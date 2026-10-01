@@ -256,8 +256,8 @@ export type ReimbursementPayoutViewerClaim = {
  * Whether this person approved the claim as it stands: they decided an approval that is still in
  * force and belongs to the current round, that is, decided at or after the claim was last
  * submitted. An approval from before a correction and resubmission is history: the claim has since
- * been routed again, and its earlier approver has no say over what it became. The same test the
- * claim page uses for "approved by a person" (`buildJourneySteps`).
+ * been routed again, and its earlier approver has no say over what it became. The claim page asks
+ * this rule too, for "approved by a person" (`buildJourneySteps`); it no longer keeps a copy.
  *
  * The one definition of a claim's own approver. The account-number reveal and its
  * `canRevealAccountNumber` flag (`claimPayoutRevealGroup` in the API), the payment slip
@@ -451,7 +451,7 @@ export function reimbursementHubBucket(claim: {
   return HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
 }
 
-/** The whole list scope as the server counted it: what the hub's cards and chips print. */
+/** The whole list scope as the server counted it, or what a search found in it: what the hub's cards and chips print. */
 export type ReimbursementHubSummary = {
   /** Claims per bucket, and `all` for the scope. The buckets add up to `all`. */
   counts: Record<'all' | ReimbursementHubBucket, number>;
@@ -707,8 +707,13 @@ export type ListReimbursementsFilter = {
   status?: ReimbursementRequestStatus;
   paymentStatus?: ReimbursementPaymentStatus;
   requesterUserId?: string;
-  /** Only the claims of one hub bucket. An unknown bucket matches nothing. */
+  /** Only the claims of one hub bucket. Any other name is refused (400). */
   bucket?: ReimbursementHubBucket;
+  /**
+   * The hub's search box: every word is in the claim's number, requester name, reason or category, or is
+   * its amount. It narrows the list and `hub` alike, so each count is still the rows its filter returns.
+   */
+  search?: string;
   page?: number;
   pageSize?: number;
 };
@@ -719,7 +724,7 @@ export type PaginatedReimbursements = {
   total: number;
   page: number;
   pageSize: number;
-  /** The scope counted per bucket, whatever `bucket` or page was asked for. */
+  /** The scope counted per bucket, whatever `bucket` or page was asked for. With `search`, the claims it found. */
   hub: ReimbursementHubSummary;
 };
 

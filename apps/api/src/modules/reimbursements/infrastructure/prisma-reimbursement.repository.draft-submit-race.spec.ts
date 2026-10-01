@@ -1,7 +1,9 @@
 /** Real PostgreSQL proof that an edit and submit cannot both commit. */
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { reimbursementHubBucket } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { MaterializeClaimExpensesService } from '../application/services/materialize-claim-expenses.service';
@@ -15,6 +17,20 @@ import { ReimbursementEvidenceService } from '../application/services/reimbursem
 import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
 import { DeleteEmployeeDraftUseCase } from '../../employee-access/application/use-cases/delete-employee-draft.use-case';
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
+import { VoidReimbursementPaymentUseCase } from '../application/use-cases/reimbursement-finance.use-case';
+import { ListReimbursementsUseCase } from '../application/use-cases/reimbursement-request.use-case';
+import { LineReimbursementDraftAdapterService } from '../../line-ai/application/line-reimbursement-draft-adapter.service';
+import { PrismaWorkflowRepository } from '../../workflow/infrastructure/prisma-workflow.repository';
+import { RunWorkflowRuleUseCase } from '../../workflow/application/use-cases/workflow-runner.use-case';
+import { ExecuteWorkflowActionUseCase } from '../../workflow/application/use-cases/workflow-action-runner.use-case';
+import { WORKFLOW_TEMPLATE_CATALOG } from '../../workflow/domain/workflow-template-catalog';
+import { buildRunDedupKey } from '../../workflow/domain/logic/workflow-idempotency.logic';
+import { PrismaBankingRepository } from '../../banking/infrastructure/prisma-banking.repository';
+import { PrismaMatchSourceQuery } from '../../banking/infrastructure/prisma-match-source.query';
+import { ConfirmMatchUseCase, ListMatchCandidatesUseCase } from '../../banking/application/use-cases/matching.use-case';
+import {
+  CompleteReconciliationSessionUseCase, CreateReconciliationSessionUseCase, ReopenReconciliationSessionUseCase,
+} from '../../banking/application/use-cases/reconciliation.use-case';
 import { MemberPayoutAccountUseCase } from '../application/use-cases/reimbursement-payout.use-case';
 import {
   CASH_PAYOUT_FINGERPRINT, openPayoutAccountNumber, payoutFingerprint, payoutSubmitToken, sealPayoutDestination, type SubmitPayoutColumns,
@@ -344,6 +360,10 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
 
   it('a stale submit rolls back candidates and numbering, then retry uses the unconsumed number', async (t) => {
     if (!reachable) return t.skip('no database reachable');
+    // The number sequence row exists once a submit has committed. The race test above usually leaves one, but not
+    // when the edit won every one of its rounds, and this test then failed on the read below. One claim is sent
+    // here first, so the test stands on its own now that CI runs this file against a database.
+    await repos[0]!.submitDraftAtomic(submitInput(await createDraft('stale-number-seed')));
     const initial = await createDraft('stale-number');
     const sequenceBefore = await clients[0]!.documentSequence.findUniqueOrThrow({
       where: { companyId_branchScopeKey_documentType_periodKey: {
@@ -1119,8 +1139,8 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
    * after that transaction's first statement, when its snapshot is already taken. This is the order
    * a lock alone cannot fix: the other writer commits first, and the payment still reads the past.
    */
-  function interleavedRepo(between: () => Promise<unknown>) {
-    const client = new Proxy(clients[0]!, { get(target, property) {
+  function interleavedClient(between: () => Promise<unknown>) {
+    return new Proxy(clients[0]!, { get(target, property) {
       if (property !== '$transaction') return Reflect.get(target, property);
       return (work: (tx: any) => Promise<unknown>, options: any) => target.$transaction((tx: any) => {
         let fired = false;
@@ -1137,7 +1157,9 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
         } }));
       }, { ...options, timeout: 20_000 });
     } });
-    return new PrismaReimbursementRepository({ client } as any, new PrismaDocumentSequenceRepository({ client: clients[0]! } as any));
+  }
+  function interleavedRepo(between: () => Promise<unknown>) {
+    return new PrismaReimbursementRepository({ client: interleavedClient(between) } as any, new PrismaDocumentSequenceRepository({ client: clients[0]! } as any));
   }
   const paymentChanged = (error: any) => error?.getStatus?.() === 409 && error.message === 'reimbursement_payment_state_changed';
 
@@ -1262,38 +1284,440 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     assert.equal(lost[0]?.getStatus?.(), 409, `a conflict, not ${String(lost[0]?.code ?? lost[0]?.message)}`);
   });
 
-  // B7 (impact audit 2026-10-01): voiding a payment must not leave a bank statement line matched to it.
-  it('refuses to void a payment a bank statement line is confirmed against, and voids once the match is undone', async (t) => {
+  // ---- A claim payment and the bank statement (impact audit B7, review 2026-10-01) ----
+  // Voiding a payment must not leave a bank statement line matched to it. Every step a person takes
+  // here goes through its own use case (the bank screen's confirm, complete and reopen, the claim
+  // page's void); only the fixtures, a bank account and a statement line, are written directly.
+
+  const quiet = { log: async () => undefined, append: async () => undefined } as any;
+  const financeCtx = (requestId = `${TAG}-bank`) => ({
+    companyId, userId: `${TAG}-finance`, requestId, scopes: {}, roles: [], authProvider: 'dev',
+    permissions: ['bank.match.read', 'bank.match.confirm', 'bank.reconciliation.create', 'bank.reconciliation.complete', 'bank.reconciliation.reopen', 'reimbursement.payment.void'],
+  }) as any;
+  // The bank screen on its own connection, as another person at another desk.
+  const banking = () => new PrismaBankingRepository({ client: clients[1]! } as any);
+  /** A bank account linked to the ledger, with one withdrawal line of 100 baht as a statement import leaves it. */
+  async function bankLine() {
+    const db = clients[0]!;
+    const ledger = await db.chartOfAccount.create({ data: { companyId, code: `${TAG}-bank-${++fileSequence}`, nameTh: 'เงินฝากธนาคาร', accountClass: 'ASSET', normalBalance: 'DEBIT' } });
+    const account = await db.bankAccount.create({ data: { companyId, branchId, displayName: `${TAG}-bank-${fileSequence}`, ledgerAccountId: ledger.id, createdByUserId: `${TAG}-finance` } });
+    const line = await db.bankStatementLine.create({ data: {
+      companyId, bankAccountId: account.id, sourceType: 'MANUAL', lineHash: `${TAG}-line-${fileSequence}`, postedDate: new Date('2026-10-01T03:00:00.000Z'),
+      description: 'โอนเงินคืนพนักงาน', direction: 'WITHDRAWAL', signedAmount: '-100.0000',
+    } });
+    return {
+      accountId: account.id,
+      lineId: line.id,
+      status: async () => (await db.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })).status,
+      matches: async () => (await db.bankReconciliationMatch.findMany({ where: { companyId, statementLineId: line.id }, orderBy: { createdAt: 'asc' } }))
+        .map((match) => [match.sourceId, match.status]),
+      remove: async () => {
+        await db.bankReconciliationSession.deleteMany({ where: { companyId, bankAccountId: account.id } });
+        await db.bankReconciliationMatch.deleteMany({ where: { companyId, bankAccountId: account.id } });
+        await db.bankStatementLine.deleteMany({ where: { companyId, bankAccountId: account.id } });
+        await db.bankAccount.deleteMany({ where: { id: account.id } });
+        await db.chartOfAccount.deleteMany({ where: { id: ledger.id } });
+      },
+    };
+  }
+  const confirmMatch = (lineId: string, paymentId: string) => new ConfirmMatchUseCase(banking(), quiet, quiet).execute(financeCtx(), {
+    statementLineId: lineId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paymentId, allocatedAmount: '100.0000', currency: 'THB',
+  });
+  /** What the bank matching screen lists for an account: its open lines and the payments it offers for them. */
+  const matchingScreen = (accountId: string) => new ListMatchCandidatesUseCase(banking(), new PrismaMatchSourceQuery({ client: clients[1]! } as any))
+    .execute(financeCtx(), accountId);
+  const voidPayment = (requestId: string, paymentId: string, auditRequestId?: string) => new VoidReimbursementPaymentUseCase(
+    repos[0]!, { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any,
+  ).execute(financeCtx(auditRequestId), requestId, paymentId, { reason: 'โอนผิดบัญชี' });
+
+  it('voids a payment a bank line is fully matched to: the match is undone with it, and the claim and the line can both move again', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const claim = await payableClaim();
     const paid = await cashPayment(claim.requestId, 'bank-matched');
+    const bank = await bankLine();
     const db = clients[0]!;
-    const account = await db.bankAccount.create({ data: { companyId, branchId, displayName: `${TAG}-bank-${++fileSequence}`, createdByUserId: `${TAG}-finance` } });
-    const line = await db.bankStatementLine.create({ data: {
-      companyId, bankAccountId: account.id, sourceType: 'MANUAL', lineHash: `${TAG}-line-${fileSequence}`, postedDate: new Date('2026-10-01T00:00:00.000Z'),
-      description: 'โอนเงินคืนพนักงาน', direction: 'WITHDRAWAL', signedAmount: '-100.0000', status: 'MATCHED',
-    } });
-    const match = await db.bankReconciliationMatch.create({ data: {
-      companyId, bankAccountId: account.id, statementLineId: line.id, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paid.payment.id,
-      sourceDisplayNumber: paid.payment.paymentNo ?? null, allocatedAmount: '100.0000', status: 'CONFIRMED', confirmedByUserId: `${TAG}-finance`, confirmedAt: new Date(),
-    } });
     try {
-      const voidIt = () => repos[0]!.voidPaymentTrueReversal(companyId, claim.requestId, paid.payment.id, `${TAG}-finance`, 'โอนผิดบัญชี');
-      await assert.rejects(voidIt, (error: any) => error.getStatus() === 409 && errorCode(error) === 'reimbursement_payment_bank_matched');
-      // Nothing moved: the payment stands, the claim is still paid, its expense record still reads paid.
+      // The bank screen confirms the whole line against the payment. A fully matched line then leaves that
+      // screen's list, so its "ยกเลิกการจับคู่" cannot be reached: the void is the only way left.
+      const match = await confirmMatch(bank.lineId, paid.payment.id);
+      assert.equal(await bank.status(), 'MATCHED');
+      assert.deepEqual((await matchingScreen(bank.accountId)).lines, []);
+
+      // Before: 409 reimbursement_payment_bank_matched, with nothing in the product that could lift it.
+      const voidRequestId = `${TAG}-void-matched`;
+      const voided = await voidPayment(claim.requestId, paid.payment.id, voidRequestId);
+      assert.deepEqual([voided.status, voided.paymentStatus, voided.payments.map((payment) => payment.status)], ['READY_FOR_PAYMENT', 'UNPAID', ['VOIDED']]);
+      assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: claim.projectionId } })).paymentStatus, 'UNPAID');
+      // The match is undone and the line reads by the bank module's own rule: nothing confirmed, so unmatched.
+      assert.deepEqual(await bank.matches(), [[paid.payment.id, 'VOIDED']]);
+      assert.equal(await bank.status(), 'UNMATCHED');
+      // Both changes are on record, made by the person who voided, in the one request.
+      const audits = await db.auditLog.findMany({ where: { companyId, requestId: voidRequestId }, orderBy: { createdAt: 'asc' } });
+      assert.deepEqual(audits.map((row) => [row.action, row.targetType, row.targetId, row.actorUserId, row.result, row.riskLevel]), [
+        ['reimbursement.payment.void', 'reimbursement_payment', paid.payment.id, `${TAG}-finance`, 'SUCCESS', 'CRITICAL'],
+        ['bank.match.void', 'bank_reconciliation_match', match.id, `${TAG}-finance`, 'SUCCESS', 'HIGH'],
+      ]);
+      assert.deepEqual(audits[1]!.metadataJson, { statementLineId: bank.lineId, reason: 'reimbursement_payment_voided', paymentId: paid.payment.id, requestId: claim.requestId });
+
+      // Nothing is stuck. The claim is paid again, and the bank screen lists the line again, offers the new
+      // payment for it and no longer the voided one, and takes the match.
+      const again = await cashPayment(claim.requestId, 'bank-matched-again');
+      assert.deepEqual([again.created, again.request.status], [true, 'PAID']);
+      const screen = await matchingScreen(bank.accountId);
+      assert.deepEqual(screen.lines.map((line) => [line.id, line.status]), [[bank.lineId, 'UNMATCHED']]);
+      const offered = screen.candidates.map((candidate) => candidate.sourceId);
+      assert.deepEqual([offered.includes(again.payment.id), offered.includes(paid.payment.id)], [true, false]);
+      await confirmMatch(bank.lineId, again.payment.id);
+      assert.equal(await bank.status(), 'MATCHED');
+      assert.deepEqual(await bank.matches(), [[paid.payment.id, 'VOIDED'], [again.payment.id, 'CONFIRMED']]);
+    } finally {
+      await bank.remove();
+    }
+  });
+
+  it('refuses the void only while the matched line sits in a completed reconciliation, and voids once that reconciliation is reopened', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'bank-reconciled');
+    const bank = await bankLine();
+    const db = clients[0]!;
+    try {
+      await confirmMatch(bank.lineId, paid.payment.id);
+      const session = await new CreateReconciliationSessionUseCase(banking(), quiet).execute(financeCtx(), {
+        bankAccountId: bank.accountId, periodStartDate: '2026-09-01', periodEndDate: '2026-10-31',
+        openingStatementBalanceAmount: '0.00', closingStatementBalanceAmount: '0.00', currency: 'THB',
+      });
+      // An open reconciliation holds nothing; a completed one holds its lines as they stood.
+      assert.equal((await new CompleteReconciliationSessionUseCase(banking(), quiet, quiet).execute(financeCtx(), session.id)).status, 'COMPLETED');
+
+      const refused = `${TAG}-void-reconciled`;
+      await assert.rejects(() => voidPayment(claim.requestId, paid.payment.id, refused),
+        (error: any) => error.getStatus() === 409 && errorCode(error) === 'reimbursement_payment_bank_reconciled');
+      // Nothing moved: the payment stands, the claim is still paid, the match and the line are as the reconciliation recorded them.
       assert.deepEqual((await paymentsOf(claim.requestId)).map((payment) => [payment.status, payment.voidedAt]), [['RECORDED', null]]);
       const still = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
       assert.deepEqual([still.status, still.paymentStatus, still.outstandingAmount.toString()], ['PAID', 'PAID', '0']);
       assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: claim.projectionId } })).paymentStatus, 'PAID');
+      assert.deepEqual([await bank.matches(), await bank.status()], [[[paid.payment.id, 'CONFIRMED']], 'MATCHED']);
+      assert.equal(await db.auditLog.count({ where: { companyId, requestId: refused } }), 0);
 
-      // The match is undone in the bank screen first; then the void goes through.
-      await db.bankReconciliationMatch.update({ where: { id: match.id }, data: { status: 'VOIDED' } });
-      const voided = await voidIt();
-      assert.deepEqual([voided.payment.status, voided.request.status, voided.request.paymentStatus], ['VOIDED', 'READY_FOR_PAYMENT', 'UNPAID']);
+      // The way out the message names: reopen that reconciliation on the bank screen, then void.
+      await new ReopenReconciliationSessionUseCase(banking(), quiet, quiet).execute(financeCtx(), session.id, 'ยกเลิกการจ่ายที่จับคู่ไว้');
+      const voided = await voidPayment(claim.requestId, paid.payment.id);
+      assert.deepEqual([voided.status, voided.paymentStatus], ['READY_FOR_PAYMENT', 'UNPAID']);
+      assert.deepEqual([await bank.matches(), await bank.status()], [[[paid.payment.id, 'VOIDED']], 'UNMATCHED']);
     } finally {
-      await db.bankReconciliationMatch.deleteMany({ where: { companyId, bankAccountId: account.id } });
-      await db.bankStatementLine.deleteMany({ where: { companyId, bankAccountId: account.id } });
-      await db.bankAccount.deleteMany({ where: { id: account.id } });
+      await bank.remove();
+    }
+  });
+
+  // ---- The bank confirm reads the payment it matches (review 2026-10-01) ----
+  // The confirm stored its source unread. It now needs the claim payment RECORDED, read under the lock the
+  // void takes, in a serializable transaction like the void's: whichever of the two read the other's past
+  // is rolled back by PostgreSQL and runs again.
+
+  /** Whether a transaction is queued for the lock every writer of this claim's payments takes, before `other` settles. */
+  async function queuedForPaymentLock(requestId: string, other: Promise<unknown>): Promise<boolean> {
+    const key = `${companyId}:${requestId}:reimbursement-payment`;
+    let settled = false;
+    void other.then(() => { settled = true; });
+    for (let attempt = 0; attempt < 200 && !settled; attempt += 1) {
+      // An advisory lock on one bigint key shows the key's low half as `objid`.
+      const [row] = await clients[1]!.$queryRaw<{ waiting: bigint }[]>`
+        SELECT count(*) AS waiting FROM pg_locks
+        WHERE locktype = 'advisory' AND NOT granted AND objid::bigint = (hashtext(${key})::bigint & 4294967295)`;
+      if (Number(row!.waiting) > 0) return true;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return false;
+  }
+  const paymentNotRecorded = (error: any) => error?.getStatus?.() === 409 && errorCode(error) === 'bank_match_payment_not_recorded';
+
+  it('refuses to match a bank line to a claim payment voided since the bank screen listed it', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'stale-candidate');
+    const bank = await bankLine();
+    try {
+      // The bank screen is open and offers the payment; a few minutes later the payment is voided on the claim's page.
+      assert.equal((await matchingScreen(bank.accountId)).candidates.some((candidate) => candidate.sourceId === paid.payment.id), true);
+      await voidPayment(claim.requestId, paid.payment.id);
+      // Before: the match was confirmed, and the line read matched to a payment that no longer stands.
+      await assert.rejects(() => confirmMatch(bank.lineId, paid.payment.id), paymentNotRecorded);
+      assert.deepEqual([await bank.matches(), await bank.status()], [[], 'UNMATCHED']);
+      // A payment this company does not have is refused the same way: the id alone proves nothing.
+      await assert.rejects(() => confirmMatch(bank.lineId, `${TAG}-no-such-payment`), paymentNotRecorded);
+      assert.deepEqual([await bank.matches(), await bank.status()], [[], 'UNMATCHED']);
+    } finally {
+      await bank.remove();
+    }
+  });
+
+  it('queues a confirm behind a void in flight, and refuses it once the void has committed', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'confirm-behind-void');
+    const bank = await bankLine();
+    try {
+      let confirming: Promise<unknown> | undefined;
+      let queued = false;
+      // The void holds the payment lock and has taken its snapshot when the bank screen confirms the match.
+      const racing = interleavedRepo(async () => {
+        confirming = confirmMatch(bank.lineId, paid.payment.id).then(() => 'confirmed', (error) => error);
+        queued = await queuedForPaymentLock(claim.requestId, confirming);
+      });
+      const voided = await racing.voidPaymentTrueReversal(companyId, claim.requestId, paid.payment.id, `${TAG}-finance`, 'โอนผิดบัญชี');
+      assert.equal(voided.payment.status, 'VOIDED');
+      // Before: the confirm took no lock and read nothing, so it committed in the middle of the void, which
+      // had already looked for matches: the line stayed matched to the voided payment.
+      assert.equal(queued, true, 'the confirm waits for the lock the void holds');
+      assert.equal(paymentNotRecorded(await confirming), true, `refused, not ${String(await confirming)}`);
+      assert.deepEqual([await bank.matches(), await bank.status()], [[], 'UNMATCHED']);
+    } finally {
+      await bank.remove();
+    }
+  });
+
+  it('queues a void behind a confirm in flight, and the void then undoes the match that confirm made', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'void-behind-confirm');
+    const bank = await bankLine();
+    const db = clients[0]!;
+    try {
+      let voiding: Promise<unknown> | undefined;
+      let queued = false;
+      const auditRequestId = `${TAG}-void-behind-confirm`;
+      // The confirm has read the payment and holds its lock when the claim's page voids it, on another connection.
+      const interleaved = new PrismaBankingRepository({ client: interleavedClient(async () => {
+        voiding = repos[1]!.voidPaymentTrueReversal(companyId, claim.requestId, paid.payment.id, `${TAG}-finance`, 'โอนผิดบัญชี', undefined, auditRequestId)
+          .then((result) => result.payment.status, (error) => error);
+        queued = await queuedForPaymentLock(claim.requestId, voiding);
+      }) } as any);
+      const match = await new ConfirmMatchUseCase(interleaved, quiet, quiet).execute(financeCtx(), {
+        statementLineId: bank.lineId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paid.payment.id, allocatedAmount: '100.0000', currency: 'THB',
+      });
+      // Before: the confirm ran no transaction and took no lock, so nothing could queue behind it.
+      assert.ok(voiding, 'the confirm reads the payment in a transaction, under the payment lock');
+      assert.equal(queued, true, 'the void waits for the lock the confirm holds');
+      // The void had taken its snapshot before the confirm committed, so it could not see the match. PostgreSQL
+      // rolls that attempt back, and the attempt after it finds the match and undoes it.
+      assert.equal(await voiding, 'VOIDED');
+      assert.deepEqual([await bank.matches(), await bank.status()], [[[paid.payment.id, 'VOIDED']], 'UNMATCHED']);
+      assert.deepEqual((await db.auditLog.findMany({ where: { companyId, requestId: auditRequestId }, orderBy: { createdAt: 'asc' } }))
+        .map((row) => [row.action, row.targetId]), [['reimbursement.payment.void', paid.payment.id], ['bank.match.void', match.id]]);
+    } finally {
+      await bank.remove();
+    }
+  });
+
+  // ---- The hub list (spec §18.1, §25.1 I1; review 2026-10-01) ----
+  // The number on every card and chip is the rows its filter returns over all pages. The fakes of the list's own
+  // spec cannot say what PostgreSQL does with the scope predicates, the case-insensitive search, the amount and
+  // the paging order, so the whole rule is asked of the real database: every scope, with and without a search.
+
+  it('counts every hub card as the rows its filter returns over all pages: company, own, related and branch-limited, with and without a search', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const hub = (await db.company.create({ data: { name: `${TAG}-hub`, status: 'ACTIVE' }, select: { id: true } })).id;
+    try {
+      const [north, south] = await Promise.all(['N', 'S'].map(async (code) => (await db.branch.create({
+        data: { companyId: hub, code: `HUB-${code}`, name: `${TAG}-hub-${code}` }, select: { id: true },
+      })).id));
+      // Every status pair the hub places differently, six times over: two requesters, two branches and one branchless
+      // claim in six, searchable words on some, and a shared creation time on a third so only the id orders them.
+      const PAIRS = [['DRAFT', 'NOT_REQUIRED'], ['PENDING_APPROVAL', 'NOT_REQUIRED'], ['FINANCE_REVIEW', 'PENDING'], ['APPROVED', 'PENDING'],
+        ['APPROVED', 'NOT_REQUIRED'], ['READY_FOR_PAYMENT', 'APPROVED_FOR_PAYMENT'], ['PAID', 'NOT_REQUIRED'], ['REJECTED', 'NOT_REQUIRED'], ['CANCELLED', 'NOT_REQUIRED']] as const;
+      const fixtures = Array.from({ length: PAIRS.length * 6 }, (_, index) => {
+        const [status, financeReviewStatus] = PAIRS[index % PAIRS.length]!;
+        const mine = index % 2 === 0;
+        return {
+          id: `${TAG}-hub-${String(index).padStart(3, '0')}`, companyId: hub, branchId: index % 6 === 5 ? null : index % 3 === 0 ? south! : north!,
+          requesterUserId: mine ? `${TAG}-user` : `${TAG}-finance`, createdByUserId: mine ? `${TAG}-user` : `${TAG}-finance`,
+          requesterDisplayNameSnapshot: mine ? 'สมชาย ใจดี' : 'Somsri K.', requestNo: status === 'DRAFT' ? null : `RB-HUB-${String(index).padStart(5, '0')}`,
+          reason: index % 4 === 0 ? 'ค่าแท็กซี่ไปพบลูกค้า' : 'ค่าที่พักต่างจังหวัด', categoryKey: 'travel', categoryLabelSnapshot: index % 5 === 0 ? 'เดินทาง' : null,
+          amount: `${1000 + index}.5000`, currency: 'THB', incurredDate: new Date('2026-09-20T00:00:00.000Z'), status, financeReviewStatus,
+          // The requester of the other half is this claim's approver, which is what makes it "related" to them.
+          currentApproverUserId: index % 7 === 0 ? `${TAG}-finance` : null,
+          createdAt: new Date(Date.UTC(2026, 8, 20, 0, 0, index % 3 === 0 ? 0 : index)),
+        };
+      });
+      await db.reimbursementRequest.createMany({ data: fixtures as any });
+
+      const list = new ListReimbursementsUseCase(repos[0]!);
+      const viewer = (userId: string, permissions: string[], branchIds?: string[]) => ({
+        companyId: hub, userId, requestId: `${TAG}-hub-list`, permissions, scopes: branchIds ? { branchIds } : {}, roles: [], authProvider: 'dev',
+      }) as any;
+      type Fixture = (typeof fixtures)[number];
+      const scopes: Array<[string, any, (claim: Fixture) => boolean]> = [
+        ['company', viewer(`${TAG}-finance`, ['reimbursement.read']), () => true],
+        ['own', viewer(`${TAG}-user`, ['reimbursement.read_own']), (claim) => claim.requesterUserId === `${TAG}-user`],
+        ['related', viewer(`${TAG}-finance`, ['reimbursement.read_related']),
+          (claim) => claim.requesterUserId === `${TAG}-finance` || claim.currentApproverUserId === `${TAG}-finance`],
+        // A branch-limited reader sees that branch and the company-central claims that have none.
+        ['branch-limited', viewer(`${TAG}-finance`, ['reimbursement.read'], [north!]), (claim) => claim.branchId === north || claim.branchId === null],
+      ];
+      const has = (claim: Fixture, word: string) => [claim.requestNo, claim.requesterDisplayNameSnapshot, claim.reason, claim.categoryLabelSnapshot]
+        .some((text) => typeof text === 'string' && text.toLowerCase().includes(word.toLowerCase())) || Number(claim.amount) === Number(word.replace(/,/g, ''));
+      const BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+      /** Every page of one list, seven rows a page, the way the hub walks it. */
+      const walk = async (ctx: any, filter: Record<string, unknown>) => {
+        const pages: Awaited<ReturnType<typeof list.execute>>[] = [];
+        for (let page = 1; ; page += 1) {
+          const answer = await list.execute(ctx, { ...filter, page, pageSize: 7 });
+          pages.push(answer);
+          if (answer.items.length < answer.pageSize || page * answer.pageSize >= answer.total) return pages;
+        }
+      };
+
+      const sizes: Record<string, number[]> = {};
+      for (const [name, ctx, inScope] of scopes) {
+        for (const search of [undefined, 'แท็กซี่', 'somsri', 'RB-HUB-0001', '1,012.5', 'สมชาย ที่พัก', 'เดินทาง', 'ไม่มีใบไหนตรง']) {
+          const label = `${name} / ${search ?? 'no search'}`;
+          const expected = fixtures.filter((claim) => inScope(claim) && (search ?? '').split(/\s+/).filter(Boolean).every((word) => has(claim, word)));
+          (sizes[name] ??= []).push(expected.length);
+          const all = await walk(ctx, { search });
+          const ids = all.flatMap((answer) => answer.items.map((item) => item.id));
+          // Every claim once, none missing and none repeated across the pages, and the total says so.
+          assert.deepEqual([...ids].sort(), expected.map((claim) => claim.id).sort(), label);
+          const summary = all[0]!.hub;
+          assert.deepEqual([all[0]!.total, summary.counts.all], [expected.length, expected.length], label);
+          assert.equal(BUCKETS.reduce((sum, bucket) => sum + summary.counts[bucket], 0), summary.counts.all, label);
+          assert.equal(Number(summary.totalAmount), expected.reduce((sum, claim) => sum + Number(claim.amount), 0), label);
+          for (const bucket of BUCKETS) {
+            const pages = await walk(ctx, { search, bucket });
+            const items = pages.flatMap((answer) => answer.items);
+            // The number on the card: the list's total, and the rows of all its pages, each of them of that bucket.
+            assert.equal(items.length, summary.counts[bucket], `${label} / ${bucket}`);
+            assert.equal(new Set(items.map((item) => item.id)).size, items.length, `${label} / ${bucket}`);
+            for (const answer of pages) assert.deepEqual([answer.total, answer.hub], [summary.counts[bucket], summary], `${label} / ${bucket}`);
+            for (const item of items) assert.equal(reimbursementHubBucket(item), bucket, `${label} / ${item.id}`);
+          }
+        }
+      }
+      // The four scopes really differ, every search narrows its scope, several of them find something in each scope,
+      // and the last one finds nothing anywhere.
+      assert.deepEqual(Object.fromEntries(Object.entries(sizes).map(([name, counts]) => [name, counts[0]])), { company: 54, own: 27, related: 31, 'branch-limited': 36 });
+      for (const counts of Object.values(sizes)) {
+        assert.ok(counts.slice(1).every((count) => count < counts[0]!), JSON.stringify(sizes));
+        assert.ok(counts.slice(1).filter((count) => count > 0).length >= 4, JSON.stringify(sizes));
+        assert.equal(counts.at(-1), 0);
+      }
+    } finally {
+      await db.company.deleteMany({ where: { id: hub } });
+    }
+  });
+
+  // ---- The LINE claim-draft receipt picker (review 2026-10-01) ----
+  // The picker listed every active upload of the requester, and of the caller when they review finance. Whoever
+  // records payments has payment slips among their uploads: they were offered as receipts, and picking one was
+  // refused when the line was saved. Asked of the real database, because the "not a slip" query has to keep the
+  // files that carry no metadata at all, which only PostgreSQL's NULL logic decides.
+
+  it('offers a claim draft the uploader\'s own receipts to pick, and none of their payment slips', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const token = `${TAG}-pick`;
+    const claim = await payableClaim();
+    const file = (name: string, overrides: Record<string, unknown> = {}) => slipUpload(claim.requestId, { originalFileName: `${token}-${name}`, ...overrides });
+    // Receipts as they are stored: a web upload with no metadata, one with other metadata, a photo staged from LINE.
+    await file('receipt-plain.jpg', { metadataJson: undefined });
+    await file('receipt-web.jpg', { metadataJson: { source: 'web' } });
+    await file('receipt-line.jpg', { metadataJson: { lineReimbursementOwner: { userId: `${TAG}-finance` }, lineReimbursementEpoch: 1 } });
+    // Slips: one uploaded and never recorded (the tag alone), one a transfer carries (tag and link), and one attached
+    // as a signed copy by mistake and moved to the payment (the link alone).
+    await file('slip-not-recorded.jpg');
+    const recorded = await file('slip-recorded.jpg');
+    const paid = await repos[0]!.recordPaymentAtomic(transfer(claim.requestId, 'pick-paid', recorded.id));
+    const moved = await file('slip-moved.pdf', { metadataJson: { source: 'web' }, mimeType: 'application/pdf' });
+    await repos[0]!.linkSignedClaimFormCopy(companyId, claim.requestId, moved.id, `${TAG}-finance`);
+    await moveToSlip(claim.requestId, paid.payment.id, moved.id);
+    assert.equal(await db.attachmentObject.count({ where: { companyId, originalFileName: { startsWith: token }, status: 'ACTIVE', uploadedByUserId: `${TAG}-finance`, branchId } }), 6);
+
+    // The picker itself, with the search a person types to narrow the files.
+    const adapter = new LineReimbursementDraftAdapterService({ client: db } as any, repos[0]!, null as never, null as never, null as never);
+    const viewer = { companyId, userId: `${TAG}-finance`, requestId: `${TAG}-pick`, roles: [], scopes: {}, authProvider: 'line',
+      permissions: ['reimbursement.create', 'reimbursement.finance_review'] };
+    const options = await (adapter as any).buildOptions(viewer, { actionId: randomUUID(), taskId: randomUUID(), actionOrdinal: 1, operation: 'CREATE' }, 1,
+      { operation: 'CREATE', subrequestIndex: 0, query: { family: 'attachment', text: token } }, undefined);
+    const offered = options.choices.filter((choice: any) => choice.kind === 'ATTACHMENT').map((choice: any) => choice.label).sort();
+    // Before: all six, the three slips included.
+    assert.deepEqual(offered, ['receipt-line.jpg', 'receipt-plain.jpg', 'receipt-web.jpg'].map((name) => `${token}-${name}`));
+    assert.deepEqual(options.pages.attachment, { returned: 3, hasMore: false });
+  });
+
+  // ---- The overdue-approval reminder (review 2026-10-01) ----
+  // The reminder is a scan. Every scan window ran the rule again for a claim still overdue, and every run made a
+  // task. The real rule runner and the real task query are asked here: which tasks are "of the same rule" is a
+  // join only the database can answer.
+
+  it('keeps one open reminder task for a claim while it stays overdue, and gives a claim sent again a task of its own', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const workflow = new PrismaWorkflowRepository({ client: db } as any);
+    const seed = WORKFLOW_TEMPLATE_CATALOG.find((template) => template.key === 'approval_sla_breach')!;
+    const taskActions = seed.defaultActionJson.filter((action) => action.actionType === 'CREATE_WORKFLOW_TASK');
+    assert.equal(taskActions.length, 1);
+    // The template row is global: a synced database has it already, a bare one gets it for this test alone.
+    const synced = await db.workflowTemplate.findUnique({ where: { key: seed.key } });
+    const template = synced ?? await db.workflowTemplate.create({ data: {
+      key: seed.key, name: seed.name, description: seed.description, category: seed.category, sourceModule: seed.sourceModule, triggerType: seed.triggerType,
+      defaultConditionJson: seed.defaultConditionJson as any, defaultActionJson: seed.defaultActionJson as any, status: 'AVAILABLE',
+    } });
+    try {
+      // The company's reminder rule as the template sync creates it, with the task action alone: the notice beside it
+      // has its own once-per-round rule and its own spec.
+      const drafted = await workflow.createRule({
+        companyId, templateId: template.id, name: seed.name, triggerType: seed.triggerType, triggerConfigJson: {}, conditionJson: seed.defaultConditionJson,
+        actionJson: taskActions, recipientConfigJson: {}, cooldownSeconds: 0, timezone: 'Asia/Bangkok', createdByUserId: `${TAG}-finance`,
+      });
+      await workflow.createRuleVersion({
+        ruleId: drafted.id, companyId, version: 1, status: 'ENABLED', triggerSnapshotJson: {}, conditionSnapshotJson: seed.defaultConditionJson,
+        actionSnapshotJson: taskActions, recipientSnapshotJson: {}, cooldownSeconds: 0, createdByUserId: `${TAG}-finance`,
+      });
+      const rule = await workflow.updateRule(companyId, drafted.id, { status: 'ENABLED' });
+      const runner = new RunWorkflowRuleUseCase(workflow, quiet,
+        new ExecuteWorkflowActionUseCase(workflow, quiet, {} as any, null as never, null as never, null as never, null as never));
+      /** One scan window that finds the claim overdue, handed to the runner the way the scan hands it. */
+      const window = (claimId: string, hour: string) => runner.execute({
+        rule, triggerType: 'SLA_SCAN', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: claimId,
+        dedupKey: buildRunDedupKey({ triggerType: 'SLA_SCAN', periodKey: hour, sourceType: 'reimbursement_request', sourceId: claimId }),
+        payload: { requestId: claimId, requestNo: 'RB-202610-00007', slaRisk: true, approverTaskRole: 'MANAGER' }, now: new Date(),
+      });
+      const tasksOf = async (claimId: string) => (await db.workflowTask.findMany({ where: { companyId, sourceType: 'reimbursement_request', sourceId: claimId }, orderBy: { createdAt: 'asc' } }))
+        .map((task) => task.status);
+      const waiting = async (reason: string) => {
+        const draft = await createDraft(reason);
+        await repos[0]!.submitDraftAtomic(submitInput(draft));
+        return draft.id;
+      };
+      const [claim, other] = [await waiting('overdue-reminder'), await waiting('overdue-reminder-other')];
+
+      // Three hours overdue, three scan windows.
+      for (const hour of ['2026-10-01T01', '2026-10-01T02', '2026-10-01T03']) assert.equal((await window(claim, hour)).status, 'SUCCEEDED', hour);
+      // Before: three open tasks, and one more for every further hour.
+      assert.deepEqual(await tasksOf(claim), ['OPEN']);
+      const results = (await db.workflowActionRun.findMany({ where: { companyId, actionType: 'CREATE_WORKFLOW_TASK' }, orderBy: { createdAt: 'asc' } }))
+        .map((run) => [run.status, run.resultJson]);
+      assert.deepEqual(results, [['SUCCEEDED', { created: true }], ['SUCCEEDED', { skipped: true, reason: 'open_task_exists' }], ['SUCCEEDED', { skipped: true, reason: 'open_task_exists' }]]);
+      assert.deepEqual((await db.workflowTask.findFirstOrThrow({ where: { companyId, sourceId: claim } })).title, 'ใบเบิกรออนุมัติเกินกำหนด: RB-202610-00007');
+      // Another overdue claim is reminded for itself.
+      await window(other, '2026-10-01T03');
+      assert.deepEqual([await tasksOf(claim), await tasksOf(other)], [['OPEN'], ['OPEN']]);
+
+      // The claim is corrected and sent again: its open tasks are closed the way that event closes them, and the
+      // new round, overdue in its turn, gets one task of its own however many windows pass.
+      assert.equal(await workflow.closeSettledClaimTasks({ companyId, requestId: claim, supersede: true }), 1);
+      for (const hour of ['2026-10-02T01', '2026-10-02T02']) await window(claim, hour);
+      assert.deepEqual([await tasksOf(claim), await tasksOf(other)], [['CANCELED', 'OPEN'], ['OPEN']]);
+      // A task the approver snoozed is still their one reminder.
+      await db.workflowTask.updateMany({ where: { companyId, sourceId: claim, status: 'OPEN' }, data: { status: 'SNOOZED' } });
+      await window(claim, '2026-10-02T03');
+      assert.deepEqual(await tasksOf(claim), ['CANCELED', 'SNOOZED']);
+    } finally {
+      await db.workflowTask.deleteMany({ where: { companyId } });
+      await db.workflowRule.deleteMany({ where: { companyId } });
+      if (!synced) await db.workflowTemplate.deleteMany({ where: { id: template.id } });
     }
   });
 

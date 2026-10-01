@@ -26,6 +26,7 @@ import { resolveTransactionBranchId, requireTransactionBranchId } from '../../da
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { assertActiveExpenseBranch, expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
+import { calculateStatementLineMatchStatus } from '../../banking/domain/logic/banking.logic';
 import type {
   ReimbursementPolicyRecord,
   ReimbursementRequestRecord,
@@ -178,6 +179,25 @@ export function hubBucketWhere(bucket: string): Prisma.ReimbursementRequestWhere
     OR: Object.values(RequestStatuses).flatMap((status) => {
       const finance = Object.values(FinanceReviewStatuses).filter((financeReviewStatus) => hubBucketOfStatus(status, financeReviewStatus) === bucket);
       return finance.length > 0 ? [{ status, financeReviewStatus: { in: finance } }] : [];
+    }),
+  };
+}
+
+/**
+ * What the hub's search box finds: every word typed is in the claim's number, its requester's name, its
+ * reason or its category, or is its amount. Those are the columns a row prints and a person can type;
+ * the status is what the chips filter. Read by the page and by the counts alike.
+ * ponytail: the first five words are read; a longer search ignores the rest.
+ */
+export function hubSearchWhere(search: string): Prisma.ReimbursementRequestWhereInput {
+  return {
+    AND: search.split(/\s+/).filter(Boolean).slice(0, 5).map((word) => {
+      const contains = { contains: word, mode: 'insensitive' as const };
+      const amount = word.replace(/,/g, '');
+      return { OR: [
+        { requestNo: contains }, { requesterDisplayNameSnapshot: contains }, { reason: contains }, { categoryLabelSnapshot: contains },
+        ...(/^\d{1,12}(\.\d{1,4})?$/.test(amount) ? [{ amount }] : []),
+      ] };
     }),
   };
 }
@@ -2488,13 +2508,15 @@ export class PrismaReimbursementRepository {
   /**
    * One page of a list, read with LIMIT and OFFSET in the database, and the whole scope grouped by the
    * fields the hub counts on. Two reads over one predicate: the page adds only the bucket to it, so the
-   * groups of a bucket add up to exactly the claims its pages hold.
+   * groups of a bucket add up to exactly the claims its pages hold. A search narrows that one predicate
+   * (`hubSearchWhere`), so with a search the groups count what was found, bucket by bucket.
    */
   async listRequestPage(where: ListRequestsWhere & { bucket?: string; skip: number; take: number }): Promise<{
     rows: ReimbursementRequestRecord[];
     groups: ReimbursementRequestGroup[];
   }> {
-    const scope = await this.requestListWhere(where);
+    const scope = await this.requestListWhere({ ...where, search: undefined });
+    if (where.search) scope.AND.push(hubSearchWhere(where.search));
     const [rows, groups] = await Promise.all([
       this.prisma.client.reimbursementRequest.findMany({
         where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
@@ -3305,13 +3327,33 @@ export class PrismaReimbursementRepository {
         return { request: this.toRequest(request), payment: this.toPayment(prior), reversalEntryId: null, alreadyVoided: true };
       }
       // A bank statement line confirmed against this payment would be left matched to a payment that
-      // no longer stands. The match is undone first: the rule deleting an expense already follows.
-      const bankMatch = await tx.bankReconciliationMatch.findFirst({
+      // no longer stands. A fully matched line is not listed on the bank matching screen, so nobody
+      // could undo the match there first: the void undoes it here, by the banking module's own rule
+      // (the match is voided and the line's status is derived again from the matches that still
+      // stand). Only a line inside a completed reconciliation is refused: that one is reopened first.
+      const bankMatches: Array<{ id: string; statementLineId: string }> = await tx.bankReconciliationMatch.findMany({
         where: { companyId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paymentId, status: 'CONFIRMED' },
-        select: { id: true },
+        select: { id: true, statementLineId: true },
       });
-      if (bankMatch) {
-        throw new ConflictException({ code: 'reimbursement_payment_bank_matched', message: 'Undo the bank reconciliation match of this payment before voiding it.' });
+      for (const match of bankMatches) {
+        const reconciled = await tx.bankReconciliationSessionLine.count({
+          where: { companyId, statementLineId: match.statementLineId, session: { status: 'COMPLETED' } },
+        });
+        if (reconciled > 0) {
+          throw new ConflictException({ code: 'reimbursement_payment_bank_reconciled', message: 'This payment is matched to a bank statement line in a completed reconciliation. Reopen that reconciliation before voiding the payment.' });
+        }
+        await tx.bankReconciliationMatch.update({ where: { id: match.id }, data: { status: 'VOIDED' } });
+        const line = await tx.bankStatementLine.findFirstOrThrow({
+          where: { id: match.statementLineId, companyId },
+          select: { signedAmount: true, matches: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true } } },
+        });
+        await tx.bankStatementLine.update({
+          where: { id: match.statementLineId },
+          data: { status: calculateStatementLineMatchStatus({
+            statementLineAmount: String(line.signedAmount),
+            confirmedAllocations: line.matches.map((standing: { allocatedAmount: unknown }) => String(standing.allocatedAmount)),
+          }) },
+        });
       }
       const voided = await tx.reimbursementPayment.updateMany({
         where: { id: paymentId, companyId, reimbursementRequestId: requestId, status: 'RECORDED' },
@@ -3382,6 +3424,12 @@ export class PrismaReimbursementRepository {
         await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'reimbursement.payment.void',
           targetType: 'reimbursement_payment', targetId: paymentId, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
           metadataJson: { reason, requestId, reversalEntryId: reversal.reversalEntryId } }, tx);
+        // The row the bank screen's own "ยกเลิกการจับคู่" writes, so a match reads the same whoever undid it.
+        for (const match of bankMatches) {
+          await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'bank.match.void',
+            targetType: 'bank_reconciliation_match', targetId: match.id, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: { statementLineId: match.statementLineId, reason: 'reimbursement_payment_voided', paymentId, requestId } }, tx);
+        }
         await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
           aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,
           payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'reimbursement_payment', aggregateId: paymentId,

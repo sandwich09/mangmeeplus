@@ -1050,3 +1050,106 @@ describe('CALL_WEBHOOK shadow coverage', () => {
     assert.equal(updates.at(-1)?.status, 'DEAD_LETTERED');
   });
 });
+
+// Review 2026-10-01: the overdue-approval reminder is a scan, and a scan comes round every window. Each window's
+// run asked for a task of its own, so a claim that stayed overdue collected one more identical reminder an hour.
+describe('a scan keeps one open task per rule and record (the overdue-approval reminder)', () => {
+  const sla = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'approval_sla_breach')!;
+  const taskAction = sla.defaultActionJson.find((a) => a.actionType === 'CREATE_WORKFLOW_TASK')!;
+
+  function world() {
+    const tasks: any[] = [];
+    const ruleOfRun: Record<string, string> = {};
+    const results: Record<string, any> = {};
+    const repo = {
+      updateActionRun: async (id: string, data: any) => { if (data.status !== 'RUNNING') results[id] = data; },
+      findTaskByActionRunId: async (_companyId: string, actionRunId: string) => tasks.find((task) => task.workflowActionRunId === actionRunId) ?? null,
+      // The repository's query over the rows held here; its SQL is asked of real PostgreSQL in the reimbursement gate.
+      findOpenTaskOfRuleForSource: async (companyId: string, workflowRunId: string, sourceType: string, sourceId: string) => tasks.find((task) =>
+        task.companyId === companyId && task.sourceType === sourceType && task.sourceId === sourceId && ['OPEN', 'SNOOZED'].includes(task.status)
+        && task.workflowRunId !== workflowRunId && ruleOfRun[task.workflowRunId] === ruleOfRun[workflowRunId]) ?? null,
+      createTask: async (data: any) => { const task = { id: `task_${tasks.length + 1}`, status: 'OPEN', ...data }; tasks.push(task); return task; },
+    };
+    const runner = new ExecuteWorkflowActionUseCase(repo as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    /** One scan window that finds the claim overdue: a run of the rule, and that run's task action. */
+    const window = async (run: string, options: { claim?: string; rule?: string; triggerType?: string } = {}) => {
+      ruleOfRun[run] = options.rule ?? 'rule_sla';
+      const claim = options.claim ?? 'rb_1';
+      await runner.execute({
+        id: `ar_${run}`, workflowRunId: run, actionKey: taskAction.actionKey, actionType: 'CREATE_WORKFLOW_TASK', actionConfigSnapshotJson: taskAction.configJson,
+        attemptCount: 0, idempotencyKey: `${run}:${taskAction.actionKey}`,
+      } as any, {
+        companyId: 'co_1', ruleName: sla.name, triggerType: options.triggerType ?? 'SLA_SCAN', sourceModule: 'reimbursements', sourceType: 'reimbursement_request',
+        sourceId: claim, payload: { requestId: claim, requestNo: 'RB-202610-00007', approverTaskUserId: 'u_manager', slaRisk: true }, siblingActions: sla.defaultActionJson,
+      } as any);
+      return results[`ar_${run}`];
+    };
+    const open = (claim = 'rb_1') => tasks.filter((task) => task.sourceId === claim && task.status === 'OPEN').map((task) => task.id);
+    return { tasks, window, open };
+  }
+
+  it('creates the reminder task once while the claim stays overdue, however many windows pass', async () => {
+    const { tasks, window } = world();
+    const first = await window('run_01h');
+    assert.deepEqual([first.status, first.resultJson, first.targetId], ['SUCCEEDED', { created: true }, 'task_1']);
+    // Before: a second and a third task, one for every window the claim was still overdue in.
+    for (const run of ['run_02h', 'run_03h', 'run_04h']) {
+      const later = await window(run);
+      assert.deepEqual([later.status, later.resultJson, later.targetType, later.targetId],
+        ['SUCCEEDED', { skipped: true, reason: 'open_task_exists' }, 'workflow_task', 'task_1'], run);
+    }
+    assert.deepEqual(tasks.map((task) => [task.title, task.priority, task.assigneeUserId, task.sourceId]),
+      [['ใบเบิกรออนุมัติเกินกำหนด: RB-202610-00007', 'CRITICAL', 'u_manager', 'rb_1']]);
+    // A task the person snoozed is still their open reminder: no second one arrives behind it.
+    tasks[0].status = 'SNOOZED';
+    assert.deepEqual((await window('run_05h')).resultJson, { skipped: true, reason: 'open_task_exists' });
+    assert.equal(tasks.length, 1);
+  });
+
+  it('gives each submission round one task: a claim sent again is reminded anew, and again only once', async () => {
+    const { tasks, window, open } = world();
+    for (const run of ['run_01h', 'run_02h']) await window(run);
+    // The claim is corrected and sent again: its tasks are cancelled, and the new round is reminded with its own.
+    tasks[0].status = 'CANCELED';
+    for (const run of ['run_09h', 'run_10h', 'run_11h']) await window(run);
+    // Before: five tasks, one per window, four of them open.
+    assert.deepEqual([tasks.map((task) => task.status), open()], [['CANCELED', 'OPEN'], ['task_2']]);
+    // Closed by hand without approving: the claim is still overdue, so the next window says so again, once.
+    tasks[1].status = 'DONE';
+    for (const run of ['run_12h', 'run_13h']) await window(run);
+    assert.deepEqual([tasks.map((task) => task.status), open()], [['CANCELED', 'DONE', 'OPEN'], ['task_3']]);
+  });
+
+  it('keeps one open task per claim and per rule, and leaves event-triggered tasks as they were', async () => {
+    const { tasks, window, open } = world();
+    // Two windows each for: the claim, another overdue claim, and another rule looking at the first claim.
+    for (const hour of ['01h', '02h']) {
+      await window(`run_${hour}`);
+      await window(`run_${hour}_other_claim`, { claim: 'rb_2' });
+      await window(`run_${hour}_other_rule`, { rule: 'rule_admin_copy' });
+    }
+    // Before: six tasks. Each claim has its own, and so has each rule; the second window added none.
+    assert.deepEqual([open('rb_1'), open('rb_2')], [['task_1', 'task_3'], ['task_2']]);
+    // A retry of the same action run finds its own task, as before.
+    assert.deepEqual((await window('run_01h')).resultJson, { alreadyExisted: true });
+    // An event happens once and its run is its own: a task per event, whatever is open.
+    assert.deepEqual((await window('event_1', { triggerType: 'EVENT' })).resultJson, { created: true });
+    assert.deepEqual((await window('event_2', { triggerType: 'EVENT' })).resultJson, { created: true });
+    assert.equal(tasks.length, 5);
+  });
+
+  it('asks the database for an open or snoozed task of the same rule and record, made by another run', async () => {
+    const asked: any[] = [];
+    const row = { id: 'task_1', companyId: 'co_1', title: 't', priority: 'CRITICAL', status: 'OPEN', createdAt: new Date(), updatedAt: new Date() };
+    const repo = new PrismaWorkflowRepository({ client: { workflowTask: { findFirst: async (args: any) => { asked.push(args); return asked.length === 1 ? row : null; } } } } as any);
+    assert.equal((await repo.findOpenTaskOfRuleForSource('co_1', 'run_9', 'reimbursement_request', 'rb_1'))?.id, 'task_1');
+    assert.equal(await repo.findOpenTaskOfRuleForSource('co_1', 'run_9', 'reimbursement_request', 'rb_1'), null);
+    assert.deepEqual(asked[0], { where: {
+      companyId: 'co_1', sourceType: 'reimbursement_request', sourceId: 'rb_1', status: { in: ['OPEN', 'SNOOZED'] },
+      // Not a task of the asking run itself, so two task actions of one rule both create theirs.
+      workflowRunId: { not: 'run_9' },
+      // The same rule: the task's run and the asking run belong to one rule.
+      workflowRun: { rule: { runs: { some: { id: 'run_9' } } } },
+    } });
+  });
+});

@@ -1,7 +1,7 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
@@ -457,7 +457,7 @@ export function hubCardFilter(open: HubFilter, tapped: HubFilter): HubFilter {
 
 /** The rows of one hub list loaded so far, where the server's list goes on, and the scope as the server counted it. */
 export type HubList = {
-  /** The list these rows belong to (company, scope, filter, reload): rows of another list are never shown as this one's. */
+  /** The list these rows belong to (company, scope, filter, reload, search): rows of another list are never shown as this one's. */
   key: string;
   rows: any[];
   /** The server's count of the whole list. */
@@ -466,12 +466,27 @@ export type HubList = {
   nextPage: number | null;
   /** Why the last page asked for did not arrive. Nothing more is asked until a retry clears it, and the rows stay. */
   failed?: string;
-  /** What the cards and chips print: the whole scope, whatever filter the rows are of. Kept from one list to the next. */
+  /** How many times this list was read again from its first page because it changed between two pages. */
+  restarts?: number;
+  /** What the cards and chips print: the whole scope (with a search, what it found), whatever filter the rows are of. Kept from one list to the next. */
   summary: ReimbursementHubSummary | null;
 };
 export const NO_HUB_LIST: HubList = { key: '', rows: [], total: 0, nextPage: 1, summary: null };
 /** What the hub asks for; what counts is the page size the server answers with. */
 export const HUB_PAGE_SIZE = 100;
+/** How long the typing has to pause before the hub asks the API for the search. */
+export const HUB_SEARCH_DELAY_MS = 300;
+
+/**
+ * The line above the hub's list. With a search the server's counts are of what the search found, so the cards and
+ * chips change with it: the line says so, because a card that showed 12 a moment ago now shows 3.
+ */
+export function hubListStatusText(shown: number, all: number, filter: HubFilter, searching: boolean): string {
+  if (searching) {
+    return `${filter === 'all' ? `พบ ${shown} รายการ` : `พบ ${shown} จาก ${all} รายการ`}ที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น`;
+  }
+  return filter === 'all' ? `ทั้งหมด ${all} รายการ` : `พบ ${shown} จาก ${all} รายการ`;
+}
 
 export const hubListKey = (...parts: unknown[]) => parts.join('|');
 
@@ -482,27 +497,41 @@ export function hubList(held: HubList, key: string): HubList {
 
 /**
  * The page to ask the server for now, given how many rows the screen needs: the first page of a list, then
- * more only when the table page shown, or a search, reaches past what is held. Null: the rows needed are
- * loaded, the list is complete, or the last page failed.
+ * more only when the table page shown reaches past what is held. Null: the rows needed are loaded, the list
+ * is complete, or the last page failed.
  */
 export function hubNextPage(list: HubList, need: number): number | null {
   return list.failed === undefined && list.rows.length < need ? list.nextPage : null;
 }
 
+/** How often a list that keeps changing is read again from the start before it is taken as it comes. */
+const HUB_MAX_RESTARTS = 3;
+
 /**
  * Adds one page. The list ends on the server's own total, or on a page shorter than the page size the
  * server answered with, never on the size that was asked for: the server may cap it.
+ *
+ * A later page whose total differs from the one held means the list changed between the two calls. When a
+ * claim left it (approved, paid, deleted), every claim behind it moved up one place, and the one that moved
+ * onto a page already read would never be shown: a claim still waiting, skipped. The list is then read again
+ * from its first page.
+ * ponytail: at most three times for one list; one that changes on every call is then taken as it comes.
  */
 export function withHubPage(
   held: HubList, key: string,
   result: { items?: any[]; total: number; page: number; pageSize: number; hub: ReimbursementHubSummary },
 ): HubList {
   const items = result.items ?? [];
+  const list = hubList(held, key);
+  const restarts = list.restarts ?? 0;
+  if (result.page > 1 && result.total !== list.total && restarts < HUB_MAX_RESTARTS) {
+    return { key, rows: [], total: result.total, nextPage: 1, summary: result.hub, restarts: restarts + 1 };
+  }
   // Keyed by id: a claim filed between two calls shifts the pages and would otherwise repeat a row.
-  const byId = new Map<string, any>(hubList(held, key).rows.map((row) => [row.id, row]));
+  const byId = new Map<string, any>(list.rows.map((row) => [row.id, row]));
   for (const item of items) byId.set(item.id, item);
   const more = items.length > 0 && items.length >= result.pageSize && result.page * result.pageSize < result.total;
-  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null, summary: result.hub };
+  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null, summary: result.hub, ...(restarts > 0 && { restarts }) };
 }
 
 /** A page did not arrive: what was loaded stays, and the same page is asked again on retry. */
@@ -670,9 +699,12 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const ended = status === 'CANCELLED' || status === 'VOIDED';
   const atIndex = keys.indexOf(journeyStepAt(detail, withFinance));
   const own = reimbursementOwnActions(detail, userId, permissions);
-  // A step approved in an earlier round (before a finance correction) is history, not this round's approval.
-  const approval = (detail?.approvalSteps ?? []).filter((step: any) => step.status === 'APPROVED' && !step.invalidatedAt
-    && String(step.decidedAt ?? '') >= String(detail?.submittedAt ?? '')).at(-1);
+  // This round's approval, by the one rule for a claim's approver (`isReimbursementClaimApprover` in contracts, the
+  // API's own): still in force, and decided at or after the claim was last submitted. A step approved in an earlier
+  // round (before a finance correction) is history. The copy of the rule that stood here compared the two dates as
+  // text and, on a claim with no submission date, counted every approved step.
+  const approval = (detail?.approvalSteps ?? []).filter((step: any) => !!step.decisionByUserId
+    && isReimbursementClaimApprover(step.decisionByUserId, { submittedAt: detail?.submittedAt, approvalSteps: [step] })).at(-1);
   const humanApproved = !!approval;
   const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
   const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);

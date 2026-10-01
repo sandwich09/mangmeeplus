@@ -450,6 +450,23 @@ export class PrismaWorkflowRepository {
     return row ? this.toTask(row) : null;
   }
 
+  /**
+   * A task still open (or snoozed) that an earlier run of the same rule created for the same source record.
+   * A scan's task action asks this before creating another. Tasks of the asking run itself are left out, so
+   * a rule with two task actions still creates both in one run.
+   */
+  async findOpenTaskOfRuleForSource(companyId: string, workflowRunId: string, sourceType: string, sourceId: string): Promise<WorkflowTaskRecord | null> {
+    const row = await this.prisma.client.workflowTask.findFirst({
+      where: {
+        companyId, sourceType, sourceId,
+        status: { in: ['OPEN', 'SNOOZED'] },
+        workflowRunId: { not: workflowRunId },
+        workflowRun: { rule: { runs: { some: { id: workflowRunId } } } },
+      },
+    });
+    return row ? this.toTask(row) : null;
+  }
+
   async listTasks(where: ListWorkflowTasksWhere): Promise<WorkflowTaskRecord[]> {
     const assigneeFilter = where.assigneeUserId
       ? where.assigneeRoles && where.assigneeRoles.length > 0
