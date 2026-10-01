@@ -647,7 +647,24 @@ describe('buildJourneySteps', () => {
     const legacy = { ...paid, claimFormLayout: 'LEGACY_FOUR_SIGNERS', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByName: 'มานี',
       signatures: [{ role: 'REQUESTER' }, { role: 'APPROVER' }] };
     assert.equal(active(legacy, STAFF, 'staff').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ฝ่ายบัญชี (มานี) และฝ่ายการเงิน (วราภรณ์)');
-    assert.equal(active({ ...legacy, financeReviewStatus: 'NOT_REQUIRED' }, STAFF, 'staff').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ฝ่ายการเงิน (วราภรณ์)');
+  });
+
+  // Before: "ยังไม่ลงนาม: ฝ่ายการเงิน (วราภรณ์)" on a claim that never passed a finance desk (spec §18.3).
+  it('names the payer of a legacy four-block claim with no finance-review step as ผู้บันทึกจ่าย, never ฝ่ายการเงิน', () => {
+    const paid = claim({ ...approved, status: 'PAID', requesterDisplayNameSnapshot: 'สมชาย', claimFormLayout: 'LEGACY_FOUR_SIGNERS',
+      approvalSteps: [{ ...approved.approvalSteps[0], decidedByName: 'สมศรี' }], signatures: [{ role: 'REQUESTER' }, { role: 'APPROVER' }],
+      payments: [{ id: 'p1', status: 'RECORDED', paidByUserId: 'fin', paidByName: 'วราภรณ์', paidAt: '2026-09-20T06:00:00.000Z' }] });
+    for (const viewer of [[STAFF, 'staff'], [APPROVER, 'boss'], [FINANCE, 'fin'], [OWNER, 'owner']] as const) {
+      const note = active(paid, [...viewer[0]], viewer[1]).note ?? '';
+      assert.match(note, /^จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้บันทึกจ่าย \(วราภรณ์\)/, viewer[1]);
+      assert.doesNotMatch(note, /ฝ่ายการเงิน/, viewer[1]);
+    }
+    // No payer name in the detail: the same words, without one.
+    assert.equal(active({ ...paid, payments: [{ id: 'p1', status: 'RECORDED', paidAt: '2026-09-20T06:00:00.000Z' }] }, STAFF, 'staff').note,
+      'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้บันทึกจ่าย');
+    // A claim that did pass finance review keeps the form's own block titles.
+    assert.equal(active({ ...paid, financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByName: 'มานี' }, STAFF, 'staff').note,
+      'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ฝ่ายบัญชี (มานี) และฝ่ายการเงิน (วราภรณ์)');
   });
 
   it('leaves a document signed before payment upcoming while the claim waits at payment (§15)', () => {

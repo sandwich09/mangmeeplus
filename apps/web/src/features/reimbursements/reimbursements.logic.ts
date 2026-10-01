@@ -427,6 +427,8 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
 // Who a claim waits for, in the words of its desk: the timeline row and the step note print the same sentence,
 // built from the pool label the "อยู่ที่ …" line and the LINE backlog answer use.
 const WAITING_FOR_FINANCE = `รอ${CURRENT_DESK_LABELS.FINANCE}ตรวจ`;
+/** The one person who records, or recorded, a claim's payment. Never "ฝ่ายการเงิน": most shops have no finance desk. */
+const PAYER = 'ผู้บันทึกจ่าย';
 /** "รอ สมศรี หรือ วิชัย บันทึกจ่าย" when the detail names who can pay; otherwise the pool, which already says it. */
 function waitingForPayer(detail: any): string {
   const payers = paymentDeskText(detail?.paymentDesk);
@@ -579,7 +581,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         if (canResolve) actions.push('resolve-duplicate');
         note = `ติดรายการซ้ำ: ${openDuplicateText(detail)} ${canResolve
           ? 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้'
-          : 'รอผู้บันทึกจ่ายตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้'}`;
+          : `รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`}`;
       } else {
         const canPay = permissions.includes('reimbursement.payment.record');
         if (payable && canPay) actions.push('pay');
@@ -604,9 +606,12 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         REQUESTER: detail?.requesterDisplayNameSnapshot, APPROVER: approval?.decidedByName ?? approval?.approverName,
         FINANCE_REVIEW: detail?.financeReviewedByName, PAYER: payment?.paidByName,
       };
+      // A legacy four-block form titles its payer block "ฝ่ายการเงิน". On a claim with no finance-review step there
+      // is no finance desk to wait for (spec §18.3), so that signer is named as the payment step names them.
+      const blockLabel = (role: ClaimSignatureRole) => (role === 'PAYER' && !withFinance ? PAYER : CLAIM_SIGNATURE_ROLE_LABELS[role]);
       const unsigned = claimSignatureSlots(detail)
         .filter((role) => !signed.has(role) && (role !== 'APPROVER' || humanApproved) && (role !== 'FINANCE_REVIEW' || review !== 'NOT_REQUIRED'))
-        .map((role) => `${CLAIM_SIGNATURE_ROLE_LABELS[role]}${signers[role] ? ` (${signers[role]})` : ''}`);
+        .map((role) => `${blockLabel(role)}${signers[role] ? ` (${signers[role]})` : ''}`);
       note = [
         unsigned.length > 0 ? `จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ${unsigned.join(' และ')}` : 'จ่ายเงินคืนแล้ว พิมพ์ใบเบิกเก็บไว้ได้',
         actions.includes('sign') && 'คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก',
