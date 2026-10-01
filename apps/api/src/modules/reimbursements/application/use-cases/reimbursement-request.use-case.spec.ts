@@ -43,7 +43,7 @@ import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixt
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import {
   applyDraftPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readClaimPayoutSecret,
-  readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
+  readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
 } from '../../infrastructure/reimbursement-payout';
 
 // Lane C: one claim, many lines. The header total, category and date are a
@@ -356,6 +356,8 @@ function fakeRepo(options: RepoOptions = {}) {
     findPayoutMember: async (_companyId: string, userId: string) => (options.payoutMembers?.[userId] ? { membershipStatus: 'ACTIVE', ...options.payoutMembers[userId] } : null),
     findClaimPayout: (claim: any) => readClaimPayout(payoutDb, claim),
     findDraftDefaultPayout: (claim: any) => readDraftDefaultPayout(payoutDb, claim),
+    // What the detail shows whoever may pay a claim that froze no account (payout spec §15).
+    findLegacyPayoutDefault: (claim: any) => readLegacyPayoutDefault(payoutDb, claim),
     findClaimPayoutSecret: (companyId: string, requestId: string, version: number) => readClaimPayoutSecret(payoutDb, companyId, requestId, version),
     planSubmitPayout: (claim: any) => readSubmitPayoutPlan(payoutDb, claim),
   } as any;
