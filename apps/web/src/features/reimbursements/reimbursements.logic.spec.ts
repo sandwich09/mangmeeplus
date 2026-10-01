@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
@@ -467,6 +469,20 @@ describe('errorMessage', () => {
     for (const raw of ['brand_new_server_code', 'เกิดข้อผิดพลาด', 'Request failed (500)', '']) {
       assert.equal(errorMessage(raw), 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
     }
+  });
+  // The payment check answers a bare code its caller throws, read here from the API's own source. Two of them
+  // (an amount of zero, an amount over what is owed) had no words, and the payer read the fallback above.
+  it('has a sentence for every refusal the claim payment check returns', () => {
+    const logic = readFileSync(join(__dirname, '../../../../api/src/modules/reimbursements/domain/logic/reimbursement.logic.ts'), 'utf8');
+    const check = logic.slice(logic.indexOf('export function validatePaymentRecording('));
+    const codes = [...check.slice(0, check.indexOf('\n}\n')).matchAll(/return '([a-z][a-z0-9_]{3,})'/g)].map((match) => match[1]!);
+    assert.ok(codes.includes('payment_amount_invalid') && codes.includes('payment_over_approved_amount') && codes.length >= 8, codes.join(', '));
+    for (const code of codes) {
+      assert.notEqual(errorMessage(code), 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง', `${code} has no sentence`);
+      assert.doesNotMatch(errorMessage(code), /[a-z]_[a-z]/, code);
+    }
+    assert.match(errorMessage('payment_amount_invalid'), /กรอกยอดคงค้าง/);
+    assert.match(errorMessage('payment_over_approved_amount'), /แก้เป็นยอดคงค้าง/);
   });
 });
 

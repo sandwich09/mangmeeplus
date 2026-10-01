@@ -206,6 +206,29 @@ describe('the refusals added with the claim hub and bank-match fixes are plain T
   });
 });
 
+// The claim payment check (`validatePaymentRecording`) answers a bare code that its caller throws as it came
+// (`throw new UnprocessableEntityException(error)`). No pattern of the discovery above sees a code returned that
+// way, and two of them reached the payment form with no Thai text: the payer read the generic fallback.
+describe('the refusals of a claim payment over or under its amount say what to enter', () => {
+  it('finds both codes where the API returns them, and answers each with the amount to pay', () => {
+    const logic = readFileSync(join(API_MODULES, 'reimbursements/domain/logic/reimbursement.logic.ts'), 'utf8');
+    const check = logic.slice(logic.indexOf('export function validatePaymentRecording('));
+    const returned = [...check.slice(0, check.indexOf('\n}\n')).matchAll(/return '([a-z][a-z0-9_]{3,})'/g)].map((match) => match[1]!);
+    for (const [code, nextStep] of [
+      ['payment_amount_invalid', /ต้องมากกว่า 0 กรุณากรอกยอดคงค้างของใบเบิกแล้วกดบันทึกจ่ายอีกครั้ง/],
+      ['payment_over_approved_amount', /เกินยอดคงค้างของใบเบิก กรุณาแก้เป็นยอดคงค้างแล้วกดบันทึกจ่ายอีกครั้ง/],
+    ] as const) {
+      assert.ok(returned.includes(code), `${code} is no longer returned by the payment check`);
+      const thai = translateApiError(code);
+      assert.ok(thai, `${code} has no Thai text`);
+      assert.match(thai!, nextStep, code);
+      assert.doesNotMatch(thai!, /[A-Za-z]/, `${code}: ${thai}`);
+      // What the payment form shows for the HTTP answer is that text: the API sends the code as its message.
+      assert.equal(apiErrorMessage(Object.assign(new Error(code), { status: 422 })), thai, code);
+    }
+  });
+});
+
 /**
  * Credit-wording spec §3 / W-01 (owner decision 2026-09-18): every surface a customer, a shop owner,
  * a support operator or a System Admin reads calls it "เครดิต AI" — never "งบ AI" and never
