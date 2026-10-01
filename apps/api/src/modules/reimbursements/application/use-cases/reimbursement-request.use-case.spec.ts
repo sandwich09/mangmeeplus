@@ -2176,6 +2176,44 @@ describe('payout: submit gate and the claim own snapshot', () => {
     assert.equal(leaksNumber(world.state.calls.outbox), false);
     assert.ok(world.state.calls.outbox.every((event: any) => !/payout|account/i.test(JSON.stringify(event.payloadJson.data))), 'no event payload carries account data');
   });
+
+  // Where the payout lanes meet in one submit: a claim nobody has to approve, paid into the requester's
+  // default account. The account is frozen and hashed in the submit transaction, and that same submit
+  // still hands the payment to the people who would have approved it (owner rule 2026-10-01).
+  it('freezes the account and names the would-be approvers when a claim that needs no approval is sent', async () => {
+    const world = payoutWorld({ policy: {
+      id: 'policy-1', updatedAt: new Date('2026-01-01T00:00:00.000Z'), currency: 'THB', approvalRequiredFromAmount: '1000.00',
+      approverMode: 'MANAGER_ROLE', defaultApproverRole: 'MANAGER', allowSelfApproval: false, duplicatePolicy: 'WARN',
+      financeReviewRequired: false, status: 'ACTIVE', requireReceipt: false, allowMissingReceiptWithReason: false,
+    } });
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    const eventTypes = () => world.state.calls.outbox.map((event: any) => event.eventType);
+    readyApproverRoutes.resolveWouldBeApproverUserIds = async () => ['approver-1', 'approver-2'];
+    try {
+      // Sent without the account its page showed: refused inside the transaction, so no event of the submit exists.
+      await assert.rejects(world.submit.execute(ctx(), draft.id), /payout_destination_changed/);
+      assert.deepEqual([world.state.request.status, eventTypes()], ['DRAFT', []]);
+
+      const sent = await world.send(ctx(), draft.id);
+      const request = world.state.request;
+      assert.deepEqual([sent.status, sent.payout?.accountLast4, sent.payout?.version, sent.payout?.source], ['READY_FOR_PAYMENT', '6789', 1, 'DEFAULT_ACCOUNT']);
+      // The lane's side: the claim's own copy is frozen, and the stored hash is the hash of the claim with it.
+      assert.equal(world.state.payoutTables.destinations[0]!.frozenAt !== null && hasPayoutSnapshot(request), true);
+      assert.equal(request.approvalSnapshotHash, computeSnapshotHash(claimSnapshotFields(request, request.approvalPolicySnapshotJson)));
+      // The assembly's side: every event of the submit came through the transaction, and the ready-to-pay
+      // event names who would have approved the claim.
+      assert.deepEqual(eventTypes(), ['reimbursement.request_submitted', 'reimbursement.approval_not_required',
+        'reimbursement.policy_projection_started', 'reimbursement.approved', 'reimbursement.ready_for_payment']);
+      const ready = world.state.calls.outbox.find((event: any) => event.eventType === 'reimbursement.ready_for_payment').payloadJson.data;
+      assert.deepEqual([ready.approverRecipientUserIds, ready.decision, ready.status], [['approver-1', 'approver-2'], 'BELOW_APPROVAL_THRESHOLD', 'READY_FOR_PAYMENT']);
+      // Neither side's events, nor the audit rows, carry anything of the account.
+      assert.equal(leaksNumber([world.state.calls.outbox, world.audits]), false);
+      assert.ok(world.state.calls.outbox.every((event: any) => !/payout|account|6789/i.test(JSON.stringify(event.payloadJson.data))));
+    } finally {
+      delete readyApproverRoutes.resolveWouldBeApproverUserIds;
+    }
+  });
 });
 
 // Payout spec §22 row 1 (security review S7): a member who changes their default after sending a claim
