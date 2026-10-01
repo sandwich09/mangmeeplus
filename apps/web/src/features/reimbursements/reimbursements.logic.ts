@@ -738,8 +738,16 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   // Spec §17.2: an approval that attested the claim's account says so. Which step did is on the account's
   // own history row, so an approval of a cash or a legacy claim, or one that attested nothing, reads as before.
   const attestedAccount = new Set((detail?.payoutHistory ?? []).map((version: any) => version.approvalStepId).filter(Boolean));
+  // Payout spec §17.2: the correction rounds the claim went through. Each approval of a new account is a row of
+  // the round ("อนุมัติบัญชีรับเงินใหม่โดย …"), so the step that gave it is not told a second time as an approval.
+  const round = payoutCorrectionRound(detail);
+  const corrections: any[] = detail?.payoutCorrectionHistory ?? [];
+  const approvedInRound = new Set(corrections.filter((event) => event.kind === 'REAPPROVED').map((event) => event.approvalStepId).filter(Boolean));
   for (const step of [...(detail?.approvalSteps ?? [])].sort((a: any, b: any) => a.sequenceNo - b.sequenceNo)) {
-    if (step.invalidatedAt) continue;
+    // The approval a round set aside stays as history: the claim's lines and amount are still what it approved. Any
+    // other step that is no longer in force is left out, a round's own refused or replaced step included.
+    if (step.invalidatedAt && !(step.status === 'APPROVED' && step.invalidatedReason === PAYOUT_CORRECTION_STEP_REASON)) continue;
+    if (approvedInRound.has(step.id)) continue;
     const key = `step-${step.id ?? step.sequenceNo}`;
     const decidedBy = step.decidedByName ?? step.approverName ?? CURRENT_DESK_LABELS.APPROVER;
     // A requester who approved their own claim checked nobody's account but their own: said as the card says it.
@@ -748,23 +756,32 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
         : `อนุมัติและตรวจบัญชีรับเงินโดย ${decidedBy}`;
     if (step.status === 'APPROVED') rows.push({ key, state: 'done', label: approvedLabel, date: step.decidedAt });
     else if (step.status === 'REJECTED') rows.push({ key, state: 'done', label: `ปฏิเสธโดย ${decidedBy}`, date: step.decidedAt });
-    else if (step.status === 'PENDING' && !cancelling) rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
+    // The step a round waits on is told after the round's own rows, as what the claim waits for now.
+    else if (step.status === 'PENDING' && !cancelling && !round) rows.push({ key, state: 'current', label: `กำลังรอ ${waitingFor} อนุมัติ` });
   }
   // Only a claim that IS rejected ends here. Reopen keeps the refused step, so a claim fixed and
   // resubmitted still carries it as history and its journey goes on.
   if (status === 'REJECTED') return rows;
   // A payment since taken back stays in the journey: what was paid, then that it was voided and why.
   const paidLabel = (payment: any) => [payment.paidByName ? `จ่ายแล้ว โดย ${payment.paidByName}` : 'จ่ายแล้ว', paymentFactsText(payment)].filter(Boolean).join(' · ');
-  const voided = (detail?.payments ?? []).filter((payment: any) => payment.status === 'VOIDED').flatMap((payment: any): ClaimTimelineRow[] => [
-    { key: `payment-${payment.id}`, state: 'done', label: paidLabel(payment), date: payment.paidAt },
-    { key: `void-${payment.id}`, state: 'done', label: `${PAYMENT_VOIDED_LABEL}${payment.voidReason ? `: ${payment.voidReason}` : ''}`, date: payment.voidedAt },
-  ]);
+  const voided = (detail?.payments ?? []).filter((payment: any) => payment.status === 'VOIDED').map((payment: any): { at: unknown; rows: ClaimTimelineRow[] } => ({
+    at: payment.voidedAt,
+    rows: [
+      { key: `payment-${payment.id}`, state: 'done', label: paidLabel(payment), date: payment.paidAt },
+      { key: `void-${payment.id}`, state: 'done', label: `${PAYMENT_VOIDED_LABEL}${payment.voidReason ? `: ${payment.voidReason}` : ''}`, date: payment.voidedAt },
+    ],
+  }));
+  // What happened to the claim after it was approved, in the order it happened: a payment taken back, and the rows
+  // of each correction round. A wrong account is often found after a transfer was voided, and often before any.
+  const moment = (at: unknown) => Date.parse(String(at)) || 0;
+  const history = [...voided, ...corrections.map((event, index) => ({ at: event.at, rows: payoutCorrectionTimelineRows(event, index, detail?.requesterUserId) }))]
+    .sort((left, right) => moment(left.at) - moment(right.at)).flatMap((entry) => entry.rows);
   if (status === 'CANCELLED' || status === 'VOIDED') {
-    return [...rows, ...voided, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
+    return [...rows, ...history, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
   }
   // Being cancelled: the journey stops here until the cancellation is finished or withdrawn.
   if (cancelling) {
-    return [...rows.map((row) => (row.state === 'current' ? { ...row, state: 'done' as const } : row)),
+    return [...rows.map((row) => (row.state === 'current' ? { ...row, state: 'done' as const } : row)), ...history,
       { key: 'cancel-started', state: 'done', label: `เริ่มยกเลิกคำขอ${cancelling.startedByName ? ` โดย ${cancelling.startedByName}` : ''}`, date: cancelling.startedAt },
       { key: 'system', state: 'current', label: `กำลัง${REIMBURSEMENT_SYSTEM_WAIT_LABEL}` }];
   }
@@ -793,11 +810,33 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
     rows.push({ key: 'finance', state: at === 'finance' ? 'current' : 'future', label: at === 'finance' ? `กำลัง${WAITING_FOR_FINANCE}` : WAITING_FOR_FINANCE });
   }
 
+  rows.push(...history);
+  // In a round the claim waits for its requester to give the account, then for the approvers of that account: the
+  // words of its badge and of its step note, so the three name the same party (spec §14.2).
+  if (round) {
+    rows.push({ key: 'correction', state: 'current', label: `กำลัง${round.phase === 'AWAITING_REQUESTER'
+      ? REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER : waitingForCorrectionApproval(detail)}` });
+  }
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
-  rows.push(...voided, paid
+  rows.push(paid
     ? { key: 'payment', state: 'done', label: paidLabel(paid), date: paid.paidAt }
     : { key: 'payment', state: at === 'payment' ? 'current' : 'future', label: at === 'payment' ? `กำลัง${waitingForPayer(detail)}` : 'รอบันทึกจ่าย' });
   return rows;
+}
+
+/** `invalidatedReason` of every approval step a correction round sets aside, as the API writes it. */
+const PAYOUT_CORRECTION_STEP_REASON = 'payout_account_correction';
+
+/**
+ * One thing that happened in a correction round, as a row of the claim's journey (spec §17.2): "ส่งกลับให้แก้
+ * บัญชีรับเงินโดย … : เหตุผล" with the note that went with it, "ผู้เบิกแก้บัญชีรับเงิน", "อนุมัติบัญชีรับเงินใหม่โดย …".
+ * Nothing for a kind of event this build has no words for.
+ */
+function payoutCorrectionTimelineRows(event: any, index: number, requesterUserId?: string): ClaimTimelineRow[] {
+  const label = event?.kind === 'SENT_BACK' ? `${payoutCorrectionSentBackText(event)}${event.note ? ` · ${event.note}` : ''}`
+    : event?.kind === 'ACCOUNT_SUBMITTED' ? payoutCorrectionSubmittedText(event, requesterUserId)
+      : event?.kind === 'REAPPROVED' ? `อนุมัติบัญชีรับเงินใหม่${event.byName ? `โดย ${event.byName}` : ''}` : null;
+  return label ? [{ key: `correction-${index}`, state: 'done', label, date: event.at }] : [];
 }
 
 /**

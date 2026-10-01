@@ -754,15 +754,19 @@ describe('the step strip and the status of a claim in a round (spec §14.2)', ()
   });
 });
 
-describe('the header line, the step note and the badge name the same party in each phase', () => {
-  it('while it waits for its requester: ผู้เบิก in all of them, with who sent it back and why', () => {
+describe('the header line, the step note, the timeline and the badge name the same party in each phase', () => {
+  const waitingRow = (detail: object) => logic.buildClaimTimeline(detail).filter((row) => row.state === 'current').map((row) => row.label);
+
+  it('while it waits for its requester: ผู้เบิก in all four, with who sent it back and why', () => {
     const detail = phaseA();
-    const { html } = claimPage(detail, auditor);
+    const { html, texts } = claimPage(detail, auditor);
     assert.deepEqual(deskLine(html), ['อยู่ที่ ผู้เบิก']);
     assert.equal(stepCard(html).note, 'ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เลขบัญชีไม่ถูกต้อง · หมายเหตุ: ธนาคารแจ้งว่าไม่พบบัญชีนี้ · รอผู้เบิกแก้บัญชีรับเงิน');
+    assert.deepEqual(waitingRow(detail), ['กำลังรอผู้เบิกแก้บัญชีรับเงิน']);
+    assert.ok(texts.includes('กำลังรอผู้เบิกแก้บัญชีรับเงิน'), 'the timeline row is on the page');
     assert.equal(model.claimStatusBadge(detail).label, 'รอผู้เบิกแก้บัญชีรับเงิน');
     // Nobody else is said to be waited for: not the approver whose approval was set aside, not a payer.
-    for (const text of [...deskLine(html), stepCard(html).note.split(' · ').at(-1)!]) {
+    for (const text of [...deskLine(html), stepCard(html).note.split(' · ').at(-1)!, ...waitingRow(detail)]) {
       assert.doesNotMatch(text, /สมศรี|ผู้มีสิทธิ์อนุมัติ|ผู้มีสิทธิ์บันทึกจ่าย|ผู้ยื่น|ฝ่ายการเงิน/u, text);
     }
     // The requester reads that it is theirs to do; a finance reviewer that they may do it for the requester.
@@ -773,18 +777,20 @@ describe('the header line, the step note and the badge name the same party in ea
     assert.equal(active(bare, auditor).note, 'ส่งกลับให้แก้บัญชีรับเงิน : ผู้เบิกขอเปลี่ยนบัญชี · รอผู้เบิกแก้บัญชีรับเงิน');
   });
 
-  it('while its new account waits for approval: the approvers by name in the header and the note', () => {
+  it('while its new account waits for approval: the approvers by name in the header, the note and the timeline', () => {
     const detail = phaseB();
-    const { html } = claimPage(detail, auditor);
+    const { html, texts } = claimPage(detail, auditor);
     assert.deepEqual(deskLine(html), ['อยู่ที่ สมศรี ผู้จัดการ']);
     assert.equal(stepCard(html).note, 'รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่');
+    assert.deepEqual(waitingRow(detail), ['กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่']);
+    assert.ok(texts.includes('กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่'), 'the timeline row is on the page');
     assert.equal(model.claimStatusBadge(detail).label, 'รออนุมัติบัญชีรับเงินใหม่');
     // Several approvers, or none the server could name.
     const two = phaseB({ currentDesk: { kind: 'APPROVER', names: ['สมศรี ผู้จัดการ', 'วิชัย'] } });
-    assert.deepEqual([deskLine(claimPage(two, auditor).html)[0], active(two, auditor).note],
-      ['อยู่ที่ สมศรี ผู้จัดการ หรือ วิชัย', 'รอ สมศรี ผู้จัดการ หรือ วิชัย อนุมัติบัญชีรับเงินใหม่']);
+    assert.deepEqual([deskLine(claimPage(two, auditor).html)[0], active(two, auditor).note, waitingRow(two)[0]],
+      ['อยู่ที่ สมศรี ผู้จัดการ หรือ วิชัย', 'รอ สมศรี ผู้จัดการ หรือ วิชัย อนุมัติบัญชีรับเงินใหม่', 'กำลังรอ สมศรี ผู้จัดการ หรือ วิชัย อนุมัติบัญชีรับเงินใหม่']);
     const pool = phaseB({ currentDesk: { kind: 'APPROVER' } });
-    assert.equal(active(pool, auditor).note, 'รอ ผู้มีสิทธิ์อนุมัติ อนุมัติบัญชีรับเงินใหม่');
+    assert.deepEqual([active(pool, auditor).note, waitingRow(pool)[0]], ['รอ ผู้มีสิทธิ์อนุมัติ อนุมัติบัญชีรับเงินใหม่', 'กำลังรอ ผู้มีสิทธิ์อนุมัติ อนุมัติบัญชีรับเงินใหม่']);
     // Whoever is to act reads what to do; the header and the timeline still say who.
     assert.equal(active(phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND }), approver).note,
       'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน');
@@ -800,8 +806,17 @@ describe('the header line, the step note and the badge name the same party in ea
   it('after the approval: whoever pays, as on any claim waiting for its payment', () => {
     const detail = reapproved();
     const { html } = claimPage(detail, auditor);
-    assert.deepEqual([deskLine(html)[0], stepCard(html).note, model.claimStatusBadge(detail).label],
-      ['อยู่ที่ วราภรณ์ การเงิน', 'รอ วราภรณ์ การเงิน บันทึกจ่าย', 'พร้อมจ่าย']);
+    assert.deepEqual([deskLine(html)[0], stepCard(html).note, waitingRow(detail)[0], model.claimStatusBadge(detail).label],
+      ['อยู่ที่ วราภรณ์ การเงิน', 'รอ วราภรณ์ การเงิน บันทึกจ่าย', 'กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย', 'พร้อมจ่าย']);
+  });
+
+  it('being cancelled in a round: the system, in all four', () => {
+    const cancelling = phaseA({ currentDesk: { kind: 'SYSTEM' }, pendingCancellation: { startedAt: AT.given, startedByName: NAMES.requester, reason: 'ซื้อซ้ำกับใบก่อน', canResume: false, canWithdraw: false } });
+    const { html } = claimPage(cancelling, auditor);
+    assert.deepEqual(deskLine(html), ['อยู่ที่ ระบบ']);
+    assert.ok(stepCard(html).note.startsWith('กำลังยกเลิกคำขอ รอระบบปรับสถานะ'));
+    assert.deepEqual(waitingRow(cancelling), ['กำลังรอระบบปรับสถานะ']);
+    assert.equal(model.claimStatusBadge(cancelling).label, 'รอระบบปรับสถานะ');
   });
 });
 
@@ -1038,5 +1053,98 @@ describe('the card "การรับเงินคืน" in a round', () => 
     assert.match(hint(phaseA(changed({ payoutCorrectionActions: GIVE }))), /ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดแก้บัญชีรับเงินในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ$/u);
     // No flag from the server: the hint says what it said before.
     assert.match(hint(ready(changed({}))), /แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน$/u);
+  });
+});
+
+describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
+  const rows = (detail: object) => logic.buildClaimTimeline(detail).map((row) => `${row.state}:${row.label}`);
+  const FIRST = 'done:อนุมัติและตรวจบัญชีรับเงินโดย สมศรี ผู้จัดการ';
+  const SENT = 'done:ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เลขบัญชีไม่ถูกต้อง · ธนาคารแจ้งว่าไม่พบบัญชีนี้';
+
+  it('keeps the first approval as history, then the send-back, the account given and the new approval, in the spec\'s words', () => {
+    assert.deepEqual(rows(ready()), ['done:ยื่นใบ', FIRST, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
+    assert.deepEqual(rows(phaseA()), ['done:ยื่นใบ', FIRST, SENT, 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
+    assert.deepEqual(rows(phaseB()), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน',
+      'current:กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่', 'future:รอบันทึกจ่าย']);
+    // The approval of the new account is told once, as the round's own row, never a second time as an approval of the claim.
+    assert.deepEqual(rows(reapproved()), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน',
+      'done:อนุมัติบัญชีรับเงินใหม่โดย สมศรี ผู้จัดการ', 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
+    // Each row of the round carries when it happened.
+    const dated = logic.buildClaimTimeline(reapproved()).filter((row) => row.key.startsWith('correction-')).map((row) => row.date);
+    assert.deepEqual(dated, [AT.sentBack, AT.given, AT.reapproved]);
+    // On the page: the rows are in the journey card, in this order.
+    const journey = claimPage(reapproved(), auditor).html;
+    const card = journey.slice(journey.indexOf('>', journey.indexOf('data-testid="reimbursement-timeline"')) + 1);
+    assert.deepEqual(visible(card.slice(0, card.indexOf('</ol>'))).filter((text) => !/^[✓●○]$|^\d/u.test(text)),
+      rows(reapproved()).map((row) => row.slice(row.indexOf(':') + 1)));
+  });
+
+  it('ends with the payment into the new account once it is paid', () => {
+    const paid = reapproved({ status: 'PAID', paymentStatus: 'PAID', outstandingAmount: '0.0000', currentDesk: undefined, paymentDesk: undefined,
+      payments: [{ id: 'p1', status: 'RECORDED', paymentMethod: 'BANK_TRANSFER', paidAt: '2026-10-01T07:00:00.000Z', paidByName: NAMES.payer, slipCount: 1,
+        payoutDestination: { version: 2, payoutKind: 'BANK_ACCOUNT', bankName: SCB.bankName, accountName: SCB.accountName, accountLast4: '1112' } }] });
+    assert.equal(rows(paid).at(-1), 'done:จ่ายแล้ว โดย วราภรณ์ การเงิน · โอนเข้าบัญชีลงท้าย 1112 · มีสลิป');
+    assert.equal(rows(paid).length, 6);
+  });
+
+  it('names whoever gave the account on the requester\'s behalf, and prints no code for a reason it has no words for', () => {
+    const onBehalf = phaseB({ payoutCorrectionHistory: [SENT_BACK, { ...GIVEN, byUserId: 'accountant', byName: 'สุภาวดี นักบัญชี' }] });
+    assert.equal(rows(onBehalf)[3], 'done:สุภาวดี นักบัญชี แก้บัญชีรับเงินแทนผู้เบิก');
+    const later = phaseA({ payoutCorrectionHistory: [{ kind: 'SENT_BACK', at: AT.sentBack, byUserId: 'gone', reasonCode: 'A_REASON_ADDED_LATER' }, { kind: 'A_KIND_ADDED_LATER', at: AT.given, byUserId: 'x' }] });
+    assert.deepEqual(rows(later), ['done:ยื่นใบ', FIRST, 'done:ส่งกลับให้แก้บัญชีรับเงิน', 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
+    for (const detail of [phaseA(), phaseB(), reapproved(), onBehalf, later]) assertPlainThai(logic.buildClaimTimeline(detail).map((row) => row.label), 'the journey');
+  });
+
+  it('tells a new account sent back again, and a second round after the first, as they happened', () => {
+    const again = { kind: 'SENT_BACK', at: '2026-10-01T05:30:00.000Z', byUserId: 'boss', byName: NAMES.approver, reasonCode: 'ACCOUNT_NAME_MISMATCH' };
+    // The round's own step was refused: it is set aside, and the claim is with its requester once more.
+    const sentBackAgain = phaseA({ approvalSteps: [setAside, { ...step2, status: 'CANCELLED', invalidatedAt: again.at, invalidatedReason: 'payout_account_correction' }],
+      payoutCorrectionHistory: [SENT_BACK, GIVEN, again] });
+    assert.deepEqual(rows(sentBackAgain), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน',
+      'done:ส่งกลับให้แก้บัญชีรับเงินโดย สมศรี ผู้จัดการ : ชื่อบัญชีไม่ตรงกับผู้เบิก', 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
+    // A second round on a claim already corrected once: its first new approval is history told by the first round's row.
+    const second = { kind: 'SENT_BACK', at: '2026-10-01T08:00:00.000Z', byUserId: 'staff', byName: NAMES.requester, reasonCode: 'REQUESTER_ASKED' };
+    const secondRound = phaseA({ payout: { ...SCB, source: 'REQUESTER' },
+      approvalSteps: [setAside, { ...step2, status: 'APPROVED', decisionByUserId: 'boss', decidedByName: NAMES.approver, decidedAt: AT.reapproved, invalidatedAt: second.at, invalidatedReason: 'payout_account_correction' }],
+      payoutCorrectionHistory: [SENT_BACK, GIVEN, REAPPROVED, second] });
+    assert.deepEqual(rows(secondRound), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน', 'done:อนุมัติบัญชีรับเงินใหม่โดย สมศรี ผู้จัดการ',
+      'done:ส่งกลับให้แก้บัญชีรับเงินโดย สมชาย พนักงาน : ผู้เบิกขอเปลี่ยนบัญชี', 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
+  });
+
+  // Plan 3.11 and 3.12 in the journey.
+  it('keeps the finance review before the round for a claim that passed it, and has no new approval for a claim nobody approves', () => {
+    const reviewed = { financeReviewRequired: true, financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByName: NAMES.payer, financeReviewedAt: '2026-10-01T03:30:00.000Z' };
+    assert.deepEqual(rows(phaseB(reviewed)), ['done:ยื่นใบ', FIRST, 'done:ฝ่ายการเงินตรวจแล้ว โดย วราภรณ์ การเงิน', SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน',
+      'current:กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่', 'future:รอบันทึกจ่าย']);
+    const noApproval = ready({ approvalSteps: [], approvedAt: AT.given, payout: { ...SCB, source: 'REQUESTER' }, payoutHistory: [version2], payoutCorrectionHistory: [SENT_BACK, GIVEN] });
+    assert.deepEqual(rows(noApproval), ['done:ยื่นใบ', SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน', 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
+    assert.deepEqual(rows(phaseA({ approvalSteps: [] })), ['done:ยื่นใบ', SENT, 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
+  });
+
+  // Spec §22: money sent to a wrong account is voided first, then the claim is sent back. And the other way round.
+  it('orders a payment that was taken back and the round by when each happened', () => {
+    const voided = (voidedAt: string) => ({ id: 'p0', status: 'VOIDED', paymentMethod: 'CASH', paidAt: '2026-10-01T00:00:00.000Z', paidByName: NAMES.payer, voidedAt, voidReason: 'โอนผิดบัญชี', slipCount: 0 });
+    const PAID = 'done:จ่ายแล้ว โดย วราภรณ์ การเงิน · เงินสด';
+    const VOID = 'done:ยกเลิกการจ่ายแล้ว: โอนผิดบัญชี';
+    assert.deepEqual(rows(phaseA({ payments: [voided('2026-10-01T03:45:00.000Z')] })),
+      ['done:ยื่นใบ', FIRST, PAID, VOID, SENT, 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
+    assert.deepEqual(rows(reapproved({ payments: [voided('2026-10-01T07:30:00.000Z')] })),
+      ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน', 'done:อนุมัติบัญชีรับเงินใหม่โดย สมศรี ผู้จัดการ', PAID, VOID, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
+  });
+
+  it('keeps the round on a claim cancelled, or being cancelled, in it', () => {
+    // Cancelling sets the step that waited aside, as it does for any claim.
+    const cancelled = phaseB({ status: 'CANCELLED', currentDesk: undefined, payoutCorrectionPhase: undefined, payoutCorrection: undefined,
+      approvalSteps: [setAside, { ...step2, status: 'CANCELLED', invalidatedAt: '2026-10-01T05:30:00.000Z', invalidatedReason: 'reimbursement_cancelled' }] });
+    assert.deepEqual(rows(cancelled), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน', 'done:ยกเลิกคำขอ']);
+    const cancelling = phaseA({ currentDesk: { kind: 'SYSTEM' }, pendingCancellation: { startedAt: AT.given, startedByName: NAMES.requester, reason: 'ซื้อซ้ำกับใบก่อน', canResume: false, canWithdraw: false } });
+    assert.deepEqual(rows(cancelling), ['done:ยื่นใบ', FIRST, SENT, 'done:เริ่มยกเลิกคำขอ โดย สมชาย พนักงาน', 'current:กำลังรอระบบปรับสถานะ']);
+  });
+
+  it('reads as before for a claim that was never in a round, an approval set aside for another reason included', () => {
+    const resubmitted = ready({ approvalSteps: [{ ...step1, id: 'old', invalidatedAt: AT.approved, invalidatedReason: 'superseded_by_atomic_resubmit' }, step1] });
+    assert.deepEqual(rows(resubmitted), ['done:ยื่นใบ', FIRST, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
+    // An action's answer carries the round and not its history: the journey still says whom the claim waits for.
+    assert.deepEqual(rows(phaseB({ payoutCorrectionHistory: undefined })), ['done:ยื่นใบ', FIRST, 'current:กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่', 'future:รอบันทึกจ่าย']);
   });
 });
