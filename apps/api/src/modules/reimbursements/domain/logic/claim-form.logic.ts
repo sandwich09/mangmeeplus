@@ -6,11 +6,12 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
-import { civilDate } from '@watchdog-bms/contracts';
+import { civilDate, maskedPayoutAccountNumber } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimFormLayout,
   ReimbursementClaimSignatureRole,
   ReimbursementDocumentSignedVia,
+  ReimbursementPayoutKind,
 } from '@watchdog-bms/contracts';
 import { cancelledDocumentReasonBox, cancelledDocumentReasonBoxes, cancelledDocumentWatermark } from '../../../../common/documents/cancelled-document';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
@@ -39,6 +40,9 @@ const DESCRIPTION_WIDTH = 264;
  *  outside its advance width. */
 const SHEET_WIDTH = 754;
 const PURPOSE_WIDTH = 159;
+/** Where the table starts under the header, and how far each payout line under the requester's name pushes it down. */
+const TABLE_TOP = 218;
+const PAYOUT_LINE_HEIGHT = 22;
 
 export type ClaimFormSigner = {
   name: string;
@@ -47,6 +51,28 @@ export type ClaimFormSigner = {
   /** Stored signature image (data URL), embedded above the name line when present. */
   signatureDataUrl?: string;
 };
+
+/**
+ * How the requester is paid back (payout spec §17.1), from the claim's own frozen account version.
+ * The renderer does not know who asked for the print: it prints the full number when it is handed
+ * one and the last 4 digits otherwise.
+ */
+export type ClaimFormPayout =
+  | { method: 'CASH' }
+  | {
+    method: 'BANK_TRANSFER';
+    kind: ReimbursementPayoutKind;
+    bankName: string | null;
+    accountName: string;
+    accountLast4: string;
+    /** Handed in only for a print whose requester may see it. Printed as stored: no grouping, leading zeros kept. */
+    accountNumber?: string;
+    /**
+     * Whoever attested this account version ("ตรวจบัญชีแล้ว"); null until someone has. A requester who
+     * attested their own account is not named as its checker: the form says they confirmed it themself.
+     */
+    verifier: { name: string; at: string } | { byRequester: true; at: string } | null;
+  };
 
 export type ReimbursementClaimFormSnapshot = {
   requestNo: string;
@@ -71,10 +97,22 @@ export type ReimbursementClaimFormSnapshot = {
   /** Printed when policy legitimately skipped the human approval step. */
   approvalDecisionNote?: string | null;
   cancellation?: { reason: string | null };
-  /** LEGACY_FOUR_SIGNERS reprints the old four blocks byte for byte; `repayment` and `selfApproved` only print on TWO_SIGNERS. */
+  /** LEGACY_FOUR_SIGNERS reprints the old four blocks byte for byte; `payout`, `repayment` and `selfApproved` only print on TWO_SIGNERS. */
   layout: ReimbursementClaimFormLayout;
+  /**
+   * "รับเงินคืนทาง", under the requester's name. Absent for a claim sent before claims carried a
+   * receiving account: that form prints as it always did.
+   */
+  payout?: ClaimFormPayout | null;
   /** Latest recorded payment, stated as text under the table; null prints ยังไม่จ่าย. */
-  repayment: { paidAt: string; method: string; reference: string | null; recordedByName: string } | null;
+  repayment: {
+    paidAt: string;
+    method: string;
+    reference: string | null;
+    recordedByName: string;
+    /** The account the payer confirmed the transfer into: its last 4 digits, the same for every reader. */
+    paidInto?: { kind: ReimbursementPayoutKind; accountLast4: string };
+  } | null;
   /** That payment carries a slip: ticks หลักฐานการชำระเงิน on TWO_SIGNERS, so paper and screen agree. */
   hasPaymentEvidence?: boolean;
   /** The requester decided their own approval. */
@@ -165,7 +203,8 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
     ? [...snapshot.lines].sort((a, b) => a.lineNo - b.lineNo)
     : [{ lineNo: 1, incurredDate: '', description: '-', purpose: null, amount: '0' }];
 
-  const tableTop = 218;
+  const header = claimFormHeader(snapshot);
+  const { tableTop } = header;
   const headerHeight = 36;
   let rowY = tableTop + headerHeight;
   const rows = sourceLines.map((line) => {
@@ -209,7 +248,7 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
 <svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_WIDTH}" height="${height}" viewBox="0 0 ${PAGE_WIDTH} ${height}" role="img" aria-label="${xml(REIMBURSEMENT_CLAIM_FORM_TITLE_TH)}">
   <rect width="${PAGE_WIDTH}" height="${height}" fill="#fff"/>
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
-    ${claimFormHeader(snapshot)}
+    ${header.markup}
     <g fill="none" stroke="#444" stroke-width="1.2">
       <rect x="45" y="${tableTop}" width="760" height="${tableBottom - tableTop}"/>
       <line x1="45" y1="${tableTop + headerHeight}" x2="805" y2="${tableTop + headerHeight}"/>
@@ -244,9 +283,11 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
   return Buffer.from(svg, 'utf8');
 }
 
-function claimFormHeader(snapshot: ReimbursementClaimFormSnapshot): string {
+/** The header, and the y its table starts at: the payout lines push the table down by their own height. */
+function claimFormHeader(snapshot: ReimbursementClaimFormSnapshot): { markup: string; tableTop: number } {
   const branchName = snapshot.company.branchName?.trim() || 'สำนักงานใหญ่';
-  return `    <text x="425" y="48" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="1">${REIMBURSEMENT_CLAIM_FORM_TITLE_EN}</text>
+  const payout = payoutLines(snapshot);
+  const markup = `    <text x="425" y="48" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="1">${REIMBURSEMENT_CLAIM_FORM_TITLE_EN}</text>
     <text x="425" y="80" text-anchor="middle" font-size="25" font-weight="700">${REIMBURSEMENT_CLAIM_FORM_TITLE_TH}</text>
     <text x="425" y="110" text-anchor="middle" font-size="17" font-weight="600"${fitToWidth(snapshot.company.name, SHEET_WIDTH, 17)}>${xml(snapshot.company.name)}</text>
     <text x="425" y="134" text-anchor="middle" font-size="13" fill="#555"${fitToWidth(`สาขา: ${branchName} · เลขประจำตัวผู้เสียภาษี: ${snapshot.company.taxId ?? '-'}`, SHEET_WIDTH, 13)}>สาขา: ${xml(branchName)} · เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
@@ -254,14 +295,38 @@ function claimFormHeader(snapshot: ReimbursementClaimFormSnapshot): string {
     <text x="45" y="180">เลขที่เอกสาร: ${xml(snapshot.requestNo)}</text>
     <text x="805" y="180" text-anchor="end">วันที่: ${xml(snapshot.submittedAt ? formatDate(snapshot.submittedAt) : '-')}</text>
     <text x="45" y="202" font-size="13" fill="#555"${fitToWidth(`ผู้ขอเบิก: ${snapshot.requesterName}`, SHEET_WIDTH, 13)}>ผู้ขอเบิก: ${xml(snapshot.requesterName)}</text>
-`;
+${payout.length ? `    ${multilineText(45, 202 + PAYOUT_LINE_HEIGHT, payout, PAYOUT_LINE_HEIGHT, SHEET_WIDTH)}\n` : ''}`;
+  return { markup, tableTop: TABLE_TOP + payout.length * PAYOUT_LINE_HEIGHT };
+}
+
+/**
+ * "รับเงินคืนทาง" and who attested the account, as wrapped lines. None on the four-block form and
+ * none for a claim that carries no receiving account, so both print as they always did. The number
+ * is the last 4 digits unless the snapshot was handed the full one.
+ */
+function payoutLines(snapshot: ReimbursementClaimFormSnapshot): string[] {
+  const payout = snapshot.layout === 'TWO_SIGNERS' ? snapshot.payout : null;
+  if (!payout) return [];
+  if (payout.method === 'CASH') return ['รับเงินคืนทาง: รับเป็นเงินสด'];
+  const number = payout.accountNumber ? ` ${payout.accountNumber}` : maskedPayoutAccountNumber(payout.accountLast4);
+  const account = payout.kind === 'PROMPTPAY_PHONE'
+    ? `พร้อมเพย์เบอร์${number} ชื่อบัญชี ${payout.accountName}`
+    : ['โอนเข้าบัญชี', payout.bankName, 'ชื่อบัญชี', payout.accountName, `เลขบัญชี${number}`].filter(Boolean).join(' ');
+  const { verifier } = payout;
+  // A requester's own attestation is printed in the claim page's words, so the paper never reads as
+  // if someone else had checked the account.
+  const attestation = verifier
+    ? wrapText(`${'byRequester' in verifier ? 'ผู้เบิกยืนยันบัญชีของตนเอง' : `ผู้ตรวจบัญชี ${verifier.name}`} วันที่ ${formatDate(verifier.at)}`, SHEET_WIDTH)
+    : [];
+  return [...wrapText(`รับเงินคืนทาง: ${account}`, SHEET_WIDTH), ...attestation];
 }
 
 /** Fixed A4 pages for preview, printing and PDF export. The legacy tall SVG above remains in the
  * response for older clients; monetary facts and authorization are identical in both renderings. */
 export function renderReimbursementClaimFormPages(snapshot: ReimbursementClaimFormSnapshot): Buffer[] {
   const bottom = MIN_PAGE_HEIGHT - 24;
-  const top = 218;
+  const header = claimFormHeader(snapshot);
+  const top = header.tableTop;
   const pages: string[][] = [[]];
   let page = pages[0]!;
   let y = top;
@@ -345,11 +410,10 @@ export function renderReimbursementClaimFormPages(snapshot: ReimbursementClaimFo
     y = bottom;
   }
 
-  const header = claimFormHeader(snapshot);
   return pages.map((content, index) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="850" height="1202" viewBox="0 0 850 1202" role="img" aria-label="${REIMBURSEMENT_CLAIM_FORM_TITLE_TH} หน้า ${index + 1}">
     <rect width="850" height="1202" fill="#fff"/>
     <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
-      ${header}<text x="805" y="24" text-anchor="end" font-size="12" fill="#555">หน้า ${index + 1} / ${pages.length}</text>${content.join('')}
+      ${header.markup}<text x="805" y="24" text-anchor="end" font-size="12" fill="#555">หน้า ${index + 1} / ${pages.length}</text>${content.join('')}
     </g>${snapshot.cancellation ? cancelledDocumentWatermark(PAGE_WIDTH, MIN_PAGE_HEIGHT) : ''}
   </svg>`, 'utf8'));
 }
@@ -373,9 +437,12 @@ function paymentEvidenceTicked(snapshot: ReimbursementClaimFormSnapshot): boolea
 }
 
 function repaymentText(repayment: ReimbursementClaimFormSnapshot['repayment']): string {
-  return repayment
-    ? `การจ่ายเงินคืน: จ่ายเมื่อ ${formatDate(repayment.paidAt)} วิธี ${PAYMENT_METHOD_LABELS[repayment.method] ?? repayment.method} เลขอ้างอิง ${repayment.reference || '-'} บันทึกโดย ${repayment.recordedByName}`
-    : 'การจ่ายเงินคืน: ยังไม่จ่าย';
+  if (!repayment) return 'การจ่ายเงินคืน: ยังไม่จ่าย';
+  // The last 4 digits for every reader: the full number prints on the "รับเงินคืนทาง" line alone.
+  const paidInto = repayment.paidInto
+    ? ` เข้า${repayment.paidInto.kind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(repayment.paidInto.accountLast4)}`
+    : '';
+  return `การจ่ายเงินคืน: จ่ายเมื่อ ${formatDate(repayment.paidAt)} วิธี ${PAYMENT_METHOD_LABELS[repayment.method] ?? repayment.method}${paidInto} เลขอ้างอิง ${repayment.reference || '-'} บันทึกโดย ${repayment.recordedByName}`;
 }
 
 /** Role label, wet-ink space, ลงชื่อ ruled line, name line, date line — filled only when the step happened. */

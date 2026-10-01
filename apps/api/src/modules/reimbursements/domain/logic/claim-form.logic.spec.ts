@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { cancelledDocumentReasonBox } from '../../../../common/documents/cancelled-document';
 import {
@@ -7,6 +8,7 @@ import {
   renderReimbursementClaimFormSvg,
   renderReimbursementClaimFormPages,
   thaiBahtText,
+  type ClaimFormPayout,
   type ReimbursementClaimFormSnapshot,
 } from './claim-form.logic';
 
@@ -457,6 +459,261 @@ describe('reimbursement claim form', () => {
     assert.ok(height > 1202, `expected a grown sheet, got ${height}`);
     // Signatures stay at the foot of the sheet whatever the body length.
     assert.ok(many.includes(`y="${height - 150}"`), 'signature row anchors to the page foot');
+  });
+});
+
+// Payout spec §17.1: the four-block form, and the form of a claim sent before claims carried a
+// receiving account, print as they always did, letter for letter. These digests are of the bytes the
+// renderer produced BEFORE the payout line was added (they were committed on their own, against the
+// untouched renderer), so they pin the old print and not the new code's opinion of it. Every text
+// here fits its line, so no digest depends on where a Thai dictionary breaks a word.
+describe('prints that predate the payout line are unchanged, byte for byte', () => {
+  const sha256 = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+  const base = snapshot();
+  const unapproved = { ...base.signers, approver: null, accounting: null, finance: null };
+  const signed = { ...base.signers, requester: { ...base.signers.requester!, signatureDataUrl: 'data:image/png;base64,AAAB' } };
+  const prints: Array<[string, Partial<ReimbursementClaimFormSnapshot>, string, string]> = [
+    ['four blocks, fully signed', { layout: 'LEGACY_FOUR_SIGNERS' }, '99698fee62531f3fa0376094307c8f801991ec98f75bfd1a22bbeeed3556ffcc', '6c55175fdbf1ae5e59258b64887a60162450a72fb7e681ce2510cd0b220a2dfe'],
+    ['four blocks, waiting for approval, receipt waived', { layout: 'LEGACY_FOUR_SIGNERS', signers: unapproved, hasReceiptEvidence: false, missingReceiptReason: 'ร้านค้าไม่ออกใบเสร็จ' }, '83d79a0f65a13ccd7b2341b215ddd7d2229cc06b8cf5278737f7c0ebe0b8c1bb', '03ee4956983f743857f3a2843c9425cdd772fab868b8cbe1c3e1b90a939a6bd4'],
+    ['four blocks, approval skipped by policy', { layout: 'LEGACY_FOUR_SIGNERS', signers: unapproved, approvalDecisionNote: 'ไม่ต้องอนุมัติตามนโยบาย' }, '02ec24c13ac2f69e06f72acdf0e5ad972034c427a5a2078c23a25062dae0ecaf', 'e2b4b95a50bb82063e2613407938d1b25b99240b0f9166ae7ad562202a41f048'],
+    ['four blocks, signed on screen, cancelled', { layout: 'LEGACY_FOUR_SIGNERS', signers: signed, cancellation: { reason: 'บันทึกซ้ำ' } }, '0cbd38c68e9b46be506b249c3879efa4b4c3a654f4dfd474c138661eb0a7acd9', '7bab863947db7f39e866841ca200257c5d6af3c88ab6a712d687666eef62c75e'],
+    ['two blocks, paid by transfer', {}, '7f05fa5de4f86022c64de84b041464fb98d82148d9e6f8d6e3feba5f1ac9902a', '64e7374821c409165f36676a72b5bc7c19172e2418bd378bb09e4ae9078e3d70'],
+    ['two blocks, waiting for approval, not paid', { signers: unapproved, repayment: null }, 'e5fb330697f129289f54e7c318ce1b0145aa517ccf685be5849dbcca721892d8', '697ebf449fed9e25f2890dc4ef77fce5dd7b8cdbd78ae5031d3dd5347d1be792'],
+    ['two blocks, own approval, paid in cash with a slip', { selfApproved: true, hasPaymentEvidence: true, repayment: { ...base.repayment!, method: 'CASH', reference: null } }, 'efed6dd67933e9477fc022f45a3238363613f6c404a4e25fdd6262330ff9c55c', '405df586737ba0cd2e017654084c824c1543c2dc2042b8a98d75145f5a3fefdf'],
+    ['two blocks, approval skipped by policy, cancelled', { signers: unapproved, approvalDecisionNote: 'ไม่ต้องอนุมัติตามนโยบาย', cancellation: { reason: 'บันทึกซ้ำ' } }, '52aaa250838ecf81aae9876ce02b916f78a6b326b29b2429c9c65855692ce95e', '0affadcd29c054c613dc459d1d991124af637f12c6ca154066bcab9100cf9986'],
+    ['two blocks, 65 lines over several pages', {
+      lines: Array.from({ length: 65 }, (_, i) => ({ lineNo: i + 1, incurredDate: '2026-09-10', description: `ROW-${i + 1}-END รายการค่าใช้จ่าย`, purpose: 'กิจการ', amount: '10.00' })),
+      totalAmount: '650.00',
+    }, '10c2e04202293608b64b22df98a5d3318664c913ab596113041a87fe65a5d7a6', 'f9791cbb6e221c98d04cc9cabcca905307194fc26d87c2d77541b5235e00d96a'],
+  ];
+
+  for (const [name, overrides, single, pages] of prints) {
+    it(name, () => {
+      const input = snapshot(overrides);
+      assert.deepEqual(
+        [sha256(renderReimbursementClaimFormSvg(input)), sha256(Buffer.concat(renderReimbursementClaimFormPages(input)))],
+        [single, pages],
+      );
+    });
+  }
+});
+
+// Payout spec §17.1, AC36: the two-signer form of a claim that carries its own receiving account says
+// how the requester is paid back, under their name. The renderer does not know who asked for the
+// print: it prints the full number when it is handed one, and the last 4 digits otherwise.
+describe('claim form payout line', () => {
+  const NUMBER = '0045671234';
+  const bank: ClaimFormPayout = { method: 'BANK_TRANSFER', kind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '1234', verifier: null };
+  const promptPay: ClaimFormPayout = { method: 'BANK_TRANSFER', kind: 'PROMPTPAY_PHONE', bankName: null, accountName: 'นาย สมชาย ใจดี', accountLast4: '5678', verifier: null };
+  const verifier = { name: 'มานี ผู้จัดการ', at: '2026-07-21T03:00:00.000Z' };
+  const count = (text: string, needle: string) => text.split(needle).length - 1;
+
+  /** The lines under the requester's name, as printed: one entry per page that carries them. */
+  function payoutBlocks(artifact: string): Array<{ lines: string[]; condensed: boolean }> {
+    return [...artifact.matchAll(/<text x="45" y="224">(.*?)<\/text>/g)].map((block) => {
+      const spans = [...block[1]!.matchAll(/<tspan x="45" dy="(\d+)"([^>]*)>([^<]*)<\/tspan>/g)];
+      assert.deepEqual(spans.map((span) => span[1]), spans.map((_, index) => (index === 0 ? '0' : '22')), 'one line every 22px');
+      return { lines: spans.map((span) => span[3]!), condensed: spans.some((span) => span[2]!.includes('textLength')) };
+    });
+  }
+  /** Where the table starts: the first ruled box at the left margin. */
+  const tableTop = (artifact: string) => Number(/<rect x="45" y="(\d+)" width="760"/.exec(artifact)![1]);
+  const signatureTop = (artifact: string) => Number(/<text x="235" y="(\d+)" text-anchor="middle" font-weight="600">ผู้เบิก</.exec(artifact)![1]);
+
+  it('prints a transfer with the last 4 digits by default, and with the full number only when handed one', () => {
+    for (const masked of [bank, { ...bank, accountNumber: undefined }, { ...bank, accountNumber: '' }]) {
+      for (const artifact of bothRenderings(snapshot({ payout: masked }))) {
+        assert.deepEqual(payoutBlocks(artifact)[0]!.lines, ['รับเงินคืนทาง: โอนเข้าบัญชี ธนาคารกสิกรไทย ชื่อบัญชี นาย สมชาย ใจดี เลขบัญชีลงท้าย 1234']);
+      }
+    }
+    for (const artifact of bothRenderings(snapshot({ payout: { ...bank, accountNumber: NUMBER } }))) {
+      assert.deepEqual(payoutBlocks(artifact)[0]!.lines, ['รับเงินคืนทาง: โอนเข้าบัญชี ธนาคารกสิกรไทย ชื่อบัญชี นาย สมชาย ใจดี เลขบัญชี 0045671234']);
+      assert.doesNotMatch(artifact, /รับเงินคืนทาง[^<]*ลงท้าย/);
+    }
+  });
+
+  it('prints a PromptPay number by the same rule, with no bank', () => {
+    for (const artifact of bothRenderings(snapshot({ payout: promptPay }))) {
+      assert.deepEqual(payoutBlocks(artifact)[0]!.lines, ['รับเงินคืนทาง: พร้อมเพย์เบอร์ลงท้าย 5678 ชื่อบัญชี นาย สมชาย ใจดี']);
+    }
+    for (const artifact of bothRenderings(snapshot({ payout: { ...promptPay, accountNumber: '0810005678' } }))) {
+      assert.deepEqual(payoutBlocks(artifact)[0]!.lines, ['รับเงินคืนทาง: พร้อมเพย์เบอร์ 0810005678 ชื่อบัญชี นาย สมชาย ใจดี']);
+      assert.doesNotMatch(artifact, /ธนาคาร|โอนเข้าบัญชี|รับเงินคืนทาง[^<]*ลงท้าย/);
+    }
+  });
+
+  it('says รับเป็นเงินสด for a cash claim, with no account and nobody to have checked one', () => {
+    const cash = snapshot({ payout: { method: 'CASH' }, repayment: { paidAt: '2026-07-23T03:00:00.000Z', method: 'CASH', reference: null, recordedByName: 'สุดา การเงิน' } });
+    for (const artifact of bothRenderings(cash)) {
+      assert.deepEqual(payoutBlocks(artifact)[0]!.lines, ['รับเงินคืนทาง: รับเป็นเงินสด']);
+      assert.doesNotMatch(artifact, /ผู้ตรวจบัญชี|ชื่อบัญชี|เลขบัญชี|พร้อมเพย์|ลงท้าย/);
+      assert.match(artifact, /การจ่ายเงินคืน: จ่ายเมื่อ 23 ก\.ค\. 2569 วิธี เงินสด เลขอ้างอิง - บันทึกโดย สุดา การเงิน/);
+    }
+  });
+
+  it('names whoever attested the account, with the Thai day they did, on a line of its own', () => {
+    for (const payout of [bank, promptPay]) {
+      const [account] = payoutBlocks(renderReimbursementClaimFormSvg(snapshot({ payout })).toString())[0]!.lines;
+      for (const artifact of bothRenderings(snapshot({ payout: { ...payout, verifier } }))) {
+        assert.deepEqual(payoutBlocks(artifact)[0]!.lines, [account, 'ผู้ตรวจบัญชี มานี ผู้จัดการ วันที่ 21 ก.ค. 2569']);
+      }
+    }
+    // 18:30Z on the 21st is the 22nd in Thailand, as every other date on the form.
+    const late = renderReimbursementClaimFormSvg(snapshot({ payout: { ...bank, verifier: { ...verifier, at: '2026-07-21T18:30:00.000Z' } } })).toString();
+    assert.equal(payoutBlocks(late)[0]!.lines[1], 'ผู้ตรวจบัญชี มานี ผู้จัดการ วันที่ 22 ก.ค. 2569');
+    // Nobody has: the line is not printed, and nothing stands in for it.
+    assert.doesNotMatch(renderReimbursementClaimFormSvg(snapshot({ payout: bank })).toString(), /ผู้ตรวจบัญชี/);
+  });
+
+  // Spec §10.2: a requester who attested their own account has confirmed it, not checked it. The form
+  // says so in the claim page's words, and does not name them as the account's checker.
+  it('says the requester confirmed their own account instead of naming them as its checker', () => {
+    for (const payout of [bank, promptPay]) {
+      const [account] = payoutBlocks(renderReimbursementClaimFormSvg(snapshot({ payout })).toString())[0]!.lines;
+      for (const artifact of bothRenderings(snapshot({ payout: { ...payout, verifier: { byRequester: true, at: verifier.at } } }))) {
+        assert.deepEqual(payoutBlocks(artifact)[0]!.lines, [account, 'ผู้เบิกยืนยันบัญชีของตนเอง วันที่ 21 ก.ค. 2569']);
+        assert.doesNotMatch(artifact, /ผู้ตรวจบัญชี/);
+      }
+    }
+    // The same Thai day rule as every other date on the form.
+    const late = renderReimbursementClaimFormSvg(snapshot({ payout: { ...bank, verifier: { byRequester: true, at: '2026-07-21T18:30:00.000Z' } } })).toString();
+    assert.equal(payoutBlocks(late)[0]!.lines[1], 'ผู้เบิกยืนยันบัญชีของตนเอง วันที่ 22 ก.ค. 2569');
+  });
+
+  it('sits under the requester name and pushes the table down by its own height, leaving the foot of the sheet alone', () => {
+    const [plainSingle, plainPages] = bothRenderings(snapshot()) as [string, string];
+    for (const [payout, lines] of [[{ method: 'CASH' }, 1], [bank, 1], [{ ...bank, verifier }, 2]] as Array<[ClaimFormPayout, number]>) {
+      const [single, pages] = bothRenderings(snapshot({ payout })) as [string, string];
+      for (const [artifact, plain] of [[single, plainSingle], [pages, plainPages]] as const) {
+        assert.equal(payoutBlocks(artifact)[0]!.lines.length, lines);
+        const at = (text: string) => artifact.indexOf(text);
+        assert.ok(at('ผู้ขอเบิก:') < at('รับเงินคืนทาง:') && at('รับเงินคืนทาง:') < at('ลำดับ'), 'between the requester and the table');
+        assert.deepEqual([tableTop(plain), tableTop(artifact)], [218, 218 + 22 * lines]);
+        assert.equal(signatureTop(artifact), signatureTop(plain), 'the signature row stays at the foot of the sheet');
+        assert.match(artifact, /width="850" height="1202"/, 'a short claim is still one A4 sheet');
+      }
+    }
+  });
+
+  it('prints the number exactly as stored: leading zeros kept, no grouping, whole on one line', () => {
+    for (const accountNumber of ['000123', NUMBER, '00123456789012345678']) {
+      for (const artifact of bothRenderings(snapshot({ payout: { ...bank, accountNumber } }))) {
+        assert.equal(count(artifact, `เลขบัญชี ${accountNumber}</tspan>`), 1);
+        assert.equal(count(artifact, accountNumber), 1, 'once, on the รับเงินคืนทาง line');
+      }
+    }
+  });
+
+  it('states the account a transfer went into on the payment line with the last 4 digits, whoever reads it', () => {
+    const paid = (paidInto: NonNullable<ReimbursementClaimFormSnapshot['repayment']>['paidInto']) => ({ ...snapshot().repayment!, paidInto });
+    // The full number is on the รับเงินคืนทาง line and nowhere else, also when the form is handed it.
+    for (const payout of [bank, { ...bank, accountNumber: NUMBER }]) {
+      for (const artifact of bothRenderings(snapshot({ payout, repayment: paid({ kind: 'BANK_ACCOUNT', accountLast4: '1234' }) }))) {
+        assert.match(artifact, /การจ่ายเงินคืน: จ่ายเมื่อ 23 ก\.ค\. 2569 วิธี โอนเงิน เข้าบัญชีลงท้าย 1234 เลขอ้างอิง TXN-1 บันทึกโดย สุดา การเงิน/);
+        assert.equal(count(artifact, NUMBER), payout.accountNumber ? 1 : 0);
+      }
+    }
+    for (const artifact of bothRenderings(snapshot({ payout: promptPay, repayment: paid({ kind: 'PROMPTPAY_PHONE', accountLast4: '5678' }) }))) {
+      assert.match(artifact, /วิธี โอนเงิน เข้าพร้อมเพย์เบอร์ลงท้าย 5678 เลขอ้างอิง TXN-1/);
+    }
+    // No account was confirmed (cash, a cheque, or a transfer elsewhere): the line is the one it always was.
+    for (const artifact of bothRenderings(snapshot({ payout: bank }))) {
+      assert.match(artifact, /การจ่ายเงินคืน: จ่ายเมื่อ 23 ก\.ค\. 2569 วิธี โอนเงิน เลขอ้างอิง TXN-1 บันทึกโดย สุดา การเงิน/);
+    }
+  });
+
+  it('ticks หลักฐานการชำระเงิน from the slip alone, whatever the claim asks to be paid by', () => {
+    const ticks = (input: ReimbursementClaimFormSnapshot) => bothRenderings(input).map((artifact) => count(artifact, '<path d="M'));
+    for (const payout of [bank, promptPay, { method: 'CASH' } as ClaimFormPayout]) {
+      assert.deepEqual(ticks(snapshot({ payout })), [1, 1], 'the receipt box only');
+      assert.deepEqual(ticks(snapshot({ payout, hasPaymentEvidence: true })), [2, 2]);
+    }
+  });
+
+  it('leaves the four-block form, and a claim with no receiving account, exactly as they print without it', () => {
+    const fourBlocks = snapshot({ layout: 'LEGACY_FOUR_SIGNERS' });
+    const handedEverything = {
+      payout: { ...bank, accountNumber: NUMBER, verifier },
+      repayment: { ...fourBlocks.repayment!, paidInto: { kind: 'BANK_ACCOUNT' as const, accountLast4: '1234' } },
+    };
+    assert.deepEqual(bothRenderings({ ...fourBlocks, ...handedEverything }), bothRenderings(fourBlocks));
+    assert.deepEqual(bothRenderings(snapshot({ payout: null })), bothRenderings(snapshot()));
+    assert.deepEqual(bothRenderings(snapshot({ payout: undefined })), bothRenderings(snapshot()));
+    for (const artifact of bothRenderings(snapshot())) assert.doesNotMatch(artifact, /รับเงินคืนทาง|ผู้ตรวจบัญชี|ลงท้าย/);
+  });
+
+  it('escapes what people typed as the bank and the account name', () => {
+    const hostile = { ...bank, bankName: 'ธนาคาร <b>ปลอม</b>', accountName: 'สมชาย <script>alert(1)</script> & co', accountNumber: NUMBER };
+    for (const artifact of bothRenderings(snapshot({ payout: hostile }))) {
+      assert.doesNotMatch(artifact, /<script|<b>/);
+      // Wherever the line wraps, the markup characters are entities in every piece of it.
+      assert.equal(
+        payoutBlocks(artifact)[0]!.lines.join('').replace(/\s+/g, ''),
+        'รับเงินคืนทาง: โอนเข้าบัญชี ธนาคาร &lt;b&gt;ปลอม&lt;/b&gt; ชื่อบัญชี สมชาย &lt;script&gt;alert(1)&lt;/script&gt; &amp; co เลขบัญชี 0045671234'.replace(/\s+/g, ''),
+      );
+    }
+  });
+
+  // The longest account the product accepts: an 80-character bank name, a 140-character account name
+  // and a 20-digit number, with a long name for whoever checked it.
+  describe('the longest account stays on the sheet', () => {
+    const longNumber = '00123456789012345678';
+    const bankName = 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร '.repeat(3).slice(0, 80);
+    const checker = { name: 'มานี ผู้จัดการฝ่ายบัญชีและการเงินประจำสำนักงานใหญ่และสาขาทั่วประเทศ', at: '2026-07-21T03:00:00.000Z' };
+    const names: Array<[string, string]> = [
+      ['Thai words with spaces', 'ห้างหุ้นส่วนจำกัด สมชายและเพื่อนการค้าวัสดุก่อสร้าง '.repeat(3).slice(0, 140)],
+      ['Thai with no space at all', 'นายสมชายใจดีมากจริง'.repeat(8).slice(0, 140)],
+      ['one unbroken Latin word', 'SOMCHAI'.repeat(20)],
+    ];
+    const squeeze = (text: string) => text.replace(/\s+/g, '');
+
+    for (const [kind, accountName] of names) {
+      const payout: ClaimFormPayout = { ...bank, bankName, accountName, accountLast4: '5678', accountNumber: longNumber, verifier: checker };
+      const sentence = `รับเงินคืนทาง: โอนเข้าบัญชี ${bankName} ชื่อบัญชี ${accountName} เลขบัญชี ${longNumber}ผู้ตรวจบัญชี ${checker.name} วันที่ 21 ก.ค. 2569`;
+
+      it(`${kind}: wraps inside the margins, loses nothing and keeps the number whole, on one sheet and across pages`, () => {
+        assert.deepEqual([bankName.length, accountName.length, longNumber.length], [80, 140, 20]);
+        const short = snapshot({ payout });
+        const long = snapshot({
+          payout, totalAmount: '650.00',
+          lines: Array.from({ length: 65 }, (_, i) => ({ lineNo: i + 1, incurredDate: '2026-09-10', description: `ROW-${i + 1}-END รายการค่าใช้จ่าย`, purpose: 'กิจการ', amount: '10.00' })),
+        });
+        for (const input of [short, long]) {
+          const single = renderReimbursementClaimFormSvg(input).toString();
+          const pages = renderReimbursementClaimFormPages(input).map(String);
+          const [block] = payoutBlocks(single);
+          assert.ok(block!.lines.length >= 4, `wrapped into ${block!.lines.length} lines`);
+          assert.equal(squeeze(block!.lines.join('')), squeeze(sentence), 'every character is printed, in order');
+          assert.equal(block!.condensed, false, 'each line fits the sheet by the measure the body text is wrapped with');
+          assert.equal(block!.lines.filter((line) => line.includes(longNumber)).length, 1, 'the number is on one line, unbroken');
+          assert.equal(tableTop(single), 218 + 22 * block!.lines.length);
+
+          // The tall image grows with its content and keeps the signature row at its foot.
+          const height = Number(/height="(\d+)"/.exec(single)![1]);
+          assert.ok(height >= 1202);
+          assert.equal(signatureTop(single), height - 150);
+
+          // Every A4 page repeats the same lines in its header and starts its table under them.
+          assert.equal(pages.length > 1, input === long);
+          for (const [index, page] of pages.entries()) {
+            assert.match(page, /width="850" height="1202" viewBox="0 0 850 1202"/);
+            assert.match(page, new RegExp(`หน้า ${index + 1} / ${pages.length}`));
+            assert.deepEqual(payoutBlocks(page), [block]);
+            if (page.includes('data-claim-row')) assert.equal(tableTop(page), tableTop(single));
+            const lowest = Math.max(...[...page.matchAll(/ y[12]?="(\d+(?:\.\d+)?)"/g)].map((match) => Number(match[1])));
+            assert.ok(lowest <= 1202 - 24, `nothing is drawn below the bottom margin (lowest y ${lowest})`);
+          }
+          const all = pages.join('');
+          for (const row of input.lines) {
+            assert.equal(count(all, `data-claim-row="${row.lineNo}" data-row-continuation="false"`), 1);
+            assert.equal(count(all, `data-claim-amount="${row.lineNo}"`), 1);
+          }
+          assert.deepEqual([count(all, 'data-claim-total'), count(all, 'data-claim-signatures'), count(all, 'การจ่ายเงินคืน:')], [1, 1, 1]);
+          assert.equal(signatureTop(pages.at(-1)!), 1202 - 24 - 150);
+          for (const artifact of [single, ...pages]) assert.doesNotMatch(artifact, /NaN|Infinity|undefined/);
+        }
+      });
+    }
   });
 });
 

@@ -695,7 +695,8 @@ decisions 2026-10-01): a default per member, and a copy frozen on each claim whe
 queue row carries the receiving method only. A claim detail carries the bank, the account name and the
 last 4 digits, the same for every reader; a notice and an audit row carry the bank and the last 4 digits;
 the evidence export carries nothing of the account. The full number leaves through the two `reveal` calls
-only, each after its audit row is written. Routes sit under `/companies/:companyId/reimbursements`, in a
+and, for a claim's own account, on the printed claim form of a reader the claim's `reveal` call would
+answer; each only after its audit row is written. Routes sit under `/companies/:companyId/reimbursements`, in a
 controller registered ahead of the claim routes so `payout-accounts/…` is matched before `:requestId`.
 
 | Route | Route permission | Who may use it |
@@ -707,6 +708,7 @@ controller registered ahead of the claim routes so `payout-accounts/…` is matc
 | `GET payout-accounts/members/:userId` | `access.employee.read` or `access.employee.update` | An employee-data reader: last 4 digits only, and whether this viewer may set it (`canEdit`) |
 | `PUT payout-accounts/members/:userId` | `access.employee.update` | Decided per member in the use case, see below. The member's own account goes by their own right |
 | `POST :requestId/payout-destination/reveal` | `account.session.read` | Decided per claim in the use case, see below |
+| `POST :requestId/claim-form/preview` (existing) | `reimbursement.read`, `reimbursement.read_related` or `reimbursement.read_own` | Takes no option and answers with no new field. The print carries the full number for a reader the `reveal` call above would answer, and the last 4 digits for any other reader of the claim, see below |
 | `POST :requestId/submit` (existing) | `reimbursement.submit` | Takes `payoutSubmitToken`, the account the claim page showed. Refused without a receiving method (`payout_method_required`, `payout_destination_required`), and for every claim but cash the draft itself chose when the token is missing or the account changed since (`payout_destination_changed`) |
 | `POST :requestId/approve` (existing) | `account.session.read` | Requires `approvalSnapshotHash`, the claim content the approver saw. A claim paid by transfer also requires `payoutVerifiedVersion`, the account version attested (`payout_verification_required`, `payout_destination_changed`) |
 
@@ -744,6 +746,14 @@ do whoever prepared the claim for the requester, `AUDITOR_READONLY`, HR and othe
 reveal endpoint and the detail's `payout.canRevealAccountNumber`, which is all the web's "แสดงเลขบัญชี"
 button reads, come from this one decision. Every refusal answers `payout_reveal_denied` and is audited;
 an answer is given only after its audit row is written.
+
+The printed claim form asks the same decision for whoever requested that print (`claimPayoutRevealGroup`),
+on the two-signer form of a claim that carries its own account. Inside the group, one audit row of the
+reveal's own action is written before the number is decrypted, with `channel: CLAIM_FORM_PRINT`, and the
+number is printed on the "รับเงินคืนทาง" line. Outside the group the print is not refused: it carries the
+last 4 digits and no row is written. A cash claim, a claim sent before the field existed and the four-block
+form print no account at all, so they decrypt nothing and write no row. The payment line of the form
+carries the last 4 digits for every reader. A print is made for one request and is not stored or linked.
 
 ### Procurement related-document visibility
 
