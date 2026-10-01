@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { RoleSummary } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
-import { PLATFORM_ONLY_ROLE_KEYS, roleGrantViolation } from '../../domain/logic/employee-access.logic';
+import { platformOnlyRoleRefused, roleGrantViolation } from '../../domain/logic/employee-access.logic';
 import { filterPermissionsByEntitlement } from '../../domain/logic/feature-gate.logic';
 import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
 import { loadEntitledFeatureKeys } from '../entitlement.helper';
@@ -29,10 +29,11 @@ export class ListRolesUseCase {
     ]);
 
     const overriddenKeys = new Set(rows.filter((row) => row.scopeKey === companyId).map((row) => row.key));
-    // RB-34: a shop is not shown the platform-only system roles at all; the platform company is.
+    // RB-34: a shop is not shown a platform-only role at all — neither the system row nor a copy of
+    // it the shop made before the by-id routes refused that; the platform company is.
     const platformTenant = companyId === PLATFORM_TENANT_ID;
-    const visible = rows.filter((row) => !(row.scopeKey === 'system'
-      && (overriddenKeys.has(row.key) || (!platformTenant && PLATFORM_ONLY_ROLE_KEYS.includes(row.key)))));
+    const visible = rows.filter((row) => !platformOnlyRoleRefused(row.key, platformTenant)
+      && !(row.scopeKey === 'system' && overriddenKeys.has(row.key)));
 
     return visible.map((row) => {
       const summary = toRoleSummary(row);
