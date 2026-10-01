@@ -19,6 +19,8 @@ import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 import {
   MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, REQUESTER_SELF_ATTESTED, type PaymentFormPayout,
 } from './reimbursement-payout.logic';
+// The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
+import { payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -1063,6 +1065,43 @@ export function activeJourneyStep(steps: readonly JourneyStep[]): JourneyStep | 
 /** "ลงนามบนกระดาษ · แนบเมื่อ … โดย …" for a scan attached with the A4 declaration; parts the detail lacks are left out. */
 export function paperSignedLine(copy?: { acknowledgedAt?: string; acknowledgedByName?: string }): string {
   return `ลงนามบนกระดาษ${copy?.acknowledgedAt ? ` · แนบเมื่อ ${formatThaiDate(copy.acknowledgedAt)}` : ''}${copy?.acknowledgedByName ? ` โดย ${copy.acknowledgedByName}` : ''}`;
+}
+
+// ---- A payout account correction round (payout spec §14) ----
+
+/** What the approvers of a round are shown to compare, and everyone else of the claim to read. */
+export type PayoutCorrectionComparison = {
+  /** The account the claim was approved with, masked; a claim sent before claims carried one says it had none. */
+  previous: string;
+  /** The account the claim has now, masked. */
+  current: string;
+  /** That the lines and the amount are what was approved, and when that was. */
+  unchanged: string;
+  /** Who sent the claim back and why, with the note they added. */
+  sentBack: string;
+  note?: string;
+  /** Who gave the account now on the claim, and when. */
+  submitted?: string;
+};
+
+/**
+ * The card "สิ่งที่เปลี่ยน: บัญชีรับเงินคืน" of a claim whose new account waits for approval (spec §14.6): the two
+ * accounts side by side, last 4 digits only, and that nothing else of the claim moved since it was approved.
+ * Null for a claim that is not there: the page then shows no card.
+ */
+export function payoutCorrectionComparison(detail: any): PayoutCorrectionComparison | null {
+  const round = detail?.payoutCorrection;
+  if (round?.phase !== 'AWAITING_APPROVAL') return null;
+  const submitted = [...(detail.payoutCorrectionHistory ?? [])].reverse().find((event: any) => event.kind === 'ACCOUNT_SUBMITTED');
+  return {
+    previous: payoutCorrectionAccountText(round.previous),
+    current: payoutCorrectionAccountText(detail.payout),
+    unchanged: `รายการและยอดเงิน ${formatMoney(detail.amount, detail.currency)} เท่ากับที่อนุมัติไว้${
+      round.previouslyApprovedAt ? `เมื่อ ${formatThaiDateTime(round.previouslyApprovedAt)}` : ''} การอนุมัติครั้งนี้ตรวจเฉพาะบัญชีรับเงินคืน`,
+    sentBack: payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode }),
+    ...(round.note && { note: round.note }),
+    ...(round.submittedAt && { submitted: `${payoutCorrectionSubmittedText(submitted, detail.requesterUserId)} เมื่อ ${formatThaiDateTime(round.submittedAt)}` }),
+  };
 }
 
 // ---- Policy decision preview (ตั้งค่านโยบาย — spec §7) ----

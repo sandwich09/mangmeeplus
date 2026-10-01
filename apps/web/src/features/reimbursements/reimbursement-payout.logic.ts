@@ -426,6 +426,15 @@ export function payoutCorrectionSentBackText(sentBack: { byName?: string | null;
 }
 
 /**
+ * "ผู้เบิกแก้บัญชีรับเงิน" (spec §17.2): who gave the account of a round. It was the requester unless the claim
+ * says someone else did it on their behalf, and that person is then named.
+ */
+export function payoutCorrectionSubmittedText(submitted: { byUserId?: string | null; byName?: string | null } | null | undefined, requesterUserId?: string | null): string {
+  const onBehalf = !!submitted?.byUserId && !!requesterUserId && submitted.byUserId !== requesterUserId;
+  return onBehalf ? `${submitted!.byName ?? 'ผู้จัดทำ'} แก้บัญชีรับเงินแทนผู้เบิก` : `ผู้เบิก${PAYOUT_CORRECTION_FIX_LABEL}`;
+}
+
+/**
  * What the send-back form refuses before it asks the API, in the API's own words for the same refusals: a reason
  * from the list, a note of at most 500 characters, and no account number in a note every reader of the claim sees.
  */
@@ -489,7 +498,7 @@ export function payoutCorrectionInput(form: PayoutCorrectionForm, defaultToken: 
 /** A receiving method and account of a round, masked, in one line: what the claim was approved with, or what it has now. */
 export function payoutCorrectionAccountText(account: ReimbursementPayoutCorrectionAccount | ReimbursementPayoutSummary | null | undefined): string {
   // No method at all: the claim was sent before claims carried one.
-  if (!account?.payoutMethod) return 'ไม่มีบัญชีในใบ';
+  if (!account?.payoutMethod) return 'ไม่มี ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน';
   if (account.payoutMethod === 'CASH') return PAYOUT_METHOD_TEXT.CASH!;
   return account.accountLast4 ? payoutAccountWithName(account) : PAYOUT_METHOD_TEXT.BANK_TRANSFER!;
 }

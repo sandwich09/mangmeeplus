@@ -26,8 +26,8 @@ import {
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 
-const labelClass = 'mb-1.5 block text-xs font-semibold text-gray-600';
-const choiceClass = 'flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700';
+export const labelClass = 'mb-1.5 block text-xs font-semibold text-gray-600';
+export const choiceClass = 'flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700';
 
 /** Bank, account name and number. The number stays text from the first keystroke: leading zeros are part of it. */
 export function PayoutAccountFields({ value, onChange, disabled = false, invalidField }: {

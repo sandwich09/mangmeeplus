@@ -1,13 +1,17 @@
+import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import {
   REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, isReimbursementPayoutCorrectionReason,
 } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
+import { ToastContext } from '@/common/components/toast/use-toast';
 import {
   PAYOUT_CORRECTION_REASONS, emptyPayoutCorrectionForm, payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
   payoutCorrectionInput, payoutCorrectionReasonText, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
-  payoutCorrectionSentBackText, type PayoutCorrectionForm,
+  payoutCorrectionSentBackText, payoutCorrectionSubmittedText, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
 /*
@@ -16,6 +20,103 @@ import {
  * that account alone, on the same claim and number. Who may do which is the server's answer; these tests hold
  * the page to it, and to plain Thai.
  */
+
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+// The screens reach the icon set through ExpensesUi; this runner has no SVG loader.
+require.extensions['.svg'] = (module) => { module.exports = () => null; };
+// Modal portals into document.body, which a server render has none of: render a dialog in place.
+Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
+const correctionUi = require('./ReimbursementPayoutCorrection') as typeof import('./ReimbursementPayoutCorrection');
+const logic = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const reactRuntime = require('react') as typeof React;
+
+const h = React.createElement;
+const noop = () => undefined;
+const router = { back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop, bfcacheId: 'test' };
+const toast = { success: noop, warning: noop, error: noop };
+
+/** What the person reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
+const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map((match) => match[1]!),
+  ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
+  .map((text) => text.replace(/&quot;/gu, '"').replace(/&#x27;/gu, "'").replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&amp;/gu, '&').trim()).filter(Boolean);
+
+/** One state a rendered screen was asked to change after it was rendered: the state's starting value, and what it was set to. */
+type StateChange = { initial: unknown; value: unknown };
+
+/**
+ * Renders with some useState starting values swapped in, picked by the component's own initial value, and
+ * keeps what the screen does afterwards: every state it sets (`changes`) and the handlers of the elements
+ * `grab` names. A handler taken from the render runs with the state that render had, so pressing it is the
+ * press of a person who sees exactly that screen.
+ */
+function render(element: React.ReactElement, pick: (initial: any) => unknown = noop, grab?: (type: unknown, props: any, children: unknown[]) => string | undefined) {
+  const changes: StateChange[] = [];
+  const handlers: Record<string, any> = {};
+  const realUseState = reactRuntime.useState;
+  const realCreateElement = reactRuntime.createElement;
+  Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
+    const [value, set] = (realUseState as (initial: unknown) => [unknown, (next: unknown) => void])(initial);
+    const start = typeof initial === 'function' ? (initial as () => unknown)() : initial;
+    const picked = pick(start);
+    const shown = picked === undefined ? value : picked;
+    return [shown, (next: unknown) => { changes.push({ initial: start, value: typeof next === 'function' ? (next as (current: unknown) => unknown)(shown) : next }); set(next); }];
+  });
+  Reflect.set(reactRuntime, 'createElement', (type: unknown, props: any, ...children: unknown[]) => {
+    const name = grab?.(type, props, children);
+    if (name) handlers[name] = props;
+    return (realCreateElement as (...args: unknown[]) => unknown)(type, props, ...children);
+  });
+  Object.assign(globalThis, { document: { body: {} } }); // Modal's portal target; never touched by a server render
+  try {
+    const html = renderToStaticMarkup(h(AppRouterContext.Provider, { value: router as never }, h(ToastContext.Provider, { value: toast as never }, element)));
+    return { html, texts: visible(html), changes, handlers };
+  } finally {
+    Reflect.set(reactRuntime, 'useState', realUseState);
+    Reflect.set(reactRuntime, 'createElement', realCreateElement);
+    Reflect.deleteProperty(globalThis, 'document');
+  }
+}
+
+/** Runs `action` with the API answering `answer`, and returns what was asked of it. */
+async function withApi(answer: (url: string, method: string) => { status: number; body: unknown }, action: () => unknown) {
+  const calls: Array<{ url: string; method: string; body: unknown }> = [];
+  const realFetch = globalThis.fetch;
+  const realWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.assign(globalThis, { window: {} });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    calls.push({ url: String(input), method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    const { status, body } = answer(String(input), method);
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  }) as typeof fetch;
+  try {
+    await action();
+    for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    globalThis.fetch = realFetch;
+    if (realWindow) Object.defineProperty(globalThis, 'window', realWindow); else Reflect.deleteProperty(globalThis, 'window');
+  }
+  return calls;
+}
+const submitEvent = { preventDefault: noop };
+/** A claim as it arrives over HTTP: a key the API left out is not there at all. */
+const asAnswered = <T,>(claim: T): T => JSON.parse(JSON.stringify(claim));
+/** The heading of a form that opened inside the step card. */
+const heading = (html: string) => /<h3[^>]*>([^<]*)<\/h3>/u.exec(html)?.[1];
+/** The form with this test id: its `onSubmit`. */
+const grabForm = (testId: string) => (type: unknown, props: any) => (type === 'form' && props?.['data-testid'] === testId ? 'form' : undefined);
+
+/** Plain Thai (owner rule 2026-09-27/29): no id, code, key, ISO date or raw JSON in what a person reads. */
+const MACHINE_TOKENS: Array<[string, RegExp]> = [
+  ['id', /\b[a-z0-9]{20,}\b/iu], ['enum or code', /[A-Z_]{4,}/u], ['camelCase key', /\b[a-z]+[A-Z]\w*\b/u], ['snake_case code', /\b[a-z]+_[a-z_]+\b/u],
+  ['ISO date', /\d{4}-\d{2}/u], ['currency code', /\bTHB\b/u], ['raw JSON', /[{}[\]"]/u],
+];
+function assertPlainThai(texts: string[], where: string) {
+  for (const text of texts) {
+    const shown = text.replaceAll('RB-202610-00007', '');
+    for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(shown, pattern, `${name} on ${where}: ${text}`);
+  }
+}
 
 const KBANK = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '5678', version: 1 };
 const SCB = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountLast4: '1112', version: 2 };
@@ -58,6 +159,14 @@ describe('sending a claim back for its payout account: what the form asks and se
     assert.equal(payoutCorrectionSentBackText({ reasonCode: 'BANK_WRONG' }), 'ส่งกลับให้แก้บัญชีรับเงิน : ธนาคารไม่ถูกต้อง');
     assert.equal(payoutCorrectionSentBackText({ byName: 'สมศรี ผู้จัดการ', reasonCode: 'A_REASON_ADDED_LATER' }), 'ส่งกลับให้แก้บัญชีรับเงินโดย สมศรี ผู้จัดการ');
     assert.equal(payoutCorrectionSentBackText(undefined), 'ส่งกลับให้แก้บัญชีรับเงิน');
+  });
+
+  it('says the requester gave the account, and names whoever gave it on their behalf', () => {
+    assert.equal(payoutCorrectionSubmittedText({ byUserId: 'staff', byName: 'สมชาย พนักงาน' }, 'staff'), 'ผู้เบิกแก้บัญชีรับเงิน');
+    assert.equal(payoutCorrectionSubmittedText({ byUserId: 'finance', byName: 'วราภรณ์ การเงิน' }, 'staff'), 'วราภรณ์ การเงิน แก้บัญชีรับเงินแทนผู้เบิก');
+    // Someone else whose name can no longer be resolved is still not said to be the requester.
+    assert.equal(payoutCorrectionSubmittedText({ byUserId: 'gone' }, 'staff'), 'ผู้จัดทำ แก้บัญชีรับเงินแทนผู้เบิก');
+    assert.equal(payoutCorrectionSubmittedText(undefined, 'staff'), 'ผู้เบิกแก้บัญชีรับเงิน');
   });
 });
 
@@ -141,7 +250,7 @@ describe('an account of a round in words, masked', () => {
     assert.equal(payoutCorrectionAccountText({ payoutMethod: 'CASH' }), 'รับเป็นเงินสด');
     // The method alone, when the account behind it could not be read.
     assert.equal(payoutCorrectionAccountText({ payoutMethod: 'BANK_TRANSFER' }), 'โอนเข้าบัญชี');
-    for (const none of [undefined, null, {}]) assert.equal(payoutCorrectionAccountText(none as never), 'ไม่มีบัญชีในใบ');
+    for (const none of [undefined, null, {}]) assert.equal(payoutCorrectionAccountText(none as never), 'ไม่มี ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน');
   });
 
   it('tells the reader of the card "การรับเงินคืน" which account they are looking at while the claim is in a round', () => {
@@ -150,5 +259,284 @@ describe('an account of a round in words, masked', () => {
     assert.equal(payoutCorrectionCardNote({ payoutCorrectionPhase: 'AWAITING_REQUESTER' }), 'ใบนี้ถูกส่งกลับให้ระบุบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
     assert.equal(payoutCorrectionCardNote({ payoutCorrectionPhase: 'AWAITING_APPROVAL', payout: SCB }), 'ด้านล่างคือวิธีรับเงินใหม่ที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้');
     assert.equal(payoutCorrectionCardNote({ payout: SCB }), null);
+  });
+});
+
+// ---- The claim, as the API answers it at each point of a round (the hand-off note's examples) ----
+
+const NAMES = { requester: 'สมชาย พนักงาน', approver: 'สมศรี ผู้จัดการ', payer: 'วราภรณ์ การเงิน' };
+const AT = { submitted: '2026-10-01T02:00:00.000Z', approved: '2026-10-01T03:00:00.000Z', sentBack: '2026-10-01T04:00:00.000Z', given: '2026-10-01T05:00:00.000Z', reapproved: '2026-10-01T06:00:00.000Z' };
+const step1 = { id: 'step-1', sequenceNo: 1, status: 'APPROVED', approverUserId: 'boss', approverName: NAMES.approver, decisionByUserId: 'boss', decidedByName: NAMES.approver,
+  assignedAt: AT.submitted, decidedAt: AT.approved };
+const setAside = { ...step1, invalidatedAt: AT.sentBack, invalidatedReason: 'payout_account_correction' };
+const step2 = { id: 'step-2', sequenceNo: 1, status: 'PENDING', approverUserId: 'boss', approverName: NAMES.approver, assignedAt: AT.given };
+const attested = { verifiedByUserId: 'boss', verifiedByName: NAMES.approver };
+const version1 = { version: 1, payoutKind: KBANK.payoutKind, bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: KBANK.accountLast4,
+  source: 'DEFAULT_ACCOUNT', frozenAt: AT.submitted, ...attested, verifiedAt: AT.approved, approvalStepId: 'step-1' };
+const version2 = { version: 2, payoutKind: SCB.payoutKind, bankName: SCB.bankName, accountName: SCB.accountName, accountLast4: SCB.accountLast4, source: 'REQUESTER', frozenAt: AT.given };
+const SENT_BACK = { kind: 'SENT_BACK', at: AT.sentBack, byUserId: 'finance', byName: NAMES.payer, reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้' };
+const GIVEN = { kind: 'ACCOUNT_SUBMITTED', at: AT.given, byUserId: 'staff', byName: NAMES.requester, payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 };
+const REAPPROVED = { kind: 'REAPPROVED', at: AT.reapproved, byUserId: 'boss', byName: NAMES.approver, approvalStepId: 'step-2' };
+const round = { requestedAt: AT.sentBack, requestedByUserId: 'finance', requestedByName: NAMES.payer, reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้',
+  previous: KBANK, previouslyApprovedAt: AT.approved };
+
+/** Approved with the KBANK account and waiting for its payment: where a round starts. */
+const ready = (overrides: Record<string, unknown> = {}): Record<string, any> => ({
+  id: 'claim-1', requestNo: 'RB-202610-00007', status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', financeReviewStatus: 'NOT_REQUIRED', financeReviewRequired: false,
+  receiptRequirementStatus: 'ATTACHED', duplicateStatus: 'NO_MATCH', requesterUserId: 'staff', requesterDisplayNameSnapshot: NAMES.requester, branchId: 'branch-1',
+  reason: 'ไปพบลูกค้า', amount: '1614.5000', outstandingAmount: '1614.5000', currency: 'THB', categoryLabelSnapshot: 'เดินทาง', claimFormLayout: 'TWO_SIGNERS', documentSignedVia: null,
+  submittedAt: AT.submitted, approvedAt: AT.approved, currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: [NAMES.payer], moreCount: 0 },
+  payoutMethod: 'BANK_TRANSFER', payout: { ...KBANK, source: 'DEFAULT_ACCOUNT', ...attested, verifiedAt: AT.approved }, payoutHistory: [version1],
+  lines: [{ id: 'line-1', lineNo: 1, incurredDate: '2026-09-30T00:00:00.000Z', description: 'ค่าแท็กซี่', categoryLabelSnapshot: 'เดินทาง', amount: '1614.5000' }],
+  approvalSteps: [step1], approvalActions: { canApprove: false, canReject: false },
+  payments: [], signatures: [], signedCopies: [], duplicateCandidates: [], ...overrides,
+});
+/** Phase A: sent back, with its requester. No approval step is open, and the account it shows is the one in question. */
+const phaseA = (overrides: Record<string, unknown> = {}) => ready({
+  status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', approvedAt: undefined, payoutCorrectionPhase: 'AWAITING_REQUESTER', currentDesk: { kind: 'REQUESTER' }, paymentDesk: undefined,
+  payoutCorrection: { phase: 'AWAITING_REQUESTER', ...round }, approvalSteps: [setAside], payoutCorrectionHistory: [SENT_BACK], ...overrides,
+});
+/** Phase B: the requester gave the SCB account, and a new step waits for the approver the claim had. */
+const phaseB = (overrides: Record<string, unknown> = {}) => phaseA({
+  payoutCorrectionPhase: 'AWAITING_APPROVAL', currentDesk: { kind: 'APPROVER', names: [NAMES.approver] }, approvalSnapshotHash: 'hash-of-version-2',
+  payout: { ...SCB, source: 'REQUESTER' }, payoutHistory: [version1, version2],
+  payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, submittedAt: AT.given }, approvalSteps: [setAside, step2], payoutCorrectionHistory: [SENT_BACK, GIVEN], ...overrides,
+});
+/** After the round: approved again, back at the pay step with the new account and its new attester. */
+const reapproved = (overrides: Record<string, unknown> = {}) => ready({
+  approvedAt: AT.reapproved, payout: { ...SCB, source: 'REQUESTER', ...attested, verifiedAt: AT.reapproved },
+  payoutHistory: [version1, { ...version2, ...attested, verifiedAt: AT.reapproved, approvalStepId: 'step-2' }],
+  approvalSteps: [setAside, { ...step2, status: 'APPROVED', decisionByUserId: 'boss', decidedByName: NAMES.approver, decidedAt: AT.reapproved }],
+  payoutCorrectionHistory: [SENT_BACK, GIVEN, REAPPROVED], ...overrides,
+});
+
+describe('the send-back form (spec §14.3): inside the step card, a fixed reason, an optional note', () => {
+  /** The form's own states, in the order it declares them: the reason, the note, then the banner. */
+  const form = (detail: object, state: { reasonCode?: string; note?: string; error?: string } = {}, onDone: (claim: unknown) => void = noop) => {
+    let blanks = 0;
+    return render(h(correctionUi.PayoutCorrectionRequestForm, { companyId: 'company-1', detail, onCancel: noop, onDone }), (start) => {
+      if (start === '') { blanks += 1; return blanks === 1 ? state.reasonCode : state.note; }
+      return start === null ? state.error : undefined;
+    }, grabForm('reimbursement-payout-correction-request'));
+  };
+
+  it('lists the six reasons as choices of 44 px, takes a note of at most 500 characters, and is no dialog', () => {
+    const { html, texts } = form(ready());
+    assert.deepEqual(texts.filter((text) => PAYOUT_CORRECTION_REASONS.some(([, label]) => label === text)), PAYOUT_CORRECTION_REASONS.map(([, label]) => label));
+    assert.equal(html.match(/<input type="radio"/g)?.length, 6);
+    assert.equal(html.match(/<label class="flex min-h-11 cursor-pointer/g)?.length, 6, 'each reason is a tap target of 44 px');
+    assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/, 'no reason is chosen for the person');
+    assert.match(html, /<textarea id="reimbursement-payout-correction-note"[^>]*maxLength="500"/);
+    for (const text of ['ส่งกลับให้แก้บัญชีรับเงิน', 'เหตุผลที่ส่งกลับ *', 'หมายเหตุ (ไม่บังคับ)', 'ผู้เบิกและทุกคนที่เปิดใบนี้เห็นหมายเหตุนี้ อย่าพิมพ์เลขบัญชี', '0/500', 'ยกเลิก', 'ยืนยันส่งกลับ']) {
+      assert.ok(texts.includes(text), text);
+    }
+    assert.doesNotMatch(html, /role="dialog"/);
+    // Both buttons span the card on a phone and sit side by side from sm.
+    assert.equal(html.match(/class="mangmee-btn [^"]*w-full sm:w-auto"/g)?.length, 2);
+    assertPlainThai(texts, 'the send-back form');
+  });
+
+  it('says what will happen before the person confirms, signatures included, and from the round\'s step that the claim is not rejected', () => {
+    const signed = form(ready({ signatures: [{ role: 'REQUESTER' }], signedCopies: [{ attachmentId: 'a', fileName: 'ใบเบิก.pdf', acknowledgedAt: AT.approved }] })).texts;
+    for (const note of payoutCorrectionSendBackNotes({ payout: KBANK, signatures: [{}], signedCopies: [{ acknowledgedAt: AT.approved }] })) assert.ok(signed.includes(note), note);
+    assert.ok(signed.some((text) => text.startsWith('ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ')));
+    const again = form(phaseB()).texts;
+    assert.equal(heading(form(phaseB()).html), 'ส่งกลับให้แก้อีกครั้ง');
+    assert.equal(heading(form(ready()).html), 'ส่งกลับให้แก้บัญชีรับเงิน');
+    assert.ok(again.includes('ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงินอีกครั้ง ใบไม่ถูกปฏิเสธ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'));
+    assert.equal(again.includes('ปฏิเสธ'), false);
+  });
+
+  it('sends the reason and the note to the send-back endpoint and hands the answer on', async () => {
+    const done: unknown[] = [];
+    const answer = asAnswered(phaseA());
+    const { handlers, changes } = form(ready(), { reasonCode: 'ACCOUNT_NUMBER_WRONG', note: ' ธนาคารแจ้งว่าไม่พบบัญชีนี้ ' }, (claim) => done.push(claim));
+    const calls = await withApi(() => ({ status: 200, body: answer }), () => handlers.form.onSubmit(submitEvent));
+    assert.deepEqual(calls, [{ url: '/api/v1/companies/company-1/reimbursements/claim-1/payout-correction', method: 'POST',
+      body: { reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้' } }]);
+    assert.deepEqual(done, [answer]);
+    assert.equal(changes.some((change) => typeof change.value === 'string' && change.initial === null), false, 'no banner');
+  });
+
+  it('asks nothing of the API without a reason, or with an account number in the note, and says why', async () => {
+    for (const [state, sentence] of [
+      [{ note: 'โอนไม่เข้า' }, 'กรุณาเลือกเหตุผลที่ส่งกลับให้แก้บัญชีรับเงิน'],
+      [{ reasonCode: 'OTHER', note: 'เลขที่ถูกคือ 004-5-67123-4' }, translateApiError('note_contains_account_number')!],
+    ] as const) {
+      const done: unknown[] = [];
+      const { handlers, changes } = form(ready(), state, (claim) => done.push(claim));
+      const calls = await withApi(() => ({ status: 200, body: {} }), () => handlers.form.onSubmit(submitEvent));
+      assert.deepEqual([calls, done], [[], []]);
+      assert.deepEqual(changes, [{ initial: null, value: sentence }]);
+    }
+  });
+
+  // A lost race (someone paid, cancelled or sent the claim back first) or a refusal: the sentence, and nothing typed is lost.
+  it('shows the server\'s sentence for a lost race or a refusal and keeps the reason and the note as typed', async () => {
+    for (const [status, code, sentence] of [
+      [409, 'reimbursement_changed', 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'],
+      [409, 'payout_correction_not_allowed', 'ใบนี้ส่งกลับแก้บัญชีไม่ได้ในสถานะปัจจุบัน'],
+      [409, 'payout_correction_in_progress', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน'],
+      [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ทำรายการแก้บัญชีรับเงินของใบนี้'],
+    ] as const) {
+      const done: unknown[] = [];
+      const { handlers, changes } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว' }, (claim) => done.push(claim));
+      const calls = await withApi(() => ({ status, body: { statusCode: status, message: code } }), () => handlers.form.onSubmit(submitEvent));
+      assert.equal(calls.length, 1, code);
+      assert.deepEqual(done, [], `${code}: the page is not told the claim moved`);
+      // Busy on, banner cleared, the sentence, busy off: the reason ('') and the note ('') states are never set.
+      assert.deepEqual(changes, [{ initial: false, value: true }, { initial: null, value: null }, { initial: null, value: sentence }, { initial: false, value: false }], code);
+    }
+    // What the person then sees: their reason still chosen, their note still in the box, and the sentence.
+    const { html, texts } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว', error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน' });
+    assert.match(html, /<input type="radio"[^>]*checked=""[^>]*\/><span class="min-w-0">ธนาคารไม่ถูกต้อง<\/span>/);
+    assert.match(html, /<textarea[^>]*>ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว<\/textarea>/);
+    assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน'));
+    assert.match(html, /role="alert"/);
+  });
+});
+
+describe('the account form of a claim in a round (spec §14.5): the default, a typed account, or cash', () => {
+  const DEFAULT = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกรุงเทพ', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', token: 'a1b2c3d4e5f60718293a4b5c6d7e8f90' };
+  const withDefault = (detail: Record<string, any>, requesterDefault: object = DEFAULT) => ({ ...detail, payoutCorrectionActions: { canRequest: false, canSubmit: true, requesterDefault } });
+  const typed = { payoutKind: 'BANK_ACCOUNT' as const, bankChoice: 'ธนาคารไทยพาณิชย์', bankOther: '', accountName: 'นาย สมชาย ใจดี', accountNumber: '111-2-33444-1112' };
+  /** The form's own states: what was picked and typed, whether the server lets this viewer save a default, then the banner. */
+  const form = (detail: object, state: { picked?: Partial<PayoutCorrectionForm>; canSaveAsDefault?: boolean; error?: string; userId?: string } = {}, onDone: (claim: unknown) => void = noop) => {
+    let falses = 0;
+    return render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail, userId: state.userId ?? 'staff', canEditEmployees: false, onCancel: noop, onDone }), (start) => {
+      if (start && typeof start === 'object' && 'saveAsDefault' in start) return { ...start, ...state.picked };
+      if (start === false) { falses += 1; return falses === 1 ? state.canSaveAsDefault : undefined; }
+      return start === null ? state.error : undefined;
+    }, grabForm('reimbursement-payout-correction-account'));
+  };
+  const choices = (texts: string[]) => texts.filter((text) => ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้'].includes(text));
+
+  it('offers the requester\'s default account as the server shows it now, masked, beside cash and a typed account, and chooses none', () => {
+    const { html, texts } = form(withDefault(phaseA()));
+    assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+    assert.ok(texts.includes('ธนาคารกรุงเทพ เลขบัญชีลงท้าย 6789 · ชื่อบัญชี นาย สมชาย ใจดี'));
+    assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/);
+    assert.equal(html.includes(DEFAULT.token), false, 'the token is sent, never shown');
+    assert.equal(html.match(/\d{5,}/g), null, 'the last 4 digits only');
+    for (const text of ['แก้บัญชีรับเงิน', 'เลือกวิธีรับเงินคืนของใบนี้ใหม่ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน', 'ยกเลิก', 'บันทึกบัญชีรับเงิน']) assert.ok(texts.includes(text), text);
+    assert.doesNotMatch(html, /role="dialog"/);
+    assert.equal(html.match(/<label class="flex min-h-11 cursor-pointer/g)?.length, 3);
+    assertPlainThai(texts, 'the account form');
+  });
+
+  it('offers no default the requester has not set, and none that is cash: cash is its own choice', () => {
+    assert.deepEqual(choices(form(phaseA({ payoutCorrectionActions: { canRequest: false, canSubmit: true } })).texts), ['รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+    assert.deepEqual(choices(form(withDefault(phaseA(), { payoutMethod: 'CASH', token: DEFAULT.token })).texts), ['รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+  });
+
+  it('shows the account fields for a typed account, and "บันทึกเป็นบัญชีประจำ" only where the server allows it', () => {
+    const closed = form(withDefault(phaseA()), { canSaveAsDefault: true }).texts;
+    assert.equal(closed.includes('เลขบัญชี *') || closed.includes('บันทึกเป็นบัญชีประจำของฉัน'), false, 'nothing to type until that choice is made');
+    const open = form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED' }, canSaveAsDefault: true }).texts;
+    for (const text of ['ประเภทบัญชี *', 'ธนาคาร *', 'ชื่อบัญชี *', 'เลขบัญชี *', 'บันทึกเป็นบัญชีประจำของฉัน']) assert.ok(open.includes(text), text);
+    assert.equal(form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED' }, canSaveAsDefault: false }).texts.includes('บันทึกเป็นบัญชีประจำของฉัน'), false);
+  });
+
+  it('speaks to a finance reviewer who fills it on the requester\'s behalf, and tells them the requester is notified', () => {
+    const { html, texts } = form(withDefault(phaseA()), { userId: 'finance', picked: { mode: 'SPECIFIED' }, canSaveAsDefault: true });
+    assert.equal(heading(html), 'แก้บัญชีรับเงินแทนผู้เบิก');
+    assert.equal(heading(form(withDefault(phaseA())).html), 'แก้บัญชีรับเงิน');
+    assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+    assert.ok(texts.includes('กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน'));
+    assert.ok(texts.includes('บันทึกเป็นบัญชีประจำของผู้เบิก'));
+  });
+
+  it('says what happens after the save: the same approvers approve the new account, or a claim nobody approves is ready for payment', () => {
+    assert.ok(form(withDefault(phaseA())).texts.includes('เมื่อบันทึกแล้ว ใบจะส่งให้ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจ่าย ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที'));
+    assert.ok(form(withDefault(phaseB())).texts.includes('เมื่อบันทึกแล้ว บัญชีที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจบัญชีใหม่นี้แทน'));
+  });
+
+  it('sends each choice to the account endpoint as the API takes it, the default by the token of the account shown', async () => {
+    const answer = asAnswered(phaseB());
+    for (const [picked, canSaveAsDefault, body] of [
+      [{ mode: 'DEFAULT' }, false, { mode: 'DEFAULT', defaultToken: DEFAULT.token }],
+      [{ mode: 'CASH' }, false, { mode: 'CASH' }],
+      [{ mode: 'SPECIFIED', account: typed }, false, { mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '111-2-33444-1112' }],
+      [{ mode: 'SPECIFIED', account: typed, saveAsDefault: true }, true,
+        { mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '111-2-33444-1112', saveAsDefault: true }],
+    ] as const) {
+      const done: unknown[] = [];
+      const { handlers } = form(withDefault(phaseA()), { picked: picked as Partial<PayoutCorrectionForm>, canSaveAsDefault }, (claim) => done.push(claim));
+      const calls = await withApi(() => ({ status: 200, body: answer }), () => handlers.form.onSubmit(submitEvent));
+      assert.deepEqual(calls, [{ url: '/api/v1/companies/company-1/reimbursements/claim-1/payout-destination', method: 'PUT', body }], JSON.stringify(picked));
+      assert.deepEqual(done, [answer]);
+    }
+  });
+
+  it('asks nothing of the API until a choice is made and a typed account is complete, and marks the field', async () => {
+    for (const [picked, sentence] of [
+      [{}, 'กรุณาเลือกวิธีรับเงินคืนของใบนี้'],
+      [{ mode: 'SPECIFIED', account: { ...typed, accountNumber: '12345' } }, 'เลขบัญชีต้องเป็นตัวเลข 6 ถึง 20 หลัก'],
+    ] as const) {
+      const { handlers, changes } = form(withDefault(phaseA()), { picked: picked as Partial<PayoutCorrectionForm> });
+      const calls = await withApi(() => ({ status: 200, body: {} }), () => handlers.form.onSubmit(submitEvent));
+      assert.deepEqual(calls, []);
+      assert.ok(changes.some((change) => change.value === sentence), sentence);
+    }
+  });
+
+  it('shows the server\'s sentence for a refusal and keeps the account as typed', async () => {
+    for (const [status, code, sentence] of [
+      [409, 'payout_destination_changed', translateApiError('payout_destination_changed')!],
+      [409, 'payout_correction_not_requested', 'ใบนี้ไม่ได้ถูกส่งกลับให้แก้บัญชีรับเงิน กรุณาเปิดใบใหม่เพื่อดูสถานะล่าสุด'],
+      [409, 'reimbursement_changed', 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'],
+      [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ทำรายการแก้บัญชีรับเงินของใบนี้'],
+    ] as const) {
+      const done: unknown[] = [];
+      const { handlers, changes } = form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED', account: typed } }, (claim) => done.push(claim));
+      const calls = await withApi(() => ({ status, body: { statusCode: status, message: code } }), () => handlers.form.onSubmit(submitEvent));
+      assert.deepEqual([calls.length, done], [1, []], code);
+      assert.ok(changes.some((change) => change.value === sentence), `${code}: ${JSON.stringify(changes)}`);
+      // The form's own state (what was picked and typed) is never set again by a refusal.
+      assert.equal(changes.some((change) => !!change.initial && typeof change.initial === 'object' && 'saveAsDefault' in change.initial), false, code);
+    }
+    const { html, texts } = form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED', account: typed }, error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน' });
+    assert.match(html, /<input[^>]*aria-label="ชื่อบัญชี"[^>]*value="นาย สมชาย ใจดี"/);
+    assert.match(html, /<input[^>]*aria-label="เลขบัญชี"[^>]*value="111-2-33444-1112"/);
+    assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน'));
+  });
+});
+
+describe('the card a round\'s approvers compare (spec §14.6)', () => {
+  const card = (detail: object) => render(h(correctionUi.PayoutCorrectionComparison, { detail }));
+
+  it('sets the account the claim was approved with beside the new one, last 4 digits only, and says nothing else changed', () => {
+    const { html, texts } = card(phaseB());
+    assert.deepEqual(texts, [
+      'สิ่งที่เปลี่ยน: บัญชีรับเงินคืน',
+      'บัญชีเดิม', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี',
+      'บัญชีใหม่', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112 · ชื่อบัญชี นาย สมชาย ใจดี',
+      'รายการและยอดเงิน 1,614.50 บาท เท่ากับที่อนุมัติไว้เมื่อ 1 ต.ค. 2569 10:00 น. การอนุมัติครั้งนี้ตรวจเฉพาะบัญชีรับเงินคืน',
+      'ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เลขบัญชีไม่ถูกต้อง', 'หมายเหตุ: ธนาคารแจ้งว่าไม่พบบัญชีนี้',
+      'ผู้เบิกแก้บัญชีรับเงิน เมื่อ 1 ต.ค. 2569 12:00 น.',
+    ]);
+    assert.equal(html.match(/\d{5,}/g), null);
+    assertPlainThai(texts, 'the comparison card');
+  });
+
+  it('reads a change to or from cash, an account given on the requester\'s behalf, and a claim that had no account', () => {
+    const toCash = logic.payoutCorrectionComparison(phaseB({ payout: { payoutMethod: 'CASH' }, payoutCorrectionHistory: [SENT_BACK, { ...GIVEN, payoutMethod: 'CASH', payoutVersion: undefined }] }))!;
+    assert.deepEqual([toCash.previous, toCash.current], ['ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี', 'รับเป็นเงินสด']);
+    const fromCash = logic.payoutCorrectionComparison(phaseB({ payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, previous: { payoutMethod: 'CASH' }, submittedAt: AT.given } }))!;
+    assert.equal(fromCash.previous, 'รับเป็นเงินสด');
+    const onBehalf = logic.payoutCorrectionComparison(phaseB({ payoutCorrectionHistory: [SENT_BACK, { ...GIVEN, byUserId: 'finance', byName: NAMES.payer }] }))!;
+    assert.equal(onBehalf.submitted, 'วราภรณ์ การเงิน แก้บัญชีรับเงินแทนผู้เบิก เมื่อ 1 ต.ค. 2569 12:00 น.');
+    // A claim sent before claims carried an account had none to be approved with.
+    const legacy = logic.payoutCorrectionComparison(phaseB({ payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, previous: undefined, submittedAt: AT.given } }))!;
+    assert.equal(legacy.previous, 'ไม่มี ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน');
+    // An action's answer carries no history: the card still says when the account was given.
+    assert.equal(logic.payoutCorrectionComparison(phaseB({ payoutCorrectionHistory: undefined }))!.submitted, 'ผู้เบิกแก้บัญชีรับเงิน เมื่อ 1 ต.ค. 2569 12:00 น.');
+  });
+
+  it('is shown for a claim whose new account waits for approval, and for no other claim', () => {
+    for (const detail of [ready(), phaseA(), reapproved(), { status: 'PENDING_APPROVAL' }]) {
+      assert.equal(logic.payoutCorrectionComparison(detail), null);
+      assert.equal(card(detail).html, '');
+    }
   });
 });
