@@ -607,6 +607,19 @@ reimbursement.policy.manage
 reimbursement.export
 ```
 
+#### Voiding a payment that a bank statement line is matched to
+
+No new permission key (review fix 2026-10-01). `reimbursement.payment.void` alone undoes the confirmed bank
+match of the payment it voids: the match becomes VOIDED and the statement line's status is derived again, in
+the void's own transaction, and a `bank.match.void` audit row is written beside the `reimbursement.payment.void`
+one, both in the name of the person who voided. `bank.match.unmatch` is not asked for: a match has no meaning
+once its payment is voided, and the bank matching screen cannot reach a fully matched line to undo it there.
+
+- A line that sits in a COMPLETED reconciliation is refused (`reimbursement_payment_bank_reconciled`). Reopening
+  that reconciliation is the bank module's own act and needs `bank.reconciliation.reopen`.
+- In the other direction, `bank.match.confirm` refuses a claim payment that is no longer RECORDED
+  (`bank_match_payment_not_recorded`). The confirm reads the payment under the lock the void takes.
+
 #### Reimbursement payment slips
 
 No new permission key. A payment slip is payment evidence with readers of its own (owner decisions
