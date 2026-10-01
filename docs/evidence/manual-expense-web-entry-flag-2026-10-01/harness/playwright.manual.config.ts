@@ -1,0 +1,2 @@
+import { defineConfig, devices } from '@playwright/test';
+export default defineConfig({testDir:'./e2e',testMatch:'manual-flag-simulation.spec.ts',timeout:90_000,expect:{timeout:12_000},workers:1,retries:0,fullyParallel:false,reporter:[['list'],['json',{outputFile:'/tmp/manual-flag-e2e-20261001/evidence/results.json'}],['html',{outputFolder:'/tmp/manual-flag-e2e-20261001/evidence/report',open:'never'}]],outputDir:'/tmp/manual-flag-e2e-20261001/evidence/test-results',use:{baseURL:'http://127.0.0.1:3060',...devices['Desktop Chrome'],trace:'on',screenshot:'only-on-failure'}});
