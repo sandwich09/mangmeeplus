@@ -260,3 +260,45 @@ Working branch: codex/executive-copy-main-20261001, based on origin/main 9aad1fd
 Verification: portable build PASS (535199-byte inline fragment); check-demo.cjs PASS (790px overview, preserved 40/15/13 company drilldowns and cash sums, comparisons, state restore, permission/account states, 320–1440px and theme); check-export.cjs PASS including owner contacts and all prior scope/state tests. Focused revenue copy/overflow checks PASS at 1440/390/320; reviewed the 390px screenshot. All 12 scoped Markdown docs have 142 valid local links. No forbidden UI wording found in the revenue view.
 The first portable wrapper check exposed missing stored-view restoration; added the same local state bridge used by the inline host and reran the full check successfully. No calculation or backend change.
 Delivery: submit this checked spec/prototype revision via separate main/develop PRs; record final PR/check/merge IDs in the local handoff memory and final response. Actual app integration remains unimplemented.
+
+## Independent review and backend document amendments — 2026-10-02
+
+Two independent reviews ran on 2026-10-01 against `origin/develop` `ae13970b0`: backend (RB-01–RB-42, `docs/research/mangmee-executive-spec-review-backend-2026-10-01-th.md`) and UI (RU-01–RU-30, `docs/research/mangmee-executive-spec-review-ui-2026-10-01-th.md`). This entry records the backend-side amendments that followed. Documentation only: no application code, no prototype code, no database, cloud, payment-provider or AI calls. Branch `claude/spec-reviews-20261001` in worktree `/private/tmp/mangmee-executive-review-20261001`; not pushed.
+
+UI-side documents (UI spec and plan, navigation/comparison, plain-language, Pareto, Excel export, QA scenarios, prototype) are amended by a different agent in a different worktree and branch. They were not touched here. Backend contract changes that RU findings needed (RU-03, RU-05, RU-06, RU-08, RU-10–RU-13, RU-15, RU-17–RU-21) were applied in the backend spec.
+
+Changed files:
+
+- `docs/specs/mangmee-executive-business-backend-spec-th.md` — status v2, a “what changed and why” table citing finding ids, a renamed-contract table for the UI-side documents, rewritten §9–§17 and §20–§22, notes on §7, §8 and §18.
+- `docs/plans/mangmee-executive-business-backend-plan-th.md` — new stage order, itemised S2 migrations/backfills, prohibitions, test strategy with CI registration, conditions before real use.
+- `docs/research/mangmee-executive-business-be-gap-impact-2026-10-01-th.md` — dated section appended; nothing above it rewritten.
+- `docs/research/mangmee-executive-current-code-bugs-2026-10-01-th.md` — new; bugs in today's code that stand on their own.
+- `docs/research/mangmee-executive-spec-review-backend-2026-10-01-th.md` — status line only.
+
+Main contract changes in the backend spec:
+
+- API05/API06 use `:targetCompanyId`. Rule: no route under `system/` may name a parameter `companyId`, and the web must not send a customer `X-Company-Id`, because `AuthGuard` reads both as the caller's company (RB-01; same root cause as the live bug RB-40).
+- The 15-minute snapshot is gone. A scheduled, re-runnable job (worker → `POST /v1/internal/executive/rebuild`) builds `ExecutiveCompanyMonth`, `ExecutiveCompanyProfile` and `ExecutiveReportBuild` (proposed names). They hold numbers and dimension codes only; owner contact is read live from `User`. Responses carry `build.id`; a stale `buildId` on a read returns `buildChanged: true`; only the export returns 409 `EXECUTIVE_SNAPSHOT_EXPIRED` (code name kept on purpose).
+- Money comes from the existing billing settlement reader (`billing-settlement.service.ts`, `SCAN_PROVIDER_BALANCE` → `OBSERVE_PROVIDER_BALANCE`), counted once per provider movement id. `paid-invoice.ts` and `billing-schedule.ts` are never modified. `productKind` keeps the real billing values; `purchaseKind` is derived; paid add-ons are “not on sale”, not zero.
+- Usage is computed from existing transaction tables (`ExpenseRecord.confirmedAt`, `AccountingDocument.issuedAt`, `AiUsageEvent` on `line-turn`). No event table, no producers. `AiTurn` is purged and cannot be history.
+- Permissions `system.executive.read`, `.export`, `.contact.read`, `system.executive_user.manage`; roles `MANGMEE_EXECUTIVE` plus per-person add-on roles `MANGMEE_EXECUTIVE_EXPORT` and `MANGMEE_EXECUTIVE_CONTACT`; `SYSTEM_ADMIN` holds all four. All executive roles are platform-only and every endpoint also calls `assertPlatformTenant`.
+- Accounts follow the sales-agent pattern (username + temporary password, forced change), are dedicated accounts, and suspension sets the platform membership to `SUSPENDED` and revokes sessions. No `commandId`/`expectedVersion`.
+- One endpoint table API01–API15 (API13 export, API14 credential, API15 per-person access), `page`/`pageSize` (20/100), `sortBy`/`sortDir`, `planState` replaces `serviceStatus`, `entity` removed from v1, a full `reasonCodes` list, and an export data contract in §16.4.
+- Audit rows `executive.report.read`, `executive.company.read`, `executive.export.created`, `executive.user.*` never carry a customer `companyId`. No environment feature switches.
+
+Decided facts recorded (BE §21.3 D01–D08): deletion deferred and hidden; contact source is the owner account; an admin-assigned referrer after signup gives the salesperson no credit (RB-35 is intended, owner decision 2026-10-01); bugs RB-40, RB-36, RB-34, RB-38 are being fixed in a separate lane (owner, 2026-10-01); `paid-invoice.ts`/`billing-schedule.ts` are never modified; no environment feature switches; exactly one System Admin; plain Thai on screens.
+
+Open questions: BE §21.2 Q10–Q36 (27 questions). The owner has not answered; each is written for the recommended answer, marked “ข้อเสนอ รอเจ้าของยืนยัน”, with the alternative and its cost. Q01–Q09 ids are unchanged and now act as group headings. Q35 (single-admin data-rights deadlock) and Q36 (sales credit differs from the sales spec in four places) are separate from the report work. Q06–Q08 stay deferred.
+
+Corrections to the backend review found while writing the amendments (also noted in that file's status line):
+
+- `CompanyOcrUsageEvent` rows are deleted when an admission is compensated (`company-ocr-governance.ts`), so the review's “no deleting code found” was wrong. They remain positive evidence only.
+- Balance scans are created by an admin command but executed by the billing worker; an automatic schedule exists for provider event scans (`CONFIGURE_PROVIDER_SCANS`, default off), not for balance scans.
+- A company-level web-entry source exists: `AuditLog` rows `auth.line.liff_session` and `auth.line_handoff.exchange` carry `companyId` (written fire-and-forget), already used by the admin partner timeline.
+- `ReceiptUnitEntry` exists only for lot-bound receipt reads, so “receipt read succeeded” is not a v1 metric.
+- CI runs API specs through three lists, not one: the `test` script in `apps/api/package.json`, `scripts/line-ai-whole-chain-acceptance.catalog.mjs`, and per-file `*.pg.spec.ts` steps in `.github/workflows/ci.yml`.
+- Refinements: suspend by membership status instead of removing the role (RB-25); the Excel export grant is per person, default off (RB-05, following RU-20); manual package terms are shown as their own label in v1 instead of asking the admin to back-enter amounts (RB-12).
+
+Verification: every amended file checked for existing relative link targets, balanced code fences, table column counts, odd backticks and trailing whitespace (`git diff --check` clean). No tests were run because no code changed. G counts in the application remain 22 OPEN / 13 DEFERRED / 0 CLOSED.
+
+Next: owner answers Q10–Q15 first (they unblock S1 and S5), then Q16–Q34. The UI-side documents must adopt the renamed contract (BE “ชื่อในสัญญาที่เปลี่ยน” table). Before any real use: the legal review in BE §20.3, the one-off company classification, and the provider read-back, which needs the owner's go and the cloud runbook.
