@@ -17,6 +17,7 @@ import {
 } from '../../domain/logic/employee-access.logic';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { invalidateLineConversationState } from '../../../line-ai/application/line-conversation-context.service';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 
 export type UpdateEmployeeCommand = UpdateEmployeeInput & {
   companyId: string;
@@ -78,6 +79,7 @@ export class UpdateEmployeeUseCase {
           cmd.requesterPermissions,
           cmd.requesterEntitlementDeniedPermissions,
           cmd.requesterRoles?.includes('OWNER'),
+          cmd.companyId === PLATFORM_TENANT_ID,
         );
         if (violation) {
           await this.auditDeniedRoleGrant(cmd, existing.userId, violation);
