@@ -12,7 +12,7 @@ import {
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
-import { ExportReimbursementEvidenceUseCase } from './reimbursement-finance.use-case';
+import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase } from './reimbursement-finance.use-case';
 import { claimSignatureAckHash, claimSnapshotFields, computeSnapshotHash } from '../../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot, payoutAttestationError, sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
@@ -1914,5 +1914,33 @@ describe('payout: nothing but the two reveal calls carries the number', () => {
     await refused(world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK, accountNumber: typed, saveAsDefault: true } })));
     assert.equal(refusals.length, 9);
     assert.equal(JSON.stringify([refusals, world.audits]).includes(typed), false);
+  });
+});
+
+// The finance note is copied into the requester's notification (web and LINE). People write account
+// numbers there ("โอนเข้า 123-4-56789-0 แทน"), and a plain "six digits in a row" check lets that through.
+describe('payout: a note that goes into a notification carries no account number', () => {
+  it('refuses the finance note before anything is decided, and takes an ordinary one', async () => {
+    const decisions: any[] = [];
+    const repo = {
+      findRequestById: async () => ({ id: 'rb-1', companyId: 'co-1', branchId: 'branch-1', status: 'FINANCE_REVIEW', updatedAt: new Date('2026-10-01T00:00:00.000Z') }),
+      recordFinanceReviewAtomic: async (data: any) => { decisions.push(data); throw new Error('stop after the guard'); },
+      beginFinanceApprovalAtomic: async (data: any) => { decisions.push(data); throw new Error('stop after the guard'); },
+    } as any;
+    const review = new FinanceReviewReimbursementUseCase(repo, { log: async () => undefined } as any, {} as any, {} as any);
+    const finance = ctx({ userId: 'finance-1', permissions: ['reimbursement.finance_review'] });
+    for (const note of ['บัญชีผิด โอนเข้า 123-4-56789-0 แทน', 'พร้อมเพย์ 081 000 1234', 'เลขบัญชี 0123456789']) {
+      for (const decision of ['NEEDS_INFO', 'APPROVED_FOR_PAYMENT'] as const) {
+        await assert.rejects(review.execute(finance, 'rb-1', { decision, note }), (error: any) => {
+          assert.equal(error.getStatus?.(), 400);
+          assert.match(error.message, /^note_contains_account_number$/);
+          return true;
+        }, note);
+      }
+    }
+    assert.equal(decisions.length, 0);
+    // A note without one goes on to the decision.
+    await assert.rejects(review.execute(finance, 'rb-1', { decision: 'NEEDS_INFO', note: 'ใบเสร็จลงวันที่ 01-10-2569 ไม่ตรงกับวันที่เบิก' }), /stop after the guard/);
+    assert.equal(decisions.length, 1);
   });
 });

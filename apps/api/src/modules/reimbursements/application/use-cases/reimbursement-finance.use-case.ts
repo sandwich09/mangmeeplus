@@ -8,7 +8,7 @@ import type {
   ReimbursementFinanceQueueItem,
   ReimbursementRequestDetail,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilPeriodKey, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, looksLikeAccountNumber, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
@@ -93,6 +93,8 @@ export class FinanceReviewReimbursementUseCase {
     const now = new Date();
     const note = input.note?.trim();
     if (note && note.length > 500) throw new BadRequestException('finance_review_note_too_long');
+    // The note is copied into the requester's notification, on the web and on LINE: no account number there.
+    if (looksLikeAccountNumber(note)) throw new BadRequestException('note_contains_account_number');
     if (input.resolveDuplicate) {
       if (!ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
       if (!input.duplicateResolutionReason?.trim()) throw new BadRequestException('duplicate_resolution_reason_required');

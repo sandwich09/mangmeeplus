@@ -32,7 +32,7 @@ import {
   type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
-import { invalidPayoutDestinationField, maskedPayoutAccount, maskedPayoutAccountNumber, normalizePayoutAccountNumber } from '@watchdog-bms/contracts';
+import { invalidPayoutDestinationField, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber, normalizePayoutAccountNumber } from '@watchdog-bms/contracts';
 import {
   CASH_PAYOUT_FINGERPRINT,
   draftFollowsDefaultAfterReopen,
@@ -738,6 +738,40 @@ describe('payout: sealing an account (one place on write)', () => {
   it('redaction drops a full number that strays into an outbound payload and keeps the last 4', () => {
     assert.deepEqual(redactPayload({ accountNumber: '0123456789', payoutAccountNumber: '0123456789', accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' }),
       { accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' });
+  });
+
+  // The evidence export and the event payloads nest objects; the old check looked at the top level only.
+  it('strips an account number at any depth, and leaves every other nested value as it was', () => {
+    const paidAt = new Date('2026-10-01T00:00:00.000Z');
+    const nested = redactPayload({
+      request: { id: 'rb-1', payout: { accountNumber: '0123456789', accountNumberEncrypted: 'v1:cipher', accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' } },
+      payments: [{ paymentNo: 'RBPAY-1', destination: { payoutAccountNumber: '0123456789', accountLast4: '6789' }, paidAt }],
+      lines: [{ lineNo: 1, sourceExpenseSnapshot: { seller: { name: 'ร้าน', documentNumber: 'INV-0042' }, accountHintKey: 'travel' } }],
+    });
+    assert.deepEqual(nested, {
+      request: { id: 'rb-1', payout: { accountLast4: '6789', bankName: 'ธนาคารกสิกรไทย' } },
+      payments: [{ paymentNo: 'RBPAY-1', destination: { accountLast4: '6789' }, paidAt }],
+      lines: [{ lineNo: 1, sourceExpenseSnapshot: { seller: { name: 'ร้าน', documentNumber: 'INV-0042' }, accountHintKey: 'travel' } }],
+    });
+    assert.equal((nested.payments as any[])[0].paidAt, paidAt, 'a date is a value, not a bag of keys');
+    assert.equal(JSON.stringify(nested).includes('0123456789'), false);
+  });
+});
+
+describe('payout: no account number in a note that goes into a notification', () => {
+  it('catches a number written the way people write one: in groups, with dashes or spaces', () => {
+    for (const text of [
+      'บัญชีผิด ต้องเป็น 123-4-56789-0', 'โอนเข้า 123 4 56789 0 แทน', 'พร้อมเพย์ 081-000-1234', 'เบอร์ 081 234 5678 ครับ', '0812345678',
+      'เลขบัญชี 0123456789', 'กสิกร 012-3-45678-9 ชื่อสมชาย', '000-123-456-789-012', 'เลขที่ 123456',
+    ]) assert.equal(looksLikeAccountNumber(text), true, text);
+  });
+
+  it('lets ordinary notes through: dates, small amounts, short references', () => {
+    for (const text of [
+      'ยอดไม่ตรงกับใบเสร็จ', 'ใบเสร็จลงวันที่ 01-10-2569 ไม่ตรงกับวันที่เบิก', 'วันที่ 2026-10-01 ซ้ำกับใบก่อน', 'ยอด 1,250.00 บาท เกินวงเงิน 500 บาท',
+      'ใบเสร็จเลขที่ 12345 ไม่ชัด', 'รายการที่ 3 - 4 ไม่มีใบเสร็จ', 'แนบสลิป 2 ใบ ของวันที่ 5 - 6 ต.ค.', '', '   ',
+    ]) assert.equal(looksLikeAccountNumber(text), false, text);
+    for (const notText of [undefined, null, 1234567890, { text: '0123456789' }]) assert.equal(looksLikeAccountNumber(notText), false);
   });
 });
 

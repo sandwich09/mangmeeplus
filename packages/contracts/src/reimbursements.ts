@@ -620,6 +620,20 @@ export function invalidPayoutDestinationField(input: Partial<PayoutDestinationIn
   return null;
 }
 
+/**
+ * Whether free text looks like it carries an account number. Used on the notes the system copies
+ * into a notification, where an account number must never land (payout spec §11.3):
+ *  - a run of 6 or more digits; or
+ *  - 10 or more digits written in groups joined by spaces or dashes, the way people write an account
+ *    or a PromptPay number: "123-4-56789-0", "081 234 5678".
+ * Groups are only joined from 10 digits up, so a date such as "01-10-2569" or "2026-10-01" still passes.
+ */
+export function looksLikeAccountNumber(text: unknown): boolean {
+  if (typeof text !== 'string') return false;
+  if (/\d{6,}/.test(text)) return true;
+  return (text.match(/\d+(?:[ -]\d+)+/g) ?? []).some((grouped) => grouped.replace(/[ -]/g, '').length >= 10);
+}
+
 /** The one masked form of an account number, on every surface that shows one. */
 export function maskedPayoutAccountNumber(accountLast4: string): string {
   return `ลงท้าย ${accountLast4}`;

@@ -631,14 +631,28 @@ export function isSlaRisk(ageHrs: number, slaHours?: number): boolean {
 
 const SENSITIVE_KEYS = /url|signedurl|objectkey|token|secret|accountnumber|ocr|rawtext|filebody/i;
 
-/** Strips known-sensitive keys from a bounded payload before it leaves the module. */
+/**
+ * Strips known-sensitive keys from a bounded payload before it leaves the module. The key list
+ * applies to the top level, as before; an account number is stripped at any depth, because the
+ * export and the event payloads nest objects and a full number must not ride out inside one
+ * (`accountLast4` is a different key and stays).
+ */
 export function redactPayload(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload)) {
     if (SENSITIVE_KEYS.test(key)) continue;
-    out[key] = value;
+    out[key] = withoutAccountNumbers(value);
   }
   return out;
+}
+
+function withoutAccountNumbers(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutAccountNumbers);
+  // Plain objects only: a Date or a decimal is a value, not a bag of keys.
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !/accountnumber/i.test(key))
+    .map(([key, item]) => [key, withoutAccountNumbers(item)]));
 }
 
 /**
