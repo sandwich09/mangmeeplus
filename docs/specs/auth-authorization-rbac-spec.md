@@ -1048,6 +1048,7 @@ Audit metadata rules:
 - Do not store raw access tokens, refresh tokens, cookies, passwords, LINE raw payloads, full prompts, full tool outputs, full document payloads, or full exported files.
 - For denied events, store denial category, not hidden policy details.
 - For auth failures before user resolution, `actorUserId` may be null.
+- `actorUserId` is a foreign key to the user table and only ever holds a real user id. A row written by a worker, a scheduled job or an automatic step names itself with `actorType: SYSTEM` and `actorRefId` (the component), never with a placeholder id such as `system`: the constraint rejects that insert, and a post-commit audit write then drops the row without failing its caller. A use case that can run under a worker context derives its actor with `auditActorOf`; `normalizeAuditActor` keeps the worker context id out of the foreign key as a last resort.
 - For companyless failures, `companyId` may be null.
 
 High-risk actions must fail closed if audit write fails:
