@@ -167,5 +167,6 @@ test เดิม “a complete 60-key EXPLICIT shop can quote and buy” (`bill
 
 - เริ่มจาก `origin/develop` ล่าสุด และทำซ้ำอาการก่อนแก้ ถ้าทำซ้ำไม่ได้ให้บันทึกและหยุด
 - แก้ทีละบั๊ก คนละ commit ไม่รวมกับงานสวิตช์ทางเข้า
+- test ใหม่ฝั่ง API ต้องมีที่ที่ CI รัน: script `test` ของ `apps/api/package.json` และบางขั้นใน `.github/workflows/ci.yml` ระบุไฟล์ spec ทีละไฟล์ ให้เขียน test ลงในไฟล์ spec ที่ CI รันอยู่แล้ว หรือขออนุญาตเจ้าของก่อนเพิ่มไฟล์ในรายการ เพราะเป็นการแก้ `package.json` ที่ไม่ใช่ dependency
 - ไม่แก้ข้อมูลของลูกค้าเพื่อซ่อมผล การซ่อมร้านที่ได้รับผลแล้วเป็นการตัดสินของเจ้าของ
 - ก่อนอ่านหรือแตะ cloud ให้อ่าน [cloud operations](../runbooks/cloud-environment-operations.md) และก่อน deploy ให้ทำตาม [deployment protocol](../runbooks/uat-production-v2-deployment.md)
