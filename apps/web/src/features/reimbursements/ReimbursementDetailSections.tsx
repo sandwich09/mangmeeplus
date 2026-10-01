@@ -42,6 +42,8 @@ import { PayerConfirmationCheck } from './ReimbursementPayout';
 import {
   PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, paymentDestinationText, paymentFormPayout, requestedPayout,
 } from './reimbursement-payout.logic';
+// The one wording for a voided payment (its own import, apart from the model block above).
+import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 
 /** `desk`: the claim's `currentDesk`. A claim the system holds reads "รอระบบปรับสถานะ", not the status it has not left yet. */
 export function StatusBadge({ status, desk }: { status: string; desk?: { kind?: string } | null }) {
@@ -145,7 +147,8 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
   return (
     <Modal open title={`ยกเลิกการจ่าย ${payment.paymentNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
-        <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย" />
+        {/* Spec §12.8: a void also undoes the payment's match to a bank statement line, in the same transaction. */}
+        <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย ถ้าการจ่ายนี้จับคู่กับรายการเดินบัญชีธนาคารไว้แล้ว ระบบจะยกเลิกการจับคู่นั้นให้ด้วย" />
         {error && <ErrorBanner message={error} />}
         <div>
           <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผล *</label>
@@ -895,7 +898,8 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   <span className="font-mono font-semibold text-gray-700">{p.paymentNo}</span>
                   <span className="font-semibold tabular-nums text-gray-900">{formatMoney(p.paidAmount, p.currency)}</span>
                 </div>
-                <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
+                {/* A voided payment is said in the words of the button that voids it, the same words the timeline uses. */}
+                <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : p.status === 'VOIDED' ? PAYMENT_VOIDED_LABEL : 'สถานะการจ่าย'}</div>
                 <div className="mt-1 break-words text-gray-500">{`วันที่จ่าย ${dateShort(p.paidAt)}${p.paymentReference ? ` · เลขอ้างอิง ${p.paymentReference}` : ''}`}</div>
                 {/* Where the money went, as the payer confirmed it: masked for everyone, and when they confirmed.
                     A transfer with no account confirmed says so (a legacy claim, or a claim that asked for cash). */}

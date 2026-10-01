@@ -15,6 +15,7 @@ import {
   type ReimbursementPayoutInput,
   type ReimbursementPayoutMethod,
   type ReimbursementPayoutSummary,
+  type ReimbursementPayoutVersionSummary,
   type SetMemberPayoutAccountInput,
 } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
@@ -39,6 +40,8 @@ export const PAYER_IS_VERIFIER_NOTE = 'ยังไม่มีผู้ตร�
 export const PAID_DIFFERENTLY_LABEL = 'จ่ายต่างจากที่ผู้เบิกขอ';
 export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผล';
 export const MISMATCH_REASON_HAS_ACCOUNT_NUMBER = 'อย่าพิมพ์เลขบัญชีในช่องเหตุผล เพราะเหตุผลนี้แสดงในประวัติการจ่ายให้ทุกคนที่เปิดใบเบิกเห็น';
+/** Spec §10.2: a requester who approved their own claim gave their own word for the account. It is never called a check. */
+export const REQUESTER_SELF_ATTESTED = 'ผู้เบิกยืนยันบัญชีของตนเอง';
 export const PAYOUT_ATTESTATION_TEXT = 'ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก';
 export const PAYOUT_ATTESTATION_REQUIRED = 'ติ๊กยืนยันว่าตรวจบัญชีรับเงินแล้วก่อนอนุมัติ';
 
@@ -192,26 +195,70 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
     };
   }
   const notes: string[] = [];
-  if (payout.followsDefault) notes.push('ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่');
-  else if (draft && payout.payoutMethod === 'BANK_TRANSFER') notes.push('บัญชีที่ระบุสำหรับใบนี้');
   // Someone other than the requester typed or set the account. It is said also when their name is
   // no longer known (they left the company): silence would read as "the requester entered it".
-  if (payout.enteredByName || payout.enteredByUserId) {
-    const setBy = `ตั้งโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้อื่น'}`;
-    notes.push(payout.followsDefault ? `บัญชีประจำนี้${setBy}`
-      // A sent claim that copied the default: the approver reads who set that default before attesting.
-      : payout.source === 'DEFAULT_ACCOUNT' ? `ใช้บัญชีประจำของผู้เบิก ซึ่ง${setBy}`
-        : `กรอกโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้จัดทำ'}`);
+  const enteredByOther = payout.enteredByName || payout.enteredByUserId;
+  if (payout.followsDefault) {
+    notes.push('ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่');
+    if (enteredByOther) notes.push(`บัญชีประจำนี้ตั้งโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้อื่น'}`);
+  } else {
+    if (draft && payout.payoutMethod === 'BANK_TRANSFER') notes.push('บัญชีที่ระบุสำหรับใบนี้');
+    // Spec §17.2: a sent claim always says where its account came from. A draft says it when someone else typed it.
+    const source = !draft || enteredByOther ? payoutSourceText(payout) : null;
+    if (source) notes.push(source);
   }
   if (payout.payoutMethod === 'CASH') return { state: 'cash', line: PAYOUT_METHOD_TEXT.CASH!, notes };
-  if (!draft) {
-    notes.push(!payout.verifiedAt
-      ? 'ยังไม่มีผู้ตรวจบัญชีนี้'
-      : payout.verifiedByUserId && payout.verifiedByUserId === detail.requesterUserId
-        ? `ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ ${formatThaiDateTime(payout.verifiedAt)}`
-        : `ตรวจบัญชีแล้วโดย ${payout.verifiedByName ?? 'ผู้อนุมัติ'} เมื่อ ${formatThaiDateTime(payout.verifiedAt)}`);
-  }
+  if (!draft) notes.push(payoutAttestationText(payout, detail.requesterUserId) ?? 'ยังไม่มีผู้ตรวจบัญชีนี้');
   return { state: 'transfer', line: maskedPayoutAccount(payout), notes };
+}
+
+type PayoutAccountOrigin = Pick<ReimbursementPayoutSummary, 'source' | 'enteredByUserId' | 'enteredByName' | 'verifiedByUserId' | 'verifiedByName' | 'verifiedAt'>;
+
+/**
+ * Where a sent claim's account came from, in one phrase (spec §17.2): a copy of the requester's default
+ * account, typed by the requester for this claim, or typed by whoever prepared the claim for them.
+ * Null when nothing says (cash has no account, and so no origin).
+ */
+export function payoutSourceText(account: PayoutAccountOrigin): string | null {
+  const other = account.enteredByName || account.enteredByUserId;
+  // A copy of the default that someone else set: the approver reads who set that default before attesting.
+  if (account.source === 'DEFAULT_ACCOUNT') return `ใช้บัญชีประจำของผู้เบิก${other ? ` ซึ่งตั้งโดย${account.enteredByName ? ` ${account.enteredByName}` : 'ผู้อื่น'}` : ''}`;
+  if (other) return `กรอกโดย${account.enteredByName ? ` ${account.enteredByName}` : 'ผู้จัดทำ'}`;
+  return account.source === 'REQUESTER' ? 'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้' : null;
+}
+
+/** Who attested an account and when: an approver or a payer by name, the requester for their own account. Null when nobody has. */
+export function payoutAttestationText(account: PayoutAccountOrigin, requesterUserId?: string): string | null {
+  if (!account.verifiedAt) return null;
+  return account.verifiedByUserId && account.verifiedByUserId === requesterUserId
+    ? `${REQUESTER_SELF_ATTESTED} เมื่อ ${formatThaiDateTime(account.verifiedAt)}`
+    : `ตรวจบัญชีแล้วโดย ${account.verifiedByName ?? 'ผู้อนุมัติ'} เมื่อ ${formatThaiDateTime(account.verifiedAt)}`;
+}
+
+/** One account the claim has been sent with, in the card's own words. */
+export type ClaimPayoutHistoryRow = { version: number; current: boolean; line: string; notes: string[] };
+
+/**
+ * The claim's account history for the card "การรับเงินคืน" (spec §17.2): every account the claim has been
+ * sent with, oldest first, masked, in the same phrases as the account above it. Empty when there is
+ * nothing to tell beyond that account: the claim has only ever been sent with the one in use.
+ */
+export function claimPayoutHistory(detail: {
+  requesterUserId?: string;
+  payout?: ReimbursementPayoutSummary | null;
+  payoutHistory?: readonly ReimbursementPayoutVersionSummary[] | null;
+}): ClaimPayoutHistoryRow[] {
+  const versions = detail.payoutHistory ?? [];
+  const current = detail.payout?.version;
+  if (versions.every((version) => version.version === current)) return [];
+  return versions.map((version) => ({
+    version: version.version,
+    current: version.version === current,
+    line: payoutAccountWithName(version),
+    // An account no longer in use says who attested it only when someone did: "not yet" would never come true.
+    notes: [`เริ่มใช้กับใบนี้เมื่อ ${formatThaiDateTime(version.frozenAt)}`, payoutSourceText(version), payoutAttestationText(version, detail.requesterUserId)]
+      .filter((note): note is string => !!note),
+  }));
 }
 
 /**

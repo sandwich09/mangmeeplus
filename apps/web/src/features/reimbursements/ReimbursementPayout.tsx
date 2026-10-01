@@ -21,7 +21,7 @@ import {
 } from './reimbursement-payout.api';
 import {
   BANK_OPTIONS, LEGACY_ASK_REQUESTER_NOTE, LEGACY_DEFAULT_LABEL, OTHER_BANK, PAYER_CONFIRMATION_TEXT, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT,
-  chooseClaimPayoutMode, claimPayoutView, emptyPayoutAccountForm,
+  chooseClaimPayoutMode, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
   memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutDefaultChangedHint, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
@@ -384,6 +384,8 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
 }) {
   const payout: ReimbursementPayoutSummary | undefined = detail.payout;
   const view = claimPayoutView(detail);
+  // Spec §17.2: every account this claim has been sent with. Masked like the one above, and no reveal here.
+  const history = claimPayoutHistory(detail);
   const defaultChanged = payoutDefaultChangedHint(detail, canWithdraw);
   // A draft whose payout block was not loaded (an action response): say nothing rather than guess.
   if (view.state === 'unknown') return null;
@@ -440,6 +442,22 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
         <ul className="space-y-1 text-xs text-gray-500">{view.notes.map((note) => <li key={note}>{note}</li>)}</ul>
       )}
       {defaultChanged && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{defaultChanged}</p>}
+      {history.length > 0 && (
+        <div className="border-t border-gray-100 pt-3" data-testid="reimbursement-payout-history">
+          <h3 className="text-xs font-semibold text-gray-500">ประวัติบัญชีรับเงินของใบนี้</h3>
+          <ol className="mt-2 space-y-2">
+            {history.map((row) => (
+              <li key={row.version} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="min-w-0 break-words text-sm font-semibold text-gray-900">{row.line}</span>
+                  {row.current && <MangmeeBadge tone="teal">ใช้อยู่ตอนนี้</MangmeeBadge>}
+                </div>
+                <ul className="mt-1 space-y-0.5 text-xs text-gray-500">{row.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
     </MangmeeCard>
   );
 }

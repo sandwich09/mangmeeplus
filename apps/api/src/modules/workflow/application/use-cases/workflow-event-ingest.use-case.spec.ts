@@ -135,7 +135,10 @@ describe('IngestWorkflowEventUseCase', () => {
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
       // A body worth pushing carries the figures the title does not. The void notice is the one
       // that carries none: it says what happened to the claim, and the claim page has the rest.
-      if (key !== 'reimbursement_payment_voided') assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
+      // The paid notice prints the sentence the payment event carries, which holds the amount, how
+      // the payment was made and whether a slip is attached (payout spec §17.3).
+      if (key === 'reimbursement_payment_recorded') assert.equal(cfg['bodyTemplate'], '{{paidNotice}}', key);
+      else if (key !== 'reimbursement_payment_voided') assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
       assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
       if (key === 'reimbursement_ready_for_payment') {
         assert.equal(cfg['excludeRecipientPayloadKeys'], undefined, key);

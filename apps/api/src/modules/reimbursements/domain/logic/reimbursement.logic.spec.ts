@@ -37,6 +37,7 @@ import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 import {
   invalidPayoutDestinationField, isReimbursementClaimApprover, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber,
   normalizePayoutAccountNumber, reimbursementPaymentRule, reimbursementPaymentSlipRequired,
+  REIMBURSEMENT_PAYMENT_METHOD_LABELS, reimbursementPaidNotice, reimbursementPaymentHowText,
 } from '@watchdog-bms/contracts';
 import {
   CASH_PAYOUT_FINGERPRINT,
@@ -54,6 +55,8 @@ import {
   sealPayoutDestination,
   submitPayoutColumns,
 } from './payout-destination.logic';
+// Whose turn it is at the pay step (its own import, apart from the block above).
+import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
 
 const read = (file: string) => readFileSync(join(__dirname, file), 'utf8');
 
@@ -578,6 +581,59 @@ describe('payout: the payer statement held against the claim', () => {
   });
 });
 
+// Payout spec §17.3 and invariant I4: one payment is said in the same words wherever it is said. The
+// claim page (its payment row and its timeline) and the requester's notice read the method and the
+// account from these two functions, which live in contracts so the web and the API cannot drift.
+describe('payment: the words every surface shares', () => {
+  const account = { payoutKind: 'BANK_ACCOUNT', accountLast4: '1234' };
+  const facts = (overrides: Record<string, unknown> = {}) => ({ paymentMethod: 'BANK_TRANSFER', paidAmount: '1614.5000', currency: 'THB', slipCount: 1, payoutDestination: account, ...overrides });
+
+  it('says where a confirmed transfer went by its last 4 digits, and every other payment by its method', () => {
+    assert.equal(reimbursementPaymentHowText(facts()), 'โอนเข้าบัญชีลงท้าย 1234');
+    assert.equal(reimbursementPaymentHowText(facts({ payoutDestination: { payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' } })), 'โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678');
+    // The masked form is the shared one, never a second spelling of it.
+    assert.equal(reimbursementPaymentHowText(facts()), `โอนเข้าบัญชี${maskedPayoutAccountNumber('1234')}`);
+    for (const [method, word] of Object.entries(REIMBURSEMENT_PAYMENT_METHOD_LABELS)) {
+      assert.equal(reimbursementPaymentHowText({ paymentMethod: method }), word, method);
+    }
+    assert.deepEqual(REIMBURSEMENT_PAYMENT_METHOD_LABELS, { CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CHEQUE: 'เช็ค', OTHER: 'อื่น ๆ' });
+    // A method added later, or a name every object carries, is never printed as it came.
+    for (const method of ['A_METHOD_ADDED_LATER', 'constructor', 'toString', '']) assert.equal(reimbursementPaymentHowText({ paymentMethod: method }), '', method);
+  });
+
+  it('builds the requester\'s notice from the payment\'s own facts (spec §17.3)', () => {
+    // The two sentences the spec gives, word for word.
+    assert.equal(reimbursementPaidNotice(facts()), 'โอนเข้าบัญชีลงท้าย 1234 จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    assert.equal(reimbursementPaidNotice(facts({ paymentMethod: 'CASH', payoutDestination: undefined, slipCount: 0 })), 'จ่ายเป็นเงินสด 1,614.50 บาท');
+    const notice = (overrides: Record<string, unknown>) => reimbursementPaidNotice(facts({ payoutDestination: undefined, slipCount: 0, ...overrides }));
+    assert.equal(reimbursementPaidNotice(facts({ payoutDestination: { payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' } })), 'โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678 จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    // A transfer with no account confirmed (a claim that asked for cash, a legacy claim paid elsewhere).
+    assert.equal(notice({ slipCount: 1 }), 'โอนเงิน จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    assert.equal(notice({ paymentMethod: 'CHEQUE' }), 'จ่ายเป็นเช็ค 1,614.50 บาท');
+    assert.equal(notice({ paymentMethod: 'OTHER' }), 'จ่ายด้วยวิธีอื่น 1,614.50 บาท');
+    // Evidence attached to a payment that needs none is said too: the row on the claim page shows it.
+    assert.equal(notice({ paymentMethod: 'CASH', slipCount: 2 }), 'จ่ายเป็นเงินสด 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    assert.equal(notice({ paymentMethod: 'A_METHOD_ADDED_LATER' }), 'จ่ายแล้ว 1,614.50 บาท');
+  });
+
+  it('writes the amount as the claim page does: two decimals, grouped, in baht', () => {
+    const amountOf = (paidAmount: string, currency = 'THB') => reimbursementPaidNotice({ paymentMethod: 'CASH', paidAmount, currency, slipCount: 0 });
+    assert.equal(amountOf('500.0000'), 'จ่ายเป็นเงินสด 500.00 บาท');
+    assert.equal(amountOf('1234567.8900'), 'จ่ายเป็นเงินสด 1,234,567.89 บาท');
+    // A legacy four-decimal claim pays, prints and is announced at its satang figure (FIN-01).
+    assert.equal(amountOf('580.0042'), 'จ่ายเป็นเงินสด 580.00 บาท');
+    assert.equal(amountOf('0.5'), 'จ่ายเป็นเงินสด 0.50 บาท');
+    // Another currency keeps its own code rather than being called baht.
+    assert.equal(amountOf('99.5000', 'USD'), 'จ่ายเป็นเงินสด 99.50 USD');
+    // No sentence in baht carries a Latin letter: no code word, no currency code.
+    for (const method of ['CASH', 'BANK_TRANSFER', 'CHEQUE', 'OTHER', 'LATER']) {
+      for (const payoutDestination of [undefined, account, { payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' }]) {
+        for (const slipCount of [0, 1]) assert.doesNotMatch(reimbursementPaidNotice(facts({ paymentMethod: method, payoutDestination, slipCount })), /[A-Za-z_]/);
+      }
+    }
+  });
+});
+
 describe('payment reference', () => {
   it('requires reference for cheque and bank transfer only', () => {
     assert.equal(validatePaymentReference('CASH'), true);
@@ -813,6 +869,40 @@ describe('pendingProjectionIntent', () => {
     assert.equal(pendingProjectionIntent(claim({ currentApprovalStepId: 'step-2', approvalSteps: [approved], cancellationPendingAt })), undefined);
     assert.equal(pendingProjectionIntent(claim({ status: 'FINANCE_REVIEW', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'fin-1', cancellationPendingAt })), undefined);
     assert.equal(pendingProjectionIntent(claim({ status: 'APPROVED', approvalPolicySnapshotJson: policy(), cancellationPendingAt })), undefined);
+  });
+});
+
+// Owner rule 2026-10-01: at the payment desk the person whose turn it is comes first. That is the order
+// the ready-to-pay notice and the payment reminder ask in: the finance reviewer who passed the claim, then
+// its approver. The claim page names the people who can pay in this order.
+describe('whose turn it is to record a payment', () => {
+  const at = (hour: number) => new Date(Date.UTC(2026, 9, 1, hour));
+  const approved = (decisionByUserId: string, decidedAt = at(4), overrides: Record<string, unknown> = {}) => ({ status: 'APPROVED', decisionByUserId, decidedAt, ...overrides });
+  const claim = (overrides: Record<string, unknown> = {}) => ({ submittedAt: at(3), approvalSteps: [approved('u-approver')], ...overrides });
+
+  it('is the claim\'s approver, by the one rule for who that is', () => {
+    assert.deepEqual(paymentTurnUserIds(claim()), ['u-approver']);
+    assert.equal(paymentTurnUserIds(claim())[0], claimApproverUserId(claim()));
+    assert.equal(isReimbursementClaimApprover('u-approver', claim()), true);
+    // Nobody approved: a claim below the threshold, a draft, an approval from an earlier round or one withdrawn.
+    for (const nobody of [claim({ approvalSteps: [] }), claim({ submittedAt: null }), claim({ approvalSteps: [approved('u-approver', at(2))] }),
+      claim({ approvalSteps: [approved('u-approver', at(4), { invalidatedAt: at(5) })] }), claim({ approvalSteps: [{ status: 'REJECTED', decisionByUserId: 'u-approver', decidedAt: at(4) }] })]) {
+      assert.deepEqual(paymentTurnUserIds(nobody), []);
+    }
+    // Sent again and approved again: the approver of the round in force.
+    assert.deepEqual(paymentTurnUserIds(claim({ approvalSteps: [approved('u-first', at(2)), approved('u-second', at(4))] })), ['u-second']);
+  });
+
+  it('puts the finance reviewer who passed the claim before its approver', () => {
+    const reviewed = { financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'u-finance' };
+    assert.deepEqual(paymentTurnUserIds(claim(reviewed)), ['u-finance', 'u-approver']);
+    // One person who did both is named once.
+    assert.deepEqual(paymentTurnUserIds(claim({ ...reviewed, financeReviewedByUserId: 'u-approver' })), ['u-approver']);
+    // A review that did not pass the claim (pending, blocked, returned, or none) gives the reviewer no turn.
+    for (const financeReviewStatus of ['NOT_REQUIRED', 'PENDING', 'NEEDS_INFO', 'BLOCKED', undefined]) {
+      assert.deepEqual(paymentTurnUserIds(claim({ ...reviewed, financeReviewStatus })), ['u-approver'], String(financeReviewStatus));
+    }
+    assert.deepEqual(paymentTurnUserIds(claim({ financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: null })), ['u-approver']);
   });
 });
 

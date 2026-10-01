@@ -29,6 +29,16 @@ const OPEN_MODULES = [
 
 const API_MODULES = join(__dirname, '../../../../api/src/modules');
 
+/**
+ * Modules whose rule functions answer a refusal as `{ error: 'code' }`, which the caller then throws as
+ * it came (`throw new ConflictException(plan.error)`, `paymentPayoutRefusal(plan.error)`). The code is
+ * no literal at the place it is thrown, so the exception patterns below never see it: the payout
+ * planners' `payout_confirmation_required` and `payment_method_mismatch_reason_required` could have
+ * lost their Thai text with this spec still passing. Named per module: in other modules the same
+ * shape also carries values that never leave the server.
+ */
+const PLANNER_ERROR_MODULES = ['reimbursements'];
+
 function sourceFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -55,6 +65,7 @@ function openFeatureErrorCodes(): Map<string, string> {
         ...source.matchAll(/code:\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
         ...source.matchAll(/billingError\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
         ...source.matchAll(/emailError\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
+        ...(PLANNER_ERROR_MODULES.includes(moduleName) ? source.matchAll(/\berror:\s*'([a-z][a-z0-9_]{3,})'/g) : []),
       ];
       for (const match of found) if (!codes.has(match[1]!)) codes.set(match[1]!, moduleName);
     }
@@ -96,6 +107,20 @@ describe('Thai coverage for default-open feature error codes', () => {
     assert.ok(codes.size > 400, `only ${codes.size} codes found — check API_MODULES resolves to the api package`);
   });
 
+  // A code a planner returns is found only if the planner still spells it this way. If it moves, this
+  // fails here instead of the code dropping out of the check below without anybody noticing.
+  it('finds the refusals the payout planners return for their caller to throw', () => {
+    const codes = openFeatureErrorCodes();
+    for (const code of ['payout_confirmation_required', 'payment_method_mismatch_reason_required', 'payout_destination_changed',
+      'payout_method_required', 'payout_destination_required', 'note_contains_account_number']) {
+      assert.equal(codes.get(code), 'reimbursements', `${code} is no longer found in the API source`);
+      assert.ok(translateApiError(code), `${code} has no Thai text`);
+    }
+    // Found by the planner shape alone: neither is thrown as a literal anywhere in the API.
+    const thrownAsLiteral = (code: string) => sourceFiles(API_MODULES).some((file) => new RegExp(`Exception\\(\\s*'${code}'|code:\\s*'${code}'`).test(readFileSync(file, 'utf8')));
+    assert.deepEqual(['payout_confirmation_required', 'payment_method_mismatch_reason_required'].filter(thrownAsLiteral), []);
+  });
+
   it('has Thai text for every error code the default-open modules answer with', () => {
     const missing = [...openFeatureErrorCodes()]
       .filter(([code]) => !NOT_USER_FACING.has(code))
@@ -128,6 +153,30 @@ describe('Thai coverage for default-open feature error codes', () => {
 // Review 2026-10-01 (claim hub, bank match and void): each refusal added there is something a shop owner or a
 // finance person reads in the middle of a job, so it has to be plain Thai that says what to do next. The two bank
 // codes come from the banking module, which the discovery above does not walk, so they are named here.
+// `note_contains_account_number` answers for two texts people type on a claim: finance's note (shown on the
+// claim and copied into the requester's notice) and the reason a payment was made another way than asked
+// (shown on the payment row, and in no notice). One label serves both, so it may say only what is true of both.
+describe('the refusal of a text that carries an account number is true wherever the API gives it', () => {
+  it('says the text is shown to everyone who opens the claim, and nothing about a notice', () => {
+    const thai = translateApiError('note_contains_account_number')!;
+    assert.match(thai, /^อย่าพิมพ์เลขบัญชีในช่องนี้ เพราะข้อความนี้แสดงให้ทุกคนที่เปิดใบเบิกเห็น /);
+    assert.doesNotMatch(thai, /แจ้งเตือน/, 'the payment reason is in no notice');
+    assert.match(thai, /4 ตัวท้าย/, 'what to write instead');
+    assert.doesNotMatch(thai, /[A-Za-z]/);
+    // The places the API answers with it. A third place has to be read against the sentence above before it is listed here.
+    const uses = sourceFiles(join(API_MODULES, 'reimbursements'))
+      .filter((file) => readFileSync(file, 'utf8').includes("'note_contains_account_number'"))
+      .map((file) => file.slice(join(API_MODULES, 'reimbursements').length + 1)).sort();
+    assert.deepEqual(uses, [
+      // Finance's note on a claim: `FinanceReviewReimbursementUseCase`.
+      'application/use-cases/reimbursement-finance.use-case.ts',
+      // The reason a payment was made by another method than the requester asked for: `planPaymentPayout`, and how it is thrown.
+      'domain/logic/payout-destination.logic.ts',
+      'infrastructure/reimbursement-payout.ts',
+    ]);
+  });
+});
+
 describe('the refusals added with the claim hub and bank-match fixes are plain Thai that says what to do', () => {
   it('names the next step, with no id, code word, enum word or currency code in the text', () => {
     for (const [code, nextStep] of [

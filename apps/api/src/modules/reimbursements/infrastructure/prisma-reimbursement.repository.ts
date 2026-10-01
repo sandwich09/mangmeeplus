@@ -95,6 +95,8 @@ import {
   assertPaymentPayoutUsable, confirmPaymentPayout, paymentPayoutRefusal, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
   type ConfirmedPaymentPayout,
 } from './reimbursement-payout';
+// The claim page's account history (its own import too, for the same reason).
+import { readClaimPayoutVersions } from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 
 function dec(v: unknown): string {
@@ -349,8 +351,10 @@ export class PrismaReimbursementRepository {
    * one pass: an ACTIVE membership and user, an ACTIVE role holding the pay right, the entitlement cut,
    * and a branch scope (over ACTIVE branches) that covers the claim. The branch is required: a claim
    * without one is in every scope, yet the payment endpoint refuses it for everyone.
+   * `turnUserIds` are the people whose turn it is, first to last (`paymentTurnUserIds`): those of them
+   * who can pay head the list in that order, and everyone else follows by name.
    */
-  async listPaymentRecorderNames(companyId: string, branchId: string): Promise<string[]> {
+  async listPaymentRecorderNames(companyId: string, branchId: string, turnUserIds: readonly string[] = []): Promise<string[]> {
     const key = 'reimbursement.payment.record';
     const [members, branches, entitled] = await Promise.all([
       this.prisma.client.companyMembership.findMany({
@@ -359,7 +363,7 @@ export class PrismaReimbursementRepository {
           roles: { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key } } } } } },
         },
         select: {
-          branchScopeMode: true, defaultBranchId: true,
+          userId: true, branchScopeMode: true, defaultBranchId: true,
           branchScopes: { select: { branchId: true } },
           user: { select: { displayName: true } },
         },
@@ -369,13 +373,16 @@ export class PrismaReimbursementRepository {
     ]);
     if (filterPermissionsByEntitlement([key], entitled).length === 0) return [];
     const activeBranchIds = new Set(branches.map((branch) => branch.id));
+    // A place in the turn order, or after everyone who has one.
+    const turn = (userId: string) => (turnUserIds.includes(userId) ? turnUserIds.indexOf(userId) : turnUserIds.length);
     return members.filter((member) => {
       const selected = member.branchScopes.map((scope) => scope.branchId).filter((id) => activeBranchIds.has(id));
       // The resolver refuses a SELECTED_BRANCHES member with no active branch outright.
       if (member.branchScopeMode === 'SELECTED_BRANCHES' && selected.length === 0) return false;
       const branchIds = resolveBranchIds(member.branchScopeMode, selected, member.defaultBranchId ?? undefined);
       return isBranchInScope(branchIds === undefined ? {} : { branchIds }, branchId);
-    }).map((member) => member.user.displayName).sort((a, b) => a.localeCompare(b, 'th'));
+    }).sort((a, b) => turn(a.userId) - turn(b.userId) || a.user.displayName.localeCompare(b.user.displayName, 'th'))
+      .map((member) => member.user.displayName);
   }
 
   /** Letterhead for the printed claim form — same precedence as the substitute receipt. */
@@ -1418,6 +1425,11 @@ export class PrismaReimbursementRepository {
   /** The claim's own snapshot. Never the member's default account. */
   findClaimPayout(request: ReimbursementRequestRecord) {
     return readClaimPayout(this.prisma.client, request);
+  }
+
+  /** Every account the claim has been sent with, oldest first, masked: the claim page's account history. */
+  listClaimPayoutVersions(request: ReimbursementRequestRecord) {
+    return readClaimPayoutVersions(this.prisma.client, request);
   }
 
   /** A draft only: the requester's default account it will be sent with. */
@@ -2907,8 +2919,11 @@ export class PrismaReimbursementRepository {
 
   async recordPaymentAtomic(data: {
     companyId: string;
-    /** Runs inside the payment transaction, once the payment and the claim totals are written. */
-    onPaymentPersisted?: (tx: any, payment: ReimbursementPaymentRecord, paymentStatus: string) => Promise<void>;
+    /**
+     * Runs inside the payment transaction, once the payment and the claim totals are written. `payout` is
+     * the account this payment was just confirmed into (masked: kind, bank, last 4), when there is one.
+     */
+    onPaymentPersisted?: (tx: any, payment: ReimbursementPaymentRecord, paymentStatus: string, payout?: ConfirmedPaymentPayout) => Promise<void>;
     reimbursementRequestId: string;
     idempotencyKey: string;
     paymentNo?: string;
@@ -3067,7 +3082,7 @@ export class PrismaReimbursementRepository {
       if (changed.count !== 1) throw new ConflictException('reimbursement_payment_state_changed');
       // Audit B10: the "paid" event commits with the payment. Appended after commit it was lost,
       // with no retry, whenever that append failed, and the requester was never told.
-      await data.onPaymentPersisted?.(tx, this.toPayment(payment), paymentStatus);
+      await data.onPaymentPersisted?.(tx, this.toPayment(payment), paymentStatus, payout);
 
       if (paymentStatus === 'PAID') {
         // Mirror the payout onto the claim's CONFIRMED expense projections (owner decision

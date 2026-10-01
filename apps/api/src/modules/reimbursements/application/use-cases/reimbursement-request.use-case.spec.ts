@@ -22,7 +22,7 @@ import { toRequestSummary } from '../dto/reimbursement.mapper';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
 import { claimSignatureAckHash, claimSnapshotFields, computeSnapshotHash } from '../../domain/logic/reimbursement.logic';
-import { hasPayoutSnapshot, payoutAttestationError, sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
+import { hasPayoutSnapshot, legacyPayoutConfirmToken, payoutAttestationError, sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
@@ -45,6 +45,7 @@ import {
   applyDraftPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readClaimPayoutSecret,
   readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
 } from '../../infrastructure/reimbursement-payout';
+import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
 
 // Lane C: one claim, many lines. The header total, category and date are a
 // server-side rollup of the lines — a client never sends them.
@@ -355,6 +356,7 @@ function fakeRepo(options: RepoOptions = {}) {
     // A member of the fixture is ACTIVE unless a case says otherwise.
     findPayoutMember: async (_companyId: string, userId: string) => (options.payoutMembers?.[userId] ? { membershipStatus: 'ACTIVE', ...options.payoutMembers[userId] } : null),
     findClaimPayout: (claim: any) => readClaimPayout(payoutDb, claim),
+    listClaimPayoutVersions: (claim: any) => readClaimPayoutVersions(payoutDb, claim),
     findDraftDefaultPayout: (claim: any) => readDraftDefaultPayout(payoutDb, claim),
     // What the detail shows whoever may pay a claim that froze no account (payout spec §15).
     findLegacyPayoutDefault: (claim: any) => readLegacyPayoutDefault(payoutDb, claim),
@@ -1627,16 +1629,17 @@ describe('claim detail paymentDesk', () => {
       throw error;
     }
   }
-  /** What the claim page is told: the names in the detail's `paymentDesk`, read through the real repository; null when it carries none. */
-  async function named(prisma: any, claimState: Record<string, unknown>): Promise<string[] | null> {
+  /** What the claim page is told: the detail's `paymentDesk`, read through the real repository; null when it carries none. */
+  async function desk(prisma: any, claimState: Record<string, unknown>): Promise<{ names: string[]; moreCount: number } | null> {
     const names = new PrismaReimbursementRepository(prisma, {} as any);
     const repo = {
       findRequestById: async () => waiting(claimState), findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
       getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
-      listPaymentRecorderNames: (companyId: string, branchId: string) => names.listPaymentRecorderNames(companyId, branchId),
+      listPaymentRecorderNames: (companyId: string, branchId: string, turnUserIds: string[]) => names.listPaymentRecorderNames(companyId, branchId, turnUserIds),
+      listClaimPayoutVersions: async () => [],
     } as any;
     const detail = await new GetReimbursementDetailUseCase(repo, detailEvidence).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
-    return detail.paymentDesk ? detail.paymentDesk.names : null;
+    return detail.paymentDesk ?? null;
   }
 
   const approverRole = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
@@ -1668,7 +1671,8 @@ describe('claim detail paymentDesk', () => {
         assert.deepEqual(await listed(prisma, branchId), names, `claim branch ${branchId}`);
         // Approved and still being routed to payment waits at the same desk, and the API takes its payment too.
         for (const status of ['READY_FOR_PAYMENT', 'APPROVED']) {
-          assert.deepEqual(await named(prisma, { branchId, status }), names, `${status} claim of branch ${branchId}`);
+          // The page is told the first two of them by name, and how many more there are.
+          assert.deepEqual(await desk(prisma, { branchId, status }), { names: names.slice(0, 2), moreCount: Math.max(names.length - 2, 0) }, `${status} claim of branch ${branchId}`);
           for (const member of members) {
             assert.equal(await pays(prisma, member.userId, { branchId, status }) === 'paid', names.includes(nameOf[member.userId]!),
               `${member.userId} on a ${status} claim of branch ${branchId}`);
@@ -1690,28 +1694,65 @@ describe('claim detail paymentDesk', () => {
       [{ branchId: undefined }, /กรุณาเลือกสาขาของรายการก่อนบันทึก/],
     ];
     for (const [claimState, reason] of refused) {
-      assert.equal(await named(prisma, claimState), null, JSON.stringify(claimState));
+      assert.equal(await desk(prisma, claimState), null, JSON.stringify(claimState));
       for (const member of members) assert.notEqual(await pays(prisma, member.userId, claimState), 'paid', `${member.userId} ${JSON.stringify(claimState)}`);
       // The owner holds the right and every branch: only the claim's own state stops them.
       assert.match(await pays(prisma, 'owner', claimState), reason);
     }
   });
 
-  it('adds at most five names and the rest as a count, only while the claim waits for payment', async () => {
+  // Owner rule 2026-10-01: the person whose turn it is comes first. The ready-to-pay notice went to the finance
+  // reviewer who passed the claim, else to its approver; the page names that person first, when they can pay.
+  it('names whoever\'s turn it is first among the people who can pay, then the others by name', async () => {
+    const prisma = company(members);
+    const at = (hour: number) => new Date(Date.UTC(2026, 9, 1, hour));
+    const approvedBy = (userId: string, decidedAt = at(4)) => ({ submittedAt: at(3), approvedAt: decidedAt,
+      approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: userId, decidedAt, assignedAt: at(3) }] });
+    const names = async (claimState: Record<string, unknown>) => (await desk(prisma, { branchId: 'b1', ...claimState }))!;
+
+    // Nobody approved (a claim below the threshold): by name, as before.
+    assert.deepEqual(await names({}), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The approver can pay: first, whatever their name sorts as.
+    assert.deepEqual(await names(approvedBy('b1-selected')), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('b1-default')), { names: ['วิชัย', 'เจ้าของ'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('owner')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The approver cannot pay (no right, or another branch): not named at all, and nobody jumps the queue.
+    assert.deepEqual(await names(approvedBy('approver-only')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('b2-selected')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // With a finance step: the finance reviewer who passed the claim, then its approver.
+    const reviewed = { financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'b1-default', financeReviewedAt: at(5) };
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed }), { names: ['วิชัย', 'สมศรี'], moreCount: 1 });
+    // A finance reviewer with no pay right leaves the approver first.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed, financeReviewedByUserId: 'approver-only' }), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    // A review that did not pass the claim gives nobody a turn.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed, financeReviewStatus: 'NOT_REQUIRED' }), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    // The approver is the one rule of contracts: an approval from before the claim was last sent, or one no longer in force, is history.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected', at(2)) }), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    assert.deepEqual(await names({ submittedAt: at(3), approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'b1-selected', decidedAt: at(4), assignedAt: at(3), invalidatedAt: at(5) }] }),
+      { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The whole list is still exactly the people the API takes the payment from: only its order changed.
+    const turnFirst = await new PrismaReimbursementRepository(prisma, {} as any).listPaymentRecorderNames('co-1', 'b1', ['b1-default', 'b1-selected', 'approver-only']);
+    assert.deepEqual(turnFirst, ['วิชัย', 'สมศรี', 'เจ้าของ']);
+    assert.deepEqual([...turnFirst].sort((a, b) => a.localeCompare(b, 'th')), await listed(prisma, 'b1'));
+  });
+
+  it('adds at most two names and the rest as a count, only while the claim waits for payment', async () => {
     const payers = ['กมล', 'ขวัญ', 'จิตรา', 'ชาติ', 'ณัฐ', 'ดวงใจ', 'ธนา'];
     const asked: Array<[string, unknown]> = [];
     const repoFor = (claim: any, names: string[]) => ({
       findRequestById: async () => claim, findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
       getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
       listPaymentRecorderNames: async (companyId: string, branchId: unknown) => { asked.push([companyId, branchId]); return names; },
+      listClaimPayoutVersions: async () => [],
       // Payout Phase 1: a draft's detail also reads the account it would be sent with. This requester has set none.
       findDraftDefaultPayout: async () => undefined, planSubmitPayout: async () => ({ error: 'payout_method_required' }),
     }) as any;
     const read = (claim: any, names: string[]) => new GetReimbursementDetailUseCase(repoFor(claim, names), detailEvidence)
       .execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
 
-    assert.deepEqual((await read(waiting(), payers)).paymentDesk, { names: payers.slice(0, 5), moreCount: 2 });
+    assert.deepEqual((await read(waiting(), payers)).paymentDesk, { names: ['กมล', 'ขวัญ'], moreCount: 5 });
     assert.deepEqual(asked, [['co-1', 'b1']], 'the payers of the claim\'s own branch');
+    assert.deepEqual((await read(waiting(), ['กมล', 'ขวัญ'])).paymentDesk, { names: ['กมล', 'ขวัญ'], moreCount: 0 });
     assert.deepEqual((await read(waiting(), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
     // Nobody can pay: an empty list, which the page reports as such.
     assert.deepEqual((await read(waiting(), [])).paymentDesk, { names: [], moreCount: 0 });
@@ -2977,6 +3018,100 @@ describe('payout: the requester is told when their default changed after the cla
       await world.payouts.setOwn(ctx(), SCB);
       assert.equal(await flag(world, ctx(), draft.id), undefined, payout.mode);
     }
+  });
+});
+
+// Payout spec §17.2: the claim page shows every account a claim has been sent with. The detail carries them
+// masked like the current one (bank, account name, the last 4 digits), with who entered each and who attested it.
+describe('payout: the accounts a claim has been sent with', () => {
+  const historyOf = async (world: ReturnType<typeof payoutWorld>, id: string, viewer = ctx()) => (await world.detail.execute(viewer, id)).payoutHistory;
+  const at = (hour: number) => new Date(Date.UTC(2026, 9, 1, hour));
+  /** What the approval transaction writes when the approver ticks "ตรวจบัญชีแล้ว". */
+  const attest = (world: ReturnType<typeof payoutWorld>, verifiedVersion: number, actorUserId: string, approvalStepId: string, verifiedAt = at(4)) =>
+    attestClaimPayout(world.state.payoutTables.client, world.state.request, { verifiedVersion, actorUserId, verifiedAt, approvalStepId });
+
+  it('lists each account the claim was sent with, oldest first, with who attested it and at which approval', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    // A first draft was never sent with any account: nothing to list.
+    assert.equal(await historyOf(world, draft.id), undefined);
+    await world.send(ctx(), draft.id);
+    const first = { version: 1, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', source: 'DEFAULT_ACCOUNT',
+      frozenAt: world.state.payoutTables.destinations[0]!.frozenAt.toISOString() };
+    assert.deepEqual(await historyOf(world, draft.id), [first]);
+
+    await attest(world, 1, 'manager-1', 'step-1');
+    const attested = { ...first, verifiedByUserId: 'manager-1', verifiedByName: 'วิภา', verifiedAt: at(4).toISOString(), approvalStepId: 'step-1' };
+    const approved = await world.detail.execute(ctx(), draft.id);
+    assert.deepEqual(approved.payoutHistory, [attested]);
+    // The same attestation the card reads off the claim's current account.
+    assert.deepEqual([approved.payout?.version, approved.payout?.verifiedByUserId, approved.payout?.verifiedByName, approved.payout?.verifiedAt], [1, 'manager-1', 'วิภา', at(4).toISOString()]);
+
+    // Taken back, the default changed, sent again: version 1 stays as it was approved, version 2 is the one in use.
+    await world.reopen.execute(ctx(), draft.id);
+    assert.deepEqual(await historyOf(world, draft.id), [attested], 'a draft that follows the default again keeps its history');
+    await world.payouts.setOwn(ctx(), SCB);
+    await world.send(ctx(), draft.id);
+    const resent = await world.detail.execute(ctx(), draft.id);
+    assert.equal(resent.payout?.version, 2);
+    assert.deepEqual(resent.payoutHistory, [attested, { version: 2, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี',
+      accountLast4: '9012', source: 'DEFAULT_ACCOUNT', frozenAt: world.state.payoutTables.destinations.find((row) => row.version === 2)!.frozenAt.toISOString() }]);
+    // Every reader of the claim gets the same rows: they hold no more than the current account does.
+    assert.deepEqual(await historyOf(world, draft.id, financeCtx()), resent.payoutHistory);
+    assert.equal(leaksNumber(resent), false);
+    assert.doesNotMatch(JSON.stringify(resent.payoutHistory), /fingerprint|encrypted|accountNumber/i);
+  });
+
+  it('says who entered an account the requester did not, and keeps a name it cannot resolve as an id', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    // Typed, not sent: the draft's working account is its current choice, not history.
+    assert.equal(await historyOf(world, draft.id), undefined);
+    await world.send(financeCtx(), draft.id);
+    const [typed] = (await historyOf(world, draft.id))!;
+    assert.deepEqual([typed!.source, typed!.enteredByUserId, typed!.enteredByName], ['PREPARER', 'finance-1', 'อรทัย']);
+    // The requester's own account names nobody.
+    await world.reopen.execute(ctx(), draft.id);
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    await world.send(ctx(), draft.id);
+    const own = (await historyOf(world, draft.id))!.at(-1)!;
+    assert.deepEqual([own.version, own.source, own.enteredByUserId, own.enteredByName], [2, 'REQUESTER', undefined, undefined]);
+    // Whoever typed version 1 has left the company: the row still says someone else did.
+    world.state.repo.getUserDisplayNames = async () => ({});
+    const [unnamed] = (await historyOf(world, draft.id))!;
+    assert.deepEqual([unnamed!.enteredByUserId, 'enteredByName' in unnamed!], ['finance-1', false]);
+  });
+
+  it('drops an attestation from the account a draft is about to be sent with again, as the claim\'s own account block does', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK } }));
+    await world.send(ctx(), draft.id);
+    await attest(world, 1, 'manager-1', 'step-1');
+    assert.equal((await historyOf(world, draft.id))![0]!.verifiedByUserId, 'manager-1');
+    // An account named for the claim stays the draft's choice after a withdraw. Its attestation is of the round
+    // that ended: the next submit clears it, so neither the card nor the history shows it meanwhile.
+    await world.reopen.execute(ctx(), draft.id);
+    const reopened = await world.detail.execute(ctx(), draft.id);
+    assert.deepEqual([reopened.status, reopened.payout?.version, reopened.payout?.verifiedAt], ['DRAFT', 1, undefined]);
+    assert.deepEqual(reopened.payoutHistory!.map((row) => [row.version, row.verifiedByUserId, row.verifiedAt, row.approvalStepId]), [[1, undefined, undefined, undefined]]);
+    await world.send(ctx(), draft.id);
+    assert.deepEqual((await historyOf(world, draft.id))!.map((row) => [row.version, row.verifiedByUserId]), [[1, undefined]]);
+  });
+
+  it('never lists the copy of the default kept with a legacy claim\'s payment: the claim was never sent with it', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    // A claim sent before claims carried an account: a number, no payout columns.
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'CASH' } }));
+    await world.send(ctx(), draft.id);
+    Object.assign(world.state.request, { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null });
+    const account = world.state.payoutTables.accounts[0]!;
+    await confirmPaymentPayout(world.state.payoutTables.client, world.state.request,
+      { payoutDefaultToken: legacyPayoutConfirmToken(draft.id, account.fingerprint) }, { actorUserId: 'manager-1', confirmedAt: at(6) });
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.source, !!row.frozenAt]), [[1, 'LEGACY_PAYMENT', true]]);
+    const detail = await world.detail.execute(ctx(), draft.id);
+    assert.deepEqual(['payout' in detail, 'payoutHistory' in detail], [false, false]);
   });
 });
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { reimbursementHubBucket, reimbursementPaidNotice } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { MaterializeClaimExpensesService } from '../application/services/materialize-claim-expenses.service';
@@ -2129,6 +2129,8 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     let reopened = await repos[0]!.reopenRejectedRequest(companyId, claim.id, claim.updatedAt, requester, 'PENDING_APPROVAL');
     assert.deepEqual([reopened.status, reopened.payoutMethod, reopened.payoutDestinationVersion, reopened.payoutFingerprint], ['DRAFT', 'BANK_TRANSFER', 1, undefined], 'an account named for this claim stays the draft choice');
     assert.equal((await repos[0]!.findClaimPayout(reopened))?.verifiedAt, undefined, 'a draft shows no attestation');
+    // Spec §17.2: the claim's account history says the same of the account the draft is about to be sent with again.
+    assert.deepEqual((await repos[0]!.listClaimPayoutVersions(reopened)).map((row) => [row.version, row.verifiedByUserId, row.verifiedAt]), [[1, undefined, undefined]]);
     const again = await submit(reopened);
     assert.deepEqual(again.plan, { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: 1, fingerprint: sentFingerprint, action: 'REUSE' });
     rows = await destinationsOf(created.id);
@@ -2138,12 +2140,20 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     reopened = await repos[0]!.reopenRejectedRequest(companyId, claim.id, again.pending.updatedAt, requester, 'PENDING_APPROVAL');
     const changed = await repos[0]!.updateDraftRequest(companyId, created.id, reopened.updatedAt, {}, undefined, typed(KBANK));
     assert.deepEqual([changed.payoutDestinationVersion, changed.payoutFingerprint], [2, undefined]);
+    // The draft's working account is its current choice, not history: only what the claim was sent with is listed.
+    assert.deepEqual((await repos[0]!.listClaimPayoutVersions(changed)).map((row) => row.version), [1]);
     const third = await submit(changed);
     assert.deepEqual(third.plan, { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: 2, fingerprint: fingerprintOf(KBANK), action: 'FREEZE' });
     rows = await destinationsOf(created.id);
     assert.deepEqual(rows.map((row) => [row.version, row.fingerprint, row.frozenAt !== null]), [[1, sentFingerprint, true], [2, fingerprintOf(KBANK), true]]);
     assert.equal((await repos[0]!.findClaimPayout(third.pending))?.accountLast4, '5678');
     assert.notEqual(third.pending.approvalSnapshotHash, again.pending.approvalSnapshotHash, 'a changed account is a changed claim');
+    // Both accounts the claim has been sent with, oldest first, masked: what the card "การรับเงินคืน" lists.
+    const history = await repos[0]!.listClaimPayoutVersions(third.pending);
+    assert.deepEqual(history.map((row) => [row.version, row.accountLast4, row.source, row.enteredByUserId, row.frozenAt.getTime()]),
+      rows.map((row) => [row.version, row.accountLast4, 'REQUESTER', undefined, row.frozenAt!.getTime()]));
+    assert.deepEqual(history.map((row) => row.version), [1, 2]);
+    assert.equal(JSON.stringify(history).includes(rows[0]!.accountNumberEncrypted) || JSON.stringify(history).includes(rows[0]!.fingerprint), false, 'neither the ciphertext nor the fingerprint');
   });
 
   it('approves a transfer claim only with an attestation of its current version, recorded in the approval transaction', async (t) => {
@@ -2641,6 +2651,67 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     assert.equal(checked!.frozenAt?.getTime(), unattested!.frozenAt?.getTime());
   });
 
+  // Phase 4 (spec §17.2, §17.3) on real rows: what the "paid" event is handed inside the payment transaction, and
+  // the attestation the claim's timeline reads ("อนุมัติและตรวจบัญชีรับเงินโดย …").
+  it('hands the payment callback the account just confirmed, inside the transaction, and names the approval that attested it', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await claimAtPayment('history: paid notice');
+    const step = (await repos[0]!.findRequestById(companyId, claim.id, true))!.approvalSteps!.find((row) => row.status === 'APPROVED')!;
+    const [frozen] = await destinationsOf(claim.id);
+    assert.deepEqual(await repos[0]!.listClaimPayoutVersions(claim), [{
+      version: 1, payoutKind: 'BANK_ACCOUNT', bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: '5678', source: 'DEFAULT_ACCOUNT',
+      frozenAt: frozen!.frozenAt, verifiedByUserId: approver, verifiedAt: new Date('2026-10-01T09:00:00.000Z'), approvalStepId: step.id,
+    }]);
+
+    const seen: any[] = [];
+    const input = await transferOf(claim.id, 'history-paid', { payoutDestinationVersion: 1, payoutConfirmed: true });
+    const paid = await payingRepo().recordPaymentAtomic({
+      ...input,
+      onPaymentPersisted: async (tx: any, payment: any, paymentStatus: string, payout: any) => {
+        // The payment row exists for this transaction and for nobody else yet: the event commits with it or not at all.
+        seen.push({ payment, paymentStatus, payout, inside: await tx.reimbursementPayment.count({ where: { id: payment.id } }),
+          outside: await clients[1]!.reimbursementPayment.count({ where: { id: payment.id } }) });
+      },
+    });
+    assert.equal(seen.length, 1);
+    assert.deepEqual([seen[0].paymentStatus, seen[0].inside, seen[0].outside, seen[0].payment.id, seen[0].payment.slipAttachmentId], ['PAID', 1, 0, paid.payment.id, input.slipAttachmentId]);
+    assert.deepEqual(seen[0].payout, paid.payout);
+    assert.deepEqual([seen[0].payout.accountLast4, seen[0].payout.payoutKind, seen[0].payout.bankName, seen[0].payout.source], ['5678', 'BANK_ACCOUNT', KBANK.bankName, 'CLAIM']);
+    // The sentence the use case writes into the event from exactly these two arguments.
+    assert.equal(reimbursementPaidNotice({
+      paymentMethod: seen[0].payment.paymentMethod, paidAmount: seen[0].payment.paidAmount, currency: seen[0].payment.currency,
+      slipCount: seen[0].payment.slipAttachmentId ? 1 : 0, payoutDestination: seen[0].payout,
+    }), 'โอนเข้าบัญชีลงท้าย 5678 จำนวน 100.00 บาท มีสลิปแนบ แตะเพื่อดูสลิป');
+    // The same request again is the same payment: no second event.
+    const replay = await payingRepo().recordPaymentAtomic({ ...input, onPaymentPersisted: async () => { seen.push('replayed'); } });
+    assert.deepEqual([replay.created, seen.length], [false, 1]);
+    // Paying changed nothing in the account's history: the approver still stands as who attested it.
+    assert.deepEqual((await repos[0]!.listClaimPayoutVersions(claim)).map((row) => [row.version, row.verifiedByUserId, row.approvalStepId]), [[1, approver, step.id]]);
+  });
+
+  // Owner rule 2026-10-01: at the pay step the person whose turn it is comes first. The list is still exactly
+  // the members who hold the pay right for the branch; only its order follows the turn.
+  it('lists who can record a payment with whoever\'s turn it is first, from real roles and memberships', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const permission = await db.permission.upsert({ where: { key: 'reimbursement.payment.record' }, update: {}, create: { key: 'reimbursement.payment.record', description: 'Record reimbursement payment' } });
+    const payerRole = await db.role.create({ data: { companyId, scopeKey: companyId, key: `${PAYOUT_TAG}-payer`, name: 'ผู้จ่ายเงิน', permissions: { create: [{ permissionId: permission.id }] } } });
+    const memberships = await db.companyMembership.findMany({ where: { companyId, userId: { in: [requester, approver] } }, select: { id: true } });
+    await db.membershipRole.createMany({ data: memberships.map((membership) => ({ membershipId: membership.id, roleId: payerRole.id })) });
+    try {
+      // Display names are the user ids here: "…-approver" sorts before "…-requester".
+      assert.deepEqual(await repos[0]!.listPaymentRecorderNames(companyId, branchId), [approver, requester]);
+      assert.deepEqual(await repos[0]!.listPaymentRecorderNames(companyId, branchId, [requester]), [requester, approver]);
+      assert.deepEqual(await repos[0]!.listPaymentRecorderNames(companyId, branchId, [approver]), [approver, requester]);
+      // Someone whose turn it is but who cannot pay (not a member here) is not listed, and moves nobody.
+      assert.deepEqual(await repos[0]!.listPaymentRecorderNames(companyId, branchId, [outsider, requester]), [requester, approver]);
+      assert.deepEqual(await repos[0]!.listPaymentRecorderNames(companyId, branchId, [outsider]), [approver, requester]);
+    } finally {
+      await db.membershipRole.deleteMany({ where: { roleId: payerRole.id } });
+      await db.role.delete({ where: { id: payerRole.id } });
+    }
+  });
+
   // Spec §15, AC34, AC35 and invariant J1.
   it('pays a legacy claim into the requester default: the copy is frozen with the payment and the claim keeps its hashes', async (t) => {
     if (!reachable) return t.skip('no database reachable');
@@ -2691,6 +2762,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     assert.deepEqual([after.payoutMethod, after.payoutDestinationVersion, after.payoutFingerprint], [undefined, undefined, undefined]);
     assert.deepEqual(hashesOf(after), [hash, hash]);
     assert.equal(await repos[0]!.findClaimPayout(after), undefined, 'the claim itself shows no account');
+    assert.deepEqual(await repos[0]!.listClaimPayoutVersions(after), [], 'and its account history lists none: the copy belongs to the payment');
 
     // The copy is the payment's, for good: the database refuses to change or remove it.
     await refusedBy(() => db.reimbursementPayoutDestination.update({ where: { id: copy!.id }, data: { accountName: 'คนอื่น' } }), /reimbursement_payout_destination_frozen/);

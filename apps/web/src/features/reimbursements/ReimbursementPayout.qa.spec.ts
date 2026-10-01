@@ -180,9 +180,11 @@ describe('what a claim says about where the money goes back to', () => {
 
   it('says who attested a sent claim, truthfully when it was the requester', () => {
     const sent = (payout: Partial<ReimbursementPayoutSummary>) => logic.claimPayoutView(claim({ payout: { ...transfer, ...payout } })).notes;
-    assert.deepEqual(sent({}), ['ยังไม่มีผู้ตรวจบัญชีนี้']);
-    assert.match(sent({ verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z' })[0]!, /^ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต\.ค\. 2569/);
-    assert.match(sent({ verifiedByUserId: ids.requester, verifiedByName: 'สมชาย', verifiedAt: '2026-10-01T03:00:00.000Z' })[0]!, /^ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ 1 ต\.ค\. 2569/);
+    // Where the account came from (spec §17.2), then who attested it.
+    assert.deepEqual(sent({}), ['ใช้บัญชีประจำของผู้เบิก', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    assert.deepEqual(sent({ source: 'REQUESTER' }), ['ผู้เบิกระบุบัญชีนี้สำหรับใบนี้', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    assert.match(sent({ verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z' }).at(-1)!, /^ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต\.ค\. 2569/);
+    assert.match(sent({ verifiedByUserId: ids.requester, verifiedByName: 'สมชาย', verifiedAt: '2026-10-01T03:00:00.000Z' }).at(-1)!, /^ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ 1 ต\.ค\. 2569/);
     assert.deepEqual(sent({ source: 'PREPARER', enteredByName: 'วิภา' }), ['กรอกโดย วิภา', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
     assert.deepEqual(sent({ source: 'PREPARER', enteredByUserId: ids.approver }), ['กรอกโดยผู้จัดทำ', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
     // A copy of the default that someone else set: the approver reads who, before the tick.
@@ -192,6 +194,86 @@ describe('what a claim says about where the money goes back to', () => {
     assert.ok(approving.includes('ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดย วิภา'));
     assert.deepEqual(logic.claimPayoutView(claim({ payout: { payoutMethod: 'CASH' } })), { state: 'cash', line: 'รับเป็นเงินสด', notes: [] });
     assert.deepEqual([logic.claimNeedsPayoutAttestation(claim()), logic.claimNeedsPayoutAttestation(claim({ payout: { payoutMethod: 'CASH' } }))], [true, false]);
+  });
+});
+
+// Payout spec §17.2: the card "การรับเงินคืน" says how the requester asked to be paid, the account (last 4
+// digits), where it came from, who attested it and when, and every account the claim has been sent with.
+describe('the card "การรับเงินคืน": where the account came from and the claim\'s account history', () => {
+  const SCB = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountLast4: '9012' };
+  const attested = { verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z' };
+  /** A claim sent with KBANK, approved, taken back and sent again with SCB typed by a preparer. */
+  const first = { version: 1, ...KBANK, source: 'DEFAULT_ACCOUNT' as const, frozenAt: '2026-10-01T02:00:00.000Z', ...attested, approvalStepId: 'step-1' };
+  const second = { version: 2, ...SCB, source: 'PREPARER' as const, enteredByUserId: ids.approver, enteredByName: 'วิภา', frozenAt: '2026-10-02T02:00:00.000Z' };
+  const resent = claim({ payout: { payoutMethod: 'BANK_TRANSFER', ...SCB, version: 2, source: 'PREPARER', enteredByUserId: ids.approver, enteredByName: 'วิภา' }, payoutHistory: [first, second] });
+  /** The visible texts of the history block; none when the card has no such block. */
+  const historyOf = (html: string) => { const [, block] = html.split('data-testid="reimbursement-payout-history"'); return block ? visible(`<div ${block}`) : []; };
+
+  it('says, for every sent transfer claim, where its account came from', () => {
+    const source = (payout: Partial<ReimbursementPayoutSummary>) => logic.payoutSourceText({ ...transfer, ...payout });
+    assert.equal(source({}), 'ใช้บัญชีประจำของผู้เบิก');
+    assert.equal(source({ enteredByUserId: ids.approver, enteredByName: 'วิภา' }), 'ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดย วิภา');
+    assert.equal(source({ source: 'REQUESTER' }), 'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้');
+    assert.equal(source({ source: 'PREPARER', enteredByUserId: ids.approver, enteredByName: 'วิภา' }), 'กรอกโดย วิภา');
+    assert.equal(source({ source: 'PREPARER', enteredByUserId: ids.approver }), 'กรอกโดยผู้จัดทำ');
+    // Cash has no account, and so no origin.
+    assert.equal(logic.payoutSourceText({ payoutMethod: 'CASH' } as ReimbursementPayoutSummary), null);
+    // On the card of a sent claim, each of them stands above who attested the account.
+    for (const [payout, text] of [[{}, 'ใช้บัญชีประจำของผู้เบิก'], [{ source: 'REQUESTER' as const }, 'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้'],
+      [{ source: 'PREPARER' as const, enteredByName: 'วิภา' }, 'กรอกโดย วิภา']] as const) {
+      const texts = visible(card(claim({ payout: { ...transfer, ...payout, ...attested } })));
+      assert.deepEqual(texts.slice(-2), [text, 'ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต.ค. 2569 10:00 น.']);
+    }
+  });
+
+  it('lists every account the claim has been sent with, oldest first, and marks the one in use', () => {
+    assert.deepEqual(logic.claimPayoutHistory(resent), [
+      { version: 1, current: false, line: 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · ชื่อบัญชี นาย สมชาย ใจดี',
+        notes: ['เริ่มใช้กับใบนี้เมื่อ 1 ต.ค. 2569 09:00 น.', 'ใช้บัญชีประจำของผู้เบิก', 'ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต.ค. 2569 10:00 น.'] },
+      // In use, and nobody has attested it: the account above already says so, and the row adds nothing false.
+      { version: 2, current: true, line: 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · ชื่อบัญชี นาย สมชาย ใจดี',
+        notes: ['เริ่มใช้กับใบนี้เมื่อ 2 ต.ค. 2569 09:00 น.', 'กรอกโดย วิภา'] },
+    ]);
+    assert.deepEqual(historyOf(card(resent)), [
+      'ประวัติบัญชีรับเงินของใบนี้',
+      'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · ชื่อบัญชี นาย สมชาย ใจดี', 'เริ่มใช้กับใบนี้เมื่อ 1 ต.ค. 2569 09:00 น.', 'ใช้บัญชีประจำของผู้เบิก', 'ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต.ค. 2569 10:00 น.',
+      'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · ชื่อบัญชี นาย สมชาย ใจดี', 'ใช้อยู่ตอนนี้', 'เริ่มใช้กับใบนี้เมื่อ 2 ต.ค. 2569 09:00 น.', 'กรอกโดย วิภา',
+    ]);
+    // The account above the history is the claim's own: the one in use.
+    const texts = visible(card(resent));
+    assert.ok(texts.indexOf('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012') < texts.indexOf('ประวัติบัญชีรับเงินของใบนี้'));
+    // A requester who attested their own account is said so here too, never as a check.
+    const own = logic.claimPayoutHistory({ requesterUserId: ids.requester, payout: transfer, payoutHistory: [{ ...first, verifiedByUserId: ids.requester }, second] });
+    assert.equal(own[0]!.notes.at(-1), 'ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ 1 ต.ค. 2569 10:00 น.');
+  });
+
+  it('shows no history when there is nothing to tell beyond the account above', () => {
+    // The claim has only ever been sent with the account in use; an action response carries no history; a legacy or a cash claim has none.
+    for (const detail of [claim({ payoutHistory: [first] }), claim(), claim({ payoutHistory: [] }), claim({ payout: undefined }), claim({ payout: { payoutMethod: 'CASH' } })]) {
+      assert.deepEqual(logic.claimPayoutHistory(detail), []);
+      assert.doesNotMatch(card(detail), /reimbursement-payout-history|ประวัติบัญชีรับเงินของใบนี้/);
+    }
+    // A claim now paid in cash, or a draft that follows the default again, still tells what it was sent with before.
+    const nowCash = claim({ payout: { payoutMethod: 'CASH' }, payoutHistory: [first] });
+    assert.deepEqual(logic.claimPayoutHistory(nowCash).map((row) => [row.version, row.current]), [[1, false]]);
+    assert.ok(historyOf(card(nowCash)).includes('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · ชื่อบัญชี นาย สมชาย ใจดี'));
+    const draftAgain = claim({ status: 'DRAFT', payout: { followsDefault: true, payoutMethod: 'BANK_TRANSFER', ...SCB, source: 'DEFAULT_ACCOUNT' }, payoutHistory: [first] });
+    assert.deepEqual(logic.claimPayoutHistory(draftAgain).map((row) => [row.version, row.current]), [[1, false]]);
+    assert.ok(!historyOf(card(draftAgain, ids.requester)).includes('ใช้อยู่ตอนนี้'));
+  });
+
+  it('never shows more of an account than its last 4 digits, and offers no control in the history', () => {
+    const html = card(claim({ ...resent, payout: { ...resent.payout, canRevealAccountNumber: true } }));
+    const history = html.split('data-testid="reimbursement-payout-history"')[1]!;
+    assert.doesNotMatch(history, /<button|<a\b|แสดงเลขบัญชี/);
+    // The reveal control stays where it was: once, on the account in use.
+    assert.equal(html.match(/แสดงเลขบัญชี/g)?.length, 1);
+    // On a 390 px phone a long bank or account name wraps inside its own row, and the mark drops below it.
+    assert.match(history, /<li class="min-w-0 [^"]*"><div class="flex flex-wrap items-center gap-2"><span class="min-w-0 break-words /);
+    assert.equal(html.replace(new RegExp(Object.values(ids).join('|'), 'g'), '').match(/\d{5,}/g), null);
+    // One wording for the masked account: the shared one.
+    assert.doesNotMatch(read('./ReimbursementPayout.tsx'), /ลงท้าย/);
+    assert.doesNotMatch(read('./reimbursement-payout.logic.ts'), /ลงท้าย/);
   });
 });
 
@@ -569,6 +651,21 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
     ['claim card: the default changed, too late to withdraw', card(claim({ status: 'READY_FOR_PAYMENT', payout: { ...transfer, defaultAccountChanged: true } }), ids.requester)],
     ['claim card: a default someone else set', card(claim({ payout: { ...transfer, enteredByUserId: ids.approver, enteredByName: 'วิภา' } }))],
     ['claim card: typed by a preparer whose name is gone', card(claim({ payout: { ...transfer, source: 'PREPARER', enteredByUserId: ids.approver } }))],
+    ['claim card: typed by the requester for this claim', card(claim({ payout: { ...transfer, source: 'REQUESTER' } }))],
+    ['claim card: sent with two accounts', card(claim({
+      payout: { ...transfer, version: 2, accountLast4: '9012', bankName: 'ธนาคารไทยพาณิชย์', source: 'PREPARER', enteredByUserId: ids.approver, enteredByName: 'วิภา' },
+      payoutHistory: [
+        { version: 1, ...KBANK, source: 'DEFAULT_ACCOUNT', frozenAt: '2026-10-01T02:00:00.000Z', verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z', approvalStepId: 'cmg7x2k9p0009stepx3c5v7b9' },
+        { version: 2, ...KBANK, bankName: 'ธนาคารไทยพาณิชย์', accountLast4: '9012', source: 'PREPARER', enteredByUserId: ids.approver, enteredByName: 'วิภา', frozenAt: '2026-10-02T02:00:00.000Z' },
+      ],
+    }))],
+    ['claim card: a long account name in the history', card(claim({
+      payout: transfer,
+      payoutHistory: [
+        { version: 1, ...KBANK, bankName: 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร', accountName: 'บริษัท ตัวอย่างชื่อบัญชีที่ยาวมากเป็นพิเศษเพื่อทดสอบการตัดบรรทัดบนหน้าจอโทรศัพท์ จำกัด (มหาชน) สาขาสำนักงานใหญ่', source: 'REQUESTER', frozenAt: '2026-10-01T02:00:00.000Z' },
+        { version: 2, ...KBANK, source: 'DEFAULT_ACCOUNT', frozenAt: '2026-10-02T02:00:00.000Z' },
+      ],
+    }))],
   ];
   // Texts that never pass through a render here: validation, the submit block and the server's refusals.
   const messages = [

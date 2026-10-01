@@ -583,6 +583,83 @@ describe('buildClaimTimeline', () => {
   });
 });
 
+// Payout spec §17.2: the claim's journey says who attested the account, and keeps a payment that was taken back.
+describe('buildClaimTimeline: the account attestation and voided payments', () => {
+  const labels = (detail: any) => buildClaimTimeline(detail).map(row => `${row.state}:${row.label}`);
+  const account = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', source: 'DEFAULT_ACCOUNT', frozenAt: '2026-10-01T02:00:00.000Z' };
+  const approved = (overrides: Record<string, unknown> = {}) => ({
+    status: 'READY_FOR_PAYMENT', requesterUserId: 'staff', submittedAt: '2026-10-01T02:00:00.000Z', approvedAt: '2026-10-01T03:00:00.000Z', financeReviewStatus: 'NOT_REQUIRED',
+    approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'boss', decidedByName: 'สมหญิง', decidedAt: '2026-10-01T03:00:00.000Z' }],
+    ...overrides,
+  });
+  /** The account's history row as the API sends it: `approvalStepId` only when an approval attested it. */
+  const attestedBy = (userId: string, step: { approvalStepId?: string } = { approvalStepId: 's1' }) => [{ version: 1, ...account, verifiedByUserId: userId, verifiedAt: '2026-10-01T03:00:00.000Z', ...step }];
+
+  it('says "อนุมัติและตรวจบัญชีรับเงินโดย …" for the approval that attested the account, and nothing more where none did', () => {
+    assert.deepEqual(labels(approved({ payoutHistory: attestedBy('boss') })), ['done:ยื่นใบ', 'done:อนุมัติและตรวจบัญชีรับเงินโดย สมหญิง', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
+    // A cash or a legacy claim, an action response (it carries no history), an account nobody attested.
+    for (const payoutHistory of [undefined, [], [{ version: 1, ...account }]]) {
+      assert.deepEqual(labels(approved({ payoutHistory })), ['done:ยื่นใบ', 'done:อนุมัติโดย สมหญิง', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
+    }
+    // Attested when the payment was recorded, by whoever recorded it: no approval did.
+    assert.equal(labels(approved({ payoutHistory: attestedBy('payer', {}) }))[1], 'done:อนุมัติโดย สมหญิง');
+    // It is the step the account names, not every approval the claim has had.
+    const twoRounds = approved({
+      submittedAt: '2026-10-02T02:00:00.000Z',
+      approvalSteps: [
+        { id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'boss', decidedByName: 'สมหญิง', decidedAt: '2026-10-01T03:00:00.000Z' },
+        { id: 's2', sequenceNo: 2, status: 'APPROVED', decisionByUserId: 'boss', decidedByName: 'สมหญิง', decidedAt: '2026-10-02T03:00:00.000Z' },
+      ],
+      payoutHistory: [{ version: 1, ...account }, { version: 2, ...account, accountLast4: '9012', verifiedByUserId: 'boss', verifiedAt: '2026-10-02T03:00:00.000Z', approvalStepId: 's2' }],
+    });
+    assert.deepEqual(labels(twoRounds).slice(1, 3), ['done:อนุมัติโดย สมหญิง', 'done:อนุมัติและตรวจบัญชีรับเงินโดย สมหญิง']);
+  });
+
+  // Spec §10.2: a requester who approves their own claim checked nobody's account but their own. The card says
+  // "ผู้เบิกยืนยันบัญชีของตนเอง"; the journey must not call the same act a check.
+  it('says the requester confirmed their own account when they approved their own claim', () => {
+    const own = approved({ approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'staff', decidedByName: 'สมชาย', decidedAt: '2026-10-01T03:00:00.000Z' }],
+      payoutHistory: attestedBy('staff') });
+    assert.equal(labels(own)[1], 'done:อนุมัติโดย สมชาย · ผู้เบิกยืนยันบัญชีของตนเอง');
+  });
+
+  const transfer = { id: 'p1', paymentNo: 'RBPAY-202610-00001', status: 'RECORDED', paymentMethod: 'BANK_TRANSFER', paidByName: 'สมศรี', paidAt: '2026-10-01T04:00:00.000Z',
+    slipCount: 1, payoutDestination: { version: 1, ...account } };
+  const voided = { ...transfer, status: 'VOIDED', voidedAt: '2026-10-02T05:00:00.000Z', voidReason: 'บันทึกเลขอ้างอิงผิด' };
+
+  it('keeps a voided payment in the journey with why it was voided, then waits for the payment again', () => {
+    const rows = buildClaimTimeline(approved({ payments: [voided], paymentDesk: { names: ['สมศรี'], moreCount: 0 } }));
+    assert.deepEqual(rows.map((row) => `${row.state}:${row.label}`), [
+      'done:ยื่นใบ', 'done:อนุมัติโดย สมหญิง',
+      'done:จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป', 'done:ยกเลิกการจ่ายแล้ว: บันทึกเลขอ้างอิงผิด',
+      'current:กำลังรอ สมศรี บันทึกจ่าย',
+    ]);
+    // Each of the two things that happened has its own date: when it was paid, and when that was taken back.
+    assert.deepEqual(rows.slice(2, 4).map((row) => row.date), ['2026-10-01T04:00:00.000Z', '2026-10-02T05:00:00.000Z']);
+    // Every row has a key of its own; the row the claim stands on is still the one named `payment`.
+    assert.equal(new Set(rows.map((row) => row.key)).size, rows.length);
+    assert.equal(rows.find((row) => row.key === 'payment')!.state, 'current');
+  });
+
+  it('shows a claim paid again after a void: what was voided, then the payment that stands', () => {
+    const again = { ...transfer, id: 'p2', paymentNo: 'RBPAY-202610-00002', paidAt: '2026-10-03T04:00:00.000Z' };
+    const cashFirst = { ...voided, paymentMethod: 'CASH', slipCount: 0, payoutDestination: undefined, methodMismatchReason: 'ผู้เบิกมารับเงินสดเอง', voidReason: undefined };
+    const rows = buildClaimTimeline(approved({ status: 'PAID', payments: [cashFirst, again] }));
+    assert.deepEqual(rows.slice(2).map((row) => `${row.state}:${row.label}`), [
+      'done:จ่ายแล้ว โดย สมศรี · เงินสด · จ่ายต่างจากที่ผู้เบิกขอ', 'done:ยกเลิกการจ่ายแล้ว',
+      'done:จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป',
+    ]);
+    assert.equal(rows.at(-1)!.key, 'payment');
+    assert.equal(rows.at(-1)!.date, '2026-10-03T04:00:00.000Z');
+  });
+
+  it('keeps the voided payment on a claim cancelled afterwards, before the row that ends it', () => {
+    assert.deepEqual(labels(approved({ status: 'CANCELLED', payments: [voided] })).slice(2), [
+      'done:จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป', 'done:ยกเลิกการจ่ายแล้ว: บันทึกเลขอ้างอิงผิด', 'done:ยกเลิกคำขอ',
+    ]);
+  });
+});
+
 describe('buildClaimTimeline after a reopen', () => {
   it('keeps a refused round as history once the claim was fixed and resubmitted', () => {
     assert.deepEqual(buildClaimTimeline({
@@ -1050,6 +1127,25 @@ describe('who a claim waits for is the same on every surface', () => {
         ...buildClaimTimeline(detail).map((row) => row.label)].join(' | ');
       assert.doesNotMatch(texts, /การเงิน/u, String(state.status));
     }
+  });
+
+  // Owner rule 2026-10-01: the API names whoever's turn it is first, then one more person, then a count. The page
+  // prints that list as it came, through one function, so its three places cannot name or order people differently.
+  it('names the same people in the same order in the header, the step note and the timeline', () => {
+    const waiting = (paymentDesk: object) => claim({ financeReviewRequired: false, ...approved, status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' }, paymentDesk });
+    assert.deepEqual(surfaces(waiting({ names: ['สมศรี', 'กมล'], moreCount: 3 })),
+      { desk: 'สมศรี หรือ กมล และอีก 3 คน', note: 'รอ สมศรี หรือ กมล และอีก 3 คน บันทึกจ่าย', timeline: 'กำลังรอ สมศรี หรือ กมล และอีก 3 คน บันทึกจ่าย' });
+    // The order is the API's own: nothing on the page sorts the names again.
+    assert.deepEqual(surfaces(waiting({ names: ['กมล', 'สมศรี'], moreCount: 3 })),
+      { desk: 'กมล หรือ สมศรี และอีก 3 คน', note: 'รอ กมล หรือ สมศรี และอีก 3 คน บันทึกจ่าย', timeline: 'กำลังรอ กมล หรือ สมศรี และอีก 3 คน บันทึกจ่าย' });
+    assert.deepEqual(surfaces(waiting({ names: ['สมศรี'], moreCount: 0 })), { desk: 'สมศรี', note: 'รอ สมศรี บันทึกจ่าย', timeline: 'กำลังรอ สมศรี บันทึกจ่าย' });
+    // The approver who cannot pay is told the same list, in the same words (spec §13.4).
+    const detail = waiting({ names: ['กมล', 'วิชัย'], moreCount: 2 });
+    const toldApprover = activeJourneyStep(buildJourneySteps(detail, ['reimbursement.approve'], 'boss'))!.note!;
+    assert.ok(toldApprover.includes(`ผู้ที่บันทึกจ่ายได้: ${currentDeskText(detail.currentDesk, detail.paymentDesk)} `), toldApprover);
+    // Whoever is offered the payment reads what to do, not who to wait for; the header and the timeline still say who.
+    const forPayer = activeJourneyStep(buildJourneySteps(detail, ['reimbursement.payment.record'], 'payer'))!;
+    assert.deepEqual([forPayer.actions.includes('pay'), forPayer.note], [true, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง']);
   });
 
   it('names the finance desk while finance reviews, then the same payment desk', () => {
