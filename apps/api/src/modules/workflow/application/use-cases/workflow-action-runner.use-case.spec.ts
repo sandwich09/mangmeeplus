@@ -293,6 +293,54 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
+  // Audit B9: nothing reminded anyone that a claim was waiting for payment.
+  describe('payment reminder notice (audit B9)', () => {
+    const reminder = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_sla_breach')!;
+    const runReminder = () => make().execute(
+      { ...actionRun(reminder().defaultActionJson[0]!.configJson), actionKey: reminder().defaultActionJson[0]!.actionKey },
+      {
+        companyId: 'co_1', ruleName: reminder().name, sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-202610-00007', ageHours: 80, slaRisk: true, amount: '250', currency: 'THB' },
+        siblingActions: reminder().defaultActionJson,
+      } as any,
+    );
+
+    it('reminds everyone who can record the payment, in plain Thai, with the link to the claim', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_approver', 'u_finance']);
+      await runReminder();
+
+      assert.deepEqual((repo.findUserIdsByPermissions.mock.calls[0] as any).arguments, ['co_1', ['reimbursement.payment.record']]);
+      const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_approver', 'u_finance']);
+      assert.equal(sent.triggerKey, 'workflow.reimbursement_payment_sla_breach');
+      assert.equal(sent.severity, 'critical');
+      assert.equal(sent.title, 'ใบเบิกรอจ่ายเงินเกินกำหนด: RB-202610-00007');
+      assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
+      assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
+      assert.doesNotMatch(`${sent.title} ${sent.body}`, /SLA|[A-Z]{2,}_[A-Z_]+|rb_1/);
+    });
+
+    // The scan comes round again every window. Retrying into a dead letter each time (a suspended
+    // company, nobody covering the branch) would bury the dead-letter list; an EVENT still retries.
+    it('skips quietly when nobody can record the payment right now, instead of dead-lettering every scan', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => []);
+      await runReminder();
+
+      assert.equal(notify.execute.mock.callCount(), 0);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'SUCCEEDED');
+      assert.deepEqual(finalUpdate.resultJson, { skipped: true, reason: 'no_recipients' });
+
+      const ready = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_ready_for_payment')!;
+      await make().execute(actionRun(ready.defaultActionJson[0]!.configJson), {
+        companyId: 'co_1', ruleName: ready.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_request',
+        sourceId: 'rb_1', payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB' }, siblingActions: [],
+      } as any);
+      assert.equal((repo.updateActionRun.mock.calls.at(-1) as any).arguments[1].status, 'FAILED_RETRYABLE');
+    });
+  });
+
   // Audit B15: `decision` is a code word in the event payload. A notice says it in the words the
   // claim page uses, whatever the rule snapshot holds, because LINE pushes the stored text as it is.
   describe('claim notices never print a decision code word (audit B15)', () => {

@@ -176,6 +176,41 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     status: 'AVAILABLE',
   },
   {
+    // Audit B9: the only reminder covered approvals, so a claim waiting for payment was never
+    // chased. Same scan, same policy deadline and same cadence as the approval reminder above;
+    // only a notice, because a task per scan window would pile up (audit B8).
+    key: 'reimbursement_payment_sla_breach',
+    name: 'Reimbursement payment SLA breach',
+    description: 'Remind everyone who can record the payment when a claim has waited for payment longer than the policy SLA age.',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'SLA_SCAN',
+    defaultConditionJson: { field: 'slaRisk', op: 'EQ', value: true },
+    defaultActionJson: [
+      {
+        actionKey: 'remind_payer',
+        actionType: 'SEND_NOTIFICATION',
+        configJson: {
+          triggerKey: 'workflow.reimbursement_payment_sla_breach',
+          recipientPermissions: ['reimbursement.payment.record'],
+          severity: 'critical',
+          titleTemplate: 'ใบเบิกรอจ่ายเงินเกินกำหนด: {{requestNo}}',
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // The scan comes round again by itself, so having nobody who can pay right now (a
+          // suspended company, no payer covering the branch) is not a failure to retry into a
+          // dead letter every window.
+          skipWhenNoRecipients: true,
+        },
+      },
+    ],
+    requiredPermissions: ['reimbursement.payment.record'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
     key: 'reimbursement_decision_requester',
     name: 'Reimbursement decision requester alert',
     description: 'Notify the requester when their reimbursement is approved or rejected.',

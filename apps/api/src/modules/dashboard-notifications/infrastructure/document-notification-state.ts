@@ -9,6 +9,7 @@ export const DOCUMENT_NOTIFICATION_STATES: Record<string, { sourceType: string; 
   'workflow.reimbursement_correction_requester': { sourceType: 'reimbursement_request', statuses: ['DRAFT'] },
   'workflow.reimbursement_finance_review': { sourceType: 'reimbursement_request', statuses: ['FINANCE_REVIEW'] },
   'workflow.reimbursement_ready_for_payment': { sourceType: 'reimbursement_request', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] },
+  'workflow.reimbursement_payment_sla_breach': { sourceType: 'reimbursement_request', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] },
 };
 
 /** Read projection also covers old alerts, without overwriting read/dismissed history. */

@@ -52,6 +52,8 @@ export class WorkflowScanCandidatesProvider {
         return this.lowStockAlert(companyId);
       case 'approval_sla_breach':
         return this.approvalSlaBreach(companyId, now);
+      case 'reimbursement_payment_sla_breach':
+        return this.paymentSlaBreach(companyId, now);
       case 'tax_due_soon':
         return this.taxDueSoon(companyId);
       case 'bank_reconciliation_aging':
@@ -135,6 +137,27 @@ export class WorkflowScanCandidatesProvider {
           approverTaskUserId: recipients[0],
           ownerRecipientUserIds: ownerRecipients[index],
           approverTaskRole: taskRole,
+        },
+      };
+    });
+  }
+
+  // Audit B9: claims waiting for payment, held to the same policy deadline as approvals. The clock
+  // starts when the claim became payable: the finance decision when there was one, else the approval.
+  private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
+    const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
+    const rows = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
+    return rows.map((r) => {
+      const payableSince = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
+      const age = payableSince ? ageHours(payableSince, now) : 0;
+      return {
+        sourceType: 'reimbursement_request',
+        sourceId: r.id,
+        payload: {
+          requestId: r.id, requestNo: r.requestNo, ageHours: age,
+          slaRisk: isSlaRisk(age, effectivePolicyForRequest(r, currentPolicy).slaHours),
+          // What is left to pay: the whole claim unless a legacy part payment was recorded.
+          amount: r.outstandingAmount, currency: r.currency,
         },
       };
     });

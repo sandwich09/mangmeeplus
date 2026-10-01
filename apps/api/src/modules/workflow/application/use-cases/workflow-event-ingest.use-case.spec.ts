@@ -54,6 +54,7 @@ describe('IngestWorkflowEventUseCase', () => {
       'reimbursement_finance_review',
       'reimbursement_finance_review_pending',
       'reimbursement_payment_recorded',
+      'reimbursement_payment_sla_breach',
       'reimbursement_payment_voided',
       'reimbursement_pending_approval',
       'reimbursement_ready_for_payment',

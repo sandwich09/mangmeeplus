@@ -20,6 +20,18 @@ it('resolves completed source work, retains active work and can reopen after a p
   assert.deepEqual(await completedDocumentNotificationIds(db, 'co1', 'u1'), ['signed']);
   assert.equal(localizeReimbursementDecision('ผลการพิจารณา: REJECTED · 125 THB'), 'ผลการพิจารณา: ไม่อนุมัติ · 125 THB');
 });
+it('keeps the payment reminder to do while the claim waits for payment, and done once it is paid (audit B9)', async () => {
+  let status = 'READY_FOR_PAYMENT';
+  const db: any = {
+    notificationEvent: { findMany: async () => [
+      { id: 'reminder', triggerKey: 'workflow.reimbursement_payment_sla_breach', sourceType: 'reimbursement_request', sourceId: 'claim1' },
+    ] },
+    reimbursementRequest: { findMany: async () => [{ id: 'claim1', status }] },
+  };
+  assert.deepEqual(await completedDocumentNotificationIds(db, 'co1', 'u1'), []);
+  status = 'PAID';
+  assert.deepEqual(await completedDocumentNotificationIds(db, 'co1', 'u1'), ['reminder']);
+});
 it('repairs every decision code word a notice stored before the fix can still carry (audit B15)', () => {
   assert.equal(localizeReimbursementDecision('ผลการพิจารณา: APPROVED · ยอด 125 THB'), 'ผลการพิจารณา: อนุมัติ · ยอด 125 THB');
   assert.equal(

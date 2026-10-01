@@ -230,6 +230,11 @@ export class ExecuteWorkflowActionUseCase {
       if (resolvedUserIds.length > 0 && cfg['skipWhenAllRecipientsExcluded'] === true) {
         return { resultJson: { skipped: true, reason: 'all_recipients_excluded' }, targetType: 'notification_event' };
       }
+      // A scan-driven reminder is retried by the next scan window, so it opts out of the retry and
+      // dead letter an event gets: an event happens once, a scan would dead-letter every window.
+      if (cfg['skipWhenNoRecipients'] === true) {
+        return { resultJson: { skipped: true, reason: 'no_recipients' }, targetType: 'notification_event' };
+      }
       throw new RetryableActionError('No active recipients resolved for configured recipientRoles, recipientPermissions, or recipientPayloadKeys (after exclusions)');
     }
     const readable = readablePayload(context.payload);
