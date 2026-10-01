@@ -26,7 +26,7 @@ import { claimSignatureAckHash, computeReceiptRequirement, currentDesk } from '.
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
-import type { ClaimPayoutRecord } from '../../infrastructure/reimbursement-payout';
+import type { ClaimPayoutRecord, PaymentPayoutDestinationRecord } from '../../infrastructure/reimbursement-payout';
 import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
 import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
@@ -133,6 +133,8 @@ export function toPaymentSummary(
   slips: PaymentSlipRows[string] = [],
   // Default deny: a slip's file id goes only to a caller the slip endpoint would serve.
   viewerCanOpenSlips = false,
+  // The masked account this payment was confirmed into, where the caller loaded it.
+  payoutDestination?: PaymentPayoutDestinationRecord,
 ): ReimbursementPaymentSummary {
   return {
     id: p.id,
@@ -154,6 +156,11 @@ export function toPaymentSummary(
     slipCount: slips.length,
     slips: viewerCanOpenSlips ? slips.map((slip) => ({ attachmentId: slip.attachmentId, attachedAt: slip.attachedAt.toISOString() })) : [],
     viewerCanOpenSlips,
+    // What the payer confirmed, the same for every reader: the masked account, when, and why the
+    // method is not the one asked for. Absent keys mean nothing of the kind was recorded.
+    ...(payoutDestination && { payoutDestination }),
+    ...(p.payoutConfirmedAt && { payoutConfirmedAt: p.payoutConfirmedAt.toISOString() }),
+    ...(p.methodMismatchReason && { methodMismatchReason: p.methodMismatchReason }),
   };
 }
 
@@ -256,6 +263,8 @@ export function toRequestDetail(
     paymentSlips?: PaymentSlipRows;
     viewerCanOpenSlips?: boolean;
     payout?: ReimbursementPayoutSummary;
+    /** The masked accounts the claim's payments were confirmed into, by account version. */
+    paymentDestinations?: Record<number, PaymentPayoutDestinationRecord>;
   } = {},
 ): ReimbursementRequestDetail {
   return {
@@ -284,7 +293,10 @@ export function toRequestDetail(
     missingReceiptReason: r.missingReceiptReason,
     ...(extras.payout && { payout: extras.payout }),
     approvalSteps: (r.approvalSteps ?? []).map((s) => toStepSummary(s, displayNames)),
-    payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames, extras.paymentSlips?.[p.id], extras.viewerCanOpenSlips)),
+    payments: (r.payments ?? []).map((p) => toPaymentSummary(
+      p, displayNames, extras.paymentSlips?.[p.id], extras.viewerCanOpenSlips,
+      p.payoutDestinationVersion === undefined ? undefined : extras.paymentDestinations?.[p.payoutDestinationVersion],
+    )),
     duplicateCandidates: (r.duplicateCandidates ?? []).map(toDuplicateSummary),
     duplicateBlocksPayment: extras.duplicateBlocksPayment,
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
@@ -318,7 +330,9 @@ export async function detailWithFileNames(
   // The claim's own snapshot only. A legacy claim has none, and nothing here can reach a member's
   // default account: a draft that still follows the default gets its preview on the detail read alone.
   const payoutRead = req.payoutMethod ? repo.findClaimPayout(req) : Promise.resolve(undefined);
-  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips, payout] = await Promise.all([
+  // The account each payment was confirmed into. Only a payment recorded with one costs a query.
+  const paidInto = (req.payments ?? []).flatMap((payment) => payment.payoutDestinationVersion ?? []);
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips, payout, paymentDestinations] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
     // Whoever declared a paper-signed scan, typed the account or attested it is named in the same batch.
@@ -331,6 +345,7 @@ export async function detailWithFileNames(
     // Only a claim with a payment can have a slip, so an unpaid claim costs no query.
     paymentIds.length > 0 ? repo.listPaymentSlips(companyId, paymentIds) : undefined,
     payoutRead,
+    paidInto.length > 0 ? repo.listPaymentPayoutDestinations(companyId, req.id, paidInto) : undefined,
   ]);
   const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
   const receiptRequirementStatus = req.status === 'DRAFT'
@@ -360,5 +375,6 @@ export async function detailWithFileNames(
       { requesterUserId: req.requesterUserId, submittedAt: req.submittedAt, approvalSteps: req.approvalSteps, approvalActions },
     ),
     payout: toPayoutSummary(payout, displayNames),
+    paymentDestinations,
   });
 }

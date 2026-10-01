@@ -174,6 +174,12 @@ export class RecordReimbursementPaymentDto implements RecordReimbursementPayment
   @IsString() @IsOptional() @MaxLength(500) note?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(128) idempotencyKey?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) slipAttachmentId?: string;
+  // The payer's statement about the payout account (payout spec §12.3). Shapes only: whether it is
+  // enough for this claim is decided under the payment lock by `planPaymentPayout`.
+  @IsInt() @Min(1) @IsOptional() payoutDestinationVersion?: number;
+  @IsBoolean() @IsOptional() payoutConfirmed?: boolean;
+  @Matches(/^[0-9a-f]{32}$/) @IsOptional() payoutDefaultToken?: string;
+  @IsString() @IsOptional() @MaxLength(500) methodMismatchReason?: string;
 }
 
 // ---- Payment slips ----

@@ -12,6 +12,13 @@ import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimb
 import { ReimbursementController } from '../../presentation/http/reimbursement.controller';
 import { detailWithFileNames } from '../dto/reimbursement.mapper';
 import { RecordReimbursementPaymentDto } from '../../presentation/http/reimbursement.dtos';
+import { ConflictException } from '@nestjs/common';
+import { claimSignatureAckHash, claimSnapshotFields, computeSnapshotHash } from '../../domain/logic/reimbursement.logic';
+import { legacyPayoutConfirmToken, planPaymentPayout, sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
+import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
+import {
+  assertPaymentPayoutUsable, confirmPaymentPayout, readClaimPayout, readPaymentPayoutDestinations, readRecordedPaymentPayout,
+} from '../../infrastructure/reimbursement-payout';
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -64,8 +71,11 @@ function fakeRepo(req: any, opts: {
   slipError?: Error;
   /** How the repository says the slip came to be one (default: the payer's own upload). */
   slipSource?: 'UPLOAD' | 'PREVIOUS_SLIP' | 'SIGNED_COPY';
+  /** The two payout tables. The fake runs the repository's own payout functions over them. */
+  payout?: ReturnType<typeof fakePayoutTables>;
 } = {}) {
   const payments: any[] = [];
+  const tables = opts.payout ?? fakePayoutTables();
   const outboxRows = opts.outboxRows ?? [];
   /** Slip links per payment: what the claim page, the export and the print all read. */
   const slips: Record<string, { attachmentId: string; attachedAt: Date }[]> = {};
@@ -84,6 +94,11 @@ function fakeRepo(req: any, opts: {
       if (opts.slipError) throw opts.slipError;
     },
     listPaymentSlips: async (_c: string, ids: string[]) => Object.fromEntries(ids.filter((id) => slips[id]).map((id) => [id, slips[id]])),
+    // The payout side is the repository's own code over in-memory tables, not an imitation of it.
+    findClaimPayout: (request: any) => readClaimPayout(tables.client, request),
+    listPaymentPayoutDestinations: (companyId: string, requestId: string, versions: number[]) => readPaymentPayoutDestinations(tables.client, companyId, requestId, versions),
+    assertPaymentPayoutUsable: (request: any, plan: any) => assertPaymentPayoutUsable(tables.client, request, plan),
+    findRecordedPaymentPayout: (request: any, payment: any) => readRecordedPaymentPayout(tables.client, request, payment),
     findPaymentById: async (_c: string, id: string) => payments.find((payment) => payment.id === id) ?? null,
     // The real void reverses the journal too; here only what the claim shows afterwards matters.
     voidPaymentTrueReversal: async (_c: string, _requestId: string, paymentId: string, actorUserId: string, reason: string) => {
@@ -163,8 +178,16 @@ function fakeRepo(req: any, opts: {
     listOpenDuplicateCandidates: async () => (opts.openDuplicates ? Array.from({ length: opts.openDuplicates }, (_v, i) => ({ id: `d${i}` })) : []),
     recordPaymentAtomic: async (data: any) => {
       const id = `pay-${payments.length + 1}`;
+      // As the repository does under the payment lock: the payer's statement is held against the
+      // claim as it stands, then the account is confirmed and its version goes onto the payment.
+      const { payout: statement, ...facts } = data;
+      const plan = planPaymentPayout(req, { ...statement, paymentMethod: data.paymentMethod });
+      if ('error' in plan) throw new ConflictException(plan.error);
+      const payout = await confirmPaymentPayout(tables.client, req, plan, { actorUserId: data.paidByUserId, confirmedAt: new Date('2026-02-01T00:00:05.000Z') });
       const payment = {
-        id, ...data,
+        id, ...facts,
+        payoutDestinationVersion: payout?.payoutDestinationVersion, payoutConfirmedAt: payout?.payoutConfirmedAt,
+        methodMismatchReason: plan.methodMismatchReason,
         sourcePaymentRef: JSON.stringify({ sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: id, direction: 'PAID' }),
         status: 'RECORDED', postingStatus: 'pending', createdAt: new Date(), updatedAt: new Date(),
       };
@@ -176,6 +199,7 @@ function fakeRepo(req: any, opts: {
         payment,
         created: true,
         ...(data.slipAttachmentId && { slip: linkSlip(id, data.slipAttachmentId, data.paidByUserId) }),
+        ...(payout && { payout }),
       };
     },
     updateRequest: async (_c: string, _id: string, data: any) => { Object.assign(req, data); return req; },
@@ -558,6 +582,492 @@ describe('payment slip at the payment step', () => {
       paidAt, paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
     }]);
     assert.equal(JSON.stringify(out).includes('att-slip-1'), false);
+  });
+});
+
+// ---- The pay step (payout Phase 1 part B): spec §12.3, §12.4, §12.6, §12.7, §15 ----
+
+const PAYOUT_KEY = Buffer.alloc(32, 7);
+/** The test account number. Nothing these suites collect may carry it: it leaves through the audited reveal alone. */
+const ACCOUNT_NUMBER = '0045671234';
+/** The same digits however they are written: bare, or with dashes or spaces between any two of them. */
+const ACCOUNT_NUMBER_WRITTEN = new RegExp(ACCOUNT_NUMBER.split('').join('[\\s-]*'));
+const sealedAccount = (accountNumber = '004-5-67123-4', accountName = 'นาย สมชาย ใจดี') => sealPayoutDestination(
+  { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName, accountNumber }, PAYOUT_KEY,
+)!;
+const MASKED_ACCOUNT = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '1234' };
+
+/**
+ * A claim sent with its own frozen account, as the payout-aware submit and an approval leave it:
+ * version 2, so nothing passes by assuming a first version, attested by its approver.
+ */
+function transferClaim(overrides: Partial<any> = {}, verifiedByUserId: string | null = 'approver-1') {
+  const tables = fakePayoutTables();
+  const sealed = sealedAccount();
+  tables.destinations.push({
+    id: 'destination-2', companyId: 'co-1', reimbursementRequestId: 'rb-1', version: 2, ...sealed,
+    source: 'DEFAULT_ACCOUNT', createdByUserId: 'staff-1', frozenAt: new Date('2026-01-10T00:00:00.000Z'),
+    ...(verifiedByUserId && { verifiedByUserId, verifiedAt: new Date('2026-01-11T00:00:00.000Z'), verifiedVia: 'APPROVAL', approvalStepId: 'step-1' }),
+  });
+  const req = financeReviewedRequest({
+    financeReviewStatus: 'NOT_REQUIRED', submittedAt: new Date('2026-01-10T00:00:00.000Z'), approvedAt: new Date('2026-01-11T00:00:00.000Z'),
+    payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: sealed.fingerprint, lines: [], ...overrides,
+  });
+  return { req, tables, sealed };
+}
+
+/** A claim sent before claims carried an account, whose requester has since set a default account. */
+function legacyClaimWithDefault(accountNumber?: string) {
+  const tables = fakePayoutTables();
+  const sealed = sealedAccount(accountNumber);
+  tables.accounts.push({
+    id: 'account-1', companyId: 'co-1', userId: 'staff-1', payoutMethod: 'BANK_TRANSFER', ...sealed,
+    version: 3, updatedByUserId: 'hr-1', updatedAt: new Date('2026-01-20T00:00:00.000Z'),
+  });
+  const req = financeReviewedRequest({ financeReviewStatus: 'NOT_REQUIRED', submittedAt: new Date('2026-01-10T00:00:00.000Z'), lines: [] });
+  return { req, tables, sealed, token: legacyPayoutConfirmToken('rb-1', sealed.fingerprint) };
+}
+
+describe('pay step: the payer confirms the account the claim froze', () => {
+  const perms = ['reimbursement.payment.record'];
+  const paidAt = '2026-02-01T00:00:00.000Z';
+  const transfer = { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER' as const, paidAt, paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1' };
+  const cash = { paidAmount: '500.0000', paymentMethod: 'CASH' as const, paidAt };
+  const confirmed = { payoutDestinationVersion: 2, payoutConfirmed: true };
+  /** The use case with document numbering that counts what it reserves and remembers what it committed. */
+  function payStep(repo: any, audit: any = noopAudit) {
+    const reservations = new Map<string, any>();
+    const reserving = { execute: async (input: any) => {
+      const reservation = reservations.get(input.idempotencyKey)
+        ?? { id: `seq-${reservations.size + 1}`, documentNumber: `RBPAY-202602-00000${reservations.size + 1}`, status: 'RESERVED' };
+      reservations.set(input.idempotencyKey, reservation);
+      return { ...reservation };
+    } } as any;
+    const committing = { execute: async (input: any) => {
+      Object.assign([...reservations.values()].find((row) => row.id === input.id), { status: 'COMMITTED', ownerType: input.ownerType, ownerId: input.ownerId });
+    } } as any;
+    return {
+      uc: new RecordReimbursementPaymentUseCase(repo, audit, noopOutbox, reserving, committing, fakeDetailEvidence as any),
+      reserved: () => reservations.size,
+    };
+  }
+  const refusal = (code: string, status = 409) => (error: any) => error.getStatus() === status && error.message === code;
+
+  it('records a transfer only with a confirmation of the account version the claim holds now', async () => {
+    const { req, tables } = transferClaim();
+    const repo = fakeRepo(req, { payout: tables });
+    const { uc, reserved } = payStep(repo);
+    const statements: [Record<string, unknown>, string][] = [
+      [{}, 'payout_confirmation_required'],
+      [{ payoutConfirmed: true }, 'payout_confirmation_required'],
+      [{ payoutDestinationVersion: 2 }, 'payout_confirmation_required'],
+      [{ payoutDestinationVersion: 2, payoutConfirmed: false }, 'payout_confirmation_required'],
+      [{ payoutDestinationVersion: 1, payoutConfirmed: true }, 'payout_destination_changed'],
+      [{ payoutDestinationVersion: 3, payoutConfirmed: true }, 'payout_destination_changed'],
+      // A token of a default account means nothing on a claim that froze its own.
+      [{ ...confirmed, payoutDefaultToken: 'a'.repeat(32) }, 'payout_destination_changed'],
+    ];
+    for (const [statement, code] of statements) {
+      await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { ...transfer, ...statement }), refusal(code), JSON.stringify(statement));
+    }
+    // Refused before a payment number is reserved, with nothing written.
+    assert.deepEqual([reserved(), repo.lastPayment, req.status, req.outstandingAmount], [0, undefined, 'READY_FOR_PAYMENT', '500.0000']);
+
+    const paid = await uc.execute(ctx(perms), 'rb-1', { ...transfer, ...confirmed });
+    assert.equal(paid.status, 'PAID');
+    // One number: the version the approver attested, the one the payer was shown and confirmed,
+    // and the one the payment keeps.
+    const attested = tables.destinations[0]!;
+    assert.deepEqual([attested.version, attested.verifiedByUserId, attested.verifiedVia], [2, 'approver-1', 'APPROVAL'], 'the approver stays the verifier');
+    assert.deepEqual([paid.payout?.version, repo.lastPayment.payoutDestinationVersion, paid.payments[0]!.payoutDestination?.version], [2, 2, 2]);
+    // The payment row says where the money went, masked, and when the payer confirmed it.
+    assert.deepEqual(paid.payments[0]!.payoutDestination, { version: 2, ...MASKED_ACCOUNT });
+    assert.equal(paid.payments[0]!.payoutConfirmedAt, '2026-02-01T00:00:05.000Z');
+    assert.equal(paid.payments[0]!.methodMismatchReason, undefined);
+  });
+
+  it('refuses a version the claim no longer holds even after the friendly check passed: the repository decides under the lock', async () => {
+    const { req, tables, sealed } = transferClaim();
+    const repo = fakeRepo(req, { payout: tables });
+    // The account is corrected between the use case's read and the payment lock.
+    const record = repo.recordPaymentAtomic.bind(repo);
+    repo.recordPaymentAtomic = async (data: any) => {
+      const next = sealedAccount('111-2-33344-5');
+      tables.destinations.push({ id: 'destination-3', companyId: 'co-1', reimbursementRequestId: 'rb-1', version: 3, ...next, source: 'REQUESTER', createdByUserId: 'staff-1', frozenAt: new Date() });
+      Object.assign(req, { payoutDestinationVersion: 3, payoutFingerprint: next.fingerprint });
+      return record(data);
+    };
+    await assert.rejects(() => payStep(repo).uc.execute(ctx(perms), 'rb-1', { ...transfer, ...confirmed }), refusal('payout_destination_changed'));
+    assert.deepEqual([repo.payments.length, req.status], [0, 'READY_FOR_PAYMENT']);
+    assert.notEqual(req.payoutFingerprint, sealed.fingerprint);
+  });
+
+  it('follows the table of spec 12.4 for every pair of requested and recorded method', async () => {
+    const reason = 'ผู้เบิกขอรับเป็นเงินสดแทน เพราะบัญชีถูกปิด';
+    type Row = { name: string; claim: () => { req: any; tables: ReturnType<typeof fakePayoutTables> }; pay: Record<string, unknown>; refusedAs?: string; stored: unknown[] };
+    const cashClaim = () => ({ req: financeReviewedRequest({ financeReviewStatus: 'NOT_REQUIRED', payoutMethod: 'CASH', payoutFingerprint: 'cash', lines: [] }), tables: fakePayoutTables() });
+    const legacy = () => ({ req: financeReviewedRequest({ financeReviewStatus: 'NOT_REQUIRED', lines: [] }), tables: fakePayoutTables() });
+    const cheque = { paidAmount: '500.0000', paymentMethod: 'CHEQUE' as const, paidAt, paymentReference: 'CHQ-9' };
+    const other = { paidAmount: '500.0000', paymentMethod: 'OTHER' as const, paidAt };
+    const rows: Row[] = [
+      // requested transfer
+      { name: 'transfer claim, transfer: confirmation and slip, no reason', claim: transferClaim, pay: { ...transfer, ...confirmed }, stored: [2, true, undefined] },
+      { name: 'transfer claim, transfer without its slip', claim: transferClaim, pay: { ...transfer, ...confirmed, slipAttachmentId: undefined }, refusedAs: 'payment_slip_required', stored: [] },
+      { name: 'transfer claim, cash without a reason', claim: transferClaim, pay: cash, refusedAs: 'payment_method_mismatch_reason_required', stored: [] },
+      { name: 'transfer claim, cash with a blank reason', claim: transferClaim, pay: { ...cash, methodMismatchReason: '   ' }, refusedAs: 'payment_method_mismatch_reason_required', stored: [] },
+      { name: 'transfer claim, cash with a reason: no confirmation, no slip', claim: transferClaim, pay: { ...cash, methodMismatchReason: ` ${reason} ` }, stored: [undefined, false, reason] },
+      { name: 'transfer claim, cheque with a reason', claim: transferClaim, pay: { ...cheque, methodMismatchReason: reason }, stored: [undefined, false, reason] },
+      { name: 'transfer claim, another method with a reason', claim: transferClaim, pay: { ...other, methodMismatchReason: reason }, stored: [undefined, false, reason] },
+      // requested cash
+      { name: 'cash claim, cash: nothing more', claim: cashClaim, pay: cash, stored: [undefined, false, undefined] },
+      { name: 'cash claim, transfer without a reason', claim: cashClaim, pay: transfer, refusedAs: 'payment_method_mismatch_reason_required', stored: [] },
+      { name: 'cash claim, transfer with a reason: the slip, and no account to confirm', claim: cashClaim, pay: { ...transfer, methodMismatchReason: reason }, stored: [undefined, false, reason] },
+      { name: 'cash claim, transfer with a reason and no slip', claim: cashClaim, pay: { ...transfer, slipAttachmentId: undefined, methodMismatchReason: reason }, refusedAs: 'payment_slip_required', stored: [] },
+      { name: 'cash claim, cheque without a reason', claim: cashClaim, pay: cheque, refusedAs: 'payment_method_mismatch_reason_required', stored: [] },
+      { name: 'cash claim, another method with a reason', claim: cashClaim, pay: { ...other, methodMismatchReason: reason }, stored: [undefined, false, reason] },
+      // legacy: exactly as before the feature
+      { name: 'legacy claim, transfer with its slip: no confirmation, no reason', claim: legacy, pay: transfer, stored: [undefined, false, undefined] },
+      { name: 'legacy claim, transfer without a slip', claim: legacy, pay: { ...transfer, slipAttachmentId: undefined }, refusedAs: 'payment_slip_required', stored: [] },
+      { name: 'legacy claim, cash', claim: legacy, pay: cash, stored: [undefined, false, undefined] },
+      { name: 'legacy claim, cheque', claim: legacy, pay: cheque, stored: [undefined, false, undefined] },
+      // A reason nobody asked for is not kept: the row would then say the method differs from one never asked for.
+      { name: 'legacy claim, another method, with a reason sent anyway', claim: legacy, pay: { ...other, methodMismatchReason: reason }, stored: [undefined, false, undefined] },
+    ];
+    for (const row of rows) {
+      const { req, tables } = row.claim();
+      const repo = fakeRepo(req, { payout: tables });
+      const run = () => payStep(repo).uc.execute(ctx(perms), 'rb-1', row.pay as any);
+      if (row.refusedAs) {
+        await assert.rejects(run, (error: any) => error.message === row.refusedAs, row.name);
+        assert.equal(repo.payments.length, 0, row.name);
+        continue;
+      }
+      const paid = await run();
+      const payment = paid.payments[0]!;
+      assert.deepEqual([payment.payoutDestination?.version, payment.payoutConfirmedAt !== undefined, payment.methodMismatchReason], row.stored, row.name);
+      assert.deepEqual([repo.lastPayment.payoutDestinationVersion, repo.lastPayment.methodMismatchReason], [row.stored[0], row.stored[2]], row.name);
+    }
+  });
+
+  it('refuses whatever the payer names as shown when it is not what the claim holds, whichever method is recorded', async () => {
+    const reason = 'จ่ายเงินสดที่ร้าน';
+    // Paying a transfer claim in cash needs no confirmation, but a version from a page loaded before the account changed is still stale.
+    const stale = transferClaim();
+    await assert.rejects(() => payStep(fakeRepo(stale.req, { payout: stale.tables })).uc.execute(ctx(perms), 'rb-1', { ...cash, methodMismatchReason: reason, payoutDestinationVersion: 1 }), refusal('payout_destination_changed'));
+    // The version the page showed, sent with a cash payment, is accepted and names no account on the payment.
+    const current = transferClaim();
+    const repo = fakeRepo(current.req, { payout: current.tables });
+    const paid = await payStep(repo).uc.execute(ctx(perms), 'rb-1', { ...cash, methodMismatchReason: reason, payoutDestinationVersion: 2 });
+    assert.deepEqual([paid.payments[0]!.payoutDestination, repo.lastPayment.payoutDestinationVersion], [undefined, undefined]);
+    // A cash claim and a legacy claim hold no account version: a page that showed one is stale.
+    for (const claim of [financeReviewedRequest({ payoutMethod: 'CASH', payoutFingerprint: 'cash', lines: [] }), financeReviewedRequest({ lines: [] })]) {
+      await assert.rejects(() => payStep(fakeRepo(claim)).uc.execute(ctx(perms), 'rb-1', { ...cash, payoutDestinationVersion: 2 }), refusal('payout_destination_changed'));
+    }
+  });
+
+  it('keeps an account number out of the reason: it is shown on the payment row to everyone who reads the claim', async () => {
+    for (const methodMismatchReason of ['โอนเข้า 0045671234 แทน', 'บัญชี 004-5-67123-4 ปิดแล้ว', 'พร้อมเพย์ 081 234 5678']) {
+      const { req, tables } = transferClaim();
+      const repo = fakeRepo(req, { payout: tables });
+      await assert.rejects(() => payStep(repo).uc.execute(ctx(perms), 'rb-1', { ...cash, methodMismatchReason }), refusal('note_contains_account_number'), methodMismatchReason);
+      assert.equal(repo.payments.length, 0);
+    }
+    // The product's own document numbers and an amount in baht are not account numbers.
+    const { req, tables } = transferClaim();
+    const repo = fakeRepo(req, { payout: tables });
+    const paid = await payStep(repo).uc.execute(ctx(perms), 'rb-1', { ...cash, methodMismatchReason: 'จ่ายเงินสดตามใบ RB-202601-000001 ยอด 500 บาท' });
+    assert.equal(paid.payments[0]!.methodMismatchReason, 'จ่ายเงินสดตามใบ RB-202601-000001 ยอด 500 บาท');
+  });
+
+  it('never carries the reason, or the account number, in the event, the audit row or a log line', async () => {
+    const { req, tables } = transferClaim();
+    const repo = fakeRepo(req, { payout: tables });
+    const outboxRows: any[] = [];
+    const record = repo.recordPaymentAtomic.bind(repo);
+    repo.recordPaymentAtomic = async (data: any) => {
+      const result = await record(data);
+      await data.onPaymentPersisted(fakeTx(outboxRows), result.payment, result.request.paymentStatus);
+      return result;
+    };
+    const audits: any[] = [];
+    const logged: unknown[] = [];
+    const consoleMethods = ['log', 'info', 'warn', 'error', 'debug'] as const;
+    const originals = consoleMethods.map((method) => console[method]);
+    const stdoutWrite = process.stdout.write;
+    consoleMethods.forEach((method) => { console[method] = (...args: unknown[]) => { logged.push(args); }; });
+    process.stdout.write = ((chunk: unknown) => { logged.push(String(chunk)); return true; }) as typeof process.stdout.write;
+    const reason = 'ผู้เบิกมารับเงินสดเองที่ร้าน';
+    try {
+      await payStep(repo, { log: async (entry: any) => { audits.push(entry); } }).uc.execute(ctx(perms), 'rb-1', { ...cash, methodMismatchReason: reason, payoutDestinationVersion: 2 });
+    } finally {
+      consoleMethods.forEach((method, index) => { console[method] = originals[index]!; });
+      process.stdout.write = stdoutWrite;
+    }
+    assert.equal(repo.lastPayment.methodMismatchReason, reason, 'the reason is on the payment record');
+    const outside = JSON.stringify([outboxRows, audits, logged]);
+    assert.equal(outboxRows.length, 1);
+    assert.equal(outside.includes(reason), false, 'and nowhere else');
+    assert.doesNotMatch(outside, ACCOUNT_NUMBER_WRITTEN);
+    // The audit row says that the method differs and from what, without the payer's words.
+    assert.deepEqual(audits.find((entry) => entry.action === 'reimbursement.payment.record').metadataJson, {
+      paymentNo: 'RBPAY-202602-000001', paidAmount: '500.0000', paymentMethod: 'CASH', requestId: 'rb-1',
+      paidDifferentlyFromRequested: true, requestedPayoutMethod: 'BANK_TRANSFER',
+    });
+  });
+
+  it('audits a confirmed transfer with the account version and the last 4 digits, never the number', async () => {
+    const { req, tables } = transferClaim();
+    const audits: any[] = [];
+    await payStep(fakeRepo(req, { payout: tables }), { log: async (entry: any) => { audits.push(entry); } }).uc.execute(ctx(perms), 'rb-1', { ...transfer, ...confirmed });
+    assert.deepEqual(audits.find((entry) => entry.action === 'reimbursement.payment.record').metadataJson, {
+      paymentNo: 'RBPAY-202602-000001', paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER', requestId: 'rb-1',
+      slipAttachmentId: 'att-slip-1', slipSource: 'UPLOAD',
+      payoutDestinationVersion: 2, payoutSource: 'CLAIM', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '1234',
+    });
+    assert.doesNotMatch(JSON.stringify(audits), ACCOUNT_NUMBER_WRITTEN);
+  });
+
+  // Spec §10.2 (AC14): where nobody but the requester has checked the account, the payer is the one who does.
+  it('records the payer as who checked the account when nobody but the requester had', async () => {
+    const cases: [string, string | null, string, unknown[]][] = [
+      ['a claim below the approval threshold: nobody attested', null, 'fin-1', ['fin-1', 'PAYMENT', null]],
+      ['a claim its requester approved themselves', 'staff-1', 'fin-1', ['fin-1', 'PAYMENT', null]],
+      ['a claim its approver attested', 'approver-1', 'fin-1', ['approver-1', 'APPROVAL', 'step-1']],
+      // One person doing everything: the record stays what it truly is, their own attestation at approval.
+      ['a claim its requester approved and pays themselves', 'staff-1', 'staff-1', ['staff-1', 'APPROVAL', 'step-1']],
+      ['a claim nobody attested, paid by its own requester', null, 'staff-1', ['staff-1', 'PAYMENT', null]],
+    ];
+    for (const [name, verifiedBy, payer, expected] of cases) {
+      const { req, tables } = transferClaim({}, verifiedBy);
+      const audits: any[] = [];
+      const paid = await payStep(fakeRepo(req, { payout: tables }), { log: async (entry: any) => { audits.push(entry); } })
+        .uc.execute({ ...ctx(perms), userId: payer }, 'rb-1', { ...transfer, ...confirmed });
+      const row = tables.destinations[0]!;
+      assert.deepEqual([row.verifiedByUserId, row.verifiedVia, row.approvalStepId ?? null], expected, name);
+      // The claim then shows that person as who checked the account it was paid into.
+      assert.equal(paid.payout?.verifiedByUserId, expected[0], name);
+      assert.equal(audits.find((entry) => entry.action === 'reimbursement.payment.record').metadataJson.payerVerifiedAccount, expected[1] === 'PAYMENT' ? true : undefined, name);
+    }
+  });
+
+  it('replays a confirmed transfer as itself, and never reports another account, or none, as paid', async () => {
+    const { req, tables } = transferClaim();
+    const repo = fakeRepo(req, { payout: tables });
+    const { uc } = payStep(repo);
+    const input = { ...transfer, ...confirmed, idempotencyKey: 'form-1' };
+    await uc.execute(ctx(perms), 'rb-1', input);
+
+    const replayed = await uc.execute(ctx(perms), 'rb-1', input);
+    assert.deepEqual([replayed.status, repo.payments.length, replayed.payments[0]!.payoutDestination?.version], ['PAID', 1, 2]);
+    for (const statement of [{ payoutDestinationVersion: 1 }, { payoutDestinationVersion: 3 }, { payoutDestinationVersion: undefined }, { payoutConfirmed: false }, { payoutConfirmed: undefined }]) {
+      await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { ...input, ...statement }), refusal('reimbursement_payment_already_recorded'), JSON.stringify(statement));
+    }
+    assert.equal(repo.payments.length, 1);
+
+    // A cash payment of a transfer claim replays as itself whether or not the page's version is sent
+    // with it: no account was confirmed, so none is compared. A different reason is not another payment.
+    const paidInCash = transferClaim();
+    const cashRepo = fakeRepo(paidInCash.req, { payout: paidInCash.tables });
+    const cashUC = payStep(cashRepo).uc;
+    const cashInput = { ...cash, methodMismatchReason: 'จ่ายเงินสดที่ร้าน', payoutDestinationVersion: 2, idempotencyKey: 'form-2' };
+    await cashUC.execute(ctx(perms), 'rb-1', cashInput);
+    for (const again of [cashInput, { ...cashInput, payoutDestinationVersion: undefined }, { ...cashInput, methodMismatchReason: 'จ่ายเงินสด' }]) {
+      assert.equal((await cashUC.execute(ctx(perms), 'rb-1', again)).status, 'PAID');
+    }
+    assert.deepEqual([cashRepo.payments.length, cashRepo.payments[0].methodMismatchReason], [1, 'จ่ายเงินสดที่ร้าน']);
+    // The same key, now claiming a confirmed transfer: that is not the payment that was recorded.
+    await assert.rejects(() => cashUC.execute(ctx(perms), 'rb-1', { ...transfer, ...confirmed, idempotencyKey: 'form-2' }), refusal('reimbursement_payment_already_recorded'));
+  });
+
+  // J10: "recorded" is only ever said of a payment that stands.
+  it('never answers a retry as paid once the payment it repeats has been voided', async () => {
+    const { req, tables } = transferClaim();
+    const repo = fakeRepo(req, { payout: tables });
+    const { uc } = payStep(repo);
+    const input = { ...transfer, ...confirmed, idempotencyKey: 'form-1' };
+    await uc.execute(ctx(perms), 'rb-1', input);
+    await new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any).execute(ctx(['reimbursement.payment.void']), 'rb-1', 'pay-1', { reason: 'โอนผิดบัญชี' });
+    assert.deepEqual([req.status, repo.payments.map((payment: any) => payment.status)], ['READY_FOR_PAYMENT', ['VOIDED']]);
+
+    // The same request again is a new payment, with its own confirmation: it creates a second record.
+    const repaid = await uc.execute(ctx(perms), 'rb-1', { ...input, idempotencyKey: 'form-2', paymentReference: 'TXN-2' });
+    assert.deepEqual(repaid.payments.map((row) => [row.status, row.payoutDestination?.version]), [['VOIDED', 2], ['RECORDED', 2]]);
+    // And without the confirmation it is refused: a void never carries a confirmation over.
+    await new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any).execute(ctx(['reimbursement.payment.void']), 'rb-1', 'pay-2', { reason: 'โอนซ้ำ' });
+    await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { ...transfer, idempotencyKey: 'form-3' }), refusal('payout_confirmation_required'));
+    assert.equal(repo.payments.filter((payment: any) => payment.status === 'RECORDED').length, 0);
+  });
+
+  // Invariant J4: outside the two audited reveal answers, nothing carries a full account number.
+  // Every answer, event, audit row and log line of a transfer claim's payment step is collected and
+  // searched for the test number, bare and written with dashes or spaces.
+  it('carries the full account number in no answer, event, audit row or log line of the payment step', async () => {
+    const { req, tables, sealed } = transferClaim();
+    const repo = fakeRepo(req, { payout: tables });
+    const outboxRows: any[] = [];
+    const record = repo.recordPaymentAtomic.bind(repo);
+    repo.recordPaymentAtomic = async (data: any) => {
+      const result = await record(data);
+      await data.onPaymentPersisted(fakeTx(outboxRows), result.payment, result.request.paymentStatus);
+      return result;
+    };
+    const audits: any[] = [];
+    const audit = { log: async (entry: any) => { audits.push(entry); } };
+    const logged: unknown[] = [];
+    const consoleMethods = ['log', 'info', 'warn', 'error', 'debug'] as const;
+    const originals = consoleMethods.map((method) => console[method]);
+    const stdoutWrite = process.stdout.write;
+    const stderrWrite = process.stderr.write;
+    consoleMethods.forEach((method) => { console[method] = (...args: unknown[]) => { logged.push(args); }; });
+    process.stdout.write = ((chunk: unknown) => { logged.push(String(chunk)); return true; }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown) => { logged.push(String(chunk)); return true; }) as typeof process.stderr.write;
+    const answers: unknown[] = [];
+    try {
+      const { uc } = payStep(repo, audit);
+      const voidUC = new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any);
+      const payer = ctx([...perms, 'reimbursement.payment.void', 'reimbursement.export']);
+      const input = { ...transfer, ...confirmed, idempotencyKey: 'form-1' };
+      // Refusals first: what a refused payer is told carries no number either.
+      for (const statement of [{}, { payoutDestinationVersion: 1, payoutConfirmed: true }]) {
+        answers.push(await uc.execute(payer, 'rb-1', { ...transfer, ...statement }).catch((error: any) => [error.message, error.getResponse?.()]));
+      }
+      answers.push(await uc.execute(payer, 'rb-1', input));                       // paid
+      answers.push(await uc.execute(payer, 'rb-1', input));                       // the same payment again
+      answers.push(await new ExportReimbursementEvidenceUseCase(repo, audit as any).execute(payer, 'rb-1'));
+      answers.push(await voidUC.execute(payer, 'rb-1', 'pay-1', { reason: 'โอนผิดบัญชี' }));
+      answers.push(await voidUC.execute(payer, 'rb-1', 'pay-1', { reason: 'โอนผิดบัญชี' }));
+      answers.push(await uc.execute(payer, 'rb-1', { ...cash, methodMismatchReason: 'จ่ายเงินสดแทน', payoutDestinationVersion: 2, idempotencyKey: 'form-2' }));
+      answers.push(await new ExportReimbursementEvidenceUseCase(repo, audit as any).execute(payer, 'rb-1'));
+      // The same claim as its other readers get it.
+      const claim = await repo.findRequestById('co-1', 'rb-1', true);
+      for (const viewer of [{ userId: 'staff-1', permissions: [] }, { userId: 'auditor-1', permissions: ['reimbursement.read'] }, { userId: 'fin-2', permissions: ['reimbursement.finance_review'] }]) {
+        answers.push(await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', claim, viewer));
+      }
+    } finally {
+      consoleMethods.forEach((method, index) => { console[method] = originals[index]!; });
+      process.stdout.write = stdoutWrite;
+      process.stderr.write = stderrWrite;
+    }
+    assert.equal(answers.length, 12);
+    assert.ok(outboxRows.length >= 2 && audits.length >= 3, 'the events and audit rows of two payments and an export were collected');
+    for (const [name, collected] of [['answers', answers], ['event payloads', outboxRows], ['audit rows', audits], ['log lines', logged]] as const) {
+      const text = JSON.stringify(collected);
+      assert.doesNotMatch(text, ACCOUNT_NUMBER_WRITTEN, name);
+      assert.equal(text.includes(sealed.accountNumberEncrypted) || text.includes(sealed.fingerprint), false, `${name}: neither the ciphertext nor the fingerprint`);
+      assert.doesNotMatch(text, /"(?:payout)?accountNumber\w*"|"\w*fingerprint\w*"/i, `${name}: no field is even named after them`);
+    }
+    // The search itself would find the number if it were there, in either spelling.
+    for (const written of ['0045671234', '004-5-67123-4', '004 567 1234']) assert.match(JSON.stringify({ leak: written }), ACCOUNT_NUMBER_WRITTEN);
+    // What the answers do carry of the account: its last four digits, to everyone alike.
+    assert.match(JSON.stringify(answers), /"accountLast4":"1234"/);
+  });
+
+});
+
+describe('pay step: a claim sent before claims carried an account', () => {
+  const perms = ['reimbursement.payment.record'];
+  const paidAt = '2026-02-01T00:00:00.000Z';
+  const transfer = { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER' as const, paidAt, paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1' };
+  const recordUC = (repo: any, audit: any = noopAudit) => new RecordReimbursementPaymentUseCase(repo, audit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+  const hashes = (claim: any) => [claimSignatureAckHash(claim), computeSnapshotHash(claimSnapshotFields(claim))];
+
+  // Spec §15 (AC35): the payer who transferred into the requester's default account says so, and a
+  // copy of that account is kept with the payment. The claim itself stays what it was.
+  it('keeps a copy of the requester default with the payment when the payer confirms it, and leaves the claim legacy', async () => {
+    const { req, tables, token } = legacyClaimWithDefault();
+    const repo = fakeRepo(req, { payout: tables });
+    const before = hashes(req);
+    const audits: any[] = [];
+    const paid = await recordUC(repo, { log: async (entry: any) => { audits.push(entry); } })
+      .execute(ctx(perms), 'rb-1', { ...transfer, payoutConfirmed: true, payoutDefaultToken: token });
+
+    // The copy is a frozen row of the claim's own table, made from the default as one unit.
+    assert.equal(tables.destinations.length, 1);
+    const copy = tables.destinations[0]!;
+    const account = tables.accounts[0]!;
+    assert.deepEqual([copy.version, copy.source, copy.createdByUserId, copy.verifiedByUserId, copy.verifiedVia, copy.frozenAt instanceof Date],
+      [1, 'LEGACY_PAYMENT', 'hr-1', 'fin-1', 'PAYMENT', true]);
+    for (const column of ['payoutKind', 'bankName', 'accountName', 'accountNumberEncrypted', 'accountLast4', 'fingerprint']) assert.equal(copy[column], account[column], column);
+    assert.deepEqual(paid.payments[0]!.payoutDestination, { version: 1, ...MASKED_ACCOUNT });
+    assert.equal(typeof paid.payments[0]!.payoutConfirmedAt, 'string');
+
+    // J1: the claim still carries no receiving method, so the hash it was approved and signed under is the same.
+    assert.deepEqual([req.payoutMethod, req.payoutDestinationVersion, req.payoutFingerprint, paid.payout], [undefined, undefined, undefined, undefined]);
+    assert.deepEqual(hashes(req), before);
+    assert.deepEqual(audits.find((entry) => entry.action === 'reimbursement.payment.record').metadataJson, {
+      paymentNo: 'RBPAY-202601-000001', paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER', requestId: 'rb-1',
+      slipAttachmentId: 'att-slip-1', slipSource: 'UPLOAD',
+      payoutDestinationVersion: 1, payoutSource: 'MEMBER_DEFAULT', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '1234', payerVerifiedAccount: true,
+    });
+    assert.doesNotMatch(JSON.stringify([paid, audits]), ACCOUNT_NUMBER_WRITTEN);
+
+    // A later change of the default never reaches the payment: its copy is its own.
+    Object.assign(account, sealedAccount('999-8-77766-5'), { version: 4 });
+    const later = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', await repo.findRequestById('co-1', 'rb-1', true), { userId: 'staff-1', permissions: [] });
+    assert.equal(later.payments[0]!.payoutDestination?.accountLast4, '1234');
+  });
+
+  it('records no account when the payer does not confirm the default: the payment reads as before the feature', async () => {
+    const { req, tables } = legacyClaimWithDefault();
+    const repo = fakeRepo(req, { payout: tables });
+    const paid = await recordUC(repo).execute(ctx(perms), 'rb-1', transfer);
+    assert.equal(paid.status, 'PAID');
+    assert.deepEqual([tables.destinations.length, paid.payments[0]!.payoutDestination, paid.payments[0]!.payoutConfirmedAt, repo.lastPayment.payoutDestinationVersion], [0, undefined, undefined, undefined]);
+  });
+
+  it('refuses a confirmation of a default the requester no longer has, before a payment number is reserved', async () => {
+    const stale = legacyClaimWithDefault();
+    const shownToken = stale.token;
+    let reservations = 0;
+    const countingReserve = { execute: async () => { reservations += 1; return { id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }; } } as any;
+    const refusedWith = async (name: string, arrange: (tables: ReturnType<typeof fakePayoutTables>) => void, statement: Record<string, unknown> = { payoutConfirmed: true, payoutDefaultToken: shownToken }, code = 'payout_destination_changed') => {
+      const { req, tables } = legacyClaimWithDefault();
+      arrange(tables);
+      const repo = fakeRepo(req, { payout: tables });
+      const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, countingReserve, commit, fakeDetailEvidence as any);
+      await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { ...transfer, ...statement }), (error: any) => error.getStatus() === 409 && error.message === code, name);
+      assert.deepEqual([repo.payments.length, tables.destinations.length, req.status], [0, 0, 'READY_FOR_PAYMENT'], name);
+    };
+    await refusedWith('the default was changed to another account', (tables) => Object.assign(tables.accounts[0]!, sealedAccount('999-8-77766-5'), { version: 4 }));
+    await refusedWith('the default was removed', (tables) => { tables.accounts.splice(0, 1); });
+    await refusedWith('the default became cash', (tables) => Object.assign(tables.accounts[0]!, { payoutMethod: 'CASH', payoutKind: null, bankName: null, accountName: null, accountNumberEncrypted: null, accountLast4: null, fingerprint: null }));
+    await refusedWith('a token of another claim', () => undefined, { payoutConfirmed: true, payoutDefaultToken: legacyPayoutConfirmToken('rb-2', stale.sealed.fingerprint) });
+    await refusedWith('a confirmation that names no account', () => undefined, { payoutConfirmed: true }, 'payout_confirmation_required');
+    assert.equal(reservations, 0);
+
+    // The same account saved again (a new version, the same destination) is still the account shown.
+    const { req, tables, token } = legacyClaimWithDefault();
+    Object.assign(tables.accounts[0]!, { version: 9, updatedAt: new Date('2026-01-25T00:00:00.000Z') });
+    await recordUC(fakeRepo(req, { payout: tables })).execute(ctx(perms), 'rb-1', { ...transfer, payoutConfirmed: true, payoutDefaultToken: token });
+    assert.equal(req.status, 'PAID');
+  });
+
+  it('replays a confirmed legacy payment as itself, and refuses a replay that names another default or none', async () => {
+    const { req, tables, token, sealed } = legacyClaimWithDefault();
+    const repo = fakeRepo(req, { payout: tables });
+    const reservations = new Map<string, any>();
+    const reserving = { execute: async (input: any) => {
+      const reservation = reservations.get(input.idempotencyKey) ?? { id: `seq-${reservations.size + 1}`, documentNumber: `RBPAY-202602-00000${reservations.size + 1}`, status: 'RESERVED' };
+      reservations.set(input.idempotencyKey, reservation);
+      return { ...reservation };
+    } } as any;
+    const committing = { execute: async (input: any) => { Object.assign([...reservations.values()].find((row) => row.id === input.id), { status: 'COMMITTED', ownerType: input.ownerType, ownerId: input.ownerId }); } } as any;
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserving, committing, fakeDetailEvidence as any);
+    const input = { ...transfer, payoutConfirmed: true, payoutDefaultToken: token, idempotencyKey: 'form-1' };
+    await uc.execute(ctx(perms), 'rb-1', input);
+
+    assert.equal((await uc.execute(ctx(perms), 'rb-1', input)).status, 'PAID');
+    assert.deepEqual([repo.payments.length, tables.destinations.length], [1, 1], 'one payment, one copy');
+    const anotherDefault = legacyPayoutConfirmToken('rb-1', sealedAccount('999-8-77766-5').fingerprint);
+    assert.notEqual(anotherDefault, token);
+    for (const statement of [{ payoutDefaultToken: anotherDefault }, { payoutConfirmed: false }, { payoutConfirmed: undefined, payoutDefaultToken: undefined }]) {
+      await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { ...input, ...statement }),
+        (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_payment_already_recorded', JSON.stringify(statement));
+    }
+    // The token says nothing of the account: it is not the fingerprint, and it is bound to the claim.
+    assert.match(token, /^[0-9a-f]{32}$/);
+    assert.equal(sealed.fingerprint.includes(token), false);
+    assert.notEqual(legacyPayoutConfirmToken('rb-2', sealed.fingerprint), token);
   });
 });
 
@@ -1230,9 +1740,17 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
   let fault = initialFault;
   let timeoutPending = ambiguousTimeout;
   let transactionTail = Promise.resolve();
-  const writes = { paymentCreates: 0, requestUpdates: 0, locks: 0, lockKeys: [] as string[], isolationLevels: [] as string[] };
+  const writes = { paymentCreates: 0, requestUpdates: 0, locks: 0, lockKeys: [] as string[], isolationLevels: [] as string[], rowLocks: [] as string[] };
+  // The claim's account versions and the members' default accounts: part of the same transaction.
+  const payout = fakePayoutTables();
 
   const tx: any = {
+    ...payout.client,
+    // `SELECT … FOR UPDATE` on a member's default account: the statement and what it was asked for.
+    $queryRaw: async (sql: TemplateStringsArray, ...values: string[]) => {
+      writes.rowLocks.push(`${sql.join('?').replace(/\s+/g, ' ').trim()} | ${values.join(',')}`);
+      return [];
+    },
     // Tagged-template call: the interpolated value is the advisory-lock key.
     $executeRaw: async (sql: TemplateStringsArray, ...values: string[]) => {
       if (fault === 'serialization-row-lock' && sql.join('').includes('FOR UPDATE')) throw rawSerializationFailure();
@@ -1310,6 +1828,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
     // The slip preflight reads outside a transaction, from the same rows.
     attachmentObject: tx.attachmentObject, attachmentLink: tx.attachmentLink, reimbursementPayment: tx.reimbursementPayment,
     reimbursementLine: tx.reimbursementLine,
+    // So do the payout preflight and the replay comparison.
+    reimbursementPayoutDestination: payout.client.reimbursementPayoutDestination, memberPayoutAccount: payout.client.memberPayoutAccount,
     $transaction: async (work: (transaction: any) => Promise<any>, options: any) => {
       const previous = transactionTail;
       let release!: () => void;
@@ -1320,6 +1840,7 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
       const paymentsBefore = structuredClone(payments);
       const filesBefore = structuredClone(files);
       const linksBefore = structuredClone(links);
+      const destinationsBefore = structuredClone(payout.destinations);
       let committed = false;
       try {
         const result = await work(tx);
@@ -1336,6 +1857,7 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
           payments = paymentsBefore;
           files = filesBefore;
           links = linksBefore;
+          payout.destinations.splice(0, payout.destinations.length, ...destinationsBefore);
         }
         throw error;
       } finally {
@@ -1349,6 +1871,7 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
     writes,
     setFault: (next?: AtomicFault) => { fault = next; },
     state: () => ({ request, payments, files, links }),
+    payout,
     addFile: (file: any) => { files.push(file); return file; },
     addLink: (link: any) => { links.push({ companyId: 'co-1', createdAt: new Date('2026-01-20T00:00:00.000Z'), ...link }); },
     addPayment: (payment: any) => { payments.push(payment); },
@@ -1711,5 +2234,164 @@ describe('PrismaReimbursementRepository payment slips', () => {
     });
     assert.deepEqual(orderBy, [{ createdAt: 'asc' }, { id: 'asc' }]);
     assert.deepEqual(await new PrismaReimbursementRepository({ client: {} } as any, {} as any).listPaymentSlips('co-1', []), {}, 'no payment, no query');
+  });
+});
+
+// The use-case specs above run the payout rules through a fake repository. These run the repository's
+// own `recordPaymentAtomic` over a fake transaction: what it reads, decides and writes under the lock.
+describe('PrismaReimbursementRepository pay step under the payment lock', () => {
+  /** The harness claim sent with its own frozen account: version 2, attested by its approver. */
+  function transferHarness(fault?: AtomicFault) {
+    const h = atomicPaymentHarness(fault);
+    const sealed = sealedAccount();
+    h.payout.destinations.push({
+      id: 'destination-2', companyId: 'co-1', reimbursementRequestId: 'rb-1', version: 2, ...sealed,
+      source: 'DEFAULT_ACCOUNT', createdByUserId: 'staff-1', frozenAt: new Date('2026-01-10T00:00:00.000Z'),
+      verifiedByUserId: 'approver-1', verifiedAt: new Date('2026-01-11T00:00:00.000Z'), verifiedVia: 'APPROVAL', approvalStepId: 'step-1',
+    });
+    Object.assign(h.state().request, { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: sealed.fingerprint });
+    h.addFile(slipUpload());
+    return { h, sealed };
+  }
+  const transferWithSlip = { ...atomicTransferInput, slipAttachmentId: 'att-slip-1' };
+  const confirmed = { payoutDestinationVersion: 2, payoutConfirmed: true };
+  const conflict = (code: string) => (error: any) => error.getStatus() === 409 && error.message === code;
+  const nothingWritten = (h: ReturnType<typeof atomicPaymentHarness>, label: string) => {
+    assert.deepEqual([h.state().payments.length, slipLinksOf(h).length, h.state().request.status, h.state().request.paymentStatus], [0, 0, 'READY_FOR_PAYMENT', 'UNPAID'], label);
+  };
+
+  it('decides from the claim it reads inside the transaction, whatever a caller checked before', async () => {
+    const refused: [string, Record<string, unknown> | undefined, string, ((h: ReturnType<typeof atomicPaymentHarness>) => void)?][] = [
+      ['no statement at all (a caller that never asked the payer)', undefined, 'payout_confirmation_required'],
+      ['a confirmation that names no version', { payoutConfirmed: true }, 'payout_confirmation_required'],
+      ['the version before the account was changed', { payoutDestinationVersion: 1, payoutConfirmed: true }, 'payout_destination_changed'],
+      // The claim moved on to version 3 after the caller read it: version 2 is no longer the claim's.
+      ['a version that was current when the caller read the claim', confirmed, 'payout_destination_changed',
+        (h) => { Object.assign(h.state().request, { payoutDestinationVersion: 3 }); }],
+      // The claim's fingerprint no longer names that row: the account under the same version number is not the one attested.
+      ['the claim version, when its row is not the account the claim froze', confirmed, 'payout_destination_changed',
+        (h) => { Object.assign(h.state().request, { payoutFingerprint: 'f'.repeat(64) }); }],
+      ['the claim version, when its row was never frozen', confirmed, 'payout_destination_changed',
+        (h) => { h.payout.destinations[0]!.frozenAt = null; }],
+    ];
+    for (const [label, payout, code, arrange] of refused) {
+      const { h } = transferHarness();
+      arrange?.(h);
+      await assert.rejects(() => h.repo.recordPaymentAtomic({ ...transferWithSlip, ...(payout && { payout }) }), conflict(code), label);
+      nothingWritten(h, label);
+      assert.deepEqual([h.payout.destinations[0]!.verifiedByUserId, h.payout.destinations.length], ['approver-1', 1], label);
+    }
+
+    const { h } = transferHarness();
+    const paid = await h.repo.recordPaymentAtomic({ ...transferWithSlip, payout: confirmed });
+    const payment = h.state().payments[0]!;
+    assert.deepEqual([paid.created, payment.payoutDestinationVersion, payment.payoutConfirmedAt instanceof Date, payment.methodMismatchReason], [true, 2, true, undefined]);
+    assert.deepEqual(paid.payout, {
+      payoutDestinationVersion: 2, payoutConfirmedAt: payment.payoutConfirmedAt, source: 'CLAIM',
+      payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '1234', payerVerified: false,
+    });
+    // The payout columns of the claim are read, never written: the claim's hash is untouched.
+    assert.deepEqual([h.state().request.payoutMethod, h.state().request.payoutDestinationVersion], ['BANK_TRANSFER', 2]);
+  });
+
+  it('asks a reason for a method the requester did not ask for, and keeps it with the payment alone', async () => {
+    const { h } = transferHarness();
+    await assert.rejects(() => h.repo.recordPaymentAtomic(atomicPaymentInput), conflict('payment_method_mismatch_reason_required'));
+    await assert.rejects(() => h.repo.recordPaymentAtomic({ ...atomicPaymentInput, payout: { methodMismatchReason: 'โอนเข้า 004-5-67123-4 ไม่ได้' } }), conflict('note_contains_account_number'));
+    nothingWritten(h, 'cash without a usable reason');
+
+    const paid = await h.repo.recordPaymentAtomic({ ...atomicPaymentInput, payout: { methodMismatchReason: ' ผู้เบิกมารับเงินสดเอง ', payoutDestinationVersion: 2 } });
+    const payment = h.state().payments[0]!;
+    assert.deepEqual([payment.paymentMethod, payment.methodMismatchReason, payment.payoutDestinationVersion ?? null, payment.payoutConfirmedAt ?? null], ['CASH', 'ผู้เบิกมารับเงินสดเอง', null, null]);
+    assert.equal(paid.payout, undefined, 'no account was confirmed');
+    assert.equal(h.payout.destinations[0]!.verifiedByUserId, 'approver-1');
+  });
+
+  it('takes the account confirmation back with a payment that does not commit', async () => {
+    // Nobody but the requester attested the account, so a confirmed transfer records the payer as who did.
+    for (const boundary of ['create', 'source-ref', 'cas', 'slip-link', 'serialization-commit'] as AtomicFault[]) {
+      const { h } = transferHarness(boundary);
+      Object.assign(h.payout.destinations[0]!, { verifiedByUserId: 'staff-1' });
+      await assert.rejects(() => h.repo.recordPaymentAtomic({ ...transferWithSlip, payout: confirmed }));
+      nothingWritten(h, boundary);
+      assert.deepEqual([h.payout.destinations[0]!.verifiedByUserId, h.payout.destinations[0]!.verifiedVia], ['staff-1', 'APPROVAL'], `${boundary}: the verifier is as it was`);
+
+      h.setFault();
+      const retried = await h.repo.recordPaymentAtomic({ ...transferWithSlip, payout: confirmed });
+      assert.deepEqual([retried.created, retried.payout?.payerVerified], [true, true], boundary);
+      assert.deepEqual([h.payout.destinations[0]!.verifiedByUserId, h.payout.destinations[0]!.verifiedVia, h.payout.destinations[0]!.approvalStepId], ['fin-1', 'PAYMENT', null], boundary);
+    }
+  });
+
+  it('replays a key as the same payment only for the same account, and never for a payment since voided', async () => {
+    const { h } = transferHarness();
+    const input = { ...transferWithSlip, payout: confirmed };
+    await h.repo.recordPaymentAtomic(input);
+    assert.equal((await h.repo.recordPaymentAtomic(input)).created, false);
+    for (const payout of [{ payoutDestinationVersion: 1, payoutConfirmed: true }, { payoutConfirmed: true }, {}, undefined]) {
+      await assert.rejects(() => h.repo.recordPaymentAtomic({ ...transferWithSlip, ...(payout && { payout }) }), conflict('reimbursement_payment_idempotency_conflict'), JSON.stringify(payout));
+    }
+    assert.equal(h.state().payments.length, 1);
+    // J10: voided, the same key and statement no longer describe a payment that stands.
+    Object.assign(h.state().payments[0], { status: 'VOIDED' });
+    await assert.rejects(() => h.repo.recordPaymentAtomic(input), conflict('reimbursement_payment_idempotency_conflict'));
+  });
+
+  it('pays a legacy claim exactly as before: no statement, no account, nothing read from the payout tables', async () => {
+    const h = atomicPaymentHarness();
+    h.addFile(slipUpload());
+    let payoutReads = 0;
+    for (const table of ['reimbursementPayoutDestination', 'memberPayoutAccount'] as const) {
+      for (const method of Object.keys(h.payout.client[table]) as (keyof typeof h.payout.client[typeof table])[]) {
+        const original = h.payout.client[table][method] as (...args: any[]) => unknown;
+        (h.payout.client[table] as any)[method] = (...args: any[]) => { payoutReads += 1; return original(...args); };
+      }
+    }
+    const paid = await h.repo.recordPaymentAtomic(transferWithSlip);
+    const payment = h.state().payments[0]!;
+    assert.deepEqual([paid.created, paid.payout, payment.payoutDestinationVersion ?? null, payment.payoutConfirmedAt ?? null, payment.methodMismatchReason ?? null], [true, undefined, null, null, null]);
+    assert.deepEqual([payoutReads, h.writes.rowLocks], [0, []]);
+    assert.deepEqual([h.state().request.payoutMethod, h.state().request.payoutDestinationVersion, h.state().request.payoutFingerprint], [undefined, undefined, undefined]);
+  });
+
+  it('copies the requester default for a confirmed legacy payment in the same transaction, under a lock on that default', async () => {
+    const arrange = (fault?: AtomicFault) => {
+      const h = atomicPaymentHarness(fault);
+      const sealed = sealedAccount();
+      h.payout.accounts.push({ id: 'account-1', companyId: 'co-1', userId: 'staff-1', payoutMethod: 'BANK_TRANSFER', ...sealed, version: 3, updatedByUserId: 'hr-1', updatedAt: new Date('2026-01-20T00:00:00.000Z') });
+      h.addFile(slipUpload());
+      return { h, token: legacyPayoutConfirmToken('rb-1', sealed.fingerprint) };
+    };
+    // The copy goes with the payment: a payment that fails leaves no copy behind.
+    const failing = arrange('create');
+    await assert.rejects(() => failing.h.repo.recordPaymentAtomic({ ...transferWithSlip, payout: { payoutConfirmed: true, payoutDefaultToken: failing.token } }), /fault:create/);
+    assert.deepEqual([failing.h.state().payments.length, failing.h.payout.destinations.length], [0, 0]);
+
+    const { h, token } = arrange();
+    await assert.rejects(() => h.repo.recordPaymentAtomic({ ...transferWithSlip, payout: { payoutConfirmed: true, payoutDefaultToken: 'b'.repeat(32) } }), conflict('payout_destination_changed'));
+    nothingWritten(h, 'a token that is not the default shown');
+    assert.equal(h.payout.destinations.length, 0);
+
+    // The default row is locked before it is read: an edit of it waits for this payment, or fails it.
+    const order: string[] = [];
+    const accounts = h.payout.client.memberPayoutAccount;
+    const findAccount = accounts.findFirst;
+    accounts.findFirst = async (args: any) => { order.push(`read after ${h.writes.rowLocks.length} lock`); return findAccount(args); };
+    h.writes.rowLocks.length = 0;
+    const paid = await h.repo.recordPaymentAtomic({ ...transferWithSlip, payout: { payoutConfirmed: true, payoutDefaultToken: token } });
+    assert.deepEqual(h.writes.rowLocks, ['SELECT 1 FROM "MemberPayoutAccount" WHERE "companyId" = ? AND "userId" = ? FOR UPDATE | co-1,staff-1']);
+    assert.deepEqual(order, ['read after 1 lock']);
+    accounts.findFirst = findAccount;
+    const copy = h.payout.destinations[0]!;
+    assert.deepEqual([h.payout.destinations.length, copy.version, copy.source, copy.verifiedByUserId, copy.verifiedVia, copy.createdByUserId], [1, 1, 'LEGACY_PAYMENT', 'fin-1', 'PAYMENT', 'hr-1']);
+    assert.deepEqual([h.state().payments[0]!.payoutDestinationVersion, paid.payout?.source, paid.payout?.accountLast4], [1, 'MEMBER_DEFAULT', '1234']);
+    // Still a legacy claim: none of its own payout columns was written.
+    assert.deepEqual([h.state().request.payoutMethod, h.state().request.payoutDestinationVersion, h.state().request.payoutFingerprint], [undefined, undefined, undefined]);
+    // The replay is the same payment for the same default, and a conflict for another or for none.
+    assert.equal((await h.repo.recordPaymentAtomic({ ...transferWithSlip, payout: { payoutConfirmed: true, payoutDefaultToken: token } })).created, false);
+    for (const payout of [{ payoutConfirmed: true, payoutDefaultToken: 'b'.repeat(32) }, {}]) {
+      await assert.rejects(() => h.repo.recordPaymentAtomic({ ...transferWithSlip, payout }), conflict('reimbursement_payment_idempotency_conflict'), JSON.stringify(payout));
+    }
+    assert.equal(h.payout.destinations.length, 1, 'one copy for the one payment');
   });
 });

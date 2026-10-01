@@ -8,7 +8,9 @@
 import { createHash, createHmac } from 'node:crypto';
 import {
   invalidPayoutDestinationField,
+  looksLikeAccountNumber,
   normalizePayoutAccountNumber,
+  reimbursementPaymentRule,
   type PayoutDestinationInput,
   type ReimbursementPayoutKind,
   type ReimbursementPayoutMethod,
@@ -194,6 +196,97 @@ export function payoutAttestationError(
   if (claim.payoutMethod !== 'BANK_TRANSFER' || !hasPayoutSnapshot(claim)) return null;
   if (verifiedVersion === undefined || verifiedVersion === null) return 'payout_verification_required';
   return verifiedVersion === claim.payoutDestinationVersion ? null : 'payout_destination_changed';
+}
+
+// ---- The payer's confirmation at the payment step ----
+
+/**
+ * `source` of a copy of the requester's default account kept with the payment of a legacy claim
+ * (payout spec §15). Such a row belongs to a payment; the claim itself never points at it.
+ */
+export const LEGACY_PAYMENT_PAYOUT_SOURCE = 'LEGACY_PAYMENT';
+
+/**
+ * Names the default account a legacy claim's payer is shown, as an opaque token: the payer who
+ * transferred into it sends the token back, and a default that is no longer that account refuses
+ * the payment. Bound to the claim and derived from the keyed fingerprint, so it says nothing about
+ * the number; the same account gives the same token, also after it was saved again unchanged.
+ */
+export function legacyPayoutConfirmToken(claimId: string, fingerprint: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify(['reimbursement-legacy-payout-confirm:v1', claimId, fingerprint]))
+    .digest('hex').slice(0, 32);
+}
+
+/** What the payer says about the payout when recording a payment, as the endpoint takes it. */
+export type PaymentPayoutStatement = {
+  paymentMethod: string;
+  /** The claim's account version the payer was shown. */
+  payoutDestinationVersion?: unknown;
+  payoutConfirmed?: unknown;
+  /** Legacy claim: the token of the requester's default the payer was shown. */
+  payoutDefaultToken?: unknown;
+  methodMismatchReason?: unknown;
+};
+
+export type PaymentPayoutError =
+  | 'payout_destination_changed' | 'payout_confirmation_required'
+  | 'payment_method_mismatch_reason_required' | 'note_contains_account_number';
+
+/** What a payment records about the payout, once the payer's statement has been held against the claim. */
+export type PaymentPayoutPlan = {
+  /** The claim's own account version the transfer is confirmed into. */
+  payoutDestinationVersion?: number;
+  /** A legacy claim: the payer confirmed the requester's default this token names. A copy is kept with the payment. */
+  payoutDefaultToken?: string;
+  /** Set exactly when the method recorded is not the one the requester asked for. */
+  methodMismatchReason?: string;
+};
+
+/**
+ * The payer's statement held against the claim as it stands, by the one table of spec §12.4
+ * (`reimbursementPaymentRule`). The friendly check before the payment lock and the check under it
+ * both come here, each with the claim as it reads at that moment.
+ *
+ *  - Whatever the payer names as shown must be current: an account version other than the claim's
+ *    own (none on a cash or a legacy claim), or a default-account token on a claim that has its own
+ *    snapshot, is a page loaded before the account changed.
+ *  - A transfer on a claim that carries an account is confirmed for exactly that version.
+ *  - On a legacy claim the confirmation is the payer's to give: it names the requester's default
+ *    they transferred into. Without it the payment records no account, as before the feature.
+ *  - A method other than the one asked for carries a reason, which may not hold an account number:
+ *    the reason is shown on the payment row to everyone who reads the claim.
+ */
+export function planPaymentPayout(
+  claim: { payoutMethod?: string | null; payoutDestinationVersion?: number | null; payoutFingerprint?: string | null },
+  statement: PaymentPayoutStatement,
+): PaymentPayoutPlan | { error: PaymentPayoutError } {
+  const legacy = !hasPayoutSnapshot(claim);
+  const currentVersion = legacy ? null : claim.payoutDestinationVersion ?? null;
+  const rule = reimbursementPaymentRule(
+    legacy ? null : { payoutMethod: claim.payoutMethod as ReimbursementPayoutMethod, hasAccount: currentVersion !== null },
+    statement.paymentMethod,
+  );
+  const shownVersion = statement.payoutDestinationVersion ?? null;
+  if (shownVersion !== null && shownVersion !== currentVersion) return { error: 'payout_destination_changed' };
+  if (!legacy && statement.payoutDefaultToken != null) return { error: 'payout_destination_changed' };
+
+  const confirmed = statement.payoutConfirmed === true;
+  if (rule.payoutConfirmation === 'required' && !(confirmed && shownVersion !== null)) return { error: 'payout_confirmation_required' };
+  const defaultToken = rule.payoutConfirmation === 'optional' && confirmed ? statement.payoutDefaultToken : undefined;
+  // A confirmation that names no account confirms nothing.
+  if (rule.payoutConfirmation === 'optional' && confirmed && (typeof defaultToken !== 'string' || !defaultToken)) {
+    return { error: 'payout_confirmation_required' };
+  }
+
+  const reason = typeof statement.methodMismatchReason === 'string' ? statement.methodMismatchReason.trim() : '';
+  if (rule.mismatchReasonRequired && !reason) return { error: 'payment_method_mismatch_reason_required' };
+  if (rule.mismatchReasonRequired && looksLikeAccountNumber(reason)) return { error: 'note_contains_account_number' };
+  return {
+    ...(rule.payoutConfirmation === 'required' && { payoutDestinationVersion: currentVersion! }),
+    ...(typeof defaultToken === 'string' && { payoutDefaultToken: defaultToken }),
+    ...(rule.mismatchReasonRequired && { methodMismatchReason: reason }),
+  };
 }
 
 // ---- Freezing at submit ----

@@ -35,14 +35,16 @@ import {
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 import {
   invalidPayoutDestinationField, isReimbursementClaimApprover, looksLikeAccountNumber, maskedPayoutAccount, maskedPayoutAccountNumber,
-  normalizePayoutAccountNumber, reimbursementPaymentSlipRequired,
+  normalizePayoutAccountNumber, reimbursementPaymentRule, reimbursementPaymentSlipRequired,
 } from '@watchdog-bms/contracts';
 import {
   CASH_PAYOUT_FINGERPRINT,
   draftFollowsDefaultAfterReopen,
   hasPayoutSnapshot,
   isBlankPayoutDestination,
+  legacyPayoutConfirmToken,
   openPayoutAccountNumber,
+  planPaymentPayout,
   payoutAttestationError,
   payoutFingerprint,
   payoutRevealGroup,
@@ -432,6 +434,146 @@ describe('payment replay (spec §12.7)', () => {
   it('reads a stored null and an omitted field as the same absence', () => {
     const cash = { paidAmount: '500.0000', currency: 'THB', paymentMethod: 'CASH', paidAt, paymentReference: null, bankAccountId: null, slipAttachmentId: null };
     assert.equal(isSamePaymentRequest(cash, { paidAmount: '500', currency: 'THB', paymentMethod: 'CASH', paidAt }), true);
+    assert.equal(isSamePaymentRequest({ ...cash, payoutDestinationVersion: null, payoutDefaultToken: null }, { paidAmount: '500', currency: 'THB', paymentMethod: 'CASH', paidAt }), true);
+  });
+
+  it('is the same payment only for the same account: the version confirmed, or the default a legacy payer confirmed', () => {
+    const intoVersion2 = { ...recorded, payoutDestinationVersion: 2 };
+    assert.equal(isSamePaymentRequest(intoVersion2, { ...request, payoutDestinationVersion: 2 }), true);
+    assert.equal(isSamePaymentRequest(intoVersion2, { ...request, payoutDestinationVersion: 3 }), false, 'another account version');
+    assert.equal(isSamePaymentRequest(intoVersion2, request), false, 'the confirmation dropped');
+    assert.equal(isSamePaymentRequest(recorded, { ...request, payoutDestinationVersion: 2 }), false, 'a confirmation the payment never had');
+
+    const intoDefault = { ...recorded, payoutDefaultToken: 'a'.repeat(32) };
+    assert.equal(isSamePaymentRequest(intoDefault, { ...request, payoutDefaultToken: 'a'.repeat(32) }), true);
+    assert.equal(isSamePaymentRequest(intoDefault, { ...request, payoutDefaultToken: 'b'.repeat(32) }), false, 'another default account');
+    assert.equal(isSamePaymentRequest(intoDefault, request), false);
+    assert.equal(isSamePaymentRequest(intoDefault, { ...request, payoutDestinationVersion: 1 }), false, 'a version is not a default');
+  });
+});
+
+// ---- The payment step (payout spec §12.3, §12.4, §12.6) ----
+
+describe('payout: the one table of what a payment asks for (spec §12.4)', () => {
+  const transferClaim = { payoutMethod: 'BANK_TRANSFER' as const, hasAccount: true };
+  const cashClaim = { payoutMethod: 'CASH' as const, hasAccount: false };
+  const rule = (slipRequired: boolean, payoutConfirmation: string, mismatchReasonRequired: boolean) => ({ slipRequired, payoutConfirmation, mismatchReasonRequired });
+
+  it('is the table, row for row', () => {
+    const table: [string, typeof transferClaim | typeof cashClaim | null, string, ReturnType<typeof rule>][] = [
+      ['โอน / โอน', transferClaim, 'BANK_TRANSFER', rule(true, 'required', false)],
+      ['โอน / เงินสด', transferClaim, 'CASH', rule(false, 'none', true)],
+      ['โอน / เช็ค', transferClaim, 'CHEQUE', rule(false, 'none', true)],
+      ['โอน / อื่น ๆ', transferClaim, 'OTHER', rule(false, 'none', true)],
+      ['เงินสด / เงินสด', cashClaim, 'CASH', rule(false, 'none', false)],
+      // The claim has no account, so there is nothing to confirm; the slip rule still holds.
+      ['เงินสด / โอน', cashClaim, 'BANK_TRANSFER', rule(true, 'none', true)],
+      ['เงินสด / เช็ค', cashClaim, 'CHEQUE', rule(false, 'none', true)],
+      ['เงินสด / อื่น ๆ', cashClaim, 'OTHER', rule(false, 'none', true)],
+      // A legacy claim asked for nothing: no method can differ from it, and the confirmation is the payer's to give.
+      ['ใบเก่า / โอน', null, 'BANK_TRANSFER', rule(true, 'optional', false)],
+      ['ใบเก่า / เงินสด', null, 'CASH', rule(false, 'none', false)],
+      ['ใบเก่า / เช็ค', null, 'CHEQUE', rule(false, 'none', false)],
+      ['ใบเก่า / อื่น ๆ', null, 'OTHER', rule(false, 'none', false)],
+    ];
+    for (const [name, requested, paymentMethod, expected] of table) assert.deepEqual(reimbursementPaymentRule(requested, paymentMethod), expected, name);
+  });
+
+  it('asks the slip by the same rule the slip check uses', () => {
+    for (const method of ['CASH', 'BANK_TRANSFER', 'CHEQUE', 'OTHER', '']) {
+      for (const requested of [transferClaim, cashClaim, null]) assert.equal(reimbursementPaymentRule(requested, method).slipRequired, reimbursementPaymentSlipRequired(method));
+    }
+  });
+});
+
+describe('payout: the payer statement held against the claim', () => {
+  const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'f'.repeat(64) };
+  const cash = { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: CASH_PAYOUT_FINGERPRINT };
+  const legacyClaims = [{}, { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null },
+    // Left by a draft, or sent by an older build during a rollback: no fingerprint, so still legacy.
+    { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: null }];
+  const byTransfer = { paymentMethod: 'BANK_TRANSFER' };
+  const token = 'a'.repeat(32);
+
+  it('records a transfer into the claim account only with a confirmation of its current version', () => {
+    assert.deepEqual(planPaymentPayout(transfer, { ...byTransfer, payoutDestinationVersion: 2, payoutConfirmed: true }), { payoutDestinationVersion: 2 });
+    for (const statement of [{}, { payoutConfirmed: true }, { payoutDestinationVersion: 2 }, { payoutDestinationVersion: 2, payoutConfirmed: false },
+      { payoutDestinationVersion: 2, payoutConfirmed: 'true' }, { payoutDestinationVersion: 2, payoutConfirmed: 1 }, { payoutDestinationVersion: null, payoutConfirmed: true }]) {
+      assert.deepEqual(planPaymentPayout(transfer, { ...byTransfer, ...statement }), { error: 'payout_confirmation_required' }, JSON.stringify(statement));
+    }
+    for (const payoutDestinationVersion of [1, 3, '2', 2.5, true]) {
+      assert.deepEqual(planPaymentPayout(transfer, { ...byTransfer, payoutDestinationVersion, payoutConfirmed: true }), { error: 'payout_destination_changed' }, String(payoutDestinationVersion));
+    }
+  });
+
+  it('refuses whatever is named as shown and is not what the claim holds, before anything else', () => {
+    // A stale version is said first, also when the confirmation or the reason is missing too.
+    assert.deepEqual(planPaymentPayout(transfer, { ...byTransfer, payoutDestinationVersion: 1 }), { error: 'payout_destination_changed' });
+    assert.deepEqual(planPaymentPayout(transfer, { paymentMethod: 'CASH', payoutDestinationVersion: 1 }), { error: 'payout_destination_changed' });
+    // A cash claim and a legacy claim hold no version; a claim with its own account takes no default-account token.
+    for (const claim of [cash, ...legacyClaims]) {
+      assert.deepEqual(planPaymentPayout(claim, { paymentMethod: 'CASH', payoutDestinationVersion: 1 }), { error: 'payout_destination_changed' });
+    }
+    for (const claim of [transfer, cash]) {
+      assert.deepEqual(planPaymentPayout(claim, { ...byTransfer, payoutDestinationVersion: claim.payoutDestinationVersion ?? undefined, payoutConfirmed: true, payoutDefaultToken: token, methodMismatchReason: 'เหตุผล' }), { error: 'payout_destination_changed' });
+    }
+  });
+
+  it('asks a reason exactly when the method differs from the one asked for, and keeps none otherwise', () => {
+    const reason = 'ผู้เบิกขอรับเป็นเงินสดแทน';
+    for (const paymentMethod of ['CASH', 'CHEQUE', 'OTHER']) {
+      assert.deepEqual(planPaymentPayout(transfer, { paymentMethod }), { error: 'payment_method_mismatch_reason_required' }, paymentMethod);
+      assert.deepEqual(planPaymentPayout(transfer, { paymentMethod, methodMismatchReason: '  ' }), { error: 'payment_method_mismatch_reason_required' });
+      assert.deepEqual(planPaymentPayout(transfer, { paymentMethod, methodMismatchReason: 42 }), { error: 'payment_method_mismatch_reason_required' });
+      assert.deepEqual(planPaymentPayout(transfer, { paymentMethod, methodMismatchReason: ` ${reason} ` }), { methodMismatchReason: reason });
+      // The page's version may come along: it is checked, and no account is recorded for a payment that used none.
+      assert.deepEqual(planPaymentPayout(transfer, { paymentMethod, methodMismatchReason: reason, payoutDestinationVersion: 2, payoutConfirmed: true }), { methodMismatchReason: reason });
+    }
+    for (const paymentMethod of ['BANK_TRANSFER', 'CHEQUE', 'OTHER']) {
+      assert.deepEqual(planPaymentPayout(cash, { paymentMethod }), { error: 'payment_method_mismatch_reason_required' }, paymentMethod);
+      // A cash claim has no account: a transfer is recorded with its reason and nothing to confirm.
+      assert.deepEqual(planPaymentPayout(cash, { paymentMethod, methodMismatchReason: reason, payoutConfirmed: true }), { methodMismatchReason: reason });
+    }
+    assert.deepEqual(planPaymentPayout(cash, { paymentMethod: 'CASH' }), {});
+    assert.deepEqual(planPaymentPayout(cash, { paymentMethod: 'CASH', methodMismatchReason: reason }), {}, 'a reason nobody asked for is not kept');
+    assert.deepEqual(planPaymentPayout(transfer, { ...byTransfer, payoutDestinationVersion: 2, payoutConfirmed: true, methodMismatchReason: reason }), { payoutDestinationVersion: 2 });
+  });
+
+  it('keeps an account number out of the reason, by the guard the notes use', () => {
+    for (const methodMismatchReason of ['โอนเข้า 0123456789', 'บัญชี 123-4-56789-0', 'เบอร์ ๐๘๑ ๒๓๔ ๕๖๗๘']) {
+      assert.equal(looksLikeAccountNumber(methodMismatchReason), true);
+      assert.deepEqual(planPaymentPayout(transfer, { paymentMethod: 'CASH', methodMismatchReason }), { error: 'note_contains_account_number' }, methodMismatchReason);
+    }
+    assert.deepEqual(planPaymentPayout(transfer, { paymentMethod: 'CASH', methodMismatchReason: 'จ่ายเงินสด 1500 บาท ตามใบ RB-202609-0003' }),
+      { methodMismatchReason: 'จ่ายเงินสด 1500 บาท ตามใบ RB-202609-0003' });
+  });
+
+  it('pays a legacy claim as before, and takes a confirmation of the requester default only with the token that names it', () => {
+    for (const claim of legacyClaims) {
+      for (const paymentMethod of ['BANK_TRANSFER', 'CASH', 'CHEQUE', 'OTHER']) {
+        assert.deepEqual(planPaymentPayout(claim, { paymentMethod }), {}, `${JSON.stringify(claim)} ${paymentMethod}`);
+        assert.deepEqual(planPaymentPayout(claim, { paymentMethod, methodMismatchReason: 'ไม่มีใครขอ' }), {});
+      }
+      assert.deepEqual(planPaymentPayout(claim, { ...byTransfer, payoutConfirmed: true, payoutDefaultToken: token }), { payoutDefaultToken: token });
+      for (const payoutDefaultToken of [undefined, null, '', 7]) {
+        assert.deepEqual(planPaymentPayout(claim, { ...byTransfer, payoutConfirmed: true, payoutDefaultToken }), { error: 'payout_confirmation_required' }, String(payoutDefaultToken));
+      }
+      // Not confirmed, or not a transfer: the token is ignored and no account is recorded.
+      assert.deepEqual(planPaymentPayout(claim, { ...byTransfer, payoutDefaultToken: token }), {});
+      assert.deepEqual(planPaymentPayout(claim, { paymentMethod: 'CASH', payoutConfirmed: true, payoutDefaultToken: token }), {});
+    }
+  });
+
+  it('names a default account by a token that is the same for the same account and says nothing of it', () => {
+    const fingerprint = payoutFingerprint({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' }, Buffer.alloc(32, 3));
+    const shown = legacyPayoutConfirmToken('claim-1', fingerprint);
+    assert.match(shown, /^[0-9a-f]{32}$/);
+    assert.equal(legacyPayoutConfirmToken('claim-1', fingerprint), shown);
+    assert.notEqual(legacyPayoutConfirmToken('claim-2', fingerprint), shown, 'bound to the claim');
+    assert.notEqual(legacyPayoutConfirmToken('claim-1', payoutFingerprint({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456780' }, Buffer.alloc(32, 3))), shown);
+    assert.equal(fingerprint.includes(shown) || shown.includes('6789'), false);
+    // Not the token a draft's submit uses: one cannot be passed off as the other.
+    assert.notEqual(payoutSubmitToken('claim-1', { payoutMethod: 'BANK_TRANSFER', followsDefault: true, version: 1, fingerprint, action: 'COPY_DEFAULT' }), shown);
   });
 });
 

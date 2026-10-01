@@ -28,6 +28,7 @@ import {
   ageHours,
   redactPayload,
 } from '../../domain/logic/reimbursement.logic';
+import { planPaymentPayout } from '../../domain/logic/payout-destination.logic';
 import { paymentSlipAuditMetadata } from './reimbursement-payment-slip.use-case';
 
 async function appendReimbursementOutboxWithinTx(tx: any, input: {
@@ -381,10 +382,21 @@ export class RecordReimbursementPaymentUseCase {
       bankAccountId: input.bankAccountId,
       slipAttachmentId: input.slipAttachmentId,
     };
+    // What the payer said about the payout account, as sent. Here it is held against the claim as just
+    // read, for the replay shortcut and a friendly refusal; the repository holds it against the claim
+    // again under the payment lock, which is the check that counts (spec §12.3).
+    const payoutStatement = {
+      payoutDestinationVersion: input.payoutDestinationVersion, payoutConfirmed: input.payoutConfirmed,
+      payoutDefaultToken: input.payoutDefaultToken, methodMismatchReason: input.methodMismatchReason,
+    };
+    const payoutPlan = planPaymentPayout(req, { ...payoutStatement, paymentMethod: input.paymentMethod });
     const recorded = req.payments?.find((row) => row.status === 'RECORDED');
     if (req.paymentStatus === 'PAID' && recorded) {
-      // A replay is the same payment only if every fact matches, the slip included (spec §12.7).
-      if (!isSamePaymentRequest(recorded, payment)) throw new ConflictException('reimbursement_payment_already_recorded');
+      // A replay is the same payment only if every fact matches, the slip and the account included
+      // (spec §12.7). A statement the claim refuses is not that payment either.
+      if ('error' in payoutPlan || !isSamePaymentRequest(
+        { ...recorded, ...await this.repo.findRecordedPaymentPayout(req, recorded) }, { ...payment, ...payoutPlan },
+      )) throw new ConflictException('reimbursement_payment_already_recorded');
       if (!recorded.idempotencyKey.startsWith('legacy:')) {
         await this.ensurePaymentNumber(ctx, paidAt, recorded.idempotencyKey, recorded.id, recorded.paymentNo);
       }
@@ -415,7 +427,13 @@ export class RecordReimbursementPaymentUseCase {
     if (error) throw new UnprocessableEntityException(error);
     // Everything that can refuse the payment is checked before a payment number is reserved: a
     // refusal after that point would burn a number that only a retry with the same key reuses.
-    // Phase 1 seam: the payer's confirmation of the payout account is validated here too.
+    // The payer's statement about the account is one of them. 409, like the payout refusals of
+    // submit and approve: a page opened before the release has no words for these codes, and its
+    // text for a conflict is "load the latest and try again".
+    if ('error' in payoutPlan) throw new ConflictException(payoutPlan.error);
+    if (payoutPlan.payoutDestinationVersion !== undefined || payoutPlan.payoutDefaultToken !== undefined) {
+      await this.repo.assertPaymentPayoutUsable(req, payoutPlan);
+    }
     if (input.slipAttachmentId) {
       await this.repo.assertPaymentSlipUsable({
         companyId: ctx.companyId, requestId: id, attachmentId: input.slipAttachmentId, actorUserId: ctx.userId,
@@ -444,6 +462,7 @@ export class RecordReimbursementPaymentUseCase {
       idempotencyKey: paymentAttemptKey,
       paymentNo: reservation.paymentNo,
       ...payment,
+      payout: payoutStatement,
       paidByUserId: ctx.userId,
     });
     if (result.created) await this.audit.log({
@@ -452,6 +471,14 @@ export class RecordReimbursementPaymentUseCase {
       metadataJson: {
         paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, paymentMethod: input.paymentMethod, requestId: id,
         ...(result.slip && paymentSlipAuditMetadata(result.slip)),
+        // Which account the payer confirmed: its version, kind, bank and the last 4 digits. Never the
+        // number, and never the payer's free-text reason: that it differs from what was asked is enough here.
+        ...(result.payout && {
+          payoutDestinationVersion: result.payout.payoutDestinationVersion, payoutSource: result.payout.source,
+          payoutKind: result.payout.payoutKind, bankName: result.payout.bankName, accountLast4: result.payout.accountLast4,
+          ...(result.payout.payerVerified && { payerVerifiedAccount: true }),
+        }),
+        ...(result.payment.methodMismatchReason && { paidDifferentlyFromRequested: true, requestedPayoutMethod: req.payoutMethod }),
       },
     });
     if (result.created && reservation.reservedId) {
