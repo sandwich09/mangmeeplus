@@ -1,12 +1,19 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { reimbursementPaymentSlipRequired } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
-  buildClaimTimeline, buildJourneySteps, activeJourneyStep, canAttachPaymentSlip, paymentSaveErrorMessage, paymentSlipChoices,
-  signedCopyMoveConfirmText, slipTargetPayment, validatePaymentForm,
+  buildClaimTimeline, buildJourneySteps, activeJourneyStep, canAttachPaymentSlip, opensPaymentFormOnArrival, paymentSaveErrorMessage,
+  paymentSlipChoices, paymentSlipCount, PAYMENT_DIALOG_MEDIA_QUERY, quickPayTarget, savePaymentForm, signedCopyMoveConfirmText,
+  slipTargetPayment, validatePaymentForm, type PaymentFormSession, type PaymentFormSlip,
 } from './reimbursements.logic';
 import { PAYMENT_METHOD_LABELS } from './reimbursements.model';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const sourceOf = (...path: string[]) => readFileSync(join(here, ...path), 'utf8');
 
 // Owner decisions 2026-10-01 for the payment step: the payer chooses the method (nothing is
 // pre-selected), a bank transfer is recorded with its slip, and the slip is opened by a fixed group.
@@ -109,9 +116,40 @@ describe('files already on the claim that can be the slip', () => {
     assert.equal(canAttachPaymentSlip(recorded(), ['reimbursement.finance_review']), false);
     assert.equal(canAttachPaymentSlip(voided(), payer), false, 'a voided payment keeps its slips and takes no more');
     assert.equal(canAttachPaymentSlip(recorded({ slips: [1, 2, 3, 4, 5].map((n) => slip(`att-${n}`)) }), payer), false);
-    assert.equal(slipTargetPayment(claim({ payments: [voided(), recorded()] }), payer)?.id, 'pay-2');
+  });
+
+  it('counts slips from the API\'s own count, which a reader gets even when the files are not listed for them', () => {
+    // Someone who may not open slips: the payment says how many there are and names none.
+    assert.equal(paymentSlipCount(recorded({ slipCount: 2, slips: [] })), 2);
+    assert.equal(paymentSlipCount(recorded({ slipCount: 0, slips: [] })), 0);
+    // A detail from before the count existed still reads off the list.
+    assert.equal(paymentSlipCount(recorded()), 1);
+    assert.equal(paymentSlipCount(recorded({ slips: undefined })), 0);
+    assert.equal(paymentSlipCount(undefined), 0);
+    // The five-file limit follows the count, not the list.
+    assert.equal(canAttachPaymentSlip(recorded({ slipCount: 5, slips: [] }), ['reimbursement.payment.record']), false);
+    assert.equal(canAttachPaymentSlip(recorded({ slipCount: 4, slips: [] }), ['reimbursement.payment.record']), true);
+  });
+
+  // Review S2: moving a file out of ใบเบิกที่เซ็นแล้ว withdraws a "signed on paper" declaration, so it is
+  // offered only where it is the fix: the standing payment has no slip. Adding another slip to a
+  // payment that has one is done from the payment row, by uploading it.
+  it('offers the move to the standing payment only while that payment has no slip', () => {
+    const payer = ['reimbursement.payment.record'];
+    const without = recorded({ slips: [], slipCount: 0 });
+    assert.equal(slipTargetPayment(claim({ payments: [voided(), without] }), payer)?.id, 'pay-2');
+    assert.equal(slipTargetPayment(claim({ payments: [recorded({ slips: undefined })] }), payer)?.id, 'pay-2', 'a payment recorded before slips existed');
+    // It already carries its slip: no move is offered, though the payment still takes more slips by upload.
+    assert.equal(slipTargetPayment(claim({ payments: [voided(), recorded()] }), payer), undefined);
+    assert.equal(canAttachPaymentSlip(recorded(), payer), true);
+    assert.equal(slipTargetPayment(claim({ payments: [recorded({ slipCount: 1, slips: [] })] }), payer), undefined, 'by the count, not the list');
+    // The slip of a voided payment does not stand in for the standing payment's own.
+    assert.equal(slipTargetPayment(claim({ payments: [voided(), without] }), payer)?.id, 'pay-2');
     assert.equal(slipTargetPayment(claim({ payments: [voided()] }), payer), undefined, 'nothing to move a file to before a payment stands');
-    assert.equal(slipTargetPayment(claim(), ['reimbursement.read']), undefined);
+    assert.equal(slipTargetPayment(claim({ payments: [without] }), ['reimbursement.read']), undefined, 'only someone who may record payments');
+    assert.equal(slipTargetPayment(claim({ payments: [] }), payer), undefined);
+    // The section offers the action from this one answer.
+    assert.match(sourceOf('ReimbursementDetailSections.tsx'), /const slipTarget = slipTargetPayment\(detail, permissions\);[\s\S]*?\{slipTarget && \([\s\S]*?onUseSignedCopyAsSlip\(copy, slipTarget\)/);
   });
 
   it('says what moving a file out of ใบเบิกที่เซ็นแล้ว will do, and mentions a declaration only when one was made', () => {
@@ -190,5 +228,167 @@ describe('void, then pay again', () => {
       ['VOIDED', 'TXN-1', ['att-slip-1']],
       ['RECORDED', 'TXN-2', ['att-slip-2']],
     ]);
+  });
+});
+
+// Review S3: what one press of บันทึกจ่าย does, in order, and what a second press and a retry do.
+describe('saving the payment form', () => {
+  const transferForm = { paidAmount: '500', paymentMethod: 'BANK_TRANSFER', paidAt: '2026-10-01', paymentReference: 'TXN-9' };
+  const picked = (name = 'slip.jpg'): PaymentFormSlip => ({ file: { name } as File });
+
+  /** The form's world: what was sent, in order, and the slip the form holds after each press. */
+  function form(options: { uploadFails?: boolean; recordFailures?: number; slip?: PaymentFormSlip | null; form?: typeof transferForm } = {}) {
+    const calls: unknown[][] = [];
+    const busy: boolean[] = [];
+    const session: PaymentFormSession = { idempotencyKey: null, saving: false };
+    let slip: PaymentFormSlip | null = options.slip === undefined ? picked() : options.slip;
+    let recordFailures = options.recordFailures ?? 0;
+    let keys = 0;
+    let release: (() => void) | undefined;
+    const press = () => savePaymentForm({ form: options.form ?? transferForm, outstandingAmount: '500', slip, session }, {
+      uploadSlip: async (file) => {
+        calls.push(['upload', file.name]);
+        if (release === undefined && held) await new Promise<void>((resolve) => { release = resolve; });
+        if (options.uploadFails) throw Object.assign(new Error('API error 503'), { code: 'payment_slip_invalid' });
+        return 'att-uploaded';
+      },
+      recordPayment: async (body) => {
+        calls.push(['record', body]);
+        if (recordFailures > 0) { recordFailures -= 1; throw Object.assign(new Error('API error 409'), { code: 'reimbursement_payment_state_changed' }); }
+        return {};
+      },
+      onSlipUploaded: (uploaded) => { slip = uploaded; },
+      newIdempotencyKey: () => `key-${++keys}`,
+      onBusy: (value) => busy.push(value),
+    });
+    let held = false;
+    return {
+      press, calls, busy, session,
+      slip: () => slip,
+      /** The next upload does not finish until `finishUpload()` is called. */
+      holdUpload: () => { held = true; },
+      finishUpload: () => release?.(),
+    };
+  }
+
+  it('uploads the picked slip, then records the payment with it and one key', async () => {
+    const h = form();
+    assert.deepEqual(await h.press(), { status: 'saved' });
+    assert.deepEqual(h.calls, [
+      ['upload', 'slip.jpg'],
+      ['record', { paidAmount: '500', paymentMethod: 'BANK_TRANSFER', paidAt: '2026-10-01T00:00:00.000Z', paymentReference: 'TXN-9', slipAttachmentId: 'att-uploaded', idempotencyKey: 'key-1' }],
+    ]);
+    assert.deepEqual(h.busy, [true, false]);
+    assert.equal(h.session.saving, false);
+  });
+
+  it('records with a file already on the claim, or with no slip for cash, without uploading anything', async () => {
+    const existing = form({ slip: { attachmentId: 'att-slip-1', name: 'สลิปของการจ่ายที่ยกเลิกแล้ว' } });
+    assert.deepEqual(await existing.press(), { status: 'saved' });
+    assert.deepEqual(existing.calls.map(([kind, body]: any[]) => [kind, body.slipAttachmentId]), [['record', 'att-slip-1']]);
+
+    const cash = form({ slip: null, form: { ...transferForm, paymentMethod: 'CASH', paymentReference: '' } });
+    assert.deepEqual(await cash.press(), { status: 'saved' });
+    const [, body] = cash.calls[0] as [string, Record<string, unknown>];
+    assert.deepEqual([body['slipAttachmentId'], body['paymentReference'], body['paymentMethod']], [undefined, undefined, 'CASH']);
+  });
+
+  it('sends nothing for a form that is not ready, and says what is missing', async () => {
+    for (const [label, h, text] of [
+      ['no method chosen', form({ form: { ...transferForm, paymentMethod: '' } }), 'กรุณาเลือกวิธีจ่าย'],
+      ['a transfer without a slip', form({ slip: null }), 'จ่ายด้วยการโอนต้องแนบสลิป'],
+    ] as const) {
+      assert.deepEqual(await h.press(), { status: 'refused', text }, label);
+      assert.deepEqual(h.calls, [], label);
+      assert.deepEqual(h.busy, [], `${label}: never shown as sending`);
+      assert.equal(h.session.idempotencyKey, null, label);
+    }
+  });
+
+  it('keeps the uploaded slip when recording fails: the retry sends it again with the same key and uploads nothing', async () => {
+    const h = form({ recordFailures: 1 });
+    const failed = await h.press();
+    assert.equal(failed.status, 'refused');
+    // The slip is in, the payment is not: the message says so and does not ask for a new slip or a new transfer.
+    assert.match((failed as { text: string }).text, /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .* · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
+    assert.deepEqual(h.slip(), { attachmentId: 'att-uploaded', name: 'slip.jpg' }, 'the form now holds the uploaded slip, not the file');
+
+    assert.deepEqual(await h.press(), { status: 'saved' });
+    assert.deepEqual(h.calls.map(([kind]) => kind), ['upload', 'record', 'record'], 'one upload for two attempts');
+    const bodies = h.calls.filter(([kind]) => kind === 'record').map(([, body]) => body as Record<string, unknown>);
+    assert.deepEqual(bodies.map((body) => [body['slipAttachmentId'], body['idempotencyKey']]), [['att-uploaded', 'key-1'], ['att-uploaded', 'key-1']],
+      'the same slip and the same key: to the API this is the same payment, not a second one');
+    assert.deepEqual(h.busy, [true, false, true, false]);
+  });
+
+  it('records nothing when the slip upload fails, and says the payment was not saved', async () => {
+    const h = form({ uploadFails: true });
+    const failed = await h.press();
+    assert.equal(failed.status, 'refused');
+    assert.match((failed as { text: string }).text, /^อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · /);
+    assert.deepEqual(h.calls.map(([kind]) => kind), ['upload']);
+    assert.equal(h.session.idempotencyKey, null, 'no payment was attempted, so no key is spent');
+    assert.deepEqual(h.slip(), picked(), 'the picked file is still in the form to try again');
+    assert.equal(h.session.saving, false, 'the form is free for the next press');
+  });
+
+  it('does nothing on a second press while the first is still running: one upload, one payment', async () => {
+    const h = form();
+    h.holdUpload();
+    const first = h.press();
+    // The first press is in the middle of its upload when the button is pressed again, twice.
+    assert.deepEqual(await h.press(), { status: 'ignored' });
+    assert.deepEqual(await h.press(), { status: 'ignored' });
+    assert.deepEqual(h.calls.map(([kind]) => kind), ['upload']);
+    h.finishUpload();
+    assert.deepEqual(await first, { status: 'saved' });
+    assert.deepEqual(h.calls.map(([kind]) => kind), ['upload', 'record']);
+    assert.deepEqual(h.busy, [true, false], 'the ignored presses never touch the busy flag');
+  });
+
+  it('is what the payment form runs, with a session that lives as long as the opened form', () => {
+    const source = sourceOf('ReimbursementDetailSections.tsx');
+    assert.match(source, /const session = useRef<PaymentFormSession>\(\{ idempotencyKey: null, saving: false \}\)/);
+    assert.match(source, /await savePaymentForm\(\{ form, outstandingAmount: String\(request\.outstandingAmount\), slip, session: session\.current \}/);
+    assert.match(source, /onSlipUploaded: setSlip/);
+    assert.match(source, /if \(result\.status === 'saved'\) \{ onDone\(\); toast\.success\('บันทึกจ่ายเรียบร้อยแล้ว'\); \}/);
+  });
+});
+
+// Spec §12.2, §21 (impact audit M13): the payment form is never a dialog on a phone.
+describe('quick pay from the finance queue', () => {
+  it('opens the claim page\'s payment step on a phone, and the dialog from the sm width up', () => {
+    assert.equal(PAYMENT_DIALOG_MEDIA_QUERY, '(min-width: 640px)', 'the same width as the sm breakpoint the page lays out by');
+    assert.deepEqual(quickPayTarget(false, 'co-1', 'rb-1'), { kind: 'page', href: '/companies/co-1/reimbursements/rb-1?pay=1' });
+    assert.deepEqual(quickPayTarget(true, 'co-1', 'rb-1'), { kind: 'dialog' });
+  });
+
+  it('opens the form on arrival only when the link asked for it and this viewer\'s current step offers the payment', () => {
+    const payable = claim({ status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', outstandingAmount: '500.0000', payments: [], currentDesk: { kind: 'PAYMENT' } });
+    const stepFor = (detail: any, permissions: string[]) => activeJourneyStep(buildJourneySteps(detail, permissions, 'user-payer'));
+    assert.equal(opensPaymentFormOnArrival(true, stepFor(payable, owner)), true);
+    assert.equal(opensPaymentFormOnArrival(false, stepFor(payable, owner)), false, 'an ordinary visit never opens it');
+    assert.equal(opensPaymentFormOnArrival(true, stepFor(payable, ['reimbursement.read'])), false, 'someone who cannot record a payment');
+    assert.equal(opensPaymentFormOnArrival(true, stepFor(claim(), owner)), false, 'a claim that is already paid');
+    assert.equal(opensPaymentFormOnArrival(true, undefined), false);
+  });
+
+  it('is wired from the queue button to the claim page, and the dialog form mounts once the claim has loaded', () => {
+    const hub = sourceOf('ReimbursementsPages.tsx');
+    // One handler for the table button and the card button; the dialog opens only through it.
+    assert.match(hub, /quickPayTarget\(window\.matchMedia\(PAYMENT_DIALOG_MEDIA_QUERY\)\.matches, companyId, row\.id\)/);
+    assert.match(hub, /if \(target\.kind === 'page'\) router\.push\(target\.href\);\s+else setPayFor\(row\);/);
+    assert.match(hub, /<FinanceQueue \{\.\.\.queueProps\} onRecordPayment=\{recordPayment\} \/>/);
+    assert.equal((hub.match(/setPayFor\(/g) ?? []).length, 3, 'opened in one place, closed in two');
+    // The form seeds its state when it mounts, so it mounts after the claim read settles, keyed on what it was given.
+    assert.match(hub, /const \[claim, setClaim\] = useState<any \| null>\(null\)/);
+    assert.match(hub, /\{claim\s+[\s\S]*?\? <PaymentForm key=\{claim === request \? 'queue-row' : 'claim'\} companyId=\{companyId\} request=\{claim\}[\s\S]*?: <LoadingState label="กำลังเปิดใบเบิก\.\.\." \/>\}/);
+
+    const route = sourceOf('..', '..', '..', 'app', '(workspace)', 'companies', '[companyId]', 'reimbursements', '[requestId]', 'page.tsx');
+    assert.match(route, /payOnOpen=\{\(searchParams \? await searchParams : \{\}\)\['pay'\] === '1'\}/);
+    const page = sourceOf('ReimbursementJourneyPage.tsx');
+    assert.match(page, /const payRequested = useRef\(payOnOpen\)/);
+    assert.match(page, /if \(opensPaymentFormOnArrival\(payRequested\.current, activeJourneyStep\(buildJourneySteps\(next, permissions, userId\)\)\)\) \{\s+setPayOpen\(true\);/);
+    assert.match(page, /payRequested\.current = false;/, 'asked for once: a later re-read never reopens a form the payer closed');
   });
 });

@@ -208,6 +208,51 @@ describe('reimbursement claim form', () => {
     }
   });
 
+  // B19 (impact audit 2026-10-01): the form printed the UTC calendar day of every instant, so a
+  // claim submitted, approved or paid between midnight and 07:00 Thai time was dated the day before
+  // what its own page showed.
+  it('dates the form by the Thai day an instant fell on: 18:30Z prints the next day', () => {
+    // 18:30Z on the 20th is 01:30 on the 21st in Thailand.
+    const early = snapshot({
+      layout: 'LEGACY_FOUR_SIGNERS',
+      submittedAt: '2026-07-20T18:30:00.000Z',
+      signers: {
+        requester: { name: 'สมชาย ใจดี', at: '2026-07-20T18:30:00.000Z' },
+        // Midnight exactly, Thai time, is already the new day.
+        approver: { name: 'มานี ผู้จัดการ', at: '2026-07-21T17:00:00.000Z' },
+        // One second before it is still the old one.
+        accounting: { name: 'ปรีชา บัญชี', at: '2026-07-22T16:59:59.000Z' },
+        // Across a year end: 31 Dec 2026 23:30Z is 1 Jan 2570 (B.E.) in Thailand.
+        finance: { name: 'สุดา การเงิน', at: '2026-12-31T23:30:00.000Z' },
+      },
+    });
+    for (const artifact of bothRenderings(early)) {
+      assert.match(artifact, /วันที่: 21 ก\.ค\. 2569/, 'the submit date in the heading');
+      assert.doesNotMatch(artifact, /วันที่: 20 ก\.ค\. 2569/);
+      for (const [name, date] of [
+        ['สมชาย ใจดี', '21 ก.ค. 2569'],
+        ['มานี ผู้จัดการ', '22 ก.ค. 2569'],
+        ['ปรีชา บัญชี', '22 ก.ค. 2569'],
+        ['สุดา การเงิน', '1 ม.ค. 2570'],
+      ]) {
+        const block = artifact.slice(artifact.indexOf(`( ${name} )`));
+        assert.match(block.slice(0, 400), new RegExp(`วันที่ ${date!.replace(/\./g, '\\.')}`), name);
+      }
+      // A line's date is a calendar day, stored at UTC midnight: it prints as entered.
+      for (const day of ['15', '16', '17']) assert.match(artifact, new RegExp(`${day} ก\\.ค\\. 2569`));
+    }
+
+    // The two-signer form states the payment in words: its date follows the same rule, and a
+    // payment date picked on the web (UTC midnight of the chosen day) prints as the day picked.
+    const paidLate = renderReimbursementClaimFormPages(snapshot({ repayment: { paidAt: '2026-07-23T18:30:00.000Z', method: 'BANK_TRANSFER', reference: 'TXN-1', recordedByName: 'สุดา การเงิน' } })).map(String).join('');
+    assert.match(paidLate, /จ่ายเมื่อ 24 ก\.ค\. 2569/);
+    const paidOnPickedDay = renderReimbursementClaimFormPages(snapshot({ repayment: { paidAt: '2026-07-23T00:00:00.000Z', method: 'CASH', reference: null, recordedByName: 'สุดา การเงิน' } })).map(String).join('');
+    assert.match(paidOnPickedDay, /จ่ายเมื่อ 23 ก\.ค\. 2569/);
+    // A date-only line value, as older callers pass it, is unchanged too.
+    const dateOnly = renderReimbursementClaimFormSvg(snapshot({ lines: [{ lineNo: 1, incurredDate: '2026-09-10', description: 'ค่าแท็กซี่', purpose: null, amount: '10.0000' }], totalAmount: '10.0000' })).toString('utf8');
+    assert.match(dateOnly, /10 ก\.ย\. 2569/);
+  });
+
   it('renders Thai baht text without losing satang', () => {
     assert.equal(thaiBahtText('0'), 'ศูนย์บาทถ้วน');
     assert.equal(thaiBahtText('1250.5000'), 'หนึ่งพันสองร้อยห้าสิบบาทห้าสิบสตางค์');

@@ -21,7 +21,7 @@ import {
 import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
   activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
-  isStaleApprovalError, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
+  isStaleApprovalError, opensPaymentFormOnArrival, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
 } from './reimbursements.logic';
 import {
   ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentForm, ReasonDialog, RejectDialog,
@@ -60,12 +60,14 @@ const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string;
   },
 };
 
-export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions, roles = [] }: {
+export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions, roles = [], payOnOpen = false }: {
   companyId: string;
   requestId: string;
   userId: string;
   permissions: readonly string[];
   roles?: readonly string[];
+  /** The finance queue's quick pay on a phone lands here: the payment form opens in the step card, never in a dialog. */
+  payOnOpen?: boolean;
 }) {
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
@@ -122,14 +124,25 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     finally { setNoteBusy(false); }
   };
 
+  // Asked for once, on arrival: a later re-read of the claim never reopens a form the payer closed.
+  const payRequested = useRef(payOnOpen);
   useEffect(() => {
     let active = true;
     setLoadError(null);
     getReimbursement(companyId, requestId)
-      .then((next) => { if (active) setDetail(next); })
+      .then((next) => {
+        if (!active) return;
+        setDetail(next);
+        if (opensPaymentFormOnArrival(payRequested.current, activeJourneyStep(buildJourneySteps(next, permissions, userId)))) {
+          setPayOpen(true);
+          // The step card holding the form comes into view, as it does after an action.
+          setFocusTick((tick) => tick + 1);
+        }
+        payRequested.current = false;
+      })
       .catch((e) => { if (active) setLoadError(e); });
     return () => { active = false; };
-  }, [companyId, requestId, reloadKey]);
+  }, [companyId, requestId, reloadKey, permissions, userId]);
 
   // The card of the step the claim moved to takes focus (and scrolls into view) after an action.
   useEffect(() => { if (focusTick) cardRef.current?.focus(); }, [focusTick]);

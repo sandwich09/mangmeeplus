@@ -160,15 +160,29 @@ export function paymentSlipChoices(detail: any): PaymentSlipChoice[] {
   return choices;
 }
 
+/**
+ * How many slips a payment carries. Every reader of the claim is told this much; which files they
+ * are (`slips`) reaches only someone who may open them, so the count is never read off that list.
+ */
+export function paymentSlipCount(payment: any): number {
+  return typeof payment?.slipCount === 'number' ? payment.slipCount : (payment?.slips ?? []).length;
+}
+
 /** A recorded payment takes more slips, up to the limit, from someone who may record payments. Add-only: there is no remove. */
 export function canAttachPaymentSlip(payment: any, permissions: readonly string[]): boolean {
   return payment?.status === 'RECORDED' && permissions.includes('reimbursement.payment.record')
-    && (payment.slips ?? []).length < REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES;
+    && paymentSlipCount(payment) < REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES;
 }
 
-/** The payment a file moved out of ใบเบิกที่เซ็นแล้ว becomes the slip of: the one standing payment, when this viewer may add to it. */
+/**
+ * The payment a file moved out of ใบเบิกที่เซ็นแล้ว becomes the slip of: the one standing payment, when
+ * this viewer may add to it and it has no slip yet. The move withdraws a "signed on paper"
+ * declaration, so it is offered only for the case it exists for (a slip attached there by mistake,
+ * on a payment that still lacks one), never as a second slip for a payment that already has its own.
+ */
 export function slipTargetPayment(detail: any, permissions: readonly string[]): any | undefined {
-  return (detail?.payments ?? []).filter((payment: any) => canAttachPaymentSlip(payment, permissions)).at(-1);
+  const standing = (detail?.payments ?? []).filter((payment: any) => payment?.status === 'RECORDED').at(-1);
+  return standing && canAttachPaymentSlip(standing, permissions) && paymentSlipCount(standing) === 0 ? standing : undefined;
 }
 
 /**
@@ -193,6 +207,99 @@ export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', reason:
   return slipKept
     ? `แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ${reason} · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่`
     : `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
+}
+
+/** What the payment form holds as its slip: a file picked but not sent yet, or one the API already holds. */
+export type PaymentFormSlip = { file: File } | { attachmentId: string; name: string };
+
+/** What lives as long as one opened payment form, across every press of บันทึกจ่าย. */
+export type PaymentFormSession = { idempotencyKey: string | null; saving: boolean };
+
+export type PaymentFormSave =
+  | { status: 'saved' }
+  /** Nothing was sent, or the save failed. `text` is the plain-Thai sentence the form shows, never a raw error. */
+  | { status: 'refused'; text: string }
+  /** A press that arrived while an earlier one was still running. Nothing was done. */
+  | { status: 'ignored' };
+
+/**
+ * One press of บันทึกจ่าย: check the form, upload the slip if it is still a picked file, then record
+ * the payment with it. Kept out of the component so the order and the retries can be tested.
+ *
+ * - The slip is uploaded before the payment and handed back at once (`onSlipUploaded`): if recording
+ *   then fails, the next press sends the same uploaded slip and uploads nothing again.
+ * - The session's key is made on the first press and kept: a press after a lost answer is the same
+ *   payment to the API, never a second one.
+ * - A second press while the first is still running does nothing: no second upload, no second request.
+ */
+export async function savePaymentForm(
+  input: {
+    form: { paidAmount: string; paymentMethod: string; paidAt: string; paymentReference: string };
+    outstandingAmount: string;
+    slip: PaymentFormSlip | null;
+    session: PaymentFormSession;
+  },
+  deps: {
+    uploadSlip: (file: File) => Promise<string>;
+    recordPayment: (body: Record<string, unknown>) => Promise<unknown>;
+    onSlipUploaded: (slip: { attachmentId: string; name: string }) => void;
+    newIdempotencyKey: () => string;
+    /** The form's busy flag: true only while something is actually being sent. */
+    onBusy?: (busy: boolean) => void;
+  },
+): Promise<PaymentFormSave> {
+  const { form, slip, session } = input;
+  if (session.saving) return { status: 'ignored' };
+  const invalid = validatePaymentForm({ ...form, outstandingAmount: input.outstandingAmount, hasSlip: slip !== null });
+  if (invalid) return { status: 'refused', text: invalid };
+
+  session.saving = true;
+  deps.onBusy?.(true);
+  try {
+    let slipAttachmentId = slip && 'attachmentId' in slip ? slip.attachmentId : undefined;
+    if (slip && 'file' in slip) {
+      try {
+        slipAttachmentId = await deps.uploadSlip(slip.file);
+      } catch (error) {
+        return { status: 'refused', text: paymentSaveErrorMessage('slip-upload', errorText(error), false) };
+      }
+      deps.onSlipUploaded({ attachmentId: slipAttachmentId, name: slip.file.name });
+    }
+    session.idempotencyKey ??= deps.newIdempotencyKey();
+    try {
+      // Phase 1 seam: the verified payout account's version and the payer's confirmation join this body.
+      await deps.recordPayment({
+        ...form, paidAt: new Date(form.paidAt).toISOString(), paymentReference: form.paymentReference || undefined,
+        slipAttachmentId, idempotencyKey: session.idempotencyKey,
+      });
+    } catch (error) {
+      return { status: 'refused', text: paymentSaveErrorMessage('record', errorText(error), slipAttachmentId !== undefined) };
+    }
+    return { status: 'saved' };
+  } finally {
+    session.saving = false;
+    deps.onBusy?.(false);
+  }
+}
+
+/** Tailwind's `sm`: from this width up, the finance queue's quick pay may open as a dialog. */
+export const PAYMENT_DIALOG_MEDIA_QUERY = '(min-width: 640px)';
+
+/**
+ * Where "บันทึกจ่าย" on a finance-queue row leads. On a phone the payment form is never a dialog
+ * (spec §12.2, §21): it opens in the payment step card of the claim's own page, where the claim's
+ * files and the account to pay sit beside it.
+ */
+export function quickPayTarget(wideEnoughForDialog: boolean, companyId: string, requestId: string):
+  { kind: 'dialog' } | { kind: 'page'; href: string } {
+  return wideEnoughForDialog
+    ? { kind: 'dialog' }
+    : { kind: 'page', href: `/companies/${companyId}/reimbursements/${requestId}?pay=1` };
+}
+
+/** The claim page opens its payment form on arrival only when the link asked for it and this viewer's current step offers it. */
+export function opensPaymentFormOnArrival(requested: boolean, activeStep: { actions: readonly string[] } | undefined | null): boolean {
+  return requested && Boolean(activeStep?.actions.includes('pay'));
 }
 
 export const MAX_CLAIM_LINES = 50;

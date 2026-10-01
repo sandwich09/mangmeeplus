@@ -1,4 +1,5 @@
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
+import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import {
   civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY,
@@ -87,6 +88,16 @@ function stringArrayOpt(value: unknown): string[] | undefined {
 }
 
 /** A file proven usable as a slip of one claim, with what the link write needs to finish the job. */
+/**
+ * A payment transaction PostgreSQL rolled back because another writer got there first: two payers,
+ * a payment against a void, or the slip file changing underneath. Nothing was written, so the
+ * answer is the payment paths' own "it changed, reload and retry" (409), never a 500.
+ */
+function paymentChangedOnSerializationFailure(error: unknown): never {
+  if (isSerializationFailure(error)) throw new ConflictException('reimbursement_payment_state_changed');
+  throw error;
+}
+
 type ResolvedPaymentSlip = {
   attachmentId: string;
   source: ReimbursementPaymentSlipSource;
@@ -2633,7 +2644,7 @@ export class PrismaReimbursementRepository {
         },
       });
       return { request: this.toRequest(updated), payment: this.toPayment(payment), created: true, ...(slipLink && { slip: slipLink }) };
-    }, { isolationLevel: 'Serializable' });
+    }, { isolationLevel: 'Serializable' }).catch(paymentChangedOnSerializationFailure);
   }
 
   // ---- Payment slips (spec §12.5, §16) ----
@@ -2648,6 +2659,11 @@ export class PrismaReimbursementRepository {
    * things qualify: a slip already on another payment of the claim (a re-pay after a void), the
    * payer's own slip upload for the claim, and a file attached to the claim as a signed copy (the
    * misfiled slip, §16). Anything else is refused: another claim's slip, somebody else's upload, a receipt.
+   *
+   * A slip is exclusive (owner 2026-10-01: never an expense receipt, never a signed claim copy). The
+   * generic file paths stop serving a slip to everyone, so a file that is also something else's
+   * evidence is refused here: every link it has must be the kind its source allows, and no claim
+   * line may name it as a receipt.
    */
   private async resolvePaymentSlip(
     db: any,
@@ -2659,15 +2675,17 @@ export class PrismaReimbursementRepository {
       select: { id: true, byteSize: true, checksumSha256: true, uploadedByUserId: true, metadataJson: true },
     });
     if (!file) throw invalid();
-    const links: { id: string; targetType: string; targetId: string }[] = await db.attachmentLink.findMany({
-      where: { companyId: input.companyId, attachmentId: input.attachmentId, OR: [
-        { targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE, purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE },
-        { targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE, targetId: input.requestId, purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE },
-      ] },
-      select: { id: true, targetType: true, targetId: true },
+    const links: { id: string; targetType: string; targetId: string; purpose: string }[] = await db.attachmentLink.findMany({
+      where: { companyId: input.companyId, attachmentId: input.attachmentId },
+      select: { id: true, targetType: true, targetId: true, purpose: true },
     });
-    const slipPaymentIds = links.filter((link) => link.targetType === REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE).map((link) => link.targetId);
-    const signedCopyLinkIds = links.filter((link) => link.targetType === REIMBURSEMENT_ATTACHMENT_TARGET_TYPE).map((link) => link.id);
+    const slipPaymentIds = links
+      .filter((link) => link.targetType === REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE && link.purpose === REIMBURSEMENT_PAYMENT_SLIP_PURPOSE)
+      .map((link) => link.targetId);
+    const signedCopyLinkIds = links
+      .filter((link) => link.targetType === REIMBURSEMENT_ATTACHMENT_TARGET_TYPE && link.targetId === input.requestId && link.purpose === REIMBURSEMENT_SIGNED_COPY_PURPOSE)
+      .map((link) => link.id);
+    if (await db.reimbursementLine.count({ where: { companyId: input.companyId, attachmentId: input.attachmentId } }) > 0) throw invalid();
     const metadataJson = (file.metadataJson ?? null) as Record<string, unknown> | null;
 
     let source: ReimbursementPaymentSlipSource;
@@ -2676,13 +2694,15 @@ export class PrismaReimbursementRepository {
       const ofThisClaim = await db.reimbursementPayment.count({
         where: { companyId: input.companyId, reimbursementRequestId: input.requestId, id: { in: slipPaymentIds } },
       });
-      if (ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
+      if (links.length !== slipPaymentIds.length || ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
       source = 'PREVIOUS_SLIP';
     } else if (metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG) {
-      if (metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
+      if (links.length !== 0 || metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
         || file.byteSize > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES) throw invalid();
       source = 'UPLOAD';
     } else if (signedCopyLinkIds.length > 0) {
+      // Only this claim's signed copy: the same file on another claim, or as a receipt, stays what it is there.
+      if (links.length !== signedCopyLinkIds.length) throw invalid();
       source = 'SIGNED_COPY';
     } else {
       throw invalid();
@@ -2730,10 +2750,10 @@ export class PrismaReimbursementRepository {
     if (slip.source === 'SIGNED_COPY') {
       await tx.attachmentLink.deleteMany({ where: { companyId: input.companyId, id: { in: slip.signedCopyLinkIds } } });
       const { [REIMBURSEMENT_SIGNED_COPY_ACK_KEY]: ack, ...rest } = slip.metadataJson ?? {};
-      if (ack !== undefined) {
-        await tx.attachmentObject.update({ where: { id: slip.attachmentId }, data: { metadataJson: rest } });
-        declarationWithdrawn = slip.signedCopyLinkIds.includes((ack as { linkId?: string } | null)?.linkId ?? '');
-      }
+      // Only the declaration made with a link removed here. One bound to any other link is not this
+      // claim's to withdraw, and it never counted for this claim either.
+      declarationWithdrawn = slip.signedCopyLinkIds.includes((ack as { linkId?: string } | null | undefined)?.linkId ?? '');
+      if (declarationWithdrawn) await tx.attachmentObject.update({ where: { id: slip.attachmentId }, data: { metadataJson: rest } });
     }
     return { attachmentId: slip.attachmentId, source: slip.source, uploadedByUserId: slip.uploadedByUserId, declarationWithdrawn };
   }
@@ -2772,7 +2792,7 @@ export class PrismaReimbursementRepository {
         created: true,
         slip: await this.linkPaymentSlip(tx, { companyId: data.companyId, paymentId: data.paymentId, linkedByUserId: data.actorUserId, slip }),
       };
-    });
+    }).catch(paymentChangedOnSerializationFailure);
   }
 
   /** Slips per payment, oldest first. Ids and times only; the file opens through the slip endpoint. */
@@ -3020,6 +3040,15 @@ export class PrismaReimbursementRepository {
         } });
         return { request: this.toRequest(request), payment: this.toPayment(prior), reversalEntryId: null, alreadyVoided: true };
       }
+      // A bank statement line confirmed against this payment would be left matched to a payment that
+      // no longer stands. The match is undone first: the rule deleting an expense already follows.
+      const bankMatch = await tx.bankReconciliationMatch.findFirst({
+        where: { companyId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paymentId, status: 'CONFIRMED' },
+        select: { id: true },
+      });
+      if (bankMatch) {
+        throw new ConflictException({ code: 'reimbursement_payment_bank_matched', message: 'Undo the bank reconciliation match of this payment before voiding it.' });
+      }
       const voided = await tx.reimbursementPayment.updateMany({
         where: { id: paymentId, companyId, reimbursementRequestId: requestId, status: 'RECORDED' },
         data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason, voidedByUserId: actorUserId },
@@ -3096,7 +3125,7 @@ export class PrismaReimbursementRepository {
           priority: 'NORMAL', status: 'PENDING' } });
       }
       return { request: this.toRequest(updated), payment: this.toPayment(payment), reversalEntryId: reversal.reversalEntryId };
-    });
+    }).catch(paymentChangedOnSerializationFailure);
   }
 
   // GAP-02: recorded-but-unposted settlement payments awaiting a generate call.
@@ -3384,12 +3413,19 @@ export class PrismaReimbursementRepository {
     linkedByUserId: string,
     ack?: ReimbursementSignedCopyAck,
   ): Promise<void> {
-    const conflict = await findAttachmentLinkConflict(this.prisma.client, {
-      companyId, attachmentId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
-    });
-    if (conflict) throw new UnprocessableEntityException(conflict);
     const client = this.prisma.client as any;
     await client.$transaction(async (tx: any) => {
+      // The key a slip link and a delete of this file take, so the check below sees whichever of
+      // them committed first: a payment slip never becomes a signed copy (owner 2026-10-01).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${attachmentId}:attachment-retention`}))`;
+      const conflict = await findAttachmentLinkConflict(tx, {
+        companyId, attachmentId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+      });
+      if (conflict) throw new UnprocessableEntityException(conflict);
+      // The other order: a payment that started before this commit reads the file under its older
+      // snapshot and would not see the link written here. Writing the file's row makes that payment
+      // fail on its own row lock and retry, instead of putting a slip link beside this copy.
+      await tx.$executeRaw`UPDATE "AttachmentObject" SET "updatedAt" = now() WHERE "id" = ${attachmentId} AND "companyId" = ${companyId}`;
       const link = await tx.attachmentLink.upsert({
         where: {
           attachmentId_targetType_targetId_purpose: {

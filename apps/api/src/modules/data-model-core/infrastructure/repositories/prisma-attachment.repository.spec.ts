@@ -323,6 +323,34 @@ describe('PrismaAttachmentRepository.linkToTarget', () => {
     assert.equal(expenseRecord.findFirst.mock.callCount(), 0);
     assert.equal(attachmentLink.create.mock.callCount(), 0);
   });
+
+  it('refuses to hang a reimbursement payment slip off an expense or an accounting document', async () => {
+    // Owner 2026-10-01: a slip is opened only through its claim, by the people that claim names. As
+    // an expense receipt it would be read by OCR and handed to every reviewer of that expense, and
+    // the generic download would then refuse them all. Refused where the link is written.
+    const slipOfAPayment = setup();
+    // The link table as it answers each question asked of it: no signature link, one slip link.
+    (slipOfAPayment.attachmentLink.findFirst.mock as any).mockImplementation(async ({ where }: any) => (
+      where.targetType === 'reimbursement_payment' && where.purpose === 'reimbursement.payment.slip' ? { targetType: 'reimbursement_payment' } : null
+    ));
+    // Uploaded as a slip and not recorded with a payment yet: the upload tag is enough.
+    const slipUpload = setup({ attachment: { id: 'att-1', branchId: 'branch-1', metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' } } });
+
+    for (const { repo, expenseRecord, accountingDocument, attachmentLink } of [slipOfAPayment, slipUpload]) {
+      for (const [targetType, targetId, purpose] of [
+        ['expense.record', 'expense-1', 'expense.receipt.primary'],
+        ['expense.record', 'expense-1', 'expense.payment.evidence'],
+        ['accounting.document', 'invoice-1', 'accounting.receipt.evidence'],
+      ]) {
+        await assert.rejects(() => repo.linkToTarget({
+          companyId: 'co-1', attachmentId: 'att-1', targetType: targetType!, targetId: targetId!, purpose: purpose!, linkedByUserId: 'user-1',
+        }), (error: any) => error.getStatus() === 400 && /payment slip cannot be attached to anything else/.test(error.message));
+      }
+      assert.equal(expenseRecord.findFirst.mock.callCount(), 0, 'refused before the target is even read');
+      assert.equal(accountingDocument.findFirst.mock.callCount(), 0);
+      assert.equal(attachmentLink.create.mock.callCount(), 0);
+    }
+  });
 });
 
 describe('PrismaAttachmentRepository wet-signed scan retention (R11)', () => {

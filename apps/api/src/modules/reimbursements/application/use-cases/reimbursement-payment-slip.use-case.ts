@@ -118,7 +118,7 @@ export class AttachPaymentSlipUseCase {
       });
     }
     // Re-read: a moved file changes the signed copies and the document step as well as the payment.
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId, true)) ?? req);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId, true)) ?? req, ctx);
   }
 }
 
@@ -148,7 +148,7 @@ export class CreatePaymentSlipDownloadUrlUseCase {
     };
     if (!canOpenReimbursementPaymentSlip(
       { userId: ctx.userId, permissions: ctx.permissions },
-      { requesterUserId: req.requesterUserId, approvalSteps: req.approvalSteps, approvalActions },
+      { requesterUserId: req.requesterUserId, submittedAt: req.submittedAt, approvalSteps: req.approvalSteps, approvalActions },
     )) {
       void this.audit.log({ ...auditEntry, result: 'DENIED', riskLevel: 'HIGH' });
       throw new ForbiddenException('payment_slip_access_denied');

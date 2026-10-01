@@ -19,6 +19,8 @@ function slipTables(links: any[] = []) {
       metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' },
     }) },
     attachmentLink: { findMany: async () => [], create: async ({ data }: any) => { links.push(data); return data; } },
+    // A slip is exclusive: no claim line names the file as its receipt.
+    reimbursementLine: { count: async () => 0 },
   };
 }
 
@@ -94,6 +96,8 @@ function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amou
       update: async ({ data }: any) => data,
     },
     journalEntry: { findFirst: async () => null },
+    // No bank statement line is confirmed against the payment (a confirmed match refuses the void).
+    bankReconciliationMatch: { findFirst: async () => null },
     reimbursementRequest: {
       findFirstOrThrow: async () => request,
       update: async ({ data }: any) => { Object.assign(request, data); return request; },

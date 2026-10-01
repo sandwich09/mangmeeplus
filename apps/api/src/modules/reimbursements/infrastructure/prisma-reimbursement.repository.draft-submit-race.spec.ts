@@ -1091,4 +1091,204 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     assert.equal((await slipLinksOf(claim.requestId)).length, 1);
   });
 
+  // ---- A slip is an exclusive link (review S1, 2026-10-01) ----
+
+  /** An ordinary upload of the requester's, attached to a claim through the signed-copy uploader. */
+  async function signedCopyOf(requestId: string, declared = false) {
+    const file = await slipUpload(requestId, { uploadedByUserId: `${TAG}-user`, metadataJson: { source: 'web' }, mimeType: 'application/pdf', originalFileName: 'scan.pdf' });
+    await repos[0]!.linkSignedClaimFormCopy(companyId, requestId, file.id, `${TAG}-user`, declared ? {
+      requestId, requestNo: 'RB', acknowledgedByUserId: `${TAG}-user`, acknowledgedAt: '2026-10-01T02:00:00.000Z', checksumSha256: file.checksumSha256,
+    } : undefined);
+    return file;
+  }
+  const linksOf = async (attachmentId: string) => (await clients[0]!.attachmentLink.findMany({ where: { attachmentId }, orderBy: { createdAt: 'asc' } }))
+    .map((link) => [link.targetType, link.targetId, link.purpose]);
+  const moveToSlip = (requestId: string, paymentId: string, attachmentId: string, repo = repos[0]!) =>
+    repo.attachPaymentSlipAtomic({ companyId, requestId, paymentId, attachmentId, actorUserId: `${TAG}-finance` });
+  const cashPayment = (requestId: string, key: string) =>
+    repos[0]!.recordPaymentAtomic({ ...transfer(requestId, key), paymentMethod: 'CASH', paymentReference: undefined });
+
+  /**
+   * A repository whose next transaction is interleaved: `between` runs on another connection right
+   * after that transaction's first statement, when its snapshot is already taken. This is the order
+   * a lock alone cannot fix: the other writer commits first, and the payment still reads the past.
+   */
+  function interleavedRepo(between: () => Promise<unknown>) {
+    const client = new Proxy(clients[0]!, { get(target, property) {
+      if (property !== '$transaction') return Reflect.get(target, property);
+      return (work: (tx: any) => Promise<unknown>, options: any) => target.$transaction((tx: any) => {
+        let fired = false;
+        return work(new Proxy(tx, { get(inner, name) {
+          const value = Reflect.get(inner, name);
+          if (name === '$executeRaw') {
+            return async (...args: unknown[]) => {
+              const result = await value.apply(inner, args);
+              if (!fired) { fired = true; await between(); }
+              return result;
+            };
+          }
+          return typeof value === 'function' ? value.bind(inner) : value;
+        } }));
+      }, { ...options, timeout: 20_000 });
+    } });
+    return new PrismaReimbursementRepository({ client } as any, new PrismaDocumentSequenceRepository({ client: clients[0]! } as any));
+  }
+  const paymentChanged = (error: any) => error?.getStatus?.() === 409 && error.message === 'reimbursement_payment_state_changed';
+
+  it('keeps a slip exclusive: never also a receipt, a signed copy or another claim\'s file', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const files = new PrismaAttachmentRepository({ client: clients[1]! } as any);
+    const asReceipt = (attachmentId: string) => files.linkToTarget({
+      companyId, attachmentId, targetType: 'expense.record', targetId: claim.projectionId, purpose: 'expense.receipt.supporting', linkedByUserId: `${TAG}-finance`,
+    });
+    const refusedAsSlip = /payment slip cannot be attached to anything else/;
+
+    // A slip upload no payment carries yet: the tag alone keeps it out of every other list.
+    const upload = await slipUpload(claim.requestId);
+    await assert.rejects(() => asReceipt(upload.id), refusedAsSlip);
+    await assert.rejects(() => repos[0]!.linkSignedClaimFormCopy(companyId, claim.requestId, upload.id, `${TAG}-finance`), refusedAsSlip);
+    assert.deepEqual(await linksOf(upload.id), []);
+
+    // What may not become a slip: a file that is already evidence of something else.
+    const cash = await cashPayment(claim.requestId, 'exclusive-cash');
+    const alsoAReceipt = await signedCopyOf(claim.requestId);
+    await clients[0]!.attachmentLink.create({ data: { companyId, attachmentId: alsoAReceipt.id, targetType: 'expense.record', targetId: claim.projectionId, purpose: 'expense.receipt.supporting', linkedByUserId: `${TAG}-user` } });
+    const alsoAnotherClaims = await signedCopyOf(claim.requestId);
+    await repos[0]!.linkSignedClaimFormCopy(companyId, 'another-claim', alsoAnotherClaims.id, `${TAG}-user`);
+    const alsoALineReceipt = await signedCopyOf(claim.requestId);
+    await clients[0]!.reimbursementLine.updateMany({ where: { companyId, reimbursementRequestId: claim.requestId }, data: { attachmentId: alsoALineReceipt.id } });
+    for (const file of [alsoAReceipt, alsoAnotherClaims, alsoALineReceipt]) {
+      const before = await linksOf(file.id);
+      await assert.rejects(() => moveToSlip(claim.requestId, cash.payment.id, file.id), /payment_slip_invalid/);
+      await assert.rejects(() => repos[0]!.assertPaymentSlipUsable({ companyId, requestId: claim.requestId, attachmentId: file.id, actorUserId: `${TAG}-finance` }), /payment_slip_invalid/);
+      assert.deepEqual(await linksOf(file.id), before, 'what it is elsewhere is untouched');
+    }
+    assert.deepEqual(await slipLinksOf(claim.requestId), []);
+
+    // A copy that is only this claim's becomes the slip, and from then on is nothing else.
+    const onlyThisClaims = await signedCopyOf(claim.requestId, true);
+    assert.equal((await moveToSlip(claim.requestId, cash.payment.id, onlyThisClaims.id)).created, true);
+    assert.deepEqual(await linksOf(onlyThisClaims.id), [['reimbursement_payment', cash.payment.id, 'reimbursement.payment.slip']]);
+    await assert.rejects(() => asReceipt(onlyThisClaims.id), refusedAsSlip);
+    for (const requestId of [claim.requestId, 'another-claim']) {
+      await assert.rejects(() => repos[1]!.linkSignedClaimFormCopy(companyId, requestId, onlyThisClaims.id, `${TAG}-user`), refusedAsSlip);
+    }
+    assert.deepEqual(await linksOf(onlyThisClaims.id), [['reimbursement_payment', cash.payment.id, 'reimbursement.payment.slip']]);
+    assert.deepEqual(await repos[0]!.listSignedClaimFormCopies(companyId, 'another-claim').then((copies) => copies.map((copy) => copy.attachmentId)), [alsoAnotherClaims.id]);
+  });
+
+  it('cannot be raced by a signed-copy link of the same file, in either order', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const cash = await cashPayment(claim.requestId, 'copy-race-cash');
+    const copyOntoAnotherClaim = (attachmentId: string) => repos[1]!.linkSignedClaimFormCopy(companyId, 'another-claim', attachmentId, `${TAG}-user`);
+
+    // Order 1: the slip link is being written when the signed-copy link starts. The copy waits on
+    // the file's lock, then looks again inside its own transaction and finds a slip.
+    const first = await signedCopyOf(claim.requestId);
+    let slipIsLinked!: () => void;
+    let commit!: () => void;
+    const linkedSignal = new Promise<void>((resolve) => { slipIsLinked = resolve; });
+    const commitSignal = new Promise<void>((resolve) => { commit = resolve; });
+    const moving = clients[0]!.$transaction(async (tx) => {
+      const slip = await (repos[0] as any).resolvePaymentSlipLocked(tx, { companyId, requestId: claim.requestId, attachmentId: first.id, actorUserId: `${TAG}-finance` });
+      await (repos[0] as any).linkPaymentSlip(tx, { companyId, paymentId: cash.payment.id, linkedByUserId: `${TAG}-finance`, slip });
+      slipIsLinked();
+      await commitSignal;
+    }, { timeout: 20_000 });
+    await linkedSignal;
+    let copySettled = false;
+    const copying = copyOntoAnotherClaim(first.id).finally(() => { copySettled = true; });
+    copying.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(copySettled, false, 'the signed-copy link is waiting on the slip link, not deciding without it');
+    commit();
+    await moving;
+    await assert.rejects(copying, /payment slip cannot be attached to anything else/);
+    assert.deepEqual(await linksOf(first.id), [['reimbursement_payment', cash.payment.id, 'reimbursement.payment.slip']]);
+
+    // Order 2: the signed-copy link commits after the payment transaction took its snapshot. The
+    // payment cannot see that link, so it must not get as far as writing a slip beside it. Through
+    // the real payment write: it fails as "the payment changed", and the retry reads the truth.
+    const repayable = await payableClaim();
+    const second = await signedCopyOf(repayable.requestId);
+    const interleavedPayment = interleavedRepo(() => copyOntoAnotherClaim(second.id));
+    await assert.rejects(() => interleavedPayment.recordPaymentAtomic(transfer(repayable.requestId, 'copy-race-transfer', second.id)), paymentChanged);
+    assert.deepEqual(await paymentsOf(repayable.requestId), [], 'no payment, so no slip link');
+    const bothCopies = [['reimbursement_request', 'another-claim'], ['reimbursement_request', repayable.requestId]].sort();
+    assert.deepEqual((await linksOf(second.id)).map(([targetType, targetId]) => [targetType, targetId]).sort(), bothCopies);
+    await assert.rejects(() => repos[0]!.recordPaymentAtomic(transfer(repayable.requestId, 'copy-race-transfer', second.id)), /payment_slip_invalid/);
+
+    // The same order against the later attach. It reads committed rows once it holds the lock, so it refuses outright.
+    const third = await signedCopyOf(claim.requestId);
+    const interleavedAttach = interleavedRepo(() => copyOntoAnotherClaim(third.id));
+    await assert.rejects(() => moveToSlip(claim.requestId, cash.payment.id, third.id, interleavedAttach), /payment_slip_invalid/);
+    assert.deepEqual((await linksOf(third.id)).map(([, , purpose]) => purpose), ['reimbursement.claim_form.signed', 'reimbursement.claim_form.signed']);
+    assert.deepEqual(await paymentsWithoutTheirSlipLink(), []);
+  });
+
+  it('answers a payment that lost its race as 409 "the payment changed", never a raw database error', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const slip = await slipUpload(claim.requestId);
+    const files = new PrismaAttachmentRepository({ client: clients[1]! } as any);
+    // The slip file is deleted after the payment transaction took its snapshot: PostgreSQL rolls
+    // the payment back on its row lock (40001), which reaches the caller as a conflict to retry.
+    const racing = interleavedRepo(() => files.markDeleted({ companyId, id: slip.id }));
+    await assert.rejects(() => racing.recordPaymentAtomic(transfer(claim.requestId, 'lost-race', slip.id)), paymentChanged);
+    assert.deepEqual(await paymentsOf(claim.requestId), []);
+    assert.equal(await clients[0]!.attachmentLink.count({ where: { attachmentId: slip.id } }), 0);
+    const untouched = await claim.db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
+    assert.deepEqual([untouched.status, untouched.paymentStatus, untouched.outstandingAmount.toString()], ['READY_FOR_PAYMENT', 'UNPAID', '100']);
+    // The retry the message asks for gets the real answer: that file is gone.
+    await assert.rejects(() => repos[0]!.recordPaymentAtomic(transfer(claim.requestId, 'lost-race', slip.id)), /payment_slip_invalid/);
+
+    // Two payers at once: whoever loses is told the same thing or that the claim is already paid, never a 500.
+    const second = await payableClaim();
+    const [a, b] = [await slipUpload(second.requestId), await slipUpload(second.requestId)];
+    const results = await Promise.allSettled([
+      repos[0]!.recordPaymentAtomic(transfer(second.requestId, 'two-payers-a', a.id)),
+      repos[1]!.recordPaymentAtomic(transfer(second.requestId, 'two-payers-b', b.id)),
+    ]);
+    const lost = results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
+    assert.equal(lost.length, 1);
+    assert.equal(lost[0]?.getStatus?.(), 409, `a conflict, not ${String(lost[0]?.code ?? lost[0]?.message)}`);
+  });
+
+  // B7 (impact audit 2026-10-01): voiding a payment must not leave a bank statement line matched to it.
+  it('refuses to void a payment a bank statement line is confirmed against, and voids once the match is undone', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const paid = await cashPayment(claim.requestId, 'bank-matched');
+    const db = clients[0]!;
+    const account = await db.bankAccount.create({ data: { companyId, branchId, displayName: `${TAG}-bank-${++fileSequence}`, createdByUserId: `${TAG}-finance` } });
+    const line = await db.bankStatementLine.create({ data: {
+      companyId, bankAccountId: account.id, sourceType: 'MANUAL', lineHash: `${TAG}-line-${fileSequence}`, postedDate: new Date('2026-10-01T00:00:00.000Z'),
+      description: 'โอนเงินคืนพนักงาน', direction: 'WITHDRAWAL', signedAmount: '-100.0000', status: 'MATCHED',
+    } });
+    const match = await db.bankReconciliationMatch.create({ data: {
+      companyId, bankAccountId: account.id, statementLineId: line.id, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paid.payment.id,
+      sourceDisplayNumber: paid.payment.paymentNo ?? null, allocatedAmount: '100.0000', status: 'CONFIRMED', confirmedByUserId: `${TAG}-finance`, confirmedAt: new Date(),
+    } });
+    try {
+      const voidIt = () => repos[0]!.voidPaymentTrueReversal(companyId, claim.requestId, paid.payment.id, `${TAG}-finance`, 'โอนผิดบัญชี');
+      await assert.rejects(voidIt, (error: any) => error.getStatus() === 409 && errorCode(error) === 'reimbursement_payment_bank_matched');
+      // Nothing moved: the payment stands, the claim is still paid, its expense record still reads paid.
+      assert.deepEqual((await paymentsOf(claim.requestId)).map((payment) => [payment.status, payment.voidedAt]), [['RECORDED', null]]);
+      const still = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
+      assert.deepEqual([still.status, still.paymentStatus, still.outstandingAmount.toString()], ['PAID', 'PAID', '0']);
+      assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: claim.projectionId } })).paymentStatus, 'PAID');
+
+      // The match is undone in the bank screen first; then the void goes through.
+      await db.bankReconciliationMatch.update({ where: { id: match.id }, data: { status: 'VOIDED' } });
+      const voided = await voidIt();
+      assert.deepEqual([voided.payment.status, voided.request.status, voided.request.paymentStatus], ['VOIDED', 'READY_FOR_PAYMENT', 'UNPAID']);
+    } finally {
+      await db.bankReconciliationMatch.deleteMany({ where: { companyId, bankAccountId: account.id } });
+      await db.bankStatementLine.deleteMany({ where: { companyId, bankAccountId: account.id } });
+      await db.bankAccount.deleteMany({ where: { id: account.id } });
+    }
+  });
+
 });

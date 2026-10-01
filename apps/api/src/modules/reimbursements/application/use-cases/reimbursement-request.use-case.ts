@@ -24,7 +24,7 @@ import type {
   ReimbursementLineWriteData,
   ReimbursementRequestRecord,
 } from '../../domain/models/reimbursement.model';
-import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames, withPaymentSlipAccess } from '../dto/reimbursement.mapper';
+import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames } from '../dto/reimbursement.mapper';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
@@ -279,7 +279,7 @@ export class GetReimbursementDetailUseCase {
     const approvalActions = await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     const notes = await this.repo.listInternalNotes(ctx.companyId, id);
     const names = await this.repo.getUserDisplayNames(ctx.companyId, notes.map(note => note.authorUserId));
-    const detail = withPaymentSlipAccess(await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req), ctx, approvalActions);
+    const detail = await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx, approvalActions);
     // Who can record the payment (spec §18.3): read only while the claim waits there, and only on this
     // read. The page re-reads the claim after every action, like `approvalActions`.
     const payers = detail.currentDesk?.kind === 'PAYMENT'
@@ -724,7 +724,7 @@ export class SubmitReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   /**
