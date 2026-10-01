@@ -8,6 +8,29 @@ import {
 } from './harness/auth';
 
 base.describe('LOGIN — auth & session', () => {
+  base('LOGIN-LINE preserves unavailable recovery and starts OAuth only after confirmed sign-out', async ({ page }) => {
+    let refreshStatus = 503;
+    const oauthRequests: string[] = [];
+    await page.route('**/api/auth/refresh', route => route.fulfill({ status: refreshStatus, json: {} }));
+    await page.route('**/api/auth/line-login/availability', route => route.fulfill({ json: { available: true } }));
+    await page.route('**/api/auth/line-login/start?**', route => {
+      oauthRequests.push(route.request().url());
+      return route.fulfill({ contentType: 'text/html', body: 'OAuth boundary reached' });
+    });
+    await page.goto('/login?line=handoff-expired&next=%2Fcompanies%2Fline-test%2Fdashboard');
+    await expect(page.locator('[data-platform-access="open"]')).toHaveCount(1);
+    await expect(page.locator('[data-client-compatibility-notice="generic"][role="alert"]')).toBeVisible();
+    const retry = page.getByRole('link', { name: 'ลองใหม่ / Try again' });
+    await expect(retry).toBeVisible();
+    await expect(page).toHaveURL(/\/login\?line=handoff-expired&next=/);
+    expect(oauthRequests).toEqual([]);
+    refreshStatus = 401;
+    await retry.click();
+    await expect(page).toHaveURL(/\/api\/auth\/line-login\/start\?.*from=handoff-expired&auto=1/);
+    expect(oauthRequests).toHaveLength(1);
+    expect(new URL(oauthRequests[0]).searchParams.get('returnTo')).toBe('/companies/line-test/dashboard');
+  });
+
   for (const width of [1280, 390]) {
     base(`LOGIN-LINE keeps availability clear and retries without losing input at ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });

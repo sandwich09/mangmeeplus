@@ -298,3 +298,30 @@ not a live user-impact call — it can be answered without holding the rest of t
 - **Q2 (blocking rollout, not build) — STILL OPEN, measured on the next UAT deploy.** Does anything between the LINE OA and the user's tap fetch the URL? Unmeasured (G7). The Phase 1 gate measures it before any user-visible rollout. The build ships behind `LINE_WEB_HANDOFF_ENABLED` (default `false`), so this question gates turning the flag on, not writing the code.
 - **Q3 — ANSWERED 2026-08-29: 15 minutes for assistant replies; the alert-rail TTL is decided at Phase 5.** TTL: 15 minutes matches the employee link token, but an alert pushed at night may be tapped in the morning. Longer TTL widens the window a leaked chat log stays useful. Owner decision — 15 min for assistant replies, longer for the alert rail, or one value for both?
 - **Q4 — ANSWERED 2026-08-29: assistant surfaces first; the alert rail follows.** Should the alert rail (`dashboard-notifications`) ship in the same phase as the assistant, or follow once the assistant surface has proved the mechanism in UAT?
+
+
+## 2026-10-01 — transient failure recovery
+
+Owner authorized a focused correction after September 30's Redis-backed rate limiter returned
+503 before token exchange. Only the API's contracted 403 refusal (or an invalid local token
+shape) enters `handoff-expired`. Network/10-second timeout, 429, other API failures and malformed
+success responses return a 503 recovery document with an explicit retry button, leaving cookies
+untouched. No automatic exchange retry: a lost response may follow a consumed single-use token.
+A subsequent confirmed 403 retains the existing sanitized `next` login path.
+
+This supersedes §11's blanket no-HTML rule only for a static error document: no scripts, external
+assets, token interpolation, upstream error details or analytics; CSP blocks external loads,
+framing and off-origin forms; `no-referrer`, `no-store` and `noindex` protect the credential URL.
+A CSP meta policy also enforces isolation when the web proxy overwrites response headers.
+The native GET form retries the current path only on user action. Success still immediately
+redirects with the existing HttpOnly cookies. Membership, single-use claims and fail-closed abuse
+limits are unchanged.
+
+Login refresh outcomes `unavailable`/`timeout` must retain the existing recovery screen and never
+auto-start LINE OAuth. A confirmed `signed_out` may still auto-start; successful recovery still
+returns to the destination. The recovery link preserves LINE/return-path parameters and removes only the spent recovery marker.
+Existing back-navigation, `auto=0` and closed-platform guards remain.
+
+Acceptance: handoff network/429/5xx/malformed responses yield retry without redirects or cookie
+changes; 403 preserves only a safe destination; HEAD never exchanges; success forwards visitor IP
+and sets cookies; browser refresh 503 stays recoverable, and retry followed by 401 may start OAuth.
