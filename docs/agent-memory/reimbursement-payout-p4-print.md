@@ -57,7 +57,7 @@ Deliberately not done:
 
 Run on 2026-10-02 at the lane's code head `626a800ec` (the commit after it is this note and the permission matrix).
 
-- Typechecks, the package scripts: contracts exit 0; API (heap flag) exit 0. The web was not touched.
+- Typechecks, the package scripts: contracts exit 0; API (heap flag) exit 0. The native compiler, as CI runs it (`tsconfig.typecheck.json`), also passes for the API. The web was not touched.
 - The two touched specs: 81 tests, 81 pass (45 renderer, 36 use case). Every spec of the reimbursement module: 759 tests, 704 pass, 0 fail, 55 skip (the real-PostgreSQL specs skip themselves without a database).
 - Unchanged prints. Nine renderer prints (four blocks and two blocks; signed, waiting, skipped by policy, cancelled, paid with a slip, 65 lines over several pages), each as the tall image and as the A4 pages, and the use case's whole answer for a legacy claim on both layouts, are compared with sha256 digests taken from the untouched code and committed first (`51947cb22`). They hold at the head.
 - Both specs also pass with Thai word segmentation degraded to single characters (a preload that replaces `Intl.Segmenter`), so no assertion or digest depends on a dictionary.
