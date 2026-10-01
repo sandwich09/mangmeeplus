@@ -729,6 +729,16 @@ describe('the receiving account on the printed claim form', () => {
     assert.equal(count(svgOf(masked), `>${LAST4}<`), 1);
   });
 
+  it('refuses a draft that kept its document number, whoever asks, and writes no row', async () => {
+    // Taken back to a draft after it was sent: the number stays with the claim, the frozen marker does not.
+    const reopened = { status: 'DRAFT', submittedAt: undefined, payoutFingerprint: undefined, approvalSteps: [] };
+    for (const who of [requester, payer]) {
+      const { print, audits, events, reads } = world(reopened);
+      await assert.rejects(print(who), /claim_form_requires_submitted/);
+      assert.deepEqual([audits, events, reads], [[], [], { payout: 0, secret: 0, paidInto: [] }]);
+    }
+  });
+
   it('writes no row for a print that fails before it is rendered', async () => {
     // A stored signature that cannot be read fails the print (422) for everyone, the requester included.
     const { repo, audits, events } = world({ claimSignatures: [signatureRow('REQUESTER', 'staff-1')] });
