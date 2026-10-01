@@ -19,7 +19,7 @@ Scope: Platform executive reports, company segmentation/detail/paid usage, execu
 - User requested a screen spec and strict parity with the existing theme, especially every dropdown and text input; backend logic is explicitly deferred to the next discussion.
 - Real implementation must reuse the current system shell, design tokens/fonts and shared fields, not the demo's custom palette/font/native select/dark appearance. Require open-dropdown and input-state browser evidence, not just a default screenshot.
 
-Open questions: Precise metric/event/cutoff contracts, identity/account administration and per-user permissions. Deletion clock anchor, access during waiting, cancellation, execution mode and lawful retention inventory are deferred by the user; the fourteen-day/all-data rule itself is decided. B6 is closed: retain existing conditional salesperson capture.
+Open questions (updated 2026-10-02): every question in the decision register for reports and accounts is decided. The metric/event/cutoff contracts, identity/account administration and per-user permissions were decided on 2026-10-02 as proposed (BE §21.2 Q10–Q36; see the last entry in this file, which also lists the few points outside the register that still need an answer). Deletion clock anchor, access during waiting, cancellation, execution mode and lawful retention inventory are deferred by the user; the fourteen-day/all-data rule itself is decided. B6 is closed: retain existing conditional salesperson capture.
 
 ## Artifacts
 
@@ -288,7 +288,7 @@ Main contract changes in the backend spec:
 
 Decided facts recorded (BE §21.3 D01–D08): deletion deferred and hidden; contact source is the owner account; an admin-assigned referrer after signup gives the salesperson no credit (RB-35 is intended, owner decision 2026-10-01); bugs RB-40, RB-36, RB-34, RB-38 are being fixed in a separate lane (owner, 2026-10-01); `paid-invoice.ts`/`billing-schedule.ts` are never modified; no environment feature switches; exactly one System Admin; plain Thai on screens.
 
-Open questions: BE §21.2 Q10–Q36 (27 questions). The owner has not answered; each is written for the recommended answer, marked “ข้อเสนอ รอเจ้าของยืนยัน”, with the alternative and its cost. Q01–Q09 ids are unchanged and now act as group headings. Q35 (single-admin data-rights deadlock) and Q36 (sales credit differs from the sales spec in four places) are separate from the report work. Q06–Q08 stay deferred.
+Open questions at the time of this entry: BE §21.2 Q10–Q36 (27 questions), each written for the recommended answer with the alternative and its cost. All 27 were decided as proposed on 2026-10-02 (“ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ)”); see the last entry in this file. Q01–Q09 ids are unchanged and now act as group headings. Q35 (single-admin data-rights deadlock) and Q36 (sales credit differs from the sales spec in four places) are separate from the report work. Q06–Q08 stay deferred.
 
 Corrections to the backend review found while writing the amendments (also noted in that file's status line):
 
@@ -301,7 +301,7 @@ Corrections to the backend review found while writing the amendments (also noted
 
 Verification: every amended file checked for existing relative link targets, balanced code fences, table column counts, odd backticks and trailing whitespace (`git diff --check` clean). No tests were run because no code changed. G counts in the application remain 22 OPEN / 13 DEFERRED / 0 CLOSED.
 
-Next: owner answers Q10–Q15 first (they unblock S1 and S5), then Q16–Q34. The UI-side documents must adopt the renamed contract (BE “ชื่อในสัญญาที่เปลี่ยน” table). Before any real use: the legal review in BE §20.3, the one-off company classification, and the provider read-back, which needs the owner's go and the cloud runbook.
+Next (superseded on 2026-10-02: the owner has answered Q10–Q36, see the last entry in this file): the UI-side documents must adopt the renamed contract (BE “ชื่อในสัญญาที่เปลี่ยน” table). Before any real use: the legal review in BE §20.3, the one-off company classification, and the provider read-back, which needs the owner's go and the cloud runbook.
 
 ## Closing pass against the UI-side amendments — 2026-10-02
 
@@ -323,3 +323,7 @@ Bug-fix lane merged (PR #950 into develop `6dd3c8c7`, PR #951 into main `4803be0
 Q36 point 4 changed to match what the owner was told: deal credit and referral credit both use the package price a deal already uses, not the invoice total, so tax added on top is never part of a salesperson's credit.
 
 Cross-references: every backend section the UI-side documents cite resolves at this head, and every UI-side section the backend documents cite resolves. Links, anchors, code fences and trailing whitespace are clean across the fifteen executive documents. UI-side sentences that this pass makes outdated (they describe a gap that is now closed) were left for the UI-side owner: UI spec §4.2, §9.3 and §13.1; chart spec §3, §4 and §5; the plain-language spec note on “ในเดือนนี้”; item 3 of the open list in the UI review.
+
+## Owner decision: all as recommended — 2026-10-02
+
+2026-10-02: The owner answered every open decision with “ตามที่แนะนำทั้งหมด”. BE §21.2 Q10–Q36 and the two UI-only decisions D2 (six-item menu) and D7 (Thai only in version 1) are decided as proposed; the executive documents now read “ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ)” and keep each alternative and its cost as the record of what was not chosen; no rule, contract field, number or screen wording changed. Implementation of the report is not ordered. Q35 is to be fixed now as separate work and Q36 is to be implemented (neither is fixed in code yet); the 34 prototype defects are to be fixed by the session that owns the prototype, from the defects file. Still not closable on paper: export size and speed, the prototype's check scripts, real production data, the legal review, and the owner's go for the provider read-back. Outside the decision register and left as written, each still needing an answer before the work it affects: the Q03 design note that trial use before paying counts as started (BE §13.2; never put to the owner as a sub-question); which waiting period the Q35 fix uses (the bugs file says the owner must choose); whether Q36 point 4 also adjusts existing credit rows; the RB-38 question on system-written billing rows. This entry supersedes every earlier “Open questions” and “Next” line in this file that waits on Q01–Q05, Q09 or Q10–Q36.

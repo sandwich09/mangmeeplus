@@ -5,7 +5,7 @@
 มติล่าสุด 2026-10-01: พักและซ่อนฟีเจอร์ลบข้อมูล; G ทั้ง 35 ข้อยังไม่ปิดใน application — 22 OPEN และ 13 DEFERRED ตาม audit. ผล 188 scenarios/58 tests ด้านล่างเป็น baseline ก่อนพัก ไม่ใช่ acceptance ของ scope ปัจจุบันทั้งหมด
 
 วันที่ปรับล่าสุด: 2026-10-02
-สถานะ: **จบรอบออกแบบ จำลอง และแก้ตามผลตรวจทานอิสระ 2026-10-01 — ยังไม่เขียน application code; รอคำตอบของเจ้าของ Q10–Q36**
+สถานะ: **จบรอบออกแบบ จำลอง และแก้ตามผลตรวจทานอิสระ 2026-10-01 — ยังไม่เขียน application code; ข้อตัดสินใจ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) การตัดสินใจปิดครบ; เจ้าของยังไม่ได้สั่งเริ่ม implement**
 Spec: [Backend](../specs/mangmee-executive-business-backend-spec-th.md)
 Audit: [Bug gap impact](../research/mangmee-executive-business-be-gap-impact-2026-10-01-th.md)
 ผลตรวจทานอิสระ: [หลังบ้าน RB-01 ถึง RB-42](../research/mangmee-executive-spec-review-backend-2026-10-01-th.md) · [หน้าจอ RU-01 ถึง RU-30](../research/mangmee-executive-spec-review-ui-2026-10-01-th.md)
@@ -37,7 +37,7 @@ Memory: [Task state](../agent-memory/executive-business-demo.md)
 - [x] จำลอง 12 journeys และ 188 scenario cases รวม negative/boundary/replay/race/recovery
 - [x] รัน existing browser demo check ผ่าน และ existing focused BE tests 58 ผ่าน
 - [x] ตรวจทานอิสระ 2026-10-01 และแก้สเปก BE ตามข้อค้นพบ 42 ข้อฝั่งหลังบ้าน กับข้อฝั่งหน้าจอที่แตะสัญญา
-- [ ] ได้คำตอบของเจ้าของ Q10–Q34 (แตกจาก Q01–Q05/Q09); Q35 และ Q36 เป็นงานแยกจากรายงาน; Q06–Q08 DEFERRED
+- [x] ได้คำตอบของเจ้าของ Q10–Q34 (แตกจาก Q01–Q05/Q09) — ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ); Q35 และ Q36 ตัดสินแล้วเช่นกันและเป็นงานแยกจากรายงาน (Q35 ให้แก้ทันที Q36 ให้ implement); Q06–Q08 DEFERRED
 - [ ] เขียน implementation หลังผู้ใช้เริ่มงานรอบถัดไปเท่านั้น
 - [ ] รัน FE→HTTP→DB integration, concurrency, failure injection และ release acceptance
 
@@ -47,10 +47,10 @@ Memory: [Task state](../agent-memory/executive-business-demo.md)
 
 | ลำดับ | Stage | งานขั้นต่ำ | ขึ้นกับ | Acceptance / stop condition |
 |---|---|---|---|---|
-| 1 | S0a Decisions — บัญชี | ได้คำตอบ Q10–Q15 (หัวข้อแม่ Q01) | Owner | มีคำตอบเป็นมติ ไม่ใช้ fixture แทน policy |
+| 1 | S0a Decisions — บัญชี | ได้คำตอบ Q10–Q15 (หัวข้อแม่ Q01) — ครบแล้ว: ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) | Owner | มีคำตอบเป็นมติ ไม่ใช้ fixture แทน policy |
 | 2 | S1 Platform access | permission สี่ตัวและ role ระบบสามตัวใน `permission-registry.ts` พร้อมแถว role ในฐานข้อมูลทุกสภาพแวดล้อม; เพิ่ม role ทั้งสามใน `PLATFORM_ONLY_ROLE_KEYS` และ `PLATFORM_ROLE_KEYS`; ปิดเส้นทางที่รับรหัส role ตาม BE §17.1 ข้อ 5; เพิ่ม prefix `executive.` ใน `PLATFORM_AUDIT_ACTION_PREFIXES`; `assertPlatformTenant` ทุก endpoint; ตัวกั้นหน้าเว็บ หน้าแรก และเมนู | S0a (การแก้ RB-34 และ RB-40 merge แล้ว — D04) | SEC ผ่าน; ร้านลูกค้าไม่เห็นและไม่มอบ role ผู้บริหารได้; tenant/billing/sales สิทธิ์ไม่ขยาย |
 | 2 | S5 Account commands (ทำคู่กับ S1) | API07–API10, API14, API15 ตามแบบแผนบัญชีเซลล์; สถานะและการระงับตาม BE §17.3; audit | S0a, S1 | USR/PX05–06 ผ่าน; ระงับแล้ว login ใหม่ไม่ได้; สร้างบัญชีทดสอบ “ผู้บริหารอ่านอย่างเดียว” ได้จริงตั้งแต่ขั้นนี้ |
-| 3 | S0b Decisions — ข้อมูล | ได้คำตอบ Q16–Q34 (หัวข้อแม่ Q02–Q05, Q09 และข้อมูลส่วนบุคคล) | Owner/domain owners | มีคำตอบเป็นมติ; คำตอบที่ต่างจากข้อเสนอถูกแก้ในสเปกก่อนเริ่ม S2 |
+| 3 | S0b Decisions — ข้อมูล | ได้คำตอบ Q16–Q34 (หัวข้อแม่ Q02–Q05, Q09 และข้อมูลส่วนบุคคล) — ครบแล้ว: ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) | Owner/domain owners | มีคำตอบเป็นมติ; ไม่มีคำตอบที่ต่างจากข้อเสนอ จึงไม่มีจุดที่ต้องแก้ในสเปกก่อนเริ่ม S2 |
 | 4 | S2 Source readiness | รายการใน §2.1: ป้ายประเภทบริษัท กลุ่มธุรกิจ รายการเงินจากตัวอ่านยอดเดิม ตารางสรุปและงานสร้าง | S0b; เจ้าของโมดูล billing | source reconciliation/coverage report; unknown ไม่กลายเป็น 0; ยอดรายเดือนกระทบกับผู้ให้บริการได้ |
 | 5 | S3 Read API | API01–API06 และ API13 อ่านจากตารางสรุป; `page`/`pageSize`; รหัสเหตุผล; audit การอ่านและการส่งออก | S1, S2 | REP/PAY/USE/SRC/PX01–04/12 ผ่านด้วย DB fixtures; จำนวนแถวของรายชื่อตรงกับทุกการ์ด |
 | 6 | S4 FE integration | ต่อ EX-01–04 ด้วย shared components; แก้ hidden filters/negative chart/partial counts | S3 | browser network และ theme states จริง; ไม่มี fixture ใน production |
@@ -65,6 +65,7 @@ EX-05/06 และ case summaries/actions ไม่ถูกสร้างเ�
 ### 2.1 รายการของ S2 — migration งานข้อมูลครั้งเดียว และงานย้อนหลัง
 
 ทุกรายการอ้างกติกาใน [สเปก BE](../specs/mangmee-executive-business-backend-spec-th.md) ชื่อ model และคอลัมน์เป็นข้อเสนอ ตัดสินตอนเริ่มทำ
+รหัส Q ในคอลัมน์สุดท้ายคือข้อตัดสินใจที่รายการนั้นใช้ ทุกข้อตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) เงื่อนไขอื่นในคอลัมน์เดียวกันยังต้องทำ รวมคำอนุมัติของเจ้าของก่อนเริ่มอ่านยอดย้อนหลังจากผู้ให้บริการบนระบบจริง (ข้อ 6)
 
 | # | รายการ | ชนิด | เจ้าของ | เงื่อนไขและหลักฐานที่ต้องมี |
 |---|---|---|---|---|
@@ -146,7 +147,7 @@ EX-05/06 และ case summaries/actions ไม่ถูกสร้างเ�
 
 ## 5. เงื่อนไขก่อนเปิดให้ผู้บริหารใช้จริง
 
-1. เจ้าของตอบ Q10–Q34 แล้ว และสเปกถูกแก้ตามคำตอบที่ต่างจากข้อเสนอ
+1. เจ้าของตอบ Q10–Q34 แล้ว และสเปกถูกแก้ตามคำตอบที่ต่างจากข้อเสนอ — ครบแล้ว: ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) ทุกข้อ ไม่มีคำตอบที่ต่างจากข้อเสนอ
 2. การแก้ RB-34 และ RB-40 merge แล้ว (PR #950 เข้า develop `6dd3c8c7`, PR #951 เข้า main `4803be00`): role ทีมขายมอบโดยร้านไม่ได้ และไม่มีเส้นทางใต้ `system/` ที่ใช้ parameter `companyId`
    สิ่งที่ยังต้องทำในขั้น S1 ก่อนเพิ่ม role ผู้บริหาร: เพิ่ม role ทั้งสามในรายการ platform-only และปิดเส้นทางที่รับรหัส role (BE §17.1 ข้อ 1 และข้อ 5)
 3. ผู้ดูแลระบบจัดประเภทบริษัทเดิมครบ (§2.1 ข้อ 2) และการอ่านยอดย้อนหลังเสร็จ (§2.1 ข้อ 6) พร้อมรายงาน coverage
@@ -157,8 +158,8 @@ EX-05/06 และ case summaries/actions ไม่ถูกสร้างเ�
 
 ## 6. Next state
 
-รอคำตอบของเจ้าของ เริ่มจากกลุ่มบัญชีและสิทธิ์ Q10–Q15 (เปิดขั้น S1 และ S5 ได้) จากนั้น Q16–Q34
-Q35 (ทางตันของผู้ดูแลคนเดียวในคำขอลบข้อมูล) และ Q36 (ยอดเครดิตเซลล์สี่จุด) เป็นงานแยกจากรายงาน อยู่ในไฟล์บั๊ก
+ข้อตัดสินใจ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) ขั้น S0a และ S0b จึงครบ และขั้น S1 กับ S5 ไม่ติดเงื่อนไขการตัดสินใจแล้ว แต่เจ้าของยังไม่ได้สั่งเริ่ม implement
+Q35 (ทางตันของผู้ดูแลคนเดียวในคำขอลบข้อมูล) ให้แก้ทันทีเป็นงานแยก และ Q36 (ยอดเครดิตเซลล์สี่จุด) ให้ implement ในโมดูลทีมขาย ทั้งสองข้อเป็นงานแยกจากรายงาน อยู่ในไฟล์บั๊ก และยังไม่ได้แก้ในโค้ด
 บั๊ก RB-40, RB-36, RB-34, RB-38 แก้และ merge แล้ว (2026-10-02) ส่วนที่ยังเหลือของแต่ละข้ออยู่ในไฟล์บั๊ก
 รายละเอียด deletion Q06–08 พักทั้งหมดตามมติล่าสุด; เปิดกลับมาคุยเมื่อ Owner ขอ
 ไม่มีบัญชีจริง คำเชิญ cloud/provider operation การ deploy หรือการลบข้อมูลในรอบเอกสารนี้
@@ -169,10 +170,10 @@ Q35 (ทางตันของผู้ดูแลคนเดียวใน
 - [x] Owner ยืนยัน Top spender เป็นเงินจ่ายให้มั่งมีหักคืนเงิน; demo72บริษัทแทนฐานเดิม12บริษัท
 - [x] Local math และ browser checks PASS รวม graph→list→detail→Back, all-page cohort reconciliation, responsive และ hidden deletion
 - [x] กติกาข้อมูลของส่วนนี้เขียนใน BE §13.4–§13.6 และ parameter ใน BE §12.4 แล้ว (หลักฐานว่าเคยเพิ่มใบเสร็จ สิทธิ์ใช้ฟีเจอร์ ยอดเท่ากันที่ขอบกลุ่ม กลุ่มเล็ก อันดับ)
-- [ ] ได้คำตอบ Q17, Q20, Q24, Q25 ก่อน integration; reuse API02/03/04/05 ตามตาราง BE §16.1
+- [x] ได้คำตอบ Q17, Q20, Q24, Q25 — ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ); เมื่อ integration ให้ reuse API02/03/04/05 ตามตาราง BE §16.1
 - [ ] ตรวจ real HTTP/DB/ชุดข้อมูล/concurrency/permission และ source completeness เมื่อเริ่ม implementation
 
-ไม่มี application implementation ในรอบนี้; Q10–Q34 ยังรอเจ้าของ, Q06–Q08 ยังคง deferred
+ไม่มี application implementation ในรอบนี้; Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ), Q06–Q08 ยังคง deferred
 
 ## ปรับโครงหน้าผู้บริหาร 2026-10-01
 
@@ -187,7 +188,7 @@ Q35 (ทางตันของผู้ดูแลคนเดียวใน
 
 ตาม [Excel spec](../specs/mangmee-executive-excel-export-spec-th.md): local header action → scoped manifest/fixed Dashboard + source/sheet preview → simulated preparing/ready/error/expired; คง context เมื่อกลับและซ่อนจาก accounts
 สัญญาฝั่งหลังบ้านของ API13 อยู่ใน BE §16.4: คำขอเดียวคืนไฟล์ตรง สิทธิ์อ่านกับสิทธิ์ส่งออกรายคน ตัวเลขจากชุดข้อมูลเดียวกับหน้าจอ (`buildId`) และ typed multi-sheet XLSX โดยต่อยอด shared writer เดิม
-ก่อน implement: ได้คำตอบ Q13 (สิทธิ์ส่งออกรายคน), Q14 และ Q33 (ข้อมูลติดต่อ) และยืนยันเพดานด้วย capacity test; ตรวจ shared writer backward compatibility, source definitions และ all-page membership
+ก่อน implement: Q13 (สิทธิ์ส่งออกรายคน), Q14 และ Q33 (ข้อมูลติดต่อ) ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ); ยังต้องยืนยันเพดานด้วย capacity test; ตรวจ shared writer backward compatibility, source definitions และ all-page membership
 ตรวจ local EXL01–09 และ existing navigation suite; EXL10–12 ต้องตรวจ backend/workbookจริงภายหลัง. ไม่เพิ่ม dependencies/app code/cloud mutations รอบออกแบบ
 
 ### Owner template amendment — Excel Dashboard v4

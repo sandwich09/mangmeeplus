@@ -4,8 +4,8 @@
 
 มติล่าสุด 2026-10-01: **พักและซ่อน EX-05/06 และคำร้องใน EX-04**; scope ปัจจุบันเป็นรายงานและบัญชีผู้บริหาร. Checkmarks เกี่ยวกับโครงคำร้อง/hold ด้านล่างเป็นประวัติเดโมเดิม ไม่ใช่ feature ที่เปิดในเดโมปัจจุบันหรือเกณฑ์ตรวจรับรอบนี้
 
-สถานะ: **สเปกฝั่งหน้าจอแก้ตามผลตรวจทานอิสระ 2026-10-01 แล้ว — ต้นแบบเป็นรุ่นรอบแก้คำ 2026-10-01 และยังไม่ตรงกับสเปกที่แก้ — ยังไม่เริ่ม application/backend integration**
-วันที่: 2026-10-01
+สถานะ: **สเปกฝั่งหน้าจอแก้ตามผลตรวจทานอิสระ 2026-10-01 แล้ว — ต้นแบบเป็นรุ่นรอบแก้คำ 2026-10-01 และยังไม่ตรงกับสเปกที่แก้ — ข้อตัดสินใจ D2, D7 และ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) การตัดสินใจปิดครบ — เจ้าของยังไม่ได้สั่งเริ่ม implement — ยังไม่เริ่ม application/backend integration**
+วันที่: 2026-10-01 · ปรับสถานะล่าสุด: 2026-10-02
 Spec: [หน้าจอและธีม](../specs/mangmee-executive-business-ui-spec-th.md)
 Backend: [มติธุรกิจและโครงหลังบ้าน](../specs/mangmee-executive-business-backend-spec-th.md)
 Memory: [Executive business demo](../agent-memory/executive-business-demo.md)
@@ -46,9 +46,9 @@ Memory: [Executive business demo](../agent-memory/executive-business-demo.md)
 - [x] เดโม v2 ผ่าน browser check: data/permission/form/hold states, dropdown keyboard/dismiss และ responsive 1440–320px; รายละเอียดและภาพอยู่ใน memory
 - [x] ตามมติล่าสุด รวมก่อนเริ่มใช้เป็น “จ่ายแล้ว ยังไม่เริ่มใช้” กลุ่มเดียว; coverage ไม่ครบเป็นหมายเหตุแยก และ browser check ผ่านหลังปรับ
 - [x] ตรวจทานอิสระ 2026-10-01 และแก้เอกสารฝั่งหน้าจอทั้งหกฉบับให้ตรงกัน (ชุดหน้าเดียว กติกา URL กติกาตารางบนมือถือ นิยามตัวเลขเดียว)
-- [ ] เจ้าของยืนยันข้อเสนอของหน้าจอ D2 และ D7 และข้อเสนอ Q10 ถึง Q33 ในทะเบียนของสเปกหลังบ้าน §21.2 ที่เปลี่ยนสิ่งที่หน้าจอแสดง (ตารางในสเปกหน้าจอ หัวข้อ “ข้อเสนอที่รอเจ้าของยืนยัน”)
+- [x] เจ้าของตัดสินข้อของหน้าจอ D2 และ D7 และข้อ Q10 ถึง Q33 ในทะเบียนของสเปกหลังบ้าน §21.2 ที่เปลี่ยนสิ่งที่หน้าจอแสดง — ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) (ตารางในสเปกหน้าจอ หัวข้อ “ข้อตัดสินใจของเจ้าของ”)
 - [ ] ผู้ดูแลต้นแบบแก้ต้นแบบและตัวตรวจตามเอกสารข้อบกพร่องของต้นแบบ (ไม่ใช่เงื่อนไขก่อนสร้างแอป แต่ก่อนนั้นห้ามใช้ต้นแบบเป็นเกณฑ์รับงาน)
-- [ ] ตกลง logic/backend spec และ data/permission contracts
+- [ ] ตกลง logic/backend spec และ data/permission contracts (ข้อตัดสินใจของเจ้าของปิดครบแล้วเมื่อ 2 ต.ค. 2569 ที่เหลือคือชื่อและรูป schema จริง ซึ่งสเปกหลังบ้านให้ตัดสินตอนเริ่มทำ)
 - [ ] Implement หน้าจอจริงและเชื่อมข้อมูล
 - [ ] ผ่าน browser/theme/integration evidence
 
@@ -61,7 +61,7 @@ Memory: [Executive business demo](../agent-memory/executive-business-demo.md)
 ## 2. ลำดับ implementation หลังคุยหลังบ้าน
 
 1. **ประตูก่อนเริ่ม** — ไม่เริ่มเขียนหน้าจนกว่าครบสามข้อ
-   (ก) เจ้าของตอบข้อเสนอที่ขั้นนั้นใช้: D2 และ D7 ก่อนขั้นใด ๆ; Q16 และ Q26 ก่อนช่องและตัวกรองสำหรับรายงานในหน้าบริษัทของผู้ดูแลระบบ (ข้อ 3); Q29, Q30, Q31, Q32 ก่อน EX-01; Q18, Q19, Q26, Q27, Q28 ก่อน EX-02 และ EX-04; Q20, Q22, Q23, Q24, Q25 ก่อน EX-03A ถึง EX-03D; Q13, Q14, Q33 ก่อนแผงส่งออก; Q10, Q11, Q12, Q15 ก่อน EX-07/08
+   (ก) เจ้าของตอบข้อที่ขั้นนั้นใช้ — ครบแล้วทุกข้อ: ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) รายการเดิมคงไว้เพื่อบอกว่าขั้นใดใช้ข้อใด: D2 และ D7 ก่อนขั้นใด ๆ; Q16 และ Q26 ก่อนช่องและตัวกรองสำหรับรายงานในหน้าบริษัทของผู้ดูแลระบบ (ข้อ 3); Q29, Q30, Q31, Q32 ก่อน EX-01; Q18, Q19, Q26, Q27, Q28 ก่อน EX-02 และ EX-04; Q20, Q22, Q23, Q24, Q25 ก่อน EX-03A ถึง EX-03D; Q13, Q14, Q33 ก่อนแผงส่งออก; Q10, Q11, Q12, Q15 ก่อน EX-07/08
    (ข) สัญญาหลังบ้านที่หน้านั้นใช้ (สเปกหลังบ้าน §12.4 และ §16) มีการทำงานจริงให้เรียกได้ (สี่เรื่องของสเปกหน้าจอ §13.1 ข้อ ก ถึง ง สเปกหลังบ้านรับแล้ว ไม่มีเรื่องของสัญญาที่ค้างก่อนเริ่ม)
    (ค) ผู้ดูแลระบบจัดประเภทบริษัทเดิมครบหนึ่งรอบ (Q16) ก่อนใช้ข้อมูลจริง; data-rights DEFERRED
    บันทึกสิ่งที่ตัดสินใน backend spec/plan และปรับคำในเอกสารคำบนหน้าจอหากนิยามเปลี่ยน
@@ -181,7 +181,7 @@ static check อย่างเดียวไม่ยืนยัน open drop
 - ผล v2: PASS ไม่มี page errors/native select/outer overflow; ตรวจ open popover และ app light theme บน OS dark แล้ว
   browser zoom/autofill และ system-shell/API integration ยังเป็นเกณฑ์ตรวจ application ภายหลัง
 - ไม่รัน application tests/typecheck/E2E ทั้งแอป เพราะไม่มี application code เปลี่ยน; ต้องตรวจ integration อีกครั้งเมื่อเชื่อมจริง
-- Next: ปิด identity/permission และ event/receipt source ก่อน implementation; รายละเอียดการลบแยกคุยภายหลังตาม Owner
+- Next (ปรับ 2 ต.ค. 2569): ข้อตัดสินใจของ identity/permission (Q10–Q15) และ event/receipt source (Q17–Q20) ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) ที่เหลือก่อน implementation คือคำสั่งเริ่มงานของเจ้าของ; รายละเอียดการลบแยกคุยภายหลังตาม Owner
 - ตรวจทานอิสระ 2026-10-01: ผล PASS ของ `check-demo.cjs`, `check-export.cjs` และ `check-analytics.ts` ยืนยันได้เฉพาะพฤติกรรมของต้นแบบรุ่นนั้น ตัวตรวจยืนยันรูปแบบเงิน “฿” และเดือน “2026-09” ซึ่งผิดกติกา เรียก reset หลังกดกลับจึงไม่เห็นตัวกรองค้าง และไม่ได้ตรวจตารางบนมือถือ จึงไม่ใช้เป็นเกณฑ์รับงานของแอป (RU-25)
 
 ## 5. ผลปรับ scope ตามมติล่าสุด 2026-10-01
@@ -197,10 +197,10 @@ static check อย่างเดียวไม่ยืนยัน open drop
 - [x] [Extension spec](../specs/mangmee-executive-usage-pareto-spec-th.md): receipt adoption แยก billing receipts, population/coverage, cohort drilldown/sort/paging และ Top spender/Pareto
 - [x] Owner ยืนยัน Top spender เป็นเงินจ่ายให้มั่งมีหักคืนเงิน; demo72บริษัทแทนฐานเดิม12บริษัท
 - [x] Local math และ browser checks PASS รวม graph→list→detail→Back, all-page cohort reconciliation, responsive และ hidden deletion
-- [ ] ปิด source/coverage/metric policy ก่อน integration; reuse API02/03/04/05 โดยเพิ่ม explicit contracts ตาม extension
+- [ ] ปิด source/coverage/metric policy ก่อน integration (ส่วนที่เป็นข้อตัดสินใจ คือ Q17, Q20, Q24, Q25 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) ที่เหลือคือหลักฐาน source/coverage จากระบบจริง); reuse API02/03/04/05 โดยเพิ่ม explicit contracts ตาม extension
 - [ ] ตรวจ real HTTP/DB/snapshot/concurrency/permission และ source completeness เมื่อเริ่ม implementation
 
-ไม่มี application implementation ในรอบนี้; Q01–Q05/Q09 ยังเปิดตามส่วนที่ยังไม่ยืนยัน, Q06–Q08 ยังคง deferred
+ไม่มี application implementation ในรอบนี้; คำถามย่อยของ Q01–Q05/Q09 (Q10–Q34) ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) ครบทุกข้อ, Q06–Q08 ยังคง deferred
 
 
 ## ปรับโครงหน้าผู้บริหาร 2026-10-01
@@ -217,7 +217,7 @@ static check อย่างเดียวไม่ยืนยัน open drop
 
 ตาม [Excel spec](../specs/mangmee-executive-excel-export-spec-th.md): local header action → scoped manifest/fixed Dashboard + source/sheet preview → simulated preparing/ready/error/expired; คง context เมื่อกลับและซ่อนจาก accounts
 ออกแบบ API13 bounded binary request, read+export capability, immutable snapshot/all-row query และ typed multi-sheet XLSX โดยต่อยอด shared writer เดิม
-ก่อน implement: ยืนยัน Q01 export grants / Q09 limits และ actual source gates; ตรวจ shared writer backward compatibility, source definitions และ all-page membership
+ก่อน implement: Q01 export grants ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) ผ่าน Q13, Q14 และ Q33; ยังต้องยืนยัน Q09 limits ด้วย capacity test และ actual source gates; ตรวจ shared writer backward compatibility, source definitions และ all-page membership
 ตรวจ local EXL01–09 และ existing navigation suite; EXL10–12 ต้องตรวจ backend/workbookจริงภายหลัง. ไม่เพิ่ม dependencies/app code/cloud mutations รอบออกแบบ
 หลังการตรวจทานอิสระ 2026-10-01: แผงของแอปจริงไม่มีตัวอย่างไฟล์ (Excel spec §2 ข้อ 6) หัวคอลัมน์และค่าเป็นภาษาไทยตาม §4.1 เพดานและบันทึกการส่งออกตาม §5 สิทธิ์ส่งออกเป็นรายบัญชีตาม §6 และเพิ่ม EXL-16 ถึง EXL-20 ซึ่งต้องตรวจกับไฟล์จริงทั้งหมด
 
