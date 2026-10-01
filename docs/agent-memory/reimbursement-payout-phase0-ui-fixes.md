@@ -23,7 +23,7 @@ Scope: plan items 0.1, 0.2, 0.3, 0.6 and 0.7 of `docs/plans/reimbursement-payout
 - The AI eval set S3 (case R-13) expects the word "การเงิน" for a claim that waits for payment with no finance step. Its oracle follows the old label and needs updating before that case is re-run.
 - Resolved in the follow-up: a claim with no branch named the holders while the payment endpoint refused them all. It now names nobody.
 - A legacy four-block claim still titles its payer block "ฝ่ายการเงิน" on the printed form and in the signature section, which shows the form's own titles. The document-step note no longer does for a claim with no finance-review step (it says "ผู้บันทึกจ่าย"). The form and its section belong to the Phase 2 lane.
-- A company role that keeps `reimbursement.approve` gets the pay and void rights back on the next deploy if they are removed by hand.
+- Resolved 2026-10-01 (`reimbursement-payout-hub-bank-fixes.md`, owner decision): a back-fill grants a key to a role once. A company role that keeps `reimbursement.approve` no longer gets the pay and void rights back on the next deploy after its admin removes them.
 - A legacy claim with no branch waits at the payment desk and nobody can pay it. The page says "ผู้มีสิทธิ์บันทึกจ่าย" and gives no way to fix the branch. No such claim is known in production; it needs an owner decision if one turns up.
 
 ## Artifacts

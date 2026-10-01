@@ -69,8 +69,8 @@ export async function syncPermissions(prisma: SyncClient, log: (message: string)
     revoked += removed.count;
   }
 
-  // Additive backfills for custom/company roles, never revoked. See the registry for why each
-  // entry exists and why its anchor is the right one.
+  // Additive backfills for custom/company roles: granted once per role and key, never revoked. See the
+  // registry for why each entry exists and why its anchor is the right one.
   const riskLevels = new Map(PERMISSIONS.map((permission) => [permission.key, permission.riskLevel]));
   const backfillReport: string[] = [];
   for (const backfill of COMPANY_ROLE_BACKFILLS) {
@@ -85,10 +85,13 @@ export async function syncPermissions(prisma: SyncClient, log: (message: string)
       backfillReport.push(`${backfill.key}: SKIPPED (anchor ${backfill.anchor} not in the registry)`);
       continue;
     }
-    // One serializable transaction per key, the read included: which roles gain the key is decided on the
-    // snapshot the grant is written to. A role edited at that moment is therefore never granted the key
-    // against an anchor it just lost, nor audited for a grant somebody else made; and a grant never lands
-    // without the audit row that says the system made it.
+    // One serializable transaction per key, the reads included: which roles gain the key, the grant and its
+    // audit rows share one snapshot, so a grant never lands without the audit row that says the system made
+    // it, and the next run finds that row.
+    // A role edited at that same moment is NOT covered. The role editor's transaction is not serializable,
+    // so PostgreSQL does not set its write against this read: an edit that commits between the read and the
+    // grant can leave the key on a role that has just lost the anchor. The window is this transaction, a few
+    // milliseconds at deploy time, and saving the role again in the editor rewrites its whole list.
     const { gained, matching } = await serializableTransaction(prisma, async (tx) => {
       const companyRoles = await tx.role.findMany({
         where: {
@@ -99,8 +102,16 @@ export async function syncPermissions(prisma: SyncClient, log: (message: string)
         },
         select: { id: true, companyId: true, permissions: { where: { permissionId }, select: { permissionId: true } } },
       });
+      const lacking = companyRoles.filter((role) => role.permissions.length === 0);
+      // Granted once (owner decision 2026-10-01). The audit row of an earlier grant is the record of it: a
+      // role that has one for this key held the key and lost it since, which only its company's admin can
+      // have done, and that removal is respected. Before, the key came back on every deploy.
+      const grantedBefore = lacking.length === 0 ? new Set<string | null>() : new Set((await tx.auditLog.findMany({
+        where: { requestId: `sync-permissions:${backfill.key}`, action: AuditAction.ACCESS_ROLE_UPDATE, targetType: 'Role' },
+        select: { targetId: true },
+      })).map((row) => row.targetId));
       // Only a role that gains the key now is written and audited, so a rerun changes nothing.
-      const gaining = companyRoles.filter((role) => role.permissions.length === 0);
+      const gaining = lacking.filter((role) => !grantedBefore.has(role.id));
       if (gaining.length > 0) {
         // Role.companyId is not a foreign key: an audit row pointing at a company that is gone would fail the deploy.
         const companies = await tx.company.findMany({

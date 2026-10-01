@@ -10,6 +10,10 @@
 // only on roles that would have received the key had they been created today. `anchor: null`
 // means universal — every company role gets it.
 //
+// Each key is granted to a role ONCE. The grant writes an audit row (actor SYSTEM, requestId
+// `sync-permissions:<key>`), and a role that has that row is skipped on every later deploy, so a
+// later removal by the company's admin is respected: the key does not come back.
+//
 // These are never revoked. Removing an entry stops future backfills; it does not take the
 // permission away from roles that already have it.
 import { REIMBURSEMENT_SELF_SERVICE_PERMISSIONS } from '../../../auth/permission-registry';
@@ -104,7 +108,8 @@ export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
       + '2026-09-21, but a custom role, or a system role the company edited, saved before that still approves '
       + 'without them, so its claims stopped at จ่ายเงินคืน. Anchored on reimbursement.approve, which only that pack '
       + 'grants (asserted in capability.logic.spec.ts). HIGH/CRITICAL: each grant writes an audit row in the '
-      + 'role\'s company. A role that keeps reimbursement.approve gets them back on the next deploy if removed.',
+      + 'role\'s company. Granted once: a later removal by the company\'s admin is respected, and that role '
+      + 'then approves without paying (the policy screen warns about it).',
   })),
   {
     key: 'report.snapshot.read',
