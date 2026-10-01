@@ -24,7 +24,7 @@ import type {
   ReimbursementLineWriteData,
   ReimbursementRequestRecord,
 } from '../../domain/models/reimbursement.model';
-import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames } from '../dto/reimbursement.mapper';
+import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames, withPaymentSlipAccess } from '../dto/reimbursement.mapper';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
@@ -280,7 +280,7 @@ export class GetReimbursementDetailUseCase {
     const notes = await this.repo.listInternalNotes(ctx.companyId, id);
     const names = await this.repo.getUserDisplayNames(ctx.companyId, notes.map(note => note.authorUserId));
     return {
-      ...await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req),
+      ...withPaymentSlipAccess(await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req), ctx, approvalActions),
       approvalActions,
       internalNotes: notes.map(note => ({
         id: note.id,
@@ -294,7 +294,7 @@ export class GetReimbursementDetailUseCase {
   }
 }
 
-async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
+export async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
   const approvalActions = await approvalDecisionActions(ctx, req, repo);
   try {
     await assertCanReadRequest(ctx, req, repo);

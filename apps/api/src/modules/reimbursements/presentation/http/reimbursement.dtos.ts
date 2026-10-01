@@ -8,6 +8,7 @@ import {
   IsString, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested,
 } from 'class-validator';
 import type {
+  AttachReimbursementPaymentSlipInput,
   CreateReimbursementRequestInput,
   LinkReimbursementSignedCopyInput,
   RecordReimbursementPaymentInput,
@@ -126,4 +127,25 @@ export class RecordReimbursementPaymentDto implements RecordReimbursementPayment
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) bankAccountId?: string;
   @IsString() @IsOptional() @MaxLength(500) note?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(128) idempotencyKey?: string;
+  @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) slipAttachmentId?: string;
+}
+
+// ---- Payment slips ----
+//
+// Type and size are judged by the use case, which answers with the stable `payment_slip_invalid`
+// the payment form translates; here only the shape is fixed.
+
+export class InitPaymentSlipUploadDto {
+  @IsString() @IsNotEmpty() @MaxLength(255) originalFileName!: string;
+  @IsString() @IsNotEmpty() @MaxLength(255) mimeType!: string;
+  @IsInt() @Min(1) byteSize!: number;
+}
+
+export class CompletePaymentSlipUploadDto {
+  @Matches(/^[0-9a-f]{64}$/) @IsOptional() checksumSha256?: string;
+  @IsInt() @IsOptional() @Min(1) byteSize?: number;
+}
+
+export class AttachPaymentSlipDto implements AttachReimbursementPaymentSlipInput {
+  @IsString() @IsNotEmpty() @MaxLength(64) attachmentId!: string;
 }

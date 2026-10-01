@@ -15,10 +15,11 @@ const attachment = {
   status: 'ACTIVE', uploadedByUserId: 'user-1', createdAt: new Date(), updatedAt: new Date(),
 };
 
-function makeUseCase(retentionHold: 'SUBSTITUTE_ARTIFACT' | 'SUBSTITUTE_SOURCE' | null) {
+function makeUseCase(retentionHold: 'SUBSTITUTE_ARTIFACT' | 'SUBSTITUTE_SOURCE' | null, paymentSlip = false) {
   const attachments = {
     findById: mock.fn(async () => attachment),
     findSubstituteEvidenceRetentionHold: mock.fn(async () => retentionHold),
+    isReimbursementPaymentSlip: mock.fn(async () => paymentSlip),
     markDeleted: mock.fn(async () => ({ ...attachment, status: 'DELETED' })),
   };
   const audit = { log: mock.fn(async () => {}) };
@@ -51,5 +52,25 @@ describe('DeleteAttachmentUseCase substitute-evidence retention', () => {
     const result = await useCase.execute(ctx, { attachmentId: 'att-1' });
     assert.equal(result.status, 'DELETED');
     assert.equal((attachments.markDeleted.mock.calls as any[]).length, 1);
+  });
+});
+
+// Spec §12.5: payment evidence is add-only. The claim page has no remove control, and the one
+// generic way to delete a file must not be a way around that.
+describe('DeleteAttachmentUseCase reimbursement payment slips', () => {
+  it('refuses to delete a file that is a payment slip and records the denied attempt', async () => {
+    const { useCase, attachments, audit } = makeUseCase(null, true);
+
+    await assert.rejects(
+      () => useCase.execute(ctx, { attachmentId: 'att-1' }),
+      (error: unknown) => error instanceof ConflictException
+        && (error.getResponse() as any).code === 'reimbursement_payment_slip_retained',
+    );
+    assert.equal((attachments.markDeleted.mock.calls as any[]).length, 0);
+    assert.deepEqual((attachments.isReimbursementPaymentSlip.mock.calls as any[])[0]?.arguments[0], { id: 'att-1', companyId: 'co-1' });
+    const denied = (audit.log.mock.calls as any[]).map((call) => call.arguments[0]);
+    assert.deepEqual(denied.map((entry) => [entry.result, entry.riskLevel, entry.metadataJson]), [
+      ['DENIED', 'HIGH', { reason: 'reimbursement_payment_slip_retained' }],
+    ]);
   });
 });

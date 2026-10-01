@@ -22,6 +22,7 @@ import { toSignedCopySummaries } from '../dto/reimbursement.mapper';
 import { assertCanReadRequest } from './reimbursement-request.use-case';
 import { claimSignatureAckHash } from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout } from '../../domain/logic/claim-form.logic';
+import { REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG } from '../../domain/reimbursement.constants';
 
 const SIGNATURE_METADATA_TAG = 'reimbursement_claim_signature';
 const SIGNATURE_MAX_BYTES = 2_000_000;
@@ -98,7 +99,7 @@ function assertImageBytes(bytes: Buffer, mimeType: string): void {
 }
 
 /** Upload endpoints borrow the attachment grant for the signer's own file, like the substitute receipt. */
-function withAttachmentCreate(ctx: RequestContext): RequestContext {
+export function withAttachmentCreate(ctx: RequestContext): RequestContext {
   return ctx.permissions.includes('attachment.create') ? ctx : { ...ctx, permissions: [...ctx.permissions, 'attachment.create'] };
 }
 
@@ -236,6 +237,12 @@ export class LinkSignedClaimFormCopyUseCase {
     }
     if (!SIGNED_COPY_MIME_TYPES.includes(attachment.mimeType)) {
       throw new BadRequestException('claim_form_signed_copy_must_be_pdf_or_image');
+    }
+    // Payment evidence is never a signed copy (owner 2026-10-01): a slip stays under the slip's own
+    // viewer rule, and this list is open to everyone who can read the claim.
+    if (attachment.metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG
+      || await this.attachments.isReimbursementPaymentSlip({ id: attachment.id, companyId: ctx.companyId })) {
+      throw new BadRequestException('claim_form_signed_copy_attachment_invalid');
     }
     // A4: with the declaration the scan is the paper-signed record; without it, an archive copy as before.
     // Neither path touches the claim's status.

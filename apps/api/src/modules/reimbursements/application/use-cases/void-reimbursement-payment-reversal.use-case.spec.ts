@@ -45,6 +45,7 @@ describe('VoidReimbursementPaymentUseCase (GAP-02 true reversal)', () => {
       findPolicy: async () => null,
       getUserDisplayNames: async () => ({}),
       listSignedClaimFormCopies: async () => [],
+      listPaymentSlips: async () => ({}),
       findPaymentById: mock.fn(async () => ({ id: 'pay-1', reimbursementRequestId: 'rb-1', status: 'RECORDED', paidAmount: '500.0000' })),
       findPostedGeneratedJournalId: mock.fn(async () => 'je-orig'),
       voidPaymentTrueReversal: mock.fn(async () => ({ request: requestDetail('READY_FOR_PAYMENT'), payment: { id: 'pay-1', status: 'VOIDED' }, reversalEntryId: 'je-rev' })),

@@ -13,6 +13,10 @@ import type {
 } from '../../domain/models/attachment.model';
 import { findAttachmentLinkConflict, isAllowedAttachmentTarget } from '../../domain/logic/attachment.logic';
 import { lockFundingEvidence, assertFundingMutation } from '../../../expenses/infrastructure/substitute-funding.guard';
+import {
+  REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+  REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+} from '../../../reimbursements/domain/reimbursement.constants';
 
 @Injectable()
 export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
@@ -57,6 +61,24 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
       select: { submittedByUserId: true },
     });
     return { ownerUserId: asset?.submittedByUserId ?? null };
+  }
+
+  /**
+   * Whether these bytes are the slip of a reimbursement payment. A slip is payment evidence with a
+   * viewer rule of its own (owner decision 2026-10-01): the generic download never serves it and the
+   * generic delete never removes it. Narrow on purpose: the slip link and nothing else.
+   */
+  async isReimbursementPaymentSlip(input: FindAttachmentInput, tx?: Prisma.TransactionClient): Promise<boolean> {
+    const link = await ((tx ?? this.prisma.client) as any).attachmentLink.findFirst({
+      where: {
+        companyId: input.companyId,
+        attachmentId: input.id,
+        targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+        purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+      },
+      select: { id: true },
+    });
+    return Boolean(link);
   }
 
   async findSubstituteEvidenceRetentionHold(
@@ -203,6 +225,13 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
         OR: [{ attachmentId: { in: evidence.attachmentIds } }, { linkedExpenseId: { in: evidence.expenseIds } }] }, select: { id: true } });
       if (claim) throw new ConflictException({ code: 'substitute_source_has_live_claim', message: 'Receipt is retained by a submitted reimbursement.' });
       await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:attachment-retention`}))`;
+      // Under the lock the slip link is written with, so a link racing this delete is seen here.
+      if (await this.isReimbursementPaymentSlip(input, db)) {
+        throw new ConflictException({
+          code: 'reimbursement_payment_slip_retained',
+          message: 'Attachment is retained as reimbursement payment evidence.',
+        });
+      }
       const hold = await this.findSubstituteEvidenceRetentionHold(input, db);
       if (hold) {
         throw new ConflictException({

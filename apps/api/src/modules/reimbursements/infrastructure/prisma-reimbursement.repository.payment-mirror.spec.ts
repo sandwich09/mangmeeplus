@@ -9,8 +9,22 @@ import { PrismaReimbursementRepository } from './prisma-reimbursement.repository
 const PAID_AT = new Date('2026-08-10T04:00:00.000Z');
 const VERSION = new Date('2026-08-10T01:00:00.000Z');
 
+// A transfer is recorded with its slip (owner 2026-10-01), so every transfer below carries one:
+// the payer's own slip upload for the claim, which the repository proves and links in the same transaction.
+const SLIP = 'att-slip-1';
+function slipTables(links: any[] = []) {
+  return {
+    attachmentObject: { findFirst: async () => ({
+      id: SLIP, byteSize: 1024, checksumSha256: 'a'.repeat(64), uploadedByUserId: 'finance-1',
+      metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' },
+    }) },
+    attachmentLink: { findMany: async () => [], create: async ({ data }: any) => { links.push(data); return data; } },
+  };
+}
+
 function recordHarness(amount = '289.0000', netPayable = amount) {
   const expenseUpdates: any[] = [];
+  const slipLinks: any[] = [];
   const request: any = {
     id: 'rb-1', companyId: 'co-1', branchId: 'branch-1', status: 'READY_FOR_PAYMENT', updatedAt: VERSION,
     amount, paymentTotalAmount: '0.0000', outstandingAmount: amount,
@@ -39,6 +53,7 @@ function recordHarness(amount = '289.0000', netPayable = amount) {
     },
     reimbursementPolicy: { findFirst: async () => null },
     reimbursementDuplicateCandidate: { count: async () => 0 },
+    ...slipTables(slipLinks),
     expenseRecord: {
       findMany: async ({ where }: any) => {
         assert.equal(where.sourceReimbursementRequestId, 'rb-1');
@@ -52,10 +67,10 @@ function recordHarness(amount = '289.0000', netPayable = amount) {
   const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
   // Projection readiness runs its own queries; the mirror is what this spec pins.
   (repo as any).assertClaimProjectionsReady = async () => undefined;
-  return { repo, expenseUpdates, request };
+  return { repo, expenseUpdates, request, slipLinks };
 }
 
-function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amount) {
+function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amount, paymentRow: Record<string, unknown> = {}) {
   const expenseUpdates: any[] = [];
   const request: any = {
     id: 'rb-1', companyId: 'co-1', status: 'PAID', amount,
@@ -74,7 +89,7 @@ function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amou
       findFirstOrThrow: async () => ({
         id: 'pay-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', paidAmount,
         currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt: PAID_AT, status: 'VOIDED',
-        postingStatus: 'pending', paidByUserId: 'finance-1', createdAt: VERSION, updatedAt: VERSION,
+        postingStatus: 'pending', paidByUserId: 'finance-1', createdAt: VERSION, updatedAt: VERSION, ...paymentRow,
       }),
       update: async ({ data }: any) => data,
     },
@@ -93,7 +108,7 @@ function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amou
   };
   const client: any = { $transaction: async (work: (t: any) => Promise<unknown>) => work(tx) };
   const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
-  return { repo, expenseUpdates, request };
+  return { repo, expenseUpdates, request, tx };
 }
 
 describe('reimbursement payout mirrors the claim expense projections', () => {
@@ -110,13 +125,16 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
   });
 
   it('marks confirmed projections PAID with the payout method/date and no ExpensePayment row', async () => {
-    const { repo, expenseUpdates } = recordHarness();
+    const { repo, expenseUpdates, slipLinks } = recordHarness();
     await repo.recordPaymentAtomic({
       companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'k-1',
       paidAmount: '289.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
-      paidAt: PAID_AT, paymentReference: 'TRX-123', paidByUserId: 'finance-1',
+      paidAt: PAID_AT, paymentReference: 'TRX-123', slipAttachmentId: SLIP, paidByUserId: 'finance-1',
     });
 
+    // The slip is evidence of the payout and nothing else: it reaches the payment, never the expense.
+    assert.deepEqual(slipLinks.map((link) => [link.attachmentId, link.targetType, link.targetId, link.purpose]),
+      [[SLIP, 'reimbursement_payment', 'pay-1', 'reimbursement.payment.slip']]);
     assert.equal(expenseUpdates.length, 1);
     assert.deepEqual(expenseUpdates[0].where, { id: 'exp-2' });
     assert.deepEqual(expenseUpdates[0].data, {
@@ -165,6 +183,7 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
       },
       reimbursementPolicy: { findFirst: async () => null },
       reimbursementDuplicateCandidate: { count: async () => 0 },
+      ...slipTables(),
       expenseRecord: {
         // A real filter, unlike the fixed single-row fakes above: proves the source decoy is
         // excluded by the query shape itself, not by the fixture only ever containing one row.
@@ -180,7 +199,7 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
     await repo.recordPaymentAtomic({
       companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'ac08-k-1',
       paidAmount: '289.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
-      paidAt: PAID_AT, paymentReference: 'TRX-123', paidByUserId: 'finance-1',
+      paidAt: PAID_AT, paymentReference: 'TRX-123', slipAttachmentId: SLIP, paidByUserId: 'finance-1',
     });
 
     assert.equal(expenseUpdates.length, 1);
@@ -203,6 +222,20 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
     assert.equal(request.status, 'READY_FOR_PAYMENT');
   });
 
+  // Owner 2026-10-01: voiding keeps the slip as history. The void transaction has no attachment
+  // table in this harness at all, so any write to a slip link would throw here.
+  it('voids the payment without touching its slip: the voided record still names it', async () => {
+    const { repo, request, tx } = voidHarness('289.0000', '289.0000', '289.0000', { slipAttachmentId: SLIP, slipChecksumSha256: 'a'.repeat(64) });
+    assert.equal(tx.attachmentLink, undefined);
+    assert.equal(tx.attachmentObject, undefined);
+
+    const result = await repo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'finance-1', 'บันทึกเลขอ้างอิงผิด');
+
+    assert.equal(result.payment.status, 'VOIDED');
+    assert.deepEqual([result.payment.slipAttachmentId, result.payment.slipChecksumSha256], [SLIP, 'a'.repeat(64)]);
+    assert.deepEqual([request.status, request.paymentStatus, request.outstandingAmount, request.paymentTotalAmount], ['READY_FOR_PAYMENT', 'UNPAID', '289.0000', '0.0000']);
+  });
+
   // FIN-01: a pre-satang claim stores a 4dp amount whose printed outstanding is the satang
   // rounding. Paying that printed figure must settle claim and projections, and voiding it
   // must reset them to the same printed figure — never to an unpayable 4dp residue.
@@ -211,7 +244,7 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
     await repo.recordPaymentAtomic({
       companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'k-1',
       paidAmount: '580.00', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
-      paidAt: PAID_AT, paymentReference: 'TRX-123', paidByUserId: 'finance-1',
+      paidAt: PAID_AT, paymentReference: 'TRX-123', slipAttachmentId: SLIP, paidByUserId: 'finance-1',
     });
 
     assert.equal(request.paymentStatus, 'PAID');

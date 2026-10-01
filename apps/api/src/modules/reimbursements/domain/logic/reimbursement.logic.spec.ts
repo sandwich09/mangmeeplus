@@ -16,6 +16,7 @@ import {
   validateRejectionReason,
   validatePaymentRecording,
   validatePaymentReference,
+  isSamePaymentRequest,
   computeOutstanding,
   computePaymentStatus,
   scoreDuplicate,
@@ -28,6 +29,7 @@ import {
   type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
+import { reimbursementPaymentSlipRequired } from '@watchdog-bms/contracts';
 
 /** A minimal valid line; overrides shape each case. */
 function line(overrides: Partial<Parameters<typeof computeClaimTotal>[0][number]> & Record<string, unknown> = {}): any {
@@ -324,6 +326,7 @@ describe('payment recording (MVP full-payment)', () => {
     outstandingAmount: '500.00',
     paidAmount: '500.00',
     paymentMethod: 'CASH' as const,
+    hasSlip: false,
   };
   it('accepts a full payment', () => {
     assert.equal(validatePaymentRecording(base), null);
@@ -358,7 +361,54 @@ describe('payment recording (MVP full-payment)', () => {
   });
   it('requires reference for bank transfer', () => {
     assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER' }), 'payment_reference_required');
-    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1' }), null);
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1', hasSlip: true }), null);
+  });
+
+  // Owner decision 2026-10-01 (D3): a transfer is recorded with its slip; every other method may carry one.
+  it('requires a slip for a bank transfer and for no other method', () => {
+    const transfer = { ...base, paymentMethod: 'BANK_TRANSFER' as const, paymentReference: 'TXN-1' };
+    assert.equal(validatePaymentRecording(transfer), 'payment_slip_required');
+    assert.equal(validatePaymentRecording({ ...transfer, hasSlip: true }), null);
+    for (const [paymentMethod, paymentReference] of [['CASH', undefined], ['CHEQUE', 'CHQ-1'], ['OTHER', undefined]] as const) {
+      assert.equal(validatePaymentRecording({ ...base, paymentMethod, paymentReference }), null, `${paymentMethod} without a slip`);
+      assert.equal(validatePaymentRecording({ ...base, paymentMethod, paymentReference, hasSlip: true }), null, `${paymentMethod} with a slip`);
+    }
+    assert.equal(reimbursementPaymentSlipRequired('BANK_TRANSFER'), true);
+    for (const method of ['CASH', 'CHEQUE', 'OTHER', '']) assert.equal(reimbursementPaymentSlipRequired(method), false, method);
+  });
+
+  it('keeps the earlier refusals ahead of the slip rule, so a claim that cannot be paid says why', () => {
+    const transfer = { ...base, paymentMethod: 'BANK_TRANSFER' as const, paymentReference: 'TXN-1' };
+    assert.equal(validatePaymentRecording({ ...transfer, status: 'PENDING_APPROVAL' }), 'invalid_status_transition');
+    assert.equal(validatePaymentRecording({ ...transfer, paidAmount: '250.00' }), 'partial_payment_not_allowed');
+  });
+});
+
+describe('payment replay (spec §12.7)', () => {
+  const paidAt = new Date('2026-02-01T00:00:00.000Z');
+  const recorded = {
+    paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt,
+    paymentReference: 'TXN-1', bankAccountId: null, slipAttachmentId: 'att-slip-1',
+  };
+  const request = {
+    paidAmount: '500.00', currency: 'THB', paymentMethod: 'BANK_TRANSFER', paidAt: new Date(paidAt),
+    paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1',
+  };
+
+  it('is the same payment only when every fact matches, the slip included', () => {
+    assert.equal(isSamePaymentRequest(recorded, request), true);
+    assert.equal(isSamePaymentRequest(recorded, { ...request, slipAttachmentId: 'att-slip-2' }), false, 'a different slip');
+    assert.equal(isSamePaymentRequest(recorded, { ...request, slipAttachmentId: undefined }), false, 'the slip dropped');
+    assert.equal(isSamePaymentRequest({ ...recorded, slipAttachmentId: null }, request), false, 'a slip added');
+    assert.equal(isSamePaymentRequest(recorded, { ...request, paymentReference: 'TXN-2' }), false);
+    assert.equal(isSamePaymentRequest(recorded, { ...request, paymentMethod: 'CASH' }), false);
+    assert.equal(isSamePaymentRequest(recorded, { ...request, paidAmount: '500.01' }), false);
+    assert.equal(isSamePaymentRequest(recorded, { ...request, paidAt: new Date('2026-02-02T00:00:00.000Z') }), false);
+  });
+
+  it('reads a stored null and an omitted field as the same absence', () => {
+    const cash = { paidAmount: '500.0000', currency: 'THB', paymentMethod: 'CASH', paidAt, paymentReference: null, bankAccountId: null, slipAttachmentId: null };
+    assert.equal(isSamePaymentRequest(cash, { paidAmount: '500', currency: 'THB', paymentMethod: 'CASH', paidAt }), true);
   });
 });
 

@@ -80,6 +80,7 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
     findPolicy: async () => policy,
     getUserDisplayNames: async () => ({}),
     listSignedClaimFormCopies: async () => [],
+    listPaymentSlips: async () => ({}),
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
       step.status = 'APPROVED'; step.decisionByUserId = data.actorUserId; step.decidedAt = data.decidedAt;
@@ -353,6 +354,8 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
     getUserDisplayNames: async () => ({}),
     // Lane F: it also lists the uploaded scans of the signed claim form.
     listSignedClaimFormCopies: async () => [],
+    // And, once the claim has a payment, that payment's slips.
+    listPaymentSlips: async () => ({}),
     createRequest: async (data: any) => {
       request = draftRequest({
         ...data,

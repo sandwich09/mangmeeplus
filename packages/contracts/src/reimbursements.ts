@@ -179,6 +179,27 @@ export type ReimbursementApprovalStepSummary = {
 
 // ---- Payment ----
 
+/**
+ * Owner decision 2026-10-01 (D3): a payment recorded as a bank transfer must carry its slip; every
+ * other method may. The API and the payment form both ask this one function, so they cannot disagree.
+ */
+export function reimbursementPaymentSlipRequired(paymentMethod: string): boolean {
+  return paymentMethod === 'BANK_TRANSFER';
+}
+
+export const REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES = 10 * 1024 * 1024;
+export const REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES = 5;
+
+/**
+ * One file of payment evidence. Ids and times only: the file is opened through the slip endpoint,
+ * which answers `canOpenReimbursementPaymentSlip` for the caller. Everyone else who reads the claim
+ * sees that a slip is attached, and nothing more.
+ */
+export type ReimbursementPaymentSlipSummary = {
+  attachmentId: string;
+  attachedAt: string;
+};
+
 export type ReimbursementPaymentSummary = {
   id: string;
   paymentNo?: string;
@@ -195,7 +216,59 @@ export type ReimbursementPaymentSummary = {
   postingStatus: ReimbursementPostingStatus;
   paidByUserId?: string;
   paidByName?: string;
+  /** Slips attached to this record, oldest first. A voided record keeps the slips it had. */
+  slips: ReimbursementPaymentSlipSummary[];
+  /**
+   * Whether the caller may open this payment's slips: the verdict of `canOpenReimbursementPaymentSlip`
+   * for them, set on every claim detail the API returns. The web offers ดูสลิป from this alone, so
+   * the button and the slip endpoint cannot disagree. It says nothing about the full account number.
+   */
+  viewerCanOpenSlips?: boolean;
 };
+
+// ---- Who sees a claim's payout details (spec §11.1, owner decision D2) ----
+
+export type ReimbursementPayoutViewer = { userId: string; permissions: readonly string[] };
+
+/** The claim facts the rule reads. The API record and the web detail both have this shape. */
+export type ReimbursementPayoutViewerClaim = {
+  requesterUserId: string;
+  approvalSteps?: readonly {
+    status: string;
+    decisionByUserId?: string | null;
+    decidedAt?: string | Date | null;
+    invalidatedAt?: string | Date | null;
+  }[];
+  /** Server-resolved authority over the pending step, as the claim detail reports it. */
+  approvalActions?: { canApprove: boolean; canReject: boolean } | null;
+};
+
+/**
+ * The people a claim's payout details belong to: the requester, the claim's own approver (whoever
+ * decided its latest approval still in force, or may decide the step it waits on), and holders of
+ * the payment-record right. Holding the approval permission without being routed this claim is not
+ * enough. The caller has already established that the viewer may read the claim, branch included.
+ */
+export function isReimbursementPayoutParty(viewer: ReimbursementPayoutViewer, claim: ReimbursementPayoutViewerClaim): boolean {
+  if (!viewer.userId) return false;
+  if (viewer.userId === claim.requesterUserId) return true;
+  if (viewer.permissions.includes('reimbursement.payment.record')) return true;
+  if (claim.approvalActions?.canApprove || claim.approvalActions?.canReject) return true;
+  const approved = [...(claim.approvalSteps ?? [])]
+    .filter((step) => step.status === 'APPROVED' && !step.invalidatedAt && !!step.decidedAt)
+    .sort((a, b) => new Date(b.decidedAt!).getTime() - new Date(a.decidedAt!).getTime())[0];
+  return approved?.decisionByUserId === viewer.userId;
+}
+
+/**
+ * Who may open a payment slip (spec §11.4): the payout parties, and finance reviewers too (owner
+ * answer 2026-10-01, "ให้เปิดดูได้"). Nobody else. The slip download endpoint enforces this, and the
+ * claim detail reports this same verdict to the web (`viewerCanOpenSlips`), so ดูสลิป is never offered
+ * to someone the endpoint would refuse. Wider than the account-number group on purpose, for slips only.
+ */
+export function canOpenReimbursementPaymentSlip(viewer: ReimbursementPayoutViewer, claim: ReimbursementPayoutViewerClaim): boolean {
+  return isReimbursementPayoutParty(viewer, claim) || viewer.permissions.includes('reimbursement.finance_review');
+}
 
 // ---- Duplicate candidate ----
 
@@ -492,6 +565,16 @@ export type RecordReimbursementPaymentInput = {
   bankAccountId?: string;
   note?: string;
   idempotencyKey?: string;
+  /**
+   * The slip for this payment: required when `reimbursementPaymentSlipRequired(paymentMethod)`.
+   * A slip uploaded for this claim by the payer, or a file already attached to the claim (a signed
+   * copy that is really the slip, or the slip of an earlier payment of the same claim).
+   */
+  slipAttachmentId?: string;
+};
+
+export type AttachReimbursementPaymentSlipInput = {
+  attachmentId: string;
 };
 
 export type VoidReimbursementPaymentInput = {
