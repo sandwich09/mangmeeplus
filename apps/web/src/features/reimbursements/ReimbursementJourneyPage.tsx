@@ -352,8 +352,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     'void-payment': () => { setActionError(null); setVoidingPayment(recordedPayment); },
   };
 
-  const actionButton = (action: JourneyAction, index: number) => {
-    const className = cx(index === 0 ? btnClass : ghostClass, 'w-full sm:w-auto');
+  const actionButton = (action: JourneyAction) => {
+    // The step's first action is its primary one. While a form is open in the card the form's own save is, so no
+    // button left beside it reads as the main thing to press ("ยกเลิกคำขอ" did, above an open form).
+    const className = cx(action === primaryAction ? btnClass : ghostClass, 'w-full sm:w-auto');
     const label = action === 'edit' && detail.financeReviewStatus === 'NEEDS_INFO' ? 'แก้ไขตามคำขอ'
       : action === 'reopen' && detail.status === 'PENDING_APPROVAL' ? 'แก้ไข (เปิดกลับเป็นร่าง)'
         : action === 'finance-approve' ? financeActionLabel(detail)
@@ -385,6 +387,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     : detail.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? `${PAYOUT_CORRECTION_FIX_LABEL}อีกครั้ง` : PAYOUT_CORRECTION_FIX_LABEL;
   // A form replaces its own button while it is open: the payment form, and the two of a correction round.
   const cardActions = (step?.actions ?? []).filter((action) => !(action === 'pay' && payOpen) && action !== openCorrectionForm);
+  const formOpen = openCorrectionForm !== null || (payOpen && Boolean(step?.actions.includes('pay')));
+  const primaryAction = formOpen ? undefined : step?.actions[0];
   const reasonDialog = reasonAction ? REASON_DIALOGS[reasonAction] : null;
 
   return (

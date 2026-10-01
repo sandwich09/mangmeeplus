@@ -35,7 +35,7 @@ import {
   claimStatusBadge,
 } from './reimbursements.model';
 import {
-  buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
+  approvalStepCorrectionNote, buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
   savePaymentForm, slipTargetPayment, sumLineAmounts, type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip,
 } from './reimbursements.logic';
 import { PayerConfirmationCheck } from './ReimbursementPayout';
@@ -889,11 +889,13 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
               <li key={s.id} className="rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold text-gray-700">ขั้นที่ {s.sequenceNo}</span>
-                  <MangmeeBadge tone={s.status === 'APPROVED' ? 'brand' : s.status === 'REJECTED' ? 'danger' : 'slate'}>
+                  {/* An approval a correction round set aside is history: it keeps its words and loses the colour of one in force. */}
+                  <MangmeeBadge tone={approvalStepCorrectionNote(s) ? 'slate' : s.status === 'APPROVED' ? 'brand' : s.status === 'REJECTED' ? 'danger' : 'slate'}>
                     {APPROVAL_STEP_STATUS_LABELS[s.status] ?? '—'}
                   </MangmeeBadge>
                 </div>
                 <div className="mt-1">{s.decidedByName ? `โดย ${s.decidedByName}` : s.approverName ? `ผู้อนุมัติ: ${s.approverName}` : '—'}</div>
+                {approvalStepCorrectionNote(s) && <div className="mt-1 text-gray-500">{approvalStepCorrectionNote(s)}</div>}
                 {s.comment && <div className="mt-1 text-gray-500">{s.comment}</div>}
                 {s.rejectionReason && <div className="mt-1 text-error-700">{s.rejectionReason}</div>}
               </li>

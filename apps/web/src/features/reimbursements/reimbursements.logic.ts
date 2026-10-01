@@ -847,6 +847,16 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
 const PAYOUT_CORRECTION_STEP_REASON = 'payout_account_correction';
 
 /**
+ * What the card "ขั้นตอนอนุมัติ" says of a step a correction round set aside: the approval the claim stood on
+ * before it was sent back, or a step of the round whose account was sent back or given again. Both stay in the
+ * list as history, and neither is the approval the claim stands on now. Null for every other step.
+ */
+export function approvalStepCorrectionNote(step: { status?: string; invalidatedAt?: unknown; invalidatedReason?: string | null } | null | undefined): string | null {
+  if (!step?.invalidatedAt || step.invalidatedReason !== PAYOUT_CORRECTION_STEP_REASON) return null;
+  return step.status === 'APPROVED' ? 'เก็บเป็นประวัติ: อนุมัติก่อนส่งกลับให้แก้บัญชีรับเงิน' : 'เก็บเป็นประวัติ: บัญชีที่รออนุมัติในขั้นนี้ถูกส่งกลับหรือแก้ใหม่';
+}
+
+/**
  * One thing that happened in a correction round, as a row of the claim's journey (spec §17.2): "ส่งกลับให้แก้
  * บัญชีรับเงินโดย … : เหตุผล" with the note that went with it, "ผู้เบิกแก้บัญชีรับเงิน", "อนุมัติบัญชีรับเงินใหม่โดย …".
  * Nothing for a kind of event this build has no words for.

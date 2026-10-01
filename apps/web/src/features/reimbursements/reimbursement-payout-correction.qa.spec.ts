@@ -856,6 +856,16 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
     for (const viewer of [requester, financeReviewer]) assertPlainThai(withForm(phaseA({ payoutCorrectionActions: withDefault }), viewer, 'correct-payout')!.texts, 'account form open');
   });
 
+  // Seen on the real page: with a form open, the first button left in the card took the primary look, and that was "ยกเลิกคำขอ".
+  it('leaves no button beside an open form looking like the main thing to press: the form\'s own save is', () => {
+    const primary = (html: string) => [...stepCard(html).html.matchAll(/<(?:button|a)\b[^>]*class="mangmee-btn mangmee-btn-primary[^"]*"[^>]*>([^<]+)</gu)].map((match) => match[1]!);
+    assert.deepEqual(primary(claimPage(phaseA({ payoutCorrectionActions: GIVE }), requester).html), ['แก้บัญชีรับเงิน']);
+    assert.deepEqual(primary(withForm(phaseA({ payoutCorrectionActions: GIVE }), requester, 'correct-payout')!.html), ['บันทึกบัญชีรับเงิน']);
+    assert.deepEqual(primary(claimPage(ready({ payoutCorrectionActions: SEND }), payer).html), ['บันทึกจ่าย']);
+    assert.deepEqual(primary(withForm(ready({ payoutCorrectionActions: SEND }), requester, 'send-back')!.html), ['ยืนยันส่งกลับ']);
+    assert.deepEqual(primary(withForm(phaseB({ approvalActions: DECIDE, payoutCorrectionActions: SEND }), approver, 'send-back')!.html), ['ยืนยันส่งกลับ']);
+  });
+
   it('opens neither form for a viewer the server does not offer it to, whatever the page was told to open', () => {
     assert.equal(withForm(ready(), { userId: 'someone', permissions: EVERYTHING }, 'send-back'), null);
     assert.equal(withForm(phaseA(), { userId: 'staff', permissions: EVERYTHING }, 'correct-payout'), null);
@@ -1165,6 +1175,19 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     assert.deepEqual(rows(cancelled), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน', 'done:ยกเลิกคำขอ']);
     const cancelling = phaseA({ currentDesk: { kind: 'SYSTEM' }, pendingCancellation: { startedAt: AT.given, startedByName: NAMES.requester, reason: 'ซื้อซ้ำกับใบก่อน', canResume: false, canWithdraw: false } });
     assert.deepEqual(rows(cancelling), ['done:ยื่นใบ', FIRST, SENT, 'done:เริ่มยกเลิกคำขอ โดย สมชาย พนักงาน', 'current:กำลังรอระบบปรับสถานะ']);
+  });
+
+  // The card "ขั้นตอนอนุมัติ" lists every step. Seen on the real page: the approval a round set aside read "อนุมัติแล้ว" in green, as if in force.
+  it('marks the steps a round set aside as history in the approval steps card, and no other step', () => {
+    assert.equal(logic.approvalStepCorrectionNote(setAside), 'เก็บเป็นประวัติ: อนุมัติก่อนส่งกลับให้แก้บัญชีรับเงิน');
+    assert.equal(logic.approvalStepCorrectionNote({ ...step2, status: 'CANCELLED', invalidatedAt: AT.given, invalidatedReason: 'payout_account_correction' }),
+      'เก็บเป็นประวัติ: บัญชีที่รออนุมัติในขั้นนี้ถูกส่งกลับหรือแก้ใหม่');
+    for (const step of [step1, step2, { ...step1, invalidatedAt: AT.given, invalidatedReason: 'superseded_by_atomic_resubmit' }, undefined]) assert.equal(logic.approvalStepCorrectionNote(step), null);
+    const { html, texts } = claimPage(reapproved(), auditor);
+    const card = html.slice(html.indexOf('>ขั้นตอนอนุมัติ<'));
+    assert.equal(texts.filter((text) => text === 'เก็บเป็นประวัติ: อนุมัติก่อนส่งกลับให้แก้บัญชีรับเงิน').length, 1);
+    // The approval in force keeps its colour; the one set aside loses it.
+    assert.deepEqual([...card.matchAll(/mangmee-badge-(\w+)">อนุมัติแล้ว</gu)].map((match) => match[1]), ['slate', 'brand']);
   });
 
   it('reads as before for a claim that was never in a round, an approval set aside for another reason included', () => {
