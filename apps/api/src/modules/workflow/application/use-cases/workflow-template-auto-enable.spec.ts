@@ -27,6 +27,11 @@ type SeedRule = {
   createdByUserId?: string; updatedByUserId?: string; cooldownSeconds?: number;
   /** Defaults to the template's own action definition, so only the named field is "stale". */
   actionJson?: unknown;
+  /**
+   * What the sync had pinned on the rule (its version 1), when the row no longer says the same:
+   * an admin's real edit. Left out, the row is exactly what was pinned.
+   */
+  pinned?: { cooldownSeconds?: number; actionJson?: unknown };
 };
 
 /** Stands in for PrismaWorkflowRepository over a real (or transaction) client. */
@@ -48,13 +53,16 @@ function fakeRepo(seedRules: SeedRule[] = []) {
       updatedByUserId: r.updatedByUserId, currentVersion: 1,
     };
   });
-  for (const rule of rules) {
+  rules.forEach((rule, index) => {
+    const pinned = seedRules[index]!.pinned;
     versions.push({
       ruleId: rule.id, companyId: rule.companyId, version: 1, status: rule.status,
-      cooldownSeconds: rule.cooldownSeconds, triggerSnapshotJson: rule.triggerConfigJson,
-      conditionSnapshotJson: rule.conditionJson, actionSnapshotJson: rule.actionJson,
+      cooldownSeconds: pinned?.cooldownSeconds ?? rule.cooldownSeconds, triggerSnapshotJson: rule.triggerConfigJson,
+      conditionSnapshotJson: rule.conditionJson, actionSnapshotJson: pinned?.actionJson ?? rule.actionJson,
+      // Mirrors toRuleVersion: whoever created the rule wrote its first version.
+      createdBy: rule.createdByUserId,
     });
-  }
+  });
   let nextId = 0;
 
   const repo = {
@@ -69,7 +77,8 @@ function fakeRepo(seedRules: SeedRule[] = []) {
       rules.push(rule);
       return rule;
     },
-    createRuleVersion: async (data: any) => { versions.push(data); return data; },
+    createRuleVersion: async (data: any) => { versions.push({ ...data, createdBy: data.createdByUserId }); return data; },
+    listRuleVersions: async (ruleId: string) => versions.filter((v) => v.ruleId === ruleId).sort((a, b) => a.version - b.version),
     findLatestRuleVersion: async (ruleId: string) => versions.filter((v) => v.ruleId === ruleId).sort((a, b) => b.version - a.version)[0] ?? null,
     updateRule: async (companyId: string, id: string, data: any) => {
       const rule = rules.find((r) => r.id === id && r.companyId === companyId)!;
@@ -237,7 +246,8 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
       configJson: { triggerKey: 'workflow.reimbursement_ready_for_payment', recipientPermissions: ['reimbursement.payment.record'], severity: 'action' },
     }];
     const readyRule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: 'reimbursement_ready_for_payment', cooldownSeconds: 0, actionJson: before, ...over });
-    const repo = fakeRepo([readyRule(), readyRule({ companyId: 'co_2', updatedByUserId: 'admin_1' })]);
+    const adminsOwn = [{ ...before[0]!, configJson: { ...before[0]!.configJson, recipientRoles: ['FINANCE'] } }];
+    const repo = fakeRepo([readyRule(), readyRule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: adminsOwn, pinned: { actionJson: before } })]);
 
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), ['reimbursement_ready_for_payment']);
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
@@ -273,11 +283,44 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
   it('never touches an admin-created or admin-edited rule', async () => {
     const repo = fakeRepo([
       syncOwned({ createdByUserId: 'admin_1', updatedByUserId: 'admin_1' }),
-      syncOwned({ updatedByUserId: 'admin_1' }),
+      // The sync pinned cooldown 0; an admin has since set it to an hour.
+      syncOwned({ updatedByUserId: 'admin_1', pinned: { cooldownSeconds: 0 } }),
     ]);
 
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), []);
     assert.ok(repo.rules.every((r: any) => r.cooldownSeconds === 3600));
+  });
+
+  // Review: enable and disable stamp the admin's id on the rule without changing anything. Read as
+  // an edit, that stamp left such a company on the old definition for good.
+  it('re-pins a rule an admin only switched off and on, because nothing in it was edited', async () => {
+    const stale = [{ actionKey: 'notify_approver', actionType: 'SEND_NOTIFICATION', configJson: { recipientRoles: ['MANAGER'] } }];
+    const repo = fakeRepo([
+      // ENABLED again by the admin: their enable wrote version 2 with the very same content.
+      syncOwned({ cooldownSeconds: 0, actionJson: stale, updatedByUserId: 'admin_1' }),
+      // Switched off by the admin and left off.
+      syncOwned({ companyId: 'co_2', cooldownSeconds: 0, actionJson: stale, updatedByUserId: 'admin_1', status: 'DISABLED' }),
+    ]);
+    repo.versions.push({ ...repo.versions[0], version: 2, createdBy: 'admin_1' });
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), ['reimbursement_pending_approval']);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), ['reimbursement_pending_approval']);
+
+    const [toggled, switchedOff] = [repo.rules.find((r: any) => r.id === 'pre_0'), repo.rules.find((r: any) => r.id === 'pre_1')];
+    assert.deepEqual(toggled.actionJson, catalogActions('reimbursement_pending_approval'));
+    assert.equal(toggled.status, 'ENABLED');
+    assert.deepEqual(switchedOff.actionJson, catalogActions('reimbursement_pending_approval'));
+    // The admin's switch is respected: the definition is current, the rule stays off.
+    assert.equal(switchedOff.status, 'DISABLED');
+  });
+
+  it('leaves alone a rule whose action an admin really changed, however it was stamped', async () => {
+    const pinnedBySync = [{ actionKey: 'notify_approver', actionType: 'SEND_NOTIFICATION', configJson: { recipientRoles: ['MANAGER'] } }];
+    const adminsOwn = [{ actionKey: 'notify_approver', actionType: 'SEND_NOTIFICATION', configJson: { recipientRoles: ['OWNER'] } }];
+    const repo = fakeRepo([syncOwned({ cooldownSeconds: 0, actionJson: adminsOwn, updatedByUserId: 'admin_1', pinned: { actionJson: pinnedBySync } })]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), []);
+    assert.deepEqual(repo.rules[0].actionJson, adminsOwn);
   });
 
   it('updates a sync-owned DISABLED rule\'s row without re-enabling it', async () => {

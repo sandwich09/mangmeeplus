@@ -258,6 +258,11 @@ export class PrismaWorkflowRepository {
     return row ? this.toRuleVersion(row) : null;
   }
 
+  async listRuleVersions(ruleId: string): Promise<WorkflowRuleVersionRecord[]> {
+    const rows = await this.prisma.client.workflowRuleVersion.findMany({ where: { ruleId }, orderBy: { version: 'asc' } });
+    return rows.map((row) => this.toRuleVersion(row));
+  }
+
   async findLatestRuleVersion(ruleId: string): Promise<WorkflowRuleVersionRecord | null> {
     const row = await this.prisma.client.workflowRuleVersion.findFirst({ where: { ruleId }, orderBy: { version: 'desc' } });
     return row ? this.toRuleVersion(row) : null;

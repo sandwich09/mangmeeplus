@@ -1,6 +1,7 @@
 import { Injectable, ForbiddenException, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type { RequestContext, WorkflowTemplateSummary, WorkflowRuleSummary, EnableWorkflowTemplateInput } from '@watchdog-bms/contracts';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
+import type { WorkflowRuleRecord } from '../../domain/models/workflow.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { toTemplateSummary, toRuleSummary } from '../dto/workflow.mapper';
 import { createRuleVersionAndEnable } from './workflow-rule.use-case';
@@ -107,7 +108,8 @@ const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON
  * recipients/body. Runs from prisma/sync-workflow-templates.ts.
  *
  * Only rules this same seam created AND nobody has edited since are re-pinned, so an
- * admin-created rule or any admin edit (cooldown, recipients, condition) always wins. ARCHIVED
+ * admin-created rule or any admin edit (cooldown, recipients, condition) always wins. "Edited" is
+ * decided by content, not by who touched the rule last (see `stillAsPinned`). ARCHIVED
  * rules are left alone (UpdateWorkflowRuleUseCase refuses to edit them). An ENABLED rule also
  * gets a new ENABLED version because the runner reads the version snapshot, not the mutable row;
  * a DISABLED/DRAFT rule only needs the row, which its next enable snapshots.
@@ -132,7 +134,7 @@ export async function resyncWorkflowTemplateRulesForCompany(
     for (const rule of await repo.listRules({ companyId, templateId: template.id })) {
       if (rule.status === 'ARCHIVED') continue;
       if (rule.createdBy !== WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID) continue;
-      if (rule.updatedBy && rule.updatedBy !== WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID) continue;
+      if (rule.updatedBy && rule.updatedBy !== WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID && !(await stillAsPinned(repo, rule))) continue;
 
       const version = rule.status === 'ENABLED' ? await repo.findLatestRuleVersion(rule.id) : null;
       const rowCurrent = rule.cooldownSeconds === desired.cooldownSeconds
@@ -152,6 +154,22 @@ export async function resyncWorkflowTemplateRulesForCompany(
     }
   }
   return resyncedKeys;
+}
+
+/**
+ * Whether a rule the sync created still holds exactly what the sync pinned on it. Switching a rule
+ * off and on stamps the admin's id on it without changing a thing, and reading that stamp as an
+ * edit left such a company on the old definition for good. An edit is a difference in content: the
+ * rule's trigger, condition, action or cooldown no longer equal any version the sync itself wrote
+ * on this rule, which are the defaults this rule was ever shipped.
+ */
+async function stillAsPinned(repo: PrismaWorkflowRepository, rule: WorkflowRuleRecord): Promise<boolean> {
+  const versions = await repo.listRuleVersions(rule.id);
+  return versions.some((version) => version.createdBy === WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID
+    && version.cooldownSeconds === rule.cooldownSeconds
+    && sameJson(version.triggerSnapshotJson, rule.triggerConfigJson)
+    && sameJson(version.conditionSnapshotJson, rule.conditionJson)
+    && sameJson(version.actionSnapshotJson, rule.actionJson));
 }
 
 @Injectable()
