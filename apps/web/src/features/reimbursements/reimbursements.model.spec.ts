@@ -102,6 +102,35 @@ describe('eligibleSignatureRoles', () => {
   });
 });
 
+// Payout spec §14.4: a send-back removes the signatures and sets the approval aside. While the round is open the
+// form prints no account and no approver, and the API refuses every block; afterwards the new approval is the claim's.
+describe('eligibleSignatureRoles around a payout account correction round', () => {
+  const setAside = { status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: '2026-07-21T00:00:00.000Z', invalidatedAt: '2026-07-22T00:00:00.000Z', invalidatedReason: 'payout_account_correction' };
+
+  it('offers no block to anyone while the server reports the claim in a round', () => {
+    for (const payoutCorrectionPhase of ['AWAITING_REQUESTER', 'AWAITING_APPROVAL']) {
+      const inRound = detail({ status: 'PENDING_APPROVAL', payoutCorrectionPhase, approvalSteps: [setAside, { status: 'PENDING' }] });
+      for (const userId of ['staff-1', 'mgr-1', 'acct-1', 'fin-1']) assert.deepEqual(eligibleSignatureRoles(inRound, userId), [], `${payoutCorrectionPhase} ${userId}`);
+      assert.equal(claimSignAction(inRound, 'staff-1'), null);
+      assert.deepEqual(eligibleSignatureRoles({ ...inRound, claimFormLayout: 'LEGACY_FOUR_SIGNERS' }, 'acct-1'), []);
+    }
+  });
+
+  it('gives the approver block to whoever approved the new account, never to an approval that was set aside', () => {
+    const after = detail({ status: 'READY_FOR_PAYMENT', approvalSteps: [setAside, { status: 'APPROVED', decisionByUserId: 'mgr-2', decidedAt: '2026-07-23T00:00:00.000Z' }] });
+    assert.deepEqual(eligibleSignatureRoles(after, 'mgr-2'), ['APPROVER']);
+    assert.deepEqual(eligibleSignatureRoles(after, 'mgr-1'), []);
+    assert.deepEqual(eligibleSignatureRoles(after, 'staff-1'), ['REQUESTER']);
+    // A claim nobody approves again (its policy needs no approval): the approval set aside still signs nothing.
+    const noApproval = detail({ status: 'READY_FOR_PAYMENT', approvalSteps: [setAside] });
+    assert.deepEqual(eligibleSignatureRoles(noApproval, 'mgr-1'), []);
+    // The same-person line follows the approval in force, too.
+    const selfSetAside = detail({ requesterUserId: 'mgr-1', status: 'READY_FOR_PAYMENT', approvalSteps: [setAside] });
+    assert.equal(claimSelfApproved(selfSetAside), false);
+    assert.equal(claimSelfApproved(detail({ requesterUserId: 'mgr-1', approvalSteps: [{ ...setAside, invalidatedAt: undefined, invalidatedReason: undefined }] })), true);
+  });
+});
+
 describe('claimSignAction (one ลงนาม button)', () => {
   const solo = detail({
     requesterUserId: 'owner-1', financeReviewedByUserId: 'owner-1',

@@ -30,7 +30,7 @@ import {
   PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
+  canUploadSignedCopy, canVoidRecordedPayment, claimInPayoutCorrection, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
   claimStatusBadge,
 } from './reimbursements.model';
@@ -40,7 +40,7 @@ import {
 } from './reimbursements.logic';
 import { PayerConfirmationCheck } from './ReimbursementPayout';
 import {
-  PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, paymentDestinationText, paymentFormPayout, requestedPayout,
+  PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, paymentDestinationText, paymentFormPayout, requestedPayout,
 } from './reimbursement-payout.logic';
 // The one wording for a voided payment (its own import, apart from the model block above).
 import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
@@ -289,12 +289,20 @@ export function MissingSavedSignatureModal({ companyId, onClose }: {
 const SIGNED_COPY_NOT_FOR_SLIPS = 'ช่องนี้สำหรับใบเบิกที่มีลายเซ็นเท่านั้น ไม่ใช่ที่แนบสลิปโอนเงิน สลิปโอนเงินแนบที่ขั้นจ่ายเงินคืน ตอนกดบันทึกจ่าย';
 
 /**
+ * Payout spec §14.4: while the claim's payout account is being corrected its form prints no account and no
+ * approver, so nobody signs it in the system and no scan is declared as signed. Said wherever signing is.
+ */
+const SIGNING_WAITS_FOR_CORRECTION = 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งหลังบัญชีใหม่ได้รับอนุมัติ';
+
+/**
  * A4: a scan counts as the signed record only after the attacher declares both signatures are on it for
  * THIS claim number. Without the declaration it is kept as an ordinary attachment that signs nothing.
  */
-function SignedCopyDialog({ requestNo, fileName, onClose, onSend }: {
+function SignedCopyDialog({ requestNo, fileName, canDeclare, onClose, onSend }: {
   requestNo: string;
   fileName: string;
+  /** False while the claim's payout account is being corrected: the API takes the file and refuses the declaration. */
+  canDeclare: boolean;
   onClose: () => void;
   onSend: (declared: boolean) => void;
 }) {
@@ -304,14 +312,20 @@ function SignedCopyDialog({ requestNo, fileName, onClose, onSend }: {
       <div className="space-y-4">
         <p className="break-words text-sm text-gray-600">{fileName}</p>
         <ErrorBanner message={SIGNED_COPY_NOT_FOR_SLIPS} />
-        <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
-          <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={declared} onChange={e => setDeclared(e.target.checked)} />
-          <span>สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ และตรงกับใบเบิกเลขที่ {requestNo}</span>
-        </label>
-        <p className="text-xs text-gray-500">ถ้ายังเซ็นไม่ครบ แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+        {canDeclare ? (
+          <>
+            <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
+              <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={declared} onChange={e => setDeclared(e.target.checked)} />
+              <span>สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ และตรงกับใบเบิกเลขที่ {requestNo}</span>
+            </label>
+            <p className="text-xs text-gray-500">ถ้ายังเซ็นไม่ครบ แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+          </>
+        ) : (
+          <p className="text-sm text-gray-600">{SIGNING_WAITS_FOR_CORRECTION} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+        )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className={ghostClass} onClick={() => onSend(false)}>แนบเป็นไฟล์แนบทั่วไป</button>
-          <button type="button" className={btnClass} disabled={!declared} onClick={() => onSend(true)}>แนบสำเนาที่ลงนามครบ</button>
+          {canDeclare && <button type="button" className={btnClass} disabled={!declared} onClick={() => onSend(true)}>แนบสำเนาที่ลงนามครบ</button>}
         </div>
       </div>
     </Modal>
@@ -654,6 +668,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   const paperSigned = detail.documentSignedVia === 'PAPER' || detail.documentSignedVia === 'BOTH';
   const paperCopy = signedCopies.find((copy: any) => copy.acknowledgedAt);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
+  const correcting = claimInPayoutCorrection(detail);
   const slipTarget = slipTargetPayment(detail, permissions);
   // One receipt block for the phone card and the table cell, so the upload rules live in one place.
   const lineReceipt = (l: any) => (
@@ -806,6 +821,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             {slots.length === 2 && claimSelfApproved(detail) && (
               <p className="mt-3 text-xs text-gray-600">ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท</p>
             )}
+            {correcting && <p className="mt-3 text-xs text-gray-600">{SIGNING_WAITS_FOR_CORRECTION}</p>}
             {/* One tap signs every block this viewer really acted on; the server re-checks each role. */}
             {signAction && (
               <button type="button" className={cx(ghostClass, 'mt-3 w-full sm:w-auto')} disabled={busy} aria-busy={Boolean(busy)}
@@ -829,8 +845,10 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   {signedCopies.map((copy: any) => (
                     <li key={copy.attachmentId} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2">
                       <button className="block min-h-11 max-w-full truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
+                      {/* A scan declared as signed before a correction round showed the account that was then corrected. */}
                       <div className="break-words text-gray-500">
-                        {copy.acknowledgedAt ? paperSignedLine(copy) : `ไฟล์แนบทั่วไป · แนบเมื่อ ${dateShort(copy.uploadedAt)}`}
+                        {copy.beforePayoutCorrection ? `${SIGNED_COPY_BEFORE_CORRECTION_LABEL} · ไม่นับว่าลงนามแล้ว · แนบเมื่อ ${dateShort(copy.uploadedAt)}`
+                          : copy.acknowledgedAt ? paperSignedLine(copy) : `ไฟล์แนบทั่วไป · แนบเมื่อ ${dateShort(copy.uploadedAt)}`}
                       </div>
                       {/* A slip attached here by mistake moves to the payment without being uploaded again (spec §16). */}
                       {slipTarget && (
@@ -855,6 +873,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             <SignedCopyDialog
               requestNo={detail.requestNo}
               fileName={pendingCopy.name}
+              canDeclare={!correcting}
               onClose={() => setPendingCopy(null)}
               onSend={(declared) => { onUploadSignedCopy(pendingCopy, declared ? detail.requestNo : undefined); setPendingCopy(null); }}
             />

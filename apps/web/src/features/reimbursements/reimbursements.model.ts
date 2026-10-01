@@ -173,10 +173,14 @@ export function claimSignatureSlots(detail: any): ClaimSignatureRole[] {
   return detail?.claimFormLayout === 'LEGACY_FOUR_SIGNERS' ? CLAIM_SIGNATURE_ROLES : ['REQUESTER', 'APPROVER'];
 }
 
-/** The approval the form prints: the latest APPROVED decision (a corrected claim can carry older ones). */
+/**
+ * The approval the form prints: the latest APPROVED decision still in force (a corrected claim can carry older
+ * ones). An approval set aside because the claim's payout account is being corrected is nobody's: the printed
+ * form then has no approver, and the API lets nobody sign for one (payout spec §14.4).
+ */
 function latestApprovedStep(detail: any): any {
   return [...(detail?.approvalSteps ?? [])]
-    .filter((step: any) => step.status === 'APPROVED' && !!step.decidedAt)
+    .filter((step: any) => step.status === 'APPROVED' && !!step.decidedAt && !step.invalidatedAt)
     .sort((a: any, b: any) => String(b.decidedAt).localeCompare(String(a.decidedAt)))[0];
 }
 
@@ -193,6 +197,9 @@ export function claimSelfApproved(detail: any): boolean {
 export function eligibleSignatureRoles(detail: any, userId: string): ClaimSignatureRole[] {
   const roles: ClaimSignatureRole[] = [];
   if (!detail?.requestNo || !userId || ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(detail.status)) return roles;
+  // Nobody signs while the claim's payout account is being corrected: the form prints no account and no approver
+  // meanwhile, and the API refuses every block. The claim says so itself, with the phase the server reports.
+  if (claimInPayoutCorrection(detail)) return roles;
   if (detail.requesterUserId === userId) roles.push('REQUESTER');
   if (latestApprovedStep(detail)?.decisionByUserId === userId) roles.push('APPROVER');
   // The two-signer form has no accounting or payer block; the API refuses those roles on it.
@@ -218,6 +225,11 @@ export function claimSignAction(detail: any, userId: string): { roles: ClaimSign
   if (roles.length === 0) return null;
   const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
   return { roles, label: roles.some((role) => signed.has(role)) ? 'ลงนามใหม่' : 'ลงนาม' };
+}
+
+/** Whether the server reports the claim as being in a payout account correction round, on a list row or on its detail. */
+export function claimInPayoutCorrection(claim: { payoutCorrectionPhase?: string | null } | null | undefined): boolean {
+  return Boolean(claim?.payoutCorrectionPhase);
 }
 
 /** The requester plus finance/payment holders may attach the signed scan. */

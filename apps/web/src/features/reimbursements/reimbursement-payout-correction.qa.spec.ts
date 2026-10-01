@@ -27,6 +27,7 @@ require.extensions['.svg'] = (module) => { module.exports = () => null; };
 // Modal portals into document.body, which a server render has none of: render a dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const correctionUi = require('./ReimbursementPayoutCorrection') as typeof import('./ReimbursementPayoutCorrection');
+const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
 const logic = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const model = require('./reimbursements.model') as typeof import('./reimbursements.model');
 const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
@@ -644,7 +645,7 @@ describe('the buttons of a correction round are what the server says, for every 
         // The whole page, not only the step card: nothing a round refuses is offered anywhere on it.
         const pressable = [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/gu)].map((match) => match[1]!);
         if (point !== 'ready') {
-          for (const refused of ['ปฏิเสธ', 'บันทึกจ่าย', 'แก้ไข (เปิดกลับเป็นร่าง)', 'แก้ไขและส่งใหม่', 'ดำเนินการต่อ']) {
+          for (const refused of ['ปฏิเสธ', 'บันทึกจ่าย', 'แก้ไข (เปิดกลับเป็นร่าง)', 'แก้ไขและส่งใหม่', 'ลงนาม', 'ลงนามใหม่', 'ดำเนินการต่อ']) {
             assert.equal(pressable.includes(refused), false, `${point}, ${name}: ${refused}`);
           }
         }
@@ -1146,5 +1147,66 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     assert.deepEqual(rows(resubmitted), ['done:ยื่นใบ', FIRST, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
     // An action's answer carries the round and not its history: the journey still says whom the claim waits for.
     assert.deepEqual(rows(phaseB({ payoutCorrectionHistory: undefined })), ['done:ยื่นใบ', FIRST, 'current:กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่', 'future:รอบันทึกจ่าย']);
+  });
+});
+
+describe('signing and signed copies around a round (spec §14.4, AC32)', () => {
+  const COPY = { attachmentId: 'copy-1', fileName: 'ใบเบิกเซ็นแล้ว.pdf', uploadedAt: '2026-10-01T03:30:00.000Z' };
+  /** The claim's sections; `pendingCopy`: a file just picked in "ใบเบิกที่เซ็นแล้ว" (the sections' first null state), which opens the dialog. */
+  const detailSections = (detail: object, viewer: Viewer, pendingCopy?: { name: string }) => {
+    let nulls = 0;
+    return render(h(sections.ClaimDetailSections, { detail, userId: viewer.userId, permissions: viewer.permissions, busy: false, onOpenAttachment: noop, onLineReceipt: noop,
+      onSign: noop, onUploadSignedCopy: noop, onRequestVoidPayment: noop, onOpenPaymentSlip: noop, onAttachPaymentSlip: noop, onUseSignedCopyAsSlip: noop }),
+    (start) => (start === null && ++nulls === 1 ? pendingCopy : undefined));
+  };
+  const signButton = (texts: string[]) => texts.filter((text) => text === 'ลงนาม' || text === 'ลงนามใหม่');
+  const WAITS = 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งหลังบัญชีใหม่ได้รับอนุมัติ';
+
+  it('offers no ลงนาม to anyone while a round is open, says why, and offers it again once the new account is approved', () => {
+    for (const at of [phaseA, phaseB]) {
+      for (const viewer of [requester, approver, payer]) {
+        const { texts } = detailSections(at(), viewer);
+        assert.deepEqual(signButton(texts), []);
+        assert.ok(texts.includes(WAITS));
+        assert.equal(texts.filter((text) => text === 'ยังไม่ลงนาม').length, 2, 'both blocks are empty: the signatures went with the send-back');
+      }
+    }
+    // Before the round and after it: the requester, and the approver the claim now stands on.
+    for (const detail of [ready(), reapproved()]) {
+      assert.deepEqual(signButton(detailSections(detail, requester).texts), ['ลงนาม']);
+      assert.deepEqual(signButton(detailSections(detail, approver).texts), ['ลงนาม']);
+      assert.equal(detailSections(detail, requester).texts.includes(WAITS), false);
+    }
+    assert.deepEqual(signButton(detailSections(reapproved(), payer).texts), []);
+  });
+
+  it('labels a scan declared before the round "สำเนาก่อนแก้บัญชีรับเงิน", keeps it openable, and does not count it as signed', () => {
+    const before = { ...COPY, beforePayoutCorrection: true as const };
+    const newer = { attachmentId: 'copy-2', fileName: 'ใบเบิกเซ็นใหม่.pdf', uploadedAt: '2026-10-01T06:30:00.000Z', acknowledgedAt: '2026-10-01T06:30:00.000Z', acknowledgedByName: NAMES.requester };
+    const { html, texts } = detailSections(reapproved({ signedCopies: [before] }), requester);
+    assert.ok(texts.includes('สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'), texts.filter((text) => text.includes('สำเนา')).join(' | '));
+    assert.match(html, /<button[^>]*>📄 ใบเบิกเซ็นแล้ว\.pdf<\/button>/);
+    assert.equal(texts.includes('ลงนามบนกระดาษ'), false, 'no block reads as signed on paper');
+    assert.equal(texts.some((text) => text.startsWith('ลงนามบนกระดาษ · แนบเมื่อ')), false);
+    // A scan declared after the round is the one that counts; the older one keeps its label beside it.
+    const both = detailSections(reapproved({ documentSignedVia: 'PAPER', signedCopies: [newer, before] }), requester).texts;
+    assert.ok(both.includes('ลงนามบนกระดาษ · แนบเมื่อ 1 ต.ค. 2569 โดย สมชาย พนักงาน') && both.includes('สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'));
+    assert.equal(both.filter((text) => text === 'ลงนามบนกระดาษ').length, 2);
+    // The step after payment waits for the signatures again: the copy from before the round finishes nothing.
+    const paid = reapproved({ status: 'PAID', paymentStatus: 'PAID', currentDesk: undefined, signedCopies: [before], payments: [{ id: 'p1', status: 'RECORDED', paidAt: AT.reapproved, paidByName: NAMES.payer }] });
+    assert.match(active(paid, requester).note!, /^จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้เบิก \(สมชาย พนักงาน\) และผู้อนุมัติ \(สมศรี ผู้จัดการ\)/u);
+  });
+
+  it('takes a file in a round but no declaration that it is the signed form, which the API refuses meanwhile', () => {
+    const file = { name: 'ใบเบิกเซ็นแล้ว.pdf' };
+    const inRound = detailSections(phaseA(), requester, file).texts;
+    assert.ok(inRound.includes('แนบเป็นไฟล์แนบทั่วไป'));
+    assert.equal(inRound.includes('แนบสำเนาที่ลงนามครบ'), false);
+    assert.equal(inRound.some((text) => text.startsWith('สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ')), false);
+    assert.ok(inRound.includes(`${WAITS} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว`));
+    // Outside a round the dialog is what it was.
+    const usual = detailSections(reapproved(), requester, file).texts;
+    assert.ok(usual.includes('แนบสำเนาที่ลงนามครบ') && usual.includes('แนบเป็นไฟล์แนบทั่วไป'));
+    assert.ok(usual.some((text) => text.startsWith('สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ')));
   });
 });
