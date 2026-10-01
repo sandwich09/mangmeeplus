@@ -155,20 +155,20 @@ describe('loadHubPage and the hub list it fills', () => {
     return { urls, failing };
   }
   const claims = (count: number, from = 0) => Array.from({ length: count }, (_, index) => ({ id: `rb-${from + index}` }));
-  const page = (number: number, scope?: string, filter: HubFilter = 'all') => new Promise<any>((resolve, reject) => {
-    loadHubPage('co-1', { scope, filter, page: number }, { onPage: resolve, onError: reject });
+  const page = (number: number, scope?: string, filter: HubFilter = 'all', search?: string) => new Promise<any>((resolve, reject) => {
+    loadHubPage('co-1', { scope, filter, search, page: number }, { onPage: resolve, onError: reject });
   });
   /** The hub's own loop, as its effect runs it: ask for the page the list needs, add it, until nothing is needed. */
-  async function fill(held: HubList, key: string, need = Infinity, scope?: string, filter: HubFilter = 'all'): Promise<HubList> {
+  async function fill(held: HubList, key: string, need = Infinity, scope?: string, filter: HubFilter = 'all', search?: string): Promise<HubList> {
     for (;;) {
       const next = hubNextPage(hubList(held, key), need);
       if (next === null) return hubList(held, key);
-      try { held = withHubPage(held, key, await page(next, scope, filter)); }
+      try { held = withHubPage(held, key, await page(next, scope, filter, search)); }
       catch (error) { held = withHubFailure(held, key, errorText(error)); }
     }
   }
 
-  it('opens with one call, takes more only as the table page shown needs them, and every page for a search', async () => {
+  it('opens with one call, and takes more only as the table page shown needs them', async () => {
     // Before: the hub walked the whole list on every open, 20 calls for 2,000 claims.
     const { urls } = server(claims(230));
     const opened = await fill(NO_HUB_LIST, 'list', 10, 'related');
@@ -182,10 +182,25 @@ describe('loadHubPage and the hub list it fills', () => {
     const further = await fill(opened, 'list', 110, 'related');
     assert.deepEqual([further.rows.length, further.nextPage], [200, 3]);
     assert.deepEqual(urls.slice(1), ['/api/v1/companies/co-1/reimbursements?scope=related&page=2&pageSize=100']);
-    // A search needs every row of the filter.
-    const all = await fill(further, 'list', Infinity, 'related');
+    // The last table page takes the last page of the list.
+    const all = await fill(further, 'list', 230, 'related');
     assert.deepEqual([all.rows.length, all.total, all.nextPage], [230, 230, null]);
     assert.deepEqual(urls.slice(2), ['/api/v1/companies/co-1/reimbursements?scope=related&page=3&pageSize=100']);
+  });
+
+  // Review 2026-10-01: a search was run in the browser, over every page of its filter loaded first.
+  it('sends the search to the API and opens it with one call, however many claims the filter holds', async () => {
+    // Before: 30 calls for a shop of 3,000 claims, each of them counting the scope again.
+    const { urls } = server(claims(3000));
+    const searched = await fill(NO_HUB_LIST, 'searched', 10, 'related', 'payment', 'สมศรี 1,500');
+    assert.deepEqual(urls, [`/api/v1/companies/co-1/reimbursements?scope=related&bucket=payment&search=${encodeURIComponent('สมศรี 1,500').replace(/%20/g, '+')}&page=1&pageSize=100`]);
+    assert.equal(new URL(urls[0]!, 'http://web.test').searchParams.get('search'), 'สมศรี 1,500');
+    assert.deepEqual([searched.rows.length, searched.nextPage], [100, 2]);
+    // No search typed, or a blank one: no search parameter at all.
+    urls.length = 0;
+    await fill(NO_HUB_LIST, 'plain', 10, undefined, 'all', '');
+    await fill(NO_HUB_LIST, 'plain-too', 10, undefined, 'all', undefined);
+    assert.deepEqual(urls, ['/api/v1/companies/co-1/reimbursements?page=1&pageSize=100', '/api/v1/companies/co-1/reimbursements?page=1&pageSize=100']);
   });
 
   it('asks the API for the bucket of the card or chip that is open, and for no bucket under ทั้งหมด', async () => {
@@ -246,6 +261,53 @@ describe('loadHubPage and the hub list it fills', () => {
     const shortPage = answer({ 1: claims(100), 2: claims(40, 100) }, 500);
     assert.equal((await fill(NO_HUB_LIST, 'list')).rows.length, 140);
     assert.equal(shortPage.length, 2);
+  });
+
+  // Review 2026-10-01: a claim that left the list between two page loads moved the rest up one place, and the claim
+  // that slid onto the page already read was never loaded.
+  it('reads the list again from its first page when its total changed between two pages, so no waiting claim is skipped', async () => {
+    (globalThis as Record<string, unknown>)['window'] = {};
+    /** A list endpoint over rows that `change` after the first call: what a claim approved or filed in between does. */
+    const changing = (before: Array<{ id: string }>, after: Array<{ id: string }>) => {
+      const pages: string[] = [];
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const number = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
+        const rows = pages.length === 0 ? before : after;
+        pages.push(String(number));
+        return Response.json({ items: rows.slice((number - 1) * 100, number * 100), total: rows.length, page: number, pageSize: 100, hub: hub(rows.length) });
+      }) as typeof fetch;
+      return pages;
+    };
+    // 101 claims wait; after page 1 is read, rb-5 is approved and leaves the filter. rb-100 moves from page 2 onto page 1.
+    const left = changing(claims(101), claims(101).filter((claim) => claim.id !== 'rb-5'));
+    const afterRemoval = await fill(NO_HUB_LIST, 'list');
+    // Before: page 2 came back empty, and the hub held rb-5 (gone) and never showed rb-100 (still waiting).
+    assert.deepEqual(afterRemoval.rows.map((row) => row.id), claims(101).map((claim) => claim.id).filter((id) => id !== 'rb-5'));
+    assert.deepEqual([afterRemoval.total, afterRemoval.nextPage, afterRemoval.summary?.counts.all], [100, null, 100]);
+    assert.deepEqual(left, ['1', '2', '1'], 'page 2 showed the change, and the list was read again from page 1');
+
+    // A claim filed in between is taken the same way: every claim once, the new one included.
+    const joined = changing(claims(150), [{ id: 'rb-new' }, ...claims(150)]);
+    const afterAddition = await fill(NO_HUB_LIST, 'list');
+    assert.deepEqual(afterAddition.rows.map((row) => row.id), ['rb-new', ...claims(150).map((claim) => claim.id)]);
+    assert.deepEqual(joined, ['1', '2', '1', '2']);
+
+    // The same total on every page is no change: nothing is read twice.
+    const steady = server(claims(230));
+    assert.equal((await fill(NO_HUB_LIST, 'list')).rows.length, 230);
+    assert.equal(steady.urls.length, 3);
+
+    // A list that changes on every single call is read again three times, then taken as it comes: no endless loop.
+    let calls = 0;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const number = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
+      calls += 1;
+      const rows = claims(150 + calls);
+      return Response.json({ items: rows.slice((number - 1) * 100, number * 100), total: rows.length, page: number, pageSize: 100, hub: hub(rows.length) });
+    }) as typeof fetch;
+    const restless = await fill(NO_HUB_LIST, 'list');
+    assert.deepEqual([calls, restless.nextPage, restless.failed], [8, null, undefined]);
+    assert.ok(restless.rows.length >= 150);
   });
 
   it('keeps what was loaded when a later page fails, and a retry asks for that page again', async () => {

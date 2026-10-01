@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { requiredFeatureKeys } from '@watchdog-bms/contracts';
 import { Prisma } from '../../../../generated/prisma/client';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
@@ -214,6 +214,21 @@ export function redactedExpensePostingError(error: unknown): string {
   return `ลงบัญชีอัตโนมัติไม่สำเร็จ (${code.slice(0, 80)})`;
 }
 
+/**
+ * The stable code of a refusal, for the log: an exception's `code`, or a message that is itself a
+ * code (`reimbursement_accrual_not_posted`). Never free text, which can carry internals.
+ */
+export function postingFailureCode(error: unknown): string {
+  const response = typeof (error as { getResponse?: unknown })?.getResponse === 'function'
+    ? (error as { getResponse: () => unknown }).getResponse()
+    : error;
+  const candidates = typeof response === 'string'
+    ? [response]
+    : [(response as { code?: unknown } | null)?.code, (response as { message?: unknown } | null)?.message];
+  const code = candidates.find((value): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:-]{2,120}$/.test(value));
+  return code ?? 'AUTO_POST_FAILED';
+}
+
 export type ExpenseAutoPostDrainResult = {
   companies: number;
   candidates: number;
@@ -223,6 +238,8 @@ export type ExpenseAutoPostDrainResult = {
 
 @Injectable()
 export class DrainExpenseAutoPostUseCase {
+  private readonly logger = new Logger(DrainExpenseAutoPostUseCase.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly generateJournal: GenerateJournalFromSourceUseCase,
@@ -275,13 +292,15 @@ export class DrainExpenseAutoPostUseCase {
             } as any);
             posted += 1;
           } catch (error) {
+            if (row.sourceType === 'reimbursement.payment') {
+              const outcome = await this.settleRefusedClaimPayout(company.id, row.sourceId, error);
+              if (outcome === 'posted') posted += 1;
+              if (outcome === 'failed') failed += 1;
+              continue;
+            }
             failed += 1;
             const postingError = redactedExpensePostingError(error);
-            if (row.sourceType === 'reimbursement.payment') {
-              // The payment row has no postingError column; the status alone hands it to the
-              // accountant's worklist, where a retry shows the reason.
-              await this.reimbursementRepo.updatePaymentPostingStatus(company.id, row.sourceId, { postingStatus: 'posting_error' });
-            } else if (row.sourceType === 'expense.payment') {
+            if (row.sourceType === 'expense.payment') {
               await this.expenseRepo.updatePaymentPostingStatus(company.id, row.sourceId, { postingStatus: 'posting_error', postingError });
             } else {
               await this.expenseRepo.updatePostingStatus(company.id, row.sourceId, { postingStatus: 'posting_error', postingError });
@@ -293,5 +312,37 @@ export class DrainExpenseAutoPostUseCase {
     } finally {
       await shadow.flush();
     }
+  }
+
+  /**
+   * What a refused claim payout becomes. The journal table is the truth: a posted settlement means
+   * another pass or an accountant got there first, or only the bookkeeping after the post failed,
+   * so the row reads `posted`, never an error. Otherwise it goes to the accountant's worklist as
+   * `posting_error`.
+   *
+   * The stamp comes FIRST and the journal is read after it, in one transaction. The stamp takes
+   * the payment row, and a poster has to hold that row to write a settlement, so no settlement can
+   * commit behind the read. (Reading first left a gap: a poster still in flight was invisible,
+   * and the error stamp then landed on top of its committed `posted`.)
+   *
+   * Either stamp lands on a RECORDED payment only: a payment voided since the candidates were read
+   * keeps the status its void gave it and is neither posted nor failed.
+   */
+  private async settleRefusedClaimPayout(companyId: string, paymentId: string, error: unknown): Promise<'posted' | 'failed' | 'voided'> {
+    const outcome = await this.prisma.client.$transaction(async (tx) => {
+      const stamp = (postingStatus: 'posted' | 'posting_error') =>
+        this.reimbursementRepo.updatePaymentPostingStatus(companyId, paymentId, { postingStatus }, tx);
+      if (!await stamp('posting_error')) return 'voided' as const;
+      const settlement = await tx.journalEntry.findFirst({
+        where: { companyId, sourceType: 'reimbursement.payment', sourceId: paymentId, entryType: 'GENERATED', status: 'POSTED' },
+        select: { id: true },
+      });
+      if (!settlement) return 'failed' as const;
+      await stamp('posted');
+      return 'posted' as const;
+    });
+    // The payment row has no postingError column, so this line is where the reason is kept.
+    if (outcome === 'failed') this.logger.warn({ msg: 'ledger.auto_post.claim_payout_failed', companyId, paymentId, code: postingFailureCode(error) });
+    return outcome;
   }
 }

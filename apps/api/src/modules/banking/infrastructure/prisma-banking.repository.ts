@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
+import { serializableTransaction } from '../../../common/database/serializable-transaction';
+import { isSerializationFailure } from '../../../common/database/prisma-error';
 import type {
   BankAccountRecord,
   BankLedgerAccountRecord,
@@ -17,6 +19,7 @@ import type {
   CreateReconciliationSessionInput,
 } from '../domain/models/banking.model';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
+import { calculateStatementLineMatchStatus } from '../domain/logic/banking.logic';
 import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import type { BankCashPositionSummary } from '@watchdog-bms/contracts';
 
@@ -366,26 +369,64 @@ export class PrismaBankingRepository {
 
   // ---- Reconciliation Match ----
 
+  /**
+   * Confirms a match and derives its line's status from the matches that then stand, in one
+   * transaction, so the status is never written from a list of matches read before somebody else
+   * changed it.
+   *
+   * A claim payment is the one source whose void undoes its bank match (`voidPaymentTrueReversal`
+   * in the reimbursement repository). The source was stored unread, so a candidate list a few
+   * minutes old confirmed a match against a payment voided since. The payment now has to be
+   * RECORDED still, and is read under the lock that void takes (the same key), so the two queue.
+   * Both transactions are serializable: one that read the other's past is rolled back by
+   * PostgreSQL and runs again, here through the shared retry, and then sees what the other left.
+   */
   async createMatch(input: CreateMatchInput): Promise<BankReconciliationMatchRecord> {
-    const line = await this.prisma.client.bankStatementLine.findFirst({ where: { id: input.statementLineId } });
-    const row = await this.prisma.client.bankReconciliationMatch.create({
-      data: {
-        companyId: input.companyId,
-        bankAccountId: input.bankAccountId,
-        statementLineId: input.statementLineId,
-        sourceType: input.sourceType as any,
-        sourceId: input.sourceId,
-        sourceDisplayNumber: input.sourceDisplayNumber,
-        allocatedAmount: input.allocatedAmount,
-        currency: input.currency,
-        confidenceScore: input.confidenceScore,
-        status: 'CONFIRMED' as any,
-        suggestedBy: input.suggestedBy,
-        suggestedReason: input.suggestedReason,
-        overrideReason: input.overrideReason,
-      },
+    return serializableTransaction(this.prisma.client, async (tx) => {
+      if (input.sourceType === 'REIMBURSEMENT_PAYMENT') {
+        const payment = await tx.reimbursementPayment.findFirst({
+          where: { id: input.sourceId, companyId: input.companyId },
+          select: { reimbursementRequestId: true, status: true },
+        });
+        if (payment) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${payment.reimbursementRequestId}:reimbursement-payment`}))`;
+        if (payment?.status !== 'RECORDED') {
+          throw new ConflictException({ code: 'bank_match_payment_not_recorded', message: 'This reimbursement payment is no longer recorded, so it cannot be matched. Refresh the list and pick another payment.' });
+        }
+      }
+      const row = await tx.bankReconciliationMatch.create({
+        data: {
+          companyId: input.companyId,
+          bankAccountId: input.bankAccountId,
+          statementLineId: input.statementLineId,
+          sourceType: input.sourceType as any,
+          sourceId: input.sourceId,
+          sourceDisplayNumber: input.sourceDisplayNumber,
+          allocatedAmount: input.allocatedAmount,
+          currency: input.currency,
+          confidenceScore: input.confidenceScore,
+          status: 'CONFIRMED' as any,
+          suggestedBy: input.suggestedBy,
+          suggestedReason: input.suggestedReason,
+          overrideReason: input.overrideReason,
+        },
+      });
+      const line = await tx.bankStatementLine.findFirstOrThrow({
+        where: { id: input.statementLineId, companyId: input.companyId },
+        select: { signedAmount: true, matches: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true } } },
+      });
+      await tx.bankStatementLine.update({
+        where: { id: input.statementLineId },
+        data: { status: calculateStatementLineMatchStatus({
+          statementLineAmount: line.signedAmount.toString(),
+          confirmedAllocations: line.matches.map((match) => match.allocatedAmount.toString()),
+        }) },
+      });
+      return this.toMatchRecord(row);
+    }).catch((error) => {
+      // Another writer got there first and the retries ran out: nothing of this confirm was written.
+      if (isSerializationFailure(error)) throw new ConflictException('bank_match_state_changed');
+      throw error;
     });
-    return this.toMatchRecord(row);
   }
 
   async findMatchById(companyId: string, id: string, branchIds?: string[]): Promise<BankReconciliationMatchRecord | null> {

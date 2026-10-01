@@ -57,17 +57,18 @@ export function listReimbursements(companyId: string, params?: Record<string, un
  * Asks for one page of a hub list and hands it over, unless the caller has let go of the request by then:
  * the function returned is that letting go. The hub lets go when it asks for another list, reloads or
  * unmounts, so an answer that arrives late changes nothing. `filter` is "ทั้งหมด" or one bucket; the API
- * filters by it and counts the whole scope in the same answer.
+ * filters by it and counts the whole scope in the same answer. `search` is the text of the search box:
+ * the API searches, and its counts are then of what the search found.
  */
 export function loadHubPage(
   companyId: string,
-  params: { scope?: string; filter: HubFilter; page: number },
+  params: { scope?: string; filter: HubFilter; search?: string; page: number },
   handlers: { onPage: (result: any) => void; onError: (error: unknown) => void },
 ): () => void {
   let held = true;
   // `.catch` after `.then`, so a page the caller cannot take is reported like a page that did not arrive.
   listReimbursements(companyId, {
-    scope: params.scope, bucket: params.filter === 'all' ? undefined : params.filter, page: params.page, pageSize: HUB_PAGE_SIZE,
+    scope: params.scope, bucket: params.filter === 'all' ? undefined : params.filter, search: params.search, page: params.page, pageSize: HUB_PAGE_SIZE,
   })
     .then((result) => {
       // The cards are the server's counts: an answer without them is not shown as a scope of zero claims.

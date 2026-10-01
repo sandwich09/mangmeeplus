@@ -39,13 +39,19 @@ function count(value: number | undefined, noun: string): string {
   return typeof value === 'number' ? `${value} ${noun}` : noun;
 }
 
+/**
+ * What a claim payout's posting state is called. One wording for the period-close check and for the
+ * worklist it sends the accountant to, so the row they look for carries the words they just read.
+ */
+export const CLAIM_PAYOUT_POSTING_WORDS = { pending: 'ยังไม่ลงบัญชี', posting_error: 'ลงบัญชีผิดพลาด' } as const;
+
 // One total cannot tell a payout nobody posted from an expense nobody confirmed, and the two are
 // fixed on different screens — so each kind gets its own words and its own way there.
-const POSTING_SCREEN: PeriodCloseCheckLink = { label: 'เปิดรายการจ่ายเงินคืนที่ยังไม่ลงบัญชี', path: '/expenses/evidence' };
+const POSTING_SCREEN: PeriodCloseCheckLink = { label: `เปิดรายการจ่ายเงินคืนที่${CLAIM_PAYOUT_POSTING_WORDS.pending}`, path: '/expenses/evidence' };
 const CLAIM_MONEY_PARTS: ReadonlyArray<{ key: string; text: (n: number) => string; link: PeriodCloseCheckLink }> = [
   { key: 'unconfirmedClaimExpenses', text: (n) => `ค่าใช้จ่ายจากใบเบิกที่ยังไม่ยืนยัน ${n} รายการ`, link: { label: 'เปิดค่าใช้จ่ายที่รอตรวจ', path: '/expenses?view=pending' } },
-  { key: 'pendingPayments', text: (n) => `การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี ${n} รายการ`, link: POSTING_SCREEN },
-  { key: 'paymentErrors', text: (n) => `การจ่ายเงินคืนใบเบิกที่ลงบัญชีผิดพลาด ${n} รายการ`, link: POSTING_SCREEN },
+  { key: 'pendingPayments', text: (n) => `การจ่ายเงินคืนใบเบิกที่${CLAIM_PAYOUT_POSTING_WORDS.pending} ${n} รายการ`, link: POSTING_SCREEN },
+  { key: 'paymentErrors', text: (n) => `การจ่ายเงินคืนใบเบิกที่${CLAIM_PAYOUT_POSTING_WORDS.posting_error} ${n} รายการ`, link: POSTING_SCREEN },
 ];
 
 /** The kinds actually pending. A response without the numbers names none and offers every way. */

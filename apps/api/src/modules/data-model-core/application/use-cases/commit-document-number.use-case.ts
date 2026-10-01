@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '../../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord, CommitDocumentNumberInput } from '../../domain/models/document-sequence.model';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -30,5 +31,10 @@ export class CommitDocumentNumberUseCase {
     });
 
     return record;
+  }
+
+  /** Commits a reservation inside the transaction that writes its document. */
+  executeInTransaction(tx: Prisma.TransactionClient, input: CommitDocumentNumberInput): Promise<ReservedDocumentNumberRecord> {
+    return this.repo.commitNumberInTransaction(tx, input);
   }
 }

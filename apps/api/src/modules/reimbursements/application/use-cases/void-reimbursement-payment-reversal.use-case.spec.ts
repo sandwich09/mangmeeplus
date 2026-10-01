@@ -87,10 +87,14 @@ describe('VoidReimbursementPaymentUseCase (GAP-02 true reversal)', () => {
 });
 
 // B7 (impact audit 2026-10-01): a bank statement line confirmed against a payment must not be left
-// matched to a payment that no longer stands. The rule deleting an expense already follows.
+// matched to a payment that no longer stands. Review 2026-10-01: the void refused and sent the user
+// to undo the match on the bank screen, which does not list a fully matched line, so the payment
+// could not be voided from the product at all. The void now undoes the match itself.
 describe('PrismaReimbursementRepository.voidPaymentTrueReversal: confirmed bank match', () => {
-  function harness(matches: any[]) {
+  /** `matches` are the bank match rows; `lines` the amount of each statement line; `reconciled` the lines a completed reconciliation holds. */
+  function harness(matches: any[], lines: Record<string, string> = { 'line-1': '-500.0000' }, reconciled: string[] = []) {
     const seen: any[] = [];
+    const writes: any[] = [];
     let attempts = 0;
     const tx = {
       $executeRaw: async () => 1,
@@ -100,26 +104,68 @@ describe('PrismaReimbursementRepository.voidPaymentTrueReversal: confirmed bank 
         updateMany: async () => { throw new Error('reached:void-write'); },
       },
       bankReconciliationMatch: {
-        findFirst: async ({ where }: any) => {
+        findMany: async ({ where }: any) => {
           seen.push(where);
-          return matches.find((match) => Object.entries(where).every(([key, value]) => match[key] === value)) ?? null;
+          return matches.filter((match) => Object.entries(where).every(([key, value]) => match[key] === value));
         },
+        update: async ({ where, data }: any) => {
+          writes.push(['match', where.id, data]);
+          Object.assign(matches.find((match) => match.id === where.id), data);
+        },
+      },
+      bankReconciliationSessionLine: {
+        count: async ({ where }: any) => {
+          assert.deepEqual(where, { companyId: 'co-1', statementLineId: where.statementLineId, session: { status: 'COMPLETED' } });
+          return reconciled.includes(where.statementLineId) ? 1 : 0;
+        },
+      },
+      bankStatementLine: {
+        findFirstOrThrow: async ({ where }: any) => ({
+          signedAmount: lines[where.id],
+          matches: matches.filter((match) => match.statementLineId === where.id && match.companyId === where.companyId && match.status === 'CONFIRMED'),
+        }),
+        update: async ({ where, data }: any) => { writes.push(['line', where.id, data]); },
       },
     };
     const client = { $transaction: async (work: (transaction: any) => Promise<unknown>) => { attempts += 1; return work(tx); } };
-    return { repo: new PrismaReimbursementRepository({ client } as any, {} as any), seen, attempts: () => attempts };
+    return { repo: new PrismaReimbursementRepository({ client } as any, {} as any), seen, writes, attempts: () => attempts };
   }
-  const match = (overrides: Record<string, unknown> = {}) => ({ id: 'match-1', companyId: 'co-1', sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: 'pay-1', status: 'CONFIRMED', ...overrides });
+  const match = (overrides: Record<string, unknown> = {}) => ({
+    id: 'match-1', companyId: 'co-1', statementLineId: 'line-1', sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: 'pay-1', status: 'CONFIRMED', allocatedAmount: '500.0000', ...overrides,
+  });
   const voidIt = (h: ReturnType<typeof harness>) => h.repo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'fin-1', 'โอนผิดบัญชี', undefined, 'req-1');
 
-  it('refuses the void while a statement line is confirmed against the payment, before anything is written', async () => {
+  it('undoes the confirmed match and derives the line\'s status again, then goes on to void', async () => {
+    // Before: 409 reimbursement_payment_bank_matched, with no way to undo the match of a fully matched line.
     const h = harness([match()]);
-    await assert.rejects(() => voidIt(h), (error: any) => error.getStatus() === 409 && error.getResponse().code === 'reimbursement_payment_bank_matched');
+    await assert.rejects(() => voidIt(h), /reached:void-write/);
     assert.deepEqual(h.seen, [{ companyId: 'co-1', sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: 'pay-1', status: 'CONFIRMED' }]);
+    assert.deepEqual(h.writes, [['match', 'match-1', { status: 'VOIDED' }], ['line', 'line-1', { status: 'UNMATCHED' }]]);
+
+    // What another payment still holds on the same line stays, and the line reads partly matched.
+    const shared = harness([match({ allocatedAmount: '300.0000' }), match({ id: 'match-2', sourceType: 'EXPENSE_PAYMENT', sourceId: 'exp-pay', allocatedAmount: '200.0000' })]);
+    await assert.rejects(() => voidIt(shared), /reached:void-write/);
+    assert.deepEqual(shared.writes, [['match', 'match-1', { status: 'VOIDED' }], ['line', 'line-1', { status: 'PARTIALLY_MATCHED' }]]);
+
+    // A payment split over two statement lines: both matches are undone, each line by its own matches.
+    const split = harness([match({ allocatedAmount: '200.0000' }), match({ id: 'match-2', statementLineId: 'line-2', allocatedAmount: '300.0000' })],
+      { 'line-1': '-200.0000', 'line-2': '-300.0000' });
+    await assert.rejects(() => voidIt(split), /reached:void-write/);
+    assert.deepEqual(split.writes, [
+      ['match', 'match-1', { status: 'VOIDED' }], ['line', 'line-1', { status: 'UNMATCHED' }],
+      ['match', 'match-2', { status: 'VOIDED' }], ['line', 'line-2', { status: 'UNMATCHED' }],
+    ]);
+  });
+
+  it('refuses only a match whose line sits in a completed reconciliation, and says to reopen it', async () => {
+    const h = harness([match()], undefined, ['line-1']);
+    await assert.rejects(() => voidIt(h), (error: any) => error.getStatus() === 409 && error.getResponse().code === 'reimbursement_payment_bank_reconciled'
+      && /Reopen that reconciliation/.test(error.getResponse().message));
+    assert.deepEqual(h.writes, [], 'nothing is written before the refusal');
     assert.equal(h.attempts(), 1, 'a refusal is not retried');
   });
 
-  it('voids once the match is undone, and is not held up by a suggestion, a rejection or another payment\'s match', async () => {
+  it('is not held up by a match already undone, a suggestion, a rejection or another payment\'s match, and leaves them alone', async () => {
     for (const rows of [
       [],
       [match({ status: 'VOIDED' })],
@@ -129,7 +175,9 @@ describe('PrismaReimbursementRepository.voidPaymentTrueReversal: confirmed bank 
       [match({ sourceType: 'EXPENSE_PAYMENT' })],
       [match({ companyId: 'co-2' })],
     ]) {
-      await assert.rejects(() => voidIt(harness(rows)), /reached:void-write/, JSON.stringify(rows));
+      const h = harness(rows, undefined, ['line-1']);
+      await assert.rejects(() => voidIt(h), /reached:void-write/, JSON.stringify(rows));
+      assert.deepEqual(h.writes, [], JSON.stringify(rows));
     }
   });
 
@@ -170,7 +218,7 @@ describe('reimbursement.payment_voided event feeds the requester notice', () => 
         update: async ({ data }: any) => data,
       },
       journalEntry: { findFirst: async () => null },
-      bankReconciliationMatch: { findFirst: async () => null },
+      bankReconciliationMatch: { findMany: async () => [] },
       reimbursementRequest: {
         findFirstOrThrow: async () => request,
         update: async ({ data }: any) => { Object.assign(request, data); return request; },

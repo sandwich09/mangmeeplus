@@ -24,6 +24,7 @@ import { buildVendorBillPostingSource, buildVendorBillPp36PostingSource } from '
 import { buildPp36InputClaimPostingSource } from '../../../procurement/application/use-cases/pp36-input-claim.use-case';
 import { buildSupplierPaymentPp36PostingSource, buildSupplierPaymentPostingSource } from '../../../procurement/application/use-cases/supplier-payment.use-case';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import type { Prisma } from '../../../../generated/prisma/client';
 import type { RequestContext, JournalEntrySummary, JournalEntryDetail, CreateManualJournalInput, LedgerJournalLineInput, LedgerSourcePostingInput } from '@watchdog-bms/contracts';
 import type { JournalEntryRecord } from '../../domain/models/ledger.model';
 import { LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
@@ -668,11 +669,40 @@ export class GenerateJournalFromSourceUseCase {
       throw new BadRequestException({ code: 'posting_unbalanced', errors: bal.errors });
     }
 
-    const reserved = await this.reserve.execute({ companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey, idempotencyKey: `gen:${source.sourceType}:${source.sourceId}`, reservedByUserId: ctx.userId });
-    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: civilDateToUtcDate(coerceCivilDate(source.sourceDate)), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines });
-    await this.repo.postJournalEntry(entry.id, ctx.userId);
-    await this.commit.execute({ id: reserved.id, companyId: ctx.companyId });
-    await this.markSource(ctx, source, 'posted', entry);
+    const number = { companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey, idempotencyKey: `gen:${source.sourceType}:${source.sourceId}`, reservedByUserId: ctx.userId };
+    const writePosted = async (entryNumber: string, db?: Prisma.TransactionClient) => {
+      const created = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: civilDateToUtcDate(coerceCivilDate(source.sourceDate)), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines }, db);
+      await this.repo.postJournalEntry(created.id, ctx.userId, db);
+      return created;
+    };
+    let entry: JournalEntryRecord;
+    if (source.sourceType === 'reimbursement.payment') {
+      // The payment was read as RECORDED many queries ago, and a void can have committed since. So
+      // the settlement is written under a claim on the payment row, in ONE transaction: the stamp
+      // updates the row only while it is still RECORDED, and that row write takes turns with the
+      // void's own update of the same row. Whoever is second sees the other's result: the void
+      // finds a posted journal to reverse, or this finds a voided payment and writes nothing at
+      // all — no journal, no number, no stamp. The same claim makes two posters take turns, so the
+      // second is answered with the first's journal instead of colliding with it.
+      const settled = await this.prisma.client.$transaction(async (tx) => {
+        const recorded = await this.reimbursementRepo.updatePaymentPostingStatus(ctx.companyId, source.sourceId, { postingStatus: 'posted' }, tx);
+        if (!recorded) return null;
+        const first = await this.repo.findGeneratedJournal(ctx.companyId, source.sourceType, source.sourceId, tx);
+        if (first) return { entry: first, written: false };
+        const reserved = await this.reserve.executeInTransaction(tx, number);
+        const created = await writePosted(reserved.documentNumber, tx);
+        await this.commit.executeInTransaction(tx, { id: reserved.id, companyId: ctx.companyId });
+        return { entry: created, written: true };
+      });
+      if (!settled) throw new BadRequestException({ code: 'reimbursement_payment_not_recorded', message: 'Only a recorded reimbursement payment can be posted' });
+      if (!settled.written) return toSummary(settled.entry);
+      entry = settled.entry;
+    } else {
+      const reserved = await this.reserve.execute(number);
+      entry = await writePosted(reserved.documentNumber);
+      await this.commit.execute({ id: reserved.id, companyId: ctx.companyId });
+      await this.markSource(ctx, source, 'posted', entry);
+    }
 
     await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'ledger.journal.generate', targetType: 'journal_entry', targetId: entry.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { sourceType: source.sourceType, sourceId: source.sourceId, entryNumber: entry.entryNumber, totalDebit: bal.totalDebit } });
     void this.outbox.append('journal.generated', 'journal_entry', entry.id, { companyId: ctx.companyId, aggregateType: 'journal_entry', aggregateId: entry.id, occurredAt: new Date().toISOString(), data: { sourceType: source.sourceType, sourceId: source.sourceId, entryNumber: entry.entryNumber, periodKey } });

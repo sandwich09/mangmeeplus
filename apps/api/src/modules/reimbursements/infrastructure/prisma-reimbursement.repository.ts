@@ -2,7 +2,7 @@ import { serializableTransaction } from '../../../common/database/serializable-t
 import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import {
-  civilPeriodKey, hasPrivilegedGrant, todayCivilDate, LEDGER_SEQUENCE_KEY,
+  civilDate, civilPeriodKey, hasPrivilegedGrant, todayCivilDate, LEDGER_SEQUENCE_KEY,
   REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES,
 } from '@watchdog-bms/contracts';
 import { expenseDraftNumberingEnabled, expenseNumberInTransaction } from '../../expenses/infrastructure/expense-number';
@@ -26,6 +26,7 @@ import { resolveTransactionBranchId, requireTransactionBranchId } from '../../da
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { assertActiveExpenseBranch, expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
+import { calculateStatementLineMatchStatus } from '../../banking/domain/logic/banking.logic';
 import type {
   ReimbursementPolicyRecord,
   ReimbursementRequestRecord,
@@ -75,7 +76,7 @@ import {
   computeReceiptRequirement,
   currentDesk,
 } from '../domain/logic/reimbursement.logic';
-import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import {
   PAYOUT_PEOPLE_MANAGER_ROLE_KEYS,
   type FrozenPayoutPlan, type SealedPayoutDestination, type SubmitPayoutColumns, type SubmitPayoutPlan,
@@ -184,6 +185,25 @@ export function hubBucketWhere(bucket: string): Prisma.ReimbursementRequestWhere
     OR: Object.values(RequestStatuses).flatMap((status) => {
       const finance = Object.values(FinanceReviewStatuses).filter((financeReviewStatus) => hubBucketOfStatus(status, financeReviewStatus) === bucket);
       return finance.length > 0 ? [{ status, financeReviewStatus: { in: finance } }] : [];
+    }),
+  };
+}
+
+/**
+ * What the hub's search box finds: every word typed is in the claim's number, its requester's name, its
+ * reason or its category, or is its amount. Those are the columns a row prints and a person can type;
+ * the status is what the chips filter. Read by the page and by the counts alike.
+ * ponytail: the first five words are read; a longer search ignores the rest.
+ */
+export function hubSearchWhere(search: string): Prisma.ReimbursementRequestWhereInput {
+  return {
+    AND: search.split(/\s+/).filter(Boolean).slice(0, 5).map((word) => {
+      const contains = { contains: word, mode: 'insensitive' as const };
+      const amount = word.replace(/,/g, '');
+      return { OR: [
+        { requestNo: contains }, { requesterDisplayNameSnapshot: contains }, { reason: contains }, { categoryLabelSnapshot: contains },
+        ...(/^\d{1,12}(\.\d{1,4})?$/.test(amount) ? [{ amount }] : []),
+      ] };
     }),
   };
 }
@@ -2514,13 +2534,15 @@ export class PrismaReimbursementRepository {
   /**
    * One page of a list, read with LIMIT and OFFSET in the database, and the whole scope grouped by the
    * fields the hub counts on. Two reads over one predicate: the page adds only the bucket to it, so the
-   * groups of a bucket add up to exactly the claims its pages hold.
+   * groups of a bucket add up to exactly the claims its pages hold. A search narrows that one predicate
+   * (`hubSearchWhere`), so with a search the groups count what was found, bucket by bucket.
    */
   async listRequestPage(where: ListRequestsWhere & { bucket?: string; skip: number; take: number }): Promise<{
     rows: ReimbursementRequestRecord[];
     groups: ReimbursementRequestGroup[];
   }> {
-    const scope = await this.requestListWhere(where);
+    const scope = await this.requestListWhere({ ...where, search: undefined });
+    if (where.search) scope.AND.push(hubSearchWhere(where.search));
     const [rows, groups] = await Promise.all([
       this.prisma.client.reimbursementRequest.findMany({
         where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
@@ -2725,7 +2747,7 @@ export class PrismaReimbursementRepository {
 
   // ---- Payment ----
 
-  async assertClaimPaymentReady(companyId: string, requestId: string): Promise<void> {
+  async assertClaimPaymentReady(companyId: string, requestId: string, paidAt?: Date): Promise<void> {
     const row = await (this.prisma.client as any).reimbursementRequest.findFirst({
       where: { id: requestId, companyId },
       include: { lines: { orderBy: { lineNo: 'asc' } } },
@@ -2733,6 +2755,23 @@ export class PrismaReimbursementRepository {
     if (!row) throw new NotFoundException('Reimbursement request not found');
     if (row.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
     await this.assertClaimProjectionsReady(this.prisma.client as any, this.toRequest(row));
+    if (paidAt) await this.assertPaymentPeriodOpen(companyId, paidAt);
+  }
+
+  /**
+   * A payment may only be dated in an accounting period that still takes entries, the rule expense
+   * confirmation applies. Recorded in a closed month, the payout could never be posted until that
+   * month was reopened. A month nobody has opened yet has no row, and is open.
+   * A check before the write, not a lock: the period close holds none either, for any source.
+   */
+  async assertPaymentPeriodOpen(companyId: string, paidAt: Date): Promise<void> {
+    const periodKey = civilPeriodKey(civilDate(paidAt));
+    const period = await (this.prisma.client as any).accountingPeriod.findUnique({
+      where: { companyId_periodKey: { companyId, periodKey } }, select: { status: true },
+    });
+    if (period && !['OPEN', 'REOPENED'].includes(String(period.status))) {
+      throw new ConflictException(`reimbursement_payment_accounting_period_locked:${periodKey}`);
+    }
   }
 
   async recordPaymentAtomic(data: {
@@ -3223,15 +3262,21 @@ export class PrismaReimbursementRepository {
   // mirroring how expense/vendor-bill/supplier-payment sources flip after generate.
   // ReimbursementPayment carries no journalEntryId/postingError columns, so only
   // the status changes here.
+  // RECORDED only, and it says whether it wrote: a void owns the posting status of a voided payment
+  // (`reversed` / `not_required`), so a late stamp from the generator or the worker must not land.
+  // Inside a transaction (`db`) the write holds the payment row, which is what makes the generator's
+  // settlement and the void's own update of that row take turns.
   async updatePaymentPostingStatus(
     companyId: string,
     id: string,
     data: { postingStatus: 'pending' | 'posted' | 'posting_error' | 'reversed' },
-  ): Promise<void> {
-    await this.prisma.client.reimbursementPayment.updateMany({
-      where: { id, companyId },
+    db: any = this.prisma.client,
+  ): Promise<boolean> {
+    const stamped = await db.reimbursementPayment.updateMany({
+      where: { id, companyId, status: 'RECORDED' },
       data: { postingStatus: data.postingStatus as any },
     });
+    return stamped.count === 1;
   }
 
   // GAP-02 (mirrors expenses H-04): the ledger journal table is the source of
@@ -3338,13 +3383,33 @@ export class PrismaReimbursementRepository {
         return { request: this.toRequest(request), payment: this.toPayment(prior), reversalEntryId: null, alreadyVoided: true };
       }
       // A bank statement line confirmed against this payment would be left matched to a payment that
-      // no longer stands. The match is undone first: the rule deleting an expense already follows.
-      const bankMatch = await tx.bankReconciliationMatch.findFirst({
+      // no longer stands. A fully matched line is not listed on the bank matching screen, so nobody
+      // could undo the match there first: the void undoes it here, by the banking module's own rule
+      // (the match is voided and the line's status is derived again from the matches that still
+      // stand). Only a line inside a completed reconciliation is refused: that one is reopened first.
+      const bankMatches: Array<{ id: string; statementLineId: string }> = await tx.bankReconciliationMatch.findMany({
         where: { companyId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paymentId, status: 'CONFIRMED' },
-        select: { id: true },
+        select: { id: true, statementLineId: true },
       });
-      if (bankMatch) {
-        throw new ConflictException({ code: 'reimbursement_payment_bank_matched', message: 'Undo the bank reconciliation match of this payment before voiding it.' });
+      for (const match of bankMatches) {
+        const reconciled = await tx.bankReconciliationSessionLine.count({
+          where: { companyId, statementLineId: match.statementLineId, session: { status: 'COMPLETED' } },
+        });
+        if (reconciled > 0) {
+          throw new ConflictException({ code: 'reimbursement_payment_bank_reconciled', message: 'This payment is matched to a bank statement line in a completed reconciliation. Reopen that reconciliation before voiding the payment.' });
+        }
+        await tx.bankReconciliationMatch.update({ where: { id: match.id }, data: { status: 'VOIDED' } });
+        const line = await tx.bankStatementLine.findFirstOrThrow({
+          where: { id: match.statementLineId, companyId },
+          select: { signedAmount: true, matches: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true } } },
+        });
+        await tx.bankStatementLine.update({
+          where: { id: match.statementLineId },
+          data: { status: calculateStatementLineMatchStatus({
+            statementLineAmount: String(line.signedAmount),
+            confirmedAllocations: line.matches.map((standing: { allocatedAmount: unknown }) => String(standing.allocatedAmount)),
+          }) },
+        });
       }
       const voided = await tx.reimbursementPayment.updateMany({
         where: { id: paymentId, companyId, reimbursementRequestId: requestId, status: 'RECORDED' },
@@ -3415,6 +3480,12 @@ export class PrismaReimbursementRepository {
         await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'reimbursement.payment.void',
           targetType: 'reimbursement_payment', targetId: paymentId, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
           metadataJson: { reason, requestId, reversalEntryId: reversal.reversalEntryId } }, tx);
+        // The row the bank screen's own "ยกเลิกการจับคู่" writes, so a match reads the same whoever undid it.
+        for (const match of bankMatches) {
+          await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'bank.match.void',
+            targetType: 'bank_reconciliation_match', targetId: match.id, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: { statementLineId: match.statementLineId, reason: 'reimbursement_payment_voided', paymentId, requestId } }, tx);
+        }
         await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
           aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,
           payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'reimbursement_payment', aggregateId: paymentId,
@@ -3451,6 +3522,7 @@ export class PrismaReimbursementRepository {
         request: { is: branchScopeWhere(scopes) },
       },
       orderBy: { paidAt: 'asc' },
+      take: CLAIM_PAYOUT_WORKLIST_LIMIT,
       include: { request: { select: { requestNo: true, requesterDisplayNameSnapshot: true } } },
     });
     return rows.map((row: any) => ({

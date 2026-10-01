@@ -1,18 +1,23 @@
 /**
- * Real PostgreSQL proof that a claim payout reaches the ledger and that the claim, its expense
- * records and the books then say the same number. Opt-in; every row is test-owned.
+ * Real PostgreSQL proof that a claim payout reaches the ledger, that the claim, its expense records
+ * and the books then say the same number, and that a post and a void of one payout take turns.
+ * A release gate: it is the only place the candidate SQL and the row locking actually run.
  *
- *   CLAIM_PAYMENT_POSTING_PG_TEST=1 DATABASE_URL=postgresql://…@127.0.0.1:<port>/<throwaway db> \
+ *   CLAIM_PAYMENT_POSTING_TEST_DATABASE_URL='postgresql://…@127.0.0.1:5432/watchdog_claim_posting_ci' \
  *     pnpm --filter @watchdog-bms/api exec tsx --test src/modules/ledger/application/use-cases/claim-payment-posting.pg.spec.ts
  *
- * The drain reads every ACTIVE company, so point it at a throwaway database only. The repositories,
- * the candidate SQL, the journal generator, the posting engine and the numbering are all real; only
- * the audit/outbox side channels are stubbed, and the confirm saga is shortcut by a fixture update.
+ * It needs a database OF ITS OWN (migrated, otherwise empty): the auto-post drain reads every
+ * ACTIVE company, so in a shared database it would also drain companies other specs left behind,
+ * and their rows would change the counts asserted here. Every row it writes is test-owned.
+ * The repositories, the candidate SQL, the journal generator, the posting engine and the numbering
+ * are all real; only the audit/outbox side channels are stubbed, and the confirm saga is shortcut
+ * by a fixture update.
  */
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { civilPeriodKey, coerceCivilDate } from '@watchdog-bms/contracts';
 import { Decimal } from 'decimal.js';
 import { PrismaClient } from '../../../../generated/prisma/client';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
@@ -20,28 +25,37 @@ import { ReserveDocumentNumberUseCase } from '../../../data-model-core/applicati
 import { PrismaDocumentSequenceRepository } from '../../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { MaterializeClaimExpensesService } from '../../../reimbursements/application/services/materialize-claim-expenses.service';
+import { RecordReimbursementPaymentUseCase } from '../../../reimbursements/application/use-cases/reimbursement-finance.use-case';
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { PrismaLedgerRepository } from '../../infrastructure/prisma-ledger.repository';
 import { DrainExpenseAutoPostUseCase, expenseAutoPostCandidateSql } from './expense-auto-post.use-case';
 import { GenerateJournalFromSourceUseCase } from './journal.use-case';
 
-const url = process.env.DATABASE_URL;
-const enabled = process.env.CLAIM_PAYMENT_POSTING_PG_TEST === '1';
+const databaseUrl = process.env.CLAIM_PAYMENT_POSTING_TEST_DATABASE_URL;
 
-describe('claim payout posting (PostgreSQL)', { skip: !enabled }, () => {
-  assert.ok(url && ['localhost', '127.0.0.1'].includes(new URL(url).hostname), 'Use a local isolated DB');
-  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
+describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
+  const url = new URL(databaseUrl!);
+  assert.ok(['localhost', '127.0.0.1'].includes(url.hostname) && url.pathname.endsWith('_ci'), 'only a disposable local *_ci database of its own');
+  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const prisma = { client } as any;
   const allocator = new PrismaDocumentSequenceRepository(prisma);
   const claims = new PrismaReimbursementRepository(prisma, allocator);
   const expenses = new PrismaExpenseRepository(prisma, allocator);
   const ledger = new PrismaLedgerRepository(prisma);
   const silent = { log: async () => undefined, append: async () => undefined } as any;
+  const reserveNumber = new ReserveDocumentNumberUseCase(allocator, silent);
+  const commitNumber = new CommitDocumentNumberUseCase(allocator, silent);
   const generate = new GenerateJournalFromSourceUseCase(
-    ledger, silent, new ReserveDocumentNumberUseCase(allocator, silent), new CommitDocumentNumberUseCase(allocator, silent),
+    ledger, silent, reserveNumber, commitNumber,
     silent, {} as any, expenses, {} as any, claims, prisma,
   );
   const drain = new DrainExpenseAutoPostUseCase(prisma, generate, expenses, claims);
+  // The payer's own entry point, for the one rule that lives there: the date a payout may carry.
+  // File names are the only thing its answer reads from outside the database.
+  const recordPayment = new RecordReimbursementPaymentUseCase(
+    claims, silent, silent, reserveNumber, commitNumber,
+    { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any,
+  );
   const companyIds: string[] = [];
   const userIds: string[] = [];
   const incurred = new Date('2026-09-15T00:00:00.000Z');
@@ -49,6 +63,7 @@ describe('claim payout posting (PostgreSQL)', { skip: !enabled }, () => {
   after(async () => {
     for (const companyId of companyIds) {
       await client.auditLog.deleteMany({ where: { companyId } });
+      await client.outboxEvent.deleteMany({ where: { companyId } });
       await client.journalEntry.deleteMany({ where: { companyId, entryType: 'REVERSAL' } });
       await client.company.delete({ where: { id: companyId } });
     }
@@ -222,29 +237,6 @@ describe('claim payout posting (PostgreSQL)', { skip: !enabled }, () => {
     } finally { await retire(s); }
   });
 
-  it('the worker and an accountant posting the same payout at once leave one settlement, and a retry settles the flag', async () => {
-    const s = await shop();
-    try {
-      const c = await claim(s, ['120.00']);
-      await drain.execute();
-      const payment = await pay(s, c);
-      const [byHand, byWorker] = await Promise.allSettled([post(s, 'reimbursement.payment', payment.id), drain.execute()]);
-      assert.ok(byHand.status === 'fulfilled' || byWorker.status === 'fulfilled');
-      // The database allows one generated journal per source, whoever wins.
-      const journals = await payoutJournals(s, payment.id);
-      assert.equal(journals.length, 1);
-      assert.equal(journals[0]!.status, 'POSTED');
-      assert.deepEqual(await books(s), { '5310-01': '120.00', '2130-01': '0.00', '1110-01': '-120.00' });
-      // The loser of the race may have left the status flag behind (as it can for an expense
-      // source); posting again finds the existing journal, creates nothing and corrects the flag.
-      const again = await post(s, 'reimbursement.payment', payment.id);
-      assert.equal(again.id, journals[0]!.id);
-      assert.equal((await payoutJournals(s, payment.id)).length, 1);
-      assert.equal((await paymentRow(payment.id)).postingStatus, 'posted');
-      assert.deepEqual(await books(s), { '5310-01': '120.00', '2130-01': '0.00', '1110-01': '-120.00' });
-    } finally { await retire(s); }
-  });
-
   it('selects only payouts that are ready, and leaves the others on the accountant\'s worklist untouched', async () => {
     const s = await shop();
     try {
@@ -346,7 +338,394 @@ describe('claim payout posting (PostgreSQL)', { skip: !enabled }, () => {
     } finally { await retire(inherited); }
   });
 
-  it('a payout dated in a closed period is refused, marked for the accountant, and posts once the period is open again', async () => {
+  // ---- Post versus void (review finding 1) ------------------------------------------------------
+  // The generator reads the payment as RECORDED and writes its journal many queries later. The fix
+  // writes the settlement under a claim on the payment row; these cases hold one side still at a
+  // chosen point and prove the other side WAITS for that row and then sees the committed result.
+
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => { resolve = done; });
+    return { promise, resolve };
+  }
+
+  /** Swaps one method for a wrapper until `restore()`; `this` and arguments pass through. */
+  function intercept(target: any, method: string, wrap: (original: (...args: any[]) => Promise<any>) => (...args: any[]) => Promise<any>) {
+    const original = target[method].bind(target);
+    target[method] = wrap(original);
+    return () => { target[method] = original; };
+  }
+
+  /** Resolves once some backend is blocked on a row lock for a statement on the payment table. */
+  async function untilPaymentRowIsAwaited(): Promise<void> {
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const [row] = await client.$queryRaw<Array<{ waiting: bigint }>>`
+        SELECT count(*) AS waiting FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%"ReimbursementPayment"%'`;
+      if (Number(row!.waiting) > 0) return;
+      await new Promise((done) => setTimeout(done, 20));
+    }
+    assert.fail('nothing waited for the payment row: the two writers did not take turns');
+  }
+
+  const settle = <T>(work: Promise<T>) => work.then((value) => ({ value, error: undefined as any }), (error) => ({ value: undefined as T | undefined, error }));
+  const errorCode = (error: any) => { const response = error?.getResponse?.(); return typeof response === 'string' ? response : response?.code ?? response?.message; };
+
+  /** The state the bug produced, and every other inconsistent one, for a payout after any race. */
+  async function assertPayoutConsistent(s: Shop, paymentId: string) {
+    const row = await paymentRow(paymentId);
+    const journals = await payoutJournals(s, paymentId);
+    const shape = journals.map((entry) => `${entry.entryType}:${entry.status}`).join(',');
+    if (row.status === 'VOIDED') {
+      assert.ok(
+        (shape === '' && row.postingStatus === 'not_required') || (shape === 'GENERATED:POSTED,REVERSAL:POSTED' && row.postingStatus === 'reversed'),
+        `a voided payout must have no settlement or a reversed one, got [${shape}] ${row.postingStatus}`,
+      );
+    } else {
+      assert.ok(
+        (shape === 'GENERATED:POSTED' && row.postingStatus === 'posted') || (shape === '' && ['pending', 'posting_error'].includes(row.postingStatus)),
+        `a recorded payout must be posted with one settlement or not posted at all, got [${shape}] ${row.postingStatus}`,
+      );
+    }
+    const net = new Map<string, Decimal>();
+    for (const line of journals.flatMap((entry) => entry.lines)) net.set(line.accountId, (net.get(line.accountId) ?? new Decimal(0)).add(line.debitAmount.toString()).sub(line.creditAmount.toString()));
+    if (row.status === 'VOIDED') for (const [accountId, value] of net) assert.equal(value.toFixed(2), '0.00', `account ${accountId} must net to zero for a voided payout`);
+    return { status: row.status, postingStatus: row.postingStatus, shape };
+  }
+
+  /** Every journal number this shop has reserved or committed: a refused post must add none. */
+  const journalNumbers = async (s: Shop) => (await client.documentNumber.findMany({
+    where: { companyId: s.companyId, documentType: 'ledger.journal' }, select: { documentNumber: true, status: true }, orderBy: { documentNumber: 'asc' },
+  })).map((row) => `${row.documentNumber}:${row.status}`);
+
+  async function payable(s: Shop, amount: string) {
+    const c = await claim(s, [amount]);
+    await post(s, 'expense.record', c.expenseIds[0]!);
+    return { c, payment: await pay(s, c) };
+  }
+  const voidPayout = (s: Shop, c: { requestId: string }, paymentId: string) => claims.voidPaymentTrueReversal(s.companyId, c.requestId, paymentId, s.userId, 'โอนผิดบัญชี');
+
+  it('void commits after the generator read the payment as RECORDED: the post is refused and nothing is written', async () => {
+    const s = await shop();
+    try {
+      const { c, payment } = await payable(s, '140.00');
+      const numbersBefore = await journalNumbers(s);
+      // Resolving the accounts is the generator's last read before it claims the payment.
+      let voided = false;
+      const restore = intercept(ledger, 'findAccountByCode', (original) => async (...args) => {
+        if (!voided) { voided = true; await voidPayout(s, c, payment.id); }
+        return original(...args);
+      });
+      const outcome = await settle(post(s, 'reimbursement.payment', payment.id)).finally(restore);
+
+      assert.equal(voided, true);
+      assert.equal(errorCode(outcome.error), 'reimbursement_payment_not_recorded');
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'VOIDED', postingStatus: 'not_required', shape: '' });
+      // Nothing at all was written: no journal (not even a draft) and no journal number.
+      assert.equal(await client.journalEntry.count({ where: { companyId: s.companyId, sourceType: 'reimbursement.payment' } }), 0);
+      assert.deepEqual(await journalNumbers(s), numbersBefore);
+      assert.deepEqual(await books(s), { '5310-01': '140.00', '2130-01': '-140.00' });
+      // Paying again posts ONE settlement, where the bug posted a second.
+      const again = await pay(s, c);
+      await post(s, 'reimbursement.payment', again.id);
+      assert.equal(await client.journalEntry.count({ where: { companyId: s.companyId, sourceType: 'reimbursement.payment' } }), 1);
+      assert.deepEqual(await books(s), { '5310-01': '140.00', '2130-01': '0.00', '1110-01': '-140.00' });
+    } finally { await retire(s); }
+  });
+
+  it('void in flight, holding the payment row: the claim waits for it, then finds the payment voided and writes nothing', async () => {
+    const s = await shop();
+    try {
+      const { c, payment } = await payable(s, '150.00');
+      const numbersBefore = await journalNumbers(s);
+      const atClaim = deferred(), goClaim = deferred(), rowWritten = deferred(), goVoid = deferred();
+      // The generator is held just before its claim; the void is held just after its own row update.
+      let heldOnce = false;
+      const restoreRead = intercept(ledger, 'findAccountByCode', (original) => async (...args) => {
+        if (!heldOnce) { heldOnce = true; atClaim.resolve(); await goClaim.promise; }
+        return original(...args);
+      });
+      const restoreVoid = intercept(claims, 'reversePaymentJournalInTx', (original) => async (...args) => { rowWritten.resolve(); await goVoid.promise; return original(...args); });
+      let posting, voiding;
+      try {
+        posting = settle(post(s, 'reimbursement.payment', payment.id));
+        await atClaim.promise;
+        voiding = settle(voidPayout(s, c, payment.id));
+        await rowWritten.promise;
+        goClaim.resolve();
+        await untilPaymentRowIsAwaited();
+      } finally { goClaim.resolve(); goVoid.resolve(); restoreRead(); restoreVoid(); }
+
+      assert.equal((await voiding!).error, undefined);
+      assert.equal(errorCode((await posting!).error), 'reimbursement_payment_not_recorded');
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'VOIDED', postingStatus: 'not_required', shape: '' });
+      assert.deepEqual(await journalNumbers(s), numbersBefore);
+      assert.deepEqual(await books(s), { '5310-01': '150.00', '2130-01': '-150.00' });
+    } finally { await retire(s); }
+  });
+
+  it('settlement in flight, holding the payment row: the void waits for it, then reverses the posted journal', async (t) => {
+    const s = await shop();
+    try {
+      const { c, payment } = await payable(s, '160.00');
+      const claimed = deferred(), goPost = deferred();
+      // Posting is the last statement of the settlement transaction: the row is claimed and the
+      // journal created, and nothing is committed yet.
+      let held = false;
+      const restore = intercept(ledger, 'postJournalEntry', (original) => async (...args) => {
+        if (!held) { held = true; claimed.resolve(); await goPost.promise; }
+        return original(...args);
+      });
+      let posting, voiding;
+      try {
+        posting = settle(post(s, 'reimbursement.payment', payment.id));
+        await claimed.promise;
+        assert.equal((await payoutJournals(s, payment.id)).length, 0, 'an uncommitted settlement is invisible to everyone else');
+        voiding = settle(voidPayout(s, c, payment.id));
+        await untilPaymentRowIsAwaited();
+      } finally { goPost.resolve(); restore(); }
+
+      assert.equal((await posting!).error, undefined);
+      // The void either re-ran on its own after the conflict, or refused with "it changed, retry".
+      const first = await voiding!;
+      t.diagnostic(first.error ? 'the void refused with "it changed" and was retried by the caller' : 'the void re-ran by itself after the write conflict');
+      if (first.error) {
+        assert.equal(errorCode(first.error), 'reimbursement_payment_state_changed');
+        assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+        await voidPayout(s, c, payment.id);
+      }
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'VOIDED', postingStatus: 'reversed', shape: 'GENERATED:POSTED,REVERSAL:POSTED' });
+      assert.deepEqual(await books(s), { '5310-01': '160.00', '2130-01': '-160.00', '1110-01': '0.00' });
+    } finally { await retire(s); }
+  });
+
+  it('post and void fired together, many times: never a posted settlement on a voided payment', async (t) => {
+    const s = await shop();
+    try {
+      const seen = new Set<string>();
+      for (let round = 0; round < 16; round += 1) {
+        const { c, payment } = await payable(s, '10.00');
+        // Even rounds start the void at the generator's last read, so both arrive at the payment
+        // row together whatever the machine's speed; odd rounds simply start both at once.
+        let voidStarted: ReturnType<typeof settle> | undefined;
+        const startVoid = () => (voidStarted ??= settle(voidPayout(s, c, payment.id)));
+        const restore = round % 2 === 0
+          ? intercept(ledger, 'findAccountByCode', (original) => async (...args) => { void startVoid(); return original(...args); })
+          : () => undefined;
+        if (round % 2 === 1) void startVoid();
+        const posting = await settle(post(s, 'reimbursement.payment', payment.id)).finally(restore);
+        const voiding = await startVoid();
+        for (const outcome of [voiding, posting]) {
+          if (outcome.error) assert.ok(['reimbursement_payment_not_recorded', 'reimbursement_payment_state_changed'].includes(errorCode(outcome.error)), `unexpected refusal: ${errorCode(outcome.error) ?? outcome.error}`);
+        }
+        const state = await assertPayoutConsistent(s, payment.id);
+        seen.add(`${state.status}/${state.postingStatus}`);
+        // Leave the claim paid-and-posted or unpaid; either way the next round starts clean.
+        if (state.status === 'RECORDED') await voidPayout(s, c, payment.id);
+        await assertPayoutConsistent(s, payment.id);
+      }
+      t.diagnostic(`end states seen over 16 races: ${[...seen].sort().join(', ')}`);
+    } finally { await retire(s); }
+  });
+
+  it('a settlement that fails midway leaves nothing behind: its number, journal and stamp go back together, and a retry posts once', async () => {
+    const s = await shop();
+    try {
+      const { payment } = await payable(s, '95.00');
+      const numbersBefore = await journalNumbers(s);
+      // The journal is created, then posting it fails. By then the payment is stamped and the number taken.
+      const restore = intercept(ledger, 'postJournalEntry', () => async () => { throw new Error('connection lost'); });
+      try {
+        await assert.rejects(() => post(s, 'reimbursement.payment', payment.id), /connection lost/);
+      } finally { restore(); }
+      assert.deepEqual(await journalNumbers(s), numbersBefore, 'no journal number is left reserved for a settlement that was not written');
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'pending', shape: '' });
+
+      await post(s, 'reimbursement.payment', payment.id);
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      const numbersAfter = await journalNumbers(s);
+      assert.equal(numbersAfter.length, numbersBefore.length + 1);
+      assert.ok(numbersAfter.every((number) => number.endsWith(':COMMITTED')), 'the one new number belongs to the one settlement');
+    } finally { await retire(s); }
+  });
+
+  it('two posters at once take turns on the payment row: one settlement, both answered with it, the flag already right', async () => {
+    const s = await shop();
+    try {
+      const { payment } = await payable(s, '170.00');
+      // The month's period already exists, as it does after any earlier posting: creating it is a
+      // separate first-use step that these three would otherwise race for, payment or not.
+      const periodKey = civilPeriodKey(coerceCivilDate(payment.paidAt));
+      const [year, month] = periodKey.split('-').map(Number) as [number, number];
+      await ledger.upsertPeriod(s.companyId, periodKey, new Date(Date.UTC(year, month - 1, 1)), new Date(Date.UTC(year, month, 0)));
+      const [byHand, byWorker, again] = await Promise.all([
+        settle(post(s, 'reimbursement.payment', payment.id)), settle(drain.execute()), settle(post(s, 'reimbursement.payment', payment.id)),
+      ]);
+      // Nobody collides: each caller is answered with the one journal.
+      assert.equal(byHand.error, undefined);
+      assert.equal(again.error, undefined);
+      assert.equal(byHand.value!.id, again.value!.id);
+      assert.equal(byWorker.error, undefined);
+      assert.equal(byWorker.value!.failed, 0);
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      assert.deepEqual(await books(s), { '5310-01': '170.00', '2130-01': '0.00', '1110-01': '-170.00' });
+      // One journal number, committed with the journal.
+      assert.equal((await journalNumbers(s)).filter((number) => number.endsWith(':COMMITTED')).length, 2);
+      assert.equal((await journalNumbers(s)).length, 2);
+    } finally { await retire(s); }
+  });
+
+  /** Runs `before` once, in the gap between the worker reading its candidates and generating. */
+  async function drainWith(before: () => Promise<void>, after: () => Promise<void> = async () => undefined) {
+    const execute = generate.execute.bind(generate);
+    let used = false;
+    generate.execute = async (...args: Parameters<typeof execute>) => {
+      if (used) return execute(...args);
+      used = true;
+      await before();
+      const summary = await execute(...args);
+      await after();
+      return summary;
+    };
+    try { return await drain.execute(); } finally { generate.execute = execute; }
+  }
+
+  it('a void that commits after the candidates were read keeps its own status: the worker stamps nothing', async () => {
+    const s = await shop();
+    try {
+      const c = await claim(s, ['60.00']);
+      await post(s, 'expense.record', c.expenseIds[0]!);
+      const payment = await pay(s, c);
+
+      const result = await drainWith(async () => { await claims.voidPaymentTrueReversal(s.companyId, c.requestId, payment.id, s.userId, 'โอนผิดบัญชี'); });
+
+      // The candidate vanished under the worker: neither posted nor failed.
+      assert.deepEqual(result, { companies: 1, candidates: 1, posted: 0, failed: 0 });
+      const row = await paymentRow(payment.id);
+      assert.deepEqual([row.status, row.postingStatus], ['VOIDED', 'not_required']);
+      assert.equal((await payoutJournals(s, payment.id)).length, 0);
+      // The readiness check counts posting errors with no status filter of its own.
+      assert.equal(await client.reimbursementPayment.count({ where: { companyId: s.companyId, postingStatus: 'posting_error' } }), 0);
+      assert.deepEqual(await claims.listUnpostedReimbursementPayments(s.companyId), []);
+    } finally { await retire(s); }
+  });
+
+  it('a failure after the settlement was posted is stamped posted, never an error', async () => {
+    const s = await shop();
+    try {
+      const c = await claim(s, ['85.00']);
+      await post(s, 'expense.record', c.expenseIds[0]!);
+      const payment = await pay(s, c);
+
+      const result = await drainWith(async () => undefined, async () => { throw new Error('the bookkeeping after the post failed'); });
+
+      assert.deepEqual(result, { companies: 1, candidates: 1, posted: 1, failed: 0 });
+      assert.equal((await paymentRow(payment.id)).postingStatus, 'posted');
+      assert.deepEqual((await payoutJournals(s, payment.id)).map((entry) => [entry.entryType, entry.status]), [['GENERATED', 'POSTED']]);
+      assert.deepEqual(await claims.listUnpostedReimbursementPayments(s.companyId), []);
+    } finally { await retire(s); }
+  });
+
+  it('the worker\'s two stamps are one unit: when the second fails the first does not stay on a posted payout', async () => {
+    const s = await shop();
+    try {
+      const { payment } = await payable(s, '65.00');
+      // The settlement is posted, then the worker's attempt fails, so it settles the refusal:
+      // an error stamp, the journal read, then `posted`. That last stamp is the one that fails here.
+      let posted = 0;
+      const restore = intercept(claims, 'updatePaymentPostingStatus', (original) => async (...args) => {
+        if (args[2].postingStatus === 'posted' && (posted += 1) === 2) throw new Error('connection lost');
+        return original(...args);
+      });
+      try {
+        await assert.rejects(() => drainWith(async () => undefined, async () => { throw new Error('the bookkeeping after the post failed'); }), /connection lost/);
+      } finally { restore(); }
+
+      // The error stamp went back with the failed unit: the settlement's own `posted` still stands.
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      assert.equal(await client.reimbursementPayment.count({ where: { companyId: s.companyId, postingStatus: 'posting_error' } }), 0);
+      assert.deepEqual(await drain.execute(), { companies: 1, candidates: 0, posted: 0, failed: 0 });
+    } finally { await retire(s); }
+  });
+
+  it('the worker fails while an accountant\'s settlement is still in flight: the payout ends posted, never an error', async () => {
+    const s = await shop();
+    try {
+      const { payment } = await payable(s, '180.00');
+      const claimed = deferred(), goPost = deferred();
+      let held = false;
+      const restorePost = intercept(ledger, 'postJournalEntry', (original) => async (...args) => {
+        if (!held) { held = true; claimed.resolve(); await goPost.promise; }
+        return original(...args);
+      });
+      // The worker's own attempt fails for a reason of its own; the accountant's runs normally.
+      const restoreGenerate = intercept(generate, 'execute', (original) => async (ctx, ...rest) => {
+        if (ctx.authSubject === 'expense-auto-post-worker') throw new Error('the worker attempt failed');
+        return original(ctx, ...rest);
+      });
+      let accounting, draining;
+      try {
+        accounting = settle(post(s, 'reimbursement.payment', payment.id));
+        await claimed.promise;
+        // The settlement is uncommitted, so the worker still sees a pending payout with no journal.
+        draining = settle(drain.execute());
+        await untilPaymentRowIsAwaited();
+      } finally { goPost.resolve(); restorePost(); }
+      const drained = await draining!.finally(restoreGenerate);
+
+      assert.equal((await accounting!).error, undefined);
+      assert.equal(drained.error, undefined);
+      // The worker's stamp waited for the payment row, then read the journal table: posted.
+      assert.deepEqual(drained.value, { companies: 1, candidates: 1, posted: 1, failed: 0 });
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      assert.equal(await client.reimbursementPayment.count({ where: { companyId: s.companyId, postingStatus: 'posting_error' } }), 0);
+    } finally { await retire(s); }
+  });
+
+  // Review finding 5. Recording is where a payout gets its date, so that is where a closed month is
+  // refused: the real use case, repository, numbering and tables.
+  it('recording refuses a payment dated in a closed month and writes nothing; once the month is reopened the same payment records and posts into it', async () => {
+    const s = await shop();
+    try {
+      const c = await claim(s, ['75.00']);
+      await post(s, 'expense.record', c.expenseIds[0]!);
+      const august = await client.accountingPeriod.create({ data: { companyId: s.companyId, periodKey: '2026-08', startDate: new Date('2026-08-01'), endDate: new Date('2026-08-31'), status: 'CLOSED' } });
+      const payer = { ...accountant(s), permissions: ['reimbursement.payment.record'] };
+      const record = (paidAt: string): Promise<any> => recordPayment.execute(payer, c.requestId, { paidAmount: c.total, paymentMethod: 'CASH', paidAt } as any);
+      const locked = (error: any) => error.getStatus?.() === 409 && error.message === 'reimbursement_payment_accounting_period_locked:2026-08';
+
+      // The first and the last instant of August in Thai time.
+      await assert.rejects(() => record('2026-07-31T17:00:00.000Z'), locked);
+      await assert.rejects(() => record('2026-08-31T16:59:59.999Z'), locked);
+      await client.accountingPeriod.update({ where: { id: august.id }, data: { status: 'CLOSING_REVIEW' } });
+      await assert.rejects(() => record('2026-08-20T03:00:00.000Z'), locked);
+
+      // Nothing was written: no payment, no payment number, no notice to the requester.
+      assert.equal(await client.reimbursementPayment.count({ where: { companyId: s.companyId } }), 0);
+      assert.equal(await client.documentNumber.count({ where: { companyId: s.companyId, documentType: 'reimbursement.payment' } }), 0);
+      assert.equal(await client.outboxEvent.count({ where: { companyId: s.companyId, eventType: 'reimbursement.payment_recorded' } }), 0);
+      assert.equal((await claimRow(c)).status, 'READY_FOR_PAYMENT');
+      // Only August refuses: the instant before it and the instant after it are other, unopened months.
+      await claims.assertPaymentPeriodOpen(s.companyId, new Date('2026-07-31T16:59:59.999Z'));
+      await claims.assertPaymentPeriodOpen(s.companyId, new Date('2026-08-31T17:00:00.000Z'));
+
+      await client.accountingPeriod.update({ where: { id: august.id }, data: { status: 'REOPENED' } });
+      const detail = await record('2026-08-20T03:00:00.000Z');
+      assert.equal(detail.status, 'PAID');
+      const payment = await client.reimbursementPayment.findFirstOrThrow({ where: { companyId: s.companyId } });
+      assert.deepEqual([payment.status, payment.postingStatus, payment.paidAt.toISOString()], ['RECORDED', 'pending', '2026-08-20T03:00:00.000Z']);
+      assert.equal(await client.outboxEvent.count({ where: { companyId: s.companyId, eventType: 'reimbursement.payment_recorded' } }), 1);
+
+      assert.deepEqual(await drain.execute(), { companies: 1, candidates: 1, posted: 1, failed: 0 });
+      assert.equal((await payoutJournals(s, payment.id))[0]!.periodId, august.id, 'the payout belongs to the month the money left');
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      assert.deepEqual(await books(s), { '5310-01': '75.00', '2130-01': '0.00', '1110-01': '-75.00' });
+    } finally { await retire(s); }
+  });
+
+  // Such a row can still exist: one recorded before recording refused the date (the repository is
+  // called directly here, as that older code path did).
+  it('a payout already sitting in a closed period is refused, marked for the accountant, and posts once the period is open again', async () => {
     const s = await shop();
     try {
       const c = await claim(s, ['75.00']);

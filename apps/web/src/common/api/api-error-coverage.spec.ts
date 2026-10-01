@@ -121,6 +121,35 @@ describe('Thai coverage for default-open feature error codes', () => {
   });
 });
 
+// Review 2026-10-01 (claim hub, bank match and void): each refusal added there is something a shop owner or a
+// finance person reads in the middle of a job, so it has to be plain Thai that says what to do next. The two bank
+// codes come from the banking module, which the discovery above does not walk, so they are named here.
+describe('the refusals added with the claim hub and bank-match fixes are plain Thai that says what to do', () => {
+  it('names the next step, with no id, code word, enum word or currency code in the text', () => {
+    for (const [code, nextStep] of [
+      // Voiding a payment whose bank line is inside a completed reconciliation: reopen that reconciliation first.
+      ['reimbursement_payment_bank_reconciled', /กด "เปิดใหม่" ที่รอบกระทบยอดนั้น.*ก่อน.*ยกเลิกการจ่าย/],
+      // Matching a bank line to a claim payment voided since the list was read: refresh and pick another.
+      ['bank_match_payment_not_recorded', /กดรีเฟรชแล้วเลือกรายการอื่น/],
+      ['bank_match_state_changed', /กดรีเฟรชแล้วลองอีกครั้ง/],
+      // A hub filter the API does not have (a page left open across an update): reload and pick again.
+      ['reimbursement_list_bucket_invalid', /โหลดหน้าใหม่แล้วเลือกตัวกรองอีกครั้ง/],
+    ] as const) {
+      const thai = translateApiError(code);
+      assert.ok(thai, `${code} has no Thai text`);
+      assert.match(thai!, nextStep, code);
+      assert.match(thai!, /กรุณา/, `${code} asks for nothing`);
+      // No Latin letter at all: that rules out an id, a status or enum word, a snake_case code and "THB" at once.
+      assert.doesNotMatch(thai!, /[A-Za-z]/, `${code}: ${thai}`);
+      // And what the person sees for the HTTP answer is that text, not the code or the English message.
+      const shown = apiErrorMessage({ status: 409, code, message: 'Refresh the list and pick another payment.', details: { code } });
+      assert.equal(shown, thai, code);
+    }
+    // The message this replaced sent the person to undo a match on a screen that does not list the line.
+    assert.equal(translateApiError('reimbursement_payment_bank_matched'), null);
+  });
+});
+
 /**
  * Credit-wording spec §3 / W-01 (owner decision 2026-09-18): every surface a customer, a shop owner,
  * a support operator or a System Admin reads calls it "เครดิต AI" — never "งบ AI" and never
