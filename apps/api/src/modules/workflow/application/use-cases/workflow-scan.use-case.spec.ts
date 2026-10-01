@@ -117,7 +117,7 @@ describe('payment reminder candidates (audit B9)', () => {
   });
   const template = () => WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_payment_sla_breach')!;
 
-  function provider(rows: any[], policy: Record<string, unknown> | null = { slaHours: 48 }, steps: any[] = []) {
+  function provider(rows: any[], policy: Record<string, unknown> | null = { slaHours: 48 }, steps: any[] = [], voids: any[] = []) {
     const queries: any[] = [];
     const reimbursementRepo = {
       findPolicy: async () => policy,
@@ -131,6 +131,12 @@ describe('payment reminder candidates (audit B9)', () => {
             .filter((row) => row.companyId === where.companyId && where.reimbursementRequestId.in.includes(row.reimbursementRequestId)
               && row.status === where.status && row.invalidatedAt === where.invalidatedAt && row.decisionByUserId != null && row.decidedAt != null)
             .sort((a, b) => a.decidedAt.getTime() - b.decidedAt.getTime()),
+        },
+        reimbursementPayment: {
+          findMany: async ({ where }: any) => voids
+            .filter((row) => (row.companyId ?? 'co-1') === where.companyId && where.reimbursementRequestId.in.includes(row.reimbursementRequestId)
+              && row.status === where.status && row.voidedAt != null)
+            .sort((a, b) => a.voidedAt.getTime() - b.voidedAt.getTime()),
         },
       },
     } as any);
@@ -156,8 +162,28 @@ describe('payment reminder candidates (audit B9)', () => {
     ]);
     assert.deepEqual(items[0]!.payload, {
       requestId: 'rb-late', requestNo: 'RB-202610-00001', ageHours: 49, slaRisk: true, amount: '250', currency: 'THB',
-      requesterUserId: 'u_staff',
+      requesterUserId: 'u_staff', notificationPeriodKey: `payable:${hoursAgo(49).toISOString()}`,
     });
+  });
+
+  // Review M1: a reminder is one push per period, not one per scan window. For a claim waiting for
+  // payment the period is the time it became payable, which a void starts again.
+  it('files the reminder under the time the claim became payable, and a void starts both that and the clock again', async () => {
+    const paidThenVoided = claim({ id: 'rb-voided', approvedAt: hoursAgo(300) });
+    const { candidates } = provider([claim({ id: 'rb-plain', approvedAt: hoursAgo(60) }), paidThenVoided], undefined, [], [
+      { reimbursementRequestId: 'rb-voided', status: 'VOIDED', voidedAt: hoursAgo(200) },
+      { reimbursementRequestId: 'rb-voided', status: 'VOIDED', voidedAt: hoursAgo(10) },
+      { reimbursementRequestId: 'rb-voided', status: 'RECORDED', voidedAt: null },
+      { reimbursementRequestId: 'rb-plain', status: 'VOIDED', voidedAt: hoursAgo(5), companyId: 'co-2' },
+    ]);
+
+    const [plain, voided] = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+
+    assert.equal(plain!.payload['notificationPeriodKey'], `payable:${hoursAgo(60).toISOString()}`);
+    // Approved 300 hours ago, but payable again only since the last void 10 hours ago: not late yet.
+    assert.equal(voided!.payload['notificationPeriodKey'], `payable:${hoursAgo(10).toISOString()}`);
+    assert.equal(voided!.payload['ageHours'], 10);
+    assert.equal(fires(voided!.payload), false);
   });
 
   // Owner rule 2026-10-01: the reminder goes to whose turn it is. The scan names them from what
@@ -256,5 +282,38 @@ describe('payment reminder candidates (audit B9)', () => {
     assert.equal(WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS['approval_sla_breach'], undefined);
     // No task action: a task per scan window is how stale tasks pile up (audit B8).
     assert.deepEqual(template().defaultActionJson.map((action) => action.actionType), ['SEND_NOTIFICATION']);
+  });
+});
+
+// Review M1: the approval reminder is one push per round the claim was sent in. A claim sent again
+// and late again is reminded again; a scan window in the same round is not a new reminder.
+describe('approval reminder period (review M1)', () => {
+  const NOW = new Date('2026-10-01T12:00:00.000Z');
+  const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * 3_600_000);
+
+  it('files the reminder under the submission round of the claim', async () => {
+    const pending = (id: string, submittedAt: Date) => ({
+      id, requestNo: `RB-${id}`, status: 'PENDING_APPROVAL', amount: '250', currency: 'THB', requesterUserId: 'u_staff',
+      submittedAt, currentApprovalStepId: `step-${id}`,
+      approvalSteps: [{ id: `step-${id}`, status: 'PENDING', assignedApproverUserIds: ['u_manager'], approverRoleSnapshot: 'MANAGER' }],
+    });
+    const reimbursementRepo = {
+      findPolicy: async () => ({ slaHours: 48 }),
+      listRequests: async () => [pending('rb-1', hoursAgo(72)), pending('rb-2', hoursAgo(1))],
+      findActiveApproverUserIds: async (_companyId: string, userIds: string[]) => new Set(userIds),
+    } as any;
+    const approverRoutes = {
+      resolveOwnerRecipientUserIds: async (_companyId: string, inputs: any[]) => inputs.map(() => ['u_owner']),
+      resolveSubmissionRoutesBestEffort: async () => [],
+    } as any;
+    const candidates = new WorkflowScanCandidatesProvider(reimbursementRepo, {} as any, {} as any, {} as any, {} as any, approverRoutes, {} as any);
+
+    const items = await candidates.forTemplate('approval_sla_breach', 'co-1', NOW);
+
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['slaRisk'], item.payload['notificationPeriodKey']]), [
+      ['rb-1', true, `round:${hoursAgo(72).toISOString()}`],
+      ['rb-2', false, `round:${hoursAgo(1).toISOString()}`],
+    ]);
+    assert.deepEqual(items[0]!.payload['approverRecipientUserIds'], ['u_manager']);
   });
 });

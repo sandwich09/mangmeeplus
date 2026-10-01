@@ -139,19 +139,27 @@ export class WorkflowScanCandidatesProvider {
           approverTaskUserId: recipients[0],
           ownerRecipientUserIds: ownerRecipients[index],
           approverTaskRole: taskRole,
+          // One reminder per round the claim was sent in (review M1): the scan comes round every
+          // window and must not nag, and a claim sent again and late again is reminded again.
+          ...(r.submittedAt && { notificationPeriodKey: `round:${r.submittedAt.toISOString()}` }),
         },
       };
     });
   }
 
   // Audit B9: claims waiting for payment, held to the same policy deadline as approvals. The clock
-  // starts when the claim became payable: the finance decision when there was one, else the approval.
+  // starts when the claim became payable: the finance decision when there was one, else the
+  // approval, and again when a recorded payment is taken back.
   private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
     const rows = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
-    const approvers = await this.workflowRepo.findClaimApprovers(companyId, rows.map((r) => r.id));
+    const ids = rows.map((r) => r.id);
+    const approvers = await this.workflowRepo.findClaimApprovers(companyId, ids);
+    const lastVoids = await this.workflowRepo.findClaimLastPaymentVoids(companyId, ids);
     return rows.map((r) => {
-      const payableSince = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
+      const becamePayable = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
+      const lastVoid = lastVoids.get(r.id);
+      const payableSince = lastVoid && (!becamePayable || lastVoid > becamePayable) ? lastVoid : becamePayable;
       const age = payableSince ? ageHours(payableSince, now) : 0;
       const approver = approvers.get(r.id);
       return {
@@ -168,6 +176,8 @@ export class WorkflowScanCandidatesProvider {
           requesterUserId: r.requesterUserId,
           ...(r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && r.financeReviewedByUserId && { financeReviewerUserId: r.financeReviewedByUserId }),
           ...(approver && (!r.submittedAt || approver.decidedAt >= r.submittedAt) && { approvedByUserId: approver.userId }),
+          // One reminder per time the claim became payable (review M1), not one per scan window.
+          ...(payableSince && { notificationPeriodKey: `payable:${payableSince.toISOString()}` }),
         },
       };
     });

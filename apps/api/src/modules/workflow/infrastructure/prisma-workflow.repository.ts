@@ -199,6 +199,18 @@ export class PrismaWorkflowRepository {
     return new Map(steps.map((step) => [step.reimbursementRequestId, { userId: step.decisionByUserId!, decidedAt: step.decidedAt! }]));
   }
 
+  /** When a payment of each claim was last taken back: the claim is payable again from that moment. */
+  async findClaimLastPaymentVoids(companyId: string, requestIds: string[]): Promise<Map<string, Date>> {
+    if (requestIds.length === 0) return new Map();
+    const voids = await this.prisma.client.reimbursementPayment.findMany({
+      where: { companyId, reimbursementRequestId: { in: requestIds }, status: 'VOIDED', voidedAt: { not: null } },
+      select: { reimbursementRequestId: true, voidedAt: true },
+      orderBy: { voidedAt: 'asc' },
+    });
+    // Oldest first, so the latest void of a claim is the one left in the map.
+    return new Map(voids.map((row) => [row.reimbursementRequestId, row.voidedAt!]));
+  }
+
   async updateRule(companyId: string, id: string, data: Record<string, unknown>): Promise<WorkflowRuleRecord> {
     const row = await this.prisma.client.workflowRule.update({ where: { id }, data: data as any });
     return this.toRule(row);
