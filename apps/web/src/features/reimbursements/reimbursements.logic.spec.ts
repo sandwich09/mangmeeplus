@@ -357,6 +357,36 @@ describe('hub cards and filter chips', () => {
     assert.equal(hubFilterOf({ status: 'A_STATE_ADDED_LATER' }), 'closed');
   });
 
+  // Before: any row without a desk that was not PAID counted under ปฏิเสธ/ยกเลิก, a draft included.
+  it('places a claim with no desk, or a desk kind it does not know, by its status', () => {
+    const byStatus: Array<[Record<string, unknown>, string]> = [
+      [{ status: 'DRAFT' }, 'draft'],
+      [{ status: 'PENDING_APPROVAL' }, 'review'],
+      [{ status: 'FINANCE_REVIEW' }, 'review'],
+      [{ status: 'APPROVED', financeReviewStatus: 'PENDING' }, 'review'],
+      [{ status: 'APPROVED', financeReviewStatus: 'NOT_REQUIRED' }, 'payment'],
+      [{ status: 'APPROVED' }, 'payment'],
+      [{ status: 'READY_FOR_PAYMENT' }, 'payment'],
+      [{ status: 'PARTIALLY_PAID' }, 'payment'],
+      [{ status: 'PAID' }, 'paid'],
+      [{ status: 'REJECTED' }, 'closed'],
+      [{ status: 'CANCELLED' }, 'closed'],
+      [{ status: 'VOIDED' }, 'closed'],
+    ];
+    for (const [row, bucket] of byStatus) {
+      for (const currentDesk of [undefined, null, {}, { kind: 'A_DESK_ADDED_LATER' }]) {
+        assert.equal(hubFilterOf({ ...row, currentDesk }), bucket, `${JSON.stringify(row)} with desk ${JSON.stringify(currentDesk)}`);
+      }
+    }
+    // A known desk still decides: it is what the row prints as "อยู่ที่ …".
+    assert.equal(hubFilterOf({ status: 'APPROVED', financeReviewStatus: 'NOT_REQUIRED', currentDesk: { kind: 'FINANCE' } }), 'review');
+    // And the status rule agrees with the desk the API resolves for every live status, so the two never split a claim.
+    for (const row of rows) assert.equal(hubFilterOf({ status: row.status, financeReviewStatus: row.currentDesk?.kind === 'FINANCE' ? 'PENDING' : 'NOT_REQUIRED' }), hubFilterOf(row), row.id);
+    // The cards and chips follow: a desk-less draft is counted as a draft, and nothing drops out of the total.
+    const deskless = rows.map(({ currentDesk: _desk, ...row }) => ({ ...row, financeReviewStatus: row.id.includes('finance') ? 'PENDING' : 'NOT_REQUIRED' }));
+    assert.deepEqual(hubFilterCounts(deskless), hubFilterCounts(rows));
+  });
+
   it('counts every card and chip as the rows its filter shows, and the chips add up to ทั้งหมด', () => {
     const counts = hubFilterCounts(rows);
     assert.deepEqual(counts, { all: 12, draft: 1, review: 3, payment: 4, paid: 1, closed: 3 });

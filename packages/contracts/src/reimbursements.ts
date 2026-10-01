@@ -383,6 +383,48 @@ export const REIMBURSEMENT_DESK_LABELS: Record<ReimbursementCurrentDeskKind, str
   PAYMENT: 'ผู้มีสิทธิ์บันทึกจ่าย',
 };
 
+// ---- หน้ารวม (hub) buckets ----
+
+/** Every claim sits in exactly one bucket, so the hub's chips add up to "ทั้งหมด". */
+export type ReimbursementHubBucket = 'draft' | 'review' | 'payment' | 'paid' | 'closed';
+
+/**
+ * Where a claim's status alone places it. Typed over every status, so a status added later has to be
+ * placed here and cannot fall into ปฏิเสธ/ยกเลิก unnoticed.
+ */
+const HUB_BUCKET_BY_STATUS: Record<ReimbursementRequestStatus, ReimbursementHubBucket> = {
+  DRAFT: 'draft',
+  PENDING_APPROVAL: 'review',
+  FINANCE_REVIEW: 'review',
+  APPROVED: 'payment',
+  READY_FOR_PAYMENT: 'payment',
+  PARTIALLY_PAID: 'payment',
+  PAID: 'paid',
+  REJECTED: 'closed',
+  CANCELLED: 'closed',
+  VOIDED: 'closed',
+};
+
+/**
+ * The hub bucket of a claim: the desk it waits at, the one its row prints as "อยู่ที่ …". A claim with no
+ * desk, or with a desk kind this code does not know, is placed by its status: a draft is a draft whether
+ * or not the row carries a desk. One rule for the cards, the chips and the list.
+ */
+export function reimbursementHubBucket(claim: {
+  status?: string;
+  financeReviewStatus?: string;
+  currentDesk?: { kind?: string } | null;
+}): ReimbursementHubBucket {
+  switch (claim.currentDesk?.kind) {
+    case 'REQUESTER': return 'draft';
+    case 'APPROVER': case 'FINANCE': return 'review';
+    case 'PAYMENT': return 'payment';
+  }
+  // Approved and still being routed on: to finance review while that is pending, otherwise to payment.
+  if (claim.status === 'APPROVED' && claim.financeReviewStatus === 'PENDING') return 'review';
+  return HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
+}
+
 // ---- Request ----
 
 export type ReimbursementRequestSummary = {

@@ -1,7 +1,8 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementHubBucket, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  type ReimbursementHubBucket,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
@@ -334,22 +335,15 @@ export function parseHubTab(value: string | null | undefined, visible: readonly 
 // ---- หน้ารวม: summary cards and filter chips (spec §18.1) ----
 
 /** Every claim sits in exactly one of these, so the chips add up to "ทั้งหมด". */
-export const HUB_FILTERS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
-export type HubFilter = 'all' | (typeof HUB_FILTERS)[number];
+export const HUB_FILTERS = ['draft', 'review', 'payment', 'paid', 'closed'] as const satisfies readonly ReimbursementHubBucket[];
+export type HubFilter = 'all' | ReimbursementHubBucket;
 
 /**
  * Read off the desk the server resolved, the one the row prints as "อยู่ที่ …": waiting on an approver
- * or on finance review is รออนุมัติ/ตรวจสอบ, waiting on whoever records the payment is รอจ่าย. A claim
- * with no desk is finished: paid, or refused/cancelled.
+ * or on finance review is รออนุมัติ/ตรวจสอบ, waiting on whoever records the payment is รอจ่าย. A row with
+ * no desk, or a desk kind added later, is placed by its status (the shared rule in contracts).
  */
-export function hubFilterOf(row: { status?: string; currentDesk?: { kind?: string } | null }): (typeof HUB_FILTERS)[number] {
-  switch (row.currentDesk?.kind) {
-    case 'REQUESTER': return 'draft';
-    case 'APPROVER': case 'FINANCE': return 'review';
-    case 'PAYMENT': return 'payment';
-  }
-  return row.status === 'PAID' ? 'paid' : 'closed';
-}
+export const hubFilterOf = reimbursementHubBucket;
 
 /** The rows a card or a chip shows. */
 export function hubRows<T extends Parameters<typeof hubFilterOf>[0]>(rows: readonly T[], filter: HubFilter): T[] {
