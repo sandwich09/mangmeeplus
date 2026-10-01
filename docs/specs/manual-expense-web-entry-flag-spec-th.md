@@ -1,16 +1,20 @@
 # Spec: สวิตช์ทางเข้าบันทึกค่าใช้จ่ายด้วยมือบนเว็บ
 
-วันที่: 2026-10-01 · Version: 2.0 — additive web-entry flag (owner update)
+วันที่: 2026-10-01 · Version: 3.0 — ค่าตั้งหน้าจอรายร้าน (แก้ตามรีวิวอิสระ)
 
-Status: **READY FOR IMPLEMENTATION — DOCUMENTATION ONLY; ยังไม่ implement และยังไม่เปลี่ยน flag**
+Status: **PROPOSAL — รอเจ้าของยืนยันข้อเสนอ D1–D8 ใน §1; ยังไม่อนุญาตให้ implement และยังไม่เปลี่ยนค่าใดในระบบจริง**
 
-Owner: thawatchai · Scope: สวิตช์ย่อยใหม่ `expenses.manual.web_entry` ใต้ฟีเจอร์ `expenses.manual`; สัญญา session และ web entry เท่านั้น
+Owner: thawatchai · Scope: ค่าตั้งรายร้าน "แสดงเมนูบันทึกด้วยมือบนเว็บ" ที่ผู้ดูแลระบบตั้งได้ใต้ฟีเจอร์ "บันทึกด้วยมือ"; สัญญา session หนึ่งค่า และทางเข้าบนเว็บเท่านั้น
+
+ฐานโค้ดที่ใช้ตรวจ v3.0: `origin/develop` `ae13970b0` · ข้อค้นพบของ v2.0 ถูกตรวจบน `4a5817b42` ซึ่งไม่ใช่บรรพบุรุษของ develop รายการที่เปลี่ยนอยู่ในภาคผนวก A
 
 เอกสารประกอบ:
 
 - [Implementation plan](../plans/manual-expense-web-entry-flag-plan-th.md)
-- [Impact audit และหลักฐานปัจจุบัน](../research/manual-expense-web-entry-flag-audit-2026-10-01-th.md)
-- [Local E2E simulation](../qa/manual-expense-web-entry-flag-e2e-simulation-2026-10-01-th.md)
+- [รีวิวอิสระ 2026-10-01 (ข้อค้นพบ RM-01 ถึง RM-25)](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md)
+- [บั๊กในระบบปัจจุบันที่แก้แยกจากงานนี้](../research/manual-expense-current-code-bugs-2026-10-01-th.md)
+- [Impact audit (ฐานเก่า มีหมายเหตุกำกับ)](../research/manual-expense-web-entry-flag-audit-2026-10-01-th.md)
+- [Local E2E simulation (ทดสอบ key เดิมเท่านั้น มีหมายเหตุกำกับ)](../qa/manual-expense-web-entry-flag-e2e-simulation-2026-10-01-th.md)
 - [Task memory](../agent-memory/manual-expense-web-entry-flag.md)
 - [Feature entitlement decoupling](feature-entitlement-decoupling-spec.md)
 - [Submenu entitlement plan เดิม](../plans/feature-entitlement-submenu-plan.md)
@@ -20,346 +24,431 @@ Owner: thawatchai · Scope: สวิตช์ย่อยใหม่ `expenses
 - [Substitute receipt edit sync](substitute-receipt-expense-edit-sync-spec.md)
 - [Marketplace capture contract](marketplace-buyer-expense-capture-contract-appendix-th.md)
 
-## 1. Product decision และขอบเขตล่าสุด
+## 1. Product decision และข้อเสนอที่รอยืนยัน
 
-Owner ยืนยัน “ปิดแค่ทางเข้าการ manual บน web”, “ยังไม่แก้นะ ทำ spec มาก่อน” และปรับข้อเสนอเป็น **“เอา flag ย่อย ภายใต้ feature บันทึกด้วยมือ ซ่อน ทางเข้า menu นี้ไป เปิดปิดได้ เบื้องหลังทำงานเหมือนเดิม”** เมื่อ 2026-10-01
+### 1.1 สิ่งที่เจ้าของตัดสินแล้ว (2026-10-01)
 
-**เลือกเพิ่มสวิตช์ใหม่ ไม่เปลี่ยนความหมายสวิตช์เดิม**:
+Owner ยืนยัน “ปิดแค่ทางเข้าการ manual บน web”, “ยังไม่แก้นะ ทำ spec มาก่อน” และ **“เอา flag ย่อย ภายใต้ feature บันทึกด้วยมือ ซ่อน ทางเข้า menu นี้ไป เปิดปิดได้ เบื้องหลังทำงานเหมือนเดิม”**
 
-- `expenses` = ฟีเจอร์ค่าใช้จ่ายเดิม
-- `expenses.manual` = ฟีเจอร์บันทึกด้วยมือเดิม; คง `permissionKeys: ['expense.create', 'expense.update']`
-- `expenses.manual.web_entry` = สวิตช์ใหม่สำหรับทางเข้าเว็บ; `permissionKeys: []`
+จากคำตัดสินนี้ สิ่งที่ตายตัวแล้วคือ
 
-ตลอดเอกสาร v2 คำว่า **entry ON/OFF** หมายถึง key ใหม่เท่านั้น การทดลอง E2E ก่อน owner update ปิด key เดิม จึงเป็นหลักฐาน impact ของวิธีเดิม ไม่ใช่การทดสอบ key ใหม่
+1. ผู้ดูแลระบบเห็นสวิตช์ย่อยใต้ฟีเจอร์ “บันทึกด้วยมือ” ในหน้าแพ็กเกจและฟีเจอร์ของร้าน เปิดและปิดได้
+2. ปิดแล้วเมนู ปุ่ม และลิงก์ที่พาไปหน้าบันทึกด้วยมือบนเว็บหายไป ไม่ครอบการกรอกด้วยมือภายใน OCR และ wizard ใบรับรองแทนใบเสร็จ
+3. เบื้องหลังเหมือนเดิม: ไม่เปลี่ยน guard ของ POST/PATCH/DELETE, สิทธิ์ของบทบาท, LINE, OCR, wizard, การเบิกจ่าย หรือพฤติกรรมด้านเงิน
+4. `expenses.manual` คง `permissionKeys: ['expense.create', 'expense.update']` และความหมายเดิมทุกประการ ร้านที่ปิด `expenses.manual` อยู่ยังถูกตัดสิทธิ์ตามเดิม ไม่มีการคืนสิทธิ์อัตโนมัติ
 
-1. Admin เห็น switch ย่อย “แสดงทางเข้าบันทึกด้วยมือบนเว็บ” ใต้ฟีเจอร์บันทึกด้วยมือ
-2. OFF ซ่อนเมนู/ปุ่ม/ลิงก์ไปยังหน้า manual และปิด admission ใหม่ของ URL นั้น ตามขอบเขต web entry เดิม; ไม่ครอบปุ่มกรอกด้วยมือภายใน OCR/wizard
-3. ไม่เปลี่ยน POST/PATCH/DELETE guards, role grants, LINE, OCR, wizard, reimbursements หรือ financial behavior เพราะ switch ใหม่นี้
-4. ฟอร์มที่รับเข้าแล้วก่อน OFF กรอก/บันทึกต่อได้ตามสิทธิ์ธุรกิจจริง; reload/เปิดแท็บใหม่หลัง OFF ไม่รับเข้าใหม่
-5. บริษัทที่เดิม `expenses.manual=false` ยังคงถูก gate ตามเดิม ห้ามเปิด permission กลับหรือแก้ stored flag อัตโนมัติ
-6. บั๊ก DELETE/LINE ที่ audit พบเก็บเป็น follow-up แยก (§11–12); ไม่รวมการแก้หลังบ้านใน diff ของสวิตช์ใหม่นี้
+### 1.2 ข้อเสนอ รอเจ้าของยืนยัน
 
-**v2 supersedes v1** ที่เสนอ reuse `expenses.manual` และถอด permission mapping ของ key เดิม รวมทั้งถอนคำแนะนำให้คืน create/update ให้บริษัทที่ปิด key เดิมอยู่แล้ว งานปัจจุบันยังเป็น spec + simulation ไม่มี authorization ให้ implement/deploy
+เจ้าของยังไม่ได้ตอบคำถามแปดข้อจาก[รีวิวอิสระ](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md) เอกสารฉบับนี้เขียนตามคำตอบที่แนะนำ ทุกจุดที่ขึ้นกับข้อเสนอมีป้าย **(ข้อเสนอ Dn รอเจ้าของยืนยัน)** ถ้าเจ้าของเลือกทางเลือก ให้แก้เฉพาะหัวข้อในคอลัมน์สุดท้าย
+
+| รหัส | คำถาม | ข้อเสนอ รอเจ้าของยืนยัน | ทางเลือกและต้นทุน | หัวข้อที่ต้องแก้ถ้าเลือกทางเลือก |
+| --- | --- | --- | --- | --- |
+| D1 | สวิตช์นี้เป็นส่วนหนึ่งของแพ็กเกจที่ขาย หรือเป็นการตั้งค่าหน้าจอของร้าน | เป็นการตั้งค่าหน้าจอของร้าน เก็บแยกจากสิทธิ์แพ็กเกจ แต่ยังแสดงให้ผู้ดูแลเห็นใต้ “บันทึกด้วยมือ” ในหน้าเดิม | เป็นสิทธิ์ในชุดแพ็กเกจ: ต้องแก้ระบบชำระเงิน การเปิดร้านใหม่ หน้าผู้ดูแล และ LINE เพิ่มตามภาคผนวก B มิฉะนั้นร้านเดิมซื้อแพ็กเกจไม่ได้และ LINE ถูกรบกวน | §5, §10, §13–§15, ภาคผนวก B |
+| D2 | ร้านเดิม ร้านใหม่ และร้านที่ซื้อหรืออัปเกรดแพ็กเกจ ควรเห็นเมนูนี้เป็นค่าเริ่มต้นไหม | เห็นเมนูทุกร้านเป็นค่าเริ่มต้น การซื้อ อัปเกรด ดีล และชุดสำเร็จรูปไม่เปลี่ยนค่านี้เลย | ให้แพ็กเกจหรือชุดสำเร็จรูปเป็นผู้กำหนด: ต้องย้ายไปอยู่ในชุดสิทธิ์ตามทางเลือกของ D1 | §5.1, §10 |
+| D3 | ปิดสวิตช์นี้เพื่ออะไร | เพื่อซ่อนเมนูเท่านั้น ไม่ใช่การห้ามบันทึกด้วยมือ และไม่ใช่การควบคุมสิทธิ์ | ต้องการห้ามพนักงานพิมพ์รายจ่ายเอง: เป็นงานอีกชิ้นที่ต้องปิดที่ระบบหลังบ้าน และต้องตัดสินเรื่องใบรับรองแทนใบเสร็จ LINE และการแก้ร่างด้วย | §2, §4, §8, §13 |
+| D4 | คู่มือบนเว็บและคำตอบของผู้ช่วยใน LINE ที่พูดถึงบันทึกด้วยมือ ต้องปรับเมื่อปิดไหม | คู่มือบนเว็บซ่อนปุ่มเปิดหน้า และขึ้นหมายเหตุที่หัวข้อ “บันทึกด้วยมือ” ว่าร้านซ่อนเมนูนี้ไว้ ส่วนคำตอบใน LINE ไม่แก้รอบนี้ | (ก) ลบหัวข้อทั้งหัวข้อ: ต้องแก้เลขหัวข้อและคำว่า “เมนูย่อยทั้ง 8 รายการ” และคู่มือเว็บจะไม่ตรงกับฉบับเอกสาร (ข) แก้คำตอบ LINE ทันที: ต้องทบทวนชุดคำตอบใหม่และส่งค่าของร้านไปถึงผู้ช่วย | §9, §13 |
+| D5 | ถ้าระบบอ่านค่าสวิตช์ไม่ได้ชั่วคราว ให้แสดงหรือซ่อนเมนู | แสดงเมนูไว้ก่อน | ซ่อนไว้ก่อน: ถ้าระบบตอบไม่ครบหรือถอยรุ่น ทุกร้านจะเข้าหน้านี้ไม่ได้ทั้งที่ไม่มีใครสั่งปิด | §6 |
+| D6 | พนักงานที่กรอกค้างบนมือถือ แล้วหน้าเว็บโหลดใหม่เองหลังปิดสวิตช์ จะกลับเข้าไม่ได้ ยอมรับได้ไหม | ยอมรับ โดยเตือนผู้ดูแลก่อนปิด | เก็บร่างไว้ในเครื่องหรือให้กลับเข้าได้ชั่วคราว: ต้องสร้างที่เก็บร่างใหม่ ซึ่งอยู่นอกขอบเขต | §7 |
+| D7 | ร้านที่ปิดอัปโหลดใบเสร็จอยู่ จะยอมให้ซ่อนเมนูนี้ด้วยไหม | ยอม แต่เตือนผู้ดูแลก่อนบันทึก | ห้ามปิดทั้งคู่: ต้องเพิ่มกติกาผูกสองค่า และตัดสินว่าถ้าปิดอัปโหลดทีหลังจะเกิดอะไรขึ้น | §8 |
+| D8 | บั๊กปุ่มลบรายจ่ายฉบับร่างของบทบาทการเงินที่สร้างจากเทมเพลต จะแก้แยกเลยหรือรอ | แก้แยกเป็นงานเล็ก ไม่รองานนี้ | รอ: บทบาทดังกล่าวยังเห็นปุ่มลบที่กดแล้วไม่สำเร็จ | §11 |
+
+**v3.0 supersedes v2.0** ซึ่งเสนอ key `expenses.manual.web_entry` ใน `FEATURE_CATALOG` และ **v1** ซึ่งเสนอใช้ `expenses.manual` เดิม งานปัจจุบันยังเป็นเอกสาร ไม่มี authorization ให้ implement หรือ deploy
 
 ## 2. Goal, ผู้ใช้ และ acceptance outcome
 
-System admin ปิดทางเข้าหน้าบันทึกด้วยมือของบริษัทได้จากหน้าฟีเจอร์เดิม โดยพนักงานยังอัปโหลดใบเสร็จ, กรอกแก้ผล OCR, ทำงานผ่าน LINE และจัดการรายการเดิมได้ตาม role/tenant/branch/state เดิม
+จุดประสงค์ **(ข้อเสนอ D3 รอเจ้าของยืนยัน)**: ให้ผู้ดูแลระบบซ่อนเมนูบันทึกด้วยมือของร้านได้ เพื่อให้หน้าจอของพนักงานพาไปที่การอัปโหลดใบเสร็จเป็นหลัก สวิตช์นี้ **ไม่ใช่การห้าม** และ **ไม่ใช่ขอบเขตความปลอดภัย** ผู้มี `expense.create` ยังสร้างรายจ่ายได้ผ่าน API, wizard ใบรับรองแทนใบเสร็จ และ LINE ตามสิทธิ์เดิม
 
 | ผู้ใช้ | สิ่งที่ต้องเกิด |
 | --- | --- |
-| System admin | เห็นสวิตช์พร้อมคำอธิบายตรงขอบเขต เปลี่ยน ON/OFF ได้ผ่าน command/version/audit เดิม |
-| พนักงานผู้สร้าง | OFF แล้วไม่เห็นทางเข้า manual ใหม่ แต่ยังแก้ draft ของตนและส่งตรวจได้ตามสิทธิ์ |
-| Reviewer / finance | งานตรวจ ยืนยัน จ่าย ลบ หรือหลักฐานเดิมไม่ถูก manual-entry flag ตัดสิทธิ์ |
-| ผู้ใช้ LINE | สิทธิ์ capture/continuation/correction ไม่ขึ้นกับการแสดงทางเข้าเว็บนี้ |
-| Read-only / ผู้ข้ามบริษัทหรือสาขา | การเปิดสวิตช์ไม่เพิ่มสิทธิ์ ไม่ทำให้เข้าถึงข้อมูลที่เดิมห้าม |
+| System admin | เห็นสวิตช์ใต้ “บันทึกด้วยมือ” พร้อมคำอธิบายตรงกับสิ่งที่ทำจริง เปิดปิดได้กับทุกร้าน รวมร้านเดิม มี audit |
+| พนักงานผู้สร้าง | ปิดแล้วไม่เห็นทางเข้าหน้าบันทึกด้วยมือ ยังอัปโหลด แก้ร่างของตน และส่งตรวจได้ตามสิทธิ์ |
+| Reviewer / finance | งานตรวจ ยืนยัน จ่าย ลบ และหลักฐานเดิมไม่ถูกสวิตช์นี้แตะ |
+| ผู้ใช้ LINE | บทสนทนา งานที่ค้าง และสิทธิ์ capture/แก้ไข ไม่เปลี่ยนเมื่อมีการสลับสวิตช์ |
+| ลูกค้าที่กำลังชำระเงิน | การสลับสวิตช์ไม่กระทบการซื้อหรือการเปิดแพ็กเกจที่จ่ายแล้ว |
+| Read-only / ผู้ข้ามบริษัทหรือสาขา | การเปิดสวิตช์ไม่เพิ่มสิทธิ์ใด |
 
-Journey หลัก: admin เปิดหน้าบริษัท → แพ็กเกจและฟีเจอร์ → ค่าใช้จ่ายและใบเสร็จ → เปิดฟีเจอร์บันทึกด้วยมือเดิมไว้ → ปิด switch ย่อย “แสดงทางเข้าบันทึกด้วยมือบนเว็บ” → ผู้ใช้รับ session ล่าสุด → ทางเข้า manual หาย → upload/review ทำต่อได้ → เปิดกลับ → ทางเข้าเดิมกลับมาเฉพาะผู้มีสิทธิ์
+Journey หลัก: admin เปิดหน้าร้าน → แพ็กเกจและฟีเจอร์ → ค่าใช้จ่ายและใบเสร็จ → แถว “บันทึกด้วยมือ” → ปิดสวิตช์ย่อย “แสดงเมนูบันทึกด้วยมือบนเว็บ” → ยืนยัน → พนักงานที่เปิดหน้าใหม่ไม่เห็นทางเข้า แท็บที่เปิดค้างปรับภายในรอบตรวจปกติ → อัปโหลดและตรวจรายการทำต่อได้ → เปิดกลับ → ทางเข้ากลับมาเฉพาะผู้มีสิทธิ์
 
-## 3. Current-state findings ที่ต้องปิด
+## 3. Current-state findings (ตรวจซ้ำที่ `ae13970b0`)
 
-| ID | ประเภท | หลักฐาน/ปัญหาปัจจุบัน | Target |
+คอลัมน์ “ขอบเขต” บอกว่าแต่ละข้ออยู่ในงานนี้หรือไม่ ผู้ลงมือทำต้องตรวจทุกข้อซ้ำที่ commit ที่จะเริ่มงานตาม plan P0
+
+| ID | ข้อเท็จจริง ณ `ae13970b0` | ขอบเขต | Target |
 | --- | --- | --- | --- |
-| F01 | Wrong control for this goal | key เดิม OFF ตัด create/update; E2E ยืนยัน 9 บทบาทได้รับผล | เพิ่ม key ใหม่ permissionKeys ว่าง; คง key เดิม |
-| F02 | Separate backend bug | UI/use case อนุญาต `expense.delete` แต่ DELETE controller ต้องมี `expense.update` | HTTP guard ตรงกับ delete use case; ownership/state ยังตรวจด้านใน |
-| F03 | Separate backend bug | LINE ส่ง `line-draft:...`; draft validator อนุญาตเฉพาะ `[A-Za-z0-9_-]{8,64}` | ใช้ deterministic key ที่ผ่าน validator โดยไม่ขยาย payment-key regex |
-| F04 | Integration gap | `entitledFeatureKeys` มีใน resolver แต่ตกหล่นก่อน `/auth/me` และ WebSession | ส่งข้อมูลเดิมต่อถึงเว็บอย่างชัดเจน ไม่สร้าง permission ปลอม |
-| F05 | Refresh gap | Access fingerprint มี roles/permissions/scopes เท่านั้น; flag เปลี่ยนโดย permissions เท่าเดิมจะไม่ refresh | Include normalized feature snapshot และแยก feature-only change จากการถอนสิทธิ์ |
-| F06 | Entry coverage | ลิงก์ manual กระจายที่ sidebar, list, ledger, guide, AI guidance, tax return path | ทุกลิงก์ใช้ predicate เดียวกัน; direct URL มี dedicated entry gate |
-| F07 | Preset impact | `applyPreset` ไม่อ่าน state เดิม จึงเปิด manual กลับได้ | รักษาค่า manual ที่มีอยู่เมื่อใช้ preset ในบริษัทเดิม |
-| F08 | Confirmed baseline behavior | E2E ปิด key เดิมแล้ว focus refresh ทำให้ formCount=0 และข้อมูลที่ยังไม่บันทึกหาย | ปิดเฉพาะ admission ใหม่; mounted form ที่ได้รับ admission แล้วไม่หายเพราะ flag-only change |
-| F09 | Test gap | Unit LINE mock `createDraft.execute` จึงไม่เจอ F03 | Integration ต่อ real note use case กับ real create use case |
+| F01 | ปิด `expenses.manual` ตัด `expense.create` และ `expense.update` ของทุกบทบาท (E2E เดิมยืนยัน 9 จาก 10 บทบาทที่ถือสิทธิ์นี้ ไม่ได้ทดสอบ HR) | งานนี้ไม่แตะ | ไม่ใช้ key เดิมเป็นตัวซ่อนเมนู และไม่แก้ mapping |
+| F02 | DELETE controller ต้องมี `expense.update` แต่ UI และ use case ยอมรับ `expense.delete` กระทบบทบาทที่สร้างจากเทมเพลตการเงินสี่แบบ บทบาทในระบบไม่ได้รับผล | แยก | ดู §11 และ[เอกสารบั๊ก B1](../research/manual-expense-current-code-bugs-2026-10-01-th.md) |
+| F03 | ปิดแล้ว: แก้ใน `6fddca795` (2026-09-29) `lineDraftIdempotencyKey()` คืน `line-draft-<id>` ที่ผ่าน `PAYMENT_IDEMPOTENCY_KEY_PATTERN` และอยู่ใน main และ develop | ปิดแล้ว | ไม่มีงาน ห้ามเปลี่ยนสูตร key อีก (§12) |
+| F04 | `/auth/me` และ `WebSession` ไม่มีข้อมูลใดบอกว่าร้านซ่อนเมนูนี้ | งานนี้ | เพิ่ม boolean หนึ่งค่า ไม่ส่งรายการ feature ทั้งชุด (§6) |
+| F05 | `accessContextFingerprint` มี roles, roleNames, permissions และ branchIds การเปลี่ยนค่าที่ไม่กระทบสิทธิ์จึงไม่สั่ง refresh | งานนี้ | เพิ่ม boolean เดียวกันใน fingerprint (§6.3) |
+| F06 | ทางเข้าหน้า manual กระจายหลายจุด และมีข้อความในคู่มือกับ LINE ที่บอกให้ไปหน้านี้ | งานนี้ | รายการครบใน §9 |
+| F07 | `applyPreset` ไม่อ่าน state เดิม | ไม่เกี่ยวกับงานนี้แล้ว | ค่าตั้งใหม่ไม่อยู่ในชุดสิทธิ์ ชุดสำเร็จรูปจึงแตะไม่ได้ (§10) พฤติกรรมของ `expenses.manual` คงเดิม |
+| F08 | เมื่อ `expense.create` หาย หน้า hub แทนฟอร์มด้วยข้อความไม่มีสิทธิ์ ฟอร์มที่กรอกค้างจึงหาย (พฤติกรรมของ key เดิม) | งานนี้ | ค่าตั้งใหม่ต้องไม่ทำให้ฟอร์มที่รับเข้าแล้วหาย (§7) |
+| F09 | unit test ยืนยันรูป key ของ LINE แล้ว ยังไม่มี integration แบบ compose จริง | แยก | เพิ่มได้เป็นงานแยกโดยยืนยัน key ปัจจุบัน |
+| F10 | key ใน `FEATURE_CATALOG` ถูกปฏิบัติเป็นสิทธิ์ทุกที่: ระบบชำระเงินบังคับรูปชุดแถว, command สิทธิ์ล้างสถานะ LINE และ bump `setVersion`, onboarding และ billing เขียนค่าจากรายการแพ็กเกจ | เหตุผลของ D1 | ไม่เพิ่ม key เข้า catalog (§5) รายละเอียดในภาคผนวก B |
+| F11 | `expenses-guide.content.ts` ถูกตรึง hash โดยชุดคำตอบ LINE (`approved-product-help.ts`) | งานนี้ | ไม่แก้ไฟล์นี้ ใช้การแปลงผลลัพธ์แทน (§9) |
+| F12 | ไฟล์ session ฝั่งเว็บและ guard ถูกตรึงโดย `validate-production-maintenance-release.sh` | งานนี้ | ไม่แก้ไฟล์ที่ถูกตรึง (plan §2) |
+| F13 | Next 16.3.4: หน้า dynamic ถูกดึงใหม่เมื่อไปข้างหน้า แต่ back/forward ใช้หน้าที่เบราว์เซอร์จำไว้ และ `cacheComponents` ไม่ได้เปิดใช้ | งานนี้ | กติกา admission ใน §7 |
 
-Audit แยก observed behavior, design requirement และสิ่งที่ยังไม่ได้ทดสอบไว้ในเอกสารหลักฐาน ห้ามใช้ baseline tests ที่ผ่านเป็นหลักฐานว่า target behavior implement แล้ว
+ห้ามใช้ baseline tests ที่ผ่านเป็นหลักฐานว่า target behavior implement แล้ว และห้ามใช้ผล E2E เดิมรับรอง v3 เพราะการทดลองนั้นปิด `expenses.manual` บนฐานโค้ดเก่า
 
-## 4. Truth table ของ switch ย่อยใหม่
+## 4. Truth table ของค่าตั้งใหม่
 
-ตารางนี้ตรึง `expenses=true` และ `expenses.manual=true` ไว้ การเปลี่ยน switch ย่อยต้องไม่แก้สองค่านี้
+ตารางนี้ตรึง `expenses=true` และ `expenses.manual=true` ไว้ การสลับค่าตั้งต้องไม่แตะสองค่านี้
 
 ทุกช่อง “ตามเดิม” หมายถึงยังต้องผ่าน company active, membership, role permission, tenant/branch, source state และกติกาเฉพาะ flow
 
-| เส้นทาง/การกระทำ | entry ON | entry OFF |
+| เส้นทาง/การกระทำ | แสดงเมนู (ค่าเริ่มต้น) | ซ่อนเมนู |
 | --- | --- | --- |
-| Sidebar/ปุ่ม/ลิงก์เข้า `/expenses/manual` | แสดงเมื่อมี `expense.create` และ parent เปิด | ซ่อน |
-| เข้า URL manual ใหม่ / reload / เปิดแท็บใหม่ | รับเข้าเมื่อข้อมูล availability พร้อมและ role อนุญาต | แสดง unavailable state ไม่ mount ฟอร์มใหม่ |
-| ฟอร์ม manual ที่รับเข้ามาก่อน OFF | ทำต่อได้ | ทำต่อได้; ห้ามล้าง input/file/idempotency key จาก flag อย่างเดียว |
+| Sidebar/ปุ่ม/ลิงก์เข้า `/expenses/manual` | แสดงเมื่อมี `expense.create` | ซ่อน |
+| เข้า URL หน้า manual ใหม่ / reload / เปิดแท็บใหม่ | เปิดฟอร์มเมื่อมี `expense.create` | แสดงสถานะ “ร้านซ่อนหน้านี้ไว้” ไม่เปิดฟอร์ม server ตอบ 200 ตามปกติ |
+| ฟอร์ม manual ที่เปิดอยู่ก่อนซ่อน | ทำต่อได้ | ทำต่อได้ ห้ามล้าง input, ไฟล์ หรือ idempotency key |
 | POST `/expenses` โดยผู้มี `expense.create` | ตามเดิม | ตามเดิม |
 | สร้างรายการใหม่ในใบรับรองแทนใบเสร็จ | ตามเดิม | ตามเดิม |
 | แก้ draft เดิมทุก capture source / ส่งตรวจ / เริ่มตรวจใหม่ | ตามเดิม | ตามเดิม |
-| Upload, OCR ไม่พร้อม/เกิน quota, กรอกผล OCR เอง | ตามเดิม | ตามเดิม |
+| Upload, OCR ไม่พร้อมหรือเกิน quota, กรอกผล OCR เอง | ตามเดิม | ตามเดิม |
 | LINE text/media/continuation/edit preview/apply | ตามเดิม | ตามเดิม |
 | Capture group/review/allocation/handoff | ตามเดิม | ตามเดิม |
 | ใบเบิกจ่ายและ expense projections | ตามเดิม | ตามเดิม |
 | Confirm/payment/void/ledger/tax/export/report | ตามเดิม | ตามเดิม |
+| ซื้อ อัปเกรด ดีล ชุดสำเร็จรูป เปิดร้านใหม่ | ไม่อ่านและไม่เขียนค่านี้ | ไม่อ่านและไม่เขียนค่านี้ |
 
-Parent `expenses=false` หรือ launch gate `expenses/DEFAULT=CLOSED` ยังใช้ semantics เดิมของมัน ห้ามทำให้ parent เปิดอัตโนมัติเพียงเพราะเว็บมี `expense.create` จาก stale session
+เมื่อ `expenses` หรือ `expenses.manual` ปิด ผู้ใช้ไม่มี `expense.create` อยู่แล้ว ทางเข้าจึงหายตามกติกาเดิมโดยไม่ขึ้นกับค่าตั้งใหม่ และค่าที่เก็บไว้ไม่ถูกแก้ เมื่อเปิดฟีเจอร์กลับ ค่าเดิมมีผลต่อทันที
 
 ## 5. Data model และ permission contract
 
-### 5.1 Flat storage, สวิตช์ย่อยใน UI
+### 5.1 ที่เก็บ **(ข้อเสนอ D1 และ D2 รอเจ้าของยืนยัน)**
 
-- เพิ่ม key **`expenses.manual.web_entry`** ใน catalog/approved entitlement keys ใช้ `CompanyFeatureEntitlement` และ command เดิม ไม่เพิ่ม table, migration, env flag, SKU หรือ permission
-- Smallest fit: เพิ่ม leaf definition ใน `FEATURE_CATALOG` ของ `expenses`, `permissionKeys: []`, route `/expenses/manual`; admin render leaf นี้เป็น setting ใต้แถว `expenses.manual` ไม่เป็นเมนูธุรกิจอีกแถว
-- Catalog ปัจจุบันมีเพียง top-level + flat submenus; `parentFeatureKey(key)` คืน segment แรก จึงยังคืน `expenses` แม้ชื่อใหม่มีสาม segment ห้ามอ้างว่ามี recursive inheritance อยู่แล้ว และไม่ต้องสร้าง recursive feature engine
-- ความเป็น “ใต้ manual” ใน UI และ effective entry ใช้การตรวจทั้งสาม key อย่างชัดเจน (§6); ไม่ต้องเพิ่ม commercial dependency/cascade rule เพื่อให้ preference ของทางเข้าอยู่ได้ขณะ feature เดิม OFF
-- อย่าเพิ่ม navigation item, route หรือ sidebar node ซ้ำเพราะ catalog leaf ใหม่ ใช้ manual route/node เดิม
-- Explicit new-row `false` ต้องคงอยู่; missing new row ให้ inherit ON ตาม existing submenu default เพื่อรักษาพฤติกรรมบริษัทเดิม; legacy zero rows ยังคืน null
-- ฟีเจอร์เดิม/parent OFF มีผลตามเดิมแม้ stored entry=true; ON ตัวใหม่ไม่เปิด parent/ฟีเจอร์เดิม/permission ให้เอง
-- Onboarding/package materialization ต้องไม่เผลอเขียน explicit false เพราะ key ใหม่ไม่อยู่ใน hardcoded preset; default entry=true เมื่อไม่มี prior choice แต่ manual authority ยังคง gate ตามเดิม
-- ไม่ backfill หรือเรียก normalizer เพื่อเปลี่ยนค่าลูกค้าระหว่างงานนี้ การ bootstrap row เมื่อ admin บันทึกครั้งแรกต้องใช้ command/CAS/audit ปกติ
+สวิตช์นี้ **ไม่ใช่ entitlement key** ไม่เพิ่มอะไรใน `FEATURE_CATALOG`, `ALL_FEATURE_ENTITLEMENT_KEYS`, `MENU_ENTITLEMENT_BINDINGS`, `STARTER_FEATURE_KEYS`, `TIER_FEATURE_PRESETS` หรือ `SALES_DEAL_ALLOWED_FEATURE_KEYS` และไม่เขียนแถวใน `CompanyFeatureEntitlement`
+
+- เก็บเป็นค่าตั้งรายร้านแบบเดียวกับ `CompanyAiConfiguration.ocrEnabled` (`apps/api/prisma/schema.prisma:4075`) คือ boolean ค่าเริ่มต้นเปิด มี version ของตัวเองสำหรับ CAS และแถวถูกสร้างเมื่อผู้ดูแลบันทึกครั้งแรกเท่านั้น
+- รูปที่เสนอ: model ใหม่หนึ่งตัว (ชื่อเสนอ `CompanyWebEntrySetting`) มี `companyId` (unique, ลบตามบริษัท), `manualExpenseEntryEnabled Boolean @default(true)`, `version Int @default(0)`, `updatedBySystemAdminUserId`, `createdAt`, `updatedAt` ชื่อ model และ field ปรับได้ตอน review schema แต่กติกาต้องคงเดิม
+- **ไม่มีแถว = แสดงเมนู** ร้านเดิมทุกร้านจึงเห็นเมนูเหมือนวันนี้โดยไม่ต้อง backfill และร้านใหม่ไม่ต้องมีขั้นตอนใดใน onboarding
+- ต้องมี migration แบบ additive หนึ่งรายการ (`CREATE TABLE` อย่างเดียว ไม่แตะตารางเดิม ไม่มีการย้ายข้อมูล) จึงต้องปล่อยผ่านเส้นทาง release ปกติที่รองรับ migration ตาม [deployment protocol](../runbooks/uat-production-v2-deployment.md)
+- ไม่เพิ่ม environment switch, SKU, permission หรือ pack
 
 ### 5.2 Authority invariance
 
-**ห้ามแก้ `expenses.manual.permissionKeys`**, `pack.expense.self`, HTTP expense guards หรือ backend source-state conditions ในงาน switch นี้ Key ใหม่ไม่มี permission owner, ไม่มี pack, ไม่มี guard ที่ repository/use case/LINE tools
+ห้ามแก้ `expenses.manual.permissionKeys`, `pack.expense.self`, HTTP expense guards, `SetPartnerFeaturesUseCase`, `evaluateEntitledFeatureKeys`, `filterPermissionsByEntitlement` หรือ source-state conditions ในงานนี้ ค่าตั้งใหม่ถูกอ่านเพียงสามจุด คือ `GET /v1/auth/me`, `GET` รายละเอียดร้านของผู้ดูแล และ command ใน §5.3 ไม่มี guard, use case, repository, LINE tool หรือ billing ใดอ่านค่านี้
 
-เมื่อ parent/manual เดิม/roles/scopes เท่าเดิม:
+เมื่อ roles, scopes และสิทธิ์แพ็กเกจเท่าเดิม ต้องได้
 
 ```text
-permissions(entry=true) == permissions(entry=false) == permissions(entry=true again)
+permissions(แสดง) == permissions(ซ่อน) == permissions(แสดงอีกครั้ง)
+entitledFeatureKeys(แสดง) == entitledFeatureKeys(ซ่อน)
+CompanyEntitlementSet.setVersion ไม่เปลี่ยนเมื่อสลับค่าตั้งนี้
 ```
 
-ต้องเทียบ permission ทั้งชุดสำหรับ OWNER/ADMIN/STAFF/FINANCE/ACCOUNTANT/custom/read-only ไม่ใช่ดูแค่ expense.create หากปิด key เดิมหรือ parent การถอน permission ตาม implementation เดิมยังเกิดได้และไม่ใช่หน้าที่ switch ใหม่นี้ที่จะยกเว้น
+ต้องเทียบ permission ทั้งชุดของทุกบทบาทใน `ROLE_GRANTS` และทุกเทมเพลตใน `ROLE_TEMPLATES` ไม่ใช่ดูแค่ `expense.create`
 
-Catalog tests ต้องตรวจ key ใหม่เพียงหนึ่งตัวและไม่มี owned permission; ไม่ลด invariant ของรายการอื่นเพื่อให้ผ่าน
+### 5.3 Command ของผู้ดูแล
+
+ใช้รูปแบบเดียวกับ `SetPartnerOcrConfigUseCase` (`apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ocr-config.use-case.ts`)
+
+- endpoint ใหม่ใต้ `/v1/system/partners/:partnerCompanyId/` (ชื่อเสนอ `manual-expense-web-entry`) guard ด้วย `system.partner_feature.manage` ซึ่งเป็นสิทธิ์เดียวกับการแก้ฟีเจอร์ของร้าน ไม่เพิ่ม permission
+- body เป็นค่าที่ต้องการแบบสัมบูรณ์: `enabled` และ `expectedVersion` ไม่บังคับกรอกเหตุผล (ต่างจาก OCR config) เพราะไม่ใช่การปรับโควตาหรือสิทธิ์ และหน้าจอมีขั้นยืนยันก่อนซ่อนอยู่แล้ว
+- ค่าที่ขอเท่ากับค่าปัจจุบัน: คืนค่าปัจจุบัน ไม่เขียน ไม่ audit ไม่เพิ่ม version การกดซ้ำหรือ retry หลัง response หายจึงปลอดภัย
+- ค่าต่างและ `expectedVersion` ไม่ตรง: 409 ให้โหลดใหม่ก่อนบันทึก
+- ร้านสถานะ `DISABLED` หรือ `ARCHIVED`: ปฏิเสธด้วยกติกา `partnerMetadataLockError` เดิม
+- ทำใน transaction เดียวกับ audit ไม่เรียก `invalidateLineConversationState` ไม่สร้าง `EntitlementTransition`, `RunoffSnapshot` หรือ `EntitlementCommand` และไม่แตะ `CompanyEntitlementSet`
+- `GET` รายละเอียดร้านคืนค่าปัจจุบันและ version เสมอ รวมร้านที่ยังไม่มีแถว (ค่า = แสดง, version = 0)
+
+### 5.4 Audit
+
+เขียน `AuditLog` หนึ่งแถวต่อการเปลี่ยนค่าจริง เก็บ company, ผู้ดูแล, requestId, ค่าเดิม, ค่าใหม่, version เดิมและใหม่ ใช้ action ใหม่ชื่อเสนอ `system.partner_manual_expense_web_entry.update` การอ่านค่าเพื่อแสดงเมนูไม่สร้าง audit
 
 ## 6. Session contract: API → web
 
-### 6.1 ใช้ข้อมูลที่มีอยู่แล้ว
+### 6.1 ค่าเดียว **(ข้อเสนอ D5 รอเจ้าของยืนยัน)**
 
-`ResolvedAccess.entitledFeatureKeys?: string[] | null` มีอยู่ใน resolver และ repository คืนค่าแล้ว ให้ forward ผ่าน:
-
-1. `ResolveRequestContextUseCase` → API `RequestContext`
-2. shared contracts `RequestContext` ให้ตรงกับ API model
-3. `GET /v1/auth/me` → `entitledFeatureKeys`
-4. web `WebSession`, `MyContext`, `fetchServerSession` และ `fetchMyContext`
-
-External `/auth/me` ใน production path ต้องคืน `entitledFeatureKeys` เสมอ ไม่จำเป็นต้องทำ field นี้ mandatory สำหรับ internal/system test contexts ทุกตัว แต่ห้ามแปลง missing field เป็น legacy `null` โดยปริยาย
-
-ตัวอย่าง response เพิ่มแบบ additive:
+`GET /v1/auth/me` เพิ่ม field เดียวแบบ additive ที่ server คำนวณ: `manualExpenseWebEntry: boolean` (true เมื่อร้านไม่มีแถวหรือแถวระบุว่าแสดง) อ่านใน `auth.controller.ts` พร้อมข้อมูลอื่นของ response เดิม ไม่ผ่าน `ResolvedAccess`, `RequestContext` หรือ resolver เพื่อไม่ให้ค่านี้ไปถึง LINE หรือ fingerprint ของ LINE
 
 ```json
 {
   "companyId": "company-A",
   "permissions": ["expense.create", "expense.update", "expense.receipt.upload"],
-  "entitledFeatureKeys": ["expenses", "expenses.manual", "expenses.upload", "expenses.list"]
+  "manualExpenseWebEntry": false
 }
 ```
 
-กรณีนี้ entry OFF (ไม่มี `expenses.manual.web_entry`) ขณะที่ฟีเจอร์ manual เดิมยัง ON และ permissions คงเดิม
+เว็บไม่รับรายการ feature ทั้งชุด เพราะเมื่อ `expenses` หรือ `expenses.manual` ปิด `expense.create` ถูกตัดอยู่แล้ว ข้อมูลที่เว็บต้องรู้เพิ่มจึงมีเพียงค่านี้
 
-| ค่า | ความหมายฝั่งเว็บ |
+| ค่าที่เว็บได้รับ | ความหมาย |
 | --- | --- |
-| array | ใช้ snapshot จาก server; ตรวจทั้ง `expenses`, `expenses.manual`, `expenses.manual.web_entry` |
-| `null` | บริษัท legacy ไม่มี entitlement rows; inherit allow แต่ยังต้องมี `expense.create` |
-| field หาย / malformed / initial request error | unknown; ไม่รับเข้า manual ใหม่ แสดง retry; ไม่ปิด feature อื่น |
+| `true` | แสดงทางเข้าตามสิทธิ์ |
+| `false` | ร้านซ่อนเมนู |
+| field หายหรืออ่านไม่ได้ | ถือว่าแสดง เพราะค่าเริ่มต้นคือแสดง และ API เป็นผู้ตัดสินสิทธิ์จริงอยู่แล้ว |
 
-ห้ามให้ browser ส่ง feature list มาเพิ่มสิทธิ์ API และไม่เก็บ feature decision ใน localStorage/JWT เป็น authority
+ห้ามให้ browser ส่งค่านี้กลับมาเพื่อเปลี่ยนสิทธิ์ และไม่เก็บใน localStorage หรือ JWT
 
 ### 6.2 Predicate เดียวสำหรับทางเข้า
 
-เพิ่ม helper เล็กใน web expense feature เช่น `manual-expense-entry.logic.ts` ใช้ร่วมกันโดย nav/CTA/dedicated gate:
+เพิ่ม helper เล็กใน web expense feature (ชื่อเสนอ `manual-expense-entry.logic.ts`) ใช้ร่วมกันทุกจุดใน §9
 
 ```text
-manualWebEntryAvailable =
-  entitledFeatureKeys === null
-  OR (array contains expenses AND expenses.manual AND expenses.manual.web_entry)
-
-canOpenManualWeb = session is for the active company
-  AND permissions contains expense.create
-  AND manualWebEntryAvailable
+canOpenManualWeb = session เป็นของบริษัทที่เปิดอยู่
+  AND permissions มี expense.create
+  AND manualExpenseWebEntry !== false
 ```
 
-unknown availability แยกจาก disabled เพื่อแสดง loading/error/retry ได้ถูกต้อง ห้ามใช้ `permissions.includes('expense.create')` เพียงอย่างเดียวแทน predicate นี้
-
-ไม่เปลี่ยนความหมาย `expenseCapabilities.canCreate` เพราะ wizard และ flow อื่นยังต้องใช้ authority เดิม ให้ส่งค่า entry availability แยกจาก capabilities
+ไม่เปลี่ยนความหมาย `expenseCapabilities.canCreate` เพราะ wizard และ flow อื่นยังต้องใช้ authority เดิม ให้ส่งผลของ predicate แยกจาก capabilities
 
 ### 6.3 Revalidation และ company switching
 
-- เพิ่ม snapshot ของ entitled features ใน `accessContextFingerprint` โดย sort/deduplicate โดยไม่ mutate input; `null`, missing และ empty array ต้องไม่ถูกเหมารวม
+- เพิ่มเฉพาะ boolean นี้ใน `accessContextFingerprint` ไม่ใส่รายการ feature เพื่อไม่ให้การเปลี่ยนสิทธิ์ที่ไม่เกี่ยวสั่ง `router.refresh()` ทุกแท็บของร้าน
 - ใช้ focus/visibility/`ACCESS_CONTEXT_STALE_EVENT`/poll **60 วินาที** เดิม ไม่เพิ่ม timer หรือ websocket
-- feature-only change ต้องอัปเดตทางเข้าแม้ permission array ไม่เปลี่ยน; role/scope revoke ยังใช้ error/refresh เดิม
-- company switch ต้อง reset entry admission; ห้ามนำ snapshot/admission ของบริษัท A ไปใช้บริษัท B
-- loading/failed reads ห้ามทำให้เมนู manual กระพริบเปิดก่อนทราบค่า
-- ไม่มีคำรับรองว่าปิดสวิตช์แล้วหายทุกแท็บทันที: fresh page ใช้ fresh context; แท็บเปิดอยู่ปรับเมื่อ revalidate สำเร็จ
+- การเปลี่ยนค่านี้ต้องอัปเดตเมนูแม้ permission array ไม่เปลี่ยน และต้องไม่ทำให้ใครหลุดจากระบบ
+- ไม่มีคำรับรองว่าปิดแล้วหายทุกแท็บทันที: หน้าที่โหลดใหม่ใช้ค่าล่าสุด แท็บที่เปิดอยู่ปรับเมื่อ revalidate สำเร็จ แท็บที่ซ่อนอยู่ปรับเมื่อกลับมาแสดง
+- company switch เป็นการเปลี่ยน route จึงประเมินใหม่เสมอ ห้ามนำค่าของบริษัท A ไปใช้กับบริษัท B
 
-## 7. Dedicated manual-page admission และการรักษางานค้าง
+## 7. Admission ของหน้า manual และการรักษางานค้าง
 
-### 7.1 เข้าหน้าใหม่
+### 7.1 Admission คืออะไร และอยู่ที่ไหน
 
-- server route `/expenses/manual` โหลด session ของบริษัทด้วย `fetchServerSession` แบบ no-store เดิม
-- ใช้ client entry gate ที่มี props จาก server และ revalidate เมื่อเป็น stale/back-navigation ก่อนรับเข้าใหม่; ไม่อาศัยเมนูซ่อนอย่างเดียว
-- ส่ง manual links ด้วย `prefetch={false}` ถ้า prefetch ทำให้ client ใช้ผล admission เก่า; มี test Back/Forward และ stale route cache
-- gate ต้องครอบเฉพาะ `ManualExpensePanel` ไม่ครอบทั้ง `ExpensesHubPage` หรือทุก `/expenses/*`
-- alias `/expenses?tab=manual`, deep link และ tax-setup return ต้องลงที่ gate เดียวกัน ไม่มีช่องเปิดผ่าน query string
-- generic `canAccessWorkspacePath` เป็น permission gate ของโมดูลตามเดิม ไม่ใช้ `expenses.manual.web_entry` ปิด module shell หรือไล่ผู้ใช้ไป dashboard
+Admission คือการตัดสินว่า “หน้านี้เปิดฟอร์มให้หรือไม่” ในเบราว์เซอร์ **เป็นสถานะหน้าจอ ไม่ใช่การปฏิเสธของ server และไม่ใช่ขอบเขตความปลอดภัย**
 
-### 7.2 Form ที่เปิดอยู่แล้ว
+- server route `/expenses/manual` โหลด session ด้วย `fetchServerSession` แบบ no-store เดิม แล้ว **render gate และฟอร์มเสมอ** โดยส่งผลของ `canOpenManualWeb` เป็น prop server ไม่ตอบ 403 และไม่ redirect เพราะค่านี้
+- gate เป็น client component ที่ครอบเฉพาะ `ManualExpensePanel` ตัดสินจาก prop: เมื่อ prop เป็นแสดง ให้รับเข้า เปิดฟอร์ม และจำผลไว้ โดยไม่ถอนเมื่อ prop เปลี่ยนเป็นซ่อนภายหลัง เมื่อ prop เป็นซ่อนและยังไม่เคยรับเข้า ให้แสดงสถานะ “ร้านซ่อนหน้านี้ไว้” และถ้า prop กลับเป็นแสดงระหว่างที่ผู้ใช้อยู่ในสถานะนั้น ให้รับเข้าได้โดยไม่ต้องโหลดหน้าใหม่
+- ผลรับเข้าเก็บใน state ของ gate เท่านั้น ไม่เก็บลง storage, cookie หรือ server
+- alias `/expenses?tab=manual`, deep link ผ่านหน้า login และลิงก์กลับจากหน้าตั้งค่ารหัสภาษี ลงที่ route เดียวกันจึงผ่าน gate เดียวกัน
+- generic `canAccessWorkspacePath` เป็น permission gate ของโมดูลตามเดิม ห้ามใช้ค่านี้ปิด module shell หรือไล่ผู้ใช้ไป dashboard
+- ไม่ต้องใส่ `prefetch={false}` ที่ลิงก์ เพราะหน้า dynamic ไม่ถูก prefetch เต็มอยู่แล้ว
+- ข้อจำกัดที่ยอมรับ: การกด Back/Forward กลับมาหน้าที่เบราว์เซอร์จำไว้ก่อนร้านซ่อนเมนู อาจยังเห็นฟอร์มจนกว่าจะโหลดหน้าใหม่ ไม่สร้างกลไกเพิ่มเพื่อปิดกรณีนี้ เพราะ API รับการบันทึกตามสิทธิ์เดิมอยู่แล้ว ถ้าภายหลังเปิดใช้ `cacheComponents` ของ Next ต้องทบทวนข้อนี้ใหม่
 
-Admission เป็นสถานะในหน่วยความจำของ mounted page/user/company เท่านั้น:
+### 7.2 ฟอร์มที่เปิดอยู่แล้ว **(ข้อเสนอ D6 รอเจ้าของยืนยัน)**
 
-- เมื่อ admission สำเร็จแล้ว flag-only OFF ไม่ unmount form, ไม่เคลียร์ branch/items/tax/file และไม่สร้าง idempotency key ใหม่
+- เมื่อ gate รับเข้าแล้ว การซ่อนเมนูภายหลังไม่ unmount ฟอร์ม ไม่เคลียร์ `items`, ค่าบริการ, ภาษี, ไฟล์ที่เลือก, `savedExpenseId` และไม่สร้าง idempotency key ใหม่ (state ใน `ExpensesPages.tsx:2666-2688`)
 - ผู้ใช้บันทึกรายการที่กำลังกรอกได้ตาม API permission เดิม และแนบไฟล์หลังสร้างต่อได้
-- แสดงข้อความสุภาพได้ว่า “ปิดทางเข้าบันทึกด้วยมือแล้ว คุณยังบันทึกรายการที่กำลังกรอกได้”
-- เมื่อออกจากหน้า, hard reload, เปลี่ยนบริษัท/ผู้ใช้ หรือเปิดแท็บใหม่ ต้องประเมิน admission ใหม่
-- permission/company/session ถูกถอนจริงยังมีผล ห้ามใช้ admission bypass API authorization
-- รูปแบบ component ต้องคง client gate identity ระหว่าง `router.refresh`; server ไม่สลับทั้ง subtree เป็น forbidden เพราะ flag-only change จนทำข้อมูลที่กรอกหาย
-- ไม่เพิ่ม persistent draft store, ไม่ส่งข้อมูลไป server อัตโนมัติ และไม่เพิ่มสิทธิ์ให้ผู้ไม่มี role grant
+- แสดงข้อความสุภาพได้ว่า “ร้านซ่อนหน้านี้แล้ว คุณยังบันทึกรายการที่กำลังกรอกได้”
+- เมื่อออกจากหน้า, โหลดหน้าใหม่, เปลี่ยนบริษัทหรือผู้ใช้ หรือเปิดแท็บใหม่ ต้องประเมินใหม่
+- ข้อจำกัดที่ยอมรับ: ถ้าเบราว์เซอร์โหลดหน้าใหม่เอง (มือถือสลับแอป, LINE in-app browser) ถือเป็นการเข้าใหม่และไม่เปิดฟอร์มเมื่อร้านซ่อนเมนู ข้อมูลที่ยังไม่บันทึกหายตามพฤติกรรมเดิมของเบราว์เซอร์
+- permission, company หรือ session ที่ถูกถอนจริงยังมีผลตามเดิม ห้ามใช้ admission ข้าม API authorization
+- server ต้องไม่สลับ subtree ของหน้าเพราะค่านี้เปลี่ยน มิฉะนั้น `router.refresh()` จะทำให้ฟอร์มหายซ้ำอาการ F08
+- ไม่เพิ่ม persistent draft store และไม่ส่งข้อมูลไป server อัตโนมัติ
 
-Acceptance ต้องทดสอบกรอกข้อมูล+เลือกไฟล์ → OFF จากอีก admin session → focus/poll → form อยู่ → บันทึกครั้งเดียว → เปิด URL ใหม่ไม่ได้
+Acceptance ต้องทดสอบ: กรอกข้อมูลและเลือกไฟล์ → ผู้ดูแลซ่อนเมนูจากอีก session → focus/poll → ฟอร์มอยู่ → บันทึกครั้งเดียวสำเร็จ → โหลดหน้าใหม่แล้วไม่เปิดฟอร์ม
 
 ## 8. Admin UI และข้อความ
 
-แสดงโครงสร้างดังนี้ โดย switch หลักคง label และ semantics เดิม:
+แสดงโครงสร้างดังนี้ในหน้าแพ็กเกจและฟีเจอร์ของร้าน โดยสวิตช์หลักคง label และความหมายเดิม
 
 ```text
 ค่าใช้จ่ายและใบเสร็จ
-  บันทึกด้วยมือ                         [switch เดิม]
-    แสดงทางเข้าบันทึกด้วยมือบนเว็บ       [switch ใหม่]
+  บันทึกด้วยมือ                         [สวิตช์เดิม อยู่ในชุดสิทธิ์]
+    แสดงเมนูบันทึกด้วยมือบนเว็บ          [สวิตช์ใหม่ บันทึกแยก]
 ```
 
-คำอธิบาย switch ใหม่: “ปิดเพื่อซ่อนเมนูและปุ่มเข้าหน้าบันทึกด้วยมือบนเว็บ งานที่เปิดอยู่ การแก้รายการเดิม อัปโหลดใบเสร็จ LINE และใบรับรองแทนใบเสร็จยังใช้สิทธิ์เดิม”
+- สวิตช์ใหม่ **ไม่อยู่ในรายการเปลี่ยนแปลงของชุดสิทธิ์** ไม่ผ่านปุ่ม “ตรวจสอบและบันทึก”, ชุดสำเร็จรูป, เปิดปิดทั้งกลุ่ม หรือ `toggleSubmenu` กดแล้วบันทึกผ่าน command ใน §5.3 ทันทีหลังยืนยัน
+- ใช้ได้กับทุกร้าน รวมร้านเดิมที่ยังไม่มีแถว และร้านที่ชุดสิทธิ์ยังรอการเตรียม เพราะไม่ขึ้นกับชุดสิทธิ์
+- เมื่อ `expenses` หรือ `expenses.manual` ที่บันทึกแล้วของร้านปิดอยู่: แสดงค่าที่เก็บไว้แบบกดไม่ได้ ไม่แก้ค่าที่เก็บ
+- ไม่เพิ่ม navigation item, route หรือแถวเมนูใหม่ในรายการเมนูของร้าน
 
-- Parent/manual เดิม OFF: setting ใหม่แสดงค่าที่เก็บไว้พร้อม disabled และข้อความให้เปิดฟีเจอร์เดิมก่อน; ไม่เปลี่ยน stored preference
-- Preview/save ระบุเปลี่ยนเฉพาะ “ทางเข้าบนเว็บ”; ไม่แสดงเป็นการถอน create/update หรือซื้อแพ็กเกจใหม่
-- Entry unavailable: “บริษัทปิดทางเข้าบันทึกด้วยมือบนเว็บอยู่” พร้อมทางกลับรายการ/อัปโหลดที่ actor มีสิทธิ์
-- Unknown/read error: “ยังตรวจสอบการเปิดใช้งานหน้านี้ไม่ได้ กรุณาลองอีกครั้ง” พร้อม retry; role deny ใช้ permission state เดิม
-- Loading/save/conflict/normalization/inactive-company controls ใช้ pattern เดิม Switch มี accessible name, focus และ aria-checked; hidden CTA ไม่เหลือ keyboard focus target
+ข้อความบนหน้าจอ **(ข้อเสนอ D3, D6, D7 รอเจ้าของยืนยัน)**
 
-## 9. ครอบคลุม web entry ทุกจุด
-
-| จุด | พฤติกรรมที่ต้อง implement/verify |
+| จุด | ข้อความ |
 | --- | --- |
-| Sidebar desktop/mobile (`buildNavItems`) | Manual submenu ใช้ canOpenManualWeb; siblings ไม่หาย |
-| Expense list (`ExpenseListPage`) | “บันทึกเอง” ซ่อนเมื่อ OFF |
-| Dedicated route / hub tab | ใช้ admission §7; `canCreate` ยังเป็น authority เดิม |
-| Income-expense ledger | CTA manual/empty-state ใช้ helper; upload ยังเสนอได้ |
-| User guide | ไม่แสดง actionable manual link เมื่อ OFF; ข้อความอธิบายทั่วไปเก็บได้ |
-| AI usage guidance บนเว็บ | ไม่เสนอ `expenses/manual` ที่เปิดไม่ได้; guidance อื่นเดิม |
-| Tax-code setup return link | ลิงก์กลับไป manual ต้องผ่าน gate; กลับ existing expense ไม่ถูกเปลี่ยน |
-| Upload “ไม่มีเอกสาร” | ทางเข้า wizard เดิมคงไว้; อย่านำ manual web flag ไปครอบ `caps.canCreate` |
-| SubstituteReceiptWizardPage | การสร้าง/เลือก existing expense คง permission/state เดิมทั้งหมด |
-| Notifications/bookmarks/query aliases | ถ้า URL ปลายทางคือ dedicated manual ให้ใช้ gate; record detail ไม่ถูก gate |
+| ชื่อสวิตช์ | แสดงเมนูบันทึกด้วยมือบนเว็บ |
+| คำอธิบายใต้สวิตช์ | ปิดเพื่อซ่อนเมนูและปุ่มที่พาไปหน้าบันทึกด้วยมือบนเว็บเท่านั้น ไม่ได้ห้ามการบันทึกรายจ่ายด้วยมือ พนักงานยังบันทึกผ่านใบรับรองแทนใบเสร็จ การพิมพ์ใน LINE และการแก้รายการเดิมได้ตามสิทธิ์เดิม |
+| ยืนยันก่อนซ่อน | ซ่อนเมนูบันทึกด้วยมือของร้านนี้ใช่ไหม พนักงานที่กำลังกรอกอยู่จะบันทึกต่อได้ แต่ถ้าหน้าเว็บถูกโหลดใหม่จะกลับเข้าหน้านี้ไม่ได้ แนะนำให้ปิดนอกเวลางาน |
+| คำเตือนเพิ่มเมื่อร้านปิดอัปโหลดใบเสร็จอยู่ | ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ ถ้าซ่อนเมนูนี้ด้วย พนักงานจะไม่มีปุ่มสร้างรายจ่ายบนเว็บ |
+| กดไม่ได้เพราะฟีเจอร์แม่ปิด | เปิดฟีเจอร์บันทึกด้วยมือก่อน จึงจะตั้งค่านี้ได้ |
+| บันทึกสำเร็จ | ซ่อนเมนูบันทึกด้วยมือแล้ว / แสดงเมนูบันทึกด้วยมือแล้ว |
+| ค่าเปลี่ยนไปแล้วระหว่างเปิดหน้า | ค่านี้ถูกเปลี่ยนไปแล้ว กรุณาโหลดหน้าใหม่ก่อนบันทึกอีกครั้ง |
+| พนักงานเปิดหน้าที่ถูกซ่อน | ร้านของคุณซ่อนหน้าบันทึกด้วยมือไว้ |
+| ปุ่มใต้ข้อความนั้น (แสดงเฉพาะที่ผู้ใช้มีสิทธิ์) | อัปโหลดใบเสร็จ · ไปหน้ารายการค่าใช้จ่าย |
+| เมื่อไม่มีปุ่มใดให้แสดง | กรุณาติดต่อผู้ดูแลร้านของคุณ |
+| ฟอร์มที่เปิดค้างหลังถูกซ่อน | ร้านซ่อนหน้านี้แล้ว คุณยังบันทึกรายการที่กำลังกรอกได้ |
+| หมายเหตุในคู่มือ | ร้านของคุณซ่อนเมนูนี้ไว้ ขั้นตอนในหัวข้อนี้จึงยังใช้ไม่ได้ในขณะนี้ |
 
-ใช้ server session ส่ง field/derived availability ตาม prop chain ที่มีอยู่ ไม่เพิ่ม global auth framework หรือ query ต่อ CTA แต่ละตัว
+- สถานะที่พนักงานเห็นต้องไม่ใช้ข้อความ “ไม่มีสิทธิ์” เพราะไม่ใช่เรื่องสิทธิ์ และต้องไม่เสนอปุ่มที่ผู้ใช้เปิดไม่ได้
+- ห้ามมีข้อความใดบอกว่าระบบหลังบ้านถูกปิด หรือบอกว่าพนักงานบันทึกด้วยมือไม่ได้
+- Switch มี accessible name, focus และ aria-checked ปุ่มที่ถูกซ่อนไม่เหลือ keyboard focus target
 
-## 10. Preset / billing / parent transitions
+## 9. ทางเข้าบนเว็บทุกจุด
 
-1. Preset ของบริษัทเดิมต้อง preserve **ค่าปัจจุบันของ key ใหม่** รวม unsaved pending choice ทั้ง true/false; ไม่ใช่อ่านเฉพาะ server snapshot
-2. ไม่แก้ preset semantics ของ `expenses.manual` หรือ feature อื่นเพื่อทำงานนี้
-3. Parent/manual เดิม OFF ทำให้ effective entry ปิด แต่ไม่ overwrite stored entry preference; เปิดกลับต้องได้ preference เดิม
-4. `applyPreset`, toggle-all/group/menu และ admin preview ต้องไม่ reset key ใหม่หรือสร้าง second menu row
-5. Billing renewal/package conversion ต้องรักษา new-key explicit admin override ผ่าน infrastructure `adminOverrideKeys` เดิม; missing key default ตาม §5, ไม่เป็น SKU เพิ่ม
-6. ทดสอบ existing explicit false/true, pending false/true, absent row, new onboarding และ legacy first save แยกกัน
-7. `commandId`, expectedSetVersion, same-command replay, payload conflict, audit และ normalization gate เดิมต้องทำงานสำหรับ key ใหม่เหมือน approved key อื่น
+เลขบรรทัดอ้างจาก `ae13970b0` ให้ใช้ชื่อ symbol เมื่อไฟล์เปลี่ยน ชื่อไฟล์ในตารางเป็นชื่อย่อ path เต็มของทุกจุดอยู่ใน[รีวิวอิสระ หัวข้อ 3](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md)
 
-## 11. Separate follow-up A — Delete permission mismatch
+### 9.1 ต้องซ่อนเมื่อร้านซ่อนเมนู (ใช้ `canOpenManualWeb`)
 
-**ไม่อยู่ใน implementation ของ switch ใหม่** เก็บวิธีแก้และ test boundary ไว้สำหรับงานแก้บั๊กแยก; ไม่ทำให้ backend behavior เปลี่ยนปนกับงาน visibility
+| จุด | ตำแหน่ง | พฤติกรรม |
+| --- | --- | --- |
+| เมนูย่อยใน sidebar (desktop และมือถือ) | `web-core-workspace.logic.ts:266-274` (`buildNavItems`) | ซ่อนรายการ “บันทึกด้วยมือ” รายการอื่นคงเดิม |
+| ปุ่ม “บันทึกเอง” บนหน้ารายการ | `ExpensesPages.tsx:2453` | ซ่อน |
+| หน้า `/expenses/manual` และ alias `?tab=manual` | `expenses/manual/page.tsx`, `ExpensesPages.tsx:2916-2925,2972` | ผ่าน gate ใน §7 |
+| ปุ่ม “กรอกรายจ่ายเอง” ในสมุดรายรับรายจ่าย | `IncomeExpenseLedgerPage.tsx:642` | ซ่อน |
+| เงื่อนไขแสดงการ์ด “เพิ่มรายการใหม่” | `IncomeExpenseLedgerPage.tsx:635` | ใช้ helper เดียวกัน ไม่เหลือการ์ดเปล่า |
+| empty state “กรอกรายจ่ายรายการแรก” | `IncomeExpenseLedgerPage.tsx:408-412` | ไม่เสนอเมื่อซ่อน |
+| การ์ด “บันทึกค่าใช้จ่ายด้วยมือ” ในหน้า AI แนะนำ | `ai-suggestions.logic.ts:168` | ไม่แสดง |
+| ลิงก์กลับจากหน้าตั้งค่ารหัสภาษี | `TransactionTaxLineSelector.tsx:88-94` | ลงที่ gate |
+| ปุ่ม “เปิดหน้าบันทึกด้วยมือ” ในคู่มือ และหัวข้อ “บันทึกด้วยมือ” | `expenses-guide.content.ts:228-262` | ดู §9.3 |
 
-Controller `DELETE /companies/:companyId/expenses/:expenseId` เปลี่ยนจาก `RequirePermissions('expense.update')` เป็น `RequireAnyPermission('expense.delete', 'expense.update')`
+### 9.2 คงไว้โดยเจตนา
 
-Use case ยังคงตัดสิน:
+| จุด | ตำแหน่ง | เหตุผล |
+| --- | --- | --- |
+| ลิงก์ “ไม่มีไฟล์ใบเสร็จ/ใบกำกับภาษี? …” ในหน้าอัปโหลด | `ExpensesPages.tsx:615-617,2971` | พาไป wizard ใบรับรองแทนใบเสร็จ ไม่ใช่หน้า manual เจ้าของให้คง wizard |
+| สร้างรายการใหม่ใน wizard ใบรับรองแทนใบเสร็จ | `SubstituteReceiptWizardPage.tsx:1716,1760` | คง permission และ state เดิมทั้งหมด |
+| กรอกแก้ผล OCR ในหน้ารายละเอียด | `ExpensesPages.tsx:1136` | ไม่ใช่ทางเข้าหน้า manual |
+| พิมพ์รายจ่ายใน LINE และลิงก์เว็บในคำตอบ LINE | `expense-document.use-case.ts:106,212` | LINE ไม่เปลี่ยน ลิงก์ทั้งหมดไปหน้ารายการหรือรายละเอียด ไม่มีลิงก์ไปหน้า manual |
+| API `POST /v1/companies/:companyId/expenses` | `expense.controller.ts:237-238` | สวิตช์ไม่ใช่การห้าม |
+| แจ้งเตือน แดชบอร์ด LINE rich menu | ตรวจแล้วไม่มีลิงก์ไปหน้า manual | ไม่มีสิ่งต้องซ่อน |
 
-- `expense.delete` สำหรับผู้มี authority ลบตาม scope
-- หรือ `expense.update` สำหรับ draft ของตนเองเท่านั้น
-- state ที่ลบได้, paid/confirmed/posted locks, linked documents, retention, tenant/branch, duplicate refresh, attachments และ audit อยู่ครบ
+### 9.3 คู่มือและคำตอบของผู้ช่วย **(ข้อเสนอ D4 รอเจ้าของยืนยัน)**
 
-ห้ามเปลี่ยน controller เป็น delete-only เพราะจะตัดเส้นทางเจ้าของลบ own draft และห้ามให้ update-only ลบของคนอื่น
+- คู่มือบนเว็บ: เมื่อร้านซ่อนเมนู ไม่แสดงปุ่ม “เปิดหน้าบันทึกด้วยมือ” และแสดงหมายเหตุตาม §8 ที่ต้นหัวข้อ “บันทึกด้วยมือ” ไม่ลบหัวข้อ เพราะคู่มืออ้างเลขหัวข้อและจำนวนเมนูย่อย
+- **ไม่แก้ `expenses-guide.content.ts`** เพราะไฟล์นี้ถูกตรึง hash โดย `apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts:5` และ `approved-knowledge.spec.ts:34` จะแดงเมื่อไฟล์เปลี่ยน ให้แปลงผลลัพธ์ของ `buildExpensesGuide` ในไฟล์ใหม่ แล้วเรียกจาก `user-guide/expenses/page.tsx` ถ้าจำเป็นต้องแก้ไฟล์คู่มือจริง ให้ทำขั้นตอน hash ใน plan §4
+- คำตอบของผู้ช่วยใน LINE (การ์ด `expense.start`) ยังกล่าวถึงบันทึกด้วยมือ รอบนี้ไม่แก้ บันทึกเป็นข้อจำกัด และปรับถ้อยคำในรอบทบทวนชุดคำตอบครั้งถัดไป
+- คู่มือฉบับเอกสารที่อยู่นอก repo ไม่อยู่ในขอบเขต
 
-Test ต้องใช้ actual decorated controller + `DenyByDefaultGuard` และ actual delete use case เพื่อไม่ให้ mock ข้าม mismatch อีก รวม role finance ที่มี delete แต่ไม่มี update ทั้ง flag ON/OFF
+### 9.4 Test ที่อ้างทางเข้านี้
 
-## 12. Separate follow-up B — LINE draft idempotency contract
+e2e ที่เปิดหน้า manual (`e2e/expenses.spec.ts`, `transaction-tax.spec.ts`, `transaction-branch.spec.ts`, `settings.spec.ts`, `evidence.spec.ts`, `responsive.spec.ts`, `local-active-feature-regression.spec.ts`, `expense-number-save.spec.ts`) และตารางความคาดหวังเมนู (`e2e/harness/roles.ts:153`) ต้องยังผ่านโดยไม่แก้ เพราะค่าเริ่มต้นคือแสดง ต้องเพิ่ม e2e ใหม่สำหรับกรณีซ่อน
 
-**ไม่อยู่ใน implementation ของ switch ใหม่** E2E integration ปัจจุบันได้ 400 ทั้ง ON/OFF ของ key เดิม ต้องระบุ known failure นี้ตรงไปตรงมา ไม่อ้างว่างาน switch ใหม่แก้ LINE แล้ว
+ใช้ server session ส่งผลของ predicate ตาม prop chain ที่มีอยู่ ไม่เพิ่ม global auth framework หรือ query ต่อปุ่มแต่ละตัว
 
-### 12.1 Root cause และวิธีแก้ที่เลือก
+## 10. แพ็กเกจ ชุดสำเร็จรูป ดีล และการเปิดร้านใหม่ **(ข้อเสนอ D2 รอเจ้าของยืนยัน)**
 
-`CaptureLineExpenseNoteUseCase` สร้าง key `line-draft:${eventId}` แต่ `CreateExpenseDraftUseCase` ใช้ `PAYMENT_IDEMPOTENCY_KEY_PATTERN` ที่ไม่รับ `:` จึง fail ก่อนสร้าง draft ทั้ง manual ON/OFF
+ค่าตั้งนี้อยู่นอกชุดสิทธิ์ จึงไม่มีโค้ดใดในกลุ่มนี้ต้องแก้ สิ่งที่ต้องพิสูจน์ด้วย test คือ **ไม่มีการอ่านหรือเขียนค่านี้** จาก
 
-เลือกแก้ฝั่งสร้าง key ให้เป็น **hex SHA-256 64 ตัวอักษร** จาก tuple คงที่ เช่น JSON array `["line-expense-note-v1", companyId, stableEventIdentity]` ใช้ `node:crypto` ที่มีอยู่ ไม่เพิ่ม dependency และไม่ขยาย validator ของ payment/expense create
+1. `applyPreset`, เปิดปิดทั้งกลุ่ม, เปิดปิดการ์ดเมนู และรายการเปลี่ยนแปลงของชุดสิทธิ์ในหน้าผู้ดูแล
+2. `billingFeaturePlan`, `applyBillingFeaturePlan`, `movePlanMenus` และ snapshot ของดีล
+3. `CreateCompanyOnboardingUseCase` และการสมัครร้านใหม่ทุกทาง
+4. `normalize-entitlements` ทั้งโหมด plan, apply และ verify
 
-- stableEventIdentity ใช้ original webhook event id; fallback lineMessageId เฉพาะเส้นทางที่ไม่มี event id จริง ๆ และต้องคง fallback เดิมตลอด replay
-- ห้ามใช้ current requestId, timestamp, retry count หรือ random UUID สำหรับ LINE event replay
-- ไม่ใส่ raw message text, access token หรือ chat secret ใน key/audit
-- deterministic hash ช่วยเรื่องรูปแบบ key เท่านั้น; tenant/owner/branch/chat checks, payload fingerprint, unique key และ transaction ยังต้องอยู่
+และการสลับค่านี้ต้องไม่เปลี่ยน `billingFeaturePlan().sourceHash` ของร้าน เพื่อให้ plan ที่ลูกค้า pin ไว้ตอนเปิดหน้าชำระเงินยัง apply ได้หลังจ่าย
 
-### 12.2 Compatibility / lost response
+ไม่แก้ preset semantics ของ `expenses.manual` หรือ feature อื่นในงานนี้
 
-- completed historical captures ต้องยังถูกพบโดย `findByLineMessageId`; ไม่สร้าง record ใหม่เพราะ key algorithm เปลี่ยน
-- เพิ่ม fixture legacy `line-draft:...` ที่มี line provenance แล้ว; replay ต้องคืนตัวเดิมตาม scope
-- ตรวจ orphan/retry boundary ที่ draft สร้างแล้วแต่การติด line provenance ยังไม่สำเร็จ: ถ้า predecessor build สามารถมี legacy key จริง ให้มี targeted read-only lookup ของ legacy key ใน company/owner/branch เดียวกันก่อนเริ่ม hash key ใหม่ โดยใช้ payload identity เดิม; ห้ามย้าย/ลบ historical row หรืออนุญาต caller เลือก key เอง
-- หากไม่มีหลักฐาน predecessor path ที่ persist key เดิมได้ ให้บันทึก code/history evidence ใน memory ก่อนตัด compatibility lookup ออก; อย่าเดาว่าไม่มีข้อมูลจาก validator ของ HEAD อย่างเดียว
-- การ retry/hash key เดิมที่ payload ต่างต้อง 409 ตามเดิม; same event ไม่เกิด orphan/duplicate expense, lines, number, audit success หรือ outbox event ซ้ำ
-- ห้ามแก้บั๊กนี้ด้วยการ mock create use case ใน test acceptance
+## 11. Separate follow-up A — Delete permission mismatch **(ข้อเสนอ D8 รอเจ้าของยืนยัน)**
+
+**ไม่อยู่ใน implementation ของงานนี้** รายละเอียด ทางทำซ้ำ และ test อยู่ใน[เอกสารบั๊ก B1](../research/manual-expense-current-code-bugs-2026-10-01-th.md)
+
+สรุป: controller `DELETE /companies/:companyId/expenses/:expenseId` บังคับ `expense.update` แต่ use case ยอมรับ `expense.delete` หรือ `expense.update` ของเจ้าของร่าง ผู้ได้รับผลคือบทบาทที่สร้างจากเทมเพลต `tpl.x.finance`, `tpl.trading.finance`, `tpl.service.finance`, `tpl.ecom.finance` ซึ่งได้ `expense.delete` จาก `pack.expense.finance` โดยไม่มี `expense.update` บทบาท FINANCE, ADMIN และ OWNER ในระบบไม่ได้รับผลเพราะมีทั้งสองสิทธิ์
+
+งานสวิตช์ต้องไม่ทำให้พฤติกรรมนี้เปลี่ยน ไม่ว่าทางดีขึ้นหรือแย่ลง
+
+## 12. LINE draft idempotency — ปิดแล้ว
+
+บั๊กที่ v2.0 เรียกว่า F03 ถูกแก้ใน `6fddca795` (2026-09-29) ก่อนเอกสาร v2.0 ถูก merge ข้อเสนอ SHA-256 64 ตัวและ compatibility lookup ของ v2.0 **ถูกถอน** สูตรปัจจุบัน (`line-draft-<event id>` หรือ hash 53 ตัวเมื่อ id ไม่เข้ารูป) คือสัญญาที่ใช้งานอยู่ ห้ามเปลี่ยนในงานนี้
+
+- key รูป `line-draft:` ไม่เคยบันทึกลงฐานข้อมูลได้ เพราะ validator ถูกเพิ่มใน commit เดียวกับที่เริ่มใช้ key รูปนั้น (`3d7379ef`) จึงไม่มีข้อมูลเก่ารูปนั้นต้องรองรับ
+- ผล “400 ทั้งสี่ครั้ง” ใน evidence เป็นของฐานโค้ดเก่า ห้ามใช้เป็นค่าคาดหวัง
+- ถ้าจะเพิ่ม integration test แบบ compose จริงของ LINE note ให้ทำเป็นงานแยก และยืนยันสูตรปัจจุบัน
 
 ## 13. Neighbor module boundaries
 
 | Module | Boundary / acceptance |
 | --- | --- |
-| Employee access / resolver | entry OFF ไม่เปลี่ยน permissions; parent OFF ยังตัด; role access matrix ไม่แสดงว่า revoke create/update |
-| Auth / web session | field additive, tenant-specific, unknown ≠ legacy, auth/privacy guards เดิม |
-| LINE gateway/AgentCore | ไม่เปลี่ยน prompts/tools เพื่อซ่อนหรือปฏิเสธ create/edit เพราะ new web entry OFF; gateway ไม่เข้าถึง repositories |
-| LINE edit/correction | `expense.update` เดิมทำให้ preview/apply/edit hints คงเดิม; existing LINE draft-edit rollout flag ยังมีผล |
-| Receipt OCR / quotas | OCR off/failed/quota-full ยังแก้ draft ที่ upload แล้วเองได้; ไม่พาไป dead manual CTA |
-| Capture group / handoff | ตรวจ create/file/review/handoff/auto-handoff เมื่อมี upload/review permission; derived source identity และ evidence locks เดิม |
+| Employee access / resolver | ไม่ถูกแก้ ค่าตั้งใหม่ไม่อยู่ใน `ResolvedAccess` และไม่เปลี่ยน permissions หรือ `entitledFeatureKeys` |
+| Auth / web session | field additive ค่าเดียว ผูกกับบริษัทที่ร้องขอ ค่าหายถือว่าแสดง auth/privacy guards เดิม |
+| LINE gateway/AgentCore | ไม่ถูกแก้ การสลับค่าต้องไม่เรียก `invalidateLineConversationState` และไม่เปลี่ยน `lineDeliveryAccessFingerprint` บทสนทนา รูปที่รอคำตอบ และคำตอบที่รอส่งต้องคงอยู่ |
+| ชุดคำตอบ LINE (`approved-product-help.ts`) | ไม่แก้เนื้อหา ไม่ทำให้ hash ของไฟล์คู่มือเปลี่ยน (§9.3) |
+| LINE edit/correction | `expense.update` เดิมทำให้ preview/apply/edit hints คงเดิม |
+| Receipt OCR / quotas | OCR off/failed/quota-full ยังแก้ draft ที่ upload แล้วเองได้ ไม่พาไปปุ่มที่ถูกซ่อน |
+| Capture group / handoff | ไม่อ่านค่านี้ |
 | Substitute certificate/signatures | การสร้าง manual expense ภายใน wizard, signed versions, payer/evidence ownership และ linked source state เดิม |
-| Reimbursements | claim draft/approve/payout/materialize API_INTERNAL projections ไม่พึ่งทางเข้าเว็บ; ห้ามเพิ่ม gate ที่ shared repository จนปิด projections |
-| Payments / ledger / tax | ไม่มี schema/account/amount/VAT/numbering change จาก flag; confirmation และ side effects เดิม |
-| Vendor/category setup | update/create vendor, tax selections, branches และ supplier details ไม่ถูก entry predicate ครอบ |
-| Dashboard/notifications/report/export | existing sources/counts/links/read authority เดิม; ห้ามกรอง records ที่ captureSource=WEB_MANUAL เพราะ flag OFF |
-| Billing / admin presets | เคารพ stored/manual choices ตาม §10; entitlement command ยัง atomic และ audited |
+| Reimbursements | claim draft/approve/payout/materialize ไม่พึ่งทางเข้าเว็บ ห้ามเพิ่ม gate ที่ shared repository |
+| Payments / ledger / tax | ไม่มี schema, account, amount, VAT หรือ numbering เปลี่ยนจากค่านี้ |
+| Billing / แพ็กเกจ / ดีล | ไม่อ่านและไม่เขียนค่านี้ การสลับค่าไม่เปลี่ยน `setVersion` หรือ `sourceHash` (§10) |
+| Onboarding / normalizer | ไม่อ่านและไม่เขียนค่านี้ ไม่มีแถว = แสดง |
+| Dashboard/notifications/report/export | ห้ามกรอง records ที่ `captureSource=WEB_MANUAL` เพราะร้านซ่อนเมนู |
+| W00 capability manifest / reliability corpus | ไม่ควรถูกแตะ เพราะไม่แก้ `feature-entitlements.ts`, `menu-entitlements.ts` หรือไฟล์ LINE ถ้า diff แตะไฟล์ที่ manifest เก็บ hash ให้ทำตาม plan §4 |
 
 ## 14. State, concurrency, audit และข้อจำกัดที่ตั้งใจ
 
-- ไม่มี ExpenseRecord state transition จากการสลับ flag ไม่มี archive/delete/reclassify/re-number/backfill
-- ใช้ entitlement command CAS และ replay เดิม: stale admin save ต้อง 409, same commandId/same payload replay ได้, reused key/different payload conflict
-- ไม่เพิ่ม transaction lock หรือ backend final-mutation fence ให้ `expenses.manual.web_entry` เพราะ scope นี้ควบคุมทางเข้าเว็บ ไม่ได้ห้าม backend creation
-- Flag OFF แข่งกับ request ที่ส่งไปแล้ว: API ทำตาม permission/parent/launch gate เดิมได้ ถือว่า expected; ไม่สัญญา “zero new expense หลัง cutoff”
-- การปิด parent หรือ revoke role เป็นคนละ authority ต้องไม่ถูก entry admission ยกเว้นให้
-- audit admin เก็บ company/key/from/to/admin/command ตามเดิม; UI availability checks ไม่สร้าง business mutation audit ปลอม
-- F02/F03 ต้องคง audit behavior เดิมของ use case ไม่เปลี่ยน result FAILED/DENIED/SUCCESS ให้ปิดบังผลจริง
+- ไม่มี ExpenseRecord state transition จากการสลับค่า ไม่มี archive/delete/reclassify/re-number/backfill
+- CAS ของค่านี้เป็นของตัวเอง (`expectedVersion`): ผู้ดูแลที่ถือค่าเก่าได้ 409, ค่าเท่าเดิมเป็น no-op
+- ไม่ใช้และไม่ bump `CompanyEntitlementSet.setVersion` จึงไม่ชนกับการแก้ชุดสิทธิ์ที่ทำพร้อมกัน และไม่ทำให้การชำระเงินที่ค้างอยู่ถูกพัก
+- ไม่เพิ่ม transaction lock หรือ backend fence ให้การสร้างรายจ่าย เพราะขอบเขตนี้ควบคุมทางเข้าเว็บ ไม่ได้ห้าม backend creation
+- ซ่อนเมนูแข่งกับ request ที่ส่งไปแล้ว: API ทำตาม permission เดิม ถือว่า expected ไม่สัญญา “ไม่มีรายจ่ายใหม่หลังเวลาที่ซ่อน”
+- การปิดฟีเจอร์แม่หรือ revoke role เป็นคนละ authority ต้องไม่ถูก admission ยกเว้นให้
+- audit ตาม §5.4 การแสดงหรือซ่อนเมนูให้ผู้ใช้ไม่สร้าง audit
 
-## 15. Compatibility และ rollout
+## 15. Compatibility, rollout และ rollback
 
-ไม่มี Prisma migration, permission migration หรือการเปลี่ยน semantics key เดิม เพิ่ม catalog key + additive session field + UI admission เท่านั้น
+มี migration แบบ additive หนึ่งรายการ ไม่มี permission migration และไม่เปลี่ยน semantics ของ key ใด
 
-1. เตรียม API ที่รู้จัก key ใหม่, ส่ง feature snapshot และรักษา permission mapping เดิม
-2. เตรียม web consumers/nav/predicate/fingerprint/admission และ admin child control
-3. เปิดให้ admin เปลี่ยน key ใหม่หลัง serving web ทุก instance รองรับแล้ว; old web จะไม่รู้จัก entry flag และอาจยังแสดงเมนู
-4. New web + old API ที่ไม่มี snapshot: unknown state ปิด admission ใหม่พร้อม retry ไม่สรุปว่า legacy null; verify version skew ก่อน release
-5. Stored flag/role/expense data เดิมต้องไม่ถูกเปลี่ยนจาก deployment; บริษัทที่ปิด `expenses.manual` เดิมไม่ถูกเปิดสิทธิ์กลับ
-6. Rollback web เก่าอาจแสดง manual entry กลับเพราะไม่อ่าน key ใหม่ แต่ไม่มี permission expansion จากการ rollback mapping (mapping เดิมไม่ถูกแก้ตั้งแต่แรก); เก็บ new-key row ไว้และบันทึก visibility limitation
+1. web และ API ออกเป็น image เดียว (`infra/api-web/Dockerfile.api-web`) จึงขึ้นและถอยพร้อมกัน ช่วงสลับรุ่นสั้น ๆ: เว็บใหม่กับ API เก่าได้ field หายและถือว่าแสดง เว็บเก่ากับ API ใหม่ไม่อ่าน field และแสดงเมนูตามเดิม
+2. ลำดับ: migration → API (command, รายละเอียดร้าน, `/auth/me`) → web (helper, gate, ทางเข้า, หน้าผู้ดูแล) ใน release เดียวกัน
+3. ข้อมูลเดิมของร้าน สิทธิ์ รายจ่าย และภาษี ไม่ถูกเปลี่ยนจาก deployment
+4. Rollback: ถอย image แล้วทุกร้านกลับมาเห็นเมนู เพราะโค้ดเก่าไม่อ่านค่านี้ ตารางใหม่ถูกปล่อยไว้ ไม่มีโค้ดเก่าใดอ่านตารางนี้ ไม่กระทบ billing, LINE หรือ normalizer ค่าที่ผู้ดูแลตั้งไว้ยังอยู่และมีผลอีกครั้งเมื่อขึ้นรุ่นใหม่ ให้บันทึกข้อจำกัดนี้ใน release handoff
+5. ไม่มีขั้นตอน “เปิดให้ใช้ทีหลัง” ด้วย environment switch สวิตช์ใช้ได้ทันทีที่ release ขึ้น
 
-ก่อน cloud inspection อ่าน [cloud operations](../runbooks/cloud-environment-operations.md); ก่อน deploy/promotion/customer-gate change/retry อ่าน [mandatory deployment protocol](../runbooks/uat-production-v2-deployment.md) งานนี้ไม่อนุญาต deploy หรือเปลี่ยน customer flag
+ก่อน cloud inspection อ่าน [cloud operations](../runbooks/cloud-environment-operations.md); ก่อน deploy/promotion/customer-gate change/retry อ่าน [mandatory deployment protocol](../runbooks/uat-production-v2-deployment.md) งานนี้ไม่อนุญาต deploy หรือเปลี่ยนค่าของลูกค้า
 
 ## 16. Acceptance criteria
 
 | ID | เงื่อนไขผ่าน |
 | --- | --- |
-| AC01 | key ใหม่เป็น approved leaf แสดงใต้ manual; key/mapping/stored values เดิมไม่เปลี่ยน; toggle ใหม่ไม่แก้ feature อื่น |
-| AC02 | effective permissions ทุก key เท่าเดิมเมื่อ entry ON→OFF→ON; parent OFF ยังมีผล |
-| AC03 | `/auth/me` ส่ง `entitledFeatureKeys` ถูก company ทั้ง array/null; missing ไม่ถูกตีความเป็น null |
-| AC04 | sidebar/mobile/list/ledger/guide/AI guidance ไม่มี actionable manual entry เมื่อ OFF |
-| AC05 | direct URL, query alias, back/forward, tax-return ผ่าน admission เดียวกัน; OFF ไม่เปิดฟอร์มใหม่ |
-| AC06 | admitted form ยังอยู่หลัง feature-only refresh และบันทึกครั้งเดียวได้; reload หลัง OFF ปิด admission |
-| AC07 | fingerprint เปลี่ยนเมื่อ flag เปลี่ยนแม้ permissions เท่าเดิม; sort order อย่างเดียวไม่ทำ refresh loop |
-| AC08 | company switch/membership revoke ไม่ reuse admission หรือ snapshot ข้ามบริษัท/ผู้ใช้ |
-| AC09 | direct API create ยังทำงานตาม `expense.create` เมื่อ entry OFF; no-permission/cross-tenant/cross-branch ยังคง deny |
-| AC10 | upload/OCR-failed/quota-full review และ own draft update/mark-ready/restart ยังทำได้ตามเดิม |
-| AC11 | substitute wizard create/select-existing/sign/review และ reimbursement projection ไม่ถูกปิด |
-| AC12 | key ใหม่ ON/OFF ไม่เปลี่ยน LINE capture permission/path/result; known F03 บันทึกแยก ไม่ใช้ stub ปิดบัง และไม่อ้างว่า create สำเร็จ |
-| AC13 | web create retry/lost response หลัง entry OFF ยัง recover command เดิมโดยไม่สร้างซ้ำ; LINE F03 retry evidence แยกจากงานสวิตช์ |
-| AC14 | LINE preview/apply/correction และ edit-capability response คงเดิมเมื่อเปลี่ยน web entry flag |
-| AC15 | key ใหม่ไม่เปลี่ยน DELETE authority/status; existing delete-only mismatch F02 เป็น follow-up แยก; state/tenant/retention guards เดิมคงอยู่ |
-| AC16 | capture group/handoff และ ledger/tax/report/export regression ไม่เปลี่ยนผลจาก flag |
-| AC17 | preset รักษาค่า entry ปัจจุบัน; billing รักษา explicit override; parent/manual ON ไม่ reset entry OFF |
-| AC18 | loading/disabled/error/retry/keyboard/mobile ครบ; ไม่มี blank redirect loop หรือ copy ว่า backend ถูกปิด |
-| AC19 | admin stale CAS/idempotent retry/normalization/inactive-company controls ผ่าน |
-| AC20 | target tests ใช้ key ใหม่บน candidate จริง; old-key simulation ไม่ถูกนับเป็น acceptance ของ v2; F02/F03 และ baseline UI failures ระบุแยก |
+| AC01 | ค่าตั้งใหม่เป็นของร้าน ร้านที่ไม่มีแถวอ่านได้ว่าแสดง ไม่มีการเปลี่ยนใน `FEATURE_CATALOG`, `ALL_FEATURE_ENTITLEMENT_KEYS`, bindings หรือ presets |
+| AC02 | permissions ทุกตัวของทุกบทบาทและทุกเทมเพลต และ `entitledFeatureKeys` เท่าเดิมเมื่อสลับ แสดง→ซ่อน→แสดง |
+| AC03 | `/auth/me` คืน `manualExpenseWebEntry` ตามบริษัทที่ร้องขอ ร้านไม่มีแถวได้ true และเว็บถือว่าแสดงเมื่อ field หาย |
+| AC04 | ทุกจุดใน §9.1 ไม่แสดงเมื่อร้านซ่อนเมนู ทุกจุดใน §9.2 คงอยู่ |
+| AC05 | URL ตรง, alias, ลิงก์กลับจากหน้าภาษี และ deep link ผ่าน login ลงที่ gate เดียวกัน เมื่อซ่อนไม่เปิดฟอร์ม และไม่มี HTTP 403 หรือ redirect จากค่านี้ |
+| AC06 | ฟอร์มที่รับเข้าแล้วอยู่ต่อหลังค่านี้เปลี่ยนและ `router.refresh()` บันทึกครั้งเดียวได้ โหลดหน้าใหม่แล้วไม่เปิดฟอร์ม |
+| AC07 | fingerprint เปลี่ยนเมื่อค่านี้เปลี่ยนแม้ permissions เท่าเดิม ไม่เปลี่ยนจากการเปลี่ยนชุดสิทธิ์ที่ไม่กระทบ permissions และไม่เกิด refresh loop |
+| AC08 | สลับบริษัทหรือผู้ใช้แล้วไม่ใช้ผลรับเข้าหรือค่าข้ามบริษัท |
+| AC09 | API create/update/delete/mark-ready ให้ผลเดิมทุกบทบาททั้งสองสถานะ no-permission/cross-tenant/cross-branch ยัง deny |
+| AC10 | upload, OCR-failed, quota-full, แก้ร่างของตน, wizard ใบรับรองแทนใบเสร็จ และ reimbursement ทำได้ตามเดิม |
+| AC11 | การสลับค่าไม่เรียก `invalidateLineConversationState` ไม่เปลี่ยน `lineDeliveryAccessFingerprint` บทสนทนา รูปที่รอคำตอบ และคำตอบที่รอส่งของ LINE คงอยู่ |
+| AC12 | การสลับค่าไม่เปลี่ยน `CompanyEntitlementSet.setVersion` และ `billingFeaturePlan().sourceHash` plan ที่ pin ก่อนสลับ apply ได้และ invoice ไม่ HELD |
+| AC13 | ซื้อ อัปเกรด ดีล ชุดสำเร็จรูป onboarding และ normalizer ไม่อ่านและไม่เขียนค่านี้ ค่าคงเดิมหลังเหตุการณ์เหล่านั้น |
+| AC14 | ผู้ดูแลเห็นสวิตช์ใต้ “บันทึกด้วยมือ” เปิดปิดได้กับร้านเดิมทุกแบบ กดไม่ได้เมื่อฟีเจอร์แม่ปิด และไม่อยู่ในรายการเปลี่ยนแปลงของชุดสิทธิ์ |
+| AC15 | command: ค่าเท่าเดิมเป็น no-op, version เก่าได้ 409, ร้านที่ล็อกถูกปฏิเสธ, การเปลี่ยนจริงมี audit หนึ่งแถว |
+| AC16 | ข้อความทุกจุดตรงกับ §8 มีคำเตือนเมื่อร้านปิดอัปโหลดใบเสร็จ และไม่มีข้อความว่าระบบหลังบ้านถูกปิดหรือพนักงานไม่มีสิทธิ์ |
+| AC17 | คู่มือ: ปุ่มหายและมีหมายเหตุเมื่อซ่อน `expenses-guide.content.ts` ไม่เปลี่ยน และ `approved-knowledge.spec.ts` ยังเขียว |
+| AC18 | loading/disabled/error/keyboard/มือถือ 390px ครบ ไม่มี blank redirect loop |
+| AC19 | migration เป็น additive ร้านเดิมไม่ต้อง backfill และถอย image ได้ตาม §15 ข้อ 4 |
+| AC20 | หลักฐานมาจาก candidate ที่เริ่มจาก develop ล่าสุด ผล E2E เดิมไม่ถูกนับ บั๊กแยกและ baseline UI failures ระบุแยก |
 
 ## 17. Out of scope และ definition of done
 
-ไม่สร้าง global kill switch, ไม่หยุด LINE/manual API, ไม่ปิด wizard, ไม่เพิ่ม permission/SKU/table, ไม่ปรับเงิน/ภาษี, ไม่เปลี่ยน parent launch/runoff policy และไม่แก้ปัญหา unrelated ใน dirty working tree
+ไม่สร้าง global kill switch, ไม่หยุด LINE หรือ manual API, ไม่ปิด wizard, ไม่เพิ่ม permission, SKU หรือ entitlement key, ไม่ปรับเงินหรือภาษี, ไม่เปลี่ยน parent launch หรือ runoff policy, ไม่แก้ชุดคำตอบ LINE, ไม่สร้างที่เก็บร่างฟอร์ม และไม่แก้บั๊กใน[เอกสารบั๊กแยก](../research/manual-expense-current-code-bugs-2026-10-01-th.md)
 
-งานสวิตช์ไม่รวม follow-up หลังบ้าน §11–12 และไม่เปลี่ยนความหมาย `expenses.manual` เดิม
+เริ่ม implement ได้เมื่อเจ้าของยืนยัน D1–D8 และสถานะเอกสารถูกเปลี่ยนตามนั้น Implementation complete เมื่อ AC01–AC20 มีหลักฐานตาม plan, spec/plan/memory อัปเดตสถานะจริง และระบุ live evidence ที่ยังค้างอย่างตรงไปตรงมา การจบ **งานเอกสารรอบนี้** หมายถึงเอกสารพร้อมให้เจ้าของตัดสินเท่านั้น
 
-Implementation complete เมื่อ AC01–AC20 มีหลักฐานตาม plan, spec/plan/memory อัปเดตสถานะจริง และระบุ live evidence ที่ยังค้างอย่างตรงไปตรงมา การจบ **งานเอกสารรอบนี้** หมายถึงเอกสารพร้อมใช้งานเท่านั้น
+## ภาคผนวก A — สิ่งที่เปลี่ยนจาก v2.0 และเหตุผล
+
+รหัส RM อ้างถึง[รีวิวอิสระ](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md)
+
+| เรื่อง | v2.0 | v3.0 | เหตุผล |
+| --- | --- | --- | --- |
+| สถานะเอกสาร | READY FOR IMPLEMENTATION | PROPOSAL รอเจ้าของยืนยัน D1–D8 | RM-01, RM-08 |
+| ฐานโค้ด | `4a5817b42` (ไม่ใช่บรรพบุรุษของ develop) | `ae13970b0` และต้องตรวจซ้ำที่ commit เริ่มงาน | RM-01 |
+| ที่เก็บสวิตช์ | key `expenses.manual.web_entry` ใน `FEATURE_CATALOG` | ค่าตั้งรายร้านแยกจากชุดสิทธิ์ | RM-03, RM-04, RM-05, RM-06, RM-07, RM-08, RM-17 |
+| ค่าเริ่มต้น | “ไม่มีแถว = เปิด” แต่ onboarding/billing/preset/ดีลจะเขียนปิด | ไม่มีแถว = แสดง และไม่มีผู้เขียนอื่นนอกจาก command ของผู้ดูแล | RM-04 |
+| ร้านเดิม | หน้าผู้ดูแลบล็อกการปิด | ปิดได้ทุกร้านผ่าน command เฉพาะ | RM-05 |
+| ผลต่อ LINE และการชำระเงิน | ใช้ command สิทธิ์เดิม ซึ่งล้างสถานะ LINE และ bump `setVersion` | ไม่แตะชุดสิทธิ์ จึงไม่กระทบทั้งสอง | RM-06, RM-07 |
+| สัญญา session | ส่ง `entitledFeatureKeys` ทั้งรายการ สามสถานะ | boolean ค่าเดียว | RM-12 |
+| ค่าที่อ่านไม่ได้ | ไม่รับเข้า แสดง retry | ถือว่าแสดง | RM-12 |
+| Admission | “revalidate เมื่อ stale/back-navigation” | ตัดสินจาก prop ที่ server ส่งมาและจำผลไว้ในหน้า เป็นสถานะหน้าจอ ระบุข้อจำกัด back/forward และมือถือ | RM-13, RM-14 |
+| ข้อความผู้ดูแล | ไม่บอกว่ายังบันทึกด้วยมือได้ทางอื่น ไม่มีจุดประสงค์ | บอกชัดว่าไม่ใช่การห้าม มีคำเตือนก่อนปิด | RM-15, RM-16 |
+| รายการทางเข้า | ขาดการ์ดเปล่าใน ledger, หัวข้อคู่มือ, คำตอบ LINE, e2e | รายการครบใน §9 | RM-10, RM-11 |
+| คู่มือ | แก้ `expenses-guide.content.ts` | ไม่แก้ไฟล์ที่ถูกตรึง hash ใช้การแปลงผลลัพธ์ | RM-10 |
+| F03 | งานค้าง พร้อมข้อเสนอเปลี่ยนสูตร key | ปิดแล้ว ห้ามเปลี่ยนสูตร | RM-02 |
+| F02 | “role finance ที่มี delete แต่ไม่มี update” | บทบาทจากเทมเพลตการเงินสี่แบบ ย้ายรายละเอียดไปเอกสารบั๊ก | RM-20 |
+| F07 | Target “รักษาค่า manual เมื่อใช้ preset” ขัดกับ §10 | ไม่เกี่ยวกับงานนี้แล้ว | RM-22 |
+| Rollback | “กระทบเพียงการแสดงเมนู” ทั้งที่แถวใหม่ทำให้ billing รุ่นเก่าปฏิเสธ | ถอยได้โดยปล่อยตารางไว้ ไม่มีผลข้างเคียง | RM-18 |
+| `prefetch={false}` | แนะนำให้ใส่ | ตัดออก | RM-24 |
+| Plan | ไม่มี W00 manifest, ชุดคำตอบ, ไฟล์ที่ถูกตรึง, ลำดับ commit | อยู่ใน plan ฉบับแก้ | RM-09, RM-19 |
+| หลักฐาน | harness ถูกอ้างเป็นจุดเริ่ม | ระบุว่าเป็นหลักฐานของ key เดิมบนฐานเก่าเท่านั้น | RM-21 |
+
+ข้อที่ไม่ใช้กับ v3.0 แล้ว: RM-23 (`toggleSubmenu` เปิด parent) เพราะสวิตช์ใหม่ไม่ผ่าน `toggleSubmenu` แต่ยังเป็นกติกาใน §8 ว่าห้ามผ่าน · ข้อที่ยังไม่ได้แก้ในเอกสารชุดนี้: RM-25 (memory `manual-expense-multi-item` อยู่นอกรายการไฟล์ที่ได้รับมอบหมายให้แก้)
+
+## ภาคผนวก B — ถ้าเจ้าของต้องการให้เป็น key ใน catalog (ทางเลือกของ D1)
+
+ทางเลือกนี้ทำได้ แต่ต้องสร้างเพิ่มทั้งหมดต่อไปนี้ใน release เดียวกับการเพิ่ม key มิฉะนั้นจะเกิดผลตามคอลัมน์ขวา ผลในคอลัมน์ขวามาจากการรันโค้ดจริงของผู้รีวิว ยกเว้นแถวที่ระบุว่าอ่านโค้ด
+
+| ต้องสร้างเพิ่ม | ไฟล์หลัก | ถ้าไม่ทำ |
+| --- | --- | --- |
+| ให้ billing รับชุดแถวของร้านเดิม (60 และ 62 แถว) เมื่อ catalog โตเป็น 63 และ apply plan ที่ pin ก่อน deploy ได้ ห้ามแก้ด้วยการเปลี่ยนเลข 62/60 เป็น 63/61 | `billing-feature-entitlements.ts:14,51-59,113` | ร้านเดิมซื้อครั้งแรก ซื้อใหม่หลังหมดอายุ ซื้อดีล และอัปเกรดไม่ได้ เงินที่จ่ายแล้วถูกพัก (RM-03 และ[เอกสารบั๊ก B4](../research/manual-expense-current-code-bugs-2026-10-01-th.md)) |
+| กติกา “key ที่ไม่มี permission ไม่ใช่สิทธิ์เชิงพาณิชย์” ใน onboarding, billing, `movePlanMenus`, `applyPreset` และดีล: ค่า = ค่าที่เก็บอยู่ ไม่มีแถว = เปิด และไม่แสดงในรายการเมนูที่จะหยุดใช้ | `menu-entitlements.ts:432-508`, `create-company-onboarding.use-case.ts:580-591`, `billing-feature-entitlements.ts:68-100`, `system-partners.logic.ts:274-288` | ร้านใหม่และร้านที่ซื้อแพ็กเกจถูกซ่อนเมนูเองโดยไม่มีใครสั่ง (RM-04) |
+| ให้หน้าผู้ดูแลปิด key ที่ร้านยังไม่มีแถวได้ | `get-partner-detail.use-case.ts:165-178`, `system-partners.logic.ts:341-362` | ปิดให้ร้านเดิมไม่ได้เลย (RM-05) |
+| ให้ `SetPartnerFeaturesUseCase` ไม่ถือว่า key นี้เป็นการเปลี่ยนสิทธิ์: ไม่ล้างสถานะ LINE ไม่สร้าง run-off และไม่ให้ key นี้เข้า `entitledFeatureKeys` ของ LINE | `set-partner-features.use-case.ts:420-497,566-568`, `line-delivery-access.ts:6-19` | ทุกครั้งที่สลับ บทสนทนา LINE ของทั้งร้านถูกล้างและคำตอบที่รอส่งถูกปฏิเสธ (RM-06) |
+| ป้องกันการสลับขณะร้านมีการชำระเงินค้าง หรือยอมรับความเสี่ยงเป็นลายลักษณ์อักษร | `billing-feature-entitlements.ts:101-126`, `billing-reconciler.service.ts:588-611` | ลูกค้าที่เปิดหน้าชำระเงินไว้ จ่ายแล้วแพ็กเกจไม่เปิดให้ (RM-07) |
+| Regenerate W00 manifest และ reliability corpus แล้วรัน whole-chain | `line-ai-capability-manifest.ts:218-221,613`, `scripts/line-ai-reliability-corpus.ts` | CI แดง (RM-09) |
+| ขั้นตอนเติมแถวให้ทุกร้านก่อนถอดกติกา “ไม่มีแถว = เปิด” ตาม decoupling spec และรับว่า `normalize-entitlements --verify` จะรายงานทุกร้านจนกว่าจะเติม | `normalize-entitlements.ts:231-305`, `feature-entitlement-decoupling-spec.md:271` | วันถอดกติกา legacy เมนูหายทุกร้านพร้อมกัน (RM-17 ส่วนของ verify รันแล้ว ส่วนของวันถอดกติกาอ่านจากสเปก) |
+| แผน rollback สำหรับแถวที่เกิน catalog ของโค้ดเก่า | `billing-feature-entitlements.ts:51` | หลังถอยรุ่น ร้านที่มีแถวนี้ซื้อแพ็กเกจไม่ได้ (RM-18 อ่านโค้ด) |
+| ข้อยกเว้นของกฎ “No nav-only gating” ใน `feature-entitlement-submenu-plan.md` บันทึกก่อนเขียนโค้ด | `docs/plans/feature-entitlement-submenu-plan.md:20` | เอกสารหลักขัดกับโค้ด |
+| สัญญา session และ predicate ต้องอ่าน key จากชุดสิทธิ์แทน boolean ใน §6 | §6 ของเอกสารนี้ | เว็บไม่รู้ค่า |
+
+ต้นทุนรวมของทางเลือกนี้คือการแก้โค้ดด้านเงินและ LINE ที่ใช้งานอยู่อย่างน้อยห้าจุด แลกกับการไม่มี migration ข้อเสนอ D1 จึงเลือกค่าตั้งรายร้านซึ่งมี migration หนึ่งรายการแต่ไม่แตะโค้ดด้านเงินและ LINE เลย
