@@ -321,6 +321,8 @@ export type ReimbursementRequestSummary = {
   /** Effective policy hint for pre-submit guidance; server validation remains authoritative. */
   allowMissingReceiptWithReason?: boolean;
   postingStatus: ReimbursementPostingStatus;
+  /** How the requester asked to be paid back. Absent on a legacy claim and on a draft that follows the default account. */
+  payoutMethod?: ReimbursementPayoutMethod;
   paymentTotalAmount: string;
   outstandingAmount: string;
   lineCount: number;
@@ -421,6 +423,8 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   /** Whether this claim has the finance review step: its frozen policy once submitted, the current policy while a draft. Detail only. */
   financeReviewRequired?: boolean;
   missingReceiptReason?: string;
+  /** Where the money goes back to, masked. Absent on a legacy claim: one sent before claims carried a receiving method. */
+  payout?: ReimbursementPayoutSummary;
   lines: ReimbursementLineSummary[];
   approvalSteps: ReimbursementApprovalStepSummary[];
   payments: ReimbursementPaymentSummary[];
@@ -445,6 +449,8 @@ export type CreateReimbursementRequestInput = {
   reason: string;
   currency?: string;
   missingReceiptReason?: string;
+  /** Omitted: the draft follows the requester's default payout account. */
+  payout?: ReimbursementPayoutInput;
   lines: ReimbursementLineInput[];
 };
 
@@ -453,6 +459,8 @@ export type UpdateReimbursementDraftInput = {
   reason?: string;
   currency?: string;
   missingReceiptReason?: string | null;
+  /** Omitted: the draft's receiving method is left as it is. */
+  payout?: ReimbursementPayoutInput;
   lines?: ReimbursementLineInput[];
 };
 
@@ -464,6 +472,11 @@ export type ApproveReimbursementInput = {
   comment?: string;
   approvalSnapshotHash?: string;
   idempotencyKey?: string;
+  /**
+   * "ตรวจบัญชีแล้ว": the account version the approver looked at. Required to approve a claim paid by
+   * transfer, and it must be the claim's current version. Cash and legacy claims take none.
+   */
+  payoutVerifiedVersion?: number;
 };
 
 export type RejectReimbursementInput = {
@@ -537,6 +550,132 @@ export type ReimbursementPaymentSourceRef = {
   paidAt: string;
   counterpartyDisplay: string;
   requestId: string;
+};
+
+// ---- Payout account (บัญชีรับเงินคืน) ----
+//
+// Where a claim is paid back. The full number travels in exactly two shapes: `PayoutDestinationInput`
+// on the way in, and `PayoutAccountReveal` out of the audited "แสดงเลขบัญชี" call. Every other payload
+// carries `accountLast4` only.
+
+/** A subset of the payment methods on purpose: no new enum value. */
+export type ReimbursementPayoutMethod = 'BANK_TRANSFER' | 'CASH';
+export type ReimbursementPayoutKind = 'BANK_ACCOUNT' | 'PROMPTPAY_PHONE';
+/** Where a claim's account came from: the requester's default, typed by the requester, or typed by whoever prepared the claim for them. */
+export type ReimbursementPayoutSource = 'DEFAULT_ACCOUNT' | 'REQUESTER' | 'PREPARER';
+
+// Source: Bank of Thailand financial institution directory, checked 2026-09-23.
+export const THAI_BANK_NAMES = [
+  'ธนาคารกรุงเทพ', 'ธนาคารกสิกรไทย', 'ธนาคารกรุงไทย', 'ธนาคารไทยพาณิชย์',
+  'ธนาคารกรุงศรีอยุธยา', 'ธนาคารทหารไทยธนชาต', 'ธนาคารยูโอบี',
+  'ธนาคารซีไอเอ็มบี ไทย', 'ธนาคารเกียรตินาคินภัทร', 'ธนาคารแลนด์ แอนด์ เฮ้าส์',
+  'ธนาคารไทยเครดิต', 'ธนาคารไอซีบีซี (ไทย)', 'ธนาคารสแตนดาร์ดชาร์เตอร์ด (ไทย)',
+  'ธนาคารออมสิน', 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร',
+  'ธนาคารอาคารสงเคราะห์', 'ธนาคารอิสลามแห่งประเทศไทย',
+] as const;
+
+export const PAYOUT_BANK_NAME_MAX_LENGTH = 80;
+export const PAYOUT_ACCOUNT_NAME_MAX_LENGTH = 140;
+
+/** An account as it is typed. The only inbound shape that carries a full number. */
+export type PayoutDestinationInput = {
+  payoutKind: ReimbursementPayoutKind;
+  /** Required for a bank account; a PromptPay number has none. */
+  bankName?: string;
+  accountName: string;
+  accountNumber: string;
+};
+
+/** Digits kept as text: spaces and dashes go, a leading zero stays, nothing is ever read as a number. */
+export function normalizePayoutAccountNumber(raw: unknown): string {
+  return typeof raw === 'string' ? raw.replace(/[\s-]/g, '') : '';
+}
+
+export type PayoutDestinationField = 'payoutKind' | 'bankName' | 'accountName' | 'accountNumber';
+
+/**
+ * The one format rule for an account, shared by the API and the web form. Completeness and shape
+ * only: a bank account is 6 to 20 digits (never forced to 10), a PromptPay number is a Thai mobile
+ * number. Nothing here matches the account name to a person or asks a bank; people verify that.
+ * Returns the first field that fails, or null.
+ */
+export function invalidPayoutDestinationField(input: Partial<PayoutDestinationInput> | null | undefined): PayoutDestinationField | null {
+  const kind = input?.payoutKind;
+  if (kind !== 'BANK_ACCOUNT' && kind !== 'PROMPTPAY_PHONE') return 'payoutKind';
+  const bankName = typeof input?.bankName === 'string' ? input.bankName.trim() : '';
+  if (kind === 'BANK_ACCOUNT' && (bankName.length === 0 || bankName.length > PAYOUT_BANK_NAME_MAX_LENGTH)) return 'bankName';
+  const accountName = typeof input?.accountName === 'string' ? input.accountName.trim() : '';
+  if (accountName.length < 2 || accountName.length > PAYOUT_ACCOUNT_NAME_MAX_LENGTH || /^[\d\s-]+$/.test(accountName)) return 'accountName';
+  const accountNumber = normalizePayoutAccountNumber(input?.accountNumber);
+  if (!(kind === 'BANK_ACCOUNT' ? /^\d{6,20}$/ : /^0\d{9}$/).test(accountNumber)) return 'accountNumber';
+  return null;
+}
+
+/** The one masked form of an account number, on every surface that shows one. */
+export function maskedPayoutAccountNumber(accountLast4: string): string {
+  return `ลงท้าย ${accountLast4}`;
+}
+
+/** A member's default payout account as every screen sees it: never the full number. */
+export type MemberPayoutAccountSummary = {
+  userId: string;
+  payoutMethod: ReimbursementPayoutMethod;
+  payoutKind?: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName?: string;
+  accountLast4?: string;
+  updatedAt: string;
+  /** Present while the latest save was made by someone else, until the account owner saves it themselves. */
+  setByOtherName?: string;
+};
+
+export type MemberPayoutAccountResponse = { account: MemberPayoutAccountSummary | null };
+
+export type SetMemberPayoutAccountInput =
+  | { payoutMethod: 'CASH' }
+  | ({ payoutMethod: 'BANK_TRANSFER' } & PayoutDestinationInput);
+
+/** The answer of the audited "แสดงเลขบัญชี" call: the only outbound shape that carries a full number. */
+export type PayoutAccountReveal = { accountNumber: string };
+
+/** A draft's choice: follow the requester's default account, take cash, or name an account for this claim only. */
+export type ReimbursementPayoutInput =
+  | { mode: 'DEFAULT' }
+  | { mode: 'CASH' }
+  | ({
+    mode: 'SPECIFIED';
+    /** Also make it the requester's default account; the claim then follows that default. */
+    saveAsDefault?: boolean;
+  } & PayoutDestinationInput);
+
+export type ReimbursementPayoutNotReadyReason = 'payout_method_required' | 'payout_destination_required';
+
+/**
+ * A claim's receiving method and account, masked. Once the claim is submitted this is the claim's
+ * own frozen snapshot: a later change to the member's default account never shows up here.
+ */
+export type ReimbursementPayoutSummary = {
+  /** Absent only while a draft follows a default account the requester has not set yet. */
+  payoutMethod?: ReimbursementPayoutMethod;
+  payoutKind?: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName?: string;
+  accountLast4?: string;
+  /** The claim's own snapshot version. Absent for cash, and while a draft still follows the default. */
+  version?: number;
+  source?: ReimbursementPayoutSource;
+  /** Draft only: the account is read from the requester's default until submit freezes a copy. */
+  followsDefault?: boolean;
+  /** Who typed or set the account, when it was not the requester. */
+  enteredByName?: string;
+  /** The attestation of exactly this version ("ตรวจบัญชีแล้ว"); absent until someone attests it. */
+  verifiedByUserId?: string;
+  verifiedByName?: string;
+  verifiedAt?: string;
+  /** Draft only: why submit would be refused. */
+  notReadyReason?: ReimbursementPayoutNotReadyReason;
+  /** Whether THIS viewer may call the reveal endpoint. Set on the detail read only; absent means no. */
+  canReveal?: boolean;
 };
 
 // ---- Printable claim form (ใบเบิกค่าใช้จ่าย) ----
