@@ -15,6 +15,8 @@ type ReimbursementLine = { lineNo: number; description: string; amount: string; 
 type ReimbursementPayment = {
   id: string; status: string; paymentMethod: string;
   slipCount: number; slips: { attachmentId: string }[]; viewerCanOpenSlips: boolean;
+  /** The account the payer confirmed the transfer into: the claim's account version, last 4 digits only. */
+  payoutDestination?: { version: number; accountLast4: string };
 };
 type Reimbursement = {
   id: string;
@@ -29,13 +31,17 @@ type Reimbursement = {
   payments?: ReimbursementPayment[];
   signedCopies?: { attachmentId: string }[];
   documentSignedVia?: string | null;
+  /** Where the money goes back to, masked. A draft's detail also carries the token a submit sends back. */
+  payout?: { payoutMethod?: string; accountLast4?: string; version?: number; submitToken?: string; verifiedByName?: string };
+  /** Present while the claim's payout account is being corrected: whom it waits for. */
+  payoutCorrectionPhase?: 'AWAITING_REQUESTER' | 'AWAITING_APPROVAL';
 };
 type ReimbursementPage = { items: Reimbursement[] };
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 /** One claim, N rows. The server computes the total — no amount is ever posted at header level. */
-async function createReimbursement(api: any, companyId: string, amounts: string[] = ['123.00']) {
+async function createReimbursement(api: any, companyId: string, amounts: string[] = ['123.00'], payout: Record<string, unknown> = { mode: 'CASH' }) {
   const branches = await json<any>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
   const branchId = (branches.data ?? branches.items ?? branches)[0].id;
   return json<Reimbursement>(await api.post(`companies/${companyId}/reimbursements`, {
@@ -43,8 +49,8 @@ async function createReimbursement(api: any, companyId: string, amounts: string[
       reason: unique('E2E reimbursement'), branchId,
       currency: 'THB',
       missingReceiptReason: 'E2E local run without receipt upload',
-      // A claim says how it is paid back before it can be sent; cash needs no account and no attestation.
-      payout: { mode: 'CASH' },
+      // A claim says how it is paid back before it can be sent; cash (the default here) needs no account and no attestation.
+      payout,
       lines: amounts.map((amount, index) => ({
         lineNo: index + 1,
         incurredDate: today(),
@@ -363,6 +369,104 @@ test.describe('REIMB — reimbursements', () => {
       expect((await api.get(`companies/${companyId}/attachments/${misfiled}/download-url`)).status()).toBe(403);
       const again = await api.post(`${claimUrl(companyId, claim.id)}/claim-form/signed-copies`, { data: { attachmentId: misfiled } });
       expect(again.status()).toBe(400);
+    });
+  });
+
+  // Payout spec §14 (Phase 3): a wrong payout account found at the pay step is corrected on the SAME claim. The payer
+  // sends it back, the requester gives the account again, the approver approves that account alone, and the payment
+  // goes into the new account. Nothing else of the claim moves: its number, its lines and its amount.
+  test('REIMB-12 @p1 a claim sent back for its payout account is corrected, approved again and paid into the new account under the same number', async ({ api, apiAs, pageAs, request, companyId }) => {
+    const staff = await apiAs('STAFF');
+    // The seeded policy routes a claim to the MANAGER role: a manager approves it, and approves its new account.
+    const manager = await apiAs('MANAGER');
+    const finance = await apiAs('FINANCE');
+    await withPolicy(api, companyId, PAYABLE, async () => {
+      // STAFF files a claim paid into an account typed for it; the manager approves it and attests that account.
+      const draft = await createReimbursement(staff, companyId, ['318.00'], {
+        mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย ปวีณ์ พนักงานทั่วไป', accountNumber: '004-5-67123-4',
+      });
+      const shown = await json<Reimbursement>(await staff.get(claimUrl(companyId, draft.id)));
+      const submitted = await json<Reimbursement>(await staff.post(`${claimUrl(companyId, draft.id)}/submit`, { data: { payoutSubmitToken: shown.payout?.submitToken } }));
+      const sent = await json<Reimbursement>(await manager.get(claimUrl(companyId, draft.id)));
+      const approved = await json<Reimbursement>(await manager.post(`${claimUrl(companyId, draft.id)}/approve`, {
+        data: { approvalSnapshotHash: submitted.approvalSnapshotHash, payoutVerifiedVersion: sent.payout?.version },
+      }));
+      expect([approved.status, approved.payout?.accountLast4, approved.payout?.version]).toEqual(['READY_FOR_PAYMENT', '1234', 1]);
+      const requestNo = approved.requestNo!;
+
+      // The payer sends it back from the pay step card: a reason from the fixed list, in the page and not in a dialog.
+      const payerPage = await pageAs('FINANCE');
+      await gotoCompany(payerPage, companyId, `/reimbursements/${draft.id}`);
+      await payerPage.getByRole('button', { name: 'ส่งกลับให้แก้บัญชีรับเงิน', exact: true }).click();
+      const sendBack = payerPage.getByTestId('reimbursement-payout-correction-request');
+      await expect(sendBack).toBeVisible();
+      await expect(payerPage.getByRole('dialog')).toHaveCount(0);
+      await sendBack.getByText('เลขบัญชีไม่ถูกต้อง', { exact: true }).click();
+      await sendBack.getByRole('textbox').fill('ธนาคารแจ้งว่าไม่พบบัญชีนี้');
+      await sendBack.getByRole('button', { name: 'ยืนยันส่งกลับ', exact: true }).click();
+      await expect(payerPage.getByText('รอผู้เบิกแก้บัญชีรับเงิน').first()).toBeVisible();
+      await expect(payerPage.getByText('อยู่ที่ ผู้เบิก')).toBeVisible();
+
+      // Same claim, same number, with its requester; and nothing pays it meanwhile.
+      const waiting = await json<Reimbursement>(await api.get(claimUrl(companyId, draft.id)));
+      expect([waiting.status, waiting.payoutCorrectionPhase, waiting.requestNo, waiting.amount]).toEqual(['PENDING_APPROVAL', 'AWAITING_REQUESTER', requestNo, approved.amount]);
+      const refused = await finance.post(`${claimUrl(companyId, draft.id)}/payments`, {
+        data: { idempotencyKey: `e2e-round-${draft.id}`, paidAmount: '318.00', currency: 'THB', paymentMethod: 'CASH', paidAt: new Date().toISOString() },
+      });
+      expect(refused.status()).toBe(409);
+      expect(await refused.text()).toContain('payout_correction_in_progress');
+
+      // The requester gives the account again, from the approval step card.
+      const requesterPage = await pageAs('STAFF');
+      await gotoCompany(requesterPage, companyId, `/reimbursements/${draft.id}`);
+      await requesterPage.getByRole('button', { name: 'แก้บัญชีรับเงิน', exact: true }).click();
+      const account = requesterPage.getByTestId('reimbursement-payout-correction-account');
+      await account.getByText('ระบุบัญชีสำหรับใบนี้', { exact: true }).click();
+      await chooseThemedOption(requesterPage, account.getByRole('combobox', { name: 'ธนาคาร', exact: true }), 'ธนาคารไทยพาณิชย์');
+      await account.getByRole('textbox', { name: 'ชื่อบัญชี', exact: true }).fill('นาย ปวีณ์ พนักงานทั่วไป');
+      await account.getByRole('textbox', { name: 'เลขบัญชี', exact: true }).fill('111-2-33444-9');
+      await account.getByRole('button', { name: 'บันทึกบัญชีรับเงิน', exact: true }).click();
+      await expect(requesterPage.getByText('รออนุมัติบัญชีรับเงินใหม่').first()).toBeVisible();
+
+      // The approver compares the two accounts, attests the new one and approves; a round offers no "ปฏิเสธ".
+      const approverPage = await pageAs('MANAGER');
+      await gotoCompany(approverPage, companyId, `/reimbursements/${draft.id}`);
+      const comparison = approverPage.getByTestId('reimbursement-payout-correction-comparison');
+      await expect(comparison).toContainText('สิ่งที่เปลี่ยน: บัญชีรับเงินคืน');
+      await expect(comparison).toContainText('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 1234');
+      await expect(comparison).toContainText('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 4449');
+      await expect(approverPage.getByRole('button', { name: 'ปฏิเสธ', exact: true })).toHaveCount(0);
+      await expect(approverPage.getByRole('button', { name: 'ส่งกลับให้แก้อีกครั้ง', exact: true })).toBeVisible();
+      const approve = approverPage.getByRole('button', { name: 'อนุมัติ', exact: true });
+      await expect(approve).toBeDisabled();
+      await approverPage.getByRole('checkbox', { name: /ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก/ }).check();
+      await approve.click();
+      await expect(approverPage.getByText('พร้อมจ่าย').first()).toBeVisible();
+
+      // Back at the pay step with the new account and its new attester, under the same number.
+      const ready = await json<Reimbursement>(await finance.get(claimUrl(companyId, draft.id)));
+      expect([ready.status, ready.payoutCorrectionPhase ?? null, ready.requestNo, ready.amount, ready.payout?.accountLast4, ready.payout?.version])
+        .toEqual(['READY_FOR_PAYMENT', null, requestNo, approved.amount, '4449', 2]);
+      expect(ready.payout?.verifiedByName).toBeTruthy();
+
+      // The payer pays into the new account: the transfer is confirmed for version 2 and carries its slip.
+      const slipAttachmentId = await uploadSlip(finance, request, companyId, draft.id);
+      const paid = await json<Reimbursement>(await finance.post(`${claimUrl(companyId, draft.id)}/payments`, {
+        data: {
+          idempotencyKey: `e2e-round-pay-${draft.id}`, paidAmount: '318.00', currency: 'THB', paymentMethod: 'BANK_TRANSFER', paymentReference: unique('E2E-TXN'),
+          paidAt: new Date().toISOString(), slipAttachmentId, payoutDestinationVersion: ready.payout?.version, payoutConfirmed: true,
+        },
+      }));
+      const payment = paid.payments!.find((row) => row.status === 'RECORDED')!;
+      expect([paid.status, paid.requestNo, payment.payoutDestination?.accountLast4, payment.payoutDestination?.version, payment.slipCount]).toEqual(['PAID', requestNo, '4449', 2, 1]);
+
+      // The claim's journey tells the round, with the first approval kept as history.
+      await requesterPage.reload();
+      const journey = requesterPage.getByTestId('reimbursement-timeline');
+      await expect(journey).toContainText('ส่งกลับให้แก้บัญชีรับเงินโดย');
+      await expect(journey).toContainText('ผู้เบิกแก้บัญชีรับเงิน');
+      await expect(journey).toContainText('อนุมัติบัญชีรับเงินใหม่โดย');
+      await expect(journey).toContainText('โอนเข้าบัญชีลงท้าย 4449');
     });
   });
 });
