@@ -181,7 +181,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     // only a notice, because a task per scan window would pile up (audit B8).
     key: 'reimbursement_payment_sla_breach',
     name: 'Reimbursement payment SLA breach',
-    description: 'Remind everyone who can record the payment when a claim has waited for payment longer than the policy SLA age.',
+    description: 'Remind the person whose turn it is to record the payment (whoever passed or approved the claim, when they can pay), else everyone who can, when a claim has waited for payment longer than the policy SLA age.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'SLA_SCAN',
@@ -193,6 +193,11 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
         configJson: {
           triggerKey: 'workflow.reimbursement_payment_sla_breach',
           recipientPermissions: ['reimbursement.payment.record'],
+          // The same preference as the ready-to-pay notice, read from what the claim records: the
+          // finance reviewer who passed it, else whoever approved it, when they can record the
+          // payment. Never the requester alone. With no such person, everyone able to record it.
+          preferRecipientPayloadKeys: ['financeReviewerUserId', 'approvedByUserId'],
+          neverPreferRecipientPayloadKeys: ['requesterUserId'],
           severity: 'critical',
           titleTemplate: 'ใบเบิกรอจ่ายเงินเกินกำหนด: {{requestNo}}',
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',

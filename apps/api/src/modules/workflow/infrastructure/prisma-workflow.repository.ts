@@ -179,6 +179,26 @@ export class PrismaWorkflowRepository {
     return row?.branchId ?? null;
   }
 
+  /**
+   * Who approved each claim in its current round: the decider of its latest APPROVED step that is
+   * still in force (not invalidated). The payout work names the same person the claim's own
+   * approver (`isReimbursementPayoutParty` in contracts); this is that rule, to be unified with it
+   * when both land.
+   */
+  async findClaimApprovers(companyId: string, requestIds: string[]): Promise<Map<string, { userId: string; decidedAt: Date }>> {
+    if (requestIds.length === 0) return new Map();
+    const steps = await this.prisma.client.reimbursementApprovalStep.findMany({
+      where: {
+        companyId, reimbursementRequestId: { in: requestIds }, status: 'APPROVED', invalidatedAt: null,
+        decisionByUserId: { not: null }, decidedAt: { not: null },
+      },
+      select: { reimbursementRequestId: true, decisionByUserId: true, decidedAt: true },
+      orderBy: { decidedAt: 'asc' },
+    });
+    // Oldest first, so the latest decision of a claim is the one left in the map.
+    return new Map(steps.map((step) => [step.reimbursementRequestId, { userId: step.decisionByUserId!, decidedAt: step.decidedAt! }]));
+  }
+
   async updateRule(companyId: string, id: string, data: Record<string, unknown>): Promise<WorkflowRuleRecord> {
     const row = await this.prisma.client.workflowRule.update({ where: { id }, data: data as any });
     return this.toRule(row);

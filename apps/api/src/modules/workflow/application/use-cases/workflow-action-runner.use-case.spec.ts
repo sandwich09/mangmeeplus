@@ -379,15 +379,58 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
   // Audit B9: nothing reminded anyone that a claim was waiting for payment.
   describe('payment reminder notice (audit B9)', () => {
     const reminder = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_sla_breach')!;
-    const runReminder = () => make().execute(
+    const runReminder = (payload: Record<string, unknown> = {}) => make().execute(
       { ...actionRun(reminder().defaultActionJson[0]!.configJson), actionKey: reminder().defaultActionJson[0]!.actionKey },
       {
         companyId: 'co_1', ruleName: reminder().name, sourceModule: 'reimbursements',
         sourceType: 'reimbursement_request', sourceId: 'rb_1',
-        payload: { requestId: 'rb_1', requestNo: 'RB-202610-00007', ageHours: 80, slaRisk: true, amount: '250', currency: 'THB' },
+        payload: { requestId: 'rb_1', requestNo: 'RB-202610-00007', ageHours: 80, slaRisk: true, amount: '250', currency: 'THB', ...payload },
         siblingActions: reminder().defaultActionJson,
       } as any,
     );
+    const reminded = () => (notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds;
+
+    // Owner rule 2026-10-01: the reminder goes to whose turn it is, like the ready-to-pay notice.
+    it('reminds only the manager who approved, where the owner, an admin and a second manager can all pay', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin', 'u_manager', 'u_manager_2']);
+      await runReminder({ requesterUserId: 'u_staff', approvedByUserId: 'u_manager' });
+
+      assert.deepEqual(reminded(), ['u_manager']);
+    });
+
+    it('reminds the finance reviewer who passed the claim before its approver, when they can pay', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance', 'u_manager']);
+      await runReminder({ requesterUserId: 'u_staff', financeReviewerUserId: 'u_finance', approvedByUserId: 'u_manager' });
+      assert.deepEqual(reminded(), ['u_finance']);
+
+      // A finance reviewer without the pay right: the approver is next in line.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager']);
+      await runReminder({ requesterUserId: 'u_staff', financeReviewerUserId: 'u_finance', approvedByUserId: 'u_manager' });
+      assert.deepEqual(reminded(), ['u_manager']);
+    });
+
+    it('reminds everyone who can pay when the approver cannot, has left, or the claim needed no approval', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin']);
+      await runReminder({ requesterUserId: 'u_staff', approvedByUserId: 'u_manager_without_pay_right' });
+      assert.deepEqual(reminded(), ['u_owner', 'u_admin']);
+
+      await runReminder({ requesterUserId: 'u_staff' });
+      assert.deepEqual(reminded(), ['u_owner', 'u_admin']);
+    });
+
+    it('still reminds a solo owner who filed and approved their own claim', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
+      await runReminder({ requesterUserId: 'u_owner', approvedByUserId: 'u_owner' });
+
+      assert.deepEqual(reminded(), ['u_owner']);
+    });
+
+    it('never reminds a requester alone to pay their own claim when others can', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager']);
+      await runReminder({ requesterUserId: 'u_manager', approvedByUserId: 'u_manager' });
+
+      assert.deepEqual(reminded(), ['u_owner', 'u_manager']);
+    });
 
     it('reminds everyone who can record the payment, in plain Thai, with the link to the claim', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => ['u_approver', 'u_finance']);

@@ -11,6 +11,7 @@ import { GetStockReportUseCase } from '../../../inventory/application/use-cases/
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { systemWorkerContext } from '../../../auth/domain/logic/system-worker-context';
 import type { ReimbursementRequestRecord } from '../../../reimbursements/domain/models/reimbursement.model';
+import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
 
 export type ScanCandidate = {
   sourceType: string;
@@ -44,6 +45,7 @@ export class WorkflowScanCandidatesProvider {
     private readonly citCalendar: GetCitCalendarUseCase,
     private readonly stockReport: GetStockReportUseCase,
     private readonly approverRoutes: ListReimbursementApproverOptionsUseCase,
+    private readonly workflowRepo: PrismaWorkflowRepository,
   ) {}
 
   async forTemplate(templateKey: string, companyId: string, now: Date): Promise<ScanCandidate[]> {
@@ -147,9 +149,11 @@ export class WorkflowScanCandidatesProvider {
   private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
     const rows = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
+    const approvers = await this.workflowRepo.findClaimApprovers(companyId, rows.map((r) => r.id));
     return rows.map((r) => {
       const payableSince = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
       const age = payableSince ? ageHours(payableSince, now) : 0;
+      const approver = approvers.get(r.id);
       return {
         sourceType: 'reimbursement_request',
         sourceId: r.id,
@@ -158,6 +162,12 @@ export class WorkflowScanCandidatesProvider {
           slaRisk: isSlaRisk(age, effectivePolicyForRequest(r, currentPolicy).slaHours),
           // What is left to pay: the whole claim unless a legacy part payment was recorded.
           amount: r.outstandingAmount, currency: r.currency,
+          // Whose turn it is to pay, for the notice to prefer (owner rule 2026-10-01): the finance
+          // reviewer who passed the claim, else whoever approved it in the round it was last sent
+          // in. A claim that needed no approval names nobody, and the notice goes to everyone able.
+          requesterUserId: r.requesterUserId,
+          ...(r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && r.financeReviewedByUserId && { financeReviewerUserId: r.financeReviewedByUserId }),
+          ...(approver && (!r.submittedAt || approver.decidedAt >= r.submittedAt) && { approvedByUserId: approver.userId }),
         },
       };
     });
