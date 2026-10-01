@@ -84,7 +84,7 @@ export function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
   );
 }
 
-export function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, minLength = 1, onClose, onConfirm }: {
+export function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, minLength = 1, initialReason = '', onClose, onConfirm }: {
   title: string;
   description: string;
   confirmLabel: string;
@@ -93,10 +93,12 @@ export function ReasonDialog({ title, description, confirmLabel, busy, error, da
   danger?: boolean;
   /** The shortest reason the API takes for this action; the confirm button stays off below it. */
   minLength?: number;
+  /** A reason already on record that the person is asked to correct. */
+  initialReason?: string;
   onClose: () => void;
   onConfirm: (reason: string) => void;
 }) {
-  const [reason, setReason] = useState('');
+  const [reason, setReason] = useState(initialReason);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const trimmed = reason.trim();
   useEffect(() => { reasonRef.current?.focus(); }, []);

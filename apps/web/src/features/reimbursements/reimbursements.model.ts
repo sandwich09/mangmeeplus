@@ -192,12 +192,14 @@ export function canVoidRecordedPayment(payment: any, permissions: readonly strin
 /** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
 export function reimbursementOwnActions(detail: any, userId: string, permissions: readonly string[]) {
   const isRequester = detail?.requesterUserId === userId;
-  const canPrepare = isRequester || permissions.includes('reimbursement.finance_review');
+  // A claim being cancelled takes no edit, submit or second cancel: the API refuses them until the
+  // cancellation is finished or withdrawn (the claim detail says so; a list row carries no such flag).
+  const canPrepare = (isRequester || permissions.includes('reimbursement.finance_review')) && !detail?.pendingCancellation;
   const status = String(detail?.status ?? '');
   return {
     canEditDraft: canPrepare && status === 'DRAFT' && (permissions.includes('reimbursement.update_own_draft') || permissions.includes('reimbursement.finance_review')),
     canSubmit: canPrepare && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
-    canCancel: ((isRequester && permissions.includes('reimbursement.cancel_own'))
+    canCancel: !detail?.pendingCancellation && ((isRequester && permissions.includes('reimbursement.cancel_own'))
       || permissions.includes('reimbursement.finance_review'))
       && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
     // REJECTED -> DRAFT: fix and resubmit under the same request number (server: /reopen).
@@ -237,6 +239,11 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   invalid_reimbursement_policy_snapshot: 'ข้อมูลนโยบายของใบเบิกนี้ไม่สมบูรณ์ ระบบจึงหยุดรายการไว้เพื่อความปลอดภัย กรุณาติดต่อผู้ดูแลระบบ',
   finance_approval_already_decided: 'คำขอนี้ถูกอนุมัติจ่ายโดยผู้ตรวจการเงินคนอื่นแล้ว ให้ผู้ที่อนุมัติเป็นผู้กด "ดำเนินการต่อ"',
   cancellation_reason_too_short: 'เหตุผลที่ยกเลิกคำขอต้องยาวอย่างน้อย 3 ตัวอักษร',
+  reimbursement_cancellation_pending: 'ใบเบิกนี้กำลังถูกยกเลิกและยังยกเลิกไม่เสร็จ จึงทำรายการนี้ไม่ได้ กรุณาโหลดรายการใหม่',
+  reimbursement_cancellation_in_progress: 'ระบบกำลังยกเลิกคำขอนี้อยู่ กรุณาโหลดรายการใหม่อีกครั้ง',
+  reimbursement_cancellation_not_pending: 'คำขอนี้ไม่มีการยกเลิกที่ค้างอยู่แล้ว กรุณาโหลดรายการใหม่',
+  reimbursement_cancellation_partly_done: 'ระบบยกเลิกรายการค่าใช้จ่ายของใบนี้ไปบางส่วนแล้ว จึงถอนการยกเลิกไม่ได้ ต้องดำเนินการยกเลิกให้เสร็จ',
+  reimbursement_cancellation_intent_changed: 'การยกเลิกคำขอนี้ถูกถอนไปแล้ว กรุณาโหลดรายการใหม่',
   void_reason_required: 'กรุณาระบุเหตุผลที่ยกเลิกการจ่าย',
   reimbursement_payment_changed: 'ข้อมูลการจ่ายถูกเปลี่ยนแล้ว กรุณาโหลดรายการใหม่',
   // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted

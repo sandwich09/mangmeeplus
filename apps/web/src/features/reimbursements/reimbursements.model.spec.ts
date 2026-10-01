@@ -265,7 +265,8 @@ describe('reimbursement status display maps', () => {
   });
 
   it('labels every desk kind the server can answer with', () => {
-    assert.deepEqual(Object.keys(CURRENT_DESK_LABELS).sort(), ['REQUESTER', 'APPROVER', 'FINANCE', 'PAYMENT'].sort());
+    // SYSTEM: a claim whose decision is made and that the system has not finished moving on (audit B3, B4).
+    assert.deepEqual(Object.keys(CURRENT_DESK_LABELS).sort(), ['REQUESTER', 'APPROVER', 'FINANCE', 'PAYMENT', 'SYSTEM'].sort());
   });
 });
 
