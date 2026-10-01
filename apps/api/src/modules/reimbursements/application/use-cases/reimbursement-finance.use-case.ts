@@ -604,6 +604,11 @@ export class ExportReimbursementEvidenceUseCase {
     const signedCopies = await this.repo.listSignedClaimFormCopies(ctx.companyId, id);
     const payments = req.payments ?? [];
     const paymentSlips = payments.length > 0 ? await this.repo.listPaymentSlips(ctx.companyId, payments.map((payment) => payment.id)) : {};
+    // The account, as every other projection has it: bank, account name and the last 4 digits. The
+    // number itself leaves through the audited reveal alone, never through an export.
+    const payout = req.payoutMethod ? await this.repo.findClaimPayout(req) : undefined;
+    const paidInto = payments.flatMap((payment) => payment.payoutDestinationVersion ?? []);
+    const destinations = paidInto.length > 0 ? await this.repo.listPaymentPayoutDestinations(ctx.companyId, id, paidInto) : {};
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.export',
@@ -625,6 +630,14 @@ export class ExportReimbursementEvidenceUseCase {
         status: req.status,
         paymentStatus: req.paymentStatus,
         approvalSnapshotHash: req.approvalSnapshotHash,
+        ...(payout?.payoutMethod && { payout: {
+          payoutMethod: payout.payoutMethod,
+          ...(payout.payoutMethod === 'BANK_TRANSFER' && {
+            payoutKind: payout.payoutKind, ...(payout.bankName && { bankName: payout.bankName }), accountName: payout.accountName,
+            accountLast4: payout.accountLast4, version: payout.version,
+            ...(payout.verifiedAt && { verifiedAt: payout.verifiedAt.toISOString() }),
+          }),
+        } }),
       },
       // Evidence lives on the lines: since lane C the header attachment/expense ids
       // are null for new claims, so a header-only export would carry no evidence at all.
@@ -648,6 +661,11 @@ export class ExportReimbursementEvidenceUseCase {
         paymentNo: p.paymentNo, paidAmount: p.paidAmount, currency: p.currency, paymentMethod: p.paymentMethod,
         paidAt: p.paidAt.toISOString(), paymentReference: p.paymentReference, status: p.status,
         slipCount: paymentSlips[p.id]?.length ?? 0,
+        // The account this payment was confirmed into (masked), when, and why the method differs from
+        // the one asked for: the same three facts the payment row on the claim page shows.
+        ...(p.payoutDestinationVersion !== undefined && destinations[p.payoutDestinationVersion] && { payoutDestination: destinations[p.payoutDestinationVersion] }),
+        ...(p.payoutConfirmedAt && { payoutConfirmedAt: p.payoutConfirmedAt.toISOString() }),
+        ...(p.methodMismatchReason && { methodMismatchReason: p.methodMismatchReason }),
       })),
     });
   }

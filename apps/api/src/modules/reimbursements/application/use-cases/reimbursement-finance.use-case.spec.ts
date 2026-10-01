@@ -1500,6 +1500,51 @@ describe('ExportReimbursementEvidenceUseCase (multi-line)', () => {
   });
 });
 
+describe('ExportReimbursementEvidenceUseCase: the payout account', () => {
+  const paidAt = '2026-02-01T00:00:00.000Z';
+  const transfer = { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER' as const, paidAt, paymentReference: 'TXN-1', slipAttachmentId: 'att-slip-1' };
+  const pay = (repo: any, input: any) => new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any)
+    .execute(ctx(['reimbursement.payment.record']), 'rb-1', input);
+
+  // Plan 1.11 and invariant I4: the export says of the account, and of each payment, what the claim
+  // page says: bank, account name and the last 4 digits, the version confirmed, when, and the reason.
+  it('exports the account and each payment as the claim page shows them: the last 4 digits, never the number', async () => {
+    const { req, tables } = transferClaim();
+    const repo = fakeRepo(req, { payout: tables });
+    const paid = await pay(repo, { ...transfer, payoutDestinationVersion: 2, payoutConfirmed: true });
+    const exportUC = new ExportReimbursementEvidenceUseCase(repo, noopAudit);
+    const out: any = await exportUC.execute(ctx(['reimbursement.export']), 'rb-1');
+    assert.deepEqual(out.request.payout, { payoutMethod: 'BANK_TRANSFER', ...MASKED_ACCOUNT, version: 2, verifiedAt: '2026-01-11T00:00:00.000Z' });
+    assert.deepEqual(out.payments, [{
+      paymentNo: 'RBPAY-202601-000001', paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
+      paidAt, paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
+      payoutDestination: { version: 2, ...MASKED_ACCOUNT }, payoutConfirmedAt: '2026-02-01T00:00:05.000Z',
+    }]);
+    // One payment, one reading: every fact the export has is the fact the claim page's payment row has.
+    const row = paid.payments[0]!;
+    for (const fact of ['paymentNo', 'paidAmount', 'currency', 'paymentMethod', 'paidAt', 'paymentReference', 'status', 'slipCount', 'payoutDestination', 'payoutConfirmedAt', 'methodMismatchReason'] as const) {
+      assert.deepEqual(out.payments[0][fact], row[fact], fact);
+    }
+    assert.doesNotMatch(JSON.stringify(out), ACCOUNT_NUMBER_WRITTEN);
+    assert.doesNotMatch(JSON.stringify(out), /accountNumber|fingerprint/i);
+
+    // Paid by another method than asked: the export carries the reason the payment row carries, and no account.
+    const inCash = transferClaim();
+    const cashRepo = fakeRepo(inCash.req, { payout: inCash.tables });
+    const cashPaid = await pay(cashRepo, { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt, methodMismatchReason: 'ผู้เบิกมารับเงินสดเอง' });
+    const cashOut: any = await new ExportReimbursementEvidenceUseCase(cashRepo, noopAudit).execute(ctx(['reimbursement.export']), 'rb-1');
+    assert.deepEqual([cashOut.payments[0].methodMismatchReason, cashOut.payments[0].payoutDestination, cashOut.payments[0].payoutConfirmedAt],
+      [cashPaid.payments[0]!.methodMismatchReason, undefined, undefined]);
+    assert.equal(cashOut.payments[0].methodMismatchReason, 'ผู้เบิกมารับเงินสดเอง');
+
+    // A cash claim says so and has no account; a legacy claim's export is what it was before the feature.
+    const cashClaim: any = await new ExportReimbursementEvidenceUseCase(fakeRepo(financeReviewedRequest({ payoutMethod: 'CASH', payoutFingerprint: 'cash', lines: [] })), noopAudit).execute(ctx(['reimbursement.export']), 'rb-1');
+    assert.deepEqual(cashClaim.request.payout, { payoutMethod: 'CASH' });
+    const legacy: any = await new ExportReimbursementEvidenceUseCase(fakeRepo(financeReviewedRequest({ lines: [] })), noopAudit).execute(ctx(['reimbursement.export']), 'rb-1');
+    assert.equal('payout' in legacy.request, false);
+  });
+});
+
 function correctionRepositoryHarness(input: {
   status?: string; recordedPayments?: number; liveProjections?: number; stepStatus?: string; candidates?: any[];
 } = {}) {
