@@ -33,7 +33,7 @@ Deliberately not done:
 - The correction-round wording and its tests (plan 4.1's last clause, AC32's print half).
 - The plan's checkboxes were left as they are, as in the other lanes.
 - No e2e spec and no web change.
-- The spec file was not edited for the two wordings above; they are listed under Open questions.
+- The spec file was not edited for the PromptPay wording on the payment line (a decision above) or for the attestation line of a requester's own attestation (an open question below).
 
 ## Open questions
 
@@ -43,7 +43,7 @@ Deliberately not done:
 
 ## Noticed, outside this task
 
-- **The ผู้อนุมัติ block reads the latest APPROVED step of any round.** `buildSnapshot` takes the newest step with status APPROVED and a decision time; it does not ask whether that step is invalidated or was decided before the claim was last sent. A claim approved, sent back by finance (which returns it to a draft and leaves the APPROVED step as it is), corrected and sent again prints the earlier approver's name and date in the ผู้อนุมัติ block while it waits for approval, and still does after the new round is rejected. Run on a hand-built record of that state (`approver-block-probe.ts`, coordinator scratchpad): the block read "( มานี ผู้จัดการ ) วันที่ 21 ก.ค. 2569" in both cases, while the rule the claim page, the reveal and the slip use (`isReimbursementClaimApprover` in contracts) says that person did not approve the round. `eligibleClaimSignatureRoles` picks the step the same way, so that earlier approver may also sign the ผู้อนุมัติ block of a claim waiting in the new round. With the account lines this now shows on one sheet: an approver is named, no "ผู้ตรวจบัญชี" line is printed (the attestation is cleared when the claim is sent again), and that earlier approver gets the last-4 print. `selfApproved` reads the same step. Reaching the state needs the finance review step, which is off by default; the path through the real send-back and resubmission was read, not run. Phase 3 marks an APPROVED step invalidated for the first time, so plan 3.6 has to change this selection in any case.
+- **The ผู้อนุมัติ block reads the latest APPROVED step of any round.** `buildSnapshot` takes the newest step with status APPROVED and a decision time; it does not ask whether that step is invalidated or was decided before the claim was last sent. A claim approved, sent back by finance (which returns it to a draft and leaves the APPROVED step as it is), corrected and sent again prints the earlier approver's name and date in the ผู้อนุมัติ block while it waits for approval, and still does after the new round is rejected. Run on a hand-built record of that state (`approver-block-probe.ts`, coordinator scratchpad): the block read "( มานี ผู้จัดการ ) วันที่ 21 ก.ค. 2569" in both cases, while the rule the claim page, the reveal and the slip use (`isReimbursementClaimApprover` in contracts) says that person did not approve the round. `eligibleClaimSignatureRoles` picks the step the same way, so that earlier approver may also sign the ผู้อนุมัติ block of a claim waiting in the new round. With the account lines this now shows on one sheet: an approver is named, no "ผู้ตรวจบัญชี" line is printed (the attestation is cleared when the claim is sent again), and that earlier approver, unless they may also record the payment, gets the last-4 print. `selfApproved` reads the same step. Reaching the state needs the finance review step, which is off by default; the path through the real send-back and resubmission was read, not run. Phase 3 marks an APPROVED step invalidated for the first time, so plan 3.6 has to change this selection in any case.
 - **The print is narrower than the claim page for one person.** The route asks for one of the three read permissions and the use case for `assertCanReadRequest`. The claim detail and the reveal also let in whoever the pending step waits on after they lost every read permission (`assertCanReadRequestOrAssignment`). That person opens the claim and reveals the number, and cannot print the form. The comment in the use case ("same read guard as GET detail") is no longer true of the detail.
 
 ## Artifacts
@@ -51,11 +51,11 @@ Deliberately not done:
 - API: `apps/api/src/modules/reimbursements/domain/logic/claim-form.logic.ts` (`ClaimFormPayout`, `payoutLines`, `claimFormHeader` now also says where the table starts, `repaymentText`), `application/use-cases/reimbursement-claim-form.use-case.ts` (`withAccountNumber`, the payout part of `buildSnapshot`, `claimFormPayout`). The use case now takes `AuditService` and `AppConfigService`.
 - Tests, both files registered in `apps/api/package.json`: `claim-form.logic.spec.ts`, `reimbursement-claim-form.use-case.spec.ts`.
 - Docs: `docs/specs/permission-matrix.md` (the payout section: the print is the third way a full number leaves, and its route row).
-- Sample prints and the scripts that made them, in the coordinator scratchpad: `print-shots/` (14 samples, 34 images each as SVG and PNG, with `samples.txt` and `measure.txt`) and `print-lane/` (`render-samples.ts`, `shoot-and-measure.cjs`, `mutate.py`, `approver-block-probe.ts`).
+- Sample prints and the scripts that made them, in the coordinator scratchpad: `print-shots/` (14 samples: 34 images, each as SVG and PNG, with `samples.txt` and `measure.txt`) and `print-lane/` (`render-samples.ts`, `shoot-and-measure.cjs`, `mutate.py`, `approver-block-probe.ts`).
 
 ## Verification
 
-Run on 2026-10-02 at the lane's code head `626a800ec` (the commit after it is this note and the permission matrix).
+Run on 2026-10-02 at the lane's code head `626a800ec` (the commits after it are this note and the permission matrix).
 
 - Typechecks, the package scripts: contracts exit 0; API (heap flag) exit 0. The native compiler, as CI runs it (`tsconfig.typecheck.json`), also passes for the API. The web was not touched.
 - The two touched specs: 81 tests, 81 pass (45 renderer, 36 use case). Every spec of the reimbursement module: 759 tests, 704 pass, 0 fail, 55 skip (the real-PostgreSQL specs skip themselves without a database).
@@ -75,4 +75,4 @@ Read, not run: the response cache header, the absence of a response interceptor 
 - Coordinator: merge into the assembly. The lane touches the two claim-form files, their specs, the permission matrix's payout section and this note.
 - Phase 3: the correction-round wording and the blank approver block, at the two places named above, with the use-case case "no number and no row during the round".
 - Decide the approver-block step (first item under "Noticed"): the print, the signing right and the page should name the same person.
-- Decide the two open wordings.
+- Decide the open questions above.
