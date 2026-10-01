@@ -976,6 +976,11 @@ GET /companies/:companyId/audit/logs
 - Permission: audit.log.read.
 - Resolves tenant from the route and requires it to match the request context.
 - Applies role/category ABAC filter: full company for OWNER/AUDITOR_READONLY, admin/security for ADMIN, accounting/tax/finance for ACCOUNTANT.
+- Returns the company's own trail only (2026-10-01, RB-38). Rows the platform wrote about the company are left out:
+  - platform-side actions, whoever the actor is: `system.*`, `sales.*`, `signup.request.*`, `signup.line.package_change_decided`, `signup.line.trial_guards_failed`, `auth.identity.repointed`, `ai.credit_hold.*`, `ai.credit_breach.*`;
+  - `billing.*`, except what one of the company's own people did there (purchase and renewal, billing recipient, their documents, capacity choices);
+  - any row whose actor is a member of the platform company and holds no membership in this company.
+  Rows the system wrote about the company's own work (scheduled jobs, automatic approvals) stay. The platform company itself is not filtered, and platform-side audit views read `AuditLog` directly, so they still see everything.
 - Returns bounded paginated audit records.
 ```
 
