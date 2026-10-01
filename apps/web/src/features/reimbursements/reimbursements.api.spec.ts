@@ -9,7 +9,7 @@ import {
   uploadReceiptFile,
   uploadSignedClaimFormCopy,
 } from './reimbursements.api';
-import { errorText, hubList, hubNextPage, NO_HUB_LIST, withHubFailure, withHubPage, withHubRetry, type HubList } from './reimbursements.logic';
+import { errorText, hubList, hubNextPage, NO_HUB_LIST, withHubFailure, withHubPage, withHubRetry, type HubFilter, type HubList } from './reimbursements.logic';
 import { subscribeToastBus, type ToastEvent } from '@/common/feedback/toast-bus';
 
 const originalFetch = globalThis.fetch;
@@ -141,6 +141,7 @@ describe('reimbursement receipt upload', () => {
 // The hub's list is asked for a page at a time. What the hub holds is `HubList` (reimbursements.logic.ts); this is the
 // part that talks to the API, and the part that drops an answer nobody is waiting for any more.
 describe('loadHubPage and the hub list it fills', () => {
+  const hub = (all: number) => ({ counts: { all, draft: 0, review: 0, payment: all, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
   /** A list endpoint over `rows`, answering `pageSize` rows a page whatever was asked; `failing` pages answer 500. */
   function server(rows: Array<{ id: string }>, pageSize = 100, failing: number[] = []) {
     const urls: string[] = [];
@@ -149,30 +150,61 @@ describe('loadHubPage and the hub list it fills', () => {
       urls.push(String(input));
       const page = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
       if (failing.includes(page)) return Response.json({ statusCode: 500, message: 'Internal server error' }, { status: 500 });
-      return Response.json({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize });
+      return Response.json({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize, hub: hub(rows.length) });
     }) as typeof fetch;
     return { urls, failing };
   }
   const claims = (count: number, from = 0) => Array.from({ length: count }, (_, index) => ({ id: `rb-${from + index}` }));
-  const page = (number: number, scope?: string) => new Promise<any>((resolve, reject) => {
-    loadHubPage('co-1', { scope, page: number }, { onPage: resolve, onError: reject });
+  const page = (number: number, scope?: string, filter: HubFilter = 'all') => new Promise<any>((resolve, reject) => {
+    loadHubPage('co-1', { scope, filter, page: number }, { onPage: resolve, onError: reject });
   });
   /** The hub's own loop, as its effect runs it: ask for the page the list needs, add it, until nothing is needed. */
-  async function fill(held: HubList, key: string, need = Infinity, scope?: string): Promise<HubList> {
+  async function fill(held: HubList, key: string, need = Infinity, scope?: string, filter: HubFilter = 'all'): Promise<HubList> {
     for (;;) {
       const next = hubNextPage(hubList(held, key), need);
       if (next === null) return hubList(held, key);
-      try { held = withHubPage(held, key, await page(next, scope)); }
+      try { held = withHubPage(held, key, await page(next, scope, filter)); }
       catch (error) { held = withHubFailure(held, key, errorText(error)); }
     }
   }
 
-  it('takes every page, so the hub cards count claims older than the first page', async () => {
-    // Before Phase 0: one unpaged call, and the endpoint answers its first 20 rows.
+  it('opens with one call, takes more only as the table page shown needs them, and every page for a search', async () => {
+    // Before: the hub walked the whole list on every open, 20 calls for 2,000 claims.
     const { urls } = server(claims(230));
-    const list = await fill(NO_HUB_LIST, 'list', Infinity, 'related');
-    assert.deepEqual([list.rows.length, list.total, list.nextPage, list.failed], [230, 230, null, undefined]);
-    assert.deepEqual(urls, [1, 2, 3].map((number) => `/api/v1/companies/co-1/reimbursements?scope=related&page=${number}&pageSize=100`));
+    const opened = await fill(NO_HUB_LIST, 'list', 10, 'related');
+    assert.deepEqual([opened.rows.length, opened.total, opened.nextPage, opened.failed], [100, 230, 2, undefined]);
+    assert.deepEqual(urls, ['/api/v1/companies/co-1/reimbursements?scope=related&page=1&pageSize=100']);
+    // The cards print the server's counts of the whole scope from that first answer.
+    assert.equal(opened.summary?.counts.all, 230);
+    // Table page 10 still fits in what is held; table page 11 asks for exactly one more page.
+    assert.equal((await fill(opened, 'list', 100, 'related')).rows.length, 100);
+    assert.equal(urls.length, 1);
+    const further = await fill(opened, 'list', 110, 'related');
+    assert.deepEqual([further.rows.length, further.nextPage], [200, 3]);
+    assert.deepEqual(urls.slice(1), ['/api/v1/companies/co-1/reimbursements?scope=related&page=2&pageSize=100']);
+    // A search needs every row of the filter.
+    const all = await fill(further, 'list', Infinity, 'related');
+    assert.deepEqual([all.rows.length, all.total, all.nextPage], [230, 230, null]);
+    assert.deepEqual(urls.slice(2), ['/api/v1/companies/co-1/reimbursements?scope=related&page=3&pageSize=100']);
+  });
+
+  it('asks the API for the bucket of the card or chip that is open, and for no bucket under ทั้งหมด', async () => {
+    const { urls } = server(claims(3));
+    await fill(NO_HUB_LIST, 'payment-list', 10, undefined, 'payment');
+    await fill(NO_HUB_LIST, 'all-list', 10, undefined, 'all');
+    await fill(NO_HUB_LIST, 'closed-list', 10, 'own', 'closed');
+    assert.deepEqual(urls, [
+      '/api/v1/companies/co-1/reimbursements?bucket=payment&page=1&pageSize=100',
+      '/api/v1/companies/co-1/reimbursements?page=1&pageSize=100',
+      '/api/v1/companies/co-1/reimbursements?scope=own&bucket=closed&page=1&pageSize=100',
+    ]);
+  });
+
+  it('treats an answer without the server\'s counts as a page that did not arrive, never as a scope of zero claims', async () => {
+    (globalThis as Record<string, unknown>)['window'] = {};
+    globalThis.fetch = (async () => Response.json({ items: claims(2), total: 2, page: 1, pageSize: 100 })) as typeof fetch;
+    const list = await fill(NO_HUB_LIST, 'list', 10);
+    assert.deepEqual([list.rows.length, list.summary, list.failed], [0, null, 'ข้อมูลที่ได้รับไม่ครบ']);
   });
 
   it('ends on the server\'s total and the server\'s page size, never on the 100 it asked for', async () => {
@@ -199,7 +231,7 @@ describe('loadHubPage and the hub list it fills', () => {
       globalThis.fetch = (async (input: string | URL | Request) => {
         urls.push(String(input));
         const number = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
-        return Response.json({ items: pages[number] ?? [], total, page: number, pageSize: 100 });
+        return Response.json({ items: pages[number] ?? [], total, page: number, pageSize: 100, hub: hub(total) });
       }) as typeof fetch;
       return urls;
     };
@@ -240,7 +272,8 @@ describe('loadHubPage and the hub list it fills', () => {
     server(claims(150));
     const first = await fill(NO_HUB_LIST, 'before-reload');
     assert.equal(first.rows.length, 150);
-    assert.deepEqual(hubList(first, 'after-reload'), { key: 'after-reload', rows: [], total: 0, nextPage: 1 });
+    // The counts on the cards stay while the next list arrives.
+    assert.deepEqual(hubList(first, 'after-reload'), { key: 'after-reload', rows: [], total: 0, nextPage: 1, summary: hub(150) });
     const { urls } = server(claims(2, 500));
     const second = await fill(first, 'after-reload');
     assert.deepEqual(second.rows, claims(2, 500));
@@ -254,11 +287,11 @@ describe('loadHubPage and the hub list it fills', () => {
       const settled = new Promise<void>((resolve) => { settle = resolve; });
       globalThis.fetch = (async () => {
         await settled;
-        return outcome === 'answers' ? Response.json({ items: claims(1), total: 1, page: 1, pageSize: 100 })
+        return outcome === 'answers' ? Response.json({ items: claims(1), total: 1, page: 1, pageSize: 100, hub: hub(1) })
           : Response.json({ statusCode: 500, message: 'Internal server error' }, { status: 500 });
       }) as typeof fetch;
       const calls: string[] = [];
-      const letGo = loadHubPage('co-1', { page: 1 }, { onPage: () => calls.push('page'), onError: () => calls.push('error') });
+      const letGo = loadHubPage('co-1', { filter: 'all', page: 1 }, { onPage: () => calls.push('page'), onError: () => calls.push('error') });
       // The hub asked for another list, reloaded, or unmounted while the request was in flight.
       letGo();
       settle();
@@ -266,7 +299,7 @@ describe('loadHubPage and the hub list it fills', () => {
       assert.deepEqual(calls, [], outcome);
       // The same request, still wanted, is handed over.
       const kept: string[] = [];
-      loadHubPage('co-1', { page: 1 }, { onPage: () => kept.push('page'), onError: () => kept.push('error') });
+      loadHubPage('co-1', { filter: 'all', page: 1 }, { onPage: () => kept.push('page'), onError: () => kept.push('error') });
       await new Promise((resolve) => setTimeout(resolve, 20));
       assert.deepEqual(kept, [outcome === 'answers' ? 'page' : 'error'], outcome);
     }
@@ -275,7 +308,7 @@ describe('loadHubPage and the hub list it fills', () => {
   it('reports a page the caller cannot take the way it reports a page that did not arrive', async () => {
     server(claims(1));
     const reported = await new Promise<unknown>((resolve) => {
-      loadHubPage('co-1', { page: 1 }, { onPage: () => { throw new Error('unreadable page'); }, onError: resolve });
+      loadHubPage('co-1', { filter: 'all', page: 1 }, { onPage: () => { throw new Error('unreadable page'); }, onError: resolve });
     });
     assert.match(String(reported), /unreadable page/);
   });

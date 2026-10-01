@@ -27,8 +27,8 @@ import {
   summariseQueue, matchesSearch, pageBounds,
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
-  hubFilterCounts, hubRows, type HubFilter, approverPaymentWarning,
-  NO_HUB_LIST, hubList, hubListKey, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
+  type HubFilter, approverPaymentWarning,
+  NO_HUB_LIST, QUEUE_PAGE_SIZE, hubCardFilter, hubList, hubListKey, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -208,8 +208,8 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   canCreate: boolean;
 }) {
   const toast = useToast();
-  // The list is held a page at a time. Which list it is (company, scope, reload) is part of what is held,
-  // so rows that were loaded for another one are never shown, and an answer that arrives late is dropped.
+  // One list is held, a page at a time. Which list it is (company, scope, filter, reload) is part of what is
+  // held, so rows that were loaded for another one are never shown, and an answer that arrives late is dropped.
   const [held, setHeld] = useState<HubList>(NO_HUB_LIST);
   const [reload, setReload] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -219,21 +219,25 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   const [page, setPage] = useState(1);
 
   const scope = reimbursementListScope(permissions);
-  const listKey = hubListKey(companyId, scope, refreshKey, reload);
+  const listKey = hubListKey(companyId, scope, statusFilter, refreshKey, reload);
   const list = hubList(held, listKey);
-  // ponytail: the cards, chips and search count the rows on this page, so every page is taken. The ceiling is
-  // one call per 100 claims; count and filter on the server to stop at the first.
-  const nextPage = hubNextPage(list, Infinity);
+  const searching = query.trim() !== '';
+  // Lazy: the first page of the filter, then more only when the table page shown reaches past what is held.
+  // ponytail: search reads the rows on this page, so a search takes every page of its filter (one call per
+  // 100 claims); search on the server once a shop holds thousands of claims.
+  const nextPage = hubNextPage(list, searching ? Infinity : page * QUEUE_PAGE_SIZE);
   useEffect(() => {
     if (nextPage === null) return;
-    // The cleanup lets go of the request: a reload, another company or an unmount leaves its answer unused.
-    return loadHubPage(companyId, { scope, page: nextPage }, {
+    // The cleanup lets go of the request: another filter, a reload, another company or an unmount leaves its answer unused.
+    return loadHubPage(companyId, { scope, filter: statusFilter, page: nextPage }, {
       onPage: (result) => setHeld((current) => withHubPage(current, listKey, result)),
       onError: (e) => setHeld((current) => withHubFailure(current, listKey, err(e))),
     });
-  }, [companyId, scope, listKey, nextPage]);
-  const data = list.rows;
+  }, [companyId, scope, statusFilter, listKey, nextPage]);
   const loading = nextPage !== null;
+  // The cards and chips are the server's counts of the whole scope, so they hold whatever part of the list is loaded.
+  const summary = list.summary;
+  const rows = list.rows;
 
   // Only the row "ส่งอนุมัติ" uses this; a refusal for want of an approver says who can fix it.
   const action = async (id: string, fn: () => Promise<unknown>, successMessage?: string) => {
@@ -241,30 +245,21 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     try { await fn(); setReload(n => n + 1); if (successMessage) toast.success(successMessage); } catch (e) { setError(approverNotReadyHelp(e, permissions)?.text ?? err(e)); } finally { setBusy(null); }
   };
 
-  const summary = useMemo(() => summariseQueue(data), [data]);
-  const blockedDraftCount = useMemo(
-    () => data.filter(row => reimbursementSubmitReadiness(row).blocked).length,
-    [data],
-  );
-  // The cards, the chips and the list all go through hubRows, so a count always equals the rows its filter shows.
-  const statusCounts = useMemo(() => hubFilterCounts(data), [data]);
-  const filteredData = useMemo(() => {
-    return hubRows(data, statusFilter).filter(r => {
-      return matchesSearch([
-        r.requestNo,
-        r.requesterDisplayNameSnapshot,
-        r.reason,
-        r.categoryLabelSnapshot ?? r.categoryKey,
-        r.lineCount ?? 1,
-        r.amount,
-        r.currency,
-        REQUEST_STATUS_LABELS[r.status] ?? r.status,
-        PAYMENT_STATUS_LABELS[r.paymentStatus] ?? r.paymentStatus,
-        currentDeskText(r.currentDesk),
-      ], query);
-    });
-  }, [data, statusFilter, query]);
-  const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
+  const filteredData = useMemo(() => (searching ? rows.filter(r => matchesSearch([
+    r.requestNo,
+    r.requesterDisplayNameSnapshot,
+    r.reason,
+    r.categoryLabelSnapshot ?? r.categoryKey,
+    r.lineCount ?? 1,
+    r.amount,
+    r.currency,
+    REQUEST_STATUS_LABELS[r.status] ?? r.status,
+    PAYMENT_STATUS_LABELS[r.paymentStatus] ?? r.paymentStatus,
+    currentDeskText(r.currentDesk),
+  ], query)) : rows), [rows, searching, query]);
+  // The server's total stands for the rows not loaded yet. A search, or a list that is complete, counts the rows it holds.
+  const shownTotal = searching || list.nextPage === null ? filteredData.length : list.total;
+  const bounds = useMemo(() => pageBounds(shownTotal, page), [shownTotal, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
   useEffect(() => { setPage(1); }, [query, statusFilter]);
   const statusChips: Array<{ key: HubFilter; label: string }> = [
@@ -276,12 +271,12 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     { key: 'closed', label: 'ปฏิเสธ/ยกเลิก' },
   ];
   // Each card is the same filter as its chip; tapping the open one goes back to ทั้งหมด.
-  const statusCards = [
-    { key: 'draft', icon: ICON.edit, label: 'ร่างรอส่ง', value: statusCounts.draft, tone: KPI.amber },
-    { key: 'review', icon: ICON.clock, label: 'รออนุมัติ/ตรวจสอบ', value: statusCounts.review, tone: KPI.purple },
-    { key: 'payment', icon: ICON.wallet, label: 'รอจ่ายเงินคืน', value: statusCounts.payment, tone: KPI.sky },
+  const statusCards = summary ? [
+    { key: 'draft', icon: ICON.edit, label: 'ร่างรอส่ง', value: summary.counts.draft, tone: KPI.amber },
+    { key: 'review', icon: ICON.clock, label: 'รออนุมัติ/ตรวจสอบ', value: summary.counts.review, tone: KPI.purple },
+    { key: 'payment', icon: ICON.wallet, label: 'รอจ่ายเงินคืน', value: summary.counts.payment, tone: KPI.sky },
     { key: 'all', icon: ICON.doc, label: 'ยอดรวมที่ขอเบิก', value: baht0(summary.totalAmount), tone: KPI.brand },
-  ] as const;
+  ] as const : [];
 
   return (
     <div className="space-y-4">
@@ -289,21 +284,21 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
       {list.failed !== undefined && (
         // A page that did not arrive is said as such, with a way to ask again: never as "ยังไม่มีคำขอเบิก".
         <div className="space-y-2" data-testid="reimbursements-mine-load-failed">
-          <ErrorBanner message={data.length > 0
-            ? `โหลดรายการได้ไม่ครบ รายการและตัวเลขด้านล่างยังไม่ใช่ทั้งหมด · ${list.failed}`
+          <ErrorBanner message={rows.length > 0
+            ? `โหลดรายการได้ไม่ครบ รายการด้านล่างยังไม่ใช่ทั้งหมด · ${list.failed}`
             : `โหลดรายการไม่สำเร็จ · ${list.failed}`} />
           <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={() => setHeld(withHubRetry)}>ลองอีกครั้ง</button>
         </div>
       )}
-      {loading ? <LoadingState label="กำลังโหลด..." /> : list.failed !== undefined && data.length === 0 ? null : (
+      {!summary ? loading && <LoadingState label="กำลังโหลด..." /> : (
         <>
-          {blockedDraftCount > 0 && (
-            <ErrorBanner message={`มีคำขอร่าง ${blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
+          {summary.blockedDraftCount > 0 && (
+            <ErrorBanner message={`มีคำขอร่าง ${summary.blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
           )}
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-summary">
             {statusCards.map(card => (
               <button key={card.key} type="button" aria-pressed={statusFilter === card.key}
-                onClick={() => setStatusFilter(statusFilter === card.key ? 'all' : card.key)}
+                onClick={() => setStatusFilter(hubCardFilter(statusFilter, card.key))}
                 className={cx('h-full w-full min-w-0 rounded-2xl text-left', card.key !== 'all' && statusFilter === card.key && 'ring-2 ring-brand-500 ring-offset-2')}>
                 <StatCard icon={card.icon} label={card.label} value={card.value} {...card.tone} />
               </button>
@@ -320,13 +315,14 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                   <span className="min-w-0">{chip.label.split('/').map((part, index, parts) => (
                     <span key={part} className="whitespace-nowrap">{part}{index < parts.length - 1 && '/'}</span>
                   ))}</span>
-                  <span className={cx('tabular-nums inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{statusCounts[chip.key]}</span>
+                  <span className={cx('tabular-nums inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{summary.counts[chip.key]}</span>
                 </button>
               ))}
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-gray-500 tabular-nums">
-                {query.trim() || statusFilter !== 'all' ? `พบ ${filteredData.length} จาก ${data.length} รายการ` : `ทั้งหมด ${data.length} รายการ`}
+              <div className="text-sm text-gray-500 tabular-nums" role="status">
+                {loading ? 'กำลังโหลดรายการ...'
+                  : searching || statusFilter !== 'all' ? `พบ ${shownTotal} จาก ${summary.counts.all} รายการ` : `ทั้งหมด ${summary.counts.all} รายการ`}
               </div>
               <div className="relative w-full sm:max-w-96">
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
@@ -337,15 +333,18 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                 </span>
               </div>
             </div>
-            {filteredData.length === 0 ? (
-              <div className="mt-3">
-                <EmptyState
-                  title={data.length === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                  description={data.length === 0
-                    ? canCreate ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE
-                    : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
-                />
-              </div>
+            {pagedData.length === 0 ? (
+              // Nothing to show yet is not "no claims": a page still on its way, or one that failed, says so itself.
+              loading ? <LoadingState label="กำลังโหลด..." /> : list.failed === undefined && (
+                <div className="mt-3">
+                  <EmptyState
+                    title={summary.counts.all === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
+                    description={summary.counts.all === 0
+                      ? canCreate ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE
+                      : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
+                  />
+                </div>
+              )
             ) : (
               <>
             <div className="hidden md:block" data-testid="reimbursements-mine-table">
@@ -356,14 +355,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                     <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้ขอ</th><th className="!text-center">เหตุผล</th><th className="!text-center">หมวด</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">การจ่าย</th><th className="!text-center">การกระทำ</th></tr>
                   </thead>
                   <tbody>
-                    {filteredData.length === 0 ? (
-                      <tr><td colSpan={9}>
-                        <EmptyState
-                          title={data.length === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                          description={data.length === 0 ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
-                        />
-                      </td></tr>
-                    ) : pagedData.map((r: any) => (
+                    {pagedData.map((r: any) => (
                       <tr key={r.id} className="cursor-pointer" onClick={() => onOpenDetail(r.id)}>
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
                         <td>{r.requesterDisplayNameSnapshot ?? '—'}</td>
@@ -435,7 +427,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
             </div>
             </>
             )}
-            <TablePager from={bounds.from} to={bounds.to} total={filteredData.length}
+            <TablePager from={bounds.from} to={bounds.to} total={shownTotal}
               page={bounds.page} totalPages={bounds.totalPages} onPage={setPage} />
           </MangmeeCard>
         </>

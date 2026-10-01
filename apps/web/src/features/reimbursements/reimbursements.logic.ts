@@ -1,8 +1,8 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementHubBucket, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
-  type ReimbursementHubBucket,
+  REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
@@ -332,34 +332,22 @@ export function parseHubTab(value: string | null | undefined, visible: readonly 
   return visible.includes(value as HubTab) ? (value as HubTab) : (visible[0] ?? 'mine');
 }
 
-// ---- หน้ารวม: summary cards and filter chips (spec §18.1) ----
-
-/** Every claim sits in exactly one of these, so the chips add up to "ทั้งหมด". */
-export const HUB_FILTERS = ['draft', 'review', 'payment', 'paid', 'closed'] as const satisfies readonly ReimbursementHubBucket[];
-export type HubFilter = 'all' | ReimbursementHubBucket;
+// ---- หน้ารวม: summary cards, filter chips and the list they filter (spec §18.1) ----
 
 /**
- * Read off the desk the server resolved, the one the row prints as "อยู่ที่ …": waiting on an approver
- * or on finance review is รออนุมัติ/ตรวจสอบ, waiting on whoever records the payment is รอจ่าย. A row with
- * no desk, or a desk kind added later, is placed by its status (the shared rule in contracts).
+ * "ทั้งหมด" or one bucket. The API places every claim in exactly one bucket (`reimbursementHubBucket`), counts
+ * the buckets and filters the list by the same rule, so a card's number is the rows its filter shows.
  */
-export const hubFilterOf = reimbursementHubBucket;
+export type HubFilter = 'all' | ReimbursementHubBucket;
 
-/** The rows a card or a chip shows. */
-export function hubRows<T extends Parameters<typeof hubFilterOf>[0]>(rows: readonly T[], filter: HubFilter): T[] {
-  return filter === 'all' ? [...rows] : rows.filter((row) => hubFilterOf(row) === filter);
+/** A card is the same filter as its chip; tapping the card that is already open goes back to ทั้งหมด. */
+export function hubCardFilter(open: HubFilter, tapped: HubFilter): HubFilter {
+  return open === tapped ? 'all' : tapped;
 }
 
-/** Counted with `hubRows` itself, so a number can never disagree with the list its filter shows. */
-export function hubFilterCounts(rows: readonly Parameters<typeof hubFilterOf>[0][]): Record<HubFilter, number> {
-  return Object.fromEntries((['all', ...HUB_FILTERS] as const).map((filter) => [filter, hubRows(rows, filter).length])) as Record<HubFilter, number>;
-}
-
-// ---- หน้ารวม: one list, loaded a page at a time ----
-
-/** The rows of one hub list loaded so far, and where the server's list goes on. */
+/** The rows of one hub list loaded so far, where the server's list goes on, and the scope as the server counted it. */
 export type HubList = {
-  /** The list these rows belong to (company, scope, reload): rows of another list are never shown as this one's. */
+  /** The list these rows belong to (company, scope, filter, reload): rows of another list are never shown as this one's. */
   key: string;
   rows: any[];
   /** The server's count of the whole list. */
@@ -368,19 +356,25 @@ export type HubList = {
   nextPage: number | null;
   /** Why the last page asked for did not arrive. Nothing more is asked until a retry clears it, and the rows stay. */
   failed?: string;
+  /** What the cards and chips print: the whole scope, whatever filter the rows are of. Kept from one list to the next. */
+  summary: ReimbursementHubSummary | null;
 };
-export const NO_HUB_LIST: HubList = { key: '', rows: [], total: 0, nextPage: 1 };
+export const NO_HUB_LIST: HubList = { key: '', rows: [], total: 0, nextPage: 1, summary: null };
 /** What the hub asks for; what counts is the page size the server answers with. */
 export const HUB_PAGE_SIZE = 100;
 
 export const hubListKey = (...parts: unknown[]) => parts.join('|');
 
-/** What is held of this list. Rows loaded for another scope, or before a reload, are not this list's. */
+/** What is held of this list. Rows loaded for another filter or scope, or before a reload, are not this list's. */
 export function hubList(held: HubList, key: string): HubList {
-  return held.key === key ? held : { ...NO_HUB_LIST, key };
+  return held.key === key ? held : { ...NO_HUB_LIST, key, summary: held.summary };
 }
 
-/** The page to ask the server for now. Null: the rows needed are loaded, the list is complete, or the last page failed. */
+/**
+ * The page to ask the server for now, given how many rows the screen needs: the first page of a list, then
+ * more only when the table page shown, or a search, reaches past what is held. Null: the rows needed are
+ * loaded, the list is complete, or the last page failed.
+ */
 export function hubNextPage(list: HubList, need: number): number | null {
   return list.failed === undefined && list.rows.length < need ? list.nextPage : null;
 }
@@ -389,13 +383,16 @@ export function hubNextPage(list: HubList, need: number): number | null {
  * Adds one page. The list ends on the server's own total, or on a page shorter than the page size the
  * server answered with, never on the size that was asked for: the server may cap it.
  */
-export function withHubPage(held: HubList, key: string, result: { items?: any[]; total: number; page: number; pageSize: number }): HubList {
+export function withHubPage(
+  held: HubList, key: string,
+  result: { items?: any[]; total: number; page: number; pageSize: number; hub: ReimbursementHubSummary },
+): HubList {
   const items = result.items ?? [];
   // Keyed by id: a claim filed between two calls shifts the pages and would otherwise repeat a row.
   const byId = new Map<string, any>(hubList(held, key).rows.map((row) => [row.id, row]));
   for (const item of items) byId.set(item.id, item);
   const more = items.length > 0 && items.length >= result.pageSize && result.page * result.pageSize < result.total;
-  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null };
+  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null, summary: result.hub };
 }
 
 /** A page did not arrive: what was loaded stays, and the same page is asked again on retry. */

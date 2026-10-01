@@ -5,10 +5,11 @@ import {
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
-  approverNotReadyHelp, HUB_FILTERS, hubFilterCounts, hubFilterOf, hubRows, approverPaymentWarning,
+  approverNotReadyHelp, approverPaymentWarning, hubCardFilter, hubList, hubNextPage, NO_HUB_LIST, QUEUE_PAGE_SIZE, withHubPage,
+  type HubFilter,
 } from './reimbursements.logic';
 import { currentDeskText } from './reimbursements.model';
-import { REIMBURSEMENT_DESK_LABELS } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DESK_LABELS, reimbursementHubBucket } from '@watchdog-bms/contracts';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
   incurredDate: '2026-01-01', description: 'แท็กซี่', categoryKey: 'travel', amount: '100', hasReceipt: true, ...overrides,
@@ -327,9 +328,11 @@ describe('parseHubTab against the visible set', () => {
   });
 });
 
-// Spec §18.1 (AC38) and the owner's consistency rule 2026-10-01: a card count is the number of rows its
-// filter shows, and the chips add up to ทั้งหมด.
-describe('hub cards and filter chips', () => {
+// Spec §18.1 (AC38) and the owner's consistency rule 2026-10-01: a card count is the number of rows its filter
+// shows, and the chips add up to ทั้งหมด. The API counts and filters by `reimbursementHubBucket` (its own spec
+// walks every page of every bucket); this is the rule itself, which lives in contracts.
+describe('hub buckets', () => {
+  const HUB_BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
   // Each row carries the desk the list API answers with (terminal claims have none).
   const rows = [
     { id: 'draft', status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } },
@@ -345,7 +348,7 @@ describe('hub cards and filter chips', () => {
     { id: 'cancelled', status: 'CANCELLED', currentDesk: null },
     { id: 'voided', status: 'VOIDED' },
   ];
-  const ids = (filter: Parameters<typeof hubRows>[1]) => hubRows(rows, filter).map((row) => row.id);
+  const ids = (bucket: string) => rows.filter((row) => reimbursementHubBucket(row) === bucket).map((row) => row.id);
 
   it('keeps a claim approved and waiting for payment out of รออนุมัติ/ตรวจสอบ', () => {
     // Before: the card counted every status from PENDING_APPROVAL to READY_FOR_PAYMENT, 7 of these rows.
@@ -354,7 +357,9 @@ describe('hub cards and filter chips', () => {
     assert.deepEqual(ids('draft'), ['draft']);
     assert.deepEqual(ids('paid'), ['paid']);
     assert.deepEqual(ids('closed'), ['rejected', 'cancelled', 'voided']);
-    assert.equal(hubFilterOf({ status: 'A_STATE_ADDED_LATER' }), 'closed');
+    assert.equal(reimbursementHubBucket({ status: 'A_STATE_ADDED_LATER' }), 'closed');
+    // No claim sits in two buckets, and none in no bucket: the chips add up to ทั้งหมด.
+    assert.deepEqual(HUB_BUCKETS.flatMap(ids).sort(), rows.map((row) => row.id).sort());
   });
 
   // Before: any row without a desk that was not PAID counted under ปฏิเสธ/ยกเลิก, a draft included.
@@ -375,26 +380,50 @@ describe('hub cards and filter chips', () => {
     ];
     for (const [row, bucket] of byStatus) {
       for (const currentDesk of [undefined, null, {}, { kind: 'A_DESK_ADDED_LATER' }]) {
-        assert.equal(hubFilterOf({ ...row, currentDesk }), bucket, `${JSON.stringify(row)} with desk ${JSON.stringify(currentDesk)}`);
+        assert.equal(reimbursementHubBucket({ ...row, currentDesk }), bucket, `${JSON.stringify(row)} with desk ${JSON.stringify(currentDesk)}`);
       }
     }
     // A known desk still decides: it is what the row prints as "อยู่ที่ …".
-    assert.equal(hubFilterOf({ status: 'APPROVED', financeReviewStatus: 'NOT_REQUIRED', currentDesk: { kind: 'FINANCE' } }), 'review');
+    assert.equal(reimbursementHubBucket({ status: 'APPROVED', financeReviewStatus: 'NOT_REQUIRED', currentDesk: { kind: 'FINANCE' } }), 'review');
     // And the status rule agrees with the desk the API resolves for every live status, so the two never split a claim.
-    for (const row of rows) assert.equal(hubFilterOf({ status: row.status, financeReviewStatus: row.currentDesk?.kind === 'FINANCE' ? 'PENDING' : 'NOT_REQUIRED' }), hubFilterOf(row), row.id);
-    // The cards and chips follow: a desk-less draft is counted as a draft, and nothing drops out of the total.
-    const deskless = rows.map(({ currentDesk: _desk, ...row }) => ({ ...row, financeReviewStatus: row.id.includes('finance') ? 'PENDING' : 'NOT_REQUIRED' }));
-    assert.deepEqual(hubFilterCounts(deskless), hubFilterCounts(rows));
+    for (const row of rows) {
+      assert.equal(reimbursementHubBucket({ status: row.status, financeReviewStatus: row.currentDesk?.kind === 'FINANCE' ? 'PENDING' : 'NOT_REQUIRED' }),
+        reimbursementHubBucket(row), row.id);
+    }
+  });
+});
+
+describe('hub cards and the lazy list', () => {
+  // Review follow-up 2026-10-01: nothing pinned what a second tap on a card does.
+  it('opens a card\'s filter on the first tap and returns to ทั้งหมด on a tap of the open card', () => {
+    const cards: HubFilter[] = ['draft', 'review', 'payment'];
+    for (const card of cards) {
+      assert.equal(hubCardFilter('all', card), card);
+      assert.equal(hubCardFilter(card, card), 'all', `${card} tapped while open`);
+      for (const other of cards.filter((candidate) => candidate !== card)) assert.equal(hubCardFilter(other, card), card, `${other} to ${card}`);
+    }
+    // ยอดรวมที่ขอเบิก is the ทั้งหมด card: tapping it always lands on ทั้งหมด.
+    assert.equal(hubCardFilter('payment', 'all'), 'all');
+    assert.equal(hubCardFilter('all', 'all'), 'all');
   });
 
-  it('counts every card and chip as the rows its filter shows, and the chips add up to ทั้งหมด', () => {
-    const counts = hubFilterCounts(rows);
-    assert.deepEqual(counts, { all: 12, draft: 1, review: 3, payment: 4, paid: 1, closed: 3 });
-    for (const filter of ['all', ...HUB_FILTERS] as const) assert.equal(counts[filter], hubRows(rows, filter).length, filter);
-    assert.equal(HUB_FILTERS.reduce((sum, filter) => sum + counts[filter], 0), counts.all);
-    // No claim sits in two buckets.
-    assert.deepEqual(HUB_FILTERS.flatMap(ids).sort(), rows.map((row) => row.id).sort());
-    assert.deepEqual(hubFilterCounts([]), { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 });
+  it('asks for a first page, then for more only when the table page shown, or a search, reaches past what is held', () => {
+    const summary = { counts: { all: 230, draft: 0, review: 0, payment: 230, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 };
+    const firstPage = { items: Array.from({ length: 100 }, (_, index) => ({ id: `rb-${index}` })), total: 230, page: 1, pageSize: 100, hub: summary };
+    // Nothing held yet: the first page, whatever the screen needs.
+    assert.equal(hubNextPage(hubList(NO_HUB_LIST, 'payment'), QUEUE_PAGE_SIZE), 1);
+    const held = withHubPage(NO_HUB_LIST, 'payment', firstPage);
+    assert.deepEqual([held.rows.length, held.total, held.nextPage, held.summary], [100, 230, 2, summary]);
+    // Table pages 1 to 10 are covered by the 100 rows held: no call.
+    for (const tablePage of [1, 5, 10]) assert.equal(hubNextPage(held, tablePage * QUEUE_PAGE_SIZE), null, `table page ${tablePage}`);
+    // Table page 11 reaches past them: the next server page, and only that one.
+    assert.equal(hubNextPage(held, 11 * QUEUE_PAGE_SIZE), 2);
+    // A search reads every row of the filter, so it takes the rest.
+    assert.equal(hubNextPage(held, Infinity), 2);
+    // Another filter is another list: it starts from its own first page, shows none of these rows, and keeps the counts on the cards.
+    const other = hubList(held, 'paid');
+    assert.deepEqual([other.rows.length, other.nextPage, other.summary], [0, 1, summary]);
+    assert.equal(hubNextPage(other, QUEUE_PAGE_SIZE), 1);
   });
 });
 

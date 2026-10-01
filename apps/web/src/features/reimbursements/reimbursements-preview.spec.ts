@@ -27,6 +27,15 @@ describe('hub list loading', () => {
     // No other way into the list: an unpaged or unguarded call would bring the old faults back.
     assert.doesNotMatch(source, /listAllReimbursements|listReimbursements\(/);
     assert.match(source, /onClick=\{\(\) => setHeld\(withHubRetry\)\}>ลองอีกครั้ง</);
+    // Lazy: what the screen needs is the table page shown, or every row while a search is typed; the open filter is part
+    // of which list is held, and goes to the API with every page.
+    assert.match(source, /const listKey = hubListKey\(companyId, scope, statusFilter, refreshKey, reload\);/);
+    assert.match(source, /hubNextPage\(list, searching \? Infinity : page \* QUEUE_PAGE_SIZE\)/);
+    assert.match(source, /loadHubPage\(companyId, \{ scope, filter: statusFilter, page: nextPage \}/);
+    // The cards and chips print the server's counts, and a card tapped twice goes back to ทั้งหมด.
+    assert.match(source, /value: summary\.counts\.payment/);
+    assert.match(source, /\{summary\.counts\[chip\.key\]\}/);
+    assert.match(source, /onClick=\{\(\) => setStatusFilter\(hubCardFilter\(statusFilter, card\.key\)\)\}/);
   });
 });
 

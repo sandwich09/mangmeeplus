@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime';
-import type { ReimbursementSourceOption, ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
+import { reimbursementHubBucket, type ReimbursementSourceOption, type ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import { ToastContext } from '@/common/components/toast/use-toast';
 
 /*
@@ -21,6 +21,7 @@ const sections = require('./ReimbursementDetailSections') as typeof import('./Re
 const { ReimbursementCreatePage } = require('./ReimbursementCreatePage') as typeof import('./ReimbursementCreatePage');
 const { ReimbursementsHubPage, PolicySettings } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
 const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts') as typeof import('./ReimbursementSourceFacts');
+const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
 const { approvalComparable, diffApprovalFields, hubListKey, reimbursementListScope } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const reactRuntime = require('react') as typeof React;
 
@@ -160,6 +161,18 @@ const queueRow = { ...draft, requestNo: 'RB-202609-00007', status: 'FINANCE_REVI
 const hubPermissions = ['reimbursement.read', 'reimbursement.create', 'reimbursement.submit', 'reimbursement.approve', 'reimbursement.finance_review',
   'reimbursement.payment.record'];
 /**
+ * What the list API answers for one hub list: the claims of the open filter, and the whole scope counted. The API
+ * places a claim with `reimbursementHubBucket` for the counts and the filter alike (its own spec walks every page of
+ * every bucket), so this fake uses the same rule and nothing of the page's.
+ */
+function served(claims: any[], filter?: string) {
+  const counts = { all: claims.length, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 };
+  for (const claim of claims) counts[reimbursementHubBucket(claim)] += 1;
+  const rows = filter ? claims.filter((claim) => reimbursementHubBucket(claim) === filter) : claims;
+  return { rows, total: rows.length, summary: { counts, totalAmount: String(claims.reduce((sum, claim) => sum + Number(claim.amount), 0)),
+    blockedDraftCount: claims.filter((claim) => claim.status === 'DRAFT' && claim.receiptRequirementStatus === 'REQUIRED').length } };
+}
+/**
  * One hub tab, its queue loaded with the rows (each queue starts as an empty list, loading); `filter` = a card or chip already tapped.
  * The hub's own list is held a page at a time: `held` overrides what it holds (pages still to come, a page that failed).
  */
@@ -168,7 +181,7 @@ const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held:
     h(ToastContext.Provider, { value: toast },
       h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'], permissions: hubPermissions })))),
   (initial) => (Array.isArray(initial) && initial.length === 0 ? rows
-    : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), 0, 0), rows, total: rows.length, nextPage: null, ...held }
+    : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), filter ?? 'all', 0, 0), nextPage: null, ...served(rows, filter), ...held }
       : initial === true ? false : initial === 'all' ? filter : undefined),
 );
 // One claim per state the hub has to place: the desk is what the list API answers, and finished claims have none.
@@ -280,39 +293,70 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
   });
 });
 
-describe('the hub says when its list did not load, and keeps what did (review follow-up 2026-10-01)', () => {
+describe('the hub takes its list lazily and says when a page did not load (review follow-up 2026-10-01)', () => {
   const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
+  const cardNumbers = (html: string) => [...html.slice(html.indexOf('data-testid="reimbursements-mine-summary"'), html.indexOf('data-testid="reimbursements-mine-filters"'))
+    .matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => visible(inner!)[0]);
   const reason = 'เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่อีกครั้ง';
+  // A shop with 230 claims waiting for payment: the first answer carries 100 rows and the counts of all 230.
+  const many = Array.from({ length: 100 }, (_, index) => ({ ...draft, id: `${ids.request}${index}`, requestNo: 'RB-202609-00007', status: 'READY_FOR_PAYMENT',
+    amount: '100.0000', currentDesk: { kind: 'PAYMENT' } }));
+  const of230 = { total: 230, nextPage: 2, summary: { counts: { all: 230, draft: 0, review: 0, payment: 230, paid: 0, closed: 0 }, totalAmount: '23000.0000', blockedDraftCount: 0 } };
 
-  it('waits for every page before it counts, and never shows rows held for another list', () => {
-    const loading = visible(hubTab('mine', hubClaims, undefined, { nextPage: 2 }));
-    assert.ok(loading.includes('กำลังโหลด...'));
-    assert.equal(loading.includes('ร่างรอส่ง'), false, 'no card counts a list that is still arriving');
-    // Rows loaded before a reload, or for another company or scope, belong to another list.
-    const other = hubTab('mine', hubClaims, undefined, { key: 'another list' });
-    assert.equal(rowsShown(other), 0);
-    assert.ok(visible(other).includes('กำลังโหลด...'));
+  it('shows the cards and chips of the whole scope from the first page, with only that page of rows held', () => {
+    // Before: the hub walked every page before it showed anything, and counted the rows it had loaded.
+    const html = hubTab('mine', many, undefined, of230);
+    const texts = visible(html);
+    assert.deepEqual(cardNumbers(html), ['0', '0', '230', '฿23,000']);
+    assert.ok(texts.includes('ทั้งหมด 230 รายการ'));
+    // Ten rows a table page, out of the server's 230: the pager counts the whole list, not the rows held.
+    assert.equal(rowsShown(html), 10);
+    assert.ok(texts.includes('แสดง 1-10 จาก 230 รายการ'), texts.filter((text) => text.includes('แสดง')).join(' | '));
+    assert.ok(texts.includes('1 / 23'));
+    // Under the รอจ่าย filter the list is the server's 230, the number on its card and its chip.
+    const filtered = visible(hubTab('mine', many, 'payment', of230));
+    assert.ok(filtered.includes('พบ 230 จาก 230 รายการ'));
+    assert.ok(filtered.includes('แสดง 1-10 จาก 230 รายการ'));
+  });
+
+  it('keeps the counts on the cards while another filter\'s rows are on their way, and shows none of the rows held before', () => {
+    // First load: nothing to count yet.
+    const first = visible(hubTab('mine', [], undefined, { summary: null, nextPage: 1 }));
+    assert.ok(first.includes('กำลังโหลด...'));
+    assert.equal(first.includes('ร่างรอส่ง'), false);
+    // A filter was tapped and its first page has not arrived: the cards stay, the old rows do not.
+    const switching = hubTab('mine', hubClaims, undefined, { key: 'the list held before the tap' });
+    assert.equal(rowsShown(switching), 0);
+    assert.deepEqual(cardNumbers(switching), ['1', '1', '2', '฿700']);
+    const texts = visible(switching);
+    assert.ok(texts.includes('กำลังโหลด...') && texts.includes('กำลังโหลดรายการ...'));
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|ไม่พบรายการ/u);
   });
 
   it('shows the failure with a retry instead of "ยังไม่มีคำขอเบิก" when the first page fails', () => {
     // Before: the error banner sat above an empty state that told the person they had no claims.
-    const texts = visible(hubTab('mine', [], undefined, { nextPage: 1, failed: reason }));
+    const texts = visible(hubTab('mine', [], undefined, { summary: null, nextPage: 1, failed: reason }));
     assert.ok(texts.includes(`⚠ โหลดรายการไม่สำเร็จ · ${reason}`), texts.join(' | '));
     assert.ok(texts.includes('ลองอีกครั้ง'));
-    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|ทั้งหมด 0 รายการ/u);
-    // A list that really is empty still says so, with no failure in sight.
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|ทั้งหมด 0 รายการ|กำลังโหลด/u);
+    // A scope that really is empty still says so, with no failure in sight.
     const empty = visible(hubTab('mine', []));
-    assert.ok(empty.includes('ยังไม่มีคำขอเบิก'));
+    assert.ok(empty.includes('ยังไม่มีคำขอเบิก') && empty.includes('ทั้งหมด 0 รายการ'));
     assert.equal(empty.includes('ลองอีกครั้ง'), false);
+    // A filter with no claim in it is not an empty scope.
+    const none = visible(hubTab('mine', hubClaims.filter((claim) => claim.status !== 'PAID'), 'paid'));
+    assert.ok(none.includes('ไม่พบรายการที่ตรงกับตัวกรอง') && none.includes('พบ 0 จาก 6 รายการ'));
+    assert.equal(none.includes('ยังไม่มีคำขอเบิก'), false);
   });
 
-  it('keeps the rows already loaded when a later page fails, and says the list is not complete', () => {
+  it('keeps the rows already loaded when a later page fails, and the cards still count the whole scope', () => {
     // Before: one failed page threw the whole load away.
-    const html = hubTab('mine', hubClaims, undefined, { total: 230, nextPage: 2, failed: reason });
+    const html = hubTab('mine', many, undefined, { ...of230, failed: reason });
     const texts = visible(html);
-    assert.ok(texts.includes(`⚠ โหลดรายการได้ไม่ครบ รายการและตัวเลขด้านล่างยังไม่ใช่ทั้งหมด · ${reason}`), texts.join(' | '));
+    assert.ok(texts.includes(`⚠ โหลดรายการได้ไม่ครบ รายการด้านล่างยังไม่ใช่ทั้งหมด · ${reason}`), texts.join(' | '));
     assert.ok(texts.includes('ลองอีกครั้ง'));
-    assert.equal(rowsShown(html), hubClaims.length);
+    assert.equal(rowsShown(html), 10);
+    assert.deepEqual(cardNumbers(html), ['0', '0', '230', '฿23,000']);
     for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก/u);
     // The retry is a full-width button on a phone.
     assert.match(html, /data-testid="reimbursements-mine-load-failed">.*?<button type="button" class="[^"]*\bmin-h-11 w-full sm:w-auto\b[^"]*">ลองอีกครั้ง<\/button>/su);
@@ -396,6 +440,41 @@ describe('a claim with no finance-review step never says ฝ่ายการ�
     // A claim that does pass finance review keeps its finance rows.
     assert.ok(visible(detailSections(paid, ids.requester, [])).includes('ฝ่ายการเงินตรวจแล้ว โดย สมศรี การเงิน'));
     assert.ok(visible(detailSections({ ...draft, financeReviewRequired: true }, ids.requester, [])).includes('รอฝ่ายการเงินตรวจ'));
+  });
+});
+
+// Review follow-up 2026-10-01: the model's `currentDeskText` was tested, but nothing held the claim page to passing it
+// the detail's `paymentDesk`. The page is rendered here with the claim already loaded.
+describe('the claim page says "อยู่ที่" with the people who can record the payment (spec §18.3)', () => {
+  /** The journey page with `detail` loaded: its claim is the page's second null state, after the confirm dialog's. */
+  const claimPage = (detail: object) => {
+    let nulls = 0;
+    return renderWithState(h(AppRouterContext.Provider, { value: router }, h(ToastContext.Provider, { value: toast },
+      h(ReimbursementJourneyPage, { companyId: 'company-1', requestId: ids.request, userId: ids.requester, permissions: ['reimbursement.read_own'] }))),
+    (initial) => (initial === null && ++nulls === 2 ? detail : undefined));
+  };
+  const deskLine = (detail: object) => visible(claimPage(detail)).filter((text) => text.startsWith('อยู่ที่'));
+
+  it('names them from the detail\'s paymentDesk, and prints the pool label when the detail names nobody', () => {
+    assert.ok(visible(claimPage(waiting)).includes('RB-202609-00007'), 'the claim rendered');
+    // Before the page passed `paymentDesk` on, this line said "ผู้มีสิทธิ์บันทึกจ่าย" whoever could pay.
+    assert.deepEqual(deskLine(waiting), ['อยู่ที่ สมชาย หรือ วิชัย']);
+    assert.deepEqual(deskLine({ ...waiting, paymentDesk: { names: ['สมชาย', 'วิชัย', 'มานี', 'ปิติ', 'สุดา'], moreCount: 2 } }),
+      ['อยู่ที่ สมชาย หรือ วิชัย หรือ มานี หรือ ปิติ หรือ สุดา และอีก 2 คน']);
+    // No list (a claim nobody can pay: part paid, or with no branch) and an empty list both fall back to the pool.
+    for (const paymentDesk of [undefined, { names: [], moreCount: 0 }]) {
+      assert.deepEqual(deskLine({ ...waiting, paymentDesk }), ['อยู่ที่ ผู้มีสิทธิ์บันทึกจ่าย']);
+    }
+    assert.deepEqual(deskLine({ ...waiting, status: 'PARTIALLY_PAID', paymentStatus: 'PARTIALLY_PAID', paymentDesk: undefined }), ['อยู่ที่ ผู้มีสิทธิ์บันทึกจ่าย']);
+    // The same party as the step note and the timeline row of the same claim.
+    const texts = visible(claimPage(waiting));
+    assert.ok(texts.includes('รอ สมชาย หรือ วิชัย บันทึกจ่าย'), 'step note');
+    assert.ok(texts.includes('กำลังรอ สมชาย หรือ วิชัย บันทึกจ่าย'), 'timeline row');
+    const pool = visible(claimPage({ ...waiting, paymentDesk: undefined }));
+    assert.ok(pool.includes('รอผู้มีสิทธิ์บันทึกจ่าย') && pool.includes('กำลังรอผู้มีสิทธิ์บันทึกจ่าย'));
+    // The payers belong to the payment desk only: an approval desk keeps its own names, a finished claim has no line.
+    assert.deepEqual(deskLine({ ...waiting, status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER', names: ['สมศรี'] } }), ['อยู่ที่ สมศรี']);
+    assert.deepEqual(deskLine(paid), []);
   });
 });
 

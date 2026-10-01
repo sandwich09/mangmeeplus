@@ -7,7 +7,7 @@ import {
   REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
   type ReimbursementApproverRoleOption, type ReimbursementInternalNote, type ReimbursementPolicySummary, type ReimbursementSourceOptions,
 } from '@watchdog-bms/contracts';
-import { HUB_PAGE_SIZE } from './reimbursements.logic';
+import { HUB_PAGE_SIZE, type HubFilter } from './reimbursements.logic';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -54,19 +54,27 @@ export function listReimbursements(companyId: string, params?: Record<string, un
   return apiFetch<any>(`${base(companyId)}${qs(params)}`);
 }
 /**
- * Asks for one page of the hub list and hands it over, unless the caller has let go of the request by then:
+ * Asks for one page of a hub list and hands it over, unless the caller has let go of the request by then:
  * the function returned is that letting go. The hub lets go when it asks for another list, reloads or
- * unmounts, so an answer that arrives late changes nothing.
+ * unmounts, so an answer that arrives late changes nothing. `filter` is "ทั้งหมด" or one bucket; the API
+ * filters by it and counts the whole scope in the same answer.
  */
 export function loadHubPage(
   companyId: string,
-  params: { scope?: string; page: number },
+  params: { scope?: string; filter: HubFilter; page: number },
   handlers: { onPage: (result: any) => void; onError: (error: unknown) => void },
 ): () => void {
   let held = true;
   // `.catch` after `.then`, so a page the caller cannot take is reported like a page that did not arrive.
-  listReimbursements(companyId, { scope: params.scope, page: params.page, pageSize: HUB_PAGE_SIZE })
-    .then((result) => { if (held) handlers.onPage(result); })
+  listReimbursements(companyId, {
+    scope: params.scope, bucket: params.filter === 'all' ? undefined : params.filter, page: params.page, pageSize: HUB_PAGE_SIZE,
+  })
+    .then((result) => {
+      // The cards are the server's counts: an answer without them is not shown as a scope of zero claims.
+      // The words are what the person reads (a thrown Error's message reaches the banner as it is).
+      if (!result?.hub?.counts) throw new Error('ข้อมูลที่ได้รับไม่ครบ');
+      if (held) handlers.onPage(result);
+    })
     .catch((error) => { if (held) handlers.onError(error); });
   return () => { held = false; };
 }
