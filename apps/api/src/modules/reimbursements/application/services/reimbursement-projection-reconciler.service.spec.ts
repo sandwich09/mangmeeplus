@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ConflictException, Logger } from '@nestjs/common';
 import { ReimbursementProjectionReconcilerService } from './reimbursement-projection-reconciler.service';
 import { ListReimbursementApproverOptionsUseCase } from '../use-cases/reimbursement-policy.use-case';
+import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 
 // The pass logs a line per claim; the cases that read those lines capture them themselves.
 Logger.overrideLogger(false);
@@ -391,5 +392,67 @@ describe('ReimbursementProjectionReconcilerService scheduled pass', () => {
       await assert.rejects(service.repair('co-1', 'a'), /reimbursement_resume_unavailable/);
       assert.deepEqual(work(), []);
     });
+  });
+});
+
+// Payout spec §14.2, §14.6: a claim sent back to have its payout account corrected is PENDING_APPROVAL
+// with its expense records already built. Its approval moves it on in the approval's own transaction,
+// so it never holds a decision for this service to carry out, whoever asks and whatever its steps say.
+describe('ReimbursementProjectionReconcilerService and a claim whose payout account is being corrected', () => {
+  const sentBackAt = new Date('2026-10-02T03:00:00.000Z');
+  const at = new Date('2026-10-01T00:00:00.000Z');
+  const setAside = { id: 'step-1', status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: at, invalidatedAt: sentBackAt, invalidatedReason: 'payout_account_correction', sequenceNo: 1, assignedAt: at, createdAt: at, updatedAt: at };
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 'rb-1', companyId: 'co-1', branchId: 'br-1', requestNo: 'RB-202610-000001', requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'ผู้เบิก',
+    reason: 'แท็กซี่', categoryKey: 'travel', amount: '100.0000', currency: 'THB', incurredDate: at, status: 'PENDING_APPROVAL',
+    financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED',
+    postingStatus: 'posted', paymentTotalAmount: '0.0000', outstandingAmount: '100.0000', createdByUserId: 'staff-1', createdAt: at, updatedAt: sentBackAt,
+    payoutCorrectionRequestedAt: sentBackAt, lines: [], ...over,
+  });
+  const withRequester = row({ currentApprovalStepId: null, approvalSteps: [setAside] });
+  const withApprovers = row({ currentApprovalStepId: 'step-2', payoutCorrectionSubmittedAt: sentBackAt, approvalSteps: [setAside, { ...setAside, id: 'step-2', status: 'PENDING', decisionByUserId: null, decidedAt: null, invalidatedAt: null, invalidatedReason: null }] });
+  // A row no transaction of a round leaves behind: its new step decided, the claim not moved on. Outside a
+  // round that is exactly a decision waiting to be carried out.
+  const torn = row({ currentApprovalStepId: 'step-2', payoutCorrectionSubmittedAt: sentBackAt, approvalSteps: [setAside, { ...setAside, id: 'step-2', invalidatedAt: null, invalidatedReason: null }] });
+  const outsideARound = { ...torn, payoutCorrectionRequestedAt: null, payoutCorrectionSubmittedAt: null };
+
+  function service(claim: any) {
+    const calls: string[] = [];
+    const repo = {
+      findRequestById: async () => new PrismaReimbursementRepository({} as any, {} as any)['toRequest'](claim),
+      findPolicy: async () => null,
+      completeApprovalProjectionAtomic: async () => { calls.push('ready'); },
+    } as any;
+    const prisma = { client: { companyFeatureEntitlement: { findMany: async () => [] } } } as any;
+    const reconciler = new ReimbursementProjectionReconcilerService(repo, { execute: async () => { calls.push('project'); } } as any,
+      { log: async () => undefined } as any, {} as any, prisma, { resolveWouldBeApproverUserIds: async () => [] } as any);
+    (reconciler as any).logger = { log: () => undefined, warn: () => undefined };
+    return { reconciler, calls };
+  }
+
+  it('carries out nothing for it when a person presses "ดำเนินการต่อ"', async () => {
+    for (const [phase, claim] of [['with its requester', withRequester], ['with its approvers', withApprovers], ['a torn row', torn]] as const) {
+      const { reconciler, calls } = service(claim);
+      assert.equal(await reconciler.repair('co-1', 'rb-1'), false, phase);
+      assert.deepEqual(calls, [], phase);
+    }
+    // The same steps on a claim in no round are a decision, and it is carried out.
+    const ordinary = service(outsideARound);
+    assert.equal(await ordinary.reconciler.repair('co-1', 'rb-1'), true);
+    assert.deepEqual(ordinary.calls, ['project', 'ready']);
+  });
+
+  it('is never on the list the scheduled pass works through: the database is asked for no claim in a round, and none it returns is taken', async () => {
+    const queries: any[] = [];
+    const answer = (rows: any[]) => new PrismaReimbursementRepository({ client: { reimbursementRequest: { findMany: async (query: any) => {
+      queries.push(query.where);
+      return query.where.status === 'PENDING_APPROVAL' ? rows : [];
+    } } } } as any, {} as any).listPendingProjectionIntents();
+    // Whatever the query returned, a claim in a round yields no intent.
+    assert.deepEqual(await answer([withRequester, withApprovers, torn]), []);
+    assert.deepEqual((await answer([outsideARound])).map((intent) => [intent.request.id, intent.kind, intent.approvalStepId]), [['rb-1', 'MANAGER', 'step-2']]);
+    const decided = queries.find((where) => where.status === 'PENDING_APPROVAL');
+    assert.equal(decided.payoutCorrectionRequestedAt, null);
+    assert.equal('payoutCorrectionRequestedAt' in decided, true);
   });
 });
