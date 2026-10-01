@@ -311,6 +311,9 @@ export class ExecuteWorkflowActionUseCase {
         recipientUserIds,
         periodKey: notificationPeriodKey(context, actionRun),
         supersedeEarlier: true,
+        // People named here keep the notice in the web bell but are not pushed on LINE: the owner
+        // finds a push about one's own action annoying, and the to-do item must still exist.
+        webOnlyRecipientUserIds: payloadUserIds(cfg['webOnlyRecipientPayloadKeys'], context.payload),
       });
       return { resultJson: { skipped: result.skipped, reason: (result as { reason?: string }).reason }, targetType: 'notification_event', targetId: result.event?.id };
     } catch (err) {

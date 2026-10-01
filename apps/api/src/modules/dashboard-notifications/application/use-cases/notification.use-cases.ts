@@ -222,6 +222,8 @@ export class CreateOrUpdateNotificationEventUseCase {
      * for, because other producers keep several periods open side by side.
      */
     supersedeEarlier?: boolean;
+    /** Recipients who get this notice in the web bell only, with no LINE push. Everyone else gets both. */
+    webOnlyRecipientUserIds?: string[];
   }) {
     const dedupKey = buildDedupKey({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, periodKey: input.periodKey });
     const now = new Date();
@@ -257,7 +259,7 @@ export class CreateOrUpdateNotificationEventUseCase {
         await this.recipients.create({ eventId: event.id, companyId: input.companyId, userId, recipientReason: 'role', readAt: undefined, dismissedAt: undefined, snoozedUntil: undefined });
       // A retry repairs partial old event/recipient writes even during cooldown. Sent/failed
       // deliveries are owned by the existing delivery worker, never recreated by this producer.
-      for (const channel of ['web', 'line'] as const) {
+      for (const channel of (input.webOnlyRecipientUserIds?.includes(userId) ? ['web'] : ['web', 'line']) as Array<'web' | 'line'>) {
         const delivery = await this.prisma.client.notificationDelivery.findFirst({
           where: { recipientId: recipient.id, channel: channel === 'web' ? 'WEB' : 'LINE' }, select: { id: true },
         });

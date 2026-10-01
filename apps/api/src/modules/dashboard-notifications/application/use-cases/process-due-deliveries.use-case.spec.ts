@@ -247,6 +247,22 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
     assert.deepEqual(events.map((row) => [row.sourceId, row.status]), [['pay-1', 'RESOLVED'], ['pay-2', 'OPEN'], ['pay-9', 'OPEN']]);
   });
 
+  // Owner rule: a push about one's own action is annoying, but the to-do item must still exist.
+  it('gives a web-only recipient the bell item and no LINE push, and everyone else both', async () => {
+    const { useCase, recipients, deliveries } = noticeStore();
+
+    await useCase.execute(claimNotice({
+      triggerKey: 'workflow.reimbursement_ready_for_payment', periodKey: 'run-1',
+      recipientUserIds: ['approver-1', 'admin-1'], webOnlyRecipientUserIds: ['approver-1'],
+    }));
+
+    const channelsOf = (userId: string) => deliveries
+      .filter((delivery) => delivery.recipientId === recipients.find((row) => row.userId === userId)!.id)
+      .map((delivery) => delivery.channel);
+    assert.deepEqual(channelsOf('approver-1'), ['WEB']);
+    assert.deepEqual(channelsOf('admin-1'), ['WEB', 'LINE']);
+  });
+
   it('leaves the periods of a producer that did not ask for it open side by side', async () => {
     const { useCase, events } = noticeStore();
     const digest = (periodKey: string) => useCase.execute(claimNotice({

@@ -393,6 +393,9 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // actor of this event approved the claim; paying it is a different step, and it is
           // theirs. Excluding them left the approver-payer with no notice at all for the pay
           // step, which is how approved claims sat unpaid in production.
+          // The actor gets it in the web bell only, though: a LINE push about what one has just
+          // done oneself is the annoyance AC11 exists to prevent. Anyone else is pushed as usual.
+          webOnlyRecipientPayloadKeys: ['actorUserId'],
         },
       },
     ],

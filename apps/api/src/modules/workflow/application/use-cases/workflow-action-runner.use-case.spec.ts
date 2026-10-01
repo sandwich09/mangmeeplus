@@ -258,6 +258,41 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_preparer']);
     });
 
+    // Owner rule: the approver keeps the to-do item in the bell, without a LINE push about an
+    // approval they have just made themselves. Anyone else who is told is pushed as usual.
+    it('ready_for_payment: the actor of the event gets the notice in the web bell only, others on LINE too', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_approver', 'u_finance']);
+      await runReady({ actorUserId: 'u_approver', requesterUserId: 'u_staff' });
+      let sent = (notify.execute.mock.calls.at(-1) as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_approver']);
+      assert.deepEqual(sent.webOnlyRecipientUserIds, ['u_approver']);
+
+      // The approver cannot pay: the others are told, and none of them is the actor.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_finance']);
+      await runReady({ actorUserId: 'u_approver', requesterUserId: 'u_staff' });
+      sent = (notify.execute.mock.calls.at(-1) as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_owner', 'u_finance']);
+      assert.equal(sent.recipientUserIds.some((userId: string) => sent.webOnlyRecipientUserIds.includes(userId)), false);
+
+      // A solo owner who approved their own claim: told with everyone able to pay, in the bell only.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin']);
+      await runReady({ actorUserId: 'u_owner', requesterUserId: 'u_owner' });
+      sent = (notify.execute.mock.calls.at(-1) as any).arguments[0];
+      assert.deepEqual(sent.recipientUserIds, ['u_owner', 'u_admin']);
+      assert.deepEqual(sent.webOnlyRecipientUserIds, ['u_owner']);
+    });
+
+    it('a notice that names nobody for the bell only pushes everyone on LINE, as before', async () => {
+      const paid = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_recorded')!;
+      await make().execute(actionRun(paid.defaultActionJson[0]!.configJson), {
+        companyId: 'co_1', ruleName: paid.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_payment', sourceId: 'pay_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', paidAmount: '250', currency: 'THB', paymentNo: 'RP-1', requesterUserId: 'u_staff', actorUserId: 'u_payer' },
+        siblingActions: [],
+      } as any);
+
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].webOnlyRecipientUserIds, []);
+    });
+
     it('ready_for_payment: a solo owner who approved their own claim gets the one notice to pay it', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
       await runReady({ requesterUserId: 'u_owner', actorUserId: 'u_owner' });
