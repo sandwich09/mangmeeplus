@@ -25,6 +25,7 @@ import {
   redactPayload,
   frozenApprovalAuthority,
   currentDesk,
+  claimSignatureAckHash,
   type CurrentDeskStepFields,
 } from './reimbursement.logic';
 import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
@@ -538,5 +539,32 @@ describe('currentDesk', () => {
       names,
     });
     assert.deepEqual(desk, { kind: 'APPROVER' });
+  });
+});
+
+// ---- Payout account (payout spec §8–§11) ----
+
+describe('payout: a claim with no receiving method keeps its hashes (legacy claims)', () => {
+  // A claim sent before the payout field existed. The three values below were computed by the code
+  // on develop 219c2369, BEFORE the payout part was added to the hash, and are pinned as literals:
+  // if any of them moves, every pending approval and every signature in production goes stale.
+  const policy = {
+    schemaVersion: 1 as const, policyId: 'pol-1', policyVersion: '2026-09-20T03:00:00.000Z',
+    approvalRequiredFromAmount: '1.0000', requiresApproval: true,
+    route: { mode: 'MANAGER_ROLE' as const, roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+    allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true,
+    duplicatePolicy: 'WARN' as const, financeReviewRequired: false,
+  };
+  const lines = [
+    { lineNo: 1, incurredDate: new Date('2026-09-18T00:00:00.000Z'), description: 'ค่าแท็กซี่ไปพบลูกค้า', purpose: 'พบลูกค้า', categoryKey: 'travel', amount: '350.0000', attachmentId: 'att-1', linkedExpenseId: null },
+    { lineNo: 2, incurredDate: new Date('2026-09-19T00:00:00.000Z'), description: 'ค่าอาหารกลางวัน', purpose: null, categoryKey: 'meals', amount: '230.5000', attachmentId: null, linkedExpenseId: 'exp-9' },
+  ];
+  const header = { amount: '580.5000', currency: 'THB', categoryKey: 'travel', incurredDate: new Date('2026-09-18T00:00:00.000Z'), reason: 'เบิกค่าเดินทางและอาหาร', primaryAttachmentId: null };
+  const approvalFields = { ...header, incurredDate: header.incurredDate.toISOString(), lines, approvalPolicySnapshotJson: policy };
+
+  it('approval hash, signature acknowledgement hash and the v1 header hash are byte for byte what they were', () => {
+    assert.equal(computeSnapshotHash(approvalFields), 'e8a0a0d5832da0361ee0442a28534235');
+    assert.equal(claimSignatureAckHash({ ...header, lines }), '0c87de6573bfb6150d6cd23c1f29fa01');
+    assert.equal(computeLegacySnapshotHashV1({ ...header, incurredDate: header.incurredDate.toISOString() }), '9436b51c8a27d00fcc3bbd319e80a905');
   });
 });
