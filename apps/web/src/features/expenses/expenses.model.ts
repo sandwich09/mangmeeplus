@@ -1513,6 +1513,10 @@ export function isClaimExpenseRecord(expense: { sourceReimbursementRequestId?: s
   return Boolean(expense.sourceReimbursementRequestId);
 }
 export const CLAIM_EXPENSE_RECORD_NOTE = 'รายการนี้เป็นรายการค่าใช้จ่ายของคำขอเบิก จึงยกเลิก ปฏิเสธ หรือลบจากหน้านี้ไม่ได้ ถ้าต้องการยกเลิก ให้ยกเลิกที่คำขอเบิกในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง';
+/** That note, until the record is voided: its claim's cancellation leaves it so, and nothing is left to cancel. */
+export function claimExpenseRecordNote(expense: { status?: string; sourceReimbursementRequestId?: string | null }): string | null {
+  return isClaimExpenseRecord(expense) && expense.status !== 'VOIDED' ? CLAIM_EXPENSE_RECORD_NOTE : null;
+}
 
 export function canDeleteExpense(
   expense: Pick<ExpenseSummary, 'status' | 'grandTotalAmount' | 'paymentStatus' | 'createdByUserId'> & { sourceReimbursementRequestId?: string | null },

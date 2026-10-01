@@ -42,7 +42,7 @@ import {
   deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseDataStepBlocker, expenseEvidenceStepBlocker, hasCurrentExpenseDocumentReview,
   expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptAction, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
-  MIME_TYPE_LABELS, CLAIM_EXPENSE_RECORD_NOTE, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, isClaimExpenseRecord, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
+  MIME_TYPE_LABELS, canDeleteExpense, claimExpenseRecordNote, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, isClaimExpenseRecord, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
   expenseConfirmBlocker, expenseDocumentDateStatus, EXPENSE_DATE_STATUS_LABELS,
   canCorrectWhtCertificate, canIssueWhtReplacementCopy,
@@ -808,6 +808,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const claimedSource = Boolean(detail.reimbursementProgress?.requestId && detail.reimbursementProgress.status !== 'DRAFT');
   // A claim's own expense record ends with its claim: the API refuses to void, reject or delete it from here.
   const claimRecord = isClaimExpenseRecord(detail);
+  const claimNote = claimExpenseRecordNote(detail);
   const canReject = caps.canReject && !claimRecord;
   const isMutable = !claimedSource && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status);
   // Backend: PATCH/mark-ready require expense.review OR (expense.update AND owner) — ownership alone is not enough.
@@ -1002,7 +1003,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       {detail.reimbursementProgress?.requestId && <Link className="text-sm font-semibold text-brand-700 underline" href={`/companies/${companyId}/reimbursements?tab=mine&focus=${detail.reimbursementProgress.requestId}`}>เปิดใบเบิกคืน</Link>}
       {detail.costSourceExpenseId && <Link className="text-sm font-semibold text-brand-700 underline" href={`/companies/${companyId}/expenses/${detail.costSourceExpenseId}`}>เปิดค่าใช้จ่ายต้นทาง</Link>}
       {claimRecord && <Link className="text-sm font-semibold text-brand-700 underline" href={`/companies/${companyId}/reimbursements/${detail.sourceReimbursementRequestId}`}>เปิดคำขอเบิก</Link>}
-      {claimRecord && <span className="w-full text-xs text-gray-500">{CLAIM_EXPENSE_RECORD_NOTE}</span>}
+      {claimNote && <span className="w-full text-xs text-gray-500">{claimNote}</span>}
       {claimedSource && <span className="w-full text-xs text-gray-500">หลักฐานต้นทางของใบเบิก รายการนี้นับยอดครั้งเดียวร่วมกับรายการบัญชีจากใบเบิก การแก้ไขและจ่ายคืนให้ดำเนินการผ่านใบเบิก</span>}
       {!sourceOnlyDraft && <MangmeeBadge tone={TAX_TONE(detail.taxEvidenceStatus)}>{expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, detail.taxEvidenceStatus, 'รอตรวจหลักฐานภาษี')}</MangmeeBadge>}
       {/* the AI badge is gone: the AI strip on the data step already says it, in words */}
