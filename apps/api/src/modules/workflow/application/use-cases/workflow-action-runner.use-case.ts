@@ -67,16 +67,32 @@ function notificationPeriodKey(context: ActionRunContext, actionRun: WorkflowAct
   return context.triggerType && !SCAN_TRIGGER_TYPES.includes(context.triggerType) ? actionRun.workflowRunId : undefined;
 }
 
+/** Payload fields that hold an amount of money in the payload's `currency`. */
+const MONEY_PAYLOAD_FIELDS = ['amount', 'paidAmount'];
+
 /**
  * The payload as a person reads it (audit B15): a claim's `decision` code word becomes the words
- * the claim page uses. Done here rather than in each template so that no rule snapshot, however
- * old or admin-edited, can put a raw code word in a notice. Conditions and links keep the raw payload.
+ * the claim page uses, and money becomes Thai text. Done here rather than in each template so that
+ * no rule snapshot, however old or admin-edited, can put a raw code word, a stored decimal or a
+ * currency code in a notice. Conditions and links keep the raw payload.
  */
 function readablePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const readable = { ...payload };
   const decision = payload['decision'];
-  return typeof decision === 'string' && Object.hasOwn(REIMBURSEMENT_DECISION_WORDS, decision)
-    ? { ...payload, decision: REIMBURSEMENT_DECISION_WORDS[decision] }
-    : payload;
+  if (typeof decision === 'string' && Object.hasOwn(REIMBURSEMENT_DECISION_WORDS, decision)) {
+    readable['decision'] = REIMBURSEMENT_DECISION_WORDS[decision];
+  }
+  // Money the way every other reply writes it, "1,234.50 บาท", never the stored decimal next to a
+  // currency code. Another currency keeps its raw pair rather than being mislabelled as baht.
+  if (payload['currency'] === 'THB') {
+    readable['currency'] = 'บาท';
+    for (const field of MONEY_PAYLOAD_FIELDS) {
+      const raw = payload[field];
+      const amount = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : typeof raw === 'number' ? raw : NaN;
+      if (Number.isFinite(amount)) readable[field] = amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+  }
+  return readable;
 }
 
 /** The user ids that the named payload fields hold: each field is one id or a list of them. */
@@ -357,7 +373,7 @@ export class ExecuteWorkflowActionUseCase {
     const existing = await this.repo.findTaskByActionRunId(context.companyId, actionRun.id);
     if (existing) return { resultJson: { alreadyExisted: true }, targetType: 'workflow_task', targetId: existing.id };
 
-    const titleTemplate = typeof cfg['titleTemplate'] === 'string' ? cfg['titleTemplate'] : `${context.ruleName}${isApprovalReview ? ' — Approval review' : ''}`;
+    const titleTemplate = typeof cfg['titleTemplate'] === 'string' ? cfg['titleTemplate'] : context.ruleName;
     const title = renderTemplate(titleTemplate, context.payload);
     const assigneeUserPayloadKey = typeof cfg['assigneeUserPayloadKey'] === 'string' ? cfg['assigneeUserPayloadKey'] : undefined;
     const payloadAssigneeUser = assigneeUserPayloadKey ? context.payload[assigneeUserPayloadKey] : undefined;
@@ -379,8 +395,9 @@ export class ExecuteWorkflowActionUseCase {
       sourceModule: context.sourceModule,
       sourceType: context.sourceType,
       sourceId: context.sourceId,
-      title: isApprovalReview ? `[Approval review] ${title}` : title,
-      description: isApprovalReview ? 'Workflow-created approval-review task. Completing this task does not approve the source record.' : undefined,
+      // Plain Thai, as the person reads it in their task list: no English tag in front of the title.
+      title,
+      description: isApprovalReview ? 'งานเตือนให้ตรวจและอนุมัติรายการนี้ การปิดงานนี้ไม่ได้อนุมัติรายการให้' : undefined,
       assigneeUserId,
       // A person snapshot is exact authority. Keeping the old role as a second assignee would
       // expose the reminder to later role holders even though the reimbursement API refuses them.

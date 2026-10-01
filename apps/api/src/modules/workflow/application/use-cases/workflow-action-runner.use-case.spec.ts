@@ -205,7 +205,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
       const sent = (notify.execute.mock.calls[0] as any).arguments[0];
       assert.deepEqual(sent.recipientUserIds, ['u_approver']);
-      assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
+      assert.equal(sent.body, 'ยอด 250.00 บาท · รอคุณบันทึกการจ่ายเงิน');
     });
 
     // Owner, 2026-10-01: "แจ้งเตือนไปเจ้าของตลอดแบบนี้น่ารำคาญ". The shop owner holds every right, so
@@ -568,7 +568,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       // Not 'critical': that severity is pushed through a person's quiet hours.
       assert.equal(sent.severity, 'action');
       assert.equal(sent.title, 'ใบเบิกรอจ่ายเงินเกินกำหนด: RB-202610-00007');
-      assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
+      assert.equal(sent.body, 'ยอด 250.00 บาท · รอคุณบันทึกการจ่ายเงิน');
       assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
       assert.doesNotMatch(`${sent.title} ${sent.body}`, /SLA|[A-Z]{2,}_[A-Z_]+|rb_1/);
     });
@@ -616,7 +616,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
       assert.deepEqual(sent.recipientUserIds, ['u_requester']);
       assert.equal(sent.title, 'ผลอนุมัติเบิกจ่าย: RB-1');
-      assert.equal(sent.body, 'ผลการพิจารณา: ไม่ต้องอนุมัติตามนโยบาย · ยอด 250 THB');
+      assert.equal(sent.body, 'ผลการพิจารณา: ไม่ต้องอนุมัติตามนโยบาย · ยอด 250.00 บาท');
     });
 
     it('says every decision a shipped claim notice can carry in Thai', async () => {
@@ -634,7 +634,79 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
     it('prints a value it has no words for as it came, never a JavaScript internal', async () => {
       const sent = await notice('reimbursement_decision_requester', 'constructor');
-      assert.equal(sent.body, 'ผลการพิจารณา: constructor · ยอด 250 THB');
+      assert.equal(sent.body, 'ผลการพิจารณา: constructor · ยอด 250.00 บาท');
+    });
+  });
+
+  // Review: bodies printed the stored decimal next to a currency code ("ยอด 1234.5000 THB"). Money is
+  // put into Thai text where the decision is, before any template renders, so a rule pinned long
+  // ago gets it too.
+  describe('claim notices write money as Thai text', () => {
+    const body = async (templateKey: string, payload: Record<string, unknown>) => {
+      const template = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === templateKey)!;
+      const action = template.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')!;
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_finance']);
+      await make().execute({ ...actionRun(action.configJson), actionKey: action.actionKey }, {
+        companyId: 'co_1', ruleName: template.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', currency: 'THB', requesterUserId: 'u_requester', actorUserId: 'u_actor', approverRecipientUserIds: ['u_manager'], ...payload },
+        siblingActions: template.defaultActionJson,
+      } as any);
+      return (notify.execute.mock.calls.at(-1) as any).arguments[0].body;
+    };
+
+    it('writes "1,234.50 บาท" in every claim notice that carries an amount', async () => {
+      assert.equal(await body('reimbursement_pending_approval', { amount: '1234.5000' }), 'ยอด 1,234.50 บาท · รออนุมัติจากคุณ');
+      assert.equal(await body('reimbursement_decision_requester', { amount: '1234.5000', decision: 'APPROVED' }), 'ผลการพิจารณา: อนุมัติ · ยอด 1,234.50 บาท');
+      assert.equal(await body('reimbursement_correction_requester', { amount: '80', note: 'แก้ยอด' }), 'แก้ยอด · ยอด 80.00 บาท');
+      assert.equal(await body('reimbursement_finance_review', { amount: '80', decision: 'BLOCKED' }), 'ผลตรวจสอบ: ระงับ · ยอด 80.00 บาท');
+      assert.equal(await body('reimbursement_finance_review_pending', { amount: 1000 }), 'ยอด 1,000.00 บาท · รอตรวจสอบการเงิน');
+      assert.equal(await body('reimbursement_ready_for_payment', { amount: '1234567.891' }), 'ยอด 1,234,567.89 บาท · รอคุณบันทึกการจ่ายเงิน');
+      assert.equal(await body('reimbursement_payment_sla_breach', { amount: '250.0000' }), 'ยอด 250.00 บาท · รอคุณบันทึกการจ่ายเงิน');
+      assert.equal(await body('reimbursement_payment_recorded', { paidAmount: '500.0000', paymentNo: 'RBPAY-202610-000001' }), 'จ่ายแล้ว 500.00 บาท · เลขที่จ่าย RBPAY-202610-000001');
+    });
+
+    it('reaches a rule snapshot pinned before this, whose template still says {{amount}} {{currency}}', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_finance']);
+      await make().execute(actionRun({
+        triggerKey: 'workflow.reimbursement_ready_for_payment', recipientPermissions: ['reimbursement.payment.record'],
+        titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}', bodyTemplate: 'ยอด {{amount}} {{currency}} · รอบันทึกการจ่ายเงิน',
+      }), {
+        companyId: 'co_1', ruleName: 'r', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '1234.5000', currency: 'THB' }, siblingActions: [],
+      } as any);
+
+      assert.equal((notify.execute.mock.calls.at(-1) as any).arguments[0].body, 'ยอด 1,234.50 บาท · รอบันทึกการจ่ายเงิน');
+    });
+
+    it('keeps another currency as its raw pair rather than calling it baht, and leaves non-amounts alone', async () => {
+      assert.equal(await body('reimbursement_pending_approval', { amount: '99.5000', currency: 'USD' }), 'ยอด 99.5000 USD · รออนุมัติจากคุณ');
+      assert.equal(await body('reimbursement_pending_approval', { amount: 'ไม่ระบุ' }), 'ยอด ไม่ระบุ บาท · รออนุมัติจากคุณ');
+    });
+  });
+
+  // Review: a task title carried an English tag ("[Approval review] ...") and the approval reminder
+  // said "SLA". Both are read by the approver in their task list and on LINE: plain Thai.
+  describe('task and reminder titles are plain Thai', () => {
+    it('creates the approval task under the claim title alone, with a Thai description', async () => {
+      const pendingApproval = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_pending_approval')!;
+      const taskAction = pendingApproval.defaultActionJson.find((a) => a.actionType === 'CREATE_APPROVAL_REVIEW_REQUEST')!;
+      repo.findTaskByActionRunId = mock.fn(async () => null);
+      repo.createTask = mock.fn(async (data: any) => ({ id: 'task_1', ...data }));
+
+      await make().execute({ ...actionRun(taskAction.configJson), actionKey: taskAction.actionKey, actionType: 'CREATE_APPROVAL_REVIEW_REQUEST' }, {
+        companyId: 'co_1', ruleName: pendingApproval.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-202610-00007', approverTaskUserId: 'u_manager' }, siblingActions: pendingApproval.defaultActionJson,
+      } as any);
+
+      const created = (repo.createTask.mock.calls[0] as any).arguments[0];
+      assert.equal(created.title, 'อนุมัติเบิกจ่าย: RB-202610-00007');
+      assert.doesNotMatch(`${created.title} ${created.description}`, /[A-Za-z]{3,}(?<!RB)/);
+    });
+
+    it('titles the approval reminder without the word SLA', () => {
+      const sla = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'approval_sla_breach')!;
+      const titles = sla.defaultActionJson.map((a) => a.configJson['titleTemplate']).filter(Boolean);
+      assert.deepEqual(titles, ['ใบเบิกรออนุมัติเกินกำหนด: {{requestNo}}']);
     });
   });
 
@@ -656,7 +728,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
     assert.equal(sent.title, 'พร้อมจ่ายเบิกจ่าย: RB-202608-00021');
-    assert.equal(sent.body, 'ยอด 250 THB · รอคุณบันทึกการจ่ายเงิน');
+    assert.equal(sent.body, 'ยอด 250.00 บาท · รอคุณบันทึกการจ่ายเงิน');
   });
 
   it('keeps the sibling-borrowed title but not the body on the pending-approval alert', async () => {
@@ -678,7 +750,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     assert.deepEqual((repo.findUserIdsByRoles.mock.calls[0] as any).arguments[1], []);
     assert.deepEqual(sent.recipientUserIds, ['u_manager']);
     assert.equal(sent.title, 'อนุมัติเบิกจ่าย: RB-202608-00021');
-    assert.equal(sent.body, 'ยอด 250 THB · รออนุมัติจากคุณ');
+    assert.equal(sent.body, 'ยอด 250.00 บาท · รออนุมัติจากคุณ');
   });
 
   it('falls back to the reimbursement journey page (never /reimbursements/reimbursement_request/:id) when no path template is set', async () => {
