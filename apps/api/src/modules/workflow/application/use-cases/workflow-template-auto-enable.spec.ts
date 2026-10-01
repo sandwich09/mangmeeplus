@@ -125,6 +125,43 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
     assert.equal(repo.rules.filter((r: any) => r.templateId === preexisting.templateId).length, 1);
   });
 
+  // Review: a rule added in a later release was created switched on even where the company had
+  // switched the notice next to it off.
+  it('creates a new notice switched off where the company switched off the one it sits next to', async () => {
+    const repo = fakeRepo([
+      { templateKey: 'reimbursement_payment_recorded', status: 'DISABLED' },
+      { templateKey: 'approval_sla_breach', status: 'DISABLED' },
+    ]);
+
+    const enabled = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
+
+    const ruleOf = (key: string) => repo.rules.find((r: any) => r.templateId === repo.templates.find((t: any) => t.key === key).id && r.id.startsWith('rule_'));
+    for (const key of ['reimbursement_payment_voided', 'reimbursement_payment_sla_breach']) {
+      assert.equal(enabled.includes(key), false, key);
+      assert.equal(ruleOf(key).status, 'DISABLED', key);
+      assert.equal(ruleOf(key).createdByUserId, WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, key);
+      // Not enabled, so no version: the admin's own enable snapshots it.
+      assert.equal(repo.versions.some((v: any) => v.ruleId === ruleOf(key).id), false, key);
+    }
+    // Everything else is switched on as usual, and a second run creates nothing more.
+    assert.equal(ruleOf('reimbursement_ready_for_payment').status, 'ENABLED');
+    assert.deepEqual(await autoEnableWorkflowTemplatesForCompany(repo, 'co_1'), []);
+  });
+
+  it('creates the new notices switched on where the one next to them is on, or was never there', async () => {
+    const withSiblingsOn = fakeRepo([
+      { templateKey: 'reimbursement_payment_recorded', status: 'ENABLED' },
+      { templateKey: 'approval_sla_breach', status: 'ENABLED' },
+    ]);
+    const fresh = fakeRepo();
+
+    for (const repo of [withSiblingsOn, fresh]) {
+      const enabled = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
+      assert.ok(enabled.includes('reimbursement_payment_voided'));
+      assert.ok(enabled.includes('reimbursement_payment_sla_breach'));
+    }
+  });
+
   it('leaves other companies alone', async () => {
     const repo = fakeRepo([{ templateKey: 'reimbursement_pending_approval', companyId: 'co_2', status: 'DISABLED' }]);
     const created = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');

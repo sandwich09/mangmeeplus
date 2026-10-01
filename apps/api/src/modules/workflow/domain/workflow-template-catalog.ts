@@ -61,6 +61,15 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_payment_voided: 0,
 };
 
+// A template added next to one a company already has follows that one's switch: where the company
+// turned the older notice off, the new one is created switched off too. An admin who disabled "paid"
+// did not ask for "payment voided", and one who disabled the approval reminder did not ask for the
+// payment reminder. The admin can still enable it; nothing else about auto-enable changes.
+export const WORKFLOW_TEMPLATE_FOLLOWS_SIBLING: Record<string, string> = {
+  reimbursement_payment_voided: 'reimbursement_payment_recorded',
+  reimbursement_payment_sla_breach: 'approval_sla_breach',
+};
+
 // Step-journey spec §11/§13: every reimbursement notification links straight to that claim's
 // journey page (one page per request — no more tab/drawer routing). Rendered by the action runner
 // with the event payload + companyId (same renderer as titles); the plain sourceWebPath is the

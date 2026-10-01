@@ -9,6 +9,7 @@ import {
   WORKFLOW_TEMPLATE_CATALOG,
   WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS,
   WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG,
+  WORKFLOW_TEMPLATE_FOLLOWS_SIBLING,
 } from '../../domain/workflow-template-catalog';
 
 /** Catalog cooldown for a template key, falling back to the global default. */
@@ -59,10 +60,24 @@ export async function autoEnableWorkflowTemplatesForCompany(
       timezone: WORKFLOW_DEFAULT_TIMEZONE,
       createdByUserId: actorUserId,
     });
+    if (await siblingRuleSwitchedOff(repo, companyId, seed.key)) {
+      // Created, so a later run does not create it again, but left for the admin to switch on.
+      await repo.updateRule(companyId, rule.id, { status: 'DISABLED', disabledByUserId: actorUserId, disabledAt: new Date(), updatedByUserId: actorUserId });
+      continue;
+    }
     await createRuleVersionAndEnable(repo, rule, actorUserId);
     enabledKeys.push(template.key);
   }
   return enabledKeys;
+}
+
+/** The company has the sibling notice of this template, and none of its rules is switched on. */
+async function siblingRuleSwitchedOff(repo: PrismaWorkflowRepository, companyId: string, templateKey: string): Promise<boolean> {
+  const siblingKey = WORKFLOW_TEMPLATE_FOLLOWS_SIBLING[templateKey];
+  const sibling = siblingKey ? await repo.findTemplateByKey(siblingKey) : null;
+  if (!sibling) return false;
+  const rules = await repo.listRules({ companyId, templateId: sibling.id });
+  return rules.length > 0 && !rules.some((rule) => rule.status === 'ENABLED');
 }
 
 const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
