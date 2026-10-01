@@ -65,7 +65,7 @@ describe('claim money on the period close check', () => {
     const copy = failed({ unconfirmedClaimExpenses: 1, pendingPayments: 2, paymentErrors: 3 });
     assert.equal(
       copy.message,
-      'พบค่าใช้จ่ายจากใบเบิกที่ยังไม่ยืนยัน 1 รายการ · การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี 2 รายการ · การจ่ายเงินคืนใบเบิกที่ลงบัญชีไม่สำเร็จ 3 รายการ กรุณาดำเนินการก่อนปิดงวด',
+      'พบค่าใช้จ่ายจากใบเบิกที่ยังไม่ยืนยัน 1 รายการ · การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี 2 รายการ · การจ่ายเงินคืนใบเบิกที่ลงบัญชีผิดพลาด 3 รายการ กรุณาดำเนินการก่อนปิดงวด',
     );
     // Waiting and failed payouts are fixed on the same screen: it is offered once, not twice.
     assert.deepEqual(copy.links, [
@@ -77,7 +77,7 @@ describe('claim money on the period close check', () => {
 
   it('leaves out the kinds with nothing pending', () => {
     const copy = failed({ unconfirmedClaimExpenses: 0, pendingPayments: 0, paymentErrors: 1 });
-    assert.equal(copy.message, 'พบการจ่ายเงินคืนใบเบิกที่ลงบัญชีไม่สำเร็จ 1 รายการ กรุณาดำเนินการก่อนปิดงวด');
+    assert.equal(copy.message, 'พบการจ่ายเงินคืนใบเบิกที่ลงบัญชีผิดพลาด 1 รายการ กรุณาดำเนินการก่อนปิดงวด');
     assert.deepEqual(copy.links, [{ label: 'เปิดรายการจ่ายเงินคืนที่ยังไม่ลงบัญชี', path: '/expenses/evidence' }]);
   });
 

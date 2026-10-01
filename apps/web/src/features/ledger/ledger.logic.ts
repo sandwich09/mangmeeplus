@@ -45,7 +45,7 @@ const POSTING_SCREEN: PeriodCloseCheckLink = { label: 'เปิดรายก�
 const CLAIM_MONEY_PARTS: ReadonlyArray<{ key: string; text: (n: number) => string; link: PeriodCloseCheckLink }> = [
   { key: 'unconfirmedClaimExpenses', text: (n) => `ค่าใช้จ่ายจากใบเบิกที่ยังไม่ยืนยัน ${n} รายการ`, link: { label: 'เปิดค่าใช้จ่ายที่รอตรวจ', path: '/expenses?view=pending' } },
   { key: 'pendingPayments', text: (n) => `การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี ${n} รายการ`, link: POSTING_SCREEN },
-  { key: 'paymentErrors', text: (n) => `การจ่ายเงินคืนใบเบิกที่ลงบัญชีไม่สำเร็จ ${n} รายการ`, link: POSTING_SCREEN },
+  { key: 'paymentErrors', text: (n) => `การจ่ายเงินคืนใบเบิกที่ลงบัญชีผิดพลาด ${n} รายการ`, link: POSTING_SCREEN },
 ];
 
 /** The kinds actually pending. A response without the numbers names none and offers every way. */
