@@ -259,9 +259,24 @@ Spec section 17. Branch `claude/claim-payment-ledger-posting-20261001`; task mem
 - [x] The period-close check carries its three counts; the web names each kind, links to the screen
   that fixes it, and shows the checks when a close is refused.
 - [x] Registered unit specs assert the claim, payment, journal and expense-record amounts, the
-  void reversal and pay-again; an opt-in PostgreSQL spec proves the same against real tables.
+  void reversal and pay-again; a PostgreSQL spec proves the same against real tables.
+
+Review follow-up (2026-10-01, spec sections 17.1 to 17.3):
+
+- [x] A claim payout is settled in one transaction under a claim on its payment row, so a post and a
+  void take turns and a refused post writes nothing; the journal number is part of that transaction.
+- [x] The worker's error stamp lands on a RECORDED payment only, becomes `posted` when a posted
+  settlement exists, and its reason is logged with the payment id and the code.
+- [x] CI runs the PostgreSQL spec in a database of its own ("Migrations and Boot" job); the candidate
+  SQL and the worklist query are also pinned in a spec that needs no database.
+- [x] The worklist returns at most 200 payouts, oldest first; the screen draws ten at a time.
+- [x] Recording refuses a payment dated in a closed accounting period, before a payment number is
+  reserved, with a message that tells the payer what to do.
+- [x] Screen: a loading line, a retry after a failed first load, a 44 px claim link, the period-close
+  wording on the rows, and no currency code.
+- [x] The worker does not post void reversals and needs no code for it: the void posts its own.
 - [ ] Owner or accountant decision: the settlement mapping for companies on `TH_SME_COA_V1`, and the
-  ledger account of a typed claim line (spec section 17.3). Until then posting fails closed there.
+  ledger account of a typed claim line (spec section 17.4). Until then posting fails closed there.
 - [ ] Owner decision: reopen the accounting screens (`ACCOUNTING_UI_HIDDEN`). Until then the worklist
   and the period-close screen are not visible to anyone.
 
