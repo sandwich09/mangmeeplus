@@ -1,16 +1,18 @@
 # Plan: สวิตช์ทางเข้า manual expense บนเว็บ
 
-วันที่: 2026-10-01 · แก้ตาม spec v3.0
+วันที่: 2026-10-01 · ปรับสถานะล่าสุด: 2026-10-02 · แก้ตาม spec v3.0
 
-Status: **PROPOSAL — รอเจ้าของยืนยันข้อเสนอ D1–D8 ใน spec §1.2; ยังไม่เริ่มแก้โค้ด**
+Status: **ตัดสินแล้ว — ยังไม่ได้สั่งเริ่ม implement และยังไม่เริ่มแก้โค้ด; ก่อนเริ่มต้องตรวจข้อค้นพบซ้ำที่ commit ล่าสุดของ develop (P0)**
+
+ข้อตัดสินใจ D1–D8 ใน spec §1.2: ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ)
 
 Source of truth: [Spec v3.0](../specs/manual-expense-web-entry-flag-spec-th.md) · [รีวิวอิสระ](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md) · [Memory](../agent-memory/manual-expense-web-entry-flag.md) · [บั๊กที่แก้แยก](../research/manual-expense-current-code-bugs-2026-10-01-th.md)
 
-แผนนี้เขียนตามข้อเสนอ D1–D8 ถ้าเจ้าของเลือกทางเลือกข้อใด ให้แก้ spec ตามคอลัมน์ “หัวข้อที่ต้องแก้” ก่อน แล้วจึงแก้แผนนี้ ถ้าเลือกทางเลือกของ D1 (เป็น key ใน catalog) แผนนี้ใช้ไม่ได้ทั้งฉบับ ต้องเขียนใหม่จาก spec ภาคผนวก B
+แผนนี้เขียนตามคำตอบ D1–D8 ซึ่งเจ้าของตัดสินตามนั้นแล้ว จึงใช้ได้ตามที่เขียนทั้งฉบับ ทางเลือกของ D1 (เป็น key ใน catalog) ไม่ได้เลือก และแผนนี้ใช้กับทางนั้นไม่ได้ สิ่งที่ทางนั้นต้องสร้างเพิ่มเก็บไว้เป็นบันทึกใน spec ภาคผนวก B
 
 ## 1. Scope lock ก่อนเริ่ม
 
-- เริ่มได้เมื่อเจ้าของยืนยัน D1–D8 และบันทึกวันที่ยืนยันใน memory แล้วเท่านั้น
+- เจ้าของตัดสิน D1–D8 แล้วเมื่อ 2 ต.ค. 2569 และวันที่บันทึกใน memory แล้ว งานเริ่มได้เมื่อเจ้าของสั่งเริ่ม implement เท่านั้น
 - เปลี่ยนเฉพาะสี่กลุ่ม: ที่เก็บค่าตั้งรายร้านกับ command ของผู้ดูแล, field เดียวใน `/auth/me`, helper/gate/ทางเข้าฝั่งเว็บ และสวิตช์ในหน้าผู้ดูแล
 - **ห้ามแก้** `packages/contracts/src/feature-entitlements.ts`, `menu-entitlements.ts`, `SetPartnerFeaturesUseCase`, โมดูล billing, onboarding, `normalize-entitlements`, โมดูล LINE, `apps/ai-gateway`, expense guards และ expense use cases ถ้าพบว่าจำเป็นต้องแก้ไฟล์กลุ่มนี้ ให้หยุดและถามก่อน เพราะแปลว่าออกนอก spec
 - ไม่รวมการแก้บั๊ก B1, B3, B4 ใน[เอกสารบั๊กแยก](../research/manual-expense-current-code-bugs-2026-10-01-th.md)
@@ -49,7 +51,7 @@ Source of truth: [Spec v3.0](../specs/manual-expense-web-entry-flag-spec-th.md) 
 
 ### P0 — เริ่มจาก develop ล่าสุดและตรวจซ้ำ
 
-- [ ] ยืนยันว่าเจ้าของตอบ D1–D8 แล้ว และ spec/plan/memory สะท้อนคำตอบ
+- [ ] ยืนยันว่าเจ้าของตอบ D1–D8 แล้ว และ spec/plan/memory สะท้อนคำตอบ (คำตอบ: ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) บันทึกใน spec §1.2 และ memory)
 - [ ] สร้าง worktree ใหม่จาก `origin/develop` ล่าสุด ไม่ใช้ checkout ร่วม บันทึก SHA
 - [ ] ตรวจ F01–F13 ใน spec §3 ซ้ำที่ SHA นั้นทีละข้อด้วยชื่อ symbol ถ้าข้อใดไม่ตรง ให้แก้ spec และ plan ก่อนเขียนโค้ด
 - [ ] ตรวจทางเข้าใน spec §9 ซ้ำด้วยการค้น `expenses/manual` ทั้ง `apps/web` ถ้าพบจุดใหม่ให้เพิ่มใน spec ก่อน
@@ -220,5 +222,7 @@ PG/browser: อ่าน fixture/setup ของ PostgreSQL spec ที่มี
 2026-10-01: [Local E2E report](../qa/manual-expense-web-entry-flag-e2e-simulation-2026-10-01-th.md) เป็นผลปิด key เดิม `expenses.manual` บนฐานโค้ดเก่า ห้าม tick P1–P6 หรืออ้าง acceptance จากผลนั้น
 
 2026-10-01 (รีวิวอิสระและฉบับแก้): spec ปรับเป็น v3.0 และแผนนี้ถูกเขียนใหม่ตาม[รีวิวอิสระ](../research/manual-expense-web-entry-flag-review-2026-10-01-th.md) สิ่งที่แผนฉบับ v2 ขาดและฉบับนี้เพิ่ม: เริ่มจาก develop ล่าสุดและตรวจซ้ำ (RM-01), ลำดับที่ไม่ทิ้งช่วงให้ระบบชำระเงินพัง (RM-03, RM-19), W00 manifest กับ reliability corpus (RM-09), ไฟล์คู่มือที่ถูกตรึง (RM-10), ไฟล์ที่ถูกตรึงสำหรับ maintenance และการลงทะเบียน spec (RM-19)
+
+2026-10-02 (เจ้าของตัดสิน): เจ้าของตอบ D1–D8 ว่า “ตามที่แนะนำทั้งหมด” spec และแผนนี้จึงเปลี่ยนสถานะเป็นตัดสินแล้ว ไม่มีคำตอบข้อใดต่างจากที่เขียนไว้ จึงไม่มีขั้นตอนของแผนที่ต้องแก้ D8 (บั๊กปุ่มลบ B1) แก้แยกและ merge แล้วใน PR #950 (develop) และ PR #951 (main) เจ้าของยังไม่ได้สั่งเริ่ม implement
 
 งานเอกสารรอบนี้เสร็จเมื่อ spec/plan/audit/QA/memory สอดคล้องกัน, links ตรวจผ่าน และ diff เป็น documentation only ไม่ทำเครื่องหมาย implementation checklist ข้างบนว่าเสร็จ

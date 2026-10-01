@@ -2,7 +2,9 @@
 
 ## Update 2026-10-01 — independent review and spec v3.0 (current state)
 
-Status: PROPOSAL. Spec v3.0 and its plan wait for the owner to confirm eight decisions (D1–D8 in spec §1.2). Implementation NOT STARTED and still unauthorized. Everything under "History" below is kept unchanged and describes the state before the review; where it disagrees with this section, this section wins.
+2026-10-02: The owner answered every open decision with “ตามที่แนะนำทั้งหมด”. D1–D8 are decided as proposed; the spec, plan, review, bugs file and the notes on the audit, QA report and evidence README now read “ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ)”, and the spec's catalog-key appendix is kept as the alternative that was not chosen. No rule, contract field, number or screen wording changed. The owner has not ordered implementation.
+
+Status: DECIDED, NOT STARTED. Spec v3.0 and its plan carry the owner's eight decisions (D1–D8 in spec §1.2, decided 2026-10-02 as proposed). Implementation NOT STARTED and not ordered; before it starts, every finding must be re-verified at the latest develop commit (plan P0). Everything under "History" below is kept unchanged and describes the state before the review; where it disagrees with this section, this section wins.
 
 Owner: thawatchai / Claude (review and v3.0 amendments); earlier work by Codex.
 
@@ -12,24 +14,23 @@ What the independent review found (docs/research/manual-expense-web-entry-flag-r
 - A new key in FEATURE_CATALOG is treated as authority everywhere: billing rejects existing 60/62-row companies when the catalog grows, onboarding/billing/presets/deals would write the new key as false, the admin screen blocks disabling a key that has no stored row, the entitlement command wipes LINE conversation state and bumps setVersion (which holds a paid invoice). All run-verified in memory against real code.
 - F02 (delete guard) is real but affects only roles built from the four finance templates, not the built-in roles.
 
-Decisions written into spec v3.0 as PROPOSALS awaiting the owner (each with the alternative and its cost):
-- D1 storage: a per-company screen setting (the CompanyAiConfiguration.ocrEnabled precedent), not a catalog entitlement key; still shown under "บันทึกด้วยมือ" on the same admin page. Appendix B of the spec lists what a catalog key would additionally require.
+Decisions in spec v3.0, decided by the owner on 2026-10-02 as proposed (the spec keeps each alternative and its cost as the record of what was not chosen):
+- D1 storage: a per-company screen setting (the CompanyAiConfiguration.ocrEnabled precedent), not a catalog entitlement key; still shown under "บันทึกด้วยมือ" on the same admin page. Appendix B of the spec keeps what a catalog key would additionally require, as the alternative that was not chosen.
 - D2 defaults: shown for every existing and new company; purchases, upgrades, presets and deals never change it.
 - D3 purpose: hide the entry only; not access control. The admin wording says so.
 - D4 guide and LINE text: the web guide hides the button and shows a note on the manual section; the LINE help card is left as is this round. (Narrower than the review's first suggestion of removing the whole section, because the guide refers to section numbers and to "8 submenus".)
 - D5 unreadable value: show the menu.
 - D6 phone reload after switch-off loses re-entry: accepted, with an admin warning.
 - D7 switching off while upload is also off: allowed, with a warning.
-- D8 delete bug: fix separately.
+- D8 delete bug: fix separately. Done: merged in PR #950 (develop `6dd3c8c7`) and PR #951 (main `4803be00`).
 
 Open questions:
-- The eight owner decisions above.
 - Whether any production company uses a finance-template role (B1) or has a deal that stores only the parent menu (B3). No database was inspected.
 - How new API spec files reach CI without editing package.json (plan §4). Needs a ruling.
 
 Artifacts added or changed on 2026-10-01 (branch claude/spec-reviews-20261001, not pushed):
 - docs/research/manual-expense-web-entry-flag-review-2026-10-01-th.md (review)
-- docs/research/manual-expense-current-code-bugs-2026-10-01-th.md (B1, B3, B4; nothing fixed)
+- docs/research/manual-expense-current-code-bugs-2026-10-01-th.md (B1, B3, B4; B1 and B3 were fixed on 2026-10-02 in PR #950/#951, B4 is not fixed)
 - docs/specs/manual-expense-web-entry-flag-spec-th.md (v3.0)
 - docs/plans/manual-expense-web-entry-flag-plan-th.md (rewritten for v3.0)
 - Reviewer notes added at the top of the audit, the QA report and the evidence README. Their original text is unchanged.
@@ -41,9 +42,8 @@ Verification (review session, no file edits to application code, no database, no
 - Not done: Playwright, PostgreSQL specs, production/UAT, real LINE or AI.
 
 Next:
-- Owner answers D1–D8. If any answer differs from the proposal, edit the spec sections named in the D-table first, then the plan.
-- Only after that and an explicit instruction: implement plan P0–P6 from the latest develop.
-- B1, B3 and B4 are separate work and do not wait for this feature.
+- Wait for the owner's explicit instruction to implement. Then run plan P0–P6 from the latest develop, re-verifying every finding at that commit first.
+- B1 and B3 were fixed separately (PR #950 / #951). B4 is still separate work and does not wait for this feature.
 
 ## History — state before the independent review (kept unchanged)
 

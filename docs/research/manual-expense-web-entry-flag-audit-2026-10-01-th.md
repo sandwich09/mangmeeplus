@@ -12,7 +12,7 @@ Status: **AUDIT + LOCAL E2E COMPLETE; v2 CHILD FLAG IMPLEMENTATION NOT STARTED**
 - **ข้อความที่ไม่เป็นจริงแล้วบน develop**
   1. F03 ทุกจุด (สองแถวของ F03 ใน §2, ย่อหน้าใต้ตาราง §2, §4.2 API ข้อ 8–9 และ recipe F03 ใน §4.3): บั๊ก key ของ LINE ถูกแก้ใน `6fddca795` (2026-09-29) การสร้าง draft จากข้อความ LINE สำเร็จแล้ว ไม่มีงานค้าง และห้ามเปลี่ยนสูตร key อีก
   2. F09: มี unit test ยืนยันรูป key แล้วใน `expense-document.use-case.spec.ts`
-  3. §1: แนวทาง key `expenses.manual.web_entry` ถูกแทนด้วยค่าตั้งรายร้านใน spec v3.0 ซึ่งยังเป็นข้อเสนอรอเจ้าของยืนยัน
+  3. §1: แนวทาง key `expenses.manual.web_entry` ถูกแทนด้วยค่าตั้งรายร้านใน spec v3.0 ซึ่งตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ)
   4. §3 แถว “System partner command/controller/UI”: ที่ develop command นี้เรียก `invalidateLineConversationState` เมื่อค่าสิทธิ์ที่มีผลเปลี่ยน (เพิ่มเมื่อ 2026-09-27) จึงมีผลต่อ LINE ซึ่งเอกสารนี้ไม่ได้กล่าวถึง
   5. §3 แถว “Billing”: ที่ develop `billingFeaturePlan` บังคับว่าชุดแถวสิทธิ์ของร้านต้องตรง catalog ทุกแถว การเพิ่ม key เข้า catalog จึงกระทบการชำระเงิน ซึ่งเอกสารนี้ไม่ได้กล่าวถึง
   6. ข้อความของแนวทาง v1 ที่ค้างอยู่: §3 แถว “Expense list/review/manual” (“ถอด visibility flag ออกจากทั้ง create/update”), แถว “System partner…” (“เพิ่ม copy และ preset preservation เท่านั้น”) และ §4.2 API ข้อ 4 (“ผลกระทบที่ต้องหายไป”) ภายใต้ v3.0 การปิด `expenses.manual` ยังตัดสิทธิ์ตามเดิมทุกประการ

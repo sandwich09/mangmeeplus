@@ -2,7 +2,7 @@
 
 > **Reviewer note, 2026-10-01 (added after the independent review) — read this first.** The text below is kept unchanged as history.
 >
-> - This folder is evidence about the OLD key `expenses.manual` only. Nothing here tests the web-entry switch, in its v2 form or as the per-company setting proposed in spec v3.0, so none of it counts toward v3.0 acceptance.
+> - This folder is evidence about the OLD key `expenses.manual` only. Nothing here tests the web-entry switch, in its v2 form or as the per-company setting of spec v3.0 (decided by the owner on 2026-10-02), so none of it counts toward v3.0 acceptance.
 > - The run used `4a5817b42` plus uncommitted work. That baseline is not an ancestor of `origin/develop`: develop `ae13970b0` has 842 commits it lacks, and 596 of the 3,728 files hashed in `source-before.json` differ from develop. `source-verification.json` only proves the test run did not modify the author's working tree.
 > - `line-note-pg.json` records a bug that was already fixed on develop in `6fddca795` (2026-09-29). The four 400 responses are not expected behaviour any more.
 > - The `harness/` files cannot be run from this repository as committed: the configs use `testDir: './e2e'`, the specs import `./harness/fixtures`, the launcher is committed as `local-env.py` while the commands below call `../run.py`, outputs go to `/tmp/manual-flag-e2e-20261001/`, and the named Docker containers exist only on the author's machine.
