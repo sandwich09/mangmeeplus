@@ -1,10 +1,21 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { PATH_METADATA } from '@nestjs/common/constants';
+import { Reflector } from '@nestjs/core';
 import { AuthGuard, isBillingRecoveryRoute, isAccountEmailRecoveryRoute, isCompanyProfileRecoveryRoute } from './presentation/auth.guard';
+import { ResolveRequestContextUseCase } from './application/use-cases/resolve-request-context.use-case';
+import { ROLE_GRANTS } from './permission-registry';
 import { DenyByDefaultGuard } from '../../common/security/deny-by-default.guard';
 import { IS_PUBLIC_ROUTE_KEY } from '../../common/security/public.decorator';
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../common/security/permissions.decorator';
+import { PermissionResolverService } from '../access-control/application/permission-resolver.service';
+import { PrismaPermissionResolverRepository } from '../access-control/infrastructure/prisma-permission-resolver.repository';
+import { PLATFORM_TENANT_ID } from '../sales-console/application/sales-context';
+import { SystemSalesAttributionController, SystemSalesReferralController } from '../sales-console/presentation/http/system-sales-agents.controller';
+import { SystemIdentityReconciliationController } from '../system-identity-reconciliation/presentation/http/system-identity-reconciliation.controller';
 
 // Minimal mock factory for ExecutionContext
 function makeContext(opts: {
@@ -743,5 +754,78 @@ describe('billing recovery boundaries', () => {
     const legalGuard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolver, localConfig, expired as any, legalRequired);
     await assert.rejects(legalGuard.canActivate(makeContext({ path: '/v1/companies/c1/billing', authHeader: 'Bearer token' })), (e: any) => e.getResponse().code === 'legal_acceptance_required');
     await assert.rejects(legalGuard.canActivate(makeContext({path:'/v1/companies/c1/package-change-requests',method:'POST',authHeader:'Bearer token'})),(e:any)=>e.getResponse().code==='legal_acceptance_required');
+  });
+});
+
+// RB-40. AuthGuard reads a path parameter named `companyId` as the CALLER's company and resolves
+// the membership there. On a platform route the id in the URL is the TARGET shop, where platform
+// staff hold no membership, so the request was refused before any handler ran.
+describe('platform routes and the companyId path parameter (RB-40)', () => {
+  const MODULES = join(__dirname, '..');
+
+  /** What Express hands the guard: one entry per `:name` in the handler's declared path. */
+  function declaredParams(controller: Function, handler: string, value: string): Record<string, string> {
+    const path = `${Reflect.getMetadata(PATH_METADATA, controller)}/${Reflect.getMetadata(PATH_METADATA, controller.prototype[handler])}`;
+    return Object.fromEntries([...path.matchAll(/:(\w+)/g)].map((match) => [match[1]!, value]));
+  }
+
+  // The real resolver over one fact: the admin is a member of the platform tenant and of no shop.
+  const adminPrisma = {
+    client: {
+      ...prismaFor('admin-1').client,
+      user: { findUnique: async () => ({ id: 'admin-1', status: 'ACTIVE' }) },
+      companyFeatureEntitlement: { findMany: async () => [] },
+      companyMembership: {
+        findFirst: async ({ where }: { where: { companyId?: string } }) => (where.companyId !== undefined && where.companyId !== PLATFORM_TENANT_ID ? null : {
+          id: 'membership-admin', companyId: PLATFORM_TENANT_ID, branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null,
+          branchScopes: [], company: { status: 'ACTIVE', planTerm: null },
+          roles: [{ role: { key: 'SYSTEM_ADMIN', status: 'ACTIVE', permissions: ROLE_GRANTS['SYSTEM_ADMIN']!.map((key) => ({ permission: { key } })) } }],
+        }),
+      },
+    },
+  } as any;
+
+  it('lets the platform admin act on any shop through the real guards', async () => {
+    const reflector = new Reflector();
+    const resolve = new ResolveRequestContextUseCase(adminPrisma, new PermissionResolverService(new PrismaPermissionResolverRepository(adminPrisma)));
+    const guard = new AuthGuard(reflector, { verify: async () => ({ subject: 'admin-1', tokenId: 'session-1' }) } as any, failVerifier as any, resolve, localConfig, adminPrisma, acceptedLegal);
+    const routes: Array<[Function, string]> = [
+      [SystemSalesReferralController, 'setReferral'],
+      [SystemSalesAttributionController, 'review'],
+      [SystemIdentityReconciliationController, 'generateForCompany'],
+      [SystemIdentityReconciliationController, 'repairTaxId'],
+    ];
+    for (const [controller, handler] of routes) {
+      const request = { method: 'POST', path: '/v1/system/x', headers: { authorization: 'Bearer valid.token' }, cookies: {}, params: declaredParams(controller, handler, 'shop-1'), context: undefined as any };
+      const context = { getHandler: () => controller.prototype[handler], getClass: () => controller, switchToHttp: () => ({ getRequest: () => request }) } as any;
+      assert.equal(await guard.canActivate(context), true, `${controller.name}.${handler}`);
+      assert.equal(new DenyByDefaultGuard(reflector).canActivate(context), true, `${controller.name}.${handler}`);
+      assert.equal(request.context.companyId, PLATFORM_TENANT_ID);
+    }
+
+    // The same admin on a shop route is still refused: there the parameter IS the caller's company.
+    const shopRequest = { method: 'GET', path: '/v1/companies/shop-1/audit/logs', headers: { authorization: 'Bearer valid.token' }, cookies: {}, params: { companyId: 'shop-1' } };
+    await assert.rejects(
+      () => guard.canActivate({ getHandler: () => ({}), getClass: () => ({}), switchToHttp: () => ({ getRequest: () => shopRequest }) } as any),
+      (error: unknown) => error instanceof ForbiddenException && error.message === 'No active company membership.',
+    );
+  });
+
+  it('no route under system/ declares a parameter named companyId', () => {
+    const files = (readdirSync(MODULES, { recursive: true, encoding: 'utf8' }) as string[]).filter((file) => file.endsWith('.controller.ts'));
+    let systemControllers = 0;
+    const offenders = files.flatMap((file) => readFileSync(join(MODULES, file), 'utf8')
+      // One block per controller class: its decorator, then the route decorators it owns.
+      .split(/(?=@Controller\()/)
+      .flatMap((block) => {
+        const prefix = /^@Controller\(\s*['"`]([^'"`]*)/.exec(block)?.[1];
+        if (prefix === undefined || !/^system(\/|$)/.test(prefix)) return [];
+        systemControllers += 1;
+        return [prefix, ...[...block.matchAll(/@(?:Get|Post|Put|Patch|Delete|All)\(\s*['"`]([^'"`]*)/g)].map((match) => `${prefix}/${match[1]}`)]
+          .filter((path) => /:companyId\b/.test(path))
+          .map((path) => `${file}: ${path}`);
+      }));
+    assert.ok(systemControllers >= 15, `expected to scan the platform controllers, found ${systemControllers}`);
+    assert.deepEqual(offenders, [], 'AuthGuard resolves :companyId as the caller membership; name the target :partnerCompanyId');
   });
 });

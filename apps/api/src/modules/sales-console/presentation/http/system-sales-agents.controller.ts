@@ -151,17 +151,22 @@ export class SystemSalesAgentsController {
   }
 }
 
-/** D6: the Owner's referral repair, kept beside the partner console it belongs to in the UI. */
+/**
+ * D6: the Owner's referral repair, kept beside the partner console it belongs to in the UI.
+ *
+ * The target shop is `:partnerCompanyId`, never `:companyId`: AuthGuard reads a parameter of that
+ * name as the caller's own company, and the admin has no membership in the shop (RB-40).
+ */
 @Controller('system/partners')
 export class SystemSalesReferralController {
   constructor(private readonly referral: SalesReferralService) {}
 
-  @Patch(':companyId/referral')
+  @Patch(':partnerCompanyId/referral')
   @RequirePermissions('sales.agent_profile.manage')
   @ApiOperation({ summary: 'Set or clear a shop referring agent, within 30 days, with a reason' })
   @ApiResponse({ status: 409, description: 'SALES_REFERRAL_WINDOW_CLOSED' })
   setReferral(
-    @Param('companyId') companyId: string,
+    @Param('partnerCompanyId') companyId: string,
     @Body() dto: SalesReferralUpdateDto,
     @Req() req: Request & { context: RequestContext },
   ): Promise<{ companyId: string; referralSalesUserId: string | null }> {
@@ -193,13 +198,13 @@ export class SystemSalesAttributionController {
     return this.reports.flagged();
   }
 
-  @Post(':companyId/review')
+  @Post(':partnerCompanyId/review')
   @HttpCode(200)
   @RequirePermissions('sales.agent_profile.manage')
   @ApiOperation({ summary: 'Keep or clear a flag, with a reason; audited HIGH' })
   @ApiResponse({ status: 400, description: 'SALES_FLAG_REVIEW_INVALID' })
   review(
-    @Param('companyId') companyId: string,
+    @Param('partnerCompanyId') companyId: string,
     @Body() dto: SalesAttributionFlagReviewDto,
     @Req() req: Request & { context: RequestContext },
   ): Promise<SalesAttributionFlagListDto> {
