@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
-import { reimbursementPaymentRule } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYMENT_METHOD_LABELS, reimbursementPaidNotice, reimbursementPaymentHowText, reimbursementPaymentRule } from '@watchdog-bms/contracts';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import { translateApiError } from '@/common/api/api-error-message';
 
@@ -534,16 +534,79 @@ describe('a payment reads the same on its row and in the claim history (spec §1
   });
 
   it('keeps a voided payment\'s account and reason on its own row', () => {
-    const voided = { ...transfer, status: 'VOIDED', voidReason: 'บันทึกเลขอ้างอิงผิด', methodMismatchReason: undefined };
+    const voided = { ...transfer, status: 'VOIDED', voidedAt: '2026-10-02T02:00:00.000Z', voidReason: 'บันทึกเลขอ้างอิงผิด', methodMismatchReason: undefined };
     const again = { ...transfer, id: 'cmg7x2k9p0008paymentb2n4m6', paymentNo: 'RBPAY-202610-00002', paymentReference: 'TXN-1003' };
     const html = detailSections(paidWith(voided) && { ...paidWith(voided), payments: [voided, again] }, ids.payer, PAYER);
     for (const paymentNo of ['RBPAY-202610-00001', 'RBPAY-202610-00002']) {
       assert.ok(paymentRow(html, paymentNo).includes(`โอนเข้า ${KBANK_LINE} · ชื่อบัญชี นาย สมชาย ใจดี · ยืนยันเมื่อ 1 ต.ค. 2569 11:30 น.`), paymentNo);
     }
     assert.ok(paymentRow(html, 'RBPAY-202610-00001').includes('เหตุผลที่ยกเลิก: บันทึกเลขอ้างอิงผิด'));
-    // The history speaks of the payment that stands.
-    assert.equal(logic.buildClaimTimeline({ ...paidWith(voided), payments: [voided, again] }).find((entry) => entry.key === 'payment')!.label,
-      'จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป');
+    // The history speaks of the payment that stands, after the one that was taken back.
+    const timeline = logic.buildClaimTimeline({ ...paidWith(voided), payments: [voided, again] });
+    assert.equal(timeline.find((entry) => entry.key === 'payment')!.label, 'จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป');
+    // Voided or not is one fact in one wording: the row's status and the history's row, with the same reason.
+    assert.ok(paymentRow(html, 'RBPAY-202610-00001').includes('โอนเงิน · ยกเลิกการจ่ายแล้ว'));
+    assert.ok(paymentRow(html, 'RBPAY-202610-00002').includes('โอนเงิน · บันทึกแล้ว'));
+    assert.deepEqual(timeline.map((entry) => entry.label).filter((label) => label.includes('ยกเลิกการจ่าย')), ['ยกเลิกการจ่ายแล้ว: บันทึกเลขอ้างอิงผิด']);
+    assert.equal(timeline.filter((entry) => entry.label.includes('ยกเลิกการจ่าย')).length, [voided, again].filter((payment) => payment.status === 'VOIDED').length);
+    // The claim's own wording for a voided claim is another word, and no payment row borrows it.
+    assert.doesNotMatch(html.split('data-testid="reimbursement-payment-row"').slice(1).join(''), /เพิกถอน/);
+  });
+
+  // The requester's notice is written on the server from the payment's own facts, by the function of contracts
+  // that is called here on the very payment the page shows. So whatever the notice says, the row and the history say.
+  it('reads the same in the requester\'s notice: the method actually used, the amount, the last 4 digits and the slip', () => {
+    const cash = { ...transfer, paymentMethod: 'CASH', paymentReference: undefined, slipCount: 0, slips: [], payoutDestination: undefined, payoutConfirmedAt: undefined,
+      methodMismatchReason: 'ผู้เบิกมารับเงินสดเอง' };
+    const promptPay = { ...transfer, payoutDestination: { version: 1, payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountLast4: '5678' } };
+    const cases: Array<[any, string]> = [
+      [transfer, 'โอนเข้าบัญชีลงท้าย 6789 จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป'],
+      [promptPay, 'โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678 จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป'],
+      // Paid in cash though the claim asked for a transfer: every surface says cash, none names the claim's account.
+      [cash, 'จ่ายเป็นเงินสด 1,614.50 บาท'],
+      [{ ...transfer, payoutDestination: undefined, payoutConfirmedAt: undefined }, 'โอนเงิน จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป'],
+    ];
+    for (const [payment, sentence] of cases) {
+      const notice = reimbursementPaidNotice(payment);
+      assert.equal(notice, sentence);
+      const how = reimbursementPaymentHowText(payment);
+      const texts = row(payment);
+      // How it was paid: the history says the shared phrase, the notice is built on it, and the row names the same method.
+      assert.ok(history(payment).split(' · ').includes(how), `${how} in ${history(payment)}`);
+      assert.ok(notice.includes(how), `${how} in ${notice}`);
+      assert.ok(texts.includes(`${REIMBURSEMENT_PAYMENT_METHOD_LABELS[payment.paymentMethod as 'CASH']} · บันทึกแล้ว`), sentence);
+      // The amount, written the same way.
+      assert.ok(texts.includes('1,614.50 บาท') && notice.includes('1,614.50 บาท'), sentence);
+      // The last 4 digits: on all three, or on none of them.
+      const last4 = payment.payoutDestination?.accountLast4;
+      for (const [surface, text] of [['row', texts.join(' | ')], ['history', history(payment)], ['notice', notice]] as const) {
+        assert.equal(/ลงท้าย \d{4}/.test(text), Boolean(last4), `${surface}: ${text}`);
+        if (last4) assert.ok(text.includes(`ลงท้าย ${last4}`), `${surface}: ${text}`);
+      }
+      // A slip: said on all three, or on none.
+      const hasSlip = payment.slipCount > 0;
+      assert.deepEqual([texts.some((text) => text.startsWith('มีสลิปแนบ')), history(payment).includes('มีสลิป'), notice.includes('มีสลิปแนบ')], [hasSlip, hasSlip, hasSlip], sentence);
+    }
+    // The payer's reason is on the row for whoever may read the claim, and never in the notice.
+    assert.ok(row(cash).includes('เหตุผล: ผู้เบิกมารับเงินสดเอง') && !reimbursementPaidNotice(cash as any).includes('ผู้เบิกมารับเงินสดเอง'));
+    // One map of method words for the form, the row, the history and the notice.
+    assert.equal(PAYMENT_METHOD_LABELS, REIMBURSEMENT_PAYMENT_METHOD_LABELS);
+  });
+
+  it('prints the day of a payment in Thai time, the same on its row and in the history', () => {
+    // 18:30 on 1 October by UTC is 01:30 on 2 October in Thailand: the day the payer saw on their own screen.
+    const late = { ...transfer, paidAt: '2026-10-01T18:30:00.000Z' };
+    const html = detailSections(paidWith(late), ids.requester, ['reimbursement.read_own']);
+    assert.ok(paymentRow(html, 'RBPAY-202610-00001').includes('วันที่จ่าย 2 ต.ค. 2569 · เลขอ้างอิง TXN-1002'));
+    const journey = visible(`<ol ${html.split('data-testid="reimbursement-timeline"')[1]!.split('</ol>')[0]}`);
+    const at = journey.indexOf('จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป');
+    assert.ok(at > 0, journey.join(' | '));
+    assert.equal(journey[at + 1], '2 ต.ค. 2569');
+    // A voided payment has two days of its own: when it was paid and when that was taken back.
+    const voided = { ...late, status: 'VOIDED', voidedAt: '2026-10-02T17:30:00.000Z', voidReason: 'บันทึกเลขอ้างอิงผิด' };
+    const afterVoid = visible(`<ol ${detailSections({ ...paidWith(voided), status: 'READY_FOR_PAYMENT' }, ids.requester, ['reimbursement.read_own']).split('data-testid="reimbursement-timeline"')[1]!.split('</ol>')[0]}`);
+    assert.deepEqual(afterVoid.slice(afterVoid.indexOf('จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป')).slice(0, 5),
+      ['จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป', '2 ต.ค. 2569', '✓', 'ยกเลิกการจ่ายแล้ว: บันทึกเลขอ้างอิงผิด', '3 ต.ค. 2569']);
   });
 });
 

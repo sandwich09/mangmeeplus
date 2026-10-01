@@ -28,7 +28,7 @@ import {
 } from './reimbursements.api';
 import {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
-  FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
+  FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, PAYMENT_VOIDED_LABEL, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
@@ -885,7 +885,8 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   <span className="font-mono font-semibold text-gray-700">{p.paymentNo}</span>
                   <span className="font-semibold tabular-nums text-gray-900">{formatMoney(p.paidAmount, p.currency)}</span>
                 </div>
-                <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
+                {/* A voided payment is said in the words of the button that voids it, the same words the timeline uses. */}
+                <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : p.status === 'VOIDED' ? PAYMENT_VOIDED_LABEL : 'สถานะการจ่าย'}</div>
                 <div className="mt-1 break-words text-gray-500">{`วันที่จ่าย ${dateShort(p.paidAt)}${p.paymentReference ? ` · เลขอ้างอิง ${p.paymentReference}` : ''}`}</div>
                 {/* Where the money went, as the payer confirmed it: masked for everyone, and when they confirmed.
                     A transfer with no account confirmed says so (a legacy claim, or a claim that asked for cash). */}
