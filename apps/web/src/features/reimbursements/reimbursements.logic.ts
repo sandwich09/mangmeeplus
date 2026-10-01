@@ -4,8 +4,9 @@ import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/co
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
-  CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, eligibleSignatureRoles, reimbursementOwnActions,
+  CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
+  canUploadSignedCopy, canVoidRecordedPayment, claimSignatureSlots, eligibleSignatureRoles, reimbursementOwnActions,
+  type ClaimSignatureRole,
 } from './reimbursements.model';
 
 /**
@@ -434,8 +435,9 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const atIndex = keys.indexOf(journeyStepAt(detail, withFinance));
   const own = reimbursementOwnActions(detail, userId, permissions);
   // A step approved in an earlier round (before a finance correction) is history, not this round's approval.
-  const humanApproved = (detail?.approvalSteps ?? []).some((step: any) => step.status === 'APPROVED' && !step.invalidatedAt
-    && String(step.decidedAt ?? '') >= String(detail?.submittedAt ?? ''));
+  const approval = (detail?.approvalSteps ?? []).filter((step: any) => step.status === 'APPROVED' && !step.invalidatedAt
+    && String(step.decidedAt ?? '') >= String(detail?.submittedAt ?? '')).at(-1);
+  const humanApproved = !!approval;
   const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
   const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
   const duplicate = ['POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE'].includes(detail?.duplicateStatus)
@@ -509,9 +511,19 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         : paperSignedLine((detail.signedCopies ?? []).find((copy: any) => copy.acknowledgedAt));
     } else if (key === 'document') {
       if (eligibleSignatureRoles(detail, userId).some((role) => !signed.has(role))) actions.push('sign');
-      note = actions.length > 0 || canUploadSignedCopy(detail, userId, permissions)
-        ? 'จ่ายเงินคืนแล้ว ลงนามในใบเบิก พิมพ์เก็บไว้ หรือแนบสำเนาที่เซ็นแล้ว'
-        : 'จ่ายเงินคืนแล้ว พิมพ์ใบเบิกเก็บไว้ได้';
+      // §18.2: name who the document still waits for. The blocks the form needs are the server's own
+      // (`documentSignedVia`): ผู้อนุมัติ only when a person approved, ฝ่ายบัญชี only when finance reviewed.
+      const signers: Record<ClaimSignatureRole, string | undefined> = {
+        REQUESTER: detail?.requesterDisplayNameSnapshot, APPROVER: approval?.decidedByName ?? approval?.approverName,
+        FINANCE_REVIEW: detail?.financeReviewedByName, PAYER: payment?.paidByName,
+      };
+      const unsigned = claimSignatureSlots(detail)
+        .filter((role) => !signed.has(role) && (role !== 'APPROVER' || humanApproved) && (role !== 'FINANCE_REVIEW' || review !== 'NOT_REQUIRED'))
+        .map((role) => `${CLAIM_SIGNATURE_ROLE_LABELS[role]}${signers[role] ? ` (${signers[role]})` : ''}`);
+      note = [
+        unsigned.length > 0 ? `จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ${unsigned.join(' และ')}` : 'จ่ายเงินคืนแล้ว พิมพ์ใบเบิกเก็บไว้ได้',
+        actions.includes('sign') && 'คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก',
+      ].filter(Boolean).join(' · ');
     }
     if (!ended && own.canCancel) actions.push('cancel');
     // No requestNo, no document: drafts and claims cancelled out of DRAFT never got one.

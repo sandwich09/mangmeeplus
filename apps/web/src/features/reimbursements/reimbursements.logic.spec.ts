@@ -604,6 +604,36 @@ describe('buildJourneySteps', () => {
     assert.equal(active({ ...paid, documentSignedVia: 'DIGITAL' }, OWNER, 'owner').note, 'ลงนามในระบบครบแล้ว');
   });
 
+  // Spec §18.2 (AC39). Before: "ลงนามในใบเบิก พิมพ์เก็บไว้ หรือแนบสำเนาที่เซ็นแล้ว", which named nobody.
+  it('names who has not signed the document, and tells a viewer who can sign to sign', () => {
+    const paid = claim({ ...approved, status: 'PAID', requesterDisplayNameSnapshot: 'สมชาย',
+      approvalSteps: [{ ...approved.approvalSteps[0], decidedByName: 'สมศรี' }],
+      payments: [{ id: 'p1', status: 'RECORDED', paidByUserId: 'fin', paidByName: 'วราภรณ์', paidAt: '2026-09-20T06:00:00.000Z' }] });
+    const waiting = 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้เบิก (สมชาย) และผู้อนุมัติ (สมศรี)';
+    // The payer signs nothing on the two-block form: they read who is awaited.
+    const payer = active(paid, FINANCE, 'fin');
+    assert.deepEqual([payer.note, payer.actions.includes('sign')], [waiting, false]);
+    // The requester and the approver each read the same list, and are told to sign.
+    for (const [permissions, userId] of [[STAFF, 'staff'], [APPROVER, 'boss']] as const) {
+      const signer = active(paid, [...permissions], userId);
+      assert.deepEqual([signer.note, signer.actions[0]], [`${waiting} · คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก`, 'sign']);
+    }
+    // Once the requester has signed, only the approver is named, and the requester is not asked again.
+    const requesterSigned = { ...paid, signatures: [{ role: 'REQUESTER' }] };
+    assert.equal(active(requesterSigned, STAFF, 'staff').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้อนุมัติ (สมศรี)');
+    assert.equal(active(requesterSigned, APPROVER, 'boss').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้อนุมัติ (สมศรี) · คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก');
+    // Policy needed no approval: the form waits for the requester alone.
+    const auto = claim({ ...submitted, approvedAt: submitted.submittedAt, status: 'PAID', requesterDisplayNameSnapshot: 'สมชาย', payments: paid.payments });
+    assert.equal(active(auto, FINANCE, 'fin').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้เบิก (สมชาย)');
+    // A name the detail does not carry leaves the block's own label, never an id.
+    assert.equal(active(claim({ ...approved, status: 'PAID', payments: paid.payments }), FINANCE, 'fin').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ผู้เบิก และผู้อนุมัติ');
+    // A claim already signed in the old accounting and payer blocks keeps all four.
+    const legacy = { ...paid, claimFormLayout: 'LEGACY_FOUR_SIGNERS', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByName: 'มานี',
+      signatures: [{ role: 'REQUESTER' }, { role: 'APPROVER' }] };
+    assert.equal(active(legacy, STAFF, 'staff').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ฝ่ายบัญชี (มานี) และฝ่ายการเงิน (วราภรณ์)');
+    assert.equal(active({ ...legacy, financeReviewStatus: 'NOT_REQUIRED' }, STAFF, 'staff').note, 'จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ฝ่ายการเงิน (วราภรณ์)');
+  });
+
   it('leaves a document signed before payment upcoming while the claim waits at payment (§15)', () => {
     const ready = claim({ ...approved, status: 'READY_FOR_PAYMENT', documentSignedVia: 'PAPER' });
     assert.deepEqual(shape(ready, OWNER, 'owner'), ['items:done', 'approval:done', 'payment:current', 'document:upcoming']);
