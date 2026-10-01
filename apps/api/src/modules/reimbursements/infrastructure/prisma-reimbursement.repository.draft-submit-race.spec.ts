@@ -1410,6 +1410,14 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
         ['bank.match.void', 'bank_reconciliation_match', match.id, `${TAG}-finance`, 'SUCCESS', 'HIGH'],
       ]);
       assert.deepEqual(audits[1]!.metadataJson, { statementLineId: bank.lineId, reason: 'reimbursement_payment_voided', paymentId: paid.payment.id, requestId: claim.requestId });
+      // And both events: the void's own, and the bank module's own for a line that was unmatched (final review W10).
+      const events = await db.outboxEvent.findMany({ where: { companyId, aggregateId: { in: [paid.payment.id, bank.lineId] } }, orderBy: { eventType: 'asc' } });
+      assert.deepEqual(events.map((event) => [event.eventType, event.aggregateType, event.aggregateId]), [
+        ['banking.statement_line.unmatched', 'bank_statement_line', bank.lineId],
+        ['reimbursement.payment_voided', 'reimbursement_payment', paid.payment.id],
+      ]);
+      assert.deepEqual([(events[0]!.payloadJson as any).data, (events[0]!.payloadJson as any).actorUserId, (events[0]!.payloadJson as any).requestId],
+        [{ matchId: match.id, statementLineId: bank.lineId }, `${TAG}-finance`, voidRequestId]);
 
       // Nothing is stuck. The claim is paid again, and the bank screen lists the line again, offers the new
       // payment for it and no longer the voided one, and takes the match.

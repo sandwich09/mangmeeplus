@@ -4021,11 +4021,18 @@ export class PrismaReimbursementRepository {
         await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'reimbursement.payment.void',
           targetType: 'reimbursement_payment', targetId: paymentId, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
           metadataJson: { reason, requestId, reversalEntryId: reversal.reversalEntryId } }, tx);
-        // The row the bank screen's own "ยกเลิกการจับคู่" writes, so a match reads the same whoever undid it.
+        // The row and the event the bank screen's own "ยกเลิกการจับคู่" writes, so a match reads the same
+        // whoever undid it. The event in the shape of that screen's (`VoidMatchUseCase`), one per match.
         for (const match of bankMatches) {
           await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'bank.match.void',
             targetType: 'bank_reconciliation_match', targetId: match.id, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'HIGH',
             metadataJson: { statementLineId: match.statementLineId, reason: 'reimbursement_payment_voided', paymentId, requestId } }, tx);
+          await tx.outboxEvent.create({ data: { companyId, eventType: 'banking.statement_line.unmatched',
+            aggregateType: 'bank_statement_line', aggregateId: match.statementLineId,
+            eventKey: `banking.statement_line.unmatched:bank_statement_line:${match.statementLineId}:${match.id}`,
+            payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'bank_statement_line', aggregateId: match.statementLineId,
+              occurredAt: new Date().toISOString(), data: { matchId: match.id, statementLineId: match.statementLineId } },
+            priority: 'NORMAL', status: 'PENDING' } });
         }
         await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
           aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,

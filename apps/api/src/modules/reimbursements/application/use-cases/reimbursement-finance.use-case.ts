@@ -626,6 +626,8 @@ export class ExportReimbursementEvidenceUseCase {
     const payout = req.payoutMethod ? await this.repo.findClaimPayout(req) : undefined;
     const paidInto = payments.flatMap((payment) => payment.payoutDestinationVersion ?? []);
     const destinations = paidInto.length > 0 ? await this.repo.listPaymentPayoutDestinations(ctx.companyId, id, paidInto) : {};
+    // Who paid, as the payment row names them (invariant I4).
+    const payerNames = payments.length > 0 ? await this.repo.getUserDisplayNames(ctx.companyId, payments.map((payment) => payment.paidByUserId)) : {};
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.export',
@@ -679,6 +681,7 @@ export class ExportReimbursementEvidenceUseCase {
         // `paidOn` is the day the claim page prints: the payment's day in Thai time, which is not always
         // the day `paidAt` reads as in UTC.
         paidAt: p.paidAt.toISOString(), paidOn: civilDate(p.paidAt), paymentReference: p.paymentReference, status: p.status,
+        paidByUserId: p.paidByUserId, ...(payerNames[p.paidByUserId] && { paidByName: payerNames[p.paidByUserId] }),
         slipCount: paymentSlips[p.id]?.length ?? 0,
         // The account this payment was confirmed into (masked), when, and why the method differs from
         // the one asked for: the same three facts the payment row on the claim page shows.

@@ -580,7 +580,7 @@ describe('payment slip at the payment step', () => {
     const out: any = await new ExportReimbursementEvidenceUseCase(repo, noopAudit).execute(ctx(['reimbursement.export']), 'rb-1');
     assert.deepEqual(out.payments, [{
       paymentNo: 'RBPAY-202601-000001', paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
-      paidAt, paidOn: '2026-02-01', paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
+      paidAt, paidOn: '2026-02-01', paymentReference: 'TXN-1', status: 'RECORDED', paidByUserId: 'fin-1', slipCount: 1,
     }]);
     assert.equal(JSON.stringify(out).includes('att-slip-1'), false);
   });
@@ -1570,12 +1570,12 @@ describe('ExportReimbursementEvidenceUseCase: the payout account', () => {
     assert.deepEqual(out.request.payout, { payoutMethod: 'BANK_TRANSFER', ...MASKED_ACCOUNT, version: 2, verifiedAt: '2026-01-11T00:00:00.000Z' });
     assert.deepEqual(out.payments, [{
       paymentNo: 'RBPAY-202601-000001', paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER',
-      paidAt, paidOn: '2026-02-01', paymentReference: 'TXN-1', status: 'RECORDED', slipCount: 1,
+      paidAt, paidOn: '2026-02-01', paymentReference: 'TXN-1', status: 'RECORDED', paidByUserId: 'fin-1', slipCount: 1,
       payoutDestination: { version: 2, ...MASKED_ACCOUNT }, payoutConfirmedAt: '2026-02-01T00:00:05.000Z',
     }]);
     // One payment, one reading: every fact the export has is the fact the claim page's payment row has.
     const row = paid.payments[0]!;
-    for (const fact of ['paymentNo', 'paidAmount', 'currency', 'paymentMethod', 'paidAt', 'paymentReference', 'status', 'slipCount', 'payoutDestination', 'payoutConfirmedAt', 'methodMismatchReason'] as const) {
+    for (const fact of ['paymentNo', 'paidAmount', 'currency', 'paymentMethod', 'paidAt', 'paymentReference', 'status', 'paidByUserId', 'slipCount', 'payoutDestination', 'payoutConfirmedAt', 'methodMismatchReason'] as const) {
       assert.deepEqual(out.payments[0][fact], row[fact], fact);
     }
     assert.doesNotMatch(JSON.stringify(out), ACCOUNT_NUMBER_WRITTEN);
@@ -1636,12 +1636,17 @@ describe('one payment reads the same in the claim detail, the requester\'s notic
     assert.deepEqual([one.row.paidAt, exported.paidAt, exported.paidOn], [paidAt, paidAt, '2026-02-02']);
     assert.equal(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date(one.row.paidAt)), exported.paidOn);
     assert.deepEqual([one.row.status, exported.status], ['RECORDED', 'RECORDED']);
+    // Final review W10: the payer is one of the facts I4 names, and the export had none.
+    assert.deepEqual([one.row.paidByUserId, exported.paidByUserId, 'paidByName' in exported], ['fin-1', 'fin-1', false]);
+    one.repo.getUserDisplayNames = async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => id === 'fin-1').map((id) => [id, 'ประไพ ผู้จ่าย']));
 
     // Voided: the detail and the export say so of the same payment, and keep what it was.
     const afterVoid = await new VoidReimbursementPaymentUseCase(one.repo, fakeDetailEvidence as any).execute(payer, 'rb-1', one.row.id, { reason: 'บันทึกเลขอ้างอิงผิด' });
     const voidedRow = afterVoid.payments.at(-1)!;
     const voidedExport = await one.exported();
     assert.deepEqual([voidedRow.status, voidedExport.status], ['VOIDED', 'VOIDED']);
+    // Named as the payment row names them, once the name can be read.
+    assert.deepEqual([voidedRow.paidByName, voidedExport.paidByName, voidedExport.paidByUserId], ['ประไพ ผู้จ่าย', 'ประไพ ผู้จ่าย', 'fin-1']);
     for (const fact of ['paymentNo', 'paidAmount', 'currency', 'paymentMethod', 'paidAt', 'paymentReference', 'slipCount', 'payoutDestination'] as const) {
       assert.deepEqual(voidedExport[fact], voidedRow[fact], fact);
       assert.deepEqual(voidedRow[fact], one.row[fact], `${fact} did not change with the void`);
