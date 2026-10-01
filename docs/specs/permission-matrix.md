@@ -625,7 +625,16 @@ claim detail says to whom each is open (`pendingCancellation.canResume`, `pendin
 
 While a cancellation is pending every other decision on the claim is refused with
 `reimbursement_cancellation_pending`: edit, submit, approve, reject, finance review, duplicate resolution
-and payment. The approval queue lists no such claim.
+and payment. The server's own flags say so: `approvalActions.canApprove` and `canReject` are false (an
+approver frozen onto the step can still read the claim), and every list and queue row carries
+`cancellationPending`. The approval queue lists no such claim; the finance queue keeps it, with no payment
+and no finance decision on its row.
+
+`expense.void`, `expense.reject` and `expense.delete` do not reach an expense record that belongs to a
+claim that still stands (any status but REJECTED, CANCELLED or VOIDED). Such a record is built when the
+claim is approved and ends with it: cancelling the claim voids it. Asked of the expense screen, all three
+answer 409 `expense_belongs_to_reimbursement` and name the claim to go to. The claim's own cancellation is
+the only path that voids one, and it needs the claim rights above, not `expense.void`.
 
 #### Voiding a payment that a bank statement line is matched to
 
