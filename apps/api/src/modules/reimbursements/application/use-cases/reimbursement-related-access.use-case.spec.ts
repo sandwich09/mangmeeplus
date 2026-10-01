@@ -85,6 +85,8 @@ describe('claim account number reveal: the requester, that claim approver, the p
       listInternalNotes: async () => [],
       // The claim waits at the payment desk, so its detail also names who can pay it.
       listPaymentRecorderNames: async () => [],
+      // Read only for a claim that has a payment: its one slip.
+      listPaymentSlips: async () => ({ 'pay-1': [{ attachmentId: 'att-slip-1', attachedAt: decidedAt }] }),
       findClaimPayout: (row: any) => readClaimPayout(tables.client, row),
       findDraftDefaultPayout: (row: any) => readDraftDefaultPayout(tables.client, row),
       // The requester's own detail compares the claim with their default as it is now (§22 hint).
@@ -217,6 +219,45 @@ describe('claim account number reveal: the requester, that claim approver, the p
     for (const who of [requester, approver, payer]) {
       const { detail } = world({ payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined });
       assert.equal((await detail.execute(who, 'reimbursement-1')).payout, undefined);
+    }
+  });
+
+  // One claim detail answers two questions about whoever asked for it, and they are different groups
+  // (payout spec §11.4): who may see the full account number, and who may open the payment slip. The
+  // flags are separate, so being able to open the slip never becomes being able to see the number.
+  it('answers the account number and the payment slip separately in one claim detail, for every reader', async () => {
+    const paid = {
+      status: 'PAID', paymentStatus: 'PAID', paymentTotalAmount: '500.0000', outstandingAmount: '0.0000',
+      payments: [{ id: 'pay-1', status: 'RECORDED', paidByUserId: 'payer-1', paidAt: decidedAt, paidAmount: '500.0000', currency: 'THB', paymentMethod: 'BANK_TRANSFER' }],
+    };
+    const finance = refused[0]![1];
+    const readers: Array<[string, RequestContext, { number: boolean; slip: boolean }]> = [
+      ['requester', requester, { number: true, slip: true }],
+      ['claim approver', approver, { number: true, slip: true }],
+      ['payment recorder', payer, { number: true, slip: true }],
+      // Owner answer 2026-10-01: a finance reviewer opens the slip, and still sees the last 4 digits only.
+      ['finance reviewer without the payment right', finance, { number: false, slip: true }],
+      ['whoever prepared the claim, a finance reviewer', refused[4]![1], { number: false, slip: true }],
+      ['auditor (read only)', refused[1]![1], { number: false, slip: false }],
+      ['holder of the approval right who was never sent this claim', refused[2]![1], { number: false, slip: false }],
+      ['related viewer', refused[3]![1], { number: false, slip: false }],
+    ];
+    assert.deepEqual([finance.permissions.includes('reimbursement.finance_review'), finance.permissions.includes('reimbursement.payment.record')], [true, false]);
+    for (const [name, who, may] of readers) {
+      const { detail, reveal, claim } = world(paid, { related: ['related-1'] });
+      const shown = await detail.execute(who, 'reimbursement-1');
+      const payment = shown.payments[0]!;
+      assert.deepEqual({ number: shown.payout?.canRevealAccountNumber, slip: payment.viewerCanOpenSlips }, may, name);
+      // Each flag is what its own endpoint answers; the reveal is asked here, the slip endpoint in its own suite below.
+      assert.equal(await reveal.execute(who, 'reimbursement-1').then(() => true, () => false), may.number, name);
+      // Everyone reads the same masked account and that a slip exists. The slip's file id goes only to
+      // someone who may open it, and nothing of the full number, or of its fingerprint, to anyone.
+      assert.deepEqual([shown.payout?.accountLast4, payment.slipCount], ['6789', 1], name);
+      assert.deepEqual(payment.slips, may.slip ? [{ attachmentId: 'att-slip-1', attachedAt: decidedAt.toISOString() }] : [], name);
+      const text = JSON.stringify(shown);
+      assert.equal(text.includes('att-slip-1'), may.slip, name);
+      assert.ok(!text.includes('0123456789') && !text.includes(claim.payoutFingerprint), name);
+      assert.doesNotMatch(text, /"(?:payout)?(?:accountNumber\w*|fingerprint)":/i, `${name}: no field is even named after them`);
     }
   });
 
