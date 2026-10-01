@@ -38,6 +38,7 @@ import {
   ListReimbursementsUseCase,
   SubmitReimbursementUseCase,
   CancelReimbursementUseCase,
+  WithdrawReimbursementCancellationUseCase,
   ReopenRejectedReimbursementUseCase,
 } from '../../application/use-cases/reimbursement-request.use-case';
 import { ListApprovalQueueUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase } from '../../application/use-cases/reimbursement-approval.use-case';
@@ -102,6 +103,7 @@ export class ReimbursementController {
     private readonly completeSlip: CompletePaymentSlipUploadUseCase,
     private readonly attachSlip: AttachPaymentSlipUseCase,
     private readonly slipDownloadUrl: CreatePaymentSlipDownloadUrlUseCase,
+    private readonly withdrawCancel: WithdrawReimbursementCancellationUseCase,
   ) {}
 
   /** Decisions/payments return the same detail shape the drawer reads, receipt names included. */
@@ -266,9 +268,17 @@ export class ReimbursementController {
   @Post(':requestId/cancel')
   @RequireAnyPermission('reimbursement.cancel_own', 'reimbursement.finance_review')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Cancel reimbursement request' })
+  @ApiOperation({ summary: 'Cancel reimbursement request, or continue a cancellation that was started and has not completed' })
   cancelRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: CancelReimbursementDto) {
     return this.cancel.execute(ctx, requestId, body?.reason);
+  }
+
+  @Post(':requestId/cancel/withdraw')
+  @RequireAnyPermission('reimbursement.cancel_own', 'reimbursement.finance_review')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Take back a cancellation that was started and has not completed, while nothing of the claim has been voided' })
+  withdrawCancellation(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
+    return this.withdrawCancel.execute(ctx, requestId);
   }
 
   // ---- Approval ----

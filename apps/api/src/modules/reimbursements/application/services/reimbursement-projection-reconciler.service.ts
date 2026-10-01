@@ -204,6 +204,8 @@ export class ReimbursementProjectionReconcilerService {
             reimbursementLineId: projection.sourceReimbursementLineId,
             branchId: intent.request.branchId,
             systemReconcile: true,
+            // Each void goes ahead only while the claim still holds its cancellation (it may be withdrawn meanwhile).
+            beforeVoid: (tx) => this.repo.assertCancellationPending(tx, intent.request.companyId, intent.request.id),
           });
         }
         const completedAt = new Date();

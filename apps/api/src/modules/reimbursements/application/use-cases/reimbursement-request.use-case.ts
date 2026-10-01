@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type {
   RequestContext,
   CreateReimbursementRequestInput,
@@ -10,6 +10,7 @@ import type {
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
   ReimbursementInternalNote,
+  ReimbursementPendingCancellation,
   ReimbursementPolicySnapshotV1,
   ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
@@ -19,6 +20,7 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import type { ExpenseVoidBlocker } from '../../../expenses/infrastructure/expense-void-blocker';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import type {
   ReimbursementDuplicateCandidateWriteData,
@@ -32,6 +34,7 @@ import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './
 import { approvalDecisionActions } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { isSerializationFailure, uniqueConstraintFields } from '../../../../common/database/prisma-error';
 import {
   defaultChangedSinceSubmit, hasPayoutSnapshot, payoutRevealGroup, payoutSubmitToken,
   type PayoutRevealGroup, type SubmitPayoutColumns,
@@ -323,8 +326,11 @@ export class GetReimbursementDetailUseCase {
     // what it froze, and the requester alone is told, from fingerprints that stay on the server.
     const defaultAccountChanged = req.requesterUserId === ctx.userId && detail.payout?.source === 'DEFAULT_ACCOUNT'
       && defaultChangedSinceSubmit(req, detail.payout.source, await this.repo.findMemberPayoutAccount(ctx.companyId, req.requesterUserId));
+    // Audit B3: a cancellation that was started and has not completed appeared in no response.
+    const pendingCancellation = await pendingCancellationOf(ctx, req, this.repo);
     return {
       ...detail,
+      ...(pendingCancellation && { pendingCancellation }),
       // The button is offered exactly when the reveal endpoint would answer.
       ...(payout && { payout: {
         ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
@@ -854,6 +860,88 @@ export class SubmitReimbursementUseCase {
   }
 }
 
+/** The right to cancel this claim: its requester with the cancel right, or a finance reviewer. */
+function holdsCancelRight(ctx: RequestContext, req: Pick<ReimbursementRequestRecord, 'requesterUserId'>): boolean {
+  return (req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.cancel_own'))
+    || ctx.permissions.includes('reimbursement.finance_review');
+}
+
+/**
+ * Whether the cancel endpoints take this viewer for this claim. The claim detail reads the same
+ * answer for its "ดำเนินการยกเลิกต่อ" and withdraw buttons, so a button is never offered to someone
+ * the endpoint refuses.
+ */
+export function mayCancelReimbursement(ctx: RequestContext, req: Pick<ReimbursementRequestRecord, 'requesterUserId' | 'branchId' | 'status'>): boolean {
+  return holdsCancelRight(ctx, req) && canTransition(req.status, 'CANCELLED') && isBranchInScope(ctx.scopes ?? {}, req.branchId);
+}
+
+/**
+ * The reason a cancellation runs with. A started one keeps the reason on record, so a retry names
+ * the same reason or none. Only when the stored reason is one the expense void refuses does the
+ * retry carry the corrected reason (audit B3: such a claim could never be cancelled).
+ */
+function cancellationReasonFor(req: ReimbursementRequestRecord, supplied?: string): string {
+  const given = supplied?.trim();
+  if (req.cancellationPendingAt && isExpenseVoidReason(req.cancellationPendingReason)) {
+    if (given && given !== req.cancellationPendingReason) throw new ConflictException('reimbursement_cancellation_already_pending');
+    return req.cancellationPendingReason!;
+  }
+  const reason = given || (req.cancellationPendingAt ? '' : 'ยกเลิกคำขอเบิกค่าใช้จ่าย');
+  // Voiding the claim's expense records takes this reason and refuses a short one. Asked before the
+  // intent is written: a claim never holds a cancellation its own reason stops.
+  if (!isExpenseVoidReason(reason)) throw new BadRequestException('cancellation_reason_too_short');
+  return reason;
+}
+
+/**
+ * A failure that means another party was voiding the same expense records at the same moment:
+ * PostgreSQL rolled this attempt back (a serialization conflict), two voids reserved their reversal
+ * number or wrote the one reversal a record may have in the same instant (a unique conflict), or the
+ * record was voided between this attempt's read and its write.
+ */
+export function lostCancellationRace(error: unknown): boolean {
+  if (isSerializationFailure(error) || uniqueConstraintFields(error)) return true;
+  const response = (error as { getResponse?: () => unknown }).getResponse?.();
+  const code = response && typeof response === 'object' ? (response as { code?: unknown }).code : undefined;
+  return code === 'expense_changed' || code === 'posting_state_changed';
+}
+
+/** `code` or `code:periodKey`: the shape the web translates by its prefix, like the payment's closed period. */
+function cancellationBlockedError(blocker: ExpenseVoidBlocker): ConflictException {
+  return new ConflictException(`reimbursement_cancellation_${blocker.code}${'periodKey' in blocker ? `:${blocker.periodKey}` : ''}`);
+}
+
+/**
+ * A cancellation that was started and has not completed, as the claim detail reports it: who
+ * started it, when, why it has not completed and what this viewer may do about it. Computed on
+ * every read, so it says what stands in the way now.
+ */
+export async function pendingCancellationOf(
+  ctx: RequestContext,
+  req: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<ReimbursementPendingCancellation | undefined> {
+  if (!req.cancellationPendingAt || req.status === 'CANCELLED' || req.status === 'VOIDED') return undefined;
+  const reasonBlocks = !isExpenseVoidReason(req.cancellationPendingReason);
+  const [blocker, projections, names] = await Promise.all([
+    reasonBlocks ? null : repo.findCancellationBlocker(req),
+    repo.listClaimProjections(req.companyId, req.id),
+    repo.getUserDisplayNames(req.companyId, req.cancellationPendingByUserId ? [req.cancellationPendingByUserId] : []),
+  ]);
+  const mayCancel = mayCancelReimbursement(ctx, req);
+  const startedByName = req.cancellationPendingByUserId ? names[req.cancellationPendingByUserId] : undefined;
+  return {
+    startedAt: req.cancellationPendingAt.toISOString(),
+    ...(req.cancellationPendingByUserId && { startedByUserId: req.cancellationPendingByUserId }),
+    ...(startedByName && { startedByName }),
+    reason: req.cancellationPendingReason ?? '',
+    ...(reasonBlocks ? { blocker: { code: 'reason_too_short' as const } } : blocker ? { blocker } : {}),
+    canResume: mayCancel,
+    // Once an expense record is voided the claim cannot go on as before; the cancellation is finished instead.
+    canWithdraw: mayCancel && !projections.some((projection) => projection.status === 'VOIDED'),
+  };
+}
+
 @Injectable()
 export class CancelReimbursementUseCase {
   constructor(
@@ -862,20 +950,28 @@ export class CancelReimbursementUseCase {
     private readonly voidExpense: VoidExpenseUseCase,
   ) {}
 
+  /**
+   * Cancels a claim, or continues a cancellation that was started and has not completed
+   * ("ดำเนินการยกเลิกต่อ"), for whoever may cancel the claim. Two phases, because voiding the
+   * claim's expense records cannot share a transaction with the claim: the intent is committed, the
+   * records are voided, then the claim closes. Everything known to stop a void is asked before the
+   * intent; what cannot be known then leaves a cancellation the claim detail shows and this same
+   * call finishes.
+   */
   async execute(ctx: RequestContext, id: string, reason?: string): Promise<ReimbursementRequestSummary> {
     const req = await this.repo.findRequestById(ctx.companyId, id);
     if (!req) throw new NotFoundException('Reimbursement request not found');
 
-    const isOwner = req.requesterUserId === ctx.userId;
-    const canCancel = (isOwner && ctx.permissions.includes('reimbursement.cancel_own')) || ctx.permissions.includes('reimbursement.finance_review');
-    if (!canCancel) throw new ForbiddenException('Cannot cancel this reimbursement');
+    if (!holdsCancelRight(ctx, req)) throw new ForbiddenException('Cannot cancel this reimbursement');
     if (!canTransition(req.status, 'CANCELLED')) throw new UnprocessableEntityException(`Cannot cancel from status ${req.status}`);
     assertReimbursementBranchInScope(ctx, req.branchId);
 
-    const cancellationReason = reason?.trim() || 'ยกเลิกคำขอเบิกค่าใช้จ่าย';
-    // Audit B3: voiding the claim's expense records takes this reason and refuses a short one. Asked
-    // here, before the intent is written: a claim never holds a cancellation its own reason stops.
-    if (!isExpenseVoidReason(cancellationReason)) throw new BadRequestException('cancellation_reason_too_short');
+    const cancellationReason = cancellationReasonFor(req, reason);
+    // A closed accounting period, a locked tax period, an expense record no void takes: refused here,
+    // while nothing has been written. Asked again on a retry, so a blocked cancellation is not half voided.
+    const blocker = await this.repo.findCancellationBlocker(req);
+    if (blocker) throw cancellationBlockedError(blocker);
+
     const startedAt = new Date();
     const intent = await this.repo.beginCancellationAtomic({
       companyId: ctx.companyId,
@@ -920,19 +1016,53 @@ export class CancelReimbursementUseCase {
           skipDuplicates: true,
         });
       },
+      onReasonCorrected: async (tx, previousReason) => {
+        await this.audit.log({
+          companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.cancellation_reason_corrected',
+          targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+          metadataJson: { previousReason, reason: cancellationReason, startedByUserId: req.cancellationPendingByUserId },
+        }, tx);
+      },
     });
+    if (intent.resumed) {
+      // The retry gets its own audit row, so a second attempt (and who made it) is not invisible.
+      await this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.cancellation_retry',
+        targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { startedByUserId: intent.request.cancellationPendingByUserId },
+      });
+    }
 
+    try {
+      return toRequestSummary(await this.voidAndClose(ctx, intent.request, cancellationReason));
+    } catch (error) {
+      const latest = await this.repo.findRequestById(ctx.companyId, id);
+      // Someone else (a second press, another canceller, the scheduled reconciler) finished the same
+      // cancellation meanwhile: the claim is cancelled, which is what was asked.
+      if (latest?.status === 'CANCELLED') return toRequestSummary(latest);
+      if (!lostCancellationRace(error)) throw error;
+      // This attempt lost to another party on the same cancellation, and nothing of it was kept: the
+      // cancellation was withdrawn, or is being finished right now. Said as that, not as a server error.
+      throw new ConflictException(latest?.cancellationPendingAt ? 'reimbursement_cancellation_in_progress' : 'reimbursement_cancellation_intent_changed');
+    }
+  }
+
+  /** Voids every expense record of the claim, then closes the claim. Each step is a no-op when already done. */
+  private async voidAndClose(ctx: RequestContext, request: ReimbursementRequestRecord, cancellationReason: string): Promise<ReimbursementRequestRecord> {
+    const id = request.id;
     const projections = await this.repo.listClaimProjections(ctx.companyId, id);
     for (const projection of projections) {
       await this.voidExpense.executeForReimbursement(ctx, projection.id, cancellationReason, {
         reimbursementRequestId: id,
         reimbursementLineId: projection.sourceReimbursementLineId,
-        branchId: intent.request.branchId,
+        branchId: request.branchId,
+        // Each void goes ahead only while this claim still holds its cancellation (it may be withdrawn meanwhile).
+        beforeVoid: (tx) => this.repo.assertCancellationPending(tx, ctx.companyId, id),
       });
     }
 
     const completedAt = new Date();
-    const updated = await this.repo.completeCancellationAtomic({
+    return this.repo.completeCancellationAtomic({
       companyId: ctx.companyId,
       requestId: id,
       actorUserId: ctx.userId,
@@ -948,7 +1078,7 @@ export class CancelReimbursementUseCase {
           requestId: ctx.requestId,
           result: 'SUCCESS',
           riskLevel: 'HIGH',
-          metadataJson: { reason: cancellationReason, projectionCount: projections.length },
+          metadataJson: { reason: cancellationReason, projectionCount: projections.length, startedByUserId: request.cancellationPendingByUserId },
         }, tx);
         await tx.outboxEvent.createMany({
           data: [{
@@ -971,6 +1101,39 @@ export class CancelReimbursementUseCase {
           }],
           skipDuplicates: true,
         });
+      },
+    });
+  }
+}
+
+/**
+ * Takes back a cancellation that was started and has not completed, so the claim goes on as before:
+ * for whoever may cancel the claim, and only while none of its expense records has been voided.
+ */
+@Injectable()
+export class WithdrawReimbursementCancellationUseCase {
+  constructor(
+    private readonly repo: PrismaReimbursementRepository,
+    private readonly audit: AuditService,
+  ) {}
+
+  async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestSummary> {
+    const req = await this.repo.findRequestById(ctx.companyId, id);
+    if (!req) throw new NotFoundException('Reimbursement request not found');
+    if (!holdsCancelRight(ctx, req)) throw new ForbiddenException('Cannot cancel this reimbursement');
+    assertReimbursementBranchInScope(ctx, req.branchId);
+
+    const updated = await this.repo.withdrawCancellationAtomic({
+      companyId: ctx.companyId,
+      requestId: id,
+      actorUserId: ctx.userId,
+      scopes: ctx.scopes ?? {},
+      onWithdrawnPersisted: async (tx, withdrawn) => {
+        await this.audit.log({
+          companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.cancellation_withdrawn',
+          targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+          metadataJson: { reason: withdrawn.reason, startedByUserId: withdrawn.startedByUserId, startedAt: withdrawn.startedAt.toISOString(), status: req.status },
+        }, tx);
       },
     });
     return toRequestSummary(updated);

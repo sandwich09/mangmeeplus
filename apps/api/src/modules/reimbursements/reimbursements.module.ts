@@ -19,6 +19,7 @@ import {
   ListReimbursementsUseCase,
   SubmitReimbursementUseCase,
   CancelReimbursementUseCase,
+  WithdrawReimbursementCancellationUseCase,
 } from './application/use-cases/reimbursement-request.use-case';
 import { ListApprovalQueueUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase } from './application/use-cases/reimbursement-approval.use-case';
 import {
@@ -77,6 +78,7 @@ import { LineReimbursementDraftUseCase } from './application/use-cases/line-reim
     ListReimbursementsUseCase,
     SubmitReimbursementUseCase,
     CancelReimbursementUseCase,
+    WithdrawReimbursementCancellationUseCase,
     ListApprovalQueueUseCase,
     ApproveReimbursementUseCase,
     RejectReimbursementUseCase,

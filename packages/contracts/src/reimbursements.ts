@@ -4,6 +4,7 @@
 // decimal strings (4 dp in DB). Dates are ISO strings across the wire.
 
 import { coerceCivilDate, isCivilDate, todayCivilDate } from './civil-date.js';
+import type { ExpenseVoidBlocker } from './expenses.js';
 
 /** One incurred-date rule for API writes, stored-draft submit and client validation. */
 export function reimbursementIncurredDateError(value: string | Date, today = todayCivilDate()): string | null {
@@ -554,6 +555,28 @@ export type LinkReimbursementSignedCopyInput = {
   confirmedRequestNo?: string;
 };
 
+/** What stands in the way of a cancellation that was started: a reason the expense void refuses, or what stops the void itself. */
+export type ReimbursementCancellationBlocker = { code: 'reason_too_short' } | ExpenseVoidBlocker;
+
+/**
+ * A cancellation that was started and has not completed. Cancelling voids the claim's expense
+ * records after the intent is committed, so a claim can sit between the two. While it does, approval
+ * and payment are refused; this says so, to whom it falls, and what they can do.
+ */
+export type ReimbursementPendingCancellation = {
+  startedAt: string;
+  startedByUserId?: string;
+  startedByName?: string;
+  /** The reason it was started with. */
+  reason: string;
+  /** What stops it from completing right now. Absent: nothing known does, and continuing should finish it. */
+  blocker?: ReimbursementCancellationBlocker;
+  /** The cancel endpoint takes this viewer: they may continue it, with a corrected reason when `reason_too_short` blocks it. */
+  canResume: boolean;
+  /** This viewer may take it back so the claim goes on as before: none of its expense records has been voided yet. */
+  canWithdraw: boolean;
+};
+
 export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   createdByName?: string;
   currentApproverUserId?: string;
@@ -595,6 +618,8 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
    * everyone (no branch, or part paid): the page then prints the desk's pool label.
    */
   paymentDesk?: { names: string[]; moreCount: number };
+  /** Present while a cancellation was started and has not completed. GET detail only, like `approvalActions`. */
+  pendingCancellation?: ReimbursementPendingCancellation;
   missingReceiptReason?: string;
   /** Where the money goes back to, masked. Absent on a legacy claim: one sent before claims carried a receiving method. */
   payout?: ReimbursementPayoutSummary;

@@ -19,6 +19,14 @@ import { MemberPayoutAccountUseCase } from '../application/use-cases/reimburseme
 import {
   CASH_PAYOUT_FINGERPRINT, openPayoutAccountNumber, payoutFingerprint, payoutSubmitToken, sealPayoutDestination, type SubmitPayoutColumns,
 } from '../domain/logic/payout-destination.logic';
+import { VoidExpenseUseCase } from '../../expenses/application/use-cases/expense-draft.use-case';
+import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
+import { ReserveDocumentNumberUseCase } from '../../data-model-core/application/use-cases/reserve-document-number.use-case';
+import { CommitDocumentNumberUseCase } from '../../data-model-core/application/use-cases/commit-document-number.use-case';
+import { CancelDocumentNumberUseCase } from '../../data-model-core/application/use-cases/cancel-document-number.use-case';
+import {
+  CancelReimbursementUseCase, GetReimbursementDetailUseCase, WithdrawReimbursementCancellationUseCase,
+} from '../application/use-cases/reimbursement-request.use-case';
 
 const TAG = `reimbursement-draft-race-${process.pid}`;
 const periodKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -1999,5 +2007,314 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     // A deleted draft takes its account with it; nothing is left to decrypt.
     await db.reimbursementRequest.delete({ where: { id: claim.id } });
     assert.equal((await destinationsOf(claim.id)).length, 0);
+  });
+});
+
+/**
+ * Audit B3 on a real database, with the real expense void: a cancellation that cannot finish is
+ * refused before anything is written, one that was started stays visible and finishable, and a
+ * withdrawal can never leave a voided expense record on a claim that goes on.
+ */
+describe('a claim is never left half cancelled (real PostgreSQL)', () => {
+  const S = `${TAG}-stuck`;
+  const STAFF = `${S}-staff`;
+  const FIN = `${S}-fin`;
+  const day = new Date('2026-09-15T00:00:00.000Z');
+  let clients: PrismaClient[] = [];
+  let repos: PrismaReimbursementRepository[] = [];
+  let companyId = '';
+  let branchId = '';
+  let accounts = { expense: '', payable: '' };
+  let reachable = false;
+  let sequence = 0;
+
+  before(async () => {
+    const url = databaseUrl();
+    if (!url) {
+      if (gateRequired) throw new Error('reimbursement_pg_gate_database_url_required');
+      return;
+    }
+    try {
+      clients = [0, 1].map(() => new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) }));
+      await clients[0]!.$queryRaw`SELECT 1`;
+    } catch (error) {
+      if (gateRequired) throw error;
+      return;
+    }
+    reachable = true;
+    const db = clients[0]!;
+    await db.user.createMany({ data: [{ id: STAFF, displayName: 'สมชาย พนักงาน' }, { id: FIN, displayName: 'วราภรณ์ การเงิน' }] });
+    companyId = (await db.company.create({ data: { name: S, status: 'ACTIVE' }, select: { id: true } })).id;
+    await db.companyMembership.createMany({ data: [STAFF, FIN].map((userId) => ({ companyId, userId, status: 'ACTIVE' as const })) });
+    branchId = (await db.branch.create({ data: { companyId, code: 'QA-STUCK', name: S }, select: { id: true } })).id;
+    const account = (code: string, accountClass: 'EXPENSE' | 'LIABILITY', normalBalance: 'DEBIT' | 'CREDIT') =>
+      db.chartOfAccount.create({ data: { companyId, code, nameTh: code, accountClass, normalBalance }, select: { id: true } });
+    accounts = { expense: (await account('QA-5000', 'EXPENSE', 'DEBIT')).id, payable: (await account('QA-2100', 'LIABILITY', 'CREDIT')).id };
+    repos = clients.map((client) => new PrismaReimbursementRepository({ client } as any, new PrismaDocumentSequenceRepository({ client } as any)));
+  });
+
+  after(async () => {
+    if (reachable) {
+      const db = clients[0]!;
+      await db.auditLog.deleteMany({ where: { companyId } });
+      await db.journalEntry.deleteMany({ where: { companyId } });
+      await db.company.deleteMany({ where: { id: companyId } });
+      await db.user.deleteMany({ where: { id: { in: [STAFF, FIN] } } });
+    }
+    await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
+  });
+
+  const requester = () => ({ requestId: `${S}-${++sequence}`, authSubject: 's', userId: STAFF, companyId, membershipId: 'm', roles: ['STAFF'],
+    permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'], scopes: {}, authProvider: 'dev' }) as any;
+  const finance = () => ({ ...requester(), userId: FIN, roles: ['FINANCE'], permissions: ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.payment.record'] });
+
+  /** The use cases over one connection, with the real expense void and audit rows written to the database. */
+  function on(index: number) {
+    const client = clients[index]!;
+    const prisma = { client } as any;
+    const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
+    const numbers = new PrismaDocumentSequenceRepository(prisma);
+    const expenses = new PrismaExpenseRepository(prisma);
+    const voidExpense = new VoidExpenseUseCase(expenses, audit, { append: async () => undefined } as any,
+      new ReserveDocumentNumberUseCase(numbers, audit), new CommitDocumentNumberUseCase(numbers, audit), new CancelDocumentNumberUseCase(numbers, audit));
+    return {
+      cancel: new CancelReimbursementUseCase(repos[index]!, audit, voidExpense),
+      withdraw: new WithdrawReimbursementCancellationUseCase(repos[index]!, audit),
+      detail: new GetReimbursementDetailUseCase(repos[index]!, new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), expenses)),
+    };
+  }
+
+  /**
+   * A claim waiting for payment whose lines each have a confirmed expense record with a posted
+   * journal, the way approval and the posting worker leave it. Each claim gets an accounting period
+   * of its own, so closing one never touches another case.
+   */
+  async function payableClaim(lines = 1) {
+    const db = clients[0]!;
+    const index = ++sequence;
+    const periodKey = `${2100 + index}-09`;
+    let request = await repos[0]!.createRequest({
+      companyId, branchId, requesterUserId: STAFF, requesterDisplayNameSnapshot: 'สมชาย พนักงาน', reason: `stuck-${index}`, categoryKey: 'travel',
+      amount: `${100 * lines}.0000`, currency: 'THB', incurredDate: day, receiptRequirementStatus: 'MISSING_WITH_REASON', missingReceiptReason: 'ใบเสร็จหาย',
+      createdByUserId: STAFF,
+      lines: Array.from({ length: lines }, (_, line) => ({ lineNo: line + 1, incurredDate: day, description: `รายการ ${line + 1}`, categoryKey: 'travel', amount: '100.0000' })),
+    });
+    await db.reimbursementRequest.update({ where: { id: request.id }, data: {
+      status: 'FINANCE_REVIEW', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: FIN, requestNo: `RB-${S}-${index}`,
+      submittedAt: day, submittedByUserId: STAFF, outstandingAmount: `${100 * lines}.0000`,
+    } });
+    request = (await repos[0]!.findRequestById(companyId, request.id))!;
+    const projections = await repos[0]!.prepareClaimProjections({ companyId, requestId: request.id, decisionKind: 'FINANCE', decisionActorUserId: FIN, scopes: {},
+      items: new MaterializeClaimExpensesService().buildItems(request) });
+    const confirm = new ConfirmExpenseUseCase(new PrismaExpenseRepository({ client: db } as any), { log: async () => undefined } as any, { resolveLines: async () => [] } as any, {} as any);
+    const period = await db.accountingPeriod.create({ data: { companyId, periodKey, startDate: new Date('2026-09-01'), endDate: new Date('2026-09-30') } });
+    for (const projection of projections) {
+      await confirm.executeForReimbursement({ ...finance(), permissions: [] }, projection.expenseId,
+        { reimbursementRequestId: request.id, reimbursementLineId: projection.reimbursementLineId, branchId, allowMissingReceiptWithReason: true });
+      await db.journalEntry.create({ data: {
+        companyId, periodId: period.id, entryNumber: `JV-${S}-${++sequence}`, entryType: 'GENERATED', sourceType: 'expense.record', sourceId: projection.expenseId,
+        status: 'POSTED', entryDate: day, postedAt: day, postedByUserId: FIN, createdByUserId: FIN,
+        lines: { create: [
+          { accountId: accounts.expense, lineNumber: 1, debitAmount: '100', creditAmount: '0' },
+          { accountId: accounts.payable, lineNumber: 2, debitAmount: '0', creditAmount: '100' },
+        ] },
+      } });
+      await db.expenseRecord.update({ where: { id: projection.expenseId }, data: { postingStatus: 'posted' } });
+    }
+    await db.reimbursementRequest.update({ where: { id: request.id }, data: { status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID' } });
+    return { requestId: request.id, periodId: period.id, periodKey, expenseIds: projections.map((projection) => projection.expenseId) };
+  }
+
+  const closePeriod = (periodId: string, status: 'CLOSED' | 'OPEN' = 'CLOSED') => clients[0]!.accountingPeriod.update({ where: { id: periodId }, data: { status } });
+  /** What a cancellation leaves behind, read from the tables: the claim, its expense records, the reversal journals and the events. */
+  async function stored(claim: { requestId: string; expenseIds: string[] }) {
+    const db = clients[0]!;
+    const row = await db.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId } });
+    const expenses = await db.expenseRecord.findMany({ where: { id: { in: claim.expenseIds } }, orderBy: { createdAt: 'asc' } });
+    return {
+      status: row.status as string, pending: !!row.cancellationPendingAt, pendingReason: row.cancellationPendingReason, closedReason: row.rejectionReason,
+      expenses: expenses.map((expense) => expense.status as string),
+      voidReasons: [...new Set(expenses.map((expense) => expense.voidReason))],
+      reversals: await db.journalEntry.count({ where: { companyId, entryType: 'REVERSAL', sourceId: { in: claim.expenseIds } } }),
+      cancelledEvents: await db.outboxEvent.count({ where: { companyId, aggregateId: claim.requestId, eventType: 'reimbursement.cancelled' } }),
+      cancelAudits: await db.auditLog.count({ where: { companyId, targetId: claim.requestId, action: 'reimbursement.request.cancel' } }),
+    };
+  }
+  /** A cancellation as production could leave it before this fix: the intent committed, nothing after it. */
+  const strand = (claim: { requestId: string }, reason: string) => repos[0]!.findRequestById(companyId, claim.requestId).then((request) => repos[0]!.beginCancellationAtomic({
+    companyId, requestId: claim.requestId, expectedStatus: request!.status, expectedUpdatedAt: request!.updatedAt, actorUserId: STAFF, scopes: {}, reason,
+    startedAt: new Date(), onIntentPersisted: async () => undefined,
+  }));
+
+  it('refuses a short reason and a closed period before any intent is written, then cancels once the period is reopened', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    const untouched = { status: 'READY_FOR_PAYMENT', pending: false, pendingReason: null, closedReason: null, expenses: ['CONFIRMED'], voidReasons: [null], reversals: 0, cancelledEvents: 0, cancelAudits: 0 };
+
+    await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId, 'ก'), (error: any) => error.getStatus() === 400 && errorMessage(error) === 'cancellation_reason_too_short');
+    assert.deepEqual(await stored(claim), untouched);
+
+    await closePeriod(claim.periodId);
+    await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId, 'ซื้อซ้ำกับใบก่อน'),
+      (error: any) => error.getStatus() === 409 && errorMessage(error) === `reimbursement_cancellation_accounting_period_locked:${claim.periodKey}`);
+    assert.deepEqual(await stored(claim), untouched, 'nothing was written: no intent, no void, no reversal number used');
+    assert.equal(await clients[0]!.outboxEvent.count({ where: { companyId, aggregateId: claim.requestId } }), 0);
+
+    await closePeriod(claim.periodId, 'OPEN');
+    assert.equal((await on(0).cancel.execute(requester(), claim.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+    assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+      expenses: ['VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 1, cancelledEvents: 1, cancelAudits: 1 });
+  });
+
+  it('shows a claim stranded by a short reason and lets another canceller finish it with a corrected reason', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim(2);
+    await strand(claim, 'ก');
+
+    const shown = (await on(0).detail.execute(finance(), claim.requestId)).pendingCancellation!;
+    assert.deepEqual([shown.startedByUserId, shown.startedByName, shown.reason, shown.blocker, shown.canResume, shown.canWithdraw],
+      [STAFF, 'สมชาย พนักงาน', 'ก', { code: 'reason_too_short' }, true, true]);
+    // While it is pending, the payment is refused, as before; the difference is that the claim now says why.
+    await assert.rejects(() => repos[0]!.assertClaimPaymentReady(companyId, claim.requestId), /reimbursement_cancellation_pending/);
+
+    for (const again of ['ก', undefined]) {
+      await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId, again), (error: any) => errorMessage(error) === 'cancellation_reason_too_short');
+    }
+    assert.deepEqual((await stored(claim)).expenses, ['CONFIRMED', 'CONFIRMED']);
+
+    assert.equal((await on(1).cancel.execute(finance(), claim.requestId, 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+    assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+      expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 });
+    const corrected = await clients[0]!.auditLog.findFirstOrThrow({ where: { companyId, targetId: claim.requestId, action: 'reimbursement.request.cancellation_reason_corrected' } });
+    assert.deepEqual([corrected.actorUserId, (corrected.metadataJson as any).previousReason, (corrected.metadataJson as any).reason], [FIN, 'ก', 'ซื้อซ้ำกับใบก่อน']);
+  });
+
+  it('shows a period closed after the cancellation started, refuses to void half of it, and finishes once the period is reopened', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim(2);
+    await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+    await closePeriod(claim.periodId);
+
+    const shown = (await on(0).detail.execute(requester(), claim.requestId)).pendingCancellation!;
+    assert.deepEqual([shown.blocker, shown.canResume, shown.canWithdraw], [{ code: 'accounting_period_locked', periodKey: claim.periodKey }, true, true]);
+    await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId),
+      (error: any) => error.getStatus() === 409 && errorMessage(error) === `reimbursement_cancellation_accounting_period_locked:${claim.periodKey}`);
+    assert.deepEqual([(await stored(claim)).expenses, (await stored(claim)).reversals], [['CONFIRMED', 'CONFIRMED'], 0]);
+
+    await closePeriod(claim.periodId, 'OPEN');
+    assert.equal((await on(0).detail.execute(requester(), claim.requestId)).pendingCancellation?.blocker, undefined);
+    assert.equal((await on(1).cancel.execute(finance(), claim.requestId)).status, 'CANCELLED');
+    assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+      expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 });
+  });
+
+  it('withdraws a blocked cancellation while nothing was voided, and the claim is paid as if it had never been started', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim();
+    await strand(claim, 'ก');
+    await closePeriod(claim.periodId);
+
+    assert.equal((await on(0).withdraw.execute(finance(), claim.requestId)).status, 'READY_FOR_PAYMENT');
+    assert.deepEqual(await stored(claim), { status: 'READY_FOR_PAYMENT', pending: false, pendingReason: null, closedReason: null,
+      expenses: ['CONFIRMED'], voidReasons: [null], reversals: 0, cancelledEvents: 0, cancelAudits: 0 });
+    assert.equal((await on(0).detail.execute(finance(), claim.requestId)).pendingCancellation, undefined);
+    await assert.rejects(() => on(0).withdraw.execute(finance(), claim.requestId), (error: any) => errorMessage(error) === 'reimbursement_cancellation_not_pending');
+    const paid = await repos[0]!.recordPaymentAtomic({ companyId, reimbursementRequestId: claim.requestId, idempotencyKey: `${S}-pay-${claim.requestId}`, paidAmount: '100.0000',
+      currency: 'THB', paymentMethod: 'CASH', paidAt: new Date(), paidByUserId: FIN });
+    assert.equal(paid.request.status, 'PAID');
+  });
+
+  it('refuses to withdraw once an expense record was voided: the cancellation can only be finished', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await payableClaim(2);
+    await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+    // The first record is voided and the cancellation stops there (what a crash between the two voids leaves).
+    const intent = (await repos[0]!.findRequestById(companyId, claim.requestId))!;
+    const line = intent.lines![0]!;
+    const numbers = new PrismaDocumentSequenceRepository({ client: clients[0]! } as any);
+    const quiet = { log: async () => undefined } as any;
+    await new VoidExpenseUseCase(new PrismaExpenseRepository({ client: clients[0]! } as any), quiet, { append: async () => undefined } as any,
+      new ReserveDocumentNumberUseCase(numbers, quiet), new CommitDocumentNumberUseCase(numbers, quiet), new CancelDocumentNumberUseCase(numbers, quiet))
+      .executeForReimbursement(requester(), claim.expenseIds[0]!, 'ซื้อซ้ำกับใบก่อน', { reimbursementRequestId: claim.requestId, reimbursementLineId: line.id, branchId });
+
+    assert.equal((await on(0).detail.execute(requester(), claim.requestId)).pendingCancellation?.canWithdraw, false);
+    await assert.rejects(() => on(0).withdraw.execute(requester(), claim.requestId), (error: any) => error.getStatus() === 409 && errorMessage(error) === 'reimbursement_cancellation_partly_done');
+    assert.equal((await on(0).cancel.execute(requester(), claim.requestId)).status, 'CANCELLED');
+    assert.deepEqual([(await stored(claim)).expenses, (await stored(claim)).reversals, (await stored(claim)).cancelledEvents], [['VOIDED', 'VOIDED'], 2, 1]);
+  });
+
+  // The fence. A continue reads the claim, then voids each record in a transaction of its own. A
+  // withdrawal that lands in between must stop those voids, or the claim goes on with a voided record.
+  it('never voids for a cancellation withdrawn while it was being continued, even when the void was already waiting behind the withdrawal', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (const voidAlreadyWaiting of [false, true]) {
+      const claim = await payableClaim(2);
+      await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+      const repo = repos[0]! as any;
+      const begin = repo.beginCancellationAtomic.bind(repo);
+      let withdrawal: Promise<unknown> = Promise.resolve();
+      // The continue has read the claim and still holds its intent. Now the withdrawal starts on the other connection.
+      repo.beginCancellationAtomic = async (data: any) => {
+        const intent = await begin(data);
+        await new Promise<void>((reached) => {
+          withdrawal = repos[1]!.withdrawCancellationAtomic({
+            companyId, requestId: claim.requestId, actorUserId: FIN, scopes: {},
+            onWithdrawnPersisted: async () => {
+              if (!voidAlreadyWaiting) return;
+              // The intent is cleared and the claim's lock held, but nothing is committed: the continue goes
+              // on, and its void starts (taking its snapshot) while it waits for this transaction.
+              reached();
+              await new Promise((resolve) => setTimeout(resolve, 500));
+            },
+          });
+          void withdrawal.then(() => reached(), () => reached());
+        });
+        return intent;
+      };
+      try {
+        await assert.rejects(() => on(0).cancel.execute(requester(), claim.requestId),
+          (error: any) => error.getStatus?.() === 409 && errorMessage(error) === 'reimbursement_cancellation_intent_changed', `void already waiting: ${voidAlreadyWaiting}`);
+        await withdrawal;
+      } finally {
+        delete repo.beginCancellationAtomic;
+      }
+      assert.deepEqual(await stored(claim), { status: 'READY_FOR_PAYMENT', pending: false, pendingReason: null, closedReason: null,
+        expenses: ['CONFIRMED', 'CONFIRMED'], voidReasons: [null], reversals: 0, cancelledEvents: 0, cancelAudits: 0 }, `void already waiting: ${voidAlreadyWaiting}`);
+      // The claim goes on: it can still be paid.
+      await repos[0]!.assertClaimPaymentReady(companyId, claim.requestId);
+    }
+  });
+
+  it('a withdrawal and a continue started together end whole either way: cancelled with every record voided, or going on with none voided', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (let round = 0; round < 6; round += 1) {
+      const claim = await payableClaim(2);
+      await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+      const proceed = () => on(round % 2).cancel.execute(requester(), claim.requestId);
+      const takeBack = () => on((round + 1) % 2).withdraw.execute(finance(), claim.requestId);
+      await Promise.allSettled(round % 2 === 0 ? [proceed(), takeBack()] : [takeBack(), proceed()]);
+
+      const after = await stored(claim);
+      const whole = after.status === 'CANCELLED'
+        ? after.expenses.every((status) => status === 'VOIDED') && after.reversals === 2 && after.cancelledEvents === 1
+        : after.status === 'READY_FOR_PAYMENT' && !after.pending && after.expenses.every((status) => status === 'CONFIRMED') && after.reversals === 0 && after.cancelledEvents === 0;
+      assert.ok(whole, `round ${round}: ${JSON.stringify(after)}`);
+    }
+  });
+
+  it('cancels once when two people press ดำเนินการยกเลิกต่อ at the same moment', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    for (let round = 0; round < 6; round += 1) {
+      const claim = await payableClaim(2);
+      await strand(claim, 'ซื้อซ้ำกับใบก่อน');
+      const results = await Promise.allSettled([on(0).cancel.execute(requester(), claim.requestId), on(1).cancel.execute(finance(), claim.requestId)]);
+      // One of them cancels it. The other is told it is cancelled, or (when it lost a void to the first) that
+      // the cancellation is being finished: a 409 to load the claim again, never a database error.
+      const answers = results.map((result) => (result.status === 'fulfilled' ? result.value.status : `${result.reason?.getStatus?.()} ${errorMessage(result.reason)}`));
+      assert.ok(answers.includes('CANCELLED'), `round ${round}: ${answers.join(' | ')}`);
+      assert.ok(answers.every((answer) => answer === 'CANCELLED' || answer === '409 reimbursement_cancellation_in_progress'), `round ${round}: ${answers.join(' | ')}`);
+      assert.deepEqual(await stored(claim), { status: 'CANCELLED', pending: true, pendingReason: 'ซื้อซ้ำกับใบก่อน', closedReason: 'ซื้อซ้ำกับใบก่อน',
+        expenses: ['VOIDED', 'VOIDED'], voidReasons: ['ซื้อซ้ำกับใบก่อน'], reversals: 2, cancelledEvents: 1, cancelAudits: 1 }, `round ${round}`);
+    }
   });
 });

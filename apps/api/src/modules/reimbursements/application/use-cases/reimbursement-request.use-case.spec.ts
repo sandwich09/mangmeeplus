@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import {
   CreateReimbursementDraftUseCase,
   CancelReimbursementUseCase,
+  WithdrawReimbursementCancellationUseCase,
   GetReimbursementDetailUseCase,
   ListReimbursementsUseCase,
   ReopenRejectedReimbursementUseCase,
@@ -14,7 +15,7 @@ import {
 } from './reimbursement-request.use-case';
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere } from '../../infrastructure/prisma-reimbursement.repository';
-import { reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { isExpenseVoidReason, reimbursementHubBucket } from '@watchdog-bms/contracts';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
 import { claimSignatureAckHash, claimSnapshotFields, computeSnapshotHash } from '../../domain/logic/reimbursement.logic';
@@ -141,6 +142,8 @@ type RepoOptions = {
   supersededApprovalStepCount?: number;
   /** Expense projections a cancellation has to void before the claim may close. */
   claimProjections?: Array<{ id: string; sourceReimbursementLineId: string; status?: string }>;
+  /** What the expense void would refuse right now, as the repository reads it before and during a cancellation. */
+  cancellationBlocker?: () => { code: string; periodKey?: string } | null;
   /** Payout: by default the fixture claim asks for cash, so a test about something else needs no account; this leaves it with no choice. */
   noDefaultPayout?: boolean;
   /** Payout: members an employee-data editor can look up (`findPayoutMember`). */
@@ -225,10 +228,24 @@ function fakeRepo(options: RepoOptions = {}) {
     // projection is voided outside the transaction, and only a claim with no live projection may
     // close. Both fakes keep the repository's guards so the spec still proves that order.
     listClaimProjections: async () => projections,
+    // Only a record still to be voided can stand in the way, as in the repository.
+    findCancellationBlocker: async () => (projections.some((projection) => projection.status !== 'VOIDED') ? options.cancellationBlocker?.() ?? null : null),
+    // The fence each void runs first: no void for a cancellation that was withdrawn.
+    assertCancellationPending: async () => {
+      if (!request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_intent_changed');
+    },
     beginCancellationAtomic: async (data: any) => {
       assert.equal(data.expectedStatus, request.status);
       assert.equal(data.expectedUpdatedAt, request.updatedAt);
-      if (request.cancellationPendingAt) return { request, resumed: true };
+      if (request.cancellationPendingAt) {
+        // The repository's rule: the reason on record stays, unless the void refuses it.
+        if (request.cancellationPendingReason === data.reason) return { request, resumed: true };
+        if (isExpenseVoidReason(request.cancellationPendingReason)) throw new ConflictException('reimbursement_cancellation_already_pending');
+        const previous = request.cancellationPendingReason;
+        Object.assign(request, { cancellationPendingReason: data.reason, updatedAt: new Date(request.updatedAt.getTime() + 1) });
+        await data.onReasonCorrected?.(fakeTx(calls.outbox), previous);
+        return { request, resumed: true };
+      }
       if (request.paymentStatus === 'PAID' || request.paymentStatus === 'PARTIALLY_PAID') {
         throw new Error('reimbursement_cancellation_has_payment');
       }
@@ -242,9 +259,8 @@ function fakeRepo(options: RepoOptions = {}) {
       return { request, resumed: false };
     },
     completeCancellationAtomic: async (data: any) => {
-      if (!request.cancellationPendingAt || request.cancellationPendingByUserId !== data.actorUserId) {
-        throw new Error('reimbursement_cancellation_intent_changed');
-      }
+      if (request.status === 'CANCELLED') return request;
+      if (!request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_intent_changed');
       if (projections.some((projection) => projection.status !== 'VOIDED')) {
         throw new Error('reimbursement_cancellation_projection_live');
       }
@@ -256,6 +272,17 @@ function fakeRepo(options: RepoOptions = {}) {
         updatedAt: new Date(request.updatedAt.getTime() + 1),
       });
       await data.onCancelledPersisted(fakeTx(calls.outbox));
+      return request;
+    },
+    withdrawCancellationAtomic: async (data: any) => {
+      if (!request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_not_pending');
+      if (projections.some((projection) => projection.status === 'VOIDED')) throw new ConflictException('reimbursement_cancellation_partly_done');
+      const withdrawn = { startedByUserId: request.cancellationPendingByUserId, startedAt: request.cancellationPendingAt, reason: request.cancellationPendingReason };
+      Object.assign(request, {
+        cancellationPendingAt: undefined, cancellationPendingByUserId: undefined, cancellationPendingReason: undefined,
+        updatedAt: new Date(request.updatedAt.getTime() + 1),
+      });
+      await data.onWithdrawnPersisted(fakeTx(calls.outbox), withdrawn);
       return request;
     },
     findLinesClaimedElsewhere: async (companyId: string, excludeId: string, attachmentIds: string[], expenseIds: string[]) => {
@@ -635,6 +662,200 @@ describe('CancelReimbursementUseCase', () => {
     await useCases(blank).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     assert.equal((await new CancelReimbursementUseCase(blank.repo, noopAudit, realVoid).execute(requester, 'rb-1', '   ')).status, 'CANCELLED');
     assert.equal(blank.request.rejectionReason, 'ยกเลิกคำขอเบิกค่าใช้จ่าย');
+  });
+});
+
+// Audit B3, the rest of it: whatever stops a cancellation after its intent is committed, the claim
+// must say so and stay finishable. Invariant: no claim is left with a cancellation that cannot complete.
+describe('a cancellation that was started stays visible and can always be finished (audit B3)', () => {
+  const PERIOD = '2026-09';
+  const startedAt = new Date('2026-10-01T02:00:00.000Z');
+  const requester = () => ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] });
+  const finance = () => ctx({ userId: 'fin-1', roles: ['FINANCE'], permissions: ['reimbursement.read', 'reimbursement.finance_review'] });
+  const bystander = () => ctx({ userId: 'reader-1', permissions: ['reimbursement.read'] });
+
+  /**
+   * A claim waiting for payment with two confirmed expense records, and the two things of the expense
+   * module a cancellation meets: what the void would refuse (asked up front) and the void itself. Both
+   * read the same `world`, as the repository's preflight and the real void read the same rows.
+   */
+  async function claimWorld() {
+    const world = { periodLocked: false, lockAfterVoids: Infinity };
+    const state = fakeRepo({
+      claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }, { id: 'exp-2', sourceReimbursementLineId: 'rbl-2' }],
+      cancellationBlocker: () => (world.periodLocked ? { code: 'accounting_period_locked', periodKey: PERIOD } : null),
+    });
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    Object.assign(state.request, { status: 'READY_FOR_PAYMENT', requestNo: 'RB-202610-000001', branchId: 'branch-1', paymentStatus: 'UNPAID' });
+    Object.assign(state.repo, {
+      listInternalNotes: async () => [],
+      getUserDisplayNames: async () => ({ 'staff-1': 'สมชาย', 'fin-1': 'วราภรณ์' }),
+    });
+    const audits: any[] = [];
+    const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
+    // The real void's rules for what these cases are about: the reason, the fence, a closed period.
+    const voidExpense = {
+      executeForReimbursement: async (_ctx: any, expenseId: string, reason: string, authority: any) => {
+        if (!isExpenseVoidReason(reason)) throw new BadRequestException('Void reason must be at least 3 characters');
+        await authority.beforeVoid?.({});
+        const projection = state.projections.find((row) => row.id === expenseId)!;
+        if (projection.status === 'VOIDED') return;
+        if (world.periodLocked) throw new ConflictException({ code: 'accounting_period_locked', message: `Accounting period ${PERIOD} is not open; reopen it before voiding.` });
+        projection.status = 'VOIDED';
+        state.calls.voided.push(expenseId);
+        if (state.calls.voided.length >= world.lockAfterVoids) world.periodLocked = true;
+      },
+    } as any;
+    return {
+      world, state, audits,
+      cancel: new CancelReimbursementUseCase(state.repo, audit, voidExpense),
+      withdraw: new WithdrawReimbursementCancellationUseCase(state.repo, audit),
+      detail: (viewer: any) => new GetReimbursementDetailUseCase(state.repo, evidenceService()).execute(viewer, 'rb-1'),
+      /** A cancellation as production left it: the intent committed, nothing after it. */
+      strand: (reason: string) => Object.assign(state.request, {
+        cancellationPendingAt: startedAt, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: reason,
+      }),
+      events: () => state.calls.outbox.map((row: any) => row.eventType),
+    };
+  }
+
+  it('a claim stranded by a short reason says who started it and why, and anyone who may cancel finishes it with a corrected reason', async () => {
+    const claim = await claimWorld();
+    claim.strand('ก');
+
+    // Before: no response carried the pending cancellation at all.
+    assert.deepEqual((await claim.detail(requester())).pendingCancellation, {
+      startedAt: startedAt.toISOString(), startedByUserId: 'staff-1', startedByName: 'สมชาย', reason: 'ก',
+      blocker: { code: 'reason_too_short' }, canResume: true, canWithdraw: true,
+    });
+    // Finance may cancel any claim, so it may finish this one; a reader may do neither.
+    assert.deepEqual([(await claim.detail(finance())).pendingCancellation?.canResume, (await claim.detail(finance())).pendingCancellation?.canWithdraw], [true, true]);
+    assert.deepEqual([(await claim.detail(bystander())).pendingCancellation?.canResume, (await claim.detail(bystander())).pendingCancellation?.canWithdraw], [false, false]);
+
+    // The stored reason is what blocks it: the same reason, another short one and no reason are refused, and nothing is voided.
+    for (const again of ['ก', 'ab', undefined]) {
+      await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', again), /cancellation_reason_too_short/, String(again));
+    }
+    assert.deepEqual([claim.state.calls.voided, claim.state.request.status, claim.state.request.cancellationPendingReason], [[], 'READY_FOR_PAYMENT', 'ก']);
+
+    // Before: a different reason was refused (already pending), and so was anyone but the person who started it.
+    const done = await claim.cancel.execute(finance(), 'rb-1', 'ซื้อซ้ำกับใบก่อน');
+    assert.equal(done.status, 'CANCELLED');
+    assert.deepEqual(claim.state.calls.voided, ['exp-1', 'exp-2']);
+    assert.equal(claim.state.request.rejectionReason, 'ซื้อซ้ำกับใบก่อน');
+    assert.deepEqual(claim.audits.map((entry) => entry.action), [
+      'reimbursement.request.cancellation_reason_corrected', 'reimbursement.request.cancellation_retry', 'reimbursement.request.cancel',
+    ]);
+    assert.deepEqual(claim.audits[0].metadataJson, { previousReason: 'ก', reason: 'ซื้อซ้ำกับใบก่อน', startedByUserId: 'staff-1' });
+    assert.deepEqual([claim.audits[2].actorUserId, claim.audits[2].metadataJson.startedByUserId], ['fin-1', 'staff-1']);
+    assert.equal((await claim.detail(requester())).pendingCancellation, undefined, 'a cancelled claim has nothing pending');
+  });
+
+  it('refuses to start a cancellation when an expense record sits in a closed period, before anything is written', async () => {
+    const claim = await claimWorld();
+    claim.world.periodLocked = true;
+
+    // Before: the intent was committed first, the void then refused, and the claim sat half cancelled with no word of it.
+    await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', 'ซื้อซ้ำกับใบก่อน'), (error: any) => {
+      assert.equal(error.getStatus?.(), 409);
+      assert.equal(error.message, `reimbursement_cancellation_accounting_period_locked:${PERIOD}`);
+      return true;
+    });
+    assert.equal(claim.state.request.cancellationPendingAt, undefined, 'no intent');
+    assert.deepEqual([claim.state.calls.voided, claim.events(), claim.audits], [[], [], []]);
+    assert.equal((await claim.detail(requester())).pendingCancellation, undefined);
+
+    // Once the period is reopened, the same request cancels the claim.
+    claim.world.periodLocked = false;
+    assert.equal((await claim.cancel.execute(requester(), 'rb-1', 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+    assert.deepEqual(claim.events(), ['reimbursement.cancellation_started', 'reimbursement.cancelled']);
+  });
+
+  it('a period closed after the cancellation started is shown with what stands in the way, and the cancellation finishes once it is reopened', async () => {
+    const claim = await claimWorld();
+    // What a check before the intent cannot know: the period is closed between the first void and the second.
+    claim.world.lockAfterVoids = 1;
+    await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', 'ซื้อซ้ำกับใบก่อน'), /Accounting period 2026-09 is not open/);
+    assert.deepEqual(claim.state.projections.map((row) => row.status), ['VOIDED', 'CONFIRMED']);
+
+    // Visible, with the reason it has not completed. One record is voided, so it can only go forward.
+    const shown = (await claim.detail(finance())).pendingCancellation!;
+    assert.deepEqual([shown.blocker, shown.reason, shown.startedByName, shown.canResume, shown.canWithdraw],
+      [{ code: 'accounting_period_locked', periodKey: PERIOD }, 'ซื้อซ้ำกับใบก่อน', 'สมชาย', true, false]);
+    await assert.rejects(() => claim.withdraw.execute(requester(), 'rb-1'), /reimbursement_cancellation_partly_done/);
+    // Continuing while it is still closed is refused up front: the second record is not touched again.
+    await assert.rejects(() => claim.cancel.execute(finance(), 'rb-1'), new RegExp(`reimbursement_cancellation_accounting_period_locked:${PERIOD}`));
+    assert.deepEqual(claim.state.calls.voided, ['exp-1']);
+
+    // Reopened: anyone who may cancel continues it, with no reason to give, and it completes under the reason it was started with.
+    claim.world.periodLocked = false;
+    assert.equal((await claim.detail(finance())).pendingCancellation?.blocker, undefined);
+    assert.equal((await claim.cancel.execute(finance(), 'rb-1')).status, 'CANCELLED');
+    assert.deepEqual(claim.state.calls.voided, ['exp-1', 'exp-2']);
+    assert.equal(claim.state.request.rejectionReason, 'ซื้อซ้ำกับใบก่อน');
+    // A reason of its own is not taken for a cancellation whose reason is on record and valid.
+    assert.deepEqual(claim.events(), ['reimbursement.cancellation_started', 'reimbursement.cancelled']);
+  });
+
+  it('keeps the reason a cancellation was started with: a retry that names another one is refused', async () => {
+    const claim = await claimWorld();
+    claim.strand('ซื้อซ้ำกับใบก่อน');
+    await assert.rejects(() => claim.cancel.execute(finance(), 'rb-1', 'เหตุผลอื่น'), (error: any) => error.getStatus?.() === 409 && /reimbursement_cancellation_already_pending/.test(error.message));
+    assert.deepEqual([claim.state.calls.voided, claim.state.request.cancellationPendingReason], [[], 'ซื้อซ้ำกับใบก่อน']);
+    // The same reason, or none, continues it.
+    assert.equal((await claim.cancel.execute(finance(), 'rb-1', 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+  });
+
+  it('lets whoever may cancel the claim withdraw the cancellation while nothing was voided, and the claim goes on as before', async () => {
+    const claim = await claimWorld();
+    claim.strand('ก');
+
+    // Not for a reader, and not for a finance reviewer of another branch.
+    await assert.rejects(() => claim.withdraw.execute(bystander(), 'rb-1'), ForbiddenException);
+    const otherBranch = ctx({ userId: 'fin-2', permissions: ['reimbursement.finance_review'], scopes: { branchIds: ['branch-2'] } });
+    await assert.rejects(() => claim.withdraw.execute(otherBranch, 'rb-1'), /branch/i);
+    assert.deepEqual([(await claim.detail(otherBranch).catch(() => null))?.pendingCancellation?.canWithdraw, claim.state.request.cancellationPendingReason], [undefined, 'ก']);
+    const back = await claim.withdraw.execute(finance(), 'rb-1');
+
+    assert.equal(back.status, 'READY_FOR_PAYMENT');
+    assert.deepEqual([claim.state.request.cancellationPendingAt, claim.state.request.cancellationPendingByUserId, claim.state.request.cancellationPendingReason],
+      [undefined, undefined, undefined]);
+    assert.deepEqual(claim.state.projections.map((row) => row.status), ['CONFIRMED', 'CONFIRMED'], 'nothing was voided');
+    assert.equal((await claim.detail(requester())).pendingCancellation, undefined);
+    assert.deepEqual(claim.audits.map((entry) => [entry.action, entry.actorUserId, entry.metadataJson.startedByUserId, entry.metadataJson.reason]),
+      [['reimbursement.request.cancellation_withdrawn', 'fin-1', 'staff-1', 'ก']]);
+    // Nothing is pending any more, so there is nothing to withdraw; the claim can be cancelled afresh.
+    await assert.rejects(() => claim.withdraw.execute(finance(), 'rb-1'), /reimbursement_cancellation_not_pending/);
+    assert.equal((await claim.cancel.execute(requester(), 'rb-1', 'เปลี่ยนใจ')).status, 'CANCELLED');
+  });
+
+  it('never voids for a cancellation that was withdrawn while it was being continued', async () => {
+    const claim = await claimWorld();
+    claim.strand('ซื้อซ้ำกับใบก่อน');
+    // The withdrawal lands between the continue reading the claim and its first void.
+    const begin = claim.state.repo.beginCancellationAtomic;
+    claim.state.repo.beginCancellationAtomic = async (data: any) => {
+      const intent = await begin(data);
+      await claim.withdraw.execute(finance(), 'rb-1');
+      return intent;
+    };
+
+    await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1'), /reimbursement_cancellation_intent_changed/);
+
+    assert.deepEqual(claim.state.calls.voided, [], 'the fence stopped the void');
+    assert.deepEqual([claim.state.request.status, claim.state.request.cancellationPendingAt], ['READY_FOR_PAYMENT', undefined]);
+  });
+
+  it('cancels once when ดำเนินการยกเลิกต่อ is pressed twice at the same moment', async () => {
+    const claim = await claimWorld();
+    claim.strand('ซื้อซ้ำกับใบก่อน');
+
+    const results = await Promise.all([claim.cancel.execute(requester(), 'rb-1'), claim.cancel.execute(finance(), 'rb-1')]);
+
+    assert.deepEqual(results.map((result) => result.status), ['CANCELLED', 'CANCELLED']);
+    assert.deepEqual(claim.state.calls.voided, ['exp-1', 'exp-2'], 'each expense record voided once');
+    assert.deepEqual(claim.events(), ['reimbursement.cancelled'], 'one cancelled event');
+    assert.equal(claim.audits.filter((entry) => entry.action === 'reimbursement.request.cancel').length, 1);
   });
 });
 
