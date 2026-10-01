@@ -180,6 +180,11 @@ describe('what a claim says about where the money goes back to', () => {
     assert.match(sent({ verifiedByUserId: ids.requester, verifiedByName: 'สมชาย', verifiedAt: '2026-10-01T03:00:00.000Z' })[0]!, /^ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ 1 ต\.ค\. 2569/);
     assert.deepEqual(sent({ source: 'PREPARER', enteredByName: 'วิภา' }), ['กรอกโดย วิภา', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
     assert.deepEqual(sent({ source: 'PREPARER', enteredByUserId: ids.approver }), ['กรอกโดยผู้จัดทำ', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    // A copy of the default that someone else set: the approver reads who, before the tick.
+    assert.deepEqual(sent({ enteredByUserId: ids.approver, enteredByName: 'วิภา' }), ['ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดย วิภา', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    assert.deepEqual(sent({ enteredByUserId: ids.approver }), ['ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดยผู้อื่น', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    const approving = visible(card(claim({ payout: { ...transfer, enteredByUserId: ids.approver, enteredByName: 'วิภา', canRevealAccountNumber: true } })));
+    assert.ok(approving.includes('ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดย วิภา'));
     assert.deepEqual(logic.claimPayoutView(claim({ payout: { payoutMethod: 'CASH' } })), { state: 'cash', line: 'รับเป็นเงินสด', notes: [] });
     assert.deepEqual([logic.claimNeedsPayoutAttestation(claim()), logic.claimNeedsPayoutAttestation(claim({ payout: { payoutMethod: 'CASH' } }))], [true, false]);
   });
@@ -463,6 +468,7 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
     ['my account page', render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: true }))],
     ['my account page: no permission', render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: false }))],
     // New screens go at the end: the phone check below names two of the screens above by position.
+    ['claim card: a default someone else set', card(claim({ payout: { ...transfer, enteredByUserId: ids.approver, enteredByName: 'วิภา' } }))],
     ['claim card: typed by a preparer whose name is gone', card(claim({ payout: { ...transfer, source: 'PREPARER', enteredByUserId: ids.approver } }))],
   ];
   // Texts that never pass through a render here: validation, the submit block and the server's refusals.

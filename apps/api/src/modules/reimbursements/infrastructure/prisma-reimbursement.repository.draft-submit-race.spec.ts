@@ -1234,6 +1234,22 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     }
   });
 
+  // Security review S1: the approver is told who set the account they attest, when it was not the requester.
+  it('freezes who last set the default with the copy, not who pressed send', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    // Someone else (an employee-data editor) set the requester's default; the requester sends the claim.
+    await repos[0]!.setMemberPayoutAccount({ companyId, userId: requester, actorUserId: approver, payoutMethod: 'BANK_TRANSFER', destination: seal(SCB) }, async () => undefined);
+    const byOther = await submit(await draft('default set by someone else'));
+    assert.deepEqual((await destinationsOf(byOther.pending.id)).map((row) => [row.source, row.createdByUserId]), [['DEFAULT_ACCOUNT', approver]]);
+    assert.equal((await repos[0]!.findClaimPayout(byOther.pending))?.enteredByUserId, approver);
+    // The requester saves the account themselves: the next claim names nobody, and the sent one keeps what it froze.
+    await setDefault(KBANK);
+    const byRequester = await submit(await draft('default set by the requester'));
+    assert.deepEqual((await destinationsOf(byRequester.pending.id)).map((row) => [row.source, row.createdByUserId]), [['DEFAULT_ACCOUNT', requester]]);
+    assert.equal((await repos[0]!.findClaimPayout(byRequester.pending))?.enteredByUserId, undefined);
+    assert.equal((await repos[0]!.findClaimPayout(byOther.pending))?.enteredByUserId, approver);
+  });
+
   it('counts versions per claim, not per member: the default at its third change freezes as the claim first', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     // Two counters start at 1 — the member default's and the claim's. They are made to differ here,

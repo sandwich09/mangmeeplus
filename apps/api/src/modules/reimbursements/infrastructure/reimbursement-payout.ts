@@ -54,7 +54,7 @@ export type ClaimPayoutRecord = {
   version?: number;
   source?: ReimbursementPayoutSource;
   followsDefault?: boolean;
-  /** Set only when someone other than the requester typed or set the account. */
+  /** Set only when someone other than the requester typed the account, or set the default it was copied from. */
   enteredByUserId?: string;
   verifiedByUserId?: string;
   verifiedAt?: Date;
@@ -159,7 +159,8 @@ export async function readClaimPayout(client: any, claim: ClaimPayoutPointer): P
   return {
     payoutMethod: 'BANK_TRANSFER', payoutKind: row.payoutKind, ...(row.bankName && { bankName: row.bankName }), accountName: row.accountName,
     accountLast4: row.accountLast4, version: row.version, source: row.source,
-    ...(row.source === 'PREPARER' && { enteredByUserId: row.createdByUserId }),
+    // Typed by a preparer, or copied from a default someone else set: anyone but the requester is named.
+    ...(row.createdByUserId !== claim.requesterUserId && { enteredByUserId: row.createdByUserId }),
     // An attestation belongs to a sent claim: a draft is about to be frozen and attested again.
     ...(claim.status !== 'DRAFT' && row.verifiedAt && { verifiedByUserId: row.verifiedByUserId, verifiedAt: row.verifiedAt }),
   };
@@ -266,10 +267,12 @@ export async function freezePayoutAtSubmit(tx: any, claim: ClaimPayoutPointer, i
       const account = await tx.memberPayoutAccount.findFirst({ where: { companyId: claim.companyId, userId: claim.requesterUserId } });
       if (!account?.accountNumberEncrypted || account.fingerprint !== plan.fingerprint) throw new ConflictException('payout_destination_changed');
       // The sealed columns are copied as one unit, so the copy's last 4 still match its ciphertext.
+      // "Who entered this account" is whoever last set the default, not whoever pressed send: the
+      // approver is shown that name when it is not the requester's (the submitter is on the claim).
       await tx.reimbursementPayoutDestination.create({ data: {
         ...where, payoutKind: account.payoutKind, bankName: account.bankName, accountName: account.accountName,
         accountNumberEncrypted: account.accountNumberEncrypted, accountLast4: account.accountLast4, fingerprint: account.fingerprint,
-        source: 'DEFAULT_ACCOUNT', createdByUserId: input.actorUserId, frozenAt: input.frozenAt,
+        source: 'DEFAULT_ACCOUNT', createdByUserId: account.updatedByUserId, frozenAt: input.frozenAt,
       } });
     } else {
       const changed = plan.action === 'FREEZE'

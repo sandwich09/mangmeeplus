@@ -140,9 +140,11 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
   // Someone other than the requester typed or set the account. It is said also when their name is
   // no longer known (they left the company): silence would read as "the requester entered it".
   if (payout.enteredByName || payout.enteredByUserId) {
-    notes.push(payout.followsDefault
-      ? `บัญชีประจำนี้ตั้งโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้อื่น'}`
-      : `กรอกโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้จัดทำ'}`);
+    const setBy = `ตั้งโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้อื่น'}`;
+    notes.push(payout.followsDefault ? `บัญชีประจำนี้${setBy}`
+      // A sent claim that copied the default: the approver reads who set that default before attesting.
+      : payout.source === 'DEFAULT_ACCOUNT' ? `ใช้บัญชีประจำของผู้เบิก ซึ่ง${setBy}`
+        : `กรอกโดย${payout.enteredByName ? ` ${payout.enteredByName}` : 'ผู้จัดทำ'}`);
   }
   if (payout.payoutMethod === 'CASH') return { state: 'cash', line: PAYOUT_METHOD_TEXT.CASH!, notes };
   if (!draft) {

@@ -7101,6 +7101,7 @@ model ReimbursementPayoutDestination {
   fingerprint            String
   /// DEFAULT_ACCOUNT | REQUESTER | PREPARER: where the account came from.
   source                 String
+  /// Who entered the account: whoever typed it, or — for a copy of the default — whoever last set that default.
   createdByUserId        String
   frozenAt               DateTime?
   verifiedByUserId       String?

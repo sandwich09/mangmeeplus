@@ -1590,6 +1590,40 @@ describe('payout: a draft follows the latest default until submit', () => {
     assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.enteredByName, undefined);
   });
 
+  // Security review S1: the frozen copy recorded who pressed send, so an approver was never shown
+  // that the account they attest was put there by someone other than the requester.
+  it('keeps who set the default on the frozen copy, and names them to the approver when it is not the requester', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const approver = ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve'] });
+    await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    // The requester sends it themselves; the account was still set by the manager.
+    const sent = await world.send(ctx(), draft.id);
+    assert.deepEqual([sent.payout?.source, sent.payout?.enteredByUserId, sent.payout?.enteredByName], ['DEFAULT_ACCOUNT', 'manager-1', 'วิภา']);
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.source, row.createdByUserId]), [['DEFAULT_ACCOUNT', 'manager-1']]);
+    const seenByApprover = (await world.detail.execute(approver, draft.id)).payout!;
+    assert.deepEqual([seenByApprover.accountLast4, seenByApprover.enteredByUserId, seenByApprover.enteredByName], ['6789', 'manager-1', 'วิภา']);
+    // The frozen copy keeps saying so, whatever happens to the default afterwards.
+    await world.payouts.setOwn(ctx(), SCB);
+    assert.equal((await world.detail.execute(approver, draft.id)).payout?.enteredByName, 'วิภา');
+
+    // Withdrawn and sent again with the default the requester has now saved themselves: nobody else is named.
+    await world.reopen.execute(ctx(), draft.id);
+    const resent = await world.send(ctx(), draft.id);
+    assert.deepEqual([resent.payout?.version, resent.payout?.accountLast4, resent.payout?.enteredByUserId, resent.payout?.enteredByName], [2, '9012', undefined, undefined]);
+    assert.equal(world.state.payoutTables.destinations.find((row) => row.version === 2)!.createdByUserId, 'staff-1');
+  });
+
+  it('names nobody when the requester set their own default, also when someone else sends the claim for them', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+    const sent = await world.send(financeCtx(), draft.id);
+    // The account is the requester's own entry; who pressed send is on the claim, not on the account.
+    assert.deepEqual([sent.payout?.source, sent.payout?.enteredByUserId, sent.payout?.enteredByName], ['DEFAULT_ACCOUNT', undefined, undefined]);
+    assert.deepEqual([world.state.payoutTables.destinations[0]!.createdByUserId, world.state.request.submittedByUserId], ['staff-1', 'finance-1']);
+  });
+
   it('takes cash, or an account for this claim only, in place of the default', async () => {
     const world = payoutWorld();
     await world.payouts.setOwn(ctx(), KBANK);
