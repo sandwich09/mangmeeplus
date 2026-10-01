@@ -20,6 +20,16 @@ describe('reimbursement self-service entry', () => {
   });
 });
 
+describe('hub list loading', () => {
+  // The loader and the list it fills are exercised in reimbursements.api.spec.ts; this holds the page to them.
+  it('takes its own list through the page loader, and lets go of a request it no longer wants', () => {
+    assert.match(source, /const nextPage = hubNextPage\(list, [^)]+\);\s+useEffect\(\(\) => \{\s+if \(nextPage === null\) return;[\s\S]*?return loadHubPage\(companyId, \{ scope, [^}]*page: nextPage \}, \{\s+onPage: \(result\) => setHeld\(\(current\) => withHubPage\(current, listKey, result\)\),\s+onError: \(e\) => setHeld\(\(current\) => withHubFailure\(current, listKey, err\(e\)\)\),\s+\}\);\s+\}, \[/);
+    // No other way into the list: an unpaged or unguarded call would bring the old faults back.
+    assert.doesNotMatch(source, /listAllReimbursements|listReimbursements\(/);
+    assert.match(source, /onClick=\{\(\) => setHeld\(withHubRetry\)\}>ลองอีกครั้ง</);
+  });
+});
+
 describe('reimbursement document preview lifecycle', () => {
   it('uses one latest-request gate for generated claim forms and authenticated attachments', () => {
     assert.match(source, /previewReimbursementClaimForm\(companyId, target\.reimbursementId\)/);

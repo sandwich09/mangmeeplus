@@ -355,6 +355,59 @@ export function hubFilterCounts(rows: readonly Parameters<typeof hubFilterOf>[0]
   return Object.fromEntries((['all', ...HUB_FILTERS] as const).map((filter) => [filter, hubRows(rows, filter).length])) as Record<HubFilter, number>;
 }
 
+// ---- หน้ารวม: one list, loaded a page at a time ----
+
+/** The rows of one hub list loaded so far, and where the server's list goes on. */
+export type HubList = {
+  /** The list these rows belong to (company, scope, reload): rows of another list are never shown as this one's. */
+  key: string;
+  rows: any[];
+  /** The server's count of the whole list. */
+  total: number;
+  /** The page to ask for when more rows are needed; null once the server has no more. */
+  nextPage: number | null;
+  /** Why the last page asked for did not arrive. Nothing more is asked until a retry clears it, and the rows stay. */
+  failed?: string;
+};
+export const NO_HUB_LIST: HubList = { key: '', rows: [], total: 0, nextPage: 1 };
+/** What the hub asks for; what counts is the page size the server answers with. */
+export const HUB_PAGE_SIZE = 100;
+
+export const hubListKey = (...parts: unknown[]) => parts.join('|');
+
+/** What is held of this list. Rows loaded for another scope, or before a reload, are not this list's. */
+export function hubList(held: HubList, key: string): HubList {
+  return held.key === key ? held : { ...NO_HUB_LIST, key };
+}
+
+/** The page to ask the server for now. Null: the rows needed are loaded, the list is complete, or the last page failed. */
+export function hubNextPage(list: HubList, need: number): number | null {
+  return list.failed === undefined && list.rows.length < need ? list.nextPage : null;
+}
+
+/**
+ * Adds one page. The list ends on the server's own total, or on a page shorter than the page size the
+ * server answered with, never on the size that was asked for: the server may cap it.
+ */
+export function withHubPage(held: HubList, key: string, result: { items?: any[]; total: number; page: number; pageSize: number }): HubList {
+  const items = result.items ?? [];
+  // Keyed by id: a claim filed between two calls shifts the pages and would otherwise repeat a row.
+  const byId = new Map<string, any>(hubList(held, key).rows.map((row) => [row.id, row]));
+  for (const item of items) byId.set(item.id, item);
+  const more = items.length > 0 && items.length >= result.pageSize && result.page * result.pageSize < result.total;
+  return { key, rows: [...byId.values()], total: result.total, nextPage: more ? result.page + 1 : null };
+}
+
+/** A page did not arrive: what was loaded stays, and the same page is asked again on retry. */
+export function withHubFailure(held: HubList, key: string, failed: string): HubList {
+  return { ...hubList(held, key), failed };
+}
+
+export function withHubRetry(held: HubList): HubList {
+  const { failed: _failed, ...list } = held;
+  return list;
+}
+
 // ---- Claim timeline (เส้นทางของใบเบิก) ----
 
 export type ClaimTimelineRow = {

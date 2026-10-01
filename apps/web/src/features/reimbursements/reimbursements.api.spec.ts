@@ -4,12 +4,12 @@ import {
   cancelReimbursementDraftAction,
   confirmReimbursementDraftAction,
   getReimbursementDraftAction,
-  listAllReimbursements,
+  loadHubPage,
   submitReimbursement,
   uploadReceiptFile,
   uploadSignedClaimFormCopy,
 } from './reimbursements.api';
-import { errorText } from './reimbursements.logic';
+import { errorText, hubList, hubNextPage, NO_HUB_LIST, withHubFailure, withHubPage, withHubRetry, type HubList } from './reimbursements.logic';
 import { subscribeToastBus, type ToastEvent } from '@/common/feedback/toast-bus';
 
 const originalFetch = globalThis.fetch;
@@ -138,38 +138,146 @@ describe('reimbursement receipt upload', () => {
   });
 });
 
-describe('listAllReimbursements', () => {
-  const pagesOf = (total: number, answer: (page: number) => unknown[]) => {
+// The hub's list is asked for a page at a time. What the hub holds is `HubList` (reimbursements.logic.ts); this is the
+// part that talks to the API, and the part that drops an answer nobody is waiting for any more.
+describe('loadHubPage and the hub list it fills', () => {
+  /** A list endpoint over `rows`, answering `pageSize` rows a page whatever was asked; `failing` pages answer 500. */
+  function server(rows: Array<{ id: string }>, pageSize = 100, failing: number[] = []) {
     const urls: string[] = [];
     (globalThis as Record<string, unknown>)['window'] = {};
     globalThis.fetch = (async (input: string | URL | Request) => {
       urls.push(String(input));
       const page = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
-      return Response.json({ items: answer(page), total, page, pageSize: 100 });
+      if (failing.includes(page)) return Response.json({ statusCode: 500, message: 'Internal server error' }, { status: 500 });
+      return Response.json({ items: rows.slice((page - 1) * pageSize, page * pageSize), total: rows.length, page, pageSize });
     }) as typeof fetch;
-    return urls;
-  };
-  const claims = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => ({ id: `rb-${from + index}` }));
+    return { urls, failing };
+  }
+  const claims = (count: number, from = 0) => Array.from({ length: count }, (_, index) => ({ id: `rb-${from + index}` }));
+  const page = (number: number, scope?: string) => new Promise<any>((resolve, reject) => {
+    loadHubPage('co-1', { scope, page: number }, { onPage: resolve, onError: reject });
+  });
+  /** The hub's own loop, as its effect runs it: ask for the page the list needs, add it, until nothing is needed. */
+  async function fill(held: HubList, key: string, need = Infinity, scope?: string): Promise<HubList> {
+    for (;;) {
+      const next = hubNextPage(hubList(held, key), need);
+      if (next === null) return hubList(held, key);
+      try { held = withHubPage(held, key, await page(next, scope)); }
+      catch (error) { held = withHubFailure(held, key, errorText(error)); }
+    }
+  }
 
-  it('loads every page, so the hub cards count claims older than the first page', async () => {
-    // Before: one unpaged call, and the endpoint answers its first 20 rows.
-    const urls = pagesOf(230, (page) => claims((page - 1) * 100, Math.min(page * 100, 230)));
-    const all = await listAllReimbursements('co-1', { scope: 'related' });
-    assert.equal(all.length, 230);
-    assert.deepEqual(urls, [1, 2, 3].map((page) => `/api/v1/companies/co-1/reimbursements?scope=related&page=${page}&pageSize=100`));
+  it('takes every page, so the hub cards count claims older than the first page', async () => {
+    // Before Phase 0: one unpaged call, and the endpoint answers its first 20 rows.
+    const { urls } = server(claims(230));
+    const list = await fill(NO_HUB_LIST, 'list', Infinity, 'related');
+    assert.deepEqual([list.rows.length, list.total, list.nextPage, list.failed], [230, 230, null, undefined]);
+    assert.deepEqual(urls, [1, 2, 3].map((number) => `/api/v1/companies/co-1/reimbursements?scope=related&page=${number}&pageSize=100`));
   });
 
-  it('asks once for a short list and never repeats a claim that shifted between two calls', async () => {
-    const short = pagesOf(3, () => claims(0, 3));
-    assert.deepEqual(await listAllReimbursements('co-1'), claims(0, 3));
-    assert.equal(short.length, 1);
+  it('ends on the server\'s total and the server\'s page size, never on the 100 it asked for', async () => {
+    // Before: `page * 100 >= total` stopped after page 2 of a server that answers 50 a page, and 20 claims were never seen.
+    const capped = server(claims(120), 50);
+    assert.equal((await fill(NO_HUB_LIST, 'list')).rows.length, 120);
+    assert.equal(capped.urls.length, 3);
+    // A full last page ends on the total: no extra call to find an empty page.
+    const exact = server(claims(200));
+    assert.equal((await fill(NO_HUB_LIST, 'list')).rows.length, 200);
+    assert.equal(exact.urls.length, 2);
+    // One call for a short list, and for an empty one.
+    const short = server(claims(3));
+    assert.deepEqual((await fill(NO_HUB_LIST, 'list')).rows, claims(3));
+    assert.equal(short.urls.length, 1);
+    const none = server([]);
+    assert.deepEqual([(await fill(NO_HUB_LIST, 'list')).rows.length, none.urls.length], [0, 1]);
+  });
+
+  it('ends on a short or empty page even when the total says more, and never repeats a claim that shifted between two calls', async () => {
+    (globalThis as Record<string, unknown>)['window'] = {};
+    const answer = (pages: Record<number, Array<{ id: string }>>, total: number) => {
+      const urls: string[] = [];
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        urls.push(String(input));
+        const number = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
+        return Response.json({ items: pages[number] ?? [], total, page: number, pageSize: 100 });
+      }) as typeof fetch;
+      return urls;
+    };
     // A claim filed between the calls pushes rb-99 onto page 2 as well.
-    pagesOf(101, (page) => (page === 1 ? claims(0, 100) : claims(99, 101)));
-    assert.equal((await listAllReimbursements('co-1')).length, 101);
-    // An empty page ends the loop even when the total says more.
-    const urls = pagesOf(500, (page) => (page === 1 ? claims(0, 100) : []));
-    assert.equal((await listAllReimbursements('co-1')).length, 100);
-    assert.equal(urls.length, 2);
+    answer({ 1: claims(100), 2: claims(2, 99) }, 101);
+    assert.equal((await fill(NO_HUB_LIST, 'list')).rows.length, 101);
+    // An empty page ends the list even when the total says more.
+    const empty = answer({ 1: claims(100) }, 500);
+    assert.equal((await fill(NO_HUB_LIST, 'list')).rows.length, 100);
+    assert.equal(empty.length, 2);
+    // So does a short one.
+    const shortPage = answer({ 1: claims(100), 2: claims(40, 100) }, 500);
+    assert.equal((await fill(NO_HUB_LIST, 'list')).rows.length, 140);
+    assert.equal(shortPage.length, 2);
+  });
+
+  it('keeps what was loaded when a later page fails, and a retry asks for that page again', async () => {
+    const down = server(claims(230), 100, [2]);
+    const failed = await fill(NO_HUB_LIST, 'list');
+    // Before: the whole load was thrown away and the hub said "ยังไม่มีคำขอเบิก".
+    assert.deepEqual([failed.rows.length, failed.total, failed.nextPage], [100, 230, 2]);
+    assert.equal(typeof failed.failed, 'string');
+    assert.doesNotMatch(failed.failed!, /500|Internal|error/i, 'the reason is said in Thai, never as a status code');
+    assert.equal(hubNextPage(failed, Infinity), null, 'nothing more is asked until someone retries');
+    assert.equal(down.urls.length, 2);
+    // Retry: the same page, not the list from the start.
+    down.failing.length = 0;
+    const whole = await fill(withHubRetry(failed), 'list');
+    assert.deepEqual([whole.rows.length, whole.nextPage, whole.failed], [230, null, undefined]);
+    assert.deepEqual(down.urls.slice(2).map((url) => new URL(url, 'http://web.test').searchParams.get('page')), ['2', '3']);
+    // The first page failing leaves an empty list that is failed, which is not the same as an empty list.
+    server(claims(5), 100, [1]);
+    const nothing = await fill(NO_HUB_LIST, 'list');
+    assert.deepEqual([nothing.rows.length, nothing.nextPage, typeof nothing.failed], [0, 1, 'string']);
+  });
+
+  it('starts another list from its first page and shows none of the rows held for the list before it', async () => {
+    server(claims(150));
+    const first = await fill(NO_HUB_LIST, 'before-reload');
+    assert.equal(first.rows.length, 150);
+    assert.deepEqual(hubList(first, 'after-reload'), { key: 'after-reload', rows: [], total: 0, nextPage: 1 });
+    const { urls } = server(claims(2, 500));
+    const second = await fill(first, 'after-reload');
+    assert.deepEqual(second.rows, claims(2, 500));
+    assert.deepEqual(urls.map((url) => new URL(url, 'http://web.test').searchParams.get('page')), ['1']);
+  });
+
+  it('hands nothing over once the caller has let go: a late answer, or a late failure, changes nothing', async () => {
+    (globalThis as Record<string, unknown>)['window'] = {};
+    for (const outcome of ['answers', 'fails'] as const) {
+      let settle!: () => void;
+      const settled = new Promise<void>((resolve) => { settle = resolve; });
+      globalThis.fetch = (async () => {
+        await settled;
+        return outcome === 'answers' ? Response.json({ items: claims(1), total: 1, page: 1, pageSize: 100 })
+          : Response.json({ statusCode: 500, message: 'Internal server error' }, { status: 500 });
+      }) as typeof fetch;
+      const calls: string[] = [];
+      const letGo = loadHubPage('co-1', { page: 1 }, { onPage: () => calls.push('page'), onError: () => calls.push('error') });
+      // The hub asked for another list, reloaded, or unmounted while the request was in flight.
+      letGo();
+      settle();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(calls, [], outcome);
+      // The same request, still wanted, is handed over.
+      const kept: string[] = [];
+      loadHubPage('co-1', { page: 1 }, { onPage: () => kept.push('page'), onError: () => kept.push('error') });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(kept, [outcome === 'answers' ? 'page' : 'error'], outcome);
+    }
+  });
+
+  it('reports a page the caller cannot take the way it reports a page that did not arrive', async () => {
+    server(claims(1));
+    const reported = await new Promise<unknown>((resolve) => {
+      loadHubPage('co-1', { page: 1 }, { onPage: () => { throw new Error('unreadable page'); }, onError: resolve });
+    });
+    assert.match(String(reported), /unreadable page/);
   });
 });
 

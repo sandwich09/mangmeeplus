@@ -21,7 +21,7 @@ const sections = require('./ReimbursementDetailSections') as typeof import('./Re
 const { ReimbursementCreatePage } = require('./ReimbursementCreatePage') as typeof import('./ReimbursementCreatePage');
 const { ReimbursementsHubPage, PolicySettings } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
 const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts') as typeof import('./ReimbursementSourceFacts');
-const { approvalComparable, diffApprovalFields } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const { approvalComparable, diffApprovalFields, hubListKey, reimbursementListScope } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
@@ -159,12 +159,17 @@ const queueRow = { ...draft, requestNo: 'RB-202609-00007', status: 'FINANCE_REVI
   currentDesk: { kind: 'APPROVER', names: ['สมชาย', 'สมศรี การเงิน'] } };
 const hubPermissions = ['reimbursement.read', 'reimbursement.create', 'reimbursement.submit', 'reimbursement.approve', 'reimbursement.finance_review',
   'reimbursement.payment.record'];
-/** One hub tab, its queue loaded with the rows (each queue starts as an empty list, loading); `filter` = a card or chip already tapped. */
-const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string) => renderWithState(
+/**
+ * One hub tab, its queue loaded with the rows (each queue starts as an empty list, loading); `filter` = a card or chip already tapped.
+ * The hub's own list is held a page at a time: `held` overrides what it holds (pages still to come, a page that failed).
+ */
+const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held: object = {}) => renderWithState(
   h(AppRouterContext.Provider, { value: router }, h(SearchParamsContext.Provider, { value: new URLSearchParams(`tab=${tab}`) },
     h(ToastContext.Provider, { value: toast },
       h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'], permissions: hubPermissions })))),
-  (initial) => (Array.isArray(initial) && initial.length === 0 ? rows : initial === true ? false : initial === 'all' ? filter : undefined),
+  (initial) => (Array.isArray(initial) && initial.length === 0 ? rows
+    : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), 0, 0), rows, total: rows.length, nextPage: null, ...held }
+      : initial === true ? false : initial === 'all' ? filter : undefined),
 );
 // One claim per state the hub has to place: the desk is what the list API answers, and finished claims have none.
 const hubClaims = ([
@@ -272,6 +277,45 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     for (const className of chipClasses) assert.doesNotMatch(className, /\b(?:min-)?w-\[|whitespace-nowrap/u);
     // A label wider than a 390 px chip (measured in a browser: 143 px needed, 132 there) breaks at its slash, never inside a Thai word.
     assert.ok(chipsOf(html).includes('<span class="min-w-0"><span class="whitespace-nowrap">รออนุมัติ/</span><span class="whitespace-nowrap">ตรวจสอบ</span></span>'));
+  });
+});
+
+describe('the hub says when its list did not load, and keeps what did (review follow-up 2026-10-01)', () => {
+  const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
+  const reason = 'เชื่อมต่อระบบไม่ได้ กรุณาลองใหม่อีกครั้ง';
+
+  it('waits for every page before it counts, and never shows rows held for another list', () => {
+    const loading = visible(hubTab('mine', hubClaims, undefined, { nextPage: 2 }));
+    assert.ok(loading.includes('กำลังโหลด...'));
+    assert.equal(loading.includes('ร่างรอส่ง'), false, 'no card counts a list that is still arriving');
+    // Rows loaded before a reload, or for another company or scope, belong to another list.
+    const other = hubTab('mine', hubClaims, undefined, { key: 'another list' });
+    assert.equal(rowsShown(other), 0);
+    assert.ok(visible(other).includes('กำลังโหลด...'));
+  });
+
+  it('shows the failure with a retry instead of "ยังไม่มีคำขอเบิก" when the first page fails', () => {
+    // Before: the error banner sat above an empty state that told the person they had no claims.
+    const texts = visible(hubTab('mine', [], undefined, { nextPage: 1, failed: reason }));
+    assert.ok(texts.includes(`⚠ โหลดรายการไม่สำเร็จ · ${reason}`), texts.join(' | '));
+    assert.ok(texts.includes('ลองอีกครั้ง'));
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|ทั้งหมด 0 รายการ/u);
+    // A list that really is empty still says so, with no failure in sight.
+    const empty = visible(hubTab('mine', []));
+    assert.ok(empty.includes('ยังไม่มีคำขอเบิก'));
+    assert.equal(empty.includes('ลองอีกครั้ง'), false);
+  });
+
+  it('keeps the rows already loaded when a later page fails, and says the list is not complete', () => {
+    // Before: one failed page threw the whole load away.
+    const html = hubTab('mine', hubClaims, undefined, { total: 230, nextPage: 2, failed: reason });
+    const texts = visible(html);
+    assert.ok(texts.includes(`⚠ โหลดรายการได้ไม่ครบ รายการและตัวเลขด้านล่างยังไม่ใช่ทั้งหมด · ${reason}`), texts.join(' | '));
+    assert.ok(texts.includes('ลองอีกครั้ง'));
+    assert.equal(rowsShown(html), hubClaims.length);
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก/u);
+    // The retry is a full-width button on a phone.
+    assert.match(html, /data-testid="reimbursements-mine-load-failed">.*?<button type="button" class="[^"]*\bmin-h-11 w-full sm:w-auto\b[^"]*">ลองอีกครั้ง<\/button>/su);
   });
 });
 

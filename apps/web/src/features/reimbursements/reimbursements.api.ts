@@ -7,6 +7,7 @@ import {
   REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES,
   type ReimbursementApproverRoleOption, type ReimbursementInternalNote, type ReimbursementPolicySummary, type ReimbursementSourceOptions,
 } from '@watchdog-bms/contracts';
+import { HUB_PAGE_SIZE } from './reimbursements.logic';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -53,19 +54,21 @@ export function listReimbursements(companyId: string, params?: Record<string, un
   return apiFetch<any>(`${base(companyId)}${qs(params)}`);
 }
 /**
- * Every claim the session may see, newest first. The hub counts, filters and searches what it has loaded,
- * and the list endpoint answers 20 rows unless asked, so one unpaged call hid every older claim from the
- * cards — a claim still waiting for payment included.
- * ponytail: pages on the client, 100 a call; count and filter on the server once a shop has thousands of claims.
+ * Asks for one page of the hub list and hands it over, unless the caller has let go of the request by then:
+ * the function returned is that letting go. The hub lets go when it asks for another list, reloads or
+ * unmounts, so an answer that arrives late changes nothing.
  */
-export async function listAllReimbursements(companyId: string, params?: Record<string, unknown>): Promise<any[]> {
-  const byId = new Map<string, any>();
-  for (let page = 1; ; page += 1) {
-    const result = await listReimbursements(companyId, { ...params, page, pageSize: 100 });
-    // Keyed by id: a claim filed between two calls shifts the pages and would otherwise repeat a row.
-    for (const item of result.items ?? []) byId.set(item.id, item);
-    if (!result.items?.length || page * 100 >= result.total) return [...byId.values()];
-  }
+export function loadHubPage(
+  companyId: string,
+  params: { scope?: string; page: number },
+  handlers: { onPage: (result: any) => void; onError: (error: unknown) => void },
+): () => void {
+  let held = true;
+  // `.catch` after `.then`, so a page the caller cannot take is reported like a page that did not arrive.
+  listReimbursements(companyId, { scope: params.scope, page: params.page, pageSize: HUB_PAGE_SIZE })
+    .then((result) => { if (held) handlers.onPage(result); })
+    .catch((error) => { if (held) handlers.onError(error); });
+  return () => { held = false; };
 }
 export function getReimbursement(companyId: string, id: string) {
   return apiFetch<any>(`${base(companyId)}/${id}`);

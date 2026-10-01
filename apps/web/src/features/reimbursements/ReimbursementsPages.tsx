@@ -9,7 +9,7 @@ import { Modal } from '@/common/components/modal';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import {
-  listAllReimbursements, submitReimbursement, getReimbursement,
+  loadHubPage, submitReimbursement, getReimbursement,
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement,
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
@@ -28,6 +28,7 @@ import {
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
   hubFilterCounts, hubRows, type HubFilter, approverPaymentWarning,
+  NO_HUB_LIST, hubList, hubListKey, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -207,25 +208,37 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   canCreate: boolean;
 }) {
   const toast = useToast();
-  const [data, setData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The list is held a page at a time. Which list it is (company, scope, reload) is part of what is held,
+  // so rows that were loaded for another one are never shown, and an answer that arrives late is dropped.
+  const [held, setHeld] = useState<HubList>(NO_HUB_LIST);
+  const [reload, setReload] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<HubFilter>('all');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    try { setData(await listAllReimbursements(companyId, { scope: reimbursementListScope(permissions) })); }
-    catch (e) { setError(err(e)); } finally { setLoading(false); }
-  }, [companyId, permissions]);
-  useEffect(() => { load(); }, [load, refreshKey]);
+  const scope = reimbursementListScope(permissions);
+  const listKey = hubListKey(companyId, scope, refreshKey, reload);
+  const list = hubList(held, listKey);
+  // ponytail: the cards, chips and search count the rows on this page, so every page is taken. The ceiling is
+  // one call per 100 claims; count and filter on the server to stop at the first.
+  const nextPage = hubNextPage(list, Infinity);
+  useEffect(() => {
+    if (nextPage === null) return;
+    // The cleanup lets go of the request: a reload, another company or an unmount leaves its answer unused.
+    return loadHubPage(companyId, { scope, page: nextPage }, {
+      onPage: (result) => setHeld((current) => withHubPage(current, listKey, result)),
+      onError: (e) => setHeld((current) => withHubFailure(current, listKey, err(e))),
+    });
+  }, [companyId, scope, listKey, nextPage]);
+  const data = list.rows;
+  const loading = nextPage !== null;
 
   // Only the row "ส่งอนุมัติ" uses this; a refusal for want of an approver says who can fix it.
   const action = async (id: string, fn: () => Promise<unknown>, successMessage?: string) => {
     setBusy(id); setError(null);
-    try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(approverNotReadyHelp(e, permissions)?.text ?? err(e)); } finally { setBusy(null); }
+    try { await fn(); setReload(n => n + 1); if (successMessage) toast.success(successMessage); } catch (e) { setError(approverNotReadyHelp(e, permissions)?.text ?? err(e)); } finally { setBusy(null); }
   };
 
   const summary = useMemo(() => summariseQueue(data), [data]);
@@ -273,7 +286,16 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   return (
     <div className="space-y-4">
       {error && <ErrorBanner message={error} />}
-      {loading ? <LoadingState label="กำลังโหลด..." /> : (
+      {list.failed !== undefined && (
+        // A page that did not arrive is said as such, with a way to ask again: never as "ยังไม่มีคำขอเบิก".
+        <div className="space-y-2" data-testid="reimbursements-mine-load-failed">
+          <ErrorBanner message={data.length > 0
+            ? `โหลดรายการได้ไม่ครบ รายการและตัวเลขด้านล่างยังไม่ใช่ทั้งหมด · ${list.failed}`
+            : `โหลดรายการไม่สำเร็จ · ${list.failed}`} />
+          <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={() => setHeld(withHubRetry)}>ลองอีกครั้ง</button>
+        </div>
+      )}
+      {loading ? <LoadingState label="กำลังโหลด..." /> : list.failed !== undefined && data.length === 0 ? null : (
         <>
           {blockedDraftCount > 0 && (
             <ErrorBanner message={`มีคำขอร่าง ${blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
