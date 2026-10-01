@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
-import { PATH_METADATA } from '@nestjs/common/constants';
+import { GUARDS_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard, isBillingRecoveryRoute, isAccountEmailRecoveryRoute, isCompanyProfileRecoveryRoute } from './presentation/auth.guard';
 import { ResolveRequestContextUseCase } from './application/use-cases/resolve-request-context.use-case';
@@ -13,7 +13,8 @@ import { IS_PUBLIC_ROUTE_KEY } from '../../common/security/public.decorator';
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../common/security/permissions.decorator';
 import { PermissionResolverService } from '../access-control/application/permission-resolver.service';
 import { PrismaPermissionResolverRepository } from '../access-control/infrastructure/prisma-permission-resolver.repository';
-import { PLATFORM_TENANT_ID } from '../sales-console/application/sales-context';
+import { PLATFORM_TENANT_ID, SalesAgentActiveGuard } from '../sales-console/application/sales-context';
+import { SalesConsoleModule } from '../sales-console/sales-console.module';
 import { SystemSalesAttributionController, SystemSalesReferralController } from '../sales-console/presentation/http/system-sales-agents.controller';
 import { SystemIdentityReconciliationController } from '../system-identity-reconciliation/presentation/http/system-identity-reconciliation.controller';
 
@@ -827,5 +828,53 @@ describe('platform routes and the companyId path parameter (RB-40)', () => {
       }));
     assert.ok(systemControllers >= 15, `expected to scan the platform controllers, found ${systemControllers}`);
     assert.deepEqual(offenders, [], 'AuthGuard resolves :companyId as the caller membership; name the target :partnerCompanyId');
+  });
+});
+
+// RB-36. Kept here because this is the guard suite the API test script runs. Suspending an agent
+// leaves the membership and the role in place, so a fresh login used to walk straight back in.
+describe('SalesAgentActiveGuard (RB-36)', () => {
+  const agent = { userId: 'agent-1', companyId: PLATFORM_TENANT_ID, roles: ['MANGMEE_SALES'], permissions: ['sales.console.read'] };
+  const httpContext = (context: object) => ({ switchToHttp: () => ({ getRequest: () => ({ context }) }) }) as any;
+  const guardOver = (profile: { status: string } | null) => {
+    const findUnique = mock.fn(async (_args: { where: { userId: string } }) => profile);
+    return { guard: new SalesAgentActiveGuard({ client: { salesAgentProfile: { findUnique } } } as any), findUnique };
+  };
+
+  it('refuses a suspended agent with a stable code, and lets the same agent back in once reactivated', async () => {
+    const profile = { status: 'SUSPENDED' };
+    const { guard, findUnique } = guardOver(profile);
+    await assert.rejects(() => guard.canActivate(httpContext(agent)), (error: unknown) => {
+      assert.ok(error instanceof ForbiddenException);
+      assert.equal((error.getResponse() as { code: string }).code, 'SALES_AGENT_SUSPENDED');
+      return true;
+    });
+    assert.deepEqual(findUnique.mock.calls[0]!.arguments[0].where, { userId: 'agent-1' });
+
+    // Nothing to re-grant: the role and the membership never left, only the status changed.
+    profile.status = 'ACTIVE';
+    assert.equal(await guard.canActivate(httpContext(agent)), true);
+  });
+
+  it('lets through a caller who has no agent profile, and never locks SYSTEM_ADMIN out', async () => {
+    assert.equal(await guardOver(null).guard.canActivate(httpContext({ ...agent, roles: ['MANGMEE_SALES_LEAD'] })), true);
+    const admin = guardOver({ status: 'SUSPENDED' });
+    assert.equal(await admin.guard.canActivate(httpContext({ ...agent, roles: ['SYSTEM_ADMIN'] })), true);
+    assert.equal(admin.findUnique.mock.callCount(), 0);
+  });
+
+  it('stands on every sales-console controller that requires a sales permission', () => {
+    const controllers = Reflect.getMetadata('controllers', SalesConsoleModule) as Function[];
+    const requiresSales = (controller: Function) => Object.getOwnPropertyNames(controller.prototype).some((name) => [
+      ...(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, controller.prototype[name]) ?? []),
+      ...(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, controller.prototype[name]) ?? []),
+    ].some((permission: string) => permission.startsWith('sales.')));
+    const sales = controllers.filter(requiresSales);
+    assert.ok(sales.length >= 6, `expected the sales controllers, found ${sales.map((controller) => controller.name).join(', ')}`);
+    assert.deepEqual(
+      sales.filter((controller) => !(Reflect.getMetadata(GUARDS_METADATA, controller) as unknown[] | undefined)?.includes(SalesAgentActiveGuard))
+        .map((controller) => controller.name),
+      [],
+    );
   });
 });

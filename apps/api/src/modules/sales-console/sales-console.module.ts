@@ -10,6 +10,7 @@ import { SystemPartnerManagementModule } from '../system-partner-management/syst
 import { ClaimEventDiscountUseCase } from './application/claim-event-discount.use-case';
 import { SalesAgentsService } from './application/sales-agents.service';
 import { SalesCompanySearchService } from './application/sales-company-search.service';
+import { SalesAgentActiveGuard } from './application/sales-context';
 import { SalesDealsService } from './application/sales-deals.service';
 import { SalesEventsService } from './application/sales-events.service';
 import { SalesReferralService } from './application/sales-referral.service';
@@ -48,7 +49,8 @@ import { SystemSalesAgentsController, SystemSalesAttributionController, SystemSa
     SalesEventReportsController,
   ],
   providers: [SalesAgentsService, SalesCompanySearchService, SalesDealsService, SalesReferralService,
-    SalesReportsService, SalesRenewalService, SalesEventsService, ClaimEventDiscountUseCase, SalesEventReportsService],
+    SalesReportsService, SalesRenewalService, SalesEventsService, ClaimEventDiscountUseCase, SalesEventReportsService,
+    SalesAgentActiveGuard],
   exports: [SalesReferralService, SalesDealsService],
 })
 export class SalesConsoleModule {}

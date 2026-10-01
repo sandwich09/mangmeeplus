@@ -4,7 +4,7 @@
  * Admin reads, updates and exports sit behind `sales.agent_profile.manage`.
  * Scoped lead and self access is exposed by `/v1/sales/*` (S10/R11).
  */
-import { Body, Controller, Get, Header, HttpCode, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import {
   IsBoolean, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested,
@@ -28,7 +28,7 @@ import { SalesAgentsService } from '../../application/sales-agents.service';
 import { SalesReferralService } from '../../application/sales-referral.service';
 import { SalesReportsService } from '../../application/sales-reports.service';
 import { ListThaiAddressesUseCase } from '../../../employee-access/application/use-cases/list-thai-addresses.use-case';
-import { assertPlatformTenant } from '../../application/sales-context';
+import { assertPlatformTenant, SalesAgentActiveGuard } from '../../application/sales-context';
 
 export class SalesAgentProfileDtoIn {
   @IsString() @IsNotEmpty() @MaxLength(200) legalName!: string;
@@ -69,6 +69,7 @@ export class SalesReferralUpdateDto {
 }
 
 @Controller('system/sales-agents')
+@UseGuards(SalesAgentActiveGuard)
 export class SystemSalesAgentsController {
   constructor(private readonly agents: SalesAgentsService, private readonly listThaiAddresses: ListThaiAddressesUseCase) {}
 
@@ -158,6 +159,7 @@ export class SystemSalesAgentsController {
  * name as the caller's own company, and the admin has no membership in the shop (RB-40).
  */
 @Controller('system/partners')
+@UseGuards(SalesAgentActiveGuard)
 export class SystemSalesReferralController {
   constructor(private readonly referral: SalesReferralService) {}
 
@@ -187,6 +189,7 @@ export class SalesAttributionFlagReviewDto {
  * a lead must never be able to clear a flag raised against their own team.
  */
 @Controller('system/sales-attribution')
+@UseGuards(SalesAgentActiveGuard)
 export class SystemSalesAttributionController {
   constructor(private readonly reports: SalesReportsService) {}
 
