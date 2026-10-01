@@ -104,19 +104,22 @@ export type PayoutAccountEditRefusal = 'target_not_active' | 'target_manages_peo
  *  - nobody sets the account of a member who is not ACTIVE: the account owner must be told of every
  *    such change, and a notice reaches active members only (a draft, invited, suspended or disabled
  *    member would never see it);
- *  - an owner or an admin may set any active employee's;
+ *  - an owner or an admin may set any active employee's. That means the product's own OWNER or ADMIN
+ *    role: the caller looks the role up (`holdsSystemOwnerOrAdminRole`), because a role key proves
+ *    nothing — a company role named "Admin" carries the key ADMIN as well;
  *  - any other holder of the right (a manager, HR, a custom role) may set it only for members who do
  *    not manage people themselves, and only for members wholly inside the editor's own branches.
  * Null means allowed. The account owner is told of every such change (see the use case).
  */
 export function payoutAccountEditRefusal(input: {
-  editorRoles: readonly string[];
+  /** The editor holds the SYSTEM owner or admin role, not merely a role with that key. */
+  editorIsOwnerOrAdmin: boolean;
   /** Undefined: the editor holds every branch. */
   editorBranchIds?: readonly string[];
   target: { membershipStatus: string; managesPeople: boolean; allBranches: boolean; branchIds: readonly string[] };
 }): PayoutAccountEditRefusal | null {
   if (input.target.membershipStatus !== 'ACTIVE') return 'target_not_active';
-  if (input.editorRoles.some((role) => role === 'OWNER' || role === 'ADMIN')) return null;
+  if (input.editorIsOwnerOrAdmin) return null;
   if (input.target.managesPeople) return 'target_manages_people';
   const branches = input.editorBranchIds;
   const outside = branches !== undefined

@@ -1358,6 +1358,49 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     await db.membershipRole.deleteMany({ where: { membershipId: approverMembership.id } });
   });
 
+  // Security review S6: "owner or admin" is the system role, never a key. A role a company makes
+  // takes its key from its name, and the copy a company gets by editing the Admin role is stored the
+  // same way: company scope, same key, not a system role.
+  it('counts only the system owner or admin role, not a company role that carries the same key', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const membership = await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: approver } }, select: { id: true } });
+    const holds = () => repos[0]!.holdsSystemOwnerOrAdminRole(companyId, approver);
+    const give = async (roleId: string) => {
+      await db.membershipRole.deleteMany({ where: { membershipId: membership.id } });
+      await db.membershipRole.create({ data: { membershipId: membership.id, roleId } });
+    };
+    const created: string[] = [];
+    try {
+      assert.equal(await holds(), false, 'no role at all');
+      for (const [key, name] of [['ADMIN', 'Admin'], ['OWNER', 'Owner']] as const) {
+        // What CreateRoleUseCase writes for a role named "Admin", and what a company's edited copy of the Admin role looks like.
+        await give((await db.role.create({ data: { companyId, scopeKey: companyId, key, name, isSystem: false } })).id);
+        assert.equal(await holds(), false, `a company role with the key ${key}`);
+        const existing = await db.role.findUnique({ where: { scopeKey_key: { scopeKey: 'system', key } } });
+        const system = existing ?? await db.role.create({ data: { scopeKey: 'system', key, name, isSystem: true } });
+        if (!existing) created.push(system.id);
+        await give(system.id);
+        assert.equal(await holds(), true, `the system role ${key}`);
+        assert.equal(await repos[0]!.holdsSystemOwnerOrAdminRole(otherCompanyId, approver), false, 'not a member of that company');
+        // A member who is not active holds nothing for this purpose.
+        await db.companyMembership.update({ where: { id: membership.id }, data: { status: 'SUSPENDED' } });
+        assert.equal(await holds(), false, 'a suspended member');
+        await db.companyMembership.update({ where: { id: membership.id }, data: { status: 'ACTIVE' } });
+      }
+      // Any other system role is not owner or admin.
+      const existingManager = await db.role.findUnique({ where: { scopeKey_key: { scopeKey: 'system', key: 'MANAGER' } } });
+      const manager = existingManager ?? await db.role.create({ data: { scopeKey: 'system', key: 'MANAGER', name: 'Manager', isSystem: true } });
+      if (!existingManager) created.push(manager.id);
+      await give(manager.id);
+      assert.equal(await holds(), false, 'the system manager role');
+    } finally {
+      await db.membershipRole.deleteMany({ where: { membershipId: membership.id } });
+      await db.role.deleteMany({ where: { id: { in: created } } });
+      await db.role.deleteMany({ where: { scopeKey: companyId, key: { in: ['ADMIN', 'OWNER'] } } });
+    }
+  });
+
   it('keeps every snapshot row inside its own claim and company', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const db = clients[0]!;

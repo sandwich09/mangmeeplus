@@ -1170,6 +1170,23 @@ export class PrismaReimbursementRepository {
     };
   }
 
+  /**
+   * Whether the member holds the product's own OWNER or ADMIN role. Roles are compared by what they
+   * are, not by their key: a role a company makes gets its key from its name, so a custom role named
+   * "Admin" has the key ADMIN too, and so does the copy a company gets when it edits the Admin role.
+   * Both live in the company's scope (`scopeKey` = the company, `isSystem` false) and cannot be told
+   * apart, so neither counts: only the system role (`scopeKey` 'system', no company) does.
+   */
+  async holdsSystemOwnerOrAdminRole(companyId: string, userId: string): Promise<boolean> {
+    return !!await this.prisma.client.companyMembership.findFirst({
+      where: {
+        companyId, userId, status: 'ACTIVE',
+        roles: { some: { role: { key: { in: ['OWNER', 'ADMIN'] }, status: 'ACTIVE', isSystem: true, scopeKey: 'system', companyId: null } } },
+      },
+      select: { id: true },
+    });
+  }
+
   /** The claim's own snapshot. Never the member's default account. */
   findClaimPayout(request: ReimbursementRequestRecord) {
     return readClaimPayout(this.prisma.client, request);

@@ -100,7 +100,7 @@ export class MemberPayoutAccountUseCase {
     return {
       ...await this.respond(ctx.companyId, await this.repo.findMemberPayoutAccount(ctx.companyId, userId)),
       // The edit button is offered exactly when the write below would go through.
-      canEdit: userId === ctx.userId ? ctx.permissions.includes('reimbursement.create') : this.editRefusal(ctx, member) === null,
+      canEdit: userId === ctx.userId ? ctx.permissions.includes('reimbursement.create') : await this.editRefusal(ctx, member) === null,
     };
   }
 
@@ -171,13 +171,17 @@ export class MemberPayoutAccountUseCase {
   }
 
   /** Why this editor may not set this member's account, or null: the right itself, then the rule about whose. */
-  private editRefusal(
+  private async editRefusal(
     ctx: RequestContext,
     member: { membershipStatus: string; managesPeople: boolean; allBranches: boolean; branchIds: string[] },
-  ): string | null {
+  ): Promise<string | null> {
     // A company without reimbursements has no payout accounts to manage.
     if (!ctx.permissions.includes('access.employee.update') || ctx.entitlementDeniedPermissions?.['reimbursement.create']) return 'no_employee_edit_right';
-    return payoutAccountEditRefusal({ editorRoles: ctx.roles, editorBranchIds: (ctx.scopes ?? {}).branchIds, target: member });
+    // The session carries role KEYS, and a company role named "Admin" has the key ADMIN too. The key
+    // only says the question is worth asking; the answer is whether the role is the system's own.
+    const editorIsOwnerOrAdmin = ctx.roles.some((role) => role === 'OWNER' || role === 'ADMIN')
+      && await this.repo.holdsSystemOwnerOrAdminRole(ctx.companyId, ctx.userId);
+    return payoutAccountEditRefusal({ editorIsOwnerOrAdmin, editorBranchIds: (ctx.scopes ?? {}).branchIds, target: member });
   }
 
   private async assertMayEditMember(ctx: RequestContext, userId: string): Promise<void> {
@@ -187,7 +191,7 @@ export class MemberPayoutAccountUseCase {
     const member = await this.repo.findPayoutMember(ctx.companyId, userId);
     // Another company's user is simply not here; a business owner has no employee record to edit.
     if (!member?.hasEmployeeProfile) throw new NotFoundException('payout_member_not_found');
-    const reason = this.editRefusal(ctx, member);
+    const reason = await this.editRefusal(ctx, member);
     if (reason) {
       // An attempt to set where someone else's money goes is recorded, refused or not.
       void this.audit.log({

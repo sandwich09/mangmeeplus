@@ -18,6 +18,7 @@ import { hasPayoutSnapshot, payoutAttestationError, sealPayoutDestination } from
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
+import { roleKeyFromName } from '../../../employee-access/application/use-cases/create-role.use-case';
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import {
   approverModeForRole,
@@ -137,6 +138,8 @@ type RepoOptions = {
   /** Payout: by default the fixture claim asks for cash, so a test about something else needs no account; this leaves it with no choice. */
   noDefaultPayout?: boolean;
   /** Payout: members an employee-data editor can look up (`findPayoutMember`). */
+  /** Payout: users whose OWNER / ADMIN key comes from a role the company made (a custom role named "Admin"), not from the system role. */
+  companyRoleUsers?: string[];
   payoutMembers?: Record<string, { displayName: string; membershipStatus?: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean }>;
 };
 
@@ -308,6 +311,8 @@ function fakeRepo(options: RepoOptions = {}) {
       if (before) await onPersisted(fakeTx(calls.outbox), before);
       return !!before;
     },
+    // An OWNER or ADMIN key in the fixture is the system role, unless a case names the user as holding a company role with that key.
+    holdsSystemOwnerOrAdminRole: async (_companyId: string, userId: string) => !(options.companyRoleUsers ?? []).includes(userId),
     // A member of the fixture is ACTIVE unless a case says otherwise.
     findPayoutMember: async (_companyId: string, userId: string) => (options.payoutMembers?.[userId] ? { membershipStatus: 'ACTIVE', ...options.payoutMembers[userId] } : null),
     findClaimPayout: (claim: any) => readClaimPayout(payoutDb, claim),
@@ -1492,6 +1497,45 @@ describe('payout: whose account an editor may set (payment-redirection guard)', 
       }
       assert.equal(world.notifications.length, targets.length);
     }
+  });
+
+  // Security review S6: "owner or admin" was read off the role KEY. A role a company makes takes its
+  // key from its name, so a custom role named "Admin" (or "Owner") carried the key and with it the
+  // right to set anyone's account. The role has to be the system's own.
+  it('holds a custom role named Admin or Owner to the rule for everyone else', async () => {
+    assert.deepEqual([roleKeyFromName('Admin'), roleKeyFromName('admin'), roleKeyFromName('Owner')], ['ADMIN', 'ADMIN', 'OWNER']);
+    for (const key of ['ADMIN', 'OWNER']) {
+      const custom = ctx({ userId: 'custom-1', roles: [key], permissions: editRights });
+      const world = payoutWorld({ payoutMembers: members, companyRoleUsers: ['custom-1'] });
+      // No peer, no superior: exactly like a manager.
+      for (const target of ['manager-2', 'hr-1', 'admin-1']) {
+        assert.equal((await world.payouts.getForMember(custom, target)).canEdit, false, `${key} → ${target}: no button`);
+        await assert.rejects(world.payouts.setForMember(custom, target, KBANK), /payout_account_edit_denied/, `${key} → ${target}`);
+      }
+      // And no other branch, when the role is limited to one.
+      const limited = ctx({ ...custom, scopes: { branchIds: ['branch-1'] } });
+      await assert.rejects(world.payouts.setForMember(limited, 'staff-b2', KBANK), /payout_account_edit_denied/);
+      assert.deepEqual(world.audits.map((row) => [row.result, row.metadataJson.reason]),
+        [...Array(3).fill(['DENIED', 'target_manages_people']), ['DENIED', 'outside_editor_branch_scope']], key);
+      assert.deepEqual([world.state.payoutTables.accounts.length, world.notifications.length], [0, 0]);
+      // Their own people remain theirs to set, with the notice.
+      assert.equal((await world.payouts.setForMember(limited, 'staff-1', KBANK)).account?.accountLast4, '6789');
+      assert.deepEqual(world.notifications.map((notice) => notice.recipientUserIds), [['staff-1']]);
+      // The same key on the system role is the real thing.
+      const real = payoutWorld({ payoutMembers: members });
+      assert.equal((await real.payouts.setForMember(custom, 'manager-2', KBANK)).account?.accountLast4, '6789', key);
+    }
+  });
+
+  it('asks about the system role only when the key is there, and never trusts the key alone', async () => {
+    const world = payoutWorld({ payoutMembers: members });
+    const asked: string[] = [];
+    world.state.repo.holdsSystemOwnerOrAdminRole = async (_companyId: string, userId: string) => { asked.push(userId); return false; };
+    await world.payouts.setForMember(editors.manager, 'staff-1', KBANK);
+    assert.deepEqual(asked, [], 'a manager is not asked about');
+    await assert.rejects(world.payouts.setForMember(editors.admin, 'manager-2', KBANK), /payout_account_edit_denied/);
+    await assert.rejects(world.payouts.setForMember(editors.owner, 'manager-2', KBANK), /payout_account_edit_denied/);
+    assert.deepEqual(asked, ['admin-1', 'owner-1']);
   });
 
   it('never needs the rule for a member own account, whichever screen it is saved from', async () => {
