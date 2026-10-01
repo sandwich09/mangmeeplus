@@ -4,6 +4,7 @@ import {
   cancelReimbursementDraftAction,
   confirmReimbursementDraftAction,
   getReimbursementDraftAction,
+  listAllReimbursements,
   submitReimbursement,
   uploadReceiptFile,
   uploadSignedClaimFormCopy,
@@ -134,6 +135,41 @@ describe('reimbursement receipt upload', () => {
       await assert.rejects(() => uploadReceiptFile('co-1', file, branchId), /สาขา/);
     }
     assert.equal(requests, 0);
+  });
+});
+
+describe('listAllReimbursements', () => {
+  const pagesOf = (total: number, answer: (page: number) => unknown[]) => {
+    const urls: string[] = [];
+    (globalThis as Record<string, unknown>)['window'] = {};
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      urls.push(String(input));
+      const page = Number(new URL(String(input), 'http://web.test').searchParams.get('page'));
+      return Response.json({ items: answer(page), total, page, pageSize: 100 });
+    }) as typeof fetch;
+    return urls;
+  };
+  const claims = (from: number, to: number) => Array.from({ length: to - from }, (_, index) => ({ id: `rb-${from + index}` }));
+
+  it('loads every page, so the hub cards count claims older than the first page', async () => {
+    // Before: one unpaged call, and the endpoint answers its first 20 rows.
+    const urls = pagesOf(230, (page) => claims((page - 1) * 100, Math.min(page * 100, 230)));
+    const all = await listAllReimbursements('co-1', { scope: 'related' });
+    assert.equal(all.length, 230);
+    assert.deepEqual(urls, [1, 2, 3].map((page) => `/api/v1/companies/co-1/reimbursements?scope=related&page=${page}&pageSize=100`));
+  });
+
+  it('asks once for a short list and never repeats a claim that shifted between two calls', async () => {
+    const short = pagesOf(3, () => claims(0, 3));
+    assert.deepEqual(await listAllReimbursements('co-1'), claims(0, 3));
+    assert.equal(short.length, 1);
+    // A claim filed between the calls pushes rb-99 onto page 2 as well.
+    pagesOf(101, (page) => (page === 1 ? claims(0, 100) : claims(99, 101)));
+    assert.equal((await listAllReimbursements('co-1')).length, 101);
+    // An empty page ends the loop even when the total says more.
+    const urls = pagesOf(500, (page) => (page === 1 ? claims(0, 100) : []));
+    assert.equal((await listAllReimbursements('co-1')).length, 100);
+    assert.equal(urls.length, 2);
   });
 });
 

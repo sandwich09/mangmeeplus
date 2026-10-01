@@ -5,7 +5,7 @@ import {
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
-  approverNotReadyHelp,
+  approverNotReadyHelp, HUB_FILTERS, hubFilterCounts, hubFilterOf, hubRows,
 } from './reimbursements.logic';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
@@ -322,6 +322,47 @@ describe('parseHubTab against the visible set', () => {
   });
   it('degrades to mine when nothing is visible', () => {
     assert.equal(parseHubTab('finance', []), 'mine');
+  });
+});
+
+// Spec §18.1 (AC38) and the owner's consistency rule 2026-10-01: a card count is the number of rows its
+// filter shows, and the chips add up to ทั้งหมด.
+describe('hub cards and filter chips', () => {
+  // Each row carries the desk the list API answers with (terminal claims have none).
+  const rows = [
+    { id: 'draft', status: 'DRAFT', currentDesk: { kind: 'REQUESTER' } },
+    { id: 'pending', status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER', names: ['คุณสมชาย'] } },
+    { id: 'finance', status: 'FINANCE_REVIEW', currentDesk: { kind: 'FINANCE' } },
+    { id: 'to-finance', status: 'APPROVED', currentDesk: { kind: 'FINANCE' } },
+    { id: 'ready', status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' } },
+    { id: 'ready-2', status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' } },
+    { id: 'to-payment', status: 'APPROVED', currentDesk: { kind: 'PAYMENT' } },
+    { id: 'part-paid', status: 'PARTIALLY_PAID', currentDesk: { kind: 'PAYMENT' } },
+    { id: 'paid', status: 'PAID' },
+    { id: 'rejected', status: 'REJECTED' },
+    { id: 'cancelled', status: 'CANCELLED', currentDesk: null },
+    { id: 'voided', status: 'VOIDED' },
+  ];
+  const ids = (filter: Parameters<typeof hubRows>[1]) => hubRows(rows, filter).map((row) => row.id);
+
+  it('keeps a claim approved and waiting for payment out of รออนุมัติ/ตรวจสอบ', () => {
+    // Before: the card counted every status from PENDING_APPROVAL to READY_FOR_PAYMENT, 7 of these rows.
+    assert.deepEqual(ids('review'), ['pending', 'finance', 'to-finance']);
+    assert.deepEqual(ids('payment'), ['ready', 'ready-2', 'to-payment', 'part-paid']);
+    assert.deepEqual(ids('draft'), ['draft']);
+    assert.deepEqual(ids('paid'), ['paid']);
+    assert.deepEqual(ids('closed'), ['rejected', 'cancelled', 'voided']);
+    assert.equal(hubFilterOf({ status: 'A_STATE_ADDED_LATER' }), 'closed');
+  });
+
+  it('counts every card and chip as the rows its filter shows, and the chips add up to ทั้งหมด', () => {
+    const counts = hubFilterCounts(rows);
+    assert.deepEqual(counts, { all: 12, draft: 1, review: 3, payment: 4, paid: 1, closed: 3 });
+    for (const filter of ['all', ...HUB_FILTERS] as const) assert.equal(counts[filter], hubRows(rows, filter).length, filter);
+    assert.equal(HUB_FILTERS.reduce((sum, filter) => sum + counts[filter], 0), counts.all);
+    // No claim sits in two buckets.
+    assert.deepEqual(HUB_FILTERS.flatMap(ids).sort(), rows.map((row) => row.id).sort());
+    assert.deepEqual(hubFilterCounts([]), { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 });
   });
 });
 

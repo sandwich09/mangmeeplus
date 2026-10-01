@@ -159,13 +159,19 @@ const queueRow = { ...draft, requestNo: 'RB-202609-00007', status: 'FINANCE_REVI
   currentDesk: { kind: 'APPROVER', names: ['สมชาย', 'สมศรี การเงิน'] } };
 const hubPermissions = ['reimbursement.read', 'reimbursement.create', 'reimbursement.submit', 'reimbursement.approve', 'reimbursement.finance_review',
   'reimbursement.payment.record'];
-/** One hub tab, its queue loaded with the row (each queue starts as an empty list, loading). */
-const hubTab = (tab: string) => renderWithState(
+/** One hub tab, its queue loaded with the rows (each queue starts as an empty list, loading); `filter` = a card or chip already tapped. */
+const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string) => renderWithState(
   h(AppRouterContext.Provider, { value: router }, h(SearchParamsContext.Provider, { value: new URLSearchParams(`tab=${tab}`) },
     h(ToastContext.Provider, { value: toast },
       h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'], permissions: hubPermissions })))),
-  (initial) => (Array.isArray(initial) && initial.length === 0 ? [queueRow] : initial === true ? false : undefined),
+  (initial) => (Array.isArray(initial) && initial.length === 0 ? rows : initial === true ? false : initial === 'all' ? filter : undefined),
 );
+// One claim per state the hub has to place: the desk is what the list API answers, and finished claims have none.
+const hubClaims = ([
+  ['DRAFT', 'REQUESTER'], ['PENDING_APPROVAL', 'APPROVER'], ['READY_FOR_PAYMENT', 'PAYMENT'], ['READY_FOR_PAYMENT', 'PAYMENT'],
+  ['PAID', null], ['REJECTED', null], ['CANCELLED', null],
+] as const).map(([status, kind], index) => ({ ...draft, id: `${ids.request}${index}`, requestNo: kind === 'REQUESTER' ? undefined : 'RB-202609-00007',
+  status, amount: '100.0000', currentDesk: kind && { kind } }));
 
 /** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
 const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map(match => match[1]!),
@@ -219,6 +225,47 @@ describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
   });
 });
 
+describe('the hub cards and chips count what their filter shows (spec §18.1, AC38)', () => {
+  /** The markup inside the element marked `from`, up to the tag that carries `to`. */
+  const between = (html: string, from: string, to: string) => html.slice(html.indexOf('>', html.indexOf(from)) + 1, html.lastIndexOf('<', html.indexOf(to)));
+  const cardsOf = (html: string) => between(html, 'data-testid="reimbursements-mine-cards"', 'data-testid="reimbursements-mine-filters"');
+  /** Label → the number beside it, for the cards (number first) or the chips (label first). */
+  const numbers = (texts: string[], numberFirst: boolean) => Object.fromEntries(Array.from({ length: Math.floor(texts.length / 2) }, (_, index) =>
+    (numberFirst ? [texts[index * 2 + 1]!, texts[index * 2]!] : [texts[index * 2]!, texts[index * 2 + 1]!])));
+  const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
+
+  it('splits claims waiting for payment from those waiting for approval, and every number is its list', () => {
+    const html = hubTab('mine', hubClaims);
+    // Before: คำขอทั้งหมด 7 and รออนุมัติ/ตรวจสอบ 3 (the two approved claims counted as waiting for approval).
+    assert.deepEqual(numbers(visible(cardsOf(html)), true),
+      { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '฿700' });
+    const chips = numbers(visible(between(html, 'data-testid="reimbursements-mine-filters"', 'type="search"')).slice(0, 12), false);
+    assert.deepEqual(chips, { 'ทั้งหมด': '7', 'ร่าง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่าย': '2', 'จ่ายแล้ว': '1', 'ปฏิเสธ/ยกเลิก': '2' });
+    assert.equal(rowsShown(html), 7);
+    // Tapping a card or its chip shows exactly the claims it counted.
+    for (const [filter, card, chip] of [['draft', 'ร่างรอส่ง', 'ร่าง'], ['review', 'รออนุมัติ/ตรวจสอบ', 'รออนุมัติ/ตรวจสอบ'],
+      ['payment', 'รอจ่ายเงินคืน', 'รอจ่าย'], ['paid', null, 'จ่ายแล้ว'], ['closed', null, 'ปฏิเสธ/ยกเลิก']] as const) {
+      const filtered = hubTab('mine', hubClaims, filter);
+      assert.equal(String(rowsShown(filtered)), chips[chip], filter);
+      if (card) assert.equal(numbers(visible(cardsOf(filtered)), true)[card], chips[chip], filter);
+      assert.ok(visible(filtered).includes(`พบ ${chips[chip]} จาก 7 รายการ`), filter);
+    }
+    assert.equal(Object.entries(chips).reduce((sum, [label, count]) => sum + (label === 'ทั้งหมด' ? 0 : Number(count)), 0), 7);
+  });
+
+  it('keeps the four cards two by two on a 390 px phone, each one a button that filters', () => {
+    const cards = cardsOf(hubTab('mine', hubClaims, 'payment'));
+    assert.ok(hubTab('mine', hubClaims).includes('<div class="grid grid-cols-2 gap-3 xl:grid-cols-4" data-testid="reimbursements-mine-cards">'));
+    const buttons = [...cards.matchAll(/<button type="button" aria-pressed="(true|false)" class="([^"]*)"/gu)];
+    assert.deepEqual(buttons.map(([, pressed]) => pressed), ['false', 'false', 'true', 'false'], 'รอจ่ายเงินคืน is the open filter');
+    // Nothing with a fixed width: a card is as wide as its grid column and its text wraps inside it.
+    for (const [, , className] of buttons) assert.match(className!, /^h-full w-full min-w-0 rounded-2xl text-left/u);
+    assert.doesNotMatch(cards, /\b(?:min-)?w-\[|whitespace-nowrap/u);
+    const chips = between(hubTab('mine', hubClaims), 'data-testid="reimbursements-mine-filters"', 'type="search"');
+    assert.doesNotMatch(chips, /\b(?:min-)?w-\[|whitespace-nowrap|lg:grid-cols/u);
+  });
+});
+
 const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementDraftActionPage.qa.spec.ts's set
   ['cuid/uuid/hash-like id', /\b[a-z0-9]{20,}\b|[0-9a-f]{8}-[0-9a-f]{4}-/iu], ['enum or code', /[A-Z_]{4,}/u],
   ['field path', /\w+\.\d+\.\w+|\b[a-zA-Z]\w*\.(?:\d|[a-z]\w*\b)/u], ['camelCase key', /\b[a-z]+[A-Z]\w*\b/u], ['snake_case code', /\b[a-z]+_[a-z_]+\b/u],
@@ -240,6 +287,7 @@ describe('no customer-visible claim page text carries a machine token (Owner rul
       ['create form: source picked, rows folded', filledCreatePage()],
       ['create form: rows bound to bills that were refused', filledCreatePage(refusedForm)],
       ...['mine', 'approvals', 'finance'].map((tab): [string, string] => [`hub: ${tab}`, hubTab(tab)]),
+      ['hub: mine, a claim in every state', hubTab('mine', hubClaims)],
     ];
     let checked = 0;
     for (const [page, html] of pages) {

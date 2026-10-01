@@ -258,6 +258,36 @@ export function parseHubTab(value: string | null | undefined, visible: readonly 
   return visible.includes(value as HubTab) ? (value as HubTab) : (visible[0] ?? 'mine');
 }
 
+// ---- หน้ารวม: summary cards and filter chips (spec §18.1) ----
+
+/** Every claim sits in exactly one of these, so the chips add up to "ทั้งหมด". */
+export const HUB_FILTERS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+export type HubFilter = 'all' | (typeof HUB_FILTERS)[number];
+
+/**
+ * Read off the desk the server resolved, the one the row prints as "อยู่ที่ …": waiting on an approver
+ * or on finance review is รออนุมัติ/ตรวจสอบ, waiting on whoever records the payment is รอจ่าย. A claim
+ * with no desk is finished: paid, or refused/cancelled.
+ */
+export function hubFilterOf(row: { status?: string; currentDesk?: { kind?: string } | null }): (typeof HUB_FILTERS)[number] {
+  switch (row.currentDesk?.kind) {
+    case 'REQUESTER': return 'draft';
+    case 'APPROVER': case 'FINANCE': return 'review';
+    case 'PAYMENT': return 'payment';
+  }
+  return row.status === 'PAID' ? 'paid' : 'closed';
+}
+
+/** The rows a card or a chip shows. */
+export function hubRows<T extends Parameters<typeof hubFilterOf>[0]>(rows: readonly T[], filter: HubFilter): T[] {
+  return filter === 'all' ? [...rows] : rows.filter((row) => hubFilterOf(row) === filter);
+}
+
+/** Counted with `hubRows` itself, so a number can never disagree with the list its filter shows. */
+export function hubFilterCounts(rows: readonly Parameters<typeof hubFilterOf>[0][]): Record<HubFilter, number> {
+  return Object.fromEntries((['all', ...HUB_FILTERS] as const).map((filter) => [filter, hubRows(rows, filter).length])) as Record<HubFilter, number>;
+}
+
 // ---- Claim timeline (เส้นทางของใบเบิก) ----
 
 export type ClaimTimelineRow = {
