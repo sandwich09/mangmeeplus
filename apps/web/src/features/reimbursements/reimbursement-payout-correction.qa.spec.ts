@@ -1219,3 +1219,31 @@ describe('signing and signed copies around a round (spec §14.4, AC32)', () => {
     assert.ok(usual.some((text) => text.startsWith('สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ')));
   });
 });
+
+describe('nothing pays a claim while its payout account is being corrected (AC30)', () => {
+  const everything: Viewer = { userId: 'finance', permissions: EVERYTHING };
+
+  it('offers no บันทึกจ่าย on a queue row or in the quick-pay dialog, and the dialog says what the claim page says', () => {
+    for (const at of [phaseA, phaseB]) {
+      assert.equal(logic.queueRowOffersPayment(at(), everything.permissions), false);
+      assert.equal(logic.queueRowOffersFinanceReview(at()), false);
+      assert.equal(active(at(), everything).actions.includes('pay'), false);
+    }
+    // A finance-queue row can be older than the claim: the dialog reads the claim and shows no form for one sent back meanwhile.
+    assert.equal(logic.quickPayBlockedNote(phaseA(), everything.permissions, everything.userId),
+      'บันทึกจ่ายใบนี้ไม่ได้ · ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เลขบัญชีไม่ถูกต้อง · หมายเหตุ: ธนาคารแจ้งว่าไม่พบบัญชีนี้ · รอผู้เบิกแก้บัญชีรับเงิน');
+    assert.equal(logic.quickPayBlockedNote(phaseB(), everything.permissions, everything.userId), 'บันทึกจ่ายใบนี้ไม่ได้ · รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่');
+    assert.equal(logic.quickPayBlockedNote(reapproved(), everything.permissions, everything.userId), null, 'payable again after the approval');
+    // The link that opens the payment form on arrival opens none on a claim in a round.
+    assert.equal(logic.opensPaymentFormOnArrival(true, active(phaseA(), everything)), false);
+  });
+
+  // Spec §22: the payer had the form open when the claim was sent back. The save is refused, and the form says why.
+  it('tells a payer whose form was open that the claim is having its payout account corrected, and to press nothing again', () => {
+    const refused = Object.assign(new Error('payout_correction_in_progress'), { status: 409 });
+    assert.equal(logic.paymentSaveErrorMessage('record', refused, true), 'ยังบันทึกจ่ายไม่สำเร็จ · ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน');
+    // A payment that lost its race against the send-back itself is told to press save again; the next press is then refused as above.
+    const lost = Object.assign(new Error('reimbursement_payment_state_changed'), { status: 409 });
+    assert.match(logic.paymentSaveErrorMessage('record', lost, true), /^ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน/u);
+  });
+});
