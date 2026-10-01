@@ -487,6 +487,19 @@ describe('claim approval tasks close when the claim moves on (audit B8)', () => 
     assert.equal(JSON.stringify(tasks), before);
   });
 
+  // Review: superseding ignores the claim's status, so called without a claim it would have
+  // cancelled every open approval task of every company.
+  it('refuses to supersede without naming the claim, and closes nothing', async () => {
+    const tasks = [task('pending-claim'), task('other-company', { companyId: 'co-2', sourceId: 'req-9' })];
+    const { repo, writes } = store(tasks, [{ id: 'req-1', status: 'PENDING_APPROVAL' }]);
+
+    await assert.rejects(() => repo.closeSettledClaimTasks({ supersede: true }), /supersede needs the claim/);
+    await assert.rejects(() => repo.closeSettledClaimTasks({ companyId: 'co-1', supersede: true }), /supersede needs the claim/);
+
+    assert.deepEqual(statuses(tasks), { 'pending-claim': 'OPEN', 'other-company': 'OPEN' });
+    assert.deepEqual(writes, []);
+  });
+
   it('decides the outcome from the claim status, and finds the claim an event is about', () => {
     assert.equal(claimApprovalTaskOutcome('PENDING_APPROVAL'), null);
     for (const status of ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID']) {

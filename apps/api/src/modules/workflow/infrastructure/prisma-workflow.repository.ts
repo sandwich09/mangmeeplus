@@ -478,6 +478,9 @@ export class PrismaWorkflowRepository {
     scope: { companyId?: string; requestId?: string; supersede?: boolean } = {},
     now: Date = new Date(),
   ): Promise<number> {
+    // Superseding ignores the claim's status, so without a claim it would cancel every open
+    // approval task of every company. Only ever one claim's.
+    if (scope.supersede && !scope.requestId) throw new Error('closeSettledClaimTasks: supersede needs the claim it is for');
     const stillOpen = { in: ['OPEN', 'SNOOZED'] as any };
     const tasks = await this.prisma.client.workflowTask.findMany({
       where: {
