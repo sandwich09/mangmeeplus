@@ -452,6 +452,8 @@ describe('payment slip at the payment step', () => {
         /payment_slip_invalid/,
       );
     }
+    // A transfer with no slip at all is refused at the same point: no number is burnt on a refusal.
+    await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', transfer), /payment_slip_required/);
     assert.equal(reservations, 0);
     assert.equal(repo.lastPayment, undefined);
     assert.equal(req.status, 'READY_FOR_PAYMENT');
@@ -1062,7 +1064,16 @@ describe('PrismaReimbursementRepository correction transitions', () => {
   });
 });
 
-type AtomicFault = 'create' | 'source-ref' | 'cas' | 'cas-conflict' | 'readback' | 'slip-link';
+type AtomicFault = 'create' | 'source-ref' | 'cas' | 'cas-conflict' | 'readback' | 'slip-link'
+  // PostgreSQL rolling the transaction back for a serialization conflict, as each layer reports it.
+  | 'serialization-row-lock' | 'serialization-commit';
+
+/** A raw statement that lost a serialization conflict, as Prisma's pg driver adapter reports it. */
+const rawSerializationFailure = () => Object.assign(new Error('Raw query failed. Code: `40001`. Message: `could not serialize access due to concurrent update`'), {
+  code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '40001', kind: 'postgres' } } },
+});
+/** The same conflict from a model query or at commit. */
+const transactionConflict = () => Object.assign(new Error('Transaction failed due to a write conflict or a deadlock. Please retry your transaction'), { code: 'P2034' });
 
 /** Enough of a Prisma `where` for the slip queries: equality, `{ in: [...] }` and `OR`. */
 function rowMatches(row: any, where: any): boolean {
@@ -1107,7 +1118,8 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
 
   const tx: any = {
     // Tagged-template call: the interpolated value is the advisory-lock key.
-    $executeRaw: async (_sql: TemplateStringsArray, ...values: string[]) => {
+    $executeRaw: async (sql: TemplateStringsArray, ...values: string[]) => {
+      if (fault === 'serialization-row-lock' && sql.join('').includes('FOR UPDATE')) throw rawSerializationFailure();
       writes.locks += 1;
       if (values[0]) writes.lockKeys.push(values[0]);
     },
@@ -1193,6 +1205,7 @@ function atomicPaymentHarness(initialFault?: AtomicFault, ambiguousTimeout = fal
       let committed = false;
       try {
         const result = await work(tx);
+        if (fault === 'serialization-commit') throw transactionConflict();
         committed = true;
         if (timeoutPending) {
           timeoutPending = false;

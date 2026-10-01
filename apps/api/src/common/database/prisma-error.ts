@@ -37,3 +37,19 @@ export function uniqueConstraintFields(err: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   return raw.map((field) => String(field).replace(/^[A-Za-z_][A-Za-z0-9_]*\(/, '').replaceAll('"', '').replace(/\)+$/, ''));
 }
+
+/**
+ * Whether PostgreSQL rolled the transaction back for a serialization conflict or a deadlock: another
+ * transaction won, nothing of this one was written, and running it again is safe.
+ *
+ * A model query reports it as `P2034`. A raw statement (an explicit row lock, for one) reports
+ * `P2010` instead and carries the SQLSTATE on the driver adapter error, as the reimbursement slip
+ * pg spec pins against real Postgres: `meta.driverAdapterError.cause.originalCode === '40001'`
+ * (serialization_failure). `40P01` (deadlock_detected) is read from the same place.
+ */
+export function isSerializationFailure(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  if ((err as { code?: string }).code === 'P2034') return true;
+  const sqlState = (err as { meta?: { driverAdapterError?: { cause?: { originalCode?: unknown } } } }).meta?.driverAdapterError?.cause?.originalCode;
+  return sqlState === '40001' || sqlState === '40P01';
+}

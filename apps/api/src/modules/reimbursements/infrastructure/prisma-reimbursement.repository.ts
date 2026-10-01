@@ -1,4 +1,5 @@
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
+import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import {
   civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY,
@@ -87,6 +88,16 @@ function stringArrayOpt(value: unknown): string[] | undefined {
 }
 
 /** A file proven usable as a slip of one claim, with what the link write needs to finish the job. */
+/**
+ * A payment transaction PostgreSQL rolled back because another writer got there first: two payers,
+ * a payment against a void, or the slip file changing underneath. Nothing was written, so the
+ * answer is the payment paths' own "it changed, reload and retry" (409), never a 500.
+ */
+function paymentChangedOnSerializationFailure(error: unknown): never {
+  if (isSerializationFailure(error)) throw new ConflictException('reimbursement_payment_state_changed');
+  throw error;
+}
+
 type ResolvedPaymentSlip = {
   attachmentId: string;
   source: ReimbursementPaymentSlipSource;
@@ -2633,7 +2644,7 @@ export class PrismaReimbursementRepository {
         },
       });
       return { request: this.toRequest(updated), payment: this.toPayment(payment), created: true, ...(slipLink && { slip: slipLink }) };
-    }, { isolationLevel: 'Serializable' });
+    }, { isolationLevel: 'Serializable' }).catch(paymentChangedOnSerializationFailure);
   }
 
   // ---- Payment slips (spec §12.5, §16) ----
@@ -2772,7 +2783,7 @@ export class PrismaReimbursementRepository {
         created: true,
         slip: await this.linkPaymentSlip(tx, { companyId: data.companyId, paymentId: data.paymentId, linkedByUserId: data.actorUserId, slip }),
       };
-    });
+    }).catch(paymentChangedOnSerializationFailure);
   }
 
   /** Slips per payment, oldest first. Ids and times only; the file opens through the slip endpoint. */
@@ -3020,6 +3031,15 @@ export class PrismaReimbursementRepository {
         } });
         return { request: this.toRequest(request), payment: this.toPayment(prior), reversalEntryId: null, alreadyVoided: true };
       }
+      // A bank statement line confirmed against this payment would be left matched to a payment that
+      // no longer stands. The match is undone first: the rule deleting an expense already follows.
+      const bankMatch = await tx.bankReconciliationMatch.findFirst({
+        where: { companyId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paymentId, status: 'CONFIRMED' },
+        select: { id: true },
+      });
+      if (bankMatch) {
+        throw new ConflictException({ code: 'reimbursement_payment_bank_matched', message: 'Undo the bank reconciliation match of this payment before voiding it.' });
+      }
       const voided = await tx.reimbursementPayment.updateMany({
         where: { id: paymentId, companyId, reimbursementRequestId: requestId, status: 'RECORDED' },
         data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason, voidedByUserId: actorUserId },
@@ -3096,7 +3116,7 @@ export class PrismaReimbursementRepository {
           priority: 'NORMAL', status: 'PENDING' } });
       }
       return { request: this.toRequest(updated), payment: this.toPayment(payment), reversalEntryId: reversal.reversalEntryId };
-    });
+    }).catch(paymentChangedOnSerializationFailure);
   }
 
   // GAP-02: recorded-but-unposted settlement payments awaiting a generate call.

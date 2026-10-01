@@ -94,6 +94,8 @@ function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amou
       update: async ({ data }: any) => data,
     },
     journalEntry: { findFirst: async () => null },
+    // No bank statement line is confirmed against the payment (a confirmed match refuses the void).
+    bankReconciliationMatch: { findFirst: async () => null },
     reimbursementRequest: {
       findFirstOrThrow: async () => request,
       update: async ({ data }: any) => { Object.assign(request, data); return request; },

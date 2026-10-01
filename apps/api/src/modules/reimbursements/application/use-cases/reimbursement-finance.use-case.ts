@@ -405,6 +405,9 @@ export class RecordReimbursementPaymentUseCase {
       hasSlip: Boolean(input.slipAttachmentId),
     });
     if (error) throw new UnprocessableEntityException(error);
+    // Everything that can refuse the payment is checked before a payment number is reserved: a
+    // refusal after that point would burn a number that only a retry with the same key reuses.
+    // Phase 1 seam: the payer's confirmation of the payout account is validated here too.
     if (input.slipAttachmentId) {
       await this.repo.assertPaymentSlipUsable({
         companyId: ctx.companyId, requestId: id, attachmentId: input.slipAttachmentId, actorUserId: ctx.userId,
