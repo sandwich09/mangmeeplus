@@ -778,20 +778,66 @@ describe('payout: sealing an account (one place on write)', () => {
   });
 });
 
+// Security review S5: the guard refused the product's own document numbers and plain amounts, so a
+// finance reviewer could not write "ดูใบ RB-202609-0003", and it missed a number written with dots,
+// slashes, several spaces or Thai digits. One function, one table.
 describe('payout: no account number in a note that goes into a notification', () => {
-  it('catches a number written the way people write one: in groups, with dashes or spaces', () => {
-    for (const text of [
-      'บัญชีผิด ต้องเป็น 123-4-56789-0', 'โอนเข้า 123 4 56789 0 แทน', 'พร้อมเพย์ 081-000-1234', 'เบอร์ 081 234 5678 ครับ', '0812345678',
-      'เลขบัญชี 0123456789', 'กสิกร 012-3-45678-9 ชื่อสมชาย', '000-123-456-789-012', 'เลขที่ 123456',
-    ]) assert.equal(looksLikeAccountNumber(text), true, text);
-  });
+  const cases: Array<[text: unknown, refused: boolean, why: string]> = [
+    // An account or a PromptPay number, the ways people write one.
+    ['0812345678', true, 'ten digits in one piece'],
+    ['เลขบัญชี 0123456789', true, 'an account number after its label'],
+    ['บัญชีผิด ต้องเป็น 123-4-56789-0', true, 'groups joined by dashes'],
+    ['โอนเข้า 123 4 56789 0 แทน', true, 'groups joined by spaces'],
+    ['พร้อมเพย์ 081-000-1234', true, 'a phone number with dashes'],
+    ['เบอร์ 081 234 5678 ครับ', true, 'a phone number with spaces'],
+    ['กสิกร 012-3-45678-9 ชื่อสมชาย', true, 'between other words'],
+    ['000-123-456-789-012', true, 'fifteen digits in groups of three'],
+    ['เลขที่ 123456', true, 'six digits in a row'],
+    ['โอนเข้า 123.4.56789.0', true, 'groups joined by dots'],
+    ['โอนเข้า 123/4/56789/0', true, 'groups joined by slashes'],
+    ['เบอร์ 081  234  5678', true, 'two spaces between the groups'],
+    ['เบอร์ 081\t234\n5678', true, 'a tab and a line break between the groups'],
+    ['012 3-45678.9', true, 'mixed separators'],
+    ['พร้อมเพย์ ๐๘๑๒๓๔๕๖๗๘', true, 'Thai digits in one piece'],
+    ['บัญชี ๑๒๓-๔-๕๖๗๘๙-๐', true, 'Thai digits in groups'],
+    ['บัญชี 123-4-๕๖๗๘๙-0', true, 'Thai and Arabic digits mixed'],
+    // What looks like an exception but is not one.
+    ['SCB-0123456789', true, 'a bank short name is not a document prefix'],
+    ['KBANK-012-3-45678-9', true, 'a bank short name before a grouped number'],
+    ['RB-0123456789', true, 'a document prefix without the year and running number'],
+    ['ดูใบ RB-202609-0003 แล้วโอนเข้า 0123456789', true, 'a document number beside an account number'],
+    ['โอน 0123456789 บาท', true, 'an amount never starts with 0'],
+    ['โอน 1234567890 บาท', true, 'ten digits is not an amount'],
+    ['ยอด 1500000', true, 'seven digits with nothing saying they are an amount'],
+    ['123 4 56789 5 บาท', true, 'a grouped number is not an amount because บาท follows it'],
+    // The product's own document numbers.
+    ['RB-202609-0003', false, 'a claim number'],
+    ['EXP-2026-10-000123', false, 'an expense number with the month apart'],
+    ['ดูใบ RB-202609-00003 และ RBPAY-202610-00001', false, 'two document numbers in a sentence'],
+    ['หนังสือรับรอง WHT-2026-00012', false, 'a yearly document number'],
+    ['ใบเบิก rb-256910-0007', false, 'typed in lower case, Buddhist year'],
+    // Plain amounts.
+    ['ยอดเกิน 1500000 บาท', false, 'a plain amount in baht'],
+    ['ยอด 1500000.50 บาท', false, 'a plain amount with satang'],
+    ['ยอด 1,250.00 บาท เกินวงเงิน 500 บาท', false, 'amounts with separators'],
+    ['ยอด ๑๕๐๐๐๐๐ บาท', false, 'a plain amount in Thai digits'],
+    // Ordinary notes: dates, short references, counts.
+    ['ยอดไม่ตรงกับใบเสร็จ', false, 'no digits at all'],
+    ['ใบเสร็จลงวันที่ 01-10-2569 ไม่ตรงกับวันที่เบิก', false, 'a date with dashes'],
+    ['วันที่ 2026-10-01 ซ้ำกับใบก่อน', false, 'an ISO date'],
+    ['ใบเสร็จวันที่ 01/10/2569 และ 05/10/2569', false, 'dates with slashes'],
+    ['ช่วงวันที่ 01/10/2569 - 05/10/2569', false, 'a date range'],
+    ['วันที่ 1.10.2569', false, 'a date with dots'],
+    ['ใบเสร็จเลขที่ 12345 ไม่ชัด', false, 'five digits'],
+    ['รายการที่ 3 - 4 ไม่มีใบเสร็จ', false, 'line numbers'],
+    ['แนบสลิป 2 ใบ ของวันที่ 5 - 6 ต.ค.', false, 'counts and days'],
+    ['', false, 'empty'], ['   ', false, 'blank'],
+    [undefined, false, 'not text'], [null, false, 'not text'], [1234567890, false, 'a number is not text'], [{ text: '0123456789' }, false, 'an object is not text'],
+  ];
 
-  it('lets ordinary notes through: dates, small amounts, short references', () => {
-    for (const text of [
-      'ยอดไม่ตรงกับใบเสร็จ', 'ใบเสร็จลงวันที่ 01-10-2569 ไม่ตรงกับวันที่เบิก', 'วันที่ 2026-10-01 ซ้ำกับใบก่อน', 'ยอด 1,250.00 บาท เกินวงเงิน 500 บาท',
-      'ใบเสร็จเลขที่ 12345 ไม่ชัด', 'รายการที่ 3 - 4 ไม่มีใบเสร็จ', 'แนบสลิป 2 ใบ ของวันที่ 5 - 6 ต.ค.', '', '   ',
-    ]) assert.equal(looksLikeAccountNumber(text), false, text);
-    for (const notText of [undefined, null, 1234567890, { text: '0123456789' }]) assert.equal(looksLikeAccountNumber(notText), false);
+  it('refuses what reads as an account number and lets document numbers, amounts and dates through', () => {
+    for (const [text, refused, why] of cases) assert.equal(looksLikeAccountNumber(text), refused, `${why}: ${JSON.stringify(text)}`);
+    assert.ok(cases.filter(([, refused]) => refused).length >= 20 && cases.filter(([, refused]) => !refused).length >= 20);
   });
 });
 

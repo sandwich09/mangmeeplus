@@ -624,17 +624,38 @@ export function invalidPayoutDestinationField(input: Partial<PayoutDestinationIn
 }
 
 /**
- * Whether free text looks like it carries an account number. Used on the notes the system copies
- * into a notification, where an account number must never land (payout spec §11.3):
- *  - a run of 6 or more digits; or
- *  - 10 or more digits written in groups joined by spaces or dashes, the way people write an account
- *    or a PromptPay number: "123-4-56789-0", "081 234 5678".
- * Groups are only joined from 10 digits up, so a date such as "01-10-2569" or "2026-10-01" still passes.
+ * The product's own document numbers: a Latin prefix, a year, an optional month and a running number
+ * ("RB-202609-0003", "EXP-2026-10-000123"). A bank's short name is no such prefix: "SCB-0123456789"
+ * has no year after it and is read as the account number it is.
  */
+const OWN_DOCUMENT_NUMBER = /\b[A-Za-z]{2,}-(?:20|25)\d{2}(?:-?(?:0[1-9]|1[0-2]))?-\d{1,6}\b/g;
+
+/**
+ * Whether free text looks like it carries an account number. Used on the notes the system copies
+ * into a notification, and on the two account fields every screen shows unmasked, where an account
+ * number must never land (payout spec §11.3). A number counts when it has:
+ *  - a run of 6 or more digits; or
+ *  - 10 or more digits written in groups, the way people write an account or a PromptPay number:
+ *    "123-4-56789-0", "081 234 5678", "123.4.56789.0", "123/4/56789/0", with one or several spaces.
+ * Thai digits are read as digits. Two things people do write in such notes are let through: the
+ * product's own document numbers, and a plain amount followed by "บาท" ("ยอดเกิน 1500000 บาท").
+ * Groups are only joined from 10 digits up, so a date such as "01-10-2569" or "01/10/2569" still passes.
+ */
+// ponytail: a heuristic for what people type by accident, not a wall against someone set on writing
+// a number out (in words, or dressed as "AB-2026-10-345678"). The audited reveal is the wall.
 export function looksLikeAccountNumber(text: unknown): boolean {
   if (typeof text !== 'string') return false;
-  if (/\d{6,}/.test(text)) return true;
-  return (text.match(/\d+(?:[ -]\d+)+/g) ?? []).some((grouped) => grouped.replace(/[ -]/g, '').length >= 10);
+  const plain = text
+    .replace(/[๐-๙]/g, (digit) => String(digit.charCodeAt(0) - 0x0e50))
+    .replace(OWN_DOCUMENT_NUMBER, ' ');
+  for (const written of plain.matchAll(/\d+(?:(?:\s+|[-./])\d+)*/g)) {
+    const groups = written[0].split(/\D+/);
+    if (groups.join('').length < 10 && groups.every((group) => group.length < 6)) continue;
+    // An amount is one number of at most 9 digits that does not start with 0, said to be baht.
+    const amount = /^[1-9]\d{0,8}(?:\.\d{1,2})?$/.test(written[0]) && /^\s*บาท/.test(plain.slice(written.index + written[0].length));
+    if (!amount) return true;
+  }
+  return false;
 }
 
 /** The one masked form of an account number, on every surface that shows one. */

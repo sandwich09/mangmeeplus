@@ -2150,7 +2150,7 @@ describe('payout: a note that goes into a notification carries no account number
     } as any;
     const review = new FinanceReviewReimbursementUseCase(repo, { log: async () => undefined } as any, {} as any, {} as any);
     const finance = ctx({ userId: 'finance-1', permissions: ['reimbursement.finance_review'] });
-    for (const note of ['บัญชีผิด โอนเข้า 123-4-56789-0 แทน', 'พร้อมเพย์ 081 000 1234', 'เลขบัญชี 0123456789']) {
+    for (const note of ['บัญชีผิด โอนเข้า 123-4-56789-0 แทน', 'พร้อมเพย์ 081 000 1234', 'เลขบัญชี 0123456789', 'โอนเข้า 123.4.56789.0', 'พร้อมเพย์ ๐๘๑๒๓๔๕๖๗๘']) {
       for (const decision of ['NEEDS_INFO', 'APPROVED_FOR_PAYMENT'] as const) {
         await assert.rejects(review.execute(finance, 'rb-1', { decision, note }), (error: any) => {
           assert.equal(error.getStatus?.(), 400);
@@ -2163,5 +2163,10 @@ describe('payout: a note that goes into a notification carries no account number
     // A note without one goes on to the decision.
     await assert.rejects(review.execute(finance, 'rb-1', { decision: 'NEEDS_INFO', note: 'ใบเสร็จลงวันที่ 01-10-2569 ไม่ตรงกับวันที่เบิก' }), /stop after the guard/);
     assert.equal(decisions.length, 1);
+    // So do the product's own document numbers and a plain amount: what a reviewer actually writes.
+    for (const note of ['ซ้ำกับใบ RB-202609-0003', 'ดูรายการ EXP-2026-10-000123 ประกอบ', 'ยอดเกิน 1500000 บาท']) {
+      await assert.rejects(review.execute(finance, 'rb-1', { decision: 'NEEDS_INFO', note }), /stop after the guard/, note);
+    }
+    assert.equal(decisions.length, 4);
   });
 });
