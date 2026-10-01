@@ -43,6 +43,7 @@ import { accountAccessNotice, MENU_GROUP_LABEL_TH, projectGrantedMenus } from '.
 import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { localizedErrorMessage, statusOf } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { MemberPayoutAccountLine } from '../reimbursements/ReimbursementPayout';
 
 type SvgProps = React.SVGProps<SVGSVGElement>;
 
@@ -592,6 +593,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                     </div>
                     <p className="mt-1 break-words text-sm font-semibold text-gray-600">ตำแหน่งงาน: {selectedEmployee.jobTitle || 'ยังไม่ระบุ'}</p>
                     <p className="mt-0.5 truncate text-xs font-semibold text-gray-400">{selectedEmployee.phoneNumber}</p>
+                    {viewerPermissions.includes('reimbursement.create') && <MemberPayoutAccountLine companyId={companyId} memberUserId={selectedEmployee.userId} />}
                   </div>
                 </div>
 

@@ -159,6 +159,10 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       eyebrow="การเบิกจ่าย"
       title="การเบิกจ่ายและอนุมัติ"
       description={HUB_TAB_DESCRIPTIONS[tab]}
+      // Beside the page actions on every tab: whoever can file a claim sets where it is paid back.
+      meta={permissions.includes('reimbursement.create') ? (
+        <Link href={`/companies/${companyId}/reimbursements/payout-account`} className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')}>บัญชีรับเงินคืนของฉัน</Link>
+      ) : undefined}
       actions={permissions.includes('reimbursement.create') && tab === 'mine' ? (
         <Link href={`/companies/${companyId}/reimbursements/new`} className={cx(btnClass, 'min-h-11 w-full sm:w-auto')}>+ สร้างคำขอเบิก</Link>
       ) : undefined}
@@ -444,6 +448,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
     try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setBusy(null); }
   };
   const approveRow = async (r: any) => {
+    // A claim paid by transfer is approved on its own page, where the approver sees and attests the account.
+    if (r.payoutMethod === 'BANK_TRANSFER') { onOpenDetail(r.id); return; }
     setBusy(r.id); setError(null);
     try {
       await approveReimbursement(companyId, r.id, undefined, r.approvalSnapshotHash);
@@ -542,7 +548,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
+                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>{r.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'}</button>
                             <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>
                           </div>
                         </td>
@@ -571,7 +577,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
-                    <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>อนุมัติ</button>
+                    <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>{r.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ'}</button>
                     <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>
                   </div>
                 </MangmeeCard>

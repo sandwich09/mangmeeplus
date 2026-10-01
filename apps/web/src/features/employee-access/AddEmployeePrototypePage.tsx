@@ -21,6 +21,7 @@ import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
+import { MemberPayoutAccountCard } from '../reimbursements/ReimbursementPayout';
 
 type TitleOption = 'นาย' | 'นาง' | 'นางสาว';
 type AddStep = 1 | 2 | 3 | 4;
@@ -812,6 +813,18 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
             </button>
           </div>
         </MangmeeCard>
+
+        {/* One card beside the wizard, saved on its own: where this employee's claims are paid back.
+            Offered only where the company uses reimbursements; the server holds a branch-limited
+            editor to employees inside their own branches, the same reading as the branch picker above. */}
+        {editingEmployee && viewerPermissions.includes('reimbursement.create') && (
+          <MemberPayoutAccountCard
+            companyId={companyId}
+            {...(!editingSelf && { memberUserId: editingEmployee.userId })}
+            canEdit={!branchScopeReadOnly}
+            description="ใช้คืนเงินเมื่อพนักงานเบิกค่าใช้จ่าย เมื่อคนอื่นตั้งหรือแก้ให้ พนักงานจะได้รับแจ้งเตือนให้ตรวจทุกครั้ง"
+          />
+        )}
       </div>
     </div>
   );
