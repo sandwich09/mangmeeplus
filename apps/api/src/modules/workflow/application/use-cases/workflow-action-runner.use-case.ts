@@ -237,11 +237,19 @@ export class ExecuteWorkflowActionUseCase {
 
   private async sendNotification(actionRun: WorkflowActionRunRecord, context: ActionRunContext, cfg: Record<string, unknown>) {
     const recipientRoles = Array.isArray(cfg['recipientRoles']) ? (cfg['recipientRoles'] as string[]) : [];
-    const roleRecipientUserIds = await this.repo.findUserIdsByRoles(context.companyId, recipientRoles);
     const recipientPermissions = Array.isArray(cfg['recipientPermissions'])
       ? (cfg['recipientPermissions'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
-    const permissionRecipientUserIds = narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload);
+    let roleRecipientUserIds: string[];
+    let permissionRecipientUserIds: string[];
+    try {
+      roleRecipientUserIds = await this.repo.findUserIdsByRoles(context.companyId, recipientRoles);
+      permissionRecipientUserIds = narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload);
+    } catch (err) {
+      // Looking people up is a read. One database blip there must not dead-letter the notice at
+      // its first attempt; it is retried like a failed send.
+      throw new RetryableActionError(`Recipient lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     const recipientPayloadKeys = Array.isArray(cfg['recipientPayloadKeys'])
       ? (cfg['recipientPayloadKeys'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];

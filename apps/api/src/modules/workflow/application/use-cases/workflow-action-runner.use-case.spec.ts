@@ -855,6 +855,24 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     assert.deepEqual(queries[0].where.roles.some.role.permissions.some.permission.key, { in: [PAY] });
   });
 
+  // Review: a lookup that threw was not a retryable error, so one database blip sent the notice
+  // straight to the dead letters. It is a read; it is retried like a failed send.
+  it('retries the notice when looking up its recipients fails, instead of dead-lettering it', async () => {
+    for (const failing of ['findUserIdsByPermissions', 'findUserIdsByRoles', 'findSourceBranchId', 'resolveAccess'] as const) {
+      const h = harness({ memberships: { u_payer: member() } });
+      h.repo.createDeadLetter = async () => { throw new Error(`${failing}: must not dead-letter on the first failure`); };
+      const blip = async () => { throw new Error('connection reset'); };
+      if (failing === 'resolveAccess') (h.useCase as any).access = { resolveAccess: blip };
+      else h.repo[failing] = blip;
+
+      await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), claimContext());
+
+      assert.equal(h.sent.length, 0, failing);
+      assert.equal(h.updates.at(-1)?.status, 'FAILED_RETRYABLE', failing);
+      assert.match(h.updates.at(-1)?.lastErrorMessage, /Recipient lookup failed: connection reset/, failing);
+    }
+  });
+
   it('reads the branch from the claim or the vendor bill, and from nothing else', async () => {
     const queries: any[] = [];
     const table = (name: string, branchId: string | null) => ({
