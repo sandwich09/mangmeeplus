@@ -786,7 +786,7 @@ describe('pay step: the payer confirms the account the claim froze', () => {
     const record = repo.recordPaymentAtomic.bind(repo);
     repo.recordPaymentAtomic = async (data: any) => {
       const result = await record(data);
-      await data.onPaymentPersisted(fakeTx(outboxRows), result.payment, result.request.paymentStatus);
+      await data.onPaymentPersisted(fakeTx(outboxRows), result.payment, result.request.paymentStatus, result.payout);
       return result;
     };
     const audits: any[] = [];
@@ -813,6 +813,58 @@ describe('pay step: the payer confirms the account the claim froze', () => {
       paymentNo: 'RBPAY-202602-000001', paidAmount: '500.0000', paymentMethod: 'CASH', requestId: 'rb-1',
       paidDifferentlyFromRequested: true, requestedPayoutMethod: 'BANK_TRANSFER',
     });
+  });
+
+  // Payout spec §17.3 (AC37, AC21): the event tells the requester how the payment was really made, as a
+  // finished sentence built from the payment just written. It is the only new thing in the event.
+  it('writes the requester\'s notice into the event: the method actually used, the last 4 digits, the amount and the slip', async () => {
+    /** One payment through the use case; the data of the event the repository writes inside its transaction. */
+    async function eventOf(claim: { req: any; tables: any }, input: Record<string, unknown>) {
+      const repo = fakeRepo(claim.req, { payout: claim.tables });
+      const outboxRows: any[] = [];
+      const record = repo.recordPaymentAtomic.bind(repo);
+      repo.recordPaymentAtomic = async (data: any) => {
+        const result = await record(data);
+        await data.onPaymentPersisted(fakeTx(outboxRows), result.payment, result.request.paymentStatus, result.payout);
+        return result;
+      };
+      await payStep(repo).uc.execute(ctx(perms), 'rb-1', input as any);
+      assert.equal(outboxRows.length, 1);
+      return outboxRows[0].payloadJson.data as Record<string, unknown>;
+    }
+    const cashClaim = () => ({ req: transferClaim({ payoutMethod: 'CASH', payoutDestinationVersion: undefined, payoutFingerprint: 'cash' }).req, tables: fakePayoutTables() });
+    const reason = 'ผู้เบิกมารับเงินสดเองที่ร้าน';
+    const legacy = legacyClaimWithDefault();
+    const cases: [string, { req: any; tables: any }, Record<string, unknown>, string][] = [
+      ['a transfer into the claim\'s account', transferClaim(), { ...transfer, ...confirmed },
+        'โอนเข้าบัญชีลงท้าย 1234 จำนวน 500.00 บาท มีสลิปแนบ แตะเพื่อดูสลิป'],
+      // AC21: the claim asked for a transfer and was paid in cash. The notice says cash, and nothing of the account.
+      ['cash for a claim that asked for a transfer', transferClaim(), { ...cash, methodMismatchReason: reason, payoutDestinationVersion: 2 },
+        'จ่ายเป็นเงินสด 500.00 บาท'],
+      ['cash for a claim that asked for cash', cashClaim(), cash, 'จ่ายเป็นเงินสด 500.00 บาท'],
+      // The other way round: the claim has no account, so the notice names none.
+      ['a transfer for a claim that asked for cash', cashClaim(), { ...transfer, methodMismatchReason: reason },
+        'โอนเงิน จำนวน 500.00 บาท มีสลิปแนบ แตะเพื่อดูสลิป'],
+      ['a cheque, with a photo of it attached', transferClaim(), { ...cash, paymentMethod: 'CHEQUE', paymentReference: 'CHQ-9', slipAttachmentId: 'att-slip-1', methodMismatchReason: reason },
+        'จ่ายเป็นเช็ค 500.00 บาท มีสลิปแนบ แตะเพื่อดูสลิป'],
+      ['another method', cashClaim(), { ...cash, paymentMethod: 'OTHER', methodMismatchReason: reason }, 'จ่ายด้วยวิธีอื่น 500.00 บาท'],
+      // A legacy claim: into the requester's default the payer confirmed, or into an account the claim never held.
+      ['a legacy claim paid into the default the payer confirmed', legacy, { ...transfer, payoutConfirmed: true, payoutDefaultToken: legacy.token },
+        'โอนเข้าบัญชีลงท้าย 1234 จำนวน 500.00 บาท มีสลิปแนบ แตะเพื่อดูสลิป'],
+      ['a legacy claim paid into an account asked of the requester', legacyClaimWithDefault(), transfer, 'โอนเงิน จำนวน 500.00 บาท มีสลิปแนบ แตะเพื่อดูสลิป'],
+    ];
+    for (const [name, claim, input, paidNotice] of cases) {
+      const data = await eventOf(claim, input);
+      assert.equal(data['paidNotice'], paidNotice, name);
+      // The whole payload: what the notice lane's rules already read, and the sentence. Nothing of the
+      // account beyond the digits in the sentence, no slip file, no reason, no method code.
+      assert.deepEqual(Object.keys(data).sort(), ['currency', 'paidAmount', 'paidNotice', 'paymentNo', 'paymentStatus', 'requestId', 'requestNo', 'requesterUserId', 'sourceType'], name);
+      const text = JSON.stringify(data);
+      for (const leak of ['att-slip-1', reason, legacy.token, 'BANK_TRANSFER', 'CASH', 'CHEQUE', 'ธนาคารกสิกรไทย', 'นาย สมชาย ใจดี']) assert.equal(text.includes(leak), false, `${name}: ${leak}`);
+      assert.doesNotMatch(text, ACCOUNT_NUMBER_WRITTEN, name);
+      // Plain Thai: the sentence has no Latin letter, so no code word and no currency code.
+      assert.doesNotMatch(paidNotice, /[A-Za-z_]/, name);
+    }
   });
 
   it('audits a confirmed transfer with the account version and the last 4 digits, never the number', async () => {
@@ -908,7 +960,7 @@ describe('pay step: the payer confirms the account the claim froze', () => {
     const record = repo.recordPaymentAtomic.bind(repo);
     repo.recordPaymentAtomic = async (data: any) => {
       const result = await record(data);
-      await data.onPaymentPersisted(fakeTx(outboxRows), result.payment, result.request.paymentStatus);
+      await data.onPaymentPersisted(fakeTx(outboxRows), result.payment, result.request.paymentStatus, result.payout);
       return result;
     };
     const audits: any[] = [];
@@ -1372,7 +1424,7 @@ describe('reimbursement.payment_recorded event payload', () => {
     const record = repo.recordPaymentAtomic.bind(repo);
     repo.recordPaymentAtomic = async (data: any) => {
       const result = await record(data);
-      await data.onPaymentPersisted(fakeTx(rows), result.payment, result.request.paymentStatus);
+      await data.onPaymentPersisted(fakeTx(rows), result.payment, result.request.paymentStatus, result.payout);
       return result;
     };
     const afterCommit: any[] = [];

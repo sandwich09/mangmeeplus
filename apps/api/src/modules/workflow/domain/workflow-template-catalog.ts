@@ -440,8 +440,14 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           recipientPayloadKeys: ['requesterUserId'],
           severity: 'info',
           titleTemplate: 'จ่ายเงินเบิกแล้ว: {{requestNo}}',
-          // paidAmount, not amount: this event carries the payment's own figures.
-          bodyTemplate: 'จ่ายแล้ว {{paidAmount}} {{currency}} · เลขที่จ่าย {{paymentNo}}',
+          // Payout spec §17.3 (AC37, AC21): the sentence the payment event itself carries, built where
+          // the payment is recorded: the method actually used, the last 4 digits of the account a
+          // transfer went into, the amount, and whether a slip is attached. Nothing here assembles it
+          // from raw fields, so no rule can print a method code or more of an account than that.
+          // The event still carries paidAmount, currency and paymentNo: a rule pinned or edited before
+          // this body keeps rendering "จ่ายแล้ว {{paidAmount}} {{currency}} · เลขที่จ่าย {{paymentNo}}".
+          bodyTemplate: '{{paidNotice}}',
+          // The claim page: the requester opens the slip there, on the payment's own row.
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
           // own action — a solo owner submitting/approving/paying their own claim gets none of

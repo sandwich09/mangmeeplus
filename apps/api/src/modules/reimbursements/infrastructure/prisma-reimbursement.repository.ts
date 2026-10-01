@@ -2776,8 +2776,11 @@ export class PrismaReimbursementRepository {
 
   async recordPaymentAtomic(data: {
     companyId: string;
-    /** Runs inside the payment transaction, once the payment and the claim totals are written. */
-    onPaymentPersisted?: (tx: any, payment: ReimbursementPaymentRecord, paymentStatus: string) => Promise<void>;
+    /**
+     * Runs inside the payment transaction, once the payment and the claim totals are written. `payout` is
+     * the account this payment was just confirmed into (masked: kind, bank, last 4), when there is one.
+     */
+    onPaymentPersisted?: (tx: any, payment: ReimbursementPaymentRecord, paymentStatus: string, payout?: ConfirmedPaymentPayout) => Promise<void>;
     reimbursementRequestId: string;
     idempotencyKey: string;
     paymentNo?: string;
@@ -2936,7 +2939,7 @@ export class PrismaReimbursementRepository {
       if (changed.count !== 1) throw new ConflictException('reimbursement_payment_state_changed');
       // Audit B10: the "paid" event commits with the payment. Appended after commit it was lost,
       // with no retry, whenever that append failed, and the requester was never told.
-      await data.onPaymentPersisted?.(tx, this.toPayment(payment), paymentStatus);
+      await data.onPaymentPersisted?.(tx, this.toPayment(payment), paymentStatus, payout);
 
       if (paymentStatus === 'PAID') {
         // Mirror the payout onto the claim's CONFIRMED expense projections (owner decision

@@ -662,7 +662,6 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       assert.equal(await body('reimbursement_finance_review_pending', { amount: 1000 }), 'ยอด 1,000.00 บาท · รอตรวจสอบการเงิน');
       assert.equal(await body('reimbursement_ready_for_payment', { amount: '1234567.891' }), 'ยอด 1,234,567.89 บาท · รอคุณบันทึกการจ่ายเงิน');
       assert.equal(await body('reimbursement_payment_sla_breach', { amount: '250.0000' }), 'ยอด 250.00 บาท · รอคุณบันทึกการจ่ายเงิน');
-      assert.equal(await body('reimbursement_payment_recorded', { paidAmount: '500.0000', paymentNo: 'RBPAY-202610-000001' }), 'จ่ายแล้ว 500.00 บาท · เลขที่จ่าย RBPAY-202610-000001');
     });
 
     it('reaches a rule snapshot pinned before this, whose template still says {{amount}} {{currency}}', async () => {
@@ -681,6 +680,75 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     it('keeps another currency as its raw pair rather than calling it baht, and leaves non-amounts alone', async () => {
       assert.equal(await body('reimbursement_pending_approval', { amount: '99.5000', currency: 'USD' }), 'ยอด 99.5000 USD · รออนุมัติจากคุณ');
       assert.equal(await body('reimbursement_pending_approval', { amount: 'ไม่ระบุ' }), 'ยอด ไม่ระบุ บาท · รออนุมัติจากคุณ');
+    });
+  });
+
+  // Payout spec §17.3 (AC37, AC21): the "paid" notice says how the payment was really made. The payment
+  // event carries that as a finished sentence (the reimbursements module builds it from the payment's own
+  // facts); the template prints it and adds nothing, so no rule can print a method code or more of an
+  // account than its last 4 digits.
+  describe('the paid notice is the sentence the payment event carries', () => {
+    const paid = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_recorded')!;
+    /** A payment event as RecordReimbursementPaymentUseCase writes it, recorded by `u_payer` for `u_requester`. */
+    const event = (overrides: Record<string, unknown> = {}) => ({
+      requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', paymentNo: 'RBPAY-202610-000001',
+      paidAmount: '1614.5000', currency: 'THB', sourceType: 'REIMBURSEMENT_PAYMENT', paymentStatus: 'PAID',
+      paidNotice: 'โอนเข้าบัญชีลงท้าย 1234 จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป',
+      eventType: 'reimbursement.payment_recorded', actorUserId: 'u_payer', ...overrides,
+    });
+    const send = async (configJson: Record<string, unknown>, payload: Record<string, unknown>) => {
+      await make().execute(actionRun(configJson), {
+        companyId: 'co_1', ruleName: paid().name, triggerType: 'EVENT', sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_payment', sourceId: 'pay_1', payload, siblingActions: [],
+      } as any);
+      return (notify.execute.mock.calls.at(-1) as any)?.arguments[0];
+    };
+    const catalogConfig = () => paid().defaultActionJson[0]!.configJson;
+
+    it('tells the requester, and only the requester, in the event\'s own words, with a link to the claim page', async () => {
+      // Nobody is picked by a role or a permission: holding the pay right tells nobody that someone else was paid.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_payer', 'u_owner']);
+      for (const paidNotice of ['โอนเข้าบัญชีลงท้าย 1234 จำนวน 1,614.50 บาท มีสลิปแนบ แตะเพื่อดูสลิป', 'จ่ายเป็นเงินสด 1,614.50 บาท']) {
+        const sent = await send(catalogConfig(), event({ paidNotice }));
+        assert.equal(sent.title, 'จ่ายเงินเบิกแล้ว: RB-202610-00007');
+        assert.equal(sent.body, paidNotice);
+        assert.deepEqual(sent.recipientUserIds, ['u_requester']);
+        assert.equal(sent.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
+        assert.equal(sent.triggerKey, 'workflow.reimbursement_payment_recorded');
+      }
+    });
+
+    it('does not tell a requester who recorded the payment themselves', async () => {
+      const before = notify.execute.mock.callCount();
+      await send(catalogConfig(), event({ actorUserId: 'u_requester' }));
+      assert.equal(notify.execute.mock.callCount(), before);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.deepEqual([finalUpdate.status, finalUpdate.resultJson.reason], ['SUCCEEDED', 'all_recipients_excluded']);
+    });
+
+    // Old rule snapshots and rules an admin edited are not re-pinned. They read the same event.
+    it('keeps a rule pinned or edited before the sentence working: the event still carries what its body prints', async () => {
+      const pinnedBefore = { ...catalogConfig(), bodyTemplate: 'จ่ายแล้ว {{paidAmount}} {{currency}} · เลขที่จ่าย {{paymentNo}}' };
+      assert.equal((await send(pinnedBefore, event())).body, 'จ่ายแล้ว 1,614.50 บาท · เลขที่จ่าย RBPAY-202610-000001');
+      const adminEdited = { ...catalogConfig(), titleTemplate: 'โอนเงินเบิกให้แล้ว {{requestNo}}', bodyTemplate: 'ตรวจยอด {{paidAmount}} {{currency}} ได้ที่หน้าใบเบิก' };
+      const sent = await send(adminEdited, event());
+      assert.deepEqual([sent.title, sent.body], ['โอนเงินเบิกให้แล้ว RB-202610-00007', 'ตรวจยอด 1,614.50 บาท ได้ที่หน้าใบเบิก']);
+      // Either way the notice goes to the requester and opens the claim.
+      assert.deepEqual([sent.recipientUserIds, sent.deepLinkHref], [['u_requester'], '/companies/co_1/reimbursements/rb_1']);
+    });
+
+    // A payment recorded by the build before this one, read by the rule after its re-pin: the event has
+    // no sentence. The notice is then its title, with nothing made up underneath it.
+    it('prints only the title for a payment event written before the sentence existed', async () => {
+      const sent = await send(catalogConfig(), event({ paidNotice: undefined }));
+      assert.deepEqual([sent.title, sent.body], ['จ่ายเงินเบิกแล้ว: RB-202610-00007', '']);
+    });
+
+    it('prints nothing of the event but the sentence: no code word, raw decimal or currency code', async () => {
+      for (const paidNotice of ['โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678 จำนวน 80.00 บาท มีสลิปแนบ แตะเพื่อดูสลิป', 'จ่ายเป็นเช็ค 80.00 บาท', 'จ่ายด้วยวิธีอื่น 80.00 บาท']) {
+        const sent = await send(catalogConfig(), event({ paidAmount: '80.0000', paidNotice }));
+        assert.doesNotMatch(`${sent.title} ${sent.body}`.replace('RB-202610-00007', ''), /[A-Za-z_]|\d\.\d{3,}/, paidNotice);
+      }
     });
   });
 

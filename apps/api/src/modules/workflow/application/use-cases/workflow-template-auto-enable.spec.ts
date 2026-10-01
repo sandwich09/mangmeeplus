@@ -262,6 +262,41 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
     assert.equal(cfg(edited).preferRecipientPayloadKeys, undefined);
   });
 
+  // Payout spec §17.3: the "paid" notice prints the sentence the payment event carries. A company whose
+  // rule the sync pinned before that picks it up at the next release; a rule an admin worded keeps its
+  // words, and goes on rendering from the fields the event still carries.
+  it('re-pins a paid rule pinned before the event carried its sentence, and leaves an admin-worded one alone', async () => {
+    const pinnedBody = 'จ่ายแล้ว {{paidAmount}} {{currency}} · เลขที่จ่าย {{paymentNo}}';
+    const [catalogAction] = catalogActions('reimbursement_payment_recorded');
+    const before = [{ ...catalogAction!, configJson: { ...catalogAction!.configJson, bodyTemplate: pinnedBody } }];
+    const adminsOwn = [{ ...catalogAction!, configJson: { ...catalogAction!.configJson, bodyTemplate: 'โอนให้แล้ว {{paidAmount}} {{currency}}' } }];
+    const paidRule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: 'reimbursement_payment_recorded', cooldownSeconds: 0, actionJson: before, ...over });
+    const repo = fakeRepo([
+      paidRule(),
+      paidRule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: adminsOwn, pinned: { actionJson: before } }),
+      // Switched off by the company: brought up to date, and still off.
+      paidRule({ companyId: 'co_3', status: 'DISABLED', updatedByUserId: 'admin_1' }),
+    ]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), ['reimbursement_payment_recorded']);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_3'), ['reimbursement_payment_recorded']);
+
+    const body = (rule: any) => rule.actionJson[0].configJson.bodyTemplate;
+    const [pinned, edited, off] = ['pre_0', 'pre_1', 'pre_2'].map((id) => repo.rules.find((r: any) => r.id === id));
+    assert.equal(body(pinned), '{{paidNotice}}');
+    // The runner reads the version snapshot, not the row.
+    const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
+    assert.deepEqual(latest.actionSnapshotJson, catalogActions('reimbursement_payment_recorded'));
+    assert.equal(body(edited), 'โอนให้แล้ว {{paidAmount}} {{currency}}');
+    assert.deepEqual([body(off), off.status], ['{{paidNotice}}', 'DISABLED']);
+    // Who is told and where the notice leads did not change with the wording.
+    const config = catalogAction!.configJson;
+    assert.deepEqual([config['recipientPayloadKeys'], config['excludeRecipientPayloadKeys'], config['deepLinkPathTemplate']],
+      [['requesterUserId'], ['actorUserId'], '/companies/{{companyId}}/reimbursements/{{requestId}}']);
+    assert.equal(config['recipientPermissions'] ?? config['recipientRoles'], undefined);
+  });
+
   it('is idempotent: a second run re-pins nothing and adds no version', async () => {
     const repo = fakeRepo([syncOwned()]);
     await resyncWorkflowTemplateRulesForCompany(repo, 'co_1');

@@ -8,7 +8,7 @@ import type {
   ReimbursementFinanceQueueItem,
   ReimbursementRequestDetail,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilPeriodKey, looksLikeAccountNumber, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, looksLikeAccountNumber, reimbursementPaidNotice, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
@@ -448,13 +448,23 @@ export class RecordReimbursementPaymentUseCase {
       companyId: ctx.companyId,
       // Audit B10: written in the payment transaction, so the requester's "paid" notice cannot be
       // lost between the commit and a later append. One event per payment row.
-      onPaymentPersisted: (tx, payment, paymentStatus) => appendReimbursementOutboxWithinTx(tx, {
+      onPaymentPersisted: (tx, payment, paymentStatus, payout) => appendReimbursementOutboxWithinTx(tx, {
         companyId: ctx.companyId, eventType: 'reimbursement.payment_recorded', aggregateType: 'reimbursement_payment',
         aggregateId: payment.id, eventKey: `reimbursement.payment_recorded:reimbursement_payment:${payment.id}`,
         payloadJson: {
           companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
           aggregateType: 'reimbursement_payment', aggregateId: payment.id, occurredAt: now.toISOString(),
-          data: redactPayload({ requestId: id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, currency: input.currency ?? req.currency, sourceType: 'REIMBURSEMENT_PAYMENT', paymentStatus }),
+          data: redactPayload({
+            requestId: id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, currency: input.currency ?? req.currency, sourceType: 'REIMBURSEMENT_PAYMENT', paymentStatus,
+            // What the requester is told (spec §17.3), as a finished sentence from the payment just written:
+            // the method actually used, the last 4 digits of the account the payer confirmed, the amount and
+            // whether a slip is attached. Nothing else of the payment rides in the event: not the account
+            // beyond those digits, not the slip's file id, not the payer's free-text reason.
+            paidNotice: reimbursementPaidNotice({
+              paymentMethod: payment.paymentMethod, paidAmount: payment.paidAmount, currency: payment.currency,
+              slipCount: payment.slipAttachmentId ? 1 : 0, payoutDestination: payout,
+            }),
+          }),
         },
       }),
       reimbursementRequestId: id,
