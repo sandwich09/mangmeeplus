@@ -225,7 +225,7 @@ export class ConvertCrmLeadUseCase {
   constructor(private readonly repo: PrismaCrmRepository, private readonly audit: AuditService, private readonly outbox: OutboxAppendService) {}
   async execute(ctx: RequestContext, id: string, input: ConvertCrmLeadInput): Promise<ConvertCrmLeadResult> {
     requirePermission(ctx, 'crm.lead.convert');
-    if (!ctx.roles.some((role) => ['OWNER', 'ADMIN', 'SALES', 'MANAGER', 'SYSTEM_ADMIN', 'SYSTEM'].includes(role))) {
+    if (!ctx.roles.some((role) => ['OWNER', 'ADMIN', 'SALES', 'MANAGER', 'SYSTEM_ADMIN'].includes(role))) {
       throw new ForbiddenException('Lead conversion requires an operational CRM role');
     }
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new BadRequestException('invalid_lead_conversion_input');
