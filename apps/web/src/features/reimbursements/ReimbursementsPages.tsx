@@ -15,7 +15,7 @@ import {
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
 } from './reimbursements.api';
 import {
-  REQUEST_STATUS_LABELS, PAYMENT_STATUS_LABELS,
+  REQUEST_STATUS_LABELS,
   FINANCE_REVIEW_LABELS, REIMBURSEMENT_CREATE_UNAVAILABLE,
   currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
@@ -28,7 +28,7 @@ import {
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
   type HubFilter, approverPaymentWarning,
-  NO_HUB_LIST, QUEUE_PAGE_SIZE, hubCardFilter, hubList, hubListKey, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
+  NO_HUB_LIST, QUEUE_PAGE_SIZE, HUB_SEARCH_DELAY_MS, hubCardFilter, hubList, hubListKey, hubListStatusText, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
   PAYMENT_DIALOG_MEDIA_QUERY, quickPayTarget,
 } from './reimbursements.logic';
 import {
@@ -229,26 +229,33 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   const [busy, setBusy] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<HubFilter>('all');
   const [query, setQuery] = useState('');
+  // The search the API is asked for: what was typed, once the typing has paused. Before, the search ran in the
+  // browser over rows it first had to load, every page of the filter (30 calls for 3,000 claims).
+  const [search, setSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(query.trim()), HUB_SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
   const [page, setPage] = useState(1);
 
   const scope = reimbursementListScope(permissions);
-  const listKey = hubListKey(companyId, scope, statusFilter, refreshKey, reload);
+  // The search goes last: it is the one part a person types, and nothing follows it that it could be mistaken for.
+  const listKey = hubListKey(companyId, scope, statusFilter, refreshKey, reload, search);
   const list = hubList(held, listKey);
-  const searching = query.trim() !== '';
-  // Lazy: the first page of the filter, then more only when the table page shown reaches past what is held.
-  // ponytail: search reads the rows on this page, so a search takes every page of its filter (one call per
-  // 100 claims); search on the server once a shop holds thousands of claims.
-  const nextPage = hubNextPage(list, searching ? Infinity : page * QUEUE_PAGE_SIZE);
+  const searching = search !== '';
+  // Lazy: the first page of the filter and the search, then more only when the table page shown reaches past what is held.
+  const nextPage = hubNextPage(list, page * QUEUE_PAGE_SIZE);
   useEffect(() => {
     if (nextPage === null) return;
-    // The cleanup lets go of the request: another filter, a reload, another company or an unmount leaves its answer unused.
-    return loadHubPage(companyId, { scope, filter: statusFilter, page: nextPage }, {
+    // The cleanup lets go of the request: another filter or search, a reload, another company or an unmount leaves its answer unused.
+    return loadHubPage(companyId, { scope, filter: statusFilter, search, page: nextPage }, {
       onPage: (result) => setHeld((current) => withHubPage(current, listKey, result)),
       onError: (e) => setHeld((current) => withHubFailure(current, listKey, err(e))),
     });
-  }, [companyId, scope, statusFilter, listKey, nextPage]);
+  }, [companyId, scope, statusFilter, search, listKey, nextPage]);
   const loading = nextPage !== null;
-  // The cards and chips are the server's counts of the whole scope, so they hold whatever part of the list is loaded.
+  // The cards and chips are the server's counts, so they hold whatever part of the list is loaded: of the whole scope,
+  // or with a search of what the search found. Either way the number on a card is the rows its filter shows.
   const summary = list.summary;
   const rows = list.rows;
 
@@ -263,23 +270,11 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     ? onOpenDetail(r.id)
     : void action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'));
 
-  const filteredData = useMemo(() => (searching ? rows.filter(r => matchesSearch([
-    r.requestNo,
-    r.requesterDisplayNameSnapshot,
-    r.reason,
-    r.categoryLabelSnapshot ?? r.categoryKey,
-    r.lineCount ?? 1,
-    r.amount,
-    r.currency,
-    REQUEST_STATUS_LABELS[r.status] ?? r.status,
-    PAYMENT_STATUS_LABELS[r.paymentStatus] ?? r.paymentStatus,
-    currentDeskText(r.currentDesk),
-  ], query)) : rows), [rows, searching, query]);
-  // The server's total stands for the rows not loaded yet. A search, or a list that is complete, counts the rows it holds.
-  const shownTotal = searching || list.nextPage === null ? filteredData.length : list.total;
+  // The server's total stands for the rows not loaded yet. A list that is complete counts the rows it holds.
+  const shownTotal = list.nextPage === null ? rows.length : list.total;
   const bounds = useMemo(() => pageBounds(shownTotal, page), [shownTotal, page]);
-  const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
-  useEffect(() => { setPage(1); }, [query, statusFilter]);
+  const pagedData = useMemo(() => rows.slice(bounds.start, bounds.end), [rows, bounds]);
+  useEffect(() => { setPage(1); }, [search, statusFilter]);
   const statusChips: Array<{ key: HubFilter; label: string }> = [
     { key: 'all', label: 'ทั้งหมด' },
     { key: 'draft', label: 'ร่าง' },
@@ -339,12 +334,11 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-gray-500 tabular-nums" role="status">
-                {loading ? 'กำลังโหลดรายการ...'
-                  : searching || statusFilter !== 'all' ? `พบ ${shownTotal} จาก ${summary.counts.all} รายการ` : `ทั้งหมด ${summary.counts.all} รายการ`}
+                {loading ? 'กำลังโหลดรายการ...' : hubListStatusText(shownTotal, summary.counts.all, statusFilter, searching)}
               </div>
               <div className="relative w-full sm:max-w-96">
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                  placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้ขอ จำนวนเงิน สถานะ"
+                  placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด หรือจำนวนเงิน"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
                   {ICON.search}
@@ -355,9 +349,10 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
               // Nothing to show yet is not "no claims": a page still on its way, or one that failed, says so itself.
               loading ? <LoadingState label="กำลังโหลด..." /> : list.failed === undefined && (
                 <div className="mt-3">
+                  {/* With a search the counts are of what it found: none found is not a shop with no claims. */}
                   <EmptyState
-                    title={summary.counts.all === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                    description={summary.counts.all === 0
+                    title={summary.counts.all === 0 && !searching ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
+                    description={summary.counts.all === 0 && !searching
                       ? canCreate ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : REIMBURSEMENT_CREATE_UNAVAILABLE
                       : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
                   />

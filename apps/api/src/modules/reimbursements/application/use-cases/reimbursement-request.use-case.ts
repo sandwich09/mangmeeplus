@@ -470,6 +470,8 @@ export class ListReimbursementsUseCase {
       status: filter.status,
       paymentStatus: filter.paymentStatus,
       bucket: filter.bucket,
+      // The hub's search box. The counts below are of the same searched list, so a card still counts its rows.
+      search: filter.search?.trim().slice(0, 100) || undefined,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }), loadReimbursementPolicy(this.repo, ctx.companyId)]);

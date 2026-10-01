@@ -13,7 +13,7 @@ import {
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
-import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere } from '../../infrastructure/prisma-reimbursement.repository';
+import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
 import { reimbursementHubBucket } from '@watchdog-bms/contracts';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
@@ -1182,6 +1182,12 @@ describe('list paging and hub buckets', () => {
       if (want === undefined) return true;
       if (field === 'AND') return want.every((part: any) => matches(row, part));
       if (field === 'OR') return want.some((part: any) => matches(row, part));
+      // The search's `contains` (case-insensitive, as PostgreSQL's ILIKE) and its amount, which the column compares as a number.
+      if (want !== null && typeof want === 'object' && 'contains' in want) {
+        assert.equal(want.mode, 'insensitive');
+        return typeof row[field] === 'string' && row[field].toLowerCase().includes(want.contains.toLowerCase());
+      }
+      if (field === 'amount') return Number(row[field]) === Number(want);
       if (want !== null && typeof want === 'object') return want.in.includes(row[field]);
       return row[field] === want;
     });
@@ -1337,6 +1343,83 @@ describe('list paging and hub buckets', () => {
     const empty = await database([]).list.execute(reader, {});
     assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
     assert.deepEqual([empty.items.length, empty.total], [0, 0]);
+  });
+
+  // Review 2026-10-01 (acceptance I1 with a search). The hub searched in the browser, so a search loaded every page of
+  // its filter: 30 calls for 3,000 claims, each with its own GROUP BY. The search now goes to the list, and the counts
+  // are of the same searched list.
+  describe('search', () => {
+    const people = ['สมชาย ใจดี', 'สมศรี มีสุข', 'Wichai K.'];
+    const reasons = ['ค่าแท็กซี่ไปพบลูกค้า', 'ค่าที่พักต่างจังหวัด', 'Parking fee'];
+    const categories = ['เดินทาง', 'ที่พัก', null];
+    /** The same claims, each with a number, a requester name, a reason and a category a person could type. */
+    const named = claims.map((claim, index) => ({
+      ...claim, requestNo: claim.status === 'DRAFT' ? null : `RB-202609-${String(index).padStart(5, '0')}`,
+      requesterDisplayNameSnapshot: people[index % 3], reason: reasons[index % 4 % 3], categoryLabelSnapshot: categories[index % 5 % 3],
+    }));
+    /** What a person expects a word to find, written without the query's own predicate. */
+    const has = (claim: any, word: string) => [claim.requestNo, claim.requesterDisplayNameSnapshot, claim.reason, claim.categoryLabelSnapshot]
+      .some((text) => typeof text === 'string' && text.toLowerCase().includes(word.toLowerCase())) || Number(claim.amount) === Number(word.replace(/,/g, ''));
+    const found = (search: string) => named.filter((claim) => search.trim().split(/\s+/).every((word) => has(claim, word)));
+
+    it('counts each bucket as the rows its filter returns over every page, for the claims the search found', async () => {
+      const { list } = database(named);
+      const whole = (await list.execute(reader, {})).hub;
+      for (const search of ['สมศรี', 'rb-202609', 'ที่พัก', 'parking', '21.5', 'สมชาย แท็กซี่', '  สมศรี   ที่พัก  ', 'ไม่มีใบไหนตรง']) {
+        const expected = found(search);
+        const all = await walk(list, { search }, 7);
+        const hub = all[0].hub;
+        assert.deepEqual(all.flatMap((answer) => answer.items.map((item: any) => item.id)).sort(), expected.map((claim) => claim.id).sort(), search);
+        assert.deepEqual([all[0].total, hub.counts.all], [expected.length, expected.length], search);
+        assert.equal(BUCKETS.reduce((sum, bucket) => sum + hub.counts[bucket], 0), hub.counts.all, search);
+        assert.equal(Number(hub.totalAmount), expected.reduce((sum, claim) => sum + Number(claim.amount), 0), search);
+        for (const bucket of BUCKETS) {
+          const pages = await walk(list, { search, bucket }, 7);
+          const items = pages.flatMap((answer) => answer.items);
+          // The number on the card is the rows its filter returns, with the search as without it.
+          assert.equal(items.length, hub.counts[bucket], `${search} ${bucket}`);
+          for (const answer of pages) assert.deepEqual([answer.total, answer.hub], [hub.counts[bucket], hub], `${search} ${bucket}`);
+          for (const item of items) assert.equal(reimbursementHubBucket(item), bucket, item.id);
+        }
+      }
+      // The searches above are real ones: each finds some claims and not all of them, and one finds none.
+      assert.deepEqual(['สมศรี', '21.5', 'สมชาย แท็กซี่', 'ไม่มีใบไหนตรง'].map((search) => found(search).length > 0), [true, true, true, false]);
+      assert.ok(found('สมศรี').length < named.length && found('สมชาย แท็กซี่').length < found('สมชาย').length);
+      // No search, or a blank one, is the whole scope as before.
+      for (const search of [undefined, '', '   ']) assert.deepEqual((await list.execute(reader, { search })).hub, whole, JSON.stringify(search));
+    });
+
+    it('keeps the search inside the caller\'s scope', async () => {
+      const { list } = database(named);
+      const own = ctx({ userId: 'staff-2', permissions: ['reimbursement.read_own'] });
+      const mine = found('สมศรี').filter((claim) => claim.requesterUserId === 'staff-2');
+      assert.ok(mine.length > 0 && mine.length < found('สมศรี').length);
+      const answer = await list.execute(own, { search: 'สมศรี', pageSize: 100 });
+      assert.deepEqual([answer.items.map((item) => item.id).sort(), answer.total, answer.hub.counts.all], [mine.map((claim) => claim.id).sort(), mine.length, mine.length]);
+    });
+
+    it('reads a search as words: trimmed, cut at 100 characters, five words at most, and a number also as an amount', () => {
+      const words = (search: string) => (hubSearchWhere(search).AND as any[]).map((part) => part.OR.map((field: any) => Object.entries(field)[0]));
+      assert.deepEqual(words('  สมศรี '), [[
+        ['requestNo', { contains: 'สมศรี', mode: 'insensitive' }], ['requesterDisplayNameSnapshot', { contains: 'สมศรี', mode: 'insensitive' }],
+        ['reason', { contains: 'สมศรี', mode: 'insensitive' }], ['categoryLabelSnapshot', { contains: 'สมศรี', mode: 'insensitive' }],
+      ]]);
+      // A number is looked for in the text columns too (a claim number), and as the claim's amount, thousands separator or not.
+      assert.deepEqual(words('1,500.50')[0]!.at(-1), ['amount', '1500.50']);
+      assert.equal(words('1500')[0]!.length, 5);
+      for (const notAnAmount of ['1.2.3', '-5', '1e3', '12345678901234', 'RB-1']) assert.equal(words(notAnAmount)[0]!.length, 4, notAnAmount);
+      assert.equal(words('a b c d e f g').length, 5);
+      assert.deepEqual(hubSearchWhere('   '), { AND: [] });
+    });
+
+    it('hands the database one trimmed search of at most 100 characters, and none for a blank one', async () => {
+      const asked: any[] = [];
+      const repo = { listRequestPage: async (where: any) => { asked.push(where.search); return { rows: [], groups: [] }; }, findPolicy: async () => null,
+        findPendingApprovalSteps: async () => [], getUserDisplayNames: async () => ({}) };
+      const list = new ListReimbursementsUseCase(repo as any);
+      for (const search of ['  แท็กซี่  ', 'ก'.repeat(150), '', '   ', undefined]) await list.execute(reader, { search });
+      assert.deepEqual(asked, ['แท็กซี่', 'ก'.repeat(100), undefined, undefined, undefined]);
+    });
   });
 
   // Review 2026-10-01: `bucket` went from the query string to the counts unread.

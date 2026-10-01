@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { reimbursementHubBucket } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { MaterializeClaimExpensesService } from '../application/services/materialize-claim-expenses.service';
@@ -16,6 +17,7 @@ import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-ex
 import { DeleteEmployeeDraftUseCase } from '../../employee-access/application/use-cases/delete-employee-draft.use-case';
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { VoidReimbursementPaymentUseCase } from '../application/use-cases/reimbursement-finance.use-case';
+import { ListReimbursementsUseCase } from '../application/use-cases/reimbursement-request.use-case';
 import { PrismaBankingRepository } from '../../banking/infrastructure/prisma-banking.repository';
 import { PrismaMatchSourceQuery } from '../../banking/infrastructure/prisma-match-source.query';
 import { ConfirmMatchUseCase, ListMatchCandidatesUseCase } from '../../banking/application/use-cases/matching.use-case';
@@ -1495,6 +1497,103 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
         .map((row) => [row.action, row.targetId]), [['reimbursement.payment.void', paid.payment.id], ['bank.match.void', match.id]]);
     } finally {
       await bank.remove();
+    }
+  });
+
+  // ---- The hub list (spec §18.1, §25.1 I1; review 2026-10-01) ----
+  // The number on every card and chip is the rows its filter returns over all pages. The fakes of the list's own
+  // spec cannot say what PostgreSQL does with the scope predicates, the case-insensitive search, the amount and
+  // the paging order, so the whole rule is asked of the real database: every scope, with and without a search.
+
+  it('counts every hub card as the rows its filter returns over all pages: company, own, related and branch-limited, with and without a search', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const hub = (await db.company.create({ data: { name: `${TAG}-hub`, status: 'ACTIVE' }, select: { id: true } })).id;
+    try {
+      const [north, south] = await Promise.all(['N', 'S'].map(async (code) => (await db.branch.create({
+        data: { companyId: hub, code: `HUB-${code}`, name: `${TAG}-hub-${code}` }, select: { id: true },
+      })).id));
+      // Every status pair the hub places differently, six times over: two requesters, two branches and one branchless
+      // claim in six, searchable words on some, and a shared creation time on a third so only the id orders them.
+      const PAIRS = [['DRAFT', 'NOT_REQUIRED'], ['PENDING_APPROVAL', 'NOT_REQUIRED'], ['FINANCE_REVIEW', 'PENDING'], ['APPROVED', 'PENDING'],
+        ['APPROVED', 'NOT_REQUIRED'], ['READY_FOR_PAYMENT', 'APPROVED_FOR_PAYMENT'], ['PAID', 'NOT_REQUIRED'], ['REJECTED', 'NOT_REQUIRED'], ['CANCELLED', 'NOT_REQUIRED']] as const;
+      const fixtures = Array.from({ length: PAIRS.length * 6 }, (_, index) => {
+        const [status, financeReviewStatus] = PAIRS[index % PAIRS.length]!;
+        const mine = index % 2 === 0;
+        return {
+          id: `${TAG}-hub-${String(index).padStart(3, '0')}`, companyId: hub, branchId: index % 6 === 5 ? null : index % 3 === 0 ? south! : north!,
+          requesterUserId: mine ? `${TAG}-user` : `${TAG}-finance`, createdByUserId: mine ? `${TAG}-user` : `${TAG}-finance`,
+          requesterDisplayNameSnapshot: mine ? 'สมชาย ใจดี' : 'Somsri K.', requestNo: status === 'DRAFT' ? null : `RB-HUB-${String(index).padStart(5, '0')}`,
+          reason: index % 4 === 0 ? 'ค่าแท็กซี่ไปพบลูกค้า' : 'ค่าที่พักต่างจังหวัด', categoryKey: 'travel', categoryLabelSnapshot: index % 5 === 0 ? 'เดินทาง' : null,
+          amount: `${1000 + index}.5000`, currency: 'THB', incurredDate: new Date('2026-09-20T00:00:00.000Z'), status, financeReviewStatus,
+          // The requester of the other half is this claim's approver, which is what makes it "related" to them.
+          currentApproverUserId: index % 7 === 0 ? `${TAG}-finance` : null,
+          createdAt: new Date(Date.UTC(2026, 8, 20, 0, 0, index % 3 === 0 ? 0 : index)),
+        };
+      });
+      await db.reimbursementRequest.createMany({ data: fixtures as any });
+
+      const list = new ListReimbursementsUseCase(repos[0]!);
+      const viewer = (userId: string, permissions: string[], branchIds?: string[]) => ({
+        companyId: hub, userId, requestId: `${TAG}-hub-list`, permissions, scopes: branchIds ? { branchIds } : {}, roles: [], authProvider: 'dev',
+      }) as any;
+      type Fixture = (typeof fixtures)[number];
+      const scopes: Array<[string, any, (claim: Fixture) => boolean]> = [
+        ['company', viewer(`${TAG}-finance`, ['reimbursement.read']), () => true],
+        ['own', viewer(`${TAG}-user`, ['reimbursement.read_own']), (claim) => claim.requesterUserId === `${TAG}-user`],
+        ['related', viewer(`${TAG}-finance`, ['reimbursement.read_related']),
+          (claim) => claim.requesterUserId === `${TAG}-finance` || claim.currentApproverUserId === `${TAG}-finance`],
+        // A branch-limited reader sees that branch and the company-central claims that have none.
+        ['branch-limited', viewer(`${TAG}-finance`, ['reimbursement.read'], [north!]), (claim) => claim.branchId === north || claim.branchId === null],
+      ];
+      const has = (claim: Fixture, word: string) => [claim.requestNo, claim.requesterDisplayNameSnapshot, claim.reason, claim.categoryLabelSnapshot]
+        .some((text) => typeof text === 'string' && text.toLowerCase().includes(word.toLowerCase())) || Number(claim.amount) === Number(word.replace(/,/g, ''));
+      const BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+      /** Every page of one list, seven rows a page, the way the hub walks it. */
+      const walk = async (ctx: any, filter: Record<string, unknown>) => {
+        const pages: Awaited<ReturnType<typeof list.execute>>[] = [];
+        for (let page = 1; ; page += 1) {
+          const answer = await list.execute(ctx, { ...filter, page, pageSize: 7 });
+          pages.push(answer);
+          if (answer.items.length < answer.pageSize || page * answer.pageSize >= answer.total) return pages;
+        }
+      };
+
+      const sizes: Record<string, number[]> = {};
+      for (const [name, ctx, inScope] of scopes) {
+        for (const search of [undefined, 'แท็กซี่', 'somsri', 'RB-HUB-0001', '1,012.5', 'สมชาย ที่พัก', 'เดินทาง', 'ไม่มีใบไหนตรง']) {
+          const label = `${name} / ${search ?? 'no search'}`;
+          const expected = fixtures.filter((claim) => inScope(claim) && (search ?? '').split(/\s+/).filter(Boolean).every((word) => has(claim, word)));
+          (sizes[name] ??= []).push(expected.length);
+          const all = await walk(ctx, { search });
+          const ids = all.flatMap((answer) => answer.items.map((item) => item.id));
+          // Every claim once, none missing and none repeated across the pages, and the total says so.
+          assert.deepEqual([...ids].sort(), expected.map((claim) => claim.id).sort(), label);
+          const summary = all[0]!.hub;
+          assert.deepEqual([all[0]!.total, summary.counts.all], [expected.length, expected.length], label);
+          assert.equal(BUCKETS.reduce((sum, bucket) => sum + summary.counts[bucket], 0), summary.counts.all, label);
+          assert.equal(Number(summary.totalAmount), expected.reduce((sum, claim) => sum + Number(claim.amount), 0), label);
+          for (const bucket of BUCKETS) {
+            const pages = await walk(ctx, { search, bucket });
+            const items = pages.flatMap((answer) => answer.items);
+            // The number on the card: the list's total, and the rows of all its pages, each of them of that bucket.
+            assert.equal(items.length, summary.counts[bucket], `${label} / ${bucket}`);
+            assert.equal(new Set(items.map((item) => item.id)).size, items.length, `${label} / ${bucket}`);
+            for (const answer of pages) assert.deepEqual([answer.total, answer.hub], [summary.counts[bucket], summary], `${label} / ${bucket}`);
+            for (const item of items) assert.equal(reimbursementHubBucket(item), bucket, `${label} / ${item.id}`);
+          }
+        }
+      }
+      // The four scopes really differ, every search narrows its scope, several of them find something in each scope,
+      // and the last one finds nothing anywhere.
+      assert.deepEqual(Object.fromEntries(Object.entries(sizes).map(([name, counts]) => [name, counts[0]])), { company: 54, own: 27, related: 31, 'branch-limited': 36 });
+      for (const counts of Object.values(sizes)) {
+        assert.ok(counts.slice(1).every((count) => count < counts[0]!), JSON.stringify(sizes));
+        assert.ok(counts.slice(1).filter((count) => count > 0).length >= 4, JSON.stringify(sizes));
+        assert.equal(counts.at(-1), 0);
+      }
+    } finally {
+      await db.company.deleteMany({ where: { id: hub } });
     }
   });
 

@@ -155,20 +155,20 @@ describe('loadHubPage and the hub list it fills', () => {
     return { urls, failing };
   }
   const claims = (count: number, from = 0) => Array.from({ length: count }, (_, index) => ({ id: `rb-${from + index}` }));
-  const page = (number: number, scope?: string, filter: HubFilter = 'all') => new Promise<any>((resolve, reject) => {
-    loadHubPage('co-1', { scope, filter, page: number }, { onPage: resolve, onError: reject });
+  const page = (number: number, scope?: string, filter: HubFilter = 'all', search?: string) => new Promise<any>((resolve, reject) => {
+    loadHubPage('co-1', { scope, filter, search, page: number }, { onPage: resolve, onError: reject });
   });
   /** The hub's own loop, as its effect runs it: ask for the page the list needs, add it, until nothing is needed. */
-  async function fill(held: HubList, key: string, need = Infinity, scope?: string, filter: HubFilter = 'all'): Promise<HubList> {
+  async function fill(held: HubList, key: string, need = Infinity, scope?: string, filter: HubFilter = 'all', search?: string): Promise<HubList> {
     for (;;) {
       const next = hubNextPage(hubList(held, key), need);
       if (next === null) return hubList(held, key);
-      try { held = withHubPage(held, key, await page(next, scope, filter)); }
+      try { held = withHubPage(held, key, await page(next, scope, filter, search)); }
       catch (error) { held = withHubFailure(held, key, errorText(error)); }
     }
   }
 
-  it('opens with one call, takes more only as the table page shown needs them, and every page for a search', async () => {
+  it('opens with one call, and takes more only as the table page shown needs them', async () => {
     // Before: the hub walked the whole list on every open, 20 calls for 2,000 claims.
     const { urls } = server(claims(230));
     const opened = await fill(NO_HUB_LIST, 'list', 10, 'related');
@@ -182,10 +182,25 @@ describe('loadHubPage and the hub list it fills', () => {
     const further = await fill(opened, 'list', 110, 'related');
     assert.deepEqual([further.rows.length, further.nextPage], [200, 3]);
     assert.deepEqual(urls.slice(1), ['/api/v1/companies/co-1/reimbursements?scope=related&page=2&pageSize=100']);
-    // A search needs every row of the filter.
-    const all = await fill(further, 'list', Infinity, 'related');
+    // The last table page takes the last page of the list.
+    const all = await fill(further, 'list', 230, 'related');
     assert.deepEqual([all.rows.length, all.total, all.nextPage], [230, 230, null]);
     assert.deepEqual(urls.slice(2), ['/api/v1/companies/co-1/reimbursements?scope=related&page=3&pageSize=100']);
+  });
+
+  // Review 2026-10-01: a search was run in the browser, over every page of its filter loaded first.
+  it('sends the search to the API and opens it with one call, however many claims the filter holds', async () => {
+    // Before: 30 calls for a shop of 3,000 claims, each of them counting the scope again.
+    const { urls } = server(claims(3000));
+    const searched = await fill(NO_HUB_LIST, 'searched', 10, 'related', 'payment', 'สมศรี 1,500');
+    assert.deepEqual(urls, [`/api/v1/companies/co-1/reimbursements?scope=related&bucket=payment&search=${encodeURIComponent('สมศรี 1,500').replace(/%20/g, '+')}&page=1&pageSize=100`]);
+    assert.equal(new URL(urls[0]!, 'http://web.test').searchParams.get('search'), 'สมศรี 1,500');
+    assert.deepEqual([searched.rows.length, searched.nextPage], [100, 2]);
+    // No search typed, or a blank one: no search parameter at all.
+    urls.length = 0;
+    await fill(NO_HUB_LIST, 'plain', 10, undefined, 'all', '');
+    await fill(NO_HUB_LIST, 'plain-too', 10, undefined, 'all', undefined);
+    assert.deepEqual(urls, ['/api/v1/companies/co-1/reimbursements?page=1&pageSize=100', '/api/v1/companies/co-1/reimbursements?page=1&pageSize=100']);
   });
 
   it('asks the API for the bucket of the card or chip that is open, and for no bucket under ทั้งหมด', async () => {

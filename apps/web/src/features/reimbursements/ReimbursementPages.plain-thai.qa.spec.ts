@@ -175,14 +175,15 @@ function served(claims: any[], filter?: string) {
 /**
  * One hub tab, its queue loaded with the rows (each queue starts as an empty list, loading); `filter` = a card or chip already tapped.
  * The hub's own list is held a page at a time: `held` overrides what it holds (pages still to come, a page that failed).
+ * `search` = a search already typed and asked for: the rows are then what the API found, and so are the counts.
  */
-const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held: object = {}) => renderWithState(
+const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held: object = {}, search = '') => renderWithState(
   h(AppRouterContext.Provider, { value: router }, h(SearchParamsContext.Provider, { value: new URLSearchParams(`tab=${tab}`) },
     h(ToastContext.Provider, { value: toast },
       h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'], permissions: hubPermissions })))),
   (initial) => (Array.isArray(initial) && initial.length === 0 ? rows
-    : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), filter ?? 'all', 0, 0), nextPage: null, ...served(rows, filter), ...held }
-      : initial === true ? false : initial === 'all' ? filter : undefined),
+    : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), filter ?? 'all', 0, 0, search), nextPage: null, ...served(rows, filter), ...held }
+      : initial === true ? false : initial === 'all' ? filter : initial === '' ? search : undefined),
 );
 // One claim per state the hub has to place: the desk is what the list API answers, and finished claims have none.
 const hubClaims = ([
@@ -360,6 +361,52 @@ describe('the hub takes its list lazily and says when a page did not load (revie
     for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก/u);
     // The retry is a full-width button on a phone.
     assert.match(html, /data-testid="reimbursements-mine-load-failed">.*?<button type="button" class="[^"]*\bmin-h-11 w-full sm:w-auto\b[^"]*">ลองอีกครั้ง<\/button>/su);
+  });
+});
+
+// Review 2026-10-01: the hub searched in the browser and counted the whole scope beside what the search showed. The
+// search now goes to the API, whose counts are of what it found, so a card still shows the rows its filter returns.
+describe('the hub search is asked of the API, and the cards count what it found (spec §25.1 I1 with a search)', () => {
+  const rowsShown = (html: string) => html.match(/data-testid="reimbursements-mine-card"/gu)?.length ?? 0;
+  const chipNumbers = (html: string) => [...html.slice(html.indexOf('data-testid="reimbursements-mine-filters"'), html.indexOf('type="search"'))
+    .matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => visible(inner!).at(-1));
+  const cardNumbers = (html: string) => [...html.slice(html.indexOf('data-testid="reimbursements-mine-summary"'), html.indexOf('data-testid="reimbursements-mine-filters"'))
+    .matchAll(/<button\b[^>]*>(.*?)<\/button>/gsu)].map(([, inner]) => visible(inner!)[0]);
+  // What the API answers for the search "แท็กซี่" in the shop of seven claims: three of them, one waiting for payment.
+  const found = [hubClaims[0]!, hubClaims[2]!, hubClaims[4]!];
+
+  it('shows the found claims with the cards, chips and line counting them, and each filter shows the rows its number says', () => {
+    const html = hubTab('mine', found, undefined, {}, 'แท็กซี่');
+    // Before: the cards kept the whole shop's 1, 1, 2 and ฿700 beside three rows, and the chip ทั้งหมด said 7.
+    assert.deepEqual(cardNumbers(html), ['1', '0', '1', '฿300']);
+    assert.deepEqual(chipNumbers(html), ['3', '1', '0', '1', '1', '0']);
+    assert.equal(rowsShown(html), 3);
+    const texts = visible(html);
+    assert.ok(texts.includes('พบ 3 รายการที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น'), texts.filter((text) => text.includes('พบ')).join(' | '));
+    assert.match(html, /<input [^>]*type="search"[^>]*value="แท็กซี่"/u);
+    // A card or chip tapped while searching: its number is its rows.
+    for (const [filter, rows] of [['payment', 1], ['draft', 1], ['review', 0]] as const) {
+      const filtered = hubTab('mine', found, filter, {}, 'แท็กซี่');
+      assert.equal(rowsShown(filtered), rows, filter);
+      assert.ok(visible(filtered).includes(`พบ ${rows} จาก 3 รายการที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น`), filter);
+    }
+  });
+
+  it('says a search found nothing, never that the shop has no claims', () => {
+    // Before (with the counts of the search): "ยังไม่มีคำขอเบิก" and a prompt to create the first claim.
+    const texts = visible(hubTab('mine', [], undefined, {}, 'ไม่มีใบไหนตรง'));
+    assert.ok(texts.includes('ไม่พบรายการที่ตรงกับตัวกรอง') && texts.includes('ลองล้างคำค้นหรือเลือกสถานะอื่น'), texts.join(' | '));
+    assert.ok(texts.includes('พบ 0 รายการที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น'));
+    for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|สร้างคำขอแรก/u);
+    // A shop that really has none still says so when nothing is searched.
+    assert.ok(visible(hubTab('mine', [])).includes('ยังไม่มีคำขอเบิก'));
+  });
+
+  it('names what the search box finds, in plain Thai', () => {
+    const html = hubTab('mine', hubClaims);
+    assert.match(html, /placeholder="ค้นหาเลขที่ ผู้ขอ เหตุผล หมวด หรือจำนวนเงิน"/u);
+    // Before: "ค้นหาทุกข้อมูลในตาราง เช่น … สถานะ". The status is what the chips filter, and the API does not search it.
+    assert.doesNotMatch(html, /ค้นหาทุกข้อมูลในตาราง/u);
   });
 });
 

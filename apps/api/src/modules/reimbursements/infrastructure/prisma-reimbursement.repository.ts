@@ -183,6 +183,25 @@ export function hubBucketWhere(bucket: string): Prisma.ReimbursementRequestWhere
   };
 }
 
+/**
+ * What the hub's search box finds: every word typed is in the claim's number, its requester's name, its
+ * reason or its category, or is its amount. Those are the columns a row prints and a person can type;
+ * the status is what the chips filter. Read by the page and by the counts alike.
+ * ponytail: the first five words are read; a longer search ignores the rest.
+ */
+export function hubSearchWhere(search: string): Prisma.ReimbursementRequestWhereInput {
+  return {
+    AND: search.split(/\s+/).filter(Boolean).slice(0, 5).map((word) => {
+      const contains = { contains: word, mode: 'insensitive' as const };
+      const amount = word.replace(/,/g, '');
+      return { OR: [
+        { requestNo: contains }, { requesterDisplayNameSnapshot: contains }, { reason: contains }, { categoryLabelSnapshot: contains },
+        ...(/^\d{1,12}(\.\d{1,4})?$/.test(amount) ? [{ amount }] : []),
+      ] };
+    }),
+  };
+}
+
 /** View-only actor graph. Linked raw ids are resolved before this predicate is built. */
 export function reimbursementRelatedToUserWhere(
   userId: string,
@@ -2489,13 +2508,15 @@ export class PrismaReimbursementRepository {
   /**
    * One page of a list, read with LIMIT and OFFSET in the database, and the whole scope grouped by the
    * fields the hub counts on. Two reads over one predicate: the page adds only the bucket to it, so the
-   * groups of a bucket add up to exactly the claims its pages hold.
+   * groups of a bucket add up to exactly the claims its pages hold. A search narrows that one predicate
+   * (`hubSearchWhere`), so with a search the groups count what was found, bucket by bucket.
    */
   async listRequestPage(where: ListRequestsWhere & { bucket?: string; skip: number; take: number }): Promise<{
     rows: ReimbursementRequestRecord[];
     groups: ReimbursementRequestGroup[];
   }> {
-    const scope = await this.requestListWhere(where);
+    const scope = await this.requestListWhere({ ...where, search: undefined });
+    if (where.search) scope.AND.push(hubSearchWhere(where.search));
     const [rows, groups] = await Promise.all([
       this.prisma.client.reimbursementRequest.findMany({
         where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },

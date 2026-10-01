@@ -457,7 +457,7 @@ export function hubCardFilter(open: HubFilter, tapped: HubFilter): HubFilter {
 
 /** The rows of one hub list loaded so far, where the server's list goes on, and the scope as the server counted it. */
 export type HubList = {
-  /** The list these rows belong to (company, scope, filter, reload): rows of another list are never shown as this one's. */
+  /** The list these rows belong to (company, scope, filter, reload, search): rows of another list are never shown as this one's. */
   key: string;
   rows: any[];
   /** The server's count of the whole list. */
@@ -466,12 +466,25 @@ export type HubList = {
   nextPage: number | null;
   /** Why the last page asked for did not arrive. Nothing more is asked until a retry clears it, and the rows stay. */
   failed?: string;
-  /** What the cards and chips print: the whole scope, whatever filter the rows are of. Kept from one list to the next. */
+  /** What the cards and chips print: the whole scope (with a search, what it found), whatever filter the rows are of. Kept from one list to the next. */
   summary: ReimbursementHubSummary | null;
 };
 export const NO_HUB_LIST: HubList = { key: '', rows: [], total: 0, nextPage: 1, summary: null };
 /** What the hub asks for; what counts is the page size the server answers with. */
 export const HUB_PAGE_SIZE = 100;
+/** How long the typing has to pause before the hub asks the API for the search. */
+export const HUB_SEARCH_DELAY_MS = 300;
+
+/**
+ * The line above the hub's list. With a search the server's counts are of what the search found, so the cards and
+ * chips change with it: the line says so, because a card that showed 12 a moment ago now shows 3.
+ */
+export function hubListStatusText(shown: number, all: number, filter: HubFilter, searching: boolean): string {
+  if (searching) {
+    return `${filter === 'all' ? `พบ ${shown} รายการ` : `พบ ${shown} จาก ${all} รายการ`}ที่ตรงกับคำค้น · ตัวเลขบนการ์ดและตัวกรองนับเฉพาะรายการที่ตรงกับคำค้น`;
+  }
+  return filter === 'all' ? `ทั้งหมด ${all} รายการ` : `พบ ${shown} จาก ${all} รายการ`;
+}
 
 export const hubListKey = (...parts: unknown[]) => parts.join('|');
 
@@ -482,8 +495,8 @@ export function hubList(held: HubList, key: string): HubList {
 
 /**
  * The page to ask the server for now, given how many rows the screen needs: the first page of a list, then
- * more only when the table page shown, or a search, reaches past what is held. Null: the rows needed are
- * loaded, the list is complete, or the last page failed.
+ * more only when the table page shown reaches past what is held. Null: the rows needed are loaded, the list
+ * is complete, or the last page failed.
  */
 export function hubNextPage(list: HubList, need: number): number | null {
   return list.failed === undefined && list.rows.length < need ? list.nextPage : null;

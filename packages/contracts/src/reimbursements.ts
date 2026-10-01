@@ -451,7 +451,7 @@ export function reimbursementHubBucket(claim: {
   return HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
 }
 
-/** The whole list scope as the server counted it: what the hub's cards and chips print. */
+/** The whole list scope as the server counted it, or what a search found in it: what the hub's cards and chips print. */
 export type ReimbursementHubSummary = {
   /** Claims per bucket, and `all` for the scope. The buckets add up to `all`. */
   counts: Record<'all' | ReimbursementHubBucket, number>;
@@ -709,6 +709,11 @@ export type ListReimbursementsFilter = {
   requesterUserId?: string;
   /** Only the claims of one hub bucket. Any other name is refused (400). */
   bucket?: ReimbursementHubBucket;
+  /**
+   * The hub's search box: every word is in the claim's number, requester name, reason or category, or is
+   * its amount. It narrows the list and `hub` alike, so each count is still the rows its filter returns.
+   */
+  search?: string;
   page?: number;
   pageSize?: number;
 };
@@ -719,7 +724,7 @@ export type PaginatedReimbursements = {
   total: number;
   page: number;
   pageSize: number;
-  /** The scope counted per bucket, whatever `bucket` or page was asked for. */
+  /** The scope counted per bucket, whatever `bucket` or page was asked for. With `search`, the claims it found. */
   hub: ReimbursementHubSummary;
 };
 
