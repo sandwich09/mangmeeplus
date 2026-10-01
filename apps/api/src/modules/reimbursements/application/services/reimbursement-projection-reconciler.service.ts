@@ -98,10 +98,10 @@ export class ReimbursementProjectionReconcilerService {
   async execute(limit = 100): Promise<ReimbursementReconcileResult> {
     const result: ReimbursementReconcileResult = { completed: [], failed: [], blocked: [] };
     // One entitlement read per company per pass.
-    const frozen = new Map<string, Promise<boolean>>();
+    const frozenByCompany = new Map<string, Promise<boolean>>();
     const isFrozen = (companyId: string) => {
-      if (!frozen.has(companyId)) frozen.set(companyId, this.frozen(companyId));
-      return frozen.get(companyId)!;
+      if (!frozenByCompany.has(companyId)) frozenByCompany.set(companyId, this.frozen(companyId));
+      return frozenByCompany.get(companyId)!;
     };
     for (const intent of await this.repo.listPendingProjectionIntents(limit)) {
       await this.attempt(result, intent.request, intent.kind, isFrozen, async () => { await this.completeProjection(intent); return 'completed'; });
@@ -313,6 +313,9 @@ export class ReimbursementProjectionReconcilerService {
     // void refuses, or a record it must void sits in a closed period. Replaying it would fail the same
     // way on every pass, and each failed void of a posted record burns a journal number. The claim
     // page says what stands in the way and who can put it right.
+    // ponytail: the blocker is every refusal the void is known to make; there is no attempt counter.
+    // A void that fails for a reason this does not foresee is tried again on the next pass, and its
+    // failure is on the log each time. Add a counter with a backoff if that log ever shows one repeating.
     if (!isExpenseVoidReason(intent.reason) || await this.repo.findCancellationBlocker(intent.request)) return 'blocked';
     const requestId = `system:reimbursement-cancellation:${intent.request.id}`;
     const ctx = this.systemContext(intent.request, intent.actorUserId, requestId);
