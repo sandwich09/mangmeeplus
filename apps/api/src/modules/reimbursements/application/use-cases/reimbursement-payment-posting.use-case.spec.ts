@@ -36,6 +36,7 @@ describe('RecordReimbursementPaymentUseCase — postingStatus lifecycle', () => 
       findPolicy: async () => null,
       getUserDisplayNames: async () => ({}),
       listSignedClaimFormCopies: async () => [],
+      listPaymentSlips: async () => ({}),
       listOpenDuplicateCandidates: async () => [],
       // Preflight before the payment number is reserved; the repository repeats it under the lock.
       assertClaimPaymentReady: async () => undefined,

@@ -13,15 +13,15 @@ import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
 import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
 import {
-  addReimbursementInternalNote, approveReimbursement, cancelReimbursement, deleteReimbursementInternalNote,
+  addReimbursementInternalNote, approveReimbursement, attachReimbursementPaymentSlip, cancelReimbursement, deleteReimbursementInternalNote,
   editReimbursementInternalNote, financeReviewReimbursement, getReimbursement, rejectReimbursement,
-  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadSignedClaimFormCopy,
+  reopenReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
   voidReimbursementPayment,
 } from './reimbursements.api';
 import { currentDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
   activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
-  isStaleApprovalError, type JourneyAction, type JourneyStepState,
+  isStaleApprovalError, opensPaymentFormOnArrival, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
 } from './reimbursements.logic';
 import {
   ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentForm, ReasonDialog, RejectDialog,
@@ -60,12 +60,14 @@ const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string;
   },
 };
 
-export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions, roles = [] }: {
+export function ReimbursementJourneyPage({ companyId, requestId, userId, permissions, roles = [], payOnOpen = false }: {
   companyId: string;
   requestId: string;
   userId: string;
   permissions: readonly string[];
   roles?: readonly string[];
+  /** The finance queue's quick pay on a phone lands here: the payment form opens in the step card, never in a dialog. */
+  payOnOpen?: boolean;
 }) {
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
@@ -89,7 +91,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const [noteBusy, setNoteBusy] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
   const cardRef = useRef<HTMLElement>(null);
-  const { previewLoadingKey, openClaimForm, openAttachment, previewModals } = useClaimDocumentPreview(companyId, setActionError);
+  const { previewLoadingKey, openClaimForm, openAttachment, openPaymentSlip, previewModals } = useClaimDocumentPreview(companyId, setActionError);
 
   const saveNote = async () => {
     if (!noteBody.trim() || noteBusy) return;
@@ -122,14 +124,25 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     finally { setNoteBusy(false); }
   };
 
+  // Asked for once, on arrival: a later re-read of the claim never reopens a form the payer closed.
+  const payRequested = useRef(payOnOpen);
   useEffect(() => {
     let active = true;
     setLoadError(null);
     getReimbursement(companyId, requestId)
-      .then((next) => { if (active) setDetail(next); })
+      .then((next) => {
+        if (!active) return;
+        setDetail(next);
+        if (opensPaymentFormOnArrival(payRequested.current, activeJourneyStep(buildJourneySteps(next, permissions, userId)))) {
+          setPayOpen(true);
+          // The step card holding the form comes into view, as it does after an action.
+          setFocusTick((tick) => tick + 1);
+        }
+        payRequested.current = false;
+      })
       .catch((e) => { if (active) setLoadError(e); });
     return () => { active = false; };
-  }, [companyId, requestId, reloadKey]);
+  }, [companyId, requestId, reloadKey, permissions, userId]);
 
   // The card of the step the claim moved to takes focus (and scrolls into view) after an action.
   useEffect(() => { if (focusTick) cardRef.current?.focus(); }, [focusTick]);
@@ -226,7 +239,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
     && !permissions.includes('reimbursement.duplicate.resolve');
   const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
-  const desk = currentDeskText(detail.currentDesk);
+  const desk = currentDeskText(detail.currentDesk, detail.paymentDesk);
   const handlers: Partial<Record<JourneyAction, () => void>> = {
     // No approver at all: the answer names who fixes it and, for a policy manager, links there.
     submit: () => { setApproverHelp(null); void act('submit', () => submitReimbursement(companyId, requestId), 'ส่งขออนุมัติเรียบร้อยแล้ว',
@@ -393,6 +406,18 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           () => uploadSignedClaimFormCopy(companyId, requestId, file, detail.branchId, confirmedRequestNo),
           confirmedRequestNo ? 'แนบสำเนาใบเบิกที่ลงนามครบเรียบร้อยแล้ว' : 'แนบไฟล์เรียบร้อยแล้ว')}
         onRequestVoidPayment={(payment) => { setActionError(null); setVoidingPayment(payment); }}
+        onOpenPaymentSlip={(payment, attachmentId, name) => void openPaymentSlip(detail.id, payment.id, attachmentId, name)}
+        onAttachPaymentSlip={(payment, file) => void act('attach-slip', async () => attachReimbursementPaymentSlip(
+          companyId, requestId, payment.id, await uploadReimbursementPaymentSlip(companyId, requestId, file),
+        ), 'แนบสลิปเรียบร้อยแล้ว')}
+        onUseSignedCopyAsSlip={(copy, payment) => void (async () => {
+          // The file changes hands and a paper-signature declaration may go with it, so it asks first.
+          if (!(await confirm({
+            title: 'ใช้ไฟล์นี้เป็นสลิปการจ่าย', message: signedCopyMoveConfirmText(copy, payment),
+            confirmLabel: 'ย้ายเป็นสลิปการจ่าย', cancelLabel: 'กลับ', variant: 'primary',
+          }))) return;
+          await act('move-slip', () => attachReimbursementPaymentSlip(companyId, requestId, payment.id, copy.attachmentId), 'ย้ายไฟล์ไปเป็นสลิปการจ่ายแล้ว');
+        })()}
       />
 
       {previewModals}

@@ -1,4 +1,6 @@
+import { canOpenReimbursementPaymentSlip } from '@watchdog-bms/contracts';
 import type {
+  ReimbursementPayoutViewer,
   ReimbursementPolicySummary,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
@@ -116,7 +118,16 @@ export function toStepSummary(s: ReimbursementApprovalStepRecord, names: Record<
   };
 }
 
-export function toPaymentSummary(p: ReimbursementPaymentRecord, names: Record<string, string> = {}): ReimbursementPaymentSummary {
+/** A payment's slips as the repository lists them: per payment id, oldest first. */
+export type PaymentSlipRows = Record<string, { attachmentId: string; attachedAt: Date }[]>;
+
+export function toPaymentSummary(
+  p: ReimbursementPaymentRecord,
+  names: Record<string, string> = {},
+  slips: PaymentSlipRows[string] = [],
+  // Default deny: a slip's file id goes only to a caller the slip endpoint would serve.
+  viewerCanOpenSlips = false,
+): ReimbursementPaymentSummary {
   return {
     id: p.id,
     paidByUserId: p.paidByUserId,
@@ -133,6 +144,10 @@ export function toPaymentSummary(p: ReimbursementPaymentRecord, names: Record<st
     voidedAt: iso(p.voidedAt),
     voidReason: p.voidReason,
     postingStatus: p.postingStatus,
+    // From the slip links alone, so every reader of a payment answers "is there a slip" the same way.
+    slipCount: slips.length,
+    slips: viewerCanOpenSlips ? slips.map((slip) => ({ attachmentId: slip.attachmentId, attachedAt: slip.attachedAt.toISOString() })) : [],
+    viewerCanOpenSlips,
   };
 }
 
@@ -217,6 +232,8 @@ export function toRequestDetail(
     financeReviewRequired?: boolean;
     allowMissingReceiptWithReason?: boolean;
     duplicateBlocksPayment?: boolean;
+    paymentSlips?: PaymentSlipRows;
+    viewerCanOpenSlips?: boolean;
   } = {},
 ): ReimbursementRequestDetail {
   return {
@@ -244,7 +261,7 @@ export function toRequestDetail(
     financeReviewRequired: extras.financeReviewRequired,
     missingReceiptReason: r.missingReceiptReason,
     approvalSteps: (r.approvalSteps ?? []).map((s) => toStepSummary(s, displayNames)),
-    payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames)),
+    payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames, extras.paymentSlips?.[p.id], extras.viewerCanOpenSlips)),
     duplicateCandidates: (r.duplicateCandidates ?? []).map(toDuplicateSummary),
     duplicateBlocksPayment: extras.duplicateBlocksPayment,
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
@@ -259,15 +276,23 @@ export function toRequestDetail(
  * their response in the drawer on purpose (a frozen assignee may lose read permission the
  * moment they decide), so their responses must be as complete as a GET. Lives in the mapper
  * because the request, approval, and finance use-cases all need it and already import here.
+ *
+ * `viewer` is whoever the answer goes to. Each payment tells them whether they may open its slips
+ * (the verdict of the one rule the slip endpoint enforces) and names the slip files only if they
+ * may; everyone else gets the count. Required, so no route can return a detail without deciding it.
+ * `approvalActions` is the viewer's authority over a pending step, where the route resolved it.
  */
 export async function detailWithFileNames(
   repo: PrismaReimbursementRepository,
   evidence: ReimbursementEvidenceService,
   companyId: string,
   req: ReimbursementRequestRecord,
+  viewer: ReimbursementPayoutViewer,
+  approvalActions?: { canApprove: boolean; canReject: boolean } | null,
 ): Promise<ReimbursementRequestDetail> {
   const signedCopiesRead = repo.listSignedClaimFormCopies(companyId, req.id);
-  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
+  const paymentIds = (req.payments ?? []).map((payment) => payment.id);
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
     // Whoever declared a paper-signed scan is named in the same batch, so the lookup follows the copies.
@@ -276,6 +301,8 @@ export async function detailWithFileNames(
     ])),
     signedCopiesRead,
     repo.findPolicy(companyId, null).then(effectivePolicy),
+    // Only a claim with a payment can have a slip, so an unpaid claim costs no query.
+    paymentIds.length > 0 ? repo.listPaymentSlips(companyId, paymentIds) : undefined,
   ]);
   const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
   const receiptRequirementStatus = req.status === 'DRAFT'
@@ -299,5 +326,10 @@ export async function detailWithFileNames(
     // once projections run, that field carries the expense-level result, not these candidates.
     duplicateBlocksPayment: requestPolicy.duplicatePolicy === 'BLOCK_PAYMENT'
       && (req.duplicateCandidates ?? []).some((candidate) => candidate.status === 'OPEN'),
+    paymentSlips,
+    viewerCanOpenSlips: canOpenReimbursementPaymentSlip(
+      { userId: viewer.userId, permissions: viewer.permissions },
+      { requesterUserId: req.requesterUserId, submittedAt: req.submittedAt, approvalSteps: req.approvalSteps, approvalActions },
+    ),
   });
 }

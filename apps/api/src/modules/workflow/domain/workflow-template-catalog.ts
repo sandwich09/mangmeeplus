@@ -35,6 +35,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   reimbursement_finance_review_pending: { eventType: 'reimbursement.approved' },
   reimbursement_ready_for_payment: { eventType: 'reimbursement.ready_for_payment' },
   reimbursement_payment_recorded: { eventType: 'reimbursement.payment_recorded' },
+  reimbursement_payment_voided: { eventType: 'reimbursement.payment_voided' },
   vendor_bill_pending_approval: { eventType: 'vendor_bill.submitted' },
   vendor_bill_second_approval: { eventType: 'vendor_bill.approval_recorded' },
   ai_draft_requested: { eventType: 'ai.draft_requested' },
@@ -55,6 +56,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_finance_review_pending: 0,
   reimbursement_ready_for_payment: 0,
   reimbursement_payment_recorded: 0,
+  reimbursement_payment_voided: 0,
 };
 
 // Step-journey spec §11/§13: every reimbursement notification links straight to that claim's
@@ -168,6 +170,46 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
       { actionKey: 'create_escalation_task', actionType: 'CREATE_WORKFLOW_TASK', configJson: { titleTemplate: 'อนุมัติเกิน SLA: {{requestNo}}', priority: 'CRITICAL', assigneeUserPayloadKey: 'approverTaskUserId', assigneeRolePayloadKey: 'approverTaskRole' } },
     ],
     requiredPermissions: ['reimbursement.approve'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
+    // Audit B9: the only reminder covered approvals, so a claim waiting for payment was never
+    // chased. Same scan, same policy deadline and same cadence as the approval reminder above;
+    // only a notice, because a task per scan window would pile up (audit B8).
+    key: 'reimbursement_payment_sla_breach',
+    name: 'Reimbursement payment SLA breach',
+    description: 'Remind the person whose turn it is to record the payment (whoever passed or approved the claim, when they can pay), else everyone who can, when a claim has waited for payment longer than the policy SLA age.',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'SLA_SCAN',
+    defaultConditionJson: { field: 'slaRisk', op: 'EQ', value: true },
+    defaultActionJson: [
+      {
+        actionKey: 'remind_payer',
+        actionType: 'SEND_NOTIFICATION',
+        configJson: {
+          triggerKey: 'workflow.reimbursement_payment_sla_breach',
+          recipientPermissions: ['reimbursement.payment.record'],
+          // The same preference as the ready-to-pay notice, read from what the claim records: the
+          // finance reviewer who passed it, else whoever approved it, when they can record the
+          // payment. Never the requester alone. With no such person, everyone able to record it.
+          preferRecipientPayloadKeys: ['financeReviewerUserId', 'approvedByUserId'],
+          neverPreferRecipientPayloadKeys: ['requesterUserId'],
+          severity: 'critical',
+          titleTemplate: 'ใบเบิกรอจ่ายเงินเกินกำหนด: {{requestNo}}',
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // The scan comes round again by itself, so having nobody who can pay right now (a
+          // suspended company, no payer covering the branch) is not a failure to retry into a
+          // dead letter every window.
+          skipWhenNoRecipients: true,
+        },
+      },
+    ],
+    requiredPermissions: ['reimbursement.payment.record'],
     requiredSourceModules: ['reimbursements'],
     defaultEnabled: false,
     autoEnable: true,
@@ -321,7 +363,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'reimbursement_ready_for_payment',
     name: 'Reimbursement ready for payment',
-    description: 'Notify everyone who can record a reimbursement payment when a claim clears finance review.',
+    description: 'Notify the person whose turn it is to record this reimbursement payment (whoever approved it, when they can pay), else everyone who can, when a claim is ready for payment.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -333,16 +375,24 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
         configJson: {
           triggerKey: 'workflow.reimbursement_ready_for_payment',
           recipientPermissions: ['reimbursement.payment.record'],
+          // Owner rule 2026-10-01: whose turn it is, not everyone who can pay (a shop owner holds
+          // every right and was pushed for every claim). That is the actor of this event when they
+          // can record the payment: the approver, the finance reviewer, or whoever filed on
+          // someone's behalf a claim that needed no approval. Next, for a claim nobody had to
+          // approve, the people who would have approved it. Never the requester alone. With no
+          // such person, everyone able to record the payment, as before.
+          preferRecipientPayloadKeys: ['actorUserId', 'approverRecipientUserIds'],
+          neverPreferRecipientPayloadKeys: ['requesterUserId'],
           severity: 'action',
           titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}',
-          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอบันทึกการจ่ายเงิน',
+          // Worded as the reader's own next step: every recipient is someone who can record it.
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
-          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
-          // own action — a solo owner submitting/approving/paying their own claim gets none of
-          // these pushes. An owner-only company excluding the sole recipient is expected, not a
-          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
-          excludeRecipientPayloadKeys: ['actorUserId'],
-          skipWhenAllRecipientsExcluded: true,
+          // NO actor exclusion, unlike every other claim notice (audit B9, owner rule 2026-10-01:
+          // a claim has a requester and an approver, and the approver records the payment). The
+          // actor of this event approved the claim; paying it is a different step, and it is
+          // theirs. Excluding them left the approver-payer with no notice at all for the pay
+          // step, which is how approved claims sat unpaid in production.
         },
       },
     ],
@@ -371,6 +421,45 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           titleTemplate: 'จ่ายเงินเบิกแล้ว: {{requestNo}}',
           // paidAmount, not amount: this event carries the payment's own figures.
           bodyTemplate: 'จ่ายแล้ว {{paidAmount}} {{currency}} · เลขที่จ่าย {{paymentNo}}',
+          deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
+          // own action — a solo owner submitting/approving/paying their own claim gets none of
+          // these pushes. An owner-only company excluding the sole recipient is expected, not a
+          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
+          excludeRecipientPayloadKeys: ['actorUserId'],
+          skipWhenAllRecipientsExcluded: true,
+        },
+      },
+    ],
+    requiredPermissions: ['reimbursement.read_own'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
+    // Audit B9: a requester told "paid" was never told when that payment was taken back.
+    key: 'reimbursement_payment_voided',
+    name: 'Reimbursement payment voided',
+    description: 'Notify the requester when a recorded payment of their reimbursement is voided.',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'EVENT',
+    // The requester, not just the claim: a void event written before its payload named the
+    // requester has nobody to tell, and must skip rather than retry into a dead letter.
+    defaultConditionJson: { field: 'requesterUserId', op: 'EXISTS' },
+    defaultActionJson: [
+      {
+        actionKey: 'notify_requester_payment_voided',
+        actionType: 'SEND_NOTIFICATION',
+        configJson: {
+          triggerKey: 'workflow.reimbursement_payment_voided',
+          recipientPayloadKeys: ['requesterUserId'],
+          severity: 'info',
+          titleTemplate: 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}',
+          // No figure and no reason on purpose: the reason is free text typed by the person who
+          // voided, and a notice must never be able to carry an account number.
+          bodyTemplate: 'การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ใบเบิกกลับไปรอจ่าย',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
           // own action — a solo owner submitting/approving/paying their own claim gets none of

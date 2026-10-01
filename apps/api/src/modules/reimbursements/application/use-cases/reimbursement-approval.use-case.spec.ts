@@ -80,6 +80,7 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
     findPolicy: async () => policy,
     getUserDisplayNames: async () => ({}),
     listSignedClaimFormCopies: async () => [],
+    listPaymentSlips: async () => ({}),
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
       step.status = 'APPROVED'; step.decisionByUserId = data.actorUserId; step.decidedAt = data.decidedAt;
@@ -311,9 +312,9 @@ function expense(overrides: Partial<any> = {}) {
   return { id: 'exp-1', companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'staff-1', ...overrides } as any;
 }
 
-function evidenceService(attachmentResult: any = null, expenseResult: any = null) {
+function evidenceService(attachmentResult: any = null, expenseResult: any = null, linkedAsPaymentSlip = false) {
   return new ReimbursementEvidenceService(
-    { findById: async () => attachmentResult, findManyByIds: async () => (attachmentResult ? [attachmentResult] : []) } as any,
+    { findById: async () => attachmentResult, findManyByIds: async () => (attachmentResult ? [attachmentResult] : []), isReimbursementPaymentSlip: async () => linkedAsPaymentSlip } as any,
     { findById: async () => expenseResult, findSubstituteEvidence: async () => null } as any,
   );
 }
@@ -353,6 +354,8 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
     getUserDisplayNames: async () => ({}),
     // Lane F: it also lists the uploaded scans of the signed claim form.
     listSignedClaimFormCopies: async () => [],
+    // And, once the claim has a payment, that payment's slips.
+    listPaymentSlips: async () => ({}),
     createRequest: async (data: any) => {
       request = draftRequest({
         ...data,
@@ -408,6 +411,8 @@ describe('Reimbursement request evidence validation', () => {
     ['cross-company', attachment({ companyId: 'co-2' })],
     ['other-user', attachment({ uploadedByUserId: 'staff-2' })],
     ['non-ACTIVE', attachment({ status: 'PENDING_UPLOAD' })],
+    // Owner 2026-10-01: payment evidence is never a claim receipt, the requester's own slip upload included.
+    ['payment-slip upload', attachment({ metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-9' } })],
   ] as const;
   const invalidExpenses = [
     ['nonexistent', null],
@@ -428,6 +433,20 @@ describe('Reimbursement request evidence validation', () => {
       await assert.rejects(() => uc.execute(requesterCtx(), 'rb-1'), /invalid_primary_attachment/);
     });
   }
+
+  // A file already linked as the slip of a payment carries no tag when it was moved there from the
+  // signed copies. Refused when the line is saved: at approval the expense record could not link it
+  // either, and the claim would be stuck in front of its approver.
+  it('rejects the slip of a payment as a line receipt, at create and at submit', async () => {
+    const create = new CreateReimbursementDraftUseCase(requestRepo().repo, noopAudit, evidenceService(attachment(), null, true));
+    await assert.rejects(() => create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] }),
+      (error: any) => error.getStatus() === 422 && error.message === 'invalid_primary_attachment');
+    const state = requestRepo(draftRequest({ lines: [lineRecord({ attachmentId: 'att-1' })] }));
+    await assert.rejects(() => submitUseCase(state.repo, noopAudit, noopOutbox, evidenceService(attachment(), null, true)).execute(requesterCtx(), 'rb-1'), /invalid_primary_attachment/);
+    // The same file, not a slip, is the ordinary receipt it always was.
+    await new CreateReimbursementDraftUseCase(requestRepo().repo, noopAudit, evidenceService(attachment()))
+      .execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
+  });
 
   for (const [name, record] of invalidExpenses) {
     it(`rejects ${name} expense at create`, async () => {
@@ -604,16 +623,51 @@ describe('decision responses are as hydrated as a GET', () => {
   });
 });
 
-describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
-  function queueRepo(request: any, policy: any = null) {
-    return {
-      findPolicy: async () => policy,
-      listRequests: async () => [request],
-      findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
-      getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
-    } as any;
+function queueRepo(request: any, policy: any = null) {
+  return {
+    findPolicy: async () => policy,
+    listRequests: async () => [request],
+    findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
+    getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
+  } as any;
+}
+
+// Audit B20: a viewer who may only reject was shown อนุมัติ on every queue row and got 403. A row now says what
+// its viewer can do, with the claim detail's own answer, so the hub offers a button only where the endpoint agrees.
+describe('approval queue rows carry what the viewer may do (audit B20)', () => {
+  const frozen = () => baseRequest({ approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }] });
+  const viewers: Array<[string, () => any, any, { canApprove: boolean; canReject: boolean }]> = [
+    ['holds approve and reject', baseRequest, ctx(), { canApprove: true, canReject: true }],
+    ['holds reject only', baseRequest, ctx({ permissions: ['reimbursement.reject'] }), { canApprove: false, canReject: true }],
+    ['holds approve only', baseRequest, ctx({ permissions: ['reimbursement.approve'] }), { canApprove: true, canReject: false }],
+    // The frozen assignment is the capability: a later role change takes neither button away.
+    ['was assigned the step, then lost both rights', frozen, ctx({ roles: ['STAFF'], permissions: [] }), { canApprove: true, canReject: true }],
+  ];
+
+  for (const [who, claim, viewer, expected] of viewers) {
+    it(`a viewer who ${who} gets exactly the buttons the endpoints accept`, async () => {
+      const rows = await new ListApprovalQueueUseCase(queueRepo(claim())).execute(viewer);
+      assert.deepEqual(rows.map((row) => row.approvalActions), [expected]);
+      // The claim detail answers the same for the same person.
+      assert.deepEqual(await approvalDecisionActions(viewer, claim(), fakeRepo(null)), expected);
+      // Each button the row offers works, and each one it withholds is refused.
+      const approve = approveUC(fakeRepo(claim())).execute(viewer, 'rb-1');
+      if (expected.canApprove) assert.equal((await approve).status, 'FINANCE_REVIEW');
+      else await assert.rejects(approve, /Missing permission: reimbursement\.approve/);
+      const reject = new RejectReimbursementUseCase(fakeRepo(claim()), noopAudit, fakeDetailEvidence as any).execute(viewer, 'rb-1', 'เอกสารไม่ครบ');
+      if (expected.canReject) assert.equal((await reject).status, 'REJECTED');
+      else await assert.rejects(reject, /Missing permission: reimbursement\.reject/);
+    });
   }
 
+  it('lists no row for a viewer who can do neither', async () => {
+    const reader = ctx({ permissions: ['reimbursement.read'] });
+    assert.deepEqual(await new ListApprovalQueueUseCase(queueRepo(baseRequest())).execute(reader), []);
+    assert.deepEqual(await approvalDecisionActions(reader, baseRequest(), fakeRepo(null)), { canApprove: false, canReject: false });
+  });
+});
+
+describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
   it('keeps frozen work in the assignee queue after their role permissions are removed', async () => {
     const assigned = baseRequest({
       approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }],

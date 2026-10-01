@@ -5,7 +5,7 @@ import type { PrismaService } from './prisma.service';
  * The callback must contain transactional DB work only; never send external side effects here.
  */
 export async function serializableTransaction<T>(
-  client: PrismaService['client'], work: (tx: Prisma.TransactionClient) => Promise<T>,
+  client: Pick<PrismaService['client'], '$transaction'>, work: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try { return await client.$transaction(work, { isolationLevel: 'Serializable' }); }

@@ -11,6 +11,7 @@ import type {
   WorkflowDeadLetterRecord,
   WorkflowWebhookEndpointRecord,
 } from '../domain/models/workflow.model';
+import { CLAIM_APPROVAL_TASK_TEMPLATE_KEYS, claimApprovalTaskOutcome } from '../domain/logic/workflow-claim-task.logic';
 
 function opt<T>(v: T | null | undefined): T | undefined {
   return v == null ? undefined : v;
@@ -162,6 +163,40 @@ export class PrismaWorkflowRepository {
       select: { userId: true },
     });
     return rows.map((r) => r.userId);
+  }
+
+  /**
+   * Branch of the record a run is about, so recipients picked by permission can be held to the
+   * branch rule that record's own API enforces (audit B12). Claims and vendor bills are the two
+   * sources whose notices pick recipients that way; any other source stays company-wide.
+   */
+  async findSourceBranchId(companyId: string, sourceType?: string, sourceId?: string): Promise<string | null> {
+    if (!sourceId) return null;
+    const query = { where: { id: sourceId, companyId }, select: { branchId: true } };
+    const row = sourceType === 'reimbursement_request' ? await this.prisma.client.reimbursementRequest.findFirst(query)
+      : sourceType === 'vendor_bill' ? await this.prisma.client.vendorBill.findFirst(query)
+        : null;
+    return row?.branchId ?? null;
+  }
+
+  /**
+   * Who approved each claim in its current round: the decider of its latest APPROVED step that is
+   * still in force (not invalidated). The payout work names the same person the claim's own
+   * approver (`isReimbursementPayoutParty` in contracts); this is that rule, to be unified with it
+   * when both land.
+   */
+  async findClaimApprovers(companyId: string, requestIds: string[]): Promise<Map<string, { userId: string; decidedAt: Date }>> {
+    if (requestIds.length === 0) return new Map();
+    const steps = await this.prisma.client.reimbursementApprovalStep.findMany({
+      where: {
+        companyId, reimbursementRequestId: { in: requestIds }, status: 'APPROVED', invalidatedAt: null,
+        decisionByUserId: { not: null }, decidedAt: { not: null },
+      },
+      select: { reimbursementRequestId: true, decisionByUserId: true, decidedAt: true },
+      orderBy: { decidedAt: 'asc' },
+    });
+    // Oldest first, so the latest decision of a claim is the one left in the map.
+    return new Map(steps.map((step) => [step.reimbursementRequestId, { userId: step.decisionByUserId!, decidedAt: step.decidedAt! }]));
   }
 
   async updateRule(companyId: string, id: string, data: Record<string, unknown>): Promise<WorkflowRuleRecord> {
@@ -415,6 +450,57 @@ export class PrismaWorkflowRepository {
   async updateTask(companyId: string, id: string, data: Record<string, unknown>): Promise<WorkflowTaskRecord> {
     const row = await this.prisma.client.workflowTask.update({ where: { id }, data: data as any });
     return this.toTask(row);
+  }
+
+  /**
+   * Audit B8: closes the open tasks the approval templates created for claims that no longer wait
+   * for approval: DONE when the approval happened, CANCELED when the claim was rejected, cancelled,
+   * withdrawn or reopened. `supersede` closes them whatever the status, for a claim that was just
+   * sent again (its new round gets its own task). Only OPEN and SNOOZED rows are touched, so a
+   * second pass changes nothing. With no claim named it sweeps every company, which is the
+   * deploy-time clean-up of tasks left open before this existed.
+   */
+  async closeSettledClaimTasks(
+    scope: { companyId?: string; requestId?: string; supersede?: boolean } = {},
+    now: Date = new Date(),
+  ): Promise<number> {
+    const stillOpen = { in: ['OPEN', 'SNOOZED'] as any };
+    const tasks = await this.prisma.client.workflowTask.findMany({
+      where: {
+        companyId: scope.companyId,
+        sourceType: 'reimbursement_request',
+        sourceId: scope.requestId ?? { not: null },
+        status: stillOpen,
+        workflowRun: { rule: { template: { key: { in: CLAIM_APPROVAL_TASK_TEMPLATE_KEYS } } } },
+      },
+      select: { id: true, companyId: true, sourceId: true },
+    });
+    if (tasks.length === 0) return 0;
+
+    // ponytail: 1,000 ids per statement keeps the sweep under the bind-parameter limit.
+    const chunks = <T>(items: T[]): T[][] => Array.from({ length: Math.ceil(items.length / 1000) }, (_, i) => items.slice(i * 1000, (i + 1) * 1000));
+    const statusOfClaim = new Map<string, string>();
+    if (!scope.supersede) {
+      for (const ids of chunks([...new Set(tasks.map((task) => task.sourceId!))])) {
+        const claims = await this.prisma.client.reimbursementRequest.findMany({ where: { id: { in: ids } }, select: { id: true, companyId: true, status: true } });
+        for (const claim of claims) statusOfClaim.set(`${claim.companyId}:${claim.id}`, claim.status);
+      }
+    }
+    const closing: Record<'DONE' | 'CANCELED', string[]> = { DONE: [], CANCELED: [] };
+    for (const task of tasks) {
+      const outcome = scope.supersede ? 'CANCELED' : claimApprovalTaskOutcome(statusOfClaim.get(`${task.companyId}:${task.sourceId}`));
+      if (outcome) closing[outcome].push(task.id);
+    }
+    for (const ids of chunks(closing.DONE)) {
+      await this.prisma.client.workflowTask.updateMany({ where: { id: { in: ids }, status: stillOpen }, data: { status: 'DONE', completedAt: now } });
+    }
+    for (const ids of chunks(closing.CANCELED)) {
+      await this.prisma.client.workflowTask.updateMany({
+        where: { id: { in: ids }, status: stillOpen },
+        data: { status: 'CANCELED', cancelReason: scope.supersede ? 'ใบเบิกนี้ถูกส่งใหม่ จึงมีงานอนุมัติใหม่แทน' : 'ใบเบิกนี้ไม่ได้รออนุมัติแล้ว' },
+      });
+    }
+    return closing.DONE.length + closing.CANCELED.length;
   }
 
   // ---- Dead letters ----

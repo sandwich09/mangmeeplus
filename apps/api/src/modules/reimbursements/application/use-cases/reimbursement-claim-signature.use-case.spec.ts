@@ -350,12 +350,13 @@ describe('Claim signature uploads', () => {
 });
 
 describe('LinkSignedClaimFormCopyUseCase', () => {
-  function attachments(overrides: Partial<any> = {}) {
+  function attachments(overrides: Partial<any> = {}, linkedAsPaymentSlip = false) {
     return {
       findById: async () => ({
         id: 'att-scan', companyId: 'co-1', status: 'ACTIVE', mimeType: 'application/pdf',
         uploadedByUserId: 'staff-1', originalFileName: 'signed.pdf', ...overrides,
       }),
+      isReimbursementPaymentSlip: async () => linkedAsPaymentSlip,
     } as any;
   }
 
@@ -455,6 +456,23 @@ describe('LinkSignedClaimFormCopyUseCase', () => {
     assert.equal(calls.links.length, 0);
   });
 
+  // Owner 2026-10-01: a slip is payment evidence and never counts as a signed claim copy. This list is
+  // open to everyone who can read the claim, the slip is not.
+  it('refuses a payment slip as a signed copy, declared or not', async () => {
+    const slipUpload = () => attachments({ mimeType: 'image/jpeg', metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' } });
+    const linkedSlip = () => attachments({}, true);
+    for (const files of [slipUpload, linkedSlip]) {
+      for (const input of [{ attachmentId: 'att-scan' }, { attachmentId: 'att-scan', acknowledgedComplete: true as const, confirmedRequestNo: 'RB-202607-00001' }]) {
+        const { repo, calls } = fakeRepo(request(), { signedCopies: copies });
+        await assert.rejects(
+          () => new LinkSignedClaimFormCopyUseCase(repo, files(), noopAudit).execute(ctx(), 'rb-1', input),
+          /claim_form_signed_copy_attachment_invalid/,
+        );
+        assert.equal(calls.links.length, 0);
+      }
+    }
+  });
+
   it('rejects an attachment that is not the actor\'s own ACTIVE PDF/image', async () => {
     const cases: [Partial<any>, RegExp][] = [
       [{ status: 'PENDING_UPLOAD' }, /claim_form_signed_copy_attachment_invalid/],
@@ -545,17 +563,33 @@ describe('PrismaReimbursementRepository saved claim signatures', () => {
 describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () => {
   const ack = { requestId: 'rb-1', requestNo: 'RB-202607-00001', acknowledgedByUserId: 'staff-1', acknowledgedAt: '2026-07-26T10:00:00.000Z', checksumSha256: 'c'.repeat(64) };
 
-  function linkClient(metadataJson: unknown = { source: 'web' }) {
+  /** `existingLinks` are the file's links as the transaction sees them once it holds the file's lock. */
+  function linkClient(metadataJson: unknown = { source: 'web' }, existingLinks: { targetType: string; purpose: string }[] = []) {
     const writes: any[] = [];
+    // Everything the transaction does, in order: the lock, the re-check, the row write, the link.
+    const steps: string[] = [];
     const tx = {
-      attachmentLink: { upsert: async (args: any) => { writes.push(['upsert', args]); return { id: 'link-1' }; } },
+      $executeRaw: async (sql: TemplateStringsArray, ...values: string[]) => {
+        steps.push(sql.join('?').includes('pg_advisory_xact_lock') ? `lock:${values[0]}` : `touch:${values[0]}`);
+        return 1;
+      },
+      attachmentLink: {
+        findFirst: async ({ where }: any) => {
+          steps.push('check');
+          return existingLinks.find((link) => (typeof where.targetType === 'string' ? link.targetType === where.targetType : link.targetType !== where.targetType.not)
+            && (where.purpose === undefined || link.purpose === where.purpose)) ?? null;
+        },
+        upsert: async (args: any) => { steps.push('upsert'); writes.push(['upsert', args]); return { id: 'link-1' }; },
+      },
       attachmentObject: {
+        findFirst: async () => ({ metadataJson }),
         findFirstOrThrow: async (args: any) => { writes.push(['read', args]); return { metadataJson }; },
         update: async (args: any) => { writes.push(['update', args]); return {}; },
       },
     };
-    const client = { attachmentLink: { findFirst: async () => null }, $transaction: async (fn: any) => fn(tx) };
-    return { repo: new PrismaReimbursementRepository({ client } as any, {} as any), writes };
+    // Nothing is read outside the transaction: a check made before the lock proves nothing.
+    const client = { $transaction: async (fn: any) => fn(tx) };
+    return { repo: new PrismaReimbursementRepository({ client } as any, {} as any), writes, steps };
   }
 
   it('stores the declaration in the scan metadata, bound to its link id, keeping existing keys', async () => {
@@ -571,6 +605,37 @@ describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () =>
     const { repo, writes } = linkClient();
     await repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');
     assert.deepEqual(writes.map(([kind]) => kind), ['upsert']);
+  });
+
+  // Owner 2026-10-01: a payment slip is never a signed copy. A slip link is written under the file's
+  // retention lock, so this link takes the same lock and looks again inside its own transaction.
+  it('takes the file lock, then re-checks, then writes: in that order, inside one transaction', async () => {
+    const { repo, steps } = linkClient();
+    await repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');
+    assert.equal(steps[0], 'lock:co-1:att-scan:attachment-retention', 'the key a slip link and a delete of this file take');
+    assert.ok(steps.indexOf('check') > 0 && steps.indexOf('check') < steps.indexOf('upsert'), 'checked under the lock, before the link');
+    // The file's row is written too: a payment reading it under an older snapshot fails on its row lock instead of missing this link.
+    assert.ok(steps.includes('touch:att-scan') && steps.indexOf('touch:att-scan') < steps.indexOf('upsert'));
+  });
+
+  it('refuses a payment slip as a signed copy, declared or not, and writes nothing', async () => {
+    const slipLink = { targetType: 'reimbursement_payment', purpose: 'reimbursement.payment.slip' };
+    const cases: [string, ReturnType<typeof linkClient>][] = [
+      ['the slip of a payment', linkClient({ source: 'web' }, [slipLink])],
+      ['a slip upload no payment carries yet', linkClient({ generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' })],
+    ];
+    for (const [label, client] of cases) {
+      for (const declaration of [undefined, ack]) {
+        await assert.rejects(
+          () => client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1', declaration),
+          (error: any) => error.getStatus() === 422 && /payment slip cannot be attached to anything else/.test(error.message),
+          label,
+        );
+      }
+      assert.deepEqual(client.writes, [], `${label}: no link, no declaration`);
+      assert.equal(client.steps.includes('upsert'), false, label);
+      assert.equal(client.steps.some((step) => step.startsWith('touch:')), false, `${label}: the file is not written either`);
+    }
   });
 
   it('counts a copy as acknowledged only when the stored declaration names its own link', async () => {
@@ -601,11 +666,11 @@ describe('claim detail: form layout and documentSignedVia', () => {
   async function detailOf(req: any, copies: any[] = [], storedPolicy: any = null, names: Record<string, string> = {}) {
     // Resolves only the ids it is asked for, so a name on screen proves the id was in the batch.
     const getUserDisplayNames = async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => names[id]).map((id) => [id, names[id]]));
-    const repo = { getUserDisplayNames, listSignedClaimFormCopies: async () => copies, findPolicy: async () => storedPolicy } as any;
+    const repo = { getUserDisplayNames, listSignedClaimFormCopies: async () => copies, findPolicy: async () => storedPolicy, listPaymentSlips: async () => ({}) } as any;
     const evidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
     // The detail maps every step, so the steps need the assignment time the shared fixture leaves out.
     const approvalSteps = req.approvalSteps.map((step: any) => ({ ...step, assignedAt: new Date('2026-07-20T00:00:00.000Z') }));
-    return detailWithFileNames(repo, evidence, 'co-1', { ...req, approvalSteps });
+    return detailWithFileNames(repo, evidence, 'co-1', { ...req, approvalSteps }, { userId: 'staff-1', permissions: [] });
   }
   const declared = { attachmentId: 'att-paper', fileName: 'signed.pdf', uploadedAt, acknowledged: true };
   const archived = { attachmentId: 'att-archive', fileName: 'scan.jpg', uploadedAt, acknowledged: false };
@@ -666,5 +731,125 @@ describe('claim detail: form layout and documentSignedVia', () => {
     assert.deepEqual(nameless.signedCopies, [
       { attachmentId: 'att-paper', fileName: 'signed.pdf', uploadedAt: uploadedAt.toISOString(), acknowledgedAt: '2026-07-26T10:05:00.000Z' },
     ]);
+  });
+});
+
+// Spec §16: a slip attached through the "ใบเบิกที่เซ็นแล้ว" uploader declared a paper signature that
+// was never there. Moving it to be the payment slip must leave the claim's signature state as what
+// is really on the claim. Real repository, on rows held in memory, so the move itself is exercised.
+describe('moving a misfiled slip recomputes how the document was signed', () => {
+  const declaredAt = new Date('2026-07-26T10:00:00.000Z');
+  const ack = (linkId: string) => ({
+    requestId: 'rb-1', requestNo: 'RB-202607-00001', acknowledgedByUserId: 'mgr-1',
+    acknowledgedAt: '2026-07-26T10:05:00.000Z', checksumSha256: 'c'.repeat(64), linkId,
+  });
+  const matches = (row: any, where: any): boolean => Object.entries(where).every(([key, value]: [string, any]) => {
+    if (key === 'OR') return value.some((alternative: any) => matches(row, alternative));
+    if (value && typeof value === 'object' && 'in' in value) return value.in.includes(row[key]);
+    return row[key] === value;
+  });
+
+  function world(claimSignatures: any[], otherCopies: { id: string; declared: boolean }[] = []) {
+    const copyLink = (linkId: string, attachmentId: string, createdAt = declaredAt) => ({
+      id: linkId, companyId: 'co-1', attachmentId, targetType: 'reimbursement_request', targetId: 'rb-1',
+      purpose: 'reimbursement.claim_form.signed', linkedByUserId: 'mgr-1', createdAt,
+    });
+    const file = (id: string, originalFileName: string, metadataJson: unknown) => ({
+      id, companyId: 'co-1', status: 'ACTIVE', mimeType: 'image/jpeg', byteSize: 900_000,
+      checksumSha256: 'c'.repeat(64), uploadedByUserId: 'mgr-1', originalFileName, metadataJson,
+    });
+    const files: any[] = [
+      file('att-misfiled', 'สลิปโอนเงิน.jpg', { reimbursementSignedCopyAck: ack('link-misfiled') }),
+      ...otherCopies.map(({ id, declared }) => file(id, 'ใบเบิกเซ็นแล้ว.pdf', declared ? { reimbursementSignedCopyAck: ack(`link-${id}`) } : null)),
+    ];
+    let links: any[] = [
+      copyLink('link-misfiled', 'att-misfiled'),
+      ...otherCopies.map(({ id }) => copyLink(`link-${id}`, id, new Date('2026-07-25T10:00:00.000Z'))),
+    ];
+    const payments = [{ id: 'pay-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: 'RECORDED' }];
+    const linkRows = (where: any) => {
+      const { attachment, ...rest } = where;
+      return links
+        .map((link) => ({ ...link, attachment: files.find((row) => row.id === link.attachmentId) }))
+        .filter((link) => matches(link, rest) && (!attachment || matches(link.attachment, attachment)));
+    };
+    const tables = {
+      attachmentObject: {
+        findFirst: async ({ where }: any) => files.find((row) => matches(row, where)) ?? null,
+        update: async ({ where, data }: any) => Object.assign(files.find((row) => row.id === where.id), data),
+      },
+      attachmentLink: {
+        findMany: async ({ where, orderBy }: any) => {
+          const newestFirst = orderBy?.createdAt === 'desc';
+          return linkRows(where).sort((a, b) => (newestFirst ? -1 : 1) * (a.createdAt.getTime() - b.createdAt.getTime()));
+        },
+        create: async ({ data }: any) => { links.push({ id: `link-slip-${links.length}`, createdAt: new Date('2026-07-27T10:00:00.000Z'), ...data }); },
+        deleteMany: async ({ where }: any) => { links = links.filter((link) => !matches(link, where)); },
+      },
+      reimbursementPayment: {
+        findFirst: async ({ where }: any) => payments.find((row) => matches(row, where)) ?? null,
+        count: async ({ where }: any) => payments.filter((row) => matches(row, where)).length,
+      },
+      // No claim line names the misfiled file as a receipt.
+      reimbursementLine: { count: async () => 0 },
+    };
+    const client = { ...tables, $transaction: async (work: (tx: any) => Promise<unknown>) => work({ ...tables, $executeRaw: async () => 1 }) };
+    const repository = new PrismaReimbursementRepository({ client } as any, {} as any);
+    // Names and policy are not what this is about; everything about copies and slips is the real repository.
+    const repo = Object.assign(Object.create(repository), { getUserDisplayNames: async () => ({ 'mgr-1': 'มานี ผู้จัดการ' }), findPolicy: async () => null });
+    const evidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
+    const claim = request({ claimSignatures });
+    const approvalSteps = claim.approvalSteps.map((step: any) => ({ ...step, assignedAt: new Date('2026-07-20T00:00:00.000Z') }));
+    return {
+      detail: () => detailWithFileNames(repo, evidence, 'co-1', { ...claim, approvalSteps }, { userId: 'staff-1', permissions: [] }),
+      move: () => repository.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' }),
+      misfiled: files[0],
+      links: () => links,
+    };
+  }
+  const shape = (detail: any) => ({
+    via: detail.documentSignedVia,
+    copies: detail.signedCopies.map((copy: any) => [copy.attachmentId, Boolean(copy.acknowledgedAt)]),
+    signed: detail.signatures.map((row: any) => row.role),
+    slips: detail.payments.find((payment: any) => payment.id === 'pay-1').slips.map((slip: any) => slip.attachmentId),
+  });
+
+  it('leaves a claim that had only that file as its paper proof unsigned, with no declaration left behind', async () => {
+    const w = world([]);
+    assert.deepEqual(shape(await w.detail()), { via: 'PAPER', copies: [['att-misfiled', true]], signed: [], slips: [] });
+
+    assert.deepEqual(await w.move(), { created: true, slip: { attachmentId: 'att-misfiled', source: 'SIGNED_COPY', uploadedByUserId: 'mgr-1', declarationWithdrawn: true } });
+
+    assert.deepEqual(shape(await w.detail()), { via: null, copies: [], signed: [], slips: ['att-misfiled'] });
+    assert.deepEqual(w.misfiled.metadataJson, {}, 'the stored declaration is gone, not merely unlinked');
+    assert.equal(w.misfiled.status, 'ACTIVE', 'the file itself stays: nothing was uploaded again or deleted');
+    assert.deepEqual(w.links().map((link) => [link.attachmentId, link.targetType, link.purpose]), [['att-misfiled', 'reimbursement_payment', 'reimbursement.payment.slip']]);
+  });
+
+  it('leaves a claim that also had both digital signatures signed in the system, and no longer on paper', async () => {
+    const w = world([signatureRow('REQUESTER', 'staff-1'), signatureRow('APPROVER', 'mgr-1')]);
+    assert.deepEqual(shape(await w.detail()), { via: 'BOTH', copies: [['att-misfiled', true]], signed: ['REQUESTER', 'APPROVER'], slips: [] });
+
+    await w.move();
+
+    assert.deepEqual(shape(await w.detail()), { via: 'DIGITAL', copies: [], signed: ['REQUESTER', 'APPROVER'], slips: ['att-misfiled'] });
+  });
+
+  it('does not let one digital signature stand in for the withdrawn paper declaration', async () => {
+    const w = world([signatureRow('REQUESTER', 'staff-1')]);
+    assert.equal((await w.detail()).documentSignedVia, 'BOTH');
+    await w.move();
+    assert.deepEqual(shape(await w.detail()), { via: null, copies: [], signed: ['REQUESTER'], slips: ['att-misfiled'] });
+  });
+
+  it('keeps the claim signed on paper when a real declared copy remains, and unsigned when the rest are archive copies', async () => {
+    const real = world([], [{ id: 'att-real', declared: true }]);
+    await real.move();
+    assert.deepEqual(shape(await real.detail()), { via: 'PAPER', copies: [['att-real', true]], signed: [], slips: ['att-misfiled'] });
+
+    const archiveOnly = world([], [{ id: 'att-archive', declared: false }]);
+    assert.equal((await archiveOnly.detail()).documentSignedVia, 'PAPER');
+    await archiveOnly.move();
+    assert.deepEqual(shape(await archiveOnly.detail()), { via: null, copies: [['att-archive', false]], signed: [], slips: ['att-misfiled'] });
   });
 });

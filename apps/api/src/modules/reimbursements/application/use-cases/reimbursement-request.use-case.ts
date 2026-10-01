@@ -5,6 +5,8 @@ import type {
   UpdateReimbursementDraftInput,
   ListReimbursementsFilter,
   ReimbursementLineInput,
+  ReimbursementHubSummary,
+  PaginatedReimbursements,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
   ReimbursementInternalNote,
@@ -12,7 +14,7 @@ import type {
   ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
-import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { PrismaReimbursementRepository, hubBucketOfStatus, type ReimbursementRequestGroup } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -42,6 +44,9 @@ import {
   scoreDuplicate,
   normalizeReason,
   normalizeReimbursementAmount,
+  PAYMENT_RECORDING_STATUSES,
+  d,
+  decStr,
 } from '../../domain/logic/reimbursement.logic';
 
 export async function loadReimbursementPolicy(repo: PrismaReimbursementRepository, companyId: string) {
@@ -279,9 +284,17 @@ export class GetReimbursementDetailUseCase {
     const approvalActions = await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     const notes = await this.repo.listInternalNotes(ctx.companyId, id);
     const names = await this.repo.getUserDisplayNames(ctx.companyId, notes.map(note => note.authorUserId));
+    const detail = await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx, approvalActions);
+    // Who can record the payment (spec §18.3): read only while the claim waits there and the endpoint would
+    // take a payment at all. A claim with no branch, or in a status it refuses (PARTIALLY_PAID), is refused
+    // for everyone, so nobody is named and the page prints the pool label. Only on this read: the page
+    // re-reads the claim after every action, like `approvalActions`.
+    const payers = detail.currentDesk?.kind === 'PAYMENT' && req.branchId && PAYMENT_RECORDING_STATUSES.includes(req.status)
+      ? await this.repo.listPaymentRecorderNames(ctx.companyId, req.branchId) : undefined;
     return {
-      ...await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req),
+      ...detail,
       approvalActions,
+      ...(payers && { paymentDesk: { names: payers.slice(0, 5), moreCount: Math.max(payers.length - 5, 0) } }),
       internalNotes: notes.map(note => ({
         id: note.id,
         authorUserId: note.authorUserId,
@@ -294,7 +307,7 @@ export class GetReimbursementDetailUseCase {
   }
 }
 
-async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
+export async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
   const approvalActions = await approvalDecisionActions(ctx, req, repo);
   try {
     await assertCanReadRequest(ctx, req, repo);
@@ -356,11 +369,30 @@ export class ReimbursementInternalNotesUseCase {
   }
 }
 
+/** The scope's groups folded into what the hub's cards and chips print. Every claim is counted in exactly one bucket. */
+export function hubSummary(groups: readonly ReimbursementRequestGroup[]): ReimbursementHubSummary {
+  const counts = { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 };
+  let totalAmount = d('0');
+  let blockedDraftCount = 0;
+  for (const group of groups) {
+    counts.all += group.count;
+    counts[hubBucketOfStatus(group.status, group.financeReviewStatus)] += group.count;
+    totalAmount = totalAmount.add(d(group.amount));
+    // The gate a list row shows on its ส่งอนุมัติ button: a draft that still owes its receipt.
+    if (group.status === 'DRAFT' && group.receiptRequirementStatus === 'REQUIRED') blockedDraftCount += group.count;
+  }
+  return { counts, totalAmount: decStr(totalAmount), blockedDraftCount };
+}
+
+/** A page number or size from the query string: a whole number from 1 up, and small enough to be an OFFSET. */
+const wholeFrom1 = (value: number | undefined, fallback: number) =>
+  (value !== undefined && Number.isFinite(value) && value >= 1 ? Math.min(Math.floor(value), 1_000_000) : fallback);
+
 @Injectable()
 export class ListReimbursementsUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
 
-  async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<{ items: ReimbursementRequestSummary[]; total: number; page: number; pageSize: number }> {
+  async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<PaginatedReimbursements> {
     const canReadAll = ctx.permissions.includes('reimbursement.read');
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
     const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
@@ -382,18 +414,23 @@ export class ListReimbursementsUseCase {
       requesterUserId = ctx.userId;
     }
 
-    const [rows, policy] = await Promise.all([this.repo.listRequests({
+    const page = wholeFrom1(filter.page, 1);
+    const pageSize = Math.min(wholeFrom1(filter.pageSize, 20), 100);
+    // The database pages. Before, every call loaded the whole scope and sliced it here, so walking a
+    // list of N claims read N rows per page: N²/100 rows for all of it.
+    const [{ rows: items, groups }, policy] = await Promise.all([this.repo.listRequestPage({
       companyId: ctx.companyId,
       requesterUserId,
       relatedUserId,
       scopes: ctx.scopes ?? {},
       status: filter.status,
       paymentStatus: filter.paymentStatus,
+      bucket: filter.bucket,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     }), loadReimbursementPolicy(this.repo, ctx.companyId)]);
-    const page = filter.page && filter.page > 0 ? filter.page : 1;
-    const pageSize = filter.pageSize && filter.pageSize > 0 ? Math.min(filter.pageSize, 100) : 20;
-    const start = (page - 1) * pageSize;
-    const items = rows.slice(start, start + pageSize);
+    // The total is read off the same groups the cards print, so a card can never count a different list.
+    const hub = hubSummary(groups);
     // "อยู่ที่ …" needs the pending step and its assignees only where a claim is actually waiting
     // on a person. Two batched lookups for the page — and neither runs when the page has no
     // PENDING_APPROVAL row (both helpers return empty on an empty id list).
@@ -410,9 +447,10 @@ export class ListReimbursementsUseCase {
         { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
         { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames },
       )),
-      total: rows.length,
+      total: filter.bucket === undefined ? hub.counts.all : hub.counts[filter.bucket] ?? 0,
       page,
       pageSize,
+      hub,
     };
   }
 }
@@ -696,6 +734,12 @@ export class SubmitReimbursementUseCase {
         kind: 'POLICY', actorUserId: req.requesterUserId,
         allowMissingReceiptWithReason: policySnapshot.allowMissingReceiptWithReason,
       });
+      // Nobody had to approve this claim, so the people who would have are the ones the ready-to-pay
+      // notice asks first (owner rule 2026-10-01). Best effort: a notice never fails a submission.
+      let approverRecipientUserIds: string[] = [];
+      try {
+        approverRecipientUserIds = await this.approverRoutes.resolveWouldBeApproverUserIds(ctx.companyId, policy, req);
+      } catch { /* the notice then goes to everyone able to record the payment */ }
       const readyAt = new Date();
       await this.repo.completePolicyProjectionAtomic({
         companyId: ctx.companyId, requestId: id, actorUserId: req.requesterUserId,
@@ -710,6 +754,7 @@ export class SubmitReimbursementUseCase {
                 requestId: id, requestNo, requesterUserId: req.requesterUserId,
                 status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD',
                 amount: req.amount, currency: req.currency,
+                ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             });
           }
@@ -718,7 +763,7 @@ export class SubmitReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   /**

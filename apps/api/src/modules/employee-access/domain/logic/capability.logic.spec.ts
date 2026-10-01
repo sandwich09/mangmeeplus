@@ -4,7 +4,7 @@ import { compileRole, summarizeCapabilities, toEffectivePermissions } from './ca
 import { CAPABILITY_PACKS, CAPABILITY_PACK_BY_KEY } from '../registries/capability-pack.registry';
 import { COMPANY_ROLE_BACKFILLS } from '../registries/company-role-backfill.registry';
 import { ROLE_TEMPLATES } from '../registries/role-template.registry';
-import { COMPANY_PERMISSION_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS } from '../../../auth/permission-registry';
+import { COMPANY_PERMISSION_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { filterPermissionsByEntitlement } from './feature-gate.logic';
 import { evaluateEntitledFeatureKeys } from '../../application/entitlement.helper';
 import { ListCapabilityPacksUseCase } from '../../application/use-cases/list-capability-packs.use-case';
@@ -52,6 +52,19 @@ describe('capability-pack registry integrity', () => {
         );
       }
     }
+  });
+
+  // Owner decision 2026-10-01 (payout-account spec §13.3 F1): whoever approves a claim can record and void its
+  // payment. The backfill that brings older company roles up to this is anchored on reimbursement.approve.
+  it('every pack and system role granted reimbursement.approve is also granted payment.record and payment.void', () => {
+    const pay = ['reimbursement.payment.record', 'reimbursement.payment.void'];
+    const packs = CAPABILITY_PACKS.filter((pack) => pack.permissionKeys.includes('reimbursement.approve'));
+    assert.deepEqual(packs.map((pack) => pack.key), ['pack.reimbursement.approve']);
+    for (const pack of packs) for (const key of pay) assert.ok(pack.permissionKeys.includes(key), `Pack ${pack.key} approves but lacks ${key}`);
+    const approverRoles = Object.entries(ROLE_GRANTS).filter(([, keys]) => keys.includes('reimbursement.approve'));
+    assert.deepEqual(approverRoles.map(([role]) => role).sort(), ['ADMIN', 'MANAGER', 'OWNER']);
+    for (const [role, keys] of approverRoles) for (const key of pay) assert.ok(keys.includes(key), `${role} approves but lacks ${key}`);
+    assert.deepEqual(COMPANY_ROLE_BACKFILLS.filter((backfill) => backfill.anchor === 'reimbursement.approve').map((backfill) => backfill.key), pay);
   });
 
   // The foundation toggles are enforced by submenu rules, not by tagging these packs. Tagging

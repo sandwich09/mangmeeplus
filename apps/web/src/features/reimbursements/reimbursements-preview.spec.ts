@@ -20,10 +20,31 @@ describe('reimbursement self-service entry', () => {
   });
 });
 
+describe('hub list loading', () => {
+  // The loader and the list it fills are exercised in reimbursements.api.spec.ts; this holds the page to them.
+  it('takes its own list through the page loader, and lets go of a request it no longer wants', () => {
+    assert.match(source, /const nextPage = hubNextPage\(list, [^)]+\);\s+useEffect\(\(\) => \{\s+if \(nextPage === null\) return;[\s\S]*?return loadHubPage\(companyId, \{ scope, [^}]*page: nextPage \}, \{\s+onPage: \(result\) => setHeld\(\(current\) => withHubPage\(current, listKey, result\)\),\s+onError: \(e\) => setHeld\(\(current\) => withHubFailure\(current, listKey, err\(e\)\)\),\s+\}\);\s+\}, \[/);
+    // No other way into the list: an unpaged or unguarded call would bring the old faults back.
+    assert.doesNotMatch(source, /listAllReimbursements|listReimbursements\(/);
+    assert.match(source, /onClick=\{\(\) => setHeld\(withHubRetry\)\}>ลองอีกครั้ง</);
+    // Lazy: what the screen needs is the table page shown, or every row while a search is typed; the open filter is part
+    // of which list is held, and goes to the API with every page.
+    assert.match(source, /const listKey = hubListKey\(companyId, scope, statusFilter, refreshKey, reload\);/);
+    assert.match(source, /hubNextPage\(list, searching \? Infinity : page \* QUEUE_PAGE_SIZE\)/);
+    assert.match(source, /loadHubPage\(companyId, \{ scope, filter: statusFilter, page: nextPage \}/);
+    // The cards and chips print the server's counts, and a card tapped twice goes back to ทั้งหมด.
+    assert.match(source, /value: summary\.counts\.payment/);
+    assert.match(source, /\{summary\.counts\[chip\.key\]\}/);
+    assert.match(source, /onClick=\{\(\) => setStatusFilter\(hubCardFilter\(statusFilter, card\.key\)\)\}/);
+  });
+});
+
 describe('reimbursement document preview lifecycle', () => {
   it('uses one latest-request gate for generated claim forms and authenticated attachments', () => {
     assert.match(source, /previewReimbursementClaimForm\(companyId, target\.reimbursementId\)/);
     assert.match(source, /fetchAttachmentPreviewBlob\(companyId, target\.attachmentId, target\.mimeType\)/);
+    // A payment slip shares the gate and the viewer, but its bytes come from the claim's own slip endpoint.
+    assert.match(source, /target\.kind === 'payment-slip'\s+\? await fetchReimbursementPaymentSlipBlob\(companyId, target\.reimbursementId, target\.paymentId, target\.attachmentId\)/);
     assert.match(source, /const requestId = \+\+previewRequestRef\.current/);
     assert.match(source, /if \(requestId !== previewRequestRef\.current\) return/);
     assert.match(source, /previewUrlRef\.current = url/);
@@ -36,7 +57,8 @@ describe('reimbursement document preview lifecycle', () => {
 
   it('keeps retries target-specific', () => {
     assert.match(source, /onRetry=\{previewTarget\?\.kind === 'claim-form' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
-    assert.match(source, /onRetry=\{previewTarget\?\.kind === 'attachment' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
+    // The file viewer retries an attachment or a slip, each by its own fetch path; never a claim form.
+    assert.match(source, /onRetry=\{previewTarget && previewTarget\.kind !== 'claim-form' \? \(\) => loadDocumentPreview\(previewTarget\) : undefined\}/);
     assert.match(source, /if \(requestId === claimFormSaveRequestRef\.current\) setClaimFormSaving\(false\)/);
   });
 });

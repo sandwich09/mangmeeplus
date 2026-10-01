@@ -297,6 +297,8 @@ describe('claim payout: the claim, its expense records and the ledger agree', ()
           return { count: rows.length };
         },
       },
+      // The void first makes sure no bank statement line is confirmed against the payment.
+      bankReconciliationMatch: { findFirst: async () => null },
       expenseRecord: {
         findMany: async ({ where }: any) => projections.filter((projection) => matches(projection, where)),
         update: async ({ where, data }: any) => Object.assign(projections.find((projection) => matches(projection, where)), data),

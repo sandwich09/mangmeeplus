@@ -11,11 +11,15 @@ import type {
   VoidReimbursementPaymentInput,
   ReimbursementRequestStatus,
   ReimbursementPaymentStatus,
+  ReimbursementHubBucket,
 } from '@watchdog-bms/contracts';
 import {
+  AttachPaymentSlipDto,
   CompleteClaimSignatureUploadDto,
+  CompletePaymentSlipUploadDto,
   CreateReimbursementRequestDto,
   InitClaimSignatureUploadDto,
+  InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto,
   RecordReimbursementPaymentDto,
   SignReimbursementClaimFormDto,
@@ -51,6 +55,12 @@ import {
   LinkSignedClaimFormCopyUseCase,
   SignClaimFormUseCase,
 } from '../../application/use-cases/reimbursement-claim-signature.use-case';
+import {
+  AttachPaymentSlipUseCase,
+  CompletePaymentSlipUploadUseCase,
+  CreatePaymentSlipDownloadUrlUseCase,
+  InitPaymentSlipUploadUseCase,
+} from '../../application/use-cases/reimbursement-payment-slip.use-case';
 import { ReimbursementEvidenceService } from '../../application/services/reimbursement-evidence.service';
 import { ReimbursementWriteQuiesceGuard } from './reimbursement-write-quiesce.guard';
 import { LineReimbursementDraftUseCase } from '../../application/use-cases/line-reimbursement-draft.use-case';
@@ -86,6 +96,10 @@ export class ReimbursementController {
     private readonly linkSignedClaimCopy: LinkSignedClaimFormCopyUseCase,
     private readonly evidence: ReimbursementEvidenceService,
     private readonly draftActions: LineReimbursementDraftUseCase,
+    private readonly initSlip: InitPaymentSlipUploadUseCase,
+    private readonly completeSlip: CompletePaymentSlipUploadUseCase,
+    private readonly attachSlip: AttachPaymentSlipUseCase,
+    private readonly slipDownloadUrl: CreatePaymentSlipDownloadUrlUseCase,
   ) {}
 
   /** Decisions/payments return the same detail shape the drawer reads, receipt names included. */
@@ -176,9 +190,10 @@ export class ReimbursementController {
     @Query('requesterUserId') requesterUserId?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('bucket') bucket?: ReimbursementHubBucket,
   ) {
     const filter: ListReimbursementsFilter = {
-      scope, status, paymentStatus, requesterUserId,
+      scope, status, paymentStatus, requesterUserId, bucket,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     };
@@ -302,6 +317,58 @@ export class ReimbursementController {
     @Body() body: VoidReimbursementPaymentInput,
   ) {
     return this.withAttachmentFileName(ctx, this.voidPayment.execute(ctx, requestId, paymentId, body));
+  }
+
+  // ---- Payment slips ----
+  //
+  // Payment evidence with its own viewer rule (spec §11, §12.5). Writes are the payer's; opening a
+  // slip is decided in the use case, like the claim detail it belongs to.
+
+  @Post(':requestId/payments/slip-upload-intent')
+  @RequirePermissions('reimbursement.payment.record')
+  @ApiOperation({ summary: 'Start a payment slip upload for this claim' })
+  initPaymentSlip(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: InitPaymentSlipUploadDto) {
+    return this.initSlip.execute(ctx, requestId, body);
+  }
+
+  @Post(':requestId/payments/slip-uploads/:attachmentId/complete')
+  @RequirePermissions('reimbursement.payment.record')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Complete a payment slip upload' })
+  completePaymentSlip(
+    @ReqCtx() ctx: RequestContext,
+    @Param('requestId') requestId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Body() body: CompletePaymentSlipUploadDto,
+  ) {
+    return this.completeSlip.execute(ctx, requestId, attachmentId, body);
+  }
+
+  @Post(':requestId/payments/:paymentId/slips')
+  @RequirePermissions('reimbursement.payment.record')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Attach a slip to a recorded payment, or move a misfiled signed copy to be its slip' })
+  attachPaymentSlip(
+    @ReqCtx() ctx: RequestContext,
+    @Param('requestId') requestId: string,
+    @Param('paymentId') paymentId: string,
+    @Body() body: AttachPaymentSlipDto,
+  ) {
+    return this.withAttachmentFileName(ctx, this.attachSlip.execute(ctx, requestId, paymentId, body));
+  }
+
+  // `?disposition=inline` is the preview ask, as on the generic attachment download.
+  @Get(':requestId/payments/:paymentId/slips/:attachmentId/download-url')
+  @RequirePermissions('account.session.read')
+  @ApiOperation({ summary: 'Open a payment slip (requester, the claim approver, payment-record or finance-review holders)' })
+  paymentSlipDownloadUrl(
+    @ReqCtx() ctx: RequestContext,
+    @Param('requestId') requestId: string,
+    @Param('paymentId') paymentId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Query('disposition') disposition?: string,
+  ) {
+    return this.slipDownloadUrl.execute(ctx, requestId, paymentId, attachmentId, disposition === 'inline' ? 'inline' : undefined);
   }
 
   @Get(':requestId/export')

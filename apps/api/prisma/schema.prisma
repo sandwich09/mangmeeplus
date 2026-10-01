@@ -7012,6 +7012,10 @@ model ReimbursementPayment {
   paidAt                 DateTime
   paymentReference       String?
   bankAccountId          String?
+  /// The slip this payment was recorded with (an AttachmentObject id) and its checksum then.
+  /// Every slip, this one included, is an AttachmentLink row on the payment.
+  slipAttachmentId       String?
+  slipChecksumSha256     String?
   sourcePaymentRef       String
   status                 ReimbursementPaymentRecordStatus @default(RECORDED)
   voidedAt               DateTime?

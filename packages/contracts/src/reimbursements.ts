@@ -94,6 +94,8 @@ export type ReimbursementApproverRoleOption = {
   uncoveredBranchNames: string[];
   selectable: boolean;
   unavailableReason?: 'MISSING_CAPABILITY' | 'NO_ACTIVE_HOLDERS' | 'OWNER_RECOVERY_NOT_READY';
+  /** Whether the role also holds the pay right. Approving never needs it, so the policy screen only warns. */
+  canRecordPayment: boolean;
 };
 
 export type ReimbursementPolicySnapshotV1 = {
@@ -179,6 +181,27 @@ export type ReimbursementApprovalStepSummary = {
 
 // ---- Payment ----
 
+/**
+ * Owner decision 2026-10-01 (D3): a payment recorded as a bank transfer must carry its slip; every
+ * other method may. The API and the payment form both ask this one function, so they cannot disagree.
+ */
+export function reimbursementPaymentSlipRequired(paymentMethod: string): boolean {
+  return paymentMethod === 'BANK_TRANSFER';
+}
+
+export const REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES = 10 * 1024 * 1024;
+export const REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES = 5;
+
+/**
+ * One file of payment evidence. Ids and times only: the file is opened through the slip endpoint,
+ * which answers `canOpenReimbursementPaymentSlip` for the caller. Everyone else who reads the claim
+ * sees that a slip is attached, and nothing more.
+ */
+export type ReimbursementPaymentSlipSummary = {
+  attachmentId: string;
+  attachedAt: string;
+};
+
 export type ReimbursementPaymentSummary = {
   id: string;
   paymentNo?: string;
@@ -195,7 +218,78 @@ export type ReimbursementPaymentSummary = {
   postingStatus: ReimbursementPostingStatus;
   paidByUserId?: string;
   paidByName?: string;
+  /** How many slips this record carries. Every reader of the claim sees this much; a voided record keeps its slips. */
+  slipCount: number;
+  /**
+   * The slip files, oldest first, for a caller who may open them (`viewerCanOpenSlips`). Empty for
+   * everyone else: a file id is not handed to someone the slip endpoint would refuse.
+   */
+  slips: ReimbursementPaymentSlipSummary[];
+  /**
+   * Whether the caller may open this payment's slips: the verdict of `canOpenReimbursementPaymentSlip`
+   * for them, set on every claim detail the API returns. The web offers ดูสลิป from this alone, so
+   * the button and the slip endpoint cannot disagree. It says nothing about the full account number.
+   */
+  viewerCanOpenSlips: boolean;
 };
+
+// ---- Who sees a claim's payout details (spec §11.1, owner decision D2) ----
+
+export type ReimbursementPayoutViewer = { userId: string; permissions: readonly string[] };
+
+/** The claim facts the rule reads. The API record and the web detail both have this shape. */
+export type ReimbursementPayoutViewerClaim = {
+  requesterUserId: string;
+  /** When the claim's current round was submitted; none while it is a draft. Named by every caller: it decides whose approval still counts. */
+  submittedAt: string | Date | null | undefined;
+  approvalSteps?: readonly {
+    status: string;
+    decisionByUserId?: string | null;
+    decidedAt?: string | Date | null;
+    invalidatedAt?: string | Date | null;
+  }[];
+  /** Server-resolved authority over the pending step, as the claim detail reports it. */
+  approvalActions?: { canApprove: boolean; canReject: boolean } | null;
+};
+
+/**
+ * Whether this person approved the claim as it stands: they decided an approval that is still in
+ * force and belongs to the current round, that is, decided at or after the claim was last
+ * submitted. An approval from before a correction and resubmission is history: the claim has since
+ * been routed again, and its earlier approver has no say over what it became. The same test the
+ * claim page uses for "approved by a person" (`buildJourneySteps`).
+ */
+export function isReimbursementClaimApprover(userId: string, claim: Pick<ReimbursementPayoutViewerClaim, 'submittedAt' | 'approvalSteps'>): boolean {
+  if (!userId || !claim.submittedAt) return false;
+  const roundStartedAt = new Date(claim.submittedAt).getTime();
+  return (claim.approvalSteps ?? []).some((step) => step.status === 'APPROVED' && !step.invalidatedAt && !!step.decidedAt
+    && step.decisionByUserId === userId && new Date(step.decidedAt).getTime() >= roundStartedAt);
+}
+
+/**
+ * The people a claim's payout details belong to: the requester, the claim's own approver (whoever
+ * approved its current round, or may decide the step it waits on), and holders of the
+ * payment-record right. Holding the approval permission without being routed this claim is not
+ * enough. The caller has already established that the viewer may read the claim, branch included.
+ * The single rule for the full account number (§11.1) and, with finance reviewers added, for slips.
+ */
+export function isReimbursementPayoutParty(viewer: ReimbursementPayoutViewer, claim: ReimbursementPayoutViewerClaim): boolean {
+  if (!viewer.userId) return false;
+  if (viewer.userId === claim.requesterUserId) return true;
+  if (viewer.permissions.includes('reimbursement.payment.record')) return true;
+  if (claim.approvalActions?.canApprove || claim.approvalActions?.canReject) return true;
+  return isReimbursementClaimApprover(viewer.userId, claim);
+}
+
+/**
+ * Who may open a payment slip (spec §11.4): the payout parties, and finance reviewers too (owner
+ * answer 2026-10-01, "ให้เปิดดูได้"). Nobody else. The slip download endpoint enforces this, and the
+ * claim detail reports this same verdict to the web (`viewerCanOpenSlips`), so ดูสลิป is never offered
+ * to someone the endpoint would refuse. Wider than the account-number group on purpose, for slips only.
+ */
+export function canOpenReimbursementPaymentSlip(viewer: ReimbursementPayoutViewer, claim: ReimbursementPayoutViewerClaim): boolean {
+  return isReimbursementPayoutParty(viewer, claim) || viewer.permissions.includes('reimbursement.finance_review');
+}
 
 // ---- Duplicate candidate ----
 
@@ -293,6 +387,71 @@ export type ReimbursementCurrentDesk = {
   kind: ReimbursementCurrentDeskKind;
   /** Assigned approver display names; absent for pool desks and when no name resolves. */
   names?: string[];
+};
+
+/**
+ * The words for a desk when no person is named. One source for the web ("อยู่ที่ …", the step note, the
+ * timeline) and for the LINE backlog answer, so they cannot name different parties for the same claim.
+ * Payment is whoever holds the pay right: most shops have no finance desk, so "ฝ่ายการเงิน" is said only
+ * of the finance-review step.
+ */
+export const REIMBURSEMENT_DESK_LABELS: Record<ReimbursementCurrentDeskKind, string> = {
+  REQUESTER: 'ผู้ยื่น',
+  APPROVER: 'ผู้มีสิทธิ์อนุมัติ',
+  FINANCE: 'ฝ่ายการเงิน',
+  PAYMENT: 'ผู้มีสิทธิ์บันทึกจ่าย',
+};
+
+// ---- หน้ารวม (hub) buckets ----
+
+/** Every claim sits in exactly one bucket, so the hub's chips add up to "ทั้งหมด". */
+export type ReimbursementHubBucket = 'draft' | 'review' | 'payment' | 'paid' | 'closed';
+
+/**
+ * Where a claim's status alone places it. Typed over every status, so a status added later has to be
+ * placed here and cannot fall into ปฏิเสธ/ยกเลิก unnoticed.
+ */
+const HUB_BUCKET_BY_STATUS: Record<ReimbursementRequestStatus, ReimbursementHubBucket> = {
+  DRAFT: 'draft',
+  PENDING_APPROVAL: 'review',
+  FINANCE_REVIEW: 'review',
+  APPROVED: 'payment',
+  READY_FOR_PAYMENT: 'payment',
+  PARTIALLY_PAID: 'payment',
+  PAID: 'paid',
+  REJECTED: 'closed',
+  CANCELLED: 'closed',
+  VOIDED: 'closed',
+};
+
+/**
+ * The hub bucket of a claim: the desk it waits at, the one its row prints as "อยู่ที่ …". A claim with no
+ * desk, or with a desk kind this code does not know, is placed by its status: a draft is a draft whether
+ * or not the row carries a desk. One rule for the cards, the chips and the list.
+ */
+export function reimbursementHubBucket(claim: {
+  status?: string;
+  financeReviewStatus?: string;
+  currentDesk?: { kind?: string } | null;
+}): ReimbursementHubBucket {
+  switch (claim.currentDesk?.kind) {
+    case 'REQUESTER': return 'draft';
+    case 'APPROVER': case 'FINANCE': return 'review';
+    case 'PAYMENT': return 'payment';
+  }
+  // Approved and still being routed on: to finance review while that is pending, otherwise to payment.
+  if (claim.status === 'APPROVED' && claim.financeReviewStatus === 'PENDING') return 'review';
+  return HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
+}
+
+/** The whole list scope as the server counted it: what the hub's cards and chips print. */
+export type ReimbursementHubSummary = {
+  /** Claims per bucket, and `all` for the scope. The buckets add up to `all`. */
+  counts: Record<'all' | ReimbursementHubBucket, number>;
+  /** Sum of the claimed amounts of the scope. */
+  totalAmount: string;
+  /** Drafts that still owe a receipt before they can be submitted. */
+  blockedDraftCount: number;
 };
 
 // ---- Request ----
@@ -420,6 +579,13 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   documentSignedVia?: ReimbursementDocumentSignedVia;
   /** Whether this claim has the finance review step: its frozen policy once submitted, the current policy while a draft. Detail only. */
   financeReviewRequired?: boolean;
+  /**
+   * Who can record this claim's payment, while it waits at the payment desk: the active members the API
+   * would accept the payment from (pay right, branch scope). At most five names, then how many more.
+   * GET detail only; an empty list means nobody can. Absent on a claim the payment endpoint refuses for
+   * everyone (no branch, or part paid): the page then prints the desk's pool label.
+   */
+  paymentDesk?: { names: string[]; moreCount: number };
   missingReceiptReason?: string;
   lines: ReimbursementLineSummary[];
   approvalSteps: ReimbursementApprovalStepSummary[];
@@ -492,6 +658,16 @@ export type RecordReimbursementPaymentInput = {
   bankAccountId?: string;
   note?: string;
   idempotencyKey?: string;
+  /**
+   * The slip for this payment: required when `reimbursementPaymentSlipRequired(paymentMethod)`.
+   * A slip uploaded for this claim by the payer, or a file already attached to the claim (a signed
+   * copy that is really the slip, or the slip of an earlier payment of the same claim).
+   */
+  slipAttachmentId?: string;
+};
+
+export type AttachReimbursementPaymentSlipInput = {
+  attachmentId: string;
 };
 
 export type VoidReimbursementPaymentInput = {
@@ -503,15 +679,20 @@ export type ListReimbursementsFilter = {
   status?: ReimbursementRequestStatus;
   paymentStatus?: ReimbursementPaymentStatus;
   requesterUserId?: string;
+  /** Only the claims of one hub bucket. An unknown bucket matches nothing. */
+  bucket?: ReimbursementHubBucket;
   page?: number;
   pageSize?: number;
 };
 
 export type PaginatedReimbursements = {
   items: ReimbursementRequestSummary[];
+  /** How many claims the list holds over all its pages. With `bucket`, that is `hub.counts[bucket]`. */
   total: number;
   page: number;
   pageSize: number;
+  /** The scope counted per bucket, whatever `bucket` or page was asked for. */
+  hub: ReimbursementHubSummary;
 };
 
 // ---- Queue items ----
@@ -519,6 +700,11 @@ export type PaginatedReimbursements = {
 export type ReimbursementApprovalQueueItem = ReimbursementRequestSummary & {
   ageHours: number;
   slaRisk: boolean;
+  /**
+   * What this viewer may do with the row, resolved by the server as on the claim detail: the current
+   * permission, or a frozen assignment. A row is listed only when at least one is true.
+   */
+  approvalActions: { canApprove: boolean; canReject: boolean };
 };
 
 export type ReimbursementFinanceQueueItem = ReimbursementRequestSummary & {

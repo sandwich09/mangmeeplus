@@ -1,14 +1,21 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import {
   CreateReimbursementDraftUseCase,
   CancelReimbursementUseCase,
+  GetReimbursementDetailUseCase,
+  ListReimbursementsUseCase,
   ReopenRejectedReimbursementUseCase,
   UpdateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
   ReimbursementInternalNotesUseCase,
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
+import { RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
+import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere } from '../../infrastructure/prisma-reimbursement.repository';
+import { reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
@@ -106,6 +113,7 @@ function evidenceService() {
     {
       findById: async ({ id }: any) => ({ ...attachment, id }),
       findManyByIds: async ({ ids }: any) => ids.map((id: string) => ({ ...attachment, id })),
+      isReimbursementPaymentSlip: async () => false,
     } as any,
     { findById: async (_c: string, id: string) => ({ id, companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'staff-1' }) } as any,
   );
@@ -705,6 +713,36 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.ready_for_payment'));
   });
 
+  // Owner rule 2026-10-01: a claim nobody had to approve has no approver of its own to hand the
+  // payment to, so its ready-to-pay event names the people who would have approved it.
+  it('names the would-be approvers on the ready-to-pay event of a claim that needed no approval', async () => {
+    const submitBelowThreshold = async () => {
+      const state = fakeRepo({ policy: { ...noReceiptNeeded, approvalRequiredFromAmount: '100.00', financeReviewRequired: false } });
+      await draftWith(state, [inputLine({ amount: '99.99' })], withReason);
+      await useCases(state).submit.execute(ctx(), 'rb-1');
+      return state;
+    };
+    const readyData = (state: any) => state.calls.outbox.find((event: any) => event.eventType === 'reimbursement.ready_for_payment').payloadJson.data;
+
+    const asked: any[] = [];
+    readyApproverRoutes.resolveWouldBeApproverUserIds = async (...args: any[]) => { asked.push(args); return ['approver-1', 'approver-2']; };
+    try {
+      const state = await submitBelowThreshold();
+      assert.deepEqual(readyData(state).approverRecipientUserIds, ['approver-1', 'approver-2']);
+      assert.equal(readyData(state).decision, 'BELOW_APPROVAL_THRESHOLD');
+      assert.equal(asked[0][0], 'co-1');
+      assert.equal(asked[0][2].requesterUserId, 'staff-1');
+
+      // Best effort: failing to name them never fails the submission, and the event simply names nobody.
+      readyApproverRoutes.resolveWouldBeApproverUserIds = async () => { throw new Error('lookup failed'); };
+      const unresolved = await submitBelowThreshold();
+      assert.equal(unresolved.request.status, 'READY_FOR_PAYMENT');
+      assert.equal(readyData(unresolved).approverRecipientUserIds, undefined);
+    } finally {
+      delete readyApproverRoutes.resolveWouldBeApproverUserIds;
+    }
+  });
+
   it('blocks INACTIVE policy before submit mutation', async () => {
     const state = fakeRepo({ policy: { ...noReceiptNeeded, status: 'INACTIVE' } });
     await draftWith(state, [inputLine()], withReason);
@@ -874,6 +912,335 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
   });
 });
 
+// Spec §18.3 and the owner's consistency rule 2026-10-01: `paymentDesk` names exactly the members the API accepts a
+// payment from on that claim — the resolver's permission, entitlement cut and branch scope, nothing looser.
+describe('claim detail paymentDesk', () => {
+  const PAY = 'reimbursement.payment.record';
+  const day = new Date('2026-10-01T03:00:00.000Z');
+  const waiting = (overrides: Record<string, unknown> = {}) => ({
+    id: 'rb-1', companyId: 'co-1', branchId: 'b1', requestNo: 'RB-202610-000001', requesterUserId: 'staff-1',
+    requesterDisplayNameSnapshot: 'ผู้เบิก', createdByUserId: 'staff-1', reason: 'แท็กซี่', categoryKey: 'travel', amount: '500.0000',
+    currency: 'THB', incurredDate: day, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID',
+    duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED', postingStatus: 'pending', paymentTotalAmount: '0.0000',
+    outstandingAmount: '500.0000', createdAt: day, updatedAt: day, lines: [], approvalSteps: [], payments: [], duplicateCandidates: [],
+    claimSignatures: [], ...overrides,
+  }) as any;
+  const detailEvidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
+
+  type Member = {
+    userId: string; displayName: string; permissions: string[]; roleStatus?: string; status?: string; userStatus?: string;
+    branchScopeMode?: string; defaultBranchId?: string; branchIds?: string[];
+  };
+  /** One company in memory, read by the repository (who is listed) and by the permission resolver (who may pay). */
+  function company(members: Member[], entitlements: Array<{ featureKey: string; enabled: boolean }> = []) {
+    const rows = members.map((member) => ({
+      id: `m-${member.userId}`, companyId: 'co-1', userId: member.userId, status: member.status ?? 'ACTIVE',
+      branchScopeMode: member.branchScopeMode ?? 'ALL_BRANCHES', defaultBranchId: member.defaultBranchId ?? null,
+      branchScopes: (member.branchIds ?? []).map((branchId) => ({ branchId })),
+      user: { status: member.userStatus ?? 'ACTIVE', displayName: member.displayName },
+      company: { status: 'ACTIVE' },
+      roles: [{ role: { key: `ROLE_${member.userId}`, status: member.roleStatus ?? 'ACTIVE',
+        permissions: member.permissions.map((key) => ({ permission: { key } })) } }],
+    }));
+    return { client: {
+      companyMembership: {
+        // The repository's own where clause, applied as written.
+        findMany: async ({ where }: any) => rows.filter((row) => row.companyId === where.companyId && row.status === where.status
+          && row.user.status === where.user.status
+          && row.roles.some(({ role }) => role.status === where.roles.some.role.status
+            && role.permissions.some(({ permission }) => permission.key === where.roles.some.role.permissions.some.permission.key))),
+        findFirst: async ({ where }: any) => rows.find((row) => row.userId === where.userId && row.companyId === where.companyId
+          && row.status === where.status) ?? null,
+      },
+      // b1 and b2 are open; b-closed is an archived branch.
+      branch: { findMany: async ({ where }: any) => ['b1', 'b2'].filter((id) => !where.id || where.id.in.includes(id)).map((id) => ({ id })) },
+      companyFeatureEntitlement: { findMany: async () => entitlements },
+    } } as any;
+  }
+  const listed = (prisma: any, branchId: string) => new PrismaReimbursementRepository(prisma, {} as any).listPaymentRecorderNames('co-1', branchId);
+  /** The API's own answer: resolve the member as every request does, then record the payment as them. `paid`, or why not. */
+  async function pays(prisma: any, userId: string, claimState: Record<string, unknown>): Promise<string> {
+    const claim = waiting(claimState);
+    const repo = {
+      findRequestById: async () => claim, findPolicy: async () => null, assertClaimPaymentReady: async () => undefined,
+      listOpenDuplicateCandidates: async () => [], getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [],
+      recordPaymentAtomic: async (data: any) => ({ created: true, payment: { id: 'pay-1', ...data, status: 'RECORDED', postingStatus: 'pending' },
+        request: { ...claim, status: 'PAID', paymentStatus: 'PAID' } }),
+    } as any;
+    const useCase = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox,
+      { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202610-000001' }) } as any, { execute: async () => undefined } as any, detailEvidence);
+    try {
+      const access = await new PrismaPermissionResolverRepository(prisma).resolveForUser({ userId, companyId: 'co-1' });
+      const paid = await useCase.execute(ctx({ userId, ...access }), claim.id, { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: day.toISOString() });
+      return paid.status === 'PAID' ? 'paid' : `status ${paid.status}`;
+    } catch (error) {
+      // Refused for want of the right or the branch scope, or because the claim itself takes no payment.
+      if (error instanceof ForbiddenException || error instanceof UnprocessableEntityException) return error.message;
+      throw error;
+    }
+  }
+  /** What the claim page is told: the names in the detail's `paymentDesk`, read through the real repository; null when it carries none. */
+  async function named(prisma: any, claimState: Record<string, unknown>): Promise<string[] | null> {
+    const names = new PrismaReimbursementRepository(prisma, {} as any);
+    const repo = {
+      findRequestById: async () => waiting(claimState), findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
+      getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
+      listPaymentRecorderNames: (companyId: string, branchId: string) => names.listPaymentRecorderNames(companyId, branchId),
+    } as any;
+    const detail = await new GetReimbursementDetailUseCase(repo, detailEvidence).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
+    return detail.paymentDesk ? detail.paymentDesk.names : null;
+  }
+
+  const approverRole = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
+  const members: Member[] = [
+    { userId: 'owner', displayName: 'เจ้าของ', permissions: [...approverRole, PAY] },
+    { userId: 'b1-selected', displayName: 'สมศรี', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1'] },
+    { userId: 'b1-default', displayName: 'วิชัย', permissions: [PAY], branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'b1' },
+    { userId: 'b2-selected', displayName: 'มานี', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b2'] },
+    { userId: 'b2-default', displayName: 'ปิติ', permissions: [PAY], branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'b2' },
+    // An approver role saved before the pay right was added: approves, cannot pay.
+    { userId: 'approver-only', displayName: 'ชูใจ', permissions: approverRole },
+    { userId: 'disabled-role', displayName: 'วีระ', permissions: [PAY], roleStatus: 'DISABLED' },
+    { userId: 'suspended', displayName: 'ปรีชา', permissions: [PAY], status: 'SUSPENDED' },
+    // Every branch this member covers is archived: the resolver refuses them outright.
+    { userId: 'closed-branch', displayName: 'สุดา', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b-closed'] },
+  ];
+  const nameOf = Object.fromEntries(members.map((member) => [member.userId, member.displayName]));
+
+  it('lists a member exactly when the API accepts their payment: listed can pay, unlisted is refused', async () => {
+    const expected: Array<[string, string[]]> = [
+      ['b1', ['เจ้าของ', 'วิชัย', 'สมศรี']],
+      ['b2', ['เจ้าของ', 'ปิติ', 'มานี']],
+      ['b-closed', ['เจ้าของ']],
+    ];
+    // The runoff rule keeps the pay right while the feature is switched off: the list and the API follow it together.
+    for (const entitlements of [[], [{ featureKey: 'reimbursement', enabled: false }]]) {
+      const prisma = company(members, entitlements);
+      for (const [branchId, names] of expected) {
+        assert.deepEqual(await listed(prisma, branchId), names, `claim branch ${branchId}`);
+        // Approved and still being routed to payment waits at the same desk, and the API takes its payment too.
+        for (const status of ['READY_FOR_PAYMENT', 'APPROVED']) {
+          assert.deepEqual(await named(prisma, { branchId, status }), names, `${status} claim of branch ${branchId}`);
+          for (const member of members) {
+            assert.equal(await pays(prisma, member.userId, { branchId, status }) === 'paid', names.includes(nameOf[member.userId]!),
+              `${member.userId} on a ${status} claim of branch ${branchId}`);
+          }
+        }
+      }
+    }
+    // A disabled user cannot sign in, so the resolver is never asked: not listed.
+    assert.deepEqual(await listed(company([{ userId: 'left', displayName: 'ลาออก', permissions: [PAY], userStatus: 'DISABLED' }]), 'b1'), []);
+  });
+
+  // Before: a part-paid claim and a claim with no branch (legacy rows) named every holder of the pay right, and the
+  // endpoint refused each of them. Nobody is named now, so the page falls back to "ผู้มีสิทธิ์บันทึกจ่าย".
+  it('names nobody on a claim the payment endpoint refuses for everyone', async () => {
+    const prisma = company(members);
+    const refused: Array<[Record<string, unknown>, RegExp]> = [
+      [{ branchId: 'b1', status: 'PARTIALLY_PAID', paymentStatus: 'PARTIALLY_PAID', outstandingAmount: '200.0000' }, /invalid_status_transition/],
+      [{ branchId: null }, /กรุณาเลือกสาขาของรายการก่อนบันทึก/],
+      [{ branchId: undefined }, /กรุณาเลือกสาขาของรายการก่อนบันทึก/],
+    ];
+    for (const [claimState, reason] of refused) {
+      assert.equal(await named(prisma, claimState), null, JSON.stringify(claimState));
+      for (const member of members) assert.notEqual(await pays(prisma, member.userId, claimState), 'paid', `${member.userId} ${JSON.stringify(claimState)}`);
+      // The owner holds the right and every branch: only the claim's own state stops them.
+      assert.match(await pays(prisma, 'owner', claimState), reason);
+    }
+  });
+
+  it('adds at most five names and the rest as a count, only while the claim waits for payment', async () => {
+    const payers = ['กมล', 'ขวัญ', 'จิตรา', 'ชาติ', 'ณัฐ', 'ดวงใจ', 'ธนา'];
+    const asked: Array<[string, unknown]> = [];
+    const repoFor = (claim: any, names: string[]) => ({
+      findRequestById: async () => claim, findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
+      getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
+      listPaymentRecorderNames: async (companyId: string, branchId: unknown) => { asked.push([companyId, branchId]); return names; },
+    }) as any;
+    const read = (claim: any, names: string[]) => new GetReimbursementDetailUseCase(repoFor(claim, names), detailEvidence)
+      .execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
+
+    assert.deepEqual((await read(waiting(), payers)).paymentDesk, { names: payers.slice(0, 5), moreCount: 2 });
+    assert.deepEqual(asked, [['co-1', 'b1']], 'the payers of the claim\'s own branch');
+    assert.deepEqual((await read(waiting(), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
+    // Nobody can pay: an empty list, which the page reports as such.
+    assert.deepEqual((await read(waiting(), [])).paymentDesk, { names: [], moreCount: 0 });
+    // Approved and still being routed to payment waits at the same desk.
+    assert.deepEqual((await read(waiting({ status: 'APPROVED' }), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
+    // Any other desk, a finished claim, and a claim nobody can pay (part paid, or with no branch): no list, and no extra read.
+    asked.length = 0;
+    for (const overrides of [{ status: 'DRAFT' }, { status: 'PENDING_APPROVAL' }, { status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' },
+      { status: 'APPROVED', financeReviewStatus: 'PENDING' }, { status: 'PAID', paymentStatus: 'PAID' }, { status: 'CANCELLED' },
+      { status: 'PARTIALLY_PAID', paymentStatus: 'PARTIALLY_PAID' }, { branchId: null }, { branchId: undefined }]) {
+      const detail = await read(waiting(overrides), payers);
+      assert.equal('paymentDesk' in detail, false, JSON.stringify(overrides));
+      // The part-paid and the branchless claim still wait at the payment desk: the page prints its pool label.
+      if (!('status' in overrides) || overrides.status === 'PARTIALLY_PAID') assert.deepEqual(detail.currentDesk, { kind: 'PAYMENT' });
+    }
+    assert.deepEqual(asked, []);
+  });
+});
+
+// Review follow-up 2026-10-01 (spec §18.1, acceptance I1). The list pages in the database, and the hub's counts are
+// read with the list's own predicate: a card's number is the rows its filter shows over every page, and the
+// buckets add up to ทั้งหมด.
+describe('list paging and hub buckets', () => {
+  const STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'];
+  const FINANCE = ['NOT_REQUIRED', 'PENDING', 'NEEDS_INFO', 'APPROVED_FOR_PAYMENT', 'BLOCKED'];
+  const BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+  const at = (second: number) => new Date(Date.UTC(2026, 8, 1, 0, 0, second));
+  /** One claim for every status pair the database can hold, twice over for the live ones, so no two buckets are the same size. */
+  const claims = STATUSES.flatMap((status, s) => FINANCE.flatMap((financeReviewStatus, f) =>
+    Array.from({ length: status === 'READY_FOR_PAYMENT' || status === 'DRAFT' ? 2 : 1 }, (_, copy) => ({
+      id: `rb-${status}-${financeReviewStatus}-${copy}`, companyId: 'co-1', branchId: 'b1', requesterUserId: copy ? 'staff-2' : 'staff-1',
+      requesterDisplayNameSnapshot: 'ผู้เบิก', reason: 'แท็กซี่', categoryKey: 'travel', amount: `${(s + 1) * 10 + f}.5000`, currency: 'THB',
+      incurredDate: at(0), status, financeReviewStatus, paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH',
+      receiptRequirementStatus: f % 2 ? 'REQUIRED' : 'ATTACHED', postingStatus: 'pending', paymentTotalAmount: '0.0000',
+      outstandingAmount: '0.0000', createdByUserId: 'staff-1', createdAt: at(s * 10 + f * 2 + copy), updatedAt: at(0),
+    }))));
+
+  /** The claims table in memory, answering the repository's own `where`, order, OFFSET and LIMIT, and its GROUP BY. */
+  function database(rows: any[] = claims) {
+    const reads: Array<{ skip?: number; take?: number }> = [];
+    const matches = (row: any, where: any): boolean => Object.entries(where ?? {}).every(([field, want]: [string, any]) => {
+      if (want === undefined) return true;
+      if (field === 'AND') return want.every((part: any) => matches(row, part));
+      if (field === 'OR') return want.some((part: any) => matches(row, part));
+      if (want !== null && typeof want === 'object') return want.in.includes(row[field]);
+      return row[field] === want;
+    });
+    const client = {
+      reimbursementRequest: {
+        findMany: async ({ where, skip, take }: any) => {
+          reads.push({ skip, take });
+          const found = rows.filter((row) => matches(row, where))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1));
+          return found.slice(skip ?? 0, take === undefined ? undefined : (skip ?? 0) + take).map((row) => ({ ...row, _count: { lines: 1 } }));
+        },
+        groupBy: async ({ by, where }: any) => {
+          const groups = new Map<string, any>();
+          for (const row of rows.filter((candidate) => matches(candidate, where))) {
+            const key = by.map((field: string) => row[field]).join('|');
+            const group = groups.get(key) ?? { ...Object.fromEntries(by.map((field: string) => [field, row[field]])), _count: { _all: 0 }, _sum: { amount: 0 } };
+            group._count._all += 1;
+            group._sum.amount += Number(row.amount);
+            groups.set(key, group);
+          }
+          return [...groups.values()];
+        },
+      },
+      reimbursementPolicy: { findMany: async () => [] },
+      reimbursementApprovalStep: { findMany: async () => [] },
+      companyMembership: { findMany: async () => [] },
+    };
+    return { reads, list: new ListReimbursementsUseCase(new PrismaReimbursementRepository({ client } as any, {} as any)) };
+  }
+  const reader = ctx({ permissions: ['reimbursement.read'] });
+  /** Every page of one list, the way a client walks it. */
+  async function walk(list: ListReimbursementsUseCase, filter: Record<string, unknown>, pageSize: number) {
+    const pages: any[] = [];
+    for (let page = 1; ; page += 1) {
+      const answer = await list.execute(reader, { ...filter, page, pageSize });
+      pages.push(answer);
+      if (answer.items.length < answer.pageSize || page * answer.pageSize >= answer.total) return pages;
+    }
+  }
+
+  it('reads one page from the database with OFFSET and LIMIT, and answers the real total', async () => {
+    const { list, reads } = database();
+    const first = await list.execute(reader, { page: 1, pageSize: 7 });
+    const third = await list.execute(reader, { page: 3, pageSize: 7 });
+    // Before: every call read the whole scope (no skip, no take) and sliced it in memory.
+    assert.deepEqual(reads, [{ skip: 0, take: 7 }, { skip: 14, take: 7 }]);
+    assert.deepEqual([first.items.length, first.total, first.page, first.pageSize], [7, claims.length, 1, 7]);
+    assert.equal(third.items.length, 7);
+    // Newest first, with the id as the tie-break: the pages are slices of one stable order.
+    const order = [...claims].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1)).map((row) => row.id);
+    assert.deepEqual(first.items.map((item) => item.id), order.slice(0, 7));
+    assert.deepEqual(third.items.map((item) => item.id), order.slice(14, 21));
+    // The page size is capped at 100 and defaults to 20; a page number that is no number is page 1.
+    assert.equal((await list.execute(reader, { pageSize: 500 })).pageSize, 100);
+    assert.equal((await list.execute(reader, {})).items.length, 20);
+    for (const page of [0, -3, Number.NaN, Number.POSITIVE_INFINITY, 1.9]) {
+      assert.deepEqual((await list.execute(reader, { page, pageSize: 7 })).items.map((item) => item.id), order.slice(0, 7), String(page));
+    }
+    assert.deepEqual(reads.slice(-1), [{ skip: 0, take: 7 }]);
+    // Past the end: an empty page with the same total, not an error.
+    const beyond = await list.execute(reader, { page: 99, pageSize: 7 });
+    assert.deepEqual([beyond.items.length, beyond.total], [0, claims.length]);
+  });
+
+  it('counts each bucket as the rows its filter returns over every page, and the buckets add up to ทั้งหมด', async () => {
+    const { list } = database();
+    const all = await walk(list, {}, 7);
+    const hub = all[0].hub;
+    assert.equal(all.flatMap((answer) => answer.items).length, claims.length);
+    assert.equal(hub.counts.all, claims.length);
+    assert.equal(all[0].total, hub.counts.all);
+    assert.equal(BUCKETS.reduce((sum, bucket) => sum + hub.counts[bucket], 0), hub.counts.all);
+    assert.equal(new Set(BUCKETS.map((bucket) => hub.counts[bucket])).size, BUCKETS.length, 'five different sizes, so a swapped bucket cannot pass');
+
+    const seen: string[] = [];
+    for (const bucket of BUCKETS) {
+      const pages = await walk(list, { bucket }, 7);
+      const items = pages.flatMap((answer) => answer.items);
+      // The card's number is the list's total and the rows of all its pages.
+      assert.equal(items.length, hub.counts[bucket], bucket);
+      for (const answer of pages) {
+        assert.equal(answer.total, hub.counts[bucket], bucket);
+        // The cards count the whole scope whatever bucket or page was asked for.
+        assert.deepEqual(answer.hub, hub, bucket);
+      }
+      // Every row belongs there by the rule its own "อยู่ที่ …" desk follows.
+      for (const item of items) assert.equal(reimbursementHubBucket(item), bucket, item.id);
+      seen.push(...items.map((item) => item.id));
+    }
+    // No claim in two buckets, none in no bucket.
+    assert.deepEqual([...seen].sort(), claims.map((row) => row.id).sort());
+    // What the cards add up besides the counts: the claimed amounts, and the drafts that still owe a receipt.
+    assert.equal(Number(hub.totalAmount), claims.reduce((sum, row) => sum + Number(row.amount), 0));
+    assert.equal(hub.blockedDraftCount, claims.filter((row) => row.status === 'DRAFT' && row.receiptRequirementStatus === 'REQUIRED').length);
+    assert.ok(hub.blockedDraftCount > 0);
+  });
+
+  it('places every status pair by its desk, in one bucket, with the same answer for the count and for the filter', () => {
+    const expected: Record<string, string> = {
+      DRAFT: 'draft', PENDING_APPROVAL: 'review', FINANCE_REVIEW: 'review', READY_FOR_PAYMENT: 'payment', PARTIALLY_PAID: 'payment',
+      PAID: 'paid', REJECTED: 'closed', CANCELLED: 'closed', VOIDED: 'closed',
+    };
+    for (const status of STATUSES) {
+      for (const financeReviewStatus of FINANCE) {
+        // Approved and still being routed on: to finance review while that is pending, otherwise to payment.
+        const bucket = status === 'APPROVED' ? (financeReviewStatus === 'PENDING' ? 'review' : 'payment') : expected[status];
+        assert.equal(hubBucketOfStatus(status as any, financeReviewStatus), bucket, `${status} ${financeReviewStatus}`);
+        // The filter is the count's rule asked of every pair: a pair is in a bucket's query exactly when it is counted there.
+        for (const candidate of BUCKETS) {
+          const inQuery = (hubBucketWhere(candidate).OR as any[]).some((part) => part.status === status && part.financeReviewStatus.in.includes(financeReviewStatus));
+          assert.equal(inQuery, candidate === bucket, `${status} ${financeReviewStatus} in ${candidate}`);
+        }
+      }
+    }
+    // An unknown bucket matches nothing instead of everything.
+    assert.deepEqual(hubBucketWhere('archived'), { OR: [] });
+  });
+
+  it('keeps the counts inside the caller\'s scope, and answers an unknown bucket with an empty list', async () => {
+    const { list } = database();
+    // Own claims only: the cards count what this person may see, never the company.
+    const own = await list.execute(ctx({ userId: 'staff-2', permissions: ['reimbursement.read_own'] }), { pageSize: 100 });
+    const mine = claims.filter((row) => row.requesterUserId === 'staff-2');
+    assert.ok(mine.length > 0 && mine.length < claims.length);
+    assert.deepEqual([own.total, own.hub.counts.all, own.items.length], [mine.length, mine.length, mine.length]);
+    assert.deepEqual(own.hub.counts, { all: mine.length, draft: 5, review: 0, payment: 5, paid: 0, closed: 0 });
+    const unknown = await list.execute(reader, { bucket: 'archived' as any });
+    assert.deepEqual([unknown.items.length, unknown.total, unknown.hub.counts.all], [0, 0, claims.length]);
+    // An empty scope: zeros everywhere, and a total amount that is still a number.
+    const empty = await database([]).list.execute(reader, {});
+    assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
+    assert.deepEqual([empty.items.length, empty.total], [0, 0]);
+  });
+});
+
 const approverPermissions = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
 const approverBranches = [{ id: 'b1', name: 'สำนักงานใหญ่' }, { id: 'b2', name: 'สาขาสอง' }];
 const approverHolder = (branchIds: string[]): ApproverRoleCandidate['holders'][number] => ({
@@ -904,6 +1271,17 @@ describe('reimbursement approver role options', () => {
     assert.equal(options.find((item) => item.key === 'FINANCE')?.unavailableReason, 'NO_ACTIVE_HOLDERS');
     assert.equal(options.find((item) => item.key === 'STAFF')?.unavailableReason, 'MISSING_CAPABILITY');
     assert.equal(options.some((item) => item.key === 'SYSTEM_ADMIN'), false);
+  });
+
+  // Payout-account spec §13.3 F2: approving never needed the pay right, so the policy screen is told which roles lack it.
+  it('says whether a role can also record the payment, without changing which roles are selectable', () => {
+    const options = buildReimbursementApproverRoleOptions([
+      approverRole({ key: 'OWNER', name: 'Owner', permissionKeys: [...approverPermissions, 'reimbursement.payment.record'], holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'OLD_APPROVER', name: 'Old approver', holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'STAFF', name: 'Staff', permissionKeys: ['reimbursement.read', 'reimbursement.payment.record'], holders: [approverHolder(['b1', 'b2'])] }),
+    ], approverBranches);
+    assert.deepEqual(Object.fromEntries(options.map((item) => [item.key, [item.selectable, item.canRecordPayment]])),
+      { OWNER: [true, true], OLD_APPROVER: [true, false], STAFF: [false, true] });
   });
 
   it('blocks partial coverage when OWNER cannot recover the uncovered branch', () => {
