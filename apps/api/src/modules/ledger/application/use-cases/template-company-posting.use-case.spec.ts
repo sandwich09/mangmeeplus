@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { GenerateJournalFromSourceUseCase } from './journal.use-case.js';
+import { systemWorkerContext } from '../../../auth/domain/logic/system-worker-context.js';
 import { requiresReviewedPostingRules } from '../../domain/logic/posting-engine.logic.js';
 
 const ctx = {
@@ -130,6 +131,7 @@ function harness() {
  */
 function postingHarness() {
   const created: any[] = [];
+  const audits: any[] = [];
   const expense = {
     id: 'expense-1', companyId: 'co-1', branchId: null, status: 'CONFIRMED', expenseNumber: 'EXP-1',
     expenseDate: new Date('2026-07-29T00:00:00.000Z'), currency: 'THB', vendorCounterpartyId: null,
@@ -150,7 +152,7 @@ function postingHarness() {
       createJournalEntry: async (entry: any) => { created.push(entry); return { ...entry, id: 'jv-1', lines: entry.lines, createdAt: new Date(), entryDate: entry.entryDate, status: 'POSTED' }; },
       postJournalEntry: async () => undefined,
     } as any,
-    { log: async () => undefined } as any,
+    { log: async (entry: any) => { audits.push(entry); } } as any,
     { execute: async () => ({ id: 'reservation-1', documentNumber: 'JV-1' }) } as any,
     { execute: async () => undefined } as any,
     { append: async () => undefined } as any,
@@ -175,7 +177,7 @@ function postingHarness() {
       },
     } as any,
   );
-  return { useCase, created, expense };
+  return { useCase, created, expense, audits };
 }
 
 describe('template-company posting with reviewed category bindings', () => {
@@ -227,6 +229,37 @@ describe('template-company posting with reviewed category bindings', () => {
       (error: any) => error.getResponse?.().code === 'expense_account_unmapped:cat-phone',
     );
     assert.equal(created.length, 0);
+  });
+
+  // The auto-post worker runs this use case under `systemWorkerContext`, whose id is no User row.
+  // Written as a USER actor the row fails the `actorUserId` FK and `AuditService.log` drops it, so
+  // a journal the system posted, or refused to post, left no audit record at all.
+  it('audits what the auto-post worker generates as a SYSTEM actor named by the worker', async () => {
+    const worker = systemWorkerContext({
+      requestId: 'req-worker', companyId: 'co-1', permissions: ['journal.entry.post'], authSubject: 'expense-auto-post-worker',
+    });
+    const posted = postingHarness();
+    await posted.useCase.execute(worker, { sourceType: 'expense.record', sourceId: 'expense-1' });
+
+    const refused = postingHarness();
+    (refused.useCase as any).prisma.client.expenseCategory.findMany = async () => [{ id: 'cat-fuel', ledgerAccountCode: '5320-01' }];
+    await assert.rejects(() => refused.useCase.execute(worker, { sourceType: 'expense.record', sourceId: 'expense-1' }));
+
+    for (const [row, result] of [[posted.audits[0], 'SUCCESS'], [refused.audits[0], 'FAILED']] as const) {
+      assert.equal(row.action, 'ledger.journal.generate');
+      assert.equal(row.result, result);
+      assert.equal(row.actorType, 'SYSTEM');
+      assert.equal(row.actorRefId, 'expense-auto-post-worker');
+      assert.equal(row.actorUserId, undefined, 'the worker id never enters the User FK');
+    }
+  });
+
+  it('keeps a person who generates a journal as the USER actor', async () => {
+    const { useCase, audits } = postingHarness();
+    await useCase.execute(ctx, { sourceType: 'expense.record', sourceId: 'expense-1' });
+    assert.equal(audits[0].actorUserId, 'user-1');
+    assert.equal(audits[0].actorType, undefined);
+    assert.equal(audits[0].actorRefId, undefined);
   });
 });
 

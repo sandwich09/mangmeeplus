@@ -5,7 +5,7 @@
  * `assertPlatformTenant` says the caller really is มั่งมี staff, not a shop role that happens to share
  * a name. The service then narrows to the batches the caller may see or manage.
  */
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import type {
@@ -19,7 +19,7 @@ import type {
 import { trustedPublicApiBase } from '../../../../common/http/public-api-base';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
-import { assertPlatformTenant } from '../../application/sales-context';
+import { assertPlatformTenant, SalesAgentActiveGuard } from '../../application/sales-context';
 import { SalesEventsService } from '../../application/sales-events.service';
 import {
   SalesEventBatchDto, SalesEventBatchStateDto, SalesEventBatchUpdateDto, SalesEventTicketRevokeDto,
@@ -28,6 +28,7 @@ import {
 type SalesRequest = Request & { context: RequestContext };
 
 @Controller('sales/events')
+@UseGuards(SalesAgentActiveGuard)
 export class SalesEventsController {
   constructor(private readonly events: SalesEventsService) {}
 

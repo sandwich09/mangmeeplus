@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeAuditActor } from './audit-actor.logic';
+import { systemWorkerContext } from '../../../auth/domain/logic/system-worker-context';
+import { auditActorOf, normalizeAuditActor } from './audit-actor.logic';
 
 describe('normalizeAuditActor', () => {
   it('defaults to USER and keeps actorUserId, dropping actorRefId', () => {
@@ -41,6 +42,39 @@ describe('normalizeAuditActor', () => {
       actorType: 'CRM_CUSTOMER',
       actorUserId: null,
       actorRefId: null,
+    });
+  });
+});
+
+/**
+ * `AuditLog.actorUserId` is a real FK to User. A worker context carries `userId: 'system'`, which
+ * is no User row: written as a USER actor the insert is rejected, and `AuditService.log` then
+ * drops the row without throwing (the journals the auto-post worker generates, the vendors a
+ * capture read saves, a customer's consent withdrawal over LINE).
+ */
+describe('the system context id is never a USER actor', () => {
+  const worker = systemWorkerContext({
+    requestId: 'req-1', companyId: 'co-1', permissions: [], authSubject: 'expense-auto-post-worker',
+  });
+
+  it('names a worker by its subsystem and leaves a person as the USER actor', () => {
+    assert.deepEqual(auditActorOf(worker.userId, worker.authSubject), {
+      actorType: 'SYSTEM',
+      actorRefId: 'expense-auto-post-worker',
+    });
+    assert.deepEqual(auditActorOf('user-1', 'user-1'), { actorUserId: 'user-1' });
+    assert.deepEqual(normalizeAuditActor(auditActorOf(worker.userId, worker.authSubject)), {
+      actorType: 'SYSTEM',
+      actorUserId: null,
+      actorRefId: 'expense-auto-post-worker',
+    });
+  });
+
+  it('keeps the id out of the User FK even when a caller still writes it as a USER actor', () => {
+    assert.deepEqual(normalizeAuditActor({ actorUserId: worker.userId }), {
+      actorType: 'SYSTEM',
+      actorUserId: null,
+      actorRefId: 'system',
     });
   });
 });

@@ -10,6 +10,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { apiErrorMessage } from '../../common/api/api-error-message';
 
 const PAGES = [
   'SalesCompaniesPage.tsx', 'SalesConsoleParts.tsx', 'SalesDealFormPage.tsx', 'SalesDealsPage.tsx',
@@ -55,6 +56,16 @@ describe('sales console theme and copy', () => {
       assert.doesNotMatch(text, /\bcatch\s*\([A-Za-z_$][\w$]*\)\s*\{[^}]*\.message\b/, `${label} displays a caught message`);
     });
   }
+
+  it('a suspended account gets one plain notice from the shell and can only sign out (RB-36)', () => {
+    // Every sales route refuses a suspended account with this code. The shell's own read runs on
+    // every screen, so it is where the console stops looking broken and says what happened.
+    const shell = readFileSync(SHELL, 'utf8');
+    assert.match(shell, /setSuspended\(apiErrorCode\(cause\) === 'SALES_AGENT_SUSPENDED'\)/);
+    assert.match(shell, /<AlertModal open=\{suspended && !signOutFailed\} title="บัญชีทีมขายถูกระงับ"[^\n]*onClose=\{\(\) => void handleSignOut\(\)\}/);
+    // The pages underneath route the same refusal through the shared map, in the same words.
+    assert.match(apiErrorMessage({ code: 'SALES_AGENT_SUSPENDED' }), /^บัญชีทีมขายถูกระงับ /);
+  });
 
   it('the deal form reloads instead of retrying blindly on a version conflict (R3)', () => {
     const text = source('SalesDealFormPage.tsx');

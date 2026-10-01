@@ -97,3 +97,27 @@ export const AuditAction = {
 } as const;
 
 export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];
+
+/**
+ * RB-38 — actions that record what the PLATFORM did about a company: its admin console (`system.`),
+ * its sales team (`sales.`), its signup queue, and the named admin decisions that sit in a tenant
+ * namespace. A company's own audit list never returns them, whoever the actor is. Prefixes.
+ */
+export const PLATFORM_AUDIT_ACTION_PREFIXES: readonly string[] = [
+  'system.', 'sales.',
+  'signup.request.', 'signup.line.package_change_decided', 'signup.line.trial_guards_failed',
+  'auth.identity.repointed', 'ai.credit_hold.', 'ai.credit_breach.',
+];
+
+/**
+ * Billing is the platform's own ledger of a company, so the rest of `billing.` is platform-side
+ * too: the operator console, refunds, issues, and everything a worker writes. What stays in the
+ * company's list is what one of its own people did there — buying and renewing, the billing
+ * recipient, their documents, and the capacity choices a purchase asked them for. Prefixes.
+ */
+export const TENANT_BILLING_AUDIT_ACTION_PREFIXES: readonly string[] = [
+  'billing.portal.', 'billing.document.', 'billing.checkout_expiry.owner_requested', 'billing.capacity.',
+  'billing.recipient.', 'billing.email_recipient.', 'billing.collection.',
+  'billing.invoice.applied', 'billing.advance_deal.applied', 'billing.prepaid_plan_change.applied',
+  'billing.package.repeated', 'billing.package.upgraded', 'billing.entitlements.applied', 'billing.plan_menus.moved',
+];
