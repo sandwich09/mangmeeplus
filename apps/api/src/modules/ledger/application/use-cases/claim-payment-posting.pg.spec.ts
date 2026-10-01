@@ -626,6 +626,28 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
     } finally { await retire(s); }
   });
 
+  it('the worker\'s two stamps are one unit: when the second fails the first does not stay on a posted payout', async () => {
+    const s = await shop();
+    try {
+      const { payment } = await payable(s, '65.00');
+      // The settlement is posted, then the worker's attempt fails, so it settles the refusal:
+      // an error stamp, the journal read, then `posted`. That last stamp is the one that fails here.
+      let posted = 0;
+      const restore = intercept(claims, 'updatePaymentPostingStatus', (original) => async (...args) => {
+        if (args[2].postingStatus === 'posted' && (posted += 1) === 2) throw new Error('connection lost');
+        return original(...args);
+      });
+      try {
+        await assert.rejects(() => drainWith(async () => undefined, async () => { throw new Error('the bookkeeping after the post failed'); }), /connection lost/);
+      } finally { restore(); }
+
+      // The error stamp went back with the failed unit: the settlement's own `posted` still stands.
+      assert.deepEqual(await assertPayoutConsistent(s, payment.id), { status: 'RECORDED', postingStatus: 'posted', shape: 'GENERATED:POSTED' });
+      assert.equal(await client.reimbursementPayment.count({ where: { companyId: s.companyId, postingStatus: 'posting_error' } }), 0);
+      assert.deepEqual(await drain.execute(), { companies: 1, candidates: 0, posted: 0, failed: 0 });
+    } finally { await retire(s); }
+  });
+
   it('the worker fails while an accountant\'s settlement is still in flight: the payout ends posted, never an error', async () => {
     const s = await shop();
     try {
