@@ -2,6 +2,8 @@
 
 Status: Six bugs from the two 2026-10-01 spec reviews fixed, one commit each, plus two follow-ups (2026-10-02), on `claude/review-bug-fixes-20261001` (from `origin/develop` `ae13970b0`). Not pushed, no PR, nothing deployed.
 
+Update 2026-10-02: that branch is on develop (merge of #950, `6dd3c8c7d`). Round 2 is the dated section at the end of this file.
+
 Owner: Coordinator session; implementation by one agent in worktree `/private/tmp/mangmee-review-bugfix-20261001`.
 
 Scope: RB-40, RB-36, RB-34, RB-38 (`docs/research/mangmee-executive-spec-review-backend-2026-10-01-th.md` §3) and B1/F02, B3 (`docs/research/manual-expense-web-entry-flag-review-2026-10-01-th.md` §4). Every change is application source, a spec or a doc: no migration, dependency, `package.json` or config change, and no file pinned by the maintenance-release validator.
@@ -52,3 +54,55 @@ Verification of the follow-ups (2026-10-02 00:30–01:00):
 - Full API `test` script: exit 0. `test:boot`: Nest resolved every provider (no provider changed). W00 capability manifest spec: 4 pass, no regeneration. Whole-chain acceptance: exit 0. Maintenance release pins: current. `git diff --check`: clean.
 
 Next: coordinator review, then push/PR and the release path the owner chooses. If the hotfix path is used, every changed `src` spec is a `--regression-test`.
+
+## Round 2 — 2026-10-02 (two fixes the owner approved)
+
+Status: Fix 1 is done in two commits. Fix 2 is NOT built: it needs a migration, so work stopped before writing one, as instructed. Branch `claude/review-bug-fixes-2-20261002` from `origin/develop` `6dd3c8c7d`, worktree `/private/tmp/mangmee-review-bugfix2-20261002`. Not pushed, no PR, nothing deployed.
+
+Scope: (1) a shop could still read and copy a platform-only role by its id, and a custom role's name could derive a system role key; (2) the single System Admin cannot finish a data-rights case.
+
+Decisions, Fix 1:
+- One list. `PLATFORM_ONLY_ROLE_KEYS` now lives in `apps/api/src/modules/auth/permission-registry.ts`, and `PLATFORM_ROLE_KEYS` is built from it. A new platform-only role (the executive-report role) is defined in `SYSTEM_ROLES` and `ROLE_GRANTS` like any role and its key is added to that list; nothing else changes. This answers the round-1 open question about `MANGMEE_EXECUTIVE`.
+- One test. `platformOnlyRoleRefused(roleKey, platformTenant)` in `employee-access.logic.ts`, asked by key. `roleGrantViolation`, `ListRolesUseCase` and the reimbursement approver candidates use it, and now so do `GetRoleUseCase`, `PreviewRoleUseCase` and `UpdateRoleUseCase`, which answer `404 Role not found`, the answer for an unknown id. This answers the round-1 open question about the routes that take a role id.
+- A copy a shop already made. Because the test is by key, the copy is no longer listed, readable, editable, assignable or offered as an approver. The row and any assignment of it are left alone (the round-1 rule). `DisableRoleUseCase` is unchanged, so a copy can still be disabled by id.
+- Reserved names. `reservedRoleKey` in `create-role.use-case.ts` refuses a new custom role whose key would be any `SYSTEM_ROLES` key or a platform-only key: `409 role_name_reserved`, message "ชื่อนี้ซ้ำกับบทบาทมาตรฐานของระบบ กรุณาใช้ชื่ออื่น", shown by the role form. Every system key is reserved, not only OWNER, SYSTEM_ADMIN and COMPANY_VIEW: a new role named after a standard role hid that role from the list while its holders kept the original, and a standard role is changed by editing it.
+- The audit H-19 preset lookup is kept, narrowed. A name with no Latin letters still takes the key of the preset it names, but only for a preset that exists in the catalogue and never for an owner or platform key. `roleTemplateKey` is free text on the request: a Thai name sent with `x.system_admin` got the key `SYSTEM_ADMIN` before.
+- Rules written down as R9 and R10 in `docs/specs/company-role-override-spec.md`; a pointer in the executive backend spec §17.1.
+
+Decisions, Fix 2:
+- No code. The five same-person rules are enforced by the database as well as by `data-rights.service.ts`: migration `20260809120000_data_rights_case_orchestration` creates `enforce_data_rights_case_transition` (creator = approver, approver = executor, executor = verification starter, executor = completer) and `enforce_data_rights_evidence_phase` (executor = recorder of independent verification), all `SQLSTATE 55000`. A self-approval built in the service is therefore rejected by the database, and the service spec would not notice because its fake database has no triggers.
+- The only honest way through is a migration that replaces those two functions, which is outside the production hotfix allow-list. Recording the approval under any other user id would be the fake second account the owner forbids.
+- Recorded in the P31 spec §8.1 and §11.5, the P31 plan D5.1 and the data-rights runbook §2.
+
+What else trusts a bare role key (read, with a search agent, and the main citations re-read):
+- `ctx.roles` is the list of KEYS of a membership's active roles, system or company-scoped, and most role checks compare those keys.
+- OWNER, SYSTEM_ADMIN, COMPANY_VIEW: no product path can put a same-key company role on a membership. Employee create and update refuse these keys, editing refuses to copy them, and onboarding and the sales console look the role up by `scopeKey: 'system'`. So the unscoped checks below are not reachable through the product today; they would matter if such a row existed with a member (old data, a hand-written row, a future write path).
+  - Platform-closed bypass: `auth.guard.ts:269`, `refresh-session.use-case.ts:93`, `password-login.use-case.ts:96`.
+  - No Terms or Privacy acceptance required: `legal-acceptance.service.ts:247`, `:405`.
+  - The platform operators' directory: `signup-admin-notify.service.ts:136` (new-signup notices that name other companies, and the operator of record for auto-approved signups), `plan-term-sweep.use-case.ts:198`, `sales-renewal.service.ts:270`.
+  - Owner shortcut on grants: `role.controller.ts:33/51/65/80`, `employee.controller.ts:57/89`; owner fallback on approvals: `reimbursement.logic.ts:620`.
+- ADMIN, MANAGER, FINANCE, ACCOUNTANT, HR, AUDITOR_READONLY and the other ordinary keys: a company role with the key is treated as that standard role. That is the override design, with consequences worth knowing: all-branch scope is forced by key (`ALL_BRANCH_ROLE_KEYS`), self-approval exemptions go by key (procurement, reimbursement, substitute receipt), and the CRM, inbox, audit and workflow broad-read lists and several notification recipient lists go by key. After R10 the ways to such a key are an edited copy of the standard role, the H-19 preset path, and rows that already exist.
+- Checks that are scoped correctly and are the pattern to copy: `plan-term-limit.ts:24` (`PLATFORM_SEAT_EXEMPT_ROLE`), `billing-scopes.service.ts:14`, `system-email-delivery.service.ts:33`, `signup-claim-history.ts:10`. Checks that also need a `system.*` or `sales.*` permission, or sit behind `assertPlatformTenant`, are safe because a company role cannot carry those permissions.
+- The payout-account rule is not in this worktree (docs only).
+
+Open questions:
+- Fix 2, for the owner: (a) the release path, since a migration means UAT then promotion, not the hotfix path; (b) the scope: lifting only creator = approver leaves a one-admin case stuck at the next rule (approver = executor), so finishing a case needs all five lifted the same explicit way.
+- Fix 2, until then: two real people can finish a case (one opens and executes, the other approves, verifies and closes).
+- Do any company-scoped roles keyed OWNER, SYSTEM_ADMIN, COMPANY_VIEW or a platform-only key exist in production, and does anyone hold one? Not checked: it needs a read of `Role` (`scopeKey <> 'system'`) joined to `MembershipRole`.
+- The H-19 lookup never runs from the web: the role form does not send `roleTemplateKey` (and never did), so a Thai-named role made from the Manager preset still gets the key `ROLE` and matches no MANAGER-routed approval step. Not changed.
+- `crm-lead.use-case.ts:228` accepts a role key `SYSTEM`, which no role in the registry has, so a custom role named "System" passes that role test (it still needs `crm.lead.convert`). Not changed.
+- `update-role.use-case.ts`: when a company role with the same key already exists, editing the system role by id adopts that role as the copy and moves the system role's holders onto it. R10 stops new same-key roles by name; rows that already exist are not changed.
+
+Artifacts: commits `9b418c2bb` (docs: the database also enforces the separation rules), `1e3fbf5bb` (platform-only role by id, a shop's copy, one list), `60ac698bb` (reserved role names, web message).
+
+Verification (2026-10-02, on `60ac698bb`):
+- API typecheck (package script) and web typecheck: pass. Commit `1e3fbf5bb` was also typechecked and tested by itself.
+- The nine new API tests and the one extended web test fail on the previous sources and pass on the fix: with the ten changed source files reversed, the five touched API spec files give 166 pass, 9 fail, and the web error-coverage spec gives 10 pass, 1 fail. All are in spec files listed in the `test` script of `apps/api/package.json`.
+- Full API `test` script: exit 0. Whole web suite: 2216 pass. `test:boot`: Nest resolved every provider (no provider changed).
+- W00 capability manifest spec: 4 pass, no regeneration. Maintenance release pins: current, no pinned file changed. `git diff --check`: clean.
+- Fix 2 finding: the migration SQL, unchanged, was run in an in-process Postgres (PGlite, scratch only) and the statements the service issues were replayed: each of the five same-person steps is refused with SQLSTATE 55000, and a case finishes with two people.
+- Not run: `*.pg.spec.ts`, Playwright e2e, the LINE-AI whole-chain acceptance (no LINE-AI file changed), any query against a deployed database.
+
+Hotfix allow-list: every changed path of the three commits is application source under `apps/api/src` or `apps/web/src`, or `docs/`. No migration, dependency, `package.json` or config change. Fix 2, when built, will not qualify.
+
+Next: coordinator review; the owner's decision on Fix 2; then push/PR and the release path the owner chooses. If the hotfix path is used, every changed `src` spec is a `--regression-test`.
