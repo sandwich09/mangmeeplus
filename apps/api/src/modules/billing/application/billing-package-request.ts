@@ -142,6 +142,11 @@ export async function scheduleDealReturn(tx: Prisma.TransactionClient, input: { 
  * A deal always wins: `applyDealRequest` runs in the same transaction and has already written the
  * DEAL row, which the one-row-per-company rule then refuses to overwrite. Both callers pass an
  * INITIAL purchase only — a top-up or a renewal never reaches here.
+ *
+ * Owner 2026-10-02 (RB-37): one base for both kinds of credit — the package price the shop was
+ * charged, which is what a deal passes as `priceSatang`. Tax added on top of that price is not
+ * sales credit; tax already inside the price leaves the invoice total equal to the price. Read
+ * from the invoice's own verified total and tax, so an event discount is the charged price too.
  */
 export async function recordReferralAttribution(tx: Prisma.TransactionClient, input: { companyId: string;
   invoiceId: string; offer: Pick<BillingOffer, 'interval' | 'intervalCount'>; paidAt: Date }) {
@@ -149,11 +154,12 @@ export async function recordReferralAttribution(tx: Prisma.TransactionClient, in
     select: { referralSalesUserId: true, referredAt: true } });
   if (!company?.referralSalesUserId || !withinReferralWindow(company.referredAt, input.paidAt)) return;
   const invoice = await tx.billingInvoice.findUnique({ where: { id: input.invoiceId },
-    select: { totalSatang: true, applyStatus: true, appliedAt: true } });
+    select: { totalSatang: true, taxSatang: true, contractSnapshot: true, applyStatus: true, appliedAt: true } });
   if (!invoice?.appliedAt || invoice.applyStatus !== 'APPLIED') return;
+  const taxOnTop = (invoice.contractSnapshot as { policy?: { taxTreatment?: string } } | null)?.policy?.taxTreatment === 'EXCLUSIVE_VAT_7';
   const count = input.offer.intervalCount ?? 1;
   await writeSalesAttribution(tx, { companyId: input.companyId, salesUserId: company.referralSalesUserId,
-    source: 'REFERRAL', amountSatang: invoice.totalSatang,
+    source: 'REFERRAL', amountSatang: invoice.totalSatang - (taxOnTop ? invoice.taxSatang : 0),
     months: input.offer.interval === 'year' ? count * 12 : count, interval: input.offer.interval,
     paidAt: input.paidAt, sourceInvoiceId: input.invoiceId });
 }

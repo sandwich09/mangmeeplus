@@ -32,6 +32,8 @@ import { SalesSelfProfileDto, SalesTeamCreateDto } from './presentation/http/sal
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../common/pipes/validation-pipe.options';
 import { encryptCredential } from '../system-partner-management/domain/logic/credential-cipher.logic';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
+import { applyDealRequest, recordReferralAttribution } from '../billing/application/billing-package-request';
+import { quoteTotals } from '../billing/domain/billing-policy';
 
 const databaseUrl = process.env.SALES_CONSOLE_TEST_DATABASE_URL;
 
@@ -133,6 +135,9 @@ async function harness() {
       const created = await client.user.findMany({ where: { username: { startsWith: tag } }, select: { id: true } });
       const userIds = [...created.map((user) => user.id), leadId, agentId, otherId];
       await client.packageChangeRequest.deleteMany({ where: { companyId: { startsWith: tag } } });
+      await client.salesAttribution.deleteMany({ where: { companyId: { startsWith: tag } } });
+      await client.billingInvoice.deleteMany({ where: { billingAccountId: { startsWith: tag } } });
+      await client.auditLog.deleteMany({ where: { companyId: { startsWith: tag } } });
       await client.salesAgentProfile.deleteMany({ where: { userId: { in: userIds } } });
       await client.companySignupRequest.deleteMany({ where: { externalSignupId: { startsWith: tag } } });
       await client.membershipRole.deleteMany({ where: { membership: { userId: { in: userIds } } } });
@@ -564,4 +569,58 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
       assert.deepEqual(await customerView.listForCompany(h.shopId), []);
     } finally { await h.teardown(); }
   });
+
+  // ── sales credit, owner decisions 2026-10-02 (spec §17.1, RB-37) ──────────────────────────
+
+  it('credits a deal and a referral for the same package the same amount, tax on top or tax included', async () => {
+    const h = await harness();
+    try {
+      const paidAt = new Date();
+      for (const taxTreatment of ['EXCLUSIVE_VAT_7', 'INCLUSIVE_VAT_7'] as const) {
+        const dealShop = `${h.tag}-deal-${taxTreatment}`, referredShop = `${h.tag}-ref-${taxTreatment}`;
+        await h.client.company.create({ data: { id: dealShop, name: `ร้านดีล ${taxTreatment}`, status: 'ACTIVE' } });
+        const referredAt = new Date(paidAt.getTime() - 24 * 60 * 60 * 1000);
+        await h.client.company.create({ data: { id: referredShop, name: `ร้านแนะนำ ${taxTreatment}`, status: 'ACTIVE',
+          referralSalesUserId: h.otherId, referredAt, referralSource: 'SIGNUP_CODE' } });
+        const draft = await h.deals.save(h.agent, snapshotBody(dealShop));
+        const submitted = await h.deals.submit(h.agent, draft.id, draft.version);
+        const approved = await h.deals.approve(h.lead, submitted.id, submitted.version, 'อนุมัติ');
+        // The same package price a deal sells at, as the reconciler stores a paid catalog invoice.
+        const dealInvoice = await paidInvoice(h, dealShop, 39900, taxTreatment);
+        const referralInvoice = await paidInvoice(h, referredShop, 39900, taxTreatment);
+        await h.client.$transaction(async (tx) => {
+          await applyDealRequest(tx, { companyId: dealShop, invoiceId: dealInvoice.id, priceSatang: 39900, paidAt,
+            deal: { requestId: approved.id, snapshotHash: 'hash', months: 12, salesUserId: h.agentId, aiMonthlyBudgetSatang: null } });
+          await recordReferralAttribution(tx, { companyId: referredShop, invoiceId: referralInvoice.id,
+            offer: { interval: 'month', intervalCount: 1 }, paidAt });
+        });
+        const deal = await h.client.salesAttribution.findUniqueOrThrow({ where: { companyId: dealShop } });
+        const referral = await h.client.salesAttribution.findUniqueOrThrow({ where: { companyId: referredShop } });
+        assert.deepEqual([deal.source, referral.source], ['DEAL', 'REFERRAL']);
+        assert.equal(deal.amountSatang, 39900);
+        assert.equal(referral.amountSatang, deal.amountSatang, `${taxTreatment}: the referral is credited on the deal's base`);
+      }
+
+      // A first bill lowered by an event discount is credited with the price actually charged.
+      const discountedShop = `${h.tag}-ref-discount`;
+      await h.client.company.create({ data: { id: discountedShop, name: 'ร้านใช้ส่วนลดงาน', status: 'ACTIVE',
+        referralSalesUserId: h.otherId, referredAt: new Date(paidAt.getTime() - 60_000), referralSource: 'SIGNUP_CODE' } });
+      const discounted = await paidInvoice(h, discountedShop, 29900, 'EXCLUSIVE_VAT_7');
+      await h.client.$transaction((tx) => recordReferralAttribution(tx, { companyId: discountedShop,
+        invoiceId: discounted.id, offer: { interval: 'month', intervalCount: 1 }, paidAt }));
+      assert.equal((await h.client.salesAttribution.findUniqueOrThrow({ where: { companyId: discountedShop } })).amountSatang, 29900);
+    } finally { await h.teardown(); }
+  });
 });
+
+/** One paid, applied package invoice the way the reconciler stores it: Stripe's total and tax, and the pinned policy. */
+async function paidInvoice(h: Awaited<ReturnType<typeof harness>>, companyId: string, priceSatang: number,
+  taxTreatment: 'EXCLUSIVE_VAT_7' | 'INCLUSIVE_VAT_7') {
+  const totals = quoteTotals(priceSatang, taxTreatment), now = new Date();
+  return h.client.billingInvoice.create({ data: { billingAccountId: `${h.tag}-account-${companyId}`,
+    providerInvoiceId: `in_${randomUUID().replace(/-/g, '')}`, providerChargeId: `ch_${randomUUID().replace(/-/g, '')}`,
+    offerSnapshot: {}, contractSnapshot: { policy: { taxTreatment } }, policyRevisionId: 'policy', currency: 'THB',
+    totalSatang: totals.totalSatang, paidSatang: totals.totalSatang, taxSatang: totals.taxSatang,
+    periodStart: now, periodEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), providerStatus: 'paid',
+    evidenceHash: 'evidence', applyStatus: 'APPLIED', appliedAt: now } });
+}
