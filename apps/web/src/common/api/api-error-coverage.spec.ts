@@ -29,6 +29,16 @@ const OPEN_MODULES = [
 
 const API_MODULES = join(__dirname, '../../../../api/src/modules');
 
+/**
+ * Modules whose rule functions answer a refusal as `{ error: 'code' }`, which the caller then throws as
+ * it came (`throw new ConflictException(plan.error)`, `paymentPayoutRefusal(plan.error)`). The code is
+ * no literal at the place it is thrown, so the exception patterns below never see it: the payout
+ * planners' `payout_confirmation_required` and `payment_method_mismatch_reason_required` could have
+ * lost their Thai text with this spec still passing. Named per module: in other modules the same
+ * shape also carries values that never leave the server.
+ */
+const PLANNER_ERROR_MODULES = ['reimbursements'];
+
 function sourceFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -55,6 +65,7 @@ function openFeatureErrorCodes(): Map<string, string> {
         ...source.matchAll(/code:\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
         ...source.matchAll(/billingError\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
         ...source.matchAll(/emailError\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
+        ...(PLANNER_ERROR_MODULES.includes(moduleName) ? source.matchAll(/\berror:\s*'([a-z][a-z0-9_]{3,})'/g) : []),
       ];
       for (const match of found) if (!codes.has(match[1]!)) codes.set(match[1]!, moduleName);
     }
@@ -90,6 +101,20 @@ describe('Thai coverage for default-open feature error codes', () => {
   it('finds the API codes at all, so a moved path fails loudly instead of passing empty', () => {
     const codes = openFeatureErrorCodes();
     assert.ok(codes.size > 400, `only ${codes.size} codes found — check API_MODULES resolves to the api package`);
+  });
+
+  // A code a planner returns is found only if the planner still spells it this way. If it moves, this
+  // fails here instead of the code dropping out of the check below without anybody noticing.
+  it('finds the refusals the payout planners return for their caller to throw', () => {
+    const codes = openFeatureErrorCodes();
+    for (const code of ['payout_confirmation_required', 'payment_method_mismatch_reason_required', 'payout_destination_changed',
+      'payout_method_required', 'payout_destination_required', 'note_contains_account_number']) {
+      assert.equal(codes.get(code), 'reimbursements', `${code} is no longer found in the API source`);
+      assert.ok(translateApiError(code), `${code} has no Thai text`);
+    }
+    // Found by the planner shape alone: neither is thrown as a literal anywhere in the API.
+    const thrownAsLiteral = (code: string) => sourceFiles(API_MODULES).some((file) => new RegExp(`Exception\\(\\s*'${code}'|code:\\s*'${code}'`).test(readFileSync(file, 'utf8')));
+    assert.deepEqual(['payout_confirmation_required', 'payment_method_mismatch_reason_required'].filter(thrownAsLiteral), []);
   });
 
   it('has Thai text for every error code the default-open modules answer with', () => {
