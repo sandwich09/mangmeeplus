@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { maskedPayoutAccount } from '@watchdog-bms/contracts';
 import type {
@@ -151,10 +152,11 @@ export class MemberPayoutAccountUseCase {
         const at = new Date();
         const when = at.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' });
         // To the requester alone, never to the shop owner or anyone else. One notice per change: the
-        // period is the moment of this save. The last 4 digits only, and a link to the claim itself.
+        // period is this save and nothing else (two saves in one millisecond are still two notices).
+        // The last 4 digits only, and a link to the claim itself.
         await this.notifications.executeInTransaction({
           companyId: ctx.companyId, triggerKey: PAYOUT_ACCOUNT_SET_TRIGGER_KEY, sourceModule: 'reimbursements',
-          sourceType: 'reimbursement_request', sourceId: requestId, periodKey: at.toISOString(), severity: 'critical',
+          sourceType: 'reimbursement_request', sourceId: requestId, periodKey: `${at.toISOString()}:${randomUUID()}`, severity: 'critical',
           title: `${editorName} ระบุบัญชีรับเงินคืนในใบเบิกของคุณ`,
           body: `${maskedPayoutAccount(destination)} ระบุเมื่อ ${when} ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที`,
           deepLinkHref: `/companies/${ctx.companyId}/reimbursements/${requestId}`,
