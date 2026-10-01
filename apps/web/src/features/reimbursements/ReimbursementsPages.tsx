@@ -28,6 +28,7 @@ import {
   formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
   hubFilterCounts, hubRows, type HubFilter, approverPaymentWarning,
+  PAYMENT_DIALOG_MEDIA_QUERY, quickPayTarget,
 } from './reimbursements.logic';
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
@@ -120,6 +121,13 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const openJourney = useCallback((id: string) => router.push(`/companies/${companyId}/reimbursements/${id}`), [companyId, router]);
   // "บันทึกจ่าย" stays a quick action right on the finance row; it never needed the drawer.
   const [payFor, setPayFor] = useState<any | null>(null);
+  // On a phone the payment form is never a dialog (spec §12.2, §21): the same press opens the claim's
+  // own page with the form already open in its payment step card.
+  const recordPayment = useCallback((row: any) => {
+    const target = quickPayTarget(window.matchMedia(PAYMENT_DIALOG_MEDIA_QUERY).matches, companyId, row.id);
+    if (target.kind === 'page') router.push(target.href);
+    else setPayFor(row);
+  }, [companyId, router]);
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Roles can change after submission. Permission-based navigation alone would strand the exact
@@ -182,7 +190,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         canCreate={permissions.includes('reimbursement.create')}
       />}
       {tab === 'approvals' && <ApprovalQueue {...queueProps} />}
-      {tab === 'finance' && <FinanceQueue {...queueProps} onRecordPayment={setPayFor} />}
+      {tab === 'finance' && <FinanceQueue {...queueProps} onRecordPayment={recordPayment} />}
       {tab === 'policy' && <PolicySettings companyId={companyId} />}
 
       {payFor && <PaymentModal
@@ -782,17 +790,25 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
 }
 
 function PaymentModal({ companyId, request, onClose, onDone }: { companyId: string; request: any; onClose: () => void; onDone: () => void }) {
-  // The queue row carries no attachments. The claim itself does, and its files can serve as the slip,
-  // so the form gets the claim once it loads; until then, and if that read fails, the row is enough to pay.
-  const [claim, setClaim] = useState<any>(request);
+  // The queue row carries no attachments and nothing about where to pay. The claim does, and the form
+  // seeds its own state from what it is given when it mounts. So the form waits for that read to
+  // settle and mounts once: with the claim, or with the row if the read failed (the row is still
+  // enough to pay). Mounting on the row and swapping the claim in later would leave the seeded state
+  // stale, and remounting then would throw away what the payer had already picked.
+  const [claim, setClaim] = useState<any | null>(null);
   useEffect(() => {
     let active = true;
-    getReimbursement(companyId, request.id).then((detail) => { if (active) setClaim(detail); }).catch(() => undefined);
+    getReimbursement(companyId, request.id)
+      .then((detail) => { if (active) setClaim(detail); })
+      .catch(() => { if (active) setClaim(request); });
     return () => { active = false; };
-  }, [companyId, request.id]);
+  }, [companyId, request]);
   return (
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
+      {claim
+        // Keyed on what it was seeded from: a form never outlives the data its state came from.
+        ? <PaymentForm key={claim === request ? 'queue-row' : 'claim'} companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
+        : <LoadingState label="กำลังเปิดใบเบิก..." />}
     </Modal>
   );
 }
