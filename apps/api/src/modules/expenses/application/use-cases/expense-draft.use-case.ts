@@ -1534,6 +1534,11 @@ export class VoidExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       systemReconcile?: boolean;
+      /**
+       * Runs first inside the void transaction. The claim's cancellation checks there that it still
+       * holds its intent, so a void never lands on a claim whose cancellation was withdrawn meanwhile.
+       */
+      beforeVoid?: (tx: any) => Promise<void>;
     },
   ): Promise<ExpenseRecord> {
     return this.voidExpense(ctx, expenseId, reason, authority);
@@ -1548,6 +1553,7 @@ export class VoidExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       systemReconcile?: boolean;
+      beforeVoid?: (tx: any) => Promise<void>;
     },
   ): Promise<ExpenseRecord> {
     if (!isExpenseVoidReason(reason)) throw new BadRequestException('Void reason must be at least 3 characters');
@@ -1570,6 +1576,7 @@ export class VoidExpenseUseCase {
           reimbursementLineId: authority.reimbursementLineId,
           actorUserId: ctx.userId,
           reason,
+          beforeVoid: authority.beforeVoid,
           eventKey: `expense.voided:expense_record:${expenseId}:reimbursement-cancel`,
           payloadJson: {
             companyId: ctx.companyId,
@@ -1645,6 +1652,7 @@ export class VoidExpenseUseCase {
         reason,
         reserved?.documentNumber,
         paymentReservations.map(({ paymentId, reservation }) => ({ paymentId, reversalEntryNumber: reservation.documentNumber })),
+        authority?.beforeVoid,
       );
     } catch (err) {
       // The reservations are still RESERVED here (commit happens only after a

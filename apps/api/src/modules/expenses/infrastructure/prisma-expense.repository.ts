@@ -6,6 +6,7 @@ import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAf
 import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
+import { findJournalToReverse, journalPeriodRefusal, lockedTaxFormTypesOf } from './expense-void-blocker';
 import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-as-printed.logic';
@@ -2717,44 +2718,18 @@ export class PrismaExpenseRepository {
   }): Promise<{ reversalEntryId: string | null; reversed: boolean }> {
     const sourceType = opts.sourceType ?? 'expense.record';
     const sourceId = opts.sourceId ?? opts.expenseId;
-    // A REVERSAL row for this source is the authoritative "already reversed"
-    // signal (one per source by unique constraint) — original.status is not,
-    // because reports count POSTED entries only.
-    const sourceWhere = { companyId: opts.companyId, sourceType, sourceId };
-    const existingReversal = await tx.journalEntry.findFirst({
-      where: { ...sourceWhere, entryType: 'REVERSAL' },
-      select: { id: true },
-    });
-    if (existingReversal) return { reversalEntryId: null, reversed: true };
-    const original = await tx.journalEntry.findFirst({
-      where: { ...sourceWhere, entryType: 'GENERATED' },
-      include: { lines: { orderBy: { lineNumber: 'asc' } } },
-    });
+    // Read through the same two readers a claim cancellation asks before it starts
+    // (./expense-void-blocker), so what this void refuses and what that check reports cannot drift.
+    const journal = await findJournalToReverse(tx, { companyId: opts.companyId, sourceType, sourceId });
+    if (journal.reversed) return { reversalEntryId: null, reversed: true };
+    const original = journal.original;
     if (!original) return { reversalEntryId: null, reversed: false };
-    if (original.status !== 'POSTED') {
-      throw new UnprocessableEntityException(`Generated journal ${original.entryNumber} is ${original.status}; resolve its posting state before voiding`);
-    }
+    if (journal.refusal) throw journal.refusal.error;
     if (!opts.reversalEntryNumber) {
       throw new ConflictException({ code: 'posting_state_changed', message: 'Posting state changed while voiding. Retry the void.' });
     }
-    // Fail closed on a missing period row: the FK guarantees it exists, but a
-    // dangling id must block the void rather than skip the period/tax locks.
-    const period = await tx.accountingPeriod.findFirst({ where: { companyId: opts.companyId, id: original.periodId } });
-    if (!period) {
-      throw new UnprocessableEntityException(`Accounting period for journal ${original.entryNumber} was not found; cannot void`);
-    }
-    if (!['OPEN', 'REOPENED'].includes(period.status)) {
-      throw new ConflictException({ code: 'accounting_period_locked', message: `Accounting period ${period.periodKey} is not open; reopen it before voiding.` });
-    }
-    if (opts.lockedTaxFormTypes.length) {
-      const lockedTaxPeriod = await tx.taxPeriod.findFirst({
-        where: { companyId: opts.companyId, formType: { in: opts.lockedTaxFormTypes }, periodKey: period.periodKey, status: { in: ['FILED', 'PAID', 'CLOSED'] } },
-        select: { formType: true },
-      });
-      if (lockedTaxPeriod) {
-        throw new ConflictException({ code: 'tax_period_locked', message: `${lockedTaxPeriod.formType}/${period.periodKey} is locked; use an adjustment or amended filing workflow.` });
-      }
-    }
+    const { refusal } = await journalPeriodRefusal(tx, { companyId: opts.companyId, lockedTaxFormTypes: opts.lockedTaxFormTypes }, original);
+    if (refusal) throw refusal.error;
     const reversalLines = buildReversalLines((original.lines ?? []).map((l: any) => ({
       accountId: l.accountId, branchId: l.branchId, description: l.description,
       debitAmount: l.debitAmount.toString(), creditAmount: l.creditAmount.toString(),
@@ -2797,8 +2772,11 @@ export class PrismaExpenseRepository {
     reason: string,
     reversalEntryNumber?: string,
     paymentReversals: Array<{ paymentId: string; reversalEntryNumber: string }> | string = [],
+    /** Runs first inside the void transaction; a claim cancellation fences its void with it. */
+    beforeVoid?: (tx: any) => Promise<void>,
   ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> }> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
+      await beforeVoid?.(tx);
       await lockExpenseFunding(tx, companyId, expenseId);
       await assertFundingMutation(tx, companyId, expenseId, 'prepare');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
@@ -2843,24 +2821,11 @@ export class PrismaExpenseRepository {
         });
       }
 
-      // Filed-form contributions on the tax-line snapshots decide the
-      // tax-period lock — the same seam the confirmation gate uses. The
-      // claim-status fallback fails closed for rows without components.
-      const formTypes = new Set<string>();
-      for (const line of expense.lines ?? []) {
-        const components = Array.isArray(line.taxComponentsJson) ? line.taxComponentsJson : [];
-        for (const component of components) {
-          for (const contribution of component?.reportContributions ?? []) {
-            if (['PP30', 'PP36', 'CUSTOMS_SUPPORT'].includes(contribution?.formType)) formTypes.add(contribution.formType);
-          }
-        }
-      }
-      if (expense.inputVatClaimStatus === 'CLAIMABLE' && Number(expense.vatAmount) !== 0) formTypes.add('PP30');
-
+      // Filed-form contributions on the tax-line snapshots decide the tax-period lock.
       const reversal = await this.reverseExpenseJournalInTx(tx, {
         companyId, expenseId, sourceType: 'expense.record', reversalEntryNumber, actorUserId,
         memo: `[VOID] ${expense.expenseNumber ?? expenseId}`,
-        lockedTaxFormTypes: [...formTypes],
+        lockedTaxFormTypes: lockedTaxFormTypesOf(expense),
       });
       const requestedPaymentReversals = typeof paymentReversals === 'string'
         ? [{ paymentId: expenseId, reversalEntryNumber: paymentReversals }]
@@ -3165,9 +3130,12 @@ export class PrismaExpenseRepository {
     reason: string;
     eventKey: string;
     payloadJson: Record<string, unknown>;
+    /** Runs first inside the transaction; a claim cancellation fences its void with it. */
+    beforeVoid?: (tx: any) => Promise<void>;
   }): Promise<ExpenseRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await input.beforeVoid?.(tx);
       const current = await tx.expenseRecord.findFirst({
         where: {
           id: input.expenseId,
