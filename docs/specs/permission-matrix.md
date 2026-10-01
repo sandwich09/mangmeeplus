@@ -596,6 +596,45 @@ reimbursement.policy.manage
 reimbursement.export
 ```
 
+#### Reimbursement payment slips
+
+No new permission key. A payment slip is payment evidence with readers of its own (owner decisions
+2026-10-01); it is never an expense receipt or a signed claim copy. Routes sit under
+`/companies/:companyId/reimbursements`.
+
+| Route | Route permission | Who may use it |
+|---|---|---|
+| `POST :requestId/payments/slip-upload-intent` | `reimbursement.payment.record` | Whoever may record payments, in the claim's branch scope |
+| `POST :requestId/payments/slip-uploads/:attachmentId/complete` | `reimbursement.payment.record` | The same person who started that upload, for that claim |
+| `POST :requestId/payments/:paymentId/slips` | `reimbursement.payment.record` | Whoever may record payments; adds a slip to a recorded payment, or moves a file misfiled as a signed copy. Add-only, five slips at most |
+| `GET :requestId/payments/:paymentId/slips/:attachmentId/download-url` | `account.session.read` | Decided per claim in the use case, see below |
+| `POST :requestId/payments` (existing) | `reimbursement.payment.record` | A bank transfer is refused without `slipAttachmentId` (`payment_slip_required`); other methods may carry one |
+
+Who may open a slip: the caller must first be able to read the claim (the same gate as the claim detail,
+branch scope included), and must then be one of
+
+- the requester;
+- the claim's approver: whoever may decide the step it waits on, or whoever approved its current round
+  (an approved step decided at or after the claim's current submission; an approver of a round the claim
+  was corrected and resubmitted after no longer counts);
+- a holder of `reimbursement.payment.record`;
+- a holder of `reimbursement.finance_review` (owner answer 2026-10-01), with or without the pay right.
+
+Holding `reimbursement.approve` without being routed the claim is not enough, and neither is
+`reimbursement.read`, `reimbursement.export` or `reimbursement.payment.void` alone. `AUDITOR_READONLY`,
+HR, other related readers and read-only platform accounts are told that a slip exists and how many, and
+nothing else: the claim detail gives them `slipCount` and no file id. The rule is one function,
+`canOpenReimbursementPaymentSlip` in `packages/contracts`, used by the download guard and to compute the
+detail's `viewerCanOpenSlips`, which is all the web's "ดูสลิป" button reads. The group that may see a full
+payout account number is narrower (`isReimbursementPayoutParty`: no finance reviewers) and is decided
+separately.
+
+The generic attachment paths never serve a slip. `GET attachments/:attachmentId/download-url` refuses a
+file that is linked as a slip or carries the slip upload tag, for everyone, the payer included.
+`DELETE attachments/:attachmentId` refuses a linked slip (`reimbursement_payment_slip_retained`). No link
+of any kind can be written onto a slip file, so it cannot become an expense receipt, a signed copy, or
+input to receipt reading. Every opening and every refusal is audited with ids only.
+
 ### Procurement related-document visibility
 
 The following LOW-risk permissions are universal to company roles but remain gated by their exact procurement submenu:
