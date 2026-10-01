@@ -48,4 +48,46 @@ describe('LINE handoff route', () => {
     const { sent } = await exchangeWith({});
     assert.equal('x-forwarded-for' in sent, false);
   });
+
+  it('keeps transient failures out of login without changing cookies or leaking the token', async () => {
+    const failures = [
+      () => Promise.reject(new TypeError('network failure')),
+      ...[429, 500, 502, 503].map(status => () => Promise.resolve(new Response('upstream detail', { status }))),
+      ...['{}', 'null', 'invalid json', '{"accessToken":123,"refreshToken":"r"}']
+        .map(body => () => Promise.resolve(new Response(body))),
+    ];
+    for (const fail of failures) {
+      let calls = 0;
+      globalThis.fetch = (async () => { calls += 1; return fail(); }) as typeof fetch;
+      const response = await GET(new NextRequest(`http://localhost:3000/l/${TOKEN}`, {
+        headers: { cookie: 'watchdog_token=existing-session' },
+      }), { params: Promise.resolve({ token: TOKEN }) });
+      assert.equal(response.status, 503);
+      assert.equal(calls, 1, 'single-use exchange is never automatically replayed');
+      assert.equal(response.headers.get('location'), null);
+      assert.equal(response.headers.get('set-cookie'), null);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+      assert.match(response.headers.get('content-security-policy')!, /default-src 'none'/);
+      const html = await response.text();
+      assert.match(html, /<meta http-equiv="Content-Security-Policy" content="default-src 'none'/);
+      assert.match(html, /<form method="get"><button type="submit">ลองอีกครั้ง/);
+      assert.doesNotMatch(html, /<script|src=|href=|upstream detail|handoff-expired/);
+      assert.ok(!html.includes(TOKEN));
+    }
+  });
+
+  it('still sends a confirmed token refusal to login with only a safe destination', async () => {
+    for (const targetPath of ['/companies/co-1/billing', 'https://evil.example', '//evil.example']) {
+      globalThis.fetch = (async () => Response.json({ targetPath }, { status: 403 })) as typeof fetch;
+      const response = await GET(new NextRequest(`http://localhost:3000/l/${TOKEN}`),
+        { params: Promise.resolve({ token: TOKEN }) });
+      assert.equal(response.status, 303);
+      const location = new URL(response.headers.get('location')!);
+      assert.equal(location.pathname, '/login');
+      assert.equal(location.searchParams.get('line'), 'handoff-expired');
+      assert.equal(location.searchParams.get('next'), targetPath.startsWith('/companies/') ? targetPath : null);
+      assert.equal(response.headers.get('set-cookie'), null);
+    }
+  });
 });

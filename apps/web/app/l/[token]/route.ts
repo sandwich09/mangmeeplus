@@ -19,6 +19,31 @@ type HandoffExchangeResult = {
 /** A refusal for a token the API recognised carries the destination the user was trying to open. */
 type HandoffRefusal = { targetPath?: unknown };
 
+// Static, self-contained recovery: no scripts, assets, upstream error text or token in the body.
+// An explicit GET retries this URL; never replay a single-use exchange automatically.
+function unavailable() {
+  // The proxy can overwrite response CSP, so the document also enforces this stricter policy.
+  const csp = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'";
+  return new Response(`<!doctype html><html lang="th"><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เปิดลิงก์ไม่สำเร็จชั่วคราว</title>
+<style>body{font-family:system-ui,sans-serif;margin:3rem 1.5rem;color:#172c22}main{max-width:36rem;margin:auto}h1{font-size:1.5rem}button{font:inherit;min-height:44px;padding:.5rem 1.5rem;cursor:pointer}</style>
+<body><main><h1>เปิดลิงก์ไม่สำเร็จชั่วคราว</h1>
+<p>ระบบขัดข้องชั่วคราว กรุณารอสักครู่แล้วลองอีกครั้ง</p>
+<form method="get"><button type="submit">ลองอีกครั้ง</button></form></main></body></html>`, {
+    status: 503,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Retry-After': '10',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': `${csp}; frame-ancestors 'none'`,
+      'X-Robots-Tag': 'noindex, nofollow',
+    },
+  });
+}
+
 /**
  * Link previews and reachability probes send HEAD. Next.js would otherwise derive HEAD from GET and
  * RUN it — spending the single-use token before the person taps (deeplink spec §G7, RV22). 204 and
@@ -31,9 +56,9 @@ export function HEAD() {
 /**
  * P12-3b: the LINE deep-link entry point.
  *
- * A route handler, NOT a page: no HTML is ever rendered while the token is in the URL, so the token
- * cannot reach a document that loads subresources. (`Referrer-Policy: no-referrer` is already global
- * — next.config.mjs.) It also sits outside `/companies/`, so the middleware's cookie-less bounce
+ * A route handler: exchanges redirect; transient failures serve only the isolated recovery above,
+ * whose CSP blocks subresources and whose referrer policy prevents token leakage. It sits outside
+ * `/companies/`, so the middleware's cookie-less bounce
  * does not intercept the one request whose entire purpose is arriving without a session.
  *
  * The exchange is spent server-side and its tokens become the same httpOnly cookies password login
@@ -64,17 +89,22 @@ export async function GET(request: NextRequest, context: { params: Promise<{ tok
       headers: { 'Content-Type': 'application/json', ...forwardedClientHeaders(request.headers) },
       body: JSON.stringify({ token }),
       cache: 'no-store',
+      signal: AbortSignal.timeout(10_000),
     });
   } catch {
-    return expired();
+    return unavailable();
   }
 
   const data = (await apiRes.json().catch(() => ({}))) as HandoffExchangeResult & HandoffRefusal;
-  if (!apiRes.ok || !data.accessToken || !data.refreshToken) {
+  if (apiRes.status === 403) {
     // A refusal for a KNOWN token names where the user was going, so the login form can finish the
     // journey instead of dropping it (spec §15 acceptance 3). An unknown token names nothing.
-    return expired(typeof data.targetPath === 'string' ? data.targetPath : undefined);
+    return expired(typeof data?.targetPath === 'string' ? data.targetPath : undefined);
   }
+  // Only 403 confirms a token refusal. Rate limits, outages and invalid responses say nothing
+  // about expiry or the browser's session, and must not send the user into LINE Login.
+  if (!apiRes.ok || typeof data?.accessToken !== 'string' || !data.accessToken
+    || typeof data?.refreshToken !== 'string' || !data.refreshToken) return unavailable();
 
   // The destination is the API's, from the token row — never anything this request supplied.
   const targetPath = sanitizeReturnTo(data.targetPath)
