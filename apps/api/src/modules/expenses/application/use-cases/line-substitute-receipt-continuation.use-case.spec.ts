@@ -9,6 +9,7 @@ import {
   isCanonicalSubstituteStart,
   isSubstituteCancelControl,
   isSubstitutePauseControl,
+  isSubstituteQueueQuestion,
   isSubstituteReceiptConversationText,
   LineSubstituteReceiptContinuationUseCase,
   parseSubstituteMediaQuestion,
@@ -2229,6 +2230,27 @@ describe('persistence seam: exact save & revision counts (real zero-write proof)
     assert.deepEqual(r.candidateExpenseIds, ['expense-1'], 'the confirm is pinned to the exact expense id');
     assert.equal(h.saves.length, 0, 'no workflow write before confirmation');
     assert.equal(h.getExpense().updatedAt.toISOString(), rev0, 'revision unchanged');
+  });
+
+  // Advisor S1 (#926 interplay): a question about receipts ALREADY waiting for a signature names the
+  // document, so the broad vocabulary matches it — but it asks to read the queue, never to make one.
+  it('a question about the signature queue misrouted here is never an explicit start and writes NOTHING', async () => {
+    for (const messageText of ['มีใบรับรองแทนใบเสร็จรอฉันเซ็นกี่ใบ', 'ใบรับรองแทนใบเสร็จที่ฉันต้องเซ็นมีกี่ใบ', 'ใบแทนใบเสร็จรออนุมัติกี่ใบคะ']) {
+      assert.equal(isSubstituteReceiptConversationText(messageText), true, messageText);
+      assert.equal(isSubstituteQueueQuestion(messageText), true, messageText);
+      const h = harness();
+      const rev0 = h.getExpense().updatedAt.toISOString();
+      const r = await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'โน้ต · 200' }], requireStartConfirmation: true });
+      assert.ok(r.pendingQuestion, `${messageText}: asks before anything opens`);
+      assert.equal(h.saves.length, 0, `${messageText}: no workflow write`);
+      assert.equal(h.getExpense().updatedAt.toISOString(), rev0, `${messageText}: revision unchanged`);
+    }
+  });
+
+  it('a real start request is still an explicit start, never a queue question', () => {
+    for (const messageText of ['ขอใบรับรองแทนใบเสร็จค่าแท็กซี่', 'ทำใบทดแทนของค่าวิน', 'ออกใบรับรองแทนใบเสร็จค่าวินมอไซต์ 50 บาท', 'ทำใบรับรองเซ็นเองค่าแท็กซี่']) {
+      assert.equal(isSubstituteQueueQuestion(messageText), false, messageText);
+    }
   });
 
   it('a confirmedStart overrides requireStartConfirmation and writes exactly once', async () => {

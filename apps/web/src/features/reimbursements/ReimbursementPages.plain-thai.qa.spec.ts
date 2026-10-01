@@ -198,12 +198,14 @@ describe('claim pages speak plain Thai (Owner rule 2026-09-27/29)', () => {
 });
 
 describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
-  it('shows each line as a card below sm, with the same receipt upload, and keeps the table from sm up', () => {
+  it('shows each line as a card below xl, with the same receipt upload, and keeps the table from xl up', () => {
     const html = detailSections(draft, ids.requester, ['reimbursement.update_own_draft']);
     // Before: only the seven-column table, which squeezed Thai text to one letter per row on a phone.
-    assert.match(html, /<div class="[^"]*\bsm:hidden\b[^"]*" data-testid="reimbursement-line-cards">/u);
-    assert.match(html, /<div class="mangmee-table-scroll hidden sm:block" data-testid="reimbursement-lines-table"><table class="mangmee-table">/u);
+    assert.match(html, /<div class="[^"]*\bxl:hidden\b[^"]*" data-testid="reimbursement-line-cards">/u);
+    assert.match(html, /<div class="relative hidden overflow-x-auto break-normal xl:block" data-testid="reimbursement-lines-table"><table class="mangmee-table">/u);
     const cardsAt = html.indexOf('data-testid="reimbursement-line-cards"'), tableAt = html.indexOf('data-testid="reimbursement-lines-table"');
+    // Not inside mangmee-table-scroll: its max-content cut the amount and receipt columns off a desktop card (2026-10-01).
+    assert.doesNotMatch(html.slice(html.lastIndexOf('<section', tableAt), tableAt), /mangmee-table-scroll/u);
     const cards = html.slice(cardsAt, tableAt), table = html.slice(tableAt);
     const cardTexts = visible(cards);
     for (const text of ['ค่าแท็กซี่', '1,234.50 บาท', '27 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'วัตถุประสงค์: ไปพบลูกค้า',

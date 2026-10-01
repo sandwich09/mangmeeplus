@@ -481,12 +481,23 @@ export class LineReimbursementDraftAdapterService {
       addPage('source', sourceChoices, sourceRows.length > PAGE_SIZE);
       // Fresh LINE media has no financial branch until this same owner's explicit/sole branch choice.
       // Only untouched staging objects with the exact original binding can acquire that scope.
-      if (stagingOwner && selectedRequester.raw['id'] === ctx.userId) await this.prisma.client.attachmentObject.updateMany({
-        where: { companyId: ctx.companyId, uploadedByUserId: ctx.userId, status: 'ACTIVE', branchId: null,
+      // Hotfix 2026-10-01: the default-branch pick above stamps the photo before the user names a branch, so a
+      // still-unused photo follows the current choice. One already on it is not rewritten (its offered choice stays
+      // current); one saved on a claim line (no relation, so a lookup) never moves. ponytail: that lookup is not
+      // locked with the write; only a claim saved elsewhere with this photo in the same instant could slip past.
+      if (stagingOwner && selectedRequester.raw['id'] === ctx.userId) {
+        const branchId = String(selectedBranch.raw['id']);
+        const staged = { companyId: ctx.companyId, uploadedByUserId: ctx.userId, status: 'ACTIVE' as const,
+          OR: [{ branchId: null }, { branchId: { not: branchId } }],
           AND: [{ metadataJson: { path: ['lineReimbursementOwner'], equals: stagingOwner.owner } },
             { metadataJson: { path: ['lineReimbursementEpoch'], equals: stagingOwner.epoch } }],
-          links: { none: {} }, captureFiles: { none: {} } },
-        data: { branchId: String(selectedBranch.raw['id']) } });
+          links: { none: {} }, captureFiles: { none: {} } };
+        const ids = (await this.prisma.client.attachmentObject.findMany({ where: staged, select: { id: true } })).map(row => row.id);
+        const used = ids.length ? (await this.prisma.client.reimbursementLine.findMany({ where: { companyId: ctx.companyId, attachmentId: { in: ids } },
+          select: { attachmentId: true } })).map(line => line.attachmentId) : [];
+        const free = ids.filter(id => !used.includes(id));
+        if (free.length) await this.prisma.client.attachmentObject.updateMany({ where: { ...staged, id: { in: free } }, data: { branchId } });
+      }
       const attachmentRows = await this.prisma.client.attachmentObject.findMany({ where: { companyId: ctx.companyId,
         branchId: String(selectedBranch.raw['id']), status: 'ACTIVE', OR: [
           { uploadedByUserId: String(selectedRequester.raw['id']) },

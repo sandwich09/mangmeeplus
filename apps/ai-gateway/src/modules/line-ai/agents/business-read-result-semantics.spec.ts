@@ -46,6 +46,7 @@ function emptyData(name: string): unknown {
       duplicateRisks: { count: 0, items: { total: 0, shown: 0, remaining: 0, items: [] } },
       excluded: { rejected: 0, voided: 0 }, limitations: { neverSubmittedDocumentsObservable: false },
     };
+    case 'expense.list_substitute_receipts_to_sign': return { accessScope: 'own', total: 0, asPayer: { count: 0, items: [] }, asApprover: { count: 0, items: [] } };
     case 'sales.get_sales_summary': return { totalSales: '0', transactionCount: 0, totalsByCurrency: [] };
     case 'procurement.get_summary': return { total: 0, monetarySummaryAvailable: false };
     case 'procurement.search_suppliers': return { total: 0, items: [] };

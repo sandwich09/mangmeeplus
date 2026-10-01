@@ -186,9 +186,13 @@ export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage 
   const displayName = boundedLabel(context.displayName, 'พนักงาน');
   const roleLabel = boundedLabel(context.roleLabel, 'พนักงาน');
   const scopeLabel = context.branchScopeLabel;
+  const text = `สวัสดีค่ะ ${displayName} 👋\nตำแหน่ง ${roleLabel} · ดูข้อมูลได้ ${scopeLabel} · เข้าถึง ${items.length} เมนู\nเมนูด้านล่างแสดงเฉพาะสิ่งที่บริษัทเปิดใช้และตำแหน่งคุณมีสิทธิ์เข้าถึง`;
   return {
     type: 'flex',
-    altText: `สวัสดีค่ะ ${displayName} 👋\nตำแหน่ง ${roleLabel} · ดูข้อมูลได้ ${scopeLabel} · เข้าถึง ${items.length} เมนู\nเมนูด้านล่างแสดงเฉพาะสิ่งที่บริษัทเปิดใช้และตำแหน่งคุณมีสิทธิ์เข้าถึง`,
+    altText: text,
+    // Required on a bound chat: its delivery plan refuses a card with no text form, and sends this
+    // greeting with the quick reply below.
+    canonicalText: text,
     contents: {
       type: 'bubble',
       size: 'kilo',
@@ -285,6 +289,7 @@ export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | n
     return {
       type: 'flex',
       altText: 'บริษัทนี้ยังไม่มีบริการที่เปิดใช้งานผ่าน LINE',
+      canonicalText: 'บริษัทนี้ยังไม่มีบริการที่เปิดใช้งานผ่าน LINE',
       contents: {
         type: 'bubble', size: 'kilo',
         body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
@@ -296,9 +301,11 @@ export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | n
   }
   const pages = Array.from({ length: Math.ceil(labels.length / 8) }, (_, index) => labels.slice(index * 8, index * 8 + 8));
   const bubbles = pages.map((page, index) => serviceBubble(page, index, pages.length));
+  const text = `บริการที่บริษัทของคุณเปิดใช้: ${labels.join(', ')}`;
   return {
     type: 'flex',
-    altText: `บริการที่บริษัทของคุณเปิดใช้: ${labels.join(', ')}`.slice(0, 400),
+    altText: text.slice(0, 400),
+    canonicalText: text,
     contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles },
   };
 }
@@ -542,15 +549,18 @@ export function buildStaffQueryMenu(context: StaffMenuContext): LineReplyMessage
 }
 
 export function buildReceiptCapturePrompt(_context: StaffMenuContext): LineReplyMessage {
+  const title = 'แนบรูปใบเสร็จเข้าระบบ';
+  const text = 'กด “แนบรูปใบเสร็จ” หรือ “เปิดกล้อง” ด้านล่าง แล้วส่งภาพให้เห็นข้อมูลครบทั้งใบค่ะ 🖼\nระบบจะบันทึกเป็นรายการรอตรวจสอบ ไม่อนุมัติหรือชำระเงินอัตโนมัติ';
   return {
     type: 'flex',
-    altText: 'แนบรูปใบเสร็จเข้าระบบ',
+    altText: title,
+    canonicalText: `${title}\n${text}`,
     contents: {
       type: 'bubble',
       size: 'kilo',
       body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '14px', contents: [
-        { type: 'text', text: 'แนบรูปใบเสร็จเข้าระบบ', weight: 'bold', size: 'md', color: '#101828' },
-        { type: 'text', text: 'กด “แนบรูปใบเสร็จ” หรือ “เปิดกล้อง” ด้านล่าง แล้วส่งภาพให้เห็นข้อมูลครบทั้งใบค่ะ 🖼\nระบบจะบันทึกเป็นรายการรอตรวจสอบ ไม่อนุมัติหรือชำระเงินอัตโนมัติ', wrap: true, size: 'sm', color: '#667085' },
+        { type: 'text', text: title, weight: 'bold', size: 'md', color: '#101828' },
+        { type: 'text', text, wrap: true, size: 'sm', color: '#667085' },
       ] },
       styles: { body: { backgroundColor: '#FFFFFF' } },
     },
@@ -642,13 +652,17 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
       : 'เปิดในเว็บเพื่อดูรายละเอียดและยืนยันอย่างปลอดภัย'
     : undefined;
 
+  const title = '✅ รายการรออนุมัติ';
   return {
     type: 'flex',
     altText: counted.length === 0 ? 'รายการรออนุมัติ' : `รายการรออนุมัติ ${total} รายการ`,
+    // Every line the card shows, then each button as "label: link", so a text delivery still opens the queue.
+    canonicalText: [title, summary, ...lines.map((line) => String(line.text)), ...(closing ? [closing] : []),
+      ...buttons.map(({ action }) => `${action.label}: ${action.uri}`)].join('\n'),
     contents: {
       type: 'bubble',
       body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
-        { type: 'text', text: '✅ รายการรออนุมัติ', weight: 'bold', size: 'lg', color: '#101828' },
+        { type: 'text', text: title, weight: 'bold', size: 'lg', color: '#101828' },
         { type: 'text', text: summary, wrap: true, color: '#667085', size: 'sm' },
         ...lines,
         ...(closing ? [{ type: 'text', text: closing, wrap: true, color: '#667085', size: 'xs', margin: 'md' }] : []),

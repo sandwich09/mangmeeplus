@@ -266,6 +266,176 @@ describe('reimbursement.list_pending_approvals forbidden outcome: a terminal per
   });
 });
 
+// Advisor S2a (docs/specs/mangmee-advisor-system-knowledge-2026-09-29-th.md §5.1, owner 2026-09-30 §10
+// items 2 and 4): billing.get_package_usage is offered to every assistant user; a caller who does not
+// manage the package gets one fixed P8 line whatever the clause kind, and a manager's answer is composed
+// under the no-price / no-other-package / projection-only rules.
+describe('billing.get_package_usage: P8 for a non-manager, composed rules for a manager', () => {
+  const CONTROL_CALL = JSON.stringify({ calls: [{ index: 0, toolName: 'billing.get_package_usage', input: {} }] });
+  function request(kind: 'read' | 'write', messageText: string, permissions: string[]): LineAiTurnRequest {
+    return { requestId: `req-package-${kind}`, webhookEventId: `event-package-${kind}`, messageText, messagePreviewHash: 'f'.repeat(16),
+      semanticSubrequests: [{ index: 0, kind, goal: 'แพ็กเกจของร้าน', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+      userContext: baseUserContext(permissions) };
+  }
+
+  for (const [kind, text] of [['read', 'เหลือใบเสร็จกี่ใบ'], ['write', 'ขอเปลี่ยนแพ็กเกจได้ไหม']] as const) {
+    it(`answers a ${kind} clause with the fixed ask-the-owner line, no link, never "the package lacks this"`, async () => {
+      const prompts: string[] = [];
+      const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+        prompts.push(input.systemPrompt ?? ''); return { ok: true, text: CONTROL_CALL };
+      } };
+      const result = await runSemanticTurnV2({
+        req: request(kind, text, ['ai.tool.invoke', 'expense.read']), provider, draftEditEnabled: false, reimbursementDraftEnabled: false,
+        publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        async invoke(): Promise<ToolResult> {
+          return { toolName: 'billing.get_package_usage', status: 'forbidden', sourceRefs: [], asOf: '2026-09-30T03:00:00.000Z', errorCode: 'PACKAGE_MANAGER_REQUIRED' };
+        },
+      });
+      assert.equal(prompts.length, 1, 'only the control round runs — never a compose call around a refusal');
+      assert.match(prompts[0]!, /call billing\.get_package_usage whatever the clause kind/);
+      const coverage = result.semanticCoverage?.[0];
+      assert.equal(coverage?.status, 'handled');
+      assert.equal(coverage?.reasonCode, 'PACKAGE_MANAGER_REQUIRED');
+      assert.equal(result.replyText, 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
+      assert.deepEqual(result.webLinks, []);
+    });
+  }
+
+  it('composes a manager\'s answer under the package rules and links the package page', async () => {
+    const data = { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-10-15' },
+      capacity: { branches: { used: 4, limit: 5, remaining: 1 }, members: { used: 3, limit: 10, remaining: 7 } },
+      receipts: { used: 70, limit: 100, remaining: 30, cadence: 'ตามรอบที่ชำระ', periodStartOn: '2026-09-15', periodEndsOn: '2026-10-15',
+        resetsOn: null, expiresOn: null, additional: null, paceNote: null,
+        pace: { projectedUsed: 150, projectedShortfall: 50, daysElapsed: 14, daysLeft: 16, daysInPeriod: 30 } } };
+    const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
+    const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
+      return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled',
+        text: 'ใบเสร็จรอบนี้ใช้ไป 70 จาก 100 ใบ เหลือ 30 ใบค่ะ คาดการณ์จากการใช้ 14 วันที่ผ่านมา ขาดประมาณ 50 ใบ',
+        sourceRefIds: ['billing:package_usage:summary'] }] }) : CONTROL_CALL };
+    } };
+    const result = await runSemanticTurnV2({
+      req: request('read', 'ใบเสร็จจะพอถึงสิ้นรอบไหม', ['ai.tool.invoke', 'company.plan.manage']), provider, draftEditEnabled: false,
+      reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> {
+        return { toolName: 'billing.get_package_usage', status: 'ok', data, asOf: '2026-09-28T03:00:00.000Z', sourceRefs: [{ label: 'แพ็กเกจของร้าน',
+          module: 'billing', entityType: 'package_usage', permissionChecked: true, webPath: '/companies/company/billing' }] };
+      },
+    });
+    const compose = calls.find((call) => call.usageTag === 'line.compose');
+    assert.ok(compose);
+    assert.match(compose.systemPrompt, /an answer about whether this shop's package is enough names no package other than its own package\.label/);
+    assert.match(compose.systemPrompt, /Never recommend a package/);
+    assert.match(compose.systemPrompt, /never suggest upgrading, a bigger package or buying more/);
+    assert.match(compose.systemPrompt, /'ขาดประมาณ N ใบ' with N = projectedShortfall/);
+    assert.match(compose.systemPrompt, /When receipts\.resetsOn is present, an answer about receipts says that day as the day the count starts again\./);
+    assert.match(compose.systemPrompt, /add no line inviting them to upgrade, change, add to, buy or manage a package/);
+    assert.match(compose.systemPrompt, /never write a web address yourself/);
+    assert.match(compose.systemPrompt, /no closing line pointing to the package page/);
+    assert.match(compose.systemPrompt, /Never write a field name, a code or an equation from the tool data/);
+    assert.match(compose.systemPrompt, /in a Thai answer no English word such as reset or margin: say เริ่มนับใหม่ or เหลือเผื่อ\./);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.match(result.replyText, /ขาดประมาณ 50 ใบ/);
+    assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจของร้าน', path: '/companies/company/billing' }]);
+  });
+
+  // Eval r11 P-02: the model gave the month's range but not the restart day the tool returned; code adds it.
+  it('adds the restart day to a monthly receipt answer that leaves it out, once', async () => {
+    const data = { package: { label: 'มืออาชีพ (PRO)', termEndsOn: '2026-11-10' },
+      capacity: { branches: { used: 4, limit: 5, remaining: 1 }, members: { used: 4, limit: 10, remaining: 6 } },
+      receipts: { used: 37, limit: 100, remaining: 63, cadence: 'รายเดือน เริ่มนับใหม่ทุกต้นเดือน', periodStartOn: '2026-10-01', periodEndsOn: '2026-10-31',
+        resetsOn: '2026-11-01', expiresOn: null, additional: null, pace: null, paceNote: 'รอบนี้เพิ่งเริ่มไม่ถึง 7 วัน ยังเร็วเกินไปที่จะคาดการณ์' } };
+    for (const [composed, expected] of [
+      ['รอบเดือนนี้ (1–31 ต.ค. 2569) ใช้ไปแล้ว 37 ใบ เหลืออีก 63 ใบค่ะ', 'รอบเดือนนี้ (1–31 ต.ค. 2569) ใช้ไปแล้ว 37 ใบ เหลืออีก 63 ใบค่ะ\nใบเสร็จจะเริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ'],
+      ['เหลืออีก 63 ใบ เริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ', 'เหลืออีก 63 ใบ เริ่มนับใหม่ 1 พ.ย. 2569 ค่ะ'],
+    ] as const) {
+      const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+        return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled', text: composed,
+          sourceRefIds: ['billing:package_usage:summary'] }] }) : CONTROL_CALL };
+      } };
+      const result = await runSemanticTurnV2({
+        req: request('read', 'เหลือใบเสดอีกกี่ใบคะ', ['ai.tool.invoke', 'company.plan.manage']), provider, draftEditEnabled: false,
+        reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        async invoke(): Promise<ToolResult> {
+          return { toolName: 'billing.get_package_usage', status: 'ok', data, asOf: '2026-10-01T03:00:00.000Z', sourceRefs: [{ label: 'แพ็กเกจของร้าน',
+            module: 'billing', entityType: 'package_usage', permissionChecked: true, webPath: '/companies/company/billing' }] };
+        },
+      });
+      assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+      assert.equal(result.replyText, expected);
+    }
+  });
+
+  // Owner 2026-09-30 (~16:00, spec §5.1a): anyone may ask package prices and contents; they come only from
+  // the catalog read, as selling prices with VAT per the billing policy, and never as a cost.
+  it('answers a staff member\'s price question from billing.get_package_catalog, with no package page link', async () => {
+    const control = JSON.stringify({ calls: [{ index: 0, toolName: 'billing.get_package_catalog', input: {} }] });
+    const data = { packages: [{ name: 'เริ่มต้น (STARTER)', branches: 1, users: 2, monthly: { price: '249', vat: '17.43', payable: '266.43', receiptReads: 30 },
+      yearly: { price: '2,490', vat: '174.30', payable: '2,664.30', receiptReads: 360, months: 12, averagePerMonth: '207.50', savingVersusMonthly: '498', pricedAsMonths: 10 },
+      menus: ['ผู้ช่วย AI ทาง LINE', 'ค่าใช้จ่ายและใบเสร็จ'] }], vatNote: 'ราคานี้ยังไม่รวม VAT 7% ยอดที่ชำระสุทธิคือราคารวม VAT',
+      usersNote: 'จำนวนผู้ใช้รวมเจ้าของร้าน', yearlyReceiptsNote: 'แบบรายปีได้สิทธิ์อ่านใบเสร็จของทั้งปีทันทีเมื่อชำระสำเร็จ', aiCreditPerMonth: 80 };
+    const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
+    const invoked: string[] = [];
+    const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
+      return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled',
+        text: 'แพ็กเกจเริ่มต้น (STARTER) ราคา 249 บาท/เดือน บวก VAT 17.43 บาท รวมชำระ 266.43 บาทค่ะ\nหากต้องการซื้อแพ็กเกจ ทำได้บนเว็บค่ะ', sourceRefIds: ['billing:package_catalog:summary'] }] }) : control };
+    } };
+    const result = await runSemanticTurnV2({
+      req: request('read', 'แพ็กเกจเริ่มต้นราคาเท่าไหร่', ['ai.tool.invoke', 'expense.read']), provider, draftEditEnabled: false,
+      reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(meta: { name: string }): Promise<ToolResult> {
+        invoked.push(meta.name);
+        return { toolName: 'billing.get_package_catalog', status: 'ok', data, asOf: '2026-09-30T09:00:00.000Z',
+          sourceRefs: [{ label: 'แพ็กเกจที่เปิดขาย', module: 'billing', entityType: 'package_catalog', permissionChecked: true }] };
+      },
+    });
+    assert.deepEqual(invoked, ['billing.get_package_catalog']);
+    assert.match(calls[0]!.systemPrompt, /call billing\.get_package_catalog with input \{\} whatever the clause kind/);
+    const compose = calls.find((call) => call.usageTag === 'line.compose');
+    assert.ok(compose);
+    assert.match(compose.systemPrompt, /comes only from billing\.get_package_catalog in this turn — this shop's own usage and room come from billing\.get_package_usage — never from memory, a guess or your own arithmetic/);
+    assert.match(compose.systemPrompt, /a price with vat is said as the price plus that VAT and its payable total; about VAT say only what vatNote says/);
+    assert.match(compose.systemPrompt, /Selling prices are the only money you may name: never state, estimate or hint at what anything costs to provide/);
+    assert.match(compose.systemPrompt, /never turn credits or receipts into money or into a number of messages/);
+    assert.match(compose.systemPrompt, /its savingVersusMonthly said as 'ประหยัด N บาท'.*never call a package or a payment term คุ้มกว่า or better value\./);
+    assert.match(compose.systemPrompt, /never say how many packages there are or how many are bigger: list them, never 'มี 3 แบบ'/);
+    assert.match(compose.systemPrompt, /Asking prices, contents or a comparison is not asking how to buy: end with what was asked, never with a line such as 'หากต้องการซื้อหรือเปลี่ยนแพ็กเกจ ทำได้ที่หน้าแพ็กเกจบนเว็บ'\./);
+    assert.match(compose.systemPrompt, /say you can only share the prices packages are sold at, as a handled answer that still cites billing\.get_package_catalog's sourceRefIds when it ran\./);
+    assert.equal(result.semanticCoverage?.[0]?.status, 'handled');
+    assert.match(result.replyText, /266\.43/);
+    assert.doesNotMatch(result.replyText, /หากต้องการซื้อแพ็กเกจ/, 'an unasked buy line is dropped');
+    assert.deepEqual(result.webLinks, [], 'someone who cannot buy gets no package page link');
+  });
+
+  // Final-assembly run, P-32: a price answer closed with the plain "การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ …" statement.
+  it('drops an unasked where-to-buy statement from a price answer and keeps it for a how-to-upgrade question', async () => {
+    const control = JSON.stringify({ calls: [{ index: 0, toolName: 'billing.get_package_catalog', input: {} }] });
+    const data = { packages: [{ name: 'เติบโต (BASIC)', branches: 2, users: 5, monthly: { price: '499', payable: '499', receiptReads: 50 } }], vatNote: 'ยังไม่มีข้อมูลว่าราคานี้มี VAT หรือไม่' };
+    const composed = 'แพ็กเกจเติบโต รายเดือน 499 บาทค่ะ\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคานี้มี VAT หรือไม่ค่ะ การซื้อหรือเปลี่ยนแพ็กเกจทำได้บนเว็บ ที่หน้าแพ็กเกจของร้านค่ะ';
+    for (const [question, expected] of [
+      ['แล้วแพ็กเกจที่ใหญ่กว่าราคาเท่าไหร่', 'แพ็กเกจเติบโต รายเดือน 499 บาทค่ะ\n\nหมายเหตุ: ยังไม่มีข้อมูลว่าราคานี้มี VAT หรือไม่ค่ะ'],
+      ['อยากอัปเกรดแพ็กเกจต้องทำยังไง', composed],
+    ] as const) {
+      const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+        return { ok: true, text: input.usageTag === 'line.compose' ? JSON.stringify({ answers: [{ index: 0, status: 'handled', text: composed,
+          sourceRefIds: ['billing:package_catalog:summary'] }] }) : control };
+      } };
+      const result = await runSemanticTurnV2({
+        req: request('read', question, ['ai.tool.invoke', 'company.plan.manage']), provider, draftEditEnabled: false,
+        reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+        async invoke(): Promise<ToolResult> {
+          return { toolName: 'billing.get_package_catalog', status: 'ok', data, asOf: '2026-10-01T03:00:00.000Z', sourceRefs: [{ label: 'แพ็กเกจที่เปิดขาย',
+            module: 'billing', entityType: 'package_catalog', permissionChecked: true, webPath: '/companies/company/billing' }] };
+        },
+      });
+      assert.equal(result.replyText, expected, question);
+      // The page link is not text: whoever may manage the plan still gets it, asked or not.
+      assert.deepEqual(result.webLinks, [{ label: 'แพ็กเกจที่เปิดขาย', path: '/companies/company/billing' }]);
+    }
+  });
+});
+
 // Items 1-4 (docs/specs/mangmee-ai-expense-advisor-spec-th.md §2, §3 rows 17-18, §8, §11): real-model
 // eval evidence (tuning-3) showed sales/P&L/receivables answered with an expense or reimbursement
 // substitute, model-written refusals with jargon or a wrong reason, "cannot fetch data" instead of a
@@ -880,5 +1050,116 @@ describe('H3: one call failing to bind never sinks an index a sibling call alrea
     });
     assert.equal(result.semanticCoverage?.[0]?.status, 'unsupported');
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'TOOL_INPUT_NOT_AUTHORIZED');
+  });
+});
+
+// Advisor S0 (R1 integrated G run 2026-10-01): general-knowledge and non-business answers, and stock asked in a mixed
+// message. Each case is one the real model produced in that run.
+describe('advisor S0: general answers are shaped in code, and a stock clause is answered before any planning', () => {
+  const STEER = 'ถ้ามีเรื่องร้านหรือรายจ่ายให้ช่วย บอกได้เลยค่ะ';
+  const FIXED_STOCK = 'แพ็กเกจที่ใช้อยู่ยังไม่มีเรื่องสต็อกสินค้าคงเหลือค่ะ ตอนนี้น้องมั่งมีช่วยเรื่องรายจ่ายและใบเบิกได้ค่ะ เช่น ลองถามว่า "ค่าใช้จ่ายเดือนนี้เท่าไหร่" หรือ "ใบเบิกที่รออนุมัติมีกี่รายการ" ได้เลยค่ะ';
+
+  function recording(responses: string[]) {
+    const queue = [...responses];
+    const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
+    const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {
+      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
+      return { ok: true, text: queue.shift() ?? '{}' };
+    } };
+    return { provider, calls };
+  }
+
+  async function general(messageText: string, intakeIntent: LineAiTurnRequest['intakeIntent'], answer: Record<string, unknown>) {
+    const { provider, calls } = recording([JSON.stringify({ answers: [{ index: 0, status: 'handled', sourceRefIds: [], ...answer }] })]);
+    const result = await runSemanticTurnV2({
+      req: { requestId: 'req-s0', webhookEventId: 'event-s0', messageText, messagePreviewHash: '5'.repeat(16), intakeIntent,
+        entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED,
+        semanticSubrequests: [{ index: 0, kind: 'general', goal: messageText, requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} }],
+        userContext: baseUserContext(['expense.read_own', 'expense.create', 'reimbursement.read_own']) },
+      provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('a general answer reads no tool'); },
+    });
+    assert.deepEqual(calls.map((call) => call.usageTag), ['line.compose'], 'the answer with "topic" is accepted on the first compose');
+    assert.deepEqual(result.semanticCoverage, [{ index: 0, status: 'handled', sourceRefIds: [] }], 'topic never joins the coverage');
+    return { replyText: result.replyText, prompt: calls[0]!.systemPrompt };
+  }
+
+  // G-06: five bullets for "แนะนำหนังสนุกๆ หน่อย"; G-15: a full recipe.
+  it('a non-business answer stays two short lines and ends with the shop line from code', async () => {
+    const films = await general('แนะนำหนังสนุกๆ หน่อย', 'UNSUPPORTED', { topic: 'other',
+      text: 'มั่งมีแนะนำหนังสนุกๆ ได้บ้างนะคะ 😊\n\n• Interstellar — ไซไฟอลังการ\n• Parasite — ระทึก พลิกโผ\n• Coco — อบอุ่นมากค่ะ\n\nถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยนะคะ' });
+    assert.equal(films.replyText, `Interstellar — ไซไฟอลังการ\nParasite — ระทึก พลิกโผ\n\n${STEER}`);
+    // The router may file a food question under its social route; the composer's mark still decides.
+    const recipe = await general('ขอสูตรต้มยำกุ้งหน่อย', 'ADVISOR_CONVERSATION', { topic: 'other', text: 'ต้มน้ำซุปกับตะไคร้ ข่า ใบมะกรูด ใส่กุ้งและเห็ด\nปรุงด้วยน้ำปลา น้ำมะนาว พริกตามชอบค่ะ' });
+    assert.equal(recipe.replyText, `ต้มน้ำซุปกับตะไคร้ ข่า ใบมะกรูด ใส่กุ้งและเห็ด\nปรุงด้วยน้ำปลา น้ำมะนาว พริกตามชอบค่ะ\n\n${STEER}`);
+    // No mark at all: her own shop line on a turn the router placed outside the product says the same.
+    const unmarked = await general('เมืองหลวงของญี่ปุ่นคืออะไร', 'UNSUPPORTED', { text: 'โตเกียวค่ะ\n\nถ้ามีเรื่องร้านหรือค่าใช้จ่ายให้ช่วย บอกได้เลยนะคะ 😊' });
+    assert.equal(unmarked.replyText, `โตเกียวค่ะ\n\n${STEER}`);
+  });
+
+  // Final-assembly run, P-31: the cost question went to the general lane and the refusal said "margin".
+  it('a general answer says "margin" and "reset" in Thai unless the turn itself used the word', async () => {
+    const refusal = 'มั่งมีบอกได้เฉพาะราคาที่แพ็กเกจถูกขายค่ะ ต้นทุน AI ต่อใบเสร็จ กำไรต่อแพ็กเกจ หรือ margin ใดๆ เป็นข้อมูลภายในค่ะ';
+    const cost = await general('มั่งมีมีต้นทุน AI ต่อใบเสร็จเท่าไหร่ กำไรต่อแพ็กเกจเท่าไหร่', 'BUSINESS_READ_QUESTION', { topic: 'business', text: refusal });
+    assert.equal(cost.replyText, 'มั่งมีบอกได้เฉพาะราคาที่แพ็กเกจถูกขายค่ะ ต้นทุน AI ต่อใบเสร็จ กำไรต่อแพ็กเกจ หรือกำไรส่วนต่างใดๆ เป็นข้อมูลภายในค่ะ');
+    const asked = await general('margin คืออะไรคะ', 'BUSINESS_READ_QUESTION', { topic: 'business', text: 'margin คือส่วนต่างระหว่างราคาขายกับต้นทุนค่ะ' });
+    assert.equal(asked.replyText, 'margin คือส่วนต่างระหว่างราคาขายกับต้นทุนค่ะ', 'the user said the word: it stays');
+  });
+
+  // G-04, G-11, G-23: business knowledge closed with the shop line; six answers gave an agency website from memory.
+  it('a business-knowledge answer keeps its length and loses the shop line and any web address', async () => {
+    const body = 'การตั้งราคาขายให้มีกำไร มีหลักคิดดังนี้ค่ะ\n\n• คำนวณต้นทุนให้ครบ\n• กำหนดกำไรที่ต้องการ\n• เทียบราคาตลาด\n\nแนะนำให้หารือกับนักบัญชีหรือกรมสรรพากร';
+    const text = `${body} (rd.go.th) นะคะ\n\nถ้ามีเรื่องค่าใช้จ่ายหรือข้อมูลร้านให้ช่วย บอกได้เลยค่ะ 😊`;
+    for (const [intent, topic] of [['ADVISOR_CONVERSATION', 'business'], ['BUSINESS_READ_QUESTION', 'business'],
+      // The router's own business route outranks a composer that marked a business answer "other".
+      ['BUSINESS_READ_QUESTION', 'other'], ['ADVISOR_CONVERSATION', undefined]] as const) {
+      const answer = await general('ตั้งราคาขายยังไงให้มีกำไร', intent, { ...(topic ? { topic } : {}), text });
+      assert.equal(answer.replyText, `${body} นะคะ`, `${intent} ${topic}`);
+    }
+  });
+
+  it('greetings and small talk keep their own reply', async () => {
+    const thanks = await general('ขอบคุณค่ะ', 'UNSUPPORTED', { topic: 'social', text: 'ยินดีค่ะ 😊 มีอะไรให้ช่วยอีกบอกได้เลยนะคะ' });
+    assert.equal(thanks.replyText, 'ยินดีค่ะ 😊 มีอะไรให้ช่วยอีกบอกได้เลยนะคะ');
+  });
+
+  it('tells the composer the general rules: topic, rule before verdict, no re-announced figure, no web address, no list', async () => {
+    const { prompt } = await general('ค่าแรงขั้นต่ำตอนนี้เท่าไหร่', 'BUSINESS_READ_QUESTION', { topic: 'business', text: 'ค่าแรงขั้นต่ำเปลี่ยนตามประกาศค่ะ' });
+    assert.match(prompt, /The answer object of a general subrequest also carries "topic", written before "text"/);
+    assert.match(prompt, /open with the rule and then say on which side of it their figure falls, so no sentence contradicts another/);
+    assert.match(prompt, /A figure you would have to recall that is re-announced from time to time \(the minimum wage, a contribution or wage ceiling, an interest or exchange rate\) is never given as a number/);
+    assert.match(prompt, /name an agency by its name only, never a web address, and never write a calendar date \(day, month and year\) from memory/);
+    assert.match(prompt, /even when the user asks for a list, a recipe or instructions, give only the gist in those two lines/);
+    assert.match(prompt, /a business knowledge answer never carries it/);
+  });
+
+  // G-16: "สต็อกคืออะไร แล้วร้านเรามีของเหลือเท่าไหร่" — the planner read company.get_current_context for the stock half and
+  // the reply was "ยังดึงข้อมูลส่วนนี้ไม่ได้ค่ะ ดูได้ที่หน้ารายจ่ายบนเว็บ".
+  it('a mixed message answers the knowledge half and gives the stock half the fixed reply, with no planning and no tool', async () => {
+    const knowledgeSpan = 'สต็อกคืออะไร', stockSpan = 'ร้านเรามีของเหลือเท่าไหร่';
+    const messageText = `${knowledgeSpan} แล้ว${stockSpan}`;
+    const evidence = await createLineAiInputEvidence({ turnKey: 's0-mixed', parts: [{ partId: 'text', rawText: messageText, eventIdHash: 'b'.repeat(64), acceptedAtMs: Date.now() }] });
+    assert.ok(evidence);
+    const part = evidence.inputEvidence.parts[0]!;
+    const ref = (span: string) => [{ partId: part.partId, rawSha256: part.rawSha256, startUtf16: messageText.indexOf(span), endUtf16: messageText.indexOf(span) + span.length }];
+    const { provider, calls } = recording([JSON.stringify({ answers: [
+      { index: 0, status: 'handled', topic: 'business', text: 'สต็อกคือสินค้าที่กิจการถือไว้เพื่อขายค่ะ', sourceRefIds: [] },
+      { index: 1, status: 'handled', text: 'ignored — the scope policy already answered this clause', sourceRefIds: [] },
+    ] })]);
+    const result = await runSemanticTurnV2({
+      req: { requestId: 'req-s0-mixed', webhookEventId: 'event-s0-mixed', messageText, messagePreviewHash: '6'.repeat(16),
+        intakeIntent: 'BUSINESS_READ_QUESTION', entitledFeatureKeys: NO_UNSOLD_MODULES_ENTITLED, inputEvidence: evidence.inputEvidence,
+        valueCandidates: extractValueCandidates(messageText, '2026-10-01'),
+        semanticSubrequests: [
+          { index: 0, kind: 'general', goal: 'อธิบายความหมายของสต็อก', requiredEvidence: [], dependsOn: [], requestedFilters: {}, evidenceRefs: ref(knowledgeSpan) },
+          { index: 1, kind: 'read', goal: 'ดูยอดสินค้าคงเหลือของร้าน', requiredEvidence: [], dependsOn: [], requestedFilters: {}, evidenceRefs: ref(stockSpan) },
+        ],
+        userContext: baseUserContext(['expense.read']) },
+      provider, draftEditEnabled: false, reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(): Promise<ToolResult> { throw new Error('no tool may run for the stock clause'); },
+    });
+    assert.deepEqual(calls.map((call) => call.usageTag), ['line.compose'], 'nothing is left to plan');
+    assert.equal(result.replyText, `1. สต็อกคือสินค้าที่กิจการถือไว้เพื่อขายค่ะ\n\n2. ${FIXED_STOCK}`);
+    assert.deepEqual(result.semanticCoverage?.map((entry) => [entry.status, entry.reasonCode]), [['handled', undefined], ['unsupported', 'PACKAGE_FEATURE_NOT_ENABLED']]);
   });
 });

@@ -1,8 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import type { SourceRef, ToolResult } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
+import { GetReimbursementApprovalBacklogUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
+import { BUSINESS_READ_BASIS_VERSION, appliedQuery, completeResult } from '../../domain/logic/business-read-source.logic';
 
 function toCtx(ctx: ErpToolContext): RequestContext {
   return {
@@ -65,6 +67,45 @@ export class ReimbursementListPendingApprovalsTool implements ErpReadToolPort {
       },
       sourceRefs,
       asOf,
+    };
+  }
+}
+
+/**
+ * "ใบเบิกค้างที่ใคร" (advisor spec §5.3). Scope, branch and active-approver rules live in the use case;
+ * this adapter only shapes the result. The caller's roles ride along like the approval queue above.
+ */
+@Injectable()
+export class ReimbursementGetApprovalBacklogTool implements ErpReadToolPort {
+  toolName = 'reimbursement.get_approval_backlog';
+
+  constructor(private readonly backlog: GetReimbursementApprovalBacklogUseCase) {}
+
+  async execute(ctx: ErpToolContext, input: { requester?: unknown } = {}): Promise<ToolResult> {
+    const asOf = new Date().toISOString();
+    const mine = input.requester === 'me';
+    let data;
+    try {
+      data = await this.backlog.execute(toCtx(ctx), mine ? { requester: 'me' } : {});
+    } catch (error) {
+      if (error instanceof ForbiddenException) return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
+      throw error;
+    }
+    return {
+      toolName: this.toolName,
+      status: 'ok',
+      data,
+      // The first source is the customer's link (spec §2.7): the web claim list shows "อยู่ที่ …" on every row.
+      sourceRefs: [{ label: 'ใบเบิกที่ยังรออยู่', module: 'reimbursements', entityType: 'reimbursement_approval_backlog',
+        asOf, permissionChecked: true, webPath: `/companies/${ctx.companyId}/reimbursements` }],
+      asOf,
+      queryApplied: appliedQuery(undefined, {
+        dateBasis: 'submitted_or_approved_thai_day', statusBasis: 'waiting_claims', dataset: 'reimbursement_requests',
+        accessScope: data.accessScope, ...(mine ? { filters: { requester: 'me' } } : {}),
+      }),
+      basisVersion: BUSINESS_READ_BASIS_VERSION,
+      completeness: completeResult(data.items.length, data.total > data.items.length,
+        data.byApprover.length + data.desks.length + (data.sharedPile ? 1 : 0)),
     };
   }
 }

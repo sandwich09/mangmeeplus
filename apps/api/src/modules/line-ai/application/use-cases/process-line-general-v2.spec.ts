@@ -4,7 +4,12 @@ import { Prisma } from '../../../../generated/prisma/client';
 import { ProcessLineWebhookUseCase } from './process-line-webhook.use-case';
 import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
 import { deliveryHash, parseLineDeliveryPlan, type DeliveryPlanV2 } from '../../domain/logic/line-delivery-plan.logic';
-import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
+import { withLineExternalBrowserText } from '@watchdog-bms/contracts';
+import { buildAiBudgetExceededMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage,
+  buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, inheritCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
+import { buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffMainMenu } from '../../domain/logic/line-staff-menu.logic';
+import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
+import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-manager.logic';
 
 it('answers an admitted private general/help turn without private ERP prefetch or touching four waiting tasks', async () => {
   const event: any = { webhookEventId: 'evt', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'ทำไมท้องฟ้าเป็นสีฟ้า', inputEvidence: { joinedSha256: 'digest' } };
@@ -127,6 +132,50 @@ for (const scenario of [
   if (scenario.kind === 'grant') assert.doesNotMatch(replies[0]!, /budget|งบประมาณ/i, 'failed admission alone does not establish exhausted budget');
   if (scenario.kind === 'deadline') assert.match(replies[0]!, /ใช้เวลานาน|ลองใหม่/i);
   assert.deepEqual(tasks, originalTasks); assert.equal(flow.semanticDelivery.has(event), false); assert.equal(flow.deliverySources.has(event), false);
+});
+
+// Production 2026-10-01: the AI credit can run out between a general question's intake and its answer
+// call, whose bound is the larger one. This lane swallowed that refusal — "ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณา
+// ลองใหม่", provider_unavailable — and now answers it with the credit card and a budget status. A credit
+// that could not be checked, like any other failure, keeps the try-again line.
+for (const scenario of [
+  { name: 'spent (owner)', code: 'AI_MONTHLY_BUDGET_EXCEEDED', status: 'ai_budget_exceeded', sentence: /^เครดิต AI ของเดือนนี้หมดแล้วค่ะ/, buttons: ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'] },
+  { name: 'spent (staff)', code: 'AI_MONTHLY_BUDGET_EXCEEDED', status: 'ai_budget_exceeded', sentence: /^เครดิต AI ของเดือนนี้หมดแล้วค่ะ/, buttons: [] },
+  { name: 'too small for this answer (owner)', code: 'AI_BUDGET_INSUFFICIENT', status: 'ai_budget_insufficient', sentence: /^เครดิต AI ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ/, buttons: ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'] },
+  { name: 'not checkable', code: 'AI_BUDGET_UNAVAILABLE', status: 'provider_unavailable', sentence: null, buttons: [] },
+]) it(`answers a general question whose answer call meets an AI credit that is ${scenario.name}`, async () => {
+  const event: any = { webhookEventId: 'evt-credit', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'กำไรขั้นต้นคืออะไร', inputEvidence: { joinedSha256: 'digest' } };
+  const owner = { companyId: 'company', userId: 'user', membershipId: 'member', chatKeyHash: 'chat' };
+  const grant = { turnKey: 'turn' }, cards: any[] = [], replies: string[] = [], statuses: string[] = [];
+  const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', semanticSubrequests: [{ index: 0, kind: 'general', goal: 'explain', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(flow, {
+    boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]), budgetGrantsV2: new WeakMap([[event, grant]]),
+    deliveryAccess: new WeakMap([[event, { fingerprint: 'fp' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(),
+    config: { webBaseUrl: '', lineAiApprovedKnowledgeEnabled: false },
+    reliabilityContext: async () => ({}),
+    aiGateway: { narrowLineReliabilityGrant: async () => grant, requestLineTurn: async () => {
+      const error: any = new Error(scenario.code); error.getStatus = () => 429; error.getResponse = () => ({ code: scenario.code, budgetScope: 'TOTAL' }); throw error;
+    } },
+    ledger: { appendTurn: async () => 'ledger', ack: async () => assert.fail('a refused answer is not acknowledged as answered') },
+    isTrialTier: async () => false,
+    deliverRequiredMessages: async (_event: unknown, messages: any[]) => { cards.push(...messages); },
+    deliverReply: async (_event: unknown, text: string) => { replies.push(text); },
+    updateEventLog: async (_id: string, status: string, errorCode?: string) => { statuses.push(`${status}:${errorCode}`); },
+  });
+  // Advisor spec §2.2: the package buttons only for a reader who may manage the package.
+  const permissions = ['line.ai.query', ...(scenario.buttons.length ? ['company.plan.manage'] : [])];
+  await flow.deliverPureGeneralV2(event, 'request', route, { permissions, roles: [], scopes: {} }, [], undefined);
+  if (scenario.sentence) {
+    assert.deepEqual(replies, [], 'no try-again line for a refusal that cannot change this month');
+    assert.equal(cards.length, 1); assert.equal(cards[0].type, 'flex'); assert.match(cards[0].canonicalText, scenario.sentence);
+    assert.deepEqual((cards[0].contents.footer?.contents ?? []).map((button: any) => button.action.label), scenario.buttons);
+    if (!scenario.buttons.length) assert.match(cards[0].canonicalText, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ$/);
+    assert.deepEqual(statuses, [`${scenario.status}:${scenario.code}`]);
+  } else {
+    assert.deepEqual(cards, []); assert.deepEqual(replies, ['ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่']);
+    assert.deepEqual(statuses, ['provider_unavailable:AI_GENERAL_UNAVAILABLE']);
+  }
 });
 
 for (const scenario of [
@@ -314,4 +363,56 @@ it('a text answer finished after its foreground deadline is delivered, never dro
   const created = new Date();
   await mediaResultFlow(created, onTime).sendMessagesV2({ ...lateText, webhookEventId: 'on-time-text' }, [{ type: 'text', text: 'ทันเวลา' }]);
   assert.equal(onTime.saved!.firstDispatchDeadlineAt, new Date(created.getTime() + 40_000).toISOString());
+});
+
+// Production 2026-10-01: a shop over its receipt quota sent a photo and heard nothing. The quota card
+// carried no canonicalText, so this seam threw LINE_PLAN_CANONICAL_TEXT_REQUIRED before a plan was saved;
+// "เมนูหลัก" and the other deterministic cards of a bound chat failed the same way. Each now freezes into
+// a plan as its own words, with its quick reply. (A card is sent as itself only with the business
+// renderer's completeness proof; these carry none, so the text is what reaches the customer. The two
+// limit cards carry it — see below.)
+const STAFF_MENU = { displayName: 'พิม', roleLabel: 'เจ้าของ', branchScopeLabel: 'ทุกสาขา', companyId: 'company', webBaseUrl: 'https://app.example.com',
+  permissions: ['reimbursement.approve', 'expense.read', 'expense.receipt.line_upload'], entitledFeatureKeys: null };
+for (const [name, card] of [
+  ['main menu', buildStaffMainMenu(STAFF_MENU)],
+  ['services', buildServiceEntitlementMessage(null)],
+  ['receipt prompt', buildReceiptCapturePrompt(STAFF_MENU)],
+  ['pending approvals', buildPendingApprovalCard(STAFF_MENU, { reimbursement: { total: 1, items: ['RB-1 · 100.00 บาท'] } })],
+  ['reimbursement payer question', buildReimbursementPayerClarificationMessage()],
+  ['reimbursement handoff', buildReimbursementHandoffMessage('https://app.example.com', 'company')],
+] as const) it(`freezes the ${name} card of a bound chat as its own words, never LINE_PLAN_CANONICAL_TEXT_REQUIRED`, async () => {
+  assert.equal(card.type, 'flex');
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  assert.equal(await mediaResultFlow(new Date(), capture).sendMessagesV2({ ...SECOND_PHOTO, webhookEventId: `card-${name}` }, [card]), 'ok');
+  assert.ok(capture.saved && parseLineDeliveryPlan(capture.saved), 'the plan validates');
+  assert.deepEqual(capture.saved!.batches.flatMap(batch => batch.primary.messages), [{ type: 'text',
+    text: withLineExternalBrowserText((card as any).canonicalText, Number.POSITIVE_INFINITY), ...(card.quickReply ? { quickReply: card.quickReply } : {}) }]);
+});
+
+// A limit card exists for its buttons — "ดูแพ็กเกจ / ขอเปลี่ยนแพ็กเกจ" at the moment the limit is hit — so
+// the plan sends the card itself, exactly as the builder made it, and keeps its sentence as the fallback
+// LINE gets if it refuses the Flex body. Advisor spec §2.2 holds in both forms: the buttons are for a
+// reader who may manage the package; anyone else gets no button and is told who to ask.
+const TOTAL_EXCEEDED = { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' } as const;
+const PACKAGE_BUTTONS = ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'];
+for (const [name, card, buttons] of [
+  ['receipt quota (owner)', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, true), true), PACKAGE_BUTTONS],
+  ['receipt quota (staff)', buildReceiptQuotaExceededMessage(receiptQuotaExceededTextTh(30, 'STARTER_249', undefined, false, false), false), []],
+  ['AI credit (owner)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, true), PACKAGE_BUTTONS],
+  ['AI credit (staff)', buildAiBudgetExceededMessage(false, TOTAL_EXCEEDED, false), []],
+  ['AI credit, not enough left (owner)', buildAiBudgetExceededMessage(true, { budgetErrorCode: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'TOTAL' }, true), PACKAGE_BUTTONS],
+  ['chat credit (staff)', buildAiBudgetExceededMessage(false, { budgetErrorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'CHAT' }, false), ['ติดต่อเจ้าหน้าที่']],
+] as const) it(`sends the ${name} card of a bound chat as the card itself`, async () => {
+  const capture: { saved?: DeliveryPlanV2 } = {};
+  assert.equal(await mediaResultFlow(new Date(), capture).sendMessagesV2({ ...SECOND_PHOTO, webhookEventId: `limit-card-${name}` }, [card]), 'ok');
+  assert.ok(capture.saved && parseLineDeliveryPlan(capture.saved), 'the plan validates');
+  const { canonicalText, ...wire } = card as any;
+  assert.deepEqual(capture.saved!.batches.map(batch => batch.primary.messages), [[wire]], 'the plan item is the Flex card, byte for byte');
+  assert.deepEqual((wire.contents.footer?.contents ?? []).map((button: any) => button.action.label), buttons);
+  assert.deepEqual(capture.saved!.batches[0]!.fallback?.messages, [{ type: 'text', text: canonicalText }]);
+  assert.equal(capture.saved!.answer.items[0]!.text, canonicalText);
+  if (name.endsWith('(staff)') && buttons.length === 0) {
+    assert.ok(canonicalText.endsWith(ASK_PLAN_MANAGER_TH), canonicalText);
+    assert.doesNotMatch(JSON.stringify(capture.saved!.batches), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|แพ็กเกจที่ใหญ่ขึ้น|ซื้อ|โปรโมชั่น/);
+  }
 });

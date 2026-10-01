@@ -1,4 +1,4 @@
-import { DEFAULT_CHAT_CREDIT_SATANG, FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS, type BillingPurchaseMode, type BillingStatus } from '@watchdog-bms/contracts';
+import { DEFAULT_CHAT_CREDIT_SATANG, packageMenuLabels, type BillingPurchaseMode, type BillingStatus } from '@watchdog-bms/contracts';
 
 /**
  * The sales team's ข้อเสนอพิเศษ on the customer's package page (spec §19.2 R10, §12 "หน้าแพ็กเกจ").
@@ -74,32 +74,11 @@ export function billingQuoteDeal(quote: { deal?: unknown } | null | undefined): 
   return deal && typeof deal.dealId === 'string' && typeof deal.months === 'number' ? deal as BillingDealQuote : null;
 }
 
-/** The dedicated PND53 route is sold separately from the full Tax workspace. */
-const CARD_MENU_LABELS: Record<string, string> = { pnd53: 'ออก ภ.ง.ด.53 ในระบบ' };
-/** The LINE assistant is the headline of the whole product and has no menu of its own — its only
- *  binding is the contextual AI แนะนำ, which is a sub-item, not the feature. Named from the feature
- *  catalog so the card, the console and the workspace all say the same Thai. */
-const AI_ASSISTANT_LABEL = FEATURE_CATALOG.find(feature => feature.key === 'ai_line_assistant')?.labelTh ?? 'ผู้ช่วย AI ทาง LINE';
-
 /**
  * The menus a deal or a catalog package grants, in nav order, worded as the customer reads them
- * elsewhere. Same rule the เซลล์ sells by (`SALES_DEAL_MENU_BINDINGS`): a menu counts only when
- * every entitlement key behind it is in the snapshot. Re-derived from the bindings rather than
- * imported from the sales console, whose module would pull the whole workspace dictionary into
- * this customer page's bundle.
+ * elsewhere. Lives in contracts (`packageMenuLabels`) so the LINE package catalog names the same menus.
  */
-export function dealMenuLabels(featureKeys: readonly string[] | null | undefined): string[] {
-  const keys = new Set(featureKeys ?? []);
-  const menus = MENU_ENTITLEMENT_BINDINGS
-    .filter(binding => binding.status === 'ready' && binding.navigation !== 'contextual'
-      && binding.entitlementKeys.length > 0 && binding.entitlementKeys.every(key => keys.has(key)))
-    .map(binding => CARD_MENU_LABELS[binding.navKey] ?? binding.labelTh);
-  return [
-    ...(keys.has('ai_line_assistant') ? [AI_ASSISTANT_LABEL] : []),
-    ...menus,
-    ...(keys.has('wht_50bis') ? ['ออกหนังสือรับรอง 50 ทวิในระบบ'] : []),
-  ];
-}
+export const dealMenuLabels = packageMenuLabels;
 
 /** v4 = chat credits, read after "เครดิต AI" (the one name for AI money); old approved deals retain their TOTAL-budget wording. */
 export function dealAiCreditText(satang: number | null | undefined, scope: 'CHAT' | 'TOTAL' = 'TOTAL'): string {

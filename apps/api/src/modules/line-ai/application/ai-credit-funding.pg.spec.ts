@@ -215,12 +215,15 @@ describe('AI credit funding of LINE v2 CHAT holds on PostgreSQL', { skip: !url }
   });
 
   it('opens the renewal cycle at the boundary while the QR is unpaid, and keeps the same lot once paid (O-01, A34)', async () => {
-    const { companyId, accountId } = await fixture('renewal', { allowance: 1_000, periods: [[daysFromNow(-31), daysFromNow(-1)]],
+    // A whole calendar month that ended one to four days ago, whatever today is. `[now-31d, now-1d]` is only
+    // 30 days: on the 1st after a 31-day month it began on the 1st, so the renewal cycle it anchors was already over.
+    const paidMonth = months(daysFromNow(-32), 1), ended = paidMonth[0]![1];
+    const { companyId, accountId } = await fixture('renewal', { allowance: 1_000, periods: paidMonth,
       account: { renewalMode: 'PROMPTPAY_RENEW', subscriptionState: 'active', graceEndsAt: new Date(now.getTime() + 5 * DAY), billingAnchorDay: null } });
     const pending = await reserve(companyId, 'p1'); assert.ok(pending.ok);
     const lot = await client.aiCreditGrant.findFirstOrThrow({ where: { companyId, sourceKind: 'INCLUDED_CYCLE' } });
     assert.equal(lot.cycleState, 'RENEWAL_PENDING'); assert.equal(lot.invoiceId, null);
-    const paidFrom = new Date(now.getTime() - DAY), paidTo = new Date(now.getTime() + 29 * DAY);
+    const paidFrom = ended, paidTo = new Date(now.getTime() + 29 * DAY);
     const renewal = await client.billingInvoice.create({ data: { billingAccountId: accountId, providerInvoiceId: `in_${companyId}_renewal`, offerSnapshot: {},
       policyRevisionId: 'synthetic', currency: 'thb', totalSatang: 24_900, paidSatang: 24_900, periodStart: paidFrom, periodEnd: paidTo,
       providerStatus: 'paid', evidenceHash: 'synthetic', applyStatus: 'APPLIED', appliedAt: now } });

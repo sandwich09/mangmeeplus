@@ -26,6 +26,7 @@ export const ALLOWED_TOOLS = new Set([
   'expense.explain_record',
   'expense.get_breakdown',
   'expense.get_daily_closing',
+  'expense.list_substitute_receipts_to_sign',
   'procurement.get_ap_outstanding',
   'procurement.get_summary',
   'procurement.search_suppliers',
@@ -65,7 +66,10 @@ export const ALLOWED_TOOLS = new Set([
   'reimbursement.list_pending_approvals',
   'reimbursement.get_summary',
   'reimbursement.get_detail',
+  'reimbursement.get_approval_backlog',
   'reports.get_monthly_report_summary',
+  'billing.get_package_usage',
+  'billing.get_package_catalog',
   // S-4 draft edit (spec §5.4). They belong to the accounting specialist because they act on the
   // expense record it already reads; the router catalog is what decides whether they are offered.
   ...LINE_DRAFT_UPDATE_TOOLS,
@@ -83,6 +87,7 @@ const TOOL_FACT_LABELS: Record<string, string> = {
   'expense.draft.set_vat_mode': 'ตัวอย่างการแก้รายการ',
   'reimbursement.get_summary': 'สรุปเบิกจ่าย',
   'reimbursement.get_detail': 'ข้อมูลเบิกจ่าย',
+  'reimbursement.get_approval_backlog': 'ใบเบิกค้างที่ใคร',
   'reports.get_monthly_report_summary': 'สรุปรายงานรายเดือน',
   'crm.get_customer_summary': 'สรุปลูกค้า',
   'crm.search_customers': 'รายชื่อลูกค้า',
@@ -102,6 +107,7 @@ const TOOL_FACT_LABELS: Record<string, string> = {
   'accounting.list_recent_documents': 'เอกสารบัญชีล่าสุด',
   'expense.get_breakdown': 'สรุปค่าใช้จ่ายแยกกลุ่ม',
   'expense.get_daily_closing': 'สรุปปิดร้าน',
+  'expense.list_substitute_receipts_to_sign': 'ใบรับรองแทนใบเสร็จที่รอคุณ',
   'procurement.get_ap_outstanding': 'เจ้าหนี้ค้างจ่าย',
   'procurement.get_summary': 'สรุปใบสั่งซื้อ',
   'procurement.search_suppliers': 'รายชื่อผู้ขาย',
@@ -121,6 +127,8 @@ const TOOL_FACT_LABELS: Record<string, string> = {
   'workflow.list_assigned_tasks': 'งานที่ได้รับมอบหมาย',
   'workflow.list_recent_failures': 'automation ที่ล้มเหลว',
   'workflow.summarize_rule_health': 'สุขภาพ automation',
+  'billing.get_package_usage': 'แพ็กเกจและใบเสร็จคงเหลือ',
+  'billing.get_package_catalog': 'แพ็กเกจและราคา',
 };
 
 function formatMoney(value: unknown): string {
@@ -447,6 +455,11 @@ export class AccountingSummaryAgent {
         group(data['byCategory'], 'หมวด', 'category');
         group(data['byBranch'], 'สาขา', 'branch');
         group(data['byVendor'], 'ร้าน', 'vendor');
+      } else if (tool.name === 'expense.list_substitute_receipts_to_sign') {
+        // Plain Thai counts, never the generic "total: 3" key dump below.
+        const step = (key: string) => data[key] as { count?: unknown } | undefined;
+        if (step('asPayer')) pushFacts({ label: 'รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงิน', value: `${String(step('asPayer')!.count)} ใบ` });
+        if (step('asApprover')) pushFacts({ label: 'รอคุณอนุมัติ', value: `${String(step('asApprover')!.count)} ใบ` });
       } else if (tool.name === 'expense.get_daily_closing') {
         const dailyFacts = dailyClosingFacts(data);
         if (!dailyFacts) { readFailed = true; toolData.pop(); continue; }

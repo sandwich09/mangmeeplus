@@ -1120,10 +1120,14 @@ export class OrchestratorAgent {
       const language = req.responsePreferences?.language ?? (req.userContext.locale.startsWith('en') ? 'en' : 'th');
       const text = evidenceRefsText(soleItem.evidenceRefs, req.inputEvidence, req.messageText);
       const override = scopePolicyOverride(text, soleItem.kind, req.userContext.permissions,
-        req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language);
+        req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys, language, soleItem.toolHint);
       if (override) {
+        // Advisor S1: "sign it on the web" comes with the page to sign on (spec §2.6).
+        const webLinks = override.webPage && req.userContext.companyId
+          ? [{ label: language === 'en' ? 'Substitute receipts' : 'ใบรับรองแทนใบเสร็จ', path: `/companies/${req.userContext.companyId}/expenses/${override.webPage}` }]
+          : [];
         return { plan: { status: 'ROUTABLE', language, intents: [], refusals: [], requiresHumanReview: false },
-          outputs: [], replyText: override.text, sourceRefs: [], webLinks: [], durationMs: Date.now() - policyCheckStartedMs,
+          outputs: [], replyText: override.text, sourceRefs: [], webLinks, durationMs: Date.now() - policyCheckStartedMs,
           semanticCoverage: [{ index: soleItem.index, status: 'unsupported', reasonCode: override.reasonCode }] };
       }
     }

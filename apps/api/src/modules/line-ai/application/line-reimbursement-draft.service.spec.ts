@@ -77,3 +77,48 @@ describe('LineReimbursementDraftAdapterService display options', () => {
     assert.equal(shown?.choices.some(choice => 'raw' in choice), false);
   });
 });
+
+// Hotfix 2026-10-01: the default-branch pick stamped a fresh LINE receipt photo with the member's default branch,
+// so naming another branch hid the photo and the claim could be saved without its receipt.
+describe('LineReimbursementDraftAdapterService staged LINE photos', () => {
+  it('lets an unused staged photo follow the branch the user names, never rewrites it in place, never moves a claimed one', async () => {
+    const updatedAt = new Date('2026-10-01T00:00:00.000Z');
+    const branches = ['branch-a', 'branch-b'].map(id => ({ id, name: id, code: id, type: 'BRANCH', updatedAt }));
+    const photos: Array<{ id: string; branchId: string | null }> = [{ id: 'photo-new', branchId: null }, { id: 'photo-claimed', branchId: 'branch-a' }];
+    const matches = (photo: { id: string; branchId: string | null }, where: any) => (where.id?.in ?? [photo.id]).includes(photo.id)
+      && ('branchId' in where ? photo.branchId === where.branchId
+        : where.OR.some((item: any) => item.branchId === null ? photo.branchId === null : photo.branchId !== null && photo.branchId !== item.branchId.not));
+    const writes: any[] = [], moved: string[] = [];
+    const client = {
+      branch: { findMany: async () => branches, findFirst: async ({ where }: any) => branches.find(row => row.id === where.id.equals) },
+      companyMembership: { findUnique: async () => ({ defaultBranchId: 'branch-a' }) },
+      attachmentObject: {
+        findMany: async ({ where, select }: any) => photos.filter(photo => matches(photo, where)).map(photo => select.originalFileName
+          ? { ...photo, originalFileName: photo.id, mimeType: 'image/jpeg', checksumSha256: photo.id, uploadedByUserId: 'u1', updatedAt } : { id: photo.id }),
+        updateMany: async ({ where, data }: any) => {
+          writes.push(where);
+          const hit = photos.filter(photo => matches(photo, where));
+          for (const photo of hit) { photo.branchId = data.branchId; moved.push(photo.id); }
+          return { count: hit.length };
+        },
+      },
+      reimbursementLine: { findMany: async ({ where }: any) => where.attachmentId.in.filter((id: string) => id === 'photo-claimed').map((attachmentId: string) => ({ attachmentId })) },
+    };
+    const repo = { listReimbursementRequesters: async () => [{ userId: 'u1', displayName: 'Me' }], listReimbursementSources: async () => [] };
+    const adapter = new LineReimbursementDraftAdapterService({ client } as any, repo as any, {} as any, {} as any, {} as any);
+    const build = (input: object, previous?: unknown) => (adapter as any).buildOptions({ ...ctx, scopes: {} },
+      { actionId, taskId: actionId, actionOrdinal: 1, operation: 'CREATE' }, 0, { operation: 'CREATE', subrequestIndex: 0, ...input }, previous, undefined, { owner, epoch: 1 });
+    const offered = (options: any) => options.choices.filter((choice: any) => choice.kind === 'ATTACHMENT').map((choice: any) => choice.label);
+
+    const defaulted = await build({});
+    assert.deepEqual(offered(defaulted), ['photo-new', 'photo-claimed']);
+    const named = await build({ branchChoiceId: defaulted.choices.find((choice: any) => choice.kind === 'BRANCH' && choice.raw.id === 'branch-b').choiceId }, defaulted);
+    assert.deepEqual(offered(named), ['photo-new'], 'the unused photo follows the branch the user names');
+    await build({}, named);
+    assert.deepEqual(moved, ['photo-new', 'photo-new'], 'a photo already on the chosen branch is not rewritten');
+    assert.equal(photos[1]!.branchId, 'branch-a', 'a photo saved on a claim line never moves');
+    for (const { OR: _or, branchId: _branchId, id: _id, ...guards } of writes) assert.deepEqual(guards, { companyId: 'c1', uploadedByUserId: 'u1', status: 'ACTIVE',
+      AND: [{ metadataJson: { path: ['lineReimbursementOwner'], equals: owner } }, { metadataJson: { path: ['lineReimbursementEpoch'], equals: 1 } }],
+      links: { none: {} }, captureFiles: { none: {} } });
+  });
+});

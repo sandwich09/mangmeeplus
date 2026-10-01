@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { conversationReadCandidates, evidenceRefsText, fileAttemptReferenceGrounded, misroutedReadTool, nameFilterGroundedInText, paymentStatusGroundedInText, reimbursementStatusQuestion, resolvePeriodKeyAlias } from './read-tool-input';
+import { conversationReadCandidates, evidenceRefsText, fileAttemptReferenceGrounded, misroutedReadTool, myPendingWorkQuestion, nameFilterGroundedInText, paymentStatusGroundedInText, reimbursementStatusQuestion, resolvePeriodKeyAlias } from './read-tool-input';
 
 const context = (turns: any[]) => ({ windowMinutes: 15, maxTurns: 15, recentTurns: turns });
 
@@ -177,5 +177,21 @@ describe('item 4: misroutedReadTool combinator (shared by the fast lane and the 
   it('leaves every other tool/text combination alone', () => {
     assert.equal(misroutedReadTool('expense.list_recent', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่คะ'), false);
     assert.equal(misroutedReadTool('reimbursement.get_summary', 'ใบเบิกที่ฉันขอไปยังไม่จ่ายใช่ป่ะคะ'), false);
+  });
+});
+
+// Advisor Q2 (owner 2026-09-30): "งานค้างของฉัน" reads the caller's own queues; Q1 "วันนี้มีอะไรต้องทำ" never does.
+describe('advisor Q2: the caller\'s own pending work vs the one-day checklist', () => {
+  it('recognises the caller\'s own pending work', () => {
+    for (const text of ['มีอะไรค้างที่ฉันต้องทำบ้าง', 'งานค้างของฉันมีอะไรบ้างคะ', 'มีงานค้างอะไรบ้าง', 'ฉันมีอะไรค้างอยู่บ้าง', 'มีอะไรรอผมทำอยู่ไหมครับ', 'มีงานอะไรค้างอยู่บ้าง']) {
+      assert.equal(myPendingWorkQuestion(text), true, text);
+    }
+  });
+
+  it('leaves Q1, a named document, and unpaid spending to their own tools', () => {
+    for (const text of ['วันนี้มีอะไรต้องทำบ้าง', 'สรุปวันนี้หน่อย', 'closing วันนี้', 'วันนี้มีอะไรค้างไหม', 'ใบเบิกของฉันค้างอยู่ที่ใคร',
+      'มีใบรับรองค้างเซ็นไหม', 'ฉันค้างจ่ายค่าไฟอยู่เท่าไหร่', 'มีบิลค้างที่ฉันต้องจ่ายไหม', 'งานซ่อมแอร์ค้างจ่ายเท่าไหร่']) {
+      assert.equal(myPendingWorkQuestion(text), false, text);
+    }
   });
 });

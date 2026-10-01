@@ -22,7 +22,7 @@ import {
 import { PartnerLifecycleTransitionUseCase } from './partner-lifecycle-transition.use-case';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
 import { checkPlanTermAdjustment, planTermSourceVersion } from '../plan-term-adjustment';
-import { PLATFORM_SEAT_EXEMPT_ROLE } from '../plan-term-limit';
+import { planCapacityUsed } from '../plan-term-limit';
 import { partnerPlanAdjustmentHistory } from '../partner-plan-adjustment-history';
 
 export const paidPlanReviewRequired = () => new ConflictException({code:'paid_plan_review_required', message:'แพ็กเกจนี้มีรายการชำระเงิน กรุณาใช้หน้าปรับแพ็กเกจชั่วคราวเพื่อตรวจและอนุมัติ'});
@@ -85,8 +85,8 @@ export class GetCompanyPlanTermUseCase {
     });
     // No row is a legitimate answer, not a 404: it is how a grandfathered company reads.
     const [activeBranches, activeMembers] = await Promise.all([
-      this.prisma.client.branch.count({where:{companyId,status:'ACTIVE'}}),
-      this.prisma.client.companyMembership.count({where:{companyId,status:'ACTIVE',roles:{none:{role:PLATFORM_SEAT_EXEMPT_ROLE}}}}),
+      planCapacityUsed.branches(this.prisma.client, companyId),
+      planCapacityUsed.members(this.prisma.client, companyId),
     ]);
     return { term: row ? toPlanTermDto(row as PlanTermRow, new Date()) : null,
       sourceVersion: planTermSourceVersion(companyId, row), activeBranches, activeMembers };
