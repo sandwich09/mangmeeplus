@@ -134,6 +134,50 @@ for (const scenario of [
   assert.deepEqual(tasks, originalTasks); assert.equal(flow.semanticDelivery.has(event), false); assert.equal(flow.deliverySources.has(event), false);
 });
 
+// Production 2026-10-01: the AI credit can run out between a general question's intake and its answer
+// call, whose bound is the larger one. This lane swallowed that refusal — "ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณา
+// ลองใหม่", provider_unavailable — and now answers it with the credit card and a budget status. A credit
+// that could not be checked, like any other failure, keeps the try-again line.
+for (const scenario of [
+  { name: 'spent (owner)', code: 'AI_MONTHLY_BUDGET_EXCEEDED', status: 'ai_budget_exceeded', sentence: /^เครดิต AI ของเดือนนี้หมดแล้วค่ะ/, buttons: ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'] },
+  { name: 'spent (staff)', code: 'AI_MONTHLY_BUDGET_EXCEEDED', status: 'ai_budget_exceeded', sentence: /^เครดิต AI ของเดือนนี้หมดแล้วค่ะ/, buttons: [] },
+  { name: 'too small for this answer (owner)', code: 'AI_BUDGET_INSUFFICIENT', status: 'ai_budget_insufficient', sentence: /^เครดิต AI ที่เหลือของเดือนนี้ไม่พอเริ่มงานนี้ค่ะ/, buttons: ['ดูแพ็กเกจ', 'ขอเปลี่ยนแพ็กเกจ'] },
+  { name: 'not checkable', code: 'AI_BUDGET_UNAVAILABLE', status: 'provider_unavailable', sentence: null, buttons: [] },
+]) it(`answers a general question whose answer call meets an AI credit that is ${scenario.name}`, async () => {
+  const event: any = { webhookEventId: 'evt-credit', messagingChannelId: 'oa', lineUserId: 'line', replyToken: 'reply', messageText: 'กำไรขั้นต้นคืออะไร', inputEvidence: { joinedSha256: 'digest' } };
+  const owner = { companyId: 'company', userId: 'user', membershipId: 'member', chatKeyHash: 'chat' };
+  const grant = { turnKey: 'turn' }, cards: any[] = [], replies: string[] = [], statuses: string[] = [];
+  const route = { status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', semanticSubrequests: [{ index: 0, kind: 'general', goal: 'explain', requiredEvidence: [], requestedFilters: {}, dependsOn: [] }] };
+  const flow: any = Object.create(ProcessLineWebhookUseCase.prototype);
+  Object.assign(flow, {
+    boundConversations: new WeakMap([[event, { owner, id: 'conversation', epoch: 3 }]]), budgetGrantsV2: new WeakMap([[event, grant]]),
+    deliveryAccess: new WeakMap([[event, { fingerprint: 'fp' }]]), semanticDelivery: new WeakMap(), deliverySources: new WeakMap(),
+    config: { webBaseUrl: '', lineAiApprovedKnowledgeEnabled: false },
+    reliabilityContext: async () => ({}),
+    aiGateway: { narrowLineReliabilityGrant: async () => grant, requestLineTurn: async () => {
+      const error: any = new Error(scenario.code); error.getStatus = () => 429; error.getResponse = () => ({ code: scenario.code, budgetScope: 'TOTAL' }); throw error;
+    } },
+    ledger: { appendTurn: async () => 'ledger', ack: async () => assert.fail('a refused answer is not acknowledged as answered') },
+    isTrialTier: async () => false,
+    deliverRequiredMessages: async (_event: unknown, messages: any[]) => { cards.push(...messages); },
+    deliverReply: async (_event: unknown, text: string) => { replies.push(text); },
+    updateEventLog: async (_id: string, status: string, errorCode?: string) => { statuses.push(`${status}:${errorCode}`); },
+  });
+  // Advisor spec §2.2: the package buttons only for a reader who may manage the package.
+  const permissions = ['line.ai.query', ...(scenario.buttons.length ? ['company.plan.manage'] : [])];
+  await flow.deliverPureGeneralV2(event, 'request', route, { permissions, roles: [], scopes: {} }, [], undefined);
+  if (scenario.sentence) {
+    assert.deepEqual(replies, [], 'no try-again line for a refusal that cannot change this month');
+    assert.equal(cards.length, 1); assert.equal(cards[0].type, 'flex'); assert.match(cards[0].canonicalText, scenario.sentence);
+    assert.deepEqual((cards[0].contents.footer?.contents ?? []).map((button: any) => button.action.label), scenario.buttons);
+    if (!scenario.buttons.length) assert.match(cards[0].canonicalText, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ$/);
+    assert.deepEqual(statuses, [`${scenario.status}:${scenario.code}`]);
+  } else {
+    assert.deepEqual(cards, []); assert.deepEqual(replies, ['ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่']);
+    assert.deepEqual(statuses, ['provider_unavailable:AI_GENERAL_UNAVAILABLE']);
+  }
+});
+
 for (const scenario of [
   { name: 'handled', coverage: [{ index: 0, status: 'handled' }], pending: [], pages: false },
   { name: 'denied and unsupported are terminal dispositions', coverage: [{ index: 0, status: 'denied' }, { index: 1, status: 'unsupported' }], pending: [], pages: false },
