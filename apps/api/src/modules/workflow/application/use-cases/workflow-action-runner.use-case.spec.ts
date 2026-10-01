@@ -512,6 +512,18 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       assert.deepEqual(reminded(), ['u_owner', 'u_admin']);
     });
 
+    // Review: a claim that needed no approval was reminded to everyone able, the owner included.
+    it('reminds the people who would have approved a claim nobody had to approve, before everyone else', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin', 'u_manager', 'u_requester']);
+      await runReminder({ requesterUserId: 'u_requester', approverRecipientUserIds: ['u_manager', 'u_requester'] });
+      assert.deepEqual(reminded(), ['u_manager']);
+
+      // None of them can pay: everyone who can.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin']);
+      await runReminder({ requesterUserId: 'u_requester', approverRecipientUserIds: ['u_manager'] });
+      assert.deepEqual(reminded(), ['u_owner', 'u_admin']);
+    });
+
     it('still reminds a solo owner who filed and approved their own claim', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
       await runReminder({ requesterUserId: 'u_owner', approvedByUserId: 'u_owner' });

@@ -170,14 +170,22 @@ export class WorkflowScanCandidatesProvider {
     const ids = rows.map((r) => r.id);
     const approvers = await this.workflowRepo.findClaimApprovers(companyId, ids);
     const lastVoids = await this.workflowRepo.findClaimLastPaymentVoids(companyId, ids);
-    return rows.flatMap((r) => {
+    const candidates: ScanCandidate[] = [];
+    for (const r of rows) {
       const becamePayable = r.financeReviewedAt ?? r.approvedAt ?? r.submittedAt;
       const lastVoid = lastVoids.get(r.id);
       const payableSince = lastVoid && (!becamePayable || lastVoid > becamePayable) ? lastVoid : becamePayable;
       const age = payableSince ? ageHours(payableSince, now) : 0;
-      if (!isSlaRisk(age, r.slaHours)) return [];
+      if (!isSlaRisk(age, r.slaHours)) continue;
       const approver = approvers.get(r.id);
-      return [{
+      const approvedByUserId = approver && (!r.submittedAt || approver.decidedAt >= r.submittedAt) ? approver.userId : undefined;
+      const financeReviewerUserId = r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? r.financeReviewedByUserId : undefined;
+      // Nobody passed or approved this claim: it needed no approval. Its ready-to-pay notice asked
+      // the people who would have approved it, so its reminder asks the same people, not everyone.
+      // ponytail: one route lookup per such overdue claim; batch it if a company ever has many.
+      const wouldApprove = financeReviewerUserId || approvedByUserId ? []
+        : await this.approverRoutes.resolveWouldBeApproverUserIds(companyId, currentPolicy, r).catch(() => []);
+      candidates.push({
         sourceType: 'reimbursement_request',
         sourceId: r.id,
         payload: {
@@ -187,15 +195,17 @@ export class WorkflowScanCandidatesProvider {
           amount: r.outstandingAmount, currency: r.currency,
           // Whose turn it is to pay, for the notice to prefer (owner rule 2026-10-01): the finance
           // reviewer who passed the claim, else whoever approved it in the round it was last sent
-          // in. A claim that needed no approval names nobody, and the notice goes to everyone able.
+          // in, else the people who would have approved a claim that needed no approval.
           requesterUserId: r.requesterUserId,
-          ...(r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && r.financeReviewedByUserId && { financeReviewerUserId: r.financeReviewedByUserId }),
-          ...(approver && (!r.submittedAt || approver.decidedAt >= r.submittedAt) && { approvedByUserId: approver.userId }),
+          ...(financeReviewerUserId && { financeReviewerUserId }),
+          ...(approvedByUserId && { approvedByUserId }),
+          ...(wouldApprove.length > 0 && { approverRecipientUserIds: wouldApprove }),
           // One reminder per time the claim became payable (review M1), not one per scan window.
           ...(payableSince && { notificationPeriodKey: `payable:${payableSince.toISOString()}` }),
         },
-      }];
-    });
+      });
+    }
+    return candidates;
   }
 
   private async taxDueSoon(companyId: string): Promise<ScanCandidate[]> {

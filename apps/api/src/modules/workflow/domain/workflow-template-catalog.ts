@@ -199,9 +199,10 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           triggerKey: 'workflow.reimbursement_payment_sla_breach',
           recipientPermissions: ['reimbursement.payment.record'],
           // The same preference as the ready-to-pay notice, read from what the claim records: the
-          // finance reviewer who passed it, else whoever approved it, when they can record the
-          // payment. Never the requester alone. With no such person, everyone able to record it.
-          preferRecipientPayloadKeys: ['financeReviewerUserId', 'approvedByUserId'],
+          // finance reviewer who passed it, else whoever approved it, else (for a claim nobody had
+          // to approve) the people who would have, when they can record the payment. Never the
+          // requester alone. With no such person, everyone able to record it.
+          preferRecipientPayloadKeys: ['financeReviewerUserId', 'approvedByUserId', 'approverRecipientUserIds'],
           neverPreferRecipientPayloadKeys: ['requesterUserId'],
           severity: 'critical',
           titleTemplate: 'ใบเบิกรอจ่ายเงินเกินกำหนด: {{requestNo}}',
