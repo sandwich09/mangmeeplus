@@ -240,6 +240,24 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_owner', 'u_manager', 'u_requester']);
     });
 
+    // ...unless the event names who would have approved it: they are asked before everyone else.
+    it('ready_for_payment: a claim that needed no approval goes to the people who would have approved it, when they can pay', async () => {
+      const filedByRequester = { actorUserId: 'u_requester', requesterUserId: 'u_requester', decision: 'BELOW_APPROVAL_THRESHOLD' };
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager', 'u_manager_2', 'u_requester']);
+      await runReady({ ...filedByRequester, approverRecipientUserIds: ['u_manager', 'u_manager_2', 'u_requester'] });
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_manager', 'u_manager_2']);
+
+      // None of them can record the payment: everyone who can is told.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_admin']);
+      await runReady({ ...filedByRequester, approverRecipientUserIds: ['u_manager'] });
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_owner', 'u_admin']);
+
+      // Filed on someone's behalf: whoever filed it still comes first.
+      repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner', 'u_manager', 'u_preparer']);
+      await runReady({ actorUserId: 'u_preparer', requesterUserId: 'u_staff', approverRecipientUserIds: ['u_manager'] });
+      assert.deepEqual((notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds, ['u_preparer']);
+    });
+
     it('ready_for_payment: a solo owner who approved their own claim gets the one notice to pay it', async () => {
       repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
       await runReady({ requesterUserId: 'u_owner', actorUserId: 'u_owner' });

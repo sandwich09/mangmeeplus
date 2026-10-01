@@ -206,7 +206,7 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     const cfg = (rule: any) => rule.actionJson[0].configJson;
     const [pinned, edited] = [repo.rules.find((r: any) => r.id === 'pre_0'), repo.rules.find((r: any) => r.id === 'pre_1')];
-    assert.deepEqual(cfg(pinned).preferRecipientPayloadKeys, ['actorUserId']);
+    assert.deepEqual(cfg(pinned).preferRecipientPayloadKeys, ['actorUserId', 'approverRecipientUserIds']);
     assert.deepEqual(cfg(pinned).neverPreferRecipientPayloadKeys, ['requesterUserId']);
     // The runner reads the version snapshot, not the row.
     const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
