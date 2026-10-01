@@ -389,7 +389,9 @@ export type ReimbursementLineSummary = {
 // Every other desk is a permission pool and prints as the pool, never as a
 // guessed person.
 
-export type ReimbursementCurrentDeskKind = 'REQUESTER' | 'APPROVER' | 'FINANCE' | 'PAYMENT';
+// `SYSTEM`: nobody's turn. The claim's decision is already made (approved, or being cancelled) and
+// the system has not finished moving it on; while it is there, nobody is asked to approve or pay it.
+export type ReimbursementCurrentDeskKind = 'REQUESTER' | 'APPROVER' | 'FINANCE' | 'PAYMENT' | 'SYSTEM';
 
 export type ReimbursementCurrentDesk = {
   kind: ReimbursementCurrentDeskKind;
@@ -408,7 +410,14 @@ export const REIMBURSEMENT_DESK_LABELS: Record<ReimbursementCurrentDeskKind, str
   APPROVER: 'ผู้มีสิทธิ์อนุมัติ',
   FINANCE: 'ฝ่ายการเงิน',
   PAYMENT: 'ผู้มีสิทธิ์บันทึกจ่าย',
+  SYSTEM: 'ระบบ',
 };
+
+/**
+ * What a claim on the system's desk is said to wait for: the words of the LINE backlog answer, and of
+ * the claim page's step note and timeline row for the same claim.
+ */
+export const REIMBURSEMENT_SYSTEM_WAIT_LABEL = 'รอระบบปรับสถานะ';
 
 // ---- หน้ารวม (hub) buckets ----
 
@@ -434,8 +443,8 @@ const HUB_BUCKET_BY_STATUS: Record<ReimbursementRequestStatus, ReimbursementHubB
 
 /**
  * The hub bucket of a claim: the desk it waits at, the one its row prints as "อยู่ที่ …". A claim with no
- * desk, or with a desk kind this code does not know, is placed by its status: a draft is a draft whether
- * or not the row carries a desk. One rule for the cards, the chips and the list.
+ * desk, with the system's desk, or with a desk kind this code does not know, is placed by its status: a
+ * draft is a draft whether or not the row carries a desk. One rule for the cards, the chips and the list.
  */
 export function reimbursementHubBucket(claim: {
   status?: string;

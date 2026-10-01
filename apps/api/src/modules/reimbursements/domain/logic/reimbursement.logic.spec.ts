@@ -604,13 +604,28 @@ describe('currentDesk', () => {
     assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL' }), { kind: 'APPROVER' });
   });
 
-  it('ignores steps that are no longer pending', () => {
-    const desk = currentDesk({
-      status: 'PENDING_APPROVAL',
-      steps: [pendingStep({ status: 'APPROVED', approverUserId: 'u-1' })],
-      names,
-    });
-    assert.deepEqual(desk, { kind: 'APPROVER' });
+  // Audit B4. Before: a claim whose step was already APPROVED answered the approver desk, so the claim page
+  // said "อยู่ที่ ผู้มีสิทธิ์อนุมัติ" under a timeline that said "อนุมัติโดย …", while LINE said รอระบบปรับสถานะ.
+  it('answers the system desk once the loaded steps hold no pending one: the approval is decided', () => {
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [pendingStep({ status: 'APPROVED', approverUserId: 'u-1' })], names }), { kind: 'SYSTEM' });
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [] }), { kind: 'SYSTEM' });
+    // A step withdrawn or superseded is not a decision, but it is not waiting either.
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL', steps: [pendingStep({ invalidatedAt: new Date('2026-08-01T00:00:00Z') })] }), { kind: 'SYSTEM' });
+    // Steps the caller did not load say nothing: the pool, as before.
+    assert.deepEqual(currentDesk({ status: 'PENDING_APPROVAL' }), { kind: 'APPROVER' });
+  });
+
+  // Audit B3. Before: a claim being cancelled kept the desk of its status, though approval and payment were refused.
+  it('answers the system desk for a claim that is being cancelled, in every status that has a desk', () => {
+    const steps = [pendingStep({ assignedApproverUserIds: ['u-1'] })];
+    for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'] as const) {
+      assert.deepEqual(currentDesk({ status, financeReviewStatus: 'PENDING', steps, names, cancellationPending: true }), { kind: 'SYSTEM' }, status);
+      assert.notEqual(currentDesk({ status, steps, names })?.kind, 'SYSTEM', `${status}, not being cancelled`);
+    }
+    // A cancelled claim keeps the intent it was cancelled with; like every finished claim it has no desk.
+    for (const status of ['PAID', 'REJECTED', 'CANCELLED', 'VOIDED'] as const) {
+      assert.equal(currentDesk({ status, cancellationPending: true }), undefined, status);
+    }
   });
 });
 

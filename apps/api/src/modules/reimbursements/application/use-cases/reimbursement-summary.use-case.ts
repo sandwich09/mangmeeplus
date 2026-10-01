@@ -1,5 +1,7 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
-import { civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, type RequestContext, type ReimbursementAiSummary } from '@watchdog-bms/contracts';
+import {
+  civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, type RequestContext, type ReimbursementAiSummary,
+} from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
@@ -78,7 +80,8 @@ export const BACKLOG_DESK_LABELS = {
   finance: `${REIMBURSEMENT_DESK_LABELS.FINANCE} (รอตรวจสอบ)`,
   payment: REIMBURSEMENT_DESK_LABELS.PAYMENT,
   no_active_approver: 'ไม่มีผู้อนุมัติที่ยังใช้งานอยู่',
-  status_pending: 'รอระบบปรับสถานะ',
+  // The system's desk: the same words the claim page prints for the same claim.
+  status_pending: REIMBURSEMENT_SYSTEM_WAIT_LABEL,
 } as const;
 export const SHARED_PILE_LABEL = 'กองกลาง (อนุมัติได้หลายคน)';
 /** The recovery rule (`frozenApprovalAuthority` FALLBACK → `matchesApproverRole`), so the answer names the real next
@@ -159,6 +162,9 @@ export class GetReimbursementApprovalBacklogUseCase {
     const desk = (kind: BacklogDeskKind) => ({ key: kind, kind });
     const pile = { key: 'pile' };
     const deskOf = (row: ReimbursementRequestRecord): { key: string; kind?: BacklogDeskKind; approverUserId?: string } => {
+      // Being cancelled: approval and payment are refused meanwhile, so it waits for no approver and no payer
+      // (audit B3). The web's desk rule (`currentDesk`) says the same of it.
+      if (row.cancellationPendingAt) return desk('status_pending');
       if (row.status !== 'PENDING_APPROVAL') {
         return currentDesk({ status: row.status, financeReviewStatus: row.financeReviewStatus })?.kind === 'FINANCE' ? desk('finance') : desk('payment');
       }

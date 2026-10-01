@@ -432,22 +432,33 @@ export type CurrentDeskStepFields = {
 export function currentDesk(input: {
   status: ReimbursementRequestStatus;
   financeReviewStatus?: ReimbursementFinanceReviewStatus;
+  /** The claim's approval steps when the caller loaded them; left out, nothing is concluded from their absence. */
   steps?: readonly CurrentDeskStepFields[];
   names?: Record<string, string>;
+  /** A cancellation was started and has not completed. */
+  cancellationPending?: boolean;
 }): ReimbursementCurrentDesk | undefined {
+  // A claim being cancelled is with the system whatever its status: nobody approves or pays it meanwhile
+  // (audit B3). A finished claim keeps having no desk.
+  const cancelling = (desk: ReimbursementCurrentDesk): ReimbursementCurrentDesk => (input.cancellationPending ? { kind: 'SYSTEM' } : desk);
   switch (input.status) {
-    case 'DRAFT': return { kind: 'REQUESTER' };
-    case 'FINANCE_REVIEW': return { kind: 'FINANCE' };
+    case 'DRAFT': return cancelling({ kind: 'REQUESTER' });
+    case 'FINANCE_REVIEW': return cancelling({ kind: 'FINANCE' });
     case 'READY_FOR_PAYMENT':
-    case 'PARTIALLY_PAID': return { kind: 'PAYMENT' };
+    case 'PARTIALLY_PAID': return cancelling({ kind: 'PAYMENT' });
     // Transient: approved, waiting for the projection to route it on to one of the two.
-    case 'APPROVED': return { kind: input.financeReviewStatus === 'PENDING' ? 'FINANCE' : 'PAYMENT' };
+    case 'APPROVED': return cancelling({ kind: input.financeReviewStatus === 'PENDING' ? 'FINANCE' : 'PAYMENT' });
     case 'PENDING_APPROVAL': break;
     default: return undefined;
   }
+  if (input.cancellationPending) return { kind: 'SYSTEM' };
   const step = [...(input.steps ?? [])]
     .filter((s) => s.status === 'PENDING' && !s.invalidatedAt)
     .sort((a, b) => a.sequenceNo - b.sequenceNo)[0];
+  // Decided (audit B4): the steps were loaded and none is waiting. The approval is durable and the claim
+  // stays PENDING_APPROVAL only until the system has built its expense records. It waits for no approver,
+  // which is what the LINE backlog answer has always said of it ("รอระบบปรับสถานะ").
+  if (input.steps && !step) return { kind: 'SYSTEM' };
   const names = [...new Set([
     ...(step?.assignedApproverUserIds ?? []),
     ...(step?.approverUserId ? [step.approverUserId] : []),

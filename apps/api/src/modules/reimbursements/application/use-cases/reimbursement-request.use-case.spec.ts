@@ -15,7 +15,9 @@ import {
 } from './reimbursement-request.use-case';
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere } from '../../infrastructure/prisma-reimbursement.repository';
-import { isExpenseVoidReason, reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { GetReimbursementApprovalBacklogUseCase } from './reimbursement-summary.use-case';
+import { toRequestSummary } from '../dto/reimbursement.mapper';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
 import { claimSignatureAckHash, claimSnapshotFields, computeSnapshotHash } from '../../domain/logic/reimbursement.logic';
@@ -662,6 +664,73 @@ describe('CancelReimbursementUseCase', () => {
     await useCases(blank).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     assert.equal((await new CancelReimbursementUseCase(blank.repo, noopAudit, realVoid).execute(requester, 'rb-1', '   ')).status, 'CANCELLED');
     assert.equal(blank.request.rejectionReason, 'ยกเลิกคำขอเบิกค่าใช้จ่าย');
+  });
+});
+
+// Owner rule 2026-10-01 (payout spec §25.1 I2), for the two stuck states of audit B3 and B4: what LINE says a
+// claim waits for and the desk the web prints for it come from the same rows, and name the same party.
+describe('a claim the system holds reads the same on LINE and on the web', () => {
+  const NOW = new Date('2026-10-01T03:00:00.000Z');
+  const row = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id, companyId: 'co-1', branchId: 'b1', requestNo: `RB-${id}`, requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'สมชาย',
+    reason: 'แท็กซี่', categoryKey: 'travel', amount: '100.0000', outstandingAmount: '100.0000', paymentTotalAmount: '0.0000', currency: 'THB',
+    incurredDate: NOW, status: 'PENDING_APPROVAL', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH',
+    receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required', submittedAt: new Date('2026-09-29T03:00:00.000Z'),
+    createdAt: new Date('2026-09-29T02:00:00.000Z'), updatedAt: NOW, ...overrides,
+  }) as any;
+  const pendingStep = (requestId: string) => ({ id: `step-${requestId}`, companyId: 'co-1', reimbursementRequestId: requestId, sequenceNo: 1,
+    status: 'PENDING', assignedApproverUserIds: ['mgr-1'], approverRoleSnapshot: 'MANAGER' }) as any;
+  const cancelling = { cancellationPendingAt: NOW, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' };
+
+  it('says รอระบบปรับสถานะ on LINE exactly where the web desk is the system, and counts neither as waiting for approval', async () => {
+    const rows = [
+      row('waiting'),                                                          // an ordinary claim waiting for สมศรี
+      row('decided'),                                                          // approved, the system has not moved it on (B4)
+      row('cancel-at-approval', cancelling),                                   // being cancelled while it waited for สมศรี (B3)
+      row('cancel-at-payment', { ...cancelling, status: 'READY_FOR_PAYMENT', approvedAt: NOW }),
+      row('cancel-at-finance', { ...cancelling, status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING', approvedAt: NOW }),
+      row('paying', { status: 'READY_FOR_PAYMENT', approvedAt: NOW }),         // an ordinary claim waiting for payment
+    ];
+    const steps = [pendingStep('waiting'), pendingStep('cancel-at-approval')];
+    const repo = {
+      listRequests: async () => rows,
+      findPendingApprovalSteps: async (_companyId: string, ids: string[]) => steps.filter((step) => ids.includes(step.reimbursementRequestId)),
+      findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+      getUserDisplayNames: async () => ({ 'mgr-1': 'สมศรี' }),
+    } as any;
+
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(repo, noopAudit).execute(ctx({ permissions: ['reimbursement.read'] }), {}, NOW);
+    const lineSays: Record<string, string> = Object.fromEntries(backlog.items.map((item) => [item.id, item.waitingOn]));
+    // The web's row for the same claim, as the hub list builds it: the claim with its pending steps.
+    const webDesk: Record<string, { kind: string; names?: string[] } | undefined> = Object.fromEntries(rows.map((claim) => [claim.id,
+      toRequestSummary({ ...claim, approvalSteps: steps.filter((step) => step.reimbursementRequestId === claim.id) }, { approverNames: { 'mgr-1': 'สมศรี' } }).currentDesk]));
+
+    for (const claim of rows) {
+      assert.equal(lineSays[claim.id] === REIMBURSEMENT_SYSTEM_WAIT_LABEL, webDesk[claim.id]?.kind === 'SYSTEM', claim.id);
+    }
+    assert.deepEqual(lineSays, {
+      waiting: 'สมศรี', decided: REIMBURSEMENT_SYSTEM_WAIT_LABEL, 'cancel-at-approval': REIMBURSEMENT_SYSTEM_WAIT_LABEL,
+      'cancel-at-payment': REIMBURSEMENT_SYSTEM_WAIT_LABEL, 'cancel-at-finance': REIMBURSEMENT_SYSTEM_WAIT_LABEL, paying: REIMBURSEMENT_DESK_LABELS.PAYMENT,
+    });
+    assert.deepEqual(webDesk, {
+      waiting: { kind: 'APPROVER', names: ['สมศรี'] }, decided: { kind: 'SYSTEM' }, 'cancel-at-approval': { kind: 'SYSTEM' },
+      'cancel-at-payment': { kind: 'SYSTEM' }, 'cancel-at-finance': { kind: 'SYSTEM' }, paying: { kind: 'PAYMENT' },
+    });
+    // LINE's wording for the group is unchanged, and a claim the system holds is not "waiting for approval".
+    assert.equal(REIMBURSEMENT_SYSTEM_WAIT_LABEL, 'รอระบบปรับสถานะ');
+    assert.deepEqual(backlog.desks.find((desk) => desk.kind === 'status_pending'), {
+      kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 4, totalsByCurrency: [{ currency: 'THB', amount: '400.00' }],
+      oldestSubmittedOn: '2026-09-29', longestWaitDays: 2,
+    });
+    assert.deepEqual([backlog.total, backlog.awaitingApprovalCount, backlog.byApprover.map((group) => [group.name, group.count])], [6, 1, [['สมศรี', 1]]]);
+    // The new desk moves no claim between the hub's buckets: a row on it sits where its status puts it, which is
+    // where the cards counted it (the cards count by status).
+    for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'] as const) {
+      for (const financeReviewStatus of ['NOT_REQUIRED', 'PENDING', 'APPROVED_FOR_PAYMENT']) {
+        assert.equal(reimbursementHubBucket({ status, financeReviewStatus, currentDesk: { kind: 'SYSTEM' } }), hubBucketOfStatus(status, financeReviewStatus),
+          `${status}/${financeReviewStatus}`);
+      }
+    }
   });
 });
 

@@ -67,6 +67,7 @@ export function toRequestSummary(
     financeReviewStatus: r.financeReviewStatus,
     steps: r.approvalSteps,
     names: options.approverNames,
+    cancellationPending: !!r.cancellationPendingAt,
   });
   return {
     id: r.id,
