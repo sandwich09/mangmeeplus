@@ -205,7 +205,7 @@ describe('payment form: the slip', () => {
     for (const row of rows) assert.match(row.cls, /\bmin-h-11\b/u);
     assert.doesNotMatch(picker, /<input type="radio"[^>]*checked=""/u, 'nothing is chosen for the payer');
     // One way to look at each before choosing, 44 px high; none where the host cannot open files (the hub's quick form).
-    assert.equal((picker.match(/<button type="button" class="[^"]*\bmin-h-11\b[^"]*">เปิดดูไฟล์นี้<\/button>/gu) ?? []).length, 2);
+    assert.equal((picker.match(/<button type="button" class="[^"]*\bmin-h-11\b[^"]*" aria-busy="false">เปิดดูไฟล์นี้<\/button>/gu) ?? []).length, 2);
     assert.ok(visible(picker).includes('ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน เปิดดูก่อนเลือกได้'));
     const withoutOpener = paymentForm(withBoth, { method: 'BANK_TRANSFER' });
     assert.doesNotMatch(withoutOpener, /เปิดดูไฟล์นี้|เปิดดูก่อนเลือกได้/u);

@@ -451,7 +451,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
                   </label>
                   {onOpenFile && (
                     <button type="button" className="ml-8 min-h-11 text-left text-sm text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
-                      disabled={busy} onClick={() => onOpenFile(choice)}>
+                      disabled={busy} aria-busy={Boolean(busy)} onClick={() => onOpenFile(choice)}>
                       เปิดดูไฟล์นี้
                     </button>
                   )}
