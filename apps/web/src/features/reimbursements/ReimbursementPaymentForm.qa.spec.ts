@@ -65,7 +65,7 @@ const paid = { ...base, status: 'PAID', paymentStatus: 'PAID', outstandingAmount
  * order (fields, the payer's statement, slip, error, busy), so the first two `null` initial values are the
  * slip and the error. A method not given is the one the form itself starts from.
  */
-function paymentForm(request: object, state: { method?: string; slip?: object; error?: string } = {}): string {
+function paymentForm(request: object, state: { method?: string; slip?: object; error?: string } = {}, onOpenFile?: (choice: unknown) => void): string {
   const realUseState = reactRuntime.useState;
   let nulls = 0;
   Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
@@ -81,7 +81,7 @@ function paymentForm(request: object, state: { method?: string; slip?: object; e
   });
   try {
     return renderToStaticMarkup(h(ToastContext.Provider, { value: toast },
-      h(sections.PaymentForm, { companyId: 'company-1', request, onCancel: noop, onDone: noop })));
+      h(sections.PaymentForm, { companyId: 'company-1', request, onCancel: noop, onDone: noop, ...(onOpenFile && { onOpenFile }) })));
   } finally { Reflect.set(reactRuntime, 'useState', realUseState); }
 }
 
@@ -176,11 +176,42 @@ describe('payment form: the slip', () => {
 
     const withFiles = { ...base, payments: [voidedTransfer], signedCopies: [misfiled] };
     assert.ok(visible(paymentForm(withFiles, { method: 'BANK_TRANSFER' })).includes('เลือกจากไฟล์ที่แนบไว้ในใบนี้'));
-    // Choosing the misfiled signed copy says what will happen to it.
-    const chosen = visible(paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.copy, name: 'สลิปโอนเงิน.jpg · แนบไว้ที่ใบเบิกที่เซ็นแล้ว' } }));
-    assert.ok(chosen.some((text) => text.startsWith('เมื่อบันทึกจ่าย ไฟล์นี้จะย้ายจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้')));
-    const earlierSlip = visible(paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.oldSlip, name: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001' } }));
-    assert.equal(earlierSlip.some((text) => text.startsWith('เมื่อบันทึกจ่าย ไฟล์นี้จะย้าย')), false);
+    // Choosing the misfiled signed copy says what will happen to it, and names the file.
+    const chosenHtml = paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.copy, name: 'สลิปโอนเงิน.jpg' } });
+    const note = /data-testid="reimbursement-payment-slip-move-note">([\s\S]*?)<\/p>/u.exec(chosenHtml)?.[1]?.replace(/<[^>]+>/gu, '') ?? '';
+    assert.equal(note, 'เมื่อบันทึกจ่าย ไฟล์ สลิปโอนเงิน.jpg จะย้ายออกจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้ และย้ายกลับไม่ได้ ถ้าเคยยืนยันว่าไฟล์นี้คือใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น');
+    const earlierSlip = paymentForm(withFiles, { method: 'BANK_TRANSFER', slip: { attachmentId: ids.oldSlip, name: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001' } });
+    assert.doesNotMatch(earlierSlip, /reimbursement-payment-slip-move-note/);
+  });
+
+  // Upgrade test 2026-10-02: a drop-down of names. The signed PDF came first and was picked as the slip, and nothing on
+  // the page said what either file was or let the payer look before choosing.
+  it('lists those files as choices of 44 px that say what each is, pictures first, each opened before it is chosen', () => {
+    const signedForm = { attachmentId: 'att-form', fileName: 'signed-form-2.pdf', uploadedAt: '2026-09-30T05:00:00.000Z', acknowledgedAt: '2026-09-30T05:00:00.000Z', acknowledgedByName: 'สมชาย' };
+    const withBoth = { ...base, signedCopies: [signedForm, misfiled] };
+    const opened: unknown[] = [];
+    const html = paymentForm(withBoth, { method: 'BANK_TRANSFER' }, (choice) => opened.push(choice));
+    const list = html.slice(html.indexOf('data-testid="reimbursement-payment-slip-choices"'));
+    const picker = list.slice(0, list.indexOf('</div></div></div>'));
+    assert.doesNotMatch(html, /<select[^>]*aria-label="เลือกจากไฟล์ที่แนบไว้ในใบนี้"/u, 'no drop-down');
+    assert.match(picker, /role="radiogroup" aria-label="เลือกจากไฟล์ที่แนบไว้ในใบนี้"/u);
+    const rows = [...picker.matchAll(/<label class="([^"]*)"><input type="radio"[^>]*\/?>(?:<\/input>)?<span class="min-w-0"><span[^>]*>([^<]*)<\/span><span[^>]*>([^<]*)<\/span>/gu)]
+      .map((match) => ({ cls: match[1]!, name: match[2]!, what: match[3]! }));
+    assert.deepEqual(rows.map((row) => [row.name, row.what]), [
+      ['สลิปโอนเงิน.jpg', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
+      ['signed-form-2.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
+    ], picker.slice(0, 900));
+    for (const row of rows) assert.match(row.cls, /\bmin-h-11\b/u);
+    assert.doesNotMatch(picker, /<input type="radio"[^>]*checked=""/u, 'nothing is chosen for the payer');
+    // One way to look at each before choosing, 44 px high; none where the host cannot open files (the hub's quick form).
+    assert.equal((picker.match(/<button type="button" class="[^"]*\bmin-h-11\b[^"]*">เปิดดูไฟล์นี้<\/button>/gu) ?? []).length, 2);
+    assert.ok(visible(picker).includes('ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน เปิดดูก่อนเลือกได้'));
+    const withoutOpener = paymentForm(withBoth, { method: 'BANK_TRANSFER' });
+    assert.doesNotMatch(withoutOpener, /เปิดดูไฟล์นี้|เปิดดูก่อนเลือกได้/u);
+    // The file that is chosen is marked, and it is the one the sentence names.
+    const chosen = paymentForm(withBoth, { method: 'BANK_TRANSFER', slip: { attachmentId: 'att-form', name: 'signed-form-2.pdf' } });
+    assert.match(chosen, /data-testid="reimbursement-payment-slip-move-note">เมื่อบันทึกจ่าย ไฟล์ <span class="font-semibold">signed-form-2\.pdf<\/span> จะย้ายออกจากรายการใบเบิกที่เซ็นแล้ว/u);
+    assert.equal((chosen.match(/<input type="radio"[^>]*checked=""/gu) ?? []).length, 1);
   });
 });
 

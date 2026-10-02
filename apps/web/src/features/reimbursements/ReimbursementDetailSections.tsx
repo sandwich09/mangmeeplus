@@ -37,7 +37,8 @@ import {
 import {
   NOTE_HAS_ACCOUNT_NUMBER,
   approvalStepCorrectionNote, buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
-  rowHasFinanceReview, savePaymentForm, slipTargetPayment, sumLineAmounts, timelineDateText, type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip,
+  rowHasFinanceReview, savePaymentForm, slipTargetPayment, sumLineAmounts, timelineDateText,
+  type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip, type PaymentSlipChoice,
 } from './reimbursements.logic';
 import { PayerConfirmationCheck } from './ReimbursementPayout';
 import {
@@ -353,7 +354,14 @@ function SignedCopyDialog({ requestNo, fileName, canDeclare, onClose, onSend }: 
  * Full payment only (MVP). A modal in the hub queue; inline in the journey card, never a modal on mobile.
  * `request` is the claim detail where the host has it: files already attached to the claim can serve as the slip.
  */
-export function PaymentForm({ companyId, request, onCancel, onDone }: { companyId: string; request: any; onCancel: () => void; onDone: () => void }) {
+export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }: {
+  companyId: string;
+  request: any;
+  onCancel: () => void;
+  onDone: () => void;
+  /** Opens a file already on the claim, so the payer sees what it is before choosing it as the slip. Where the host can. */
+  onOpenFile?: (choice: PaymentSlipChoice) => void;
+}) {
   const toast = useToast();
   // The method starts from what the requester asked for (spec §12.2): the claim's own receiving method.
   // A legacy claim asked for nothing, so nothing is chosen for its payer. เงินสด is never a fallback
@@ -425,15 +433,34 @@ export function PaymentForm({ companyId, request, onCancel, onDone }: { companyI
           {slipRequired ? 'จ่ายด้วยการโอนต้องแนบสลิป' : 'แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้'} · PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF ขนาดไม่เกิน 10 MB
         </p>
         {attached.length > 0 && (
-          <div className="mt-2">
-            <ThemedSelect className={inputClass} aria-label="เลือกจากไฟล์ที่แนบไว้ในใบนี้" disabled={busy} value={chosen?.attachmentId ?? ''}
-              onChange={e => { const choice = attached.find(row => row.attachmentId === e.target.value); setSlip(choice ? { attachmentId: choice.attachmentId, name: choice.label } : null); }}>
-              <option value="">เลือกจากไฟล์ที่แนบไว้ในใบนี้</option>
-              {attached.map(choice => <option key={choice.attachmentId} value={choice.attachmentId}>{choice.label}</option>)}
-            </ThemedSelect>
+          <div className="mt-3 [overflow-wrap:anywhere]" data-testid="reimbursement-payment-slip-choices">
+            <div className="text-xs font-semibold text-gray-600">เลือกจากไฟล์ที่แนบไว้ในใบนี้</div>
+            <p className="mb-2 mt-1 text-xs leading-5 text-gray-500">ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน{onOpenFile ? ' เปิดดูก่อนเลือกได้' : ''}</p>
+            {/* A list, not a drop-down: each file says what it is on this claim and can be opened before it is chosen. */}
+            <div role="radiogroup" aria-label="เลือกจากไฟล์ที่แนบไว้ในใบนี้" className="space-y-2">
+              {attached.map(choice => (
+                <div key={choice.attachmentId} className={cx('rounded-xl border px-3 py-2', chosen?.attachmentId === choice.attachmentId ? 'border-brand-300 bg-brand-25' : 'border-gray-200')}>
+                  <label className="flex min-h-11 cursor-pointer items-start gap-3">
+                    <input type="radio" name="reimbursement-payment-slip-choice" className="mt-0.5 h-5 w-5 shrink-0" disabled={busy}
+                      checked={chosen?.attachmentId === choice.attachmentId}
+                      onChange={() => setSlip({ attachmentId: choice.attachmentId, name: choice.label })} />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-gray-900">{choice.label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-gray-500">{choice.what}</span>
+                    </span>
+                  </label>
+                  {onOpenFile && (
+                    <button type="button" className="ml-8 min-h-11 text-left text-sm text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
+                      disabled={busy} onClick={() => onOpenFile(choice)}>
+                      เปิดดูไฟล์นี้
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
             {chosen?.kind === 'signed-copy' && (
-              <p className="mt-1 text-xs leading-5 text-gray-500">
-                เมื่อบันทึกจ่าย ไฟล์นี้จะย้ายจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้ ถ้าเคยยืนยันว่าไฟล์นี้คือใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น
+              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800" data-testid="reimbursement-payment-slip-move-note">
+                เมื่อบันทึกจ่าย ไฟล์ <span className="font-semibold">{chosen.label}</span> จะย้ายออกจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้ และย้ายกลับไม่ได้ ถ้าเคยยืนยันว่าไฟล์นี้คือใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น
               </p>
             )}
           </div>

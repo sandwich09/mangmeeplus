@@ -137,14 +137,35 @@ describe('files already on the claim that can be the slip', () => {
       payments: [voided(), voided({ id: 'pay-0', paymentNo: 'RBPAY-202609-00000', slips: [slip('att-slip-1'), slip('att-slip-0')] })],
       signedCopies: [declaredCopy],
     });
+    const WAS_A_SLIP = 'เคยเป็นสลิปของการจ่ายที่ยกเลิกไปแล้ว ใช้กับการจ่ายครั้งนี้ได้ถ้าเป็นการโอนรายการเดียวกัน';
     assert.deepEqual(paymentSlipChoices(detail), [
-      { attachmentId: 'att-slip-1', kind: 'previous-slip', label: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001' },
-      { attachmentId: 'att-slip-0', kind: 'previous-slip', label: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00000 (ไฟล์ที่ 2)' },
-      { attachmentId: 'att-copy', kind: 'signed-copy', label: 'สลิปโอนเงิน.jpg · แนบไว้ที่ใบเบิกที่เซ็นแล้ว' },
+      { attachmentId: 'att-slip-1', kind: 'previous-slip', paymentId: 'pay-1', label: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001', what: WAS_A_SLIP },
+      { attachmentId: 'att-slip-0', kind: 'previous-slip', paymentId: 'pay-0', label: 'สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00000 (ไฟล์ที่ 2)', what: WAS_A_SLIP },
+      { attachmentId: 'att-copy', kind: 'signed-copy', fileName: 'สลิปโอนเงิน.jpg', label: 'สลิปโอนเงิน.jpg',
+        what: 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ' },
     ]);
     // A standing payment's slip is not offered again, and a queue row (no attachments at all) offers nothing.
     assert.deepEqual(paymentSlipChoices(claim()), []);
     assert.deepEqual(paymentSlipChoices({ id: 'rb-1', outstandingAmount: '500.0000' }), []);
+  });
+
+  // Upgrade test 2026-10-02: the signed PDF was listed before the e-slip, by a name and nothing else, and was picked as the slip.
+  it('lists the pictures among the signed copies before their PDFs, and says of each file what it is on this claim', () => {
+    const signedForm = { attachmentId: 'att-form', fileName: 'signed-form-2.pdf', uploadedAt: '2026-09-29T06:00:00.000Z', acknowledgedAt: '2026-09-29T06:00:00.000Z', acknowledgedByName: 'สมชาย' };
+    const eslip = { attachmentId: 'att-eslip', fileName: 'eslip-2.JPG', uploadedAt: '2026-09-29T05:00:00.000Z', acknowledgedAt: '2026-09-29T05:00:00.000Z', acknowledgedByName: 'สมชาย' };
+    const plain = { attachmentId: 'att-plain', fileName: 'หลักฐาน.png', uploadedAt: '2026-09-29T04:00:00.000Z' };
+    const before = { attachmentId: 'att-before', fileName: 'ใบเบิกเก่า.pdf', uploadedAt: '2026-09-29T03:00:00.000Z', beforePayoutCorrection: true as const };
+    // The API lists them newest first: the signed form on top. The picker puts the pictures first, each group still newest first.
+    const choices = paymentSlipChoices(claim({ status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', payments: [], signedCopies: [signedForm, eslip, plain, before] }));
+    assert.deepEqual(choices.map((choice) => [choice.label, choice.what]), [
+      ['eslip-2.JPG', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
+      ['หลักฐาน.png', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นไฟล์แนบทั่วไป'],
+      ['signed-form-2.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
+      ['ใบเบิกเก่า.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นสำเนาก่อนแก้บัญชีรับเงิน'],
+    ]);
+    // What the page needs to open each before it is chosen: the file's own name, or the payment a slip belongs to.
+    assert.deepEqual(choices.map((choice) => choice.fileName), ['eslip-2.JPG', 'หลักฐาน.png', 'signed-form-2.pdf', 'ใบเบิกเก่า.pdf']);
+    assert.equal(paymentSlipChoices(claim({ payments: [voided()], signedCopies: [] }))[0]!.paymentId, 'pay-1');
   });
 
   it('lets a payment-record holder add slips to a recorded payment only, five at most', () => {

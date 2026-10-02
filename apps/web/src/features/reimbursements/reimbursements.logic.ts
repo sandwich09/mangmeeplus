@@ -21,7 +21,7 @@ import {
   MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, REQUESTER_SELF_ATTESTED, type PaymentFormPayout,
 } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
-import { PAYOUT_METHOD_TEXT, payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
+import { PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
 import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS } from '@watchdog-bms/contracts';
 
 /**
@@ -247,13 +247,36 @@ export function validatePaymentForm(input: {
 
 // ---- Payment slips (สลิปการจ่ายเงินคืน) ----
 
-/** A file already on the claim that can serve as the slip of a payment, without uploading it again. */
-export type PaymentSlipChoice = { attachmentId: string; label: string; kind: 'previous-slip' | 'signed-copy' };
+/** "ไฟล์ PDF" or "ไฟล์รูปภาพ", from the name a file was attached under: what a person sees before opening it. */
+export function attachedFileKindText(fileName: unknown): string {
+  return /\.pdf$/iu.test(String(fileName ?? '')) ? 'ไฟล์ PDF' : 'ไฟล์รูปภาพ';
+}
+
+/**
+ * A file already on the claim that can serve as the slip of a payment, without uploading it again: its name, what it
+ * is on this claim today, and what the page needs to open it before it is chosen.
+ */
+export type PaymentSlipChoice = {
+  attachmentId: string;
+  kind: 'previous-slip' | 'signed-copy';
+  /** The name the payer reads: the file's own name, or which voided payment it was the slip of. */
+  label: string;
+  /** What the file is on this claim today: its type, where it is filed, and what its attacher declared it to be. */
+  what: string;
+  /** signed-copy: the file's name, for opening it as an attachment of the claim. */
+  fileName?: string;
+  /** previous-slip: the payment it is the slip of, for opening it through the slip's own endpoint. */
+  paymentId?: string;
+};
 
 /**
  * Files already attached to the claim that the payer may use as the slip: slips of payments since
  * voided (the same transfer, recorded again), and files in ใบเบิกที่เซ็นแล้ว (a slip attached there
  * by mistake). The API accepts exactly these two kinds beside a fresh slip upload.
+ *
+ * In the order a payer looks for a slip: what was a slip before, then the images among the signed copies, then
+ * their PDFs. A slip is a picture far more often than a signed form is, and the form listed first was picked as
+ * the slip (upgrade test 2026-10-02). Each says what it is, because a name alone did not.
  */
 export function paymentSlipChoices(detail: any): PaymentSlipChoice[] {
   const choices: PaymentSlipChoice[] = [];
@@ -262,12 +285,19 @@ export function paymentSlipChoices(detail: any): PaymentSlipChoice[] {
     if (payment.status !== 'VOIDED') continue;
     const slips: any[] = payment.slips ?? [];
     slips.forEach((slip, index) => add({
-      attachmentId: slip.attachmentId, kind: 'previous-slip',
+      attachmentId: slip.attachmentId, kind: 'previous-slip', paymentId: payment.id,
       label: `สลิปของการจ่ายที่ยกเลิกแล้ว ${payment.paymentNo ?? ''}`.trim() + (slips.length > 1 ? ` (ไฟล์ที่ ${index + 1})` : ''),
+      what: 'เคยเป็นสลิปของการจ่ายที่ยกเลิกไปแล้ว ใช้กับการจ่ายครั้งนี้ได้ถ้าเป็นการโอนรายการเดียวกัน',
     }));
   }
-  for (const copy of detail?.signedCopies ?? []) {
-    add({ attachmentId: copy.attachmentId, kind: 'signed-copy', label: `${copy.fileName} · แนบไว้ที่ใบเบิกที่เซ็นแล้ว` });
+  const copies: any[] = [...(detail?.signedCopies ?? [])];
+  const isPdf = (copy: any) => /\.pdf$/iu.test(String(copy?.fileName ?? ''));
+  for (const copy of [...copies.filter((row) => !isPdf(row)), ...copies.filter(isPdf)]) {
+    add({
+      attachmentId: copy.attachmentId, kind: 'signed-copy', fileName: copy.fileName, label: copy.fileName,
+      what: `${attachedFileKindText(copy.fileName)} · ${copy.acknowledgedAt ? 'แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'
+        : copy.beforePayoutCorrection ? `แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็น${SIGNED_COPY_BEFORE_CORRECTION_LABEL}` : 'แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นไฟล์แนบทั่วไป'}`,
+    });
   }
   return choices;
 }

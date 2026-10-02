@@ -528,7 +528,11 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           )}
           {payOpen && step.actions.includes('pay') && (
             <div className="border-t border-gray-100 pt-3">
-              <PaymentForm companyId={companyId} request={detail} onCancel={() => setPayOpen(false)} onDone={() => void afterPayment()} />
+              <PaymentForm companyId={companyId} request={detail} onCancel={() => setPayOpen(false)} onDone={() => void afterPayment()}
+                // A file already on the claim is opened before it is chosen as the slip: a slip through the slip's own endpoint.
+                onOpenFile={(choice) => void (choice.kind === 'previous-slip' && choice.paymentId
+                  ? openPaymentSlip(detail.id, choice.paymentId, choice.attachmentId, choice.label)
+                  : openAttachment(detail.id, choice.attachmentId, choice.fileName ?? choice.label))} />
             </div>
           )}
           {/* The two forms of a correction round open here too, inside the step card and never in a dialog. */}
