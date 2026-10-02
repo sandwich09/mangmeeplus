@@ -31,6 +31,9 @@ const COLUMNS = [
   { key: 'flaggedCount', label: 'ถูกธง' },
 ] as const;
 
+/** A figure taken below zero by deductions is never painted as a sale. */
+const amountClass = (satang: number, positive: string) => (satang < 0 ? 'text-error-700' : positive);
+
 function MonthFigures({ rows, totals }: { rows: SalesReportRow[]; totals: SalesReportTotals }) {
   return (
     <>
@@ -39,7 +42,7 @@ function MonthFigures({ rows, totals }: { rows: SalesReportRow[]; totals: SalesR
         {rows.map((row) => (
           <div key={row.salesUserId} className="rounded-xl border border-gray-200 p-3.5">
             <p className="text-[15px] font-bold text-gray-900">{row.displayName}</p>
-            <p className={`mt-1 text-lg font-extrabold ${row.amountSatang < 0 ? 'text-error-700' : 'text-brand-800'}`}>{formatBaht(row.amountSatang)}</p>
+            <p className={`mt-1 text-lg font-extrabold ${amountClass(row.amountSatang, 'text-brand-800')}`}>{formatBaht(row.amountSatang)}</p>
             <p className="mt-0.5 text-xs text-gray-500">
               ดีลพิเศษ {row.dealActivations} ร้าน · แนะนำร้าน {row.referralActivations} ร้าน
             </p>
@@ -64,13 +67,13 @@ function MonthFigures({ rows, totals }: { rows: SalesReportRow[]; totals: SalesR
               <tr key={row.salesUserId}>
                 <th scope="row" className="font-bold text-gray-900">{row.displayName}</th>
                 {COLUMNS.map((column) => <td key={column.key} className="text-right">{row[column.key].toLocaleString('th-TH')}</td>)}
-                <td className="text-right font-bold text-gray-900">{formatBaht(row.amountSatang)}</td>
+                <td className={`text-right font-bold ${amountClass(row.amountSatang, 'text-gray-900')}`}>{formatBaht(row.amountSatang)}</td>
               </tr>
             ))}
             <tr>
               <th scope="row" className="font-bold text-gray-900">รวมทั้งเดือน</th>
               {COLUMNS.map((column) => <td key={column.key} className="text-right font-bold">{totals[column.key].toLocaleString('th-TH')}</td>)}
-              <td className="text-right font-bold text-brand-800">{formatBaht(totals.amountSatang)}</td>
+              <td className={`text-right font-bold ${amountClass(totals.amountSatang, 'text-brand-800')}`}>{formatBaht(totals.amountSatang)}</td>
             </tr>
           </tbody>
         </table>

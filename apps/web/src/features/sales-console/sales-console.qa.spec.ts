@@ -172,8 +172,11 @@ describe('sales console theme and copy', () => {
     // Stacked, with the amount held to its own width: the line fits a 390 px phone.
     assert.match(text, /<li key=\{`\$\{deduction\.occurredAt\}:\$\{index\}`\} className="flex items-start justify-between gap-3">\s*<div className="min-w-0">/);
     assert.match(text, /<p className="shrink-0 text-sm font-bold text-error-700">\{line\.amount\}<\/p>/);
-    // A month that went below zero is marked, not painted as a sale.
+    // A month or an agent taken below zero is marked, never painted as a sale: the badge, the
+    // phone card, the table row and the month total all go through the one rule.
     assert.match(text, /tone=\{month\.totals\.amountSatang < 0 \? 'danger' : 'brand'\}/);
+    assert.match(text, /const amountClass = \(satang: number, positive: string\) => \(satang < 0 \? 'text-error-700' : positive\);/);
+    assert.equal([...text.matchAll(/amountClass\((?:row|totals)\.amountSatang, /g)].length, 3);
   });
 
   it('a flagged attribution is only cleared or kept with a reason the Owner typed (D6)', () => {
