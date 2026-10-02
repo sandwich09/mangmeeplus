@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workspaceDictionary } from './workspace-dictionary';
 import { t, getDefaultLocale } from './workspace-i18n.logic';
 
 describe('workspace-i18n', () => {
@@ -105,5 +106,25 @@ describe('a shop never reads "SLA"', () => {
       }
     }
     assert.deepEqual(found, []);
+  });
+});
+
+/**
+ * Owner report 2026-10-02: the inbox and the CRM report said "เกิน 30 นาที". The time a shop allows for
+ * answering a customer is its own setting (กำหนดเวลาตอบลูกค้า, 1-1440 minutes, counted inside its business
+ * hours), and each chat keeps the deadline it was given when it started. Neither screen holds that
+ * number, so late is "รอตอบเกินกำหนด" and no text of the two screens names minutes, in either language.
+ */
+describe('a late reply is "รอตอบเกินกำหนด", never a fixed number of minutes', () => {
+  it('gives the reply deadline no number in the inbox and the CRM report, in both languages', () => {
+    assert.equal(t('inbox.chip_overdue', 'th'), 'รอตอบเกินกำหนด');
+    assert.equal(t('inbox.view_overdue_suffix', 'th'), 'แชทด่วนที่รอตอบเกินกำหนด');
+    assert.equal(t('crm_reports.kpi.overdue', 'th'), 'ลูกค้ารอตอบเกินกำหนด');
+    assert.equal(t('crm_reports.kpi.avg_response_sub', 'th'), 'ไม่ควรเกินกำหนดเวลาตอบ');
+    for (const locale of ['th', 'en'] as const) {
+      for (const [key, text] of Object.entries(workspaceDictionary[locale])) {
+        if (/^(inbox|crm_reports)\./.test(key)) assert.doesNotMatch(text, /\d+\s*(นาที|min)/, `${key} (${locale})`);
+      }
+    }
   });
 });

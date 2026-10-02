@@ -24,6 +24,16 @@ Left: report name "Workflow SLA" (report catalogue and its guide row are English
 
 `signature-asset.use-case.ts` makes the default name once, at creation, and stores it: `<ชื่อ> <วันที่>`. The date is now `formatThaiExportDate` ("2 ต.ค. 2569"). Stored names are not touched.
 
+## 4. "เกิน 30 นาที" (second round, a finding of the pass above)
+
+The inbox (chip, button) and the CRM report (a card and the pill under the average reply time) named 30 minutes. The time a shop allows is its own setting, "กำหนดเวลาตอบลูกค้า": 1 to 1440 minutes, counted inside business hours when that box is ticked (no saved setting = 30 minutes inside 09:00-18:00). Only `crm.inbox.policy_manage` reads it, so neither page holds the number.
+
+- The figure is right and was not touched. A chat is given its deadline once, when it starts or restarts (`resolveConversation` -> `computeFirstResponseDueAt`, from the setting of that moment), and every count compares that stored time with now (`overdueWhere` in `prisma-crm-inbox.repository.ts`: inbox chip, CRM report card, the scan behind the dashboard card and the notice). Nothing counts with a fixed 30. On a local stack, changing the setting to 1 and to 1440 minutes left the late count as it was: the setting reaches new chats only, as its page says.
+- Texts now, with no number: chip "⏱ รอตอบเกินกำหนด", button "ดู N แชทด่วนที่รอตอบเกินกำหนด", report card "ลูกค้ารอตอบเกินกำหนด", pill "ไม่ควรเกินกำหนดเวลาตอบ" (with "ลูกค้า" the pill wrapped at 1280 px, by 2 px). The English side of the same four keys carries no number either. The live inbox words its chip and button itself (`inbox-prototype.model.ts`, `InboxPrototypePage.tsx`); the dictionary keys serve the unrouted `InboxPage.tsx`.
+- Also reworded, though no route shows them: two lines of the module mock and one sample summary in `mangmee-crm-data.ts`.
+- Left: comments in the API and contracts that still call the chip "เกิน 30 นาที"; the mock's "รออนุมัติ ... เกิน 30 นาที" (approvals, not replies); the unused `CRM_OVERDUE_MIN = 30`.
+- Noticed, not changed (figures and colours, not wording): the average reply time counts clock time from the start of a chat, closed hours included, while the deadline counts business hours, so the two are not the same measure for a chat that arrives after closing; the countdown on a chat turns amber at 15 minutes left whatever the setting; a chat counts as late only while it waits for its FIRST reply.
+
 Decisions: recorded above. No role-name unification, no hiding of `SYSTEM_ADMIN` / `COMPANY_VIEW` from a shop's role list (the API lists them; only the sales roles are platform-only).
 Open questions (owner):
 - One Thai name per standard role across the app? Today: role page "บัญชี / แอดมิน / เจ้าของร้าน", employee pages "ฝ่ายบัญชี / ผู้ดูแลบริษัท / เจ้าของกิจการ", claim policy "บัญชี / แอดมิน / เจ้าของกิจการ".
