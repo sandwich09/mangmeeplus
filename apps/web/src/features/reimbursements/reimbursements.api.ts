@@ -291,9 +291,12 @@ export async function uploadClaimSignature(companyId: string, requestId: string,
   });
 }
 
-/** `snapshotHash` is the claim's live ack hash from the detail — the server rejects a stale one. */
+/**
+ * `snapshotHash` is the claim's live ack hash from the detail — the server rejects a stale one. The claim page answers a
+ * refusal itself: the dialog of a signer with no saved signature, or the banner of its step card. No error toast beside it.
+ */
 export function signReimbursementClaimForm(companyId: string, requestId: string, body: { role: string; signatureAttachmentId?: string; snapshotHash: string }) {
-  return apiFetch<any>(`${base(companyId)}/${requestId}/claim-form/signatures`, { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch<any>(`${base(companyId)}/${requestId}/claim-form/signatures`, { method: 'POST', body: JSON.stringify(body), suppressErrorToast: true });
 }
 
 /**

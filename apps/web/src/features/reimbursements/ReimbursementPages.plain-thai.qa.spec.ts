@@ -720,6 +720,16 @@ describe('a signer with no saved signature is told what is true and what to do (
     const signaturePage = readFileSync(join(__dirname, '../expenses/ExpensesWorkspacePanels.tsx'), 'utf8');
     for (const text of ['ยังไม่มีลายเซ็นของคุณ', 'บันทึกลายเซ็นแล้ว ใช้ลงนามได้ทันที']) assert.ok(signaturePage.includes(text), text);
   });
+
+  // Seen in the real look: the dialog opened under a red error toast that said the same thing in other words.
+  it('is the one answer to that refusal: the sign call leaves it to the page, with no error toast beside the dialog', () => {
+    const api = readFileSync(join(__dirname, 'reimbursements.api.ts'), 'utf8');
+    assert.match(api, /claim-form\/signatures`, \{ method: 'POST', body: JSON\.stringify\(body\), suppressErrorToast: true \}\)/);
+    // The page still answers every refusal of a signature: this dialog, or the banner of its step card.
+    const page = readFileSync(join(__dirname, 'ReimbursementJourneyPage.tsx'), 'utf8');
+    assert.match(page, /if \(!isMissingSavedSignatureError\(e\)\) return false; setMissingSignatureFor\(roles\[0\] \?\? null\); return true;/);
+    assert.match(page, /dialogOpened = handled\?\.\(e\) \?\? false;\s+if \(!dialogOpened\) setActionError\(errorText\(e\)\);/);
+  });
 });
 
 // Owner 2026-10-02: "SLA" is no word a shop owner reads. A claim that waited past the company's deadline reads "เกินกำหนด",
