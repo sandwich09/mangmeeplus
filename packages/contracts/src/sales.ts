@@ -213,7 +213,7 @@ export type PackageChangeRequestKind = 'CUSTOMER_REQUEST' | 'SALES_DEAL' | 'SPEC
 
 /** §17.2: a shop is counted once, the first time it is paid for. `DEAL` beats `REFERRAL`. */
 export type SalesAttributionSource = 'DEAL' | 'REFERRAL';
-/** §17.1 anti-gaming. A row carrying any of these counts ZERO until a SYSTEM_ADMIN reviews it. */
+/** §17.1 anti-gaming. A row carrying any of these counts ZERO until the Owner clears them (`salesCreditState`). */
 export const SALES_ATTRIBUTION_FLAGS = ['self_referral', 'repeat_owner', 'referral_anomaly'] as const;
 export type SalesAttributionFlag = typeof SALES_ATTRIBUTION_FLAGS[number];
 /**
