@@ -637,9 +637,12 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
       // Asked for October alone, the deduction is still there although its payment is outside the range.
       assert.deepEqual(await figures(h.agent, { from: '2026-10', to: '2026-10' }), [['2026-10', [-49900]]]);
 
-      // R11: another agent sees none of it; a lead narrowing to this agent sees exactly the same.
+      // R11: another agent sees none of it; a lead narrowing to this agent sees exactly the same,
+      // and so does a lead reading every team (an empty scope means "all", never "none").
       assert.deepEqual((await reports.summary(h.other, range)).months, []);
       assert.deepEqual(await figures(h.lead, { ...range, salesUserId: h.agentId }), [['2026-10', [-49900]], ['2026-09', [49900]]]);
+      assert.deepEqual((await figures(h.lead)).filter(([, amounts]) => (amounts as number[]).length > 0),
+        [['2026-10', [-49900]], ['2026-09', [49900]]]);
 
       // The database itself refuses a second row for the same provider id, a kind it does not know and a zero.
       const again = { attributionId: attribution.id, kind: 'REFUND', amountSatang: 100, occurredAt };
