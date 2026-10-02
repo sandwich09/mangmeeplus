@@ -66,6 +66,8 @@ import {
   payoutCorrectionAnswer, payoutCorrectionAnsweredBy, payoutCorrectionFacts, payoutCorrectionHeld, payoutCorrectionRequesterDesk, payoutCorrectionStatusLabel,
 } from './reimbursement.logic';
 import { mayTypePayoutAccountFor, payoutDefaultToken } from './payout-destination.logic';
+// The requester's notice of a round someone else answered for them (its own import, apart from the block below).
+import { reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
 import {
   isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionReasons, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
   reimbursementHubBucket, reimbursementPayoutCorrectionPhase,
@@ -1811,5 +1813,48 @@ describe('payout account correction round', () => {
       assert.deepEqual([payoutCorrectionAnswer({ ...kept, status }), payoutCorrectionAnsweredBy({ ...kept, status, requesterUserId: 'staff-1' }), payoutCorrectionStatusLabel({ ...kept, status })],
         [undefined, undefined, undefined], status);
     }
+  });
+
+  // Owner rule 2026-10-01: the person whose money it is hears of every change someone else makes for them. A finance
+  // reviewer may answer a round for the requester. Before, the requester was told only of an account TYPED for them;
+  // their default account, the account the claim had, and cash, chosen for them, told them nothing.
+  it('words the requester\'s notice of an answer given for them: who did what on their claim, what the claim holds now, and what to do', () => {
+    const kbank = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 2 };
+    const cash = { payoutMethod: 'CASH' };
+    const anAccount = 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ใช่บัญชีของคุณ แก้ได้ทันที';
+    const asCash = 'รับเป็นเงินสด · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แก้ได้ทันที';
+    const expected: Record<ReimbursementPayoutRoundAnswer, { title: string; body: string }> = {
+      NEW_ACCOUNT: { title: 'อรทัย แก้บัญชีรับเงินในใบเบิกของคุณ', body: anAccount },
+      SAME_ACCOUNT: { title: 'อรทัย ยืนยันบัญชีเดิมในใบเบิกของคุณ', body: anAccount },
+      CASH_INSTEAD: { title: 'อรทัย เปลี่ยนวิธีรับเงินคืนในใบเบิกของคุณ', body: asCash },
+      ACCOUNT_INSTEAD: { title: 'อรทัย เปลี่ยนวิธีรับเงินคืนในใบเบิกของคุณ', body: anAccount },
+      SAME_CASH: { title: 'อรทัย ยืนยันวิธีรับเงินคืนเดิมในใบเบิกของคุณ', body: asCash },
+      FIRST_ACCOUNT: { title: 'อรทัย เพิ่มบัญชีรับเงินในใบเบิกของคุณ', body: anAccount },
+      FIRST_CASH: { title: 'อรทัย เลือกวิธีรับเงินคืนในใบเบิกของคุณ', body: asCash },
+    };
+    for (const answer of ANSWERS) {
+      const notice = reimbursementPayoutAnsweredForRequesterNotice(answer, 'อรทัย', answer.endsWith('CASH') || answer === 'CASH_INSTEAD' ? cash : kbank);
+      assert.deepEqual(notice, expected[answer], answer);
+      // The title is the timeline's own row of that answer, said to the requester instead of about them.
+      assert.equal(notice.title, reimbursementPayoutRoundDid(answer, { onBehalf: true, byName: 'อรทัย' }).replace(/แทนผู้เบิก$/, 'ในใบเบิกของคุณ'), answer);
+      // Plain Thai but for the name. Of an account: its bank and last 4 digits, never its name or more of its number.
+      assert.doesNotMatch(`${notice.title} ${notice.body}`, /[A-Za-z_{}$]|ผู้เบิก|สมชาย|\d{5}/, answer);
+    }
+    // Cash is never called an account; "ใหม่" and "แก้" are said of nothing but an account that replaced an account.
+    for (const answer of ['CASH_INSTEAD', 'SAME_CASH', 'FIRST_CASH'] as const) assert.doesNotMatch(`${expected[answer].title} ${expected[answer].body}`, /บัญชี/, answer);
+    assert.deepEqual(ANSWERS.filter((answer) => /แก้บัญชี/.test(expected[answer].title)), ['NEW_ACCOUNT']);
+    // A PromptPay number has no bank: the last 4 digits of the phone.
+    assert.equal(reimbursementPayoutAnsweredForRequesterNotice('FIRST_ACCOUNT', 'อรทัย', { payoutMethod: 'BANK_TRANSFER', payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' }).body,
+      'พร้อมเพย์เบอร์ลงท้าย 5678 · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ใช่บัญชีของคุณ แก้ได้ทันที');
+    // A name that cannot be resolved is not the requester and never an id; with no record of the answer or of what
+    // the claim holds, the notice says what is true of every answer and prints no empty account.
+    for (const byName of [undefined, null, '  ']) {
+      assert.equal(reimbursementPayoutAnsweredForRequesterNotice('SAME_ACCOUNT', byName, kbank).title, 'ผู้จัดทำ ยืนยันบัญชีเดิมในใบเบิกของคุณ');
+    }
+    for (const answer of [undefined, null, 'AN_ANSWER_ADDED_LATER' as never, 'toString' as never]) {
+      assert.deepEqual(reimbursementPayoutAnsweredForRequesterNotice(answer, 'อรทัย', undefined),
+        { title: 'อรทัย เลือกวิธีรับเงินคืนในใบเบิกของคุณ', body: 'เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แก้ได้ทันที' });
+    }
+    assert.equal(reimbursementPayoutAnsweredForRequesterNotice('NEW_ACCOUNT', 'อรทัย', { payoutMethod: 'BANK_TRANSFER' }).body, 'เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แก้ได้ทันที');
   });
 });

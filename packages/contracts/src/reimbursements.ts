@@ -1326,6 +1326,30 @@ export const REIMBURSEMENT_PAYOUT_ROUND_TEXTS = {
   answer: Record<ReimbursementPayoutRoundAnswer, PayoutRoundAnswerTexts>;
 };
 
+/**
+ * The requester's notice when someone else answered a round for them (spec §17.3; owner rule 2026-10-01: the
+ * person whose money it is hears of every change made for them). The title is the timeline's own row of that
+ * answer, said to the requester: "{ชื่อ} ยืนยันบัญชีเดิมในใบเบิกของคุณ". Whoever sends it follows the title with
+ * the claim number, as a template does for the other two notices of a round. The body is what the claim holds
+ * now (an account by its bank and last 4 digits and no more, or cash) and what to do about it.
+ *
+ * A name that cannot be resolved reads "ผู้จัดทำ". An answer with no words (a round with no record of how it
+ * began) reads as a choice of method, which is true of every answer.
+ */
+export function reimbursementPayoutAnsweredForRequesterNotice(
+  answer: ReimbursementPayoutRoundAnswer | null | undefined,
+  byName: string | null | undefined,
+  given: { payoutMethod?: string | null; payoutKind?: ReimbursementPayoutKind | null; bankName?: string | null; accountLast4?: string | null } | null | undefined,
+): { title: string; body: string } {
+  const did = typeof answer === 'string' && Object.hasOwn(PAYOUT_ROUND_ANSWER_WORDS, answer) ? PAYOUT_ROUND_ANSWER_WORDS[answer].did : 'เลือกวิธีรับเงินคืน';
+  const account = given?.payoutMethod === 'BANK_TRANSFER' && given.accountLast4 ? maskedPayoutAccount(given) : undefined;
+  const holds = account ?? (given?.payoutMethod === 'CASH' ? 'รับเป็นเงินสด' : undefined);
+  return {
+    title: `${payoutRoundDoer({ onBehalf: true, byName }).who}${did}ในใบเบิกของคุณ`,
+    body: `${holds ? `${holds} · ` : ''}เปิดใบเบิกเพื่อตรวจ ${account ? 'ถ้าไม่ใช่บัญชีของคุณ' : 'ถ้าไม่ถูกต้อง'} แก้ได้ทันที`,
+  };
+}
+
 /** `POST :requestId/payout-correction`: send an approved claim back to have its payout account corrected. */
 export type RequestReimbursementPayoutCorrectionInput = {
   reasonCode: ReimbursementPayoutCorrectionReason;
