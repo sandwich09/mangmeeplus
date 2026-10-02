@@ -1,8 +1,23 @@
-import type { BillingPurchaseSource } from '@watchdog-bms/contracts';
-import type { BillingAccount, CompanyPlanTerm } from '../../../generated/prisma/client';
+import { BILLING_PAID_TIERS, type BillingPurchaseSource } from '@watchdog-bms/contracts';
+import type { BillingAccount, BillingInvoice, CompanyPlanTerm } from '../../../generated/prisma/client';
 import { termProjectionHash } from '../domain/paid-invoice';
 
 type SourceAccount = Pick<BillingAccount, 'id' | 'baseSubscriptionId' | 'activeAttemptId' | 'contractAttemptId' | 'renewalMode' | 'paidThrough' | 'termProjectionHash'>;
+
+/** The active one-time source used by status, quote and the locked Checkout recheck. */
+type OneTimeAccount = Pick<BillingAccount, 'id' | 'baseSubscriptionId' | 'contractAttemptId' | 'paidThrough' | 'billingAnchorDay'>;
+type OneTimeInvoice = Pick<BillingInvoice, 'billingAccountId' | 'sourceAttemptId' | 'productKind' | 'providerStatus' | 'applyStatus' | 'appliedAt' |
+  'refundedSatang' | 'disputed' | 'periodEnd' | 'contractSnapshot'>;
+export function oneTimeSourceReady(account: OneTimeAccount | null, invoice: OneTimeInvoice | null): account is OneTimeAccount & { paidThrough: Date; billingAnchorDay: number } {
+  const snapshot = invoice?.contractSnapshot as { quote?: { offer?: { offerKey?: unknown; interval?: unknown } } } | null;
+  const offer = snapshot?.quote?.offer;
+  return !!account && !!invoice && !account.baseSubscriptionId && !!account.contractAttemptId &&
+    invoice.billingAccountId === account.id && invoice.sourceAttemptId === account.contractAttemptId &&
+    invoice.productKind === 'PACKAGE' && invoice.providerStatus === 'paid' && invoice.applyStatus === 'APPLIED' &&
+    !!invoice.appliedAt && !invoice.refundedSatang && !invoice.disputed && !!account.paidThrough && !!account.billingAnchorDay &&
+    invoice.periodEnd.getTime() === account.paidThrough.getTime() && !!offer &&
+    BILLING_PAID_TIERS.includes(offer.offerKey as typeof BILLING_PAID_TIERS[number]) && ['month', 'year'].includes(String(offer.interval));
+}
 
 /** An account row or customer ID is not payment evidence. A mapped, verified paid term is. */
 export function billingPurchaseSource(term: CompanyPlanTerm | null, account: SourceAccount | null, hasPaidInvoice: boolean, now = new Date()): BillingPurchaseSource {

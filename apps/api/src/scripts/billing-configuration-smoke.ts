@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { BILLING_PERMISSIONS } from '@watchdog-bms/contracts';
 import { hashPassword } from '../modules/auth/domain/logic/password-credential.logic';
 import type { PrismaService } from '../common/database/prisma.service';
-import type { startBillingBrowser } from './billing-browser-smoke';
+import { selectBillingOption, type startBillingBrowser } from './billing-browser-smoke';
 import type { BrowserContext } from '@playwright/test';
 import { checkBillingScopes } from './billing-scopes-smoke';
 import {checkBillingConfigurationDrafts} from './billing-configuration-drafts-smoke';
@@ -77,45 +77,49 @@ export async function checkBillingConfiguration(input: {
     const browserPreview = async (proposed: any) => {
       const page = browser!.page;
       await page.goto(`${browser!.origin}/system/billing/settings`, { waitUntil: 'domcontentloaded' });
-      await page.getByLabel('ภาษีมูลค่าเพิ่ม', { exact: true }).selectOption(proposed.taxTreatment);
+      await selectBillingOption(page,'หัวข้อการตั้งค่า','ภาษี ระยะผ่อนผัน และวงเงินคืนเงิน');
+      await selectBillingOption(page,'ภาษีมูลค่าเพิ่ม',proposed.taxTreatment==='NOT_VAT_REGISTERED'?'ปิด — ยังไม่จด VAT':proposed.taxTreatment==='EXCLUSIVE_VAT_7'?'เปิด 7% — บวกจากราคา':'เปิด 7% — รวมในราคา');
       if (proposed.taxTreatment !== 'NOT_VAT_REGISTERED') {
         for (const [label, key] of [['ชื่อกิจการตามทะเบียน', 'legalName'], ['ที่อยู่กิจการ', 'address'], ['เลขประจำตัวผู้เสียภาษี 13 หลัก', 'thaiTaxId'], ['Stripe Account Tax ID', 'stripeTaxId']])
           await page.getByLabel(label!, { exact: true }).fill(proposed.issuer[key!]);
         await page.getByLabel('Stripe Tax Rate ID', { exact: true }).fill(proposed.taxRateId);
       }
-      await page.getByText('เชื่อมราคาและ Portal ของ Stripe', { exact: true }).click();
+      await selectBillingOption(page,'หัวข้อการตั้งค่า','เชื่อมราคาและหน้าจัดการบัตรของ Stripe');
+      await page.locator('fieldset[data-setting-topic="stripe"] summary').click();
       await page.getByLabel('มืออาชีพ (PRO) · รายปี · ราคาเก็บเงิน', { exact: true }).fill(proposed.priceIds['PRO_999:year']);
       await page.getByLabel('มืออาชีพ (PRO) · รายปี · ราคาศูนย์สำหรับช่วงจ่ายล่วงหน้า', { exact: true }).fill(proposed.zeroPriceIds['PRO_999:year']);
       await page.getByLabel('เหตุผลการเปลี่ยนค่า', { exact: true }).fill('ทดสอบเปลี่ยน VAT และย้อนกลับผ่านหน้าเว็บ');
-      await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor();
-      const link = page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }), href = await link.getAttribute('href');
-      assert.ok(href); assert.ok(href.startsWith('/system/billing/configuration-changes/'));
-      await link.click();
-      await page.waitForURL(`${browser!.origin}${href}`);
+      await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
+      await page.getByRole('status').filter({hasText:'บันทึกฉบับร่างแล้ว'}).waitFor();
+      const previewResponse=page.waitForResponse(response=>new URL(response.url()).pathname===`/api${base}/configuration-changes/preview`&&response.request().method()==='POST');
+      await page.getByRole('button', { name: '2. ตรวจผลก่อนยืนยัน', exact: true }).click();
+      const result=await previewResponse;assert.equal(result.status(),200);const operation=await result.json();
+      await page.getByRole('heading', { name: '2. ตรวจผลก่อนยืนยัน', exact: true }).waitFor();
+      const href=`/system/billing/configuration-changes/${operation.id}`;
+      await page.goto(`${browser!.origin}${href}`);
       await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).waitFor();
       return request(`${base}/configuration-changes/${href.split('/').at(-1)}`);
     };
     const browserSubmit = async (op: any) => {
       await browser!.page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
-      await browser!.page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
+      await browser!.page.getByRole('heading', { name: '3. ยืนยันใช้การตั้งค่า', exact: true }).waitFor();
       return request(`${base}/configuration-changes/${op.id}`);
     };
     const browserApprove = async (op: any) => {
       const page = secondBrowser!.pages()[0]!;
       await page.goto(`${browser!.origin}/system/billing/configuration-changes/${op.id}`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: 'อนุมัติและใช้ค่าชุดนี้', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
+      await page.getByRole('heading', { name: 'การตั้งค่านี้มีผลแล้ว', exact: true }).waitFor();
       return request(`${base}/configuration-changes/${op.id}`);
     };
     const old = await preview(); assert.equal(old.status, 200);
     assert.equal((await submit(old.body)).body.code, 'CONTROL_REAUTH_REQUIRED');
     assert.equal((await request(`${base}/reauthenticate`, 'POST', { password: 'wrong' })).status, 403);
     if (browser) {
-      await browser.page.goto(`${browser.origin}/system/billing/settings`, { waitUntil: 'domcontentloaded' });
+      await browser.page.goto(`${browser.origin}/system/billing/configuration-changes/${old.body.id}`, { waitUntil: 'domcontentloaded' });
       await browser.page.getByLabel('รหัสผ่านปัจจุบัน', { exact: true }).fill(password);
       await browser.page.getByRole('button', { name: 'ยืนยันรหัสผ่าน', exact: true }).click();
-      await browser.page.getByRole('status').filter({ hasText: 'ยืนยันแล้วถึง' }).waitFor();
+      await browser.page.getByRole('status').filter({ hasText: 'ยืนยันตัวตนแล้ว' }).waitFor();
     } else assert.equal((await request(`${base}/reauthenticate`, 'POST', { password })).status, 200);
     const closeBody = { expectedVersion: before.version, gates: { ...before.gates, new_sales: false }, reason: 'หยุดขายใหม่เพื่อทดสอบ' }, closeKey = `billing-close-${run}`;
     const close = await request(`${base}/settings/emergency-close`, 'POST', closeBody, { 'idempotency-key': closeKey }); assert.equal(close.status, 200); assert.equal(close.body.state, 'SUCCEEDED');
@@ -141,11 +145,11 @@ export async function checkBillingConfiguration(input: {
       const page = browser.page;
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`${browser.origin}/system/billing/configuration-changes/${waiting.body.id}`, { waitUntil: 'domcontentloaded' });
-      await page.getByRole('status').filter({ hasText: 'ยืนยันแล้วถึง' }).waitFor();
+      await page.getByRole('status').filter({ hasText: 'ยืนยันตัวตนแล้ว' }).waitFor();
       await page.getByRole('button', { name: 'อนุมัติและใช้ค่าชุดนี้', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
+      await page.getByRole('heading', { name: 'การตั้งค่านี้มีผลแล้ว', exact: true }).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-      await page.locator('button:enabled').filter({ hasText: 'โหลดการตั้งค่าล่าสุด' }).waitFor();
+      await page.getByRole('heading', { name: 'ค่าที่ใช้งานอยู่', exact: true }).waitFor();
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({ path: `${browser.evidenceDir}/admin-configuration-mobile.png`, fullPage: true });
     } else { assert.equal((await approveRequest(`${base}/reauthenticate`, 'POST', { password })).status, 200);

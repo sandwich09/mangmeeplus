@@ -264,3 +264,16 @@ Owner clarification — first purchase during trial (2026-09-17):
 Owner-approved trial receipt carryover (2026-09-17):
 - First verified purchase during an active trial preserves remaining ordinary trial receipts, up to 15, once per company. Expiry is the first purchased term's original end; trial days do not carry. Purchased balances in repeat/upgrade/cadence flows are carried in full under existing rules, never capped at 15. Independent admin gifts retain their original expiry. See `../plans/billing-trial-carryover-2026-09-17.md`.
 - Initial review conditionally shows “โควตาแพ็กเกจ”, “ยกยอดจากทดลองใช้”, any other surviving allowance, and “รวมหลังชำระสำเร็จโดยประมาณ”, with the carryover expiry and a short explanation that use during checkout changes the final balance. Hide the carryover block when there is none; never display trial carryover on a repeat/upgrade/restart. Do not repeat the allowance in the adjacent duration paragraph.
+
+
+## Local acceptance repair — 2026-10-02
+
+อ้างอิง [แผนตรวจและแก้ purchase recovery](../plans/billing-purchase-recovery-audit-2026-10-02.md) และ [ผล bug/dependency impact](../research/billing-purchase-recovery-bugs-2026-10-02-th.md):
+
+- BillingStatus เพิ่ม optional `purchaseBlockCode` (stable error code เดิม, null เมื่อไม่มี known local blocker) และ `packageChangesEnabled` (plan-change gate); status เป็น local preflight ไม่แทนการตรวจ provider ที่ quote/Checkout
+- หน้าแสดงเหตุที่ซื้อไม่ได้และทางจัดการก่อนเลือกราคา; ข้อมูล one-time เดิมที่คืนเงิน/ผิด provenance และ terminal restart ที่มี financial review ต้องไม่เสนอสรุปซื้อที่ API ปฏิเสธแน่นอน
+- คำขอเปลี่ยนผู้รับเอกสารทั้ง customer และ ADMIN ใช้ fence เดียวกันก่อน quote/Checkout; cancellation ที่อนุญาตอยู่เดิมยังดำเนินการได้
+- อายุ one-time quote ไม่เกิน paidThrough ของ source; Checkout ตรวจ source ยังอยู่ในรอบเดิม การเริ่มใหม่หลังหมดอายุใช้ RESTART/menu/capacity rules เดิม
+- refresh status เมื่อหมดอายุและเมื่อกลับแท็บ; ผลตอบกลับเก่าต้องไม่เขียนทับสถานะใหม่หรือเปิดหน้ากลับหลัง permission denial; history โหลดแยกและไม่ทำให้เส้นทางซื้อรอ แม้ตอบค้าง; network/5xx แสดง retry ส่วน 401/403 ยังปิดการใช้งาน
+- business API denial หลังหมดอายุยังเป็น 403 แต่ต้องไม่ redirect ผู้ที่อยู่ billing recovery/return/document route ออกไป; shell ตาม notice ใหม่และไม่เปิด business access จากการ refresh UI
+- การคืนเงินและ end-package/reset ใช้กลไกเดิม ไม่ลบ ledger หรือ reset อัตโนมัติจากปุ่มซื้อ การเปลี่ยน API/web นี้ยังต้องผ่าน deployment protocol เมื่อนำขึ้นระบบจริง
