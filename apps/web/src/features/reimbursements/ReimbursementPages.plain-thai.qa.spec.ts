@@ -879,6 +879,14 @@ describe('one thing has one name on the claim screens (owner 2026-10-02)', () =>
       assert.doesNotMatch(errorMessage(code), /ผู้ขอ|ผู้ยื่น|ผู้รับเงินคืน|ผู้ดูแลบริษัท|ตั้งค่าเบิกจ่าย|คำขอตนเอง"/u, code);
     }
   });
+
+  // Seen in the real look: the role page listed the claim rights under "ขอเงินคืน", a name no menu or screen uses for claims.
+  it('names the claims module on the role page as the menu and the hub do', () => {
+    const rolePage = readFileSync(join(__dirname, '../employee-access/EmployeeAccessPages.tsx'), 'utf8');
+    assert.match(rolePage, /reimbursement: 'การเบิกจ่าย'/);
+    assert.equal(rolePage.includes('ขอเงินคืน'), false);
+    assert.match(readFileSync(join(__dirname, '../../common/i18n/workspace-dictionary.ts'), 'utf8'), /'module\.reimbursements': 'การเบิกจ่าย'/);
+  });
 });
 
 const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementDraftActionPage.qa.spec.ts's set
