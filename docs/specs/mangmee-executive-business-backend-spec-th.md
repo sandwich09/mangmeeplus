@@ -761,6 +761,8 @@ membership exit ต้องทั้งสาม id และเชื่อม
 
 ตารางไม่อนุมัติ single-admin ใหม่: P31 มีมติ single-admin เดิม แต่ source ปัจจุบันยังบังคับคนละ actor
 การมีผู้บริหาร 4 คนไม่แก้ความขัดแย้งนี้ ต้องเลือก effective actor policy Q06 ก่อน implementation
+(อัปเดต 2026-10-02: โมดูล operator `/system/data-rights` มี single-admin mode แล้ว — คนเดิมทำได้เฉพาะขณะมี System Admin คนเดียว
+และต้องประกาศพร้อมเหตุผลทุกขั้น ดู [P31 spec §8.7](mangmee-company-data-lifecycle-deletion-spec-th.md); Q06 ของ flow ผู้บริหารในเอกสารนี้ยังเปิดและยังพักไว้เหมือนเดิม)
 
 ### 18.3 Hold model ที่เสนอรอมติ Q07
 
