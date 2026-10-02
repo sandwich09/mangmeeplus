@@ -37,6 +37,8 @@ type Reimbursement = {
   payout?: { payoutMethod?: string; accountLast4?: string; version?: number; submitToken?: string; verifiedByName?: string };
   /** Present while the claim's payout account is being corrected: whom it waits for. */
   payoutCorrectionPhase?: 'AWAITING_REQUESTER' | 'AWAITING_APPROVAL';
+  /** The round: once its account is given, whether it is the very account the claim was approved with. */
+  payoutCorrection?: { sameAsPrevious?: boolean };
 };
 type ReimbursementPage = { items: Reimbursement[] };
 
@@ -589,6 +591,9 @@ test.describe('REIMB — reimbursements', () => {
       await expect(requesterPage.getByText('รออนุมัติบัญชีรับเงินใหม่').first()).toBeVisible();
       const kept = await json<Reimbursement>(await staff.get(claimUrl(companyId, draft.id)));
       expect([kept.payoutCorrectionPhase, kept.payout?.payoutMethod, kept.payout?.accountLast4, kept.payout?.version]).toEqual(['AWAITING_APPROVAL', 'BANK_TRANSFER', '1234', 2]);
+      // The server says it is the same account, and the card says so in place of two accounts that read alike.
+      expect(kept.payoutCorrection?.sameAsPrevious).toBe(true);
+      await expect(requesterPage.getByTestId('reimbursement-payout-correction-same-account')).toContainText('บัญชีเดิม ไม่ได้เปลี่ยน');
 
       // The other tab still shows the form of the claim as it was. Its press is refused, the page reads the claim again,
       // closes the form and says what to look at; the claim keeps the account it was just given.
