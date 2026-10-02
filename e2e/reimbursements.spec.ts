@@ -497,6 +497,58 @@ test.describe('REIMB — reimbursements', () => {
       await expect(journey).toContainText('โอนเข้าบัญชีลงท้าย 4449');
     });
   });
+
+  // Payout spec §14.5 (final review W6, W8): a claim sent back by mistake keeps the account it was approved with, and a
+  // press that arrives from a form left open on the claim as it was freezes nothing.
+  test('REIMB-14 @p1 a claim sent back by mistake keeps the account it had, and a press from a form left open freezes nothing', async ({ api, apiAs, pageAs, companyId }) => {
+    const staff = await apiAs('STAFF');
+    const manager = await apiAs('MANAGER');
+    const finance = await apiAs('FINANCE');
+    await withPolicy(api, companyId, PAYABLE, async () => {
+      const draft = await createReimbursement(staff, companyId, ['207.00'], {
+        mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย ปวีณ์ พนักงานทั่วไป', accountNumber: '004-5-67123-4',
+      });
+      const shown = await json<Reimbursement>(await staff.get(claimUrl(companyId, draft.id)));
+      const submitted = await json<Reimbursement>(await staff.post(`${claimUrl(companyId, draft.id)}/submit`, { data: { payoutSubmitToken: shown.payout?.submitToken } }));
+      const sent = await json<Reimbursement>(await manager.get(claimUrl(companyId, draft.id)));
+      await json<Reimbursement>(await manager.post(`${claimUrl(companyId, draft.id)}/approve`, {
+        data: { approvalSnapshotHash: submitted.approvalSnapshotHash, payoutVerifiedVersion: sent.payout?.version },
+      }));
+      const sentBack = await json<Reimbursement>(await finance.post(`${claimUrl(companyId, draft.id)}/payout-correction`, { data: { reasonCode: 'ACCOUNT_NUMBER_WRONG' } }));
+      expect(sentBack.payoutCorrectionPhase).toBe('AWAITING_REQUESTER');
+
+      // The requester has the account form open twice: the page they work in, and one left open in another tab.
+      const requesterPage = await pageAs('STAFF');
+      const leftOpen = await requesterPage.context().newPage();
+      for (const tab of [requesterPage, leftOpen]) {
+        await gotoCompany(tab, companyId, `/reimbursements/${draft.id}`);
+        await tab.getByRole('button', { name: 'แก้บัญชีรับเงิน', exact: true }).click();
+        await expect(tab.getByTestId('reimbursement-payout-correction-account')).toBeVisible();
+      }
+
+      // "ใช้บัญชีเดิมของใบนี้" names the account the claim was approved with, by bank and last 4 digits, and takes it as it is.
+      const account = requesterPage.getByTestId('reimbursement-payout-correction-account');
+      await expect(account).toContainText('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 1234');
+      await account.getByText('ใช้บัญชีเดิมของใบนี้', { exact: true }).click();
+      await account.getByRole('button', { name: 'บันทึกบัญชีรับเงิน', exact: true }).click();
+      await expect(requesterPage.getByText('รออนุมัติบัญชีรับเงินใหม่').first()).toBeVisible();
+      const kept = await json<Reimbursement>(await staff.get(claimUrl(companyId, draft.id)));
+      expect([kept.payoutCorrectionPhase, kept.payout?.payoutMethod, kept.payout?.accountLast4, kept.payout?.version]).toEqual(['AWAITING_APPROVAL', 'BANK_TRANSFER', '1234', 2]);
+
+      // The other tab still shows the form of the claim as it was. Its press is refused, the page reads the claim again,
+      // closes the form and says what to look at; the claim keeps the account it was just given.
+      const stale = leftOpen.getByTestId('reimbursement-payout-correction-account');
+      await stale.getByText('รับเป็นเงินสด', { exact: true }).click();
+      await stale.getByRole('button', { name: 'บันทึกบัญชีรับเงิน', exact: true }).click();
+      await expect(leftOpen.getByText('ยังไม่ได้บันทึกบัญชีรับเงินครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม', { exact: false })).toBeVisible();
+      await expect(stale).toHaveCount(0);
+      await expect(leftOpen.getByText('รออนุมัติบัญชีรับเงินใหม่').first()).toBeVisible();
+      await expect(leftOpen.getByRole('button', { name: 'แก้บัญชีรับเงินอีกครั้ง', exact: true })).toBeVisible();
+      const after = await json<Reimbursement>(await staff.get(claimUrl(companyId, draft.id)));
+      expect([after.payoutCorrectionPhase, after.payout?.payoutMethod, after.payout?.accountLast4, after.payout?.version]).toEqual(['AWAITING_APPROVAL', 'BANK_TRANSFER', '1234', 2]);
+      await leftOpen.close();
+    });
+  });
 });
 
 for (const width of [1280, 390]) {
