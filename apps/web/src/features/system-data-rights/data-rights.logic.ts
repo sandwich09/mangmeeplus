@@ -1,15 +1,18 @@
 import {
-  DATA_RIGHTS_CASE_TYPES,
   DATA_RIGHTS_DECISION_CATEGORIES,
+  DATA_RIGHTS_SINGLE_ADMIN_REASON_MAX_LENGTH,
+  DATA_RIGHTS_SINGLE_ADMIN_REASON_MIN_LENGTH,
   dataRightsAllowedDispositions,
   dataRightsCaseRequiresTenantAuthority,
   dataRightsCaseEvidenceRequirements,
+  dataRightsSingleAdminReasonProblem,
   type DataRightsCaseStatus,
   type DataRightsCaseType,
   type DataRightsDecisionCategory,
   type DataRightsDisposition,
   type DataRightsEvidenceType,
   type DataRightsRequestSource,
+  type DataRightsSingleAdminStep,
 } from '@watchdog-bms/contracts';
 
 export type DataRightsTargetField = 'targetUserId' | 'companyId' | 'membershipId';
@@ -42,31 +45,87 @@ export type EvidenceLike = {
   sha256?: string | null;
 };
 
-export type DataRightsRoleSeparationBlocks = {
-  approval: boolean;
-  execution: boolean;
-  verification: boolean;
+/**
+ * How the reader may take a step that is refused to the person who took the step before.
+ * - NORMAL: somebody else took that step, so the reader simply takes this one.
+ * - SINGLE_ADMIN: the reader took it and is the only active System Admin, so this step is offered
+ *   as an explicit self-step with a reason (P31 §8).
+ * - SECOND_ADMIN: the reader took it and another active System Admin exists; that person takes it.
+ */
+export type DataRightsSameActorMode = 'NORMAL' | 'SINGLE_ADMIN' | 'SECOND_ADMIN';
+
+export type DataRightsSameActorModes = {
+  approval: DataRightsSameActorMode;
+  execution: DataRightsSameActorMode;
+  /** Starting verification, recording independent verification and closing the case. */
+  verification: DataRightsSameActorMode;
 };
 
 export function isValidEvidenceSha256(value: string | null | undefined): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 }
 
-/** Every data-rights case uses the same four-eyes role boundaries. */
-export function dataRightsRoleSeparationBlocks(input: {
-  caseType: DataRightsCaseType;
+/** Every data-rights case uses the same role boundaries, whatever its type. */
+export function dataRightsSameActorModes(input: {
   currentUserId: string | null;
   createdByUserId: string | null;
   approvedByUserId: string | null;
   executionStartedByUserId: string | null;
-}): DataRightsRoleSeparationBlocks {
-  const required = DATA_RIGHTS_CASE_TYPES.includes(input.caseType);
-  const currentUserId = input.currentUserId;
-  return {
-    approval: required && Boolean(currentUserId && input.createdByUserId === currentUserId),
-    execution: required && Boolean(currentUserId && input.approvedByUserId === currentUserId),
-    verification: required && Boolean(currentUserId && input.executionStartedByUserId === currentUserId),
+  singleAdminAvailable: boolean;
+}): DataRightsSameActorModes {
+  const mode = (priorActorUserId: string | null): DataRightsSameActorMode => {
+    if (!input.currentUserId || priorActorUserId !== input.currentUserId) return 'NORMAL';
+    return input.singleAdminAvailable ? 'SINGLE_ADMIN' : 'SECOND_ADMIN';
   };
+  return {
+    approval: mode(input.createdByUserId),
+    execution: mode(input.approvedByUserId),
+    verification: mode(input.executionStartedByUserId),
+  };
+}
+
+export const SINGLE_ADMIN_STEP_LABEL: Record<DataRightsSingleAdminStep, string> = {
+  APPROVAL: 'อนุมัติแผน',
+  EXECUTION: 'เริ่มดำเนินการ',
+  VERIFICATION: 'เริ่มตรวจยืนยัน',
+  INDEPENDENT_VERIFICATION: 'บันทึกผลตรวจยืนยัน',
+  COMPLETION: 'สรุปผลและปิดเคส',
+};
+
+/** The steps of a case that one person took alone, in order, each with the reason given for it. */
+export function singleAdminSteps(input: {
+  approvalSingleAdmin: boolean; approvalSingleAdminReason: string | null;
+  executionSingleAdmin: boolean; executionSingleAdminReason: string | null;
+  verificationSingleAdmin: boolean; verificationSingleAdminReason: string | null;
+  completionSingleAdmin: boolean; completionSingleAdminReason: string | null;
+  evidence: readonly { evidenceType: DataRightsEvidenceType; singleAdmin?: boolean; singleAdminReason?: string | null }[];
+}): Array<{ step: DataRightsSingleAdminStep; reason: string }> {
+  const independent = input.evidence.find((item) => item.evidenceType === 'INDEPENDENT_VERIFICATION' && item.singleAdmin === true);
+  return ([
+    ['APPROVAL', input.approvalSingleAdmin, input.approvalSingleAdminReason],
+    ['EXECUTION', input.executionSingleAdmin, input.executionSingleAdminReason],
+    ['VERIFICATION', input.verificationSingleAdmin, input.verificationSingleAdminReason],
+    ['INDEPENDENT_VERIFICATION', Boolean(independent), independent?.singleAdminReason ?? null],
+    ['COMPLETION', input.completionSingleAdmin, input.completionSingleAdminReason],
+  ] as const).filter(([, taken]) => taken).map(([step, , reason]) => ({ step, reason: reason ?? '' }));
+}
+
+/** What to tell the admin about a reason the server would refuse; null when it is acceptable. */
+export function singleAdminReasonError(reason: string): string | null {
+  switch (dataRightsSingleAdminReasonProblem(reason)) {
+    case 'REQUIRED': return 'กรุณาเขียนเหตุผลที่ทำขั้นตอนนี้ด้วยตนเอง';
+    case 'TOO_SHORT': return `เหตุผลสั้นเกินไป กรุณาเขียนอย่างน้อย ${DATA_RIGHTS_SINGLE_ADMIN_REASON_MIN_LENGTH} ตัวอักษร`;
+    case 'TOO_LONG': return `เหตุผลยาวเกินไป กรุณาเขียนไม่เกิน ${DATA_RIGHTS_SINGLE_ADMIN_REASON_MAX_LENGTH} ตัวอักษร`;
+    case 'TRIVIAL': return 'กรุณาเขียนเหตุผลเป็นประโยคที่อ่านแล้วเข้าใจ';
+    default: return null;
+  }
+}
+
+/** The reason kept on a history entry of a single-admin step; null for every other entry. */
+export function singleAdminReasonOfAction(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const value = metadata as { singleAdmin?: unknown; singleAdminReason?: unknown };
+  return value.singleAdmin === true && typeof value.singleAdminReason === 'string' ? value.singleAdminReason : null;
 }
 
 const OPAQUE_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
