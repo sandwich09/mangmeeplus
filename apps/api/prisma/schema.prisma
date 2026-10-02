@@ -3850,11 +3850,16 @@ model SalesAttribution {
   salesUserId     String
   /// 'DEAL' (Phase 3) | 'REFERRAL' (Phase 4).
   source          String
-  /// What the customer actually paid, in satang; `refundedSatang` is deducted by the report.
+  /// The credit, in satang: the package price the shop was charged, for a deal and a referral alike
+  /// (owner 2026-10-02). REFERRAL rows written before that change hold the invoice total instead and
+  /// are not rewritten.
   amountSatang    Int
   months          Int?
   interval        String?
   paidAt          DateTime
+  /// Cumulative refund from before 2026-10-02, when a refund had no date of its own. The report
+  /// still takes it off in the payment month, exactly as it did. Never written again: every later
+  /// refund or lost dispute is a `SalesAttributionDeduction` row.
   refundedSatang  Int      @default(0)
   /// BillingInvoice.id of the paid one-time invoice that created this row.
   sourceInvoiceId String
@@ -3868,9 +3873,35 @@ model SalesAttribution {
   flagReviewedByUserId String?
   flagReviewNote       String?
   createdAt       DateTime @default(now())
+  deductions      SalesAttributionDeduction[]
 
   @@index([salesUserId, paidAt])
   @@index([flaggedAt])
+}
+
+/// Sales credit taken back (spec §17.1, owner 2026-10-02): one row per refund that succeeded, or
+/// per payment dispute that was lost, on the payment that opened the shop. The report shows each
+/// as its own line in the Bangkok month of `createdAt`, so a month that is over never changes and
+/// the payment month keeps its figure. CHECKs in the migration SQL (Prisma cannot model them, so do
+/// NOT let a future `prisma migrate diff` drop them): kind IN ('REFUND','DISPUTE'), amountSatang > 0.
+model SalesAttributionDeduction {
+  id            String           @id @default(cuid())
+  attributionId String
+  /// 'REFUND' | 'DISPUTE'.
+  kind          String
+  /// The payment provider's own id of the refund or the dispute. Unique: seen twice, deducted once.
+  providerRef   String           @unique
+  /// Satang taken off the credit; never more than the credit that was left.
+  amountSatang  Int
+  /// The provider's time: when the refund was made, or when the dispute was opened. The 60 days
+  /// run from the payment to this instant, never to the time this system noticed.
+  occurredAt    DateTime
+  /// When this system recorded it — the instant that decides the month it is deducted in.
+  createdAt     DateTime         @default(now())
+  attribution   SalesAttribution @relation(fields: [attributionId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([attributionId])
 }
 
 /// Sales-event discounts (docs/specs/sales-event-discounts-spec-th.md §6.1). A sales lead sets up a
