@@ -731,7 +731,8 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
           <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} phase={detail.payoutCorrectionPhase} />} />
-          {/* A claim sent while the company had no finance-review step has no finance review to speak of: no row for it. */}
+          {/* Only for a claim that is at, or went through, the finance review. A claim with no such step has none to speak
+              of, and one that has not reached it yet read "ไม่ต้องตรวจ" here, which is not so: the step strip names what is ahead. */}
           {rowHasFinanceReview(detail) && <Row k="ตรวจการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />}
           {detail.financeReviewedByName && <Row k="ผู้ตรวจการเงิน" v={detail.financeReviewedByName} />}
           <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />
