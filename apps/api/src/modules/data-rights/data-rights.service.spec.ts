@@ -991,6 +991,34 @@ describe('DataRightsService single-admin mode', () => {
     assert.deepEqual(prisma.state.auditLogs.map((row: any) => row.metadataJson.step), ['APPROVAL', 'EXECUTION', 'VERIFICATION']);
   });
 
+  it('rechecks the retention dates before a single-admin step, as it does for two people', async () => {
+    const prisma = makePrisma();
+    prisma.state.systemAdmins = ['admin-a'];
+    const service = makeService(prisma);
+    const admin = operator('admin-a');
+    const caseId = await reachReview(service, admin);
+    await recordAllDeleteDecisions(service, caseId, admin);
+    await service.recordDecision(admin, caseId, {
+      commandId: 'decision-ai-restricted', category: 'AI_OCR_DATA', disposition: 'RESTRICT',
+      legalBasisCode: 'CLAIM-LIMITATION', rationale: 'Restrict the evidence through the current legal review period.',
+      retentionUntil: '2031-01-01T00:00:00.000Z', accessRestriction: 'Privacy coordinator and counsel only.',
+    });
+    const restricted = prisma.state.decisions
+      .filter((item: any) => item.caseId === caseId && item.category === 'AI_OCR_DATA')
+      .sort((a: any, b: any) => b.revision - a.revision)[0];
+    const expired = code('data_rights_retention_review_expired');
+
+    restricted.retentionUntil = new Date('2020-01-01T00:00:00.000Z');
+    await assert.rejects(() => service.approve(admin, caseId, 'approve-stale', REASON), expired);
+    restricted.retentionUntil = new Date('2031-01-01T00:00:00.000Z');
+    await service.approve(admin, caseId, 'approve-self', REASON);
+    restricted.retentionUntil = new Date('2020-01-01T00:00:00.000Z');
+    await assert.rejects(() => service.startExecution(admin, caseId, 'execute-stale', REASON), expired);
+
+    assert.equal(prisma.state.cases[0].status, 'APPROVED');
+    assert.deepEqual(prisma.state.auditLogs.map((row: any) => row.metadataJson.step), ['APPROVAL']);
+  });
+
   it('tells every case read whether the single-admin path is open', async () => {
     const prisma = makePrisma();
     const service = makeService(prisma);
