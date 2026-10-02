@@ -16,7 +16,7 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAVE_LABEL,
+  PAYOUT_CORRECTION_ON_BEHALF_NOTICE, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAVE_LABEL,
   PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
   isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionAnswerWords, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
@@ -225,7 +225,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       <div role="radiogroup" aria-label="รับเงินคืนทาง" aria-required className="space-y-2">
         {defaultAccount && offers('DEFAULT') && option('DEFAULT', forSelf ? 'ใช้บัญชีรับเงินคืนประจำของฉัน' : 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', payoutAccountWithName(defaultAccount))}
         {offers('CASH') && option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
-        {typingOffered && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน')}
+        {typingOffered && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย')}
         {previousAccount && offers('PREVIOUS') && option('PREVIOUS', PAYOUT_CORRECTION_PREVIOUS_LABEL, `${payoutCorrectionAccountText(previousAccount)} · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง`)}
       </div>
       {/* Known before anyone typed: said as what the form is, not as something that went wrong. */}
@@ -252,6 +252,11 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
           ? 'เมื่อบันทึกแล้ว วิธีรับเงินคืนที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจวิธีรับเงินคืนที่เลือกครั้งนี้แทน'
           : 'เมื่อบันทึกแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติวิธีรับเงินคืนนี้ก่อนจึงจ่ายได้ ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที'}
       </p>
+      {/* Whoever answers for the requester: the requester is told of it, whatever is chosen. Said only where a notice can
+          reach them: a requester who is no longer an active member is told nothing, and the form says that case above. */}
+      {!forSelf && typingOffered && (
+        <p className="text-xs leading-5 text-gray-500" data-testid="reimbursement-payout-correction-on-behalf-notice">{PAYOUT_CORRECTION_ON_BEHALF_NOTICE}</p>
+      )}
       {error && <ErrorBanner message={error} />}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button type="button" className={cx(ghostClass, 'w-full sm:w-auto')} disabled={busy} onClick={onCancel}>ยกเลิก</button>

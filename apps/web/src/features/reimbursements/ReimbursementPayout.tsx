@@ -358,8 +358,9 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
         )}
         {option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
         {hasOwnAccount && option('KEEP', 'ใช้บัญชีที่ระบุไว้ในใบนี้', `${payoutAccountLine(current)}${current?.accountName ? ` · ${current.accountName}` : ''}`)}
+        {/* On a draft filed for someone only an account typed for them tells them: said beside that choice, and of no other. */}
         {option('SPECIFIED', hasOwnAccount ? 'ระบุบัญชีใหม่สำหรับใบนี้' : 'ระบุบัญชีสำหรับใบนี้',
-          forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย')}
+          forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน')}
       </div>
       {value.mode === 'SPECIFIED' && (
         <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">

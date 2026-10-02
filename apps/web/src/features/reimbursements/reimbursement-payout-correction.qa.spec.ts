@@ -828,8 +828,34 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     assert.equal(heading(html), 'แก้บัญชีรับเงินแทนผู้เบิก');
     assert.equal(heading(form(withDefault(phaseA())).html), 'แก้บัญชีรับเงิน');
     assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
-    assert.ok(texts.includes('กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน'));
+    assert.ok(texts.includes('กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย'));
     assert.ok(texts.includes('บันทึกเป็นบัญชีประจำของผู้เบิก'));
+  });
+
+  // Before: "… และผู้เบิกจะได้รับแจ้งเตือน" beside the typed-account choice only. The requester is told of every answer given for
+  // them (owner rule 2026-10-01): their standing account, the account the claim had and cash included.
+  it('tells whoever answers for the requester that the requester is notified whatever is chosen, and says it of no other case', () => {
+    const NOTICE = 'ผู้เบิกจะได้รับแจ้งเตือนทุกครั้งที่มีผู้เลือกวิธีรับเงินคืนแทน ไม่ว่าเลือกแบบใด';
+    const told = (texts: string[]) => texts.filter((text) => text.includes('แจ้งเตือน'));
+    const listed = (submitModes: string[], more: object = {}) => ({ ...phaseA(), payoutCorrectionActions: { canRequest: false, canSubmit: true, requesterDefault: DEFAULT, submitModes, ...more } });
+    const all = listed(['DEFAULT', 'SPECIFIED', 'CASH', 'PREVIOUS']);
+    // Before anything is picked, and under each of the four choices: the one sentence, once, and no other word of a notice.
+    for (const picked of [undefined, { mode: 'DEFAULT' }, { mode: 'CASH' }, { mode: 'PREVIOUS' }, { mode: 'SPECIFIED' }] as const) {
+      assert.deepEqual(told(form(all, { userId: 'finance', picked }).texts), [NOTICE], JSON.stringify(picked));
+    }
+    // Whatever the claim holds, and when an answer already waits and is given again.
+    for (const detail of [...HELD.map((held) => withDefault(sentBackHolding(held))), withDefault(answeredWith('CASH_INSTEAD')), withDefault(phaseB())]) {
+      assert.deepEqual(told(form(detail, { userId: 'finance' }).texts), [NOTICE]);
+    }
+    // The requester answering for themself is told of no notice: none is sent.
+    for (const picked of [undefined, { mode: 'SPECIFIED' }] as const) assert.deepEqual(told(form(all, { picked }).texts), []);
+    // A requester no notice can reach (no longer an active member): the form does not say they will be told. It says
+    // why no account can be typed for them, known up front or learned from the refusal.
+    const gone = form(listed(['DEFAULT', 'CASH', 'PREVIOUS'], { specifiedRefusal: 'REQUESTER_NOT_ACTIVE' }), { userId: 'finance' }).texts;
+    assert.equal(gone.includes(NOTICE), false);
+    assert.equal(form(all, { userId: 'finance', typing: 'refused' }).texts.includes(NOTICE), false);
+    assert.match(form(all, { userId: 'finance' }).html, /data-testid="reimbursement-payout-correction-on-behalf-notice"/);
+    assertPlainThai([NOTICE], 'the on-behalf notice of the answer form');
   });
 
   // Before: "ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่" and "บัญชีที่ส่งไปก่อนหน้า … บัญชีใหม่นี้", whatever was about to be chosen: the same

@@ -429,7 +429,15 @@ describe('the receiving choice on the claim form', () => {
     const html = section({ forSelf: false, defaultAccount: null, canSaveAsDefault: true, value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: false } });
     const texts = visible(html);
     for (const text of ['ตามบัญชีรับเงินคืนประจำของผู้เบิก', 'ระบบใช้บัญชีรับเงินคืนประจำของผู้เบิกที่เลือกไว้ และแสดงบัญชีนั้นให้ตรวจในหน้าใบเบิกก่อนกดส่งอนุมัติ',
-      'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย', 'บันทึกเป็นบัญชีประจำของผู้เบิก']) assert.ok(texts.includes(text), text);
+      'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน', 'บันทึกเป็นบัญชีประจำของผู้เบิก']) assert.ok(texts.includes(text), text);
+    // On a draft only an account typed for the requester tells them: the form says so beside that choice, and of no other.
+    // (Following the requester's standing account, or cash, on a draft filed for them sends no notice.)
+    for (const mode of ['DEFAULT', 'CASH', 'SPECIFIED'] as const) {
+      const told = visible(section({ forSelf: false, defaultAccount: null, value: { mode, account: logic.emptyPayoutAccountForm(), saveAsDefault: false } })).filter((text) => text.includes('แจ้งเตือน'));
+      assert.deepEqual(told, ['กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน'], mode);
+    }
+    // The requester filling their own draft is told of no notice.
+    assert.deepEqual(visible(section({ value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: false } })).filter((text) => text.includes('แจ้งเตือน')), []);
     assert.ok(!texts.some((text) => text.includes('ของฉัน')), 'nothing on an on-behalf form speaks of "my" account');
     assert.doesNotMatch(html, /payout-account/, 'and nothing links to the preparer own account page');
 
