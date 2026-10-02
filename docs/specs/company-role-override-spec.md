@@ -102,6 +102,14 @@ rules bound what a company may copy or create.
     that key. It applies only to a preset that exists in the catalogue (`roleTemplateKey` is free
     text on the request) and never to `OWNER`, `SYSTEM_ADMIN`, `COMPANY_VIEW` or a platform-only key.
   - Renaming a role never changes its key, so R10 is a rule of creation only.
+  - Roles of one company whose names derive the same key are numbered (added 2026-10-02): the first
+    takes the key, the next ones `<KEY>_1`, `<KEY>_2`, … with no cap, each the first free number
+    read inside the creating transaction. A name with no Latin letter and no preset derives `ROLE`,
+    so a company's Thai-named roles are `ROLE`, `ROLE_1`, `ROLE_2`, …; the numbering used to stop
+    at `_4` and refuse the sixth. Two roles created at the same moment are told apart by the unique
+    index: the refused one is run again and takes the next number. Five rounds lost in a row
+    answer `409 role_key_allocation_failed`; nothing is written, saving again works, and the message is
+    "ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กรุณากดบันทึกอีกครั้ง".
 
 ### Deployment interaction
 

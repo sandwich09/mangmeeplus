@@ -1,5 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
 import { NON_EDITABLE_ROLE_KEYS, type CreateRoleInput, type RoleDetail } from '@watchdog-bms/contracts';
+import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { COMPANY_PERMISSION_KEYS, PLATFORM_ONLY_ROLE_KEYS, SYSTEM_ROLES } from '../../../auth/permission-registry';
@@ -68,6 +69,24 @@ export function reservedRoleKey(name: string, roleTemplateKey?: string): boolean
   return !borrowedFromPreset || NEVER_A_COMPANY_ROLE_KEY.has(key);
 }
 
+/**
+ * Roles whose names give the same key are numbered `ROLE`, `ROLE_1`, `ROLE_2`, … with no cap. The
+ * loop this replaces stopped at `_4`: a company's sixth Thai-named role was refused, and the role
+ * page called it a duplicate of something, which it was not.
+ *
+ * Two creations at the same moment read the same free key, and the unique index on (scopeKey, key)
+ * refuses one of them: that one reads the keys again and takes the next. A round is lost only to
+ * another role saved in the same company in that instant.
+ * ponytail: five rounds. Losing them all takes six roles of one base saved in one company at once;
+ * nothing is written then, saving again works, and the answer says so. If a shop ever gets there,
+ * take the company lock the edit path takes (`lockPlanTermCompany`).
+ */
+const ROLE_KEY_ATTEMPTS = 5;
+const ROLE_KEY_ALLOCATION_FAILED = {
+  code: 'role_key_allocation_failed',
+  message: 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กรุณากดบันทึกอีกครั้ง',
+};
+
 @Injectable()
 export class CreateRoleUseCase {
   constructor(private readonly prisma: PrismaService) {}
@@ -101,19 +120,18 @@ export class CreateRoleUseCase {
     });
 
     const baseKey = roleKeyFromName(cmd.name, cmd.roleTemplateKey);
-    const role = await this.prisma.client.$transaction(async (tx) => {
-      let created;
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const key = attempt === 0 ? baseKey : `${baseKey}_${attempt}`;
-        const existing = await tx.role.findUnique({ where: { scopeKey_key: { scopeKey: cmd.companyId, key } } });
-        if (!existing) {
-          created = await tx.role.create({
-            data: { companyId: cmd.companyId, scopeKey: cmd.companyId, key, name: cmd.name, description: cmd.description, isSystem: false },
-          });
-          break;
-        }
-      }
-      if (!created) throw new ConflictException('Could not allocate a unique role key. Please retry.');
+    const createWithFreeKey = () => this.prisma.client.$transaction(async (tx) => {
+      // One read, whatever the number of roles. `startsWith` is a LIKE, where `_` matches any
+      // character: it can only read more keys than the base's own, and the lookup below is exact.
+      const taken = new Set((await tx.role.findMany({
+        where: { scopeKey: cmd.companyId, key: { startsWith: baseKey } },
+        select: { key: true },
+      })).map((row) => row.key));
+      let key = baseKey;
+      for (let suffix = 1; taken.has(key); suffix++) key = `${baseKey}_${suffix}`;
+      const created = await tx.role.create({
+        data: { companyId: cmd.companyId, scopeKey: cmd.companyId, key, name: cmd.name, description: cmd.description, isSystem: false },
+      });
 
       await tx.rolePermission.createMany({
         data: permissions.map((p) => ({ roleId: created.id, permissionId: p.id })),
@@ -140,6 +158,17 @@ export class CreateRoleUseCase {
 
       return created;
     });
+
+    let role: Awaited<ReturnType<typeof createWithFreeKey>> | undefined;
+    for (let attempt = 0; !role && attempt < ROLE_KEY_ATTEMPTS; attempt++) {
+      try {
+        role = await createWithFreeKey();
+      } catch (err) {
+        // Only the key's own index: the transaction was rolled back, so the next round starts clean.
+        if (!uniqueConstraintFields(err)?.includes('key')) throw err;
+      }
+    }
+    if (!role) throw new ConflictException(ROLE_KEY_ALLOCATION_FAILED);
 
     const row = await this.prisma.client.role.findUniqueOrThrow({ where: { id: role.id }, include: ROLE_INCLUDE });
     return toRoleSummary(row);

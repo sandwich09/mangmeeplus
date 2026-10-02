@@ -174,7 +174,7 @@ export const CRM_CUSTOMERS: Record<string, CrmCustomer> = {
   k6: {
     name: 'คุณมิ้นต์ พุทธิชา', lineName: 'mint.p', phone: '080-111-2233', dob: '30/01/1999', status: 'lead', statusLabel: 'ลูกค้าใหม่', score: 60, sentiment: 'สนใจ', ltv: '0', lastVisit: '—', tags: ['ลูกค้าใหม่', 'ถามโปร'],
     deal: null, purchases: [], tasks: [], appt: null,
-    aiSummary: 'ลูกค้าใหม่ถามโปรโมชั่นเดือนนี้ — ค้างเกิน 30 นาที ควรรีบตอบ',
+    aiSummary: 'ลูกค้าใหม่ถามโปรโมชั่นเดือนนี้ — รอตอบเกินกำหนด ควรรีบตอบ',
     aiReply: 'สวัสดีค่ะ เดือนนี้มีโปรต่อขนตา Volume ลด 15% เหลือ 2,125 บาทค่ะ สนใจจองคิววันไหนดีคะ?',
     intent: 'สอบโปร', next: 'ตอบด่วน + เสนอโปร',
   },

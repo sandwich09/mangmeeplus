@@ -6,6 +6,7 @@ import { CreateUploadIntentUseCase } from '../../../data-model-core/application/
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { AuditService } from '../../../audit/application/audit.service';
+import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import type { RequestContext, CreateSignatureAssetInput, SignatureFillInput } from '@watchdog-bms/contracts';
 import type { SignatureAssetRecord } from '../../domain/models/expense.model';
@@ -194,7 +195,9 @@ export class CreateSignatureAssetUseCase {
     try {
       asset = await this.repo.createSignatureAsset({
         companyId: ctx.companyId,
-        label: cmd.label ?? `${identity.displayName} ${todayCivilDate()}`,
+        // The name its owner reads in the signature list when none was typed: the date as every other
+        // screen prints one (2 ต.ค. 2569), not the machine form 2026-10-02. Stored, so it never changes.
+        label: cmd.label ?? `${identity.displayName} ${formatThaiExportDate(todayCivilDate())}`,
         originalAttachmentId: cmd.attachmentId,
         submittedByUserId: ctx.userId,
         submittedFromChannel: cmd.submittedFromChannel ?? 'WEB',

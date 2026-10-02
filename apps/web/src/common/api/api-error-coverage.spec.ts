@@ -15,7 +15,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { apiErrorMessage, translateApiError } from './api-error-message';
+import { apiErrorCode, apiErrorMessage, translateApiError } from './api-error-message';
 import { GENERIC_UPLOAD_ERROR_MESSAGE, uploadErrorMessage } from '../files/upload-file.logic';
 
 /** Default-open customer features, plus the billing/renewal boundary. */
@@ -148,6 +148,31 @@ describe('Thai coverage for default-open feature error codes', () => {
       assert.match(thai!, expected, code);
       assert.doesNotMatch(thai!, /[a-z]{3,}_[a-z]{3,}/, `${code} leaks a snake_case identifier into the message`);
     }
+  });
+});
+
+// Seen on a local stack on 2026-10-02: a company's sixth role with a Thai name was refused with a bare 409,
+// and the role form reads a bare 409 as "ข้อมูลซ้ำกับที่มีอยู่ในระบบ". Nothing was duplicated. Role keys are
+// numbered without a cap now, and the one refusal left (several roles saved in one company in the same
+// instant, every round lost) carries a code, so the form and the toast say what happened and what to do.
+describe('a role that could not be created because other roles were saved at the same moment', () => {
+  it('says so and asks to save again, on the role form and in the toast, and never calls it a duplicate', () => {
+    const code = 'role_key_allocation_failed';
+    assert.equal(openFeatureErrorCodes().get(code), 'employee-access', `${code} is no longer found in the API source`);
+    const thai = translateApiError(code)!;
+    assert.equal(thai, 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กรุณากดบันทึกอีกครั้ง');
+    assert.doesNotMatch(thai, /ซ้ำ|[A-Za-z]/);
+    // The API gives the same sentence as its message, so a reader of the message is told the same thing.
+    const useCase = readFileSync(join(API_MODULES, 'employee-access/application/use-cases/create-role.use-case.ts'), 'utf8');
+    assert.ok(useCase.includes(`message: '${thai}'`), 'the API message and the web text differ');
+
+    // The answer as `authedApiFetch` throws it. The toast words it by its code, whatever the message says.
+    const refusal = Object.assign(new Error('Conflict'), { status: 409, code, details: { code } });
+    assert.equal(apiErrorMessage(refusal), thai);
+    // So does the role form: it reads a refusal by its status only when the refusal has no code.
+    const form = readFileSync(join(__dirname, '../../features/employee-access/EmployeeAccessPages.tsx'), 'utf8');
+    assert.match(form, /setError\(apiErrorCode\(e2\) \? apiErrorMessage\(e2, locale\) : localizedErrorMessage\(e2, locale, /);
+    assert.equal(apiErrorCode(refusal), code);
   });
 });
 

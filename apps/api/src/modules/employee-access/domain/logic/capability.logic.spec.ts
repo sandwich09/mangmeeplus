@@ -97,6 +97,28 @@ describe('capability-pack registry integrity', () => {
     assert.equal(approve.description, 'ดู อนุมัติ และปฏิเสธคำขอเบิก รวมทั้งบันทึกจ่ายเงินคืนและยกเลิกการจ่าย');
   });
 
+  // Owner report 2026-10-02: the role page printed "audit", "dead letter" and "webhook". Every choice and
+  // every example role is read by a shop on a phone, so what it says is Thai. The Latin words left are
+  // names the whole product and its users already say: the LINE app, a QR label, the AI helper, a PDF
+  // file and VAT.
+  it('prints every choice and example role of the role page in Thai', () => {
+    const everydayNames = /\b(LINE|QR|AI|PDF|VAT)\b/g;
+    // Loan words that no other screen uses: each stood for a thing the app names in Thai elsewhere.
+    const jargon = /เควสต์|ออโตเมชัน|วิดเจ็ต|สแนปช็อต|สเตจ|ซิงก์|ซิงค์/;
+    const texts = [
+      ...CAPABILITY_PACKS.flatMap((pack) => [[pack.key, pack.nameTh], [pack.key, pack.description]]),
+      ...ROLE_TEMPLATES.flatMap((template) => [[template.key, template.nameTh], [template.key, template.description]]),
+    ] as Array<[string, string]>;
+    for (const [key, text] of texts) {
+      assert.match(text, /[ก-๙]/, `${key}: "${text}"`);
+      assert.doesNotMatch(text.replace(everydayNames, ''), /[A-Za-z_]/, `${key}: "${text}"`);
+      assert.doesNotMatch(text, jargon, `${key}: "${text}"`);
+    }
+    // The two the report named, said by what they are for and in the words of the ระบบอัตโนมัติ page.
+    assert.match(CAPABILITY_PACK_BY_KEY.get('pack.workflow.view')!.description, /งานอัตโนมัติที่ทำไม่สำเร็จและยังค้างอยู่/);
+    assert.match(CAPABILITY_PACK_BY_KEY.get('pack.workflow.manage')!.description, /ส่งข้อมูลไปให้โปรแกรมอื่นโดยอัตโนมัติ/);
+  });
+
   // The foundation toggles are enforced by submenu rules, not by tagging these packs. Tagging
   // them would strip everything else they carry — most damagingly attachment.create, which is
   // granted by no other pack and guards every upload endpoint in the product.

@@ -644,6 +644,29 @@ test.describe('Mobile responsive invariants', () => {
     await expect(summary.getByTestId('access-permission-actions').locator('button, a, [role="button"], [tabindex]')).toHaveCount(0);
   });
 
+  // Owner report 2026-10-02: the role's menu rights were a table with an 820 px minimum, so on a phone
+  // only the menu names showed and the ticks had to be scrolled to sideways.
+  test('/settings/permissions — a role’s menu rights are read without scrolling sideways', async ({ authedPage, companyId }) => {
+    await gotoAndSettle(authedPage, companyId, '/settings/permissions');
+    await expect(authedPage.getByRole('heading', { name: /^สิทธิ์เข้าถึงเมนู/ })).toBeVisible();
+
+    const sidewaysScrollers = await authedPage.locator('main').evaluate((main) => [...main.querySelectorAll('*')].flatMap((node) => {
+      const overflowX = window.getComputedStyle(node).overflowX;
+      return (overflowX === 'auto' || overflowX === 'scroll') && node.scrollWidth > node.clientWidth + 1
+        ? [`${node.tagName.toLowerCase()} ${node.scrollWidth}px in ${node.clientWidth}px`]
+        : [];
+    }));
+    expect(sidewaysScrollers, 'nothing on the role page may scroll sideways').toEqual([]);
+
+    const rows = authedPage.getByTestId('role-permission-matrix').getByTestId('role-permission-row');
+    await expect(rows.first()).toBeVisible();
+    const pastTheEdge = await rows.evaluateAll((elements) => elements.flatMap((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.left < -1 || rect.right > window.innerWidth + 1 ? [element.textContent] : [];
+    }));
+    expect(pastTheEdge, 'every menu row and its rights stay inside the screen').toEqual([]);
+  });
+
   test('INV-3 drawer works', async ({ authedPage, companyId }) => {
     await gotoAndSettle(authedPage, companyId, '/dashboard');
 
