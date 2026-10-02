@@ -1,7 +1,9 @@
 import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import type { RequestContext, SourceRef, ToolResult } from '@watchdog-bms/contracts';
-import { civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL } from '@watchdog-bms/contracts';
+import {
+  civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementPayoutHeld, reimbursementPayoutRoundStatus,
+} from '@watchdog-bms/contracts';
 import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/line-draft-update.use-case';
@@ -10,7 +12,7 @@ import { GetDocumentUseCase, ListDocumentsUseCase } from '../../../accounting-do
 import { GetExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import { parseLineExpenseDraftContinuation } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { GetReimbursementDetailUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
-import { GetReimbursementAiSummaryUseCase, PAYOUT_CORRECTION_NOTE } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
+import { GetReimbursementAiSummaryUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 import { PAYOUT_CORRECTION_STEP_REASON } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import {
@@ -420,10 +422,12 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
     if (!reimbursementId) return unavailable(this.toolName, asOf, 'REIMBURSEMENT_ID_REQUIRED');
     return safely(this.toolName, asOf, 'REIMBURSEMENT_NOT_FOUND', async () => {
       const item = await this.getDetail.execute(toCtx(ctx), reimbursementId);
-      // Payout spec §14: a claim sent back for its account is PENDING_APPROVAL by its status, with the approval it
-      // stood on set aside. It reads here as `reimbursement.get_approval_backlog` reads it: the claim page's words
-      // for the phase in place of the status (the gateway's fixed reply prints `status` as it comes), the Thai day
-      // that wait began, and nothing of the account, the reason or who sent it back. A claim being cancelled is
+      // Payout spec §14: a claim sent back from the pay step is PENDING_APPROVAL by its status, with the approval it
+      // stood on set aside. It reads here as `reimbursement.get_approval_backlog` reads it: the claim page's status
+      // label in place of the status (the gateway's fixed reply prints `status` as it comes), the Thai day that wait
+      // began, and nothing of the account, the reason or who sent it back. The label follows what the claim holds
+      // while it is with its requester and what was answered while it waits for approval, as on the claim page: a
+      // claim with no account is not said to have one under correction, nor a kept account to be new. A claim being cancelled is
       // asked for no account, so the round is not said of it. It waits for no approver and no payer either
       // (both are refused meanwhile): its status reads as the system's wait, the words of the claim page and
       // of the backlog tool for the same claim, never as the status it has not left yet.
@@ -434,8 +438,12 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
           id: item.id, requestNo: item.requestNo ?? null, requesterDisplayName: item.requesterDisplayNameSnapshot,
           title: item.title ?? null, reason: item.reason, category: item.categoryLabelSnapshot ?? item.categoryKey,
           amount: item.amount, currency: item.currency, incurredDate: item.incurredDate,
-          status: item.cancellationPending ? REIMBURSEMENT_SYSTEM_WAIT_LABEL : round ? REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS[round.phase] : item.status,
-          ...(round?.phase === 'AWAITING_REQUESTER' && { sentBackOn: civilDate(new Date(round.requestedAt)), note: PAYOUT_CORRECTION_NOTE }),
+          status: item.cancellationPending ? REIMBURSEMENT_SYSTEM_WAIT_LABEL
+            : (round && reimbursementPayoutRoundStatus({ payoutCorrectionPhase: round.phase, payoutMethod: item.payoutMethod, payoutCorrectionAnswer: item.payoutCorrectionAnswer }))
+              ?? item.status,
+          ...(round?.phase === 'AWAITING_REQUESTER' && {
+            sentBackOn: civilDate(new Date(round.requestedAt)), note: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held[reimbursementPayoutHeld(item)].assistantNote,
+          }),
           ...(round?.phase === 'AWAITING_APPROVAL' && round.submittedAt && { resubmittedOn: civilDate(new Date(round.submittedAt)) }),
           financeReviewStatus: item.financeReviewStatus, paymentStatus: item.paymentStatus,
           receiptRequirementStatus: item.receiptRequirementStatus, postingStatus: item.postingStatus,

@@ -20,7 +20,7 @@ import {
   isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket,
   reimbursementPayoutAnswerNotice, reimbursementPayoutCorrectionReasons, reimbursementPayoutRoundStatus,
 } from '@watchdog-bms/contracts';
-import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, PAYOUT_CORRECTION_NOTE } from './reimbursement-summary.use-case';
+import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase } from './reimbursement-summary.use-case';
 import { toRequestSummary } from '../dto/reimbursement.mapper';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
@@ -768,7 +768,12 @@ describe('a claim whose payout account is being corrected reads the same on LINE
   }) as any;
   const pendingStep = (requestId: string) => ({ id: `step-${requestId}`, companyId: 'co-1', reimbursementRequestId: requestId, sequenceNo: 1,
     status: 'PENDING', assignedApproverUserIds: ['mgr-1'], approverRoleSnapshot: 'MANAGER' }) as any;
-  const sentBack = { payoutCorrectionRequestedAt: new Date('2026-09-30T03:00:00.000Z'), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG' };
+  // What a claim holds: an account of its own (the method and the fingerprint its submit froze), cash, or neither.
+  const ACCOUNT_HELD = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64) };
+  const CASH_HELD = { payoutMethod: 'CASH', payoutFingerprint: 'cash' };
+  const sentBack = {
+    payoutCorrectionRequestedAt: new Date('2026-09-30T03:00:00.000Z'), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG', ...ACCOUNT_HELD,
+  };
   const rows = [
     row('sent-back', sentBack),                                                                   // phase A: with its requester
     row('new-account', { ...sentBack, payoutCorrectionSubmittedAt: new Date('2026-10-01T02:00:00.000Z') }), // phase B: waiting for สมศรี again
@@ -810,15 +815,65 @@ describe('a claim whose payout account is being corrected reads the same on LINE
       { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-20', longestWaitDays: 11 },
       {
         kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
-        oldestSentBackOn: '2026-09-30', longestWaitDays: 1, note: PAYOUT_CORRECTION_NOTE,
+        oldestSentBackOn: '2026-09-30', longestWaitDays: 1,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
       },
     ]);
-    assert.equal(PAYOUT_CORRECTION_NOTE, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
     // สมศรี has two claims to approve; the corrected account has waited for her since this morning, not for eleven days.
     assert.deepEqual(backlog.byApprover, [{ name: 'สมศรี', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '200.00' }], oldestSubmittedOn: '2026-09-29', longestWaitDays: 2 }]);
     assert.deepEqual([backlog.total, backlog.awaitingApprovalCount], [4, 2]);
     // Nothing of an account, and no code word, in what the assistant is handed.
     assert.doesNotMatch(JSON.stringify(backlog), /ACCOUNT_NUMBER_WRONG|payer-1|AWAITING_|accountLast4|bankName|fingerprint/);
+  });
+
+  // Payout spec §17.3. The desk of a claim that waits for its requester is named for what THAT claim holds. One row
+  // used to say "รอผู้เบิกแก้บัญชีรับเงิน" of every such claim: of one with no account to correct, and of one that asked for cash.
+  it('lists claims that wait for their requester under one row per label: an account to correct, one to add, the method to choose again', async () => {
+    const on = (day: string, reasonCode: string) => ({
+      payoutCorrectionRequestedAt: new Date(`2026-09-${day}T03:00:00.000Z`), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: reasonCode,
+    });
+    const waiting = [
+      row('c-1', { ...on('29', 'CASH_NOT_PAYABLE'), ...CASH_HELD, outstandingAmount: '250.0000' }),
+      row('n-1', { ...on('27', 'NO_ACCOUNT_ON_CLAIM'), outstandingAmount: '40.0000' }),
+      row('a-1', { ...on('30', 'ACCOUNT_NUMBER_WRONG'), ...ACCOUNT_HELD }),
+      // Sent before claims carried a destination: the method its draft once chose is no account of its own.
+      row('n-2', { ...on('25', 'NO_ACCOUNT_ON_CLAIM'), payoutMethod: 'BANK_TRANSFER', outstandingAmount: '60.0000' }),
+      // Answered with cash: it waits for สมศรี, and is in none of these rows.
+      row('answered', { ...on('28', 'CASH_NOT_PAYABLE'), ...CASH_HELD, payoutCorrectionSubmittedAt: new Date('2026-10-01T02:00:00.000Z') }),
+    ];
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(
+      { ...repo, listRequests: async () => waiting, findPendingApprovalSteps: async () => [pendingStep('answered')] }, noopAudit,
+    ).execute(reader, {}, NOW);
+
+    // Each row is whole in itself: a label true of every claim it counts, its own figures and its own sentence.
+    assert.deepEqual(backlog.desks, [
+      {
+        kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
+        oldestSentBackOn: '2026-09-30', longestWaitDays: 1,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+      },
+      {
+        kind: 'requester_correction', label: 'รอผู้เบิกเพิ่มบัญชีรับเงิน', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
+        oldestSentBackOn: '2026-09-25', longestWaitDays: 6,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ผู้เบิกเพิ่มได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+      },
+      {
+        kind: 'requester_correction', label: 'รอผู้เบิกเลือกวิธีรับเงินคืน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '250.00' }],
+        oldestSentBackOn: '2026-09-29', longestWaitDays: 2,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ผู้เบิกเลือกได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+      },
+    ]);
+    // Each claim waits on the label of its own row; the one that was answered waits for its approver.
+    assert.deepEqual(backlog.items.map((item) => [item.id, item.waitingOn, item.sentBackOn ?? item.resubmittedOn, item.waitDays]), [
+      ['n-2', 'รอผู้เบิกเพิ่มบัญชีรับเงิน', '2026-09-25', 6], ['n-1', 'รอผู้เบิกเพิ่มบัญชีรับเงิน', '2026-09-27', 4],
+      ['c-1', 'รอผู้เบิกเลือกวิธีรับเงินคืน', '2026-09-29', 2], ['a-1', 'รอผู้เบิกแก้บัญชีรับเงิน', '2026-09-30', 1],
+      ['answered', 'สมศรี', '2026-10-01', 0],
+    ]);
+    // The rows add up to the claims that are with their requester, and none of those is counted for an approver.
+    assert.deepEqual([backlog.total, backlog.awaitingApprovalCount, backlog.desks.reduce((sum, desk) => sum + desk.count, 0), backlog.byApprover.map((group) => [group.name, group.count])],
+      [5, 1, 4, [['สมศรี', 1]]]);
+    // Where each claim stands, and nothing of an account, a reason or who sent it back.
+    assert.doesNotMatch(JSON.stringify(backlog), /payout|account|ffff|CASH|NO_ACCOUNT|payer-1|AWAITING_|fingerprint/i);
   });
 
   it('counts it as waiting for approval in the assistant summary only once the account is given, and as late only by that wait', async () => {

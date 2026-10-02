@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import {
   isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPayoutCorrectionPhase,
-  reimbursementPayoutHeld, reimbursementPayoutRoundAnswer, reimbursementPayoutRoundStatus, todayCivilDate,
+  reimbursementPayoutHeld, reimbursementPayoutRoundAnswer, reimbursementPayoutRoundStatus, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, todayCivilDate,
 } from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
@@ -515,6 +515,21 @@ export function payoutCorrectionFacts(log: readonly {
  */
 export function payoutCorrectionAnswer(claim: PayoutCorrectionClaim): ReimbursementPayoutRoundAnswer | undefined {
   return payoutCorrectionPhase(claim) === 'AWAITING_APPROVAL' ? payoutCorrectionFacts(claim.payoutCorrectionLog).at(-1)?.answer : undefined;
+}
+
+/**
+ * The desk of a claim that waits for its requester, as the LINE backlog lists it (payout spec §17.3): the
+ * claim page's status label for what the claim holds, and the sentence that says what happens next. One
+ * desk row per label, so each label is true of every claim its row counts; `order` places the rows.
+ */
+export function payoutCorrectionRequesterDesk(claim: PayoutHolder): { order: number; label: string; note: string } {
+  const held = payoutCorrectionHeld(claim);
+  const payoutMethod = hasPayoutSnapshot(claim) ? claim.payoutMethod : undefined;
+  return {
+    order: Object.keys(REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held).indexOf(held),
+    label: reimbursementPayoutRoundStatus({ payoutCorrectionPhase: 'AWAITING_REQUESTER', payoutMethod }) as string,
+    note: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held[held].assistantNote,
+  };
 }
 
 /** What a claim in a round is said to wait for (contracts `reimbursementPayoutRoundStatus`), asked of a claim record. Undefined: it is in no round. */

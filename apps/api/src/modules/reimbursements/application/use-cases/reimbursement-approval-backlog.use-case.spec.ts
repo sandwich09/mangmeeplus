@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { REIMBURSEMENT_DESK_LABELS, type RequestContext } from '@watchdog-bms/contracts';
-import { GetReimbursementApprovalBacklogUseCase, NO_ACTIVE_APPROVER_NOTE, PAYOUT_CORRECTION_NOTE, SHARED_PILE_LABEL } from './reimbursement-summary.use-case';
+import { GetReimbursementApprovalBacklogUseCase, NO_ACTIVE_APPROVER_NOTE, SHARED_PILE_LABEL } from './reimbursement-summary.use-case';
 
 // 2026-09-30 10:00 Bangkok.
 const NOW = new Date('2026-09-30T03:00:00.000Z');
@@ -212,16 +212,19 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
   // with its requester, and that is not a decided claim the system has yet to move on.
   it('puts a claim that waits for its requester to correct the payout account on its own desk, and counts it for no approver', async () => {
     const sentBackAt = new Date('2026-09-28T03:00:00.000Z');
-    const withRequester = claim({ payoutCorrectionRequestedAt: sentBackAt });
+    // Both claims carry an account of their own: the desk and its words are those of an account to correct.
+    const account = { payoutMethod: 'BANK_TRANSFER', payoutFingerprint: 'f'.repeat(64) };
+    const withRequester = claim({ ...account, payoutCorrectionRequestedAt: sentBackAt });
     // The account was given on the 29th: it waits for its approver again, since then.
-    const withApprover = claim({ payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: new Date('2026-09-29T03:00:00.000Z') });
+    const withApprover = claim({ ...account, payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: new Date('2026-09-29T03:00:00.000Z') });
     const decided = claim();
     const result = await run(repo([withRequester, withApprover, decided], [step(withApprover.id, { assignedApproverUserIds: ['mgrA'] })], { b1: ['mgrA'] }));
 
     assert.deepEqual(result.desks, [
       { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-23', longestWaitDays: 7 },
       { kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
-        oldestSentBackOn: '2026-09-28', longestWaitDays: 2, note: PAYOUT_CORRECTION_NOTE },
+        oldestSentBackOn: '2026-09-28', longestWaitDays: 2,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้' },
     ]);
     assert.deepEqual(result.byApprover, [{ name: 'สมศรี', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-29', longestWaitDays: 1 }]);
     assert.deepEqual(result.items.map((item) => [item.id, item.waitingOn, item.submittedOn, item.sentBackOn ?? item.resubmittedOn ?? null, item.waitDays]), [

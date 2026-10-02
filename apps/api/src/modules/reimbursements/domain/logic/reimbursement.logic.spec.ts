@@ -62,7 +62,7 @@ import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
 // A payout account correction round (payout spec §14).
 import { approvalWaitStartedAt, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionSourceStep, PAYOUT_CORRECTION_STEP_REASON } from './reimbursement.logic';
 // The facts behind the words of a round (payout spec §14.2).
-import { payoutCorrectionAnswer, payoutCorrectionFacts, payoutCorrectionHeld, payoutCorrectionStatusLabel } from './reimbursement.logic';
+import { payoutCorrectionAnswer, payoutCorrectionFacts, payoutCorrectionHeld, payoutCorrectionRequesterDesk, payoutCorrectionStatusLabel } from './reimbursement.logic';
 import { mayTypePayoutAccountFor, payoutDefaultToken } from './payout-destination.logic';
 import {
   isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionReasons, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
@@ -1699,6 +1699,13 @@ describe('payout account correction round', () => {
     assert.deepEqual([account, {}, cash].map((holds) => payoutCorrectionStatusLabel({ ...withRequester, ...holds })),
       ['รอผู้เบิกแก้บัญชีรับเงิน', 'รอผู้เบิกเพิ่มบัญชีรับเงิน', 'รอผู้เบิกเลือกวิธีรับเงินคืน']);
     assert.equal(payoutCorrectionAnswer({ ...withRequester, ...account }), undefined, 'nothing was answered yet');
+    // The LINE backlog lists such claims under one row per label, in this order, each with the sentence that goes with it.
+    assert.deepEqual([account, {}, cash, { payoutMethod: 'BANK_TRANSFER' }].map(payoutCorrectionRequesterDesk), [
+      { order: 0, label: 'รอผู้เบิกแก้บัญชีรับเงิน', note: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held.ACCOUNT.assistantNote },
+      { order: 1, label: 'รอผู้เบิกเพิ่มบัญชีรับเงิน', note: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held.NOTHING.assistantNote },
+      { order: 2, label: 'รอผู้เบิกเลือกวิธีรับเงินคืน', note: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held.CASH.assistantNote },
+      { order: 1, label: 'รอผู้เบิกเพิ่มบัญชีรับเงิน', note: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held.NOTHING.assistantNote },
+    ]);
 
     const waiting = (...log: object[]) => ({ ...inRound, payoutCorrectionSubmittedAt: accountGivenAt, ...account, payoutCorrectionLog: log as any });
     const kept = waiting(sentBack({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 1 }), answered('BANK_TRANSFER', true));
