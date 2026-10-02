@@ -921,33 +921,13 @@ export function isReimbursementPayoutCorrectionReason(value: unknown): value is 
  *
  * `payoutKind` is the kind of the account held (`payout.payoutKind` on a detail).
  */
-export function reimbursementPayoutCorrectionReasons(held: ReimbursementPayoutHeld, payoutKind?: ReimbursementPayoutKind | null): ReimbursementPayoutCorrectionReason[];
-/**
- * @deprecated The question as it was asked before the words of a round followed what the claim holds
- * ("has the claim an account?"), with the list as it then was: it takes cash for an account, and offers a
- * claim with no account the reasons of a wrong one. Kept only until the web stops calling it.
- */
-export function reimbursementPayoutCorrectionReasons(claimHasAccount: boolean): ReimbursementPayoutCorrectionReason[];
-export function reimbursementPayoutCorrectionReasons(
-  held: ReimbursementPayoutHeld | boolean, payoutKind?: ReimbursementPayoutKind | null,
-): ReimbursementPayoutCorrectionReason[] {
-  const ofAnAccount: ReimbursementPayoutCorrectionReason[] = [
+export function reimbursementPayoutCorrectionReasons(held: ReimbursementPayoutHeld, payoutKind?: ReimbursementPayoutKind | null): ReimbursementPayoutCorrectionReason[] {
+  if (held === 'NOTHING') return ['NO_ACCOUNT_ON_CLAIM'];
+  if (held === 'CASH') return ['CASH_NOT_PAYABLE', 'REQUESTER_ASKED_METHOD', 'OTHER'];
+  return [
     'ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NAME_MISMATCH', ...(payoutKind === 'PROMPTPAY_PHONE' ? [] : ['BANK_WRONG' as const]),
     'ACCOUNT_UNUSABLE', 'REQUESTER_ASKED', 'OTHER',
   ];
-  if (typeof held === 'boolean') return held ? ofAnAccount : ['NO_ACCOUNT_ON_CLAIM', ...ofAnAccount];
-  if (held === 'NOTHING') return ['NO_ACCOUNT_ON_CLAIM'];
-  if (held === 'CASH') return ['CASH_NOT_PAYABLE', 'REQUESTER_ASKED_METHOD', 'OTHER'];
-  return ofAnAccount;
-}
-
-/**
- * @deprecated Reads the case from a reason code, which is untrue as soon as a claim with no account is
- * sent back with another reason, and knows nothing of cash. Use `reimbursementPayoutRoundAsk(held)`.
- * Kept only until the web stops importing it.
- */
-export function reimbursementPayoutCorrectionAsk(reasonCode: unknown): 'เพิ่มบัญชีรับเงิน' | 'แก้บัญชีรับเงิน' {
-  return reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? 'เพิ่มบัญชีรับเงิน' : 'แก้บัญชีรับเงิน';
 }
 
 /** The note that may go with a reason. Shown on the claim page only; it may not carry an account number. */
@@ -975,15 +955,6 @@ export function reimbursementPayoutCorrectionPhase(claim: {
   if (claim.status !== 'PENDING_APPROVAL' || !claim.payoutCorrectionRequestedAt) return undefined;
   return claim.payoutCorrectionSubmittedAt ? 'AWAITING_APPROVAL' : 'AWAITING_REQUESTER';
 }
-
-/**
- * @deprecated One label per phase is true of one case only: an account that was wrong, replaced by another
- * account. Use `reimbursementPayoutRoundStatus(claim)`. Kept only until the web stops importing it.
- */
-export const REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS: Record<ReimbursementPayoutCorrectionPhase, string> = {
-  AWAITING_REQUESTER: 'รอผู้เบิกแก้บัญชีรับเงิน',
-  AWAITING_APPROVAL: 'รออนุมัติบัญชีรับเงินใหม่',
-};
 
 // ---- The words of a round (payout spec §14.2) ----
 //
