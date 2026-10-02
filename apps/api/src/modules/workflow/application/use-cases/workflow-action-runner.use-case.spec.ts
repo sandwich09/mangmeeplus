@@ -501,6 +501,43 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       // The roles are the ones the permission resolver answered for each holder: no role is looked up for this.
       assert.ok(repo.findUserIdsByRoles.mock.calls.every((call: any) => call.arguments[1].length === 0));
     });
+
+    // Controller decision 2026-10-02: a notice that leaves its actor out weighs its last resort AFTER that. Someone
+    // who is not going to get the notice is not "somebody else able to act": where the actor is the only other
+    // holder, the last resort is told. Before, the actor counted as somebody else and was then left out, so nobody
+    // was told and the record just sat.
+    it('weighs the last resort after leaving out whoever the notice excludes, so its actor is not the "somebody else"', async () => {
+      const leavesActorOut = { lastResortRecipientRoles: ['OWNER'], excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
+      /** Who is told of an event by `actorUserId` when these people hold the right, and how the action ended. */
+      const told = async (holders: string[], actorUserId: string, cfg: Record<string, unknown> = leavesActorOut) => {
+        repo.findUserIdsByPermissions = mock.fn(async () => holders);
+        const before = notify.execute.mock.callCount();
+        await make().execute(
+          actionRun({ triggerKey: 'workflow.test', severity: 'action', recipientPermissions: ['reimbursement.finance_review'], ...cfg }),
+          { companyId: 'co_1', ruleName: 'r', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1', payload: { actorUserId }, siblingActions: [] } as any,
+        );
+        const final = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+        return { to: notify.execute.mock.callCount() > before ? (notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds : null, status: final.status, skipped: final.resultJson?.reason ?? null };
+      };
+
+      // Somebody else can act: they are told, and neither the actor nor the last resort is.
+      assert.deepEqual(await told(['u_owner', 'u_admin', 'u_mgr_1'], 'u_admin'), { to: ['u_mgr_1'], status: 'SUCCEEDED', skipped: null });
+      // The actor is the only other holder: nobody else is left, so the last resort is told. The actor is not.
+      assert.deepEqual(await told(['u_owner', 'u_admin'], 'u_admin'), { to: ['u_owner'], status: 'SUCCEEDED', skipped: null });
+      // The last resort acted, alone: nobody is told, quietly (nothing is retried into a dead letter).
+      assert.deepEqual(await told(['u_owner'], 'u_owner'), { to: null, status: 'SUCCEEDED', skipped: 'all_recipients_excluded' });
+      // The last resort acted where others can act: they are told.
+      assert.deepEqual(await told(['u_owner', 'u_admin'], 'u_owner'), { to: ['u_admin'], status: 'SUCCEEDED', skipped: null });
+
+      // A notice that does NOT leave its actor out is as it was: the actor is somebody else who can act, and is told.
+      assert.deepEqual((await told(['u_owner', 'u_admin'], 'u_admin', { lastResortRecipientRoles: ['OWNER'] })).to, ['u_admin']);
+      // And a notice with no last resort leaves its actor out exactly as before, whoever else there is.
+      const noLastResort = { excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
+      assert.deepEqual((await told(['u_owner', 'u_admin', 'u_mgr_1'], 'u_admin', noLastResort)).to, ['u_owner', 'u_mgr_1']);
+      assert.deepEqual(await told(['u_admin'], 'u_admin', noLastResort), { to: null, status: 'SUCCEEDED', skipped: 'all_recipients_excluded' });
+      // Without the quiet-skip key, everyone being left out is still the failure it was (the vendor bill's second approver).
+      assert.deepEqual(await told(['u_admin'], 'u_admin', { excludeRecipientPayloadKeys: ['actorUserId'] }), { to: null, status: 'FAILED_RETRYABLE', skipped: null });
+    });
   });
 
   // Audit B9: a requester told "paid" was never told when that payment was taken back.
@@ -1329,10 +1366,11 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     for (const cfg of [arrivalCfg, readyCfg]) {
       assert.deepEqual([cfg['excludeRecipientPayloadKeys'], cfg['skipWhenAllRecipientsExcluded'], cfg['webOnlyRecipientPayloadKeys']], [undefined, undefined, ['actorUserId']]);
     }
-    // A rule pinned before this leaves its actor out as it did: with the owner as the last resort, nobody is told.
-    const pinnedBefore = { ...arrivalCfg, webOnlyRecipientPayloadKeys: undefined, excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
-    assert.deepEqual(await announce({ u_owner: holding('OWNER'), u_approver: holding('ACCOUNTANT') }, pinnedBefore),
-      { to: undefined, bellOnly: undefined, status: 'SUCCEEDED', result: { skipped: true, reason: 'all_recipients_excluded' } });
+    // The rule as it shipped (one pinned before these decisions, or kept by an admin's edit) has no last resort and
+    // leaves its actor out: every other holder is told, the owner included, as it always was.
+    const asShipped = { ...arrivalCfg, lastResortRecipientRoles: undefined, webOnlyRecipientPayloadKeys: undefined, excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
+    const shipped = await announce({ u_owner: holding('OWNER'), u_approver: holding('ACCOUNTANT') }, asShipped);
+    assert.deepEqual([shipped.to, shipped.bellOnly], [['u_owner'], []]);
   });
 
   // Owner decision 2026-10-02: the finance desk's other notice, a claim a reviewer blocked, follows the rule of the
@@ -1363,10 +1401,13 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     // Nobody else can review this claim: the one who blocked it reviews for another branch now, another reviewer's
     // role is switched off. The owner is the one left to tell.
     assert.deepEqual((await block({ u_owner: holding('OWNER'), u_finance: holding('CUSTOM_FINANCE', elsewhere), u_off: holding('ACCOUNTANT', {}, 'DISABLED') })).to, ['u_owner']);
-    // The one who blocked it is the only reviewer besides the owner: they are not told of what they did, as the actor
-    // of every such notice is not, and the owner is not told in their place. Nobody is, and nothing is retried.
-    const alone = await block({ u_owner: holding('OWNER'), u_finance: holding('CUSTOM_FINANCE') });
-    assert.deepEqual([alone.to, alone.status, alone.result], [undefined, 'SUCCEEDED', { skipped: true, reason: 'all_recipients_excluded' }]);
+    // The one who blocked it is the only reviewer besides the owner. A block is not their next task and they are
+    // not told of what they did; with them left out no reviewer is left, so the owner is told (the last resort is
+    // weighed after the actor is left out). Before, nobody was told and the claim just sat.
+    assert.deepEqual((await block({ u_owner: holding('OWNER'), u_finance: holding('CUSTOM_FINANCE') })).to, ['u_owner']);
+    // An owner-only shop, where the owner blocked the claim: there is nobody else to tell, and nothing is retried.
+    const ownerOnly = await block({ u_owner: holding('OWNER') }, blockedCfg, 'u_owner');
+    assert.deepEqual([ownerOnly.to, ownerOnly.status, ownerOnly.result], [undefined, 'SUCCEEDED', { skipped: true, reason: 'all_recipients_excluded' }]);
 
     // A rule pinned before this, or one an admin edited, has no such key: every reviewer but the one who blocked it.
     const { lastResortRecipientRoles: _added, ...pinnedBefore } = blockedCfg;

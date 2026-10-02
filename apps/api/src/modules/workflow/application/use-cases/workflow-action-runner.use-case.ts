@@ -121,9 +121,12 @@ function payloadUserIds(keys: unknown, payload: Record<string, unknown>): string
  * names nobody: holders of those roles are left out while anybody else is able to act, and are the
  * ones told when nobody else is. A claim at the finance desk goes to the people who review there,
  * and to the shop owner only in a shop where the owner is that desk.
+ * "Anybody else" is weighed AFTER the people the notice leaves out (`excluded`, its actor): someone
+ * who is not going to get the notice is not somebody else able to act. A reviewer who blocks a
+ * claim is not told of it; where they are the only reviewer besides the owner, the owner is told.
  * A rule snapshot without a key keeps the whole group, exactly as before.
  */
-function narrowToPreferred(members: AbleMember[], cfg: Record<string, unknown>, payload: Record<string, unknown>): string[] {
+function narrowToPreferred(members: AbleMember[], cfg: Record<string, unknown>, payload: Record<string, unknown>, excluded: ReadonlySet<string>): string[] {
   const able = members.map((member) => member.userId);
   const preferKeys = Array.isArray(cfg['preferRecipientPayloadKeys']) ? cfg['preferRecipientPayloadKeys'] : [];
   const never = new Set(payloadUserIds(cfg['neverPreferRecipientPayloadKeys'], payload));
@@ -133,7 +136,10 @@ function narrowToPreferred(members: AbleMember[], cfg: Record<string, unknown>, 
     if (preferred.length > 0) return preferred;
   }
   const lastResortRoles: unknown[] = Array.isArray(cfg['lastResortRecipientRoles']) ? cfg['lastResortRecipientRoles'] : [];
-  const others = members.filter((member) => !member.roles.some((role) => lastResortRoles.includes(role))).map((member) => member.userId);
+  const others = members
+    .filter((member) => !excluded.has(member.userId) && !member.roles.some((role) => lastResortRoles.includes(role)))
+    .map((member) => member.userId);
+  // Nobody else: the whole group, from which the caller still leaves out whoever is excluded.
   return others.length > 0 ? others : able;
 }
 
@@ -267,11 +273,23 @@ export class ExecuteWorkflowActionUseCase {
     const recipientPermissions = Array.isArray(cfg['recipientPermissions'])
       ? (cfg['recipientPermissions'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
+    // excludeRecipientPayloadKeys names payload fields (string or string[]) holding
+    // user ids that must never receive this notification — e.g. the submitter and
+    // recorded approvers of a dual-approval vendor bill.
+    const excludeKeys = Array.isArray(cfg['excludeRecipientPayloadKeys'])
+      ? (cfg['excludeRecipientPayloadKeys'] as unknown[]).filter((key): key is string => typeof key === 'string')
+      : [];
+    const excludedUserIds = new Set(excludeKeys.flatMap((key) => {
+      const value = context.payload[key];
+      if (typeof value === 'string') return [value];
+      if (Array.isArray(value)) return value.filter((id): id is string => typeof id === 'string');
+      return [];
+    }));
     let roleRecipientUserIds: string[];
     let permissionRecipientUserIds: string[];
     try {
       roleRecipientUserIds = await this.repo.findUserIdsByRoles(context.companyId, recipientRoles);
-      permissionRecipientUserIds = narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload);
+      permissionRecipientUserIds = narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload, excludedUserIds);
     } catch (err) {
       // Looking people up is a read. One database blip there must not dead-letter the notice at
       // its first attempt; it is retried like a failed send.
@@ -286,18 +304,6 @@ export class ExecuteWorkflowActionUseCase {
       if (Array.isArray(value)) return value.filter((id): id is string => typeof id === 'string' && id.length > 0);
       return [];
     });
-    // excludeRecipientPayloadKeys names payload fields (string or string[]) holding
-    // user ids that must never receive this notification — e.g. the submitter and
-    // recorded approvers of a dual-approval vendor bill.
-    const excludeKeys = Array.isArray(cfg['excludeRecipientPayloadKeys'])
-      ? (cfg['excludeRecipientPayloadKeys'] as unknown[]).filter((key): key is string => typeof key === 'string')
-      : [];
-    const excludedUserIds = new Set(excludeKeys.flatMap((key) => {
-      const value = context.payload[key];
-      if (typeof value === 'string') return [value];
-      if (Array.isArray(value)) return value.filter((id): id is string => typeof id === 'string');
-      return [];
-    }));
     const resolvedUserIds = [...new Set([...roleRecipientUserIds, ...permissionRecipientUserIds, ...payloadRecipientUserIds])];
     const recipientUserIds = resolvedUserIds.filter((userId) => !excludedUserIds.has(userId));
     if (recipientUserIds.length === 0) {
