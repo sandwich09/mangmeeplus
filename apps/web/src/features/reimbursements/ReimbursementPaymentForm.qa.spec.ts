@@ -16,6 +16,7 @@ require.extensions['.svg'] = (module) => { module.exports = () => null; };
 // Modal portals into document.body, which a server render has none of: render the dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
+const logic = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
@@ -319,6 +320,43 @@ describe('ใบเบิกที่เซ็นแล้ว is not where a sli
     assert.equal(payer.includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย'), false);
     assert.ok(payer.includes('แนบสลิปเพิ่ม'), 'the payment row still takes another slip');
     assert.ok(payer.some((text) => text.includes('สลิปโอนเงิน.jpg')), 'the copy stays listed where it is');
+  });
+
+  // Upgrade test 2026-10-02: after a payment with a newly uploaded slip, the e-slip attached here by mistake stayed listed
+  // as a paper-signed copy, with nothing on its row to say what it is or what to do about it.
+  it('says on each file what it is, and tells whoever pays what to do about a slip attached here by mistake', () => {
+    const PAYER_RIGHTS = ['reimbursement.read', 'reimbursement.payment.record'];
+    const signedForm = { attachmentId: 'att-form', fileName: 'signed-form-2.pdf', uploadedAt: '2026-09-30T05:00:00.000Z', acknowledgedAt: '2026-09-30T05:00:00.000Z', acknowledgedByName: 'สมชาย' };
+    const plain = { attachmentId: 'att-plain', fileName: 'หลักฐาน.png', uploadedAt: '2026-09-28T05:00:00.000Z' };
+    const copies = { signedCopies: [signedForm, misfiled, plain], documentSignedVia: 'PAPER' };
+    const AFTER = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องทำอะไรเพิ่ม การจ่ายของคำขอนี้มีสลิปของตัวเองแล้ว';
+    const BEFORE = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้';
+    const hints = (texts: string[]) => texts.filter((text) => text.startsWith('ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง'));
+
+    // Paid, and the payment carries its own slip: every reader sees what each file is; whoever pays is told nothing more is needed.
+    const paidWithSlip = { ...paid, ...copies };
+    const payer = visible(detailSections(paidWithSlip, ids.payer, PAYER_RIGHTS));
+    for (const text of ['ไฟล์ PDF · ลงนามบนกระดาษ · แนบเมื่อ 30 ก.ย. 2569 โดย สมชาย', 'ไฟล์รูปภาพ · ลงนามบนกระดาษ · แนบเมื่อ 29 ก.ย. 2569 โดย สมชาย', 'ไฟล์รูปภาพ · ไฟล์แนบทั่วไป · แนบเมื่อ 28 ก.ย. 2569']) {
+      assert.ok(payer.includes(text), `${text}: ${JSON.stringify(payer.filter((shown) => shown.includes('แนบเมื่อ')))}`);
+    }
+    assert.deepEqual(hints(payer), [AFTER, AFTER, AFTER]);
+    const requester = visible(detailSections(paidWithSlip, ids.requester, ['reimbursement.read_own']));
+    assert.ok(requester.includes('ไฟล์รูปภาพ · ลงนามบนกระดาษ · แนบเมื่อ 29 ก.ย. 2569 โดย สมชาย'));
+    assert.deepEqual(hints(requester), [], 'someone who records no payment has nothing to do about it');
+
+    // Waiting for its payment: the file is chosen as the slip in the payment form, not uploaded again.
+    const waiting = { ...base, ...copies, status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', payments: [] };
+    assert.deepEqual(hints(visible(detailSections(waiting, ids.payer, PAYER_RIGHTS))), [BEFORE, BEFORE, BEFORE]);
+    // Paid with no slip: the row has its own button, and that button is the answer.
+    const paidNoSlip = { ...paid, ...copies, payments: [{ ...transfer, slipCount: 0, slips: [] }] };
+    const withButton = visible(detailSections(paidNoSlip, ids.payer, PAYER_RIGHTS));
+    assert.deepEqual(hints(withButton), []);
+    assert.equal(withButton.filter((text) => text === 'ใช้ไฟล์นี้เป็นสลิปการจ่าย').length, 3);
+    // Not at a point where a payment is recorded: nothing to say.
+    assert.deepEqual(hints(visible(detailSections({ ...base, ...copies, status: 'PENDING_APPROVAL', payments: [] }, ids.payer, PAYER_RIGHTS))), []);
+    assert.equal(logic.signedCopyMisfiledHint(paidWithSlip, PAYER_RIGHTS), AFTER);
+    assert.equal(logic.signedCopyMisfiledHint(waiting, PAYER_RIGHTS), BEFORE);
+    assert.equal(logic.signedCopyMisfiledHint(waiting, ['reimbursement.read']), null);
   });
 });
 

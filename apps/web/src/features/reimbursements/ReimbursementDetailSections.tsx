@@ -36,8 +36,8 @@ import {
 } from './reimbursements.model';
 import {
   NOTE_HAS_ACCOUNT_NUMBER,
-  approvalStepCorrectionNote, buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
-  rowHasFinanceReview, savePaymentForm, slipTargetPayment, sumLineAmounts, timelineDateText,
+  approvalStepCorrectionNote, attachedFileKindText, buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
+  rowHasFinanceReview, savePaymentForm, signedCopyMisfiledHint, slipTargetPayment, sumLineAmounts, timelineDateText,
   type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip, type PaymentSlipChoice,
 } from './reimbursements.logic';
 import { PayerConfirmationCheck } from './ReimbursementPayout';
@@ -714,6 +714,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
   const correcting = claimInPayoutCorrection(detail);
   const slipTarget = slipTargetPayment(detail, permissions);
+  const misfiledHint = signedCopyMisfiledHint(detail, permissions);
   // One receipt block for the phone card and the table cell, so the upload rules live in one place.
   const lineReceipt = (l: any) => (
     <>
@@ -892,10 +893,13 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                     <li key={copy.attachmentId} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2">
                       <button className="block min-h-11 max-w-full truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
                       {/* A scan declared as signed before a correction round showed the account that was then corrected. */}
+                      {/* What the file is, before anyone opens it: a picture or a PDF, then what it was attached as. */}
                       <div className="break-words text-gray-500">
-                        {copy.beforePayoutCorrection ? `${SIGNED_COPY_BEFORE_CORRECTION_LABEL} · ไม่นับว่าลงนามแล้ว · แนบเมื่อ ${dateShort(copy.uploadedAt)}`
-                          : copy.acknowledgedAt ? paperSignedLine(copy) : `ไฟล์แนบทั่วไป · แนบเมื่อ ${dateShort(copy.uploadedAt)}`}
+                        {`${attachedFileKindText(copy.fileName)} · ${copy.beforePayoutCorrection ? `${SIGNED_COPY_BEFORE_CORRECTION_LABEL} · ไม่นับว่าลงนามแล้ว · แนบเมื่อ ${dateShort(copy.uploadedAt)}`
+                          : copy.acknowledgedAt ? paperSignedLine(copy) : `ไฟล์แนบทั่วไป · แนบเมื่อ ${dateShort(copy.uploadedAt)}`}`}
                       </div>
+                      {/* A slip attached here by mistake, where the row has no button of its own: what to do about it, for whoever pays. */}
+                      {misfiledHint && <div className="mt-1 break-words text-gray-500" data-testid="reimbursement-signed-copy-misfiled-hint">{misfiledHint}</div>}
                       {/* A slip attached here by mistake moves to the payment without being uploaded again (spec §16). */}
                       {slipTarget && (
                         <button type="button" className="mt-1 min-h-11 text-left text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"

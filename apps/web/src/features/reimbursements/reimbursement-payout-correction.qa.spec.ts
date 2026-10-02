@@ -1518,13 +1518,14 @@ describe('signing and signed copies around a round (spec §14.4, AC32)', () => {
     const before = { ...COPY, beforePayoutCorrection: true as const };
     const newer = { attachmentId: 'copy-2', fileName: 'ใบเบิกเซ็นใหม่.pdf', uploadedAt: '2026-10-01T06:30:00.000Z', acknowledgedAt: '2026-10-01T06:30:00.000Z', acknowledgedByName: NAMES.requester };
     const { html, texts } = detailSections(reapproved({ signedCopies: [before] }), requester);
-    assert.ok(texts.includes('สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'), texts.filter((text) => text.includes('สำเนา')).join(' | '));
+    assert.ok(texts.includes('ไฟล์ PDF · สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'), texts.filter((text) => text.includes('สำเนา')).join(' | '));
     assert.match(html, /<button[^>]*>📄 ใบเบิกเซ็นแล้ว\.pdf<\/button>/);
     assert.equal(texts.includes('ลงนามบนกระดาษ'), false, 'no block reads as signed on paper');
-    assert.equal(texts.some((text) => text.startsWith('ลงนามบนกระดาษ · แนบเมื่อ')), false);
+    assert.equal(texts.some((text) => text.includes('ลงนามบนกระดาษ · แนบเมื่อ')), false);
     // A scan declared after the round is the one that counts; the older one keeps its label beside it.
     const both = detailSections(reapproved({ documentSignedVia: 'PAPER', signedCopies: [newer, before] }), requester).texts;
-    assert.ok(both.includes('ลงนามบนกระดาษ · แนบเมื่อ 1 ต.ค. 2569 โดย สมชาย พนักงาน') && both.includes('สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'));
+    assert.ok(both.includes('ไฟล์ PDF · ลงนามบนกระดาษ · แนบเมื่อ 1 ต.ค. 2569 โดย สมชาย พนักงาน') && both.includes('ไฟล์ PDF · สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'),
+      both.filter((text) => text.includes('แนบเมื่อ')).join(' | '));
     assert.equal(both.filter((text) => text === 'ลงนามบนกระดาษ').length, 2);
     // The step after payment waits for the signatures again: the copy from before the round finishes nothing.
     const paid = reapproved({ status: 'PAID', paymentStatus: 'PAID', currentDesk: undefined, signedCopies: [before], payments: [{ id: 'p1', status: 'RECORDED', paidAt: AT.reapproved, paidByName: NAMES.payer }] });

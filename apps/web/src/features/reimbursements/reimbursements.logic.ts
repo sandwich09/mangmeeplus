@@ -328,6 +328,20 @@ export function slipTargetPayment(detail: any, permissions: readonly string[]): 
 }
 
 /**
+ * What whoever records payments is told on a file of ใบเบิกที่เซ็นแล้ว that no button speaks for (spec §16): a slip
+ * attached there by mistake reads as a paper-signed copy, and the row said nothing of what to do about it.
+ * Before the payment it is chosen as the slip in the payment form; once the payment has a slip of its own, nothing
+ * more is needed for the claim. Null where the row has its own button (a recorded payment with no slip), for a
+ * viewer who records no payments, and for a claim that is at neither point.
+ */
+export function signedCopyMisfiledHint(detail: any, permissions: readonly string[]): string | null {
+  if (!permissions.includes('reimbursement.payment.record') || slipTargetPayment(detail, permissions)) return null;
+  const standing = (detail?.payments ?? []).filter((payment: any) => payment?.status === 'RECORDED').at(-1);
+  if (standing) return 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องทำอะไรเพิ่ม การจ่ายของคำขอนี้มีสลิปของตัวเองแล้ว';
+  return detail?.status === 'READY_FOR_PAYMENT' ? 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้' : null;
+}
+
+/**
  * What the payer confirms before a file leaves ใบเบิกที่เซ็นแล้ว to become a payment's slip (spec §16.2):
  * nothing is uploaded again, a "signed on paper" declaration made with that file is withdrawn, and
  * the file is from then on opened only by the slip's own readers.
