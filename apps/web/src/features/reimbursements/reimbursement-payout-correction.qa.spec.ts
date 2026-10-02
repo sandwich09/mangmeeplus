@@ -1266,14 +1266,34 @@ describe('the buttons of a correction round are what the server says, for every 
     ] as const) {
       const detail = readyHolding(held, { payoutCorrectionActions: SEND });
       assert.equal(lead(detail, payer), forPayer, held);
-      for (const viewer of [requester, approver]) {
-        assert.equal(lead(detail, viewer), forOthers, held);
-        assert.doesNotMatch(lead(detail, viewer), /อย่าเพิ่งจ่าย/u);
-      }
+      // The approver the claim stands on, who cannot pay. (What the claim's own requester reads is the next test.)
+      assert.equal(lead(detail, approver), forOthers, held);
+      for (const viewer of [requester, approver]) assert.doesNotMatch(lead(detail, viewer), /อย่าเพิ่งจ่าย/u);
     }
     // A payer whose payment a possible duplicate holds back is not offered the payment either.
     const blocked = ready({ payoutCorrectionActions: SEND, duplicateBlocksPayment: true, duplicateStatus: 'POSSIBLE_DUPLICATE', duplicateCandidates: [{ id: 'd1', candidateType: 'ATTACHMENT_CHECKSUM', status: 'OPEN' }] });
     assert.doesNotMatch(lead(blocked, payer), /อย่าเพิ่งจ่าย/u);
+  });
+
+  // Before: the requester of a cash claim read "… ส่งกลับให้ผู้เบิกเลือกได้ก่อนมีการจ่าย": of themself, in the third person.
+  it('says the line to the requester of a cash claim as "คุณ", whether or not the payment is theirs to record, and to nobody else', () => {
+    const lead = (detail: object, viewer: Viewer) => accountBoxSendBack(claimPage(detail, viewer).html)!.lead;
+    const cash = readyHolding('CASH', { payoutCorrectionActions: SEND });
+    /** The requester who also records payments: a shop's owner filing their own claim. */
+    const requesterWhoPays: Viewer = { userId: 'staff', permissions: EVERYTHING };
+    assert.equal(lead(cash, requester), 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง คุณส่งกลับเพื่อเลือกอีกครั้งได้ก่อนมีการจ่าย');
+    assert.equal(lead(cash, requesterWhoPays), 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย คุณส่งกลับเพื่อเลือกอีกครั้งได้');
+    for (const viewer of [requester, requesterWhoPays]) assert.doesNotMatch(lead(cash, viewer), /ผู้เบิก/u, viewer.permissions.length.toString());
+    // Everyone else reads of the requester, as before.
+    assert.equal(lead(cash, payer), 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย ส่งกลับให้ผู้เบิกเลือกก่อน');
+    assert.equal(lead(cash, approver), 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง ส่งกลับให้ผู้เบิกเลือกได้ก่อนมีการจ่าย');
+    // The other two lines name nobody: the requester reads them as every reader does.
+    for (const held of ['ACCOUNT', 'NOTHING'] as const) {
+      const detail = readyHolding(held, { payoutCorrectionActions: SEND });
+      assert.deepEqual([lead(detail, requester), lead(detail, requesterWhoPays)], [lead(detail, approver), lead(detail, payer)], held);
+      for (const viewer of [requester, requesterWhoPays, approver, payer]) assert.doesNotMatch(lead(detail, viewer), /ผู้เบิก/u, held);
+    }
+    assertPlainThai([lead(cash, requester), lead(cash, requesterWhoPays)], 'the pay-step line of a cash claim, to its requester');
   });
 
   // Before: a claim that asked for cash read "ถ้าวิธีรับเงินหรือบัญชีนี้ไม่ถูกต้อง" above the link "ส่งกลับให้แก้บัญชีรับเงิน".

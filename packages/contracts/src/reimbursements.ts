@@ -1319,6 +1319,19 @@ export const REIMBURSEMENT_PAYOUT_ROUND_TEXTS = {
 };
 
 /**
+ * The line above the send-back at the pay step (`held[…].payLead`, `payLeadCannotPay`), said to the claim's own
+ * requester, who reads that line too: they may send their claim back, and may be the one who records its payment.
+ * Only where the line every other reader gets names "ผู้เบิก", a claim that holds cash: the requester is spoken to
+ * as "คุณ". The other two lines name nobody, and the requester reads them as they are.
+ */
+export const REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER: Partial<Record<ReimbursementPayoutHeld, Pick<PayoutRoundHeldTexts, 'payLead' | 'payLeadCannotPay'>>> = {
+  CASH: {
+    payLead: 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย คุณส่งกลับเพื่อเลือกอีกครั้งได้',
+    payLeadCannotPay: 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง คุณส่งกลับเพื่อเลือกอีกครั้งได้ก่อนมีการจ่าย',
+  },
+};
+
+/**
  * The requester's notice when someone else answered a round for them (spec §17.3; owner rule 2026-10-01: the
  * person whose money it is hears of every change made for them). The title is the timeline's own row of that
  * answer, said to the requester: "{ชื่อ} ยืนยันบัญชีเดิมในใบเบิกของคุณ". Whoever sends it follows the title with

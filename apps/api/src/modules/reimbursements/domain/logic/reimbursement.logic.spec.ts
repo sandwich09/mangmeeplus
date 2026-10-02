@@ -70,6 +70,8 @@ import { mayTypePayoutAccountFor, payoutDefaultToken } from './payout-destinatio
 import { reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
 // A reason in words, by the kind of the account held (its own import, apart from the block below).
 import { reimbursementPayoutCorrectionReasonLabel, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
+// The pay step's line, said to the claim's own requester (its own import, apart from the block below).
+import { REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER } from '@watchdog-bms/contracts';
 import {
   isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionReasons, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
   reimbursementHubBucket, reimbursementPayoutCorrectionPhase,
@@ -1745,6 +1747,22 @@ describe('payout account correction round', () => {
     for (const held of HELD) {
       assert.equal(texts.held[held].sendBackLine2, 'เมื่อเลือกวิธีรับเงินคืนแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที', held);
     }
+    // The line above the send-back at the pay step is read by the claim's own requester too. Where it names "ผู้เบิก" (a
+    // cash claim's), the requester reads it said to them; the other two name nobody. Before, a requester read of themself
+    // in the third person.
+    assert.deepEqual({ ...REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER }, { CASH: {
+      payLead: 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย คุณส่งกลับเพื่อเลือกอีกครั้งได้',
+      payLeadCannotPay: 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง คุณส่งกลับเพื่อเลือกอีกครั้งได้ก่อนมีการจ่าย',
+    } });
+    for (const held of HELD) {
+      const namesRequester = /ผู้เบิก/.test(`${texts.held[held].payLead} ${texts.held[held].payLeadCannotPay}`);
+      assert.equal(!!REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER[held], namesRequester, `${held}: a lead that names the requester has its own words for the requester`);
+    }
+    for (const [reader, sentence] of Object.entries(REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER.CASH!)) {
+      assert.doesNotMatch(sentence, /ผู้เบิก|บัญชี|แก้|[A-Za-z_{}$]/, reader);
+      assert.match(sentence, /คุณ/, reader);
+    }
+    assert.doesNotMatch(REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER.CASH!.payLeadCannotPay, /อย่าเพิ่งจ่าย/);
     // The card the approvers compare on is named for what waits for approval, and shows one row where nothing changed.
     assert.deepEqual(Object.fromEntries(ANSWERS.map((answer) => [answer, [texts.answer[answer].cardTitle, ...texts.answer[answer].cardRows]])), {
       NEW_ACCOUNT: ['สิ่งที่รออนุมัติ: บัญชีรับเงินใหม่', 'บัญชีเดิม', 'บัญชีใหม่'],
