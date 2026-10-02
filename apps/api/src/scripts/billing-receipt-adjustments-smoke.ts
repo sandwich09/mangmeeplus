@@ -18,7 +18,8 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
   try {
     await db.company.create({data:{id:companyId,name:'ร้านทดสอบสิทธิ์ใบเสร็จ'}});
     const sessionPermission=await db.permission.findUniqueOrThrow({where:{key:'account.session.read'}});
-    const ownerRole=await db.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic receipt owner',permissions:{create:{permissionId:sessionPermission.id}}}});ownerRoleId=ownerRole.id;
+    const planPermission=await db.permission.findUniqueOrThrow({where:{key:'company.plan.manage'}});
+    const ownerRole=await db.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic receipt owner',permissions:{create:[{permissionId:sessionPermission.id},{permissionId:planPermission.id}]}}});ownerRoleId=ownerRole.id;
     const owner=await db.companyMembership.create({data:{companyId,userId:input.userIds[0]!,roles:{create:{roleId:ownerRole.id}}}});
     await input.recordLegal(input.userIds[0]!,owner.id,companyId);
     cases.push(...await checkManualReceiptAdjustments(input,companyId));

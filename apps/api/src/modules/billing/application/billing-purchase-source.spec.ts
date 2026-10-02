@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { BillingAccount, CompanyPlanTerm } from '../../../generated/prisma/client';
+import type { BillingAccount, BillingInvoice, CompanyPlanTerm } from '../../../generated/prisma/client';
 import { termProjectionHash } from '../domain/paid-invoice';
-import { billingPurchaseSource, initialPurchaseSource, packageMenuPurchaseSource } from './billing-purchase-source';
+import { billingPurchaseSource, initialPurchaseSource, packageMenuPurchaseSource, oneTimeSourceReady } from './billing-purchase-source';
 
 const now = new Date('2026-09-21T00:00:00.000Z');
+test('one-time readiness refuses refunded, disputed, missing or mismapped contract evidence', () => {
+  const account = { id: 'a', baseSubscriptionId: null, contractAttemptId: 'attempt', paidThrough: now, billingAnchorDay: 21 } as BillingAccount;
+  const invoice = { billingAccountId: 'a', sourceAttemptId: 'attempt', productKind: 'PACKAGE', providerStatus: 'paid', applyStatus: 'APPLIED',
+    appliedAt: now, refundedSatang: 0, disputed: false, periodEnd: now, contractSnapshot: { quote: { offer: { offerKey: 'STARTER_249', interval: 'month' } } } } as unknown as BillingInvoice;
+  assert.equal(oneTimeSourceReady(account, invoice), true);
+  for (const patch of [{ refundedSatang: 1 }, { disputed: true }, { appliedAt: null }, { applyStatus: 'HELD' },
+    { billingAccountId: 'other' }, { sourceAttemptId: 'other' }, { productKind: 'CHAT_CREDIT' },
+    { periodEnd: new Date(now.getTime() + 1) }, { contractSnapshot: {} }, { contractSnapshot: { quote: {} } },
+    { contractSnapshot: { quote: { offer: { offerKey: 'UNKNOWN', interval: 'month' } } } }]) {
+    assert.equal(oneTimeSourceReady(account, { ...invoice, ...patch } as BillingInvoice), false, JSON.stringify(patch));
+  }
+  assert.equal(oneTimeSourceReady({ ...account, baseSubscriptionId: 'sub' }, invoice), false);
+  assert.equal(oneTimeSourceReady(account, null), false);
+});
 const manual = { companyId: 'company', tierKey: 'BASIC_499', billingReceiptAccountId: null,
   termStartAt: new Date('2026-09-01T00:00:00.000Z'), termEndsAt: new Date('2026-10-01T00:00:00.000Z'),
   branchLimit: 2, employeeLimit: 5, monthlySlipLimit: 50, termDisabledAt: null,

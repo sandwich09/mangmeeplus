@@ -101,21 +101,25 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
 
   useEffect(() => { lockedRef.current = notice?.derivedState === 'EXPIRED'; }, [notice?.derivedState]);
 
-  // Only the locked shell listens: a running shop has nothing to unlock, and BusinessWorkspaceLayout
-  // already re-reads its access context on focus (see ACCESS_CONTEXT_STALE_EVENT below).
+  // Billing recovery also has to notice ACTIVE -> EXPIRED while a purchase page stays open.
+  // Other running business pages already re-read their access context on focus.
   useEffect(() => {
-    if (notice?.derivedState !== 'EXPIRED') return;
+    if (notice?.derivedState !== 'EXPIRED' && !isBillingCustomerRecoveryPath(pathname ?? '', companyId)) return;
     const bump = () => setRevision((n) => n + 1);
     const onVisible = () => { if (document.visibilityState === 'visible') bump(); };
+    const end = Date.parse(notice?.termEndsAt ?? '');
+    const timer = notice?.derivedState !== 'EXPIRED' && end > Date.now()
+      ? window.setTimeout(bump, Math.min(2_147_483_647, end - Date.now() + 150)) : undefined;
     window.addEventListener(PLAN_TERM_CHANGED_EVENT, bump);
     window.addEventListener('focus', bump);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
+      window.clearTimeout(timer);
       window.removeEventListener(PLAN_TERM_CHANGED_EVENT, bump);
       window.removeEventListener('focus', bump);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [notice?.derivedState]);
+  }, [companyId, pathname, notice?.derivedState, notice?.termEndsAt]);
 
   // Nothing business-shaped may mount before the term is known: the business shell's first render
   // fires the nav, notification and access-context reads, which a locked shop answers with 403 —

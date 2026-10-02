@@ -167,7 +167,8 @@ export async function checkBillingRestart(input: {
   const staffMember = await client.companyMembership.create({ data: { companyId, userId: input.extraUserId, status: 'ACTIVE' } });
   const staffProfile = await client.employeeAccessProfile.create({ data: { companyId, userId: input.extraUserId, membershipId: staffMember.id, displayName: 'Synthetic retained selection staff', status: 'ACTIVE',
     identityType: 'PASSPORT', identityLast4: '0000', identityHash: suffix, identityEncryptedRef: 'synthetic-only', phoneNumber: suffix, createdByUserId: original.initiatingUserId } });
-  const conversation = await client.aiConversation.create({ data: { companyId, userId: input.extraUserId } });
+  // Current bound LINE context survives as a row, but its pending state must be invalidated on suspension.
+  const conversation = await client.aiConversation.create({ data: { companyId, userId: input.extraUserId, membershipId:staffMember.id, channelKind:'USER', messagingChannelId:'synthetic-restart', chatKeyHash:suffix } });
   const settings = await client.billingSettings.findFirstOrThrow({ where: { stripeAccountId: account.stripeAccountId, livemode: false } });
   const revision = await client.billingPolicyRevision.findUniqueOrThrow({ where: { id: settings.policyRevisionId! } });
   const policy = structuredClone(revision.policyJson) as unknown as BillingSnapshot['policy'];
@@ -274,7 +275,8 @@ export async function checkBillingRestart(input: {
   assert.equal((await client.employeeAccessProfile.findUniqueOrThrow({ where: { id: staffProfile.id } })).status, 'SUSPENDED');
   assert.equal((await client.companyMembership.findUniqueOrThrow({ where: { id: staffMember.id } })).status, 'SUSPENDED');
   assert.equal((await client.user.findUniqueOrThrow({ where: { id: input.extraUserId } })).status, 'ACTIVE');
-  assert.ok(await client.aiConversation.findUnique({ where: { id: conversation.id } }));
+  const retainedConversation=await client.aiConversation.findUniqueOrThrow({where:{id:conversation.id}});
+  assert.ok(retainedConversation.lifecycleEpoch>conversation.lifecycleEpoch);assert.equal(retainedConversation.taskStateJson,null);
   assert.equal(await client.auditLog.count({ where: { companyId, action: 'billing.capacity.applied' } }), 1);
   cases.push('capacity-paid-apply-atomic-suspension-defaults-history-and-global-user-preserved');
   cases.push('restart-lost-response-binding-cap-race-paid-held-repair-and-exactly-once-new-contract');
