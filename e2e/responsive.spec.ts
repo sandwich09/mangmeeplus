@@ -233,18 +233,25 @@ test.describe('P24-2a shared-shell targets', () => {
         await expect(drawer).toBeHidden();
       } else {
         // Existing desktop collapse removes its trigger; restoring that focus is a separate P24 gap.
-        // The desktop shell expands on hover: move off it before asserting the collapsed state.
-        // It opens over the page, which stays where it is, so the page's heading lies under it: the pointer leaves for a
-        // point of the page beyond the sidebar's 289 px, and reaches the heading once the sidebar has closed.
+        // The press closes the sidebar at once, although the pointer still rests where the button was.
+        // The collapsed shell expands on hover only once the pointer has left and comes back. It opens over the page,
+        // which stays where it is, so the page's heading lies under it: the pointer leaves for a point of the page
+        // beyond the sidebar's 289 px, and reaches the heading while the sidebar is closed.
         const pageHeading = authedPage.getByRole('heading', { level: 1 });
         const leaveSidebar = () => authedPage.mouse.move(289 + 100, 450);
-        await leaveSidebar();
         await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(86);
+        await leaveSidebar();
         await pageHeading.hover();
         if (await authedPage.evaluate(() => window.matchMedia('(hover: hover)').matches)) {
           await drawer.hover();
           await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(289);
           await leaveSidebar();
+          await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(86);
+          // Pinned open again by the same button, it closes at once from the keyboard too, the pointer still on the button.
+          await drawer.hover();
+          await toggle.click();
+          await expect.poll(async () => Math.round((await authedPage.locator('#workspace-main').boundingBox())?.x ?? 0)).toBe(289);
+          await toggle.press('Enter');
           await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(86);
         }
       }
