@@ -24,7 +24,8 @@ export async function checkBillingDeliveryRecovery(input:Parameters<typeof check
   const get=(id:string)=>delegated(`${deliveryBase}/${id}`);
   const preview=async(id:string,actor=delegated)=>{const result=await actor(`${base}/operations/preview`,'POST',{type:'RETRY_NOTIFICATION',companyId,expectedVersion:account.version,referenceId:id,reason:'กู้คืนรายการส่งเดิมหลังตรวจการตั้งค่า'});assert.equal(result.status,200,JSON.stringify(result));return result.body;};
   const submit=(op:any,actor=delegated)=>actor(`${base}/operations`,'POST',{previewId:op.id,previewHash:op.previewHash,expectedVersion:op.version},{'idempotency-key':`notice-repair-${op.id}`});
-  const state=()=>db.billingAccount.findUniqueOrThrow({where:{id:account.id}}),beforeAccount=await state(),beforeGrants=await db.billingReceiptGrant.findMany({where:{companyId},orderBy:{id:'asc'}});
+  // Background leases may touch updatedAt; every financial/access field and version must stay equal.
+  const state=async()=>{const {updatedAt,...snapshot}=await db.billingAccount.findUniqueOrThrow({where:{id:account.id}});return snapshot;},beforeAccount=await state(),beforeGrants=await db.billingReceiptGrant.findMany({where:{companyId},orderBy:{id:'asc'}});
   const viewport=browser?.page.viewportSize();
   let credentialId:string|undefined;
   try{

@@ -14,6 +14,7 @@ import { checkEmailVerification } from './email-verification-smoke';
 import { checkEmailMonitoring } from './email-monitoring-smoke';
 import { checkBillingApplyRetry } from './billing-apply-retry-smoke';
 import { checkBillingNoSetup } from './billing-no-setup-smoke';
+import { checkBillingPurchaseRecovery } from './billing-purchase-recovery-smoke';
 import { RedisRateLimitService } from '../common/security/redis-rate-limit.service';
 import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 import { BillingService } from '../modules/billing/application/billing.service';
@@ -208,6 +209,13 @@ async function main() {
         drainOperations:()=>request('/v1/internal/billing/drain','POST',{}, {'x-worker-token':workerToken}),
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
+    if(process.env.BILLING_PURCHASE_RECOVERY_ONLY==='1'){
+      if(process.env.BILLING_BROWSER_E2E==='1'){
+        const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      }
+      cases.push(...await checkBillingPurchaseRecovery({request,prisma,companyId:companyIds[0]!,userId:userIds[0]!,stripeAccountId:accountId,browser}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:Boolean(browser),simulatedProviders:['Stripe'],realProviderPayment:false}));return;
+    }
     if(process.env.BILLING_NO_SETUP_ONLY==='1'){
       cases.push(...await checkBillingNoSetup({app,request,prisma,companyId:companyIds[0]!,userId:userIds[0]!,stripeAccountId:accountId,
         drain:()=>request('/v1/internal/billing/drain','POST',{}, {'x-worker-token':workerToken}),drainNotifications,
@@ -357,9 +365,10 @@ async function main() {
       await page.screenshot({ path: `${browser.evidenceDir}/purchase-no-setup-review-mobile.png`, fullPage: true });
       await documents.getByRole('link', { name: 'แก้ไขข้อมูลร้าน', exact: true }).click();
       await page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true }).waitFor();
-      for (const [label, value] of Object.entries({ 'ที่อยู่ (บ้านเลขที่ ถนน)': BILLING_TEST_ADDRESS.line1,
-        'ตำบล / แขวง': BILLING_TEST_ADDRESS.subdistrict, 'อำเภอ / เขต': BILLING_TEST_ADDRESS.district,
-        'จังหวัด': BILLING_TEST_ADDRESS.province, 'รหัสไปรษณีย์': BILLING_TEST_ADDRESS.postalCode })) {
+      // Postal edits clear dependent fields. This isolated DB uses the manual address fallback.
+      for (const [label, value] of Object.entries({ 'รหัสไปรษณีย์': BILLING_TEST_ADDRESS.postalCode,
+        'ที่อยู่ (บ้านเลขที่ ถนน)': BILLING_TEST_ADDRESS.line1, 'จังหวัด': BILLING_TEST_ADDRESS.province,
+        'อำเภอ / เขต': BILLING_TEST_ADDRESS.district, 'ตำบล / แขวง': BILLING_TEST_ADDRESS.subdistrict })) {
         await page.getByRole('textbox', { name: label, exact: true }).fill(value);
       }
       await page.getByRole('button', { name: 'บันทึกและกลับไปซื้อแพ็กเกจ', exact: true }).click();
@@ -382,6 +391,12 @@ async function main() {
       assert.equal(checkoutCalls, 0);
       assert.equal(await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).count(), 0);
       await toggleSales(true);
+      // A layout revalidation may return to the overview; either recovery entry must lead to a new quote.
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(button =>
+        !button.disabled && /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ|เลือกแพ็กเกจนี้)$/.test(button.textContent?.trim() ?? '')));
+      const chooser = page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true });
+      if (await chooser.isVisible()) await chooser.click();
+      await page.getByRole('button', { name: 'รายปี', exact: true }).click();
       await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
       cases.push('browser-runtime-sales-gate-refresh-invalidates-review-and-recovers-without-restart');

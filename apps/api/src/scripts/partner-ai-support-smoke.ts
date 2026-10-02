@@ -29,7 +29,7 @@ export async function checkPartnerAiSupport(input:Parameters<typeof checkBilling
     await db.companyAiConfiguration.update({where:{companyId},data:{ocrEnabled:false}});facts=await read();assert.equal(facts[0].label,'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้');assert.equal(facts[0].detail,'ผู้ดูแลปิดการอ่านเอกสารด้วย AI ไว้');
     if(browser){const page=browser.page;await page.getByRole('button',{name:'โหลดประวัติร้านล่าสุด',exact:true}).click();const label=page.getByText(facts[0].detail,{exact:true});await label.waitFor();await page.getByText('ตอนนี้ AI ยังทำงานให้ร้านไม่ได้',{exact:true}).waitFor({state:'hidden'});
       await label.evaluate(el=>el.closest('section')?.scrollIntoView({block:'start'}));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:`${browser.evidenceDir}/admin-ai-support-status-mobile.png`,fullPage:false});}
-    await db.company.update({where:{id:companyId},data:{status:'DISABLED'}});facts=await read();assert.equal(facts[0].detail,'ร้านถูกพักใช้งาน');
+    await db.company.update({where:{id:companyId},data:{status:'DISABLED'}});facts=await read();assert.equal(facts[0].detail,'ร้านถูกพักใช้งานโดยผู้ดูแล');
     cases.push('admin-ai-support-current-budget-ocr-switch-and-company-hold-have-distinct-explanations');
     if(browser)cases.push('browser-admin-ai-support-reloads-current-grant-budget-and-ocr-facts-without-restart');
     return cases;

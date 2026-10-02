@@ -36,6 +36,18 @@ async function withStubbedWindow(body: () => Promise<void>): Promise<string[]> {
 }
 
 describe('authed-fetch', () => {
+  it('preserves billing recovery pages on business-term denial while normal business pages still redirect', async () => {
+    const destinations = await withStubbedWindow(async () => {
+      for (const pathname of ['/companies/c1/billing', '/companies/c1/billing/return', '/companies/c1/billing/invoices/i1']) {
+        window.location.pathname = pathname;
+        const response = await authedFetch('/companies/c1/branches', undefined, async () => jsonResponse(403, { code: 'company_term_expired' }));
+        assert.equal(response.status, 403);
+      }
+      window.location.pathname = '/companies/c1/expenses';
+      await authedFetch('/companies/c1/expenses', undefined, async () => jsonResponse(403, { code: 'company_term_expired' }));
+    });
+    assert.deepEqual(destinations, ['/companies/c1/renew']);
+  });
   it('prefixes paths with /api/v1 and strips a legacy /v1 prefix', async () => {
     const calls: Call[] = [];
     const fetchImpl = scriptedFetch([() => jsonResponse(200, { ok: true })], calls);

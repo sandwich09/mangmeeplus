@@ -65,6 +65,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     return () => window.removeEventListener('hashchange', selectHash);
   }, []);
   const [error, setError] = useState(''), [errorCode, setErrorCode] = useState<string | null>(null), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
+  const [historyError, setHistoryError] = useState(''), [historyLoading, setHistoryLoading] = useState(false);
   // Item 6: a notice about a Checkout still being checked carries its own "อัปเดตข้อมูล" and goes away once
   // the status has no attempt left to check; a finished outcome ("ยุติ…แล้ว") stays until the next action.
   const [checkoutCancelNotice, setCheckoutCancelNotice] = useState<{ text: string; checking: boolean } | null>(null);
@@ -127,6 +128,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const openRecipientEditor = () => { setSection('payment'); setRecipientOpen(value => value + 1); };
   const key = useRef(''), running = useRef(false), intervalInitialized = useRef(false);
   const generation = useRef(0);
+  const statusRead = useRef(0), statusCatalogRevision = useRef<string | null>(null);
   useEffect(() => { generation.current++; return () => { generation.current++; }; }, [companyId]);
   const returnComplete = returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState === 'APPLIED';
   // G12: Stripe's cancel_url adds `checkout=canceled`. Read after mount, so the server render matches.
@@ -141,11 +143,26 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   }, [data]);
   useEffect(() => { if (new URLSearchParams(window.location.search).get('interval') === 'year') setInterval('year'); }, []);
   useEffect(() => {
-    let active = true;
+    let active = true, historyDenied = false;
+    let history: BillingHistory = { items: [], nextCursor: null };
     setError(''); setErrorCode(null);
-    Promise.all([api.status(), api.catalog(), api.history()]).then(([status, catalog, history]) => {
+    setHistoryError(''); setHistoryLoading(true);
+    const read = ++statusRead.current;
+    // History is independent: an unavailable or slow document service must not delay purchase.
+    void api.history().then(value => {
       if (!active) return;
-      setData({ status, catalog, history });
+      history = value; setData(current => current && { ...current, history }); setHistoryLoading(false);
+    }).catch(e => {
+      if (!active) return;
+      setHistoryLoading(false);
+      if (errorStatus(e) === 401 || errorStatus(e) === 403) {
+        historyDenied = true; setData(null); setError(errorText(e)); setErrorCode(apiErrorCode(e));
+      } else setHistoryError(errorText(e));
+    });
+    Promise.all([api.status(), api.catalog()]).then(([status, catalog]) => {
+      if (!active || historyDenied) return;
+      setData(current => read === statusRead.current ? { status, catalog, history } : current && { ...current, catalog, history });
+      if (read !== statusRead.current) return;
       if (!status.attemptId) setCheckoutCancelNotice(notice => notice?.checking ? null : notice);
       // F09/F10: after a one-tap cancel, the chooser opens only on a status that allows a new sale.
       if (reopenChooser.current && status.allowedActions.includes('new_sales') && !status.attemptId) { reopenChooser.current = false; setChoosing(true); setSection('package'); }
@@ -259,8 +276,11 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       }
     }
     try {
-      const latest = await api.status();
-      setData(value => value && { ...value, status: latest });
+      const read = ++statusRead.current, latest = await api.status();
+      if (read === statusRead.current) setData(value => value && { ...value, status: latest });
+      const modes = dealId ? latest.deal?.purchaseModes : latest.availablePurchaseModes;
+      if ((!dealId && !latest.allowedActions.includes('new_sales')) || (modes && !modes.includes(mode)))
+        throw { code: latest.purchaseBlockCode ?? 'BILLING_MODE_NOT_READY' };
       // SD-O12/SD-O13: every one-time package payment carries the choice, and the first bill of a package started in a renewing mode.
       const discountChoice = !dealId && eventDiscountMode(mode, latest.purchaseSource) && eventDiscountUsable(latest.eventDiscount) ? choice ?? eventChoice : undefined;
       const discountSerial = discountChoice === 'USE' ? eventDiscountSerial(latest.eventDiscount, eventSerial) ?? undefined : undefined;
@@ -276,6 +296,41 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const menusMoveLater = quote?.advanceDeal ? date(quote.advanceDeal.startsAt)
     : quote?.purchase?.kind === 'SCHEDULED_CHANGE' ? date(quote.purchase.previousPaidThrough) : null;
   const status = data?.status;
+  useEffect(() => {
+    if (!status || preview) return;
+    let active = true, loading = false, refreshAgain = false, deadlineTimer: number | undefined, retryTimer: number | undefined;
+    const refresh = async () => {
+      if (running.current) return false;
+      if (loading) { refreshAgain = true; return false; }
+      loading = true;
+      const scope = generation.current;
+      let read = statusRead.current;
+      try {
+        let latest: BillingStatus;
+        // A focus/visibility event during the read must not lose a newer completed operation/gate change.
+        do { refreshAgain = false; read = ++statusRead.current; latest = await api.status(); } while (active && refreshAgain);
+        if (scope === generation.current && read === statusRead.current) setData(current => current && { ...current, status: latest });
+        return true;
+      } catch (e) {
+        if (scope === generation.current && read === statusRead.current && (errorStatus(e) === 401 || errorStatus(e) === 403)) { setData(null); setError(errorText(e)); setErrorCode(apiErrorCode(e)); }
+        return errorStatus(e) === 401 || errorStatus(e) === 403;
+      } finally { loading = false; }
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh().then(ok => {
+      if (!ok && active) { window.clearTimeout(retryTimer); retryTimer = window.setTimeout(onVisible, 5000); }
+    }); };
+    const deadlines = [status.paidThrough, status.termEndsAt, status.graceEndsAt].filter(Boolean).map(value => Date.parse(value!)).filter(at => at > Date.now());
+    const atDeadline = async () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!await refresh() && active) deadlineTimer = window.setTimeout(atDeadline, 5000);
+    };
+    if (deadlines.length) deadlineTimer = window.setTimeout(atDeadline, Math.min(2_147_483_647, Math.max(0, Math.min(...deadlines) - Date.now() + 150)));
+    const revision = data?.catalog.catalogRevision ?? null, changed = statusCatalogRevision.current !== null && revision !== statusCatalogRevision.current;
+    statusCatalogRevision.current = revision;
+    if (changed) onVisible();
+    window.addEventListener('focus', onVisible); document.addEventListener('visibilitychange', onVisible);
+    return () => { active = false; window.clearTimeout(deadlineTimer); window.clearTimeout(retryTimer); window.removeEventListener('focus', onVisible); document.removeEventListener('visibilitychange', onVisible); };
+  }, [api, status, preview, data?.catalog.catalogRevision]);
   // The picked discount while this page still offers it; a ticket used or gone since falls back to the default.
   const chosenEventSerial = eventDiscountSerial(status?.eventDiscount, eventSerial);
   const availableModes = status?.availablePurchaseModes ?? ['CARD_AUTO'];
@@ -375,12 +430,12 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   // Item 17: a no-package box saying "เลือกแพ็กเกจ…" with no button under it, and no other line saying
   // why, was a dead end (sales closed, collection paused, policy not ready).
   const canBuy = !!status?.allowedActions.includes('new_sales');
-  const saleClosedUnexplained = !!status && !canBuy && !status.attemptId && !status.refundReviewPending
+  const saleClosedUnexplained = !!status && !status.purchaseBlockCode && !canBuy && !status.attemptId && !status.refundReviewPending
     && status.purchaseEligibility === 'ELIGIBLE' && status.accessState !== 'HELD';
   const purchaseHint = canBuy || oneTapCancel ? lockReason === 'no_package' ? 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน' : 'เลือกแพ็กเกจเพื่อใช้งานต่อ'
     : saleClosedUnexplained ? 'ยังเปิดรับชำระไม่ได้ชั่วคราว กรุณาลองใหม่ภายหลัง' : null;
   const recipientLocked = !!status && billingRecipientLocked(status);
-  const purchasing = choosing || !!quote || !!capacity;
+  const purchasing = (choosing && canBuy) || !!quote || !!capacity;
   const showOverview = section === 'package' && !purchasing;
   // R-A7: a document bounced — said on the overview and above the recipient panel.
   const bounceBanner = status?.recipient?.bouncedAt ? <div role="alert" className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
@@ -403,6 +458,13 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       {checkoutCancelNotice.checking && <button className={button} disabled={busy} onClick={() => setReload(value => value + 1)}>อัปเดตข้อมูล</button>}</div>}
     {!data && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}
     {data && status && <>
+      {status.purchaseBlockCode && <div role="alert" className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4">
+        <p>{errorText({ code: status.purchaseBlockCode })}</p>
+        {supportReference && <p className="break-all text-sm">เลขอ้างอิงสำหรับแจ้งทีมงาน: {supportReference}</p>}
+        {status.purchaseBlockCode === 'BILLING_EMAIL_UPDATE_PENDING'
+          ? <button className={button} onClick={() => { setChoosing(false); openRecipientEditor(); }}>จัดการผู้รับเอกสาร</button>
+          : <button className={button} disabled={busy} onClick={() => { setChoosing(false); setSection('payment'); setReload(value => value + 1); }}>ตรวจสถานะล่าสุด</button>}
+      </div>}
       {status.mode === 'TEST' && !preview && <div><MangmeeBadge tone="amber">โหมดทดสอบ · ไม่มีการรับเงินจริง</MangmeeBadge></div>}
       {returnError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4">{returnError}</p>}
       <nav aria-label="หมวดแพ็กเกจและการชำระเงิน" className="flex border-b border-gray-200">
@@ -617,6 +679,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
             (status.renewalMode === 'CARD_ONCE' || status.renewalMode === 'PROMPTPAY_ONCE') &&
             (chosenMode === 'CARD_ONCE' || chosenMode === 'PROMPTPAY_ONCE') && status.interval === offer.interval &&
             BILLING_PAID_TIERS.indexOf(offer.offerKey as typeof BILLING_PAID_TIERS[number]) > currentRank;
+          const packageChangeUnavailable = status.packageChangesEnabled === false && status.paidThrough && Date.parse(status.paidThrough) > Date.now() &&
+            (status.renewalMode === 'CARD_ONCE' || status.renewalMode === 'PROMPTPAY_ONCE') && (status.tierKey !== offer.offerKey || status.interval !== offer.interval);
           // Read the offer's actual snapshot so the card matches what checkout grants.
           const menus = dealMenuLabels(offer.featureKeys);
           const eventCard = eventDiscountMode(chosenMode, status.purchaseSource) && eventChoice === 'USE' ? eventDiscountCard(status.eventDiscount, offer, chosenEventSerial) : null;
@@ -633,10 +697,11 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           {menus.length > 0 && <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-brand-700">ดูรายละเอียดทั้งหมด · {menus.length} เมนู</summary>
             <ul className="space-y-1 break-words">{menus.map(label => <li key={label}><span aria-hidden="true">✓ </span>{label}</li>)}</ul></details>}
           {offer.availability === 'COMING_SOON' && <p className="text-sm text-gray-600">แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน</p>}
-          <button className="mangmee-btn mangmee-btn-primary mt-auto w-full" disabled={modeUnavailable || busy || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE'} aria-busy={Boolean(busy)} onClick={() => action(async () => {
+          <button className="mangmee-btn mangmee-btn-primary mt-auto w-full" disabled={!!packageChangeUnavailable || modeUnavailable || busy || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE'} aria-busy={Boolean(busy)} onClick={() => action(async () => {
             await requestQuote(offer.offerKey, interval, recipientEmail);
           })}>{offer.availability === 'COMING_SOON' ? 'เร็ว ๆ นี้' : offer.availability === 'AVAILABLE' ? current ? 'ซื้อแพ็กเกจเดิมเพิ่ม' : fullPackageUpgrade ? 'อัปเกรดจ่ายส่วนต่าง' : status.paidThrough && Date.parse(status.paidThrough) > Date.now() && status.tierKey === offer.offerKey && status.interval === 'month' && interval === 'year' ? 'เปลี่ยนเป็นรายปี' : status.paidThrough && Date.parse(status.paidThrough) > Date.now() && status.tierKey === offer.offerKey && status.interval === 'year' && interval === 'month' ? 'เปลี่ยนเป็นรายเดือนรอบถัดไป' : 'เลือกแพ็กเกจนี้' : 'ยังไม่เปิดขาย'}</button>
-          {fullPackageUpgrade && <button className={button} disabled={modeUnavailable || busy || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE'} aria-busy={Boolean(busy)} onClick={() => action(async () => {
+          {packageChangeUnavailable && <p className="text-sm text-gray-500">{errorText({ code: 'BILLING_REPEAT_NOT_READY' })}</p>}
+          {fullPackageUpgrade && <button className={button} disabled={!!packageChangeUnavailable || modeUnavailable || busy || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE'} aria-busy={Boolean(busy)} onClick={() => action(async () => {
             await requestQuote(offer.offerKey, interval, recipientEmail, undefined, chosenMode, undefined, 'FULL_PACKAGE');
           })}>ซื้อ {offer.label} เต็มแพ็ก {money(offer.priceSatang)}</button>}
         </article>; })}</div>
@@ -732,7 +797,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {/* A stale catalog does not stop a deal: its price is the approved snapshot's, not a row's. */}
         {quoteExpired ? <div role="status" className="space-y-3 rounded-xl bg-amber-50 p-4"><p>ราคานี้หมดอายุแล้ว กดตรวจสอบราคาใหม่</p>
           <button className="mangmee-btn mangmee-btn-primary" disabled={busy} aria-busy={Boolean(busy)} onClick={() => void requoteSame()}>ตรวจสอบราคาใหม่</button></div>
-        : <div className="flex flex-wrap gap-3"><button className="mangmee-btn mangmee-btn-primary" disabled={busy || (catalogUnavailable && !dealQuote) || !accepted} aria-busy={Boolean(busy)} onClick={() => action(async navigate => {
+        : <div className="flex flex-wrap gap-3"><button className="mangmee-btn mangmee-btn-primary" disabled={busy || (catalogUnavailable && !dealQuote) || !accepted || (!!status.purchaseBlockCode && !(dealQuote && dealModes.includes(quote.purchaseMode!)))} aria-busy={Boolean(busy)} onClick={() => action(async navigate => {
           const params = new URLSearchParams(window.location.search);
           const result = await api.checkout({ quoteId: quote.quoteId, consentRevision: quote.consentRevision, accepted: true, channel: params.get('channel') === 'line' ? 'line' : 'web' }, key.current);
           if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout');
@@ -745,7 +810,10 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       </section>}
       </div>}
       <section hidden={section !== 'history'} id="billing-history" aria-label="ประวัติการชำระเงิน" className="mangmee-card space-y-4 p-5 sm:p-6"><h2 className="text-lg font-bold">ประวัติและเอกสารการชำระเงิน</h2>
-        {data.history.items.length === 0 && <p className="rounded-xl bg-gray-50 p-5 text-gray-500">ยังไม่มีรายการชำระเงิน</p>}
+        {historyLoading && <p role="status">กำลังโหลดประวัติการชำระเงิน…</p>}
+        {historyError && <div role="alert" className="space-y-2 rounded-xl bg-amber-50 p-4"><p>โหลดประวัติการชำระเงินไม่สำเร็จ · {historyError}</p>
+          <button className={button} disabled={busy} onClick={() => action(async () => { const history = await api.history(); setData(current => current && ({ ...current, history })); setHistoryError(''); })}>ลองโหลดประวัติใหม่</button></div>}
+        {!historyLoading && !historyError && data.history.items.length === 0 && <p className="rounded-xl bg-gray-50 p-5 text-gray-500">ยังไม่มีรายการชำระเงิน</p>}
         {data.history.items.map(invoice => <article key={invoice.id} className="space-y-2 rounded-xl border border-gray-200 bg-white p-4"><p>{invoice.number ?? 'รายการชำระเงิน'} · {money(invoice.amountSatang)} · {date(invoice.createdAt)}</p>
           {(invoice.refundedSatang > 0 || invoice.disputed) && <p className="text-sm text-amber-900">{invoice.refundedSatang > 0 && `ยอดคืนเงินที่ Stripe บันทึก ${money(invoice.refundedSatang)} · `}{invoice.disputed && 'มีข้อพิพาทการชำระเงิน · '}ทีมงานตรวจสิทธิ์เป็นรายกรณี · ตรวจล่าสุด {date(invoice.financialObservedAt)}</p>}
           {preview ? <button className={button} onClick={preview.openDocumentHistory}>ดูเอกสาร</button> : <Link className={button} href={`/companies/${encodeURIComponent(companyId)}/billing/invoices/${encodeURIComponent(invoice.id)}`}>ดูเอกสาร</Link>}
