@@ -83,8 +83,12 @@ const shortDate = (iso?: string) => dateShort(iso);
 const QUEUE_TABLE_CLASS = 'mangmee-table [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap';
 /** A cell of free text (a name, a reason, a category): it wraps, inside a word if it must, and keeps room to be read. */
 const FREE_TEXT_CELL = '!whitespace-normal [overflow-wrap:anywhere]';
-/** A queue's cards: one column on a phone, two once the card that holds them is as wide as two phones. */
-const QUEUE_CARDS_CLASS = 'mt-3 grid gap-3 @[44rem]:grid-cols-2';
+/**
+ * A queue's cards: one column on a phone, two once the card that holds them is as wide as two phones. The one column is
+ * named (`grid-cols-1`), so it is as wide as the list and no wider: an unnamed column takes the width of its longest
+ * line that does not wrap (a long reason, a desk of several names), and every card then runs past the screen's edge.
+ */
+const QUEUE_CARDS_CLASS = 'mt-3 grid grid-cols-1 gap-3 @[44rem]:grid-cols-2';
 /** A claim never said whose desk it sits on. Terminal claims have none, and render nothing. */
 function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] } } }) {
   const desk = claimDeskText(row);

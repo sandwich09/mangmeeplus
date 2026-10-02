@@ -484,11 +484,22 @@ describe('a hub list is a table only where its card is wide enough for it, and c
       const page = html(tab);
       // The table and its cards sit in one box that is their container; each names the width the table needs.
       assert.match(page, new RegExp(`<div class="\\[container-type:inline-size\\]"><div class="hidden @\\[${width}\\]:block" data-testid="reimbursements-${tab}-table">`, 'u'), tab);
-      assert.match(page, new RegExp(`<div class="mt-3 grid gap-3 @\\[44rem\\]:grid-cols-2 @\\[${width}\\]:hidden" data-testid="reimbursements-${tab}-card-list">`, 'u'), tab);
+      assert.match(page, new RegExp(`<div class="mt-3 grid grid-cols-1 gap-3 @\\[44rem\\]:grid-cols-2 @\\[${width}\\]:hidden" data-testid="reimbursements-${tab}-card-list">`, 'u'), tab);
       const table = page.slice(page.indexOf(`data-testid="reimbursements-${tab}-table"`), page.indexOf(`data-testid="reimbursements-${tab}-card-list"`));
       // Only free text wraps; no forced width and no max-content scroller around it.
       assert.match(table, /<div class="mt-3 overflow-x-auto"><table class="mangmee-table \[&amp;_td\]:whitespace-nowrap \[&amp;_th\]:whitespace-nowrap">/u, tab);
       assert.doesNotMatch(table, /min-w-\[980px\]|mangmee-table-scroll|md:block/u, tab);
+    }
+  });
+
+  // Seen on a 390 px screen (2026-10-02): the requester's list held a claim with a long reason. Its card keeps the
+  // reason on one line, and the list's one column was unnamed, so the column took the width of that line: every card
+  // of the list was 483 px wide on a 390 px screen, with the date, the amount and the end of its button past the edge.
+  it('keeps a card as wide as its list and no wider: the one column of a phone is named', () => {
+    for (const [tab] of lists) {
+      const list = html(tab).match(new RegExp(`<div class="([^"]*)" data-testid="reimbursements-${tab}-card-list">`, 'u'))?.[1].split(' ') ?? [];
+      // `grid-cols-1` is one column of minmax(0, 1fr); a grid with no named column sizes it by its content.
+      assert.ok(list.includes('grid') && list.includes('grid-cols-1'), `${tab}: ${list.join(' ')}`);
     }
   });
 
