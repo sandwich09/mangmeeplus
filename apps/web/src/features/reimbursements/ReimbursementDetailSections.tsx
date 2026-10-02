@@ -36,7 +36,7 @@ import {
 } from './reimbursements.model';
 import {
   approvalStepCorrectionNote, buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
-  savePaymentForm, slipTargetPayment, sumLineAmounts, type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip,
+  savePaymentForm, slipTargetPayment, sumLineAmounts, timelineDateText, type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip,
 } from './reimbursements.logic';
 import { PayerConfirmationCheck } from './ReimbursementPayout';
 import {
@@ -707,7 +707,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
               <span className={cx('min-w-0 flex-1', step.state === 'current' ? 'font-semibold text-gray-900' : step.state === 'done' ? 'text-gray-700' : 'text-gray-400')}>
                 {step.label}
               </span>
-              {step.date && <span className="shrink-0 text-xs tabular-nums text-gray-400">{dateShort(step.date)}</span>}
+              {step.date && <span className="shrink-0 text-xs tabular-nums text-gray-400">{timelineDateText(timeline, step)}</span>}
             </li>
           ))}
         </ol>

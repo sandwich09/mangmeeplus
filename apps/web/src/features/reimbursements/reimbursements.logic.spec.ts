@@ -8,7 +8,7 @@ import {
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
   approverNotReadyHelp, approverPaymentWarning, hubCardFilter, hubList, hubListStatusText, hubNextPage, NO_HUB_LIST, QUEUE_PAGE_SIZE, withHubPage,
-  financeQueueWords, rowHasFinanceReview, rowMayBeDuplicate,
+  financeQueueWords, rowHasFinanceReview, rowMayBeDuplicate, timelineDateText,
   type HubFilter,
 } from './reimbursements.logic';
 import { currentDeskText } from './reimbursements.model';
@@ -42,6 +42,33 @@ describe('financeQueueWords', () => {
   it('knows a row that goes or went through the review from the row itself', () => {
     for (const status of ['PENDING', 'NEEDS_INFO', 'APPROVED_FOR_PAYMENT', 'BLOCKED']) assert.equal(rowHasFinanceReview({ financeReviewStatus: status }), true, status);
     for (const row of [{ financeReviewStatus: 'NOT_REQUIRED' }, {}, null, undefined]) assert.equal(rowHasFinanceReview(row), false);
+  });
+});
+
+// A requester who gave the account of a correction round twice in one day had two journey rows that read alike.
+describe('timelineDateText', () => {
+  const round = {
+    status: 'READY_FOR_PAYMENT', requesterUserId: 'staff', submittedAt: '2026-10-02T01:00:00.000Z', approvedAt: '2026-10-02T05:00:00.000Z',
+    approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decidedAt: '2026-10-02T02:00:00.000Z', decidedByName: 'สมศรี', invalidatedAt: '2026-10-02T03:00:00.000Z', invalidatedReason: 'payout_account_correction' }],
+    payoutCorrectionHistory: [
+      { kind: 'SENT_BACK', at: '2026-10-02T03:00:00.000Z', byUserId: 'boss', byName: 'สมศรี', reasonCode: 'ACCOUNT_NUMBER_WRONG' },
+      { kind: 'ACCOUNT_SUBMITTED', at: '2026-10-02T03:10:00.000Z', byUserId: 'staff', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 },
+      { kind: 'ACCOUNT_SUBMITTED', at: '2026-10-02T03:25:00.000Z', byUserId: 'staff', payoutMethod: 'BANK_TRANSFER', payoutVersion: 3 },
+      { kind: 'REAPPROVED', at: '2026-10-02T05:00:00.000Z', byUserId: 'boss', byName: 'สมศรี', approvalStepId: 's2' },
+    ],
+  };
+
+  it('tells two rows that read alike on one day apart by their time, and leaves every other row its date alone', () => {
+    const rows = buildClaimTimeline(round);
+    const printed = rows.map((row) => `${row.label} | ${timelineDateText(rows, row) ?? ''}`);
+    assert.deepEqual(printed.filter((text) => text.startsWith('ผู้เบิกแก้บัญชีรับเงิน')),
+      ['ผู้เบิกแก้บัญชีรับเงิน | 2 ต.ค. 2569 10:10 น.', 'ผู้เบิกแก้บัญชีรับเงิน | 2 ต.ค. 2569 10:25 น.']);
+    assert.ok(printed.includes('ยื่นใบ | 2 ต.ค. 2569'));
+    assert.ok(printed.includes('อนุมัติบัญชีรับเงินใหม่โดย สมศรี | 2 ต.ค. 2569'));
+    // The same account given on two days already reads apart, and a row with no date prints none.
+    const twoDays = buildClaimTimeline({ ...round, payoutCorrectionHistory: round.payoutCorrectionHistory.map((event, index) => (index === 2 ? { ...event, at: '2026-10-03T03:25:00.000Z' } : event)) });
+    assert.deepEqual(twoDays.filter((row) => row.label === 'ผู้เบิกแก้บัญชีรับเงิน').map((row) => timelineDateText(twoDays, row)), ['2 ต.ค. 2569', '3 ต.ค. 2569']);
+    assert.equal(timelineDateText(rows, { key: 'payment', state: 'current', label: 'รอบันทึกจ่าย' }), null);
   });
 });
 

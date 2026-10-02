@@ -871,6 +871,18 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   return rows;
 }
 
+/**
+ * The date a journey row prints. Two rows that read alike on one day are told apart by their time: a requester who
+ * gives the account of a round twice in a day had two rows "ผู้เบิกแก้บัญชีรับเงิน" with one date. Every other row
+ * keeps the date alone. Null for a row with no date.
+ */
+export function timelineDateText(rows: readonly ClaimTimelineRow[], row: ClaimTimelineRow): string | null {
+  if (!row.date) return null;
+  const day = formatThaiDate(row.date);
+  const alike = rows.some((other) => other !== row && other.label === row.label && !!other.date && formatThaiDate(other.date) === day);
+  return alike ? formatThaiDateTime(row.date) : day;
+}
+
 /** `invalidatedReason` of every approval step a correction round sets aside, as the API writes it. */
 const PAYOUT_CORRECTION_STEP_REASON = 'payout_account_correction';
 
