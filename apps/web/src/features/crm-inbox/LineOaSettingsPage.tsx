@@ -479,7 +479,7 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
         businessHours: hoursEnabled ? { start, end, timezone } : null,
       });
       setPolicy(updated);
-      toast.success('บันทึกการตั้งค่า SLA แล้ว — มีผลกับแชทใหม่ตั้งแต่ตอนนี้');
+      toast.success('บันทึกกำหนดเวลาตอบลูกค้าแล้ว — มีผลกับแชทใหม่ตั้งแต่ตอนนี้');
     } catch (e) {
       setError(apiErrorMessage(e));
     } finally {
@@ -490,7 +490,7 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
   return (
     <div className={cardClass}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold text-gray-900">SLA การตอบกลับลูกค้า</h2>
+        <h2 className="text-lg font-semibold text-gray-900">กำหนดเวลาตอบลูกค้า</h2>
         {policy?.isDefault ? (
           <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">ค่าเริ่มต้น</span>
         ) : null}
@@ -538,7 +538,7 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
           {error ? <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
           <div className="mt-4">
             <button className={primaryBtn} onClick={() => void save()} disabled={saving || policy === null} aria-busy={Boolean(saving)}>
-              {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า SLA'}
+              {saving ? 'กำลังบันทึก...' : 'บันทึกกำหนดเวลาตอบลูกค้า'}
             </button>
           </div>
         </>

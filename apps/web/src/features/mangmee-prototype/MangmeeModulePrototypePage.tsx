@@ -178,7 +178,7 @@ const configs = {
       { label: 'ใบเสนอราคา', value: '28', sub: 'รอลูกค้าตัดสินใจ', tone: 'amber', icon: DocsIcon },
       { label: 'ใบแจ้งหนี้', value: '46', sub: 'ครบกำหนด 8 ใบ', tone: 'sky', icon: PageIcon },
       { label: 'ชำระแล้ว', value: '72', sub: 'ออกใบเสร็จแล้ว', tone: 'brand', icon: CheckCircleIcon },
-      { label: 'ต้องติดตาม', value: '9', sub: 'เกิน SLA', tone: 'danger', icon: BellIcon },
+      { label: 'ต้องติดตาม', value: '9', sub: 'เกินกำหนด', tone: 'danger', icon: BellIcon },
     ],
     rows: [
       { title: 'ใบเสนอราคาคอร์สเลเซอร์', sub: 'ลูกค้า VIP 6 ราย', value: '฿268,000', tone: 'purple' },
@@ -265,7 +265,7 @@ const configs = {
     heroLabel: 'แจ้งเตือนที่เปิดใช้งาน',
     heroValue: '18 กฎ',
     heroSub: 'ส่งผ่านเว็บและ LINE OA',
-    progressLabel: 'เหตุการณ์ที่ตอบทัน SLA',
+    progressLabel: 'เหตุการณ์ที่ตอบทันกำหนด',
     progress: 89,
     metrics: [
       { label: 'ลูกค้ารอแชท', value: '4', sub: 'เกิน 30 นาที', tone: 'danger', icon: BellIcon },

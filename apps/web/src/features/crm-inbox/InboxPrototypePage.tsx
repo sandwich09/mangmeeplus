@@ -1378,7 +1378,7 @@ function CustomerPanel({
           <div className="text-gray-800" style={{ fontSize: 14, fontWeight: 700, marginTop: 3 }}>{waitMinutesLabel(detail.lastInboundAt, now)}</div>
         </div>
         <div className="rounded-[10px] bg-gray-50 p-2.5">
-          <div className="text-gray-400" style={{ fontSize: 11 }}>SLA</div>
+          <div className="text-gray-400" style={{ fontSize: 11 }}>กำหนดตอบ</div>
           <div className="text-gray-800" style={{ fontSize: 14, fontWeight: 700, marginTop: 3 }}>{detail.slaBreachedAt ? 'เกินกำหนด' : countdown?.label ?? '—'}</div>
         </div>
         <div className="rounded-[10px] bg-gray-50 p-2.5">

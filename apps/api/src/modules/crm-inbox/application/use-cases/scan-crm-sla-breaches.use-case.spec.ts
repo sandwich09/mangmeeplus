@@ -65,6 +65,9 @@ describe('ScanCrmSlaBreachesUseCase', () => {
     assert.equal(call.triggerKey, 'crm_sla_breach');
     assert.equal(call.severity, 'action');
     assert.match(call.title, /คุณฝ้าย/);
+    // What a shop reads in its notices: the words of the dashboard card, never "SLA".
+    assert.equal(call.title, 'ลูกค้ารอตอบเกินกำหนด: คุณฝ้าย');
+    assert.doesNotMatch(`${call.title} ${call.body}`, /SLA/);
     assert.deepEqual([...call.recipientUserIds].sort(), ['mgr-1', 'owner-1']);
     assert.equal(call.sourceRefs[0].permissionKey, 'crm.inbox.read');
   });

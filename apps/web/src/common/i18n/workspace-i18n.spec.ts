@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { t, getDefaultLocale } from './workspace-i18n.logic';
 
 describe('workspace-i18n', () => {
@@ -77,4 +80,30 @@ describe('AI money refusal copy on the expense screens', () => {
       assert.equal(t('expenses.extract_ai_budget_exceeded', locale) === t('expenses.extract_ocr_limit', locale), false);
     });
   }
+});
+
+/**
+ * Owner report 2026-10-02: a dashboard card said "เกิน SLA". A shop does not know the word. Late is
+ * "เกินกำหนด" on every screen, and a setting says what its number is. This walks every source of the
+ * web for text a person reads (a string or JSX text that is Thai, or the bare label) carrying "SLA".
+ * An identifier such as SLA_SCAN, a comment, and the English name of a report are not that.
+ */
+describe('a shop never reads "SLA"', () => {
+  it('says what it means in Thai, with the same words on every screen', () => {
+    assert.equal(t('card.sla_breaches', 'th'), 'รอตอบเกินกำหนด');
+    const src = fileURLToPath(new URL('../../', import.meta.url));
+    const shown = /'([^'\n]*\bSLA\b[^'\n]*)'|"([^"\n]*\bSLA\b[^"\n]*)"|`([^`\n]*\bSLA\b[^`\n]*)`|>([^<>{}\n]*\bSLA\b[^<>{}\n]*)</g;
+    const found: string[] = [];
+    for (const file of readdirSync(src, { recursive: true, encoding: 'utf8' })) {
+      if (!/\.tsx?$/.test(file) || /\.spec\.tsx?$/.test(file)) continue;
+      for (const [index, line] of readFileSync(join(src, file), 'utf8').split('\n').entries()) {
+        if (/^\s*(\/\/|\/?\*)/.test(line)) continue;
+        for (const match of line.matchAll(shown)) {
+          const text = (match[1] ?? match[2] ?? match[3] ?? match[4] ?? '').trim();
+          if (/[ก-๙]/.test(text) || text === 'SLA') found.push(`${file}:${index + 1} ${text}`);
+        }
+      }
+    }
+    assert.deepEqual(found, []);
+  });
 });

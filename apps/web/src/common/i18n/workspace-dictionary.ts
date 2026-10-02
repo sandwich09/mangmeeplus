@@ -220,7 +220,7 @@ export const workspaceDictionary = {
     'dashboard.home.load_error': 'โหลดข้อมูลแดชบอร์ดไม่สำเร็จ',
     'dashboard.home.refresh_error': 'รีเฟรชข้อมูลไม่สำเร็จ',
     'card.unanswered': 'ยังไม่ได้ตอบ',
-    'card.sla_breaches': 'เกิน SLA',
+    'card.sla_breaches': 'รอตอบเกินกำหนด',
     'card.new_customers': 'ลูกค้าใหม่',
     'card.appointments': 'นัดหมาย',
     'card.payment_proofs': 'หลักฐานโอนรอตรวจ',
