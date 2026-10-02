@@ -33,6 +33,7 @@ import { SalesSelfProfileDto, SalesTeamCreateDto } from './presentation/http/sal
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../common/pipes/validation-pipe.options';
 import { encryptCredential } from '../system-partner-management/domain/logic/credential-cipher.logic';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
+import { observeBillingCharges } from '../billing/application/billing-financial';
 import { applyDealRequest, recordAttributionDeductions, recordReferralAttribution } from '../billing/application/billing-package-request';
 import { bangkokMonthKey, type CreditTakeBack } from './domain/sales-attribution.logic';
 import { quoteTotals } from '../billing/domain/billing-policy';
@@ -139,6 +140,8 @@ async function harness() {
       await client.packageChangeRequest.deleteMany({ where: { companyId: { startsWith: tag } } });
       await client.salesAttribution.deleteMany({ where: { companyId: { startsWith: tag } } });
       await client.billingInvoice.deleteMany({ where: { billingAccountId: { startsWith: tag } } });
+      await client.billingIssue.deleteMany({ where: { companyId: { startsWith: tag } } });
+      await client.billingAccount.deleteMany({ where: { companyId: { startsWith: tag } } });
       await client.auditLog.deleteMany({ where: { companyId: { startsWith: tag } } });
       await client.salesAgentProfile.deleteMany({ where: { userId: { in: userIds } } });
       await client.companySignupRequest.deleteMany({ where: { externalSignupId: { startsWith: tag } } });
@@ -699,6 +702,66 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
       assert.deepEqual(new Map(summary.months.map((month) => [month.monthKey, month.rows[0]!.amountSatang])), expected);
       assert.deepEqual(summary.months.flatMap((month) => month.deductions ?? []).map((line) => [line.kind, line.companyName, line.paidMonthKey, line.amountSatang]),
         [['DISPUTE', 'ร้านเดิม', paidMonth, 20000]]);
+    } finally { await h.teardown(); }
+  });
+
+  it('observes a refunded and disputed first payment end to end: the provider\'s facts in, dated deductions out', async () => {
+    const h = await harness();
+    try {
+      // Paid 62 days ago: everything below is first NOTICED after the 60 days.
+      const paidAt = new Date(Math.floor(Date.now() / 1000) * 1000 - 62 * 24 * 60 * 60 * 1000);
+      const at = (day: number) => new Date(paidAt.getTime() + day * 24 * 60 * 60 * 1000);
+      const leaseToken = `lease-${h.tag}`;
+      const account = await h.client.billingAccount.create({ data: { id: `${h.tag}-account`, companyId: h.shopId,
+        stripeAccountId: `acct_${h.tag}`, livemode: false, customerId: `cus_${h.tag}`, leaseToken, leaseUntil: new Date(Date.now() + 60_000) } });
+      const chargeId = `ch_${randomUUID().replace(/-/g, '')}`;
+      const invoice = await h.client.billingInvoice.create({ data: { billingAccountId: account.id, providerInvoiceId: `in_${h.tag}`,
+        providerChargeId: chargeId, offerSnapshot: {}, contractSnapshot: { policy: { taxTreatment: 'INCLUSIVE_VAT_7' } },
+        policyRevisionId: 'policy', currency: 'THB', totalSatang: 39900, paidSatang: 39900, taxSatang: 2610, periodStart: paidAt,
+        periodEnd: at(365), providerStatus: 'paid', evidenceHash: 'evidence', applyStatus: 'APPLIED', appliedAt: paidAt } });
+      const credit = await h.client.salesAttribution.create({ data: { companyId: h.shopId, salesUserId: h.agentId, source: 'REFERRAL',
+        amountSatang: 39900, months: 1, interval: 'month', paidAt, sourceInvoiceId: invoice.id } });
+
+      // Ids shaped like the provider's own: a short prefix, an underscore, letters and digits.
+      const ref = (prefix: string, name: string) => `${prefix}_${name}${h.tag.replace(/[^a-z0-9]/g, '')}`;
+      const fact = (object: 'refund' | 'dispute', id: string, amount: number, when: Date, status: string) =>
+        ({ id, object, charge: chargeId, currency: 'thb', amount, created: when.getTime() / 1000, status });
+      const calls: string[] = [];
+      const stripe = { accountId: account.stripeAccountId, livemode: false,
+        request: async (_method: string, path: string) => { calls.push(path); return { id: chargeId, customer: account.customerId, livemode: false,
+          currency: 'thb', status: 'succeeded', paid: true, captured: true, amount: 39900, amount_refunded: 15000, disputed: true }; },
+        list: async (path: string) => { calls.push(path); return path === '/refunds'
+          ? [fact('refund', ref('re', 'day59'), 10000, at(59), 'succeeded'), fact('refund', ref('re', 'day61'), 5000, at(61), 'succeeded')]
+          : [fact('dispute', ref('dp', 'won'), 39900, at(20), 'won'), fact('dispute', ref('dp', 'lost'), 39900, at(60), 'lost')]; } };
+      const observe = () => observeBillingCharges({ client: h.client } as never, stripe as never, account, leaseToken);
+      await observe();
+      await observe();
+
+      // The refund of day 59 is deducted though noticed on day 62; the one of day 61 is not; the won
+      // dispute is nothing; the lost one, opened on day 60, takes what is left of the credit; and the
+      // second observation adds no row.
+      const rows = await h.client.salesAttributionDeduction.findMany({ where: { attributionId: credit.id }, orderBy: { occurredAt: 'asc' } });
+      assert.deepEqual(rows.map((row) => [row.kind, row.providerRef, row.amountSatang, row.occurredAt.toISOString()]), [
+        ['REFUND', ref('re', 'day59'), 10000, at(59).toISOString()],
+        ['DISPUTE', ref('dp', 'lost'), 29900, at(60).toISOString()],
+      ]);
+      const stored = await h.client.billingInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      assert.deepEqual([stored.refundedSatang, stored.disputed], [15000, true]);
+      assert.equal((await h.client.salesAttribution.findUniqueOrThrow({ where: { id: credit.id } })).refundedSatang, 0);
+      // The credit is used up, so a third visit reads the charge and nothing else.
+      const before = calls.length;
+      await observe();
+      assert.deepEqual(calls.slice(before), [`/charges/${chargeId}`]);
+
+      // The report: the payment month keeps its 399.00, the month of recording carries both lines.
+      const reports = new SalesReportsService({ client: h.client } as never, { log: async () => {} } as never);
+      const paidMonth = bangkokMonthKey(paidAt), nowMonth = bangkokMonthKey(new Date());
+      const expected = new Map([[paidMonth, 39900]]);
+      expected.set(nowMonth, (expected.get(nowMonth) ?? 0) - 39900);
+      const summary = await reports.summary(h.agent, { from: paidMonth, to: nowMonth });
+      assert.deepEqual(new Map(summary.months.map((month) => [month.monthKey, month.rows[0]!.amountSatang])), expected);
+      assert.deepEqual(summary.months.flatMap((month) => month.deductions ?? []).map((line) => [line.kind, line.amountSatang]).sort(),
+        [['DISPUTE', 29900], ['REFUND', 10000]]);
     } finally { await h.teardown(); }
   });
 });
