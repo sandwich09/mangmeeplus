@@ -53,6 +53,7 @@ describe('IngestWorkflowEventUseCase', () => {
       'approval_sla_breach',
       'reimbursement_correction_requester',
       'reimbursement_decision_requester',
+      'reimbursement_finance_blocked_requester',
       'reimbursement_finance_review',
       'reimbursement_finance_review_pending',
       'reimbursement_payment_recorded',
@@ -132,7 +133,7 @@ describe('IngestWorkflowEventUseCase', () => {
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
       .map((entry) => ({ key: entry.key, cfg: entry.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {} }));
 
-    assert.equal(notifications.length, 10);
+    assert.equal(notifications.length, 11);
     for (const { key, cfg } of notifications) {
       assert.equal(typeof cfg['bodyTemplate'], 'string', key);
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
@@ -144,7 +145,7 @@ describe('IngestWorkflowEventUseCase', () => {
       // too: the reason in the fixed list's own words, and nothing a person typed (payout spec §17.3).
       if (key === 'reimbursement_payment_recorded') assert.equal(cfg['bodyTemplate'], '{{paidNotice}}', key);
       else if (key === 'reimbursement_payout_correction_requested') assert.equal(cfg['bodyTemplate'], '{{payoutCorrectionNotice}}', key);
-      else if (key !== 'reimbursement_payment_voided') assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
+      else if (!['reimbursement_payment_voided', 'reimbursement_finance_blocked_requester'].includes(key)) assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
       assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
       // Two notices are about the NEXT step, which may be the actor's own: paying a claim one has approved, and
       // (owner decision 2026-10-02) reviewing at the finance desk a claim one has approved. Their actor is not
@@ -156,7 +157,7 @@ describe('IngestWorkflowEventUseCase', () => {
         continue;
       }
       assert.equal(cfg['webOnlyRecipientPayloadKeys'], undefined, key);
-      assert.deepEqual(cfg['excludeRecipientPayloadKeys'], ['actorUserId'], key);
+      assert.deepEqual(cfg['excludeRecipientPayloadKeys'], key === 'reimbursement_finance_review' ? ['actorUserId', 'requesterUserId'] : ['actorUserId'], key);
       assert.equal(cfg['skipWhenAllRecipientsExcluded'], true, key);
     }
     // The SLA scan is a system reminder, not an actor's own event — it must stay unaffected.
@@ -214,9 +215,9 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.equal(template?.autoEnable, true);
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
     // Owner decision 2026-10-02: the rule of the arrival notice. The reviewers, and the shop owner only as the last
-    // resort. The reviewer who blocked the claim is still left out, as the actor of the event.
+    // resort. The blocker is left out; the requester gets only their own notice, even if they review finance.
     assert.deepEqual(cfg['lastResortRecipientRoles'], ['OWNER']);
-    assert.deepEqual([cfg['excludeRecipientPayloadKeys'], cfg['skipWhenAllRecipientsExcluded']], [['actorUserId'], true]);
+    assert.deepEqual([cfg['excludeRecipientPayloadKeys'], cfg['skipWhenAllRecipientsExcluded']], [['actorUserId', 'requesterUserId'], true]);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['severity'], 'action');
     assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);

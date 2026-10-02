@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { maskedPayoutAccount } from '@watchdog-bms/contracts';
+import { maskedPayoutAccount, reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
 import type {
   MemberPayoutAccountResponse,
   MemberPayoutAccountSummary,
@@ -129,40 +129,39 @@ export class MemberPayoutAccountUseCase {
     /** A correction round tells the requester of every answer given for them itself, a typed account included: no second notice from here. */
     inRound = false,
   ): Promise<DraftPayoutChange & { audit: DraftPayoutAudit }> {
-    if (input.mode !== 'SPECIFIED') return { write: { mode: input.mode === 'CASH' ? 'CASH' : 'DEFAULT' }, audit: { mode: input.mode === 'CASH' ? 'CASH' : 'DEFAULT' } };
-    const destination = this.seal(input);
     const byRequester = requesterUserId === ctx.userId;
     const source = byRequester ? 'REQUESTER' as const : 'PREPARER' as const;
-    if (input.saveAsDefault) {
-      if (byRequester) this.assertOwn(ctx);
-      else await this.assertMayEditMember(ctx, requesterUserId);
-      return {
-        write: { mode: 'DEFAULT' }, audit: { mode: 'SPECIFIED', source, savedAsDefault: true },
-        onPersisted: async (tx) => { await this.write(ctx, requesterUserId, 'BANK_TRANSFER', destination, tx); },
-      };
+    let change: DraftPayoutChange & { audit: DraftPayoutAudit };
+    if (input.mode === 'SPECIFIED') {
+      const destination = this.seal(input);
+      if (input.saveAsDefault) {
+        if (byRequester) this.assertOwn(ctx);
+        else await this.assertMayEditMember(ctx, requesterUserId);
+        change = {
+          write: { mode: 'DEFAULT' }, audit: { mode: 'SPECIFIED', source, savedAsDefault: true },
+          // The claim's notice covers this save too. Failure rolls both writes back.
+          onPersisted: async (tx) => { await this.write(ctx, requesterUserId, 'BANK_TRANSFER', destination, tx, true); },
+        };
+      } else {
+        if (!byRequester && !mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId))) {
+          throw new ConflictException('payout_account_member_not_active');
+        }
+        change = { write: { mode: 'SPECIFIED', destination, source, actorUserId: ctx.userId }, audit: { mode: 'SPECIFIED', source } };
+      }
+    } else {
+      const mode = input.mode === 'CASH' ? 'CASH' : 'DEFAULT';
+      change = { write: { mode }, audit: { mode } };
     }
-    const write = { mode: 'SPECIFIED' as const, destination, source, actorUserId: ctx.userId };
-    if (byRequester) return { write, audit: { mode: 'SPECIFIED', source } };
-    // Someone else types where the requester's money goes, on a claim filed for them. Same condition
-    // as for a default account: the requester is told, in the transaction that saves the draft, so
-    // the account cannot be on the claim without its notice — and only a member a notice can reach
-    // (an active one) may have an account typed for them at all.
-    if (!mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId))) {
-      throw new ConflictException('payout_account_member_not_active');
-    }
-    if (inRound) return { write, audit: { mode: 'SPECIFIED', source } };
-    const editorName = (await this.repo.getUserDisplayNames(ctx.companyId, [ctx.userId]))[ctx.userId] ?? UNNAMED_MEMBER;
-    return {
-      write, audit: { mode: 'SPECIFIED', source },
-      onPersisted: async (tx, requestId) => {
-        const when = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' });
-        // The last 4 digits only.
-        await this.tellClaimRequester(tx, ctx.companyId, requestId, requesterUserId, {
-          title: `${editorName} ระบุบัญชีรับเงินในใบเบิกของคุณ`,
-          body: `${maskedPayoutAccount(destination)} ระบุเมื่อ ${when} ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที`,
-        });
-      },
+    // Rounds announce every answer themselves. Drafts announce only a changed destination, and
+    // cash/default choices for a former member remain valid even though nobody can receive a notice.
+    // Both typed-account paths already checked that the requester is active.
+    if (byRequester || inRound || (input.mode !== 'SPECIFIED' && !mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId)))) return change;
+    const editorName = (await this.repo.getUserDisplayNames(ctx.companyId, [ctx.userId]))[ctx.userId];
+    change.onChanged = async (tx, requestId, given) => {
+      await this.tellClaimRequester(tx, ctx.companyId, requestId, requesterUserId,
+        reimbursementPayoutAnsweredForRequesterNotice(undefined, editorName, given, { draft: true, alsoSavedAsDefault: change.audit.savedAsDefault }));
     };
+    return change;
   }
 
   /**
@@ -242,6 +241,7 @@ export class MemberPayoutAccountUseCase {
     payoutMethod: 'BANK_TRANSFER' | 'CASH',
     destination: SealedPayoutDestination | undefined,
     tx?: unknown,
+    toldWithClaim = false,
   ): Promise<MemberPayoutAccountRecord> {
     const byOwner = userId === ctx.userId;
     const editorName = byOwner ? '' : (await this.repo.getUserDisplayNames(ctx.companyId, [ctx.userId]))[ctx.userId] ?? UNNAMED_MEMBER;
@@ -262,7 +262,7 @@ export class MemberPayoutAccountUseCase {
         //    fails is recorded (notification_delivery.critical_failed) instead of vanishing;
         //  - the period is the moment of this change, so every change is its own notice. The version
         //    would repeat after the member deletes the account and someone sets it again.
-        if (byOwner) return;
+        if (byOwner || toldWithClaim) return;
         const when = change.after.updatedAt.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' });
         await this.notifications.executeInTransaction({
           companyId: ctx.companyId, triggerKey: PAYOUT_ACCOUNT_SET_TRIGGER_KEY, sourceModule: 'reimbursements',
