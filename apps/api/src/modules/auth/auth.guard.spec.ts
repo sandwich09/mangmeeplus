@@ -812,20 +812,23 @@ describe('platform routes and the companyId path parameter (RB-40)', () => {
     );
   });
 
-  it('no route under system/ declares a parameter named companyId', () => {
+  it('no route under system/ or sales/ declares a parameter named companyId', () => {
     const files = (readdirSync(MODULES, { recursive: true, encoding: 'utf8' }) as string[]).filter((file) => file.endsWith('.controller.ts'));
     let systemControllers = 0;
+    let salesControllers = 0;
     const offenders = files.flatMap((file) => readFileSync(join(MODULES, file), 'utf8')
       // One block per controller class: its decorator, then the route decorators it owns.
       .split(/(?=@Controller\()/)
       .flatMap((block) => {
         const prefix = /^@Controller\(\s*['"`]([^'"`]*)/.exec(block)?.[1];
-        if (prefix === undefined || !/^system(\/|$)/.test(prefix)) return [];
+        if (prefix === undefined || !/^(system|sales)(\/|$)/.test(prefix)) return [];
         systemControllers += 1;
+        if (/^sales(\/|$)/.test(prefix)) salesControllers += 1;
         return [prefix, ...[...block.matchAll(/@(?:Get|Post|Put|Patch|Delete|All)\(\s*['"`]([^'"`]*)/g)].map((match) => `${prefix}/${match[1]}`)]
           .filter((path) => /:companyId\b/.test(path))
           .map((path) => `${file}: ${path}`);
       }));
+    assert.ok(salesControllers >= 3, `expected sales controllers in the scan, found ${salesControllers}`);
     assert.ok(systemControllers >= 15, `expected to scan the platform controllers, found ${systemControllers}`);
     assert.deepEqual(offenders, [], 'AuthGuard resolves :companyId as the caller membership; name the target :partnerCompanyId');
   });
@@ -877,4 +880,84 @@ describe('SalesAgentActiveGuard (RB-36)', () => {
       [],
     );
   });
+});
+
+// E1: enumerate the module's actual route handlers so a seventh endpoint cannot evade this test.
+describe('executive account boundary (E1)', () => {
+  it('requires permission and platform context on every route, independent of caller role names', async () => {
+    const { ExecutiveBusinessModule } = await import('../executive-business/executive-business.module');
+    const controllers = Reflect.getMetadata('controllers', ExecutiveBusinessModule) as any[];
+    const { METHOD_METADATA, HEADERS_METADATA } = await import('@nestjs/common/constants');
+    let checked = 0;
+    const context = { userId: 'caller', companyId: PLATFORM_TENANT_ID, roles: [] as string[], permissions: ['system.executive_user.manage'], requestId: 'e1-guard' };
+    for (const Controller of controllers) {
+      const calls: string[] = [];
+      const service = new Proxy({}, { get: (_target, method: string) => () => { calls.push(method); return Promise.resolve({}); } });
+      const controller = new Controller(service);
+      for (const method of Object.getOwnPropertyNames(Controller.prototype).filter((name) => Reflect.hasMetadata(METHOD_METADATA, Controller.prototype[name]))) {
+        checked++;
+        const handler = Controller.prototype[method];
+        assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['system.executive_user.manage']);
+        assert.ok(Reflect.getMetadata(HEADERS_METADATA, handler).some((h: any) => h.name === 'Cache-Control' && h.value === 'no-store'));
+        const request = { context: { ...context, companyId: 'customer-company' } };
+        const http = { getHandler: () => handler, getClass: () => Controller, switchToHttp: () => ({ getRequest: () => request }) } as any;
+        assert.equal(new DenyByDefaultGuard(new Reflector()).canActivate(http), true);
+        const args = (req: any) => method === 'list' ? [{}, req] : method === 'create' ? [{}, req] : method === 'detail' ? ['target', req] : ['target', {}, req];
+        await assert.rejects(async () => controller[method](...args(request)), (e: any) => e.getStatus() === 403, method);
+        assert.equal(calls.length, 0, method);
+        request.context = { ...context };
+        await controller[method](...args(request));
+        assert.equal(calls.length, 1, method); calls.length = 0;
+        request.context = { ...context, roles: ['MANGMEE_EXECUTIVE', 'SYSTEM_ADMIN'], permissions: [] };
+        assert.throws(() => new DenyByDefaultGuard(new Reflector()).canActivate(http), ForbiddenException, method);
+      }
+    }
+    assert.equal(checked, 6);
+    const app = readFileSync(join(__dirname, '../../app.module.ts'), 'utf8');
+    assert.match(app, /imports:\s*\[[\s\S]*?ExecutiveBusinessModule/);
+  });
+
+  it('accepts only the documented command/query keys and rejects invalid values at the HTTP boundary', async () => {
+    const { ValidationPipe } = await import('@nestjs/common');
+    const { GLOBAL_VALIDATION_PIPE_OPTIONS } = await import('../../common/pipes/validation-pipe.options');
+    const dto = await import('../executive-business/presentation/http/executive-users.controller');
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    for (const [metatype, body] of [
+      [dto.ExecutiveUserCreateDto, { username: 'reader', displayName: 'ผู้บริหาร', canExport: false, canSeeContacts: false }],
+      [dto.ExecutiveUserStatusDto, { status: 'SUSPENDED', reason: 'เหตุผล' }],
+      [dto.ExecutiveUserCredentialDto, { reason: 'เหตุผล' }],
+      [dto.ExecutiveUserAccessDto, { canExport: false, canSeeContacts: true, reason: 'เหตุผล' }],
+      [dto.ExecutiveUserListQueryDto, { q: 'reader', status: 'ACTIVE', page: 1, pageSize: 20 }],
+    ] as const) {
+      const metadata = { type: 'body' as const, metatype };
+      assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(await pipe.transform(body, metadata)))).sort(), Object.keys(body).sort());
+      await assert.rejects(pipe.transform({ ...body, roles: ['SYSTEM_ADMIN'] }, metadata));
+    }
+    for (const body of [{ page: 0 }, { pageSize: 101 }, { status: 'DISABLED' }, { page: 'x' }, { page: 1.5 }]) {
+      await assert.rejects(pipe.transform(body, { type: 'query', metatype: dto.ExecutiveUserListQueryDto }));
+    }
+    const parsed = await pipe.transform({ page: '2', pageSize: '10' }, { type: 'query', metatype: dto.ExecutiveUserListQueryDto });
+    assert.equal(parsed.page, 2); assert.equal(parsed.pageSize, 10);
+  });
+});
+
+
+it('executive account errors carry safe codes and the request id without leaking guard/validation messages', async () => {
+  const { ExecutiveUsersController } = await import('../executive-business/presentation/http/executive-users.controller');
+  const { EXCEPTION_FILTERS_METADATA } = await import('@nestjs/common/constants');
+  const { BadRequestException } = await import('@nestjs/common');
+  const filter = Reflect.getMetadata(EXCEPTION_FILTERS_METADATA, ExecutiveUsersController)[0];
+  for (const [method, error, expectedCode] of [
+    ['POST', new ForbiddenException('sales_console_platform_tenant_required'), 'EXECUTIVE_ACCESS_DENIED'],
+    ['POST', new BadRequestException(['canExport must be a boolean']), 'INVALID_INPUT'],
+    ['GET', new BadRequestException(['page must be a number']), 'EXECUTIVE_QUERY_INVALID'],
+  ] as const) {
+    let result: any; let status: number | undefined; let cache: string | undefined;
+    const response = { setHeader: (name: string, value: string) => { assert.equal(name, 'Cache-Control'); cache = value; }, status: (value: number) => { status = value; return response; }, json: (value: any) => { result = value; } };
+    filter.catch(error, { switchToHttp: () => ({ getRequest: () => ({ method, headers: { 'x-request-id': 'request-e1' } }), getResponse: () => response }) });
+    assert.equal(status, error.getStatus()); assert.equal(cache, 'no-store');
+    assert.deepEqual(Object.keys(result).sort(), ['code', 'message', 'requestId']);
+    assert.equal(result.code, expectedCode); assert.equal(result.requestId, 'request-e1');
+    assert.doesNotMatch(result.message, /[A-Za-z]/);
+  }
 });

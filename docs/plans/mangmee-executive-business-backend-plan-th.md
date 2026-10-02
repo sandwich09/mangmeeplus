@@ -5,7 +5,7 @@
 มติล่าสุด 2026-10-01: พักและซ่อนฟีเจอร์ลบข้อมูล; G ทั้ง 35 ข้อยังไม่ปิดใน application — 22 OPEN และ 13 DEFERRED ตาม audit. ผล 188 scenarios/58 tests ด้านล่างเป็น baseline ก่อนพัก ไม่ใช่ acceptance ของ scope ปัจจุบันทั้งหมด
 
 วันที่ปรับล่าสุด: 2026-10-02
-สถานะ: **จบรอบออกแบบ จำลอง และแก้ตามผลตรวจทานอิสระ 2026-10-01 — ยังไม่เขียน application code; ข้อตัดสินใจ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) การตัดสินใจปิดครบ; เจ้าของสั่งเริ่ม implement แล้ว 2 ต.ค. 2569 (“ทำตามลำดับเลย”) — งานทำเป็นขั้นบนกิ่ง `claude/executive-program-20261002` ยังไม่ merge และยังไม่ขึ้นระบบ**
+สถานะ: **จบรอบออกแบบ จำลอง และแก้ตามผลตรวจทานอิสระ 2026-10-01 — E1 ฝั่ง API มี diff แล้วตาม BE §17.4; ข้อตัดสินใจ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) การตัดสินใจปิดครบ; เจ้าของสั่งเริ่ม implement แล้ว 2 ต.ค. 2569 (“ทำตามลำดับเลย”) — งานทำเป็นขั้นบนกิ่ง `claude/executive-program-20261002` ยังไม่ merge และยังไม่ขึ้นระบบ**
 Spec: [Backend](../specs/mangmee-executive-business-backend-spec-th.md)
 Audit: [Bug gap impact](../research/mangmee-executive-business-be-gap-impact-2026-10-01-th.md)
 ผลตรวจทานอิสระ: [หลังบ้าน RB-01 ถึง RB-42](../research/mangmee-executive-spec-review-backend-2026-10-01-th.md) · [หน้าจอ RU-01 ถึง RU-30](../research/mangmee-executive-spec-review-ui-2026-10-01-th.md)
@@ -61,6 +61,11 @@ Memory: [Task state](../agent-memory/executive-business-demo.md)
 Current scope คือ S0a, S1, S5, S0b, S2, S3, S4 และ S8 เฉพาะรายงาน/บัญชี; S6/S7 พักและไม่เป็น acceptance gate รอบนี้
 EX-05/06 และ case summaries/actions ไม่ถูกสร้างเลย (ไม่มี route เมนู หรือ permission) รวม saved route เดิม; API06 ไม่มี case data
 เจ้าของสั่งเริ่มเขียนโค้ดของ S1, S5, S2, S3, S4 และ S8 เมื่อ 2 ต.ค. 2569; S6/S7 ยังพัก
+
+**สถานะ E1 (2026-10-02):** S1 ฝั่ง API และ S5 มี diff แล้วตาม BE §17.4; ไม่แก้เว็บ ไม่เปลี่ยน schema ไม่แตะไฟล์ maintenance ที่ตรึงไว้ การตรวจใน lane ใช้ spec เดิมที่ลงทะเบียนอยู่ ไม่มี `package.json` เปลี่ยน รายละเอียด red/green อยู่ใน memory หัวข้อ Implementation, stage E1
+ผู้ควบคุมตัดสิน lifecycle แล้ว 2026-10-02 ตามนิยาม UI §9.2 (ไม่ใช่ข้อตัดสินใจใหม่ของเจ้าของ): รับเฉพาะ membership ACTIVE/SUSPENDED/DISABLED; DRAFT/INVITED ไม่อยู่ในรายการและรายละเอียด/คำสั่งคืน ACCOUNT_NOT_FOUND; ตรวจ user ที่ไม่ ACTIVE, membership DISABLED หรือ credential หาย/DISABLED เป็น REVOKED ก่อน SUSPENDED; credential TEMPORARY หรือ ACTIVE ที่หมดอายุเป็น PENDING_ACTIVATION พร้อม temporaryPasswordExpiresAt; ที่เหลือเป็น ACTIVE เมื่อ credential ยังใช้ได้
+API10/API14/API15 ปฏิเสธ REVOKED ด้วย ACCOUNT_REVOKED โดยไม่เขียนข้อมูล/session/audit; API10 เปลี่ยนได้เฉพาะ ACTIVE ↔ SUSPENDED และปลายทางเดิมเป็น no-op; API14 ยังออกใหม่ขณะ SUSPENDED ได้ และ API15 ใช้ได้กับสถานะที่ไม่ REVOKED ตาม BE §17.3
+ข้อเปิดที่เหลือของ E1: ยืนยัน PostgreSQL จริงโดยผู้ควบคุม ส่วนหน้าเว็บของ S1 และข้อความไทย ACCOUNT_REVOKED คงเป็นงานขั้นถัดไป
 
 ### 2.1 รายการของ S2 — migration งานข้อมูลครั้งเดียว และงานย้อนหลัง
 

@@ -1,5 +1,7 @@
 # ผู้บริหารมั่งมี — สเปกหลังบ้านและสัญญาการเชื่อมหน้าจอ
 
+**Implementation E1 — 2026-10-02:** เจ้าของสั่งเริ่มแล้ว; รอบนี้ทำเฉพาะ S1 ฝั่ง API และ S5 (API07–10/API14/API15) ตาม §17.4 ด้านล่าง ยังไม่ใช่การเปิดใช้จริง ไม่มีงานเว็บหรือรายงาน S2–S4 ใน diff นี้ ส่วนลบข้อมูลยังพักและไม่สร้างในโค้ด
+
 คำที่แสดงบนหน้าจอล่าสุด: [ใช้คำที่คนทั่วไปเข้าใจ](mangmee-executive-plain-language-spec-th.md) — เมนู “รายรับ”, แท็บ “ลูกค้าที่สร้างรายรับสูง”; identifiers/สูตรเดิมคงไว้
 
 ส่งออกล่าสุด: [Export Excel](mangmee-executive-excel-export-spec-th.md) — Excel Dashboard เขียว–ทองตามไฟล์v4, native charts/สูตร/ข้อมูลต้นทางสองชีต; ขอบเขตตามหน้าที่ดูและทุกหน้าของผลกรอง; ยังเป็นสเปก/เดโม
@@ -18,7 +20,7 @@ API06 รุ่นแรกคืนเฉพาะประวัติบร�
 การซ่อนในงานนี้ไม่เปลี่ยนโมดูล operator `/system/data-rights` ที่มีอยู่ และไม่เปิดใช้ API ใหม่
 คำถามย่อยของ Q01–Q05/Q09 สำหรับรายงาน/บัญชี (Q10–Q34 ใน §21.2) ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) ครบทุกข้อ; ไม่มีการอนุมัติให้เริ่ม application implementation จากมตินี้
 
-สถานะ: **DETAILED DESIGN DRAFT v2 — แก้ตามผลตรวจทานอิสระ 2026-10-01 แล้ว; ข้อตัดสินใจ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) การตัดสินใจปิดครบ; เจ้าของยังไม่ได้สั่งเริ่ม implement; เงื่อนไขที่ปิดบนเอกสารไม่ได้ยังคงอยู่ตามเดิม: เพดานและความเร็วของการส่งออก ตัวตรวจของต้นแบบ และข้อมูลจริงใน production**
+สถานะ: **DETAILED DESIGN DRAFT v2 — แก้ตามผลตรวจทานอิสระ 2026-10-01 แล้ว; ข้อตัดสินใจ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) การตัดสินใจปิดครบ; เจ้าของสั่งเริ่ม implement แล้ว 2 ต.ค. 2569; E1 ฝั่ง API มี diff ตาม §17.4 และยังไม่ขึ้นระบบ; เงื่อนไขที่ปิดบนเอกสารไม่ได้ยังคงอยู่ตามเดิม: เพดานและความเร็วของการส่งออก ตัวตรวจของต้นแบบ และข้อมูลจริงใน production**
 วันที่ปรับล่าสุด: 2026-10-02
 Owner: Product owner / Codex
 หน้าจอ: [UI spec](mangmee-executive-business-ui-spec-th.md)
@@ -27,8 +29,8 @@ Memory: [Executive business](../agent-memory/executive-business-demo.md)
 
 เอกสารนี้เป็นสัญญาเป้าหมายสำหรับ BA, SA, BE, FE และ QA โดยรักษามติ Owner B1–B7 และเก็บ B8 เป็นประวัติที่พักไว้ตามมติล่าสุด
 ส่วน 1–8 บันทึกมติและประวัติ; ส่วน 9 เป็นสัญญากับหน้าจอ; ส่วน 10 เป็นต้นไปลงรายละเอียด API, ข้อมูล,
-สูตร, สิทธิ์ และข้อกำหนด integration **ชื่อ endpoint/model/permission ใหม่เป็นข้อเสนอ ยังไม่มีในระบบ**
-รอบนี้แก้เฉพาะเอกสาร ไม่เขียน application code, migration หรือทดสอบ mutation กับระบบจริง
+สูตร, สิทธิ์ และข้อกำหนด integration **บัญชีและสิทธิ์ E1 ลงมือแล้วตาม §17.4; endpoint/model ของรายงานที่เหลือยังเป็นสัญญาเป้าหมาย**
+E1 ไม่มี migration หรือ mutation กับระบบจริง; ไม่ใช่การตรวจรับส่วนรายงานทั้งหมด
 
 - [Bug gap และผลกระทบข้ามโมดูล](../research/mangmee-executive-business-be-gap-impact-2026-10-01-th.md)
 - [จำลอง E2E และเกณฑ์ตรวจรายเคส](../qa/mangmee-executive-business-e2e-simulation-2026-10-01-th.md)
@@ -112,7 +114,7 @@ Memory: [Executive business](../agent-memory/executive-business-demo.md)
 | ไม่มี | API13 ส่งออก, API14 ออกรหัสผ่านใหม่, API15 เปิด/ปิดสิทธิ์รายคน | เพิ่มในตาราง §16.1 |
 | `lastLoginAt` | `lastWebEntryAt` และ `lastLineActivityAt` | §13.1 |
 | `contactUserId` ในข้อมูลที่ส่งออก | ไม่ส่งทั้งหน้าจอและไฟล์ | §16.2, §16.4 |
-| 409 `SOURCE_CHANGED`, `VERSION_CONFLICT`, `COMMAND_CONFLICT`, `ACCOUNT_ALREADY_ENROLLED` | 409 `ACCOUNT_ALREADY_EXISTS` อย่างเดียว | ไม่มี `commandId`/`expectedVersion` แล้ว |
+| 409 `SOURCE_CHANGED`, `VERSION_CONFLICT`, `COMMAND_CONFLICT`, `ACCOUNT_ALREADY_ENROLLED` | 409 `ACCOUNT_ALREADY_EXISTS`; เพิ่ม `ACCOUNT_REVOKED` สำหรับบัญชีที่ถูกปิดจากทางอื่น (§17.3) | ไม่มี `commandId`/`expectedVersion` แล้ว |
 | ไม่มี | 422 `EXECUTIVE_EXPORT_EMPTY`, 422 `ACCOUNT_PROTECTED` | §16.3 |
 | 422 ของงานลบข้อมูล (`POLICY_NOT_READY`, `HOLD_NOT_ELAPSED` และอื่น ๆ) | ไม่อยู่ในชุดรหัสของรุ่นนี้ | พักไว้ตาม §18 |
 
@@ -1009,7 +1011,7 @@ taxId ที่อยู่เต็ม และชื่อเจ้าขอ�
 
 ### 16.1 Endpoint inventory
 
-ทุก endpoint ใหม่ด้านล่างเป็น **PROPOSED**; prefix API จริงคือ `/v1`
+API07–API10/API14/API15 มี implementation ใน E1 (ดูสถานะตรวจรับและข้อเปิด §17.4); endpoint ใหม่ที่เหลือยังเป็น **PROPOSED**; prefix API จริงคือ `/v1`
 ใช้ validation/authenticated fetch/error presentation ที่มีอยู่ และ `Cache-Control: no-store` บน authenticated responses
 ตารางนี้เป็นรายการ endpoint ชุดเดียวของงานนี้ (API01–API15) เอกสารฉบับอื่นอ้างรหัสจากตารางนี้ ไม่เขียนรายการของตนเอง (RB-18)
 
@@ -1186,7 +1188,8 @@ paidUsage.basis ของตัวอย่างเป็นข้อเสน�
 | 403 | EXECUTIVE_ACCESS_DENIED / CAPABILITY_DENIED | ไม่มีสิทธิ์ หรือบริบทไม่ใช่บริษัทแพลตฟอร์ม; ล้างข้อมูลที่แสดง; ไม่ใช้ cached success |
 | 404 | COMPANY_NOT_FOUND / ACCOUNT_NOT_FOUND | รวมบริษัทที่ไม่อยู่ในประชากรของรายงาน; ข้อความไม่เปิดเผยว่ามีข้อมูลอยู่ |
 | 409 | EXECUTIVE_SNAPSHOT_EXPIRED | เฉพาะ API13 เมื่อ `buildId` ไม่ใช่ชุดปัจจุบัน; ให้ผู้ใช้ดูรายงานที่โหลดใหม่ก่อนสร้างไฟล์ |
-| 409 | ACCOUNT_ALREADY_EXISTS | API08 เมื่อ `username` ซ้ำ; แสดงที่ช่องชื่อผู้ใช้ |
+| 409 | ACCOUNT_ALREADY_EXISTS | API08 เมื่อ `username` หรือ `email` ซ้ำ; แสดงที่ช่องนั้น |
+| 409 | ACCOUNT_REVOKED | API10, API14, API15 เมื่อสถานะบัญชีเป็น REVOKED; ไม่เขียนข้อมูล ไม่แตะ session และไม่เพิ่ม audit; หน้านี้เปิดคืนไม่ได้ |
 | 422 | ACCOUNT_PROTECTED | API10, API14, API15 กับผู้ใช้ที่ถือ role ผู้ดูแลระบบ (รวมการระงับตัวเอง); แสดงเหตุผลแทนปุ่ม |
 | 422 | EXECUTIVE_EXPORT_LIMIT_EXCEEDED / EXECUTIVE_EXPORT_EMPTY | API13 เกินเพดาน หรือไม่มีบริษัทในขอบเขต; ไม่สร้างไฟล์ที่ถูกตัดหรือไฟล์เปล่า |
 | 429 | RATE_LIMITED | Retry-After; หยุดปุ่มชั่วคราวตามเวลา; รวมกรณีผู้ใช้คนเดียวมีงานส่งออกค้างอยู่ |
@@ -1277,9 +1280,9 @@ response error `{code,message,requestId,fieldErrors?,retryable?,retryAfterSecond
 | คำขอเกี่ยวกับข้อมูล (DEFERRED ในงานนี้) | ตามสิทธิ์เดิมของโมดูล `/system/data-rights` | ซ่อน ไม่มี route | ซ่อน ไม่มี route | ซ่อน ไม่มี route |
 | billing mutate/refund/credits | ตาม billing permissions/scopes เดิมเท่านั้น | ไม่มี | ไม่มี | ไม่มี |
 
-ชื่อ permission ที่เสนอ (ยังไม่อยู่ใน registry): `system.executive.read`, `system.executive.export`,
+ชื่อ permission ใน registry ตั้งแต่ E1: `system.executive.read`, `system.executive.export`,
 `system.executive.contact.read`, `system.executive_user.manage`
-ชื่อ role ระบบที่เสนอ (`isSystem = true`, `scopeKey = 'system'`, `companyId = null`):
+ชื่อ role ระบบใน E1 (`isSystem = true`, `scopeKey = 'system'`, `companyId = null`):
 
 | Role | Permission | ใครได้ |
 |---|---|---|
@@ -1343,21 +1346,33 @@ role ระบบทั้งสามตัวต้องมีแถวใน
 
 ข้อมูลที่รับ: `username` (ไม่ซ้ำทั้งระบบ), `displayName` 1–120 ตัวอักษร, `phoneNumber?`, `email?` (ไม่เกิน 320 ตัวอักษร; ตรวจรูปแบบด้วย helper เดิมของ auth)
 อีเมลเป็นช่องไม่บังคับ และถ้าใส่ต้องไม่ซ้ำกับผู้ใช้อื่นตามกติกา unique เดิมของ `User.email`
+E1 ใช้ `optionalLineContactEmail` ซึ่งเรียก `requireLineContactEmail` ตัวเดียวกับ auth signup/การเปลี่ยนอีเมล ใน `external-signup/domain/line-signup.logic.ts`: trim, lowercase, `isEmail` และเพดานจริง 254 ตัวอักษร (อยู่ภายในขอบเขต 320 ข้างต้น) ไม่สร้างตัวตรวจรูปแบบอีกชุด
 
-**สถานะที่หลังบ้านคืน** (คำนวณจากข้อมูลจริง ไม่มีคอลัมน์สถานะใหม่):
+**ประชากรและสถานะ — ผู้ควบคุมตัดสิน 2026-10-02 ตามนิยาม UI §9.2 (ไม่ใช่ข้อตัดสินใจใหม่ของเจ้าของ):**
+API07/API09 และคำสั่งที่มีบัญชีเป้าหมายรับเฉพาะ membership ในบริษัทแพลตฟอร์มที่ถือ role หลัก `MANGMEE_EXECUTIVE`
+และสถานะ membership เป็น `ACTIVE`, `SUSPENDED` หรือ `DISABLED` ของผู้ใช้ที่ไม่ถือ `SYSTEM_ADMIN`
+สมาชิกภาพ `DRAFT`/`INVITED` ยังไม่เป็นบัญชีผู้บริหาร: ไม่อยู่ในรายการ และรายละเอียด/คำสั่งคืน `ACCOUNT_NOT_FOUND`
+ข้อยกเว้นคุ้มครองผู้ดูแลระบบในคำสั่งยังคืน `ACCOUNT_PROTECTED` ตามเดิม
 
-| สถานะ | เงื่อนไข | ป้าย |
-|---|---|---|
-| PENDING_ACTIVATION | membership ACTIVE และ credential ยังเป็น `TEMPORARY` | รอเปิดใช้งาน |
-| ACTIVE | membership ACTIVE, user ACTIVE และ credential ใช้งานได้ | เปิดใช้งาน |
-| SUSPENDED | membership ของบริษัทแพลตฟอร์มเป็น `SUSPENDED` | ระงับ |
-| REVOKED | user ไม่อยู่ในสถานะ ACTIVE หรือ membership เป็น `DISABLED` (ถูกปิดจากทางอื่น) | ถอนสิทธิ์แล้ว |
+**สถานะที่หลังบ้านคืน** (คำนวณจากข้อมูลจริงตามลำดับด้านล่าง ไม่มีคอลัมน์ใหม่ และไม่มีกรณีโยนข้อผิดพลาดจากการแปลงสถานะ):
+
+| ลำดับ | สถานะ | เงื่อนไข | ป้าย |
+|---|---|---|---|
+| 1 | REVOKED | user ไม่ ACTIVE หรือ membership DISABLED หรือ credential หาย/เป็น DISABLED | ถอนสิทธิ์แล้ว |
+| 2 | SUSPENDED | membership SUSPENDED และไม่เข้าเงื่อนไขข้อ 1 | ระงับ |
+| 3 | PENDING_ACTIVATION | membership ACTIVE และ credential TEMPORARY (หมดอายุหรือยังไม่หมดก็ได้) หรือ credential ACTIVE ที่ `expiresAt <= เวลาปัจจุบัน` | รอเปิดใช้งาน |
+| 4 | ACTIVE | membership ACTIVE และ credential ACTIVE ที่ไม่หมดอายุ (`expiresAt` เป็น null หรืออยู่ในอนาคต) | เปิดใช้งาน |
+
+`temporaryPasswordExpiresAt: string | null` คืน `credential.expiresAt` เป็น ISO string เฉพาะเมื่อสถานะเป็น `PENDING_ACTIVATION`
+(รวม credential ACTIVE ที่หมดอายุและต้องออกใหม่); ถ้าไม่มีวันหมดอายุหรือเป็นสถานะอื่นคืน null เพื่อให้เว็บบอกได้ว่ารหัสชั่วคราวหมดอายุแล้ว
+หนึ่งแถวที่ใช้เข้าไม่ได้ไม่ทำให้รายชื่อทั้งหน้าล้ม และไม่ถูกแสดงเป็น ACTIVE; `SOURCE_UNAVAILABLE` ยังใช้เมื่อแถว role ระบบไม่ครบ
 
 **การระงับต้องตัดสิทธิ์จริง (RB-25):** ระงับ = ตั้ง `CompanyMembership.status` ของบริษัทแพลตฟอร์มเป็น `SUSPENDED`
-และเรียก `revokeActiveSessions` ใน transaction เดียวพร้อม audit; เปิดคืน = ตั้งกลับเป็น `ACTIVE`
+และเรียก `revokeActiveSessions` ใน transaction เดียวพร้อม audit; API10 เปลี่ยนได้เฉพาะ ACTIVE → SUSPENDED และ SUSPENDED → ACTIVE
+บัญชีที่ไม่ REVOKED และ membership ตรงกับปลายทางอยู่แล้วคืน view โดยไม่เขียน ไม่เพิกถอน session และไม่เพิ่ม audit
 ทั้ง login และ permission resolver รับเฉพาะ membership ที่ `status = 'ACTIVE'` อยู่แล้ว บัญชีที่มี membership เดียวจึงเข้าไม่ได้ทั้งการ login ใหม่และคำขอถัดไป
 โดยไม่ต้องเพิ่มการตรวจในแต่ละ endpoint และ role ยังอยู่ บัญชีจึงยังแสดงในรายการเป็น “ระงับ”
-ต้องมี test ว่าหลังระงับแล้ว login ใหม่ด้วยรหัสผ่านเดิม ทุก endpoint ผู้บริหารได้ 403
+ต้องมี test ว่าหลังระงับแล้ว login ใหม่ด้วยรหัสผ่านเดิมถูกปฏิเสธ 403 และ token เดิมถูกปฏิเสธ 401 ทุก endpoint ผู้บริหารเพราะ session ถูกเพิกถอน ตาม auth เดิม
 บัญชีผู้บริหารไม่ใช้แบบของบัญชีเซลล์: การแก้ RB-36 ที่ merge แล้ว (D04) เพิ่มตัวกั้น `SalesAgentActiveGuard` ซึ่งปฏิเสธทุกคำสั่งของคอนโซลทีมขายด้วย 403 `SALES_AGENT_SUSPENDED`
 แต่เซลล์ที่ถูกระงับยัง login ได้ เพราะ membership และ role ถูกคงไว้ให้หัวหน้าทีมอ่านดีลของเซลล์คนนั้นต่อ บัญชีผู้บริหารไม่มีเหตุผลนั้น จึงปิด membership ซึ่งตัดการ login ด้วย
 
@@ -1366,13 +1381,29 @@ role ระบบทั้งสามตัวต้องมีแถวใน
 - API10 ต้องมี `reason`; คำสั่งกับผู้ใช้ที่ถือ role ผู้ดูแลระบบถูกปฏิเสธด้วย 422 `ACCOUNT_PROTECTED` เสมอ ซึ่งครอบคลุมการระงับตัวเองด้วย
   เพราะผู้จัดการบัญชีมีคนเดียวคือผู้ดูแลระบบ (บัญชีผู้ดูแลระบบไม่ใช่บัญชีผู้บริหารและไม่อยู่ในรายการของ API07)
   ไม่มีกติกา “ผู้จัดการคนสุดท้าย” และไม่มีการ lock รายชื่อผู้จัดการ เพราะผู้จัดการคือผู้ดูแลระบบคนเดียว
-- API14 ออกรหัสผ่านชั่วคราวใหม่และยกเลิก session เดิมทั้งหมด ใช้เมื่อผู้บริหารลืมรหัสหรือรหัสชั่วคราวหมดอายุ
-- API15 เปิด/ปิดสิทธิ์ส่งออกและสิทธิ์ดูข้อมูลติดต่อ พร้อมเหตุผล; การปิดสิทธิ์มีผลกับคำขอถัดไปทันที ไฟล์ที่ดาวน์โหลดไปแล้วเพิกถอนไม่ได้
+- API10/API14/API15 ปฏิเสธบัญชี REVOKED ด้วย 409 `ACCOUNT_REVOKED` และข้อความคงที่ “บัญชีนี้ถูกปิดจากทางอื่นของระบบ หน้านี้เปิดคืนไม่ได้” ก่อนการเขียนทุกชนิด: ไม่คืนรหัสผ่าน ไม่แตะ session และไม่เพิ่ม audit แม้ขอปลายทางเดิม
+- API14 ออกรหัสผ่านชั่วคราวใหม่และยกเลิก session เดิมทั้งหมด ใช้เมื่อผู้บริหารลืมรหัสหรือรหัสชั่วคราวหมดอายุ; อนุญาตขณะ SUSPENDED เพื่อเปลี่ยนรหัสที่รั่วไหลก่อนเปิดคืน โดยไม่เปลี่ยน membership เป็น ACTIVE
+- API15 อนุญาตในสถานะ PENDING_ACTIVATION, ACTIVE และ SUSPENDED; เปิด/ปิดสิทธิ์ส่งออกและสิทธิ์ดูข้อมูลติดต่อ พร้อมเหตุผล; การปิดสิทธิ์มีผลกับคำขอถัดไปทันที ไฟล์ที่ดาวน์โหลดไปแล้วเพิกถอนไม่ได้
 - existing disabled user ไม่ reactivate ด้วยการเพิ่ม executive access (API08 สร้าง user ใหม่เสมอ จึงไม่มีทางนี้)
 - `lastWebEntryAt` ของบัญชีผู้บริหารคือเวลา login ล่าสุดของบัญชี ไม่ใช่เวลาอ่านรายงานล่าสุด
 - audit ทุกคำสั่ง: actor, target, from, to, reason, requestId; ไม่บันทึก password/token (§20.3)
 - ปุ่มยกเลิกฟอร์มไม่สร้างบัญชี; UI success หลัง result สำเร็จ ไม่ optimistic grant
 - รุ่นแรกไม่มีคำสั่งแก้ชื่อ อีเมล หรือชื่อผู้ใช้ และไม่มีคำสั่งถอนสิทธิ์ถาวร (ใช้การระงับ)
+
+### 17.4 สัญญาที่ลงมือทำใน E1 — 2026-10-02
+
+- `packages/contracts/src/executive-business.ts` เป็นสัญญาบัญชี; `ExecutiveBusinessModule` ต่อกับ API เดิม ทุก handler ตรวจ permission และ `assertPlatformTenant` ไม่มีการตรวจ role ของผู้เรียกเพื่อให้สิทธิ์
+- API07 คืน `{items, pagination}`; `pagination` มีเฉพาะ `page`, `pageSize`, `total`, `totalPages` ค่าเริ่มต้น 1/20 และขนาดหน้าไม่เกิน 100; ค้นชื่อผู้ใช้ ชื่อที่แสดง อีเมล เบอร์โทรแบบไม่แยกตัวพิมพ์ กรองสถานะก่อนแบ่งหน้า เรียงวันสร้างสมาชิกภาพแล้วรหัสสมาชิกภาพเพื่อให้ลำดับคงที่
+- API09/API10/API15 และแถวใน API07 ใช้ชุด key เดียว: `userId`, `username`, `displayName`, `email`, `phoneNumber`, `status`, `canRead`, `canExport`, `canSeeContacts`, `lastWebEntryAt`, `temporaryPasswordExpiresAt` สิทธิ์สามค่าคือสิทธิ์ที่ role ACTIVE มอบให้ ไม่ใช่การรับรองว่า session หรือสมาชิกภาพยังใช้ได้; การเข้าถึงตรวจใหม่ทุกคำขอ
+- API08 คืน `{user, credential}` โดย `user` ใช้ชุด key ข้างต้น; `credential` และผล API14 มีเฉพาะ `userId`, `username`, `temporaryPassword`, `expiresAt` เก็บ hash โดยไม่เก็บสำเนารหัสที่ถอดกลับได้ API07/API09 ไม่มีรหัสผ่าน และไม่มีการส่งข้อความหรืออีเมล
+- ทุก response ของ handler ใช้ `Cache-Control: no-store`; ข้อผิดพลาด validation แปลงเป็นรหัสใน §16.3 พร้อม `requestId`; filter รับ 403 จาก guard ด้วยและแปลงทุก 403 เป็น `EXECUTIVE_ACCESS_DENIED` (รวมข้อบังคับเปลี่ยนรหัสผ่าน/ยอมรับข้อตกลง); 401 คง body เดิม การซ้ำของ username หรือ email คืน `ACCOUNT_ALREADY_EXISTS` พร้อม `fieldErrors` ที่ระบุช่อง; ไม่คืนรายละเอียดฐานข้อมูล
+- ตรวจ source ของ Nest 11.1.27 แล้ว: controller filter อยู่ก่อน global filter และรับ exception จาก global guard ภายใน route proxy ได้; ยังไม่ได้ตรวจผ่าน HTTP จริงใน lane นี้ สำหรับ 401/404/409/422 ที่เป็น object body ให้ผลเหมือน `AllExceptionsFilter`; raw string `HttpException` ต่างกัน: controller ส่ง JSON string แต่ global filter ห่อ `{statusCode,message}` รวม 429 ที่ `ApiRateLimitGuard` โยนในโค้ดปัจจุบัน (ยังไม่เปลี่ยน filter ใน follow-up นี้)
+- ทุกการเขียนกับ audit อยู่ใน transaction เดียว ใช้ `serializableTransaction` เดิมเพื่อ retry เฉพาะ transaction ที่ฐานข้อมูล rollback จากการแข่งขัน ไม่มี command table, version, idempotency key หรือ explicit lock เพิ่ม คำสั่ง status/access ที่สถานะปลายทางตรงอยู่แล้วไม่เขียนข้อมูล ไม่ยกเลิก session ซ้ำ และไม่เพิ่ม audit อีกแถว
+- `lastWebEntryAt` อ่าน `AuthSession.issuedAt` ล่าสุดของบัญชี รวม session ที่หมดอายุหรือถูกเพิกถอน ไม่ใช้เวลาอ่านรายงานหรือเวลา refresh; ไม่มีแถวให้เวลาเป็น null
+- ประชากร/สถานะและการปฏิเสธ REVOKED ใช้กติกาที่ผู้ควบคุมตัดสิน 2026-10-02 ใน §17.3; ไม่มีข้อรอตัดสินเรื่อง lifecycle และไม่มีการโยน `SOURCE_UNAVAILABLE` จาก status projection
+- งานเว็บขั้นถัดไปต้องเพิ่มข้อความไทยสำหรับ `ACCOUNT_REVOKED` ใน `apps/web/src/common/api/api-error-message.ts` ตามข้อความคงที่ใน §17.3 และใช้ `temporaryPasswordExpiresAt` บอกการหมดอายุ; E1 ไม่แก้เว็บ
+- การระงับทำให้ login ใหม่ได้ 403 จาก auth เดิม ส่วน token เดิมได้ 401 เพราะ session ถูกเพิกถอน (ไม่เปลี่ยน auth เพื่อบังคับให้ทุกกรณีเป็น 403) ตัวตรวจ membership ปฏิเสธด้วย 403 เช่นเดิม
+- หลักฐานใน spec ที่ CI รันอยู่แล้ว: permission/role isolation, ทุก route, DTO allow-list, account commands/audit rollback และ permission resolver; proof PostgreSQL เพิ่มใน `sales-console.pg.spec.ts` แต่ **ยังไม่ตรวจด้วยฐานข้อมูลจริงใน lane นี้** ตัวกั้นหน้าเว็บ/หน้าแรกและการแปลรหัสเป็นข้อความหน้าจอยังเป็นงานเว็บขั้นถัดไป
 
 ## 18. Data rights contract และช่องว่างจากฟอร์มจำลอง — DEFERRED ทั้งส่วน
 
@@ -1657,7 +1688,7 @@ Q36 ไม่ขวางรายงานผู้บริหาร เพร
 | D08 | คำบนหน้าจอและในไฟล์เป็นภาษาไทยที่คนทั่วไปเข้าใจ ไม่มีรหัสหรือคำระบบ | กติกาประจำ | §9.1, §16.3, §16.4 |
 
 Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) ครบทุกข้อ จึงไม่มี gate ใดของรายงานและบัญชีที่ยังรอคำตอบของเจ้าของ
-การเขียนโค้ดยังต้องรอคำสั่งเริ่ม implement ของเจ้าของ และการเขียนโค้ดที่ข้าม policy boundary ของ Q06–Q08 ซึ่งยังพักอยู่ ต้องหยุดที่ gate นั้น
+เจ้าของสั่งเริ่ม implement แล้ว 2 ต.ค. 2569 แต่การเขียนโค้ดที่ข้าม policy boundary ของ Q06–Q08 ซึ่งยังพักอยู่ ต้องหยุดที่ gate นั้น
 
 ## 22. สถานะความพร้อม ณ 2026-10-02
 
@@ -1667,7 +1698,7 @@ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ:
 - Existing BE: focused tests 58 ผ่าน; เป็น guard/domain เดิม ไม่พิสูจน์ executive API ใหม่
 - บั๊กของระบบปัจจุบันที่พบระหว่างตรวจ: RB-40, RB-36, RB-34, RB-38 แก้และ merge แล้ว (ส่วนที่ยังเหลืออยู่ในไฟล์บั๊ก); RB-30 (Q35) ตัดสินแล้วให้แก้ทันทีเป็นงานแยก — แก้แล้วในโค้ด 2026-10-02 ยังไม่ขึ้นระบบ; RB-37 (Q36) แก้ในโค้ดแล้ว 2 ต.ค. 2569 ยังไม่ merge; RB-39 ยังไม่กระทบ
 - New integration: ยังไม่มี endpoint/role/ตารางสรุป จึงจำลอง request/response บนเอกสาร ไม่ยิง mutation จริง
-- Release: ยังไม่พร้อมเปิดใช้จริง; คำตอบของเจ้าของครบแล้ว แต่เจ้าของยังไม่ได้สั่งเริ่ม implement; ยังต้องทำ implementation/verification ตามแผน และผ่านเงื่อนไขด้านข้อมูลส่วนบุคคลใน §20.3
+- Release: ยังไม่พร้อมเปิดใช้จริง; คำตอบของเจ้าของครบแล้ว แต่เจ้าของสั่งเริ่ม implement แล้ว 2 ต.ค. 2569; E1 ฝั่ง API มี diff ตาม §17.4 และยังไม่ขึ้นระบบ; ยังต้องทำ implementation/verification ตามแผน และผ่านเงื่อนไขด้านข้อมูลส่วนบุคคลใน §20.3
 
 ## ส่วนเพิ่มกราฟการใช้งานและ 80/20 (2026-10-01)
 
