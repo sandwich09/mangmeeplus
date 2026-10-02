@@ -732,6 +732,29 @@ describe('a signer with no saved signature is told what is true and what to do (
   });
 });
 
+// Seen in the real look: an approver whose claim was edited after it was sent got the dialog that says so, under a red
+// toast that said "ข้อมูลใบเบิกที่ใช้อนุมัติไม่ครบ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง": another reason, and another thing to do.
+describe('a refused approval gets one answer, from the screen that asked (owner 2026-10-02)', () => {
+  it('leaves the refusal to the claim page and the approval queue, which answer every one, with no error toast beside them', () => {
+    const api = readFileSync(join(__dirname, 'reimbursements.api.ts'), 'utf8');
+    assert.match(api, /\/approve`, \{\s+method: 'POST', body: JSON\.stringify\(\{ comment, approvalSnapshotHash, payoutVerifiedVersion \}\), suppressErrorToast: true,\s+\}\)/);
+    // The queue: the dialog of a claim edited after it was sent, or its own banner. Both of its approvals.
+    const hub = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
+    assert.match(hub, /if \(isStaleApprovalError\(e\)\) \{\s+try \{\s+setStaleReview\(\{ row: r, detail: await getReimbursement\(companyId, r\.id\) \}\);\s+\} catch \(e2\) \{ setError\(err\(e2\)\); \}\s+\} else \{/);
+    // A refusal of any other kind: the claim moved on while the queue was open. The queue is read again, and the banner
+    // says what was refused above the claims as they are now (seen in the real look: the cancelled claim's card stayed, with its buttons).
+    assert.match(hub, /\} else \{\s+const failure = err\(e\);\s+await load\(\);\s+setError\(failure\);\s+\}/);
+    assert.equal((hub.match(/try \{ await fn\(\); \} catch \(e\) \{ failure = err\(e\); \}\s+await load\(\);\s+if \(failure\) setError\(failure\);/g) ?? []).length, 2, 'the approval queue and the pay queue');
+    assert.match(hub, /toast\.success\('อนุมัติคำขอเรียบร้อยแล้ว'\);\s+\} catch \(e\) \{ setError\(err\(e\)\); \}/);
+    // Its banner is brought into view (the row pressed may be far below it on a phone), except under that dialog, which shows it.
+    assert.match(hub, /\{error && <ErrorBanner message=\{error\} focus=\{!staleReview\} \/>\}/);
+    assert.match(hub, /<StaleApprovalDialog[\s\S]{0,700}?error=\{error\}/);
+    // The words of that dialog, and of the claim screens' own sentence for the refusal: the claim was edited, look again.
+    assert.match(readFileSync(join(__dirname, 'ReimbursementDetailSections.tsx'), 'utf8'), /คำขอนี้ถูกแก้ไขหลังจากส่งอนุมัติ กรุณาตรวจสอบข้อมูลล่าสุดก่อนตัดสินใจ/);
+    assert.match(errorMessage('stale_approval_snapshot'), /^คำขอถูกแก้ไขหลังส่งอนุมัติ/u);
+  });
+});
+
 // Owner 2026-10-02: "SLA" is no word a shop owner reads. A claim that waited past the company's deadline reads "เกินกำหนด",
 // the words of the notice the server sends for it, and the policy page names the deadline for what it is.
 describe('the deadline of a claim is said in plain Thai (owner 2026-10-02)', () => {

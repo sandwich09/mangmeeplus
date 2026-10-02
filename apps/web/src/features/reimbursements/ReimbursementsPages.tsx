@@ -514,9 +514,19 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
   }, [companyId]);
   useEffect(() => { load(); }, [load, refreshKey]);
 
+  /**
+   * A refused approval or rejection usually means the claim moved on while this queue was open: cancelled, decided by
+   * someone else, sent back. Reload either way, then restore the message `load` cleared, so the approver reads what
+   * was refused above a queue that shows the claims as they are now.
+   */
   const action = async (id: string, fn: () => Promise<unknown>, successMessage?: string) => {
     setBusy(id); setError(null);
-    try { await fn(); await load(); if (successMessage) toast.success(successMessage); } catch (e) { setError(err(e)); } finally { setBusy(null); }
+    let failure: string | null = null;
+    try { await fn(); } catch (e) { failure = err(e); }
+    await load();
+    if (failure) setError(failure);
+    else if (successMessage) toast.success(successMessage);
+    setBusy(null);
   };
   const approveRow = async (r: any) => {
     // A claim paid by transfer is approved on its own page, where the approver sees and attests the account. So is
@@ -532,7 +542,11 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
         try {
           setStaleReview({ row: r, detail: await getReimbursement(companyId, r.id) });
         } catch (e2) { setError(err(e2)); }
-      } else { setError(err(e)); }
+      } else {
+        const failure = err(e);
+        await load();
+        setError(failure);
+      }
     } finally { setBusy(null); }
   };
   const summary = useMemo(() => summariseQueue(data), [data]);
@@ -554,7 +568,9 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
 
   return (
     <div className="space-y-4">
-      {error && <ErrorBanner message={error} />}
+      {/* The queue's own answer to a refused approval (the call raises no toast): brought into view, since the row that was
+          pressed may be far below it on a phone. Not while the dialog of an edited claim is open: that dialog shows it. */}
+      {error && <ErrorBanner message={error} focus={!staleReview} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">

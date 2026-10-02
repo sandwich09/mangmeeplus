@@ -177,9 +177,15 @@ export function reopenReimbursement(companyId: string, id: string) {
 export function listApprovalQueue(companyId: string) {
   return apiFetch<any>(`${base(companyId)}/approval-queue`);
 }
-/** `payoutVerifiedVersion`: the approver's "ตรวจบัญชีแล้ว" for the account version shown; a transfer claim is refused without it. */
+/**
+ * `payoutVerifiedVersion`: the approver's "ตรวจบัญชีแล้ว" for the account version shown; a transfer claim is refused without it.
+ * The claim page and the approval queue answer a refusal themselves: the dialog of a claim edited after it was sent, or their
+ * own banner. No error toast beside it: the toast's sentence for an edited claim said its data was incomplete.
+ */
 export function approveReimbursement(companyId: string, id: string, comment?: string, approvalSnapshotHash?: string, payoutVerifiedVersion?: number) {
-  return apiFetch<any>(`${base(companyId)}/${id}/approve`, { method: 'POST', body: JSON.stringify({ comment, approvalSnapshotHash, payoutVerifiedVersion }) });
+  return apiFetch<any>(`${base(companyId)}/${id}/approve`, {
+    method: 'POST', body: JSON.stringify({ comment, approvalSnapshotHash, payoutVerifiedVersion }), suppressErrorToast: true,
+  });
 }
 export function rejectReimbursement(companyId: string, id: string, reason: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
