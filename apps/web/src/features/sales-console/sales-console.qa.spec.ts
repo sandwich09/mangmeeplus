@@ -162,6 +162,41 @@ describe('sales console theme and copy', () => {
     assert.doesNotMatch(source('SalesReportsPage.tsx'), /(?:href|<Link)[^\n]*(?:billing|invoice|receipt|document)/i);
   });
 
+  it('the report prints each deduction as its own line through the reviewed Thai wording (§17.1)', () => {
+    const text = source('SalesReportsPage.tsx');
+    // Every month card lists its own deductions, and every word of a line comes from the logic
+    // module — the page itself never prints a kind, an id or a currency code.
+    assert.match(text, /month\.deductions\.map\(\(deduction, index\) =>/);
+    assert.match(text, /salesDeductionLine\(deduction,/);
+    assert.doesNotMatch(text, /deduction\.(?:kind|salesUserId)\}|THB/);
+    // Stacked, with the amount held to its own width: the line fits a 390 px phone.
+    assert.match(text, /<li key=\{`\$\{deduction\.occurredAt\}:\$\{index\}`\} className="flex items-start justify-between gap-3">\s*<div className="min-w-0">/);
+    assert.match(text, /<p className="shrink-0 text-sm font-bold text-error-700">\{line\.amount\}<\/p>/);
+    // A month or an agent taken below zero is marked, never painted as a sale: the badge, the
+    // phone card, the table row and the month total all go through the one rule.
+    assert.match(text, /tone=\{month\.totals\.amountSatang < 0 \? 'danger' : 'brand'\}/);
+    assert.match(text, /const amountClass = \(satang: number, positive: string\) => \(satang < 0 \? 'text-error-700' : positive\);/);
+    assert.equal([...text.matchAll(/amountClass\((?:row|totals)\.amountSatang, /g)].length, 3);
+  });
+
+  it('the flag queue says where each row stands and offers only a decision that still changes something (§17.1)', () => {
+    const text = source('SalesTeamPage.tsx');
+    // The standing and the open decisions come from the logic module, which reads the report's own
+    // rule — the page never decides by itself whether a row is cut out.
+    assert.match(text, /const review = salesFlagReview\(row\);/);
+    assert.match(text, /<MangmeeBadge tone=\{review\.tone\}>\{review\.label\}<\/MangmeeBadge>/);
+    assert.match(text, /\{review\.detail && <p className="mt-1 break-words text-xs text-gray-500">\{review\.detail\}<\/p>\}/);
+    assert.match(text, /\{review\.canConfirm && \(\s*<button[^\n]*\n[^\n]*setFlagDecision\(\{ row, keep: false \}\); \}\}>ยืนยันว่าไม่ผิดปกติ<\/button>/);
+    assert.match(text, /\{review\.canExclude && \(\s*<button[^\n]*\n[^\n]*setFlagDecision\(\{ row, keep: true \}\); \}\}>ตัดออกจากยอด<\/button>/);
+    // And the Owner is told a cut-out shop stays in this list.
+    assert.match(text, /ร้านที่คุณตัดออกจะไม่นับให้เซลล์ และยังอยู่ในรายการนี้ให้ตรวจย้อนหลัง/);
+    // 390 px: the queue and its card may shrink below a long shop name, which is then cut with an
+    // ellipsis instead of pushing the page sideways (measured in a browser: 276 px before).
+    assert.match(text, /<section aria-label="รายการที่ถูกธง" className="grid min-w-0 gap-3">/);
+    assert.match(text, /<MangmeeCard className="min-w-0">\s*\{flags\.map\(/);
+    assert.match(text, /<p className="min-w-0 truncate text-\[15px\] font-bold text-gray-900">\{row\.companyName\}<\/p>/);
+  });
+
   it('a flagged attribution is only cleared or kept with a reason the Owner typed (D6)', () => {
     const text = source('SalesTeamPage.tsx');
     assert.match(text, /disabled=\{busy \|\| !flagReason\.trim\(\)\}/);

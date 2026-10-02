@@ -18,7 +18,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { ValidationPipe } from '@nestjs/common';
-import type { SalesAgentSelfProfileInput } from '@watchdog-bms/contracts';
+import { salesCreditState, type SalesAgentSelfProfileInput } from '@watchdog-bms/contracts';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -27,11 +27,16 @@ import { SalesAgentsService } from './application/sales-agents.service';
 import { SalesCompanySearchService } from './application/sales-company-search.service';
 import { SalesDealsService } from './application/sales-deals.service';
 import { SalesReferralService } from './application/sales-referral.service';
+import { SalesReportsService } from './application/sales-reports.service';
 import { PLATFORM_TENANT_ID } from './application/sales-context';
 import { SalesSelfProfileDto, SalesTeamCreateDto } from './presentation/http/sales.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../common/pipes/validation-pipe.options';
 import { encryptCredential } from '../system-partner-management/domain/logic/credential-cipher.logic';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
+import { observeBillingCharges } from '../billing/application/billing-financial';
+import { applyDealRequest, recordAttributionDeductions, recordReferralAttribution } from '../billing/application/billing-package-request';
+import { bangkokMonthKey, type CreditTakeBack } from './domain/sales-attribution.logic';
+import { quoteTotals } from '../billing/domain/billing-policy';
 
 const databaseUrl = process.env.SALES_CONSOLE_TEST_DATABASE_URL;
 
@@ -133,6 +138,11 @@ async function harness() {
       const created = await client.user.findMany({ where: { username: { startsWith: tag } }, select: { id: true } });
       const userIds = [...created.map((user) => user.id), leadId, agentId, otherId];
       await client.packageChangeRequest.deleteMany({ where: { companyId: { startsWith: tag } } });
+      await client.salesAttribution.deleteMany({ where: { companyId: { startsWith: tag } } });
+      await client.billingInvoice.deleteMany({ where: { billingAccountId: { startsWith: tag } } });
+      await client.billingIssue.deleteMany({ where: { companyId: { startsWith: tag } } });
+      await client.billingAccount.deleteMany({ where: { companyId: { startsWith: tag } } });
+      await client.auditLog.deleteMany({ where: { companyId: { startsWith: tag } } });
       await client.salesAgentProfile.deleteMany({ where: { userId: { in: userIds } } });
       await client.companySignupRequest.deleteMany({ where: { externalSignupId: { startsWith: tag } } });
       await client.membershipRole.deleteMany({ where: { membership: { userId: { in: userIds } } } });
@@ -564,4 +574,245 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
       assert.deepEqual(await customerView.listForCompany(h.shopId), []);
     } finally { await h.teardown(); }
   });
+
+  // ── sales credit, owner decisions 2026-10-02 (spec §17.1, RB-37) ──────────────────────────
+
+  it('credits a deal and a referral for the same package the same amount, tax on top or tax included', async () => {
+    const h = await harness();
+    try {
+      const paidAt = new Date();
+      for (const taxTreatment of ['EXCLUSIVE_VAT_7', 'INCLUSIVE_VAT_7'] as const) {
+        const dealShop = `${h.tag}-deal-${taxTreatment}`, referredShop = `${h.tag}-ref-${taxTreatment}`;
+        await h.client.company.create({ data: { id: dealShop, name: `ร้านดีล ${taxTreatment}`, status: 'ACTIVE' } });
+        const referredAt = new Date(paidAt.getTime() - 24 * 60 * 60 * 1000);
+        await h.client.company.create({ data: { id: referredShop, name: `ร้านแนะนำ ${taxTreatment}`, status: 'ACTIVE',
+          referralSalesUserId: h.otherId, referredAt, referralSource: 'SIGNUP_CODE' } });
+        const draft = await h.deals.save(h.agent, snapshotBody(dealShop));
+        const submitted = await h.deals.submit(h.agent, draft.id, draft.version);
+        const approved = await h.deals.approve(h.lead, submitted.id, submitted.version, 'อนุมัติ');
+        // The same package price a deal sells at, as the reconciler stores a paid catalog invoice.
+        const dealInvoice = await paidInvoice(h, dealShop, 39900, taxTreatment);
+        const referralInvoice = await paidInvoice(h, referredShop, 39900, taxTreatment);
+        await h.client.$transaction(async (tx) => {
+          await applyDealRequest(tx, { companyId: dealShop, invoiceId: dealInvoice.id, priceSatang: 39900, paidAt,
+            deal: { requestId: approved.id, snapshotHash: 'hash', months: 12, salesUserId: h.agentId, aiMonthlyBudgetSatang: null } });
+          await recordReferralAttribution(tx, { companyId: referredShop, invoiceId: referralInvoice.id,
+            offer: { interval: 'month', intervalCount: 1 }, paidAt });
+        });
+        const deal = await h.client.salesAttribution.findUniqueOrThrow({ where: { companyId: dealShop } });
+        const referral = await h.client.salesAttribution.findUniqueOrThrow({ where: { companyId: referredShop } });
+        assert.deepEqual([deal.source, referral.source], ['DEAL', 'REFERRAL']);
+        assert.equal(deal.amountSatang, 39900);
+        assert.equal(referral.amountSatang, deal.amountSatang, `${taxTreatment}: the referral is credited on the deal's base`);
+      }
+
+      // A first bill lowered by an event discount is credited with the price actually charged.
+      const discountedShop = `${h.tag}-ref-discount`;
+      await h.client.company.create({ data: { id: discountedShop, name: 'ร้านใช้ส่วนลดงาน', status: 'ACTIVE',
+        referralSalesUserId: h.otherId, referredAt: new Date(paidAt.getTime() - 60_000), referralSource: 'SIGNUP_CODE' } });
+      const discounted = await paidInvoice(h, discountedShop, 29900, 'EXCLUSIVE_VAT_7');
+      await h.client.$transaction((tx) => recordReferralAttribution(tx, { companyId: discountedShop,
+        invoiceId: discounted.id, offer: { interval: 'month', intervalCount: 1 }, paidAt }));
+      assert.equal((await h.client.salesAttribution.findUniqueOrThrow({ where: { companyId: discountedShop } })).amountSatang, 29900);
+    } finally { await h.teardown(); }
+  });
+
+  it('reports a deduction in the month it was recorded and leaves the month of the payment alone', async () => {
+    const h = await harness();
+    try {
+      const reports = new SalesReportsService({ client: h.client } as never, { log: async () => {} } as never);
+      const attribution = await h.client.salesAttribution.create({ data: { companyId: h.shopId, salesUserId: h.agentId,
+        source: 'REFERRAL', amountSatang: 49900, months: 1, interval: 'month', paidAt: new Date('2026-09-20T03:00:00Z'),
+        sourceInvoiceId: `${h.tag}-invoice` } });
+      const range = { from: '2026-09', to: '2026-10' };
+      const figures = async (ctx: RequestContext, query: Record<string, string> = range) =>
+        (await reports.summary(ctx, query)).months.map((month) => [month.monthKey,
+          month.rows.filter((row) => row.salesUserId === h.agentId).map((row) => row.amountSatang)]);
+      assert.deepEqual(await figures(h.agent), [['2026-09', [49900]]]);
+
+      const occurredAt = new Date('2026-10-05T02:00:00Z');
+      await h.client.salesAttributionDeduction.create({ data: { attributionId: attribution.id, kind: 'REFUND',
+        providerRef: `re_${h.tag}`, amountSatang: 49900, occurredAt, createdAt: new Date('2026-10-05T02:03:00Z') } });
+      assert.deepEqual(await figures(h.agent), [['2026-10', [-49900]], ['2026-09', [49900]]]);
+      const [october] = (await reports.summary(h.agent, range)).months;
+      assert.deepEqual(october!.deductions, [{ salesUserId: h.agentId, kind: 'REFUND', companyName: `ร้านทดสอบ ${h.tag}`,
+        paidMonthKey: '2026-09', amountSatang: 49900, occurredAt: occurredAt.toISOString() }]);
+      // Asked for October alone, the deduction is still there although its payment is outside the range.
+      assert.deepEqual(await figures(h.agent, { from: '2026-10', to: '2026-10' }), [['2026-10', [-49900]]]);
+
+      // R11: another agent sees none of it; a lead narrowing to this agent sees exactly the same,
+      // and so does a lead reading every team (an empty scope means "all", never "none").
+      assert.deepEqual((await reports.summary(h.other, range)).months, []);
+      assert.deepEqual(await figures(h.lead, { ...range, salesUserId: h.agentId }), [['2026-10', [-49900]], ['2026-09', [49900]]]);
+      assert.deepEqual((await figures(h.lead)).filter(([, amounts]) => (amounts as number[]).length > 0),
+        [['2026-10', [-49900]], ['2026-09', [49900]]]);
+
+      // The database itself refuses a second row for the same provider id, a kind it does not know and a zero.
+      const again = { attributionId: attribution.id, kind: 'REFUND', amountSatang: 100, occurredAt };
+      await assert.rejects(h.client.salesAttributionDeduction.create({ data: { ...again, providerRef: `re_${h.tag}` } }));
+      await assert.rejects(h.client.salesAttributionDeduction.create({ data: { ...again, providerRef: `x_${h.tag}`, kind: 'CHARGEBACK' } }));
+      await assert.rejects(h.client.salesAttributionDeduction.create({ data: { ...again, providerRef: `y_${h.tag}`, amountSatang: 0 } }));
+    } finally { await h.teardown(); }
+  });
+
+  it('records one deduction per provider id however often it is observed, and never more than the credit', async () => {
+    const h = await harness();
+    try {
+      // Relative to today, so the case does not expire: paid 30 days ago, everything inside the 60 days.
+      const paidAt = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const back = (kind: CreditTakeBack['kind'], name: string, amountSatang: number, day: number): CreditTakeBack =>
+        ({ kind, providerRef: `${name}_${h.tag}`, amountSatang, occurredAt: new Date(paidAt.getTime() + day * 24 * 60 * 60 * 1000) });
+      const observe = (companyId: string, invoiceId: string, takeBacks: CreditTakeBack[]) =>
+        h.client.$transaction((tx) => recordAttributionDeductions(tx, { companyId, invoiceId, takeBacks }));
+      const recorded = async (attributionId: string) => (await h.client.salesAttributionDeduction.findMany({
+        where: { attributionId }, orderBy: { occurredAt: 'asc' } })).map((row) => [row.kind, row.providerRef, row.amountSatang]);
+
+      // 107,000 paid with tax on top, 100,000 credited.
+      const invoiceId = `${h.tag}-invoice`;
+      const row = await h.client.salesAttribution.create({ data: { companyId: h.shopId, salesUserId: h.agentId, source: 'DEAL',
+        amountSatang: 100000, months: 12, interval: 'month', paidAt, sourceInvoiceId: invoiceId } });
+      const first = back('REFUND', 're1', 30000, 5), second = back('REFUND', 're2', 77000, 9);
+      await observe(h.shopId, invoiceId, [first]);
+      await observe(h.shopId, invoiceId, [first]);
+      assert.deepEqual(await recorded(row.id), [['REFUND', first.providerRef, 30000]], 'the same refund seen twice is one row');
+      await observe(h.shopId, invoiceId, [first, second]);
+      await observe(h.shopId, invoiceId, [first, second, back('DISPUTE', 'dp', 107000, 20)]);
+      assert.deepEqual(await recorded(row.id), [['REFUND', first.providerRef, 30000], ['REFUND', second.providerRef, 70000]],
+        'the second refund takes what was left, and a later dispute finds nothing to take');
+      // A later invoice of the same shop is not the payment that carries the credit.
+      await observe(h.shopId, `${h.tag}-renewal`, [back('REFUND', 're3', 5000, 12)]);
+      assert.equal((await recorded(row.id)).length, 2);
+      assert.equal((await h.client.salesAttribution.findUniqueOrThrow({ where: { id: row.id } })).refundedSatang, 0,
+        'the undated column is no longer written');
+
+      // An older row: 30,000 refunded before deductions were dated. Its payment month keeps reading
+      // 70,000; the provider's earliest refund is that amount, so only the later one is dated.
+      const oldShop = `${h.tag}-old`;
+      await h.client.company.create({ data: { id: oldShop, name: 'ร้านเดิม', status: 'ACTIVE' } });
+      const old = await h.client.salesAttribution.create({ data: { companyId: oldShop, salesUserId: h.otherId, source: 'REFERRAL',
+        amountSatang: 100000, refundedSatang: 30000, months: 1, interval: 'month', paidAt, sourceInvoiceId: `${h.tag}-old-invoice` } });
+      await observe(oldShop, `${h.tag}-old-invoice`, [back('REFUND', 'old1', 30000, 2), back('DISPUTE', 'old2', 20000, 20)]);
+      assert.deepEqual(await recorded(old.id), [['DISPUTE', `old2_${h.tag}`, 20000]]);
+
+      const reports = new SalesReportsService({ client: h.client } as never, { log: async () => {} } as never);
+      const paidMonth = bangkokMonthKey(paidAt), nowMonth = bangkokMonthKey(new Date());
+      const expected = new Map([[paidMonth, 70000]]);
+      expected.set(nowMonth, (expected.get(nowMonth) ?? 0) - 20000);
+      const summary = await reports.summary(h.other, { from: paidMonth, to: nowMonth });
+      assert.deepEqual(new Map(summary.months.map((month) => [month.monthKey, month.rows[0]!.amountSatang])), expected);
+      assert.deepEqual(summary.months.flatMap((month) => month.deductions ?? []).map((line) => [line.kind, line.companyName, line.paidMonthKey, line.amountSatang]),
+        [['DISPUTE', 'ร้านเดิม', paidMonth, 20000]]);
+    } finally { await h.teardown(); }
+  });
+
+  it('observes a refunded and disputed first payment end to end: the provider\'s facts in, dated deductions out', async () => {
+    const h = await harness();
+    try {
+      // Paid 62 days ago: everything below is first NOTICED after the 60 days.
+      const paidAt = new Date(Math.floor(Date.now() / 1000) * 1000 - 62 * 24 * 60 * 60 * 1000);
+      const at = (day: number) => new Date(paidAt.getTime() + day * 24 * 60 * 60 * 1000);
+      const leaseToken = `lease-${h.tag}`;
+      const account = await h.client.billingAccount.create({ data: { id: `${h.tag}-account`, companyId: h.shopId,
+        stripeAccountId: `acct_${h.tag}`, livemode: false, customerId: `cus_${h.tag}`, leaseToken, leaseUntil: new Date(Date.now() + 60_000) } });
+      const chargeId = `ch_${randomUUID().replace(/-/g, '')}`;
+      const invoice = await h.client.billingInvoice.create({ data: { billingAccountId: account.id, providerInvoiceId: `in_${h.tag}`,
+        providerChargeId: chargeId, offerSnapshot: {}, contractSnapshot: { policy: { taxTreatment: 'INCLUSIVE_VAT_7' } },
+        policyRevisionId: 'policy', currency: 'THB', totalSatang: 39900, paidSatang: 39900, taxSatang: 2610, periodStart: paidAt,
+        periodEnd: at(365), providerStatus: 'paid', evidenceHash: 'evidence', applyStatus: 'APPLIED', appliedAt: paidAt } });
+      const credit = await h.client.salesAttribution.create({ data: { companyId: h.shopId, salesUserId: h.agentId, source: 'REFERRAL',
+        amountSatang: 39900, months: 1, interval: 'month', paidAt, sourceInvoiceId: invoice.id } });
+
+      // Ids shaped like the provider's own: a short prefix, an underscore, letters and digits.
+      const ref = (prefix: string, name: string) => `${prefix}_${name}${h.tag.replace(/[^a-z0-9]/g, '')}`;
+      const fact = (object: 'refund' | 'dispute', id: string, amount: number, when: Date, status: string) =>
+        ({ id, object, charge: chargeId, currency: 'thb', amount, created: when.getTime() / 1000, status });
+      const calls: string[] = [];
+      const stripe = { accountId: account.stripeAccountId, livemode: false,
+        request: async (_method: string, path: string) => { calls.push(path); return { id: chargeId, customer: account.customerId, livemode: false,
+          currency: 'thb', status: 'succeeded', paid: true, captured: true, amount: 39900, amount_refunded: 15000, disputed: true }; },
+        list: async (path: string) => { calls.push(path); return path === '/refunds'
+          ? [fact('refund', ref('re', 'day59'), 10000, at(59), 'succeeded'), fact('refund', ref('re', 'day61'), 5000, at(61), 'succeeded')]
+          : [fact('dispute', ref('dp', 'won'), 39900, at(20), 'won'), fact('dispute', ref('dp', 'lost'), 39900, at(60), 'lost')]; } };
+      const observe = () => observeBillingCharges({ client: h.client } as never, stripe as never, account, leaseToken);
+      await observe();
+      await observe();
+
+      // The refund of day 59 is deducted though noticed on day 62; the one of day 61 is not; the won
+      // dispute is nothing; the lost one, opened on day 60, takes what is left of the credit; and the
+      // second observation adds no row.
+      const rows = await h.client.salesAttributionDeduction.findMany({ where: { attributionId: credit.id }, orderBy: { occurredAt: 'asc' } });
+      assert.deepEqual(rows.map((row) => [row.kind, row.providerRef, row.amountSatang, row.occurredAt.toISOString()]), [
+        ['REFUND', ref('re', 'day59'), 10000, at(59).toISOString()],
+        ['DISPUTE', ref('dp', 'lost'), 29900, at(60).toISOString()],
+      ]);
+      const stored = await h.client.billingInvoice.findUniqueOrThrow({ where: { id: invoice.id } });
+      assert.deepEqual([stored.refundedSatang, stored.disputed], [15000, true]);
+      assert.equal((await h.client.salesAttribution.findUniqueOrThrow({ where: { id: credit.id } })).refundedSatang, 0);
+      // The credit is used up, so a third visit reads the charge and nothing else.
+      const before = calls.length;
+      await observe();
+      assert.deepEqual(calls.slice(before), [`/charges/${chargeId}`]);
+
+      // The report: the payment month keeps its 399.00, the month of recording carries both lines.
+      const reports = new SalesReportsService({ client: h.client } as never, { log: async () => {} } as never);
+      const paidMonth = bangkokMonthKey(paidAt), nowMonth = bangkokMonthKey(new Date());
+      const expected = new Map([[paidMonth, 39900]]);
+      expected.set(nowMonth, (expected.get(nowMonth) ?? 0) - 39900);
+      const summary = await reports.summary(h.agent, { from: paidMonth, to: nowMonth });
+      assert.deepEqual(new Map(summary.months.map((month) => [month.monthKey, month.rows[0]!.amountSatang])), expected);
+      assert.deepEqual(summary.months.flatMap((month) => month.deductions ?? []).map((line) => [line.kind, line.amountSatang]).sort(),
+        [['DISPUTE', 29900], ['REFUND', 10000]]);
+    } finally { await h.teardown(); }
+  });
+
+  it('counts a shop the Owner cut out as zero in every figure, even after a refund, and keeps it in the queue as cut out', async () => {
+    const h = await harness();
+    try {
+      const owner = ctx(h.leadId, ['SYSTEM_ADMIN'], ['sales.agent_profile.manage', 'sales.report.read']);
+      const reports = new SalesReportsService({ client: h.client } as never, { log: async () => {} } as never);
+      const paidAt = new Date('2026-09-20T03:00:00Z');
+      // Two shops of one agent in September: a clean deal, and a referral the anti-gaming check flagged.
+      const cleanShop = `${h.tag}-clean`;
+      await h.client.company.create({ data: { id: cleanShop, name: 'ร้านปกติ', status: 'ACTIVE' } });
+      await h.client.salesAttribution.create({ data: { companyId: cleanShop, salesUserId: h.agentId, source: 'DEAL',
+        amountSatang: 20000, months: 1, interval: 'month', paidAt, sourceInvoiceId: `${h.tag}-clean-invoice` } });
+      const flagged = await h.client.salesAttribution.create({ data: { companyId: h.shopId, salesUserId: h.agentId, source: 'REFERRAL',
+        amountSatang: 49900, months: 1, interval: 'month', paidAt, sourceInvoiceId: `${h.tag}-invoice`,
+        flags: ['self_referral'], flaggedAt: paidAt } });
+      // The flagged shop is refunded in October.
+      await h.client.salesAttributionDeduction.create({ data: { attributionId: flagged.id, kind: 'REFUND', providerRef: `re_${h.tag}`,
+        amountSatang: 49900, occurredAt: new Date('2026-10-05T02:00:00Z'), createdAt: new Date('2026-10-05T02:03:00Z') } });
+      // [amount, deal shops, referral shops, waiting for review] per agent row, and the number of deduction lines.
+      const figures = async () => (await reports.summary(h.agent, { from: '2026-09', to: '2026-10' })).months.map((month) => [month.monthKey,
+        month.rows.map((row) => [row.amountSatang, row.dealActivations, row.referralActivations, row.flaggedCount]), (month.deductions ?? []).length]);
+      assert.deepEqual(await figures(), [['2026-09', [[20000, 1, 1, 1]], 0]], 'waiting: no amount yet, shown as a pending flag');
+
+      // "ตัดออกจากยอด": the flags stay, the review is stamped, and the shop is in no figure at all.
+      const queue = await reports.reviewFlag(owner, h.shopId, true, 'เจ้าของร้านเป็นเซลล์เอง');
+      assert.deepEqual(await figures(), [['2026-09', [[20000, 1, 0, 0]], 0]],
+        'no amount, no activation, no pending flag, and its refund makes no negative October');
+      const kept = queue.items.find((item) => item.companyId === h.shopId)!;
+      assert.deepEqual([kept.flags, kept.reviewNote], [['self_referral'], 'เจ้าของร้านเป็นเซลล์เอง']);
+      assert.equal(salesCreditState(kept.flags, kept.reviewedAt), 'EXCLUDED', 'the queue still lists it, as cut out');
+
+      // The Owner can undo it: "ยืนยันว่าไม่ผิดปกติ" counts the shop like any other, credit and refund each in its month.
+      await reports.reviewFlag(owner, h.shopId, false, 'ตรวจแล้ว เป็นคนละคน');
+      assert.deepEqual(await figures(), [['2026-10', [[-49900, 0, 0, 0]], 1], ['2026-09', [[69900, 1, 1, 0]], 0]]);
+      // A confirmed row has no flag left to keep, so cutting it out is refused instead of recorded as done.
+      assert.equal(await reason(() => reports.reviewFlag(owner, h.shopId, true, 'เปลี่ยนใจ')), 'SALES_FLAG_REVIEW_INVALID');
+      assert.deepEqual(await figures(), [['2026-10', [[-49900, 0, 0, 0]], 1], ['2026-09', [[69900, 1, 1, 0]], 0]]);
+    } finally { await h.teardown(); }
+  });
 });
+
+/** One paid, applied package invoice the way the reconciler stores it: Stripe's total and tax, and the pinned policy. */
+async function paidInvoice(h: Awaited<ReturnType<typeof harness>>, companyId: string, priceSatang: number,
+  taxTreatment: 'EXCLUSIVE_VAT_7' | 'INCLUSIVE_VAT_7') {
+  const totals = quoteTotals(priceSatang, taxTreatment), now = new Date();
+  return h.client.billingInvoice.create({ data: { billingAccountId: `${h.tag}-account-${companyId}`,
+    providerInvoiceId: `in_${randomUUID().replace(/-/g, '')}`, providerChargeId: `ch_${randomUUID().replace(/-/g, '')}`,
+    offerSnapshot: {}, contractSnapshot: { policy: { taxTreatment } }, policyRevisionId: 'policy', currency: 'THB',
+    totalSatang: totals.totalSatang, paidSatang: totals.totalSatang, taxSatang: totals.taxSatang,
+    periodStart: now, periodEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), providerStatus: 'paid',
+    evidenceHash: 'evidence', applyStatus: 'APPLIED', appliedAt: now } });
+}

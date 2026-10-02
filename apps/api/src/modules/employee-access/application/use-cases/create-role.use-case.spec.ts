@@ -7,7 +7,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { roleKeyFromName } from './create-role.use-case';
+import { reservedRoleKey, roleKeyFromName } from './create-role.use-case';
 
 describe('roleKeyFromName (audit H-19)', () => {
   it('still slugs a Latin name exactly as before', () => {
@@ -46,5 +46,31 @@ describe('roleKeyFromName (audit H-19)', () => {
     assert.equal(roleKeyFromName('ผู้จัดการ'), 'ROLE');
     assert.equal(roleKeyFromName('หัวหน้าฝ่าย', undefined), 'ROLE');
     assert.equal(roleKeyFromName('ผู้จัดการ', 'tpl.'), 'ROLE');
+  });
+});
+
+// A custom role named "System Admin" got the key SYSTEM_ADMIN: the key was derived from free text
+// with nothing reserved, and role keys are what the owner, platform and routing checks compare.
+describe('reservedRoleKey', () => {
+  it('reserves a system or platform role key that the NAME derives', () => {
+    for (const name of ['System Admin', 'system_admin', 'Owner', 'Company View', 'Admin', 'Manager', 'Staff', 'Auditor Readonly', 'Mangmee Sales', 'MANGMEE SALES LEAD']) {
+      assert.equal(reservedRoleKey(name), true, name);
+      // Naming a preset does not launder a name that already yields the key.
+      assert.equal(reservedRoleKey(name, 'tpl.x.manager'), true, `${name} with a preset`);
+    }
+    for (const name of ['Cashier', 'Store Manager', 'Owner assistant', 'Admin 2', 'ผู้จัดการ', 'Role']) {
+      assert.equal(reservedRoleKey(name), false, name);
+    }
+  });
+
+  it('lets a preset lend its key only when the preset exists, and never an owner or platform key', () => {
+    // Audit H-19 stays as it was: these are ordinary company roles the routing expects.
+    for (const preset of ['tpl.x.manager', 'tpl.x.finance', 'tpl.retail.sales', 'tpl.trading.inventory', 'tpl.x.marketing']) {
+      assert.equal(reservedRoleKey('ชื่อภาษาไทย', preset), false, preset);
+    }
+    // `roleTemplateKey` is free text on the request, so its last segment proves nothing by itself.
+    for (const preset of ['tpl.x.system_admin', 'x.owner', 'x.company_view', 'x.mangmee_sales', 'made.up.manager', 'manager']) {
+      assert.equal(reservedRoleKey('ชื่อภาษาไทย', preset), true, preset);
+    }
   });
 });

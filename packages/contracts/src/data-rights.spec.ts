@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   DATA_RIGHTS_DECISION_CATEGORIES,
+  DATA_RIGHTS_SINGLE_ADMIN_STEPS,
   dataRightsAllowedDispositions,
   dataRightsCaseEvidenceRequirements,
   dataRightsEvidenceRequirements,
   dataRightsCaseRequiresTenantAuthority,
   dataRightsRequiredExecutionEvidence,
+  dataRightsSingleAdminReasonProblem,
+  normalizeDataRightsSingleAdminReason,
 } from './data-rights.js';
 
 test('requires an explicit decision for every deletion data layer', () => {
@@ -106,4 +109,24 @@ test('requires minimum absence or execution proof even when decisions are not ap
     { evidenceType: 'BACKUP_MANIFEST', category: 'BACKUPS' },
   ]);
   assert.equal(dataRightsCaseEvidenceRequirements('COMPANY_WORKSPACE_OFFBOARDING', []).length, 6);
+});
+
+test('names the five steps one admin may take alone, and asks for a reason that says something', () => {
+  assert.deepEqual(DATA_RIGHTS_SINGLE_ADMIN_STEPS, [
+    'APPROVAL', 'EXECUTION', 'VERIFICATION', 'INDEPENDENT_VERIFICATION', 'COMPLETION',
+  ]);
+  assert.equal(normalizeDataRightsSingleAdminReason('  ระบบมี   ผู้ดูแล\nคนเดียว  '), 'ระบบมี ผู้ดูแล คนเดียว');
+  for (const [reason, problem] of [
+    [undefined, 'REQUIRED'], [null, 'REQUIRED'], ['', 'REQUIRED'], ['   \n ', 'REQUIRED'],
+    ['มีผู้ดูแลคนเดียว', 'TOO_SHORT'],
+    // Padding is collapsed before the length is counted.
+    ['สั้น' + ' '.repeat(40) + 'ไป', 'TOO_SHORT'],
+    ['a'.repeat(40), 'TRIVIAL'], ['.'.repeat(40), 'TRIVIAL'], ['12345678901234567890', 'TRIVIAL'],
+    ['test test test test test', 'TRIVIAL'], ['ok ok ok ok ok ok ok ok ok', 'TRIVIAL'],
+    ['ก'.repeat(1_001), 'TOO_LONG'],
+    ['ระบบมีผู้ดูแลระบบเพียงคนเดียว จึงอนุมัติด้วยตนเอง', null],
+    ['I am the only system admin, so I approve this myself.', null],
+  ] as const) {
+    assert.equal(dataRightsSingleAdminReasonProblem(reason), problem, JSON.stringify(reason));
+  }
 });

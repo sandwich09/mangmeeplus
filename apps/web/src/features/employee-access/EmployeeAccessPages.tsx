@@ -24,6 +24,7 @@ import { LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
+import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { trimmed } from '@/common/forms/trim';
 import { listBranches as listCompanyBranches } from '../branch-settings/branches.api';
 import {
@@ -969,7 +970,8 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
     if (selectedPacks.length === 0 && preservedKeys.length === 0) { setError('กรุณาเลือกงานอย่างน้อย 1 รายการ'); return; }
     setSaving(true); setError(null);
     try { await onSubmit({ name: trimmed(name), description: trimmed(description) || undefined, capabilityPackKeys: selectedPacks, permissionKeys: preservedKeys }); }
-    catch (e2) { setError(localizedErrorMessage(e2, locale, { fallback: 'error.save_failed' })); }
+    // A refusal that names its rule (a reserved role name) has its own sentence; the rest stay generic.
+    catch (e2) { setError(apiErrorCode(e2) ? apiErrorMessage(e2, locale) : localizedErrorMessage(e2, locale, { fallback: 'error.save_failed' })); }
     finally { setSaving(false); }
   };
 

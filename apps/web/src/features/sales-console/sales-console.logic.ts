@@ -13,15 +13,18 @@ import {
   SALES_DEAL_DESCRIPTION_MAX,
   SALES_DEAL_MONTHS_MAX,
   SALES_DEAL_REASON_MAX,
+  SALES_ATTRIBUTION_REFUND_WINDOW_DAYS,
   SALES_REFERRAL_ADMIN_WINDOW_DAYS,
   SALES_REPORT_MAX_MONTHS,
   SALES_REPORT_MONTH_PATTERN,
+  salesCreditState,
   TIER_FEATURE_PRESETS,
   SALES_DEAL_ALLOWED_FEATURE_KEYS,
   formatCompanyLegalAddress,
   type CompanyLegalAddress,
   type SalesAgentView,
   type SalesAttributionFlag,
+  type SalesAttributionFlagRow,
   type SalesAttributionSource,
   type SalesCompanyAccessState,
   type SalesDealBaseTier,
@@ -31,16 +34,18 @@ import {
   type SalesDealSnapshot,
   type SalesDealStatus,
   type SalesDealView,
+  type SalesDeductionKind,
   type SalesMyWorkItem,
   type SalesMyWorkKind,
   type SalesReferralSource,
+  type SalesReportDeduction,
   type SalesReportMonth,
   type SalesReportRow,
   type SalesRoleKey,
   type MenuEntitlementBinding,
 } from '@watchdog-bms/contracts';
 import type { MangmeeTone } from '@/common/components/mangmee';
-import { formatThaiDate } from '@/common/i18n/thai-date';
+import { formatThaiDate, formatThaiMonth } from '@/common/i18n/thai-date';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 
 /** Where the console lives. One constant, so the layout, the header and the gates cannot drift. */
@@ -63,8 +68,9 @@ export function parseBahtInput(raw: string): BahtParse {
   return { ok: true, satang };
 }
 
+/** The sign goes before the ฿, so a month taken below zero reads -฿499.00 rather than ฿-499.00. */
 export const formatBaht = (satang: number) =>
-  '฿' + (satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  (satang < 0 ? '-' : '') + '฿' + (Math.abs(satang) / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Prefill for a baht box: satang are kept, never rounded away, so an edit round-trips unchanged. */
 export const satangToBahtInput = (satang: number) =>
@@ -668,6 +674,24 @@ export const SALES_ATTRIBUTION_SOURCE_LABELS: Record<SalesAttributionSource, str
   REFERRAL: 'แนะนำร้าน',
 };
 
+/**
+ * What the Owner's queue says about a flagged row, and which decision is still open on it. The
+ * state is the report's own rule (`salesCreditState`), so the words here cannot promise something
+ * the totals do not do. A row that was cut out can still be confirmed — that is how a mistake is
+ * undone. A confirmed row has no flag left, so there is nothing more to decide on it.
+ */
+export function salesFlagReview(row: Pick<SalesAttributionFlagRow, 'flags' | 'reviewedAt' | 'reviewNote'>): {
+  label: string; tone: MangmeeTone; detail: string | null; canConfirm: boolean; canExclude: boolean;
+} {
+  const state = salesCreditState(row.flags, row.reviewedAt);
+  if (state === 'WAITING') return { label: 'รอตรวจ · ยังไม่นับในยอด', tone: 'amber', detail: null, canConfirm: true, canExclude: true };
+  const detail = [`ตรวจเมื่อ ${formatThaiDate(row.reviewedAt)}`, row.reviewNote ? `เหตุผล: ${row.reviewNote}` : '']
+    .filter(Boolean).join(' · ');
+  return state === 'EXCLUDED'
+    ? { label: 'ตัดออกจากยอดแล้ว · ไม่นับให้เซลล์', tone: 'danger', detail, canConfirm: true, canExclude: false }
+    : { label: 'ยืนยันแล้วว่าไม่ผิดปกติ · นับในยอด', tone: 'brand', detail, canConfirm: false, canExclude: false };
+}
+
 // ── report (§17.2 — one row per shop, counted once, so the report is a plain sum) ──
 
 export type SalesReportTotals = Pick<SalesReportRow, 'dealActivations' | 'referralActivations' | 'amountSatang' | 'flaggedCount'>;
@@ -682,13 +706,38 @@ export function salesReportTotals(rows: readonly SalesReportRow[]): SalesReportT
 }
 
 /** Newest month first, biggest seller first inside it — the reading order of "who sold what". */
-export function sortSalesReportMonths(months: readonly SalesReportMonth[]): { monthKey: string; rows: SalesReportRow[]; totals: SalesReportTotals }[] {
+export function sortSalesReportMonths(months: readonly SalesReportMonth[]): { monthKey: string; rows: SalesReportRow[]; totals: SalesReportTotals; deductions: SalesReportDeduction[] }[] {
   return [...months]
     .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
     .map((month) => {
       const rows = [...month.rows].sort((a, b) => b.amountSatang - a.amountSatang || a.displayName.localeCompare(b.displayName, 'th'));
-      return { monthKey: month.monthKey, rows, totals: salesReportTotals(rows) };
+      return { monthKey: month.monthKey, rows, totals: salesReportTotals(rows), deductions: month.deductions ?? [] };
     });
+}
+
+// ── deductions (§17.1, owner 2026-10-02 — its own line, in the month it happened) ──
+
+/** Said once under the report title, so nobody has to ask why a month went down or below zero. */
+export const SALES_DEDUCTION_RULE = `คืนเงินหรือแพ้ข้อโต้แย้งการชำระภายใน ${SALES_ATTRIBUTION_REFUND_WINDOW_DAYS} วัน หักในเดือนที่เกิดรายการ ไม่ย้อนแก้เดือนที่รับเงิน`;
+
+const SALES_DEDUCTION_LABELS: Record<SalesDeductionKind, { title: string; when: string }> = {
+  REFUND: { title: 'หักจากการคืนเงิน', when: 'คืนเงินเมื่อ' },
+  DISPUTE: { title: 'หักจากข้อโต้แย้งการชำระ', when: 'เปิดข้อโต้แย้งเมื่อ' },
+};
+
+/**
+ * One deduction as a person reads it: what it is and which shop, then whose it is, which month's
+ * credit it takes back and when the money went back. Like `salesFlagLabel`, a kind added later on
+ * the API side falls back to plain words instead of reaching a person as a raw key.
+ */
+export function salesDeductionLine(deduction: SalesReportDeduction, agentName?: string): { title: string; detail: string; amount: string } {
+  const label = SALES_DEDUCTION_LABELS[deduction.kind] ?? { title: 'หักจากยอด', when: 'เกิดรายการเมื่อ' };
+  return {
+    title: `${label.title} · ${deduction.companyName || 'ไม่พบชื่อร้าน'}`,
+    detail: [agentName, `ยอดของเดือน ${formatThaiMonth(`${deduction.paidMonthKey}-01`)}`, `${label.when} ${formatThaiDate(deduction.occurredAt)}`]
+      .filter(Boolean).join(' · '),
+    amount: formatBaht(-deduction.amountSatang),
+  };
 }
 
 export function salesReportRowsOf(months: readonly SalesReportMonth[]): SalesReportRow[] {

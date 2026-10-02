@@ -9,7 +9,7 @@ import { LoadingState } from '@/common/components/state';
 import { formatThaiMonth } from '@/common/i18n/thai-date';
 import { getSalesReportSummary } from './sales.api';
 import {
-  defaultSalesReportRange, formatBaht, salesReportLeads, salesReportRangeError, salesReportRowsOf,
+  defaultSalesReportRange, formatBaht, SALES_DEDUCTION_RULE, salesDeductionLine, salesReportLeads, salesReportRangeError, salesReportRowsOf,
   salesReportTotals, sortSalesReportMonths, type SalesReportRange, type SalesReportTotals,
 } from './sales-console.logic';
 import { SalesEmpty, SalesNotice } from './SalesConsoleParts';
@@ -31,6 +31,9 @@ const COLUMNS = [
   { key: 'flaggedCount', label: 'ถูกธง' },
 ] as const;
 
+/** A figure taken below zero by deductions is never painted as a sale. */
+const amountClass = (satang: number, positive: string) => (satang < 0 ? 'text-error-700' : positive);
+
 function MonthFigures({ rows, totals }: { rows: SalesReportRow[]; totals: SalesReportTotals }) {
   return (
     <>
@@ -39,7 +42,7 @@ function MonthFigures({ rows, totals }: { rows: SalesReportRow[]; totals: SalesR
         {rows.map((row) => (
           <div key={row.salesUserId} className="rounded-xl border border-gray-200 p-3.5">
             <p className="text-[15px] font-bold text-gray-900">{row.displayName}</p>
-            <p className="mt-1 text-lg font-extrabold text-brand-800">{formatBaht(row.amountSatang)}</p>
+            <p className={`mt-1 text-lg font-extrabold ${amountClass(row.amountSatang, 'text-brand-800')}`}>{formatBaht(row.amountSatang)}</p>
             <p className="mt-0.5 text-xs text-gray-500">
               ดีลพิเศษ {row.dealActivations} ร้าน · แนะนำร้าน {row.referralActivations} ร้าน
             </p>
@@ -64,13 +67,13 @@ function MonthFigures({ rows, totals }: { rows: SalesReportRow[]; totals: SalesR
               <tr key={row.salesUserId}>
                 <th scope="row" className="font-bold text-gray-900">{row.displayName}</th>
                 {COLUMNS.map((column) => <td key={column.key} className="text-right">{row[column.key].toLocaleString('th-TH')}</td>)}
-                <td className="text-right font-bold text-gray-900">{formatBaht(row.amountSatang)}</td>
+                <td className={`text-right font-bold ${amountClass(row.amountSatang, 'text-gray-900')}`}>{formatBaht(row.amountSatang)}</td>
               </tr>
             ))}
             <tr>
               <th scope="row" className="font-bold text-gray-900">รวมทั้งเดือน</th>
               {COLUMNS.map((column) => <td key={column.key} className="text-right font-bold">{totals[column.key].toLocaleString('th-TH')}</td>)}
-              <td className="text-right font-bold text-brand-800">{formatBaht(totals.amountSatang)}</td>
+              <td className={`text-right font-bold ${amountClass(totals.amountSatang, 'text-brand-800')}`}>{formatBaht(totals.amountSatang)}</td>
             </tr>
           </tbody>
         </table>
@@ -124,7 +127,7 @@ export default function SalesReportsPage() {
       title={eventsView ? 'รายงานส่วนลดจากงาน' : ownNumbers ? 'ยอดของฉัน' : 'รายงานยอดขาย'}
       description={eventsView
         ? 'นับส่วนลดที่แจกในช่วงเดือนที่เลือก ตามงาน ชุด และเซลล์ผู้แจก'
-        : 'นับเฉพาะร้านที่เปิดใช้งานครั้งแรก ร้านละครั้งเดียว · รอบต่ออายุไม่นับ · หักคืนเงินแล้ว'}
+        : `นับเฉพาะร้านที่เปิดใช้งานครั้งแรก ร้านละครั้งเดียว · รอบต่ออายุไม่นับ · ${SALES_DEDUCTION_RULE}`}
     >
       <div role="group" aria-label="เลือกรายงาน" className="grid grid-cols-2 gap-2">
         {[{ events: false, label: 'ยอดขาย' }, { events: true, label: 'ส่วนลดจากงาน' }].map((tab) => (
@@ -170,9 +173,31 @@ export default function SalesReportsPage() {
             <MangmeeCard key={month.monthKey} className="grid gap-3 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-[15px] font-extrabold text-gray-900">{formatThaiMonth(`${month.monthKey}-01`)}</p>
-                <MangmeeBadge tone="brand">{formatBaht(month.totals.amountSatang)}</MangmeeBadge>
+                <MangmeeBadge tone={month.totals.amountSatang < 0 ? 'danger' : 'brand'}>{formatBaht(month.totals.amountSatang)}</MangmeeBadge>
               </div>
               <MonthFigures rows={month.rows} totals={month.totals} />
+              {/* Owner 2026-10-02: a refund or a lost dispute is its own line in the month it happened,
+                  with the shop and the month whose credit it takes back — stacked, so it fits 390 px. */}
+              {month.deductions.length > 0 && (
+                <div className="grid gap-2 border-t border-gray-100 pt-3">
+                  <p className="text-xs font-bold text-gray-700">รายการหักในเดือนนี้</p>
+                  <ul className="grid gap-2">
+                    {month.deductions.map((deduction, index) => {
+                      const line = salesDeductionLine(deduction,
+                        ownNumbers ? undefined : month.rows.find((row) => row.salesUserId === deduction.salesUserId)?.displayName);
+                      return (
+                        <li key={`${deduction.occurredAt}:${index}`} className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="break-words text-sm font-semibold text-gray-900">{line.title}</p>
+                            <p className="mt-0.5 text-xs text-gray-500">{line.detail}</p>
+                          </div>
+                          <p className="shrink-0 text-sm font-bold text-error-700">{line.amount}</p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
             </MangmeeCard>
           ))}
 

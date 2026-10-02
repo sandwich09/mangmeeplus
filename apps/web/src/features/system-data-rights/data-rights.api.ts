@@ -35,6 +35,15 @@ export type DataRightsCaseSummary = {
   completedAt: string | null;
   completedByUserId: string | null;
   outcomeSummary: string | null;
+  // A step the person who took the previous step took again, as the only active System Admin.
+  approvalSingleAdmin: boolean;
+  approvalSingleAdminReason: string | null;
+  executionSingleAdmin: boolean;
+  executionSingleAdminReason: string | null;
+  verificationSingleAdmin: boolean;
+  verificationSingleAdminReason: string | null;
+  completionSingleAdmin: boolean;
+  completionSingleAdminReason: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -61,6 +70,8 @@ export type DataRightsEvidenceRecord = {
   note: string | null;
   recordedByUserId: string;
   recordedAt: string;
+  singleAdmin: boolean;
+  singleAdminReason: string | null;
 };
 
 export type DataRightsActionRecord = {
@@ -79,6 +90,8 @@ export type DataRightsCaseDetail = DataRightsCaseSummary & {
   decisions: DataRightsDecisionRecord[];
   evidence: DataRightsEvidenceRecord[];
   actions: DataRightsActionRecord[];
+  /** The platform has exactly one active System Admin right now, so a self-step can be offered. */
+  singleAdminAvailable: boolean;
 };
 
 export type DataRightsCommandResult = {
@@ -188,26 +201,38 @@ export function recordDataRightsEvidence(caseId: string, input: VerificationEvid
   evidenceType: DataRightsEvidenceType;
   category?: DataRightsDecisionCategory;
   sha256: string;
+  singleAdminReason?: string;
 }) {
   return postCaseCommand(caseId, 'evidence', input);
 }
 
-export function approveDataRightsCase(caseId: string, commandId: string) {
-  return postCaseCommand(caseId, 'approve', { commandId });
+/**
+ * The three steps below, `recordDataRightsEvidence` (independent verification) and
+ * `completeDataRightsCase` take `singleAdminReason` only when the only active System Admin takes a
+ * step they would otherwise hand to a second person. It is left out of the body otherwise: the
+ * server refuses a reason on a step two different people took.
+ */
+function sameActorStep(commandId: string, singleAdminReason?: string) {
+  return { commandId, ...(singleAdminReason !== undefined && { singleAdminReason }) };
 }
 
-export function startDataRightsExecution(caseId: string, commandId: string) {
-  return postCaseCommand(caseId, 'start-execution', { commandId });
+export function approveDataRightsCase(caseId: string, commandId: string, singleAdminReason?: string) {
+  return postCaseCommand(caseId, 'approve', sameActorStep(commandId, singleAdminReason));
 }
 
-export function startDataRightsVerification(caseId: string, commandId: string) {
-  return postCaseCommand(caseId, 'start-verification', { commandId });
+export function startDataRightsExecution(caseId: string, commandId: string, singleAdminReason?: string) {
+  return postCaseCommand(caseId, 'start-execution', sameActorStep(commandId, singleAdminReason));
+}
+
+export function startDataRightsVerification(caseId: string, commandId: string, singleAdminReason?: string) {
+  return postCaseCommand(caseId, 'start-verification', sameActorStep(commandId, singleAdminReason));
 }
 
 export function completeDataRightsCase(caseId: string, input: {
   commandId: string;
   outcome: 'COMPLETED' | 'COMPLETED_WITH_EXCEPTION';
   outcomeSummary: string;
+  singleAdminReason?: string;
 }) {
   return postCaseCommand(caseId, 'complete', input);
 }
