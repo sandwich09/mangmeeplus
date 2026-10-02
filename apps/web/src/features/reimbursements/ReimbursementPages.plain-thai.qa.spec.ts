@@ -452,6 +452,39 @@ describe('the hub search is asked of the API, and the cards count what it found 
   });
 });
 
+// The three lists were tables forced to 980 px from 768 px up. A 1280 px screen leaves their card 901 px (the side menu takes
+// the rest), so the table scrolled sideways inside its card and hid its action column; at 1024 and 768 px by more.
+describe('a hub list is a table only where its card is wide enough for it, and cards below (owner 2026-10-02)', () => {
+  const lists = [['mine', '80rem'], ['approvals', '70rem'], ['finance', '58rem']] as const;
+  const html = (tab: string) => hubTab(tab, [{ ...queueRow, status: 'PENDING_APPROVAL', reason: 'ค่าเดินทางไปพบลูกค้า', approvalActions: { canApprove: true, canReject: true } }]);
+
+  it('switches by the width of the card that holds it, never by the screen, and forces no width on the table', () => {
+    for (const [tab, width] of lists) {
+      const page = html(tab);
+      // The table and its cards sit in one box that is their container; each names the width the table needs.
+      assert.match(page, new RegExp(`<div class="\\[container-type:inline-size\\]"><div class="hidden @\\[${width}\\]:block" data-testid="reimbursements-${tab}-table">`, 'u'), tab);
+      assert.match(page, new RegExp(`<div class="mt-3 grid gap-3 @\\[44rem\\]:grid-cols-2 @\\[${width}\\]:hidden" data-testid="reimbursements-${tab}-card-list">`, 'u'), tab);
+      const table = page.slice(page.indexOf(`data-testid="reimbursements-${tab}-table"`), page.indexOf(`data-testid="reimbursements-${tab}-card-list"`));
+      // Only free text wraps; no forced width and no max-content scroller around it.
+      assert.match(table, /<div class="mt-3 overflow-x-auto"><table class="mangmee-table \[&amp;_td\]:whitespace-nowrap \[&amp;_th\]:whitespace-nowrap">/u, tab);
+      assert.doesNotMatch(table, /min-w-\[980px\]|mangmee-table-scroll|md:block/u, tab);
+    }
+  });
+
+  it('says on a card what its table row says of the claim: the reason to an approver, the review to a finance desk', () => {
+    const cards = (page: string, tab: string) => visible(page.slice(page.indexOf(`data-testid="reimbursements-${tab}-card-list"`)));
+    assert.ok(cards(html('approvals'), 'approvals').includes('ค่าเดินทางไปพบลูกค้า'), 'the reason, which the approval card left out');
+    const review = { ...queueRow, financeReviewStatus: 'BLOCKED' };
+    assert.ok(cards(hubTab('finance', [review], undefined, {}, '', true), 'finance').some((text) => text.includes('ระงับ')), 'the review state');
+  });
+
+  it('names what each queue\'s search box finds, short enough for a 390 px phone and true of cards', () => {
+    assert.match(html('approvals'), /placeholder="ค้นหาเลขที่ ผู้เบิก เหตุผล ยอดเงิน"/u);
+    assert.match(html('finance'), /placeholder="ค้นหาเลขที่ ผู้เบิก ยอดเงิน สถานะ"/u);
+    for (const [tab] of lists) assert.doesNotMatch(html(tab), /ในตาราง/u, tab);
+  });
+});
+
 // Audit B20: a viewer who may only reject was offered อนุมัติ on every queue row, and the API answered 403.
 describe('the approval queue offers only what the server says this viewer can do', () => {
   const row = (approvalActions?: { canApprove: boolean; canReject: boolean }) => ({ ...queueRow, status: 'PENDING_APPROVAL', approvalActions });

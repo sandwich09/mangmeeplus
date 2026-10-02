@@ -65,6 +65,9 @@ const CARD_VIEW_CASES = [
     // parity test was failing on develop too. Corrected rather than left red, since a test
     // nobody trusts is worse than no test.
     columnCount: 9,
+    // The hub's lists switch by the width of their own card, and the nine-column table needs 1280 px of it:
+    // on a 1280 px screen the side menu leaves 901 px, where the list is cards and no table scrolls sideways.
+    desktopViewport: { width: 1920, height: 1080 },
   },
   {
     route: '/expenses',
@@ -791,6 +794,7 @@ test.describe('Desktop card-view parity', () => {
 
   for (const cardView of CARD_VIEW_CASES) {
     test(`${cardView.route} — INV-7 desktop table view`, async ({ authedPage, companyId }) => {
+      if ('desktopViewport' in cardView) await authedPage.setViewportSize(cardView.desktopViewport);
       await gotoAndSettle(authedPage, companyId, cardView.route);
 
       const table = authedPage.getByTestId(cardView.tableTestId);

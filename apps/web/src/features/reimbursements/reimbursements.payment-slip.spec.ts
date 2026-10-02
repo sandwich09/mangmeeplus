@@ -402,7 +402,7 @@ describe('quick pay from the finance queue', () => {
     assert.deepEqual(quickPayTarget('table', 'co-1', 'rb-1'), { kind: 'dialog' });
     const hub = sourceOf('ReimbursementsPages.tsx');
     // The two layouts are the page's own: cards below md, the table from md. Each button names its own.
-    assert.match(hub, /<div className="hidden md:block" data-testid="reimbursements-finance-table">[\s\S]*?onRecordPayment\(r, 'table'\)[\s\S]*?<div className="mt-3 space-y-3 md:hidden" data-testid="reimbursements-finance-card-list">[\s\S]*?onRecordPayment\(r, 'cards'\)/);
+    assert.match(hub, /data-testid="reimbursements-finance-table">[\s\S]*?onRecordPayment\(r, 'table'\)[\s\S]*?data-testid="reimbursements-finance-card-list">[\s\S]*?onRecordPayment\(r, 'cards'\)/);
     assert.equal(hub.match(/onRecordPayment\(r, '(?:cards|table)'\)/g)?.length, 2);
     assert.doesNotMatch(hub, /matchMedia|innerWidth/, 'no second measurement of the screen');
   });

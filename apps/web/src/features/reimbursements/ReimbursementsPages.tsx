@@ -73,6 +73,18 @@ const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' |
   return option.name === STANDARD_ROLE_NAMES[option.key] ? (APPROVER_ROLE_LABELS[option.key] ?? option.name) : option.name;
 };
 const shortDate = (iso?: string) => dateShort(iso);
+/*
+ * A queue is a table where the card that holds it is wide enough for the table, and cards below that: the fix of
+ * the claim lines (2026-10-01), by the card's own width. The side menu takes its share of the screen, so a 1280 px
+ * screen leaves a 901 px card, where a table forced to 980 px scrolled sideways and hid its action column.
+ * Each list names the width its table reads at (`@[…rem]:`), measured with nothing but free text wrapping.
+ */
+/** A queue's table: only a cell of free text wraps, so a number, an amount or a badge is never broken over lines. */
+const QUEUE_TABLE_CLASS = 'mangmee-table [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap';
+/** A cell of free text (a name, a reason, a category): it wraps, inside a word if it must, and keeps room to be read. */
+const FREE_TEXT_CELL = '!whitespace-normal [overflow-wrap:anywhere]';
+/** A queue's cards: one column on a phone, two once the card that holds them is as wide as two phones. */
+const QUEUE_CARDS_CLASS = 'mt-3 grid gap-3 @[44rem]:grid-cols-2';
 /** A claim never said whose desk it sits on. Terminal claims have none, and render nothing. */
 function CurrentDeskLine({ row }: { row: { currentDesk?: { kind?: string; names?: string[] } } }) {
   const desk = claimDeskText(row);
@@ -395,11 +407,10 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                 </div>
               )
             ) : (
-              <>
-            <div className="hidden md:block" data-testid="reimbursements-mine-table">
+            <div className="[container-type:inline-size]">
+            <div className="hidden @[80rem]:block" data-testid="reimbursements-mine-table">
             <div className="mt-3 overflow-x-auto">
-              <div className="min-w-[980px]">
-                <table className="mangmee-table">
+                <table className={QUEUE_TABLE_CLASS}>
                   <thead>
                     <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">เหตุผล</th><th className="!text-center">หมวด</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">การจ่าย</th><th className="!text-center">การกระทำ</th></tr>
                   </thead>
@@ -407,9 +418,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                     {pagedData.map((r: any) => (
                       <tr key={r.id} className="cursor-pointer" onClick={() => onOpenDetail(r.id)}>
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
-                        <td>{r.requesterDisplayNameSnapshot ?? '—'}</td>
-                        <td>{r.reason}</td>
-                        <td className="text-gray-500">{categoryText(r.categoryLabelSnapshot)}</td>
+                        <td className={cx(FREE_TEXT_CELL, 'min-w-24')}>{r.requesterDisplayNameSnapshot ?? '—'}</td>
+                        <td className={cx(FREE_TEXT_CELL, 'min-w-40')}>{r.reason}</td>
+                        <td className={cx(FREE_TEXT_CELL, 'min-w-20 text-gray-500')}>{categoryText(r.categoryLabelSnapshot)}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
                         <td><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} /></td>
@@ -435,10 +446,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                     ))}
                   </tbody>
                 </table>
-              </div>
             </div>
             </div>
-            <div className="mt-3 space-y-3 md:hidden" data-testid="reimbursements-mine-card-list">
+            <div className={cx(QUEUE_CARDS_CLASS, '@[80rem]:hidden')} data-testid="reimbursements-mine-card-list">
               {pagedData.map((r: any) => (
                 <MangmeeCard key={r.id} className="relative p-4">
                   <Link
@@ -474,7 +484,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                 </MangmeeCard>
               ))}
             </div>
-            </>
+            </div>
             )}
             <TablePager from={bounds.from} to={bounds.to} total={shownTotal}
               page={bounds.page} totalPages={bounds.totalPages} onPage={setPage} />
@@ -559,7 +569,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
               </div>
               <div className="relative w-full sm:max-w-96">
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                  placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้เบิก จำนวนเงิน สถานะ"
+                  placeholder="ค้นหาเลขที่ ผู้เบิก เหตุผล ยอดเงิน"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
                   {ICON.search}
@@ -574,27 +584,19 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                 />
               </div>
             ) : (
-              <>
-            <div className="hidden md:block" data-testid="reimbursements-approvals-table">
+            <div className="[container-type:inline-size]">
+            <div className="hidden @[70rem]:block" data-testid="reimbursements-approvals-table">
             <div className="mt-3 overflow-x-auto">
-              <div className="min-w-[980px]">
-                <table className="mangmee-table">
+                <table className={QUEUE_TABLE_CLASS}>
                   <thead>
                     <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">เหตุผล</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">อายุ</th><th className="!text-center">การกระทำ</th></tr>
                   </thead>
                   <tbody>
-                    {filteredData.length === 0 ? (
-                      <tr><td colSpan={7}>
-                        <EmptyState
-                          title={data.length === 0 ? 'ไม่มีรายการรออนุมัติ' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
-                          description={data.length === 0 ? 'คำขอที่รอคุณอนุมัติจะแสดงที่นี่' : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
-                        />
-                      </td></tr>
-                    ) : pagedData.map((r: any) => (
+                    {pagedData.map((r: any) => (
                       <tr key={r.id} className="cursor-pointer" onClick={() => onOpenDetail(r.id)}>
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
-                        <td>{r.requesterDisplayNameSnapshot}</td>
-                        <td>{r.reason}</td>
+                        <td className={cx(FREE_TEXT_CELL, 'min-w-24')}>{r.requesterDisplayNameSnapshot}</td>
+                        <td className={cx(FREE_TEXT_CELL, 'min-w-40')}>{r.reason}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
                         <td className="text-right">
@@ -624,16 +626,17 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                     ))}
                   </tbody>
                 </table>
-              </div>
             </div>
             </div>
-            <div className="mt-3 space-y-3 md:hidden" data-testid="reimbursements-approvals-card-list">
+            <div className={cx(QUEUE_CARDS_CLASS, '@[70rem]:hidden')} data-testid="reimbursements-approvals-card-list">
               {pagedData.map((r: any) => (
                 <MangmeeCard key={r.id} className="p-4">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{r.requestNo ?? '—'}</span>
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{r.requesterDisplayNameSnapshot}</span>
                   </div>
+                  {/* The table's reason column: the card is what a laptop with the side menu open shows too. */}
+                  <div className="mt-1 line-clamp-2 text-sm text-gray-700 [overflow-wrap:anywhere]">{r.reason}</div>
                   <CurrentDeskLine row={r} />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -652,7 +655,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                 </MangmeeCard>
               ))}
             </div>
-            </>
+            </div>
             )}
             <TablePager from={bounds.from} to={bounds.to} total={filteredData.length}
               page={bounds.page} totalPages={bounds.totalPages} onPage={setPage} />
@@ -774,7 +777,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
               </div>
               <div className="relative w-full sm:max-w-96">
                 <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
-                  placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้เบิก จำนวนเงิน สถานะ"
+                  placeholder="ค้นหาเลขที่ ผู้เบิก ยอดเงิน สถานะ"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
                   {ICON.search}
@@ -789,11 +792,10 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                 />
               </div>
             ) : (
-              <>
-            <div className="hidden md:block" data-testid="reimbursements-finance-table">
+            <div className="[container-type:inline-size]">
+            <div className="hidden @[58rem]:block" data-testid="reimbursements-finance-table">
             <div className="mt-3 overflow-x-auto">
-              <div className="min-w-[980px]">
-                <table className="mangmee-table">
+                <table className={QUEUE_TABLE_CLASS}>
                   <thead>
                     <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้เบิก</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th>{withReview && <th className="!text-center">ตรวจการเงิน</th>}<th className="!text-center">การกระทำ</th></tr>
                   </thead>
@@ -801,7 +803,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                     {pagedData.map((r: any) => (
                       <tr key={r.id} className="cursor-pointer" onClick={() => onOpenDetail(r.id)}>
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
-                        <td>{r.requesterDisplayNameSnapshot}</td>
+                        <td className={cx(FREE_TEXT_CELL, 'min-w-24')}>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
                         <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}</div></td>
@@ -821,10 +823,9 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                     ))}
                   </tbody>
                 </table>
-              </div>
             </div>
             </div>
-            <div className="mt-3 space-y-3 md:hidden" data-testid="reimbursements-finance-card-list">
+            <div className={cx(QUEUE_CARDS_CLASS, '@[58rem]:hidden')} data-testid="reimbursements-finance-card-list">
               {pagedData.map((r: any) => (
                 <MangmeeCard key={r.id} className="p-4">
                   <div className="flex min-w-0 items-center gap-2">
@@ -832,6 +833,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{r.requesterDisplayNameSnapshot}</span>
                   </div>
                   <CurrentDeskLine row={r} />
+                  {withReview && <div className="mt-1 truncate text-xs text-gray-500">ตรวจการเงิน: {FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</div>}
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
@@ -848,7 +850,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                 </MangmeeCard>
               ))}
             </div>
-            </>
+            </div>
             )}
             <TablePager from={bounds.from} to={bounds.to} total={filteredData.length}
               page={bounds.page} totalPages={bounds.totalPages} onPage={setPage} />
