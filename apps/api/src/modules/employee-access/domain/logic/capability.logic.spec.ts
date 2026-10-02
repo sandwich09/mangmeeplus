@@ -67,6 +67,36 @@ describe('capability-pack registry integrity', () => {
     assert.deepEqual(COMPANY_ROLE_BACKFILLS.filter((backfill) => backfill.anchor === 'reimbursement.approve').map((backfill) => backfill.key), pay);
   });
 
+  // The role page prints each description under its choice and tells the owner it says what the choice lets a
+  // person see, change, approve or pay. "อนุมัติการเบิก" said "ดูและอนุมัติ/ปฏิเสธ" while it also paid and
+  // took payments back, and the two finance choices said nothing of acting on other people's claims.
+  it('says in plain Thai everything a claim pack lets its holder do, and nothing it does not', () => {
+    const says: Array<[string, RegExp]> = [
+      ['reimbursement.approve', /อนุมัติ/], ['reimbursement.reject', /ปฏิเสธ/],
+      ['reimbursement.payment.record', /บันทึกจ่าย/], ['reimbursement.payment.void', /ยกเลิกการจ่าย/],
+      ['reimbursement.finance_review', /ตรวจการเงิน/], ['reimbursement.duplicate.resolve', /ปลดรายการซ้ำ/],
+      ['reimbursement.export', /ส่งออก/], ['reimbursement.policy.manage', /ตั้งนโยบาย/],
+    ];
+    const claimPacks = CAPABILITY_PACKS.filter((pack) => pack.module === 'reimbursement');
+    assert.deepEqual(claimPacks.map((pack) => pack.key),
+      ['pack.reimbursement.self', 'pack.reimbursement.approve', 'pack.reimbursement.review', 'pack.reimbursement.finance', 'pack.reimbursement.policy']);
+    for (const pack of claimPacks) {
+      for (const [key, words] of says) {
+        if (pack.permissionKeys.includes(key)) assert.match(pack.description, words, `${pack.key} grants ${key} and does not say so`);
+        // A thing the pack does not give is named only to say so ("แต่บันทึกจ่ายและยกเลิกการจ่ายไม่ได้").
+        else if (words.test(pack.description)) assert.match(pack.description, new RegExp(`แต่.*${words.source}.*ไม่ได้`), `${pack.key} names ${key} without granting it`);
+      }
+      // The finance-review right reaches other people's claims (prepare, edit, send, cancel): said, or not held.
+      assert.equal(/แทนผู้เบิก/.test(pack.description), pack.permissionKeys.includes('reimbursement.finance_review'), pack.key);
+      // What a shop reads: no English word, id or code.
+      assert.doesNotMatch(pack.description, /[A-Za-z_]/, pack.key);
+      // A choice is still found by its name alone: no other choice's text carries it.
+      assert.deepEqual(CAPABILITY_PACKS.filter((other) => other.key !== pack.key && `${other.nameTh} ${other.description}`.includes(pack.nameTh)).map((other) => other.key), [], pack.nameTh);
+    }
+    const approve = CAPABILITY_PACK_BY_KEY.get('pack.reimbursement.approve')!;
+    assert.equal(approve.description, 'ดู อนุมัติ และปฏิเสธคำขอเบิก รวมทั้งบันทึกจ่ายเงินคืนและยกเลิกการจ่าย');
+  });
+
   // The foundation toggles are enforced by submenu rules, not by tagging these packs. Tagging
   // them would strip everything else they carry — most damagingly attachment.create, which is
   // granted by no other pack and guards every upload endpoint in the product.
