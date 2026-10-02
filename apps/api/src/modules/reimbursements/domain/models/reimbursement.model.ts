@@ -193,6 +193,13 @@ export type ReimbursementPayoutCorrectionLogEntry = {
   /** ACCOUNT_SUBMITTED: what the claim was given. */
   payoutMethod?: ReimbursementPayoutMethod;
   payoutVersion?: number;
+  /**
+   * ACCOUNT_SUBMITTED: what was given is the very destination the claim was approved with when the round
+   * began (the same account by its stored fingerprint, or cash both times). Decided once, in the
+   * transaction that takes the answer, so a list row can say it without a query. An entry without the
+   * key reads as not the same.
+   */
+  sameAsApproved?: true;
   /** REAPPROVED: the step that approved the account. */
   approvalStepId?: string;
 };

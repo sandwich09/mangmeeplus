@@ -726,7 +726,9 @@ Who may set someone else's default account (`payoutAccountEditRefusal`), beyond 
 
 The account owner is told every time someone else sets their account, in the same transaction
 (`reimbursement.payout_account_set_by_other`, critical, never dropped by a saved preference list). The same
-notice goes to the requester when someone else types an account into a claim filed for them.
+notice goes to the requester when someone else types an account into a claim filed for them. In a
+payout correction round the requester is told of every answer someone else gives for them, whatever was chosen
+(an account typed, their default account, the account the claim had, or cash), once per answer.
 
 Who may see a claim's full account number (`payoutRevealGroup`). The claim must carry an account of its
 own: a transfer claim sent with a payout snapshot, or a draft with an account typed into it. A cash claim

@@ -193,13 +193,16 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'approval_sla_breach',
     name: 'Approval SLA breach',
-    description: 'Escalate to owner/manager when a pending reimbursement approval exceeds the policy SLA age.',
+    description: 'Remind the approvers of a claim (the shop owner only when none of them can act) when it has waited for approval longer than the policy SLA age.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'SLA_SCAN',
     defaultConditionJson: { field: 'slaRisk', op: 'EQ', value: true },
     defaultActionJson: [
-      { actionKey: 'escalate_sla', actionType: 'SEND_NOTIFICATION', configJson: { triggerKey: 'workflow.approval_sla_breach', recipientPayloadKeys: ['approverRecipientUserIds', 'ownerRecipientUserIds'], severity: 'critical' } },
+      // Owner decision 2026-10-02: to the claim's approvers only. The owner was added to every reminder
+      // (`ownerRecipientUserIds`), whoever the approvers were. The scan names the owner AS the approvers
+      // when none of them can act any more, which is the one case the owner is told.
+      { actionKey: 'escalate_sla', actionType: 'SEND_NOTIFICATION', configJson: { triggerKey: 'workflow.approval_sla_breach', recipientPayloadKeys: ['approverRecipientUserIds'], severity: 'critical' } },
       { actionKey: 'create_escalation_task', actionType: 'CREATE_WORKFLOW_TASK', configJson: { titleTemplate: 'ใบเบิกรออนุมัติเกินกำหนด: {{requestNo}}', priority: 'CRITICAL', assigneeUserPayloadKey: 'approverTaskUserId', assigneeRolePayloadKey: 'approverTaskRole' } },
     ],
     requiredPermissions: ['reimbursement.approve'],
@@ -324,7 +327,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'reimbursement_finance_review',
     name: 'Reimbursement finance review',
-    description: 'Notify everyone who can run finance review when a claim is blocked.',
+    description: 'Notify the people who can run finance review on the claim (the shop owner only when nobody else can) when a claim is blocked.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -338,6 +341,9 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
         configJson: {
           triggerKey: 'workflow.reimbursement_finance_review',
           recipientPermissions: ['reimbursement.finance_review'],
+          // Owner decision 2026-10-02, the rule of the arrival notice below: to the reviewers who can act
+          // on the claim's branch, and to the shop owner only when nobody else can review the claim.
+          lastResortRecipientRoles: ['OWNER'],
           severity: 'action',
           titleTemplate: 'ตรวจสอบการเงินเบิกจ่าย: {{requestNo}}',
           bodyTemplate: 'ผลตรวจสอบ: {{decision}} · ยอด {{amount}} {{currency}}',
@@ -363,7 +369,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     // finance decision, i.e. on finance's own action.
     key: 'reimbursement_finance_review_pending',
     name: 'Reimbursement awaiting finance review',
-    description: 'Notify everyone who can run finance review when an approved claim arrives at the finance desk.',
+    description: 'Notify the people who can run finance review on the claim (the shop owner only when nobody else can) when a claim arrives at the finance desk.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -377,16 +383,20 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
         configJson: {
           triggerKey: 'workflow.reimbursement_finance_review',
           recipientPermissions: ['reimbursement.finance_review'],
+          // Owner decision 2026-10-02: to the people who review at the finance desk and can act on the
+          // claim's branch, not to the shop owner, who holds every right and was told of every claim of
+          // every branch. The owner is told only where nobody else can review the claim.
+          lastResortRecipientRoles: ['OWNER'],
           severity: 'action',
           titleTemplate: 'ใบเบิกรอตรวจสอบการเงิน: {{requestNo}}',
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รอตรวจสอบการเงิน',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
-          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
-          // own action — a solo owner submitting/approving/paying their own claim gets none of
-          // these pushes. An owner-only company excluding the sole recipient is expected, not a
-          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
-          excludeRecipientPayloadKeys: ['actorUserId'],
-          skipWhenAllRecipientsExcluded: true,
+          // NO actor exclusion, as for the ready-to-pay notice below (owner decision 2026-10-02). Whoever
+          // put the claim on this desk (the approver, or the sender of a claim nobody approves) may review
+          // finance themselves: the review is then their own next task. Left out as the actor, with the
+          // owner no longer told in their place, a shop whose approver is its one finance reviewer told
+          // nobody. They get the notice in the web bell only: no LINE push about what one has just done.
+          webOnlyRecipientPayloadKeys: ['actorUserId'],
         },
       },
     ],
@@ -543,10 +553,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           triggerKey: 'workflow.reimbursement_payout_correction_requested',
           recipientPayloadKeys: ['requesterUserId'],
           severity: 'action',
-          titleTemplate: 'ใบเบิกต้องแก้บัญชีรับเงิน: {{requestNo}}',
-          // The sentence the event itself carries, built where the claim is sent back: the reason in the
-          // words of the fixed list. Nothing here assembles it, so no rule can print a code word, and the
-          // note a person typed is in no notice at all.
+          // The title and the body are the sentences the event itself carries, built in contracts where the
+          // claim is sent back (`reimbursementPayoutSentBackNotice`), from what the claim held at that moment:
+          // an account is corrected ("ใบเบิกต้องแก้บัญชีรับเงิน"), a missing one added, cash chosen again. The
+          // body is the reason in the words of the fixed list and what to do. Nothing here assembles a
+          // sentence, so no rule can print a code word or say "แก้บัญชี" of a claim with no account, and
+          // the note a person typed is in no notice at all.
+          titleTemplate: '{{payoutCorrectionTitle}}: {{requestNo}}',
           bodyTemplate: '{{payoutCorrectionNotice}}',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // Step-journey spec §11 (AC11): a requester who asked for their own account to be changed is
@@ -581,8 +594,11 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           triggerKey: 'workflow.reimbursement_payout_correction_submitted',
           recipientPayloadKeys: ['approverRecipientUserIds'],
           severity: 'action',
-          titleTemplate: 'รออนุมัติบัญชีรับเงินใหม่: {{requestNo}}',
-          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่',
+          // The title is the claim's own status label and the end of the body names the same thing, both from
+          // the event (`reimbursementPayoutAnswerNotice`), by what the requester answered: another account
+          // ("รออนุมัติบัญชีรับเงินใหม่"), the same account, a first account, or cash.
+          titleTemplate: '{{payoutAnswerTitle}}: {{requestNo}}',
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · {{payoutAnswerNotice}}',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // Step-journey spec §11 (AC11): a requester who is their own approver gave the account
           // themselves, and is not told so.

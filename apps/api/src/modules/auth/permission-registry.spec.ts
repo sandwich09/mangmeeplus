@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { COMPANY_PERMISSION_KEYS, PERMISSIONS, PERMISSION_KEYS, PLATFORM_ROLE_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS, ROLE_GRANTS, SYSTEM_ROLES } from './permission-registry';
+import { COMPANY_PERMISSION_KEYS, PERMISSIONS, PERMISSION_KEYS, PLATFORM_ONLY_ROLE_KEYS, PLATFORM_ROLE_KEYS, REIMBURSEMENT_SELF_SERVICE_PERMISSIONS, ROLE_GRANTS, SYSTEM_ROLES } from './permission-registry';
 import { REQUIRED_ANY_PERMISSIONS_KEY } from '../../common/security/permissions.decorator';
 import { AccessCatalogController } from '../employee-access/presentation/http/access-catalog.controller';
 import { EmployeeController } from '../employee-access/presentation/http/employee.controller';
@@ -286,6 +286,15 @@ describe('permission-registry', () => {
       assert.equal(ROLE_GRANTS.OWNER!.includes(key), false, `OWNER must not hold ${key}`);
       // S06: the shop's own SALES role must never pick up a platform sales authority.
       assert.equal(ROLE_GRANTS.SALES!.includes(key), false, `tenant SALES must not hold ${key}`);
+    }
+  });
+
+  // Owner report 2026-10-02: the role page prints a role's description under its title, and a shop
+  // read "Accounting access" there. A shop is listed every system role except the platform-only ones.
+  it('describes every role a shop is listed in Thai', () => {
+    for (const role of SYSTEM_ROLES.filter(({ key }) => !PLATFORM_ONLY_ROLE_KEYS.includes(key))) {
+      assert.match(role.description, /[ก-๙]/, `${role.key} has no Thai description`);
+      assert.doesNotMatch(role.description, /[A-Za-z]/, `${role.key}: "${role.description}"`);
     }
   });
 

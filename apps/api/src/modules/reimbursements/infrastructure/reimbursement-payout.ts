@@ -514,6 +514,21 @@ export async function claimPayoutMatchesVersion(client: any, claim: ClaimPayoutP
 }
 
 /**
+ * Whether what a round's answer froze (`columns`) is the very destination the claim was approved with
+ * when the round began (`start`): cash both times, or the same account by `claimPayoutMatchesVersion`.
+ * Asked ONCE, inside the transaction that takes the answer, and kept on the round's log entry
+ * (`sameAsApproved`): a list row, a queue row, a notice and the LINE backlog then say "the same account"
+ * without a query each (payout spec §14.6). A claim that had no account, or changed its method, kept nothing.
+ */
+export async function payoutCorrectionKeptDestination(
+  tx: any, claim: ClaimPayoutPointer, columns: SubmitPayoutColumns, start: { payoutMethod?: string; payoutVersion?: number } | undefined,
+): Promise<boolean> {
+  if (start?.payoutMethod === 'CASH') return columns.payoutMethod === 'CASH';
+  if (start?.payoutMethod !== 'BANK_TRANSFER' || start.payoutVersion === undefined) return false;
+  return claimPayoutMatchesVersion(tx, { ...claim, ...columns }, start.payoutVersion);
+}
+
+/**
  * A legacy claim's payer is shown the REQUESTER's default account as it is now (spec §15): masked,
  * with the token that names it. Null when the requester has no account to transfer into (no default,
  * or a cash default). The caller has already established that the claim is legacy and payable and

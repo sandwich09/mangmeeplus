@@ -9,8 +9,9 @@ import { LoadingState } from '@/common/components/state';
 import { formatThaiMonth } from '@/common/i18n/thai-date';
 import { getSalesReportSummary } from './sales.api';
 import {
-  defaultSalesReportRange, formatBaht, SALES_DEDUCTION_RULE, salesDeductionLine, salesReportLeads, salesReportRangeError, salesReportRowsOf,
-  salesReportTotals, sortSalesReportMonths, type SalesReportRange, type SalesReportTotals,
+  defaultSalesReportRange, formatBaht, SALES_DEDUCTION_RULE, SALES_WAITING, SALES_WAITING_NOTE, salesDeductionLine, salesReportLeads,
+  salesReportRangeError, salesReportRowsOf, salesReportTotals, salesWaitingLine, salesWaitingNotice, sortSalesReportMonths,
+  type SalesReportRange, type SalesReportTotals,
 } from './sales-console.logic';
 import { SalesEmpty, SalesNotice } from './SalesConsoleParts';
 import SalesEventReportSection from './SalesEventReportSection';
@@ -28,7 +29,8 @@ import SalesEventReportSection from './SalesEventReportSection';
 const COLUMNS = [
   { key: 'dealActivations', label: 'ดีลพิเศษ' },
   { key: 'referralActivations', label: 'แนะนำร้าน' },
-  { key: 'flaggedCount', label: 'ถูกธง' },
+  // Owner 2026-10-02: a shop waiting for review is in neither column before it; it is its own count.
+  { key: 'flaggedCount', label: SALES_WAITING },
 ] as const;
 
 /** A figure taken below zero by deductions is never painted as a sale. */
@@ -47,7 +49,7 @@ function MonthFigures({ rows, totals }: { rows: SalesReportRow[]; totals: SalesR
               ดีลพิเศษ {row.dealActivations} ร้าน · แนะนำร้าน {row.referralActivations} ร้าน
             </p>
             {row.flaggedCount > 0 && (
-              <p className="mt-1 text-xs font-semibold text-warning-700">ถูกธง {row.flaggedCount} ร้าน · ยังไม่นับในยอด</p>
+              <p className="mt-1 text-xs font-semibold text-warning-700">{SALES_WAITING} {row.flaggedCount} ร้าน · {SALES_WAITING_NOTE}</p>
             )}
           </div>
         ))}
@@ -176,6 +178,26 @@ export default function SalesReportsPage() {
                 <MangmeeBadge tone={month.totals.amountSatang < 0 ? 'danger' : 'brand'}>{formatBaht(month.totals.amountSatang)}</MangmeeBadge>
               </div>
               <MonthFigures rows={month.rows} totals={month.totals} />
+              {/* Owner 2026-10-02: a shop waiting for review is no opened shop yet. It is named here, in
+                  the month it will count in, with why it waits, so whoever reads the report sees which
+                  shop is held back and why. */}
+              {month.waiting.length > 0 && (
+                <div className="grid gap-2 border-t border-gray-100 pt-3">
+                  <p className="text-xs font-bold text-gray-700">ร้านที่{SALES_WAITING} · {SALES_WAITING_NOTE}</p>
+                  <ul className="grid gap-2">
+                    {month.waiting.map((waiting, index) => {
+                      const line = salesWaitingLine(waiting,
+                        ownNumbers ? undefined : month.rows.find((row) => row.salesUserId === waiting.salesUserId)?.displayName);
+                      return (
+                        <li key={`${waiting.companyName}:${index}`}>
+                          <p className="text-sm font-semibold text-gray-900 [overflow-wrap:anywhere]">{line.title}</p>
+                          <p className="mt-0.5 text-xs text-warning-700 [overflow-wrap:anywhere]">{line.detail}</p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
               {/* Owner 2026-10-02: a refund or a lost dispute is its own line in the month it happened,
                   with the shop and the month whose credit it takes back — stacked, so it fits 390 px. */}
               {month.deductions.length > 0 && (
@@ -201,11 +223,7 @@ export default function SalesReportsPage() {
             </MangmeeCard>
           ))}
 
-      {totals.flaggedCount > 0 && (
-        <SalesNotice tone="warning">
-          มี {totals.flaggedCount.toLocaleString('th-TH')} ร้านที่ระบบตั้งธงไว้และยังไม่นับรวมในยอด ผู้ดูแลระบบเป็นผู้ตรวจ
-        </SalesNotice>
-      )}
+      {totals.flaggedCount > 0 && <SalesNotice tone="warning">{salesWaitingNotice(totals.flaggedCount)}</SalesNotice>}
       </>}
     </MangmeePage>
   );

@@ -569,19 +569,24 @@ describe('claim form payout line', () => {
     }
   });
 
-  // Payout spec §17.1: while a claim's payout account is being corrected the form prints no account at all.
-  it('says อยู่ระหว่างแก้ไขบัญชีรับเงิน for a claim whose account is being corrected: one line, no account, no attestation', () => {
-    const correcting = snapshot({ payout: { method: 'CORRECTION_IN_PROGRESS' }, signers: { ...snapshot().signers, approver: null }, repayment: null });
+  // Payout spec §17.1: while a claim is in a round the form prints no account at all. The line says what the claim
+  // waits for, in the words of the claim page's badge, which the use case hands in: a claim with no account, or one that
+  // asked for cash, is not said to have its "บัญชีรับเงิน" under correction.
+  it('says what a claim in a round waits for on the รับเงินคืนทาง line: one line, no account, no attestation', () => {
     const [plain] = bothRenderings(snapshot({ signers: { ...snapshot().signers, approver: null }, repayment: null })) as [string];
-    for (const artifact of bothRenderings(correcting)) {
-      assert.deepEqual(payoutBlocks(artifact)[0]!.lines, ['รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน']);
-      assert.doesNotMatch(artifact, /ผู้ตรวจบัญชี|ชื่อบัญชี|เลขบัญชี|พร้อมเพย์|ลงท้าย|รับเป็นเงินสด|มานี ผู้จัดการ/);
+    for (const status of ['รอผู้เบิกแก้บัญชีรับเงิน', 'รอผู้เบิกเพิ่มบัญชีรับเงิน', 'รอผู้เบิกเลือกวิธีรับเงินคืน',
+      'รออนุมัติบัญชีรับเงินใหม่', 'รออนุมัติบัญชีรับเงินเดิม', 'รออนุมัติบัญชีรับเงิน', 'รออนุมัติการรับเป็นเงินสด', 'รออนุมัติวิธีรับเงินคืน']) {
+      const correcting = snapshot({ payout: { method: 'CORRECTION_IN_PROGRESS', status }, signers: { ...snapshot().signers, approver: null }, repayment: null });
+      for (const artifact of bothRenderings(correcting)) {
+        assert.deepEqual(payoutBlocks(artifact)[0]!.lines, [`รับเงินคืนทาง: ${status}`]);
+        assert.doesNotMatch(artifact, /ผู้ตรวจบัญชี|ชื่อบัญชี|เลขบัญชี|พร้อมเพย์|ลงท้าย|มานี ผู้จัดการ|อยู่ระหว่างแก้ไข/, status);
+      }
+      // One line of its own height, like the cash line.
+      assert.deepEqual([tableTop(plain), tableTop(bothRenderings(correcting)[0]!)], [218, 240], status);
     }
-    // One line of its own height, like the cash line.
-    assert.deepEqual([tableTop(plain), tableTop(bothRenderings(correcting)[0]!)], [218, 240]);
     // The four-block form prints no receiving line at all, in a round as otherwise.
-    for (const artifact of bothRenderings(snapshot({ layout: 'LEGACY_FOUR_SIGNERS', payout: { method: 'CORRECTION_IN_PROGRESS' } }))) {
-      assert.doesNotMatch(artifact, /รับเงินคืนทาง|อยู่ระหว่างแก้ไข/);
+    for (const artifact of bothRenderings(snapshot({ layout: 'LEGACY_FOUR_SIGNERS', payout: { method: 'CORRECTION_IN_PROGRESS', status: 'รอผู้เบิกแก้บัญชีรับเงิน' } }))) {
+      assert.doesNotMatch(artifact, /รับเงินคืนทาง|รอผู้เบิก/);
     }
   });
 

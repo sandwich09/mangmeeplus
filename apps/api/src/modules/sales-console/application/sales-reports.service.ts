@@ -61,7 +61,7 @@ export class SalesReportsService {
     const [rows, taken] = await Promise.all([
       this.prisma.client.salesAttribution.findMany({
         where: { paidAt: within, ...scope },
-        select: { salesUserId: true, source: true, amountSatang: true, refundedSatang: true, paidAt: true,
+        select: { salesUserId: true, companyId: true, source: true, amountSatang: true, refundedSatang: true, paidAt: true,
           flags: true, flagReviewedAt: true },
         orderBy: { paidAt: 'desc' },
         take: REPORT_ROW_LIMIT,
@@ -76,16 +76,20 @@ export class SalesReportsService {
         take: REPORT_ROW_LIMIT,
       }),
     ]);
+    // A shop is named only where the report prints a line for it: a deduction, or a flagged shop
+    // that may be waiting for review (owner 2026-10-02).
+    const named = [...taken.map((item) => item.attribution.companyId),
+      ...rows.filter((row) => row.flags.length > 0).map((row) => row.companyId)];
     const [agents, companies] = await Promise.all([
       this.agentIndex([...rows.map((row) => row.salesUserId), ...taken.map((item) => item.attribution.salesUserId)]),
-      taken.length === 0 ? [] : this.prisma.client.company.findMany({
-        where: { id: { in: taken.map((item) => item.attribution.companyId) } }, select: { id: true, name: true } }),
+      named.length === 0 ? [] : this.prisma.client.company.findMany({
+        where: { id: { in: named } }, select: { id: true, name: true } }),
     ]);
     const nameByCompany = new Map(companies.map((company) => [company.id, company.name]));
     const report: AttributionReportRow[] = rows.map((row) => ({
       salesUserId: row.salesUserId, source: row.source as SalesAttributionSource,
       amountSatang: row.amountSatang, refundedSatang: row.refundedSatang, paidAt: row.paidAt,
-      flags: row.flags, flagReviewedAt: row.flagReviewedAt,
+      flags: row.flags, flagReviewedAt: row.flagReviewedAt, companyName: nameByCompany.get(row.companyId),
     }));
     const deductions: AttributionReportDeduction[] = taken.map((item) => ({
       kind: item.kind as SalesDeductionKind, amountSatang: item.amountSatang, occurredAt: item.occurredAt,

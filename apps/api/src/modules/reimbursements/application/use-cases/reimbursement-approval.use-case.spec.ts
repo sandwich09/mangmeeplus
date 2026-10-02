@@ -1403,6 +1403,7 @@ describe('a claim whose payout account is being corrected', () => {
     assert.deepEqual(events.map((event) => event.eventType), ['reimbursement.payout_correction_requested']);
     assert.deepEqual(events[0].payloadJson.data, {
       requestId: 'rb-1', requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', status: 'PENDING_APPROVAL',
+      payoutCorrectionTitle: 'ใบเบิกต้องแก้บัญชีรับเงิน',
       payoutCorrectionNotice: 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
     });
     assert.deepEqual(entries.map((entry) => [entry.action, entry.inTransaction]), [['reimbursement.payout_correction.request', true]]);

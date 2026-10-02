@@ -490,3 +490,62 @@ describe('approval reminder period (review M1)', () => {
     assert.deepEqual(items.map((item) => item.payload['approverRecipientUserIds']), [['u_manager'], ['u_manager']]);
   });
 });
+
+// Owner decision 2026-10-02: the approval reminder is for the claim's approvers, and for the shop owner only when
+// none of them can act. The scan decides who that is, and the notice names nobody else. Before, a claim from before
+// approvers were frozen on the step, whose role can no longer approve, named nobody: only the owner's separate
+// mention in the notice reached anyone.
+describe('approval reminder: who the scan names as the people to approve an overdue claim', () => {
+  const NOW = new Date('2026-10-01T12:00:00.000Z');
+  const sentAt = new Date(NOW.getTime() - 72 * 3_600_000);
+  /** An overdue claim on a step that names these approvers, or (sent before steps named anyone) only its role. */
+  const overdue = (id: string, assignedApproverUserIds?: string[]) => ({
+    id, requestNo: `RB-${id}`, status: 'PENDING_APPROVAL', amount: '250', currency: 'THB', requesterUserId: 'u_staff', branchId: 'br-1',
+    submittedAt: sentAt, currentApprovalStepId: `step-${id}`,
+    approvalSteps: [{ id: `step-${id}`, status: 'PENDING', approverRoleSnapshot: 'MANAGER', ...(assignedApproverUserIds && { assignedApproverUserIds }) }],
+  });
+
+  it('names the approvers of the step who can still act, and the shop owner only when none of them can', async () => {
+    const reimbursementRepo = {
+      findPolicy: async () => ({ slaHours: 48 }),
+      listRequests: async () => [
+        overdue('rb-approvers', ['u_manager', 'u_left']),
+        overdue('rb-nobody-left', ['u_left']),
+        overdue('rb-route'),
+        overdue('rb-dead-route'),
+      ],
+      // u_left no longer holds what approving asks of them.
+      findActiveApproverUserIds: async (_companyId: string, userIds: string[]) => new Set(userIds.filter((userId) => userId !== 'u_left')),
+    } as any;
+    const routeInputs: any[] = [];
+    const approverRoutes = {
+      resolveOwnerRecipientUserIds: async (_companyId: string, inputs: any[]) => inputs.map(() => ['u_owner']),
+      // Today's route of a step that names nobody: the holders of its role, or none when the role can no longer approve.
+      resolveSubmissionRoutesBestEffort: async (_companyId: string, inputs: any[]) => {
+        routeInputs.push(...inputs);
+        return [{ recipientUserIds: ['u_manager_2'], effectiveTaskRole: 'MANAGER' }, null];
+      },
+    } as any;
+    const candidates = new WorkflowScanCandidatesProvider(reimbursementRepo, {} as any, {} as any, {} as any, {} as any, approverRoutes, {} as any);
+
+    const items = await candidates.forTemplate('approval_sla_breach', 'co-1', NOW);
+
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload['slaRisk'], item.payload['approverRecipientUserIds'], item.payload['approverTaskUserId'], item.payload['approverTaskRole']]), [
+      // The approvers frozen on the step who can still act: not the one who left, and not the owner beside them.
+      ['rb-approvers', true, ['u_manager'], 'u_manager', 'MANAGER'],
+      // None of them can: the owner approves it now, and is the one reminded.
+      ['rb-nobody-left', true, ['u_owner'], 'u_owner', 'OWNER'],
+      // A step that names nobody: today's holders of its role.
+      ['rb-route', true, ['u_manager_2'], 'u_manager_2', 'MANAGER'],
+      // Its role can no longer approve and the route finds nobody: the owner, where it named nobody at all.
+      ['rb-dead-route', true, ['u_owner'], 'u_owner', 'MANAGER'],
+    ]);
+    // Only the two steps that name nobody ask for today's route.
+    assert.equal(routeInputs.length, 2);
+    // The owner is still named apart in the payload, for a rule pinned before the notice stopped reading it.
+    assert.deepEqual(items.map((item) => item.payload['ownerRecipientUserIds']), [['u_owner'], ['u_owner'], ['u_owner'], ['u_owner']]);
+    // What the notice reads: the approvers and nobody else.
+    const notice = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'approval_sla_breach')!.defaultActionJson.find((action) => action.actionType === 'SEND_NOTIFICATION')!;
+    assert.deepEqual(notice.configJson['recipientPayloadKeys'], ['approverRecipientUserIds']);
+  });
+});

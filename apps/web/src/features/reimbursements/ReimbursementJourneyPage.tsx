@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { EXPENSE_VOID_REASON_MIN_LENGTH } from '@watchdog-bms/contracts';
+import { EXPENSE_VOID_REASON_MIN_LENGTH, reimbursementPayoutRoundApproves } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
@@ -33,21 +33,22 @@ import { PAYOUT_ATTESTATION_REQUIRED, claimNeedsPayoutAttestation, claimPayoutSu
 // The payout account correction round (payout spec §14): its forms and card, and the words of its buttons.
 import { PayoutCorrectionAccountForm, PayoutCorrectionComparison, PayoutCorrectionRequestForm } from './ReimbursementPayoutCorrection';
 import {
-  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED,
+  PAYOUT_CORRECTION_SAVE_LABEL, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, payoutCorrectionAnswerWords, payoutCorrectionSendBackTitle, payoutRoundTexts,
 } from './reimbursement-payout.logic';
 
 const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
   done: 'done', current: 'current', upcoming: 'upcoming', 'needs-fix': 'attention', ended: 'attention',
 };
 
-const ACTION_LABELS: Record<JourneyAction, string> = {
+// The two actions of a payout round have no fixed words: they follow what the claim holds (`payoutCorrectionSendBackTitle`,
+// `payoutCorrectionAnswerWords`).
+const ACTION_LABELS: Record<Exclude<JourneyAction, 'send-back' | 'correct-payout'>, string> = {
   submit: 'ส่งอนุมัติ', edit: 'แก้ไขคำขอ', cancel: 'ยกเลิกคำขอ', reopen: 'แก้ไขและส่งใหม่',
   'resume-cancel': 'ดำเนินการยกเลิกต่อ', 'withdraw-cancel': 'ถอนการยกเลิก',
   approve: 'อนุมัติ', reject: 'ปฏิเสธ', resume: 'ดำเนินการต่อ', 'policy-settings': `ไปที่${POLICY_TAB_LABEL}`,
   'finance-approve': 'อนุมัติจ่าย', 'finance-return': 'ส่งกลับให้แก้ไข', 'finance-block': 'ระงับการจ่าย',
   'resolve-duplicate': 'ปลดรายการซ้ำ', pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
   'attach-signed-copy': 'แนบสำเนาที่เซ็นแล้ว', 'void-payment': 'ยกเลิกการจ่าย',
-  'send-back': PAYOUT_CORRECTION_SEND_BACK_LABEL, 'correct-payout': PAYOUT_CORRECTION_FIX_LABEL,
 };
 
 /** An approval that arrived after the claim had moved on, where nothing is left for this viewer to approve. */
@@ -225,8 +226,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     const { ok, latest } = await act(
       'approve',
       () => approveReimbursement(companyId, requestId, undefined, target.approvalSnapshotHash, verified ?? undefined),
-      // In a correction round the same call approves the new account alone, and the claim is back at its pay step.
-      target.payoutCorrectionPhase ? 'อนุมัติบัญชีรับเงินใหม่แล้ว ใบกลับไปรอจ่ายเงินคืน' : 'อนุมัติคำขอเรียบร้อยแล้ว',
+      // In a payout round the same call approves what was answered alone, and the claim is back at its pay step: said of
+      // that thing, a new account, the account the claim had, a first one, or cash.
+      target.payoutCorrectionPhase ? `อนุมัติ${reimbursementPayoutRoundApproves(target.payoutCorrectionAnswer)}แล้ว ใบกลับไปรอจ่ายเงินคืน` : 'อนุมัติคำขอเรียบร้อยแล้ว',
       (e) => { stale = !review && isStaleApprovalError(e); return stale; },
     );
     if (stale) {
@@ -391,8 +393,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     const label = action === 'edit' && detail.financeReviewStatus === 'NEEDS_INFO' ? 'แก้ไขตามคำขอ'
       : action === 'reopen' && detail.status === 'PENDING_APPROVAL' ? 'แก้ไข (เปิดกลับเป็นร่าง)'
         : action === 'finance-approve' ? financeActionLabel(detail)
-          // From the step a round waits on, sending back is how its approvers refuse the new account: said as that.
-          : action === 'send-back' && detail.payoutCorrectionPhase ? PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL
+          // From the step a round waits on, sending back is how its approvers do not take what was answered: said as
+          // that, of an account to correct again or of cash to choose again.
+          : action === 'send-back' ? payoutCorrectionSendBackTitle(detail)
             : action === 'correct-payout' ? correctPayoutLabel
               : ACTION_LABELS[action];
     if (action === 'edit') return <Link key={action} className={className} href={`${hubHref}/${detail.id}/edit`}>{label}</Link>;
@@ -414,9 +417,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   };
   // A form of the correction round is open only while the server still offers its action to this viewer.
   const openCorrectionForm = correctionForm && step?.actions.includes(correctionForm) ? correctionForm : null;
-  // The requester fills their own account; a finance reviewer fills it on their behalf. Again, once one was given.
-  const correctPayoutLabel = detail.requesterUserId !== userId ? `${PAYOUT_CORRECTION_FIX_LABEL}แทนผู้เบิก`
-    : detail.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? `${PAYOUT_CORRECTION_FIX_LABEL}อีกครั้ง` : PAYOUT_CORRECTION_FIX_LABEL;
+  // The requester answers for themselves; a finance reviewer answers on their behalf. Again, once an answer was given.
+  // The words say what is asked by what the claim holds: an account to correct, one to add, or the method to choose.
+  const correctPayoutLabel = payoutCorrectionAnswerWords(detail, detail.requesterUserId === userId).button;
   // At the pay step the send-back is no button of this card: it sits at the foot of the account box, as a line of text,
   // away from "บันทึกจ่าย". From the step a round waits on it stays here: there it is how the new account is refused.
   const sendBackAtAccountBox = step?.key === 'payment' && !detail.payoutCorrectionPhase && step.actions.includes('send-back');
@@ -438,7 +441,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       eyebrow={back}
       title={detail.requestNo ?? 'คำขอเบิกฉบับร่าง'}
       description={desk ? `อยู่ที่ ${desk}` : undefined}
-      meta={<StatusBadge status={detail.status} desk={detail.currentDesk} phase={detail.payoutCorrectionPhase} />}
+      meta={<StatusBadge claim={detail} />}
     >
       <ClaimSummaryCard detail={detail} />
 
@@ -524,10 +527,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
             {step.note && <p className="mt-1 text-sm text-gray-600">{step.note}</p>}
           </div>
           {step.actions.includes('submit') && readiness.blocked && readiness.message && <ErrorBanner message={readiness.message} />}
-          {/* Spec §14.6: what a round's approvers approve. The account the claim was approved with beside the new one. */}
+          {/* Spec §14.6: what a round's approvers approve. What the claim was approved with beside what was answered. */}
           {step.key === 'approval' && <PayoutCorrectionComparison detail={detail} />}
           {needsAttestation && (
-            <PayoutAttestationCheck checked={attested} disabled={busyAction !== null}
+            <PayoutAttestationCheck checked={attested} disabled={busyAction !== null} payoutKind={detail.payout?.payoutKind}
               onChange={(checked) => setAttestedVersion(checked ? detail.payout?.version ?? null : null)} />
           )}
           {cardActions.length > 0 && (
@@ -545,7 +548,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
             <div className="border-t border-gray-100 pt-3">
               <PayoutCorrectionRequestForm companyId={companyId} detail={detail} onCancel={() => setCorrectionForm(null)}
                 onConflict={() => afterCorrectionConflict('send-back')}
-                onDone={(answered) => void afterCorrection(answered, 'ส่งกลับให้ผู้เบิกแก้บัญชีรับเงินแล้ว')} />
+                // Said of what the claim held when it was sent back: the claim on this page, before the answer replaces it.
+                onDone={(answered) => void afterCorrection(answered, payoutRoundTexts(detail).sentBackToast)} />
             </div>
           )}
           {openCorrectionForm === 'correct-payout' && (
@@ -553,8 +557,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
               <PayoutCorrectionAccountForm companyId={companyId} detail={detail} userId={userId} canEditEmployees={permissions.includes('access.employee.update')}
                 onCancel={() => setCorrectionForm(null)} onConflict={(claimChanged) => afterCorrectionConflict('correct-payout', claimChanged)}
                 // A claim nobody has to approve is ready for payment in the same call (spec §14.5).
+                // Otherwise it waits for its approvers, who approve what was answered: said by the answer the API returned.
                 onDone={(answered) => void afterCorrection(answered, answered?.status === 'READY_FOR_PAYMENT'
-                  ? 'บันทึกบัญชีรับเงินแล้ว ใบกลับไปรอจ่ายเงินคืน' : 'บันทึกบัญชีรับเงินแล้ว รอผู้อนุมัติอนุมัติบัญชีใหม่')} />
+                  ? `${PAYOUT_CORRECTION_SAVE_LABEL}แล้ว ใบกลับไปรอจ่ายเงินคืน`
+                  : `${PAYOUT_CORRECTION_SAVE_LABEL}แล้ว รอผู้อนุมัติอนุมัติ${reimbursementPayoutRoundApproves(answered?.payoutCorrectionAnswer)}`)} />
             </div>
           )}
           {approverHelp && step.actions.includes('submit') && (

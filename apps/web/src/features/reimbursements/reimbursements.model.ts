@@ -3,8 +3,8 @@ import { REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimburseme
 import { translateApiError } from '@/common/api/api-error-message';
 // The words for a payment method are shared with the server's notice (their own import, apart from the line above).
 import { REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
-// A claim sent back for its payout account (payout spec §14): the words the LINE backlog uses for its two phases.
-import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, type ReimbursementPayoutCorrectionPhase } from '@watchdog-bms/contracts';
+// A claim sent back from the pay step (payout spec §14): what it is said to wait for, in the words every other reader of it uses.
+import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 
 export const REIMBURSEMENT_CREATE_UNAVAILABLE = 'ขณะนี้ไม่สามารถสร้างคำขอใหม่ได้ กรุณาติดต่อเจ้าของกิจการหรือแอดมินเพื่อตรวจสอบการเปิดใช้งานการเบิกจ่ายและสิทธิ์บัญชี · ยังดูประวัติเดิมได้ตามสิทธิ์';
 
@@ -70,22 +70,19 @@ export const REQUEST_STATUS_TONES: Record<string, MangmeeTone> = {
  * "พร้อมจ่าย" on one being cancelled) beside an "อยู่ที่ ระบบ" line and a step note that said otherwise. It
  * reads "รอระบบปรับสถานะ" for such a claim: the words of that line, that note and the LINE backlog.
  */
-export function claimStatusBadge(
-  claim: { status?: string; currentDesk?: { kind?: string } | null; payoutCorrectionPhase?: string | null } | null | undefined,
-): { label: string; tone: MangmeeTone } {
+export function claimStatusBadge(claim: {
+  status?: string; currentDesk?: { kind?: string } | null;
+  payoutCorrectionPhase?: string | null; payoutMethod?: string | null; payoutCorrectionAnswer?: string | null;
+} | null | undefined): { label: string; tone: MangmeeTone } {
   if (claim?.currentDesk?.kind === 'SYSTEM') return { label: REIMBURSEMENT_SYSTEM_WAIT_LABEL, tone: 'amber' };
-  // Payout spec §14.2: a claim sent back for its payout account is PENDING_APPROVAL by its status. "รออนุมัติ" would
-  // name an approver nobody waits for while the requester gives the account, and say nothing of what is approved after.
-  const correction = payoutCorrectionPhaseLabel(claim?.payoutCorrectionPhase);
-  if (correction) return { label: correction, tone: 'amber' };
+  // Payout spec §14.2: a claim sent back from its pay step is PENDING_APPROVAL by its status. "รออนุมัติ" would name an
+  // approver nobody waits for while the claim is with its requester, and say nothing of what is approved after. What it
+  // waits for is said by what the claim holds, then by what was answered: the one sentence of contracts, which a list
+  // row, the claim page, the printed form and the LINE assistant all print. Nothing for a claim in no round.
+  const round = claim && reimbursementPayoutRoundStatus(claim);
+  if (round) return { label: round, tone: 'amber' };
   const status = String(claim?.status ?? '');
   return { label: REQUEST_STATUS_LABELS[status] ?? '—', tone: REQUEST_STATUS_TONES[status] ?? 'slate' };
-}
-
-/** A claim's place in a correction round in words; nothing for a claim in none, or for a phase this build has no words for. */
-export function payoutCorrectionPhaseLabel(phase: unknown): string | undefined {
-  return typeof phase === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, phase)
-    ? REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS[phase as ReimbursementPayoutCorrectionPhase] : undefined;
 }
 
 export const PAYMENT_STATUS_TONES: Record<string, MangmeeTone> = {

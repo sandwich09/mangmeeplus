@@ -1,5 +1,7 @@
 # Agent Memory: reimbursement payout Phase 3, the correction round (server side and web)
 
+> The words of a round changed after this note was written (2 Oct 2026): they follow what the claim held when it was sent back and what was answered, and the reasons follow what the claim holds. The labels, reasons, notices and assistant words quoted below are those of the first build. The current ones, with the fields that carry the facts, are in [reimbursement-payout-round-wording.md](reimbursement-payout-round-wording.md).
+
 Status: server side and web done on `claude/reimb-payout-p3-correction-round-20261002`, not pushed. Plan tasks 3.1 to 3.13; nothing is ticked in the plan. The web is described under "What the web does" below.
 Owner: payout lane, Phase 3 (spec `docs/specs/reimbursement-payout-account-and-payment-slip-spec-th.md` §14, §17, §19; plan `docs/plans/reimbursement-payout-account-and-payment-slip-plan-th.md` Phase 3).
 Scope: contracts, API, workflow notices, notification state, the assistant's two reads, the A5 evidence classifier, the printed form. Web: the claim page, the hub rows and the approval queue of a round, and two Thai sentences for payment refusals that had none. The web lane touched no file outside `apps/web/` and `e2e/`.
@@ -80,7 +82,7 @@ All under `companies/:companyId/reimbursements`.
 | Sign or declare a signed scan | as before | nobody | nobody |
 | Cancel | as before | as before | as before |
 
-When someone other than the requester types the account, the requester gets the existing notice "… ระบุบัญชีรับเงินคืนในใบเบิกของคุณ", in the same transaction.
+When someone other than the requester gives the account, whatever they chose, the requester gets a notice in the same transaction, in the words of that answer: "… แก้บัญชีรับเงินในใบเบิกของคุณ: เลขที่ใบ", "… ยืนยันบัญชีเดิมในใบเบิกของคุณ: เลขที่ใบ" and so on (since 2026-10-02; before, only a typed account told them, as "… ระบุบัญชีรับเงินในใบเบิกของคุณ"). Payout spec §17.3.
 
 ### Refusal codes
 
