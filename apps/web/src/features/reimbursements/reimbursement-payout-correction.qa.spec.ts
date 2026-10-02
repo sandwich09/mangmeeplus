@@ -270,20 +270,23 @@ describe('sending a claim back for its payout account: what the form asks and se
 
 describe('what whoever sends a claim back is told before they confirm (spec §14.1, §14.4)', () => {
   const ready = { payoutMethod: 'BANK_TRANSFER', signatures: [], signedCopies: [] };
-  const AFTER = 'ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที';
+  // What comes after is said in words true of any answer and of whoever gives it. Before: "เมื่อผู้เบิกแก้แล้ว …", "เมื่อผู้เบิกเพิ่มแล้ว …"
+  // and "เมื่อผู้เบิกเลือกแล้ว …", though the answer to any of the three may be cash, or the account the claim had, and a finance
+  // reviewer may give it for the requester.
+  const AFTER = 'เมื่อเลือกวิธีรับเงินคืนแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที';
   const UNCHANGED = 'ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน';
 
   it('says what changes and what does not, and how the claim comes back to the pay step', () => {
-    assert.deepEqual(payoutCorrectionSendBackNotes(ready), [`ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงิน ${UNCHANGED}`, `เมื่อผู้เบิกแก้แล้ว ${AFTER}`]);
+    assert.deepEqual(payoutCorrectionSendBackNotes(ready), [`ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงิน ${UNCHANGED}`, AFTER]);
   });
 
   // Before: one pair of sentences for every claim. A claim that asked for cash was told its requester would "แก้บัญชีรับเงิน",
   // and every claim that its approvers would approve "บัญชีใหม่", which is one of the things a requester may answer.
-  it('says it of what the claim holds: cash is chosen again and an account is added, and no sentence promises a new account', () => {
-    assert.deepEqual(payoutCorrectionSendBackNotes({ ...ready, payoutMethod: 'CASH' }),
-      [`ใบนี้จะกลับไปให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ${UNCHANGED}`, `เมื่อผู้เบิกเลือกแล้ว ${AFTER}`]);
-    assert.deepEqual(payoutCorrectionSendBackNotes({ ...ready, payoutMethod: undefined }).slice(0, 2),
-      [`ใบนี้จะกลับไปให้ผู้เบิกเพิ่มบัญชีรับเงิน ${UNCHANGED}`, `เมื่อผู้เบิกเพิ่มแล้ว ${AFTER}`]);
+  it('says it of what the claim holds: cash is chosen again and an account is added, and no sentence promises a new account or presumes the answer', () => {
+    assert.deepEqual(payoutCorrectionSendBackNotes({ ...ready, payoutMethod: 'CASH' }), [`ใบนี้จะกลับไปให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ${UNCHANGED}`, AFTER]);
+    assert.deepEqual(payoutCorrectionSendBackNotes({ ...ready, payoutMethod: undefined }).slice(0, 2), [`ใบนี้จะกลับไปให้ผู้เบิกเพิ่มบัญชีรับเงิน ${UNCHANGED}`, AFTER]);
+    // The second line names no kind of answer ("แก้", "เพิ่ม") and nobody as the one who answers, whatever the claim holds.
+    for (const payoutMethod of ['BANK_TRANSFER', 'CASH', undefined]) assert.doesNotMatch(payoutCorrectionSendBackNotes({ ...ready, payoutMethod })[1]!, /ผู้เบิก|แก้|เพิ่ม|บัญชี/u, String(payoutMethod));
     for (const payoutMethod of ['BANK_TRANSFER', 'CASH', undefined]) {
       const notes = payoutCorrectionSendBackNotes({ payoutMethod, signatures: [{}], signedCopies: [{ acknowledgedAt: AT.approved }] });
       for (const note of notes) assert.doesNotMatch(note, /บัญชีใหม่|ชุดเดิม/u, `${payoutMethod}: ${note}`);
@@ -558,9 +561,12 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
     assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/, 'no reason is chosen for the person');
     assert.match(html, /<textarea id="reimbursement-payout-correction-note"[^>]*maxLength="500"/);
     for (const text of ['ส่งกลับให้แก้บัญชีรับเงิน', 'เหตุผลที่ส่งกลับ *', 'หมายเหตุ (ไม่บังคับ)', 'ผู้เบิกและทุกคนที่เปิดใบนี้เห็นหมายเหตุนี้ อย่าพิมพ์เลขบัญชี', '0/500', 'ยกเลิก', 'ยืนยันส่งกลับ',
-      'เช่น ธนาคารแจ้งว่าไม่พบบัญชีนี้']) {
+      'เช่น ธนาคารแจ้งว่าไม่พบบัญชีนี้',
+      // What comes after presumes no answer: the requester may keep the account or take cash, and someone may answer for them.
+      'เมื่อเลือกวิธีรับเงินคืนแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที']) {
       assert.ok(texts.includes(text), text);
     }
+    assert.equal(texts.some((text) => text.startsWith('เมื่อผู้เบิก')), false);
     assert.doesNotMatch(html, /role="dialog"/);
     // Its heading can take focus when the form opens: the button that opened it is gone by then.
     assert.match(html, /<h3 tabindex="-1" class="[^"]*outline-none">ส่งกลับให้แก้บัญชีรับเงิน<\/h3>/);
@@ -597,6 +603,7 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
     assert.equal(html.match(/<input type="radio"/g)?.length, 3);
     assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/, 'no reason is chosen for the person');
     assert.ok(texts.includes('ใบนี้จะกลับไปให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'));
+    assert.ok(texts.includes('เมื่อเลือกวิธีรับเงินคืนแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที'));
     assert.ok(texts.includes('รายละเอียดเพิ่มเติมถึงผู้เบิก'));
     // No sentence of the form names an account, which this claim has none of. The note's hint still says not to type a number.
     assert.deepEqual(texts.filter((text) => text.includes('บัญชี')), ['ผู้เบิกและทุกคนที่เปิดใบนี้เห็นหมายเหตุนี้ อย่าพิมพ์เลขบัญชี']);
@@ -1272,7 +1279,7 @@ describe('the buttons of a correction round are what the server says, for every 
     assert.equal(heading(form.html), 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน');
     for (const text of [
       'ใบนี้จะกลับไปให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
-      'เมื่อผู้เบิกเพิ่มแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
+      'เมื่อเลือกวิธีรับเงินคืนแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
       'ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่เมื่อใบกลับมารอจ่าย',
       'สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่เมื่อใบกลับมารอจ่าย',
       'เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน', 'ยืนยันส่งกลับ',

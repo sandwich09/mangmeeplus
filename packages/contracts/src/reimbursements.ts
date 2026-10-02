@@ -1181,6 +1181,13 @@ export function reimbursementPayoutAnswerNotice(answer: ReimbursementPayoutRound
 type PayoutRoundHeldTexts = Record<
   | 'payLead' | 'payLeadCannotPay' | 'payLink' | 'sendBackLine1' | 'sendBackLine2' | 'notePlaceholder' | 'sentBackToast'
   | 'waitForYou' | 'waitOnBehalf' | 'askOnBehalf' | 'cardNote' | 'assistantNote', string>;
+
+/**
+ * What whoever sends a claim back is told comes after, whatever the claim holds: in words true of any answer and of
+ * whoever gives it. The requester may keep the account, give another or take cash, and a finance reviewer may answer
+ * for them, so it names no kind of answer ("แก้", "เพิ่ม") and nobody as the one who answers.
+ */
+const PAYOUT_ROUND_SEND_BACK_LINE_2 = 'เมื่อเลือกวิธีรับเงินคืนแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที';
 type PayoutRoundGivenTexts = Record<'sendBackAgain' | 'sendBackAgainLine1' | 'askAgain' | 'againForYou' | 'againOnBehalf' | 'cardChecks', string>;
 type PayoutRoundAnswerTexts = { cardTitle: string; cardRows: readonly [string] | readonly [string, string] };
 
@@ -1201,7 +1208,7 @@ export const REIMBURSEMENT_PAYOUT_ROUND_TEXTS = {
       payLink: 'ส่งกลับให้แก้บัญชีรับเงิน',
       // The send-back form: what happens, what comes after, the note's placeholder, and what is said once it is sent.
       sendBackLine1: 'ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
-      sendBackLine2: 'เมื่อผู้เบิกแก้แล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
+      sendBackLine2: PAYOUT_ROUND_SEND_BACK_LINE_2,
       notePlaceholder: 'เช่น ธนาคารแจ้งว่าไม่พบบัญชีนี้',
       sentBackToast: 'ส่งกลับให้ผู้เบิกแก้บัญชีรับเงินแล้ว',
       // The end of the step note: for the requester, and for whoever may answer on their behalf.
@@ -1220,7 +1227,7 @@ export const REIMBURSEMENT_PAYOUT_ROUND_TEXTS = {
       payLeadCannotPay: 'ใบนี้บันทึกจ่ายได้เลยโดยไม่ต้องมีบัญชีในใบ ข้อความด้านล่างใช้เมื่อต้องการให้ใบมีบัญชีที่ผู้อนุมัติตรวจแล้วเท่านั้น',
       payLink: 'เพิ่มบัญชีรับเงินให้ใบนี้ แล้วให้ผู้อนุมัติตรวจบัญชีนั้น',
       sendBackLine1: 'ใบนี้จะกลับไปให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
-      sendBackLine2: 'เมื่อผู้เบิกเพิ่มแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
+      sendBackLine2: PAYOUT_ROUND_SEND_BACK_LINE_2,
       notePlaceholder: 'รายละเอียดเพิ่มเติมถึงผู้เบิก',
       sentBackToast: 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงินแล้ว',
       waitForYou: 'รอคุณเพิ่มบัญชีรับเงิน กดเพิ่มบัญชีรับเงินแล้วเลือกวิธีรับเงินคืนของใบนี้',
@@ -1234,7 +1241,7 @@ export const REIMBURSEMENT_PAYOUT_ROUND_TEXTS = {
       payLeadCannotPay: 'ถ้าวิธีรับเงินคืนนี้ไม่ถูกต้อง ส่งกลับให้ผู้เบิกเลือกได้ก่อนมีการจ่าย',
       payLink: 'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง',
       sendBackLine1: 'ใบนี้จะกลับไปให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
-      sendBackLine2: 'เมื่อผู้เบิกเลือกแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
+      sendBackLine2: PAYOUT_ROUND_SEND_BACK_LINE_2,
       notePlaceholder: 'รายละเอียดเพิ่มเติมถึงผู้เบิก',
       sentBackToast: 'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้งแล้ว',
       waitForYou: 'รอคุณเลือกวิธีรับเงินคืนอีกครั้ง กดเลือกวิธีรับเงินคืนแล้วเลือกวิธีที่ต้องการ',

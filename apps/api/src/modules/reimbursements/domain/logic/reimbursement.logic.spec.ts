@@ -1739,6 +1739,12 @@ describe('payout account correction round', () => {
     for (const [where, sentence] of flat({ NOTHING: texts.held.NOTHING })) assert.doesNotMatch(sentence, /แก้|เดิม|ใหม่|อีกครั้ง(?!ก่อน)/, where);
     // Whoever cannot pay is not told to hold a payment back.
     for (const held of HELD) assert.doesNotMatch(texts.held[held].payLeadCannotPay, /อย่าเพิ่งจ่าย/, held);
+    // What comes after a send-back is said in words true of any answer and of whoever gives it: the requester may keep the
+    // account, give another or take cash, and a finance reviewer may answer for them. Before: "เมื่อผู้เบิกแก้แล้ว …",
+    // "เมื่อผู้เบิกเพิ่มแล้ว …", "เมื่อผู้เบิกเลือกแล้ว …".
+    for (const held of HELD) {
+      assert.equal(texts.held[held].sendBackLine2, 'เมื่อเลือกวิธีรับเงินคืนแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติอีกครั้งก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที', held);
+    }
     // The card the approvers compare on is named for what waits for approval, and shows one row where nothing changed.
     assert.deepEqual(Object.fromEntries(ANSWERS.map((answer) => [answer, [texts.answer[answer].cardTitle, ...texts.answer[answer].cardRows]])), {
       NEW_ACCOUNT: ['สิ่งที่รออนุมัติ: บัญชีรับเงินใหม่', 'บัญชีเดิม', 'บัญชีใหม่'],
