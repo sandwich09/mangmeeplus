@@ -1,8 +1,8 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementAwaitingSystem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import {
-  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
-  REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
+  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionReasons, reimbursementPayoutSentBackNotice,
+  REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH,
 } from '@watchdog-bms/contracts';
 import { notAwaitingApproval, PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -243,6 +243,7 @@ export async function sendBackForPayoutCorrection(
 
   const policy = effectivePolicyForRequest(req, effectivePolicy(await deps.repo.findPolicy(ctx.companyId, null)));
   const requestedAt = new Date();
+  const notice = reimbursementPayoutSentBackNotice(held, reasonCode);
   await deps.repo.requestPayoutCorrectionAtomic({
     companyId: ctx.companyId,
     requestId: req.id,
@@ -274,12 +275,14 @@ export async function sendBackForPayoutCorrection(
         payloadJson: {
           companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
           aggregateType: 'reimbursement_request', aggregateId: req.id, occurredAt: requestedAt.toISOString(),
-          // To the requester alone. The reason is the fixed list's own Thai words in a finished sentence:
-          // no template assembles it, so no rule can print a code or anything a person typed.
+          // To the requester alone. The title and the body are finished sentences from contracts, chosen by
+          // what the claim held when it was sent back (an account is corrected, a missing one added, cash
+          // chosen again), with the reason in the fixed list's own Thai words: no template assembles them,
+          // so no rule can print a code or anything a person typed.
           data: {
             requestId: req.id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, status: 'PENDING_APPROVAL',
-            // A claim with no account of its own is asked to add one, not to correct one.
-            payoutCorrectionNotice: `เหตุผล: ${REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode]} · เปิดใบเบิกเพื่อ${reimbursementPayoutCorrectionAsk(reasonCode)}`,
+            payoutCorrectionTitle: notice.title,
+            payoutCorrectionNotice: notice.body,
           },
         },
       });

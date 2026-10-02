@@ -543,10 +543,13 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           triggerKey: 'workflow.reimbursement_payout_correction_requested',
           recipientPayloadKeys: ['requesterUserId'],
           severity: 'action',
-          titleTemplate: 'ใบเบิกต้องแก้บัญชีรับเงิน: {{requestNo}}',
-          // The sentence the event itself carries, built where the claim is sent back: the reason in the
-          // words of the fixed list. Nothing here assembles it, so no rule can print a code word, and the
-          // note a person typed is in no notice at all.
+          // The title and the body are the sentences the event itself carries, built in contracts where the
+          // claim is sent back (`reimbursementPayoutSentBackNotice`), from what the claim held at that moment:
+          // an account is corrected ("ใบเบิกต้องแก้บัญชีรับเงิน"), a missing one added, cash chosen again. The
+          // body is the reason in the words of the fixed list and what to do. Nothing here assembles a
+          // sentence, so no rule can print a code word or say "แก้บัญชี" of a claim with no account, and
+          // the note a person typed is in no notice at all.
+          titleTemplate: '{{payoutCorrectionTitle}}: {{requestNo}}',
           bodyTemplate: '{{payoutCorrectionNotice}}',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // Step-journey spec §11 (AC11): a requester who asked for their own account to be changed is
@@ -581,8 +584,11 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           triggerKey: 'workflow.reimbursement_payout_correction_submitted',
           recipientPayloadKeys: ['approverRecipientUserIds'],
           severity: 'action',
-          titleTemplate: 'รออนุมัติบัญชีรับเงินใหม่: {{requestNo}}',
-          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่',
+          // The title is the claim's own status label and the end of the body names the same thing, both from
+          // the event (`reimbursementPayoutAnswerNotice`), by what the requester answered: another account
+          // ("รออนุมัติบัญชีรับเงินใหม่"), the same account, a first account, or cash.
+          titleTemplate: '{{payoutAnswerTitle}}: {{requestNo}}',
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · {{payoutAnswerNotice}}',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // Step-journey spec §11 (AC11): a requester who is their own approver gave the account
           // themselves, and is not told so.

@@ -3998,7 +3998,12 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const roundEvents = (await eventsOf(claim.requestId)).filter((event) => event.createdAt.getTime() >= withRequester.payoutCorrectionRequestedAt!.getTime());
     assert.deepEqual(roundEvents.map((event) => event.eventType),
       ['reimbursement.payout_correction_requested', 'reimbursement.payout_correction_submitted', 'reimbursement.ready_for_payment']);
-    assert.deepEqual((roundEvents[0]!.payloadJson as any).data.payoutCorrectionNotice, 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
+    // The two notices of the round carry their own title and body, finished: for an account that was wrong, replaced by another.
+    const noticeOf = (event: { payloadJson: unknown }) => { const { data } = event.payloadJson as any; return [data.payoutCorrectionTitle ?? data.payoutAnswerTitle, data.payoutCorrectionNotice ?? data.payoutAnswerNotice]; };
+    assert.deepEqual(roundEvents.slice(0, 2).map(noticeOf), [
+      ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+      ['รออนุมัติบัญชีรับเงินใหม่', 'รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่'],
+    ]);
     const audits = await clients[0]!.auditLog.findMany({ where: { companyId, targetId: claim.requestId, action: { startsWith: 'reimbursement.payout' } }, orderBy: { createdAt: 'asc' } });
     assert.deepEqual(audits.map((row) => [row.action, row.result]).slice(-4), [
       ['reimbursement.payout_correction.request', 'SUCCESS'], ['reimbursement.payout_correction.submit', 'SUCCESS'],
@@ -4585,6 +4590,18 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const anAccount = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
     assert.deepEqual([anAccount.payoutCorrectionAnswer, anAccount.payoutCorrection?.sameAsPrevious], ['ACCOUNT_INSTEAD', false]);
     assert.deepEqual(await factsOf(claim.requestId), ['ACCOUNT', 'CASH_INSTEAD', 'CASH_INSTEAD', 'CASH', 'SAME_CASH', 'CASH', 'ACCOUNT_INSTEAD']);
+    // Each notice of the two rounds, as its event carries it: worded for what the claim held, or for what was answered.
+    const noticesOf = async (requestId: string) => (await eventsOf(requestId))
+      .filter((event) => ['reimbursement.payout_correction_requested', 'reimbursement.payout_correction_submitted'].includes(event.eventType))
+      .map((event) => { const { data } = event.payloadJson as any; return [data.payoutCorrectionTitle ?? data.payoutAnswerTitle, data.payoutCorrectionNotice ?? data.payoutAnswerNotice]; });
+    assert.deepEqual(await noticesOf(claim.requestId), [
+      ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+      ['รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+      ['ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง', 'เหตุผล: จ่ายเป็นเงินสดไม่ได้ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน'],
+      ['รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+      ['ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน'],
+      ['รออนุมัติบัญชีรับเงิน', 'รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+    ]);
     assert.deepEqual(((await claimRow(claim.requestId)).payoutCorrectionLogJson as any[]).map((entry) => [entry.kind, entry.sameAsApproved ?? null]), [
       ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', null], ['REAPPROVED', null],
       ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', true], ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', null],
@@ -4606,6 +4623,12 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.deepEqual([cashFirst.payoutCorrectionAnswer, cashFirst.payoutCorrection?.sameAsPrevious], ['FIRST_CASH', false]);
     assert.equal((await approveAgain(legacy.requestId)).status, 'READY_FOR_PAYMENT');
     assert.deepEqual(await factsOf(legacy.requestId), ['NOTHING', 'FIRST_ACCOUNT', 'ACCOUNT', 'FIRST_CASH', 'FIRST_CASH']);
+    assert.deepEqual(await noticesOf(legacy.requestId), [
+      ['ใบเบิกต้องเพิ่มบัญชีรับเงิน', 'เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน'],
+      ['รออนุมัติบัญชีรับเงิน', 'รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+      ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+      ['รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+    ]);
 
     // A PromptPay number has no bank to be wrong: the kind is read from the account the claim itself carries.
     const promptPay = await approvedTransferClaim();

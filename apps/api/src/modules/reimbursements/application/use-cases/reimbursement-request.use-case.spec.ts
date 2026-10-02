@@ -18,7 +18,7 @@ import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, 
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
 import {
   isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket,
-  reimbursementPayoutCorrectionReasons, reimbursementPayoutRoundStatus,
+  reimbursementPayoutAnswerNotice, reimbursementPayoutCorrectionReasons, reimbursementPayoutRoundStatus,
 } from '@watchdog-bms/contracts';
 import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, PAYOUT_CORRECTION_NOTE } from './reimbursement-summary.use-case';
 import { toRequestSummary } from '../dto/reimbursement.mapper';
@@ -3960,6 +3960,7 @@ describe('payout correction: sending a claim that waits for payment back for its
     assert.equal(event.eventType, 'reimbursement.payout_correction_requested');
     assert.deepEqual(event.payloadJson.data, {
       requestId: id, requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', status: 'PENDING_APPROVAL',
+      payoutCorrectionTitle: 'ใบเบิกต้องแก้บัญชีรับเงิน',
       payoutCorrectionNotice: 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
     });
     assert.equal(event.payloadJson.actorUserId, 'payer-1');
@@ -4139,6 +4140,8 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.deepEqual(event.payloadJson.data, {
       requestId: id, requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', amount: claim.amount, currency: 'THB',
       status: 'PENDING_APPROVAL', stepId: 'step-2', approverRecipientUserIds: ['manager-1'],
+      // Another account in place of the one the claim had: the one answer whose notice says "ใหม่".
+      payoutAnswerTitle: 'รออนุมัติบัญชีรับเงินใหม่', payoutAnswerNotice: 'รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่',
     });
     const [entry] = world.audits;
     assert.deepEqual([world.audits.length, entry.action, entry.result], [1, 'reimbursement.payout_correction.submit', 'SUCCESS']);
@@ -4668,8 +4671,20 @@ describe('payout correction: what the claim held and what its requester answered
       // With its requester: the row says what the claim holds, and nothing of an answer yet.
       assert.deepEqual([sentBack.payoutMethod, sentBack.payoutCorrectionAnswer, toRequestSummary(world.claim()).payoutCorrectionAnswer],
         [{ ACCOUNT: 'BANK_TRANSFER', CASH: 'CASH', NOTHING: undefined }[held], undefined, undefined], answer);
+      // The requester's notice is titled and worded for what the claim held: its event carries both sentences, finished.
+      const asked = world.events().at(-1).payloadJson.data;
+      assert.deepEqual([world.events().at(-1).eventType, asked.payoutCorrectionTitle, asked.payoutCorrectionNotice], ['reimbursement.payout_correction_requested', ...{
+        ACCOUNT: ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+        CASH: ['ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน'],
+        NOTHING: ['ใบเบิกต้องเพิ่มบัญชีรับเงิน', 'เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน'],
+      }[held]], answer);
 
       const given = await world.giveAccount.execute(ctx(), id, give as any);
+      // The approvers' notice is titled with the claim's own status label and names the same thing in its body.
+      const waits = world.events().at(-1).payloadJson.data;
+      assert.deepEqual([world.events().at(-1).eventType, waits.payoutAnswerTitle, waits.payoutAnswerNotice],
+        ['reimbursement.payout_correction_submitted', label, `รอคุณตรวจและอนุมัติ${label.replace('รออนุมัติ', '')}`], answer);
+      assert.deepEqual({ title: waits.payoutAnswerTitle, body: waits.payoutAnswerNotice }, reimbursementPayoutAnswerNotice(answer), answer);
       const row = toRequestSummary(world.claim());
       assert.deepEqual([given.payoutCorrectionPhase, given.payoutCorrectionAnswer, row.payoutCorrectionAnswer, given.payoutCorrection?.sameAsPrevious, reimbursementPayoutRoundStatus(row)],
         ['AWAITING_APPROVAL', answer, answer, same, label], answer);
@@ -4695,11 +4710,15 @@ describe('payout correction: what the claim held and what its requester answered
     const refused = await world.detail.execute(ctx(), id);
     assert.deepEqual([refused.payoutCorrectionPhase, refused.payoutMethod, refused.payoutCorrectionAnswer, reimbursementPayoutRoundStatus(refused)],
       ['AWAITING_REQUESTER', 'CASH', undefined, 'รอผู้เบิกเลือกวิธีรับเงินคืน']);
+    // Its requester is told so in the words of cash, though the round began with an account.
+    const notice = () => { const { payoutCorrectionTitle, payoutCorrectionNotice } = world.events().at(-1).payloadJson.data; return [payoutCorrectionTitle, payoutCorrectionNotice]; };
+    assert.deepEqual(notice(), ['ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน']);
     // The next answer is measured against the account the round began with, not against the cash just refused.
     const kept = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
     assert.deepEqual([kept.payoutCorrectionAnswer, kept.payoutCorrection?.sameAsPrevious], ['SAME_ACCOUNT', true]);
     await world.sendBack.execute(approverCtx(), id, { reasonCode: 'ACCOUNT_NAME_MISMATCH' });
     assert.equal(reimbursementPayoutRoundStatus(await world.detail.execute(ctx(), id)), 'รอผู้เบิกแก้บัญชีรับเงิน');
+    assert.deepEqual(notice(), ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน']);
     await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
     const waiting = await world.detail.execute(approverCtx(), id);
     await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, waiting.payout?.version);

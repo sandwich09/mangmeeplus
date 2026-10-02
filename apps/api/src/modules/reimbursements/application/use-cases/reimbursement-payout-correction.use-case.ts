@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { reimbursementPayoutAnswerNotice } from '@watchdog-bms/contracts';
 import type { ReimbursementPayoutInput, ReimbursementRequestDetail, RequestContext, SubmitReimbursementPayoutCorrectionInput } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
@@ -140,6 +141,7 @@ export class SubmitPayoutCorrectionUseCase {
           },
         }, tx);
         const eventType = result.readyForPayment ? 'reimbursement.ready_for_payment' : 'reimbursement.payout_correction_submitted';
+        const notice = reimbursementPayoutAnswerNotice(result.answer);
         await tx.outboxEvent.createMany({
           data: [{
             companyId: ctx.companyId,
@@ -155,7 +157,10 @@ export class SubmitPayoutCorrectionUseCase {
                 amount: req.amount, currency: req.currency,
                 ...(result.readyForPayment
                   ? { status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD' }
-                  : { status: 'PENDING_APPROVAL', stepId: result.step!.id }),
+                  // To the approvers of the new step. The title and the end of the body are finished sentences
+                  // from contracts, chosen by what the requester answered (another account, the same one, a
+                  // first one, cash): no template assembles them.
+                  : { status: 'PENDING_APPROVAL', stepId: result.step!.id, payoutAnswerTitle: notice.title, payoutAnswerNotice: notice.body }),
                 ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             },

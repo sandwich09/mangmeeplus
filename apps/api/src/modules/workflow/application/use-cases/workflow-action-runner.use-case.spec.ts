@@ -1,5 +1,9 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  reimbursementPayoutAnswerNotice, reimbursementPayoutSentBackNotice,
+  type ReimbursementPayoutCorrectionReason, type ReimbursementPayoutHeld, type ReimbursementPayoutRoundAnswer,
+} from '@watchdog-bms/contracts';
 import { ExecuteWorkflowActionUseCase } from './workflow-action-runner.use-case';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -795,18 +799,30 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       } as any);
       return (notify.execute.mock.calls.at(-1) as any)?.arguments[0];
     };
-    /** As `sendBackForPayoutCorrection` writes it: sent back by `u_payer`, with the reason as a finished sentence. */
-    const sentBack = (overrides: Record<string, unknown> = {}) => ({
-      requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', status: 'PENDING_APPROVAL',
-      payoutCorrectionNotice: 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
-      eventType: 'reimbursement.payout_correction_requested', actorUserId: 'u_payer', ...overrides,
-    });
-    /** As `SubmitPayoutCorrectionUseCase` writes it: the requester gave the account, which waits for `u_manager`. */
-    const accountGiven = (overrides: Record<string, unknown> = {}) => ({
-      requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', amount: '1614.5000', currency: 'THB',
-      status: 'PENDING_APPROVAL', stepId: 'step_2', approverRecipientUserIds: ['u_manager'],
-      eventType: 'reimbursement.payout_correction_submitted', actorUserId: 'u_requester', ...overrides,
-    });
+    /**
+     * As `sendBackForPayoutCorrection` writes it: sent back by `u_payer`, with the title and the body as finished
+     * sentences, chosen by what the claim held when it was sent back.
+     */
+    const sentBack = (overrides: Record<string, unknown> = {}, held: ReimbursementPayoutHeld = 'ACCOUNT', reasonCode: ReimbursementPayoutCorrectionReason = 'ACCOUNT_NUMBER_WRONG') => {
+      const notice = reimbursementPayoutSentBackNotice(held, reasonCode);
+      return {
+        requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', status: 'PENDING_APPROVAL',
+        payoutCorrectionTitle: notice.title, payoutCorrectionNotice: notice.body,
+        eventType: 'reimbursement.payout_correction_requested', actorUserId: 'u_payer', ...overrides,
+      };
+    };
+    /**
+     * As `SubmitPayoutCorrectionUseCase` writes it: the requester answered, and the answer waits for `u_manager`. The
+     * title and the end of the body are finished sentences, chosen by what was answered.
+     */
+    const accountGiven = (overrides: Record<string, unknown> = {}, answer: ReimbursementPayoutRoundAnswer | null = 'NEW_ACCOUNT') => {
+      const notice = reimbursementPayoutAnswerNotice(answer);
+      return {
+        requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', amount: '1614.5000', currency: 'THB',
+        status: 'PENDING_APPROVAL', stepId: 'step_2', approverRecipientUserIds: ['u_manager'], payoutAnswerTitle: notice.title, payoutAnswerNotice: notice.body,
+        eventType: 'reimbursement.payout_correction_submitted', actorUserId: 'u_requester', ...overrides,
+      };
+    };
 
     it('tells the requester alone that the claim needs its account corrected, with the reason and a link to the claim', async () => {
       const sent = await send('reimbursement_payout_correction_requested', sentBack());
@@ -834,6 +850,51 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       const before = notify.execute.mock.callCount();
       await send('reimbursement_payout_correction_submitted', accountGiven({ approverRecipientUserIds: ['u_requester'] }));
       assert.equal(notify.execute.mock.callCount(), before);
+    });
+
+    // Payout spec §17.3. The title used to be the template's own, one for every claim: a claim with no account, and a
+    // claim that asked for cash, were told their "บัญชีรับเงิน" needed correcting.
+    it('titles and words the send-back notice by what the claim held: an account is corrected, a missing one added, cash chosen again', async () => {
+      const cases = [
+        ['ACCOUNT', 'BANK_WRONG', 'ใบเบิกต้องแก้บัญชีรับเงิน: RB-202610-00007', 'เหตุผล: ธนาคารไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+        ['NOTHING', 'NO_ACCOUNT_ON_CLAIM', 'ใบเบิกต้องเพิ่มบัญชีรับเงิน: RB-202610-00007', 'เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน'],
+        ['CASH', 'CASH_NOT_PAYABLE', 'ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง: RB-202610-00007', 'เหตุผล: จ่ายเป็นเงินสดไม่ได้ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน'],
+      ] as const;
+      for (const [held, reasonCode, title, body] of cases) {
+        const sent = await send('reimbursement_payout_correction_requested', sentBack({}, held, reasonCode));
+        assert.deepEqual([sent.title, sent.body, sent.recipientUserIds], [title, body, ['u_requester']], held);
+        assert.doesNotMatch(`${sent.title} ${sent.body}`.replace('RB-202610-00007', ''), /[A-Za-z_]/, held);
+      }
+    });
+
+    // The title and the body used to say "บัญชีรับเงินใหม่" of every answer: of the same account, of a first account, of cash.
+    it('titles and words the approvers\' notice by what the requester answered, and says "ใหม่" only of another account', async () => {
+      const expected = {
+        NEW_ACCOUNT: ['รออนุมัติบัญชีรับเงินใหม่: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่'],
+        SAME_ACCOUNT: ['รออนุมัติบัญชีรับเงินเดิม: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงินเดิม'],
+        CASH_INSTEAD: ['รออนุมัติการรับเป็นเงินสด: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+        ACCOUNT_INSTEAD: ['รออนุมัติบัญชีรับเงิน: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+        SAME_CASH: ['รออนุมัติการรับเป็นเงินสด: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+        FIRST_ACCOUNT: ['รออนุมัติบัญชีรับเงิน: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+        FIRST_CASH: ['รออนุมัติการรับเป็นเงินสด: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+      } satisfies Record<ReimbursementPayoutRoundAnswer, [string, string]>;
+      for (const [answer, words] of Object.entries(expected) as Array<[ReimbursementPayoutRoundAnswer, [string, string]]>) {
+        const sent = await send('reimbursement_payout_correction_submitted', accountGiven({}, answer));
+        assert.deepEqual([sent.title, sent.body, sent.recipientUserIds], [...words, ['u_manager']], answer);
+        assert.doesNotMatch(`${sent.title} ${sent.body}`.replace('RB-202610-00007', ''), /[A-Za-z_]|\d\.\d{3,}/, answer);
+      }
+      // An answer with no record of how its round began: words that are true of every answer.
+      const unknown = await send('reimbursement_payout_correction_submitted', accountGiven({}, null));
+      assert.deepEqual([unknown.title, unknown.body], ['รออนุมัติวิธีรับเงินคืน: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติวิธีรับเงินคืน']);
+    });
+
+    it('lets neither template assemble a sentence of its own: both print what the event carries', () => {
+      const words = (key: string) => {
+        const { titleTemplate, bodyTemplate } = template(key).defaultActionJson[0]!.configJson as { titleTemplate: string; bodyTemplate: string };
+        return [titleTemplate, bodyTemplate];
+      };
+      assert.deepEqual(words('reimbursement_payout_correction_requested'), ['{{payoutCorrectionTitle}}: {{requestNo}}', '{{payoutCorrectionNotice}}']);
+      assert.deepEqual(words('reimbursement_payout_correction_submitted'), ['{{payoutAnswerTitle}}: {{requestNo}}', 'ยอด {{amount}} {{currency}} · {{payoutAnswerNotice}}']);
     });
 
     it('creates no task and reads no account: each is one notice, about where the claim stands', () => {
