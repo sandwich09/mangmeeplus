@@ -158,7 +158,7 @@ describe('what a claim says about where the money goes back to', () => {
     assert.deepEqual(draft(missing), { state: 'missing', line: 'ยังไม่ได้เลือกวิธีรับเงินคืน',
       notes: ['ผู้เบิกยังไม่ได้ตั้งบัญชีรับเงินคืนประจำ เลือกรับเป็นเงินสด ระบุบัญชีสำหรับใบนี้ หรือตั้งบัญชีประจำก่อนส่งอนุมัติ'] });
     assert.equal(logic.claimPayoutSubmitBlock({ status: 'DRAFT', payout: missing }), 'ยังไม่ได้เลือกวิธีรับเงินคืน เลือกวิธีรับเงินคืนก่อนส่งอนุมัติ');
-    assert.equal(draft({ payoutMethod: 'BANK_TRANSFER', notReadyReason: 'payout_destination_required' }).line, 'ยังไม่ได้ระบุบัญชีรับเงินคืน');
+    assert.equal(draft({ payoutMethod: 'BANK_TRANSFER', notReadyReason: 'payout_destination_required' }).line, 'ยังไม่ได้ระบุบัญชีรับเงิน');
     assert.equal(logic.claimPayoutSubmitBlock({ status: 'DRAFT', payout: { followsDefault: true, ...transfer } }), null);
     // An account typed for this claim, by the requester or by whoever prepared it.
     assert.deepEqual(draft({ ...transfer, source: 'REQUESTER' }).notes, ['บัญชีที่ระบุสำหรับใบนี้']);

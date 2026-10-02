@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 import { buildReimbursementGuide } from './reimbursement-guide.content';
 import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content';
 import { buildExpensesGuide } from './expenses-guide.content';
@@ -150,16 +151,30 @@ describe('the reimbursement guide reads as the product does', () => {
       }
       return false;
     };
-    // ponytail: the screens of the payout account correction round are built on another branch, so the names of their
-    // buttons, card and label are the spec's (payout spec §14.2, §14.4, §14.6) and have no screen to be held against
-    // yet. The exception ends by itself once the claim screens read `payoutCorrectionActions`, the flags those buttons
-    // are shown from: from then on these five are checked like every other quote.
-    const notBuiltYet = claimScreens.includes('payoutCorrectionActions') ? [] : [
-      'ส่งกลับให้แก้บัญชีรับเงิน', 'แก้บัญชีรับเงิน', 'ส่งกลับให้แก้อีกครั้ง', 'สิ่งที่เปลี่ยน: บัญชีรับเงินคืน', 'สำเนาก่อนแก้บัญชีรับเงิน',
-    ];
     const quotes = [...new Set(read.flatMap((text) => [...text.matchAll(/“([^”]+)”/g)].map((match) => match[1]!)))];
     assert.ok(quotes.length > 50, 'the guide quotes the screens it describes');
-    assert.deepEqual(quotes.filter((quote) => !isShown(quote) && !notBuiltYet.includes(quote)), []);
+    assert.deepEqual(quotes.filter((quote) => !isShown(quote)), []);
+    // The words of a payout round are quoted as the screens say them now: by what the claim holds and by what was answered.
+    for (const label of ['รอผู้เบิกเพิ่มบัญชีรับเงิน', 'รอผู้เบิกเลือกวิธีรับเงินคืน', 'รออนุมัติบัญชีรับเงินเดิม', 'รออนุมัติการรับเป็นเงินสด', 'สิ่งที่รออนุมัติ: บัญชีรับเงินใหม่',
+      'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง', 'บันทึกวิธีรับเงินคืน', 'สำเนาก่อนส่งกลับ', 'เพิ่มบัญชีรับเงินให้ใบนี้ แล้วให้ผู้อนุมัติตรวจบัญชีนั้น']) {
+      assert.ok(quotes.includes(label), label);
+    }
+    for (const gone of ['สิ่งที่เปลี่ยน: บัญชีรับเงินคืน', 'สำเนาก่อนแก้บัญชีรับเงิน', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน', 'รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน']) {
+      assert.equal(quotes.includes(gone), false, gone);
+    }
+  });
+
+  // A round is not only "a wrong account, replaced by another": the status table names each thing a claim in a round waits for.
+  it('lists every status a claim in a payout round shows, as its badge says it', () => {
+    const statuses = guide.sections.find((section) => section.id === 'status')!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows.map((row) => row[0]) : []));
+    for (const answer of [undefined, 'NEW_ACCOUNT', 'SAME_ACCOUNT', 'CASH_INSTEAD', 'ACCOUNT_INSTEAD', 'SAME_CASH', 'FIRST_ACCOUNT', 'FIRST_CASH'] as const) {
+      for (const payoutMethod of answer ? [undefined] : ['BANK_TRANSFER', 'CASH', undefined]) {
+        const label = reimbursementPayoutRoundStatus({ payoutCorrectionPhase: answer ? 'AWAITING_APPROVAL' : 'AWAITING_REQUESTER', payoutMethod, payoutCorrectionAnswer: answer })!;
+        assert.ok(statuses.includes(label), label);
+      }
+    }
+    // No sentence of the guide says the old words of one case for every case.
+    for (const text of read) assert.doesNotMatch(text, /ผู้อนุมัติชุดเดิม|อยู่ระหว่างแก้บัญชี|อยู่ระหว่างแก้ไขบัญชี|หลังอนุมัติบัญชีใหม่/u, text);
   });
 
   // Owner rule: readers are shop staff on a phone. A file type, a file size and the app's own name are all that stays in Latin letters.

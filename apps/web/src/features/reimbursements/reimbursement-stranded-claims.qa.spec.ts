@@ -518,12 +518,13 @@ describe('the status badge of a claim the system holds reads รอระบบ�
     for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT']) {
       assert.deepEqual(claimStatusBadge({ status, currentDesk: { kind: 'SYSTEM' } }), { label: REIMBURSEMENT_SYSTEM_WAIT_LABEL, tone: 'amber' }, status);
     }
-    // Each also hands over the row's place in a payout account correction round, which the badge reads after the desk.
-    assert.equal(hub.match(/<StatusBadge status=\{r\.status\} desk=\{r\.currentDesk\} phase=\{r\.payoutCorrectionPhase\} \/>/g)?.length, 6,
-      'the list, its cards, the approval cards, the approval table (a row of a correction round), the finance table and its cards');
-    assert.equal(hub.includes('<StatusBadge status={r.status} />'), false);
-    assert.equal(hub.includes('<StatusBadge status={r.status} desk={r.currentDesk} />'), false);
-    assert.match(hub, /claimStatusBadge\(r\)\.label,\s+FINANCE_REVIEW_LABELS\[r\.financeReviewStatus\]/);
+    // Each hands the badge the whole row: after the desk it reads the row's place in a payout round, with what the claim
+    // holds and what was answered, which no single field of a row says.
+    assert.equal(hub.match(/<StatusBadge claim=\{r\} \/>/g)?.length, 6,
+      'the list, its cards, the approval cards, the approval table (a row of a round), the finance table and its cards');
+    assert.doesNotMatch(hub, /<StatusBadge (?!claim=\{r\} \/>)/u, 'no badge is given less than the row');
+    // By the words its row shows: the badge's, and the finance review's where the row says one.
+    assert.match(hub, /claimStatusBadge\(r\)\.label,\s+financeLine\(r\)/);
   });
 });
 

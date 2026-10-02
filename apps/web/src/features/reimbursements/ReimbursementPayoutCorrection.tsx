@@ -16,13 +16,12 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL, PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL,
-  PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
-  PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
+  PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAVE_LABEL,
+  PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
   isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
-  emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
-  payoutCorrectionOffers, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
-  payoutCorrectionTypingRefusedUpFront, type PayoutCorrectionForm,
+  emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionAnswerWords, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
+  payoutCorrectionOffers, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, payoutCorrectionSendBackTitle,
+  payoutCorrectionTypingRefusedUpFront, payoutRoundTexts, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
 /**
@@ -45,8 +44,11 @@ async function refusalText(e: unknown, onConflict: () => Promise<boolean>): Prom
 }
 
 /**
- * "ส่งกลับให้แก้บัญชีรับเงิน": a reason from the fixed list and an optional note (spec §14.3). The same form
- * sends a claim back again from the step a round waits on, which is how its approvers refuse a new account.
+ * The send-back: a reason from the fixed list and an optional note (spec §14.3). The same form sends a claim back again
+ * from the step a round waits on, which is how its approvers do not take what was answered. Its title, what it says
+ * will happen, the reasons it lists and the note's hint all follow what the claim holds: an account to correct, cash
+ * to choose again, or none yet. A claim with no account is sent back for that one reason, so the form says the reason
+ * and asks for none.
  */
 export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDone, onConflict }: {
   companyId: string;
@@ -64,16 +66,19 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
   // A second press before the first has answered does nothing: one send-back, one request.
   const sending = useRef(false);
   const heading = useFocusOnOpen();
-  const again = detail.payoutCorrectionPhase === 'AWAITING_APPROVAL';
+  const reasons = payoutCorrectionReasons(detail);
+  // One reason only (a claim with no account of its own): it is what the form sends, said and not asked.
+  const onlyReason = reasons.length === 1 ? reasons[0] : undefined;
+  const chosen = onlyReason?.[0] ?? reasonCode;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (sending.current) return;
-    const invalid = payoutCorrectionRequestError(reasonCode, note);
+    const invalid = payoutCorrectionRequestError(chosen, note);
     if (invalid) { setError(invalid); return; }
     sending.current = true; setBusy(true); setError(null);
     try {
-      onDone(await requestReimbursementPayoutCorrection(companyId, detail.id, payoutCorrectionRequestInput(reasonCode as ReimbursementPayoutCorrectionReason, note)));
+      onDone(await requestReimbursementPayoutCorrection(companyId, detail.id, payoutCorrectionRequestInput(chosen as ReimbursementPayoutCorrectionReason, note)));
     } catch (e) {
       // A lost race or a refusal: the sentence is shown here, and the reason and note stay as typed.
       setError(await refusalText(e, onConflict));
@@ -83,31 +88,32 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
   return (
     <form className="space-y-3 [overflow-wrap:anywhere]" onSubmit={submit} noValidate data-testid="reimbursement-payout-correction-request">
       <div>
-        {/* A claim with no account of its own (sent before claims carried one) has none to correct: its requester adds one. */}
-        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">
-          {again ? PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL : !detail.payout ? PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL}
-        </h3>
+        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">{payoutCorrectionSendBackTitle(detail)}</h3>
         <ul className="mt-1 space-y-1 text-sm text-gray-600">
           {payoutCorrectionSendBackNotes(detail).map((line) => <li key={line}>{line}</li>)}
         </ul>
       </div>
-      <div>
-        <div className={labelClass}>เหตุผลที่ส่งกลับ *</div>
-        <div role="radiogroup" aria-label="เหตุผลที่ส่งกลับ" aria-required className="grid gap-2 sm:grid-cols-2">
-          {payoutCorrectionReasons(detail).map(([code, label]) => (
-            <label key={code} className={cx(choiceClass, reasonCode === code && 'border-brand-300 bg-brand-25')}>
-              <input type="radio" name="payout-correction-reason" className="mt-0.5 h-5 w-5 shrink-0" checked={reasonCode === code} disabled={busy}
-                onChange={() => { setReasonCode(code); setError(null); }} />
-              <span className="min-w-0">{label}</span>
-            </label>
-          ))}
+      {onlyReason ? (
+        <p className="text-sm font-semibold text-gray-900" data-testid="reimbursement-payout-correction-reason">{`เหตุผล: ${onlyReason[1]}`}</p>
+      ) : (
+        <div>
+          <div className={labelClass}>เหตุผลที่ส่งกลับ *</div>
+          <div role="radiogroup" aria-label="เหตุผลที่ส่งกลับ" aria-required className="grid gap-2 sm:grid-cols-2">
+            {reasons.map(([code, label]) => (
+              <label key={code} className={cx(choiceClass, reasonCode === code && 'border-brand-300 bg-brand-25')}>
+                <input type="radio" name="payout-correction-reason" className="mt-0.5 h-5 w-5 shrink-0" checked={reasonCode === code} disabled={busy}
+                  onChange={() => { setReasonCode(code); setError(null); }} />
+                <span className="min-w-0">{label}</span>
+              </label>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
       <div>
         <label className={labelClass} htmlFor="reimbursement-payout-correction-note">หมายเหตุ (ไม่บังคับ)</label>
         <textarea id="reimbursement-payout-correction-note" className={cx(inputClass, 'min-h-20 resize-y')} maxLength={REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH}
           disabled={busy} value={note} onChange={(event) => { setNote(sanitizeReasonInput(event.target.value)); setError(null); }}
-          placeholder="เช่น ธนาคารแจ้งว่าไม่พบบัญชีนี้" />
+          placeholder={payoutRoundTexts(detail).notePlaceholder} />
         <div className="mt-1 flex justify-between gap-3 text-xs leading-5 text-gray-500">
           <span className="min-w-0">ผู้เบิกและทุกคนที่เปิดใบนี้เห็นหมายเหตุนี้ อย่าพิมพ์เลขบัญชี</span>
           <span className="shrink-0 tabular-nums">{note.length}/{REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH}</span>
@@ -123,11 +129,13 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
 }
 
 /**
- * "แก้บัญชีรับเงิน": the account a claim in a round is to be paid into (spec §14.5), from its requester or from
- * a finance reviewer on their behalf. The three choices of a draft: the requester's default account as the
+ * The answer to a send-back: how a claim in a round is to be paid back (spec §14.5), from its requester or from a
+ * finance reviewer on their behalf. Its title says what is asked, by what the claim holds: "แก้บัญชีรับเงิน",
+ * "เพิ่มบัญชีรับเงิน" or "เลือกวิธีรับเงินคืน". The three choices of a draft: the requester's default account as the
  * server shows it now, an account typed for this claim, or cash. And one a draft has no use for: the account
  * the claim was approved with, kept as it is, for a claim that was sent back by mistake. Nothing is chosen for
- * them: the account that was sent back may well be their default.
+ * them: the account that was sent back may well be their default. What is saved may be cash, so the button that
+ * saves it, and every sentence about what is saved, names the method and never "the account".
  */
 export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEditEmployees, onCancel, onDone, onConflict }: {
   companyId: string;
@@ -210,8 +218,9 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   return (
     <form className="space-y-3 [overflow-wrap:anywhere]" onSubmit={submit} noValidate data-testid="reimbursement-payout-correction-account">
       <div>
-        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">{forSelf ? PAYOUT_CORRECTION_FIX_LABEL : `${PAYOUT_CORRECTION_FIX_LABEL}แทนผู้เบิก`}</h3>
-        <p className="mt-1 text-sm text-gray-600">เลือกวิธีรับเงินคืนของใบนี้ใหม่ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน</p>
+        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">{payoutCorrectionAnswerWords(detail, forSelf).title}</h3>
+        {/* Not "ใหม่": a claim with no account of its own never chose one before. */}
+        <p className="mt-1 text-sm text-gray-600">เลือกวิธีรับเงินคืนของใบนี้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน</p>
       </div>
       <div role="radiogroup" aria-label="รับเงินคืนทาง" aria-required className="space-y-2">
         {defaultAccount && offers('DEFAULT') && option('DEFAULT', forSelf ? 'ใช้บัญชีรับเงินคืนประจำของฉัน' : 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', payoutAccountWithName(defaultAccount))}
@@ -236,47 +245,49 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
           )}
         </div>
       )}
+      {/* True of every choice: what is approved may be the same account, a first one, or cash, and the step that
+          approves it keeps only those of the claim's approvers who are still on its route. */}
       <p className="text-xs leading-5 text-gray-500">
         {detail.payoutCorrectionPhase === 'AWAITING_APPROVAL'
-          ? 'เมื่อบันทึกแล้ว บัญชีที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจบัญชีใหม่นี้แทน'
-          : 'เมื่อบันทึกแล้ว ใบจะส่งให้ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจ่าย ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที'}
+          ? 'เมื่อบันทึกแล้ว วิธีรับเงินคืนที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจวิธีรับเงินคืนที่เลือกครั้งนี้แทน'
+          : 'เมื่อบันทึกแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติวิธีรับเงินคืนนี้ก่อนจึงจ่ายได้ ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที'}
       </p>
       {error && <ErrorBanner message={error} />}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button type="button" className={cx(ghostClass, 'w-full sm:w-auto')} disabled={busy} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกบัญชีรับเงิน'}</button>
+        <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังบันทึก...' : PAYOUT_CORRECTION_SAVE_LABEL}</button>
       </div>
     </form>
   );
 }
 
 /**
- * "สิ่งที่เปลี่ยน: บัญชีรับเงินคืน" (spec §14.6): what a round's approvers approve. The account the claim was
- * approved with beside the one it has now, last 4 digits only, why it was sent back, and that the lines and
- * the amount are what was approved. Shown to every reader of a claim whose new account waits for approval.
+ * "สิ่งที่รออนุมัติ: …" (spec §14.6): what a round's approvers approve, named by what was answered. What the claim was
+ * approved with beside what it has now (an account by its last 4 digits only), why it was sent back, who answered, and
+ * that the lines and the amount are what was approved. Shown to every reader of a claim whose answer waits for approval.
  */
 export function PayoutCorrectionComparison({ detail }: { detail: any }) {
   const view = payoutCorrectionComparison(detail);
   if (!view) return null;
   return (
     <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3 [overflow-wrap:anywhere]" data-testid="reimbursement-payout-correction-comparison">
-      <h3 className="text-sm font-bold text-gray-900">สิ่งที่เปลี่ยน: บัญชีรับเงินคืน</h3>
-      {/* The same account given again: one account and the word that it did not change, never two that read alike. */}
-      {view.same ? (
+      <h3 className="text-sm font-bold text-gray-900">{view.title}</h3>
+      {/* The destination that was kept: once, under the words that it did not change, never two that read alike. */}
+      {view.labels.length === 1 ? (
         <dl>
           <div className="min-w-0" data-testid="reimbursement-payout-correction-same-account">
-            <dt className="text-xs font-semibold text-gray-600">{PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL}</dt>
+            <dt className="text-xs font-semibold text-gray-600">{view.labels[0]}</dt>
             <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
           </div>
         </dl>
       ) : (
         <dl className="grid gap-3 sm:grid-cols-2">
           <div className="min-w-0">
-            <dt className="text-xs font-semibold text-gray-600">บัญชีเดิม</dt>
+            <dt className="text-xs font-semibold text-gray-600">{view.labels[0]}</dt>
             <dd className="mt-1 break-words text-sm text-gray-700">{view.previous}</dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-xs font-semibold text-gray-600">บัญชีใหม่</dt>
+            <dt className="text-xs font-semibold text-gray-600">{view.labels[1]}</dt>
             <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
           </div>
         </dl>
