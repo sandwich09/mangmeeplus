@@ -1,5 +1,44 @@
 # Agent Memory: manual-expense-web-entry-flag
 
+## Update 2026-10-02 — implementation (current state)
+
+Everything below this section is kept unchanged as history. Where it disagrees with this section, this section wins.
+
+Status: IN PROGRESS on branch `claude/manual-expense-web-entry-20261002` (worktree `/private/tmp/mangmee-manual-expense-entry-20261002`, from develop `608b4a6f5`). Not pushed, not released. Phase state: P0 done, P1 done; P2–P6 follow in their own commits and update this section.
+
+Owner: thawatchai / Claude (implementation lane; the controller session reviews, pushes and merges).
+
+Scope: spec v3.1 and its plan, P0–P6. A per-company screen setting, the admin command, one `/auth/me` field, the web helper, gate and entrances, the admin switch. Nothing behind the entrances changes.
+
+Decisions:
+- Owner, 2026-10-02 ~23:08, mid-build: "สวิตช์ซ่อนเมนู ให้เป็น default ปิดไปเลยนะ". Read by the controller as: the menu is NOT shown by default; a company without a row reads as not shown, existing and new alike; the system admin switches it on per company. The owner has been asked to confirm this reading. The second half of D2 stands (purchases, upgrades, deals and presets never read or write the setting).
+- The default lives in ONE place on the API side: `MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW` in `apps/api/src/modules/system-partner-management/domain/logic/manual-expense-web-entry.logic.ts`. `/auth/me`, the partner detail and the command read through `manualExpenseWebEntryState`. A different answer from the owner is that one line plus the one test that pins it (proved: flipping the constant fails exactly that test in `partner.controller.spec.ts`).
+- The flag column has no database default, so a row always states its value and the table can hold "shown" rows (needed by the seed, and by the variant the owner may still choose: existing shops keep the menu through a one-time "shown" row. NOT built).
+- The web predicate does not change with the default: `manualExpenseWebEntry !== false`. A missing field still shows the entrances (D5); its reason is rewritten in spec §6.1.
+- API tests live in spec files the `test` script already lists (`partner.controller.spec.ts`, `auth.controller.spec.ts`); no `package.json` is edited. The P5 PostgreSQL spec is registered in `.github/workflows/ci.yml` like `data-rights-single-admin.pg.spec.ts`. This closes the open question of plan §4.
+- The command locks the company row (`lockPlanTermCompany`), the lock every lifecycle writer takes, instead of adding an advisory lock of its own.
+- Audit risk level MEDIUM (a screen setting, like a profile edit), action `system.partner_manual_expense_web_entry.update`.
+- Six sentences of spec §8 were corrected because each was untrue in a state found during the build; the table of reasons is spec appendix C.
+
+Open questions:
+- The owner's confirmation of the controller's reading of the default change.
+- Whether shops that exist at release should keep the menu (a one-time "shown" row). Not built.
+- The reimbursement-payout release notes (`docs/evidence/reimbursement-payout-release-2026-10-02/`) name `20261002120000_data_rights_single_admin_mode` as the last migration; once this branch merges, the last one is `20261002230000_company_web_entry_setting`. Whoever cuts that release must account for it.
+
+Artifacts (this branch):
+- `apps/api/prisma/schema.prisma` (`CompanyWebEntrySetting`), migration `20261002230000_company_web_entry_setting`
+- `apps/api/src/modules/system-partner-management/domain/logic/manual-expense-web-entry.logic.ts`
+- `apps/api/src/modules/system-partner-management/application/use-cases/set-partner-manual-expense-web-entry.use-case.ts`
+- `partner.controller.ts` (`PUT :partnerCompanyId/manual-expense-web-entry`), `get-partner-detail.use-case.ts`, the module, `packages/contracts/src/partner-management.ts`
+- Spec v3.1, plan, this note.
+
+Verification (real runs, 2026-10-02):
+- P0 at `608b4a6f5`: F01–F13 re-checked by symbol, all hold (F02 fixed as the spec says); no entrance outside spec §9. Baseline: API 133 + 112 + 91 tests on the plan's three lines, web 232, ai-gateway approved-knowledge 9, all exit 0; maintenance pins `status=current` (48 files); contracts rebuilt from source.
+- P1: `partner.controller.spec.ts` 46 pass (33 before). Each new behaviour was shown red by reverting its production line for one run: 16 single-line reverts, each failed the named test and nothing else of the new set (no-op, 409, lock refusal, 404, audit, two validations, version increment, company lock, the default constant, two partner-detail cases, endpoint permission, route parameter, argument forwarding, DTO). `prisma validate` exit 0; `migration:review` SQL for the new table copied into the migration; `check-di-metadata` exit 0; API typecheck exit 0.
+
+Next:
+- P2 `/auth/me` field, web session types, helper, fingerprint, seed row. P3 gate, entrances, guide. P4 admin switch. P5 PostgreSQL invariants. P6 browser evidence and docs.
+
 ## Update 2026-10-01 — independent review and spec v3.0 (current state)
 
 2026-10-02: The owner answered every open decision with “ตามที่แนะนำทั้งหมด”. D1–D8 are decided as proposed; the spec, plan, review, bugs file and the notes on the audit, QA report and evidence README now read “ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ)”, and the spec's catalog-key appendix is kept as the alternative that was not chosen. No rule, contract field, number or screen wording changed. The owner has not ordered implementation.

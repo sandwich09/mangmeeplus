@@ -340,6 +340,8 @@ const CODE_LABELS: Record<string, string> = {
   entitlement_command_conflict: 'คำขอนี้ถูกใช้ไปแล้วด้วยข้อมูลอื่น กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   entitlement_set_version_conflict: 'แพ็กเกจถูกแก้ไขโดยผู้อื่นระหว่างบันทึก กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   ocr_config_version_conflict: 'การตั้งค่า OCR ถูกแก้ไขโดยผู้ดูแลคนอื่น ระบบยังไม่ได้บันทึก กรุณาโหลดค่าล่าสุดแล้วตรวจสอบอีกครั้ง',
+  // The page reloads the partner detail itself on this 409, so the sentence asks for a check, not a reload.
+  manual_expense_web_entry_version_conflict: 'ค่านี้ถูกเปลี่ยนไปแล้ว กรุณาตรวจค่าล่าสุดก่อนบันทึกอีกครั้ง',
   // P10-L §15.1: the monthly AI image-read ceiling. Worded as reads, not receipts, because the
   // admission charges every image the assistant looks at. The receipt itself was saved — only the
   // read was refused — so the copy says what still works before it says what to do about the

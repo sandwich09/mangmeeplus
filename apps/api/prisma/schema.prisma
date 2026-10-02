@@ -420,6 +420,7 @@ model Company {
   archivedAt                        DateTime?
   featureEntitlements               CompanyFeatureEntitlement[]
   aiConfiguration                   CompanyAiConfiguration?
+  webEntrySetting                   CompanyWebEntrySetting?
   aiUsageEvents                     AiUsageEvent[]
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
   aiMonthlyBucketUsage              CompanyAiMonthlyBucketUsage[]
@@ -4142,6 +4143,22 @@ model CompanyAiConfiguration {
   /// tool (plan PR G) only; `aiCreditCutoverSource` says which cohort rule moved it.
   aiCreditCutoverAt          DateTime?
   aiCreditCutoverSource      String?
+  updatedBySystemAdminUserId String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+  company                    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+// Per-company screen settings for web entrances (manual-expense-web-entry-flag spec §5.1).
+// NOT an entitlement: nothing here grants or removes a permission, and no guard, LINE or billing
+// code reads it. A row exists only once the system admin has set a value (or a seed wrote one);
+// what a company WITHOUT a row reads as is decided in one place,
+// `MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW`, so the flag has no database default on purpose.
+model CompanyWebEntrySetting {
+  id                         String   @id @default(cuid())
+  companyId                  String   @unique
+  manualExpenseEntryEnabled  Boolean
+  version                    Int      @default(0) // monotonic CAS fence; increments only on a real change
   updatedBySystemAdminUserId String?
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
