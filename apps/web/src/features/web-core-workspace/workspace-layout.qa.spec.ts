@@ -7,8 +7,8 @@ import { test } from 'node:test';
 // shells in place; the wiring lives behind `useEffect`, so it is checked from source, not rendered.
 const source = readFileSync(new URL('./WorkspaceLayout.tsx', import.meta.url), 'utf8');
 
-test('the locked shell listens for PLAN_TERM_CHANGED, focus and visibility — a running shop does not', () => {
-  assert.match(source, /if \(notice\?\.derivedState !== 'EXPIRED'\) return;/);
+test('locked and billing recovery shells listen for changes; ordinary running business pages use their access context', () => {
+  assert.match(source, /if \(notice\?\.derivedState !== 'EXPIRED' && !isBillingCustomerRecoveryPath\(pathname \?\? '', companyId\)\) return;/);
   assert.match(source, /window\.addEventListener\(PLAN_TERM_CHANGED_EVENT, bump\)/);
   assert.match(source, /window\.addEventListener\('focus', bump\)/);
   assert.match(source, /document\.addEventListener\('visibilitychange', onVisible\)/);

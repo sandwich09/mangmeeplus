@@ -8,13 +8,21 @@ import { planCapacityUsed } from '../../system-partner-management/application/pl
 export type RestartSource = { subscriptionId: string; contractAttemptId: string | null; paidThrough: string; termHash: string | null };
 const review = () => billingError('BILLING_RESTART_REVIEW', 'ต้องตรวจสมาชิกหรือยอดค้างเดิมก่อนเริ่มแพ็กเกจใหม่ กรุณาติดต่อทีมงานพร้อมเลขบริษัท');
 
+/** Cheap local preflight; provider debt/dispute/history checks still run before a new payment. */
+export async function restartReviewPending(tx: Prisma.TransactionClient, account: BillingAccount, newSubscriptionId?: string): Promise<boolean> {
+  return !!(await tx.billingIssue.count({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+    livemode: account.livemode, kind: 'FINANCIAL_REVIEW', state: { not: 'RESOLVED' } } }) ||
+    await tx.billingInvoice.count({ where: { billingAccountId: account.id,
+      ...(newSubscriptionId ? { AND: [{ OR: [{ subscriptionId: null }, { subscriptionId: { not: newSubscriptionId } }] }] } : {}),
+      OR: [{ applyStatus: { not: 'APPLIED' } }, { refundedSatang: { not: 0 } }, { disputed: true }] } }));
+}
+
 /** A new paid contract may replace a terminal one; its old ledger is never removed. */
 export async function restartSource(prisma: PrismaService, stripe: StripeClient, account: BillingAccount, expected?: RestartSource,
   newSubscriptionId?: string): Promise<RestartSource> {
   if (!account.customerId || !account.baseSubscriptionId || !account.paidThrough || account.paidThrough > new Date() ||
     (account.graceEndsAt && account.graceEndsAt > new Date())) throw review();
-  if (await prisma.client.billingIssue.count({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
-    livemode: account.livemode, kind: 'FINANCIAL_REVIEW', state: { not: 'RESOLVED' } } })) throw review();
+  if (await restartReviewPending(prisma.client, account, newSubscriptionId)) throw review();
   const source = { subscriptionId: account.baseSubscriptionId, contractAttemptId: account.contractAttemptId,
     paidThrough: account.paidThrough.toISOString(), termHash: account.termProjectionHash };
   if (expected && (expected.subscriptionId !== source.subscriptionId || expected.contractAttemptId !== source.contractAttemptId ||
