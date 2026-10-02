@@ -6,7 +6,8 @@
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import {
-  isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPayoutCorrectionPhase, todayCivilDate,
+  isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPayoutCorrectionPhase,
+  reimbursementPayoutHeld, reimbursementPayoutRoundAnswer, reimbursementPayoutRoundStatus, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, todayCivilDate,
 } from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
@@ -16,9 +17,12 @@ import type {
   ReimbursementPaymentMethod,
   ReimbursementPaymentSourceRef,
   ReimbursementPayoutCorrectionPhase,
+  ReimbursementPayoutHeld,
+  ReimbursementPayoutRoundAnswer,
   ReimbursementReceiptRequirementStatus,
   ReimbursementPolicySnapshotV1,
 } from '@watchdog-bms/contracts';
+import { hasPayoutSnapshot } from './payout-destination.logic';
 // FIN-01: one settlement tolerance across the app. Shared, not copied, because the
 // reimbursements module already depends on expenses (projection orchestrator, evidence
 // service, repository) and expenses never depends back — this is a pure Decimal constant,
@@ -444,6 +448,115 @@ export function payoutCorrectionRoundStart<Approved extends { payoutMethod?: str
   payoutCorrectionLog?: readonly { kind: string; approved?: Approved }[] | null;
 }): Approved | undefined {
   return [...(claim.payoutCorrectionLog ?? [])].reverse().find((entry) => entry.kind === 'SENT_BACK' && !!entry.approved)?.approved;
+}
+
+// ---- The facts behind the words of a round (payout spec §14.2) ----
+//
+// Every word a round shows follows what the claim HELD when it was sent back and what its requester
+// ANSWERED, never the phase alone or the reason code. The words are in contracts; the facts are read here.
+
+/** A claim, as far as what it holds goes: the method of its own snapshot. */
+type PayoutHolder = { payoutMethod?: string | null; payoutFingerprint?: string | null };
+/** A claim, as far as its round goes. */
+type PayoutCorrectionClaim = PayoutHolder & Parameters<typeof reimbursementPayoutCorrectionPhase>[0] & {
+  requesterUserId?: string | null;
+  payoutCorrectionLog?: Parameters<typeof payoutCorrectionFacts>[0];
+};
+
+/**
+ * What a claim record holds as its payout destination (contracts `reimbursementPayoutHeld`): the method
+ * of its own snapshot. A claim sent before claims carried one holds nothing, whatever its draft once chose.
+ */
+export function payoutCorrectionHeld(claim: PayoutHolder): ReimbursementPayoutHeld {
+  return reimbursementPayoutHeld({ payoutMethod: hasPayoutSnapshot(claim) ? claim.payoutMethod : undefined });
+}
+
+/**
+ * The fact behind the words of every step of every round of a claim, in the order of its log and one
+ * for each entry: what the claim held at a send-back, and what an answer gave against what its round
+ * began with. The ONE reading of the log: a list row, a claim detail, the timeline, the two notices,
+ * the printed form and the LINE assistant take their words from it, so they cannot tell it differently.
+ *
+ * A send-back from the pay step opens a round and says what the claim was approved with (`approved`,
+ * with no method for a claim that had no account). A send-back from the round's waiting step holds
+ * what the answer before it gave. An approval approves the answer before it. Whether an answer is the
+ * very destination the round began with was decided when it was taken (`sameAsApproved`). An entry
+ * whose round has no opening on record gets no fact: its reader then says words true of every claim.
+ *
+ * An answer also says whether someone gave it on the requester's behalf (`requesterUserId`: the claim's
+ * requester): no sentence says the requester did what someone else did for them.
+ */
+export function payoutCorrectionFacts(log: readonly {
+  kind: string;
+  byUserId?: string | null;
+  approved?: { payoutMethod?: string | null } | null;
+  payoutMethod?: string | null;
+  sameAsApproved?: boolean;
+}[] | null | undefined, requesterUserId?: string | null): Array<{ held?: ReimbursementPayoutHeld; answer?: ReimbursementPayoutRoundAnswer; onBehalf?: true }> {
+  let start: ReimbursementPayoutHeld | undefined;
+  let given: ReimbursementPayoutHeld | undefined;
+  let answer: ReimbursementPayoutRoundAnswer | undefined;
+  return (log ?? []).map((entry) => {
+    if (entry.kind === 'SENT_BACK' && entry.approved) {
+      start = reimbursementPayoutHeld(entry.approved);
+      given = undefined;
+      answer = undefined;
+      return { held: start };
+    }
+    if (entry.kind === 'SENT_BACK') return given ? { held: given } : {};
+    if (entry.kind === 'ACCOUNT_SUBMITTED') {
+      const method = entry.payoutMethod === 'BANK_TRANSFER' || entry.payoutMethod === 'CASH' ? entry.payoutMethod : undefined;
+      given = method && reimbursementPayoutHeld({ payoutMethod: method });
+      answer = start && method ? reimbursementPayoutRoundAnswer(start, method, entry.sameAsApproved === true) : undefined;
+      const onBehalf = !!entry.byUserId && !!requesterUserId && entry.byUserId !== requesterUserId;
+      return { ...(answer && { answer }), ...(onBehalf && { onBehalf: true as const }) };
+    }
+    // The approval of the answer before it.
+    return answer ? { answer } : {};
+  });
+}
+
+/**
+ * What the requester gave, of a claim whose answer waits for approval: the fact of that answer, the
+ * last entry of its log. Undefined for a claim in any other state.
+ */
+export function payoutCorrectionAnswer(claim: PayoutCorrectionClaim): ReimbursementPayoutRoundAnswer | undefined {
+  return payoutCorrectionPhase(claim) === 'AWAITING_APPROVAL' ? payoutCorrectionFacts(claim.payoutCorrectionLog).at(-1)?.answer : undefined;
+}
+
+/**
+ * Who gave the answer that waits for approval, and whether that was someone other than the claim's
+ * requester: the same last entry of the log. Undefined for a claim in any other state.
+ */
+export function payoutCorrectionAnsweredBy(claim: PayoutCorrectionClaim): { byUserId: string; onBehalf?: true } | undefined {
+  const answered = payoutCorrectionPhase(claim) === 'AWAITING_APPROVAL' ? claim.payoutCorrectionLog?.at(-1) : undefined;
+  if (answered?.kind !== 'ACCOUNT_SUBMITTED' || !answered.byUserId) return undefined;
+  const onBehalf = payoutCorrectionFacts(claim.payoutCorrectionLog, claim.requesterUserId).at(-1)?.onBehalf;
+  return { byUserId: answered.byUserId, ...(onBehalf && { onBehalf }) };
+}
+
+/**
+ * The desk of a claim that waits for its requester, as the LINE backlog lists it (payout spec §17.3): the
+ * claim page's status label for what the claim holds, and the sentence that says what happens next. One
+ * desk row per label, so each label is true of every claim its row counts; `order` places the rows.
+ */
+export function payoutCorrectionRequesterDesk(claim: PayoutHolder): { order: number; label: string; note: string } {
+  const held = payoutCorrectionHeld(claim);
+  const payoutMethod = hasPayoutSnapshot(claim) ? claim.payoutMethod : undefined;
+  return {
+    order: Object.keys(REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held).indexOf(held),
+    label: reimbursementPayoutRoundStatus({ payoutCorrectionPhase: 'AWAITING_REQUESTER', payoutMethod }) as string,
+    note: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held[held].assistantNote,
+  };
+}
+
+/** What a claim in a round is said to wait for (contracts `reimbursementPayoutRoundStatus`), asked of a claim record. Undefined: it is in no round. */
+export function payoutCorrectionStatusLabel(claim: PayoutCorrectionClaim): string | undefined {
+  return reimbursementPayoutRoundStatus({
+    payoutCorrectionPhase: payoutCorrectionPhase(claim),
+    payoutMethod: hasPayoutSnapshot(claim) ? claim.payoutMethod : undefined,
+    payoutCorrectionAnswer: payoutCorrectionAnswer(claim),
+  });
 }
 
 /**

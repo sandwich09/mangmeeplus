@@ -104,8 +104,10 @@ describe('ReimbursementListPendingApprovalsTool', () => {
       ['amount', 'branch', 'currency', 'documentNumber', 'id', 'requesterDisplayName', 'status', 'submittedAt']);
     assert.doesNotMatch(JSON.stringify(result), /payout|account|6789|กสิกร|สมชาย/i);
     // The backlog and the AI summary shape their own rows too; none of the three reads payout data at all.
-    // The one thing the backlog asks is whether a claim was sent back for its account and whom it waits
-    // for (the correction phase, spec §17.3): where a claim stands, never what its account is.
+    // The one thing the backlog asks is whether a claim was sent back from the pay step, whom it waits for
+    // and under which label (the correction phase and its desk, spec §17.3): two questions of the claim's
+    // own logic, which answers with the claim page's status label. Where a claim stands, never what its
+    // account is.
     for (const file of ['erp-reimbursement-tools.use-case.ts', '../../../reimbursements/application/use-cases/reimbursement-summary.use-case.ts']) {
       assert.doesNotMatch(readFileSync(join(__dirname, file), 'utf8'), /payout(?!_?correction)|accountNumber|accountLast4/i, file);
     }
@@ -220,7 +222,7 @@ describe('a claim whose payout account is being corrected, as the assistant read
       desks: [{
         kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '580.50' }],
         oldestSentBackOn: '2026-09-30', longestWaitDays: 1,
-        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
       }],
       items: [
         { id: '000001', documentNumber: 'RB-202609-000001', requesterName: 'สมชาย', amount: '580.50', currency: 'THB',
@@ -232,5 +234,62 @@ describe('a claim whose payout account is being corrected, as the assistant read
     // Where the claim stands and nothing of the account, the reason code or who sent it back.
     assert.doesNotMatch(JSON.stringify(result.data), /payout|account|ffff/i);
     assert.doesNotMatch(JSON.stringify(result.data), /ACCOUNT_NUMBER_WRONG|payer-1|AWAITING_/);
+  });
+
+  const backlogOf = async (claims: unknown[]) => {
+    const backlog = new GetReimbursementApprovalBacklogUseCase({ ...repo, listRequests: async () => claims }, { log: async () => undefined } as any);
+    return new ReimbursementGetApprovalBacklogTool({ execute: (ctx: any, input: any) => backlog.execute(ctx, input, NOW) } as any).execute(approver);
+  };
+
+  // The whole answer for a claim that holds an account, as the assistant is handed it, letter for letter. It is what
+  // develop returned at 603f461dd (captured from that build) in everything but one word: the note now calls a claim's
+  // account "บัญชีรับเงิน", the name it has everywhere else (it said "บัญชีรับเงินคืน", the name of a member's standing
+  // account). The label, every figure, every date and the order of the fields are as they were.
+  it('returns for a claim that holds an account and waits for its requester the label it always had, and a note that names the account as every screen does', async () => {
+    const data = (await backlogOf([withRequester, withApprover])).data as any;
+    // The evaluation case of the assistant for such a claim (R-23) asks its answer for one of "บัญชีรับเงิน", "แก้บัญชี",
+    // "แก้ไขบัญชี" and for "ผู้เบิก" or the requester's name: the label, the note and the item each give both.
+    for (const said of [data.desks[0].label, data.desks[0].note, data.items[0].waitingOn]) {
+      assert.match(said, /บัญชีรับเงิน|แก้บัญชี|แก้ไขบัญชี/);
+      assert.match(said, /ผู้เบิก/);
+    }
+    assert.equal(data.items[0].requesterName, 'สมชาย');
+    assert.equal(JSON.stringify(data),
+      '{"accessScope":"company","total":2,"awaitingApprovalCount":1,"totalsByCurrency":[{"currency":"THB","amount":"1161.00"}],"byApprover":[{"name":"สมศรี","count":1,"totalsByCurrency":[{"currency":"THB","amount":"580.50"}],"oldestSubmittedOn":"2026-10-01","longestWaitDays":0}],"sharedPile":null,"desks":[{"kind":"requester_correction","label":"รอผู้เบิกแก้บัญชีรับเงิน","count":1,"totalsByCurrency":[{"currency":"THB","amount":"580.50"}],"oldestSentBackOn":"2026-09-30","longestWaitDays":1,"note":"ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้"}],"items":[{"id":"000001","documentNumber":"RB-202609-000001","requesterName":"สมชาย","amount":"580.50","currency":"THB","waitingOn":"รอผู้เบิกแก้บัญชีรับเงิน","submittedOn":"2026-09-20","sentBackOn":"2026-09-30","waitDays":1},{"id":"000002","documentNumber":"RB-202609-000002","requesterName":"สมชาย","amount":"580.50","currency":"THB","waitingOn":"สมศรี","submittedOn":"2026-09-20","resubmittedOn":"2026-10-01","waitDays":0}]}');
+  });
+
+  // Payout spec §17.3: no field is added or removed. The one row of claims that wait for their requester becomes one row
+  // per label, each whole in itself, and each claim waits on the label of its own row. Before, a claim with no account
+  // and a claim that had asked for cash were both said to wait for "แก้บัญชีรับเงิน".
+  it('gives a claim with no account, and a claim that asked for cash, a row and words of their own beside the row of an account', async () => {
+    const sentBackOn = (day: string) => new Date(`2026-09-${day}T03:00:00.000Z`);
+    const noAccount = claim('000003', { payoutMethod: undefined, payoutDestinationVersion: undefined, payoutFingerprint: undefined, payoutCorrectionReasonCode: 'NO_ACCOUNT_ON_CLAIM', payoutCorrectionRequestedAt: sentBackOn('28') });
+    const askedForCash = claim('000004', { payoutMethod: 'CASH', payoutDestinationVersion: undefined, payoutFingerprint: 'cash', payoutCorrectionReasonCode: 'CASH_NOT_PAYABLE', payoutCorrectionRequestedAt: sentBackOn('29') });
+    const alone = (await backlogOf([withRequester, withApprover])).data as any;
+    const result = await backlogOf([askedForCash, withApprover, noAccount, withRequester]);
+    const data = result.data as any;
+
+    const row = (label: string, oldestSentBackOn: string, longestWaitDays: number, note: string) => ({
+      kind: 'requester_correction', label, count: 1, totalsByCurrency: [{ currency: 'THB', amount: '580.50' }], oldestSentBackOn, longestWaitDays, note,
+    });
+    assert.deepEqual(data.desks, [
+      row('รอผู้เบิกแก้บัญชีรับเงิน', '2026-09-30', 1, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้'),
+      row('รอผู้เบิกเพิ่มบัญชีรับเงิน', '2026-09-28', 3, 'ใบเบิกถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ผู้เบิกเพิ่มได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้'),
+      row('รอผู้เบิกเลือกวิธีรับเงินคืน', '2026-09-29', 2, 'ใบเบิกถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ผู้เบิกเลือกได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้'),
+    ]);
+    assert.deepEqual(data.items.map((item: any) => [item.id, item.waitingOn, item.sentBackOn ?? item.resubmittedOn, item.waitDays]), [
+      ['000003', 'รอผู้เบิกเพิ่มบัญชีรับเงิน', '2026-09-28', 3], ['000004', 'รอผู้เบิกเลือกวิธีรับเงินคืน', '2026-09-29', 2],
+      ['000001', 'รอผู้เบิกแก้บัญชีรับเงิน', '2026-09-30', 1], ['000002', 'สมศรี', '2026-10-01', 0],
+    ]);
+    // The row and the item of the claim that held an account are, byte for byte, what they are when it is listed alone.
+    assert.equal(JSON.stringify(data.desks[0]), JSON.stringify(alone.desks[0]));
+    assert.equal(JSON.stringify(data.items[2]), JSON.stringify(alone.items[0]));
+    // The same fields as before, in every row and item: none added, none removed.
+    for (const desk of data.desks) assert.deepEqual(Object.keys(desk), Object.keys(alone.desks[0]));
+    for (const item of data.items.slice(0, 3)) assert.deepEqual(Object.keys(item), Object.keys(alone.items[0]));
+    // Three claims are with their requester and one waits for approval, as the counts say; each row is one more group.
+    assert.deepEqual([data.total, data.awaitingApprovalCount, data.byApprover.map((group: any) => group.count), result.completeness?.groups.returned], [4, 1, [1], 4]);
+    // Where each claim stands and nothing of an account, a method, a reason code or who sent it back.
+    assert.doesNotMatch(JSON.stringify(result.data), /payout|account|ffff|cash|NO_ACCOUNT|payer-1|AWAITING_/i);
   });
 });

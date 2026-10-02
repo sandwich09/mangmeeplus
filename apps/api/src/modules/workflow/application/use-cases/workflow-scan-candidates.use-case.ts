@@ -123,9 +123,11 @@ export class WorkflowScanCandidatesProvider {
       const activeFrozenAssignees = activeFrozenByBranch.get(r.branchId ?? '') ?? new Set<string>();
       const frozenRecipients = step?.assignedApproverUserIds?.filter((userId) => activeFrozenAssignees.has(userId));
       const legacyRoute = legacyRouteByIndex.get(index);
-      const recipients = frozenRecipients === undefined
-        ? legacyRoute?.recipientUserIds ?? []
-        : frozenRecipients.length > 0 ? frozenRecipients : ownerRecipients[index]!;
+      // The claim's approvers who can still act: the people frozen on its step or, for a step from before
+      // they were, today's route of its role. The shop owner only when there is none of them (owner
+      // decision 2026-10-02): the reminder names these people and nobody else.
+      const approvers = frozenRecipients ?? legacyRoute?.recipientUserIds ?? [];
+      const recipients = approvers.length > 0 ? approvers : ownerRecipients[index]!;
       const snapshot = parseReimbursementPolicySnapshot(r.approvalPolicySnapshotJson);
       const taskRole = frozenRecipients === undefined
         ? legacyRoute?.effectiveTaskRole ?? step?.approverRoleSnapshot ?? inputs[index]!.roleKey
@@ -143,6 +145,7 @@ export class WorkflowScanCandidatesProvider {
           slaRisk: isSlaRisk(age, policy.slaHours), amount: r.amount, currency: r.currency,
           approverRecipientUserIds: recipients,
           approverTaskUserId: recipients[0],
+          // Not read by the notice any more. Kept for a rule pinned before, or edited to name the owner.
           ownerRecipientUserIds: ownerRecipients[index],
           approverTaskRole: taskRole,
           // One reminder per round the claim was sent in (review M1): the scan comes round every

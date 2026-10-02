@@ -2500,7 +2500,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
       const notices = await told();
       assert.equal(notices.length, 2);
       assert.deepEqual([notices[1]!.userId, notices[1]!.event.title, notices[1]!.event.deepLinkHref, notices[1]!.deliveries.length],
-        [requester, `${approver} ระบุบัญชีรับเงินคืนในใบเบิกของคุณ`, `/companies/${companyId}/reimbursements/${claim.id}`, 2]);
+        [requester, `${approver} ระบุบัญชีรับเงินในใบเบิกของคุณ`, `/companies/${companyId}/reimbursements/${claim.id}`, 2]);
       assert.match(notices[1]!.event.body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112 ระบุเมื่อ /);
       // Nobody else in the company was written to, and no text carries a number.
       assert.ok(notices.every((notice) => notice.userId === requester));
@@ -3838,13 +3838,16 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   /** The requester as the claim page knows them when they may edit their own claims. */
   const requesterWhoEdits = () => ({ ...requester(), permissions: ['reimbursement.read_own', 'reimbursement.cancel_own', 'reimbursement.update_own_draft'] });
 
-  /** The use cases of a round over one connection, with the audit rows and events written to the database. */
-  function round(index: number) {
+  /**
+   * The use cases of a round over one connection, with the audit rows and events written to the database.
+   * `notices`: the writer of the requester's notice, for a case where someone answers for a requester a notice can
+   * reach. Every other case fails if a notice is asked for at all.
+   */
+  function round(index: number, notices: unknown = { executeInTransaction: async () => { throw new Error('nobody is told of an answer here'); } }) {
     const prisma = { client: clients[index]! } as any;
     const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
     const evidence = new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), new PrismaExpenseRepository(prisma));
-    const payouts = new MemberPayoutAccountUseCase(repos[index]!, audit, { credentialEncryptionKey: roundKey } as any,
-      { executeInTransaction: async () => { throw new Error('nobody typed an account for someone else here'); } } as any);
+    const payouts = new MemberPayoutAccountUseCase(repos[index]!, audit, { credentialEncryptionKey: roundKey } as any, notices as any);
     return {
       sendBack: new RequestPayoutCorrectionUseCase(repos[index]!, audit, evidence),
       giveAccount: new SubmitPayoutCorrectionUseCase(repos[index]!, audit, evidence, payouts, new ListReimbursementApproverOptionsUseCase(prisma)),
@@ -3858,14 +3861,16 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
    * A claim paid by transfer that waits for payment the way production leaves it: sent with the
    * requester's default account, approved by its manager who checked account version 1, carried out
    * by the system, and every line with a confirmed expense record and a posted journal.
+   * `payBy: 'unset'`: the same claim as a build from before claims carried a destination sent it, with
+   * no account of its own and none for its approver to check.
    */
-  async function approvedTransferClaim(lines = 1) {
+  async function approvedTransferClaim(lines = 1, payBy: 'transfer' | 'unset' = 'transfer') {
     const db = clients[0]!;
-    const waiting = await waitingClaim(lines, 'transfer');
+    const waiting = await waitingClaim(lines, payBy);
     await repos[0]!.beginApprovalDecisionAtomic({
       companyId, requestId: waiting.id, expectedUpdatedAt: waiting.updatedAt, expectedApprovalSnapshotHash: waiting.approvalSnapshotHash,
       actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
-      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined, payoutVerifiedVersion: 1,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined, ...(payBy === 'transfer' && { payoutVerifiedVersion: 1 }),
     });
     assert.equal((await system(0).resume.execute(manager(), waiting.id)).status, 'READY_FOR_PAYMENT');
     const period = await db.accountingPeriod.create({ data: { companyId, periodKey: `${2100 + ++sequence}-09`, startDate: new Date('2026-09-01'), endDate: new Date('2026-09-30') } });
@@ -3996,7 +4001,12 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const roundEvents = (await eventsOf(claim.requestId)).filter((event) => event.createdAt.getTime() >= withRequester.payoutCorrectionRequestedAt!.getTime());
     assert.deepEqual(roundEvents.map((event) => event.eventType),
       ['reimbursement.payout_correction_requested', 'reimbursement.payout_correction_submitted', 'reimbursement.ready_for_payment']);
-    assert.deepEqual((roundEvents[0]!.payloadJson as any).data.payoutCorrectionNotice, 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
+    // The two notices of the round carry their own title and body, finished: for an account that was wrong, replaced by another.
+    const noticeOf = (event: { payloadJson: unknown }) => { const { data } = event.payloadJson as any; return [data.payoutCorrectionTitle ?? data.payoutAnswerTitle, data.payoutCorrectionNotice ?? data.payoutAnswerNotice]; };
+    assert.deepEqual(roundEvents.slice(0, 2).map(noticeOf), [
+      ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+      ['รออนุมัติบัญชีรับเงินใหม่', 'รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่'],
+    ]);
     const audits = await clients[0]!.auditLog.findMany({ where: { companyId, targetId: claim.requestId, action: { startsWith: 'reimbursement.payout' } }, orderBy: { createdAt: 'asc' } });
     assert.deepEqual(audits.map((row) => [row.action, row.result]).slice(-4), [
       ['reimbursement.payout_correction.request', 'SUCCESS'], ['reimbursement.payout_correction.submit', 'SUCCESS'],
@@ -4015,9 +4025,11 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const payments = await clients[0]!.reimbursementPayment.findMany({ where: { reimbursementRequestId: claim.requestId } });
     assert.deepEqual([paid.request.status, payments.map((payment) => payment.payoutDestinationVersion), paid.payout?.payoutDestinationVersion, paid.payout?.accountLast4, paid.payout?.payerVerified],
       ['PAID', [2], 2, '1112', false]);
-    // The claim's timeline has the three steps of its round, with the people named.
-    assert.deepEqual((await on(0).detail.execute(finance(), claim.requestId)).payoutCorrectionHistory!.map((entry) => [entry.kind, entry.byName, entry.reasonCode ?? entry.payoutVersion ?? entry.approvalStepId]), [
-      ['SENT_BACK', 'วราภรณ์ การเงิน', 'ACCOUNT_NUMBER_WRONG'], ['ACCOUNT_SUBMITTED', 'สมชาย พนักงาน', 2], ['REAPPROVED', 'สมศรี ผู้จัดการ', stepTwo!.id],
+    // The claim's timeline has the three steps of its round, with the people named, and of each step the fact its
+    // words are chosen from: what the claim held when it was sent back, what was given, which answer was approved.
+    assert.deepEqual((await on(0).detail.execute(finance(), claim.requestId)).payoutCorrectionHistory!
+      .map((entry) => [entry.kind, entry.byName, entry.reasonCode ?? entry.payoutVersion ?? entry.approvalStepId, entry.held ?? entry.answer]), [
+      ['SENT_BACK', 'วราภรณ์ การเงิน', 'ACCOUNT_NUMBER_WRONG', 'ACCOUNT'], ['ACCOUNT_SUBMITTED', 'สมชาย พนักงาน', 2, 'NEW_ACCOUNT'], ['REAPPROVED', 'สมศรี ผู้จัดการ', stepTwo!.id, 'NEW_ACCOUNT'],
     ]);
     // A paid claim is not sent back: its payment is voided first.
     await assert.rejects(() => round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER' }), conflict('payout_correction_not_allowed'));
@@ -4499,6 +4511,13 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
 
       const given = await round(0).giveAccount.execute(finance(), claim.requestId, { mode: 'PREVIOUS' });
       assert.deepEqual([given.payoutCorrection?.phase, given.payout?.version, given.payout?.accountLast4], ['AWAITING_APPROVAL', 2, '5678']);
+      // It was the finance reviewer who answered, not the requester: the detail, a list row and the timeline say so,
+      // so that no sentence says the requester confirmed the account.
+      assert.deepEqual([given.payoutCorrectionAnswer, given.payoutCorrectionAnsweredBy], ['SAME_ACCOUNT', { byUserId: FIN, byName: 'วราภรณ์ การเงิน', onBehalf: true }]);
+      const listed = (await repos[1]!.listRequests({ companyId, scopes: {}, statuses: ['PENDING_APPROVAL'] })).find((row) => row.id === claim.requestId)!;
+      assert.deepEqual(toRequestSummary(listed).payoutCorrectionAnsweredBy, { byUserId: FIN, onBehalf: true });
+      assert.deepEqual((await on(1).detail.execute(manager(), claim.requestId)).payoutCorrectionHistory!.map((entry) => [entry.kind, entry.byName, entry.onBehalf ?? null]),
+        [['SENT_BACK', 'วราภรณ์ การเงิน', null], ['ACCOUNT_SUBMITTED', 'วราภรณ์ การเงิน', true]]);
       const [first, second] = await accountVersionsOf(claim.requestId);
       // The sealed columns moved as one unit into a frozen version of its own; the first is as it was.
       assert.deepEqual([second!.version, second!.accountNumberEncrypted, second!.accountLast4, second!.fingerprint, second!.source, second!.createdByUserId, second!.frozenAt !== null, second!.verifiedByUserId],
@@ -4517,6 +4536,68 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     }
   });
 
+  // Owner rule 2026-10-01 (decision D12): the person whose money it is hears of every change someone else makes for
+  // them. Before, only an account TYPED for the requester told them. With the real notification writer, because what
+  // has to hold is a matter of rows: the notice is written in the answer's own transaction, reads the account that
+  // transaction has just frozen, and is for the requester alone on both channels.
+  it('tells the requester of every answer a finance reviewer gives for them, as part of that answer, and of none they give themselves', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const writer = new CreateOrUpdateNotificationEventUseCase(null as never, null as never, null as never, null as never, null as never, { client: db } as never);
+    const claim = await approvedTransferClaim();
+    const id = claim.requestId;
+    await round(0).sendBack.execute(finance(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    const told = async () => (await db.notificationRecipient.findMany({
+      where: { companyId }, orderBy: { createdAt: 'asc' },
+      select: { userId: true, event: { select: { triggerKey: true, severity: true, title: true, body: true, deepLinkHref: true, sourceType: true, sourceId: true } }, deliveries: { select: { channel: true } } },
+    })).map((row) => ({ to: row.userId, ...row.event, channels: row.deliveries.map((delivery) => delivery.channel).sort() }));
+    const anAccount = (masked: string) => `${masked} · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ใช่บัญชีของคุณ แก้ได้ทันที`;
+    const promptPay = sealPayoutDestination({ payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountNumber: '0812345678' }, roundKey)!;
+    try {
+      assert.deepEqual(await told(), []);
+      // The four choices of the form, each given by the finance reviewer: the account the claim had, cash, an account
+      // typed, and the requester's default account as it is now.
+      await round(0, writer).giveAccount.execute(finance(), id, { mode: 'PREVIOUS' });
+      await round(0, writer).giveAccount.execute(finance(), id, { mode: 'CASH' });
+      await round(0, writer).giveAccount.execute(finance(), id, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+      await repos[0]!.setMemberPayoutAccount({ companyId, userId: STAFF, actorUserId: STAFF, payoutMethod: 'BANK_TRANSFER', destination: promptPay }, async () => undefined);
+      const defaultToken = (await on(0).detail.execute(finance(), id)).payoutCorrectionActions!.requesterDefault!.token;
+      await round(0, writer).giveAccount.execute(finance(), id, { mode: 'DEFAULT', defaultToken });
+
+      const notices = await told();
+      // One notice per answer, the typed account included (it sent a notice of its own before, in other words).
+      assert.deepEqual(notices.map((notice) => [notice.title, notice.body]), [
+        [`วราภรณ์ การเงิน ยืนยันบัญชีเดิมในใบเบิกของคุณ: ${claim.requestNo}`, anAccount('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678')],
+        [`วราภรณ์ การเงิน เปลี่ยนวิธีรับเงินคืนในใบเบิกของคุณ: ${claim.requestNo}`, 'รับเป็นเงินสด · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แก้ได้ทันที'],
+        [`วราภรณ์ การเงิน แก้บัญชีรับเงินในใบเบิกของคุณ: ${claim.requestNo}`, anAccount('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112')],
+        [`วราภรณ์ การเงิน แก้บัญชีรับเงินในใบเบิกของคุณ: ${claim.requestNo}`, anAccount('พร้อมเพย์เบอร์ลงท้าย 5678')],
+      ]);
+      // To the requester alone (not the reviewer who answered, not the approver, not an owner), on the web and on LINE,
+      // never held back by quiet hours, with a link to the claim.
+      for (const notice of notices) {
+        assert.deepEqual([notice.to, notice.triggerKey, notice.severity, notice.sourceType, notice.sourceId, notice.deepLinkHref, notice.channels],
+          [STAFF, 'reimbursement.payout_account_set_by_other', 'CRITICAL', 'reimbursement_request', id, `/companies/${companyId}/reimbursements/${id}`, ['LINE', 'WEB']], notice.title);
+      }
+      assert.equal(await db.notificationEvent.count({ where: { companyId } }), 4, 'no event is written for anybody else');
+      for (const number of ['0012345678', SCB_ACCOUNT.accountNumber, '0812345678']) assert.equal(JSON.stringify(notices).includes(number), false);
+
+      // The requester's own answer tells nobody: this writer would fail the answer if it were asked.
+      const own = await round(0).giveAccount.execute(requesterWhoEdits(), id, { mode: 'CASH' });
+      assert.deepEqual([own.payoutCorrectionAnswer, (await told()).length], ['CASH_INSTEAD', 4]);
+
+      // The notice is part of the answer. When it cannot be written the answer is not taken: the claim, its account
+      // versions and its events are as they were, and the notice the transaction did write is gone with it.
+      const before = { claim: await claimRow(id), versions: (await accountVersionsOf(id)).length, events: (await eventsOf(id)).length };
+      const failsAfterWriting = { executeInTransaction: async (input: any, tx: any) => { await writer.executeInTransaction(input, tx); throw new Error('the notice could not be written'); } };
+      await assert.rejects(() => round(0, failsAfterWriting).giveAccount.execute(finance(), id, { mode: 'PREVIOUS' }), /the notice could not be written/);
+      assert.deepEqual({ claim: await claimRow(id), versions: (await accountVersionsOf(id)).length, events: (await eventsOf(id)).length }, before);
+      assert.equal((await told()).length, 4);
+    } finally {
+      await repos[0]!.removeMemberPayoutAccount(companyId, STAFF, async () => undefined);
+      await db.notificationEvent.deleteMany({ where: { companyId } });
+    }
+  });
+
   // Upgrade test 2026-10-02: a requester who kept the account the claim had left its approver a card with two accounts
   // that read alike and no word that they are one. The detail says so, from the stored fingerprints, which stay here.
   it('tells the approver of a round whether the account given is the very one the claim had, and gives away neither fingerprint', async (t) => {
@@ -4526,11 +4607,20 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal('sameAsPrevious' in (await on(0).detail.execute(manager(), claim.requestId)).payoutCorrection!, false, 'nothing is given yet');
 
     const kept = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'PREVIOUS' });
-    assert.deepEqual([kept.payoutCorrection?.phase, kept.payoutCorrection?.sameAsPrevious, kept.payout?.version, kept.payoutCorrection?.previous?.version],
-      ['AWAITING_APPROVAL', true, 2, 1]);
+    assert.deepEqual([kept.payoutCorrection?.phase, kept.payoutCorrection?.sameAsPrevious, kept.payout?.version, kept.payoutCorrection?.previous?.version, kept.payoutCorrectionAnswer],
+      ['AWAITING_APPROVAL', true, 2, 1, 'SAME_ACCOUNT']);
+    // The requester answered for themselves: nothing is said to be on anyone's behalf.
+    assert.deepEqual(kept.payoutCorrectionAnsweredBy, { byUserId: STAFF, byName: 'สมชาย พนักงาน' });
+    // Compared once, in the transaction that took the answer, and kept on the round's own record: no read compares again.
+    const answersOnRecord = async () => ((await claimRow(claim.requestId)).payoutCorrectionLogJson as any[])
+      .filter((entry) => entry.kind === 'ACCOUNT_SUBMITTED').map((entry) => [entry.payoutVersion, entry.sameAsApproved]);
+    assert.deepEqual(await answersOnRecord(), [[2, true]]);
     // What the approver reads over another connection says the same, and carries nothing that was compared.
     const shown = await on(1).detail.execute(manager(), claim.requestId);
-    assert.equal(shown.payoutCorrection?.sameAsPrevious, true);
+    assert.deepEqual([shown.payoutCorrection?.sameAsPrevious, shown.payoutCorrectionAnswer], [true, 'SAME_ACCOUNT']);
+    // A list row carries the same answer: the round's record comes with every row, and nothing is read for it.
+    const listed = (await repos[1]!.listRequests({ companyId, scopes: {}, statuses: ['PENDING_APPROVAL'] })).find((row) => row.id === claim.requestId)!;
+    assert.deepEqual([toRequestSummary(listed).payoutCorrectionPhase, toRequestSummary(listed).payoutCorrectionAnswer], ['AWAITING_APPROVAL', 'SAME_ACCOUNT']);
     const [first, second] = await accountVersionsOf(claim.requestId);
     assert.equal(first!.fingerprint, second!.fingerprint);
     assert.equal(JSON.stringify(shown).includes(first!.fingerprint), false);
@@ -4538,8 +4628,89 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
 
     // Another account in the same round is not the same account.
     const changed = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
-    assert.deepEqual([changed.payoutCorrection?.sameAsPrevious, changed.payout?.version], [false, 3]);
+    assert.deepEqual([changed.payoutCorrection?.sameAsPrevious, changed.payout?.version, changed.payoutCorrectionAnswer], [false, 3, 'NEW_ACCOUNT']);
     assert.equal((await on(1).detail.execute(manager(), claim.requestId)).payoutCorrection?.sameAsPrevious, false);
+    assert.deepEqual(await answersOnRecord(), [[2, true], [3, undefined]]);
+  });
+
+  // Payout spec §14.2: the words of a round follow what the claim held and what its requester answered. Here the two
+  // facts over the real tables, for the two starts the cases above do not make: a claim that asked for cash, and a
+  // claim sent before claims carried a destination.
+  it('keeps on the round\'s own record what the claim held and what its requester answered, from cash and from nothing as from an account', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const factsOf = async (requestId: string) => (await on(1).detail.execute(finance(), requestId)).payoutCorrectionHistory!.map((entry) => entry.held ?? entry.answer);
+    const approveAgain = async (requestId: string) => {
+      const shown = await on(0).detail.execute(manager(), requestId);
+      return round(0).approve.execute(manager(), requestId, undefined, shown.approvalSnapshotHash, shown.payout?.version);
+    };
+
+    // From an account to cash: nothing was kept, and the claim then holds cash.
+    const claim = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    const asCash = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'CASH' });
+    assert.deepEqual([asCash.payoutCorrectionAnswer, asCash.payoutCorrection?.sameAsPrevious, asCash.payoutMethod], ['CASH_INSTEAD', false, 'CASH']);
+    assert.equal((await approveAgain(claim.requestId)).status, 'READY_FOR_PAYMENT');
+
+    // A second round, which begins with cash: cash again is the same, an account is not, and each is measured
+    // against what this round began with. A claim that holds cash is sent back for a reason of cash (§14.3).
+    const noSuchReason = (error: any) => error?.getStatus?.() === 400 && (errorCode(error) ?? errorMessage(error)) === 'payout_correction_reason_required';
+    await assert.rejects(() => round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' }), noSuchReason);
+    const cashSentBack = await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'CASH_NOT_PAYABLE' });
+    assert.deepEqual([cashSentBack.payoutCorrectionPhase, cashSentBack.payoutMethod, cashSentBack.payoutCorrection?.previous], ['AWAITING_REQUESTER', 'CASH', { payoutMethod: 'CASH' }]);
+    const cashAgain = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'PREVIOUS' });
+    assert.deepEqual([cashAgain.payoutCorrectionAnswer, cashAgain.payoutCorrection?.sameAsPrevious, cashAgain.payoutMethod], ['SAME_CASH', true, 'CASH']);
+    // Not taken by the approver: the claim is with its requester again holding that cash, and then answers with an account.
+    await round(0).sendBack.execute(manager(), claim.requestId, { reasonCode: 'OTHER' });
+    const anAccount = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+    assert.deepEqual([anAccount.payoutCorrectionAnswer, anAccount.payoutCorrection?.sameAsPrevious], ['ACCOUNT_INSTEAD', false]);
+    assert.deepEqual(await factsOf(claim.requestId), ['ACCOUNT', 'CASH_INSTEAD', 'CASH_INSTEAD', 'CASH', 'SAME_CASH', 'CASH', 'ACCOUNT_INSTEAD']);
+    // Each notice of the two rounds, as its event carries it: worded for what the claim held, or for what was answered.
+    const noticesOf = async (requestId: string) => (await eventsOf(requestId))
+      .filter((event) => ['reimbursement.payout_correction_requested', 'reimbursement.payout_correction_submitted'].includes(event.eventType))
+      .map((event) => { const { data } = event.payloadJson as any; return [data.payoutCorrectionTitle ?? data.payoutAnswerTitle, data.payoutCorrectionNotice ?? data.payoutAnswerNotice]; });
+    assert.deepEqual(await noticesOf(claim.requestId), [
+      ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+      ['รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+      ['ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง', 'เหตุผล: จ่ายเป็นเงินสดไม่ได้ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน'],
+      ['รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+      ['ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน'],
+      ['รออนุมัติบัญชีรับเงิน', 'รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+    ]);
+    assert.deepEqual(((await claimRow(claim.requestId)).payoutCorrectionLogJson as any[]).map((entry) => [entry.kind, entry.sameAsApproved ?? null]), [
+      ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', null], ['REAPPROVED', null],
+      ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', true], ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', null],
+    ]);
+
+    // A claim with no account of its own: its first account is neither new nor the same, and cash is its first choice.
+    const legacy = await approvedTransferClaim(1, 'unset');
+    assert.deepEqual([(await claimRow(legacy.requestId)).payoutMethod, (await claimRow(legacy.requestId)).payoutFingerprint], [null, null]);
+    // It is sent back for the one reason that is true of it, and for no other.
+    for (const reasonCode of ['OTHER', 'ACCOUNT_NUMBER_WRONG', 'CASH_NOT_PAYABLE']) {
+      await assert.rejects(() => round(0).sendBack.execute(finance(), legacy.requestId, { reasonCode }), noSuchReason, reasonCode);
+    }
+    assert.equal((await claimRow(legacy.requestId)).status, 'READY_FOR_PAYMENT');
+    await round(0).sendBack.execute(finance(), legacy.requestId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    const first = await round(0).giveAccount.execute(requesterWhoEdits(), legacy.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+    assert.deepEqual([first.payoutCorrectionPhase, first.payoutCorrectionAnswer, first.payoutCorrection?.sameAsPrevious, first.payout?.version], ['AWAITING_APPROVAL', 'FIRST_ACCOUNT', false, 1]);
+    await round(0).sendBack.execute(manager(), legacy.requestId, { reasonCode: 'OTHER' });
+    const cashFirst = await round(0).giveAccount.execute(requesterWhoEdits(), legacy.requestId, { mode: 'CASH' });
+    assert.deepEqual([cashFirst.payoutCorrectionAnswer, cashFirst.payoutCorrection?.sameAsPrevious], ['FIRST_CASH', false]);
+    assert.equal((await approveAgain(legacy.requestId)).status, 'READY_FOR_PAYMENT');
+    assert.deepEqual(await factsOf(legacy.requestId), ['NOTHING', 'FIRST_ACCOUNT', 'ACCOUNT', 'FIRST_CASH', 'FIRST_CASH']);
+    assert.deepEqual(await noticesOf(legacy.requestId), [
+      ['ใบเบิกต้องเพิ่มบัญชีรับเงิน', 'เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน'],
+      ['รออนุมัติบัญชีรับเงิน', 'รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+      ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+      ['รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+    ]);
+
+    // A PromptPay number has no bank to be wrong: the kind is read from the account the claim itself carries.
+    const promptPay = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), promptPay.requestId, { reasonCode: 'BANK_WRONG' });
+    await round(0).giveAccount.execute(requesterWhoEdits(), promptPay.requestId, { mode: 'SPECIFIED', payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountNumber: '0812345678' });
+    await assert.rejects(() => round(0).sendBack.execute(manager(), promptPay.requestId, { reasonCode: 'BANK_WRONG' }), noSuchReason);
+    assert.equal((await claimRow(promptPay.requestId)).payoutCorrectionSubmittedAt !== null, true, 'the refusal sent nothing back');
+    assert.equal((await round(0).sendBack.execute(manager(), promptPay.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' })).payoutCorrection?.reasonCode, 'ACCOUNT_NUMBER_WRONG');
   });
 
   it('still cancels a claim in a round by the rule every claim is cancelled by: its records are voided and it closes', async (t) => {
@@ -4608,7 +4779,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const before = await leftAloneByARound(claim);
     assert.deepEqual([first.payoutMethod, first.payoutFingerprint, first.financeReviewStatus, (await stepsOf(claim.requestId)).length], [null, null, 'APPROVED_FOR_PAYMENT', 0]);
 
-    const sentBack = await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER', note: 'เพิ่มบัญชีรับเงินให้ใบนี้' });
+    const sentBack = await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM', note: 'เพิ่มบัญชีรับเงินให้ใบนี้' });
     assert.deepEqual([sentBack.status, sentBack.payoutCorrection?.phase, sentBack.payoutCorrection?.previous, sentBack.payout, sentBack.currentDesk, sentBack.awaitingSystem],
       ['PENDING_APPROVAL', 'AWAITING_REQUESTER', undefined, undefined, { kind: 'REQUESTER' }, undefined]);
     assert.equal((await claimRow(claim.requestId)).approvalSnapshotHash, first.approvalSnapshotHash, 'sending back changes no hash');

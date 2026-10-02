@@ -1,12 +1,14 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import {
-  civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
+  civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
   type RequestContext, type ReimbursementAiSummary,
 } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
-import { ageHours, isSlaRisk, d, decStr, currentDesk, approvalWaitStartedAt, payoutCorrectionPhase } from '../../domain/logic/reimbursement.logic';
+import {
+  ageHours, isSlaRisk, d, decStr, currentDesk, approvalWaitStartedAt, payoutCorrectionPhase, payoutCorrectionRequesterDesk,
+} from '../../domain/logic/reimbursement.logic';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 
 /**
@@ -89,22 +91,22 @@ export const BACKLOG_DESK_LABELS = {
   no_active_approver: 'ไม่มีผู้อนุมัติที่ยังใช้งานอยู่',
   // The system's desk: the same words the claim page prints for the same claim.
   status_pending: REIMBURSEMENT_SYSTEM_WAIT_LABEL,
-  // Sent back for its account to be corrected (spec §14, §17.3): it is with its requester, in the
-  // words of the claim page's status badge. The answer says that and nothing of the account itself.
-  requester_correction: REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER,
 } as const;
 export const SHARED_PILE_LABEL = 'กองกลาง (อนุมัติได้หลายคน)';
 /** The recovery rule (`frozenApprovalAuthority` FALLBACK → `matchesApproverRole`), so the answer names the real next
  *  step instead of guessing one (eval 2026-09-30: "ติดต่อทีม HR", "จะค้างไม่มีกำหนด"). */
 export const NO_ACTIVE_APPROVER_NOTE = 'ผู้ที่ถูกกำหนดให้อนุมัติไม่อยู่หรือไม่ได้ดูแลสาขานี้แล้ว เจ้าของร้านหรือผู้มีบทบาทอนุมัติเดิมอนุมัติแทนได้บนเว็บ';
-/** What happens next to a claim that waits for its requester's account: the answer says this and guesses nothing else. */
-export const PAYOUT_CORRECTION_NOTE = 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้';
-const BACKLOG_DESK_NOTES: Partial<Record<keyof typeof BACKLOG_DESK_LABELS, string>> = {
-  no_active_approver: NO_ACTIVE_APPROVER_NOTE,
-  requester_correction: PAYOUT_CORRECTION_NOTE,
-};
+const BACKLOG_DESK_NOTES: Partial<Record<keyof typeof BACKLOG_DESK_LABELS, string>> = { no_active_approver: NO_ACTIVE_APPROVER_NOTE };
 
-type BacklogDeskKind = keyof typeof BACKLOG_DESK_LABELS;
+/**
+ * The desks, in the order the answer lists them. The last is a claim sent back from the pay step that is with its
+ * requester (spec §14, §17.3). It has no label of its own: its row takes the claim page's status label for what
+ * THAT claim holds, and the sentence that goes with it (`payoutCorrectionRequesterDesk`). So there is one row per
+ * label, each true of every claim it counts ("รอผู้เบิกแก้บัญชีรับเงิน" was said of a claim with no account, and of
+ * one that asked for cash). The answer says where the claim stands and nothing of an account itself.
+ */
+type BacklogDeskKind = keyof typeof BACKLOG_DESK_LABELS | 'requester_correction';
+const BACKLOG_DESK_KINDS: BacklogDeskKind[] = [...Object.keys(BACKLOG_DESK_LABELS) as Array<keyof typeof BACKLOG_DESK_LABELS>, 'requester_correction'];
 type BacklogMoney = { currency: string; amount: string };
 /**
  * Approval-stage waits count from `submittedAt`; finance and payment have no arrival time, so from `approvedAt`.
@@ -187,17 +189,21 @@ export class GetReimbursementApprovalBacklogUseCase {
     const activeByBranch = new Map(await Promise.all([...idsByBranch].map(async ([branch, ids]) =>
       [branch, await this.repo.findActiveApproverUserIds(ctx.companyId, ids, branch || undefined)] as const)));
 
-    const desk = (kind: BacklogDeskKind) => ({ key: kind, kind });
+    const desk = (kind: keyof typeof BACKLOG_DESK_LABELS) => ({ key: kind, kind, label: BACKLOG_DESK_LABELS[kind], note: BACKLOG_DESK_NOTES[kind] });
     const pile = { key: 'pile' };
-    const deskOf = (row: ReimbursementRequestRecord): { key: string; kind?: BacklogDeskKind; approverUserId?: string } => {
+    const deskOf = (row: ReimbursementRequestRecord): { key: string; kind?: BacklogDeskKind; label?: string; note?: string; approverUserId?: string } => {
       // Being cancelled: approval and payment are refused meanwhile, so it waits for no approver and no payer
       // (audit B3). The web's desk rule (`currentDesk`) says the same of it.
       if (row.cancellationPendingAt) return desk('status_pending');
       if (row.status !== 'PENDING_APPROVAL') {
         return currentDesk({ status: row.status, financeReviewStatus: row.financeReviewStatus })?.kind === 'FINANCE' ? desk('finance') : desk('payment');
       }
-      // With its requester, and no step open by design: not a decided claim the system has yet to move on.
-      if (payoutCorrectionPhase(row) === 'AWAITING_REQUESTER') return desk('requester_correction');
+      // With its requester, and no step open by design: not a decided claim the system has yet to move on. Its
+      // desk is named for what the claim holds: an account to correct, one to add, or the method to choose again.
+      if (payoutCorrectionPhase(row) === 'AWAITING_REQUESTER') {
+        const { order, label, note } = payoutCorrectionRequesterDesk(row);
+        return { key: `requester_correction:${order}`, kind: 'requester_correction', label, note };
+      }
       const step = stepOf.get(row.id);
       if (!step) return desk('status_pending'); // decided; the status has not moved on yet
       const ids = candidates(step);
@@ -214,7 +220,7 @@ export class GetReimbursementApprovalBacklogUseCase {
     // Whole Thai days, never hours: the delivery re-read must return the same data (spec §5.0).
     const today = civilDate(now);
     const waitDays = (since: string) => Math.max(0, Math.round((civilDateToUtcDate(today).getTime() - civilDateToUtcDate(since).getTime()) / 86_400_000));
-    type Acc = { label: string; approver: boolean; approved: boolean; count: number; totals: Map<string, Money>; oldest: string };
+    type Acc = { label: string; kind?: BacklogDeskKind; note?: string; approver: boolean; approved: boolean; count: number; totals: Map<string, Money>; oldest: string };
     const groups = new Map<string, Acc>();
     const overall = new Map<string, Money>();
     const items = rows.map((row) => {
@@ -228,9 +234,8 @@ export class GetReimbursementApprovalBacklogUseCase {
       const round = phase === 'AWAITING_REQUESTER' && row.payoutCorrectionRequestedAt ? { sentBackOn: civilDate(row.payoutCorrectionRequestedAt) }
         : phase === 'AWAITING_APPROVAL' && row.payoutCorrectionSubmittedAt ? { resubmittedOn: civilDate(row.payoutCorrectionSubmittedAt) } : undefined;
       const since = approvedOn ?? round?.sentBackOn ?? round?.resubmittedOn ?? submittedOn;
-      const label = entry.approverUserId ? names[entry.approverUserId] ?? REIMBURSEMENT_DESK_LABELS.APPROVER
-        : entry.kind ? BACKLOG_DESK_LABELS[entry.kind] : SHARED_PILE_LABEL;
-      const group = groups.get(entry.key) ?? { label, approver: !!entry.approverUserId, approved, count: 0, totals: new Map(), oldest: since };
+      const label = entry.approverUserId ? names[entry.approverUserId] ?? REIMBURSEMENT_DESK_LABELS.APPROVER : entry.label ?? SHARED_PILE_LABEL;
+      const group = groups.get(entry.key) ?? { label, kind: entry.kind, note: entry.note, approver: !!entry.approverUserId, approved, count: 0, totals: new Map(), oldest: since };
       group.count += 1;
       if (since < group.oldest) group.oldest = since;
       addMoney(group.totals, row.currency, row.outstandingAmount);
@@ -263,10 +268,9 @@ export class GetReimbursementApprovalBacklogUseCase {
       byApprover: all.filter((group) => group.approver).map((group) => ({ name: group.label, ...summary(group) }))
         .sort((a, b) => b.count - a.count || b.longestWaitDays - a.longestWaitDays || a.name.localeCompare(b.name, 'th')),
       sharedPile: shared ? { label: shared.label, ...summary(shared) } : null,
-      desks: (Object.keys(BACKLOG_DESK_LABELS) as BacklogDeskKind[]).flatMap((kind) => {
-        const group = groups.get(kind);
-        return group ? [{ kind, label: group.label, ...summary(group, kind), ...(BACKLOG_DESK_NOTES[kind] ? { note: BACKLOG_DESK_NOTES[kind] } : {}) }] : [];
-      }),
+      // One row per desk, and for claims with their requester one row per label, in the order of what a claim can hold.
+      desks: BACKLOG_DESK_KINDS.flatMap((kind) => [...groups].filter(([, group]) => group.kind === kind).sort(([a], [b]) => a.localeCompare(b))
+        .map(([, group]) => ({ kind, label: group.label, ...summary(group, kind), ...(group.note ? { note: group.note } : {}) }))),
       items: items.sort((a, b) => b.waitDays - a.waitDays || a.submittedOn.localeCompare(b.submittedOn)
         || (a.documentNumber ?? a.id).localeCompare(b.documentNumber ?? b.id)).slice(0, 10),
       ...(hasOwnClaims !== undefined ? { hasOwnClaims } : {}),
