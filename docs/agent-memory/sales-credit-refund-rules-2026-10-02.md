@@ -1,6 +1,6 @@
 # Agent Memory: sales-credit-refund-rules-2026-10-02
 
-Status: The four owner decisions on sales credit (RB-37 / Q36, decided 2026-10-02) are implemented on `claude/sales-credit-refund-rules-20261002`, cut from `origin/develop` `55daababb`. Not pushed, no PR, nothing deployed. The branch carries a migration, so it cannot ship on the hotfix path.
+Status: The four owner decisions on sales credit (RB-37 / Q36, decided 2026-10-02) are implemented on `claude/sales-credit-refund-rules-20261002`, cut from `origin/develop` `55daababb` and merged with develop `e2f7eb423` (#954), which landed while the branch was being built. Not pushed, no PR, nothing deployed. The branch carries a migration, so it cannot ship on the hotfix path.
 
 Owner: one implementation agent in worktree `/private/tmp/mangmee-sales-credit-20261002`.
 
@@ -14,7 +14,7 @@ Decisions:
 - The deduction is booked in the Bangkok month of `createdAt`, the month it was recorded. The system records within minutes (webhook, or the 5-minute account sweep), so this is the month the refund happened. When it learns later, the deduction goes to the month it learned, because the owner's rule is that a month that is over never changes. The line still shows the provider's date. The one-line alternative is `bangkokMonthKey(item.occurredAt)` in `aggregateReport` and `occurredAt` in the report query.
 - A dispute is deducted when its status is `lost`. Won, open and inquiry statuses deduct nothing. The window is counted to the day the dispute was opened; the booking month is the month the loss was recorded.
 - The amount taken is the refunded or lost satang, capped at the credit that is left on the row. A full refund therefore takes exactly the credit, also when the money returned includes tax added on top.
-- Ingestion lives in `observeBillingCharges`, the one place a refund or dispute is observed. For the one payment per shop that carries credit, and only while credit is left, it also reads `GET /refunds?charge=` and `GET /disputes?charge=`. Any other payment costs no extra provider call. An entry that is not exactly a settled refund or dispute of that charge is left out, never guessed. A provider error fails that account's reconcile for the cycle, like any other provider read there.
+- Ingestion lives in `observeBillingCharges`, the one place a refund or dispute is observed. For the one payment per shop that carries credit, and only while credit is left, it also reads `GET /refunds?charge=` and `GET /disputes?charge=`. Any other payment costs no extra provider call. An entry that is not exactly a settled refund or dispute of that charge, in THB, with a positive amount and a time, is left out, never guessed. The provider's id is taken as given, because it is only the key against a second write, and the amount has no upper bound of its own, because the credit that is left caps it. A provider error fails that account's reconcile for the cycle, like any other provider read there.
 - `recordBillingFinancials` records the deductions whether or not the invoice totals changed: a dispute is lost, and a pending refund succeeds, without `amount_refunded` or `disputed` moving.
 - A flagged row nobody reviewed counts zero, and so do its deductions.
 
@@ -76,19 +76,19 @@ Open questions:
 - RB-39 still applies: the report reads at most 5,000 rows, now for credit and for deductions separately.
 
 Artifacts:
-- `1d743f2b7` referral base; `d19fe87b9` schema and migration `20261002100000_sales_credit_deductions`; `acf7888ab` report reads deductions; `dd295c74c` ingestion of refunds and lost disputes; `3116069aa` and `7fa5d5b37` the report screen; the docs commit after them.
+- `1d743f2b7` referral base; `d19fe87b9` schema and migration `20261002100000_sales_credit_deductions`; `acf7888ab` report reads deductions; `dd295c74c` ingestion of refunds and lost disputes; `3116069aa` and `7fa5d5b37` the report screen; `e1a021f77` docs; `2a552d984` merge of develop `e2f7eb423`; `c0c36ea78` and `206797862` two more PostgreSQL tests; `b18e1a017` the reader takes any provider id; then the commit that records this paragraph.
 - Docs: sales spec §17.1.1 (new) and the note in §17.2; bugs file RB-37; executive backend spec §14.3 and its two status lines; one status line each in the executive gap-impact file and backend plan; sales-event spec §5.5.
 
-Verification (2026-10-02, on `55daababb` plus the six code commits; rerun after merging develop, see the end of this file):
-- Typechecks: the package scripts, API with its 8 GB heap flag and web: exit 0, 0 errors each. The native compiler CI uses, after each code commit: 0 errors.
-- New tests: 25 (12 in `sales-attribution.logic.spec.ts`, 4 in `billing-financial.spec.ts`, 3 in `sales-console.pg.spec.ts`, 5 in `sales-console.logic.spec.ts`, 1 in `sales-console.qa.spec.ts`). With the six changed source files put back to `55daababb`, all 25 fail, plus the three older aggregation tests whose call now passes the deductions list; everything else in those five files passes (20 of 35, 4 of 8, 16 of 19, 55 of 60, 45 of 46).
+Verification (2026-10-02):
+- New tests: 26 (12 in `sales-attribution.logic.spec.ts`, 4 in `billing-financial.spec.ts`, 4 in `sales-console.pg.spec.ts`, 5 in `sales-console.logic.spec.ts`, 1 in `sales-console.qa.spec.ts`). With the six changed source files put back to `55daababb`, all 26 fail, plus the three older aggregation tests whose call now passes the deductions list; everything else in those five files passes (20 of 35, 4 of 8, 16 of 20, 55 of 60, 45 of 46).
 - Where they run: `sales-attribution.logic.spec.ts` and `billing-financial.spec.ts` are in the whole-chain acceptance catalog, which CI runs; no billing or sales-console spec is in the `test` script of `apps/api/package.json`. `sales-console.pg.spec.ts` is registered in `.github/workflows/ci.yml`. No spec file was added, so nothing had to be registered.
-- `sales-console.pg.spec.ts` on a scratch PostgreSQL 18.3 with every migration applied: 19 pass (16 before).
-- Whole-chain acceptance: exit 0. Full API `test` script: exit 0. Web suite: 2222 pass. Contracts: 343 pass.
-- `migration:review`: exit 0. `prisma migrate deploy` applied the new migration on the scratch database, and `prisma migrate diff` from that database to the schema shows no difference for the new table.
-- `test:boot`: Nest resolved every provider. W00 capability manifest spec: 4 pass, no regeneration. Maintenance pins: current. `git diff --check`: clean.
+- `sales-console.pg.spec.ts` on a scratch PostgreSQL 18.3 with every migration applied: 20 pass (16 before). One of the four new cases drives the real charge observer against real tables with a stand-in for the provider only. Its first run found that the reader dropped facts whose id did not match one pattern, which is why `b18e1a017` exists.
+- Before the merge, on `55daababb` plus the code commits: package typechecks (API with its 8 GB heap flag, web) 0 errors; whole-chain acceptance exit 0; full API `test` script exit 0; web suite 2222 pass; contracts 343 pass.
+- After merging develop `e2f7eb423`: native typechecks 0 errors; whole-chain acceptance exit 0; full API `test` script exit 0; web suite 2222 pass; contracts 343 pass.
+- On the head before this note was committed (`206797862`): package typechecks, API with its 8 GB heap flag and web, 0 errors each; whole-chain acceptance exit 0; the five touched spec files pass (43 API, 106 web, 20 PostgreSQL); `migration:review` exit 0; W00 capability manifest spec 4 pass with no regeneration; maintenance pins current; `test:boot` resolved every provider; `git diff --check` clean.
+- `prisma migrate deploy` applied the new migration on the scratch database, and `prisma migrate diff` from that database to the schema shows no difference for the new table.
 - Browser, local stack (the API and web of this branch, a seeded scratch database, the seeded QA lead): `/sales/reports` at 390 px and 1280 px, team view and single-salesperson view. No horizontal scroll, a negative month and a negative agent shown with the sign before ฿ and marked, deduction lines stacked with the shop, the payment month and the date. That look found the month total of a negative month still painted green, fixed in `7fa5d5b37`.
 - An ordinary เซลล์ does not hold `sales.report.read` and is sent back to the deals page, so the single-salesperson view is what a lead or the Owner sees when one person is in the answer.
-- Not run: the Playwright e2e suite, any UAT or production system, the real payment provider. The two provider list reads (`/refunds?charge=`, `/disputes?charge=`) were exercised only against in-memory stand-ins.
+- Not run: the Playwright e2e suite, any UAT or production system, the real payment provider. The two provider list reads (`/refunds?charge=`, `/disputes?charge=`) were exercised only against stand-ins.
 
 Next: coordinator review; the owner's answer on the two open questions; then push, PR and the release path with a migration (UAT, then promote). After the release, run query (1) on production to see whether any existing referral row sits on the old base.
