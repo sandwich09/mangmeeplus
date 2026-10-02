@@ -5,14 +5,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import {
   REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, isReimbursementPayoutCorrectionReason,
-  reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
+  reimbursementPayoutCorrectionReasons,
 } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import {
-  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED,
+  PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL, PAYOUT_CORRECTION_SAVE_LABEL, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED,
   emptyPayoutCorrectionForm, isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
-  payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
+  payoutCorrectionAccountText, payoutCorrectionAnswerWords, payoutCorrectionCardNote, payoutCorrectionFormError,
   payoutCorrectionInput, payoutCorrectionOffers, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
   payoutCorrectionSentBackText, payoutCorrectionSubmittedText, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
@@ -220,12 +220,26 @@ describe('sending a claim back for its payout account: what the form asks and se
   it('says a claim sent back for having no account was sent back to be given one, and that its account was added', () => {
     assert.equal(payoutCorrectionSubmittedText({ byUserId: 'staff', byName: 'สมชาย พนักงาน' }, 'staff', 'NO_ACCOUNT_ON_CLAIM'), 'ผู้เบิกเพิ่มบัญชีรับเงิน');
     assert.equal(payoutCorrectionSubmittedText({ byUserId: 'finance', byName: 'วราภรณ์ การเงิน' }, 'staff', 'NO_ACCOUNT_ON_CLAIM'), 'วราภรณ์ การเงิน เพิ่มบัญชีรับเงินแทนผู้เบิก');
-    // Every other reason, and none, keep the words the round always had: the label of the requester's own button.
+    // Every other reason, and none, keep the words the round always had.
     for (const reason of ['ACCOUNT_NUMBER_WRONG', 'OTHER', 'A_REASON_ADDED_LATER', undefined]) {
-      assert.equal(reimbursementPayoutCorrectionAsk(reason), PAYOUT_CORRECTION_FIX_LABEL, String(reason));
       assert.equal(payoutCorrectionSubmittedText({ byUserId: 'staff' }, 'staff', reason), 'ผู้เบิกแก้บัญชีรับเงิน', String(reason));
     }
-    assert.equal(reimbursementPayoutCorrectionAsk('NO_ACCOUNT_ON_CLAIM'), 'เพิ่มบัญชีรับเงิน');
+  });
+
+  // Before: the button and the form's title read "แก้บัญชีรับเงิน" on every claim sent back, also on one with no account
+  // and on one that asked for cash.
+  it('names what whoever answers is asked to do by what the claim holds, on their button and as the title of their form', () => {
+    const words = (payoutMethod: string | undefined, payoutCorrectionPhase: string, forSelf: boolean) => payoutCorrectionAnswerWords({ payoutMethod, payoutCorrectionPhase }, forSelf);
+    for (const [payoutMethod, ask] of [['BANK_TRANSFER', 'แก้บัญชีรับเงิน'], [undefined, 'เพิ่มบัญชีรับเงิน'], ['CASH', 'เลือกวิธีรับเงินคืน']] as const) {
+      assert.deepEqual(words(payoutMethod, 'AWAITING_REQUESTER', true), { title: ask, button: ask }, ask);
+      // Whoever answers for the requester reads both as done on the requester's behalf.
+      assert.deepEqual(words(payoutMethod, 'AWAITING_REQUESTER', false), { title: `${ask}แทนผู้เบิก`, button: `${ask}แทนผู้เบิก` }, ask);
+    }
+    // Once an answer waits for approval the claim holds it: the requester is offered to do it again, by what was given.
+    assert.deepEqual(words('BANK_TRANSFER', 'AWAITING_APPROVAL', true), { title: 'แก้บัญชีรับเงิน', button: 'แก้บัญชีรับเงินอีกครั้ง' });
+    assert.deepEqual(words('CASH', 'AWAITING_APPROVAL', true), { title: 'เลือกวิธีรับเงินคืน', button: 'เลือกวิธีรับเงินคืนอีกครั้ง' });
+    assert.deepEqual(words('CASH', 'AWAITING_APPROVAL', false), { title: 'เลือกวิธีรับเงินคืนแทนผู้เบิก', button: 'เลือกวิธีรับเงินคืนแทนผู้เบิก' });
+    assert.equal(PAYOUT_CORRECTION_SAVE_LABEL, 'บันทึกวิธีรับเงินคืน');
   });
 });
 
@@ -689,7 +703,7 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/);
     assert.equal(html.includes(DEFAULT.token), false, 'the token is sent, never shown');
     assert.equal(html.match(/\d{5,}/g), null, 'the last 4 digits only');
-    for (const text of ['แก้บัญชีรับเงิน', 'เลือกวิธีรับเงินคืนของใบนี้ใหม่ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน', 'ยกเลิก', 'บันทึกบัญชีรับเงิน']) assert.ok(texts.includes(text), text);
+    for (const text of ['แก้บัญชีรับเงิน', 'เลือกวิธีรับเงินคืนของใบนี้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน', 'ยกเลิก', 'บันทึกวิธีรับเงินคืน']) assert.ok(texts.includes(text), text);
     assert.doesNotMatch(html, /role="dialog"/);
     assert.equal(html.match(/<label class="flex min-h-11 cursor-pointer/g)?.length, 4);
     assertPlainThai(texts, 'the account form');
@@ -770,9 +784,33 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     assert.ok(texts.includes('บันทึกเป็นบัญชีประจำของผู้เบิก'));
   });
 
-  it('says what happens after the save: the same approvers approve the new account, or a claim nobody approves is ready for payment', () => {
-    assert.ok(form(withDefault(phaseA())).texts.includes('เมื่อบันทึกแล้ว ใบจะส่งให้ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจ่าย ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที'));
-    assert.ok(form(withDefault(phaseB())).texts.includes('เมื่อบันทึกแล้ว บัญชีที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจบัญชีใหม่นี้แทน'));
+  // Before: "ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่" and "บัญชีที่ส่งไปก่อนหน้า … บัญชีใหม่นี้", whatever was about to be chosen: the same
+  // account, a first one, or cash. And the step that approves keeps only those approvers who are still on the claim's route.
+  it('says what happens after the save in words true of every choice: the claim\'s approvers approve the method chosen, or a claim nobody approves is ready for payment', () => {
+    const AFTER = 'เมื่อบันทึกแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติวิธีรับเงินคืนนี้ก่อนจึงจ่ายได้ ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที';
+    const AGAIN = 'เมื่อบันทึกแล้ว วิธีรับเงินคืนที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจวิธีรับเงินคืนที่เลือกครั้งนี้แทน';
+    for (const held of HELD) assert.ok(form(withDefault(sentBackHolding(held))).texts.includes(AFTER), held);
+    for (const answer of ALL_ANSWERS) assert.ok(form(withDefault(answeredWith(answer))).texts.includes(AGAIN), answer);
+    for (const sentence of [AFTER, AGAIN]) assert.doesNotMatch(sentence, /บัญชี|ชุดเดิม|ใหม่/u);
+  });
+
+  // Before: "แก้บัญชีรับเงิน" and "เลือกวิธีรับเงินคืนของใบนี้ใหม่" on a claim that never had an account, and "บันทึกบัญชีรับเงิน" over a
+  // choice of cash.
+  it('is titled for what is asked by what the claim holds, saves "the method" whatever is chosen, and asks a claim with no account for no "new" choice', () => {
+    for (const [held, own, onBehalf] of [
+      ['ACCOUNT', 'แก้บัญชีรับเงิน', 'แก้บัญชีรับเงินแทนผู้เบิก'], ['NOTHING', 'เพิ่มบัญชีรับเงิน', 'เพิ่มบัญชีรับเงินแทนผู้เบิก'], ['CASH', 'เลือกวิธีรับเงินคืน', 'เลือกวิธีรับเงินคืนแทนผู้เบิก'],
+    ] as const) {
+      const mine = form(withDefault(sentBackHolding(held)));
+      assert.equal(heading(mine.html), own, held);
+      assert.equal(heading(form(withDefault(sentBackHolding(held)), { userId: 'finance' }).html), onBehalf, held);
+      for (const text of ['เลือกวิธีรับเงินคืนของใบนี้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน', 'บันทึกวิธีรับเงินคืน']) assert.ok(mine.texts.includes(text), `${held}: ${text}`);
+      assert.equal(mine.texts.some((text) => text === 'บันทึกบัญชีรับเงิน' || text.includes('ของใบนี้ใหม่')), false, held);
+      assertPlainThai(mine.texts, `the answer form of a claim holding ${held}`);
+    }
+    // Opened again while an answer waits: titled for what the claim now holds, the answer already given.
+    assert.equal(heading(form(withDefault(answeredWith('FIRST_ACCOUNT'))).html), 'แก้บัญชีรับเงิน');
+    assert.equal(heading(form(withDefault(answeredWith('CASH_INSTEAD'))).html), 'เลือกวิธีรับเงินคืน');
+    assert.equal(heading(form(withDefault(answeredWith('SAME_CASH')), { userId: 'finance' }).html), 'เลือกวิธีรับเงินคืนแทนผู้เบิก');
   });
 
   it('sends each choice to the account endpoint as the API takes it, the default by the token of the account shown', async () => {
@@ -860,7 +898,8 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     const { texts } = form(withDefault(phaseA()), { userId: 'finance', typing: 'refused' });
     assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', KEEP]);
     assert.ok(texts.includes(`⚠ ${PAYOUT_CORRECTION_TYPING_REFUSED}`));
-    assert.equal(PAYOUT_CORRECTION_TYPING_REFUSED, 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงระบุบัญชีใหม่แทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้ระบุบัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ');
+    // No "บัญชีใหม่": the claim may have had no account, and what cannot be done is typing one.
+    assert.equal(PAYOUT_CORRECTION_TYPING_REFUSED, 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงพิมพ์บัญชีแทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้พิมพ์บัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ');
     // A typed account left in the form is not shown as fields any more, and is never sent.
     assert.equal(form(withDefault(phaseA()), { userId: 'finance', typing: 'refused', picked: { mode: 'SPECIFIED', account: typed } }).texts.includes('เลขบัญชี *'), false);
     assertPlainThai(texts, 'the account form after the refusal');
@@ -1289,7 +1328,7 @@ describe('the header line, the step note, the timeline and the badge name the sa
       assert.doesNotMatch(text, /สมศรี|ผู้มีสิทธิ์อนุมัติ|ผู้มีสิทธิ์บันทึกจ่าย|ผู้ยื่น|ฝ่ายการเงิน/u, text);
     }
     // The requester reads that it is theirs to do; a finance reviewer that they may do it for the requester.
-    assert.equal(stepCard(claimPage(phaseA({ payoutCorrectionActions: GIVE }), requester).html).note.split(' · ').at(-1), 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินที่ถูกต้อง');
+    assert.equal(stepCard(claimPage(phaseA({ payoutCorrectionActions: GIVE }), requester).html).note.split(' · ').at(-1), 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินคืนที่ถูกต้อง');
     assert.equal(stepCard(claimPage(phaseA({ payoutCorrectionActions: GIVE }), financeReviewer).html).note.split(' · ').at(-1), 'รอผู้เบิกแก้บัญชีรับเงิน คุณแก้แทนผู้เบิกได้');
     // No note was added, or nobody can be named: the sentence is still whole.
     const bare = phaseA({ payoutCorrection: { phase: 'AWAITING_REQUESTER', requestedAt: AT.sentBack, reasonCode: 'REQUESTER_ASKED' } });
@@ -1352,6 +1391,39 @@ describe('the header line, the step note, the timeline and the badge name the sa
     assert.equal(logic.quickPayBlockedNote(answeredWith('SAME_CASH'), EVERYTHING, 'finance'), 'บันทึกจ่ายใบนี้ไม่ได้ · รอ สมศรี ผู้จัดการ อนุมัติการรับเป็นเงินสด');
   });
 
+  // Before: "รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงิน…" and "รอผู้เบิกแก้บัญชีรับเงิน คุณแก้แทนผู้เบิกได้" on every claim sent back, and the
+  // button "แก้บัญชีรับเงิน" under them, also where there was no account to correct.
+  it('tells the requester what they are asked to do and the button that does it, and whoever may answer for them that they may, by what the claim holds', () => {
+    const last = (detail: object, viewer: Viewer) => active(detail, viewer).note!.split(' · ').at(-1);
+    for (const [held, mine, onBehalf, button] of [
+      ['ACCOUNT', 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินคืนที่ถูกต้อง', 'รอผู้เบิกแก้บัญชีรับเงิน คุณแก้แทนผู้เบิกได้', 'แก้บัญชีรับเงิน'],
+      ['NOTHING', 'รอคุณเพิ่มบัญชีรับเงิน กดเพิ่มบัญชีรับเงินแล้วเลือกวิธีรับเงินคืนของใบนี้', 'รอผู้เบิกเพิ่มบัญชีรับเงิน คุณเพิ่มแทนผู้เบิกได้', 'เพิ่มบัญชีรับเงิน'],
+      ['CASH', 'รอคุณเลือกวิธีรับเงินคืนอีกครั้ง กดเลือกวิธีรับเงินคืนแล้วเลือกวิธีที่ต้องการ', 'รอผู้เบิกเลือกวิธีรับเงินคืน คุณเลือกแทนผู้เบิกได้', 'เลือกวิธีรับเงินคืน'],
+    ] as const) {
+      const detail = sentBackHolding(held, { payoutCorrectionActions: GIVE });
+      assert.equal(last(detail, requester), mine, held);
+      assert.equal(last(detail, financeReviewer), onBehalf, held);
+      // The button each sentence names is the first button of the step card, and the title of the form it opens.
+      assert.deepEqual(stepCard(claimPage(detail, requester).html).buttons, [button, 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก'], held);
+      assert.deepEqual(stepCard(claimPage(detail, financeReviewer).html).buttons, [`${button}แทนผู้เบิก`, 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก'], held);
+      assert.ok(mine.includes(`กด${button}แล้ว`), held);
+      const formOf = (viewer: Viewer) => { const page = withForm(detail, viewer, 'correct-payout')!; return heading(page.html.slice(page.html.indexOf('data-testid="reimbursement-payout-correction-account"'))); };
+      assert.deepEqual([formOf(requester), formOf(financeReviewer)], [button, `${button}แทนผู้เบิก`], held);
+    }
+    // While an answer waits for approval it may be given again: said, and offered, by what was given.
+    const ACCOUNT_AGAIN = ['ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง กดแก้บัญชีรับเงินอีกครั้งได้', 'ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง คุณแก้แทนผู้เบิกได้', 'แก้บัญชีรับเงินอีกครั้ง', 'แก้บัญชีรับเงินแทนผู้เบิก'] as const;
+    const CASH_AGAIN = ['ถ้าต้องการเปลี่ยนวิธีรับเงินคืน กดเลือกวิธีรับเงินคืนอีกครั้งได้', 'ถ้าต้องการเปลี่ยนวิธีรับเงินคืน คุณเลือกแทนผู้เบิกได้', 'เลือกวิธีรับเงินคืนอีกครั้ง', 'เลือกวิธีรับเงินคืนแทนผู้เบิก'] as const;
+    for (const answer of ALL_ANSWERS) {
+      const [mine, onBehalf, button, behalfButton] = ANSWERS[answer].given === 'CASH' ? CASH_AGAIN : ACCOUNT_AGAIN;
+      const detail = answeredWith(answer, { payoutCorrectionActions: GIVE });
+      assert.equal(last(detail, requester), mine, answer);
+      assert.equal(last(detail, financeReviewer), onBehalf, answer);
+      assert.deepEqual(stepCard(claimPage(detail, requester).html).buttons, [button, 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก'], answer);
+      assert.deepEqual(stepCard(claimPage(detail, financeReviewer).html).buttons, [behalfButton, 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก'], answer);
+      assert.ok(mine.includes(`กด${button}ได้`), answer);
+    }
+  });
+
   it('after the approval: whoever pays, as on any claim waiting for its payment', () => {
     const detail = reapproved();
     const { html } = claimPage(detail, auditor);
@@ -1390,7 +1462,7 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
     const card = stepCard(page.html);
     assert.match(card.html, /data-testid="reimbursement-payout-correction-account"/);
     assert.doesNotMatch(page.html, /role="dialog"/);
-    assert.deepEqual(card.buttons, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก', 'ยกเลิก', 'บันทึกบัญชีรับเงิน']);
+    assert.deepEqual(card.buttons, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก', 'ยกเลิก', 'บันทึกวิธีรับเงินคืน']);
     assert.equal(heading(card.html), 'แก้บัญชีรับเงิน');
     assert.equal(heading(stepCard(withForm(phaseA({ payoutCorrectionActions: GIVE }), financeReviewer, 'correct-payout')!.html).html), 'แก้บัญชีรับเงินแทนผู้เบิก');
   });
@@ -1406,7 +1478,7 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
   it('leaves no button beside an open form looking like the main thing to press: the form\'s own save is', () => {
     const primary = (html: string) => [...stepCard(html).html.matchAll(/<(?:button|a)\b[^>]*class="mangmee-btn mangmee-btn-primary[^"]*"[^>]*>([^<]+)</gu)].map((match) => match[1]!);
     assert.deepEqual(primary(claimPage(phaseA({ payoutCorrectionActions: GIVE }), requester).html), ['แก้บัญชีรับเงิน']);
-    assert.deepEqual(primary(withForm(phaseA({ payoutCorrectionActions: GIVE }), requester, 'correct-payout')!.html), ['บันทึกบัญชีรับเงิน']);
+    assert.deepEqual(primary(withForm(phaseA({ payoutCorrectionActions: GIVE }), requester, 'correct-payout')!.html), ['บันทึกวิธีรับเงินคืน']);
     assert.deepEqual(primary(claimPage(ready({ payoutCorrectionActions: SEND }), payer).html), ['บันทึกจ่าย']);
     // While the new account waits for its approvers, giving it again is allowed and is not the thing to do next.
     assert.deepEqual(primary(claimPage(phaseB({ payoutCorrectionActions: GIVE }), requester).html), []);
@@ -1519,10 +1591,16 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
   });
 
   it('gives the account from the page and says where the claim went: to its approvers, or straight back to the pay step', async () => {
+    // Before: "บันทึกบัญชีรับเงินแล้ว รอผู้อนุมัติอนุมัติบัญชีใหม่" after every answer, cash and a kept account included.
     for (const [answer, said] of [
-      [asAnswered(phaseB()), 'บันทึกบัญชีรับเงินแล้ว รอผู้อนุมัติอนุมัติบัญชีใหม่'],
+      [asAnswered(phaseB()), 'บันทึกวิธีรับเงินคืนแล้ว รอผู้อนุมัติอนุมัติบัญชีรับเงินใหม่'],
+      [asAnswered(answeredWith('SAME_ACCOUNT')), 'บันทึกวิธีรับเงินคืนแล้ว รอผู้อนุมัติอนุมัติบัญชีรับเงินเดิม'],
+      [asAnswered(answeredWith('CASH_INSTEAD')), 'บันทึกวิธีรับเงินคืนแล้ว รอผู้อนุมัติอนุมัติการรับเป็นเงินสด'],
+      [asAnswered(answeredWith('FIRST_ACCOUNT')), 'บันทึกวิธีรับเงินคืนแล้ว รอผู้อนุมัติอนุมัติบัญชีรับเงิน'],
+      // An answer from a server that does not say what was answered: the method, which is true of every answer.
+      [asAnswered(phaseB({ payoutCorrectionAnswer: undefined })), 'บันทึกวิธีรับเงินคืนแล้ว รอผู้อนุมัติอนุมัติวิธีรับเงินคืน'],
       // Plan 3.12: a claim nobody has to approve is ready for payment in the same call.
-      [asAnswered(ready({ approvalSteps: [], payout: { payoutMethod: 'CASH' } })), 'บันทึกบัญชีรับเงินแล้ว ใบกลับไปรอจ่ายเงินคืน'],
+      [asAnswered(ready({ approvalSteps: [], payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' } })), 'บันทึกวิธีรับเงินคืนแล้ว ใบกลับไปรอจ่ายเงินคืน'],
     ] as const) {
       const page = filled(phaseA({ payoutCorrectionActions: GIVE }), requester, 'correct-payout', { picked: { mode: 'CASH' } });
       toasts.length = 0;
@@ -1546,12 +1624,17 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
     assert.ok(page.changes.some((change) => (change.value as { payoutCorrectionPhase?: string } | null)?.payoutCorrectionPhase === 'AWAITING_APPROVAL'), 'the page shows the claim as read again');
     assert.ok(page.changes.some((change) => change.value === PAYOUT_CORRECTION_STALE_PRESS), 'the page says what was not done and what to look at');
     assert.equal(page.changes.some((change) => typeof change.value === 'string' && change.value.includes(PAYOUT_CORRECTION_REREAD_NOTE)), false, 'nothing invites the same press again');
+    // Before: "ยังไม่ได้บันทึกบัญชีรับเงินครั้งนี้ … กดปุ่มแก้บัญชีรับเงินเพื่อแก้ใหม่": what was chosen may be cash, and the button is
+    // named by what the claim holds. The sentence now names no button: it says where the button is.
     assert.equal(PAYOUT_CORRECTION_STALE_PRESS,
-      'ยังไม่ได้บันทึกบัญชีรับเงินครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม หน้านี้แสดงสถานะล่าสุดของใบแล้ว ดูที่หัวข้อการรับเงินคืนว่าตอนนี้ใบใช้วิธีรับเงินใด ถ้ายังไม่ถูก กดปุ่มแก้บัญชีรับเงินเพื่อแก้ใหม่');
-    assertPlainThai([PAYOUT_CORRECTION_STALE_PRESS], 'the stale press sentence');
-    // The page it describes: the claim in its round shows the card "การรับเงินคืน" and still offers the button it names.
-    const after = claimPage(phaseB({ payoutCorrectionActions: GIVE }), requester);
-    assert.ok(after.texts.includes('การรับเงินคืน') && after.texts.some((text) => text.startsWith('แก้บัญชีรับเงิน')), JSON.stringify(after.texts.filter((text) => text.includes('รับเงิน'))));
+      'ยังไม่ได้บันทึกวิธีรับเงินคืนครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม หน้านี้แสดงสถานะล่าสุดของใบแล้ว ดูที่หัวข้อการรับเงินคืนว่าตอนนี้ใบใช้วิธีรับเงินคืนใด ถ้ายังไม่ถูก กดปุ่มในขั้นตอนนี้เพื่อเลือกอีกครั้ง');
+    assert.equal(PAYOUT_CORRECTION_SUPERSEDED['correct-payout'], 'ยังไม่ได้บันทึกวิธีรับเงินคืน เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง');
+    assertPlainThai([PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED['correct-payout']], 'the sentences of a form the page closed');
+    // The page it describes: the claim in its round shows the card "การรับเงินคืน" and offers, in its step, the button to choose again.
+    for (const [answer, button] of [['NEW_ACCOUNT', 'แก้บัญชีรับเงินอีกครั้ง'], ['CASH_INSTEAD', 'เลือกวิธีรับเงินคืนอีกครั้ง']] as const) {
+      const after = claimPage(answeredWith(answer, { payoutCorrectionActions: GIVE }), requester);
+      assert.ok(after.texts.includes('การรับเงินคืน') && stepCard(after.html).buttons.includes(button), `${answer}: ${JSON.stringify(stepCard(after.html).buttons)}`);
+    }
   });
 
   it('says the round is over when the claim that changed no longer offers the account form, and keeps a form whose claim did not change', async () => {
@@ -1851,7 +1934,9 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     // Its requester is asked to add an account, by the button the page shows; everyone else reads the claim's status.
     const requester = { userId: 'staff', permissions: ['reimbursement.read_own', 'reimbursement.create'] };
     const own = claimPage({ ...waiting, payoutCorrectionActions: { canRequest: false, canSubmit: true, requesterDefault: 'ABSENT' } }, requester).texts;
-    assert.ok(own.some((text) => text === `${ASKED.slice(5)} · รอคุณเพิ่มบัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินของใบนี้`), JSON.stringify(own.filter((text) => text.includes('ส่งกลับ'))));
+    assert.ok(own.some((text) => text === `${ASKED.slice(5)} · รอคุณเพิ่มบัญชีรับเงิน กดเพิ่มบัญชีรับเงินแล้วเลือกวิธีรับเงินคืนของใบนี้`), JSON.stringify(own.filter((text) => text.includes('ส่งกลับ'))));
+    // Before: the sentence named a button "แก้บัญชีรับเงิน". The button it names is the one on the page.
+    assert.ok(own.includes('เพิ่มบัญชีรับเงิน') && !own.includes('แก้บัญชีรับเงิน'), JSON.stringify(own.filter((text) => text.includes('บัญชีรับเงิน'))));
     assert.ok(claimPage(waiting, auditor).texts.some((text) => text === `${ASKED.slice(5)} · รอผู้เบิกเพิ่มบัญชีรับเงิน`));
     for (const detail of [waiting, given, corrected]) assertPlainThai(logic.buildClaimTimeline(detail).map((row) => row.label), 'the journey of a claim that had no account');
   });

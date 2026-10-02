@@ -16,10 +16,10 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL,
+  PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL, PAYOUT_CORRECTION_SAVE_LABEL,
   PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
   isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
-  emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
+  emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionAnswerWords, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
   payoutCorrectionOffers, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, payoutCorrectionSendBackTitle,
   payoutCorrectionTypingRefusedUpFront, payoutRoundTexts, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
@@ -129,11 +129,13 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
 }
 
 /**
- * "แก้บัญชีรับเงิน": the account a claim in a round is to be paid into (spec §14.5), from its requester or from
- * a finance reviewer on their behalf. The three choices of a draft: the requester's default account as the
+ * The answer to a send-back: how a claim in a round is to be paid back (spec §14.5), from its requester or from a
+ * finance reviewer on their behalf. Its title says what is asked, by what the claim holds: "แก้บัญชีรับเงิน",
+ * "เพิ่มบัญชีรับเงิน" or "เลือกวิธีรับเงินคืน". The three choices of a draft: the requester's default account as the
  * server shows it now, an account typed for this claim, or cash. And one a draft has no use for: the account
  * the claim was approved with, kept as it is, for a claim that was sent back by mistake. Nothing is chosen for
- * them: the account that was sent back may well be their default.
+ * them: the account that was sent back may well be their default. What is saved may be cash, so the button that
+ * saves it, and every sentence about what is saved, names the method and never "the account".
  */
 export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEditEmployees, onCancel, onDone, onConflict }: {
   companyId: string;
@@ -216,8 +218,9 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   return (
     <form className="space-y-3 [overflow-wrap:anywhere]" onSubmit={submit} noValidate data-testid="reimbursement-payout-correction-account">
       <div>
-        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">{forSelf ? PAYOUT_CORRECTION_FIX_LABEL : `${PAYOUT_CORRECTION_FIX_LABEL}แทนผู้เบิก`}</h3>
-        <p className="mt-1 text-sm text-gray-600">เลือกวิธีรับเงินคืนของใบนี้ใหม่ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน</p>
+        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">{payoutCorrectionAnswerWords(detail, forSelf).title}</h3>
+        {/* Not "ใหม่": a claim with no account of its own never chose one before. */}
+        <p className="mt-1 text-sm text-gray-600">เลือกวิธีรับเงินคืนของใบนี้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน</p>
       </div>
       <div role="radiogroup" aria-label="รับเงินคืนทาง" aria-required className="space-y-2">
         {defaultAccount && offers('DEFAULT') && option('DEFAULT', forSelf ? 'ใช้บัญชีรับเงินคืนประจำของฉัน' : 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', payoutAccountWithName(defaultAccount))}
@@ -242,15 +245,17 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
           )}
         </div>
       )}
+      {/* True of every choice: what is approved may be the same account, a first one, or cash, and the step that
+          approves it keeps only those of the claim's approvers who are still on its route. */}
       <p className="text-xs leading-5 text-gray-500">
         {detail.payoutCorrectionPhase === 'AWAITING_APPROVAL'
-          ? 'เมื่อบันทึกแล้ว บัญชีที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจบัญชีใหม่นี้แทน'
-          : 'เมื่อบันทึกแล้ว ใบจะส่งให้ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจ่าย ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที'}
+          ? 'เมื่อบันทึกแล้ว วิธีรับเงินคืนที่ส่งไปก่อนหน้าจะถูกแทนที่ และผู้อนุมัติจะตรวจวิธีรับเงินคืนที่เลือกครั้งนี้แทน'
+          : 'เมื่อบันทึกแล้ว ผู้อนุมัติของใบนี้ต้องอนุมัติวิธีรับเงินคืนนี้ก่อนจึงจ่ายได้ ถ้าใบนี้ไม่ต้องอนุมัติตามนโยบาย ใบจะกลับไปรอจ่ายทันที'}
       </p>
       {error && <ErrorBanner message={error} />}
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button type="button" className={cx(ghostClass, 'w-full sm:w-auto')} disabled={busy} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกบัญชีรับเงิน'}</button>
+        <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy} aria-busy={busy}>{busy ? 'กำลังบันทึก...' : PAYOUT_CORRECTION_SAVE_LABEL}</button>
       </div>
     </form>
   );

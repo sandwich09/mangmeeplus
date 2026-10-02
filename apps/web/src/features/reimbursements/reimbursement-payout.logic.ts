@@ -27,7 +27,9 @@ import {
   type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
 } from '@watchdog-bms/contracts';
 // The words of a round (payout spec §14.2): the contracts' own, chosen there from what the claim holds and from what was answered.
-import { REIMBURSEMENT_PAYOUT_ROUND_TEXTS, reimbursementPayoutHeld, reimbursementPayoutRoundSendBack, type ReimbursementPayoutHeld } from '@watchdog-bms/contracts';
+import {
+  REIMBURSEMENT_PAYOUT_ROUND_TEXTS, reimbursementPayoutHeld, reimbursementPayoutRoundAsk, reimbursementPayoutRoundSendBack, type ReimbursementPayoutHeld,
+} from '@watchdog-bms/contracts';
 import { apiErrorCode, translateApiError } from '@/common/api/api-error-message';
 
 export const PAYOUT_METHOD_TEXT: Record<string, string> = { BANK_TRANSFER: 'โอนเข้าบัญชี', CASH: 'รับเป็นเงินสด' };
@@ -277,15 +279,17 @@ export function claimPayoutHistory(detail: {
  * to do (taking the claim back to a draft and sending it again). Null when the server said nothing.
  */
 export function payoutDefaultChangedHint(
-  detail: { payout?: ReimbursementPayoutSummary | null; payoutCorrectionActions?: { canRequest?: boolean; canSubmit?: boolean } | null },
+  detail: { payout?: ReimbursementPayoutSummary | null; payoutCorrectionPhase?: string | null; payoutCorrectionActions?: { canRequest?: boolean; canSubmit?: boolean } | null },
   canWithdraw: boolean,
 ): string | null {
   if (detail.payout?.defaultAccountChanged !== true) return null;
   // After approval the requester no longer takes the claim back to a draft. Where the server lets them, the way to
   // the new account is the correction round (spec §14.3): give the account now, or send the claim back for it.
   const how = canWithdraw ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
-    : detail.payoutCorrectionActions?.canSubmit === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_FIX_LABEL}ในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ`
-      // By the words of the line it names: that of a claim holding an account, the only claim told this (it copied the default).
+    // The button and the line named are the claim's own, as they read: those of a claim that holds an account (it copied
+    // the default, which is why it is told this), for its requester, who alone is told.
+    : detail.payoutCorrectionActions?.canSubmit === true
+      ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${payoutCorrectionAnswerWords({ ...detail.payout, payoutCorrectionPhase: detail.payoutCorrectionPhase }, true).button}ในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ`
       : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${payoutRoundTexts(detail.payout).payLink}ที่ท้ายกล่องนี้ ก่อนมีการโอน`
         : 'ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
   return `บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ${how}`;
@@ -441,7 +445,20 @@ export function payoutCorrectionSendBackTitle(claim: { payoutMethod?: string | n
  * accounts can read alike, and of one account always do.
  */
 export const PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL = 'บัญชีเดิม ไม่ได้เปลี่ยน';
-export const PAYOUT_CORRECTION_FIX_LABEL = 'แก้บัญชีรับเงิน';
+/** The button that saves the answer of a round, whatever is chosen: what is saved may be cash, which is no account. */
+export const PAYOUT_CORRECTION_SAVE_LABEL = 'บันทึกวิธีรับเงินคืน';
+/**
+ * What whoever answers a round is asked to do, by what the claim holds: correct its account, add one, or choose how to
+ * be paid back. `title` heads the form; `button` opens it. Whoever answers for the requester reads both as done on the
+ * requester's behalf, and a requester whose answer already waits for approval is offered to do it again.
+ */
+export function payoutCorrectionAnswerWords(
+  claim: { payoutMethod?: string | null; payoutCorrectionPhase?: string | null }, forSelf: boolean,
+): { title: string; button: string } {
+  const words = payoutRoundTexts(claim);
+  const title = forSelf ? reimbursementPayoutRoundAsk(words.held) : words.askOnBehalf;
+  return { title, button: forSelf && claim.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? words.given.askAgain : title };
+}
 /** A scan declared as signed before the round (spec §14.4): it stays in the list and no longer counts. */
 export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อนแก้บัญชีรับเงิน';
 
@@ -474,11 +491,11 @@ export const PAYOUT_CORRECTION_REREAD_NOTE = 'หน้านี้แสดง�
  * was opened (an earlier press of the same form may be what changed it): what was not done, and what to look at
  * before giving the account once more. Nothing typed for the claim as it was is sent to the claim as it is.
  */
-export const PAYOUT_CORRECTION_STALE_PRESS = 'ยังไม่ได้บันทึกบัญชีรับเงินครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม หน้านี้แสดงสถานะล่าสุดของใบแล้ว ดูที่หัวข้อการรับเงินคืนว่าตอนนี้ใบใช้วิธีรับเงินใด ถ้ายังไม่ถูก กดปุ่มแก้บัญชีรับเงินเพื่อแก้ใหม่';
+export const PAYOUT_CORRECTION_STALE_PRESS = 'ยังไม่ได้บันทึกวิธีรับเงินคืนครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม หน้านี้แสดงสถานะล่าสุดของใบแล้ว ดูที่หัวข้อการรับเงินคืนว่าตอนนี้ใบใช้วิธีรับเงินคืนใด ถ้ายังไม่ถูก กดปุ่มในขั้นตอนนี้เพื่อเลือกอีกครั้ง';
 /** Said by the page when the form is no longer offered: what was not done, why, and where to read what can be done now. */
 export const PAYOUT_CORRECTION_SUPERSEDED: Record<'send-back' | 'correct-payout', string> = {
   'send-back': 'ยังไม่ได้ส่งกลับ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
-  'correct-payout': 'ยังไม่ได้บันทึกบัญชีรับเงิน เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
+  'correct-payout': 'ยังไม่ได้บันทึกวิธีรับเงินคืน เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
 };
 
 /**
@@ -608,7 +625,7 @@ export function payoutCorrectionTypingRefusedUpFront(
   return detail?.payoutCorrectionActions?.specifiedRefusal === 'REQUESTER_NOT_ACTIVE';
 }
 /** Said in the account form in place of the choice it does not offer: what cannot be done, why, and what still can. */
-export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงระบุบัญชีใหม่แทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้ระบุบัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
+export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงพิมพ์บัญชีแทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้พิมพ์บัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
 
 export function emptyPayoutCorrectionForm(): PayoutCorrectionForm {
   return { mode: '', account: emptyPayoutAccountForm(), saveAsDefault: false };

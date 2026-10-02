@@ -21,9 +21,9 @@ import {
   MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, REQUESTER_SELF_ATTESTED, type PaymentFormPayout,
 } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
-import { PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
+import { PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText, payoutRoundTexts } from './reimbursement-payout.logic';
 // The words of a round are the contracts' own, chosen there from what the claim holds and from what was answered.
-import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, reimbursementPayoutHeld, reimbursementPayoutRoundApproves, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
+import { reimbursementPayoutRoundApproves, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -1138,17 +1138,16 @@ function payoutCorrectionStepNote(
   detail: any, round: NonNullable<ReturnType<typeof payoutCorrectionRound>>,
   viewer: { canApprove: boolean; canSubmit: boolean; isRequester: boolean },
 ): string {
+  // The contracts' sentences for what the claim holds: with its requester what it was sent back holding, after that what was answered.
+  const words = payoutRoundTexts(detail);
   if (round.phase === 'AWAITING_REQUESTER') {
     return [
       // With its requester the claim holds what it held when it was sent back: the send-back is said by that.
-      payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: reimbursementPayoutHeld(detail) }),
+      payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: words.held }),
       round.note && `หมายเหตุ: ${round.note}`,
-      // A claim sent back for having no account has none that was wrong: its requester is asked to add one.
-      viewer.canSubmit && viewer.isRequester ? (round.reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? 'รอคุณเพิ่มบัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินของใบนี้'
-        : 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินที่ถูกต้อง')
-        : viewer.canSubmit ? `${REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER} คุณแก้แทนผู้เบิกได้`
-          // Everyone else reads what the claim waits for, in the words of its badge.
-          : payoutRoundStatus(detail, round),
+      // The requester reads what they are asked to do and the button that does it; whoever may answer for them, that
+      // they may. Everyone else reads what the claim waits for, in the words of its badge.
+      viewer.canSubmit ? (viewer.isRequester ? words.waitForYou : words.waitOnBehalf) : payoutRoundStatus(detail, round),
     ].filter(Boolean).join(' · ');
   }
   const waiting = waitingForCorrectionApproval(detail);
@@ -1159,8 +1158,8 @@ function payoutCorrectionStepNote(
       : 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน') : waiting,
     // The requester holds the approval this account waits on and the company's switch refuses them (spec §15).
     detail?.approvalActions?.selfApprovalBlocked === true && `ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติบัญชีใหม่เองไม่ได้`,
-    !viewer.canApprove && viewer.canSubmit && (viewer.isRequester
-      ? 'ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง กดแก้บัญชีรับเงินอีกครั้งได้' : 'ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง คุณแก้แทนผู้เบิกได้'),
+    // While it waits, what was answered may be answered again: an account corrected, or cash changed for another choice.
+    !viewer.canApprove && viewer.canSubmit && (viewer.isRequester ? words.given.againForYou : words.given.againOnBehalf),
   ].filter(Boolean).join(' · ');
 }
 
