@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { REPORT_INDUSTRY_GROUP_VERSION, isReportClassification, planTermState, reportIndustryGroupOf, salesCreditState,
+import { REPORT_INDUSTRY_GROUP_VERSION, planTermState, reportIndustryGroupOf, salesCreditState,
   type SalesAttributionSource, type SalesDeductionKind } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma, type ExecutiveCompanyMonth, type PrismaClient } from '../../../generated/prisma/client';
 import { BillingCashMovementsService, billingCoveredThrough, type BillingCashMovement } from '../../billing/application/billing-cash-movements.service';
 import { evaluateEntitledFeatureKeys } from '../../employee-access/application/entitlement.helper';
-import { PLATFORM_TENANT_ID } from '../../sales-console/application/sales-context';
+import { reportClassificationOf } from '../../system-partner-management/domain/logic/report-labels.logic';
 import { aggregateReport } from '../../sales-console/domain/sales-attribution.logic';
 import { EXECUTIVE_DEFINITION_VERSION, NO_USAGE, USAGE_COUNTERS, bangkokDayStart, decideDiscovery, decidePaidEver, decideReceiptAdoption,
   decideReferrer, decideSignupRail, decideUsageGroup, executiveMonthOf, executiveMonthRange, executiveMonths, figuresKey, int32,
@@ -160,8 +160,7 @@ export class ExecutiveReportBuildUseCase {
     const months = kind === 'FULL' ? executiveMonths(firstMonth, currentMonth) : executiveMonths(previousMonth < firstMonth ? firstMonth : previousMonth, currentMonth);
     const firstBuildAt = firstBuild._min.asOf ?? asOf;
 
-    const classificationOf = (company: CompanyRow) => company.id === PLATFORM_TENANT_ID ? 'INTERNAL'
-      : isReportClassification(company.reportClassification) ? company.reportClassification : null;
+    const classificationOf = (company: CompanyRow) => reportClassificationOf(company);
     const monthRows: Prisma.ExecutiveCompanyMonthCreateManyInput[] = [], monthHeaders: Prisma.ExecutiveReportMonthCreateManyInput[] = [];
     const activityOf = new Map<string, { firstAt: Date | null; lastAt: Date | null; lastLineAt: Date | null }>();
     const paidNow = new Map<string, { paidEver: string; paidEverReason: string | null; fullyRefunded: boolean }>();

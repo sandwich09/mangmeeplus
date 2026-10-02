@@ -3,6 +3,7 @@
  * The build reads sets, hands each company's facts to these functions, and stores what they answer.
  */
 import { SIGNUP_DISCOVERY_SOURCE_OPTIONS, planTermLockReason, type BillingPurchaseSource } from '@watchdog-bms/contracts';
+import { SIGNUP_SOURCE_EMAIL_OTP, SIGNUP_SOURCE_LINE_OA, SIGNUP_SOURCE_OFFICIAL_SITE } from '../../external-signup/domain/company-signup.logic';
 
 /** Raise when the meaning of a stored figure or group changes: the build then writes a new set of rows. */
 export const EXECUTIVE_DEFINITION_VERSION = 1;
@@ -131,9 +132,11 @@ export function decideDiscovery(signup: OriginalSignup | null, discoverySince: D
   if (signup.discoverySource && DISCOVERY_VALUES.includes(signup.discoverySource)) return signup.discoverySource;
   return discoverySince && signup.createdAt >= discoverySince ? 'UNKNOWN' : 'BEFORE_COLLECTION';
 }
+/** Every rail the signup code has: the website form, the LINE OA form and the email signup (spec §15 names the first two). */
+const SIGNUP_RAILS: readonly string[] = [SIGNUP_SOURCE_OFFICIAL_SITE, SIGNUP_SOURCE_LINE_OA, SIGNUP_SOURCE_EMAIL_OTP];
 export function decideSignupRail(signup: OriginalSignup | null): string {
   if (!signup) return 'ADMIN_CREATED';
-  return signup.source === 'official-site' || signup.source === 'line-oa' ? signup.source : 'UNKNOWN';
+  return SIGNUP_RAILS.includes(signup.source) ? signup.source : 'UNKNOWN';
 }
 /**
  * KNOWN: a referrer whose sales profile exists. UNRESOLVED: an id with no profile behind it.

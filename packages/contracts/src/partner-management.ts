@@ -5,6 +5,7 @@ import type { CompanyLegalAddress, VatRegistrationStatus } from './company-tax-i
 import type { CompanyBusinessType } from './company-business-type.js';
 import type { SignupDiscoverySource } from './external-signup.js';
 import type { PlanTermLockReason, PlanTermState, PlanTierKey } from './plan-term.js';
+import type { ReportClassification, ReportIndustryGroup } from './report-labels.js';
 import type { SalesReferralSource } from './sales.js';
 
 export type PartnerCompanyStatus = 'ACTIVE' | 'DISABLED' | 'ARCHIVED' | 'SUSPENDED';
@@ -68,6 +69,33 @@ export type PartnerCompanySummaryDto = {
   lockReason?: PlanTermLockReason;
   tierKey?: PlanTierKey;
   termEndsAt?: string;
+  /** Executive report label (executive spec §12.2); null = not classified yet. The platform company is always INTERNAL. */
+  reportClassification: ReportClassification | null;
+  /** The industry group the report uses: the admin's, else the mapping of the shop's own business type; null = none. */
+  reportIndustryGroup: ReportIndustryGroup | null;
+};
+
+/** `GET /v1/system/partners` filters beside `q` and `status` (executive spec §16.1). ALL is the default of both. */
+export const PARTNER_REPORT_CLASSIFICATION_FILTERS = ['ALL', 'CUSTOMER', 'TEST', 'INTERNAL', 'UNCLASSIFIED'] as const;
+export type PartnerReportClassificationFilter = typeof PARTNER_REPORT_CLASSIFICATION_FILTERS[number];
+/** UNSET: neither the admin's group nor a group from the shop's business type — the report shows "ไม่ระบุ". */
+export const PARTNER_REPORT_INDUSTRY_GROUP_FILTERS = ['ALL', 'UNSET'] as const;
+export type PartnerReportIndustryGroupFilter = typeof PARTNER_REPORT_INDUSTRY_GROUP_FILTERS[number];
+
+/** The two report labels on a company, with who set them and when (executive spec §16.1). */
+export type PartnerReportLabelsDto = {
+  classification: ReportClassification | null;
+  /** When the classification was last chosen. With no `classifiedBy` the system chose it (signup, or the one-time data task). */
+  classifiedAt?: string;
+  classifiedBy?: { userId: string; displayName: string };
+  /** The group the admin set; null = none, and the report falls back to `effectiveIndustryGroup`. */
+  industryGroup: ReportIndustryGroup | null;
+  industryGroupSetAt?: string;
+  industryGroupSetBy?: { userId: string; displayName: string };
+  /** What the report uses: the admin's group, else the mapping of the shop's own business type; null = "ไม่ระบุ". */
+  effectiveIndustryGroup: ReportIndustryGroup | null;
+  /** Version of the business-type mapping behind `effectiveIndustryGroup`. */
+  industryGroupVersion: number;
 };
 
 export type PaginatedPartnersDto = {
@@ -126,6 +154,7 @@ export type PartnerCompanyDetailDto = {
   entitlementNormalizationPending: boolean;
   planState?: PlanTermState;
   lockReason?: PlanTermLockReason;
+  reportLabels: PartnerReportLabelsDto;
 };
 
 export type PartnerMembershipStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED' | 'DISABLED';
@@ -173,6 +202,9 @@ export type UpdatePartnerProfileDto = {
   locale?: string;
   phone?: string;
   email?: string;
+  /** Executive report labels. Absent = unchanged; null = clear. They stay editable on a held or archived company. */
+  reportClassification?: ReportClassification | null;
+  reportIndustryGroup?: ReportIndustryGroup | null;
 };
 
 export type PartnerLifecycleTransitionDto = {

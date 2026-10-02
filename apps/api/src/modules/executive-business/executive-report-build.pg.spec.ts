@@ -726,8 +726,8 @@ describe('executive report rules', () => {
     assert.equal(decideDiscovery(request(null, '2026-09-17T18:59:59Z'), since), 'BEFORE_COLLECTION');
     assert.equal(decideDiscovery(request(null, '2026-09-20T00:00:00Z'), null), 'BEFORE_COLLECTION');
     assert.equal(decideDiscovery(request('BILLBOARD', '2026-09-20T00:00:00Z'), since), 'UNKNOWN'); // a value the contract does not know is not passed on
-    assert.deepEqual([decideSignupRail(null), decideSignupRail(request(null, '2026-09-20T00:00:00Z', 'line-oa')), decideSignupRail(request(null, '2026-09-20T00:00:00Z', 'partner-api'))],
-      ['ADMIN_CREATED', 'line-oa', 'UNKNOWN']);
+    assert.deepEqual([null, 'official-site', 'line-oa', 'email-otp', 'partner-api'].map((source) => decideSignupRail(source ? request(null, '2026-09-20T00:00:00Z', source) : null)),
+      ['ADMIN_CREATED', 'official-site', 'line-oa', 'email-otp', 'UNKNOWN']);
     assert.equal(decideReferrer({ referralSalesUserId: 'u1', salesProfileExists: true, discovery: 'WEBSITE' }), 'KNOWN'); // the admin's later entry shows as it is
     assert.equal(decideReferrer({ referralSalesUserId: 'u1', salesProfileExists: false, discovery: 'SALES' }), 'UNRESOLVED');
     assert.equal(decideReferrer({ referralSalesUserId: null, salesProfileExists: false, discovery: 'SALES' }), 'UNKNOWN');

@@ -1,6 +1,6 @@
 # Agent Memory: executive report — source readiness (stage S2)
 
-Status: IN PROGRESS on branch `claude/executive-source-readiness-20261002` (from `claude/executive-program-20261002`). Part B (money facts) and Part C (summary tables and their build) are built and verified locally. Parts A and D follow in this note as they land. Nothing is pushed, merged or deployed.
+Status: IN PROGRESS on branch `claude/executive-source-readiness-20261002` (from `claude/executive-program-20261002`). Part B (money facts), Part C (summary tables and their build) and Part A (company labels) are built and verified locally. Part D follows in this note. Nothing is pushed, merged or deployed.
 
 Owner: implementation lane of 2026-10-02; the controller session reviews, verifies, pushes and merges.
 
@@ -25,6 +25,13 @@ Decisions:
 - `referrerKind`: an id with a sales profile is `KNOWN`, an id without one `UNRESOLVED`; no id is `UNKNOWN` when the shop said "sales" or signed up before the question existed, `NONE` otherwise.
 - A question to the assistant is one distinct `requestId`; a row with no request id counts as its own request, so a month with such rows never shows active days and zero questions.
 - The company label columns and the industry-group mapping landed with Part C, because the build reads them. Part A adds how they are written.
+- One reading of the labels for the admin page and the report: `reportClassificationOf` and `reportLabelWhere` in `apps/api/src/modules/system-partner-management/domain/logic/report-labels.logic.ts` (company management owns the labels; the build imports the first). The platform company is `INTERNAL` whatever its row says; a stored value outside the list reads as unclassified.
+- The labels are written through the existing `PATCH /v1/system/partners/:partnerCompanyId` and its existing audit row (`system.partner_company.update`), whose metadata now carries each label's `from`/`to`. The classification keeps who and when on the company row; the industry group's who and when are read from the latest audit row that changed it.
+- Labels stay editable on a held or archived company (the population counts every lifecycle). The other profile fields keep their lock: a request that mixes both on a locked company is refused whole.
+- Provisioning from a signup request writes `CUSTOMER` in the company's own transaction; the admin-created path writes nothing.
+- The one-time job for older companies is `apps/api/prisma/report-label-backfill.ts`, called from `sync-permissions.ts` `main()`, which every release already runs after `migrate deploy` (Kamal `release.py`, `recover-release-intent.yml`, `run-release-task.sh`, `start-production.sh`). It works once: its first run writes a marker audit row (no target) and later runs find it and change nothing, so a label the admin clears afterwards is not put back. It takes an advisory lock, so containers booting together label once. Proof of a signup company: a `CompanySignupRequest` whose `companyId` names it. Only onboarding writes that column, for the company it creates from the request, in the same transaction (`create-company-onboarding.use-case.ts`), and `completeProvisioning` writes the same id; the schema comment says it "only ever means provisioned here", and a request that points at an existing shop uses `resolvedExistingCompanyId` instead.
+- The signup rail has a third value in the code, `email-otp`; the build stores it as it is (spec §15 named two).
+- The partner list answers an unknown filter value with 422, like its existing `q`/`status` filters; spec §12.4's 400 is the report's rule, not this endpoint's.
 
 `purchaseKind` evidence (spec §14.1 table; line numbers at commit of Part B):
 
@@ -37,6 +44,38 @@ Decisions:
 | `productKind` `CHAT_CREDIT` or `RECEIPT_IMAGE` | ADD_ON | `BillingInvoice.productKind` (default `PACKAGE`) | No code writes `productKind` on an invoice or an attempt today, so this cannot occur until add-ons are sold. The report must say "not on sale" (`ADDON_NOT_ON_SALE`), not 0 |
 | Cannot be filed, or no matched invoice | UNKNOWN | reader: no matched invoice, unknown product kind, neither attempt nor subscription, a quote without `purchase.kind` (none found: the field exists since the first billing commit `97d98a2ea`, 2026-09-14), and the two cases above | — |
 
+Industry groups, version 1 (`packages/contracts/src/report-labels.ts`; PROPOSED content for the owner to review before the report opens). A shop's group is the admin's choice if set, else the group of the section (A–U) of its own DBD business type code. Code counts are from the master list in the repo (`dbd-tsic-master.ts`, 1,098 codes, every one mapped; counted by running the mapping):
+
+| Group key | Label on screen | DBD sections | Codes | What it holds |
+|---|---|---|---|---|
+| RETAIL_WHOLESALE | ค้าปลีกและค้าส่ง | G | 168 | shops selling goods, wholesale, vehicle trade and repair |
+| FOOD_ACCOMMODATION | ร้านอาหารและที่พัก | I | 18 | restaurants, cafés, drink shops, hotels and other lodging |
+| MANUFACTURING | การผลิต | C | 382 | making or processing goods |
+| CONSTRUCTION_PROPERTY | ก่อสร้างและอสังหาริมทรัพย์ | F, L | 28 | building, contractors, renting and selling property |
+| TRANSPORT_LOGISTICS | ขนส่งและคลังสินค้า | H | 52 | moving goods or people, storage, post and couriers |
+| PROFESSIONAL_BUSINESS | บริการวิชาชีพและบริการธุรกิจ | M, N | 72 | accounting, law, design, consulting, rental, cleaning, staffing, travel agents |
+| TECH_MEDIA | เทคโนโลยีและสื่อ | J | 54 | software, IT services, publishing, broadcasting, telecom |
+| HEALTH_EDUCATION | สุขภาพและการศึกษา | P, Q | 49 | schools, tutoring, clinics, care |
+| PERSONAL_LEISURE | บริการส่วนบุคคลและนันทนาการ | R, S | 57 | beauty, laundry, repair of personal goods, arts, sport, entertainment, associations |
+| AGRICULTURE | เกษตร ประมง และป่าไม้ | A | 106 | farming, livestock, fishing, forestry |
+| FINANCE | การเงินและประกันภัย | K | 43 | lending, insurance, other financial services |
+| OTHER_INDUSTRY | กิจการอื่น | B, D, E, O, T, U | 69 | mining, energy, water and waste, public administration, households, international bodies |
+| (no group) | ไม่ระบุ | — | — | no business type chosen yet, `OTHER` with free text, or a code not in the list; the admin can set a group |
+
+How many companies fall in each group in production was not checked (no production read in this stage). After the first build in an environment it is one read-only query: `SELECT "industryGroup", "industryGroupSource", count(*) FROM "ExecutiveCompanyProfile" WHERE "reportClassification" = 'CUSTOMER' GROUP BY 1, 2 ORDER BY 3 DESC`. Before any build: `SELECT count(*) FILTER (WHERE "businessTypeCode" IS NULL) AS none, count(*) FILTER (WHERE "businessTypeCode" = 'OTHER') AS other_text, count(*) FILTER (WHERE "businessTypeCode" ~ '^[0-9]{5}$') AS coded, count(*) AS companies FROM "Company"`. The section of a code is also its first two digits by the ISIC rev. 4 division ranges (checked: 0 of 1,098 codes differ), so a count by group needs no application code if it is ever wanted before a build.
+
+Before/after counts of the one-time label job (read-only; run before the release and again after it, and keep both results with the release record):
+
+```sql
+SELECT COALESCE("reportClassification", 'UNCLASSIFIED') AS label, count(*) AS companies,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM "CompanySignupRequest" s WHERE s."companyId" = c.id)) AS from_signup
+FROM "Company" c GROUP BY 1 ORDER BY 1;
+SELECT "targetId" IS NULL AS marker, count(*), min("createdAt"), max(("metadataJson"->>'labelledCustomer')) AS customer, max(("metadataJson"->>'labelledInternal')) AS internal
+FROM "AuditLog" WHERE "requestId" = 'report-label-backfill:v1' GROUP BY 1;
+```
+
+Expected after: every company with a signup request is `CUSTOMER` unless it already had a label; the platform company is `INTERNAL`; `UNCLASSIFIED` holds exactly the admin-created companies (the admin's work list). One marker row, and one row per labelled company.
+
 Open questions:
 
 - Owner: the `SCHEDULED_CHANGE` row and the deal-conversion case above. Both are UNKNOWN in the code until answered; either answer is a one-line change in `billingPurchaseKind`.
@@ -44,6 +83,8 @@ Open questions:
 - The hourly round builds two months. A company's older months are written by the daily full round, so a label changed today reaches months older than the previous one within a day, not within the hour.
 - `ExecutiveReportBuild` rows are never deleted (about 9,000 a year). Nothing reads old ones except "the first build"; a retention rule is not in the spec.
 - Whether the provider-scan schedule is published and enabled in production was not checked (no production read in this stage). The daily balance scan does not start until it is.
+- Owner: the industry-group content above (proposed), and a label for the `email-otp` signup rail on screen.
+- Test shops the team made through the public signup are labelled `CUSTOMER` by the one-time job like every signup company; the admin moves them to `TEST` (the list's `CUSTOMER` filter finds them).
 
 Artifacts:
 
@@ -55,12 +96,16 @@ Artifacts:
 - Worker: `apps/workers/src/modules/executive/executive-rebuild-worker.ts` (hourly), registered in `apps/workers/src/main.ts`; that file is pinned by the production maintenance validator, so the two pins were re-synced with `infra/security/sync-production-maintenance-release-pins.mjs`
 - Labels and mapping: `packages/contracts/src/report-labels.ts`
 - Real-PostgreSQL spec of the build: `apps/api/src/modules/executive-business/executive-report-build.pg.spec.ts`, run by the same CI job with `EXECUTIVE_REPORT_BUILD_TEST_DATABASE_URL`; it builds its own scratch database from the migration files
+- Labels: `report-labels.logic.ts` (above), the profile update, detail and list use cases and `partner.controller.ts` in `apps/api/src/modules/system-partner-management/`, the contracts in `packages/contracts/src/partner-management.ts`, provisioning in `create-company-onboarding.use-case.ts`
+- One-time job: `apps/api/prisma/report-label-backfill.ts`, called from `apps/api/prisma/sync-permissions.ts`
+- Real-PostgreSQL spec of the labels and the job: `apps/api/src/modules/system-partner-management/report-labels.pg.spec.ts`, run by the same CI job with `REPORT_LABELS_TEST_DATABASE_URL`; it builds its own scratch database from the migration files
 - Working notes outside the repository: the lane's scratch folder `exec-s2/NOTES.md`
 
 Verification:
 
 - Part B: `billing-cash-movements.pg.spec.ts` 12 tests pass on a local `postgres:18.3-alpine` with every migration applied. Each behaviour was also run against the production code with that behaviour removed, and failed (dedup, provider time, exclusions, mode scope, safe-integer check, coverage, schedule enabled, catch-up, authority).
 - Part C: `executive-report-build.pg.spec.ts` 22 tests pass (16 on real PostgreSQL, 6 rule tables). 32 single-line changes of the production code were each run against it; every one failed at least one test.
+- Part A: `report-labels.pg.spec.ts` 3 tests pass (the one-time job incl. three concurrent runs, the list filters and the build's `unclassifiedCount` against them, the update and detail round trip); unit tests added to `update-partner-profile.use-case.spec.ts` (13 pass), `partner.controller.spec.ts` (35 pass), `create-company-onboarding.spec.ts` (43 pass). Red runs listed in the final report of the lane.
 - Not run: the extended billing smoke suite (`extended-tests.yml`, real browser and Redis). Read instead: `billing-scan-schedule-smoke.ts` counts only `/v1/events` reads and event-scan rows, so the extra balance job its enabled schedule now queues does not meet any of its assertions; it is left queued for retry there because the fake provider has no `/balance_transactions` route.
 
 Operator steps — the one-time back-read (owner approved 2026-10-02; only after this code is live in production):
@@ -73,4 +118,4 @@ Operator steps — the one-time back-read (owner approved 2026-10-02; only after
 6. Then publish the provider-scan schedule as enabled at `/system/billing/provider-scans`. From that day the system reads the previous day by itself.
 7. The report shows a month's money as complete only when successful windows cover the whole month; the build picks the back-read up in its next daily full round.
 
-Next: Part C (summary tables and build), then Part A (company labels), then Part D (two verifications).
+Next: Part D (two verifications), then the controller's review.

@@ -5,7 +5,8 @@
  * COMPANY_ROLE_BACKFILLS below. Each permission a backfill adds to a company role
  * writes an audit row (actor SYSTEM) in that company, in the same transaction.
  * Runs on production boot after migrate deploy so new permission keys ship
- * with the code that requires them.
+ * with the code that requires them. The standalone run also carries the one-time
+ * report-label backfill (`report-label-backfill.ts`), which changes nothing after its first run.
  */
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
@@ -13,6 +14,7 @@ import { PERMISSIONS, ROLE_GRANTS, SYSTEM_ROLES } from '../src/modules/auth/perm
 import { AuditAction } from '../src/modules/audit/domain/models/audit-action';
 import { COMPANY_ROLE_BACKFILLS } from '../src/modules/employee-access/domain/registries/company-role-backfill.registry';
 import { serializableTransaction } from '../src/common/database/serializable-transaction';
+import { backfillReportLabels } from './report-label-backfill';
 
 /** Minimal surface this sync needs, so seed.ts can pass its own client. */
 type SyncClient = Pick<PrismaClient, 'permission' | 'role' | 'rolePermission' | '$transaction'>;
@@ -159,6 +161,7 @@ async function main() {
   const prisma = new PrismaClient({ adapter });
   try {
     await syncPermissions(prisma);
+    await backfillReportLabels(prisma);
   } finally {
     await prisma.$disconnect();
   }

@@ -798,6 +798,8 @@ jobs:
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/billing/billing-cash-movements.pg.spec.ts
           EXECUTIVE_REPORT_BUILD_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/executive-business/executive-report-build.pg.spec.ts
+          REPORT_LABELS_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test src/modules/system-partner-management/report-labels.pg.spec.ts
       # Claim payout posting: the auto-post candidate SQL and the row locking between a post and a
       # void run nowhere else. Its own database, because the drain reads every ACTIVE company: in
       # the shared one it would also drain what the specs above left behind.
