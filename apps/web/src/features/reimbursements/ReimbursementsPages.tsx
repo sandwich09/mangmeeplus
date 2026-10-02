@@ -32,7 +32,7 @@ import {
   approvalRowOffers, financeQueueWords, rowHasFinanceReview, rowMayBeDuplicate,
 } from './reimbursements.logic';
 import {
-  PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel,
+  PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
 import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
@@ -879,7 +879,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
   );
 }
 
-function PaymentModal({ companyId, userId, permissions, request, onClose, onDone }: { companyId: string; userId: string; permissions: readonly string[]; request: any; onClose: () => void; onDone: () => void }) {
+// Exported for the QA spec, which renders the dialog with its claim already read.
+export function PaymentModal({ companyId, userId, permissions, request, onClose, onDone }: { companyId: string; userId: string; permissions: readonly string[]; request: any; onClose: () => void; onDone: () => void }) {
   // The queue row carries no attachments and nothing about where to pay. The claim does: the account
   // to transfer into, the version the payer confirms and the files that can be the slip. The form
   // seeds its own state from what it is given when it mounts, so it mounts once, when that read has
@@ -888,6 +889,11 @@ function PaymentModal({ companyId, userId, permissions, request, onClose, onDone
   const [claim, setClaim] = useState<any | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // The files listed under "เลือกจากไฟล์ที่แนบไว้ในใบนี้" are opened before one is chosen, as on the claim's own page
+  // (upgrade test 2026-10-02: here the list had no way to look, and a signed PDF and a slip were chosen between blind).
+  // The viewer is a sibling of this dialog: closing the file leaves the form as it was.
+  const [openFileError, setOpenFileError] = useState<string | null>(null);
+  const { openSlipChoice, previewModals } = useClaimDocumentPreview(companyId, setOpenFileError);
   useEffect(() => {
     let active = true;
     setFailed(null);
@@ -901,6 +907,7 @@ function PaymentModal({ companyId, userId, permissions, request, onClose, onDone
   // step). The form is shown only where the claim's own page would show it; otherwise this says why.
   const blocked = claim ? quickPayBlockedNote(claim, permissions, userId) : null;
   return (
+    <>
     <Modal open title={`บันทึกการจ่ายเงิน — ${request.requestNo}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       {claim ? (
         blocked ? (
@@ -914,7 +921,9 @@ function PaymentModal({ companyId, userId, permissions, request, onClose, onDone
         <div className="space-y-3">
           {/* The same box the claim page shows at its payment step: where to transfer, with show and copy. */}
           <ClaimPayoutCard companyId={companyId} detail={claim} userId={userId} payoutAccountHref={`${claimPath}/payout-account`} payStep />
-          <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone} />
+          <PaymentForm companyId={companyId} request={claim} onCancel={onClose} onDone={onDone}
+            onOpenFile={(choice) => void openSlipChoice(claim.id, choice)} />
+          {openFileError && <ErrorBanner message={`เปิดไฟล์ไม่สำเร็จ · ${openFileError}`} />}
         </div>
         )
       ) : failed ? (
@@ -927,6 +936,8 @@ function PaymentModal({ companyId, userId, permissions, request, onClose, onDone
         </div>
       ) : <LoadingState label="กำลังเปิดใบเบิก..." />}
     </Modal>
+    {previewModals}
+    </>
   );
 }
 

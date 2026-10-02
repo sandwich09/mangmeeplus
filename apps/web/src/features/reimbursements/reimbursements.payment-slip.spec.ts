@@ -506,7 +506,7 @@ describe('quick pay from the finance queue', () => {
     assert.match(hub, /const \[claim, setClaim\] = useState<any \| null>\(null\)/);
     assert.match(hub, /\.then\(\(detail\) => \{ if \(active\) setClaim\(detail\); \}\)\s+\.catch\(\(e\) => \{ if \(active\) setFailed\(err\(e\)\); \}\);/);
     assert.doesNotMatch(hub, /setClaim\(request\)/);
-    assert.match(hub, /\{claim \? \([\s\S]*?<ClaimPayoutCard companyId=\{companyId\} detail=\{claim\} userId=\{userId\}[^\n]* payStep \/>\s+<PaymentForm companyId=\{companyId\} request=\{claim\} onCancel=\{onClose\} onDone=\{onDone\} \/>[\s\S]*?\) : failed \? \([\s\S]*?\) : <LoadingState label="กำลังเปิดใบเบิก\.\.\." \/>\}/);
+    assert.match(hub, /\{claim \? \([\s\S]*?<ClaimPayoutCard companyId=\{companyId\} detail=\{claim\} userId=\{userId\}[^\n]* payStep \/>\s+<PaymentForm companyId=\{companyId\} request=\{claim\} onCancel=\{onClose\} onDone=\{onDone\}\s+onOpenFile=\{\(choice\) => void openSlipChoice\(claim\.id, choice\)\} \/>[\s\S]*?\) : failed \? \([\s\S]*?\) : <LoadingState label="กำลังเปิดใบเบิก\.\.\." \/>\}/);
     assert.equal(hub.match(/<PaymentForm /g)?.length, 1);
     // A failed read is not a dead end: try again, or go to the claim's own page with the form open.
     assert.match(hub, /<ErrorBanner message=\{`เปิดใบเบิกไม่สำเร็จ จึงยังบันทึกจ่ายจากหน้านี้ไม่ได้ · \$\{failed\}`\} \/>/);

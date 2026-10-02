@@ -361,8 +361,11 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
   request: any;
   onCancel: () => void;
   onDone: () => void;
-  /** Opens a file already on the claim, so the payer sees what it is before choosing it as the slip. Where the host can. */
-  onOpenFile?: (choice: PaymentSlipChoice) => void;
+  /**
+   * Opens a file already on the claim, so the payer sees what it is before choosing it as the slip. Every host gives
+   * it (`useClaimDocumentPreview().openSlipChoice`): the form never lists files that cannot be looked at.
+   */
+  onOpenFile: (choice: PaymentSlipChoice) => void;
 }) {
   const toast = useToast();
   // The method starts from what the requester asked for (spec §12.2): the claim's own receiving method.
@@ -437,7 +440,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
         {attached.length > 0 && (
           <div className="mt-3 [overflow-wrap:anywhere]" data-testid="reimbursement-payment-slip-choices">
             <div className="text-xs font-semibold text-gray-600">เลือกจากไฟล์ที่แนบไว้ในใบนี้</div>
-            <p className="mb-2 mt-1 text-xs leading-5 text-gray-500">ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน{onOpenFile ? ' เปิดดูก่อนเลือกได้' : ''}</p>
+            <p className="mb-2 mt-1 text-xs leading-5 text-gray-500">ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน เปิดดูก่อนเลือกได้</p>
             {/* A list, not a drop-down: each file says what it is on this claim and can be opened before it is chosen. */}
             <div role="radiogroup" aria-label="เลือกจากไฟล์ที่แนบไว้ในใบนี้" className="space-y-2">
               {attached.map(choice => (
@@ -451,12 +454,10 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
                       <span className="mt-0.5 block text-xs leading-5 text-gray-500">{choice.what}</span>
                     </span>
                   </label>
-                  {onOpenFile && (
-                    <button type="button" className="ml-8 min-h-11 text-left text-sm text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
-                      disabled={busy} aria-busy={Boolean(busy)} onClick={() => onOpenFile(choice)}>
-                      เปิดดูไฟล์นี้
-                    </button>
-                  )}
+                  <button type="button" className="ml-8 min-h-11 text-left text-sm text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
+                    disabled={busy} aria-busy={Boolean(busy)} onClick={() => onOpenFile(choice)}>
+                    เปิดดูไฟล์นี้
+                  </button>
                 </div>
               ))}
             </div>
@@ -650,7 +651,16 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
     </>
   );
 
-  return { previewLoadingKey, closeDocumentPreview, openClaimForm, openAttachment, openPaymentSlip, previewModals };
+  /**
+   * A file already on the claim, opened before it is chosen as a payment's slip (`PaymentForm`'s `onOpenFile`): a
+   * slip of an earlier payment through the slip's own endpoint, a signed copy as an attachment of the claim. One
+   * handler for every host of the payment form, so none of them lists files that cannot be looked at.
+   */
+  const openSlipChoice = (reimbursementId: string, choice: PaymentSlipChoice) => (choice.kind === 'previous-slip' && choice.paymentId
+    ? openPaymentSlip(reimbursementId, choice.paymentId, choice.attachmentId, choice.label)
+    : openAttachment(reimbursementId, choice.attachmentId, choice.fileName ?? choice.label));
+
+  return { previewLoadingKey, closeDocumentPreview, openClaimForm, openAttachment, openPaymentSlip, openSlipChoice, previewModals };
 }
 
 /** Who is paid back, why, and how much — the head of every claim view. */

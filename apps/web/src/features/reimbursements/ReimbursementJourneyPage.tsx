@@ -116,7 +116,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   // Which form of a correction round is open inside the step card: sending the claim back, or giving its account.
   const [correctionForm, setCorrectionForm] = useState<'send-back' | 'correct-payout' | null>(null);
   const cardRef = useRef<HTMLElement>(null);
-  const { previewLoadingKey, openClaimForm, openAttachment, openPaymentSlip, previewModals } = useClaimDocumentPreview(companyId, setActionError);
+  const { previewLoadingKey, openClaimForm, openAttachment, openPaymentSlip, openSlipChoice, previewModals } = useClaimDocumentPreview(companyId, setActionError);
 
   const saveNote = async () => {
     if (!noteBody.trim() || noteBusy) return;
@@ -536,10 +536,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           {payOpen && step.actions.includes('pay') && (
             <div className="border-t border-gray-100 pt-3">
               <PaymentForm companyId={companyId} request={detail} onCancel={() => setPayOpen(false)} onDone={() => void afterPayment()}
-                // A file already on the claim is opened before it is chosen as the slip: a slip through the slip's own endpoint.
-                onOpenFile={(choice) => void (choice.kind === 'previous-slip' && choice.paymentId
-                  ? openPaymentSlip(detail.id, choice.paymentId, choice.attachmentId, choice.label)
-                  : openAttachment(detail.id, choice.attachmentId, choice.fileName ?? choice.label))} />
+                // A file already on the claim is opened before it is chosen as the slip (the pay queue's dialog uses the same handler).
+                onOpenFile={(choice) => void openSlipChoice(detail.id, choice)} />
             </div>
           )}
           {/* The two forms of a correction round open here too, inside the step card and never in a dialog. */}

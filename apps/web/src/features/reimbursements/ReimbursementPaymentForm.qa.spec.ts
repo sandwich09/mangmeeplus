@@ -66,7 +66,7 @@ const paid = { ...base, status: 'PAID', paymentStatus: 'PAID', outstandingAmount
  * order (fields, the payer's statement, slip, error, busy), so the first two `null` initial values are the
  * slip and the error. A method not given is the one the form itself starts from.
  */
-function paymentForm(request: object, state: { method?: string; slip?: object; error?: string } = {}, onOpenFile?: (choice: unknown) => void): string {
+function paymentForm(request: object, state: { method?: string; slip?: object; error?: string } = {}, onOpenFile: (choice: unknown) => void = noop): string {
   const realUseState = reactRuntime.useState;
   let nulls = 0;
   Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
@@ -82,7 +82,7 @@ function paymentForm(request: object, state: { method?: string; slip?: object; e
   });
   try {
     return renderToStaticMarkup(h(ToastContext.Provider, { value: toast },
-      h(sections.PaymentForm, { companyId: 'company-1', request, onCancel: noop, onDone: noop, ...(onOpenFile && { onOpenFile }) })));
+      h(sections.PaymentForm, { companyId: 'company-1', request, onCancel: noop, onDone: noop, onOpenFile })));
   } finally { Reflect.set(reactRuntime, 'useState', realUseState); }
 }
 
@@ -204,11 +204,9 @@ describe('payment form: the slip', () => {
     ], picker.slice(0, 900));
     for (const row of rows) assert.match(row.cls, /\bmin-h-11\b/u);
     assert.doesNotMatch(picker, /<input type="radio"[^>]*checked=""/u, 'nothing is chosen for the payer');
-    // One way to look at each before choosing, 44 px high; none where the host cannot open files (the hub's quick form).
+    // One way to look at each before choosing, 44 px high, wherever the form is shown: the handler is not optional.
     assert.equal((picker.match(/<button type="button" class="[^"]*\bmin-h-11\b[^"]*" aria-busy="false">เปิดดูไฟล์นี้<\/button>/gu) ?? []).length, 2);
     assert.ok(visible(picker).includes('ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน เปิดดูก่อนเลือกได้'));
-    const withoutOpener = paymentForm(withBoth, { method: 'BANK_TRANSFER' });
-    assert.doesNotMatch(withoutOpener, /เปิดดูไฟล์นี้|เปิดดูก่อนเลือกได้/u);
     // The file that is chosen is marked, and it is the one the sentence names.
     const chosen = paymentForm(withBoth, { method: 'BANK_TRANSFER', slip: { attachmentId: 'att-form', name: 'signed-form-2.pdf' } });
     assert.match(chosen, /data-testid="reimbursement-payment-slip-move-note">เมื่อบันทึกจ่าย ไฟล์ <span class="font-semibold">signed-form-2\.pdf<\/span> จะย้ายออกจากรายการใบเบิกที่เซ็นแล้ว/u);
@@ -393,5 +391,96 @@ describe('no payment-step text carries a machine token (Owner rule 2026-09-27/29
       }
     }
     assert.ok(checked > 150, `only ${checked} texts rendered`);
+  });
+});
+
+// Upgrade test 2026-10-02, second run: the dialog the pay queue's table opens (the layout of 1536 px and wider) listed the
+// claim's files and the note about the move, and had no way to look at a file before choosing it. A signed PDF and an
+// e-slip were chosen between blind. The dialog now has the claim page's own handler, and the form no longer takes none.
+describe('the pay queue\'s dialog: every listed file is opened before it is chosen, as on the claim page', () => {
+  const pages = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
+  const { AppRouterContext } = require('next/dist/shared/lib/app-router-context.shared-runtime') as typeof import('next/dist/shared/lib/app-router-context.shared-runtime');
+  const router = { back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop, bfcacheId: 'test' };
+  const signedForm = { attachmentId: 'cmg7x2k9p0013copyf1g3h5j7k9', fileName: 'signed-form-2.pdf', uploadedAt: '2026-09-30T05:00:00.000Z', acknowledgedAt: '2026-09-30T05:00:00.000Z', acknowledgedByName: 'สมชาย' };
+  const waiting = { ...base, branchId: 'branch-1', currentDesk: { kind: 'PAYMENT' }, payments: [voidedTransfer], signedCopies: [signedForm, misfiled] };
+  const payerRights = ['reimbursement.read', 'reimbursement.payment.record'];
+
+  /**
+   * The dialog with its claim already read (the claim is its first null state), and the handlers of its
+   * "เปิดดูไฟล์นี้" links in the order of the list: the page's own, taken from the buttons it renders.
+   */
+  function payDialog(claim: object) {
+    const realUseState = reactRuntime.useState;
+    const realCreateElement = reactRuntime.createElement;
+    let nulls = 0;
+    const openers: Array<() => void> = [];
+    Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
+      const [value, set] = (realUseState as (initial: unknown) => [unknown, unknown])(initial);
+      if (initial === null) { nulls += 1; if (nulls === 1) return [claim, set]; }
+      return [value, set];
+    });
+    Reflect.set(reactRuntime, 'createElement', (type: unknown, props: { onClick?: () => void } | null, ...children: unknown[]) => {
+      if (type === 'button' && children[0] === 'เปิดดูไฟล์นี้' && typeof props?.onClick === 'function') openers.push(props.onClick);
+      return (realCreateElement as (...args: unknown[]) => unknown)(type, props, ...children);
+    });
+    Object.assign(globalThis, { document: { body: {} } }); // the dialog's portal target; never touched by a server render
+    try {
+      const html = renderToStaticMarkup(h(AppRouterContext.Provider, { value: router as never }, h(ToastContext.Provider, { value: toast },
+        h(pages.PaymentModal, { companyId: 'company-1', userId: ids.payer, permissions: payerRights, request: { id: ids.request, requestNo: 'RB-202609-00007' }, onClose: noop, onDone: noop }))));
+      return { html, openers };
+    } finally {
+      Reflect.set(reactRuntime, 'useState', realUseState);
+      Reflect.set(reactRuntime, 'createElement', realCreateElement);
+      Reflect.deleteProperty(globalThis, 'document');
+    }
+  }
+
+  /** Presses one link and returns the first thing the page then asks of the API. */
+  async function firstRequest(open: () => void): Promise<string> {
+    const asked: string[] = [];
+    const realFetch = globalThis.fetch;
+    const realWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.assign(globalThis, { window: {} });
+    globalThis.fetch = (async (input: string | URL | Request) => { asked.push(String(input)); return Response.json({}); }) as typeof fetch;
+    try {
+      open();
+      for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      globalThis.fetch = realFetch;
+      if (realWindow) Object.defineProperty(globalThis, 'window', realWindow); else Reflect.deleteProperty(globalThis, 'window');
+    }
+    return asked[0] ?? '';
+  }
+
+  it('lists the same files as the claim page, each with a link of 44 px, and opens each through the endpoint that serves that kind of file', async () => {
+    const { html, openers } = payDialog(waiting);
+    const list = html.slice(html.indexOf('data-testid="reimbursement-payment-slip-choices"'));
+    const picker = list.slice(0, list.indexOf('</div></div></div>'));
+    const names = [...picker.matchAll(/<span class="min-w-0"><span[^>]*>([^<]*)<\/span>/gu)].map((match) => match[1]!);
+    assert.deepEqual(names, ['สลิปของการจ่ายที่ยกเลิกแล้ว RBPAY-202609-00001', 'สลิปโอนเงิน.jpg', 'signed-form-2.pdf']);
+    assert.equal((picker.match(/<button type="button" class="[^"]*\bmin-h-11\b[^"]*" aria-busy="false">เปิดดูไฟล์นี้<\/button>/gu) ?? []).length, 3);
+    assert.ok(visible(picker).includes('ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน เปิดดูก่อนเลือกได้'));
+    assert.equal(openers.length, 3);
+    // A slip of an earlier payment through the slip's own endpoint; a file of ใบเบิกที่เซ็นแล้ว as an attachment of the claim.
+    const api = '/api/v1/companies/company-1';
+    assert.equal(await firstRequest(openers[0]!), `${api}/reimbursements/${ids.request}/payments/${ids.voided}/slips/${ids.oldSlip}/download-url?disposition=inline`);
+    assert.match(await firstRequest(openers[1]!), new RegExp(`^${api}/attachments/${ids.copy}/download-url`));
+    assert.match(await firstRequest(openers[2]!), new RegExp(`^${api}/attachments/${signedForm.attachmentId}/download-url`));
+    // Nothing of a file id is shown for it: the links are words.
+    for (const id of [ids.oldSlip, ids.copy, signedForm.attachmentId]) assert.equal(visible(picker).some((text) => text.includes(id)), false);
+  });
+
+  // One handler for both hosts, and the viewer beside the dialog: closing a file leaves the form as it was.
+  it('opens files by the handler the claim page uses, in a viewer that is not inside the dialog', () => {
+    const hub = read('./ReimbursementsPages.tsx');
+    const page = read('./ReimbursementJourneyPage.tsx');
+    assert.match(hub, /const \{ openSlipChoice, previewModals \} = useClaimDocumentPreview\(companyId, setOpenFileError\);/);
+    assert.match(hub, /<PaymentForm companyId=\{companyId\} request=\{claim\} onCancel=\{onClose\} onDone=\{onDone\}\s+onOpenFile=\{\(choice\) => void openSlipChoice\(claim\.id, choice\)\} \/>/);
+    assert.match(page, /onOpenFile=\{\(choice\) => void openSlipChoice\(detail\.id, choice\)\} \/>/);
+    assert.match(hub, /<\/Modal>\s+\{previewModals\}\s+<\/>/);
+    // A file that cannot be opened says so inside the dialog, where the person is looking.
+    assert.match(hub, /\{openFileError && <ErrorBanner message=\{`เปิดไฟล์ไม่สำเร็จ · \$\{openFileError\}`\} \/>\}/);
+    // The form takes no host without the handler.
+    assert.match(read('./ReimbursementDetailSections.tsx'), /\n  onOpenFile: \(choice: PaymentSlipChoice\) => void;\n\}\) \{/);
   });
 });

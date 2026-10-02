@@ -102,7 +102,7 @@ const CLAIMS: Array<[string, any]> = [
  */
 function paymentForm(request: object, state: { method?: string; payer?: { confirmedFor?: string; mismatchReason?: string }; slip?: object; error?: string } = {}): string {
   let nulls = 0;
-  return renderWithState(h(sections.PaymentForm, { companyId: ids.company, request, onCancel: noop, onDone: noop }), (start) => {
+  return renderWithState(h(sections.PaymentForm, { companyId: ids.company, request, onCancel: noop, onDone: noop, onOpenFile: noop }), (start) => {
     if (start && typeof start === 'object' && 'paymentMethod' in start) return { ...start, ...(state.method !== undefined && { paymentMethod: state.method }) };
     if (start && typeof start === 'object' && 'confirmedFor' in start) return { ...start, ...state.payer };
     if (start === null) {
