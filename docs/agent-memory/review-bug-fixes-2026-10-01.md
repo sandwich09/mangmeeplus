@@ -2,7 +2,7 @@
 
 Status: Six bugs from the two 2026-10-01 spec reviews fixed, one commit each, plus two follow-ups (2026-10-02), on `claude/review-bug-fixes-20261001` (from `origin/develop` `ae13970b0`). Not pushed, no PR, nothing deployed.
 
-Update 2026-10-02: that branch is on develop (merge of #950, `6dd3c8c7d`). Round 2 is the dated section at the end of this file.
+Update 2026-10-02: that branch is on develop (merge of #950, `6dd3c8c7d`). Round 2 and round 3 (single-admin mode for a data-rights case) are the dated sections at the end of this file.
 
 Owner: Coordinator session; implementation by one agent in worktree `/private/tmp/mangmee-review-bugfix-20261001`.
 
@@ -106,3 +106,54 @@ Verification (2026-10-02, on `60ac698bb`):
 Hotfix allow-list: every changed path of the three commits is application source under `apps/api/src` or `apps/web/src`, or `docs/`. No migration, dependency, `package.json` or config change. Fix 2, when built, will not qualify.
 
 Next: coordinator review; the owner's decision on Fix 2; then push/PR and the release path the owner chooses. If the hotfix path is used, every changed `src` spec is a `--regression-test`.
+
+## Round 3 — 2026-10-02 (single-admin mode for a data-rights case, with a migration)
+
+Status: Built. Branch `claude/data-rights-single-admin-20261002` from `claude/review-bug-fixes-2-20261002` (`e10854eb4`), worktree `/private/tmp/mangmee-data-rights-single-admin-20261002`. Not pushed, no PR, nothing deployed. It carries a migration, a `schema.prisma` change and a `ci.yml` line, so it goes through the normal release path (UAT, READY, Production), not the hotfix path.
+
+Scope: the owner's decision on Fix 2 of round 2 (build it with a migration and lift all five same-person rules the same explicit way), the admin page for it, and one small extra: `crm-lead.use-case.ts` trusted a role key `SYSTEM` that no role has.
+
+Decisions:
+- When it applies: only while the platform has exactly one active System Admin and that person is the caller. "Active System Admin" is an active person holding the system-owned System Admin role through an active membership of an active company (`PLATFORM_SEAT_EXEMPT_ROLE`); a company role that merely carries the key does not count. `DataRightsService.selfStep` counts inside the transaction of the step. With a second active System Admin the separation rules stand and the single-admin path is refused, with or without a reason.
+- What it is: each of the five steps the database refuses to the same person (creator = approver, approver = executor, executor = verification starter, executor recording independent verification, executor = completer) may be taken as an explicit single-admin step: a reason (20 to 1000 characters, at least 8 distinct letters; one rule in `packages/contracts/src/data-rights.ts`), a marker and the reason stored on the row of that step, an audit row of its own (`system.data_rights.single_admin_step`, CRITICAL) and a label on the case journal entry. The audit row and the label are written last, after the step's own checks and write have succeeded.
+- Guardrails: nothing is relaxed. Every step keeps the checks it had (identity and company authority verified, all 12 category decisions current and allowed, retention dates current, execution evidence complete, the completing verifier's own independent-verification evidence, the hash format).
+- Database: migration `20261002120000_data_rights_single_admin_mode` adds ten columns (four marker and reason pairs on `DataRightsCase`, one pair on `DataRightsEvidenceRecord`), three CHECK constraints and replaces the two trigger functions in place. The marker is true exactly when the same person took both steps (CHECK, both directions); a marker needs a reason of at least 20 characters and a reason needs a marker; a same-person step without the marker and reason is refused with the same SQLSTATE 55000 messages as before; a marker or reason changes only on its own step; a marker on other evidence or on another person's evidence is refused. No back-fill; existing rows keep the default.
+- The database does not know how many System Admins exist. That part is the service's, as decided. A row written straight to the database with a marker and reason by the same person is accepted whatever the admin count.
+- No erasure. No executor exists and none was added. `startExecution` and the later steps move the case status, stamp the actor and append a journal row. The case page says so on every case and again when a case is closed.
+- No system-wide switch. P31 §8.6 asks for an explicitly declared setting. Availability comes from the admin count (the owner's 2026-10-02 rule) and every use is declared step by step, so no step passes silently. A separate on/off switch was not built.
+- Not built, on purpose: gates E1 to E3 (they guard the erasure executor, which the owner deferred on 2026-10-01), E4 and E4' (replaced by the deferred B8 fourteen-day hold), and the completion letter (the system writes none; the runbook tells the operator to state the single-person steps).
+- Web: `dataRightsSameActorModes` replaces `dataRightsRoleSeparationBlocks` and answers NORMAL, SINGLE_ADMIN or SECOND_ADMIN for approval, execution and verification from the `singleAdminAvailable` flag the API returns with a case. The evidence form used to be hidden from the executor in every status, so the executor could not add execution evidence through the page at all; it is now hidden only while the case is in verification and a second admin has to record the result.
+- CRM extra: the smaller correct change was to remove `SYSTEM` from the role list in `crm-lead.use-case.ts`, since no role has that key. Reserving the name would not have covered a role that already exists.
+
+Release gates (read in the repository, not run against a deployed environment):
+- CI job "Migrations and Boot": `prisma validate`, `migration:review`, `prisma migrate deploy` on an empty database, then the PostgreSQL specs, now including `data-rights-single-admin.pg.spec.ts`.
+- UAT, READY and Production (`infra/kamal/release.py`): `verify-applied-migration-catalog.ts` with pending migrations allowed runs `assertProductionA5NoDestructiveSql` on each pending migration, then `prisma migrate deploy`, then the exact catalog check. The migration passes that scan (a service test holds it). READY also rehearses `migrate deploy` on a clone of production (`run-release-readiness-clone.ts`), which is where the three CHECK constraints meet the real rows.
+- `apps/api/prisma/production-a5/reviewed-migration-catalog.ts` pins md5 hashes of the two old function bodies. Only the first-generation `reviewed-v1` path reads them, and that path runs only on a database where its 42 migrations are still pending. No current gate compares against the old bodies, so the catalog was left alone and no decision was needed.
+
+Open questions:
+- Production must have exactly one active System Admin by the definition above for the mode to be available. If a bootstrap or break-glass account also holds the system role, the mode is refused and two people are needed as before. Not checked: it needs a read of the production database.
+  The count is: distinct `userId` of `CompanyMembership` rows with status ACTIVE, whose user and company are ACTIVE, joined through `MembershipRole` to the `Role` with key `SYSTEM_ADMIN`, status ACTIVE, `isSystem` true, `scopeKey` `system` and no `companyId`.
+- The migration also adds three CHECK constraints, beyond the columns and the two replaced functions the brief named. They make the marker truthful on INSERT as well as UPDATE, which a transition trigger cannot. If only columns and functions are wanted, the same rules can move into the trigger functions.
+- The case page still shows user ids and English operator terms in the parts that were already there. Not changed.
+- In local `next dev` the page sometimes stays on the root loading text: the loading segment's script tag has no CSP nonce under Turbopack and is blocked, and the runtime then waits for it forever. It happens on pages this branch does not touch and a reload gets past it. Not changed; production builds with webpack.
+
+Artifacts: commits `6e6979633` (CRM role key), `47d60d7e8` (backend, migration, PostgreSQL spec, CI line), `8e2aad4f9` (web), `78863a43f` (web follow-ups from the browser check), `4c8ecc818` (hash-format test), `6467ff20d` (docs). Docs: P31 spec §8.7 and §11.5, P31 plan D5.1, runbook §2 and §2.1, executive backend spec §18.2 note.
+
+Verification (2026-10-02 07:57 to 08:10, on `6467ff20d`; the commit after it changes this file only):
+- API typecheck (package script, heap flag): pass. Web typecheck: pass, and once more without the incremental cache.
+- Touched specs: API 91 pass (service 16, controller 5, CRM workflow 70), web 32 pass (logic 15, API client 6, error coverage 11), contracts 344 pass.
+- Each new test fails on the previous sources. With the sources of each commit reversed: CRM 69 pass, 1 fail; backend 15 pass, 6 fail, and the 4 PostgreSQL tests cancelled because their setup needs the migration; web 16 pass, 5 fail (4 added, 1 rewritten for the new function); the contracts spec file does not load, because it imports an export that does not exist yet.
+- PostgreSQL spec on a throwaway `postgres:18.3-alpine` container (the image CI uses): 4 pass; skipped cleanly without its environment variable. The container, the second one used for Redis, and their volumes were removed.
+- Upgrade path (scratch probe on the same container, not committed): 266 migrations, then three cases written through the old guards by two people (one completed, one in review, one executing; 37 evidence rows), then this migration on top without error. The existing rows keep every marker false. The new code reads the completed case, and the only admin approves the case that was in review and verifies and closes the one that was executing, as single-admin steps.
+- `migration:review`: exit 0. `prisma validate`: valid. `prisma migrate deploy` on an empty database: every migration applied.
+- Release-gate specs outside `src` (`verify-applied-migration-catalog`, `verify-production-ready-migration`, `run-clone-rehearsal`, `run-production-apply`): 26 pass.
+- Boot DI smoke: Nest resolved every provider (no provider changed).
+- Whole web suite: 2220 pass. Full API `test` script: exit 0.
+- W00 capability manifest spec: 4 pass, no regeneration. Maintenance release pins: current, no pinned file changed. `git diff --check`: clean.
+- Local HTTP run (API built from this branch on that PostgreSQL): the one System Admin took a case from RECEIVED to COMPLETED. Each of the five steps answered 422 `data_rights_single_admin_reason_required` without a reason and 200 with one.
+- Browser at 390 px on the same local stack: all five single-admin steps taken through the page; the closed case shows the label, the five reasons and the history labels; no horizontal overflow. With a second System Admin the page shows the refusal and no reason field, and a page left open while a second admin appeared got the plain-Thai refusal from the server. Two things that check found are fixed in `78863a43f`.
+- Not run: Playwright e2e, the LINE-AI whole-chain acceptance (no LINE-AI file changed), anything against a deployed environment.
+
+Hotfix allow-list: not eligible (migration, `schema.prisma`, `.github/workflows/ci.yml`).
+
+Next: coordinator review, then push/PR and the normal release path. At merge: other open branches add PostgreSQL spec lines at the same place in `ci.yml` (keep both sides), and worktrees that take this change need `prisma generate`. Before relying on the mode in production, confirm that the count of active System Admins there is one.
