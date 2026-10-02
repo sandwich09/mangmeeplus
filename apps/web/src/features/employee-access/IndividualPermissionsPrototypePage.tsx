@@ -122,7 +122,7 @@ function RoleBadge({ role, withCaret = false, className }: { role: DisplayRole; 
 }
 
 function DraftBadge() {
-  return <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 px-2.5 text-xs font-extrabold text-gray-600">Draft</span>;
+  return <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-gray-200 bg-gray-100 px-2.5 text-xs font-extrabold text-gray-600">แบบร่าง</span>;
 }
 
 function MenuIconFrame({ menu, className }: { menu: MenuDefinition; className?: string }) {
@@ -666,7 +666,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                         </span>
                       </span>
                       <MangmeeBadge tone={selectedIsDraft ? 'amber' : selectedActive ? 'brand' : 'danger'} className="mt-1">
-                        {selectedIsDraft ? 'Draft' : selectedActive ? 'ใช้งาน' : 'ปิดใช้งาน'}
+                        {selectedIsDraft ? 'แบบร่าง' : selectedActive ? 'ใช้งาน' : 'ปิดใช้งาน'}
                       </MangmeeBadge>
                     </span>
                     {canDisableEmployee && <ToggleSwitch checked={Boolean(selectedActive)} disabled={selectedIsOwner || selectedIsDraft || busy} onChange={() => void toggleSelectedActive()} label="เปิดปิดสถานะบัญชี" />}

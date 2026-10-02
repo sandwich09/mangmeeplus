@@ -4,11 +4,27 @@ const THAI_SYSTEM_ROLE_NAMES: Record<string, string> = {
   OWNER: 'เจ้าของกิจการ', ADMIN: 'ผู้ดูแลบริษัท', SYSTEM_ADMIN: 'ผู้ดูแลระบบ', MANAGER: 'ผู้จัดการ',
   HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'ฝ่ายคลังสินค้า', FINANCE: 'ฝ่ายการเงิน',
   ACCOUNTANT: 'ฝ่ายบัญชี', MARKETING: 'ฝ่ายการตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ (ดูอย่างเดียว)',
+  COMPANY_VIEW: 'เจ้าของบริษัท',
   MANGMEE_SALES_LEAD: 'หัวหน้าทีมขายมั่งมี', MANGMEE_SALES: 'เซลล์มั่งมี',
 };
 
+/**
+ * The name the API stores for each standard role a company may edit. Editing one gives the company
+ * its own copy, which starts out with this name: a copy still carrying it was never named by the
+ * company, so it reads as the standard role and not as "Accountant".
+ */
+const STANDARD_ROLE_NAMES: Record<string, string> = {
+  ADMIN: 'Admin', MANAGER: 'Manager', HR: 'HR', SALES: 'Sales', INVENTORY: 'Inventory', FINANCE: 'Finance',
+  ACCOUNTANT: 'Accountant', MARKETING: 'Marketing', STAFF: 'Staff', AUDITOR_READONLY: 'Auditor (Read-only)',
+};
+
+/** A standard role, or a company's copy of one that the company has not given a name of its own. */
+export function hasStandardRoleName(role: Pick<RoleSummary, 'key' | 'name'> & { isSystem?: boolean }): boolean {
+  return role.isSystem !== false || role.name === STANDARD_ROLE_NAMES[role.key];
+}
+
 export function roleDisplayName(role: Pick<RoleSummary, 'key' | 'name'> & { isSystem?: boolean }): string {
-  return role.isSystem === false ? role.name : THAI_SYSTEM_ROLE_NAMES[role.key] ?? role.name;
+  return hasStandardRoleName(role) ? THAI_SYSTEM_ROLE_NAMES[role.key] ?? role.name : role.name;
 }
 
 /** Thai label for a bare system-role key (company switcher, pickers). Unknown keys pass through. */

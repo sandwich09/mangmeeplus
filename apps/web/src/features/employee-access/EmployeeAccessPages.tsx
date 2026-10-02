@@ -6,7 +6,8 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { formatThaiTime } from '@/common/i18n/thai-date';
-import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import { workspaceDictionary, type DictionaryKey, type SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import { hasStandardRoleName } from './role-picker.logic';
 import { employeeFullName } from '@watchdog-bms/contracts';
 import type {
   CapabilityPackView, RiskLevel, RolePreviewResult, RoleTemplate, PermissionCatalogItem,
@@ -96,21 +97,6 @@ function assignableRoles(roles: any[]) {
   return roles.filter((r) => r.status === 'ACTIVE' && !NON_ASSIGNABLE_ROLE_KEYS.includes(r.key));
 }
 
-const ROLE_LABEL_KEYS: Record<string, DictionaryKey> = {
-  OWNER: 'role.OWNER',
-  SYSTEM_ADMIN: 'role.SYSTEM_ADMIN',
-  ADMIN: 'role.ADMIN',
-  MANAGER: 'role.MANAGER',
-  HR: 'role.HR',
-  SALES: 'role.SALES',
-  INVENTORY: 'role.INVENTORY',
-  FINANCE: 'role.FINANCE',
-  ACCOUNTANT: 'role.ACCOUNTANT',
-  MARKETING: 'role.MARKETING',
-  STAFF: 'role.STAFF',
-  AUDITOR_READONLY: 'role.AUDITOR_READONLY',
-};
-
 const ROLE_NAME_TO_KEY: Record<string, string> = {
   owner: 'OWNER',
   'system admin': 'SYSTEM_ADMIN',
@@ -134,8 +120,13 @@ export function roleDisplayName(roleOrKey: any, locale: SupportedLocale) {
   const rawName = typeof roleOrKey === 'string' ? roleOrKey : roleOrKey?.name;
   const normalizedName = String(rawName ?? '').trim().toLowerCase();
   const key = String(rawKey ?? ROLE_NAME_TO_KEY[normalizedName] ?? '').trim().toUpperCase();
-  const dictKey = ROLE_LABEL_KEYS[key];
-  return dictKey ? t(dictKey, locale) : (rawName || 'บทบาทที่กำหนดเอง');
+  // Every standard role has its `role.<KEY>` entry in the dictionary: a second list kept by hand here
+  // is how "Company owner" came to be printed in English. A company's copy of a standard role keeps
+  // the name the company gave it; only a copy still carrying the stored English name reads as standard.
+  const dictKey = `role.${key}`;
+  const standard = dictKey in workspaceDictionary.th
+    && (typeof roleOrKey === 'string' || hasStandardRoleName({ key, name: String(rawName ?? ''), isSystem: roleOrKey?.isSystem }));
+  return standard ? t(dictKey as DictionaryKey, locale) : (rawName || 'บทบาทที่กำหนดเอง');
 }
 
 export const panelClass = 'rounded-lg border border-gray-200 bg-white shadow-[0_1px_3px_rgba(16,24,40,.06)]';
@@ -1072,9 +1063,13 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
                 <details className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs" open>
                   <summary className="cursor-pointer font-semibold">งานเดิมที่จะเก็บไว้ ({preservedKeys.length} รายการ)</summary>
                   <p className="mt-2 text-gray-600">รายการเหล่านี้ไม่ตรงกับงานตัวเลือกข้อใดข้อหนึ่ง ระบบจึงแสดงแยกไว้ เมื่อบันทึกจะยังเก็บรายการเดิมไว้ แต่ถ้าเลือกตัวอย่างหน้าที่ รายการที่เลือกอยู่จะเปลี่ยนตามตัวอย่างนั้น</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-4">
-                    {preservedKeys.map((key) => <li key={key}>{permissionCatalog.find((p) => p.key === key)?.description ?? 'สิทธิ์เดิมที่ตั้งไว้'}</li>)}
-                  </ul>
+                  {/* Listed only where each line can say something: the role page has no wording for single
+                      rights, and printed one sentence 52 times under a standard role. The count stays above. */}
+                  {permissionCatalog.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-1 pl-4">
+                      {preservedKeys.map((key) => <li key={key}>{permissionCatalog.find((p) => p.key === key)?.description ?? 'สิทธิ์เดิมที่ตั้งไว้'}</li>)}
+                    </ul>
+                  )}
                 </details>
               )}
               <p className="mt-1 text-[11px] text-gray-400">พนักงานทุกคนเข้าใช้ระบบ ดูหน้าหลัก และรับการแจ้งเตือนได้อยู่แล้ว</p>
