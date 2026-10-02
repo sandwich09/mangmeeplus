@@ -179,6 +179,24 @@ describe('sales console theme and copy', () => {
     assert.equal([...text.matchAll(/amountClass\((?:row|totals)\.amountSatang, /g)].length, 3);
   });
 
+  it('the report sets a shop waiting for review apart, in the words the queue uses (§17.1, owner 2026-10-02)', () => {
+    const text = source('SalesReportsPage.tsx');
+    // The column, the phone card and the list title all take the word from the logic module, which
+    // the queue's badge is built from too; the report never says it another way.
+    assert.match(text, /\{ key: 'flaggedCount', label: SALES_WAITING \}/);
+    assert.match(text, /\{SALES_WAITING\} \{row\.flaggedCount\} ร้าน · \{SALES_WAITING_NOTE\}/);
+    assert.match(text, /ร้านที่\{SALES_WAITING\} · \{SALES_WAITING_NOTE\}/);
+    assert.doesNotMatch(text, /ถูกธง|ตั้งธง|ติดธง/);
+    // Every month card names its waiting shops, each line worded by the logic module.
+    assert.match(text, /month\.waiting\.map\(\(waiting, index\) =>/);
+    assert.match(text, /salesWaitingLine\(waiting,/);
+    assert.doesNotMatch(text, /waiting\.(?:flags|source|salesUserId)\}/);
+    // 390 px: a shop name with no place to break still wraps instead of pushing the card sideways.
+    assert.match(text, /<p className="text-sm font-semibold text-gray-900 \[overflow-wrap:anywhere\]">\{line\.title\}<\/p>/);
+    assert.match(text, /<p className="mt-0\.5 text-xs text-warning-700 \[overflow-wrap:anywhere\]">\{line\.detail\}<\/p>/);
+    assert.match(text, /\{totals\.flaggedCount > 0 && <SalesNotice tone="warning">\{salesWaitingNotice\(totals\.flaggedCount\)\}<\/SalesNotice>\}/);
+  });
+
   it('the flag queue says where each row stands and offers only a decision that still changes something (§17.1)', () => {
     const text = source('SalesTeamPage.tsx');
     // The standing and the open decisions come from the logic module, which reads the report's own
@@ -190,6 +208,9 @@ describe('sales console theme and copy', () => {
     assert.match(text, /\{review\.canExclude && \(\s*<button[^\n]*\n[^\n]*setFlagDecision\(\{ row, keep: true \}\); \}\}>ตัดออกจากยอด<\/button>/);
     // And the Owner is told a cut-out shop stays in this list.
     assert.match(text, /ร้านที่คุณตัดออกจะไม่นับให้เซลล์ และยังอยู่ในรายการนี้ให้ตรวจย้อนหลัง/);
+    // Owner 2026-10-02: a waiting shop is no opened shop either, and confirming it names the month that gains it.
+    assert.match(text, /ยังไม่นับเป็นร้านที่เปิดและยังไม่นับในยอดของเซลล์จนกว่าคุณจะตรวจ/);
+    assert.match(text, /: salesFlagConfirmEffect\(flagDecision\?\.row\.paidAt\)\}/);
     // 390 px: the queue and its card may shrink below a long shop name, which is then cut with an
     // ellipsis instead of pushing the page sideways (measured in a browser: 276 px before).
     assert.match(text, /<section aria-label="รายการที่ถูกธง" className="grid min-w-0 gap-3">/);
