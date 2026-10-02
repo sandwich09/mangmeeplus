@@ -287,8 +287,9 @@ export type ReimbursementPaymentSummary = {
   /** When the payer confirmed the transfer into `payoutDestination`. */
   payoutConfirmedAt?: string;
   /**
-   * Why the payer paid by another method than the requester asked for. Present exactly when they
-   * did, so every surface says "จ่ายต่างจากที่ผู้เบิกขอ" from this one fact.
+   * Why the payer paid by another method than the claim states. Present exactly when they did, so
+   * every surface says "จ่ายต่างจากที่ระบุในใบ" from this one fact (of the claim, never of who chose
+   * its method: whoever prepared it, or answered a round for the requester, may have).
    */
   methodMismatchReason?: string;
 };
@@ -1140,8 +1141,10 @@ export function reimbursementPayoutRoundGivenNote(answeredBy?: PayoutRoundAnswer
 }
 
 /**
- * What that card says of a claim paid in cash: who chose cash. "ผู้เบิกขอรับเป็นเงินสด" is true of a claim its
- * requester sent or answered with cash, not of one a finance reviewer answered with cash for them.
+ * What that card says of a claim whose cash an answer of a round gave it: who chose cash. "ผู้เบิกขอรับเป็นเงินสด" is
+ * true of a claim its requester answered with cash, not of one a finance reviewer answered with cash for them. A
+ * claim that no answer gave its cash is not asked here: no fact says who chose cash on its draft (someone may have
+ * prepared it for the requester), so its card says what the claim states.
  */
 export function reimbursementPayoutRoundCashNote(answeredBy?: PayoutRoundAnsweredBy): string {
   const { who, forRequester } = payoutRoundDoer(answeredBy);

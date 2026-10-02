@@ -742,7 +742,7 @@ describe('buildClaimTimeline: the account attestation and voided payments', () =
     const cashFirst = { ...voided, paymentMethod: 'CASH', slipCount: 0, payoutDestination: undefined, methodMismatchReason: 'ผู้เบิกมารับเงินสดเอง', voidReason: undefined };
     const rows = buildClaimTimeline(approved({ status: 'PAID', payments: [cashFirst, again] }));
     assert.deepEqual(rows.slice(2).map((row) => `${row.state}:${row.label}`), [
-      'done:จ่ายแล้ว โดย สมศรี · เงินสด · จ่ายต่างจากที่ผู้เบิกขอ', 'done:ยกเลิกการจ่ายแล้ว',
+      'done:จ่ายแล้ว โดย สมศรี · เงินสด · จ่ายต่างจากที่ระบุในใบ', 'done:ยกเลิกการจ่ายแล้ว',
       'done:จ่ายแล้ว โดย สมศรี · โอนเข้าบัญชีลงท้าย 6789 · มีสลิป',
     ]);
     assert.equal(rows.at(-1)!.key, 'payment');

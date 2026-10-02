@@ -419,15 +419,16 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
           {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </ThemedSelect>
       </div>
-      {/* Spec §12.4: paying another way than the requester asked is allowed, and says why. */}
+      {/* Spec §12.4: paying another way than the claim states is allowed, and says why. Said of the claim: no fact says
+          who chose its method (whoever prepared it, or answered a round for the requester, may have). */}
       {payout.rule.mismatchReasonRequired && (
         <div data-testid="reimbursement-payment-mismatch">
-          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-payment-mismatch-reason">เหตุผลที่จ่ายต่างจากที่ผู้เบิกขอ *</label>
+          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-payment-mismatch-reason">เหตุผลที่จ่ายต่างจากที่ระบุในใบ *</label>
           <textarea id="reimbursement-payment-mismatch-reason" className={cx(inputClass, 'min-h-20 resize-y')} aria-required maxLength={REASON_MAX_LENGTH} disabled={busy}
             value={payer.mismatchReason} onChange={e => setPayer(p => ({ ...p, mismatchReason: sanitizeReasonInput(e.target.value) }))}
             placeholder="เช่น ผู้เบิกขอรับเป็นเงินสดแทน" />
           <p className="mt-1 text-xs leading-5 text-gray-500">
-            ผู้เบิกขอ{payout.requestedMethodText} ประวัติการจ่ายจะแสดงว่า{PAID_DIFFERENTLY_LABEL} พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้
+            ใบนี้ระบุ{payout.requestedMethodText} ประวัติการจ่ายจะแสดงว่า{PAID_DIFFERENTLY_LABEL} พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้
           </p>
         </div>
       )}

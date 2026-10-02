@@ -50,9 +50,12 @@ export const PAYER_CONFIRMATION_TEXT = 'โอนเข้าบัญชีน�
 export const PAYER_CONFIRMATION_REQUIRED = 'ติ๊กยืนยันว่าโอนเข้าบัญชีนี้แล้ว และชื่อผู้รับที่ธนาคารแสดงตรงกับใบเบิก ก่อนกดบันทึกจ่าย';
 /** Spec §10.2: nobody but the requester has checked the account, so the payer is told they are the one checking. */
 export const PAYER_IS_VERIFIER_NOTE = 'ยังไม่มีผู้ตรวจบัญชีนี้ คุณเป็นผู้ตรวจ';
-/** The mark on a payment recorded by another method than the requester asked for (spec §12.4, §17.2). */
-export const PAID_DIFFERENTLY_LABEL = 'จ่ายต่างจากที่ผู้เบิกขอ';
-export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผล';
+/**
+ * The mark on a payment recorded by another method than the claim states (spec §12.4, §17.2). Said of the claim, never of
+ * "what the requester asked for": whoever prepared the claim, or answered a round for the requester, may have chosen it.
+ */
+export const PAID_DIFFERENTLY_LABEL = 'จ่ายต่างจากที่ระบุในใบ';
+export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล';
 export const MISMATCH_REASON_HAS_ACCOUNT_NUMBER = 'อย่าพิมพ์เลขบัญชีในช่องเหตุผล เพราะเหตุผลนี้แสดงในประวัติการจ่ายให้ทุกคนที่เปิดใบเบิกเห็น';
 /** Spec §10.2: a requester who approved their own claim gave their own word for the account. It is never called a check. */
 export const REQUESTER_SELF_ATTESTED = 'ผู้เบิกยืนยันบัญชีของตนเอง';
@@ -283,15 +286,20 @@ function keptAccountAnswers(detail: PayoutRoundFacts): Map<number | undefined, R
     .map((event) => [event.payoutVersion, event]));
 }
 
+/** What the card says of a cash claim that no round gave its cash: what the claim states, with no word of who chose it. */
+export const CLAIM_STATES_CASH_NOTE = 'ใบนี้ระบุรับเป็นเงินสด ไม่ต้องมีบัญชี';
+
 /**
- * What the card says of a claim paid back in cash: who chose cash. "ผู้เบิกขอรับเป็นเงินสด" is true of a claim its requester
- * sent, or answered a round, with cash; when someone answered a round with cash for them, it is said of that person.
- * Who answered: the claim's own fact while the answer waits for approval, afterwards the last answer of its history.
+ * What the card says of a claim paid back in cash. Where a round gave it its cash, who chose it: "ผู้เบิกขอรับเป็นเงินสด" of a
+ * requester who answered with cash, and of whoever answered for them by name (the claim's own fact while the answer waits
+ * for approval, afterwards the last answer of its history). Where no answer did, no fact says who chose cash: a claim may
+ * be prepared for its requester, so the card says what the claim states.
  */
 export function claimCashNote(detail: PayoutRoundFacts): string {
   const answers = (detail.payoutCorrectionHistory ?? []).filter((event) => event.kind === 'ACCOUNT_SUBMITTED');
   const last = answers[answers.length - 1];
-  return reimbursementPayoutRoundCashNote(detail.payoutCorrectionAnsweredBy ?? (last?.payoutMethod === 'CASH' ? last : undefined));
+  const answeredBy = detail.payoutCorrectionAnsweredBy ?? (last?.payoutMethod === 'CASH' ? last : undefined);
+  return answeredBy ? reimbursementPayoutRoundCashNote(answeredBy) : CLAIM_STATES_CASH_NOTE;
 }
 
 type PayoutAccountOrigin = Pick<ReimbursementPayoutSummary, 'source' | 'enteredByUserId' | 'enteredByName' | 'verifiedByUserId' | 'verifiedByName' | 'verifiedAt'>;

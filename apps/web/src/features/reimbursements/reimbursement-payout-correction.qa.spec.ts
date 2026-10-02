@@ -1930,8 +1930,9 @@ describe('the card "การรับเงินคืน" in a round', () => 
     assert.equal(note(sentBackHolding('ACCOUNT')), 'ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือบัญชีที่ถูกส่งกลับ ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
     assert.equal(note(sentBackHolding('CASH')), 'ใบนี้ถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ด้านล่างคือวิธีรับเงินคืนที่ถูกส่งกลับ ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
     assert.equal(note(sentBackHolding('NOTHING')), 'ใบนี้ถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
+    // Under it, what the claim states: nobody answered this round yet, and no fact says who chose cash on the draft.
     const cash = claimPage(sentBackHolding('CASH'), auditor).texts;
-    assert.ok(cash.includes('ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี'));
+    assert.ok(cash.includes('ใบนี้ระบุรับเป็นเงินสด ไม่ต้องมีบัญชี'));
     // An answer sent back again from the waiting step is what the claim shows: "ที่ถูกส่งกลับ", never "เดิมของใบ".
     for (const held of HELD) assert.doesNotMatch(note(sentBackHolding(held))!, /เดิมของใบ/u);
     assert.equal(note(ready()), null);
@@ -1956,11 +1957,19 @@ describe('the card "การรับเงินคืน" in a round', () => 
     const paidInCash = readyHolding('CASH', { payoutCorrectionHistory: [...history, { ...REAPPROVED, answer: 'CASH_INSTEAD' }] });
     assert.deepEqual([claimPage(paidInCash, auditor).texts.includes(FOR_THEM), claimPage(paidInCash, auditor).texts.includes(OWN)], [true, false]);
     assert.ok(claimPage(sentBackHolding('CASH', { payoutCorrectionHistory: history }), auditor).texts.includes(FOR_THEM));
-    // A claim that asked for cash when it was sent, and one whose requester answered with cash, read as before.
-    for (const detail of [readyHolding('CASH'), readyHolding('CASH', { payoutCorrectionHistory: answeredWith('SAME_CASH').payoutCorrectionHistory })]) {
-      assert.ok(claimPage(detail, auditor).texts.includes(OWN));
+    // A claim whose requester answered a round with cash still says so: that is the round's own fact.
+    assert.ok(claimPage(readyHolding('CASH', { payoutCorrectionHistory: answeredWith('SAME_CASH').payoutCorrectionHistory }), auditor).texts.includes(OWN));
+    // Outside a round no fact says who chose cash: whoever prepared the claim for the requester may have. Before, the card
+    // said "ผู้เบิกขอรับเป็นเงินสด" of every such claim. It says what the claim states, and names nobody.
+    const STATED = 'ใบนี้ระบุรับเป็นเงินสด ไม่ต้องมีบัญชี';
+    const prepared = { createdByUserId: 'accountant', createdByName: 'สุภาวดี นักบัญชี' };
+    for (const detail of [readyHolding('CASH'), readyHolding('CASH', prepared), sentBackHolding('CASH'), sentBackHolding('CASH', prepared)]) {
+      for (const viewer of [auditor, requester, payer]) {
+        const texts = claimPage(detail, viewer).texts;
+        assert.deepEqual([texts.includes(STATED), texts.includes(OWN)], [true, false], viewer.userId);
+      }
     }
-    assert.equal(claimCashNote({}), OWN);
+    assert.deepEqual([claimCashNote({}), claimCashNote({ payoutCorrectionHistory: [sentBackEvent('CASH')] as never })], [STATED, STATED]);
   });
 
   // Decision D8. Before: the card said "ยังไม่มีผู้ตรวจบัญชีนี้" of the account the claim was approved with, right above a
