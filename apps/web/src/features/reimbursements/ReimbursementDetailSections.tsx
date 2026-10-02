@@ -858,7 +858,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                         <>
                           <MangmeeBadge tone="brand">ลงนามบนกระดาษ</MangmeeBadge>
                           {paperCopy && (
-                            <button type="button" className="mt-1 block min-h-11 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2"
+                            <button type="button" className="mt-1 block min-h-11 min-w-11 text-left text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2"
                               onClick={() => onOpenAttachment(paperCopy.attachmentId, paperCopy.fileName)}>
                               ดูสำเนา
                             </button>
@@ -1003,7 +1003,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                         {slips.map((slip: any, index: number) => {
                           const label = slips.length > 1 ? `ดูสลิป ${index + 1}` : 'ดูสลิป';
                           return (
-                            <button key={slip.attachmentId} type="button" className="min-h-11 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
+                            <button key={slip.attachmentId} type="button" className="min-h-11 min-w-11 text-left text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
                               disabled={busy} aria-busy={Boolean(busy)} onClick={() => onOpenPaymentSlip(p, slip.attachmentId, slips.length > 1 ? `${slipName} (${index + 1})` : slipName)}>
                               {label}
                             </button>

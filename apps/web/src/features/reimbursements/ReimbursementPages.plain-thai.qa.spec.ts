@@ -677,6 +677,23 @@ describe('what a person presses on a claim screen is 44 px high on a phone (owne
     for (const cls of removers) assert.match(cls, /\bh-11 w-11\b/, cls);
   });
 
+  // The second look (the owner's own case, with paper copies and a slip) measured 37 px and 29 px wide on two links of two
+  // words, and the notes of a claim had two with no height of their own.
+  it('gives the short links of a claim page 44 px both ways: ดูสำเนา, ดูสลิป, and a note\'s แก้ไข and ลบ', () => {
+    const html = detailSections({ ...paid, payments: [{ ...(paid.payments[1] as object), slipCount: 1, slips: [{ attachmentId: ids.attachment }], viewerCanOpenSlips: true }],
+      signedCopies: [{ attachmentId: ids.attachment, fileName: 'ใบเบิกเซ็นแล้ว.pdf', uploadedAt: '2026-09-29T05:00:00.000Z', acknowledgedAt: '2026-09-29T05:00:00.000Z' }], signatures: [] },
+      ids.requester, ['reimbursement.read_own']);
+    for (const label of ['ดูสำเนา', 'ดูสลิป']) {
+      const buttons = [...html.matchAll(new RegExp(`<button[^>]*class="([^"]*)"[^>]*>${label}</button>`, 'gu'))].map((match) => match[1]!);
+      assert.ok(buttons.length > 0, label);
+      for (const cls of buttons) assert.match(cls, /\bmin-h-11 min-w-11\b/u, `${label}: ${cls}`);
+    }
+    const page = readFileSync(join(__dirname, 'ReimbursementJourneyPage.tsx'), 'utf8');
+    for (const label of ['แก้ไขโน้ตของ', 'ลบโน้ตของ']) {
+      assert.match(page, new RegExp(`className="min-h-11 min-w-11 [^"]*" aria-label=\\{\`${label} `, 'u'), label);
+    }
+  });
+
   it('gives each approver role on the policy tab a 44 px height', () => {
     const html = policySettingsHtml(policyForm, [roleOption('MANAGER', 'Manager', true), roleOption('CHECKER', 'ผู้ตรวจ', false)]);
     const roles = [...html.matchAll(/<label class="([^"]*)"><span class="min-w-0">[^<]*<\/span><input type="checkbox"/gu)].map((match) => match[1]!);
