@@ -73,12 +73,12 @@ Exit: ผู้ดูแลตั้งค่าได้ผ่าน API ไม
 
 ### P2 — `/auth/me` และ session ฝั่งเว็บ
 
-- [ ] `me()` คืน `manualExpenseWebEntry` ของบริษัทใน context ร้านไม่มีแถวได้ **false** ผ่านจุดตัดสินเดียวกับรายละเอียดร้าน
-- [ ] เพิ่ม field ใน `WebSession` และ `MyContext` แบบ optional
-- [ ] เพิ่ม helper `canOpenManualWeb` ตาม spec §6.2 ค่าหายถือว่าแสดง (predicate ฝั่งเว็บไม่เปลี่ยนตามค่าเริ่มต้นใหม่)
-- [ ] seed ของร้านตัวอย่าง (`apps/api/prisma/seed.ts`) เขียนแถว “แสดง” เพื่อให้ e2e เดิม local stack และร้านตัวอย่างยังเห็นเมนู ไม่แก้ที่ตัว test
-- [ ] เพิ่ม boolean ใน `accessContextFingerprint` เท่านั้น
-- [ ] ไม่แตะ JWT, localStorage, resolver หรือ `RequestContext`
+- [x] `me()` คืน `manualExpenseWebEntry` ของบริษัทใน context ร้านไม่มีแถวได้ **false** ผ่านจุดตัดสินเดียวกับรายละเอียดร้าน
+- [x] เพิ่ม field ใน `WebSession` และ `MyContext` แบบ optional
+- [x] เพิ่ม helper `canOpenManualWeb` ตาม spec §6.2 ค่าหายถือว่าแสดง (predicate ฝั่งเว็บไม่เปลี่ยนตามค่าเริ่มต้นใหม่) ใน `features/expenses/manual-expense-entry.logic.ts`
+- [x] seed ของร้านตัวอย่าง (`apps/api/prisma/seed.ts`) เขียนแถว “แสดง” เพื่อให้ e2e เดิม local stack และร้านตัวอย่างยังเห็นเมนู ไม่แก้ที่ตัว test (ร้าน `seed-local-company` และ `seed-local-company-2`)
+- [x] เพิ่ม boolean ใน `accessContextFingerprint` เท่านั้น (ค่าหายอ่านเป็นแสดง จึงไม่ refresh เพราะ field หาย)
+- [x] ไม่แตะ JWT, localStorage, resolver หรือ `RequestContext`
 
 Exit: เว็บรู้ค่าของร้าน ร้านที่ไม่มีแถวไม่เห็นทางเข้า และแท็บที่เปิดค้างปรับเมนูในรอบ focus/poll เดิม
 

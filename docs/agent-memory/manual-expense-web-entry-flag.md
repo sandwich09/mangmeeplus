@@ -4,7 +4,7 @@
 
 Everything below this section is kept unchanged as history. Where it disagrees with this section, this section wins.
 
-Status: IN PROGRESS on branch `claude/manual-expense-web-entry-20261002` (worktree `/private/tmp/mangmee-manual-expense-entry-20261002`, from develop `608b4a6f5`). Not pushed, not released. Phase state: P0 done, P1 done; P2–P6 follow in their own commits and update this section.
+Status: IN PROGRESS on branch `claude/manual-expense-web-entry-20261002` (worktree `/private/tmp/mangmee-manual-expense-entry-20261002`, from develop `608b4a6f5`). Not pushed, not released. Phase state: P0, P1 and P2 done; P3–P6 follow in their own commits and update this section.
 
 Owner: thawatchai / Claude (implementation lane; the controller session reviews, pushes and merges).
 
@@ -30,14 +30,17 @@ Artifacts (this branch):
 - `apps/api/src/modules/system-partner-management/domain/logic/manual-expense-web-entry.logic.ts`
 - `apps/api/src/modules/system-partner-management/application/use-cases/set-partner-manual-expense-web-entry.use-case.ts`
 - `partner.controller.ts` (`PUT :partnerCompanyId/manual-expense-web-entry`), `get-partner-detail.use-case.ts`, the module, `packages/contracts/src/partner-management.ts`
+- P2: `auth.controller.ts` (`me()` answers `manualExpenseWebEntry`), `apps/web/src/common/models/web-session.model.ts`, `workspace-scope.api.ts` (type and fingerprint), `apps/web/src/features/expenses/manual-expense-entry.logic.ts` (`canOpenManualWeb`), `apps/api/prisma/seed.ts` (a "shown" row for `seed-local-company` and `seed-local-company-2`).
+- With P1: `apps/web/src/common/api/api-error-message.ts` (Thai text of the 409 code; the web coverage spec demands one for every code of this API module).
 - Spec v3.1, plan, this note.
 
 Verification (real runs, 2026-10-02):
 - P0 at `608b4a6f5`: F01–F13 re-checked by symbol, all hold (F02 fixed as the spec says); no entrance outside spec §9. Baseline: API 133 + 112 + 91 tests on the plan's three lines, web 232, ai-gateway approved-knowledge 9, all exit 0; maintenance pins `status=current` (48 files); contracts rebuilt from source.
 - P1: `partner.controller.spec.ts` 46 pass (33 before). Each new behaviour was shown red by reverting its production line for one run: 16 single-line reverts, each failed the named test and nothing else of the new set (no-op, 409, lock refusal, 404, audit, two validations, version increment, company lock, the default constant, two partner-detail cases, endpoint permission, route parameter, argument forwarding, DTO). `prisma validate` exit 0; `migration:review` SQL for the new table copied into the migration; `check-di-metadata` exit 0; API typecheck exit 0.
+- P2: `auth.controller.spec.ts` 24 pass (20 before; the 4 new ones were red before the change). `workspace-scope.api.spec.ts` 6 pass and the new `manual-expense-entry.logic.spec.ts` 4 pass (red before). Nine single-line reverts each failed their named test (the `/auth/me` field, ignoring the row, reading another company; the fingerprint field and its missing-means-shown reading; the helper's permission, missing-means-shown, company and value clauses). `api-error-coverage.spec.ts` was red without the Thai text of the 409 code and is green with it (68 pass with its two neighbours). API typecheck exit 0, web typecheck exit 0. `prisma/seed.ts` is outside the API typecheck (`include` is `src/**`); it is exercised by the local stack in P6.
 
 Next:
-- P2 `/auth/me` field, web session types, helper, fingerprint, seed row. P3 gate, entrances, guide. P4 admin switch. P5 PostgreSQL invariants. P6 browser evidence and docs.
+- P3 gate, entrances, guide. P4 admin switch. P5 PostgreSQL invariants. P6 browser evidence and docs.
 
 ## Update 2026-10-01 — independent review and spec v3.0 (current state)
 

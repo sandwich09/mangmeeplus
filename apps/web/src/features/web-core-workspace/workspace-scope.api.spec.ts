@@ -38,4 +38,29 @@ describe('accessContextFingerprint', () => {
       accessContextFingerprint({ ...base, roleNames: { CUSTOM_QA: 'After' } }),
     );
   });
+
+  // manual-expense-web-entry-flag spec §6.3: the setting changes no permission, so without this the
+  // open tabs of a shop would keep the old menu until somebody reloads.
+  it('changes when the manual-expense web entry of the company changes, though the permissions stay the same', () => {
+    const base = { roles: ['EMPLOYEE'], permissions: ['expense.create', 'expense.update'] };
+    assert.notEqual(
+      accessContextFingerprint({ ...base, manualExpenseWebEntry: true }),
+      accessContextFingerprint({ ...base, manualExpenseWebEntry: false }),
+    );
+  });
+
+  it('reads a missing manual-expense web entry as shown, so an answer without the field causes no refresh', () => {
+    const base = { roles: ['EMPLOYEE'], permissions: ['expense.create'] };
+    assert.equal(accessContextFingerprint(base), accessContextFingerprint({ ...base, manualExpenseWebEntry: true }));
+    assert.notEqual(accessContextFingerprint(base), accessContextFingerprint({ ...base, manualExpenseWebEntry: false }));
+  });
+
+  it('carries nothing else of the answer: a change the menu does not depend on causes no refresh', () => {
+    const base = { roles: ['EMPLOYEE'], permissions: ['expense.create'], manualExpenseWebEntry: true };
+    // Fields /auth/me also answers with, and a feature list it must never grow into (spec §6.3).
+    const unrelated = { ...base, displayName: 'ชื่อใหม่', legalAcceptanceRequired: true, entitledFeatureKeys: ['expenses', 'inventory'] };
+    assert.equal(accessContextFingerprint(base), accessContextFingerprint(unrelated));
+    assert.deepEqual(Object.keys(JSON.parse(accessContextFingerprint(base))).sort(),
+      ['branchIds', 'manualExpenseWebEntry', 'permissions', 'roleNames', 'roles']);
+  });
 });

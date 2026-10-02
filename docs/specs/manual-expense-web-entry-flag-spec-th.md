@@ -385,7 +385,7 @@ e2e ที่เปิดหน้า manual (`e2e/expenses.spec.ts`, `transacti
 3. ข้อมูลเดิมของร้าน สิทธิ์ รายจ่าย และภาษี ไม่ถูกเปลี่ยนจาก deployment
 4. Rollback: ถอย image แล้ว**ทุกร้านกลับมาเห็นเมนู** ทั้งร้านที่เปิดไว้และร้านที่ไม่เคยเปิด เพราะโค้ดเก่าไม่อ่านค่านี้ ตารางใหม่ถูกปล่อยไว้ ไม่มีโค้ดเก่าใดอ่านตารางนี้ ไม่กระทบ billing, LINE หรือ normalizer ค่าที่ผู้ดูแลตั้งไว้ยังอยู่และมีผลอีกครั้งเมื่อขึ้นรุ่นใหม่ ให้บันทึกข้อจำกัดนี้ใน release handoff
 5. ไม่มีขั้นตอน “เปิดให้ใช้ทีหลัง” ด้วย environment switch สวิตช์ใช้ได้ทันทีที่ release ขึ้น และค่าเริ่มต้น “ไม่แสดง” มีผลกับทุกร้านทันทีเช่นกัน
-6. ร้านตัวอย่างของ seed (local, e2e) มีแถว “แสดง” ที่ seed เขียนให้ ฐานข้อมูลจริงไม่มี seed นี้ จึงไม่มีร้านใดได้แถวจากการปล่อย
+6. ร้านตัวอย่างของ seed (local, e2e) มีแถว “แสดง” ที่ `apps/api/prisma/seed.ts` เขียนให้ seed นี้ถูกเรียกเฉพาะในเครื่องและใน workflow ทดสอบ (`extended-tests.yml`) ไม่อยู่ในขั้นตอน deploy ใดใน `infra/` หรือ workflow ปล่อย จึงไม่มีร้านใดได้แถวจากการปล่อย (ตรวจจากโค้ดใน repo ไม่ได้ตรวจฐานข้อมูลจริง)
 
 ก่อน cloud inspection อ่าน [cloud operations](../runbooks/cloud-environment-operations.md); ก่อน deploy/promotion/customer-gate change/retry อ่าน [mandatory deployment protocol](../runbooks/uat-production-v2-deployment.md) งานนี้ไม่อนุญาต deploy หรือเปลี่ยนค่าของลูกค้า
 
