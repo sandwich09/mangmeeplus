@@ -372,7 +372,9 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
   it('re-pins a finance arrival rule pinned before the shop owner was left out, and leaves an admin-edited one alone', async () => {
     const key = 'reimbursement_finance_review_pending';
     const [catalogAction] = catalogActions(key);
-    const { lastResortRecipientRoles: _added, ...shippedConfig } = catalogAction!.configJson;
+    // As shipped: every holder of the right, and the actor of the event left out.
+    const { lastResortRecipientRoles: _lastResort, webOnlyRecipientPayloadKeys: _bellOnly, ...common } = catalogAction!.configJson;
+    const shippedConfig = { ...common, excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
     const shipped = [{ ...catalogAction!, configJson: shippedConfig }];
     const adminsOwn = [{ ...catalogAction!, configJson: { ...shippedConfig, titleTemplate: 'มีใบเบิกมาถึงฝ่ายการเงิน: {{requestNo}}' } }];
     const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, cooldownSeconds: 0, actionJson: shipped, ...over });
@@ -388,6 +390,9 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     const config = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson;
     assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map((id) => config(id).lastResortRecipientRoles), [['OWNER'], undefined, ['OWNER']]);
+    // And with it the actor's own notice in the web bell only (decided the same day), in place of leaving the actor out.
+    assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map((id) => [config(id).webOnlyRecipientPayloadKeys, config(id).excludeRecipientPayloadKeys]),
+      [[['actorUserId'], undefined], [undefined, ['actorUserId']], [['actorUserId'], undefined]]);
     // The admin's rule is exactly what the admin left: their title, and every holder of the right as before.
     assert.deepEqual(repo.rules.find((r: any) => r.id === 'pre_1').actionJson, adminsOwn);
     assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED');

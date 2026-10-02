@@ -388,12 +388,12 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           titleTemplate: 'ใบเบิกรอตรวจสอบการเงิน: {{requestNo}}',
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รอตรวจสอบการเงิน',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
-          // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
-          // own action — a solo owner submitting/approving/paying their own claim gets none of
-          // these pushes. An owner-only company excluding the sole recipient is expected, not a
-          // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
-          excludeRecipientPayloadKeys: ['actorUserId'],
-          skipWhenAllRecipientsExcluded: true,
+          // NO actor exclusion, as for the ready-to-pay notice below (owner decision 2026-10-02). Whoever
+          // put the claim on this desk (the approver, or the sender of a claim nobody approves) may review
+          // finance themselves: the review is then their own next task. Left out as the actor, with the
+          // owner no longer told in their place, a shop whose approver is its one finance reviewer told
+          // nobody. They get the notice in the web bell only: no LINE push about what one has just done.
+          webOnlyRecipientPayloadKeys: ['actorUserId'],
         },
       },
     ],
