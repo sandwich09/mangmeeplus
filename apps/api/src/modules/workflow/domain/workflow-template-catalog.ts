@@ -1,3 +1,4 @@
+import { reimbursementFinanceBlockedRequesterNotice } from '@watchdog-bms/contracts';
 import type { WorkflowActionDefinition, WorkflowConditionNode, WorkflowTemplateStatus, WorkflowTriggerType } from '@watchdog-bms/contracts';
 
 export type WorkflowTemplateSeed = {
@@ -31,6 +32,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   reimbursement_pending_approval: { eventType: 'reimbursement.request_submitted' },
   reimbursement_decision_requester: { eventTypes: ['reimbursement.approved', 'reimbursement.rejected'] },
   reimbursement_correction_requester: { eventType: 'reimbursement.correction_requested' },
+  reimbursement_finance_blocked_requester: { eventType: 'reimbursement.finance_review_updated' },
   reimbursement_finance_review: { eventType: 'reimbursement.finance_review_updated' },
   // Two ways a claim arrives at the finance desk: a person approved it, or it needed no approval
   // and was sent straight there. The second wrote an event no rule listened to, so nobody was told.
@@ -56,6 +58,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_pending_approval: 0,
   reimbursement_decision_requester: 0,
   reimbursement_correction_requester: 0,
+  reimbursement_finance_blocked_requester: 0,
   reimbursement_finance_review: 0,
   reimbursement_finance_review_pending: 0,
   reimbursement_ready_for_payment: 0,
@@ -70,6 +73,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
 // did not ask for "payment voided", and one who disabled the approval reminder did not ask for the
 // payment reminder. The admin can still enable it; nothing else about auto-enable changes.
 export const WORKFLOW_TEMPLATE_FOLLOWS_SIBLING: Record<string, string> = {
+  reimbursement_finance_blocked_requester: 'reimbursement_decision_requester',
   reimbursement_payment_voided: 'reimbursement_payment_recorded',
   reimbursement_payment_sla_breach: 'approval_sla_breach',
   // The two notices of a payout account correction (payout spec §17.3): "your claim needs its account
@@ -325,6 +329,34 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     status: 'AVAILABLE',
   },
   {
+    key: 'reimbursement_finance_blocked_requester',
+    name: 'แจ้งผู้เบิกเมื่อระงับการจ่าย',
+    description: 'แจ้งผู้เบิกเมื่อผู้ตรวจการเงินระงับการจ่าย ให้เปิดใบเบิกดูรายละเอียดและรอผู้ตรวจการเงินดำเนินการต่อ',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'EVENT',
+    defaultConditionJson: { type: 'ALL', conditions: [{ field: 'decision', op: 'EQ', value: 'BLOCKED' }, { field: 'requesterUserId', op: 'EXISTS' }] },
+    defaultActionJson: [{
+      actionKey: 'notify_requester_finance_blocked',
+      actionType: 'SEND_NOTIFICATION',
+      configJson: {
+        triggerKey: 'workflow.reimbursement_finance_blocked_requester',
+        recipientPayloadKeys: ['requesterUserId'],
+        severity: 'info',
+        titleTemplate: `${reimbursementFinanceBlockedRequesterNotice().title}: {{requestNo}}`,
+        bodyTemplate: reimbursementFinanceBlockedRequesterNotice().body,
+        deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+        excludeRecipientPayloadKeys: ['actorUserId'],
+        skipWhenAllRecipientsExcluded: true,
+      },
+    }],
+    requiredPermissions: ['reimbursement.read_own'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
     key: 'reimbursement_finance_review',
     name: 'Reimbursement finance review',
     description: 'Notify the people who can run finance review on the claim (the shop owner only when nobody else can) when a claim is blocked.',
@@ -352,7 +384,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // own action — a solo owner submitting/approving/paying their own claim gets none of
           // these pushes. An owner-only company excluding the sole recipient is expected, not a
           // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
-          excludeRecipientPayloadKeys: ['actorUserId'],
+          // The requester gets the requester notice even when they can review finance (controller decision 2026-10-02).
+          excludeRecipientPayloadKeys: ['actorUserId', 'requesterUserId'],
           skipWhenAllRecipientsExcluded: true,
         },
       },

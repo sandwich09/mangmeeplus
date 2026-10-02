@@ -894,16 +894,16 @@ describe('ProcessQueuedDeliveryUseCase and a preference list saved before a trig
 
   // Audit B9, added the same day as the payout notice: a requester whose payment was taken back, and
   // whoever can pay a claim waiting past the deadline. A list saved earlier names neither.
-  it('still pushes the voided-payment notice and the payment reminder, and respects LINE switched off for them too', async () => {
+  it('still pushes payment and finance-block notices past old preferences, respecting LINE off and quiet hours', async () => {
     const savedEarlier = { ...savedLong, quietHoursStart: null, quietHoursEnd: null };
-    for (const [triggerKey, severity] of [['workflow.reimbursement_payment_voided', 'INFO'], ['workflow.reimbursement_payment_sla_breach', 'ACTION']] as const) {
+    for (const [triggerKey, severity] of [['workflow.reimbursement_payment_voided', 'INFO'], ['workflow.reimbursement_finance_blocked_requester', 'INFO'], ['workflow.reimbursement_payment_sla_breach', 'ACTION']] as const) {
       const sent = await deliver(triggerKey, savedEarlier, severity);
       assert.deepEqual([sent.pushes.length, sent.last.status], [1, 'SENT'], triggerKey);
       const lineOff = await deliver(triggerKey, { ...savedEarlier, enabledChannelsJson: ['web'] }, severity);
       assert.deepEqual([lineOff.pushes.length, lineOff.last.status], [0, 'suppressed'], triggerKey);
     }
     // Quiet hours are a person's own choice and still hold a notice that is not critical: both of these.
-    for (const [triggerKey, severity] of [['workflow.reimbursement_payment_voided', 'INFO'], ['workflow.reimbursement_payment_sla_breach', 'ACTION']] as const) {
+    for (const [triggerKey, severity] of [['workflow.reimbursement_payment_voided', 'INFO'], ['workflow.reimbursement_finance_blocked_requester', 'INFO'], ['workflow.reimbursement_payment_sla_breach', 'ACTION']] as const) {
       const quiet = await deliver(triggerKey, savedLong, severity);
       assert.deepEqual([quiet.pushes.length, quiet.last.status], [0, 'suppressed'], triggerKey);
     }

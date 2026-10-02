@@ -315,3 +315,26 @@ describe('shop guide permission help names business roles and separates package 
     }
   });
 });
+
+
+describe('claim notification gaps in the guide', () => {
+  it('explains changed draft choices, combined standing saves, and the requester finance-block notice', () => {
+    const guide = buildReimbursementGuide('co', OWNER, ['OWNER']);
+    const text = sentences(guide).join(' ');
+    const notify = guide.sections.find(s => s.id === 'notify')!;
+    const rows = notify.blocks.flatMap(b => b.kind === 'table' ? b.rows : []);
+    assert.ok(rows.some(r => r[0].includes('ระงับ') && r[1].includes('ผู้เบิก') && r[2].includes('เหตุผล')));
+    assert.ok(rows.some(r => r[0].includes('ร่าง') && r[2].includes('เงินสด') && r[2].includes('บัญชีรับเงินคืนประจำ')));
+    assert.match(text, /ถ้าบันทึกโดยไม่เปลี่ยนจะไม่แจ้งซ้ำ/);
+    assert.match(text, /ใบร่างที่ทำแทนผู้เบิก: แจ้งเมื่อวิธีรับเงินคืนเปลี่ยน/);
+    assert.doesNotMatch(text, /ปลายทาง/);
+    const draft = rows.find(r => r[0].includes('ร่าง'))!;
+    assert.equal(draft[1], 'ผู้เบิกที่ยังใช้งานอยู่ เมื่อวิธีรับเงินคืนหรือบัญชีเปลี่ยน');
+    assert.match(draft[2], /เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แจ้งผู้จัดทำใบเบิก/);
+    assert.doesNotMatch(draft[2], /ผู้ตรวจการเงิน/);
+    assert.ok(rows.some(r => r[0].includes('ระงับ') && r[1].includes('ไม่รวมคนที่ระงับและผู้เบิก')));
+    assert.match(text, /แจ้งเตือนเดียว/);
+    assert.match(text, /บัญชีรับเงินคืนประจำ/);
+    assert.doesNotMatch(text, /เจ้าของบัญชีได้รับแจ้งทุกครั้ง/);
+  });
+});

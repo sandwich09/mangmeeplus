@@ -207,6 +207,21 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
     }
   });
 
+  it('creates the requester block notice following the requester decision switch, once per company', async () => {
+    for (const status of ['ENABLED', 'DISABLED', undefined]) {
+      const repo = fakeRepo(status ? [{ templateKey: 'reimbursement_decision_requester', status }] : []);
+      const enabled = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
+      const template = repo.templates.find((t: any) => t.key === 'reimbursement_finance_blocked_requester');
+      assert.ok(template);
+      const rule = repo.rules.find((r: any) => r.templateId === template.id);
+      assert.equal(rule.status, status ?? 'ENABLED');
+      assert.equal(enabled.includes(template.key), status !== 'DISABLED');
+      assert.deepEqual(rule.triggerConfigJson, { eventType: 'reimbursement.finance_review_updated' });
+      assert.equal(rule.cooldownSeconds, 0);
+      assert.deepEqual(await autoEnableWorkflowTemplatesForCompany(repo, 'co_1'), []);
+    }
+  });
+
   it('leaves other companies alone', async () => {
     const repo = fakeRepo([{ templateKey: 'reimbursement_pending_approval', companyId: 'co_2', status: 'DISABLED' }]);
     const created = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
@@ -403,11 +418,12 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
   });
 
   // Owner decision 2026-10-02: the finance desk's "blocked" notice takes the rule of the arrival notice, the shop owner
-  // only as the last resort. It has shipped as well, and is re-pinned the same way.
+  // only as the last resort. The release pins this unshipped template with the requester excluded too.
   it('re-pins a finance "blocked" rule pinned before the shop owner was left out, and leaves an admin-edited one alone', async () => {
     const key = 'reimbursement_finance_review';
     const [catalogAction] = catalogActions(key);
-    const { lastResortRecipientRoles: _lastResort, ...shippedConfig } = catalogAction!.configJson;
+    const { lastResortRecipientRoles: _lastResort, ...withoutLastResort } = catalogAction!.configJson;
+    const shippedConfig = { ...withoutLastResort, excludeRecipientPayloadKeys: ['actorUserId'] };
     const shipped = [{ ...catalogAction!, configJson: shippedConfig }];
     const adminsOwn = [{ ...catalogAction!, configJson: { ...shippedConfig, bodyTemplate: 'ฝ่ายการเงินระงับใบนี้ ยอด {{amount}} {{currency}}' } }];
     const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, cooldownSeconds: 0, actionJson: shipped, ...over });
@@ -423,8 +439,9 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     const config = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson;
     assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map((id) => config(id).lastResortRecipientRoles), [['OWNER'], undefined, ['OWNER']]);
-    // Nothing else of the rule moved: the same people's right, the same words, the actor still left out.
-    assert.deepEqual({ ...config('pre_0'), lastResortRecipientRoles: undefined }, { ...shippedConfig, lastResortRecipientRoles: undefined });
+    // The requester gets their own notice, including when they can also review finance.
+    assert.deepEqual(config('pre_0').excludeRecipientPayloadKeys, ['actorUserId', 'requesterUserId']);
+    assert.deepEqual({ ...config('pre_0'), lastResortRecipientRoles: undefined, excludeRecipientPayloadKeys: undefined }, { ...shippedConfig, lastResortRecipientRoles: undefined, excludeRecipientPayloadKeys: undefined });
     assert.deepEqual(repo.rules.find((r: any) => r.id === 'pre_1').actionJson, adminsOwn);
     assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED');
     const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];

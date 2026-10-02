@@ -3,6 +3,7 @@
 
 import {
   invalidPayoutDestinationField,
+  reimbursementPayoutOnBehalfNotice,
   maskedPayoutAccount,
   reimbursementPaymentRule,
   THAI_BANK_NAMES,
@@ -747,7 +748,7 @@ export function payoutCorrectionTypingRefusedUpFront(
  * whatever is chosen (an account typed, their standing account, the account the claim had, or cash). Shown only where a
  * notice can reach the requester: where none can, the form says why no account can be typed for them instead.
  */
-export const PAYOUT_CORRECTION_ON_BEHALF_NOTICE = 'ผู้เบิกจะได้รับแจ้งเตือนทุกครั้งที่มีผู้เลือกวิธีรับเงินคืนแทน ไม่ว่าเลือกแบบใด';
+export const PAYOUT_CORRECTION_ON_BEHALF_NOTICE = reimbursementPayoutOnBehalfNotice();
 /** Said in the account form in place of the choice it does not offer: what cannot be done, why, and what still can. */
 export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงพิมพ์บัญชีแทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้พิมพ์บัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
 
