@@ -27,7 +27,7 @@ test.describe('CRMRPT — CRM reports', () => {
     await expect(totalCard.getByText(String(summary.total), { exact: true })).toBeVisible();
     const resolvedCard = authedPage.getByText('ตอบจบแล้ว', { exact: true }).locator('..');
     await expect(resolvedCard.getByText(`${summary.resolvedRate}%`, { exact: true })).toBeVisible();
-    const overdueCard = authedPage.getByText('ลูกค้ารอเกิน 30 นาที', { exact: true }).locator('..');
+    const overdueCard = authedPage.getByText('ลูกค้ารอตอบเกินกำหนด', { exact: true }).locator('..');
     await expect(overdueCard.getByText(String(summary.overdue), { exact: true })).toBeVisible();
 
     const salesOps = authedPage.getByText('ยอดขายและโอกาสขาย', { exact: true }).locator('..');

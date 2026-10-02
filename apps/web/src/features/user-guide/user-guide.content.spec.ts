@@ -1,7 +1,11 @@
+import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
+import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 import { buildReimbursementGuide } from './reimbursement-guide.content';
 import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content';
 import { buildExpensesGuide } from './expenses-guide.content';
@@ -150,16 +154,75 @@ describe('the reimbursement guide reads as the product does', () => {
       }
       return false;
     };
-    // ponytail: the screens of the payout account correction round are built on another branch, so the names of their
-    // buttons, card and label are the spec's (payout spec §14.2, §14.4, §14.6) and have no screen to be held against
-    // yet. The exception ends by itself once the claim screens read `payoutCorrectionActions`, the flags those buttons
-    // are shown from: from then on these five are checked like every other quote.
-    const notBuiltYet = claimScreens.includes('payoutCorrectionActions') ? [] : [
-      'ส่งกลับให้แก้บัญชีรับเงิน', 'แก้บัญชีรับเงิน', 'ส่งกลับให้แก้อีกครั้ง', 'สิ่งที่เปลี่ยน: บัญชีรับเงินคืน', 'สำเนาก่อนแก้บัญชีรับเงิน',
-    ];
     const quotes = [...new Set(read.flatMap((text) => [...text.matchAll(/“([^”]+)”/g)].map((match) => match[1]!)))];
     assert.ok(quotes.length > 50, 'the guide quotes the screens it describes');
-    assert.deepEqual(quotes.filter((quote) => !isShown(quote) && !notBuiltYet.includes(quote)), []);
+    assert.deepEqual(quotes.filter((quote) => !isShown(quote)), []);
+    // The words of a payout round are quoted as the screens say them now: by what the claim holds and by what was answered.
+    for (const label of ['รอผู้เบิกเพิ่มบัญชีรับเงิน', 'รอผู้เบิกเลือกวิธีรับเงินคืน', 'รออนุมัติบัญชีรับเงินเดิม', 'รออนุมัติการรับเป็นเงินสด', 'สิ่งที่รออนุมัติ: บัญชีรับเงินใหม่',
+      'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง', 'บันทึกวิธีรับเงินคืน', 'สำเนาก่อนส่งกลับ', 'เพิ่มบัญชีรับเงินให้ใบนี้ แล้วให้ผู้อนุมัติตรวจบัญชีนั้น']) {
+      assert.ok(quotes.includes(label), label);
+    }
+    for (const gone of ['สิ่งที่เปลี่ยน: บัญชีรับเงินคืน', 'สำเนาก่อนแก้บัญชีรับเงิน', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน', 'รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน']) {
+      assert.equal(quotes.includes(gone), false, gone);
+    }
+    // The notice to a requester when someone answered a round for them is quoted by the words of its title: what was done
+    // (the row's own words of that answer) and "ในใบเบิกของคุณ". The title itself is put together with the person's name.
+    for (const titleWord of ['แก้บัญชีรับเงิน', 'ยืนยันบัญชีเดิม', 'เปลี่ยนวิธีรับเงินคืน', 'ในใบเบิกของคุณ']) assert.ok(quotes.includes(titleWord), titleWord);
+    const answeredForYou = read.find((text) => text.includes('“ในใบเบิกของคุณ”'))!;
+    for (const titleWord of ['“แก้บัญชีรับเงิน”', '“ยืนยันบัญชีเดิม”', '“เปลี่ยนวิธีรับเงินคืน”']) assert.ok(answeredForYou.includes(titleWord), titleWord);
+    // A PromptPay number is quoted as the screens call it, beside the words of a bank account.
+    for (const label of ['แสดงเบอร์พร้อมเพย์', 'คัดลอกเบอร์พร้อมเพย์', 'ซ่อนเบอร์พร้อมเพย์', 'คุณไม่มีสิทธิ์ดูเบอร์พร้อมเพย์เต็มของใบนี้', 'แสดงเลขบัญชี', 'คัดลอกเลขบัญชี', 'ซ่อนเลขบัญชี']) {
+      assert.ok(quotes.includes(label), label);
+    }
+    // A payment by another method is said of what the claim states, as the screens say it: nobody is named as having asked.
+    for (const label of ['เหตุผลที่จ่ายต่างจากที่ระบุในใบ', 'จ่ายต่างจากที่ระบุในใบ', 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล']) assert.ok(quotes.includes(label), label);
+    for (const text of read) assert.doesNotMatch(text, /ที่ผู้เบิกขอ|ผู้เบิกขอรับ/u, text);
+  });
+
+  // A round is not only "a wrong account, replaced by another": the status table names each thing a claim in a round waits for.
+  it('lists every status a claim in a payout round shows, as its badge says it', () => {
+    const statuses = guide.sections.find((section) => section.id === 'status')!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows.map((row) => row[0]) : []));
+    for (const answer of [undefined, 'NEW_ACCOUNT', 'SAME_ACCOUNT', 'CASH_INSTEAD', 'ACCOUNT_INSTEAD', 'SAME_CASH', 'FIRST_ACCOUNT', 'FIRST_CASH'] as const) {
+      for (const payoutMethod of answer ? [undefined] : ['BANK_TRANSFER', 'CASH', undefined]) {
+        const label = reimbursementPayoutRoundStatus({ payoutCorrectionPhase: answer ? 'AWAITING_APPROVAL' : 'AWAITING_REQUESTER', payoutMethod, payoutCorrectionAnswer: answer })!;
+        assert.ok(statuses.includes(label), label);
+      }
+    }
+    // No sentence of the guide says the old words of one case for every case.
+    for (const text of read) assert.doesNotMatch(text, /ผู้อนุมัติชุดเดิม|อยู่ระหว่างแก้บัญชี|อยู่ระหว่างแก้ไขบัญชี|หลังอนุมัติบัญชีใหม่/u, text);
+  });
+
+  // The page itself, as a reader on a phone opens it: every section is folded until it is opened, and a table is a
+  // stack of cards below sm. The lines of the final wording pass are on it, in the words the screens use.
+  it('shows on the page what the notice of an answer given for you says, and the buttons of a PromptPay number', () => {
+    (globalThis as typeof globalThis & { React: typeof React }).React = React;
+    // The page reaches the icon set; this runner has no SVG loader.
+    require.extensions['.svg'] = (module) => { module.exports = () => null; };
+    const { UserGuidePage } = require('./UserGuidePage') as typeof import('./UserGuidePage');
+    const reactRuntime = require('react') as typeof React;
+    const realUseState = reactRuntime.useState;
+    const open = ['approve', 'pay', 'account-number', 'account-fix', 'notify', 'faq'];
+    // The page's one state is the list of open sections: it starts empty.
+    Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
+      const [value, set] = (realUseState as (initial: unknown) => [unknown, unknown])(initial);
+      return [Array.isArray(initial) && initial.length === 0 ? open : value, set];
+    });
+    const router = { back() {}, forward() {}, refresh() {}, push() {}, replace() {}, prefetch() {}, bfcacheId: 'test' };
+    const page = () => renderToStaticMarkup(React.createElement(AppRouterContext.Provider, { value: router as never }, React.createElement(UserGuidePage, { guide })));
+    let html: string;
+    try { html = page(); } finally { Reflect.set(reactRuntime, 'useState', realUseState); }
+    const texts = html.replace(/<[^>]*>/gu, '\n').split('\n').map((text) => text.replace(/&quot;/gu, '"').replace(/&amp;/gu, '&').trim()).filter(Boolean);
+    const ANSWERED_FOR_YOU = 'หัวข้อบอกชื่อคนที่ทำและสิ่งที่ทำ เช่น “แก้บัญชีรับเงิน” “ยืนยันบัญชีเดิม” หรือ “เปลี่ยนวิธีรับเงินคืน” ตามด้วย “ในใบเบิกของคุณ” และเลขที่คำขอ เนื้อความบอกธนาคารและ 4 ตัวท้ายของบัญชี หรือบอกว่ารับเป็นเงินสด และให้เปิดคำขอเพื่อตรวจ';
+    // Once in the phone's card and once in the table from sm up: the same sentence.
+    assert.equal(texts.filter((text) => text === ANSWERED_FOR_YOU).length, 2);
+    // On a phone the sentence is in a card that wraps: no table, no horizontal scroll.
+    assert.match(html, new RegExp(`<ul class="flex flex-col gap-2 sm:hidden">[\\s\\S]*?<p class="text-sm leading-6 break-words text-gray-600">${ANSWERED_FOR_YOU}</p>`, 'u'));
+    for (const said of ['กด “แสดงเลขบัญชี” หรือ “แสดงเบอร์พร้อมเพย์” เพื่อดูเลขเต็ม', 'ปุ่มคือ “แสดงเบอร์พร้อมเพย์” กับ “คัดลอกเบอร์พร้อมเพย์”', 'บัญชีพร้อมเพย์ใช้ปุ่ม “แสดงเบอร์พร้อมเพย์” และ “ซ่อนเบอร์พร้อมเพย์”',
+      'ข้อแรกคือเบอร์พร้อมเพย์ไม่ถูกต้อง', 'ประวัติการจ่ายจะขึ้นป้าย “จ่ายต่างจากที่ระบุในใบ”', 'เมื่อเลือกวิธีรับเงินคืนแล้ว คำขอกลับไปพร้อมจ่ายทันที', 'จะไม่มีแจ้งเตือนถึงผู้เบิก']) {
+      assert.ok(texts.some((text) => text.includes(said)), said);
+    }
+    // Folded, the page shows none of it: a reader opens the section they need.
+    assert.equal(page().includes('ในใบเบิกของคุณ'), false);
   });
 
   // Owner rule: readers are shop staff on a phone. A file type, a file size and the app's own name are all that stays in Latin letters.

@@ -53,7 +53,7 @@ const RAW_TEMPLATES: RawTemplate[] = [
   },
   {
     key: 'tpl.x.finance', industryTag: 'crosscutting',
-    nameTh: 'การเงิน (AR/AP)', nameEn: 'Finance',
+    nameTh: 'การเงิน (ลูกหนี้/เจ้าหนี้)', nameEn: 'Finance',
     description: 'ออกบิล รับ/จ่ายเงิน กระทบยอด และเตรียมภาษี',
     capabilityPackKeys: FINANCE_PACKS,
   },
@@ -119,7 +119,7 @@ const RAW_TEMPLATES: RawTemplate[] = [
   },
   {
     key: 'tpl.service.sales', industryTag: 'service',
-    nameTh: 'ฝ่ายขาย/CRM', nameEn: 'Sales / CRM',
+    nameTh: 'ฝ่ายขาย/ดูแลลูกค้า', nameEn: 'Sales / CRM',
     description: 'ดูแลลูกค้าและทำใบเสนอราคา',
     capabilityPackKeys: ['pack.crm.view', 'pack.crm.operate', 'pack.quotation.operate', 'pack.billing.view', 'pack.expense.self', 'pack.reimbursement.self', TASKS],
   },

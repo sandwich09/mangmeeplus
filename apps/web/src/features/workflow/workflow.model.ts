@@ -89,7 +89,7 @@ export const TRIGGER_TYPE_LABELS: Record<string, string> = {
   EVENT: 'เหตุการณ์',
   SCHEDULE: 'ตามกำหนดเวลา',
   THRESHOLD_SCAN: 'ตรวจสอบเกณฑ์',
-  SLA_SCAN: 'ตรวจสอบ SLA',
+  SLA_SCAN: 'ตรวจงานที่เกินกำหนด',
   MANUAL_TEST: 'ทดสอบ',
   MANUAL_REPLAY: 'ทำซ้ำ',
 };

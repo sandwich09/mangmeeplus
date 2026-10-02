@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import type { CrmMessageSummary, ListCrmConversationsResult } from '@watchdog-bms/contracts';
 import { buildStatusChips, chipColor, visibleMessages } from './inbox-prototype.model';
 
@@ -28,6 +29,15 @@ describe('inbox prototype model', () => {
     const chips = buildStatusChips(result);
     assert.deepEqual(chips.map((c) => c.id), ['all', 'overdue', 'mine', 'unassigned', 'NEW', 'OPEN', 'RESOLVED', 'SPAM']);
     assert.equal(chips[0]!.count, 6);
+  });
+
+  // Owner report 2026-10-02: the chip and the button said "เกิน 30 นาที", but the minutes are the shop's
+  // own setting and the inbox does not hold them. The live inbox words these two itself.
+  it('calls late chats "รอตอบเกินกำหนด", with no number of minutes', () => {
+    assert.equal(buildStatusChips(result).find((c) => c.id === 'overdue')!.label, '⏱ รอตอบเกินกำหนด');
+    const page = readFileSync(new URL('./InboxPrototypePage.tsx', import.meta.url), 'utf8');
+    assert.match(page, /ดู \{overdueCount\} แชทด่วนที่รอตอบเกินกำหนด/);
+    assert.doesNotMatch(page, /30 นาที/);
   });
 
   it('has stable chip colors per filter kind', () => {

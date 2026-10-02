@@ -17,9 +17,11 @@ test.describe('BRIEF — dashboard daily brief', () => {
     );
     await authedPage.getByRole('button', { name: 'เดือนนี้' }).click();
     await monthBrief;
+    // The summary has been a closed section since 2026-09-17: its cards exist only once it is opened.
+    await authedPage.getByText('สรุปงานลูกค้าและการขาย').click();
     await expect(authedPage.getByText('สรุปงานลูกค้า (CRM)', { exact: true })).toBeVisible();
 
-    const overdue = await linkUrl(authedPage.getByRole('link', { name: /เกิน SLA/ }));
+    const overdue = await linkUrl(authedPage.getByRole('link', { name: /รอตอบเกินกำหนด/ }));
     expect(overdue.pathname).toBe(`/companies/${companyId}/inbox`);
     expect(Object.fromEntries(overdue.searchParams)).toEqual({ overdue: 'true' });
 

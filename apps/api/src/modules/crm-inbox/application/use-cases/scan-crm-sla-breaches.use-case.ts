@@ -107,7 +107,7 @@ export class ScanCrmSlaBreachesUseCase {
       sourceType: 'crm_conversation',
       sourceId: conv.id,
       severity: 'action',
-      title: `SLA เกินกำหนด: ${customerName}`,
+      title: `ลูกค้ารอตอบเกินกำหนด: ${customerName}`,
       body: `ยังไม่มีการตอบกลับแรกถึงลูกค้า (เกินกำหนดมา ${overdueMinutes} นาที)`,
       deepLinkHref: inboxHref,
       sourceRefs: [

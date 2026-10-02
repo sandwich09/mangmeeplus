@@ -8,6 +8,8 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { maskedPayoutAccount, type MemberPayoutAccountSummary, type ReimbursementLegacyPayoutDefault, type ReimbursementPayoutSummary } from '@watchdog-bms/contracts';
+// The pay step's line as the claim's own requester reads it (its own import, apart from the line above).
+import { REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, cx } from '@/common/components/mangmee';
 import { ErrorState, LoadingState } from '@/common/components/state';
@@ -21,11 +23,12 @@ import {
 } from './reimbursement-payout.api';
 import {
   BANK_OPTIONS, LEGACY_ASK_REQUESTER_NOTE, LEGACY_DEFAULT_LABEL, OTHER_BANK, PAYER_CONFIRMATION_TEXT, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT,
-  PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL, PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_SEND_BACK_LEAD,
-  chooseClaimPayoutMode, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
-  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
+  chooseClaimPayoutMode, claimCashNote, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
+  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, payoutRoundTexts, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
+// What the number of an account is called, by its kind (its own import, apart from the block above).
+import { isPayoutRevealDenied, payoutNumberWords } from './reimbursement-payout.logic';
 
 /**
  * "← กลับไปการเบิกจ่าย" in the eyebrow pill of a claim page. The pill is 28 px high. On a phone the link's own box is
@@ -94,9 +97,13 @@ export function PayoutAccountFields({ value, onChange, disabled = false, invalid
   );
 }
 
-/** The masked account with "แสดงเลขบัญชี". The number is fetched on demand and never kept past this card. */
-function AccountNumberReveal({ masked, revealKey, canReveal, onReveal, last4 }: {
+/**
+ * The masked account with "แสดงเลขบัญชี". The number is fetched on demand and never kept past this card. What the number
+ * is called follows the kind of account: a PromptPay destination is a phone number, "เบอร์พร้อมเพย์".
+ */
+function AccountNumberReveal({ masked, payoutKind, revealKey, canReveal, onReveal, last4 }: {
   masked: string;
+  payoutKind?: string | null;
   /** What the number belongs to: the claim and its account version, or the default as last saved. */
   revealKey: string;
   canReveal: boolean;
@@ -105,6 +112,7 @@ function AccountNumberReveal({ masked, revealKey, canReveal, onReveal, last4 }: 
   last4?: string;
 }) {
   const toast = useToast();
+  const words = payoutNumberWords(payoutKind);
   const [revealed, setRevealed] = useState<{ revealKey: string; accountNumber: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,12 +131,15 @@ function AccountNumberReveal({ masked, revealKey, canReveal, onReveal, last4 }: 
       const accountNumber = await onReveal();
       if (revealedNumberMatchesCard(accountNumber, last4)) setRevealed({ revealKey, accountNumber });
       else setError(errorMessage('payout_destination_changed'));
-    } catch (e) { setError(errorText(e)); } finally { setBusy(false); }
+    } catch (e) {
+      // A refused reveal is said of the number it is: the sentence of that refusal's code names an account number.
+      setError((isPayoutRevealDenied(e) && words.denied) || errorText(e));
+    } finally { setBusy(false); }
   };
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(shown ?? '');
-      toast.success('คัดลอกเลขบัญชีแล้ว');
+      toast.success(words.copied);
     } catch { setError('คัดลอกไม่สำเร็จ กรุณาคัดลอกด้วยตนเอง'); }
   };
 
@@ -137,20 +148,20 @@ function AccountNumberReveal({ masked, revealKey, canReveal, onReveal, last4 }: 
       <div className="break-words text-sm font-semibold text-gray-900">{masked}</div>
       {shown && (
         <div className="rounded-xl border border-brand-100 bg-brand-25 p-3">
-          <div className="text-xs font-semibold text-gray-500">เลขบัญชีเต็ม</div>
+          <div className="text-xs font-semibold text-gray-500">{words.full}</div>
           <div className="mt-1 break-all font-mono text-lg font-bold tracking-[.06em] text-gray-900" data-testid="payout-account-number">{shown}</div>
         </div>
       )}
       {/* The hide control follows the number itself: whenever a number is on screen, so is the way to hide it. */}
       {shown ? (
         <div className="flex flex-col gap-2 sm:flex-row">
-          <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={() => void copy()}>คัดลอกเลขบัญชี</button>
-          <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={() => setRevealed(null)}>ซ่อนเลขบัญชี</button>
+          <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={() => void copy()}>{words.copy}</button>
+          <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} onClick={() => setRevealed(null)}>{words.hide}</button>
         </div>
       ) : canReveal && (
         <div className="flex flex-col gap-2 sm:flex-row">
           <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void reveal()}>
-            {busy ? 'กำลังเปิด...' : 'แสดงเลขบัญชี'}
+            {busy ? 'กำลังเปิด...' : words.show}
           </button>
         </div>
       )}
@@ -269,7 +280,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                   <div>
                     <dt className="text-xs font-semibold text-gray-500">บัญชี</dt>
                     <dd className="mt-1">
-                      <AccountNumberReveal masked={payoutAccountLine(account)} revealKey={`${companyId}:${account.userId}:${account.updatedAt}`} canReveal={own}
+                      <AccountNumberReveal masked={payoutAccountLine(account)} payoutKind={account.payoutKind} revealKey={`${companyId}:${account.userId}:${account.updatedAt}`} canReveal={own}
                         last4={account.accountLast4} onReveal={async () => (await revealMyPayoutAccount(companyId)).accountNumber} />
                     </dd>
                   </div>
@@ -349,8 +360,9 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
         )}
         {option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
         {hasOwnAccount && option('KEEP', 'ใช้บัญชีที่ระบุไว้ในใบนี้', `${payoutAccountLine(current)}${current?.accountName ? ` · ${current.accountName}` : ''}`)}
+        {/* On a draft filed for someone only an account typed for them tells them: said beside that choice, and of no other. */}
         {option('SPECIFIED', hasOwnAccount ? 'ระบุบัญชีใหม่สำหรับใบนี้' : 'ระบุบัญชีสำหรับใบนี้',
-          forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย')}
+          forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน')}
       </div>
       {value.mode === 'SPECIFIED' && (
         <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
@@ -401,11 +413,15 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
   // Spec §17.2: every account this claim has been sent with. Masked like the one above, and no reveal here.
   const history = claimPayoutHistory(detail);
   const defaultChanged = payoutDefaultChangedHint(detail, canWithdraw);
-  // Payout spec §14: in a correction round the account below is the one in question, or a new one nobody approved yet.
+  // Payout spec §14: in a payout round what is shown below is what was sent back, or what was answered and nobody approved yet.
   const correctionNote = payoutCorrectionCardNote(detail);
+  // The words of the send-back at the foot of the box, by what the claim holds.
+  const round = payoutRoundTexts(detail);
   // A draft whose payout block was not loaded (an action response): say nothing rather than guess.
   if (view.state === 'unknown') return null;
   const isRequester = detail.requesterUserId === userId;
+  // The line above the send-back names "ผู้เบิก" on a cash claim: the claim's own requester reads it said to them ("คุณ").
+  const lead = (isRequester && REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER[round.held]) || round;
   // Present only for a viewer the server lets pay this legacy claim, whose requester has an account.
   const legacyDefault: ReimbursementLegacyPayoutDefault | undefined = view.state === 'legacy' ? detail.legacyPayoutDefault ?? undefined : undefined;
   // Side by side on purpose: people, not the system, judge whether the two names belong together.
@@ -432,7 +448,7 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
               <p className="text-sm font-semibold text-gray-900">{LEGACY_DEFAULT_LABEL}</p>
               {names(legacyDefault.accountName)}
               {/* The claim's own reveal call: it answers this payer with the requester's default, and records it. */}
-              <AccountNumberReveal masked={maskedPayoutAccount(legacyDefault)} revealKey={`${detail.id}:default:${legacyDefault.confirmToken}`} canReveal
+              <AccountNumberReveal masked={maskedPayoutAccount(legacyDefault)} payoutKind={legacyDefault.payoutKind} revealKey={`${detail.id}:default:${legacyDefault.confirmToken}`} canReveal
                 last4={legacyDefault.accountLast4} onReveal={reveal} />
             </>
           ) : payStep && <p className="text-sm text-gray-700">{LEGACY_ASK_REQUESTER_NOTE}</p>}
@@ -447,11 +463,12 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
           </div>
         </>
       )}
-      {view.state === 'cash' && <p className="text-sm text-gray-700">ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี</p>}
+      {/* Who chose cash: the requester, or whoever answered a payout round with cash on their behalf. */}
+      {view.state === 'cash' && <p className="text-sm text-gray-700">{claimCashNote(detail)}</p>}
       {view.state === 'transfer' && payout && (
         <>
           {names(payout.accountName)}
-          <AccountNumberReveal masked={view.line} revealKey={`${detail.id}:${payout.version ?? ''}`} canReveal={payout.canRevealAccountNumber === true}
+          <AccountNumberReveal masked={view.line} payoutKind={payout.payoutKind} revealKey={`${detail.id}:${payout.version ?? ''}`} canReveal={payout.canRevealAccountNumber === true}
             last4={payout.accountLast4} onReveal={reveal} />
         </>
       )}
@@ -477,11 +494,12 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
       )}
       {sendBack && (
         <div className="border-t border-gray-100 pt-3" data-testid="reimbursement-payout-send-back">
-          {/* A claim with no account of its own has nothing to correct, and is paid as it is: the action says what it does. */}
-          <p className="text-xs leading-5 text-gray-500">{view.state === 'legacy' ? PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD : PAYOUT_CORRECTION_SEND_BACK_LEAD}</p>
+          {/* By what the claim holds: an account to correct, cash to choose again, or (a claim with no account of its own,
+              which is paid as it is) an account to add. "อย่าเพิ่งจ่าย" is said only to whoever is offered the payment. */}
+          <p className="text-xs leading-5 text-gray-500">{payStep ? lead.payLead : lead.payLeadCannotPay}</p>
           <button type="button" disabled={sendBack.disabled} onClick={sendBack.onPress}
             className="inline-flex min-h-11 items-center text-left text-sm font-semibold text-gray-700 underline underline-offset-4 hover:text-gray-900 disabled:opacity-50">
-            {view.state === 'legacy' ? PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL}
+            {round.payLink}
           </button>
         </div>
       )}
@@ -489,18 +507,22 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
   );
 }
 
-/** "ตรวจบัญชีแล้ว": the approver's attestation of the account shown above, required to approve a transfer claim. */
-export function PayoutAttestationCheck({ checked, onChange, disabled = false }: {
+/**
+ * "ตรวจบัญชีแล้ว": the approver's attestation of the account shown above, required to approve a transfer claim. What they
+ * are told to look at is what the card shows of that kind of account: a PromptPay number has no bank and no "เลขบัญชี".
+ */
+export function PayoutAttestationCheck({ checked, onChange, disabled = false, payoutKind }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  payoutKind?: string | null;
 }) {
   return (
     <label className="flex min-h-11 items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
       <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
       <span>
         <span className="block font-semibold text-gray-900">{PAYOUT_ATTESTATION_TEXT}</span>
-        <span className="mt-0.5 block text-xs text-gray-500">ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ</span>
+        <span className="mt-0.5 block text-xs text-gray-500">{payoutNumberWords(payoutKind).check}</span>
       </span>
     </label>
   );

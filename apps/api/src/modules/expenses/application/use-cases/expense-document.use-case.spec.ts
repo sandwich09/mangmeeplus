@@ -735,8 +735,11 @@ describe('signature asset lifecycle', () => {
       assert.equal(harness.created[0].status, 'ACTIVE');
       assert.equal(harness.created[0].approvedByUserId, 'user-1', 'activated by the person whose signature it is');
       assert.ok(harness.created[0].approvedAt instanceof Date);
-      // A14: a LINE asset used to arrive with no label at all.
-      assert.match(harness.created[0].label, /^สมชาย ใจดี \d{4}-\d{2}-\d{2}$/);
+      // A14: a LINE asset used to arrive with no label at all. The name it is given is read by its
+      // owner in the signature list, so its date is the Thai short date of every other screen
+      // (2 ต.ค. 2569, Buddhist era), not the machine form the owner reported on 2026-10-02.
+      assert.match(harness.created[0].label, /^สมชาย ใจดี \d{1,2} (ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.) 25\d{2}$/);
+      assert.doesNotMatch(harness.created[0].label, /\d{4}-\d{2}-\d{2}/);
       // One row, and it is not an approval: there is no second party to record.
       assert.deepEqual(audits.map((entry) => entry.action), ['expense.signature.create']);
       assert.equal(audits[0].metadataJson.activationMode, 'personal');

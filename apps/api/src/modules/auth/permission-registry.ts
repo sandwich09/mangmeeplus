@@ -1060,20 +1060,24 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
 };
 
+// `name` is an identifier other code compares (a company's copy of a standard role starts with it), so it
+// stays as it is and each screen prints its own Thai name by key. `description` is read by the shop
+// under the role's title on the role page, and copied into the company's copy when it edits a standard
+// role: it says in plain Thai who the role is for and the kind of work it does.
 export const SYSTEM_ROLES: Array<{ key: string; name: string; description: string }> = [
-  { key: 'OWNER',           name: 'Owner',          description: 'Full access to all resources' },
-  { key: 'SYSTEM_ADMIN',    name: 'System Admin',   description: 'Platform company onboarding access' },
-  { key: 'COMPANY_VIEW',    name: 'Company owner',  description: 'Company owner view: reads the business end to end and opens company settings' },
-  { key: 'ADMIN',           name: 'Admin',           description: 'Administrative access' },
-  { key: 'MANAGER',         name: 'Manager',         description: 'Manager level access' },
-  { key: 'HR',              name: 'HR',              description: 'Employee administration with operational role assignment' },
-  { key: 'SALES',           name: 'Sales',           description: 'Sales access' },
-  { key: 'INVENTORY',       name: 'Inventory',       description: 'Inventory access' },
-  { key: 'FINANCE',         name: 'Finance',         description: 'Finance access' },
-  { key: 'ACCOUNTANT',      name: 'Accountant',      description: 'Accounting access' },
-  { key: 'MARKETING',       name: 'Marketing',       description: 'Marketing access' },
-  { key: 'STAFF',           name: 'Staff',           description: 'General staff access' },
-  { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: 'Read-only audit access' },
+  { key: 'OWNER',           name: 'Owner',          description: 'มีทุกสิทธิ์ที่บริษัทนี้ใช้ได้' },
+  { key: 'SYSTEM_ADMIN',    name: 'System Admin',   description: 'สำหรับเจ้าหน้าที่ของมั่งมีที่ดูแลระบบ ไม่ใช่บทบาทของพนักงานในร้าน' },
+  { key: 'COMPANY_VIEW',    name: 'Company owner',  description: 'สำหรับผู้ที่ต้องการดูภาพรวมของบริษัทโดยไม่แก้ไขข้อมูล เช่น ลูกค้า เอกสารขาย ค่าใช้จ่าย บัญชี และรายงาน' },
+  { key: 'ADMIN',           name: 'Admin',           description: 'สำหรับผู้ดูแลงานในบริษัท: ตั้งค่าบริษัท สาขา พนักงาน และงานประจำวันของร้าน' },
+  { key: 'MANAGER',         name: 'Manager',         description: 'สำหรับผู้จัดการ: ดูแลทีมและอนุมัติงาน เช่น ใบขอซื้อและการเบิกจ่าย' },
+  { key: 'HR',              name: 'HR',              description: 'สำหรับฝ่ายบุคคล: เพิ่ม แก้ไข และปิดบัญชีพนักงาน และกำหนดบทบาทให้พนักงานได้บางบทบาท' },
+  { key: 'SALES',           name: 'Sales',           description: 'สำหรับฝ่ายขาย: ดูแลลูกค้าและทำใบเสนอราคา' },
+  { key: 'INVENTORY',       name: 'Inventory',       description: 'สำหรับฝ่ายคลังสินค้า: รับ-จ่ายสินค้า นับและปรับสต๊อก และบันทึกรับของ' },
+  { key: 'FINANCE',         name: 'Finance',         description: 'สำหรับฝ่ายการเงิน: ออกเอกสารขาย รับเงิน จ่ายเงิน กระทบยอดธนาคาร และเตรียมภาษี' },
+  { key: 'ACCOUNTANT',      name: 'Accountant',      description: 'สำหรับฝ่ายบัญชี: ลงบัญชี ปิดงวด ทำภาษี และกระทบยอดธนาคาร' },
+  { key: 'MARKETING',       name: 'Marketing',       description: 'สำหรับฝ่ายการตลาด: ดูข้อมูลลูกค้าและรายงาน' },
+  { key: 'STAFF',           name: 'Staff',           description: 'สำหรับพนักงานทั่วไป: บันทึกค่าใช้จ่ายและขอเบิกของตัวเอง' },
+  { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: 'สำหรับผู้ตรวจสอบ: ดูข้อมูลของบริษัทเพื่อตรวจสอบโดยไม่แก้ไข' },
   // S06: prefixed so they can never be confused with the tenant role `SALES` above, which is a
   // shop's own sales employee. UI wording is "ทีมขายมั่งมี" / "เซลล์".
   { key: 'MANGMEE_SALES_LEAD', name: 'Mangmee Sales Lead', description: 'Mangmee sales team lead: all teams deals, approvals, team accounts' },

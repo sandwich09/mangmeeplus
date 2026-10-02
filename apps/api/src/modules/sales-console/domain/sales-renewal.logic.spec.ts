@@ -17,14 +17,15 @@ describe('renewal windows (D3)', () => {
 });
 
 describe('daily digest text (§17.2 — counts only, console only)', () => {
-  const body = digestBodyTh({ deals: 2, referrals: 3, amountSatang: 1_234_500, flagged: 1,
+  const body = digestBodyTh({ deals: 2, referrals: 3, amountSatang: 1_234_500, waiting: 1,
     renewalsPending: 4, renewalsOverdue: 2 });
 
   it('reports both channels, the total and every queue', () => {
     assert.match(body, /ดีล 2/);
     assert.match(body, /แนะนำ 3/);
     assert.match(body, /12,345 บาท/);
-    assert.match(body, /ต้องตรวจ 1/);
+    // Owner 2026-10-02: a shop waiting for review is apart from the new shops, in the words of the report and the queue.
+    assert.match(body, /^ร้านเปิดใหม่เมื่อวาน 5 ร้าน \(ดีล 2 · แนะนำ 3\) รวม 12,345 บาท · รอตรวจ 1 ร้าน \(ยังไม่นับในยอด\) · /);
     assert.match(body, /รออนุมัติ 4/);
     assert.match(body, /เตือน 2/);
   });
@@ -35,7 +36,7 @@ describe('daily digest text (§17.2 — counts only, console only)', () => {
   });
 
   it('reads sensibly on an empty day', () => {
-    const empty = digestBodyTh({ deals: 0, referrals: 0, amountSatang: 0, flagged: 0,
+    const empty = digestBodyTh({ deals: 0, referrals: 0, amountSatang: 0, waiting: 0,
       renewalsPending: 0, renewalsOverdue: 0 });
     assert.match(empty, /ร้านเปิดใหม่เมื่อวาน 0 ร้าน/);
     assert.match(empty, /0 บาท/);

@@ -61,6 +61,13 @@ describe('buildDailyBriefWidgets', () => {
     );
   });
 
+  // Owner report 2026-10-02: the dashboard card said "เกิน SLA". Late is "เกินกำหนด" on every screen.
+  it('labels every card in words a shop reads, with no "SLA"', () => {
+    const by = Object.fromEntries(widgets.map((w) => [w.key, w]));
+    assert.equal(by['sla_breaches'].label, 'รอตอบเกินกำหนด');
+    for (const widget of widgets) assert.doesNotMatch(widget.label, /SLA/, widget.key);
+  });
+
   it('escalates severity only when a queue needs attention', () => {
     const by = Object.fromEntries(widgets.map((w) => [w.key, w]));
     assert.equal(by['sla_breaches'].severity, 'critical'); // >0 breaches

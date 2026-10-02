@@ -7,14 +7,14 @@
  * and a renewal never credits the agent — §17.2 counts first activations only.
  */
 import { Injectable } from '@nestjs/common';
-import type { SalesDealSnapshot } from '@watchdog-bms/contracts';
+import { salesCountsAsActivation, salesCreditState, type SalesDealSnapshot } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
 import { AuditService } from '../../audit/application/audit.service';
 import { SalesDealPriceService } from '../../billing/application/sales-deal-price.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
-import { bangkokDateKey } from '../domain/sales-attribution.logic';
+import { bangkokDateKey, countableAmountSatang } from '../domain/sales-attribution.logic';
 import { DEAL_KIND } from '../domain/sales-deal.logic';
 import { DEAL_ENDING_NOTICE_DAYS } from './sales-deals.service';
 import { PLATFORM_TENANT_ID, SALES_LEAD_ROLE } from './sales-context';
@@ -260,21 +260,25 @@ export class SalesRenewalService {
     const periodKey = bangkokDateKey(new Date(now.getTime() - DAY_MS));
     const dayStart = new Date(`${periodKey}T00:00:00+07:00`);
     const dayEnd = new Date(dayStart.getTime() + DAY_MS);
-    const [attributions, flagged, renewalsPending, renewalsOverdue, admins] = await Promise.all([
+    const [attributions, renewalsPending, renewalsOverdue, admins] = await Promise.all([
       this.prisma.client.salesAttribution.findMany({ where: { createdAt: { gte: dayStart, lt: dayEnd } },
-        select: { source: true, amountSatang: true } }),
-      this.prisma.client.salesAttribution.count({ where: { flaggedAt: { gte: dayStart, lt: dayEnd } } }),
+        select: { source: true, amountSatang: true, refundedSatang: true, flags: true, flagReviewedAt: true } }),
       this.prisma.client.packageChangeRequest.count({ where: { kind: DEAL_KIND, status: 'PENDING_APPROVAL', renewalOfRequestId: { not: null } } }),
       this.prisma.client.packageChangeRequest.count({ where: { kind: DEAL_KIND, status: 'PENDING_APPROVAL',
         renewalOfRequestId: { not: null }, renewalRemindedAt: { not: null } } }),
       this.prisma.client.companyMembership.findMany({ where: { status: 'ACTIVE', roles: { some: { role: { key: 'SYSTEM_ADMIN' } } } },
         select: { companyId: true, userId: true } }),
     ]);
+    // Owner 2026-10-02: the report's own rule. A shop waiting for review is no new shop and no
+    // amount, it is its own count; a shop the Owner already cut out is in neither.
+    const state = (row: (typeof attributions)[number]) => salesCreditState(row.flags, row.flagReviewedAt);
+    const counted = attributions.filter((row) => salesCountsAsActivation(state(row)));
     const body = digestBodyTh({
-      deals: attributions.filter((row) => row.source === 'DEAL').length,
-      referrals: attributions.filter((row) => row.source === 'REFERRAL').length,
-      amountSatang: attributions.reduce((sum, row) => sum + row.amountSatang, 0),
-      flagged, renewalsPending, renewalsOverdue,
+      deals: counted.filter((row) => row.source === 'DEAL').length,
+      referrals: counted.filter((row) => row.source === 'REFERRAL').length,
+      amountSatang: attributions.reduce((sum, row) => sum + countableAmountSatang(row), 0),
+      waiting: attributions.filter((row) => state(row) === 'WAITING').length,
+      renewalsPending, renewalsOverdue,
     });
     const byCompany = new Map<string, string[]>();
     for (const admin of admins) byCompany.set(admin.companyId, [...(byCompany.get(admin.companyId) ?? []), admin.userId]);
@@ -298,12 +302,13 @@ export class SalesRenewalService {
  * The digest body. Counts and one baht total — nothing that identifies a shop, an owner or an
  * agent, because this text reaches a dashboard and a notification list (S24).
  */
-export function digestBodyTh(counts: { deals: number; referrals: number; amountSatang: number; flagged: number;
+export function digestBodyTh(counts: { deals: number; referrals: number; amountSatang: number; waiting: number;
   renewalsPending: number; renewalsOverdue: number }): string {
   const baht = (counts.amountSatang / 100).toLocaleString('th-TH', { maximumFractionDigits: 2 });
   return [
     `ร้านเปิดใหม่เมื่อวาน ${counts.deals + counts.referrals} ร้าน (ดีล ${counts.deals} · แนะนำ ${counts.referrals}) รวม ${baht} บาท`,
-    `รายการที่ต้องตรวจ ${counts.flagged} รายการ`,
+    // The words the report and the Owner's queue use for the same shops.
+    `รอตรวจ ${counts.waiting} ร้าน (ยังไม่นับในยอด)`,
     `ข้อเสนอต่ออายุรออนุมัติ ${counts.renewalsPending} รายการ (เลยกำหนดเตือน ${counts.renewalsOverdue})`,
   ].join(' · ');
 }

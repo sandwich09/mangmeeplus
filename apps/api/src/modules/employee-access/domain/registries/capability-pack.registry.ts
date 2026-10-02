@@ -38,7 +38,7 @@ const RAW_PACKS: RawPack[] = [
   {
     key: 'pack.workflow.tasks', module: 'foundation', featureEntitlementKey: 'workflow_automation',
     nameTh: 'งานที่ได้รับมอบหมาย', nameEn: 'My tasks',
-    description: 'รับและทำงาน/เควสต์ที่ระบบมอบหมายให้',
+    description: 'ดูงานที่ระบบมอบหมายให้ แล้วเลื่อนเวลา ทำให้เสร็จ หรือยกเลิกงานนั้น',
     permissionKeys: ['workflow.task.read', 'workflow.task.work'],
   },
 
@@ -108,32 +108,34 @@ const RAW_PACKS: RawPack[] = [
   },
   {
     key: 'pack.audit.read', module: 'company',
-    nameTh: 'ดูบันทึกการใช้งาน (audit)', nameEn: 'Read audit log',
-    description: 'ดูประวัติการกระทำที่ตรวจสอบได้ของบริษัท',
+    nameTh: 'ดูประวัติการใช้งาน', nameEn: 'Read audit log',
+    description: 'ดูประวัติว่าใครทำอะไรในระบบและเมื่อไร รวมถึงประวัติของระบบอัตโนมัติ',
     permissionKeys: ['audit.log.read', 'workflow.audit.read'],
   },
   {
     key: 'pack.dashboard.manage', module: 'company', featureEntitlementKey: 'dashboard_notifications',
     nameTh: 'ปรับแต่งแดชบอร์ด', nameEn: 'Configure dashboard',
-    description: 'ปรับแต่งวิดเจ็ตและสร้างสแนปช็อตแดชบอร์ด',
+    description: 'ปรับการ์ดบนแดชบอร์ด และสั่งให้แดชบอร์ดคำนวณตัวเลขใหม่ทันที',
     permissionKeys: ['dashboard.configure', 'dashboard.snapshot.generate'],
   },
   {
     key: 'pack.notification.admin', module: 'company', featureEntitlementKey: 'dashboard_notifications',
-    nameTh: 'จัดการแจ้งเตือน (แอดมิน)', nameEn: 'Notification admin',
-    description: 'ตั้งกฎแจ้งเตือน และดู/ส่งซ้ำการส่งแจ้งเตือน',
+    nameTh: 'จัดการกฎแจ้งเตือน', nameEn: 'Notification admin',
+    description: 'ตั้งกฎการแจ้งเตือนของบริษัท ดูประวัติการส่ง และสั่งส่งใหม่เมื่อส่งไม่สำเร็จ',
     permissionKeys: ['notification.rule.manage', 'notification.delivery.read', 'notification.delivery.retry'],
   },
   {
     key: 'pack.workflow.view', module: 'company', featureEntitlementKey: 'workflow_automation',
-    nameTh: 'ดูออโตเมชัน', nameEn: 'View automation',
-    description: 'ดูเทมเพลต กฎ การรัน และ dead letter ของออโตเมชัน',
+    nameTh: 'ดูระบบอัตโนมัติ', nameEn: 'View automation',
+    // The words of the ระบบอัตโนมัติ page's own tabs. Its "ข้อผิดพลาดค้าง" tab (a dead letter) is said by what it holds.
+    description: 'ดูเทมเพลต กฎอัตโนมัติ ประวัติการทำงาน และงานอัตโนมัติที่ทำไม่สำเร็จและยังค้างอยู่',
     permissionKeys: ['workflow.template.read', 'workflow.rule.read', 'workflow.run.read', 'workflow.dead_letter.read', 'workflow.audit.read'],
   },
   {
     key: 'pack.workflow.manage', module: 'company', featureEntitlementKey: 'workflow_automation',
-    nameTh: 'จัดการออโตเมชัน', nameEn: 'Manage automation',
-    description: 'สร้าง/เปิดกฎ รันซ้ำ และจัดการ webhook ของออโตเมชัน',
+    nameTh: 'จัดการระบบอัตโนมัติ', nameEn: 'Manage automation',
+    // A webhook is said by what it does for the shop: the system sends its data on to another program.
+    description: 'สร้าง แก้ เปิด และปิดกฎอัตโนมัติ สั่งงานที่ทำไม่สำเร็จให้ทำใหม่หรือข้ามไป และตั้งปลายทางที่ระบบจะส่งข้อมูลไปให้โปรแกรมอื่นโดยอัตโนมัติ',
     permissionKeys: ['workflow.rule.manage', 'workflow.rule.enable', 'workflow.run.replay', 'workflow.dead_letter.replay', 'workflow.webhook.manage'],
   },
 
@@ -170,7 +172,7 @@ const RAW_PACKS: RawPack[] = [
   {
     key: 'pack.crm.operate', module: 'sales', featureEntitlementKey: 'crm',
     nameTh: 'ทำงานขายรายวัน', nameEn: 'Work sales daily',
-    description: 'สร้าง/แก้ลูกค้า ลีด โอกาสขาย เลื่อนสเตจ ปิดการขาย และงานติดตาม',
+    description: 'สร้าง/แก้ลูกค้า ลีด โอกาสขาย ย้ายขั้นตอนการขาย ปิดการขาย และงานติดตาม',
     permissionKeys: [
       'crm.customer.create', 'crm.customer.update', 'crm.contact.manage',
       'crm.lead.create', 'crm.lead.update', 'crm.lead.convert', 'crm.lead.disqualify',
@@ -449,7 +451,7 @@ const RAW_PACKS: RawPack[] = [
   {
     key: 'pack.tax.prepare', module: 'tax', featureEntitlementKey: 'thai_tax',
     nameTh: 'เตรียม/ยื่นภาษี', nameEn: 'Prepare & file tax',
-    description: 'ซิงก์เหตุการณ์ภาษี คำนวณ/ส่งออกรายงาน ทำเครื่องหมายยื่น/จ่าย ออก 50 ทวิ และปรับปรุง',
+    description: 'ดึงรายการภาษีจากเอกสารเข้างวด คำนวณ/ส่งออกรายงาน ทำเครื่องหมายยื่น/จ่าย ออก 50 ทวิ และปรับปรุง',
     permissionKeys: ['tax.event.sync', 'tax.report.recompute', 'tax.report.export', 'tax.filing.mark_filed', 'tax.filing.mark_paid', 'tax.certificate.issue', 'tax.certificate.void', 'tax.review_issue.resolve', 'tax.adjustment.create'],
   },
   {

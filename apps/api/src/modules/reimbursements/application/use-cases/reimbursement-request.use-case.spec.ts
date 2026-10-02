@@ -16,8 +16,13 @@ import {
 } from './reimbursement-request.use-case';
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
-import { isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket } from '@watchdog-bms/contracts';
-import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, PAYOUT_CORRECTION_NOTE } from './reimbursement-summary.use-case';
+import {
+  isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket,
+  reimbursementPayoutAnswerNotice, reimbursementPayoutCorrectionReasons, reimbursementPayoutRoundApproverNote, reimbursementPayoutRoundDid,
+  reimbursementPayoutRoundGivenNote, reimbursementPayoutRoundStatus,
+} from '@watchdog-bms/contracts';
+import { reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
+import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase } from './reimbursement-summary.use-case';
 import { toRequestSummary } from '../dto/reimbursement.mapper';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
 import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
@@ -46,8 +51,8 @@ import {
   readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
 } from '../../infrastructure/reimbursement-payout';
 import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
-import { claimPayoutMatchesVersion, freezePayoutCorrection, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
-import { paymentTurnUserIds, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
+import { freezePayoutCorrection, payoutCorrectionKeptDestination, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
+import { paymentTurnUserIds, payoutCorrectionFacts, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
 import { payoutDefaultToken } from '../../domain/logic/payout-destination.logic';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from './reimbursement-payout-correction.use-case';
@@ -765,7 +770,12 @@ describe('a claim whose payout account is being corrected reads the same on LINE
   }) as any;
   const pendingStep = (requestId: string) => ({ id: `step-${requestId}`, companyId: 'co-1', reimbursementRequestId: requestId, sequenceNo: 1,
     status: 'PENDING', assignedApproverUserIds: ['mgr-1'], approverRoleSnapshot: 'MANAGER' }) as any;
-  const sentBack = { payoutCorrectionRequestedAt: new Date('2026-09-30T03:00:00.000Z'), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG' };
+  // What a claim holds: an account of its own (the method and the fingerprint its submit froze), cash, or neither.
+  const ACCOUNT_HELD = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64) };
+  const CASH_HELD = { payoutMethod: 'CASH', payoutFingerprint: 'cash' };
+  const sentBack = {
+    payoutCorrectionRequestedAt: new Date('2026-09-30T03:00:00.000Z'), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG', ...ACCOUNT_HELD,
+  };
   const rows = [
     row('sent-back', sentBack),                                                                   // phase A: with its requester
     row('new-account', { ...sentBack, payoutCorrectionSubmittedAt: new Date('2026-10-01T02:00:00.000Z') }), // phase B: waiting for สมศรี again
@@ -807,15 +817,65 @@ describe('a claim whose payout account is being corrected reads the same on LINE
       { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-20', longestWaitDays: 11 },
       {
         kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
-        oldestSentBackOn: '2026-09-30', longestWaitDays: 1, note: PAYOUT_CORRECTION_NOTE,
+        oldestSentBackOn: '2026-09-30', longestWaitDays: 1,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
       },
     ]);
-    assert.equal(PAYOUT_CORRECTION_NOTE, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
     // สมศรี has two claims to approve; the corrected account has waited for her since this morning, not for eleven days.
     assert.deepEqual(backlog.byApprover, [{ name: 'สมศรี', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '200.00' }], oldestSubmittedOn: '2026-09-29', longestWaitDays: 2 }]);
     assert.deepEqual([backlog.total, backlog.awaitingApprovalCount], [4, 2]);
     // Nothing of an account, and no code word, in what the assistant is handed.
     assert.doesNotMatch(JSON.stringify(backlog), /ACCOUNT_NUMBER_WRONG|payer-1|AWAITING_|accountLast4|bankName|fingerprint/);
+  });
+
+  // Payout spec §17.3. The desk of a claim that waits for its requester is named for what THAT claim holds. One row
+  // used to say "รอผู้เบิกแก้บัญชีรับเงิน" of every such claim: of one with no account to correct, and of one that asked for cash.
+  it('lists claims that wait for their requester under one row per label: an account to correct, one to add, the method to choose again', async () => {
+    const on = (day: string, reasonCode: string) => ({
+      payoutCorrectionRequestedAt: new Date(`2026-09-${day}T03:00:00.000Z`), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: reasonCode,
+    });
+    const waiting = [
+      row('c-1', { ...on('29', 'CASH_NOT_PAYABLE'), ...CASH_HELD, outstandingAmount: '250.0000' }),
+      row('n-1', { ...on('27', 'NO_ACCOUNT_ON_CLAIM'), outstandingAmount: '40.0000' }),
+      row('a-1', { ...on('30', 'ACCOUNT_NUMBER_WRONG'), ...ACCOUNT_HELD }),
+      // Sent before claims carried a destination: the method its draft once chose is no account of its own.
+      row('n-2', { ...on('25', 'NO_ACCOUNT_ON_CLAIM'), payoutMethod: 'BANK_TRANSFER', outstandingAmount: '60.0000' }),
+      // Answered with cash: it waits for สมศรี, and is in none of these rows.
+      row('answered', { ...on('28', 'CASH_NOT_PAYABLE'), ...CASH_HELD, payoutCorrectionSubmittedAt: new Date('2026-10-01T02:00:00.000Z') }),
+    ];
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(
+      { ...repo, listRequests: async () => waiting, findPendingApprovalSteps: async () => [pendingStep('answered')] }, noopAudit,
+    ).execute(reader, {}, NOW);
+
+    // Each row is whole in itself: a label true of every claim it counts, its own figures and its own sentence.
+    assert.deepEqual(backlog.desks, [
+      {
+        kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
+        oldestSentBackOn: '2026-09-30', longestWaitDays: 1,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+      },
+      {
+        kind: 'requester_correction', label: 'รอผู้เบิกเพิ่มบัญชีรับเงิน', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
+        oldestSentBackOn: '2026-09-25', longestWaitDays: 6,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ผู้เบิกเพิ่มได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+      },
+      {
+        kind: 'requester_correction', label: 'รอผู้เบิกเลือกวิธีรับเงินคืน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '250.00' }],
+        oldestSentBackOn: '2026-09-29', longestWaitDays: 2,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ผู้เบิกเลือกได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+      },
+    ]);
+    // Each claim waits on the label of its own row; the one that was answered waits for its approver.
+    assert.deepEqual(backlog.items.map((item) => [item.id, item.waitingOn, item.sentBackOn ?? item.resubmittedOn, item.waitDays]), [
+      ['n-2', 'รอผู้เบิกเพิ่มบัญชีรับเงิน', '2026-09-25', 6], ['n-1', 'รอผู้เบิกเพิ่มบัญชีรับเงิน', '2026-09-27', 4],
+      ['c-1', 'รอผู้เบิกเลือกวิธีรับเงินคืน', '2026-09-29', 2], ['a-1', 'รอผู้เบิกแก้บัญชีรับเงิน', '2026-09-30', 1],
+      ['answered', 'สมศรี', '2026-10-01', 0],
+    ]);
+    // The rows add up to the claims that are with their requester, and none of those is counted for an approver.
+    assert.deepEqual([backlog.total, backlog.awaitingApprovalCount, backlog.desks.reduce((sum, desk) => sum + desk.count, 0), backlog.byApprover.map((group) => [group.name, group.count])],
+      [5, 1, 4, [['สมศรี', 1]]]);
+    // Where each claim stands, and nothing of an account, a reason or who sent it back.
+    assert.doesNotMatch(JSON.stringify(backlog), /payout|account|ffff|CASH|NO_ACCOUNT|payer-1|AWAITING_|fingerprint/i);
   });
 
   it('counts it as waiting for approval in the assistant summary only once the account is given, and as late only by that wait', async () => {
@@ -3337,7 +3397,7 @@ describe('payout: filing a claim on behalf of someone', () => {
     const notice = world.notifications[0];
     // To the requester alone: not the preparer, not the shop owner, not an approver.
     assert.deepEqual(notice.recipientUserIds, ['staff-1']);
-    assert.equal(notice.title, 'อรทัย ระบุบัญชีรับเงินคืนในใบเบิกของคุณ');
+    assert.equal(notice.title, 'อรทัย ระบุบัญชีรับเงินในใบเบิกของคุณ');
     assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 ระบุเมื่อ .+ ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที$/);
     assert.equal(notice.deepLinkHref, `/companies/co-1/reimbursements/${draft.id}`);
     assert.deepEqual([notice.triggerKey, notice.severity, notice.sourceType, notice.sourceId], ['reimbursement.payout_account_set_by_other', 'critical', 'reimbursement_request', draft.id]);
@@ -3758,8 +3818,6 @@ function correctionWorld(options: RepoOptions = {}) {
     getUserDisplayNames: async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => names[id]).map((id) => [id, names[id]])),
     findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(activeApprovers ?? ids),
     listPaymentPayoutDestinations: (companyId: string, requestId: string, versions: number[]) => readPaymentPayoutDestinations(db, companyId, requestId, versions),
-    // The repository's own comparison of the two stored fingerprints, over the same tables.
-    claimPayoutMatchesVersion: (request: any, version: number) => claimPayoutMatchesVersion(db, request, version),
     listPaymentSlips: async () => ({}),
     areClaimProjectionsReady: async () => true,
     listRequests: async ({ statuses }: any) => (statuses.includes(claim().status) ? [{ ...claim(), approvalSteps: steps }] : []),
@@ -3806,16 +3864,22 @@ function correctionWorld(options: RepoOptions = {}) {
         requestSnapshotHash: approvalSnapshotHash, assignedAt: data.submittedAt,
       } : undefined;
       if (step) steps.push(step);
+      // The repository's own comparison of the two stored fingerprints, over the same tables, made once: here.
+      const sameAsApproved = await payoutCorrectionKeptDestination(db, request, columns, payoutCorrectionRoundStart(request));
       const entry = {
         kind: 'ACCOUNT_SUBMITTED', at: data.submittedAt.toISOString(), byUserId: data.actorUserId, payoutMethod: columns.payoutMethod,
         ...(columns.payoutDestinationVersion !== null && { payoutVersion: columns.payoutDestinationVersion }),
+        ...(sameAsApproved && { sameAsApproved: true }),
       };
+      const log = [...request.payoutCorrectionLog, entry];
       bump({
-        ...columns, approvalSnapshotHash, payoutCorrectionLog: [...request.payoutCorrectionLog, entry],
+        ...columns, approvalSnapshotHash, payoutCorrectionLog: log,
         ...(step ? { currentApprovalStepId: step.id, payoutCorrectionSubmittedAt: data.submittedAt }
           : { status: 'READY_FOR_PAYMENT', approvedAt: data.submittedAt, paymentStatus: 'UNPAID', ...OUT_OF_ROUND }),
       });
-      await data.onPersisted(fakeTx(calls.outbox), { columns, ...(step && { step }), ...(replaced && { replacedStepId: replaced.id }), readyForPayment: !step });
+      await data.onPersisted(fakeTx(calls.outbox), {
+        columns, ...(step && { step }), ...(replaced && { replacedStepId: replaced.id }), readyForPayment: !step, answer: payoutCorrectionFacts(log).at(-1)?.answer,
+      });
       return { request, ...(step && { step }), readyForPayment: !step };
     },
     approvePayoutCorrectionAtomic: async (data: any) => {
@@ -3953,6 +4017,7 @@ describe('payout correction: sending a claim that waits for payment back for its
     assert.equal(event.eventType, 'reimbursement.payout_correction_requested');
     assert.deepEqual(event.payloadJson.data, {
       requestId: id, requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', status: 'PENDING_APPROVAL',
+      payoutCorrectionTitle: 'ใบเบิกต้องแก้บัญชีรับเงิน',
       payoutCorrectionNotice: 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
     });
     assert.equal(event.payloadJson.actorUserId, 'payer-1');
@@ -4020,7 +4085,8 @@ describe('payout correction: what the claim says and allows while it is in a rou
 describe('payout correction: the requester gives the account and it is approved again (AC31)', () => {
   const sentBack = async (world: ReturnType<typeof correctionWorld>, send: Parameters<ReturnType<typeof correctionWorld>['ready']>[0] = {}) => {
     const id = await world.ready(send);
-    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    // A reason the claim takes: a wrong account number is no reason for a claim that asked for cash.
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: world.claim().payoutMethod === 'CASH' ? 'CASH_NOT_PAYABLE' : 'ACCOUNT_NUMBER_WRONG' });
     world.events().length = 0;
     world.audits.length = 0;
     return id;
@@ -4131,6 +4197,8 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.deepEqual(event.payloadJson.data, {
       requestId: id, requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', amount: claim.amount, currency: 'THB',
       status: 'PENDING_APPROVAL', stepId: 'step-2', approverRecipientUserIds: ['manager-1'],
+      // Another account in place of the one the claim had: the one answer whose notice says "ใหม่".
+      payoutAnswerTitle: 'รออนุมัติบัญชีรับเงินใหม่', payoutAnswerNotice: 'รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่',
     });
     const [entry] = world.audits;
     assert.deepEqual([world.audits.length, entry.action, entry.result], [1, 'reimbursement.payout_correction.submit', 'SUCCESS']);
@@ -4176,15 +4244,16 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.equal(leaksNumber([saved.events(), saved.audits]), false);
   });
 
-  it('lets a finance reviewer give it on the requester\'s behalf, and tells the requester who typed the account', async () => {
+  it('lets a finance reviewer give it on the requester\'s behalf, and tells the requester who answered and with which account', async () => {
     const world = correctionWorld();
     const id = await sentBack(world);
     await world.giveAccount.execute(financeCtx(), id, { mode: 'SPECIFIED', ...SCB });
     assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.source, row.createdByUserId]).slice(1), [[2, 'PREPARER', 'finance-1']]);
     assert.equal(world.audits[0].metadataJson.onBehalfOfRequester, true);
-    // The notice every account typed for someone else sends, to the requester alone, with the last four digits.
+    // ONE notice, to the requester alone, with the last four digits: the notice of a round answered for them, in the
+    // words of that answer, and not also the one an account typed on a draft sends ("… ระบุบัญชีรับเงินในใบเบิกของคุณ").
     assert.deepEqual(world.notifications.map((notice) => [notice.recipientUserIds, notice.triggerKey, notice.title]),
-      [[['staff-1'], 'reimbursement.payout_account_set_by_other', 'อรทัย ระบุบัญชีรับเงินคืนในใบเบิกของคุณ']]);
+      [[['staff-1'], 'reimbursement.payout_account_set_by_other', 'อรทัย แก้บัญชีรับเงินในใบเบิกของคุณ: RB-202601-000001']]);
     assert.match(world.notifications[0].body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 /);
     assert.equal(leaksNumber([world.notifications, world.events(), world.audits]), false);
   });
@@ -4236,7 +4305,7 @@ describe('payout correction: the requester gives the account and it is approved 
     const legacy = correctionWorld();
     const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
     Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
-    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'OTHER' });
+    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
     await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'PREVIOUS' }), (error: any) => error.getStatus() === 409 && error.message === 'payout_destination_required');
     assert.equal(legacy.claim().payoutCorrectionSubmittedAt, undefined);
   });
@@ -4440,11 +4509,13 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.deepEqual(world.events().map((event) => event.eventType), ['reimbursement.ready_for_payment']);
 
     // The timeline's three lines (spec §17.2), with the people named; the note-free reason is a code the page words.
+    // Each line carries the fact its words are chosen from: what the claim held when it was sent back, what its
+    // requester answered, and which answer was approved.
     const at = (index: number) => world.claim().payoutCorrectionLog[index].at;
     assert.deepEqual(forPayer.payoutCorrectionHistory, [
-      { kind: 'SENT_BACK', at: at(0), byUserId: 'payer-1', byName: 'ประไพ', reasonCode: 'ACCOUNT_NUMBER_WRONG' },
-      { kind: 'ACCOUNT_SUBMITTED', at: at(1), byUserId: 'staff-1', byName: 'สมชาย', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 },
-      { kind: 'REAPPROVED', at: at(2), byUserId: 'manager-1', byName: 'วิภา', approvalStepId: 'step-2' },
+      { kind: 'SENT_BACK', at: at(0), byUserId: 'payer-1', byName: 'ประไพ', reasonCode: 'ACCOUNT_NUMBER_WRONG', held: 'ACCOUNT' },
+      { kind: 'ACCOUNT_SUBMITTED', at: at(1), byUserId: 'staff-1', byName: 'สมชาย', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2, answer: 'NEW_ACCOUNT' },
+      { kind: 'REAPPROVED', at: at(2), byUserId: 'manager-1', byName: 'วิภา', approvalStepId: 'step-2', answer: 'NEW_ACCOUNT' },
     ]);
     assert.deepEqual(forPayer.approvalSteps.map((step) => [step.id, step.status]), [['step-1', 'APPROVED'], ['step-2', 'APPROVED']]);
     assert.equal(leaksNumber([approved, forPayer, world.events(), world.audits]), false);
@@ -4533,7 +4604,7 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     const legacyHash = claim.approvalSnapshotHash;
     assert.equal(hasPayoutSnapshot(claim), false);
 
-    const sentBack = await world.sendBack.execute(payerCtx(), id, { reasonCode: 'OTHER' });
+    const sentBack = await world.sendBack.execute(payerCtx(), id, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
     assert.deepEqual([sentBack.payoutCorrection?.previous, sentBack.payout], [undefined, undefined], 'it had no account to show');
     assert.equal(world.claim().approvalSnapshotHash, legacyHash, 'sending back changes no hash');
     const given = await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK });
@@ -4546,38 +4617,406 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     assert.deepEqual([approved.status, approved.payout?.verifiedByName], ['READY_FOR_PAYMENT', 'วิภา']);
   });
 
-  // Upgrade test 2026-10-02: every reason presumed an account that is wrong, so whoever sent a legacy claim back to be
-  // given one had only "อื่น ๆ". The reason exists for exactly that claim, and its notice asks for an account to be added.
-  it('takes "the claim has no account yet" from a claim with no account of its own and from no other, and asks its requester to add one', async () => {
+  // Payout spec §14.3. The reasons a send-back takes are the ones that are true of what the claim holds. Before, every
+  // claim was offered the reasons of a wrong account: a claim with no account took five reasons that presumed one, and
+  // so did a claim that had asked for cash, which has none.
+  it('takes a reason only from the list of what the claim holds: one for a claim with no account, three of its own for cash, and no wrong bank for a PromptPay number', async () => {
     const refused = (error: any) => error.getStatus() === 400 && error.message === 'payout_correction_reason_required';
-    const legacy = correctionWorld();
-    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
-    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
-    const sentBack = await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
-    assert.deepEqual([sentBack.payoutCorrection?.phase, sentBack.payoutCorrection?.reasonCode, legacy.claim().payoutCorrectionReasonCode],
-      ['AWAITING_REQUESTER', 'NO_ACCOUNT_ON_CLAIM', 'NO_ACCOUNT_ON_CLAIM']);
-    assert.deepEqual(legacy.events().map((event) => event.payloadJson.data.payoutCorrectionNotice), ['เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน']);
-    assert.equal(legacy.audits[0].metadataJson.reasonCode, 'NO_ACCOUNT_ON_CLAIM');
-
-    // Once its requester has given an account the claim has one: sent back again from the waiting step, it takes the
-    // reasons of a claim with an account, and that notice asks for a correction.
-    await legacy.giveAccount.execute(ctx(), legacyId, { mode: 'SPECIFIED', ...KBANK });
-    assert.equal(hasPayoutSnapshot(legacy.claim()), true);
-    await assert.rejects(() => legacy.reject.execute(approverCtx(), legacyId, 'ชื่อบัญชีไม่ตรง', 'NO_ACCOUNT_ON_CLAIM'), refused);
-    await legacy.reject.execute(approverCtx(), legacyId, 'ชื่อบัญชีไม่ตรง', 'ACCOUNT_NAME_MISMATCH');
-    assert.equal(legacy.events().at(-1).payloadJson.data.payoutCorrectionNotice, 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
-
-    // A claim sent with an account, by transfer or as cash, has one to correct: the reason is refused and nothing is written.
-    for (const send of [{}, { setDefault: null, payout: { mode: 'CASH' } }] as const) {
+    const LEGACY = { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined };
+    type Made = { world: ReturnType<typeof correctionWorld>; id: string; by: any };
+    /** A claim that waits for payment, as it was sent; `legacy`: as a build from before claims carried a destination left it. */
+    const ready = (send: Record<string, unknown>, legacy = false) => async (): Promise<Made> => {
       const world = correctionWorld();
-      const id = await world.ready(send);
-      await assert.rejects(() => world.sendBack.execute(payerCtx(), id, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' }), refused, JSON.stringify(send));
-      assert.deepEqual([world.claim().status, world.events(), world.audits], ['READY_FOR_PAYMENT', [], []]);
-    }
-    // The other reasons stay open to a legacy claim: the account its payer is shown is its requester's default, which can be wrong.
+      const id = await world.ready(send as any);
+      if (legacy) Object.assign(world.claim(), LEGACY);
+      return { world, id, by: payerCtx() };
+    };
+    /** The same claim sent back and answered: it waits for its approver, who may send it back again. */
+    const answered = (claim: () => Promise<Made>, reasonCode: string, give: Record<string, unknown>) => async (): Promise<Made> => {
+      const made = await claim();
+      await made.world.sendBack.execute(payerCtx(), made.id, { reasonCode });
+      await made.world.giveAccount.execute(ctx(), made.id, give as any);
+      return { ...made, by: approverCtx() };
+    };
+    /** Every reason the send-back takes from such a claim, each tried on a claim of its own. A refusal writes nothing. */
+    const taken = async (make: () => Promise<Made>) => {
+      const codes: string[] = [];
+      for (const reasonCode of Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS)) {
+        const { world, id, by } = await make();
+        const before = [world.claim().status, world.claim().updatedAt.getTime(), world.events().length, world.audits.length];
+        try {
+          await world.sendBack.execute(by, id, { reasonCode });
+          codes.push(reasonCode);
+        } catch (error) {
+          assert.ok(refused(error), `${reasonCode}: ${String(error)}`);
+          assert.deepEqual([world.claim().status, world.claim().updatedAt.getTime(), world.events().length, world.audits.length], before, reasonCode);
+        }
+      }
+      return codes;
+    };
+    const OF_AN_ACCOUNT = ['ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NAME_MISMATCH', 'BANK_WRONG', 'ACCOUNT_UNUSABLE', 'REQUESTER_ASKED', 'OTHER'];
+    const OF_CASH = ['CASH_NOT_PAYABLE', 'REQUESTER_ASKED_METHOD', 'OTHER'];
+    const withAccount = ready({});
+    const withPromptPay = ready({ setDefault: PROMPTPAY });
+    const withCash = ready({ setDefault: null, payout: { mode: 'CASH' } });
+    const withNothing = ready({ setDefault: null, payout: { mode: 'CASH' } }, true);
+
+    // At the pay step: what the claim was approved with.
+    assert.deepEqual(await taken(withAccount), OF_AN_ACCOUNT);
+    // A PromptPay number has no bank to be wrong.
+    assert.deepEqual(await taken(withPromptPay), OF_AN_ACCOUNT.filter((code) => code !== 'BANK_WRONG'));
+    assert.deepEqual(await taken(withCash), OF_CASH);
+    // No account: that one reason, and not even "อื่น ๆ".
+    assert.deepEqual(await taken(withNothing), ['NO_ACCOUNT_ON_CLAIM']);
+
+    // From the waiting step: what its requester just gave, whatever the claim held before.
+    assert.deepEqual(await taken(answered(withNothing, 'NO_ACCOUNT_ON_CLAIM', { mode: 'SPECIFIED', ...KBANK })), OF_AN_ACCOUNT);
+    assert.deepEqual(await taken(answered(withNothing, 'NO_ACCOUNT_ON_CLAIM', { mode: 'CASH' })), OF_CASH);
+    assert.deepEqual(await taken(answered(withAccount, 'ACCOUNT_NUMBER_WRONG', { mode: 'CASH' })), OF_CASH);
+    assert.deepEqual(await taken(answered(withAccount, 'ACCOUNT_NUMBER_WRONG', { mode: 'SPECIFIED', ...PROMPTPAY })), OF_AN_ACCOUNT.filter((code) => code !== 'BANK_WRONG'));
+    assert.deepEqual(await taken(answered(withCash, 'CASH_NOT_PAYABLE', { mode: 'SPECIFIED', ...SCB })), OF_AN_ACCOUNT);
+
+    // The list the form offers is the list the endpoint takes: one function, asked the same question.
+    assert.deepEqual([OF_AN_ACCOUNT, OF_AN_ACCOUNT.filter((code) => code !== 'BANK_WRONG'), OF_CASH, ['NO_ACCOUNT_ON_CLAIM']],
+      [reimbursementPayoutCorrectionReasons('ACCOUNT', 'BANK_ACCOUNT'), reimbursementPayoutCorrectionReasons('ACCOUNT', 'PROMPTPAY_PHONE'), reimbursementPayoutCorrectionReasons('CASH'), reimbursementPayoutCorrectionReasons('NOTHING')]);
+
+    // What was sent back is on the claim, in its audit row and in the requester's notice, in the list's own words.
+    const legacy = await withNothing();
+    const sentBack = await legacy.world.sendBack.execute(payerCtx(), legacy.id, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assert.deepEqual([sentBack.payoutCorrection?.phase, sentBack.payoutCorrection?.reasonCode, legacy.world.claim().payoutCorrectionReasonCode, legacy.world.audits[0].metadataJson.reasonCode],
+      ['AWAITING_REQUESTER', 'NO_ACCOUNT_ON_CLAIM', 'NO_ACCOUNT_ON_CLAIM', 'NO_ACCOUNT_ON_CLAIM']);
+    assert.deepEqual(legacy.world.events().map((event) => event.payloadJson.data.payoutCorrectionNotice), ['เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน']);
+
+    // The reject call of the approval card is the same send-back: the same list, and "อื่น ๆ" when it names no reason.
+    const cashAnswer = await answered(withAccount, 'ACCOUNT_NUMBER_WRONG', { mode: 'CASH' })();
+    await assert.rejects(() => cashAnswer.world.reject.execute(approverCtx(), cashAnswer.id, 'ขอให้รับเป็นการโอน', 'ACCOUNT_NAME_MISMATCH'), refused);
+    const again = await cashAnswer.world.reject.execute(approverCtx(), cashAnswer.id, 'ขอให้รับเป็นการโอน');
+    assert.deepEqual([again.payoutCorrection?.phase, again.payoutCorrection?.reasonCode, again.payoutCorrection?.note], ['AWAITING_REQUESTER', 'OTHER', 'ขอให้รับเป็นการโอน']);
+  });
+
+  // A PromptPay destination is a phone number, which the entry form calls "เบอร์พร้อมเพย์". Before, the requester of a
+  // PromptPay claim was told "เหตุผล: เลขบัญชีไม่ถูกต้อง". The reason is the same one, under the same code: the words follow
+  // the kind of the account the claim holds when it is sent back.
+  it('tells the requester the reason in the words of the account kind: "เบอร์พร้อมเพย์" of a PromptPay number, from the pay step and from the waiting step', async () => {
+    const notice = (world: ReturnType<typeof correctionWorld>) => world.events()
+      .filter((event) => event.eventType === 'reimbursement.payout_correction_requested').at(-1)!.payloadJson.data.payoutCorrectionNotice;
+    const PROMPTPAY_WORDS = 'เหตุผล: เบอร์พร้อมเพย์ไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน';
+    const BANK_WORDS = 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน';
+
+    const promptPay = correctionWorld();
+    const promptPayId = await promptPay.ready({ setDefault: PROMPTPAY as any });
+    const sentBack = await promptPay.sendBack.execute(payerCtx(), promptPayId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.equal(notice(promptPay), PROMPTPAY_WORDS);
+    // The code on the claim, in its detail and in its audit row is the one sent: only the words differ.
+    assert.deepEqual([sentBack.payoutCorrection?.reasonCode, promptPay.claim().payoutCorrectionReasonCode, promptPay.audits[0].metadataJson.reasonCode],
+      ['ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NUMBER_WRONG']);
+
+    const bank = correctionWorld();
+    const bankId = await bank.ready();
+    await bank.sendBack.execute(payerCtx(), bankId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.equal(notice(bank), BANK_WORDS);
+
+    // From the waiting step the claim holds what was just given: the words are those of that answer, not of what the round began with.
+    await bank.giveAccount.execute(ctx(), bankId, { mode: 'SPECIFIED', ...PROMPTPAY });
+    await bank.sendBack.execute(approverCtx(), bankId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.equal(notice(bank), PROMPTPAY_WORDS);
+    await promptPay.giveAccount.execute(ctx(), promptPayId, { mode: 'SPECIFIED', ...SCB });
+    await promptPay.sendBack.execute(approverCtx(), promptPayId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.equal(notice(promptPay), BANK_WORDS);
+    // Every other reason of a PromptPay number reads as it does of any account.
     const other = correctionWorld();
-    const otherId = await other.ready({ setDefault: null, payout: { mode: 'CASH' } });
-    Object.assign(other.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
-    assert.equal((await other.sendBack.execute(payerCtx(), otherId, { reasonCode: 'ACCOUNT_UNUSABLE' })).payoutCorrection?.reasonCode, 'ACCOUNT_UNUSABLE');
+    const otherId = await other.ready({ setDefault: PROMPTPAY as any });
+    await other.sendBack.execute(payerCtx(), otherId, { reasonCode: 'ACCOUNT_NAME_MISMATCH' });
+    assert.equal(notice(other), 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
+  });
+});
+
+// Payout spec §14.2: the words of a round. Every reader of a round chooses its words from two facts: what the claim
+// held when it was sent back, and what its requester answered against what the round began with. Both are on the
+// row, the detail and each line of the timeline, read from the round's log by one function, and "the same
+// destination" is decided once, when the answer is taken.
+describe('payout correction: what the claim held and what its requester answered, for every reader of a round', () => {
+  const LEGACY = { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined };
+  /** A claim that waits for payment holding an account (its requester's default, KBANK), cash, or nothing. */
+  const holding = async (held: 'ACCOUNT' | 'CASH' | 'NOTHING') => {
+    const world = correctionWorld();
+    const id = await world.ready(held === 'ACCOUNT' ? {} : { setDefault: null, payout: { mode: 'CASH' } });
+    if (held === 'NOTHING') Object.assign(world.claim(), LEGACY);
+    return { world, id };
+  };
+  // A reason each of the three takes, whichever way its list is drawn.
+  const REASON = { ACCOUNT: 'ACCOUNT_NUMBER_WRONG', CASH: 'OTHER', NOTHING: 'NO_ACCOUNT_ON_CLAIM' } as const;
+  const facts = (detail: { payoutCorrectionHistory?: Array<{ kind: string; held?: string; answer?: string }> }) =>
+    detail.payoutCorrectionHistory!.map((event) => [event.kind, event.held, event.answer]);
+
+  it('names each of the seven answers on the row, the detail and the timeline, and calls "the same" only a destination that was kept', async () => {
+    const cases = [
+      ['ACCOUNT', { mode: 'SPECIFIED', ...SCB }, 'NEW_ACCOUNT', false, 'รออนุมัติบัญชีรับเงินใหม่'],
+      ['ACCOUNT', { mode: 'PREVIOUS' }, 'SAME_ACCOUNT', true, 'รออนุมัติบัญชีรับเงินเดิม'],
+      ['ACCOUNT', { mode: 'CASH' }, 'CASH_INSTEAD', false, 'รออนุมัติการรับเป็นเงินสด'],
+      ['CASH', { mode: 'SPECIFIED', ...KBANK }, 'ACCOUNT_INSTEAD', false, 'รออนุมัติบัญชีรับเงิน'],
+      ['CASH', { mode: 'CASH' }, 'SAME_CASH', true, 'รออนุมัติการรับเป็นเงินสด'],
+      ['NOTHING', { mode: 'SPECIFIED', ...KBANK }, 'FIRST_ACCOUNT', false, 'รออนุมัติบัญชีรับเงิน'],
+      ['NOTHING', { mode: 'CASH' }, 'FIRST_CASH', false, 'รออนุมัติการรับเป็นเงินสด'],
+    ] as const;
+    for (const [held, give, answer, same, label] of cases) {
+      const { world, id } = await holding(held);
+      const sentBack = await world.sendBack.execute(payerCtx(), id, { reasonCode: REASON[held] });
+      // With its requester: the row says what the claim holds, and nothing of an answer yet.
+      assert.deepEqual([sentBack.payoutMethod, sentBack.payoutCorrectionAnswer, toRequestSummary(world.claim()).payoutCorrectionAnswer],
+        [{ ACCOUNT: 'BANK_TRANSFER', CASH: 'CASH', NOTHING: undefined }[held], undefined, undefined], answer);
+      // The requester's notice is titled and worded for what the claim held: its event carries both sentences, finished.
+      const asked = world.events().at(-1).payloadJson.data;
+      assert.deepEqual([world.events().at(-1).eventType, asked.payoutCorrectionTitle, asked.payoutCorrectionNotice], ['reimbursement.payout_correction_requested', ...{
+        ACCOUNT: ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+        CASH: ['ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน'],
+        NOTHING: ['ใบเบิกต้องเพิ่มบัญชีรับเงิน', 'เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน'],
+      }[held]], answer);
+
+      const given = await world.giveAccount.execute(ctx(), id, give as any);
+      // The approvers' notice is titled with the claim's own status label and names the same thing in its body.
+      const waits = world.events().at(-1).payloadJson.data;
+      assert.deepEqual([world.events().at(-1).eventType, waits.payoutAnswerTitle, waits.payoutAnswerNotice],
+        ['reimbursement.payout_correction_submitted', label, `รอคุณตรวจและอนุมัติ${label.replace('รออนุมัติ', '')}`], answer);
+      assert.deepEqual({ title: waits.payoutAnswerTitle, body: waits.payoutAnswerNotice }, reimbursementPayoutAnswerNotice(answer), answer);
+      const row = toRequestSummary(world.claim());
+      assert.deepEqual([given.payoutCorrectionPhase, given.payoutCorrectionAnswer, row.payoutCorrectionAnswer, given.payoutCorrection?.sameAsPrevious, reimbursementPayoutRoundStatus(row)],
+        ['AWAITING_APPROVAL', answer, answer, same, label], answer);
+      // Decided once, when the answer was taken, and kept on the round's log: a read compares nothing.
+      assert.equal(world.claim().payoutCorrectionLog.at(-1).sameAsApproved, same ? true : undefined, answer);
+
+      const waiting = await world.detail.execute(approverCtx(), id);
+      await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, waiting.payout?.version);
+      const after = await world.detail.execute(payerCtx(), id);
+      assert.deepEqual(facts(after), [['SENT_BACK', held, undefined], ['ACCOUNT_SUBMITTED', undefined, answer], ['REAPPROVED', undefined, answer]], answer);
+      // Out of its round it is a claim waiting for payment like any other, and the log's own key stays on the server.
+      assert.deepEqual([after.status, after.payoutCorrectionAnswer, toRequestSummary(world.claim()).payoutCorrectionAnswer], ['READY_FOR_PAYMENT', undefined, undefined], answer);
+      assert.doesNotMatch(JSON.stringify(after), /sameAsApproved|fingerprint/i, answer);
+    }
+  });
+
+  it('says what the claim held at every send-back, and measures every answer against what its round began with', async () => {
+    const { world, id } = await holding('ACCOUNT');
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    // Not taken by the approver: the claim is with its requester again, holding the answer that was refused.
+    await world.sendBack.execute(approverCtx(), id, { reasonCode: 'OTHER' });
+    const refused = await world.detail.execute(ctx(), id);
+    assert.deepEqual([refused.payoutCorrectionPhase, refused.payoutMethod, refused.payoutCorrectionAnswer, reimbursementPayoutRoundStatus(refused)],
+      ['AWAITING_REQUESTER', 'CASH', undefined, 'รอผู้เบิกเลือกวิธีรับเงินคืน']);
+    // Its requester is told so in the words of cash, though the round began with an account.
+    const notice = () => { const { payoutCorrectionTitle, payoutCorrectionNotice } = world.events().at(-1).payloadJson.data; return [payoutCorrectionTitle, payoutCorrectionNotice]; };
+    assert.deepEqual(notice(), ['ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน']);
+    // The next answer is measured against the account the round began with, not against the cash just refused.
+    const kept = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual([kept.payoutCorrectionAnswer, kept.payoutCorrection?.sameAsPrevious], ['SAME_ACCOUNT', true]);
+    await world.sendBack.execute(approverCtx(), id, { reasonCode: 'ACCOUNT_NAME_MISMATCH' });
+    assert.equal(reimbursementPayoutRoundStatus(await world.detail.execute(ctx(), id)), 'รอผู้เบิกแก้บัญชีรับเงิน');
+    assert.deepEqual(notice(), ['ใบเบิกต้องแก้บัญชีรับเงิน', 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน']);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    const waiting = await world.detail.execute(approverCtx(), id);
+    await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, waiting.payout?.version);
+
+    // A second round begins with what the first one approved: going back to the first account is another account
+    // now, and "the account the claim had" is the one approved last.
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'REQUESTER_ASKED' });
+    assert.equal((await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK })).payoutCorrectionAnswer, 'NEW_ACCOUNT');
+    const again = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual([again.payoutCorrectionAnswer, again.payout?.accountLast4], ['SAME_ACCOUNT', '9012']);
+    assert.deepEqual(facts(await world.detail.execute(ctx(), id)), [
+      ['SENT_BACK', 'ACCOUNT', undefined], ['ACCOUNT_SUBMITTED', undefined, 'CASH_INSTEAD'],
+      ['SENT_BACK', 'CASH', undefined], ['ACCOUNT_SUBMITTED', undefined, 'SAME_ACCOUNT'],
+      ['SENT_BACK', 'ACCOUNT', undefined], ['ACCOUNT_SUBMITTED', undefined, 'NEW_ACCOUNT'], ['REAPPROVED', undefined, 'NEW_ACCOUNT'],
+      ['SENT_BACK', 'ACCOUNT', undefined], ['ACCOUNT_SUBMITTED', undefined, 'NEW_ACCOUNT'], ['ACCOUNT_SUBMITTED', undefined, 'SAME_ACCOUNT'],
+    ]);
+  });
+
+  // D2: an answer taken by a build from before the key existed carries none. It reads as not the same; nothing is compared again.
+  it('reads an answer with no record of having been kept as another destination', async () => {
+    const { world, id } = await holding('ACCOUNT');
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    const kept = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.equal(kept.payoutCorrectionAnswer, 'SAME_ACCOUNT');
+    delete world.claim().payoutCorrectionLog.at(-1).sameAsApproved;
+    const read = await world.detail.execute(approverCtx(), id);
+    assert.deepEqual([read.payoutCorrectionAnswer, read.payoutCorrection?.sameAsPrevious, reimbursementPayoutRoundStatus(read)], ['NEW_ACCOUNT', false, 'รออนุมัติบัญชีรับเงินใหม่']);
+  });
+});
+
+// No sentence may say the requester did what someone else did for them. A finance reviewer may answer a round on the
+// requester's behalf (payout spec §14.5): the row, the detail and the timeline then say who answered, so that every
+// sentence that says what was done can say it of that person.
+describe('payout correction: who answered, when someone answers for the requester', () => {
+  const LEGACY = { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined };
+  const holding = async (held: 'ACCOUNT' | 'CASH' | 'NOTHING') => {
+    const world = correctionWorld();
+    const id = await world.ready(held === 'ACCOUNT' ? {} : { setDefault: null, payout: { mode: 'CASH' } });
+    if (held === 'NOTHING') Object.assign(world.claim(), LEGACY);
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: { ACCOUNT: 'ACCOUNT_NUMBER_WRONG', CASH: 'CASH_NOT_PAYABLE', NOTHING: 'NO_ACCOUNT_ON_CLAIM' }[held] });
+    return { world, id };
+  };
+
+  it('names the finance reviewer who answered, on the row, the detail and the timeline, and in every sentence made from them, for each of the seven answers', async () => {
+    const cases = [
+      ['ACCOUNT', { mode: 'SPECIFIED', ...SCB }, 'NEW_ACCOUNT', 'อรทัย แก้บัญชีรับเงินแทนผู้เบิก'],
+      ['ACCOUNT', { mode: 'PREVIOUS' }, 'SAME_ACCOUNT', 'อรทัย ยืนยันบัญชีเดิมแทนผู้เบิก'],
+      ['ACCOUNT', { mode: 'CASH' }, 'CASH_INSTEAD', 'อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก'],
+      ['CASH', { mode: 'SPECIFIED', ...KBANK }, 'ACCOUNT_INSTEAD', 'อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก'],
+      ['CASH', { mode: 'CASH' }, 'SAME_CASH', 'อรทัย ยืนยันวิธีรับเงินคืนเดิมแทนผู้เบิก'],
+      ['NOTHING', { mode: 'SPECIFIED', ...KBANK }, 'FIRST_ACCOUNT', 'อรทัย เพิ่มบัญชีรับเงินแทนผู้เบิก'],
+      ['NOTHING', { mode: 'CASH' }, 'FIRST_CASH', 'อรทัย เลือกวิธีรับเงินคืนแทนผู้เบิก'],
+    ] as const;
+    for (const [held, give, answer, did] of cases) {
+      const { world, id } = await holding(held);
+      const given = await world.giveAccount.execute(financeCtx(), id, give as any);
+      // The detail names who answered. A list row resolves no names, and still says it was not the requester.
+      const who = { byUserId: 'finance-1', byName: 'อรทัย', onBehalf: true as const };
+      assert.deepEqual([given.payoutCorrectionAnswer, given.payoutCorrectionAnsweredBy], [answer, who], answer);
+      assert.deepEqual(toRequestSummary(world.claim()).payoutCorrectionAnsweredBy, { byUserId: 'finance-1', onBehalf: true }, answer);
+      const waiting = await world.detail.execute(approverCtx(), id);
+      const event = waiting.payoutCorrectionHistory!.at(-1)!;
+      assert.deepEqual([event.kind, event.answer, event.byUserId, event.byName, event.onBehalf], ['ACCOUNT_SUBMITTED', answer, 'finance-1', 'อรทัย', true], answer);
+
+      // The sentences made from them, as the web will make them: the timeline row, the approver's step note and the
+      // card's note name อรทัย and say it was for the requester. Nothing says the requester did it.
+      const said = [
+        reimbursementPayoutRoundDid(event.answer!, event),
+        reimbursementPayoutRoundApproverNote(waiting.payoutCorrectionAnswer!, waiting.payoutCorrectionAnsweredBy),
+        reimbursementPayoutRoundGivenNote(waiting.payoutCorrectionAnsweredBy),
+      ];
+      assert.equal(said[0], did, answer);
+      assert.equal(said[1], reimbursementPayoutRoundApproverNote(answer, who), answer);
+      assert.doesNotMatch(said.join(' ').replaceAll('แทนผู้เบิก', ''), /ผู้เบิก|finance-1/, answer);
+      for (const sentence of answer === 'NEW_ACCOUNT' ? [said[0]!, said[2]!] : said) assert.match(sentence, /อรทัย .*แทนผู้เบิก/, answer);
+
+      // The approvers' notice says what waits for them and names nobody: it is the notice of the same answer by the requester.
+      const waits = world.events().at(-1).payloadJson.data;
+      assert.deepEqual([world.events().at(-1).eventType, { title: waits.payoutAnswerTitle, body: waits.payoutAnswerNotice }],
+        ['reimbursement.payout_correction_submitted', reimbursementPayoutAnswerNotice(answer)], answer);
+      assert.doesNotMatch(`${waits.payoutAnswerTitle} ${waits.payoutAnswerNotice}`, /ผู้เบิก|อรทัย/, answer);
+
+      // Approved: the approval is the approver's own act, and out of its round the claim carries no answerer.
+      await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, waiting.payout?.version);
+      const after = await world.detail.execute(payerCtx(), id);
+      assert.deepEqual(after.payoutCorrectionHistory!.map((entry) => [entry.kind, entry.byName, entry.onBehalf]),
+        [['SENT_BACK', 'ประไพ', undefined], ['ACCOUNT_SUBMITTED', 'อรทัย', true], ['REAPPROVED', 'วิภา', undefined]], answer);
+      assert.deepEqual([after.payoutCorrectionAnsweredBy, toRequestSummary(world.claim()).payoutCorrectionAnsweredBy], [undefined, undefined], answer);
+    }
+  });
+
+  it('says the requester answered when they did, also after someone answered for them', async () => {
+    const { world, id } = await holding('ACCOUNT');
+    await world.giveAccount.execute(financeCtx(), id, { mode: 'CASH' });
+    assert.equal((await world.detail.execute(approverCtx(), id)).payoutCorrectionAnsweredBy?.onBehalf, true);
+    // The requester gives the account themselves while the reviewer's answer still waits: theirs is the answer now.
+    const own = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual([own.payoutCorrectionAnswer, own.payoutCorrectionAnsweredBy], ['SAME_ACCOUNT', { byUserId: 'staff-1', byName: 'สมชาย' }]);
+    assert.deepEqual(toRequestSummary(world.claim()).payoutCorrectionAnsweredBy, { byUserId: 'staff-1' });
+    const history = (await world.detail.execute(approverCtx(), id)).payoutCorrectionHistory!;
+    assert.deepEqual(history.map((entry) => [entry.kind, entry.answer, entry.onBehalf]),
+      [['SENT_BACK', undefined, undefined], ['ACCOUNT_SUBMITTED', 'CASH_INSTEAD', true], ['ACCOUNT_SUBMITTED', 'SAME_ACCOUNT', undefined]]);
+    assert.deepEqual(history.slice(1).map((entry) => reimbursementPayoutRoundDid(entry.answer!, entry)), ['อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก', 'ผู้เบิกยืนยันบัญชีเดิม']);
+    assert.equal(reimbursementPayoutRoundApproverNote(own.payoutCorrectionAnswer!, own.payoutCorrectionAnsweredBy),
+      'รอคุณอนุมัติบัญชีรับเงินเดิม ผู้เบิกยืนยันบัญชีเดิมของใบนี้ ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน');
+    // With its requester (not yet answered, or sent back again) nobody has answered what the claim waits for.
+    await world.sendBack.execute(approverCtx(), id, { reasonCode: 'OTHER' });
+    assert.equal((await world.detail.execute(ctx(), id)).payoutCorrectionAnsweredBy, undefined);
+  });
+
+  // Owner rule 2026-10-01 (decision D12): the person whose money it is hears of every change someone else makes for
+  // them. Before, the requester was told only of an account TYPED for them: their default account, the account the
+  // claim had, and cash, chosen for them, told them nothing.
+  it('tells the requester of every answer someone gives for them, once, in the words of that answer, to them alone', async () => {
+    const anAccount = (masked: string) => `${masked} · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ใช่บัญชีของคุณ แก้ได้ทันที`;
+    const asCash = 'รับเป็นเงินสด · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แก้ได้ทันที';
+    const [kbank, scb, promptPay] = ['ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012', 'พร้อมเพย์เบอร์ลงท้าย 5678'];
+    // The four choices of the form (an account typed, the requester's default, the account the claim had, cash), over
+    // the three things a claim can hold: every one of the seven answers. `DEFAULT`: the requester's default as it is now.
+    const cases: Array<['ACCOUNT' | 'CASH' | 'NOTHING', Record<string, unknown>, string, string, string]> = [
+      ['ACCOUNT', { mode: 'SPECIFIED', ...SCB }, 'NEW_ACCOUNT', 'อรทัย แก้บัญชีรับเงินในใบเบิกของคุณ', anAccount(scb)],
+      ['ACCOUNT', { mode: 'DEFAULT', setDefault: PROMPTPAY }, 'NEW_ACCOUNT', 'อรทัย แก้บัญชีรับเงินในใบเบิกของคุณ', anAccount(promptPay)],
+      ['ACCOUNT', { mode: 'DEFAULT' }, 'SAME_ACCOUNT', 'อรทัย ยืนยันบัญชีเดิมในใบเบิกของคุณ', anAccount(kbank)],
+      ['ACCOUNT', { mode: 'PREVIOUS' }, 'SAME_ACCOUNT', 'อรทัย ยืนยันบัญชีเดิมในใบเบิกของคุณ', anAccount(kbank)],
+      ['ACCOUNT', { mode: 'CASH' }, 'CASH_INSTEAD', 'อรทัย เปลี่ยนวิธีรับเงินคืนในใบเบิกของคุณ', asCash],
+      ['CASH', { mode: 'SPECIFIED', ...KBANK }, 'ACCOUNT_INSTEAD', 'อรทัย เปลี่ยนวิธีรับเงินคืนในใบเบิกของคุณ', anAccount(kbank)],
+      ['CASH', { mode: 'PREVIOUS' }, 'SAME_CASH', 'อรทัย ยืนยันวิธีรับเงินคืนเดิมในใบเบิกของคุณ', asCash],
+      ['CASH', { mode: 'CASH' }, 'SAME_CASH', 'อรทัย ยืนยันวิธีรับเงินคืนเดิมในใบเบิกของคุณ', asCash],
+      ['NOTHING', { mode: 'SPECIFIED', ...KBANK }, 'FIRST_ACCOUNT', 'อรทัย เพิ่มบัญชีรับเงินในใบเบิกของคุณ', anAccount(kbank)],
+      ['NOTHING', { mode: 'CASH' }, 'FIRST_CASH', 'อรทัย เลือกวิธีรับเงินคืนในใบเบิกของคุณ', asCash],
+    ];
+    for (const [held, { setDefault, ...give }, answer, title, body] of cases) {
+      const label = `${held} ${String(give['mode'])} ${answer}`;
+      const { world, id } = await holding(held);
+      // The requester changed their default after the claim was sent: "use the default account" is then another account.
+      if (setDefault) await world.payouts.setOwn(ctx(), setDefault as typeof PROMPTPAY);
+      const defaultToken = give['mode'] === 'DEFAULT' ? (await world.detail.execute(financeCtx(), id)).payoutCorrectionActions!.requesterDefault!.token : undefined;
+      world.events().length = 0;
+      assert.equal(world.notifications.length, 0, label);
+
+      const given = await world.giveAccount.execute(financeCtx(), id, { ...give, ...(defaultToken && { defaultToken }) } as any);
+      assert.equal(given.payoutCorrectionAnswer, answer, label);
+      // One notice, to the requester alone (not the reviewer who answered, not an approver, not the shop owner), with
+      // the claim's number and a link to the claim, as the notice of an account typed for someone is sent.
+      assert.deepEqual(world.notifications.map(({ periodKey: _period, ...notice }) => notice), [{
+        companyId: 'co-1', triggerKey: 'reimbursement.payout_account_set_by_other', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: id,
+        severity: 'critical', title: `${title}: RB-202601-000001`, body, deepLinkHref: `/companies/co-1/reimbursements/${id}`, recipientUserIds: ['staff-1'],
+      }], label);
+      // The words are the one function's, from the answer the claim now carries and the account it now shows.
+      const words = reimbursementPayoutAnsweredForRequesterNotice(given.payoutCorrectionAnswer, 'อรทัย', given.payout);
+      assert.deepEqual([`${words.title}: ${given.requestNo}`, words.body], [world.notifications[0].title, body], label);
+      // The approvers are asked as for any answer: one event, and it is not the requester's notice.
+      assert.deepEqual(world.events().map((event) => event.eventType), ['reimbursement.payout_correction_submitted'], label);
+      assert.equal(leaksNumber([world.notifications, world.events()]), false, label);
+      assert.doesNotMatch(`${world.notifications[0].title} ${world.notifications[0].body}`, /สมชาย|finance-1|staff-1|[A-Z]{2,}_[A-Z_]+/, label);
+    }
+  });
+
+  it('tells the requester nothing of an answer they give themselves, and tells them again of the next one given for them', async () => {
+    const { world, id } = await holding('ACCOUNT');
+    const token = async (viewer: any) => (await world.detail.execute(viewer, id)).payoutCorrectionActions!.requesterDefault!.token;
+    // The requester's own answers, each of the four choices: nobody did anything for them.
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    await world.giveAccount.execute(ctx(), id, { mode: 'DEFAULT', defaultToken: await token(ctx()) });
+    await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    assert.equal(world.notifications.length, 0);
+
+    // The reviewer answers twice while the answer waits: each answer is a change of its own, and a notice of its own.
+    await world.giveAccount.execute(financeCtx(), id, { mode: 'PREVIOUS' });
+    await world.giveAccount.execute(financeCtx(), id, { mode: 'CASH' });
+    assert.deepEqual(world.notifications.map((notice) => [notice.recipientUserIds, notice.title]), [
+      [['staff-1'], 'อรทัย ยืนยันบัญชีเดิมในใบเบิกของคุณ: RB-202601-000001'],
+      [['staff-1'], 'อรทัย เปลี่ยนวิธีรับเงินคืนในใบเบิกของคุณ: RB-202601-000001'],
+    ]);
+    assert.notEqual(world.notifications[0].periodKey, world.notifications[1].periodKey);
+    // An answer that is refused changes nothing and tells nobody.
+    await assert.rejects(() => world.giveAccount.execute(financeCtx(), id, { mode: 'DEFAULT', defaultToken: 'x' }), /payout_destination_changed/);
+    await assert.rejects(() => world.giveAccount.execute(approverCtx(), id, { mode: 'CASH' }), /payout_correction_denied/);
+    assert.equal(world.notifications.length, 2);
+  });
+
+  // "Save as the requester's default" by someone who may set it changes two things of the requester's: their standing
+  // account, and where this claim is paid. Each has its own page to check and to correct, and each is told.
+  it('tells the requester of the answer and of their default account, when whoever answered also saved the account as their default', async () => {
+    const { world, id } = await holding('ACCOUNT');
+    const owner = ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.create', 'reimbursement.finance_review', 'access.employee.update'] });
+    await world.giveAccount.execute(owner, id, { mode: 'SPECIFIED', saveAsDefault: true, ...SCB });
+    assert.deepEqual(world.notifications.map((notice) => [notice.recipientUserIds, notice.sourceType, notice.title, notice.deepLinkHref]), [
+      [['staff-1'], 'member_payout_account', 'เจ้าของร้าน ตั้งบัญชีรับเงินคืนของคุณ', '/companies/co-1/reimbursements/payout-account'],
+      [['staff-1'], 'reimbursement_request', 'เจ้าของร้าน แก้บัญชีรับเงินในใบเบิกของคุณ: RB-202601-000001', `/companies/co-1/reimbursements/${id}`],
+    ]);
+    assert.equal(leaksNumber(world.notifications), false);
+  });
+
+  it('tells the requester of an answer given for them on a claim nobody approves, which is ready for payment at once', async () => {
+    const world = correctionWorld({ policy: NO_APPROVAL_POLICY });
+    const id = await world.ready();
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    world.events().length = 0;
+    const given = await world.giveAccount.execute(financeCtx(), id, { mode: 'SPECIFIED', ...SCB });
+    assert.deepEqual([given.status, world.events().map((event) => event.eventType)], ['READY_FOR_PAYMENT', ['reimbursement.ready_for_payment']]);
+    // Nobody approves this account before it is paid into: the requester is the one person who can say it is wrong.
+    assert.deepEqual(world.notifications.map((notice) => [notice.recipientUserIds, notice.title, notice.body]), [[['staff-1'],
+      'อรทัย แก้บัญชีรับเงินในใบเบิกของคุณ: RB-202601-000001', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ใช่บัญชีของคุณ แก้ได้ทันที']]);
   });
 });

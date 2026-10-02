@@ -366,6 +366,104 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
     }
   });
 
+  // Owner decision 2026-10-02: the finance desk's arrival notice leaves the shop owner out while anyone else can
+  // review. That template has shipped, so companies hold a rule of it: the next release brings up to date a rule the
+  // sync pinned, also one a company only switched off; a rule an admin really changed keeps what it was given.
+  it('re-pins a finance arrival rule pinned before the shop owner was left out, and leaves an admin-edited one alone', async () => {
+    const key = 'reimbursement_finance_review_pending';
+    const [catalogAction] = catalogActions(key);
+    // As shipped: every holder of the right, and the actor of the event left out.
+    const { lastResortRecipientRoles: _lastResort, webOnlyRecipientPayloadKeys: _bellOnly, ...common } = catalogAction!.configJson;
+    const shippedConfig = { ...common, excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
+    const shipped = [{ ...catalogAction!, configJson: shippedConfig }];
+    const adminsOwn = [{ ...catalogAction!, configJson: { ...shippedConfig, titleTemplate: 'มีใบเบิกมาถึงฝ่ายการเงิน: {{requestNo}}' } }];
+    const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, cooldownSeconds: 0, actionJson: shipped, ...over });
+    const repo = fakeRepo([
+      rule(),
+      rule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: adminsOwn, pinned: { actionJson: shipped } }),
+      rule({ companyId: 'co_3', status: 'DISABLED', updatedByUserId: 'admin_1' }),
+    ]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [key]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_3'), [key]);
+
+    const config = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson;
+    assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map((id) => config(id).lastResortRecipientRoles), [['OWNER'], undefined, ['OWNER']]);
+    // And with it the actor's own notice in the web bell only (decided the same day), in place of leaving the actor out.
+    assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map((id) => [config(id).webOnlyRecipientPayloadKeys, config(id).excludeRecipientPayloadKeys]),
+      [[['actorUserId'], undefined], [undefined, ['actorUserId']], [['actorUserId'], undefined]]);
+    // The admin's rule is exactly what the admin left: their title, and every holder of the right as before.
+    assert.deepEqual(repo.rules.find((r: any) => r.id === 'pre_1').actionJson, adminsOwn);
+    assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED');
+    // The runner reads the version snapshot, not the row.
+    const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
+    assert.deepEqual([latest.version, latest.actionSnapshotJson], [2, catalogActions(key)]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [], 'a second run changes nothing');
+  });
+
+  // Owner decision 2026-10-02: the finance desk's "blocked" notice takes the rule of the arrival notice, the shop owner
+  // only as the last resort. It has shipped as well, and is re-pinned the same way.
+  it('re-pins a finance "blocked" rule pinned before the shop owner was left out, and leaves an admin-edited one alone', async () => {
+    const key = 'reimbursement_finance_review';
+    const [catalogAction] = catalogActions(key);
+    const { lastResortRecipientRoles: _lastResort, ...shippedConfig } = catalogAction!.configJson;
+    const shipped = [{ ...catalogAction!, configJson: shippedConfig }];
+    const adminsOwn = [{ ...catalogAction!, configJson: { ...shippedConfig, bodyTemplate: 'ฝ่ายการเงินระงับใบนี้ ยอด {{amount}} {{currency}}' } }];
+    const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, cooldownSeconds: 0, actionJson: shipped, ...over });
+    const repo = fakeRepo([
+      rule(),
+      rule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: adminsOwn, pinned: { actionJson: shipped } }),
+      rule({ companyId: 'co_3', status: 'DISABLED', updatedByUserId: 'admin_1' }),
+    ]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [key]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_3'), [key]);
+
+    const config = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson;
+    assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map((id) => config(id).lastResortRecipientRoles), [['OWNER'], undefined, ['OWNER']]);
+    // Nothing else of the rule moved: the same people's right, the same words, the actor still left out.
+    assert.deepEqual({ ...config('pre_0'), lastResortRecipientRoles: undefined }, { ...shippedConfig, lastResortRecipientRoles: undefined });
+    assert.deepEqual(repo.rules.find((r: any) => r.id === 'pre_1').actionJson, adminsOwn);
+    assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED');
+    const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
+    assert.deepEqual([latest.version, latest.actionSnapshotJson], [2, catalogActions(key)]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [], 'a second run changes nothing');
+  });
+
+  // Owner decision 2026-10-02: the approval reminder goes to the claim's approvers and no longer adds the shop owner.
+  // That template has shipped too: a rule the sync pinned stops naming the owner at the next release, the task beside
+  // the notice is as it was, and a rule an admin really changed goes on naming whoever it named.
+  it('re-pins an approval reminder rule pinned while it still added the shop owner, and leaves an admin-edited one alone', async () => {
+    const key = 'approval_sla_breach';
+    const [notice, task] = catalogActions(key);
+    const shipped = [{ ...notice!, configJson: { ...notice!.configJson, recipientPayloadKeys: ['approverRecipientUserIds', 'ownerRecipientUserIds'] } }, task!];
+    const adminsOwn = [{ ...shipped[0]!, configJson: { ...shipped[0]!.configJson, severity: 'action' } }, task!];
+    // A scan rule keeps the default cooldown, which is what `syncOwned` seeds.
+    const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, actionJson: shipped, ...over });
+    const repo = fakeRepo([
+      rule(),
+      rule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: adminsOwn, pinned: { actionJson: shipped } }),
+      rule({ companyId: 'co_3', status: 'DISABLED', updatedByUserId: 'admin_1' }),
+    ]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [key]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_3'), [key]);
+
+    const named = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson.recipientPayloadKeys;
+    assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map(named),
+      [['approverRecipientUserIds'], ['approverRecipientUserIds', 'ownerRecipientUserIds'], ['approverRecipientUserIds']]);
+    assert.deepEqual(repo.rules.find((r: any) => r.id === 'pre_1').actionJson, adminsOwn);
+    assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED');
+    const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
+    assert.deepEqual([latest.version, latest.cooldownSeconds, latest.actionSnapshotJson], [2, 3600, catalogActions(key)]);
+    // The task of the reminder is assigned as before.
+    assert.deepEqual(latest.actionSnapshotJson[1], task);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [], 'a second run changes nothing');
+  });
+
   it('is idempotent: a second run re-pins nothing and adds no version', async () => {
     const repo = fakeRepo([syncOwned()]);
     await resyncWorkflowTemplateRulesForCompany(repo, 'co_1');

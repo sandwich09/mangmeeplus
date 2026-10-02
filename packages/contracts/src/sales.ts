@@ -227,6 +227,16 @@ export function salesCreditState(flags: readonly string[], reviewedAt: Date | st
   if (flags.length === 0) return 'COUNTED';
   return reviewedAt ? 'EXCLUDED' : 'WAITING';
 }
+/**
+ * Owner 2026-10-02: a shop is an opened shop ("ร้านที่เปิดได้") and carries an amount only while its
+ * credit is COUNTED. A WAITING shop is neither, in any figure, and is reported on its own as
+ * waiting for review; once the Owner confirms it, it counts in the month of its payment. An
+ * EXCLUDED shop is in no figure at all. The one place that decides it: the report and the daily
+ * digest both ask here.
+ */
+export function salesCountsAsActivation(state: SalesCreditState): boolean {
+  return state === 'COUNTED';
+}
 /** The referral window (§17.1, Owner round 3): paid within 14 days of the shop opening, or nobody. */
 export const SALES_REFERRAL_WINDOW_DAYS = 14;
 /**
@@ -245,11 +255,20 @@ export type SalesReportRow = {
   salesUserId: string; displayName: string; teamLeadUserId: string | null;
   /** Phase 4 leftover: the lead's name, so the report groups without a second lookup client-side. */
   teamLeadDisplayName: string | null;
-  /** Shops opened by a deal this agent wrote, and by a signup that named their code. */
+  /** Shops opened by a deal this agent wrote, and by a signup that named their code. A shop waiting for review is in neither. */
   dealActivations: number; referralActivations: number;
   /** This month's credit less this month's `deductions`, so it may be negative; flagged rows contribute 0 until reviewed. */
   amountSatang: number;
+  /** Shops waiting for the Owner's review: no opened shop and no amount yet, each named in the month's `waiting`. */
   flaggedCount: number;
+};
+/**
+ * One shop waiting for the Owner's review, shown as its own line in the Bangkok month of its
+ * payment, which is the month it counts in once confirmed (owner 2026-10-02). The shop's name and
+ * why it waits, no document (S21).
+ */
+export type SalesReportWaiting = {
+  salesUserId: string; source: SalesAttributionSource; companyName: string; flags: SalesAttributionFlag[];
 };
 /**
  * One deduction, shown as its own line in the Bangkok month it was recorded in — the month of the
@@ -264,8 +283,10 @@ export type SalesReportDeduction = {
   /** The provider's time: the refund, or the dispute being opened. */
   occurredAt: string;
 };
-/** `deductions` is absent only on an answer that predates the field. */
-export type SalesReportMonth = { monthKey: string; rows: SalesReportRow[]; deductions?: SalesReportDeduction[] };
+/** `deductions` and `waiting` are absent only on an answer that predates the field. */
+export type SalesReportMonth = {
+  monthKey: string; rows: SalesReportRow[]; deductions?: SalesReportDeduction[]; waiting?: SalesReportWaiting[];
+};
 export type SalesReportSummary = { months: SalesReportMonth[]; from: string; to: string };
 /**
  * `GET /v1/sales/events/report` (sales-event spec §10): event → batch → เซลล์, over tickets ISSUED in

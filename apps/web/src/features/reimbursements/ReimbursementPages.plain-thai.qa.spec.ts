@@ -202,10 +202,11 @@ const hubClaims = ([
   status, amount: '100.0000', currentDesk: kind && { kind } }));
 
 // The same claim sent back from the pay step for its payout account, as the list API answers it in each phase:
-// PENDING_APPROVAL, first with its requester, then with the approvers its new account waits for.
-const correctionRows = ([['AWAITING_REQUESTER', { kind: 'REQUESTER' }], ['AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมชาย'] }]] as const)
-  .map(([payoutCorrectionPhase, currentDesk], index) => ({ ...draft, id: `${ids.request}round${index}`, requestNo: 'RB-202609-00007', status: 'PENDING_APPROVAL',
-    receiptRequirementStatus: 'ATTACHED', payoutMethod: 'BANK_TRANSFER', amount: '100.0000', payoutCorrectionPhase, currentDesk }));
+// PENDING_APPROVAL, first with its requester, then with the approvers its new account waits for. It was sent back
+// holding an account and answered with another account; the answer is on a waiting row only.
+const correctionRows = ([['AWAITING_REQUESTER', { kind: 'REQUESTER' }, {}], ['AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมชาย'] }, { payoutCorrectionAnswer: 'NEW_ACCOUNT' }]] as const)
+  .map(([payoutCorrectionPhase, currentDesk, answered], index) => ({ ...draft, id: `${ids.request}round${index}`, requestNo: 'RB-202609-00007', status: 'PENDING_APPROVAL',
+    receiptRequirementStatus: 'ATTACHED', payoutMethod: 'BANK_TRANSFER', amount: '100.0000', payoutCorrectionPhase, currentDesk, ...answered }));
 
 /** The source of every claim screen, as one text. A comment is not a screen, so comments are left out. */
 function claimScreenSources(): string {
@@ -316,6 +317,23 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     assert.equal(texts.some((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ'), false);
     assert.equal(rowsShown(hubTab('mine', claims, 'draft')), 1);
     assert.equal(visible(hubTab('mine', claims, 'draft')).includes('รอผู้เบิกแก้บัญชีรับเงิน'), false);
+  });
+
+  // Before: every row of a round read one of two labels, written for a wrong account replaced by another one. A claim
+  // sent back with no account, or one that asked for cash, read "รอผู้เบิกแก้บัญชีรับเงิน"; an account that was kept, a
+  // first account, or cash read "รออนุมัติบัญชีรับเงินใหม่".
+  it('says on each row of a round what that claim waits for: by what it holds, then by what was answered', () => {
+    const cases = [
+      [undefined, undefined, 'รอผู้เบิกเพิ่มบัญชีรับเงิน'], ['CASH', undefined, 'รอผู้เบิกเลือกวิธีรับเงินคืน'],
+      ['BANK_TRANSFER', 'SAME_ACCOUNT', 'รออนุมัติบัญชีรับเงินเดิม'], ['BANK_TRANSFER', 'FIRST_ACCOUNT', 'รออนุมัติบัญชีรับเงิน'], ['CASH', 'CASH_INSTEAD', 'รออนุมัติการรับเป็นเงินสด'],
+    ] as const;
+    const rows = cases.map(([payoutMethod, payoutCorrectionAnswer], index) => ({ ...correctionRows[payoutCorrectionAnswer ? 1 : 0]!, id: `${ids.request}case${index}`, payoutMethod, payoutCorrectionAnswer }));
+    const texts = visible(hubTab('mine', rows, 'review'));
+    assert.equal(rowsShown(hubTab('mine', rows, 'review')), cases.length);
+    // In the table and on the phone card of each row.
+    for (const [, , label] of cases) assert.equal(texts.filter((text) => text === label).length, 2, label);
+    for (const untrue of ['รอผู้เบิกแก้บัญชีรับเงิน', 'รออนุมัติบัญชีรับเงินใหม่', 'รออนุมัติ']) assert.equal(texts.includes(untrue), false, untrue);
+    for (const text of texts) for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(text.replaceAll('RB-202609-00007', ''), pattern, `${name}: ${text}`);
   });
 
   it('keeps the four cards two by two on a 390 px phone, each one a button that filters', () => {
@@ -466,11 +484,22 @@ describe('a hub list is a table only where its card is wide enough for it, and c
       const page = html(tab);
       // The table and its cards sit in one box that is their container; each names the width the table needs.
       assert.match(page, new RegExp(`<div class="\\[container-type:inline-size\\]"><div class="hidden @\\[${width}\\]:block" data-testid="reimbursements-${tab}-table">`, 'u'), tab);
-      assert.match(page, new RegExp(`<div class="mt-3 grid gap-3 @\\[44rem\\]:grid-cols-2 @\\[${width}\\]:hidden" data-testid="reimbursements-${tab}-card-list">`, 'u'), tab);
+      assert.match(page, new RegExp(`<div class="mt-3 grid grid-cols-1 gap-3 @\\[44rem\\]:grid-cols-2 @\\[${width}\\]:hidden" data-testid="reimbursements-${tab}-card-list">`, 'u'), tab);
       const table = page.slice(page.indexOf(`data-testid="reimbursements-${tab}-table"`), page.indexOf(`data-testid="reimbursements-${tab}-card-list"`));
       // Only free text wraps; no forced width and no max-content scroller around it.
       assert.match(table, /<div class="mt-3 overflow-x-auto"><table class="mangmee-table \[&amp;_td\]:whitespace-nowrap \[&amp;_th\]:whitespace-nowrap">/u, tab);
       assert.doesNotMatch(table, /min-w-\[980px\]|mangmee-table-scroll|md:block/u, tab);
+    }
+  });
+
+  // Seen on a 390 px screen (2026-10-02): the requester's list held a claim with a long reason. Its card keeps the
+  // reason on one line, and the list's one column was unnamed, so the column took the width of that line: every card
+  // of the list was 483 px wide on a 390 px screen, with the date, the amount and the end of its button past the edge.
+  it('keeps a card as wide as its list and no wider: the one column of a phone is named', () => {
+    for (const [tab] of lists) {
+      const list = html(tab).match(new RegExp(`<div class="([^"]*)" data-testid="reimbursements-${tab}-card-list">`, 'u'))?.[1].split(' ') ?? [];
+      // `grid-cols-1` is one column of minmax(0, 1fr); a grid with no named column sizes it by its content.
+      assert.ok(list.includes('grid') && list.includes('grid-cols-1'), `${tab}: ${list.join(' ')}`);
     }
   });
 
@@ -525,22 +554,34 @@ describe('the approval queue offers only what the server says this viewer can do
     assert.deepEqual(offered(hubTab('approvals', [{ ...row({ canApprove: true, canReject: false }), payoutMethod: 'CASH' }])), ['อนุมัติ', 'อนุมัติ']);
   });
 
-  // Payout spec §14.6: what a round's approvers approve is the change of account, which a row does not show. Its
-  // row leads to the claim page for whoever decides the waiting step, and offers no "ปฏิเสธ": a round never rejects.
-  it('leads a row of a correction round to the claim page: no approval in place and no ปฏิเสธ, whatever the new receiving method', () => {
-    const offered = (html: string) => visible(html).filter((text) => ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ตรวจบัญชีรับเงินใหม่', 'ปฏิเสธ'].includes(text));
-    const inRound = (approvalActions: { canApprove: boolean; canReject: boolean } | undefined, payoutMethod: string) =>
-      ({ ...correctionRows[1]!, ageHours: 3, slaRisk: false, approvalActions, payoutMethod, approvalSnapshotHash: 'hash' });
-    for (const payoutMethod of ['BANK_TRANSFER', 'CASH']) {
-      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, payoutMethod)])), ['ตรวจบัญชีรับเงินใหม่', 'ตรวจบัญชีรับเงินใหม่'], payoutMethod);
-      // Whoever may only send the new account back gets the same way in.
-      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: false, canReject: true }, payoutMethod)])), ['ตรวจบัญชีรับเงินใหม่', 'ตรวจบัญชีรับเงินใหม่'], payoutMethod);
-      assert.deepEqual(offered(hubTab('approvals', [inRound(undefined, payoutMethod)])), [], payoutMethod);
+  // Payout spec §14.6: what a round's approvers approve is what was answered, which a row does not show. Its row
+  // leads to the claim page for whoever decides the waiting step, and offers no "ปฏิเสธ": a round never rejects.
+  // Before: its one button read "ตรวจบัญชีรับเงินใหม่" whatever was answered: an account that was kept, a first one, or cash.
+  it('leads a row of a correction round to the claim page: no approval in place and no ปฏิเสธ, its button named for what was answered', () => {
+    const BUTTONS = {
+      NEW_ACCOUNT: ['BANK_TRANSFER', 'ตรวจบัญชีรับเงินใหม่', 'รออนุมัติบัญชีรับเงินใหม่'], SAME_ACCOUNT: ['BANK_TRANSFER', 'ตรวจบัญชีรับเงินเดิม', 'รออนุมัติบัญชีรับเงินเดิม'],
+      ACCOUNT_INSTEAD: ['BANK_TRANSFER', 'ตรวจบัญชีรับเงิน', 'รออนุมัติบัญชีรับเงิน'], FIRST_ACCOUNT: ['BANK_TRANSFER', 'ตรวจบัญชีรับเงิน', 'รออนุมัติบัญชีรับเงิน'],
+      CASH_INSTEAD: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'], SAME_CASH: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'],
+      FIRST_CASH: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'],
+    } as const;
+    const all = ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ', 'ตรวจวิธีรับเงินคืน', ...Object.values(BUTTONS).map(([, button]) => button)] as string[];
+    const offered = (html: string) => visible(html).filter((text) => all.includes(text));
+    const inRound = (approvalActions: { canApprove: boolean; canReject: boolean } | undefined, payoutCorrectionAnswer?: keyof typeof BUTTONS) =>
+      ({ ...correctionRows[1]!, ageHours: 3, slaRisk: false, approvalActions, payoutMethod: payoutCorrectionAnswer ? BUTTONS[payoutCorrectionAnswer][0] : 'BANK_TRANSFER', payoutCorrectionAnswer, approvalSnapshotHash: 'hash' });
+    for (const [answer, [, button, badge]] of Object.entries(BUTTONS) as Array<[keyof typeof BUTTONS, typeof BUTTONS[keyof typeof BUTTONS]]>) {
+      // In the table and on the phone card.
+      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, answer)])), [button, button], answer);
+      // Whoever may only send the answer back gets the same way in.
+      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: false, canReject: true }, answer)])), [button, button], answer);
+      assert.deepEqual(offered(hubTab('approvals', [inRound(undefined, answer)])), [], answer);
+      // The row says what it waits for: in the table beside its age, and on its phone card. The button names the same thing.
+      const texts = visible(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, answer)]));
+      assert.equal(texts.filter((text) => text === badge).length, 2, answer);
+      assert.equal(texts.includes('รออนุมัติ'), false, answer);
+      assert.equal(badge, `รออนุมัติ${button.slice('ตรวจ'.length)}`);
     }
-    // The row says what it waits for: in the table beside its age, and on its phone card.
-    const texts = visible(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, 'BANK_TRANSFER')]));
-    assert.equal(texts.filter((text) => text === 'รออนุมัติบัญชีรับเงินใหม่').length, 2);
-    assert.equal(texts.includes('รออนุมัติ'), false);
+    // A row with no answer on it (a page fed by an older server): the method, which is true of every answer.
+    assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true })])), ['ตรวจวิธีรับเงินคืน', 'ตรวจวิธีรับเงินคืน']);
     // A row of no round has no such badge in the table, only its status on the card.
     assert.equal(visible(hubTab('approvals', [row({ canApprove: true, canReject: true })])).filter((text) => text === 'รออนุมัติ').length, 1);
   });
@@ -639,7 +680,38 @@ describe('the hub\'s third tab is the pay queue where the company has no finance
   it('keeps the review column and its count for a queue that still holds such a claim, under the tab the company now has', () => {
     const html = hubTab('finance', [ready, underReview], undefined, {}, '', false);
     assert.deepEqual(tabsOf(html), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
-    for (const text of ['รอตรวจ/รอจ่าย', 'ตรวจการเงิน', 'รอตรวจสอบ', 'ไม่ต้องตรวจ']) assert.ok(visible(html).includes(text), text);
+    for (const text of ['รอตรวจ/รอจ่าย', 'ตรวจการเงิน', 'รอตรวจสอบ']) assert.ok(visible(html).includes(text), text);
+    // The claim beside it never had the step: it says nothing of a review (before: "ตรวจการเงิน: ไม่ต้องตรวจ").
+    assert.equal(visible(html).includes('ไม่ต้องตรวจ'), false);
+  });
+
+  // Upgrade test 2026-10-02, on the owner's own company: six claims wait for payment, and one of them passed a finance
+  // review while the company still had that step. Every card of the queue then read "ตรวจการเงิน: ไม่ต้องตรวจ", also the
+  // five that never had a review, and the count read "รอตรวจ/รอจ่าย" though nothing waited for one.
+  it('says a claim\'s finance review only on the claim that had one, and counts "รอจ่าย" when nothing waits for a review', () => {
+    const reviewed = { ...ready, id: `${ids.request}reviewed`, requestNo: 'RB-202609-00028', financeReviewStatus: 'APPROVED_FOR_PAYMENT' };
+    const others = [1, 2, 3].map((index) => ({ ...ready, id: `${ids.request}plain${index}`, requestNo: `RB-202609-0003${index}` }));
+    const html = hubTab('finance', [others[0]!, reviewed, others[1]!, others[2]!], undefined, {}, '', false);
+    const texts = visible(html);
+    assert.deepEqual(tabsOf(html), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
+    // The count: nothing in the queue waits for a review.
+    assert.ok(texts.includes('รอจ่าย') && !texts.includes('รอตรวจ/รอจ่าย'), texts.filter((text) => text.includes('รอ')).join(' | '));
+    assert.equal(texts.includes('ไม่ต้องตรวจ'), false);
+    // On the phone cards: one finance line, on the claim that was reviewed, with what happened.
+    const cards = html.slice(html.indexOf('data-testid="reimbursements-finance-card-list"')).split('<a ').slice(0, -1);
+    const lineOf = (card: string) => /ตรวจการเงิน: (?:<!-- -->)?([^<]*)</u.exec(card)?.[1] ?? null;
+    assert.deepEqual(cards.map((card) => [/RB-202609-000\d\d/u.exec(card)?.[0], lineOf(card)]),
+      [['RB-202609-00031', null], ['RB-202609-00028', 'อนุมัติจ่าย'], ['RB-202609-00032', null], ['RB-202609-00033', null]]);
+    // In the table: the column is there for that one claim, and the cells of the others are empty.
+    const table = html.slice(html.indexOf('data-testid="reimbursements-finance-table"'), html.indexOf('data-testid="reimbursements-finance-card-list"'));
+    assert.ok(visible(table).includes('ตรวจการเงิน'));
+    assert.deepEqual([...table.matchAll(/<td class="text-xs text-gray-500">([^<]*)<\/td>/gu)].map((match) => match[1]), ['—', 'อนุมัติจ่าย', '—', '—']);
+    // A queue with no such claim says nothing of a review at all, as before.
+    const plain = visible(hubTab('finance', others, undefined, {}, '', false));
+    for (const text of plain) assert.doesNotMatch(text, /การเงิน|ไม่ต้องตรวจ|รอตรวจ/u);
+    // The search finds a claim by the finance words its row shows, and no claim by words its row does not show.
+    const found = (query: string) => hubTab('finance', [others[0]!, reviewed, others[1]!], undefined, {}, query, false).match(/data-testid="reimbursements-finance-card"/gu)?.length ?? 0;
+    assert.deepEqual([found('อนุมัติจ่าย'), found('ไม่ต้องตรวจ')], [1, 0]);
   });
 
   it('names no third tab before the page is told, with a policy right or without one', () => {
@@ -938,8 +1010,10 @@ describe('a claim with no finance-review step never says ฝ่ายการ�
     for (const [state, detail] of [['draft', { ...draft, financeReviewRequired: false }], ['waiting for payment', waiting], ['paid', noFinance]] as const) {
       for (const text of visible(detailSections(detail, ids.requester, []))) assert.doesNotMatch(text, /ฝ่ายการเงิน/u, state);
     }
-    // A claim that does pass finance review keeps its finance rows.
-    assert.ok(visible(detailSections(paid, ids.requester, [])).includes('ฝ่ายการเงินตรวจแล้ว โดย สมศรี การเงิน'));
+    // A claim that does pass finance review keeps its finance rows. The row of a review that was done says what was done
+    // and by whom, in the name of the step: whoever reviewed may be the owner or the claim's approver, not a department.
+    assert.ok(visible(detailSections(paid, ids.requester, [])).includes('ตรวจการเงินแล้ว โดย สมศรี การเงิน'));
+    assert.equal(visible(detailSections(paid, ids.requester, [])).some((text) => text.startsWith('ฝ่ายการเงินตรวจแล้ว')), false);
     assert.ok(visible(detailSections({ ...draft, financeReviewRequired: true }, ids.requester, [])).includes('รอฝ่ายการเงินตรวจ'));
   });
 

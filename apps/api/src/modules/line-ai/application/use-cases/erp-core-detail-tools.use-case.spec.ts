@@ -10,7 +10,7 @@ import {
   ReimbursementGetSummaryTool,
 } from './erp-core-detail-tools.use-case';
 import { InternalToolsController } from '../../presentation/http/internal-tools.controller';
-import { BACKLOG_DESK_LABELS, PAYOUT_CORRECTION_NOTE } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
+import { BACKLOG_DESK_LABELS } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 
 const ctx = {
   requestId: 'r1', companyId: 'c1', userId: 'u1', membershipId: 'm1',
@@ -149,15 +149,14 @@ describe('LINE ERP core detail tools', () => {
       payoutCorrectionPhase: 'AWAITING_REQUESTER', currentDesk: { kind: 'REQUESTER' }, payoutCorrection: round('AWAITING_REQUESTER'), approvalSteps: [approvedBefore],
     }));
     assert.equal(withRequester.status, 'รอผู้เบิกแก้บัญชีรับเงิน');
-    assert.equal(withRequester.status, BACKLOG_DESK_LABELS.requester_correction);
     assert.equal(withRequester.sentBackOn, '2026-10-01');
-    assert.equal(withRequester.note, PAYOUT_CORRECTION_NOTE);
+    assert.equal(withRequester.note, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
     assert.equal(withRequester.resubmittedOn, undefined);
     assert.deepEqual(withRequester.approvalSteps, []);
 
     // The account given at 09:00 on 2 October: it waits for approval again from that day, at the new step alone.
     const withApprover = await read(claim({
-      payoutCorrectionPhase: 'AWAITING_APPROVAL', currentDesk: { kind: 'APPROVER', names: ['สมศรี'] },
+      payoutCorrectionPhase: 'AWAITING_APPROVAL', payoutCorrectionAnswer: 'NEW_ACCOUNT', currentDesk: { kind: 'APPROVER', names: ['สมศรี'] },
       payoutCorrection: round('AWAITING_APPROVAL', { submittedAt: '2026-10-02T02:00:00.000Z' }),
       approvalSteps: [approvedBefore, { id: 's2', sequenceNo: 2, approverUserId: 'approver-1', status: 'PENDING', assignedAt: '2026-10-02T02:00:00.000Z' }],
     }));
@@ -188,6 +187,85 @@ describe('LINE ERP core detail tools', () => {
     // Payout spec §11.2: where the claim stands, and nothing of the account, the reason or who sent it back.
     assert.doesNotMatch(JSON.stringify([withRequester, withApprover, cancelling, approvedAgain]),
       /payout|6789|1234|กสิกร|สมชาย|สมศรี|ACCOUNT_NUMBER_WRONG|payer-1|ผู้จ่าย|เลขท้าย|AWAITING_|approver-1/);
+  });
+
+  // Payout spec §14.2, §17.3. The status the assistant reads is the claim page's badge: by what the claim holds while
+  // it is with its requester, by what was answered while it waits for approval. It used to be one label per phase, so a
+  // claim with no account, and one that asked for cash, read "รอผู้เบิกแก้บัญชีรับเงิน", and a kept account read "ใหม่".
+  it('words a claim in a round by what it holds and by what its requester answered, with the note that goes with the label', async () => {
+    const claim = (overrides: Record<string, unknown>) => ({
+      id: 'rr4', companyId: 'c1', requestNo: 'RB-202609-000004', requesterUserId: 'u1', requesterDisplayNameSnapshot: 'User', reason: 'travel',
+      categoryKey: 'travel', amount: '580.50', currency: 'THB', incurredDate: '2026-09-20', status: 'PENDING_APPROVAL',
+      financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED',
+      postingStatus: 'posted', paymentTotalAmount: '0', outstandingAmount: '580.50', lineCount: 1, createdAt: '', updatedAt: '',
+      payments: [], duplicateCandidates: [], approvalSteps: [], ...overrides,
+    });
+    const round = (phase: string, submittedAt?: string) => ({ phase, requestedAt: '2026-09-30T18:30:00.000Z', reasonCode: 'OTHER', ...(submittedAt && { submittedAt }) });
+    const read = async (item: unknown) => (await new ReimbursementGetDetailTool({ execute: async () => item } as any).execute(ctx, { reimbursementId: 'rr4' })).data as any;
+
+    // With its requester: what the claim holds. A claim sent before claims carried a destination carries no method.
+    const withRequester = async (payoutMethod?: string) => read(claim({ payoutCorrectionPhase: 'AWAITING_REQUESTER', payoutCorrection: round('AWAITING_REQUESTER'), ...(payoutMethod && { payoutMethod }) }));
+    const [account, nothing, cash] = [await withRequester('BANK_TRANSFER'), await withRequester(), await withRequester('CASH')];
+    assert.deepEqual([account.status, account.note],
+      ['รอผู้เบิกแก้บัญชีรับเงิน', 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้']);
+    assert.deepEqual([nothing.status, nothing.note],
+      ['รอผู้เบิกเพิ่มบัญชีรับเงิน', 'ใบเบิกถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ผู้เบิกเพิ่มได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้']);
+    assert.deepEqual([cash.status, cash.note],
+      ['รอผู้เบิกเลือกวิธีรับเงินคืน', 'ใบเบิกถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ผู้เบิกเลือกได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้']);
+    // Nothing else of the answer differs: the same fields, the same day.
+    for (const other of [nothing, cash]) {
+      assert.deepEqual({ ...other, status: account.status, note: account.note }, account);
+      assert.deepEqual(Object.keys(other), Object.keys(account));
+    }
+    assert.equal(account.sentBackOn, '2026-10-01');
+
+    // Waiting for approval: what the requester answered, against what the round began with.
+    const withApprover = (payoutCorrectionAnswer?: string) => read(claim({
+      payoutCorrectionPhase: 'AWAITING_APPROVAL', payoutCorrection: round('AWAITING_APPROVAL', '2026-10-02T02:00:00.000Z'), payoutMethod: 'CASH', ...(payoutCorrectionAnswer && { payoutCorrectionAnswer }),
+    }));
+    const labels = {
+      NEW_ACCOUNT: 'รออนุมัติบัญชีรับเงินใหม่', SAME_ACCOUNT: 'รออนุมัติบัญชีรับเงินเดิม', CASH_INSTEAD: 'รออนุมัติการรับเป็นเงินสด', ACCOUNT_INSTEAD: 'รออนุมัติบัญชีรับเงิน',
+      SAME_CASH: 'รออนุมัติการรับเป็นเงินสด', FIRST_ACCOUNT: 'รออนุมัติบัญชีรับเงิน', FIRST_CASH: 'รออนุมัติการรับเป็นเงินสด',
+    };
+    for (const [answer, label] of Object.entries(labels)) {
+      const waiting = await withApprover(answer);
+      assert.deepEqual([waiting.status, waiting.resubmittedOn, waiting.sentBackOn, waiting.note], [label, '2026-10-02', undefined, undefined], answer);
+    }
+    // A claim detail with no answer on it: words that are true of every answer.
+    assert.equal((await withApprover()).status, 'รออนุมัติวิธีรับเงินคืน');
+    // Where the claim stands, and nothing of an account, a method code, a reason or an answer code.
+    assert.doesNotMatch(JSON.stringify([account, nothing, cash, await withApprover('SAME_ACCOUNT'), await withApprover('CASH_INSTEAD')]),
+      /payout|BANK_TRANSFER|CASH|ACCOUNT|AWAITING_|OTHER/);
+  });
+
+  // The whole answer for a claim that holds an account, letter for letter. It is what `reimbursement.get_detail` returned
+  // at 603f461dd (captured from that build) in everything but one word: the note now calls a claim's account
+  // "บัญชีรับเงิน", the name it has everywhere else (it said "บัญชีรับเงินคืน", the name of a member's standing account).
+  // The status, every other field and their order are as they were.
+  it('returns for a claim that holds an account and waits for its requester the status it always had, and a note that names the account as every screen does', async () => {
+    const setAside = { invalidatedAt: '2026-09-30T18:30:00.000Z', invalidatedReason: 'payout_account_correction' };
+    const item = {
+      id: 'rr2', companyId: 'c1', requestNo: 'RB-202609-000002', requesterUserId: 'u1', requesterDisplayNameSnapshot: 'User', reason: 'travel',
+      categoryKey: 'travel', amount: '580.50', currency: 'THB', incurredDate: '2026-09-20', status: 'PENDING_APPROVAL',
+      financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED',
+      postingStatus: 'posted', paymentTotalAmount: '0', outstandingAmount: '580.50', lineCount: 1, createdAt: '', updatedAt: '',
+      payments: [], duplicateCandidates: [], payoutMethod: 'BANK_TRANSFER',
+      payout: { payoutMethod: 'BANK_TRANSFER', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 2, canRevealAccountNumber: true },
+      payoutCorrectionPhase: 'AWAITING_REQUESTER', currentDesk: { kind: 'REQUESTER' },
+      payoutCorrection: {
+        phase: 'AWAITING_REQUESTER', requestedAt: '2026-09-30T18:30:00.000Z', requestedByUserId: 'payer-1', requestedByName: 'ผู้จ่าย', reasonCode: 'ACCOUNT_NUMBER_WRONG',
+        note: 'เลขท้ายไม่ตรงสมุดบัญชี', previous: { payoutMethod: 'BANK_TRANSFER', accountName: 'นาย สมชาย ใจดี', accountLast4: '1234', version: 1 },
+      },
+      approvalSteps: [{ id: 's1', sequenceNo: 1, approverUserId: 'approver-1', status: 'APPROVED', assignedAt: '', decidedAt: '2026-09-21T03:00:00.000Z', ...setAside }],
+    };
+    const result = await new ReimbursementGetDetailTool({ execute: async () => item } as any).execute(ctx, { reimbursementId: 'rr2' });
+    // What the evaluation case of the assistant for such a claim (R-23) asks of an answer is in the status and in the note.
+    for (const said of [(result.data as any).status, (result.data as any).note]) {
+      assert.match(said, /บัญชีรับเงิน|แก้บัญชี|แก้ไขบัญชี/);
+      assert.match(said, /ผู้เบิก/);
+    }
+    assert.equal(JSON.stringify(result.data),
+      '{"id":"rr2","requestNo":"RB-202609-000002","requesterDisplayName":"User","title":null,"reason":"travel","category":"travel","amount":"580.50","currency":"THB","incurredDate":"2026-09-20","status":"รอผู้เบิกแก้บัญชีรับเงิน","sentBackOn":"2026-10-01","note":"ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้","financeReviewStatus":"NOT_REQUIRED","paymentStatus":"NOT_PAYABLE","receiptRequirementStatus":"ATTACHED","postingStatus":"posted","paymentTotalAmount":"0","outstandingAmount":"580.50","lineCount":1,"approvalSteps":[],"payments":[],"duplicateCount":0}');
   });
 
   // Tool dry-run 2026-10-02: a claim whose cancellation was started came back as `status: 'PENDING_APPROVAL'` with its

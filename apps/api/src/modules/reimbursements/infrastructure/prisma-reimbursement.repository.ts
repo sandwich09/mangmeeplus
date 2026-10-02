@@ -12,7 +12,9 @@ import { isDeepStrictEqual } from 'node:util';
 import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { reimbursementHubBucket } from '@watchdog-bms/contracts';
-import type { ReimbursementClaimSignatureRole, ReimbursementHubBucket, ReimbursementPayoutCorrectionReason, ReimbursementRequestStatus } from '@watchdog-bms/contracts';
+import type {
+  ReimbursementClaimSignatureRole, ReimbursementHubBucket, ReimbursementPayoutCorrectionReason, ReimbursementPayoutRoundAnswer, ReimbursementRequestStatus,
+} from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import {
   Prisma, ReimbursementFinanceReviewStatus as FinanceReviewStatuses, ReimbursementRequestStatus as RequestStatuses,
@@ -94,13 +96,13 @@ import {
 // The payment step's side of the payout (kept as its own imports, apart from the block above).
 import { planPaymentPayout, type PaymentPayoutPlan, type PaymentPayoutStatement } from '../domain/logic/payout-destination.logic';
 import {
-  assertPaymentPayoutUsable, claimPayoutMatchesVersion, confirmPaymentPayout, paymentPayoutRefusal, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
+  assertPaymentPayoutUsable, confirmPaymentPayout, paymentPayoutRefusal, payoutCorrectionKeptDestination, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
   type ConfirmedPaymentPayout,
 } from './reimbursement-payout';
 // The claim page's account history (its own import too, for the same reason).
 import { readClaimPayoutVersions } from './reimbursement-payout';
 // The payout account correction round (payout spec §14).
-import { PAYOUT_CORRECTION_STEP_REASON, payoutCorrectionPhase, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../domain/logic/reimbursement.logic';
+import { PAYOUT_CORRECTION_STEP_REASON, payoutCorrectionFacts, payoutCorrectionPhase, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot } from '../domain/logic/payout-destination.logic';
 import { freezePayoutCorrection, type CorrectionPayoutWrite } from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
@@ -1472,9 +1474,12 @@ export class PrismaReimbursementRepository {
     });
   }
 
-  /** The claim's own snapshot. Never the member's default account. */
-  findClaimPayout(request: ReimbursementRequestRecord) {
-    return readClaimPayout(this.prisma.client, request);
+  /**
+   * The claim's own snapshot. Never the member's default account.
+   * `client`: a transaction, for a caller that reads what that transaction has just frozen on the claim.
+   */
+  findClaimPayout(request: Parameters<typeof readClaimPayout>[1], client: unknown = this.prisma.client) {
+    return readClaimPayout(client, request);
   }
 
   /** Every account the claim has been sent with, oldest first, masked: the claim page's account history. */
@@ -1504,11 +1509,6 @@ export class PrismaReimbursementRepository {
   /** The masked accounts a claim's payments were confirmed into, by account version. */
   listPaymentPayoutDestinations(companyId: string, requestId: string, versions: readonly number[]) {
     return readPaymentPayoutDestinations(this.prisma.client, companyId, requestId, versions);
-  }
-
-  /** A correction round: whether the account the claim holds now is the one that version named. A yes or a no; no fingerprint leaves. */
-  claimPayoutMatchesVersion(request: ReimbursementRequestRecord, version: number): Promise<boolean> {
-    return claimPayoutMatchesVersion(this.prisma.client, request, version);
   }
 
   /** Friendly preflight of the payout proof that `recordPaymentAtomic` repeats under the payment lock. */
@@ -2822,6 +2822,8 @@ export class PrismaReimbursementRepository {
     approverRouteUserIds: readonly string[];
     onPersisted: (tx: any, result: {
       columns: SubmitPayoutColumns; step?: ReimbursementApprovalStepRecord; replacedStepId?: string; readyForPayment: boolean;
+      /** What was given, against what the round began with (`payoutCorrectionFacts`). Undefined only for a round with no opening on record. */
+      answer?: ReimbursementPayoutRoundAnswer;
     }) => Promise<void>;
   }): Promise<{ request: ReimbursementRequestRecord; step?: ReimbursementApprovalStepRecord; readyForPayment: boolean }> {
     const client = this.prisma.client as any;
@@ -2873,10 +2875,15 @@ export class PrismaReimbursementRepository {
       // Nobody approves it: it is payable again from here, so its expense records are held to its lines first.
       if (!step) await this.assertClaimProjectionsReady(tx, request);
 
+      // Whether this is the very destination the claim was approved with: decided here, once, and kept on
+      // the entry, so every later reader of the round says the same of it without comparing anything.
+      const sameAsApproved = await payoutCorrectionKeptDestination(tx, request, columns, payoutCorrectionRoundStart(request));
       const entry: ReimbursementPayoutCorrectionLogEntry = {
         kind: 'ACCOUNT_SUBMITTED', at: data.submittedAt.toISOString(), byUserId: data.actorUserId, payoutMethod: columns.payoutMethod,
         ...(columns.payoutDestinationVersion !== null && { payoutVersion: columns.payoutDestinationVersion }),
+        ...(sameAsApproved && { sameAsApproved: true as const }),
       };
+      const log = withPayoutCorrectionStep(row, entry);
       const changed = await tx.reimbursementRequest.updateMany({
         where: { id: data.requestId, companyId: data.companyId, status: 'PENDING_APPROVAL', updatedAt: row.updatedAt, cancellationPendingAt: null },
         data: {
@@ -2885,13 +2892,17 @@ export class PrismaReimbursementRepository {
           ...(step
             ? { currentApprovalStepId: step.id, currentApproverUserId: step.approverUserId ?? null, payoutCorrectionSubmittedAt: data.submittedAt }
             : { status: 'READY_FOR_PAYMENT', approvedAt: data.submittedAt, paymentStatus: 'UNPAID', currentApprovalStepId: null, currentApproverUserId: null, ...NO_PAYOUT_CORRECTION }),
-          payoutCorrectionLogJson: withPayoutCorrectionStep(row, entry),
+          payoutCorrectionLogJson: log,
           updatedByUserId: data.actorUserId,
           updatedAt: this.nextVersion(row.updatedAt),
         },
       });
       if (changed.count !== 1) throw this.requestChanged();
-      await data.onPersisted(tx, { columns, ...(step && { step }), ...(replaced && { replacedStepId: replaced.id }), readyForPayment: !step });
+      await data.onPersisted(tx, {
+        columns, ...(step && { step }), ...(replaced && { replacedStepId: replaced.id }), readyForPayment: !step,
+        // What the requester gave against what the round began with, as every reader of the log will say it.
+        answer: payoutCorrectionFacts(log).at(-1)?.answer,
+      });
       const updated = await tx.reimbursementRequest.findFirstOrThrow({
         where: { id: data.requestId, companyId: data.companyId }, include: { lines: { orderBy: { lineNo: 'asc' } } },
       });
