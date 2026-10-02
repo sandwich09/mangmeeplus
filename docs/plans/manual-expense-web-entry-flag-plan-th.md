@@ -84,12 +84,12 @@ Exit: เว็บรู้ค่าของร้าน ร้านที่�
 
 ### P3 — Gate, ทางเข้า และคู่มือ
 
-- [ ] gate ครอบเฉพาะ `ManualExpensePanel` ตามกติกา spec §7.1: รับเข้าแล้วจำผล ไม่ถอนเมื่อ prop เปลี่ยน
-- [ ] server page ส่งผลของ helper เป็น prop และ render gate กับฟอร์มเสมอ
-- [ ] ต่อ nav, ปุ่มหน้ารายการ, ledger (ปุ่ม, การ์ด, empty state), AI แนะนำ กับ helper ตาม prop chain ที่มีอยู่
-- [ ] แปลงผลลัพธ์ของ `buildExpensesGuide` ในไฟล์ใหม่: ตัดปุ่มของหัวข้อ `manual` และเพิ่มหมายเหตุ ไม่แก้ไฟล์ที่ถูกตรึง
-- [ ] ข้อความตาม spec §8 รวมสถานะที่ไม่มีปุ่มให้แสดง, accessibility และ 390px
-- [ ] ไม่เอาผลของ helper ไปทับ `caps.canCreate` หรือ gate wizard/upload/shared API
+- [x] gate ครอบเฉพาะส่วนฟอร์มของแท็บบันทึกด้วยมือตามกติกา spec §7.1: รับเข้าแล้วจำผล ไม่ถอนเมื่อ prop เปลี่ยน (state ใน `ExpensesHubPage` ตรรกะใน `manual-expense-entry.logic.ts`)
+- [x] server page ส่งผลของ helper เป็น prop และ render gate กับฟอร์มเสมอ
+- [x] ต่อ nav, ปุ่มหน้ารายการ, ledger (ปุ่ม, การ์ด, empty state), AI แนะนำ กับ helper ตาม prop chain ที่มีอยู่
+- [x] แปลงผลลัพธ์ของ `buildExpensesGuide` ในไฟล์ใหม่: ตัดปุ่มของหัวข้อ `manual` และเพิ่มหมายเหตุ ไม่แก้ไฟล์ที่ถูกตรึง (`expenses-guide-manual-entry.ts`; hash ของไฟล์คู่มือยังเป็น `73f50c33…`)
+- [x] ข้อความตาม spec §8 รวมสถานะที่ไม่มีปุ่มให้แสดง, accessibility และ 390px (ข้อความอยู่ใน `workspace-dictionary.ts` ทั้งไทยและอังกฤษ; การดูจริงที่ 390px อยู่ใน P6)
+- [x] ไม่เอาผลของ helper ไปทับ `caps.canCreate` หรือ gate wizard/upload/shared API
 
 Exit: ร้านที่ไม่แสดงเมนูไม่มีทางเข้าใน spec §9.1 เลย ผู้ดูแลเปิดแล้วทางเข้ามาโดยไม่ต้อง login ใหม่ ปิดแล้วฟอร์มที่กรอกค้างยังอยู่
 

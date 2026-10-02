@@ -161,8 +161,15 @@ export function canCreateSourceDraft(
 }
 
 
-/** Code-owned usage guidance never invents an action outside the effective permission set. */
-export function permittedUsageGuidance(permissions: readonly string[]) {
+/**
+ * Code-owned usage guidance never invents an action outside the effective permission set — nor a
+ * page the company does not show: `canOpenManualExpense` is `canOpenManualWeb` of the session, and
+ * a caller that says nothing keeps the permission rule.
+ */
+export function permittedUsageGuidance(
+  permissions: readonly string[],
+  canOpenManualExpense: boolean = permissions.includes('expense.create'),
+) {
   return [
     { path: 'expenses/upload', permission: 'expense.receipt.upload', title: 'อัปโหลดใบเสร็จ', help: 'แนบเอกสาร รออ่านข้อมูล แล้วตรวจยอดและหลักฐานก่อนส่งตรวจ' },
     { path: 'expenses/manual', permission: 'expense.create', title: 'บันทึกค่าใช้จ่ายด้วยมือ', help: 'กรอกผู้รับเงิน รายการและยอด พร้อมแนบหลักฐานหรือระบุเหตุผลที่ไม่มีใบเสร็จ' },
@@ -170,5 +177,5 @@ export function permittedUsageGuidance(permissions: readonly string[]) {
     { path: 'reimbursements', permission: 'reimbursement.create', title: 'ขอเบิกคืนเงินสำรองจ่าย', help: 'เลือกเอกสารต้นทางที่รองรับ ตรวจข้อมูล แล้วส่งตามลำดับอนุมัติ' },
     { path: 'expenses/evidence', permission: 'expense.evidence.read', title: 'ตรวจหลักฐานทางบัญชี', help: 'ตรวจรายการยืนยันแล้วและความครบของหลักฐานก่อนส่งต่อบัญชี' },
     { path: 'settings/employees', permission: 'access.employee.update', title: 'จัดการพนักงาน', help: 'กำหนดบทบาทและสาขาที่พนักงานทำงานได้' },
-  ].filter((item) => permissions.includes(item.permission));
+  ].filter((item) => permissions.includes(item.permission) && (item.path !== 'expenses/manual' || canOpenManualExpense));
 }

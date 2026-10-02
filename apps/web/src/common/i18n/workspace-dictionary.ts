@@ -1236,6 +1236,13 @@ export const workspaceDictionary = {
     'expenses.manual_receipt_upload_failed': 'บันทึกฉบับร่างแล้ว แต่แนบใบเสร็จไม่สำเร็จ',
     'expenses.manual_open_saved': 'เปิดรายการที่บันทึกไว้',
     'expenses.manual_read_only': 'อ่านอย่างเดียว: บัญชีนี้ไม่มีสิทธิ์สร้างรายการค่าใช้จ่าย',
+    // "แสดงเมนูบันทึกด้วยมือบนเว็บ" (manual-expense-web-entry-flag spec §8). The web only knows whether the
+    // shop shows the menu, not whether it ever did, so every sentence is true both for a shop that
+    // was never switched on and for one that was switched off again: "ไม่ได้เปิดใช้", never "ยังไม่เปิดใช้".
+    'expenses.manual_entry_not_enabled': 'หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ',
+    'expenses.manual_entry_go_list': 'ไปหน้ารายการค่าใช้จ่าย',
+    'expenses.manual_entry_contact_admin': 'กรุณาติดต่อผู้ดูแลร้านของคุณ',
+    'expenses.manual_entry_closed_notice': 'หน้านี้ถูกปิดสำหรับร้านของคุณแล้ว คุณยังบันทึกรายการที่กำลังกรอกได้',
     'expenses.manual_summary_title': 'สรุปก่อนบันทึก',
     'expenses.manual_before_tax': 'ยอดก่อนภาษี',
     'expenses.manual_no_tax_code': 'ไม่ได้เลือกประเภทภาษี',
@@ -2861,6 +2868,10 @@ export const workspaceDictionary = {
     'expenses.manual_receipt_upload_failed': 'Draft saved, but attaching the receipt failed',
     'expenses.manual_open_saved': 'Open the saved draft',
     'expenses.manual_read_only': 'Read only: this account cannot create expenses',
+    'expenses.manual_entry_not_enabled': 'Manual entry is not enabled for your shop',
+    'expenses.manual_entry_go_list': 'Go to the expense list',
+    'expenses.manual_entry_contact_admin': 'Please contact your shop administrator',
+    'expenses.manual_entry_closed_notice': 'This page has been closed for your shop. You can still save the entry you are filling in.',
     'expenses.manual_summary_title': 'Summary before saving',
     'expenses.manual_before_tax': 'Before tax',
     'expenses.manual_no_tax_code': 'No Tax Code',

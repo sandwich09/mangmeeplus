@@ -48,6 +48,8 @@ import { AI_BUDGET_REFUSAL_CODES, isCalculatedExpenseRounding, expenseVatReconci
 import { counterpartyAutoSaveNotice, counterpartyHref } from '../counterparties/counterparties.logic';
 import { COUNTERPARTY_READ_PERMISSION, type CounterpartyAutoSaveNotice } from '../counterparties/counterparties.model';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
+import { ManualExpenseEntryNotEnabled } from './ManualExpenseEntryNotEnabled';
+import { manualEntryView, nextManualEntryAdmission } from './manual-expense-entry.logic';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
@@ -2214,7 +2216,7 @@ export const STEP_HELPER_KEYS: Record<ExpenseReviewStepKey, DictionaryKey> = {
 const GRID = 'grid grid-cols-[minmax(160px,1fr)_minmax(150px,1.4fr)_minmax(150px,1fr)_minmax(100px,0.7fr)_minmax(140px,1fr)_84px] items-center gap-3';
 const LIST_PAGE_SIZE = 10;
 
-function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: string; caps: ExpenseCapabilities; userId: string; onSelect: (id: string) => void }) {
+function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: { companyId: string; caps: ExpenseCapabilities; canOpenManual: boolean; userId: string; onSelect: (id: string) => void }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -2450,7 +2452,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
         {caps.canUploadReceipts && <Link className={btnClass} href={`/companies/${companyId}/expenses/upload`}>อัปโหลดใบเสร็จ</Link>}
-        {caps.canCreate && <Link className={ghostClass} href={`/companies/${companyId}/expenses/manual`}>บันทึกเอง</Link>}
+        {canOpenManual && <Link className={ghostClass} href={`/companies/${companyId}/expenses/manual`}>บันทึกเอง</Link>}
       </div>
       {sourceView && <div role="status" className="rounded-xl bg-brand-25 p-3 text-sm text-brand-800">
         {sourceView === 'confirmed' ? `รายการยืนยันแล้ว · วันที่เอกสาร ${dateShort(fromDate)} – ${dateShort(toDate)}`
@@ -2661,7 +2663,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   );
 }
 
-function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }: { companyId: string; branchId?: string; canAttachReceipt: boolean; onSuccess: (expenseId: string) => void }) {
+function ManualExpensePanel({ companyId, branchId, canAttachReceipt, entryClosed, onSuccess }: { companyId: string; branchId?: string; canAttachReceipt: boolean; entryClosed: boolean; onSuccess: (expenseId: string) => void }) {
   const locale = useWorkspaceLocale();
   const [expenseDate, setExpenseDate] = useState(todayCivilDate());
   const [items, setItems] = useState<ManualExpenseItem[]>([{ description: '', quantity: '1', unitPrice: '', discountAmount: '0' }]);
@@ -2772,6 +2774,9 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
   const req = <span aria-hidden="true" className="text-error-500"> *</span>;
   return <div className="space-y-4">
     <div><h2 className="text-lg font-bold text-gray-900">{t('expenses.manual_title', locale)}</h2><p className="text-sm text-gray-500">{t('expenses.manual_intro', locale)}</p></div>
+    {/* The company stopped showing this page while the form was open (spec §7.2): the form stays and
+        can be saved. Once the draft is saved there is no entry in progress left to speak of. */}
+    {entryClosed && !savedExpenseId && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium leading-6 text-amber-900">{t('expenses.manual_entry_closed_notice', locale)}</p>}
     {error && <ErrorBanner message={error} focus />}
     {error && draftSave.current.body && !savedExpenseId && <p role="status" className="text-sm text-gray-600">ยังยืนยันผลการบันทึกไม่ได้ กดบันทึกซ้ำเพื่อตรวจคำสั่งเดิม แล้วเปิดรายการที่บันทึกไว้เพื่อแก้ไขต่อ</p>}
     <form onSubmit={submit} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -2899,7 +2904,11 @@ const TAB_META: Record<ExpensesTab, { labelKey: DictionaryKey; descKey: Dictiona
   evidence: { labelKey: 'expenses.tab_evidence', descKey: 'expenses.tab_evidence_desc' },
 };
 
-export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }: { companyId: string; userId: string; permissions: string[]; tab?: ExpensesTab }) {
+export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', manualEntryOpen }: {
+  companyId: string; userId: string; permissions: string[]; tab?: ExpensesTab;
+  /** `canOpenManualWeb` of the server session, from the list and the manual page. Left out, the permission decides. */
+  manualEntryOpen?: boolean;
+}) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const branchFilter = useBranchFilter();
@@ -2907,6 +2916,14 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
   const createBranchId = useTransactionCreateBranchId();
   const toast = useToast();
   const caps = expenseCapabilities(permissions);
+  // The manual page's admission (spec §7.1): a state of this mounted page, taken from the prop the
+  // server sent and never withdrawn — the server renders this hub whatever the setting says, so a
+  // `router.refresh()` after the admin switches the menu off changes the prop and keeps the form.
+  const canOpenManual = manualEntryOpen ?? caps.canCreate;
+  const [manualAdmitted, setManualAdmitted] = useState(canOpenManual);
+  const manualAdmittedNow = nextManualEntryAdmission(manualAdmitted, canOpenManual);
+  if (manualAdmittedNow !== manualAdmitted) setManualAdmitted(manualAdmittedNow);
+  const manualView = manualEntryView(manualAdmittedNow, canOpenManual);
   // A2: the LINE ticket names one signature. The `?tab=` redirect below already carries every other
   // query param through to the real route, so this only has to read it once it lands.
   const [focusSignatureId, setFocusSignatureId] = useState('');
@@ -2941,16 +2958,20 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
   // clicked rather than the hub — `labelKey` is the sidebar's own wording, so the two cannot drift.
   const meta = TAB_META[tab];
   const forbidden = !canAccessExpenseTab(tab, caps);
+  // Outside the branch field and its disabled fieldset below, so this state's own links are never
+  // answered with the form's "choose a branch first".
+  const manualNotEnabled = tab === 'manual' && !forbidden && manualView === 'not_enabled';
 
   return (
     <MangmeePage
       eyebrow={t('expenses.eyebrow', locale)}
       title={t(meta.labelKey, locale)}
-      description={t(meta.descKey, locale)}
+      // The description tells the reader what to fill in; with no form to fill it would be untrue.
+      description={manualNotEnabled ? undefined : t(meta.descKey, locale)}
     >
-      {forbidden ? <StateBanner error="Forbidden" /> : (
+      {forbidden ? <StateBanner error="Forbidden" /> : manualNotEnabled ? <ManualExpenseEntryNotEnabled companyId={companyId} caps={caps} /> : (
         <>
-          {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} onSelect={openListExpense} />}
+          {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} canOpenManual={canOpenManual} userId={userId} onSelect={openListExpense} />}
           {(tab === 'upload' || tab === 'manual') && <>
             <TransactionBranchField value={createBranchId} invalid={!createBranchId} />
             {/* Owner report 2026-08-28: with several branches and the all-branches filter on, this panel is
@@ -2969,7 +2990,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
             }}>
             <fieldset disabled={!createBranchId} className="min-w-0">
               {tab === 'upload' && <UploadPanel companyId={companyId} branchId={createBranchId} canManagePlan={permissions.includes('company.plan.manage')} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} onBatchSuccess={(created) => { for (const row of created) storeExtractionNotice(row.expenseId, row.notice); router.push(`/companies/${companyId}/expenses?highlight=${encodeURIComponent(created.at(-1)!.expenseId)}`); }} />}
-              {tab === 'manual' && <ManualExpensePanel companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} onSuccess={openListExpense} />}
+              {tab === 'manual' && <ManualExpensePanel companyId={companyId} branchId={createBranchId} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} entryClosed={manualView === 'form_closed'} onSuccess={openListExpense} />}
             </fieldset>
             </div>
           </>}

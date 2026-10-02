@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { canOpenManualWeb } from './manual-expense-entry.logic';
+import { canOpenManualWeb, manualEntryView, manualExpenseWebEntryShown, nextManualEntryAdmission } from './manual-expense-entry.logic';
 
 // manual-expense-web-entry-flag spec §6.1–6.2: the one predicate behind every web entrance to the
 // manual expense page. The API decides what a company without a row reads as; the web only ever
@@ -34,5 +34,42 @@ describe('canOpenManualWeb', () => {
     assert.equal(canOpenManualWeb(session({ companyId: 'co-2', manualExpenseWebEntry: true }), 'co-1'), false);
     assert.equal(canOpenManualWeb(null, 'co-1'), false);
     assert.equal(canOpenManualWeb(undefined, 'co-1'), false);
+  });
+});
+
+describe('manualExpenseWebEntryShown', () => {
+  it('reads the company setting alone: not shown only when the API answered false', () => {
+    assert.equal(manualExpenseWebEntryShown({ manualExpenseWebEntry: false }), false);
+    for (const session of [{ manualExpenseWebEntry: true }, {}, null, undefined]) {
+      assert.equal(manualExpenseWebEntryShown(session), true, JSON.stringify(session));
+    }
+  });
+});
+
+// spec §7.1: the page admits once, from the prop the server sent, and never withdraws the admission
+// while it stays mounted — so a form in progress survives the admin switching the menu off.
+describe('manual entry admission', () => {
+  it('does not admit while the entrance is not shown', () => {
+    assert.equal(nextManualEntryAdmission(false, false), false);
+    assert.equal(manualEntryView(false, false), 'not_enabled');
+  });
+
+  it('admits when the entrance is shown, also later without a new page load', () => {
+    assert.equal(nextManualEntryAdmission(false, true), true);
+    assert.equal(manualEntryView(true, true), 'form');
+  });
+
+  it('never withdraws an admission, and says so on the form instead', () => {
+    assert.equal(nextManualEntryAdmission(true, false), true);
+    assert.equal(manualEntryView(true, false), 'form_closed');
+  });
+
+  it('follows a whole session: not shown, switched on, switched off, switched on again', () => {
+    let admitted = false;
+    const seen = [false, false, true, false, false, true].map((open) => {
+      admitted = nextManualEntryAdmission(admitted, open);
+      return manualEntryView(admitted, open);
+    });
+    assert.deepEqual(seen, ['not_enabled', 'not_enabled', 'form', 'form_closed', 'form_closed', 'form']);
   });
 });
