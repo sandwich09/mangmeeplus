@@ -9,7 +9,7 @@ import { Modal } from '@/common/components/modal';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import {
-  loadHubPage, submitReimbursement, getReimbursement,
+  loadHubPage, submitReimbursement, getReimbursement, getReimbursementFinanceStep,
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement,
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
@@ -155,25 +155,27 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const [refreshKey, setRefreshKey] = useState(0);
 
   // A finance desk exists only where the company turned the finance-review step on, so the tab that holds the claims
-  // waiting for payment is named by the company's own policy. The page reads it where this session may (the policy
-  // endpoint asks for a policy right). A session that may not keeps the finance wording, for the right it holds.
-  const canReadPolicy = permissionTabs.includes('finance')
-    && (permissions.includes('reimbursement.policy.read') || permissions.includes('reimbursement.policy.manage'));
+  // waiting for payment is named by the company's own policy. A session that may read the policy reads it there (the
+  // policy endpoint asks for a policy right). One that may not, an accountant say, is told that one fact by the claims
+  // list answer, which carries it for whoever may list claims: such a session read "คิวการเงิน" in a shop with no finance step.
+  const hasThirdTab = permissionTabs.includes('finance');
+  const canReadPolicy = permissions.includes('reimbursement.policy.read') || permissions.includes('reimbursement.policy.manage');
+  const listScope = reimbursementListScope(permissions);
   const [policyRead, setPolicyRead] = useState<{ companyId: string | null; financeStep: boolean }>({ companyId: null, financeStep: true });
   const notePolicy = useCallback((policy: { financeReviewRequired?: boolean }) => {
     setPolicyRead({ companyId, financeStep: policy.financeReviewRequired === true });
   }, [companyId]);
   useEffect(() => {
-    if (!canReadPolicy) return;
+    if (!hasThirdTab) return;
     let current = true;
-    void getReimbursementPolicy(companyId)
+    void (canReadPolicy ? getReimbursementPolicy(companyId) : getReimbursementFinanceStep(companyId, listScope))
       .then((policy) => { if (current) notePolicy(policy); })
-      // Not read: the finance wording, as for a session that may not read the policy at all.
+      // Not told (the read failed, or the session may list no claims): the finance wording, for the right it holds.
       .catch(() => { if (current) notePolicy({ financeReviewRequired: true }); });
     return () => { current = false; };
-  }, [companyId, canReadPolicy, notePolicy]);
-  // Undefined: the policy is still being read, and the tab is not named before it is known.
-  const financeStep = !canReadPolicy ? true : policyRead.companyId === companyId ? policyRead.financeStep : undefined;
+  }, [companyId, hasThirdTab, canReadPolicy, listScope, notePolicy]);
+  // Undefined: not told yet, and the tab is not named before it is known.
+  const financeStep = !hasThirdTab ? true : policyRead.companyId === companyId ? policyRead.financeStep : undefined;
   const financeWords = financeStep === undefined ? undefined : financeQueueWords(financeStep);
   const tabLabel = (t: HubTab) => (t === 'finance' ? financeWords?.tab : HUB_TAB_LABELS[t]);
 

@@ -539,6 +539,9 @@ export class ListReimbursementsUseCase {
       page,
       pageSize,
       hub,
+      // The one fact of the policy the hub needs from here: a finance reviewer who may not read the
+      // policy (an accountant) named the third tab "คิวการเงิน" in a company with no finance step.
+      financeReviewRequired: policy.financeReviewRequired,
     };
   }
 }

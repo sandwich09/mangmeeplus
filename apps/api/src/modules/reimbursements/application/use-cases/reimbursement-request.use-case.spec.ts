@@ -2167,6 +2167,32 @@ describe('list paging and hub buckets', () => {
     // A caller with no read right is refused for that, whatever bucket it names.
     await assert.rejects(() => list.execute(ctx({ permissions: [] }), { bucket: 'constructor' as any }), (error: any) => error.getStatus() === 403);
   });
+
+  // The hub names its third tab by the company's finance step (payout spec §18.5). The policy endpoint asks for a
+  // policy right, which an accountant does not hold, so the tab read "คิวการเงิน" in a company with no finance step.
+  it('tells whoever lists claims whether the company has the finance-review step now, and nothing else of its policy', async () => {
+    const policyRecord = (financeReviewRequired: boolean) => ({
+      id: 'pol-1', companyId: 'co-1', currency: 'THB', approvalThresholdAmount: '5000.00', approvalRequiredFromAmount: '5000.00',
+      approverMode: 'CUSTOM_ROLE', defaultApproverRole: 'SECRET_ROLE', defaultApproverRoles: ['SECRET_ROLE'], allowSelfApproval: true,
+      requireReceipt: true, allowMissingReceiptWithReason: false, duplicatePolicy: 'WARN', financeReviewRequired, slaHours: 48, status: 'ACTIVE',
+      createdByUserId: 'owner-1', createdAt: at(0), updatedAt: at(0),
+    });
+    const listWith = (policy: unknown) => new ListReimbursementsUseCase({
+      listRequestPage: async () => ({ rows: [], groups: [] }), findPolicy: async () => policy,
+      findPendingApprovalSteps: async () => [], getUserDisplayNames: async () => ({}),
+    } as any);
+    // An accountant: reads claims and reviews them for finance, and holds no right to the policy.
+    const accountant = ctx({ roles: ['ACCOUNTANT'], permissions: ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.export'] });
+    // No policy saved yet: the company default, which has no finance step.
+    for (const [policy, expected] of [[policyRecord(true), true], [policyRecord(false), false], [null, false]] as const) {
+      const answer = await listWith(policy).execute(accountant, { pageSize: 1 });
+      assert.equal(answer.financeReviewRequired, expected);
+      assert.deepEqual(Object.keys(answer).sort(), ['financeReviewRequired', 'hub', 'items', 'page', 'pageSize', 'total']);
+      assert.doesNotMatch(JSON.stringify(answer), /SECRET_ROLE|5000|48|pol-1/);
+    }
+    // A requester lists their own claims only, and is told the same.
+    assert.equal((await listWith(policyRecord(true)).execute(ctx({ permissions: ['reimbursement.read_own'] }), { scope: 'own' })).financeReviewRequired, true);
+  });
 });
 
 const approverPermissions = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];

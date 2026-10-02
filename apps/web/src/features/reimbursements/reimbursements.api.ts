@@ -80,6 +80,17 @@ export function loadHubPage(
     .catch((error) => { if (held) handlers.onError(error); });
   return () => { held = false; };
 }
+/**
+ * Whether the company has the finance-review step now, for a session that may not read the policy (an accountant
+ * reviews claims for finance and holds no policy right). The claims list answer carries this one fact for whoever may
+ * list claims, so one row is asked for and the fact is read off the answer. An answer without it is refused, never
+ * read as a company with no finance step. No error toast: the hub then keeps the wording of the right the session holds.
+ */
+export async function getReimbursementFinanceStep(companyId: string, scope?: string): Promise<{ financeReviewRequired: boolean }> {
+  const answer = await apiFetch<any>(`${base(companyId)}${qs({ scope, pageSize: 1 })}`, { suppressErrorToast: true });
+  if (typeof answer?.financeReviewRequired !== 'boolean') throw new Error('ข้อมูลที่ได้รับไม่ครบ');
+  return { financeReviewRequired: answer.financeReviewRequired };
+}
 export function getReimbursement(companyId: string, id: string) {
   return apiFetch<any>(`${base(companyId)}/${id}`);
 }

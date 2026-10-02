@@ -1109,6 +1109,12 @@ export type PaginatedReimbursements = {
   pageSize: number;
   /** The scope counted per bucket, whatever `bucket` or page was asked for. With `search`, the claims it found. */
   hub: ReimbursementHubSummary;
+  /**
+   * Whether the company has the finance-review step now: its current policy, the one a claim sent
+   * today would be held to. The hub names its third tab by it ("คิวการเงิน" or "คิวรอจ่าย"). This one
+   * fact goes to whoever may list claims; the policy itself stays with the policy endpoint and its rights.
+   */
+  financeReviewRequired: boolean;
 };
 
 // ---- Queue items ----

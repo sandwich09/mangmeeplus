@@ -179,15 +179,17 @@ function served(claims: any[], filter?: string) {
  * One hub tab, its queue loaded with the rows (each queue starts as an empty list, loading); `filter` = a card or chip already tapped.
  * The hub's own list is held a page at a time: `held` overrides what it holds (pages still to come, a page that failed).
  * `search` = a search already typed and asked for: the rows are then what the API found, and so are the counts.
- * `financeStep`: the viewer may read the company's policy, which says whether the finance-review step is on; 'unread' = may read it and
- * has not yet. Left out, the viewer holds no policy right, as `hubPermissions` has none.
+ * `financeStep`: whether the company has the finance-review step, as the page was told it; 'unread' = not told yet.
+ * `mayReadPolicy`: the viewer holds a policy right and is told by the policy itself. Without one (`hubPermissions` has
+ * none) the claims list answer tells them. Left out, both: a viewer with no policy right, told that the company has the step.
  */
-const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held: object = {}, search = '', financeStep?: boolean | 'unread') => renderWithState(
+const hubTab = (tab: string, rows: object[] = [queueRow], filter?: string, held: object = {}, search = '', financeStep?: boolean | 'unread',
+  mayReadPolicy = financeStep !== undefined, told: boolean | 'unread' = financeStep ?? true) => renderWithState(
   h(AppRouterContext.Provider, { value: router }, h(SearchParamsContext.Provider, { value: new URLSearchParams(`tab=${tab}`) },
     h(ToastContext.Provider, { value: toast },
       h(ReimbursementsHubPage, { companyId: 'company-1', userId: ids.requester, roles: ['OWNER'],
-        permissions: financeStep === undefined ? hubPermissions : [...hubPermissions, 'reimbursement.policy.read'] })))),
-  (initial) => (initial && typeof initial === 'object' && 'financeStep' in initial ? (typeof financeStep === 'boolean' ? { companyId: 'company-1', financeStep } : undefined)
+        permissions: mayReadPolicy ? [...hubPermissions, 'reimbursement.policy.read'] : hubPermissions })))),
+  (initial) => (initial && typeof initial === 'object' && 'financeStep' in initial ? (typeof told === 'boolean' ? { companyId: 'company-1', financeStep: told } : undefined)
     : Array.isArray(initial) && initial.length === 0 ? rows
       : Array.isArray(initial?.rows) ? { key: hubListKey('company-1', reimbursementListScope(hubPermissions), filter ?? 'all', 0, 0, search), nextPage: null, ...served(rows, filter), ...held }
         : initial === true ? false : initial === 'all' ? filter : initial === '' ? search : undefined),
@@ -640,15 +642,29 @@ describe('the hub\'s third tab is the pay queue where the company has no finance
     for (const text of ['รอตรวจ/รอจ่าย', 'ตรวจการเงิน', 'รอตรวจสอบ', 'ไม่ต้องตรวจ']) assert.ok(visible(html).includes(text), text);
   });
 
-  it('names no third tab before the policy is read, and keeps the finance wording for a viewer who may not read it', () => {
-    const unread = hubTab('finance', [ready], undefined, {}, '', 'unread');
-    assert.deepEqual(tabsOf(unread), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ']);
-    for (const text of visible(unread)) assert.doesNotMatch(text, /คิวการเงิน|คิวรอจ่าย|ไม่มีใบรอจ่าย|รอตรวจ\/รอจ่าย/u);
-    assert.ok(visible(unread).includes('กำลังโหลด...'));
-    // The policy endpoint asks for a policy right. Whoever holds the finance-review right without one cannot be told the
-    // company's switch, and reads the tab by the right they hold.
-    assert.deepEqual(tabsOf(hubTab('finance', [])), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวการเงิน']);
-    assert.ok(visible(hubTab('finance', [])).includes('ไม่มีรายการรอการเงิน'));
+  it('names no third tab before the page is told, with a policy right or without one', () => {
+    for (const mayReadPolicy of [true, false]) {
+      const unread = hubTab('finance', [ready], undefined, {}, '', 'unread', mayReadPolicy);
+      assert.deepEqual(tabsOf(unread), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ']);
+      for (const text of visible(unread)) assert.doesNotMatch(text, /คิวการเงิน|คิวรอจ่าย|ไม่มีใบรอจ่าย|รอตรวจ\/รอจ่าย/u);
+      assert.ok(visible(unread).includes('กำลังโหลด...'));
+    }
+  });
+
+  // The policy endpoint asks for a policy right, which an accountant does not hold: they review claims for finance and
+  // record no policy. Before, such a viewer read "คิวการเงิน" and "ไม่มีรายการรอการเงิน" in a shop with no finance step.
+  it('names the tab by the company for a finance reviewer who may not read the policy, as the claims list answer tells it', () => {
+    const off = hubTab('finance', [], undefined, {}, '', false, false);
+    assert.deepEqual(tabsOf(off), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
+    assert.ok(visible(off).includes('ไม่มีใบรอจ่าย'));
+    for (const text of visible(off)) assert.doesNotMatch(text, /การเงิน|รอตรวจ/u);
+    const on = hubTab('finance', [], undefined, {}, '', true, false);
+    assert.deepEqual(tabsOf(on), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวการเงิน']);
+    assert.ok(visible(on).includes('ไม่มีรายการรอการเงิน'));
+    // Which of the two it asks is the page's own choice: the policy where the session may read it, else the list answer.
+    const page = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
+    assert.match(page, /void \(canReadPolicy \? getReimbursementPolicy\(companyId\) : getReimbursementFinanceStep\(companyId, listScope\)\)/);
+    assert.match(page, /const financeStep = !hasThirdTab \? true : policyRead\.companyId === companyId \? policyRead\.financeStep : undefined;/);
   });
 });
 

@@ -4,6 +4,7 @@ import {
   cancelReimbursementDraftAction,
   confirmReimbursementDraftAction,
   getReimbursementDraftAction,
+  getReimbursementFinanceStep,
   loadHubPage,
   requestReimbursementPayoutCorrection,
   submitReimbursement,
@@ -70,6 +71,45 @@ describe('reimbursement submit error notifications', () => {
       });
     }
   }
+});
+
+// The hub names its third tab by the company's finance step. A session that may not read the policy (an accountant)
+// is told that one fact by the claims list answer.
+describe('the finance step for a session that may not read the policy', () => {
+  const answering = (body: unknown, status = 200) => {
+    const asked: string[] = [];
+    (globalThis as Record<string, unknown>)['window'] = {};
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      asked.push(String(input));
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    return asked;
+  };
+  const listAnswer = { items: [], total: 0, page: 1, pageSize: 1, hub: { counts: { all: 0 } } };
+
+  it('asks the claims list for one row in the session\'s own scope, and reads the one fact off the answer', async () => {
+    let asked = answering({ ...listAnswer, financeReviewRequired: false });
+    assert.deepEqual(await getReimbursementFinanceStep('co-1'), { financeReviewRequired: false });
+    assert.deepEqual(asked, ['/api/v1/companies/co-1/reimbursements?pageSize=1']);
+    asked = answering({ ...listAnswer, financeReviewRequired: true, approvalRequiredFromAmount: '5000.00' });
+    // Only the fact is handed on, whatever else an answer carries.
+    assert.deepEqual(await getReimbursementFinanceStep('co-1', 'own'), { financeReviewRequired: true });
+    assert.deepEqual(asked, ['/api/v1/companies/co-1/reimbursements?scope=own&pageSize=1']);
+  });
+
+  it('refuses an answer without the fact rather than reading it as no finance step, and raises no toast for a refusal', async () => {
+    const events: ToastEvent[] = [];
+    const unsubscribe = subscribeToastBus((event) => events.push(event));
+    try {
+      // An API from before the fact was added: the hub then keeps the wording of the right the session holds.
+      answering(listAnswer);
+      await assert.rejects(() => getReimbursementFinanceStep('co-1'));
+      // A session that holds the finance-review right and no right to list claims.
+      answering({ statusCode: 403, message: 'Missing permission to read reimbursements' }, 403);
+      await assert.rejects(() => getReimbursementFinanceStep('co-1'), (error: Error & { status?: number }) => error.status === 403);
+      assert.deepEqual(events, []);
+    } finally { unsubscribe(); }
+  });
 });
 
 describe('reimbursement receipt upload', () => {
