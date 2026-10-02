@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import {
   DATA_RIGHTS_DECISION_CATEGORIES,
@@ -11,6 +13,7 @@ import {
   type DataRightsDisposition,
 } from '@watchdog-bms/contracts';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
+import { assertProductionA5NoDestructiveSql } from '../../scripts/production-a5-evidence.logic';
 import {
   DATA_RIGHTS_MANAGE_PERMISSION,
   DataRightsService,
@@ -39,6 +42,10 @@ function makeService(prisma: ReturnType<typeof makePrisma>, current = PDPA_KEY, 
   } as any);
 }
 
+function databaseRefusal(message: string) {
+  return Object.assign(new Error(message), { code: '55000' });
+}
+
 function makePrisma() {
   let sequence = 0;
   const state = {
@@ -46,6 +53,9 @@ function makePrisma() {
     decisions: [] as any[],
     evidence: [] as any[],
     actions: [] as any[],
+    auditLogs: [] as any[],
+    // Two active System Admins unless a test says otherwise, so the separation rules apply.
+    systemAdmins: ['admin-a', 'admin-b'],
     users: new Set(['user-1', 'user-2']),
     companies: new Set(['company-1']),
     memberships: [{ id: 'membership-1', companyId: 'company-1', userId: 'user-1' }],
@@ -120,6 +130,14 @@ function makePrisma() {
         completedAt: null,
         completedByUserId: null,
         outcomeSummary: null,
+        approvalSingleAdmin: false,
+        approvalSingleAdminReason: null,
+        executionSingleAdmin: false,
+        executionSingleAdminReason: null,
+        verificationSingleAdmin: false,
+        verificationSingleAdminReason: null,
+        completionSingleAdmin: false,
+        completionSingleAdminReason: null,
         createdAt: now,
         updatedAt: now,
         ...args.data,
@@ -129,6 +147,21 @@ function makePrisma() {
     },
     update: async (args: any) => {
       const row = state.cases.find((item) => item.id === args.where.id);
+      const next = { ...row, ...args.data };
+      // What the transition trigger and the CHECK constraints of the real database refuse, so a
+      // service that stopped sending the marker fails here and not only against PostgreSQL.
+      for (const [flag, actor, prior, rule] of [
+        ['approval', 'approvedByUserId', 'createdByUserId', 'data-rights case requires an approver independent from its creator'],
+        ['execution', 'executionStartedByUserId', 'approvedByUserId', 'data-rights approver cannot execute the case'],
+        ['verification', 'verificationStartedByUserId', 'executionStartedByUserId', 'data-rights execution requires an independent verifier'],
+        ['completion', 'completedByUserId', 'executionStartedByUserId', 'data-rights executor cannot verify completion'],
+      ] as const) {
+        const samePerson = Boolean(next[actor]) && next[actor] === next[prior];
+        const marker = next[`${flag}SingleAdmin`] === true;
+        const reason = next[`${flag}SingleAdminReason`];
+        if (samePerson && !(marker && typeof reason === 'string' && reason.trim().length >= 20)) throw databaseRefusal(rule);
+        if (marker !== samePerson || (!marker && reason !== null)) throw databaseRefusal(`${flag} single-admin marker check`);
+      }
       Object.assign(row, args.data, { updatedAt: new Date() });
       return { ...row };
     },
@@ -157,7 +190,12 @@ function makePrisma() {
   const dataRightsEvidenceRecord = {
     findMany: async (args: any) => state.evidence.filter((item) => item.caseId === args.where.caseId),
     create: async (args: any) => {
-      const row = { id: id('evidence'), recordedAt: new Date(), ...args.data };
+      const row = { id: id('evidence'), recordedAt: new Date(), singleAdmin: false, singleAdminReason: null, ...args.data };
+      const executor = state.cases.find((item) => item.id === row.caseId)?.executionStartedByUserId;
+      const byExecutor = row.evidenceType === 'INDEPENDENT_VERIFICATION' && row.recordedByUserId === executor;
+      const marked = row.singleAdmin === true && typeof row.singleAdminReason === 'string' && row.singleAdminReason.trim().length >= 20;
+      if (byExecutor && !marked) throw databaseRefusal('data-rights executor cannot provide independent verification');
+      if (row.singleAdmin !== byExecutor || (!row.singleAdmin && row.singleAdminReason !== null)) throw databaseRefusal('evidence single-admin marker check');
       state.evidence.push(row);
       return row;
     },
@@ -172,10 +210,19 @@ function makePrisma() {
     company: { findUnique: async (args: any) => state.companies.has(args.where.id) ? { id: args.where.id } : null },
     companyMembership: {
       findUnique: async (args: any) => state.memberships.find((item) => item.id === args.where.id) ?? null,
-      findMany: async (args: any) => state.memberships
-        .filter((item) => matches(item, args.where))
-        .map((item) => ({ ...item })),
+      findMany: async (args: any) => {
+        // The one query that asks who the active System Admins are.
+        if (args.where?.roles) {
+          assert.deepEqual(args.where, {
+            status: 'ACTIVE', user: { status: 'ACTIVE' }, company: { status: 'ACTIVE' },
+            roles: { some: { role: { key: 'SYSTEM_ADMIN', status: 'ACTIVE', isSystem: true, scopeKey: 'system', companyId: null } } },
+          });
+          return state.systemAdmins.map((userId) => ({ userId }));
+        }
+        return state.memberships.filter((item) => matches(item, args.where)).map((item) => ({ ...item }));
+      },
     },
+    auditLog: { create: async (args: any) => { state.auditLogs.push(args.data); return args.data; } },
   };
   return {
     state,
@@ -791,5 +838,188 @@ describe('DataRightsService', () => {
     assert.deepEqual(overdue.items.map((item: any) => item.id), [blocked.caseId]);
     const resolvedOnly = await service.listCases(ctx, { dueFilter: 'RESOLVED' });
     assert.deepEqual(resolvedOnly.items.map((item: any) => item.id), [resolved.caseId]);
+  });
+});
+
+// P31 §8 single-admin mode. The project has one System Admin, and five steps of a case were refused
+// to the person who took the step before, so no case could move past its retention review.
+describe('DataRightsService single-admin mode', () => {
+  const REASON = 'ระบบมีผู้ดูแลระบบเพียงคนเดียว จึงทำขั้นตอนนี้ด้วยตนเอง';
+  const code = (expected: string) => (error: unknown) => {
+    assert.equal(((error as any).getResponse?.() as any)?.code, expected);
+    return true;
+  };
+  const independent = (commandId: string, singleAdminReason?: string) => ({
+    commandId, evidenceType: 'INDEPENDENT_VERIFICATION' as const, reference: `evidence://verification/${commandId}`,
+    sha256: 'b'.repeat(64), ...(singleAdminReason !== undefined && { singleAdminReason }),
+  });
+  const complete = (commandId: string, singleAdminReason?: string) => ({
+    commandId, outcome: 'COMPLETED' as const, outcomeSummary: 'Approved scope recorded; nothing retained.',
+    ...(singleAdminReason !== undefined && { singleAdminReason }),
+  });
+
+  it('lets the only active System Admin take all five same-person steps as explicit single-admin steps', async () => {
+    const prisma = makePrisma();
+    prisma.state.systemAdmins = ['admin-a'];
+    const service = makeService(prisma);
+    const admin = operator('admin-a');
+    const caseId = await reachReview(service, admin);
+    await recordAllDeleteDecisions(service, caseId, admin);
+
+    // Without the explicit confirmation the step is not taken, and a reason has to say something.
+    await assert.rejects(() => service.approve(admin, caseId, 'approve-bare'), code('data_rights_single_admin_reason_required'));
+    await assert.rejects(() => service.approve(admin, caseId, 'approve-blank', '   '), code('data_rights_single_admin_reason_required'));
+    await assert.rejects(() => service.approve(admin, caseId, 'approve-short', 'คนเดียว'), code('data_rights_single_admin_reason_invalid'));
+    await assert.rejects(() => service.approve(admin, caseId, 'approve-padding', 'a'.repeat(60)), code('data_rights_single_admin_reason_invalid'));
+    assert.deepEqual([prisma.state.cases[0].status, prisma.state.auditLogs], ['RETENTION_REVIEW', []]);
+
+    const approved = await service.approve(admin, caseId, 'approve-self', `  ${REASON}\n `);
+    assert.deepEqual(
+      [approved.case.status, approved.case.approvedByUserId, approved.case.approvalSingleAdmin, approved.case.approvalSingleAdminReason],
+      ['APPROVED', 'admin-a', true, REASON],
+    );
+    // A retry carries the same reason; a different one is a different command.
+    assert.equal((await service.approve(admin, caseId, 'approve-self', REASON)).replayed, true);
+    await assert.rejects(() => service.approve(admin, caseId, 'approve-self', `${REASON} อีกเหตุผลหนึ่ง`), code('data_rights_command_conflict'));
+
+    await assert.rejects(() => service.startExecution(admin, caseId, 'execute-bare'), code('data_rights_single_admin_reason_required'));
+    await service.startExecution(admin, caseId, 'execute-self', REASON);
+    await recordRequiredEvidence(service, prisma, caseId, admin);
+    await assert.rejects(() => service.startVerification(admin, caseId, 'verify-bare'), code('data_rights_single_admin_reason_required'));
+    await service.startVerification(admin, caseId, 'verify-self', REASON);
+    await assert.rejects(() => service.recordEvidence(admin, caseId, independent('independent-bare')), code('data_rights_single_admin_reason_required'));
+    await service.recordEvidence(admin, caseId, independent('independent-self', REASON));
+    await assert.rejects(() => service.complete(admin, caseId, complete('complete-bare')), code('data_rights_single_admin_reason_required'));
+    const done = await service.complete(admin, caseId, complete('complete-self', REASON));
+
+    assert.equal(done.case.status, 'COMPLETED');
+    assert.equal(done.case.singleAdminAvailable, true);
+    for (const flag of ['approval', 'execution', 'verification', 'completion'] as const) {
+      assert.deepEqual([done.case[`${flag}SingleAdmin`], done.case[`${flag}SingleAdminReason`]], [true, REASON], flag);
+    }
+    const evidence = done.case.evidence.find((item: any) => item.evidenceType === 'INDEPENDENT_VERIFICATION')!;
+    assert.deepEqual([evidence.singleAdmin, evidence.singleAdminReason], [true, REASON]);
+    // The other evidence the same person recorded is ordinary evidence.
+    assert.equal(done.case.evidence.filter((item: any) => item.singleAdmin).length, 1);
+
+    // One audit row of its own per self-step, written once, and the history labels the same five.
+    assert.deepEqual(prisma.state.auditLogs.map((row: any) => [
+      row.action, row.metadataJson.step, row.metadataJson.reason, row.metadataJson.commandId,
+      row.riskLevel, row.result, row.targetType, row.targetId, row.actorUserId, row.companyId, row.requestId,
+    ]), (['APPROVAL', 'EXECUTION', 'VERIFICATION', 'INDEPENDENT_VERIFICATION', 'COMPLETION'] as const).map((step, index) => [
+      'system.data_rights.single_admin_step', step, REASON,
+      ['approve-self', 'execute-self', 'verify-self', 'independent-self', 'complete-self'][index],
+      'CRITICAL', 'SUCCESS', 'DataRightsCase', caseId, 'admin-a', 'system-company', 'req-admin-a',
+    ]));
+    assert.deepEqual(
+      done.case.actions.filter((action: any) => action.metadataJson.singleAdmin).map((action: any) => [action.action, action.metadataJson.singleAdminReason]),
+      [['APPROVED', REASON], ['EXECUTION_STARTED', REASON], ['VERIFICATION_STARTED', REASON], ['EVIDENCE_RECORDED', REASON], ['CASE_COMPLETED', REASON]],
+    );
+  });
+
+  it('keeps every separation rule while a second active System Admin exists, whatever reason is given', async () => {
+    const prisma = makePrisma();
+    const service = makeService(prisma);
+    const adminA = operator('admin-a');
+    const adminB = operator('admin-b');
+    const second = code('data_rights_second_admin_required');
+    const caseId = await reachReview(service, adminA);
+    await recordAllDeleteDecisions(service, caseId, adminA);
+
+    await assert.rejects(() => service.approve(adminA, caseId, 'approve-self', REASON), second);
+    // Two different people do not confirm a single-admin step: the marker would be false evidence.
+    await assert.rejects(() => service.approve(adminB, caseId, 'approve-b-marked', REASON), code('data_rights_single_admin_not_applicable'));
+    await service.approve(adminB, caseId, 'approve-b');
+    await assert.rejects(() => service.startExecution(adminB, caseId, 'execute-self', REASON), second);
+    await service.startExecution(adminA, caseId, 'execute-a');
+    await recordRequiredEvidence(service, prisma, caseId, adminA);
+    await assert.rejects(() => service.recordEvidence(adminA, caseId, {
+      commandId: 'export-marked', evidenceType: 'ACCESS_REVOCATION', category: 'MEMBERSHIPS_ACCESS',
+      reference: 'run://offboarding/access-again', sha256: 'c'.repeat(64), singleAdminReason: REASON,
+    }), code('data_rights_single_admin_not_applicable'));
+    await assert.rejects(() => service.startVerification(adminA, caseId, 'verify-self', REASON), second);
+    await service.startVerification(adminB, caseId, 'verify-b');
+    await assert.rejects(() => service.recordEvidence(adminA, caseId, independent('independent-self', REASON)), second);
+    await service.recordEvidence(adminB, caseId, independent('independent-b'));
+    await assert.rejects(() => service.complete(adminA, caseId, complete('complete-self', REASON)), second);
+    const done = await service.complete(adminB, caseId, complete('complete-b'));
+
+    assert.deepEqual([done.case.status, done.case.singleAdminAvailable], ['COMPLETED', false]);
+    for (const flag of ['approval', 'execution', 'verification', 'completion'] as const) {
+      assert.deepEqual([done.case[`${flag}SingleAdmin`], done.case[`${flag}SingleAdminReason`]], [false, null], flag);
+    }
+    assert.equal(done.case.evidence.some((item: any) => item.singleAdmin), false);
+    assert.equal(done.case.actions.some((action: any) => action.metadataJson.singleAdmin), false);
+    assert.deepEqual(prisma.state.auditLogs, []);
+
+    // "Exactly one" is about who the one is: a caller who is not that person has a second person to ask.
+    const other = makePrisma();
+    other.state.systemAdmins = ['admin-b'];
+    const otherService = makeService(other);
+    const otherCase = await reachReview(otherService, adminA);
+    await recordAllDeleteDecisions(otherService, otherCase, adminA);
+    await assert.rejects(() => otherService.approve(adminA, otherCase, 'approve-self', REASON), second);
+    other.state.systemAdmins = [];
+    await assert.rejects(() => otherService.approve(adminA, otherCase, 'approve-self-2', REASON), second);
+  });
+
+  it('never lets a single-admin step skip what a second person would have checked', async () => {
+    const prisma = makePrisma();
+    prisma.state.systemAdmins = ['admin-a'];
+    const service = makeService(prisma);
+    const admin = operator('admin-a');
+    const caseId = await reachReview(service, admin);
+
+    // Every category decision first.
+    await assert.rejects(() => service.approve(admin, caseId, 'approve-early', REASON), code('data_rights_decisions_incomplete'));
+    await recordAllDeleteDecisions(service, caseId, admin);
+    await service.approve(admin, caseId, 'approve-self', REASON);
+    await service.startExecution(admin, caseId, 'execute-self', REASON);
+    // The execution evidence first.
+    await assert.rejects(() => service.startVerification(admin, caseId, 'verify-early', REASON), code('data_rights_execution_evidence_incomplete'));
+    await recordRequiredEvidence(service, prisma, caseId, admin);
+    await service.startVerification(admin, caseId, 'verify-self', REASON);
+    // The verification evidence first, itself an explicit step.
+    await assert.rejects(() => service.complete(admin, caseId, complete('complete-early', REASON)), code('data_rights_completion_evidence_incomplete'));
+
+    assert.deepEqual(prisma.state.cases[0].status, 'VERIFICATION');
+    assert.deepEqual(prisma.state.auditLogs.map((row: any) => row.metadataJson.step), ['APPROVAL', 'EXECUTION', 'VERIFICATION']);
+  });
+
+  it('tells every case read whether the single-admin path is open', async () => {
+    const prisma = makePrisma();
+    const service = makeService(prisma);
+    const admin = operator('admin-a');
+    const created = await service.createCase(admin, COMPANY_CASE);
+    assert.equal(created.case.singleAdminAvailable, false);
+    prisma.state.systemAdmins = ['admin-a'];
+    assert.equal((await service.getCase(admin, created.caseId)).singleAdminAvailable, true);
+    // The same person through two memberships is still one person.
+    prisma.state.systemAdmins = ['admin-a', 'admin-a'];
+    assert.equal((await service.getCase(admin, created.caseId)).singleAdminAvailable, true);
+  });
+
+  it('ships a migration the automatic release path accepts: additive, no back-fill, both rules replaced in place', () => {
+    const sql = readFileSync(join(
+      __dirname, '..', '..', '..', 'prisma', 'migrations', '20261002120000_data_rights_single_admin_mode', 'migration.sql',
+    ), 'utf8');
+    // The gate UAT, READY and Production run on every pending migration.
+    assert.doesNotThrow(() => assertProductionA5NoDestructiveSql(sql));
+    const executable = sql.replace(/--[^\n]*/g, ' ');
+    assert.doesNotMatch(executable, /(?:^|;)\s*(?:UPDATE|INSERT\s+INTO|DELETE\s+FROM)\b/im, 'no back-fill');
+    assert.doesNotMatch(executable, /\bDROP\b|\bCREATE\s+TRIGGER\b|\bALTER\s+COLUMN\b/i);
+    assert.deepEqual(
+      [...executable.matchAll(/CREATE OR REPLACE FUNCTION "([a-z_]+)"\(\)/g)].map((match) => match[1]),
+      ['enforce_data_rights_evidence_phase', 'enforce_data_rights_case_transition'],
+    );
+    assert.equal([...executable.matchAll(/ADD COLUMN "[A-Za-z]*singleAdmin(?:Reason)?" /gi)].length, 10);
+    // Each of the five refusals is still in the function, now with its explicit exception beside it.
+    for (const refusal of [
+      'data-rights case requires an approver independent from its creator',
+      'data-rights approver cannot execute the case',
+      'data-rights execution requires an independent verifier',
+      'data-rights executor cannot verify completion',
+      'data-rights executor cannot provide independent verification',
+    ]) assert.equal(sql.split(refusal).length, 2, refusal);
   });
 });

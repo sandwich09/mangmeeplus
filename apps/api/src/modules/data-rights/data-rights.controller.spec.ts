@@ -7,10 +7,12 @@ import { IS_PUBLIC_ROUTE_KEY } from '../../common/security/public.decorator';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../common/pipes/validation-pipe.options';
 import {
   CloseCaseDto,
+  CompleteCaseDto,
   CreateCaseDto,
   DataRightsController,
   ListCasesQueryDto,
   RecordEvidenceDto,
+  SameActorStepDto,
   VerifyIdentityDto,
 } from './data-rights.controller';
 import { DATA_RIGHTS_MANAGE_PERMISSION } from './data-rights.service';
@@ -82,5 +84,43 @@ describe('DataRightsController', () => {
     assert.equal(query.dueFilter, 'OVERDUE');
     assert.equal(query.pageSize, 25);
     await assert.rejects(() => validate({ dueFilter: 'TERMINAL' }, ListCasesQueryDto), BadRequestException);
+  });
+
+  it('carries the single-admin reason of the five same-person steps to the service, and nothing unknown', async () => {
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const validate = (value: Record<string, unknown>, metatype: new () => object) =>
+      pipe.transform(value, { type: 'body', metatype }) as Promise<any>;
+    const reason = 'ระบบมีผู้ดูแลระบบเพียงคนเดียว จึงทำขั้นตอนนี้ด้วยตนเอง';
+    const calls: any[] = [];
+    const record = (name: string) => async (...args: any[]) => { calls.push([name, ...args.slice(1)]); return { caseId: 'case-1' }; };
+    const controller = new DataRightsController({
+      approve: record('approve'), startExecution: record('startExecution'), startVerification: record('startVerification'),
+      recordEvidence: record('recordEvidence'), complete: record('complete'),
+    } as any);
+    const req = { context: { userId: 'admin-1' } } as any;
+
+    const step = await validate({ commandId: 'step-1', singleAdminReason: reason }, SameActorStepDto);
+    await controller.approve('case-1', step, req);
+    await controller.startExecution('case-1', step, req);
+    await controller.startVerification('case-1', await validate({ commandId: 'step-2' }, SameActorStepDto), req);
+    const evidence = await validate({
+      commandId: 'evidence-1', evidenceType: 'INDEPENDENT_VERIFICATION', reference: 'evidence://verification/1',
+      sha256: 'a'.repeat(64), singleAdminReason: reason,
+    }, RecordEvidenceDto);
+    await controller.recordEvidence('case-1', evidence, req);
+    const completion = await validate({
+      commandId: 'complete-1', outcome: 'COMPLETED', outcomeSummary: 'Recorded.', singleAdminReason: reason,
+    }, CompleteCaseDto);
+    await controller.complete('case-1', completion, req);
+
+    assert.deepEqual(calls.slice(0, 3), [
+      ['approve', 'case-1', 'step-1', reason],
+      ['startExecution', 'case-1', 'step-1', reason],
+      ['startVerification', 'case-1', 'step-2', undefined],
+    ]);
+    assert.equal(calls[3][2].singleAdminReason, reason);
+    assert.equal(calls[4][2].singleAdminReason, reason);
+    await assert.rejects(() => validate({ commandId: 'step-3', singleAdminReason: 'ก'.repeat(1_001) }, SameActorStepDto), BadRequestException);
+    await assert.rejects(() => validate({ commandId: 'step-4', singleAdmin: true }, SameActorStepDto), BadRequestException);
   });
 });
