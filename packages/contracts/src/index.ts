@@ -4,6 +4,7 @@ export type HealthStatus = {
   timestamp: string;
 };
 export * from './company-business-type.js';
+export * from './report-labels.js';
 export * from './billing-company-profile.js';
 
 export type TenantContext = {

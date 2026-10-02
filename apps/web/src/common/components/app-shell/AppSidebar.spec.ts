@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isActiveNavSubItem, lineLinkMenuRow, revealScrollDelta, type SidebarSubItemRef } from './app-sidebar.logic';
+import { isActiveNavSubItem, isPointerArrival, lineLinkMenuRow, revealScrollDelta, type SidebarSubItemRef } from './app-sidebar.logic';
 
 const shellDir = dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +51,36 @@ describe('collapsed sidebar layout', () => {
     const source = readFileSync(join(shellDir, 'WorkspaceShell.tsx'), 'utf8');
     assert.match(source, /: isExpanded\s*\? 'lg:ml-\[289px\]'/);
     assert.doesNotMatch(source, /isExpanded \|\| isHovered/);
+  });
+});
+
+describe('collapsed sidebar hover', () => {
+  // What the browser reports to the sidebar once its collapse button was pressed with the pointer resting on it
+  // (real look, 2026-10-02): the press takes the button and every label out of the page, and the pointer is reported
+  // again as one more mouseenter — in Chromium 149 coming from the removed element, in WebKit 26.5 from nowhere.
+  const removedElement = { isConnected: false };
+  const elementOfThePage = { isConnected: true };
+
+  it('stays collapsed when the collapse button is pressed with the pointer on the sidebar', () => {
+    assert.equal(isPointerArrival(removedElement, true), false);
+    assert.equal(isPointerArrival(null, true), false);
+  });
+
+  it('opens when the pointer has left and comes back', () => {
+    // A leave lowers the flag; any entry counts then, also one from outside the window, where the sidebar's edge is.
+    assert.equal(isPointerArrival(elementOfThePage, false), true);
+    assert.equal(isPointerArrival(null, false), true);
+    // WebKit reports no leave when the removed label was all that lay under the pointer: arriving from the page is proof enough.
+    assert.equal(isPointerArrival(elementOfThePage, true), true);
+  });
+
+  it('closes the same way from the keyboard: by where the pointer rests, never by focus', () => {
+    const source = readFileSync(join(shellDir, 'AppSidebar.tsx'), 'utf8');
+    // Enter or Space on the focused button is this same click; what counts is whether the pointer is on the sidebar.
+    assert.match(source, /closedUnderPointerRef\.current = isExpanded && Boolean\(event\.currentTarget\.closest\('aside'\)\?\.matches\(':hover'\)\);\s+setIsHovered\(false\);\s+toggleSidebar\(\);/);
+    assert.match(source, /if \(!isPointerArrival\(event\.nativeEvent\.relatedTarget as Node \| null, closedUnderPointerRef\.current\)\) return;/);
+    assert.match(source, /onMouseLeave=\{\(\) => \{\s+closedUnderPointerRef\.current = false;/);
+    assert.match(source, /\$\{isExpanded \|\| isMobileOpen \|\| isHovered \? 'w-\[min\(289px,85vw\)\] lg:w-\[289px\]' : 'w-\[86px\]'\}/);
   });
 });
 

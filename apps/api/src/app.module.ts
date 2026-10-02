@@ -34,9 +34,10 @@ import { BillingModule } from './modules/billing/billing.module';
 import { ExternalSignupModule } from './modules/external-signup/external-signup.module';
 import { ExecutiveBusinessModule } from './modules/executive-business/executive-business.module';
 import { SalesConsoleModule } from './modules/sales-console/sales-console.module';
+import { ExecutiveReportBuildModule } from './modules/executive-business/executive-report-build.module';
 
 @Module({
-  imports: [ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule, ExternalSignupModule, SalesConsoleModule, BillingModule, ExecutiveBusinessModule],
+  imports: [ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule, ExternalSignupModule, SalesConsoleModule, BillingModule, ExecutiveBusinessModule, ExecutiveReportBuildModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

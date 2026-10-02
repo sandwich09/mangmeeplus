@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { UpdatePartnerProfileUseCase } from './update-partner-profile.use-case';
+import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 
 function makeCmd(overrides: Record<string, unknown> = {}) {
   return {
@@ -13,17 +14,20 @@ function makeCmd(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makePrisma(opts: { companyFound?: boolean; status?: string; termDisabledAt?: Date | null; customerId?: string | null } = {}) {
+function makePrisma(opts: { companyFound?: boolean; status?: string; termDisabledAt?: Date | null; customerId?: string | null;
+  companyId?: string; labels?: { reportClassification?: string | null; reportIndustryGroup?: string | null } } = {}) {
   const companyFound = opts.companyFound ?? true;
   const status = opts.status ?? 'ACTIVE';
   const termDisabledAt = opts.termDisabledAt ?? null;
   const customerId = opts.customerId === undefined ? 'cus_1' : opts.customerId;
   let updateCalled = false;
   const syncCalls: unknown[] = [];
+  const updates: any[] = [];
+  const audits: any[] = [];
 
   const tx = {
-    company: { update: async () => { updateCalled = true; return {}; } },
-    auditLog: { create: async () => ({}) },
+    company: { update: async (args: any) => { updateCalled = true; updates.push(args); return {}; } },
+    auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
     billingAccount: {
       findUnique: async () => (customerId ? { id: 'acct-1', companyId: 'co-1', stripeAccountId: 'acct_test', livemode: false, customerId, version: 3 } : null),
     },
@@ -35,12 +39,14 @@ function makePrisma(opts: { companyFound?: boolean; status?: string; termDisable
   const prisma = {
     updateCalled: () => updateCalled,
     syncCalls: () => syncCalls,
+    updates: () => updates,
+    audits: () => audits,
     client: {
       company: {
         findUnique: async () =>
           companyFound
-            ? { id: 'co-1', status, name: 'Old Name', brandName: null, timezone: 'Asia/Bangkok', locale: 'th-TH', phone: null, email: null,
-                planTerm: { termDisabledAt } }
+            ? { id: opts.companyId ?? 'co-1', status, name: 'Old Name', brandName: null, timezone: 'Asia/Bangkok', locale: 'th-TH', phone: null, email: null,
+                reportClassification: null, reportIndustryGroup: null, ...opts.labels, planTerm: { termDisabledAt } }
             : null,
       },
       $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(tx),
@@ -123,5 +129,69 @@ describe('UpdatePartnerProfileUseCase', () => {
     const useCase = new UpdatePartnerProfileUseCase(prisma, getDetailStub, configStub);
     await useCase.execute(makeCmd({ name: 'New Name' }));
     assert.equal(prisma.syncCalls().length, 0);
+  });
+
+  // Executive spec §12.2, §15, §16.1: the two report labels.
+  it('writes both labels with who and when, and audits each before and after', async () => {
+    const prisma = makePrisma({ labels: { reportIndustryGroup: 'RETAIL_WHOLESALE' } });
+    const before = Date.now();
+    await new UpdatePartnerProfileUseCase(prisma, getDetailStub, configStub)
+      .execute(makeCmd({ name: undefined, reportClassification: 'TEST', reportIndustryGroup: 'MANUFACTURING' }));
+    const data = prisma.updates()[0].data;
+    assert.equal(data.reportClassification, 'TEST');
+    assert.equal(data.reportClassifiedByUserId, 'admin-1');
+    assert.ok(data.reportClassifiedAt instanceof Date && data.reportClassifiedAt.getTime() >= before);
+    assert.equal(data.reportIndustryGroup, 'MANUFACTURING');
+    assert.deepEqual(prisma.audits()[0].data.metadataJson, {
+      changedFields: ['reportClassification', 'reportIndustryGroup'],
+      reportClassification: { from: null, to: 'TEST' },
+      reportIndustryGroup: { from: 'RETAIL_WHOLESALE', to: 'MANUFACTURING' },
+    });
+    assert.equal(prisma.audits()[0].data.action, 'system.partner_company.update');
+  });
+
+  it('null clears a label; an unchanged label writes nothing and keeps who/when', async () => {
+    const prisma = makePrisma({ labels: { reportClassification: 'CUSTOMER', reportIndustryGroup: 'FINANCE' } });
+    await new UpdatePartnerProfileUseCase(prisma, getDetailStub, configStub)
+      .execute(makeCmd({ name: undefined, reportClassification: 'CUSTOMER', reportIndustryGroup: null }));
+    assert.deepEqual(prisma.updates()[0].data, { reportIndustryGroup: null });
+    assert.deepEqual(prisma.audits()[0].data.metadataJson, {
+      changedFields: ['reportIndustryGroup'], reportIndustryGroup: { from: 'FINANCE', to: null },
+    });
+  });
+
+  it('labels a held or archived company (every company is counted), but still refuses its profile fields', async () => {
+    for (const status of ['DISABLED', 'ARCHIVED']) {
+      const labelled = makePrisma({ status });
+      await new UpdatePartnerProfileUseCase(labelled, getDetailStub, configStub)
+        .execute(makeCmd({ name: undefined, reportClassification: 'CUSTOMER', reportIndustryGroup: 'OTHER_INDUSTRY' }));
+      assert.equal(labelled.updates()[0].data.reportClassification, 'CUSTOMER', status);
+      assert.equal(labelled.updates()[0].data.reportIndustryGroup, 'OTHER_INDUSTRY', status);
+
+      const mixed = makePrisma({ status });
+      await assert.rejects(() => new UpdatePartnerProfileUseCase(mixed, getDetailStub, configStub)
+        .execute(makeCmd({ reportClassification: 'CUSTOMER' })), UnprocessableEntityException);
+      assert.equal(mixed.updateCalled(), false, status);
+    }
+  });
+
+  it('keeps the platform company INTERNAL and refuses values outside the lists', async () => {
+    for (const reportClassification of ['CUSTOMER', 'TEST', null]) {
+      const prisma = makePrisma({ companyId: PLATFORM_TENANT_ID });
+      await assert.rejects(() => new UpdatePartnerProfileUseCase(prisma, getDetailStub, configStub)
+        .execute(makeCmd({ companyId: PLATFORM_TENANT_ID, name: undefined, reportClassification })), UnprocessableEntityException);
+      assert.equal(prisma.updateCalled(), false, String(reportClassification));
+    }
+    const platform = makePrisma({ companyId: PLATFORM_TENANT_ID });
+    await new UpdatePartnerProfileUseCase(platform, getDetailStub, configStub)
+      .execute(makeCmd({ companyId: PLATFORM_TENANT_ID, name: undefined, reportClassification: 'INTERNAL' }));
+    assert.equal(platform.updates()[0].data.reportClassification, 'INTERNAL', 'the row is brought in line with the fixed rule');
+
+    for (const bad of [{ reportClassification: 'VIP' }, { reportIndustryGroup: 'RESTAURANTS' }]) {
+      const prisma = makePrisma();
+      await assert.rejects(() => new UpdatePartnerProfileUseCase(prisma, getDetailStub, configStub)
+        .execute(makeCmd({ name: undefined, ...bad })), UnprocessableEntityException);
+      assert.equal(prisma.updateCalled(), false, JSON.stringify(bad));
+    }
   });
 });

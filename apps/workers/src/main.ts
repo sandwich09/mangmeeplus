@@ -16,6 +16,7 @@ import { startExpenseAutoPostWorker } from './modules/expense-auto-post/expense-
 import { startExpenseCaptureReadWorker } from './modules/expense-capture-read/expense-capture-read-worker.js';
 import { startPlanTermSweepWorker } from './modules/plan-term-sweep/plan-term-sweep-worker.js';
 import { startReimbursementReconcileWorker } from './modules/reimbursement-reconcile/reimbursement-reconcile-worker.js';
+import { startExecutiveRebuildWorker } from './modules/executive/executive-rebuild-worker.js';
 import { startSalesSweepWorker } from './modules/sales/sales-sweep-worker.js';
 import { startSignupClaimEmailWorker, startSignupClaimReminderWorker } from './modules/signup-claim-email/signup-claim-email-worker.js';
 
@@ -67,6 +68,8 @@ if (config.QUEUE_ENABLED) {
   workerLog('info', { event: 'plan_term_sweep_worker_started' });
   workers.push(startSalesSweepWorker(config.REDIS_URL));
   workerLog('info', { event: 'sales_sweep_worker_started' });
+  workers.push(startExecutiveRebuildWorker(config.REDIS_URL));
+  workerLog('info', { event: 'executive_rebuild_worker_started' });
   workers.push(startSignupClaimEmailWorker(config.REDIS_URL));
   workerLog('info', { event: 'signup_claim_email_worker_started' });
   workers.push(startSignupClaimReminderWorker(config.REDIS_URL));
