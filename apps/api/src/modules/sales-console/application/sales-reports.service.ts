@@ -1,9 +1,10 @@
 /**
  * Phase 4 reports and the Owner's anti-gaming queue (spec §17.1/§17.2, R13, S21).
  *
- * `SalesAttribution` is the ONLY source. There is nothing to reconcile with Stripe here and no
- * financial document of any kind reaches a sales user (S21): the report answers "how many shops
- * did this agent open and for how much", never "what did that shop pay for what".
+ * `SalesAttribution` and its dated `SalesAttributionDeduction` rows are the ONLY source. There is
+ * nothing to reconcile with Stripe here and no financial document of any kind reaches a sales user
+ * (S21): the report answers "how many shops did this agent open and for how much", never "what
+ * did that shop pay for what".
  */
 import { Injectable } from '@nestjs/common';
 import {
@@ -11,6 +12,7 @@ import {
   type SalesAttributionFlagListDto,
   type SalesAttributionFlagRow,
   type SalesAttributionSource,
+  type SalesDeductionKind,
   type SalesReportSummary,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -20,6 +22,7 @@ import {
   aggregateReport,
   reportRange,
   SalesReportRangeError,
+  type AttributionReportDeduction,
   type AttributionReportRow,
 } from '../domain/sales-attribution.logic';
 import { canSeeAllDeals, salesBadRequest, salesNotFound } from './sales-context';
@@ -52,22 +55,45 @@ export class SalesReportsService {
   async summary(ctx: RequestContext, query: SalesReportQuery): Promise<SalesReportSummary> {
     const range = salesReportRange(query);
     const salesUserIds = await this.visibleAgents(ctx, query);
-    const rows = salesUserIds === null ? [] : await this.prisma.client.salesAttribution.findMany({
-      where: { paidAt: { gte: range.start, lt: range.end }, ...(salesUserIds ? { salesUserId: { in: salesUserIds } } : {}) },
-      select: { salesUserId: true, source: true, amountSatang: true, refundedSatang: true, paidAt: true,
-        flags: true, flagReviewedAt: true },
-      orderBy: { paidAt: 'desc' },
-      take: REPORT_ROW_LIMIT,
-    });
-    const agents = await this.agentIndex(rows.map((row) => row.salesUserId));
+    if (salesUserIds === null) return { from: range.from, to: range.to, months: [] };
+    const within = { gte: range.start, lt: range.end };
+    const scope = salesUserIds ? { salesUserId: { in: salesUserIds } } : {};
+    const [rows, taken] = await Promise.all([
+      this.prisma.client.salesAttribution.findMany({
+        where: { paidAt: within, ...scope },
+        select: { salesUserId: true, source: true, amountSatang: true, refundedSatang: true, paidAt: true,
+          flags: true, flagReviewedAt: true },
+        orderBy: { paidAt: 'desc' },
+        take: REPORT_ROW_LIMIT,
+      }),
+      // Owner 2026-10-02: a refund or a lost dispute belongs to the month it was recorded in,
+      // whatever month its payment is in — so it is read by its own date, in the same scope.
+      this.prisma.client.salesAttributionDeduction.findMany({
+        where: { createdAt: within, attribution: scope },
+        select: { kind: true, amountSatang: true, occurredAt: true, createdAt: true,
+          attribution: { select: { salesUserId: true, companyId: true, paidAt: true, flags: true, flagReviewedAt: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: REPORT_ROW_LIMIT,
+      }),
+    ]);
+    const [agents, companies] = await Promise.all([
+      this.agentIndex([...rows.map((row) => row.salesUserId), ...taken.map((item) => item.attribution.salesUserId)]),
+      taken.length === 0 ? [] : this.prisma.client.company.findMany({
+        where: { id: { in: taken.map((item) => item.attribution.companyId) } }, select: { id: true, name: true } }),
+    ]);
+    const nameByCompany = new Map(companies.map((company) => [company.id, company.name]));
     const report: AttributionReportRow[] = rows.map((row) => ({
       salesUserId: row.salesUserId, source: row.source as SalesAttributionSource,
       amountSatang: row.amountSatang, refundedSatang: row.refundedSatang, paidAt: row.paidAt,
       flags: row.flags, flagReviewedAt: row.flagReviewedAt,
     }));
+    const deductions: AttributionReportDeduction[] = taken.map((item) => ({
+      kind: item.kind as SalesDeductionKind, amountSatang: item.amountSatang, occurredAt: item.occurredAt,
+      recordedAt: item.createdAt, companyName: nameByCompany.get(item.attribution.companyId) ?? '', row: item.attribution,
+    }));
     return {
       from: range.from, to: range.to,
-      months: aggregateReport(report, (userId) => agents.get(userId) ?? { displayName: '', teamLeadUserId: null, teamLeadDisplayName: null }),
+      months: aggregateReport(report, deductions, (userId) => agents.get(userId) ?? { displayName: '', teamLeadUserId: null, teamLeadDisplayName: null }),
     };
   }
 
@@ -140,9 +166,10 @@ export class SalesReportsService {
   }
 
   /**
-   * "ยืนยันว่าไม่ผิดปกติ" (`keep: false`) clears the flags and the row starts counting; "ตัดออก"
-   * (`keep: true`) leaves them in place and records that a human decided so. Either way the row and
-   * its money stay — nothing here deletes evidence.
+   * "ยืนยันว่าไม่ผิดปกติ" (`keep: false`) clears the flags and the row starts counting; "ตัดออกจากยอด"
+   * (`keep: true`) leaves them in place with a review time, and a row in that state counts zero in
+   * every figure for good (`salesCreditState`). Either way the row and its money stay — nothing
+   * here deletes evidence — and a cut-out row can still be confirmed later, which undoes it.
    */
   async reviewFlag(ctx: RequestContext, companyId: string, keep: boolean, rawReason: string): Promise<SalesAttributionFlagListDto> {
     const reason = (rawReason ?? '').trim();
@@ -151,6 +178,11 @@ export class SalesReportsService {
     }
     const row = await this.prisma.client.salesAttribution.findUnique({ where: { companyId } });
     if (!row || !row.flaggedAt) throw salesNotFound('SALES_COMPANY_NOT_FOUND', 'ไม่พบรายการที่ติดธงของร้านนี้');
+    // A confirmed row has no flag left to keep, so cutting it out would change nothing while the
+    // audit trail said it had. Refused, so the screen reloads the queue and shows where it stands.
+    if (keep && row.flags.length === 0) {
+      throw salesBadRequest('SALES_FLAG_REVIEW_INVALID', 'ร้านนี้ยืนยันแล้วว่าไม่ผิดปกติ จึงตัดออกจากยอดไม่ได้');
+    }
     await this.prisma.client.$transaction(async (tx) => {
       await tx.salesAttribution.update({
         where: { companyId },

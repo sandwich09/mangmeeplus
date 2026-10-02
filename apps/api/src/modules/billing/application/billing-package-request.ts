@@ -3,7 +3,7 @@ import { BILLING_PAID_TIERS, SALES_DEAL_OPEN_STATUSES, type BillingOffer, type P
 import { termProjectionHash } from '../domain/paid-invoice';
 import { dealReturnAt, type DealSource } from '../domain/deal-offer';
 import { writeSalesAttribution } from '../../sales-console/application/sales-attribution.write';
-import { withinReferralWindow, withinRefundWindow } from '../../sales-console/domain/sales-attribution.logic';
+import { creditDeductions, withinReferralWindow, type CreditTakeBack } from '../../sales-console/domain/sales-attribution.logic';
 
 /** Inside the existing Company-locked paid apply transaction; never called for a free Admin gift. */
 export async function fulfillPaidPackageRequest(tx:Prisma.TransactionClient,companyId:string,accountId:string,invoiceId:string){
@@ -142,6 +142,11 @@ export async function scheduleDealReturn(tx: Prisma.TransactionClient, input: { 
  * A deal always wins: `applyDealRequest` runs in the same transaction and has already written the
  * DEAL row, which the one-row-per-company rule then refuses to overwrite. Both callers pass an
  * INITIAL purchase only — a top-up or a renewal never reaches here.
+ *
+ * Owner 2026-10-02 (RB-37): one base for both kinds of credit — the package price the shop was
+ * charged, which is what a deal passes as `priceSatang`. Tax added on top of that price is not
+ * sales credit; tax already inside the price leaves the invoice total equal to the price. Read
+ * from the invoice's own verified total and tax, so an event discount is the charged price too.
  */
 export async function recordReferralAttribution(tx: Prisma.TransactionClient, input: { companyId: string;
   invoiceId: string; offer: Pick<BillingOffer, 'interval' | 'intervalCount'>; paidAt: Date }) {
@@ -149,28 +154,32 @@ export async function recordReferralAttribution(tx: Prisma.TransactionClient, in
     select: { referralSalesUserId: true, referredAt: true } });
   if (!company?.referralSalesUserId || !withinReferralWindow(company.referredAt, input.paidAt)) return;
   const invoice = await tx.billingInvoice.findUnique({ where: { id: input.invoiceId },
-    select: { totalSatang: true, applyStatus: true, appliedAt: true } });
+    select: { totalSatang: true, taxSatang: true, contractSnapshot: true, applyStatus: true, appliedAt: true } });
   if (!invoice?.appliedAt || invoice.applyStatus !== 'APPLIED') return;
+  const taxOnTop = (invoice.contractSnapshot as { policy?: { taxTreatment?: string } } | null)?.policy?.taxTreatment === 'EXCLUSIVE_VAT_7';
   const count = input.offer.intervalCount ?? 1;
   await writeSalesAttribution(tx, { companyId: input.companyId, salesUserId: company.referralSalesUserId,
-    source: 'REFERRAL', amountSatang: invoice.totalSatang,
+    source: 'REFERRAL', amountSatang: invoice.totalSatang - (taxOnTop ? invoice.taxSatang : 0),
     months: input.offer.interval === 'year' ? count * 12 : count, interval: input.offer.interval,
     paidAt: input.paidAt, sourceInvoiceId: input.invoiceId });
 }
 
 /**
- * §17.1 "คืนเงิน/dispute ภายใน 60 วัน หักออกจากยอด". The attribution row mirrors the invoice's
- * refunded amount instead of disappearing: the shop was still opened by that agent, and a deleted
- * row would silently rewrite a month the Owner has already read.
+ * §17.1 "คืนเงิน/dispute ภายใน 60 วัน หักออกจากยอดเดือนที่คืน" (owner 2026-10-02). What went back
+ * to the customer takes the credit back as dated rows of its own; the attribution row is never
+ * rewritten — the shop was still opened by that agent, and rewriting it would change a month the
+ * Owner has already read. `providerRef` is unique, so a refund or a dispute seen twice is one
+ * deduction. The caller holds the company lock.
  */
-export async function mirrorAttributionRefund(tx: Prisma.TransactionClient, input: { invoiceId: string;
-  refundedSatang: number; observedAt: Date }) {
-  const row = await tx.salesAttribution.findFirst({ where: { sourceInvoiceId: input.invoiceId },
-    select: { id: true, paidAt: true, amountSatang: true, refundedSatang: true } });
-  if (!row || row.refundedSatang === input.refundedSatang) return;
-  if (!withinRefundWindow(row.paidAt, input.observedAt)) return;
-  await tx.salesAttribution.update({ where: { id: row.id },
-    data: { refundedSatang: Math.min(Math.max(0, input.refundedSatang), row.amountSatang) } });
+export async function recordAttributionDeductions(tx: Prisma.TransactionClient, input: { companyId: string;
+  invoiceId: string; takeBacks: readonly CreditTakeBack[] }) {
+  if (input.takeBacks.length === 0) return;
+  const row = await tx.salesAttribution.findUnique({ where: { companyId: input.companyId },
+    select: { id: true, sourceInvoiceId: true, paidAt: true, amountSatang: true, refundedSatang: true,
+      deductions: { select: { providerRef: true, amountSatang: true } } } });
+  if (!row || row.sourceInvoiceId !== input.invoiceId) return;
+  const data = creditDeductions(row, row.deductions, input.takeBacks).map((item) => ({ ...item, attributionId: row.id }));
+  if (data.length > 0) await tx.salesAttributionDeduction.createMany({ data, skipDuplicates: true });
 }
 
 /**

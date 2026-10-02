@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parentFeatureKey, PLAN_TIER_PRESETS, planTermStateLabel, SALES_ERROR_CODES, salesDealFeatureKeys, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportMonth, type SalesReportRow } from '@watchdog-bms/contracts';
+import { parentFeatureKey, PLAN_TIER_PRESETS, planTermStateLabel, SALES_ERROR_CODES, salesDealFeatureKeys, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportDeduction, type SalesReportMonth, type SalesReportRow } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
   agentStatusMeta, baseTierDefaults, companyReferral, dealAutoRenew, dealBadges, dealFormFromView, dealInputFromForm,
@@ -8,7 +8,7 @@ import {
   dealWarnings, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
   isDealCancellable, isDealEditable, isMenuSelected, myWorkBadgeLabel, myWorkMeta,
   normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_ACCESS_STATE_META, SALES_DEAL_MENU_BINDINGS,
-  SALES_DEAL_STATUS_META, salesAgentAddress, salesCodeError, salesFlagLabel, salesReportLeads, salesReportRangeError,
+  SALES_DEAL_STATUS_META, SALES_DEDUCTION_RULE, salesAgentAddress, salesCodeError, salesDeductionLine, salesFlagLabel, salesFlagReview, salesReportLeads, salesReportRangeError,
   salesReportRowsOf, salesReportTotals, sortMyWork, sortSalesReportMonths,
   toggleMenuSelection, validateAgentForm, validateDealForm, type SalesDealFormValues,
 } from './sales-console.logic';
@@ -32,6 +32,12 @@ describe('deal price in baht', () => {
 
   it('formats back to Thai baht with both decimals', () => {
     assert.equal(formatBaht(24900), '฿249.00');
+  });
+
+  it('puts the sign of a negative amount before the ฿', () => {
+    assert.equal(formatBaht(-49900), '-฿499.00');
+    assert.equal(formatBaht(-123456789), '-฿1,234,567.89');
+    assert.equal(formatBaht(0), '฿0.00');
   });
 });
 
@@ -400,6 +406,37 @@ describe('anti-gaming flags (§17.1 / D6)', () => {
   });
 });
 
+describe('the Owner\'s flag queue (§17.1 — where each flagged row stands)', () => {
+  const flagged = (over: { flags?: ('self_referral' | 'repeat_owner' | 'referral_anomaly')[]; reviewedAt?: string | null; reviewNote?: string | null } = {}) =>
+    ({ flags: ['self_referral' as const], reviewedAt: null, reviewNote: null, ...over });
+
+  it('offers both decisions while a row waits for review', () => {
+    assert.deepEqual(salesFlagReview(flagged()),
+      { label: 'รอตรวจ · ยังไม่นับในยอด', tone: 'amber', detail: null, canConfirm: true, canExclude: true });
+  });
+
+  it('shows a row the Owner cut out as cut out, with the date and the reason, and still lets it be confirmed', () => {
+    assert.deepEqual(salesFlagReview(flagged({ reviewedAt: '2026-10-02T03:00:00.000Z', reviewNote: 'เจ้าของร้านเป็นเซลล์เอง' })), {
+      label: 'ตัดออกจากยอดแล้ว · ไม่นับให้เซลล์', tone: 'danger',
+      detail: 'ตรวจเมื่อ 2 ต.ค. 2569 · เหตุผล: เจ้าของร้านเป็นเซลล์เอง', canConfirm: true, canExclude: false,
+    });
+  });
+
+  it('shows a confirmed row as counted and offers no decision that would change nothing', () => {
+    // "ยืนยันว่าไม่ผิดปกติ" cleared the flags, so there is no flag left to keep.
+    assert.deepEqual(salesFlagReview(flagged({ flags: [], reviewedAt: '2026-10-02T03:00:00.000Z' })), {
+      label: 'ยืนยันแล้วว่าไม่ผิดปกติ · นับในยอด', tone: 'brand', detail: 'ตรวจเมื่อ 2 ต.ค. 2569', canConfirm: false, canExclude: false,
+    });
+  });
+
+  it('says where a row stands in plain Thai only', () => {
+    for (const row of [flagged(), flagged({ reviewedAt: '2026-10-02T03:00:00.000Z' }), flagged({ flags: [], reviewedAt: '2026-10-02T03:00:00.000Z' })]) {
+      const review = salesFlagReview(row);
+      assert.doesNotMatch(`${review.label} ${review.detail ?? ''}`, /[A-Za-z_]/);
+    }
+  });
+});
+
 describe('sales report (§17.2 — one row per shop, so the report is a plain sum)', () => {
   const row = (over: Partial<SalesReportMonth['rows'][number]> = {}) => ({
     salesUserId: 'u1', displayName: 'สมชาย', teamLeadUserId: 'l1', teamLeadDisplayName: null,
@@ -438,6 +475,56 @@ describe('sales report (§17.2 — one row per shop, so the report is a plain su
     }];
     assert.deepEqual(salesReportLeads(months), [{ userId: 'l1', displayName: 'หัวหน้าเอ' }]);
     assert.deepEqual(salesReportLeads([]), []);
+  });
+});
+
+describe('sales report deductions (§17.1, owner 2026-10-02 — its own line, in the month it happened)', () => {
+  const row = (over: Partial<SalesReportRow> = {}): SalesReportRow => ({
+    salesUserId: 'u1', displayName: 'สมชาย', teamLeadUserId: 'l1', teamLeadDisplayName: null,
+    dealActivations: 0, referralActivations: 0, amountSatang: -49_900, flaggedCount: 0, ...over,
+  });
+  const deduction = (over: Partial<SalesReportDeduction> = {}): SalesReportDeduction => ({
+    salesUserId: 'u1', kind: 'REFUND', companyName: 'ร้านกาแฟดี', paidMonthKey: '2026-09',
+    amountSatang: 49_900, occurredAt: '2026-10-05T02:00:00.000Z', ...over,
+  });
+
+  it('words a refund and a lost dispute in plain Thai, with the shop and the month of the original payment', () => {
+    assert.deepEqual(salesDeductionLine(deduction()), {
+      title: 'หักจากการคืนเงิน · ร้านกาแฟดี',
+      detail: 'ยอดของเดือน ก.ย. 2569 · คืนเงินเมื่อ 5 ต.ค. 2569',
+      amount: '-฿499.00',
+    });
+    assert.deepEqual(salesDeductionLine(deduction({ kind: 'DISPUTE', amountSatang: 129_000 }), 'สมหญิง'), {
+      title: 'หักจากข้อโต้แย้งการชำระ · ร้านกาแฟดี',
+      detail: 'สมหญิง · ยอดของเดือน ก.ย. 2569 · เปิดข้อโต้แย้งเมื่อ 5 ต.ค. 2569',
+      amount: '-฿1,290.00',
+    });
+  });
+
+  it('never shows an id, a key, an English word or THB — not even for a kind it does not know', () => {
+    for (const kind of ['REFUND', 'DISPUTE', 'CHARGEBACK_V2'] as SalesReportDeduction['kind'][]) {
+      const line = salesDeductionLine(deduction({ kind, companyName: '' }), 'สมหญิง');
+      assert.doesNotMatch(`${line.title} ${line.detail} ${line.amount}`, /[A-Za-z_]/, kind);
+    }
+    assert.equal(salesDeductionLine(deduction({ companyName: '' })).title, 'หักจากการคืนเงิน · ไม่พบชื่อร้าน');
+    assert.doesNotMatch(SALES_DEDUCTION_RULE, /[A-Za-z_]/);
+  });
+
+  it('dates the line in Bangkok time, so a refund at 00:30 on the 1st is not shown as the day before', () => {
+    assert.match(salesDeductionLine(deduction({ occurredAt: '2026-09-30T17:30:00.000Z' })).detail, /คืนเงินเมื่อ 1 ต\.ค\. 2569$/);
+  });
+
+  it('keeps each month\'s deductions with it and totals a month that went below zero', () => {
+    const [october, september] = sortSalesReportMonths([
+      { monthKey: '2026-09', rows: [row({ amountSatang: 49_900, referralActivations: 1 })] },
+      { monthKey: '2026-10', rows: [row()], deductions: [deduction()] },
+    ]);
+    assert.equal(october!.totals.amountSatang, -49_900);
+    assert.deepEqual(october!.deductions, [deduction()]);
+    // An answer that predates the field still renders: no deductions, never undefined.
+    assert.deepEqual(september!.deductions, []);
+    assert.equal(september!.totals.amountSatang, 49_900);
+    assert.equal(salesReportTotals([...october!.rows, ...september!.rows]).amountSatang, 0);
   });
 });
 

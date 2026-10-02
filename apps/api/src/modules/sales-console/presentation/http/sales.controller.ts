@@ -135,8 +135,9 @@ export class SalesController {
   }
 
   /**
-   * R13/§17.2 — how many shops this agent opened, per Bangkok month, net of refunds. An agent is
-   * forced onto their own rows inside the service; the query parameters only narrow a lead's view.
+   * R13/§17.2 — how many shops this agent opened, per Bangkok month. A refund or a lost dispute is
+   * deducted in the month it was recorded, as its own line (§17.1.1). An agent is forced onto
+   * their own rows inside the service; the query parameters only narrow a lead's view.
    */
   @Get('reports/summary')
   @RequirePermissions('sales.report.read')

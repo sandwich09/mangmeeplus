@@ -213,13 +213,30 @@ export type PackageChangeRequestKind = 'CUSTOMER_REQUEST' | 'SALES_DEAL' | 'SPEC
 
 /** §17.2: a shop is counted once, the first time it is paid for. `DEAL` beats `REFERRAL`. */
 export type SalesAttributionSource = 'DEAL' | 'REFERRAL';
-/** §17.1 anti-gaming. A row carrying any of these counts ZERO until a SYSTEM_ADMIN reviews it. */
+/** §17.1 anti-gaming. A row carrying any of these counts ZERO until the Owner clears them (`salesCreditState`). */
 export const SALES_ATTRIBUTION_FLAGS = ['self_referral', 'repeat_owner', 'referral_anomaly'] as const;
 export type SalesAttributionFlag = typeof SALES_ATTRIBUTION_FLAGS[number];
+/**
+ * Where the credit of a row stands (§17.1). A row that carries a flag counts ZERO: while nobody
+ * has reviewed it (WAITING), and for good once the Owner kept the flag with "ตัดออกจากยอด"
+ * (EXCLUDED). "ยืนยันว่าไม่ผิดปกติ" clears the flags, and only a row without flags counts
+ * (COUNTED). One rule for the report and for the Owner's review queue, so they cannot disagree.
+ */
+export type SalesCreditState = 'COUNTED' | 'WAITING' | 'EXCLUDED';
+export function salesCreditState(flags: readonly string[], reviewedAt: Date | string | null | undefined): SalesCreditState {
+  if (flags.length === 0) return 'COUNTED';
+  return reviewedAt ? 'EXCLUDED' : 'WAITING';
+}
 /** The referral window (§17.1, Owner round 3): paid within 14 days of the shop opening, or nobody. */
 export const SALES_REFERRAL_WINDOW_DAYS = 14;
-/** Refund/dispute deducted from the agent's total when it lands inside this window (§17.1). */
+/**
+ * A refund or a lost payment dispute takes the credit back when it happens within this many days
+ * of the payment, counted to the provider's own time of it, never to the time this system noticed
+ * (§17.1, owner 2026-10-02).
+ */
 export const SALES_ATTRIBUTION_REFUND_WINDOW_DAYS = 60;
+/** What takes sales credit back: a refund that succeeded, or a payment dispute that was lost. */
+export type SalesDeductionKind = 'REFUND' | 'DISPUTE';
 /** One sales code attributing more than this many shops in a Bangkok day is an anomaly (§17.1). */
 export const SALES_REFERRAL_DAILY_ANOMALY_LIMIT = 20;
 
@@ -230,11 +247,25 @@ export type SalesReportRow = {
   teamLeadDisplayName: string | null;
   /** Shops opened by a deal this agent wrote, and by a signup that named their code. */
   dealActivations: number; referralActivations: number;
-  /** Net of refunds; flagged rows contribute 0 until reviewed. */
+  /** This month's credit less this month's `deductions`, so it may be negative; flagged rows contribute 0 until reviewed. */
   amountSatang: number;
   flaggedCount: number;
 };
-export type SalesReportMonth = { monthKey: string; rows: SalesReportRow[] };
+/**
+ * One deduction, shown as its own line in the Bangkok month it was recorded in — the month of the
+ * payment keeps its figure (§17.1, owner 2026-10-02). A shop name and a month, no document (S21).
+ */
+export type SalesReportDeduction = {
+  salesUserId: string; kind: SalesDeductionKind; companyName: string;
+  /** Bangkok month of the payment whose credit this takes back. */
+  paidMonthKey: string;
+  /** Positive satang; the agent's row for this month already has it taken off. */
+  amountSatang: number;
+  /** The provider's time: the refund, or the dispute being opened. */
+  occurredAt: string;
+};
+/** `deductions` is absent only on an answer that predates the field. */
+export type SalesReportMonth = { monthKey: string; rows: SalesReportRow[]; deductions?: SalesReportDeduction[] };
 export type SalesReportSummary = { months: SalesReportMonth[]; from: string; to: string };
 /**
  * `GET /v1/sales/events/report` (sales-event spec §10): event → batch → เซลล์, over tickets ISSUED in

@@ -308,7 +308,7 @@ INCLUSIVE: `quoteTotals(39201)` ได้ subtotal 36636 และ tax 2565 ต�
 
 ### 5.5 เอกสาร ประวัติ และการคืนเงินของส่วนลดราคา
 
-ดู §3.6. ประวัติและหน้าแอดมินระบุว่าใบไหนได้ส่วนลดจาก `SalesEventTicket.invoiceId` เท่านั้น — ห้ามอ่านจาก `contractSnapshot.eventDiscount` ของ invoice เพราะบิลต่ออายุของ CARD_AUTO/PROMPTPAY_RENEW เก็บ contract snapshot เดียวกันกับบิลแรก (`applyInvoice`, `billing-reconciler.service.ts:1279-1287`). คืนเงินในแอปใช้ยอดจริง (`billing-refund-source.ts:52`). REFERRAL attribution (ถ้ามี) บันทึกยอดจริง `invoice.totalSatang` (`billing-package-request.ts:144-151`) และหักคืนตามยอดจริง (`:159-167`)
+ดู §3.6. ประวัติและหน้าแอดมินระบุว่าใบไหนได้ส่วนลดจาก `SalesEventTicket.invoiceId` เท่านั้น — ห้ามอ่านจาก `contractSnapshot.eventDiscount` ของ invoice เพราะบิลต่ออายุของ CARD_AUTO/PROMPTPAY_RENEW เก็บ contract snapshot เดียวกันกับบิลแรก (`applyInvoice`, `billing-reconciler.service.ts:1279-1287`). คืนเงินในแอปใช้ยอดจริง (`billing-refund-source.ts:52`). REFERRAL attribution (ถ้ามี) บันทึกราคาที่เรียกเก็บจริงหลังส่วนลด ไม่รวมภาษีที่บวกเพิ่ม (`recordReferralAttribution` ใน `billing-package-request.ts`; ตั้งภาษีแบบรวมในคือ `invoice.totalSatang` เท่าเดิม) และการคืนเงินหรือแพ้ข้อโต้แย้งหักตามจำนวนจริงเป็นรายการหักที่มีวันที่ (`recordAttributionDeductions`) — แก้ 2026-10-02 ตาม[สเปกทีมขาย §17.1.1](mangmee-sales-deals-and-locked-signup-spec-th.md)
 
 ### 5.6 เส้นทางเครดิต: เพิ่มยอดผ่านกลไกของ add-on โดยไม่แตะ billing
 
