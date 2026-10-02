@@ -26,7 +26,8 @@ import type {
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
 import {
-  claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment, payoutCorrectionPhase, payoutCorrectionRoundStart,
+  claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment,
+  payoutCorrectionAnswer, payoutCorrectionAnsweredBy, payoutCorrectionPhase, payoutCorrectionRoundStart,
 } from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
@@ -67,8 +68,10 @@ export function toRequestSummary(
   // people; a caller that has not loaded the names simply gets the pool.
   options: { allowMissingReceiptWithReason?: boolean; approverNames?: Record<string, string> } = {},
 ): ReimbursementRequestSummary {
-  // A claim sent back to have its payout account corrected (payout spec §14): whom it waits for.
+  // A claim sent back from the pay step for its payout destination (payout spec §14): whom it waits for.
   const correctionPhase = payoutCorrectionPhase(r);
+  const correctionAnswer = payoutCorrectionAnswer(r);
+  const answeredBy = payoutCorrectionAnsweredBy(r);
   const desk = currentDesk({
     status: r.status,
     financeReviewStatus: r.financeReviewStatus,
@@ -109,6 +112,16 @@ export function toRequestSummary(
     // of its own snapshot; a legacy claim has none, whatever a draft once chose.
     ...(r.payoutMethod && (r.status === 'DRAFT' || hasPayoutSnapshot(r)) ? { payoutMethod: r.payoutMethod } : {}),
     ...(correctionPhase && { payoutCorrectionPhase: correctionPhase }),
+    // Once its requester has answered: what was given, against what the round began with. With the method
+    // above, it is what the words of a round are chosen from (payout spec §14.2).
+    ...(correctionAnswer && { payoutCorrectionAnswer: correctionAnswer }),
+    // And who gave it: the requester, or someone on their behalf, named where the names were loaded. No
+    // sentence says the requester did what someone else did for them.
+    ...(answeredBy && { payoutCorrectionAnsweredBy: {
+      byUserId: answeredBy.byUserId,
+      ...(options.approverNames?.[answeredBy.byUserId] && { byName: options.approverNames[answeredBy.byUserId] }),
+      ...(answeredBy.onBehalf && { onBehalf: true as const }),
+    } }),
     paymentTotalAmount: r.paymentTotalAmount,
     outstandingAmount: r.outstandingAmount,
     lineCount: r.lineCount ?? r.lines?.length ?? 0,
@@ -212,8 +225,9 @@ export function detailUserIds(r: ReimbursementRequestRecord): string[] {
   return [
     r.createdByUserId,
     r.financeReviewedByUserId,
-    // Whoever sent the claim back to have its payout account corrected: the round's note names them.
+    // Whoever sent the claim back from the pay step, and whoever answered it: the round's notes name them.
     r.payoutCorrectionRequestedByUserId,
+    payoutCorrectionAnsweredBy(r)?.byUserId,
     // The frozen assignees too: they are the people the timeline's "กำลังรอ" row names.
     ...(r.approvalSteps ?? []).flatMap((s) => [s.approverUserId, s.decisionByUserId, ...(s.assignedApproverUserIds ?? [])]),
     ...(r.payments ?? []).map((p) => p.paidByUserId),
@@ -257,12 +271,12 @@ export function toPayoutCorrection(
   r: ReimbursementRequestRecord,
   names: Record<string, string> = {},
   previousAccount?: PaymentPayoutDestinationRecord,
-  sameAsPrevious?: boolean,
 ): ReimbursementPayoutCorrection | undefined {
   const phase = payoutCorrectionPhase(r);
   if (!phase || !r.payoutCorrectionRequestedAt) return undefined;
   const requestedByName = r.payoutCorrectionRequestedByUserId ? names[r.payoutCorrectionRequestedByUserId] : undefined;
   const approved = payoutCorrectionRoundStart(r);
+  const answer = payoutCorrectionAnswer(r);
   return {
     phase,
     requestedAt: r.payoutCorrectionRequestedAt.toISOString(),
@@ -279,8 +293,9 @@ export function toPayoutCorrection(
       }),
     } }),
     ...(approved?.at && { previouslyApprovedAt: approved.at }),
-    // Only once an account was given: whether it is the one the claim had.
-    ...(phase === 'AWAITING_APPROVAL' && sameAsPrevious !== undefined && { sameAsPrevious }),
+    // Only once the requester has answered: whether what was given is the very destination the claim had.
+    // Decided when the answer was taken and read from the round's log, like every other word of the round.
+    ...(phase === 'AWAITING_APPROVAL' && { sameAsPrevious: answer === 'SAME_ACCOUNT' || answer === 'SAME_CASH' }),
   };
 }
 
@@ -408,14 +423,7 @@ export async function detailWithFileNames(
   // In a correction round: the account the claim was approved with, to set beside the one it has now.
   const roundStart = payoutCorrectionPhase(req) ? payoutCorrectionRoundStart(req) : undefined;
   const approvedVersion = roundStart?.payoutVersion;
-  // Once the round's account is given: whether it is the very account the claim was approved with. Cash
-  // both times is the same; two transfers are compared by the repository, from what it stores; a claim
-  // that had no account, or changed its method, is not.
-  const keptAccount = payoutCorrectionPhase(req) !== 'AWAITING_APPROVAL' ? undefined
-    : roundStart?.payoutMethod === 'CASH' ? req.payoutMethod === 'CASH'
-      : roundStart?.payoutMethod === 'BANK_TRANSFER' && approvedVersion !== undefined && req.payoutMethod === 'BANK_TRANSFER'
-        ? repo.claimPayoutMatchesVersion(req, approvedVersion) : false;
-  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips, payout, paymentDestinations, approvedAccounts, sameAsPrevious] = await Promise.all([
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips, payout, paymentDestinations, approvedAccounts] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
     // Whoever declared a paper-signed scan, typed the account or attested it is named in the same batch.
@@ -430,7 +438,6 @@ export async function detailWithFileNames(
     payoutRead,
     paidInto.length > 0 ? repo.listPaymentPayoutDestinations(companyId, req.id, paidInto) : undefined,
     approvedVersion === undefined ? undefined : repo.listPaymentPayoutDestinations(companyId, req.id, [approvedVersion]),
-    keptAccount,
   ]);
   const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
   const receiptRequirementStatus = req.status === 'DRAFT'
@@ -461,6 +468,6 @@ export async function detailWithFileNames(
     ),
     payout: toPayoutSummary(payout, displayNames),
     paymentDestinations,
-    payoutCorrection: toPayoutCorrection(req, displayNames, approvedVersion === undefined ? undefined : approvedAccounts?.[approvedVersion], sameAsPrevious),
+    payoutCorrection: toPayoutCorrection(req, displayNames, approvedVersion === undefined ? undefined : approvedAccounts?.[approvedVersion]),
   });
 }

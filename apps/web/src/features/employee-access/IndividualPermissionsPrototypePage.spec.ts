@@ -56,6 +56,37 @@ test('disabled roles are labelled and cannot be edited or disabled again', () =>
   assert.match(matrix, /selectedRole\.status !== 'ACTIVE'/);
 });
 
+// Owner report 2026-10-02: the table carried an 820 px minimum inside a sideways scroller, so at 390,
+// 768 and 1280 px alike the tick columns had to be scrolled to.
+test('a role’s menu rights never scroll sideways: stacked rows on a phone, a table that fits from sm up', () => {
+  const matrix = readFileSync(new URL('./PermissionMatrixPrototypePage.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(matrix, /min-w-\[\d+px\]|overflow-x-(auto|scroll)/);
+  assert.match(matrix, /className="[^"]*\bsm:hidden\b[^"]*">\s*\{MENU_GROUP_ORDER\.map/);
+  assert.match(matrix, /data-testid="role-permission-row"/);
+  assert.match(matrix, /className="hidden [^"]*\bsm:block\b[^"]*">\s*<table className="w-full border-collapse">/);
+  // Both layouts print one set of action words, and a menu with nothing granted says so.
+  assert.match(matrix, /ACTIONS\.filter\(\(action\) => selectedRow\?\.menus\[menu\.id\]\?\.\[action\.key\]\)/);
+  assert.match(matrix, /granted\.length === 0 \? <span[^>]*>ไม่ได้เปิดสิทธิ์<\/span>/);
+});
+
+// Owner report 2026-10-02: the role page printed "Company owner", and its editor opened a standard role
+// with the stored name "Accountant" and would save that name into the company's copy.
+test('the role and employee pages print no English role name or status', () => {
+  const matrix = readFileSync(new URL('./PermissionMatrixPrototypePage.tsx', import.meta.url), 'utf8');
+  const legacy = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
+  // One list of standard role names (the dictionary's role.* entries), not a second one kept by hand.
+  assert.doesNotMatch(legacy, /ROLE_LABEL_KEYS/);
+  assert.match(legacy, /const dictKey = `role\.\$\{key\}`;/);
+  assert.match(legacy, /dictKey in workspaceDictionary\.th\s+&& \(typeof roleOrKey === 'string' \|\| hasStandardRoleName\(/);
+  // The editor opens with the name the list shows.
+  assert.match(matrix, /selectedRole && \{ \.\.\.selectedRole, name: roleDisplayName\(selectedRole, locale\) \}/);
+  assert.match(matrix, /initial=\{editedRole\}/);
+  assert.doesNotMatch(matrix, /initial=\{selectedRole\}/);
+  assert.doesNotMatch(source, /'Draft'|>Draft</);
+  // The rights a standard role keeps outside the choices are counted, not printed as one sentence per right.
+  assert.match(legacy, /\{permissionCatalog\.length > 0 && \(\s*<ul /);
+});
+
 test('both employee branch pickers exclude inactive branches from options and retained selections', () => {
   const wizard = readFileSync(new URL('./AddEmployeePrototypePage.tsx', import.meta.url), 'utf8');
   assert.match(source, /setBranches\(branchesR\.value\.filter\(\(branch\) => branch\.status === 'ACTIVE'\)\)/);

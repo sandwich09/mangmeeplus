@@ -124,8 +124,9 @@ describe('IngestWorkflowEventUseCase', () => {
   // Step-journey spec §11/§13 (AC10/AC11): every one of these also links straight to the claim's
   // journey page and excludes the event's own actor from its recipients, with a graceful skip
   // (never a dead-lettered retry) when that exclusion empties the recipient list — the exact
-  // shape of an owner-only company acting on its own claim. "Ready for payment" is the one notice
-  // that keeps its actor (audit B9): they approved, and recording the payment is their next step.
+  // shape of an owner-only company acting on its own claim. "Ready for payment" keeps its actor
+  // (audit B9): they approved, and recording the payment is their next step. So does the arrival at
+  // the finance desk (owner decision 2026-10-02), for an approver who reviews finance themselves.
   it('gives every reimbursement notification a body distinct from its title, the journey-page link, and actor exclusion', () => {
     const notifications = WORKFLOW_TEMPLATE_CATALOG
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
@@ -145,10 +146,16 @@ describe('IngestWorkflowEventUseCase', () => {
       else if (key === 'reimbursement_payout_correction_requested') assert.equal(cfg['bodyTemplate'], '{{payoutCorrectionNotice}}', key);
       else if (key !== 'reimbursement_payment_voided') assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
       assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
-      if (key === 'reimbursement_ready_for_payment') {
+      // Two notices are about the NEXT step, which may be the actor's own: paying a claim one has approved, and
+      // (owner decision 2026-10-02) reviewing at the finance desk a claim one has approved. Their actor is not
+      // left out, and gets the notice in the web bell only.
+      if (key === 'reimbursement_ready_for_payment' || key === 'reimbursement_finance_review_pending') {
         assert.equal(cfg['excludeRecipientPayloadKeys'], undefined, key);
+        assert.equal(cfg['skipWhenAllRecipientsExcluded'], undefined, key);
+        assert.deepEqual(cfg['webOnlyRecipientPayloadKeys'], ['actorUserId'], key);
         continue;
       }
+      assert.equal(cfg['webOnlyRecipientPayloadKeys'], undefined, key);
       assert.deepEqual(cfg['excludeRecipientPayloadKeys'], ['actorUserId'], key);
       assert.equal(cfg['skipWhenAllRecipientsExcluded'], true, key);
     }
@@ -173,6 +180,9 @@ describe('IngestWorkflowEventUseCase', () => {
       true,
     );
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
+    // Owner decision 2026-10-02: the people who review, not the shop owner, who holds every right and is told only
+    // when nobody else can review the claim.
+    assert.deepEqual(cfg['lastResortRecipientRoles'], ['OWNER']);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);
   });
@@ -203,6 +213,10 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.equal(template?.status, 'AVAILABLE');
     assert.equal(template?.autoEnable, true);
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
+    // Owner decision 2026-10-02: the rule of the arrival notice. The reviewers, and the shop owner only as the last
+    // resort. The reviewer who blocked the claim is still left out, as the actor of the event.
+    assert.deepEqual(cfg['lastResortRecipientRoles'], ['OWNER']);
+    assert.deepEqual([cfg['excludeRecipientPayloadKeys'], cfg['skipWhenAllRecipientsExcluded']], [['actorUserId'], true]);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['severity'], 'action');
     assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);

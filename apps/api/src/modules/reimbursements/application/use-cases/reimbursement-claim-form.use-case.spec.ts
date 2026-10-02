@@ -722,30 +722,46 @@ describe('the receiving account on the printed claim form', () => {
       }
     });
 
-    // Payout spec §14, §17.1 (AC32): a claim sent back to have its payout account corrected prints no
-    // account and no approver until one is approved again, whoever asks and in either phase.
-    it('says อยู่ระหว่างแก้ไขบัญชีรับเงิน and leaves the approver block blank during a correction round, with no number, row or decrypt', async () => {
+    // Payout spec §14, §17.1 (AC32): a claim sent back from the pay step prints no account and no approver until it is
+    // approved again, whoever asks and in either phase. The line says what the claim waits for, in the words of the
+    // claim page's badge: before, it read "อยู่ระหว่างแก้ไขบัญชีรับเงิน" of a claim with no account and of a cash claim too.
+    it('prints what a claim in a round waits for on the รับเงินคืนทาง line and leaves the approver block blank, with no number, row or decrypt', async () => {
       const sentBackAt = new Date('2026-07-25T00:00:00.000Z');
       const givenAt = new Date('2026-07-26T00:00:00.000Z');
       const setAside = { id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt, assignedAt: sentAt, invalidatedAt: sentBackAt, invalidatedReason: 'payout_account_correction' };
       const round = { status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG' };
-      const phases: Array<[string, Record<string, unknown>]> = [
-        // Phase A: no step is open, and the claim still points at the account in question.
-        ['waiting for the requester', { ...round, currentApprovalStepId: undefined, approvalSteps: [setAside] }],
-        // Phase B: the account was given again and a new step waits for mgr-1.
-        ['waiting for approval of the new account', {
-          ...round, payoutCorrectionSubmittedAt: givenAt, currentApprovalStepId: 'st-2', payoutDestinationVersion: 2,
-          approvalSteps: [setAside, { id: 'st-2', sequenceNo: 1, status: 'PENDING', assignedApproverUserIds: ['mgr-1'], assignedAt: givenAt }],
-        }],
+      // Phase A: no step is open, and the claim still points at what it was sent back with.
+      const withRequester = { ...round, currentApprovalStepId: undefined, approvalSteps: [setAside] };
+      // Phase B: the requester answered and a new step waits for mgr-1. The round's log says how it began and what was given.
+      const withApprover = (answer: Record<string, unknown>, approved: Record<string, unknown> = { payoutMethod: 'BANK_TRANSFER', payoutVersion: 1 }) => ({
+        ...round, payoutCorrectionSubmittedAt: givenAt, currentApprovalStepId: 'st-2', payoutDestinationVersion: 2,
+        approvalSteps: [setAside, { id: 'st-2', sequenceNo: 1, status: 'PENDING', assignedApproverUserIds: ['mgr-1'], assignedAt: givenAt }],
+        payoutCorrectionLog: [
+          { kind: 'SENT_BACK', at: sentBackAt.toISOString(), byUserId: 'fin-1', reasonCode: 'ACCOUNT_NUMBER_WRONG', approved },
+          { kind: 'ACCOUNT_SUBMITTED', at: givenAt.toISOString(), byUserId: 'staff-1', ...answer },
+        ],
+      });
+      const asCash = { payoutMethod: 'CASH', payoutFingerprint: 'cash', payoutDestinationVersion: undefined };
+      const phases: Array<[string, Record<string, unknown>, string]> = [
+        ['with its requester, holding an account', withRequester, 'รอผู้เบิกแก้บัญชีรับเงิน'],
+        ['with its requester, holding cash', { ...withRequester, ...asCash }, 'รอผู้เบิกเลือกวิธีรับเงินคืน'],
+        ['with its requester, holding nothing', { ...withRequester, payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined }, 'รอผู้เบิกเพิ่มบัญชีรับเงิน'],
+        ['another account waits for approval', withApprover({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 }), 'รออนุมัติบัญชีรับเงินใหม่'],
+        ['the same account waits for approval', withApprover({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 2, sameAsApproved: true }), 'รออนุมัติบัญชีรับเงินเดิม'],
+        ['cash in place of the account waits for approval', { ...withApprover({ payoutMethod: 'CASH' }), ...asCash }, 'รออนุมัติการรับเป็นเงินสด'],
+        ['a first account waits for approval', withApprover({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 }, {}), 'รออนุมัติบัญชีรับเงิน'],
+        // A round with no record of how it began: words that are true of every answer.
+        ['an answer waits for approval, with no record of the round', { ...withApprover({}), payoutCorrectionLog: undefined }, 'รออนุมัติวิธีรับเงินคืน'],
       ];
-      for (const [phase, state] of phases) {
+      for (const [phase, state, waitsFor] of phases) {
         for (const [who, viewer] of [...inGroup, ...outsideGroup]) {
           const { print, audits, events, reads, tables, sealed } = world(state);
           tables.destinations.push({ ...tables.destinations[0], id: 'destination-2', version: 2, frozenAt: givenAt, verifiedByUserId: null, verifiedAt: null, verifiedVia: null, approvalStepId: null, fingerprint: sealed.fingerprint });
           const result = await print(viewer);
           for (const image of imagesOf(result)) {
-            assert.equal(count(image, '>รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน<'), 1, `${phase}, ${who}`);
-            assert.doesNotMatch(image, /ผู้ตรวจบัญชี|ชื่อบัญชี|เลขบัญชี|ลงท้าย|กสิกรไทย|มานี ผู้จัดการ/, `${phase}, ${who}`);
+            assert.equal(count(image, `>รับเงินคืนทาง: ${waitsFor}<`), 1, `${phase}, ${who}`);
+            assert.equal(count(image, 'รับเงินคืนทาง'), 1, `${phase}, ${who}`);
+            assert.doesNotMatch(image, /ผู้ตรวจบัญชี|ชื่อบัญชี|เลขบัญชี|ลงท้าย|กสิกรไทย|มานี ผู้จัดการ|อยู่ระหว่างแก้ไข/, `${phase}, ${who}`);
             assert.ok(!image.includes(NUMBER), `${phase}, ${who}`);
           }
           // Two ruled signing lines, and only the requester's carries a name.

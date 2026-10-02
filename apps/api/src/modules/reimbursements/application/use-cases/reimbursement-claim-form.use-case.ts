@@ -7,7 +7,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ClaimPayoutRecord } from '../../infrastructure/reimbursement-payout';
 import type { ReimbursementClaimSignatureRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
-import { isLineEvidenced, byLineNo, claimApprovalStep, payoutCorrectionPhase } from '../../domain/logic/reimbursement.logic';
+import { isLineEvidenced, byLineNo, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionStatusLabel } from '../../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot, openPayoutAccountNumber } from '../../domain/logic/payout-destination.logic';
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
@@ -128,9 +128,11 @@ export class PreviewReimbursementClaimFormUseCase {
       // The account that payment was confirmed into, from the version the payment itself stored.
       paidIntoVersion === undefined ? undefined : this.repo.listPaymentPayoutDestinations(companyId, req.id, [paidIntoVersion]),
     ]);
-    // Spec §17.1: in a round the line reads "อยู่ระหว่างแก้ไขบัญชีรับเงิน" for every reader. It carries no
-    // account, so nothing is decrypted for it and no reveal is recorded.
-    const payout: ClaimFormPayout | undefined = correcting ? { method: 'CORRECTION_IN_PROGRESS' } : claimFormPayout(claimPayout, names, req.requesterUserId);
+    // Spec §17.1: in a round the line reads what the claim waits for, for every reader, in the words of the
+    // claim page's badge: by what the claim holds while it is with its requester, by what was answered while
+    // it waits for approval. It carries no account, so nothing is decrypted for it and no reveal is recorded.
+    const waitsFor = payoutCorrectionStatusLabel(req);
+    const payout: ClaimFormPayout | undefined = waitsFor ? { method: 'CORRECTION_IN_PROGRESS', status: waitsFor } : claimFormPayout(claimPayout, names, req.requesterUserId);
     const paidInto = paidIntoVersion === undefined ? undefined : paymentDestinations?.[paidIntoVersion];
     const signer = (userId: string | undefined, at: Date | undefined, role: ReimbursementClaimSignatureRole): ClaimFormSigner | null =>
       (userId && at

@@ -124,7 +124,11 @@ export class MemberPayoutAccountUseCase {
    * makes the typed account the REQUESTER's default (never the preparer's) and leaves the claim
    * following that default, in the same transaction as the draft.
    */
-  async draftPayoutChange(ctx: RequestContext, requesterUserId: string, input: ReimbursementPayoutInput): Promise<DraftPayoutChange & { audit: DraftPayoutAudit }> {
+  async draftPayoutChange(
+    ctx: RequestContext, requesterUserId: string, input: ReimbursementPayoutInput,
+    /** A correction round tells the requester of every answer given for them itself, a typed account included: no second notice from here. */
+    inRound = false,
+  ): Promise<DraftPayoutChange & { audit: DraftPayoutAudit }> {
     if (input.mode !== 'SPECIFIED') return { write: { mode: input.mode === 'CASH' ? 'CASH' : 'DEFAULT' }, audit: { mode: input.mode === 'CASH' ? 'CASH' : 'DEFAULT' } };
     const destination = this.seal(input);
     const byRequester = requesterUserId === ctx.userId;
@@ -146,25 +150,36 @@ export class MemberPayoutAccountUseCase {
     if (!mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId))) {
       throw new ConflictException('payout_account_member_not_active');
     }
+    if (inRound) return { write, audit: { mode: 'SPECIFIED', source } };
     const editorName = (await this.repo.getUserDisplayNames(ctx.companyId, [ctx.userId]))[ctx.userId] ?? UNNAMED_MEMBER;
     return {
       write, audit: { mode: 'SPECIFIED', source },
       onPersisted: async (tx, requestId) => {
-        const at = new Date();
-        const when = at.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' });
-        // To the requester alone, never to the shop owner or anyone else. One notice per change: the
-        // period is this save and nothing else (two saves in one millisecond are still two notices).
-        // The last 4 digits only, and a link to the claim itself.
-        await this.notifications.executeInTransaction({
-          companyId: ctx.companyId, triggerKey: PAYOUT_ACCOUNT_SET_TRIGGER_KEY, sourceModule: 'reimbursements',
-          sourceType: 'reimbursement_request', sourceId: requestId, periodKey: `${at.toISOString()}:${randomUUID()}`, severity: 'critical',
-          title: `${editorName} ระบุบัญชีรับเงินคืนในใบเบิกของคุณ`,
+        const when = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' });
+        // The last 4 digits only.
+        await this.tellClaimRequester(tx, ctx.companyId, requestId, requesterUserId, {
+          title: `${editorName} ระบุบัญชีรับเงินในใบเบิกของคุณ`,
           body: `${maskedPayoutAccount(destination)} ระบุเมื่อ ${when} ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที`,
-          deepLinkHref: `/companies/${ctx.companyId}/reimbursements/${requestId}`,
-          recipientUserIds: [requesterUserId],
-        }, tx as never);
+        });
       },
     };
+  }
+
+  /**
+   * Tells a requester what someone else did to where their claim is paid: an account typed on a claim filed
+   * for them, or an answer given for them in a correction round. To the requester alone, never to the shop
+   * owner or anyone else, with a link to the claim itself, in the transaction of the change: the change cannot
+   * be on the claim without its notice. One notice per change: the period is this change and nothing else (two
+   * in one millisecond are still two notices). Critical, like the notice of a default account set by someone else.
+   */
+  async tellClaimRequester(tx: unknown, companyId: string, requestId: string, requesterUserId: string, notice: { title: string; body: string }): Promise<void> {
+    await this.notifications.executeInTransaction({
+      companyId, triggerKey: PAYOUT_ACCOUNT_SET_TRIGGER_KEY, sourceModule: 'reimbursements',
+      sourceType: 'reimbursement_request', sourceId: requestId, periodKey: `${new Date().toISOString()}:${randomUUID()}`, severity: 'critical',
+      title: notice.title, body: notice.body,
+      deepLinkHref: `/companies/${companyId}/reimbursements/${requestId}`,
+      recipientUserIds: [requesterUserId],
+    }, tx as never);
   }
 
   private assertOwn(ctx: RequestContext): void {

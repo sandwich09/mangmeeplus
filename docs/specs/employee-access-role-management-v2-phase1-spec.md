@@ -268,11 +268,11 @@ Curated bundles over the existing `permission-registry.ts` keys plus the explici
 | `pack.company.vat_registration.manage` | จัดการสถานะจด VAT | Manage VAT registration fact | HIGH | — | company.vat_registration.read, company.vat_registration.manage |
 | `pack.people.view` | ดูพนักงานและสิทธิ์ | View people & roles | LOW | — | access.employee.read, access.role.read, access.permission.read, access.capability_pack.read, access.role_template.read, access.effective.read |
 | `pack.people.manage` | จัดการพนักงานและสิทธิ์ | Manage people & roles | CRITICAL | — | access.employee.create, access.employee.update, access.employee.disable, access.employee.credential.issue, access.employee.line_link.issue, access.employee.line_link.revoke, access.role.manage, access.role_template.manage |
-| `pack.audit.read` | ดูบันทึกการใช้งาน (audit) | Read audit log | MEDIUM | — | audit.log.read, workflow.audit.read |
+| `pack.audit.read` | ดูประวัติการใช้งาน | Read audit log | MEDIUM | — | audit.log.read, workflow.audit.read |
 | `pack.dashboard.manage` | ปรับแต่งแดชบอร์ด | Configure dashboard | MEDIUM | — | dashboard.configure, dashboard.snapshot.generate |
-| `pack.notification.admin` | จัดการแจ้งเตือน (แอดมิน) | Notification admin | HIGH | — | notification.rule.manage, notification.delivery.read, notification.delivery.retry |
-| `pack.workflow.view` | ดูออโตเมชัน | View automation | MEDIUM | workflow | workflow.template.read, workflow.rule.read, workflow.run.read, workflow.dead_letter.read, workflow.audit.read |
-| `pack.workflow.manage` | จัดการออโตเมชัน | Manage automation | CRITICAL | workflow | workflow.rule.manage, workflow.rule.enable, workflow.run.replay, workflow.dead_letter.replay, workflow.webhook.manage |
+| `pack.notification.admin` | จัดการกฎแจ้งเตือน | Notification admin | HIGH | — | notification.rule.manage, notification.delivery.read, notification.delivery.retry |
+| `pack.workflow.view` | ดูระบบอัตโนมัติ | View automation | MEDIUM | workflow | workflow.template.read, workflow.rule.read, workflow.run.read, workflow.dead_letter.read, workflow.audit.read |
+| `pack.workflow.manage` | จัดการระบบอัตโนมัติ | Manage automation | CRITICAL | workflow | workflow.rule.manage, workflow.rule.enable, workflow.run.replay, workflow.dead_letter.replay, workflow.webhook.manage |
 
 `pack.people.view` and `pack.people.manage` remain independently composable. An employee creator/editor
 or role manager may read the minimum role/address/catalog data required to complete that exact action via
@@ -391,7 +391,7 @@ It is an explicit exception to the core pack's always-on label: the runtime pref
 | `tpl.x.accounting` | บัญชี/ผู้ทำบัญชี | Bookkeeper / Accountant | pack.company.settings.view, pack.company.vat_registration.manage, pack.billing.view, pack.payment.view, pack.ledger.manage, pack.tax.manage, pack.finance.vat.review, pack.wht.certificate.manage, pack.vat.credit_outcome.correct, pack.bank.reconcile_manage, pack.expense.review, pack.reimbursement.review, pack.procurement.view, pack.audit.read |
 | `tpl.x.marketing` | การตลาด | Marketing | pack.crm.view, pack.dashboard.manage |
 | `tpl.x.manager` | ผู้จัดการ | Manager | pack.crm.manage, pack.quotation.approve, pack.billing.view, pack.payment.view, pack.inventory.view, pack.expense.review, pack.reimbursement.approve, pack.procurement.approve, pack.cash.view, pack.dashboard.manage, pack.people.view, pack.tax.view, pack.ledger.view |
-| `tpl.x.finance` | การเงิน (AR/AP) | Finance | pack.company.settings.view, pack.billing.operate, pack.billing.issue, pack.payment.record, pack.payment.void, pack.bank.operate, pack.procurement.ap_manage, pack.tax.prepare, pack.finance.vat.review, pack.wht.certificate.manage, pack.ledger.operate, pack.expense.finance, pack.reimbursement.finance |
+| `tpl.x.finance` | การเงิน (ลูกหนี้/เจ้าหนี้) | Finance | pack.company.settings.view, pack.billing.operate, pack.billing.issue, pack.payment.record, pack.payment.void, pack.bank.operate, pack.procurement.ap_manage, pack.tax.prepare, pack.finance.vat.review, pack.wht.certificate.manage, pack.ledger.operate, pack.expense.finance, pack.reimbursement.finance |
 
 *Read-only preset uses view-tier packs only; `pack.expense.review` is replaced by an expense read via `pack.billing.view`/audit where a dedicated `expense read` view is needed — confirm whether to add a `pack.expense.view` (read-only) during Phase 0 (recommended, so the read-only preset never pulls a mutate-capable pack).
 
@@ -418,7 +418,7 @@ It is an explicit exception to the core pack's always-on label: the runtime pref
 | Preset key | ไทย | English | Packs (beyond core) |
 |---|---|---|---|
 | `tpl.service.front_desk` | หน้าร้าน/ต้อนรับ | Front desk | pack.crm.operate, pack.billing.operate, pack.payment.record, pack.reimbursement.self |
-| `tpl.service.sales` | ฝ่ายขาย/CRM | Sales / CRM | pack.crm.operate, pack.quotation.operate, pack.billing.view, pack.expense.self, pack.reimbursement.self |
+| `tpl.service.sales` | ฝ่ายขาย/ดูแลลูกค้า | Sales / CRM | pack.crm.operate, pack.quotation.operate, pack.billing.view, pack.expense.self, pack.reimbursement.self |
 | `tpl.service.finance` | การเงิน | Finance | = `tpl.x.finance` packs |
 | `tpl.service.manager` | ผู้จัดการ | Manager | = `tpl.x.manager` packs |
 

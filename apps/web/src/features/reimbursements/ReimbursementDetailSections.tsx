@@ -48,11 +48,12 @@ import {
 import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 
 /**
- * `desk`: the claim's `currentDesk`. A claim the system holds reads "รอระบบปรับสถานะ", not the status it has not left yet.
- * `phase`: its `payoutCorrectionPhase`. A claim sent back for its payout account reads whom it waits for.
+ * The status badge of a claim, as its list or queue row or as its detail. It takes the whole claim, because the words
+ * are not the status alone: a claim the system holds reads "รอระบบปรับสถานะ" (its `currentDesk`), and a claim sent back
+ * from its pay step reads what it waits for, by what it holds and what was answered (`claimStatusBadge`).
  */
-export function StatusBadge({ status, desk, phase }: { status: string; desk?: { kind?: string } | null; phase?: string | null }) {
-  const badge = claimStatusBadge({ status, currentDesk: desk, payoutCorrectionPhase: phase });
+export function StatusBadge({ claim }: { claim: Parameters<typeof claimStatusBadge>[0] }) {
+  const badge = claimStatusBadge(claim);
   return <MangmeeBadge tone={badge.tone}>{badge.label}</MangmeeBadge>;
 }
 export function PaymentBadge({ status }: { status: string }) {
@@ -309,24 +310,28 @@ export function MissingSavedSignatureModal({ companyId, requestId, onClose }: {
 const SIGNED_COPY_NOT_FOR_SLIPS = 'ช่องนี้สำหรับใบเบิกที่มีลายเซ็นเท่านั้น ไม่ใช่ที่แนบสลิปโอนเงิน สลิปโอนเงินแนบที่ขั้นจ่ายเงินคืน ตอนกดบันทึกจ่าย';
 
 /**
- * Payout spec §14.4: while the claim's payout account is being corrected its form prints no account and no
- * approver, so nobody signs it in the system and no scan is declared as signed. Said wherever signing is.
+ * Payout spec §14.4: while a claim is in a payout round its form prints no destination and no approver, so nobody
+ * signs it in the system and no scan is declared as signed. Said wherever signing is, with what the claim waits for
+ * in the words of its badge: a claim with no account, one that asked for cash, and an answer that kept the account
+ * have no "account being corrected" and no "new account" to wait for. Signing comes back with the pay step.
  */
-const SIGNING_WAITS_FOR_CORRECTION = 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งหลังบัญชีใหม่ได้รับอนุมัติ';
+const signingWaitsForRound = (detail: Parameters<typeof claimStatusBadge>[0]) =>
+  `ใบนี้${claimStatusBadge(detail).label} ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งเมื่อใบกลับมารอจ่าย`;
 
 /**
  * A4: a scan counts as the signed record only after the attacher declares both signatures are on it for
  * THIS claim number. Without the declaration it is kept as an ordinary attachment that signs nothing.
  */
-function SignedCopyDialog({ requestNo, fileName, canDeclare, onClose, onSend }: {
+function SignedCopyDialog({ requestNo, fileName, waitsForRound, onClose, onSend }: {
   requestNo: string;
   fileName: string;
-  /** False while the claim's payout account is being corrected: the API takes the file and refuses the declaration. */
-  canDeclare: boolean;
+  /** While the claim is in a payout round: why no declaration is taken (the API takes the file and refuses the declaration). */
+  waitsForRound?: string;
   onClose: () => void;
   onSend: (declared: boolean) => void;
 }) {
   const [declared, setDeclared] = useState(false);
+  const canDeclare = !waitsForRound;
   return (
     <Modal open title="แนบใบเบิกที่เซ็นแล้ว" size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
@@ -341,7 +346,7 @@ function SignedCopyDialog({ requestNo, fileName, canDeclare, onClose, onSend }: 
             <p className="text-xs text-gray-500">ถ้ายังเซ็นไม่ครบ แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
           </>
         ) : (
-          <p className="text-sm text-gray-600">{SIGNING_WAITS_FOR_CORRECTION} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+          <p className="text-sm text-gray-600">{waitsForRound} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
         )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className={ghostClass} onClick={() => onSend(false)}>แนบเป็นไฟล์แนบทั่วไป</button>
@@ -414,15 +419,16 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
           {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </ThemedSelect>
       </div>
-      {/* Spec §12.4: paying another way than the requester asked is allowed, and says why. */}
+      {/* Spec §12.4: paying another way than the claim states is allowed, and says why. Said of the claim: no fact says
+          who chose its method (whoever prepared it, or answered a round for the requester, may have). */}
       {payout.rule.mismatchReasonRequired && (
         <div data-testid="reimbursement-payment-mismatch">
-          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-payment-mismatch-reason">เหตุผลที่จ่ายต่างจากที่ผู้เบิกขอ *</label>
+          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-payment-mismatch-reason">เหตุผลที่จ่ายต่างจากที่ระบุในใบ *</label>
           <textarea id="reimbursement-payment-mismatch-reason" className={cx(inputClass, 'min-h-20 resize-y')} aria-required maxLength={REASON_MAX_LENGTH} disabled={busy}
             value={payer.mismatchReason} onChange={e => setPayer(p => ({ ...p, mismatchReason: sanitizeReasonInput(e.target.value) }))}
             placeholder="เช่น ผู้เบิกขอรับเป็นเงินสดแทน" />
           <p className="mt-1 text-xs leading-5 text-gray-500">
-            ผู้เบิกขอ{payout.requestedMethodText} ประวัติการจ่ายจะแสดงว่า{PAID_DIFFERENTLY_LABEL} พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้
+            ใบนี้ระบุ{payout.requestedMethodText} ประวัติการจ่ายจะแสดงว่า{PAID_DIFFERENTLY_LABEL} พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้
           </p>
         </div>
       )}
@@ -773,7 +779,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <h4 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h4>
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
-          <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} phase={detail.payoutCorrectionPhase} />} />
+          <Row k="สถานะ" v={<StatusBadge claim={detail} />} />
           {/* Only for a claim that is at, or went through, the finance review. A claim with no such step has none to speak
               of, and one that has not reached it yet read "ไม่ต้องตรวจ" here, which is not so: the step strip names what is ahead. */}
           {rowHasFinanceReview(detail) && <Row k="ตรวจการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />}
@@ -884,7 +890,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             {slots.length === 2 && claimSelfApproved(detail) && (
               <p className="mt-3 text-xs text-gray-600">ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท</p>
             )}
-            {correcting && <p className="mt-3 text-xs text-gray-600">{SIGNING_WAITS_FOR_CORRECTION}</p>}
+            {correcting && <p className="mt-3 text-xs text-gray-600">{signingWaitsForRound(detail)}</p>}
             {/* One tap signs every block this viewer really acted on; the server re-checks each role. */}
             {signAction && (
               <button type="button" className={cx(ghostClass, 'mt-3 w-full sm:w-auto')} disabled={busy} aria-busy={Boolean(busy)}
@@ -939,7 +945,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             <SignedCopyDialog
               requestNo={detail.requestNo}
               fileName={pendingCopy.name}
-              canDeclare={!correcting}
+              {...(correcting && { waitsForRound: signingWaitsForRound(detail) })}
               onClose={() => setPendingCopy(null)}
               onSend={(declared) => { onUploadSignedCopy(pendingCopy, declared ? detail.requestNo : undefined); setPendingCopy(null); }}
             />

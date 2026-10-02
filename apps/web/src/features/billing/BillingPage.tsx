@@ -812,7 +812,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       <section hidden={section !== 'history'} id="billing-history" aria-label="ประวัติการชำระเงิน" className="mangmee-card space-y-4 p-5 sm:p-6"><h2 className="text-lg font-bold">ประวัติและเอกสารการชำระเงิน</h2>
         {historyLoading && <p role="status">กำลังโหลดประวัติการชำระเงิน…</p>}
         {historyError && <div role="alert" className="space-y-2 rounded-xl bg-amber-50 p-4"><p>โหลดประวัติการชำระเงินไม่สำเร็จ · {historyError}</p>
-          <button className={button} disabled={busy} onClick={() => action(async () => { const history = await api.history(); setData(current => current && ({ ...current, history })); setHistoryError(''); })}>ลองโหลดประวัติใหม่</button></div>}
+          <button className={button} disabled={busy} aria-busy={busy} onClick={() => action(async () => { const history = await api.history(); setData(current => current && ({ ...current, history })); setHistoryError(''); })}>ลองโหลดประวัติใหม่</button></div>}
         {!historyLoading && !historyError && data.history.items.length === 0 && <p className="rounded-xl bg-gray-50 p-5 text-gray-500">ยังไม่มีรายการชำระเงิน</p>}
         {data.history.items.map(invoice => <article key={invoice.id} className="space-y-2 rounded-xl border border-gray-200 bg-white p-4"><p>{invoice.number ?? 'รายการชำระเงิน'} · {money(invoice.amountSatang)} · {date(invoice.createdAt)}</p>
           {(invoice.refundedSatang > 0 || invoice.disputed) && <p className="text-sm text-amber-900">{invoice.refundedSatang > 0 && `ยอดคืนเงินที่ Stripe บันทึก ${money(invoice.refundedSatang)} · `}{invoice.disputed && 'มีข้อพิพาทการชำระเงิน · '}ทีมงานตรวจสิทธิ์เป็นรายกรณี · ตรวจล่าสุด {date(invoice.financialObservedAt)}</p>}

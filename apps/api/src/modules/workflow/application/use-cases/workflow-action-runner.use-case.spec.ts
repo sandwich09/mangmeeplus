@@ -1,5 +1,9 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  reimbursementPayoutAnswerNotice, reimbursementPayoutSentBackNotice,
+  type ReimbursementPayoutCorrectionReason, type ReimbursementPayoutHeld, type ReimbursementPayoutRoundAnswer,
+} from '@watchdog-bms/contracts';
 import { ExecuteWorkflowActionUseCase } from './workflow-action-runner.use-case';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -68,10 +72,11 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
   // Shadow probe double: SEND_NOTIFICATION never reaches the CALL_WEBHOOK sweep, so a probe that
   // is never touched is the faithful stand-in here.
   const shadow = { startSweep: () => { throw new Error('no shadow sweep on this action type'); } } as any;
-  // Every holder in these tests can act; who cannot is the subject of the B12 block below.
+  // Every holder in these tests can act; who cannot is the subject of the B12 block below. `u_owner` is the shop owner.
   const access = {
-    resolveAccess: async () => ({
+    resolveAccess: async (userId: string) => ({
       permissions: ['procurement.vendor_bill.approve', 'reimbursement.payment.record', 'reimbursement.finance_review'],
+      roles: userId === 'u_owner' ? ['OWNER'] : ['STAFF'],
       scopes: {},
     }),
   } as any;
@@ -467,6 +472,72 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
         ['u_auditor', 'u_mgr_1', 'u_watcher'],
       );
     });
+
+    // Owner decision 2026-10-02: a notice that goes to everyone holding a right reached the shop owner every time,
+    // because the owner holds every right. `lastResortRecipientRoles` leaves the holders of a role out while anybody
+    // else is able to act. Before, there was no way to say so: the whole group was told.
+    it('leaves the holders of a last-resort role out while anybody else can act, and tells them when nobody else can', async () => {
+      const lastResort = { lastResortRecipientRoles: ['OWNER'] };
+      assert.deepEqual(await send(lastResort, {}), ['u_admin', 'u_mgr_1', 'u_mgr_2']);
+      // Whoever the event names comes first, as before: the owner too, when it is the owner's own turn.
+      assert.deepEqual(await send({ ...prefer, ...lastResort }, { firstChoice: 'u_owner' }), ['u_owner']);
+      assert.deepEqual(await send({ ...prefer, ...lastResort }, { firstChoice: 'u_mgr_1' }), ['u_mgr_1']);
+      // The event names nobody able to act: everyone else who is, and still not the owner.
+      assert.deepEqual(await send({ ...prefer, ...lastResort }, { firstChoice: 'u_cannot_act' }), ['u_admin', 'u_mgr_1', 'u_mgr_2']);
+      // A role nobody here holds leaves nobody out, and a list that is no list is read as none.
+      assert.deepEqual(await send({ lastResortRecipientRoles: ['AUDITOR_READONLY'] }, {}), ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2']);
+      assert.deepEqual(await send({ lastResortRecipientRoles: 'OWNER' }, {}), ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2']);
+
+      // Nobody but the owner can act: the owner is the one to tell.
+      const alone = async (cfg: Record<string, unknown>) => {
+        repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
+        await make().execute(
+          actionRun({ triggerKey: 'workflow.test', severity: 'action', recipientPermissions: ['reimbursement.payment.record'], ...cfg }),
+          { companyId: 'co_1', ruleName: 'r', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1', payload: {}, siblingActions: [] } as any,
+        );
+        return (notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds;
+      };
+      assert.deepEqual(await alone(lastResort), ['u_owner']);
+      // The roles are the ones the permission resolver answered for each holder: no role is looked up for this.
+      assert.ok(repo.findUserIdsByRoles.mock.calls.every((call: any) => call.arguments[1].length === 0));
+    });
+
+    // Controller decision 2026-10-02: a notice that leaves its actor out weighs its last resort AFTER that. Someone
+    // who is not going to get the notice is not "somebody else able to act": where the actor is the only other
+    // holder, the last resort is told. Before, the actor counted as somebody else and was then left out, so nobody
+    // was told and the record just sat.
+    it('weighs the last resort after leaving out whoever the notice excludes, so its actor is not the "somebody else"', async () => {
+      const leavesActorOut = { lastResortRecipientRoles: ['OWNER'], excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
+      /** Who is told of an event by `actorUserId` when these people hold the right, and how the action ended. */
+      const told = async (holders: string[], actorUserId: string, cfg: Record<string, unknown> = leavesActorOut) => {
+        repo.findUserIdsByPermissions = mock.fn(async () => holders);
+        const before = notify.execute.mock.callCount();
+        await make().execute(
+          actionRun({ triggerKey: 'workflow.test', severity: 'action', recipientPermissions: ['reimbursement.finance_review'], ...cfg }),
+          { companyId: 'co_1', ruleName: 'r', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1', payload: { actorUserId }, siblingActions: [] } as any,
+        );
+        const final = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+        return { to: notify.execute.mock.callCount() > before ? (notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds : null, status: final.status, skipped: final.resultJson?.reason ?? null };
+      };
+
+      // Somebody else can act: they are told, and neither the actor nor the last resort is.
+      assert.deepEqual(await told(['u_owner', 'u_admin', 'u_mgr_1'], 'u_admin'), { to: ['u_mgr_1'], status: 'SUCCEEDED', skipped: null });
+      // The actor is the only other holder: nobody else is left, so the last resort is told. The actor is not.
+      assert.deepEqual(await told(['u_owner', 'u_admin'], 'u_admin'), { to: ['u_owner'], status: 'SUCCEEDED', skipped: null });
+      // The last resort acted, alone: nobody is told, quietly (nothing is retried into a dead letter).
+      assert.deepEqual(await told(['u_owner'], 'u_owner'), { to: null, status: 'SUCCEEDED', skipped: 'all_recipients_excluded' });
+      // The last resort acted where others can act: they are told.
+      assert.deepEqual(await told(['u_owner', 'u_admin'], 'u_owner'), { to: ['u_admin'], status: 'SUCCEEDED', skipped: null });
+
+      // A notice that does NOT leave its actor out is as it was: the actor is somebody else who can act, and is told.
+      assert.deepEqual((await told(['u_owner', 'u_admin'], 'u_admin', { lastResortRecipientRoles: ['OWNER'] })).to, ['u_admin']);
+      // And a notice with no last resort leaves its actor out exactly as before, whoever else there is.
+      const noLastResort = { excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
+      assert.deepEqual((await told(['u_owner', 'u_admin', 'u_mgr_1'], 'u_admin', noLastResort)).to, ['u_owner', 'u_mgr_1']);
+      assert.deepEqual(await told(['u_admin'], 'u_admin', noLastResort), { to: null, status: 'SUCCEEDED', skipped: 'all_recipients_excluded' });
+      // Without the quiet-skip key, everyone being left out is still the failure it was (the vendor bill's second approver).
+      assert.deepEqual(await told(['u_admin'], 'u_admin', { excludeRecipientPayloadKeys: ['actorUserId'] }), { to: null, status: 'FAILED_RETRYABLE', skipped: null });
+    });
   });
 
   // Audit B9: a requester told "paid" was never told when that payment was taken back.
@@ -617,6 +688,48 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
         sourceId: 'rb_1', payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB' }, siblingActions: [],
       } as any);
       assert.equal((repo.updateActionRun.mock.calls.at(-1) as any).arguments[1].status, 'FAILED_RETRYABLE');
+    });
+  });
+
+  // Owner decision 2026-10-02: a claim that has waited for approval past the company's deadline is the business of
+  // its approvers. Before, the reminder added the shop owner to every one of them, whoever the approvers were.
+  describe('approval reminder notice (owner decision 2026-10-02)', () => {
+    const sla = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'approval_sla_breach')!;
+    const notifyAction = () => sla().defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')!;
+    // What the scan hands the rule for a claim past its deadline: its approvers, and the owner named apart.
+    const runReminder = (payload: Record<string, unknown>, cfg: Record<string, unknown> = notifyAction().configJson) => make().execute(
+      { ...actionRun(cfg), actionKey: notifyAction().actionKey },
+      {
+        companyId: 'co_1', ruleName: sla().name, triggerType: 'SLA_SCAN', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: {
+          requestId: 'rb_1', requestNo: 'RB-202610-00007', ageHours: 80, slaRisk: true, amount: '250', currency: 'THB',
+          ownerRecipientUserIds: ['u_owner'], notificationPeriodKey: 'round:2026-10-01T03:00:00.000Z', ...payload,
+        },
+        siblingActions: sla().defaultActionJson,
+      } as any,
+    );
+    const reminded = () => (notify.execute.mock.calls.at(-1) as any).arguments[0];
+
+    it('reminds the approvers of the claim, and the shop owner only when the scan names the owner as the one to approve it', async () => {
+      await runReminder({ approverRecipientUserIds: ['u_manager', 'u_manager_2'], approverTaskUserId: 'u_manager', approverTaskRole: 'MANAGER' });
+
+      assert.deepEqual(reminded().recipientUserIds, ['u_manager', 'u_manager_2']);
+      assert.deepEqual(notifyAction().configJson['recipientPayloadKeys'], ['approverRecipientUserIds']);
+      // The notice itself is as it was: the same trigger, title, link and once-per-round period.
+      assert.deepEqual([reminded().triggerKey, reminded().severity, reminded().title, reminded().deepLinkHref, reminded().periodKey],
+        ['workflow.approval_sla_breach', 'critical', 'ใบเบิกรออนุมัติเกินกำหนด: RB-202610-00007', '/companies/co_1/reimbursements/rb_1', 'round:2026-10-01T03:00:00.000Z']);
+
+      // None of the claim's approvers can act any more: the scan names the owner as the one who approves it now.
+      await runReminder({ approverRecipientUserIds: ['u_owner'], approverTaskUserId: 'u_owner', approverTaskRole: 'OWNER' });
+      assert.deepEqual(reminded().recipientUserIds, ['u_owner']);
+      // A shop owner who is one of the claim's approvers is reminded as that.
+      await runReminder({ approverRecipientUserIds: ['u_owner', 'u_manager'], approverTaskUserId: 'u_manager', approverTaskRole: 'MANAGER' });
+      assert.deepEqual(reminded().recipientUserIds, ['u_owner', 'u_manager']);
+
+      // A rule pinned before this, or one an admin edited to say so, names the owner itself: the owner is still added.
+      const pinnedBefore = { ...notifyAction().configJson, recipientPayloadKeys: ['approverRecipientUserIds', 'ownerRecipientUserIds'] };
+      await runReminder({ approverRecipientUserIds: ['u_manager'], approverTaskUserId: 'u_manager', approverTaskRole: 'MANAGER' }, pinnedBefore);
+      assert.deepEqual(reminded().recipientUserIds, ['u_manager', 'u_owner']);
     });
   });
 
@@ -795,18 +908,30 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       } as any);
       return (notify.execute.mock.calls.at(-1) as any)?.arguments[0];
     };
-    /** As `sendBackForPayoutCorrection` writes it: sent back by `u_payer`, with the reason as a finished sentence. */
-    const sentBack = (overrides: Record<string, unknown> = {}) => ({
-      requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', status: 'PENDING_APPROVAL',
-      payoutCorrectionNotice: 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
-      eventType: 'reimbursement.payout_correction_requested', actorUserId: 'u_payer', ...overrides,
-    });
-    /** As `SubmitPayoutCorrectionUseCase` writes it: the requester gave the account, which waits for `u_manager`. */
-    const accountGiven = (overrides: Record<string, unknown> = {}) => ({
-      requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', amount: '1614.5000', currency: 'THB',
-      status: 'PENDING_APPROVAL', stepId: 'step_2', approverRecipientUserIds: ['u_manager'],
-      eventType: 'reimbursement.payout_correction_submitted', actorUserId: 'u_requester', ...overrides,
-    });
+    /**
+     * As `sendBackForPayoutCorrection` writes it: sent back by `u_payer`, with the title and the body as finished
+     * sentences, chosen by what the claim held when it was sent back.
+     */
+    const sentBack = (overrides: Record<string, unknown> = {}, held: ReimbursementPayoutHeld = 'ACCOUNT', reasonCode: ReimbursementPayoutCorrectionReason = 'ACCOUNT_NUMBER_WRONG') => {
+      const notice = reimbursementPayoutSentBackNotice(held, reasonCode);
+      return {
+        requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', status: 'PENDING_APPROVAL',
+        payoutCorrectionTitle: notice.title, payoutCorrectionNotice: notice.body,
+        eventType: 'reimbursement.payout_correction_requested', actorUserId: 'u_payer', ...overrides,
+      };
+    };
+    /**
+     * As `SubmitPayoutCorrectionUseCase` writes it: the requester answered, and the answer waits for `u_manager`. The
+     * title and the end of the body are finished sentences, chosen by what was answered.
+     */
+    const accountGiven = (overrides: Record<string, unknown> = {}, answer: ReimbursementPayoutRoundAnswer | null = 'NEW_ACCOUNT') => {
+      const notice = reimbursementPayoutAnswerNotice(answer);
+      return {
+        requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', amount: '1614.5000', currency: 'THB',
+        status: 'PENDING_APPROVAL', stepId: 'step_2', approverRecipientUserIds: ['u_manager'], payoutAnswerTitle: notice.title, payoutAnswerNotice: notice.body,
+        eventType: 'reimbursement.payout_correction_submitted', actorUserId: 'u_requester', ...overrides,
+      };
+    };
 
     it('tells the requester alone that the claim needs its account corrected, with the reason and a link to the claim', async () => {
       const sent = await send('reimbursement_payout_correction_requested', sentBack());
@@ -834,6 +959,51 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       const before = notify.execute.mock.callCount();
       await send('reimbursement_payout_correction_submitted', accountGiven({ approverRecipientUserIds: ['u_requester'] }));
       assert.equal(notify.execute.mock.callCount(), before);
+    });
+
+    // Payout spec §17.3. The title used to be the template's own, one for every claim: a claim with no account, and a
+    // claim that asked for cash, were told their "บัญชีรับเงิน" needed correcting.
+    it('titles and words the send-back notice by what the claim held: an account is corrected, a missing one added, cash chosen again', async () => {
+      const cases = [
+        ['ACCOUNT', 'BANK_WRONG', 'ใบเบิกต้องแก้บัญชีรับเงิน: RB-202610-00007', 'เหตุผล: ธนาคารไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน'],
+        ['NOTHING', 'NO_ACCOUNT_ON_CLAIM', 'ใบเบิกต้องเพิ่มบัญชีรับเงิน: RB-202610-00007', 'เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน'],
+        ['CASH', 'CASH_NOT_PAYABLE', 'ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง: RB-202610-00007', 'เหตุผล: จ่ายเป็นเงินสดไม่ได้ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน'],
+      ] as const;
+      for (const [held, reasonCode, title, body] of cases) {
+        const sent = await send('reimbursement_payout_correction_requested', sentBack({}, held, reasonCode));
+        assert.deepEqual([sent.title, sent.body, sent.recipientUserIds], [title, body, ['u_requester']], held);
+        assert.doesNotMatch(`${sent.title} ${sent.body}`.replace('RB-202610-00007', ''), /[A-Za-z_]/, held);
+      }
+    });
+
+    // The title and the body used to say "บัญชีรับเงินใหม่" of every answer: of the same account, of a first account, of cash.
+    it('titles and words the approvers\' notice by what the requester answered, and says "ใหม่" only of another account', async () => {
+      const expected = {
+        NEW_ACCOUNT: ['รออนุมัติบัญชีรับเงินใหม่: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่'],
+        SAME_ACCOUNT: ['รออนุมัติบัญชีรับเงินเดิม: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงินเดิม'],
+        CASH_INSTEAD: ['รออนุมัติการรับเป็นเงินสด: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+        ACCOUNT_INSTEAD: ['รออนุมัติบัญชีรับเงิน: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+        SAME_CASH: ['รออนุมัติการรับเป็นเงินสด: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+        FIRST_ACCOUNT: ['รออนุมัติบัญชีรับเงิน: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+        FIRST_CASH: ['รออนุมัติการรับเป็นเงินสด: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+      } satisfies Record<ReimbursementPayoutRoundAnswer, [string, string]>;
+      for (const [answer, words] of Object.entries(expected) as Array<[ReimbursementPayoutRoundAnswer, [string, string]]>) {
+        const sent = await send('reimbursement_payout_correction_submitted', accountGiven({}, answer));
+        assert.deepEqual([sent.title, sent.body, sent.recipientUserIds], [...words, ['u_manager']], answer);
+        assert.doesNotMatch(`${sent.title} ${sent.body}`.replace('RB-202610-00007', ''), /[A-Za-z_]|\d\.\d{3,}/, answer);
+      }
+      // An answer with no record of how its round began: words that are true of every answer.
+      const unknown = await send('reimbursement_payout_correction_submitted', accountGiven({}, null));
+      assert.deepEqual([unknown.title, unknown.body], ['รออนุมัติวิธีรับเงินคืน: RB-202610-00007', 'ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติวิธีรับเงินคืน']);
+    });
+
+    it('lets neither template assemble a sentence of its own: both print what the event carries', () => {
+      const words = (key: string) => {
+        const { titleTemplate, bodyTemplate } = template(key).defaultActionJson[0]!.configJson as { titleTemplate: string; bodyTemplate: string };
+        return [titleTemplate, bodyTemplate];
+      };
+      assert.deepEqual(words('reimbursement_payout_correction_requested'), ['{{payoutCorrectionTitle}}: {{requestNo}}', '{{payoutCorrectionNotice}}']);
+      assert.deepEqual(words('reimbursement_payout_correction_submitted'), ['{{payoutAnswerTitle}}: {{requestNo}}', 'ยอด {{amount}} {{currency}} · {{payoutAnswerNotice}}']);
     });
 
     it('creates no task and reads no account: each is one notice, about where the claim stands', () => {
@@ -1114,6 +1284,134 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff' };
     await h.useCase.execute(actionRun(cfg), context);
     assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_approver']);
+  });
+
+  // ---- The finance desk (owner decisions 2026-10-02) ----
+  const REVIEW = 'reimbursement.finance_review';
+  /** A member whose one role, of this key, holds the finance-review right. */
+  const holding = (key: string, extra: Record<string, unknown> = {}, status = 'ACTIVE') =>
+    member({ roles: [{ role: { key, status, permissions: [{ permission: { key: REVIEW } }] } }], ...extra });
+  const elsewhere = { branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] };
+  const arrival = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_finance_review_pending')!;
+  const arrivalCfg = arrival.defaultActionJson[0]!.configJson;
+  /** A notice of the finance desk about a claim its approver (u_approver) passed, run against these members. */
+  const announce = async (memberships: Record<string, unknown>, cfg: Record<string, unknown> = arrivalCfg, payload: Record<string, unknown> = {}) => {
+    const h = harness({ sourceBranchId: 'br_claim', memberships });
+    await h.useCase.execute({ ...actionRun(cfg), actionKey: arrival.defaultActionJson[0]!.actionKey }, {
+      companyId: 'co_1', ruleName: arrival.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+      payload: { requestId: 'rb_1', requestNo: 'RB-1', status: 'FINANCE_REVIEW', decision: 'APPROVED', amount: '250', currency: 'THB', requesterUserId: 'u_staff', actorUserId: 'u_approver', ...payload },
+      siblingActions: [],
+    } as any);
+    return { to: h.sent[0]?.recipientUserIds, bellOnly: h.sent[0]?.webOnlyRecipientUserIds, status: h.updates.at(-1)?.status, result: h.updates.at(-1)?.resultJson };
+  };
+
+  // Owner decision 2026-10-02: a claim that arrives at the finance desk is announced to the people who review there
+  // and can act on its branch, and not to the shop owner, who holds every right, unless nobody else can review it.
+  // Before, every holder of the right was told, the owner included, for every claim of every branch.
+  it('announces a claim at the finance desk to its reviewers, and to the shop owner only when nobody else can review it', async () => {
+    assert.deepEqual(arrivalCfg['lastResortRecipientRoles'], ['OWNER']);
+
+    // The owner, an accountant and a company's own finance role all hold the right: the two who review are told.
+    const desk = { u_owner: holding('OWNER'), u_accountant: holding('ACCOUNTANT'), u_finance: holding('CUSTOM_FINANCE') };
+    assert.deepEqual((await announce(desk)).to, ['u_accountant', 'u_finance']);
+    // One reviewer for this branch is enough to leave the owner out.
+    assert.deepEqual((await announce({ ...desk, u_accountant: holding('ACCOUNTANT', elsewhere), u_finance: holding('CUSTOM_FINANCE', { branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'br_claim' }) })).to, ['u_finance']);
+    // Whoever cannot review THIS claim is not "somebody else": a reviewer of another branch, one whose role is switched off.
+    assert.deepEqual((await announce({ u_owner: holding('OWNER'), u_elsewhere: holding('ACCOUNTANT', elsewhere), u_off: holding('ACCOUNTANT', {}, 'DISABLED') })).to, ['u_owner']);
+    // A shop where the owner is the finance desk, alone or with a second owner.
+    assert.deepEqual((await announce({ u_owner: holding('OWNER') })).to, ['u_owner']);
+    assert.deepEqual((await announce({ u_owner: holding('OWNER'), u_owner_2: holding('OWNER') })).to, ['u_owner', 'u_owner_2']);
+    // A member who holds the owner role beside another one is the shop owner all the same.
+    const ownerAndFinance = member({ roles: [{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [] } }, { role: { key: 'FINANCE', status: 'ACTIVE', permissions: [{ permission: { key: REVIEW } }] } }] });
+    assert.deepEqual((await announce({ u_owner: ownerAndFinance, u_accountant: holding('ACCOUNTANT') })).to, ['u_accountant']);
+    // A claim nobody had to approve arrives by its own event, from whoever sent it: the same people are told.
+    assert.deepEqual((await announce(desk, arrivalCfg, { eventType: 'reimbursement.finance_review_requested', decision: undefined, actorUserId: 'u_staff' })).to, ['u_accountant', 'u_finance']);
+
+    // A rule pinned before this, or one an admin edited, has no such key: every holder who can act, as before.
+    const { lastResortRecipientRoles: _added, ...pinnedBefore } = arrivalCfg;
+    assert.deepEqual((await announce(desk, pinnedBefore)).to, ['u_owner', 'u_accountant', 'u_finance']);
+  });
+
+  // Owner decision 2026-10-02 (the same day, after the one above): an approver who also reviews finance puts the claim
+  // on their own desk by approving it. The review is their next task, so the notice is theirs too, in the web bell
+  // only: no LINE push about what they have just done, as the ready-to-pay notice does for an approver who pays.
+  // Before, they were left out as the actor of the event, and with the owner no longer told in their place a shop
+  // whose approver is its one finance reviewer told nobody at all.
+  it('gives the one who put the claim on the finance desk the notice in the web bell only, when they review there themselves', async () => {
+    // The approver is the only reviewer besides the owner: the task is in the approver's bell, and the owner is not told.
+    assert.deepEqual(await announce({ u_owner: holding('OWNER'), u_approver: holding('ACCOUNTANT') }),
+      { to: ['u_approver'], bellOnly: ['u_approver'], status: 'SUCCEEDED', result: { skipped: false, reason: undefined } });
+    // Another reviewer beside them: both are told, and only the approver is spared the LINE push.
+    assert.deepEqual(await announce({ u_owner: holding('OWNER'), u_approver: holding('ACCOUNTANT'), u_finance: holding('CUSTOM_FINANCE') }),
+      { to: ['u_approver', 'u_finance'], bellOnly: ['u_approver'], status: 'SUCCEEDED', result: { skipped: false, reason: undefined } });
+    // An approver who cannot review this claim (no finance right, or it is for another branch) is told nothing, as before.
+    const others = { u_owner: holding('OWNER'), u_finance: holding('CUSTOM_FINANCE') };
+    for (const memberships of [others, { ...others, u_approver: holding('ACCOUNTANT', elsewhere) }]) {
+      const told = await announce(memberships);
+      assert.deepEqual(told.to, ['u_finance']);
+      assert.equal(told.to.some((userId: string) => told.bellOnly.includes(userId)), false, 'the reviewer who did not act is pushed as usual');
+    }
+    // The shop owner approved: where someone else reviews, that one is told and the owner is not. In a shop where the
+    // owner is the finance desk, the review is the owner's own next task: in the bell, with no LINE push.
+    assert.deepEqual((await announce(others, arrivalCfg, { actorUserId: 'u_owner' })).to, ['u_finance']);
+    const ownerAlone = await announce({ u_owner: holding('OWNER') }, arrivalCfg, { actorUserId: 'u_owner' });
+    assert.deepEqual([ownerAlone.to, ownerAlone.bellOnly], [['u_owner'], ['u_owner']]);
+    // A claim nobody had to approve, sent by someone who reviews finance: theirs to review, in the bell only.
+    const sentByReviewer = await announce({ u_owner: holding('OWNER'), u_accountant: holding('ACCOUNTANT'), u_finance: holding('CUSTOM_FINANCE') }, arrivalCfg,
+      { eventType: 'reimbursement.finance_review_requested', decision: undefined, requesterUserId: 'u_accountant', actorUserId: 'u_accountant' });
+    assert.deepEqual([sentByReviewer.to, sentByReviewer.bellOnly], [['u_accountant', 'u_finance'], ['u_accountant']]);
+
+    // The catalog says so the way the ready-to-pay notice does: nobody is left out as the actor, and the actor is the one for the bell only.
+    const readyCfg = readyToPay().defaultActionJson[0]!.configJson;
+    for (const cfg of [arrivalCfg, readyCfg]) {
+      assert.deepEqual([cfg['excludeRecipientPayloadKeys'], cfg['skipWhenAllRecipientsExcluded'], cfg['webOnlyRecipientPayloadKeys']], [undefined, undefined, ['actorUserId']]);
+    }
+    // The rule as it shipped (one pinned before these decisions, or kept by an admin's edit) has no last resort and
+    // leaves its actor out: every other holder is told, the owner included, as it always was.
+    const asShipped = { ...arrivalCfg, lastResortRecipientRoles: undefined, webOnlyRecipientPayloadKeys: undefined, excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
+    const shipped = await announce({ u_owner: holding('OWNER'), u_approver: holding('ACCOUNTANT') }, asShipped);
+    assert.deepEqual([shipped.to, shipped.bellOnly], [['u_owner'], []]);
+  });
+
+  // Owner decision 2026-10-02: the finance desk's other notice, a claim a reviewer blocked, follows the rule of the
+  // arrival notice. To the reviewers who can act on the claim's branch, and to the shop owner only when nobody else
+  // can review it. Before, every reviewer was told, the owner included, whoever else was at the desk.
+  it('tells the reviewers that a claim was blocked, and the shop owner only when nobody else can review it', async () => {
+    const blockedCfg = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_finance_review')!.defaultActionJson[0]!.configJson;
+    /** u_finance blocks the claim, unless a case says who did. */
+    const block = async (memberships: Record<string, unknown>, cfg: Record<string, unknown> = blockedCfg, actorUserId = 'u_finance') => {
+      const h = harness({ sourceBranchId: 'br_claim', memberships });
+      await h.useCase.execute({ ...actionRun(cfg), actionKey: 'notify_finance_reviewer' }, {
+        companyId: 'co_1', ruleName: 'Reimbursement finance review', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', status: 'FINANCE_REVIEW', decision: 'BLOCKED', amount: '250', currency: 'THB', requesterUserId: 'u_staff', actorUserId },
+        siblingActions: [],
+      } as any);
+      return { to: h.sent[0]?.recipientUserIds, notice: h.sent[0], status: h.updates.at(-1)?.status, result: h.updates.at(-1)?.resultJson };
+    };
+    // The owner, an accountant and a finance role review; the finance role blocked the claim: the accountant is told.
+    const desk = { u_owner: holding('OWNER'), u_accountant: holding('ACCOUNTANT'), u_finance: holding('CUSTOM_FINANCE') };
+    const told = await block(desk);
+    assert.deepEqual(told.to, ['u_accountant']);
+    assert.deepEqual(blockedCfg['lastResortRecipientRoles'], ['OWNER']);
+    // The notice itself is as it was: in plain Thai, pushed on LINE too, with the link to the claim.
+    assert.deepEqual([told.notice.triggerKey, told.notice.severity, told.notice.title, told.notice.body, told.notice.deepLinkHref, told.notice.webOnlyRecipientUserIds],
+      ['workflow.reimbursement_finance_review', 'action', 'ตรวจสอบการเงินเบิกจ่าย: RB-1', 'ผลตรวจสอบ: ระงับ · ยอด 250.00 บาท', '/companies/co_1/reimbursements/rb_1', []]);
+    // The shop owner blocked it: the others are told, as before.
+    assert.deepEqual((await block(desk, blockedCfg, 'u_owner')).to, ['u_accountant', 'u_finance']);
+    // Nobody else can review this claim: the one who blocked it reviews for another branch now, another reviewer's
+    // role is switched off. The owner is the one left to tell.
+    assert.deepEqual((await block({ u_owner: holding('OWNER'), u_finance: holding('CUSTOM_FINANCE', elsewhere), u_off: holding('ACCOUNTANT', {}, 'DISABLED') })).to, ['u_owner']);
+    // The one who blocked it is the only reviewer besides the owner. A block is not their next task and they are
+    // not told of what they did; with them left out no reviewer is left, so the owner is told (the last resort is
+    // weighed after the actor is left out). Before, nobody was told and the claim just sat.
+    assert.deepEqual((await block({ u_owner: holding('OWNER'), u_finance: holding('CUSTOM_FINANCE') })).to, ['u_owner']);
+    // An owner-only shop, where the owner blocked the claim: there is nobody else to tell, and nothing is retried.
+    const ownerOnly = await block({ u_owner: holding('OWNER') }, blockedCfg, 'u_owner');
+    assert.deepEqual([ownerOnly.to, ownerOnly.status, ownerOnly.result], [undefined, 'SUCCEEDED', { skipped: true, reason: 'all_recipients_excluded' }]);
+
+    // A rule pinned before this, or one an admin edited, has no such key: every reviewer but the one who blocked it.
+    const { lastResortRecipientRoles: _added, ...pinnedBefore } = blockedCfg;
+    assert.deepEqual((await block(desk, pinnedBefore)).to, ['u_owner', 'u_accountant']);
   });
 
   it('keeps a branch-limited payer for a company-central claim, exactly as the pay endpoint does', async () => {

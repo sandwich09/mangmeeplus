@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { reimbursementPayoutAnsweredForRequesterNotice, reimbursementPayoutAnswerNotice } from '@watchdog-bms/contracts';
 import type { ReimbursementPayoutInput, ReimbursementRequestDetail, RequestContext, SubmitReimbursementPayoutCorrectionInput } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { effectivePolicy, effectivePolicyForRequest, type EffectivePolicy } from '../../domain/reimbursement.constants';
+import { mayTypePayoutAccountFor } from '../../domain/logic/payout-destination.logic';
 import { payoutCorrectionPhase, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { detailWithFileNames } from '../dto/reimbursement.mapper';
@@ -65,7 +67,8 @@ export class RequestPayoutCorrectionUseCase {
  * paid into, given by its requester, or by a finance reviewer on their behalf, with the three choices
  * a draft has. The account is frozen as a new version of the claim and, where the claim had
  * approvers, waits for the same people; a claim nobody had to approve is ready for payment at once.
- * It may be given again while it still waits.
+ * It may be given again while it still waits. An answer given on the requester's behalf is told to
+ * the requester, whatever was chosen (§17.3).
  */
 @Injectable()
 export class SubmitPayoutCorrectionUseCase {
@@ -92,15 +95,23 @@ export class SubmitPayoutCorrectionUseCase {
     if (beingCancelled(req)) throw new ConflictException('reimbursement_cancellation_pending');
     if (!payoutCorrectionPhase(req)) throw new ConflictException('payout_correction_not_requested');
 
-    // The same seam as a draft's receiving choice: the account is sealed here, "save as my default" sets
-    // the REQUESTER's default in the same transaction, and an account typed by someone else tells the
-    // requester in that transaction too.
+    // The same seam as a draft's receiving choice: the account is sealed here, and "save as my default"
+    // sets the REQUESTER's default in the same transaction. The notice of an account typed for someone
+    // is not sent from there: a round tells the requester of every answer given for them, below.
     const { defaultToken, expectedUpdatedAt, ...payout } = input as SubmitReimbursementPayoutCorrectionInput & { defaultToken?: unknown };
     // "The account the claim had" (final review W6): nobody types an account for anyone, so the rules
     // about typing one do not come into it, the one about a requester who is no longer active included.
     const change: CorrectionPayoutChange = payout.mode === 'PREVIOUS'
       ? { write: { mode: 'PREVIOUS' }, audit: { mode: 'PREVIOUS' } }
-      : await this.payouts.draftPayoutChange(ctx, req.requesterUserId, payout as ReimbursementPayoutInput);
+      : await this.payouts.draftPayoutChange(ctx, req.requesterUserId, payout as ReimbursementPayoutInput, true);
+    // Owner rule 2026-10-01: the person whose money it is hears of every change someone else makes for
+    // them. Whoever answers for the requester (a finance reviewer may) is named to them, whatever was
+    // chosen: an account typed, their default, the account the claim had, or cash. Only where a notice
+    // can reach them: a requester who is no longer an active member is told nothing, and the answers
+    // that type no account are still taken for them (§14.5).
+    const tellRequester = ctx.userId !== req.requesterUserId
+      && mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, req.requesterUserId));
+    const answeredByName = tellRequester ? (await this.repo.getUserDisplayNames(ctx.companyId, [ctx.userId]))[ctx.userId] : undefined;
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const source = payoutCorrectionSourceStep(req);
     // Who may stay on the new step, and whom its notice asks when it names nobody (final review S2).
@@ -140,6 +151,7 @@ export class SubmitPayoutCorrectionUseCase {
           },
         }, tx);
         const eventType = result.readyForPayment ? 'reimbursement.ready_for_payment' : 'reimbursement.payout_correction_submitted';
+        const notice = reimbursementPayoutAnswerNotice(result.answer);
         await tx.outboxEvent.createMany({
           data: [{
             companyId: ctx.companyId,
@@ -155,7 +167,10 @@ export class SubmitPayoutCorrectionUseCase {
                 amount: req.amount, currency: req.currency,
                 ...(result.readyForPayment
                   ? { status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD' }
-                  : { status: 'PENDING_APPROVAL', stepId: result.step!.id }),
+                  // To the approvers of the new step. The title and the end of the body are finished sentences
+                  // from contracts, chosen by what the requester answered (another account, the same one, a
+                  // first one, cash): no template assembles them.
+                  : { status: 'PENDING_APPROVAL', stepId: result.step!.id, payoutAnswerTitle: notice.title, payoutAnswerNotice: notice.body }),
                 ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             },
@@ -164,6 +179,14 @@ export class SubmitPayoutCorrectionUseCase {
           }],
           skipDuplicates: true,
         });
+        if (tellRequester) {
+          // In the words of the answer, with what the claim holds now as this transaction froze it: of an
+          // account, its bank and last 4 digits. To the requester alone, whether the claim now waits for
+          // its approvers or, having none, is ready for payment.
+          const notice = reimbursementPayoutAnsweredForRequesterNotice(result.answer, answeredByName, await this.repo.findClaimPayout({ ...req, ...result.columns }, tx));
+          await this.payouts.tellClaimRequester(tx, ctx.companyId, id, req.requesterUserId,
+            { title: req.requestNo ? `${notice.title}: ${req.requestNo}` : notice.title, body: notice.body });
+        }
       },
     });
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);

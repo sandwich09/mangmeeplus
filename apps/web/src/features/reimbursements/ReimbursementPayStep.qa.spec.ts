@@ -181,17 +181,52 @@ describe('pay step: what the payer is shown (spec §12.1, §15)', () => {
     assert.match(read('./ReimbursementPayout.tsx'), /await navigator\.clipboard\.writeText\(shown \?\? ''\);/);
   });
 
-  it('a PromptPay claim: the phone number masked the same way, with no bank', () => {
+  it('a PromptPay claim: the phone number masked the same way, with no bank, and a button that shows a phone number', () => {
     assert.deepEqual(visible(card(promptPayClaim, { payStep: true })), [
-      'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', 'พร้อมเพย์เบอร์ลงท้าย 5678', 'แสดงเลขบัญชี',
+      'โอนเข้าบัญชีนี้', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', 'พร้อมเพย์เบอร์ลงท้าย 5678', 'แสดงเบอร์พร้อมเพย์',
       'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้', 'ยังไม่มีผู้ตรวจบัญชีนี้',
     ]);
   });
 
-  it('a cash claim: the requester asked for cash, and there is no account and nothing to show', () => {
+  // A PromptPay destination is a phone number: the entry form calls it "เบอร์พร้อมเพย์". Before, the buttons on it read
+  // "แสดงเลขบัญชี", "คัดลอกเลขบัญชี" and "ซ่อนเลขบัญชี", over the label "เลขบัญชีเต็ม".
+  it('calls a PromptPay number "เบอร์พร้อมเพย์" where it is shown, copied and hidden, on every card that shows one', () => {
+    const number = { accountNumber: '0812345678' };
+    const before = visible(card(promptPayClaim, { payStep: true }));
+    const after = visible(card(promptPayClaim, { payStep: true, revealed: { revealKey: `${ids.request}:1`, ...number } }));
+    for (const text of ['เบอร์พร้อมเพย์เต็ม', '0812345678', 'คัดลอกเบอร์พร้อมเพย์', 'ซ่อนเบอร์พร้อมเพย์']) assert.ok(after.includes(text), text);
+    assert.ok(before.includes('แสดงเบอร์พร้อมเพย์') && !after.includes('แสดงเบอร์พร้อมเพย์'));
+    for (const texts of [before, after]) assert.deepEqual(texts.filter((text) => text.includes('เลขบัญชี')), []);
+    // A legacy claim's payer is shown the requester's default account: a PromptPay default reads the same way.
+    const legacy = { ...base, legacyPayoutDefault: { payoutKind: 'PROMPTPAY_PHONE' as const, accountName: 'นาย สมชาย ใจดี', accountLast4: '5678', confirmToken: TOKEN } };
+    assert.ok(visible(card(legacy, { payStep: true })).includes('แสดงเบอร์พร้อมเพย์'));
+    const shown = visible(card(legacy, { payStep: true, revealed: { revealKey: `${ids.request}:default:${TOKEN}`, ...number } }));
+    assert.ok(shown.includes('คัดลอกเบอร์พร้อมเพย์') && shown.includes('ซ่อนเบอร์พร้อมเพย์') && !shown.some((text) => text.includes('เลขบัญชี')), shown.join(' | '));
+    // The member's own standing account, on "บัญชีรับเงินคืนของฉัน": the card's second null state is the account (after the
+    // confirm dialog's), and its second false state says the account was read.
+    const mine = (payoutKind: 'PROMPTPAY_PHONE' | 'BANK_ACCOUNT') => {
+      let nulls = 0;
+      let falses = 0;
+      return visible(renderWithState(h(payoutUi.MemberPayoutAccountCard, { companyId: ids.company, canEdit: true }), (start) => {
+        if (start === null) return ++nulls === 2 ? { userId: ids.requester, payoutMethod: 'BANK_TRANSFER', payoutKind, accountName: 'นาย สมชาย ใจดี', accountLast4: '5678', updatedAt: '2026-10-01T03:00:00.000Z' } : undefined;
+        return start === false && ++falses === 2 ? true : undefined;
+      }));
+    };
+    assert.deepEqual([mine('PROMPTPAY_PHONE').includes('แสดงเบอร์พร้อมเพย์'), mine('PROMPTPAY_PHONE').includes('แสดงเลขบัญชี')], [true, false]);
+    // A bank account keeps its words, on each of the three.
+    assert.deepEqual([mine('BANK_ACCOUNT').includes('แสดงเลขบัญชี'), visible(card(transferClaim, { payStep: true })).includes('แสดงเลขบัญชี'),
+      visible(card(legacyWithDefault, { payStep: true })).includes('แสดงเลขบัญชี')], [true, true, true]);
+  });
+
+  // Before: "ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี" of every cash claim. Whoever prepared the claim for the requester may have chosen
+  // cash, and no fact of the claim says who did: the card says what the claim states.
+  it('a cash claim: the claim states cash, with no word of who chose it, and there is no account and nothing to show', () => {
     const html = card(cashClaim, { payStep: true });
-    assert.deepEqual(visible(html), ['การรับเงินคืน', 'รับเป็นเงินสด', 'ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี']);
+    assert.deepEqual(visible(html), ['การรับเงินคืน', 'รับเป็นเงินสด', 'ใบนี้ระบุรับเป็นเงินสด ไม่ต้องมีบัญชี']);
     assert.doesNotMatch(html, /<button/);
+    // The same for every reader of the claim, the requester included, and for a claim someone else prepared.
+    for (const userId of [ids.requester, ids.approver, ids.reader]) assert.equal(visible(card(cashClaim, { userId })).at(-1), 'ใบนี้ระบุรับเป็นเงินสด ไม่ต้องมีบัญชี');
+    assert.equal(visible(card({ ...cashClaim, createdByUserId: ids.payer, createdByName: 'สมศรี' }, { payStep: true })).at(-1), 'ใบนี้ระบุรับเป็นเงินสด ไม่ต้องมีบัญชี');
   });
 
   it('a legacy claim whose requester has a default account: that account under its own label, with show and copy', () => {
@@ -377,11 +412,12 @@ describe('pay step: the form asks exactly what the API asks (spec §12.4, invari
     // A tick is for one account: given for an earlier version, or for a default account, it is none for this one.
     await refusedAs(transferClaim, 'BANK_TRANSFER', { confirmedFor: 'version:1' }, TICK);
     await refusedAs(transferClaim, 'BANK_TRANSFER', { confirmedFor: `default:${TOKEN}` }, TICK);
+    // Said of what the claim states: no fact says who chose the method (a preparer may have).
     for (const method of ['CASH', 'CHEQUE', 'OTHER']) {
-      await refusedAs(transferClaim, method, {}, 'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผล');
-      await refusedAs(transferClaim, method, { mismatchReason: '   ' }, 'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผล');
+      await refusedAs(transferClaim, method, {}, 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล');
+      await refusedAs(transferClaim, method, { mismatchReason: '   ' }, 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล');
     }
-    await refusedAs(cashClaim, 'BANK_TRANSFER', {}, 'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผล');
+    await refusedAs(cashClaim, 'BANK_TRANSFER', {}, 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล');
     // The reason is shown on the payment row to every reader of the claim: the API's own guard, before anything is sent.
     for (const mismatchReason of ['โอนเข้า 0045671234 แทน', 'บัญชี 004-5-67123-4 ปิดแล้ว', 'พร้อมเพย์ 081 234 5678']) {
       await refusedAs(transferClaim, 'CASH', { mismatchReason }, 'อย่าพิมพ์เลขบัญชีในช่องเหตุผล เพราะเหตุผลนี้แสดงในประวัติการจ่ายให้ทุกคนที่เปิดใบเบิกเห็น');
@@ -442,11 +478,16 @@ describe('pay step: the confirmation names one account, and says when the payer 
     assert.match(read('./ReimbursementDetailSections.tsx'), /onChange=\{\(checked\) => setPayer\(p => \(\{ \.\.\.p, confirmedFor: checked \? payout\.confirmation!\.key : '' \}\)\)\}/);
   });
 
-  it('asks why, in the requester\'s own words for what they asked, when the method is another one', () => {
+  // Before: "เหตุผลที่จ่ายต่างจากที่ผู้เบิกขอ" and "ผู้เบิกขอรับเป็นเงินสด …". The method on the claim may have been chosen by whoever
+  // prepared it, or by a finance reviewer in a round: the form says what the claim states.
+  it('asks why, in the claim\'s own words for what it states, when the method is another one', () => {
     const cashForTransfer = visible(paymentForm(transferClaim, { method: 'CASH' }));
-    assert.ok(cashForTransfer.includes('เหตุผลที่จ่ายต่างจากที่ผู้เบิกขอ *'));
-    assert.ok(cashForTransfer.includes('ผู้เบิกขอโอนเข้าบัญชี ประวัติการจ่ายจะแสดงว่าจ่ายต่างจากที่ผู้เบิกขอ พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้'));
-    assert.ok(visible(paymentForm(cashClaim, { method: 'CHEQUE' })).includes('ผู้เบิกขอรับเป็นเงินสด ประวัติการจ่ายจะแสดงว่าจ่ายต่างจากที่ผู้เบิกขอ พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้'));
+    assert.ok(cashForTransfer.includes('เหตุผลที่จ่ายต่างจากที่ระบุในใบ *'));
+    assert.ok(cashForTransfer.includes('ใบนี้ระบุโอนเข้าบัญชี ประวัติการจ่ายจะแสดงว่าจ่ายต่างจากที่ระบุในใบ พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้'));
+    const chequeForCash = visible(paymentForm(cashClaim, { method: 'CHEQUE' }));
+    assert.ok(chequeForCash.includes('ใบนี้ระบุรับเป็นเงินสด ประวัติการจ่ายจะแสดงว่าจ่ายต่างจากที่ระบุในใบ พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้'));
+    // No sentence of the form says who asked for the method. (The hint in the reason box is an example of what a payer may write.)
+    for (const texts of [cashForTransfer, chequeForCash]) assert.deepEqual(texts.filter((text) => text.includes('ผู้เบิกขอ')), ['เช่น ผู้เบิกขอรับเป็นเงินสดแทน']);
     const typed = paymentForm(transferClaim, { method: 'CASH', payer: { mismatchReason: 'ผู้เบิกมารับเงินสดเอง' } });
     assert.match(typed, /<textarea id="reimbursement-payment-mismatch-reason"[^>]*aria-required="true"[^>]*maxLength="500"[^>]*>ผู้เบิกมารับเงินสดเอง<\/textarea>/i);
   });
@@ -484,19 +525,21 @@ describe('a payment reads the same on its row and in the claim history (spec §1
       `โอนเข้า ${KBANK_LINE} · ชื่อบัญชี นาย สมชาย ใจดี · ยืนยันเมื่อ 1 ต.ค. 2569 11:30 น.`, 'จ่ายโดย สมศรี', 'มีสลิปแนบ 1 ไฟล์']) {
       assert.ok(texts.includes(text), `${text} in ${JSON.stringify(texts)}`);
     }
-    assert.ok(!texts.includes('จ่ายต่างจากที่ผู้เบิกขอ') && !texts.includes('ไม่มีบัญชีรับเงินในใบเบิก'));
+    assert.ok(!texts.includes('จ่ายต่างจากที่ระบุในใบ') && !texts.includes('ไม่มีบัญชีรับเงินในใบเบิก'));
     // PromptPay says so, with the same last 4 digits on both.
     const promptPay = { ...transfer, payoutDestination: { version: 1, payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountLast4: '5678' } };
     assert.equal(history(promptPay), 'จ่ายแล้ว โดย สมศรี · โอนเข้าพร้อมเพย์เบอร์ลงท้าย 5678 · มีสลิป');
     assert.ok(row(promptPay).includes('โอนเข้า พร้อมเพย์เบอร์ลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี · ยืนยันเมื่อ 1 ต.ค. 2569 11:30 น.'));
   });
 
-  it('a payment by another method than the requester asked for: marked on both, with the reason on the row', () => {
+  // Before: "จ่ายต่างจากที่ผู้เบิกขอ". What the payment differs from is the method the claim states, whoever chose it.
+  it('a payment by another method than the claim states: marked on both in the same words, with the reason on the row', () => {
     const cash = { ...transfer, paymentMethod: 'CASH', paymentReference: undefined, slipCount: 0, slips: [], payoutDestination: undefined, payoutConfirmedAt: undefined,
       methodMismatchReason: 'ผู้เบิกมารับเงินสดเอง' };
-    assert.equal(history(cash), 'จ่ายแล้ว โดย สมศรี · เงินสด · จ่ายต่างจากที่ผู้เบิกขอ');
+    assert.equal(history(cash), 'จ่ายแล้ว โดย สมศรี · เงินสด · จ่ายต่างจากที่ระบุในใบ');
     const texts = row(cash);
-    for (const text of ['เงินสด · บันทึกแล้ว', 'จ่ายต่างจากที่ผู้เบิกขอ', 'เหตุผล: ผู้เบิกมารับเงินสดเอง']) assert.ok(texts.includes(text), `${text} in ${JSON.stringify(texts)}`);
+    for (const text of ['เงินสด · บันทึกแล้ว', 'จ่ายต่างจากที่ระบุในใบ', 'เหตุผล: ผู้เบิกมารับเงินสดเอง']) assert.ok(texts.includes(text), `${text} in ${JSON.stringify(texts)}`);
+    assert.equal(texts.some((text) => text.includes('ที่ผู้เบิกขอ')), false);
     assert.ok(!texts.some((text) => text.startsWith('โอนเข้า')) && !texts.includes('ไม่มีบัญชีรับเงินในใบเบิก'));
   });
 
@@ -671,7 +714,7 @@ describe('pay step: plain Thai on a 390 px phone (Owner rule 2026-09-27/29)', ()
     const labels = ['payout_confirmation_required', 'payment_method_mismatch_reason_required', 'payment_slip_in_use_elsewhere'].map((code) => translateApiError(code));
     assert.deepEqual(labels, [
       'ต้องยืนยันว่าโอนเข้าบัญชีที่แสดงแล้ว ติ๊กช่องยืนยันก่อนกดบันทึกจ่าย ถ้าไม่เห็นช่องยืนยัน กรุณาโหลดหน้าใหม่',
-      'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผลก่อนกดบันทึกจ่าย ถ้าไม่เห็นช่องเหตุผล กรุณาโหลดหน้าใหม่',
+      'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผลก่อนกดบันทึกจ่าย ถ้าไม่เห็นช่องเหตุผล กรุณาโหลดหน้าใหม่',
       'ไฟล์นี้ถูกใช้เป็นใบเสร็จหรือเอกสารของรายการอื่นด้วย จึงใช้เป็นสลิปไม่ได้ กรุณาแนบสลิปเป็นไฟล์ใหม่',
     ]);
     // Not the sentence for a file of the wrong type or size: this file is fine, it is in use elsewhere.

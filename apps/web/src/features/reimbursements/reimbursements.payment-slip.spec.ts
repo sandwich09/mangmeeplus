@@ -161,7 +161,8 @@ describe('files already on the claim that can be the slip', () => {
       ['eslip-2.JPG', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
       ['หลักฐาน.png', 'ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นไฟล์แนบทั่วไป'],
       ['signed-form-2.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ'],
-      ['ใบเบิกเก่า.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นสำเนาก่อนแก้บัญชีรับเงิน'],
+      // Not "สำเนาก่อนแก้บัญชีรับเงิน": the claim may have been sent back with no account, or with cash.
+      ['ใบเบิกเก่า.pdf', 'ไฟล์ PDF · แนบไว้ที่ใบเบิกที่เซ็นแล้ว เป็นสำเนาก่อนส่งกลับ'],
     ]);
     // What the page needs to open each before it is chosen: the file's own name, or the payment a slip belongs to.
     assert.deepEqual(choices.map((choice) => choice.fileName), ['eslip-2.JPG', 'หลักฐาน.png', 'signed-form-2.pdf', 'ใบเบิกเก่า.pdf']);

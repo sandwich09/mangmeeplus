@@ -21,10 +21,16 @@ import {
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 // The correction round of payout spec §14 (its own imports, apart from the blocks above).
 import {
-  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
-  REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
-  type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason,
+  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionReasonLabel, reimbursementPayoutCorrectionReasons,
+  REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH,
+  type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason, type ReimbursementPayoutKind,
   type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
+} from '@watchdog-bms/contracts';
+// The words of a round (payout spec §14.2): the contracts' own, chosen there from what the claim holds and from what was answered.
+import {
+  REIMBURSEMENT_PAYOUT_ROUND_TEXTS, reimbursementPayoutHeld, reimbursementPayoutRoundAsk, reimbursementPayoutRoundCashNote, reimbursementPayoutRoundDid,
+  reimbursementPayoutRoundGivenNote, reimbursementPayoutRoundSendBack,
+  type ReimbursementPayoutCorrectionEvent, type ReimbursementPayoutHeld, type ReimbursementPayoutRoundAnswer,
 } from '@watchdog-bms/contracts';
 import { apiErrorCode, translateApiError } from '@/common/api/api-error-message';
 
@@ -44,9 +50,12 @@ export const PAYER_CONFIRMATION_TEXT = 'โอนเข้าบัญชีน�
 export const PAYER_CONFIRMATION_REQUIRED = 'ติ๊กยืนยันว่าโอนเข้าบัญชีนี้แล้ว และชื่อผู้รับที่ธนาคารแสดงตรงกับใบเบิก ก่อนกดบันทึกจ่าย';
 /** Spec §10.2: nobody but the requester has checked the account, so the payer is told they are the one checking. */
 export const PAYER_IS_VERIFIER_NOTE = 'ยังไม่มีผู้ตรวจบัญชีนี้ คุณเป็นผู้ตรวจ';
-/** The mark on a payment recorded by another method than the requester asked for (spec §12.4, §17.2). */
-export const PAID_DIFFERENTLY_LABEL = 'จ่ายต่างจากที่ผู้เบิกขอ';
-export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ผู้เบิกขอ กรุณาระบุเหตุผล';
+/**
+ * The mark on a payment recorded by another method than the claim states (spec §12.4, §17.2). Said of the claim, never of
+ * "what the requester asked for": whoever prepared the claim, or answered a round for the requester, may have chosen it.
+ */
+export const PAID_DIFFERENTLY_LABEL = 'จ่ายต่างจากที่ระบุในใบ';
+export const MISMATCH_REASON_REQUIRED = 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล';
 export const MISMATCH_REASON_HAS_ACCOUNT_NUMBER = 'อย่าพิมพ์เลขบัญชีในช่องเหตุผล เพราะเหตุผลนี้แสดงในประวัติการจ่ายให้ทุกคนที่เปิดใบเบิกเห็น';
 /** Spec §10.2: a requester who approved their own claim gave their own word for the account. It is never called a check. */
 export const REQUESTER_SELF_ATTESTED = 'ผู้เบิกยืนยันบัญชีของตนเอง';
@@ -166,6 +175,32 @@ export function shownAccountNumber(revealed: { revealKey: string; accountNumber:
 }
 
 /**
+ * What the screens call the full number of an account, by its kind. A bank account has an account number; a PromptPay
+ * destination is a phone number, which the entry form calls "เบอร์พร้อมเพย์" and nothing calls "เลขบัญชี". Whole labels, never
+ * put together from a noun: the guide quotes them as they read. `check`: what an approver is told to look at before the
+ * tick. `denied`: the API's refusal of a reveal, where the sentence of its code (`payout_reveal_denied`) names an account number.
+ */
+type PayoutNumberWords = Record<'show' | 'full' | 'copy' | 'copied' | 'hide' | 'check', string> & { denied?: string };
+const PAYOUT_NUMBER_WORDS: Record<'BANK_ACCOUNT' | 'PROMPTPAY_PHONE', PayoutNumberWords> = {
+  BANK_ACCOUNT: {
+    show: 'แสดงเลขบัญชี', full: 'เลขบัญชีเต็ม', copy: 'คัดลอกเลขบัญชี', copied: 'คัดลอกเลขบัญชีแล้ว', hide: 'ซ่อนเลขบัญชี',
+    check: 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ',
+  },
+  PROMPTPAY_PHONE: {
+    show: 'แสดงเบอร์พร้อมเพย์', full: 'เบอร์พร้อมเพย์เต็ม', copy: 'คัดลอกเบอร์พร้อมเพย์', copied: 'คัดลอกเบอร์พร้อมเพย์แล้ว', hide: 'ซ่อนเบอร์พร้อมเพย์',
+    check: 'ดูชื่อบัญชีและเบอร์พร้อมเพย์ในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ',
+    denied: 'คุณไม่มีสิทธิ์ดูเบอร์พร้อมเพย์เต็มของใบนี้',
+  },
+};
+export function payoutNumberWords(payoutKind?: string | null): PayoutNumberWords {
+  return PAYOUT_NUMBER_WORDS[payoutKind === 'PROMPTPAY_PHONE' ? 'PROMPTPAY_PHONE' : 'BANK_ACCOUNT'];
+}
+/** The API refused to reveal a number: the viewer's right to it went after the page was read. */
+export function isPayoutRevealDenied(e: unknown): boolean {
+  return refusalIs(e, 'payout_reveal_denied');
+}
+
+/**
  * Whether a number the API answered with belongs on the card that asked for it: it must end with the
  * last 4 digits that card shows. The API answers with the account as it is now, so a page loaded
  * before the account changed would otherwise put the new number under the old bank and name.
@@ -190,7 +225,7 @@ export type ClaimPayoutView = {
  * What the claim page says about where the money goes back to. Everything here is masked; the full
  * number is only ever fetched by the reveal button, which the page offers when `canRevealAccountNumber`.
  */
-export function claimPayoutView(detail: { status?: string; requesterUserId?: string; payout?: ReimbursementPayoutSummary | null }): ClaimPayoutView {
+export function claimPayoutView(detail: { status?: string; requesterUserId?: string; payout?: ReimbursementPayoutSummary | null } & PayoutRoundFacts): ClaimPayoutView {
   const payout = detail.payout;
   const draft = detail.status === 'DRAFT';
   // Only the detail read carries a draft's payout; an action response without it says nothing either way.
@@ -198,7 +233,8 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
   if (payout.notReadyReason || !payout.payoutMethod) {
     return {
       state: 'missing',
-      line: payout.notReadyReason === 'payout_destination_required' ? 'ยังไม่ได้ระบุบัญชีรับเงินคืน' : 'ยังไม่ได้เลือกวิธีรับเงินคืน',
+      // A claim's account is "บัญชีรับเงิน" on every screen; "บัญชีรับเงินคืน" names the member's standing account.
+      line: payout.notReadyReason === 'payout_destination_required' ? 'ยังไม่ได้ระบุบัญชีรับเงิน' : 'ยังไม่ได้เลือกวิธีรับเงินคืน',
       notes: payout.followsDefault ? ['ผู้เบิกยังไม่ได้ตั้งบัญชีรับเงินคืนประจำ เลือกรับเป็นเงินสด ระบุบัญชีสำหรับใบนี้ หรือตั้งบัญชีประจำก่อนส่งอนุมัติ'] : [],
     };
   }
@@ -216,8 +252,54 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
     if (source) notes.push(source);
   }
   if (payout.payoutMethod === 'CASH') return { state: 'cash', line: PAYOUT_METHOD_TEXT.CASH!, notes };
-  if (!draft) notes.push(payoutAttestationText(payout, detail.requesterUserId) ?? 'ยังไม่มีผู้ตรวจบัญชีนี้');
+  if (!draft) {
+    const attested = payoutAttestationText(payout, detail.requesterUserId);
+    // An account that was kept in a payout round (the server's answer) is the account the claim was approved with: it
+    // was checked then, as the history under it says, so it is never said that nobody has checked it. While it waits
+    // for approval it is said to wait for its check again.
+    const kept = detail.payoutCorrectionAnswer === 'SAME_ACCOUNT' || keptAccountAnswers(detail).has(payout.version);
+    if (attested) notes.push(attested);
+    else if (!kept) notes.push('ยังไม่มีผู้ตรวจบัญชีนี้');
+    else if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') notes.push('รอผู้อนุมัติตรวจบัญชีนี้อีกครั้ง');
+  }
   return { state: 'transfer', line: maskedPayoutAccount(payout), notes };
+}
+
+/** What a claim's detail says of its payout rounds, as far as the card "การรับเงินคืน" reads it. */
+type PayoutRoundFacts = {
+  payoutCorrectionPhase?: string | null;
+  payoutCorrectionAnswer?: string | null;
+  payoutCorrectionAnsweredBy?: { onBehalf?: boolean | null; byName?: string | null } | null;
+  payoutCorrectionHistory?: readonly ReimbursementPayoutCorrectionEvent[] | null;
+};
+
+/**
+ * The answers of the claim's rounds that KEPT the account the round began with, by the account version each of them
+ * froze. Keeping an account freezes a new version of it (what is approved next is that row), so the claim's account
+ * history holds the one account twice. Whether a version is such a copy is the server's fact, decided when the answer
+ * was taken (`answer: 'SAME_ACCOUNT'` on the history event that names the version); the page never decides it from the
+ * digits it shows.
+ */
+function keptAccountAnswers(detail: PayoutRoundFacts): Map<number | undefined, ReimbursementPayoutCorrectionEvent> {
+  return new Map((detail.payoutCorrectionHistory ?? [])
+    .filter((event) => event.kind === 'ACCOUNT_SUBMITTED' && event.answer === 'SAME_ACCOUNT' && event.payoutVersion != null)
+    .map((event) => [event.payoutVersion, event]));
+}
+
+/** What the card says of a cash claim that no round gave its cash: what the claim states, with no word of who chose it. */
+export const CLAIM_STATES_CASH_NOTE = 'ใบนี้ระบุรับเป็นเงินสด ไม่ต้องมีบัญชี';
+
+/**
+ * What the card says of a claim paid back in cash. Where a round gave it its cash, who chose it: "ผู้เบิกขอรับเป็นเงินสด" of a
+ * requester who answered with cash, and of whoever answered for them by name (the claim's own fact while the answer waits
+ * for approval, afterwards the last answer of its history). Where no answer did, no fact says who chose cash: a claim may
+ * be prepared for its requester, so the card says what the claim states.
+ */
+export function claimCashNote(detail: PayoutRoundFacts): string {
+  const answers = (detail.payoutCorrectionHistory ?? []).filter((event) => event.kind === 'ACCOUNT_SUBMITTED');
+  const last = answers[answers.length - 1];
+  const answeredBy = detail.payoutCorrectionAnsweredBy ?? (last?.payoutMethod === 'CASH' ? last : undefined);
+  return answeredBy ? reimbursementPayoutRoundCashNote(answeredBy) : CLAIM_STATES_CASH_NOTE;
 }
 
 type PayoutAccountOrigin = Pick<ReimbursementPayoutSummary, 'source' | 'enteredByUserId' | 'enteredByName' | 'verifiedByUserId' | 'verifiedByName' | 'verifiedAt'>;
@@ -250,23 +332,38 @@ export type ClaimPayoutHistoryRow = { version: number; current: boolean; line: s
  * The claim's account history for the card "การรับเงินคืน" (spec §17.2): every account the claim has been
  * sent with, oldest first, masked, in the same phrases as the account above it. Empty when there is
  * nothing to tell beyond that account: the claim has only ever been sent with the one in use.
+ *
+ * An account that was kept in a payout round shows once. The version its answer froze is no second account: it joins
+ * the row of that account, the latest one before it that reads the same, as what happened to it next ("ผู้เบิกยืนยัน
+ * บัญชีเดิม เมื่อ …", then who checked it again). It did not start to be used with the claim on that day.
  */
 export function claimPayoutHistory(detail: {
   requesterUserId?: string;
   payout?: ReimbursementPayoutSummary | null;
   payoutHistory?: readonly ReimbursementPayoutVersionSummary[] | null;
-}): ClaimPayoutHistoryRow[] {
+} & PayoutRoundFacts): ClaimPayoutHistoryRow[] {
   const versions = detail.payoutHistory ?? [];
   const current = detail.payout?.version;
   if (versions.every((version) => version.version === current)) return [];
-  return versions.map((version) => ({
-    version: version.version,
-    current: version.version === current,
-    line: payoutAccountWithName(version),
-    // An account no longer in use says who attested it only when someone did: "not yet" would never come true.
-    notes: [`เริ่มใช้กับใบนี้เมื่อ ${formatThaiDateTime(version.frozenAt)}`, payoutSourceText(version), payoutAttestationText(version, detail.requesterUserId)]
-      .filter((note): note is string => !!note),
-  }));
+  const kept = keptAccountAnswers(detail);
+  const rows: ClaimPayoutHistoryRow[] = [];
+  for (const version of versions) {
+    const line = payoutAccountWithName(version);
+    const attested = payoutAttestationText(version, detail.requesterUserId);
+    const answer = kept.get(version.version);
+    const sameAccount = answer && [...rows].reverse().find((row) => row.line === line);
+    if (sameAccount) {
+      sameAccount.current ||= version.version === current;
+      sameAccount.notes.push(`${payoutCorrectionAnsweredText(answer.answer, answer)} เมื่อ ${formatThaiDateTime(answer.at)}`, ...(attested ? [attested] : []));
+      continue;
+    }
+    rows.push({
+      version: version.version, current: version.version === current, line,
+      // An account no longer in use says who attested it only when someone did: "not yet" would never come true.
+      notes: [`เริ่มใช้กับใบนี้เมื่อ ${formatThaiDateTime(version.frozenAt)}`, payoutSourceText(version), attested].filter((note): note is string => !!note),
+    });
+  }
+  return rows;
 }
 
 /**
@@ -275,15 +372,18 @@ export function claimPayoutHistory(detail: {
  * to do (taking the claim back to a draft and sending it again). Null when the server said nothing.
  */
 export function payoutDefaultChangedHint(
-  detail: { payout?: ReimbursementPayoutSummary | null; payoutCorrectionActions?: { canRequest?: boolean; canSubmit?: boolean } | null },
+  detail: { payout?: ReimbursementPayoutSummary | null; payoutCorrectionPhase?: string | null; payoutCorrectionActions?: { canRequest?: boolean; canSubmit?: boolean } | null },
   canWithdraw: boolean,
 ): string | null {
   if (detail.payout?.defaultAccountChanged !== true) return null;
   // After approval the requester no longer takes the claim back to a draft. Where the server lets them, the way to
   // the new account is the correction round (spec §14.3): give the account now, or send the claim back for it.
   const how = canWithdraw ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
-    : detail.payoutCorrectionActions?.canSubmit === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_FIX_LABEL}ในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ`
-      : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_SEND_BACK_LABEL}ที่ท้ายกล่องนี้ ก่อนมีการโอน`
+    // The button and the line named are the claim's own, as they read: those of a claim that holds an account (it copied
+    // the default, which is why it is told this), for its requester, who alone is told.
+    : detail.payoutCorrectionActions?.canSubmit === true
+      ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${payoutCorrectionAnswerWords({ ...detail.payout, payoutCorrectionPhase: detail.payoutCorrectionPhase }, true).button}ในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ`
+      : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${payoutRoundTexts(detail.payout).payLink}ที่ท้ายกล่องนี้ ก่อนมีการโอน`
         : 'ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
   return `บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ${how}`;
 }
@@ -404,31 +504,54 @@ export const BANK_OPTIONS: readonly string[] = THAI_BANK_NAMES;
 
 // ---- Correcting the payout account after approval (payout spec §14) ----
 //
-// A wrong account found after approval is fixed on the same claim: it is sent back from the pay step, its
-// requester gives the account again and its approvers approve that account alone. Who may do which is the
-// server's answer (`payoutCorrectionActions`, `approvalActions`); nothing here decides it.
+// A payout destination found wrong after approval is fixed on the same claim: it is sent back from the pay step, its
+// requester gives the destination again and its approvers approve that alone. Who may do which is the server's
+// answer (`payoutCorrectionActions`, `approvalActions`); nothing here decides it.
+//
+// A claim is sent back holding an account, cash, or (sent before claims carried one, spec §15) nothing, and what is
+// answered is one of seven things. The words of every screen follow those two facts, and are the contracts' own
+// (`REIMBURSEMENT_PAYOUT_ROUND_TEXTS` and the functions beside it): no screen makes a sentence of its own from a
+// phase or a reason code.
 
-export const PAYOUT_CORRECTION_SEND_BACK_LABEL = 'ส่งกลับให้แก้บัญชีรับเงิน';
 /**
- * The same send-back on a claim sent before claims carried an account (spec §15): there is no account to correct,
- * so the action is named for what it does. Such a claim can be paid as it is, and is told so beside the action.
+ * The contracts' sentences of a round for this claim, by what it holds now (its list row's or its detail's
+ * `payoutMethod`): the texts of `held` for the pay step and for the claim while it is with its requester, and under
+ * `given` those of an answer that waits for approval. The claim then holds what was given, which is never nothing.
  */
-export const PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL = 'เพิ่มบัญชีรับเงินให้ใบนี้ แล้วให้ผู้อนุมัติตรวจใหม่';
-export const PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL = 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน';
-/** Said above the send-back at the foot of the account box of a claim that waits for its payment (spec §14.3). */
-export const PAYOUT_CORRECTION_SEND_BACK_LEAD = 'ถ้าวิธีรับเงินหรือบัญชีนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย ส่งกลับให้แก้ก่อน';
-export const PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD = 'ใบนี้บันทึกจ่ายได้เลยโดยไม่ต้องมีบัญชีในใบ ข้อความด้านล่างใช้เมื่อต้องการให้ใบมีบัญชีที่ผู้อนุมัติตรวจแล้วเท่านั้น';
+export function payoutRoundTexts(claim: { payoutMethod?: string | null } | null | undefined) {
+  const held = reimbursementPayoutHeld(claim);
+  return { held, ...REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held[held], given: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.given[held === 'CASH' ? 'CASH' : 'ACCOUNT'] };
+}
+
 /**
- * Said on the approvers' card in place of the two accounts side by side, when the account given in the round is the
- * very account the claim had (the server's answer, `payoutCorrection.sameAsPrevious`): the last 4 digits of two
- * accounts can read alike, and of one account always do.
+ * The words of the send-back, as the title of its form: by what the claim holds, an account to correct, none yet to
+ * add, or cash to choose again. From the step a round waits on it is how the approvers do not take the answer, never
+ * a refusal of the claim, and it is the words of their button too.
  */
-export const PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL = 'บัญชีเดิม ไม่ได้เปลี่ยน';
-/** The same send-back from whoever decides the round's waiting step: it is never a refusal of the claim. */
-export const PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL = 'ส่งกลับให้แก้อีกครั้ง';
-export const PAYOUT_CORRECTION_FIX_LABEL = 'แก้บัญชีรับเงิน';
-/** A scan declared as signed before the round (spec §14.4): it stays in the list and no longer counts. */
-export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อนแก้บัญชีรับเงิน';
+export function payoutCorrectionSendBackTitle(claim: { payoutMethod?: string | null; payoutCorrectionPhase?: string | null }): string {
+  const words = payoutRoundTexts(claim);
+  return claim.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? words.given.sendBackAgain : reimbursementPayoutRoundSendBack(words.held);
+}
+/** The button that saves the answer of a round, whatever is chosen: what is saved may be cash, which is no account. */
+export const PAYOUT_CORRECTION_SAVE_LABEL = 'บันทึกวิธีรับเงินคืน';
+/**
+ * What whoever answers a round is asked to do, by what the claim holds: correct its account, add one, or choose how to
+ * be paid back. `title` heads the form; `button` opens it. Whoever answers for the requester reads both as done on the
+ * requester's behalf, and a requester whose answer already waits for approval is offered to do it again.
+ */
+export function payoutCorrectionAnswerWords(
+  claim: { payoutMethod?: string | null; payoutCorrectionPhase?: string | null }, forSelf: boolean,
+): { title: string; button: string } {
+  const words = payoutRoundTexts(claim);
+  const title = forSelf ? reimbursementPayoutRoundAsk(words.held) : words.askOnBehalf;
+  return { title, button: forSelf && claim.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? words.given.askAgain : title };
+}
+/**
+ * A scan declared as signed before the claim was sent back (spec §14.4): it stays in the list and no longer counts.
+ * Named for the send-back alone, for good: a claim is also sent back with no account, or with cash, and what it comes
+ * back with may be what it had.
+ */
+export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อนส่งกลับ';
 
 /**
  * The API refused a form of the round because the claim is no longer as the page read it (HTTP 409): someone paid it,
@@ -459,49 +582,84 @@ export const PAYOUT_CORRECTION_REREAD_NOTE = 'หน้านี้แสดง�
  * was opened (an earlier press of the same form may be what changed it): what was not done, and what to look at
  * before giving the account once more. Nothing typed for the claim as it was is sent to the claim as it is.
  */
-export const PAYOUT_CORRECTION_STALE_PRESS = 'ยังไม่ได้บันทึกบัญชีรับเงินครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม หน้านี้แสดงสถานะล่าสุดของใบแล้ว ดูที่หัวข้อการรับเงินคืนว่าตอนนี้ใบใช้วิธีรับเงินใด ถ้ายังไม่ถูก กดปุ่มแก้บัญชีรับเงินเพื่อแก้ใหม่';
+export const PAYOUT_CORRECTION_STALE_PRESS = 'ยังไม่ได้บันทึกวิธีรับเงินคืนครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม หน้านี้แสดงสถานะล่าสุดของใบแล้ว ดูที่หัวข้อการรับเงินคืนว่าตอนนี้ใบใช้วิธีรับเงินคืนใด ถ้ายังไม่ถูก กดปุ่มในขั้นตอนนี้เพื่อเลือกอีกครั้ง';
 /** Said by the page when the form is no longer offered: what was not done, why, and where to read what can be done now. */
 export const PAYOUT_CORRECTION_SUPERSEDED: Record<'send-back' | 'correct-payout', string> = {
   'send-back': 'ยังไม่ได้ส่งกลับ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
-  'correct-payout': 'ยังไม่ได้บันทึกบัญชีรับเงิน เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
+  'correct-payout': 'ยังไม่ได้บันทึกวิธีรับเงินคืน เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
 };
 
 /**
  * The fixed reasons this claim can be sent back with, in the order the form lists them: the list the API takes for
- * it (`reimbursementPayoutCorrectionReasons`). A claim with no account of its own has "ใบนี้ยังไม่มีบัญชีรับเงิน"
- * first; a claim that carries one is never offered it.
+ * it (`reimbursementPayoutCorrectionReasons`), by what the claim holds. An account can be wrong in five ways (a
+ * PromptPay number, which has no bank, in four), cash has its own two, and each list ends with "อื่น ๆ". A claim with
+ * no account of its own has the one reason that says so, which its form states and does not ask.
  */
-export function payoutCorrectionReasons(detail: { payout?: unknown } | null | undefined): ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]> {
-  return reimbursementPayoutCorrectionReasons(!!detail?.payout).map((code) => [code, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[code]]);
+export function payoutCorrectionReasons(
+  detail: { payoutMethod?: string | null; payout?: Pick<ReimbursementPayoutSummary, 'payoutMethod' | 'payoutKind'> | null } | null | undefined,
+): ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]> {
+  // Each in the words of the account the claim holds: a PromptPay number is never called "เลขบัญชี". The code sent is the same.
+  return reimbursementPayoutCorrectionReasons(reimbursementPayoutHeld(detail), detail?.payout?.payoutKind)
+    .map((code) => [code, reimbursementPayoutCorrectionReasonLabel(code, detail?.payout?.payoutKind)]);
 }
 
-/** A reason in words. Empty for a reason this build has no words for: a code is never printed. */
-export function payoutCorrectionReasonText(reasonCode: unknown): string {
-  return isReimbursementPayoutCorrectionReason(reasonCode) ? REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode] : '';
+/**
+ * A reason in words, as the form offered it: by the kind of the account it was said of (`payoutKind`), where the reader
+ * knows it. Empty for a reason this build has no words for: a code is never printed.
+ */
+export function payoutCorrectionReasonText(reasonCode: unknown, payoutKind?: unknown): string {
+  return isReimbursementPayoutCorrectionReason(reasonCode)
+    ? reimbursementPayoutCorrectionReasonLabel(reasonCode, payoutKind === 'PROMPTPAY_PHONE' ? payoutKind : undefined) : '';
+}
+
+/**
+ * The kind of the account a claim held at a send-back, for the words of its reason. The server says THAT the claim held
+ * an account then (`held` on the event); which one it was is found here, in the claim's own account history: the last
+ * account it had been sent with, or given in a round, by that moment. A claim's account is always the latest one frozen
+ * for it, and a round's answer is frozen when it is taken, before any later send-back. Undefined where the detail carries
+ * no such row (an action's answer has no history): the reason then reads in the list's own words.
+ */
+export function payoutKindHeldAt(
+  payoutHistory: readonly Pick<ReimbursementPayoutVersionSummary, 'payoutKind' | 'frozenAt'>[] | null | undefined, at: unknown,
+): ReimbursementPayoutKind | undefined {
+  const moment = Date.parse(String(at));
+  return [...(payoutHistory ?? [])].reverse().find((row) => Date.parse(row.frozenAt) <= moment)?.payoutKind;
 }
 
 /**
  * "ส่งกลับให้แก้บัญชีรับเงินโดย … : เหตุผล" (spec §14.2, §17.2). One sentence for the step note of a claim that
  * waits for its requester, for the timeline row and for the card its approvers read, so they cannot tell it differently.
- * A claim sent back because it had no account was sent back to be given one, and is told so: nothing was corrected.
+ * How it is said follows `held`, what the claim held at that send-back: an account to correct, none yet to add, or cash
+ * to choose again. Never the reason code, which says why and not what the claim held. A send-back with no record of what
+ * was held (an event from an older server) is told in words true of every claim sent back. The reason is worded for the
+ * kind of the account that was held (`payoutKind`): a PromptPay number is never called "เลขบัญชี".
  */
-export function payoutCorrectionSentBackText(sentBack: { byName?: string | null; reasonCode?: unknown } | null | undefined): string {
-  const reason = payoutCorrectionReasonText(sentBack?.reasonCode);
-  const action = sentBack?.reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL;
+export function payoutCorrectionSentBackText(sentBack: { byName?: string | null; reasonCode?: unknown; held?: unknown; payoutKind?: unknown } | null | undefined): string {
+  const reason = payoutCorrectionReasonText(sentBack?.reasonCode, sentBack?.payoutKind);
+  const held = sentBack?.held;
+  const action = typeof held === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held, held)
+    ? reimbursementPayoutRoundSendBack(held as ReimbursementPayoutHeld) : 'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืน';
   return `${action}${sentBack?.byName ? `โดย ${sentBack.byName}` : ''}${reason ? ` : ${reason}` : ''}`;
 }
 
 /**
- * "ผู้เบิกแก้บัญชีรับเงิน" (spec §17.2): who gave the account of a round. It was the requester unless the claim
- * says someone else did it on their behalf, and that person is then named. `sentBackReason` is the reason of the
- * send-back it answers: a claim that had no account was given one ("ผู้เบิกเพิ่มบัญชีรับเงิน"), not corrected.
+ * What was answered in a round, where the claim or the event says it in a word this build knows. Undefined: no record
+ * of it (a page fed by an older server), or an answer added later. A reader then says what is true of every answer.
  */
-export function payoutCorrectionSubmittedText(
-  submitted: { byUserId?: string | null; byName?: string | null } | null | undefined, requesterUserId?: string | null, sentBackReason?: unknown,
-): string {
-  const onBehalf = !!submitted?.byUserId && !!requesterUserId && submitted.byUserId !== requesterUserId;
-  const did = reimbursementPayoutCorrectionAsk(sentBackReason);
-  return onBehalf ? `${submitted!.byName ?? 'ผู้จัดทำ'} ${did}แทนผู้เบิก` : `ผู้เบิก${did}`;
+export function payoutRoundAnswer(answer: unknown): ReimbursementPayoutRoundAnswer | undefined {
+  return typeof answer === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_ROUND_TEXTS.answer, answer) ? answer as ReimbursementPayoutRoundAnswer : undefined;
+}
+
+/**
+ * Who answered a round and what they did (spec §17.2), in the contracts' words for that answer: "ผู้เบิกแก้บัญชีรับเงิน" of
+ * another account, "ผู้เบิกยืนยันบัญชีเดิม" of the same one, "ผู้เบิกเปลี่ยนวิธีรับเงินคืน" between an account and cash, and so on.
+ * When someone answered for the requester (a finance reviewer may) it is said of that person, by name: no sentence says
+ * the requester did what someone else did for them. `answeredBy`: the history event of the answer, or the claim's
+ * `payoutCorrectionAnsweredBy`; either says whether it was on the requester's behalf.
+ */
+export function payoutCorrectionAnsweredText(answer: unknown, answeredBy?: { onBehalf?: boolean | null; byName?: string | null } | null): string {
+  // ponytail: with no answer on record the words are those of a method chosen, which every answer is.
+  return reimbursementPayoutRoundDid(payoutRoundAnswer(answer) ?? 'FIRST_CASH', answeredBy);
 }
 
 /**
@@ -522,24 +680,23 @@ export function payoutCorrectionRequestInput(reasonCode: ReimbursementPayoutCorr
 
 /** What whoever sends a claim back is told before they confirm (spec §14.1, §14.4): what changes, and what is lost. */
 export function payoutCorrectionSendBackNotes(detail: {
-  payoutCorrectionPhase?: string | null; payout?: ReimbursementPayoutSummary | null;
+  payoutCorrectionPhase?: string | null; payoutMethod?: string | null;
   signatures?: readonly unknown[] | null; signedCopies?: readonly { acknowledgedAt?: string }[] | null;
 }): string[] {
-  // From the round's waiting step: the account goes back to the requester once more. Nothing is signed in a round.
-  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') {
-    return ['ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงินอีกครั้ง ใบไม่ถูกปฏิเสธ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'];
-  }
-  // A claim sent before claims carried an account gets one through this same path (spec §15): it has none to correct.
-  const legacy = !detail.payout;
+  const words = payoutRoundTexts(detail);
+  // From the round's waiting step: the claim goes back to its requester once more, for what was just given: an account
+  // to correct, or cash to choose again. Nothing is signed in a round.
+  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') return [words.given.sendBackAgainLine1];
   return [
-    legacy ? 'ใบนี้จะกลับไปให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'
-      : 'ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
-    legacy ? 'เมื่อผู้เบิกเพิ่มบัญชีแล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีนั้นก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที'
-      : 'เมื่อผู้เบิกแก้แล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
-    ...(legacy ? [`${LEGACY_PAYOUT_NOTE} หลังส่งกลับ ผู้เบิกจะระบุบัญชีรับเงินของใบนี้ได้`] : []),
-    ...((detail.signatures ?? []).length > 0 ? ['ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่หลังบัญชีใหม่ได้รับอนุมัติ'] : []),
+    words.sendBackLine1,
+    // What comes after names no "new account": the requester may keep the account, or take cash.
+    words.sendBackLine2,
+    // A claim sent before claims carried an account gets one through this same path (spec §15): it has none to correct.
+    ...(words.held === 'NOTHING' ? [`${LEGACY_PAYOUT_NOTE} หลังส่งกลับ ผู้เบิกจะระบุบัญชีรับเงินของใบนี้ได้`] : []),
+    // What is lost comes back when the claim is at its pay step again, whatever was answered in between.
+    ...((detail.signatures ?? []).length > 0 ? ['ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่เมื่อใบกลับมารอจ่าย'] : []),
     ...((detail.signedCopies ?? []).some((copy) => copy.acknowledgedAt)
-      ? ['สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่หลังบัญชีใหม่ได้รับอนุมัติ'] : []),
+      ? ['สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่เมื่อใบกลับมารอจ่าย'] : []),
   ];
 }
 
@@ -585,8 +742,14 @@ export function payoutCorrectionTypingRefusedUpFront(
 ): boolean {
   return detail?.payoutCorrectionActions?.specifiedRefusal === 'REQUESTER_NOT_ACTIVE';
 }
+/**
+ * Said in the account form to whoever answers for the requester: the requester is told of every answer given for them,
+ * whatever is chosen (an account typed, their standing account, the account the claim had, or cash). Shown only where a
+ * notice can reach the requester: where none can, the form says why no account can be typed for them instead.
+ */
+export const PAYOUT_CORRECTION_ON_BEHALF_NOTICE = 'ผู้เบิกจะได้รับแจ้งเตือนทุกครั้งที่มีผู้เลือกวิธีรับเงินคืนแทน ไม่ว่าเลือกแบบใด';
 /** Said in the account form in place of the choice it does not offer: what cannot be done, why, and what still can. */
-export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงระบุบัญชีใหม่แทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้ระบุบัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
+export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงพิมพ์บัญชีแทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้พิมพ์บัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
 
 export function emptyPayoutCorrectionForm(): PayoutCorrectionForm {
   return { mode: '', account: emptyPayoutAccountForm(), saveAsDefault: false };
@@ -626,15 +789,13 @@ export function payoutCorrectionAccountText(account: ReimbursementPayoutCorrecti
 }
 
 /**
- * What the card "การรับเงินคืน" says of the account it shows while the claim is in a round: in phase A that
- * account is the one in question, in phase B it is the new one and nobody has approved it yet. Null: no round.
+ * What the card "การรับเงินคืน" says of what it shows while the claim is in a round. With its requester: what the claim
+ * was sent back holding, an account or cash that is in question (after a send-back from the round's waiting step, the
+ * answer that was not taken, which is not what the claim began with), or that it has no account yet. While an answer
+ * waits for approval: that it is what was sent, by whom, and that nobody has approved it yet. Null: no round.
  */
-export function payoutCorrectionCardNote(detail: { payoutCorrectionPhase?: string | null; payout?: ReimbursementPayoutSummary | null }): string | null {
-  if (detail.payoutCorrectionPhase === 'AWAITING_REQUESTER') {
-    return detail.payout
-      ? 'ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือวิธีรับเงินเดิมของใบ ระหว่างนี้ยังบันทึกจ่ายไม่ได้'
-      : 'ใบนี้ถูกส่งกลับให้ระบุบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้';
-  }
-  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') return 'ด้านล่างคือวิธีรับเงินใหม่ที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้';
+export function payoutCorrectionCardNote(detail: { payoutMethod?: string | null } & PayoutRoundFacts): string | null {
+  if (detail.payoutCorrectionPhase === 'AWAITING_REQUESTER') return payoutRoundTexts(detail).cardNote;
+  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') return reimbursementPayoutRoundGivenNote(detail.payoutCorrectionAnsweredBy);
   return null;
 }

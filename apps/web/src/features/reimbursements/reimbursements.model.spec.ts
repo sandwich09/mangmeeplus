@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS } from '@watchdog-bms/contracts';
+import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 import {
   APPROVAL_STEP_STATUS_LABELS,
   claimDeskText,
@@ -334,16 +334,22 @@ describe('currentDeskText', () => {
   });
 });
 
-// Payout spec §14.2: a claim sent back from the pay step for its payout account is PENDING_APPROVAL by its
-// status. Its badge and its "อยู่ที่" line say whom it really waits for, on a list row and on the claim page alike.
-describe('a claim in a payout account correction round', () => {
-  const round = (payoutCorrectionPhase: string, currentDesk: { kind: string; names?: string[] }) => ({ status: 'PENDING_APPROVAL', payoutCorrectionPhase, currentDesk });
+// Payout spec §14.2: a claim sent back from the pay step is PENDING_APPROVAL by its status. Its badge and its "อยู่ที่"
+// line say whom it really waits for and for what, on a list row and on the claim page alike. The words follow what the
+// claim holds while it is with its requester, and what was answered while that waits for approval.
+describe('a claim in a payout round', () => {
+  /** A list row of a claim in a round. Without other facts: sent back holding an account, the case the words were first written for. */
+  const round = (payoutCorrectionPhase: string, currentDesk: { kind: string; names?: string[] },
+    facts: { payoutMethod?: string; payoutCorrectionAnswer?: string } = { payoutMethod: 'BANK_TRANSFER' }) => ({ status: 'PENDING_APPROVAL', payoutCorrectionPhase, currentDesk, ...facts });
+  const withRequester = (payoutMethod?: string) => round('AWAITING_REQUESTER', { kind: 'REQUESTER' }, { payoutMethod });
 
-  it('reads its phase on the badge in the words the LINE backlog uses, never รออนุมัติ', () => {
-    assert.deepEqual(claimStatusBadge(round('AWAITING_REQUESTER', { kind: 'REQUESTER' })), { label: 'รอผู้เบิกแก้บัญชีรับเงิน', tone: 'amber' });
-    assert.deepEqual(claimStatusBadge(round('AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมศรี'] })), { label: 'รออนุมัติบัญชีรับเงินใหม่', tone: 'amber' });
-    assert.deepEqual([claimStatusBadge(round('AWAITING_REQUESTER', { kind: 'REQUESTER' })).label, claimStatusBadge(round('AWAITING_APPROVAL', { kind: 'APPROVER' })).label],
-      [REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_APPROVAL]);
+  it('reads on the badge what it waits for, by what the claim holds while it is with its requester, never รออนุมัติ', () => {
+    assert.deepEqual(claimStatusBadge(withRequester('BANK_TRANSFER')), { label: 'รอผู้เบิกแก้บัญชีรับเงิน', tone: 'amber' });
+    // A claim sent before claims carried an account has none to correct, and a claim that asked for cash has no account at all.
+    assert.deepEqual(claimStatusBadge(withRequester(undefined)), { label: 'รอผู้เบิกเพิ่มบัญชีรับเงิน', tone: 'amber' });
+    assert.deepEqual(claimStatusBadge(withRequester('CASH')), { label: 'รอผู้เบิกเลือกวิธีรับเงินคืน', tone: 'amber' });
+    // A method this build does not know: words that are true of every claim sent back.
+    assert.equal(claimStatusBadge(withRequester('A_METHOD_ADDED_LATER')).label, 'รอผู้เบิกเลือกวิธีรับเงินคืน');
     // Being cancelled in a round: the system holds it, as it holds any claim being cancelled.
     assert.equal(claimStatusBadge(round('AWAITING_REQUESTER', { kind: 'SYSTEM' })).label, 'รอระบบปรับสถานะ');
     // A phase this build has no words for prints the status, never the code.
@@ -353,9 +359,29 @@ describe('a claim in a payout account correction round', () => {
     assert.equal(claimStatusBadge({ status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' } }).label, 'พร้อมจ่าย');
   });
 
-  it('is with ผู้เบิก while its requester gives the account, in the badge\'s own word, and with its approvers after', () => {
+  // Before: one label, "รออนุมัติบัญชีรับเงินใหม่", for every answer. It was true of one of the seven.
+  it('reads by what was answered while that waits for approval: "ใหม่" only of an account that replaced an account, and cash is never an account', () => {
+    const waiting = (payoutMethod: string, payoutCorrectionAnswer?: string) => round('AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมศรี'] }, { payoutMethod, payoutCorrectionAnswer });
+    for (const [payoutMethod, answer, label] of [
+      ['BANK_TRANSFER', 'NEW_ACCOUNT', 'รออนุมัติบัญชีรับเงินใหม่'], ['BANK_TRANSFER', 'SAME_ACCOUNT', 'รออนุมัติบัญชีรับเงินเดิม'], ['CASH', 'CASH_INSTEAD', 'รออนุมัติการรับเป็นเงินสด'],
+      ['BANK_TRANSFER', 'ACCOUNT_INSTEAD', 'รออนุมัติบัญชีรับเงิน'], ['CASH', 'SAME_CASH', 'รออนุมัติการรับเป็นเงินสด'],
+      ['BANK_TRANSFER', 'FIRST_ACCOUNT', 'รออนุมัติบัญชีรับเงิน'], ['CASH', 'FIRST_CASH', 'รออนุมัติการรับเป็นเงินสด'],
+    ] as const) {
+      assert.deepEqual(claimStatusBadge(waiting(payoutMethod, answer)), { label, tone: 'amber' }, answer);
+    }
+    // A row with no answer on it (a page fed by an older server), or an answer added later: the method, which is true of every answer.
+    for (const answer of [undefined, 'AN_ANSWER_ADDED_LATER']) assert.equal(claimStatusBadge(waiting('BANK_TRANSFER', answer)).label, 'รออนุมัติวิธีรับเงินคืน');
+    // The badge prints the sentence of contracts, which the printed form, the notices and the LINE assistant print too.
+    for (const row of [withRequester('CASH'), withRequester(undefined), waiting('BANK_TRANSFER', 'SAME_ACCOUNT'), waiting('CASH', 'FIRST_CASH')]) {
+      assert.equal(claimStatusBadge(row).label, reimbursementPayoutRoundStatus(row));
+    }
+  });
+
+  it('is with ผู้เบิก while it waits for its requester, in the badge\'s own word whatever the claim holds, and with its approvers after', () => {
     assert.equal(claimDeskText(round('AWAITING_REQUESTER', { kind: 'REQUESTER' })), 'ผู้เบิก');
-    assert.ok(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER.includes(claimDeskText(round('AWAITING_REQUESTER', { kind: 'REQUESTER' }))!));
+    for (const payoutMethod of ['BANK_TRANSFER', 'CASH', undefined]) {
+      assert.ok(claimStatusBadge(withRequester(payoutMethod)).label.includes(claimDeskText(round('AWAITING_REQUESTER', { kind: 'REQUESTER' }))!), String(payoutMethod));
+    }
     assert.equal(claimDeskText(round('AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมศรี', 'วิชัย'] })), 'สมศรี หรือ วิชัย');
     assert.equal(claimDeskText(round('AWAITING_REQUESTER', { kind: 'SYSTEM' })), 'ระบบ');
     // A draft is with its requester too, in the same word; a payment desk names its payers.

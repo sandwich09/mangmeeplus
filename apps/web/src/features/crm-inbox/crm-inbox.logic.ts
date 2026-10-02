@@ -84,7 +84,7 @@ export function addConversationTag(tags: string[], raw: string): string[] | null
   return [...tags, tag];
 }
 
-/** Mirrors the API's first-response SLA rule (badge "⏱ เกิน 30 นาที"). */
+/** Mirrors the API's first-response SLA rule (badge "⏱ รอตอบเกินกำหนด"). */
 export function conversationIsOverdue(
   c: Pick<CrmConversationSummary, 'status' | 'firstRespondedAt' | 'firstResponseDueAt'>,
   now: Date,

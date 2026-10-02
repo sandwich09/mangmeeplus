@@ -447,7 +447,7 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
     }
   }, [companyId, detail, actionBusy, userId, applyConversationPatch, loadList, locale]);
 
-  // Chip definitions per Flow A: ทั้งหมด · ⏱ เกิน 30 นาที (เมื่อมี) · ของฉัน/ยังไม่มีผู้รับ · สถานะตามลำดับ
+  // Chip definitions per Flow A: ทั้งหมด · ⏱ รอตอบเกินกำหนด (เมื่อมี) · ของฉัน/ยังไม่มีผู้รับ · สถานะตามลำดับ
   const chips = useMemo(() => {
     // "ทั้งหมด" mirrors the default list, which mutes spam.
     const totalAll = INBOX_STATUS_ORDER.reduce((sum, st) => sum + (st === 'SPAM' ? 0 : statusCounts[st] ?? 0), 0);
