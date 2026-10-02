@@ -4,7 +4,7 @@
 
 Everything below this section is kept unchanged as history. Where it disagrees with this section, this section wins.
 
-Status: IN PROGRESS on branch `claude/manual-expense-web-entry-20261002` (worktree `/private/tmp/mangmee-manual-expense-entry-20261002`, from develop `608b4a6f5`). Not pushed, not released. Phase state: P0–P4 done; P5 and P6 follow in their own commits and update this section.
+Status: IN PROGRESS on branch `claude/manual-expense-web-entry-20261002` (worktree `/private/tmp/mangmee-manual-expense-entry-20261002`, from develop `608b4a6f5`). Not pushed, not released. Phase state: P0–P5 done; P6 follows in its own commit and updates this section.
 
 Owner: thawatchai / Claude (implementation lane; the controller session reviews, pushes and merges).
 
@@ -33,6 +33,7 @@ Artifacts (this branch):
 - P2: `auth.controller.ts` (`me()` answers `manualExpenseWebEntry`), `apps/web/src/common/models/web-session.model.ts`, `workspace-scope.api.ts` (type and fingerprint), `apps/web/src/features/expenses/manual-expense-entry.logic.ts` (`canOpenManualWeb`), `apps/api/prisma/seed.ts` (a "shown" row for `seed-local-company` and `seed-local-company-2`).
 - P3: `manual-expense-entry.logic.ts` (admission and view), `ManualExpenseEntryNotEnabled.tsx`, `ExpensesPages.tsx` (hub admission, list button, open-form note), `web-core-workspace.logic.ts` + `WorkspaceLayout.tsx` (sidebar item), `IncomeExpenseLedgerPage.tsx`, `ai-suggestions.logic.ts` + `AiSuggestionsPages.tsx`, `features/user-guide/expenses-guide-manual-entry.ts`, the five server pages, four dictionary keys (Thai and English).
 - P4: `PartnerDetailPage.tsx` (the switch under the "บันทึกด้วยมือ" row, its own state, handler and confirmation; the "เมนูย่อย" expander is no longer disabled by the entitlement locks), `system-partners.logic.ts` (`manualWebEntryRow` and every sentence the operator reads), `system-partners.api.ts`.
+- P5: `apps/api/src/modules/system-partner-management/manual-expense-web-entry.pg.spec.ts`, registered in `.github/workflows/ci.yml` beside the data-rights spec (`MANUAL_EXPENSE_WEB_ENTRY_TEST_DATABASE_URL`).
 - With P1: `apps/web/src/common/api/api-error-message.ts` (Thai text of the 409 code; the web coverage spec demands one for every code of this API module).
 - Spec v3.1, plan, this note.
 
@@ -44,9 +45,11 @@ Verification (real runs, 2026-10-02):
 - The admission and the texts are proven in a browser in P6; the unit level proves the logic, the rendered not-enabled state and the wiring by source.
 - P4: `system-partners.logic.spec.ts` and the new `manual-web-entry-switch.qa.spec.ts`, 58 pass (16 were red before the change). 19 single-line reverts each failed their named test: the saved-not-pending rule, the three conditions of the standing note, asking only before hiding, the upload warning, three sentences, the command and its version, no reload on success, the re-read on 409, the confirmation, the lock rule, the expander, the row's place, the page prop and the click handler. Web typecheck exit 0. Seen in a browser at 390 and 1280 px (P6).
 - A save of the switch does not reload the partner detail, and a 409 re-reads the detail for this value only: a reload would have reset package changes the operator had made and not saved yet.
+- P5 (run on 2026-10-03 against a throwaway PostgreSQL 18.3 container; the spec builds its own scratch database from all 274 migration files and drops it): 12 tests pass. The shop is created by the real `CreateCompanyOnboardingUseCase`; 13 system roles of `ROLE_GRANTS` and every template of `ROLE_TEMPLATES` are resolved by the real resolver in four states and compared whole, with the LINE delivery fingerprint. The billing plan hash, the set version, the entitlement transition, run-off and command counts are unchanged and a plan pinned before the switch applies after it. The four LINE tables are unchanged row for row. Creating, updating, marking ready and deleting an expense answer the same in three states (holder succeeds, read-only refused). Two operators pressing at once make one change. Ten harmful one-line additions or reverts each failed the named test (bumping the set version, wiping LINE state, writing an entitlement transition, stripping a permission when hidden, removing the company lock, `/auth/me` ignoring the row, the migration touching another table, another file reading the setting, removing the lock refusal, the audit level). API typecheck exit 0 with the spec in it.
+- Not run as flows: OCR/source draft, the substitute-receipt wizard and reimbursement. Their evidence is structural: only five API files name the setting, and the permissions those flows check are identical in every state.
 
 Next:
-- P5 PostgreSQL invariants. P6 browser evidence and docs.
+- P6 browser evidence and docs.
 
 ## Update 2026-10-01 — independent review and spec v3.0 (current state)
 

@@ -105,14 +105,15 @@ Exit: ผู้ดูแลแสดงและซ่อนเมนูให�
 
 ### P5 — Invariants และ regression
 
-- [ ] `git diff --stat` เทียบ commit เริ่มงาน: ไม่มีไฟล์ในรายการห้ามแก้ของ §1 และ §2
-- [ ] permissions และ `entitledFeatureKeys` ของ `/auth/me` เท่าเดิมก่อนและหลังสลับค่า สำหรับทุกบทบาทใน `ROLE_GRANTS` และทุกเทมเพลตใน `ROLE_TEMPLATES`
-- [ ] สลับค่าแล้ว `CompanyEntitlementSet.setVersion` และ `billingFeaturePlan().plan.sourceHash` ของร้านไม่เปลี่ยน
-- [ ] สลับค่าแล้วแถว `AiConversation`, `AiTurn`, `LineIntakePendingMedia`, `LineDeliveryPlan` ของร้านไม่เปลี่ยน
-- [ ] สร้างร้านใหม่ผ่าน onboarding แล้วไม่มีแถวค่าตั้ง และ `/auth/me` คืน **false**
-- [ ] API create/update/delete/mark-ready, OCR/source draft, wizard และ reimbursement ให้ผลเดิมก่อนและหลังสลับค่า
+- [x] `git diff --stat` เทียบ commit เริ่มงาน: ไม่มีไฟล์ในรายการห้ามแก้ของ §1 และ §2 (และไม่มี `package.json` ใดถูกแก้)
+- [x] permissions และ `entitledFeatureKeys` ของ `/auth/me` เท่าเดิมก่อนและหลังสลับค่า สำหรับทุกบทบาทใน `ROLE_GRANTS` และทุกเทมเพลตใน `ROLE_TEMPLATES` (resolver จริงบน PostgreSQL สี่สถานะ: ไม่มีแถว เปลี่ยน เปลี่ยนกลับ เปลี่ยนอีก รวม `lineDeliveryAccessFingerprint`)
+- [x] สลับค่าแล้ว `CompanyEntitlementSet.setVersion` และ `billingFeaturePlan().plan.sourceHash` ของร้านไม่เปลี่ยน และ plan ที่ pin ก่อนสลับยัง apply ได้หลังสลับ
+- [x] สลับค่าแล้วแถว `AiConversation`, `AiTurn`, `LineIntakePendingMedia`, `LineDeliveryPlan` ของร้านไม่เปลี่ยน
+- [x] สร้างร้านใหม่ผ่าน onboarding แล้วไม่มีแถวค่าตั้ง และ `/auth/me` คืน **false** (`CreateCompanyOnboardingUseCase` จริงบน PostgreSQL)
+- [x] API create/update/mark-ready/delete ให้ผลเดิมก่อนและหลังสลับค่า ทั้งผู้ถือสิทธิ์ (สำเร็จ) และผู้อ่านอย่างเดียว (ถูกปฏิเสธ) ด้วย use case จริงบน PostgreSQL
+- [ ] OCR/source draft, wizard และ reimbursement: **ไม่ได้รันเป็น flow ในงานนี้** หลักฐานที่มีเป็นเชิงโครงสร้าง: test สแกน source ของ API ยืนยันว่ามีเพียงห้าไฟล์ที่อ้างค่าตั้งนี้ (command, logic, รายละเอียดร้าน, controller ของผู้ดูแล, `/auth/me`) และ permissions ที่ flow เหล่านี้ใช้เท่าเดิมทุกสถานะตามข้อบน
 - [ ] e2e เดิมที่เปิดหน้า manual ผ่านโดยไม่แก้
-- [ ] ตรวจสามสถานะฐานของ P0 ซ้ำ ต้องยังเขียวและ `status=current`
+- [x] ตรวจสามสถานะฐานของ P0 ซ้ำ ต้องยังเขียวและ `status=current` (pins `status=current`, `approved-knowledge.spec.ts` 9 ข้อ, `line-ai-capability-manifest.spec.ts` อยู่ในชุด 91 ข้อที่ผ่าน)
 
 Exit: งานนี้ไม่สร้าง regression นอกหน้าจอ และพิสูจน์ได้ว่าไม่แตะเงิน สิทธิ์ และ LINE
 
@@ -167,7 +168,7 @@ Test ใหม่ที่ต้องเขียน
 | ทางเข้า | `web-core-workspace.spec.ts`, `ai-suggestions.logic.spec.ts`, spec ของ ledger ถ้ามี logic แยก | ไม่แสดงครบตาม spec §9.1 เมื่อค่าเป็น false และไม่มีการ์ดเปล่า |
 | คู่มือ | spec ข้างไฟล์แปลงผลลัพธ์ | ปุ่มหาย มีหมายเหตุ หัวข้ออื่นไม่เปลี่ยน |
 | หน้าผู้ดูแล | `system-partners.logic.spec.ts` | `applyPreset`, เปิดปิดกลุ่ม และ `changedEntitlements` ไม่มี key หรือค่าของสวิตช์ใหม่ |
-| invariants | PostgreSQL spec ใหม่หนึ่งไฟล์ | รายการใน P5 ข้อ 2–5 |
+| invariants | PostgreSQL spec ใหม่หนึ่งไฟล์ `apps/api/src/modules/system-partner-management/manual-expense-web-entry.pg.spec.ts` ลงทะเบียนใน `.github/workflows/ci.yml` (ตัวแปร `MANUAL_EXPENSE_WEB_ENTRY_TEST_DATABASE_URL`) | รายการใน P5 ข้อ 2–6 รวม migration ที่สร้างเฉพาะตารางของตัวเอง command บนฐานข้อมูลจริง และผู้ดูแลสองคนกดพร้อมกัน |
 
 spec ใหม่ฝั่ง API ต้องมีที่ที่ CI รัน: script `test` ของ `apps/api/package.json` ระบุไฟล์ทีละไฟล์ และ `.github/workflows/ci.yml` มีรายการของตัวเองบางขั้น **ข้อตัดสินของงานนี้ (2 ต.ค. 2569):** ไม่แก้ `package.json` ใด test ฝั่ง API ทั้งหมดเขียนลงในไฟล์ spec ที่รายการ `test` มีอยู่แล้ว ส่วน spec PostgreSQL ไฟล์ใหม่ของ P5 ลงทะเบียนใน `.github/workflows/ci.yml` แบบเดียวกับ `data-rights-single-admin.pg.spec.ts` ห้ามปล่อย spec ใหม่ไว้โดยไม่มีที่รัน ฝั่งเว็บใช้ glob จึงไม่ต้องลงทะเบียน
 
