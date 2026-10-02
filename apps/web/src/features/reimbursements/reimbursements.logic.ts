@@ -330,14 +330,21 @@ export function slipTargetPayment(detail: any, permissions: readonly string[]): 
 /**
  * What whoever records payments is told on a file of ใบเบิกที่เซ็นแล้ว that no button speaks for (spec §16): a slip
  * attached there by mistake reads as a paper-signed copy, and the row said nothing of what to do about it.
- * Before the payment it is chosen as the slip in the payment form; once the payment has a slip of its own, nothing
- * more is needed for the claim. Null where the row has its own button (a recorded payment with no slip), for a
- * viewer who records no payments, and for a claim that is at neither point.
+ * Before the payment it is chosen as the slip in the payment form. Once the payment has a slip, no file moves any
+ * more, and the page cannot know which file is which: the sentence is true either way. Nothing more is needed when the
+ * slip on the payment is the real one; when it is not (the signed form was picked as the slip, and the real slip is
+ * the file left on this row), the real one is attached at the payment row, which says "แนบสลิปเพิ่ม" for as long as the
+ * payment takes another slip. Null where the row has its own button (a recorded payment with no slip), for a viewer
+ * who records no payments, and for a claim that is at neither point.
  */
 export function signedCopyMisfiledHint(detail: any, permissions: readonly string[]): string | null {
   if (!permissions.includes('reimbursement.payment.record') || slipTargetPayment(detail, permissions)) return null;
   const standing = (detail?.payments ?? []).filter((payment: any) => payment?.status === 'RECORDED').at(-1);
-  if (standing) return 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องทำอะไรเพิ่ม การจ่ายของคำขอนี้มีสลิปของตัวเองแล้ว';
+  if (standing) {
+    const settled = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง และสลิปที่แนบกับการจ่ายถูกต้องแล้ว ไม่ต้องทำอะไรเพิ่ม';
+    // The second sentence names a control: it is said only while the payment row shows that control.
+    return canAttachPaymentSlip(standing, permissions) ? `${settled} ถ้าสลิปที่แนบกับการจ่ายไม่ใช่สลิปจริง ให้กดแนบสลิปเพิ่มที่แถวการจ่าย แล้วแนบสลิปจริง` : settled;
+  }
   return detail?.status === 'READY_FOR_PAYMENT' ? 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้' : null;
 }
 

@@ -327,17 +327,27 @@ describe('ใบเบิกที่เซ็นแล้ว is not where a sli
     const signedForm = { attachmentId: 'att-form', fileName: 'signed-form-2.pdf', uploadedAt: '2026-09-30T05:00:00.000Z', acknowledgedAt: '2026-09-30T05:00:00.000Z', acknowledgedByName: 'สมชาย' };
     const plain = { attachmentId: 'att-plain', fileName: 'หลักฐาน.png', uploadedAt: '2026-09-28T05:00:00.000Z' };
     const copies = { signedCopies: [signedForm, misfiled, plain], documentSignedVia: 'PAPER' };
-    const AFTER = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องทำอะไรเพิ่ม การจ่ายของคำขอนี้มีสลิปของตัวเองแล้ว';
+    // Second run of the upgrade test: the sentence said nothing was needed, also when the payer had picked the signed PDF
+    // as the slip and the real e-slip was the file left on this row. The page cannot know which file is which, so the
+    // sentence is true either way, and names the control that puts the other case right.
+    const SETTLED = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง และสลิปที่แนบกับการจ่ายถูกต้องแล้ว ไม่ต้องทำอะไรเพิ่ม';
+    const AFTER = `${SETTLED} ถ้าสลิปที่แนบกับการจ่ายไม่ใช่สลิปจริง ให้กดแนบสลิปเพิ่มที่แถวการจ่าย แล้วแนบสลิปจริง`;
     const BEFORE = 'ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้';
     const hints = (texts: string[]) => texts.filter((text) => text.startsWith('ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง'));
 
-    // Paid, and the payment carries its own slip: every reader sees what each file is; whoever pays is told nothing more is needed.
+    // Paid, and the payment carries a slip: every reader sees what each file is; whoever pays is told what holds in both cases.
     const paidWithSlip = { ...paid, ...copies };
     const payer = visible(detailSections(paidWithSlip, ids.payer, PAYER_RIGHTS));
     for (const text of ['ไฟล์ PDF · ลงนามบนกระดาษ · แนบเมื่อ 30 ก.ย. 2569 โดย สมชาย', 'ไฟล์รูปภาพ · ลงนามบนกระดาษ · แนบเมื่อ 29 ก.ย. 2569 โดย สมชาย', 'ไฟล์รูปภาพ · ไฟล์แนบทั่วไป · แนบเมื่อ 28 ก.ย. 2569']) {
       assert.ok(payer.includes(text), `${text}: ${JSON.stringify(payer.filter((shown) => shown.includes('แนบเมื่อ')))}`);
     }
     assert.deepEqual(hints(payer), [AFTER, AFTER, AFTER]);
+    // The control the sentence names is on the page, by that name, and the move button is not: no file moves once a payment has a slip.
+    assert.deepEqual([payer.includes('แนบสลิปเพิ่ม'), payer.includes('ใช้ไฟล์นี้เป็นสลิปการจ่าย')], [true, false]);
+    // A payment that takes no more slips has no such control, and the sentence names none.
+    const full = { ...paidWithSlip, payments: [voidedTransfer, { ...transfer, slipCount: 5, slips: [1, 2, 3, 4, 5].map((n) => slip(`${ids.slip}${n}`)) }] };
+    const atLimit = visible(detailSections(full, ids.payer, PAYER_RIGHTS));
+    assert.deepEqual([hints(atLimit), atLimit.includes('แนบสลิปเพิ่ม')], [[SETTLED, SETTLED, SETTLED], false]);
     const requester = visible(detailSections(paidWithSlip, ids.requester, ['reimbursement.read_own']));
     assert.ok(requester.includes('ไฟล์รูปภาพ · ลงนามบนกระดาษ · แนบเมื่อ 29 ก.ย. 2569 โดย สมชาย'));
     assert.deepEqual(hints(requester), [], 'someone who records no payment has nothing to do about it');
