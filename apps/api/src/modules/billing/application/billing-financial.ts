@@ -47,10 +47,12 @@ async function creditTakeBacks(prisma: PrismaService, stripe: StripeClient, acco
   const credit = await prisma.client.salesAttribution.findUnique({ where: { companyId: account.companyId },
     select: { sourceInvoiceId: true, amountSatang: true, refundedSatang: true, deductions: { select: { amountSatang: true } } } });
   if (!credit || credit.sourceInvoiceId !== invoice.id || creditLeftSatang(credit, credit.deductions) === 0) return [];
+  // The id is only the key that makes a second sighting write nothing, so any id the provider
+  // gives is taken; the amount needs no upper bound because the credit that is left caps it.
   const read = async (path: string, object: string, settled: string, kind: CreditTakeBack['kind']) =>
     (await stripe.list(path, { charge: charge.id })).filter(item => item && item.object === object && item.status === settled &&
-      typeof item.id === 'string' && /^[a-z]+_[A-Za-z0-9_]{1,120}$/.test(item.id) && stripeId(item.charge) === charge.id &&
-      item.currency === 'thb' && Number.isSafeInteger(item.amount) && item.amount > 0 && item.amount <= charge.amount &&
+      typeof item.id === 'string' && item.id.length > 0 && item.id.length <= 255 && stripeId(item.charge) === charge.id &&
+      item.currency === 'thb' && Number.isSafeInteger(item.amount) && item.amount > 0 &&
       Number.isSafeInteger(item.created) && item.created > 0)
       .map((item): CreditTakeBack => ({ kind, providerRef: item.id, amountSatang: item.amount, occurredAt: new Date(item.created * 1000) }));
   return [...(charge.amount_refunded ? await read('/refunds', 'refund', 'succeeded', 'REFUND') : []),
