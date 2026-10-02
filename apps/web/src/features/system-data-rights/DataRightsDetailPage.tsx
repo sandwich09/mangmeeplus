@@ -386,6 +386,8 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
     singleAdminAvailable: detail.singleAdminAvailable,
   });
   const selfSteps = singleAdminSteps(detail);
+  /** Two admins: the separation rules are a hard stop. One admin: they are the norm a reasoned self-step may depart from. */
+  const mustNotBe = detail.singleAdminAvailable ? 'ไม่ควรเป็น' : 'ต้องไม่ใช่';
   const selfReason = (step: DataRightsSingleAdminStep) => selfReasons[step] ?? '';
   const setSelfReason = (step: DataRightsSingleAdminStep) => (value: string) =>
     setSelfReasons((current) => ({ ...current, [step]: value }));
@@ -675,7 +677,7 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-gray-950">การแยกหน้าที่และผู้รับผิดชอบ</h2>
-              <p className="mt-1 text-sm text-gray-500">แต่ละขั้นตอนควรทำโดยคนละคนกับขั้นก่อนหน้า หน้านี้แสดงว่าใครทำขั้นตอนใดเพื่อตรวจสอบย้อนหลัง</p>
+              <p className="mt-1 text-sm text-gray-500">แต่ละขั้นตอน{detail.singleAdminAvailable ? 'ควร' : 'ต้อง'}ทำโดยคนละคนกับขั้นก่อนหน้า หน้านี้แสดงว่าใครทำขั้นตอนใดเพื่อตรวจสอบย้อนหลัง</p>
             </div>
             <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">{detail.singleAdminAvailable ? 'ตอนนี้มีผู้ดูแลระบบคนเดียว' : 'ต้องใช้ผู้ดูแลระบบสองคน'}</span>
           </div>
@@ -696,9 +698,9 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
             ))}
           </div>
           <div className="mt-4 grid gap-2 text-xs text-violet-900 sm:grid-cols-3">
-            <p className="rounded-xl bg-violet-50 px-3 py-2">ผู้อนุมัติไม่ควรเป็นผู้เปิดเคส</p>
-            <p className="rounded-xl bg-violet-50 px-3 py-2">ผู้ดำเนินการไม่ควรเป็นผู้อนุมัติ</p>
-            <p className="rounded-xl bg-violet-50 px-3 py-2">ผู้เริ่มตรวจ ผู้บันทึกผลตรวจ และผู้ปิดเคส ไม่ควรเป็นผู้ดำเนินการ</p>
+            <p className="rounded-xl bg-violet-50 px-3 py-2">ผู้อนุมัติ{mustNotBe}ผู้เปิดเคส</p>
+            <p className="rounded-xl bg-violet-50 px-3 py-2">ผู้ดำเนินการ{mustNotBe}ผู้อนุมัติ</p>
+            <p className="rounded-xl bg-violet-50 px-3 py-2">ผู้เริ่มตรวจ ผู้บันทึกผลตรวจ และผู้ปิดเคส {mustNotBe}ผู้ดำเนินการ</p>
           </div>
           <p className="mt-4 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-950">
             {detail.singleAdminAvailable
@@ -964,7 +966,7 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
               <h2 className="text-lg font-semibold text-gray-950">การดำเนินการตามสถานะ</h2>
               {detail.status === 'APPROVED' && (
                 <div className="mt-4">
-                  <p className="text-sm leading-6 text-gray-600">ขั้นตอนนี้บันทึกว่าใครเป็นผู้ดำเนินการ และเปิดให้บันทึกหลักฐาน งานจริงทำตามคู่มือนอกระบบ ผู้ดำเนินการไม่ควรเป็นผู้อนุมัติ</p>
+                  <p className="text-sm leading-6 text-gray-600">ขั้นตอนนี้บันทึกว่าใครเป็นผู้ดำเนินการ และเปิดให้บันทึกหลักฐาน งานจริงทำตามคู่มือนอกระบบ ผู้ดำเนินการ{mustNotBe}ผู้อนุมัติ</p>
                   {sameActor.execution === 'SINGLE_ADMIN' && (
                     <div className="mt-3">
                       <SingleAdminStepField step="EXECUTION" who="คุณเป็นผู้อนุมัติเคสนี้" value={selfReason('EXECUTION')} onChange={setSelfReason('EXECUTION')} />
@@ -1018,7 +1020,7 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
                 <div className="mt-4">
                   {completionEvidenceMissing.length ? (
                     <><p className="text-sm font-semibold text-amber-800">ยังปิดเคสไม่ได้ ขาดหลักฐาน</p><ul className="mt-2 space-y-1 text-xs text-gray-600">{completionEvidenceMissing.map((item) => <li key={`${item.evidenceType}:${item.category}`}>• {EVIDENCE_TYPE_LABEL[item.evidenceType]}{item.category ? ` — ${CATEGORY_LABEL[item.category]}` : ''}</li>)}</ul></>
-                  ) : <><p className="text-sm font-semibold text-emerald-800">✓ หลักฐานขั้นต่ำครบ พร้อมสรุปผล</p><p className="mt-2 text-xs leading-5 text-gray-600">ผู้ปิดเคสต้องเป็นคนเดียวกับผู้บันทึกผลตรวจยืนยัน และไม่ควรเป็นผู้ดำเนินการ</p></>}
+                  ) : <><p className="text-sm font-semibold text-emerald-800">✓ หลักฐานขั้นต่ำครบ พร้อมสรุปผล</p><p className="mt-2 text-xs leading-5 text-gray-600">ผู้ปิดเคสต้องเป็นคนเดียวกับผู้บันทึกผลตรวจยืนยัน และ{mustNotBe}ผู้ดำเนินการ</p></>}
                   {!currentUserIndependentEvidence && <p className="mt-2 text-xs font-semibold text-amber-700">บัญชีของคุณยังไม่ได้บันทึกผลตรวจยืนยัน</p>}
                   <Button type="button" className="mt-4 w-full" disabled={completionEvidenceMissing.length > 0 || !currentUserIndependentEvidence || sameActor.verification === 'SECOND_ADMIN'} onClick={() => setCompletionOpen(true)}>{sameActor.verification === 'SINGLE_ADMIN' ? 'สรุปผลและปิดเคสด้วยตนเอง' : 'สรุปผลและปิดเคส'}</Button>
                 </div>
@@ -1178,7 +1180,7 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
         footer={(
           <>
             <Button type="button" variant="secondary" onClick={() => setCompletionOpen(false)}>ยกเลิก</Button>
-            <Button type="submit" form="data-rights-completion-form" loading={busyAction === 'complete'}>ยืนยันปิดเคส</Button>
+            <Button type="submit" form="data-rights-completion-form" loading={busyAction === 'complete'} disabled={!selfReasonReady(sameActor.verification, 'COMPLETION')}>ยืนยันปิดเคส</Button>
           </>
         )}
       >
