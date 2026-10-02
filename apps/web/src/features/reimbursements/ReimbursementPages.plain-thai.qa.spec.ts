@@ -741,6 +741,15 @@ describe('the deadline of a claim is said in plain Thai (owner 2026-10-02)', () 
   });
 });
 
+// The summary beside the policy form read "≥ 1.00 บาท": a sign where the field and the preview say "ตั้งแต่" in words.
+describe('the policy summary says the approval threshold in the words of its field (owner 2026-10-02)', () => {
+  it('reads "ตั้งแต่ 1.00 บาท", with no comparison sign anywhere on the policy tab', () => {
+    const texts = policySettings(policyForm, [roleOption('MANAGER', 'Manager', true)]);
+    assert.ok(texts.includes('ตั้งแต่ 1.00 บาท'), JSON.stringify(texts.filter((text) => text.includes('บาท'))));
+    for (const text of texts) assert.doesNotMatch(text, /[≥≤<>]/u, text);
+  });
+});
+
 // The same claim as `paid`, on the default route: approved, then paid by whoever holds the pay right.
 const noFinance = { ...paid, financeReviewStatus: 'NOT_REQUIRED', financeReviewRequired: false, financeReviewedByName: undefined, financeReviewedAt: undefined };
 const waiting = { ...noFinance, status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', documentSignedVia: null, payments: [], signatures: [], signedCopies: [],

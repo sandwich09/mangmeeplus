@@ -1129,7 +1129,7 @@ export function PolicySettings({ companyId, onPolicy }: {
             </div>
             <div className="flex items-center justify-between gap-3 py-3">
               <dt className="text-xs text-gray-500">ต้องอนุมัติเมื่อยอด</dt>
-              <dd className="text-sm font-semibold text-gray-800">≥ {formatMoney(form.approvalRequiredFromAmount)} บาท</dd>
+              <dd className="text-sm font-semibold text-gray-800">ตั้งแต่ {formatMoney(form.approvalRequiredFromAmount)} บาท</dd>
             </div>
             <div className="flex items-center justify-between gap-3 py-3">
               <dt className="text-xs text-gray-500">ส่งให้อนุมัติ</dt>
