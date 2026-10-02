@@ -1,0 +1,35 @@
+# Agent Memory: role page layout and wording, "SLA", saved-signature name (2026-10-02)
+
+Status: done on `claude/ui-wording-roles-dashboard-20261002` (worktree `/private/tmp/mangmee-ui-wording-20261002`, from `origin/develop` 603f461dd). Not pushed, no PR. Nothing deployed.
+Owner: wording lane (web, API strings, two browser tests, one spec table). No `package.json`, no migration, no feature switch. Nothing under the claim screens, their API module, their notice templates or `packages/contracts/src/reimbursements.ts`.
+Scope: three defects the owner approved on 2026-10-02 ("แก้ตามแนะนำได้เลย"), outside the claim screens. Standard: what a shop employee reads on a phone is plain Thai and true.
+
+## 1. Role page (menu พนักงานและสิทธิ์)
+
+Live routes: `/settings/permissions` (`PermissionMatrixPrototypePage` + `RoleBuilder`), `/settings/access-overview`, `/settings/employees`. `EmployeeAccessWorkspacePage` (EmployeesView, RolesView, MatrixView) is not routed. `/settings/permissions` needs `access.role.manage`, so a read-only viewer never opens it.
+
+- Layout: the rights of a role were a table with an 820 px minimum inside a sideways scroller. Below `sm` they are one stacked row per menu, grouped like the per-employee summary; from `sm` up the table fits. No sideways scroller is left at 390, 768 or 1280 px.
+- Role names: each page keeps the Thai names it already printed. Two lists exist and were NOT unified: the dictionary's `role.*` (role page, sidebar footer) and `THAI_SYSTEM_ROLE_NAMES` in `role-picker.logic.ts` (employee pages, company switcher). `COMPANY_VIEW` is "เจ้าของบริษัท" on both (the label recorded in `docs/qa/tennis-shop-e2e-test-cases-2026-07-29.md`).
+- A standard role is stored as "Accountant". Editing one gives the company its own copy with that name. Rule now, on every page of the menu: a copy still carrying the stored English name reads as the standard role; a copy the company named reads by that name. The editor opens with the name shown, so a new copy stores the Thai name.
+- Role descriptions: Thai at the source (`SYSTEM_ROLES`), synced into the system rows at release. Copies made before keep the English text they stored; `toRoleSummary` reads such a copy as the standard description of today (`FORMER_STANDARD_DESCRIPTIONS`, marked `ponytail:`).
+- Choices and example roles (`capability-pack.registry.ts`, `role-template.registry.ts`): "audit", "dead letter", "webhook", "AR/AP", "CRM" and the loan words no other screen uses are gone. `workflow_automation` is on for every shop from onboarding, so a shop role can hold the dead-letter and webhook rights: they are said by what they do. Kept: LINE, QR, AI, PDF, VAT.
+- "Draft" on the employee list is "แบบร่าง". The editor no longer prints "สิทธิ์เดิมที่ตั้งไว้" once per kept right.
+
+## 2. "SLA"
+
+Late is "เกินกำหนด". Changed: dashboard card "รอตอบเกินกำหนด" (web dictionary + the API's copy of the label), the notice "ลูกค้ารอตอบเกินกำหนด: <ลูกค้า>", LINE OA settings "กำหนดเวลาตอบลูกค้า", inbox tile "กำหนดตอบ", automation trigger "ตรวจงานที่เกินกำหนด", the unrouted module mock.
+Left: report name "Workflow SLA" (report catalogue and its guide row are English throughout), the two claim-notice templates in `workflow-template-catalog.ts` (the claim lane's), identifiers and comments. No platform-admin screen prints the word.
+
+## 3. Saved signature
+
+`signature-asset.use-case.ts` makes the default name once, at creation, and stores it: `<ชื่อ> <วันที่>`. The date is now `formatThaiExportDate` ("2 ต.ค. 2569"). Stored names are not touched.
+
+Decisions: recorded above. No role-name unification, no hiding of `SYSTEM_ADMIN` / `COMPANY_VIEW` from a shop's role list (the API lists them; only the sales roles are platform-only).
+Open questions (owner):
+- One Thai name per standard role across the app? Today: role page "บัญชี / แอดมิน / เจ้าของร้าน", employee pages "ฝ่ายบัญชี / ผู้ดูแลบริษัท / เจ้าของกิจการ", claim policy "บัญชี / แอดมิน / เจ้าของกิจการ".
+- Should a shop be listed "ผู้ดูแลระบบ" and "เจ้าของบริษัท" at all? Both are roles it can neither edit nor give.
+- Six example roles are never offered: the builder drops an example that names the automatic claim choice (`pack.reimbursement.self`).
+- English left on other pages: reports (names, columns), automation page ("Trigger:", "Source:", template names), add-employee wizard ("Username", "DDMMYYYY", "Draft"), dashboard stock card ("Reorder Point", a machine timestamp), a saved report view's default name (ISO date).
+Artifacts: commits 9df57ddfd, 792fe1bee, 4a9ef1b65, e75e953e0, 4dd7a0a67, daeaf9419 and the one adding this file. Screens and measurements: session scratchpad `uiword/shots/` (`before-*`, `after2*`, `fork2-*`), notes `uiword/NOTES.md`.
+Verification: see the final handoff of the lane (web typecheck and suite, API typecheck, six touched API specs, two browser tests, looks at 390 / 768 / 1280 px). Each new or changed test was run against the old source and failed there.
+Next: owner review, then PR to `develop`. Release runs `sync-permissions`, which writes the Thai descriptions into the system role rows.
