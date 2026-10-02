@@ -810,6 +810,25 @@ describe('a signer with no saved signature is told what is true and what to do (
     for (const text of ['ยังไม่มีลายเซ็นของคุณ', 'บันทึกลายเซ็นแล้ว ใช้ลงนามได้ทันที']) assert.ok(signaturePage.includes(text), text);
   });
 
+  // Upgrade test 2026-10-02: after the signature was saved, nothing on the signature page led back to the claim.
+  it('carries the claim to the signature page, which offers the way back to it before and after a signature is saved', () => {
+    Object.assign(globalThis, { document: { body: {} } });
+    let html: string;
+    try { html = renderToStaticMarkup(h(AppRouterContext.Provider, { value: router }, h(sections.MissingSavedSignatureModal, { companyId: 'company-1', requestId: ids.request, onClose: noop }))); }
+    finally { Reflect.deleteProperty(globalThis, 'document'); }
+    assert.match(html, new RegExp(`<a[^>]*href="/companies/company-1/expenses/signatures\\?fromClaim=${ids.request}"[^>]*>ไปหน้าลายเซ็น</a>`, 'u'));
+    const panel = require('../expenses/ExpensesWorkspacePanels') as typeof import('../expenses/ExpensesWorkspacePanels');
+    assert.equal(panel.signatureReturnText(false), 'เมื่อบันทึกลายเซ็นแล้ว กลับไปกดลงนามในใบเบิกได้ทันที');
+    assert.equal(panel.signatureReturnText(true), 'ลายเซ็นของคุณพร้อมใช้แล้ว กลับไปกดลงนามในใบเบิกได้เลย');
+    // Only a plain id is taken from the address, and only ever as the last part of this company's own claim page.
+    assert.equal(panel.RETURN_CLAIM_ID.test(ids.request), true);
+    for (const other of ['', 'a/b', '../settings', 'https://example.com', 'x'.repeat(65), 'claim 1', 'claim?x=1']) assert.equal(panel.RETURN_CLAIM_ID.test(other), false, other);
+    const source = readFileSync(join(__dirname, '../expenses/ExpensesWorkspacePanels.tsx'), 'utf8');
+    assert.match(source, /setFromClaimId\(RETURN_CLAIM_ID\.test\(id\) \? id : ''\);/);
+    assert.match(source, /href=\{`\/companies\/\$\{companyId\}\/reimbursements\/\$\{fromClaimId\}#reimbursement-signatures`\}/);
+    assert.match(source, /className=\{cx\(current \? btnClass : ghostClass, 'mt-2 min-h-11 w-full sm:w-auto'\)\}>\s+กลับไปที่ใบเบิก/);
+  });
+
   // Seen in the real look: the dialog opened under a red error toast that said the same thing in other words.
   it('is the one answer to that refusal: the sign call leaves it to the page, with no error toast beside the dialog', () => {
     const api = readFileSync(join(__dirname, 'reimbursements.api.ts'), 'utf8');

@@ -591,7 +591,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       />
 
       {previewModals}
-      {missingSignatureFor && <MissingSavedSignatureModal companyId={companyId} onClose={() => setMissingSignatureFor(null)} />}
+      {missingSignatureFor && <MissingSavedSignatureModal companyId={companyId} requestId={requestId} onClose={() => setMissingSignatureFor(null)} />}
       {rejecting && <RejectDialog
         requestNo={detail.requestNo}
         busy={busyAction === 'reject'}

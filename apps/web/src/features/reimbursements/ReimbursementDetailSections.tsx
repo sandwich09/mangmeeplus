@@ -281,8 +281,10 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
  * Signing was refused because the signer has saved no signature. A signature saved on "ลายเซ็นของฉัน" is usable at
  * once: nothing is waited for and nobody approves it, so the dialog says where to save one and to come back.
  */
-export function MissingSavedSignatureModal({ companyId, onClose }: {
+export function MissingSavedSignatureModal({ companyId, requestId, onClose }: {
   companyId: string;
+  /** The claim the signer is on: the signature page offers the way back to it once a signature is saved. */
+  requestId?: string;
   onClose: () => void;
 }) {
   return (
@@ -293,7 +295,7 @@ export function MissingSavedSignatureModal({ companyId, onClose }: {
         </p>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ไว้ภายหลัง</button>
-          <Link href={`/companies/${companyId}/expenses/signatures`} className={btnClass}>ไปหน้าลายเซ็น</Link>
+          <Link href={`/companies/${companyId}/expenses/signatures${requestId ? `?fromClaim=${encodeURIComponent(requestId)}` : ''}`} className={btnClass}>ไปหน้าลายเซ็น</Link>
         </div>
       </div>
     </Modal>
