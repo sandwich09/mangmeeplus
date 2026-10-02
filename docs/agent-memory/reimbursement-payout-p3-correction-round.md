@@ -82,7 +82,7 @@ All under `companies/:companyId/reimbursements`.
 | Sign or declare a signed scan | as before | nobody | nobody |
 | Cancel | as before | as before | as before |
 
-When someone other than the requester types the account, the requester gets the existing notice "… ระบุบัญชีรับเงินคืนในใบเบิกของคุณ", in the same transaction.
+When someone other than the requester gives the account, whatever they chose, the requester gets a notice in the same transaction, in the words of that answer: "… แก้บัญชีรับเงินในใบเบิกของคุณ: เลขที่ใบ", "… ยืนยันบัญชีเดิมในใบเบิกของคุณ: เลขที่ใบ" and so on (since 2026-10-02; before, only a typed account told them, as "… ระบุบัญชีรับเงินในใบเบิกของคุณ"). Payout spec §17.3.
 
 ### Refusal codes
 
