@@ -1311,14 +1311,16 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
   const rows = (detail: object) => logic.buildClaimTimeline(detail).map((row) => `${row.state}:${row.label}`);
   const FIRST = 'done:อนุมัติและตรวจบัญชีรับเงินโดย สมศรี ผู้จัดการ';
   const SENT = 'done:ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เลขบัญชีไม่ถูกต้อง · ธนาคารแจ้งว่าไม่พบบัญชีนี้';
+  /** The account-given row of the fixtures: the SCB account, version 2 of the claim's account history, masked. */
+  const GAVE = `done:ผู้เบิกแก้บัญชีรับเงิน · ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย ${SCB.accountLast4}`;
 
   it('keeps the first approval as history, then the send-back, the account given and the new approval, in the spec\'s words', () => {
     assert.deepEqual(rows(ready()), ['done:ยื่นใบ', FIRST, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
     assert.deepEqual(rows(phaseA()), ['done:ยื่นใบ', FIRST, SENT, 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
-    assert.deepEqual(rows(phaseB()), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน',
+    assert.deepEqual(rows(phaseB()), ['done:ยื่นใบ', FIRST, SENT, GAVE,
       'current:กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่', 'future:รอบันทึกจ่าย']);
     // The approval of the new account is told once, as the round's own row, never a second time as an approval of the claim.
-    assert.deepEqual(rows(reapproved()), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน',
+    assert.deepEqual(rows(reapproved()), ['done:ยื่นใบ', FIRST, SENT, GAVE,
       'done:อนุมัติบัญชีรับเงินใหม่โดย สมศรี ผู้จัดการ', 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
     // Each row of the round carries when it happened.
     const dated = logic.buildClaimTimeline(reapproved()).filter((row) => row.key.startsWith('correction-')).map((row) => row.date);
@@ -1328,6 +1330,24 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     const card = journey.slice(journey.indexOf('>', journey.indexOf('data-testid="reimbursement-timeline"')) + 1);
     assert.deepEqual(visible(card.slice(0, card.indexOf('</ol>'))).filter((text) => !/^[✓●○]$|^\d/u.test(text)),
       rows(reapproved()).map((row) => row.slice(row.indexOf(':') + 1)));
+  });
+
+  // Seen in the real look: a requester who gave the account twice within one minute had two rows that read alike, time included.
+  it('says what each account-given row gave, so a requester who gives the account twice has two rows that differ', () => {
+    const version3 = { version: 3, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกรุงเทพ', accountName: KBANK.accountName, accountLast4: '5667', source: 'REQUESTER', frozenAt: AT.given };
+    const twice = phaseB({ payoutHistory: [version1, version2, version3], payoutCorrectionHistory: [SENT_BACK, GIVEN, { ...GIVEN, payoutVersion: 3 }] });
+    assert.deepEqual(rows(twice).slice(3, 5), [GAVE, 'done:ผู้เบิกแก้บัญชีรับเงิน · ธนาคารกรุงเทพ เลขบัญชีลงท้าย 5667']);
+    // Changed to cash: said as the receiving method, with no account to name.
+    assert.equal(rows(phaseB({ payoutCorrectionHistory: [SENT_BACK, { ...GIVEN, payoutMethod: 'CASH', payoutVersion: undefined }] }))[3], 'done:ผู้เบิกแก้บัญชีรับเงิน · รับเป็นเงินสด');
+    // A detail that carries no such account (an older answer) keeps the row as the spec words it, and never prints a version number.
+    assert.equal(rows(phaseB({ payoutHistory: undefined }))[3], 'done:ผู้เบิกแก้บัญชีรับเงิน');
+    assert.equal(rows(phaseB({ payoutHistory: [version1] }))[3], 'done:ผู้เบิกแก้บัญชีรับเงิน');
+    for (const row of rows(twice)) assert.doesNotMatch(row, /\d{5,}/u, 'the last 4 digits only');
+    // The same account given twice on one day is the one case left where two rows read alike: they are told apart by their time.
+    const same = logic.buildClaimTimeline(phaseB({ payoutCorrectionHistory: [SENT_BACK, GIVEN, { ...GIVEN, at: '2026-10-01T05:20:00.000Z' }] })).filter((row) => row.label.startsWith('ผู้เบิกแก้บัญชีรับเงิน'));
+    assert.equal(same.length, 2);
+    const all = logic.buildClaimTimeline(phaseB({ payoutCorrectionHistory: [SENT_BACK, GIVEN, { ...GIVEN, at: '2026-10-01T05:20:00.000Z' }] }));
+    assert.notEqual(logic.timelineDateText(all, same[0]!), logic.timelineDateText(all, same[1]!));
   });
 
   it('ends with the payment into the new account once it is paid', () => {
@@ -1340,7 +1360,7 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
 
   it('names whoever gave the account on the requester\'s behalf, and prints no code for a reason it has no words for', () => {
     const onBehalf = phaseB({ payoutCorrectionHistory: [SENT_BACK, { ...GIVEN, byUserId: 'accountant', byName: 'สุภาวดี นักบัญชี' }] });
-    assert.equal(rows(onBehalf)[3], 'done:สุภาวดี นักบัญชี แก้บัญชีรับเงินแทนผู้เบิก');
+    assert.equal(rows(onBehalf)[3], `done:สุภาวดี นักบัญชี แก้บัญชีรับเงินแทนผู้เบิก · ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย ${SCB.accountLast4}`);
     const later = phaseA({ payoutCorrectionHistory: [{ kind: 'SENT_BACK', at: AT.sentBack, byUserId: 'gone', reasonCode: 'A_REASON_ADDED_LATER' }, { kind: 'A_KIND_ADDED_LATER', at: AT.given, byUserId: 'x' }] });
     assert.deepEqual(rows(later), ['done:ยื่นใบ', FIRST, 'done:ส่งกลับให้แก้บัญชีรับเงิน', 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
     for (const detail of [phaseA(), phaseB(), reapproved(), onBehalf, later]) assertPlainThai(logic.buildClaimTimeline(detail).map((row) => row.label), 'the journey');
@@ -1365,10 +1385,10 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
   // Plan 3.11 and 3.12 in the journey.
   it('keeps the finance review before the round for a claim that passed it, and has no new approval for a claim nobody approves', () => {
     const reviewed = { financeReviewRequired: true, financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByName: NAMES.payer, financeReviewedAt: '2026-10-01T03:30:00.000Z' };
-    assert.deepEqual(rows(phaseB(reviewed)), ['done:ยื่นใบ', FIRST, 'done:ฝ่ายการเงินตรวจแล้ว โดย วราภรณ์ การเงิน', SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน',
+    assert.deepEqual(rows(phaseB(reviewed)), ['done:ยื่นใบ', FIRST, 'done:ฝ่ายการเงินตรวจแล้ว โดย วราภรณ์ การเงิน', SENT, GAVE,
       'current:กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่', 'future:รอบันทึกจ่าย']);
     const noApproval = ready({ approvalSteps: [], approvedAt: AT.given, payout: { ...SCB, source: 'REQUESTER' }, payoutHistory: [version2], payoutCorrectionHistory: [SENT_BACK, GIVEN] });
-    assert.deepEqual(rows(noApproval), ['done:ยื่นใบ', SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน', 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
+    assert.deepEqual(rows(noApproval), ['done:ยื่นใบ', SENT, GAVE, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
     assert.deepEqual(rows(phaseA({ approvalSteps: [] })), ['done:ยื่นใบ', SENT, 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
   });
 
@@ -1380,14 +1400,14 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     assert.deepEqual(rows(phaseA({ payments: [voided('2026-10-01T03:45:00.000Z')] })),
       ['done:ยื่นใบ', FIRST, PAID, VOID, SENT, 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
     assert.deepEqual(rows(reapproved({ payments: [voided('2026-10-01T07:30:00.000Z')] })),
-      ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน', 'done:อนุมัติบัญชีรับเงินใหม่โดย สมศรี ผู้จัดการ', PAID, VOID, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
+      ['done:ยื่นใบ', FIRST, SENT, GAVE, 'done:อนุมัติบัญชีรับเงินใหม่โดย สมศรี ผู้จัดการ', PAID, VOID, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
   });
 
   it('keeps the round on a claim cancelled, or being cancelled, in it', () => {
     // Cancelling sets the step that waited aside, as it does for any claim.
     const cancelled = phaseB({ status: 'CANCELLED', currentDesk: undefined, payoutCorrectionPhase: undefined, payoutCorrection: undefined,
       approvalSteps: [setAside, { ...step2, status: 'CANCELLED', invalidatedAt: '2026-10-01T05:30:00.000Z', invalidatedReason: 'reimbursement_cancelled' }] });
-    assert.deepEqual(rows(cancelled), ['done:ยื่นใบ', FIRST, SENT, 'done:ผู้เบิกแก้บัญชีรับเงิน', 'done:ยกเลิกคำขอ']);
+    assert.deepEqual(rows(cancelled), ['done:ยื่นใบ', FIRST, SENT, GAVE, 'done:ยกเลิกคำขอ']);
     const cancelling = phaseA({ currentDesk: { kind: 'SYSTEM' }, pendingCancellation: { startedAt: AT.given, startedByName: NAMES.requester, reason: 'ซื้อซ้ำกับใบก่อน', canResume: false, canWithdraw: false } });
     assert.deepEqual(rows(cancelling), ['done:ยื่นใบ', FIRST, SENT, 'done:เริ่มยกเลิกคำขอ โดย สมชาย พนักงาน', 'current:กำลังรอระบบปรับสถานะ']);
   });

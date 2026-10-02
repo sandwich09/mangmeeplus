@@ -15,13 +15,13 @@ import {
 } from './reimbursements.model';
 import { payoutComparableText } from './reimbursement-payout.logic';
 // The payment step's side of the payout (kept as its own imports, apart from the blocks above).
-import { looksLikeAccountNumber, reimbursementPaymentHowText, type ReimbursementPaymentRule } from '@watchdog-bms/contracts';
+import { looksLikeAccountNumber, maskedPayoutAccount, reimbursementPaymentHowText, type ReimbursementPaymentRule } from '@watchdog-bms/contracts';
 import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 import {
   MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, REQUESTER_SELF_ATTESTED, type PaymentFormPayout,
 } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
-import { payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
+import { PAYOUT_METHOD_TEXT, payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
 import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS } from '@watchdog-bms/contracts';
 
 /**
@@ -827,7 +827,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   // What happened to the claim after it was approved, in the order it happened: a payment taken back, and the rows
   // of each correction round. A wrong account is often found after a transfer was voided, and often before any.
   const moment = (at: unknown) => Date.parse(String(at)) || 0;
-  const history = [...voided, ...corrections.map((event, index) => ({ at: event.at, rows: payoutCorrectionTimelineRows(event, index, detail?.requesterUserId) }))]
+  const history = [...voided, ...corrections.map((event, index) => ({ at: event.at, rows: payoutCorrectionTimelineRows(event, index, detail?.requesterUserId, detail?.payoutHistory) }))]
     .sort((left, right) => moment(left.at) - moment(right.at)).flatMap((entry) => entry.rows);
   if (status === 'CANCELLED' || status === 'VOIDED') {
     return [...rows, ...history, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
@@ -903,13 +903,26 @@ export function approvalStepCorrectionNote(step: { status?: string; invalidatedA
 }
 
 /**
+ * What a round's "account given" event gave, masked: cash, or the account of the claim's account history it names,
+ * by its bank and last 4 digits in the shared words of contracts. Empty where the detail carries no such row.
+ */
+function payoutCorrectionGivenText(event: any, payoutHistory: readonly any[] | null | undefined): string {
+  if (event?.payoutMethod === 'CASH') return PAYOUT_METHOD_TEXT.CASH!;
+  const account = (payoutHistory ?? []).find((row) => row?.version != null && row.version === event?.payoutVersion);
+  return account?.accountLast4 ? maskedPayoutAccount(account) : '';
+}
+
+/**
  * One thing that happened in a correction round, as a row of the claim's journey (spec §17.2): "ส่งกลับให้แก้
- * บัญชีรับเงินโดย … : เหตุผล" with the note that went with it, "ผู้เบิกแก้บัญชีรับเงิน", "อนุมัติบัญชีรับเงินใหม่โดย …".
+ * บัญชีรับเงินโดย … : เหตุผล" with the note that went with it, "ผู้เบิกแก้บัญชีรับเงิน" with what was given,
+ * "อนุมัติบัญชีรับเงินใหม่โดย …". A requester who gives the account twice (a slip of the finger put right at once)
+ * gets two rows that say different things; the time alone could not tell them apart within one minute.
  * Nothing for a kind of event this build has no words for.
  */
-function payoutCorrectionTimelineRows(event: any, index: number, requesterUserId?: string): ClaimTimelineRow[] {
+function payoutCorrectionTimelineRows(event: any, index: number, requesterUserId?: string, payoutHistory?: readonly any[] | null): ClaimTimelineRow[] {
+  const given = event?.kind === 'ACCOUNT_SUBMITTED' ? payoutCorrectionGivenText(event, payoutHistory) : '';
   const label = event?.kind === 'SENT_BACK' ? `${payoutCorrectionSentBackText(event)}${event.note ? ` · ${event.note}` : ''}`
-    : event?.kind === 'ACCOUNT_SUBMITTED' ? payoutCorrectionSubmittedText(event, requesterUserId)
+    : event?.kind === 'ACCOUNT_SUBMITTED' ? `${payoutCorrectionSubmittedText(event, requesterUserId)}${given ? ` · ${given}` : ''}`
       : event?.kind === 'REAPPROVED' ? `อนุมัติบัญชีรับเงินใหม่${event.byName ? `โดย ${event.byName}` : ''}` : null;
   return label ? [{ key: `correction-${index}`, state: 'done', label, date: event.at }] : [];
 }
