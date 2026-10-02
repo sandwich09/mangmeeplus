@@ -459,6 +459,7 @@ export function payoutCorrectionRoundStart<Approved extends { payoutMethod?: str
 type PayoutHolder = { payoutMethod?: string | null; payoutFingerprint?: string | null };
 /** A claim, as far as its round goes. */
 type PayoutCorrectionClaim = PayoutHolder & Parameters<typeof reimbursementPayoutCorrectionPhase>[0] & {
+  requesterUserId?: string | null;
   payoutCorrectionLog?: Parameters<typeof payoutCorrectionFacts>[0];
 };
 
@@ -481,13 +482,17 @@ export function payoutCorrectionHeld(claim: PayoutHolder): ReimbursementPayoutHe
  * what the answer before it gave. An approval approves the answer before it. Whether an answer is the
  * very destination the round began with was decided when it was taken (`sameAsApproved`). An entry
  * whose round has no opening on record gets no fact: its reader then says words true of every claim.
+ *
+ * An answer also says whether someone gave it on the requester's behalf (`requesterUserId`: the claim's
+ * requester): no sentence says the requester did what someone else did for them.
  */
 export function payoutCorrectionFacts(log: readonly {
   kind: string;
+  byUserId?: string | null;
   approved?: { payoutMethod?: string | null } | null;
   payoutMethod?: string | null;
   sameAsApproved?: boolean;
-}[] | null | undefined): Array<{ held?: ReimbursementPayoutHeld; answer?: ReimbursementPayoutRoundAnswer }> {
+}[] | null | undefined, requesterUserId?: string | null): Array<{ held?: ReimbursementPayoutHeld; answer?: ReimbursementPayoutRoundAnswer; onBehalf?: true }> {
   let start: ReimbursementPayoutHeld | undefined;
   let given: ReimbursementPayoutHeld | undefined;
   let answer: ReimbursementPayoutRoundAnswer | undefined;
@@ -503,8 +508,10 @@ export function payoutCorrectionFacts(log: readonly {
       const method = entry.payoutMethod === 'BANK_TRANSFER' || entry.payoutMethod === 'CASH' ? entry.payoutMethod : undefined;
       given = method && reimbursementPayoutHeld({ payoutMethod: method });
       answer = start && method ? reimbursementPayoutRoundAnswer(start, method, entry.sameAsApproved === true) : undefined;
+      const onBehalf = !!entry.byUserId && !!requesterUserId && entry.byUserId !== requesterUserId;
+      return { ...(answer && { answer }), ...(onBehalf && { onBehalf: true as const }) };
     }
-    // An answer, or the approval of the answer before it.
+    // The approval of the answer before it.
     return answer ? { answer } : {};
   });
 }
@@ -515,6 +522,17 @@ export function payoutCorrectionFacts(log: readonly {
  */
 export function payoutCorrectionAnswer(claim: PayoutCorrectionClaim): ReimbursementPayoutRoundAnswer | undefined {
   return payoutCorrectionPhase(claim) === 'AWAITING_APPROVAL' ? payoutCorrectionFacts(claim.payoutCorrectionLog).at(-1)?.answer : undefined;
+}
+
+/**
+ * Who gave the answer that waits for approval, and whether that was someone other than the claim's
+ * requester: the same last entry of the log. Undefined for a claim in any other state.
+ */
+export function payoutCorrectionAnsweredBy(claim: PayoutCorrectionClaim): { byUserId: string; onBehalf?: true } | undefined {
+  const answered = payoutCorrectionPhase(claim) === 'AWAITING_APPROVAL' ? claim.payoutCorrectionLog?.at(-1) : undefined;
+  if (answered?.kind !== 'ACCOUNT_SUBMITTED' || !answered.byUserId) return undefined;
+  const onBehalf = payoutCorrectionFacts(claim.payoutCorrectionLog, claim.requesterUserId).at(-1)?.onBehalf;
+  return { byUserId: answered.byUserId, ...(onBehalf && { onBehalf }) };
 }
 
 /**

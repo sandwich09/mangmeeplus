@@ -1354,8 +1354,9 @@ export async function payoutCorrectionHistoryOf(
   if (log.length === 0) return undefined;
   const names = await repo.getUserDisplayNames(req.companyId, log.map((entry) => entry.byUserId));
   // What the words of each row are chosen from (payout spec §14.2): what the claim held at a send-back, what
-  // an answer gave. The one reading of the log, so a row never reads its case off a reason code.
-  const facts = payoutCorrectionFacts(log);
+  // an answer gave, and whether someone gave it on the requester's behalf. The one reading of the log, so a
+  // row never reads its case off a reason code, nor says the requester did what someone else did for them.
+  const facts = payoutCorrectionFacts(log, req.requesterUserId);
   // `approved` is what the round started from: the detail says it once, as `payoutCorrection.previous`. Whether
   // an answer was the same destination is in its `answer`.
   return log.map(({ approved: _approved, sameAsApproved: _same, ...entry }, index) => ({

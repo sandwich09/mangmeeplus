@@ -18,7 +18,8 @@ import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, 
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
 import {
   isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket,
-  reimbursementPayoutAnswerNotice, reimbursementPayoutCorrectionReasons, reimbursementPayoutRoundStatus,
+  reimbursementPayoutAnswerNotice, reimbursementPayoutCorrectionReasons, reimbursementPayoutRoundApproverNote, reimbursementPayoutRoundDid,
+  reimbursementPayoutRoundGivenNote, reimbursementPayoutRoundStatus,
 } from '@watchdog-bms/contracts';
 import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase } from './reimbursement-summary.use-case';
 import { toRequestSummary } from '../dto/reimbursement.mapper';
@@ -4801,5 +4802,86 @@ describe('payout correction: what the claim held and what its requester answered
     delete world.claim().payoutCorrectionLog.at(-1).sameAsApproved;
     const read = await world.detail.execute(approverCtx(), id);
     assert.deepEqual([read.payoutCorrectionAnswer, read.payoutCorrection?.sameAsPrevious, reimbursementPayoutRoundStatus(read)], ['NEW_ACCOUNT', false, 'รออนุมัติบัญชีรับเงินใหม่']);
+  });
+});
+
+// No sentence may say the requester did what someone else did for them. A finance reviewer may answer a round on the
+// requester's behalf (payout spec §14.5): the row, the detail and the timeline then say who answered, so that every
+// sentence that says what was done can say it of that person.
+describe('payout correction: who answered, when someone answers for the requester', () => {
+  const LEGACY = { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined };
+  const holding = async (held: 'ACCOUNT' | 'CASH' | 'NOTHING') => {
+    const world = correctionWorld();
+    const id = await world.ready(held === 'ACCOUNT' ? {} : { setDefault: null, payout: { mode: 'CASH' } });
+    if (held === 'NOTHING') Object.assign(world.claim(), LEGACY);
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: { ACCOUNT: 'ACCOUNT_NUMBER_WRONG', CASH: 'CASH_NOT_PAYABLE', NOTHING: 'NO_ACCOUNT_ON_CLAIM' }[held] });
+    return { world, id };
+  };
+
+  it('names the finance reviewer who answered, on the row, the detail and the timeline, and in every sentence made from them, for each of the seven answers', async () => {
+    const cases = [
+      ['ACCOUNT', { mode: 'SPECIFIED', ...SCB }, 'NEW_ACCOUNT', 'อรทัย แก้บัญชีรับเงินแทนผู้เบิก'],
+      ['ACCOUNT', { mode: 'PREVIOUS' }, 'SAME_ACCOUNT', 'อรทัย ยืนยันบัญชีเดิมแทนผู้เบิก'],
+      ['ACCOUNT', { mode: 'CASH' }, 'CASH_INSTEAD', 'อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก'],
+      ['CASH', { mode: 'SPECIFIED', ...KBANK }, 'ACCOUNT_INSTEAD', 'อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก'],
+      ['CASH', { mode: 'CASH' }, 'SAME_CASH', 'อรทัย ยืนยันวิธีรับเงินคืนเดิมแทนผู้เบิก'],
+      ['NOTHING', { mode: 'SPECIFIED', ...KBANK }, 'FIRST_ACCOUNT', 'อรทัย เพิ่มบัญชีรับเงินแทนผู้เบิก'],
+      ['NOTHING', { mode: 'CASH' }, 'FIRST_CASH', 'อรทัย เลือกวิธีรับเงินคืนแทนผู้เบิก'],
+    ] as const;
+    for (const [held, give, answer, did] of cases) {
+      const { world, id } = await holding(held);
+      const given = await world.giveAccount.execute(financeCtx(), id, give as any);
+      // The detail names who answered. A list row resolves no names, and still says it was not the requester.
+      const who = { byUserId: 'finance-1', byName: 'อรทัย', onBehalf: true as const };
+      assert.deepEqual([given.payoutCorrectionAnswer, given.payoutCorrectionAnsweredBy], [answer, who], answer);
+      assert.deepEqual(toRequestSummary(world.claim()).payoutCorrectionAnsweredBy, { byUserId: 'finance-1', onBehalf: true }, answer);
+      const waiting = await world.detail.execute(approverCtx(), id);
+      const event = waiting.payoutCorrectionHistory!.at(-1)!;
+      assert.deepEqual([event.kind, event.answer, event.byUserId, event.byName, event.onBehalf], ['ACCOUNT_SUBMITTED', answer, 'finance-1', 'อรทัย', true], answer);
+
+      // The sentences made from them, as the web will make them: the timeline row, the approver's step note and the
+      // card's note name อรทัย and say it was for the requester. Nothing says the requester did it.
+      const said = [
+        reimbursementPayoutRoundDid(event.answer!, event),
+        reimbursementPayoutRoundApproverNote(waiting.payoutCorrectionAnswer!, waiting.payoutCorrectionAnsweredBy),
+        reimbursementPayoutRoundGivenNote(waiting.payoutCorrectionAnsweredBy),
+      ];
+      assert.equal(said[0], did, answer);
+      assert.equal(said[1], reimbursementPayoutRoundApproverNote(answer, who), answer);
+      assert.doesNotMatch(said.join(' ').replaceAll('แทนผู้เบิก', ''), /ผู้เบิก|finance-1/, answer);
+      for (const sentence of answer === 'NEW_ACCOUNT' ? [said[0]!, said[2]!] : said) assert.match(sentence, /อรทัย .*แทนผู้เบิก/, answer);
+
+      // The approvers' notice says what waits for them and names nobody: it is the notice of the same answer by the requester.
+      const waits = world.events().at(-1).payloadJson.data;
+      assert.deepEqual([world.events().at(-1).eventType, { title: waits.payoutAnswerTitle, body: waits.payoutAnswerNotice }],
+        ['reimbursement.payout_correction_submitted', reimbursementPayoutAnswerNotice(answer)], answer);
+      assert.doesNotMatch(`${waits.payoutAnswerTitle} ${waits.payoutAnswerNotice}`, /ผู้เบิก|อรทัย/, answer);
+
+      // Approved: the approval is the approver's own act, and out of its round the claim carries no answerer.
+      await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, waiting.payout?.version);
+      const after = await world.detail.execute(payerCtx(), id);
+      assert.deepEqual(after.payoutCorrectionHistory!.map((entry) => [entry.kind, entry.byName, entry.onBehalf]),
+        [['SENT_BACK', 'ประไพ', undefined], ['ACCOUNT_SUBMITTED', 'อรทัย', true], ['REAPPROVED', 'วิภา', undefined]], answer);
+      assert.deepEqual([after.payoutCorrectionAnsweredBy, toRequestSummary(world.claim()).payoutCorrectionAnsweredBy], [undefined, undefined], answer);
+    }
+  });
+
+  it('says the requester answered when they did, also after someone answered for them', async () => {
+    const { world, id } = await holding('ACCOUNT');
+    await world.giveAccount.execute(financeCtx(), id, { mode: 'CASH' });
+    assert.equal((await world.detail.execute(approverCtx(), id)).payoutCorrectionAnsweredBy?.onBehalf, true);
+    // The requester gives the account themselves while the reviewer's answer still waits: theirs is the answer now.
+    const own = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual([own.payoutCorrectionAnswer, own.payoutCorrectionAnsweredBy], ['SAME_ACCOUNT', { byUserId: 'staff-1', byName: 'สมชาย' }]);
+    assert.deepEqual(toRequestSummary(world.claim()).payoutCorrectionAnsweredBy, { byUserId: 'staff-1' });
+    const history = (await world.detail.execute(approverCtx(), id)).payoutCorrectionHistory!;
+    assert.deepEqual(history.map((entry) => [entry.kind, entry.answer, entry.onBehalf]),
+      [['SENT_BACK', undefined, undefined], ['ACCOUNT_SUBMITTED', 'CASH_INSTEAD', true], ['ACCOUNT_SUBMITTED', 'SAME_ACCOUNT', undefined]]);
+    assert.deepEqual(history.slice(1).map((entry) => reimbursementPayoutRoundDid(entry.answer!, entry)), ['อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก', 'ผู้เบิกยืนยันบัญชีเดิม']);
+    assert.equal(reimbursementPayoutRoundApproverNote(own.payoutCorrectionAnswer!, own.payoutCorrectionAnsweredBy),
+      'รอคุณอนุมัติบัญชีรับเงินเดิม ผู้เบิกยืนยันบัญชีเดิมของใบนี้ ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน');
+    // With its requester (not yet answered, or sent back again) nobody has answered what the claim waits for.
+    await world.sendBack.execute(approverCtx(), id, { reasonCode: 'OTHER' });
+    assert.equal((await world.detail.execute(ctx(), id)).payoutCorrectionAnsweredBy, undefined);
   });
 });

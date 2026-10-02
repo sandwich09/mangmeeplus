@@ -4508,6 +4508,13 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
 
       const given = await round(0).giveAccount.execute(finance(), claim.requestId, { mode: 'PREVIOUS' });
       assert.deepEqual([given.payoutCorrection?.phase, given.payout?.version, given.payout?.accountLast4], ['AWAITING_APPROVAL', 2, '5678']);
+      // It was the finance reviewer who answered, not the requester: the detail, a list row and the timeline say so,
+      // so that no sentence says the requester confirmed the account.
+      assert.deepEqual([given.payoutCorrectionAnswer, given.payoutCorrectionAnsweredBy], ['SAME_ACCOUNT', { byUserId: FIN, byName: 'วราภรณ์ การเงิน', onBehalf: true }]);
+      const listed = (await repos[1]!.listRequests({ companyId, scopes: {}, statuses: ['PENDING_APPROVAL'] })).find((row) => row.id === claim.requestId)!;
+      assert.deepEqual(toRequestSummary(listed).payoutCorrectionAnsweredBy, { byUserId: FIN, onBehalf: true });
+      assert.deepEqual((await on(1).detail.execute(manager(), claim.requestId)).payoutCorrectionHistory!.map((entry) => [entry.kind, entry.byName, entry.onBehalf ?? null]),
+        [['SENT_BACK', 'วราภรณ์ การเงิน', null], ['ACCOUNT_SUBMITTED', 'วราภรณ์ การเงิน', true]]);
       const [first, second] = await accountVersionsOf(claim.requestId);
       // The sealed columns moved as one unit into a frozen version of its own; the first is as it was.
       assert.deepEqual([second!.version, second!.accountNumberEncrypted, second!.accountLast4, second!.fingerprint, second!.source, second!.createdByUserId, second!.frozenAt !== null, second!.verifiedByUserId],
@@ -4537,6 +4544,8 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const kept = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'PREVIOUS' });
     assert.deepEqual([kept.payoutCorrection?.phase, kept.payoutCorrection?.sameAsPrevious, kept.payout?.version, kept.payoutCorrection?.previous?.version, kept.payoutCorrectionAnswer],
       ['AWAITING_APPROVAL', true, 2, 1, 'SAME_ACCOUNT']);
+    // The requester answered for themselves: nothing is said to be on anyone's behalf.
+    assert.deepEqual(kept.payoutCorrectionAnsweredBy, { byUserId: STAFF, byName: 'สมชาย พนักงาน' });
     // Compared once, in the transaction that took the answer, and kept on the round's own record: no read compares again.
     const answersOnRecord = async () => ((await claimRow(claim.requestId)).payoutCorrectionLogJson as any[])
       .filter((entry) => entry.kind === 'ACCOUNT_SUBMITTED').map((entry) => [entry.payoutVersion, entry.sameAsApproved]);

@@ -27,7 +27,7 @@ import type {
 } from '../../domain/models/reimbursement.model';
 import {
   claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment,
-  payoutCorrectionAnswer, payoutCorrectionPhase, payoutCorrectionRoundStart,
+  payoutCorrectionAnswer, payoutCorrectionAnsweredBy, payoutCorrectionPhase, payoutCorrectionRoundStart,
 } from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
@@ -71,6 +71,7 @@ export function toRequestSummary(
   // A claim sent back from the pay step for its payout destination (payout spec §14): whom it waits for.
   const correctionPhase = payoutCorrectionPhase(r);
   const correctionAnswer = payoutCorrectionAnswer(r);
+  const answeredBy = payoutCorrectionAnsweredBy(r);
   const desk = currentDesk({
     status: r.status,
     financeReviewStatus: r.financeReviewStatus,
@@ -114,6 +115,13 @@ export function toRequestSummary(
     // Once its requester has answered: what was given, against what the round began with. With the method
     // above, it is what the words of a round are chosen from (payout spec §14.2).
     ...(correctionAnswer && { payoutCorrectionAnswer: correctionAnswer }),
+    // And who gave it: the requester, or someone on their behalf, named where the names were loaded. No
+    // sentence says the requester did what someone else did for them.
+    ...(answeredBy && { payoutCorrectionAnsweredBy: {
+      byUserId: answeredBy.byUserId,
+      ...(options.approverNames?.[answeredBy.byUserId] && { byName: options.approverNames[answeredBy.byUserId] }),
+      ...(answeredBy.onBehalf && { onBehalf: true as const }),
+    } }),
     paymentTotalAmount: r.paymentTotalAmount,
     outstandingAmount: r.outstandingAmount,
     lineCount: r.lineCount ?? r.lines?.length ?? 0,
@@ -217,8 +225,9 @@ export function detailUserIds(r: ReimbursementRequestRecord): string[] {
   return [
     r.createdByUserId,
     r.financeReviewedByUserId,
-    // Whoever sent the claim back to have its payout account corrected: the round's note names them.
+    // Whoever sent the claim back from the pay step, and whoever answered it: the round's notes name them.
     r.payoutCorrectionRequestedByUserId,
+    payoutCorrectionAnsweredBy(r)?.byUserId,
     // The frozen assignees too: they are the people the timeline's "กำลังรอ" row names.
     ...(r.approvalSteps ?? []).flatMap((s) => [s.approverUserId, s.decisionByUserId, ...(s.assignedApproverUserIds ?? [])]),
     ...(r.payments ?? []).map((p) => p.paidByUserId),

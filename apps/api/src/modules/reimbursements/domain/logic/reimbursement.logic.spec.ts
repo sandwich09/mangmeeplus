@@ -62,15 +62,17 @@ import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
 // A payout account correction round (payout spec §14).
 import { approvalWaitStartedAt, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionSourceStep, PAYOUT_CORRECTION_STEP_REASON } from './reimbursement.logic';
 // The facts behind the words of a round (payout spec §14.2).
-import { payoutCorrectionAnswer, payoutCorrectionFacts, payoutCorrectionHeld, payoutCorrectionRequesterDesk, payoutCorrectionStatusLabel } from './reimbursement.logic';
+import {
+  payoutCorrectionAnswer, payoutCorrectionAnsweredBy, payoutCorrectionFacts, payoutCorrectionHeld, payoutCorrectionRequesterDesk, payoutCorrectionStatusLabel,
+} from './reimbursement.logic';
 import { mayTypePayoutAccountFor, payoutDefaultToken } from './payout-destination.logic';
 import {
   isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionReasons, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
   reimbursementHubBucket, reimbursementPayoutCorrectionPhase,
   // The words of a round, by what the claim held and what its requester answered (payout spec §14.2).
   reimbursementPayoutAnswerNotice, reimbursementPayoutHeld, reimbursementPayoutRoundAnswer, reimbursementPayoutRoundApproves,
-  reimbursementPayoutRoundAsk, reimbursementPayoutRoundDid, reimbursementPayoutRoundSendBack, reimbursementPayoutRoundStatus,
-  reimbursementPayoutSentBackNotice, REIMBURSEMENT_PAYOUT_ROUND_TEXTS,
+  reimbursementPayoutRoundApproverNote, reimbursementPayoutRoundAsk, reimbursementPayoutRoundCashNote, reimbursementPayoutRoundDid, reimbursementPayoutRoundGivenNote,
+  reimbursementPayoutRoundSendBack, reimbursementPayoutRoundStatus, reimbursementPayoutSentBackNotice, REIMBURSEMENT_PAYOUT_ROUND_TEXTS,
   type ReimbursementPayoutHeld, type ReimbursementPayoutRoundAnswer,
 } from '@watchdog-bms/contracts';
 
@@ -1581,7 +1583,7 @@ describe('payout account correction round', () => {
   it('words a claim that waits for its approvers by what its requester answered', () => {
     const words = (answer: ReimbursementPayoutRoundAnswer) => {
       const notice = reimbursementPayoutAnswerNotice(answer);
-      return [reimbursementPayoutRoundDid(answer), reimbursementPayoutRoundDid(answer, 'อรทัย'), reimbursementPayoutRoundApproves(answer),
+      return [reimbursementPayoutRoundDid(answer), reimbursementPayoutRoundDid(answer, { onBehalf: true, byName: 'อรทัย' }), reimbursementPayoutRoundApproves(answer),
         reimbursementPayoutRoundStatus({ payoutCorrectionPhase: 'AWAITING_APPROVAL', payoutMethod: 'CASH', payoutCorrectionAnswer: answer }), notice.title, notice.body];
     };
     assert.deepEqual(Object.fromEntries(ANSWERS.map((answer) => [answer, words(answer)])), {
@@ -1598,6 +1600,77 @@ describe('payout account correction round', () => {
     const said = (word: RegExp) => ANSWERS.filter((answer) => word.test(words(answer).join(' ')));
     assert.deepEqual([said(/ใหม่/), said(/เดิม/), said(/แก้/)], [['NEW_ACCOUNT'], ['SAME_ACCOUNT', 'SAME_CASH'], ['NEW_ACCOUNT']]);
     for (const answer of ['CASH_INSTEAD', 'SAME_CASH', 'FIRST_CASH'] as const) assert.doesNotMatch(words(answer).join(' '), /บัญชี/, answer);
+  });
+
+  // No sentence may say the requester did what someone else did for them. A finance reviewer may answer a round on the
+  // requester's behalf: every sentence that says who answered then names that person, and says it was done for the
+  // requester. Before, the words of what was done had the requester as their subject whoever had answered.
+  it('names whoever answered for the requester in every sentence that says what was done, in each of the seven answers', () => {
+    type Who = Parameters<typeof reimbursementPayoutRoundDid>[1];
+    // The requester answered: no fact at all, a fact that says so, or a history event of the requester's own answer.
+    const ownEvent = { kind: 'ACCOUNT_SUBMITTED', byUserId: 'staff-1', byName: 'สมชาย' };
+    const byRequester: Who[] = [undefined, null, {}, { onBehalf: false, byName: 'สมชาย' }, ownEvent];
+    // Someone else did: as a claim detail (`payoutCorrectionAnsweredBy`) and a history event carry it.
+    const forRequester = { byUserId: 'finance-1', byName: 'อรทัย', onBehalf: true as const };
+    const sentences = (answer: ReimbursementPayoutRoundAnswer, who: Who) => [reimbursementPayoutRoundDid(answer, who), reimbursementPayoutRoundApproverNote(answer, who)];
+    const expected: Record<ReimbursementPayoutRoundAnswer, [string[], string[]]> = {
+      NEW_ACCOUNT: [
+        ['ผู้เบิกแก้บัญชีรับเงิน', 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'],
+        ['อรทัย แก้บัญชีรับเงินแทนผู้เบิก', 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'],
+      ],
+      SAME_ACCOUNT: [
+        ['ผู้เบิกยืนยันบัญชีเดิม', 'รอคุณอนุมัติบัญชีรับเงินเดิม ผู้เบิกยืนยันบัญชีเดิมของใบนี้ ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'],
+        ['อรทัย ยืนยันบัญชีเดิมแทนผู้เบิก', 'รอคุณอนุมัติบัญชีรับเงินเดิม อรทัย ยืนยันบัญชีเดิมของใบนี้แทนผู้เบิก ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'],
+      ],
+      CASH_INSTEAD: [
+        ['ผู้เบิกเปลี่ยนวิธีรับเงินคืน', 'รอคุณอนุมัติการรับเป็นเงินสด ผู้เบิกเปลี่ยนจากโอนเข้าบัญชีเป็นรับเป็นเงินสด รายการและยอดเงินไม่เปลี่ยน'],
+        ['อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก', 'รอคุณอนุมัติการรับเป็นเงินสด อรทัย เปลี่ยนจากโอนเข้าบัญชีเป็นรับเป็นเงินสดแทนผู้เบิก รายการและยอดเงินไม่เปลี่ยน'],
+      ],
+      ACCOUNT_INSTEAD: [
+        ['ผู้เบิกเปลี่ยนวิธีรับเงินคืน', 'รอคุณอนุมัติบัญชีรับเงิน ผู้เบิกเปลี่ยนจากรับเป็นเงินสดเป็นโอนเข้าบัญชี ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'],
+        ['อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก', 'รอคุณอนุมัติบัญชีรับเงิน อรทัย เปลี่ยนจากรับเป็นเงินสดเป็นโอนเข้าบัญชีแทนผู้เบิก ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'],
+      ],
+      SAME_CASH: [
+        ['ผู้เบิกยืนยันวิธีรับเงินคืนเดิม', 'รอคุณอนุมัติการรับเป็นเงินสด ผู้เบิกยืนยันรับเป็นเงินสดตามเดิม ไม่ได้เปลี่ยน รายการและยอดเงินไม่เปลี่ยน'],
+        ['อรทัย ยืนยันวิธีรับเงินคืนเดิมแทนผู้เบิก', 'รอคุณอนุมัติการรับเป็นเงินสด อรทัย ยืนยันรับเป็นเงินสดตามเดิมแทนผู้เบิก ไม่ได้เปลี่ยน รายการและยอดเงินไม่เปลี่ยน'],
+      ],
+      FIRST_ACCOUNT: [
+        ['ผู้เบิกเพิ่มบัญชีรับเงิน', 'รอคุณอนุมัติบัญชีรับเงิน ใบนี้ไม่เคยมีบัญชีรับเงิน ตรวจบัญชีที่ผู้เบิกเพิ่มด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'],
+        ['อรทัย เพิ่มบัญชีรับเงินแทนผู้เบิก', 'รอคุณอนุมัติบัญชีรับเงิน ใบนี้ไม่เคยมีบัญชีรับเงิน ตรวจบัญชีที่ อรทัย เพิ่มแทนผู้เบิกด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'],
+      ],
+      FIRST_CASH: [
+        ['ผู้เบิกเลือกวิธีรับเงินคืน', 'รอคุณอนุมัติการรับเป็นเงินสด ใบนี้ไม่เคยมีบัญชีรับเงิน ผู้เบิกเลือกรับเป็นเงินสด รายการและยอดเงินไม่เปลี่ยน'],
+        ['อรทัย เลือกวิธีรับเงินคืนแทนผู้เบิก', 'รอคุณอนุมัติการรับเป็นเงินสด ใบนี้ไม่เคยมีบัญชีรับเงิน อรทัย เลือกรับเป็นเงินสดแทนผู้เบิก รายการและยอดเงินไม่เปลี่ยน'],
+      ],
+    };
+    for (const answer of ANSWERS) {
+      for (const who of byRequester) assert.deepEqual(sentences(answer, who), expected[answer][0], `${answer}, ${JSON.stringify(who)}`);
+      const [did, note] = sentences(answer, forRequester) as [string, string];
+      assert.deepEqual([did, note], expected[answer][1], answer);
+      // Whoever did it is its subject, it was done for the requester, and the requester is named for nothing else.
+      assert.match(did, /^อรทัย .+แทนผู้เบิก$/, answer);
+      assert.doesNotMatch(`${did} ${note}`.replaceAll('แทนผู้เบิก', ''), /ผู้เบิก/, answer);
+      // The note begins with the thing that waits for approval, whoever answered, and is plain Thai but for the name.
+      for (const text of [note, expected[answer][0][1]!]) assert.ok(text.startsWith(`รอคุณอนุมัติ${reimbursementPayoutRoundApproves(answer)} `), answer);
+      assert.doesNotMatch(`${did} ${note}`, /[A-Za-z_{}$]/, answer);
+      // The approvers' notice and the status say what waits, of nobody: they need no word of who answered.
+      const notice = reimbursementPayoutAnswerNotice(answer);
+      assert.doesNotMatch(`${notice.title} ${notice.body} ${reimbursementPayoutRoundStatus({ payoutCorrectionPhase: 'AWAITING_APPROVAL', payoutCorrectionAnswer: answer })}`, /ผู้เบิก/, answer);
+    }
+    // The card "การรับเงินคืน" while the answer waits: who sent what it shows, and who chose cash.
+    assert.deepEqual([reimbursementPayoutRoundGivenNote(), reimbursementPayoutRoundGivenNote(ownEvent), reimbursementPayoutRoundGivenNote(forRequester)], [
+      'ด้านล่างคือวิธีรับเงินคืนที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้',
+      'ด้านล่างคือวิธีรับเงินคืนที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้',
+      'ด้านล่างคือวิธีรับเงินคืนที่ อรทัย ส่งมาแทนผู้เบิก รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้',
+    ]);
+    assert.deepEqual([reimbursementPayoutRoundCashNote(), reimbursementPayoutRoundCashNote(forRequester)],
+      ['ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี', 'อรทัย เลือกรับเป็นเงินสดแทนผู้เบิก ไม่ต้องมีบัญชี']);
+    // A name that cannot be resolved (a row carries none; the person may have left): still not the requester, and never an id.
+    const unnamed: Who[] = [{ onBehalf: true }, { onBehalf: true, byName: '  ' }, { onBehalf: true, byName: null }];
+    for (const who of unnamed) {
+      assert.equal(reimbursementPayoutRoundDid('SAME_CASH', who), 'ผู้จัดทำ ยืนยันวิธีรับเงินคืนเดิมแทนผู้เบิก');
+      assert.equal(reimbursementPayoutRoundGivenNote(who), 'ด้านล่างคือวิธีรับเงินคืนที่ ผู้จัดทำ ส่งมาแทนผู้เบิก รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้');
+    }
   });
 
   it('says words that are true of every claim where the fact is not known, and nothing of a claim in no round', () => {
@@ -1621,7 +1694,7 @@ describe('payout account correction round', () => {
     const flat = (table: Record<string, Record<string, string | readonly string[]>>) =>
       Object.entries(table).flatMap(([row, cells]) => Object.entries(cells).flatMap(([cell, text]) => [text].flat().map((sentence) => [`${row}.${cell}`, sentence] as const)));
     const everySentence = [...flat(texts.held), ...flat(texts.given), ...flat(texts.answer)];
-    assert.equal(everySentence.length, 3 * 12 + 2 * 6 + 7 * 2 + 12);
+    assert.equal(everySentence.length, 3 * 12 + 2 * 6 + 7 * 1 + 12);
     for (const [where, sentence] of everySentence) {
       assert.ok(sentence.trim() === sentence && sentence.length > 0, where);
       assert.doesNotMatch(sentence, /[A-Za-z_{}$]/, where);
@@ -1651,7 +1724,6 @@ describe('payout account correction round', () => {
     });
     for (const answer of ANSWERS) {
       assert.equal(texts.answer[answer].cardTitle, `สิ่งที่รออนุมัติ: ${reimbursementPayoutRoundApproves(answer)}`, answer);
-      assert.ok(texts.answer[answer].approverNote.startsWith(`รอคุณอนุมัติ${reimbursementPayoutRoundApproves(answer)} `), answer);
       assert.equal(texts.answer[answer].cardRows.length, answer === 'SAME_ACCOUNT' || answer === 'SAME_CASH' ? 1 : 2, answer);
     }
   });
@@ -1686,6 +1758,18 @@ describe('payout account correction round', () => {
     assert.deepEqual(payoutCorrectionFacts([sentBack(), answered('CASH'), approved]), [{}, {}, {}]);
     assert.deepEqual(payoutCorrectionFacts([sentBack({ payoutMethod: 'CASH' }), answered('A_METHOD_ADDED_LATER'), sentBack(), approved]), [{ held: 'CASH' }, {}, {}, {}]);
     assert.deepEqual([payoutCorrectionFacts([]), payoutCorrectionFacts(undefined), payoutCorrectionFacts(null)], [[], [], []]);
+    // Who answered: an answer by anyone but the claim's requester was given on the requester's behalf. Only an answer
+    // says so (whoever sends a claim back or approves it does that in their own name).
+    const mixed = [
+      sentBack({ payoutMethod: 'CASH' }), { ...answered('CASH', true), byUserId: 'finance-1' }, { ...sentBack(), byUserId: 'mgr-1' },
+      { ...answered('BANK_TRANSFER'), byUserId: 'staff-1' }, { ...approved, byUserId: 'mgr-1' },
+    ];
+    assert.deepEqual(payoutCorrectionFacts(mixed, 'staff-1'),
+      [{ held: 'CASH' }, { answer: 'SAME_CASH', onBehalf: true }, { held: 'CASH' }, { answer: 'ACCOUNT_INSTEAD' }, { answer: 'ACCOUNT_INSTEAD' }]);
+    // An answer with no record of how its round began still says who gave it.
+    assert.deepEqual(payoutCorrectionFacts([{ ...answered('CASH'), byUserId: 'finance-1' }], 'staff-1'), [{ onBehalf: true }]);
+    // With no requester to measure against, nothing is said of it.
+    assert.deepEqual(payoutCorrectionFacts(mixed).map((fact) => fact.onBehalf), [undefined, undefined, undefined, undefined, undefined]);
   });
 
   it('says of a claim record what it holds and what it waits for, in the words every other reader uses', () => {
@@ -1718,9 +1802,14 @@ describe('payout account correction round', () => {
     // A round with no record of how it began: words that are true of every answer.
     const unknown = waiting(answered('CASH'));
     assert.deepEqual([payoutCorrectionAnswer(unknown), payoutCorrectionStatusLabel(unknown)], [undefined, 'รออนุมัติวิธีรับเงินคืน']);
-    // Out of its round, whatever its log holds: no answer and no words of a round.
+    // Who gave the answer that waits: the requester, or someone on their behalf. The log entries above are by 'u'.
+    assert.deepEqual([payoutCorrectionAnsweredBy({ ...kept, requesterUserId: 'u' }), payoutCorrectionAnsweredBy({ ...kept, requesterUserId: 'staff-1' })],
+      [{ byUserId: 'u' }, { byUserId: 'u', onBehalf: true }]);
+    assert.equal(payoutCorrectionAnsweredBy({ ...withRequester, ...account, requesterUserId: 'staff-1' }), undefined, 'nobody has answered yet');
+    // Out of its round, whatever its log holds: no answer, nobody who gave it and no words of a round.
     for (const status of ['READY_FOR_PAYMENT', 'CANCELLED', 'PAID'] as const) {
-      assert.deepEqual([payoutCorrectionAnswer({ ...kept, status }), payoutCorrectionStatusLabel({ ...kept, status })], [undefined, undefined], status);
+      assert.deepEqual([payoutCorrectionAnswer({ ...kept, status }), payoutCorrectionAnsweredBy({ ...kept, status, requesterUserId: 'staff-1' }), payoutCorrectionStatusLabel({ ...kept, status })],
+        [undefined, undefined, undefined], status);
     }
   });
 });

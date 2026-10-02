@@ -625,6 +625,11 @@ export type ReimbursementRequestSummary = {
    * round began. Absent on a claim whose round has no record of how it began.
    */
   payoutCorrectionAnswer?: ReimbursementPayoutRoundAnswer;
+  /**
+   * AWAITING_APPROVAL only: who gave that answer, and whether it was someone other than the requester. A
+   * sentence that says what was done says it of this person (`reimbursementPayoutRoundDid`).
+   */
+  payoutCorrectionAnsweredBy?: ReimbursementPayoutRoundAnsweredBy;
   paymentTotalAmount: string;
   outstandingAmount: string;
   lineCount: number;
@@ -1092,12 +1097,73 @@ export function reimbursementPayoutRoundSendBack(held: ReimbursementPayoutHeld):
 }
 
 /**
- * Who answered a round and what they did, as the timeline and the approvers' card say it: the requester,
- * or, when someone answered on the requester's behalf, that person by name.
+ * Who gave an answer of a round: the requester, or someone on the requester's behalf (a finance reviewer may).
+ * A list row, a claim detail and a history event carry it, because no sentence may say the requester did what
+ * someone else did for them: every sentence that says who answered takes this.
  */
-export function reimbursementPayoutRoundDid(answer: ReimbursementPayoutRoundAnswer, onBehalfByName?: string | null): string {
-  const did = PAYOUT_ROUND_ANSWER_WORDS[answer].did;
-  return onBehalfByName ? `${onBehalfByName} ${did}แทนผู้เบิก` : `ผู้เบิก${did}`;
+export type ReimbursementPayoutRoundAnsweredBy = {
+  byUserId: string;
+  /** Absent when the name cannot be resolved; a list row resolves none. */
+  byName?: string;
+  /** Present when it was not the requester. */
+  onBehalf?: true;
+};
+
+/** What a sentence needs of who answered. None at all: the requester. A row, a detail's `payoutCorrectionAnsweredBy` and a history event all fit. */
+type PayoutRoundAnsweredBy = { onBehalf?: boolean | null; byName?: string | null } | null | undefined;
+
+/**
+ * The doer of "what was done", at the head of a sentence and inside one, and what follows the verb when it was
+ * done for the requester. A name that cannot be resolved reads "ผู้จัดทำ": an id is never printed.
+ */
+function payoutRoundDoer(answeredBy: PayoutRoundAnsweredBy): { who: string; named: string; forRequester: string } {
+  if (!answeredBy?.onBehalf) return { who: 'ผู้เบิก', named: 'ผู้เบิก', forRequester: '' };
+  const name = answeredBy.byName?.trim() || 'ผู้จัดทำ';
+  return { who: `${name} `, named: ` ${name} `, forRequester: 'แทนผู้เบิก' };
+}
+
+/**
+ * Who answered a round and what they did, as the timeline and the approvers' card say it: "ผู้เบิกแก้บัญชีรับเงิน"
+ * when the requester answered, "{ชื่อ} แก้บัญชีรับเงินแทนผู้เบิก" when someone answered on the requester's behalf.
+ */
+export function reimbursementPayoutRoundDid(answer: ReimbursementPayoutRoundAnswer, answeredBy?: PayoutRoundAnsweredBy): string {
+  const { who, forRequester } = payoutRoundDoer(answeredBy);
+  return `${who}${PAYOUT_ROUND_ANSWER_WORDS[answer].did}${forRequester}`;
+}
+
+/** The step note of whoever may approve an answer, by the answer and by who gave it. */
+const PAYOUT_ROUND_APPROVER_NOTES: Record<ReimbursementPayoutRoundAnswer, (doer: ReturnType<typeof payoutRoundDoer>) => string> = {
+  NEW_ACCOUNT: () => 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน',
+  SAME_ACCOUNT: ({ who, forRequester }) => `รอคุณอนุมัติบัญชีรับเงินเดิม ${who}ยืนยันบัญชีเดิมของใบนี้${forRequester} ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน`,
+  CASH_INSTEAD: ({ who, forRequester }) => `รอคุณอนุมัติการรับเป็นเงินสด ${who}เปลี่ยนจากโอนเข้าบัญชีเป็นรับเป็นเงินสด${forRequester} รายการและยอดเงินไม่เปลี่ยน`,
+  ACCOUNT_INSTEAD: ({ who, forRequester }) => `รอคุณอนุมัติบัญชีรับเงิน ${who}เปลี่ยนจากรับเป็นเงินสดเป็นโอนเข้าบัญชี${forRequester} ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน`,
+  SAME_CASH: ({ who, forRequester }) => `รอคุณอนุมัติการรับเป็นเงินสด ${who}ยืนยันรับเป็นเงินสดตามเดิม${forRequester} ไม่ได้เปลี่ยน รายการและยอดเงินไม่เปลี่ยน`,
+  FIRST_ACCOUNT: ({ named, forRequester }) => `รอคุณอนุมัติบัญชีรับเงิน ใบนี้ไม่เคยมีบัญชีรับเงิน ตรวจบัญชีที่${named}เพิ่ม${forRequester}ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน`,
+  FIRST_CASH: ({ who, forRequester }) => `รอคุณอนุมัติการรับเป็นเงินสด ใบนี้ไม่เคยมีบัญชีรับเงิน ${who}เลือกรับเป็นเงินสด${forRequester} รายการและยอดเงินไม่เปลี่ยน`,
+};
+
+/**
+ * What the step note tells whoever may approve an answer: the thing that waits for them, what was done and by
+ * whom, and what to look at. "ผู้เบิกยืนยันบัญชีเดิมของใบนี้" when the requester answered; when someone answered
+ * for them, that person by name: "{ชื่อ} ยืนยันบัญชีเดิมของใบนี้แทนผู้เบิก".
+ */
+export function reimbursementPayoutRoundApproverNote(answer: ReimbursementPayoutRoundAnswer, answeredBy?: PayoutRoundAnsweredBy): string {
+  return PAYOUT_ROUND_APPROVER_NOTES[answer](payoutRoundDoer(answeredBy));
+}
+
+/** What the card "การรับเงินคืน" says of what it shows while an answer waits for approval: who sent it. */
+export function reimbursementPayoutRoundGivenNote(answeredBy?: PayoutRoundAnsweredBy): string {
+  const { named, forRequester } = payoutRoundDoer(answeredBy);
+  return `ด้านล่างคือวิธีรับเงินคืนที่${named}ส่งมา${forRequester} รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้`;
+}
+
+/**
+ * What that card says of a claim paid in cash: who chose cash. "ผู้เบิกขอรับเป็นเงินสด" is true of a claim its
+ * requester sent or answered with cash, not of one a finance reviewer answered with cash for them.
+ */
+export function reimbursementPayoutRoundCashNote(answeredBy?: PayoutRoundAnsweredBy): string {
+  const { who, forRequester } = payoutRoundDoer(answeredBy);
+  return forRequester ? `${who}เลือกรับเป็นเงินสด${forRequester} ไม่ต้องมีบัญชี` : 'ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี';
 }
 
 /**
@@ -1134,12 +1200,13 @@ type PayoutRoundHeldTexts = Record<
   | 'payLead' | 'payLeadCannotPay' | 'payLink' | 'sendBackLine1' | 'sendBackLine2' | 'notePlaceholder' | 'sentBackToast'
   | 'waitForYou' | 'waitOnBehalf' | 'askOnBehalf' | 'cardNote' | 'assistantNote', string>;
 type PayoutRoundGivenTexts = Record<'sendBackAgain' | 'sendBackAgainLine1' | 'askAgain' | 'againForYou' | 'againOnBehalf' | 'cardChecks', string>;
-type PayoutRoundAnswerTexts = { approverNote: string; cardTitle: string; cardRows: readonly [string] | readonly [string, string] };
+type PayoutRoundAnswerTexts = { cardTitle: string; cardRows: readonly [string] | readonly [string, string] };
 
 /**
  * The longer sentences of a round, where they differ by case: the pay step and the send-back form, the
  * requester's step, the card "การรับเงินคืน", the approvers' card, and what the LINE assistant is told.
- * A sentence that reads the same in every case stays with the screen that shows it.
+ * A sentence that reads the same in every case stays with the screen that shows it, and a sentence that
+ * says who answered is a function of who did (`reimbursementPayoutRoundDid` and the three after it).
  */
 export const REIMBURSEMENT_PAYOUT_ROUND_TEXTS = {
   /** At the pay step and while the claim is with its requester: by what the claim holds. */
@@ -1219,43 +1286,36 @@ export const REIMBURSEMENT_PAYOUT_ROUND_TEXTS = {
     },
   },
   /**
-   * For the approvers, by the answer: the step note of whoever may approve, the title of the card they
-   * compare on, and the names of its rows. Two rows: what the claim had, then what was given. One row: the
-   * destination was kept, and is shown once.
+   * For the approvers, by the answer: the title of the card they compare on and the names of its rows. Two
+   * rows: what the claim had, then what was given. One row: the destination was kept, and is shown once.
+   * (Their step note says who answered, so it is a function: `reimbursementPayoutRoundApproverNote`.)
    */
   answer: {
     NEW_ACCOUNT: {
-      approverNote: 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน',
       cardTitle: 'สิ่งที่รออนุมัติ: บัญชีรับเงินใหม่',
       cardRows: ['บัญชีเดิม', 'บัญชีใหม่'],
     },
     SAME_ACCOUNT: {
-      approverNote: 'รอคุณอนุมัติบัญชีรับเงินเดิม ผู้เบิกยืนยันบัญชีเดิมของใบนี้ ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน',
       cardTitle: 'สิ่งที่รออนุมัติ: บัญชีรับเงินเดิม',
       cardRows: ['บัญชีเดิม ไม่ได้เปลี่ยน'],
     },
     CASH_INSTEAD: {
-      approverNote: 'รอคุณอนุมัติการรับเป็นเงินสด ผู้เบิกเปลี่ยนจากโอนเข้าบัญชีเป็นรับเป็นเงินสด รายการและยอดเงินไม่เปลี่ยน',
       cardTitle: 'สิ่งที่รออนุมัติ: การรับเป็นเงินสด',
       cardRows: ['วิธีรับเงินคืนเดิม', 'วิธีรับเงินคืนใหม่'],
     },
     ACCOUNT_INSTEAD: {
-      approverNote: 'รอคุณอนุมัติบัญชีรับเงิน ผู้เบิกเปลี่ยนจากรับเป็นเงินสดเป็นโอนเข้าบัญชี ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน',
       cardTitle: 'สิ่งที่รออนุมัติ: บัญชีรับเงิน',
       cardRows: ['วิธีรับเงินคืนเดิม', 'วิธีรับเงินคืนใหม่'],
     },
     SAME_CASH: {
-      approverNote: 'รอคุณอนุมัติการรับเป็นเงินสด ผู้เบิกยืนยันรับเป็นเงินสดตามเดิม ไม่ได้เปลี่ยน รายการและยอดเงินไม่เปลี่ยน',
       cardTitle: 'สิ่งที่รออนุมัติ: การรับเป็นเงินสด',
       cardRows: ['วิธีรับเงินคืนเดิม ไม่ได้เปลี่ยน'],
     },
     FIRST_ACCOUNT: {
-      approverNote: 'รอคุณอนุมัติบัญชีรับเงิน ใบนี้ไม่เคยมีบัญชีรับเงิน ตรวจบัญชีที่ผู้เบิกเพิ่มด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน',
       cardTitle: 'สิ่งที่รออนุมัติ: บัญชีรับเงิน',
       cardRows: ['เดิม', 'บัญชีที่เพิ่ม'],
     },
     FIRST_CASH: {
-      approverNote: 'รอคุณอนุมัติการรับเป็นเงินสด ใบนี้ไม่เคยมีบัญชีรับเงิน ผู้เบิกเลือกรับเป็นเงินสด รายการและยอดเงินไม่เปลี่ยน',
       cardTitle: 'สิ่งที่รออนุมัติ: การรับเป็นเงินสด',
       cardRows: ['เดิม', 'วิธีรับเงินคืนที่เลือก'],
     },
@@ -1375,7 +1435,7 @@ export type ReimbursementPayoutCorrectionActions = {
  * One thing that happened in a round, for the claim's timeline (spec §17.2). The words of each row come
  * from the fact the event carries, never from the reason code:
  * SENT_BACK "{reimbursementPayoutRoundSendBack(held)}โดย … : เหตุผล",
- * ACCOUNT_SUBMITTED `reimbursementPayoutRoundDid(answer)`,
+ * ACCOUNT_SUBMITTED `reimbursementPayoutRoundDid(answer, event)`, which names whoever answered for the requester,
  * REAPPROVED "อนุมัติ{reimbursementPayoutRoundApproves(answer)}โดย …".
  * A claim nobody has to approve has no REAPPROVED: it is ready for payment from its ACCOUNT_SUBMITTED.
  */
@@ -1398,6 +1458,11 @@ export type ReimbursementPayoutCorrectionEvent = {
    * REAPPROVED: the answer that was approved. Absent only where the log has no record of how the round began.
    */
   answer?: ReimbursementPayoutRoundAnswer;
+  /**
+   * ACCOUNT_SUBMITTED only: the answer was given by someone other than the requester, who is `byUserId` and
+   * `byName`. With them the event is who answered, as the sentences that say so take it.
+   */
+  onBehalf?: true;
   /** ACCOUNT_SUBMITTED only: what the claim was given. A transfer names its row of `payoutHistory`. */
   payoutMethod?: ReimbursementPayoutMethod;
   payoutVersion?: number;
