@@ -61,6 +61,8 @@ import {
 import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
 // A payout account correction round (payout spec §14).
 import { approvalWaitStartedAt, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionSourceStep, PAYOUT_CORRECTION_STEP_REASON } from './reimbursement.logic';
+// The facts behind the words of a round (payout spec §14.2).
+import { payoutCorrectionAnswer, payoutCorrectionFacts, payoutCorrectionHeld, payoutCorrectionStatusLabel } from './reimbursement.logic';
 import { mayTypePayoutAccountFor, payoutDefaultToken } from './payout-destination.logic';
 import {
   isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionReasons, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
@@ -1651,6 +1653,67 @@ describe('payout account correction round', () => {
       assert.equal(texts.answer[answer].cardTitle, `สิ่งที่รออนุมัติ: ${reimbursementPayoutRoundApproves(answer)}`, answer);
       assert.ok(texts.answer[answer].approverNote.startsWith(`รอคุณอนุมัติ${reimbursementPayoutRoundApproves(answer)} `), answer);
       assert.equal(texts.answer[answer].cardRows.length, answer === 'SAME_ACCOUNT' || answer === 'SAME_CASH' ? 1 : 2, answer);
+    }
+  });
+
+  // The one reading of a claim's log of rounds. A list row, a claim detail, the timeline, the two notices, the printed
+  // form and the LINE assistant all take the fact behind their words from it.
+  const sentBack = (approved?: { payoutMethod?: string; payoutVersion?: number }) => ({ kind: 'SENT_BACK', at: 't', byUserId: 'u', reasonCode: 'OTHER', ...(approved && { approved }) });
+  const answered = (payoutMethod: string, sameAsApproved?: boolean) => ({ kind: 'ACCOUNT_SUBMITTED', at: 't', byUserId: 'u', payoutMethod, ...(sameAsApproved && { sameAsApproved }) });
+  const approved = { kind: 'REAPPROVED', at: 't', byUserId: 'u', approvalStepId: 's' };
+
+  it('walks the log of a claim\'s rounds and names, of each step, what the claim held or what its requester answered', () => {
+    // Round 1 began with an account: cash was refused, the account was kept and refused, another account was approved.
+    // Round 2 began with that account. Round 3 began on what round 2 left: cash.
+    const log = [
+      sentBack({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 1 }), answered('CASH'), sentBack(), answered('BANK_TRANSFER', true), sentBack(), answered('BANK_TRANSFER'), approved,
+      sentBack({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 3 }), answered('CASH'), approved,
+      sentBack({ payoutMethod: 'CASH' }), answered('CASH', true), answered('BANK_TRANSFER'),
+    ];
+    assert.deepEqual(payoutCorrectionFacts(log), [
+      { held: 'ACCOUNT' }, { answer: 'CASH_INSTEAD' }, { held: 'CASH' }, { answer: 'SAME_ACCOUNT' }, { held: 'ACCOUNT' }, { answer: 'NEW_ACCOUNT' }, { answer: 'NEW_ACCOUNT' },
+      { held: 'ACCOUNT' }, { answer: 'CASH_INSTEAD' }, { answer: 'CASH_INSTEAD' },
+      { held: 'CASH' }, { answer: 'SAME_CASH' }, { answer: 'ACCOUNT_INSTEAD' },
+    ]);
+    // A claim that had no account: the send-back that opens its round keeps no method.
+    assert.deepEqual(payoutCorrectionFacts([sentBack({}), answered('BANK_TRANSFER'), sentBack(), answered('CASH'), approved]),
+      [{ held: 'NOTHING' }, { answer: 'FIRST_ACCOUNT' }, { held: 'ACCOUNT' }, { answer: 'FIRST_CASH' }, { answer: 'FIRST_CASH' }]);
+    // Whether an account is the one the round began with is read from the entry, never worked out here: an entry
+    // that says nothing of it (written before the key existed) is another account, and cash after cash needs no key.
+    assert.deepEqual(payoutCorrectionFacts([sentBack({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 1 }), answered('BANK_TRANSFER')])[1], { answer: 'NEW_ACCOUNT' });
+    assert.deepEqual(payoutCorrectionFacts([sentBack({ payoutMethod: 'CASH' }), answered('CASH')])[1], { answer: 'SAME_CASH' });
+    // No record of how the round began, or of a method this build knows: no fact, and the reader says words true of every claim.
+    assert.deepEqual(payoutCorrectionFacts([sentBack(), answered('CASH'), approved]), [{}, {}, {}]);
+    assert.deepEqual(payoutCorrectionFacts([sentBack({ payoutMethod: 'CASH' }), answered('A_METHOD_ADDED_LATER'), sentBack(), approved]), [{ held: 'CASH' }, {}, {}, {}]);
+    assert.deepEqual([payoutCorrectionFacts([]), payoutCorrectionFacts(undefined), payoutCorrectionFacts(null)], [[], [], []]);
+  });
+
+  it('says of a claim record what it holds and what it waits for, in the words every other reader uses', () => {
+    const cash = { payoutMethod: 'CASH', payoutFingerprint: 'cash' };
+    const account = { payoutMethod: 'BANK_TRANSFER', payoutFingerprint: 'f'.repeat(64) };
+    // A claim sent before claims carried a destination holds nothing, whatever its draft once chose.
+    assert.deepEqual([account, cash, { payoutMethod: 'BANK_TRANSFER' }, { payoutMethod: 'CASH', payoutFingerprint: null }, {}].map(payoutCorrectionHeld),
+      ['ACCOUNT', 'CASH', 'NOTHING', 'NOTHING', 'NOTHING']);
+
+    const withRequester = { ...inRound, payoutCorrectionLog: [sentBack({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 1 })] };
+    assert.deepEqual([account, {}, cash].map((holds) => payoutCorrectionStatusLabel({ ...withRequester, ...holds })),
+      ['รอผู้เบิกแก้บัญชีรับเงิน', 'รอผู้เบิกเพิ่มบัญชีรับเงิน', 'รอผู้เบิกเลือกวิธีรับเงินคืน']);
+    assert.equal(payoutCorrectionAnswer({ ...withRequester, ...account }), undefined, 'nothing was answered yet');
+
+    const waiting = (...log: object[]) => ({ ...inRound, payoutCorrectionSubmittedAt: accountGivenAt, ...account, payoutCorrectionLog: log as any });
+    const kept = waiting(sentBack({ payoutMethod: 'BANK_TRANSFER', payoutVersion: 1 }), answered('BANK_TRANSFER', true));
+    assert.deepEqual([payoutCorrectionAnswer(kept), payoutCorrectionStatusLabel(kept)], ['SAME_ACCOUNT', 'รออนุมัติบัญชีรับเงินเดิม']);
+    const first = waiting(sentBack({}), answered('BANK_TRANSFER'));
+    assert.deepEqual([payoutCorrectionAnswer(first), payoutCorrectionStatusLabel(first)], ['FIRST_ACCOUNT', 'รออนุมัติบัญชีรับเงิน']);
+    // The answer that waits is the last one given, in the round the claim is in.
+    const changed = waiting(sentBack({ payoutMethod: 'CASH' }), answered('CASH', true), approved, sentBack({ payoutMethod: 'CASH' }), answered('CASH', true), answered('BANK_TRANSFER'));
+    assert.deepEqual([payoutCorrectionAnswer(changed), payoutCorrectionStatusLabel(changed)], ['ACCOUNT_INSTEAD', 'รออนุมัติบัญชีรับเงิน']);
+    // A round with no record of how it began: words that are true of every answer.
+    const unknown = waiting(answered('CASH'));
+    assert.deepEqual([payoutCorrectionAnswer(unknown), payoutCorrectionStatusLabel(unknown)], [undefined, 'รออนุมัติวิธีรับเงินคืน']);
+    // Out of its round, whatever its log holds: no answer and no words of a round.
+    for (const status of ['READY_FOR_PAYMENT', 'CANCELLED', 'PAID'] as const) {
+      assert.deepEqual([payoutCorrectionAnswer({ ...kept, status }), payoutCorrectionStatusLabel({ ...kept, status })], [undefined, undefined], status);
     }
   });
 });

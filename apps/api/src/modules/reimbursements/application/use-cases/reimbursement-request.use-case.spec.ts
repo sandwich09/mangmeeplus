@@ -16,7 +16,7 @@ import {
 } from './reimbursement-request.use-case';
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
-import { isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, PAYOUT_CORRECTION_NOTE } from './reimbursement-summary.use-case';
 import { toRequestSummary } from '../dto/reimbursement.mapper';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
@@ -46,8 +46,8 @@ import {
   readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
 } from '../../infrastructure/reimbursement-payout';
 import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
-import { claimPayoutMatchesVersion, freezePayoutCorrection, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
-import { paymentTurnUserIds, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
+import { freezePayoutCorrection, payoutCorrectionKeptDestination, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
+import { paymentTurnUserIds, payoutCorrectionFacts, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
 import { payoutDefaultToken } from '../../domain/logic/payout-destination.logic';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from './reimbursement-payout-correction.use-case';
@@ -3758,8 +3758,6 @@ function correctionWorld(options: RepoOptions = {}) {
     getUserDisplayNames: async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => names[id]).map((id) => [id, names[id]])),
     findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(activeApprovers ?? ids),
     listPaymentPayoutDestinations: (companyId: string, requestId: string, versions: number[]) => readPaymentPayoutDestinations(db, companyId, requestId, versions),
-    // The repository's own comparison of the two stored fingerprints, over the same tables.
-    claimPayoutMatchesVersion: (request: any, version: number) => claimPayoutMatchesVersion(db, request, version),
     listPaymentSlips: async () => ({}),
     areClaimProjectionsReady: async () => true,
     listRequests: async ({ statuses }: any) => (statuses.includes(claim().status) ? [{ ...claim(), approvalSteps: steps }] : []),
@@ -3806,16 +3804,22 @@ function correctionWorld(options: RepoOptions = {}) {
         requestSnapshotHash: approvalSnapshotHash, assignedAt: data.submittedAt,
       } : undefined;
       if (step) steps.push(step);
+      // The repository's own comparison of the two stored fingerprints, over the same tables, made once: here.
+      const sameAsApproved = await payoutCorrectionKeptDestination(db, request, columns, payoutCorrectionRoundStart(request));
       const entry = {
         kind: 'ACCOUNT_SUBMITTED', at: data.submittedAt.toISOString(), byUserId: data.actorUserId, payoutMethod: columns.payoutMethod,
         ...(columns.payoutDestinationVersion !== null && { payoutVersion: columns.payoutDestinationVersion }),
+        ...(sameAsApproved && { sameAsApproved: true }),
       };
+      const log = [...request.payoutCorrectionLog, entry];
       bump({
-        ...columns, approvalSnapshotHash, payoutCorrectionLog: [...request.payoutCorrectionLog, entry],
+        ...columns, approvalSnapshotHash, payoutCorrectionLog: log,
         ...(step ? { currentApprovalStepId: step.id, payoutCorrectionSubmittedAt: data.submittedAt }
           : { status: 'READY_FOR_PAYMENT', approvedAt: data.submittedAt, paymentStatus: 'UNPAID', ...OUT_OF_ROUND }),
       });
-      await data.onPersisted(fakeTx(calls.outbox), { columns, ...(step && { step }), ...(replaced && { replacedStepId: replaced.id }), readyForPayment: !step });
+      await data.onPersisted(fakeTx(calls.outbox), {
+        columns, ...(step && { step }), ...(replaced && { replacedStepId: replaced.id }), readyForPayment: !step, answer: payoutCorrectionFacts(log).at(-1)?.answer,
+      });
       return { request, ...(step && { step }), readyForPayment: !step };
     },
     approvePayoutCorrectionAtomic: async (data: any) => {
@@ -4440,11 +4444,13 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.deepEqual(world.events().map((event) => event.eventType), ['reimbursement.ready_for_payment']);
 
     // The timeline's three lines (spec §17.2), with the people named; the note-free reason is a code the page words.
+    // Each line carries the fact its words are chosen from: what the claim held when it was sent back, what its
+    // requester answered, and which answer was approved.
     const at = (index: number) => world.claim().payoutCorrectionLog[index].at;
     assert.deepEqual(forPayer.payoutCorrectionHistory, [
-      { kind: 'SENT_BACK', at: at(0), byUserId: 'payer-1', byName: 'ประไพ', reasonCode: 'ACCOUNT_NUMBER_WRONG' },
-      { kind: 'ACCOUNT_SUBMITTED', at: at(1), byUserId: 'staff-1', byName: 'สมชาย', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 },
-      { kind: 'REAPPROVED', at: at(2), byUserId: 'manager-1', byName: 'วิภา', approvalStepId: 'step-2' },
+      { kind: 'SENT_BACK', at: at(0), byUserId: 'payer-1', byName: 'ประไพ', reasonCode: 'ACCOUNT_NUMBER_WRONG', held: 'ACCOUNT' },
+      { kind: 'ACCOUNT_SUBMITTED', at: at(1), byUserId: 'staff-1', byName: 'สมชาย', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2, answer: 'NEW_ACCOUNT' },
+      { kind: 'REAPPROVED', at: at(2), byUserId: 'manager-1', byName: 'วิภา', approvalStepId: 'step-2', answer: 'NEW_ACCOUNT' },
     ]);
     assert.deepEqual(forPayer.approvalSteps.map((step) => [step.id, step.status]), [['step-1', 'APPROVED'], ['step-2', 'APPROVED']]);
     assert.equal(leaksNumber([approved, forPayer, world.events(), world.audits]), false);
@@ -4579,5 +4585,101 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     const otherId = await other.ready({ setDefault: null, payout: { mode: 'CASH' } });
     Object.assign(other.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
     assert.equal((await other.sendBack.execute(payerCtx(), otherId, { reasonCode: 'ACCOUNT_UNUSABLE' })).payoutCorrection?.reasonCode, 'ACCOUNT_UNUSABLE');
+  });
+});
+
+// Payout spec §14.2: the words of a round. Every reader of a round chooses its words from two facts: what the claim
+// held when it was sent back, and what its requester answered against what the round began with. Both are on the
+// row, the detail and each line of the timeline, read from the round's log by one function, and "the same
+// destination" is decided once, when the answer is taken.
+describe('payout correction: what the claim held and what its requester answered, for every reader of a round', () => {
+  const LEGACY = { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined };
+  /** A claim that waits for payment holding an account (its requester's default, KBANK), cash, or nothing. */
+  const holding = async (held: 'ACCOUNT' | 'CASH' | 'NOTHING') => {
+    const world = correctionWorld();
+    const id = await world.ready(held === 'ACCOUNT' ? {} : { setDefault: null, payout: { mode: 'CASH' } });
+    if (held === 'NOTHING') Object.assign(world.claim(), LEGACY);
+    return { world, id };
+  };
+  // A reason each of the three takes, whichever way its list is drawn.
+  const REASON = { ACCOUNT: 'ACCOUNT_NUMBER_WRONG', CASH: 'OTHER', NOTHING: 'NO_ACCOUNT_ON_CLAIM' } as const;
+  const facts = (detail: { payoutCorrectionHistory?: Array<{ kind: string; held?: string; answer?: string }> }) =>
+    detail.payoutCorrectionHistory!.map((event) => [event.kind, event.held, event.answer]);
+
+  it('names each of the seven answers on the row, the detail and the timeline, and calls "the same" only a destination that was kept', async () => {
+    const cases = [
+      ['ACCOUNT', { mode: 'SPECIFIED', ...SCB }, 'NEW_ACCOUNT', false, 'รออนุมัติบัญชีรับเงินใหม่'],
+      ['ACCOUNT', { mode: 'PREVIOUS' }, 'SAME_ACCOUNT', true, 'รออนุมัติบัญชีรับเงินเดิม'],
+      ['ACCOUNT', { mode: 'CASH' }, 'CASH_INSTEAD', false, 'รออนุมัติการรับเป็นเงินสด'],
+      ['CASH', { mode: 'SPECIFIED', ...KBANK }, 'ACCOUNT_INSTEAD', false, 'รออนุมัติบัญชีรับเงิน'],
+      ['CASH', { mode: 'CASH' }, 'SAME_CASH', true, 'รออนุมัติการรับเป็นเงินสด'],
+      ['NOTHING', { mode: 'SPECIFIED', ...KBANK }, 'FIRST_ACCOUNT', false, 'รออนุมัติบัญชีรับเงิน'],
+      ['NOTHING', { mode: 'CASH' }, 'FIRST_CASH', false, 'รออนุมัติการรับเป็นเงินสด'],
+    ] as const;
+    for (const [held, give, answer, same, label] of cases) {
+      const { world, id } = await holding(held);
+      const sentBack = await world.sendBack.execute(payerCtx(), id, { reasonCode: REASON[held] });
+      // With its requester: the row says what the claim holds, and nothing of an answer yet.
+      assert.deepEqual([sentBack.payoutMethod, sentBack.payoutCorrectionAnswer, toRequestSummary(world.claim()).payoutCorrectionAnswer],
+        [{ ACCOUNT: 'BANK_TRANSFER', CASH: 'CASH', NOTHING: undefined }[held], undefined, undefined], answer);
+
+      const given = await world.giveAccount.execute(ctx(), id, give as any);
+      const row = toRequestSummary(world.claim());
+      assert.deepEqual([given.payoutCorrectionPhase, given.payoutCorrectionAnswer, row.payoutCorrectionAnswer, given.payoutCorrection?.sameAsPrevious, reimbursementPayoutRoundStatus(row)],
+        ['AWAITING_APPROVAL', answer, answer, same, label], answer);
+      // Decided once, when the answer was taken, and kept on the round's log: a read compares nothing.
+      assert.equal(world.claim().payoutCorrectionLog.at(-1).sameAsApproved, same ? true : undefined, answer);
+
+      const waiting = await world.detail.execute(approverCtx(), id);
+      await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, waiting.payout?.version);
+      const after = await world.detail.execute(payerCtx(), id);
+      assert.deepEqual(facts(after), [['SENT_BACK', held, undefined], ['ACCOUNT_SUBMITTED', undefined, answer], ['REAPPROVED', undefined, answer]], answer);
+      // Out of its round it is a claim waiting for payment like any other, and the log's own key stays on the server.
+      assert.deepEqual([after.status, after.payoutCorrectionAnswer, toRequestSummary(world.claim()).payoutCorrectionAnswer], ['READY_FOR_PAYMENT', undefined, undefined], answer);
+      assert.doesNotMatch(JSON.stringify(after), /sameAsApproved|fingerprint/i, answer);
+    }
+  });
+
+  it('says what the claim held at every send-back, and measures every answer against what its round began with', async () => {
+    const { world, id } = await holding('ACCOUNT');
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    // Not taken by the approver: the claim is with its requester again, holding the answer that was refused.
+    await world.sendBack.execute(approverCtx(), id, { reasonCode: 'OTHER' });
+    const refused = await world.detail.execute(ctx(), id);
+    assert.deepEqual([refused.payoutCorrectionPhase, refused.payoutMethod, refused.payoutCorrectionAnswer, reimbursementPayoutRoundStatus(refused)],
+      ['AWAITING_REQUESTER', 'CASH', undefined, 'รอผู้เบิกเลือกวิธีรับเงินคืน']);
+    // The next answer is measured against the account the round began with, not against the cash just refused.
+    const kept = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual([kept.payoutCorrectionAnswer, kept.payoutCorrection?.sameAsPrevious], ['SAME_ACCOUNT', true]);
+    await world.sendBack.execute(approverCtx(), id, { reasonCode: 'ACCOUNT_NAME_MISMATCH' });
+    assert.equal(reimbursementPayoutRoundStatus(await world.detail.execute(ctx(), id)), 'รอผู้เบิกแก้บัญชีรับเงิน');
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    const waiting = await world.detail.execute(approverCtx(), id);
+    await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, waiting.payout?.version);
+
+    // A second round begins with what the first one approved: going back to the first account is another account
+    // now, and "the account the claim had" is the one approved last.
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'REQUESTER_ASKED' });
+    assert.equal((await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK })).payoutCorrectionAnswer, 'NEW_ACCOUNT');
+    const again = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual([again.payoutCorrectionAnswer, again.payout?.accountLast4], ['SAME_ACCOUNT', '9012']);
+    assert.deepEqual(facts(await world.detail.execute(ctx(), id)), [
+      ['SENT_BACK', 'ACCOUNT', undefined], ['ACCOUNT_SUBMITTED', undefined, 'CASH_INSTEAD'],
+      ['SENT_BACK', 'CASH', undefined], ['ACCOUNT_SUBMITTED', undefined, 'SAME_ACCOUNT'],
+      ['SENT_BACK', 'ACCOUNT', undefined], ['ACCOUNT_SUBMITTED', undefined, 'NEW_ACCOUNT'], ['REAPPROVED', undefined, 'NEW_ACCOUNT'],
+      ['SENT_BACK', 'ACCOUNT', undefined], ['ACCOUNT_SUBMITTED', undefined, 'NEW_ACCOUNT'], ['ACCOUNT_SUBMITTED', undefined, 'SAME_ACCOUNT'],
+    ]);
+  });
+
+  // D2: an answer taken by a build from before the key existed carries none. It reads as not the same; nothing is compared again.
+  it('reads an answer with no record of having been kept as another destination', async () => {
+    const { world, id } = await holding('ACCOUNT');
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    const kept = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.equal(kept.payoutCorrectionAnswer, 'SAME_ACCOUNT');
+    delete world.claim().payoutCorrectionLog.at(-1).sameAsApproved;
+    const read = await world.detail.execute(approverCtx(), id);
+    assert.deepEqual([read.payoutCorrectionAnswer, read.payoutCorrection?.sameAsPrevious, reimbursementPayoutRoundStatus(read)], ['NEW_ACCOUNT', false, 'รออนุมัติบัญชีรับเงินใหม่']);
   });
 });

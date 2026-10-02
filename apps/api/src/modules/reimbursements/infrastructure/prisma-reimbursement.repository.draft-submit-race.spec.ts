@@ -3858,14 +3858,16 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
    * A claim paid by transfer that waits for payment the way production leaves it: sent with the
    * requester's default account, approved by its manager who checked account version 1, carried out
    * by the system, and every line with a confirmed expense record and a posted journal.
+   * `payBy: 'unset'`: the same claim as a build from before claims carried a destination sent it, with
+   * no account of its own and none for its approver to check.
    */
-  async function approvedTransferClaim(lines = 1) {
+  async function approvedTransferClaim(lines = 1, payBy: 'transfer' | 'unset' = 'transfer') {
     const db = clients[0]!;
-    const waiting = await waitingClaim(lines, 'transfer');
+    const waiting = await waitingClaim(lines, payBy);
     await repos[0]!.beginApprovalDecisionAtomic({
       companyId, requestId: waiting.id, expectedUpdatedAt: waiting.updatedAt, expectedApprovalSnapshotHash: waiting.approvalSnapshotHash,
       actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
-      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined, payoutVerifiedVersion: 1,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined, ...(payBy === 'transfer' && { payoutVerifiedVersion: 1 }),
     });
     assert.equal((await system(0).resume.execute(manager(), waiting.id)).status, 'READY_FOR_PAYMENT');
     const period = await db.accountingPeriod.create({ data: { companyId, periodKey: `${2100 + ++sequence}-09`, startDate: new Date('2026-09-01'), endDate: new Date('2026-09-30') } });
@@ -4015,9 +4017,11 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const payments = await clients[0]!.reimbursementPayment.findMany({ where: { reimbursementRequestId: claim.requestId } });
     assert.deepEqual([paid.request.status, payments.map((payment) => payment.payoutDestinationVersion), paid.payout?.payoutDestinationVersion, paid.payout?.accountLast4, paid.payout?.payerVerified],
       ['PAID', [2], 2, '1112', false]);
-    // The claim's timeline has the three steps of its round, with the people named.
-    assert.deepEqual((await on(0).detail.execute(finance(), claim.requestId)).payoutCorrectionHistory!.map((entry) => [entry.kind, entry.byName, entry.reasonCode ?? entry.payoutVersion ?? entry.approvalStepId]), [
-      ['SENT_BACK', 'วราภรณ์ การเงิน', 'ACCOUNT_NUMBER_WRONG'], ['ACCOUNT_SUBMITTED', 'สมชาย พนักงาน', 2], ['REAPPROVED', 'สมศรี ผู้จัดการ', stepTwo!.id],
+    // The claim's timeline has the three steps of its round, with the people named, and of each step the fact its
+    // words are chosen from: what the claim held when it was sent back, what was given, which answer was approved.
+    assert.deepEqual((await on(0).detail.execute(finance(), claim.requestId)).payoutCorrectionHistory!
+      .map((entry) => [entry.kind, entry.byName, entry.reasonCode ?? entry.payoutVersion ?? entry.approvalStepId, entry.held ?? entry.answer]), [
+      ['SENT_BACK', 'วราภรณ์ การเงิน', 'ACCOUNT_NUMBER_WRONG', 'ACCOUNT'], ['ACCOUNT_SUBMITTED', 'สมชาย พนักงาน', 2, 'NEW_ACCOUNT'], ['REAPPROVED', 'สมศรี ผู้จัดการ', stepTwo!.id, 'NEW_ACCOUNT'],
     ]);
     // A paid claim is not sent back: its payment is voided first.
     await assert.rejects(() => round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER' }), conflict('payout_correction_not_allowed'));
@@ -4526,11 +4530,18 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal('sameAsPrevious' in (await on(0).detail.execute(manager(), claim.requestId)).payoutCorrection!, false, 'nothing is given yet');
 
     const kept = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'PREVIOUS' });
-    assert.deepEqual([kept.payoutCorrection?.phase, kept.payoutCorrection?.sameAsPrevious, kept.payout?.version, kept.payoutCorrection?.previous?.version],
-      ['AWAITING_APPROVAL', true, 2, 1]);
+    assert.deepEqual([kept.payoutCorrection?.phase, kept.payoutCorrection?.sameAsPrevious, kept.payout?.version, kept.payoutCorrection?.previous?.version, kept.payoutCorrectionAnswer],
+      ['AWAITING_APPROVAL', true, 2, 1, 'SAME_ACCOUNT']);
+    // Compared once, in the transaction that took the answer, and kept on the round's own record: no read compares again.
+    const answersOnRecord = async () => ((await claimRow(claim.requestId)).payoutCorrectionLogJson as any[])
+      .filter((entry) => entry.kind === 'ACCOUNT_SUBMITTED').map((entry) => [entry.payoutVersion, entry.sameAsApproved]);
+    assert.deepEqual(await answersOnRecord(), [[2, true]]);
     // What the approver reads over another connection says the same, and carries nothing that was compared.
     const shown = await on(1).detail.execute(manager(), claim.requestId);
-    assert.equal(shown.payoutCorrection?.sameAsPrevious, true);
+    assert.deepEqual([shown.payoutCorrection?.sameAsPrevious, shown.payoutCorrectionAnswer], [true, 'SAME_ACCOUNT']);
+    // A list row carries the same answer: the round's record comes with every row, and nothing is read for it.
+    const listed = (await repos[1]!.listRequests({ companyId, scopes: {}, statuses: ['PENDING_APPROVAL'] })).find((row) => row.id === claim.requestId)!;
+    assert.deepEqual([toRequestSummary(listed).payoutCorrectionPhase, toRequestSummary(listed).payoutCorrectionAnswer], ['AWAITING_APPROVAL', 'SAME_ACCOUNT']);
     const [first, second] = await accountVersionsOf(claim.requestId);
     assert.equal(first!.fingerprint, second!.fingerprint);
     assert.equal(JSON.stringify(shown).includes(first!.fingerprint), false);
@@ -4538,8 +4549,56 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
 
     // Another account in the same round is not the same account.
     const changed = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
-    assert.deepEqual([changed.payoutCorrection?.sameAsPrevious, changed.payout?.version], [false, 3]);
+    assert.deepEqual([changed.payoutCorrection?.sameAsPrevious, changed.payout?.version, changed.payoutCorrectionAnswer], [false, 3, 'NEW_ACCOUNT']);
     assert.equal((await on(1).detail.execute(manager(), claim.requestId)).payoutCorrection?.sameAsPrevious, false);
+    assert.deepEqual(await answersOnRecord(), [[2, true], [3, undefined]]);
+  });
+
+  // Payout spec §14.2: the words of a round follow what the claim held and what its requester answered. Here the two
+  // facts over the real tables, for the two starts the cases above do not make: a claim that asked for cash, and a
+  // claim sent before claims carried a destination.
+  it('keeps on the round\'s own record what the claim held and what its requester answered, from cash and from nothing as from an account', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const factsOf = async (requestId: string) => (await on(1).detail.execute(finance(), requestId)).payoutCorrectionHistory!.map((entry) => entry.held ?? entry.answer);
+    const approveAgain = async (requestId: string) => {
+      const shown = await on(0).detail.execute(manager(), requestId);
+      return round(0).approve.execute(manager(), requestId, undefined, shown.approvalSnapshotHash, shown.payout?.version);
+    };
+
+    // From an account to cash: nothing was kept, and the claim then holds cash.
+    const claim = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    const asCash = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'CASH' });
+    assert.deepEqual([asCash.payoutCorrectionAnswer, asCash.payoutCorrection?.sameAsPrevious, asCash.payoutMethod], ['CASH_INSTEAD', false, 'CASH']);
+    assert.equal((await approveAgain(claim.requestId)).status, 'READY_FOR_PAYMENT');
+
+    // A second round, which begins with cash: cash again is the same, an account is not, and each is measured
+    // against what this round began with.
+    const cashSentBack = await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER' });
+    assert.deepEqual([cashSentBack.payoutCorrectionPhase, cashSentBack.payoutMethod, cashSentBack.payoutCorrection?.previous], ['AWAITING_REQUESTER', 'CASH', { payoutMethod: 'CASH' }]);
+    const cashAgain = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'PREVIOUS' });
+    assert.deepEqual([cashAgain.payoutCorrectionAnswer, cashAgain.payoutCorrection?.sameAsPrevious, cashAgain.payoutMethod], ['SAME_CASH', true, 'CASH']);
+    // Not taken by the approver: the claim is with its requester again holding that cash, and then answers with an account.
+    await round(0).sendBack.execute(manager(), claim.requestId, { reasonCode: 'OTHER' });
+    const anAccount = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+    assert.deepEqual([anAccount.payoutCorrectionAnswer, anAccount.payoutCorrection?.sameAsPrevious], ['ACCOUNT_INSTEAD', false]);
+    assert.deepEqual(await factsOf(claim.requestId), ['ACCOUNT', 'CASH_INSTEAD', 'CASH_INSTEAD', 'CASH', 'SAME_CASH', 'CASH', 'ACCOUNT_INSTEAD']);
+    assert.deepEqual(((await claimRow(claim.requestId)).payoutCorrectionLogJson as any[]).map((entry) => [entry.kind, entry.sameAsApproved ?? null]), [
+      ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', null], ['REAPPROVED', null],
+      ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', true], ['SENT_BACK', null], ['ACCOUNT_SUBMITTED', null],
+    ]);
+
+    // A claim with no account of its own: its first account is neither new nor the same, and cash is its first choice.
+    const legacy = await approvedTransferClaim(1, 'unset');
+    assert.deepEqual([(await claimRow(legacy.requestId)).payoutMethod, (await claimRow(legacy.requestId)).payoutFingerprint], [null, null]);
+    await round(0).sendBack.execute(finance(), legacy.requestId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    const first = await round(0).giveAccount.execute(requesterWhoEdits(), legacy.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+    assert.deepEqual([first.payoutCorrectionPhase, first.payoutCorrectionAnswer, first.payoutCorrection?.sameAsPrevious, first.payout?.version], ['AWAITING_APPROVAL', 'FIRST_ACCOUNT', false, 1]);
+    await round(0).sendBack.execute(manager(), legacy.requestId, { reasonCode: 'OTHER' });
+    const cashFirst = await round(0).giveAccount.execute(requesterWhoEdits(), legacy.requestId, { mode: 'CASH' });
+    assert.deepEqual([cashFirst.payoutCorrectionAnswer, cashFirst.payoutCorrection?.sameAsPrevious], ['FIRST_CASH', false]);
+    assert.equal((await approveAgain(legacy.requestId)).status, 'READY_FOR_PAYMENT');
+    assert.deepEqual(await factsOf(legacy.requestId), ['NOTHING', 'FIRST_ACCOUNT', 'ACCOUNT', 'FIRST_CASH', 'FIRST_CASH']);
   });
 
   it('still cancels a claim in a round by the rule every claim is cancelled by: its records are voided and it closes', async (t) => {
