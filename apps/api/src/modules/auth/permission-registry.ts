@@ -3,12 +3,21 @@
 import { BILLING_PERMISSIONS, SALES_PERMISSION_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 
 /**
+ * RB-34 — THE list of platform-only roles: มั่งมี's own staff roles. They are system roles, so every
+ * company's role query finds them, but they mean something only inside the platform company.
+ * Outside it a company cannot list, read, copy, assign or route an approval to one, and no custom
+ * role may take its key (`platformOnlyRoleRefused`, `reservedRoleKey`). A new platform-only role
+ * (the executive-report role, when it is built) joins HERE and nowhere else.
+ */
+export const PLATFORM_ONLY_ROLE_KEYS: readonly string[] = [...SALES_ROLE_KEYS];
+
+/**
  * Roles that belong to the PLATFORM, not to a customer company. They hold no business
  * permission of any kind, so none of the "every company role can …" invariants below apply
  * to them — see S29: a sales agent is a member of the platform tenant and must find nothing
  * there to open.
  */
-export const PLATFORM_ROLE_KEYS: readonly string[] = ['SYSTEM_ADMIN', ...SALES_ROLE_KEYS];
+export const PLATFORM_ROLE_KEYS: readonly string[] = ['SYSTEM_ADMIN', ...PLATFORM_ONLY_ROLE_KEYS];
 
 export type PermissionRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 

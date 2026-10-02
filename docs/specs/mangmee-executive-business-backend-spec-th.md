@@ -1292,19 +1292,19 @@ response error `{code,message,requestId,fieldErrors?,retryable?,retryAfterSecond
 - ทางเลือกของ Q13/Q14 ที่ไม่ได้เลือก (ทุกคนที่ดูรายงานได้ ส่งออกและเห็นข้อมูลติดต่อได้): ตัด role เสริมสองตัวและ API15 แล้วใส่ permission สองตัวนั้นใน `MANGMEE_EXECUTIVE` — แก้ที่ registry จุดเดียว
 
 **role ผู้บริหารเป็นของแพลตฟอร์มเท่านั้น (RB-34)** ก่อนการแก้ เจ้าของร้านเห็นและมอบ role ระบบของแพลตฟอร์ม (ทีมขาย) ให้พนักงานตัวเองได้
-การแก้ที่ merge แล้ว (D04) เพิ่มรายการ `PLATFORM_ONLY_ROLE_KEYS` ใน `employee-access.logic.ts`: role ในรายการนี้ไม่อยู่ในรายการ role ของร้าน
+การแก้ที่ merge แล้ว (D04) เพิ่มรายการ `PLATFORM_ONLY_ROLE_KEYS` (รอบแก้ที่สองย้ายมาอยู่ที่ `apps/api/src/modules/auth/permission-registry.ts` ที่เดียว และ `PLATFORM_ROLE_KEYS` สร้างจากรายการนี้): role ในรายการนี้ไม่อยู่ในรายการ role ของร้าน
 ไม่อยู่ในตัวเลือกผู้อนุมัติเบิกจ่าย และ `roleGrantViolation` ปฏิเสธการมอบในบริษัทที่ไม่ใช่บริษัทแพลตฟอร์ม วันนี้รายการนี้มีเฉพาะ role ทีมขายสองตัว
 กติกาห้าข้อต่อไปนี้เป็นเงื่อนไขของงานนี้และต้องมี test ของตัวเอง:
 
-1. role ผู้บริหารทั้งสามตัวต้องถูกเพิ่มทั้งใน `PLATFORM_ONLY_ROLE_KEYS` (ร้านไม่เห็นและมอบไม่ได้) และใน `PLATFORM_ROLE_KEYS` ของ `permission-registry.ts`
-   (กติกาอื่นของระบบใช้รายการหลังแยก role ของแพลตฟอร์มออกจาก role ของร้าน) มี test ว่า role ผู้บริหารทุกตัวอยู่ในทั้งสองรายการ
+1. role ผู้บริหารทั้งสามตัวต้องถูกเพิ่มใน `PLATFORM_ONLY_ROLE_KEYS` ของ `permission-registry.ts` ที่เดียว (ร้านไม่เห็น ไม่อ่าน ไม่คัดลอก ไม่มอบ และตั้งชื่อบทบาทให้ได้ key นี้ไม่ได้ โดยไม่ต้องแก้จุดอื่น)
+   `PLATFORM_ROLE_KEYS` ซึ่งกติกาอื่นของระบบใช้แยก role ของแพลตฟอร์มออกจาก role ของร้าน สร้างจากรายการนี้ มี test ว่า role ผู้บริหารทุกตัวอยู่ในทั้งสองรายการ (กติกา R9–R10 ใน [company-role-override-spec](company-role-override-spec.md))
 2. ทุก endpoint ผู้บริหารต้องเรียก `assertPlatformTenant(ctx)` คู่กับ `@RequirePermissions('system.executive.…')`
    มี test ว่าผู้เรียกที่ถือ permission นี้แต่บริบทเป็นบริษัทลูกค้าได้ 403 ทุก endpoint
 3. ห้ามตรวจสิทธิ์ผู้บริหารด้วยชื่อ role ที่จุดใดทั้ง API และเว็บ ใช้ permission เท่านั้น
-4. การสร้างบทบาทของร้านต้องปฏิเสธชื่อที่ได้ key ตรงกับ role ระบบ (ยังไม่ได้แก้ในการแก้ RB-34: ชื่อ “System Admin” ยังได้ key `SYSTEM_ADMIN` แต่บทบาทนั้นมอบไม่ได้ เพราะกติกาห้ามมอบดูจาก key)
-5. ก่อนเพิ่ม role ผู้บริหาร ต้องปิดส่วนที่การแก้ RB-34 ยังเหลือ: เส้นทางที่รับรหัส role โดยตรง (`GET …/settings/roles/:roleId`, `POST …/settings/roles/preview`, `PATCH …/settings/roles/:roleId`)
-   ยังไม่ใช้กติกา platform-only ร้านที่รู้รหัสของ role แพลตฟอร์มจึงอ่านรายการ permission ของ role นั้น และ fork เป็นบทบาทของร้านที่ key เดียวกันได้
-   บทบาทที่ fork มอบไม่ได้และไม่มีผลนอกบริษัทแพลตฟอร์ม แต่จะโผล่ในรายการบทบาทของร้าน สามเส้นทางนี้ต้องตอบเหมือนไม่พบ role เมื่อ key อยู่ใน `PLATFORM_ONLY_ROLE_KEYS` และบริษัทไม่ใช่บริษัทแพลตฟอร์ม
+4. การสร้างบทบาทของร้านต้องปฏิเสธชื่อที่ได้ key ตรงกับ role ระบบ (แก้แล้วในรอบแก้ที่สอง 2 ต.ค. 2569: ตอบ 409 `role_name_reserved` สำหรับชื่อที่ได้ key ของ role ระบบหรือ role แพลตฟอร์มทุกตัว)
+5. เส้นทางที่รับรหัส role โดยตรง (`GET …/settings/roles/:roleId`, `POST …/settings/roles/preview`, `PATCH …/settings/roles/:roleId`) ใช้กติกา platform-only แล้ว (แก้ในรอบแก้ที่สอง 2 ต.ค. 2569)
+   ทั้งสามเส้นทางตอบเหมือนไม่พบ role เมื่อ key อยู่ใน `PLATFORM_ONLY_ROLE_KEYS` และบริษัทไม่ใช่บริษัทแพลตฟอร์ม สำเนาที่ร้านเคย fork ไว้ก่อนการแก้ไม่ถูกแสดง อ่าน แก้ มอบ หรือเลือกเป็นผู้อนุมัติได้อีก ข้อมูลเดิมไม่ถูกลบ
+   ก่อนเพิ่ม role ผู้บริหารจึงเหลือเพียงเพิ่ม key ลงในรายการตามข้อ 1 และ test ของข้อ 1 ถึง 3
 
 reuse User/CompanyMembership/Role/MembershipRole ใน platform tenant เดิม;
 tenant custom role แม้ชื่อ/permission string คล้ายกันไม่กลายเป็น platform authority เพราะ permission ที่ขึ้นต้น `system.` ไม่เข้า role ของร้าน
