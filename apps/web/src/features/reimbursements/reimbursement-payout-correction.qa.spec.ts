@@ -11,8 +11,9 @@ import {
 import { translateApiError } from '@/common/api/api-error-message';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import {
-  PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_SUPERSEDED, emptyPayoutCorrectionForm, isClaimStateConflict, payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
-  payoutCorrectionInput, payoutCorrectionReasonText, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
+  PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED, emptyPayoutCorrectionForm, isClaimStateConflict, isRequesterNotActiveRefusal,
+  payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
+  payoutCorrectionInput, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
   payoutCorrectionSentBackText, payoutCorrectionSubmittedText, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
@@ -247,6 +248,27 @@ describe('giving the account of a claim in a round: what the form asks and sends
     // A tick left over from a typed account is never sent with another choice.
     assert.deepEqual(payoutCorrectionInput({ ...ticked, mode: 'CASH' }, undefined, true), { mode: 'CASH' });
   });
+
+  it('sends "the account the claim had" as that choice alone: nobody types or names an account', () => {
+    assert.equal(payoutCorrectionFormError(form({ mode: 'PREVIOUS' })), null);
+    assert.deepEqual(payoutCorrectionInput(form({ mode: 'PREVIOUS' }), undefined, false), { mode: 'PREVIOUS' });
+    // Neither an account typed before the choice was changed, nor its tick, nor the default's token goes with it.
+    assert.deepEqual(payoutCorrectionInput(form({ mode: 'PREVIOUS', account: typed, saveAsDefault: true }), 'a1b2c3', true), { mode: 'PREVIOUS' });
+  });
+
+  it('has an account to keep only for a claim that was approved with one: cash is the cash choice, and an old claim had none', () => {
+    assert.deepEqual(payoutCorrectionPreviousAccount({ payoutCorrection: { previous: KBANK } }), KBANK);
+    assert.equal(payoutCorrectionPreviousAccount({ payoutCorrection: { previous: { payoutMethod: 'CASH' } } }), undefined);
+    for (const detail of [{}, { payoutCorrection: null }, { payoutCorrection: {} }, { payoutCorrection: { previous: null } }]) assert.equal(payoutCorrectionPreviousAccount(detail), undefined);
+  });
+
+  it('knows the refusal of an account typed for a requester who is no longer active, however the API carries its name', () => {
+    assert.equal(isRequesterNotActiveRefusal(Object.assign(new Error('payout_account_member_not_active'), { status: 409 })), true);
+    assert.equal(isRequesterNotActiveRefusal(Object.assign(new Error('Conflict'), { status: 409, code: 'payout_account_member_not_active' })), true);
+    for (const other of [Object.assign(new Error('reimbursement_changed'), { status: 409 }), new Error('Failed to fetch'), null, 'payout_account_member_not_active']) {
+      assert.equal(isRequesterNotActiveRefusal(other), false);
+    }
+  });
 });
 
 describe('an account of a round in words, masked', () => {
@@ -432,32 +454,56 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
   const withDefault = (detail: Record<string, any>, requesterDefault: object = DEFAULT) => ({ ...detail, payoutCorrectionActions: { canRequest: false, canSubmit: true, requesterDefault } });
   const typed = { payoutKind: 'BANK_ACCOUNT' as const, bankChoice: 'ธนาคารไทยพาณิชย์', bankOther: '', accountName: 'นาย สมชาย ใจดี', accountNumber: '111-2-33444-1112' };
   /** The form's own states: what was picked and typed, whether the server lets this viewer save a default, then the banner. */
-  const form = (detail: object, state: { picked?: Partial<PayoutCorrectionForm>; canSaveAsDefault?: boolean; error?: string; userId?: string } = {}, onDone: (claim: unknown) => void = noop) => {
+  const form = (detail: object, state: { picked?: Partial<PayoutCorrectionForm>; canSaveAsDefault?: boolean; error?: string; userId?: string; typing?: 'refused' } = {}, onDone: (claim: unknown) => void = noop,
+    onConflict: () => Promise<boolean> = async () => false) => {
     let falses = 0;
-    return render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail, userId: state.userId ?? 'staff', canEditEmployees: false, onCancel: noop, onDone, onConflict: async () => false }), (start) => {
+    return render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail, userId: state.userId ?? 'staff', canEditEmployees: false, onCancel: noop, onDone, onConflict }), (start) => {
       if (start && typeof start === 'object' && 'saveAsDefault' in start) return { ...start, ...state.picked };
       if (start === false) { falses += 1; return falses === 1 ? state.canSaveAsDefault : undefined; }
+      if (start === 'offered') return state.typing;
       return start === null ? state.error : undefined;
     }, grabForm('reimbursement-payout-correction-account'));
   };
-  const choices = (texts: string[]) => texts.filter((text) => ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้'].includes(text));
+  const KEEP = 'ใช้บัญชีเดิมของใบนี้';
+  const choices = (texts: string[]) => texts.filter((text) => ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP].includes(text));
 
   it('offers the requester\'s default account as the server shows it now, masked, beside cash and a typed account, and chooses none', () => {
     const { html, texts } = form(withDefault(phaseA()));
-    assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+    assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
     assert.ok(texts.includes('ธนาคารกรุงเทพ เลขบัญชีลงท้าย 6789 · ชื่อบัญชี นาย สมชาย ใจดี'));
     assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/);
     assert.equal(html.includes(DEFAULT.token), false, 'the token is sent, never shown');
     assert.equal(html.match(/\d{5,}/g), null, 'the last 4 digits only');
     for (const text of ['แก้บัญชีรับเงิน', 'เลือกวิธีรับเงินคืนของใบนี้ใหม่ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน', 'ยกเลิก', 'บันทึกบัญชีรับเงิน']) assert.ok(texts.includes(text), text);
     assert.doesNotMatch(html, /role="dialog"/);
-    assert.equal(html.match(/<label class="flex min-h-11 cursor-pointer/g)?.length, 3);
+    assert.equal(html.match(/<label class="flex min-h-11 cursor-pointer/g)?.length, 4);
     assertPlainThai(texts, 'the account form');
   });
 
   it('offers no default the requester has not set, and none that is cash: cash is its own choice', () => {
-    assert.deepEqual(choices(form(phaseA({ payoutCorrectionActions: { canRequest: false, canSubmit: true } })).texts), ['รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
-    assert.deepEqual(choices(form(withDefault(phaseA(), { payoutMethod: 'CASH', token: DEFAULT.token })).texts), ['รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+    assert.deepEqual(choices(form(phaseA({ payoutCorrectionActions: { canRequest: false, canSubmit: true } })).texts), ['รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
+    assert.deepEqual(choices(form(withDefault(phaseA(), { payoutMethod: 'CASH', token: DEFAULT.token })).texts), ['รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
+  });
+
+  it('offers the account the claim was approved with as its own choice, by bank and last 4 digits, in both phases and to whoever fills the form', () => {
+    for (const [name, detail, userId] of [
+      ['its requester, sent back', withDefault(phaseA()), 'staff'], ['its requester, giving it again', withDefault(phaseB()), 'staff'], ['on the requester\'s behalf', withDefault(phaseA()), 'finance'],
+    ] as const) {
+      const { html, texts } = form(detail, { userId });
+      assert.equal(choices(texts).at(-1), KEEP, name);
+      // The account before the round (KBANK), never the one the claim shows now: in phase B that is the new one (SCB).
+      assert.ok(texts.includes('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง'), `${name}: ${JSON.stringify(texts)}`);
+      assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/, name);
+      assert.equal(html.match(/\d{5,}/g), null, `${name}: the last 4 digits only`);
+      assertPlainThai(texts, name);
+    }
+  });
+
+  it('offers no account to keep to a claim approved for cash, which the cash choice says, nor to a claim that had none', () => {
+    const none = { ...round, previous: undefined };
+    for (const payoutCorrection of [{ phase: 'AWAITING_REQUESTER', ...round, previous: { payoutMethod: 'CASH' } }, { phase: 'AWAITING_REQUESTER', ...none }]) {
+      assert.deepEqual(choices(form(withDefault(phaseA({ payoutCorrection }))).texts), ['ใช้บัญชีรับเงินคืนประจำของฉัน', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+    }
   });
 
   it('shows the account fields for a typed account, and "บันทึกเป็นบัญชีประจำ" only where the server allows it', () => {
@@ -472,7 +518,7 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     const { html, texts } = form(withDefault(phaseA()), { userId: 'finance', picked: { mode: 'SPECIFIED' }, canSaveAsDefault: true });
     assert.equal(heading(html), 'แก้บัญชีรับเงินแทนผู้เบิก');
     assert.equal(heading(form(withDefault(phaseA())).html), 'แก้บัญชีรับเงิน');
-    assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+    assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
     assert.ok(texts.includes('กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน'));
     assert.ok(texts.includes('บันทึกเป็นบัญชีประจำของผู้เบิก'));
   });
@@ -487,6 +533,7 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     for (const [picked, canSaveAsDefault, body] of [
       [{ mode: 'DEFAULT' }, false, { mode: 'DEFAULT', defaultToken: DEFAULT.token }],
       [{ mode: 'CASH' }, false, { mode: 'CASH' }],
+      [{ mode: 'PREVIOUS' }, false, { mode: 'PREVIOUS' }],
       [{ mode: 'SPECIFIED', account: typed }, false, { mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '111-2-33444-1112' }],
       [{ mode: 'SPECIFIED', account: typed, saveAsDefault: true }, true,
         { mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '111-2-33444-1112', saveAsDefault: true }],
@@ -530,6 +577,27 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     assert.match(html, /<input[^>]*aria-label="ชื่อบัญชี"[^>]*value="นาย สมชาย ใจดี"/);
     assert.match(html, /<input[^>]*aria-label="เลขบัญชี"[^>]*value="111-2-33444-1112"/);
     assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'));
+  });
+
+  it('stops offering a typed account once the server refuses one for a requester who is no longer active, says why, and keeps what is left', async () => {
+    const reread: string[] = [];
+    const done: unknown[] = [];
+    const { handlers, changes } = form(withDefault(phaseA()), { userId: 'finance', picked: { mode: 'SPECIFIED', account: typed } }, (claim) => done.push(claim),
+      async () => { reread.push('asked'); return true; });
+    const calls = await withApi(() => ({ status: 409, body: { statusCode: 409, message: 'payout_account_member_not_active' } }), () => handlers.form.onSubmit(submitEvent));
+    assert.deepEqual([calls.length, done, reread], [1, [], []], 'refused once; the claim did not move, so the page is not asked to read it again');
+    assert.ok(changes.some((change) => change.initial === 'offered' && change.value === 'refused'), JSON.stringify(changes));
+    // The refused choice is no longer the one picked: nothing is sent again by a press on the same form.
+    assert.equal((changes.find((change) => !!change.initial && typeof change.initial === 'object' && 'saveAsDefault' in change.initial)?.value as PayoutCorrectionForm).mode, '');
+    assert.equal(changes.some((change) => typeof change.value === 'string' && change.value.includes('กดอีกครั้ง')), false, 'no invitation to press again');
+
+    const { texts } = form(withDefault(phaseA()), { userId: 'finance', typing: 'refused' });
+    assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', KEEP]);
+    assert.ok(texts.includes(`⚠ ${PAYOUT_CORRECTION_TYPING_REFUSED}`));
+    assert.equal(PAYOUT_CORRECTION_TYPING_REFUSED, 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงระบุบัญชีใหม่แทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้ระบุบัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ');
+    // A typed account left in the form is not shown as fields any more, and is never sent.
+    assert.equal(form(withDefault(phaseA()), { userId: 'finance', typing: 'refused', picked: { mode: 'SPECIFIED', account: typed } }).texts.includes('เลขบัญชี *'), false);
+    assertPlainThai(texts, 'the account form after the refusal');
   });
 });
 

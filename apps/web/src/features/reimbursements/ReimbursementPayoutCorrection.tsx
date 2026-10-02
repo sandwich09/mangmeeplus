@@ -16,10 +16,11 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_METHOD_TEXT,
-  isClaimStateConflict,
-  emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionRequestError,
-  payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, type PayoutCorrectionForm,
+  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
+  PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
+  isClaimStateConflict, isRequesterNotActiveRefusal,
+  emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
+  payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
 /**
@@ -119,8 +120,9 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
 /**
  * "แก้บัญชีรับเงิน": the account a claim in a round is to be paid into (spec §14.5), from its requester or from
  * a finance reviewer on their behalf. The three choices of a draft: the requester's default account as the
- * server shows it now, an account typed for this claim, or cash. Nothing is chosen for them: the account that
- * was sent back may well be their default.
+ * server shows it now, an account typed for this claim, or cash. And one a draft has no use for: the account
+ * the claim was approved with, kept as it is, for a claim that was sent back by mistake. Nothing is chosen for
+ * them: the account that was sent back may well be their default.
  */
 export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEditEmployees, onCancel, onDone, onConflict }: {
   companyId: string;
@@ -141,12 +143,16 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   const [error, setError] = useState<string | null>(null);
   const [invalidField, setInvalidField] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
+  // Typing an account for a requester who is no longer an active member is the server's to refuse, and it says so
+  // only when asked: once it has, that choice is not offered again and the form says why.
+  const [typing, setTyping] = useState<'offered' | 'refused'>('offered');
   const sending = useRef(false);
   const heading = useFocusOnOpen();
   // The requester's default account as it is now, masked, with the token that names it. Cash as a default is
   // the cash choice below, so only a default that is an account is offered as one.
   const requesterDefault = detail.payoutCorrectionActions?.requesterDefault;
   const defaultAccount = requesterDefault?.payoutMethod === 'BANK_TRANSFER' ? requesterDefault : undefined;
+  const previousAccount = payoutCorrectionPreviousAccount(detail);
   const requesterUserId: string = detail.requesterUserId;
 
   useEffect(() => {
@@ -171,6 +177,8 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
     try {
       onDone(await submitReimbursementPayoutCorrection(companyId, detail.id, input));
     } catch (e) {
+      // Not a claim that moved on: the claim is as it was, and what is left to choose from is on the form.
+      if (isRequesterNotActiveRefusal(e)) { setTyping('refused'); setForm((current) => ({ ...current, mode: '' })); return; }
       // The account stays as typed: a refusal for one field is fixed and sent again without typing the rest.
       setError(await refusalText(e, onConflict));
     } finally { sending.current = false; setBusy(false); }
@@ -196,9 +204,11 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       <div role="radiogroup" aria-label="รับเงินคืนทาง" aria-required className="space-y-2">
         {defaultAccount && option('DEFAULT', forSelf ? 'ใช้บัญชีรับเงินคืนประจำของฉัน' : 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', payoutAccountWithName(defaultAccount))}
         {option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
-        {option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน')}
+        {typing === 'offered' && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน')}
+        {previousAccount && option('PREVIOUS', PAYOUT_CORRECTION_PREVIOUS_LABEL, `${payoutCorrectionAccountText(previousAccount)} · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง`)}
       </div>
-      {form.mode === 'SPECIFIED' && (
+      {typing === 'refused' && <ErrorBanner message={PAYOUT_CORRECTION_TYPING_REFUSED} />}
+      {form.mode === 'SPECIFIED' && typing === 'offered' && (
         <div className="space-y-3 border-t border-gray-100 pt-3">
           <PayoutAccountFields value={form.account} onChange={(account) => change({ account })} disabled={busy} invalidField={invalidField} />
           {canSaveAsDefault && (

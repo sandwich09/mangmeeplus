@@ -26,7 +26,7 @@ import {
   type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason,
   type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
 } from '@watchdog-bms/contracts';
-import { translateApiError } from '@/common/api/api-error-message';
+import { apiErrorCode, translateApiError } from '@/common/api/api-error-message';
 
 export const PAYOUT_METHOD_TEXT: Record<string, string> = { BANK_TRANSFER: 'โอนเข้าบัญชี', CASH: 'รับเป็นเงินสด' };
 export const PAYOUT_KIND_TEXT: Record<string, string> = { BANK_ACCOUNT: 'บัญชีธนาคาร', PROMPTPAY_PHONE: 'พร้อมเพย์ (เบอร์มือถือ)' };
@@ -493,7 +493,30 @@ export function payoutCorrectionSendBackNotes(detail: {
 }
 
 /** What the requester picks for a claim in a round. Nothing is picked for them: the account in question may be their default. */
-export type PayoutCorrectionForm = { mode: '' | 'DEFAULT' | 'SPECIFIED' | 'CASH'; account: PayoutAccountForm; saveAsDefault: boolean };
+export type PayoutCorrectionForm = { mode: '' | 'DEFAULT' | 'SPECIFIED' | 'CASH' | 'PREVIOUS'; account: PayoutAccountForm; saveAsDefault: boolean };
+
+/** The choice that keeps the account the claim was approved with before its round, as it is (spec §14.5): nobody types anything. */
+export const PAYOUT_CORRECTION_PREVIOUS_LABEL = 'ใช้บัญชีเดิมของใบนี้';
+
+/**
+ * The account that choice would take again. Undefined for a claim approved for cash, which the cash choice already
+ * says, and for a claim sent before claims carried an account: it had none, and the API refuses the choice.
+ */
+export function payoutCorrectionPreviousAccount(detail: { payoutCorrection?: { previous?: ReimbursementPayoutCorrectionAccount | null } | null }): ReimbursementPayoutCorrectionAccount | undefined {
+  const previous = detail.payoutCorrection?.previous;
+  return previous?.payoutMethod === 'BANK_TRANSFER' ? previous : undefined;
+}
+
+/**
+ * The API refused an account typed on behalf of a requester who is no longer an active member (409, spec §14.5):
+ * the notice such an account always sends would reach nobody. The claim itself did not change.
+ */
+export function isRequesterNotActiveRefusal(e: unknown): boolean {
+  // A bare Nest exception carries its name as the message; one with a body carries it as the code.
+  return (apiErrorCode(e) ?? (e instanceof Error ? e.message : null)) === 'payout_account_member_not_active';
+}
+/** Said in the account form after that refusal, in place of the choice it no longer offers: what cannot be done, why, and what still can. */
+export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงระบุบัญชีใหม่แทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้ระบุบัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
 
 export function emptyPayoutCorrectionForm(): PayoutCorrectionForm {
   return { mode: '', account: emptyPayoutAccountForm(), saveAsDefault: false };
@@ -508,10 +531,12 @@ export function payoutCorrectionFormError(form: PayoutCorrectionForm): { text: s
 /**
  * The body of `PUT :requestId/payout-destination`. "Use the default account" names the default the page showed
  * (`payoutCorrectionActions.requesterDefault.token`), so the claim never takes an account nobody was shown. A
- * tick to save as the default is sent only where the server said this viewer may (`canSaveAsDefault`).
+ * tick to save as the default is sent only where the server said this viewer may (`canSaveAsDefault`). "The
+ * account the claim had" names nothing: the server takes the one the claim was approved with.
  */
 export function payoutCorrectionInput(form: PayoutCorrectionForm, defaultToken: string | undefined, canSaveAsDefault: boolean): SubmitReimbursementPayoutCorrectionInput | null {
   if (form.mode === 'CASH') return { mode: 'CASH' };
+  if (form.mode === 'PREVIOUS') return { mode: 'PREVIOUS' };
   if (form.mode === 'DEFAULT') return defaultToken ? { mode: 'DEFAULT', defaultToken } : null;
   if (form.mode !== 'SPECIFIED') return null;
   return { mode: 'SPECIFIED', ...payoutDestinationInput(form.account), ...(form.saveAsDefault && canSaveAsDefault && { saveAsDefault: true }) };
