@@ -759,6 +759,19 @@ describe('a claim with no finance-review step never says ฝ่ายการ�
     assert.ok(visible(detailSections(paid, ids.requester, [])).includes('ฝ่ายการเงินตรวจแล้ว โดย สมศรี การเงิน'));
     assert.ok(visible(detailSections({ ...draft, financeReviewRequired: true }, ids.requester, [])).includes('รอฝ่ายการเงินตรวจ'));
   });
+
+  // Seen in the real look: every claim of a company with no finance-review step read "ตรวจสอบการเงิน: ไม่ต้องตรวจ" in its
+  // card of facts, a row about a review that company does not have. The hub's pay queue already leaves that column out.
+  it('has no row about a finance review in the facts of a claim that passes none, under any name', () => {
+    for (const [state, detail] of [['draft', { ...draft, financeReviewRequired: false }], ['waiting for payment', waiting], ['paid', noFinance]] as const) {
+      const texts = visible(detailSections(detail, ids.requester, []));
+      for (const text of texts) assert.doesNotMatch(text, /การเงิน|ไม่ต้องตรวจ/u, `${state}: ${text}`);
+    }
+    // A claim that does pass the review says where it stands, under the name the step and the queue use.
+    const reviewed = visible(detailSections(paid, ids.requester, []));
+    for (const text of ['ตรวจการเงิน', 'อนุมัติจ่าย', 'ผู้ตรวจการเงิน', 'สมศรี การเงิน']) assert.ok(reviewed.includes(text), `${text}: ${JSON.stringify(reviewed.filter((shown) => shown.includes('ตรวจ')))}`);
+    assert.equal(reviewed.includes('ตรวจสอบการเงิน'), false, 'one name for the step');
+  });
 });
 
 // Review follow-up 2026-10-01: the model's `currentDeskText` was tested, but nothing held the claim page to passing it

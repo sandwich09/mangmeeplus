@@ -37,7 +37,7 @@ import {
 import {
   NOTE_HAS_ACCOUNT_NUMBER,
   approvalStepCorrectionNote, buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
-  savePaymentForm, slipTargetPayment, sumLineAmounts, timelineDateText, type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip,
+  rowHasFinanceReview, savePaymentForm, slipTargetPayment, sumLineAmounts, timelineDateText, type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip,
 } from './reimbursements.logic';
 import { PayerConfirmationCheck } from './ReimbursementPayout';
 import {
@@ -731,7 +731,8 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
           <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} phase={detail.payoutCorrectionPhase} />} />
-          <Row k="ตรวจสอบการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />
+          {/* A claim sent while the company had no finance-review step has no finance review to speak of: no row for it. */}
+          {rowHasFinanceReview(detail) && <Row k="ตรวจการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />}
           {detail.financeReviewedByName && <Row k="ผู้ตรวจการเงิน" v={detail.financeReviewedByName} />}
           <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />
           <Row k="ใบเสร็จ" v={RECEIPT_REQUIREMENT_LABELS[detail.receiptRequirementStatus]} />
