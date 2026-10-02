@@ -244,6 +244,27 @@ it('guide role tables name finance and the read-only auditor as the role picker 
   assert.ok(values(buildExpensesGuide('co')).includes('ฝ่ายบัญชีและฝ่ายการเงิน'));
 });
 
+it('the claim guide names every standard role as the role picker does', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+  const guide = buildReimbursementGuide('co');
+  const read = sentences(guide);
+  const rows = (id: string) => guide.sections.find((section) => section.id === id)!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows : []));
+  const holders = (item: string) => rows('permissions').find((row) => row[1] === item)?.[2];
+  assert.equal(holders('อนุมัติการเบิก'), `${roles.OWNER} ${roles.ADMIN} ${roles.MANAGER}`);
+  assert.equal(holders('ตรวจสอบการเบิก'), `${roles.OWNER} ${roles.ACCOUNTANT}`);
+  assert.equal(holders('ตรวจ/จ่ายการเบิก'), `${roles.OWNER} ${roles.FINANCE}`);
+  assert.equal(holders('ตั้งนโยบายการเบิก'), `${roles.OWNER} ${roles.ADMIN}`);
+  assert.equal(holders('สิทธิ์แก้ไขข้อมูลพนักงาน'), `${roles.OWNER} ${roles.ADMIN} และ${roles.MANAGER}กับ${roles.HR}ในสาขาที่ตนดูแล`);
+  assert.equal(rows('tabs').find((row) => row[0] === 'ตั้งค่านโยบาย')?.[1], `${roles.OWNER} และ${roles.ADMIN}`);
+  // Approving one's own claim without the policy switch, and approving then paying: the three roles that hold it.
+  const approvers = `${roles.OWNER} ${roles.ADMIN} และ${roles.MANAGER}`;
+  for (const part of ['อนุมัติคำขอของตัวเองได้ ระบบบันทึกไว้', 'ทำได้อยู่แล้วโดยไม่ต้องเปิด', 'ทำได้อยู่แล้ว บทบาทที่บริษัทสร้างเอง', 'อนุมัติคำขอของตัวเองได้ บทบาทอื่นจะเห็น']) {
+    assert.ok(read.find((sentence) => sentence.includes(part))?.includes(approvers), part);
+  }
+  // A role is never called by a word outside the one list ("เจ้าของบัญชี" is the account's owner, not a role).
+  for (const text of read) assert.doesNotMatch(text, /แอดมิน|เจ้าของ(?!กิจการ|บัญชี)/u, text);
+});
+
 describe('shop guides name the company admin for the business permissions it holds', () => {
   const roles = THAI_SYSTEM_ROLE_NAMES;
 
@@ -312,6 +333,23 @@ describe('shop guide permission help names business roles and separates package 
     for (const text of [exportHelp, reviewHelp]) {
       for (const role of ['OWNER', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const) assert.ok(text.includes(roles[role]), role);
       for (const role of ['ADMIN', 'MANAGER'] as const) assert.ok(!text.includes(roles[role]), role);
+    }
+  });
+
+  it('keeps platform roles out of the claim guide and sends every request for rights to the owner', () => {
+    const guide = buildReimbursementGuide('co');
+    check(guide);
+    const said = (part: string) => sentences(guide).find((sentence) => sentence.includes(part)) ?? part;
+    // A missing menu, tab or button, or the page's own refusal: only the owner can give every right in the table.
+    for (const [part, ask] of [
+      ['แสดงว่าบัญชีของคุณยังไม่มีสิทธิ์ใช้งาน', `ให้แจ้ง${roles.OWNER} โดยบอกสิ่งที่ต้องการทำ`],
+      ['ถ้าไม่พบแท็บหรือปุ่มที่ต้องใช้', `ให้แจ้ง${roles.OWNER}ตรวจสิทธิ์ของคุณ`],
+      ['ข้อความคือ “บัญชีนี้ยังไม่มีสิทธิ์ใช้งานหน้าการเบิกจ่าย”', `ให้ติดต่อ${roles.OWNER} โดยอ้างตาราง`],
+    ]) assert.ok(said(part).includes(ask), said(part));
+    // Rights come with a role: a role that has the item, or the item added to the role, for everyone in it.
+    const howToAsk = said('อ้างข้อในคอลัมน์กลางของตารางนี้');
+    for (const text of [`แจ้ง${roles.OWNER}ว่าต้องการทำสิ่งใด`, 'เปลี่ยนบทบาทของคุณเป็นบทบาทที่มีข้อนั้น', 'เลือกข้อนั้นให้บทบาทของคุณ', 'ทุกคนในบทบาทเดียวกัน']) {
+      assert.ok(howToAsk.includes(text), text);
     }
   });
 });

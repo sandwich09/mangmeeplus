@@ -1,13 +1,13 @@
 # Agent Memory: standard role names, one list (2026-10-02)
 
-Status: controller follow-up 2 complete; all nine remaining platform-role help sentences and the custom-role settings claim corrected. Four new guide tests and one changed test have red/green evidence; guide specs 20/20, approved-knowledge specs 9/9. Uncommitted lane 3a.
+Status: reimbursement guide closed 2026-10-03 on `claude/batch-a-roles-notices-20261003` (closing section at the end); before that, controller follow-up 2 complete; all nine remaining platform-role help sentences and the custom-role settings claim corrected. Four new guide tests and one changed test have red/green evidence; guide specs 20/20, approved-knowledge specs 9/9. Uncommitted lane 3a.
 Owner: Codex lane 3a; controller owns commit, full verification, PostgreSQL and browser checks.
 Scope: one Thai label for all 15 standard role keys; company-named copies keep their names; employees-and-rights, claims, guides, API role descriptions and fallback notices. Controller follow-up authorizes three assistant source hashes only; no help-card body edit. No package manifest, schema, migration, public, sales-console or platform-admin edits. The reimbursement guide and its pin are owned by another lane.
 Decisions: the approved labels move from the employee picker to `packages/contracts/src/employee-access.ts`, because API role descriptions and the approval-backlog note also name standard roles. Consumers interpolate the shared labels. The English dictionary keeps its current English labels. Company-copy recognition is reused, including the sidebar and claim policy.
-Open questions: reimbursement guide/pin stay with the other lane; existing pending sentences are unchanged, with five additional platform-role help sentences listed below. No SYSTEM_ADMIN text remains in the four edited guides. Default employee delegation limits, the lack of a per-user permission editor, and an existing spec/code discrepancy are recorded in follow-up 2. Sales-console aliases, company-owned descriptions and protected-role visibility remain out of scope.
+Open questions: reimbursement guide/pin: both pending lists closed 2026-10-03 (see "Reimbursement guide closed" at the end); the meaning points noticed there are for the owner. At the time of follow-up 2 the existing pending sentences were unchanged, with five additional platform-role help sentences listed below. No SYSTEM_ADMIN text remains in the four edited guides. Default employee delegation limits, the lack of a per-user permission editor, and an existing spec/code discrepancy are recorded in follow-up 2. Sales-console aliases, company-owned descriptions and protected-role visibility remain out of scope.
 Artifacts: inventory, changes and wording table to be recorded below; preceding investigation: `ui-wording-roles-sla-signature-2026-10-02.md` section 1.
 Verification: initial red/green evidence below: 428 focused tests passed (16 files), no failures/skips; contracts build twice rc 0; locked API typecheck rc 0; locked web typecheck rc 0 after correcting two integration errors. Follow-up red/green: guide specs rc 1 (13 pass/3 fail) then rc 0 (16 pass/0 fail); approved-knowledge rc 1 (8 pass/1 fail, source hash mismatch) then rc 0 (9 pass/0 fail), no skips. Final diff/integrity checks recorded in the follow-up section. Network, servers, Docker, browser and real PostgreSQL are unavailable by lane rules. Follow-up 2: guide specs rc 1 (15 pass/5 fail, twice) then rc 0 (20 pass/0 fail); approved-knowledge rc 1 (8 pass/1 fail) then rc 0 (9 pass/0 fail), no skips. Initial typechecks are historical evidence; not rerun in this follow-up.
-Next: controller integrates the reimbursement guide/pin, runs full suites, real PostgreSQL and browser checks, then reviews and commits. Deploy the assistant with the web because this lane now changes three hashes in apps/ai-gateway; deployment not attempted here.
+Next: reimbursement guide/pin integrated 2026-10-03 (closing section at the end); controller runs full suites, real PostgreSQL and browser checks, then reviews and pushes. Deploy the assistant with the web because this lane now changes three hashes in apps/ai-gateway; deployment not attempted here.
 
 ## Product and implementation evidence
 
@@ -83,7 +83,7 @@ listed, not copied lists of labels. Line numbers refer to this lane's final work
 - `apps/web/src/features/user-guide/tax-guide.content.ts`: 1, 170, 171, 172, 173.
 - `apps/web/src/features/web-core-workspace/WorkspaceScope.tsx`: 325.
 
-## Open points: reimbursement guide (do not edit in this lane)
+## Open points: reimbursement guide (do not edit in this lane) — CLOSED 2026-10-03, see "Reimbursement guide closed" at the end
 
 Another lane owns `apps/web/src/features/user-guide/reimbursement-guide.content.ts`. These exact
 sentences need the central names; keep their facts/conditional finance-review wording. Its pin in
@@ -567,7 +567,7 @@ unchanged. The assistant still must be deployed with the web; no live deployment
 - Typechecks/full suites/browser/live behavior are **not checked in follow-up 2**: focused wording/hash checks suffice here; the controller owns full integration and live checks.
 - Existing discrepancy noticed but not changed: role-picker spec R1 says assigning people-manager roles additionally requires `access.role.manage`, but the actual shared `roleGrantViolation` and update employee path allow ADMIN to assign the built-in ADMIN through the raw-subset rule. The read-only diagnostic confirms this. The guide uses OWNER for generic requests, so it does not depend on resolving that separate rule discrepancy.
 
-## Open points: reimbursement guide — additional pending sentences
+## Open points: reimbursement guide — additional pending sentences — CLOSED 2026-10-03, see the next section
 
 The original pending-sentence block above remains byte-for-byte unchanged. These five additional
 occurrences belong to the next lane; `reimbursement-guide.content.ts` itself and its pin are
@@ -588,3 +588,75 @@ three assistant hash-line changes). A production-source search over all `*guide.
 files finds “ผู้ดูแลระบบ” only in the untouched reimbursement guide, at the five pending rows
 listed above. Node-loader commands worked; no sandbox refusal. No browser, real PostgreSQL,
 full suite, typecheck, or live deployment was run in this follow-up.
+
+## Reimbursement guide closed (2026-10-03, branch `claude/batch-a-roles-notices-20261003`)
+
+Both pending lists above are closed in `apps/web/src/features/user-guide/reimbursement-guide.content.ts`.
+Names are read from `THAI_SYSTEM_ROLE_NAMES`; the permissions summary reuses `GUIDE_PERMISSION_REQUEST`.
+Already-correct literal names in untouched sentences stay as written (several “ฝ่ายการเงิน” there mean
+the people of the finance-review step, which includes ฝ่ายบัญชี, not the FINANCE key alone). An
+old/new render of every guide sentence: 686 sentences, exactly 17 changed (rows below), all other
+sentences and every “ ” screen quote byte-identical.
+
+Rule used for the five requests: each sends the reader to someone to get a right from the claim
+table. Giving it means changing the employee's one role (`access.employee.update` +
+`roleGrantViolation`: OWNER may assign every assignable role; ADMIN/MANAGER only roles inside their
+own permissions; HR only MANAGER/SALES/INVENTORY/MARKETING/STAFF on a holder of one of those;
+FINANCE/ACCOUNTANT also need `access.role.financial.assign`, OWNER only) or adding the item to the
+role (`access.role.manage`, OWNER only; editing a standard role forks it and moves every holder in
+the company, so it affects everyone in that role). Only OWNER can do it for every row, so OWNER is
+named alone, as in the other guides. No per-user permission editor exists or is implied.
+
+| Line (by text) | Old | New | Act → permission checked → standard roles |
+| --- | --- | --- | --- |
+| quick-start note “หากไม่พบเมนูการเบิกจ่าย” | แสดงว่าบัญชีของคุณยังไม่มีสิทธิ์ใช้งาน ให้แจ้งผู้ดูแลระบบ โดยบอกสิ่งที่ต้องการทำตามตารางในหัวข้อสิทธิ์ที่ต้องมี | แสดงว่าบัญชีของคุณยังไม่มีสิทธิ์ใช้งาน ให้แจ้งเจ้าของกิจการ โดยบอกสิ่งที่ต้องการทำตามตารางในหัวข้อสิทธิ์ที่ต้องมี | Give claim rights (rule above) → OWNER. A company with claims off also goes to OWNER (`company.plan.manage`); table row 1 already says rights come when the company turns claims on |
+| tabs note “คุณจะเห็นเฉพาะงานที่เป็นหน้าที่ของคุณ” | …ถ้าไม่พบแท็บหรือปุ่มที่ต้องใช้ ให้แจ้งผู้ดูแลระบบตรวจสิทธิ์ของคุณ… | …ถ้าไม่พบแท็บหรือปุ่มที่ต้องใช้ ให้แจ้งเจ้าของกิจการตรวจสิทธิ์ของคุณ… | Check and give the missing right: read `access.employee.read`; give per rule above → OWNER |
+| permissions summary | ใช้ตารางนี้อ้างอิงเมื่อต้องแจ้งผู้ดูแลระบบขอเปิดสิทธิ์เพิ่ม | ใช้ตารางนี้บอกเจ้าของกิจการว่าต้องการสิทธิ์ใดเพิ่ม (`GUIDE_PERMISSION_REQUEST`) | Give any right in the table → OWNER |
+| permissions note “วิธีขอสิทธิ์เพิ่ม” | แจ้งผู้ดูแลระบบว่าต้องการทำสิ่งใด โดยอ้างข้อในคอลัมน์กลางของตารางนี้ ผู้ดูแลจะเลือกข้อนั้นให้บทบาทของคุณที่เมนูพนักงานและสิทธิ์ | แจ้งเจ้าของกิจการว่าต้องการทำสิ่งใด โดยอ้างข้อในคอลัมน์กลางของตารางนี้ เจ้าของกิจการให้สิทธิ์ได้ที่เมนูพนักงานและสิทธิ์ โดยเปลี่ยนบทบาทของคุณเป็นบทบาทที่มีข้อนั้น หรือเลือกข้อนั้นให้บทบาทของคุณ ซึ่งมีผลกับทุกคนในบทบาทเดียวกัน | Assign a role holding the item (`access.employee.update` + `roleGrantViolation`) or add it to the role (`access.role.manage`) → OWNER |
+| FAQ “เปิดหน้าการเบิกจ่ายแล้วระบบแจ้งว่าไม่มีสิทธิ์” | ข้อความคือ “บัญชีนี้ยังไม่มีสิทธิ์ใช้งานหน้าการเบิกจ่าย” ให้ติดต่อผู้ดูแลระบบ โดยอ้างตารางในหัวข้อสิทธิ์ที่ต้องมี | ข้อความคือ “บัญชีนี้ยังไม่มีสิทธิ์ใช้งานหน้าการเบิกจ่าย” ให้ติดต่อเจ้าของกิจการ โดยอ้างตารางในหัวข้อสิทธิ์ที่ต้องมี | Same as the menu note → OWNER; screen quote kept |
+| tabs table, ตั้งค่านโยบาย | เจ้าของกิจการ และแอดมิน | เจ้าของกิจการ และผู้ดูแลบริษัท | Hold `reimbursement.policy.manage` → OWNER, ADMIN |
+| payout item “ใครตั้งบัญชีประจำให้คุณได้อีก” | เจ้าของกิจการและแอดมินตั้งให้… | เจ้าของกิจการและผู้ดูแลบริษัทตั้งให้… (rest unchanged) | `access.employee.update` + system OWNER/ADMIN for everyone; MANAGER/HR branch-scoped (`payoutAccountEditRefusal`) |
+| approve note “อนุมัติคำขอของตัวเอง”; policy row “ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้”; FAQ “อนุมัติคำขอของตัวเองไม่ได้” | เจ้าของกิจการ แอดมิน และผู้จัดการ… | เจ้าของกิจการ ผู้ดูแลบริษัท และผู้จัดการ… (rest unchanged) | Self-approval without the switch: `SELF_APPROVAL_EXEMPT_ROLES` → OWNER, ADMIN, MANAGER |
+| permissions table, อนุมัติการเบิก | เจ้าของกิจการ แอดมิน ผู้จัดการ | เจ้าของกิจการ ผู้ดูแลบริษัท ผู้จัดการ | `reimbursement.approve` → OWNER, ADMIN, MANAGER |
+| permissions table, ตรวจสอบการเบิก | เจ้าของกิจการ บัญชี | เจ้าของกิจการ ฝ่ายบัญชี | `reimbursement.finance_review` without payment → ACCOUNTANT (OWNER holds all) |
+| permissions table, ตรวจ/จ่ายการเบิก | เจ้าของกิจการ การเงิน | เจ้าของกิจการ ฝ่ายการเงิน | `finance_review` + `payment.record/void` + `duplicate.resolve` → OWNER, FINANCE |
+| permissions table, ตั้งนโยบายการเบิก | เจ้าของกิจการ แอดมิน | เจ้าของกิจการ ผู้ดูแลบริษัท | `reimbursement.policy.manage` → OWNER, ADMIN |
+| permissions table, สิทธิ์แก้ไขข้อมูลพนักงาน | เจ้าของกิจการ แอดมิน และผู้จัดการกับฝ่ายบุคคลในสาขาที่ตนดูแล | เจ้าของกิจการ ผู้ดูแลบริษัท และผู้จัดการกับฝ่ายบุคคลในสาขาที่ตนดูแล | `access.employee.update` → OWNER, ADMIN, MANAGER, HR |
+| permissions item “บทบาทที่อนุมัติได้ บันทึกจ่ายและยกเลิกการจ่ายได้ด้วย” | เจ้าของกิจการ แอดมิน และผู้จัดการ ทำได้อยู่แล้ว… | เจ้าของกิจการ ผู้ดูแลบริษัท และผู้จัดการ ทำได้อยู่แล้ว… | `approve` + `payment.record/void` → OWNER, ADMIN, MANAGER |
+| notify row “คำขอถูกระงับการจ่ายที่ขั้นตรวจการเงิน” (other reviewers) | …และเจ้าของไม่ได้เป็นคนที่ระงับหรือผู้เบิก | …และเจ้าของกิจการไม่ได้เป็นคนที่ระงับหรือผู้เบิก | Not in either list: a bare “เจ้าของ” for OWNER, one name per thing |
+
+Pin: `reimbursements` in `apps/ai-gateway/src/modules/line-ai/agents/approved-product-help.ts`
+`57b21660eee36ef639fb071bdf7ab3da1a606c12ba3cad6cf755ce5dfccab30f` →
+`8bee70d8c61b19aa39091a0b0427314a9bb01035919c645c92fd6accd77362ca`; no other assistant line changed.
+Deploy the assistant with the web. Card bodies unchanged:
+
+- `reimbursement.meaning` (quick-start): still true. It names no role or rights step; the quick-start
+  facts it rests on (the purpose, คำขอเบิก vs ใบเบิกค่าใช้จ่าย, a draft or print is not approval or
+  payment) are unchanged.
+- `reimbursement.roles` (tabs): still true. Tabs follow role and rights; requester, approver and
+  finance see different work; a new claim does not fix access. “ให้ผู้ดูแลตรวจสิทธิ์ของคุณก่อน” uses the
+  generic, unkeyed “ผู้ดูแล” (same as `report.access`), not the platform role; checking an employee's
+  rights is something the owner (and the company admin, `access.employee.read`/`access.effective.read`)
+  can do, and it says “first”, not who grants. The guide it cites now names เจ้าของกิจการ; the next
+  pack review may align the card's word to it.
+
+Verification (node loader; one commit, not pushed):
+
+- `pnpm --filter @watchdog-bms/web exec node --import tsx --test --test-reporter=spec src/features/user-guide/user-guide.content.spec.ts`:
+  red rc 1, 21 pass / 2 fail / 0 skip of 23 (the two new tests fail on “แอดมิน” in the approve row
+  and on “ผู้ดูแลระบบ” in the missing-menu note); green rc 0, 23 / 0 / 0.
+- `pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx --test src/modules/line-ai/agents/approved-knowledge.spec.ts`:
+  red rc 1, 8 / 1 / 0 (pin `57b2…` vs file `8bee…`); green rc 0, 9 / 0 / 0.
+- Under `/tmp/mangmee-heavy.lock` (taken 06:50:53, released 06:51:39), no `S3_*` variables:
+  `pnpm --filter @watchdog-bms/web exec node --import tsx --test 'src/**/*.spec.ts'` rc 0, 2677 tests
+  in 552 suites, 2677 pass / 0 fail / 0 cancelled / 0 skipped; `pnpm --filter @watchdog-bms/web typecheck` rc 0.
+- `git diff --check` rc 0. No e2e or other spec asserts the old guide words. Browser, PostgreSQL and
+  live assistant output not checked.
+
+Noticed, not changed (meaning outside this lane, for the owner): ADMIN also holds
+`reimbursement.policy.manage` and the policy write checks nothing more, yet the tabs note says
+“งานตรวจการเงินมีต่อเมื่อเจ้าของกิจการเปิด “ตรวจการเงินก่อนจ่าย””, the finance section summary says
+“มีเมื่อเจ้าของกิจการเปิด “ตรวจการเงินก่อนจ่าย” เท่านั้น”, the approve note says “บทบาทอื่นทำได้เมื่อ
+เจ้าของกิจการเปิด “ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้””, and the policy section is titled
+“(สำหรับเจ้าของกิจการ)” while the tabs table names both. The substitute-receipt guide still has two bare
+“เจ้าของ” back-references (settings note and the default signing mode row).
