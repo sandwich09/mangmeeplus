@@ -699,7 +699,8 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
   it('stacks on a phone: full-width 44 px controls, one column, long names wrap', () => {
     for (const [screen, html] of screens) {
       for (const [control] of html.matchAll(/<(?:button|a)\b[^>]*>/g)) {
-        // The page header's back link is the shared page chrome, as on every other claim page.
+        // The page header's back link sits in the page's pill: as wide as its words, and 44 px high on a phone by its own box.
+        if (control.startsWith('<a ') && control.includes('-my-[13px]')) { assert.match(control, /\bmin-h-11\b/, `${screen}: ${control}`); continue; }
         if (!control.includes('class="')) continue;
         if (/class="[^"]*underline/.test(control)) { assert.match(control, /min-h-11/, `${screen}: ${control}`); continue; }
         assert.match(control, /min-h-11 w-full sm:w-auto/, `${screen}: ${control}`);
