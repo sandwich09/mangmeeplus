@@ -249,7 +249,7 @@ Every button of a round is shown from a flag the server sent: `payoutCorrectionA
 
 ## Notices
 
-- `reimbursement.payout_correction_requested`, to the requester alone: "ใบเบิกต้องแก้บัญชีรับเงิน: {เลขที่ใบ}" and "เหตุผล: {reason label} · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน". Not sent to a requester who asked for it themselves.
+- `reimbursement.payout_correction_requested`, to the requester alone: "ใบเบิกต้องแก้บัญชีรับเงิน: {เลขที่ใบ}" and "เหตุผล: {reason label} · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน". Not sent to a requester who asked for it themselves. A claim with no account of its own is sent back with the reason "ใบนี้ยังไม่มีบัญชีรับเงิน" (2 Oct 2026, `NO_ACCOUNT_ON_CLAIM`, taken from such a claim only), and its body ends "เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน"; the title is the template's and is the same for every reason.
 - `reimbursement.payout_correction_submitted`, to the approvers of the new step alone: "รออนุมัติบัญชีรับเงินใหม่: {เลขที่ใบ}" and "ยอด 1,614.50 บาท · รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่".
 - After the approval: the existing `reimbursement.ready_for_payment`, same payload as an ordinary approval.
 - Both templates are auto-enabled, follow the switch of `reimbursement_correction_requester` and `reimbursement_pending_approval`, and are in the implemented and always-delivered trigger lists.
@@ -258,7 +258,7 @@ Every button of a round is shown from a flag the server sent: `payoutCorrectionA
 
 - `reimbursement.get_approval_backlog`: a claim in phase A is on a desk of its own, `kind: 'requester_correction'`, `label: 'รอผู้เบิกแก้บัญชีรับเงิน'`, with `oldestSentBackOn`, `longestWaitDays` and the note "ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้". Its item has `waitingOn: 'รอผู้เบิกแก้บัญชีรับเงิน'`, `submittedOn`, `sentBackOn`, `waitDays`. It is not counted in `awaitingApprovalCount`. In phase B the item names the approver, with `resubmittedOn` and `waitDays` from that day.
 - `reimbursement.list_pending_approvals`: lists a claim only in phase B, as an ordinary row.
-- `reimbursement.get_summary`: phase A is not counted as waiting for approval; phase B is late only by its own wait.
+- `reimbursement.get_summary`: phase A is not counted as waiting for approval; phase B is late only by its own wait. A claim being cancelled is in none of its four figures (it waits for the system, and no approver or payer can act on it): closed on 2 Oct 2026 with `reimbursement.get_detail`, whose `status` for such a claim is the claim page's own "รอระบบปรับสถานะ" (`REIMBURSEMENT_SYSTEM_WAIT_LABEL`) and never the status it has not left yet.
 - No field of an account, the reason code or who sent the claim back is in any of them.
 
 ## Open questions
