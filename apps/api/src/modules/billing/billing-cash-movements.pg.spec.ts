@@ -199,7 +199,7 @@ describe('billing cash movements on real PostgreSQL', { skip: !databaseUrl }, ()
     assert.deepEqual((await reader(account, 'test').movements(day)).map((row) => row.amountSatang), [222]);
     assert.deepEqual((await reader(other).movements(day)).map((row) => row.amountSatang), [333]);
     assert.deepEqual(await reader(account, 'disabled').movements(day), []);
-    assert.deepEqual(await reader(account, 'disabled').coverage(), { ranges: [], dataThrough: null });
+    assert.deepEqual(await reader(account, 'disabled').coverage(), { ranges: [], dataThrough: null, since: null });
   });
 
   it('refuses an amount that is not a safe integer instead of adding it up', async () => {
@@ -227,6 +227,51 @@ describe('billing cash movements on real PostgreSQL', { skip: !databaseUrl }, ()
     assert.equal(billingCoveredThrough(coverage.ranges, SEPTEMBER.start)?.getTime(), SEPTEMBER.end.getTime());
     assert.equal(billingCoveredThrough(coverage.ranges, SEPTEMBER.end), null);
     assert.equal(billingCoveredThrough(coverage.ranges, AUGUST.start), null);
+    // No billing account in this mode yet: no online payment can exist, so there is no start to cover from.
+    assert.equal(coverage.since, null);
+  });
+
+  it('says per company whether a paid invoice exists in this mode, and what billing makes of a company without one', async () => {
+    const scope = `acct_paid${randomUUID().replaceAll('-', '')}`;
+    const ids = { paid: `cash-paid-${tag}`, refunded: `cash-refunded-${tag}`, trial: `cash-trial-${tag}`, never: `cash-never-${tag}`,
+      manual: `cash-manual-${tag}`, testOnly: `cash-testonly-${tag}`, bare: `cash-bare-${tag}` };
+    for (const id of Object.values(ids)) await client.company.create({ data: { id, name: 'spec' } });
+    const term = (companyId: string, tierKey: string, days: number, renewCount = 0) => client.companyPlanTerm.create({ data: { companyId, tierKey, branchLimit: 1,
+      employeeLimit: 2, monthlySlipLimit: 30, termStartAt: at('2026-09-01T00:00:00Z'), termEndsAt: new Date(Date.parse('2026-09-01T00:00:00Z') + days * 86_400_000), renewCount } });
+    const billingAccount = (companyId: string, livemode = true, createdAt = at('2026-09-14T03:00:00Z')) =>
+      client.billingAccount.create({ data: { companyId, stripeAccountId: scope, livemode, createdAt } });
+    const paidInvoice = (billingAccountId: string, paidSatang: number, refundedSatang = 0, providerStatus = 'paid') => client.billingInvoice.create({ data: {
+      billingAccountId, providerInvoiceId: `in_${randomUUID()}`, offerSnapshot: {}, policyRevisionId: 'p', currency: 'THB', totalSatang: paidSatang, paidSatang, refundedSatang,
+      periodStart: SEPTEMBER.start, periodEnd: SEPTEMBER.end, providerStatus, evidenceHash: 'h' } });
+
+    await term(ids.paid, 'STARTER_249', 30);
+    const paid = await billingAccount(ids.paid);
+    await paidInvoice(paid.id, 24_900); await paidInvoice(paid.id, 24_900);
+    await term(ids.refunded, 'STARTER_249', 30);
+    const refunded = await billingAccount(ids.refunded, true, at('2026-09-20T00:00:00Z'));
+    await paidInvoice(refunded.id, 24_900, 24_900);
+    await paidInvoice(refunded.id, 99_900, 0, 'open');
+    await term(ids.trial, 'FREE_TRIAL_15', 30);
+    await term(ids.never, 'STARTER_249', 0);
+    await term(ids.manual, 'PRO_999', 365, 1);
+    // Paid in TEST only: in LIVE this company has no account and no invoice.
+    await term(ids.testOnly, 'STARTER_249', 30);
+    await paidInvoice((await billingAccount(ids.testOnly, false, at('2026-08-01T00:00:00Z'))).id, 24_900);
+    // An account that started a checkout and never paid.
+    await billingAccount(ids.bare, true, at('2026-09-25T00:00:00Z'));
+
+    const payments = await reader(scope).companyPayments();
+    assert.deepEqual(payments.get(ids.paid), { paidInvoice: true, invoicePaidSatang: 49_800, invoiceRefundedSatang: 0, sourceWithoutInvoice: 'ADMIN_MANUAL' });
+    assert.deepEqual(payments.get(ids.refunded), { paidInvoice: true, invoicePaidSatang: 24_900, invoiceRefundedSatang: 24_900, sourceWithoutInvoice: 'ADMIN_MANUAL' });
+    assert.deepEqual(payments.get(ids.trial), { paidInvoice: false, invoicePaidSatang: 0, invoiceRefundedSatang: 0, sourceWithoutInvoice: 'TRIAL' });
+    assert.deepEqual(payments.get(ids.never), { paidInvoice: false, invoicePaidSatang: 0, invoiceRefundedSatang: 0, sourceWithoutInvoice: 'ADMIN_MANUAL' });
+    assert.deepEqual(payments.get(ids.manual), { paidInvoice: false, invoicePaidSatang: 0, invoiceRefundedSatang: 0, sourceWithoutInvoice: 'ADMIN_MANUAL' });
+    assert.deepEqual(payments.get(ids.testOnly), { paidInvoice: false, invoicePaidSatang: 0, invoiceRefundedSatang: 0, sourceWithoutInvoice: 'ADMIN_MANUAL' });
+    assert.deepEqual(payments.get(ids.bare), { paidInvoice: false, invoicePaidSatang: 0, invoiceRefundedSatang: 0, sourceWithoutInvoice: 'NO_TERM' });
+    assert.equal((await reader(scope, 'test').companyPayments()).get(ids.testOnly)?.paidInvoice, true);
+    // The first billing account of the mode: nothing was paid online before it.
+    assert.equal((await reader(scope).coverage()).since?.toISOString(), '2026-09-14T03:00:00.000Z');
+    assert.equal((await reader(scope, 'test').coverage()).since?.toISOString(), '2026-08-01T00:00:00.000Z');
   });
 
   describe('the daily balance scan of the previous Bangkok day', () => {

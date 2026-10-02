@@ -350,6 +350,15 @@ model Company {
   referredAt                        DateTime?
   /// 'SIGNUP_CODE' | 'SIGNUP_LINK' | 'ADMIN'.
   referralSource                    String?
+  // ── Executive report labels (executive backend spec §12.2, §15). Set by the System Admin on the
+  // partner page, never by the shop. Strings validated in the application, not Prisma enums.
+  /// 'CUSTOMER' | 'TEST' | 'INTERNAL'; null = not classified yet. Only CUSTOMER is in the report's population.
+  reportClassification              String?
+  reportClassifiedAt                DateTime?
+  /// Who chose the label; null with a time = the system did (signup provisioning, the one-time data task).
+  reportClassifiedByUserId          String?
+  /// A report industry group key (contracts `REPORT_INDUSTRY_GROUPS`); null = use the mapping of `businessTypeCode`.
+  reportIndustryGroup               String?
   createdAt                         DateTime                                  @default(now())
   updatedAt                         DateTime                                  @updatedAt
   memberships                       CompanyMembership[]
@@ -3903,6 +3912,181 @@ model SalesAttributionDeduction {
 
   @@index([createdAt])
   @@index([attributionId])
+}
+
+// ── Executive report summary (executive backend spec §12.3). Written only by the report build
+// (`executive-business` module): numbers, dates, dimension codes and internal ids. No person's
+// name, e-mail, phone, search text or document content is ever stored here; a company's name and
+// its owner's contact are read live when a report is answered. Every row can be rebuilt from the
+// source tables, except the counters a rebuild keeps when source rows were deleted. No foreign key
+// to Company on purpose: deleting a company must never delete what it paid.
+
+/// One row per build round that wrote a data set. The newest row is the set every report answers from.
+model ExecutiveReportBuild {
+  id                 String    @id @default(cuid())
+  /// 'HOURLY' (every profile, the current and the previous month) | 'FULL' (also every earlier month with data).
+  kind               String
+  definitionVersion  Int
+  /// Version of the industry-group mapping used for the whole set.
+  dimensionVersion   Int
+  /// Every source was read up to this instant; a month still running ends here.
+  asOf               DateTime
+  startedAt          DateTime
+  finishedAt         DateTime
+  /// 'YYYY-MM' (Asia/Bangkok), the first and the last month this round wrote.
+  firstMonth         String    @db.Char(7)
+  lastMonth          String    @db.Char(7)
+  companyCount       Int
+  /// Companies with no report label at `asOf`, whatever month is asked for.
+  unclassifiedCount  Int
+  /// Where the latest time a successful provider balance scan covers ends; null = nothing was read yet.
+  billingDataThrough DateTime?
+  /// When the first billing account of the running mode was created: no online payment is older. Null = none yet.
+  billingSince       DateTime?
+  /// When each source began to keep rows in this database: its earliest row. Null = no row yet.
+  aiUsageSince       DateTime?
+  ocrUsageSince      DateTime?
+  discoverySince     DateTime?
+
+  @@index([asOf])
+  @@index([definitionVersion, kind, asOf])
+}
+
+/// One row per month and definition version: what belongs to the month and to no single company.
+model ExecutiveReportMonth {
+  /// 'YYYY-MM', Asia/Bangkok.
+  month                   String    @db.Char(7)
+  definitionVersion       Int
+  buildId                 String
+  /// `asOf` of the build that wrote this row. Earlier than the month's end = the month was still running.
+  asOf                    DateTime
+  /// Where the unbroken cover of successful balance scans that starts at the month's first instant ends.
+  /// Null, or earlier than the month's end = money of the month is not complete (BILLING_SCAN_NOT_COMPLETE).
+  billingCoveredThrough   DateTime?
+  /// Money not tied to a company (unmatched, or left for a manual check), dated in the month.
+  untiedCount             Int       @default(0)
+  untiedReceiptsSatang    Int       @default(0)
+  untiedRefundsSatang     Int       @default(0)
+  /// Signed sum of movements that are neither a charge nor a refund (a lost dispute, an adjustment).
+  untiedOtherSatang       Int       @default(0)
+  /// Refunds the scan read in a state other than succeeded: counted nowhere, kept as a number.
+  unsuccessfulRefundCount Int       @default(0)
+  /// The month began before the first build: its usage counters only hold rows that still existed then.
+  beforeFirstBuild        Boolean   @default(false)
+  /// Raised when a rebuild changes a figure of a month that had already ended.
+  revision                Int       @default(0)
+  revisedAt               DateTime?
+
+  @@id([month, definitionVersion])
+}
+
+/// One row per company, month and definition version, for every company created before the month ended.
+model ExecutiveCompanyMonth {
+  companyId              String
+  /// 'YYYY-MM', Asia/Bangkok.
+  month                  String    @db.Char(7)
+  definitionVersion      Int
+  buildId                String
+  /// The company's report label when this month was last built. The population of the month is CUSTOMER.
+  reportClassification   String?
+  // Money: movements the billing reader tied to this company, dated in the month by the provider.
+  receiptsSatang         Int       @default(0)
+  refundsSatang          Int       @default(0)
+  feesSatang             Int       @default(0)
+  taxSatang              Int       @default(0)
+  /// { "<purchaseKind>": { receiptsSatang, refundsSatang, feesSatang, taxSatang } }, only kinds with money.
+  moneyByPurchaseKind    Json
+  /// Invoices paid in the month that are disputed at the provider right now.
+  disputedInvoiceCount   Int       @default(0)
+  /// AiUsageEvent.costSatang by `monthKey`, cost adjustments included.
+  aiCostSatang           Int       @default(0)
+  // Usage counters. A rebuild keeps the larger of the stored and the recounted value.
+  activeDays             Int       @default(0)
+  activeDaysLine         Int       @default(0)
+  activeDaysWeb          Int       @default(0)
+  activeUsers            Int       @default(0)
+  activeUsersLine        Int       @default(0)
+  activeUsersWeb         Int       @default(0)
+  confirmedExpensesLine  Int       @default(0)
+  confirmedExpensesWeb   Int       @default(0)
+  issuedDocuments        Int       @default(0)
+  aiRequests             Int       @default(0)
+  expenseReceiptsLine    Int       @default(0)
+  expenseReceiptsWeb     Int       @default(0)
+  /// A stored counter was higher than the recount, so source rows are gone (SOURCE_ROWS_PURGED).
+  countersHeld           Boolean   @default(false)
+  // Groups of the month (spec §13.2).
+  /// 'YES' | 'NO' | 'UNKNOWN', as of the month's end.
+  paidEver               String
+  /// With UNKNOWN: BILLING_SOURCE_REVIEW | MANUAL_TERM_NO_RECEIPT | LEGACY_NO_TERM | BILLING_SCAN_NOT_COMPLETE.
+  paidEverReason         String?
+  fullyRefunded          Boolean   @default(false)
+  /// 'NOT_STARTED' | 'INACTIVE' | 'ACTIVE' | 'NOT_PAID'; null = fully refunded, or not assessable.
+  usageGroup             String?
+  /// 'ACTIVITY_HISTORY_INCOMPLETE' | 'PAYMENT_HISTORY_INCOMPLETE' when the group cannot be assessed.
+  usageUnassessedReason  String?
+  // Sales credit of the month, by the sales module's own rules, as it stood at the build.
+  salesCreditSatang      Int       @default(0)
+  salesCreditActivations Int       @default(0)
+  salesCreditWaiting     Int       @default(0)
+  /// Raised when a rebuild changes a figure of this row after its month had ended.
+  revision               Int       @default(0)
+  revisedAt              DateTime?
+
+  @@id([companyId, month, definitionVersion])
+  @@index([month, definitionVersion, reportClassification])
+}
+
+/// One row per company: the dimensions as they are at the build, and the values of its whole life.
+model ExecutiveCompanyProfile {
+  companyId                   String    @id
+  buildId                     String
+  companyCreatedAt            DateTime
+  companyStatus               String
+  /// 'CUSTOMER' | 'TEST' | 'INTERNAL'; null = not classified. The platform company is always INTERNAL.
+  reportClassification        String?
+  /// Report industry group key; null = the shop has none (INDUSTRY_NOT_PROVIDED).
+  industryGroup               String?
+  /// 'ADMIN' (the admin's label) | 'MAPPING' (from the shop's business type).
+  industryGroupSource         String?
+  /// ThaiAddressMaster.provinceCode; null = the address names no known province.
+  provinceCode                String?
+  /// WEBSITE | IG | TIKTOK | FACEBOOK | SALES | OTHER | UNKNOWN | BEFORE_COLLECTION | ADMIN_CREATED.
+  discovery                   String
+  /// 'official-site' | 'line-oa' | 'ADMIN_CREATED' | 'UNKNOWN'.
+  signupRail                  String
+  /// 'KNOWN' | 'NONE' | 'UNKNOWN' | 'UNRESOLVED'.
+  referrerKind                String
+  referrerSalesUserId         String?
+  /// 'SIGNUP_CODE' | 'ADMIN', only with a referrer.
+  referralSource              String?
+  creditedSalesUserId         String?
+  /// 'COUNTED' | 'WAITING' | 'EXCLUDED', only with a credited seller.
+  salesCreditState            String?
+  salesCreditPaidAt           DateTime?
+  /// 'ACTIVE' | 'TRIAL' | 'NO_PACKAGE' | 'EXPIRED' | 'ADMIN_HOLD' from planTermState().
+  planState                   String
+  planTierKey                 String?
+  planEndsAt                  DateTime?
+  /// 'YES' | 'NO' | 'UNKNOWN', as of the build.
+  paidEver                    String
+  paidEverReason              String?
+  fullyRefunded               Boolean   @default(false)
+  lifetimeReceiptsSatang      Int       @default(0)
+  lifetimeRefundsSatang       Int       @default(0)
+  /// Earliest and latest counted action ever found; a rebuild never moves them the wrong way.
+  firstActivityAt             DateTime?
+  lastActivityAt              DateTime?
+  lastLineActivityAt          DateTime?
+  lastWebEntryAt              DateTime?
+  /// 'EVER' | 'NOT_ENTITLED' | 'UNKNOWN' | 'NEVER' (spec §13.4). EVER is never taken back.
+  receiptAdoption             String
+  /// Sum of the stored monthly receipt counts, not a recount.
+  expenseReceiptCountLifetime Int       @default(0)
+  activeMemberCount           Int       @default(0)
+  branchCount                 Int       @default(0)
+
+  @@index([reportClassification])
 }
 
 /// Sales-event discounts (docs/specs/sales-event-discounts-spec-th.md §6.1). A sales lead sets up a

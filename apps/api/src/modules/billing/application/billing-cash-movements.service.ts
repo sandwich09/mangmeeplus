@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { billingProductKind, type BillingProductKind } from '@watchdog-bms/contracts';
+import { billingProductKind, type BillingProductKind, type BillingPurchaseSource } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma } from '../../../generated/prisma/client';
+import { billingPurchaseSource } from './billing-purchase-source';
 
 /**
  * Money facts for the executive report (executive spec §14.1–§14.2).
@@ -51,8 +52,22 @@ export type BillingCashMovement = {
   invoiceDisputed: boolean;
 };
 export type BillingCashRange = { start: Date; end: Date };
-/** `ranges`: the time successful balance scans cover, merged and ascending. `dataThrough`: where the latest one ends. */
-export type BillingCashCoverage = { ranges: BillingCashRange[]; dataThrough: Date | null };
+/**
+ * `ranges`: the time successful balance scans cover, merged and ascending. `dataThrough`: where the
+ * latest one ends. `since`: when the first billing account of this mode was created — no online
+ * payment can be older — or null when there is none.
+ */
+export type BillingCashCoverage = { ranges: BillingCashRange[]; dataThrough: Date | null; since: Date | null };
+/** What the invoices of one company say today, in the mode this system runs in (executive spec §13.2). */
+export type BillingCompanyPayment = {
+  /** A verified invoice with money paid exists: the company has paid, whenever that was. */
+  paidInvoice: boolean;
+  /** Cumulative over those invoices, undated: what was paid and what went back. */
+  invoicePaidSatang: number;
+  invoiceRefundedSatang: number;
+  /** `billingPurchaseSource()` for a company with no paid invoice; a paid shape here is a case for review. */
+  sourceWithoutInvoice: BillingPurchaseSource;
+};
 
 const PAYOUT_TYPES = ['payout', 'payout_failure', 'payout_cancel'];
 const QUOTE_KIND: Record<string, BillingPurchaseKind> = {
@@ -166,6 +181,33 @@ export class BillingCashMovementsService {
       if (last && window.start <= last.end.getTime()) { if (window.end > last.end.getTime()) last.end = new Date(window.end); }
       else ranges.push({ start: new Date(window.start), end: new Date(window.end) });
     }
-    return { ranges, dataThrough: ranges.at(-1)?.end ?? null };
+    const first = scope ? await this.prisma.client.billingAccount.aggregate({ where: scope, _min: { createdAt: true } }) : null;
+    return { ranges, dataThrough: ranges.at(-1)?.end ?? null, since: first?._min.createdAt ?? null };
+  }
+
+  /**
+   * One entry per company that has a plan term or a billing account in this mode. Three set reads,
+   * never one per company; the purchase source is billing's own rule, not a copy of it.
+   */
+  async companyPayments(): Promise<Map<string, BillingCompanyPayment>> {
+    const scope = this.scope(), db = this.prisma.client;
+    const [terms, accounts] = await Promise.all([
+      db.companyPlanTerm.findMany(),
+      scope ? db.billingAccount.findMany({ where: scope, select: { id: true, companyId: true, baseSubscriptionId: true, activeAttemptId: true,
+        contractAttemptId: true, renewalMode: true, paidThrough: true, termProjectionHash: true } }) : [],
+    ]);
+    const paid = accounts.length ? await db.billingInvoice.groupBy({ by: ['billingAccountId'],
+      where: { billingAccountId: { in: accounts.map((account) => account.id) }, providerStatus: 'paid', paidSatang: { gt: 0 } },
+      _sum: { paidSatang: true, refundedSatang: true } }) : [];
+    const paidOf = new Map(paid.map((row) => [row.billingAccountId, row._sum]));
+    const accountOf = new Map(accounts.map((account) => [account.companyId, account]));
+    const termOf = new Map(terms.map((term) => [term.companyId, term]));
+    const result = new Map<string, BillingCompanyPayment>();
+    for (const companyId of new Set([...termOf.keys(), ...accountOf.keys()])) {
+      const account = accountOf.get(companyId) ?? null, sums = account ? paidOf.get(account.id) : undefined;
+      result.set(companyId, { paidInvoice: !!sums, invoicePaidSatang: satang(sums?.paidSatang ?? 0), invoiceRefundedSatang: satang(sums?.refundedSatang ?? 0),
+        sourceWithoutInvoice: billingPurchaseSource(termOf.get(companyId) ?? null, account, false) });
+    }
+    return result;
   }
 }
