@@ -410,13 +410,18 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   // The requester fills their own account; a finance reviewer fills it on their behalf. Again, once one was given.
   const correctPayoutLabel = detail.requesterUserId !== userId ? `${PAYOUT_CORRECTION_FIX_LABEL}แทนผู้เบิก`
     : detail.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? `${PAYOUT_CORRECTION_FIX_LABEL}อีกครั้ง` : PAYOUT_CORRECTION_FIX_LABEL;
+  // At the pay step the send-back is no button of this card: it sits at the foot of the account box, as a line of text,
+  // away from "บันทึกจ่าย". From the step a round waits on it stays here: there it is how the new account is refused.
+  const sendBackAtAccountBox = step?.key === 'payment' && !detail.payoutCorrectionPhase && step.actions.includes('send-back');
   // A form replaces its own button while it is open: the payment form, and the two of a correction round.
-  const cardActions = (step?.actions ?? []).filter((action) => !(action === 'pay' && payOpen) && action !== openCorrectionForm);
+  const cardActions = (step?.actions ?? []).filter((action) => !(action === 'pay' && payOpen) && action !== openCorrectionForm
+    && !(action === 'send-back' && sendBackAtAccountBox));
   const formOpen = openCorrectionForm !== null || (payOpen && Boolean(step?.actions.includes('pay')));
   // Giving the account again while it already waits for its approvers is allowed, and is not what the claim waits
   // for: it starts the approvers' wait over, so it is offered without the look of the thing to do next.
   const givingAgain = step?.actions[0] === 'correct-payout' && detail.payoutCorrectionPhase === 'AWAITING_APPROVAL';
-  const primaryAction = formOpen || givingAgain ? undefined : step?.actions[0];
+  // The first action still shown as a button: a viewer who can only send the claim back has no main thing to press here.
+  const primaryAction = formOpen || givingAgain ? undefined : cardActions[0] === step?.actions[0] ? cardActions[0] : undefined;
   const reasonDialog = reasonAction ? REASON_DIALOGS[reasonAction] : null;
 
   return (
@@ -497,6 +502,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         // At the payment step, for whoever is offered to record the payment, the card is the account to transfer into.
         payStep={step?.key === 'payment' && step.actions.includes('pay')}
         {...(step?.actions.includes('edit') && { editHref: `${hubHref}/${detail.id}/edit` })}
+        // Its form opens in the step card below, and replaces this line while it is open.
+        {...(sendBackAtAccountBox && openCorrectionForm !== 'send-back' && {
+          sendBack: { onPress: () => handlers['send-back']?.(), disabled: busyAction !== null || previewLoadingKey !== null },
+        })}
       />
 
       {step && (

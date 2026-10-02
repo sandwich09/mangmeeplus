@@ -698,9 +698,10 @@ const DECIDE = { canApprove: true, canReject: true };
  */
 const AS_ANSWERED: Record<'ready' | 'phaseA' | 'phaseB', Array<[name: string, viewer: Viewer, flags: Record<string, unknown>, buttons: string[]]>> = {
   ready: [
-    ['the requester', requester, { payoutCorrectionActions: SEND }, ['ส่งกลับให้แก้บัญชีรับเงิน', 'ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
-    ['the approver the claim stands on', approver, { payoutCorrectionActions: SEND }, ['ส่งกลับให้แก้บัญชีรับเงิน', 'พิมพ์ใบเบิก']],
-    ['a payer', payer, { payoutCorrectionActions: SEND }, ['บันทึกจ่าย', 'ส่งกลับให้แก้บัญชีรับเงิน', 'พิมพ์ใบเบิก']],
+    // The send-back the server offers these three is no button of the step card: it is the text action of the account box.
+    ['the requester', requester, { payoutCorrectionActions: SEND }, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
+    ['the approver the claim stands on', approver, { payoutCorrectionActions: SEND }, ['พิมพ์ใบเบิก']],
+    ['a payer', payer, { payoutCorrectionActions: SEND }, ['บันทึกจ่าย', 'พิมพ์ใบเบิก']],
     ['a finance reviewer', financeReviewer, {}, ['ยกเลิกคำขอ', 'พิมพ์ใบเบิก']],
     ['a read-only auditor', auditor, {}, ['พิมพ์ใบเบิก']],
   ],
@@ -757,6 +758,13 @@ function stepCard(html: string) {
     buttons: [...section.matchAll(/<(?:button|a)\b[^>]*>([^<]+)<\/(?:button|a)>/gu)].map((match) => match[1]!),
   };
 }
+/** The send-back at the foot of the account box of a claim that waits for its payment: the line above it and the text action. Null: not offered there. */
+function accountBoxSendBack(html: string) {
+  const at = html.indexOf('data-testid="reimbursement-payout-send-back"');
+  if (at < 0) return null;
+  const foot = html.slice(at, html.indexOf('</div>', at));
+  return { lead: /<p[^>]*>([^<]*)<\/p>/u.exec(foot)?.[1] ?? '', action: /<button\b[^>]*>([^<]*)<\/button>/u.exec(foot)?.[1] ?? '', button: /<button\b[^>]*>/u.exec(foot)?.[0] ?? '' };
+}
 const deskLine = (html: string) => visible(html).filter((text) => text.startsWith('อยู่ที่'));
 /** How often one exact text is on the page. */
 const exactly = (html: string, text: string) => visible(html).filter((shown) => shown === text).length;
@@ -771,6 +779,9 @@ describe('the buttons of a correction round are what the server says, for every 
         const detail = CLAIM_AT[point](flags);
         const { html, texts } = claimPage(detail, viewer);
         assert.deepEqual(stepCard(html).buttons, buttons, `${point}, ${name}`);
+        // At the pay step, whoever the server lets send the claim back finds that at the foot of the account box, and nobody else does.
+        const sendsBackAtPayStep = point === 'ready' && (flags as { payoutCorrectionActions?: { canRequest?: boolean } }).payoutCorrectionActions?.canRequest === true;
+        assert.equal(accountBoxSendBack(html)?.action ?? null, sendsBackAtPayStep ? 'ส่งกลับให้แก้บัญชีรับเงิน' : null, `${point}, ${name}: the account box`);
         // Plain Thai on the whole page, for every viewer: no id, code, key or raw date.
         assertPlainThai(texts, `${point}, ${name}`);
         // The whole page, not only the step card: nothing a round refuses is offered anywhere on it.
@@ -823,13 +834,48 @@ describe('the buttons of a correction round are what the server says, for every 
     assert.equal(active(paid, payer).actions.includes('send-back'), false);
   });
 
-  it('tells whoever may send the claim back that a wrong account is sent back before it is paid', () => {
-    assert.equal(stepCard(claimPage(ready({ payoutCorrectionActions: SEND }), payer).html).note,
-      'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง · ถ้าวิธีรับเงินหรือบัญชีรับเงินไม่ถูกต้อง กดส่งกลับให้แก้บัญชีรับเงินก่อนมีการจ่าย');
-    assert.equal(stepCard(claimPage(ready({ payoutCorrectionActions: SEND }), requester).html).note,
-      'รอ วราภรณ์ การเงิน บันทึกจ่าย · ถ้าวิธีรับเงินหรือบัญชีรับเงินไม่ถูกต้อง กดส่งกลับให้แก้บัญชีรับเงินก่อนมีการจ่าย');
-    // A viewer the server does not let send it back reads the note as before.
+  // Upgrade test 2026-10-02: the send-back sat directly under "บันทึกจ่าย". One wrong tap on a claim that only needed paying
+  // removed both of its signatures and put it back through approval.
+  it('keeps the send-back away from บันทึกจ่าย: a line of text at the foot of the account box, never a button of the pay step', () => {
+    const forPayer = claimPage(ready({ payoutCorrectionActions: SEND }), payer).html;
+    const card = stepCard(forPayer);
+    assert.deepEqual(card.buttons, ['บันทึกจ่าย', 'พิมพ์ใบเบิก']);
+    // The step says what the step is for, and points to no button it no longer has.
+    assert.equal(card.note, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง');
+    assert.equal(stepCard(claimPage(ready({ payoutCorrectionActions: SEND }), requester).html).note, 'รอ วราภรณ์ การเงิน บันทึกจ่าย');
     assert.equal(stepCard(claimPage(ready(), auditor).html).note, 'รอ วราภรณ์ การเงิน บันทึกจ่าย');
+    // Where the account is read: the reason to send it back, then the action as underlined text of 44 px, above the step card.
+    const foot = accountBoxSendBack(forPayer)!;
+    assert.deepEqual([foot.lead, foot.action], ['ถ้าวิธีรับเงินหรือบัญชีนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย ส่งกลับให้แก้ก่อน', 'ส่งกลับให้แก้บัญชีรับเงิน']);
+    for (const cls of ['min-h-11', 'underline']) assert.ok(foot.button.includes(cls), `${cls}: ${foot.button}`);
+    assert.doesNotMatch(foot.button, /mangmee-btn/u, 'no button look');
+    assert.ok(forPayer.indexOf('data-testid="reimbursement-payout-send-back"') < forPayer.indexOf('aria-labelledby="journey-step-title"'), 'in the account box, above the step card');
+    // A viewer who can only send it back has no main thing to press in the step card.
+    assert.doesNotMatch(stepCard(claimPage(ready({ payoutCorrectionActions: SEND }), requester).html).html, /mangmee-btn-primary/u);
+    assert.match(card.html, /<button[^>]*mangmee-btn-primary[^>]*>บันทึกจ่าย<\/button>/u);
+  });
+
+  it('names the action for what it does on a claim that has no account of its own, and says such a claim is paid as it is', () => {
+    const legacy = ready({ payout: undefined, payoutHistory: undefined, payoutCorrectionActions: SEND, signatures: [{ id: 's1', role: 'REQUESTER' }], signedCopies: [{ id: 'c1', acknowledgedAt: AT.approved }] });
+    const { html, texts } = claimPage(legacy, payer);
+    assert.deepEqual(stepCard(html).buttons, ['บันทึกจ่าย', 'พิมพ์ใบเบิก']);
+    const foot = accountBoxSendBack(html)!;
+    assert.equal(foot.action, 'เพิ่มบัญชีรับเงินให้ใบนี้ แล้วให้ผู้อนุมัติตรวจใหม่');
+    assert.equal(foot.lead, 'ใบนี้บันทึกจ่ายได้เลยโดยไม่ต้องมีบัญชีในใบ ข้อความด้านล่างใช้เมื่อต้องการให้ใบมีบัญชีที่ผู้อนุมัติตรวจแล้วเท่านั้น');
+    assert.equal(texts.includes('ส่งกลับให้แก้บัญชีรับเงิน'), false, 'nothing to correct on a claim with no account');
+    // The form it opens: named the same way, and still says what is lost before the confirm.
+    const form = withForm(legacy, payer, 'send-back')!;
+    assert.equal(heading(form.html), 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน');
+    for (const text of [
+      'ใบนี้จะกลับไปให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
+      'เมื่อผู้เบิกเพิ่มบัญชีแล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีนั้นก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
+      'ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่หลังบัญชีใหม่ได้รับอนุมัติ',
+      'สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่หลังบัญชีใหม่ได้รับอนุมัติ',
+      'ยืนยันส่งกลับ',
+    ]) assert.ok(form.texts.includes(text), `${text}: ${JSON.stringify(form.texts.filter((shown) => shown.includes('ใบ')).slice(0, 12))}`);
+    // The line of the account box gives way to its form while the form is open.
+    assert.equal(accountBoxSendBack(form.html), null);
+    assertPlainThai(form.texts, 'the send-back form of a claim with no account');
   });
 
   it('shows a reader from another branch no claim at all: the API refuses them the detail', () => {
@@ -1247,7 +1293,8 @@ describe('the approval of a round: the comparison, the attestation of the NEW ac
 describe('after the approval the claim is back at its pay step with the new account (AC31)', () => {
   it('shows the new account in the box "โอนเข้าบัญชีนี้" with who attested it, and offers the payment and a new send-back', () => {
     const { html, texts } = claimPage(reapproved({ payoutCorrectionActions: SEND }), payer);
-    assert.deepEqual(stepCard(html).buttons, ['บันทึกจ่าย', 'ส่งกลับให้แก้บัญชีรับเงิน', 'พิมพ์ใบเบิก']);
+    assert.deepEqual(stepCard(html).buttons, ['บันทึกจ่าย', 'พิมพ์ใบเบิก']);
+    assert.equal(accountBoxSendBack(html)?.action, 'ส่งกลับให้แก้บัญชีรับเงิน');
     for (const text of ['โอนเข้าบัญชีนี้', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112', 'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้', 'ตรวจบัญชีแล้วโดย สมศรี ผู้จัดการ เมื่อ 1 ต.ค. 2569 13:00 น.']) {
       assert.ok(texts.includes(text), text);
     }
@@ -1300,7 +1347,11 @@ describe('the card "การรับเงินคืน" in a round', () => 
   it('tells a requester whose default account changed how to take it onto the claim, where the server lets them', () => {
     const changed = (overrides: Record<string, unknown>) => ({ payout: { ...KBANK, source: 'DEFAULT_ACCOUNT', defaultAccountChanged: true as const }, ...overrides });
     const hint = (detail: object) => claimPage(detail, requester).texts.find((text) => text.startsWith('บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว'))!;
-    assert.match(hint(ready(changed({ payoutCorrectionActions: SEND }))), /ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดส่งกลับให้แก้บัญชีรับเงินในขั้นจ่ายเงินคืน ก่อนมีการโอน$/u);
+    assert.match(hint(ready(changed({ payoutCorrectionActions: SEND }))), /ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดส่งกลับให้แก้บัญชีรับเงินที่ท้ายกล่องนี้ ก่อนมีการโอน$/u);
+    // "กล่องนี้" is the box that says it: the hint and the action it names are in the same card.
+    const page = claimPage(ready(changed({ payoutCorrectionActions: SEND })), requester).html;
+    const box = page.slice(page.lastIndexOf('<div', page.indexOf('บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว')), page.indexOf('aria-labelledby="journey-step-title"'));
+    assert.match(box, /data-testid="reimbursement-payout-send-back"/);
     assert.match(hint(phaseA(changed({ payoutCorrectionActions: GIVE }))), /ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดแก้บัญชีรับเงินในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ$/u);
     // No flag from the server: the hint says what it said before.
     assert.match(hint(ready(changed({}))), /แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน$/u);

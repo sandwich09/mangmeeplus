@@ -1218,12 +1218,10 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       ].filter(Boolean).join(' · ');
     }
     // Spec §14.3: a claim that waits for its payment is sent back for its account by whoever the server says may:
-    // whoever may record its payment, the approver it stands on, or its requester. Said to them, because a wrong
-    // account is found here, by the payer reading the bank's own screen, and must not be paid into.
-    if (!ended && key === 'payment' && !round && correction?.canRequest === true) {
-      actions.push('send-back');
-      note = [note, 'ถ้าวิธีรับเงินหรือบัญชีรับเงินไม่ถูกต้อง กดส่งกลับให้แก้บัญชีรับเงินก่อนมีการจ่าย'].filter(Boolean).join(' · ');
-    }
+    // whoever may record its payment, the approver it stands on, or its requester. The page offers it at the foot of
+    // the account box, where a wrong account is found, and says it there: not among the buttons of this step, where
+    // one wrong tap beside "บันทึกจ่าย" took both signatures off a claim that only needed paying.
+    if (!ended && key === 'payment' && !round && correction?.canRequest === true) actions.push('send-back');
     if (!ended && own.canCancel) actions.push('cancel');
     // No requestNo, no document: drafts and claims cancelled out of DRAFT never got one.
     if (detail?.requestNo && status !== 'DRAFT') actions.push('print');

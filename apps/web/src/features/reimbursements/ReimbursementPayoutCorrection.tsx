@@ -16,7 +16,7 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
+  PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL, PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
   PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
   isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
@@ -81,7 +81,10 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
   return (
     <form className="space-y-3 [overflow-wrap:anywhere]" onSubmit={submit} noValidate data-testid="reimbursement-payout-correction-request">
       <div>
-        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">{again ? PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL}</h3>
+        {/* A claim with no account of its own (sent before claims carried one) has none to correct: its requester adds one. */}
+        <h3 ref={heading} tabIndex={-1} className="text-sm font-bold text-gray-900 outline-none">
+          {again ? PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL : !detail.payout ? PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL}
+        </h3>
         <ul className="mt-1 space-y-1 text-sm text-gray-600">
           {payoutCorrectionSendBackNotes(detail).map((line) => <li key={line}>{line}</li>)}
         </ul>

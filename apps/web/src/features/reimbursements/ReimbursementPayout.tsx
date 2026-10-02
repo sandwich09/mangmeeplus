@@ -21,6 +21,7 @@ import {
 } from './reimbursement-payout.api';
 import {
   BANK_OPTIONS, LEGACY_ASK_REQUESTER_NOTE, LEGACY_DEFAULT_LABEL, OTHER_BANK, PAYER_CONFIRMATION_TEXT, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT,
+  PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL, PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_SEND_BACK_LEAD,
   chooseClaimPayoutMode, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
   memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
@@ -379,7 +380,7 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
  * claim froze no account, so its payer is shown the requester's current default instead, labelled
  * as never approved on this claim, or is told to ask the requester (§15).
  */
-export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAccountHref, canWithdraw = false, payStep = false }: {
+export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAccountHref, canWithdraw = false, payStep = false, sendBack }: {
   companyId: string;
   detail: any;
   userId: string;
@@ -389,6 +390,11 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
   canWithdraw?: boolean;
   /** The claim waits for its payment and this viewer is offered to record it. */
   payStep?: boolean;
+  /**
+   * The claim waits for its payment and the server lets this viewer send it back for its account (spec §14.3). The
+   * action sits here, at the foot of the box that shows the account, as a line of text: never beside "บันทึกจ่าย".
+   */
+  sendBack?: { onPress: () => void; disabled?: boolean };
 }) {
   const payout: ReimbursementPayoutSummary | undefined = detail.payout;
   const view = claimPayoutView(detail);
@@ -467,6 +473,16 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
               </li>
             ))}
           </ol>
+        </div>
+      )}
+      {sendBack && (
+        <div className="border-t border-gray-100 pt-3" data-testid="reimbursement-payout-send-back">
+          {/* A claim with no account of its own has nothing to correct, and is paid as it is: the action says what it does. */}
+          <p className="text-xs leading-5 text-gray-500">{view.state === 'legacy' ? PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD : PAYOUT_CORRECTION_SEND_BACK_LEAD}</p>
+          <button type="button" disabled={sendBack.disabled} onClick={sendBack.onPress}
+            className="inline-flex min-h-11 items-center text-left text-sm font-semibold text-gray-700 underline underline-offset-4 hover:text-gray-900 disabled:opacity-50">
+            {view.state === 'legacy' ? PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL}
+          </button>
         </div>
       )}
     </MangmeeCard>

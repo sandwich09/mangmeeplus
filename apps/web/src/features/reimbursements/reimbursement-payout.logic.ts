@@ -283,7 +283,7 @@ export function payoutDefaultChangedHint(
   // the new account is the correction round (spec §14.3): give the account now, or send the claim back for it.
   const how = canWithdraw ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
     : detail.payoutCorrectionActions?.canSubmit === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_FIX_LABEL}ในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ`
-      : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_SEND_BACK_LABEL}ในขั้นจ่ายเงินคืน ก่อนมีการโอน`
+      : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_SEND_BACK_LABEL}ที่ท้ายกล่องนี้ ก่อนมีการโอน`
         : 'ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
   return `บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ${how}`;
 }
@@ -409,6 +409,15 @@ export const BANK_OPTIONS: readonly string[] = THAI_BANK_NAMES;
 // server's answer (`payoutCorrectionActions`, `approvalActions`); nothing here decides it.
 
 export const PAYOUT_CORRECTION_SEND_BACK_LABEL = 'ส่งกลับให้แก้บัญชีรับเงิน';
+/**
+ * The same send-back on a claim sent before claims carried an account (spec §15): there is no account to correct,
+ * so the action is named for what it does. Such a claim can be paid as it is, and is told so beside the action.
+ */
+export const PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL = 'เพิ่มบัญชีรับเงินให้ใบนี้ แล้วให้ผู้อนุมัติตรวจใหม่';
+export const PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL = 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน';
+/** Said above the send-back at the foot of the account box of a claim that waits for its payment (spec §14.3). */
+export const PAYOUT_CORRECTION_SEND_BACK_LEAD = 'ถ้าวิธีรับเงินหรือบัญชีนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย ส่งกลับให้แก้ก่อน';
+export const PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD = 'ใบนี้บันทึกจ่ายได้เลยโดยไม่ต้องมีบัญชีในใบ ข้อความด้านล่างใช้เมื่อต้องการให้ใบมีบัญชีที่ผู้อนุมัติตรวจแล้วเท่านั้น';
 /** The same send-back from whoever decides the round's waiting step: it is never a refusal of the claim. */
 export const PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL = 'ส่งกลับให้แก้อีกครั้ง';
 export const PAYOUT_CORRECTION_FIX_LABEL = 'แก้บัญชีรับเงิน';
@@ -499,11 +508,14 @@ export function payoutCorrectionSendBackNotes(detail: {
   if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') {
     return ['ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงินอีกครั้ง ใบไม่ถูกปฏิเสธ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'];
   }
+  // A claim sent before claims carried an account gets one through this same path (spec §15): it has none to correct.
+  const legacy = !detail.payout;
   return [
-    'ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
-    'เมื่อผู้เบิกแก้แล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
-    // A claim sent before claims carried an account gets one through this same path (spec §15).
-    ...(!detail.payout ? [`${LEGACY_PAYOUT_NOTE} หลังส่งกลับ ผู้เบิกจะระบุบัญชีรับเงินของใบนี้ได้`] : []),
+    legacy ? 'ใบนี้จะกลับไปให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'
+      : 'ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
+    legacy ? 'เมื่อผู้เบิกเพิ่มบัญชีแล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีนั้นก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที'
+      : 'เมื่อผู้เบิกแก้แล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
+    ...(legacy ? [`${LEGACY_PAYOUT_NOTE} หลังส่งกลับ ผู้เบิกจะระบุบัญชีรับเงินของใบนี้ได้`] : []),
     ...((detail.signatures ?? []).length > 0 ? ['ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่หลังบัญชีใหม่ได้รับอนุมัติ'] : []),
     ...((detail.signedCopies ?? []).some((copy) => copy.acknowledgedAt)
       ? ['สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่หลังบัญชีใหม่ได้รับอนุมัติ'] : []),
