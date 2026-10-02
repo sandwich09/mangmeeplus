@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import {
@@ -11,7 +9,8 @@ import {
 import { translateApiError } from '@/common/api/api-error-message';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import {
-  PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED, emptyPayoutCorrectionForm, isClaimStateConflict, isRequesterNotActiveRefusal,
+  PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED,
+  emptyPayoutCorrectionForm, isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
   payoutCorrectionInput, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
   payoutCorrectionSentBackText, payoutCorrectionSubmittedText, type PayoutCorrectionForm,
@@ -262,6 +261,26 @@ describe('giving the account of a claim in a round: what the form asks and sends
     for (const detail of [{}, { payoutCorrection: null }, { payoutCorrection: {} }, { payoutCorrection: { previous: null } }]) assert.equal(payoutCorrectionPreviousAccount(detail), undefined);
   });
 
+  it('sends every choice with the claim the form was opened on, and without it only where the page has none to name', () => {
+    const openedOn = '2026-10-01T04:00:00.000Z';
+    assert.deepEqual(payoutCorrectionInput(form({ mode: 'CASH' }), undefined, false, openedOn), { mode: 'CASH', expectedUpdatedAt: openedOn });
+    assert.deepEqual(payoutCorrectionInput(form({ mode: 'PREVIOUS' }), undefined, false, openedOn), { mode: 'PREVIOUS', expectedUpdatedAt: openedOn });
+    assert.deepEqual(payoutCorrectionInput(form({ mode: 'DEFAULT' }), 'a1b2c3', false, openedOn), { mode: 'DEFAULT', defaultToken: 'a1b2c3', expectedUpdatedAt: openedOn });
+    assert.equal((payoutCorrectionInput(form({ mode: 'SPECIFIED', account: typed }), undefined, false, openedOn) as { expectedUpdatedAt?: string }).expectedUpdatedAt, openedOn);
+    for (const none of [undefined, null, '']) assert.deepEqual(payoutCorrectionInput(form({ mode: 'CASH' }), undefined, false, none), { mode: 'CASH' });
+    // Still nothing to send without a choice, or without the default the page showed.
+    assert.equal(payoutCorrectionInput(form(), 'a1b2c3', true, openedOn), null);
+    assert.equal(payoutCorrectionInput(form({ mode: 'DEFAULT' }), undefined, true, openedOn), null);
+  });
+
+  it('knows the refusal of a press on a claim that changed after the form was opened, however the API carries its name', () => {
+    assert.equal(isClaimChangedRefusal(Object.assign(new Error('Reimbursement changed. Reload and retry.'), { status: 409, code: 'reimbursement_changed' })), true);
+    assert.equal(isClaimChangedRefusal(Object.assign(new Error('reimbursement_changed'), { status: 409 })), true);
+    for (const other of [Object.assign(new Error('payout_destination_changed'), { status: 409 }), Object.assign(new Error('payout_account_member_not_active'), { status: 409 }), new Error('Failed to fetch'), null]) {
+      assert.equal(isClaimChangedRefusal(other), false);
+    }
+  });
+
   it('knows the refusal of an account typed for a requester who is no longer active, however the API carries its name', () => {
     assert.equal(isRequesterNotActiveRefusal(Object.assign(new Error('payout_account_member_not_active'), { status: 409 })), true);
     assert.equal(isRequesterNotActiveRefusal(Object.assign(new Error('Conflict'), { status: 409, code: 'payout_account_member_not_active' })), true);
@@ -442,10 +461,7 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
     // A form that is no longer offered is closed by the page, which says what was not done and where to read what can be done now.
     for (const text of Object.values(PAYOUT_CORRECTION_SUPERSEDED)) assert.match(text, /^ยังไม่ได้.+ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง$/u);
     assert.deepEqual([isClaimStateConflict({ status: 409 }), isClaimStateConflict({ status: 403 }), isClaimStateConflict(new Error('x'))], [true, false, false]);
-    const page = readFileSync(join(__dirname, 'ReimbursementJourneyPage.tsx'), 'utf8');
-    assert.match(page, /onConflict=\{\(\) => afterCorrectionConflict\('send-back'\)\}/);
-    assert.match(page, /onConflict=\{\(\) => afterCorrectionConflict\('correct-payout'\)\}/);
-    assert.match(page, /setDetail\(latest\);\s+if \(activeJourneyStep\(buildJourneySteps\(latest, permissions, userId\)\)\?\.actions\.includes\(form\)\) return true;\s+setCorrectionForm\(null\); setActionError\(PAYOUT_CORRECTION_SUPERSEDED\[form\]\);/);
+    // What the page does with either form after it read the claim again is held by the page's own tests below.
   });
 });
 
@@ -455,7 +471,7 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
   const typed = { payoutKind: 'BANK_ACCOUNT' as const, bankChoice: 'ธนาคารไทยพาณิชย์', bankOther: '', accountName: 'นาย สมชาย ใจดี', accountNumber: '111-2-33444-1112' };
   /** The form's own states: what was picked and typed, whether the server lets this viewer save a default, then the banner. */
   const form = (detail: object, state: { picked?: Partial<PayoutCorrectionForm>; canSaveAsDefault?: boolean; error?: string; userId?: string; typing?: 'refused' } = {}, onDone: (claim: unknown) => void = noop,
-    onConflict: () => Promise<boolean> = async () => false) => {
+    onConflict: (claimChanged: boolean) => Promise<boolean> = async () => false) => {
     let falses = 0;
     return render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail, userId: state.userId ?? 'staff', canEditEmployees: false, onCancel: noop, onDone, onConflict }), (start) => {
       if (start && typeof start === 'object' && 'saveAsDefault' in start) return { ...start, ...state.picked };
@@ -577,6 +593,25 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     assert.match(html, /<input[^>]*aria-label="ชื่อบัญชี"[^>]*value="นาย สมชาย ใจดี"/);
     assert.match(html, /<input[^>]*aria-label="เลขบัญชี"[^>]*value="111-2-33444-1112"/);
     assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'));
+  });
+
+  it('sends the claim it was opened on with the account, and tells the page when the refusal is that this claim has changed since', async () => {
+    const openedOn = withDefault(phaseA({ updatedAt: AT.sentBack }));
+    const taken = await withApi(() => ({ status: 200, body: asAnswered(phaseB()) }), () => form(openedOn, { picked: { mode: 'PREVIOUS' } }).handlers.form.onSubmit(submitEvent));
+    assert.deepEqual(taken.map((call) => call.body), [{ mode: 'PREVIOUS', expectedUpdatedAt: AT.sentBack }]);
+    for (const [body, claimChanged, said] of [
+      // The server's own answer to a press on a claim that is no longer the one the form read.
+      [{ statusCode: 409, code: 'reimbursement_changed', message: 'Reimbursement changed. Reload and retry.' }, true, 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'],
+      // Another conflict: the claim is the one the form read, the default account shown is not the default any more.
+      [{ statusCode: 409, message: 'payout_destination_changed' }, false, `${translateApiError('payout_destination_changed')!} · ${PAYOUT_CORRECTION_REREAD_NOTE}`],
+    ] as const) {
+      const told: boolean[] = [];
+      // The page answers that the form stays only where the claim is still the one it was opened on.
+      const { handlers, changes } = form(openedOn, { picked: { mode: 'DEFAULT' } }, noop, async (changed) => { told.push(changed); return !changed; });
+      const calls = await withApi(() => ({ status: 409, body }), () => handlers.form.onSubmit(submitEvent));
+      assert.deepEqual([calls.length, told], [1, [claimChanged]], body.message);
+      assert.ok(changes.some((change) => change.value === said), `${body.message}: ${JSON.stringify(changes)}`);
+    }
   });
 
   it('stops offering a typed account once the server refuses one for a requester who is no longer active, says why, and keeps what is left', async () => {
@@ -1051,6 +1086,43 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
       assert.deepEqual(calls[0]!.body, { mode: 'CASH' });
       assert.deepEqual(toasts, [said]);
     }
+  });
+
+  // A second press that arrives after the first was taken (another tab, or a press again after a lost answer).
+  it('closes an account form whose claim changed after it was opened, even where the form is still offered, and says what to look at', async () => {
+    const page = filled(phaseA({ payoutCorrectionActions: GIVE, updatedAt: AT.sentBack }), requester, 'correct-payout', { picked: { mode: 'CASH' } });
+    toasts.length = 0;
+    // The earlier press was taken: the claim waits for its approvers with that account, and its requester may still give another.
+    const calls = await withApi((_url, method) => (method === 'PUT' ? { status: 409, body: { statusCode: 409, code: 'reimbursement_changed', message: 'Reimbursement changed. Reload and retry.' } }
+      : { status: 200, body: asAnswered(phaseB({ payoutCorrectionActions: GIVE, updatedAt: AT.given })) }), () => page.handlers.form.onSubmit(submitEvent));
+    assert.deepEqual(calls.map((call) => `${call.method} ${call.url.split('/claim-1')[1]}`), ['PUT /payout-destination', 'GET '], 'refused once, then the claim is read again; nothing is sent a second time');
+    assert.deepEqual(calls[0]!.body, { mode: 'CASH', expectedUpdatedAt: AT.sentBack });
+    assert.deepEqual(toasts, []);
+    assert.ok(page.changes.some((change) => (change.value as { payoutCorrectionPhase?: string } | null)?.payoutCorrectionPhase === 'AWAITING_APPROVAL'), 'the page shows the claim as read again');
+    assert.ok(page.changes.some((change) => change.value === PAYOUT_CORRECTION_STALE_PRESS), 'the page says what was not done and what to look at');
+    assert.equal(page.changes.some((change) => typeof change.value === 'string' && change.value.includes(PAYOUT_CORRECTION_REREAD_NOTE)), false, 'nothing invites the same press again');
+    assert.equal(PAYOUT_CORRECTION_STALE_PRESS,
+      'ยังไม่ได้บันทึกบัญชีรับเงินครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม หน้านี้แสดงสถานะล่าสุดของใบแล้ว ดูที่หัวข้อการรับเงินคืนว่าตอนนี้ใบใช้วิธีรับเงินใด ถ้ายังไม่ถูก กดปุ่มแก้บัญชีรับเงินเพื่อแก้ใหม่');
+    assertPlainThai([PAYOUT_CORRECTION_STALE_PRESS], 'the stale press sentence');
+    // The page it describes: the claim in its round shows the card "การรับเงินคืน" and still offers the button it names.
+    const after = claimPage(phaseB({ payoutCorrectionActions: GIVE }), requester);
+    assert.ok(after.texts.includes('การรับเงินคืน') && after.texts.some((text) => text.startsWith('แก้บัญชีรับเงิน')), JSON.stringify(after.texts.filter((text) => text.includes('รับเงิน'))));
+  });
+
+  it('says the round is over when the claim that changed no longer offers the account form, and keeps a form whose claim did not change', async () => {
+    // Approved meanwhile: the claim is back at its pay step and nobody gives its account.
+    const over = filled(phaseB({ payoutCorrectionActions: GIVE, updatedAt: AT.given }), requester, 'correct-payout', { picked: { mode: 'CASH' } });
+    await withApi((_url, method) => (method === 'PUT' ? { status: 409, body: { statusCode: 409, code: 'reimbursement_changed', message: 'Reimbursement changed. Reload and retry.' } }
+      : { status: 200, body: asAnswered(reapproved({ updatedAt: AT.reapproved })) }), () => over.handlers.form.onSubmit(submitEvent));
+    assert.ok(over.changes.some((change) => change.value === PAYOUT_CORRECTION_SUPERSEDED['correct-payout']));
+    assert.equal(over.changes.some((change) => change.value === PAYOUT_CORRECTION_STALE_PRESS), false);
+    // The default account shown is no longer the default: the claim is the one the form read, so the form stays with the fresh default under it.
+    const same = filled(phaseA({ payoutCorrectionActions: GIVE, updatedAt: AT.sentBack }), requester, 'correct-payout', { picked: { mode: 'CASH' } });
+    const calls = await withApi((_url, method) => (method === 'PUT' ? { status: 409, body: { statusCode: 409, message: 'payout_destination_changed' } }
+      : { status: 200, body: asAnswered(phaseA({ payoutCorrectionActions: GIVE, updatedAt: AT.sentBack })) }), () => same.handlers.form.onSubmit(submitEvent));
+    assert.equal(calls.length, 2);
+    assert.ok(same.changes.some((change) => change.value === `${translateApiError('payout_destination_changed')!} · ${PAYOUT_CORRECTION_REREAD_NOTE}`));
+    assert.equal(same.changes.some((change) => change.value === PAYOUT_CORRECTION_STALE_PRESS || change.value === PAYOUT_CORRECTION_SUPERSEDED['correct-payout']), false, 'the page closes nothing');
   });
 });
 

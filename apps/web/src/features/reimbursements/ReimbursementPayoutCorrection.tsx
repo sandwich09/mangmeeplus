@@ -18,7 +18,7 @@ import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPay
 import {
   PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
   PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
-  isClaimStateConflict, isRequesterNotActiveRefusal,
+  isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
   payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
@@ -131,8 +131,11 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   /** The session may edit employee data: only then is the server asked whether this viewer may set the requester's default. */
   canEditEmployees: boolean;
   onCancel: () => void;
-  /** The claim moved on (409): the page reads it again, and answers whether this form is still offered. */
-  onConflict: () => Promise<boolean>;
+  /**
+   * The claim moved on (409): the page reads it again, and answers whether this form stays open. `claimChanged`:
+   * the claim is no longer the one this form was opened on, so what it holds is not sent again as it is.
+   */
+  onConflict: (claimChanged: boolean) => Promise<boolean>;
   /** The claim detail the API answered with: waiting for its approvers, or ready for payment at once. */
   onDone: (claim: any) => void;
 }) {
@@ -171,7 +174,8 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
     event.preventDefault();
     if (sending.current) return;
     const invalid = payoutCorrectionFormError(form);
-    const input = invalid ? null : payoutCorrectionInput(form, defaultAccount?.token, canSaveAsDefault);
+    // With the claim the form was opened on (`updatedAt`): a press that arrives after an earlier one was taken is refused.
+    const input = invalid ? null : payoutCorrectionInput(form, defaultAccount?.token, canSaveAsDefault, detail.updatedAt);
     if (invalid || !input) { setError(invalid?.text ?? 'กรุณาเลือกวิธีรับเงินคืนของใบนี้'); setInvalidField(invalid?.field); return; }
     sending.current = true; setBusy(true); setError(null); setInvalidField(undefined);
     try {
@@ -180,7 +184,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       // Not a claim that moved on: the claim is as it was, and what is left to choose from is on the form.
       if (isRequesterNotActiveRefusal(e)) { setTyping('refused'); setForm((current) => ({ ...current, mode: '' })); return; }
       // The account stays as typed: a refusal for one field is fixed and sent again without typing the rest.
-      setError(await refusalText(e, onConflict));
+      setError(await refusalText(e, () => onConflict(isClaimChangedRefusal(e))));
     } finally { sending.current = false; setBusy(false); }
   };
 

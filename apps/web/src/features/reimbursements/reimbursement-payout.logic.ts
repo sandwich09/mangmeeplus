@@ -422,8 +422,26 @@ export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อน�
 export function isClaimStateConflict(e: unknown): boolean {
   return (e as { status?: unknown } | null)?.status === 409;
 }
+/** The API's name for a refusal: a bare Nest exception carries it as the message, one with a body as the code. */
+function refusalName(e: unknown): string | null {
+  return apiErrorCode(e) ?? (e instanceof Error ? e.message : null);
+}
+/**
+ * The API took no account because the claim is no longer the one the form was opened on (`reimbursement_changed`):
+ * the account form sends the `updatedAt` it read, so a press that arrives after an earlier one was taken freezes
+ * no further version of the account and sends no further notice (spec §14.5).
+ */
+export function isClaimChangedRefusal(e: unknown): boolean {
+  return refusalName(e) === 'reimbursement_changed';
+}
 /** Added to such a refusal in a form that is still offered, once the page under it shows the claim as it is now. */
 export const PAYOUT_CORRECTION_REREAD_NOTE = 'หน้านี้แสดงสถานะล่าสุดของใบแล้ว ตรวจแล้วกดอีกครั้งได้';
+/**
+ * Said by the page when it closed an account form that is still offered, because the claim changed after the form
+ * was opened (an earlier press of the same form may be what changed it): what was not done, and what to look at
+ * before giving the account once more. Nothing typed for the claim as it was is sent to the claim as it is.
+ */
+export const PAYOUT_CORRECTION_STALE_PRESS = 'ยังไม่ได้บันทึกบัญชีรับเงินครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม หน้านี้แสดงสถานะล่าสุดของใบแล้ว ดูที่หัวข้อการรับเงินคืนว่าตอนนี้ใบใช้วิธีรับเงินใด ถ้ายังไม่ถูก กดปุ่มแก้บัญชีรับเงินเพื่อแก้ใหม่';
 /** Said by the page when the form is no longer offered: what was not done, why, and where to read what can be done now. */
 export const PAYOUT_CORRECTION_SUPERSEDED: Record<'send-back' | 'correct-payout', string> = {
   'send-back': 'ยังไม่ได้ส่งกลับ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
@@ -512,8 +530,7 @@ export function payoutCorrectionPreviousAccount(detail: { payoutCorrection?: { p
  * the notice such an account always sends would reach nobody. The claim itself did not change.
  */
 export function isRequesterNotActiveRefusal(e: unknown): boolean {
-  // A bare Nest exception carries its name as the message; one with a body carries it as the code.
-  return (apiErrorCode(e) ?? (e instanceof Error ? e.message : null)) === 'payout_account_member_not_active';
+  return refusalName(e) === 'payout_account_member_not_active';
 }
 /** Said in the account form after that refusal, in place of the choice it no longer offers: what cannot be done, why, and what still can. */
 export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงระบุบัญชีใหม่แทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้ระบุบัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
@@ -532,14 +549,19 @@ export function payoutCorrectionFormError(form: PayoutCorrectionForm): { text: s
  * The body of `PUT :requestId/payout-destination`. "Use the default account" names the default the page showed
  * (`payoutCorrectionActions.requesterDefault.token`), so the claim never takes an account nobody was shown. A
  * tick to save as the default is sent only where the server said this viewer may (`canSaveAsDefault`). "The
- * account the claim had" names nothing: the server takes the one the claim was approved with.
+ * account the claim had" names nothing: the server takes the one the claim was approved with. Every choice goes
+ * with `expectedUpdatedAt`, the `updatedAt` of the claim the form was opened on, so the server takes it only while
+ * the claim is still that one.
  */
-export function payoutCorrectionInput(form: PayoutCorrectionForm, defaultToken: string | undefined, canSaveAsDefault: boolean): SubmitReimbursementPayoutCorrectionInput | null {
-  if (form.mode === 'CASH') return { mode: 'CASH' };
-  if (form.mode === 'PREVIOUS') return { mode: 'PREVIOUS' };
-  if (form.mode === 'DEFAULT') return defaultToken ? { mode: 'DEFAULT', defaultToken } : null;
-  if (form.mode !== 'SPECIFIED') return null;
-  return { mode: 'SPECIFIED', ...payoutDestinationInput(form.account), ...(form.saveAsDefault && canSaveAsDefault && { saveAsDefault: true }) };
+export function payoutCorrectionInput(
+  form: PayoutCorrectionForm, defaultToken: string | undefined, canSaveAsDefault: boolean, expectedUpdatedAt?: string | null,
+): SubmitReimbursementPayoutCorrectionInput | null {
+  const choice: SubmitReimbursementPayoutCorrectionInput | null = form.mode === 'CASH' ? { mode: 'CASH' }
+    : form.mode === 'PREVIOUS' ? { mode: 'PREVIOUS' }
+      : form.mode === 'DEFAULT' ? (defaultToken ? { mode: 'DEFAULT', defaultToken } : null)
+        : form.mode === 'SPECIFIED' ? { mode: 'SPECIFIED', ...payoutDestinationInput(form.account), ...(form.saveAsDefault && canSaveAsDefault && { saveAsDefault: true }) }
+          : null;
+  return choice && { ...choice, ...(expectedUpdatedAt && { expectedUpdatedAt }) };
 }
 
 /** A receiving method and account of a round, masked, in one line: what the claim was approved with, or what it has now. */
