@@ -4573,8 +4573,10 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal((await approveAgain(claim.requestId)).status, 'READY_FOR_PAYMENT');
 
     // A second round, which begins with cash: cash again is the same, an account is not, and each is measured
-    // against what this round began with.
-    const cashSentBack = await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER' });
+    // against what this round began with. A claim that holds cash is sent back for a reason of cash (§14.3).
+    const noSuchReason = (error: any) => error?.getStatus?.() === 400 && (errorCode(error) ?? errorMessage(error)) === 'payout_correction_reason_required';
+    await assert.rejects(() => round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' }), noSuchReason);
+    const cashSentBack = await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'CASH_NOT_PAYABLE' });
     assert.deepEqual([cashSentBack.payoutCorrectionPhase, cashSentBack.payoutMethod, cashSentBack.payoutCorrection?.previous], ['AWAITING_REQUESTER', 'CASH', { payoutMethod: 'CASH' }]);
     const cashAgain = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'PREVIOUS' });
     assert.deepEqual([cashAgain.payoutCorrectionAnswer, cashAgain.payoutCorrection?.sameAsPrevious, cashAgain.payoutMethod], ['SAME_CASH', true, 'CASH']);
@@ -4591,6 +4593,11 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     // A claim with no account of its own: its first account is neither new nor the same, and cash is its first choice.
     const legacy = await approvedTransferClaim(1, 'unset');
     assert.deepEqual([(await claimRow(legacy.requestId)).payoutMethod, (await claimRow(legacy.requestId)).payoutFingerprint], [null, null]);
+    // It is sent back for the one reason that is true of it, and for no other.
+    for (const reasonCode of ['OTHER', 'ACCOUNT_NUMBER_WRONG', 'CASH_NOT_PAYABLE']) {
+      await assert.rejects(() => round(0).sendBack.execute(finance(), legacy.requestId, { reasonCode }), noSuchReason, reasonCode);
+    }
+    assert.equal((await claimRow(legacy.requestId)).status, 'READY_FOR_PAYMENT');
     await round(0).sendBack.execute(finance(), legacy.requestId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
     const first = await round(0).giveAccount.execute(requesterWhoEdits(), legacy.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
     assert.deepEqual([first.payoutCorrectionPhase, first.payoutCorrectionAnswer, first.payoutCorrection?.sameAsPrevious, first.payout?.version], ['AWAITING_APPROVAL', 'FIRST_ACCOUNT', false, 1]);
@@ -4599,6 +4606,14 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.deepEqual([cashFirst.payoutCorrectionAnswer, cashFirst.payoutCorrection?.sameAsPrevious], ['FIRST_CASH', false]);
     assert.equal((await approveAgain(legacy.requestId)).status, 'READY_FOR_PAYMENT');
     assert.deepEqual(await factsOf(legacy.requestId), ['NOTHING', 'FIRST_ACCOUNT', 'ACCOUNT', 'FIRST_CASH', 'FIRST_CASH']);
+
+    // A PromptPay number has no bank to be wrong: the kind is read from the account the claim itself carries.
+    const promptPay = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), promptPay.requestId, { reasonCode: 'BANK_WRONG' });
+    await round(0).giveAccount.execute(requesterWhoEdits(), promptPay.requestId, { mode: 'SPECIFIED', payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountNumber: '0812345678' });
+    await assert.rejects(() => round(0).sendBack.execute(manager(), promptPay.requestId, { reasonCode: 'BANK_WRONG' }), noSuchReason);
+    assert.equal((await claimRow(promptPay.requestId)).payoutCorrectionSubmittedAt !== null, true, 'the refusal sent nothing back');
+    assert.equal((await round(0).sendBack.execute(manager(), promptPay.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' })).payoutCorrection?.reasonCode, 'ACCOUNT_NUMBER_WRONG');
   });
 
   it('still cancels a claim in a round by the rule every claim is cancelled by: its records are voided and it closes', async (t) => {
@@ -4667,7 +4682,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const before = await leftAloneByARound(claim);
     assert.deepEqual([first.payoutMethod, first.payoutFingerprint, first.financeReviewStatus, (await stepsOf(claim.requestId)).length], [null, null, 'APPROVED_FOR_PAYMENT', 0]);
 
-    const sentBack = await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER', note: 'เพิ่มบัญชีรับเงินให้ใบนี้' });
+    const sentBack = await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM', note: 'เพิ่มบัญชีรับเงินให้ใบนี้' });
     assert.deepEqual([sentBack.status, sentBack.payoutCorrection?.phase, sentBack.payoutCorrection?.previous, sentBack.payout, sentBack.currentDesk, sentBack.awaitingSystem],
       ['PENDING_APPROVAL', 'AWAITING_REQUESTER', undefined, undefined, { kind: 'REQUESTER' }, undefined]);
     assert.equal((await claimRow(claim.requestId)).approvalSnapshotHash, first.approvalSnapshotHash, 'sending back changes no hash');

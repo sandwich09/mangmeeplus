@@ -16,7 +16,10 @@ import {
 } from './reimbursement-request.use-case';
 import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
-import { isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
+import {
+  isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket,
+  reimbursementPayoutCorrectionReasons, reimbursementPayoutRoundStatus,
+} from '@watchdog-bms/contracts';
 import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, PAYOUT_CORRECTION_NOTE } from './reimbursement-summary.use-case';
 import { toRequestSummary } from '../dto/reimbursement.mapper';
 import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
@@ -4024,7 +4027,8 @@ describe('payout correction: what the claim says and allows while it is in a rou
 describe('payout correction: the requester gives the account and it is approved again (AC31)', () => {
   const sentBack = async (world: ReturnType<typeof correctionWorld>, send: Parameters<ReturnType<typeof correctionWorld>['ready']>[0] = {}) => {
     const id = await world.ready(send);
-    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    // A reason the claim takes: a wrong account number is no reason for a claim that asked for cash.
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: world.claim().payoutMethod === 'CASH' ? 'CASH_NOT_PAYABLE' : 'ACCOUNT_NUMBER_WRONG' });
     world.events().length = 0;
     world.audits.length = 0;
     return id;
@@ -4240,7 +4244,7 @@ describe('payout correction: the requester gives the account and it is approved 
     const legacy = correctionWorld();
     const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
     Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
-    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'OTHER' });
+    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
     await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'PREVIOUS' }), (error: any) => error.getStatus() === 409 && error.message === 'payout_destination_required');
     assert.equal(legacy.claim().payoutCorrectionSubmittedAt, undefined);
   });
@@ -4539,7 +4543,7 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     const legacyHash = claim.approvalSnapshotHash;
     assert.equal(hasPayoutSnapshot(claim), false);
 
-    const sentBack = await world.sendBack.execute(payerCtx(), id, { reasonCode: 'OTHER' });
+    const sentBack = await world.sendBack.execute(payerCtx(), id, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
     assert.deepEqual([sentBack.payoutCorrection?.previous, sentBack.payout], [undefined, undefined], 'it had no account to show');
     assert.equal(world.claim().approvalSnapshotHash, legacyHash, 'sending back changes no hash');
     const given = await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK });
@@ -4552,39 +4556,81 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     assert.deepEqual([approved.status, approved.payout?.verifiedByName], ['READY_FOR_PAYMENT', 'วิภา']);
   });
 
-  // Upgrade test 2026-10-02: every reason presumed an account that is wrong, so whoever sent a legacy claim back to be
-  // given one had only "อื่น ๆ". The reason exists for exactly that claim, and its notice asks for an account to be added.
-  it('takes "the claim has no account yet" from a claim with no account of its own and from no other, and asks its requester to add one', async () => {
+  // Payout spec §14.3. The reasons a send-back takes are the ones that are true of what the claim holds. Before, every
+  // claim was offered the reasons of a wrong account: a claim with no account took five reasons that presumed one, and
+  // so did a claim that had asked for cash, which has none.
+  it('takes a reason only from the list of what the claim holds: one for a claim with no account, three of its own for cash, and no wrong bank for a PromptPay number', async () => {
     const refused = (error: any) => error.getStatus() === 400 && error.message === 'payout_correction_reason_required';
-    const legacy = correctionWorld();
-    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
-    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
-    const sentBack = await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
-    assert.deepEqual([sentBack.payoutCorrection?.phase, sentBack.payoutCorrection?.reasonCode, legacy.claim().payoutCorrectionReasonCode],
-      ['AWAITING_REQUESTER', 'NO_ACCOUNT_ON_CLAIM', 'NO_ACCOUNT_ON_CLAIM']);
-    assert.deepEqual(legacy.events().map((event) => event.payloadJson.data.payoutCorrectionNotice), ['เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน']);
-    assert.equal(legacy.audits[0].metadataJson.reasonCode, 'NO_ACCOUNT_ON_CLAIM');
-
-    // Once its requester has given an account the claim has one: sent back again from the waiting step, it takes the
-    // reasons of a claim with an account, and that notice asks for a correction.
-    await legacy.giveAccount.execute(ctx(), legacyId, { mode: 'SPECIFIED', ...KBANK });
-    assert.equal(hasPayoutSnapshot(legacy.claim()), true);
-    await assert.rejects(() => legacy.reject.execute(approverCtx(), legacyId, 'ชื่อบัญชีไม่ตรง', 'NO_ACCOUNT_ON_CLAIM'), refused);
-    await legacy.reject.execute(approverCtx(), legacyId, 'ชื่อบัญชีไม่ตรง', 'ACCOUNT_NAME_MISMATCH');
-    assert.equal(legacy.events().at(-1).payloadJson.data.payoutCorrectionNotice, 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
-
-    // A claim sent with an account, by transfer or as cash, has one to correct: the reason is refused and nothing is written.
-    for (const send of [{}, { setDefault: null, payout: { mode: 'CASH' } }] as const) {
+    const LEGACY = { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined };
+    type Made = { world: ReturnType<typeof correctionWorld>; id: string; by: any };
+    /** A claim that waits for payment, as it was sent; `legacy`: as a build from before claims carried a destination left it. */
+    const ready = (send: Record<string, unknown>, legacy = false) => async (): Promise<Made> => {
       const world = correctionWorld();
-      const id = await world.ready(send);
-      await assert.rejects(() => world.sendBack.execute(payerCtx(), id, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' }), refused, JSON.stringify(send));
-      assert.deepEqual([world.claim().status, world.events(), world.audits], ['READY_FOR_PAYMENT', [], []]);
-    }
-    // The other reasons stay open to a legacy claim: the account its payer is shown is its requester's default, which can be wrong.
-    const other = correctionWorld();
-    const otherId = await other.ready({ setDefault: null, payout: { mode: 'CASH' } });
-    Object.assign(other.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
-    assert.equal((await other.sendBack.execute(payerCtx(), otherId, { reasonCode: 'ACCOUNT_UNUSABLE' })).payoutCorrection?.reasonCode, 'ACCOUNT_UNUSABLE');
+      const id = await world.ready(send as any);
+      if (legacy) Object.assign(world.claim(), LEGACY);
+      return { world, id, by: payerCtx() };
+    };
+    /** The same claim sent back and answered: it waits for its approver, who may send it back again. */
+    const answered = (claim: () => Promise<Made>, reasonCode: string, give: Record<string, unknown>) => async (): Promise<Made> => {
+      const made = await claim();
+      await made.world.sendBack.execute(payerCtx(), made.id, { reasonCode });
+      await made.world.giveAccount.execute(ctx(), made.id, give as any);
+      return { ...made, by: approverCtx() };
+    };
+    /** Every reason the send-back takes from such a claim, each tried on a claim of its own. A refusal writes nothing. */
+    const taken = async (make: () => Promise<Made>) => {
+      const codes: string[] = [];
+      for (const reasonCode of Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS)) {
+        const { world, id, by } = await make();
+        const before = [world.claim().status, world.claim().updatedAt.getTime(), world.events().length, world.audits.length];
+        try {
+          await world.sendBack.execute(by, id, { reasonCode });
+          codes.push(reasonCode);
+        } catch (error) {
+          assert.ok(refused(error), `${reasonCode}: ${String(error)}`);
+          assert.deepEqual([world.claim().status, world.claim().updatedAt.getTime(), world.events().length, world.audits.length], before, reasonCode);
+        }
+      }
+      return codes;
+    };
+    const OF_AN_ACCOUNT = ['ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NAME_MISMATCH', 'BANK_WRONG', 'ACCOUNT_UNUSABLE', 'REQUESTER_ASKED', 'OTHER'];
+    const OF_CASH = ['CASH_NOT_PAYABLE', 'REQUESTER_ASKED_METHOD', 'OTHER'];
+    const withAccount = ready({});
+    const withPromptPay = ready({ setDefault: PROMPTPAY });
+    const withCash = ready({ setDefault: null, payout: { mode: 'CASH' } });
+    const withNothing = ready({ setDefault: null, payout: { mode: 'CASH' } }, true);
+
+    // At the pay step: what the claim was approved with.
+    assert.deepEqual(await taken(withAccount), OF_AN_ACCOUNT);
+    // A PromptPay number has no bank to be wrong.
+    assert.deepEqual(await taken(withPromptPay), OF_AN_ACCOUNT.filter((code) => code !== 'BANK_WRONG'));
+    assert.deepEqual(await taken(withCash), OF_CASH);
+    // No account: that one reason, and not even "อื่น ๆ".
+    assert.deepEqual(await taken(withNothing), ['NO_ACCOUNT_ON_CLAIM']);
+
+    // From the waiting step: what its requester just gave, whatever the claim held before.
+    assert.deepEqual(await taken(answered(withNothing, 'NO_ACCOUNT_ON_CLAIM', { mode: 'SPECIFIED', ...KBANK })), OF_AN_ACCOUNT);
+    assert.deepEqual(await taken(answered(withNothing, 'NO_ACCOUNT_ON_CLAIM', { mode: 'CASH' })), OF_CASH);
+    assert.deepEqual(await taken(answered(withAccount, 'ACCOUNT_NUMBER_WRONG', { mode: 'CASH' })), OF_CASH);
+    assert.deepEqual(await taken(answered(withAccount, 'ACCOUNT_NUMBER_WRONG', { mode: 'SPECIFIED', ...PROMPTPAY })), OF_AN_ACCOUNT.filter((code) => code !== 'BANK_WRONG'));
+    assert.deepEqual(await taken(answered(withCash, 'CASH_NOT_PAYABLE', { mode: 'SPECIFIED', ...SCB })), OF_AN_ACCOUNT);
+
+    // The list the form offers is the list the endpoint takes: one function, asked the same question.
+    assert.deepEqual([OF_AN_ACCOUNT, OF_AN_ACCOUNT.filter((code) => code !== 'BANK_WRONG'), OF_CASH, ['NO_ACCOUNT_ON_CLAIM']],
+      [reimbursementPayoutCorrectionReasons('ACCOUNT', 'BANK_ACCOUNT'), reimbursementPayoutCorrectionReasons('ACCOUNT', 'PROMPTPAY_PHONE'), reimbursementPayoutCorrectionReasons('CASH'), reimbursementPayoutCorrectionReasons('NOTHING')]);
+
+    // What was sent back is on the claim, in its audit row and in the requester's notice, in the list's own words.
+    const legacy = await withNothing();
+    const sentBack = await legacy.world.sendBack.execute(payerCtx(), legacy.id, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assert.deepEqual([sentBack.payoutCorrection?.phase, sentBack.payoutCorrection?.reasonCode, legacy.world.claim().payoutCorrectionReasonCode, legacy.world.audits[0].metadataJson.reasonCode],
+      ['AWAITING_REQUESTER', 'NO_ACCOUNT_ON_CLAIM', 'NO_ACCOUNT_ON_CLAIM', 'NO_ACCOUNT_ON_CLAIM']);
+    assert.deepEqual(legacy.world.events().map((event) => event.payloadJson.data.payoutCorrectionNotice), ['เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน']);
+
+    // The reject call of the approval card is the same send-back: the same list, and "อื่น ๆ" when it names no reason.
+    const cashAnswer = await answered(withAccount, 'ACCOUNT_NUMBER_WRONG', { mode: 'CASH' })();
+    await assert.rejects(() => cashAnswer.world.reject.execute(approverCtx(), cashAnswer.id, 'ขอให้รับเป็นการโอน', 'ACCOUNT_NAME_MISMATCH'), refused);
+    const again = await cashAnswer.world.reject.execute(approverCtx(), cashAnswer.id, 'ขอให้รับเป็นการโอน');
+    assert.deepEqual([again.payoutCorrection?.phase, again.payoutCorrection?.reasonCode, again.payoutCorrection?.note], ['AWAITING_REQUESTER', 'OTHER', 'ขอให้รับเป็นการโอน']);
   });
 });
 
