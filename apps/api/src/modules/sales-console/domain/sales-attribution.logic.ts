@@ -51,10 +51,61 @@ export function withinReferralWindow(referredAt: Date | null | undefined, paidAt
   return elapsed >= 0 && elapsed <= SALES_REFERRAL_WINDOW_DAYS * DAY_MS;
 }
 
-/** §17.1: a refund only cancels the credit when it lands inside 60 days of the payment. */
-export function withinRefundWindow(paidAt: Date, observedAt: Date): boolean {
-  const elapsed = observedAt.getTime() - paidAt.getTime();
+/**
+ * §17.1: a refund or a lost dispute takes the credit back only when it happens within 60 days of
+ * the payment. Owner 2026-10-02: the 60 days run to the provider's own time of it — a refund made
+ * on day 59 counts even when this system notices it on day 61.
+ */
+export function withinRefundWindow(paidAt: Date, occurredAt: Date): boolean {
+  const elapsed = occurredAt.getTime() - paidAt.getTime();
   return elapsed >= 0 && elapsed <= SALES_ATTRIBUTION_REFUND_WINDOW_DAYS * DAY_MS;
+}
+
+/**
+ * Money that went back to the customer, exactly as the payment provider reports it: a refund that
+ * succeeded, or a dispute that was lost. `occurredAt` is the provider's time of the refund, or of
+ * the dispute being opened.
+ */
+export type CreditTakeBack = { kind: SalesDeductionKind; providerRef: string; amountSatang: number; occurredAt: Date };
+
+/** Credit still standing on a row: what was credited, less the undated refund an older row carries and every dated deduction. */
+export function creditLeftSatang(row: { amountSatang: number; refundedSatang: number }, recorded: readonly { amountSatang: number }[]): number {
+  return Math.max(0, row.amountSatang - row.refundedSatang - recorded.reduce((sum, item) => sum + item.amountSatang, 0));
+}
+
+/**
+ * Owner 2026-10-02: which of the provider's refunds and lost disputes become deductions, and for
+ * how much. The caller passes everything the provider lists for the payment, every time.
+ *
+ * - One provider id deducts once, however often it is observed.
+ * - Outside the 60 days (by the provider's time) it deducts nothing.
+ * - Never more than the credit that is left: a refund of the tax added on top cannot push a row
+ *   below zero. ponytail: the refunded satang come off as they are, so with tax added on top a
+ *   PARTIAL refund also takes its tax share; scale by credit/paid if that ever matters.
+ * - A row from before this change carries an undated cumulative `refundedSatang`, already deducted
+ *   in its payment month. That amount IS the provider's earliest refunds, so they are consumed
+ *   against it first and only what exceeds it is dated. A dispute was never part of it.
+ */
+export function creditDeductions(
+  row: { amountSatang: number; refundedSatang: number; paidAt: Date },
+  recorded: readonly { providerRef: string; amountSatang: number }[],
+  takeBacks: readonly CreditTakeBack[],
+): CreditTakeBack[] {
+  const seen = new Set(recorded.map((item) => item.providerRef));
+  let undated = row.refundedSatang;
+  let left = creditLeftSatang(row, recorded);
+  const deductions: CreditTakeBack[] = [];
+  for (const item of [...takeBacks].sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime() || a.providerRef.localeCompare(b.providerRef))) {
+    if (!(item.amountSatang > 0)) continue;
+    const covered = item.kind === 'REFUND' ? Math.min(undated, item.amountSatang) : 0;
+    undated -= covered;
+    const amountSatang = Math.min(item.amountSatang - covered, left);
+    if (seen.has(item.providerRef) || amountSatang <= 0 || !withinRefundWindow(row.paidAt, item.occurredAt)) continue;
+    seen.add(item.providerRef);
+    left -= amountSatang;
+    deductions.push({ ...item, amountSatang });
+  }
+  return deductions;
 }
 
 /** One person's contactable identity, lower-cased so two spellings of the same email match. */

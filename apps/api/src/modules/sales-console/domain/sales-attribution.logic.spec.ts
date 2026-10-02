@@ -6,6 +6,8 @@ import {
   bangkokDateKey,
   bangkokMonthKey,
   countableAmountSatang,
+  creditDeductions,
+  creditLeftSatang,
   identitiesMatch,
   reportRange,
   SalesReportRangeError,
@@ -14,6 +16,7 @@ import {
   type AttributionFacts,
   type AttributionReportDeduction,
   type AttributionReportRow,
+  type CreditTakeBack,
 } from './sales-attribution.logic';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -53,7 +56,7 @@ describe('referral window (§17.1 — 14 days from the shop opening, inclusive)'
     assert.equal(withinReferralWindow(undefined, new Date()), false);
   });
 
-  it('deducts a refund inside 60 days and ignores one after', () => {
+  it('deducts a refund made inside 60 days of the payment and ignores one made after', () => {
     assert.equal(withinRefundWindow(REFERRED, new Date(REFERRED.getTime() + 60 * DAY)), true);
     assert.equal(withinRefundWindow(REFERRED, new Date(REFERRED.getTime() + 61 * DAY)), false);
   });
@@ -124,6 +127,67 @@ describe('countable amount (§17.1/§17.2)', () => {
   it('counts zero while a flag is unreviewed and the full amount once it is reviewed', () => {
     assert.equal(countableAmountSatang({ ...base, flags: ['self_referral'] }), 0);
     assert.equal(countableAmountSatang({ ...base, flags: ['self_referral'], flagReviewedAt: new Date() }), 100_000);
+  });
+});
+
+describe('credit taken back (§17.1, owner 2026-10-02 — refunds and lost disputes, by the provider\'s time)', () => {
+  const PAID = new Date('2026-08-02T03:00:00Z');
+  const credit = { amountSatang: 100_000, refundedSatang: 0, paidAt: PAID };
+  const back = (providerRef: string, amountSatang: number, day: number, kind: CreditTakeBack['kind'] = 'REFUND'): CreditTakeBack =>
+    ({ kind, providerRef, amountSatang, occurredAt: new Date(PAID.getTime() + day * DAY) });
+  const amounts = (items: readonly CreditTakeBack[]) => items.map((item) => [item.providerRef, item.amountSatang]);
+
+  it('counts the 60 days to the provider\'s time of the refund, whenever it is noticed', () => {
+    // Nothing here knows the time of observation: a refund of day 59 is deducted on day 61 too.
+    assert.deepEqual(amounts(creditDeductions(credit, [], [back('re_day59', 10_000, 59)])), [['re_day59', 10_000]]);
+    assert.deepEqual(amounts(creditDeductions(credit, [], [back('re_day60', 10_000, 60)])), [['re_day60', 10_000]]);
+    assert.deepEqual(creditDeductions(credit, [], [back('re_day61', 10_000, 61)]), []);
+    // A refund dated before the payment is not this payment's refund.
+    assert.deepEqual(creditDeductions(credit, [], [back('re_before', 10_000, -1)]), []);
+  });
+
+  it('deducts a lost dispute exactly like a refund, by the day the dispute was opened', () => {
+    const [taken] = creditDeductions(credit, [], [back('dp_lost', 100_000, 30, 'DISPUTE')]);
+    assert.deepEqual([taken!.kind, taken!.providerRef, taken!.amountSatang], ['DISPUTE', 'dp_lost', 100_000]);
+    assert.equal(taken!.occurredAt.toISOString(), new Date(PAID.getTime() + 30 * DAY).toISOString());
+    assert.deepEqual(creditDeductions(credit, [], [back('dp_late', 100_000, 61, 'DISPUTE')]), []);
+  });
+
+  it('takes a partial refund and then a second one, and never more than the credit', () => {
+    // 107,000 paid with tax on top, 100,000 credited: the two refunds return all 107,000.
+    const first = creditDeductions(credit, [], [back('re_1', 30_000, 5)]);
+    assert.deepEqual(amounts(first), [['re_1', 30_000]]);
+    const second = creditDeductions(credit, first, [back('re_1', 30_000, 5), back('re_2', 77_000, 9)]);
+    assert.deepEqual(amounts(second), [['re_2', 70_000]]);
+    assert.equal(creditLeftSatang(credit, [...first, ...second]), 0);
+    // Both seen for the first time in one read give the same two rows.
+    assert.deepEqual(amounts(creditDeductions(credit, [], [back('re_2', 77_000, 9), back('re_1', 30_000, 5)])),
+      [['re_1', 30_000], ['re_2', 70_000]]);
+    // With nothing left, a later dispute on the same payment takes nothing.
+    assert.deepEqual(creditDeductions(credit, [...first, ...second], [back('dp_x', 107_000, 20, 'DISPUTE')]), []);
+  });
+
+  it('deducts one provider id once, however often it is observed', () => {
+    const seen = creditDeductions(credit, [], [back('re_1', 30_000, 5)]);
+    assert.deepEqual(creditDeductions(credit, seen, [back('re_1', 30_000, 5)]), []);
+    assert.deepEqual(amounts(creditDeductions(credit, [], [back('re_1', 30_000, 5), back('re_1', 30_000, 5)])), [['re_1', 30_000]]);
+  });
+
+  it('leaves the undated refund of an older row where it is and dates only what came after it', () => {
+    // Before this change the row mirrored a cumulative 30,000 with no date; the report still
+    // deducts it in the payment month. The provider lists that same refund first.
+    const old = { ...credit, refundedSatang: 30_000 };
+    assert.deepEqual(creditDeductions(old, [], [back('re_old', 30_000, 5)]), []);
+    assert.deepEqual(amounts(creditDeductions(old, [], [back('re_old', 30_000, 5), back('re_new', 20_000, 20)])), [['re_new', 20_000]]);
+    // A dispute was never part of the old cumulative amount, and what is left caps it.
+    assert.deepEqual(amounts(creditDeductions(old, [], [back('re_old', 30_000, 5), back('dp_lost', 100_000, 20, 'DISPUTE')])),
+      [['dp_lost', 70_000]]);
+  });
+
+  it('ignores an amount that is not a positive number, without losing the facts after it', () => {
+    const old = { ...credit, refundedSatang: 10_000 };
+    assert.deepEqual(amounts(creditDeductions(old, [], [back('re_nan', Number.NaN, 1), back('re_zero', 0, 2),
+      back('re_old', 10_000, 3), back('re_real', 5_000, 4)])), [['re_real', 5_000]]);
   });
 });
 
