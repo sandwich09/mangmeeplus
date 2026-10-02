@@ -462,14 +462,14 @@ test.describe('REIMB — reimbursements', () => {
       await chooseThemedOption(requesterPage, account.getByRole('combobox', { name: 'ธนาคาร', exact: true }), 'ธนาคารไทยพาณิชย์');
       await account.getByRole('textbox', { name: 'ชื่อบัญชี', exact: true }).fill('นาย ปวีณ์ พนักงานทั่วไป');
       await account.getByRole('textbox', { name: 'เลขบัญชี', exact: true }).fill('111-2-33444-9');
-      await account.getByRole('button', { name: 'บันทึกบัญชีรับเงิน', exact: true }).click();
+      await account.getByRole('button', { name: 'บันทึกวิธีรับเงินคืน', exact: true }).click();
       await expect(requesterPage.getByText('รออนุมัติบัญชีรับเงินใหม่').first()).toBeVisible();
 
       // The approver compares the two accounts, attests the new one and approves; a round offers no "ปฏิเสธ".
       const approverPage = await pageAs('MANAGER');
       await gotoCompany(approverPage, companyId, `/reimbursements/${draft.id}`);
       const comparison = approverPage.getByTestId('reimbursement-payout-correction-comparison');
-      await expect(comparison).toContainText('สิ่งที่เปลี่ยน: บัญชีรับเงินคืน');
+      await expect(comparison).toContainText('สิ่งที่รออนุมัติ: บัญชีรับเงินใหม่');
       await expect(comparison).toContainText('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 1234');
       await expect(comparison).toContainText('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 4449');
       await expect(approverPage.getByRole('button', { name: 'ปฏิเสธ', exact: true })).toHaveCount(0);
@@ -524,7 +524,7 @@ test.describe('REIMB — reimbursements', () => {
       const stepCard = authedPage.locator('section[aria-labelledby="journey-step-title"]');
       await expect(stepCard.getByRole('button', { name: 'บันทึกจ่าย', exact: true })).toBeVisible();
       await expect(stepCard.getByRole('button', { name: /ส่งกลับ/ })).toHaveCount(0);
-      await expect(authedPage.getByTestId('reimbursement-payout-send-back').getByRole('button', { name: 'ส่งกลับให้แก้บัญชีรับเงิน', exact: true })).toBeVisible();
+      await expect(authedPage.getByTestId('reimbursement-payout-send-back').getByRole('button', { name: 'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง', exact: true })).toBeVisible();
       // Whoever pays is told on the misfiled file what to do with it.
       await expect(authedPage.getByTestId('reimbursement-signed-copy-misfiled-hint')).toHaveText('ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้');
 
@@ -587,8 +587,8 @@ test.describe('REIMB — reimbursements', () => {
       const account = requesterPage.getByTestId('reimbursement-payout-correction-account');
       await expect(account).toContainText('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 1234');
       await account.getByText('ใช้บัญชีเดิมของใบนี้', { exact: true }).click();
-      await account.getByRole('button', { name: 'บันทึกบัญชีรับเงิน', exact: true }).click();
-      await expect(requesterPage.getByText('รออนุมัติบัญชีรับเงินใหม่').first()).toBeVisible();
+      await account.getByRole('button', { name: 'บันทึกวิธีรับเงินคืน', exact: true }).click();
+      await expect(requesterPage.getByText('รออนุมัติบัญชีรับเงินเดิม').first()).toBeVisible();
       const kept = await json<Reimbursement>(await staff.get(claimUrl(companyId, draft.id)));
       expect([kept.payoutCorrectionPhase, kept.payout?.payoutMethod, kept.payout?.accountLast4, kept.payout?.version]).toEqual(['AWAITING_APPROVAL', 'BANK_TRANSFER', '1234', 2]);
       // The server says it is the same account, and the card says so in place of two accounts that read alike.
@@ -599,10 +599,10 @@ test.describe('REIMB — reimbursements', () => {
       // closes the form and says what to look at; the claim keeps the account it was just given.
       const stale = leftOpen.getByTestId('reimbursement-payout-correction-account');
       await stale.getByText('รับเป็นเงินสด', { exact: true }).click();
-      await stale.getByRole('button', { name: 'บันทึกบัญชีรับเงิน', exact: true }).click();
-      await expect(leftOpen.getByText('ยังไม่ได้บันทึกบัญชีรับเงินครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม', { exact: false })).toBeVisible();
+      await stale.getByRole('button', { name: 'บันทึกวิธีรับเงินคืน', exact: true }).click();
+      await expect(leftOpen.getByText('ยังไม่ได้บันทึกวิธีรับเงินคืนครั้งนี้ เพราะใบนี้เปลี่ยนไปหลังจากเปิดฟอร์ม', { exact: false })).toBeVisible();
       await expect(stale).toHaveCount(0);
-      await expect(leftOpen.getByText('รออนุมัติบัญชีรับเงินใหม่').first()).toBeVisible();
+      await expect(leftOpen.getByText('รออนุมัติบัญชีรับเงินเดิม').first()).toBeVisible();
       await expect(leftOpen.getByRole('button', { name: 'แก้บัญชีรับเงินอีกครั้ง', exact: true })).toBeVisible();
       const after = await json<Reimbursement>(await staff.get(claimUrl(companyId, draft.id)));
       expect([after.payoutCorrectionPhase, after.payout?.payoutMethod, after.payout?.accountLast4, after.payout?.version]).toEqual(['AWAITING_APPROVAL', 'BANK_TRANSFER', '1234', 2]);
