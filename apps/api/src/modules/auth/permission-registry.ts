@@ -1069,7 +1069,7 @@ export const SYSTEM_ROLES: Array<{ key: string; name: string; description: strin
   { key: 'SYSTEM_ADMIN',    name: 'System Admin',   description: 'สำหรับเจ้าหน้าที่ของมั่งมีที่ดูแลระบบ ไม่ใช่บทบาทของพนักงานในร้าน' },
   { key: 'COMPANY_VIEW',    name: 'Company owner',  description: 'สำหรับผู้ที่ต้องการดูภาพรวมของบริษัทโดยไม่แก้ไขข้อมูล เช่น ลูกค้า เอกสารขาย ค่าใช้จ่าย บัญชี และรายงาน' },
   { key: 'ADMIN',           name: 'Admin',           description: 'สำหรับผู้ดูแลงานในบริษัท: ตั้งค่าบริษัท สาขา พนักงาน และงานประจำวันของร้าน' },
-  { key: 'MANAGER',         name: 'Manager',         description: 'สำหรับผู้จัดการ: ดูแลทีมและอนุมัติงาน เช่น ใบเสนอราคา ใบขอซื้อ และการเบิกจ่าย' },
+  { key: 'MANAGER',         name: 'Manager',         description: 'สำหรับผู้จัดการ: ดูแลทีมและอนุมัติงาน เช่น ใบขอซื้อและการเบิกจ่าย' },
   { key: 'HR',              name: 'HR',              description: 'สำหรับฝ่ายบุคคล: เพิ่ม แก้ไข และปิดบัญชีพนักงาน และกำหนดบทบาทให้พนักงานได้บางบทบาท' },
   { key: 'SALES',           name: 'Sales',           description: 'สำหรับฝ่ายขาย: ดูแลลูกค้าและทำใบเสนอราคา' },
   { key: 'INVENTORY',       name: 'Inventory',       description: 'สำหรับฝ่ายคลังสินค้า: รับ-จ่ายสินค้า นับและปรับสต๊อก และบันทึกรับของ' },
@@ -1077,7 +1077,7 @@ export const SYSTEM_ROLES: Array<{ key: string; name: string; description: strin
   { key: 'ACCOUNTANT',      name: 'Accountant',      description: 'สำหรับฝ่ายบัญชี: ลงบัญชี ปิดงวด ทำภาษี และกระทบยอดธนาคาร' },
   { key: 'MARKETING',       name: 'Marketing',       description: 'สำหรับฝ่ายการตลาด: ดูข้อมูลลูกค้าและรายงาน' },
   { key: 'STAFF',           name: 'Staff',           description: 'สำหรับพนักงานทั่วไป: บันทึกค่าใช้จ่ายและขอเบิกของตัวเอง' },
-  { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: 'สำหรับผู้ตรวจสอบ: ดูข้อมูลได้ทุกส่วนโดยไม่แก้ไข' },
+  { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: 'สำหรับผู้ตรวจสอบ: ดูข้อมูลของบริษัทเพื่อตรวจสอบโดยไม่แก้ไข' },
   // S06: prefixed so they can never be confused with the tenant role `SALES` above, which is a
   // shop's own sales employee. UI wording is "ทีมขายมั่งมี" / "เซลล์".
   { key: 'MANGMEE_SALES_LEAD', name: 'Mangmee Sales Lead', description: 'Mangmee sales team lead: all teams deals, approvals, team accounts' },
