@@ -188,9 +188,9 @@ export default function SalesReportsPage() {
                       const line = salesWaitingLine(waiting,
                         ownNumbers ? undefined : month.rows.find((row) => row.salesUserId === waiting.salesUserId)?.displayName);
                       return (
-                        <li key={`${waiting.companyName}:${index}`} className="min-w-0">
-                          <p className="break-words text-sm font-semibold text-gray-900">{line.title}</p>
-                          <p className="mt-0.5 break-words text-xs text-warning-700">{line.detail}</p>
+                        <li key={`${waiting.companyName}:${index}`}>
+                          <p className="text-sm font-semibold text-gray-900 [overflow-wrap:anywhere]">{line.title}</p>
+                          <p className="mt-0.5 text-xs text-warning-700 [overflow-wrap:anywhere]">{line.detail}</p>
                         </li>
                       );
                     })}

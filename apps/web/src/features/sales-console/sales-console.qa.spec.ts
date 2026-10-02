@@ -191,8 +191,9 @@ describe('sales console theme and copy', () => {
     assert.match(text, /month\.waiting\.map\(\(waiting, index\) =>/);
     assert.match(text, /salesWaitingLine\(waiting,/);
     assert.doesNotMatch(text, /waiting\.(?:flags|source|salesUserId)\}/);
-    // 390 px: a long shop name or a long reason wraps instead of pushing the card sideways.
-    assert.match(text, /<li key=\{`\$\{waiting\.companyName\}:\$\{index\}`\} className="min-w-0">\s*<p className="break-words /);
+    // 390 px: a shop name with no place to break still wraps instead of pushing the card sideways.
+    assert.match(text, /<p className="text-sm font-semibold text-gray-900 \[overflow-wrap:anywhere\]">\{line\.title\}<\/p>/);
+    assert.match(text, /<p className="mt-0\.5 text-xs text-warning-700 \[overflow-wrap:anywhere\]">\{line\.detail\}<\/p>/);
     assert.match(text, /\{totals\.flaggedCount > 0 && <SalesNotice tone="warning">\{salesWaitingNotice\(totals\.flaggedCount\)\}<\/SalesNotice>\}/);
   });
 
