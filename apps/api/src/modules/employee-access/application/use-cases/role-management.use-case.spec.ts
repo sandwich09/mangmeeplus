@@ -200,6 +200,34 @@ describe('ListRolesUseCase', () => {
     assert.equal(result.find((role) => role.key === 'ADMIN')?.id, 'company-admin');
     assert.ok(result.some((role) => role.id === 'system-sales'));
   });
+
+  // Owner report 2026-10-02: the role page printed "Accounting access" under the role's title. The
+  // standard descriptions are Thai now, but a company that edited a standard role earlier owns a copy
+  // that stored the English one; a description the company wrote itself is left exactly as written.
+  it('reads the English description an old company copy stored as the standard role’s description of today', async () => {
+    const standard = (key: string) => SYSTEM_ROLES.find((role) => role.key === key)!.description;
+    const prisma = {
+      client: {
+        role: {
+          findMany: async () => [
+            { id: 'copy-accountant', scopeKey: COMPANY_ID, key: 'ACCOUNTANT', name: 'Accountant', description: 'Accounting access', isSystem: false, status: 'ACTIVE', permissions: [] },
+            { id: 'copy-manager', scopeKey: COMPANY_ID, key: 'MANAGER', name: 'Manager', description: 'หัวหน้าสาขา ดูแลหน้าร้าน', isSystem: false, status: 'ACTIVE', permissions: [] },
+            { id: 'custom', scopeKey: COMPANY_ID, key: 'ROLE', name: 'ผู้ช่วย', description: 'Sales access', isSystem: false, status: 'ACTIVE', permissions: [] },
+            { id: 'system-staff', scopeKey: 'system', key: 'STAFF', name: 'Staff', description: 'General staff access', isSystem: true, status: 'ACTIVE', permissions: [] },
+          ],
+        },
+        companyFeatureEntitlement: { findMany: async () => [] },
+      },
+    } as any;
+
+    const byId = new Map((await new ListRolesUseCase(prisma).execute(COMPANY_ID)).map((role) => [role.id, role.description]));
+
+    assert.equal(byId.get('copy-accountant'), standard('ACCOUNTANT'));
+    assert.equal(byId.get('system-staff'), standard('STAFF'));
+    assert.equal(byId.get('copy-manager'), 'หัวหน้าสาขา ดูแลหน้าร้าน');
+    assert.equal(byId.get('custom'), 'Sales access', 'another role’s old text on a custom role is the company’s own wording');
+    for (const key of ['ACCOUNTANT', 'STAFF']) assert.doesNotMatch(standard(key), /[A-Za-z]/);
+  });
 });
 
 describe('ListRolesUseCase assignableByCurrentUser', () => {

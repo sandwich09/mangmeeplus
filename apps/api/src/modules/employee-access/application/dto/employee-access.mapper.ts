@@ -1,4 +1,5 @@
 import type { EmployeeSummary, RoleSummary, PermissionCatalogItem } from '@watchdog-bms/contracts';
+import { SYSTEM_ROLES } from '../../../auth/permission-registry';
 import { maskIdentityNumber } from '../../domain/logic/employee-access.logic';
 
 export const EMPLOYEE_PROFILE_INCLUDE = {
@@ -106,12 +107,29 @@ type RoleRow = {
   permissions: Array<{ permission: { key: string } }>;
 };
 
+/**
+ * What the standard roles' descriptions said before they were written in Thai. A company that edited
+ * a standard role in those days got its own copy carrying this text, and a stored copy is never
+ * rewritten: it is read as the standard role's description of today instead.
+ * ponytail: a fixed list for rows already stored; drop it once no company role carries one of these.
+ */
+const FORMER_STANDARD_DESCRIPTIONS: Record<string, string> = {
+  ADMIN: 'Administrative access', MANAGER: 'Manager level access',
+  HR: 'Employee administration with operational role assignment', SALES: 'Sales access',
+  INVENTORY: 'Inventory access', FINANCE: 'Finance access', ACCOUNTANT: 'Accounting access',
+  MARKETING: 'Marketing access', STAFF: 'General staff access', AUDITOR_READONLY: 'Read-only audit access',
+};
+const STANDARD_DESCRIPTIONS = new Map(SYSTEM_ROLES.map((role) => [role.key, role.description]));
+
 export function toRoleSummary(row: RoleRow): RoleSummary {
+  const description = row.description && row.description === FORMER_STANDARD_DESCRIPTIONS[row.key]
+    ? STANDARD_DESCRIPTIONS.get(row.key)
+    : row.description;
   return {
     id: row.id,
     key: row.key,
     name: row.name,
-    description: row.description ?? undefined,
+    description: description ?? undefined,
     isSystem: row.isSystem,
     status: row.status as RoleSummary['status'],
     permissionKeys: row.permissions.map((p) => p.permission.key),
