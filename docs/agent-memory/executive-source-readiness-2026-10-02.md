@@ -1,6 +1,6 @@
 # Agent Memory: executive report — source readiness (stage S2)
 
-Status: IN PROGRESS on branch `claude/executive-source-readiness-20261002` (from `claude/executive-program-20261002`). Part B (money facts), Part C (summary tables and their build) and Part A (company labels) are built and verified locally. Part D follows in this note. Nothing is pushed, merged or deployed.
+Status: BUILT on branch `claude/executive-source-readiness-20261002` (from `claude/executive-program-20261002`), waiting for the controller's review. Part B (money facts), Part C (summary tables and their build), Part A (company labels) and Part D (two verifications) are built and verified locally, one commit each. Nothing is pushed, merged or deployed.
 
 Owner: implementation lane of 2026-10-02; the controller session reviews, verifies, pushes and merges.
 
@@ -105,8 +105,20 @@ Verification:
 
 - Part B: `billing-cash-movements.pg.spec.ts` 12 tests pass on a local `postgres:18.3-alpine` with every migration applied. Each behaviour was also run against the production code with that behaviour removed, and failed (dedup, provider time, exclusions, mode scope, safe-integer check, coverage, schedule enabled, catch-up, authority).
 - Part C: `executive-report-build.pg.spec.ts` 22 tests pass (16 on real PostgreSQL, 6 rule tables). 32 single-line changes of the production code were each run against it; every one failed at least one test.
+- Part D: `executive-report-build.pg.spec.ts` 23 tests pass with the void test added.
 - Part A: `report-labels.pg.spec.ts` 3 tests pass (the one-time job incl. three concurrent runs, the list filters and the build's `unclassifiedCount` against them, the update and detail round trip); unit tests added to `update-partner-profile.use-case.spec.ts` (13 pass), `partner.controller.spec.ts` (35 pass), `create-company-onboarding.spec.ts` (43 pass). Red runs listed in the final report of the lane.
 - Not run: the extended billing smoke suite (`extended-tests.yml`, real browser and Redis). Read instead: `billing-scan-schedule-smoke.ts` counts only `/v1/events` reads and event-scan rows, so the extra balance job its enabled schedule now queues does not meet any of its assertions; it is left queued for retry there because the fake provider has no `/balance_transactions` route.
+
+Part D — the two verifications (plan §2.1 rows 10–11):
+
+- Row 11, answered by a test that runs: voiding a confirmed expense keeps `confirmedAt` and `confirmedByUserId`. The test (`keeps the confirm action of an expense that is voided afterwards`, in `executive-report-build.pg.spec.ts`) confirms an expense, voids it through `PrismaExpenseRepository.voidExpenseTrueReversal` on real PostgreSQL (the transaction the web void and a claim cancellation both end in for a confirmed expense; an unconfirmed claim expense goes through `terminalizeUnconfirmedClaimProjection`, which never had a confirmation), then builds the report for a shop the build has never seen and finds the confirmation counted (`confirmedExpensesWeb` 1, `countersHeld` false). With the void changed to clear the two columns, the test fails (red run recorded in the lane's report). A confirmed or voided expense cannot be deleted either (`isExpenseDeletableState` allows only drafts, rejected ones and zero-total unconfirmed ones).
+- Row 10 was not answered: it needs the production deploy history, and this stage had no production access. The report does not depend on it: every "since" date (`aiUsageSince`, `ocrUsageSince`, `discoverySince`, `billingSince`) is the first row of its source, stored on each build row. What is known from the repository: the production read of 2026-10-02 14:03 (`docs/agent-memory/reimbursement-payout-release-readiness.md`) counted 266 applied migrations, the last being `20260930150000_signup_discovery_source_sales`, so both migrations were live in production by then; that is an upper bound, not the day.
+
+For the controller — the records that answer row 10 (read-only, under `docs/runbooks/cloud-environment-operations.md`, owner told first):
+
+1. Production `_prisma_migrations`: `SELECT migration_name, started_at, finished_at, rolled_back_at FROM "_prisma_migrations" WHERE migration_name IN ('20260729120000_ai_usage_ledger', '20260826200000_external_signup_core', '20260827120000_company_ocr_governance', '20260912150000_stripe_postmark_billing', '20260917140000_ai_usage_metadata', '20260917190000_line_signup_discovery_source', '20260930150000_signup_discovery_source_sales') ORDER BY finished_at`. `finished_at` is when `migrate deploy` applied each one in production: the AI usage table, the signup requests, the OCR usage table, billing, the AI event kind, the discovery answer, and the SALES answer.
+2. The first row of each source, which is what the build uses: `SELECT min("createdAt") FROM "AiUsageEvent"`, `… FROM "CompanyOcrUsageEvent"`, `SELECT min("createdAt") FROM "CompanySignupRequest" WHERE "discoverySource" IS NOT NULL`, `SELECT min("createdAt") FROM "BillingAccount" WHERE livemode`. After the first build these are on `ExecutiveReportBuild` (`aiUsageSince`, `ocrUsageSince`, `discoverySince`, `billingSince`) and need no separate read.
+3. The production release runs between 2026-09-17 and 2026-10-02 (run ids and release receipts), only to cross-check item 1; the database rows are the record.
 
 Operator steps — the one-time back-read (owner approved 2026-10-02; only after this code is live in production):
 
@@ -118,4 +130,4 @@ Operator steps — the one-time back-read (owner approved 2026-10-02; only after
 6. Then publish the provider-scan schedule as enabled at `/system/billing/provider-scans`. From that day the system reads the previous day by itself.
 7. The report shows a month's money as complete only when successful windows cover the whole month; the build picks the back-read up in its next daily full round.
 
-Next: Part D (two verifications), then the controller's review.
+Next: the controller reviews the four commits, pushes and merges; then the release (migrations, the one-time label job inside `sync-permissions.ts`), the owner's answers above, the admin's labelling of the rest, the back-read after the code is live, and the read stage (S3).

@@ -809,6 +809,9 @@ population = paidEverTrue + confirmedNeverPaid + paymentUnknown
 | ออกเอกสารขาย | `AccountingDocument` ที่ `issuedAt` ไม่ว่าง | `issuedAt` / `createdByUserId` (ผู้สร้างเอกสาร ใช้แทนผู้ออก) / เว็บ | เอกสารร่าง |
 | ถามผู้ช่วย AI | `AiUsageEvent` ที่ `sourceRoute = 'line-turn'`, `eventKind = 'MODEL_CALL'`, `ok = true` | `createdAt` / ไม่มีรหัสผู้ใช้ / LINE | เส้นทางอื่นของ AI เช่น `receipt-ocr`, `line-intake-route`, `crm-*`, `draft-generate`; แถว `COST_ADJUSTMENT` |
 
+ยืนยันแล้วด้วย test ที่รันจริง (ขั้น S2, แผน §2.1 ข้อ 11): การยกเลิกรายจ่ายที่ยืนยันแล้ว (`voidExpenseTrueReversal` ซึ่งทั้งปุ่มยกเลิกบนเว็บและการยกเลิกคำขอเบิกใช้กับรายจ่ายที่ยืนยันแล้ว)
+ไม่ล้าง `confirmedAt` และ `confirmedByUserId` บนฐานข้อมูลจริง การยืนยันนั้นจึงยังนับเป็นการใช้งานในเดือนที่ยืนยัน รายจ่ายที่ยืนยันแล้วหรือยกเลิกแล้วลบทิ้งไม่ได้ (`isExpenseDeletableState`)
+
 กติกาประกอบ:
 
 - นับเฉพาะการกระทำที่ผู้ทำเป็นสมาชิกของบริษัทนั้น (ไม่ว่าสถานะสมาชิกปัจจุบันจะเป็นอะไร) ไม่นับ actor ชนิด SYSTEM/SERVICE และพนักงานแพลตฟอร์มที่ทำแทน

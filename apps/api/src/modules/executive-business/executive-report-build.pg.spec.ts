@@ -24,6 +24,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Client } from 'pg';
 import { PrismaClient } from '../../generated/prisma/client';
 import { BillingCashMovementsService } from '../billing/application/billing-cash-movements.service';
+import { PrismaExpenseRepository } from '../expenses/infrastructure/prisma-expense.repository';
 import { PLATFORM_TENANT_ID } from '../sales-console/application/sales-context';
 import { ExecutiveReportBuildUseCase } from './application/executive-report-build.use-case';
 import { bangkokDayStart, decideDiscovery, decidePaidEver, decideReceiptAdoption, decideReferrer, decideSignupRail, decideUsageGroup,
@@ -646,6 +647,31 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
     } finally {
       if (token === undefined) delete process.env.WORKER_INTERNAL_TOKEN; else process.env.WORKER_INTERNAL_TOKEN = token;
     }
+  });
+
+  // Plan §2.1 row 11, spec §13.3: cancelling a confirmed expense must not erase that it was confirmed. Run through the
+  // expense module's own void transaction (`voidExpenseTrueReversal`, which the web void and a claim cancellation both
+  // end in for a confirmed expense), on real PostgreSQL, so a trigger or a later write would show too.
+  it('keeps the confirm action of an expense that is voided afterwards', async () => {
+    const shop = next('voided-shop');
+    await company(shop, { reportClassification: 'CUSTOMER' });
+    const userId = await person(shop);
+    // The clock is in November 2026 by now (the test above moved it), so an hourly round builds October and November.
+    const confirmedAt = '2026-10-20T05:00:00.000Z';
+    const row = await client.expenseRecord.create({ data: { companyId: shop, expenseDate: at(confirmedAt), createdByUserId: userId, confirmedByUserId: userId,
+      confirmedAt: at(confirmedAt), captureSource: 'WEB_MANUAL', status: 'CONFIRMED', createdAt: at(confirmedAt) } });
+    const voided = await new PrismaExpenseRepository({ client } as never).voidExpenseTrueReversal(shop, row.id, userId, 'บันทึกซ้ำ ยกเลิกรายการนี้');
+    assert.equal(voided.expense.status, 'VOIDED');
+    const stored = await client.expenseRecord.findUniqueOrThrow({ where: { id: row.id } });
+    assert.equal(stored.status, 'VOIDED');
+    assert.ok(stored.voidedAt);
+    assert.equal(stored.confirmedAt?.toISOString(), confirmedAt);
+    assert.equal(stored.confirmedByUserId, userId);
+    // This shop is new to the build, so nothing is held from an earlier round: the count below is the voided row's own.
+    assert.equal(await client.executiveCompanyMonth.count({ where: { companyId: shop } }), 0);
+    await build.rebuild(minuteLater());
+    const october = await client.executiveCompanyMonth.findUniqueOrThrow({ where: { companyId_month_definitionVersion: { companyId: shop, month: '2026-10', definitionVersion: 1 } } });
+    assert.deepEqual([october.confirmedExpensesWeb, october.activeDays, october.countersHeld], [1, 1, false]);
   });
 });
 
