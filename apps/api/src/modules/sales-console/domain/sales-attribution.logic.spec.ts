@@ -213,11 +213,20 @@ describe('report aggregation (§17.2 — per agent per Bangkok month)', () => {
     }]);
   });
 
-  it('withholds a flagged row from the total but still reports it as flagged', () => {
-    const [month] = aggregateReport([row({ flags: ['repeat_owner'] }), row({ amountSatang: 20_000 })], [], agent);
-    assert.equal(month!.rows[0]!.amountSatang, 20_000);
-    assert.equal(month!.rows[0]!.flaggedCount, 1);
-    assert.equal(month!.rows[0]!.dealActivations, 2);
+  it('counts a shop waiting for review as no opened shop and no amount, and reports it on its own', () => {
+    // Owner 2026-10-02: the waiting shop is in neither figure; it is a count and a named line.
+    const waiting = row({ flags: ['repeat_owner'], companyName: 'ร้านรอตรวจ' });
+    const [month] = aggregateReport([waiting, row({ amountSatang: 20_000 })], [], agent);
+    assert.deepEqual(month!.rows, [{
+      salesUserId: 'agent-1', displayName: 'AGENT-1', teamLeadUserId: 'lead-1', teamLeadDisplayName: 'LEAD-1',
+      dealActivations: 1, referralActivations: 0, amountSatang: 20_000, flaggedCount: 1,
+    }]);
+    assert.deepEqual(month!.waiting, [{ salesUserId: 'agent-1', source: 'DEAL', companyName: 'ร้านรอตรวจ', flags: ['repeat_owner'] }]);
+    // An agent whose only shop waits still has a row for the month, so the shop is not lost from sight.
+    const [alone] = aggregateReport([waiting], [], agent);
+    assert.deepEqual([alone!.rows[0]!.dealActivations, alone!.rows[0]!.amountSatang, alone!.rows[0]!.flaggedCount, alone!.waiting!.length], [0, 0, 1, 1]);
+    // A shop that never waited leaves the list empty.
+    assert.deepEqual(aggregateReport([row({})], [], agent)[0]!.waiting, []);
   });
 
   it('groups by Bangkok month, newest month first', () => {
@@ -294,12 +303,16 @@ describe('report aggregation (§17.2 — per agent per Bangkok month)', () => {
     const months = aggregateReport([flagged], [taken({ row: flagged })], agent);
     assert.deepEqual(months.map((month) => month.monthKey), ['2026-09']);
     assert.equal(months[0]!.rows[0]!.amountSatang, 0);
+    assert.equal(months[0]!.rows[0]!.dealActivations, 0);
     assert.equal(months[0]!.rows[0]!.flaggedCount, 1);
     assert.deepEqual(months[0]!.deductions, []);
-    // Once reviewed, the credit and the deduction both count, each in its own month.
+    // Once the Owner confirms it, here on 6 Oct, the shop, its credit and the deduction all count:
+    // the shop and the credit in the month of the payment, though September is over, the deduction in its own.
     const reviewed = { ...flagged, flags: [], flagReviewedAt: new Date('2026-10-06T00:00:00Z') };
     const after = aggregateReport([reviewed], [taken({ row: reviewed })], agent);
-    assert.deepEqual(after.map((month) => [month.monthKey, month.rows[0]!.amountSatang]), [['2026-10', -49_900], ['2026-09', 100_000]]);
+    assert.deepEqual(after.map((month) => [month.monthKey, month.rows[0]!.amountSatang, month.rows[0]!.dealActivations, month.rows[0]!.flaggedCount]),
+      [['2026-10', -49_900, 0, 0], ['2026-09', 100_000, 1, 0]]);
+    assert.deepEqual(after.flatMap((month) => month.waiting), []);
   });
 
   // ── a row the Owner cut out ("ตัดออกจากยอด": the flags stay, the review is stamped) ──

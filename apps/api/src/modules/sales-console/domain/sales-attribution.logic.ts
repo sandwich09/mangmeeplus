@@ -11,6 +11,7 @@ import {
   SALES_REFERRAL_WINDOW_DAYS,
   SALES_REPORT_MAX_MONTHS,
   SALES_REPORT_MONTH_PATTERN,
+  salesCountsAsActivation,
   salesCreditState,
   type SalesAttributionFlag,
   type SalesAttributionSource,
@@ -18,6 +19,7 @@ import {
   type SalesReportDeduction,
   type SalesReportMonth,
   type SalesReportRow,
+  type SalesReportWaiting,
 } from '@watchdog-bms/contracts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -177,6 +179,8 @@ export type AttributionReportRow = {
   paidAt: Date;
   flags: readonly string[];
   flagReviewedAt: Date | null;
+  /** Read only for a row that carries a flag: a shop waiting for review is named in the report. */
+  companyName?: string;
 };
 
 /** One dated deduction (`SalesAttributionDeduction`) with the row it takes credit back from. */
@@ -202,7 +206,7 @@ const creditState = (row: Pick<AttributionReportRow, 'flags' | 'flagReviewedAt'>
  * undated refund older rows carry, and never below zero.
  */
 export function countableAmountSatang(row: Pick<AttributionReportRow, 'amountSatang' | 'refundedSatang' | 'flags' | 'flagReviewedAt'>): number {
-  if (creditState(row) !== 'COUNTED') return 0;
+  if (!salesCountsAsActivation(creditState(row))) return 0;
   return Math.max(0, row.amountSatang - row.refundedSatang);
 }
 
@@ -215,19 +219,21 @@ export function countableAmountSatang(row: Pick<AttributionReportRow, 'amountSat
  * agent's month may be negative. A row from before that change still has its undated cumulative
  * refund taken off in the payment month (`countableAmountSatang`), which is the figure it always gave.
  *
- * A row waiting for review still appears, as an activation under `flaggedCount`, so the Owner can
- * see what is being withheld. A row the Owner cut out appears nowhere: §17.2 counts "ร้านที่นับได้",
- * so it is no activation, no amount and no pending flag, and what was taken back from it cannot
- * make a month negative for credit that was never counted.
+ * Owner 2026-10-02: a row waiting for review is no activation and no amount. It is reported on its
+ * own, as `flaggedCount` and as a named line in `waiting`, in the month of its payment, so nobody
+ * loses sight of it; once the Owner confirms it, it counts in that same month, also when that
+ * month is already over. A row the Owner cut out appears nowhere: §17.2 counts "ร้านที่นับได้", so
+ * it is no activation, no amount and no pending flag, and what was taken back from it cannot make
+ * a month negative for credit that was never counted.
  */
 export function aggregateReport(
   rows: readonly AttributionReportRow[],
   deductions: readonly AttributionReportDeduction[],
   agent: (salesUserId: string) => { displayName: string; teamLeadUserId: string | null; teamLeadDisplayName: string | null },
 ): SalesReportMonth[] {
-  const byMonth = new Map<string, { rows: Map<string, SalesReportRow>; deductions: SalesReportDeduction[] }>();
+  const byMonth = new Map<string, { rows: Map<string, SalesReportRow>; deductions: SalesReportDeduction[]; waiting: SalesReportWaiting[] }>();
   const bucket = (monthKey: string, salesUserId: string) => {
-    const month = byMonth.get(monthKey) ?? { rows: new Map<string, SalesReportRow>(), deductions: [] };
+    const month = byMonth.get(monthKey) ?? { rows: new Map<string, SalesReportRow>(), deductions: [], waiting: [] };
     byMonth.set(monthKey, month);
     const current = month.rows.get(salesUserId) ?? {
       salesUserId, ...agent(salesUserId),
@@ -239,14 +245,19 @@ export function aggregateReport(
   for (const row of rows) {
     const state = creditState(row);
     if (state === 'EXCLUDED') continue;
-    const { current } = bucket(bangkokMonthKey(row.paidAt), row.salesUserId);
-    if (row.source === 'DEAL') current.dealActivations += 1; else current.referralActivations += 1;
-    current.amountSatang += countableAmountSatang(row);
-    if (state === 'WAITING') current.flaggedCount += 1;
+    const { month, current } = bucket(bangkokMonthKey(row.paidAt), row.salesUserId);
+    if (salesCountsAsActivation(state)) {
+      if (row.source === 'DEAL') current.dealActivations += 1; else current.referralActivations += 1;
+      current.amountSatang += countableAmountSatang(row);
+    } else {
+      current.flaggedCount += 1;
+      month.waiting.push({ salesUserId: row.salesUserId, source: row.source, companyName: row.companyName ?? '',
+        flags: [...row.flags] as SalesAttributionFlag[] });
+    }
   }
   for (const item of deductions) {
     // Credit that counts zero, waiting or cut out, has nothing to take back.
-    if (creditState(item.row) !== 'COUNTED') continue;
+    if (!salesCountsAsActivation(creditState(item.row))) continue;
     const { month, current } = bucket(bangkokMonthKey(item.recordedAt), item.row.salesUserId);
     current.amountSatang -= item.amountSatang;
     month.deductions.push({
@@ -261,6 +272,7 @@ export function aggregateReport(
       monthKey,
       rows: [...month.rows.values()].sort((a, b) => b.amountSatang - a.amountSatang || a.salesUserId.localeCompare(b.salesUserId)),
       deductions: month.deductions,
+      waiting: month.waiting,
     }));
 }
 
