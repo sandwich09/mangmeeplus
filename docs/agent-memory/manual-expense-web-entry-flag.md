@@ -11,9 +11,9 @@ Owner: thawatchai / Claude (implementation lane; the controller session reviews,
 Scope: spec v3.1 and its plan, P0–P6. A per-company screen setting, the admin command, one `/auth/me` field, the web helper, gate and entrances, the admin switch. Nothing behind the entrances changes.
 
 Decisions:
-- Owner, 2026-10-02 ~23:08, mid-build: "สวิตช์ซ่อนเมนู ให้เป็น default ปิดไปเลยนะ". Read by the controller as: the menu is NOT shown by default; a company without a row reads as not shown, existing and new alike; the system admin switches it on per company. The owner has been asked to confirm this reading. The second half of D2 stands (purchases, upgrades, deals and presets never read or write the setting).
-- The default lives in ONE place on the API side: `MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW` in `apps/api/src/modules/system-partner-management/domain/logic/manual-expense-web-entry.logic.ts`. `/auth/me`, the partner detail and the command read through `manualExpenseWebEntryState`. A different answer from the owner is that one line plus the one test that pins it (proved: flipping the constant fails exactly that test in `partner.controller.spec.ts`).
-- The flag column has no database default, so a row always states its value and the table can hold "shown" rows (needed by the seed, and by the variant the owner may still choose: existing shops keep the menu through a one-time "shown" row. NOT built).
+- Owner, 2026-10-02 ~23:08, mid-build: "สวิตช์ซ่อนเมนู ให้เป็น default ปิดไปเลยนะ". Read by the controller as: the menu is NOT shown by default; a company without a row reads as not shown, existing and new alike; the system admin switches it on per company. The owner confirmed this reading on 2026-10-03: "ปิดเป็นค่าเริ่มต้นทุกร้าน รวมร้านเก่าด้วย". The second half of D2 stands (purchases, upgrades, deals and presets never read or write the setting).
+- The default lives in ONE place on the API side: `MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW` in `apps/api/src/modules/system-partner-management/domain/logic/manual-expense-web-entry.logic.ts`. `/auth/me`, the partner detail and the command read through `manualExpenseWebEntryState`. Changing the default later is that one line plus the one test that pins it (proved: flipping the constant fails exactly that test in `partner.controller.spec.ts`).
+- The flag column has no database default, so a row always states its value and the table can hold "shown" rows (needed by the seed and by the admin's switch). The variant in which existing shops keep the menu through a one-time "shown" row is not wanted (owner, 2026-10-03) and not built.
 - The web predicate does not change with the default: `manualExpenseWebEntry !== false`. A missing field still shows the entrances (D5); its reason is rewritten in spec §6.1.
 - API tests live in spec files the `test` script already lists (`partner.controller.spec.ts`, `auth.controller.spec.ts`); no `package.json` is edited. The P5 PostgreSQL spec is registered in `.github/workflows/ci.yml` like `data-rights-single-admin.pg.spec.ts`. This closes the open question of plan §4.
 - The command locks the company row (`lockPlanTermCompany`), the lock every lifecycle writer takes, instead of adding an advisory lock of its own.
@@ -21,8 +21,6 @@ Decisions:
 - Six sentences of spec §8 were corrected because each was untrue in a state found during the build; the table of reasons is spec appendix C.
 
 Open questions:
-- The owner's confirmation of the controller's reading of the default change.
-- Whether shops that exist at release should keep the menu (a one-time "shown" row). Not built.
 - The reimbursement-payout release notes (`docs/evidence/reimbursement-payout-release-2026-10-02/`) name `20261002120000_data_rights_single_admin_mode` as the last migration; once this branch merges, the last one is `20261002230000_company_web_entry_setting`. Whoever cuts that release must account for it.
 
 Artifacts (this branch):

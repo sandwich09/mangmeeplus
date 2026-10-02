@@ -3,10 +3,11 @@
 // expense page and nothing else: no guard, permission, entitlement, LINE or billing code reads it.
 
 /**
- * What a company WITHOUT a row reads as. Owner 2026-10-02: not shown until the system admin
- * switches it on for that company. This is the one place that says so — GET /auth/me, the partner
- * detail and the admin command all read through `manualExpenseWebEntryState` — so a different
- * answer is a change to this line and to the test that pins it.
+ * What a company WITHOUT a row reads as: not shown, for the companies that exist at release and for
+ * new ones alike, until the system admin switches it on for that company (owner 2026-10-02,
+ * confirmed 2026-10-03). This is the one place that says so — GET /auth/me, the partner detail and
+ * the admin command all read through `manualExpenseWebEntryState` — so changing it is a change to
+ * this line and to the test that pins it.
  */
 export const MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW = false;
 
