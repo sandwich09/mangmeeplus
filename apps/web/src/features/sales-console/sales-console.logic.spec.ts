@@ -8,7 +8,7 @@ import {
   dealWarnings, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
   isDealCancellable, isDealEditable, isMenuSelected, myWorkBadgeLabel, myWorkMeta,
   normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_ACCESS_STATE_META, SALES_DEAL_MENU_BINDINGS,
-  SALES_DEAL_STATUS_META, SALES_DEDUCTION_RULE, salesAgentAddress, salesCodeError, salesDeductionLine, salesFlagLabel, salesReportLeads, salesReportRangeError,
+  SALES_DEAL_STATUS_META, SALES_DEDUCTION_RULE, salesAgentAddress, salesCodeError, salesDeductionLine, salesFlagLabel, salesFlagReview, salesReportLeads, salesReportRangeError,
   salesReportRowsOf, salesReportTotals, sortMyWork, sortSalesReportMonths,
   toggleMenuSelection, validateAgentForm, validateDealForm, type SalesDealFormValues,
 } from './sales-console.logic';
@@ -403,6 +403,37 @@ describe('anti-gaming flags (§17.1 / D6)', () => {
     assert.equal(salesFlagLabel('referral_anomaly'), 'รูปแบบผิดปกติ (จำนวน/ข้อมูลซ้ำ)');
     // The fallback is the point: a flag added later on the API side must not reach a person raw.
     assert.doesNotMatch(salesFlagLabel('referral_anomaly_v2'), /referral|anomaly|_/);
+  });
+});
+
+describe('the Owner\'s flag queue (§17.1 — where each flagged row stands)', () => {
+  const flagged = (over: { flags?: ('self_referral' | 'repeat_owner' | 'referral_anomaly')[]; reviewedAt?: string | null; reviewNote?: string | null } = {}) =>
+    ({ flags: ['self_referral' as const], reviewedAt: null, reviewNote: null, ...over });
+
+  it('offers both decisions while a row waits for review', () => {
+    assert.deepEqual(salesFlagReview(flagged()),
+      { label: 'รอตรวจ · ยังไม่นับในยอด', tone: 'amber', detail: null, canConfirm: true, canExclude: true });
+  });
+
+  it('shows a row the Owner cut out as cut out, with the date and the reason, and still lets it be confirmed', () => {
+    assert.deepEqual(salesFlagReview(flagged({ reviewedAt: '2026-10-02T03:00:00.000Z', reviewNote: 'เจ้าของร้านเป็นเซลล์เอง' })), {
+      label: 'ตัดออกจากยอดแล้ว · ไม่นับให้เซลล์', tone: 'danger',
+      detail: 'ตรวจเมื่อ 2 ต.ค. 2569 · เหตุผล: เจ้าของร้านเป็นเซลล์เอง', canConfirm: true, canExclude: false,
+    });
+  });
+
+  it('shows a confirmed row as counted and offers no decision that would change nothing', () => {
+    // "ยืนยันว่าไม่ผิดปกติ" cleared the flags, so there is no flag left to keep.
+    assert.deepEqual(salesFlagReview(flagged({ flags: [], reviewedAt: '2026-10-02T03:00:00.000Z' })), {
+      label: 'ยืนยันแล้วว่าไม่ผิดปกติ · นับในยอด', tone: 'brand', detail: 'ตรวจเมื่อ 2 ต.ค. 2569', canConfirm: false, canExclude: false,
+    });
+  });
+
+  it('says where a row stands in plain Thai only', () => {
+    for (const row of [flagged(), flagged({ reviewedAt: '2026-10-02T03:00:00.000Z' }), flagged({ flags: [], reviewedAt: '2026-10-02T03:00:00.000Z' })]) {
+      const review = salesFlagReview(row);
+      assert.doesNotMatch(`${review.label} ${review.detail ?? ''}`, /[A-Za-z_]/);
+    }
   });
 });
 

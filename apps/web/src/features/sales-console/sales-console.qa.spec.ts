@@ -179,6 +179,24 @@ describe('sales console theme and copy', () => {
     assert.equal([...text.matchAll(/amountClass\((?:row|totals)\.amountSatang, /g)].length, 3);
   });
 
+  it('the flag queue says where each row stands and offers only a decision that still changes something (§17.1)', () => {
+    const text = source('SalesTeamPage.tsx');
+    // The standing and the open decisions come from the logic module, which reads the report's own
+    // rule — the page never decides by itself whether a row is cut out.
+    assert.match(text, /const review = salesFlagReview\(row\);/);
+    assert.match(text, /<MangmeeBadge tone=\{review\.tone\}>\{review\.label\}<\/MangmeeBadge>/);
+    assert.match(text, /\{review\.detail && <p className="mt-1 break-words text-xs text-gray-500">\{review\.detail\}<\/p>\}/);
+    assert.match(text, /\{review\.canConfirm && \(\s*<button[^\n]*\n[^\n]*setFlagDecision\(\{ row, keep: false \}\); \}\}>ยืนยันว่าไม่ผิดปกติ<\/button>/);
+    assert.match(text, /\{review\.canExclude && \(\s*<button[^\n]*\n[^\n]*setFlagDecision\(\{ row, keep: true \}\); \}\}>ตัดออกจากยอด<\/button>/);
+    // And the Owner is told a cut-out shop stays in this list.
+    assert.match(text, /ร้านที่คุณตัดออกจะไม่นับให้เซลล์ และยังอยู่ในรายการนี้ให้ตรวจย้อนหลัง/);
+    // 390 px: the queue and its card may shrink below a long shop name, which is then cut with an
+    // ellipsis instead of pushing the page sideways (measured in a browser: 276 px before).
+    assert.match(text, /<section aria-label="รายการที่ถูกธง" className="grid min-w-0 gap-3">/);
+    assert.match(text, /<MangmeeCard className="min-w-0">\s*\{flags\.map\(/);
+    assert.match(text, /<p className="min-w-0 truncate text-\[15px\] font-bold text-gray-900">\{row\.companyName\}<\/p>/);
+  });
+
   it('a flagged attribution is only cleared or kept with a reason the Owner typed (D6)', () => {
     const text = source('SalesTeamPage.tsx');
     assert.match(text, /disabled=\{busy \|\| !flagReason\.trim\(\)\}/);

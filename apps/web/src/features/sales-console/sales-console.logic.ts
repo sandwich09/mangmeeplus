@@ -17,12 +17,14 @@ import {
   SALES_REFERRAL_ADMIN_WINDOW_DAYS,
   SALES_REPORT_MAX_MONTHS,
   SALES_REPORT_MONTH_PATTERN,
+  salesCreditState,
   TIER_FEATURE_PRESETS,
   SALES_DEAL_ALLOWED_FEATURE_KEYS,
   formatCompanyLegalAddress,
   type CompanyLegalAddress,
   type SalesAgentView,
   type SalesAttributionFlag,
+  type SalesAttributionFlagRow,
   type SalesAttributionSource,
   type SalesCompanyAccessState,
   type SalesDealBaseTier,
@@ -678,6 +680,24 @@ export const SALES_ATTRIBUTION_SOURCE_LABELS: Record<SalesAttributionSource, str
   DEAL: 'ดีลพิเศษ',
   REFERRAL: 'แนะนำร้าน',
 };
+
+/**
+ * What the Owner's queue says about a flagged row, and which decision is still open on it. The
+ * state is the report's own rule (`salesCreditState`), so the words here cannot promise something
+ * the totals do not do. A row that was cut out can still be confirmed — that is how a mistake is
+ * undone. A confirmed row has no flag left, so there is nothing more to decide on it.
+ */
+export function salesFlagReview(row: Pick<SalesAttributionFlagRow, 'flags' | 'reviewedAt' | 'reviewNote'>): {
+  label: string; tone: MangmeeTone; detail: string | null; canConfirm: boolean; canExclude: boolean;
+} {
+  const state = salesCreditState(row.flags, row.reviewedAt);
+  if (state === 'WAITING') return { label: 'รอตรวจ · ยังไม่นับในยอด', tone: 'amber', detail: null, canConfirm: true, canExclude: true };
+  const detail = [`ตรวจเมื่อ ${formatThaiDate(row.reviewedAt)}`, row.reviewNote ? `เหตุผล: ${row.reviewNote}` : '']
+    .filter(Boolean).join(' · ');
+  return state === 'EXCLUDED'
+    ? { label: 'ตัดออกจากยอดแล้ว · ไม่นับให้เซลล์', tone: 'danger', detail, canConfirm: true, canExclude: false }
+    : { label: 'ยืนยันแล้วว่าไม่ผิดปกติ · นับในยอด', tone: 'brand', detail, canConfirm: false, canExclude: false };
+}
 
 // ── report (§17.2 — one row per shop, counted once, so the report is a plain sum) ──
 
