@@ -3340,7 +3340,7 @@ describe('payout: filing a claim on behalf of someone', () => {
     const notice = world.notifications[0];
     // To the requester alone: not the preparer, not the shop owner, not an approver.
     assert.deepEqual(notice.recipientUserIds, ['staff-1']);
-    assert.equal(notice.title, 'อรทัย ระบุบัญชีรับเงินคืนในใบเบิกของคุณ');
+    assert.equal(notice.title, 'อรทัย ระบุบัญชีรับเงินในใบเบิกของคุณ');
     assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 ระบุเมื่อ .+ ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที$/);
     assert.equal(notice.deepLinkHref, `/companies/co-1/reimbursements/${draft.id}`);
     assert.deepEqual([notice.triggerKey, notice.severity, notice.sourceType, notice.sourceId], ['reimbursement.payout_account_set_by_other', 'critical', 'reimbursement_request', draft.id]);
@@ -4195,7 +4195,7 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.equal(world.audits[0].metadataJson.onBehalfOfRequester, true);
     // The notice every account typed for someone else sends, to the requester alone, with the last four digits.
     assert.deepEqual(world.notifications.map((notice) => [notice.recipientUserIds, notice.triggerKey, notice.title]),
-      [[['staff-1'], 'reimbursement.payout_account_set_by_other', 'อรทัย ระบุบัญชีรับเงินคืนในใบเบิกของคุณ']]);
+      [[['staff-1'], 'reimbursement.payout_account_set_by_other', 'อรทัย ระบุบัญชีรับเงินในใบเบิกของคุณ']]);
     assert.match(world.notifications[0].body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 /);
     assert.equal(leaksNumber([world.notifications, world.events(), world.audits]), false);
   });

@@ -2500,7 +2500,7 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
       const notices = await told();
       assert.equal(notices.length, 2);
       assert.deepEqual([notices[1]!.userId, notices[1]!.event.title, notices[1]!.event.deepLinkHref, notices[1]!.deliveries.length],
-        [requester, `${approver} ระบุบัญชีรับเงินคืนในใบเบิกของคุณ`, `/companies/${companyId}/reimbursements/${claim.id}`, 2]);
+        [requester, `${approver} ระบุบัญชีรับเงินในใบเบิกของคุณ`, `/companies/${companyId}/reimbursements/${claim.id}`, 2]);
       assert.match(notices[1]!.event.body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112 ระบุเมื่อ /);
       // Nobody else in the company was written to, and no text carries a number.
       assert.ok(notices.every((notice) => notice.userId === requester));

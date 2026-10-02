@@ -158,7 +158,7 @@ export class MemberPayoutAccountUseCase {
         await this.notifications.executeInTransaction({
           companyId: ctx.companyId, triggerKey: PAYOUT_ACCOUNT_SET_TRIGGER_KEY, sourceModule: 'reimbursements',
           sourceType: 'reimbursement_request', sourceId: requestId, periodKey: `${at.toISOString()}:${randomUUID()}`, severity: 'critical',
-          title: `${editorName} ระบุบัญชีรับเงินคืนในใบเบิกของคุณ`,
+          title: `${editorName} ระบุบัญชีรับเงินในใบเบิกของคุณ`,
           body: `${maskedPayoutAccount(destination)} ระบุเมื่อ ${when} ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที`,
           deepLinkHref: `/companies/${ctx.companyId}/reimbursements/${requestId}`,
           recipientUserIds: [requesterUserId],
