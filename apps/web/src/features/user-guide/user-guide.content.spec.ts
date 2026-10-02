@@ -1,7 +1,10 @@
+import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 import { buildReimbursementGuide } from './reimbursement-guide.content';
 import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content';
@@ -187,6 +190,39 @@ describe('the reimbursement guide reads as the product does', () => {
     }
     // No sentence of the guide says the old words of one case for every case.
     for (const text of read) assert.doesNotMatch(text, /ผู้อนุมัติชุดเดิม|อยู่ระหว่างแก้บัญชี|อยู่ระหว่างแก้ไขบัญชี|หลังอนุมัติบัญชีใหม่/u, text);
+  });
+
+  // The page itself, as a reader on a phone opens it: every section is folded until it is opened, and a table is a
+  // stack of cards below sm. The lines of the final wording pass are on it, in the words the screens use.
+  it('shows on the page what the notice of an answer given for you says, and the buttons of a PromptPay number', () => {
+    (globalThis as typeof globalThis & { React: typeof React }).React = React;
+    // The page reaches the icon set; this runner has no SVG loader.
+    require.extensions['.svg'] = (module) => { module.exports = () => null; };
+    const { UserGuidePage } = require('./UserGuidePage') as typeof import('./UserGuidePage');
+    const reactRuntime = require('react') as typeof React;
+    const realUseState = reactRuntime.useState;
+    const open = ['approve', 'pay', 'account-number', 'account-fix', 'notify', 'faq'];
+    // The page's one state is the list of open sections: it starts empty.
+    Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
+      const [value, set] = (realUseState as (initial: unknown) => [unknown, unknown])(initial);
+      return [Array.isArray(initial) && initial.length === 0 ? open : value, set];
+    });
+    const router = { back() {}, forward() {}, refresh() {}, push() {}, replace() {}, prefetch() {}, bfcacheId: 'test' };
+    const page = () => renderToStaticMarkup(React.createElement(AppRouterContext.Provider, { value: router as never }, React.createElement(UserGuidePage, { guide })));
+    let html: string;
+    try { html = page(); } finally { Reflect.set(reactRuntime, 'useState', realUseState); }
+    const texts = html.replace(/<[^>]*>/gu, '\n').split('\n').map((text) => text.replace(/&quot;/gu, '"').replace(/&amp;/gu, '&').trim()).filter(Boolean);
+    const ANSWERED_FOR_YOU = 'หัวข้อบอกชื่อคนที่ทำและสิ่งที่ทำ เช่น “แก้บัญชีรับเงิน” “ยืนยันบัญชีเดิม” หรือ “เปลี่ยนวิธีรับเงินคืน” ตามด้วย “ในใบเบิกของคุณ” และเลขที่คำขอ เนื้อความบอกธนาคารและ 4 ตัวท้ายของบัญชี หรือบอกว่ารับเป็นเงินสด และให้เปิดคำขอเพื่อตรวจ';
+    // Once in the phone's card and once in the table from sm up: the same sentence.
+    assert.equal(texts.filter((text) => text === ANSWERED_FOR_YOU).length, 2);
+    // On a phone the sentence is in a card that wraps: no table, no horizontal scroll.
+    assert.match(html, new RegExp(`<ul class="flex flex-col gap-2 sm:hidden">[\\s\\S]*?<p class="text-sm leading-6 break-words text-gray-600">${ANSWERED_FOR_YOU}</p>`, 'u'));
+    for (const said of ['กด “แสดงเลขบัญชี” หรือ “แสดงเบอร์พร้อมเพย์” เพื่อดูเลขเต็ม', 'ปุ่มคือ “แสดงเบอร์พร้อมเพย์” กับ “คัดลอกเบอร์พร้อมเพย์”', 'บัญชีพร้อมเพย์ใช้ปุ่ม “แสดงเบอร์พร้อมเพย์” และ “ซ่อนเบอร์พร้อมเพย์”',
+      'ข้อแรกคือเบอร์พร้อมเพย์ไม่ถูกต้อง', 'ประวัติการจ่ายจะขึ้นป้าย “จ่ายต่างจากที่ระบุในใบ”', 'เมื่อเลือกวิธีรับเงินคืนแล้ว คำขอกลับไปพร้อมจ่ายทันที', 'จะไม่มีแจ้งเตือนถึงผู้เบิก']) {
+      assert.ok(texts.some((text) => text.includes(said)), said);
+    }
+    // Folded, the page shows none of it: a reader opens the section they need.
+    assert.equal(page().includes('ในใบเบิกของคุณ'), false);
   });
 
   // Owner rule: readers are shop staff on a phone. A file type, a file size and the app's own name are all that stays in Latin letters.
