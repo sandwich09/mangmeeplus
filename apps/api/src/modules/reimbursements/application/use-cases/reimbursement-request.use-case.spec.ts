@@ -816,7 +816,7 @@ describe('a claim whose payout account is being corrected reads the same on LINE
       {
         kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
         oldestSentBackOn: '2026-09-30', longestWaitDays: 1,
-        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
       },
     ]);
     // สมศรี has two claims to approve; the corrected account has waited for her since this morning, not for eleven days.
@@ -850,7 +850,7 @@ describe('a claim whose payout account is being corrected reads the same on LINE
       {
         kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
         oldestSentBackOn: '2026-09-30', longestWaitDays: 1,
-        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
       },
       {
         kind: 'requester_correction', label: 'รอผู้เบิกเพิ่มบัญชีรับเงิน', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],

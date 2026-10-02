@@ -150,7 +150,7 @@ describe('LINE ERP core detail tools', () => {
     }));
     assert.equal(withRequester.status, 'รอผู้เบิกแก้บัญชีรับเงิน');
     assert.equal(withRequester.sentBackOn, '2026-10-01');
-    assert.equal(withRequester.note, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
+    assert.equal(withRequester.note, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
     assert.equal(withRequester.resubmittedOn, undefined);
     assert.deepEqual(withRequester.approvalSteps, []);
 
@@ -207,7 +207,7 @@ describe('LINE ERP core detail tools', () => {
     const withRequester = async (payoutMethod?: string) => read(claim({ payoutCorrectionPhase: 'AWAITING_REQUESTER', payoutCorrection: round('AWAITING_REQUESTER'), ...(payoutMethod && { payoutMethod }) }));
     const [account, nothing, cash] = [await withRequester('BANK_TRANSFER'), await withRequester(), await withRequester('CASH')];
     assert.deepEqual([account.status, account.note],
-      ['รอผู้เบิกแก้บัญชีรับเงิน', 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้']);
+      ['รอผู้เบิกแก้บัญชีรับเงิน', 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้']);
     assert.deepEqual([nothing.status, nothing.note],
       ['รอผู้เบิกเพิ่มบัญชีรับเงิน', 'ใบเบิกถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ผู้เบิกเพิ่มได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้']);
     assert.deepEqual([cash.status, cash.note],
@@ -238,10 +238,11 @@ describe('LINE ERP core detail tools', () => {
       /payout|BANK_TRANSFER|CASH|ACCOUNT|AWAITING_|OTHER/);
   });
 
-  // The proof that a claim that held an account reads as it did: what `reimbursement.get_detail` returned for it at
-  // 603f461dd (develop before the words of a round followed the case), captured from that build and kept here byte for
-  // byte. A pinned evaluation of the assistant (R-23, a claim sent back with a wrong account number) reads these words.
-  it('returns for a claim that held an account and waits for its requester exactly the bytes it returned before', async () => {
+  // The whole answer for a claim that holds an account, letter for letter. It is what `reimbursement.get_detail` returned
+  // at 603f461dd (captured from that build) in everything but one word: the note now calls a claim's account
+  // "บัญชีรับเงิน", the name it has everywhere else (it said "บัญชีรับเงินคืน", the name of a member's standing account).
+  // The status, every other field and their order are as they were.
+  it('returns for a claim that holds an account and waits for its requester the status it always had, and a note that names the account as every screen does', async () => {
     const setAside = { invalidatedAt: '2026-09-30T18:30:00.000Z', invalidatedReason: 'payout_account_correction' };
     const item = {
       id: 'rr2', companyId: 'c1', requestNo: 'RB-202609-000002', requesterUserId: 'u1', requesterDisplayNameSnapshot: 'User', reason: 'travel',
@@ -258,8 +259,13 @@ describe('LINE ERP core detail tools', () => {
       approvalSteps: [{ id: 's1', sequenceNo: 1, approverUserId: 'approver-1', status: 'APPROVED', assignedAt: '', decidedAt: '2026-09-21T03:00:00.000Z', ...setAside }],
     };
     const result = await new ReimbursementGetDetailTool({ execute: async () => item } as any).execute(ctx, { reimbursementId: 'rr2' });
+    // What the evaluation case of the assistant for such a claim (R-23) asks of an answer is in the status and in the note.
+    for (const said of [(result.data as any).status, (result.data as any).note]) {
+      assert.match(said, /บัญชีรับเงิน|แก้บัญชี|แก้ไขบัญชี/);
+      assert.match(said, /ผู้เบิก/);
+    }
     assert.equal(JSON.stringify(result.data),
-      '{"id":"rr2","requestNo":"RB-202609-000002","requesterDisplayName":"User","title":null,"reason":"travel","category":"travel","amount":"580.50","currency":"THB","incurredDate":"2026-09-20","status":"รอผู้เบิกแก้บัญชีรับเงิน","sentBackOn":"2026-10-01","note":"ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้","financeReviewStatus":"NOT_REQUIRED","paymentStatus":"NOT_PAYABLE","receiptRequirementStatus":"ATTACHED","postingStatus":"posted","paymentTotalAmount":"0","outstandingAmount":"580.50","lineCount":1,"approvalSteps":[],"payments":[],"duplicateCount":0}');
+      '{"id":"rr2","requestNo":"RB-202609-000002","requesterDisplayName":"User","title":null,"reason":"travel","category":"travel","amount":"580.50","currency":"THB","incurredDate":"2026-09-20","status":"รอผู้เบิกแก้บัญชีรับเงิน","sentBackOn":"2026-10-01","note":"ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้","financeReviewStatus":"NOT_REQUIRED","paymentStatus":"NOT_PAYABLE","receiptRequirementStatus":"ATTACHED","postingStatus":"posted","paymentTotalAmount":"0","outstandingAmount":"580.50","lineCount":1,"approvalSteps":[],"payments":[],"duplicateCount":0}');
   });
 
   // Tool dry-run 2026-10-02: a claim whose cancellation was started came back as `status: 'PENDING_APPROVAL'` with its

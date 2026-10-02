@@ -1162,9 +1162,8 @@ export const REIMBURSEMENT_PAYOUT_ROUND_TEXTS = {
       askOnBehalf: 'แก้บัญชีรับเงินแทนผู้เบิก',
       // The card "การรับเงินคืน" while the claim is with its requester.
       cardNote: 'ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือบัญชีที่ถูกส่งกลับ ระหว่างนี้ยังบันทึกจ่ายไม่ได้',
-      // What the LINE assistant is told happens next. This one is kept letter for letter ("บัญชีรับเงินคืน"
-      // included): a pinned evaluation of the assistant reads it.
-      assistantNote: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+      // What the LINE assistant is told happens next.
+      assistantNote: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
     },
     NOTHING: {
       // Such a claim can be paid as it is: the same lead for every reader.

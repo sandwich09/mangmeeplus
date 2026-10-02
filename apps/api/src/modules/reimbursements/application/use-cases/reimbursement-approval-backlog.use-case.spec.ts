@@ -224,7 +224,7 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
       { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-23', longestWaitDays: 7 },
       { kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
         oldestSentBackOn: '2026-09-28', longestWaitDays: 2,
-        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้' },
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้' },
     ]);
     assert.deepEqual(result.byApprover, [{ name: 'สมศรี', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-29', longestWaitDays: 1 }]);
     assert.deepEqual(result.items.map((item) => [item.id, item.waitingOn, item.submittedOn, item.sentBackOn ?? item.resubmittedOn ?? null, item.waitDays]), [

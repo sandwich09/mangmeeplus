@@ -1628,10 +1628,10 @@ describe('payout account correction round', () => {
       // The method has one name, the one a draft's form uses.
       assert.doesNotMatch(sentence, /วิธีรับเงิน(?!คืน)/, where);
     }
-    // A claim's account is "บัญชีรับเงิน". The one sentence that still says "บัญชีรับเงินคืน" is what the LINE assistant has
-    // been told of a claim that held an account since the round shipped: it is kept letter for letter.
-    assert.deepEqual(everySentence.filter(([, sentence]) => sentence.includes('บัญชีรับเงินคืน')).map(([where]) => where), ['ACCOUNT.assistantNote']);
-    assert.equal(texts.held.ACCOUNT.assistantNote, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
+    // A claim's account is "บัญชีรับเงิน" in every sentence, what the LINE assistant is told included: "บัญชีรับเงินคืน" is
+    // the name of a member's standing account, and no sentence of a round is about that.
+    assert.deepEqual(everySentence.filter(([, sentence]) => sentence.includes('บัญชีรับเงินคืน')).map(([where]) => where), []);
+    assert.equal(texts.held.ACCOUNT.assistantNote, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงิน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
     assert.equal(texts.held.NOTHING.assistantNote, 'ใบเบิกถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ผู้เบิกเพิ่มได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
     assert.equal(texts.held.CASH.assistantNote, 'ใบเบิกถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ผู้เบิกเลือกได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
     // Cash is never called an account, and nothing is "corrected" on a claim that held none.
