@@ -409,7 +409,7 @@ describe('the two calls of a payout account correction round', () => {
     const unsubscribe = subscribeToastBus((event) => events.push(event));
     try {
       for (const [status, code, sentence] of [
-        [409, 'payout_correction_in_progress', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน'],
+        [409, 'payout_correction_in_progress', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'],
         [409, 'payout_correction_not_allowed', 'ใบนี้ส่งกลับแก้บัญชีไม่ได้ในสถานะปัจจุบัน'],
         [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ทำรายการแก้บัญชีรับเงินของใบนี้'],
         [409, 'payout_correction_not_requested', 'ใบนี้ไม่ได้ถูกส่งกลับให้แก้บัญชีรับเงิน กรุณาเปิดใบใหม่เพื่อดูสถานะล่าสุด'],

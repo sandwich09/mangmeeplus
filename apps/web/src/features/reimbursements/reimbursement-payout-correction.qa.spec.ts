@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import {
@@ -9,7 +11,7 @@ import {
 import { translateApiError } from '@/common/api/api-error-message';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import {
-  PAYOUT_CORRECTION_REASONS, emptyPayoutCorrectionForm, payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
+  PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_SUPERSEDED, emptyPayoutCorrectionForm, isClaimStateConflict, payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
   payoutCorrectionInput, payoutCorrectionReasonText, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
   payoutCorrectionSentBackText, payoutCorrectionSubmittedText, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
@@ -317,9 +319,10 @@ const reapproved = (overrides: Record<string, unknown> = {}) => ready({
 
 describe('the send-back form (spec §14.3): inside the step card, a fixed reason, an optional note', () => {
   /** The form's own states, in the order it declares them: the reason, the note, then the banner. */
-  const form = (detail: object, state: { reasonCode?: string; note?: string; error?: string } = {}, onDone: (claim: unknown) => void = noop) => {
+  const form = (detail: object, state: { reasonCode?: string; note?: string; error?: string } = {}, onDone: (claim: unknown) => void = noop,
+    onConflict: () => Promise<boolean> = async () => false) => {
     let blanks = 0;
-    return render(h(correctionUi.PayoutCorrectionRequestForm, { companyId: 'company-1', detail, onCancel: noop, onDone }), (start) => {
+    return render(h(correctionUi.PayoutCorrectionRequestForm, { companyId: 'company-1', detail, onCancel: noop, onDone, onConflict }), (start) => {
       if (start === '') { blanks += 1; return blanks === 1 ? state.reasonCode : state.note; }
       return start === null ? state.error : undefined;
     }, grabForm('reimbursement-payout-correction-request'));
@@ -383,14 +386,18 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
     for (const [status, code, sentence] of [
       [409, 'reimbursement_changed', 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'],
       [409, 'payout_correction_not_allowed', 'ใบนี้ส่งกลับแก้บัญชีไม่ได้ในสถานะปัจจุบัน'],
-      [409, 'payout_correction_in_progress', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน'],
+      [409, 'payout_correction_in_progress', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'],
       [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ทำรายการแก้บัญชีรับเงินของใบนี้'],
     ] as const) {
       const done: unknown[] = [];
-      const { handlers, changes } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว' }, (claim) => done.push(claim));
+      let reread = 0;
+      const { handlers, changes } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว' }, (claim) => done.push(claim),
+        async () => { reread += 1; return false; });
       const calls = await withApi(() => ({ status, body: { statusCode: status, message: code } }), () => handlers.form.onSubmit(submitEvent));
       assert.equal(calls.length, 1, code);
-      assert.deepEqual(done, [], `${code}: the page is not told the claim moved`);
+      assert.deepEqual(done, [], `${code}: the page is not told the send-back went through`);
+      // The claim moved on (409): the page is asked to read it again, so what is under the form is true. A refusal of this viewer is none.
+      assert.equal(reread, status === 409 ? 1 : 0, code);
       // Busy on, banner cleared, the sentence, busy off: the reason ('') and the note ('') states are never set.
       assert.deepEqual(changes.map(({ initial, value }) => ({ initial, value })),
         [{ initial: false, value: true }, { initial: null, value: null }, { initial: null, value: sentence }, { initial: false, value: false }], code);
@@ -398,11 +405,25 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
       assert.equal(changes.some((change) => change.shown === 'BANK_WRONG' || change.shown === 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว'), false, code);
     }
     // What the person then sees: their reason still chosen, their note still in the box, and the sentence.
-    const { html, texts } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว', error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน' });
+    const { html, texts } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว', error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร' });
     assert.match(html, /<input type="radio"[^>]*checked=""[^>]*\/><span class="min-w-0">ธนาคารไม่ถูกต้อง<\/span>/);
     assert.match(html, /<textarea[^>]*>ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว<\/textarea>/);
-    assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน'));
+    assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'));
     assert.match(html, /role="alert"/);
+  });
+
+  // Before: the page under the form stayed as it was until it was opened again, and the sentence named nothing to do.
+  it('says the page now shows the claim as it is, in a form that is still offered after the page read the claim again', async () => {
+    const { handlers, changes } = form(ready(), { reasonCode: 'BANK_WRONG' }, noop, async () => true);
+    await withApi(() => ({ status: 409, body: { statusCode: 409, message: 'reimbursement_changed' } }), () => handlers.form.onSubmit(submitEvent));
+    assert.ok(changes.some((change) => change.value === 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง · หน้านี้แสดงสถานะล่าสุดของใบแล้ว ตรวจแล้วกดอีกครั้งได้'), JSON.stringify(changes));
+    // A form that is no longer offered is closed by the page, which says what was not done and where to read what can be done now.
+    for (const text of Object.values(PAYOUT_CORRECTION_SUPERSEDED)) assert.match(text, /^ยังไม่ได้.+ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง$/u);
+    assert.deepEqual([isClaimStateConflict({ status: 409 }), isClaimStateConflict({ status: 403 }), isClaimStateConflict(new Error('x'))], [true, false, false]);
+    const page = readFileSync(join(__dirname, 'ReimbursementJourneyPage.tsx'), 'utf8');
+    assert.match(page, /onConflict=\{\(\) => afterCorrectionConflict\('send-back'\)\}/);
+    assert.match(page, /onConflict=\{\(\) => afterCorrectionConflict\('correct-payout'\)\}/);
+    assert.match(page, /setDetail\(latest\);\s+if \(activeJourneyStep\(buildJourneySteps\(latest, permissions, userId\)\)\?\.actions\.includes\(form\)\) return true;\s+setCorrectionForm\(null\); setActionError\(PAYOUT_CORRECTION_SUPERSEDED\[form\]\);/);
   });
 });
 
@@ -413,7 +434,7 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
   /** The form's own states: what was picked and typed, whether the server lets this viewer save a default, then the banner. */
   const form = (detail: object, state: { picked?: Partial<PayoutCorrectionForm>; canSaveAsDefault?: boolean; error?: string; userId?: string } = {}, onDone: (claim: unknown) => void = noop) => {
     let falses = 0;
-    return render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail, userId: state.userId ?? 'staff', canEditEmployees: false, onCancel: noop, onDone }), (start) => {
+    return render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail, userId: state.userId ?? 'staff', canEditEmployees: false, onCancel: noop, onDone, onConflict: async () => false }), (start) => {
       if (start && typeof start === 'object' && 'saveAsDefault' in start) return { ...start, ...state.picked };
       if (start === false) { falses += 1; return falses === 1 ? state.canSaveAsDefault : undefined; }
       return start === null ? state.error : undefined;
@@ -505,10 +526,10 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
       // The form's own state (what was picked and typed) is never set again by a refusal.
       assert.equal(changes.some((change) => !!change.initial && typeof change.initial === 'object' && 'saveAsDefault' in change.initial), false, code);
     }
-    const { html, texts } = form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED', account: typed }, error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน' });
+    const { html, texts } = form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED', account: typed }, error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร' });
     assert.match(html, /<input[^>]*aria-label="ชื่อบัญชี"[^>]*value="นาย สมชาย ใจดี"/);
     assert.match(html, /<input[^>]*aria-label="เลขบัญชี"[^>]*value="111-2-33444-1112"/);
-    assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน'));
+    assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'));
   });
 });
 
@@ -917,14 +938,36 @@ describe('the round\'s forms open inside the step card, never in a dialog', () =
     assert.ok(page.changes.some((change) => change.initial === null && change.value === null), 'the form is closed');
   });
 
-  it('keeps the page and the form as they are when the send-back is refused: no reload, no toast, the sentence in the form', async () => {
+  // Before: the claim was not read again, so the page under the form showed the claim as it had been until it was reopened.
+  it('reads the claim again when the send-back lost its race, and keeps a form that is still offered with what was typed', async () => {
     const page = filled(ready({ payoutCorrectionActions: SEND }), payer, 'send-back', { blanks: ['ACCOUNT_UNUSABLE', 'ธนาคารแจ้งว่าบัญชีปิดแล้ว'] });
     toasts.length = 0;
-    const calls = await withApi(() => ({ status: 409, body: { statusCode: 409, message: 'reimbursement_changed' } }), () => page.handlers.form.onSubmit(submitEvent));
-    assert.equal(calls.length, 1, 'the claim is not read again, so the form and what was typed stay on the screen');
+    // Refused for a change that left the claim where it was: it still waits for payment, and this viewer may still send it back.
+    const calls = await withApi((_url, method) => (method === 'POST' ? { status: 409, body: { statusCode: 409, message: 'reimbursement_changed' } }
+      : { status: 200, body: asAnswered(ready({ payoutCorrectionActions: SEND })) }), () => page.handlers.form.onSubmit(submitEvent));
+    assert.deepEqual(calls.map((call) => `${call.method} ${call.url.split('/claim-1')[1]}`), ['POST /payout-correction', 'GET ']);
     assert.deepEqual(toasts, []);
-    assert.ok(page.changes.some((change) => change.value === 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'));
-    assert.equal(page.changes.some((change) => (change.value as { status?: string } | null)?.status !== undefined), false, 'the claim on the page is not replaced');
+    assert.ok(page.changes.some((change) => (change.value as { status?: string } | null)?.status === 'READY_FOR_PAYMENT'), 'the page shows the claim as read again');
+    assert.ok(page.changes.some((change) => change.value === 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง · หน้านี้แสดงสถานะล่าสุดของใบแล้ว ตรวจแล้วกดอีกครั้งได้'));
+    // Still offered: the page closes no form and says nothing of its own.
+    assert.equal(page.changes.some((change) => change.value === PAYOUT_CORRECTION_SUPERSEDED['send-back']), false);
+  });
+
+  it('closes a send-back form that is no longer offered after the re-read, and says what was not done and where to read what can be done', async () => {
+    const page = filled(ready({ payoutCorrectionActions: SEND }), payer, 'send-back', { blanks: ['ACCOUNT_UNUSABLE', ''] });
+    toasts.length = 0;
+    // Someone else sent the claim back first: it is with its requester now, and nobody sends it back again.
+    const calls = await withApi((_url, method) => (method === 'POST' ? { status: 409, body: { statusCode: 409, message: 'payout_correction_in_progress' } }
+      : { status: 200, body: asAnswered(phaseA()) }), () => page.handlers.form.onSubmit(submitEvent));
+    assert.equal(calls.length, 2);
+    assert.deepEqual(toasts, []);
+    assert.ok(page.changes.some((change) => (change.value as { payoutCorrectionPhase?: string } | null)?.payoutCorrectionPhase === 'AWAITING_REQUESTER'), 'the page shows the claim in its round');
+    assert.ok(page.changes.some((change) => change.value === PAYOUT_CORRECTION_SUPERSEDED['send-back']), 'the page says why the form is gone');
+    // A re-read that fails leaves the page as it is: the form keeps the server's sentence and what was typed.
+    const offline = filled(ready({ payoutCorrectionActions: SEND }), payer, 'send-back', { blanks: ['ACCOUNT_UNUSABLE', ''] });
+    await withApi(() => ({ status: 409, body: { statusCode: 409, message: 'reimbursement_changed' } }), () => offline.handlers.form.onSubmit(submitEvent));
+    assert.ok(offline.changes.some((change) => change.value === 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'));
+    assert.equal(offline.changes.some((change) => (change.value as { status?: string } | null)?.status !== undefined), false, 'the claim on the page is not replaced');
   });
 
   it('gives the account from the page and says where the claim went: to its approvers, or straight back to the pay step', async () => {
@@ -1312,7 +1355,7 @@ describe('nothing pays a claim while its payout account is being corrected (AC30
   // Spec §22: the payer had the form open when the claim was sent back. The save is refused, and the form says why.
   it('tells a payer whose form was open that the claim is having its payout account corrected, and to press nothing again', () => {
     const refused = Object.assign(new Error('payout_correction_in_progress'), { status: 409 });
-    assert.equal(logic.paymentSaveErrorMessage('record', refused, true), 'ยังบันทึกจ่ายไม่สำเร็จ · ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน');
+    assert.equal(logic.paymentSaveErrorMessage('record', refused, true), 'ยังบันทึกจ่ายไม่สำเร็จ · ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร');
     // A payment that lost its race against the send-back itself is told to press save again; the next press is then refused as above.
     const lost = Object.assign(new Error('reimbursement_payment_state_changed'), { status: 409 });
     assert.match(logic.paymentSaveErrorMessage('record', lost, true), /^ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน/u);

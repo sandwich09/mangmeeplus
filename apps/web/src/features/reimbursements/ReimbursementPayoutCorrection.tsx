@@ -3,7 +3,8 @@
 // The payout account correction round on the claim page (payout spec §14): the send-back form of whoever
 // may send the claim back, the account form of its requester, and the comparison its approvers are shown.
 // Both forms open inside the step card, never in a dialog, the way the payment form does on a phone. Each
-// makes its own call and, when the API refuses, says so in its own banner and keeps what was typed.
+// makes its own call and, when the API refuses, says so in its own banner and keeps what was typed. A refusal
+// because the claim moved on (409) also has the page read the claim again, so what is under the form is true.
 
 import { useEffect, useRef, useState } from 'react';
 import { REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
@@ -15,7 +16,8 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_METHOD_TEXT,
+  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_METHOD_TEXT,
+  isClaimStateConflict,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionRequestError,
   payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
@@ -32,13 +34,23 @@ function useFocusOnOpen() {
 }
 
 /**
+ * What a form says when the API refuses it. A refusal because the claim moved on has the page read the claim again
+ * (`onConflict` answers whether this form is still offered after that); the banner then says the page is up to date.
+ */
+async function refusalText(e: unknown, onConflict: () => Promise<boolean>): Promise<string> {
+  return isClaimStateConflict(e) && await onConflict() ? `${errorText(e)} · ${PAYOUT_CORRECTION_REREAD_NOTE}` : errorText(e);
+}
+
+/**
  * "ส่งกลับให้แก้บัญชีรับเงิน": a reason from the fixed list and an optional note (spec §14.3). The same form
  * sends a claim back again from the step a round waits on, which is how its approvers refuse a new account.
  */
-export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDone }: {
+export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDone, onConflict }: {
   companyId: string;
   detail: any;
   onCancel: () => void;
+  /** The claim moved on (409): the page reads it again, and answers whether this form is still offered. */
+  onConflict: () => Promise<boolean>;
   /** The claim detail the API answered with: the claim is with its requester now. */
   onDone: (claim: any) => void;
 }) {
@@ -61,7 +73,7 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
       onDone(await requestReimbursementPayoutCorrection(companyId, detail.id, payoutCorrectionRequestInput(reasonCode as ReimbursementPayoutCorrectionReason, note)));
     } catch (e) {
       // A lost race or a refusal: the sentence is shown here, and the reason and note stay as typed.
-      setError(errorText(e));
+      setError(await refusalText(e, onConflict));
     } finally { sending.current = false; setBusy(false); }
   };
 
@@ -110,13 +122,15 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
  * server shows it now, an account typed for this claim, or cash. Nothing is chosen for them: the account that
  * was sent back may well be their default.
  */
-export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEditEmployees, onCancel, onDone }: {
+export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEditEmployees, onCancel, onDone, onConflict }: {
   companyId: string;
   detail: any;
   userId: string;
   /** The session may edit employee data: only then is the server asked whether this viewer may set the requester's default. */
   canEditEmployees: boolean;
   onCancel: () => void;
+  /** The claim moved on (409): the page reads it again, and answers whether this form is still offered. */
+  onConflict: () => Promise<boolean>;
   /** The claim detail the API answered with: waiting for its approvers, or ready for payment at once. */
   onDone: (claim: any) => void;
 }) {
@@ -158,7 +172,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       onDone(await submitReimbursementPayoutCorrection(companyId, detail.id, input));
     } catch (e) {
       // The account stays as typed: a refusal for one field is fixed and sent again without typing the rest.
-      setError(errorText(e));
+      setError(await refusalText(e, onConflict));
     } finally { sending.current = false; setBusy(false); }
   };
 

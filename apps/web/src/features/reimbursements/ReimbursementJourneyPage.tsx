@@ -32,7 +32,7 @@ import { ClaimPayoutCard, PayoutAttestationCheck } from './ReimbursementPayout';
 import { PAYOUT_ATTESTATION_REQUIRED, claimNeedsPayoutAttestation, claimPayoutSubmitBlock } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its forms and card, and the words of its buttons.
 import { PayoutCorrectionAccountForm, PayoutCorrectionComparison, PayoutCorrectionRequestForm } from './ReimbursementPayoutCorrection';
-import { PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL, PAYOUT_CORRECTION_SEND_BACK_LABEL } from './reimbursement-payout.logic';
+import { PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_SUPERSEDED } from './reimbursement-payout.logic';
 
 const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
   done: 'done', current: 'current', upcoming: 'upcoming', 'needs-fix': 'attention', ended: 'attention',
@@ -267,6 +267,21 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     try { latest = await getReimbursement(companyId, requestId); } catch { /* keep what the call answered */ }
     if (latest) setDetail(latest);
     setFocusTick((tick) => tick + 1);
+  };
+
+  /**
+   * A form of a correction round was refused because the claim moved on (409). The page reads the claim again, so what
+   * is under the form is true. A form still offered stays, with what was typed; one no longer offered is closed, and
+   * the page says what was not done and where to read what can be done now. Answers whether the form stays.
+   */
+  const afterCorrectionConflict = async (form: 'send-back' | 'correct-payout') => {
+    let latest: any;
+    try { latest = await getReimbursement(companyId, requestId); } catch { return false; /* the form's own banner says why */ }
+    setDetail(latest);
+    if (activeJourneyStep(buildJourneySteps(latest, permissions, userId))?.actions.includes(form)) return true;
+    setCorrectionForm(null); setActionError(PAYOUT_CORRECTION_SUPERSEDED[form]);
+    setFocusTick((tick) => tick + 1);
+    return false;
   };
 
   if (!detail) {
@@ -504,13 +519,14 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           {openCorrectionForm === 'send-back' && (
             <div className="border-t border-gray-100 pt-3">
               <PayoutCorrectionRequestForm companyId={companyId} detail={detail} onCancel={() => setCorrectionForm(null)}
+                onConflict={() => afterCorrectionConflict('send-back')}
                 onDone={(answered) => void afterCorrection(answered, 'ส่งกลับให้ผู้เบิกแก้บัญชีรับเงินแล้ว')} />
             </div>
           )}
           {openCorrectionForm === 'correct-payout' && (
             <div className="border-t border-gray-100 pt-3">
               <PayoutCorrectionAccountForm companyId={companyId} detail={detail} userId={userId} canEditEmployees={permissions.includes('access.employee.update')}
-                onCancel={() => setCorrectionForm(null)}
+                onCancel={() => setCorrectionForm(null)} onConflict={() => afterCorrectionConflict('correct-payout')}
                 // A claim nobody has to approve is ready for payment in the same call (spec §14.5).
                 onDone={(answered) => void afterCorrection(answered, answered?.status === 'READY_FOR_PAYMENT'
                   ? 'บันทึกบัญชีรับเงินแล้ว ใบกลับไปรอจ่ายเงินคืน' : 'บันทึกบัญชีรับเงินแล้ว รอผู้อนุมัติอนุมัติบัญชีใหม่')} />

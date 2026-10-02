@@ -415,6 +415,21 @@ export const PAYOUT_CORRECTION_FIX_LABEL = 'แก้บัญชีรับเ
 /** A scan declared as signed before the round (spec §14.4): it stays in the list and no longer counts. */
 export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อนแก้บัญชีรับเงิน';
 
+/**
+ * The API refused a form of the round because the claim is no longer as the page read it (HTTP 409): someone paid it,
+ * cancelled it, sent it back or gave its account meanwhile. The page then reads the claim again.
+ */
+export function isClaimStateConflict(e: unknown): boolean {
+  return (e as { status?: unknown } | null)?.status === 409;
+}
+/** Added to such a refusal in a form that is still offered, once the page under it shows the claim as it is now. */
+export const PAYOUT_CORRECTION_REREAD_NOTE = 'หน้านี้แสดงสถานะล่าสุดของใบแล้ว ตรวจแล้วกดอีกครั้งได้';
+/** Said by the page when the form is no longer offered: what was not done, why, and where to read what can be done now. */
+export const PAYOUT_CORRECTION_SUPERSEDED: Record<'send-back' | 'correct-payout', string> = {
+  'send-back': 'ยังไม่ได้ส่งกลับ เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
+  'correct-payout': 'ยังไม่ได้บันทึกบัญชีรับเงิน เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
+};
+
 /** The fixed reasons, in the order the form lists them. */
 export const PAYOUT_CORRECTION_REASONS = Object.entries(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS) as ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]>;
 
