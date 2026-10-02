@@ -1,5 +1,5 @@
 import { test, expect } from './harness/fixtures';
-import { gotoCompany, json, unique } from './harness/e2e-utils';
+import { branchOptionName, chooseThemedOption, firstActiveBranch, gotoCompany, json, unique } from './harness/e2e-utils';
 import { roleDisplayName } from '../apps/web/src/features/employee-access/role-picker.logic';
 import {
   API_BASE_URL,
@@ -90,6 +90,8 @@ test.describe('SET — settings', () => {
     await authedPage.getByRole('button', { name: /ฝ่ายการเงิน|Finance/ }).click();
     await expect(authedPage.getByRole('button', { name: /ฝ่ายบัญชี|Accountant/ })).toHaveAttribute('aria-pressed', 'false');
     await authedPage.getByLabel(/^ตำแหน่งงาน/).fill('เจ้าหน้าที่บัญชีและการเงิน');
+    // The seeded company has several branches: สาขาหลัก follows the header's branch, and under "ทุกสาขา" it is the person's choice.
+    await chooseThemedOption(authedPage, authedPage.locator('#employee-default-branch'), (await firstActiveBranch(api, companyId)).name);
     await authedPage.getByRole('button', { name: /^ถัดไป/ }).click();
     await expect(authedPage.getByText(username).first()).toBeVisible();
     await expect(authedPage.getByAltText('LINE link QR')).toHaveCount(0);
@@ -159,7 +161,7 @@ test.describe('SET — settings', () => {
     expect(created.code).toBe(code);
 
     await gotoCompany(authedPage, companyId, '/settings/branches');
-    await expect(authedPage.getByRole('heading', { name: /สาขา|Branches/i })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'สาขา', exact: true })).toBeVisible();
     await expect(authedPage.getByText(/SIAM|AREE|THONG/).first()).toBeVisible();
     await expect(authedPage.getByText(code).first()).toBeVisible();
 
@@ -390,14 +392,18 @@ test.describe('SET — settings', () => {
 
       await gotoCompany(page, companyId, '/expenses/manual');
       await expect(page.getByRole('heading', { name: 'บันทึกค่าใช้จ่ายด้วยมือ' })).toBeVisible();
+      // Several branches and the "ทุกสาขา" filter: the form stays disabled until the record's branch is chosen.
+      await chooseThemedOption(page, page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true }), branchOptionName(await firstActiveBranch(api, companyId)));
       await page.getByLabel('รายละเอียดค่าใช้จ่าย').fill(unique('E2E union expense'));
       await page.getByLabel('ราคาต่อหน่วย').fill('123.45');
       await page.getByRole('button', { name: 'บันทึกฉบับร่าง' }).click();
       await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/expenses/[^/?]+$`));
-      await expect(page.getByRole('heading', { name: /ฉบับร่าง/ })).toBeVisible();
+      // A saved draft is titled by its own number and vendor now; with no vendor yet the title says so.
+      await expect(page.getByRole('heading', { name: /รอระบุผู้ขาย/ })).toBeVisible();
 
       await gotoCompany(page, companyId, '/expenses/substitute-receipts');
-      await expect(page.getByRole('heading', { name: 'ใบรับรองแทนใบเสร็จรับเงิน' })).toBeVisible();
+      // exact: the empty list has its own heading, "ยังไม่มีใบรับรองแทนใบเสร็จรับเงินในบริษัทนี้".
+      await expect(page.getByRole('heading', { name: 'ใบรับรองแทนใบเสร็จรับเงิน', exact: true })).toBeVisible();
       await expect(page.getByRole('link', { name: '+ สร้างใบรับรองฉบับใหม่' })).toBeVisible();
 
       await gotoCompany(page, companyId, '/reimbursements');
