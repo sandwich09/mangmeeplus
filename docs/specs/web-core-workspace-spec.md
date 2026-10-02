@@ -265,6 +265,7 @@ Navigation behavior:
 - Mobile uses compact top bar and slide-over or bottom navigation for primary modules.
 - Active route is visible.
 - On desktop, hover expansion of a collapsed sidebar overlays the page; only an explicit pinned expansion changes the main-content offset. Route changes scroll the active row only when it is outside the sidebar viewport and never force-centre an already visible row.
+- On desktop, pressing the sidebar's collapse button closes it to the rail at once, also while the pointer still rests on the sidebar and also when the button is pressed from the keyboard; hover expansion starts again only after the pointer has left the sidebar and come back.
 - Unauthorized modules are hidden from primary nav unless a route is opened directly; direct open shows forbidden state.
 - Planned modules may appear as disabled only when useful for roadmap visibility. They must not fake working behavior.
 - Top bar contains company selector, language switch, user menu entry, and notification entry placeholder. Real notification data, preferences, rules, and delivery live in Dashboard and Notification item 06.

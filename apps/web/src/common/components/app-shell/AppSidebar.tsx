@@ -4,7 +4,7 @@ import { withLineExternalBrowser } from '@/common/auth/line-in-app-browser.logic
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarContext';
-import { isActiveNavSubItem, lineLinkMenuRow, revealScrollDelta } from './app-sidebar.logic';
+import { isActiveNavSubItem, isPointerArrival, lineLinkMenuRow, revealScrollDelta } from './app-sidebar.logic';
 import { ChevronDownIcon, HorizontalDotsIcon } from '@/common/icons';
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
 import { Button } from '@/common/components/button';
@@ -151,6 +151,8 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   /** Last pathname the route-sync effect acted on, so it runs once per navigation. */
   const syncedPathRef = useRef<string | null>(null);
   const subMenuRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  /** The collapse button was pressed with the pointer on the sidebar, and the pointer has not left since. */
+  const closedUnderPointerRef = useRef(false);
   // A member holding several roles sees all of them, so the shell answers "ฉันเป็นตำแหน่งอะไร" (spec R9).
   // Deduped after translation: two custom role keys both fall back to the same generic label, and
   // "เมนูผู้ใช้ · เมนูผู้ใช้" reads as a bug. First appearance keeps its position.
@@ -303,8 +305,15 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
         lg:visible lg:translate-x-0`}
       aria-hidden={isOffCanvas ? true : undefined}
       inert={isOffCanvas ? true : undefined}
-      onMouseEnter={() => supportsHover && !isExpanded && setIsHovered(true)}
-      onMouseLeave={() => supportsHover && setIsHovered(false)}
+      onMouseEnter={(event) => {
+        if (!isPointerArrival(event.nativeEvent.relatedTarget as Node | null, closedUnderPointerRef.current)) return;
+        closedUnderPointerRef.current = false;
+        if (supportsHover && !isExpanded) setIsHovered(true);
+      }}
+      onMouseLeave={() => {
+        closedUnderPointerRef.current = false;
+        if (supportsHover) setIsHovered(false);
+      }}
     >
       <div className={`py-6 flex items-center ${!isExpanded && !isHovered ? 'lg:justify-center' : 'justify-between'}`}>
         <Link href="/" className="flex items-center gap-2.5">
@@ -316,7 +325,8 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
         {sidebarVisible && (
           <button
             type="button"
-            onClick={() => {
+            onClick={(event) => {
+              closedUnderPointerRef.current = isExpanded && Boolean(event.currentTarget.closest('aside')?.matches(':hover'));
               setIsHovered(false);
               toggleSidebar();
             }}

@@ -26,6 +26,22 @@ export function revealScrollDelta(
 }
 
 /**
+ * Whether a mouseenter is the pointer arriving on the sidebar, which is what opens the collapsed one over the page.
+ *
+ * Pressing the collapse button takes the button and every label out of the page while the pointer still rests there.
+ * The browser then reports that pointer again and React hands the sidebar one more mouseenter, which used to reopen
+ * it on the spot: the press looked as if it did nothing. So after a press made with the pointer on the sidebar
+ * (`closedUnderPointer`) only an entry from an element still in the page counts, until the pointer leaves or so
+ * arrives. `cameFrom` is the native event's relatedTarget: the removed element in Chromium, nothing in WebKit.
+ * ponytail: nothing is also what a pointer coming in from outside the window brings, so when the browser reports no
+ * leave (WebKit, when a removed label was all that lay under the pointer) one such entry is ignored; follow the
+ * pointer's position instead if that ever matters.
+ */
+export function isPointerArrival(cameFrom: { isConnected?: boolean } | null, closedUnderPointer: boolean): boolean {
+  return !closedUnderPointer || cameFrom?.isConnected === true;
+}
+
+/**
  * Self-service LINE link menu row (line-self-link spec §3, owner directive 2026-09-01).
  * `null` = the lazy account-security fetch has not landed yet: the row renders immediately (the
  * menu never blocks on a network call) but stays DISABLED, because "unknown" must not be treated
