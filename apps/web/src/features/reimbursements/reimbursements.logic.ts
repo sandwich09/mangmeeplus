@@ -23,7 +23,7 @@ import {
 // The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
 import { PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
 // The words of a round are the contracts' own, chosen there from what the claim holds and from what was answered.
-import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, reimbursementPayoutRoundApproves, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, reimbursementPayoutHeld, reimbursementPayoutRoundApproves, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -1140,7 +1140,8 @@ function payoutCorrectionStepNote(
 ): string {
   if (round.phase === 'AWAITING_REQUESTER') {
     return [
-      payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode }),
+      // With its requester the claim holds what it held when it was sent back: the send-back is said by that.
+      payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: reimbursementPayoutHeld(detail) }),
       round.note && `หมายเหตุ: ${round.note}`,
       // A claim sent back for having no account has none that was wrong: its requester is asked to add one.
       viewer.canSubmit && viewer.isRequester ? (round.reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? 'รอคุณเพิ่มบัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินของใบนี้'
@@ -1406,14 +1407,17 @@ export type PayoutCorrectionComparison = {
 export function payoutCorrectionComparison(detail: any): PayoutCorrectionComparison | null {
   const round = detail?.payoutCorrection;
   if (round?.phase !== 'AWAITING_APPROVAL') return null;
-  const submitted = [...(detail.payoutCorrectionHistory ?? [])].reverse().find((event: any) => event.kind === 'ACCOUNT_SUBMITTED');
+  // The round's events, latest first: the answer that waits, and the send-back it answers.
+  const latest: any[] = [...(detail.payoutCorrectionHistory ?? [])].reverse();
+  const submitted = latest.find((event: any) => event.kind === 'ACCOUNT_SUBMITTED');
   return {
     previous: payoutCorrectionAccountText(round.previous),
     current: payoutCorrectionAccountText(detail.payout),
     ...(round.sameAsPrevious === true && { same: true as const }),
     unchanged: `รายการและยอดเงิน ${formatMoney(detail.amount, detail.currency)} เท่ากับที่อนุมัติไว้${
       round.previouslyApprovedAt ? `เมื่อ ${formatThaiDateTime(round.previouslyApprovedAt)}` : ''} การอนุมัติครั้งนี้ตรวจเฉพาะบัญชีรับเงินคืน`,
-    sentBack: payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode }),
+    // What the claim held at that send-back is the event's own fact: the claim now holds what was answered.
+    sentBack: payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: latest.find((event: any) => event.kind === 'SENT_BACK')?.held }),
     ...(round.note && { note: round.note }),
     ...(round.submittedAt && { submitted: `${payoutCorrectionSubmittedText(submitted, detail.requesterUserId, round.reasonCode)} เมื่อ ${formatThaiDateTime(round.submittedAt)}` }),
   };

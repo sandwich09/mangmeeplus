@@ -26,6 +26,8 @@ import {
   type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason,
   type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
 } from '@watchdog-bms/contracts';
+// The words of a round (payout spec §14.2): the contracts' own, chosen there from what the claim holds and from what was answered.
+import { REIMBURSEMENT_PAYOUT_ROUND_TEXTS, reimbursementPayoutHeld, reimbursementPayoutRoundSendBack, type ReimbursementPayoutHeld } from '@watchdog-bms/contracts';
 import { apiErrorCode, translateApiError } from '@/common/api/api-error-message';
 
 export const PAYOUT_METHOD_TEXT: Record<string, string> = { BANK_TRANSFER: 'โอนเข้าบัญชี', CASH: 'รับเป็นเงินสด' };
@@ -283,7 +285,8 @@ export function payoutDefaultChangedHint(
   // the new account is the correction round (spec §14.3): give the account now, or send the claim back for it.
   const how = canWithdraw ? 'ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง'
     : detail.payoutCorrectionActions?.canSubmit === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_FIX_LABEL}ในขั้นอนุมัติ แล้วเลือกใช้บัญชีประจำ`
-      : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${PAYOUT_CORRECTION_SEND_BACK_LABEL}ที่ท้ายกล่องนี้ ก่อนมีการโอน`
+      // By the words of the line it names: that of a claim holding an account, the only claim told this (it copied the default).
+      : detail.payoutCorrectionActions?.canRequest === true ? `ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กด${payoutRoundTexts(detail.payout).payLink}ที่ท้ายกล่องนี้ ก่อนมีการโอน`
         : 'ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
   return `บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ${how}`;
 }
@@ -404,28 +407,40 @@ export const BANK_OPTIONS: readonly string[] = THAI_BANK_NAMES;
 
 // ---- Correcting the payout account after approval (payout spec §14) ----
 //
-// A wrong account found after approval is fixed on the same claim: it is sent back from the pay step, its
-// requester gives the account again and its approvers approve that account alone. Who may do which is the
-// server's answer (`payoutCorrectionActions`, `approvalActions`); nothing here decides it.
+// A payout destination found wrong after approval is fixed on the same claim: it is sent back from the pay step, its
+// requester gives the destination again and its approvers approve that alone. Who may do which is the server's
+// answer (`payoutCorrectionActions`, `approvalActions`); nothing here decides it.
+//
+// A claim is sent back holding an account, cash, or (sent before claims carried one, spec §15) nothing, and what is
+// answered is one of seven things. The words of every screen follow those two facts, and are the contracts' own
+// (`REIMBURSEMENT_PAYOUT_ROUND_TEXTS` and the functions beside it): no screen makes a sentence of its own from a
+// phase or a reason code.
 
-export const PAYOUT_CORRECTION_SEND_BACK_LABEL = 'ส่งกลับให้แก้บัญชีรับเงิน';
 /**
- * The same send-back on a claim sent before claims carried an account (spec §15): there is no account to correct,
- * so the action is named for what it does. Such a claim can be paid as it is, and is told so beside the action.
+ * The contracts' sentences of a round for this claim, by what it holds now (its list row's or its detail's
+ * `payoutMethod`): the texts of `held` for the pay step and for the claim while it is with its requester, and under
+ * `given` those of an answer that waits for approval. The claim then holds what was given, which is never nothing.
  */
-export const PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL = 'เพิ่มบัญชีรับเงินให้ใบนี้ แล้วให้ผู้อนุมัติตรวจใหม่';
-export const PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL = 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน';
-/** Said above the send-back at the foot of the account box of a claim that waits for its payment (spec §14.3). */
-export const PAYOUT_CORRECTION_SEND_BACK_LEAD = 'ถ้าวิธีรับเงินหรือบัญชีนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย ส่งกลับให้แก้ก่อน';
-export const PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD = 'ใบนี้บันทึกจ่ายได้เลยโดยไม่ต้องมีบัญชีในใบ ข้อความด้านล่างใช้เมื่อต้องการให้ใบมีบัญชีที่ผู้อนุมัติตรวจแล้วเท่านั้น';
+export function payoutRoundTexts(claim: { payoutMethod?: string | null } | null | undefined) {
+  const held = reimbursementPayoutHeld(claim);
+  return { held, ...REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held[held], given: REIMBURSEMENT_PAYOUT_ROUND_TEXTS.given[held === 'CASH' ? 'CASH' : 'ACCOUNT'] };
+}
+
+/**
+ * The words of the send-back, as the title of its form: by what the claim holds, an account to correct, none yet to
+ * add, or cash to choose again. From the step a round waits on it is how the approvers do not take the answer, never
+ * a refusal of the claim, and it is the words of their button too.
+ */
+export function payoutCorrectionSendBackTitle(claim: { payoutMethod?: string | null; payoutCorrectionPhase?: string | null }): string {
+  const words = payoutRoundTexts(claim);
+  return claim.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? words.given.sendBackAgain : reimbursementPayoutRoundSendBack(words.held);
+}
 /**
  * Said on the approvers' card in place of the two accounts side by side, when the account given in the round is the
  * very account the claim had (the server's answer, `payoutCorrection.sameAsPrevious`): the last 4 digits of two
  * accounts can read alike, and of one account always do.
  */
 export const PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL = 'บัญชีเดิม ไม่ได้เปลี่ยน';
-/** The same send-back from whoever decides the round's waiting step: it is never a refusal of the claim. */
-export const PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL = 'ส่งกลับให้แก้อีกครั้ง';
 export const PAYOUT_CORRECTION_FIX_LABEL = 'แก้บัญชีรับเงิน';
 /** A scan declared as signed before the round (spec §14.4): it stays in the list and no longer counts. */
 export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อนแก้บัญชีรับเงิน';
@@ -468,11 +483,15 @@ export const PAYOUT_CORRECTION_SUPERSEDED: Record<'send-back' | 'correct-payout'
 
 /**
  * The fixed reasons this claim can be sent back with, in the order the form lists them: the list the API takes for
- * it (`reimbursementPayoutCorrectionReasons`). A claim with no account of its own has "ใบนี้ยังไม่มีบัญชีรับเงิน"
- * first; a claim that carries one is never offered it.
+ * it (`reimbursementPayoutCorrectionReasons`), by what the claim holds. An account can be wrong in five ways (a
+ * PromptPay number, which has no bank, in four), cash has its own two, and each list ends with "อื่น ๆ". A claim with
+ * no account of its own has the one reason that says so, which its form states and does not ask.
  */
-export function payoutCorrectionReasons(detail: { payout?: unknown } | null | undefined): ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]> {
-  return reimbursementPayoutCorrectionReasons(!!detail?.payout).map((code) => [code, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[code]]);
+export function payoutCorrectionReasons(
+  detail: { payoutMethod?: string | null; payout?: Pick<ReimbursementPayoutSummary, 'payoutMethod' | 'payoutKind'> | null } | null | undefined,
+): ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]> {
+  return reimbursementPayoutCorrectionReasons(reimbursementPayoutHeld(detail), detail?.payout?.payoutKind)
+    .map((code) => [code, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[code]]);
 }
 
 /** A reason in words. Empty for a reason this build has no words for: a code is never printed. */
@@ -483,11 +502,15 @@ export function payoutCorrectionReasonText(reasonCode: unknown): string {
 /**
  * "ส่งกลับให้แก้บัญชีรับเงินโดย … : เหตุผล" (spec §14.2, §17.2). One sentence for the step note of a claim that
  * waits for its requester, for the timeline row and for the card its approvers read, so they cannot tell it differently.
- * A claim sent back because it had no account was sent back to be given one, and is told so: nothing was corrected.
+ * How it is said follows `held`, what the claim held at that send-back: an account to correct, none yet to add, or cash
+ * to choose again. Never the reason code, which says why and not what the claim held. A send-back with no record of what
+ * was held (an event from an older server) is told in words true of every claim sent back.
  */
-export function payoutCorrectionSentBackText(sentBack: { byName?: string | null; reasonCode?: unknown } | null | undefined): string {
+export function payoutCorrectionSentBackText(sentBack: { byName?: string | null; reasonCode?: unknown; held?: unknown } | null | undefined): string {
   const reason = payoutCorrectionReasonText(sentBack?.reasonCode);
-  const action = sentBack?.reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL;
+  const held = sentBack?.held;
+  const action = typeof held === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held, held)
+    ? reimbursementPayoutRoundSendBack(held as ReimbursementPayoutHeld) : 'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืน';
   return `${action}${sentBack?.byName ? `โดย ${sentBack.byName}` : ''}${reason ? ` : ${reason}` : ''}`;
 }
 
@@ -522,24 +545,23 @@ export function payoutCorrectionRequestInput(reasonCode: ReimbursementPayoutCorr
 
 /** What whoever sends a claim back is told before they confirm (spec §14.1, §14.4): what changes, and what is lost. */
 export function payoutCorrectionSendBackNotes(detail: {
-  payoutCorrectionPhase?: string | null; payout?: ReimbursementPayoutSummary | null;
+  payoutCorrectionPhase?: string | null; payoutMethod?: string | null;
   signatures?: readonly unknown[] | null; signedCopies?: readonly { acknowledgedAt?: string }[] | null;
 }): string[] {
-  // From the round's waiting step: the account goes back to the requester once more. Nothing is signed in a round.
-  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') {
-    return ['ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงินอีกครั้ง ใบไม่ถูกปฏิเสธ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'];
-  }
-  // A claim sent before claims carried an account gets one through this same path (spec §15): it has none to correct.
-  const legacy = !detail.payout;
+  const words = payoutRoundTexts(detail);
+  // From the round's waiting step: the claim goes back to its requester once more, for what was just given: an account
+  // to correct, or cash to choose again. Nothing is signed in a round.
+  if (detail.payoutCorrectionPhase === 'AWAITING_APPROVAL') return [words.given.sendBackAgainLine1];
   return [
-    legacy ? 'ใบนี้จะกลับไปให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน'
-      : 'ใบนี้จะกลับไปให้ผู้เบิกแก้บัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน',
-    legacy ? 'เมื่อผู้เบิกเพิ่มบัญชีแล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีนั้นก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที'
-      : 'เมื่อผู้เบิกแก้แล้ว ผู้อนุมัติชุดเดิมอนุมัติบัญชีใหม่ก่อนจึงจ่ายได้ ใบที่ไม่ต้องอนุมัติตามนโยบายจะกลับมารอจ่ายทันที',
-    ...(legacy ? [`${LEGACY_PAYOUT_NOTE} หลังส่งกลับ ผู้เบิกจะระบุบัญชีรับเงินของใบนี้ได้`] : []),
-    ...((detail.signatures ?? []).length > 0 ? ['ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่หลังบัญชีใหม่ได้รับอนุมัติ'] : []),
+    words.sendBackLine1,
+    // What comes after names no "new account": the requester may keep the account, or take cash.
+    words.sendBackLine2,
+    // A claim sent before claims carried an account gets one through this same path (spec §15): it has none to correct.
+    ...(words.held === 'NOTHING' ? [`${LEGACY_PAYOUT_NOTE} หลังส่งกลับ ผู้เบิกจะระบุบัญชีรับเงินของใบนี้ได้`] : []),
+    // What is lost comes back when the claim is at its pay step again, whatever was answered in between.
+    ...((detail.signatures ?? []).length > 0 ? ['ลายเซ็นในระบบที่ลงไว้ในใบนี้จะถูกลบ ต้องลงนามใหม่เมื่อใบกลับมารอจ่าย'] : []),
     ...((detail.signedCopies ?? []).some((copy) => copy.acknowledgedAt)
-      ? ['สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่หลังบัญชีใหม่ได้รับอนุมัติ'] : []),
+      ? ['สำเนาใบเบิกที่ลงนามบนกระดาษยังเปิดดูได้ แต่จะไม่นับว่าลงนามแล้ว ต้องแนบสำเนาใหม่เมื่อใบกลับมารอจ่าย'] : []),
   ];
 }
 

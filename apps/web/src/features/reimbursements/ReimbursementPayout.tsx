@@ -21,9 +21,8 @@ import {
 } from './reimbursement-payout.api';
 import {
   BANK_OPTIONS, LEGACY_ASK_REQUESTER_NOTE, LEGACY_DEFAULT_LABEL, OTHER_BANK, PAYER_CONFIRMATION_TEXT, PAYOUT_ATTESTATION_TEXT, PAYOUT_KIND_TEXT, PAYOUT_METHOD_TEXT,
-  PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL, PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_SEND_BACK_LEAD,
   chooseClaimPayoutMode, claimPayoutHistory, claimPayoutView, emptyPayoutAccountForm,
-  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
+  memberPayoutAccountInput, payoutAccountFormError, payoutAccountLine, payoutCorrectionCardNote, payoutDefaultChangedHint, payoutRoundTexts, revealedNumberMatchesCard, setByOtherLine, shownAccountNumber,
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 
@@ -403,6 +402,8 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
   const defaultChanged = payoutDefaultChangedHint(detail, canWithdraw);
   // Payout spec §14: in a correction round the account below is the one in question, or a new one nobody approved yet.
   const correctionNote = payoutCorrectionCardNote(detail);
+  // The words of the send-back at the foot of the box, by what the claim holds.
+  const round = payoutRoundTexts(detail);
   // A draft whose payout block was not loaded (an action response): say nothing rather than guess.
   if (view.state === 'unknown') return null;
   const isRequester = detail.requesterUserId === userId;
@@ -477,11 +478,12 @@ export function ClaimPayoutCard({ companyId, detail, userId, editHref, payoutAcc
       )}
       {sendBack && (
         <div className="border-t border-gray-100 pt-3" data-testid="reimbursement-payout-send-back">
-          {/* A claim with no account of its own has nothing to correct, and is paid as it is: the action says what it does. */}
-          <p className="text-xs leading-5 text-gray-500">{view.state === 'legacy' ? PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD : PAYOUT_CORRECTION_SEND_BACK_LEAD}</p>
+          {/* By what the claim holds: an account to correct, cash to choose again, or (a claim with no account of its own,
+              which is paid as it is) an account to add. "อย่าเพิ่งจ่าย" is said only to whoever is offered the payment. */}
+          <p className="text-xs leading-5 text-gray-500">{payStep ? round.payLead : round.payLeadCannotPay}</p>
           <button type="button" disabled={sendBack.disabled} onClick={sendBack.onPress}
             className="inline-flex min-h-11 items-center text-left text-sm font-semibold text-gray-700 underline underline-offset-4 hover:text-gray-900 disabled:opacity-50">
-            {view.state === 'legacy' ? PAYOUT_CORRECTION_ADD_ACCOUNT_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL}
+            {round.payLink}
           </button>
         </div>
       )}

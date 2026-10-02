@@ -33,21 +33,22 @@ import { PAYOUT_ATTESTATION_REQUIRED, claimNeedsPayoutAttestation, claimPayoutSu
 // The payout account correction round (payout spec §14): its forms and card, and the words of its buttons.
 import { PayoutCorrectionAccountForm, PayoutCorrectionComparison, PayoutCorrectionRequestForm } from './ReimbursementPayoutCorrection';
 import {
-  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL, PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED,
+  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, payoutCorrectionSendBackTitle, payoutRoundTexts,
 } from './reimbursement-payout.logic';
 
 const STEPPER_STATE: Record<JourneyStepState, ThemedStepState> = {
   done: 'done', current: 'current', upcoming: 'upcoming', 'needs-fix': 'attention', ended: 'attention',
 };
 
-const ACTION_LABELS: Record<JourneyAction, string> = {
+// The send-back has no fixed words: they follow what the claim holds (`payoutCorrectionSendBackTitle`).
+const ACTION_LABELS: Record<Exclude<JourneyAction, 'send-back'>, string> = {
   submit: 'ส่งอนุมัติ', edit: 'แก้ไขคำขอ', cancel: 'ยกเลิกคำขอ', reopen: 'แก้ไขและส่งใหม่',
   'resume-cancel': 'ดำเนินการยกเลิกต่อ', 'withdraw-cancel': 'ถอนการยกเลิก',
   approve: 'อนุมัติ', reject: 'ปฏิเสธ', resume: 'ดำเนินการต่อ', 'policy-settings': `ไปที่${POLICY_TAB_LABEL}`,
   'finance-approve': 'อนุมัติจ่าย', 'finance-return': 'ส่งกลับให้แก้ไข', 'finance-block': 'ระงับการจ่าย',
   'resolve-duplicate': 'ปลดรายการซ้ำ', pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
   'attach-signed-copy': 'แนบสำเนาที่เซ็นแล้ว', 'void-payment': 'ยกเลิกการจ่าย',
-  'send-back': PAYOUT_CORRECTION_SEND_BACK_LABEL, 'correct-payout': PAYOUT_CORRECTION_FIX_LABEL,
+  'correct-payout': PAYOUT_CORRECTION_FIX_LABEL,
 };
 
 /** An approval that arrived after the claim had moved on, where nothing is left for this viewer to approve. */
@@ -391,8 +392,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     const label = action === 'edit' && detail.financeReviewStatus === 'NEEDS_INFO' ? 'แก้ไขตามคำขอ'
       : action === 'reopen' && detail.status === 'PENDING_APPROVAL' ? 'แก้ไข (เปิดกลับเป็นร่าง)'
         : action === 'finance-approve' ? financeActionLabel(detail)
-          // From the step a round waits on, sending back is how its approvers refuse the new account: said as that.
-          : action === 'send-back' && detail.payoutCorrectionPhase ? PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL
+          // From the step a round waits on, sending back is how its approvers do not take what was answered: said as
+          // that, of an account to correct again or of cash to choose again.
+          : action === 'send-back' ? payoutCorrectionSendBackTitle(detail)
             : action === 'correct-payout' ? correctPayoutLabel
               : ACTION_LABELS[action];
     if (action === 'edit') return <Link key={action} className={className} href={`${hubHref}/${detail.id}/edit`}>{label}</Link>;
@@ -545,7 +547,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
             <div className="border-t border-gray-100 pt-3">
               <PayoutCorrectionRequestForm companyId={companyId} detail={detail} onCancel={() => setCorrectionForm(null)}
                 onConflict={() => afterCorrectionConflict('send-back')}
-                onDone={(answered) => void afterCorrection(answered, 'ส่งกลับให้ผู้เบิกแก้บัญชีรับเงินแล้ว')} />
+                // Said of what the claim held when it was sent back: the claim on this page, before the answer replaces it.
+                onDone={(answered) => void afterCorrection(answered, payoutRoundTexts(detail).sentBackToast)} />
             </div>
           )}
           {openCorrectionForm === 'correct-payout' && (
