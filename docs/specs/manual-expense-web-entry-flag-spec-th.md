@@ -2,7 +2,7 @@
 
 วันที่: 2026-10-01 · ปรับสถานะล่าสุด: 2026-10-03 · Version: 3.1 — ค่าตั้งหน้าจอรายร้าน ค่าเริ่มต้นคือไม่แสดง (เจ้าของสั่ง 2 ต.ค. 2569 ยืนยัน 3 ต.ค. 2569)
 
-Status: **เจ้าของสั่งเริ่ม implement เมื่อ 2 ต.ค. 2569 — กำลังสร้างบน branch `claude/manual-expense-web-entry-20261002` ยังไม่ปล่อย**
+Status: **สร้างเสร็จ 2–3 ต.ค. 2569 บน branch `claude/manual-expense-web-entry-20261002` (เจ้าของสั่งเริ่ม 2 ต.ค. 2569) ยังไม่ merge และยังไม่ปล่อย หลักฐานต่อ AC อยู่ใน plan §5.1**
 
 ข้อตัดสินใจ D1–D8 ใน §1.2: ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) · **ครึ่งแรกของ D2 ถูกเจ้าของเปลี่ยนในวันเดียวกัน: ค่าเริ่มต้นคือไม่แสดงเมนู ทุกร้านรวมร้านเดิม** (เจ้าของยืนยัน 3 ต.ค. 2569; §1.2 และภาคผนวก C) · ยังไม่เปลี่ยนค่าใดในระบบจริง
 
@@ -316,7 +316,7 @@ Acceptance ต้องทดสอบ: ร้านที่ผู้ดูแ�
 
 ### 9.4 Test ที่อ้างทางเข้านี้
 
-e2e ที่เปิดหน้า manual (`e2e/expenses.spec.ts`, `transaction-tax.spec.ts`, `transaction-branch.spec.ts`, `settings.spec.ts`, `evidence.spec.ts`, `responsive.spec.ts`, `local-active-feature-regression.spec.ts`, `expense-number-save.spec.ts`) และตารางความคาดหวังเมนู (`e2e/harness/roles.ts:153`) ต้องยังผ่านโดยไม่แก้ เมื่อค่าเริ่มต้นคือไม่แสดง สิ่งนี้เป็นจริงได้เพราะ **seed ของร้านตัวอย่างเขียนแถว “แสดง” ให้** (`apps/api/prisma/seed.ts` สำหรับร้าน `seed-local-company` และ `seed-local-company-2` ซึ่ง e2e, local stack และร้านตัวอย่างใช้ร่วมกัน) ไม่แก้ที่ตัว test ต้องเพิ่ม e2e ใหม่ที่**เริ่มจากร้านที่ไม่มีแถว**: ทางเข้าไม่มี หน้าแสดงสถานะตาม §8 ผู้ดูแลเปิด ทางเข้ามาโดยไม่ต้องเข้าสู่ระบบใหม่ แล้วปิดอีกครั้งพร้อมกรณีฟอร์มเปิดค้าง
+e2e ที่เปิดหน้า manual (`e2e/expenses.spec.ts`, `transaction-tax.spec.ts`, `transaction-branch.spec.ts`, `settings.spec.ts`, `evidence.spec.ts`, `responsive.spec.ts`, `local-active-feature-regression.spec.ts`, `expense-number-save.spec.ts`) และตารางความคาดหวังเมนู (`e2e/harness/roles.ts:153`) ต้องยังผ่านโดยไม่แก้ เมื่อค่าเริ่มต้นคือไม่แสดง สิ่งนี้เป็นจริงได้เพราะ **seed ของร้านตัวอย่างเขียนแถว “แสดง” ให้** (`apps/api/prisma/seed.ts` สำหรับร้าน `seed-local-company` และ `seed-local-company-2` ซึ่ง e2e, local stack และร้านตัวอย่างใช้ร่วมกัน) ไม่แก้ที่ตัว test ต้องเพิ่ม e2e ใหม่ (`e2e/manual-expense-web-entry.spec.ts`) ที่**เริ่มจากร้านที่ไม่มีแถว**: ทางเข้าไม่มี หน้าแสดงสถานะตาม §8 ผู้ดูแลเปิด ทางเข้ามาโดยไม่ต้องเข้าสู่ระบบใหม่ แล้วปิดอีกครั้งพร้อมกรณีฟอร์มเปิดค้าง
 
 ใช้ server session ส่งผลของ predicate ตาม prop chain ที่มีอยู่ ไม่เพิ่ม global auth framework หรือ query ต่อปุ่มแต่ละตัว
 
