@@ -216,6 +216,17 @@ export type SalesAttributionSource = 'DEAL' | 'REFERRAL';
 /** §17.1 anti-gaming. A row carrying any of these counts ZERO until a SYSTEM_ADMIN reviews it. */
 export const SALES_ATTRIBUTION_FLAGS = ['self_referral', 'repeat_owner', 'referral_anomaly'] as const;
 export type SalesAttributionFlag = typeof SALES_ATTRIBUTION_FLAGS[number];
+/**
+ * Where the credit of a row stands (§17.1). A row that carries a flag counts ZERO: while nobody
+ * has reviewed it (WAITING), and for good once the Owner kept the flag with "ตัดออกจากยอด"
+ * (EXCLUDED). "ยืนยันว่าไม่ผิดปกติ" clears the flags, and only a row without flags counts
+ * (COUNTED). One rule for the report and for the Owner's review queue, so they cannot disagree.
+ */
+export type SalesCreditState = 'COUNTED' | 'WAITING' | 'EXCLUDED';
+export function salesCreditState(flags: readonly string[], reviewedAt: Date | string | null | undefined): SalesCreditState {
+  if (flags.length === 0) return 'COUNTED';
+  return reviewedAt ? 'EXCLUDED' : 'WAITING';
+}
 /** The referral window (§17.1, Owner round 3): paid within 14 days of the shop opening, or nobody. */
 export const SALES_REFERRAL_WINDOW_DAYS = 14;
 /**

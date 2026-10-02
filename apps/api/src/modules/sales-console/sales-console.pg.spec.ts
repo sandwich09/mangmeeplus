@@ -18,7 +18,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { ValidationPipe } from '@nestjs/common';
-import type { SalesAgentSelfProfileInput } from '@watchdog-bms/contracts';
+import { salesCreditState, type SalesAgentSelfProfileInput } from '@watchdog-bms/contracts';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -762,6 +762,45 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
       assert.deepEqual(new Map(summary.months.map((month) => [month.monthKey, month.rows[0]!.amountSatang])), expected);
       assert.deepEqual(summary.months.flatMap((month) => month.deductions ?? []).map((line) => [line.kind, line.amountSatang]).sort(),
         [['DISPUTE', 29900], ['REFUND', 10000]]);
+    } finally { await h.teardown(); }
+  });
+
+  it('counts a shop the Owner cut out as zero in every figure, even after a refund, and keeps it in the queue as cut out', async () => {
+    const h = await harness();
+    try {
+      const owner = ctx(h.leadId, ['SYSTEM_ADMIN'], ['sales.agent_profile.manage', 'sales.report.read']);
+      const reports = new SalesReportsService({ client: h.client } as never, { log: async () => {} } as never);
+      const paidAt = new Date('2026-09-20T03:00:00Z');
+      // Two shops of one agent in September: a clean deal, and a referral the anti-gaming check flagged.
+      const cleanShop = `${h.tag}-clean`;
+      await h.client.company.create({ data: { id: cleanShop, name: 'ร้านปกติ', status: 'ACTIVE' } });
+      await h.client.salesAttribution.create({ data: { companyId: cleanShop, salesUserId: h.agentId, source: 'DEAL',
+        amountSatang: 20000, months: 1, interval: 'month', paidAt, sourceInvoiceId: `${h.tag}-clean-invoice` } });
+      const flagged = await h.client.salesAttribution.create({ data: { companyId: h.shopId, salesUserId: h.agentId, source: 'REFERRAL',
+        amountSatang: 49900, months: 1, interval: 'month', paidAt, sourceInvoiceId: `${h.tag}-invoice`,
+        flags: ['self_referral'], flaggedAt: paidAt } });
+      // The flagged shop is refunded in October.
+      await h.client.salesAttributionDeduction.create({ data: { attributionId: flagged.id, kind: 'REFUND', providerRef: `re_${h.tag}`,
+        amountSatang: 49900, occurredAt: new Date('2026-10-05T02:00:00Z'), createdAt: new Date('2026-10-05T02:03:00Z') } });
+      // [amount, deal shops, referral shops, waiting for review] per agent row, and the number of deduction lines.
+      const figures = async () => (await reports.summary(h.agent, { from: '2026-09', to: '2026-10' })).months.map((month) => [month.monthKey,
+        month.rows.map((row) => [row.amountSatang, row.dealActivations, row.referralActivations, row.flaggedCount]), (month.deductions ?? []).length]);
+      assert.deepEqual(await figures(), [['2026-09', [[20000, 1, 1, 1]], 0]], 'waiting: no amount yet, shown as a pending flag');
+
+      // "ตัดออกจากยอด": the flags stay, the review is stamped, and the shop is in no figure at all.
+      const queue = await reports.reviewFlag(owner, h.shopId, true, 'เจ้าของร้านเป็นเซลล์เอง');
+      assert.deepEqual(await figures(), [['2026-09', [[20000, 1, 0, 0]], 0]],
+        'no amount, no activation, no pending flag, and its refund makes no negative October');
+      const kept = queue.items.find((item) => item.companyId === h.shopId)!;
+      assert.deepEqual([kept.flags, kept.reviewNote], [['self_referral'], 'เจ้าของร้านเป็นเซลล์เอง']);
+      assert.equal(salesCreditState(kept.flags, kept.reviewedAt), 'EXCLUDED', 'the queue still lists it, as cut out');
+
+      // The Owner can undo it: "ยืนยันว่าไม่ผิดปกติ" counts the shop like any other, credit and refund each in its month.
+      await reports.reviewFlag(owner, h.shopId, false, 'ตรวจแล้ว เป็นคนละคน');
+      assert.deepEqual(await figures(), [['2026-10', [[-49900, 0, 0, 0]], 1], ['2026-09', [[69900, 1, 1, 0]], 0]]);
+      // A confirmed row has no flag left to keep, so cutting it out is refused instead of recorded as done.
+      assert.equal(await reason(() => reports.reviewFlag(owner, h.shopId, true, 'เปลี่ยนใจ')), 'SALES_FLAG_REVIEW_INVALID');
+      assert.deepEqual(await figures(), [['2026-10', [[-49900, 0, 0, 0]], 1], ['2026-09', [[69900, 1, 1, 0]], 0]]);
     } finally { await h.teardown(); }
   });
 });

@@ -11,6 +11,7 @@ import {
   SALES_REFERRAL_WINDOW_DAYS,
   SALES_REPORT_MAX_MONTHS,
   SALES_REPORT_MONTH_PATTERN,
+  salesCreditState,
   type SalesAttributionFlag,
   type SalesAttributionSource,
   type SalesDeductionKind,
@@ -190,17 +191,18 @@ export type AttributionReportDeduction = {
   row: Pick<AttributionReportRow, 'salesUserId' | 'paidAt' | 'flags' | 'flagReviewedAt'>;
 };
 
-/** §17.1: a flagged row nobody has reviewed is withheld from every total. */
-const withheld = (row: Pick<AttributionReportRow, 'flags' | 'flagReviewedAt'>): boolean =>
-  row.flags.length > 0 && !row.flagReviewedAt;
+/** §17.1: where a row's credit stands — waiting for the Owner, cut out by the Owner, or counted. */
+const creditState = (row: Pick<AttributionReportRow, 'flags' | 'flagReviewedAt'>) =>
+  salesCreditState(row.flags, row.flagReviewedAt);
 
 /**
- * §17.1/§17.2: a flagged row that nobody has reviewed counts ZERO — it still appears, under
- * `flaggedCount`, so the Owner can see what is being withheld. A reviewed row counts whatever is
- * left after the undated refund older rows carry, and never below zero.
+ * §17.1/§17.2: a row that carries a flag counts ZERO — while nobody has reviewed it, and for good
+ * once the Owner cut it out ("ตัดออกจากยอด" keeps the flags). Only a row whose flags the Owner
+ * cleared ("ยืนยันว่าไม่ผิดปกติ"), or that never had one, counts: whatever is left after the
+ * undated refund older rows carry, and never below zero.
  */
 export function countableAmountSatang(row: Pick<AttributionReportRow, 'amountSatang' | 'refundedSatang' | 'flags' | 'flagReviewedAt'>): number {
-  if (withheld(row)) return 0;
+  if (creditState(row) !== 'COUNTED') return 0;
   return Math.max(0, row.amountSatang - row.refundedSatang);
 }
 
@@ -212,6 +214,11 @@ export function countableAmountSatang(row: Pick<AttributionReportRow, 'amountSat
  * its own line in the month it was recorded in, so a month that is over never changes and an
  * agent's month may be negative. A row from before that change still has its undated cumulative
  * refund taken off in the payment month (`countableAmountSatang`), which is the figure it always gave.
+ *
+ * A row waiting for review still appears, as an activation under `flaggedCount`, so the Owner can
+ * see what is being withheld. A row the Owner cut out appears nowhere: §17.2 counts "ร้านที่นับได้",
+ * so it is no activation, no amount and no pending flag, and what was taken back from it cannot
+ * make a month negative for credit that was never counted.
  */
 export function aggregateReport(
   rows: readonly AttributionReportRow[],
@@ -230,14 +237,16 @@ export function aggregateReport(
     return { month, current };
   };
   for (const row of rows) {
+    const state = creditState(row);
+    if (state === 'EXCLUDED') continue;
     const { current } = bucket(bangkokMonthKey(row.paidAt), row.salesUserId);
     if (row.source === 'DEAL') current.dealActivations += 1; else current.referralActivations += 1;
     current.amountSatang += countableAmountSatang(row);
-    if (withheld(row)) current.flaggedCount += 1;
+    if (state === 'WAITING') current.flaggedCount += 1;
   }
   for (const item of deductions) {
-    // The credit of a withheld row counts zero, so what was taken back from it counts zero too.
-    if (withheld(item.row)) continue;
+    // Credit that counts zero, waiting or cut out, has nothing to take back.
+    if (creditState(item.row) !== 'COUNTED') continue;
     const { month, current } = bucket(bangkokMonthKey(item.recordedAt), item.row.salesUserId);
     current.amountSatang -= item.amountSatang;
     month.deductions.push({

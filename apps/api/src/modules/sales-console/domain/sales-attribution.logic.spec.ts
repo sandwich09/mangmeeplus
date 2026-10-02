@@ -124,9 +124,15 @@ describe('countable amount (§17.1/§17.2)', () => {
     assert.equal(countableAmountSatang({ ...base, refundedSatang: 150_000 }), 0);
   });
 
-  it('counts zero while a flag is unreviewed and the full amount once it is reviewed', () => {
+  it('counts zero while a flag is unreviewed and the full amount once the Owner confirms it is not abnormal', () => {
     assert.equal(countableAmountSatang({ ...base, flags: ['self_referral'] }), 0);
-    assert.equal(countableAmountSatang({ ...base, flags: ['self_referral'], flagReviewedAt: new Date() }), 100_000);
+    // "ยืนยันว่าไม่ผิดปกติ" clears the flags and stamps the review.
+    assert.equal(countableAmountSatang({ ...base, flags: [], flagReviewedAt: new Date() }), 100_000);
+  });
+
+  it('keeps counting zero for a row the Owner cut out — "ตัดออกจากยอด" leaves the flags and stamps the review', () => {
+    assert.equal(countableAmountSatang({ ...base, flags: ['self_referral'], flagReviewedAt: new Date() }), 0);
+    assert.equal(countableAmountSatang({ ...base, refundedSatang: 10_000, flags: ['repeat_owner', 'referral_anomaly'], flagReviewedAt: new Date() }), 0);
   });
 });
 
@@ -294,6 +300,37 @@ describe('report aggregation (§17.2 — per agent per Bangkok month)', () => {
     const reviewed = { ...flagged, flags: [], flagReviewedAt: new Date('2026-10-06T00:00:00Z') };
     const after = aggregateReport([reviewed], [taken({ row: reviewed })], agent);
     assert.deepEqual(after.map((month) => [month.monthKey, month.rows[0]!.amountSatang]), [['2026-10', -49_900], ['2026-09', 100_000]]);
+  });
+
+  // ── a row the Owner cut out ("ตัดออกจากยอด": the flags stay, the review is stamped) ──
+
+  const cutOut = row({ source: 'REFERRAL', flags: ['self_referral'], flagReviewedAt: new Date('2026-10-01T02:00:00Z') });
+
+  it('leaves a shop the Owner cut out out of every figure: no amount, no activation, no pending flag', () => {
+    // Alone, it leaves the agent with nothing at all for the month (§17.2 counts "ร้านที่นับได้").
+    assert.deepEqual(aggregateReport([cutOut], [], agent), []);
+    // Beside a clean shop of the same agent, only the clean shop is there.
+    const [month] = aggregateReport([cutOut, row({ amountSatang: 20_000 })], [], agent);
+    assert.deepEqual(month!.rows, [{
+      salesUserId: 'agent-1', displayName: 'AGENT-1', teamLeadUserId: 'lead-1', teamLeadDisplayName: 'LEAD-1',
+      dealActivations: 1, referralActivations: 0, amountSatang: 20_000, flaggedCount: 0,
+    }]);
+    // A shop the Owner confirmed as not abnormal still counts exactly like one that was never flagged.
+    const confirmed = { ...cutOut, flags: [] };
+    assert.deepEqual(aggregateReport([confirmed], [], agent), aggregateReport([{ ...cutOut, flags: [], flagReviewedAt: null }], [], agent));
+    assert.equal(aggregateReport([confirmed], [], agent)[0]!.rows[0]!.referralActivations, 1);
+  });
+
+  it('takes nothing back from a shop the Owner cut out, so its refund cannot make a month negative', () => {
+    assert.deepEqual(aggregateReport([cutOut], [taken({ row: cutOut })], agent), []);
+    // Asked for the month of the refund alone, where the payment is outside the range.
+    assert.deepEqual(aggregateReport([], [taken({ row: cutOut }), taken({ kind: 'DISPUTE', row: cutOut })], agent), []);
+    // Another agent's month is untouched by it, and a counted shop's own refund still shows.
+    const clean = row({ amountSatang: 100_000, paidAt: new Date('2026-10-02T03:00:00Z') });
+    const [month] = aggregateReport([cutOut, clean], [taken({ row: cutOut }), taken({ row: clean, amountSatang: 30_000 })], agent);
+    assert.equal(month!.monthKey, '2026-10');
+    assert.equal(month!.rows[0]!.amountSatang, 70_000);
+    assert.deepEqual(month!.deductions!.map((line) => line.amountSatang), [30_000]);
   });
 });
 

@@ -166,9 +166,10 @@ export class SalesReportsService {
   }
 
   /**
-   * "ยืนยันว่าไม่ผิดปกติ" (`keep: false`) clears the flags and the row starts counting; "ตัดออก"
-   * (`keep: true`) leaves them in place and records that a human decided so. Either way the row and
-   * its money stay — nothing here deletes evidence.
+   * "ยืนยันว่าไม่ผิดปกติ" (`keep: false`) clears the flags and the row starts counting; "ตัดออกจากยอด"
+   * (`keep: true`) leaves them in place with a review time, and a row in that state counts zero in
+   * every figure for good (`salesCreditState`). Either way the row and its money stay — nothing
+   * here deletes evidence — and a cut-out row can still be confirmed later, which undoes it.
    */
   async reviewFlag(ctx: RequestContext, companyId: string, keep: boolean, rawReason: string): Promise<SalesAttributionFlagListDto> {
     const reason = (rawReason ?? '').trim();
@@ -177,6 +178,11 @@ export class SalesReportsService {
     }
     const row = await this.prisma.client.salesAttribution.findUnique({ where: { companyId } });
     if (!row || !row.flaggedAt) throw salesNotFound('SALES_COMPANY_NOT_FOUND', 'ไม่พบรายการที่ติดธงของร้านนี้');
+    // A confirmed row has no flag left to keep, so cutting it out would change nothing while the
+    // audit trail said it had. Refused, so the screen reloads the queue and shows where it stands.
+    if (keep && row.flags.length === 0) {
+      throw salesBadRequest('SALES_FLAG_REVIEW_INVALID', 'ร้านนี้ยืนยันแล้วว่าไม่ผิดปกติ จึงตัดออกจากยอดไม่ได้');
+    }
     await this.prisma.client.$transaction(async (tx) => {
       await tx.salesAttribution.update({
         where: { companyId },
