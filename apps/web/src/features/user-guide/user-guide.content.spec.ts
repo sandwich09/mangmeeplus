@@ -162,6 +162,18 @@ describe('the reimbursement guide reads as the product does', () => {
     for (const gone of ['สิ่งที่เปลี่ยน: บัญชีรับเงินคืน', 'สำเนาก่อนแก้บัญชีรับเงิน', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน', 'รับเงินคืนทาง: อยู่ระหว่างแก้ไขบัญชีรับเงิน']) {
       assert.equal(quotes.includes(gone), false, gone);
     }
+    // The notice to a requester when someone answered a round for them is quoted by the words of its title: what was done
+    // (the row's own words of that answer) and "ในใบเบิกของคุณ". The title itself is put together with the person's name.
+    for (const titleWord of ['แก้บัญชีรับเงิน', 'ยืนยันบัญชีเดิม', 'เปลี่ยนวิธีรับเงินคืน', 'ในใบเบิกของคุณ']) assert.ok(quotes.includes(titleWord), titleWord);
+    const answeredForYou = read.find((text) => text.includes('“ในใบเบิกของคุณ”'))!;
+    for (const titleWord of ['“แก้บัญชีรับเงิน”', '“ยืนยันบัญชีเดิม”', '“เปลี่ยนวิธีรับเงินคืน”']) assert.ok(answeredForYou.includes(titleWord), titleWord);
+    // A PromptPay number is quoted as the screens call it, beside the words of a bank account.
+    for (const label of ['แสดงเบอร์พร้อมเพย์', 'คัดลอกเบอร์พร้อมเพย์', 'ซ่อนเบอร์พร้อมเพย์', 'คุณไม่มีสิทธิ์ดูเบอร์พร้อมเพย์เต็มของใบนี้', 'แสดงเลขบัญชี', 'คัดลอกเลขบัญชี', 'ซ่อนเลขบัญชี']) {
+      assert.ok(quotes.includes(label), label);
+    }
+    // A payment by another method is said of what the claim states, as the screens say it: nobody is named as having asked.
+    for (const label of ['เหตุผลที่จ่ายต่างจากที่ระบุในใบ', 'จ่ายต่างจากที่ระบุในใบ', 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผล']) assert.ok(quotes.includes(label), label);
+    for (const text of read) assert.doesNotMatch(text, /ที่ผู้เบิกขอ|ผู้เบิกขอรับ/u, text);
   });
 
   // A round is not only "a wrong account, replaced by another": the status table names each thing a claim in a round waits for.
