@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { DataModelCoreModule } from '../data-model-core/data-model-core.module';
 import { ExpensesModule } from '../expenses/expenses.module';
+import { DashboardNotificationsModule } from '../dashboard-notifications/dashboard-notifications.module';
 import { PrismaReimbursementRepository } from './infrastructure/prisma-reimbursement.repository';
 import { ReimbursementEvidenceService } from './application/services/reimbursement-evidence.service';
 import { MaterializeClaimExpensesService } from './application/services/materialize-claim-expenses.service';
@@ -18,6 +19,8 @@ import {
   ListReimbursementsUseCase,
   SubmitReimbursementUseCase,
   CancelReimbursementUseCase,
+  WithdrawReimbursementCancellationUseCase,
+  ResumeReimbursementUseCase,
 } from './application/use-cases/reimbursement-request.use-case';
 import { ListApprovalQueueUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase } from './application/use-cases/reimbursement-approval.use-case';
 import {
@@ -36,16 +39,32 @@ import {
   LinkSignedClaimFormCopyUseCase,
   SignClaimFormUseCase,
 } from './application/use-cases/reimbursement-claim-signature.use-case';
+import {
+  AttachPaymentSlipUseCase,
+  CompletePaymentSlipUploadUseCase,
+  CreatePaymentSlipDownloadUrlUseCase,
+  InitPaymentSlipUploadUseCase,
+} from './application/use-cases/reimbursement-payment-slip.use-case';
 import { ReimbursementController } from './presentation/http/reimbursement.controller';
+import { ReimbursementPayoutController } from './presentation/http/reimbursement-payout.controller';
+import { MemberPayoutAccountUseCase } from './application/use-cases/reimbursement-payout.use-case';
+import { RevealClaimPayoutUseCase } from './application/use-cases/reimbursement-payout-reveal.use-case';
+import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from './application/use-cases/reimbursement-payout-correction.use-case';
 import { ReimbursementPolicyController } from './presentation/http/reimbursement-policy.controller';
+import { ReimbursementReconcileInternalController } from './presentation/http/reimbursement-reconcile-internal.controller';
 import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursement-write-quiesce.guard';
 import { LineReimbursementDraftUseCase } from './application/use-cases/line-reimbursement-draft.use-case';
 
 @Module({
-  imports: [AuditModule, DataModelCoreModule, ExpensesModule],
-  controllers: [ReimbursementController, ReimbursementPolicyController],
+  imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, ExpensesModule],
+  // The payout controller comes first: its fixed `payout-accounts/…` paths must match before `:requestId`.
+  controllers: [ReimbursementPayoutController, ReimbursementController, ReimbursementPolicyController, ReimbursementReconcileInternalController],
   providers: [
     PrismaReimbursementRepository,
+    MemberPayoutAccountUseCase,
+    RevealClaimPayoutUseCase,
+    RequestPayoutCorrectionUseCase,
+    SubmitPayoutCorrectionUseCase,
     ReimbursementEvidenceService,
     MaterializeClaimExpensesService,
     ReimbursementProjectionOrchestratorService,
@@ -64,6 +83,8 @@ import { LineReimbursementDraftUseCase } from './application/use-cases/line-reim
     ListReimbursementsUseCase,
     SubmitReimbursementUseCase,
     CancelReimbursementUseCase,
+    WithdrawReimbursementCancellationUseCase,
+    ResumeReimbursementUseCase,
     ListApprovalQueueUseCase,
     ApproveReimbursementUseCase,
     RejectReimbursementUseCase,
@@ -80,6 +101,10 @@ import { LineReimbursementDraftUseCase } from './application/use-cases/line-reim
     CompleteClaimSignatureUploadUseCase,
     SignClaimFormUseCase,
     LinkSignedClaimFormCopyUseCase,
+    InitPaymentSlipUploadUseCase,
+    CompletePaymentSlipUploadUseCase,
+    AttachPaymentSlipUseCase,
+    CreatePaymentSlipDownloadUrlUseCase,
   ],
   exports: [PrismaReimbursementRepository, ReimbursementProjectionReconcilerService, ListReimbursementApproverOptionsUseCase, GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, GetReimbursementDetailUseCase, ListApprovalQueueUseCase, LineReimbursementDraftUseCase],
 })

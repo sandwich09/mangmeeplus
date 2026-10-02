@@ -3,6 +3,7 @@ import type { RequestContext } from '@watchdog-bms/contracts';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
+import { REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG } from '../../domain/reimbursement.constants';
 
 type EvidenceRef = {
   attachmentId?: string | null;
@@ -30,6 +31,13 @@ export class ReimbursementEvidenceService {
           || attachment.status !== 'ACTIVE'
           || (attachment.uploadedByUserId !== requesterUserId && !ref.linkedExpenseId && retainedAttachmentOwners.get(ref.attachmentId) !== attachment.uploadedByUserId && !(ctx.permissions.includes('reimbursement.finance_review') && attachment.uploadedByUserId === ctx.userId))
         ) {
+          throw new UnprocessableEntityException('invalid_primary_attachment');
+        }
+        // Payment evidence is never a claim receipt (owner 2026-10-01). Refused here, when the line
+        // is saved: the expense record made at approval could not link a slip either, and by then
+        // the claim would be stuck in front of its approver.
+        if (attachment.metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG
+          || await this.attachments.isReimbursementPaymentSlip({ id: attachment.id, companyId: ctx.companyId })) {
           throw new UnprocessableEntityException('invalid_primary_attachment');
         }
         this.assertEvidenceBranch(attachment.branchId, sourceBranchId);

@@ -1,0 +1,215 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { UnpostedClaimPayment } from '../ledger/ledger.api';
+
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+
+const pending: UnpostedClaimPayment = {
+  paymentId: 'cmpaymentpending0001', reimbursementRequestId: 'cmrequest0000000001', requestNo: 'RB-202602-0001',
+  requesterDisplayNameSnapshot: 'สมชาย ใจดี', paymentNo: 'RBPAY-202602-000001', paidAmount: '500.5000', currency: 'THB',
+  paidAt: '2026-02-01T00:00:00.000Z', postingStatus: 'pending',
+};
+const failed: UnpostedClaimPayment = {
+  ...pending, paymentId: 'cmpaymentfailed00002', reimbursementRequestId: 'cmrequest0000000002', requestNo: 'RB-202602-0002',
+  requesterDisplayNameSnapshot: 'วิไล', paymentNo: 'RBPAY-202602-000002', paidAmount: '1289', postingStatus: 'posting_error',
+};
+
+async function render(props: Partial<{ rows: UnpostedClaimPayment[] | null; visible: number; postingId: string | null; error: string | null }> = {}): Promise<string> {
+  const { ClaimPaymentPostingList, CLAIM_PAYOUT_PAGE_SIZE } = await import('./ClaimPaymentPosting');
+  return renderToStaticMarkup(React.createElement(ClaimPaymentPostingList, {
+    companyId: 'company-1', rows: [pending, failed], visible: CLAIM_PAYOUT_PAGE_SIZE, postingId: null, error: null,
+    onPost: () => undefined, onShowMore: () => undefined, onRetry: () => undefined, ...props,
+  }));
+}
+
+/** `count` waiting payouts, oldest first, each with its own number. */
+const many = (count: number): UnpostedClaimPayment[] => Array.from({ length: count }, (_, index) => ({
+  ...pending, paymentId: `cmpayment${index}`, reimbursementRequestId: `cmrequest${index}`, requestNo: `RB-${String(index + 1).padStart(4, '0')}`,
+}));
+const drawnRows = (html: string) => (html.match(/<li /g) ?? []).length;
+
+/** The words a person reads: markup stripped, so an id inside an href does not count as shown. */
+const visibleText = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+
+test('lists each unposted claim payout in plain Thai with its own posting action', async () => {
+  const html = await render();
+  const text = visibleText(html);
+  assert.match(text, /การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี \(2 รายการ\)/);
+  assert.match(text, /ต้องลงให้ครบก่อนจึงจะปิดงวดได้/);
+  // What was paid, to whom, when — the facts an accountant checks before posting.
+  assert.match(text, /RB-202602-0001/);
+  assert.match(text, /จ่ายคืน สมชาย ใจดี · เลขที่จ่าย RBPAY-202602-000001/);
+  assert.match(text, /฿500\.50/);
+  assert.match(text, /฿1,289\.00/);
+  assert.match(text, /จ่ายเมื่อ 1 ก\.พ\. 2569/);
+  // A payout still waiting and one whose last attempt failed read differently, and so do their buttons.
+  const [waitingRow, failedRow] = html.split('<li ').slice(1).map(visibleText);
+  assert.match(waitingRow!, /RB-202602-0001.*ยังไม่ลงบัญชี/);
+  assert.doesNotMatch(waitingRow!, /ผิดพลาด|ลองอีกครั้ง/);
+  assert.match(failedRow!, /RB-202602-0002.*ลงบัญชีผิดพลาด.*ลองอีกครั้ง/);
+  assert.doesNotMatch(failedRow!, /ยังไม่ลงบัญชี/);
+  assert.equal((html.match(/>ลงบัญชี<\/button>/g) ?? []).length, 1);
+  assert.equal((html.match(/>ลองอีกครั้ง<\/button>/g) ?? []).length, 1);
+  // Each row opens its claim.
+  assert.match(html, /href="\/companies\/company-1\/reimbursements\/cmrequest0000000001"/);
+});
+
+test('shows no machine token: no ids, status keys, currency code or ISO date', async () => {
+  const text = visibleText(await render({ error: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี' }));
+  assert.doesNotMatch(text, /cmpayment|cmrequest/);
+  assert.doesNotMatch(text, /posting_error|pending|RECORDED|reimbursement\.payment/);
+  assert.doesNotMatch(text, /THB|2026-02-01|T00:00/);
+  assert.doesNotMatch(text, /\d+\.\d{3,}/, 'money is printed to the satang, never 4 decimals');
+});
+
+test('a row with no claim number, payer name or payment number falls back to words, never to an id', async () => {
+  const bare: UnpostedClaimPayment = { paymentId: 'cmpaymentbare0000003', reimbursementRequestId: 'cmrequest0000000003', paidAmount: '75', currency: 'THB', paidAt: '2026-02-03T00:00:00.000Z', postingStatus: 'pending' };
+  const text = visibleText(await render({ rows: [bare] }));
+  assert.match(text, /ใบเบิก ฿75\.00 จ่ายคืน พนักงาน จ่ายเมื่อ 3 ก\.พ\. 2569/);
+  assert.doesNotMatch(text, /เลขที่จ่าย|undefined|null|cmpayment|cmrequest/);
+});
+
+// Review finding: the close check that sends the accountant here said "ยังไม่ลงบัญชี / ลงบัญชีผิดพลาด"
+// while the rows said "รอบันทึกบัญชี / บันทึกผิดพลาด".
+test('a row is labelled with the very words the period-close check used to send the accountant here', async () => {
+  const { periodCloseCheckCopy } = await import('../ledger/ledger.logic');
+  const copy = periodCloseCheckCopy({ checkKey: 'reimbursement_postings_complete', status: 'FAILED', count: 2, breakdown: { pendingPayments: 1, paymentErrors: 1 } });
+  const html = await render();
+  const badges = [...html.matchAll(/<li [\s\S]*?จ่ายเมื่อ[^<]*<\/span><span[^>]*>([^<]+)<\/span>/g)].map((match) => match[1]!);
+  assert.deepEqual(badges, ['ยังไม่ลงบัญชี', 'ลงบัญชีผิดพลาด']);
+  for (const badge of badges) assert.ok(copy.message.includes(`การจ่ายเงินคืนใบเบิกที่${badge} 1 รายการ`), `the close check says "${badge}" too`);
+  assert.ok(copy.links?.some((link) => link.label === `เปิดรายการจ่ายเงินคืนที่${badges[0]}` && link.path === '/expenses/evidence'));
+  assert.match(visibleText(html), new RegExp(`การจ่ายเงินคืนใบเบิกที่${badges[0]} \\(2 รายการ\\)`), 'and so does the heading');
+  assert.doesNotMatch(visibleText(html), /รอบันทึกบัญชี|บันทึกผิดพลาด/);
+});
+
+test('a payout in another currency is named in Thai, never by a code or a baht sign', async () => {
+  const amount = async (currency: string) => visibleText(await render({ rows: [{ ...pending, currency, paidAmount: '20' }] }));
+  assert.match(await amount('USD'), /20\.00 ดอลลาร์สหรัฐ/);
+  assert.match(await amount('JPY'), /20\.00 เยนญี่ปุ่น/);
+  // A code nobody can name, and one that is not a currency code at all.
+  assert.match(await amount('XYZ'), /20\.00 สกุลเงินอื่น/);
+  assert.match(await amount('US'), /20\.00 สกุลเงินอื่น/);
+  for (const currency of ['USD', 'JPY', 'XYZ', 'US']) assert.doesNotMatch(await amount(currency), /฿|USD|JPY|XYZ|\bUS\b/);
+});
+
+test('a refused post stays on screen as an alert, with the row still there to retry', async () => {
+  const html = await render({ error: 'ต้องลงบัญชีตั้งหนี้ของใบเบิกให้เสร็จก่อน จึงจะบันทึกการจ่ายได้' });
+  assert.match(html, /role="alert"[^>]*>⚠ ต้องลงบัญชีตั้งหนี้ของใบเบิกให้เสร็จก่อน/);
+  assert.equal((html.match(/<li /g) ?? []).length, 2);
+});
+
+test('while one payout is posting, its button says so and no second post can start', async () => {
+  const html = await render({ postingId: pending.paymentId });
+  assert.equal((html.match(/>กำลังลง\.\.\.<\/button>/g) ?? []).length, 1);
+  assert.equal((html.match(/aria-busy="true"/g) ?? []).length, 1);
+  assert.equal((html.match(/<button[^>]*disabled=""/g) ?? []).length, 2, 'every posting button is locked meanwhile');
+});
+
+// Review findings: the section used to appear only once rows arrived, pushing the page down, and a
+// failed first load read "(0 รายการ)" with no way to try again.
+test('before the first answer it already holds its place with one line, and claims no count', async () => {
+  const html = await render({ rows: null });
+  assert.match(visibleText(html), /การจ่ายเงินคืนใบเบิกที่ยังไม่ลงบัญชี เงินที่จ่ายคืนพนักงานแล้ว/);
+  assert.match(html, /<p role="status" aria-busy="true" class="text-sm text-gray-500">กำลังโหลด\.\.\.<\/p>/);
+  assert.doesNotMatch(visibleText(html), /รายการ\)|ไม่มีรายการค้าง/);
+  assert.doesNotMatch(html, /<ul|<button|role="alert"/);
+});
+
+test('nothing waiting is one line of the same size as the loading line, so the page below does not move', async () => {
+  const html = await render({ rows: [] });
+  assert.match(html, /<p class="text-sm text-gray-500">ไม่มีรายการค้าง ลงบัญชีครบแล้ว<\/p>/);
+  assert.doesNotMatch(visibleText(html), /รายการ\)|กำลังโหลด/);
+  assert.doesNotMatch(html, /<ul|<button|role="alert"|role="status"/);
+});
+
+test('a failed first load shows the reason and a way to try again, never an empty list or a zero', async () => {
+  const html = await render({ rows: null, error: 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่' });
+  assert.match(html, /role="alert"[^>]*>⚠ เชื่อมต่อระบบไม่ได้/);
+  assert.match(html, /<button type="button" class="[^"]*mangmee-btn[^"]*w-full sm:w-auto"[^>]*>โหลดอีกครั้ง<\/button>/);
+  assert.doesNotMatch(visibleText(html), /0 รายการ|รายการ\)|ไม่มีรายการค้าง|กำลังโหลด/, 'an unread list is not an empty one');
+
+  const section = read('./ClaimPaymentPosting.tsx');
+  assert.match(section, /useState<UnpostedClaimPayment\[\] \| null>\(null\)/, 'the list is unknown until the first answer');
+  assert.match(section, /const retry = \(\) => \{ setError\(null\); void load\(\); \};/, 'a retry clears the error, so the loading line shows again');
+  assert.match(section, /onRetry=\{retry\}/);
+});
+
+test('a refused post on a loaded list offers no reload: the rows are there and each can be retried', async () => {
+  const html = await render({ rows: [failed], error: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี' });
+  assert.doesNotMatch(html, /โหลดอีกครั้ง|กำลังโหลด/);
+  assert.equal(drawnRows(html), 1);
+});
+
+test('reads top to bottom on a 390px phone: stacked cards, amount in view, full-width action', async () => {
+  const html = await render();
+  assert.doesNotMatch(html, /<table/, 'no table to scroll sideways on a phone');
+  assert.match(html, /<li [^>]*class="[^"]*sm:flex/, 'a row only becomes a single line from the sm breakpoint up');
+  // The amount is printed once per layout; the phone copy sits beside the claim number.
+  assert.equal((html.match(/sm:hidden[^>]*>฿500\.50</g) ?? []).length, 1);
+  assert.equal((html.match(/hidden [^"]*sm:inline[^>]*>฿500\.50</g) ?? []).length, 1);
+  assert.equal((html.match(/<button[^>]*class="[^"]*mangmee-btn[^"]*w-full sm:w-auto/g) ?? []).length, 2);
+  // The claim number is a 44px touch target, and it is the number that gets cut when it is too long.
+  assert.equal((html.match(/<a class="flex min-h-11 min-w-0 items-center [^"]*" href="[^"]*"><span class="truncate">/g) ?? []).length, 2,
+    'a long claim number cannot push the amount off screen, and a thumb can hit it');
+  assert.match(html, /break-words/);
+});
+
+// Review finding: the list was unbounded and every row was drawn. Where nothing can post yet it
+// only grows.
+test('draws the first ten and offers the rest ten at a time', async () => {
+  const first = await render({ rows: many(25) });
+  assert.equal(drawnRows(first), 10);
+  assert.match(visibleText(first), /\(25 รายการ\)/, 'the heading still counts them all');
+  assert.match(first, /<button[^>]*class="[^"]*w-full[^"]*"[^>]*>แสดงเพิ่ม \(อีก 15 รายการ\)<\/button>/);
+  assert.match(visibleText(first), /RB-0010/);
+  assert.doesNotMatch(visibleText(first), /RB-0011/);
+
+  const second = await render({ rows: many(25), visible: 20 });
+  assert.equal(drawnRows(second), 20);
+  assert.match(visibleText(second), /แสดงเพิ่ม \(อีก 5 รายการ\)/);
+
+  const all = await render({ rows: many(25), visible: 30 });
+  assert.equal(drawnRows(all), 25);
+  assert.doesNotMatch(visibleText(all), /แสดงเพิ่ม/);
+  assert.doesNotMatch(visibleText(await render()), /แสดงเพิ่ม/, 'a short list has nothing more to show');
+});
+
+test('at the server limit it says these are the first ones, not a total', async () => {
+  const { CLAIM_PAYOUT_WORKLIST_LIMIT } = await import('@watchdog-bms/contracts');
+  const capped = visibleText(await render({ rows: many(CLAIM_PAYOUT_WORKLIST_LIMIT) }));
+  assert.match(capped, /\(200 รายการแรก\)/);
+  assert.match(capped, /แสดงเฉพาะ 200 รายการที่จ่ายก่อน เมื่อลงบัญชีรายการด้านบนแล้ว รายการถัดไปจะแสดงให้เอง/);
+  const under = visibleText(await render({ rows: many(CLAIM_PAYOUT_WORKLIST_LIMIT - 1) }));
+  assert.match(under, /\(199 รายการ\)/);
+  assert.doesNotMatch(under, /รายการแรก|แสดงเฉพาะ/);
+});
+
+test('each "แสดงเพิ่ม" adds one page, and the list asks the server for the bounded worklist only', () => {
+  const section = read('./ClaimPaymentPosting.tsx');
+  assert.match(section, /useState\(CLAIM_PAYOUT_PAGE_SIZE\)/);
+  assert.match(section, /onShowMore=\{\(\) => setVisible\(\(count\) => count \+ CLAIM_PAYOUT_PAGE_SIZE\)\}/);
+  assert.match(section, /export const CLAIM_PAYOUT_PAGE_SIZE = 10;/);
+});
+
+test('posts through the existing generator and worklist endpoint, and follows the same switch as the other posting buttons', () => {
+  const section = read('./ClaimPaymentPosting.tsx');
+  assert.match(section, /generateSourceJournal\(companyId, 'reimbursement\.payment', paymentId\)/);
+  assert.match(section, /listUnpostedClaimPayments\(companyId\)/);
+  assert.match(read('../ledger/ledger.api.ts'), /apiFetch\(`\/v1\/companies\/\$\{companyId\}\/reimbursements\/posting\/pending`\)/);
+
+  const source = read('./ExpensesWorkspacePanels.tsx');
+  const panel = source.slice(source.indexOf('export function EvidencePanel('));
+  assert.match(panel, /\{canPostClaimPayments && <ClaimPaymentPosting companyId=\{companyId\} \/>\}/);
+  assert.ok(panel.indexOf('{!error && (') > 0 && panel.indexOf('<ClaimPaymentPosting') < panel.indexOf('{!error && ('),
+    'a refused post must not be hidden with the rest of the panel');
+  // `canPostLedger` already carries the accounting-screens switch and both ledger posting rights;
+  // the worklist endpoint asks for the finance-review right on top.
+  assert.match(read('./ExpensesPages.tsx'), /canPostClaimPayments=\{caps\.canPostLedger && permissions\.includes\('reimbursement\.finance_review'\)\}/);
+  assert.match(read('./expenses.model.ts'), /canPostLedger: !ACCOUNTING_UI_HIDDEN && has\('journal\.entry\.create'\) && has\('journal\.entry\.post'\)/);
+});

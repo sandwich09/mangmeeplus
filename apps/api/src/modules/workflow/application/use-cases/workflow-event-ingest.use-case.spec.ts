@@ -10,6 +10,8 @@ import {
 } from '../../domain/workflow-template-catalog';
 import { ruleMatchesEventType } from '../../domain/logic/workflow-event-match.logic';
 import { evaluateCondition } from '../../domain/logic/workflow-condition.logic';
+import { claimApprovalTaskOutcome, claimIdOfEvent } from '../../domain/logic/workflow-claim-task.logic';
+import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
 
 function baseEvent(overrides: Partial<WorkflowEventEnvelope> = {}): WorkflowEventEnvelope {
   return {
@@ -54,6 +56,10 @@ describe('IngestWorkflowEventUseCase', () => {
       'reimbursement_finance_review',
       'reimbursement_finance_review_pending',
       'reimbursement_payment_recorded',
+      'reimbursement_payment_sla_breach',
+      'reimbursement_payment_voided',
+      'reimbursement_payout_correction_requested',
+      'reimbursement_payout_correction_submitted',
       'reimbursement_pending_approval',
       'reimbursement_ready_for_payment',
     ]);
@@ -67,8 +73,10 @@ describe('IngestWorkflowEventUseCase', () => {
       ['reimbursement_correction_requester', 'reimbursement.correction_requested'],
       ['reimbursement_finance_review', 'reimbursement.finance_review_updated'],
       ['reimbursement_finance_review_pending', 'reimbursement.approved'],
+      ['reimbursement_finance_review_pending', 'reimbursement.finance_review_requested'],
       ['reimbursement_ready_for_payment', 'reimbursement.ready_for_payment'],
       ['reimbursement_payment_recorded', 'reimbursement.payment_recorded'],
+      ['reimbursement_payment_voided', 'reimbursement.payment_voided'],
     ] as const) {
       assert.equal(ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG[key] ?? {}, eventType), true, key);
     }
@@ -116,19 +124,31 @@ describe('IngestWorkflowEventUseCase', () => {
   // Step-journey spec §11/§13 (AC10/AC11): every one of these also links straight to the claim's
   // journey page and excludes the event's own actor from its recipients, with a graceful skip
   // (never a dead-lettered retry) when that exclusion empties the recipient list — the exact
-  // shape of an owner-only company acting on its own claim.
+  // shape of an owner-only company acting on its own claim. "Ready for payment" is the one notice
+  // that keeps its actor (audit B9): they approved, and recording the payment is their next step.
   it('gives every reimbursement notification a body distinct from its title, the journey-page link, and actor exclusion', () => {
     const notifications = WORKFLOW_TEMPLATE_CATALOG
       .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
       .map((entry) => ({ key: entry.key, cfg: entry.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {} }));
 
-    assert.equal(notifications.length, 7);
+    assert.equal(notifications.length, 10);
     for (const { key, cfg } of notifications) {
       assert.equal(typeof cfg['bodyTemplate'], 'string', key);
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
-      // A body worth pushing carries the figures the title does not.
-      assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
+      // A body worth pushing carries the figures the title does not. The void notice is the one
+      // that carries none: it says what happened to the claim, and the claim page has the rest.
+      // The paid notice prints the sentence the payment event carries, which holds the amount, how
+      // the payment was made and whether a slip is attached (payout spec §17.3).
+      // The notice that a claim was sent back for its payout account prints the sentence its event carries
+      // too: the reason in the fixed list's own words, and nothing a person typed (payout spec §17.3).
+      if (key === 'reimbursement_payment_recorded') assert.equal(cfg['bodyTemplate'], '{{paidNotice}}', key);
+      else if (key === 'reimbursement_payout_correction_requested') assert.equal(cfg['bodyTemplate'], '{{payoutCorrectionNotice}}', key);
+      else if (key !== 'reimbursement_payment_voided') assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
       assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
+      if (key === 'reimbursement_ready_for_payment') {
+        assert.equal(cfg['excludeRecipientPayloadKeys'], undefined, key);
+        continue;
+      }
       assert.deepEqual(cfg['excludeRecipientPayloadKeys'], ['actorUserId'], key);
       assert.equal(cfg['skipWhenAllRecipientsExcluded'], true, key);
     }
@@ -155,6 +175,25 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);
+  });
+
+  // Review: a claim below the approval threshold in a company with finance review on wrote only
+  // `finance_review_requested`, which no rule listened to, so it reached the finance desk unannounced.
+  // And the pending-approval rule matched it, with no approver to tell: a dead letter per claim.
+  it('announces a claim that needed no approval to the finance desk, and asks nobody to approve it', () => {
+    const now = new Date('2026-10-01T00:00:00.000Z');
+    const arrival = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_finance_review_pending')!;
+    const pending = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_pending_approval')!;
+    // What submit writes on `request_submitted` and `finance_review_requested` for such a claim.
+    const sentToFinance = { requestId: 'rb-1', requestNo: 'RB-202610-00003', status: 'FINANCE_REVIEW', requesterUserId: 'staff-1', amount: '80', currency: 'THB' };
+
+    assert.equal(ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_finance_review_pending'] ?? {}, 'reimbursement.finance_review_requested'), true);
+    assert.equal(evaluateCondition(arrival.defaultConditionJson, sentToFinance, now).matched, true);
+
+    assert.equal(evaluateCondition(pending.defaultConditionJson, sentToFinance, now).matched, false);
+    assert.equal(evaluateCondition(pending.defaultConditionJson, { ...sentToFinance, status: 'READY_FOR_PAYMENT' }, now).matched, false);
+    // A claim that does wait for a person is announced exactly as before.
+    assert.equal(evaluateCondition(pending.defaultConditionJson, { ...sentToFinance, status: 'PENDING_APPROVAL' }, now).matched, true);
   });
 
   it('routes the finance-review template to finance-review permission holders and stays out of the approve path', () => {
@@ -248,5 +287,268 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.equal(update.status, 'MATCHED');
     assert.equal(update.errorCode, 'RUNS_SKIPPED');
     assert.equal(update.errorMessage, 'cooldown×2');
+  });
+});
+
+/**
+ * Audit B8: approval and SLA tasks were closed only by hand, so "งานที่ได้รับมอบหมาย" kept listing
+ * claims long since approved, rejected or paid. The REAL repository runs here over an in-memory
+ * store, so the query, the status rule and the idempotence are what these tests prove.
+ */
+describe('claim approval tasks close when the claim moves on (audit B8)', () => {
+  const NOW = new Date('2026-10-01T05:00:00.000Z');
+  const task = (id: string, extra: Record<string, unknown> = {}): any => ({
+    id, companyId: 'co-1', sourceType: 'reimbursement_request', sourceId: 'req-1', status: 'OPEN',
+    templateKey: 'reimbursement_pending_approval', ...extra,
+  });
+
+  function store(
+    tasks: any[],
+    claims: Array<{ id: string; companyId?: string; status: string; payoutCorrectionRequestedAt?: Date; payoutCorrectionSubmittedAt?: Date }>,
+    rules: any[] = [],
+  ) {
+    const inbox = new Map<string, any>();
+    const writes: any[] = [];
+    const matches = (row: any, where: any) => (where.companyId === undefined || row.companyId === where.companyId)
+      && row.sourceType === where.sourceType
+      && (typeof where.sourceId === 'string' ? row.sourceId === where.sourceId : row.sourceId != null)
+      && where.status.in.includes(row.status)
+      && where.workflowRun.rule.template.key.in.includes(row.templateKey);
+    const prisma = {
+      client: {
+        workflowEventInbox: {
+          findUnique: async ({ where }: any) => inbox.get(`${where.companyId_eventId.companyId}:${where.companyId_eventId.eventId}`) ?? null,
+          create: async ({ data }: any) => {
+            const row = { id: `inbox-${inbox.size + 1}`, ...data };
+            inbox.set(`${data.companyId}:${data.eventId}`, row);
+            return row;
+          },
+          update: async () => undefined,
+        },
+        workflowRule: { findMany: async () => rules },
+        workflowTask: {
+          findMany: async ({ where }: any) => tasks.filter((row) => matches(row, where)).map((row) => ({ id: row.id, companyId: row.companyId, sourceId: row.sourceId })),
+          updateMany: async ({ where, data }: any) => {
+            const hits = tasks.filter((row) => where.id.in.includes(row.id) && where.status.in.includes(row.status));
+            hits.forEach((row) => Object.assign(row, data));
+            writes.push({ ids: hits.map((row) => row.id), data });
+            return { count: hits.length };
+          },
+        },
+        reimbursementRequest: {
+          findMany: async ({ where }: any) => claims
+            .filter((claim) => where.id.in.includes(claim.id))
+            .map((claim) => ({
+              id: claim.id, companyId: claim.companyId ?? 'co-1', status: claim.status,
+              payoutCorrectionRequestedAt: claim.payoutCorrectionRequestedAt ?? null, payoutCorrectionSubmittedAt: claim.payoutCorrectionSubmittedAt ?? null,
+            })),
+        },
+      },
+    } as any;
+    return { repo: new PrismaWorkflowRepository(prisma), writes };
+  }
+  const noRules = { execute: mock.fn(async () => ({ status: 'SUCCEEDED' as const })) };
+  const statuses = (tasks: any[]) => Object.fromEntries(tasks.map((row) => [row.id, row.status]));
+
+  it('approve closes the approver task and the SLA task as done, and nothing else', async () => {
+    const tasks = [
+      task('approval'),
+      task('sla', { templateKey: 'approval_sla_breach', status: 'SNOOZED' }),
+      task('admin-made', { templateKey: 'some_admin_rule' }),
+      task('other-claim', { sourceId: 'req-2' }),
+      task('other-company', { companyId: 'co-2' }),
+    ];
+    const { repo } = store(tasks, [{ id: 'req-1', status: 'READY_FOR_PAYMENT' }, { id: 'req-2', status: 'PENDING_APPROVAL' }]);
+
+    await new IngestWorkflowEventUseCase(repo, noRules as any).execute(baseEvent({ eventType: 'reimbursement.approved' }));
+
+    assert.deepEqual(statuses(tasks), {
+      approval: 'DONE', sla: 'DONE', 'admin-made': 'OPEN', 'other-claim': 'OPEN', 'other-company': 'OPEN',
+    });
+    assert.ok(tasks[0]!.completedAt instanceof Date);
+    assert.equal(tasks[0]!.cancelReason, undefined);
+  });
+
+  it('reject, cancel and a return to draft close them as cancelled', async () => {
+    for (const [eventType, claimStatus] of [
+      ['reimbursement.rejected', 'REJECTED'],
+      ['reimbursement.cancelled', 'CANCELLED'],
+      ['reimbursement.reopened', 'DRAFT'],
+    ] as const) {
+      const tasks = [task('approval'), task('sla', { templateKey: 'approval_sla_breach' })];
+      const { repo } = store(tasks, [{ id: 'req-1', status: claimStatus }]);
+
+      await new IngestWorkflowEventUseCase(repo, noRules as any).execute(baseEvent({ eventType }));
+
+      assert.deepEqual(statuses(tasks), { approval: 'CANCELED', sla: 'CANCELED' }, eventType);
+      assert.equal(tasks[0]!.cancelReason, 'ใบเบิกนี้ไม่ได้รออนุมัติแล้ว', eventType);
+      assert.equal(tasks[0]!.completedAt, undefined, eventType);
+    }
+  });
+
+  it('leaves a paid claim with no open claim task, reading the claim from a payment event', async () => {
+    const tasks = [task('approval'), task('sla', { templateKey: 'approval_sla_breach' })];
+    const { repo } = store(tasks, [{ id: 'req-1', status: 'PAID' }]);
+
+    await new IngestWorkflowEventUseCase(repo, noRules as any).execute(baseEvent({
+      eventType: 'reimbursement.payment_recorded', sourceType: 'reimbursement_payment', sourceId: 'pay-1',
+      payload: { requestId: 'req-1', paymentNo: 'RP-1' },
+    }));
+
+    assert.deepEqual(tasks.filter((row) => ['OPEN', 'SNOOZED'].includes(row.status)), []);
+    assert.deepEqual(statuses(tasks), { approval: 'DONE', sla: 'DONE' });
+  });
+
+  it('keeps the task while the claim still waits for approval', async () => {
+    const tasks = [task('approval')];
+    const { repo, writes } = store(tasks, [{ id: 'req-1', status: 'PENDING_APPROVAL' }]);
+
+    await new IngestWorkflowEventUseCase(repo, noRules as any).execute(baseEvent({ eventType: 'reimbursement.approval_projection_started' }));
+
+    assert.deepEqual(statuses(tasks), { approval: 'OPEN' });
+    assert.deepEqual(writes, []);
+  });
+
+  it('replaying an event changes nothing, not even the task of a later round', async () => {
+    const tasks = [task('round-1')];
+    const { repo, writes } = store(tasks, [{ id: 'req-1', status: 'REJECTED' }]);
+    const uc = new IngestWorkflowEventUseCase(repo, noRules as any);
+    const submitted = baseEvent({ eventId: 'evt-submit', eventType: 'reimbursement.request_submitted' });
+    const rejected = baseEvent({ eventId: 'evt-reject', eventType: 'reimbursement.rejected' });
+
+    await uc.execute(rejected);
+    assert.deepEqual(statuses(tasks), { 'round-1': 'CANCELED' });
+    const closedAs = { ...tasks[0] };
+    const writesAfterFirst = writes.length;
+
+    // The same event again: dropped at the inbox, no write at all.
+    assert.equal((await uc.execute(rejected)).reason, 'already_processed');
+    assert.deepEqual(tasks[0], closedAs);
+    assert.equal(writes.length, writesAfterFirst);
+
+    // A resubmission is processed once and gets its task; replaying that submit event must not
+    // supersede the very task it stands for.
+    await uc.execute(submitted);
+    tasks.push(task('round-2'));
+    assert.equal((await uc.execute(submitted)).reason, 'already_processed');
+    assert.deepEqual(statuses(tasks), { 'round-1': 'CANCELED', 'round-2': 'OPEN' });
+  });
+
+  it('a claim sent again supersedes what an earlier round left open, before its own task is created', async () => {
+    const tasks = [task('round-1'), task('round-1-sla', { templateKey: 'approval_sla_breach' })];
+    const rule = { id: 'rule-1', companyId: 'co-1', triggerConfigJson: { eventType: 'reimbursement.request_submitted' }, template: { key: 'reimbursement_pending_approval', sourceModule: 'reimbursements' } };
+    const { repo } = store(tasks, [{ id: 'req-1', status: 'PENDING_APPROVAL' }], [rule]);
+    // The rule run is where the new round's task is born.
+    const runner = { execute: mock.fn(async () => { tasks.push(task('round-2')); return { status: 'SUCCEEDED' as const, runId: 'run-2' }; }) };
+
+    await new IngestWorkflowEventUseCase(repo, runner as any).execute(baseEvent({ eventType: 'reimbursement.request_submitted' }));
+
+    assert.deepEqual(statuses(tasks), { 'round-1': 'CANCELED', 'round-1-sla': 'CANCELED', 'round-2': 'OPEN' });
+    assert.equal(tasks[0]!.cancelReason, 'ใบเบิกนี้ถูกส่งใหม่ จึงมีงานอนุมัติใหม่แทน');
+  });
+
+  it('closes at once the task of a submit event that arrives after the claim was already approved', async () => {
+    const tasks: any[] = [];
+    const rule = { id: 'rule-1', companyId: 'co-1', triggerConfigJson: { eventType: 'reimbursement.request_submitted' }, template: { key: 'reimbursement_pending_approval', sourceModule: 'reimbursements' } };
+    const { repo } = store(tasks, [{ id: 'req-1', status: 'READY_FOR_PAYMENT' }], [rule]);
+    const runner = { execute: mock.fn(async () => { tasks.push(task('late')); return { status: 'SUCCEEDED' as const, runId: 'run-1' }; }) };
+
+    await new IngestWorkflowEventUseCase(repo, runner as any).execute(baseEvent({ eventType: 'reimbursement.request_submitted' }));
+
+    assert.deepEqual(statuses(tasks), { late: 'DONE' });
+  });
+
+  it('never fails the event when closing a task fails: its notices matter more', async () => {
+    const repo = fakeRepo({ rules: [{ id: 'rule-1', triggerConfigJson: { eventType: 'reimbursement.approved' }, template: { sourceModule: 'reimbursements' } }] });
+    repo.closeSettledClaimTasks = mock.fn(async () => { throw new Error('database blip'); });
+    const runner = { execute: mock.fn(async () => ({ status: 'SUCCEEDED' as const, runId: 'run-1' })) };
+
+    const result = await new IngestWorkflowEventUseCase(repo, runner as any).execute(baseEvent({ eventType: 'reimbursement.approved' }));
+
+    assert.equal(result.matchedRuleCount, 1);
+    assert.equal(runner.execute.mock.callCount(), 1);
+    assert.equal(repo.closeSettledClaimTasks.mock.callCount(), 1);
+  });
+
+  it('the release sweep closes the backlog across companies once, and a second run closes nothing', async () => {
+    const tasks = [
+      task('paid-claim'),
+      task('paid-claim-sla', { templateKey: 'approval_sla_breach' }),
+      task('rejected-claim', { sourceId: 'req-2' }),
+      task('still-pending', { sourceId: 'req-3' }),
+      task('claim-deleted', { sourceId: 'req-gone' }),
+      task('other-company-approved', { companyId: 'co-2', sourceId: 'req-4' }),
+      task('already-done', { status: 'DONE', completedAt: new Date('2026-09-01T00:00:00.000Z') }),
+      task('admin-made', { templateKey: 'some_admin_rule' }),
+      task('stock-task', { sourceType: 'stock_balance', sourceId: 'p-1', templateKey: 'low_stock_alert' }),
+    ];
+    const { repo } = store(tasks, [
+      { id: 'req-1', status: 'PAID' }, { id: 'req-2', status: 'REJECTED' }, { id: 'req-3', status: 'PENDING_APPROVAL' },
+      { id: 'req-4', companyId: 'co-2', status: 'FINANCE_REVIEW' },
+    ]);
+
+    assert.equal(await repo.closeSettledClaimTasks({}, NOW), 5);
+    assert.deepEqual(statuses(tasks), {
+      'paid-claim': 'DONE', 'paid-claim-sla': 'DONE', 'rejected-claim': 'CANCELED', 'still-pending': 'OPEN',
+      'claim-deleted': 'CANCELED', 'other-company-approved': 'DONE', 'already-done': 'DONE',
+      'admin-made': 'OPEN', 'stock-task': 'OPEN',
+    });
+    assert.equal(tasks[0]!.completedAt, NOW);
+    // Closed by hand before the sweep: its own completion time is not rewritten.
+    assert.deepEqual(tasks[6]!.completedAt, new Date('2026-09-01T00:00:00.000Z'));
+
+    const before = JSON.stringify(tasks);
+    assert.equal(await repo.closeSettledClaimTasks({}, new Date('2026-10-02T00:00:00.000Z')), 0);
+    assert.equal(JSON.stringify(tasks), before);
+  });
+
+  // Review: superseding ignores the claim's status, so called without a claim it would have
+  // cancelled every open approval task of every company.
+  it('refuses to supersede without naming the claim, and closes nothing', async () => {
+    const tasks = [task('pending-claim'), task('other-company', { companyId: 'co-2', sourceId: 'req-9' })];
+    const { repo, writes } = store(tasks, [{ id: 'req-1', status: 'PENDING_APPROVAL' }]);
+
+    await assert.rejects(() => repo.closeSettledClaimTasks({ supersede: true }), /supersede needs the claim/);
+    await assert.rejects(() => repo.closeSettledClaimTasks({ companyId: 'co-1', supersede: true }), /supersede needs the claim/);
+
+    assert.deepEqual(statuses(tasks), { 'pending-claim': 'OPEN', 'other-company': 'OPEN' });
+    assert.deepEqual(writes, []);
+  });
+
+  // Payout spec §14: a claim sent back to have its payout account corrected is PENDING_APPROVAL, with
+  // nothing to approve while its requester gives the account. A reminder task that chased its approver
+  // is cancelled then, kept while a new account waits for them, and done when they approve it.
+  it('cancels a task that asks for approval once the claim is with its requester for its account', async () => {
+    const sentBackAt = new Date('2026-10-01T03:00:00.000Z');
+    const phases: Array<[string, string, Record<string, unknown>, string]> = [
+      ['reimbursement.payout_correction_requested', 'PENDING_APPROVAL', { payoutCorrectionRequestedAt: sentBackAt }, 'CANCELED'],
+      ['reimbursement.payout_correction_submitted', 'PENDING_APPROVAL', { payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: NOW }, 'OPEN'],
+      ['reimbursement.ready_for_payment', 'READY_FOR_PAYMENT', {}, 'DONE'],
+    ];
+    for (const [eventType, status, round, expected] of phases) {
+      const tasks = [task('sla', { templateKey: 'approval_sla_breach' }), task('other-claim', { sourceId: 'req-2' })];
+      const { repo } = store(tasks, [{ id: 'req-1', status, ...round }, { id: 'req-2', status: 'PENDING_APPROVAL' }]);
+      await new IngestWorkflowEventUseCase(repo, noRules as any).execute(baseEvent({ eventType }));
+      assert.deepEqual(statuses(tasks), { sla: expected, 'other-claim': 'OPEN' }, eventType);
+    }
+    assert.equal(claimApprovalTaskOutcome('PENDING_APPROVAL', true), 'CANCELED');
+    assert.equal(claimApprovalTaskOutcome('PENDING_APPROVAL', false), null);
+    // Only a claim waiting for approval can be with its requester for its account.
+    assert.equal(claimApprovalTaskOutcome('READY_FOR_PAYMENT', true), 'DONE');
+  });
+
+  it('decides the outcome from the claim status, and finds the claim an event is about', () => {
+    assert.equal(claimApprovalTaskOutcome('PENDING_APPROVAL'), null);
+    for (const status of ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID']) {
+      assert.equal(claimApprovalTaskOutcome(status), 'DONE', status);
+    }
+    for (const status of ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED', undefined]) {
+      assert.equal(claimApprovalTaskOutcome(status), 'CANCELED', String(status));
+    }
+    assert.equal(claimIdOfEvent(baseEvent()), 'req-1');
+    assert.equal(claimIdOfEvent(baseEvent({ sourceType: 'reimbursement_payment', sourceId: 'pay-1', payload: { requestId: 'req-9' } })), 'req-9');
+    // A policy change names no claim, and another module's event is never read as one.
+    assert.equal(claimIdOfEvent(baseEvent({ eventType: 'reimbursement.policy_updated', sourceType: 'reimbursement_policy', sourceId: 'policy-1', payload: {} })), undefined);
+    assert.equal(claimIdOfEvent(baseEvent({ eventType: 'vendor_bill.submitted', sourceType: 'vendor_bill', sourceId: 'bill-1', payload: { requestId: 'req-1' } })), undefined);
   });
 });

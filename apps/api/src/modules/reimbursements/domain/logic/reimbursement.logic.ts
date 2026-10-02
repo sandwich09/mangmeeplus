@@ -5,7 +5,9 @@
 
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
-import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import {
+  isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPayoutCorrectionPhase, todayCivilDate,
+} from '@watchdog-bms/contracts';
 import type {
   ReimbursementRequestStatus,
   ReimbursementApprovalStepStatus,
@@ -13,6 +15,7 @@ import type {
   ReimbursementFinanceReviewStatus,
   ReimbursementPaymentMethod,
   ReimbursementPaymentSourceRef,
+  ReimbursementPayoutCorrectionPhase,
   ReimbursementReceiptRequirementStatus,
   ReimbursementPolicySnapshotV1,
 } from '@watchdog-bms/contracts';
@@ -21,6 +24,7 @@ import type {
 // service, repository) and expenses never depends back — this is a pure Decimal constant,
 // so the "no Nest / Prisma" rule above still holds.
 import { SETTLE_EPSILON } from '../../../expenses/domain/logic/expense-totals.logic';
+import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 
 // ---- Money helpers ----
 
@@ -165,7 +169,54 @@ export type ApprovalSnapshotFields = {
   primaryAttachmentId?: string | null;
   lines?: readonly ReimbursementLineFields[];
   approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
+  /**
+   * The claim's receiving method and its own account snapshot. Folded into the hash only when the
+   * claim carries `payoutFingerprint` — the one value nothing but the payout-aware submit writes — so
+   * a claim sent before the field existed, or sent by an older build during a rollback, keeps the
+   * hash it was approved and signed under whatever a draft had chosen.
+   */
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
 };
+
+/** A claim as its hash reads it: the record itself, or the same columns read by the production gate. */
+export type ClaimSnapshotSource = {
+  amount: string;
+  currency: string;
+  categoryKey: string;
+  incurredDate: Date | string;
+  reason: string;
+  primaryAttachmentId?: string | null;
+  lines?: ApprovalSnapshotFields['lines'];
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
+};
+
+/**
+ * The ONE mapping from a claim to the fields its hash is made of. Submit, the live approval check,
+ * the signature acknowledgement (preview and sign) and the production gate all hash through it, so
+ * the payout part cannot be folded into one and left out of another.
+ */
+export function claimSnapshotFields(
+  claim: ClaimSnapshotSource,
+  approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1 | null,
+): ApprovalSnapshotFields {
+  return {
+    amount: claim.amount,
+    currency: claim.currency,
+    categoryKey: claim.categoryKey,
+    incurredDate: isoOf(claim.incurredDate),
+    reason: claim.reason,
+    primaryAttachmentId: claim.primaryAttachmentId,
+    lines: claim.lines ?? [],
+    ...(approvalPolicySnapshotJson && { approvalPolicySnapshotJson }),
+    payoutMethod: claim.payoutMethod,
+    payoutDestinationVersion: claim.payoutDestinationVersion,
+    payoutFingerprint: claim.payoutFingerprint,
+  };
+}
 
 export type LegacyV1FallbackSnapshotFields = ApprovalSnapshotFields & {
   requestId: string;
@@ -209,24 +260,8 @@ export function computeLegacySnapshotHashV1(fields: ApprovalSnapshotFields): str
  * it without an application-layer import cycle; structural param keeps this file
  * free of model/Prisma imports.
  */
-export function claimSignatureAckHash(req: {
-  amount: ApprovalSnapshotFields['amount'];
-  currency: string;
-  categoryKey: string;
-  incurredDate: Date;
-  reason: string;
-  primaryAttachmentId?: string | null;
-  lines?: ApprovalSnapshotFields['lines'];
-}): string {
-  return computeSnapshotHash({
-    amount: req.amount,
-    currency: req.currency,
-    categoryKey: req.categoryKey,
-    incurredDate: req.incurredDate.toISOString(),
-    reason: req.reason,
-    primaryAttachmentId: req.primaryAttachmentId,
-    lines: req.lines ?? [],
-  });
+export function claimSignatureAckHash(req: ClaimSnapshotSource): string {
+  return computeSnapshotHash(claimSnapshotFields(req));
 }
 
 /**
@@ -239,6 +274,12 @@ export function computeSnapshotHash(fields: ApprovalSnapshotFields): string {
     ...snapshotHeaderParts(fields),
     ...(fields.approvalPolicySnapshotJson
       ? [`policy:${stableJson(fields.approvalPolicySnapshotJson)}`]
+      : []),
+    // Cash is hashed too (no version; its fingerprint is the fixed cash marker): switching cash to a
+    // transfer after approval has to invalidate that approval. The attestation itself is not hashed,
+    // so ticking it never changes what was signed.
+    ...(fields.payoutFingerprint
+      ? [`payout:${fields.payoutMethod ?? ''}:${fields.payoutDestinationVersion ?? ''}:${fields.payoutFingerprint}`]
       : []),
     ...byLineNo(fields.lines ?? []).map((line) => [
       line.lineNo,
@@ -337,14 +378,107 @@ export function isSelfApproval(
   return !approverRoles.some((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role));
 }
 
+/**
+ * The claim's own approver, for a notice that asks one person. Who that is has one definition,
+ * `isReimbursementClaimApprover` in contracts (it also decides the account number and the payment
+ * slip): an approval still in force, made in the round the claim was last sent in. This asks that
+ * rule of each decider and takes the latest. The workflow reminder scan reads the same person with a
+ * query (`findClaimApprovers`), which restates the rule because it cannot call it.
+ */
+export function claimApproverUserId(claim: Parameters<typeof claimApprovalStep>[0]): string | undefined {
+  return claimApprovalStep(claim)?.decisionByUserId ?? undefined;
+}
+
+/**
+ * The approval the claim stands on: the step that same rule answers for, the latest when there are
+ * several. The printed form's ผู้อนุมัติ block and the right to sign it read this step, so the paper,
+ * the signature and the page name one person. A claim whose approval was invalidated (its payout
+ * account is being corrected, payout spec §14) or was given before the claim was last sent has none.
+ */
+export function claimApprovalStep<Step extends { status: string; decisionByUserId?: string | null; decidedAt?: Date | null; invalidatedAt?: Date | null }>(claim: {
+  submittedAt?: Date | null;
+  approvalSteps?: readonly Step[];
+}): Step | undefined {
+  return (claim.approvalSteps ?? [])
+    .filter((step) => !!step.decisionByUserId
+      && isReimbursementClaimApprover(step.decisionByUserId, { submittedAt: claim.submittedAt, approvalSteps: [step] }))
+    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
+}
+
+// ---- Payout account correction round (payout spec §14) ----
+
+/** `invalidatedReason` of every approval step a correction round sets aside: the approval it replaces, and each step of the round that did not end in approval. */
+export const PAYOUT_CORRECTION_STEP_REASON = 'payout_account_correction';
+
+/** Whether a claim is in a correction round, and whom it waits for: the contracts rule, under the name this module calls it by. */
+export const payoutCorrectionPhase = reimbursementPayoutCorrectionPhase;
+
+/**
+ * The approval step a round's new step takes its approvers from (payout spec §14.5): the one still
+ * waiting when the account is given a second time, else the one the round last set aside when the
+ * claim was sent back. The new step copies who it names, so the same people approve the account,
+ * and the step's own recovery rule (its recorded role, or the owner) applies when none of them can
+ * act any more. None: nobody had to approve this claim, and it needs no approval now.
+ */
+export function payoutCorrectionSourceStep<Step extends { id: string; status: string; invalidatedAt?: Date | null; invalidatedReason?: string | null }>(claim: {
+  currentApprovalStepId?: string | null;
+  payoutCorrectionRequestedAt?: Date | null;
+  approvalSteps?: readonly Step[];
+}): Step | undefined {
+  const steps = claim.approvalSteps ?? [];
+  const waiting = steps.find((step) => step.id === claim.currentApprovalStepId && step.status === 'PENDING');
+  if (waiting) return waiting;
+  const since = claim.payoutCorrectionRequestedAt?.getTime();
+  if (since === undefined) return undefined;
+  return steps
+    .filter((step) => step.invalidatedReason === PAYOUT_CORRECTION_STEP_REASON && !!step.invalidatedAt && step.invalidatedAt.getTime() >= since)
+    .sort((a, b) => b.invalidatedAt!.getTime() - a.invalidatedAt!.getTime())[0];
+}
+
+/**
+ * What the claim was approved with when its current round began: kept by the send-back that opened
+ * the round (a send-back from the round's own step keeps none). The detail's "previous account" and
+ * the choice to keep that account read it. A legacy claim had no method; cash has no version.
+ */
+export function payoutCorrectionRoundStart<Approved extends { payoutMethod?: string; payoutVersion?: number; at?: string }>(claim: {
+  payoutCorrectionLog?: readonly { kind: string; approved?: Approved }[] | null;
+}): Approved | undefined {
+  return [...(claim.payoutCorrectionLog ?? [])].reverse().find((entry) => entry.kind === 'SENT_BACK' && !!entry.approved)?.approved;
+}
+
+/**
+ * Since when a claim waits for its approvers: the day it was sent, or, in a correction round, the
+ * moment its new account was given. The approval queue's age, the deadline reminder and the LINE
+ * backlog count from here, so a round's approvers are not held to a wait that was not theirs.
+ */
+export function approvalWaitStartedAt(claim: { submittedAt?: Date | null; payoutCorrectionSubmittedAt?: Date | null }): Date | undefined {
+  return claim.payoutCorrectionSubmittedAt ?? claim.submittedAt ?? undefined;
+}
+
+/**
+ * Whose turn it is to record a claim's payment, first to last (owner rule 2026-10-01): the finance
+ * reviewer who passed the claim, then the claim's own approver. It is the order the ready-to-pay notice
+ * and the payment reminder ask in, so the claim page names first the person those notices went to.
+ * Whether they can pay is the caller's question: someone who cannot is not named at all.
+ */
+export function paymentTurnUserIds(claim: Parameters<typeof claimApproverUserId>[0] & {
+  financeReviewStatus?: string;
+  financeReviewedByUserId?: string | null;
+}): string[] {
+  const reviewer = claim.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? claim.financeReviewedByUserId : undefined;
+  return [...new Set([reviewer, claimApproverUserId(claim)].filter((userId): userId is string => !!userId))];
+}
+
 // ---- Status transitions ----
 
 const ALLOWED_TRANSITIONS: Record<ReimbursementRequestStatus, ReimbursementRequestStatus[]> = {
   DRAFT: ['PENDING_APPROVAL', 'CANCELLED'],
-  PENDING_APPROVAL: ['APPROVED', 'REJECTED', 'CANCELLED', 'DRAFT'],
+  // READY_FOR_PAYMENT: only out of a payout account correction round, whose approval moves the claim on in one step.
+  PENDING_APPROVAL: ['APPROVED', 'REJECTED', 'CANCELLED', 'DRAFT', 'READY_FOR_PAYMENT'],
   APPROVED: ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'CANCELLED', 'VOIDED'],
   FINANCE_REVIEW: ['READY_FOR_PAYMENT', 'APPROVED', 'CANCELLED', 'VOIDED'],
-  READY_FOR_PAYMENT: ['PAID', 'PARTIALLY_PAID', 'FINANCE_REVIEW', 'CANCELLED', 'VOIDED'],
+  // PENDING_APPROVAL: sent back to have its payout account corrected.
+  READY_FOR_PAYMENT: ['PAID', 'PARTIALLY_PAID', 'FINANCE_REVIEW', 'CANCELLED', 'VOIDED', 'PENDING_APPROVAL'],
   PARTIALLY_PAID: ['PAID', 'VOIDED'],
   REJECTED: ['DRAFT'],
   CANCELLED: [],
@@ -354,6 +488,59 @@ const ALLOWED_TRANSITIONS: Record<ReimbursementRequestStatus, ReimbursementReque
 
 export function canTransition(from: ReimbursementRequestStatus, to: ReimbursementRequestStatus): boolean {
   return (ALLOWED_TRANSITIONS[from] ?? []).includes(to);
+}
+
+// ---- A decision the system has yet to carry out ----
+
+export type PendingProjectionIntent = {
+  /** MANAGER: a person approved it. FINANCE: finance passed it for payment. POLICY: it needed no approval. */
+  kind: 'MANAGER' | 'FINANCE' | 'POLICY';
+  /** Who made the decision the claim waits on (for POLICY: who sent the claim). */
+  actorUserId: string;
+  approvalStepId?: string;
+};
+
+/**
+ * The durable decision a claim waits for the system to carry out, if any. A decision is committed
+ * first and the claim's expense records are built and confirmed after it, so a failure in between
+ * leaves the claim decided but not moved on (audit B4). One definition for the scheduled reconciler,
+ * for the "ดำเนินการต่อ" call and for the flag on the claim detail, so the three cannot disagree on
+ * which claims are in that state.
+ *
+ * Needs the claim's approval steps (the approved ones at least). A claim that is being cancelled is
+ * never one: the cancellation comes first.
+ */
+export function pendingProjectionIntent(request: {
+  status: ReimbursementRequestStatus;
+  financeReviewStatus?: ReimbursementFinanceReviewStatus;
+  financeReviewedByUserId?: string | null;
+  currentApprovalStepId?: string | null;
+  cancellationPendingAt?: Date | null;
+  payoutCorrectionRequestedAt?: Date | null;
+  requesterUserId: string;
+  submittedByUserId?: string | null;
+  approvalPolicySnapshotJson?: unknown;
+  approvalSteps?: ReadonlyArray<{ id: string; status: ReimbursementApprovalStepStatus; decisionByUserId?: string | null }>;
+}): PendingProjectionIntent | undefined {
+  if (request.cancellationPendingAt) return undefined;
+  if (request.status === 'PENDING_APPROVAL') {
+    // A claim in a payout account correction round holds no decision to carry out: its expense records
+    // stand, and its approval moves it on in the approval's own transaction (payout spec §14.6).
+    if (request.payoutCorrectionRequestedAt) return undefined;
+    const step = request.approvalSteps?.find((candidate) => candidate.id === request.currentApprovalStepId);
+    return step?.status === 'APPROVED' && step.decisionByUserId
+      ? { kind: 'MANAGER', actorUserId: step.decisionByUserId, approvalStepId: step.id } : undefined;
+  }
+  if (request.status === 'FINANCE_REVIEW') {
+    return request.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && request.financeReviewedByUserId
+      ? { kind: 'FINANCE', actorUserId: request.financeReviewedByUserId } : undefined;
+  }
+  if (request.status === 'APPROVED' && !request.currentApprovalStepId) {
+    const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
+    return snapshot && !snapshot.requiresApproval && !snapshot.financeReviewRequired
+      ? { kind: 'POLICY', actorUserId: request.submittedByUserId ?? request.requesterUserId } : undefined;
+  }
+  return undefined;
 }
 
 // ---- Current desk (อยู่ที่ใคร) ----
@@ -378,22 +565,39 @@ export type CurrentDeskStepFields = {
 export function currentDesk(input: {
   status: ReimbursementRequestStatus;
   financeReviewStatus?: ReimbursementFinanceReviewStatus;
+  /** The claim's approval steps when the caller loaded them; left out, nothing is concluded from their absence. */
   steps?: readonly CurrentDeskStepFields[];
   names?: Record<string, string>;
+  /** A cancellation was started and has not completed. */
+  cancellationPending?: boolean;
+  /** The claim's place in a payout account correction round (`payoutCorrectionPhase`), when it is in one. */
+  payoutCorrectionPhase?: ReimbursementPayoutCorrectionPhase;
 }): ReimbursementCurrentDesk | undefined {
+  // A claim being cancelled is with the system whatever its status: nobody approves or pays it meanwhile
+  // (audit B3). A finished claim keeps having no desk.
+  const cancelling = (desk: ReimbursementCurrentDesk): ReimbursementCurrentDesk => (input.cancellationPending ? { kind: 'SYSTEM' } : desk);
   switch (input.status) {
-    case 'DRAFT': return { kind: 'REQUESTER' };
-    case 'FINANCE_REVIEW': return { kind: 'FINANCE' };
+    case 'DRAFT': return cancelling({ kind: 'REQUESTER' });
+    case 'FINANCE_REVIEW': return cancelling({ kind: 'FINANCE' });
     case 'READY_FOR_PAYMENT':
-    case 'PARTIALLY_PAID': return { kind: 'PAYMENT' };
+    case 'PARTIALLY_PAID': return cancelling({ kind: 'PAYMENT' });
     // Transient: approved, waiting for the projection to route it on to one of the two.
-    case 'APPROVED': return { kind: input.financeReviewStatus === 'PENDING' ? 'FINANCE' : 'PAYMENT' };
+    case 'APPROVED': return cancelling({ kind: input.financeReviewStatus === 'PENDING' ? 'FINANCE' : 'PAYMENT' });
     case 'PENDING_APPROVAL': break;
     default: return undefined;
   }
+  if (input.cancellationPending) return { kind: 'SYSTEM' };
+  // Sent back to have its payout account corrected (payout spec §14.2): no step is open, and that is
+  // not a decision waiting for the system. The claim is with its requester until they give the account;
+  // after that the new step below names its approvers like any other.
+  if (input.payoutCorrectionPhase === 'AWAITING_REQUESTER') return { kind: 'REQUESTER' };
   const step = [...(input.steps ?? [])]
     .filter((s) => s.status === 'PENDING' && !s.invalidatedAt)
     .sort((a, b) => a.sequenceNo - b.sequenceNo)[0];
+  // Decided (audit B4): the steps were loaded and none is waiting. The approval is durable and the claim
+  // stays PENDING_APPROVAL only until the system has built its expense records. It waits for no approver,
+  // which is what the LINE backlog answer has always said of it ("รอระบบปรับสถานะ").
+  if (input.steps && !step) return { kind: 'SYSTEM' };
   const names = [...new Set([
     ...(step?.assignedApproverUserIds ?? []),
     ...(step?.approverUserId ? [step.approverUserId] : []),
@@ -445,12 +649,55 @@ export type PaymentEligibilityInput = {
   paidAmount: string;
   paymentMethod: ReimbursementPaymentMethod;
   paymentReference?: string;
+  /** A slip comes with this payment. Whether the file itself is acceptable is proven separately. */
+  hasSlip: boolean;
 };
+
+/**
+ * The statuses a payment is recorded in. PARTIALLY_PAID is not one: only the full outstanding amount is
+ * taken. The claim page names who can pay only in these, so it never names someone the endpoint refuses.
+ */
+export const PAYMENT_RECORDING_STATUSES: readonly ReimbursementRequestStatus[] = ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'];
+
+// ---- A possible duplicate: one fact, from the claim's own candidates ----
+//
+// Submit records the other claims this one may repeat as candidates, OPEN until a person clears them.
+// The claim's `duplicateStatus` column says the same until its expense records are built; from then on
+// the column holds the result of THOSE records, which know nothing of the candidates. So a claim
+// found possibly duplicate at submit read NO_MATCH after approval while its payment was still refused.
+// Every answer now reads the candidates through the two rules below.
+
+/**
+ * Whether an unresolved duplicate refuses the claim's payment: the policy the claim was sent under
+ * blocks payment, and a candidate is still open. The one test. Recording a payment asks it before
+ * the payment lock and under it (`duplicate_unresolved`), the claim detail reports it as
+ * `duplicateBlocksPayment` and a pay-queue row as `hasDuplicateBlocker`, so a row and a claim page
+ * carry the mark exactly when the payment would be refused for it.
+ */
+export function duplicateBlocksPayment(duplicatePolicy: string, openCandidates: number): boolean {
+  return duplicatePolicy === 'BLOCK_PAYMENT' && openCandidates > 0;
+}
+
+/**
+ * A claim's duplicate status as an answer reports it: the stored column (its expense records' result
+ * once they exist) together with the claim's own candidates. A candidate still open is a possible
+ * duplicate whatever the records say; candidates a person cleared read as checked, never as "none
+ * found". A draft (NOT_CHECKED) says nothing yet: the candidates of an earlier round are replaced
+ * when it is sent again. `candidates` undefined: they were not loaded, and the column is all there is.
+ */
+export function claimDuplicateStatus<Status extends string>(
+  stored: Status,
+  candidates: readonly { status: string }[] | null | undefined,
+): Status | 'POSSIBLE_DUPLICATE' | 'OVERRIDDEN' {
+  if (!candidates || stored === 'CONFIRMED_DUPLICATE' || stored === 'NOT_CHECKED') return stored;
+  if (candidates.some((candidate) => candidate.status === 'OPEN')) return 'POSSIBLE_DUPLICATE';
+  if (stored === 'POSSIBLE_DUPLICATE') return stored;
+  return candidates.some((candidate) => candidate.status === 'OVERRIDDEN') ? 'OVERRIDDEN' : stored;
+}
 
 /** Returns a stable error code, or null if payment is allowed. Enforces MVP full-payment. */
 export function validatePaymentRecording(input: PaymentEligibilityInput): string | null {
-  const payableStatuses: ReimbursementRequestStatus[] = ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'];
-  if (!payableStatuses.includes(input.status)) return 'invalid_status_transition';
+  if (!PAYMENT_RECORDING_STATUSES.includes(input.status)) return 'invalid_status_transition';
   if (input.financeReviewRequired && !input.financeReviewApproved) return 'finance_review_required';
   if (input.duplicateBlocking) return 'duplicate_unresolved';
 
@@ -467,7 +714,43 @@ export function validatePaymentRecording(input: PaymentEligibilityInput): string
   if (outstanding.sub(paid).gte(SETTLE_EPSILON)) return 'partial_payment_not_allowed';
 
   if (!validatePaymentReference(input.paymentMethod, input.paymentReference)) return 'payment_reference_required';
+  // Owner decision D3: a transfer is recorded with its slip. Claims approved before the slip
+  // existed are paid under the same rule, so nothing here reads the claim's age.
+  if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return 'payment_slip_required';
   return null;
+}
+
+/**
+ * Whether a request repeats an already recorded payment (spec §12.7). One list of facts for the
+ * shortcut before the payment lock and the check under it: a replay that differs in any of them,
+ * the slip and the account included, is a conflict and never a success.
+ *
+ * The account is compared as the payer stated it: the claim's account version the transfer was
+ * confirmed into, or the token of the default a legacy claim's payer confirmed. The recorded side
+ * comes from `readRecordedPaymentPayout`, the requested side from `planPaymentPayout`.
+ */
+export function isSamePaymentRequest(
+  recorded: {
+    paidAmount: unknown; currency: string; paymentMethod: string; paidAt: Date;
+    paymentReference?: string | null; bankAccountId?: string | null; slipAttachmentId?: string | null;
+    payoutDestinationVersion?: number | null; payoutDefaultToken?: string | null;
+  },
+  requested: {
+    paidAmount: string; currency: string; paymentMethod: string; paidAt: Date;
+    paymentReference?: string; bankAccountId?: string; slipAttachmentId?: string;
+    payoutDestinationVersion?: number; payoutDefaultToken?: string;
+  },
+): boolean {
+  const same = (left?: string | number | null, right?: string | number | null) => (left ?? undefined) === (right ?? undefined);
+  return d(String(recorded.paidAmount)).eq(d(requested.paidAmount))
+    && recorded.currency === requested.currency
+    && recorded.paymentMethod === requested.paymentMethod
+    && recorded.paidAt.getTime() === requested.paidAt.getTime()
+    && same(recorded.paymentReference, requested.paymentReference)
+    && same(recorded.bankAccountId, requested.bankAccountId)
+    && same(recorded.slipAttachmentId, requested.slipAttachmentId)
+    && same(recorded.payoutDestinationVersion, requested.payoutDestinationVersion)
+    && same(recorded.payoutDefaultToken, requested.payoutDefaultToken);
 }
 
 export function validatePaymentReference(method: ReimbursementPaymentMethod, reference?: string): boolean {
@@ -594,14 +877,28 @@ export function isSlaRisk(ageHrs: number, slaHours?: number): boolean {
 
 const SENSITIVE_KEYS = /url|signedurl|objectkey|token|secret|accountnumber|ocr|rawtext|filebody/i;
 
-/** Strips known-sensitive keys from a bounded payload before it leaves the module. */
+/**
+ * Strips known-sensitive keys from a bounded payload before it leaves the module. The key list
+ * applies to the top level, as before; an account number is stripped at any depth, because the
+ * export and the event payloads nest objects and a full number must not ride out inside one
+ * (`accountLast4` is a different key and stays).
+ */
 export function redactPayload(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload)) {
     if (SENSITIVE_KEYS.test(key)) continue;
-    out[key] = value;
+    out[key] = withoutAccountNumbers(value);
   }
   return out;
+}
+
+function withoutAccountNumbers(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutAccountNumbers);
+  // Plain objects only: a Date or a decimal is a value, not a bag of keys.
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !/accountnumber/i.test(key))
+    .map(([key, item]) => [key, withoutAccountNumbers(item)]));
 }
 
 /**

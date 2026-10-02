@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
-import { PrismaAttachmentRepository } from './prisma-attachment.repository';
+import { Prisma } from '../../../../generated/prisma/client';
+import { NOT_REIMBURSEMENT_PAYMENT_SLIP_WHERE, PrismaAttachmentRepository } from './prisma-attachment.repository';
 
 function makeRepo(input?: { directEvidence?: object | null; snapshotEvidence?: object | null; linkedExpenseIds?: string[]; sourceEvidence?: object | null; wetSignedScan?: object | null }) {
   const expenseSubstituteReceiptEvidence = {
@@ -140,7 +141,7 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
     const tx = {
       $executeRaw: mock.fn(async () => 1),
       expenseSubstituteReceiptEvidence: { findFirst: mock.fn(async () => null) },
-      attachmentLink: { findMany: mock.fn(async () => []) },
+      attachmentLink: { findMany: mock.fn(async () => []), findFirst: mock.fn(async () => null) },
       expenseRecord: { findFirst: mock.fn(async () => null) },
       reimbursementLine: { findFirst: mock.fn(async () => null) },
       attachmentObject: {
@@ -169,12 +170,65 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
     // wet-signed scan, then the artifact/signature hold, then the snapshot hold — all on the tx.
     assert.equal(tx.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 3);
     assert.equal(tx.attachmentLink.findMany.mock.callCount(), 2);
+    // The payment-slip hold is checked on the same transaction, after the retention lock is taken.
+    assert.equal(tx.attachmentLink.findFirst.mock.callCount(), 1);
     assert.deepEqual((tx.attachmentObject.updateMany.mock.calls as any[])[0]?.arguments[0].where, {
       id: 'att-1',
       companyId: 'co-1',
       status: { not: 'DELETED' },
     });
     assert.equal(result.status, 'DELETED');
+  });
+});
+
+describe('PrismaAttachmentRepository reimbursement payment slips', () => {
+  it('recognises a slip by its payment link alone, tenant-scoped', async () => {
+    const attachmentLink = { findFirst: mock.fn(async (): Promise<{ id: string } | null> => ({ id: 'link-1' })) };
+    const repo = new PrismaAttachmentRepository({ client: { attachmentLink } } as any);
+
+    assert.equal(await repo.isReimbursementPaymentSlip({ id: 'att-1', companyId: 'co-1' }), true);
+    assert.deepEqual((attachmentLink.findFirst.mock.calls as any[])[0].arguments[0].where, {
+      companyId: 'co-1', attachmentId: 'att-1', targetType: 'reimbursement_payment', purpose: 'reimbursement.payment.slip',
+    });
+
+    attachmentLink.findFirst = mock.fn(async () => null);
+    assert.equal(await repo.isReimbursementPaymentSlip({ id: 'att-receipt', companyId: 'co-1' }), false);
+  });
+
+  // Review 2026-10-01: the LINE claim-draft picker offered the payer's slip files as receipts to pick, and picking
+  // one was refused when the line was saved. The picker asks with this query.
+  it('writes "not a payment slip" as a query that keeps every ordinary upload', () => {
+    assert.deepEqual(NOT_REIMBURSEMENT_PAYMENT_SLIP_WHERE, { AND: [
+      // A slip a payment carries: by its link.
+      { links: { none: { targetType: 'reimbursement_payment', purpose: 'reimbursement.payment.slip' } } },
+      // A slip uploaded and not recorded yet: by its upload tag, said as "no such tag, or another tag". The shorter
+      // NOT (tag = slip) is NULL for a file with no metadata or no `generatedFor`, and PostgreSQL then drops every
+      // ordinary receipt from the list. The real database answers this in the reimbursement gate
+      // (prisma-reimbursement.repository.draft-submit-race.spec.ts).
+      { OR: [
+        { metadataJson: { path: ['generatedFor'], equals: Prisma.DbNull } },
+        { metadataJson: { path: ['generatedFor'], not: 'reimbursement_payment_slip' } },
+      ] },
+    ] });
+  });
+
+  it('refuses to delete a slip inside the delete transaction, before anything is written', async () => {
+    const tx = {
+      $executeRaw: mock.fn(async () => 1),
+      reimbursementLine: { findFirst: mock.fn(async () => null) },
+      attachmentLink: { findFirst: mock.fn(async () => ({ id: 'link-1' })), findMany: mock.fn(async () => []) },
+      expenseSubstituteReceiptEvidence: { findFirst: mock.fn(async () => null) },
+      attachmentObject: { updateMany: mock.fn(async () => ({ count: 1 })) },
+    };
+    const repo = new PrismaAttachmentRepository({ client: {} } as any);
+
+    await assert.rejects(
+      () => repo.markDeleted({ companyId: 'co-1', id: 'att-slip' }, tx as any),
+      (error: any) => error.getStatus() === 409 && error.getResponse().code === 'reimbursement_payment_slip_retained',
+    );
+    assert.equal(tx.attachmentObject.updateMany.mock.callCount(), 0);
+    // Checked under the retention lock, which the slip link is written under as well.
+    assert.equal(tx.$executeRaw.mock.callCount(), 2);
   });
 });
 
@@ -286,6 +340,34 @@ describe('PrismaAttachmentRepository.linkToTarget', () => {
     }), /personal signature image cannot be attached/);
     assert.equal(expenseRecord.findFirst.mock.callCount(), 0);
     assert.equal(attachmentLink.create.mock.callCount(), 0);
+  });
+
+  it('refuses to hang a reimbursement payment slip off an expense or an accounting document', async () => {
+    // Owner 2026-10-01: a slip is opened only through its claim, by the people that claim names. As
+    // an expense receipt it would be read by OCR and handed to every reviewer of that expense, and
+    // the generic download would then refuse them all. Refused where the link is written.
+    const slipOfAPayment = setup();
+    // The link table as it answers each question asked of it: no signature link, one slip link.
+    (slipOfAPayment.attachmentLink.findFirst.mock as any).mockImplementation(async ({ where }: any) => (
+      where.targetType === 'reimbursement_payment' && where.purpose === 'reimbursement.payment.slip' ? { targetType: 'reimbursement_payment' } : null
+    ));
+    // Uploaded as a slip and not recorded with a payment yet: the upload tag is enough.
+    const slipUpload = setup({ attachment: { id: 'att-1', branchId: 'branch-1', metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' } } });
+
+    for (const { repo, expenseRecord, accountingDocument, attachmentLink } of [slipOfAPayment, slipUpload]) {
+      for (const [targetType, targetId, purpose] of [
+        ['expense.record', 'expense-1', 'expense.receipt.primary'],
+        ['expense.record', 'expense-1', 'expense.payment.evidence'],
+        ['accounting.document', 'invoice-1', 'accounting.receipt.evidence'],
+      ]) {
+        await assert.rejects(() => repo.linkToTarget({
+          companyId: 'co-1', attachmentId: 'att-1', targetType: targetType!, targetId: targetId!, purpose: purpose!, linkedByUserId: 'user-1',
+        }), (error: any) => error.getStatus() === 400 && /payment slip cannot be attached to anything else/.test(error.message));
+      }
+      assert.equal(expenseRecord.findFirst.mock.callCount(), 0, 'refused before the target is even read');
+      assert.equal(accountingDocument.findFirst.mock.callCount(), 0);
+      assert.equal(attachmentLink.create.mock.callCount(), 0);
+    }
   });
 });
 

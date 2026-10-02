@@ -4,6 +4,7 @@ import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.r
 import { RunWorkflowRuleUseCase, type RunWorkflowRuleResult } from './workflow-runner.use-case';
 import { ruleMatchesEventType } from '../../domain/logic/workflow-event-match.logic';
 import { buildRunDedupKey } from '../../domain/logic/workflow-idempotency.logic';
+import { claimIdOfEvent } from '../../domain/logic/workflow-claim-task.logic';
 
 export type IngestWorkflowEventResult = { matchedRuleCount: number; skipped: boolean; reason?: string };
 
@@ -27,6 +28,29 @@ export class IngestWorkflowEventUseCase {
   // Idempotent on (companyId, eventId): a re-delivered source event is stored once and
   // re-processing is a no-op. Unknown/unmatched events are recorded as SKIPPED, not FAILED.
   async execute(event: WorkflowEventEnvelope): Promise<IngestWorkflowEventResult> {
+    const result = await this.ingest(event);
+    // Audit B8: after the event's own rules ran (a claim event with no rule still counts), close the
+    // approval tasks its claim has outlived. Not on a replay, which must change nothing at all.
+    if (result.reason !== 'already_processed') await this.closeClaimTasks(event, false);
+    return result;
+  }
+
+  /**
+   * ponytail: best effort. A throw here would lose the event's notices for good (the retry is
+   * dropped at the inbox), and a task left open is closed by the claim's next event or by the
+   * sweep that runs at every release.
+   */
+  private async closeClaimTasks(event: WorkflowEventEnvelope, supersede: boolean): Promise<void> {
+    const requestId = claimIdOfEvent(event);
+    if (!requestId) return;
+    try {
+      await this.repo.closeSettledClaimTasks({ companyId: event.companyId, requestId, supersede });
+    } catch {
+      // Left for the next event or the release sweep, as described above.
+    }
+  }
+
+  private async ingest(event: WorkflowEventEnvelope): Promise<IngestWorkflowEventResult> {
     const existing = await this.repo.findEventInboxByEventId(event.companyId, event.eventId);
     if (existing) return { matchedRuleCount: 0, skipped: true, reason: 'already_processed' };
 
@@ -41,6 +65,9 @@ export class IngestWorkflowEventUseCase {
       payloadJson: event.payload,
       dedupKey: event.dedupKey,
     });
+    // A claim sent again starts a new round with its own task: whatever an earlier round left open
+    // is superseded before that task is created (audit B8).
+    if (event.eventType === 'reimbursement.request_submitted') await this.closeClaimTasks(event, true);
 
     let rules;
     try {

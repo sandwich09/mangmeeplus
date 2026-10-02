@@ -1,17 +1,32 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { BadRequestException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
 import {
   CreateReimbursementDraftUseCase,
   CancelReimbursementUseCase,
+  WithdrawReimbursementCancellationUseCase,
+  ResumeReimbursementUseCase,
+  GetReimbursementDetailUseCase,
+  ListReimbursementsUseCase,
   ReopenRejectedReimbursementUseCase,
   UpdateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
   ReimbursementInternalNotesUseCase,
   reimbursementPeriodKey,
 } from './reimbursement-request.use-case';
+import { ExportReimbursementEvidenceUseCase, FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase, RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
+import { PrismaReimbursementRepository, hubBucketOfStatus, hubBucketWhere, hubSearchWhere } from '../../infrastructure/prisma-reimbursement.repository';
+import { isExpenseVoidReason, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { GetReimbursementAiSummaryUseCase, GetReimbursementApprovalBacklogUseCase, PAYOUT_CORRECTION_NOTE } from './reimbursement-summary.use-case';
+import { toRequestSummary } from '../dto/reimbursement.mapper';
+import { PrismaPermissionResolverRepository } from '../../../access-control/infrastructure/prisma-permission-resolver.repository';
+import { RevealClaimPayoutUseCase } from './reimbursement-payout-reveal.use-case';
+import { claimSignatureAckHash, claimSnapshotFields, computeSnapshotHash } from '../../domain/logic/reimbursement.logic';
+import { hasPayoutSnapshot, legacyPayoutConfirmToken, payoutAttestationError, sealPayoutDestination } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
+import { roleKeyFromName } from '../../../employee-access/application/use-cases/create-role.use-case';
 import { filterPermissionsByEntitlement } from '../../../employee-access/domain/logic/feature-gate.logic';
 import {
   approverModeForRole,
@@ -23,6 +38,19 @@ import {
 } from './reimbursement-policy.use-case';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
+import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
+import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
+import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import {
+  applyDraftPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readClaimPayoutSecret,
+  readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
+} from '../../infrastructure/reimbursement-payout';
+import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
+import { claimPayoutMatchesVersion, freezePayoutCorrection, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
+import { paymentTurnUserIds, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
+import { payoutDefaultToken } from '../../domain/logic/payout-destination.logic';
+import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
+import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from './reimbursement-payout-correction.use-case';
 
 // Lane C: one claim, many lines. The header total, category and date are a
 // server-side rollup of the lines — a client never sends them.
@@ -107,6 +135,7 @@ function evidenceService() {
     {
       findById: async ({ id }: any) => ({ ...attachment, id }),
       findManyByIds: async ({ ids }: any) => ids.map((id: string) => ({ ...attachment, id })),
+      isReimbursementPaymentSlip: async () => false,
     } as any,
     { findById: async (_c: string, id: string) => ({ id, companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'staff-1' }) } as any,
   );
@@ -123,6 +152,14 @@ type RepoOptions = {
   supersededApprovalStepCount?: number;
   /** Expense projections a cancellation has to void before the claim may close. */
   claimProjections?: Array<{ id: string; sourceReimbursementLineId: string; status?: string }>;
+  /** What the expense void would refuse right now, as the repository reads it before and during a cancellation. */
+  cancellationBlocker?: () => { code: string; periodKey?: string } | null;
+  /** Payout: by default the fixture claim asks for cash, so a test about something else needs no account; this leaves it with no choice. */
+  noDefaultPayout?: boolean;
+  /** Payout: members an employee-data editor can look up (`findPayoutMember`). */
+  /** Payout: users whose OWNER / ADMIN key comes from a role the company made (a custom role named "Admin"), not from the system role. */
+  companyRoleUsers?: string[];
+  payoutMembers?: Record<string, { displayName: string; membershipStatus?: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean }>;
 };
 
 /** Captures the outbox rows a two-phase repository method writes inside its transaction. */
@@ -132,6 +169,9 @@ function fakeTx(rows: any[]) {
 
 function fakeRepo(options: RepoOptions = {}) {
   let request: any = null;
+  // The payout tables are in memory, but every read and write below is the production function.
+  const payoutTables = fakePayoutTables();
+  const payoutDb = payoutTables.client;
   const projections = (options.claimProjections ?? []).map((projection) => ({ status: 'CONFIRMED', ...projection }));
   const calls = {
     claimQueries: [] as any[], duplicates: [] as any[], audits: [] as any[], outbox: [] as any[],
@@ -142,12 +182,16 @@ function fakeRepo(options: RepoOptions = {}) {
     resolveSourceLines: async (_company: string, _user: string, _branch: string, _currency: string, lines: any[]) => lines.map(line => ({ ...line, ...(line.linkedExpenseId ? { sourceExpenseSnapshot: { schemaVersion: 1, expenseId: line.linkedExpenseId } } : {}) })),
     resolveCreateBranchId: async () => 'branch-1',
     findPolicy: async () => options.policy ?? null,
+    // The claim detail's gate, which every decision endpoint asks first: who on the waiting step can still act.
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
     getUserDisplayName: async () => 'Somchai',
     // Lane D: the detail path resolves approver/reviewer/payer names in one batch.
     getUserDisplayNames: async () => ({}),
     // Lane F: the detail path also lists uploaded scans of the signed claim form.
     listSignedClaimFormCopies: async () => [],
-    createRequest: async (data: any) => {
+    // Payout Phase 0: the detail of a claim waiting for payment names who can record it.
+    listPaymentRecorderNames: async () => [],
+    createRequest: async (data: any, payout?: any) => {
       request = {
         id: 'rb-1', status: options.status ?? 'DRAFT', requesterUserId: data.requesterUserId,
         paymentTotalAmount: '0.0000', outstandingAmount: data.amount, duplicateStatus: 'NOT_CHECKED',
@@ -156,10 +200,19 @@ function fakeRepo(options: RepoOptions = {}) {
         ...data,
         lines: data.lines.map((line: any, index: number) => ({ ...line, id: `rbl-${index + 1}`, companyId: data.companyId, reimbursementRequestId: 'rb-1' })),
       };
+      if (!options.noDefaultPayout && !payout) request.payoutMethod = 'CASH';
+      if (payout) {
+        Object.assign(request, await applyDraftPayout(payoutDb, data.companyId, request.id, payout.write));
+        await payout.onPersisted?.(fakeTx(calls.outbox), request.id);
+      }
       return request;
     },
-    updateDraftRequest: async (companyId: string, id: string, expectedUpdatedAt: Date, data: any, lines?: any[]) => {
+    updateDraftRequest: async (companyId: string, id: string, expectedUpdatedAt: Date, data: any, lines?: any[], payout?: any) => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
+      if (payout) {
+        Object.assign(request, await applyDraftPayout(payoutDb, companyId, id, payout.write));
+        await payout.onPersisted?.(fakeTx(calls.outbox), id);
+      }
       Object.assign(request, data, { updatedAt: new Date(request.updatedAt.getTime() + 1) });
       if (lines) request.lines = lines.map((line: any, index: number) => ({
         ...line, id: `rbl-${index + 1}`, companyId, reimbursementRequestId: id,
@@ -177,7 +230,7 @@ function fakeRepo(options: RepoOptions = {}) {
         throw new Error('reimbursement_changed');
       }
       if (expectedStatus === 'PENDING_APPROVAL') Object.assign(current ?? {}, { status: 'CANCELLED', invalidatedReason: 'withdrawn_by_requester' });
-      Object.assign(request, {
+      Object.assign(request, await draftPayoutAfterReopen(payoutDb, request), {
         status: 'DRAFT', rejectedAt: null, rejectionReason: null, approvalSnapshotHash: null, approvalPolicySnapshotJson: null,
         currentApprovalStepId: null, updatedByUserId: actorUserId, updatedAt: new Date(request.updatedAt.getTime() + 1),
       });
@@ -187,10 +240,24 @@ function fakeRepo(options: RepoOptions = {}) {
     // projection is voided outside the transaction, and only a claim with no live projection may
     // close. Both fakes keep the repository's guards so the spec still proves that order.
     listClaimProjections: async () => projections,
+    // Only a record still to be voided can stand in the way, as in the repository.
+    findCancellationBlocker: async () => (projections.some((projection) => projection.status !== 'VOIDED') ? options.cancellationBlocker?.() ?? null : null),
+    // The fence each void runs first: no void for a cancellation that was withdrawn.
+    assertCancellationPending: async () => {
+      if (!request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_intent_changed');
+    },
     beginCancellationAtomic: async (data: any) => {
       assert.equal(data.expectedStatus, request.status);
       assert.equal(data.expectedUpdatedAt, request.updatedAt);
-      if (request.cancellationPendingAt) return { request, resumed: true };
+      if (request.cancellationPendingAt) {
+        // The repository's rule: the reason on record stays, unless the void refuses it.
+        if (request.cancellationPendingReason === data.reason) return { request, resumed: true };
+        if (isExpenseVoidReason(request.cancellationPendingReason)) throw new ConflictException('reimbursement_cancellation_already_pending');
+        const previous = request.cancellationPendingReason;
+        Object.assign(request, { cancellationPendingReason: data.reason, updatedAt: new Date(request.updatedAt.getTime() + 1) });
+        await data.onReasonCorrected?.(fakeTx(calls.outbox), previous);
+        return { request, resumed: true };
+      }
       if (request.paymentStatus === 'PAID' || request.paymentStatus === 'PARTIALLY_PAID') {
         throw new Error('reimbursement_cancellation_has_payment');
       }
@@ -204,9 +271,8 @@ function fakeRepo(options: RepoOptions = {}) {
       return { request, resumed: false };
     },
     completeCancellationAtomic: async (data: any) => {
-      if (!request.cancellationPendingAt || request.cancellationPendingByUserId !== data.actorUserId) {
-        throw new Error('reimbursement_cancellation_intent_changed');
-      }
+      if (request.status === 'CANCELLED') return request;
+      if (!request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_intent_changed');
       if (projections.some((projection) => projection.status !== 'VOIDED')) {
         throw new Error('reimbursement_cancellation_projection_live');
       }
@@ -220,6 +286,17 @@ function fakeRepo(options: RepoOptions = {}) {
       await data.onCancelledPersisted(fakeTx(calls.outbox));
       return request;
     },
+    withdrawCancellationAtomic: async (data: any) => {
+      if (!request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_not_pending');
+      if (projections.some((projection) => projection.status === 'VOIDED')) throw new ConflictException('reimbursement_cancellation_partly_done');
+      const withdrawn = { startedByUserId: request.cancellationPendingByUserId, startedAt: request.cancellationPendingAt, reason: request.cancellationPendingReason };
+      Object.assign(request, {
+        cancellationPendingAt: undefined, cancellationPendingByUserId: undefined, cancellationPendingReason: undefined,
+        updatedAt: new Date(request.updatedAt.getTime() + 1),
+      });
+      await data.onWithdrawnPersisted(fakeTx(calls.outbox), withdrawn);
+      return request;
+    },
     findLinesClaimedElsewhere: async (companyId: string, excludeId: string, attachmentIds: string[], expenseIds: string[]) => {
       calls.claimQueries.push({ companyId, excludeId, attachmentIds, expenseIds });
       return options.claimedElsewhere ?? [];
@@ -227,17 +304,21 @@ function fakeRepo(options: RepoOptions = {}) {
     findDuplicateCandidates: async () => options.duplicateCandidates ?? [],
     createDuplicateCandidate: async (data: any) => { calls.duplicates.push(data); },
     createApprovalStep: async () => ({ id: 'step-1' }),
-    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, duplicateCandidates, approvalStep, onSubmittedPersisted }: any) => {
+    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, duplicateCandidates, approvalStep, payout, onSubmittedPersisted }: any) => {
       if (options.submitError) throw options.submitError;
       assert.equal(expectedUpdatedAt, request.updatedAt);
+      // Like the repository transaction: the payout is decided, checked against what was shown and
+      // frozen first, by the production function, and the claim's hash is made from its columns.
+      const frozen = payout ? await freezePayoutAtSubmit(payoutDb, { ...request }, payout) : undefined;
+      const snapshotHash = frozen ? payout.snapshotHash(frozen.columns) : approvalStep?.requestSnapshotHash;
       const step = approvalStep ? {
-        id: `step-${calls.approvalSteps.length + 1}`, ...approvalStep,
+        id: `step-${calls.approvalSteps.length + 1}`, ...approvalStep, requestSnapshotHash: snapshotHash,
         assignedApproverUserIds: approvalStep.assignedApproverUserIdsJson,
       } : undefined;
       if (step) calls.approvalSteps.push(step);
       calls.duplicates.push(...duplicateCandidates);
       const documentNumber = { id: 'num-1', documentNumber: 'RB-202601-000001' };
-      Object.assign(request, data, {
+      Object.assign(request, data, frozen && { ...frozen.columns, approvalSnapshotHash: snapshotHash }, {
         requestNo: documentNumber.documentNumber,
         currentApprovalStepId: step?.id ?? null,
         updatedAt: new Date(request.updatedAt.getTime() + 1),
@@ -246,6 +327,7 @@ function fakeRepo(options: RepoOptions = {}) {
         step, documentNumber, documentNumberReused: options.documentNumberReused ?? false,
         supersededDuplicateCandidateCount: options.supersededDuplicateCandidateCount ?? 0,
         supersededApprovalStepCount: options.supersededApprovalStepCount ?? 0,
+        payout: frozen,
       });
       return {
         step,
@@ -263,6 +345,30 @@ function fakeRepo(options: RepoOptions = {}) {
       await data.onReadyPersisted(fakeTx(calls.outbox));
       return request;
     },
+    // ---- Payout: thin wrappers, like the repository's own ----
+    findMemberPayoutAccount: (companyId: string, userId: string) => readMemberPayoutAccount(payoutDb, companyId, userId),
+    findMemberPayoutSecret: (companyId: string, userId: string) => readMemberPayoutSecret(payoutDb, companyId, userId),
+    setMemberPayoutAccount: async (data: any, onPersisted: any) => {
+      const change = await writeMemberPayoutAccount(payoutDb, data);
+      await onPersisted(fakeTx(calls.outbox), change);
+      return change.after;
+    },
+    removeMemberPayoutAccount: async (companyId: string, userId: string, onPersisted: any) => {
+      const before = await deleteMemberPayoutAccount(payoutDb, companyId, userId);
+      if (before) await onPersisted(fakeTx(calls.outbox), before);
+      return !!before;
+    },
+    // An OWNER or ADMIN key in the fixture is the system role, unless a case names the user as holding a company role with that key.
+    holdsSystemOwnerOrAdminRole: async (_companyId: string, userId: string) => !(options.companyRoleUsers ?? []).includes(userId),
+    // A member of the fixture is ACTIVE unless a case says otherwise.
+    findPayoutMember: async (_companyId: string, userId: string) => (options.payoutMembers?.[userId] ? { membershipStatus: 'ACTIVE', ...options.payoutMembers[userId] } : null),
+    findClaimPayout: (claim: any) => readClaimPayout(payoutDb, claim),
+    listClaimPayoutVersions: (claim: any) => readClaimPayoutVersions(payoutDb, claim),
+    findDraftDefaultPayout: (claim: any) => readDraftDefaultPayout(payoutDb, claim),
+    // What the detail shows whoever may pay a claim that froze no account (payout spec §15).
+    findLegacyPayoutDefault: (claim: any) => readLegacyPayoutDefault(payoutDb, claim),
+    findClaimPayoutSecret: (companyId: string, requestId: string, version: number) => readClaimPayoutSecret(payoutDb, companyId, requestId, version),
+    planSubmitPayout: (claim: any) => readSubmitPayoutPlan(payoutDb, claim),
   } as any;
   // Voiding a projection is what makes it safe to close the claim, so the fake really flips it.
   const voidExpense = {
@@ -272,7 +378,16 @@ function fakeRepo(options: RepoOptions = {}) {
       if (projection) projection.status = 'VOIDED';
     },
   } as any;
-  return { repo, calls, voidExpense, projections, get request() { return request; } };
+  return { repo, calls, voidExpense, projections, payoutTables, get request() { return request; } };
+}
+
+/** The real payout use case over the fake repository; its key never leaves this process. */
+const PAYOUT_KEY = Buffer.alloc(32, 7);
+function payoutUseCase(repo: any, audit: any = noopAudit, notifications: any[] = []) {
+  return new MemberPayoutAccountUseCase(
+    repo, audit, { credentialEncryptionKey: PAYOUT_KEY } as any,
+    { executeInTransaction: async (input: any) => { notifications.push(input); } } as any,
+  );
 }
 
 function useCases(state: { repo: any; calls?: { audits: any[] } }) {
@@ -280,9 +395,11 @@ function useCases(state: { repo: any; calls?: { audits: any[] } }) {
   const audit = state.calls
     ? { log: async (data: any) => { state.calls!.audits.push(data); } } as any
     : noopAudit;
+  const payouts = payoutUseCase(state.repo, audit);
   return {
-    create: new CreateReimbursementDraftUseCase(state.repo, audit, evidence),
-    update: new UpdateReimbursementDraftUseCase(state.repo, audit, evidence),
+    payouts,
+    create: new CreateReimbursementDraftUseCase(state.repo, audit, evidence, payouts),
+    update: new UpdateReimbursementDraftUseCase(state.repo, audit, evidence, payouts),
     submit: new SubmitReimbursementUseCase(
       state.repo, audit, noopOutbox, evidence, readyApproverRoutes,
       { execute: async (...args: any[]) => { (state.calls as any)?.projections?.push(args); } } as any,
@@ -488,7 +605,7 @@ describe('CancelReimbursementUseCase', () => {
     const state = fakeRepo();
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense);
-    const result = await cancel.execute(ctx({ permissions: ['reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว');
+    const result = await cancel.execute(ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว');
     assert.equal(result.status, 'CANCELLED');
     assert.equal(state.request.rejectionReason, 'ไม่ใช้แล้ว');
     assert.equal(state.request.paymentStatus, 'NOT_PAYABLE');
@@ -505,7 +622,7 @@ describe('CancelReimbursementUseCase', () => {
     ] });
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense);
-    const result = await cancel.execute(ctx({ permissions: ['reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว');
+    const result = await cancel.execute(ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว');
     assert.equal(result.status, 'CANCELLED');
     assert.deepEqual(state.calls.voided, ['exp-1', 'exp-2']);
   });
@@ -514,7 +631,7 @@ describe('CancelReimbursementUseCase', () => {
     const state = fakeRepo();
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense);
-    const result = await cancel.execute(ctx({ userId: 'finance-1', permissions: ['reimbursement.finance_review'] }), 'rb-1', 'ยกเลิกหลังกลับรายการจ่าย');
+    const result = await cancel.execute(ctx({ userId: 'finance-1', permissions: ['reimbursement.read', 'reimbursement.finance_review'] }), 'rb-1', 'ยกเลิกหลังกลับรายการจ่าย');
     assert.equal(result.status, 'CANCELLED');
     assert.equal(state.request.rejectionReason, 'ยกเลิกหลังกลับรายการจ่าย');
   });
@@ -526,11 +643,679 @@ describe('CancelReimbursementUseCase', () => {
     const brokenVoid = { executeForReimbursement: async () => undefined } as any;
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, brokenVoid);
     await assert.rejects(
-      () => cancel.execute(ctx({ permissions: ['reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว'),
+      () => cancel.execute(ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว'),
       /reimbursement_cancellation_projection_live/,
     );
     assert.notEqual(state.request.status, 'CANCELLED');
     assert.ok(state.request.cancellationPendingAt, 'the intent stays pending so a retry can finish it');
+  });
+
+  // Audit B3. Before: a reason of one or two characters was taken, the intent was committed, and the
+  // first expense void then refused the reason. Nothing could finish or replace that cancellation.
+  it('refuses a reason the expense void would refuse, before any intent is written', async () => {
+    const state = fakeRepo({ claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }] });
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    // The real void: its reason rule is the one a cancellation has to satisfy. Nothing else of it is reached.
+    const realVoid = new VoidExpenseUseCase({} as any, noopAudit, noopOutbox, {} as any, {} as any, {} as any);
+    const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, realVoid);
+    const requester = ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] });
+
+    for (const reason of ['ก', 'ab', '  x  ']) {
+      await assert.rejects(() => cancel.execute(requester, 'rb-1', reason), (error: any) => {
+        assert.equal(error.getStatus?.(), 400, reason);
+        assert.match(error.message, /cancellation_reason_too_short/);
+        return true;
+      });
+    }
+    assert.equal(state.request.cancellationPendingAt, undefined, 'no intent was written');
+    assert.equal(state.request.status, 'DRAFT');
+    assert.deepEqual(state.calls.outbox, []);
+
+    // The shortest reason the void takes cancels the claim, and no reason at all still takes the default one.
+    assert.equal((await new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense).execute(requester, 'rb-1', 'abc')).status, 'CANCELLED');
+    const blank = fakeRepo();
+    await useCases(blank).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    assert.equal((await new CancelReimbursementUseCase(blank.repo, noopAudit, realVoid).execute(requester, 'rb-1', '   ')).status, 'CANCELLED');
+    assert.equal(blank.request.rejectionReason, 'ยกเลิกคำขอเบิกค่าใช้จ่าย');
+  });
+});
+
+// Owner rule 2026-10-01 (payout spec §25.1 I2), for the two stuck states of audit B3 and B4: what LINE says a
+// claim waits for and the desk the web prints for it come from the same rows, and name the same party.
+describe('a claim the system holds reads the same on LINE and on the web', () => {
+  const NOW = new Date('2026-10-01T03:00:00.000Z');
+  const row = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id, companyId: 'co-1', branchId: 'b1', requestNo: `RB-${id}`, requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'สมชาย',
+    reason: 'แท็กซี่', categoryKey: 'travel', amount: '100.0000', outstandingAmount: '100.0000', paymentTotalAmount: '0.0000', currency: 'THB',
+    incurredDate: NOW, status: 'PENDING_APPROVAL', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH',
+    receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required', submittedAt: new Date('2026-09-29T03:00:00.000Z'),
+    createdAt: new Date('2026-09-29T02:00:00.000Z'), updatedAt: NOW, ...overrides,
+  }) as any;
+  const pendingStep = (requestId: string) => ({ id: `step-${requestId}`, companyId: 'co-1', reimbursementRequestId: requestId, sequenceNo: 1,
+    status: 'PENDING', assignedApproverUserIds: ['mgr-1'], approverRoleSnapshot: 'MANAGER' }) as any;
+  const cancelling = { cancellationPendingAt: NOW, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' };
+
+  it('says รอระบบปรับสถานะ on LINE exactly where the web desk is the system, and counts neither as waiting for approval', async () => {
+    const rows = [
+      row('waiting'),                                                          // an ordinary claim waiting for สมศรี
+      row('decided'),                                                          // approved, the system has not moved it on (B4)
+      row('cancel-at-approval', cancelling),                                   // being cancelled while it waited for สมศรี (B3)
+      row('cancel-at-payment', { ...cancelling, status: 'READY_FOR_PAYMENT', approvedAt: NOW }),
+      row('cancel-at-finance', { ...cancelling, status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING', approvedAt: NOW }),
+      row('paying', { status: 'READY_FOR_PAYMENT', approvedAt: NOW }),         // an ordinary claim waiting for payment
+      row('no-approval-needed', { status: 'APPROVED', approvedAt: NOW }),      // nobody had to approve it; the system has not moved it on (B4)
+    ];
+    const steps = [pendingStep('waiting'), pendingStep('cancel-at-approval')];
+    const repo = {
+      listRequests: async () => rows,
+      findPendingApprovalSteps: async (_companyId: string, ids: string[]) => steps.filter((step) => ids.includes(step.reimbursementRequestId)),
+      findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+      getUserDisplayNames: async () => ({ 'mgr-1': 'สมศรี' }),
+    } as any;
+
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(repo, noopAudit).execute(ctx({ permissions: ['reimbursement.read'] }), {}, NOW);
+    const lineSays: Record<string, string> = Object.fromEntries(backlog.items.map((item) => [item.id, item.waitingOn]));
+    // The web's row for the same claim, as the hub list builds it: the claim with its pending steps.
+    const webDesk: Record<string, { kind: string; names?: string[] } | undefined> = Object.fromEntries(rows.map((claim) => [claim.id,
+      toRequestSummary({ ...claim, approvalSteps: steps.filter((step) => step.reimbursementRequestId === claim.id) }, { approverNames: { 'mgr-1': 'สมศรี' } }).currentDesk]));
+
+    for (const claim of rows) {
+      assert.equal(lineSays[claim.id] === REIMBURSEMENT_SYSTEM_WAIT_LABEL, webDesk[claim.id]?.kind === 'SYSTEM', claim.id);
+    }
+    assert.deepEqual(lineSays, {
+      waiting: 'สมศรี', decided: REIMBURSEMENT_SYSTEM_WAIT_LABEL, 'cancel-at-approval': REIMBURSEMENT_SYSTEM_WAIT_LABEL,
+      'cancel-at-payment': REIMBURSEMENT_SYSTEM_WAIT_LABEL, 'cancel-at-finance': REIMBURSEMENT_SYSTEM_WAIT_LABEL, paying: REIMBURSEMENT_DESK_LABELS.PAYMENT,
+      // Whoever may record the payment is who carries it on (ดำเนินการต่อ), so both name the payment desk.
+      'no-approval-needed': REIMBURSEMENT_DESK_LABELS.PAYMENT,
+    });
+    assert.deepEqual(webDesk, {
+      waiting: { kind: 'APPROVER', names: ['สมศรี'] }, decided: { kind: 'SYSTEM' }, 'cancel-at-approval': { kind: 'SYSTEM' },
+      'cancel-at-payment': { kind: 'SYSTEM' }, 'cancel-at-finance': { kind: 'SYSTEM' }, paying: { kind: 'PAYMENT' },
+      'no-approval-needed': { kind: 'PAYMENT' },
+    });
+    // LINE's wording for the group is unchanged, and a claim the system holds is not "waiting for approval".
+    assert.equal(REIMBURSEMENT_SYSTEM_WAIT_LABEL, 'รอระบบปรับสถานะ');
+    assert.deepEqual(backlog.desks.find((desk) => desk.kind === 'status_pending'), {
+      kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 4, totalsByCurrency: [{ currency: 'THB', amount: '400.00' }],
+      oldestSubmittedOn: '2026-09-29', longestWaitDays: 2,
+    });
+    assert.deepEqual([backlog.total, backlog.awaitingApprovalCount, backlog.byApprover.map((group) => [group.name, group.count])], [7, 1, [['สมศรี', 1]]]);
+    // The new desk moves no claim between the hub's buckets: a row on it sits where its status puts it, which is
+    // where the cards counted it (the cards count by status).
+    for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'] as const) {
+      for (const financeReviewStatus of ['NOT_REQUIRED', 'PENDING', 'APPROVED_FOR_PAYMENT']) {
+        assert.equal(reimbursementHubBucket({ status, financeReviewStatus, currentDesk: { kind: 'SYSTEM' } }), hubBucketOfStatus(status, financeReviewStatus),
+          `${status}/${financeReviewStatus}`);
+      }
+    }
+  });
+});
+
+// Payout spec §14.7, §17.3: a claim sent back to have its payout account corrected is PENDING_APPROVAL
+// with no step open. Read by its steps alone that is "decided, waiting for the system"; it is with its
+// requester, and LINE and the web say so in the same words.
+describe('a claim whose payout account is being corrected reads the same on LINE and on the web', () => {
+  const NOW = new Date('2026-10-01T03:00:00.000Z'); // 10:00 on 1 October in Bangkok
+  const row = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id, companyId: 'co-1', branchId: 'b1', requestNo: `RB-${id}`, requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'สมชาย',
+    reason: 'แท็กซี่', categoryKey: 'travel', amount: '100.0000', outstandingAmount: '100.0000', paymentTotalAmount: '0.0000', currency: 'THB',
+    incurredDate: NOW, status: 'PENDING_APPROVAL', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH',
+    receiptRequirementStatus: 'ATTACHED', postingStatus: 'posted', submittedAt: new Date('2026-09-20T03:00:00.000Z'),
+    createdAt: new Date('2026-09-20T02:00:00.000Z'), updatedAt: NOW, ...overrides,
+  }) as any;
+  const pendingStep = (requestId: string) => ({ id: `step-${requestId}`, companyId: 'co-1', reimbursementRequestId: requestId, sequenceNo: 1,
+    status: 'PENDING', assignedApproverUserIds: ['mgr-1'], approverRoleSnapshot: 'MANAGER' }) as any;
+  const sentBack = { payoutCorrectionRequestedAt: new Date('2026-09-30T03:00:00.000Z'), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG' };
+  const rows = [
+    row('sent-back', sentBack),                                                                   // phase A: with its requester
+    row('new-account', { ...sentBack, payoutCorrectionSubmittedAt: new Date('2026-10-01T02:00:00.000Z') }), // phase B: waiting for สมศรี again
+    row('waiting', { submittedAt: new Date('2026-09-29T03:00:00.000Z') }),                        // an ordinary claim waiting for สมศรี
+    row('sent-back-cancelling', { ...sentBack, cancellationPendingAt: NOW, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' }),
+  ];
+  const steps = [pendingStep('new-account'), pendingStep('waiting')];
+  const repo = {
+    listRequests: async () => rows,
+    findPolicy: async () => ({ ...NO_APPROVAL_POLICY, slaHours: 48 }),
+    findPendingApprovalSteps: async (_companyId: string, ids: string[]) => steps.filter((step) => ids.includes(step.reimbursementRequestId)),
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+    getUserDisplayNames: async () => ({ 'mgr-1': 'สมศรี' }),
+  } as any;
+  const reader = ctx({ permissions: ['reimbursement.read'] });
+
+  it('says รอผู้เบิกแก้บัญชีรับเงิน on LINE where the web desk is the requester, and counts the claim for no approver', async () => {
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(repo, noopAudit).execute(reader, {}, NOW);
+    const webDesk = Object.fromEntries(rows.map((claim) => [claim.id,
+      toRequestSummary({ ...claim, approvalSteps: steps.filter((step) => step.reimbursementRequestId === claim.id) }, { approverNames: { 'mgr-1': 'สมศรี' } }).currentDesk]));
+    assert.deepEqual(webDesk, {
+      'sent-back': { kind: 'REQUESTER' }, 'new-account': { kind: 'APPROVER', names: ['สมศรี'] }, waiting: { kind: 'APPROVER', names: ['สมศรี'] },
+      'sent-back-cancelling': { kind: 'SYSTEM' },
+    });
+    // Every claim, with the day its wait counts from: the send-back, the new account, or the day it was sent.
+    const byId = Object.fromEntries(backlog.items.map((item) => [item.id, item]));
+    assert.deepEqual(byId['sent-back'], {
+      id: 'sent-back', documentNumber: 'RB-sent-back', requesterName: 'สมชาย', amount: '100.00', currency: 'THB',
+      waitingOn: 'รอผู้เบิกแก้บัญชีรับเงิน', submittedOn: '2026-09-20', sentBackOn: '2026-09-30', waitDays: 1,
+    });
+    assert.deepEqual(byId['new-account'], {
+      id: 'new-account', documentNumber: 'RB-new-account', requesterName: 'สมชาย', amount: '100.00', currency: 'THB',
+      waitingOn: 'สมศรี', submittedOn: '2026-09-20', resubmittedOn: '2026-10-01', waitDays: 0,
+    });
+    assert.deepEqual([byId['waiting']!.waitingOn, byId['waiting']!.waitDays, byId['sent-back-cancelling']!.waitingOn], ['สมศรี', 2, REIMBURSEMENT_SYSTEM_WAIT_LABEL]);
+
+    // Its own desk, in the words of the claim page's badge, with what happens next. Not "waiting for the system".
+    assert.deepEqual(backlog.desks, [
+      { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-20', longestWaitDays: 11 },
+      {
+        kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
+        oldestSentBackOn: '2026-09-30', longestWaitDays: 1, note: PAYOUT_CORRECTION_NOTE,
+      },
+    ]);
+    assert.equal(PAYOUT_CORRECTION_NOTE, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
+    // สมศรี has two claims to approve; the corrected account has waited for her since this morning, not for eleven days.
+    assert.deepEqual(backlog.byApprover, [{ name: 'สมศรี', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '200.00' }], oldestSubmittedOn: '2026-09-29', longestWaitDays: 2 }]);
+    assert.deepEqual([backlog.total, backlog.awaitingApprovalCount], [4, 2]);
+    // Nothing of an account, and no code word, in what the assistant is handed.
+    assert.doesNotMatch(JSON.stringify(backlog), /ACCOUNT_NUMBER_WRONG|payer-1|AWAITING_|accountLast4|bankName|fingerprint/);
+  });
+
+  it('counts it as waiting for approval in the assistant summary only once the account is given, and as late only by that wait', async () => {
+    const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000);
+    // Each was first sent two weeks ago and sent back eighty hours ago; the company's deadline is 48 hours.
+    const round = (id: string, overrides: Record<string, unknown> = {}) => row(id, { submittedAt: hoursAgo(14 * 24), payoutCorrectionRequestedAt: hoursAgo(80), ...overrides });
+    const withRequester = round('with-requester');
+    const givenToday = round('given-today', { payoutCorrectionSubmittedAt: hoursAgo(3) });
+    const givenThreeDaysAgo = round('given-three-days-ago', { payoutCorrectionSubmittedAt: hoursAgo(72) });
+    const summary = async (claims: any[]) => {
+      const answer = await new GetReimbursementAiSummaryUseCase({ ...repo, listRequests: async () => claims }, noopAudit).execute(reader);
+      return [answer.pendingApprovalCount, answer.overdueApprovalCount];
+    };
+    assert.deepEqual(await summary([withRequester]), [0, 0], 'with its requester: no approver waits, none is late');
+    assert.deepEqual(await summary([givenToday]), [1, 0], 'the approver has had it for three hours, not two weeks');
+    assert.deepEqual(await summary([givenThreeDaysAgo]), [1, 1]);
+    assert.deepEqual(await summary([withRequester, givenToday, givenThreeDaysAgo]), [2, 1]);
+    // An ordinary claim is counted from the day it was sent, as before.
+    assert.deepEqual(await summary([row('ordinary', { submittedAt: hoursAgo(14 * 24) })]), [1, 1]);
+  });
+});
+
+// A list or queue row carried nothing about a pending cancellation, so the hub offered what the API
+// refuses on such a claim: "บันทึกจ่าย" and "อนุมัติจ่าย" in the finance queue, "ส่งอนุมัติ" on a draft row.
+describe('a list or queue row says when its claim is being cancelled', () => {
+  const NOW = new Date('2026-10-01T03:00:00.000Z');
+  const row = (status: string, overrides: Record<string, unknown> = {}) => ({
+    id: `rb-${status}`, companyId: 'co-1', branchId: 'b1', requestNo: `RB-${status}`, requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'สมชาย',
+    reason: 'แท็กซี่', categoryKey: 'travel', amount: '100.0000', outstandingAmount: '100.0000', paymentTotalAmount: '0.0000', currency: 'THB',
+    incurredDate: NOW, status, financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH',
+    receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required', createdAt: NOW, updatedAt: NOW, ...overrides,
+  }) as any;
+  const cancelling = { cancellationPendingAt: NOW, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' };
+
+  it('carries cancellationPending on every row of a claim on its way to being cancelled, and on no other', () => {
+    for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT']) {
+      assert.equal(toRequestSummary(row(status, cancelling)).cancellationPending, true, status);
+      assert.equal('cancellationPending' in toRequestSummary(row(status)), false, `${status}, not being cancelled`);
+    }
+    // A cancelled claim keeps the intent it was cancelled with; it is not pending any more.
+    for (const status of ['CANCELLED', 'VOIDED']) assert.equal('cancellationPending' in toRequestSummary(row(status, cancelling)), false, status);
+  });
+
+  it('keeps such a claim in the finance queue, where whoever may finish or withdraw the cancellation works, and marks it', async () => {
+    const rows = [row('READY_FOR_PAYMENT', { id: 'paying' }), row('READY_FOR_PAYMENT', { id: 'cancel-at-payment', ...cancelling }),
+      row('FINANCE_REVIEW', { id: 'cancel-at-finance', financeReviewStatus: 'PENDING', ...cancelling })];
+    const queue = await new ListFinanceQueueUseCase({ listRequests: async () => rows, findPolicy: async () => null } as any)
+      .execute(ctx({ userId: 'fin-1', permissions: ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.payment.record'] }));
+
+    assert.deepEqual(queue.map((item) => [item.id, item.cancellationPending ?? false, item.currentDesk?.kind]), [
+      ['paying', false, 'PAYMENT'], ['cancel-at-payment', true, 'SYSTEM'], ['cancel-at-finance', true, 'SYSTEM'],
+    ]);
+  });
+
+  // Tool dry-run 2026-10-02: with one claim being cancelled the backlog said 6 waiting for approval and the
+  // summary said 7. Approval and payment are refused meanwhile, so such a claim waits for no approver and no payer.
+  it('counts a claim being cancelled in none of the assistant summary\'s four figures, where the backlog puts it on the system\'s desk', async () => {
+    const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000);
+    const claims = [
+      row('PENDING_APPROVAL', { id: 'waiting', submittedAt: hoursAgo(72) }),
+      row('PENDING_APPROVAL', { id: 'cancel-at-approval', submittedAt: hoursAgo(72), ...cancelling }),
+      row('READY_FOR_PAYMENT', { id: 'paying', outstandingAmount: '250.0000' }),
+      row('READY_FOR_PAYMENT', { id: 'cancel-at-payment', ...cancelling }),
+      row('FINANCE_REVIEW', { id: 'cancel-at-finance', financeReviewStatus: 'PENDING', ...cancelling }),
+    ];
+    const step = { id: 'step-1', companyId: 'co-1', reimbursementRequestId: 'waiting', sequenceNo: 1, status: 'PENDING', assignedApproverUserIds: ['mgr-1'], approverRoleSnapshot: 'MANAGER' };
+    const repo = {
+      listRequests: async (where: { statuses?: string[] }) => claims.filter((claim) => !where.statuses || where.statuses.includes(claim.status)),
+      findPolicy: async () => ({ ...NO_APPROVAL_POLICY, slaHours: 48 }),
+      findPendingApprovalSteps: async (_companyId: string, ids: string[]) => [step, { ...step, id: 'step-2', reimbursementRequestId: 'cancel-at-approval' }]
+        .filter((entry) => ids.includes(entry.reimbursementRequestId)),
+      findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+      getUserDisplayNames: async () => ({ 'mgr-1': 'สมศรี' }),
+    } as any;
+    const reader = ctx({ permissions: ['reimbursement.read'] });
+    const summary = await new GetReimbursementAiSummaryUseCase(repo, noopAudit).execute(reader);
+    // One claim waits for its approver (and is late), one for its payment: the three being cancelled are in no figure.
+    assert.deepEqual([summary.pendingApprovalCount, summary.overdueApprovalCount, summary.unpaidApprovedCount, summary.totalUnpaidAmount], [1, 1, 1, '250.0000']);
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(repo, noopAudit).execute(reader);
+    assert.equal(backlog.awaitingApprovalCount, summary.pendingApprovalCount, 'the two tools count the same claims as waiting for approval');
+    assert.deepEqual(backlog.desks.find((desk) => desk.kind === 'status_pending')?.count, 3);
+  });
+});
+
+// Audit B3, the rest of it: whatever stops a cancellation after its intent is committed, the claim
+// must say so and stay finishable. Invariant: no claim is left with a cancellation that cannot complete.
+describe('a cancellation that was started stays visible and can always be finished (audit B3)', () => {
+  const PERIOD = '2026-09';
+  const startedAt = new Date('2026-10-01T02:00:00.000Z');
+  const requester = () => ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] });
+  const finance = () => ctx({ userId: 'fin-1', roles: ['FINANCE'], permissions: ['reimbursement.read', 'reimbursement.finance_review'] });
+  const bystander = () => ctx({ userId: 'reader-1', permissions: ['reimbursement.read'] });
+
+  /**
+   * A claim waiting for payment with two confirmed expense records, and the two things of the expense
+   * module a cancellation meets: what the void would refuse (asked up front) and the void itself. Both
+   * read the same `world`, as the repository's preflight and the real void read the same rows.
+   */
+  async function claimWorld() {
+    const world = { periodLocked: false, lockAfterVoids: Infinity };
+    const state = fakeRepo({
+      claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }, { id: 'exp-2', sourceReimbursementLineId: 'rbl-2' }],
+      cancellationBlocker: () => (world.periodLocked ? { code: 'accounting_period_locked', periodKey: PERIOD } : null),
+    });
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    Object.assign(state.request, { status: 'READY_FOR_PAYMENT', requestNo: 'RB-202610-000001', branchId: 'branch-1', paymentStatus: 'UNPAID' });
+    Object.assign(state.repo, {
+      listInternalNotes: async () => [],
+      getUserDisplayNames: async () => ({ 'staff-1': 'สมชาย', 'fin-1': 'วราภรณ์' }),
+    });
+    const audits: any[] = [];
+    const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
+    // The real void's rules for what these cases are about: the reason, the fence, a closed period.
+    const voidExpense = {
+      executeForReimbursement: async (_ctx: any, expenseId: string, reason: string, authority: any) => {
+        if (!isExpenseVoidReason(reason)) throw new BadRequestException('Void reason must be at least 3 characters');
+        await authority.beforeVoid?.({});
+        const projection = state.projections.find((row) => row.id === expenseId)!;
+        if (projection.status === 'VOIDED') return;
+        if (world.periodLocked) throw new ConflictException({ code: 'accounting_period_locked', message: `Accounting period ${PERIOD} is not open; reopen it before voiding.` });
+        projection.status = 'VOIDED';
+        state.calls.voided.push(expenseId);
+        if (state.calls.voided.length >= world.lockAfterVoids) world.periodLocked = true;
+      },
+    } as any;
+    return {
+      world, state, audits,
+      cancel: new CancelReimbursementUseCase(state.repo, audit, voidExpense),
+      withdraw: new WithdrawReimbursementCancellationUseCase(state.repo, audit),
+      detail: (viewer: any) => new GetReimbursementDetailUseCase(state.repo, evidenceService()).execute(viewer, 'rb-1'),
+      /** A cancellation as production left it: the intent committed, nothing after it. */
+      strand: (reason: string) => Object.assign(state.request, {
+        cancellationPendingAt: startedAt, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: reason,
+      }),
+      events: () => state.calls.outbox.map((row: any) => row.eventType),
+    };
+  }
+
+  it('a claim stranded by a short reason says who started it and why, and anyone who may cancel finishes it with a corrected reason', async () => {
+    const claim = await claimWorld();
+    claim.strand('ก');
+
+    // Before: no response carried the pending cancellation at all.
+    assert.deepEqual((await claim.detail(requester())).pendingCancellation, {
+      startedAt: startedAt.toISOString(), startedByUserId: 'staff-1', startedByName: 'สมชาย', reason: 'ก',
+      blocker: { code: 'reason_too_short' }, canResume: true, canWithdraw: true,
+    });
+    // Finance may cancel any claim, so it may finish this one; a reader may do neither.
+    assert.deepEqual([(await claim.detail(finance())).pendingCancellation?.canResume, (await claim.detail(finance())).pendingCancellation?.canWithdraw], [true, true]);
+    assert.deepEqual([(await claim.detail(bystander())).pendingCancellation?.canResume, (await claim.detail(bystander())).pendingCancellation?.canWithdraw], [false, false]);
+
+    // The stored reason is what blocks it: the same reason, another short one and no reason are refused, and nothing is voided.
+    for (const again of ['ก', 'ab', undefined]) {
+      await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', again), /cancellation_reason_too_short/, String(again));
+    }
+    assert.deepEqual([claim.state.calls.voided, claim.state.request.status, claim.state.request.cancellationPendingReason], [[], 'READY_FOR_PAYMENT', 'ก']);
+
+    // Before: a different reason was refused (already pending), and so was anyone but the person who started it.
+    const done = await claim.cancel.execute(finance(), 'rb-1', 'ซื้อซ้ำกับใบก่อน');
+    assert.equal(done.status, 'CANCELLED');
+    assert.deepEqual(claim.state.calls.voided, ['exp-1', 'exp-2']);
+    assert.equal(claim.state.request.rejectionReason, 'ซื้อซ้ำกับใบก่อน');
+    assert.deepEqual(claim.audits.map((entry) => entry.action), [
+      'reimbursement.request.cancellation_reason_corrected', 'reimbursement.request.cancellation_retry', 'reimbursement.request.cancel',
+    ]);
+    assert.deepEqual(claim.audits[0].metadataJson, { previousReason: 'ก', reason: 'ซื้อซ้ำกับใบก่อน', startedByUserId: 'staff-1' });
+    assert.deepEqual([claim.audits[2].actorUserId, claim.audits[2].metadataJson.startedByUserId], ['fin-1', 'staff-1']);
+    assert.equal((await claim.detail(requester())).pendingCancellation, undefined, 'a cancelled claim has nothing pending');
+  });
+
+  it('refuses to start a cancellation when an expense record sits in a closed period, before anything is written', async () => {
+    const claim = await claimWorld();
+    claim.world.periodLocked = true;
+
+    // Before: the intent was committed first, the void then refused, and the claim sat half cancelled with no word of it.
+    await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', 'ซื้อซ้ำกับใบก่อน'), (error: any) => {
+      assert.equal(error.getStatus?.(), 409);
+      assert.equal(error.message, `reimbursement_cancellation_accounting_period_locked:${PERIOD}`);
+      return true;
+    });
+    assert.equal(claim.state.request.cancellationPendingAt, undefined, 'no intent');
+    assert.deepEqual([claim.state.calls.voided, claim.events(), claim.audits], [[], [], []]);
+    assert.equal((await claim.detail(requester())).pendingCancellation, undefined);
+
+    // Once the period is reopened, the same request cancels the claim.
+    claim.world.periodLocked = false;
+    assert.equal((await claim.cancel.execute(requester(), 'rb-1', 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+    assert.deepEqual(claim.events(), ['reimbursement.cancellation_started', 'reimbursement.cancelled']);
+  });
+
+  it('a period closed after the cancellation started is shown with what stands in the way, and the cancellation finishes once it is reopened', async () => {
+    const claim = await claimWorld();
+    // What a check before the intent cannot know: the period is closed between the first void and the second.
+    claim.world.lockAfterVoids = 1;
+    await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1', 'ซื้อซ้ำกับใบก่อน'), /Accounting period 2026-09 is not open/);
+    assert.deepEqual(claim.state.projections.map((row) => row.status), ['VOIDED', 'CONFIRMED']);
+
+    // Visible, with the reason it has not completed. One record is voided, so it can only go forward.
+    const shown = (await claim.detail(finance())).pendingCancellation!;
+    assert.deepEqual([shown.blocker, shown.reason, shown.startedByName, shown.canResume, shown.canWithdraw],
+      [{ code: 'accounting_period_locked', periodKey: PERIOD }, 'ซื้อซ้ำกับใบก่อน', 'สมชาย', true, false]);
+    await assert.rejects(() => claim.withdraw.execute(requester(), 'rb-1'), /reimbursement_cancellation_partly_done/);
+    // Continuing while it is still closed is refused up front: the second record is not touched again.
+    await assert.rejects(() => claim.cancel.execute(finance(), 'rb-1'), new RegExp(`reimbursement_cancellation_accounting_period_locked:${PERIOD}`));
+    assert.deepEqual(claim.state.calls.voided, ['exp-1']);
+
+    // Reopened: anyone who may cancel continues it, with no reason to give, and it completes under the reason it was started with.
+    claim.world.periodLocked = false;
+    assert.equal((await claim.detail(finance())).pendingCancellation?.blocker, undefined);
+    assert.equal((await claim.cancel.execute(finance(), 'rb-1')).status, 'CANCELLED');
+    assert.deepEqual(claim.state.calls.voided, ['exp-1', 'exp-2']);
+    assert.equal(claim.state.request.rejectionReason, 'ซื้อซ้ำกับใบก่อน');
+    // A reason of its own is not taken for a cancellation whose reason is on record and valid.
+    assert.deepEqual(claim.events(), ['reimbursement.cancellation_started', 'reimbursement.cancelled']);
+  });
+
+  it('keeps the reason a cancellation was started with: a retry that names another one is refused', async () => {
+    const claim = await claimWorld();
+    claim.strand('ซื้อซ้ำกับใบก่อน');
+    await assert.rejects(() => claim.cancel.execute(finance(), 'rb-1', 'เหตุผลอื่น'), (error: any) => error.getStatus?.() === 409 && /reimbursement_cancellation_already_pending/.test(error.message));
+    assert.deepEqual([claim.state.calls.voided, claim.state.request.cancellationPendingReason], [[], 'ซื้อซ้ำกับใบก่อน']);
+    // The same reason, or none, continues it.
+    assert.equal((await claim.cancel.execute(finance(), 'rb-1', 'ซื้อซ้ำกับใบก่อน')).status, 'CANCELLED');
+  });
+
+  it('lets whoever may cancel the claim withdraw the cancellation while nothing was voided, and the claim goes on as before', async () => {
+    const claim = await claimWorld();
+    claim.strand('ก');
+
+    // Not for a reader, and not for a finance reviewer of another branch.
+    await assert.rejects(() => claim.withdraw.execute(bystander(), 'rb-1'), ForbiddenException);
+    const otherBranch = ctx({ userId: 'fin-2', permissions: ['reimbursement.finance_review'], scopes: { branchIds: ['branch-2'] } });
+    await assert.rejects(() => claim.withdraw.execute(otherBranch, 'rb-1'), /branch/i);
+    assert.deepEqual([(await claim.detail(otherBranch).catch(() => null))?.pendingCancellation?.canWithdraw, claim.state.request.cancellationPendingReason], [undefined, 'ก']);
+    const back = await claim.withdraw.execute(finance(), 'rb-1');
+
+    assert.equal(back.status, 'READY_FOR_PAYMENT');
+    assert.deepEqual([claim.state.request.cancellationPendingAt, claim.state.request.cancellationPendingByUserId, claim.state.request.cancellationPendingReason],
+      [undefined, undefined, undefined]);
+    assert.deepEqual(claim.state.projections.map((row) => row.status), ['CONFIRMED', 'CONFIRMED'], 'nothing was voided');
+    assert.equal((await claim.detail(requester())).pendingCancellation, undefined);
+    assert.deepEqual(claim.audits.map((entry) => [entry.action, entry.actorUserId, entry.metadataJson.startedByUserId, entry.metadataJson.reason]),
+      [['reimbursement.request.cancellation_withdrawn', 'fin-1', 'staff-1', 'ก']]);
+    // Nothing is pending any more, so there is nothing to withdraw; the claim can be cancelled afresh.
+    await assert.rejects(() => claim.withdraw.execute(finance(), 'rb-1'), /reimbursement_cancellation_not_pending/);
+    assert.equal((await claim.cancel.execute(requester(), 'rb-1', 'เปลี่ยนใจ')).status, 'CANCELLED');
+  });
+
+  // Payout spec §25.1 I3, both directions: the two buttons the detail offers a viewer are exactly the two calls
+  // the API takes from that viewer. Checked viewer by viewer against the endpoints themselves.
+  it('offers ดำเนินการยกเลิกต่อ and ถอนการยกเลิก to exactly the viewers the cancel and withdraw calls accept', async () => {
+    const viewers: Array<[string, any]> = [
+      ['the requester', requester()],
+      ['the requester without the cancel right', ctx({ permissions: ['reimbursement.read_own'] })],
+      ['a finance reviewer', finance()],
+      ['a finance reviewer of another branch', ctx({ userId: 'fin-2', permissions: ['reimbursement.read', 'reimbursement.finance_review'], scopes: { branchIds: ['branch-2'] } })],
+      ['a reader', bystander()],
+      ['an approver who may also pay', ctx({ userId: 'boss-1', roles: ['MANAGER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.payment.record'] })],
+    ];
+    const refusedForWho = (error: unknown) => error instanceof ForbiddenException;
+    for (const [name, viewer] of viewers) {
+      // Asked of the detail first; a viewer who cannot read the claim is offered nothing.
+      const reading = await claimWorld();
+      reading.strand('ซื้อซ้ำกับใบก่อน');
+      const offered = await reading.detail(viewer).then((detail) => detail.pendingCancellation, () => undefined);
+      // Then each call, on a claim of its own, as that viewer.
+      const continuing = await claimWorld();
+      continuing.strand('ซื้อซ้ำกับใบก่อน');
+      const continued = await continuing.cancel.execute(viewer, 'rb-1').then(() => true, (error) => { if (refusedForWho(error)) return false; throw error; });
+      const withdrawing = await claimWorld();
+      withdrawing.strand('ซื้อซ้ำกับใบก่อน');
+      const withdrawn = await withdrawing.withdraw.execute(viewer, 'rb-1').then(() => true, (error) => { if (refusedForWho(error)) return false; throw error; });
+
+      assert.deepEqual([offered?.canResume ?? false, offered?.canWithdraw ?? false], [continued, withdrawn], name);
+    }
+  });
+
+  it('never voids for a cancellation that was withdrawn while it was being continued', async () => {
+    const claim = await claimWorld();
+    claim.strand('ซื้อซ้ำกับใบก่อน');
+    // The withdrawal lands between the continue reading the claim and its first void.
+    const begin = claim.state.repo.beginCancellationAtomic;
+    claim.state.repo.beginCancellationAtomic = async (data: any) => {
+      const intent = await begin(data);
+      await claim.withdraw.execute(finance(), 'rb-1');
+      return intent;
+    };
+
+    await assert.rejects(() => claim.cancel.execute(requester(), 'rb-1'), /reimbursement_cancellation_intent_changed/);
+
+    assert.deepEqual(claim.state.calls.voided, [], 'the fence stopped the void');
+    assert.deepEqual([claim.state.request.status, claim.state.request.cancellationPendingAt], ['READY_FOR_PAYMENT', undefined]);
+  });
+
+  it('cancels once when ดำเนินการยกเลิกต่อ is pressed twice at the same moment', async () => {
+    const claim = await claimWorld();
+    claim.strand('ซื้อซ้ำกับใบก่อน');
+
+    const results = await Promise.all([claim.cancel.execute(requester(), 'rb-1'), claim.cancel.execute(finance(), 'rb-1')]);
+
+    assert.deepEqual(results.map((result) => result.status), ['CANCELLED', 'CANCELLED']);
+    assert.deepEqual(claim.state.calls.voided, ['exp-1', 'exp-2'], 'each expense record voided once');
+    assert.deepEqual(claim.events(), ['reimbursement.cancelled'], 'one cancelled event');
+    assert.equal(claim.audits.filter((entry) => entry.action === 'reimbursement.request.cancel').length, 1);
+  });
+});
+
+// Audit B4: a decision that is on record and has not been carried out must be visible, and whoever
+// the page offers "ดำเนินการต่อ" to must be taken by the call. Carrying the claim on is the
+// reconciler's work (its own spec, and real PostgreSQL in the repository race spec); these cases are
+// about what the detail says and about who.
+describe('a decided claim that has not moved on is visible and can be carried on (audit B4)', () => {
+  const decidedAt = new Date('2026-10-01T02:00:00.000Z');
+  const NO_APPROVAL_POLICY = {
+    schemaVersion: 1, policyId: 'pol-1', policyVersion: 'v1', approvalRequiredFromAmount: '1000.00', requiresApproval: false, route: null,
+    allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false,
+  };
+  const requester = () => ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] });
+  const approver = (overrides: Partial<any> = {}) => ctx({ userId: 'mgr-1', roles: ['MANAGER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'], ...overrides });
+  const payer = (overrides: Partial<any> = {}) => ctx({ userId: 'pay-1', roles: ['FINANCE'], permissions: ['reimbursement.read', 'reimbursement.payment.record'], ...overrides });
+
+  type Kind = 'approved' | 'no-approval-needed' | 'waiting-for-approver';
+
+  /** One claim over the fake repository; `repair` stands in for the reconciler carrying it on. */
+  async function claimWorld(kind: Kind, options: { repair?: () => Promise<boolean>; frozenOnStep?: string[] } = {}) {
+    const state = fakeRepo();
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    const step = {
+      id: 'step-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', sequenceNo: 1, approverRoleSnapshot: 'MANAGER', assignedAt: decidedAt,
+      ...(options.frozenOnStep && { assignedApproverUserIds: options.frozenOnStep }),
+      ...(kind === 'approved' ? { status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt } : { status: 'PENDING' }),
+    };
+    Object.assign(state.request, { requestNo: 'RB-202610-000001', branchId: 'branch-1', submittedAt: decidedAt, submittedByUserId: 'staff-1' },
+      kind === 'no-approval-needed'
+        ? { status: 'APPROVED', approvedAt: decidedAt, currentApprovalStepId: null, approvalPolicySnapshotJson: NO_APPROVAL_POLICY }
+        : { status: 'PENDING_APPROVAL', currentApprovalStepId: 'step-1' });
+    const world = { expenseRecordsConfirmed: false, repairs: 0 };
+    Object.assign(state.repo, {
+      findRequestById: async () => ({ ...state.request, approvalSteps: kind === 'no-approval-needed' ? [] : [step], payments: [], duplicateCandidates: [] }),
+      findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+      // Whoever decided the claim's step had a part in it: the claim is theirs to read with the related-read right.
+      isUserRelatedToRequest: async (_companyId: string, _requestId: string, userId: string) => 'decisionByUserId' in step && step.decisionByUserId === userId,
+      areClaimProjectionsReady: async () => world.expenseRecordsConfirmed,
+      listInternalNotes: async () => [],
+      getUserDisplayNames: async () => ({ 'staff-1': 'สมชาย', 'mgr-1': 'สมศรี' }),
+    });
+    const audits: any[] = [];
+    const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
+    const reconciler = { repair: async () => {
+      world.repairs += 1;
+      if (options.repair) return options.repair();
+      if (state.request.status === 'READY_FOR_PAYMENT') return false;
+      Object.assign(state.request, { status: 'READY_FOR_PAYMENT', currentApprovalStepId: null, paymentStatus: 'UNPAID' });
+      return true;
+    } } as any;
+    return {
+      state, world, audits,
+      resume: new ResumeReimbursementUseCase(state.repo, audit, reconciler, evidenceService()),
+      detail: (viewer: any) => new GetReimbursementDetailUseCase(state.repo, evidenceService()).execute(viewer, 'rb-1'),
+    };
+  }
+
+  it('says on the detail that the claim waits for the system, and offers no decision a second time', async () => {
+    const approved = await claimWorld('approved');
+    const seenByApprover = await approved.detail(approver());
+    assert.deepEqual(seenByApprover.awaitingSystem, { kind: 'APPROVAL', canResume: true });
+    assert.deepEqual(seenByApprover.currentDesk, { kind: 'SYSTEM' });
+    assert.deepEqual(seenByApprover.approvalActions, { canApprove: false, canReject: false }, 'the decision is made; nobody is asked for it again');
+    assert.deepEqual((await approved.detail(requester())).awaitingSystem, { kind: 'APPROVAL', canResume: false });
+
+    // Nobody had to approve it: it waits for the system only while it cannot be paid, and it waits at the payment desk.
+    const noApproval = await claimWorld('no-approval-needed');
+    const seenByPayer = await noApproval.detail(payer());
+    assert.deepEqual(seenByPayer.awaitingSystem, { kind: 'NO_APPROVAL_NEEDED', canResume: true });
+    assert.equal(seenByPayer.currentDesk?.kind, 'PAYMENT');
+    noApproval.world.expenseRecordsConfirmed = true;
+    assert.equal((await noApproval.detail(payer())).awaitingSystem, undefined, 'payable: the page offers the payment itself');
+
+    assert.equal((await (await claimWorld('waiting-for-approver')).detail(approver())).awaitingSystem, undefined);
+  });
+
+  // The server's own flags (the page no longer has to hide what the detail offers).
+  it('offers no approval on the detail of a claim being cancelled, to its approver or to an assignee who can still open it', async () => {
+    const cancelling = { cancellationPendingAt: decidedAt, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' };
+    const claim = await claimWorld('waiting-for-approver', { frozenOnStep: ['mgr-1'] });
+    const assigneeWithNoRights = approver({ roles: ['STAFF'], permissions: [] });
+    // Waiting for its approver: both hold the step and are offered the decision.
+    for (const viewer of [approver(), assigneeWithNoRights]) {
+      assert.deepEqual((await claim.detail(viewer)).approvalActions, { canApprove: true, canReject: true });
+    }
+
+    Object.assign(claim.state.request, cancelling);
+
+    for (const viewer of [approver(), assigneeWithNoRights]) {
+      const detail = await claim.detail(viewer);
+      assert.deepEqual(detail.approvalActions, { canApprove: false, canReject: false });
+      assert.equal(detail.pendingCancellation?.startedByUserId, 'staff-1', 'and they can still read why');
+    }
+    // Someone with no right and no place on the step still cannot open it.
+    await assert.rejects(() => claim.detail(ctx({ userId: 'stranger-1', permissions: [] })), ForbiddenException);
+  });
+
+  it('says only that it is being cancelled when a cancellation was started on it: the cancellation comes first', async () => {
+    const claim = await claimWorld('approved');
+    Object.assign(claim.state.request, { cancellationPendingAt: decidedAt, cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' });
+
+    const detail = await claim.detail(approver());
+
+    assert.equal(detail.awaitingSystem, undefined);
+    assert.equal(detail.pendingCancellation?.startedByUserId, 'staff-1');
+    // And the call does nothing for it either: nothing waits for the system but the cancellation.
+    assert.equal((await claim.resume.execute(approver(), 'rb-1')).status, 'PENDING_APPROVAL');
+    assert.equal(claim.world.repairs, 0);
+  });
+
+  // Both directions: "ดำเนินการต่อ" is offered to a viewer exactly when the call takes that viewer.
+  it('offers ดำเนินการต่อ to exactly the viewers the resume call accepts', async () => {
+    const viewers: Array<[string, any]> = [
+      ['the approver who decided', approver()],
+      ['the approver who decided, restricted to another branch', approver({ scopes: { branchIds: ['branch-2'] } })],
+      ['the approver who decided, whose approve right is gone', approver({ permissions: ['reimbursement.read'] })],
+      ['another approver', approver({ userId: 'mgr-2' })],
+      ['the requester', requester()],
+      ['whoever may record the payment', payer()],
+      ['a payer of another branch', payer({ scopes: { branchIds: ['branch-2'] } })],
+      ['an approver who may also pay', approver({ userId: 'boss-1', permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.payment.record'] })],
+      ['a reader', ctx({ userId: 'reader-1', permissions: ['reimbursement.read'] })],
+    ];
+    const offeredTo: Record<string, string[]> = { approved: [], 'no-approval-needed': [] };
+    for (const kind of ['approved', 'no-approval-needed'] as const) {
+      for (const [name, viewer] of viewers) {
+        // Asked of the detail first; a viewer who cannot read the claim is offered nothing.
+        const offered = await (await claimWorld(kind)).detail(viewer).then((detail) => detail.awaitingSystem?.canResume ?? false, () => false);
+        // Then the call, on a claim of its own, as that viewer.
+        const pressing = await claimWorld(kind);
+        const accepted = await pressing.resume.execute(viewer, 'rb-1').then(() => true, (error) => { if (error instanceof ForbiddenException) return false; throw error; });
+        assert.equal(offered, accepted, `${kind}: ${name}`);
+        assert.equal(pressing.world.repairs, accepted ? 1 : 0, `${kind}: ${name}`);
+        if (offered) offeredTo[kind]!.push(name);
+      }
+    }
+    assert.deepEqual(offeredTo, {
+      approved: ['the approver who decided'],
+      'no-approval-needed': ['whoever may record the payment', 'an approver who may also pay'],
+    });
+  });
+
+  it('keeps ดำเนินการต่อ with an approver frozen onto the step after their approve right is gone, as approving itself does', async () => {
+    // Demoted since: no approve right left, and the right every member keeps to read a claim they had a part in.
+    const frozen = approver({ permissions: ['reimbursement.read_related'] });
+    const claim = await claimWorld('approved', { frozenOnStep: ['mgr-1'] });
+
+    assert.equal((await claim.detail(frozen)).awaitingSystem?.canResume, true, 'offered on the page they can still open');
+    assert.equal((await claim.resume.execute(frozen, 'rb-1')).status, 'READY_FOR_PAYMENT');
+    assert.equal(claim.world.repairs, 1);
+
+    // The same person on a role-routed step, with no place on it and no approve right, is refused.
+    const roleRouted = await claimWorld('approved');
+    await assert.rejects(() => roleRouted.resume.execute(frozen, 'rb-1'), /reimbursement_resume_not_allowed/);
+    assert.equal(roleRouted.world.repairs, 0);
+
+    // With no way left to open the claim, the call answers what the claim detail answers them (final review
+    // item 18): the page never offered it to them, and the scheduled run carries the decision out.
+    const noRights = approver({ permissions: [] });
+    const unreadable = await claimWorld('approved', { frozenOnStep: ['mgr-1'] });
+    await assert.rejects(() => unreadable.detail(noRights), /Cannot read this reimbursement/);
+    await assert.rejects(() => unreadable.resume.execute(noRights, 'rb-1'), /Cannot read this reimbursement/);
+    assert.equal(unreadable.world.repairs, 0);
+  });
+
+  it('carries the decision out once, decides nothing again, and records who asked', async () => {
+    const claim = await claimWorld('approved');
+    // The fake repository has no approval, attestation or payment method at all: a call into any of them would throw.
+
+    const carried = await claim.resume.execute(approver(), 'rb-1');
+
+    assert.equal(carried.status, 'READY_FOR_PAYMENT');
+    assert.deepEqual(claim.audits.map((entry) => [entry.action, entry.actorUserId, entry.metadataJson.waitingFor]), [['reimbursement.projection.resume', 'mgr-1', 'APPROVAL']]);
+
+    // Pressed again, or pressed after the scheduled run got there first: the claim as it stands, and nothing more.
+    assert.equal((await claim.resume.execute(approver(), 'rb-1')).status, 'READY_FOR_PAYMENT');
+    assert.equal(claim.world.repairs, 1, 'nothing waits, so nothing is carried out a second time');
+    assert.equal(claim.audits.length, 1);
+    await assert.rejects(() => claim.resume.execute(ctx({ userId: 'stranger-1', permissions: [] }), 'rb-1'), ForbiddenException,
+      'a claim that no longer waits is shown only to someone who may read it');
+  });
+
+  it('says what stopped it and records nothing when the claim is no longer what was approved', async () => {
+    const claim = await claimWorld('approved', { repair: async () => { throw new ConflictException('stale_approval_snapshot'); } });
+
+    await assert.rejects(() => claim.resume.execute(approver(), 'rb-1'), /stale_approval_snapshot/);
+
+    assert.equal(claim.state.request.status, 'PENDING_APPROVAL');
+    assert.deepEqual(claim.audits, []);
+  });
+
+  it('records nothing when the scheduled run carried the claim on first', async () => {
+    const claim = await claimWorld('approved', { repair: async () => false });
+    await claim.resume.execute(approver(), 'rb-1');
+    assert.deepEqual(claim.audits, []);
   });
 });
 
@@ -554,9 +1339,14 @@ describe('ReopenRejectedReimbursementUseCase', () => {
     const reopen = new ReopenRejectedReimbursementUseCase(state.repo, noopAudit);
     await assert.rejects(() => reopen.execute(ctx(), 'rb-1'), /Cannot reopen from status DRAFT/);
     Object.assign(state.request, { status: 'REJECTED' });
+    // Someone else who can open the claim is told they may not reopen it; someone who cannot open it is told only that.
+    await assert.rejects(
+      () => reopen.execute(ctx({ userId: 'someone-else', permissions: ['reimbursement.read', 'reimbursement.update_own_draft'] }), 'rb-1'),
+      /Cannot reopen this reimbursement/,
+    );
     await assert.rejects(
       () => reopen.execute(ctx({ userId: 'someone-else', permissions: ['reimbursement.update_own_draft'] }), 'rb-1'),
-      /Cannot reopen this reimbursement/,
+      /Cannot read this reimbursement/,
     );
   });
 
@@ -580,7 +1370,7 @@ describe('ReopenRejectedReimbursementUseCase', () => {
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     Object.assign(state.request, { status: 'PENDING_APPROVAL', currentApprovalStepId: 'step-1' });
     const reopen = new ReopenRejectedReimbursementUseCase(state.repo, noopAudit);
-    const finance = ctx({ userId: 'fin-1', permissions: ['reimbursement.update_own_draft', 'reimbursement.finance_review'] });
+    const finance = ctx({ userId: 'fin-1', permissions: ['reimbursement.read', 'reimbursement.update_own_draft', 'reimbursement.finance_review'] });
 
     await assert.rejects(() => reopen.execute(finance, 'rb-1'), /Cannot reopen this reimbursement/);
     state.calls.approvalSteps.push({ id: 'step-1', status: 'APPROVED' });
@@ -691,6 +1481,13 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.equal(state.calls.approvalSteps.length, 0);
     assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.approval_not_required'));
     assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.finance_review_requested'));
+    // The finance desk is told from `finance_review_requested`, and nobody is asked to approve from
+    // `request_submitted`: both workflow rules decide on the status these two events carry.
+    for (const eventType of ['reimbursement.finance_review_requested', 'reimbursement.request_submitted']) {
+      const data = state.calls.outbox.find((event: any) => event.eventType === eventType).payloadJson.data;
+      assert.equal(data.status, 'FINANCE_REVIEW', eventType);
+      assert.ok(data.requestNo && data.requesterUserId && data.amount && data.currency, eventType);
+    }
   });
 
   it('reaches ready-for-payment through POLICY projection below threshold when finance is off', async () => {
@@ -704,6 +1501,36 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.equal(state.calls.approvalSteps.length, 0);
     assert.equal(state.calls.projections[0]?.[2]?.kind, 'POLICY');
     assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.ready_for_payment'));
+  });
+
+  // Owner rule 2026-10-01: a claim nobody had to approve has no approver of its own to hand the
+  // payment to, so its ready-to-pay event names the people who would have approved it.
+  it('names the would-be approvers on the ready-to-pay event of a claim that needed no approval', async () => {
+    const submitBelowThreshold = async () => {
+      const state = fakeRepo({ policy: { ...noReceiptNeeded, approvalRequiredFromAmount: '100.00', financeReviewRequired: false } });
+      await draftWith(state, [inputLine({ amount: '99.99' })], withReason);
+      await useCases(state).submit.execute(ctx(), 'rb-1');
+      return state;
+    };
+    const readyData = (state: any) => state.calls.outbox.find((event: any) => event.eventType === 'reimbursement.ready_for_payment').payloadJson.data;
+
+    const asked: any[] = [];
+    readyApproverRoutes.resolveWouldBeApproverUserIds = async (...args: any[]) => { asked.push(args); return ['approver-1', 'approver-2']; };
+    try {
+      const state = await submitBelowThreshold();
+      assert.deepEqual(readyData(state).approverRecipientUserIds, ['approver-1', 'approver-2']);
+      assert.equal(readyData(state).decision, 'BELOW_APPROVAL_THRESHOLD');
+      assert.equal(asked[0][0], 'co-1');
+      assert.equal(asked[0][2].requesterUserId, 'staff-1');
+
+      // Best effort: failing to name them never fails the submission, and the event simply names nobody.
+      readyApproverRoutes.resolveWouldBeApproverUserIds = async () => { throw new Error('lookup failed'); };
+      const unresolved = await submitBelowThreshold();
+      assert.equal(unresolved.request.status, 'READY_FOR_PAYMENT');
+      assert.equal(readyData(unresolved).approverRecipientUserIds, undefined);
+    } finally {
+      delete readyApproverRoutes.resolveWouldBeApproverUserIds;
+    }
   });
 
   it('blocks INACTIVE policy before submit mutation', async () => {
@@ -875,6 +1702,528 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
   });
 });
 
+// Spec §18.3 and the owner's consistency rule 2026-10-01: `paymentDesk` names exactly the members the API accepts a
+// payment from on that claim — the resolver's permission, entitlement cut and branch scope, nothing looser.
+describe('claim detail paymentDesk', () => {
+  const PAY = 'reimbursement.payment.record';
+  const day = new Date('2026-10-01T03:00:00.000Z');
+  const waiting = (overrides: Record<string, unknown> = {}) => ({
+    id: 'rb-1', companyId: 'co-1', branchId: 'b1', requestNo: 'RB-202610-000001', requesterUserId: 'staff-1',
+    requesterDisplayNameSnapshot: 'ผู้เบิก', createdByUserId: 'staff-1', reason: 'แท็กซี่', categoryKey: 'travel', amount: '500.0000',
+    currency: 'THB', incurredDate: day, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID',
+    duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED', postingStatus: 'pending', paymentTotalAmount: '0.0000',
+    outstandingAmount: '500.0000', createdAt: day, updatedAt: day, lines: [], approvalSteps: [], payments: [], duplicateCandidates: [],
+    claimSignatures: [], ...overrides,
+  }) as any;
+  const detailEvidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
+
+  type Member = {
+    userId: string; displayName: string; permissions: string[]; roleStatus?: string; status?: string; userStatus?: string;
+    branchScopeMode?: string; defaultBranchId?: string; branchIds?: string[];
+  };
+  /** One company in memory, read by the repository (who is listed) and by the permission resolver (who may pay). */
+  function company(members: Member[], entitlements: Array<{ featureKey: string; enabled: boolean }> = []) {
+    const rows = members.map((member) => ({
+      id: `m-${member.userId}`, companyId: 'co-1', userId: member.userId, status: member.status ?? 'ACTIVE',
+      branchScopeMode: member.branchScopeMode ?? 'ALL_BRANCHES', defaultBranchId: member.defaultBranchId ?? null,
+      branchScopes: (member.branchIds ?? []).map((branchId) => ({ branchId })),
+      user: { status: member.userStatus ?? 'ACTIVE', displayName: member.displayName },
+      company: { status: 'ACTIVE' },
+      roles: [{ role: { key: `ROLE_${member.userId}`, status: member.roleStatus ?? 'ACTIVE',
+        permissions: member.permissions.map((key) => ({ permission: { key } })) } }],
+    }));
+    return { client: {
+      companyMembership: {
+        // The repository's own where clause, applied as written.
+        findMany: async ({ where }: any) => rows.filter((row) => row.companyId === where.companyId && row.status === where.status
+          && row.user.status === where.user.status
+          && row.roles.some(({ role }) => role.status === where.roles.some.role.status
+            && role.permissions.some(({ permission }) => permission.key === where.roles.some.role.permissions.some.permission.key))),
+        findFirst: async ({ where }: any) => rows.find((row) => row.userId === where.userId && row.companyId === where.companyId
+          && row.status === where.status) ?? null,
+      },
+      // b1 and b2 are open; b-closed is an archived branch.
+      branch: { findMany: async ({ where }: any) => ['b1', 'b2'].filter((id) => !where.id || where.id.in.includes(id)).map((id) => ({ id })) },
+      companyFeatureEntitlement: { findMany: async () => entitlements },
+    } } as any;
+  }
+  const listed = (prisma: any, branchId: string) => new PrismaReimbursementRepository(prisma, {} as any).listPaymentRecorderNames('co-1', branchId);
+  /** The API's own answer: resolve the member as every request does, then record the payment as them. `paid`, or why not. */
+  async function pays(prisma: any, userId: string, claimState: Record<string, unknown>): Promise<string> {
+    const claim = waiting(claimState);
+    const repo = {
+      findRequestById: async () => claim, findPolicy: async () => null, assertClaimPaymentReady: async () => undefined,
+      listOpenDuplicateCandidates: async () => [], getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [],
+      recordPaymentAtomic: async (data: any) => ({ created: true, payment: { id: 'pay-1', ...data, status: 'RECORDED', postingStatus: 'pending' },
+        request: { ...claim, status: 'PAID', paymentStatus: 'PAID' } }),
+    } as any;
+    const useCase = new RecordReimbursementPaymentUseCase(repo, noopAudit,
+      { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202610-000001' }) } as any, { execute: async () => undefined } as any, detailEvidence);
+    try {
+      const access = await new PrismaPermissionResolverRepository(prisma).resolveForUser({ userId, companyId: 'co-1' });
+      const paid = await useCase.execute(ctx({ userId, ...access }), claim.id, { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: day.toISOString() });
+      return paid.status === 'PAID' ? 'paid' : `status ${paid.status}`;
+    } catch (error) {
+      // Refused for want of the right or the branch scope, or because the claim itself takes no payment.
+      if (error instanceof ForbiddenException || error instanceof UnprocessableEntityException) return error.message;
+      throw error;
+    }
+  }
+  /** What the claim page is told: the detail's `paymentDesk`, read through the real repository; null when it carries none. */
+  async function desk(prisma: any, claimState: Record<string, unknown>): Promise<{ names: string[]; moreCount: number } | null> {
+    const names = new PrismaReimbursementRepository(prisma, {} as any);
+    const repo = {
+      findRequestById: async () => waiting(claimState), findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
+      getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
+      listPaymentRecorderNames: (companyId: string, branchId: string, turnUserIds: string[]) => names.listPaymentRecorderNames(companyId, branchId, turnUserIds),
+      listClaimPayoutVersions: async () => [],
+    } as any;
+    const detail = await new GetReimbursementDetailUseCase(repo, detailEvidence).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
+    return detail.paymentDesk ?? null;
+  }
+
+  const approverRole = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
+  const members: Member[] = [
+    { userId: 'owner', displayName: 'เจ้าของ', permissions: [...approverRole, PAY] },
+    { userId: 'b1-selected', displayName: 'สมศรี', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1'] },
+    { userId: 'b1-default', displayName: 'วิชัย', permissions: [PAY], branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'b1' },
+    { userId: 'b2-selected', displayName: 'มานี', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b2'] },
+    { userId: 'b2-default', displayName: 'ปิติ', permissions: [PAY], branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'b2' },
+    // An approver role saved before the pay right was added: approves, cannot pay.
+    { userId: 'approver-only', displayName: 'ชูใจ', permissions: approverRole },
+    { userId: 'disabled-role', displayName: 'วีระ', permissions: [PAY], roleStatus: 'DISABLED' },
+    { userId: 'suspended', displayName: 'ปรีชา', permissions: [PAY], status: 'SUSPENDED' },
+    // Every branch this member covers is archived: the resolver refuses them outright.
+    { userId: 'closed-branch', displayName: 'สุดา', permissions: [PAY], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b-closed'] },
+  ];
+  const nameOf = Object.fromEntries(members.map((member) => [member.userId, member.displayName]));
+
+  it('lists a member exactly when the API accepts their payment: listed can pay, unlisted is refused', async () => {
+    const expected: Array<[string, string[]]> = [
+      ['b1', ['เจ้าของ', 'วิชัย', 'สมศรี']],
+      ['b2', ['เจ้าของ', 'ปิติ', 'มานี']],
+      ['b-closed', ['เจ้าของ']],
+    ];
+    // The runoff rule keeps the pay right while the feature is switched off: the list and the API follow it together.
+    for (const entitlements of [[], [{ featureKey: 'reimbursement', enabled: false }]]) {
+      const prisma = company(members, entitlements);
+      for (const [branchId, names] of expected) {
+        assert.deepEqual(await listed(prisma, branchId), names, `claim branch ${branchId}`);
+        // Approved and still being routed to payment waits at the same desk, and the API takes its payment too.
+        for (const status of ['READY_FOR_PAYMENT', 'APPROVED']) {
+          // The page is told the first two of them by name, and how many more there are.
+          assert.deepEqual(await desk(prisma, { branchId, status }), { names: names.slice(0, 2), moreCount: Math.max(names.length - 2, 0) }, `${status} claim of branch ${branchId}`);
+          for (const member of members) {
+            assert.equal(await pays(prisma, member.userId, { branchId, status }) === 'paid', names.includes(nameOf[member.userId]!),
+              `${member.userId} on a ${status} claim of branch ${branchId}`);
+          }
+        }
+      }
+    }
+    // A disabled user cannot sign in, so the resolver is never asked: not listed.
+    assert.deepEqual(await listed(company([{ userId: 'left', displayName: 'ลาออก', permissions: [PAY], userStatus: 'DISABLED' }]), 'b1'), []);
+  });
+
+  // Before: a part-paid claim and a claim with no branch (legacy rows) named every holder of the pay right, and the
+  // endpoint refused each of them. Nobody is named now, so the page falls back to "ผู้มีสิทธิ์บันทึกจ่าย".
+  it('names nobody on a claim the payment endpoint refuses for everyone', async () => {
+    const prisma = company(members);
+    const refused: Array<[Record<string, unknown>, RegExp]> = [
+      [{ branchId: 'b1', status: 'PARTIALLY_PAID', paymentStatus: 'PARTIALLY_PAID', outstandingAmount: '200.0000' }, /invalid_status_transition/],
+      [{ branchId: null }, /กรุณาเลือกสาขาของรายการก่อนบันทึก/],
+      [{ branchId: undefined }, /กรุณาเลือกสาขาของรายการก่อนบันทึก/],
+    ];
+    for (const [claimState, reason] of refused) {
+      assert.equal(await desk(prisma, claimState), null, JSON.stringify(claimState));
+      for (const member of members) assert.notEqual(await pays(prisma, member.userId, claimState), 'paid', `${member.userId} ${JSON.stringify(claimState)}`);
+      // The owner holds the right and every branch: only the claim's own state stops them.
+      assert.match(await pays(prisma, 'owner', claimState), reason);
+    }
+  });
+
+  // Owner rule 2026-10-01: the person whose turn it is comes first. The ready-to-pay notice went to the finance
+  // reviewer who passed the claim, else to its approver; the page names that person first, when they can pay.
+  it('names whoever\'s turn it is first among the people who can pay, then the others by name', async () => {
+    const prisma = company(members);
+    const at = (hour: number) => new Date(Date.UTC(2026, 9, 1, hour));
+    const approvedBy = (userId: string, decidedAt = at(4)) => ({ submittedAt: at(3), approvedAt: decidedAt,
+      approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: userId, decidedAt, assignedAt: at(3) }] });
+    const names = async (claimState: Record<string, unknown>) => (await desk(prisma, { branchId: 'b1', ...claimState }))!;
+
+    // Nobody approved (a claim below the threshold): by name, as before.
+    assert.deepEqual(await names({}), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The approver can pay: first, whatever their name sorts as.
+    assert.deepEqual(await names(approvedBy('b1-selected')), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('b1-default')), { names: ['วิชัย', 'เจ้าของ'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('owner')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The approver cannot pay (no right, or another branch): not named at all, and nobody jumps the queue.
+    assert.deepEqual(await names(approvedBy('approver-only')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    assert.deepEqual(await names(approvedBy('b2-selected')), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // With a finance step: the finance reviewer who passed the claim, then its approver.
+    const reviewed = { financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'b1-default', financeReviewedAt: at(5) };
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed }), { names: ['วิชัย', 'สมศรี'], moreCount: 1 });
+    // A finance reviewer with no pay right leaves the approver first.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed, financeReviewedByUserId: 'approver-only' }), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    // A review that did not pass the claim gives nobody a turn.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected'), ...reviewed, financeReviewStatus: 'NOT_REQUIRED' }), { names: ['สมศรี', 'เจ้าของ'], moreCount: 1 });
+    // The approver is the one rule of contracts: an approval from before the claim was last sent, or one no longer in force, is history.
+    assert.deepEqual(await names({ ...approvedBy('b1-selected', at(2)) }), { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    assert.deepEqual(await names({ submittedAt: at(3), approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'b1-selected', decidedAt: at(4), assignedAt: at(3), invalidatedAt: at(5) }] }),
+      { names: ['เจ้าของ', 'วิชัย'], moreCount: 1 });
+    // The whole list is still exactly the people the API takes the payment from: only its order changed.
+    const turnFirst = await new PrismaReimbursementRepository(prisma, {} as any).listPaymentRecorderNames('co-1', 'b1', ['b1-default', 'b1-selected', 'approver-only']);
+    assert.deepEqual(turnFirst, ['วิชัย', 'สมศรี', 'เจ้าของ']);
+    assert.deepEqual([...turnFirst].sort((a, b) => a.localeCompare(b, 'th')), await listed(prisma, 'b1'));
+  });
+
+  it('adds at most two names and the rest as a count, only while the claim waits for payment', async () => {
+    const payers = ['กมล', 'ขวัญ', 'จิตรา', 'ชาติ', 'ณัฐ', 'ดวงใจ', 'ธนา'];
+    const asked: Array<[string, unknown]> = [];
+    const repoFor = (claim: any, names: string[]) => ({
+      findRequestById: async () => claim, findPolicy: async () => null, findActiveApproverUserIds: async () => new Set(),
+      getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [], listInternalNotes: async () => [],
+      listPaymentRecorderNames: async (companyId: string, branchId: unknown) => { asked.push([companyId, branchId]); return names; },
+      listClaimPayoutVersions: async () => [],
+      // Payout Phase 1: a draft's detail also reads the account it would be sent with. This requester has set none.
+      findDraftDefaultPayout: async () => undefined, planSubmitPayout: async () => ({ error: 'payout_method_required' }),
+    }) as any;
+    const read = (claim: any, names: string[]) => new GetReimbursementDetailUseCase(repoFor(claim, names), detailEvidence)
+      .execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1');
+
+    assert.deepEqual((await read(waiting(), payers)).paymentDesk, { names: ['กมล', 'ขวัญ'], moreCount: 5 });
+    assert.deepEqual(asked, [['co-1', 'b1']], 'the payers of the claim\'s own branch');
+    assert.deepEqual((await read(waiting(), ['กมล', 'ขวัญ'])).paymentDesk, { names: ['กมล', 'ขวัญ'], moreCount: 0 });
+    assert.deepEqual((await read(waiting(), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
+    // Nobody can pay: an empty list, which the page reports as such.
+    assert.deepEqual((await read(waiting(), [])).paymentDesk, { names: [], moreCount: 0 });
+    // Approved and still being routed to payment waits at the same desk.
+    assert.deepEqual((await read(waiting({ status: 'APPROVED' }), ['กมล'])).paymentDesk, { names: ['กมล'], moreCount: 0 });
+    // Any other desk, a finished claim, and a claim nobody can pay (part paid, or with no branch): no list, and no extra read.
+    asked.length = 0;
+    for (const overrides of [{ status: 'DRAFT' }, { status: 'PENDING_APPROVAL' }, { status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' },
+      { status: 'APPROVED', financeReviewStatus: 'PENDING' }, { status: 'PAID', paymentStatus: 'PAID' }, { status: 'CANCELLED' },
+      { status: 'PARTIALLY_PAID', paymentStatus: 'PARTIALLY_PAID' }, { branchId: null }, { branchId: undefined }]) {
+      const detail = await read(waiting(overrides), payers);
+      assert.equal('paymentDesk' in detail, false, JSON.stringify(overrides));
+      // The part-paid and the branchless claim still wait at the payment desk: the page prints its pool label.
+      if (!('status' in overrides) || overrides.status === 'PARTIALLY_PAID') assert.deepEqual(detail.currentDesk, { kind: 'PAYMENT' });
+    }
+    assert.deepEqual(asked, []);
+  });
+});
+
+// Review follow-up 2026-10-01 (spec §18.1, acceptance I1). The list pages in the database, and the hub's counts are
+// read with the list's own predicate: a card's number is the rows its filter shows over every page, and the
+// buckets add up to ทั้งหมด.
+describe('list paging and hub buckets', () => {
+  const STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'REJECTED', 'CANCELLED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'VOIDED'];
+  const FINANCE = ['NOT_REQUIRED', 'PENDING', 'NEEDS_INFO', 'APPROVED_FOR_PAYMENT', 'BLOCKED'];
+  const BUCKETS = ['draft', 'review', 'payment', 'paid', 'closed'] as const;
+  const at = (second: number) => new Date(Date.UTC(2026, 8, 1, 0, 0, second));
+  /** One claim for every status pair the database can hold, twice over for the live ones, so no two buckets are the same size. */
+  const claims = STATUSES.flatMap((status, s) => FINANCE.flatMap((financeReviewStatus, f) =>
+    Array.from({ length: status === 'READY_FOR_PAYMENT' || status === 'DRAFT' ? 2 : 1 }, (_, copy) => ({
+      id: `rb-${status}-${financeReviewStatus}-${copy}`, companyId: 'co-1', branchId: 'b1', requesterUserId: copy ? 'staff-2' : 'staff-1',
+      requesterDisplayNameSnapshot: 'ผู้เบิก', reason: 'แท็กซี่', categoryKey: 'travel', amount: `${(s + 1) * 10 + f}.5000`, currency: 'THB',
+      incurredDate: at(0), status, financeReviewStatus, paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH',
+      receiptRequirementStatus: f % 2 ? 'REQUIRED' : 'ATTACHED', postingStatus: 'pending', paymentTotalAmount: '0.0000',
+      outstandingAmount: '0.0000', createdByUserId: 'staff-1', createdAt: at(s * 10 + f * 2 + copy), updatedAt: at(0),
+    }))));
+
+  /** The claims table in memory, answering the repository's own `where`, order, OFFSET and LIMIT, and its GROUP BY. */
+  function database(rows: any[] = claims) {
+    const reads: Array<{ skip?: number; take?: number }> = [];
+    const matches = (row: any, where: any): boolean => Object.entries(where ?? {}).every(([field, want]: [string, any]) => {
+      if (want === undefined) return true;
+      if (field === 'AND') return want.every((part: any) => matches(row, part));
+      if (field === 'OR') return want.some((part: any) => matches(row, part));
+      // The search's `contains` (case-insensitive, as PostgreSQL's ILIKE) and its amount, which the column compares as a number.
+      if (want !== null && typeof want === 'object' && 'contains' in want) {
+        assert.equal(want.mode, 'insensitive');
+        return typeof row[field] === 'string' && row[field].toLowerCase().includes(want.contains.toLowerCase());
+      }
+      if (field === 'amount') return Number(row[field]) === Number(want);
+      if (want !== null && typeof want === 'object') return want.in.includes(row[field]);
+      return row[field] === want;
+    });
+    const client = {
+      reimbursementRequest: {
+        findMany: async ({ where, skip, take }: any) => {
+          reads.push({ skip, take });
+          const found = rows.filter((row) => matches(row, where))
+            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1));
+          return found.slice(skip ?? 0, take === undefined ? undefined : (skip ?? 0) + take).map((row) => ({ ...row, _count: { lines: 1 } }));
+        },
+        groupBy: async ({ by, where }: any) => {
+          const groups = new Map<string, any>();
+          for (const row of rows.filter((candidate) => matches(candidate, where))) {
+            const key = by.map((field: string) => row[field]).join('|');
+            const group = groups.get(key) ?? { ...Object.fromEntries(by.map((field: string) => [field, row[field]])), _count: { _all: 0 }, _sum: { amount: 0 } };
+            group._count._all += 1;
+            group._sum.amount += Number(row.amount);
+            groups.set(key, group);
+          }
+          return [...groups.values()];
+        },
+      },
+      reimbursementPolicy: { findMany: async () => [] },
+      reimbursementApprovalStep: { findMany: async () => [] },
+      companyMembership: { findMany: async () => [] },
+    };
+    return { reads, list: new ListReimbursementsUseCase(new PrismaReimbursementRepository({ client } as any, {} as any)) };
+  }
+  const reader = ctx({ permissions: ['reimbursement.read'] });
+  /** Every page of one list, the way a client walks it. */
+  async function walk(list: ListReimbursementsUseCase, filter: Record<string, unknown>, pageSize: number) {
+    const pages: any[] = [];
+    for (let page = 1; ; page += 1) {
+      const answer = await list.execute(reader, { ...filter, page, pageSize });
+      pages.push(answer);
+      if (answer.items.length < answer.pageSize || page * answer.pageSize >= answer.total) return pages;
+    }
+  }
+
+  it('reads one page from the database with OFFSET and LIMIT, and answers the real total', async () => {
+    const { list, reads } = database();
+    const first = await list.execute(reader, { page: 1, pageSize: 7 });
+    const third = await list.execute(reader, { page: 3, pageSize: 7 });
+    // Before: every call read the whole scope (no skip, no take) and sliced it in memory.
+    assert.deepEqual(reads, [{ skip: 0, take: 7 }, { skip: 14, take: 7 }]);
+    assert.deepEqual([first.items.length, first.total, first.page, first.pageSize], [7, claims.length, 1, 7]);
+    assert.equal(third.items.length, 7);
+    // Newest first, with the id as the tie-break: the pages are slices of one stable order.
+    const order = [...claims].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1)).map((row) => row.id);
+    assert.deepEqual(first.items.map((item) => item.id), order.slice(0, 7));
+    assert.deepEqual(third.items.map((item) => item.id), order.slice(14, 21));
+    // The page size is capped at 100 and defaults to 20; a page number that is no number is page 1.
+    assert.equal((await list.execute(reader, { pageSize: 500 })).pageSize, 100);
+    assert.equal((await list.execute(reader, {})).items.length, 20);
+    for (const page of [0, -3, Number.NaN, Number.POSITIVE_INFINITY, 1.9]) {
+      assert.deepEqual((await list.execute(reader, { page, pageSize: 7 })).items.map((item) => item.id), order.slice(0, 7), String(page));
+    }
+    assert.deepEqual(reads.slice(-1), [{ skip: 0, take: 7 }]);
+    // Past the end: an empty page with the same total, not an error.
+    const beyond = await list.execute(reader, { page: 99, pageSize: 7 });
+    assert.deepEqual([beyond.items.length, beyond.total], [0, claims.length]);
+  });
+
+  // Payout Phase 1 on the paged list. The hub decides from the row whether "ส่งอนุมัติ" may be sent from the row
+  // (cash the draft itself chose) or opens the claim page, so the paged row has to say how the claim is paid
+  // back, and nothing more of the account.
+  it('says on a paged row how the claim is paid back: a draft\'s own choice, a sent claim\'s snapshot, nothing for a legacy claim', async () => {
+    const row = (id: string, extra: Record<string, unknown>) => ({ ...claims[0]!, id, status: 'DRAFT', ...extra });
+    const fingerprint = 'f'.repeat(64);
+    const { list } = database([
+      row('rb-cash', { payoutMethod: 'CASH' }),
+      row('rb-follows-default', { payoutMethod: null }),
+      row('rb-own-account', { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }),
+      row('rb-sent', { status: 'PENDING_APPROVAL', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: fingerprint }),
+      row('rb-sent-cash', { status: 'READY_FOR_PAYMENT', payoutMethod: 'CASH', payoutFingerprint: 'cash' }),
+      // Sent by a build from before the account existed: whatever its draft chose, it has no snapshot.
+      row('rb-legacy', { status: 'PENDING_APPROVAL', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: null }),
+    ]);
+    const page = await list.execute(reader, { pageSize: 100 });
+    assert.deepEqual(Object.fromEntries(page.items.map((item) => [item.id, item.payoutMethod ?? null])), {
+      'rb-cash': 'CASH', 'rb-follows-default': null, 'rb-own-account': 'BANK_TRANSFER', 'rb-sent': 'BANK_TRANSFER', 'rb-sent-cash': 'CASH', 'rb-legacy': null,
+    });
+    assert.doesNotMatch(JSON.stringify(page), new RegExp(`${fingerprint}|payoutFingerprint|payoutDestinationVersion`));
+    // The same rows through a bucket filter: the draft chip of the hub.
+    const drafts = await list.execute(reader, { bucket: 'draft', pageSize: 100 });
+    assert.deepEqual(drafts.items.map((item) => [item.id, item.payoutMethod ?? null]).sort(), [['rb-cash', 'CASH'], ['rb-follows-default', null], ['rb-own-account', 'BANK_TRANSFER']]);
+  });
+
+  it('counts each bucket as the rows its filter returns over every page, and the buckets add up to ทั้งหมด', async () => {
+    const { list } = database();
+    const all = await walk(list, {}, 7);
+    const hub = all[0].hub;
+    assert.equal(all.flatMap((answer) => answer.items).length, claims.length);
+    assert.equal(hub.counts.all, claims.length);
+    assert.equal(all[0].total, hub.counts.all);
+    assert.equal(BUCKETS.reduce((sum, bucket) => sum + hub.counts[bucket], 0), hub.counts.all);
+    assert.equal(new Set(BUCKETS.map((bucket) => hub.counts[bucket])).size, BUCKETS.length, 'five different sizes, so a swapped bucket cannot pass');
+
+    const seen: string[] = [];
+    for (const bucket of BUCKETS) {
+      const pages = await walk(list, { bucket }, 7);
+      const items = pages.flatMap((answer) => answer.items);
+      // The card's number is the list's total and the rows of all its pages.
+      assert.equal(items.length, hub.counts[bucket], bucket);
+      for (const answer of pages) {
+        assert.equal(answer.total, hub.counts[bucket], bucket);
+        // The cards count the whole scope whatever bucket or page was asked for.
+        assert.deepEqual(answer.hub, hub, bucket);
+      }
+      // Every row belongs there by the rule its own "อยู่ที่ …" desk follows.
+      for (const item of items) assert.equal(reimbursementHubBucket(item), bucket, item.id);
+      seen.push(...items.map((item) => item.id));
+    }
+    // No claim in two buckets, none in no bucket.
+    assert.deepEqual([...seen].sort(), claims.map((row) => row.id).sort());
+    // What the cards add up besides the counts: the claimed amounts, and the drafts that still owe a receipt.
+    assert.equal(Number(hub.totalAmount), claims.reduce((sum, row) => sum + Number(row.amount), 0));
+    assert.equal(hub.blockedDraftCount, claims.filter((row) => row.status === 'DRAFT' && row.receiptRequirementStatus === 'REQUIRED').length);
+    assert.ok(hub.blockedDraftCount > 0);
+  });
+
+  it('places every status pair by its desk, in one bucket, with the same answer for the count and for the filter', () => {
+    const expected: Record<string, string> = {
+      DRAFT: 'draft', PENDING_APPROVAL: 'review', FINANCE_REVIEW: 'review', READY_FOR_PAYMENT: 'payment', PARTIALLY_PAID: 'payment',
+      PAID: 'paid', REJECTED: 'closed', CANCELLED: 'closed', VOIDED: 'closed',
+    };
+    for (const status of STATUSES) {
+      for (const financeReviewStatus of FINANCE) {
+        // Approved and still being routed on: to finance review while that is pending, otherwise to payment.
+        const bucket = status === 'APPROVED' ? (financeReviewStatus === 'PENDING' ? 'review' : 'payment') : expected[status];
+        assert.equal(hubBucketOfStatus(status as any, financeReviewStatus), bucket, `${status} ${financeReviewStatus}`);
+        // The filter is the count's rule asked of every pair: a pair is in a bucket's query exactly when it is counted there.
+        for (const candidate of BUCKETS) {
+          const inQuery = (hubBucketWhere(candidate).OR as any[]).some((part) => part.status === status && part.financeReviewStatus.in.includes(financeReviewStatus));
+          assert.equal(inQuery, candidate === bucket, `${status} ${financeReviewStatus} in ${candidate}`);
+        }
+      }
+    }
+    // An unknown bucket matches nothing instead of everything.
+    assert.deepEqual(hubBucketWhere('archived'), { OR: [] });
+  });
+
+  it('keeps the counts inside the caller\'s scope', async () => {
+    const { list } = database();
+    // Own claims only: the cards count what this person may see, never the company.
+    const own = await list.execute(ctx({ userId: 'staff-2', permissions: ['reimbursement.read_own'] }), { pageSize: 100 });
+    const mine = claims.filter((row) => row.requesterUserId === 'staff-2');
+    assert.ok(mine.length > 0 && mine.length < claims.length);
+    assert.deepEqual([own.total, own.hub.counts.all, own.items.length], [mine.length, mine.length, mine.length]);
+    assert.deepEqual(own.hub.counts, { all: mine.length, draft: 5, review: 0, payment: 5, paid: 0, closed: 0 });
+    // An empty scope: zeros everywhere, and a total amount that is still a number.
+    const empty = await database([]).list.execute(reader, {});
+    assert.deepEqual(empty.hub, { counts: { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 }, totalAmount: '0.0000', blockedDraftCount: 0 });
+    assert.deepEqual([empty.items.length, empty.total], [0, 0]);
+  });
+
+  // Review 2026-10-01 (acceptance I1 with a search). The hub searched in the browser, so a search loaded every page of
+  // its filter: 30 calls for 3,000 claims, each with its own GROUP BY. The search now goes to the list, and the counts
+  // are of the same searched list.
+  describe('search', () => {
+    const people = ['สมชาย ใจดี', 'สมศรี มีสุข', 'Wichai K.'];
+    const reasons = ['ค่าแท็กซี่ไปพบลูกค้า', 'ค่าที่พักต่างจังหวัด', 'Parking fee'];
+    const categories = ['เดินทาง', 'ที่พัก', null];
+    /** The same claims, each with a number, a requester name, a reason and a category a person could type. */
+    const named = claims.map((claim, index) => ({
+      ...claim, requestNo: claim.status === 'DRAFT' ? null : `RB-202609-${String(index).padStart(5, '0')}`,
+      requesterDisplayNameSnapshot: people[index % 3], reason: reasons[index % 4 % 3], categoryLabelSnapshot: categories[index % 5 % 3],
+    }));
+    /** What a person expects a word to find, written without the query's own predicate. */
+    const has = (claim: any, word: string) => [claim.requestNo, claim.requesterDisplayNameSnapshot, claim.reason, claim.categoryLabelSnapshot]
+      .some((text) => typeof text === 'string' && text.toLowerCase().includes(word.toLowerCase())) || Number(claim.amount) === Number(word.replace(/,/g, ''));
+    const found = (search: string) => named.filter((claim) => search.trim().split(/\s+/).every((word) => has(claim, word)));
+
+    it('counts each bucket as the rows its filter returns over every page, for the claims the search found', async () => {
+      const { list } = database(named);
+      const whole = (await list.execute(reader, {})).hub;
+      for (const search of ['สมศรี', 'rb-202609', 'ที่พัก', 'parking', '21.5', 'สมชาย แท็กซี่', '  สมศรี   ที่พัก  ', 'ไม่มีใบไหนตรง']) {
+        const expected = found(search);
+        const all = await walk(list, { search }, 7);
+        const hub = all[0].hub;
+        assert.deepEqual(all.flatMap((answer) => answer.items.map((item: any) => item.id)).sort(), expected.map((claim) => claim.id).sort(), search);
+        assert.deepEqual([all[0].total, hub.counts.all], [expected.length, expected.length], search);
+        assert.equal(BUCKETS.reduce((sum, bucket) => sum + hub.counts[bucket], 0), hub.counts.all, search);
+        assert.equal(Number(hub.totalAmount), expected.reduce((sum, claim) => sum + Number(claim.amount), 0), search);
+        for (const bucket of BUCKETS) {
+          const pages = await walk(list, { search, bucket }, 7);
+          const items = pages.flatMap((answer) => answer.items);
+          // The number on the card is the rows its filter returns, with the search as without it.
+          assert.equal(items.length, hub.counts[bucket], `${search} ${bucket}`);
+          for (const answer of pages) assert.deepEqual([answer.total, answer.hub], [hub.counts[bucket], hub], `${search} ${bucket}`);
+          for (const item of items) assert.equal(reimbursementHubBucket(item), bucket, item.id);
+        }
+      }
+      // The searches above are real ones: each finds some claims and not all of them, and one finds none.
+      assert.deepEqual(['สมศรี', '21.5', 'สมชาย แท็กซี่', 'ไม่มีใบไหนตรง'].map((search) => found(search).length > 0), [true, true, true, false]);
+      assert.ok(found('สมศรี').length < named.length && found('สมชาย แท็กซี่').length < found('สมชาย').length);
+      // No search, or a blank one, is the whole scope as before.
+      for (const search of [undefined, '', '   ']) assert.deepEqual((await list.execute(reader, { search })).hub, whole, JSON.stringify(search));
+    });
+
+    it('keeps the search inside the caller\'s scope', async () => {
+      const { list } = database(named);
+      const own = ctx({ userId: 'staff-2', permissions: ['reimbursement.read_own'] });
+      const mine = found('สมศรี').filter((claim) => claim.requesterUserId === 'staff-2');
+      assert.ok(mine.length > 0 && mine.length < found('สมศรี').length);
+      const answer = await list.execute(own, { search: 'สมศรี', pageSize: 100 });
+      assert.deepEqual([answer.items.map((item) => item.id).sort(), answer.total, answer.hub.counts.all], [mine.map((claim) => claim.id).sort(), mine.length, mine.length]);
+    });
+
+    it('reads a search as words: trimmed, cut at 100 characters, five words at most, and a number also as an amount', () => {
+      const words = (search: string) => (hubSearchWhere(search).AND as any[]).map((part) => part.OR.map((field: any) => Object.entries(field)[0]));
+      assert.deepEqual(words('  สมศรี '), [[
+        ['requestNo', { contains: 'สมศรี', mode: 'insensitive' }], ['requesterDisplayNameSnapshot', { contains: 'สมศรี', mode: 'insensitive' }],
+        ['reason', { contains: 'สมศรี', mode: 'insensitive' }], ['categoryLabelSnapshot', { contains: 'สมศรี', mode: 'insensitive' }],
+      ]]);
+      // A number is looked for in the text columns too (a claim number), and as the claim's amount, thousands separator or not.
+      assert.deepEqual(words('1,500.50')[0]!.at(-1), ['amount', '1500.50']);
+      assert.equal(words('1500')[0]!.length, 5);
+      for (const notAnAmount of ['1.2.3', '-5', '1e3', '12345678901234', 'RB-1']) assert.equal(words(notAnAmount)[0]!.length, 4, notAnAmount);
+      assert.equal(words('a b c d e f g').length, 5);
+      assert.deepEqual(hubSearchWhere('   '), { AND: [] });
+    });
+
+    it('hands the database one trimmed search of at most 100 characters, and none for a blank one', async () => {
+      const asked: any[] = [];
+      const repo = { listRequestPage: async (where: any) => { asked.push(where.search); return { rows: [], groups: [] }; }, findPolicy: async () => null,
+        findPendingApprovalSteps: async () => [], getUserDisplayNames: async () => ({}) };
+      const list = new ListReimbursementsUseCase(repo as any);
+      for (const search of ['  แท็กซี่  ', 'ก'.repeat(150), '', '   ', undefined]) await list.execute(reader, { search });
+      assert.deepEqual(asked, ['แท็กซี่', 'ก'.repeat(100), undefined, undefined, undefined]);
+    });
+  });
+
+  // Review 2026-10-01: `bucket` went from the query string to the counts unread.
+  it('refuses a bucket it does not have with 400, before reading anything', async () => {
+    const { list, reads } = database();
+    // Before: `all` answered no rows under the whole scope's total, `constructor` answered a total that is a function
+    // (dropped from the JSON), and any other name an empty list that said nothing was wrong.
+    for (const bucket of ['all', 'constructor', 'toString', '__proto__', 'archived', 'DRAFT', ' draft', '']) {
+      await assert.rejects(() => list.execute(reader, { bucket: bucket as any }),
+        (error: any) => error.getStatus() === 400 && error.message === 'reimbursement_list_bucket_invalid', JSON.stringify(bucket));
+    }
+    assert.deepEqual(reads, []);
+    // Every bucket the hub has is taken, and so is no bucket at all; the total is always a number.
+    for (const bucket of [...BUCKETS, undefined]) {
+      const answer = await list.execute(reader, { bucket, pageSize: 1 });
+      assert.equal(typeof answer.total, 'number', String(bucket));
+      assert.equal(answer.total, answer.hub.counts[bucket ?? 'all'], String(bucket));
+    }
+    // A caller with no read right is refused for that, whatever bucket it names.
+    await assert.rejects(() => list.execute(ctx({ permissions: [] }), { bucket: 'constructor' as any }), (error: any) => error.getStatus() === 403);
+  });
+
+  // The hub names its third tab by the company's finance step (payout spec §18.5). The policy endpoint asks for a
+  // policy right, which an accountant does not hold, so the tab read "คิวการเงิน" in a company with no finance step.
+  it('tells whoever lists claims whether the company has the finance-review step now, and nothing else of its policy', async () => {
+    const policyRecord = (financeReviewRequired: boolean) => ({
+      id: 'pol-1', companyId: 'co-1', currency: 'THB', approvalThresholdAmount: '5000.00', approvalRequiredFromAmount: '5000.00',
+      approverMode: 'CUSTOM_ROLE', defaultApproverRole: 'SECRET_ROLE', defaultApproverRoles: ['SECRET_ROLE'], allowSelfApproval: true,
+      requireReceipt: true, allowMissingReceiptWithReason: false, duplicatePolicy: 'WARN', financeReviewRequired, slaHours: 48, status: 'ACTIVE',
+      createdByUserId: 'owner-1', createdAt: at(0), updatedAt: at(0),
+    });
+    const listWith = (policy: unknown) => new ListReimbursementsUseCase({
+      listRequestPage: async () => ({ rows: [], groups: [] }), findPolicy: async () => policy,
+      findPendingApprovalSteps: async () => [], getUserDisplayNames: async () => ({}),
+    } as any);
+    // An accountant: reads claims and reviews them for finance, and holds no right to the policy.
+    const accountant = ctx({ roles: ['ACCOUNTANT'], permissions: ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.export'] });
+    // No policy saved yet: the company default, which has no finance step.
+    for (const [policy, expected] of [[policyRecord(true), true], [policyRecord(false), false], [null, false]] as const) {
+      const answer = await listWith(policy).execute(accountant, { pageSize: 1 });
+      assert.equal(answer.financeReviewRequired, expected);
+      assert.deepEqual(Object.keys(answer).sort(), ['financeReviewRequired', 'hub', 'items', 'page', 'pageSize', 'total']);
+      assert.doesNotMatch(JSON.stringify(answer), /SECRET_ROLE|5000|48|pol-1/);
+    }
+    // A requester lists their own claims only, and is told the same.
+    assert.equal((await listWith(policyRecord(true)).execute(ctx({ permissions: ['reimbursement.read_own'] }), { scope: 'own' })).financeReviewRequired, true);
+  });
+});
+
 const approverPermissions = ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'];
 const approverBranches = [{ id: 'b1', name: 'สำนักงานใหญ่' }, { id: 'b2', name: 'สาขาสอง' }];
 const approverHolder = (branchIds: string[]): ApproverRoleCandidate['holders'][number] => ({
@@ -905,6 +2254,17 @@ describe('reimbursement approver role options', () => {
     assert.equal(options.find((item) => item.key === 'FINANCE')?.unavailableReason, 'NO_ACTIVE_HOLDERS');
     assert.equal(options.find((item) => item.key === 'STAFF')?.unavailableReason, 'MISSING_CAPABILITY');
     assert.equal(options.some((item) => item.key === 'SYSTEM_ADMIN'), false);
+  });
+
+  // Payout-account spec §13.3 F2: approving never needed the pay right, so the policy screen is told which roles lack it.
+  it('says whether a role can also record the payment, without changing which roles are selectable', () => {
+    const options = buildReimbursementApproverRoleOptions([
+      approverRole({ key: 'OWNER', name: 'Owner', permissionKeys: [...approverPermissions, 'reimbursement.payment.record'], holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'OLD_APPROVER', name: 'Old approver', holders: [approverHolder(['b1', 'b2'])] }),
+      approverRole({ key: 'STAFF', name: 'Staff', permissionKeys: ['reimbursement.read', 'reimbursement.payment.record'], holders: [approverHolder(['b1', 'b2'])] }),
+    ], approverBranches);
+    assert.deepEqual(Object.fromEntries(options.map((item) => [item.key, [item.selectable, item.canRecordPayment]])),
+      { OWNER: [true, true], OLD_APPROVER: [true, false], STAFF: [false, true] });
   });
 
   it('blocks partial coverage when OWNER cannot recover the uncovered branch', () => {
@@ -1110,5 +2470,2114 @@ describe('reimbursement policy role save', () => {
     assert.equal(audits[0]?.action, 'reimbursement.policy.update');
     assert.equal(outboxRows[0]?.eventType, 'reimbursement.policy_updated');
     assert.equal(outboxRows[0]?.aggregateId, 'policy-1');
+  });
+});
+
+// ---- Payout account (payout spec §8–§11, owner decisions 2026-10-01) ----
+//
+// The repository fake keeps the two payout tables in memory, and every read and write on them is the
+// production function, so these cases exercise the real freeze, masking and reveal code.
+
+const KBANK = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '012-3-45678-9' };
+const SCB = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '000123456789012' };
+const PROMPTPAY = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'PROMPTPAY_PHONE' as const, accountName: 'นาย สมชาย ใจดี', accountNumber: '081-234-5678' };
+const PAYOUT_NAMES: Record<string, string> = { 'staff-1': 'สมชาย', 'manager-1': 'วิภา', 'finance-1': 'อรทัย', 'owner-1': 'เจ้าของร้าน' };
+/** Every full number a case types in, as stored and as typed. None may ever appear in a payload, an audit row or a notification. */
+const FULL_NUMBERS = ['0123456789', '012-3-45678-9', '000123456789012', '0812345678', '081-234-5678'];
+const leaksNumber = (value: unknown) => FULL_NUMBERS.some((number) => JSON.stringify(value ?? null).includes(number));
+
+function payoutWorld(options: RepoOptions = {}) {
+  const state = fakeRepo({ noDefaultPayout: true, ...options });
+  Object.assign(state.repo, {
+    getUserDisplayNames: async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => PAYOUT_NAMES[id]).map((id) => [id, PAYOUT_NAMES[id]])),
+    listInternalNotes: async () => [],
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+    isUserRelatedToRequest: async () => false,
+  });
+  const audits: any[] = [];
+  const notifications: any[] = [];
+  const audit = { log: async (entry: any) => { audits.push(entry); }, logOrThrow: async (entry: any) => { audits.push(entry); } } as any;
+  const payouts = payoutUseCase(state.repo, audit, notifications);
+  const evidence = evidenceService();
+  const submit = new SubmitReimbursementUseCase(state.repo, audit, noopOutbox, evidence, readyApproverRoutes, noopProjections);
+  const detail = new GetReimbursementDetailUseCase(state.repo, evidence);
+  return {
+    state, audits, notifications, payouts,
+    create: new CreateReimbursementDraftUseCase(state.repo, audit, evidence, payouts),
+    update: new UpdateReimbursementDraftUseCase(state.repo, audit, evidence, payouts),
+    submit,
+    detail,
+    /** What the claim page does: read the claim, then send it with the token of the account that page showed. */
+    send: async (context: any, id: string) => submit.execute(context, id, { payoutSubmitToken: (await detail.execute(context, id)).payout?.submitToken }),
+    reopen: new ReopenRejectedReimbursementUseCase(state.repo, audit),
+    reveal: new RevealClaimPayoutUseCase(state.repo, audit, { credentialEncryptionKey: PAYOUT_KEY } as any),
+  };
+}
+
+const claimInput = (extra: Record<string, unknown> = {}) => ({ reason: 'ค่าเดินทาง', branchId: 'branch-1', lines: [inputLine({ attachmentId: 'att-1' })], ...extra }) as any;
+const financeCtx = () => ctx({
+  userId: 'finance-1', roles: ['FINANCE'],
+  permissions: ['reimbursement.create', 'reimbursement.finance_review', 'reimbursement.submit', 'reimbursement.read', 'reimbursement.update_own_draft'],
+});
+const managerCtx = (overrides: Partial<any> = {}) => ctx({
+  userId: 'manager-1', roles: ['MANAGER'], permissions: ['access.employee.read', 'access.employee.update', 'reimbursement.create'], ...overrides,
+});
+const EMPLOYEE = { displayName: 'สมชาย', hasEmployeeProfile: true, allBranches: false, branchIds: ['branch-1'], managesPeople: false };
+
+describe('payout: a member sets their own default account', () => {
+  it('works for every self-service role and for an owner who has no employee record', async () => {
+    for (const [role, permissions] of Object.entries(ROLE_GRANTS).filter(([key]) => !PLATFORM_ROLE_KEYS.includes(key))) {
+      // No employee record anywhere in this world: the account hangs off the membership alone.
+      const world = payoutWorld();
+      const me = ctx({ userId: `${role}-user`, roles: [role], permissions });
+      const set = await world.payouts.setOwn(me, KBANK);
+      assert.deepEqual(set.account && { bank: set.account.bankName, last4: set.account.accountLast4, name: set.account.accountName },
+        { bank: 'ธนาคารกสิกรไทย', last4: '6789', name: 'นาย สมชาย ใจดี' }, role);
+      assert.equal((await world.payouts.revealOwn(me)).accountNumber, '0123456789', role);
+      assert.equal((await world.payouts.setOwn(me, { payoutMethod: 'CASH' })).account?.payoutMethod, 'CASH', role);
+      assert.deepEqual(await world.payouts.deleteOwn(me), { account: null });
+      assert.deepEqual(await world.payouts.getOwn(me), { account: null, canEdit: true });
+    }
+  });
+
+  it('keeps every digit: leading zeros, 6 to 20 digits, and a PromptPay mobile number', async () => {
+    const world = payoutWorld();
+    for (const [input, full, last4] of [[KBANK, '0123456789', '6789'], [SCB, '000123456789012', '9012'], [PROMPTPAY, '0812345678', '5678']] as const) {
+      assert.equal((await world.payouts.setOwn(ctx(), input)).account?.accountLast4, last4);
+      assert.equal((await world.payouts.revealOwn(ctx())).accountNumber, full);
+    }
+    await assert.rejects(world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: '12345' }), /payout_destination_invalid/);
+    await assert.rejects(world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: '123456789012345678901' }), /payout_destination_invalid/);
+    await assert.rejects(world.payouts.setOwn(ctx(), { ...PROMPTPAY, accountNumber: '1234567890123' }), /payout_destination_invalid/);
+    await assert.rejects(world.payouts.setOwn(ctx(), { payoutMethod: 'BANK_TRANSFER' } as any), /payout_destination_required/);
+    await assert.rejects(world.payouts.setOwn(ctx(), { payoutMethod: 'CHEQUE' } as any), /payout_method_required/);
+    // Cash needs no account at all.
+    assert.deepEqual(Object.keys((await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' })).account!).sort(), ['payoutMethod', 'updatedAt', 'userId']);
+  });
+
+  it('is one account per company, and no payload or audit row ever carries the number', async () => {
+    const world = payoutWorld();
+    const here = ctx();
+    const elsewhere = ctx({ companyId: 'co-2' });
+    const answers = [await world.payouts.setOwn(here, KBANK), await world.payouts.setOwn(elsewhere, SCB), await world.payouts.getOwn(here)];
+    assert.equal((await world.payouts.getOwn(here)).account?.accountLast4, '6789');
+    assert.equal((await world.payouts.getOwn(elsewhere)).account?.accountLast4, '9012');
+    assert.equal((await world.payouts.revealOwn(elsewhere)).accountNumber, '000123456789012');
+    assert.equal(leaksNumber(answers), false);
+    assert.equal(leaksNumber(world.audits), false);
+    assert.ok(answers.every((answer) => !('accountNumber' in (answer.account ?? {})) && !('accountNumberEncrypted' in (answer.account ?? {}))));
+    // Every change and every reveal is on record, with the last 4 before and after.
+    assert.deepEqual(world.audits.map((row) => row.action), [
+      'reimbursement.payout_account.set', 'reimbursement.payout_account.set', 'reimbursement.payout_account.reveal',
+    ]);
+    assert.deepEqual(world.audits[0].metadataJson, {
+      accountUserId: 'staff-1', byOwner: true, before: null,
+      after: { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountLast4: '6789', version: 1 },
+    });
+  });
+
+  it('refuses a member who may not file claims, and a reveal with nothing set', async () => {
+    const world = payoutWorld();
+    const noClaims = ctx({ permissions: ['reimbursement.read_own'] });
+    for (const call of [() => world.payouts.getOwn(noClaims), () => world.payouts.setOwn(noClaims, KBANK), () => world.payouts.deleteOwn(noClaims), () => world.payouts.revealOwn(noClaims)]) {
+      await assert.rejects(call, /Missing permission: reimbursement.create/);
+    }
+    await assert.rejects(world.payouts.revealOwn(ctx()), /payout_account_not_set/);
+    assert.equal(world.state.payoutTables.accounts.length, 0);
+  });
+});
+
+describe('payout: someone else sets a member account (owner decision 2026-10-01)', () => {
+  it('lets an employee-data editor set a subordinate account, records it and tells the account owner', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const answer = await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    // The editor typed the full number once; what comes back is the last 4, like for everyone else.
+    assert.equal(answer.account?.accountLast4, '6789');
+    assert.equal(answer.account?.setByOtherName, 'วิภา');
+    assert.equal(leaksNumber(answer), false);
+
+    assert.equal(world.audits.length, 1);
+    assert.deepEqual([world.audits[0].action, world.audits[0].riskLevel, world.audits[0].actorUserId, world.audits[0].metadataJson.byOwner], [
+      'reimbursement.payout_account.set', 'HIGH', 'manager-1', false,
+    ]);
+    assert.equal(leaksNumber(world.audits), false);
+
+    // The owner's condition: the account owner is told who, when and which account, last 4 only.
+    assert.equal(world.notifications.length, 1);
+    const notice = world.notifications[0];
+    assert.deepEqual(notice.recipientUserIds, ['staff-1']);
+    assert.equal(notice.title, 'วิภา ตั้งบัญชีรับเงินคืนของคุณ');
+    assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 ตั้งเมื่อ .+ ถ้าไม่ใช่บัญชีของคุณ เปิดดูแล้วแก้ได้ทันที$/);
+    assert.equal(notice.deepLinkHref, '/companies/co-1/reimbursements/payout-account');
+    assert.equal(notice.triggerKey, 'reimbursement.payout_account_set_by_other');
+    // Where a person's money goes: not held back by quiet hours, and a failed push is recorded.
+    assert.equal(notice.severity, 'critical');
+    assert.equal(leaksNumber(notice), false);
+
+    // The account owner sees who set it until they save it themselves; the editor still cannot read the number.
+    assert.equal((await world.payouts.getOwn(ctx())).account?.setByOtherName, 'วิภา');
+    assert.equal((await world.payouts.getForMember(managerCtx(), 'staff-1')).account?.accountLast4, '6789');
+    assert.equal(typeof (world.payouts as any).revealForMember, 'undefined', 'there is no way to reveal someone else default account');
+    await assert.rejects(world.payouts.revealOwn(managerCtx()), /payout_account_not_set/, "the editor's own reveal reads the editor's own account");
+    assert.equal((await world.payouts.revealOwn(ctx())).accountNumber, '0123456789');
+  });
+
+  it('notifies again on every later change by someone else, including a switch to cash', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    await world.payouts.setForMember(managerCtx(), 'staff-1', PROMPTPAY);
+    await world.payouts.setForMember(managerCtx(), 'staff-1', { payoutMethod: 'CASH' });
+    assert.equal(world.notifications.length, 3);
+    // One notification per change: the dedup period is the change itself (its version and its moment).
+    assert.deepEqual(world.notifications.map((notice) => notice.periodKey.split(':')[0]), ['v1', 'v2', 'v3']);
+    assert.equal(new Set(world.notifications.map((notice) => notice.periodKey)).size, 3);
+    assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 ตั้งเมื่อ /);
+    assert.match(world.notifications[2].body, /^ตั้งให้คุณรับเงินคืนเป็นเงินสด เมื่อ .+ ถ้าไม่ถูกต้อง เปิดดูแล้วแก้ได้ทันที$/);
+    assert.equal(leaksNumber(world.notifications), false);
+  });
+
+  // The version starts again at 1 after the member deletes the account. A period made of the version
+  // alone would fold the second notice into the first, and the member would not be told.
+  it('tells the member again when someone sets the account after the member deleted it', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    await world.payouts.deleteOwn(ctx());
+    await world.payouts.setForMember(managerCtx(), 'staff-1', SCB);
+    assert.deepEqual(world.notifications.map((notice) => notice.periodKey.split(':')[0]), ['v1', 'v1']);
+    assert.notEqual(world.notifications[0].periodKey, world.notifications[1].periodKey);
+    assert.match(world.notifications[1].body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 ตั้งเมื่อ /);
+  });
+
+  it('sends nothing when the account owner edits their own account', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE, 'manager-1': { ...EMPLOYEE, displayName: 'วิภา' } } });
+    await world.payouts.setOwn(ctx(), KBANK);
+    await world.payouts.setOwn(ctx(), SCB);
+    // An editor saving their OWN account through the employee page is a self-edit too.
+    await world.payouts.setForMember(managerCtx(), 'manager-1', KBANK);
+    assert.equal(world.notifications.length, 0);
+    assert.ok(world.audits.every((row) => row.metadataJson.byOwner === true && row.riskLevel === 'MEDIUM'));
+    // Saving it themselves also clears "set by someone else".
+    await world.payouts.setForMember(managerCtx(), 'staff-1', PROMPTPAY);
+    assert.equal((await world.payouts.getOwn(ctx())).account?.setByOtherName, 'วิภา');
+    await world.payouts.setOwn(ctx(), KBANK);
+    assert.equal((await world.payouts.getOwn(ctx())).account?.setByOtherName, undefined);
+  });
+
+  // Security review M1: the notice is the owner's condition for letting anyone else set an account,
+  // and the notification writer makes recipients of ACTIVE members only. A draft, invited, suspended
+  // or disabled member would never be told, so nobody sets their account for them: not a manager,
+  // not an admin, not the owner.
+  it('refuses a member who is not active, whoever asks, and tells an active member', async () => {
+    const editRights = ['access.employee.read', 'access.employee.update', 'reimbursement.create'];
+    const editors = [managerCtx(), ctx({ userId: 'admin-1', roles: ['ADMIN'], permissions: editRights }), ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: editRights })];
+    for (const membershipStatus of ['DRAFT', 'INVITED', 'SUSPENDED', 'DISABLED']) {
+      for (const editor of editors) {
+        const label = `${editor.roles[0]} → ${membershipStatus}`;
+        const world = payoutWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus } } });
+        assert.equal((await world.payouts.getForMember(editor, 'staff-1')).canEdit, false, `${label}: no button`);
+        await assert.rejects(world.payouts.setForMember(editor, 'staff-1', KBANK), (error: any) => {
+          assert.equal(error.getStatus(), 409, label);
+          assert.match(error.message, /^payout_account_member_not_active$/, label);
+          return true;
+        }, label);
+        // The same through "save as the requester's default" on a claim filed for them.
+        const preparer = ctx({ ...editor, permissions: [...editRights, 'reimbursement.finance_review', 'reimbursement.update_own_draft'] });
+        await assert.rejects(world.create.execute(preparer, claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } })), /^ConflictException: payout_account_member_not_active$/, label);
+        // Each attempt is on record with its reason; nothing was written and no notice went into the void.
+        assert.deepEqual(world.audits.map((row) => [row.action, row.result, row.metadataJson.reason]),
+          Array(2).fill(['reimbursement.payout_account.set', 'DENIED', 'target_not_active']), label);
+        assert.deepEqual([world.state.payoutTables.accounts.length, world.notifications.length], [0, 0], label);
+      }
+    }
+    // The same member once active: the account is set, and they are the one and only person told.
+    for (const editor of editors) {
+      const world = payoutWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus: 'ACTIVE' } } });
+      assert.equal((await world.payouts.getForMember(editor, 'staff-1')).canEdit, true);
+      assert.equal((await world.payouts.setForMember(editor, 'staff-1', KBANK)).account?.accountLast4, '6789');
+      assert.deepEqual(world.notifications.map((notice) => notice.recipientUserIds), [['staff-1']]);
+    }
+  });
+
+  it('refuses another company, an owner with no employee record, another branch, and a company without reimbursements', async () => {
+    const world = payoutWorld({ payoutMembers: {
+      'staff-1': EMPLOYEE,
+      'owner-1': { displayName: 'เจ้าของร้าน', hasEmployeeProfile: false, allBranches: true, branchIds: [], managesPeople: true },
+      'staff-b2': { ...EMPLOYEE, branchIds: ['branch-2'] },
+      'staff-both': { ...EMPLOYEE, branchIds: ['branch-1', 'branch-2'] },
+      'admin-1': { ...EMPLOYEE, allBranches: true, branchIds: [] },
+    } });
+    const branchManager = managerCtx({ scopes: { branchIds: ['branch-1'] } });
+
+    // A user id from another company is simply not a member here.
+    await assert.rejects(world.payouts.setForMember(managerCtx(), 'user-of-another-company', KBANK), /payout_member_not_found/);
+    await assert.rejects(world.payouts.getForMember(managerCtx(), 'user-of-another-company'), /payout_member_not_found/);
+    // A business owner has no employee record: only they set their own.
+    await assert.rejects(world.payouts.setForMember(managerCtx(), 'owner-1', KBANK), /payout_member_not_found/);
+    // A branch-limited editor: only members wholly inside the editor's branches.
+    assert.equal((await world.payouts.setForMember(branchManager, 'staff-1', KBANK)).account?.accountLast4, '6789');
+    for (const outside of ['staff-b2', 'staff-both', 'admin-1']) {
+      await assert.rejects(world.payouts.setForMember(branchManager, outside, KBANK), /payout_account_edit_denied/, outside);
+    }
+    assert.equal(world.audits.filter((row) => row.result === 'DENIED' && row.metadataJson.reason === 'outside_editor_branch_scope').length, 3);
+    // An editor with every branch is not limited.
+    assert.equal((await world.payouts.setForMember(managerCtx(), 'staff-b2', SCB)).account?.accountLast4, '9012');
+    // No right to edit employee data, or the company does not use reimbursements.
+    await assert.rejects(world.payouts.setForMember(managerCtx({ permissions: ['access.employee.read'] }), 'staff-1', KBANK), /payout_account_edit_denied/);
+    await assert.rejects(world.payouts.setForMember(managerCtx({ entitlementDeniedPermissions: { 'reimbursement.create': 'reimbursements' } }), 'staff-1', KBANK), /payout_account_edit_denied/);
+    await assert.rejects(world.payouts.getForMember(ctx(), 'staff-1'), /Missing permission: access.employee.read/);
+    // Nothing refused left a row or a notification behind.
+    assert.deepEqual(world.state.payoutTables.accounts.map((row) => row.userId).sort(), ['staff-1', 'staff-b2']);
+    assert.equal(world.notifications.length, 2);
+  });
+});
+
+// Owner direction 2026-10-01 (security): the employee-edit right reaches the whole company, so on its
+// own it would let a manager point a peer's, an admin's or another branch's reimbursements at any
+// account. Whose account an editor may set is its own rule.
+describe('payout: whose account an editor may set (payment-redirection guard)', () => {
+  const members = {
+    'staff-1': EMPLOYEE,
+    'staff-b2': { ...EMPLOYEE, displayName: 'พนักงานสาขาสอง', branchIds: ['branch-2'] },
+    'finance-1': { ...EMPLOYEE, displayName: 'อรทัย', allBranches: true, branchIds: [] },
+    'manager-2': { ...EMPLOYEE, displayName: 'ผู้จัดการอีกคน', managesPeople: true },
+    'hr-1': { ...EMPLOYEE, displayName: 'ฝ่ายบุคคล', managesPeople: true, allBranches: true, branchIds: [] },
+    'admin-1': { ...EMPLOYEE, displayName: 'ผู้ดูแลบริษัท', managesPeople: true, allBranches: true, branchIds: [] },
+    'owner-1': { displayName: 'เจ้าของร้าน', hasEmployeeProfile: false, managesPeople: true, allBranches: true, branchIds: [] },
+  };
+  const editRights = ['access.employee.read', 'access.employee.update', 'reimbursement.create'];
+  const editors = {
+    owner: ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: editRights }),
+    admin: ctx({ userId: 'admin-1', roles: ['ADMIN'], permissions: editRights }),
+    manager: ctx({ userId: 'manager-1', roles: ['MANAGER'], permissions: editRights }),
+    branchManager: ctx({ userId: 'manager-1', roles: ['MANAGER'], permissions: editRights, scopes: { branchIds: ['branch-1'] } }),
+    hr: ctx({ userId: 'hr-1', roles: ['HR'], permissions: editRights }),
+    customRole: ctx({ userId: 'custom-1', roles: ['SHIFT_LEAD'], permissions: editRights, scopes: { branchIds: ['branch-1'] } }),
+  };
+
+  it('lets an owner or an admin set any employee account, and tells the account owner each time', async () => {
+    for (const editor of [editors.owner, editors.admin]) {
+      const world = payoutWorld({ payoutMembers: members });
+      for (const target of ['staff-1', 'staff-b2', 'finance-1', 'manager-2', 'hr-1'].filter((id) => id !== editor.userId)) {
+        assert.equal((await world.payouts.getForMember(editor, target)).canEdit, true, `${editor.roles[0]} → ${target}`);
+        assert.equal((await world.payouts.setForMember(editor, target, KBANK)).account?.accountLast4, '6789', `${editor.roles[0]} → ${target}`);
+      }
+      // Nobody but the member sets the member's own account without the notice: one per change, to that member.
+      assert.deepEqual(world.notifications.map((notice) => notice.recipientUserIds[0]), ['staff-1', 'staff-b2', 'finance-1', 'manager-2', 'hr-1']);
+      assert.equal(world.audits.filter((row) => row.result === 'DENIED').length, 0);
+    }
+    // The business owner has no employee record: not even an admin sets the owner's account.
+    const world = payoutWorld({ payoutMembers: members });
+    await assert.rejects(world.payouts.setForMember(editors.admin, 'owner-1', KBANK), /payout_member_not_found/);
+  });
+
+  it('holds everyone else to their own people: no peer, no superior, no other branch', async () => {
+    const refusals: Array<[keyof typeof editors, string, string]> = [
+      // A manager and a peer manager, the admin, and HR (who edit employee data themselves).
+      ['manager', 'manager-2', 'target_manages_people'], ['manager', 'admin-1', 'target_manages_people'], ['manager', 'hr-1', 'target_manages_people'],
+      // HR and a custom role with the employee-edit right are held to the same rule.
+      ['hr', 'manager-2', 'target_manages_people'], ['hr', 'admin-1', 'target_manages_people'], ['customRole', 'manager-2', 'target_manages_people'],
+      // A branch-limited editor: another branch, and a member who works across every branch.
+      ['branchManager', 'staff-b2', 'outside_editor_branch_scope'], ['branchManager', 'finance-1', 'outside_editor_branch_scope'],
+      ['customRole', 'staff-b2', 'outside_editor_branch_scope'],
+      // The peer rule comes first: a peer in the editor's own branch is still a peer.
+      ['branchManager', 'manager-2', 'target_manages_people'],
+    ];
+    for (const [editor, target, reason] of refusals) {
+      const world = payoutWorld({ payoutMembers: members });
+      assert.equal((await world.payouts.getForMember(editors[editor], target)).canEdit, false, `${editor} → ${target}: no button`);
+      await assert.rejects(world.payouts.setForMember(editors[editor], target, KBANK), (error: any) => {
+        assert.equal(error.getStatus(), 403);
+        assert.match(error.message, /payout_account_edit_denied/);
+        return true;
+      }, `${editor} → ${target}`);
+      // The attempt is on record with its reason; nothing was written and nobody was notified.
+      assert.deepEqual(world.audits.map((row) => [row.action, row.result, row.riskLevel, row.actorUserId, row.targetId, row.metadataJson.reason]),
+        [['reimbursement.payout_account.set', 'DENIED', 'HIGH', editors[editor].userId, target, reason]], `${editor} → ${target}`);
+      assert.deepEqual([world.state.payoutTables.accounts.length, world.notifications.length], [0, 0]);
+      // The same refusal through "save as the requester's default" on a claim filed on their behalf.
+      const preparer = ctx({ ...editors[editor], permissions: [...editRights, 'reimbursement.finance_review', 'reimbursement.update_own_draft'] });
+      await assert.rejects(world.create.execute(preparer, claimInput({ requesterUserId: target, lines: [inputLine()], payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } })), /payout_account_edit_denied/);
+      assert.equal(world.state.payoutTables.accounts.length, 0);
+    }
+  });
+
+  it('lets a manager, HR and a custom role set the account of their own people', async () => {
+    for (const [editor, targets] of [['manager', ['staff-1', 'staff-b2', 'finance-1']], ['branchManager', ['staff-1']], ['hr', ['staff-1', 'staff-b2', 'finance-1']], ['customRole', ['staff-1']]] as const) {
+      const world = payoutWorld({ payoutMembers: members });
+      for (const target of targets) {
+        assert.equal((await world.payouts.getForMember(editors[editor], target)).canEdit, true, `${editor} → ${target}`);
+        assert.equal((await world.payouts.setForMember(editors[editor], target, KBANK)).canEdit, true, `${editor} → ${target}`);
+      }
+      assert.equal(world.notifications.length, targets.length);
+    }
+  });
+
+  // Security review S6: "owner or admin" was read off the role KEY. A role a company makes takes its
+  // key from its name, so a custom role named "Admin" (or "Owner") carried the key and with it the
+  // right to set anyone's account. The role has to be the system's own.
+  it('holds a custom role named Admin or Owner to the rule for everyone else', async () => {
+    assert.deepEqual([roleKeyFromName('Admin'), roleKeyFromName('admin'), roleKeyFromName('Owner')], ['ADMIN', 'ADMIN', 'OWNER']);
+    for (const key of ['ADMIN', 'OWNER']) {
+      const custom = ctx({ userId: 'custom-1', roles: [key], permissions: editRights });
+      const world = payoutWorld({ payoutMembers: members, companyRoleUsers: ['custom-1'] });
+      // No peer, no superior: exactly like a manager.
+      for (const target of ['manager-2', 'hr-1', 'admin-1']) {
+        assert.equal((await world.payouts.getForMember(custom, target)).canEdit, false, `${key} → ${target}: no button`);
+        await assert.rejects(world.payouts.setForMember(custom, target, KBANK), /payout_account_edit_denied/, `${key} → ${target}`);
+      }
+      // And no other branch, when the role is limited to one.
+      const limited = ctx({ ...custom, scopes: { branchIds: ['branch-1'] } });
+      await assert.rejects(world.payouts.setForMember(limited, 'staff-b2', KBANK), /payout_account_edit_denied/);
+      assert.deepEqual(world.audits.map((row) => [row.result, row.metadataJson.reason]),
+        [...Array(3).fill(['DENIED', 'target_manages_people']), ['DENIED', 'outside_editor_branch_scope']], key);
+      assert.deepEqual([world.state.payoutTables.accounts.length, world.notifications.length], [0, 0]);
+      // Their own people remain theirs to set, with the notice.
+      assert.equal((await world.payouts.setForMember(limited, 'staff-1', KBANK)).account?.accountLast4, '6789');
+      assert.deepEqual(world.notifications.map((notice) => notice.recipientUserIds), [['staff-1']]);
+      // The same key on the system role is the real thing.
+      const real = payoutWorld({ payoutMembers: members });
+      assert.equal((await real.payouts.setForMember(custom, 'manager-2', KBANK)).account?.accountLast4, '6789', key);
+    }
+  });
+
+  it('asks about the system role only when the key is there, and never trusts the key alone', async () => {
+    const world = payoutWorld({ payoutMembers: members });
+    const asked: string[] = [];
+    world.state.repo.holdsSystemOwnerOrAdminRole = async (_companyId: string, userId: string) => { asked.push(userId); return false; };
+    await world.payouts.setForMember(editors.manager, 'staff-1', KBANK);
+    assert.deepEqual(asked, [], 'a manager is not asked about');
+    await assert.rejects(world.payouts.setForMember(editors.admin, 'manager-2', KBANK), /payout_account_edit_denied/);
+    await assert.rejects(world.payouts.setForMember(editors.owner, 'manager-2', KBANK), /payout_account_edit_denied/);
+    assert.deepEqual(asked, ['admin-1', 'owner-1']);
+  });
+
+  it('never needs the rule for a member own account, whichever screen it is saved from', async () => {
+    const world = payoutWorld({ payoutMembers: members });
+    // A manager manages people, so nobody but an owner or admin could set theirs; they still set their own.
+    assert.equal((await world.payouts.setForMember(editors.manager, 'manager-1', KBANK)).account?.setByOtherName, undefined);
+    assert.equal((await world.payouts.getOwn(editors.manager)).canEdit, true);
+    assert.deepEqual([world.notifications.length, world.audits[0].metadataJson.byOwner], [0, true]);
+  });
+});
+
+describe('payout: a draft follows the latest default until submit', () => {
+  it('shows the requester default as it is now: set, edited, switched to cash, removed', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput());
+    const tokens: Array<string | undefined> = [];
+    /** The payout block without its token; the tokens are collected to compare below. */
+    const shown = async () => {
+      const { submitToken, ...payout } = (await world.detail.execute(ctx(), draft.id)).payout!;
+      tokens.push(submitToken);
+      return payout;
+    };
+
+    assert.deepEqual(await shown(), { followsDefault: true, notReadyReason: 'payout_method_required', canRevealAccountNumber: false });
+    await world.payouts.setOwn(ctx(), KBANK);
+    assert.deepEqual(await shown(), {
+      followsDefault: true, payoutMethod: 'BANK_TRANSFER', source: 'DEFAULT_ACCOUNT', payoutKind: 'BANK_ACCOUNT',
+      bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', canRevealAccountNumber: false,
+    });
+    await world.payouts.setOwn(ctx(), SCB);
+    assert.equal((await shown()).accountLast4, '9012');
+    await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' });
+    assert.deepEqual(await shown(), { followsDefault: true, payoutMethod: 'CASH', source: 'DEFAULT_ACCOUNT', canRevealAccountNumber: false });
+    await world.payouts.deleteOwn(ctx());
+    assert.equal((await shown()).notReadyReason, 'payout_method_required');
+    // The token names what a submit would freeze: none while nothing can be sent, and a different
+    // one for every account or method the page showed.
+    assert.deepEqual([tokens[0], tokens[4]], [undefined, undefined]);
+    for (const token of tokens.slice(1, 4)) assert.match(token!, /^[0-9a-f]{32}$/);
+    assert.equal(new Set(tokens.slice(1, 4)).size, 3);
+    // A draft never keeps a copy: nothing was written to the claim's own table.
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+    assert.equal(world.state.request.payoutMethod ?? null, null);
+  });
+
+  it('names who set the default when it was not the requester', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.enteredByName, 'วิภา');
+    await world.payouts.setOwn(ctx(), KBANK);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.enteredByName, undefined);
+  });
+
+  // Security review S1: the frozen copy recorded who pressed send, so an approver was never shown
+  // that the account they attest was put there by someone other than the requester.
+  it('keeps who set the default on the frozen copy, and names them to the approver when it is not the requester', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const approver = ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve'] });
+    await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    // The requester sends it themselves; the account was still set by the manager.
+    const sent = await world.send(ctx(), draft.id);
+    assert.deepEqual([sent.payout?.source, sent.payout?.enteredByUserId, sent.payout?.enteredByName], ['DEFAULT_ACCOUNT', 'manager-1', 'วิภา']);
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.source, row.createdByUserId]), [['DEFAULT_ACCOUNT', 'manager-1']]);
+    const seenByApprover = (await world.detail.execute(approver, draft.id)).payout!;
+    assert.deepEqual([seenByApprover.accountLast4, seenByApprover.enteredByUserId, seenByApprover.enteredByName], ['6789', 'manager-1', 'วิภา']);
+    // The frozen copy keeps saying so, whatever happens to the default afterwards.
+    await world.payouts.setOwn(ctx(), SCB);
+    assert.equal((await world.detail.execute(approver, draft.id)).payout?.enteredByName, 'วิภา');
+
+    // Withdrawn and sent again with the default the requester has now saved themselves: nobody else is named.
+    await world.reopen.execute(ctx(), draft.id);
+    const resent = await world.send(ctx(), draft.id);
+    assert.deepEqual([resent.payout?.version, resent.payout?.accountLast4, resent.payout?.enteredByUserId, resent.payout?.enteredByName], [2, '9012', undefined, undefined]);
+    assert.equal(world.state.payoutTables.destinations.find((row) => row.version === 2)!.createdByUserId, 'staff-1');
+  });
+
+  it('names nobody when the requester set their own default, also when someone else sends the claim for them', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+    const sent = await world.send(financeCtx(), draft.id);
+    // The account is the requester's own entry; who pressed send is on the claim, not on the account.
+    assert.deepEqual([sent.payout?.source, sent.payout?.enteredByUserId, sent.payout?.enteredByName], ['DEFAULT_ACCOUNT', undefined, undefined]);
+    assert.deepEqual([world.state.payoutTables.destinations[0]!.createdByUserId, world.state.request.submittedByUserId], ['staff-1', 'finance-1']);
+  });
+
+  it('takes cash, or an account for this claim only, in place of the default', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'CASH' } }));
+    const shown = async () => { const { submitToken: _token, ...payout } = (await world.detail.execute(ctx(), draft.id)).payout!; return payout; };
+    assert.deepEqual(await shown(), { payoutMethod: 'CASH', canRevealAccountNumber: false });
+
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    assert.deepEqual(await shown(), {
+      payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี',
+      accountLast4: '9012', version: 1, source: 'REQUESTER', canRevealAccountNumber: true,
+    });
+    // The default is untouched, and typing again edits the same working row instead of piling versions up.
+    assert.equal((await world.payouts.getOwn(ctx())).account?.accountLast4, '6789');
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...PROMPTPAY } });
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.frozenAt]), [[1, '5678', null]]);
+    // Back to the default: the draft keeps no ciphertext of its own.
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'DEFAULT' } });
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.accountLast4, '6789');
+  });
+
+  it('refuses an account that is missing or malformed without changing the draft', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput());
+    await assert.rejects(world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT' } as any }), /payout_destination_required/);
+    await assert.rejects(world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...KBANK, accountNumber: '12345' } }), /payout_destination_invalid/);
+    await assert.rejects(world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK, accountName: '123456' } })), /payout_destination_invalid/);
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+  });
+
+  it('saves a typed account as the default and lets the claim follow it', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } }));
+    assert.equal((await world.payouts.getOwn(ctx())).account?.accountLast4, '6789');
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.followsDefault, true);
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+    assert.equal(world.notifications.length, 0, 'their own account, so nobody is notified');
+    // The next claim needs no typing.
+    const submitted = await world.send(ctx(), draft.id);
+    assert.deepEqual([submitted.payout?.payoutMethod, submitted.payout?.accountLast4, submitted.payout?.source], ['BANK_TRANSFER', '6789', 'DEFAULT_ACCOUNT']);
+  });
+});
+
+describe('payout: submit gate and the claim own snapshot', () => {
+  it('refuses a claim with no receiving method and takes cash without an account', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput());
+    await assert.rejects(world.send(ctx(), draft.id), /payout_method_required/);
+    assert.equal(world.state.request.status, 'DRAFT');
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'CASH' } });
+    const submitted = await world.send(ctx(), draft.id);
+    assert.deepEqual(submitted.payout, { payoutMethod: 'CASH' });
+    assert.equal(submitted.payoutMethod, 'CASH');
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+  });
+
+  it('freezes its own copy at submit: later changes to the default never reach the claim', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    const submitted = await world.send(ctx(), draft.id);
+    const frozen = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 1, source: 'DEFAULT_ACCOUNT' };
+    assert.deepEqual(submitted.payout, frozen);
+    assert.equal(leaksNumber(submitted), false);
+    const request = world.state.request;
+    const stored = { method: request.payoutMethod, version: request.payoutDestinationVersion, fingerprint: request.payoutFingerprint, hash: request.approvalSnapshotHash };
+    // The approval hash covers exactly this snapshot.
+    assert.equal(stored.hash, computeSnapshotHash({
+      amount: request.amount, currency: request.currency, categoryKey: request.categoryKey, incurredDate: request.incurredDate.toISOString(),
+      reason: request.reason, primaryAttachmentId: request.primaryAttachmentId, lines: request.lines,
+      approvalPolicySnapshotJson: request.approvalPolicySnapshotJson,
+      payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: world.state.payoutTables.destinations[0]!.fingerprint,
+    }));
+
+    // The member now edits the default twice and finally removes it.
+    // The requester is told that the default is no longer this account (a removed default is not another account).
+    for (const [change, told] of [[() => world.payouts.setOwn(ctx(), SCB), true], [() => world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' as const }), true], [() => world.payouts.deleteOwn(ctx()), false]] as const) {
+      await change();
+      const now = await world.detail.execute(ctx(), draft.id);
+      assert.deepEqual(now.payout, { ...frozen, canRevealAccountNumber: true, ...(told && { defaultAccountChanged: true }) }, 'display');
+      assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0123456789', 'reveal');
+      assert.deepEqual({ method: world.state.request.payoutMethod, version: world.state.request.payoutDestinationVersion, fingerprint: world.state.request.payoutFingerprint, hash: world.state.request.approvalSnapshotHash }, stored, 'attestation target and hash');
+    }
+    assert.equal(world.state.payoutTables.destinations.length, 1);
+    // The frozen copy itself cannot be rewritten, whatever code tries.
+    await assert.rejects(
+      world.state.payoutTables.client.reimbursementPayoutDestination.updateMany({ where: { reimbursementRequestId: draft.id }, data: { accountLast4: '0000' } }),
+      /reimbursement_payout_destination_frozen/,
+    );
+  });
+
+  it('refuses the submit when the default changed after it was read, instead of freezing an account nobody hashed', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    const submitAtomic = world.state.repo.submitDraftAtomic;
+    // The member saves a different default between the use case reading it and the transaction.
+    world.state.repo.submitDraftAtomic = async (data: any) => { await world.payouts.setOwn(ctx(), SCB); return submitAtomic(data); };
+    await assert.rejects(world.send(ctx(), draft.id), /payout_destination_changed/);
+    assert.equal(world.state.payoutTables.destinations.length, 0);
+    world.state.repo.submitDraftAtomic = submitAtomic;
+    assert.equal((await world.send(ctx(), draft.id)).payout?.accountLast4, '9012');
+  });
+
+  it('sent again after a withdraw: an unchanged account keeps its version, a changed default gets the next', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.send(ctx(), draft.id);
+    await world.reopen.execute(ctx(), draft.id);
+    // Back in draft it follows the default again, so it shows whatever the default is now.
+    assert.equal(world.state.request.payoutMethod, null);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.followsDefault, true);
+    assert.equal((await world.send(ctx(), draft.id)).payout?.version, 1);
+
+    await world.reopen.execute(ctx(), draft.id);
+    await world.payouts.setOwn(ctx(), SCB);
+    const resent = await world.send(ctx(), draft.id);
+    assert.deepEqual([resent.payout?.version, resent.payout?.accountLast4], [2, '9012']);
+    // Version 1 stays as history, untouched.
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4]).sort(), [[1, '6789'], [2, '9012']]);
+  });
+
+  it('an account named for the claim survives a withdraw, and a new one becomes the next version', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK } }));
+    await world.send(ctx(), draft.id);
+    await world.reopen.execute(ctx(), draft.id);
+    assert.deepEqual([world.state.request.payoutMethod, world.state.request.payoutDestinationVersion], ['BANK_TRANSFER', 1]);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.accountLast4, '6789');
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    const resent = await world.send(ctx(), draft.id);
+    assert.deepEqual([resent.payout?.version, resent.payout?.accountLast4], [2, '9012']);
+    assert.equal(world.state.payoutTables.destinations.every((row) => row.frozenAt), true);
+  });
+
+  it('records which snapshot was frozen in the submit audit, without any account detail', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.send(ctx(), draft.id);
+    const submit = world.audits.find((row) => row.action === 'reimbursement.request.submit');
+    assert.deepEqual(submit.metadataJson.payout, { method: 'BANK_TRANSFER', version: 1, followsDefault: true });
+    assert.equal(leaksNumber(world.audits), false);
+    assert.equal(leaksNumber(world.state.calls.outbox), false);
+    assert.ok(world.state.calls.outbox.every((event: any) => !/payout|account/i.test(JSON.stringify(event.payloadJson.data))), 'no event payload carries account data');
+  });
+
+  // Where the payout lanes meet in one submit: a claim nobody has to approve, paid into the requester's
+  // default account. The account is frozen and hashed in the submit transaction, and that same submit
+  // still hands the payment to the people who would have approved it (owner rule 2026-10-01).
+  it('freezes the account and names the would-be approvers when a claim that needs no approval is sent', async () => {
+    const world = payoutWorld({ policy: {
+      id: 'policy-1', updatedAt: new Date('2026-01-01T00:00:00.000Z'), currency: 'THB', approvalRequiredFromAmount: '1000.00',
+      approverMode: 'MANAGER_ROLE', defaultApproverRole: 'MANAGER', allowSelfApproval: false, duplicatePolicy: 'WARN',
+      financeReviewRequired: false, status: 'ACTIVE', requireReceipt: false, allowMissingReceiptWithReason: false,
+    } });
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    const eventTypes = () => world.state.calls.outbox.map((event: any) => event.eventType);
+    readyApproverRoutes.resolveWouldBeApproverUserIds = async () => ['approver-1', 'approver-2'];
+    try {
+      // Sent without the account its page showed: refused inside the transaction, so no event of the submit exists.
+      await assert.rejects(world.submit.execute(ctx(), draft.id), /payout_destination_changed/);
+      assert.deepEqual([world.state.request.status, eventTypes()], ['DRAFT', []]);
+
+      const sent = await world.send(ctx(), draft.id);
+      const request = world.state.request;
+      assert.deepEqual([sent.status, sent.payout?.accountLast4, sent.payout?.version, sent.payout?.source], ['READY_FOR_PAYMENT', '6789', 1, 'DEFAULT_ACCOUNT']);
+      // The lane's side: the claim's own copy is frozen, and the stored hash is the hash of the claim with it.
+      assert.equal(world.state.payoutTables.destinations[0]!.frozenAt !== null && hasPayoutSnapshot(request), true);
+      assert.equal(request.approvalSnapshotHash, computeSnapshotHash(claimSnapshotFields(request, request.approvalPolicySnapshotJson)));
+      // The assembly's side: every event of the submit came through the transaction, and the ready-to-pay
+      // event names who would have approved the claim.
+      assert.deepEqual(eventTypes(), ['reimbursement.request_submitted', 'reimbursement.approval_not_required',
+        'reimbursement.policy_projection_started', 'reimbursement.approved', 'reimbursement.ready_for_payment']);
+      const ready = world.state.calls.outbox.find((event: any) => event.eventType === 'reimbursement.ready_for_payment').payloadJson.data;
+      assert.deepEqual([ready.approverRecipientUserIds, ready.decision, ready.status], [['approver-1', 'approver-2'], 'BELOW_APPROVAL_THRESHOLD', 'READY_FOR_PAYMENT']);
+      // Neither side's events, nor the audit rows, carry anything of the account.
+      assert.equal(leaksNumber([world.state.calls.outbox, world.audits]), false);
+      assert.ok(world.state.calls.outbox.every((event: any) => !/payout|account|6789/i.test(JSON.stringify(event.payloadJson.data))));
+    } finally {
+      delete readyApproverRoutes.resolveWouldBeApproverUserIds;
+    }
+  });
+});
+
+// Payout spec §22 row 1 (security review S7): a member who changes their default after sending a claim
+// expects the claim to follow. It does not, by design; the requester is told so on the claim.
+describe('payout: the requester is told when their default changed after the claim was sent', () => {
+  const flag = async (world: ReturnType<typeof payoutWorld>, viewer: any, id: string) => (await world.detail.execute(viewer, id)).payout?.defaultAccountChanged;
+  const approver = () => ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve'] });
+
+  it('says so to the requester alone, from the fingerprints, and never shows a fingerprint', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+    assert.equal(await flag(world, ctx(), draft.id), undefined, 'a draft follows the default: nothing has changed for it');
+    await world.send(ctx(), draft.id);
+    assert.equal(await flag(world, ctx(), draft.id), undefined, 'the default is still the account the claim copied');
+    // The same account saved again is the same account.
+    await world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: '0123456789' });
+    assert.equal(await flag(world, ctx(), draft.id), undefined);
+
+    await world.payouts.setOwn(ctx(), SCB);
+    assert.equal(await flag(world, ctx(), draft.id), true);
+    // The claim itself still shows, and reveals, the account it was sent with.
+    const shown = await world.detail.execute(ctx(), draft.id);
+    assert.equal(shown.payout?.accountLast4, '6789');
+    assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0123456789');
+    // Nobody else is told: not the approver, not whoever prepared the claim.
+    assert.equal(await flag(world, approver(), draft.id), undefined);
+    assert.equal(await flag(world, financeCtx(), draft.id), undefined);
+    // The answer is a yes or nothing; no fingerprint of either account leaves the server.
+    const { accounts, destinations } = world.state.payoutTables;
+    for (const fingerprint of [accounts[0]!.fingerprint, destinations[0]!.fingerprint]) assert.equal(JSON.stringify(shown).includes(fingerprint), false);
+    assert.doesNotMatch(JSON.stringify(shown), /fingerprint/i);
+
+    // Switched to cash is a change too; a removed default is not a newer account.
+    await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' });
+    assert.equal(await flag(world, ctx(), draft.id), true);
+    await world.payouts.deleteOwn(ctx());
+    assert.equal(await flag(world, ctx(), draft.id), undefined);
+  });
+
+  it('follows the claim while telling can still change something, and stops once it is paid or closed', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.send(ctx(), draft.id);
+    await world.payouts.setOwn(ctx(), SCB);
+    for (const [status, told] of [
+      ['PENDING_APPROVAL', true], ['APPROVED', true], ['FINANCE_REVIEW', true], ['READY_FOR_PAYMENT', true],
+      ['PARTIALLY_PAID', undefined], ['PAID', undefined], ['REJECTED', undefined], ['CANCELLED', undefined], ['VOIDED', undefined],
+    ] as const) {
+      world.state.request.status = status;
+      assert.equal(await flag(world, ctx(), draft.id), told, status);
+    }
+    // Taken back and sent again, the claim copies the default as it is now: nothing left to say.
+    world.state.request.status = 'PENDING_APPROVAL';
+    await world.reopen.execute(ctx(), draft.id);
+    assert.equal(await flag(world, ctx(), draft.id), undefined, 'a draft again');
+    const resent = await world.send(ctx(), draft.id);
+    assert.deepEqual([resent.payout?.accountLast4, await flag(world, ctx(), draft.id)], ['9012', undefined]);
+  });
+
+  it('says nothing about a claim that never followed the default', async () => {
+    // An account typed for this claim, and cash: the default was never theirs to follow.
+    for (const payout of [{ mode: 'SPECIFIED' as const, ...KBANK }, { mode: 'CASH' as const }]) {
+      const world = payoutWorld();
+      await world.payouts.setOwn(ctx(), PROMPTPAY);
+      const draft = await world.create.execute(ctx(), claimInput({ payout }));
+      await world.send(ctx(), draft.id);
+      await world.payouts.setOwn(ctx(), SCB);
+      assert.equal(await flag(world, ctx(), draft.id), undefined, payout.mode);
+    }
+  });
+});
+
+// Payout spec §17.2: the claim page shows every account a claim has been sent with. The detail carries them
+// masked like the current one (bank, account name, the last 4 digits), with who entered each and who attested it.
+describe('payout: the accounts a claim has been sent with', () => {
+  const historyOf = async (world: ReturnType<typeof payoutWorld>, id: string, viewer = ctx()) => (await world.detail.execute(viewer, id)).payoutHistory;
+  const at = (hour: number) => new Date(Date.UTC(2026, 9, 1, hour));
+  /** What the approval transaction writes when the approver ticks "ตรวจบัญชีแล้ว". */
+  const attest = (world: ReturnType<typeof payoutWorld>, verifiedVersion: number, actorUserId: string, approvalStepId: string, verifiedAt = at(4)) =>
+    attestClaimPayout(world.state.payoutTables.client, world.state.request, { verifiedVersion, actorUserId, verifiedAt, approvalStepId });
+
+  it('lists each account the claim was sent with, oldest first, with who attested it and at which approval', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    // A first draft was never sent with any account: nothing to list.
+    assert.equal(await historyOf(world, draft.id), undefined);
+    await world.send(ctx(), draft.id);
+    const first = { version: 1, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', source: 'DEFAULT_ACCOUNT',
+      frozenAt: world.state.payoutTables.destinations[0]!.frozenAt.toISOString() };
+    assert.deepEqual(await historyOf(world, draft.id), [first]);
+
+    await attest(world, 1, 'manager-1', 'step-1');
+    const attested = { ...first, verifiedByUserId: 'manager-1', verifiedByName: 'วิภา', verifiedAt: at(4).toISOString(), approvalStepId: 'step-1' };
+    const approved = await world.detail.execute(ctx(), draft.id);
+    assert.deepEqual(approved.payoutHistory, [attested]);
+    // The same attestation the card reads off the claim's current account.
+    assert.deepEqual([approved.payout?.version, approved.payout?.verifiedByUserId, approved.payout?.verifiedByName, approved.payout?.verifiedAt], [1, 'manager-1', 'วิภา', at(4).toISOString()]);
+
+    // Taken back, the default changed, sent again: version 1 stays as it was approved, version 2 is the one in use.
+    await world.reopen.execute(ctx(), draft.id);
+    assert.deepEqual(await historyOf(world, draft.id), [attested], 'a draft that follows the default again keeps its history');
+    await world.payouts.setOwn(ctx(), SCB);
+    await world.send(ctx(), draft.id);
+    const resent = await world.detail.execute(ctx(), draft.id);
+    assert.equal(resent.payout?.version, 2);
+    assert.deepEqual(resent.payoutHistory, [attested, { version: 2, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี',
+      accountLast4: '9012', source: 'DEFAULT_ACCOUNT', frozenAt: world.state.payoutTables.destinations.find((row) => row.version === 2)!.frozenAt.toISOString() }]);
+    // Every reader of the claim gets the same rows: they hold no more than the current account does.
+    assert.deepEqual(await historyOf(world, draft.id, financeCtx()), resent.payoutHistory);
+    assert.equal(leaksNumber(resent), false);
+    assert.doesNotMatch(JSON.stringify(resent.payoutHistory), /fingerprint|encrypted|accountNumber/i);
+  });
+
+  it('says who entered an account the requester did not, and keeps a name it cannot resolve as an id', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    // Typed, not sent: the draft's working account is its current choice, not history.
+    assert.equal(await historyOf(world, draft.id), undefined);
+    await world.send(financeCtx(), draft.id);
+    const [typed] = (await historyOf(world, draft.id))!;
+    assert.deepEqual([typed!.source, typed!.enteredByUserId, typed!.enteredByName], ['PREPARER', 'finance-1', 'อรทัย']);
+    // The requester's own account names nobody.
+    await world.reopen.execute(ctx(), draft.id);
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    await world.send(ctx(), draft.id);
+    const own = (await historyOf(world, draft.id))!.at(-1)!;
+    assert.deepEqual([own.version, own.source, own.enteredByUserId, own.enteredByName], [2, 'REQUESTER', undefined, undefined]);
+    // Whoever typed version 1 has left the company: the row still says someone else did.
+    world.state.repo.getUserDisplayNames = async () => ({});
+    const [unnamed] = (await historyOf(world, draft.id))!;
+    assert.deepEqual([unnamed!.enteredByUserId, 'enteredByName' in unnamed!], ['finance-1', false]);
+  });
+
+  it('drops an attestation from the account a draft is about to be sent with again, as the claim\'s own account block does', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK } }));
+    await world.send(ctx(), draft.id);
+    await attest(world, 1, 'manager-1', 'step-1');
+    assert.equal((await historyOf(world, draft.id))![0]!.verifiedByUserId, 'manager-1');
+    // An account named for the claim stays the draft's choice after a withdraw. Its attestation is of the round
+    // that ended: the next submit clears it, so neither the card nor the history shows it meanwhile.
+    await world.reopen.execute(ctx(), draft.id);
+    const reopened = await world.detail.execute(ctx(), draft.id);
+    assert.deepEqual([reopened.status, reopened.payout?.version, reopened.payout?.verifiedAt], ['DRAFT', 1, undefined]);
+    assert.deepEqual(reopened.payoutHistory!.map((row) => [row.version, row.verifiedByUserId, row.verifiedAt, row.approvalStepId]), [[1, undefined, undefined, undefined]]);
+    await world.send(ctx(), draft.id);
+    assert.deepEqual((await historyOf(world, draft.id))!.map((row) => [row.version, row.verifiedByUserId]), [[1, undefined]]);
+  });
+
+  it('never lists the copy of the default kept with a legacy claim\'s payment: the claim was never sent with it', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    // A claim sent before claims carried an account: a number, no payout columns.
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'CASH' } }));
+    await world.send(ctx(), draft.id);
+    Object.assign(world.state.request, { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null });
+    const account = world.state.payoutTables.accounts[0]!;
+    await confirmPaymentPayout(world.state.payoutTables.client, world.state.request,
+      { payoutDefaultToken: legacyPayoutConfirmToken(draft.id, account.fingerprint) }, { actorUserId: 'manager-1', confirmedAt: at(6) });
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.source, !!row.frozenAt]), [[1, 'LEGACY_PAYMENT', true]]);
+    const detail = await world.detail.execute(ctx(), draft.id);
+    assert.deepEqual(['payout' in detail, 'payoutHistory' in detail], [false, false]);
+  });
+});
+
+describe('payout: filing a claim on behalf of someone', () => {
+  it("uses the requester's account, never the preparer's, and follows the requester's default until submit", async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(financeCtx(), SCB); // the preparer's own account, which must never appear
+    await world.payouts.setOwn(ctx(), KBANK); // the requester's
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+    const seenByPreparer = async () => (await world.detail.execute(financeCtx(), draft.id)).payout;
+
+    assert.deepEqual([(await seenByPreparer())?.accountLast4, (await seenByPreparer())?.canRevealAccountNumber], ['6789', false]);
+    // The requester changes their default while the claim is still a draft: the draft shows the new one.
+    await world.payouts.setOwn(ctx(), PROMPTPAY);
+    assert.equal((await seenByPreparer())?.accountLast4, '5678');
+
+    const submitted = await world.send(financeCtx(), draft.id);
+    assert.deepEqual([submitted.payout?.accountLast4, submitted.payout?.source, submitted.payout?.enteredByName], ['5678', 'DEFAULT_ACCOUNT', undefined]);
+    // After submit the requester's default changes again; the claim does not.
+    await world.payouts.setOwn(ctx(), KBANK);
+    assert.equal((await seenByPreparer())?.accountLast4, '5678');
+    assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0812345678', 'the requester reads their own frozen number');
+    // The preparer holds no payment right and is not the approver: last 4 only.
+    assert.equal((await seenByPreparer())?.canRevealAccountNumber, false);
+    await assert.rejects(world.reveal.execute(financeCtx(), draft.id), /payout_reveal_denied/);
+  });
+
+  it('lets the preparer type the requester account, records who typed it, and shows them the last 4 afterwards', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    const forPreparer = (await world.detail.execute(financeCtx(), draft.id)).payout;
+    assert.deepEqual([forPreparer?.source, forPreparer?.enteredByName, forPreparer?.accountLast4, forPreparer?.canRevealAccountNumber], ['PREPARER', 'อรทัย', '6789', false]);
+    await assert.rejects(world.reveal.execute(financeCtx(), draft.id), /payout_reveal_denied/);
+    // The requester opens their own claim and sees the account that was put on it.
+    const forRequester = (await world.detail.execute(ctx(), draft.id)).payout;
+    assert.deepEqual([forRequester?.enteredByName, forRequester?.canRevealAccountNumber], ['อรทัย', true]);
+    assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '0123456789');
+    assert.equal(world.state.payoutTables.accounts.length, 0, 'nobody default was set');
+  });
+
+  // Security review S2: the per-claim path told nobody. Whoever types where the requester's money
+  // goes on a claim filed for them is named to the requester, exactly as for a default account.
+  it('tells the requester, and nobody else, every time someone else types the account on their claim', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    assert.equal(world.notifications.length, 1);
+    const notice = world.notifications[0];
+    // To the requester alone: not the preparer, not the shop owner, not an approver.
+    assert.deepEqual(notice.recipientUserIds, ['staff-1']);
+    assert.equal(notice.title, 'อรทัย ระบุบัญชีรับเงินคืนในใบเบิกของคุณ');
+    assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 ระบุเมื่อ .+ ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที$/);
+    assert.equal(notice.deepLinkHref, `/companies/co-1/reimbursements/${draft.id}`);
+    assert.deepEqual([notice.triggerKey, notice.severity, notice.sourceType, notice.sourceId], ['reimbursement.payout_account_set_by_other', 'critical', 'reimbursement_request', draft.id]);
+
+    // Changed again by the preparer: a notice of its own. Typed by the requester: none.
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...PROMPTPAY } });
+    assert.equal(world.notifications.length, 2);
+    assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 ระบุเมื่อ /);
+    assert.notEqual(world.notifications[1].periodKey, notice.periodKey);
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    // Cash, or following the requester's own default, types no account for anyone.
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'CASH' } });
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'DEFAULT' } });
+    assert.equal(world.notifications.length, 2);
+    assert.ok(world.notifications.every((entry) => entry.recipientUserIds.length === 1 && entry.recipientUserIds[0] === 'staff-1'));
+    assert.equal(leaksNumber(world.notifications), false);
+  });
+
+  it('types no account for a requester a notice cannot reach', async () => {
+    for (const membershipStatus of ['DRAFT', 'INVITED', 'SUSPENDED', 'DISABLED']) {
+      const world = payoutWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus } } });
+      const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+      await assert.rejects(world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...KBANK } }), (error: any) => {
+        assert.equal(error.getStatus(), 409, membershipStatus);
+        assert.match(error.message, /^payout_account_member_not_active$/, membershipStatus);
+        return true;
+      });
+      assert.deepEqual([world.state.payoutTables.destinations.length, world.notifications.length, world.state.request.payoutMethod ?? null], [0, 0, null], membershipStatus);
+      // Cash and the requester's own default remain open: neither is an account someone typed for them.
+      await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'CASH' } });
+    }
+  });
+
+  it('records the receiving choice and who typed an account on the draft audit rows, never the account', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'CASH' } });
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'DEFAULT' } });
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...PROMPTPAY, saveAsDefault: true } });
+    await world.update.execute(ctx(), draft.id, { reason: 'แก้เหตุผลอย่างเดียว' });
+    const draftRows = world.audits.filter((row) => /^reimbursement\.request\.(create|update_draft)$/.test(row.action));
+    assert.deepEqual(draftRows.map((row) => [row.action.split('.').pop(), row.actorUserId, row.metadataJson?.payout]), [
+      ['create', 'finance-1', { mode: 'SPECIFIED', source: 'PREPARER' }],
+      ['update_draft', 'staff-1', { mode: 'SPECIFIED', source: 'REQUESTER' }],
+      ['update_draft', 'staff-1', { mode: 'CASH' }],
+      ['update_draft', 'staff-1', { mode: 'DEFAULT' }],
+      ['update_draft', 'staff-1', { mode: 'SPECIFIED', source: 'REQUESTER', savedAsDefault: true }],
+      // A draft edit that leaves the receiving choice alone says nothing about it.
+      ['update_draft', 'staff-1', undefined],
+    ]);
+    assert.equal(leaksNumber(world.audits), false);
+    assert.doesNotMatch(JSON.stringify(draftRows), /accountLast4|accountName|bankName|fingerprint|6789|9012|5678/);
+  });
+
+  it('still says someone else entered the account when their name can no longer be resolved', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    assert.deepEqual([(await world.detail.execute(ctx(), draft.id)).payout?.enteredByUserId, (await world.detail.execute(ctx(), draft.id)).payout?.enteredByName], ['finance-1', 'อรทัย']);
+    // The preparer has left the company: no name comes back for them.
+    delete PAYOUT_NAMES['finance-1'];
+    try {
+      const shown = (await world.detail.execute(ctx(), draft.id)).payout!;
+      assert.deepEqual([shown.source, shown.enteredByUserId, shown.enteredByName], ['PREPARER', 'finance-1', undefined]);
+    } finally { PAYOUT_NAMES['finance-1'] = 'อรทัย'; }
+    // The requester's own account carries neither.
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    const own = (await world.detail.execute(ctx(), draft.id)).payout!;
+    assert.deepEqual([own.source, own.enteredByUserId, own.enteredByName], ['REQUESTER', undefined, undefined]);
+  });
+
+  it('saves it as the requester default only for a preparer who may edit employee data, and tells the requester', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const input = claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } });
+    await assert.rejects(world.create.execute(financeCtx(), input), /payout_account_edit_denied/);
+    assert.equal(world.state.payoutTables.accounts.length, 0);
+
+    const hr = ctx({ userId: 'finance-1', permissions: [...financeCtx().permissions, 'access.employee.update'] });
+    const draft = await world.create.execute(hr, input);
+    assert.deepEqual(world.state.payoutTables.accounts.map((row) => [row.userId, row.accountLast4, row.updatedByUserId]), [['staff-1', '6789', 'finance-1']]);
+    assert.equal((await world.detail.execute(hr, draft.id)).payout?.followsDefault, true);
+    assert.deepEqual(world.notifications.map((notice) => notice.recipientUserIds), [['staff-1']]);
+  });
+});
+
+describe('payout: a draft made from LINE', () => {
+  // LINE writes a draft with no account data at all (it has no payout field); it is sent on the web.
+  it('submits on the web when the requester has a default account, with nothing to add', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const lineDraft = await world.create.execute(ctx(), claimInput());
+    assert.equal(world.state.request.payoutMethod ?? null, null);
+    assert.equal((await world.send(ctx(), lineDraft.id)).payout?.accountLast4, '6789');
+  });
+
+  it('says what is missing when the requester has none, and submits once a method is chosen', async () => {
+    const world = payoutWorld();
+    const lineDraft = await world.create.execute(ctx(), claimInput());
+    assert.deepEqual((await world.detail.execute(ctx(), lineDraft.id)).payout, { followsDefault: true, notReadyReason: 'payout_method_required', canRevealAccountNumber: false });
+    await assert.rejects(world.send(ctx(), lineDraft.id), /payout_method_required/);
+    await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' });
+    assert.equal((await world.send(ctx(), lineDraft.id)).payout?.payoutMethod, 'CASH');
+  });
+});
+
+describe('payout: lists carry the receiving method and nothing of the account', () => {
+  it('returns the method on a row and no bank, name, last 4 or number', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    await world.send(ctx(), draft.id);
+    Object.assign(world.state.repo, { listRequestPage: async () => ({ rows: [world.state.request], groups: [] }), findPendingApprovalSteps: async () => [] });
+    const page = await new ListReimbursementsUseCase(world.state.repo).execute(ctx(), {});
+    assert.equal(page.items[0]!.payoutMethod, 'BANK_TRANSFER');
+    assert.ok(!/payout(?!Method)|bankName|accountName|accountLast4|accountNumber|fingerprint/i.test(JSON.stringify(page)));
+    assert.equal(leaksNumber(page), false);
+  });
+});
+
+// Owner direction 2026-10-01: a draft follows the member's default account, and since a manager may
+// change that default, the requester could send a claim to an account they never saw. The page shows
+// the account that will be frozen, and the submit is bound to what it showed.
+describe('payout: the claim is sent with the account its page showed (show before freeze)', () => {
+  it('refuses a submit that names no account, and one whose default was changed after the page was read', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    // A list-row submit, a browser tab from before the release, a script: nothing was shown, nothing is sent.
+    await assert.rejects(world.submit.execute(ctx(), draft.id), /payout_destination_changed/);
+    await assert.rejects(world.submit.execute(ctx(), draft.id, null), /payout_destination_changed/);
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: 'f'.repeat(32) }), /payout_destination_changed/);
+
+    // The requester reads the page, then a manager changes their default before they press send.
+    const seen = (await world.detail.execute(ctx(), draft.id)).payout!;
+    assert.equal(seen.accountLast4, '6789');
+    await world.payouts.setForMember(managerCtx(), 'staff-1', SCB);
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: seen.submitToken }), (error: any) => {
+      assert.equal(error.getStatus(), 409);
+      assert.match(error.message, /payout_destination_changed/);
+      return true;
+    });
+    assert.deepEqual([world.state.request.status, world.state.request.payoutFingerprint ?? null, world.state.payoutTables.destinations.length], ['DRAFT', null, 0]);
+
+    // They look again: the page now shows the new account and says who set it. That is what they send.
+    const latest = (await world.detail.execute(ctx(), draft.id)).payout!;
+    assert.deepEqual([latest.accountLast4, latest.enteredByName], ['9012', 'วิภา']);
+    assert.notEqual(latest.submitToken, seen.submitToken);
+    const sent = await world.submit.execute(ctx(), draft.id, { payoutSubmitToken: latest.submitToken });
+    assert.deepEqual([sent.status, sent.payout?.accountLast4, sent.payout?.submitToken], ['PENDING_APPROVAL', '9012', undefined]);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.submitToken, undefined, 'a sent claim has nothing left to send');
+  });
+
+  it('refuses when the default was removed, or switched between a transfer and cash, after the page was read', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    const tokenOf = async () => (await world.detail.execute(ctx(), draft.id)).payout?.submitToken;
+
+    const transfer = await tokenOf();
+    await world.payouts.setOwn(ctx(), { payoutMethod: 'CASH' });
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: transfer }), /payout_destination_changed/, 'a transfer the page showed is not sent as cash');
+    const cash = await tokenOf();
+    await world.payouts.setOwn(ctx(), KBANK);
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: cash }), /payout_destination_changed/, 'cash the page showed is not sent as a transfer');
+    // The same account saved again is the same account: no needless refusal.
+    assert.equal(await tokenOf(), transfer);
+    await world.payouts.deleteOwn(ctx());
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: transfer }), (error: any) => {
+      assert.equal(error.getStatus(), 409);
+      assert.match(error.message, /payout_method_required/);
+      return true;
+    });
+    assert.equal(world.state.request.status, 'DRAFT');
+  });
+
+  it('takes cash the draft chose without a token, and refuses a token that is not what the claim would freeze', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'CASH' } }));
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: 'e'.repeat(32) }), /payout_destination_changed/);
+    // Cash chosen on the claim itself depends on nothing that was shown and on nobody else's edit.
+    assert.equal((await world.submit.execute(ctx(), draft.id)).status, 'PENDING_APPROVAL');
+  });
+
+  // Security review S2: an account typed into the claim was sent blind. A preparer (or the requester
+  // in another tab) can change it between the page being read and the button being pressed, so a
+  // transfer is sent only with the token of the account that was on the page.
+  it('sends an account typed into the claim only with the token of the page that showed it', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK } }));
+    // A list-row submit, an older browser tab, a script: nothing was shown, nothing is sent.
+    for (const input of [undefined, null, {}, { payoutSubmitToken: 'e'.repeat(32) }]) {
+      await assert.rejects(world.submit.execute(ctx(), draft.id, input), (error: any) => {
+        assert.equal(error.getStatus(), 409);
+        assert.match(error.message, /^payout_destination_changed$/);
+        return true;
+      });
+    }
+    // The requester reads the page; then someone who prepares claims for them types another account.
+    const seen = (await world.detail.execute(ctx(), draft.id)).payout!;
+    assert.deepEqual([seen.accountLast4, seen.followsDefault], ['6789', undefined]);
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+    await assert.rejects(world.submit.execute(ctx(), draft.id, { payoutSubmitToken: seen.submitToken }), /payout_destination_changed/);
+    assert.deepEqual([world.state.request.status, world.state.request.payoutFingerprint ?? null, world.state.payoutTables.destinations[0]!.frozenAt], ['DRAFT', null, null]);
+    // They look again, see the account now on the claim and who typed it, and send that.
+    const latest = (await world.detail.execute(ctx(), draft.id)).payout!;
+    assert.deepEqual([latest.accountLast4, latest.source, latest.enteredByName], ['9012', 'PREPARER', 'อรทัย']);
+    assert.notEqual(latest.submitToken, seen.submitToken);
+    const sent = await world.submit.execute(ctx(), draft.id, { payoutSubmitToken: latest.submitToken });
+    assert.deepEqual([sent.status, sent.payout?.accountLast4], ['PENDING_APPROVAL', '9012']);
+  });
+});
+
+describe('payout: a legacy claim is one thing everywhere', () => {
+  /** What an older build stores on submit: no payout columns of its own, a hash without a payout part. */
+  function sendWithAnOlderBuild(request: any) {
+    Object.assign(request, {
+      status: 'PENDING_APPROVAL', submittedAt: new Date('2026-10-01T03:00:00.000Z'), requestNo: 'RB-202610-000009',
+      approvalSnapshotHash: computeSnapshotHash(claimSnapshotFields({ ...request, payoutFingerprint: undefined })),
+    });
+  }
+
+  // The rollback window: the draft chose its account under this build, an older build sent it.
+  it('shows, lists, hashes, attests and reveals a draft choice sent by an older build as a legacy claim', async () => {
+    const world = payoutWorld();
+    const draft = await world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK } }));
+    const request = world.state.request;
+    sendWithAnOlderBuild(request);
+    assert.deepEqual([request.payoutMethod, request.payoutDestinationVersion, request.payoutFingerprint ?? null], ['BANK_TRANSFER', 1, null]);
+
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout, undefined, 'no account is shown for the claim');
+    Object.assign(world.state.repo, { listRequestPage: async () => ({ rows: [request], groups: [] }), findPendingApprovalSteps: async () => [] });
+    assert.equal((await new ListReimbursementsUseCase(world.state.repo).execute(ctx(), {})).items[0]!.payoutMethod, undefined);
+    await assert.rejects(world.reveal.execute(ctx(), draft.id), /payout_reveal_denied/);
+    // The live approval check recomputes exactly what the older build stored, and asks for no attestation.
+    assert.equal(computeSnapshotHash(claimSnapshotFields(request, request.approvalPolicySnapshotJson)), request.approvalSnapshotHash);
+    assert.equal(payoutAttestationError(request, undefined), null);
+    assert.equal(hasPayoutSnapshot(request), false);
+
+    // Withdrawn under this build, the draft's own choice is back, and sending it freezes a real snapshot.
+    await world.reopen.execute(ctx(), draft.id);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout?.accountLast4, '6789');
+    const sent = await world.send(ctx(), draft.id);
+    assert.deepEqual([sent.payout?.version, hasPayoutSnapshot(world.state.request), world.state.payoutTables.destinations[0]!.frozenAt !== null], [1, true, true]);
+  });
+
+  // Part B stores a copy of the account a legacy claim was paid to. The claim itself stays legacy.
+  it('keeps a claim sent before the field existed legacy, also when account rows exist for it', async () => {
+    const world = payoutWorld();
+    await world.payouts.setOwn(ctx(), KBANK);
+    const draft = await world.create.execute(ctx(), claimInput());
+    const request = world.state.request;
+    sendWithAnOlderBuild(request);
+    const before = { hash: request.approvalSnapshotHash, signature: claimSignatureAckHash(request) };
+    const sealed = sealPayoutDestination(KBANK, PAYOUT_KEY)!;
+    world.state.payoutTables.destinations.push({
+      id: 'destination-paid', companyId: 'co-1', reimbursementRequestId: draft.id, version: 1, ...sealed,
+      source: 'DEFAULT_ACCOUNT', createdByUserId: 'finance-1', frozenAt: new Date('2026-10-02T00:00:00.000Z'),
+    });
+
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout, undefined);
+    await assert.rejects(world.reveal.execute(ctx(), draft.id), /payout_reveal_denied/);
+    assert.deepEqual({ hash: computeSnapshotHash(claimSnapshotFields(request, request.approvalPolicySnapshotJson)), signature: claimSignatureAckHash(request) }, before);
+    assert.equal(payoutAttestationError(request, undefined), null);
+    // The member's default is not shown as the claim's account either: nothing after submit reads it.
+    await world.payouts.setOwn(ctx(), SCB);
+    assert.equal((await world.detail.execute(ctx(), draft.id)).payout, undefined);
+  });
+});
+
+describe('payout: nothing but the two reveal calls carries the number', () => {
+  it('keeps the number, the ciphertext and the fingerprint out of every response, row, audit entry, notice, event and export', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const out: unknown[] = [];
+    out.push(await world.payouts.setForMember(managerCtx(), 'staff-1', KBANK), await world.payouts.getForMember(managerCtx(), 'staff-1'));
+    out.push(await world.payouts.setOwn(ctx(), PROMPTPAY), await world.payouts.getOwn(ctx()));
+    const draft = await world.create.execute(ctx(), claimInput());
+    out.push(draft, await world.detail.execute(ctx(), draft.id));
+    out.push(await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } }), await world.detail.execute(ctx(), draft.id));
+    out.push(await world.send(ctx(), draft.id), await world.detail.execute(ctx(), draft.id));
+    Object.assign(world.state.repo, { listRequestPage: async () => ({ rows: [world.state.request], groups: [] }), findPendingApprovalSteps: async () => [] });
+    out.push(await new ListReimbursementsUseCase(world.state.repo).execute(ctx(), {}));
+    out.push(await new ExportReimbursementEvidenceUseCase(world.state.repo, { log: async (entry: any) => { world.audits.push(entry); } } as any)
+      .execute(ctx({ permissions: ['reimbursement.export', 'reimbursement.read'] }), draft.id));
+    out.push(world.audits, world.notifications, world.state.calls.outbox);
+
+    const { accounts, destinations } = world.state.payoutTables;
+    const secrets = [...FULL_NUMBERS, ...[...accounts, ...destinations].flatMap((row) => [row.accountNumberEncrypted, row.fingerprint])];
+    assert.equal(secrets.length, FULL_NUMBERS.length + 4);
+    const text = JSON.stringify(out);
+    for (const secret of secrets) assert.equal(text.includes(secret), false, `leaked: ${String(secret).slice(0, 12)}…`);
+    assert.doesNotMatch(text, /"(?:payout)?(?:accountNumber\w*|fingerprint)":/i, 'no field is even named after them');
+    // The last 4 digits are what everyone may see, and the two reveal calls are the only way to the rest.
+    assert.match(text, /"accountLast4":"9012"/);
+    assert.equal((await world.reveal.execute(ctx(), draft.id)).accountNumber, '000123456789012');
+    assert.equal((await world.payouts.revealOwn(ctx())).accountNumber, '0812345678');
+  });
+
+  it('never echoes what was typed in a refusal', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE, 'admin-1': { ...EMPLOYEE, allBranches: true, branchIds: [] } } });
+    const typed = '0123456789';
+    const refusals: unknown[] = [];
+    const refused = async (attempt: Promise<unknown>) => {
+      await assert.rejects(attempt, (error: any) => { refusals.push([error.message, error.getResponse?.()]); return true; });
+    };
+    await refused(world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: `${typed}${typed}${typed}` }));
+    await refused(world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: `${typed}x` }));
+    await refused(world.payouts.setOwn(ctx(), { ...KBANK, accountName: typed }));
+    await refused(world.payouts.setOwn(ctx(), { payoutMethod: 'BANK_TRANSFER', accountNumber: typed } as any));
+    await refused(world.payouts.setOwn(ctx(), { ...KBANK, accountNumber: typed, payoutMethod: 'TRANSFER_TO_ME' } as any));
+    await refused(world.payouts.setForMember(managerCtx({ scopes: { branchIds: ['branch-9'] } }), 'staff-1', { ...KBANK, accountNumber: typed }));
+    await refused(world.payouts.setForMember(managerCtx(), 'nobody', { ...KBANK, accountNumber: typed }));
+    await refused(world.create.execute(ctx(), claimInput({ payout: { mode: 'SPECIFIED', ...KBANK, accountNumber: `${typed}x` } })));
+    await refused(world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK, accountNumber: typed, saveAsDefault: true } })));
+    assert.equal(refusals.length, 9);
+    assert.equal(JSON.stringify([refusals, world.audits]).includes(typed), false);
+  });
+});
+
+// The finance note is copied into the requester's notification (web and LINE). People write account
+// numbers there ("โอนเข้า 123-4-56789-0 แทน"), and a plain "six digits in a row" check lets that through.
+describe('payout: a note that goes into a notification carries no account number', () => {
+  it('refuses the finance note before anything is decided, and takes an ordinary one', async () => {
+    const decisions: any[] = [];
+    const repo = {
+      findRequestById: async () => ({ id: 'rb-1', companyId: 'co-1', branchId: 'branch-1', status: 'FINANCE_REVIEW', updatedAt: new Date('2026-10-01T00:00:00.000Z') }),
+      recordFinanceReviewAtomic: async (data: any) => { decisions.push(data); throw new Error('stop after the guard'); },
+      beginFinanceApprovalAtomic: async (data: any) => { decisions.push(data); throw new Error('stop after the guard'); },
+    } as any;
+    const review = new FinanceReviewReimbursementUseCase(repo, { log: async () => undefined } as any, {} as any, {} as any);
+    const finance = ctx({ userId: 'finance-1', permissions: ['reimbursement.read', 'reimbursement.finance_review'] });
+    for (const note of ['บัญชีผิด โอนเข้า 123-4-56789-0 แทน', 'พร้อมเพย์ 081 000 1234', 'เลขบัญชี 0123456789', 'โอนเข้า 123.4.56789.0', 'พร้อมเพย์ ๐๘๑๒๓๔๕๖๗๘']) {
+      for (const decision of ['NEEDS_INFO', 'APPROVED_FOR_PAYMENT'] as const) {
+        await assert.rejects(review.execute(finance, 'rb-1', { decision, note }), (error: any) => {
+          assert.equal(error.getStatus?.(), 400);
+          assert.match(error.message, /^note_contains_account_number$/);
+          return true;
+        }, note);
+      }
+    }
+    assert.equal(decisions.length, 0);
+    // A note without one goes on to the decision.
+    await assert.rejects(review.execute(finance, 'rb-1', { decision: 'NEEDS_INFO', note: 'ใบเสร็จลงวันที่ 01-10-2569 ไม่ตรงกับวันที่เบิก' }), /stop after the guard/);
+    assert.equal(decisions.length, 1);
+    // So do the product's own document numbers and a plain amount: what a reviewer actually writes.
+    for (const note of ['ซ้ำกับใบ RB-202609-0003', 'ดูรายการ EXP-2026-10-000123 ประกอบ', 'ยอดเกิน 1500000 บาท']) {
+      await assert.rejects(review.execute(finance, 'rb-1', { decision: 'NEEDS_INFO', note }), /stop after the guard/, note);
+    }
+    assert.equal(decisions.length, 4);
+  });
+});
+
+// ---- Payout account correction round (payout spec §14, AC29-AC32) ----
+//
+// One claim over the fake repository. The three transactions of a round are imitated the way the other
+// transactions above are (their locks, their guards and what they leave untouched are proven against a
+// real PostgreSQL in prisma-reimbursement.repository.draft-submit-race.spec.ts). The account itself is
+// frozen, attested and read by the production payout functions, and every decision about who may do
+// what is the use cases' own.
+
+const OUT_OF_ROUND = {
+  payoutCorrectionRequestedAt: undefined, payoutCorrectionRequestedByUserId: undefined, payoutCorrectionReasonCode: undefined,
+  payoutCorrectionNote: undefined, payoutCorrectionSubmittedAt: undefined,
+};
+const approverCtx = (overrides: Partial<any> = {}) => ctx({
+  userId: 'manager-1', roles: ['MANAGER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'], ...overrides,
+});
+const payerCtx = (overrides: Partial<any> = {}) => ctx({
+  userId: 'payer-1', roles: ['ACCOUNTANT'], permissions: ['reimbursement.read', 'reimbursement.payment.record'], ...overrides,
+});
+const readerCtx = () => ctx({ userId: 'reader-1', roles: ['AUDITOR'], permissions: ['reimbursement.read'] });
+const NO_APPROVAL_POLICY = {
+  id: 'policy-1', updatedAt: new Date('2026-01-01T00:00:00.000Z'), currency: 'THB', approvalRequiredFromAmount: '1000.00',
+  approverMode: 'MANAGER_ROLE', defaultApproverRole: 'MANAGER', allowSelfApproval: false, duplicatePolicy: 'WARN',
+  financeReviewRequired: false, status: 'ACTIVE', requireReceipt: false, allowMissingReceiptWithReason: false,
+};
+
+function correctionWorld(options: RepoOptions = {}) {
+  const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE }, ...options });
+  const { repo, calls } = world.state;
+  const db = world.state.payoutTables.client;
+  const steps: any[] = calls.approvalSteps;
+  const payments: any[] = [];
+  const claim = () => world.state.request;
+  const bump = (changes: Record<string, unknown>) => Object.assign(claim(), changes, { updatedAt: new Date(claim().updatedAt.getTime() + 1) });
+  const findPlain = repo.findRequestById;
+  const names: Record<string, string> = { ...PAYOUT_NAMES, 'payer-1': 'ประไพ' };
+  /**
+   * Today's approval route for the claim's step, as the submit's resolver answers it (the manager the
+   * claim was approved by, unless a case says otherwise; an error is what the resolver throws when
+   * nobody is on it), and who would approve a claim nobody has to.
+   */
+  let routeToday: string[] | Error = ['manager-1'];
+  const routeCalls: any[] = [];
+  const routes = {
+    resolveNamedSubmissionRoute: async () => null,
+    resolveSubmissionRoute: async (input: any) => {
+      routeCalls.push(input);
+      if (routeToday instanceof Error) throw routeToday;
+      return { recipientUserIds: routeToday };
+    },
+    resolveWouldBeApproverUserIds: async () => ['manager-1'],
+  } as any;
+  let activeApprovers: string[] | undefined;
+  const submitPlain = repo.submitDraftAtomic;
+  Object.assign(repo, {
+    // The step a submit creates, with the columns the database fills in.
+    submitDraftAtomic: async (data: any) => {
+      const result = await submitPlain(data);
+      for (const step of steps) {
+        Object.assign(step, { companyId: 'co-1', reimbursementRequestId: claim().id, status: step.status ?? 'PENDING', assignedAt: step.assignedAt ?? data.request.submittedAt });
+      }
+      return result;
+    },
+    findRequestById: async (companyId: string, id: string, withRelations?: boolean) => {
+      const found = await findPlain(companyId, id, false);
+      return found && withRelations ? { ...found, approvalSteps: steps, payments, duplicateCandidates: [] } : found;
+    },
+    getUserDisplayNames: async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => names[id]).map((id) => [id, names[id]])),
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(activeApprovers ?? ids),
+    listPaymentPayoutDestinations: (companyId: string, requestId: string, versions: number[]) => readPaymentPayoutDestinations(db, companyId, requestId, versions),
+    // The repository's own comparison of the two stored fingerprints, over the same tables.
+    claimPayoutMatchesVersion: (request: any, version: number) => claimPayoutMatchesVersion(db, request, version),
+    listPaymentSlips: async () => ({}),
+    areClaimProjectionsReady: async () => true,
+    listRequests: async ({ statuses }: any) => (statuses.includes(claim().status) ? [{ ...claim(), approvalSteps: steps }] : []),
+    requestPayoutCorrectionAtomic: async (data: any) => {
+      const request = claim();
+      if (data.expectedUpdatedAt.getTime() !== request.updatedAt.getTime()) throw new ConflictException('reimbursement_changed');
+      const again = !!request.payoutCorrectionSubmittedAt;
+      const setAside = steps.filter((step) => (again ? step.id === request.currentApprovalStepId : step.status === 'APPROVED' && !step.invalidatedAt));
+      for (const step of setAside) Object.assign(step, again && { status: 'CANCELLED' }, { invalidatedAt: data.requestedAt, invalidatedReason: 'payout_account_correction' });
+      const entry = {
+        kind: 'SENT_BACK', at: data.requestedAt.toISOString(), byUserId: data.actorUserId, reasonCode: data.reasonCode, ...(data.note && { note: data.note }),
+        ...(!again && { approved: {
+          ...(hasPayoutSnapshot(request) && { payoutMethod: request.payoutMethod, ...(request.payoutDestinationVersion != null && { payoutVersion: request.payoutDestinationVersion }) }),
+          ...(request.approvedAt && { at: request.approvedAt.toISOString() }),
+        } }),
+      };
+      bump({
+        status: 'PENDING_APPROVAL', approvedAt: undefined, paymentStatus: 'NOT_PAYABLE', currentApprovalStepId: null,
+        payoutCorrectionRequestedAt: data.requestedAt, payoutCorrectionRequestedByUserId: data.actorUserId, payoutCorrectionReasonCode: data.reasonCode,
+        payoutCorrectionNote: data.note, payoutCorrectionSubmittedAt: undefined, payoutCorrectionLog: [...(request.payoutCorrectionLog ?? []), entry],
+      });
+      await data.onPersisted(fakeTx(calls.outbox), { again, setAsideStepIds: setAside.map((step) => step.id), signaturesRemoved: 0, declarationsSetAside: 0 });
+      return request;
+    },
+    submitPayoutCorrectionAtomic: async (data: any) => {
+      const request = claim();
+      if (data.expectedUpdatedAt.getTime() !== request.updatedAt.getTime()) throw new ConflictException('reimbursement_changed');
+      await data.payout.onPersisted?.(fakeTx(calls.outbox), request.id);
+      const columns = await freezePayoutCorrection(db, request, {
+        write: data.payout.write, frozenAt: data.submittedAt, seenDefaultToken: data.seenDefaultToken, defaultSetInThisTransaction: data.defaultSetInThisTransaction,
+        previous: payoutCorrectionRoundStart(request),
+      });
+      const approvalSnapshotHash = computeSnapshotHash(claimSnapshotFields({ ...request, ...columns }, request.approvalPolicySnapshotJson));
+      const source: any = payoutCorrectionSourceStep<any>({ ...request, approvalSteps: steps });
+      const replaced = source?.status === 'PENDING' ? source : undefined;
+      if (replaced) Object.assign(replaced, { status: 'CANCELLED', invalidatedAt: data.submittedAt, invalidatedReason: 'payout_account_correction' });
+      // Of the people the old step named, those on today's approval route; nobody left, no frozen list.
+      const onRoute = (userId: string) => data.approverRouteUserIds.includes(userId);
+      const stillAssigned = (source?.assignedApproverUserIds ?? []).filter(onRoute);
+      const step = source ? {
+        id: `step-${steps.length + 1}`, companyId: request.companyId, reimbursementRequestId: request.id, sequenceNo: source.sequenceNo, status: 'PENDING',
+        approverUserId: source.approverUserId && onRoute(source.approverUserId) ? source.approverUserId : undefined,
+        approverRoleSnapshot: source.approverRoleSnapshot, assignedApproverUserIds: stillAssigned.length > 0 ? stillAssigned : undefined,
+        requestSnapshotHash: approvalSnapshotHash, assignedAt: data.submittedAt,
+      } : undefined;
+      if (step) steps.push(step);
+      const entry = {
+        kind: 'ACCOUNT_SUBMITTED', at: data.submittedAt.toISOString(), byUserId: data.actorUserId, payoutMethod: columns.payoutMethod,
+        ...(columns.payoutDestinationVersion !== null && { payoutVersion: columns.payoutDestinationVersion }),
+      };
+      bump({
+        ...columns, approvalSnapshotHash, payoutCorrectionLog: [...request.payoutCorrectionLog, entry],
+        ...(step ? { currentApprovalStepId: step.id, payoutCorrectionSubmittedAt: data.submittedAt }
+          : { status: 'READY_FOR_PAYMENT', approvedAt: data.submittedAt, paymentStatus: 'UNPAID', ...OUT_OF_ROUND }),
+      });
+      await data.onPersisted(fakeTx(calls.outbox), { columns, ...(step && { step }), ...(replaced && { replacedStepId: replaced.id }), readyForPayment: !step });
+      return { request, ...(step && { step }), readyForPayment: !step };
+    },
+    approvePayoutCorrectionAtomic: async (data: any) => {
+      const request = claim();
+      if (data.expectedUpdatedAt.getTime() !== request.updatedAt.getTime()) throw new ConflictException('stale_approval_snapshot');
+      const step = steps.find((candidate) => candidate.id === request.currentApprovalStepId);
+      await attestClaimPayout(db, request, { verifiedVersion: data.payoutVerifiedVersion, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id });
+      Object.assign(step, { status: 'APPROVED', decidedAt: data.decidedAt, decisionByUserId: data.actorUserId, comment: data.comment });
+      bump({
+        status: 'READY_FOR_PAYMENT', approvedAt: data.decidedAt, paymentStatus: 'UNPAID', currentApprovalStepId: null, ...OUT_OF_ROUND,
+        payoutCorrectionLog: [...request.payoutCorrectionLog, { kind: 'REAPPROVED', at: data.decidedAt.toISOString(), byUserId: data.actorUserId, approvalStepId: step.id }],
+      });
+      await data.onApprovedPersisted(fakeTx(calls.outbox), step.id);
+      return request;
+    },
+  });
+  const evidence = evidenceService();
+  const audit = { log: async (entry: any) => { world.audits.push(entry); } } as any;
+  const sendBack = new RequestPayoutCorrectionUseCase(repo, audit, evidence);
+  const giveAccount = new SubmitPayoutCorrectionUseCase(repo, audit, evidence, world.payouts, routes);
+  const approve = new ApproveReimbursementUseCase(repo, audit, { execute: async () => { throw new Error('a correction round builds no expense record'); } } as any, evidence);
+  const reject = new RejectReimbursementUseCase(repo, audit, evidence);
+  return {
+    ...world, steps, payments, claim, bump, routes, routeCalls, sendBack, giveAccount, approve, reject,
+    setActiveApprovers: (ids: string[] | undefined) => { activeApprovers = ids; },
+    setRouteToday: (route: string[] | Error) => { routeToday = route; },
+    events: () => calls.outbox as any[],
+    /** A claim sent with the requester's default account, approved by its manager (who checked version 1), waiting for payment. */
+    async ready(send: { payout?: Record<string, unknown>; setDefault?: typeof KBANK | null } = {}) {
+      if (send.setDefault !== null) await world.payouts.setOwn(ctx(), send.setDefault ?? KBANK);
+      const draft = await world.create.execute(ctx(), claimInput(send.payout ? { payout: send.payout } : {}));
+      await world.send(ctx(), draft.id);
+      const approvedAt = new Date();
+      if (steps[0]) {
+        await attestClaimPayout(db, claim(), { verifiedVersion: claim().payoutDestinationVersion ?? undefined, actorUserId: 'manager-1', verifiedAt: approvedAt, approvalStepId: steps[0].id });
+        Object.assign(steps[0], { status: 'APPROVED', assignedApproverUserIds: ['manager-1'], decisionByUserId: 'manager-1', decidedAt: approvedAt });
+        bump({ status: 'READY_FOR_PAYMENT', approvedAt, currentApprovalStepId: null, paymentStatus: 'UNPAID' });
+      }
+      calls.outbox.length = 0;
+      world.audits.length = 0;
+      world.notifications.length = 0;
+      return draft.id as string;
+    },
+  };
+}
+
+describe('payout correction: sending a claim that waits for payment back for its account (AC29)', () => {
+  const reason = { reasonCode: 'ACCOUNT_NUMBER_WRONG' };
+
+  it('takes whoever may record its payment, the approver it stands on and its requester, and nobody else', async () => {
+    const senders: Array<[string, any, string]> = [
+      ['whoever may record its payment', payerCtx(), 'PAYER'],
+      ['the approver it stands on, who cannot pay', approverCtx(), 'APPROVER'],
+      ['its requester', ctx(), 'REQUESTER'],
+    ];
+    for (const [who, viewer, sentBackBy] of senders) {
+      const world = correctionWorld();
+      const id = await world.ready();
+      assert.deepEqual((await world.detail.execute(viewer, id)).payoutCorrectionActions, { canRequest: true, canSubmit: false }, who);
+      const detail = await world.sendBack.execute(viewer, id, reason);
+      assert.deepEqual([detail.status, detail.requestNo, detail.payoutCorrection?.phase, detail.currentDesk], ['PENDING_APPROVAL', 'RB-202601-000001', 'AWAITING_REQUESTER', { kind: 'REQUESTER' }], who);
+      assert.equal(world.audits.find((entry) => entry.action === 'reimbursement.payout_correction.request').metadataJson.sentBackBy, sentBackBy, who);
+    }
+    const refused: Array<[string, any]> = [
+      ['a reader of the claim', readerCtx()],
+      // The finance reviewer holds no pay right here, and reviewing is not paying.
+      ['a finance reviewer who cannot pay', financeCtx()],
+      ['an approver of other claims', approverCtx({ userId: 'manager-2' })],
+      ['whoever may pay, outside the claim branch', payerCtx({ scopes: { branchIds: ['branch-2'] } })],
+      ['a requester who may not edit their own claims', ctx({ permissions: ['reimbursement.read_own'] })],
+    ];
+    for (const [who, viewer] of refused) {
+      const world = correctionWorld();
+      const id = await world.ready();
+      const flags = await world.detail.execute(viewer, id).then((detail) => detail.payoutCorrectionActions, () => undefined);
+      assert.equal(flags, undefined, `${who}: no button`);
+      await assert.rejects(() => world.sendBack.execute(viewer, id, reason), (error: any) => error.getStatus() === 403, who);
+      assert.deepEqual([world.claim().status, world.events()], ['READY_FOR_PAYMENT', []], who);
+    }
+    // A refusal for want of the right is on record: it is an attempt to stop a payment.
+    const world = correctionWorld();
+    const id = await world.ready();
+    await assert.rejects(() => world.sendBack.execute(readerCtx(), id, reason), /^ForbiddenException: payout_correction_denied$/);
+    assert.deepEqual(world.audits.map((entry) => [entry.action, entry.result, entry.actorUserId]), [['reimbursement.payout_correction.request', 'DENIED', 'reader-1']]);
+  });
+
+  it('refuses a claim that is paid, not at the pay step, being cancelled, or already with its requester', async () => {
+    const world = correctionWorld();
+    const id = await world.ready();
+    // Paid: the payment is voided first, the account it went into is never changed under it.
+    world.payments.push({ id: 'pay-1', status: 'RECORDED', paidAmount: '120.0000', paidAt: new Date(), paidByUserId: 'payer-1', paymentMethod: 'BANK_TRANSFER' });
+    await assert.rejects(() => world.sendBack.execute(payerCtx(), id, reason), (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_not_allowed');
+    assert.equal((await world.detail.execute(payerCtx(), id)).payoutCorrectionActions, undefined);
+    // A voided payment does not stand in the way.
+    world.payments[0].status = 'VOIDED';
+    assert.equal((await world.detail.execute(payerCtx(), id)).payoutCorrectionActions?.canRequest, true);
+
+    for (const status of ['DRAFT', 'FINANCE_REVIEW', 'APPROVED', 'PARTIALLY_PAID', 'PAID', 'REJECTED', 'CANCELLED']) {
+      world.bump({ status });
+      await assert.rejects(() => world.sendBack.execute(payerCtx(), id, reason), /payout_correction_not_allowed/, status);
+    }
+    world.bump({ status: 'READY_FOR_PAYMENT', cancellationPendingAt: new Date(), cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ยกเลิกคำขอเบิกค่าใช้จ่าย' });
+    await assert.rejects(() => world.sendBack.execute(payerCtx(), id, reason), (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_cancellation_pending');
+    assert.equal((await world.detail.execute(payerCtx(), id)).payoutCorrectionActions, undefined);
+    world.bump({ cancellationPendingAt: undefined, cancellationPendingByUserId: undefined, cancellationPendingReason: undefined });
+
+    await world.sendBack.execute(payerCtx(), id, reason);
+    // Someone with the page from before presses again: the claim is already with its requester.
+    await assert.rejects(() => world.sendBack.execute(approverCtx(), id, reason), (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress');
+    assert.equal(world.events().length, 1);
+  });
+
+  it('takes a reason from the fixed list and a note that carries no account number, and tells the requester alone', async () => {
+    const world = correctionWorld();
+    const id = await world.ready();
+    for (const bad of [{}, { reasonCode: '' }, { reasonCode: 'เลขบัญชีผิด' }, { reasonCode: 'account_number_wrong' }, { reasonCode: 7 }, undefined]) {
+      await assert.rejects(() => world.sendBack.execute(payerCtx(), id, bad as any), (error: any) => error.getStatus() === 400 && error.message === 'payout_correction_reason_required');
+    }
+    await assert.rejects(() => world.sendBack.execute(payerCtx(), id, { reasonCode: 'OTHER', note: 'x'.repeat(501) }), (error: any) => error.getStatus() === 400 && error.message === 'payout_correction_note_too_long');
+    for (const note of ['ที่ถูกคือ 012-3-45678-9', 'โอนเข้า 0812345678 แทน']) {
+      await assert.rejects(() => world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG', note }), (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number');
+    }
+    assert.deepEqual([world.claim().status, world.events(), world.audits], ['READY_FOR_PAYMENT', [], []]);
+
+    const detail = await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NAME_MISMATCH', note: '  ชื่อบัญชีเป็นของภรรยา  ' });
+    assert.deepEqual(detail.payoutCorrection, {
+      phase: 'AWAITING_REQUESTER', requestedAt: world.claim().payoutCorrectionRequestedAt.toISOString(), requestedByUserId: 'payer-1', requestedByName: 'ประไพ',
+      reasonCode: 'ACCOUNT_NAME_MISMATCH', note: 'ชื่อบัญชีเป็นของภรรยา',
+      previous: { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 1 },
+      previouslyApprovedAt: world.steps[0].decidedAt.toISOString(),
+    });
+    // One notice, for the requester: the reason in the list's own words, nothing anyone typed, no account.
+    const [event] = world.events();
+    assert.equal(world.events().length, 1);
+    assert.equal(event.eventType, 'reimbursement.payout_correction_requested');
+    assert.deepEqual(event.payloadJson.data, {
+      requestId: id, requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', status: 'PENDING_APPROVAL',
+      payoutCorrectionNotice: 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
+    });
+    assert.equal(event.payloadJson.actorUserId, 'payer-1');
+    const [entry] = world.audits;
+    assert.deepEqual([world.audits.length, entry.action, entry.result, entry.riskLevel], [1, 'reimbursement.payout_correction.request', 'SUCCESS', 'HIGH']);
+    assert.deepEqual(entry.metadataJson, {
+      requestNo: 'RB-202601-000001', reasonCode: 'ACCOUNT_NAME_MISMATCH', hasNote: true, sentBackBy: 'PAYER', again: false,
+      payoutMethod: 'BANK_TRANSFER', payoutVersion: 1, setAsideStepIds: ['step-1'], signaturesRemoved: 0, declarationsSetAside: 0,
+    });
+    assert.ok(!JSON.stringify([world.events(), world.audits]).includes('ภรรยา'), 'the note stays on the claim');
+    assert.equal(leaksNumber([detail, world.events(), world.audits]), false);
+  });
+});
+
+describe('payout correction: what the claim says and allows while it is in a round (AC30)', () => {
+  it('is with its requester, in the approval bucket, in no queue, and cannot be paid, decided or reopened', async () => {
+    const world = correctionWorld();
+    const id = await world.ready();
+    const before = { ...world.claim() };
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'BANK_WRONG' });
+    const claim = world.claim();
+    // Only the round moved: the number, the amounts, the lines, the evidence and every other state are the ones it was approved with.
+    for (const field of ['requestNo', 'amount', 'outstandingAmount', 'paymentTotalAmount', 'lines', 'duplicateStatus', 'postingStatus', 'financeReviewStatus',
+      'receiptRequirementStatus', 'approvalSnapshotHash', 'approvalPolicySnapshotJson', 'submittedAt', 'payoutMethod', 'payoutDestinationVersion', 'payoutFingerprint']) {
+      assert.deepEqual(claim[field], before[field], field);
+    }
+    assert.deepEqual([claim.status, claim.approvedAt, claim.paymentStatus, claim.currentApprovalStepId], ['PENDING_APPROVAL', undefined, 'NOT_PAYABLE', null]);
+
+    // Every reader says the same: with the requester, not with an approver and not "waiting for the system".
+    for (const viewer of [ctx(), approverCtx(), payerCtx(), readerCtx()]) {
+      const detail = await world.detail.execute(viewer, id);
+      assert.deepEqual([detail.currentDesk, detail.payoutCorrectionPhase, detail.awaitingSystem, detail.paymentDesk, detail.approvalActions],
+        [{ kind: 'REQUESTER' }, 'AWAITING_REQUESTER', undefined, undefined, { canApprove: false, canReject: false }], viewer.userId);
+      assert.equal(reimbursementHubBucket(detail), 'review');
+    }
+    assert.equal(hubBucketOfStatus(claim.status, claim.financeReviewStatus), 'review', 'the card that counts it is the one whose list shows it');
+    assert.deepEqual(await new ListFinanceQueueUseCase(world.state.repo).execute(financeCtx()), []);
+
+    // Not payable, by its status and by name.
+    const pay = new RecordReimbursementPaymentUseCase(world.state.repo, noopAudit,
+      { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-1' }) } as any, { execute: async () => undefined } as any, evidenceService());
+    await assert.rejects(() => pay.execute(payerCtx(), id, { paidAmount: claim.amount, paymentMethod: 'CASH', paidAt: new Date().toISOString() } as any),
+      (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress');
+    // Not a draft again: its expense records stand, only its account changes.
+    await assert.rejects(() => world.reopen.execute(ctx(), id), (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress');
+    await assert.rejects(() => world.update.execute(ctx(), id, { reason: 'แก้ยอด' } as any), /Cannot edit|DRAFT|draft/i);
+    assert.deepEqual([world.claim().status, world.claim().payoutCorrectionRequestedAt !== undefined], ['PENDING_APPROVAL', true]);
+  });
+
+  it('can still be cancelled, by the rule every claim is cancelled by', async () => {
+    const world = correctionWorld({ claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }] });
+    const id = await world.ready();
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'REQUESTER_ASKED' });
+    const cancel = new CancelReimbursementUseCase(world.state.repo, noopAudit, world.state.voidExpense);
+    const cancelled = await cancel.execute(ctx({ permissions: ['reimbursement.cancel_own', 'reimbursement.read_own'] }), id, 'ยกเลิกคำขอเบิกค่าใช้จ่าย');
+    assert.deepEqual([cancelled.status, world.state.calls.voided, cancelled.currentDesk, cancelled.payoutCorrectionPhase], ['CANCELLED', ['exp-1'], undefined, undefined]);
+    // A claim that is no longer waiting for approval is in no round, whatever its columns still say.
+    assert.equal((await world.detail.execute(ctx(), id)).payoutCorrection, undefined);
+    // It is refused for what it is, by both calls and for whoever asks.
+    await assert.rejects(() => world.giveAccount.execute(ctx(), id, { mode: 'CASH' }), /^ConflictException: payout_correction_not_requested$/);
+    await assert.rejects(() => world.sendBack.execute(payerCtx(), id, { reasonCode: 'OTHER' }), /^ConflictException: payout_correction_not_allowed$/);
+  });
+});
+
+describe('payout correction: the requester gives the account and it is approved again (AC31)', () => {
+  const sentBack = async (world: ReturnType<typeof correctionWorld>, send: Parameters<ReturnType<typeof correctionWorld>['ready']>[0] = {}) => {
+    const id = await world.ready(send);
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    world.events().length = 0;
+    world.audits.length = 0;
+    return id;
+  };
+
+  it('lets the requester, or a finance reviewer on their behalf, give it, and nobody else', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    // Before anything was sent back, there is nothing to give.
+    const untouched = correctionWorld();
+    const readyId = await untouched.ready();
+    await assert.rejects(() => untouched.giveAccount.execute(ctx(), readyId, { mode: 'CASH' }), (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_not_requested');
+
+    const flags = async (viewer: any) => (await world.detail.execute(viewer, id)).payoutCorrectionActions;
+    const kbankDefault = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789' };
+    const requesterFlags = await flags(ctx());
+    assert.deepEqual({ ...requesterFlags, requesterDefault: { ...requesterFlags!.requesterDefault, token: 'x' } },
+      { canRequest: false, canSubmit: true, requesterDefault: { ...kbankDefault, token: 'x' }, submitModes: ['DEFAULT', 'SPECIFIED', 'CASH', 'PREVIOUS'] });
+    assert.equal(requesterFlags!.requesterDefault!.token, payoutDefaultToken(id, await world.state.repo.findMemberPayoutAccount('co-1', 'staff-1')));
+    assert.deepEqual((await flags(financeCtx()))?.canSubmit, true, 'on the requester\'s behalf, as for a draft');
+    for (const viewer of [approverCtx(), payerCtx(), readerCtx()]) {
+      assert.equal(await flags(viewer), undefined, viewer.userId);
+      await assert.rejects(() => world.giveAccount.execute(viewer, id, { mode: 'CASH' }), /^ForbiddenException: payout_correction_denied$/, viewer.userId);
+    }
+    assert.deepEqual(world.audits.map((entry) => [entry.action, entry.result]), Array(3).fill(['reimbursement.payout_correction.submit', 'DENIED']));
+    assert.deepEqual([world.claim().payoutCorrectionSubmittedAt, world.events()], [undefined, []]);
+    assert.equal(leaksNumber(requesterFlags), false);
+  });
+
+  // Upgrade test 2026-10-02: a finance reviewer filled in an account for a requester who had left, and was told it
+  // could not be taken only after pressing save. The detail now lists the choices the endpoint takes from this viewer.
+  it('says up front which choices the account endpoint takes from this viewer, and the endpoint takes those and refuses the rest', async () => {
+    const offered = async (world: ReturnType<typeof correctionWorld>, viewer: any, id: string) => {
+      const actions = (await world.detail.execute(viewer, id)).payoutCorrectionActions;
+      return [actions?.submitModes, actions?.specifiedRefusal];
+    };
+    const refused = (code: string) => (error: any) => error.getStatus() === 409 && error.message === code;
+
+    // An active requester with a default, on a claim approved with an account: every choice, for them and for a finance reviewer.
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    for (const viewer of [ctx(), financeCtx()]) assert.deepEqual(await offered(world, viewer, id), [['DEFAULT', 'SPECIFIED', 'CASH', 'PREVIOUS'], undefined], viewer.userId);
+    // Whoever may not give the account is told nothing of its choices.
+    assert.equal((await world.detail.execute(approverCtx(), id)).payoutCorrectionActions, undefined);
+
+    // The requester left: nobody types an account for them, and the detail says so before anyone tries. They have no
+    // default either, so that choice is not listed.
+    const gone = correctionWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus: 'DISABLED' } } });
+    const goneId = await sentBack(gone, { setDefault: null, payout: { mode: 'SPECIFIED', ...KBANK } });
+    assert.deepEqual(await offered(gone, financeCtx(), goneId), [['CASH', 'PREVIOUS'], 'REQUESTER_NOT_ACTIVE']);
+    await assert.rejects(() => gone.giveAccount.execute(financeCtx(), goneId, { mode: 'SPECIFIED', ...SCB }), refused('payout_account_member_not_active'));
+    await assert.rejects(() => gone.giveAccount.execute(financeCtx(), goneId, { mode: 'DEFAULT', defaultToken: 'x' }), refused('payout_method_required'));
+    assert.equal(gone.claim().payoutCorrectionSubmittedAt, undefined, 'the two unlisted choices wrote nothing');
+    assert.equal((await gone.giveAccount.execute(financeCtx(), goneId, { mode: 'PREVIOUS' })).payoutCorrection?.phase, 'AWAITING_APPROVAL');
+    // Still the same list while the account waits for approval, where it may be given again; cash is taken too.
+    assert.deepEqual(await offered(gone, financeCtx(), goneId), [['CASH', 'PREVIOUS'], 'REQUESTER_NOT_ACTIVE']);
+    assert.equal((await gone.giveAccount.execute(financeCtx(), goneId, { mode: 'CASH' })).payout?.payoutMethod, 'CASH');
+    // An inactive requester who set a default before leaving: the default is theirs and nobody types it, so it is listed and taken.
+    const left = correctionWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus: 'DISABLED' } } });
+    const leftId = await sentBack(left);
+    assert.deepEqual(await offered(left, financeCtx(), leftId), [['DEFAULT', 'CASH', 'PREVIOUS'], 'REQUESTER_NOT_ACTIVE']);
+    const token = (await left.detail.execute(financeCtx(), leftId)).payoutCorrectionActions!.requesterDefault!.token;
+    assert.equal((await left.giveAccount.execute(financeCtx(), leftId, { mode: 'DEFAULT', defaultToken: token })).payoutCorrection?.phase, 'AWAITING_APPROVAL');
+
+    // A claim that had no account of its own has none to keep: that choice is not listed, and is refused.
+    const legacy = correctionWorld();
+    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assert.deepEqual(await offered(legacy, ctx(), legacyId), [['SPECIFIED', 'CASH'], undefined]);
+    await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'PREVIOUS' }), refused('payout_destination_required'));
+    await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'DEFAULT', defaultToken: 'x' }), refused('payout_method_required'));
+    assert.equal((await legacy.giveAccount.execute(ctx(), legacyId, { mode: 'SPECIFIED', ...KBANK })).payout?.accountLast4, '6789');
+  });
+
+  it('freezes the new account as a new version, asks the same approvers again and shows them both accounts', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    const hashBefore = world.claim().approvalSnapshotHash;
+    const detail = await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+
+    // A new frozen version; the first one stays as it was, with who checked it.
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.frozenAt !== null, row.verifiedByUserId ?? null, row.source]),
+      [[1, '6789', true, 'manager-1', 'DEFAULT_ACCOUNT'], [2, '9012', true, null, 'REQUESTER']]);
+    const claim = world.claim();
+    assert.deepEqual([claim.status, claim.payoutMethod, claim.payoutDestinationVersion, claim.currentApprovalStepId], ['PENDING_APPROVAL', 'BANK_TRANSFER', 2, 'step-2']);
+    // The hash is the same claim with the new account, and the new step is bound to it.
+    assert.notEqual(claim.approvalSnapshotHash, hashBefore);
+    assert.equal(claim.approvalSnapshotHash, computeSnapshotHash(claimSnapshotFields(claim, claim.approvalPolicySnapshotJson)));
+    assert.deepEqual(world.steps.map((step) => [step.id, step.status, step.sequenceNo, step.assignedApproverUserIds, step.approverRoleSnapshot, step.invalidatedReason ?? null]), [
+      ['step-1', 'APPROVED', 1, ['manager-1'], 'MANAGER', 'payout_account_correction'],
+      ['step-2', 'PENDING', 1, ['manager-1'], 'MANAGER', null],
+    ]);
+    assert.equal(world.steps[1].requestSnapshotHash, claim.approvalSnapshotHash);
+
+    // What every viewer reads: waiting for the same approver, with the account it had and the one it has now.
+    assert.deepEqual([detail.currentDesk, detail.payoutCorrectionPhase, detail.payoutCorrection?.phase, detail.payoutCorrection?.submittedAt],
+      [{ kind: 'APPROVER', names: ['วิภา'] }, 'AWAITING_APPROVAL', 'AWAITING_APPROVAL', claim.payoutCorrectionSubmittedAt.toISOString()]);
+    assert.deepEqual([detail.payoutCorrection?.previous?.accountLast4, detail.payoutCorrection?.previous?.version, detail.payout?.accountLast4, detail.payout?.version, detail.payout?.verifiedAt],
+      ['6789', 1, '9012', 2, undefined]);
+    assert.deepEqual((await world.detail.execute(approverCtx(), id)).approvalActions, { canApprove: true, canReject: true });
+    assert.deepEqual((await world.detail.execute(approverCtx(), id)).payoutCorrectionActions, { canRequest: true, canSubmit: false }, 'the approver may send it back again');
+    assert.deepEqual((await world.detail.execute(payerCtx(), id)).payoutCorrectionActions, undefined, 'whoever pays has nothing to do until it is approved');
+
+    // One notice, to the approvers of the new step, not to the requester who sent it.
+    const [event] = world.events();
+    assert.deepEqual([world.events().length, event.eventType, event.eventKey], [1, 'reimbursement.payout_correction_submitted', `reimbursement.payout_correction_submitted:reimbursement_request:${id}:step-2`]);
+    assert.deepEqual(event.payloadJson.data, {
+      requestId: id, requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', amount: claim.amount, currency: 'THB',
+      status: 'PENDING_APPROVAL', stepId: 'step-2', approverRecipientUserIds: ['manager-1'],
+    });
+    const [entry] = world.audits;
+    assert.deepEqual([world.audits.length, entry.action, entry.result], [1, 'reimbursement.payout_correction.submit', 'SUCCESS']);
+    assert.deepEqual(entry.metadataJson, {
+      requestNo: 'RB-202601-000001', payout: { mode: 'SPECIFIED', source: 'REQUESTER', method: 'BANK_TRANSFER', version: 2 },
+      onBehalfOfRequester: false, previousVersion: 1, approvalStepId: 'step-2', replacedStepId: null, readyForPayment: false,
+    });
+    assert.equal(leaksNumber([detail, world.events(), world.audits]), false);
+  });
+
+  it('takes the same account again, the default as the page showed it, cash, and a new default, each as a new answer', async () => {
+    // Sent back by mistake: the requester confirms the account it had. Still a new version and a new approval.
+    const same = correctionWorld();
+    const sameId = await sentBack(same);
+    const token = (await same.detail.execute(ctx(), sameId)).payoutCorrectionActions!.requesterDefault!.token;
+    await same.giveAccount.execute(ctx(), sameId, { mode: 'DEFAULT', defaultToken: token });
+    assert.deepEqual(same.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.source]), [[1, '6789', 'DEFAULT_ACCOUNT'], [2, '6789', 'DEFAULT_ACCOUNT']]);
+    assert.deepEqual([same.claim().payoutDestinationVersion, same.claim().currentApprovalStepId], [2, 'step-2']);
+
+    // The default changed after the page was read: the page is asked to show it again, and nothing is frozen.
+    const moved = correctionWorld();
+    const movedId = await sentBack(moved);
+    const seen = (await moved.detail.execute(ctx(), movedId)).payoutCorrectionActions!.requesterDefault!.token;
+    await moved.payouts.setOwn(ctx(), SCB);
+    for (const defaultToken of [seen, undefined, 'x']) {
+      await assert.rejects(() => moved.giveAccount.execute(ctx(), movedId, { mode: 'DEFAULT', defaultToken } as any), (error: any) => error.getStatus() === 409 && error.message === 'payout_destination_changed');
+    }
+    assert.deepEqual([moved.state.payoutTables.destinations.length, moved.claim().payoutCorrectionSubmittedAt, moved.events()], [1, undefined, []]);
+
+    // Cash: no account row, and the claim says cash.
+    const cash = correctionWorld();
+    const cashId = await sentBack(cash);
+    const asCash = await cash.giveAccount.execute(ctx(), cashId, { mode: 'CASH' });
+    assert.deepEqual([cash.claim().payoutMethod, cash.claim().payoutDestinationVersion, cash.state.payoutTables.destinations.length, asCash.payout?.payoutMethod, asCash.payoutCorrection?.previous?.accountLast4],
+      ['CASH', null, 1, 'CASH', '6789']);
+
+    // "Save as my default": the default is set in the same transaction, and the claim copies exactly that.
+    const saved = correctionWorld();
+    const savedId = await sentBack(saved);
+    await saved.giveAccount.execute(ctx(), savedId, { mode: 'SPECIFIED', saveAsDefault: true, ...PROMPTPAY });
+    assert.deepEqual([saved.state.payoutTables.accounts[0]!.accountLast4, saved.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.source])],
+      ['5678', [[1, '6789', 'DEFAULT_ACCOUNT'], [2, '5678', 'DEFAULT_ACCOUNT']]]);
+    assert.equal(leaksNumber([saved.events(), saved.audits]), false);
+  });
+
+  it('lets a finance reviewer give it on the requester\'s behalf, and tells the requester who typed the account', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    await world.giveAccount.execute(financeCtx(), id, { mode: 'SPECIFIED', ...SCB });
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.source, row.createdByUserId]).slice(1), [[2, 'PREPARER', 'finance-1']]);
+    assert.equal(world.audits[0].metadataJson.onBehalfOfRequester, true);
+    // The notice every account typed for someone else sends, to the requester alone, with the last four digits.
+    assert.deepEqual(world.notifications.map((notice) => [notice.recipientUserIds, notice.triggerKey, notice.title]),
+      [[['staff-1'], 'reimbursement.payout_account_set_by_other', 'อรทัย ระบุบัญชีรับเงินคืนในใบเบิกของคุณ']]);
+    assert.match(world.notifications[0].body, /^ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 /);
+    assert.equal(leaksNumber([world.notifications, world.events(), world.audits]), false);
+  });
+
+  // Final review W6. A claim sent back by mistake, whose account was typed for that claim, could not get it
+  // back once its requester had left: only the stored default or cash could be given for them.
+  it('lets a finance reviewer keep the account the claim had for a requester who is no longer active, and still refuses typing one for them', async () => {
+    const world = correctionWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus: 'DISABLED' } } });
+    const id = await sentBack(world, { setDefault: null, payout: { mode: 'SPECIFIED', ...KBANK } });
+    const hashBefore = world.claim().approvalSnapshotHash;
+    // Typing a new account for someone no notice can reach stays refused, and nothing is written.
+    await assert.rejects(() => world.giveAccount.execute(financeCtx(), id, { mode: 'SPECIFIED', ...SCB }), (error: any) => error.getStatus() === 409 && error.message === 'payout_account_member_not_active');
+    assert.deepEqual([world.state.payoutTables.destinations.length, world.claim().payoutCorrectionSubmittedAt], [1, undefined]);
+
+    const given = await world.giveAccount.execute(financeCtx(), id, { mode: 'PREVIOUS' });
+    // The same account as a new frozen version, with who entered it as it was: nobody typed anything.
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.source, row.createdByUserId, row.frozenAt !== null, row.verifiedByUserId ?? null]),
+      [[1, '6789', 'REQUESTER', 'staff-1', true, 'manager-1'], [2, '6789', 'REQUESTER', 'staff-1', true, null]]);
+    assert.equal(world.state.payoutTables.destinations[1]!.accountNumberEncrypted, world.state.payoutTables.destinations[0]!.accountNumberEncrypted, 'the sealed number moved as it is');
+    assert.deepEqual([given.payoutCorrection?.phase, given.payout?.version, given.payout?.accountLast4, world.claim().currentApprovalStepId], ['AWAITING_APPROVAL', 2, '6789', 'step-2']);
+    // Approved again like any other answer: a new hash, a new step, a notice to its approver, and none to the requester.
+    assert.notEqual(world.claim().approvalSnapshotHash, hashBefore);
+    assert.deepEqual([world.events().map((event) => event.eventType), world.notifications], [['reimbursement.payout_correction_submitted'], []]);
+    const entry = world.audits.find((row) => row.result === 'SUCCESS');
+    assert.deepEqual([entry.metadataJson.payout, entry.metadataJson.onBehalfOfRequester, entry.metadataJson.previousVersion], [{ mode: 'PREVIOUS', method: 'BANK_TRANSFER', version: 2 }, true, 1]);
+    const waiting = await world.detail.execute(approverCtx(), id);
+    assert.equal((await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, 2)).status, 'READY_FOR_PAYMENT');
+    assert.equal(leaksNumber([given, world.events(), world.audits]), false);
+  });
+
+  it('keeps the account the claim was approved with, not one refused since: cash stays cash, and a claim that had none has nothing to keep', async () => {
+    // Another account was given and refused: "the account it had" is still the one it was approved with.
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    await world.sendBack.execute(approverCtx(), id, { reasonCode: 'ACCOUNT_NAME_MISMATCH' });
+    assert.deepEqual([world.claim().payoutDestinationVersion, (await world.detail.execute(ctx(), id)).payoutCorrection?.previous?.version], [2, 1]);
+    await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.accountLast4, row.source]),
+      [[1, '6789', 'DEFAULT_ACCOUNT'], [2, '9012', 'REQUESTER'], [3, '6789', 'DEFAULT_ACCOUNT']]);
+    assert.equal(world.claim().payoutDestinationVersion, 3);
+
+    const cash = correctionWorld();
+    const cashId = await sentBack(cash, { setDefault: null, payout: { mode: 'CASH' } });
+    await cash.giveAccount.execute(ctx(), cashId, { mode: 'PREVIOUS' });
+    assert.deepEqual([cash.claim().payoutMethod, cash.claim().payoutDestinationVersion, cash.state.payoutTables.destinations.length], ['CASH', null, 0]);
+
+    // Sent before claims carried a receiving method: there is no account of its own to keep.
+    const legacy = correctionWorld();
+    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'OTHER' });
+    await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'PREVIOUS' }), (error: any) => error.getStatus() === 409 && error.message === 'payout_destination_required');
+    assert.equal(legacy.claim().payoutCorrectionSubmittedAt, undefined);
+  });
+
+  // Upgrade test 2026-10-02: a requester who chose "ใช้บัญชีเดิมของใบนี้" left the approver a card with two accounts
+  // that read alike (bank, name, last 4 digits) and no word that they are one account. The server knows: it compares
+  // what it stores, and says yes or no.
+  it('says whether the account given in a round is the very account the claim had, and gives away nothing it compared', async () => {
+    const same = async (world: ReturnType<typeof correctionWorld>, id: string) => (await world.detail.execute(approverCtx(), id)).payoutCorrection?.sameAsPrevious;
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    // Not asked before an account is given: there is nothing to compare yet.
+    const waiting = await world.detail.execute(ctx(), id);
+    assert.deepEqual([waiting.payoutCorrection?.phase, 'sameAsPrevious' in waiting.payoutCorrection!], ['AWAITING_REQUESTER', false]);
+    // "The account the claim had", the same account typed again, and the default that is that account: each a new version, each the same account.
+    const kept = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual([kept.payoutCorrection?.phase, kept.payoutCorrection?.sameAsPrevious, kept.payout?.version, kept.payoutCorrection?.previous?.version], ['AWAITING_APPROVAL', true, 2, 1]);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK });
+    assert.equal(await same(world, id), true, 'typed again, digit for digit');
+    const token = (await world.detail.execute(ctx(), id)).payoutCorrectionActions!.requesterDefault!.token;
+    await world.giveAccount.execute(ctx(), id, { mode: 'DEFAULT', defaultToken: token });
+    assert.equal(await same(world, id), true, 'the default it was sent with');
+    // Another account, the same number under another name, and another method are not.
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    assert.equal(await same(world, id), false);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK, accountName: 'นาง สมศรี ใจดี' });
+    assert.equal(await same(world, id), false, 'the same last 4 digits under another name is another account');
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    assert.equal(await same(world, id), false);
+    // The answer is all that leaves: no fingerprint of either account in what any reader of the claim gets.
+    await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    const answer = JSON.stringify(await world.detail.execute(approverCtx(), id));
+    for (const row of world.state.payoutTables.destinations) assert.equal(answer.includes(row.fingerprint), false);
+    assert.doesNotMatch(answer, /fingerprint/i);
+    assert.equal(leaksNumber(answer), false);
+
+    // Cash both times is the same receiving method; cash changed to an account is not.
+    const cash = correctionWorld();
+    const cashId = await sentBack(cash, { setDefault: null, payout: { mode: 'CASH' } });
+    assert.equal((await cash.giveAccount.execute(ctx(), cashId, { mode: 'PREVIOUS' })).payoutCorrection?.sameAsPrevious, true);
+    assert.equal((await cash.giveAccount.execute(ctx(), cashId, { mode: 'SPECIFIED', ...KBANK })).payoutCorrection?.sameAsPrevious, false);
+    // A claim that had no account of its own was given its first: never "the same".
+    const legacy = correctionWorld();
+    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assert.equal((await legacy.giveAccount.execute(ctx(), legacyId, { mode: 'SPECIFIED', ...KBANK })).payoutCorrection?.sameAsPrevious, false);
+  });
+
+  // Final review W11: a claim being cancelled takes no account and no approval of one, in either phase of
+  // a round, and offers neither. (The approval's own refusal is the repository's, under the claim lock.)
+  it('takes no account for a claim that is being cancelled, offers nothing on it, and takes the account again once the cancellation is withdrawn', async () => {
+    const cancelling = { cancellationPendingAt: new Date(), cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ยกเลิกคำขอเบิกค่าใช้จ่าย' };
+    const withdrawn = { cancellationPendingAt: undefined, cancellationPendingByUserId: undefined, cancellationPendingReason: undefined };
+    const refused = (error: any) => error.getStatus() === 409 && error.message === 'reimbursement_cancellation_pending';
+    const world = correctionWorld();
+    const id = await sentBack(world);
+
+    // With its requester.
+    world.bump(cancelling);
+    for (const viewer of [ctx(), financeCtx()]) {
+      await assert.rejects(() => world.giveAccount.execute(viewer, id, { mode: 'SPECIFIED', ...SCB }), refused, viewer.userId);
+      assert.equal((await world.detail.execute(viewer, id)).payoutCorrectionActions, undefined, viewer.userId);
+    }
+    assert.deepEqual([world.state.payoutTables.destinations.length, world.claim().payoutCorrectionSubmittedAt, world.events(), world.steps.length], [1, undefined, [], 1]);
+    world.bump(withdrawn);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+
+    // With its approver: no second answer is taken, and the approver is offered neither decision.
+    world.bump(cancelling);
+    await assert.rejects(() => world.giveAccount.execute(ctx(), id, { mode: 'CASH' }), refused);
+    const shown = await world.detail.execute(approverCtx(), id);
+    assert.deepEqual([shown.approvalActions, shown.payoutCorrectionActions, shown.currentDesk], [{ canApprove: false, canReject: false }, undefined, { kind: 'SYSTEM' }]);
+    assert.deepEqual([world.state.payoutTables.destinations.length, world.claim().payoutMethod, world.steps.map((step) => step.status)], [2, 'BANK_TRANSFER', ['APPROVED', 'PENDING']]);
+    world.bump(withdrawn);
+    assert.deepEqual((await world.detail.execute(approverCtx(), id)).approvalActions, { canApprove: true, canReject: true });
+  });
+
+  // Final review W8. A second press that arrived after the first was taken froze another version, opened
+  // another step and sent another notice: the call compared against its own read, not against the page's.
+  it('refuses a second press of the same form once the first was taken, and still takes another account from the page of the waiting step', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    // What the form was opened on.
+    const shown = (await world.detail.execute(ctx(), id)).updatedAt;
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB, expectedUpdatedAt: shown });
+    const standing = () => [world.state.payoutTables.destinations.length, world.steps.map((step) => [step.id, step.status]), world.events().length, world.claim().payoutDestinationVersion];
+    const taken = standing();
+    assert.deepEqual(taken, [2, [['step-1', 'APPROVED'], ['step-2', 'PENDING']], 1, 2]);
+
+    for (const late of [{ mode: 'SPECIFIED', ...SCB }, { mode: 'CASH' }, { mode: 'PREVIOUS' }] as const) {
+      await assert.rejects(() => world.giveAccount.execute(ctx(), id, { ...late, expectedUpdatedAt: shown } as any),
+        (error: any) => error.getStatus() === 409 && ((error.getResponse() as any).code ?? error.message) === 'reimbursement_changed', late.mode);
+    }
+    assert.deepEqual(standing(), taken, 'no version frozen, no step opened, nobody told');
+
+    // The requester reads the claim again and gives another account while it waits: the page they read is the claim as it stands.
+    const waiting = (await world.detail.execute(ctx(), id)).updatedAt;
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...PROMPTPAY, expectedUpdatedAt: waiting });
+    assert.deepEqual(standing(), [3, [['step-1', 'APPROVED'], ['step-2', 'CANCELLED'], ['step-3', 'PENDING']], 2, 3]);
+  });
+
+  it('replaces the step that waits when the requester gives another account before it is approved', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...PROMPTPAY });
+    assert.deepEqual(world.steps.map((step) => [step.id, step.status, step.invalidatedReason ?? null]),
+      [['step-1', 'APPROVED', 'payout_account_correction'], ['step-2', 'CANCELLED', 'payout_account_correction'], ['step-3', 'PENDING', null]]);
+    assert.deepEqual([world.claim().payoutDestinationVersion, world.claim().currentApprovalStepId, world.steps[2].assignedApproverUserIds], [3, 'step-3', ['manager-1']]);
+    assert.deepEqual(world.audits.map((entry) => [entry.metadataJson.approvalStepId, entry.metadataJson.replacedStepId]), [['step-2', null], ['step-3', 'step-2']]);
+    // The approver who still has the page of the second account approves nothing: neither its hash nor its version is current.
+    const stale = world.steps[1].requestSnapshotHash;
+    await assert.rejects(() => world.approve.execute(approverCtx(), id, undefined, stale, 2), /payout_destination_changed|stale_approval_snapshot/);
+    assert.equal(world.claim().status, 'PENDING_APPROVAL');
+  });
+
+  // Final review S2. The old step may be weeks old and a claim in a round cannot be withdrawn and sent
+  // again, so the new step keeps only the people who are on today's approval route.
+  const ownerCtx = () => ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'] });
+  /** The manager the claim was approved by, moved to a staff role since: still an active member, no approve right. */
+  const demotedCtx = () => approverCtx({ roles: ['STAFF'], permissions: ['reimbursement.read'] });
+
+  it('asks the same approver again while they are on today\'s approval route for the step\'s role and branch', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    // The route is the submit's own, asked for the step's recorded role, the claim's branch and requester, under the claim's self-approval rule.
+    assert.deepEqual(world.routeCalls, [{ companyId: 'co-1', branchId: world.claim().branchId, requesterUserId: 'staff-1', allowSelfApproval: false, roleKey: 'MANAGER', roleKeys: ['MANAGER'] }]);
+    assert.deepEqual([world.steps[1].assignedApproverUserIds, world.events()[0].payloadJson.data.approverRecipientUserIds], [['manager-1'], ['manager-1']]);
+    assert.deepEqual((await world.detail.execute(approverCtx(), id)).approvalActions, { canApprove: true, canReject: true });
+  });
+
+  it('does not ask a demoted approver, who cannot approve the account change, and lets the owner approve it when nobody else is left', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    // Today the manager role has no holder for this branch: the route falls to the owner.
+    world.setRouteToday(['owner-1']);
+    const given = await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    // The new step names nobody: its recorded role, or the owner, decides it.
+    assert.deepEqual([world.steps[1].status, world.steps[1].assignedApproverUserIds, world.steps[1].approverUserId, world.steps[1].approverRoleSnapshot], ['PENDING', undefined, undefined, 'MANAGER']);
+    assert.deepEqual(given.currentDesk, { kind: 'APPROVER' });
+    assert.deepEqual(world.events()[0].payloadJson.data.approverRecipientUserIds, ['owner-1'], 'the notice asks who can approve, not who used to');
+
+    const forDemoted = await world.detail.execute(demotedCtx(), id);
+    assert.deepEqual([forDemoted.approvalActions, forDemoted.payoutCorrectionActions], [{ canApprove: false, canReject: false }, undefined]);
+    await assert.rejects(() => world.approve.execute(demotedCtx(), id, undefined, forDemoted.approvalSnapshotHash, 2), (error: any) => error.getStatus() === 403);
+    await assert.rejects(() => world.reject.execute(demotedCtx(), id, 'ไม่อนุมัติ'), (error: any) => error.getStatus() === 403);
+    assert.equal(world.claim().status, 'PENDING_APPROVAL');
+
+    const forOwner = await world.detail.execute(ownerCtx(), id);
+    assert.deepEqual(forOwner.approvalActions, { canApprove: true, canReject: true });
+    const approved = await world.approve.execute(ownerCtx(), id, undefined, forOwner.approvalSnapshotHash, 2);
+    assert.deepEqual([approved.status, world.steps[1].decisionByUserId], ['READY_FOR_PAYMENT', 'owner-1']);
+  });
+
+  it('keeps of several approvers only those still on the route, and names nobody when the role itself can no longer approve', async () => {
+    const world = correctionWorld();
+    const id = await world.ready();
+    world.steps[0].assignedApproverUserIds = ['manager-1', 'manager-2'];
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    world.events().length = 0;
+    // manager-1 was moved to another role; manager-2 and a manager hired since hold it today.
+    world.setRouteToday(['manager-2', 'manager-3']);
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    assert.deepEqual([world.steps[1].assignedApproverUserIds, world.events()[0].payloadJson.data.approverRecipientUserIds], [['manager-2'], ['manager-2']]);
+    assert.deepEqual((await world.detail.execute(approverCtx({ userId: 'manager-2' }), id)).approvalActions, { canApprove: true, canReject: true });
+    assert.deepEqual((await world.detail.execute(approverCtx(), id)).approvalActions, { canApprove: false, canReject: false }, 'the step is the remaining assignee\'s');
+
+    // The role lost the approve right for everyone: the resolver finds no route at all.
+    const unrouted = correctionWorld();
+    const unroutedId = await sentBack(unrouted);
+    unrouted.setRouteToday(new BadRequestException('approver_role_not_eligible'));
+    await unrouted.giveAccount.execute(ctx(), unroutedId, { mode: 'CASH' });
+    assert.deepEqual([unrouted.steps[1].assignedApproverUserIds, unrouted.events()[0].payloadJson.data.approverRecipientUserIds], [undefined, undefined]);
+    assert.deepEqual((await unrouted.detail.execute(ownerCtx(), unroutedId)).approvalActions, { canApprove: true, canReject: true });
+    // Anything else the resolver fails with is not "nobody": the account is not given on a guess.
+    const failing = correctionWorld();
+    const failingId = await sentBack(failing);
+    failing.setRouteToday(new Error('database unavailable'));
+    await assert.rejects(() => failing.giveAccount.execute(ctx(), failingId, { mode: 'CASH' }), /database unavailable/);
+    assert.equal(failing.claim().payoutCorrectionSubmittedAt, undefined);
+  });
+
+  it('is approved for the account alone and is ready for payment at once, with its whole round on record', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    const waiting = await world.detail.execute(approverCtx(), id);
+    world.events().length = 0;
+    world.audits.length = 0;
+
+    const approved = await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, waiting.payout!.version);
+    assert.deepEqual([approved.status, approved.currentDesk, approved.payoutCorrection, approved.payoutCorrectionPhase, world.claim().paymentStatus],
+      ['READY_FOR_PAYMENT', { kind: 'PAYMENT' }, undefined, undefined, 'UNPAID']);
+    // The account the approver checked is the one the claim now has and the pay step shows.
+    const forPayer = await world.detail.execute(payerCtx(), id);
+    assert.deepEqual([forPayer.payout?.version, forPayer.payout?.accountLast4, forPayer.payout?.verifiedByName, forPayer.payoutCorrectionActions],
+      [2, '9012', 'วิภา', { canRequest: true, canSubmit: false }]);
+    assert.deepEqual(world.state.payoutTables.destinations.map((row) => [row.version, row.verifiedByUserId ?? null, row.approvalStepId ?? null]), [[1, 'manager-1', 'step-1'], [2, 'manager-1', 'step-2']]);
+    assert.deepEqual(world.events().map((event) => event.eventType), ['reimbursement.ready_for_payment']);
+
+    // The timeline's three lines (spec §17.2), with the people named; the note-free reason is a code the page words.
+    const at = (index: number) => world.claim().payoutCorrectionLog[index].at;
+    assert.deepEqual(forPayer.payoutCorrectionHistory, [
+      { kind: 'SENT_BACK', at: at(0), byUserId: 'payer-1', byName: 'ประไพ', reasonCode: 'ACCOUNT_NUMBER_WRONG' },
+      { kind: 'ACCOUNT_SUBMITTED', at: at(1), byUserId: 'staff-1', byName: 'สมชาย', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 },
+      { kind: 'REAPPROVED', at: at(2), byUserId: 'manager-1', byName: 'วิภา', approvalStepId: 'step-2' },
+    ]);
+    assert.deepEqual(forPayer.approvalSteps.map((step) => [step.id, step.status]), [['step-1', 'APPROVED'], ['step-2', 'APPROVED']]);
+    assert.equal(leaksNumber([approved, forPayer, world.events(), world.audits]), false);
+  });
+
+  it('goes back to its requester when the approver refuses the new account, and can be answered again', async () => {
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    world.events().length = 0;
+    // Through either door: the reject button of the approval card, or the send-back call itself.
+    const again = await world.reject.execute(approverCtx(), id, 'ชื่อบัญชีไม่ตรง', 'ACCOUNT_NAME_MISMATCH');
+    assert.deepEqual([again.status, again.payoutCorrection?.phase, again.payoutCorrection?.requestedByName, again.payoutCorrection?.note, again.payoutCorrection?.previous?.version],
+      ['PENDING_APPROVAL', 'AWAITING_REQUESTER', 'วิภา', 'ชื่อบัญชีไม่ตรง', 1]);
+    assert.deepEqual(world.steps.map((step) => [step.id, step.status]), [['step-1', 'APPROVED'], ['step-2', 'CANCELLED']]);
+    assert.deepEqual(world.events().map((event) => event.eventType), ['reimbursement.payout_correction_requested']);
+
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...PROMPTPAY });
+    // The same people as the approval the claim stood on, not nobody because the last step was cancelled.
+    assert.deepEqual([world.steps[2].status, world.steps[2].assignedApproverUserIds, world.claim().payoutDestinationVersion], ['PENDING', ['manager-1'], 3]);
+    const viaEndpoint = await world.sendBack.execute(approverCtx(), id, { reasonCode: 'ACCOUNT_UNUSABLE' });
+    assert.equal(viaEndpoint.payoutCorrection?.phase, 'AWAITING_REQUESTER');
+    // Whoever may pay has no say while the account waits for its approver.
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    await assert.rejects(() => world.sendBack.execute(payerCtx(), id, { reasonCode: 'OTHER' }), /^ForbiddenException: payout_correction_denied$/);
+    assert.deepEqual((await world.detail.execute(ctx(), id)).payoutCorrectionHistory!.map((event) => [event.kind, event.byName, event.reasonCode ?? event.payoutMethod]), [
+      ['SENT_BACK', 'ประไพ', 'ACCOUNT_NUMBER_WRONG'], ['ACCOUNT_SUBMITTED', 'สมชาย', 'BANK_TRANSFER'], ['SENT_BACK', 'วิภา', 'ACCOUNT_NAME_MISMATCH'],
+      ['ACCOUNT_SUBMITTED', 'สมชาย', 'BANK_TRANSFER'], ['SENT_BACK', 'วิภา', 'ACCOUNT_UNUSABLE'], ['ACCOUNT_SUBMITTED', 'สมชาย', 'CASH'],
+    ]);
+  });
+});
+
+describe('payout correction: claims finance passed, claims nobody approves and legacy claims (3B)', () => {
+  it('makes a claim nobody had to approve ready for payment as soon as its account is given', async () => {
+    const world = correctionWorld({ policy: NO_APPROVAL_POLICY });
+    const id = await world.ready();
+    assert.deepEqual([world.claim().status, world.steps.length], ['READY_FOR_PAYMENT', 0]);
+    const sentBack = await world.sendBack.execute(payerCtx(), id, { reasonCode: 'BANK_WRONG' });
+    assert.deepEqual([sentBack.payoutCorrection?.phase, sentBack.currentDesk, sentBack.awaitingSystem], ['AWAITING_REQUESTER', { kind: 'REQUESTER' }, undefined]);
+    world.events().length = 0;
+    world.audits.length = 0;
+
+    const given = await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    assert.deepEqual([given.status, given.payoutCorrection, given.payout?.version, given.payout?.verifiedAt, world.claim().paymentStatus, world.steps.length],
+      ['READY_FOR_PAYMENT', undefined, 2, undefined, 'UNPAID', 0]);
+    // Nobody approved the account: whoever pays is the one to check it, and is told so by the notice they already get.
+    assert.deepEqual(world.events().map((event) => event.eventType), ['reimbursement.ready_for_payment']);
+    assert.deepEqual(world.events()[0].payloadJson.data, {
+      requestId: id, requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', amount: world.claim().amount, currency: 'THB',
+      status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD', approverRecipientUserIds: ['manager-1'],
+    });
+    assert.deepEqual([world.audits[0].metadataJson.readyForPayment, world.audits[0].metadataJson.approvalStepId], [true, null]);
+    assert.deepEqual(given.payoutCorrectionHistory, undefined, 'the answer of a write carries no timeline; the page reads the claim again');
+    assert.deepEqual((await world.detail.execute(ctx(), id)).payoutCorrectionHistory!.map((event) => event.kind), ['SENT_BACK', 'ACCOUNT_SUBMITTED']);
+  });
+
+  it('keeps the result of a finance review: the account is approved again, the review is not', async () => {
+    const world = correctionWorld();
+    const id = await world.ready();
+    world.bump({ financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'finance-1', financeReviewedAt: new Date() });
+    await world.sendBack.execute(payerCtx(), id, { reasonCode: 'ACCOUNT_UNUSABLE' });
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    assert.deepEqual([world.claim().financeReviewStatus, world.claim().financeReviewedByUserId], ['APPROVED_FOR_PAYMENT', 'finance-1']);
+    world.events().length = 0;
+    const waiting = await world.detail.execute(approverCtx(), id);
+    const approved = await world.approve.execute(approverCtx(), id, undefined, waiting.approvalSnapshotHash, 2);
+    assert.deepEqual([approved.status, approved.financeReviewStatus], ['READY_FOR_PAYMENT', 'APPROVED_FOR_PAYMENT']);
+    // The ready-to-pay notice asks the finance reviewer who passed the claim first, as it did the first time:
+    // the event names them where the notice looks first, ahead of its own actor, the approver. That is
+    // the order the claim page names the two in (`paymentTurnUserIds`).
+    const [ready] = world.events();
+    assert.deepEqual([world.events().length, ready.eventType], [1, 'reimbursement.ready_for_payment']);
+    assert.deepEqual([ready.payloadJson.data.financeReviewerUserId, ready.payloadJson.actorUserId], paymentTurnUserIds({ ...world.claim(), approvalSteps: world.steps }));
+    assert.deepEqual([ready.payloadJson.data.financeReviewerUserId, ready.payloadJson.actorUserId], ['finance-1', 'manager-1']);
+    // And still where a rule made before this order looks second, so nobody is dropped before the template sync runs.
+    assert.deepEqual(ready.payloadJson.data.approverRecipientUserIds, ['finance-1']);
+  });
+
+  it('gives a legacy claim an account through a round: from then on it is hashed and attested like any claim with one', async () => {
+    const world = correctionWorld();
+    const id = await world.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    // As a build from before claims carried an account left it: no method, no account part in its hash.
+    const claim = world.claim();
+    Object.assign(claim, { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    claim.approvalSnapshotHash = computeSnapshotHash(claimSnapshotFields(claim, claim.approvalPolicySnapshotJson));
+    const legacyHash = claim.approvalSnapshotHash;
+    assert.equal(hasPayoutSnapshot(claim), false);
+
+    const sentBack = await world.sendBack.execute(payerCtx(), id, { reasonCode: 'OTHER' });
+    assert.deepEqual([sentBack.payoutCorrection?.previous, sentBack.payout], [undefined, undefined], 'it had no account to show');
+    assert.equal(world.claim().approvalSnapshotHash, legacyHash, 'sending back changes no hash');
+    const given = await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK });
+    assert.deepEqual([given.payout?.version, given.payout?.accountLast4, hasPayoutSnapshot(world.claim())], [1, '6789', true]);
+    assert.notEqual(world.claim().approvalSnapshotHash, legacyHash);
+    assert.equal(world.claim().approvalSnapshotHash, computeSnapshotHash(claimSnapshotFields(world.claim(), world.claim().approvalPolicySnapshotJson)));
+    // Its approver now has an account to check, like any claim paid by transfer.
+    await assert.rejects(() => world.approve.execute(approverCtx(), id, undefined, world.claim().approvalSnapshotHash), /payout_verification_required/);
+    const approved = await world.approve.execute(approverCtx(), id, undefined, world.claim().approvalSnapshotHash, 1);
+    assert.deepEqual([approved.status, approved.payout?.verifiedByName], ['READY_FOR_PAYMENT', 'วิภา']);
+  });
+
+  // Upgrade test 2026-10-02: every reason presumed an account that is wrong, so whoever sent a legacy claim back to be
+  // given one had only "อื่น ๆ". The reason exists for exactly that claim, and its notice asks for an account to be added.
+  it('takes "the claim has no account yet" from a claim with no account of its own and from no other, and asks its requester to add one', async () => {
+    const refused = (error: any) => error.getStatus() === 400 && error.message === 'payout_correction_reason_required';
+    const legacy = correctionWorld();
+    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    const sentBack = await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assert.deepEqual([sentBack.payoutCorrection?.phase, sentBack.payoutCorrection?.reasonCode, legacy.claim().payoutCorrectionReasonCode],
+      ['AWAITING_REQUESTER', 'NO_ACCOUNT_ON_CLAIM', 'NO_ACCOUNT_ON_CLAIM']);
+    assert.deepEqual(legacy.events().map((event) => event.payloadJson.data.payoutCorrectionNotice), ['เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน']);
+    assert.equal(legacy.audits[0].metadataJson.reasonCode, 'NO_ACCOUNT_ON_CLAIM');
+
+    // Once its requester has given an account the claim has one: sent back again from the waiting step, it takes the
+    // reasons of a claim with an account, and that notice asks for a correction.
+    await legacy.giveAccount.execute(ctx(), legacyId, { mode: 'SPECIFIED', ...KBANK });
+    assert.equal(hasPayoutSnapshot(legacy.claim()), true);
+    await assert.rejects(() => legacy.reject.execute(approverCtx(), legacyId, 'ชื่อบัญชีไม่ตรง', 'NO_ACCOUNT_ON_CLAIM'), refused);
+    await legacy.reject.execute(approverCtx(), legacyId, 'ชื่อบัญชีไม่ตรง', 'ACCOUNT_NAME_MISMATCH');
+    assert.equal(legacy.events().at(-1).payloadJson.data.payoutCorrectionNotice, 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
+
+    // A claim sent with an account, by transfer or as cash, has one to correct: the reason is refused and nothing is written.
+    for (const send of [{}, { setDefault: null, payout: { mode: 'CASH' } }] as const) {
+      const world = correctionWorld();
+      const id = await world.ready(send);
+      await assert.rejects(() => world.sendBack.execute(payerCtx(), id, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' }), refused, JSON.stringify(send));
+      assert.deepEqual([world.claim().status, world.events(), world.audits], ['READY_FOR_PAYMENT', [], []]);
+    }
+    // The other reasons stay open to a legacy claim: the account its payer is shown is its requester's default, which can be wrong.
+    const other = correctionWorld();
+    const otherId = await other.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(other.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    assert.equal((await other.sendBack.execute(payerCtx(), otherId, { reasonCode: 'ACCOUNT_UNUSABLE' })).payoutCorrection?.reasonCode, 'ACCOUNT_UNUSABLE');
   });
 });

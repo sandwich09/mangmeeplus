@@ -150,7 +150,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipients', () => {
         return { skipped: false, event: { id: 'notification-1' } };
       },
     } as any;
-    const useCase = new ExecuteWorkflowActionUseCase(repo, noopAudit, {} as any, notify, {} as any, noShadowSweep);
+    const useCase = new ExecuteWorkflowActionUseCase(repo, noopAudit, {} as any, notify, {} as any, noShadowSweep, {} as any);
 
     await useCase.execute(
       actionRun({ recipientRoles: ['MANAGER'], recipientPayloadKeys: ['requesterUserId', 'watcherUserId', 'notAString'] }),
@@ -174,7 +174,7 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipients', () => {
       findUserIdsByPermissions: async () => [],
       createDeadLetter: async () => { throw new Error('must not dead-letter on first retryable failure'); },
     } as any;
-    const useCase = new ExecuteWorkflowActionUseCase(repo, noopAudit, {} as any, { execute: async () => undefined } as any, {} as any, noShadowSweep);
+    const useCase = new ExecuteWorkflowActionUseCase(repo, noopAudit, {} as any, { execute: async () => undefined } as any, {} as any, noShadowSweep, {} as any);
 
     await useCase.execute(
       actionRun({ recipientPayloadKeys: ['requesterUserId'] }),

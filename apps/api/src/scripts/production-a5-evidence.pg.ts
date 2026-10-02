@@ -17,6 +17,7 @@ import {
 } from './a5-readonly-evidence.logic';
 import {
   computeLegacySnapshotHashV1,
+  claimSnapshotFields,
   computeSnapshotHash,
   isExactLegacyV1FallbackSnapshot,
   type LegacyV1FallbackSnapshotFields,
@@ -67,6 +68,13 @@ type PendingReimbursementHeader = {
   linkedExpenseId: string | null;
   approvalSnapshotHash: string | null;
   approvalPolicySnapshotJson?: LegacyV1FallbackSnapshotFields['approvalPolicySnapshotJson'] | null;
+  // Present from the payout-account migration on; a claim sent with a receiving method hashes it.
+  payoutMethod?: string | null;
+  payoutDestinationVersion?: number | null;
+  payoutFingerprint?: string | null;
+  // Present from the payout-correction migration on: set while the claim is sent back for its account.
+  payoutCorrectionRequestedAt?: Date | string | null;
+  payoutCorrectionSubmittedAt?: Date | string | null;
   currentApprovalStepId: string | null;
   currentStepStatus: string | null;
   currentStepDecidedAt: Date | string | null;
@@ -109,35 +117,42 @@ function snapshotFields(
   header: PendingReimbursementHeader,
   lines: readonly PendingReimbursementLine[],
 ): LegacyV1FallbackSnapshotFields {
+  const snapshotLines = lines.map((line) => ({
+    id: line.id,
+    companyId: line.companyId,
+    reimbursementRequestId: line.reimbursementRequestId,
+    lineNo: line.lineNo,
+    incurredDate: iso(line.incurredDate),
+    description: line.description,
+    purpose: line.purpose,
+    categoryKey: line.categoryKey,
+    categoryLabelSnapshot: line.categoryLabelSnapshot,
+    amount: decimal(line.amount),
+    attachmentId: line.attachmentId,
+    linkedExpenseId: line.linkedExpenseId,
+    sourceExpenseSnapshot: line.sourceExpenseSnapshotJson ?? undefined,
+    attachmentSnapshot: line.attachmentSnapshotJson ?? undefined,
+  }));
   return {
+    // The same builder as submit and the live approval check: a new pending claim is hashed with its
+    // payout part exactly as the application hashes it, or it would be classified as invalid.
+    ...claimSnapshotFields({
+      amount: decimal(header.amount),
+      currency: header.currency,
+      categoryKey: header.categoryKey,
+      incurredDate: iso(header.incurredDate),
+      reason: header.reason,
+      primaryAttachmentId: header.primaryAttachmentId,
+      payoutMethod: header.payoutMethod,
+      payoutDestinationVersion: header.payoutDestinationVersion,
+      payoutFingerprint: header.payoutFingerprint,
+    }, header.approvalPolicySnapshotJson),
     requestId: header.requestId,
     companyId: header.companyId,
     title: header.title,
-    reason: header.reason,
-    categoryKey: header.categoryKey,
     categoryLabelSnapshot: header.categoryLabelSnapshot,
-    amount: decimal(header.amount),
-    currency: header.currency,
-    incurredDate: iso(header.incurredDate),
-    primaryAttachmentId: header.primaryAttachmentId,
     linkedExpenseId: header.linkedExpenseId,
-    approvalPolicySnapshotJson: header.approvalPolicySnapshotJson ?? undefined,
-    lines: lines.map((line) => ({
-      id: line.id,
-      companyId: line.companyId,
-      reimbursementRequestId: line.reimbursementRequestId,
-      lineNo: line.lineNo,
-      incurredDate: iso(line.incurredDate),
-      description: line.description,
-      purpose: line.purpose,
-      categoryKey: line.categoryKey,
-      categoryLabelSnapshot: line.categoryLabelSnapshot,
-      amount: decimal(line.amount),
-      attachmentId: line.attachmentId,
-      linkedExpenseId: line.linkedExpenseId,
-      sourceExpenseSnapshot: line.sourceExpenseSnapshotJson ?? undefined,
-      attachmentSnapshot: line.attachmentSnapshotJson ?? undefined,
-    })),
+    lines: snapshotLines,
   };
 }
 
@@ -167,7 +182,12 @@ export function classifyProductionA5ReimbursementApprovalSnapshots(
     const hasDecisionActor = typeof header.currentStepDecisionByUserId === 'string'
       && header.currentStepDecisionByUserId.trim() !== '';
     const hasDecisionTime = header.currentStepDecidedAt !== null;
-    if (header.currentApprovalStepId === null || header.currentStepStatus === null) {
+    if (header.currentApprovalStepId === null && header.payoutCorrectionRequestedAt && !header.payoutCorrectionSubmittedAt) {
+      // Sent back to have its payout account corrected and waiting for its requester (payout spec
+      // §14.2): it has no current step by design. Nothing about it is decided, so it is counted with
+      // the claims that wait undecided, not as one whose step is missing.
+      result.currentStepPending += 1;
+    } else if (header.currentApprovalStepId === null || header.currentStepStatus === null) {
       result.invalidCurrentStep += 1;
     } else if (header.currentStepStatus === 'PENDING'
       && !hasDecisionActor && !hasDecisionTime
@@ -223,6 +243,11 @@ export async function readProductionA5ReimbursementApprovalSnapshots(
            request."incurredDate", request."primaryAttachmentId", request."linkedExpenseId",
            request."approvalSnapshotHash", request."currentApprovalStepId",
            to_jsonb(request)->'approvalPolicySnapshotJson' AS "approvalPolicySnapshotJson",
+           to_jsonb(request)->>'payoutMethod' AS "payoutMethod",
+           (to_jsonb(request)->>'payoutDestinationVersion')::int AS "payoutDestinationVersion",
+           to_jsonb(request)->>'payoutFingerprint' AS "payoutFingerprint",
+           to_jsonb(request)->>'payoutCorrectionRequestedAt' AS "payoutCorrectionRequestedAt",
+           to_jsonb(request)->>'payoutCorrectionSubmittedAt' AS "payoutCorrectionSubmittedAt",
            step.status::text AS "currentStepStatus", step."decidedAt" AS "currentStepDecidedAt",
            step."decisionByUserId" AS "currentStepDecisionByUserId",
            step.comment AS "currentStepComment", step."rejectionReason" AS "currentStepRejectionReason"

@@ -204,7 +204,9 @@ G1. Current desk on every queue card — appended to what the card already shows
 - `อยู่ที่ คุณยุนกิ` — PENDING_APPROVAL, naming the ASSIGNED approvers of the current pending step
   (several read as `A หรือ B`; any one of them can decide).
 - `อยู่ที่ ฝ่ายการเงิน` — FINANCE_REVIEW.
-- `อยู่ที่ ฝ่ายการเงิน (รอบันทึกจ่าย)` — READY_FOR_PAYMENT / PARTIALLY_PAID.
+- `อยู่ที่ ผู้มีสิทธิ์บันทึกจ่าย` — READY_FOR_PAYMENT / PARTIALLY_PAID. On the claim page the people who can
+  record the payment are named instead (`paymentDesk`). Until 2026-10-01 this read `ฝ่ายการเงิน (รอบันทึกจ่าย)`;
+  see reimbursement-payout-account-and-payment-slip-spec-th.md §18.3.
 - `อยู่ที่ ผู้ยื่น` — DRAFT.
 - Nothing appended on a terminal claim (PAID / REJECTED / CANCELLED / VOIDED).
 

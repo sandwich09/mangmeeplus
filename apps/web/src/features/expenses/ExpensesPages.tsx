@@ -2975,7 +2975,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
           </>}
           {tab === 'categories' && <CategoryManagePanel companyId={companyId} />}
           {tab === 'signatures' && <SignaturePanel companyId={companyId} {...(focusSignatureId ? { focusSignatureId } : {})} />}
-          {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} onOpenExpense={openListExpense} />}
+          {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} canPostClaimPayments={caps.canPostLedger && permissions.includes('reimbursement.finance_review')} onOpenExpense={openListExpense} />}
         </>
       )}
     </MangmeePage>

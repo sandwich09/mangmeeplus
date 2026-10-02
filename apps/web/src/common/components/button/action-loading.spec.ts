@@ -142,7 +142,7 @@ test('period checks show busy before waiting, reject duplicate clicks, and clear
 });
 
 test('closing a period waits for confirmation then shows busy through refresh; cancellation writes nothing', async () => {
-  let busy: unknown, approved = false, calls = 0, refreshed = 0;
+  let busy: unknown, approved = false, calls = 0, refreshed = 0, checkRuns = 0, shown: unknown;
   let wait = deferred<void>();
   const pending = { current: false };
   const { close } = handlers('ledger/LedgerReportsPage.tsx', ['close'], {
@@ -150,6 +150,8 @@ test('closing a period waits for confirmation then shows busy through refresh; c
     setBusyAction: (value: unknown) => { busy = value; }, setError: () => {}, err: String,
     confirm: async () => approved, closePeriod: () => { calls++; return wait.promise; },
     load: async () => { refreshed++; }, toast: { success: () => {} },
+    apiErrorCode: (error: { code?: string }) => error.code ?? null,
+    runCloseChecks: async () => { checkRuns++; return 'FAILED CHECKS'; }, setCloseRun: (value: unknown) => { shown = value; },
   });
   await close(); assert.equal(calls, 0); assert.equal(pending.current, false);
   approved = true;
@@ -157,8 +159,33 @@ test('closing a period waits for confirmation then shows busy through refresh; c
   assert.equal(busy, 'close'); await close(); assert.equal(calls, 1);
   wait.reject(new Error('failed')); await first;
   assert.equal(busy, null); assert.equal(pending.current, false); assert.equal(refreshed, 0);
+  assert.equal(checkRuns, 0, 'an unrelated failure does not pretend the checks failed');
+  // A refused close shows the checks by itself: what is still pending, and where to fix it.
+  wait = deferred<void>(); const refused = close(); await Promise.resolve();
+  wait.reject(Object.assign(new Error('refused'), { code: 'close_check_failed' })); await refused;
+  assert.equal(checkRuns, 1); assert.equal(shown, 'FAILED CHECKS');
+  assert.equal(busy, null); assert.equal(pending.current, false); assert.equal(refreshed, 0);
   wait = deferred<void>(); const retry = close(); await Promise.resolve(); wait.resolve(); await retry;
-  assert.equal(calls, 2); assert.equal(refreshed, 1); assert.equal(busy, null);
+  assert.equal(calls, 3); assert.equal(refreshed, 1); assert.equal(busy, null);
+});
+
+test('posting a claim payout shows busy, reloads the worklist either way, and keeps a refusal on screen', async () => {
+  let busy: unknown, error: unknown = 'stale', loads = 0, toasts = 0;
+  let wait = deferred<void>();
+  const posted: unknown[][] = [];
+  const { post } = handlers('expenses/ClaimPaymentPosting.tsx', ['post'], {
+    companyId: 'company', setPostingId: (value: unknown) => { busy = value; }, setError: (value: unknown) => { error = value; },
+    err: (cause: Error) => `ไทย:${cause.message}`, toast: { success: () => { toasts++; } },
+    generateSourceJournal: (...args: unknown[]) => { posted.push(args); return wait.promise; }, load: async () => { loads++; },
+  });
+  const refused = post('pay-1');
+  assert.equal(busy, 'pay-1'); assert.equal(error, null, 'a new attempt clears the last refusal');
+  wait.reject(new Error('posting_rule_missing')); await refused;
+  assert.deepEqual(posted, [['company', 'reimbursement.payment', 'pay-1']]);
+  assert.equal(error, 'ไทย:posting_rule_missing'); assert.equal(toasts, 0);
+  assert.equal(loads, 1, 'a refused payout changes status, so the list is read again'); assert.equal(busy, null);
+  wait = deferred<void>(); const accepted = post('pay-1'); wait.resolve(); await accepted;
+  assert.equal(error, null); assert.equal(toasts, 1); assert.equal(loads, 2); assert.equal(busy, null);
 });
 
 test('signature background preparation locks until image/blob completes and unlocks on decode failure', async () => {

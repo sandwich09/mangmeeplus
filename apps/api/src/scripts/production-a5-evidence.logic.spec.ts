@@ -29,6 +29,8 @@ import {
   type ProductionA5VerificationEvidence,
 } from './production-a5-evidence.logic';
 import { sha256, stableJson } from './a5-readonly-evidence.logic';
+import { classifyProductionA5ReimbursementApprovalSnapshots, readProductionA5ReimbursementApprovalSnapshots } from './production-a5-evidence.pg';
+import { computeSnapshotHash } from '../modules/reimbursements/domain/logic/reimbursement.logic';
 import {
   ALL_FEATURE_ENTITLEMENT_KEYS,
   PLATFORM_INVARIANT_FEATURE_KEYS,
@@ -792,5 +794,88 @@ describe('production A5 H2 evidence contract', () => {
       .filter((key) => !PLATFORM_INVARIANT_FEATURE_KEYS.includes(parentFeatureKey(key)));
     for (const key of platformSubmenus) assert.equal(expectedAllowList.includes(key), false, key);
     assert.equal(productionA5PolicyHashes().allowListHash, sha256(stableJson(expectedAllowList)));
+  });
+});
+
+// The payout-account release adds a payout part to the hash of every claim sent with a receiving
+// method. The production gate must hash those claims the way the live approval check does, or the
+// first pending claim sent after the release would be counted as a corrupted snapshot.
+describe('production A5 pending claims sent with a receiving method', () => {
+  const incurredDate = new Date('2026-10-01T00:00:00.000Z');
+  const header = {
+    requestId: 'claim-1', companyId: 'tenant-secret', title: 'private title', reason: 'private reason',
+    categoryKey: 'travel', categoryLabelSnapshot: null, amount: '100.0000', currency: 'THB', incurredDate,
+    primaryAttachmentId: null, linkedExpenseId: null,
+    currentApprovalStepId: 'step-1', currentStepStatus: 'PENDING', currentStepDecidedAt: null,
+    currentStepDecisionByUserId: null, currentStepComment: null, currentStepRejectionReason: null,
+  };
+  const line = {
+    id: 'line-1', companyId: 'tenant-secret', reimbursementRequestId: 'claim-1', lineNo: 1, incurredDate,
+    description: 'แท็กซี่', purpose: null, categoryKey: 'travel', categoryLabelSnapshot: null, amount: '100.0000',
+    attachmentId: null, linkedExpenseId: null,
+  };
+  const hashOf = (payout: Record<string, unknown>) => computeSnapshotHash({
+    amount: header.amount, currency: header.currency, categoryKey: header.categoryKey, incurredDate: incurredDate.toISOString(),
+    reason: header.reason, title: header.title, lines: [{ ...line, incurredDate: incurredDate.toISOString() }], ...payout,
+  } as any);
+  const classify = (stored: string, columns: Record<string, unknown>) =>
+    classifyProductionA5ReimbursementApprovalSnapshots('POST_MIGRATION', [{ ...header, approvalSnapshotHash: stored, ...columns }], [line]);
+
+  it('classifies a transfer claim, a cash claim and a legacy claim as valid, each by its own columns', () => {
+    const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fingerprint-secret' };
+    const cash = { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: 'cash' };
+    const legacy = { payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null };
+    for (const columns of [transfer, cash, legacy]) {
+      const result = classify(hashOf(columns), columns);
+      assert.deepEqual([result.v2Valid, result.invalid], [1, 0], JSON.stringify(columns));
+      assert.equal(JSON.stringify(result).includes('fingerprint-secret'), false);
+    }
+    // Three different hashes: the payout part is really in the hash, and a legacy claim keeps the old one.
+    assert.equal(new Set([hashOf(transfer), hashOf(cash), hashOf(legacy)]).size, 3);
+    assert.equal(hashOf(legacy), hashOf({}));
+    // A snapshot that moved after the claim was sent is what this gate exists to catch.
+    assert.equal(classify(hashOf(transfer), { ...transfer, payoutDestinationVersion: 2 }).invalid, 1);
+    assert.equal(classify(hashOf(transfer), { ...transfer, payoutFingerprint: 'another-account' }).invalid, 1);
+    assert.equal(classify(hashOf(transfer), legacy).invalid, 1);
+    // A draft's choice that an older build sent without a snapshot (no fingerprint) is a legacy claim here too.
+    const leftByADraft = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: null };
+    assert.equal(hashOf(leftByADraft), hashOf(legacy));
+    assert.equal(classify(hashOf(legacy), leftByADraft).v2Valid, 1);
+  });
+
+  it('reads the payout columns in a way a database from before the migration can still answer', async () => {
+    const queries: string[] = [];
+    await readProductionA5ReimbursementApprovalSnapshots({
+      $queryRawUnsafe: (async (sql: string) => { queries.push(sql); return []; }) as any,
+    }, 'POST_MIGRATION');
+    for (const column of ['payoutMethod', 'payoutDestinationVersion', 'payoutFingerprint', 'payoutCorrectionRequestedAt', 'payoutCorrectionSubmittedAt']) {
+      assert.ok(queries.some((sql) => sql.includes(`to_jsonb(request)->>'${column}'`)), column);
+      assert.ok(queries.every((sql) => !sql.includes(`request."${column}"`)), column);
+    }
+  });
+
+  // Payout spec §14.2, §14.7: a claim sent back to have its payout account corrected is PENDING_APPROVAL
+  // with no current step while its requester gives the account. That is the round as designed, not a
+  // claim whose step went missing, which is what this gate counts as an anomaly.
+  it('counts a claim that waits for its requester to correct the payout account as waiting, not as a claim with a broken step', () => {
+    const transfer = { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fingerprint-secret' };
+    const noStep = { currentApprovalStepId: null, currentStepStatus: null };
+    const sentBackAt = '2026-10-02T03:00:00.000Z';
+    const steps = (columns: Record<string, unknown>) => {
+      const result = classify(hashOf(transfer), { ...transfer, ...columns });
+      return [result.currentStepPending, result.invalidCurrentStep, result.v2Valid, result.invalid];
+    };
+    // Phase A, as the database returns the column (text) and as a client returns it (a date).
+    assert.deepEqual(steps({ ...noStep, payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: null }), [1, 0, 1, 0]);
+    assert.deepEqual(steps({ ...noStep, payoutCorrectionRequestedAt: new Date(sentBackAt) }), [1, 0, 1, 0]);
+    // No step and no round, on a database from before the columns or after them: still the anomaly it was.
+    assert.deepEqual(steps(noStep), [0, 1, 1, 0]);
+    assert.deepEqual(steps({ ...noStep, payoutCorrectionRequestedAt: null, payoutCorrectionSubmittedAt: null }), [0, 1, 1, 0]);
+    // The account was given: the claim must stand on a step again, and one without it is broken.
+    assert.deepEqual(steps({ ...noStep, payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: '2026-10-02T05:00:00.000Z' }), [0, 1, 1, 0]);
+    // Phase B is an ordinary waiting step, hashed with the account version the round froze.
+    const given = { ...transfer, payoutDestinationVersion: 2 };
+    const phaseB = classify(hashOf(given), { ...given, payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: '2026-10-02T05:00:00.000Z' });
+    assert.deepEqual([phaseB.currentStepPending, phaseB.invalidCurrentStep, phaseB.v2Valid, phaseB.invalid], [1, 0, 1, 0]);
   });
 });

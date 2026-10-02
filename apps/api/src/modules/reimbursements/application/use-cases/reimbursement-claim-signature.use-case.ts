@@ -20,8 +20,10 @@ import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimb
 import type { ReimbursementRequestRecord, ReimbursementSignedCopyAck } from '../../domain/models/reimbursement.model';
 import { toSignedCopySummaries } from '../dto/reimbursement.mapper';
 import { assertCanReadRequest } from './reimbursement-request.use-case';
-import { claimSignatureAckHash } from '../../domain/logic/reimbursement.logic';
+import { claimApprovalStep, claimSignatureAckHash, payoutCorrectionPhase } from '../../domain/logic/reimbursement.logic';
+import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
 import { claimFormLayout } from '../../domain/logic/claim-form.logic';
+import { REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG } from '../../domain/reimbursement.constants';
 
 const SIGNATURE_METADATA_TAG = 'reimbursement_claim_signature';
 const SIGNATURE_MAX_BYTES = 2_000_000;
@@ -39,12 +41,15 @@ export function eligibleClaimSignatureRoles(req: ReimbursementRequestRecord, use
   // A corrected/reopened draft can keep its request number, but its facts are editable and therefore
   // cannot be signed until resubmission freezes a new snapshot.
   if (!req.requestNo || ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(req.status)) return roles;
+  // Nor while its payout account is being corrected (payout spec §14): the form then prints no
+  // account and no approver, and a signature would acknowledge an account its signer was not shown.
+  if (payoutCorrectionPhase(req)) return roles;
   if (req.requesterUserId === userId) roles.push('REQUESTER');
 
-  const approvedStep = (req.approvalSteps ?? [])
-    .filter((step) => step.status === 'APPROVED' && !!step.decidedAt)
-    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
-  if (approvedStep?.decisionByUserId === userId) roles.push('APPROVER');
+  // The approval the claim stands on, by the one rule for a claim's approver: in force, and given in
+  // the round the claim was last sent in. Whoever approved an earlier round, or an approval a
+  // correction set aside, signs nothing.
+  if (claimApprovalStep(req)?.decisionByUserId === userId) roles.push('APPROVER');
   // D3: the two-signer form has no accounting or payer block; a legacy form keeps all four.
   if (claimFormLayout(req.claimSignatures) === 'TWO_SIGNERS') return roles;
 
@@ -98,7 +103,7 @@ function assertImageBytes(bytes: Buffer, mimeType: string): void {
 }
 
 /** Upload endpoints borrow the attachment grant for the signer's own file, like the substitute receipt. */
-function withAttachmentCreate(ctx: RequestContext): RequestContext {
+export function withAttachmentCreate(ctx: RequestContext): RequestContext {
   return ctx.permissions.includes('attachment.create') ? ctx : { ...ctx, permissions: [...ctx.permissions, 'attachment.create'] };
 }
 
@@ -195,6 +200,9 @@ export class SignClaimFormUseCase {
       signatureAttachmentId: signature.id,
       signedByUserId: ctx.userId,
       signedAt: new Date(),
+      // The claim every check above was made on. The write is refused if it is another claim by then
+      // (sent back for its payout account, or returned to draft, while the image was being fetched).
+      seen: req,
     });
 
     void this.audit.log({
@@ -237,6 +245,12 @@ export class LinkSignedClaimFormCopyUseCase {
     if (!SIGNED_COPY_MIME_TYPES.includes(attachment.mimeType)) {
       throw new BadRequestException('claim_form_signed_copy_must_be_pdf_or_image');
     }
+    // Payment evidence is never a signed copy (owner 2026-10-01): a slip stays under the slip's own
+    // viewer rule, and this list is open to everyone who can read the claim.
+    if (attachment.metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG
+      || await this.attachments.isReimbursementPaymentSlip({ id: attachment.id, companyId: ctx.companyId })) {
+      throw new BadRequestException('claim_form_signed_copy_attachment_invalid');
+    }
     // A4: with the declaration the scan is the paper-signed record; without it, an archive copy as before.
     // Neither path touches the claim's status.
     let ack: ReimbursementSignedCopyAck | undefined;
@@ -249,6 +263,9 @@ export class LinkSignedClaimFormCopyUseCase {
       ack = {
         requestId, requestNo: req.requestNo, acknowledgedByUserId: ctx.userId,
         acknowledgedAt: new Date().toISOString(), checksumSha256: attachment.checksumSha256 ?? null,
+        // Which account the declared paper showed (payout spec §19). A later correction of the account
+        // sets the declaration aside where it is made (`requestPayoutCorrectionAtomic`).
+        payoutDestinationVersion: hasPayoutSnapshot(req) ? req.payoutDestinationVersion ?? null : null,
       };
     }
 

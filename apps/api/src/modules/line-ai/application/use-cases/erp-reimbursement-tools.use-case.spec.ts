@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ReimbursementGetApprovalBacklogTool, ReimbursementListPendingApprovalsTool } from './erp-reimbursement-tools.use-case';
+import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
+import { GetReimbursementApprovalBacklogUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 
 const baseCtx = {
   companyId: 'co-1',
@@ -88,6 +92,25 @@ describe('ReimbursementListPendingApprovalsTool', () => {
     assert.deepEqual(captured.scopes, { branchIds: ['branch-1'], locationIds: undefined });
   });
 
+  // Payout spec §11.2: an AI answer never carries a payout account, not even the masked one.
+  it('keeps the payout account out of the answer even when the queue row carries it', async () => {
+    const leaky = {
+      ...queueItem(0), payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fingerprint',
+      payout: { payoutMethod: 'BANK_TRANSFER', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', accountNumber: '0123456789' },
+    };
+    const result = await new ReimbursementListPendingApprovalsTool({ execute: async () => [leaky] } as any).execute(baseCtx);
+
+    assert.deepEqual(Object.keys((result.data as any).items[0]).sort(),
+      ['amount', 'branch', 'currency', 'documentNumber', 'id', 'requesterDisplayName', 'status', 'submittedAt']);
+    assert.doesNotMatch(JSON.stringify(result), /payout|account|6789|กสิกร|สมชาย/i);
+    // The backlog and the AI summary shape their own rows too; none of the three reads payout data at all.
+    // The one thing the backlog asks is whether a claim was sent back for its account and whom it waits
+    // for (the correction phase, spec §17.3): where a claim stands, never what its account is.
+    for (const file of ['erp-reimbursement-tools.use-case.ts', '../../../reimbursements/application/use-cases/reimbursement-summary.use-case.ts']) {
+      assert.doesNotMatch(readFileSync(join(__dirname, file), 'utf8'), /payout(?!_?correction)|accountNumber|accountLast4/i, file);
+    }
+  });
+
   it('returns an empty summary when no approvals are pending', async () => {
     const queue = { execute: async () => [] } as any;
 
@@ -139,5 +162,75 @@ describe('ReimbursementGetApprovalBacklogTool', () => {
       .execute(baseCtx);
     assert.equal(result.status, 'forbidden');
     assert.equal(result.data, undefined);
+  });
+});
+
+// Payout spec §14.7, §17.3. A claim sent back to have its payout account corrected is PENDING_APPROVAL,
+// with no step open while its requester gives the account. The two tools below are what the assistant
+// reads about such a claim, here over the real use cases: it waits for its requester, in the words of
+// the claim page, and for its approver again only once the account is given.
+describe('a claim whose payout account is being corrected, as the assistant reads it', () => {
+  // 10:00 on 1 October 2026 in Bangkok: sent on 20 September, sent back yesterday, answered this morning.
+  const NOW = new Date('2026-10-01T03:00:00.000Z');
+  const claim = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id, companyId: 'co-1', branchId: 'branch-1', requestNo: `RB-202609-${id}`, requesterUserId: 'staff-1', requesterDisplayNameSnapshot: 'สมชาย',
+    reason: 'ค่าเดินทาง', categoryKey: 'travel', amount: '580.5000', outstandingAmount: '580.5000', paymentTotalAmount: '0.0000', currency: 'THB',
+    incurredDate: NOW, status: 'PENDING_APPROVAL', financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH',
+    receiptRequirementStatus: 'ATTACHED', postingStatus: 'posted', submittedAt: new Date('2026-09-20T03:00:00.000Z'),
+    createdAt: new Date('2026-09-20T02:00:00.000Z'), updatedAt: NOW,
+    payoutCorrectionRequestedAt: new Date('2026-09-30T03:00:00.000Z'), payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG',
+    payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'f'.repeat(64),
+    approvalSteps: [] as any[], ...overrides,
+  });
+  const waitingStep = { id: 'step-2', companyId: 'co-1', reimbursementRequestId: '000002', sequenceNo: 1, status: 'PENDING', assignedApproverUserIds: ['approver-1'], approverRoleSnapshot: 'MANAGER' };
+  const withRequester = claim('000001');
+  const withApprover = claim('000002', { payoutCorrectionSubmittedAt: new Date('2026-10-01T02:00:00.000Z'), payoutDestinationVersion: 2, currentApprovalStepId: 'step-2', approvalSteps: [waitingStep] });
+  const repo = {
+    findPolicy: async () => null,
+    listRequests: async () => [withRequester, withApprover],
+    findPendingApprovalSteps: async () => [waitingStep],
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+    getUserDisplayNames: async () => ({ 'approver-1': 'สมศรี' }),
+  } as any;
+  const approver = { ...baseCtx, permissions: ['reimbursement.approve', 'reimbursement.reject', 'reimbursement.read'] };
+
+  it('says it waits for its requester to correct the payout account, counts it for no approver, and lists it for approval once the account is given', async () => {
+    // The approver's own queue: nothing to decide while the claim is with its requester, the claim again once the account is given.
+    const queue = await new ReimbursementListPendingApprovalsTool(new ListApprovalQueueUseCase(repo)).execute(approver);
+    assert.deepEqual(queue.data, {
+      total: 1,
+      items: [{
+        id: '000002', documentNumber: 'RB-202609-000002', requesterDisplayName: 'สมชาย', amount: '580.5000', currency: 'THB',
+        submittedAt: '2026-09-20T03:00:00.000Z', status: 'PENDING_APPROVAL', branch: 'branch-1',
+      }],
+    });
+    assert.doesNotMatch(JSON.stringify(queue), /payout|account|ffff/i);
+
+    const backlog = new GetReimbursementApprovalBacklogUseCase(repo, { log: async () => undefined } as any);
+    const tool = new ReimbursementGetApprovalBacklogTool({ execute: (ctx: any, input: any) => backlog.execute(ctx, input, NOW) } as any);
+    const result = await tool.execute(approver);
+    assert.equal(result.status, 'ok');
+    assert.deepEqual(result.data, {
+      accessScope: 'company',
+      total: 2,
+      awaitingApprovalCount: 1,
+      totalsByCurrency: [{ currency: 'THB', amount: '1161.00' }],
+      byApprover: [{ name: 'สมศรี', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '580.50' }], oldestSubmittedOn: '2026-10-01', longestWaitDays: 0 }],
+      sharedPile: null,
+      desks: [{
+        kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '580.50' }],
+        oldestSentBackOn: '2026-09-30', longestWaitDays: 1,
+        note: 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้',
+      }],
+      items: [
+        { id: '000001', documentNumber: 'RB-202609-000001', requesterName: 'สมชาย', amount: '580.50', currency: 'THB',
+          waitingOn: 'รอผู้เบิกแก้บัญชีรับเงิน', submittedOn: '2026-09-20', sentBackOn: '2026-09-30', waitDays: 1 },
+        { id: '000002', documentNumber: 'RB-202609-000002', requesterName: 'สมชาย', amount: '580.50', currency: 'THB',
+          waitingOn: 'สมศรี', submittedOn: '2026-09-20', resubmittedOn: '2026-10-01', waitDays: 0 },
+      ],
+    });
+    // Where the claim stands and nothing of the account, the reason code or who sent it back.
+    assert.doesNotMatch(JSON.stringify(result.data), /payout|account|ffff/i);
+    assert.doesNotMatch(JSON.stringify(result.data), /ACCOUNT_NUMBER_WRONG|payer-1|AWAITING_/);
   });
 });

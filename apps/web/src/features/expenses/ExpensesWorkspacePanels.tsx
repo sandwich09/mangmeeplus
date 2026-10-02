@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEventHandler, type ReactNode } from 'react';
+import Link from 'next/link';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { EmptyState, LoadingState } from '@/common/components/state';
 import { pageBounds } from '@/common/table/paging.logic';
@@ -33,6 +34,7 @@ import {
   type EvidenceFlagKey,
 } from './evidence-audit.logic';
 import { generateSourceJournal, previewExpenseBackfill, runExpenseBackfill } from '../ledger/ledger.api';
+import { ClaimPaymentPosting } from './ClaimPaymentPosting';
 import { showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 import { listTaxCodeDefinitions } from '../tax/transaction-tax.api';
 import { availableTaxDefinitions } from '../tax/transaction-tax.model';
@@ -294,6 +296,13 @@ export function SignatureThumb({ url, alt, className }: { url: string; alt: stri
   );
 }
 
+/** A claim id as the claim page's link carries it: letters and digits, nothing that could leave the claim's own path. */
+export const RETURN_CLAIM_ID = /^[A-Za-z0-9]{8,64}$/;
+/** What a signer who came here from a claim is told: before a signature is saved, and once there is one. */
+export function signatureReturnText(hasSignature: boolean): string {
+  return hasSignature ? 'ลายเซ็นของคุณพร้อมใช้แล้ว กลับไปกดลงนามในใบเบิกได้เลย' : 'เมื่อบันทึกลายเซ็นแล้ว กลับไปกดลงนามในใบเบิกได้ทันที';
+}
+
 /**
  * "ลายเซ็นของฉัน" (owner decision 2026-08-20, superseding D10/D11). A signature is a personal asset:
  * you keep your own, you are the only one who ever sees it, and it signs from the moment it is
@@ -346,6 +355,14 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   useEffect(() => {
     if (focusSignatureId && !loading) focusRef.current?.scrollIntoView({ block: 'center' });
   }, [focusSignatureId, loading, assets]);
+  // The claim a signer came from ("ไปหน้าลายเซ็น" in the claim's dialog, `?fromClaim=`): the way back to sign it. A
+  // signer who saved a signature here had nothing leading back to the claim that sent them. Only a plain id is
+  // taken, and only ever as the last part of this company's own claim page.
+  const [fromClaimId, setFromClaimId] = useState('');
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('fromClaim') ?? '';
+    setFromClaimId(RETURN_CLAIM_ID.test(id) ? id : '');
+  }, []);
 
   const selectSignatureFile = async (file: File | null) => {
     if (saving || previewPendingRef.current) return;
@@ -473,6 +490,15 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
       <HowItWorks title="ลายเซ็นของฉันทำงานอย่างไร" steps={['เพิ่มลายเซ็น: วาดบนหน้าจอหรืออัปโหลดรูป ระบบลบพื้นหลังให้', 'บันทึกแล้วใช้ได้ทันที ไม่ต้องรออนุมัติ ลายเซ็นนี้เป็นของคุณ', 'เลือกใช้ลายเซ็นในหน้าตรวจเอกสารค่าใช้จ่าย']} />
       {actionError && <ErrorBanner message={actionError} />}
       <StateBanner error={error} />
+      {fromClaimId && !loading && !error && (
+        <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3" data-testid="signature-return-to-claim">
+          <p className="text-sm text-gray-700">{signatureReturnText(Boolean(current))}</p>
+          <Link href={`/companies/${companyId}/reimbursements/${fromClaimId}#reimbursement-signatures`}
+            className={cx(current ? btnClass : ghostClass, 'mt-2 min-h-11 w-full sm:w-auto')}>
+            กลับไปที่ใบเบิก
+          </Link>
+        </div>
+      )}
 
       {!error && (
         <div className="space-y-4">
@@ -607,11 +633,13 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
 }
 
 // ── Accountant shared evidence + export package ───────────────────────────────
-export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, onOpenExpense }: {
+export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, canPostClaimPayments = false, onOpenExpense }: {
   companyId: string;
   canExport: boolean;
   canReadLedger: boolean;
   canPostLedger: boolean;
+  /** May post to the ledger AND read the claim payout worklist (`reimbursement.finance_review`). */
+  canPostClaimPayments?: boolean;
   onOpenExpense: (expenseId: string) => void;
 }) {
   const toast = useToast();
@@ -790,6 +818,8 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
       <HowItWorks title="เตรียมหลักฐานให้สำนักงานบัญชี" steps={['เปิดรายการที่มีคำเตือนเพื่อตรวจข้อมูล', 'หากเอกสารยืนยันแล้วผิด ให้ยกเลิกแล้วบันทึกใหม่', 'ตรวจความครบถ้วนก่อนส่งออกให้บัญชี']} />
       <StateBanner error={error} />
       {backfillMessage && <InfoBanner message={backfillMessage} />}
+      {/* Outside the `!error` block on purpose: a refused post is an answer, not a broken screen. */}
+      {canPostClaimPayments && <ClaimPaymentPosting companyId={companyId} />}
 
       {!error && (
         <>

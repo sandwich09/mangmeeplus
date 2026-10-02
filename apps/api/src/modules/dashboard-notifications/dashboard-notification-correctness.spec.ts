@@ -24,7 +24,9 @@ import {
   PrismaNotificationRecipientRepository,
 } from './infrastructure/prisma-notification.repository';
 import { PrismaDashboardSnapshotRepository } from './infrastructure/prisma-dashboard.repository';
-import { IMPLEMENTED_TRIGGER_KEYS, FUTURE_TRIGGER_KEYS } from './domain/models/notification.model';
+import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, FUTURE_TRIGGER_KEYS } from './domain/models/notification.model';
+import { completedDocumentNotificationIds } from './infrastructure/document-notification-state';
+import { WORKFLOW_TEMPLATE_CATALOG } from '../workflow/domain/workflow-template-catalog';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
 
 const COMPANY = 'co-1';
@@ -158,6 +160,37 @@ describe('cursor pagination keys', () => {
   });
 });
 
+// Audit B15: notices stored before decisions were rendered in Thai still hold the code word. The
+// list repairs the two notices that print a decision and leaves every other body as it was typed.
+describe('decision code words in notices stored before the fix', () => {
+  it('reads the requester result and the finance hold in plain Thai, and nothing else is rewritten', async () => {
+    const row = (id: string, triggerKey: string, body: string) => ({
+      id, companyId: COMPANY, triggerKey, severity: 'INFO', status: 'OPEN', title: 't', body,
+      payloadJson: {}, sourceRefsJson: {}, recipients: [],
+    });
+    const prisma = {
+      client: {
+        notificationEvent: {
+          // The first read (a `select`) is the still-to-do projection; the second is the page.
+          findMany: async (args: any) => (args.select ? [] : [
+            row('n1', 'workflow.reimbursement_decision_requester', 'ผลการพิจารณา: BELOW_APPROVAL_THRESHOLD · ยอด 125 THB'),
+            row('n2', 'workflow.reimbursement_finance_review', 'ผลตรวจสอบ: BLOCKED · ยอด 125 THB'),
+            row('n3', 'workflow.reimbursement_correction_requester', 'ใบเสร็จเขียนว่า APPROVED · ยอด 125 THB'),
+          ]),
+        },
+      },
+    } as any;
+
+    const { items } = await new PrismaNotificationEventRepository(prisma).list(COMPANY, 'u1', { pageSize: 10 } as any);
+
+    assert.deepEqual(items.map((item) => item.body), [
+      'ผลการพิจารณา: ไม่ต้องอนุมัติตามนโยบาย · ยอด 125 THB',
+      'ผลตรวจสอบ: ระงับ · ยอด 125 THB',
+      'ใบเสร็จเขียนว่า APPROVED · ยอด 125 THB',
+    ]);
+  });
+});
+
 describe('unread badge counting', () => {
   it('counts in the database instead of transferring the backlog', async () => {
     const captured: Record<string, any> = {};
@@ -237,5 +270,78 @@ describe('every emitted trigger can actually be delivered', () => {
   it('never lets a key sit in both lists, which would make the gate depend on read order', () => {
     const both = IMPLEMENTED_TRIGGER_KEYS.filter((key) => FUTURE_TRIGGER_KEYS.includes(key));
     assert.deepEqual(both, []);
+  });
+});
+
+// Payout spec §14, §17.3. A claim sent back to have its payout account corrected is PENDING_APPROVAL
+// again. By its status alone the approval notice of its first round would come back as still to do
+// while nobody can approve anything, and the two notices of the round would never be done.
+describe('notices of a claim whose payout account is being corrected', () => {
+  const at = (iso: string) => new Date(iso);
+  const sentBackAt = at('2026-10-02T03:00:00.000Z');
+  const accountGivenAt = at('2026-10-02T05:00:00.000Z');
+  const notice = (id: string, triggerKey: string, createdAt: Date) => ({ id, triggerKey, sourceType: 'reimbursement_request', sourceId: 'claim1', createdAt });
+  const notices = [
+    notice('first-approval', 'workflow.reimbursement_pending_approval', at('2026-09-20T03:00:00.000Z')),
+    notice('first-reminder', 'workflow.approval_sla_breach', at('2026-09-23T03:00:00.000Z')),
+    notice('ready-to-pay', 'workflow.reimbursement_ready_for_payment', at('2026-09-24T03:00:00.000Z')),
+    notice('payment-reminder', 'workflow.reimbursement_payment_sla_breach', at('2026-09-27T03:00:00.000Z')),
+    notice('sent-back', 'workflow.reimbursement_payout_correction_requested', at('2026-10-02T03:00:05.000Z')),
+    notice('new-account', 'workflow.reimbursement_payout_correction_submitted', at('2026-10-02T05:00:05.000Z')),
+    notice('round-reminder', 'workflow.approval_sla_breach', at('2026-10-04T06:00:00.000Z')),
+  ];
+  const stillToDo = async (claim: Record<string, unknown>) => {
+    const asked: any[] = [];
+    const db: any = {
+      notificationEvent: { findMany: async (query: any) => { asked.push(query); return notices; } },
+      reimbursementRequest: { findMany: async () => [{ id: 'claim1', payoutCorrectionRequestedAt: null, payoutCorrectionSubmittedAt: null, ...claim }] },
+    };
+    const done = new Set(await completedDocumentNotificationIds(db, COMPANY, 'u1'));
+    // The two notices of a round are among the ones whose state is read at all.
+    assert.ok(['workflow.reimbursement_payout_correction_requested', 'workflow.reimbursement_payout_correction_submitted']
+      .every((key) => asked[0].where.triggerKey.in.includes(key)));
+    return notices.map((row) => row.id).filter((id) => !done.has(id));
+  };
+
+  it('keeps to do only the notice of the phase the claim is in', async () => {
+    // With its requester: the one thing to do is theirs. The approver's old notices stay done.
+    assert.deepEqual(await stillToDo({ status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: sentBackAt }), ['sent-back']);
+    // The account is given: its approvers have a notice to act on, and a reminder once they are late with it.
+    // The approval notice and the reminder of the first round are about a wait that ended, and stay done.
+    assert.deepEqual(await stillToDo({ status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: accountGivenAt }),
+      ['new-account', 'round-reminder']);
+    // Approved again: the claim waits for payment, and nothing of the round is left to do.
+    assert.deepEqual(await stillToDo({ status: 'READY_FOR_PAYMENT' }), ['ready-to-pay', 'payment-reminder']);
+    assert.deepEqual(await stillToDo({ status: 'PAID' }), []);
+  });
+
+  // Final review W4: a claim being cancelled takes no decision and no payment, so none of its notices
+  // is something to do. Withdrawn, the cancellation gives them back as they were.
+  it('keeps nothing to do for a claim that is being cancelled, in any status, and gives it back once the cancellation is withdrawn', async () => {
+    const cancellationPendingAt = at('2026-10-05T03:00:00.000Z');
+    for (const claim of [
+      { status: 'PENDING_APPROVAL' },
+      { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: sentBackAt },
+      { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: accountGivenAt },
+      { status: 'READY_FOR_PAYMENT' },
+    ]) {
+      assert.notDeepEqual(await stillToDo(claim), [], claim.status);
+      assert.deepEqual(await stillToDo({ ...claim, cancellationPendingAt }), [], `${claim.status} while being cancelled`);
+    }
+    // The state is read, not stored: the same notices are to do again as soon as the claim goes on.
+    assert.deepEqual(await stillToDo({ status: 'READY_FOR_PAYMENT', cancellationPendingAt: null }), ['ready-to-pay', 'payment-reminder']);
+  });
+
+  it('leaves an ordinary claim waiting for approval as it was: its approval notice and its reminder are to do', async () => {
+    assert.deepEqual(await stillToDo({ status: 'PENDING_APPROVAL' }), ['first-approval', 'first-reminder', 'round-reminder']);
+  });
+
+  it('delivers both notices whatever a member chose for optional notices, like the other claim notices', () => {
+    for (const template of WORKFLOW_TEMPLATE_CATALOG.filter((entry) => entry.key.startsWith('reimbursement_payout_correction_'))) {
+      const triggerKey = String(template.defaultActionJson[0]!.configJson['triggerKey']);
+      assert.ok(IMPLEMENTED_TRIGGER_KEYS.includes(triggerKey), triggerKey);
+      assert.ok(ALWAYS_DELIVERED_TRIGGER_KEYS.includes(triggerKey), triggerKey);
+    }
+    assert.equal(WORKFLOW_TEMPLATE_CATALOG.filter((entry) => entry.key.startsWith('reimbursement_payout_correction_')).length, 2);
   });
 });

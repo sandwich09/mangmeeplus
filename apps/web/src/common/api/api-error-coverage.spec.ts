@@ -29,6 +29,16 @@ const OPEN_MODULES = [
 
 const API_MODULES = join(__dirname, '../../../../api/src/modules');
 
+/**
+ * Modules whose rule functions answer a refusal as `{ error: 'code' }`, which the caller then throws as
+ * it came (`throw new ConflictException(plan.error)`, `paymentPayoutRefusal(plan.error)`). The code is
+ * no literal at the place it is thrown, so the exception patterns below never see it: the payout
+ * planners' `payout_confirmation_required` and `payment_method_mismatch_reason_required` could have
+ * lost their Thai text with this spec still passing. Named per module: in other modules the same
+ * shape also carries values that never leave the server.
+ */
+const PLANNER_ERROR_MODULES = ['reimbursements'];
+
 function sourceFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -55,6 +65,7 @@ function openFeatureErrorCodes(): Map<string, string> {
         ...source.matchAll(/code:\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
         ...source.matchAll(/billingError\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
         ...source.matchAll(/emailError\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
+        ...(PLANNER_ERROR_MODULES.includes(moduleName) ? source.matchAll(/\berror:\s*'([a-z][a-z0-9_]{3,})'/g) : []),
       ];
       for (const match of found) if (!codes.has(match[1]!)) codes.set(match[1]!, moduleName);
     }
@@ -84,12 +95,30 @@ const NOT_USER_FACING = new Set([
   // cancelForWeb) catch them and answer with a status the page renders through its own Thai copy.
   'reimbursement_action_changed', 'reimbursement_action_identity_conflict', 'reimbursement_active_action_exists',
   'reimbursement_target_missing', 'state_not_editable',
+  // What stands in the way of a claim's cancellation (`expense-void-blocker.ts`, `pendingCancellationOf`):
+  // the `blocker` of the claim detail, never an HTTP answer by itself. The claim page words it through
+  // `cancellationBlockerText`; a cancel refused for the same reason answers `reimbursement_cancellation_<code>`.
+  'expense_not_voidable', 'posting_unresolved', 'reason_too_short',
 ]);
 
 describe('Thai coverage for default-open feature error codes', () => {
   it('finds the API codes at all, so a moved path fails loudly instead of passing empty', () => {
     const codes = openFeatureErrorCodes();
     assert.ok(codes.size > 400, `only ${codes.size} codes found — check API_MODULES resolves to the api package`);
+  });
+
+  // A code a planner returns is found only if the planner still spells it this way. If it moves, this
+  // fails here instead of the code dropping out of the check below without anybody noticing.
+  it('finds the refusals the payout planners return for their caller to throw', () => {
+    const codes = openFeatureErrorCodes();
+    for (const code of ['payout_confirmation_required', 'payment_method_mismatch_reason_required', 'payout_destination_changed',
+      'payout_method_required', 'payout_destination_required', 'note_contains_account_number']) {
+      assert.equal(codes.get(code), 'reimbursements', `${code} is no longer found in the API source`);
+      assert.ok(translateApiError(code), `${code} has no Thai text`);
+    }
+    // Found by the planner shape alone: neither is thrown as a literal anywhere in the API.
+    const thrownAsLiteral = (code: string) => sourceFiles(API_MODULES).some((file) => new RegExp(`Exception\\(\\s*'${code}'|code:\\s*'${code}'`).test(readFileSync(file, 'utf8')));
+    assert.deepEqual(['payout_confirmation_required', 'payment_method_mismatch_reason_required'].filter(thrownAsLiteral), []);
   });
 
   it('has Thai text for every error code the default-open modules answer with', () => {
@@ -118,6 +147,85 @@ describe('Thai coverage for default-open feature error codes', () => {
       assert.ok(thai, `${code} has no Thai text`);
       assert.match(thai!, expected, code);
       assert.doesNotMatch(thai!, /[a-z]{3,}_[a-z]{3,}/, `${code} leaks a snake_case identifier into the message`);
+    }
+  });
+});
+
+// Review 2026-10-01 (claim hub, bank match and void): each refusal added there is something a shop owner or a
+// finance person reads in the middle of a job, so it has to be plain Thai that says what to do next. The two bank
+// codes come from the banking module, which the discovery above does not walk, so they are named here.
+// `note_contains_account_number` answers for two texts people type on a claim: finance's note (shown on the
+// claim and copied into the requester's notice) and the reason a payment was made another way than asked
+// (shown on the payment row, and in no notice). One label serves both, so it may say only what is true of both.
+describe('the refusal of a text that carries an account number is true wherever the API gives it', () => {
+  it('says the text is shown to everyone who opens the claim, and nothing about a notice', () => {
+    const thai = translateApiError('note_contains_account_number')!;
+    assert.match(thai, /^อย่าพิมพ์เลขบัญชีในช่องนี้ เพราะข้อความนี้แสดงให้ทุกคนที่เปิดใบเบิกเห็น /);
+    assert.doesNotMatch(thai, /แจ้งเตือน/, 'the payment reason is in no notice');
+    assert.match(thai, /4 ตัวท้าย/, 'what to write instead');
+    assert.doesNotMatch(thai, /[A-Za-z]/);
+    // The places the API answers with it. A third place has to be read against the sentence above before it is listed here.
+    const uses = sourceFiles(join(API_MODULES, 'reimbursements'))
+      .filter((file) => readFileSync(file, 'utf8').includes("'note_contains_account_number'"))
+      .map((file) => file.slice(join(API_MODULES, 'reimbursements').length + 1)).sort();
+    assert.deepEqual(uses, [
+      // The note that goes with sending a claim back for its payout account: `sendBackForPayoutCorrection`.
+      // It is shown on the claim page; the requester's notice carries the reason from the fixed list only.
+      'application/use-cases/reimbursement-approval.use-case.ts',
+      // Finance's note on a claim: `FinanceReviewReimbursementUseCase`.
+      'application/use-cases/reimbursement-finance.use-case.ts',
+      // The reason a payment was made by another method than the requester asked for: `planPaymentPayout`, and how it is thrown.
+      'domain/logic/payout-destination.logic.ts',
+      'infrastructure/reimbursement-payout.ts',
+    ]);
+  });
+});
+
+describe('the refusals added with the claim hub and bank-match fixes are plain Thai that says what to do', () => {
+  it('names the next step, with no id, code word, enum word or currency code in the text', () => {
+    for (const [code, nextStep] of [
+      // Voiding a payment whose bank line is inside a completed reconciliation: reopen that reconciliation first.
+      ['reimbursement_payment_bank_reconciled', /กด "เปิดใหม่" ที่รอบกระทบยอดนั้น.*ก่อน.*ยกเลิกการจ่าย/],
+      // Matching a bank line to a claim payment voided since the list was read: refresh and pick another.
+      ['bank_match_payment_not_recorded', /กดรีเฟรชแล้วเลือกรายการอื่น/],
+      ['bank_match_state_changed', /กดรีเฟรชแล้วลองอีกครั้ง/],
+      // A hub filter the API does not have (a page left open across an update): reload and pick again.
+      ['reimbursement_list_bucket_invalid', /โหลดหน้าใหม่แล้วเลือกตัวกรองอีกครั้ง/],
+    ] as const) {
+      const thai = translateApiError(code);
+      assert.ok(thai, `${code} has no Thai text`);
+      assert.match(thai!, nextStep, code);
+      assert.match(thai!, /กรุณา/, `${code} asks for nothing`);
+      // No Latin letter at all: that rules out an id, a status or enum word, a snake_case code and "THB" at once.
+      assert.doesNotMatch(thai!, /[A-Za-z]/, `${code}: ${thai}`);
+      // And what the person sees for the HTTP answer is that text, not the code or the English message.
+      const shown = apiErrorMessage({ status: 409, code, message: 'Refresh the list and pick another payment.', details: { code } });
+      assert.equal(shown, thai, code);
+    }
+    // The message this replaced sent the person to undo a match on a screen that does not list the line.
+    assert.equal(translateApiError('reimbursement_payment_bank_matched'), null);
+  });
+});
+
+// The claim payment check (`validatePaymentRecording`) answers a bare code that its caller throws as it came
+// (`throw new UnprocessableEntityException(error)`). No pattern of the discovery above sees a code returned that
+// way, and two of them reached the payment form with no Thai text: the payer read the generic fallback.
+describe('the refusals of a claim payment over or under its amount say what to enter', () => {
+  it('finds both codes where the API returns them, and answers each with the amount to pay', () => {
+    const logic = readFileSync(join(API_MODULES, 'reimbursements/domain/logic/reimbursement.logic.ts'), 'utf8');
+    const check = logic.slice(logic.indexOf('export function validatePaymentRecording('));
+    const returned = [...check.slice(0, check.indexOf('\n}\n')).matchAll(/return '([a-z][a-z0-9_]{3,})'/g)].map((match) => match[1]!);
+    for (const [code, nextStep] of [
+      ['payment_amount_invalid', /ต้องมากกว่า 0 กรุณากรอกยอดคงค้างของใบเบิกแล้วกดบันทึกจ่ายอีกครั้ง/],
+      ['payment_over_approved_amount', /เกินยอดคงค้างของใบเบิก กรุณาแก้เป็นยอดคงค้างแล้วกดบันทึกจ่ายอีกครั้ง/],
+    ] as const) {
+      assert.ok(returned.includes(code), `${code} is no longer returned by the payment check`);
+      const thai = translateApiError(code);
+      assert.ok(thai, `${code} has no Thai text`);
+      assert.match(thai!, nextStep, code);
+      assert.doesNotMatch(thai!, /[A-Za-z]/, `${code}: ${thai}`);
+      // What the payment form shows for the HTTP answer is that text: the API sends the code as its message.
+      assert.equal(apiErrorMessage(Object.assign(new Error(code), { status: 422 })), thai, code);
     }
   });
 });

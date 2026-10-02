@@ -1,22 +1,32 @@
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
+import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
-import { civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
+import {
+  civilDate, civilPeriodKey, hasPrivilegedGrant, todayCivilDate, LEDGER_SEQUENCE_KEY,
+  REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES,
+} from '@watchdog-bms/contracts';
 import { expenseDraftNumberingEnabled, expenseNumberInTransaction } from '../../expenses/infrastructure/expense-number';
 import { resolveReimbursementSourceLines, assertReimbursementSources, readReimbursementSource, sourceError, type SourceLine } from './reimbursement-source';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { isDeepStrictEqual } from 'node:util';
 import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import type { ReimbursementClaimSignatureRole, ReimbursementRequestStatus } from '@watchdog-bms/contracts';
+import { reimbursementHubBucket } from '@watchdog-bms/contracts';
+import type { ReimbursementClaimSignatureRole, ReimbursementHubBucket, ReimbursementPayoutCorrectionReason, ReimbursementRequestStatus } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { Prisma } from '../../../generated/prisma/client';
+import {
+  Prisma, ReimbursementFinanceReviewStatus as FinanceReviewStatuses, ReimbursementRequestStatus as RequestStatuses,
+} from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord } from '../../data-model-core/domain/models/document-sequence.model';
-import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { branchScopeWhere, isBranchInScope, resolveBranchIds, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { loadEntitledFeatureKeys } from '../../employee-access/application/entitlement.helper';
+import { filterPermissionsByEntitlement } from '../../employee-access/domain/logic/feature-gate.logic';
 import { resolveTransactionBranchId, requireTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
 import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { assertActiveExpenseBranch, expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
+import { calculateStatementLineMatchStatus } from '../../banking/domain/logic/banking.logic';
 import type {
   ReimbursementPolicyRecord,
   ReimbursementRequestRecord,
@@ -30,12 +40,19 @@ import type {
   CreateReimbursementRequestData,
   MaterializeClaimExpenseItem,
   ReimbursementSignedCopyAck,
+  ReimbursementPaymentSlipLink,
+  ReimbursementPaymentSlipSource,
   ReimbursementDraftActionOwner,
   ReimbursementDraftActionRecord,
   ReimbursementDraftPreparedCommand,
+  ReimbursementPayoutCorrectionLogEntry,
 } from '../domain/models/reimbursement.model';
 import {
   REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+  REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+  REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES,
+  REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+  REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG,
   REIMBURSEMENT_SIGNED_COPY_ACK_KEY,
   REIMBURSEMENT_SIGNED_COPY_PURPOSE,
   parseReimbursementPolicySnapshot,
@@ -43,21 +60,49 @@ import {
 import { effectivePolicy, effectivePolicyForRequest } from '../domain/reimbursement.constants';
 import {
   buildPaymentSourceRef,
+  claimSnapshotFields,
   computeSnapshotHash,
   computeOutstanding,
   computePaymentStatus,
   d,
   decStr,
   isExactLegacyV1FallbackSnapshot,
+  isSamePaymentRequest,
   isSelfApproval,
   matchesApproverRole,
   frozenApprovalAuthority,
+  pendingProjectionIntent,
+  type PendingProjectionIntent,
   validatePaymentRecording,
   validateRequestFields,
   deriveHeaderFromLines,
   computeReceiptRequirement,
+  currentDesk,
+  duplicateBlocksPayment,
 } from '../domain/logic/reimbursement.logic';
-import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay, isExpenseVoidReason } from '@watchdog-bms/contracts';
+import { findClaimExpenseVoidBlocker, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
+import {
+  PAYOUT_PEOPLE_MANAGER_ROLE_KEYS,
+  type FrozenPayoutPlan, type SealedPayoutDestination, type SubmitPayoutColumns, type SubmitPayoutPlan,
+} from '../domain/logic/payout-destination.logic';
+import {
+  applyDraftPayout, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit,
+  readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan,
+  writeMemberPayoutAccount, type DraftPayoutWrite, type MemberPayoutAccountRecord,
+} from './reimbursement-payout';
+// The payment step's side of the payout (kept as its own imports, apart from the block above).
+import { planPaymentPayout, type PaymentPayoutPlan, type PaymentPayoutStatement } from '../domain/logic/payout-destination.logic';
+import {
+  assertPaymentPayoutUsable, claimPayoutMatchesVersion, confirmPaymentPayout, paymentPayoutRefusal, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
+  type ConfirmedPaymentPayout,
+} from './reimbursement-payout';
+// The claim page's account history (its own import too, for the same reason).
+import { readClaimPayoutVersions } from './reimbursement-payout';
+// The payout account correction round (payout spec §14).
+import { PAYOUT_CORRECTION_STEP_REASON, payoutCorrectionPhase, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../domain/logic/reimbursement.logic';
+import { hasPayoutSnapshot } from '../domain/logic/payout-destination.logic';
+import { freezePayoutCorrection, type CorrectionPayoutWrite } from './reimbursement-payout';
 import { deliveryHash, parseDeliveryBatchStates, parseLineDeliveryPlan } from '../../line-ai/domain/logic/line-delivery-plan.logic';
 
 function dec(v: unknown): string {
@@ -73,6 +118,35 @@ function stringArrayOpt(value: unknown): string[] | undefined {
   }
   return [...new Set(value)];
 }
+
+/**
+ * A payment transaction PostgreSQL rolled back because another writer got there first: two payers,
+ * a payment against a void, or the slip file changing underneath. Nothing was written, so the
+ * answer is the payment paths' own "it changed, reload and retry" (409), never a 500.
+ */
+function paymentChangedOnSerializationFailure(error: unknown): never {
+  if (isSerializationFailure(error)) throw new ConflictException('reimbursement_payment_state_changed');
+  throw error;
+}
+
+/** A file proven usable as a slip of one claim, with what the link write needs to finish the job. */
+type ResolvedPaymentSlip = {
+  attachmentId: string;
+  source: ReimbursementPaymentSlipSource;
+  checksumSha256: string | null;
+  uploadedByUserId: string;
+  metadataJson: Record<string, unknown> | null;
+  signedCopyLinkIds: string[];
+  /** A signed copy that carries a "signed on paper" declaration made with a link this move removes. */
+  withdrawsDeclaration: boolean;
+};
+
+/** What every slip proof is asked: which file, for which claim, by whom, and whether a withdrawal was confirmed. */
+type PaymentSlipProofInput = {
+  companyId: string; requestId: string; attachmentId: string; actorUserId: string;
+  /** The payer's explicit yes to withdrawing the file's "signed on paper" declaration (spec §16.2). */
+  confirmSignedCopyWithdrawal?: boolean;
+};
 
 function activeApproverMembershipWhere(
   companyId: string,
@@ -92,6 +166,26 @@ function activeApproverMembershipWhere(
   };
 }
 
+/** A draft's receiving choice plus anything that must commit with it (setting the default account, its audit row, the requester's notice). */
+export type DraftPayoutChange = { write: DraftPayoutWrite; onPersisted?: (tx: any, requestId: string) => Promise<void> };
+
+/** How long the scheduled pass leaves a fresh decision to the request that is carrying it out. */
+const PROJECTION_INTENT_MIN_AGE_MS = 60_000;
+
+/** The five round columns of a claim that is in no payout account correction round. */
+const NO_PAYOUT_CORRECTION = {
+  payoutCorrectionRequestedAt: null,
+  payoutCorrectionRequestedByUserId: null,
+  payoutCorrectionReasonCode: null,
+  payoutCorrectionNote: null,
+  payoutCorrectionSubmittedAt: null,
+} as const;
+
+/** The claim's round history with one more step. */
+function withPayoutCorrectionStep(row: { payoutCorrectionLogJson?: unknown }, entry: ReimbursementPayoutCorrectionLogEntry): ReimbursementPayoutCorrectionLogEntry[] {
+  return [...(Array.isArray(row.payoutCorrectionLogJson) ? row.payoutCorrectionLogJson : []), entry];
+}
+
 export type ListRequestsWhere = {
   companyId: string;
   requesterUserId?: string;
@@ -103,7 +197,62 @@ export type ListRequestsWhere = {
   search?: string;
   skip?: number;
   take?: number;
+  /** Load each claim's own duplicate candidates too: a queue whose rows say whether a duplicate refuses the payment. */
+  withDuplicateCandidates?: boolean;
 };
+
+/**
+ * A claim's own duplicate candidates that still say something: open, or cleared by a person. The
+ * ones a resubmit superseded are history. What a list row needs for `claimDuplicateStatus` and
+ * `duplicateBlocksPayment`; the claim detail loads every candidate.
+ */
+const LIVE_DUPLICATE_CANDIDATES = { where: { status: { in: ['OPEN', 'OVERRIDDEN'] as any } } };
+
+/** The claims of a list scope that share the fields the hub counts on. */
+export type ReimbursementRequestGroup = {
+  status: ReimbursementRequestStatus;
+  financeReviewStatus: string;
+  receiptRequirementStatus: string;
+  count: number;
+  amount: string;
+};
+
+/** The hub bucket of a status pair: the desk the API resolves for it decides, exactly as a row of the list prints it. */
+export function hubBucketOfStatus(status: ReimbursementRequestStatus, financeReviewStatus: string): ReimbursementHubBucket {
+  return reimbursementHubBucket({ status, financeReviewStatus, currentDesk: currentDesk({ status, financeReviewStatus: financeReviewStatus as any }) });
+}
+
+/**
+ * A hub bucket as a query: the bucket rule asked of every status pair the database can hold. Derived, not
+ * written out a second time, so the list filter cannot drift from the counts. An unknown bucket matches nothing.
+ */
+export function hubBucketWhere(bucket: string): Prisma.ReimbursementRequestWhereInput {
+  return {
+    OR: Object.values(RequestStatuses).flatMap((status) => {
+      const finance = Object.values(FinanceReviewStatuses).filter((financeReviewStatus) => hubBucketOfStatus(status, financeReviewStatus) === bucket);
+      return finance.length > 0 ? [{ status, financeReviewStatus: { in: finance } }] : [];
+    }),
+  };
+}
+
+/**
+ * What the hub's search box finds: every word typed is in the claim's number, its requester's name, its
+ * reason or its category, or is its amount. Those are the columns a row prints and a person can type;
+ * the status is what the chips filter. Read by the page and by the counts alike.
+ * ponytail: the first five words are read; a longer search ignores the rest.
+ */
+export function hubSearchWhere(search: string): Prisma.ReimbursementRequestWhereInput {
+  return {
+    AND: search.split(/\s+/).filter(Boolean).slice(0, 5).map((word) => {
+      const contains = { contains: word, mode: 'insensitive' as const };
+      const amount = word.replace(/,/g, '');
+      return { OR: [
+        { requestNo: contains }, { requesterDisplayNameSnapshot: contains }, { reason: contains }, { categoryLabelSnapshot: contains },
+        ...(/^\d{1,12}(\.\d{1,4})?$/.test(amount) ? [{ amount }] : []),
+      ] };
+    }),
+  };
+}
 
 /** View-only actor graph. Linked raw ids are resolved before this predicate is built. */
 export function reimbursementRelatedToUserWhere(
@@ -134,6 +283,17 @@ export function reimbursementRelatedToUserWhere(
       ...(signedCopyRequestIds.length > 0 ? [{ id: { in: [...signedCopyRequestIds] } }] : []),
     ],
   };
+}
+
+/**
+ * Approve or reject reached a claim that no longer waits for approval: someone decided it, it was
+ * cancelled, or its requester took it back to a draft after the caller's page was loaded. One code
+ * for both calls and for the check before the lock and under it, and never the status word: the
+ * screen says what happened in its own words and reads the claim again. 409, like every other
+ * answer to a page that is behind its claim (it used to be a 422 "Cannot approve from status …").
+ */
+export function notAwaitingApproval(): ConflictException {
+  return new ConflictException('reimbursement_not_awaiting_approval');
 }
 
 @Injectable()
@@ -235,6 +395,46 @@ export class PrismaReimbursementRepository {
       select: { userId: true },
     });
     return new Set(rows.map((row) => row.userId));
+  }
+
+  /**
+   * Display names of the members the API would accept a payment from on a claim of this branch, for the
+   * claim page to say who it waits for. The rule is the permission resolver's, applied to every member in
+   * one pass: an ACTIVE membership and user, an ACTIVE role holding the pay right, the entitlement cut,
+   * and a branch scope (over ACTIVE branches) that covers the claim. The branch is required: a claim
+   * without one is in every scope, yet the payment endpoint refuses it for everyone.
+   * `turnUserIds` are the people whose turn it is, first to last (`paymentTurnUserIds`): those of them
+   * who can pay head the list in that order, and everyone else follows by name.
+   */
+  async listPaymentRecorderNames(companyId: string, branchId: string, turnUserIds: readonly string[] = []): Promise<string[]> {
+    const key = 'reimbursement.payment.record';
+    const [members, branches, entitled] = await Promise.all([
+      this.prisma.client.companyMembership.findMany({
+        where: {
+          companyId, status: 'ACTIVE', user: { status: 'ACTIVE' },
+          roles: { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key } } } } } },
+        },
+        select: {
+          userId: true, branchScopeMode: true, defaultBranchId: true,
+          branchScopes: { select: { branchId: true } },
+          user: { select: { displayName: true } },
+        },
+      }),
+      this.prisma.client.branch.findMany({ where: { companyId, status: 'ACTIVE' }, select: { id: true } }),
+      loadEntitledFeatureKeys(this.prisma, companyId),
+    ]);
+    if (filterPermissionsByEntitlement([key], entitled).length === 0) return [];
+    const activeBranchIds = new Set(branches.map((branch) => branch.id));
+    // A place in the turn order, or after everyone who has one.
+    const turn = (userId: string) => (turnUserIds.includes(userId) ? turnUserIds.indexOf(userId) : turnUserIds.length);
+    return members.filter((member) => {
+      const selected = member.branchScopes.map((scope) => scope.branchId).filter((id) => activeBranchIds.has(id));
+      // The resolver refuses a SELECTED_BRANCHES member with no active branch outright.
+      if (member.branchScopeMode === 'SELECTED_BRANCHES' && selected.length === 0) return false;
+      const branchIds = resolveBranchIds(member.branchScopeMode, selected, member.defaultBranchId ?? undefined);
+      return isBranchInScope(branchIds === undefined ? {} : { branchIds }, branchId);
+    }).sort((a, b) => turn(a.userId) - turn(b.userId) || a.user.displayName.localeCompare(b.user.displayName, 'th'))
+      .map((member) => member.user.displayName);
   }
 
   /** Letterhead for the printed claim form — same precedence as the substitute receipt. */
@@ -366,7 +566,7 @@ export class PrismaReimbursementRepository {
 
   // ---- Request ----
 
-  async createRequest(data: CreateReimbursementRequestData): Promise<ReimbursementRequestRecord> {
+  async createRequest(data: CreateReimbursementRequestData, payout?: DraftPayoutChange): Promise<ReimbursementRequestRecord> {
     requireTransactionBranchId(data.branchId);
     const client = this.prisma.client as any;
     const row = await client.$transaction(async (tx: any) => {
@@ -399,17 +599,15 @@ export class PrismaReimbursementRepository {
         },
       });
       await this.replaceLines(tx, data.companyId, created.id, data.lines);
+      if (payout) {
+        await tx.reimbursementRequest.update({ where: { id: created.id }, data: await applyDraftPayout(tx, data.companyId, created.id, payout.write) });
+        await payout.onPersisted?.(tx, created.id);
+      }
       return created;
     });
     return (await this.findRequestById(data.companyId, row.id))!;
   }
 
-  /**
-   * Wholesale line replacement, mirroring the expense-line convention: advisory
-   * lock on the claim, drop the lines the caller no longer sends, upsert the
-   * rest on the (requestId, lineNo) unique — never create-then-catch-P2002
-   * inside a transaction (Prisma 7 aborts it, 25P02).
-   */
   /**
    * Draft header/line replacement and submit use the same request lock and the
    * version observed by their caller. A stale writer therefore changes nothing.
@@ -420,15 +618,19 @@ export class PrismaReimbursementRepository {
     expectedUpdatedAt: Date,
     data: Record<string, unknown>,
     lines?: ReimbursementLineWriteData[],
+    payout?: DraftPayoutChange,
   ): Promise<ReimbursementRequestRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
       await this.lockRequest(tx, companyId, requestId);
+      const payoutColumns = payout ? await applyDraftPayout(tx, companyId, requestId, payout.write) : {};
       const changed = await tx.reimbursementRequest.updateMany({
-        where: { id: requestId, companyId, status: 'DRAFT', updatedAt: expectedUpdatedAt },
-        data: { ...data, updatedAt: this.nextVersion(expectedUpdatedAt) },
+        // Not while the draft is being cancelled (audit B3): answered like any other change under the editor.
+        where: { id: requestId, companyId, status: 'DRAFT', updatedAt: expectedUpdatedAt, cancellationPendingAt: null },
+        data: { ...data, ...payoutColumns, updatedAt: this.nextVersion(expectedUpdatedAt) },
       });
       if (changed.count !== 1) throw this.draftChanged();
+      await payout?.onPersisted?.(tx, requestId);
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId, id: requestId }, include: { lines: true } });
       await assertReimbursementSources(tx, { ...sourceRequest, lines: lines ?? sourceRequest.lines.map((line: any) => ({ ...line, sourceExpenseSnapshot: line.sourceExpenseSnapshotJson, attachmentSnapshot: line.attachmentSnapshotJson })) });
       if (lines) {
@@ -750,7 +952,8 @@ export class PrismaReimbursementRepository {
       approverUserId?: string;
       approverRoleSnapshot?: string;
       assignedApproverUserIdsJson?: string[];
-      requestSnapshotHash: string;
+      /** Left out when `payout` is given: the hash is then made inside this transaction. */
+      requestSnapshotHash?: string;
     };
     duplicateCandidates: ReimbursementDuplicateCandidateWriteData[];
     evidence: { attachmentIds: string[]; expenseIds: string[] };
@@ -762,12 +965,24 @@ export class PrismaReimbursementRepository {
       reservedByUserId: string;
     };
     request: Record<string, unknown>;
+    /**
+     * The claim's payout snapshot. Decided, checked against what the submitter was shown, frozen and
+     * hashed inside this transaction: `snapshotHash` is asked for the claim's hash once the payout
+     * columns are known, and that hash is what the step and the claim store.
+     */
+    payout?: {
+      actorUserId: string;
+      frozenAt: Date;
+      seenToken?: unknown;
+      snapshotHash: (columns: SubmitPayoutColumns) => string;
+    };
     onSubmittedPersisted?: (tx: any, result: {
       step?: ReimbursementApprovalStepRecord;
       documentNumber: ReservedDocumentNumberRecord;
       documentNumberReused: boolean;
       supersededDuplicateCandidateCount: number;
       supersededApprovalStepCount: number;
+      payout?: { plan: FrozenPayoutPlan; columns: SubmitPayoutColumns };
     }) => Promise<void>;
   }): Promise<{
     step?: ReimbursementApprovalStepRecord;
@@ -775,6 +990,7 @@ export class PrismaReimbursementRepository {
     documentNumberReused: boolean;
     supersededDuplicateCandidateCount: number;
     supersededApprovalStepCount: number;
+    payout?: { plan: FrozenPayoutPlan; columns: SubmitPayoutColumns };
   }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
@@ -782,7 +998,12 @@ export class PrismaReimbursementRepository {
       await this.lockEvidence(tx, data.companyId, data.evidence);
       await this.assertEvidenceAvailable(tx, data.companyId, data.requestId, data.evidence);
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId: data.companyId, id: data.requestId }, include: { lines: true } });
-      await assertReimbursementSources(tx, this.toRequest(sourceRequest));
+      const draft = this.toRequest(sourceRequest);
+      this.assertNotBeingCancelled(draft);
+      await assertReimbursementSources(tx, draft);
+      // Before anything is written: what this submit freezes, and the hash that binds it.
+      const payout = data.payout ? await freezePayoutAtSubmit(tx, draft, data.payout) : undefined;
+      const snapshotHash = payout ? data.payout!.snapshotHash(payout.columns) : data.approvalStep?.requestSnapshotHash;
 
       const reserved = await this.documentNumbers.reserveNumberInTransaction(tx, {
         companyId: data.companyId,
@@ -832,12 +1053,14 @@ export class PrismaReimbursementRepository {
           })),
         });
       }
+      if (data.approvalStep && !snapshotHash) throw new Error('reimbursement_submit_snapshot_hash_missing');
       const step = data.approvalStep
         ? await tx.reimbursementApprovalStep.create({
           data: {
             companyId: data.companyId,
             reimbursementRequestId: data.requestId,
             ...data.approvalStep,
+            requestSnapshotHash: snapshotHash,
           },
         })
         : undefined;
@@ -850,6 +1073,12 @@ export class PrismaReimbursementRepository {
         },
         data: {
           ...data.request,
+          // The payout columns and the hash made from them, written by this submit and nothing else.
+          ...(payout && { ...payout.columns, approvalSnapshotHash: snapshotHash }),
+          // A claim that is sent is in no payout account correction round. Written, not assumed: a build
+          // from before the round neither reads nor clears these columns, so a claim it returned to draft
+          // during a rollback still carries them, and they must never be read as a round again.
+          ...NO_PAYOUT_CORRECTION,
           requestNo: reserved.documentNumber,
           currentApprovalStepId: step?.id ?? null,
           updatedAt: this.nextVersion(data.expectedUpdatedAt),
@@ -870,6 +1099,7 @@ export class PrismaReimbursementRepository {
         documentNumberReused,
         supersededDuplicateCandidateCount: supersededCandidates.count,
         supersededApprovalStepCount: supersededApprovalSteps.count,
+        payout,
       });
       return {
         step: step ? this.toStep(step) : undefined,
@@ -877,6 +1107,7 @@ export class PrismaReimbursementRepository {
         documentNumberReused,
         supersededDuplicateCandidateCount: supersededCandidates.count,
         supersededApprovalStepCount: supersededApprovalSteps.count,
+        payout,
       };
     });
   }
@@ -914,6 +1145,8 @@ export class PrismaReimbursementRepository {
     reason: string;
     startedAt: Date;
     onIntentPersisted: (tx: any) => Promise<void>;
+    /** Runs in the same transaction when a stored reason the void refuses is replaced by `reason`. */
+    onReasonCorrected?: (tx: any, previousReason: string | undefined) => Promise<void>;
   }): Promise<{ request: ReimbursementRequestRecord; resumed: boolean }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
@@ -926,11 +1159,25 @@ export class PrismaReimbursementRepository {
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
       if (request.cancellationPendingAt) {
-        if (request.cancellationPendingByUserId !== data.actorUserId
-          || request.cancellationPendingReason !== data.reason) {
+        // Audit B3: a started cancellation is continued by whoever may cancel the claim, not only by
+        // the person who started it (the caller has checked that right). Its reason stays the one on
+        // record: expense records may already be voided under it. Only a stored reason the void
+        // refuses is replaced, because nothing can have been voided with that one.
+        if (request.cancellationPendingReason === data.reason) return { request, resumed: true };
+        if (isExpenseVoidReason(request.cancellationPendingReason)) {
           throw new ConflictException('reimbursement_cancellation_already_pending');
         }
-        return { request, resumed: true };
+        const corrected = await tx.reimbursementRequest.updateMany({
+          where: { id: data.requestId, companyId: data.companyId, updatedAt: row.updatedAt, cancellationPendingAt: row.cancellationPendingAt },
+          data: { cancellationPendingReason: data.reason, updatedByUserId: data.actorUserId, updatedAt: this.nextVersion(row.updatedAt) },
+        });
+        if (corrected.count !== 1) throw new ConflictException('reimbursement_cancellation_state_changed');
+        await data.onReasonCorrected?.(tx, request.cancellationPendingReason);
+        const updated = await tx.reimbursementRequest.findFirstOrThrow({
+          where: { id: data.requestId, companyId: data.companyId },
+          include: { lines: { orderBy: { lineNo: 'asc' } } },
+        });
+        return { request: this.toRequest(updated), resumed: true };
       }
       if (request.status !== data.expectedStatus || request.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('reimbursement_cancellation_state_changed');
@@ -988,7 +1235,9 @@ export class PrismaReimbursementRepository {
       if (row.status === 'CANCELLED') return this.toRequest(row);
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes, data.systemReconcile, data.expectedBranchId);
-      if (!request.cancellationPendingAt || request.cancellationPendingByUserId !== data.actorUserId) {
+      // Whoever may cancel the claim finishes a cancellation someone else started; what matters is
+      // that the intent is still there (it may have been withdrawn in between).
+      if (!request.cancellationPendingAt) {
         throw new ConflictException('reimbursement_cancellation_intent_changed');
       }
       const recordedPayments = await tx.reimbursementPayment.count({
@@ -1017,7 +1266,6 @@ export class PrismaReimbursementRepository {
           status: row.status,
           updatedAt: row.updatedAt,
           cancellationPendingAt: row.cancellationPendingAt,
-          cancellationPendingByUserId: data.actorUserId,
         },
         data: {
           status: 'CANCELLED',
@@ -1043,6 +1291,86 @@ export class PrismaReimbursementRepository {
     });
   }
 
+  /**
+   * What would stop this claim's cancellation from finishing: the first of its expense records the
+   * void would refuse (a closed accounting period, a locked tax period, a journal that is not posted,
+   * a record no void takes). Read before a cancellation is started, so the intent is not written for
+   * a cancellation that cannot finish, and again whenever a started one is shown or continued.
+   */
+  async findCancellationBlocker(request: Pick<ReimbursementRequestRecord, 'id' | 'companyId' | 'branchId'>): Promise<ExpenseVoidBlocker | null> {
+    for (const projection of await this.listClaimProjections(request.companyId, request.id)) {
+      if (projection.status === 'VOIDED') continue;
+      // The void's own authority check: a record on another branch than its claim is refused.
+      if (projection.branchId !== request.branchId) return { code: 'expense_not_voidable' };
+      const blocker = await findClaimExpenseVoidBlocker(this.prisma.client, request.companyId, projection.id);
+      if (blocker) return blocker;
+    }
+    return null;
+  }
+
+  /**
+   * The fence of a cancellation's expense voids, run first inside each void transaction: the void
+   * goes ahead only while the claim still holds its cancellation intent.
+   *
+   * The claim's lock orders it against a withdrawal: either the withdrawal waits and then finds this
+   * record voided (and refuses), or it ran first. The row lock is what makes "ran first" visible to a
+   * void whose snapshot was taken while it waited (the confirmed-expense void is serializable):
+   * PostgreSQL refuses to lock a row changed since that snapshot, and a read-committed void reads
+   * the row as it is now. A shared lock, so two voids of one cancellation do not refuse each other.
+   */
+  async assertCancellationPending(tx: any, companyId: string, requestId: string): Promise<void> {
+    await this.lockRequest(tx, companyId, requestId);
+    const rows: Array<{ pending: Date | null }> = await tx.$queryRaw`
+      SELECT "cancellationPendingAt" AS pending FROM "ReimbursementRequest"
+      WHERE "id" = ${requestId} AND "companyId" = ${companyId} FOR SHARE`;
+    if (!rows[0]?.pending) throw new ConflictException('reimbursement_cancellation_intent_changed');
+  }
+
+  /**
+   * Takes a started cancellation back, so the claim goes on as before. Only while none of the
+   * claim's expense records has been voided: after that the claim cannot go on, and the
+   * cancellation has to be finished instead.
+   */
+  async withdrawCancellationAtomic(data: {
+    companyId: string;
+    requestId: string;
+    actorUserId: string;
+    scopes: { branchIds?: string[] };
+    onWithdrawnPersisted: (tx: any, withdrawn: { startedByUserId?: string; startedAt: Date; reason?: string }) => Promise<void>;
+  }): Promise<ReimbursementRequestRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId } });
+      if (!row) throw new NotFoundException('Reimbursement request not found');
+      this.assertDecisionBranch(row.branchId, data.scopes);
+      if (!row.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_not_pending');
+      const voided = await tx.expenseRecord.count({
+        where: { companyId: data.companyId, sourceReimbursementRequestId: data.requestId, status: 'VOIDED' },
+      });
+      if (voided > 0) throw new ConflictException('reimbursement_cancellation_partly_done');
+      const changed = await tx.reimbursementRequest.updateMany({
+        where: { id: data.requestId, companyId: data.companyId, updatedAt: row.updatedAt, cancellationPendingAt: row.cancellationPendingAt },
+        data: {
+          cancellationPendingAt: null,
+          cancellationPendingByUserId: null,
+          cancellationPendingReason: null,
+          updatedByUserId: data.actorUserId,
+          updatedAt: this.nextVersion(row.updatedAt),
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('reimbursement_cancellation_state_changed');
+      await data.onWithdrawnPersisted(tx, {
+        startedByUserId: opt(row.cancellationPendingByUserId), startedAt: row.cancellationPendingAt, reason: opt(row.cancellationPendingReason),
+      });
+      const updated = await tx.reimbursementRequest.findFirstOrThrow({
+        where: { id: data.requestId, companyId: data.companyId },
+        include: { _count: { select: { lines: true } } },
+      });
+      return this.toRequest(updated);
+    });
+  }
+
   async listPendingCancellationIntents(limit = 100): Promise<Array<{
     request: ReimbursementRequestRecord;
     actorUserId: string;
@@ -1051,7 +1379,8 @@ export class PrismaReimbursementRepository {
     const rows = await (this.prisma.client as any).reimbursementRequest.findMany({
       where: { cancellationPendingAt: { not: null }, status: { notIn: ['CANCELLED', 'VOIDED'] } },
       include: { lines: { orderBy: { lineNo: 'asc' } } },
-      orderBy: { cancellationPendingAt: 'asc' },
+      // Newest first, like the projection intents: one a person has to unblock never holds the head of the list.
+      orderBy: { cancellationPendingAt: 'desc' },
       take: limit,
     });
     return rows.flatMap((row: any) => row.cancellationPendingByUserId && row.cancellationPendingReason
@@ -1059,8 +1388,150 @@ export class PrismaReimbursementRepository {
       : []);
   }
 
+  // ---- Payout account (rules: ../domain/logic/payout-destination.logic.ts, SQL: ./reimbursement-payout.ts) ----
+
+  findMemberPayoutAccount(companyId: string, userId: string): Promise<MemberPayoutAccountRecord | null> {
+    return readMemberPayoutAccount(this.prisma.client, companyId, userId);
+  }
+
+  /** Reveal only. */
+  findMemberPayoutSecret(companyId: string, userId: string): Promise<string | null> {
+    return readMemberPayoutSecret(this.prisma.client, companyId, userId);
+  }
+
+  /** `tx`: join a draft save that sets the default in the same transaction. */
+  async setMemberPayoutAccount(
+    data: { companyId: string; userId: string; actorUserId: string; payoutMethod: 'BANK_TRANSFER' | 'CASH'; destination?: SealedPayoutDestination },
+    onPersisted: (tx: any, change: { before: MemberPayoutAccountRecord | null; after: MemberPayoutAccountRecord }) => Promise<void>,
+    tx?: any,
+  ): Promise<MemberPayoutAccountRecord> {
+    const write = async (client: any) => {
+      const change = await writeMemberPayoutAccount(client, data);
+      await onPersisted(client, change);
+      return change.after;
+    };
+    return tx ? write(tx) : (this.prisma.client as any).$transaction(write);
+  }
+
+  async removeMemberPayoutAccount(
+    companyId: string,
+    userId: string,
+    onPersisted: (tx: any, before: MemberPayoutAccountRecord) => Promise<void>,
+  ): Promise<boolean> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const before = await deleteMemberPayoutAccount(tx, companyId, userId);
+      if (before) await onPersisted(tx, before);
+      return !!before;
+    });
+  }
+
+  /**
+   * Whose default account an employee-data editor may set: the member, whether they have an employee
+   * record, their branches, and whether they manage people themselves (a manager may not set a
+   * peer's or a superior's account).
+   */
+  async findPayoutMember(companyId: string, userId: string): Promise<{
+    displayName: string; membershipStatus: string; hasEmployeeProfile: boolean; allBranches: boolean; branchIds: string[]; managesPeople: boolean;
+  } | null> {
+    const row = await this.prisma.client.companyMembership.findFirst({
+      where: { companyId, userId },
+      select: {
+        status: true, branchScopeMode: true, defaultBranchId: true, branchScopes: { select: { branchId: true } },
+        employeeAccessProfile: { select: { id: true } }, user: { select: { displayName: true } },
+        roles: { select: { role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } } } },
+      },
+    });
+    if (!row) return null;
+    return {
+      displayName: row.user.displayName,
+      // The status the notification writer filters recipients by: only an ACTIVE member is ever told.
+      membershipStatus: row.status,
+      hasEmployeeProfile: !!row.employeeAccessProfile,
+      // The same reading of "people-managing role" as suspending or deleting an employee uses.
+      managesPeople: row.roles.some(({ role }) => PAYOUT_PEOPLE_MANAGER_ROLE_KEYS.includes(role.key)
+        || hasPrivilegedGrant(role.permissions.map((entry) => entry.permission.key))),
+      allBranches: row.branchScopeMode === 'ALL_BRANCHES',
+      branchIds: [...new Set([...row.branchScopes.map((scope) => scope.branchId), ...(row.defaultBranchId ? [row.defaultBranchId] : [])])],
+    };
+  }
+
+  /**
+   * Whether the member holds the product's own OWNER or ADMIN role. Roles are compared by what they
+   * are, not by their key: a role a company makes gets its key from its name, so a custom role named
+   * "Admin" has the key ADMIN too, and so does the copy a company gets when it edits the Admin role.
+   * Both live in the company's scope (`scopeKey` = the company, `isSystem` false) and cannot be told
+   * apart, so neither counts: only the system role (`scopeKey` 'system', no company) does.
+   */
+  async holdsSystemOwnerOrAdminRole(companyId: string, userId: string): Promise<boolean> {
+    return !!await this.prisma.client.companyMembership.findFirst({
+      where: {
+        companyId, userId, status: 'ACTIVE',
+        roles: { some: { role: { key: { in: ['OWNER', 'ADMIN'] }, status: 'ACTIVE', isSystem: true, scopeKey: 'system', companyId: null } } },
+      },
+      select: { id: true },
+    });
+  }
+
+  /** The claim's own snapshot. Never the member's default account. */
+  findClaimPayout(request: ReimbursementRequestRecord) {
+    return readClaimPayout(this.prisma.client, request);
+  }
+
+  /** Every account the claim has been sent with, oldest first, masked: the claim page's account history. */
+  listClaimPayoutVersions(request: ReimbursementRequestRecord) {
+    return readClaimPayoutVersions(this.prisma.client, request);
+  }
+
+  /** A draft only: the requester's default account it will be sent with. */
+  findDraftDefaultPayout(request: ReimbursementRequestRecord) {
+    return readDraftDefaultPayout(this.prisma.client, request);
+  }
+
+  /** Reveal only. */
+  findClaimPayoutSecret(companyId: string, requestId: string, version: number) {
+    return readClaimPayoutSecret(this.prisma.client, companyId, requestId, version);
+  }
+
+  planSubmitPayout(request: ReimbursementRequestRecord): Promise<SubmitPayoutPlan> {
+    return readSubmitPayoutPlan(this.prisma.client, request);
+  }
+
+  /** A legacy claim's payer only: the requester's default account as it is now, masked (spec §15). */
+  findLegacyPayoutDefault(request: ReimbursementRequestRecord) {
+    return readLegacyPayoutDefault(this.prisma.client, request);
+  }
+
+  /** The masked accounts a claim's payments were confirmed into, by account version. */
+  listPaymentPayoutDestinations(companyId: string, requestId: string, versions: readonly number[]) {
+    return readPaymentPayoutDestinations(this.prisma.client, companyId, requestId, versions);
+  }
+
+  /** A correction round: whether the account the claim holds now is the one that version named. A yes or a no; no fingerprint leaves. */
+  claimPayoutMatchesVersion(request: ReimbursementRequestRecord, version: number): Promise<boolean> {
+    return claimPayoutMatchesVersion(this.prisma.client, request, version);
+  }
+
+  /** Friendly preflight of the payout proof that `recordPaymentAtomic` repeats under the payment lock. */
+  assertPaymentPayoutUsable(request: ReimbursementRequestRecord, plan: PaymentPayoutPlan): Promise<void> {
+    return assertPaymentPayoutUsable(this.prisma.client, request, plan);
+  }
+
+  /** A recorded payment's account as a payment request states it: see `isSamePaymentRequest`. */
+  findRecordedPaymentPayout(request: ReimbursementRequestRecord, payment: ReimbursementPaymentRecord) {
+    return readRecordedPaymentPayout(this.prisma.client, request, payment);
+  }
+
   private async lockRequest(tx: any, companyId: string, requestId: string): Promise<void> {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${requestId}:reimbursement-request`}))`;
+  }
+
+  /**
+   * A claim being cancelled takes no other decision until that cancellation is finished or
+   * withdrawn (audit B3). A decision taken in between could leave it in a status the cancellation
+   * cannot complete from, or build expense records the cancellation then has to void.
+   */
+  private assertNotBeingCancelled(row: { cancellationPendingAt?: Date | null }): void {
+    if (row.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
   }
 
   private assertDecisionBranch(
@@ -1189,16 +1660,9 @@ export class PrismaReimbursementRepository {
   ): string {
     const storedHash = request.approvalSnapshotHash;
     if (!storedHash || !request.lines?.length) throw new ConflictException('stale_approval_snapshot');
-    const liveHash = computeSnapshotHash({
-      amount: request.amount,
-      currency: request.currency,
-      categoryKey: request.categoryKey,
-      incurredDate: request.incurredDate.toISOString(),
-      reason: request.reason,
-      primaryAttachmentId: request.primaryAttachmentId,
-      lines: request.lines,
-      approvalPolicySnapshotJson: request.approvalPolicySnapshotJson,
-    });
+    // Same builder as the submit that stored the hash: a claim sent with a payout snapshot is
+    // checked with it, a legacy claim without.
+    const liveHash = computeSnapshotHash(claimSnapshotFields(request, request.approvalPolicySnapshotJson));
     const legacyV1Compatible = isExactLegacyV1FallbackSnapshot({
       requestId: request.id,
       companyId: request.companyId,
@@ -1214,12 +1678,20 @@ export class PrismaReimbursementRepository {
       lines: request.lines,
     }, storedHash);
     if (storedHash !== liveHash && !legacyV1Compatible) throw new ConflictException('stale_approval_snapshot');
-    if (expectedApprovalSnapshotHash && expectedApprovalSnapshotHash !== storedHash) {
+    // Nothing is approved unseen: the approver names the claim content they looked at, and it has to
+    // be the content stored now. A call that names none is as stale as one that names another.
+    if (expectedApprovalSnapshotHash !== storedHash) {
       throw new ConflictException('stale_approval_snapshot');
     }
     return storedHash;
   }
 
+  /**
+   * Wholesale line replacement, mirroring the expense-line convention: advisory
+   * lock on the claim, drop the lines the caller no longer sends, upsert the
+   * rest on the (requestId, lineNo) unique — never create-then-catch-P2002
+   * inside a transaction (Prisma 7 aborts it, 25P02).
+   */
   private async replaceLines(
     tx: any,
     companyId: string,
@@ -1277,6 +1749,8 @@ export class PrismaReimbursementRepository {
     financeReviewRequired: boolean;
     decidedAt: Date;
     comment?: string;
+    /** "ตรวจบัญชีแล้ว": the account version the approver looked at. */
+    payoutVerifiedVersion?: unknown;
     financeRequestPatch: Record<string, unknown>;
     onDecisionPersisted: (tx: any) => Promise<void>;
   }): Promise<{ request: ReimbursementRequestRecord; resumed: boolean; approvalStepId: string }> {
@@ -1288,12 +1762,13 @@ export class PrismaReimbursementRepository {
         include: { lines: { orderBy: { lineNo: 'asc' } } },
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
-      if (row.status !== 'PENDING_APPROVAL') {
-        throw new UnprocessableEntityException(`Cannot approve from status ${row.status}`);
-      }
+      if (row.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
       if (row.cancellationPendingAt) {
         throw new ConflictException('reimbursement_cancellation_pending');
       }
+      // A claim whose payout account is being corrected is approved by `approvePayoutCorrectionAtomic`
+      // alone, in one transaction. This two-phase decision would leave it decided and still in its round.
+      if (row.payoutCorrectionRequestedAt) throw new ConflictException('payout_correction_in_progress');
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_approval_snapshot');
       }
@@ -1325,6 +1800,10 @@ export class PrismaReimbursementRepository {
         return { request, resumed: true, approvalStepId: step.id };
       }
       if (step.status !== 'PENDING') throw new ConflictException('stale_approval_snapshot');
+      // Same transaction as the decision: an approval of a transfer claim cannot exist without it.
+      await attestClaimPayout(tx, request, {
+        verifiedVersion: data.payoutVerifiedVersion, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id,
+      });
 
       const changedStep = await tx.reimbursementApprovalStep.updateMany({
         where: {
@@ -1390,6 +1869,7 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'FINANCE_REVIEW') {
         throw new UnprocessableEntityException(`Cannot finance-review from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_finance_review_snapshot');
       }
@@ -1460,6 +1940,7 @@ export class PrismaReimbursementRepository {
       if (!['APPROVED', 'READY_FOR_PAYMENT'].includes(row.status)) {
         throw new UnprocessableEntityException(`Cannot resolve duplicates from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.requestChanged();
       this.assertDecisionBranch(row.branchId, data.scopes);
       await this.overrideOpenDuplicates(tx, data.companyId, data.requestId, data.actorUserId, data.resolvedAt, data.reason);
@@ -1506,6 +1987,7 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'FINANCE_REVIEW') {
         throw new UnprocessableEntityException(`Cannot finance-review from status ${row.status}`);
       }
+      this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_finance_review_snapshot');
       }
@@ -1547,6 +2029,7 @@ export class PrismaReimbursementRepository {
             paymentStatus: 'NOT_PAYABLE',
             duplicateStatus: 'NOT_CHECKED',
             postingStatus: 'not_required',
+            ...await draftPayoutAfterReopen(tx, request),
           } : {}),
           financeReviewStatus: data.decision,
           financeReviewedByUserId: data.actorUserId,
@@ -1603,6 +2086,8 @@ export class PrismaReimbursementRepository {
       if (!row) throw new NotFoundException('Reimbursement request not found');
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes, data.systemReconcile, data.expectedBranchId);
+      // No expense record is built for a claim that is being cancelled: the cancellation would have to void it.
+      this.assertNotBeingCancelled(request);
       if (data.decisionKind === 'MANAGER') {
         if (request.status !== 'PENDING_APPROVAL' || request.currentApprovalStepId !== data.approvalStepId) {
           throw new ConflictException('reimbursement_projection_decision_changed');
@@ -1619,6 +2104,9 @@ export class PrismaReimbursementRepository {
         if (!step || step.requestSnapshotHash !== request.approvalSnapshotHash) {
           throw new ConflictException('reimbursement_projection_decision_changed');
         }
+        // Whoever carries the decision out, at once or as a retry: the claim must still be what was
+        // approved. Nothing is built for a claim whose content moved since (stale_approval_snapshot).
+        this.assertApprovalSnapshot(request, request.approvalSnapshotHash);
       } else if (data.decisionKind === 'FINANCE') {
         if (request.status !== 'FINANCE_REVIEW'
           || request.financeReviewStatus !== 'APPROVED_FOR_PAYMENT'
@@ -1767,20 +2255,44 @@ export class PrismaReimbursementRepository {
     }));
   }
 
-  async listPendingProjectionIntents(limit = 100): Promise<Array<{
-    request: ReimbursementRequestRecord;
-    kind: 'MANAGER' | 'FINANCE' | 'POLICY';
-    actorUserId: string;
-    approvalStepId?: string;
-  }>> {
+  /**
+   * The claims whose durable decision the system has yet to carry out (`pendingProjectionIntent`),
+   * at most `limit` of them, the most recently decided first.
+   *
+   * Newest first: a claim that failed a moment ago most likely failed in passing and is repaired on
+   * this run, while one that cannot be repaired (its line falls in a closed accounting period, say)
+   * drops down the list as new ones arrive instead of holding a place at its head for good.
+   * ponytail: no attempt counter. Past `limit` claims that cannot complete, the oldest of them stop
+   * being retried by the run; add a counter with a backoff if the failure log ever shows that many.
+   *
+   * Only decisions made before `decidedBefore`, a minute ago unless the caller says otherwise: the
+   * newest decision of all is the one a live approve, submit or finance request is still carrying
+   * out, and a pass that took it would compete with that request for the same expense records (it
+   * can lose a document-number race and answer 409). Left alone for a minute, a decision is either
+   * carried out or truly waiting. The claim's `updatedAt` is when it was decided: the decision is the
+   * write that put it in this state.
+   */
+  async listPendingProjectionIntents(
+    limit = 100,
+    decidedBefore = new Date(Date.now() - PROJECTION_INTENT_MIN_AGE_MS),
+  ): Promise<Array<PendingProjectionIntent & { request: ReimbursementRequestRecord }>> {
+    const updatedAt = { lt: decidedBefore };
     const [managerRows, financeRows, policyRows] = await Promise.all([
       (this.prisma.client as any).reimbursementRequest.findMany({
-        where: { status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null },
+        // Decided: no step is waiting any more. Asked of the database, not filtered afterwards:
+        // every claim still waiting for its approver is PENDING_APPROVAL too, and a page of those
+        // would otherwise crowd the decided ones out of the first `limit` rows.
+        where: {
+          status: 'PENDING_APPROVAL', currentApprovalStepId: { not: null }, cancellationPendingAt: null, updatedAt,
+          // Never a claim whose payout account is being corrected: it holds no decision to carry out.
+          payoutCorrectionRequestedAt: null,
+          approvalSteps: { some: { status: 'APPROVED' }, none: { status: 'PENDING' } },
+        },
         include: {
           lines: { orderBy: { lineNo: 'asc' } },
           approvalSteps: { where: { status: 'APPROVED' } },
         },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
       (this.prisma.client as any).reimbursementRequest.findMany({
@@ -1789,45 +2301,46 @@ export class PrismaReimbursementRepository {
           financeReviewStatus: 'APPROVED_FOR_PAYMENT',
           financeReviewedByUserId: { not: null },
           cancellationPendingAt: null,
+          updatedAt,
         },
-        include: { lines: { orderBy: { lineNo: 'asc' } } },
-        orderBy: { updatedAt: 'asc' },
+        // The approved steps too: the replayed ready-to-pay event names the claim's approver.
+        include: { lines: { orderBy: { lineNo: 'asc' } }, approvalSteps: { where: { status: 'APPROVED' } } },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
       (this.prisma.client as any).reimbursementRequest.findMany({
-        where: { status: 'APPROVED', currentApprovalStepId: null, cancellationPendingAt: null },
+        where: { status: 'APPROVED', currentApprovalStepId: null, cancellationPendingAt: null, updatedAt },
         include: { lines: { orderBy: { lineNo: 'asc' } } },
-        orderBy: { updatedAt: 'asc' },
+        orderBy: { updatedAt: 'desc' },
         take: limit,
       }),
     ]);
-    const intents: Array<{
-      request: ReimbursementRequestRecord;
-      kind: 'MANAGER' | 'FINANCE' | 'POLICY';
-      actorUserId: string;
-      approvalStepId?: string;
-    }> = [];
-    for (const row of managerRows) {
-      const request = this.toRequest(row);
-      const step = request.approvalSteps?.find((candidate) => candidate.id === request.currentApprovalStepId);
-      if (step?.status === 'APPROVED' && step.decisionByUserId) {
-        intents.push({ request, kind: 'MANAGER', actorUserId: step.decisionByUserId, approvalStepId: step.id });
-      }
+    return [...managerRows, ...financeRows, ...policyRows]
+      .map((row: any) => this.toRequest(row))
+      .flatMap((request) => {
+        // This list is read across every company. A claim whose frozen policy cannot be read (the
+        // parser throws, as it does on every other read of that claim) is left out of it, so one
+        // such row never stops the run for everyone else's claims.
+        try {
+          const intent = pendingProjectionIntent(request);
+          return intent ? [{ request, ...intent }] : [];
+        } catch {
+          return [];
+        }
+      })
+      .sort((a, b) => b.request.updatedAt.getTime() - a.request.updatedAt.getTime())
+      .slice(0, limit);
+  }
+
+  /** Whether every line of the claim has its confirmed expense record: what the payment gate asks. */
+  async areClaimProjectionsReady(request: ReimbursementRequestRecord): Promise<boolean> {
+    try {
+      await this.assertClaimProjectionsReady(this.prisma.client as any, request);
+      return true;
+    } catch (error) {
+      if (error instanceof ConflictException) return false;
+      throw error;
     }
-    for (const row of financeRows) {
-      const request = this.toRequest(row);
-      if (request.financeReviewedByUserId) {
-        intents.push({ request, kind: 'FINANCE', actorUserId: request.financeReviewedByUserId });
-      }
-    }
-    for (const row of policyRows) {
-      const request = this.toRequest(row);
-      const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
-      if (snapshot && !snapshot.requiresApproval && !snapshot.financeReviewRequired) {
-        intents.push({ request, kind: 'POLICY', actorUserId: request.submittedByUserId ?? request.requesterUserId });
-      }
-    }
-    return intents.sort((a, b) => a.request.updatedAt.getTime() - b.request.updatedAt.getTime()).slice(0, limit);
   }
 
   private async assertClaimProjectionsReady(
@@ -1899,6 +2412,9 @@ export class PrismaReimbursementRepository {
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (row.status === 'READY_FOR_PAYMENT') return this.toRequest(row);
+      // A cancellation started while the decision was being carried out comes first: the claim is not
+      // moved on, and nobody is told to pay it, only for the cancellation to close it a moment later.
+      this.assertNotBeingCancelled(row);
       if (row.status !== 'PENDING_APPROVAL' || row.currentApprovalStepId !== data.approvalStepId) {
         throw new ConflictException('reimbursement_projection_decision_changed');
       }
@@ -1924,6 +2440,7 @@ export class PrismaReimbursementRepository {
           status: 'PENDING_APPROVAL',
           currentApprovalStepId: data.approvalStepId,
           updatedAt: row.updatedAt,
+          cancellationPendingAt: null,
         },
         data: {
           status: 'READY_FOR_PAYMENT',
@@ -1967,6 +2484,7 @@ export class PrismaReimbursementRepository {
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (row.status === 'READY_FOR_PAYMENT') return this.toRequest(row);
+      this.assertNotBeingCancelled(row);
       const request = this.toRequest(row);
       const snapshot = parseReimbursementPolicySnapshot(request.approvalPolicySnapshotJson);
       if (request.status !== 'APPROVED' || request.currentApprovalStepId
@@ -1982,6 +2500,7 @@ export class PrismaReimbursementRepository {
           status: 'APPROVED',
           currentApprovalStepId: null,
           updatedAt: row.updatedAt,
+          cancellationPendingAt: null,
         },
         data: {
           status: 'READY_FOR_PAYMENT',
@@ -2021,6 +2540,7 @@ export class PrismaReimbursementRepository {
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (row.status === 'READY_FOR_PAYMENT') return this.toRequest(row);
+      this.assertNotBeingCancelled(row);
       if (row.status !== 'FINANCE_REVIEW'
         || row.financeReviewStatus !== 'APPROVED_FOR_PAYMENT'
         || row.financeReviewedByUserId !== data.decisionActorUserId) {
@@ -2037,6 +2557,7 @@ export class PrismaReimbursementRepository {
           financeReviewStatus: 'APPROVED_FOR_PAYMENT',
           financeReviewedByUserId: data.decisionActorUserId,
           updatedAt: row.updatedAt,
+          cancellationPendingAt: null,
         },
         data: {
           status: 'READY_FOR_PAYMENT',
@@ -2078,9 +2599,14 @@ export class PrismaReimbursementRepository {
         include: { lines: { orderBy: { lineNo: 'asc' } } },
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
-      if (row.status !== 'PENDING_APPROVAL') {
-        throw new UnprocessableEntityException(`Cannot reject from status ${row.status}`);
-      }
+      if (row.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
+      this.assertNotBeingCancelled(row);
+      // REJECTED releases the claim's receipts to other claims. A claim whose payout account is being
+      // corrected was approved and has its expense records, so refusing its new account sends it back to
+      // its requester (`requestPayoutCorrectionAtomic`) and never rejects it; and no claim at all is
+      // rejected while expense records of its own still stand.
+      if (row.payoutCorrectionRequestedAt) throw new ConflictException('payout_correction_in_progress');
+      await this.assertNoLiveProjections(tx, data.companyId, data.requestId);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_approval_snapshot');
       }
@@ -2127,6 +2653,334 @@ export class PrismaReimbursementRepository {
       });
       if (changedRequest.count !== 1) throw new ConflictException('stale_approval_snapshot');
       await data.onRejectedPersisted(tx);
+    });
+  }
+
+  // ---- Payout account correction round (payout spec §14) ----
+
+  /** A claim keeps the status its expense records were built under while any of them still stands. */
+  private async assertNoLiveProjections(tx: any, companyId: string, requestId: string): Promise<void> {
+    const live = await tx.expenseRecord.count({ where: { companyId, sourceReimbursementRequestId: requestId, status: { not: 'VOIDED' } } });
+    if (live > 0) throw new ConflictException('reimbursement_correction_has_projection');
+  }
+
+  /**
+   * The scans declared as the claim's signed form stop counting from here: they show the account that
+   * is now in question. Each stays in the list, marked as from before the correction. The same place a
+   * slip move withdraws a declaration (`linkPaymentSlip`): the scan's own metadata, under its link id.
+   */
+  private async supersedeSignedCopyDeclarations(tx: any, companyId: string, requestId: string, at: Date): Promise<number> {
+    const links: Array<{ id: string; attachmentId: string; attachment: { metadataJson: unknown } }> = await tx.attachmentLink.findMany({
+      where: { companyId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE, targetId: requestId, purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE },
+      select: { id: true, attachmentId: true, attachment: { select: { metadataJson: true } } },
+    });
+    let superseded = 0;
+    for (const link of links) {
+      const metadata = (link.attachment.metadataJson ?? {}) as Record<string, any>;
+      const ack = metadata[REIMBURSEMENT_SIGNED_COPY_ACK_KEY];
+      if (ack?.linkId !== link.id || ack.supersededAt) continue;
+      await tx.attachmentObject.update({
+        where: { id: link.attachmentId },
+        data: { metadataJson: { ...metadata, [REIMBURSEMENT_SIGNED_COPY_ACK_KEY]: { ...ack, supersededAt: at.toISOString() } } },
+      });
+      superseded += 1;
+    }
+    return superseded;
+  }
+
+  /**
+   * Sends a claim back to have its payout account corrected: out of READY_FOR_PAYMENT, or, while the
+   * account it was given waits for approval, back again to its requester (`again`). It takes the two
+   * locks recording a payment takes, in the same order, so a send-back and a payment of one claim
+   * cannot both succeed: whichever commits first leaves the other with a claim that changed under it.
+   *
+   * Only the round is written. The approval the claim stood on is set aside, `approvedAt` is cleared
+   * and the claim is not payable; its number, lines, amounts, evidence, duplicate state, finance
+   * result, expense records and journals are not touched. What was signed was signed on the account
+   * now in question: the signature rows go, and a scan declared as signed stops counting.
+   */
+  async requestPayoutCorrectionAtomic(data: {
+    companyId: string;
+    requestId: string;
+    expectedUpdatedAt: Date;
+    actorUserId: string;
+    actorRoles: string[];
+    scopes: { branchIds?: string[] };
+    /** The claim's self-approval rule, for a send-back made by deciding the waiting step. */
+    allowSelfApproval: boolean;
+    requestedAt: Date;
+    reasonCode: ReimbursementPayoutCorrectionReason;
+    note?: string;
+    onPersisted: (tx: any, result: { again: boolean; setAsideStepIds: string[]; signaturesRemoved: number; declarationsSetAside: number }) => Promise<void>;
+  }): Promise<ReimbursementRequestRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${data.companyId}:${data.requestId}:reimbursement-payment`}))`;
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId } });
+      if (!row) throw new NotFoundException('Reimbursement request not found');
+      this.assertNotBeingCancelled(row);
+      // Paid, cancelled or sent back by someone else since the caller read it: they look again.
+      if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.requestChanged();
+      this.assertDecisionBranch(row.branchId, data.scopes);
+      const phase = payoutCorrectionPhase(row);
+      if (phase === 'AWAITING_REQUESTER') throw new ConflictException('payout_correction_in_progress');
+      const again = phase === 'AWAITING_APPROVAL';
+      const where = { companyId: data.companyId, reimbursementRequestId: data.requestId };
+      const setAside = { invalidatedAt: data.requestedAt, invalidatedReason: PAYOUT_CORRECTION_STEP_REASON };
+      let setAsideStepIds: string[];
+      if (again) {
+        // The step that waits: whoever may decide it sends the claim back, exactly as they would reject.
+        const step = row.currentApprovalStepId
+          ? await tx.reimbursementApprovalStep.findFirst({ where: { ...where, id: row.currentApprovalStepId } }) : null;
+        if (!step || step.status !== 'PENDING') throw this.requestChanged();
+        const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, row.branchId);
+        if (!assignedBySnapshot && isSelfApproval(row.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
+          throw new ForbiddenException('self_approval_denied');
+        }
+        const cancelled = await tx.reimbursementApprovalStep.updateMany({ where: { ...where, id: step.id, status: 'PENDING' }, data: { status: 'CANCELLED', ...setAside } });
+        if (cancelled.count !== 1) throw this.requestChanged();
+        setAsideStepIds = [step.id];
+      } else {
+        if (row.status !== 'READY_FOR_PAYMENT') throw new ConflictException('payout_correction_not_allowed');
+        // A payment that stands is voided first: the account it went into is never changed under it.
+        if (await tx.reimbursementPayment.count({ where: { ...where, status: 'RECORDED' } }) > 0) {
+          throw new ConflictException('payout_correction_not_allowed');
+        }
+        // The approval the claim stands on (`isReimbursementClaimApprover`): in force, and given in the
+        // round the claim was last sent in. It stays as history. A claim nobody had to approve has none.
+        const approvals: Array<{ id: string }> = row.submittedAt ? await tx.reimbursementApprovalStep.findMany({
+          where: { ...where, status: 'APPROVED', invalidatedAt: null, decidedAt: { gte: row.submittedAt } }, select: { id: true },
+        }) : [];
+        setAsideStepIds = approvals.map((step) => step.id);
+        if (setAsideStepIds.length > 0) await tx.reimbursementApprovalStep.updateMany({ where: { ...where, id: { in: setAsideStepIds } }, data: setAside });
+      }
+      const entry: ReimbursementPayoutCorrectionLogEntry = {
+        kind: 'SENT_BACK', at: data.requestedAt.toISOString(), byUserId: data.actorUserId, reasonCode: data.reasonCode,
+        ...(data.note && { note: data.note }),
+        // What the claim was approved with, for the comparison its approvers are shown. A legacy claim had no method.
+        ...(!again && { approved: {
+          ...(hasPayoutSnapshot(row) && { payoutMethod: row.payoutMethod, ...(row.payoutDestinationVersion != null && { payoutVersion: row.payoutDestinationVersion }) }),
+          ...(row.approvedAt && { at: row.approvedAt.toISOString() }),
+        } }),
+      };
+      const changed = await tx.reimbursementRequest.updateMany({
+        where: { id: data.requestId, companyId: data.companyId, status: row.status, updatedAt: row.updatedAt, cancellationPendingAt: null },
+        data: {
+          status: 'PENDING_APPROVAL',
+          approvedAt: null,
+          paymentStatus: 'NOT_PAYABLE',
+          currentApproverUserId: null,
+          currentApprovalStepId: null,
+          payoutCorrectionRequestedAt: data.requestedAt,
+          payoutCorrectionRequestedByUserId: data.actorUserId,
+          payoutCorrectionReasonCode: data.reasonCode,
+          payoutCorrectionNote: data.note ?? null,
+          payoutCorrectionSubmittedAt: null,
+          payoutCorrectionLogJson: withPayoutCorrectionStep(row, entry),
+          updatedByUserId: data.actorUserId,
+          updatedAt: this.nextVersion(row.updatedAt),
+        },
+      });
+      if (changed.count !== 1) throw this.requestChanged();
+      const signatures = await tx.reimbursementClaimSignature.deleteMany({ where: where });
+      const declarationsSetAside = await this.supersedeSignedCopyDeclarations(tx, data.companyId, data.requestId, data.requestedAt);
+      await data.onPersisted(tx, { again, setAsideStepIds, signaturesRemoved: signatures.count, declarationsSetAside });
+      return this.toRequest(await tx.reimbursementRequest.findFirstOrThrow({
+        where: { id: data.requestId, companyId: data.companyId }, include: { _count: { select: { lines: true } } },
+      }));
+    });
+  }
+
+  /**
+   * The account a claim in a round is given (payout spec §14.5), in one transaction: it is frozen as a
+   * new version, the claim's approval hash is made again from the same claim with that account, and a
+   * new approval step waits for the approvers the claim had (`payoutCorrectionSourceStep`; a step
+   * still waiting from an earlier answer is replaced). A claim nobody had to approve is ready for
+   * payment at once, its expense records checked first: whoever pays it is the one to check the account.
+   *
+   * Of the people the claim's step named, the new step keeps only those on today's approval route
+   * (`approverRouteUserIds`, final review S2). The old step may be weeks old and a claim in a round
+   * cannot be withdrawn and sent again, so a person who has since lost the approve right would
+   * otherwise be the only one able to approve a change of bank account. When none of them is left
+   * the step names nobody, and its recorded role, or the owner, decides it.
+   */
+  async submitPayoutCorrectionAtomic(data: {
+    companyId: string;
+    requestId: string;
+    expectedUpdatedAt: Date;
+    actorUserId: string;
+    scopes: { branchIds?: string[] };
+    submittedAt: Date;
+    /** The receiving choice with whatever must commit with it, as for a draft (`draftPayoutChange`), or the account the claim had. */
+    payout: { write: CorrectionPayoutWrite; onPersisted?: DraftPayoutChange['onPersisted'] };
+    /** For "use the default account": the token of the default the page showed. */
+    seenDefaultToken?: unknown;
+    /** The default account is set by `payout.onPersisted` in this transaction: what was typed is what is copied. */
+    defaultSetInThisTransaction?: boolean;
+    /** Who is on today's approval route for the step the round takes its approvers from, as a submit would resolve it. */
+    approverRouteUserIds: readonly string[];
+    onPersisted: (tx: any, result: {
+      columns: SubmitPayoutColumns; step?: ReimbursementApprovalStepRecord; replacedStepId?: string; readyForPayment: boolean;
+    }) => Promise<void>;
+  }): Promise<{ request: ReimbursementRequestRecord; step?: ReimbursementApprovalStepRecord; readyForPayment: boolean }> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const row = await tx.reimbursementRequest.findFirst({
+        where: { id: data.requestId, companyId: data.companyId },
+        include: { lines: { orderBy: { lineNo: 'asc' } }, approvalSteps: true },
+      });
+      if (!row) throw new NotFoundException('Reimbursement request not found');
+      this.assertNotBeingCancelled(row);
+      if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.requestChanged();
+      const request = this.toRequest(row);
+      if (!payoutCorrectionPhase(request)) throw new ConflictException('payout_correction_not_requested');
+      this.assertDecisionBranch(request.branchId, data.scopes);
+
+      // First what commits with the choice: a default account set here is the one copied below.
+      await data.payout.onPersisted?.(tx, data.requestId);
+      const columns = await freezePayoutCorrection(tx, request, {
+        write: data.payout.write, frozenAt: data.submittedAt,
+        seenDefaultToken: data.seenDefaultToken, defaultSetInThisTransaction: data.defaultSetInThisTransaction,
+        previous: payoutCorrectionRoundStart(request),
+      });
+      // The same claim with the account it has now: nothing else of it moved, so nothing else of the hash does.
+      const snapshotHash = computeSnapshotHash(claimSnapshotFields({ ...request, ...columns }, request.approvalPolicySnapshotJson));
+
+      const where = { companyId: data.companyId, reimbursementRequestId: data.requestId };
+      const source = payoutCorrectionSourceStep(request);
+      const replaced = source?.status === 'PENDING' ? source : undefined;
+      if (replaced) {
+        const cancelled = await tx.reimbursementApprovalStep.updateMany({
+          where: { ...where, id: replaced.id, status: 'PENDING' },
+          data: { status: 'CANCELLED', invalidatedAt: data.submittedAt, invalidatedReason: PAYOUT_CORRECTION_STEP_REASON },
+        });
+        if (cancelled.count !== 1) throw this.requestChanged();
+      }
+      const onRoute = (userId: string) => data.approverRouteUserIds.includes(userId);
+      // In the shape the old step had: a frozen list stays a list, a step that only named a person names that person.
+      const stillAssigned = source?.assignedApproverUserIds?.filter(onRoute) ?? [];
+      const step = source ? this.toStep(await tx.reimbursementApprovalStep.create({ data: {
+        ...where,
+        sequenceNo: source.sequenceNo,
+        approverUserId: source.approverUserId && onRoute(source.approverUserId) ? source.approverUserId : null,
+        approverRoleSnapshot: source.approverRoleSnapshot,
+        ...(stillAssigned.length > 0 && { assignedApproverUserIdsJson: stillAssigned }),
+        requestSnapshotHash: snapshotHash,
+        assignedAt: data.submittedAt,
+      } })) : undefined;
+      // Nobody approves it: it is payable again from here, so its expense records are held to its lines first.
+      if (!step) await this.assertClaimProjectionsReady(tx, request);
+
+      const entry: ReimbursementPayoutCorrectionLogEntry = {
+        kind: 'ACCOUNT_SUBMITTED', at: data.submittedAt.toISOString(), byUserId: data.actorUserId, payoutMethod: columns.payoutMethod,
+        ...(columns.payoutDestinationVersion !== null && { payoutVersion: columns.payoutDestinationVersion }),
+      };
+      const changed = await tx.reimbursementRequest.updateMany({
+        where: { id: data.requestId, companyId: data.companyId, status: 'PENDING_APPROVAL', updatedAt: row.updatedAt, cancellationPendingAt: null },
+        data: {
+          ...columns,
+          approvalSnapshotHash: snapshotHash,
+          ...(step
+            ? { currentApprovalStepId: step.id, currentApproverUserId: step.approverUserId ?? null, payoutCorrectionSubmittedAt: data.submittedAt }
+            : { status: 'READY_FOR_PAYMENT', approvedAt: data.submittedAt, paymentStatus: 'UNPAID', currentApprovalStepId: null, currentApproverUserId: null, ...NO_PAYOUT_CORRECTION }),
+          payoutCorrectionLogJson: withPayoutCorrectionStep(row, entry),
+          updatedByUserId: data.actorUserId,
+          updatedAt: this.nextVersion(row.updatedAt),
+        },
+      });
+      if (changed.count !== 1) throw this.requestChanged();
+      await data.onPersisted(tx, { columns, ...(step && { step }), ...(replaced && { replacedStepId: replaced.id }), readyForPayment: !step });
+      const updated = await tx.reimbursementRequest.findFirstOrThrow({
+        where: { id: data.requestId, companyId: data.companyId }, include: { lines: { orderBy: { lineNo: 'asc' } } },
+      });
+      return { request: this.toRequest(updated), ...(step && { step }), readyForPayment: !step };
+    });
+  }
+
+  /**
+   * Approves the account a correction round gave the claim (payout spec §14.6), in ONE transaction:
+   * the step is decided, the new account version gets its attester, the claim's expense records are
+   * held to its lines again, the claim is READY_FOR_PAYMENT and out of its round, and the caller's
+   * ready-to-pay event is written. Nothing is left for a second phase or for the reconciler, because
+   * nothing is built: the expense records and their journals are the ones the claim already has.
+   * Any refusal leaves the claim exactly as it was, the step and the attestation included.
+   */
+  async approvePayoutCorrectionAtomic(data: {
+    companyId: string;
+    requestId: string;
+    expectedUpdatedAt: Date;
+    expectedApprovalSnapshotHash?: string;
+    actorUserId: string;
+    actorRoles: string[];
+    scopes: { branchIds?: string[] };
+    allowSelfApproval: boolean;
+    decidedAt: Date;
+    comment?: string;
+    /** "ตรวจบัญชีแล้ว": the account version the approver looked at. */
+    payoutVerifiedVersion?: unknown;
+    onApprovedPersisted: (tx: any, approvalStepId: string) => Promise<void>;
+  }): Promise<ReimbursementRequestRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const row = await tx.reimbursementRequest.findFirst({
+        where: { id: data.requestId, companyId: data.companyId },
+        include: { lines: { orderBy: { lineNo: 'asc' } } },
+      });
+      if (!row) throw new NotFoundException('Reimbursement request not found');
+      this.assertNotBeingCancelled(row);
+      if (payoutCorrectionPhase(row) !== 'AWAITING_APPROVAL' || row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
+        throw new ConflictException('stale_approval_snapshot');
+      }
+      const request = this.toRequest(row);
+      this.assertDecisionBranch(request.branchId, data.scopes);
+      await assertReimbursementSources(tx, request);
+      const storedHash = this.assertApprovalSnapshot(request, data.expectedApprovalSnapshotHash);
+      const where = { companyId: data.companyId, reimbursementRequestId: data.requestId };
+      const step = request.currentApprovalStepId
+        ? await tx.reimbursementApprovalStep.findFirst({ where: { ...where, id: request.currentApprovalStepId } }) : null;
+      if (!step || step.status !== 'PENDING' || step.requestSnapshotHash !== storedHash) throw new ConflictException('stale_approval_snapshot');
+      const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
+        throw new ForbiddenException('self_approval_denied');
+      }
+      await attestClaimPayout(tx, request, {
+        verifiedVersion: data.payoutVerifiedVersion, actorUserId: data.actorUserId, verifiedAt: data.decidedAt, approvalStepId: step.id,
+      });
+      const decided = await tx.reimbursementApprovalStep.updateMany({
+        where: { ...where, id: step.id, status: 'PENDING', requestSnapshotHash: storedHash },
+        data: { status: 'APPROVED', decidedAt: data.decidedAt, decisionByUserId: data.actorUserId, comment: data.comment },
+      });
+      if (decided.count !== 1) throw new ConflictException('stale_approval_snapshot');
+      // Only held to the lines, never written: the duplicate and posting states of the claim stay as they were.
+      await this.assertClaimProjectionsReady(tx, request);
+      const changed = await tx.reimbursementRequest.updateMany({
+        where: {
+          id: data.requestId, companyId: data.companyId, status: 'PENDING_APPROVAL', updatedAt: data.expectedUpdatedAt,
+          currentApprovalStepId: step.id, cancellationPendingAt: null,
+        },
+        data: {
+          status: 'READY_FOR_PAYMENT',
+          approvedAt: data.decidedAt,
+          paymentStatus: 'UNPAID',
+          currentApproverUserId: null,
+          currentApprovalStepId: null,
+          ...NO_PAYOUT_CORRECTION,
+          payoutCorrectionLogJson: withPayoutCorrectionStep(row, {
+            kind: 'REAPPROVED', at: data.decidedAt.toISOString(), byUserId: data.actorUserId, approvalStepId: step.id,
+          }),
+          updatedByUserId: data.actorUserId,
+          updatedAt: this.nextVersion(data.expectedUpdatedAt),
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('stale_approval_snapshot');
+      await data.onApprovedPersisted(tx, step.id);
+      const updated = await tx.reimbursementRequest.findFirstOrThrow({
+        where: { id: data.requestId, companyId: data.companyId }, include: { lines: { orderBy: { lineNo: 'asc' } } },
+      });
+      return this.toRequest(updated);
     });
   }
 
@@ -2215,31 +3069,78 @@ export class PrismaReimbursementRepository {
     if (changed.count !== 1) throw new NotFoundException('Internal note not found');
   }
 
-  async listRequests(where: ListRequestsWhere): Promise<ReimbursementRequestRecord[]> {
+  /** The list predicate: company, requester, status filters, branch scope, the related-records relation and the search. */
+  private async requestListWhere(where: ListRequestsWhere): Promise<Prisma.ReimbursementRequestWhereInput & { AND: Prisma.ReimbursementRequestWhereInput[] }> {
     const predicates: Prisma.ReimbursementRequestWhereInput[] = [
       branchScopeWhere(where.scopes ?? {}) as Prisma.ReimbursementRequestWhereInput,
     ];
     if (where.relatedUserId) {
       predicates.push(await this.relatedRequestPredicate(where.companyId, where.relatedUserId, where.scopes));
     }
+    return {
+      companyId: where.companyId,
+      requesterUserId: where.requesterUserId,
+      status: (where.status as any) ?? (where.statuses ? { in: where.statuses as any } : undefined),
+      paymentStatus: where.paymentStatus as any,
+      AND: [...predicates, ...(where.search ? [{ OR: [
+        { requestNo: { contains: where.search, mode: 'insensitive' as const } },
+        { title: { contains: where.search, mode: 'insensitive' as const } },
+        { reason: { contains: where.search, mode: 'insensitive' as const } },
+      ] }] : [])],
+    };
+  }
+
+  /**
+   * One page of a list, read with LIMIT and OFFSET in the database, and the whole scope grouped by the
+   * fields the hub counts on. Two reads over one predicate: the page adds only the bucket to it, so the
+   * groups of a bucket add up to exactly the claims its pages hold. A search narrows that one predicate
+   * (`hubSearchWhere`), so with a search the groups count what was found, bucket by bucket.
+   */
+  async listRequestPage(where: ListRequestsWhere & { bucket?: string; skip: number; take: number }): Promise<{
+    rows: ReimbursementRequestRecord[];
+    groups: ReimbursementRequestGroup[];
+  }> {
+    const scope = await this.requestListWhere({ ...where, search: undefined });
+    if (where.search) scope.AND.push(hubSearchWhere(where.search));
+    const [rows, groups] = await Promise.all([
+      this.prisma.client.reimbursementRequest.findMany({
+        where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
+        // The page's rows report the same duplicate status as the claim's own page: one batched read for the page.
+        include: { _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES },
+        // The same stable order as `listRequests`: OFFSET pages need every row to keep its place.
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: where.skip,
+        take: where.take,
+      }),
+      this.prisma.client.reimbursementRequest.groupBy({
+        by: ['status', 'financeReviewStatus', 'receiptRequirementStatus'],
+        where: scope,
+        _count: { _all: true },
+        _sum: { amount: true },
+      }),
+    ]);
+    return {
+      rows: rows.map((row) => this.toRequest(row)),
+      groups: groups.map((group) => ({
+        status: group.status,
+        financeReviewStatus: group.financeReviewStatus,
+        receiptRequirementStatus: group.receiptRequirementStatus,
+        count: group._count._all,
+        amount: dec(group._sum.amount),
+      })),
+    };
+  }
+
+  async listRequests(where: ListRequestsWhere): Promise<ReimbursementRequestRecord[]> {
     const rows = await this.prisma.client.reimbursementRequest.findMany({
-      where: {
-        companyId: where.companyId,
-        requesterUserId: where.requesterUserId,
-        status: (where.status as any) ?? (where.statuses ? { in: where.statuses as any } : undefined),
-        paymentStatus: where.paymentStatus as any,
-        AND: [...predicates, ...(where.search ? [{ OR: [
-          { requestNo: { contains: where.search, mode: 'insensitive' as const } },
-          { title: { contains: where.search, mode: 'insensitive' as const } },
-          { reason: { contains: where.search, mode: 'insensitive' as const } },
-        ] }] : [])],
-      },
+      where: await this.requestListWhere(where),
       // Queues show a line count, not the lines themselves — keep the list query cheap.
       include: {
         _count: { select: { lines: true } },
         ...(where.status === 'PENDING_APPROVAL' && {
           approvalSteps: { where: { status: 'PENDING' as any } },
         }),
+        ...(where.withDuplicateCandidates && { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES }),
       },
       // F2 (tuning-6b): rows created in the same instant (seeded data, bulk imports) came back in
       // arbitrary order under createdAt alone, so the LINE list's "1./2." numbering ("ใบที่สอง") could
@@ -2277,6 +3178,14 @@ export class PrismaReimbursementRepository {
   ): Promise<ReimbursementRequestRecord> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       await this.lockRequest(tx, companyId, id);
+      // A draft can be edited line by line. A claim whose payout account is being corrected keeps its
+      // lines and its expense records, so it never goes back to one (payout spec §14.7); nor does any
+      // claim while expense records of its own still stand.
+      const claim = await tx.reimbursementRequest.findFirst({
+        where: { id, companyId }, select: { status: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true },
+      });
+      if (claim && payoutCorrectionPhase(claim)) throw new ConflictException('payout_correction_in_progress');
+      await this.assertNoLiveProjections(tx, companyId, id);
       if (expectedStatus === 'PENDING_APPROVAL') {
         // An approval's projection phase keeps the claim PENDING_APPROVAL after its step is decided,
         // so only an undecided current step may be withdrawn. It is cancelled the way a cancellation
@@ -2290,9 +3199,14 @@ export class PrismaReimbursementRepository {
           : { count: 0 };
         if (withdrawn.count !== 1) throw this.requestChanged();
       }
+      const sent = await tx.reimbursementRequest.findFirst({
+        where: { id, companyId },
+        select: { id: true, companyId: true, requesterUserId: true, status: true, payoutMethod: true, payoutDestinationVersion: true },
+      });
       const changed = await tx.reimbursementRequest.updateMany({
         where: { id, companyId, status: expectedStatus, updatedAt: expectedUpdatedAt, cancellationPendingAt: null },
         data: {
+          ...(sent ? await draftPayoutAfterReopen(tx, sent) : {}),
           status: 'DRAFT',
           submittedAt: null,
           submittedByUserId: null,
@@ -2330,6 +3244,12 @@ export class PrismaReimbursementRepository {
         where: { id, companyId },
         include: { _count: { select: { lines: true } } },
       });
+      // Going back to draft had no event at all, so the workflow module could not close the approval task (audit B8).
+      await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.reopened',
+        aggregateType: 'reimbursement_request', aggregateId: id, eventKey: `reimbursement.reopened:reimbursement_request:${id}:${row.updatedAt.toISOString()}`,
+        payloadJson: { companyId, actorUserId, aggregateType: 'reimbursement_request', aggregateId: id,
+          occurredAt: row.updatedAt.toISOString(), data: { requestId: id, status: 'DRAFT', previousStatus: expectedStatus } },
+        priority: 'NORMAL', status: 'PENDING' } });
       return this.toRequest(row);
     });
   }
@@ -2396,7 +3316,7 @@ export class PrismaReimbursementRepository {
 
   // ---- Payment ----
 
-  async assertClaimPaymentReady(companyId: string, requestId: string): Promise<void> {
+  async assertClaimPaymentReady(companyId: string, requestId: string, paidAt?: Date): Promise<void> {
     const row = await (this.prisma.client as any).reimbursementRequest.findFirst({
       where: { id: requestId, companyId },
       include: { lines: { orderBy: { lineNo: 'asc' } } },
@@ -2404,10 +3324,32 @@ export class PrismaReimbursementRepository {
     if (!row) throw new NotFoundException('Reimbursement request not found');
     if (row.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
     await this.assertClaimProjectionsReady(this.prisma.client as any, this.toRequest(row));
+    if (paidAt) await this.assertPaymentPeriodOpen(companyId, paidAt);
+  }
+
+  /**
+   * A payment may only be dated in an accounting period that still takes entries, the rule expense
+   * confirmation applies. Recorded in a closed month, the payout could never be posted until that
+   * month was reopened. A month nobody has opened yet has no row, and is open.
+   * A check before the write, not a lock: the period close holds none either, for any source.
+   */
+  async assertPaymentPeriodOpen(companyId: string, paidAt: Date): Promise<void> {
+    const periodKey = civilPeriodKey(civilDate(paidAt));
+    const period = await (this.prisma.client as any).accountingPeriod.findUnique({
+      where: { companyId_periodKey: { companyId, periodKey } }, select: { status: true },
+    });
+    if (period && !['OPEN', 'REOPENED'].includes(String(period.status))) {
+      throw new ConflictException(`reimbursement_payment_accounting_period_locked:${periodKey}`);
+    }
   }
 
   async recordPaymentAtomic(data: {
     companyId: string;
+    /**
+     * Runs inside the payment transaction, once the payment and the claim totals are written. `payout` is
+     * the account this payment was just confirmed into (masked: kind, bank, last 4), when there is one.
+     */
+    onPaymentPersisted?: (tx: any, payment: ReimbursementPaymentRecord, paymentStatus: string, payout?: ConfirmedPaymentPayout) => Promise<void>;
     reimbursementRequestId: string;
     idempotencyKey: string;
     paymentNo?: string;
@@ -2417,26 +3359,31 @@ export class PrismaReimbursementRepository {
     paidAt: Date;
     paymentReference?: string;
     bankAccountId?: string;
+    /** Payment evidence: proven for this claim and payer, then linked, inside this transaction. */
+    slipAttachmentId?: string;
+    /** The payer's yes to withdrawing a "signed on paper" declaration the slip file carries. */
+    confirmSignedCopyWithdrawal?: boolean;
+    /**
+     * What the payer said about the payout account, as sent. It is held against the claim under the
+     * payment lock (`planPaymentPayout`), never trusted from a check made before it.
+     */
+    payout?: Omit<PaymentPayoutStatement, 'paymentMethod'>;
     paidByUserId: string;
-  }): Promise<{ request: ReimbursementRequestRecord; payment: ReimbursementPaymentRecord; created: boolean }> {
+  }): Promise<{
+    request: ReimbursementRequestRecord; payment: ReimbursementPaymentRecord; created: boolean;
+    slip?: ReimbursementPaymentSlipLink; payout?: ConfirmedPaymentPayout;
+  }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${data.companyId}:${data.reimbursementRequestId}:reimbursement-payment`}))`;
       await this.lockRequest(tx, data.companyId, data.reimbursementRequestId);
+      const statement: PaymentPayoutStatement = { ...data.payout, paymentMethod: data.paymentMethod };
 
       const existing = await tx.reimbursementPayment.findFirst({
         where: { companyId: data.companyId, idempotencyKey: data.idempotencyKey },
       });
       if (existing) {
-        const samePayment = existing.reimbursementRequestId === data.reimbursementRequestId
-          && d(existing.paidAmount).eq(d(data.paidAmount))
-          && existing.currency === data.currency
-          && existing.paymentMethod === data.paymentMethod
-          && existing.paidAt.getTime() === data.paidAt.getTime()
-          && (existing.paymentReference ?? undefined) === data.paymentReference
-          && (existing.bankAccountId ?? undefined) === data.bankAccountId;
-        if (!samePayment) throw new ConflictException('reimbursement_payment_idempotency_conflict');
-        const request = await tx.reimbursementRequest.findFirstOrThrow({
+        const request = await tx.reimbursementRequest.findFirst({
           where: { id: data.reimbursementRequestId, companyId: data.companyId },
           include: {
             lines: { orderBy: { lineNo: 'asc' } },
@@ -2445,6 +3392,15 @@ export class PrismaReimbursementRepository {
             duplicateCandidates: true,
           },
         });
+        if (!request) throw new NotFoundException('Reimbursement request not found');
+        const plan = planPaymentPayout(request, statement);
+        // A voided payment is not this payment any more: replaying its key must not read as paid.
+        // Nor is a replay that names another account, or none, than the one that payment went into.
+        const samePayment = existing.reimbursementRequestId === data.reimbursementRequestId
+          && existing.status === 'RECORDED'
+          && !('error' in plan)
+          && isSamePaymentRequest({ ...existing, ...await readRecordedPaymentPayout(tx, request, existing) }, { ...data, ...plan });
+        if (!samePayment) throw new ConflictException('reimbursement_payment_idempotency_conflict');
         return { request: this.toRequest(request), payment: this.toPayment(existing), created: false };
       }
 
@@ -2455,6 +3411,8 @@ export class PrismaReimbursementRepository {
       if (!request) throw new NotFoundException('Reimbursement request not found');
       if (request.paymentStatus === 'PAID') throw new ConflictException('reimbursement_payment_already_recorded');
       if (request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
+      // Its status refuses the payment anyway (payout spec §14.7); this says why in the payer's words.
+      if (payoutCorrectionPhase(request)) throw new ConflictException('payout_correction_in_progress');
       requireTransactionBranchId(request.branchId);
       await assertReimbursementSources(tx, this.toRequest(request));
       await this.assertClaimProjectionsReady(tx, this.toRequest(request));
@@ -2462,10 +3420,9 @@ export class PrismaReimbursementRepository {
       const policy = effectivePolicyForRequest(this.toRequest(request), effectivePolicy(await tx.reimbursementPolicy.findFirst({
         where: { companyId: data.companyId, branchId: null },
       }).then((row: any) => row ? this.toPolicy(row) : null)));
-      const duplicateBlocking = policy.duplicatePolicy === 'BLOCK_PAYMENT'
-        && await tx.reimbursementDuplicateCandidate.count({
-          where: { companyId: data.companyId, reimbursementRequestId: data.reimbursementRequestId, status: 'OPEN' },
-        }) > 0;
+      const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, await tx.reimbursementDuplicateCandidate.count({
+        where: { companyId: data.companyId, reimbursementRequestId: data.reimbursementRequestId, status: 'OPEN' },
+      }));
       const error = validatePaymentRecording({
         status: request.status,
         financeReviewRequired: policy.financeReviewRequired,
@@ -2476,8 +3433,23 @@ export class PrismaReimbursementRepository {
         paidAmount: data.paidAmount,
         paymentMethod: data.paymentMethod as any,
         paymentReference: data.paymentReference,
+        hasSlip: Boolean(data.slipAttachmentId),
       });
       if (error) throw new UnprocessableEntityException(error);
+      // Spec §12.3, §12.4, §12.6: the account version the payer was shown is the claim's version NOW,
+      // a transfer into the claim's account is confirmed, and a method other than the one asked for
+      // has its reason. Decided here, from the row read under the lock, so no account change that
+      // committed before this transaction can slip between the check and the payment.
+      const payoutPlan = planPaymentPayout(request, statement);
+      if ('error' in payoutPlan) throw paymentPayoutRefusal(payoutPlan.error);
+      const slip = data.slipAttachmentId
+        ? await this.resolvePaymentSlipLocked(tx, {
+          companyId: data.companyId, requestId: data.reimbursementRequestId,
+          attachmentId: data.slipAttachmentId, actorUserId: data.paidByUserId,
+          confirmSignedCopyWithdrawal: data.confirmSignedCopyWithdrawal,
+        })
+        : undefined;
+      const payout = await confirmPaymentPayout(tx, request, payoutPlan, { actorUserId: data.paidByUserId, confirmedAt: new Date() });
 
       let payment = await tx.reimbursementPayment.create({ data: {
         companyId: data.companyId,
@@ -2490,10 +3462,22 @@ export class PrismaReimbursementRepository {
         paidAt: data.paidAt,
         paymentReference: data.paymentReference,
         bankAccountId: data.bankAccountId,
+        slipAttachmentId: slip?.attachmentId,
+        slipChecksumSha256: slip?.checksumSha256,
+        // The version stored is the one just proven current: what the approver attested, what the
+        // payer was shown and confirmed, and what this payment went into are one number.
+        payoutDestinationVersion: payout?.payoutDestinationVersion,
+        payoutConfirmedAt: payout?.payoutConfirmedAt,
+        methodMismatchReason: payoutPlan.methodMismatchReason,
         sourcePaymentRef: '',
         paidByUserId: data.paidByUserId,
         postingStatus: 'pending',
       } });
+      // Same transaction as the payment row: a payment never exists without the slip it was
+      // recorded with, and a slip link never outlives a payment that failed to commit.
+      const slipLink = slip
+        ? await this.linkPaymentSlip(tx, { companyId: data.companyId, paymentId: payment.id, linkedByUserId: data.paidByUserId, slip })
+        : undefined;
       const sourcePaymentRef = JSON.stringify(buildPaymentSourceRef({
         id: payment.id,
         paidAmount: data.paidAmount,
@@ -2526,6 +3510,9 @@ export class PrismaReimbursementRepository {
         },
       });
       if (changed.count !== 1) throw new ConflictException('reimbursement_payment_state_changed');
+      // Audit B10: the "paid" event commits with the payment. Appended after commit it was lost,
+      // with no retry, whenever that append failed, and the requester was never told.
+      await data.onPaymentPersisted?.(tx, this.toPayment(payment), paymentStatus, payout);
 
       if (paymentStatus === 'PAID') {
         // Mirror the payout onto the claim's CONFIRMED expense projections (owner decision
@@ -2563,8 +3550,216 @@ export class PrismaReimbursementRepository {
           duplicateCandidates: true,
         },
       });
-      return { request: this.toRequest(updated), payment: this.toPayment(payment), created: true };
-    }, { isolationLevel: 'Serializable' });
+      return {
+        request: this.toRequest(updated), payment: this.toPayment(payment), created: true,
+        ...(slipLink && { slip: slipLink }), ...(payout && { payout }),
+      };
+    }, { isolationLevel: 'Serializable' }).catch(paymentChangedOnSerializationFailure);
+  }
+
+  // ---- Payment slips (spec §12.5, §16) ----
+
+  /** Friendly preflight of the slip proof that `recordPaymentAtomic` repeats under the payment lock. */
+  async assertPaymentSlipUsable(input: PaymentSlipProofInput): Promise<void> {
+    await this.resolvePaymentSlip(this.prisma.client as any, input);
+  }
+
+  /**
+   * What a file offered as a payment slip is to THIS claim and THIS payer (spec §12.5, AC22). Three
+   * things qualify: a slip already on another payment of the claim (a re-pay after a void), the
+   * payer's own slip upload for the claim, and a file attached to the claim as a signed copy (the
+   * misfiled slip, §16). Anything else is refused: another claim's slip, somebody else's upload, a receipt.
+   *
+   * A slip is exclusive (owner 2026-10-01: never an expense receipt, never a signed claim copy). The
+   * generic file paths stop serving a slip to everyone, so a file that is also something else's
+   * evidence is refused here: every link it has must be the kind its source allows, and no claim
+   * line may name it as a receipt.
+   */
+  private async resolvePaymentSlip(db: any, input: PaymentSlipProofInput): Promise<ResolvedPaymentSlip> {
+    const invalid = () => new UnprocessableEntityException('payment_slip_invalid');
+    const file = await db.attachmentObject.findFirst({
+      where: { id: input.attachmentId, companyId: input.companyId, status: 'ACTIVE', mimeType: { in: REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES } },
+      select: { id: true, byteSize: true, checksumSha256: true, uploadedByUserId: true, metadataJson: true },
+    });
+    if (!file) throw invalid();
+    const links: { id: string; targetType: string; targetId: string; purpose: string }[] = await db.attachmentLink.findMany({
+      where: { companyId: input.companyId, attachmentId: input.attachmentId },
+      select: { id: true, targetType: true, targetId: true, purpose: true },
+    });
+    const slipPaymentIds = links
+      .filter((link) => link.targetType === REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE && link.purpose === REIMBURSEMENT_PAYMENT_SLIP_PURPOSE)
+      .map((link) => link.targetId);
+    const signedCopyLinkIds = links
+      .filter((link) => link.targetType === REIMBURSEMENT_ATTACHMENT_TARGET_TYPE && link.targetId === input.requestId && link.purpose === REIMBURSEMENT_SIGNED_COPY_PURPOSE)
+      .map((link) => link.id);
+    const alsoReceipt = await db.reimbursementLine.count({ where: { companyId: input.companyId, attachmentId: input.attachmentId } }) > 0;
+    const metadataJson = (file.metadataJson ?? null) as Record<string, unknown> | null;
+
+    let source: ReimbursementPaymentSlipSource;
+    if (slipPaymentIds.length > 0) {
+      // Already a slip somewhere: it may serve again only for payments of this same claim.
+      const ofThisClaim = await db.reimbursementPayment.count({
+        where: { companyId: input.companyId, reimbursementRequestId: input.requestId, id: { in: slipPaymentIds } },
+      });
+      if (alsoReceipt || links.length !== slipPaymentIds.length || ofThisClaim !== new Set(slipPaymentIds).size) throw invalid();
+      source = 'PREVIOUS_SLIP';
+    } else if (metadataJson?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG) {
+      if (alsoReceipt || links.length !== 0 || metadataJson['requestId'] !== input.requestId || file.uploadedByUserId !== input.actorUserId
+        || file.byteSize > REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES) throw invalid();
+      source = 'UPLOAD';
+    } else if (signedCopyLinkIds.length > 0) {
+      // Only this claim's signed copy: the same file on another claim, or as a receipt, stays what it
+      // is there. Said as its own refusal: nothing is wrong with the file's type or size, and the
+      // payer can do something about it (attach the slip as a new file).
+      if (alsoReceipt || links.length !== signedCopyLinkIds.length) throw new UnprocessableEntityException('payment_slip_in_use_elsewhere');
+      source = 'SIGNED_COPY';
+    } else {
+      throw invalid();
+    }
+    // Only the declaration made with a link this move removes. One bound to any other link is not this
+    // claim's to withdraw, and it never counted for this claim either.
+    const declaredLinkId = (metadataJson?.[REIMBURSEMENT_SIGNED_COPY_ACK_KEY] as { linkId?: string } | null | undefined)?.linkId ?? '';
+    const withdrawsDeclaration = source === 'SIGNED_COPY' && signedCopyLinkIds.includes(declaredLinkId);
+    // The signed form picked as the slip (upgrade test 2026-10-02): the move cannot be undone, so a
+    // declared copy leaves its list only on the payer's explicit word. A page that predates the
+    // question sends nothing and is told to reload (409), where the picker asks it.
+    if (withdrawsDeclaration && input.confirmSignedCopyWithdrawal !== true) throw new ConflictException('payment_slip_signed_copy_unconfirmed');
+    return {
+      attachmentId: file.id, source, checksumSha256: file.checksumSha256 ?? null,
+      uploadedByUserId: file.uploadedByUserId, metadataJson, signedCopyLinkIds, withdrawsDeclaration,
+    };
+  }
+
+  /**
+   * The proof inside a transaction, safe against a generic delete of the same file from either side.
+   * The advisory key is the one deletion takes before it looks for holds: a delete that starts now
+   * waits, then finds the slip and refuses. The row lock covers the other order: a delete that
+   * committed after this transaction's snapshot was taken fails this transaction (a serialization
+   * conflict under the payment's isolation level) instead of leaving a slip on a deleted file.
+   */
+  private async resolvePaymentSlipLocked(tx: any, input: PaymentSlipProofInput): Promise<ResolvedPaymentSlip> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.attachmentId}:attachment-retention`}))`;
+    await tx.$executeRaw`SELECT 1 FROM "AttachmentObject" WHERE "id" = ${input.attachmentId} AND "companyId" = ${input.companyId} FOR UPDATE`;
+    return this.resolvePaymentSlip(tx, input);
+  }
+
+  /**
+   * Writes the slip link. A file that came from the signed copies leaves that list in the same
+   * transaction and takes its "signed on paper" declaration with it (§16.2): the declaration was
+   * bound to the link now gone, and the stored copy of it is removed so nothing stale is left behind.
+   */
+  private async linkPaymentSlip(tx: any, input: {
+    companyId: string; paymentId: string; linkedByUserId: string; slip: ResolvedPaymentSlip;
+  }): Promise<ReimbursementPaymentSlipLink> {
+    const { slip } = input;
+    await tx.attachmentLink.create({ data: {
+      companyId: input.companyId,
+      attachmentId: slip.attachmentId,
+      targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+      targetId: input.paymentId,
+      purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+      linkedByUserId: input.linkedByUserId,
+    } });
+    if (slip.source === 'SIGNED_COPY') {
+      await tx.attachmentLink.deleteMany({ where: { companyId: input.companyId, id: { in: slip.signedCopyLinkIds } } });
+      // The declaration the proof found (and the payer confirmed withdrawing) goes with its link.
+      const { [REIMBURSEMENT_SIGNED_COPY_ACK_KEY]: _withdrawn, ...rest } = slip.metadataJson ?? {};
+      if (slip.withdrawsDeclaration) await tx.attachmentObject.update({ where: { id: slip.attachmentId }, data: { metadataJson: rest } });
+    }
+    return { attachmentId: slip.attachmentId, source: slip.source, uploadedByUserId: slip.uploadedByUserId, declarationWithdrawn: slip.withdrawsDeclaration };
+  }
+
+  /**
+   * Adds a slip to a payment already recorded (spec §12.5 "แนบเพิ่มทีหลัง", §16.2). Add-only: a slip
+   * is never removed. Takes the same two locks as recording and voiding, so it cannot interleave
+   * with either. Attaching the same file to the same payment again changes nothing.
+   */
+  async attachPaymentSlipAtomic(data: {
+    companyId: string; requestId: string; paymentId: string; attachmentId: string; actorUserId: string;
+    confirmSignedCopyWithdrawal?: boolean;
+  }): Promise<{ created: boolean; slip?: ReimbursementPaymentSlipLink }> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${data.companyId}:${data.requestId}:reimbursement-payment`}))`;
+      await this.lockRequest(tx, data.companyId, data.requestId);
+      const payment = await tx.reimbursementPayment.findFirst({
+        where: { id: data.paymentId, companyId: data.companyId, reimbursementRequestId: data.requestId },
+        select: { id: true, status: true },
+      });
+      if (!payment) throw new NotFoundException('Payment not found');
+      // A voided payment is history: it keeps the slips it had and takes no new ones.
+      if (payment.status !== 'RECORDED') {
+        throw new ConflictException({ code: 'reimbursement_payment_changed', message: 'Payment changed before the slip was attached. Reload and retry.' });
+      }
+      const attached: { attachmentId: string }[] = await tx.attachmentLink.findMany({
+        where: {
+          companyId: data.companyId, targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+          targetId: data.paymentId, purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+        },
+        select: { attachmentId: true },
+      });
+      if (attached.some((link) => link.attachmentId === data.attachmentId)) return { created: false };
+      if (attached.length >= REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES) throw new UnprocessableEntityException('payment_slip_limit_reached');
+      const slip = await this.resolvePaymentSlipLocked(tx, data);
+      return {
+        created: true,
+        slip: await this.linkPaymentSlip(tx, { companyId: data.companyId, paymentId: data.paymentId, linkedByUserId: data.actorUserId, slip }),
+      };
+    }).catch(paymentChangedOnSerializationFailure);
+  }
+
+  /** Slips per payment, oldest first. Ids and times only; the file opens through the slip endpoint. */
+  async listPaymentSlips(companyId: string, paymentIds: readonly string[]): Promise<Record<string, { attachmentId: string; attachedAt: Date }[]>> {
+    const byPayment: Record<string, { attachmentId: string; attachedAt: Date }[]> = {};
+    if (paymentIds.length === 0) return byPayment;
+    const rows = await this.prisma.client.attachmentLink.findMany({
+      where: {
+        companyId,
+        targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+        targetId: { in: [...paymentIds] },
+        purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+        attachment: { status: 'ACTIVE' },
+      },
+      select: { attachmentId: true, targetId: true, createdAt: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    for (const row of rows) (byPayment[row.targetId] ??= []).push({ attachmentId: row.attachmentId, attachedAt: row.createdAt });
+    return byPayment;
+  }
+
+  /** The payer's own slip upload for this claim, in any status: the complete step must not finish a stranger's intent. */
+  async findPaymentSlipUpload(
+    companyId: string, attachmentId: string, actorUserId: string, requestId: string,
+  ): Promise<{ id: string; status: string } | null> {
+    const row = await this.prisma.client.attachmentObject.findFirst({
+      where: {
+        id: attachmentId,
+        companyId,
+        uploadedByUserId: actorUserId,
+        metadataJson: { equals: { generatedFor: REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG, requestId } },
+      },
+      select: { id: true, status: true },
+    });
+    return row ?? null;
+  }
+
+  /** Storage coordinates of one slip of one payment; null unless that exact link exists on a live file. */
+  async findPaymentSlipFile(companyId: string, paymentId: string, attachmentId: string): Promise<{
+    id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; originalFileName: string;
+  } | null> {
+    const link = await this.prisma.client.attachmentLink.findFirst({
+      where: {
+        companyId,
+        attachmentId,
+        targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+        targetId: paymentId,
+        purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+        attachment: { status: 'ACTIVE' },
+      },
+      select: { attachment: { select: { id: true, bucket: true, objectKey: true, objectVersionId: true, mimeType: true, originalFileName: true } } },
+    });
+    if (!link) return null;
+    const { objectVersionId, ...file } = link.attachment;
+    return { ...file, ...(objectVersionId ? { objectVersionId } : {}) };
   }
 
   async findPaymentById(companyId: string, id: string): Promise<ReimbursementPaymentRecord | null> {
@@ -2643,15 +3838,21 @@ export class PrismaReimbursementRepository {
   // mirroring how expense/vendor-bill/supplier-payment sources flip after generate.
   // ReimbursementPayment carries no journalEntryId/postingError columns, so only
   // the status changes here.
+  // RECORDED only, and it says whether it wrote: a void owns the posting status of a voided payment
+  // (`reversed` / `not_required`), so a late stamp from the generator or the worker must not land.
+  // Inside a transaction (`db`) the write holds the payment row, which is what makes the generator's
+  // settlement and the void's own update of that row take turns.
   async updatePaymentPostingStatus(
     companyId: string,
     id: string,
     data: { postingStatus: 'pending' | 'posted' | 'posting_error' | 'reversed' },
-  ): Promise<void> {
-    await this.prisma.client.reimbursementPayment.updateMany({
-      where: { id, companyId },
+    db: any = this.prisma.client,
+  ): Promise<boolean> {
+    const stamped = await db.reimbursementPayment.updateMany({
+      where: { id, companyId, status: 'RECORDED' },
       data: { postingStatus: data.postingStatus as any },
     });
+    return stamped.count === 1;
   }
 
   // GAP-02 (mirrors expenses H-04): the ledger journal table is the source of
@@ -2757,6 +3958,35 @@ export class PrismaReimbursementRepository {
         } });
         return { request: this.toRequest(request), payment: this.toPayment(prior), reversalEntryId: null, alreadyVoided: true };
       }
+      // A bank statement line confirmed against this payment would be left matched to a payment that
+      // no longer stands. A fully matched line is not listed on the bank matching screen, so nobody
+      // could undo the match there first: the void undoes it here, by the banking module's own rule
+      // (the match is voided and the line's status is derived again from the matches that still
+      // stand). Only a line inside a completed reconciliation is refused: that one is reopened first.
+      const bankMatches: Array<{ id: string; statementLineId: string }> = await tx.bankReconciliationMatch.findMany({
+        where: { companyId, sourceType: 'REIMBURSEMENT_PAYMENT', sourceId: paymentId, status: 'CONFIRMED' },
+        select: { id: true, statementLineId: true },
+      });
+      for (const match of bankMatches) {
+        const reconciled = await tx.bankReconciliationSessionLine.count({
+          where: { companyId, statementLineId: match.statementLineId, session: { status: 'COMPLETED' } },
+        });
+        if (reconciled > 0) {
+          throw new ConflictException({ code: 'reimbursement_payment_bank_reconciled', message: 'This payment is matched to a bank statement line in a completed reconciliation. Reopen that reconciliation before voiding the payment.' });
+        }
+        await tx.bankReconciliationMatch.update({ where: { id: match.id }, data: { status: 'VOIDED' } });
+        const line = await tx.bankStatementLine.findFirstOrThrow({
+          where: { id: match.statementLineId, companyId },
+          select: { signedAmount: true, matches: { where: { status: 'CONFIRMED' }, select: { allocatedAmount: true } } },
+        });
+        await tx.bankStatementLine.update({
+          where: { id: match.statementLineId },
+          data: { status: calculateStatementLineMatchStatus({
+            statementLineAmount: String(line.signedAmount),
+            confirmedAllocations: line.matches.map((standing: { allocatedAmount: unknown }) => String(standing.allocatedAmount)),
+          }) },
+        });
+      }
       const voided = await tx.reimbursementPayment.updateMany({
         where: { id: paymentId, companyId, reimbursementRequestId: requestId, status: 'RECORDED' },
         data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason, voidedByUserId: actorUserId },
@@ -2826,14 +4056,27 @@ export class PrismaReimbursementRepository {
         await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'reimbursement.payment.void',
           targetType: 'reimbursement_payment', targetId: paymentId, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
           metadataJson: { reason, requestId, reversalEntryId: reversal.reversalEntryId } }, tx);
+        // The row and the event the bank screen's own "ยกเลิกการจับคู่" writes, so a match reads the same
+        // whoever undid it. The event in the shape of that screen's (`VoidMatchUseCase`), one per match.
+        for (const match of bankMatches) {
+          await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'bank.match.void',
+            targetType: 'bank_reconciliation_match', targetId: match.id, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: { statementLineId: match.statementLineId, reason: 'reimbursement_payment_voided', paymentId, requestId } }, tx);
+          await tx.outboxEvent.create({ data: { companyId, eventType: 'banking.statement_line.unmatched',
+            aggregateType: 'bank_statement_line', aggregateId: match.statementLineId,
+            eventKey: `banking.statement_line.unmatched:bank_statement_line:${match.statementLineId}:${match.id}`,
+            payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'bank_statement_line', aggregateId: match.statementLineId,
+              occurredAt: new Date().toISOString(), data: { matchId: match.id, statementLineId: match.statementLineId } },
+            priority: 'NORMAL', status: 'PENDING' } });
+        }
         await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
           aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,
           payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'reimbursement_payment', aggregateId: paymentId,
-            occurredAt: new Date().toISOString(), data: { requestId, paymentStatus, reversalEntryId: reversal.reversalEntryId } },
+            occurredAt: new Date().toISOString(), data: { requestId, requestNo: updated.requestNo, requesterUserId: updated.requesterUserId, paymentStatus, reversalEntryId: reversal.reversalEntryId } },
           priority: 'NORMAL', status: 'PENDING' } });
       }
       return { request: this.toRequest(updated), payment: this.toPayment(payment), reversalEntryId: reversal.reversalEntryId };
-    });
+    }).catch(paymentChangedOnSerializationFailure);
   }
 
   // GAP-02: recorded-but-unposted settlement payments awaiting a generate call.
@@ -2857,10 +4100,12 @@ export class PrismaReimbursementRepository {
       where: {
         companyId,
         status: 'RECORDED',
-        postingStatus: 'pending' as any,
+        // A failed attempt (posting_error) still needs posting, and a retry is how it clears.
+        postingStatus: { in: ['pending', 'posting_error'] as any },
         request: { is: branchScopeWhere(scopes) },
       },
       orderBy: { paidAt: 'asc' },
+      take: CLAIM_PAYOUT_WORKLIST_LIMIT,
       include: { request: { select: { requestNo: true, requesterDisplayNameSnapshot: true } } },
     });
     return rows.map((row: any) => ({
@@ -2957,6 +4202,11 @@ export class PrismaReimbursementRepository {
   /**
    * Re-signing replaces the signer's own row — an upsert on the (request, role)
    * unique, never create-then-catch-P2002 (Prisma 7 aborts the transaction).
+   *
+   * Written under the claim's lock, and only onto the claim its signer was shown: `seen` is the claim
+   * the caller checked the signer's role and acknowledgement on. A send-back for the payout account
+   * and a return to draft both delete the claim's signatures under this lock, so a signature that
+   * passed its checks before either of them committed is refused here instead of landing after it.
    */
   async upsertClaimSignature(data: {
     companyId: string;
@@ -2965,29 +4215,43 @@ export class PrismaReimbursementRepository {
     signatureAttachmentId: string;
     signedByUserId: string;
     signedAt: Date;
+    seen: Pick<ReimbursementRequestRecord, 'status' | 'updatedAt' | 'payoutCorrectionRequestedAt' | 'payoutCorrectionSubmittedAt'>;
   }): Promise<ReimbursementClaimSignatureRecord> {
-    const row = await this.prisma.client.reimbursementClaimSignature.upsert({
-      where: {
-        reimbursementRequestId_role: {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await this.lockRequest(tx, data.companyId, data.reimbursementRequestId);
+      const claim = await tx.reimbursementRequest.findFirst({
+        where: { id: data.reimbursementRequestId, companyId: data.companyId },
+        select: { status: true, updatedAt: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true },
+      });
+      const at = (value?: Date | null) => value?.getTime() ?? null;
+      if (!claim || claim.status !== data.seen.status || at(claim.updatedAt) !== at(data.seen.updatedAt)
+        || at(claim.payoutCorrectionRequestedAt) !== at(data.seen.payoutCorrectionRequestedAt)
+        || at(claim.payoutCorrectionSubmittedAt) !== at(data.seen.payoutCorrectionSubmittedAt)) {
+        throw new ConflictException('stale_claim_snapshot');
+      }
+      const row = await tx.reimbursementClaimSignature.upsert({
+        where: {
+          reimbursementRequestId_role: {
+            reimbursementRequestId: data.reimbursementRequestId,
+            role: data.role as any,
+          },
+        },
+        create: {
+          companyId: data.companyId,
           reimbursementRequestId: data.reimbursementRequestId,
           role: data.role as any,
+          signatureAttachmentId: data.signatureAttachmentId,
+          signedByUserId: data.signedByUserId,
+          signedAt: data.signedAt,
         },
-      },
-      create: {
-        companyId: data.companyId,
-        reimbursementRequestId: data.reimbursementRequestId,
-        role: data.role as any,
-        signatureAttachmentId: data.signatureAttachmentId,
-        signedByUserId: data.signedByUserId,
-        signedAt: data.signedAt,
-      },
-      update: {
-        signatureAttachmentId: data.signatureAttachmentId,
-        signedByUserId: data.signedByUserId,
-        signedAt: data.signedAt,
-      },
+        update: {
+          signatureAttachmentId: data.signatureAttachmentId,
+          signedByUserId: data.signedByUserId,
+          signedAt: data.signedAt,
+        },
+      });
+      return this.toClaimSignature(row);
     });
-    return this.toClaimSignature(row);
   }
 
   async listClaimSignatures(companyId: string, requestId: string): Promise<ReimbursementClaimSignatureRecord[]> {
@@ -3082,6 +4346,7 @@ export class PrismaReimbursementRepository {
    */
   async listSignedClaimFormCopies(companyId: string, requestId: string): Promise<{
     attachmentId: string; fileName: string; uploadedAt: Date; acknowledged: boolean; acknowledgedByUserId?: string; acknowledgedAt?: string;
+    beforePayoutCorrection?: true;
   }[]> {
     const rows = await this.prisma.client.attachmentLink.findMany({
       where: {
@@ -3096,9 +4361,12 @@ export class PrismaReimbursementRepository {
       take: 50,
     });
     return rows.map((row) => {
-      const ack = (row.attachment.metadataJson as Record<string, (Partial<ReimbursementSignedCopyAck> & { linkId?: unknown }) | undefined> | null)
+      const ack = (row.attachment.metadataJson as Record<string, (Partial<ReimbursementSignedCopyAck> & { linkId?: unknown; supersededAt?: unknown }) | undefined> | null)
         ?.[REIMBURSEMENT_SIGNED_COPY_ACK_KEY];
-      const acknowledged = ack?.linkId === row.id;
+      const declared = ack?.linkId === row.id;
+      // Declared, and then the claim was sent back to have its payout account corrected: the scan shows
+      // the account that was in question, so it is kept and no longer counts (payout spec §14.4).
+      const acknowledged = declared && !ack?.supersededAt;
       return {
         attachmentId: row.attachmentId,
         fileName: row.attachment.originalFileName,
@@ -3106,6 +4374,7 @@ export class PrismaReimbursementRepository {
         acknowledged,
         // Only the declaration bound to this link: a pre-filled or stale one names nobody.
         ...(acknowledged && { acknowledgedByUserId: ack?.acknowledgedByUserId, acknowledgedAt: ack?.acknowledgedAt }),
+        ...(declared && !acknowledged && { beforePayoutCorrection: true as const }),
       };
     });
   }
@@ -3121,12 +4390,30 @@ export class PrismaReimbursementRepository {
     linkedByUserId: string,
     ack?: ReimbursementSignedCopyAck,
   ): Promise<void> {
-    const conflict = await findAttachmentLinkConflict(this.prisma.client, {
-      companyId, attachmentId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
-    });
-    if (conflict) throw new UnprocessableEntityException(conflict);
     const client = this.prisma.client as any;
     await client.$transaction(async (tx: any) => {
+      if (ack) {
+        // A declaration says the scan is the claim's signed form as the claim stands. Under the claim's
+        // lock (taken first, as a payment takes it before a file's), so one made while the claim is
+        // sent back for its payout account is refused, and one that commits just before the send-back
+        // is set aside by it. A scan without the declaration is only filed, as before.
+        await this.lockRequest(tx, companyId, requestId);
+        const claim = await tx.reimbursementRequest.findFirst({
+          where: { id: requestId, companyId }, select: { status: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true },
+        });
+        if (claim && payoutCorrectionPhase(claim)) throw new ConflictException('payout_correction_in_progress');
+      }
+      // The key a slip link and a delete of this file take, so the check below sees whichever of
+      // them committed first: a payment slip never becomes a signed copy (owner 2026-10-01).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${attachmentId}:attachment-retention`}))`;
+      const conflict = await findAttachmentLinkConflict(tx, {
+        companyId, attachmentId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+      });
+      if (conflict) throw new UnprocessableEntityException(conflict);
+      // The other order: a payment that started before this commit reads the file under its older
+      // snapshot and would not see the link written here. Writing the file's row makes that payment
+      // fail on its own row lock and retry, instead of putting a slip link beside this copy.
+      await tx.$executeRaw`UPDATE "AttachmentObject" SET "updatedAt" = now() WHERE "id" = ${attachmentId} AND "companyId" = ${companyId}`;
       const link = await tx.attachmentLink.upsert({
         where: {
           attachmentId_targetType_targetId_purpose: {
@@ -3331,6 +4618,15 @@ export class PrismaReimbursementRepository {
       missingReceiptReason: opt(row.missingReceiptReason),
       approvalSnapshotHash: opt(row.approvalSnapshotHash),
       approvalPolicySnapshotJson: opt(row.approvalPolicySnapshotJson),
+      payoutMethod: opt(row.payoutMethod),
+      payoutDestinationVersion: opt(row.payoutDestinationVersion),
+      payoutFingerprint: opt(row.payoutFingerprint),
+      payoutCorrectionRequestedAt: opt(row.payoutCorrectionRequestedAt),
+      payoutCorrectionRequestedByUserId: opt(row.payoutCorrectionRequestedByUserId),
+      payoutCorrectionReasonCode: opt(row.payoutCorrectionReasonCode),
+      payoutCorrectionNote: opt(row.payoutCorrectionNote),
+      payoutCorrectionSubmittedAt: opt(row.payoutCorrectionSubmittedAt),
+      payoutCorrectionLog: Array.isArray(row.payoutCorrectionLogJson) ? row.payoutCorrectionLogJson : undefined,
       paymentTotalAmount: dec(row.paymentTotalAmount),
       outstandingAmount: dec(row.outstandingAmount),
       idempotencyKey: opt(row.idempotencyKey),
@@ -3404,6 +4700,11 @@ export class PrismaReimbursementRepository {
       paidAt: row.paidAt,
       paymentReference: opt(row.paymentReference),
       bankAccountId: opt(row.bankAccountId),
+      slipAttachmentId: opt(row.slipAttachmentId),
+      slipChecksumSha256: opt(row.slipChecksumSha256),
+      payoutDestinationVersion: opt(row.payoutDestinationVersion),
+      payoutConfirmedAt: opt(row.payoutConfirmedAt),
+      methodMismatchReason: opt(row.methodMismatchReason),
       sourcePaymentRef: row.sourcePaymentRef,
       status: row.status,
       voidedAt: opt(row.voidedAt),
