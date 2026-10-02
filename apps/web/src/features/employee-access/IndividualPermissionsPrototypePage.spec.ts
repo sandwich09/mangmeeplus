@@ -56,6 +56,19 @@ test('disabled roles are labelled and cannot be edited or disabled again', () =>
   assert.match(matrix, /selectedRole\.status !== 'ACTIVE'/);
 });
 
+// Owner report 2026-10-02: the table carried an 820 px minimum inside a sideways scroller, so at 390,
+// 768 and 1280 px alike the tick columns had to be scrolled to.
+test('a role’s menu rights never scroll sideways: stacked rows on a phone, a table that fits from sm up', () => {
+  const matrix = readFileSync(new URL('./PermissionMatrixPrototypePage.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(matrix, /min-w-\[\d+px\]|overflow-x-(auto|scroll)/);
+  assert.match(matrix, /className="[^"]*\bsm:hidden\b[^"]*">\s*\{MENU_GROUP_ORDER\.map/);
+  assert.match(matrix, /data-testid="role-permission-row"/);
+  assert.match(matrix, /className="hidden [^"]*\bsm:block\b[^"]*">\s*<table className="w-full border-collapse">/);
+  // Both layouts print one set of action words, and a menu with nothing granted says so.
+  assert.match(matrix, /ACTIONS\.filter\(\(action\) => selectedRow\?\.menus\[menu\.id\]\?\.\[action\.key\]\)/);
+  assert.match(matrix, /granted\.length === 0 \? <span[^>]*>ไม่ได้เปิดสิทธิ์<\/span>/);
+});
+
 test('both employee branch pickers exclude inactive branches from options and retained selections', () => {
   const wizard = readFileSync(new URL('./AddEmployeePrototypePage.tsx', import.meta.url), 'utf8');
   assert.match(source, /setBranches\(branchesR\.value\.filter\(\(branch\) => branch\.status === 'ACTIVE'\)\)/);

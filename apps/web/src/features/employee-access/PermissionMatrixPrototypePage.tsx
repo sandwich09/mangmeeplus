@@ -38,6 +38,7 @@ import {
   listRoles,
   updateRole,
 } from './employee-access.api';
+import { MENU_GROUP_LABEL_TH, MENU_GROUP_ORDER } from './access-overview.model';
 import { RoleBuilder, coveredPacks, ghostClass, dangerClass, roleDisplayName } from './EmployeeAccessPages';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -379,8 +380,44 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
               )}
             </div>
 
-            <div className="overflow-x-auto px-6 pb-6">
-              <table className="w-full min-w-[820px] border-collapse">
+            {/* The rights never scroll sideways. A phone has no room for five tick columns beside a menu
+                name, so it gets one stacked row per menu with the rights written out (the shape the
+                per-employee summary uses); from `sm` up the table fits its card. */}
+            <div data-testid="role-permission-matrix">
+            <div className="grid gap-4 px-3 pb-5 pt-4 sm:hidden">
+              {MENU_GROUP_ORDER.map((group) => {
+                const groupMenus = menus.filter((menu) => menu.group === group);
+                if (groupMenus.length === 0) return null;
+                return (
+                  <div key={group} className="grid gap-1">
+                    <h3 className="px-3 text-xs font-extrabold tracking-wide text-gray-400">{MENU_GROUP_LABEL_TH[group]}</h3>
+                    {groupMenus.map((menu) => {
+                      const granted = ACTIONS.filter((action) => selectedRow?.menus[menu.id]?.[action.key]);
+                      return (
+                        <div key={menu.id} data-testid="role-permission-row" className="grid min-w-0 gap-1 px-3 py-2.5">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <MangmeeIconFrame tone={MENU_TONE[menu.id]} className="h-8 w-8 shrink-0 rounded-lg">
+                              {MENU_ICON[menu.id]}
+                            </MangmeeIconFrame>
+                            <span className="min-w-0 break-words text-sm font-extrabold text-gray-800">{menu.labelTh}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 pl-11">
+                            {granted.length === 0 ? <span className="text-sm font-medium text-gray-400">ไม่ได้เปิดสิทธิ์</span> : granted.map((action) => (
+                              <span key={action.key} className="inline-flex items-center gap-1 text-sm font-extrabold text-brand-700">
+                                <CheckLineIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                {action.label}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="hidden px-6 pb-6 sm:block">
+              <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200 text-xs font-bold text-gray-500">
                     <th className="py-3 text-left">เมนู</th>
@@ -412,6 +449,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
                   ))}
                 </tbody>
               </table>
+            </div>
             </div>
           </MangmeeCard>
         ) : (
