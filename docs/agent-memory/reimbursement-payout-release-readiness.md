@@ -15,6 +15,7 @@ Decisions:
 - The release task grants each back-fill permission once per role; the audit row of the grant is the record, so a right an admin removes later stays removed.
 - Owner, 2026-10-02 ("เราต้องสื่อสารกับ user ได้อย่างถูกต้อง"): every sentence of a payout round follows what the claim held when it was sent back (an account, cash, nothing), what was answered (seven cases) and who answered. A claim's account is "บัญชีรับเงิน"; the member's standing account keeps "บัญชีรับเงินคืนของฉัน"; the method is "วิธีรับเงินคืน". Detail: `reimbursement-payout-round-wording.md`.
 - Owner, 2026-10-02: a notice goes to the person it concerns. The requester is told whenever someone else answers a round for them; the finance-review notices and the approval reminder reach the shop owner only when nobody else can act.
+- Owner, 2026-10-02: a flagged shop confirmed after its payment month has ended counts in the month the customer paid (the code's behaviour; the month of the review was offered and not chosen). Sales spec §17.1.1.
 - Owner, 2026-10-02: the legal documents for stored bank accounts (privacy notice, processing register, retention table, data-rights runbook) may follow the release. Data-deletion requests are the next feature and are on hold: nothing is to be designed or added for them now.
 - Owner, 2026-10-02: the accountant's questions about posting claim payouts are answered when the accounting screens open. Until then no claim payout is posted on the standard chart (it is refused for want of a reviewed mapping), and every unposted payout of any age stays on the worklist.
 
@@ -31,7 +32,6 @@ Production facts (read on 2026-10-02 14:03 with `pre-release-checks.sql`, read-o
 
 Open questions:
 
-- Sales: a shop confirmed after its payment month has ended adds to that past month. Booking it in the month of the review would keep past months fixed, as refunds are. Asked on 2026-10-02; no attribution row exists in production.
 - `e2e/settings.spec.ts` SET-08E expects the tab "คิวรอจ่าย", true for the seeded company. REIMB-03 and REIMB-13 turn the finance step on for a moment, so a whole-suite run with parallel workers can make SET-08E read "คิวการเงิน". No workflow runs these files, and nothing typechecks `e2e/`.
 - Three tests of `e2e/responsive.spec.ts` fail on develop before and after this work (the shell's hover at 1024 and 1280 px; the expense grid's column count). Stale tests; not fixed here.
 - Wording outside this round, for the owner to order: two Thai vocabularies for the standard roles (role page and employee pages); English on the reports page, the automation page, the notification rules page, the dashboard stock card and the add-employee wizard; the dashboard card "รอตอบเกินกำหนด" counts by another rule than the list it opens.
