@@ -649,7 +649,17 @@ describe('buildClaimTimeline', () => {
       financeReviewedAt: '2026-08-22T03:00:00.000Z',
       financeReviewedByName: 'คุณมานี',
       payments: [{ status: 'RECORDED', paidByName: 'คุณมานี', paidAt: '2026-08-23T03:00:00.000Z' }],
-    }), ['done:ยื่นใบ', 'done:ฝ่ายการเงินตรวจแล้ว โดย คุณมานี', 'done:จ่ายแล้ว โดย คุณมานี']);
+    }), ['done:ยื่นใบ', 'done:ตรวจการเงินแล้ว โดย คุณมานี', 'done:จ่ายแล้ว โดย คุณมานี']);
+  });
+
+  // Before: "ฝ่ายการเงินตรวจแล้ว โดย <name>". Whoever reviewed may be the owner or the claim's approver, so the row named a
+  // department beside a person who is not of it. It says what was done, in the name of the step, and by whom.
+  it('says the finance review was done and by whom, and names no department', () => {
+    const reviewed = { status: 'READY_FOR_PAYMENT', submittedAt: '2026-08-20T03:00:00.000Z', approvedAt: '2026-08-21T03:00:00.000Z',
+      financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedAt: '2026-08-22T03:00:00.000Z' };
+    assert.deepEqual(labels({ ...reviewed, financeReviewedByName: 'คุณเจ้าของร้าน' }), ['done:ยื่นใบ', 'done:ตรวจการเงินแล้ว โดย คุณเจ้าของร้าน', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
+    assert.deepEqual(labels(reviewed), ['done:ยื่นใบ', 'done:ตรวจการเงินแล้ว', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
+    for (const row of [...labels(reviewed), ...labels({ ...reviewed, financeReviewedByName: 'คุณเจ้าของร้าน' })]) assert.doesNotMatch(row, /ฝ่ายการเงิน/u);
   });
 
   // Spec §18.3 (AC39). Before: every claim not yet approved carried "รอฝ่ายการเงินตรวจ", finance step or not.
@@ -665,7 +675,7 @@ describe('buildClaimTimeline', () => {
       ['done:ยื่นใบ', 'current:กำลังรอ สมศรี หรือ วิชัย และอีก 1 คน บันทึกจ่าย']);
     // A claim finance reviewed is paid by whoever holds the pay right, like any other.
     assert.deepEqual(labels({ ...approved, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedAt: '2026-08-22T03:00:00.000Z' }),
-      ['done:ยื่นใบ', 'done:ฝ่ายการเงินตรวจแล้ว', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
+      ['done:ยื่นใบ', 'done:ตรวจการเงินแล้ว', 'current:กำลังรอผู้มีสิทธิ์บันทึกจ่าย']);
   });
 });
 

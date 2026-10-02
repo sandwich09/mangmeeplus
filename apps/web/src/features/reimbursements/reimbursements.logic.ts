@@ -933,7 +933,9 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
     rows.push({
       key: 'finance',
       state: 'done',
-      label: detail.financeReviewedByName ? `ฝ่ายการเงินตรวจแล้ว โดย ${detail.financeReviewedByName}` : 'ฝ่ายการเงินตรวจแล้ว',
+      // What was done and by whom, in the name of the step ("ตรวจการเงิน"). Not "ฝ่ายการเงินตรวจแล้ว": whoever reviewed may be
+      // the owner or the claim's approver, and the row then named a department beside that person.
+      label: detail.financeReviewedByName ? `ตรวจการเงินแล้ว โดย ${detail.financeReviewedByName}` : 'ตรวจการเงินแล้ว',
       date: detail.financeReviewedAt,
     });
   } else if (withFinance) {

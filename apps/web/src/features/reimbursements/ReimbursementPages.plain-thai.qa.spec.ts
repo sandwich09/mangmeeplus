@@ -999,8 +999,10 @@ describe('a claim with no finance-review step never says ฝ่ายการ�
     for (const [state, detail] of [['draft', { ...draft, financeReviewRequired: false }], ['waiting for payment', waiting], ['paid', noFinance]] as const) {
       for (const text of visible(detailSections(detail, ids.requester, []))) assert.doesNotMatch(text, /ฝ่ายการเงิน/u, state);
     }
-    // A claim that does pass finance review keeps its finance rows.
-    assert.ok(visible(detailSections(paid, ids.requester, [])).includes('ฝ่ายการเงินตรวจแล้ว โดย สมศรี การเงิน'));
+    // A claim that does pass finance review keeps its finance rows. The row of a review that was done says what was done
+    // and by whom, in the name of the step: whoever reviewed may be the owner or the claim's approver, not a department.
+    assert.ok(visible(detailSections(paid, ids.requester, [])).includes('ตรวจการเงินแล้ว โดย สมศรี การเงิน'));
+    assert.equal(visible(detailSections(paid, ids.requester, [])).some((text) => text.startsWith('ฝ่ายการเงินตรวจแล้ว')), false);
     assert.ok(visible(detailSections({ ...draft, financeReviewRequired: true }, ids.requester, [])).includes('รอฝ่ายการเงินตรวจ'));
   });
 

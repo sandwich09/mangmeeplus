@@ -2166,7 +2166,7 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
   // Plan 3.11 and 3.12 in the journey.
   it('keeps the finance review before the round for a claim that passed it, and has no new approval for a claim nobody approves', () => {
     const reviewed = { financeReviewRequired: true, financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByName: NAMES.payer, financeReviewedAt: '2026-10-01T03:30:00.000Z' };
-    assert.deepEqual(rows(phaseB(reviewed)), ['done:ยื่นใบ', FIRST, 'done:ฝ่ายการเงินตรวจแล้ว โดย วราภรณ์ การเงิน', SENT, GAVE,
+    assert.deepEqual(rows(phaseB(reviewed)), ['done:ยื่นใบ', FIRST, 'done:ตรวจการเงินแล้ว โดย วราภรณ์ การเงิน', SENT, GAVE,
       'current:กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่', 'future:รอบันทึกจ่าย']);
     const noApproval = ready({ approvalSteps: [], approvedAt: AT.given, payout: { ...SCB, source: 'REQUESTER' }, payoutHistory: [version2], payoutCorrectionHistory: [SENT_BACK, GIVEN] });
     assert.deepEqual(rows(noApproval), ['done:ยื่นใบ', SENT, GAVE, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
