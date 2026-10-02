@@ -24,7 +24,7 @@ const { ReimbursementCreatePage } = require('./ReimbursementCreatePage') as type
 const { ReimbursementsHubPage, PolicySettings } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
 const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts') as typeof import('./ReimbursementSourceFacts');
 const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
-const { approvalComparable, diffApprovalFields, errorMessage, hubListKey, reimbursementListScope } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const { approvalComparable, diffApprovalFields, draftSentBackNote, errorMessage, hubListKey, reimbursementListScope } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
@@ -681,6 +681,55 @@ describe('what a person presses on a claim screen is 44 px high on a phone (owne
     const roles = [...html.matchAll(/<label class="([^"]*)"><span class="min-w-0">[^<]*<\/span><input type="checkbox"/gu)].map((match) => match[1]!);
     assert.equal(roles.length, 2, html.slice(html.indexOf('ส่งใบเบิกให้ใครอนุมัติ'), html.indexOf('ส่งใบเบิกให้ใครอนุมัติ') + 900));
     for (const cls of roles) assert.match(cls, /\bmin-h-11\b/, cls);
+  });
+});
+
+// Upgrade test 2026-10-02: the edit page of a draft made before the release said "แก้ไขข้อมูลตามเหตุผลที่ส่งกลับ แล้วบันทึกร่าง
+// ก่อนส่งอนุมัติใหม่", although nobody had sent that draft back.
+describe('the edit page speaks of a reason for sending back only for a draft someone sent back (owner 2026-10-02)', () => {
+  /**
+   * The edit page with its draft loaded. Its states in the order it declares them: `loading` is its one `true`,
+   * `editLoaded` its fourth `false`, and the note of a draft that was sent back its sixth `null`.
+   */
+  const editPage = (note: string | null) => {
+    let falses = 0;
+    let nulls = 0;
+    return visible(renderWithState(createPage({ requestId: ids.request, canUpdate: true }), (initial) => {
+      if (Array.isArray(initial?.lines)) return filledForm;
+      if (initial === true) return false;
+      if (initial === false) { falses += 1; return falses === 4 ? true : undefined; }
+      if (initial === null) { nulls += 1; return nulls === 6 && note ? note : undefined; }
+      return undefined;
+    }));
+  };
+  const SENT_BACK = 'แก้ไขข้อมูลตามเหตุผลที่ส่งกลับ แล้วบันทึกร่างก่อนส่งอนุมัติใหม่';
+  const JUST_EDITED = 'แก้ไขข้อมูลคำขอ แล้วบันทึกร่างก่อนส่งอนุมัติ';
+
+  it('says a plain draft is edited and sent, and says "ตามเหตุผลที่ส่งกลับ" beside the reason of one that was sent back', () => {
+    const plain = editPage(null);
+    assert.ok(plain.includes('แก้ไขคำขอเบิก') && plain.includes(JUST_EDITED), JSON.stringify(plain.slice(0, 12)));
+    assert.equal(plain.some((text) => text.includes('ส่งกลับ')), false, 'nobody sent it back');
+    const returned = editPage('ฝ่ายการเงินขอให้แก้ไข: แนบใบเสร็จตัวจริง');
+    assert.ok(returned.includes(SENT_BACK));
+    assert.ok(returned.includes('⚠ ฝ่ายการเงินขอให้แก้ไข: แนบใบเสร็จตัวจริง'), 'the reason is on the page that speaks of it');
+    assert.equal(returned.includes(JUST_EDITED), false);
+  });
+
+  it('knows a draft that was sent back from the claim itself: finance asked for a correction, or its approver rejected it', () => {
+    const step = (status: string, assignedAt: string, extra: object = {}) => ({ id: `step-${assignedAt}`, sequenceNo: 1, status, assignedAt, ...extra });
+    assert.equal(draftSentBackNote({ ...draft }), null, 'never sent');
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [] }), null);
+    assert.equal(draftSentBackNote({ ...draft, financeReviewStatus: 'NEEDS_INFO', financeReviewNote: 'แนบใบเสร็จตัวจริง' }), 'ฝ่ายการเงินขอให้แก้ไข: แนบใบเสร็จตัวจริง');
+    assert.equal(draftSentBackNote({ ...draft, financeReviewStatus: 'NEEDS_INFO' }), 'ฝ่ายการเงินขอให้แก้ไข');
+    // Rejected, then reopened by its requester: the step it was last put before says why.
+    const rejected = step('REJECTED', '2026-09-28T02:00:00.000Z', { rejectionReason: 'ยอดไม่ตรงกับใบเสร็จ' });
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [rejected] }), 'ผู้อนุมัติปฏิเสธคำขอนี้: ยอดไม่ตรงกับใบเสร็จ');
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [step('REJECTED', '2026-09-28T02:00:00.000Z')] }), 'ผู้อนุมัติปฏิเสธคำขอนี้');
+    // Taken back by the requester themselves, also after an earlier rejection: nobody sent it back this time.
+    const withdrawn = step('CANCELLED', '2026-09-29T02:00:00.000Z', { invalidatedReason: 'withdrawn_by_requester' });
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [withdrawn] }), null);
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [withdrawn, rejected] }), null, 'by when each was assigned, not by the order of the list');
+    assert.equal(draftSentBackNote({ ...draft, approvalSteps: [step('CANCELLED', '2026-09-27T02:00:00.000Z'), rejected] }), 'ผู้อนุมัติปฏิเสธคำขอนี้: ยอดไม่ตรงกับใบเสร็จ');
   });
 });
 

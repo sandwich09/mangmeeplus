@@ -1306,6 +1306,20 @@ export function activeJourneyStep(steps: readonly JourneyStep[]): JourneyStep | 
   return steps.find((step) => step.state !== 'done' && step.state !== 'upcoming') ?? steps.at(-1);
 }
 
+/**
+ * Why a draft is on the edit page again when someone sent it back: finance asked for a correction, or an approver
+ * rejected it and its requester reopened it. Null for a draft nobody sent back: one never sent, or one its requester
+ * took back themselves. The edit page says "ตามเหตุผลที่ส่งกลับ" only beside such a reason (a draft made before the
+ * release read that way with nobody having sent it back).
+ */
+export function draftSentBackNote(detail: any): string | null {
+  if (detail?.financeReviewStatus === 'NEEDS_INFO') return `ฝ่ายการเงินขอให้แก้ไข${detail.financeReviewNote ? `: ${detail.financeReviewNote}` : ''}`;
+  // The step the claim was last put before: rejected means its approver sent it back; cancelled means the requester withdrew it.
+  const moment = (step: any) => Date.parse(String(step?.assignedAt ?? step?.decidedAt ?? '')) || 0;
+  const last = [...(detail?.approvalSteps ?? [])].sort((left, right) => moment(left) - moment(right)).at(-1);
+  return last?.status === 'REJECTED' ? `ผู้อนุมัติปฏิเสธคำขอนี้${last.rejectionReason ? `: ${last.rejectionReason}` : ''}` : null;
+}
+
 /** "ลงนามบนกระดาษ · แนบเมื่อ … โดย …" for a scan attached with the A4 declaration; parts the detail lacks are left out. */
 export function paperSignedLine(copy?: { acknowledgedAt?: string; acknowledgedByName?: string }): string {
   return `ลงนามบนกระดาษ${copy?.acknowledgedAt ? ` · แนบเมื่อ ${formatThaiDate(copy.acknowledgedAt)}` : ''}${copy?.acknowledgedByName ? ` โดย ${copy.acknowledgedByName}` : ''}`;

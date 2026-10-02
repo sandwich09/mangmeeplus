@@ -14,7 +14,7 @@ import { LoadingState } from '@/common/components/state/LoadingState';
 import { createReimbursement, getReimbursementSourceOptions, getReimbursement, updateReimbursementDraft, uploadReceiptFile } from './reimbursements.api';
 import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses/ExpensesUi';
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
-import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestForm, errorMessage, sumLineAmounts, formatMoney, errorText, money, categoryText } from './reimbursements.logic';
+import { collectReceiptUploadResults, draftSentBackNote, mergeDraftLineEvidence, validateRequestForm, errorMessage, sumLineAmounts, formatMoney, errorText, money, categoryText } from './reimbursements.logic';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
 import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
@@ -129,7 +129,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           categoryLabel: line.categoryLabelSnapshot,
         })),
       });
-      setCorrectionNote(detail.financeReviewStatus === 'NEEDS_INFO' ? detail.financeReviewNote ?? null : null);
+      setCorrectionNote(draftSentBackNote(detail));
       setCurrentPayout(detail.payout ?? null);
       setPayout(claimPayoutFormOf(detail.payout));
       setEditLoaded(true);
@@ -375,7 +375,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     <MangmeePage
       eyebrow={<BackToClaimsLink href={hubHref} />}
       title={editing ? 'แก้ไขคำขอเบิก' : 'สร้างคำขอเบิก'}
-      description={editing ? 'แก้ไขข้อมูลตามเหตุผลที่ส่งกลับ แล้วบันทึกร่างก่อนส่งอนุมัติใหม่' : 'กรอกเหตุผลและรายการที่ขอเบิก ระบบจะบันทึกเป็นฉบับร่างให้ตรวจก่อนส่งอนุมัติ'}
+      // "ตามเหตุผลที่ส่งกลับ" only for a draft someone sent back, whose reason is shown below: any other draft is just edited.
+      description={editing ? (correctionNote ? 'แก้ไขข้อมูลตามเหตุผลที่ส่งกลับ แล้วบันทึกร่างก่อนส่งอนุมัติใหม่' : 'แก้ไขข้อมูลคำขอ แล้วบันทึกร่างก่อนส่งอนุมัติ') : 'กรอกเหตุผลและรายการที่ขอเบิก ระบบจะบันทึกเป็นฉบับร่างให้ตรวจก่อนส่งอนุมัติ'}
     >
       {/* noValidate: collapsed rows hide required inputs with CSS, and the browser aborts a
           submit it cannot focus — silently, with no message and no request. validateRequestForm
@@ -383,7 +384,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
       <form onSubmit={handleCreate} noValidate className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
           {!editing && <TransactionBranchField value={branchId} />}
-          {correctionNote && <ErrorBanner message={`ฝ่ายการเงินขอให้แก้ไข: ${correctionNote}`} />}
+          {correctionNote && <ErrorBanner message={correctionNote} />}
           {/* `?expenseId=`: why the source the link named is not on line 1 — never a blank draft. */}
           {sourceLinkNotice && <ErrorBanner message={`รายการต้นทางที่เลือกมายังเบิกไม่ได้: ${sourceLinkNotice}`} />}
           <MangmeeCard className="p-4">
