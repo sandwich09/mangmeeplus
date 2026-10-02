@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { DATA_RIGHTS_CASE_TYPES, DATA_RIGHTS_DECISION_CATEGORIES } from '@watchdog-bms/contracts';
+import { DATA_RIGHTS_DECISION_CATEGORIES } from '@watchdog-bms/contracts';
 import {
   allowedDispositionsForDecision,
   completionOutcomeForDecisions,
-  dataRightsRoleSeparationBlocks,
+  dataRightsSameActorModes,
   isOverdueCase,
   isLatestRequestEpoch,
   latestDecisions,
@@ -13,6 +13,9 @@ import {
   missingRetentionEvidenceCategories,
   recordableEvidenceTypesForStatus,
   requiredEvidenceCategory,
+  singleAdminReasonError,
+  singleAdminReasonOfAction,
+  singleAdminSteps,
   targetFieldsForCaseType,
   validateCreateCase,
   type CreateDataRightsCaseForm,
@@ -75,32 +78,73 @@ describe('data-rights create validation', () => {
 });
 
 describe('data-rights workflow helpers', () => {
-  it('enforces the same role separation for every case type', () => {
-    for (const caseType of DATA_RIGHTS_CASE_TYPES) {
-      assert.deepEqual(dataRightsRoleSeparationBlocks({
-        caseType,
-        currentUserId: 'system-admin-1',
-        createdByUserId: 'system-admin-1',
-        approvedByUserId: 'system-admin-1',
-        executionStartedByUserId: 'system-admin-1',
-      }), {
-        approval: true,
-        execution: true,
-        verification: true,
-      }, caseType);
-    }
-
-    assert.deepEqual(dataRightsRoleSeparationBlocks({
-      caseType: 'USER_ACCOUNT_ERASURE',
-      currentUserId: 'system-admin-2',
+  it('offers a same-person step to the only System Admin and hands it to a second one when there is one', () => {
+    const sameActor = {
+      currentUserId: 'system-admin-1',
       createdByUserId: 'system-admin-1',
       approvedByUserId: 'system-admin-1',
       executionStartedByUserId: 'system-admin-1',
-    }), {
-      approval: false,
-      execution: false,
-      verification: false,
+    };
+    // A second active System Admin exists: that person takes the step, as before.
+    assert.deepEqual(dataRightsSameActorModes({ ...sameActor, singleAdminAvailable: false }), {
+      approval: 'SECOND_ADMIN', execution: 'SECOND_ADMIN', verification: 'SECOND_ADMIN',
     });
+    // The reader is the only one: each step is offered as an explicit self-step.
+    assert.deepEqual(dataRightsSameActorModes({ ...sameActor, singleAdminAvailable: true }), {
+      approval: 'SINGLE_ADMIN', execution: 'SINGLE_ADMIN', verification: 'SINGLE_ADMIN',
+    });
+    // Somebody else took the step before: nothing special, whatever the number of admins.
+    for (const singleAdminAvailable of [true, false]) {
+      assert.deepEqual(dataRightsSameActorModes({ ...sameActor, currentUserId: 'system-admin-2', singleAdminAvailable }), {
+        approval: 'NORMAL', execution: 'NORMAL', verification: 'NORMAL',
+      });
+    }
+    // Decided step by step: only the step whose previous actor is the reader changes.
+    assert.deepEqual(dataRightsSameActorModes({
+      currentUserId: 'system-admin-1', createdByUserId: 'system-admin-2', approvedByUserId: 'system-admin-1',
+      executionStartedByUserId: null, singleAdminAvailable: true,
+    }), { approval: 'NORMAL', execution: 'SINGLE_ADMIN', verification: 'NORMAL' });
+    // An unknown reader is never treated as the previous actor.
+    assert.deepEqual(dataRightsSameActorModes({ ...sameActor, currentUserId: null, singleAdminAvailable: true }), {
+      approval: 'NORMAL', execution: 'NORMAL', verification: 'NORMAL',
+    });
+  });
+
+  it('lists the steps one person took alone and reads the reason kept in the case history', () => {
+    const none = {
+      approvalSingleAdmin: false, approvalSingleAdminReason: null,
+      executionSingleAdmin: false, executionSingleAdminReason: null,
+      verificationSingleAdmin: false, verificationSingleAdminReason: null,
+      completionSingleAdmin: false, completionSingleAdminReason: null,
+      evidence: [{ evidenceType: 'INDEPENDENT_VERIFICATION' as const, singleAdmin: false, singleAdminReason: null }],
+    };
+    assert.deepEqual(singleAdminSteps(none), []);
+    assert.deepEqual(singleAdminSteps({
+      ...none,
+      approvalSingleAdmin: true, approvalSingleAdminReason: 'เหตุผลอนุมัติ',
+      completionSingleAdmin: true, completionSingleAdminReason: 'เหตุผลปิดเคส',
+      evidence: [
+        { evidenceType: 'ACCESS_REVOCATION', singleAdmin: false, singleAdminReason: null },
+        { evidenceType: 'INDEPENDENT_VERIFICATION', singleAdmin: true, singleAdminReason: 'เหตุผลตรวจ' },
+      ],
+    }), [
+      { step: 'APPROVAL', reason: 'เหตุผลอนุมัติ' },
+      { step: 'INDEPENDENT_VERIFICATION', reason: 'เหตุผลตรวจ' },
+      { step: 'COMPLETION', reason: 'เหตุผลปิดเคส' },
+    ]);
+
+    assert.equal(singleAdminReasonOfAction({ fingerprint: 'x', singleAdmin: true, singleAdminReason: 'ทำคนเดียว' }), 'ทำคนเดียว');
+    for (const metadata of [null, 'text', { fingerprint: 'x' }, { singleAdmin: false, singleAdminReason: 'x' }, { singleAdmin: true }]) {
+      assert.equal(singleAdminReasonOfAction(metadata), null);
+    }
+  });
+
+  it('explains in plain Thai why a single-admin reason is not accepted yet', () => {
+    assert.equal(singleAdminReasonError(''), 'กรุณาเขียนเหตุผลที่ทำขั้นตอนนี้ด้วยตนเอง');
+    assert.equal(singleAdminReasonError('คนเดียว'), 'เหตุผลสั้นเกินไป กรุณาเขียนอย่างน้อย 20 ตัวอักษร');
+    assert.equal(singleAdminReasonError('ก'.repeat(1_001)), 'เหตุผลยาวเกินไป กรุณาเขียนไม่เกิน 1000 ตัวอักษร');
+    assert.equal(singleAdminReasonError('a'.repeat(40)), 'กรุณาเขียนเหตุผลเป็นประโยคที่อ่านแล้วเข้าใจ');
+    assert.equal(singleAdminReasonError('ระบบมีผู้ดูแลระบบเพียงคนเดียว จึงทำขั้นตอนนี้ด้วยตนเอง'), null);
   });
 
   it('keeps BLOCKED unresolved for overdue tracking but excludes resolved cases', () => {
