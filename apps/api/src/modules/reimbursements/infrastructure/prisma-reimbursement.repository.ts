@@ -137,6 +137,15 @@ type ResolvedPaymentSlip = {
   uploadedByUserId: string;
   metadataJson: Record<string, unknown> | null;
   signedCopyLinkIds: string[];
+  /** A signed copy that carries a "signed on paper" declaration made with a link this move removes. */
+  withdrawsDeclaration: boolean;
+};
+
+/** What every slip proof is asked: which file, for which claim, by whom, and whether a withdrawal was confirmed. */
+type PaymentSlipProofInput = {
+  companyId: string; requestId: string; attachmentId: string; actorUserId: string;
+  /** The payer's explicit yes to withdrawing the file's "signed on paper" declaration (spec §16.2). */
+  confirmSignedCopyWithdrawal?: boolean;
 };
 
 function activeApproverMembershipWhere(
@@ -3347,6 +3356,8 @@ export class PrismaReimbursementRepository {
     bankAccountId?: string;
     /** Payment evidence: proven for this claim and payer, then linked, inside this transaction. */
     slipAttachmentId?: string;
+    /** The payer's yes to withdrawing a "signed on paper" declaration the slip file carries. */
+    confirmSignedCopyWithdrawal?: boolean;
     /**
      * What the payer said about the payout account, as sent. It is held against the claim under the
      * payment lock (`planPaymentPayout`), never trusted from a check made before it.
@@ -3430,6 +3441,7 @@ export class PrismaReimbursementRepository {
         ? await this.resolvePaymentSlipLocked(tx, {
           companyId: data.companyId, requestId: data.reimbursementRequestId,
           attachmentId: data.slipAttachmentId, actorUserId: data.paidByUserId,
+          confirmSignedCopyWithdrawal: data.confirmSignedCopyWithdrawal,
         })
         : undefined;
       const payout = await confirmPaymentPayout(tx, request, payoutPlan, { actorUserId: data.paidByUserId, confirmedAt: new Date() });
@@ -3543,7 +3555,7 @@ export class PrismaReimbursementRepository {
   // ---- Payment slips (spec §12.5, §16) ----
 
   /** Friendly preflight of the slip proof that `recordPaymentAtomic` repeats under the payment lock. */
-  async assertPaymentSlipUsable(input: { companyId: string; requestId: string; attachmentId: string; actorUserId: string }): Promise<void> {
+  async assertPaymentSlipUsable(input: PaymentSlipProofInput): Promise<void> {
     await this.resolvePaymentSlip(this.prisma.client as any, input);
   }
 
@@ -3558,10 +3570,7 @@ export class PrismaReimbursementRepository {
    * evidence is refused here: every link it has must be the kind its source allows, and no claim
    * line may name it as a receipt.
    */
-  private async resolvePaymentSlip(
-    db: any,
-    input: { companyId: string; requestId: string; attachmentId: string; actorUserId: string },
-  ): Promise<ResolvedPaymentSlip> {
+  private async resolvePaymentSlip(db: any, input: PaymentSlipProofInput): Promise<ResolvedPaymentSlip> {
     const invalid = () => new UnprocessableEntityException('payment_slip_invalid');
     const file = await db.attachmentObject.findFirst({
       where: { id: input.attachmentId, companyId: input.companyId, status: 'ACTIVE', mimeType: { in: REIMBURSEMENT_PAYMENT_SLIP_MIME_TYPES } },
@@ -3602,9 +3611,17 @@ export class PrismaReimbursementRepository {
     } else {
       throw invalid();
     }
+    // Only the declaration made with a link this move removes. One bound to any other link is not this
+    // claim's to withdraw, and it never counted for this claim either.
+    const declaredLinkId = (metadataJson?.[REIMBURSEMENT_SIGNED_COPY_ACK_KEY] as { linkId?: string } | null | undefined)?.linkId ?? '';
+    const withdrawsDeclaration = source === 'SIGNED_COPY' && signedCopyLinkIds.includes(declaredLinkId);
+    // The signed form picked as the slip (upgrade test 2026-10-02): the move cannot be undone, so a
+    // declared copy leaves its list only on the payer's explicit word. A page that predates the
+    // question sends nothing and is told to reload (409), where the picker asks it.
+    if (withdrawsDeclaration && input.confirmSignedCopyWithdrawal !== true) throw new ConflictException('payment_slip_signed_copy_unconfirmed');
     return {
       attachmentId: file.id, source, checksumSha256: file.checksumSha256 ?? null,
-      uploadedByUserId: file.uploadedByUserId, metadataJson, signedCopyLinkIds,
+      uploadedByUserId: file.uploadedByUserId, metadataJson, signedCopyLinkIds, withdrawsDeclaration,
     };
   }
 
@@ -3615,10 +3632,7 @@ export class PrismaReimbursementRepository {
    * committed after this transaction's snapshot was taken fails this transaction (a serialization
    * conflict under the payment's isolation level) instead of leaving a slip on a deleted file.
    */
-  private async resolvePaymentSlipLocked(
-    tx: any,
-    input: { companyId: string; requestId: string; attachmentId: string; actorUserId: string },
-  ): Promise<ResolvedPaymentSlip> {
+  private async resolvePaymentSlipLocked(tx: any, input: PaymentSlipProofInput): Promise<ResolvedPaymentSlip> {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.attachmentId}:attachment-retention`}))`;
     await tx.$executeRaw`SELECT 1 FROM "AttachmentObject" WHERE "id" = ${input.attachmentId} AND "companyId" = ${input.companyId} FOR UPDATE`;
     return this.resolvePaymentSlip(tx, input);
@@ -3641,16 +3655,13 @@ export class PrismaReimbursementRepository {
       purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
       linkedByUserId: input.linkedByUserId,
     } });
-    let declarationWithdrawn = false;
     if (slip.source === 'SIGNED_COPY') {
       await tx.attachmentLink.deleteMany({ where: { companyId: input.companyId, id: { in: slip.signedCopyLinkIds } } });
-      const { [REIMBURSEMENT_SIGNED_COPY_ACK_KEY]: ack, ...rest } = slip.metadataJson ?? {};
-      // Only the declaration made with a link removed here. One bound to any other link is not this
-      // claim's to withdraw, and it never counted for this claim either.
-      declarationWithdrawn = slip.signedCopyLinkIds.includes((ack as { linkId?: string } | null | undefined)?.linkId ?? '');
-      if (declarationWithdrawn) await tx.attachmentObject.update({ where: { id: slip.attachmentId }, data: { metadataJson: rest } });
+      // The declaration the proof found (and the payer confirmed withdrawing) goes with its link.
+      const { [REIMBURSEMENT_SIGNED_COPY_ACK_KEY]: _withdrawn, ...rest } = slip.metadataJson ?? {};
+      if (slip.withdrawsDeclaration) await tx.attachmentObject.update({ where: { id: slip.attachmentId }, data: { metadataJson: rest } });
     }
-    return { attachmentId: slip.attachmentId, source: slip.source, uploadedByUserId: slip.uploadedByUserId, declarationWithdrawn };
+    return { attachmentId: slip.attachmentId, source: slip.source, uploadedByUserId: slip.uploadedByUserId, declarationWithdrawn: slip.withdrawsDeclaration };
   }
 
   /**
@@ -3660,6 +3671,7 @@ export class PrismaReimbursementRepository {
    */
   async attachPaymentSlipAtomic(data: {
     companyId: string; requestId: string; paymentId: string; attachmentId: string; actorUserId: string;
+    confirmSignedCopyWithdrawal?: boolean;
   }): Promise<{ created: boolean; slip?: ReimbursementPaymentSlipLink }> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${data.companyId}:${data.requestId}:reimbursement-payment`}))`;

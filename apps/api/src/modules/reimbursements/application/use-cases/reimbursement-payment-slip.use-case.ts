@@ -109,6 +109,7 @@ export class AttachPaymentSlipUseCase {
 
     const result = await this.repo.attachPaymentSlipAtomic({
       companyId: ctx.companyId, requestId, paymentId, attachmentId: input.attachmentId, actorUserId: ctx.userId,
+      ...(input.confirmSignedCopyWithdrawal === true && { confirmSignedCopyWithdrawal: true }),
     });
     if (result.created && result.slip) {
       await this.audit.log({

@@ -226,6 +226,7 @@ export class RecordReimbursementPaymentDto implements RecordReimbursementPayment
   @IsString() @IsOptional() @MaxLength(500) note?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(128) idempotencyKey?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) slipAttachmentId?: string;
+  @IsBoolean() @IsOptional() confirmSignedCopyWithdrawal?: boolean;
   // The payer's statement about the payout account (payout spec §12.3). Shapes only: whether it is
   // enough for this claim is decided under the payment lock by `planPaymentPayout`.
   @IsInt() @Min(1) @IsOptional() payoutDestinationVersion?: number;
@@ -252,4 +253,5 @@ export class CompletePaymentSlipUploadDto {
 
 export class AttachPaymentSlipDto implements AttachReimbursementPaymentSlipInput {
   @IsString() @IsNotEmpty() @MaxLength(64) attachmentId!: string;
+  @IsBoolean() @IsOptional() confirmSignedCopyWithdrawal?: boolean;
 }

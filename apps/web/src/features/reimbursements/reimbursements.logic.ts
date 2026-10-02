@@ -343,12 +343,12 @@ export function signedCopyMisfiledHint(detail: any, permissions: readonly string
 
 /**
  * What the payer confirms before a file leaves ใบเบิกที่เซ็นแล้ว to become a payment's slip (spec §16.2):
- * nothing is uploaded again, a "signed on paper" declaration made with that file is withdrawn, and
- * the file is from then on opened only by the slip's own readers.
+ * nothing is uploaded again, nothing moves it back, a "signed on paper" declaration made with that file
+ * is withdrawn, and the file is from then on opened only by the slip's own readers.
  */
 export function signedCopyMoveConfirmText(copy: { fileName?: string; acknowledgedAt?: string }, payment: { paymentNo?: string }): string {
   return [
-    `ไฟล์ ${copy.fileName ?? 'นี้'} จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย${payment.paymentNo ? ` ${payment.paymentNo}` : 'นี้'} โดยไม่ต้องอัปโหลดใหม่`,
+    `ไฟล์ ${copy.fileName ?? 'นี้'} จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย${payment.paymentNo ? ` ${payment.paymentNo}` : 'นี้'} โดยไม่ต้องอัปโหลดใหม่ และย้ายกลับไม่ได้`,
     ...(copy.acknowledgedAt ? ['ไฟล์นี้เคยถูกยืนยันว่าเป็นใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น ใบเบิกจะไม่นับว่าลงนามบนกระดาษจากไฟล์นี้อีก'] : []),
     'หลังย้ายแล้ว ไฟล์นี้เปิดดูได้เฉพาะผู้เบิก ผู้อนุมัติของใบนี้ ผู้ที่บันทึกจ่ายได้ และผู้ตรวจการเงิน',
   ].join(' ');
@@ -384,6 +384,14 @@ export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', error: 
 /** What the payment form holds as its slip: a file picked but not sent yet, or one the API already holds. */
 export type PaymentFormSlip = { file: File } | { attachmentId: string; name: string };
 
+/**
+ * The file of `paymentSlipChoices` the form holds as its slip. Undefined for a file the payer picked or uploaded, and
+ * for none. The form's warning under a chosen signed copy and the confirmation the payment carries both read this.
+ */
+export function chosenPaymentSlipChoice(slip: PaymentFormSlip | null, choices: readonly PaymentSlipChoice[]): PaymentSlipChoice | undefined {
+  return slip && 'attachmentId' in slip ? choices.find((choice) => choice.attachmentId === slip.attachmentId) : undefined;
+}
+
 /** What lives as long as one opened payment form, across every press of บันทึกจ่าย. */
 export type PaymentFormSession = { idempotencyKey: string | null; saving: boolean };
 
@@ -403,6 +411,8 @@ export type PaymentFormSave =
  * - The session's key is made on the first press and kept: a press after a lost answer is the same
  *   payment to the API, never a second one.
  * - A second press while the first is still running does nothing: no second upload, no second request.
+ * - A signed copy chosen as the slip goes with the payer's confirmation that it leaves ใบเบิกที่เซ็นแล้ว for good
+ *   (spec §16.2): the API refuses a declared copy without it, and nothing but that choice sends it.
  * - What the payer says about the account goes with it (spec §12.3): the account version the page
  *   shows, always, so a page loaded before the account changed is refused; the confirmation, only
  *   for the account it was ticked for; the reason, only when the method differs from the one asked for.
@@ -412,6 +422,11 @@ export async function savePaymentForm(
     form: { paidAmount: string; paymentMethod: string; paidAt: string; paymentReference: string };
     outstandingAmount: string;
     slip: PaymentFormSlip | null;
+    /**
+     * The files the form lists under "เลือกจากไฟล์ที่แนบไว้ในใบนี้". A signed copy chosen from them was chosen under the
+     * note that it moves for good and loses its "signed on paper" declaration, so the payment carries that confirmation.
+     */
+    slipChoices?: readonly PaymentSlipChoice[];
     session: PaymentFormSession;
     /** The payout side of the form for the method chosen (`paymentFormPayout`). Omitted: the claim asks nothing of it. */
     payout?: PaymentFormPayout;
@@ -455,6 +470,7 @@ export async function savePaymentForm(
       await deps.recordPayment({
         ...form, paidAt: new Date(form.paidAt).toISOString(), paymentReference: form.paymentReference || undefined,
         slipAttachmentId, idempotencyKey: session.idempotencyKey,
+        ...(chosenPaymentSlipChoice(slip, input.slipChoices ?? [])?.kind === 'signed-copy' && { confirmSignedCopyWithdrawal: true }),
         ...(payout?.version !== undefined && { payoutDestinationVersion: payout.version }),
         ...(confirmed && { payoutConfirmed: true, ...(payout.confirmation!.defaultToken && { payoutDefaultToken: payout.confirmation!.defaultToken }) }),
         ...(payout?.rule.mismatchReasonRequired && { methodMismatchReason: mismatchReason.trim() }),

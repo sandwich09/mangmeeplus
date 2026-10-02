@@ -588,12 +588,13 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           companyId, requestId, payment.id, await uploadReimbursementPaymentSlip(companyId, requestId, file),
         ), 'แนบสลิปเรียบร้อยแล้ว')}
         onUseSignedCopyAsSlip={(copy, payment) => void (async () => {
-          // The file changes hands and a paper-signature declaration may go with it, so it asks first.
+          // The file changes hands for good and a paper-signature declaration may go with it, so it asks first;
+          // the yes goes with the call, which the API refuses for a declared copy without it.
           if (!(await confirm({
             title: 'ใช้ไฟล์นี้เป็นสลิปการจ่าย', message: signedCopyMoveConfirmText(copy, payment),
             confirmLabel: 'ย้ายเป็นสลิปการจ่าย', cancelLabel: 'กลับ', variant: 'primary',
           }))) return;
-          await act('move-slip', () => attachReimbursementPaymentSlip(companyId, requestId, payment.id, copy.attachmentId), 'ย้ายไฟล์ไปเป็นสลิปการจ่ายแล้ว');
+          await act('move-slip', () => attachReimbursementPaymentSlip(companyId, requestId, payment.id, copy.attachmentId, true), 'ย้ายไฟล์ไปเป็นสลิปการจ่ายแล้ว');
         })()}
       />
 

@@ -7,8 +7,8 @@ import { reimbursementPaymentSlipRequired } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, canAttachPaymentSlip, isLostPaymentRace, opensPaymentFormOnArrival, paymentSaveErrorMessage,
-  paymentSlipChoices, paymentSlipCount, queueRowOffersPayment, quickPayTarget, savePaymentForm, signedCopyMoveConfirmText,
-  slipTargetPayment, validatePaymentForm, type PaymentFormSession, type PaymentFormSlip,
+  chosenPaymentSlipChoice, paymentSlipChoices, paymentSlipCount, queueRowOffersPayment, quickPayTarget, savePaymentForm, signedCopyMoveConfirmText,
+  slipTargetPayment, validatePaymentForm, type PaymentFormSession, type PaymentFormSlip, type PaymentSlipChoice,
 } from './reimbursements.logic';
 import { PAYMENT_METHOD_LABELS } from './reimbursements.model';
 
@@ -213,11 +213,13 @@ describe('files already on the claim that can be the slip', () => {
 
   it('says what moving a file out of ใบเบิกที่เซ็นแล้ว will do, and mentions a declaration only when one was made', () => {
     const declared = signedCopyMoveConfirmText(declaredCopy, recorded());
-    assert.match(declared, /^ไฟล์ สลิปโอนเงิน\.jpg จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย RBPAY-202609-00002 โดยไม่ต้องอัปโหลดใหม่/);
+    assert.match(declared, /^ไฟล์ สลิปโอนเงิน\.jpg จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย RBPAY-202609-00002 โดยไม่ต้องอัปโหลดใหม่ และย้ายกลับไม่ได้ /);
     assert.match(declared, /ระบบจะถอนการยืนยันนั้น ใบเบิกจะไม่นับว่าลงนามบนกระดาษจากไฟล์นี้อีก/);
     assert.match(declared, /เปิดดูได้เฉพาะผู้เบิก ผู้อนุมัติของใบนี้ ผู้ที่บันทึกจ่ายได้ และผู้ตรวจการเงิน$/);
     const archived = signedCopyMoveConfirmText({ fileName: 'scan.pdf' }, recorded());
     assert.doesNotMatch(archived, /ถอนการยืนยัน/);
+    // Either way the file does not come back: both are told so before they confirm.
+    assert.match(archived, /และย้ายกลับไม่ได้ /);
   });
 });
 
@@ -296,7 +298,7 @@ describe('saving the payment form', () => {
   const picked = (name = 'slip.jpg'): PaymentFormSlip => ({ file: { name } as File });
 
   /** The form's world: what was sent, in order, and the slip the form holds after each press. */
-  function form(options: { uploadFails?: boolean; recordFailures?: number; slip?: PaymentFormSlip | null; form?: typeof transferForm } = {}) {
+  function form(options: { uploadFails?: boolean; recordFailures?: number; slip?: PaymentFormSlip | null; form?: typeof transferForm; slipChoices?: PaymentSlipChoice[] } = {}) {
     const calls: unknown[][] = [];
     const busy: boolean[] = [];
     const session: PaymentFormSession = { idempotencyKey: null, saving: false };
@@ -304,7 +306,7 @@ describe('saving the payment form', () => {
     let recordFailures = options.recordFailures ?? 0;
     let keys = 0;
     let release: (() => void) | undefined;
-    const press = () => savePaymentForm({ form: options.form ?? transferForm, outstandingAmount: '500', slip, session }, {
+    const press = () => savePaymentForm({ form: options.form ?? transferForm, outstandingAmount: '500', slip, session, ...(options.slipChoices && { slipChoices: options.slipChoices }) }, {
       uploadSlip: async (file) => {
         calls.push(['upload', file.name]);
         if (release === undefined && held) await new Promise<void>((resolve) => { release = resolve; });
@@ -350,6 +352,35 @@ describe('saving the payment form', () => {
     assert.deepEqual(await cash.press(), { status: 'saved' });
     const [, body] = cash.calls[0] as [string, Record<string, unknown>];
     assert.deepEqual([body['slipAttachmentId'], body['paymentReference'], body['paymentMethod']], [undefined, undefined, 'CASH']);
+  });
+
+  // The signed form picked as the slip (upgrade test 2026-10-02). The API refuses a declared copy without the payer's
+  // confirmation; the form sends it for a signed copy chosen from its list, which is exactly when it shows the note
+  // that the file moves out of ใบเบิกที่เซ็นแล้ว and cannot be moved back, and for nothing else.
+  it('confirms the withdrawal with the payment for a signed copy chosen from the list, and for no other slip', async () => {
+    const slipChoices = paymentSlipChoices(claim({ payments: [voided()], signedCopies: [declaredCopy, { attachmentId: 'att-scan', fileName: 'scan.pdf' }] }));
+    assert.deepEqual(slipChoices.map((choice) => [choice.attachmentId, choice.kind]), [['att-slip-1', 'previous-slip'], ['att-copy', 'signed-copy'], ['att-scan', 'signed-copy']]);
+    const sent = async (slip: PaymentFormSlip, choices: PaymentSlipChoice[] | undefined = slipChoices) => {
+      const h = form({ slip, ...(choices && { slipChoices: choices }) });
+      assert.deepEqual(await h.press(), { status: 'saved' });
+      const [, body] = h.calls.at(-1) as [string, Record<string, unknown>];
+      return [body['slipAttachmentId'], body['confirmSignedCopyWithdrawal']];
+    };
+    assert.deepEqual(await sent({ attachmentId: 'att-copy', name: 'สลิปโอนเงิน.jpg' }), ['att-copy', true], 'a declared copy');
+    assert.deepEqual(await sent({ attachmentId: 'att-scan', name: 'scan.pdf' }), ['att-scan', true], 'an archive copy: the same note was shown');
+    assert.deepEqual(await sent({ attachmentId: 'att-slip-1', name: 'สลิปของการจ่ายที่ยกเลิกแล้ว' }), ['att-slip-1', undefined], 'the slip of a voided payment moves nothing');
+    assert.deepEqual(await sent(picked()), ['att-uploaded', undefined], 'a new upload');
+    assert.deepEqual(await sent({ attachmentId: 'att-uploaded', name: 'slip.jpg' }), ['att-uploaded', undefined], 'an upload kept after a failed save');
+
+    // The note and the confirmation read one answer: the listed file the form holds.
+    for (const choice of slipChoices) {
+      assert.equal(chosenPaymentSlipChoice({ attachmentId: choice.attachmentId, name: choice.label }, slipChoices), choice);
+    }
+    assert.equal(chosenPaymentSlipChoice(picked(), slipChoices), undefined);
+    assert.equal(chosenPaymentSlipChoice(null, slipChoices), undefined);
+    const formSource = sourceOf('ReimbursementDetailSections.tsx');
+    assert.match(formSource, /const attached = paymentSlipChoices\(request\);[\s\S]*?const chosen = chosenPaymentSlipChoice\(slip, attached\);/);
+    assert.match(formSource, /\{chosen\?\.kind === 'signed-copy' && \(\s*<p [^>]*data-testid="reimbursement-payment-slip-move-note">[\s\S]*?ย้ายกลับไม่ได้/);
   });
 
   it('sends nothing for a form that is not ready, and says what is missing', async () => {
@@ -408,7 +439,8 @@ describe('saving the payment form', () => {
   it('is what the payment form runs, with a session that lives as long as the opened form', () => {
     const source = sourceOf('ReimbursementDetailSections.tsx');
     assert.match(source, /const session = useRef<PaymentFormSession>\(\{ idempotencyKey: null, saving: false \}\)/);
-    assert.match(source, /await savePaymentForm\(\{ form, outstandingAmount: String\(request\.outstandingAmount\), slip, session: session\.current, payout, payer \}/);
+    // With the list the form shows: the save confirms the withdrawal for a signed copy chosen from it, and for nothing else.
+    assert.match(source, /await savePaymentForm\(\{ form, outstandingAmount: String\(request\.outstandingAmount\), slip, slipChoices: attached, session: session\.current, payout, payer \}/);
     assert.match(source, /onSlipUploaded: setSlip/);
     assert.match(source, /if \(result\.status === 'saved'\) \{ onDone\(\); toast\.success\('บันทึกจ่ายเรียบร้อยแล้ว'\); \}/);
   });

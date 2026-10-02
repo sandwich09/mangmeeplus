@@ -235,6 +235,19 @@ describe('payment slip DTOs', () => {
     await rejects(AttachPaymentSlipDto, {});
     await rejects(AttachPaymentSlipDto, { attachmentId: 'att-1', paymentId: 'pay-9' });
   });
+
+  // The payer's word that a declared signed copy may leave its list for good. A boolean and nothing
+  // that looks like one, on the two bodies that can make a file a slip; whether it is needed is the
+  // repository's to decide, from the file.
+  it('take the confirmation of a withdrawn declaration as a boolean, on the payment and on the later attachment', async () => {
+    const payment = { paidAmount: '500.00', paymentMethod: 'BANK_TRANSFER', paidAt: '2026-02-01T00:00:00.000Z', paymentReference: 'TXN-1', slipAttachmentId: 'att-1' };
+    for (const [metatype, body] of [[RecordReimbursementPaymentDto, payment], [AttachPaymentSlipDto, { attachmentId: 'att-1' }]] as const) {
+      for (const word of [true, false]) {
+        assert.equal((await pipe.transform({ ...body, confirmSignedCopyWithdrawal: word }, { type: 'body', metatype })).confirmSignedCopyWithdrawal, word);
+      }
+      for (const word of ['true', 1, 'yes', [true]]) await rejects(metatype, { ...body, confirmSignedCopyWithdrawal: word });
+    }
+  });
 });
 
 describe('LinkReimbursementSignedCopyDto', () => {

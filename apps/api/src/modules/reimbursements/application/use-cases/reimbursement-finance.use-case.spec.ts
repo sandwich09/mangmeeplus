@@ -1219,6 +1219,27 @@ describe('payment slip upload and later attachment', () => {
     assert.equal(audits.length, 1);
   });
 
+  // The repository decides (a declared copy is refused without it); the use cases must hand it the payer's word
+  // as sent, and nothing in its place: an absent or false answer is never turned into a yes on the way.
+  it('hands the payer\'s confirmation of a withdrawn declaration to every slip proof, and only a true one', async () => {
+    for (const [sent, carried] of [[{ confirmSignedCopyWithdrawal: true }, true], [{ confirmSignedCopyWithdrawal: false }, undefined], [{}, undefined]] as const) {
+      const pay = fakeRepo(financeReviewedRequest(), { slipSource: 'SIGNED_COPY' });
+      await new RecordReimbursementPaymentUseCase(pay, noopAudit, reserve, commit, fakeDetailEvidence as any).execute(ctx(perms), 'rb-1', {
+        paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER', paidAt: '2026-02-01T00:00:00.000Z', paymentReference: 'TXN-1', slipAttachmentId: 'att-misfiled', ...sent,
+      });
+      assert.deepEqual([pay.slipChecks[0].confirmSignedCopyWithdrawal, pay.lastPayment.confirmSignedCopyWithdrawal], [carried, carried], `pay: ${JSON.stringify(sent)}`);
+
+      const later = fakeRepo(financeReviewedRequest(), { slipSource: 'SIGNED_COPY' });
+      await new RecordReimbursementPaymentUseCase(later, noopAudit, reserve, commit, fakeDetailEvidence as any)
+        .execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
+      const attach = later.attachPaymentSlipAtomic.bind(later);
+      const attached: any[] = [];
+      later.attachPaymentSlipAtomic = async (data: any) => { attached.push(data); return attach(data); };
+      await new AttachPaymentSlipUseCase(later, noopAudit, fakeDetailEvidence as any).execute(ctx(perms), 'rb-1', 'pay-1', { attachmentId: 'att-misfiled', ...sent });
+      assert.deepEqual(attached.map((data) => data.confirmSignedCopyWithdrawal), [carried], `attach: ${JSON.stringify(sent)}`);
+    }
+  });
+
   it('refuses to attach a slip without the payment-record right, outside the branch, or to another claim\'s payment', async () => {
     const req = financeReviewedRequest();
     const repo = fakeRepo(req);
@@ -2339,7 +2360,7 @@ describe('PrismaReimbursementRepository payment slips', () => {
   it('moves a misfiled signed copy to be the slip: the copy link and its paper declaration go, the file stays', async () => {
     const h = atomicPaymentHarness();
     misfiledSignedCopy(h);
-    const result = await h.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-misfiled' });
+    const result = await h.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-misfiled', confirmSignedCopyWithdrawal: true });
 
     // No size limit on a file already stored: the 10 MB cap is on new slip uploads.
     assert.deepEqual(result.slip, { attachmentId: 'att-misfiled', source: 'SIGNED_COPY', uploadedByUserId: 'staff-1', declarationWithdrawn: true });
@@ -2354,7 +2375,10 @@ describe('PrismaReimbursementRepository payment slips', () => {
       const h = atomicPaymentHarness();
       await h.repo.recordPaymentAtomic(atomicPaymentInput); // cash, recorded before the slip existed
       misfiledSignedCopy(h, declared);
-      const attached = await h.repo.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' });
+      // Only the declared copy needs the payer's word: an archive copy has no declaration to withdraw.
+      const attached = await h.repo.attachPaymentSlipAtomic({
+        companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1', ...(declared && { confirmSignedCopyWithdrawal: true }),
+      });
       assert.deepEqual(attached, { created: true, slip: { attachmentId: 'att-misfiled', source: 'SIGNED_COPY', uploadedByUserId: 'staff-1', declarationWithdrawn: declared } });
       assert.deepEqual(h.state().links.map((link) => [link.purpose, link.targetId, link.linkedByUserId]), [['reimbursement.payment.slip', 'pay-1', 'fin-1']]);
       assert.deepEqual(h.state().files[0].metadataJson, { source: 'web' });
@@ -2365,6 +2389,35 @@ describe('PrismaReimbursementRepository payment slips', () => {
       assert.deepEqual(await h.repo.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' }), { created: false });
       assert.equal(h.state().links.length, 1);
     }
+  });
+
+  // The signed form picked as the slip (upgrade test 2026-10-02). There is no way back, so the three proofs
+  // (the friendly check, the payment write, the later attach) refuse a declared copy without the payer's word.
+  it('refuses a declared signed copy as the slip until the payer confirms withdrawing its declaration, and writes nothing', async () => {
+    const unconfirmed = (error: any) => error.getStatus() === 409 && error.message === 'payment_slip_signed_copy_unconfirmed';
+    const proof = { companyId: 'co-1', requestId: 'rb-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' };
+    for (const word of [undefined, false, 'true', 1] as any[]) {
+      const pay = atomicPaymentHarness();
+      const file = misfiledSignedCopy(pay);
+      const declaration = structuredClone(file.metadataJson);
+      const sent = word === undefined ? {} : { confirmSignedCopyWithdrawal: word };
+      await assert.rejects(() => pay.repo.assertPaymentSlipUsable({ ...proof, ...sent }), unconfirmed, `check: ${word}`);
+      await assert.rejects(() => pay.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-misfiled', ...sent }), unconfirmed, `pay: ${word}`);
+      assert.deepEqual([pay.state().payments.length, pay.state().links.map((link) => link.purpose), pay.state().files[0].metadataJson],
+        [0, ['reimbursement.claim_form.signed'], declaration], `pay: ${word}: no payment, the copy and its declaration are where they were`);
+
+      const attach = atomicPaymentHarness();
+      await attach.repo.recordPaymentAtomic(atomicPaymentInput);
+      misfiledSignedCopy(attach);
+      await assert.rejects(() => attach.repo.attachPaymentSlipAtomic({ ...proof, paymentId: 'pay-1', ...sent }), unconfirmed, `attach: ${word}`);
+      assert.deepEqual([attach.state().links.map((link) => link.purpose), attach.state().files[0].metadataJson],
+        [['reimbursement.claim_form.signed'], declaration], `attach: ${word}`);
+    }
+    // With the payer's word the same three go through.
+    const h = atomicPaymentHarness();
+    misfiledSignedCopy(h);
+    await h.repo.assertPaymentSlipUsable({ ...proof, confirmSignedCopyWithdrawal: true });
+    assert.equal((await h.repo.recordPaymentAtomic({ ...atomicTransferInput, slipAttachmentId: 'att-misfiled', confirmSignedCopyWithdrawal: true })).slip?.declarationWithdrawn, true);
   });
 
   it('withdraws only the declaration made with the copy it removes: one bound to another link is left alone', async () => {

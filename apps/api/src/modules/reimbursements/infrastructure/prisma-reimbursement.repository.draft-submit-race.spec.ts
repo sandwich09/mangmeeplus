@@ -1179,7 +1179,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     const files = new PrismaAttachmentRepository({ client: claim.db } as any);
     assert.equal(await files.isReimbursementPaymentSlip({ id: misfiled.id, companyId }), false);
 
-    const moved = await repos[0]!.attachPaymentSlipAtomic({ companyId, requestId: claim.requestId, paymentId: cash.payment.id, attachmentId: misfiled.id, actorUserId: `${TAG}-finance` });
+    const moved = await repos[0]!.attachPaymentSlipAtomic({ companyId, requestId: claim.requestId, paymentId: cash.payment.id, attachmentId: misfiled.id, actorUserId: `${TAG}-finance`, confirmSignedCopyWithdrawal: true });
     assert.deepEqual(moved, { created: true, slip: { attachmentId: misfiled.id, source: 'SIGNED_COPY', uploadedByUserId: `${TAG}-user`, declarationWithdrawn: true } });
 
     // Out of the signed copies, declaration gone from the stored metadata (the rest kept), linked as the slip.
@@ -1212,8 +1212,8 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
   }
   const linksOf = async (attachmentId: string) => (await clients[0]!.attachmentLink.findMany({ where: { attachmentId }, orderBy: { createdAt: 'asc' } }))
     .map((link) => [link.targetType, link.targetId, link.purpose]);
-  const moveToSlip = (requestId: string, paymentId: string, attachmentId: string, repo = repos[0]!) =>
-    repo.attachPaymentSlipAtomic({ companyId, requestId, paymentId, attachmentId, actorUserId: `${TAG}-finance` });
+  const moveToSlip = (requestId: string, paymentId: string, attachmentId: string, repo = repos[0]!, confirmSignedCopyWithdrawal?: boolean) =>
+    repo.attachPaymentSlipAtomic({ companyId, requestId, paymentId, attachmentId, actorUserId: `${TAG}-finance`, confirmSignedCopyWithdrawal });
   const cashPayment = (requestId: string, key: string) =>
     repos[0]!.recordPaymentAtomic({ ...transfer(requestId, key), paymentMethod: 'CASH', paymentReference: undefined });
 
@@ -1281,7 +1281,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
 
     // A copy that is only this claim's becomes the slip, and from then on is nothing else.
     const onlyThisClaims = await signedCopyOf(claim.requestId, true);
-    assert.equal((await moveToSlip(claim.requestId, cash.payment.id, onlyThisClaims.id)).created, true);
+    assert.equal((await moveToSlip(claim.requestId, cash.payment.id, onlyThisClaims.id, repos[0]!, true)).created, true);
     assert.deepEqual(await linksOf(onlyThisClaims.id), [['reimbursement_payment', cash.payment.id, 'reimbursement.payment.slip']]);
     await assert.rejects(() => asReceipt(onlyThisClaims.id), refusedAsSlip);
     for (const requestId of [claim.requestId, 'another-claim']) {
@@ -1289,6 +1289,43 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     }
     assert.deepEqual(await linksOf(onlyThisClaims.id), [['reimbursement_payment', cash.payment.id, 'reimbursement.payment.slip']]);
     assert.deepEqual(await repos[0]!.listSignedClaimFormCopies(companyId, 'another-claim').then((copies) => copies.map((copy) => copy.attachmentId)), [alsoAnotherClaims.id]);
+  });
+
+  // The signed form picked as the slip (upgrade test 2026-10-02): nothing moves a file back, so a declared copy
+  // leaves ใบเบิกที่เซ็นแล้ว only on the payer's explicit word, at the payment and at the later attach alike.
+  it('refuses a declared signed copy as the slip, at the payment and at the later attach, until the payer confirms the withdrawal', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const unconfirmed = (error: any) => error.getStatus() === 409 && errorMessage(error) === 'payment_slip_signed_copy_unconfirmed';
+    const copies = async (requestId: string) => (await repos[0]!.listSignedClaimFormCopies(companyId, requestId)).map((copy) => [copy.attachmentId, copy.acknowledged]);
+    const metadataOf = async (id: string) => (await clients[0]!.attachmentObject.findUniqueOrThrow({ where: { id } })).metadataJson;
+
+    // At the payment: a transfer whose slip is the claim's declared copy.
+    const claim = await payableClaim();
+    const form = await signedCopyOf(claim.requestId, true);
+    const declaration = await metadataOf(form.id);
+    for (const word of [undefined, false]) {
+      await assert.rejects(() => repos[0]!.assertPaymentSlipUsable({ companyId, requestId: claim.requestId, attachmentId: form.id, actorUserId: `${TAG}-finance`, confirmSignedCopyWithdrawal: word }), unconfirmed);
+      await assert.rejects(() => repos[0]!.recordPaymentAtomic({ ...transfer(claim.requestId, 'declared-unconfirmed', form.id), confirmSignedCopyWithdrawal: word }), unconfirmed);
+    }
+    // Nothing was written: no payment, the copy still counts as the paper-signed record, its declaration is intact.
+    assert.deepEqual([(await paymentsOf(claim.requestId)).length, await copies(claim.requestId), await linksOf(form.id), await metadataOf(form.id)],
+      [0, [[form.id, true]], [['reimbursement_request', claim.requestId, 'reimbursement.claim_form.signed']], declaration]);
+    const paid = await repos[0]!.recordPaymentAtomic({ ...transfer(claim.requestId, 'declared-confirmed', form.id), confirmSignedCopyWithdrawal: true });
+    assert.deepEqual(paid.slip, { attachmentId: form.id, source: 'SIGNED_COPY', uploadedByUserId: `${TAG}-user`, declarationWithdrawn: true });
+    assert.deepEqual([await copies(claim.requestId), await slipLinksOf(claim.requestId)], [[], [[form.id, paid.payment.id]]]);
+
+    // At the later attach: the payment was recorded as cash, and the declared copy is offered as its slip.
+    const later = await payableClaim();
+    const cash = await cashPayment(later.requestId, 'declared-later');
+    const scan = await signedCopyOf(later.requestId, true);
+    await assert.rejects(() => moveToSlip(later.requestId, cash.payment.id, scan.id), unconfirmed);
+    await assert.rejects(() => moveToSlip(later.requestId, cash.payment.id, scan.id, repos[1]!, false), unconfirmed);
+    assert.deepEqual([await copies(later.requestId), await slipLinksOf(later.requestId)], [[[scan.id, true]], []]);
+    // An archive copy carries no declaration: nothing to withdraw, so nothing to confirm.
+    const archive = await signedCopyOf(later.requestId);
+    assert.equal((await moveToSlip(later.requestId, cash.payment.id, archive.id)).slip?.declarationWithdrawn, false);
+    assert.equal((await moveToSlip(later.requestId, cash.payment.id, scan.id, repos[0]!, true)).slip?.declarationWithdrawn, true);
+    assert.deepEqual([await copies(later.requestId), (await slipLinksOf(later.requestId)).map(([attachmentId]) => attachmentId)], [[], [archive.id, scan.id]]);
   });
 
   it('cannot be raced by a signed-copy link of the same file, in either order', async (t) => {

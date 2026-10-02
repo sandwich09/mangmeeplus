@@ -1057,6 +1057,12 @@ export type RecordReimbursementPaymentInput = {
    */
   slipAttachmentId?: string;
   /**
+   * The payer was told that using this file as the slip takes it out of ใบเบิกที่เซ็นแล้ว for good and
+   * withdraws its "signed on paper" declaration, and goes on. Required when the file carries such a
+   * declaration, else `payment_slip_signed_copy_unconfirmed`: there is no way to move the file back.
+   */
+  confirmSignedCopyWithdrawal?: boolean;
+  /**
    * The claim's account version the payer was shown (`payout.version`). Whenever it is sent it must be
    * the claim's current version, else `payout_destination_changed`. Required, with `payoutConfirmed`,
    * to record a transfer on a claim that carries an account.
@@ -1079,6 +1085,8 @@ export type RecordReimbursementPaymentInput = {
 
 export type AttachReimbursementPaymentSlipInput = {
   attachmentId: string;
+  /** As on `RecordReimbursementPaymentInput`: required for a file that carries a "signed on paper" declaration. */
+  confirmSignedCopyWithdrawal?: boolean;
 };
 
 export type VoidReimbursementPaymentInput = {

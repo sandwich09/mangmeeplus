@@ -646,6 +646,10 @@ const CODE_LABELS: Record<string, string> = {
   payment_slip_invalid: 'ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพ ขนาดไม่เกิน 10 MB แล้วลองใหม่',
   // ไฟล์ที่เลือกจากใบเบิกที่เซ็นแล้วไม่ได้ผิดชนิดหรือขนาด แต่ถูกใช้เป็นหลักฐานของรายการอื่นอยู่ด้วย
   payment_slip_in_use_elsewhere: 'ไฟล์นี้ถูกใช้เป็นใบเสร็จหรือเอกสารของรายการอื่นด้วย จึงใช้เป็นสลิปไม่ได้ กรุณาแนบสลิปเป็นไฟล์ใหม่',
+  // A declared signed copy offered as the slip without the payer's confirmation (a page loaded before the
+  // picker asked for it, or another client). Nothing was moved; the reloaded page warns first, then sends it.
+  payment_slip_signed_copy_unconfirmed:
+    'ไฟล์นี้ถูกยืนยันไว้ว่าเป็นใบเบิกที่ลงนามครบ จึงยังไม่ได้ใช้เป็นสลิป ถ้าไฟล์นี้คือสลิปจริง โหลดหน้านี้ใหม่แล้วเลือกไฟล์อีกครั้ง หน้าจอจะบอกก่อนว่าไฟล์จะย้ายออกจากใบเบิกที่เซ็นแล้วและย้ายกลับไม่ได้',
   payment_slip_limit_reached: 'การจ่ายหนึ่งครั้งแนบสลิปได้ไม่เกิน 5 ไฟล์',
   payment_slip_access_denied: 'คุณไม่มีสิทธิ์เปิดสลิปของใบเบิกนี้',
   reimbursement_payment_slip_retained: 'ไฟล์นี้เป็นสลิปการจ่ายเงินคืน จึงลบไม่ได้',

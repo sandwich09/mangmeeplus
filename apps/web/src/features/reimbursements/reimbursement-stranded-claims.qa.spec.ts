@@ -559,3 +559,42 @@ describe('the claim page clears a duplicate block at the finance approval exactl
     assert.ok(visible(claimPage(warned, reviewer)).includes('อาจเป็นรายการซ้ำ ต้องตรวจสอบ'), 'the claim still says it may be a duplicate');
   });
 });
+
+// The signed form picked as the slip (upgrade test 2026-10-02). Nothing moves a file back out of a payment's slips, and
+// the API refuses a declared copy unless the call carries the payer's confirmation. On the claim page that confirmation
+// is the yes to a dialog that says so; a no sends nothing.
+describe('moving a file of ใบเบิกที่เซ็นแล้ว to be the slip of a recorded payment', () => {
+  const payer = { userId: 'owner', permissions: OWNER };
+  const paidInCash = claim({
+    status: 'PAID', paymentStatus: 'PAID', outstandingAmount: '0.0000', currentDesk: undefined,
+    payments: [{ id: 'pay-1', paymentNo: 'RBPAY-202610-00003', status: 'RECORDED', paymentMethod: 'CASH', paidAmount: '500.0000', currency: 'THB',
+      paidAt: '2026-10-01T05:00:00.000Z', paidByUserId: 'owner', paidByName: 'สมศรี', slipCount: 0, slips: [], viewerCanOpenSlips: true }],
+    signedCopies: [{ attachmentId: 'att-copy', fileName: 'สลิปโอนเงิน.jpg', uploadedAt: '2026-10-01T06:00:00.000Z', acknowledgedAt: '2026-10-01T06:00:00.000Z', acknowledgedByName: 'พิม' }],
+  });
+
+  /** Presses the row's button and answers the page's confirm dialog: what the dialog asked, and what the page then sent. */
+  async function pressAndAnswer(answer: boolean) {
+    const realUseState = reactRuntime.useState;
+    const asked: Array<{ title?: unknown; message?: unknown; confirmLabel?: unknown }> = [];
+    Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
+      const [value, set] = (realUseState as (initial: unknown) => [unknown, (next: unknown) => void])(initial);
+      return [value, (next: any) => { if (typeof next?.resolve === 'function') { asked.push(next); next.resolve(answer); } else set(next); }];
+    });
+    try { return { calls: await press(paidInCash, payer, 'ใช้ไฟล์นี้เป็นสลิปการจ่าย'), asked }; } finally { Reflect.set(reactRuntime, 'useState', realUseState); }
+  }
+
+  it('says before the yes that the file cannot be moved back and its declaration is withdrawn, and sends that yes with the call', async () => {
+    const { calls, asked } = await pressAndAnswer(true);
+    assert.deepEqual(asked.map((dialog) => [dialog.title, dialog.confirmLabel]), [['ใช้ไฟล์นี้เป็นสลิปการจ่าย', 'ย้ายเป็นสลิปการจ่าย']]);
+    const message = String(asked[0]!.message);
+    for (const part of ['ไฟล์ สลิปโอนเงิน.jpg จะย้ายจากรายการใบเบิกที่เซ็นแล้ว ไปเป็นสลิปของการจ่าย RBPAY-202610-00003', 'ย้ายกลับไม่ได้', 'ระบบจะถอนการยืนยันนั้น']) {
+      assert.ok(message.includes(part), `${part} in ${message}`);
+    }
+    assert.deepEqual(calls.filter((call) => call.method === 'POST'), [
+      { url: '/api/v1/companies/company-1/reimbursements/claim-1/payments/pay-1/slips', method: 'POST', body: { attachmentId: 'att-copy', confirmSignedCopyWithdrawal: true } },
+    ]);
+    // A no sends nothing: the confirmation is never sent for the person.
+    const refused = await pressAndAnswer(false);
+    assert.deepEqual([refused.asked.length, refused.calls.filter((call) => call.method !== 'GET')], [1, []]);
+  });
+});

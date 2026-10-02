@@ -266,9 +266,15 @@ export async function uploadReimbursementPaymentSlip(companyId: string, requestI
   });
 }
 
-/** Adds a slip to a recorded payment: a slip just uploaded, or a file already attached to the claim. Returns the claim detail. */
-export function attachReimbursementPaymentSlip(companyId: string, requestId: string, paymentId: string, attachmentId: string) {
-  return apiFetch<any>(`${base(companyId)}/${requestId}/payments/${paymentId}/slips`, { method: 'POST', body: JSON.stringify({ attachmentId }) });
+/**
+ * Adds a slip to a recorded payment: a slip just uploaded, or a file already attached to the claim. Returns the claim detail.
+ * `confirmSignedCopyWithdrawal` is the payer's yes to the dialog that says the file leaves ใบเบิกที่เซ็นแล้ว for good and
+ * loses its "signed on paper" declaration; the API refuses such a file without it.
+ */
+export function attachReimbursementPaymentSlip(companyId: string, requestId: string, paymentId: string, attachmentId: string, confirmSignedCopyWithdrawal = false) {
+  return apiFetch<any>(`${base(companyId)}/${requestId}/payments/${paymentId}/slips`, {
+    method: 'POST', body: JSON.stringify({ attachmentId, ...(confirmSignedCopyWithdrawal && { confirmSignedCopyWithdrawal: true }) }),
+  });
 }
 
 /** A slip's bytes for the viewer. The claim's slip endpoint decides who gets them; the generic attachment download never serves a slip. */

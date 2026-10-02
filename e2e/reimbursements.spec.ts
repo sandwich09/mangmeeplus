@@ -385,7 +385,14 @@ test.describe('REIMB — reimbursements', () => {
       expect(copies.map((copy) => copy.attachmentId)).toEqual([misfiled]);
       expect((await json<Reimbursement>(await api.get(claimUrl(companyId, claim.id)))).documentSignedVia).toBe('PAPER');
 
-      const moved = await json<Reimbursement>(await api.post(`${claimUrl(companyId, claim.id)}/payments/${payment.id}/slips`, { data: { attachmentId: misfiled } }));
+      // A declared copy leaves the signed copies only on the payer's explicit word (there is no way back): without it nothing moves.
+      const unconfirmed = await api.post(`${claimUrl(companyId, claim.id)}/payments/${payment.id}/slips`, { data: { attachmentId: misfiled } });
+      expect(unconfirmed.status()).toBe(409);
+      expect((await json<Reimbursement>(await api.get(claimUrl(companyId, claim.id)))).documentSignedVia).toBe('PAPER');
+
+      const moved = await json<Reimbursement>(await api.post(`${claimUrl(companyId, claim.id)}/payments/${payment.id}/slips`, {
+        data: { attachmentId: misfiled, confirmSignedCopyWithdrawal: true },
+      }));
       expect(moved.payments?.find((row) => row.id === payment.id)).toMatchObject({ slipCount: 1, slips: [{ attachmentId: misfiled }] });
       const after = await json<Reimbursement>(await api.get(claimUrl(companyId, claim.id)));
       expect(after.signedCopies).toEqual([]);

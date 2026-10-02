@@ -36,7 +36,7 @@ import {
 } from './reimbursements.model';
 import {
   NOTE_HAS_ACCOUNT_NUMBER,
-  approvalStepCorrectionNote, attachedFileKindText, buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
+  approvalStepCorrectionNote, attachedFileKindText, buildClaimTimeline, canAttachPaymentSlip, categoryText, chosenPaymentSlipChoice, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
   rowHasFinanceReview, savePaymentForm, signedCopyMisfiledHint, slipTargetPayment, sumLineAmounts, timelineDateText,
   type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip, type PaymentSlipChoice,
 } from './reimbursements.logic';
@@ -385,11 +385,11 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
   // slip, the confirmation of the account and the reason for another method than the one asked for.
   const payout = paymentFormPayout(request, form.paymentMethod);
   const slipRequired = payout.rule.slipRequired;
-  const chosen = slip && 'attachmentId' in slip ? attached.find((choice) => choice.attachmentId === slip.attachmentId) : undefined;
+  const chosen = chosenPaymentSlipChoice(slip, attached);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const result = await savePaymentForm({ form, outstandingAmount: String(request.outstandingAmount), slip, session: session.current, payout, payer }, {
+    const result = await savePaymentForm({ form, outstandingAmount: String(request.outstandingAmount), slip, slipChoices: attached, session: session.current, payout, payer }, {
       uploadSlip: (file) => uploadReimbursementPaymentSlip(companyId, request.id, file),
       recordPayment: (body) => recordReimbursementPayment(companyId, request.id, body),
       // Kept once uploaded: if saving then fails, the retry sends this same slip instead of uploading again.

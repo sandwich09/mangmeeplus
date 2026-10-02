@@ -451,6 +451,7 @@ export class RecordReimbursementPaymentUseCase {
     if (input.slipAttachmentId) {
       await this.repo.assertPaymentSlipUsable({
         companyId: ctx.companyId, requestId: id, attachmentId: input.slipAttachmentId, actorUserId: ctx.userId,
+        ...(input.confirmSignedCopyWithdrawal === true && { confirmSignedCopyWithdrawal: true }),
       });
     }
 
@@ -486,6 +487,9 @@ export class RecordReimbursementPaymentUseCase {
       idempotencyKey: paymentAttemptKey,
       paymentNo: reservation.paymentNo,
       ...payment,
+      // Not a fact of the payment (a replay is the same payment with or without it): the payer's word
+      // on a file that leaves ใบเบิกที่เซ็นแล้ว for good, held against the file under the payment lock.
+      ...(input.confirmSignedCopyWithdrawal === true && { confirmSignedCopyWithdrawal: true }),
       payout: payoutStatement,
       paidByUserId: ctx.userId,
     });

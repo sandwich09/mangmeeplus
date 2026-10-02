@@ -939,7 +939,8 @@ describe('moving a misfiled slip recomputes how the document was signed', () => 
     const approvalSteps = claim.approvalSteps.map((step: any) => ({ ...step, assignedAt: new Date('2026-07-20T00:00:00.000Z') }));
     return {
       detail: () => detailWithFileNames(repo, evidence, 'co-1', { ...claim, approvalSteps }, { userId: 'staff-1', permissions: [] }),
-      move: () => repository.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1' }),
+      // The payer's confirmed move: a declared copy leaves the list only on their explicit word.
+      move: () => repository.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1', confirmSignedCopyWithdrawal: true }),
       misfiled: files[0],
       links: () => links,
     };

@@ -1,6 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  attachReimbursementPaymentSlip,
   cancelReimbursementDraftAction,
   confirmReimbursementDraftAction,
   getReimbursementDraftAction,
@@ -479,6 +480,46 @@ describe('the two calls of a payout account correction round', () => {
       }
       assert.deepEqual(events, []);
     } finally { unsubscribe(); }
+  });
+});
+
+// A file of ใบเบิกที่เซ็นแล้ว used as a slip leaves that list for good, and a declared copy loses its declaration: the
+// API refuses a declared copy unless the call says the payer confirmed it.
+describe('adding a slip to a recorded payment', () => {
+  const answering = (status: number, body: unknown) => {
+    const requests: Array<{ url: string; method?: string; body: unknown }> = [];
+    (globalThis as Record<string, unknown>)['window'] = {};
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(input), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    return requests;
+  };
+
+  it('sends the payer\'s confirmation only when the caller has it, and nothing in its place', async () => {
+    const requests = answering(200, { id: 'rb-1', status: 'PAID' });
+    await attachReimbursementPaymentSlip('co-1', 'rb-1', 'pay-1', 'att-upload');
+    await attachReimbursementPaymentSlip('co-1', 'rb-1', 'pay-1', 'att-copy', true);
+    await attachReimbursementPaymentSlip('co-1', 'rb-1', 'pay-1', 'att-copy', false);
+    const url = '/api/v1/companies/co-1/reimbursements/rb-1/payments/pay-1/slips';
+    assert.deepEqual(requests, [
+      { url, method: 'POST', body: { attachmentId: 'att-upload' } },
+      { url, method: 'POST', body: { attachmentId: 'att-copy', confirmSignedCopyWithdrawal: true } },
+      { url, method: 'POST', body: { attachmentId: 'att-copy' } },
+    ]);
+  });
+
+  // A page loaded before the picker asked: it is told nothing was moved, why, and to reload, in a sentence and not a code.
+  it('answers the refusal of an unconfirmed declared copy with its own Thai sentence', async () => {
+    const requests = answering(409, { statusCode: 409, message: 'payment_slip_signed_copy_unconfirmed', error: 'Conflict' });
+    await assert.rejects(() => attachReimbursementPaymentSlip('co-1', 'rb-1', 'pay-1', 'att-copy'), (error: Error & { status?: number }) => {
+      assert.equal(error.status, 409);
+      const sentence = errorText(error);
+      for (const part of ['ไฟล์นี้ถูกยืนยันไว้ว่าเป็นใบเบิกที่ลงนามครบ', 'จึงยังไม่ได้ใช้เป็นสลิป', 'โหลดหน้านี้ใหม่', 'ย้ายกลับไม่ได้']) assert.ok(sentence.includes(part), `${part} in ${sentence}`);
+      assert.doesNotMatch(sentence, /[a-z]_[a-z]|[A-Za-z]{3,}/, sentence);
+      return true;
+    });
+    assert.equal(requests.length, 1, 'a refusal is not retried');
   });
 });
 
