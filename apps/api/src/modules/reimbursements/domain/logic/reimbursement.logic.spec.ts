@@ -63,9 +63,13 @@ import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
 import { approvalWaitStartedAt, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionSourceStep, PAYOUT_CORRECTION_STEP_REASON } from './reimbursement.logic';
 import { mayTypePayoutAccountFor, payoutDefaultToken } from './payout-destination.logic';
 import {
-  isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
-  REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
+  isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionReasons, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
   reimbursementHubBucket, reimbursementPayoutCorrectionPhase,
+  // The words of a round, by what the claim held and what its requester answered (payout spec §14.2).
+  reimbursementPayoutAnswerNotice, reimbursementPayoutHeld, reimbursementPayoutRoundAnswer, reimbursementPayoutRoundApproves,
+  reimbursementPayoutRoundAsk, reimbursementPayoutRoundDid, reimbursementPayoutRoundSendBack, reimbursementPayoutRoundStatus,
+  reimbursementPayoutSentBackNotice, REIMBURSEMENT_PAYOUT_ROUND_TEXTS,
+  type ReimbursementPayoutHeld, type ReimbursementPayoutRoundAnswer,
 } from '@watchdog-bms/contracts';
 
 const read = (file: string) => readFileSync(join(__dirname, file), 'utf8');
@@ -1504,25 +1508,149 @@ describe('payout account correction round', () => {
     }
   });
 
-  it('offers a fixed list of reasons and words both phases in plain Thai', () => {
+  it('takes a reason that is true of what the claim holds, and words every reason in plain Thai', () => {
     assert.deepEqual(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, {
       NO_ACCOUNT_ON_CLAIM: 'ใบนี้ยังไม่มีบัญชีรับเงิน',
       ACCOUNT_NUMBER_WRONG: 'เลขบัญชีไม่ถูกต้อง', ACCOUNT_NAME_MISMATCH: 'ชื่อบัญชีไม่ตรงกับผู้เบิก', BANK_WRONG: 'ธนาคารไม่ถูกต้อง',
-      ACCOUNT_UNUSABLE: 'บัญชีปิดหรือโอนไม่ได้', REQUESTER_ASKED: 'ผู้เบิกขอเปลี่ยนบัญชี', OTHER: 'อื่น ๆ',
+      ACCOUNT_UNUSABLE: 'บัญชีปิดหรือโอนไม่ได้', REQUESTER_ASKED: 'ผู้เบิกขอเปลี่ยนบัญชี',
+      CASH_NOT_PAYABLE: 'จ่ายเป็นเงินสดไม่ได้', REQUESTER_ASKED_METHOD: 'ผู้เบิกขอเปลี่ยนวิธีรับเงินคืน', OTHER: 'อื่น ๆ',
     });
-    // Which of them a claim takes: "the claim has no account yet" only where it has none, first in the list;
-    // every other reason either way. The send-back form and the send-back endpoint both read this.
-    const SIX = ['ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NAME_MISMATCH', 'BANK_WRONG', 'ACCOUNT_UNUSABLE', 'REQUESTER_ASKED', 'OTHER'];
-    assert.deepEqual([reimbursementPayoutCorrectionReasons(true), reimbursementPayoutCorrectionReasons(false)], [SIX, ['NO_ACCOUNT_ON_CLAIM', ...SIX]]);
-    // What its requester is asked for, in the words of the notice and the claim page.
-    assert.deepEqual(['NO_ACCOUNT_ON_CLAIM', 'OTHER', 'A_REASON_ADDED_LATER', undefined].map(reimbursementPayoutCorrectionAsk),
-      ['เพิ่มบัญชีรับเงิน', 'แก้บัญชีรับเงิน', 'แก้บัญชีรับเงิน', 'แก้บัญชีรับเงิน']);
-    assert.deepEqual(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, { AWAITING_REQUESTER: 'รอผู้เบิกแก้บัญชีรับเงิน', AWAITING_APPROVAL: 'รออนุมัติบัญชีรับเงินใหม่' });
+    // The send-back form and the send-back endpoint both read this list. An account can be wrong in five ways,
+    // cash in its own two, and a claim with no account is sent back for that one reason and no other.
+    const ACCOUNT = ['ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NAME_MISMATCH', 'BANK_WRONG', 'ACCOUNT_UNUSABLE', 'REQUESTER_ASKED', 'OTHER'];
+    const CASH = ['CASH_NOT_PAYABLE', 'REQUESTER_ASKED_METHOD', 'OTHER'];
+    assert.deepEqual([reimbursementPayoutCorrectionReasons('ACCOUNT'), reimbursementPayoutCorrectionReasons('ACCOUNT', 'BANK_ACCOUNT')], [ACCOUNT, ACCOUNT]);
+    // A PromptPay number has no bank to be wrong.
+    assert.deepEqual(reimbursementPayoutCorrectionReasons('ACCOUNT', 'PROMPTPAY_PHONE'), ACCOUNT.filter((code) => code !== 'BANK_WRONG'));
+    assert.deepEqual(reimbursementPayoutCorrectionReasons('CASH'), CASH);
+    assert.deepEqual(reimbursementPayoutCorrectionReasons('NOTHING'), ['NO_ACCOUNT_ON_CLAIM']);
+    // The kind of an account says nothing of cash, nor of a claim with no account.
+    assert.deepEqual([reimbursementPayoutCorrectionReasons('CASH', 'PROMPTPAY_PHONE'), reimbursementPayoutCorrectionReasons('NOTHING', 'PROMPTPAY_PHONE')], [CASH, ['NO_ACCOUNT_ON_CLAIM']]);
+    // No reason of one thing is taken for another: the lists share "อื่น ๆ" and nothing else, and a claim with no account has not even that.
+    assert.deepEqual(ACCOUNT.filter((code) => CASH.includes(code)), ['OTHER']);
+    // Every reason is taken for something, and each is a reason by its code alone.
+    assert.deepEqual(Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS).sort(), [...new Set(['NO_ACCOUNT_ON_CLAIM', ...ACCOUNT, ...CASH])].sort());
     for (const code of Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS)) assert.equal(isReimbursementPayoutCorrectionReason(code), true, code);
     // A label, a lowercase code, an inherited key, a non-string: none is a reason.
     for (const bad of ['เลขบัญชีไม่ถูกต้อง', 'other', 'toString', 'constructor', '', undefined, null, 1, {}]) assert.equal(isReimbursementPayoutCorrectionReason(bad), false, String(bad));
-    for (const text of [...Object.values(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS), ...Object.values(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS)]) {
-      assert.doesNotMatch(text, /[A-Za-z_]/, text);
+    for (const text of Object.values(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS)) assert.doesNotMatch(text, /[A-Za-z_]/, text);
+  });
+
+  // Payout spec §14.2. Every word of a round is chosen from two facts: what the claim held when it was sent back,
+  // and what its requester answered against what the round began with. Not from the phase alone (one label per
+  // phase is true of one case in seven) and not from the reason code.
+  const HELD: ReimbursementPayoutHeld[] = ['ACCOUNT', 'NOTHING', 'CASH'];
+  const ANSWERS: ReimbursementPayoutRoundAnswer[] = ['NEW_ACCOUNT', 'SAME_ACCOUNT', 'CASH_INSTEAD', 'ACCOUNT_INSTEAD', 'SAME_CASH', 'FIRST_ACCOUNT', 'FIRST_CASH'];
+
+  it('reads what a claim holds from the method of its own snapshot, and names the seven answers to a round', () => {
+    assert.deepEqual([{ payoutMethod: 'BANK_TRANSFER' }, { payoutMethod: 'CASH' }, {}, { payoutMethod: null }, null, undefined].map(reimbursementPayoutHeld),
+      ['ACCOUNT', 'CASH', 'NOTHING', 'NOTHING', 'NOTHING', 'NOTHING']);
+    // (the method given, whether it is the very destination the claim was approved with)
+    const answers = (start: ReimbursementPayoutHeld) => (['BANK_TRANSFER', 'CASH'] as const)
+      .flatMap((given) => [false, true].map((same) => reimbursementPayoutRoundAnswer(start, given, same)));
+    assert.deepEqual(answers('ACCOUNT'), ['NEW_ACCOUNT', 'SAME_ACCOUNT', 'CASH_INSTEAD', 'CASH_INSTEAD']);
+    // Cash after cash is the same by itself, and a claim that had no account kept nothing.
+    assert.deepEqual(answers('CASH'), ['ACCOUNT_INSTEAD', 'ACCOUNT_INSTEAD', 'SAME_CASH', 'SAME_CASH']);
+    assert.deepEqual(answers('NOTHING'), ['FIRST_ACCOUNT', 'FIRST_ACCOUNT', 'FIRST_CASH', 'FIRST_CASH']);
+    assert.deepEqual([...new Set(HELD.flatMap(answers))].sort(), [...ANSWERS].sort());
+  });
+
+  it('words a claim that is with its requester by what it holds: an account is corrected, a missing one added, cash chosen again', () => {
+    const method = { ACCOUNT: 'BANK_TRANSFER', CASH: 'CASH', NOTHING: undefined };
+    const words = (held: ReimbursementPayoutHeld) => {
+      const notice = reimbursementPayoutSentBackNotice(held, reimbursementPayoutCorrectionReasons(held)[0]!);
+      return [reimbursementPayoutRoundStatus({ payoutCorrectionPhase: 'AWAITING_REQUESTER', payoutMethod: method[held] }),
+        reimbursementPayoutRoundAsk(held), reimbursementPayoutRoundSendBack(held), notice.title, notice.body];
+    };
+    assert.deepEqual(words('ACCOUNT'), ['รอผู้เบิกแก้บัญชีรับเงิน', 'แก้บัญชีรับเงิน', 'ส่งกลับให้แก้บัญชีรับเงิน', 'ใบเบิกต้องแก้บัญชีรับเงิน',
+      'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน']);
+    assert.deepEqual(words('NOTHING'), ['รอผู้เบิกเพิ่มบัญชีรับเงิน', 'เพิ่มบัญชีรับเงิน', 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน', 'ใบเบิกต้องเพิ่มบัญชีรับเงิน',
+      'เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน']);
+    assert.deepEqual(words('CASH'), ['รอผู้เบิกเลือกวิธีรับเงินคืน', 'เลือกวิธีรับเงินคืน', 'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง', 'ใบเบิกต้องเลือกวิธีรับเงินคืนอีกครั้ง',
+      'เหตุผล: จ่ายเป็นเงินสดไม่ได้ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน']);
+    // The reason in the notice is the one given, in the list's own words.
+    assert.equal(reimbursementPayoutSentBackNotice('ACCOUNT', 'REQUESTER_ASKED').body, 'เหตุผล: ผู้เบิกขอเปลี่ยนบัญชี · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
+    assert.equal(reimbursementPayoutSentBackNotice('CASH', 'OTHER').body, 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อเลือกวิธีรับเงินคืน');
+    // Nothing is "corrected" where no account was held, and cash is never called an account.
+    assert.doesNotMatch([...words('NOTHING'), ...words('CASH')].join(' '), /แก้/);
+    assert.doesNotMatch(words('CASH').join(' '), /บัญชี/);
+  });
+
+  it('words a claim that waits for its approvers by what its requester answered', () => {
+    const words = (answer: ReimbursementPayoutRoundAnswer) => {
+      const notice = reimbursementPayoutAnswerNotice(answer);
+      return [reimbursementPayoutRoundDid(answer), reimbursementPayoutRoundDid(answer, 'อรทัย'), reimbursementPayoutRoundApproves(answer),
+        reimbursementPayoutRoundStatus({ payoutCorrectionPhase: 'AWAITING_APPROVAL', payoutMethod: 'CASH', payoutCorrectionAnswer: answer }), notice.title, notice.body];
+    };
+    assert.deepEqual(Object.fromEntries(ANSWERS.map((answer) => [answer, words(answer)])), {
+      NEW_ACCOUNT: ['ผู้เบิกแก้บัญชีรับเงิน', 'อรทัย แก้บัญชีรับเงินแทนผู้เบิก', 'บัญชีรับเงินใหม่', 'รออนุมัติบัญชีรับเงินใหม่', 'รออนุมัติบัญชีรับเงินใหม่', 'รอคุณตรวจและอนุมัติบัญชีรับเงินใหม่'],
+      SAME_ACCOUNT: ['ผู้เบิกยืนยันบัญชีเดิม', 'อรทัย ยืนยันบัญชีเดิมแทนผู้เบิก', 'บัญชีรับเงินเดิม', 'รออนุมัติบัญชีรับเงินเดิม', 'รออนุมัติบัญชีรับเงินเดิม', 'รอคุณตรวจและอนุมัติบัญชีรับเงินเดิม'],
+      CASH_INSTEAD: ['ผู้เบิกเปลี่ยนวิธีรับเงินคืน', 'อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก', 'การรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+      ACCOUNT_INSTEAD: ['ผู้เบิกเปลี่ยนวิธีรับเงินคืน', 'อรทัย เปลี่ยนวิธีรับเงินคืนแทนผู้เบิก', 'บัญชีรับเงิน', 'รออนุมัติบัญชีรับเงิน', 'รออนุมัติบัญชีรับเงิน', 'รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+      SAME_CASH: ['ผู้เบิกยืนยันวิธีรับเงินคืนเดิม', 'อรทัย ยืนยันวิธีรับเงินคืนเดิมแทนผู้เบิก', 'การรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+      FIRST_ACCOUNT: ['ผู้เบิกเพิ่มบัญชีรับเงิน', 'อรทัย เพิ่มบัญชีรับเงินแทนผู้เบิก', 'บัญชีรับเงิน', 'รออนุมัติบัญชีรับเงิน', 'รออนุมัติบัญชีรับเงิน', 'รอคุณตรวจและอนุมัติบัญชีรับเงิน'],
+      FIRST_CASH: ['ผู้เบิกเลือกวิธีรับเงินคืน', 'อรทัย เลือกวิธีรับเงินคืนแทนผู้เบิก', 'การรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด', 'รอคุณตรวจและอนุมัติการรับเป็นเงินสด'],
+    });
+    // "ใหม่" only where an account replaced an account, "เดิม" only where the destination was kept, "แก้" only where
+    // another account was given for an account, and a cash answer is never called an account.
+    const said = (word: RegExp) => ANSWERS.filter((answer) => word.test(words(answer).join(' ')));
+    assert.deepEqual([said(/ใหม่/), said(/เดิม/), said(/แก้/)], [['NEW_ACCOUNT'], ['SAME_ACCOUNT', 'SAME_CASH'], ['NEW_ACCOUNT']]);
+    for (const answer of ['CASH_INSTEAD', 'SAME_CASH', 'FIRST_CASH'] as const) assert.doesNotMatch(words(answer).join(' '), /บัญชี/, answer);
+  });
+
+  it('says words that are true of every claim where the fact is not known, and nothing of a claim in no round', () => {
+    // A method this build has no words for is not "no account": the requester is asked for the method, whatever it was.
+    assert.equal(reimbursementPayoutRoundStatus({ payoutCorrectionPhase: 'AWAITING_REQUESTER', payoutMethod: 'A_METHOD_ADDED_LATER' }), 'รอผู้เบิกเลือกวิธีรับเงินคืน');
+    // No answer on the row (a round with no record of how it began, a page fed by an older server), or one added later.
+    for (const payoutCorrectionAnswer of [undefined, null, 'AN_ANSWER_ADDED_LATER', 'toString']) {
+      assert.equal(reimbursementPayoutRoundStatus({ payoutCorrectionPhase: 'AWAITING_APPROVAL', payoutMethod: 'BANK_TRANSFER', payoutCorrectionAnswer }), 'รออนุมัติวิธีรับเงินคืน');
+    }
+    assert.deepEqual([reimbursementPayoutRoundApproves(undefined), reimbursementPayoutRoundApproves(null)], ['วิธีรับเงินคืน', 'วิธีรับเงินคืน']);
+    assert.deepEqual(reimbursementPayoutAnswerNotice(undefined), { title: 'รออนุมัติวิธีรับเงินคืน', body: 'รอคุณตรวจและอนุมัติวิธีรับเงินคืน' });
+    // In no round, no words of one: whatever the claim holds and whatever a round once answered.
+    for (const claim of [{}, { payoutMethod: 'CASH' }, { payoutMethod: 'BANK_TRANSFER', payoutCorrectionAnswer: 'SAME_ACCOUNT' }, { payoutCorrectionPhase: null }, { payoutCorrectionPhase: 'A_PHASE_ADDED_LATER' }]) {
+      assert.equal(reimbursementPayoutRoundStatus(claim), undefined, JSON.stringify(claim));
+    }
+  });
+
+  it('keeps the longer sentences of a round in the same words: one name per thing, in plain Thai, true of the case they are for', () => {
+    const texts = REIMBURSEMENT_PAYOUT_ROUND_TEXTS;
+    assert.deepEqual([Object.keys(texts.held), Object.keys(texts.given), Object.keys(texts.answer).sort()], [HELD, ['ACCOUNT', 'CASH'], [...ANSWERS].sort()]);
+    const flat = (table: Record<string, Record<string, string | readonly string[]>>) =>
+      Object.entries(table).flatMap(([row, cells]) => Object.entries(cells).flatMap(([cell, text]) => [text].flat().map((sentence) => [`${row}.${cell}`, sentence] as const)));
+    const everySentence = [...flat(texts.held), ...flat(texts.given), ...flat(texts.answer)];
+    assert.equal(everySentence.length, 3 * 12 + 2 * 6 + 7 * 2 + 12);
+    for (const [where, sentence] of everySentence) {
+      assert.ok(sentence.trim() === sentence && sentence.length > 0, where);
+      assert.doesNotMatch(sentence, /[A-Za-z_{}$]/, where);
+      // The method has one name, the one a draft's form uses.
+      assert.doesNotMatch(sentence, /วิธีรับเงิน(?!คืน)/, where);
+    }
+    // A claim's account is "บัญชีรับเงิน". The one sentence that still says "บัญชีรับเงินคืน" is what the LINE assistant has
+    // been told of a claim that held an account since the round shipped: it is kept letter for letter.
+    assert.deepEqual(everySentence.filter(([, sentence]) => sentence.includes('บัญชีรับเงินคืน')).map(([where]) => where), ['ACCOUNT.assistantNote']);
+    assert.equal(texts.held.ACCOUNT.assistantNote, 'ใบเบิกถูกส่งกลับให้ผู้เบิกแก้บัญชีรับเงินคืน ผู้เบิกแก้ได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
+    assert.equal(texts.held.NOTHING.assistantNote, 'ใบเบิกถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ผู้เบิกเพิ่มได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
+    assert.equal(texts.held.CASH.assistantNote, 'ใบเบิกถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ผู้เบิกเลือกได้ที่หน้าใบเบิกบนเว็บ ระหว่างนี้ยังจ่ายเงินไม่ได้');
+    // Cash is never called an account, and nothing is "corrected" on a claim that held none.
+    for (const [where, sentence] of [...flat({ CASH: texts.held.CASH }), ...flat({ CASH: texts.given.CASH })]) assert.doesNotMatch(sentence, /บัญชี|แก้/, where);
+    for (const [where, sentence] of flat({ NOTHING: texts.held.NOTHING })) assert.doesNotMatch(sentence, /แก้|เดิม|ใหม่|อีกครั้ง(?!ก่อน)/, where);
+    // Whoever cannot pay is not told to hold a payment back.
+    for (const held of HELD) assert.doesNotMatch(texts.held[held].payLeadCannotPay, /อย่าเพิ่งจ่าย/, held);
+    // The card the approvers compare on is named for what waits for approval, and shows one row where nothing changed.
+    assert.deepEqual(Object.fromEntries(ANSWERS.map((answer) => [answer, [texts.answer[answer].cardTitle, ...texts.answer[answer].cardRows]])), {
+      NEW_ACCOUNT: ['สิ่งที่รออนุมัติ: บัญชีรับเงินใหม่', 'บัญชีเดิม', 'บัญชีใหม่'],
+      SAME_ACCOUNT: ['สิ่งที่รออนุมัติ: บัญชีรับเงินเดิม', 'บัญชีเดิม ไม่ได้เปลี่ยน'],
+      CASH_INSTEAD: ['สิ่งที่รออนุมัติ: การรับเป็นเงินสด', 'วิธีรับเงินคืนเดิม', 'วิธีรับเงินคืนใหม่'],
+      ACCOUNT_INSTEAD: ['สิ่งที่รออนุมัติ: บัญชีรับเงิน', 'วิธีรับเงินคืนเดิม', 'วิธีรับเงินคืนใหม่'],
+      SAME_CASH: ['สิ่งที่รออนุมัติ: การรับเป็นเงินสด', 'วิธีรับเงินคืนเดิม ไม่ได้เปลี่ยน'],
+      FIRST_ACCOUNT: ['สิ่งที่รออนุมัติ: บัญชีรับเงิน', 'เดิม', 'บัญชีที่เพิ่ม'],
+      FIRST_CASH: ['สิ่งที่รออนุมัติ: การรับเป็นเงินสด', 'เดิม', 'วิธีรับเงินคืนที่เลือก'],
+    });
+    for (const answer of ANSWERS) {
+      assert.equal(texts.answer[answer].cardTitle, `สิ่งที่รออนุมัติ: ${reimbursementPayoutRoundApproves(answer)}`, answer);
+      assert.ok(texts.answer[answer].approverNote.startsWith(`รอคุณอนุมัติ${reimbursementPayoutRoundApproves(answer)} `), answer);
+      assert.equal(texts.answer[answer].cardRows.length, answer === 'SAME_ACCOUNT' || answer === 'SAME_CASH' ? 1 : 2, answer);
     }
   });
 });
