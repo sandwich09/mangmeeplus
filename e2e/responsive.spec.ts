@@ -75,7 +75,9 @@ const CARD_VIEW_CASES = [
     cardListTestId: 'expenses-card-list',
     cardTestId: 'expenses-card',
     url: /\/expenses\/[^/?#]+$/,
-    columnCount: 5,
+    // Named, not counted: a bare 5 could not say that the expense number had been given a column of its own, the first.
+    // The last is the action column, whose heading only a screen reader reads.
+    columns: ['เลขรายจ่าย (EXP)', 'ผู้ขาย / หมวดหมู่', 'วันที่เอกสาร / เข้าระบบ', 'ยอดรวม', 'สถานะ', 'การทำงาน'],
   },
   {
     route: '/accounting',
@@ -232,13 +234,17 @@ test.describe('P24-2a shared-shell targets', () => {
       } else {
         // Existing desktop collapse removes its trigger; restoring that focus is a separate P24 gap.
         // The desktop shell expands on hover: move off it before asserting the collapsed state.
+        // It opens over the page, which stays where it is, so the page's heading lies under it: the pointer leaves for a
+        // point of the page beyond the sidebar's 289 px, and reaches the heading once the sidebar has closed.
         const pageHeading = authedPage.getByRole('heading', { level: 1 });
-        await pageHeading.hover();
+        const leaveSidebar = () => authedPage.mouse.move(289 + 100, 450);
+        await leaveSidebar();
         await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(86);
+        await pageHeading.hover();
         if (await authedPage.evaluate(() => window.matchMedia('(hover: hover)').matches)) {
           await drawer.hover();
           await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(289);
-          await pageHeading.hover();
+          await leaveSidebar();
           await expect.poll(async () => Math.round((await drawer.boundingBox())?.width ?? 0)).toBe(86);
         }
       }
@@ -825,7 +831,7 @@ test.describe('Desktop card-view parity', () => {
       await expect(authedPage.getByTestId(cardView.cardListTestId)).toBeHidden();
 
       if (cardView.route === '/expenses') {
-        await expect(table.locator('[class*="uppercase"][class*="tracking-wide"]').first().locator(':scope > div')).toHaveCount(cardView.columnCount);
+        await expect(table.locator('[class*="uppercase"][class*="tracking-wide"]').first().locator(':scope > div')).toHaveText(cardView.columns);
       } else {
         await expect(table.locator('th')).toHaveCount(cardView.columnCount);
       }
