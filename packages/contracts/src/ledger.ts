@@ -388,6 +388,8 @@ export type PeriodCloseCheck = {
   message: string;
   count?: number;
   amount?: string;
+  /** The named parts of `count`, so a client can say WHAT is pending instead of one total. */
+  breakdown?: Record<string, number>;
 };
 
 export type PeriodCloseRunSummary = {
@@ -435,3 +437,9 @@ export const ACCOUNTING_PERIOD_STATUS_LABELS: Record<AccountingPeriodStatus, str
 };
 
 export const LEDGER_SEQUENCE_KEY = 'ledger.journal';
+/**
+ * The most claim payouts the posting worklist returns, oldest first. On a chart with no settlement
+ * mapping nothing can post and the list only grows, so the query is bounded and the screen says
+ * when it is showing the first ones only.
+ */
+export const CLAIM_PAYOUT_WORKLIST_LIMIT = 200;

@@ -71,7 +71,7 @@ function Snapshot({ value, label }: { value: any; label: string }) {
     <section className="rounded-xl border border-gray-200 bg-white p-4" aria-label={label}>
       <h2 className="text-base font-semibold text-gray-900">{label}</h2>
       <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-        <div><dt className="text-gray-500">ผู้ขอเบิก</dt><dd className="font-medium">{value.requesterDisplayName}</dd></div>
+        <div><dt className="text-gray-500">ผู้เบิก</dt><dd className="font-medium">{value.requesterDisplayName}</dd></div>
         {value.branchName && <div><dt className="text-gray-500">สาขา</dt><dd>{value.branchName}</dd></div>}
         <div><dt className="text-gray-500">ยอดรวม</dt><dd className="font-semibold tabular-nums">{money(value.amount, value.currency)}</dd></div>
         <div><dt className="text-gray-500">เหตุผล</dt><dd>{value.reason}</dd></div>

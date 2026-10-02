@@ -1,44 +1,57 @@
 import { HttpException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { ReimbursementClaimFormPreview, ReimbursementClaimSignatureRole, RequestContext } from '@watchdog-bms/contracts';
+import { AppConfigService } from '../../../../common/config/app-config.service';
+import { AuditService } from '../../../audit/application/audit.service';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import type { ClaimPayoutRecord } from '../../infrastructure/reimbursement-payout';
 import type { ReimbursementClaimSignatureRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
-import { isLineEvidenced, byLineNo } from '../../domain/logic/reimbursement.logic';
+import { isLineEvidenced, byLineNo, claimApprovalStep, payoutCorrectionPhase } from '../../domain/logic/reimbursement.logic';
+import { hasPayoutSnapshot, openPayoutAccountNumber } from '../../domain/logic/payout-destination.logic';
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
   claimFormLayout,
   renderReimbursementClaimFormSvg,
   renderReimbursementClaimFormPages,
+  type ClaimFormPayout,
   type ClaimFormSigner,
   type ReimbursementClaimFormSnapshot,
 } from '../../domain/logic/claim-form.logic';
-import { assertCanReadRequest } from './reimbursement-request.use-case';
+import { assertCanReadRequest, claimPayoutRevealGroup } from './reimbursement-request.use-case';
 import { loadOwnedClaimSignature } from './reimbursement-claim-signature.use-case';
 
 /**
- * Preview of the printable ใบเบิกค่าใช้จ่าย. Rendered on demand, returned inline
- * and never stored: the paper file is produced by the user's own browser print,
- * and re-rendering always reflects the claim's current state.
+ * Preview of the printable ใบเบิกค่าใช้จ่าย. Rendered on demand for whoever asked, returned inline
+ * and never stored, cached or linked: the paper file is produced by the user's own browser print,
+ * and re-rendering always reflects the claim's current state. Two people printing one claim each
+ * get their own rendering, which is what lets the account number follow the reader (payout spec §17.1).
  */
 @Injectable()
 export class PreviewReimbursementClaimFormUseCase {
   constructor(
     private readonly repo: PrismaReimbursementRepository,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
+    private readonly audit: AuditService,
+    private readonly config: AppConfigService,
   ) {}
 
   async execute(ctx: RequestContext, requestId: string): Promise<ReimbursementClaimFormPreview> {
     const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
-    // Same read guard as GET detail — printing exposes nothing the drawer does not.
+    // The claim's branch must be in the reader's scope, and the reader must hold `reimbursement.read`,
+    // or `reimbursement.read_own` on their own claim, or `reimbursement.read_related` and be related to
+    // it. Narrower than GET detail in one case: the detail also admits whoever the pending approval
+    // step waits on after they lost every read permission; the print, like its route, does not.
     await assertCanReadRequest(ctx, req, this.repo);
     // The document number is what makes this a document. A draft never has one,
     // and neither does a claim cancelled straight out of DRAFT — printing either
     // would produce a form with a blank เลขที่เอกสาร.
     if (req.status === 'DRAFT' || !req.requestNo) throw new UnprocessableEntityException('claim_form_requires_submitted');
 
-    const snapshot = await this.buildSnapshot(ctx.companyId, req);
+    // The number is asked for last: everything that can refuse this print has refused it by now, so a
+    // row is written only for a print that goes on to carry the number.
+    const snapshot = await this.withAccountNumber(ctx, req, await this.buildSnapshot(ctx.companyId, req));
     const svg = renderReimbursementClaimFormSvg(snapshot);
     const pages = renderReimbursementClaimFormPages(snapshot);
     return {
@@ -48,14 +61,43 @@ export class PreviewReimbursementClaimFormUseCase {
     };
   }
 
+  /**
+   * Payout spec §17.1: whoever asked for THIS print gets the full account number when the "แสดงเลขบัญชี"
+   * command would answer them. That command's own function decides (`claimPayoutRevealGroup`), nothing
+   * the caller sends, and the print is recorded as that reveal is: one row, written before the decrypt,
+   * saying the channel was the printed form. Anyone else who may read the claim gets the snapshot as it
+   * was built, with the last 4 digits, and no row. The number goes to the renderer and nowhere else.
+   * A form with no account line (cash, a legacy claim, the four-block form) asks nothing here.
+   */
+  private async withAccountNumber(
+    ctx: RequestContext, req: ReimbursementRequestRecord, snapshot: ReimbursementClaimFormSnapshot,
+  ): Promise<ReimbursementClaimFormSnapshot> {
+    const payout = snapshot.payout;
+    if (payout?.method !== 'BANK_TRANSFER') return snapshot;
+    const group = await claimPayoutRevealGroup(ctx, req, this.repo);
+    const secret = group && await this.repo.findClaimPayoutSecret(ctx.companyId, req.id, req.payoutDestinationVersion!);
+    if (!secret) return snapshot;
+    // No row, no number: the write is fail-closed and comes before the decrypt.
+    const { accountNumberEncrypted, ...facts } = secret;
+    await this.audit.logOrThrow({
+      companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout.reveal',
+      targetType: 'reimbursement_request', targetId: req.id, requestId: ctx.requestId, riskLevel: 'HIGH', result: 'SUCCESS',
+      metadataJson: { group, channel: 'CLAIM_FORM_PRINT', ...facts },
+    });
+    return { ...snapshot, payout: { ...payout, accountNumber: openPayoutAccountNumber(accountNumberEncrypted, this.config.credentialEncryptionKey) } };
+  }
+
   private async buildSnapshot(companyId: string, req: ReimbursementRequestRecord): Promise<ReimbursementClaimFormSnapshot> {
     const steps = req.approvalSteps ?? [];
     const payments = req.payments ?? [];
     const lines = req.lines ?? [];
-    // Latest APPROVED step and latest non-voided payment are the ones that signed.
-    const approvedStep = steps
-      .filter((step) => step.status === 'APPROVED' && !!step.decidedAt)
-      .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
+    // The approval the claim stands on and the latest non-voided payment are the ones that signed.
+    // Nothing but this step feeds the ผู้อนุมัติ block, its signature and the same-person line, and it
+    // is the claim's approver by the one rule the page, the reveal and the signing right ask
+    // (`claimApprovalStep`): an approval of an earlier round, or one set aside because the claim's
+    // payout account is being corrected (payout spec §14), is nobody's, and the block prints blank.
+    const approvedStep = claimApprovalStep({ submittedAt: req.submittedAt, approvalSteps: steps });
+    const correcting = !!payoutCorrectionPhase(req);
     const payment = payments
       .filter((row) => row.status === 'RECORDED')
       .sort((a, b) => a.paidAt.getTime() - b.paidAt.getTime())
@@ -64,16 +106,32 @@ export class PreviewReimbursementClaimFormUseCase {
       ? req.financeReviewedByUserId
       : undefined;
     const policySnapshot = parseReimbursementPolicySnapshot(req.approvalPolicySnapshotJson);
+    const layout = claimFormLayout(req.claimSignatures);
+    // The claim's own frozen account version, masked: never the member's default account (invariant
+    // I5). Not read for the four-block form, nor for a claim sent before claims carried one (spec
+    // §15): those print as they always did, payment line included.
+    // Nor while the account is being corrected: the form then says so instead of printing an account.
+    const claimPayout = layout === 'TWO_SIGNERS' && hasPayoutSnapshot(req) && !correcting ? await this.repo.findClaimPayout(req) : undefined;
+    const paidIntoVersion = claimPayout ? payment?.payoutDestinationVersion : undefined;
 
-    const [company, names, signatureImages] = await Promise.all([
+    const [company, names, signatureImages, paymentSlips, paymentDestinations] = await Promise.all([
       this.repo.getClaimFormCompanyContext(companyId, req.branchId ?? null),
       this.repo.getUserDisplayNames(companyId, [
         approvedStep?.decisionByUserId,
         financeReviewed,
         payment?.paidByUserId,
+        claimPayout?.verifiedByUserId,
       ].filter((id): id is string => !!id)),
       this.loadSignatureImages(companyId, req.id, req.claimSignatures ?? []),
+      // The slips of the payment the form prints, read the way the claim page reads them.
+      payment ? this.repo.listPaymentSlips(companyId, [payment.id]) : undefined,
+      // The account that payment was confirmed into, from the version the payment itself stored.
+      paidIntoVersion === undefined ? undefined : this.repo.listPaymentPayoutDestinations(companyId, req.id, [paidIntoVersion]),
     ]);
+    // Spec §17.1: in a round the line reads "อยู่ระหว่างแก้ไขบัญชีรับเงิน" for every reader. It carries no
+    // account, so nothing is decrypted for it and no reveal is recorded.
+    const payout: ClaimFormPayout | undefined = correcting ? { method: 'CORRECTION_IN_PROGRESS' } : claimFormPayout(claimPayout, names, req.requesterUserId);
+    const paidInto = paidIntoVersion === undefined ? undefined : paymentDestinations?.[paidIntoVersion];
     const signer = (userId: string | undefined, at: Date | undefined, role: ReimbursementClaimSignatureRole): ClaimFormSigner | null =>
       (userId && at
         ? {
@@ -106,15 +164,18 @@ export class PreviewReimbursementClaimFormUseCase {
       hasReceiptEvidence: lines.some(isLineEvidenced),
       missingReceiptReason: req.missingReceiptReason ?? null,
       approvalDecisionNote: policySnapshot?.requiresApproval === false ? 'ไม่ต้องอนุมัติตามนโยบาย' : null,
-      layout: claimFormLayout(req.claimSignatures),
+      layout,
+      ...(payout && { payout }),
       repayment: payment
         ? {
             paidAt: payment.paidAt.toISOString(),
             method: payment.paymentMethod,
             reference: payment.paymentReference ?? null,
             recordedByName: names[payment.paidByUserId] ?? payment.paidByUserId,
+            ...(paidInto && { paidInto: { kind: paidInto.payoutKind, accountLast4: paidInto.accountLast4 } }),
           }
         : null,
+      hasPaymentEvidence: !!payment && (paymentSlips?.[payment.id]?.length ?? 0) > 0,
       selfApproved: approvedStep?.decisionByUserId === req.requesterUserId,
       ...(req.status === 'CANCELLED' ? { cancellation: { reason: req.rejectionReason ?? null } } : {}),
       signers: {
@@ -169,4 +230,21 @@ export class PreviewReimbursementClaimFormUseCase {
     }
     return Object.fromEntries(loaded);
   }
+}
+
+/** The claim's masked payout record in the form's terms. Nothing it is given carries the full number. */
+function claimFormPayout(payout: ClaimPayoutRecord | undefined, names: Record<string, string>, requesterUserId: string): ClaimFormPayout | undefined {
+  if (payout?.payoutMethod === 'CASH') return { method: 'CASH' };
+  // A sent claim paid by transfer always has its frozen row; without one there is no line to print.
+  if (payout?.payoutMethod !== 'BANK_TRANSFER' || !payout.payoutKind || !payout.accountName || !payout.accountLast4) return undefined;
+  const at = payout.verifiedAt?.toISOString();
+  return {
+    method: 'BANK_TRANSFER', kind: payout.payoutKind, bankName: payout.bankName ?? null,
+    accountName: payout.accountName, accountLast4: payout.accountLast4,
+    // The same test the claim page makes: an attestation by the requester is their own confirmation
+    // (spec §10.2), not a check by someone else, and is printed as such.
+    verifier: !payout.verifiedByUserId || !at ? null
+      : payout.verifiedByUserId === requesterUserId ? { byRequester: true, at }
+        : { name: names[payout.verifiedByUserId] ?? payout.verifiedByUserId, at },
+  };
 }

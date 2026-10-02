@@ -1,40 +1,55 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type {
   RequestContext,
   CreateReimbursementRequestInput,
   UpdateReimbursementDraftInput,
   ListReimbursementsFilter,
   ReimbursementLineInput,
+  ReimbursementHubBucket,
+  ReimbursementHubSummary,
+  PaginatedReimbursements,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
   ReimbursementInternalNote,
+  ReimbursementPendingCancellation,
+  ReimbursementPayoutCorrectionActions,
+  ReimbursementPayoutCorrectionEvent,
   ReimbursementPolicySnapshotV1,
   ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
-import { REIMBURSEMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
-import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { REIMBURSEMENT_SEQUENCE_KEYS, isExpenseVoidReason, isReimbursementClaimApprover } from '@watchdog-bms/contracts';
+import { PrismaReimbursementRepository, hubBucketOfStatus, type ReimbursementRequestGroup } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
+import type { ExpenseVoidBlocker } from '../../../expenses/infrastructure/expense-void-blocker';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type {
   ReimbursementDuplicateCandidateWriteData,
   ReimbursementLineRecord,
   ReimbursementLineWriteData,
   ReimbursementRequestRecord,
 } from '../../domain/models/reimbursement.model';
-import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames } from '../dto/reimbursement.mapper';
+import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries, detailWithFileNames, toPayoutSummary, toPayoutVersionSummary } from '../dto/reimbursement.mapper';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
-import { approvalDecisionActions } from './reimbursement-approval.use-case';
+import { approvalDecisionActions, awaitingSystemOf } from './reimbursement-approval.use-case';
+import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
+import {
+  defaultChangedSinceSubmit, hasPayoutSnapshot, mayTypePayoutAccountFor, payoutDefaultToken, payoutRevealGroup, payoutSubmitToken,
+  type PayoutRevealGroup, type SubmitPayoutColumns,
+} from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
+import { lostWriteRace, ReimbursementProjectionReconcilerService } from '../services/reimbursement-projection-reconciler.service';
 import {
   validateRequestFields,
   validateLines,
   requiresApproval,
   computeReceiptRequirement,
   isLineEvidenced,
+  claimSnapshotFields,
   computeSnapshotHash,
   canTransition,
   deriveHeaderFromLines,
@@ -42,6 +57,12 @@ import {
   scoreDuplicate,
   normalizeReason,
   normalizeReimbursementAmount,
+  PAYMENT_RECORDING_STATUSES,
+  paymentTurnUserIds,
+  payoutCorrectionPhase,
+  payoutCorrectionRoundStart,
+  d,
+  decStr,
 } from '../../domain/logic/reimbursement.logic';
 
 export async function loadReimbursementPolicy(repo: PrismaReimbursementRepository, companyId: string) {
@@ -112,6 +133,7 @@ export class CreateReimbursementDraftUseCase {
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
     private readonly evidence: ReimbursementEvidenceService,
+    private readonly payouts: MemberPayoutAccountUseCase,
   ) {}
 
   async execute(ctx: RequestContext, input: CreateReimbursementRequestInput): Promise<ReimbursementRequestSummary> {
@@ -137,6 +159,8 @@ export class CreateReimbursementDraftUseCase {
     });
     // Header amount/category/date are the rollup of the lines — never client input.
     const header = deriveHeaderFromLines(resolvedLines);
+    // The account is the REQUESTER's, whoever prepares the claim. No choice sent = follow their default.
+    const payout = input.payout ? await this.payouts.draftPayoutChange(ctx, requesterUserId, input.payout) : undefined;
 
     const created = await this.repo.createRequest({
       companyId: ctx.companyId,
@@ -155,13 +179,17 @@ export class CreateReimbursementDraftUseCase {
       receiptRequirementStatus: receipt.status === 'REQUIRED' ? 'REQUIRED' : receipt.status,
       createdByUserId: ctx.userId,
       lines: prepareReimbursementLineWrites(resolvedLines),
-    });
+    }, payout);
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.create',
       targetType: 'reimbursement_request', targetId: created.id, requestId: ctx.requestId,
       result: 'SUCCESS', riskLevel: 'LOW',
-      metadataJson: { amount: created.amount, currency: created.currency, categoryKey: created.categoryKey, lineCount: input.lines.length },
+      metadataJson: {
+        amount: created.amount, currency: created.currency, categoryKey: created.categoryKey, lineCount: input.lines.length,
+        // The receiving choice and who typed an account. Nothing of the account itself.
+        ...(payout && { payout: payout.audit }),
+      },
     });
     return toRequestSummary(created, { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason });
   }
@@ -173,6 +201,7 @@ export class UpdateReimbursementDraftUseCase {
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
     private readonly evidence: ReimbursementEvidenceService,
+    private readonly payouts: MemberPayoutAccountUseCase,
   ) {}
 
   async execute(ctx: RequestContext, id: string, input: UpdateReimbursementDraftInput): Promise<ReimbursementRequestSummary> {
@@ -217,10 +246,13 @@ export class UpdateReimbursementDraftUseCase {
       missingReceiptReason: input.missingReceiptReason ?? req.missingReceiptReason,
     });
     data.receiptRequirementStatus = receipt.status;
-    const updated = await this.repo.updateDraftRequest(ctx.companyId, id, req.updatedAt, data, lines);
+    const payout = input.payout ? await this.payouts.draftPayoutChange(ctx, req.requesterUserId, input.payout) : undefined;
+    const updated = await this.repo.updateDraftRequest(ctx.companyId, id, req.updatedAt, data, lines, payout);
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.update_draft',
       targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+      // A change of where the money goes is on record: the choice and who typed an account, never the account.
+      ...(payout && { metadataJson: { payout: payout.audit } }),
     });
     return toRequestSummary(updated, { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason });
   }
@@ -240,8 +272,11 @@ export class ReopenRejectedReimbursementUseCase {
   ) {}
 
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestSummary> {
-    const req = await this.repo.findRequestById(ctx.companyId, id);
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
+    // review item 18): which refusal a finance reviewer got below said whether the claim waits for approval.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
 
     const isOwner = req.requesterUserId === ctx.userId;
     const withdraw = req.status === 'PENDING_APPROVAL';
@@ -249,10 +284,13 @@ export class ReopenRejectedReimbursementUseCase {
     const canReopen = (isOwner && ctx.permissions.includes('reimbursement.update_own_draft'))
       || (!withdraw && ctx.permissions.includes('reimbursement.finance_review'));
     if (!canReopen) throw new ForbiddenException('Cannot reopen this reimbursement');
-    assertReimbursementBranchInScope(ctx, req.branchId);
     if ((req.status !== 'REJECTED' && !withdraw) || !canTransition(req.status, 'DRAFT')) {
       throw new UnprocessableEntityException(`Cannot reopen from status ${req.status}`);
     }
+    // A claim sent back to have its payout account corrected was approved and has its expense records:
+    // only its account changes, so it never returns to a draft (payout spec §14.7). The repository
+    // refuses the same under the claim's lock, and any claim whose expense records still stand.
+    if (payoutCorrectionPhase(req)) throw new ConflictException('payout_correction_in_progress');
 
     const updated = await this.repo.reopenRejectedRequest(ctx.companyId, id, req.updatedAt, ctx.userId, withdraw ? 'PENDING_APPROVAL' : 'REJECTED');
     void this.audit.log({
@@ -279,9 +317,61 @@ export class GetReimbursementDetailUseCase {
     const approvalActions = await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     const notes = await this.repo.listInternalNotes(ctx.companyId, id);
     const names = await this.repo.getUserDisplayNames(ctx.companyId, notes.map(note => note.authorUserId));
+    const detail = await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx, approvalActions);
+    // Who can record the payment (spec §18.3): read only while the claim waits there and the endpoint would
+    // take a payment at all. A claim with no branch, or in a status it refuses (PARTIALLY_PAID), is refused
+    // for everyone, so nobody is named and the page prints the pool label. Only on this read: the page
+    // re-reads the claim after every action, like `approvalActions`. Whoever's turn it is to pay comes
+    // first when they can (owner rule 2026-10-01), as the ready-to-pay notice went to them first.
+    const payers = detail.currentDesk?.kind === 'PAYMENT' && req.branchId && PAYMENT_RECORDING_STATUSES.includes(req.status)
+      ? await this.repo.listPaymentRecorderNames(ctx.companyId, req.branchId, paymentTurnUserIds(req)) : undefined;
+    // A draft with no method of its own shows the requester's default account it would be sent with.
+    // This read is the only one, and only for a draft: a sent claim shows its own frozen snapshot.
+    const draftDefault = req.status === 'DRAFT' && !req.payoutMethod ? await this.repo.findDraftDefaultPayout(req) : undefined;
+    const payout = detail.payout ?? toPayoutSummary(
+      draftDefault,
+      draftDefault?.enteredByUserId ? await this.repo.getUserDisplayNames(ctx.companyId, [draftDefault.enteredByUserId]) : {},
+    );
+    // What "ส่งอนุมัติ" would freeze right now. The page sends this back with the submit, and a
+    // submit whose own answer differs is refused: nobody sends a claim to an account they did not see.
+    const submitToken = req.status === 'DRAFT' ? payoutSubmitToken(req.id, await this.repo.planSubmitPayout(req)) : undefined;
+    // Payout spec §22: the requester changed their default after sending this claim. The claim keeps
+    // what it froze, and the requester alone is told, from fingerprints that stay on the server.
+    const defaultAccountChanged = req.requesterUserId === ctx.userId && detail.payout?.source === 'DEFAULT_ACCOUNT'
+      && defaultChangedSinceSubmit(req, detail.payout.source, await this.repo.findMemberPayoutAccount(ctx.companyId, req.requesterUserId));
+    // Audit B3: a cancellation that was started and has not completed appeared in no response.
+    const pendingCancellation = await pendingCancellationOf(ctx, req, this.repo);
+    // Audit B4: a claim that was decided and has not moved on said nothing of it either.
+    const awaitingSystem = await awaitingSystemOf(ctx, req, this.repo);
+    // Spec §15: a legacy claim froze no account, so whoever may record its payment is shown the
+    // requester's default account as it is now, with the token a confirmation of it sends back.
+    // Present exactly when the reveal endpoint would answer this viewer for that account.
+    const legacyPayoutDefault = await legacyPayoutPayer(ctx, req, this.repo) ? await this.repo.findLegacyPayoutDefault(req) : null;
+    // Spec §17.2: the accounts this claim has been sent with, masked like the current one. Only a claim
+    // that has a number was ever sent, so a first draft costs no read.
+    const payoutVersions = req.requestNo ? await this.repo.listClaimPayoutVersions(req) : [];
+    const payoutVersionNames = payoutVersions.length > 0 ? await this.repo.getUserDisplayNames(ctx.companyId,
+      payoutVersions.flatMap((version) => [version.enteredByUserId ?? '', version.verifiedByUserId ?? ''])) : {};
+    // Payout spec §14: whether this viewer may send the claim back for its account, or give that
+    // account, as the two endpoints decide it; and what the claim's rounds were, for its timeline.
+    const payoutCorrectionActions = await payoutCorrectionActionsOf(ctx, req, this.repo, approvalActions);
+    const payoutCorrectionHistory = await payoutCorrectionHistoryOf(req, this.repo);
     return {
-      ...await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req),
+      ...detail,
+      ...(pendingCancellation && { pendingCancellation }),
+      ...(awaitingSystem && { awaitingSystem }),
+      ...(payoutCorrectionActions && { payoutCorrectionActions }),
+      ...(payoutCorrectionHistory && { payoutCorrectionHistory }),
+      // The button is offered exactly when the reveal endpoint would answer.
+      ...(payout && { payout: {
+        ...payout, ...(submitToken && { submitToken }), ...(defaultAccountChanged && { defaultAccountChanged: true as const }),
+        canRevealAccountNumber: await claimPayoutRevealGroup(ctx, req, this.repo, approvalActions) !== null,
+      } }),
+      ...(legacyPayoutDefault && { legacyPayoutDefault }),
+      ...(payoutVersions.length > 0 && { payoutHistory: payoutVersions.map((version) => toPayoutVersionSummary(version, payoutVersionNames)) }),
       approvalActions,
+      // Two names, then a count: the page says "อยู่ที่ … หรือ … และอีก N คน" in its header, its step note and its timeline.
+      ...(payers && { paymentDesk: { names: payers.slice(0, 2), moreCount: Math.max(payers.length - 2, 0) } }),
       internalNotes: notes.map(note => ({
         id: note.id,
         authorUserId: note.authorUserId,
@@ -294,14 +384,18 @@ export class GetReimbursementDetailUseCase {
   }
 }
 
-async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
+export async function assertCanReadRequestOrAssignment(ctx: RequestContext, req: ReimbursementRequestRecord, repo: PrismaReimbursementRepository) {
   const approvalActions = await approvalDecisionActions(ctx, req, repo);
   try {
     await assertCanReadRequest(ctx, req, repo);
   } catch (error) {
-    // A frozen assignment permits this exact claim even after a role change.
-    if (!(error instanceof ForbiddenException)
-      || (!approvalActions.canApprove && !approvalActions.canReject)) throw error;
+    if (!(error instanceof ForbiddenException)) throw error;
+    // A frozen assignment permits this exact claim even after a role change. It still does while the claim
+    // is being cancelled: the step is theirs to read, though nothing can be decided on it meanwhile.
+    const held = req.cancellationPendingAt
+      ? await approvalDecisionActions(ctx, { ...req, cancellationPendingAt: undefined }, repo)
+      : approvalActions;
+    if (!held.canApprove && !held.canReject) throw error;
   }
   return approvalActions;
 }
@@ -356,15 +450,40 @@ export class ReimbursementInternalNotesUseCase {
   }
 }
 
+/** The scope's groups folded into what the hub's cards and chips print. Every claim is counted in exactly one bucket. */
+export function hubSummary(groups: readonly ReimbursementRequestGroup[]): ReimbursementHubSummary {
+  const counts = { all: 0, draft: 0, review: 0, payment: 0, paid: 0, closed: 0 };
+  let totalAmount = d('0');
+  let blockedDraftCount = 0;
+  for (const group of groups) {
+    counts.all += group.count;
+    counts[hubBucketOfStatus(group.status, group.financeReviewStatus)] += group.count;
+    totalAmount = totalAmount.add(d(group.amount));
+    // The gate a list row shows on its ส่งอนุมัติ button: a draft that still owes its receipt.
+    if (group.status === 'DRAFT' && group.receiptRequirementStatus === 'REQUIRED') blockedDraftCount += group.count;
+  }
+  return { counts, totalAmount: decStr(totalAmount), blockedDraftCount };
+}
+
+/** The hub's buckets by name. Typed over every bucket, so one added later has to be named here to be asked for. */
+const HUB_BUCKETS: readonly string[] = Object.keys({ draft: true, review: true, payment: true, paid: true, closed: true } satisfies Record<ReimbursementHubBucket, true>);
+
+/** A page number or size from the query string: a whole number from 1 up, and small enough to be an OFFSET. */
+const wholeFrom1 = (value: number | undefined, fallback: number) =>
+  (value !== undefined && Number.isFinite(value) && value >= 1 ? Math.min(Math.floor(value), 1_000_000) : fallback);
+
 @Injectable()
 export class ListReimbursementsUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
 
-  async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<{ items: ReimbursementRequestSummary[]; total: number; page: number; pageSize: number }> {
+  async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<PaginatedReimbursements> {
     const canReadAll = ctx.permissions.includes('reimbursement.read');
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
     const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
     if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read reimbursements');
+    // Only a bucket the hub has. The name came straight from the query string: `all` answered no rows under the
+    // whole scope's total, and a name every object carries (`constructor`) answered with no total at all.
+    if (filter.bucket !== undefined && !HUB_BUCKETS.includes(filter.bucket)) throw new BadRequestException('reimbursement_list_bucket_invalid');
 
     let requesterUserId: string | undefined;
     let relatedUserId: string | undefined;
@@ -382,18 +501,25 @@ export class ListReimbursementsUseCase {
       requesterUserId = ctx.userId;
     }
 
-    const [rows, policy] = await Promise.all([this.repo.listRequests({
+    const page = wholeFrom1(filter.page, 1);
+    const pageSize = Math.min(wholeFrom1(filter.pageSize, 20), 100);
+    // The database pages. Before, every call loaded the whole scope and sliced it here, so walking a
+    // list of N claims read N rows per page: N²/100 rows for all of it.
+    const [{ rows: items, groups }, policy] = await Promise.all([this.repo.listRequestPage({
       companyId: ctx.companyId,
       requesterUserId,
       relatedUserId,
       scopes: ctx.scopes ?? {},
       status: filter.status,
       paymentStatus: filter.paymentStatus,
+      bucket: filter.bucket,
+      // The hub's search box. The counts below are of the same searched list, so a card still counts its rows.
+      search: filter.search?.trim().slice(0, 100) || undefined,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
     }), loadReimbursementPolicy(this.repo, ctx.companyId)]);
-    const page = filter.page && filter.page > 0 ? filter.page : 1;
-    const pageSize = filter.pageSize && filter.pageSize > 0 ? Math.min(filter.pageSize, 100) : 20;
-    const start = (page - 1) * pageSize;
-    const items = rows.slice(start, start + pageSize);
+    // The total is read off the same groups the cards print, so a card can never count a different list.
+    const hub = hubSummary(groups);
     // "อยู่ที่ …" needs the pending step and its assignees only where a claim is actually waiting
     // on a person. Two batched lookups for the page — and neither runs when the page has no
     // PENDING_APPROVAL row (both helpers return empty on an empty id list).
@@ -410,9 +536,13 @@ export class ListReimbursementsUseCase {
         { ...row, approvalSteps: pendingSteps.filter((step) => step.reimbursementRequestId === row.id) },
         { allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason, approverNames },
       )),
-      total: rows.length,
+      total: hub.counts[filter.bucket ?? 'all'],
       page,
       pageSize,
+      hub,
+      // The one fact of the policy the hub needs from here: a finance reviewer who may not read the
+      // policy (an accountant) named the third tab "คิวการเงิน" in a company with no finance step.
+      financeReviewRequired: policy.financeReviewRequired,
     };
   }
 }
@@ -428,7 +558,8 @@ export class SubmitReimbursementUseCase {
     private readonly projections: ReimbursementProjectionOrchestratorService,
   ) {}
 
-  async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
+  /** `payoutSubmitToken`: the `payout.submitToken` of the detail the submitter was looking at. */
+  async execute(ctx: RequestContext, id: string, input?: { payoutSubmitToken?: unknown } | null): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.submit')) throw new ForbiddenException('Missing permission: reimbursement.submit');
 
     const req = await this.repo.findRequestById(ctx.companyId, id);
@@ -526,16 +657,13 @@ export class SubmitReimbursementUseCase {
       financeReviewRequired: policy.financeReviewRequired,
       ...(policy.slaHours !== undefined && { slaHours: policy.slaHours }),
     };
-    const snapshotHash = computeSnapshotHash({
-      amount: req.amount,
-      currency: req.currency,
-      categoryKey: req.categoryKey,
-      incurredDate: req.incurredDate.toISOString(),
-      reason: req.reason,
-      primaryAttachmentId: req.primaryAttachmentId,
-      lines,
-      approvalPolicySnapshotJson: policySnapshot,
-    });
+    // Payout gate: a claim is sent with a receiving method, and a transfer with a complete account.
+    // A draft that names none follows the requester's default; nothing is picked for a requester who
+    // has not chosen, so a claim meant for a transfer is never sent as cash. All of it — what is
+    // frozen, its fingerprint and version, and the hash that binds them — is decided inside the
+    // submit transaction, which asks this for the hash once the payout columns are known.
+    const snapshotHash = (payoutColumns: SubmitPayoutColumns) =>
+      computeSnapshotHash(claimSnapshotFields({ ...req, lines, ...payoutColumns }, policySnapshot));
 
     const periodKey = reimbursementPeriodKey(now);
     // A corrected request may be submitted again under the same unchanged policy and even with
@@ -570,14 +698,14 @@ export class SubmitReimbursementUseCase {
         approverUserId,
         approverRoleSnapshot: submissionRoute!.responsibilityRole,
         assignedApproverUserIdsJson: submissionRoute!.recipientUserIds,
-        requestSnapshotHash: snapshotHash,
       } }),
+      // The claim's own copy is frozen in this transaction; from here on nothing reads the default.
+      payout: { actorUserId: ctx.userId, frozenAt: now, seenToken: input?.payoutSubmitToken, snapshotHash },
       request: {
         status: initialStatus,
         submittedAt: now,
         submittedByUserId: ctx.userId,
         currentApproverUserId: humanApprovalRequired ? approverUserId : null,
-        approvalSnapshotHash: snapshotHash,
         approvalPolicySnapshotJson: policySnapshot,
         // A corrected draft may carry NEEDS_INFO while the requester works. Once it is
         // resubmitted, that decision is historical; finance starts again only after the new approval.
@@ -618,6 +746,8 @@ export class SubmitReimbursementUseCase {
             ownerFallbackUsed: submissionRoute?.ownerFallbackUsed ?? false,
             soloSelfApproval: submissionRoute?.soloSelfApproval ?? false,
             branchId: req.branchId,
+            // Which snapshot was frozen. Version and origin only: no account detail belongs here.
+            payout: { method: persisted.payout!.plan.payoutMethod, version: persisted.payout!.columns.payoutDestinationVersion, followsDefault: persisted.payout!.plan.followsDefault },
             legacyRecovery: {
               documentNumberReused: persisted.documentNumberReused,
               supersededDuplicateCandidateCount: persisted.supersededDuplicateCandidateCount,
@@ -696,6 +826,12 @@ export class SubmitReimbursementUseCase {
         kind: 'POLICY', actorUserId: req.requesterUserId,
         allowMissingReceiptWithReason: policySnapshot.allowMissingReceiptWithReason,
       });
+      // Nobody had to approve this claim, so the people who would have are the ones the ready-to-pay
+      // notice asks first (owner rule 2026-10-01). Best effort: a notice never fails a submission.
+      let approverRecipientUserIds: string[] = [];
+      try {
+        approverRecipientUserIds = await this.approverRoutes.resolveWouldBeApproverUserIds(ctx.companyId, policy, req);
+      } catch { /* the notice then goes to everyone able to record the payment */ }
       const readyAt = new Date();
       await this.repo.completePolicyProjectionAtomic({
         companyId: ctx.companyId, requestId: id, actorUserId: req.requesterUserId,
@@ -710,6 +846,7 @@ export class SubmitReimbursementUseCase {
                 requestId: id, requestNo, requesterUserId: req.requesterUserId,
                 status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD',
                 amount: req.amount, currency: req.currency,
+                ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             });
           }
@@ -718,7 +855,7 @@ export class SubmitReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   /**
@@ -772,6 +909,75 @@ export class SubmitReimbursementUseCase {
   }
 }
 
+/** The right to cancel this claim: its requester with the cancel right, or a finance reviewer. */
+function holdsCancelRight(ctx: RequestContext, req: Pick<ReimbursementRequestRecord, 'requesterUserId'>): boolean {
+  return (req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.cancel_own'))
+    || ctx.permissions.includes('reimbursement.finance_review');
+}
+
+/**
+ * Whether the cancel endpoints take this viewer for this claim. The claim detail reads the same
+ * answer for its "ดำเนินการยกเลิกต่อ" and withdraw buttons, so a button is never offered to someone
+ * the endpoint refuses.
+ */
+export function mayCancelReimbursement(ctx: RequestContext, req: Pick<ReimbursementRequestRecord, 'requesterUserId' | 'branchId' | 'status'>): boolean {
+  return holdsCancelRight(ctx, req) && canTransition(req.status, 'CANCELLED') && isBranchInScope(ctx.scopes ?? {}, req.branchId);
+}
+
+/**
+ * The reason a cancellation runs with. A started one keeps the reason on record, so a retry names
+ * the same reason or none. Only when the stored reason is one the expense void refuses does the
+ * retry carry the corrected reason (audit B3: such a claim could never be cancelled).
+ */
+function cancellationReasonFor(req: ReimbursementRequestRecord, supplied?: string): string {
+  const given = supplied?.trim();
+  if (req.cancellationPendingAt && isExpenseVoidReason(req.cancellationPendingReason)) {
+    if (given && given !== req.cancellationPendingReason) throw new ConflictException('reimbursement_cancellation_already_pending');
+    return req.cancellationPendingReason!;
+  }
+  const reason = given || (req.cancellationPendingAt ? '' : 'ยกเลิกคำขอเบิกค่าใช้จ่าย');
+  // Voiding the claim's expense records takes this reason and refuses a short one. Asked before the
+  // intent is written: a claim never holds a cancellation its own reason stops.
+  if (!isExpenseVoidReason(reason)) throw new BadRequestException('cancellation_reason_too_short');
+  return reason;
+}
+
+/** `code` or `code:periodKey`: the shape the web translates by its prefix, like the payment's closed period. */
+function cancellationBlockedError(blocker: ExpenseVoidBlocker): ConflictException {
+  return new ConflictException(`reimbursement_cancellation_${blocker.code}${'periodKey' in blocker ? `:${blocker.periodKey}` : ''}`);
+}
+
+/**
+ * A cancellation that was started and has not completed, as the claim detail reports it: who
+ * started it, when, why it has not completed and what this viewer may do about it. Computed on
+ * every read, so it says what stands in the way now.
+ */
+export async function pendingCancellationOf(
+  ctx: RequestContext,
+  req: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<ReimbursementPendingCancellation | undefined> {
+  if (!req.cancellationPendingAt || req.status === 'CANCELLED' || req.status === 'VOIDED') return undefined;
+  const reasonBlocks = !isExpenseVoidReason(req.cancellationPendingReason);
+  const [blocker, projections, names] = await Promise.all([
+    reasonBlocks ? null : repo.findCancellationBlocker(req),
+    repo.listClaimProjections(req.companyId, req.id),
+    repo.getUserDisplayNames(req.companyId, req.cancellationPendingByUserId ? [req.cancellationPendingByUserId] : []),
+  ]);
+  const mayCancel = mayCancelReimbursement(ctx, req);
+  const startedByName = req.cancellationPendingByUserId ? names[req.cancellationPendingByUserId] : undefined;
+  return {
+    startedAt: req.cancellationPendingAt.toISOString(),
+    ...(req.cancellationPendingByUserId && { startedByUserId: req.cancellationPendingByUserId }),
+    ...(startedByName && { startedByName }),
+    reason: req.cancellationPendingReason ?? '',
+    ...(reasonBlocks ? { blocker: { code: 'reason_too_short' as const } } : blocker ? { blocker } : {}),
+    canResume: mayCancel,
+    // Once an expense record is voided the claim cannot go on as before; the cancellation is finished instead.
+    canWithdraw: mayCancel && !projections.some((projection) => projection.status === 'VOIDED'),
+  };
+}
+
 @Injectable()
 export class CancelReimbursementUseCase {
   constructor(
@@ -780,17 +986,30 @@ export class CancelReimbursementUseCase {
     private readonly voidExpense: VoidExpenseUseCase,
   ) {}
 
+  /**
+   * Cancels a claim, or continues a cancellation that was started and has not completed
+   * ("ดำเนินการยกเลิกต่อ"), for whoever may cancel the claim. Two phases, because voiding the
+   * claim's expense records cannot share a transaction with the claim: the intent is committed, the
+   * records are voided, then the claim closes. Everything known to stop a void is asked before the
+   * intent; what cannot be known then leaves a cancellation the claim detail shows and this same
+   * call finishes.
+   */
   async execute(ctx: RequestContext, id: string, reason?: string): Promise<ReimbursementRequestSummary> {
-    const req = await this.repo.findRequestById(ctx.companyId, id);
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
+    // review item 18): "Cannot cancel from status …" was said before the branch was looked at.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
 
-    const isOwner = req.requesterUserId === ctx.userId;
-    const canCancel = (isOwner && ctx.permissions.includes('reimbursement.cancel_own')) || ctx.permissions.includes('reimbursement.finance_review');
-    if (!canCancel) throw new ForbiddenException('Cannot cancel this reimbursement');
+    if (!holdsCancelRight(ctx, req)) throw new ForbiddenException('Cannot cancel this reimbursement');
     if (!canTransition(req.status, 'CANCELLED')) throw new UnprocessableEntityException(`Cannot cancel from status ${req.status}`);
-    assertReimbursementBranchInScope(ctx, req.branchId);
 
-    const cancellationReason = reason?.trim() || 'ยกเลิกคำขอเบิกค่าใช้จ่าย';
+    const cancellationReason = cancellationReasonFor(req, reason);
+    // A closed accounting period, a locked tax period, an expense record no void takes: refused here,
+    // while nothing has been written. Asked again on a retry, so a blocked cancellation is not half voided.
+    const blocker = await this.repo.findCancellationBlocker(req);
+    if (blocker) throw cancellationBlockedError(blocker);
+
     const startedAt = new Date();
     const intent = await this.repo.beginCancellationAtomic({
       companyId: ctx.companyId,
@@ -835,19 +1054,53 @@ export class CancelReimbursementUseCase {
           skipDuplicates: true,
         });
       },
+      onReasonCorrected: async (tx, previousReason) => {
+        await this.audit.log({
+          companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.cancellation_reason_corrected',
+          targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+          metadataJson: { previousReason, reason: cancellationReason, startedByUserId: req.cancellationPendingByUserId },
+        }, tx);
+      },
     });
+    if (intent.resumed) {
+      // The retry gets its own audit row, so a second attempt (and who made it) is not invisible.
+      await this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.cancellation_retry',
+        targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { startedByUserId: intent.request.cancellationPendingByUserId },
+      });
+    }
 
+    try {
+      return toRequestSummary(await this.voidAndClose(ctx, intent.request, cancellationReason));
+    } catch (error) {
+      const latest = await this.repo.findRequestById(ctx.companyId, id);
+      // Someone else (a second press, another canceller, the scheduled reconciler) finished the same
+      // cancellation meanwhile: the claim is cancelled, which is what was asked.
+      if (latest?.status === 'CANCELLED') return toRequestSummary(latest);
+      if (!lostWriteRace(error)) throw error;
+      // This attempt lost to another party on the same cancellation, and nothing of it was kept: the
+      // cancellation was withdrawn, or is being finished right now. Said as that, not as a server error.
+      throw new ConflictException(latest?.cancellationPendingAt ? 'reimbursement_cancellation_in_progress' : 'reimbursement_cancellation_intent_changed');
+    }
+  }
+
+  /** Voids every expense record of the claim, then closes the claim. Each step is a no-op when already done. */
+  private async voidAndClose(ctx: RequestContext, request: ReimbursementRequestRecord, cancellationReason: string): Promise<ReimbursementRequestRecord> {
+    const id = request.id;
     const projections = await this.repo.listClaimProjections(ctx.companyId, id);
     for (const projection of projections) {
       await this.voidExpense.executeForReimbursement(ctx, projection.id, cancellationReason, {
         reimbursementRequestId: id,
         reimbursementLineId: projection.sourceReimbursementLineId,
-        branchId: intent.request.branchId,
+        branchId: request.branchId,
+        // Each void goes ahead only while this claim still holds its cancellation (it may be withdrawn meanwhile).
+        beforeVoid: (tx) => this.repo.assertCancellationPending(tx, ctx.companyId, id),
       });
     }
 
     const completedAt = new Date();
-    const updated = await this.repo.completeCancellationAtomic({
+    return this.repo.completeCancellationAtomic({
       companyId: ctx.companyId,
       requestId: id,
       actorUserId: ctx.userId,
@@ -863,7 +1116,7 @@ export class CancelReimbursementUseCase {
           requestId: ctx.requestId,
           result: 'SUCCESS',
           riskLevel: 'HIGH',
-          metadataJson: { reason: cancellationReason, projectionCount: projections.length },
+          metadataJson: { reason: cancellationReason, projectionCount: projections.length, startedByUserId: request.cancellationPendingByUserId },
         }, tx);
         await tx.outboxEvent.createMany({
           data: [{
@@ -888,7 +1141,82 @@ export class CancelReimbursementUseCase {
         });
       },
     });
+  }
+}
+
+/**
+ * Takes back a cancellation that was started and has not completed, so the claim goes on as before:
+ * for whoever may cancel the claim, and only while none of its expense records has been voided.
+ */
+@Injectable()
+export class WithdrawReimbursementCancellationUseCase {
+  constructor(
+    private readonly repo: PrismaReimbursementRepository,
+    private readonly audit: AuditService,
+  ) {}
+
+  async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestSummary> {
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
+    if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, branch scope included, ahead of everything else about the claim.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
+    if (!holdsCancelRight(ctx, req)) throw new ForbiddenException('Cannot cancel this reimbursement');
+
+    const updated = await this.repo.withdrawCancellationAtomic({
+      companyId: ctx.companyId,
+      requestId: id,
+      actorUserId: ctx.userId,
+      scopes: ctx.scopes ?? {},
+      onWithdrawnPersisted: async (tx, withdrawn) => {
+        await this.audit.log({
+          companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.cancellation_withdrawn',
+          targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+          metadataJson: { reason: withdrawn.reason, startedByUserId: withdrawn.startedByUserId, startedAt: withdrawn.startedAt.toISOString(), status: req.status },
+        }, tx);
+      },
+    });
     return toRequestSummary(updated);
+  }
+}
+
+/**
+ * "ดำเนินการต่อ" (audit B4): has the system carry out now the decision a claim already holds. Nothing
+ * is decided here, so nothing is attested again, and what was approved is carried out only while
+ * the claim is still what was approved. The scheduled run does the same for every such claim; this
+ * is that step for one claim, asked for by a person the claim detail offered it to.
+ */
+@Injectable()
+export class ResumeReimbursementUseCase {
+  constructor(
+    private readonly repo: PrismaReimbursementRepository,
+    private readonly audit: AuditService,
+    private readonly reconciler: ReimbursementProjectionReconcilerService,
+    private readonly evidence: ReimbursementEvidenceService,
+  ) {}
+
+  async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
+    if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
+    // review item 18): which refusal came back said whether a decision on the claim waits for the system.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
+    const waiting = await awaitingSystemOf(ctx, req, this.repo);
+    if (!waiting) {
+      // Nothing waits any more (pressed twice, or the scheduled run got there first). That is what
+      // was asked for, so the answer is the claim as it stands.
+      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
+    }
+    if (!waiting.canResume) throw new ForbiddenException('reimbursement_resume_not_allowed');
+    if (await this.reconciler.repair(ctx.companyId, id)) {
+      // The repair's own audit row is the system's; this one names the person who asked for it.
+      await this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.projection.resume',
+        targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { requestNo: req.requestNo, waitingFor: waiting.kind },
+      });
+    }
+    const latest = await this.repo.findRequestById(ctx.companyId, id, true);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, latest ?? req, ctx);
   }
 }
 
@@ -903,6 +1231,148 @@ export async function assertCanReadRequest(
   if (ctx.permissions.includes('reimbursement.read_related')
     && await repo.isUserRelatedToRequest(ctx.companyId, request.id, ctx.userId, ctx.scopes ?? {})) return;
   throw new ForbiddenException('Cannot read this reimbursement');
+}
+
+/**
+ * Which reveal group this viewer is in for this claim, or null. Gathers the facts for
+ * `payoutRevealGroup`; the detail's `canRevealAccountNumber` flag and the reveal endpoint both call this, so the
+ * two can never disagree. Needs the claim loaded with its approval steps.
+ */
+export async function claimPayoutRevealGroup(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+  approvalActions?: { canApprove: boolean; canReject: boolean },
+): Promise<PayoutRevealGroup | null> {
+  const isRequester = request.requesterUserId === ctx.userId;
+  const isDraft = request.status === 'DRAFT';
+  // A draft's own account, or the snapshot a sent claim froze. A legacy claim has neither.
+  const hasClaimAccount = request.payoutMethod === 'BANK_TRANSFER' && request.payoutDestinationVersion != null
+    && (isDraft || hasPayoutSnapshot(request));
+  if (!hasClaimAccount) return null;
+  // The number is never easier to reach than the claim it belongs to: every group, the requester
+  // included, passes the gate the claim detail itself has (`assertCanReadRequestOrAssignment`):
+  // the claim's branch and a way to read it, or the pending step being theirs to decide. An approver
+  // of the current round who has since lost every way to read the claim is refused the detail, the
+  // slip and, here, the number.
+  const actions = approvalActions ?? await approvalDecisionActions(ctx, request, repo);
+  const canRead = await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
+  if (!canRead && !actions.canApprove && !actions.canReject) return null;
+  return payoutRevealGroup({
+    hasClaimAccount, isDraft, isRequester,
+    canRecordPayment: canRead && ctx.permissions.includes('reimbursement.payment.record'),
+    // The approver this claim was sent to (pending step) or who approved it in this round — not
+    // every holder of the approval permission. The same two facts, from the same resolver and the
+    // same contracts rule, that `isReimbursementPayoutParty` reads for the payment slip: the reveal,
+    // the detail's flag and the slip cannot name different people as the claim's approver.
+    isClaimApprover: actions.canApprove || actions.canReject
+      || isReimbursementClaimApprover(ctx.userId, { submittedAt: request.submittedAt, approvalSteps: request.approvalSteps }),
+  });
+}
+
+// ---- Payout account correction round (payout spec §14): who may do what ----
+
+/**
+ * Who a viewer is to a claim that waits for payment, for sending it back (§14.3): whoever may record
+ * its payment, the approver the claim stands on (also without the pay right), or its requester asking
+ * for their own account to be changed. Nobody else. The claim's branch is theirs to act in, as for
+ * every other decision on a claim.
+ */
+export function payoutCorrectionSender(ctx: RequestContext, req: ReimbursementRequestRecord): 'PAYER' | 'APPROVER' | 'REQUESTER' | null {
+  if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) return null;
+  if (ctx.permissions.includes('reimbursement.payment.record')) return 'PAYER';
+  if (isReimbursementClaimApprover(ctx.userId, { submittedAt: req.submittedAt, approvalSteps: req.approvalSteps })) return 'APPROVER';
+  return req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.update_own_draft') ? 'REQUESTER' : null;
+}
+
+/** Whether the viewer may give the account of a claim in a round (§14.5): its requester, or a finance reviewer on their behalf, as for a draft. */
+export function mayGivePayoutAccount(ctx: RequestContext, req: ReimbursementRequestRecord): boolean {
+  return isBranchInScope(ctx.scopes ?? {}, req.branchId)
+    && ((req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.update_own_draft'))
+      || ctx.permissions.includes('reimbursement.finance_review'));
+}
+
+/**
+ * What this viewer may do about the payout account of an approved claim, as the claim detail reports
+ * it. The two endpoints decide by the same functions, so a button is never offered to someone its
+ * endpoint refuses, nor withheld from someone it takes. Needs the claim loaded with its approval steps
+ * and payments, and the viewer's authority over the step it waits on.
+ */
+export async function payoutCorrectionActionsOf(
+  ctx: RequestContext,
+  req: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+  approvalActions: { canApprove: boolean; canReject: boolean },
+): Promise<ReimbursementPayoutCorrectionActions | undefined> {
+  const phase = payoutCorrectionPhase(req);
+  // Nothing is decided on a claim being cancelled, and only a claim at the pay step or in a round has either action.
+  if (req.cancellationPendingAt || (!phase && req.status !== 'READY_FOR_PAYMENT')) return undefined;
+  const canRequest = phase === 'AWAITING_APPROVAL' ? approvalActions.canReject
+    : !phase && !(req.payments ?? []).some((payment) => payment.status === 'RECORDED') && payoutCorrectionSender(ctx, req) !== null;
+  const canSubmit = !!phase && mayGivePayoutAccount(ctx, req);
+  if (!canRequest && !canSubmit) return undefined;
+  // What "use the default account" would copy, for whoever fills the form: the requester's default as it is now.
+  const account = canSubmit ? await repo.findMemberPayoutAccount(req.companyId, req.requesterUserId) : null;
+  const token = payoutDefaultToken(req.id, account);
+  // Typing an account for someone else needs a requester a notice can reach: the write's own rule
+  // (`draftPayoutChange`), asked here so the form says it before anyone types.
+  const typingRefused = canSubmit && req.requesterUserId !== ctx.userId
+    && !mayTypePayoutAccountFor(await repo.findPayoutMember(req.companyId, req.requesterUserId));
+  return {
+    canRequest,
+    canSubmit,
+    ...(account && token && { requesterDefault: {
+      payoutMethod: account.payoutMethod,
+      ...(account.payoutKind && { payoutKind: account.payoutKind }),
+      ...(account.bankName && { bankName: account.bankName }),
+      ...(account.accountName && { accountName: account.accountName }),
+      ...(account.accountLast4 && { accountLast4: account.accountLast4 }),
+      token,
+    } }),
+    // The choices the account endpoint takes from this viewer, each by the rule that would refuse it there:
+    // the default needs one to use, typing needs a requester who is told, and "the account the claim had"
+    // needs the claim to have had one (`freezePayoutCorrection`). Cash is always taken.
+    ...(canSubmit && {
+      submitModes: [
+        ...(account && token ? ['DEFAULT' as const] : []),
+        ...(typingRefused ? [] : ['SPECIFIED' as const]),
+        'CASH' as const,
+        ...(payoutCorrectionRoundStart(req)?.payoutMethod ? ['PREVIOUS' as const] : []),
+      ],
+      ...(typingRefused && { specifiedRefusal: 'REQUESTER_NOT_ACTIVE' as const }),
+    }),
+  };
+}
+
+/** The claim's rounds as its timeline reads them (spec §17.2), oldest first, with the people named. Undefined: it was never in one. */
+export async function payoutCorrectionHistoryOf(
+  req: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<ReimbursementPayoutCorrectionEvent[] | undefined> {
+  const log = req.payoutCorrectionLog ?? [];
+  if (log.length === 0) return undefined;
+  const names = await repo.getUserDisplayNames(req.companyId, log.map((entry) => entry.byUserId));
+  // `approved` is what the round started from: the detail says it once, as `payoutCorrection.previous`.
+  return log.map(({ approved: _approved, ...entry }) => ({ ...entry, ...(names[entry.byUserId] && { byName: names[entry.byUserId] }) }));
+}
+
+/**
+ * Whether this viewer is shown, and may reveal, the requester's CURRENT default account on a legacy
+ * claim (payout spec §15). A claim sent before claims carried an account froze none, so the payer has
+ * nothing else to transfer into. Only whoever the payment endpoint would accept the payment from,
+ * and only while it would take one: the pay right, the claim's branch, a way to read the claim, and
+ * a claim that can be paid. Nobody else has a use for a member's default on someone's claim. The
+ * detail's `legacyPayoutDefault` block and the reveal endpoint both ask this, so they cannot disagree.
+ */
+export async function legacyPayoutPayer(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<boolean> {
+  return request.status !== 'DRAFT' && !hasPayoutSnapshot(request)
+    && !!request.branchId && PAYMENT_RECORDING_STATUSES.includes(request.status)
+    && ctx.permissions.includes('reimbursement.payment.record')
+    && await assertCanReadRequest(ctx, request, repo).then(() => true, () => false);
 }
 
 // claimSignatureAckHash moved to ../../domain/logic/reimbursement.logic (pure record hash).

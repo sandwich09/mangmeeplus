@@ -316,6 +316,8 @@ export class RunPeriodCloseChecksUseCase {
         ? 'ค่าใช้จ่ายและการจ่ายเงินจากใบเบิกลงบัญชีครบแล้ว'
         : `มีค่าใช้จ่ายจากใบเบิกยังไม่ยืนยัน ${reimbursementBlockers.unconfirmedClaimExpenses} รายการ และการจ่ายเงินเบิกยังไม่ลงบัญชี ${reimbursementBlockers.pendingPayments} รายการ (ลงบัญชีผิดพลาด ${reimbursementBlockers.paymentErrors} รายการ) กรุณาดำเนินการก่อนปิดงวด`,
       count: reimbursementPending,
+      // The web writes its own copy from the check key; the three numbers let it name each kind.
+      breakdown: { ...reimbursementBlockers },
     });
 
     const allPassed = checks.every((c) => c.status === 'PASSED');

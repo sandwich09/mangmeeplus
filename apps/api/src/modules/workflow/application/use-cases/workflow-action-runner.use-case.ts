@@ -1,15 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
 import type { WorkflowActionDefinition } from '@watchdog-bms/contracts';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
+import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
+import { REIMBURSEMENT_DECISION_WORDS } from '../../../dashboard-notifications/infrastructure/document-notification-state';
 import { CreateDraftRequestUseCase } from '../../../ai-draft/application/use-cases/create-draft-request.use-case';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { decryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { renderTemplate } from '../../domain/logic/workflow-render.logic';
+import { WORKFLOW_NOTICE_ALSO_REPLACES } from '../../domain/workflow-template-catalog';
 import { computeNextAttemptAt, isRetryExhausted } from '../../domain/logic/workflow-idempotency.logic';
 import { WORKFLOW_MAX_RETRY_ATTEMPTS } from '../../domain/workflow.constants';
 import type { WorkflowActionRunRecord, WorkflowRunRecord } from '../../domain/models/workflow.model';
@@ -21,6 +25,7 @@ const WEBHOOK_FEATURE_KEY = 'workflow_automation';
 export type ActionRunContext = {
   companyId: string;
   ruleName: string;
+  triggerType?: string;
   sourceModule?: string;
   sourceType?: string;
   sourceId?: string;
@@ -34,6 +39,7 @@ export function buildActionRunContext(run: WorkflowRunRecord): ActionRunContext 
   return {
     companyId: run.companyId,
     ruleName: run.rule?.name ?? '',
+    triggerType: run.triggerType,
     sourceModule: run.sourceModule,
     sourceType: run.sourceType,
     sourceId: run.sourceId,
@@ -44,6 +50,82 @@ export function buildActionRunContext(run: WorkflowRunRecord): ActionRunContext 
 
 class RetryableActionError extends Error {}
 class FinalActionError extends Error {}
+
+const SCAN_TRIGGER_TYPES = ['SCHEDULE', 'THRESHOLD_SCAN', 'SLA_SCAN'];
+
+/**
+ * The period a notice belongs to (review M1). The notice store keeps ONE notice per trigger, record
+ * and period, and a workflow notice is never resolved, so with no period a claim was notified once
+ * per person, ever: a claim sent again never reached its approver, "approved" after "rejected" was
+ * never pushed and the bell kept the old text.
+ * An event happens once, so its run is its period: a retry of the same run repeats nothing, the
+ * next event of the same kind is a new notice. A scan comes round every window and must not nag,
+ * so it has no period of its own; a scan that wants one push per period names it in the payload.
+ */
+function notificationPeriodKey(context: ActionRunContext, actionRun: WorkflowActionRunRecord): string | undefined {
+  const named = context.payload['notificationPeriodKey'];
+  if (typeof named === 'string' && named.length > 0) return named;
+  return context.triggerType && !SCAN_TRIGGER_TYPES.includes(context.triggerType) ? actionRun.workflowRunId : undefined;
+}
+
+/** Payload fields that hold an amount of money in the payload's `currency`. */
+const MONEY_PAYLOAD_FIELDS = ['amount', 'paidAmount'];
+
+/**
+ * The payload as a person reads it (audit B15): a claim's `decision` code word becomes the words
+ * the claim page uses, and money becomes Thai text. Done here rather than in each template so that
+ * no rule snapshot, however old or admin-edited, can put a raw code word, a stored decimal or a
+ * currency code in a notice. Conditions and links keep the raw payload.
+ */
+function readablePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const readable = { ...payload };
+  const decision = payload['decision'];
+  if (typeof decision === 'string' && Object.hasOwn(REIMBURSEMENT_DECISION_WORDS, decision)) {
+    readable['decision'] = REIMBURSEMENT_DECISION_WORDS[decision];
+  }
+  // Money the way every other reply writes it, "1,234.50 บาท", never the stored decimal next to a
+  // currency code. Another currency keeps its raw pair rather than being mislabelled as baht.
+  if (payload['currency'] === 'THB') {
+    readable['currency'] = 'บาท';
+    for (const field of MONEY_PAYLOAD_FIELDS) {
+      const raw = payload[field];
+      const amount = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : typeof raw === 'number' ? raw : NaN;
+      if (Number.isFinite(amount)) readable[field] = amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+  }
+  return readable;
+}
+
+/** The user ids that the named payload fields hold: each field is one id or a list of them. */
+function payloadUserIds(keys: unknown, payload: Record<string, unknown>): string[] {
+  if (!Array.isArray(keys)) return [];
+  return keys.flatMap((key) => {
+    const value = typeof key === 'string' ? payload[key] : undefined;
+    if (typeof value === 'string' && value.length > 0) return [value];
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0) : [];
+  });
+}
+
+/**
+ * Owner rule 2026-10-01: an action notice goes to the person whose turn it is, not to everyone
+ * who holds the right (a shop owner holds every right and was pushed for every claim in every
+ * branch). `preferRecipientPayloadKeys` names payload fields in order of preference. The first one
+ * that names somebody ABLE to act narrows the group to those people; when none does, the whole
+ * group stands, which keeps a solo owner, an approver without the right and one who has since left.
+ * `neverPreferRecipientPayloadKeys` names people who are never the preferred ones (a requester is
+ * not told alone to pay their own claim) though they stay in the whole group.
+ * A rule snapshot without the key keeps the whole group, exactly as before.
+ */
+function narrowToPreferred(able: string[], cfg: Record<string, unknown>, payload: Record<string, unknown>): string[] {
+  const preferKeys = Array.isArray(cfg['preferRecipientPayloadKeys']) ? cfg['preferRecipientPayloadKeys'] : [];
+  const never = new Set(payloadUserIds(cfg['neverPreferRecipientPayloadKeys'], payload));
+  for (const key of preferKeys) {
+    const named = new Set(payloadUserIds([key], payload));
+    const preferred = able.filter((userId) => named.has(userId) && !never.has(userId));
+    if (preferred.length > 0) return preferred;
+  }
+  return able;
+}
 
 function findTitleTemplate(actionKey: string, configJson: Record<string, unknown>, siblings: WorkflowActionDefinition[]): string | undefined {
   if (typeof configJson['titleTemplate'] === 'string') return configJson['titleTemplate'];
@@ -89,6 +171,7 @@ export class ExecuteWorkflowActionUseCase {
     private readonly notify: CreateOrUpdateNotificationEventUseCase,
     private readonly aiDraft: CreateDraftRequestUseCase,
     private readonly shadow: LaunchShadowProbe,
+    private readonly access: PermissionResolverService,
   ) {}
 
   // Idempotent per actionRun row: SUCCEEDED runs are never re-passed here by the caller,
@@ -171,11 +254,19 @@ export class ExecuteWorkflowActionUseCase {
 
   private async sendNotification(actionRun: WorkflowActionRunRecord, context: ActionRunContext, cfg: Record<string, unknown>) {
     const recipientRoles = Array.isArray(cfg['recipientRoles']) ? (cfg['recipientRoles'] as string[]) : [];
-    const roleRecipientUserIds = await this.repo.findUserIdsByRoles(context.companyId, recipientRoles);
     const recipientPermissions = Array.isArray(cfg['recipientPermissions'])
       ? (cfg['recipientPermissions'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
-    const permissionRecipientUserIds = await this.repo.findUserIdsByPermissions(context.companyId, recipientPermissions);
+    let roleRecipientUserIds: string[];
+    let permissionRecipientUserIds: string[];
+    try {
+      roleRecipientUserIds = await this.repo.findUserIdsByRoles(context.companyId, recipientRoles);
+      permissionRecipientUserIds = narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload);
+    } catch (err) {
+      // Looking people up is a read. One database blip there must not dead-letter the notice at
+      // its first attempt; it is retried like a failed send.
+      throw new RetryableActionError(`Recipient lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     const recipientPayloadKeys = Array.isArray(cfg['recipientPayloadKeys'])
       ? (cfg['recipientPayloadKeys'] as unknown[]).filter((key): key is string => typeof key === 'string')
       : [];
@@ -214,20 +305,29 @@ export class ExecuteWorkflowActionUseCase {
       if (resolvedUserIds.length > 0 && cfg['skipWhenAllRecipientsExcluded'] === true) {
         return { resultJson: { skipped: true, reason: 'all_recipients_excluded' }, targetType: 'notification_event' };
       }
+      // A scan-driven reminder is retried by the next scan window, so it opts out of the retry and
+      // dead letter an event gets: an event happens once, a scan would dead-letter every window.
+      if (cfg['skipWhenNoRecipients'] === true) {
+        return { resultJson: { skipped: true, reason: 'no_recipients' }, targetType: 'notification_event' };
+      }
       throw new RetryableActionError('No active recipients resolved for configured recipientRoles, recipientPermissions, or recipientPayloadKeys (after exclusions)');
     }
+    const readable = readablePayload(context.payload);
     const titleTemplate = findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);
-    const title = titleTemplate ? renderTemplate(titleTemplate, context.payload) : `${context.ruleName} — WatchDog Workflow`;
+    const title = titleTemplate ? renderTemplate(titleTemplate, readable) : `${context.ruleName} — WatchDog Workflow`;
     // Own config only (no sibling fallback like the title): a body borrowed from a sibling action
     // is how the notification ended up printing its own title twice.
     const bodyTemplate = typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined;
-    const body = bodyTemplate ? renderTemplate(bodyTemplate, context.payload) : title;
+    // A body that renders to nothing falls back to the title too: a template that prints one field of
+    // the event (the "paid" sentence) has nothing to say about an event written before that field existed.
+    const body = (bodyTemplate && renderTemplate(bodyTemplate, readable).trim()) || title;
     const webPath = resolveDeepLink(actionRun.actionKey, cfg, context);
+    const triggerKey = String(cfg['triggerKey'] ?? `workflow.${actionRun.actionKey}`);
 
     try {
       const result = await this.notify.execute({
         companyId: context.companyId,
-        triggerKey: String(cfg['triggerKey'] ?? `workflow.${actionRun.actionKey}`),
+        triggerKey,
         sourceModule: context.sourceModule ?? 'workflow',
         sourceType: context.sourceType ?? 'workflow_run',
         sourceId: context.sourceId ?? actionRun.workflowRunId,
@@ -237,6 +337,12 @@ export class ExecuteWorkflowActionUseCase {
         deepLinkHref: webPath,
         sourceRefs: webPath ? [{ module: context.sourceModule, type: context.sourceType, id: context.sourceId, webPath }] : [],
         recipientUserIds,
+        periodKey: notificationPeriodKey(context, actionRun),
+        supersedeEarlier: true,
+        alsoSupersedeTriggerKeys: WORKFLOW_NOTICE_ALSO_REPLACES[triggerKey],
+        // People named here keep the notice in the web bell but are not pushed on LINE: the owner
+        // finds a push about one's own action annoying, and the to-do item must still exist.
+        webOnlyRecipientUserIds: payloadUserIds(cfg['webOnlyRecipientPayloadKeys'], context.payload),
       });
       return { resultJson: { skipped: result.skipped, reason: (result as { reason?: string }).reason }, targetType: 'notification_event', targetId: result.event?.id };
     } catch (err) {
@@ -244,11 +350,44 @@ export class ExecuteWorkflowActionUseCase {
     }
   }
 
+  /**
+   * Audit B12: a recipient picked by permission must be able to ACT on this record, or the notice
+   * is a link that answers 403. "Able to act" has one definition, the permission resolver (ACTIVE
+   * role, entitlement filter, branch scope), so each holder is put through it instead of a second
+   * copy of those rules living in the recipient query.
+   * ponytail: one resolver round-trip per holder; batch it if a company ever has hundreds of them.
+   */
+  private async membersAbleToAct(context: ActionRunContext, permissionKeys: string[]): Promise<string[]> {
+    const holders = await this.repo.findUserIdsByPermissions(context.companyId, permissionKeys);
+    if (holders.length === 0) return [];
+    const branchId = await this.repo.findSourceBranchId(context.companyId, context.sourceType, context.sourceId);
+    const able = await Promise.all(holders.map(async (userId) => {
+      try {
+        const access = await this.access.resolveAccess(userId, context.companyId);
+        return permissionKeys.some((key) => access.permissions.includes(key)) && isBranchInScope(access.scopes, branchId);
+      } catch (err) {
+        // The resolver refuses outright a member it would not let into this company at all.
+        if (err instanceof ForbiddenException) return false;
+        throw err;
+      }
+    }));
+    return holders.filter((_, index) => able[index]);
+  }
+
   private async createTask(actionRun: WorkflowActionRunRecord, context: ActionRunContext, cfg: Record<string, unknown>, isApprovalReview: boolean) {
     const existing = await this.repo.findTaskByActionRunId(context.companyId, actionRun.id);
     if (existing) return { resultJson: { alreadyExisted: true }, targetType: 'workflow_task', targetId: existing.id };
 
-    const titleTemplate = typeof cfg['titleTemplate'] === 'string' ? cfg['titleTemplate'] : `${context.ruleName}${isApprovalReview ? ' — Approval review' : ''}`;
+    // A scan comes round every window, and while its record still matched, every window's run asked for a task
+    // of its own: a claim a day overdue had twenty-four identical reminders in the task list. One open task of
+    // the rule for the record is enough. Nothing more is created until that one is done or cancelled; a claim
+    // sent again cancels its tasks (closeSettledClaimTasks), so each submission round still gets its own.
+    if (context.triggerType && SCAN_TRIGGER_TYPES.includes(context.triggerType) && context.sourceType && context.sourceId) {
+      const open = await this.repo.findOpenTaskOfRuleForSource(context.companyId, actionRun.workflowRunId, context.sourceType, context.sourceId);
+      if (open) return { resultJson: { skipped: true, reason: 'open_task_exists' }, targetType: 'workflow_task', targetId: open.id };
+    }
+
+    const titleTemplate = typeof cfg['titleTemplate'] === 'string' ? cfg['titleTemplate'] : context.ruleName;
     const title = renderTemplate(titleTemplate, context.payload);
     const assigneeUserPayloadKey = typeof cfg['assigneeUserPayloadKey'] === 'string' ? cfg['assigneeUserPayloadKey'] : undefined;
     const payloadAssigneeUser = assigneeUserPayloadKey ? context.payload[assigneeUserPayloadKey] : undefined;
@@ -270,8 +409,9 @@ export class ExecuteWorkflowActionUseCase {
       sourceModule: context.sourceModule,
       sourceType: context.sourceType,
       sourceId: context.sourceId,
-      title: isApprovalReview ? `[Approval review] ${title}` : title,
-      description: isApprovalReview ? 'Workflow-created approval-review task. Completing this task does not approve the source record.' : undefined,
+      // Plain Thai, as the person reads it in their task list: no English tag in front of the title.
+      title,
+      description: isApprovalReview ? 'งานเตือนให้ตรวจและอนุมัติรายการนี้ การปิดงานนี้ไม่ได้อนุมัติรายการให้' : undefined,
       assigneeUserId,
       // A person snapshot is exact authority. Keeping the old role as a second assignee would
       // expose the reminder to later role holders even though the reimbursement API refuses them.

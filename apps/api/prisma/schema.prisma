@@ -977,6 +977,7 @@ model CompanyMembership {
   branchScopes          MembershipBranchScope[]
   employeeAccessProfile EmployeeAccessProfile?
   reimbursementDraftActions ReimbursementDraftAction[]
+  payoutAccount         MemberPayoutAccount?
 
   @@unique([companyId, userId])
   @@index([userId, status])
@@ -6884,6 +6885,24 @@ model ReimbursementRequest {
   missingReceiptReason         String?
   approvalSnapshotHash         String?
   approvalPolicySnapshotJson   Json?
+  /// How the requester is paid back. NULL on a draft = follow the requester's default payout account
+  /// until submit; NULL on a submitted claim = a claim sent before this field existed (legacy).
+  payoutMethod                 ReimbursementPaymentMethod?
+  /// The claim's own account snapshot (ReimbursementPayoutDestination.version); NULL for cash.
+  payoutDestinationVersion     Int?
+  payoutFingerprint            String?
+  /// A payout account correction round (payout spec §14): a claim sent back from the pay step waits,
+  /// as PENDING_APPROVAL, for its requester to give the account and for its approvers to approve it.
+  /// These five are set while it does and NULL again once it is ready for payment.
+  payoutCorrectionRequestedAt       DateTime?
+  payoutCorrectionRequestedByUserId String?
+  payoutCorrectionReasonCode        String?
+  payoutCorrectionNote              String?
+  /// When the account was given again. NULL while the claim still waits for its requester.
+  payoutCorrectionSubmittedAt       DateTime?
+  /// What happened in every correction round of the claim, oldest first (sent back by whom and why,
+  /// account given, approved again). Kept when the five columns above are cleared.
+  payoutCorrectionLogJson           Json?
   paymentTotalAmount           Decimal                               @default(0) @db.Decimal(18, 4)
   outstandingAmount            Decimal                               @default(0) @db.Decimal(18, 4)
   idempotencyKey               String?
@@ -6901,6 +6920,7 @@ model ReimbursementRequest {
   internalNotes                ReimbursementInternalNote[]
   sourceExpenses               ExpenseRecord[]                       @relation("ExpenseSourceReimbursementRequest")
   draftActions                 ReimbursementDraftAction[]
+  payoutDestinations           ReimbursementPayoutDestination[]
 
   @@unique([companyId, requestNo])
   @@unique([companyId, id])
@@ -7058,6 +7078,17 @@ model ReimbursementPayment {
   paidAt                 DateTime
   paymentReference       String?
   bankAccountId          String?
+  /// The slip this payment was recorded with (an AttachmentObject id) and its checksum then.
+  /// Every slip, this one included, is an AttachmentLink row on the payment.
+  slipAttachmentId       String?
+  slipChecksumSha256     String?
+  /// The account this transfer was confirmed into: a version of the claim's own
+  /// ReimbursementPayoutDestination rows (on a legacy claim, the copy of the requester's default
+  /// account made at payment). NULL when no account was confirmed. Never changes once recorded.
+  payoutDestinationVersion Int?
+  payoutConfirmedAt      DateTime?
+  /// Why the payer paid by another method than the requester asked for; NULL when it was the same.
+  methodMismatchReason   String?
   sourcePaymentRef       String
   status                 ReimbursementPaymentRecordStatus @default(RECORDED)
   voidedAt               DateTime?
@@ -7095,6 +7126,64 @@ model ReimbursementDuplicateCandidate {
   request                ReimbursementRequest                  @relation(fields: [reimbursementRequestId], references: [id], onDelete: Cascade)
 
   @@index([companyId, reimbursementRequestId, status])
+}
+
+/// A company member's default account for getting reimbursements back (payout spec §8). One row per
+/// membership, so an owner without an employee profile has one too and two companies never share it.
+/// The number is AES-256-GCM ciphertext; `accountLast4` is the only part any list or detail shows.
+model MemberPayoutAccount {
+  id                     String                     @id @default(cuid())
+  companyId              String
+  userId                 String
+  /// BANK_TRANSFER or CASH only (CHECK in the migration); a cash default carries no account.
+  payoutMethod           ReimbursementPaymentMethod
+  /// BANK_ACCOUNT | PROMPTPAY_PHONE, NULL for a cash default.
+  payoutKind             String?
+  bankName               String?
+  accountName            String?
+  accountNumberEncrypted String?
+  accountLast4           String?
+  /// HMAC of the destination, stable across re-encryption: tells "changed" from "same account".
+  fingerprint            String?
+  version                Int                        @default(1)
+  updatedByUserId        String
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+  membership             CompanyMembership          @relation(fields: [companyId, userId], references: [companyId, userId], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+}
+
+/// The claim's own copy of the account it is paid into, one row per version (payout spec §9). A row
+/// with `frozenAt` set is what the approver attests and the payer pays; the migrations' triggers let
+/// only the verification columns change after that, and refuse deleting it while its claim exists.
+model ReimbursementPayoutDestination {
+  id                     String               @id @default(cuid())
+  companyId              String
+  reimbursementRequestId String
+  version                Int
+  payoutKind             String
+  bankName               String?
+  accountName            String
+  accountNumberEncrypted String
+  accountLast4           String
+  fingerprint            String
+  /// DEFAULT_ACCOUNT | REQUESTER | PREPARER: where the claim's account came from. LEGACY_PAYMENT: a
+  /// copy of the requester's default made when a legacy claim was paid into it (the claim never points at it).
+  source                 String
+  /// Who entered the account: whoever typed it, or — for a copy of the default — whoever last set that default.
+  createdByUserId        String
+  frozenAt               DateTime?
+  verifiedByUserId       String?
+  verifiedAt             DateTime?
+  /// APPROVAL, or PAYMENT when the payer was the first person other than the requester to check it.
+  verifiedVia            String?
+  approvalStepId         String?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+  request                ReimbursementRequest @relation(fields: [companyId, reimbursementRequestId], references: [companyId, id], onDelete: Cascade, map: "ReimbursementPayoutDestination_request_fkey")
+
+  @@unique([reimbursementRequestId, version], map: "ReimbursementPayoutDestination_request_version_key")
 }
 
 // ===== Item 15: CRM and Sales MVP =====

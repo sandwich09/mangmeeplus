@@ -1,4 +1,8 @@
+import { canOpenReimbursementPaymentSlip } from '@watchdog-bms/contracts';
 import type {
+  ReimbursementPayoutCorrection,
+  ReimbursementPayoutCorrectionReason,
+  ReimbursementPayoutViewer,
   ReimbursementPolicySummary,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
@@ -8,6 +12,8 @@ import type {
   ReimbursementLineSummary,
   ReimbursementClaimSignatureSummary,
   ReimbursementDocumentSignedVia,
+  ReimbursementPayoutSummary,
+  ReimbursementPayoutVersionSummary,
   ReimbursementSignedCopySummary,
 } from '@watchdog-bms/contracts';
 import type {
@@ -19,10 +25,14 @@ import type {
   ReimbursementLineRecord,
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
-import { claimSignatureAckHash, computeReceiptRequirement, currentDesk } from '../../domain/logic/reimbursement.logic';
+import {
+  claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment, payoutCorrectionPhase, payoutCorrectionRoundStart,
+} from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import type { ClaimPayoutRecord, ClaimPayoutVersionRecord, PaymentPayoutDestinationRecord } from '../../infrastructure/reimbursement-payout';
+import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
 import type { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
@@ -57,11 +67,15 @@ export function toRequestSummary(
   // people; a caller that has not loaded the names simply gets the pool.
   options: { allowMissingReceiptWithReason?: boolean; approverNames?: Record<string, string> } = {},
 ): ReimbursementRequestSummary {
+  // A claim sent back to have its payout account corrected (payout spec §14): whom it waits for.
+  const correctionPhase = payoutCorrectionPhase(r);
   const desk = currentDesk({
     status: r.status,
     financeReviewStatus: r.financeReviewStatus,
     steps: r.approvalSteps,
     names: options.approverNames,
+    cancellationPending: !!r.cancellationPendingAt,
+    payoutCorrectionPhase: correctionPhase,
   });
   return {
     id: r.id,
@@ -79,14 +93,22 @@ export function toRequestSummary(
     incurredDate: r.incurredDate.toISOString(),
     status: r.status,
     ...(desk ? { currentDesk: desk } : {}),
+    // A cancelled claim keeps the intent it was cancelled with; only one still on its way is pending.
+    ...(r.cancellationPendingAt && r.status !== 'CANCELLED' && r.status !== 'VOIDED' ? { cancellationPending: true as const } : {}),
     financeReviewStatus: r.financeReviewStatus,
     paymentStatus: r.paymentStatus,
-    duplicateStatus: r.duplicateStatus,
+    // With the claim's own candidates where they were loaded: a candidate still open is a possible
+    // duplicate whatever the column says once the claim's expense records exist (`claimDuplicateStatus`).
+    duplicateStatus: claimDuplicateStatus(r.duplicateStatus, r.duplicateCandidates),
     receiptRequirementStatus: r.receiptRequirementStatus,
     ...(options.allowMissingReceiptWithReason !== undefined
       ? { allowMissingReceiptWithReason: options.allowMissingReceiptWithReason }
       : {}),
     postingStatus: r.postingStatus,
+    // The method only: no list or queue row carries an account. On a sent claim it is the method
+    // of its own snapshot; a legacy claim has none, whatever a draft once chose.
+    ...(r.payoutMethod && (r.status === 'DRAFT' || hasPayoutSnapshot(r)) ? { payoutMethod: r.payoutMethod } : {}),
+    ...(correctionPhase && { payoutCorrectionPhase: correctionPhase }),
     paymentTotalAmount: r.paymentTotalAmount,
     outstandingAmount: r.outstandingAmount,
     lineCount: r.lineCount ?? r.lines?.length ?? 0,
@@ -116,7 +138,18 @@ export function toStepSummary(s: ReimbursementApprovalStepRecord, names: Record<
   };
 }
 
-export function toPaymentSummary(p: ReimbursementPaymentRecord, names: Record<string, string> = {}): ReimbursementPaymentSummary {
+/** A payment's slips as the repository lists them: per payment id, oldest first. */
+export type PaymentSlipRows = Record<string, { attachmentId: string; attachedAt: Date }[]>;
+
+export function toPaymentSummary(
+  p: ReimbursementPaymentRecord,
+  names: Record<string, string> = {},
+  slips: PaymentSlipRows[string] = [],
+  // Default deny: a slip's file id goes only to a caller the slip endpoint would serve.
+  viewerCanOpenSlips = false,
+  // The masked account this payment was confirmed into, where the caller loaded it.
+  payoutDestination?: PaymentPayoutDestinationRecord,
+): ReimbursementPaymentSummary {
   return {
     id: p.id,
     paidByUserId: p.paidByUserId,
@@ -133,6 +166,15 @@ export function toPaymentSummary(p: ReimbursementPaymentRecord, names: Record<st
     voidedAt: iso(p.voidedAt),
     voidReason: p.voidReason,
     postingStatus: p.postingStatus,
+    // From the slip links alone, so every reader of a payment answers "is there a slip" the same way.
+    slipCount: slips.length,
+    slips: viewerCanOpenSlips ? slips.map((slip) => ({ attachmentId: slip.attachmentId, attachedAt: slip.attachedAt.toISOString() })) : [],
+    viewerCanOpenSlips,
+    // What the payer confirmed, the same for every reader: the masked account, when, and why the
+    // method is not the one asked for. Absent keys mean nothing of the kind was recorded.
+    ...(payoutDestination && { payoutDestination }),
+    ...(p.payoutConfirmedAt && { payoutConfirmedAt: p.payoutConfirmedAt.toISOString() }),
+    ...(p.methodMismatchReason && { methodMismatchReason: p.methodMismatchReason }),
   };
 }
 
@@ -170,6 +212,8 @@ export function detailUserIds(r: ReimbursementRequestRecord): string[] {
   return [
     r.createdByUserId,
     r.financeReviewedByUserId,
+    // Whoever sent the claim back to have its payout account corrected: the round's note names them.
+    r.payoutCorrectionRequestedByUserId,
     // The frozen assignees too: they are the people the timeline's "กำลังรอ" row names.
     ...(r.approvalSteps ?? []).flatMap((s) => [s.approverUserId, s.decisionByUserId, ...(s.assignedApproverUserIds ?? [])]),
     ...(r.payments ?? []).map((p) => p.paidByUserId),
@@ -190,7 +234,7 @@ export function toClaimSignatureSummary(
 }
 
 export function toSignedCopySummaries(
-  rows: { attachmentId: string; fileName: string; uploadedAt: Date; acknowledgedAt?: string; acknowledgedByUserId?: string }[],
+  rows: { attachmentId: string; fileName: string; uploadedAt: Date; acknowledgedAt?: string; acknowledgedByUserId?: string; beforePayoutCorrection?: true }[],
   names: Record<string, string> = {},
 ): ReimbursementSignedCopySummary[] {
   return rows.map((row) => {
@@ -199,8 +243,74 @@ export function toSignedCopySummaries(
       attachmentId: row.attachmentId, fileName: row.fileName, uploadedAt: row.uploadedAt.toISOString(),
       ...(row.acknowledgedAt && { acknowledgedAt: row.acknowledgedAt }),
       ...(acknowledgedByName && { acknowledgedByName }),
+      ...(row.beforePayoutCorrection && { beforePayoutCorrection: true as const }),
     };
   });
+}
+
+/**
+ * The round a claim is in, as every detail carries it: whom it waits for, who sent it back and why,
+ * and what it was approved with before, for the comparison its approvers are shown. Undefined: the
+ * claim is in no round. `previousAccount` is the masked account of the version the round started from.
+ */
+export function toPayoutCorrection(
+  r: ReimbursementRequestRecord,
+  names: Record<string, string> = {},
+  previousAccount?: PaymentPayoutDestinationRecord,
+  sameAsPrevious?: boolean,
+): ReimbursementPayoutCorrection | undefined {
+  const phase = payoutCorrectionPhase(r);
+  if (!phase || !r.payoutCorrectionRequestedAt) return undefined;
+  const requestedByName = r.payoutCorrectionRequestedByUserId ? names[r.payoutCorrectionRequestedByUserId] : undefined;
+  const approved = payoutCorrectionRoundStart(r);
+  return {
+    phase,
+    requestedAt: r.payoutCorrectionRequestedAt.toISOString(),
+    ...(r.payoutCorrectionRequestedByUserId && { requestedByUserId: r.payoutCorrectionRequestedByUserId }),
+    ...(requestedByName && { requestedByName }),
+    reasonCode: (r.payoutCorrectionReasonCode ?? 'OTHER') as ReimbursementPayoutCorrectionReason,
+    ...(r.payoutCorrectionNote && { note: r.payoutCorrectionNote }),
+    ...(r.payoutCorrectionSubmittedAt && { submittedAt: r.payoutCorrectionSubmittedAt.toISOString() }),
+    ...(approved?.payoutMethod && { previous: {
+      payoutMethod: approved.payoutMethod,
+      ...(previousAccount && {
+        payoutKind: previousAccount.payoutKind, ...(previousAccount.bankName && { bankName: previousAccount.bankName }),
+        accountName: previousAccount.accountName, accountLast4: previousAccount.accountLast4, version: previousAccount.version,
+      }),
+    } }),
+    ...(approved?.at && { previouslyApprovedAt: approved.at }),
+    // Only once an account was given: whether it is the one the claim had.
+    ...(phase === 'AWAITING_APPROVAL' && sameAsPrevious !== undefined && { sameAsPrevious }),
+  };
+}
+
+/** The masked payout block of a detail: bank, account name and last 4 digits, the same for every viewer. */
+export function toPayoutSummary(payout: ClaimPayoutRecord | undefined, names: Record<string, string> = {}): ReimbursementPayoutSummary | undefined {
+  if (!payout) return undefined;
+  const { verifiedAt, ...shown } = payout;
+  return {
+    ...shown,
+    // The id stays also when the name cannot be resolved, so the screen still says someone else entered it.
+    ...(payout.enteredByUserId && names[payout.enteredByUserId] && { enteredByName: names[payout.enteredByUserId] }),
+    ...(verifiedAt && {
+      verifiedAt: verifiedAt.toISOString(),
+      ...(payout.verifiedByUserId && names[payout.verifiedByUserId] && { verifiedByName: names[payout.verifiedByUserId] }),
+    }),
+  };
+}
+
+/** One row of the claim's account history: the stored version with the two people it names resolved. */
+export function toPayoutVersionSummary(version: ClaimPayoutVersionRecord, names: Record<string, string> = {}): ReimbursementPayoutVersionSummary {
+  const { frozenAt, verifiedAt, ...shown } = version;
+  return {
+    ...shown,
+    frozenAt: frozenAt.toISOString(),
+    ...(version.enteredByUserId && names[version.enteredByUserId] && { enteredByName: names[version.enteredByUserId] }),
+    ...(verifiedAt && {
+      verifiedAt: verifiedAt.toISOString(),
+      ...(version.verifiedByUserId && names[version.verifiedByUserId] && { verifiedByName: names[version.verifiedByUserId] }),
+    }),
+  };
 }
 
 export function toRequestDetail(
@@ -217,6 +327,12 @@ export function toRequestDetail(
     financeReviewRequired?: boolean;
     allowMissingReceiptWithReason?: boolean;
     duplicateBlocksPayment?: boolean;
+    paymentSlips?: PaymentSlipRows;
+    viewerCanOpenSlips?: boolean;
+    payout?: ReimbursementPayoutSummary;
+    /** The masked accounts the claim's payments were confirmed into, by account version. */
+    paymentDestinations?: Record<number, PaymentPayoutDestinationRecord>;
+    payoutCorrection?: ReimbursementPayoutCorrection;
   } = {},
 ): ReimbursementRequestDetail {
   return {
@@ -243,8 +359,17 @@ export function toRequestDetail(
     documentSignedVia: extras.documentSignedVia,
     financeReviewRequired: extras.financeReviewRequired,
     missingReceiptReason: r.missingReceiptReason,
-    approvalSteps: (r.approvalSteps ?? []).map((s) => toStepSummary(s, displayNames)),
-    payments: (r.payments ?? []).map((p) => toPaymentSummary(p, displayNames)),
+    ...(extras.payout && { payout: extras.payout }),
+    ...(extras.payoutCorrection && { payoutCorrection: extras.payoutCorrection }),
+    // In the order they were assigned: a correction round's steps carry the sequence number of the
+    // approval they replace, so the number alone would not say which came first.
+    approvalSteps: [...(r.approvalSteps ?? [])]
+      .sort((a, b) => a.sequenceNo - b.sequenceNo || a.assignedAt.getTime() - b.assignedAt.getTime())
+      .map((s) => toStepSummary(s, displayNames)),
+    payments: (r.payments ?? []).map((p) => toPaymentSummary(
+      p, displayNames, extras.paymentSlips?.[p.id], extras.viewerCanOpenSlips,
+      p.payoutDestinationVersion === undefined ? undefined : extras.paymentDestinations?.[p.payoutDestinationVersion],
+    )),
     duplicateCandidates: (r.duplicateCandidates ?? []).map(toDuplicateSummary),
     duplicateBlocksPayment: extras.duplicateBlocksPayment,
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
@@ -259,23 +384,53 @@ export function toRequestDetail(
  * their response in the drawer on purpose (a frozen assignee may lose read permission the
  * moment they decide), so their responses must be as complete as a GET. Lives in the mapper
  * because the request, approval, and finance use-cases all need it and already import here.
+ *
+ * `viewer` is whoever the answer goes to. Each payment tells them whether they may open its slips
+ * (the verdict of the one rule the slip endpoint enforces) and names the slip files only if they
+ * may; everyone else gets the count. Required, so no route can return a detail without deciding it.
+ * `approvalActions` is the viewer's authority over a pending step, where the route resolved it.
  */
 export async function detailWithFileNames(
   repo: PrismaReimbursementRepository,
   evidence: ReimbursementEvidenceService,
   companyId: string,
   req: ReimbursementRequestRecord,
+  viewer: ReimbursementPayoutViewer,
+  approvalActions?: { canApprove: boolean; canReject: boolean } | null,
 ): Promise<ReimbursementRequestDetail> {
   const signedCopiesRead = repo.listSignedClaimFormCopies(companyId, req.id);
-  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy] = await Promise.all([
+  const paymentIds = (req.payments ?? []).map((payment) => payment.id);
+  // The claim's own snapshot only. A legacy claim has none, and nothing here can reach a member's
+  // default account: a draft that still follows the default gets its preview on the detail read alone.
+  const payoutRead = req.payoutMethod ? repo.findClaimPayout(req) : Promise.resolve(undefined);
+  // The account each payment was confirmed into. Only a payment recorded with one costs a query.
+  const paidInto = (req.payments ?? []).flatMap((payment) => payment.payoutDestinationVersion ?? []);
+  // In a correction round: the account the claim was approved with, to set beside the one it has now.
+  const roundStart = payoutCorrectionPhase(req) ? payoutCorrectionRoundStart(req) : undefined;
+  const approvedVersion = roundStart?.payoutVersion;
+  // Once the round's account is given: whether it is the very account the claim was approved with. Cash
+  // both times is the same; two transfers are compared by the repository, from what it stores; a claim
+  // that had no account, or changed its method, is not.
+  const keptAccount = payoutCorrectionPhase(req) !== 'AWAITING_APPROVAL' ? undefined
+    : roundStart?.payoutMethod === 'CASH' ? req.payoutMethod === 'CASH'
+      : roundStart?.payoutMethod === 'BANK_TRANSFER' && approvedVersion !== undefined && req.payoutMethod === 'BANK_TRANSFER'
+        ? repo.claimPayoutMatchesVersion(req, approvedVersion) : false;
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips, payout, paymentDestinations, approvedAccounts, sameAsPrevious] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
-    // Whoever declared a paper-signed scan is named in the same batch, so the lookup follows the copies.
-    signedCopiesRead.then((copies) => repo.getUserDisplayNames(companyId, [
+    // Whoever declared a paper-signed scan, typed the account or attested it is named in the same batch.
+    Promise.all([signedCopiesRead, payoutRead]).then(([copies, claimPayout]) => repo.getUserDisplayNames(companyId, [
       ...detailUserIds(req), ...copies.map((copy) => copy.acknowledgedByUserId ?? ''),
+      claimPayout?.enteredByUserId ?? '', claimPayout?.verifiedByUserId ?? '',
     ])),
     signedCopiesRead,
     repo.findPolicy(companyId, null).then(effectivePolicy),
+    // Only a claim with a payment can have a slip, so an unpaid claim costs no query.
+    paymentIds.length > 0 ? repo.listPaymentSlips(companyId, paymentIds) : undefined,
+    payoutRead,
+    paidInto.length > 0 ? repo.listPaymentPayoutDestinations(companyId, req.id, paidInto) : undefined,
+    approvedVersion === undefined ? undefined : repo.listPaymentPayoutDestinations(companyId, req.id, [approvedVersion]),
+    keptAccount,
   ]);
   const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
   const receiptRequirementStatus = req.status === 'DRAFT'
@@ -295,9 +450,17 @@ export async function detailWithFileNames(
     // The same value the approval and payment paths act on.
     financeReviewRequired: requestPolicy.financeReviewRequired,
     allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
-    // The payment gate's own test (open candidates under BLOCK_PAYMENT). Not `duplicateStatus`:
-    // once projections run, that field carries the expense-level result, not these candidates.
-    duplicateBlocksPayment: requestPolicy.duplicatePolicy === 'BLOCK_PAYMENT'
-      && (req.duplicateCandidates ?? []).some((candidate) => candidate.status === 'OPEN'),
+    // The payment gate's own test, by the gate's own function: the page marks the claim exactly when
+    // recording its payment would answer `duplicate_unresolved`.
+    duplicateBlocksPayment: duplicateBlocksPayment(requestPolicy.duplicatePolicy,
+      (req.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length),
+    paymentSlips,
+    viewerCanOpenSlips: canOpenReimbursementPaymentSlip(
+      { userId: viewer.userId, permissions: viewer.permissions },
+      { requesterUserId: req.requesterUserId, submittedAt: req.submittedAt, approvalSteps: req.approvalSteps, approvalActions },
+    ),
+    payout: toPayoutSummary(payout, displayNames),
+    paymentDestinations,
+    payoutCorrection: toPayoutCorrection(req, displayNames, approvedVersion === undefined ? undefined : approvedAccounts?.[approvedVersion], sameAsPrevious),
   });
 }

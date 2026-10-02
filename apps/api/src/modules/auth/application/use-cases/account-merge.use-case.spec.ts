@@ -22,6 +22,8 @@ type HarnessOptions = {
   existingUser?: Partial<UserRow> | null;
   memberships?: MembershipRow[];
   profiles?: Array<{ membershipId: string; userId: string }>;
+  /** Default payout accounts: whose it is (it follows its membership in the database) and who last set it. */
+  payoutAccounts?: Array<{ companyId: string; userId: string; updatedByUserId: string }>;
   /** Simulates the CAS losing to a concurrent confirm. */
   ticketAlreadyClaimed?: boolean;
   /** Which accounts have a username/password credential; default: the one being merged away. */
@@ -46,6 +48,7 @@ function makeHarness(opts: HarnessOptions = {}) {
     { id: 'm-new-a', companyId: 'co-a', userId: 'new-1', status: 'ACTIVE' },
   ];
   const profiles = opts.profiles ?? [];
+  const payoutAccounts = opts.payoutAccounts ?? [];
   const tickets = [{
     id: 'ticket-1',
     tokenHash: hashToken(RAW_TICKET),
@@ -92,7 +95,20 @@ function makeHarness(opts: HarnessOptions = {}) {
           roles: (m.roleKeys ?? []).map((key) => ({ role: { key } })),
           company: { name: m.companyName ?? m.companyId },
         })),
-      update: async ({ where, data }: any) => Object.assign(memberships.find((m) => m.id === where.id)!, data),
+      update: async ({ where, data }: any) => {
+        const membership = memberships.find((m) => m.id === where.id)!;
+        // The payout account's key is the membership's own (companyId, userId), ON UPDATE CASCADE:
+        // the database moves it with the membership (proved on real PostgreSQL in the claim repository spec).
+        if (data.userId) payoutAccounts.filter((a) => a.companyId === membership.companyId && a.userId === membership.userId).forEach((a) => { a.userId = data.userId; });
+        return Object.assign(membership, data);
+      },
+    },
+    memberPayoutAccount: {
+      updateMany: async ({ where, data }: any) => {
+        const match = payoutAccounts.filter((a) => a.updatedByUserId === where.updatedByUserId);
+        match.forEach((a) => Object.assign(a, data));
+        return { count: match.length };
+      },
     },
     userCredential: {
       findUnique: async ({ where }: any) => (opts.credentials ?? ['new-1']).includes(where.userId)
@@ -129,10 +145,42 @@ function makeHarness(opts: HarnessOptions = {}) {
   const run = (ticket = RAW_TICKET, userId = 'new-1') => useCase.execute({ userId, ticket, requestId: 'req-1' });
   const preview = (ticket = RAW_TICKET, userId = 'new-1') => useCase.preview({ userId, ticket });
   const mergeAudit = () => audits.find((entry) => entry.action === 'auth.account.merge');
-  return { run, preview, users, memberships, profiles, tickets, sessionRevocations, issued, audits, mergeAudit };
+  return { run, preview, users, memberships, profiles, payoutAccounts, tickets, sessionRevocations, issued, audits, mergeAudit };
 }
 
 describe('AccountMergeUseCase', () => {
+  // Payout account lifecycle (payout impact audit M6): the account where a member's claims are paid
+  // back must still be theirs after a merge, and must not start reading "set by someone else".
+  it('keeps a default payout account with its member, and who set it, across the merge', async () => {
+    const h = makeHarness({
+      memberships: [
+        { id: 'm-new-a', companyId: 'co-a', userId: 'new-1', status: 'ACTIVE' },
+        { id: 'm-new-old', companyId: 'co-old', userId: 'new-1', status: 'DISABLED' },
+      ],
+      payoutAccounts: [
+        // Set by the person themselves in the shop that moves.
+        { companyId: 'co-a', userId: 'new-1', updatedByUserId: 'new-1' },
+        // Set for them by a manager: that attribution is someone else's and stays.
+        { companyId: 'co-b', userId: 'colleague-1', updatedByUserId: 'manager-1' },
+        // Set BY them for an employee, as a manager: the same person keeps the credit under the surviving account.
+        { companyId: 'co-a', userId: 'employee-1', updatedByUserId: 'new-1' },
+        // A membership that does not move keeps its account where it is.
+        { companyId: 'co-old', userId: 'new-1', updatedByUserId: 'manager-1' },
+      ],
+    });
+
+    await h.run();
+
+    assert.deepEqual(h.payoutAccounts, [
+      { companyId: 'co-a', userId: 'existing-1', updatedByUserId: 'existing-1' },
+      { companyId: 'co-b', userId: 'colleague-1', updatedByUserId: 'manager-1' },
+      { companyId: 'co-a', userId: 'employee-1', updatedByUserId: 'existing-1' },
+      { companyId: 'co-old', userId: 'new-1', updatedByUserId: 'manager-1' },
+    ]);
+    // Their own account still reads as their own: owner and last editor are the same user again.
+    assert.ok(h.payoutAccounts.filter((a) => a.userId === 'existing-1').every((a) => a.updatedByUserId === a.userId));
+  });
+
   it('moves the memberships, the email and the session to the existing account, then disables the emptied one', async () => {
     const h = makeHarness({
       memberships: [

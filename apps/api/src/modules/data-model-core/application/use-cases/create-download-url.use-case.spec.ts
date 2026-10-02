@@ -27,6 +27,7 @@ const makeAttachment = (status: AttachmentRecord['status'] = 'ACTIVE'): Attachme
 const makeRepo = (record: AttachmentRecord | null = makeAttachment()) => ({
   findById: mock.fn(async () => record),
   isSubstituteRawSignature: mock.fn(async () => false),
+  isReimbursementPaymentSlip: mock.fn(async () => false),
   findSignatureAssetOwner: mock.fn(async (): Promise<{ ownerUserId: string | null } | null> => null),
   createPending: mock.fn(async () => { throw new Error('not used'); }),
   markActive: mock.fn(async () => { throw new Error('not used'); }),
@@ -128,6 +129,38 @@ describe('CreateDownloadUrlUseCase', () => {
       () => orphanUc.execute(makeCtx(['attachment.read']), { attachmentId: 'att-1' }),
       ForbiddenException,
     );
+  });
+
+  /**
+   * A reimbursement payment slip is opened through its claim, where the readers are decided per
+   * claim (owner decision 2026-10-01). Every reader of a claim holds `attachment.read` and can see
+   * the slip's attachment id in the claim detail, so this generic path must serve it to nobody —
+   * including the people the slip endpoint would serve.
+   */
+  it('never serves a reimbursement payment slip, linked to a payment or still only uploaded as one', async () => {
+    const linked = makeRepo();
+    linked.isReimbursementPaymentSlip = mock.fn(async () => true);
+    const uploadedOnly = makeRepo({ ...makeAttachment(), metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' } });
+    for (const repo of [linked, uploadedOnly]) {
+      const storage = makeStorage();
+      const audit = makeAudit();
+      const uc = new CreateDownloadUrlUseCase(repo as any, storage as any, audit as any);
+      await assert.rejects(
+        // The uploader, with every attachment and reimbursement right: still refused here.
+        () => uc.execute(makeCtx(['attachment.read', 'reimbursement.read', 'reimbursement.payment.record', 'reimbursement.finance_review']), { attachmentId: 'att-1' }),
+        ForbiddenException,
+      );
+      assert.equal(storage.createDownloadUrl.mock.calls.length, 0, 'no URL is ever minted');
+      const denied = (audit.log.mock.calls as any[]).map((call) => call.arguments[0]).find((entry) => entry.result === 'DENIED');
+      assert.equal(denied?.metadataJson?.reason, 'reimbursement_payment_slip');
+    }
+    assert.deepEqual((linked.isReimbursementPaymentSlip.mock.calls as any[])[0]?.arguments[0], { id: 'att-1', companyId: 'co-1' });
+
+    // Narrow on purpose: a file tagged for something else, and every ordinary file, is served as before.
+    const signatureTagged = makeRepo({ ...makeAttachment(), metadataJson: { generatedFor: 'reimbursement_claim_signature' } });
+    const served = await new CreateDownloadUrlUseCase(signatureTagged as any, makeStorage() as any, makeAudit() as any)
+      .execute(makeCtx(['attachment.read']), { attachmentId: 'att-1' });
+    assert.ok(served.downloadUrl);
   });
 
   it('returns downloadUrl (not objectKey) on success', async () => {

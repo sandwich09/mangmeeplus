@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
-import { apiErrorMessage } from '@/common/api/api-error-message';
+import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { formatThaiDate, formatThaiMonth } from '@/common/i18n/thai-date';
 import {
   closePeriod,
@@ -133,6 +133,11 @@ export function LedgerReportsPage({ companyId }: { companyId: string }) {
       toast.success('ปิดงวดเรียบร้อยแล้ว');
     } catch (e) {
       setError(err(e));
+      // The refusal itself only says "not yet". Show the checks, so the user sees what is still
+      // pending and where to fix it without having to press "ตรวจสอบก่อนปิดงวด" as well.
+      if (apiErrorCode(e) === 'close_check_failed') {
+        await runCloseChecks(companyId, selectedPeriod.id).then(setCloseRun, () => undefined);
+      }
     } finally {
       actionPendingRef.current = false;
       setBusyAction(null);
@@ -257,11 +262,14 @@ export function LedgerReportsPage({ companyId }: { companyId: string }) {
             <h2 className="text-sm font-semibold text-gray-900">ตรวจสอบก่อนปิดงวด</h2>
             <div className="mt-3 space-y-2">
               {(closeRun?.checks ?? []).map((check) => {
-                const { label, statusLabel, message: checkMessage } = periodCloseCheckCopy(check);
+                const { label, statusLabel, message: checkMessage, links } = periodCloseCheckCopy(check);
                 return (
                   <div key={check.checkKey} className="rounded-lg border border-gray-100 px-3 py-2 text-sm">
                     <div className="flex justify-between gap-3"><span className="font-medium text-gray-900">{label}</span><span className={check.status === 'PASSED' ? 'text-[#027A48]' : 'text-red-700'}>{statusLabel}</span></div>
                     <p className="mt-1 text-gray-500">{checkMessage}</p>
+                    {links?.map((link) => (
+                      <a key={link.path} className="flex min-h-11 items-center font-semibold text-brand-700 hover:underline" href={`/companies/${companyId}${link.path}`}>{link.label} →</a>
+                    ))}
                   </div>
                 );
               })}

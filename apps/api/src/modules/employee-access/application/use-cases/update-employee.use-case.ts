@@ -161,14 +161,30 @@ export class UpdateEmployeeUseCase {
         const finalBranchIds = mode === 'DEFAULT_BRANCH_ONLY'
           ? (defaultBranchId ? [defaultBranchId] : [])
           : cmd.branchIds ?? membership.branchScopes.map((scope) => scope.branchId);
-        if (assignsAllBranchRole || mode === 'ALL_BRANCHES'
+        // The scope the employee holds NOW must be the editor's too, not only the scope they would end
+        // with. Checking the result alone let a branch-limited editor pull a member of another branch
+        // (or of every branch) into their own and from then on treat them as one of their people:
+        // their status, and where their reimbursements are paid.
+        const currentBranchIds = [
+          ...(membership.branchScopeMode === 'DEFAULT_BRANCH_ONLY' ? [] : membership.branchScopes.map((scope) => scope.branchId)),
+          ...(membership.defaultBranchId ? [membership.defaultBranchId] : []),
+        ];
+        // A draft nobody has scoped yet still stands on the column default (every branch, no rows, no
+        // default branch); the wizard gives it its first scope in the call right after creating it.
+        const neverScopedDraft = existing.status === 'DRAFT' && membership.branchScopeMode === 'ALL_BRANCHES' && currentBranchIds.length === 0;
+        const currentScopeOutside = scopeTouched && !neverScopedDraft && (membership.branchScopeMode === 'ALL_BRANCHES'
+          || currentBranchIds.length === 0 || currentBranchIds.some((id) => !cmd.requesterBranchIds!.includes(id)));
+        if (currentScopeOutside || assignsAllBranchRole || mode === 'ALL_BRANCHES'
           || [...finalBranchIds, ...referenced].some((id) => !cmd.requesterBranchIds!.includes(id))) {
           const reason = "Cannot assign access outside the requester's branch scope.";
           await this.prisma.client.auditLog.create({ data: {
             companyId: cmd.companyId, actorUserId: cmd.requestingUserId,
             action: AuditAction.ACCESS_EMPLOYEE_UPDATE, targetType: 'EmployeeAccessProfile',
             targetId: cmd.employeeId, requestId: cmd.requestId, result: 'DENIED', riskLevel: 'HIGH',
-            metadataJson: { reason, granteeUserId: existing.userId, branchScopeMode: mode, branchIds: finalBranchIds },
+            metadataJson: {
+              reason, granteeUserId: existing.userId, branchScopeMode: mode, branchIds: finalBranchIds,
+              ...(currentScopeOutside && { currentBranchScopeMode: membership.branchScopeMode, currentBranchIds }),
+            },
           } });
           throw new ForbiddenException(reason);
         }

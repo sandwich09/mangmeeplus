@@ -299,7 +299,9 @@ const RAW_PACKS: RawPack[] = [
   {
     key: 'pack.reimbursement.approve', module: 'reimbursement',
     nameTh: 'อนุมัติการเบิก', nameEn: 'Approve reimbursement',
-    description: 'ดูและอนุมัติ/ปฏิเสธคำขอเบิก',
+    // The role page prints this under the choice, so it names everything the choice gives: paying and
+    // taking a payment back too, which "อนุมัติ" alone does not say.
+    description: 'ดู อนุมัติ และปฏิเสธคำขอเบิก รวมทั้งบันทึกจ่ายเงินคืนและยกเลิกการจ่าย',
     // Owner decision 2026-09-19 (D1/A2, supersedes team decision 2026-07-28 "paying stays
     // FINANCE-only"): an approver can record payment directly, so a custom role built from this
     // pack gets the same payment.record/payment.void the ADMIN/MANAGER system roles now hold.
@@ -311,13 +313,14 @@ const RAW_PACKS: RawPack[] = [
   {
     key: 'pack.reimbursement.review', module: 'reimbursement',
     nameTh: 'ตรวจสอบการเบิก', nameEn: 'Review reimbursement',
-    description: 'ดู ตรวจการเงิน และส่งออกคำขอเบิก โดยไม่มีสิทธิ์บันทึกหรือยกเลิกการจ่าย',
+    // The finance-review right also reaches other people's claims: preparing, editing, sending and cancelling one for its requester.
+    description: 'ดูและส่งออกคำขอเบิก ตรวจการเงิน และสร้าง แก้ ส่ง หรือยกเลิกคำขอแทนผู้เบิก แต่บันทึกจ่ายและยกเลิกการจ่ายไม่ได้',
     permissionKeys: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.read_related', 'reimbursement.finance_review', 'reimbursement.export'],
   },
   {
     key: 'pack.reimbursement.finance', module: 'reimbursement',
     nameTh: 'ตรวจ/จ่ายการเบิก', nameEn: 'Finance review & pay',
-    description: 'ตรวจการเงิน บันทึก/ยกเลิกการจ่าย แก้รายการซ้ำ และส่งออก',
+    description: 'ดูและส่งออกคำขอเบิก ตรวจการเงิน บันทึกจ่าย ยกเลิกการจ่าย ปลดรายการซ้ำ และสร้าง แก้ ส่ง หรือยกเลิกคำขอแทนผู้เบิก',
     permissionKeys: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.finance_review', 'reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.duplicate.resolve', 'reimbursement.export'],
   },
   {

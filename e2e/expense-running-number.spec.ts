@@ -24,7 +24,7 @@ test('Proof: linked source reject/reopen, finance return, payout retry/void and 
     const options = await read(await api.get(`${base}/reimbursements/source-options?branchId=${source.branchId}&expenseId=${sourceId}`),'source eligibility');
     const option = options.items.find((item:any)=>item.expenseId===sourceId);
     expect(option?.eligible).toBe(true);
-    const draft = await read(await api.post(`${base}/reimbursements`,{data:{branchId:source.branchId,reason:'QA EXP proof reversal',currency:'THB',lines:[{lineNo:1,incurredDate:option.incurredDate,description:option.description,categoryKey:option.categoryKey,amount:option.amount,linkedExpenseId:sourceId,sourceExpenseUpdatedAt:option.updatedAt}]}}),'create linked draft');
+    const draft = await read(await api.post(`${base}/reimbursements`,{data:{branchId:source.branchId,reason:'QA EXP proof reversal',currency:'THB',payout:{mode:'CASH'},lines:[{lineNo:1,incurredDate:option.incurredDate,description:option.description,categoryKey:option.categoryKey,amount:option.amount,linkedExpenseId:sourceId,sourceExpenseUpdatedAt:option.updatedAt}]}}),'create linked draft');
     const url = `${base}/reimbursements/${draft.id}`;
     let current = await read(await api.post(`${url}/submit`,{data:{}}),'submit');
     const requestNo = current.requestNo;

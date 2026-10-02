@@ -43,6 +43,21 @@ export class DeleteAttachmentUseCase {
       });
     }
 
+    // Payment evidence is add-only (spec §12.5). The repository repeats this inside its transaction;
+    // refusing here first puts the attempt on the audit trail.
+    if (await this.attachments.isReimbursementPaymentSlip({ id: cmd.attachmentId, companyId: ctx.companyId })) {
+      void this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+        action: 'attachment.delete', targetType: 'attachment', targetId: cmd.attachmentId,
+        requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
+        metadataJson: { reason: 'reimbursement_payment_slip_retained' },
+      });
+      throw new ConflictException({
+        code: 'reimbursement_payment_slip_retained',
+        message: 'Attachment is retained as reimbursement payment evidence.',
+      });
+    }
+
     const record = await this.attachments.markDeleted({ id: cmd.attachmentId, companyId: ctx.companyId });
 
     void this.audit.log({

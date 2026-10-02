@@ -1,0 +1,721 @@
+import * as React from 'react';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
+import { THAI_BANK_NAMES, maskedPayoutAccount, type ReimbursementPayoutSummary } from '@watchdog-bms/contracts';
+import { ToastContext } from '@/common/components/toast/use-toast';
+import { translateApiError } from '@/common/api/api-error-message';
+import { SALES_BANK_NAMES } from '../sales-console/sales-console.logic';
+
+/*
+ * Payout account screens (payout spec §8–§11, Phase 1 part A). What this guards:
+ *  - one format rule and one masked wording, shared with the API;
+ *  - every screen shows the last 4 digits; "แสดงเลขบัญชี" is offered only when the server said so;
+ *  - a claim sent before the field existed reads the same everywhere;
+ *  - the approver cannot approve a transfer claim without attesting the account version shown;
+ *  - plain Thai and a 390 px phone.
+ */
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+// The screens reach the icon set through ExpensesUi; this runner has no SVG loader.
+require.extensions['.svg'] = (module) => { module.exports = () => null; };
+// Modal portals into document.body, which a server render has none of: render the dialog in place.
+Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
+const ui = require('./ReimbursementPayout') as typeof import('./ReimbursementPayout');
+const { ReimbursementPayoutAccountPage } = require('./ReimbursementPayoutAccountPage') as typeof import('./ReimbursementPayoutAccountPage');
+const logic = require('./reimbursement-payout.logic') as typeof import('./reimbursement-payout.logic');
+const { approvalComparable, diffApprovalFields } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const { StaleApprovalDialog } = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
+
+const h = React.createElement;
+const noop = () => undefined;
+const router = { back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop, bfcacheId: 'test' };
+const toast = { success: noop, warning: noop, error: noop };
+const render = (element: React.ReactElement) => renderToStaticMarkup(
+  h(AppRouterContext.Provider, { value: router as never }, h(ToastContext.Provider, { value: toast as never }, element)));
+const read = (file: string) => readFileSync(new URL(file, import.meta.url), 'utf8');
+
+/** What the customer reads: text nodes plus aria labels, placeholders and tooltips; never other attributes such as links. */
+const visible = (html: string) => [...[...html.matchAll(/(?:aria-label|placeholder|title)="([^"]*)"/gu)].map((match) => match[1]!),
+  ...html.replace(/<[^>]*>/gu, '\n').split('\n')]
+  .map((text) => text.replace(/&quot;/gu, '"').replace(/&#x27;/gu, "'").replace(/&lt;/gu, '<').replace(/&gt;/gu, '>').replace(/&amp;/gu, '&').trim()).filter(Boolean);
+
+const ids = { company: 'cmg7x2k9p0000companyq1w2e3', request: 'cmg7x2k9p0001requestq8w3e5', requester: 'cmg7x2k9p0002userr4t6y8a1', approver: 'cmg7x2k9p0003useru1i3o5p7' };
+const KBANK = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789' };
+const transfer: ReimbursementPayoutSummary = { payoutMethod: 'BANK_TRANSFER', ...KBANK, version: 1, source: 'DEFAULT_ACCOUNT' };
+const claim = (overrides: Record<string, unknown> = {}) => ({
+  id: ids.request, status: 'PENDING_APPROVAL', requesterUserId: ids.requester, requesterDisplayNameSnapshot: 'สมชาย ใจดี', payout: transfer, ...overrides,
+});
+const card = (detail: object, userId = ids.approver, editHref?: string) => render(h(ui.ClaimPayoutCard, {
+  companyId: ids.company, detail, userId, payoutAccountHref: `/companies/${ids.company}/reimbursements/payout-account`, ...(editHref && { editHref }),
+}));
+const form = (overrides: Partial<import('./reimbursement-payout.logic').PayoutAccountForm> = {}) => ({
+  ...logic.emptyPayoutAccountForm(), bankChoice: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789', ...overrides,
+});
+const section = (props: Partial<Parameters<typeof ui.ClaimPayoutFormSection>[0]> = {}) => render(h(ui.ClaimPayoutFormSection, {
+  value: logic.emptyClaimPayoutForm(), onChange: noop, forSelf: true, defaultAccount: null, canSaveAsDefault: true,
+  payoutAccountHref: `/companies/${ids.company}/reimbursements/payout-account`, ...props,
+}));
+
+describe('payout account form: the same rule the server runs, said in Thai', () => {
+  it('keeps the number as typed text, leading zeros included, and sends an account only for a transfer', () => {
+    assert.deepEqual(logic.payoutDestinationInput(form({ accountNumber: '0012345678' })),
+      { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0012345678' });
+    assert.deepEqual(logic.payoutDestinationInput(form({ bankChoice: logic.OTHER_BANK, bankOther: '  ธนาคารทดสอบ ' })).bankName, 'ธนาคารทดสอบ');
+    // PromptPay has no bank; a bank left in the picker is not sent with it.
+    assert.deepEqual(logic.payoutDestinationInput(form({ payoutKind: 'PROMPTPAY_PHONE', accountNumber: '0812345678' })),
+      { payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountNumber: '0812345678' });
+    assert.deepEqual(logic.memberPayoutAccountInput('CASH', form()), { payoutMethod: 'CASH' });
+    assert.deepEqual(logic.memberPayoutAccountInput('BANK_TRANSFER', form()),
+      { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' });
+  });
+
+  it('names the first field that is wrong, and accepts what a person really types', () => {
+    const problem = (overrides: Parameters<typeof form>[0]) => logic.payoutAccountFormError(form(overrides));
+    for (const accountNumber of ['0123456789', '012-3-45678-9', '012 345 6789', '000123', '12345678901234567890']) assert.equal(problem({ accountNumber }), null, accountNumber);
+    assert.deepEqual(problem({ bankChoice: '' }), { field: 'bankName', text: 'กรุณาเลือกธนาคาร' });
+    assert.deepEqual(problem({ bankChoice: logic.OTHER_BANK, bankOther: ' ' }), { field: 'bankName', text: 'กรุณาระบุชื่อธนาคาร ไม่เกิน 80 ตัวอักษร และไม่ใส่เลขบัญชีในช่องนี้' });
+    for (const accountName of ['', 'ก', '1234567890']) assert.equal(problem({ accountName })?.field, 'accountName', accountName);
+    // The two names are shown unmasked everywhere: a full number typed into either is refused, in words.
+    assert.deepEqual(problem({ accountName: 'นาย สมชาย ใจดี 012-3-45678-9' }),
+      { field: 'accountName', text: 'กรุณาระบุชื่อบัญชีตามที่ธนาคารแสดง 2 ถึง 140 ตัวอักษร ไม่ใช่ตัวเลขล้วน และไม่ใส่เลขบัญชีในช่องนี้' });
+    assert.equal(problem({ bankChoice: logic.OTHER_BANK, bankOther: 'สหกรณ์ออมทรัพย์ 0123456789' })?.field, 'bankName');
+    assert.equal(problem({ accountName: 'บริษัท เอบีซี 1999 จำกัด' }), null, 'a name with a year in it is a name');
+    for (const accountNumber of ['', '12345', '123456789012345678901', '01234x6789', '๐๑๒๓๔๕๖']) {
+      assert.deepEqual(problem({ accountNumber }), { field: 'accountNumber', text: 'เลขบัญชีต้องเป็นตัวเลข 6 ถึง 20 หลัก' }, accountNumber);
+    }
+    // No bank account is forced to 10 digits; a PromptPay phone number is.
+    for (const accountNumber of ['081234567', '8123456789', '08123456789']) {
+      assert.deepEqual(problem({ payoutKind: 'PROMPTPAY_PHONE', accountNumber }),
+        { field: 'accountNumber', text: 'เบอร์พร้อมเพย์ต้องเป็นเบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0' }, accountNumber);
+    }
+    assert.equal(problem({ payoutKind: 'PROMPTPAY_PHONE', bankChoice: '', accountNumber: '081-234-5678' }), null);
+  });
+
+  it('turns the claim form choice into the request field, and leaves a kept account untouched', () => {
+    const base = logic.emptyClaimPayoutForm();
+    assert.deepEqual(base, { mode: 'DEFAULT', account: logic.emptyPayoutAccountForm(), saveAsDefault: false });
+    assert.deepEqual(logic.claimPayoutInput(base), { mode: 'DEFAULT' });
+    assert.deepEqual(logic.claimPayoutInput({ ...base, mode: 'CASH', account: form() }), { mode: 'CASH' });
+    assert.equal(logic.claimPayoutInput({ ...base, mode: 'KEEP' }), undefined);
+    const typed = { mode: 'SPECIFIED', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' };
+    assert.deepEqual(logic.claimPayoutInput({ mode: 'SPECIFIED', account: form(), saveAsDefault: false }), typed);
+    assert.deepEqual(logic.claimPayoutInput({ mode: 'SPECIFIED', account: form(), saveAsDefault: true }), { ...typed, saveAsDefault: true });
+    // Only an account being typed can be wrong; the other choices carry none.
+    assert.equal(logic.claimPayoutFormError({ ...base, mode: 'CASH', account: form({ accountNumber: '1' }) }), null);
+    assert.equal(logic.claimPayoutFormError({ ...base, mode: 'SPECIFIED', account: form({ accountNumber: '1' }) }), 'เลขบัญชีต้องเป็นตัวเลข 6 ถึง 20 หลัก');
+
+    // An existing draft opens on what it stands on.
+    assert.equal(logic.claimPayoutFormOf(undefined).mode, 'DEFAULT');
+    assert.equal(logic.claimPayoutFormOf({ followsDefault: true, ...transfer }).mode, 'DEFAULT');
+    assert.equal(logic.claimPayoutFormOf({ followsDefault: true, notReadyReason: 'payout_method_required' }).mode, 'DEFAULT');
+    assert.equal(logic.claimPayoutFormOf({ payoutMethod: 'CASH' }).mode, 'CASH');
+    assert.equal(logic.claimPayoutFormOf({ ...transfer, source: 'REQUESTER' }).mode, 'KEEP');
+  });
+});
+
+describe('what a claim says about where the money goes back to', () => {
+  it('uses one masked wording everywhere: the shared one', () => {
+    assert.equal(maskedPayoutAccount(KBANK), 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789');
+    assert.equal(logic.payoutAccountLine({ payoutMethod: 'BANK_TRANSFER', ...KBANK }), maskedPayoutAccount(KBANK));
+    assert.equal(logic.claimPayoutView(claim()).line, maskedPayoutAccount(KBANK));
+    assert.equal(logic.payoutAccountLine({ payoutMethod: 'BANK_TRANSFER', payoutKind: 'PROMPTPAY_PHONE', accountLast4: '5678' }), 'พร้อมเพย์เบอร์ลงท้าย 5678');
+    assert.equal(logic.payoutAccountLine({ payoutMethod: 'CASH' }), 'รับเป็นเงินสด');
+    assert.equal(logic.payoutAccountLine(null), 'ยังไม่ได้ตั้ง');
+    assert.equal(logic.setByOtherLine({ updatedAt: '2026-10-01T03:00:00.000Z' }), null);
+    assert.match(logic.setByOtherLine({ setByOtherName: 'วิภา', updatedAt: '2026-10-01T03:00:00.000Z' })!, /^ตั้งโดย วิภา เมื่อ 1 ต\.ค\. 2569/);
+    // One wording, one place: no screen builds the masked form by hand.
+    for (const file of ['./ReimbursementPayout.tsx', './reimbursement-payout.logic.ts', './ReimbursementJourneyPage.tsx', './ReimbursementCreatePage.tsx']) {
+      assert.doesNotMatch(read(file), /ลงท้าย/, file);
+    }
+  });
+
+  it('reads a claim from before the field existed the same way in every status and for every viewer', () => {
+    for (const status of ['PENDING_APPROVAL', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PAID', 'REJECTED', 'CANCELLED']) {
+      assert.deepEqual(logic.claimPayoutView({ status, requesterUserId: ids.requester }), { state: 'legacy', line: logic.LEGACY_PAYOUT_NOTE, notes: [] }, status);
+      assert.equal(logic.claimNeedsPayoutAttestation({}), false);
+      assert.equal(logic.claimPayoutSubmitBlock({ status }), null);
+      for (const viewer of [ids.requester, ids.approver]) {
+        const html = card(claim({ status, payout: undefined }), viewer);
+        assert.deepEqual(visible(html), ['การรับเงินคืน', 'ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีบัญชีที่ผ่านการอนุมัติในใบ'], `${status} ${viewer}`);
+        assert.doesNotMatch(html, /<button/, 'nothing to reveal');
+      }
+    }
+  });
+
+  it('shows a draft what it will be sent with, and says so when the default is edited, removed or missing', () => {
+    const draft = (payout: ReimbursementPayoutSummary) => logic.claimPayoutView({ status: 'DRAFT', requesterUserId: ids.requester, payout });
+    assert.deepEqual(draft({ followsDefault: true, ...transfer }), { state: 'transfer', line: 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789',
+      notes: ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่'] });
+    // The default was set by someone else (a claim filed on the requester's behalf shows this to the preparer too).
+    assert.deepEqual(draft({ followsDefault: true, ...transfer, enteredByName: 'วิภา' }).notes,
+      ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่', 'บัญชีประจำนี้ตั้งโดย วิภา']);
+    assert.deepEqual(draft({ followsDefault: true, payoutMethod: 'CASH', source: 'DEFAULT_ACCOUNT' }),
+      { state: 'cash', line: 'รับเป็นเงินสด', notes: ['ตามบัญชีรับเงินคืนประจำของผู้เบิก ใบนี้จะส่งด้วยบัญชีที่แสดงอยู่นี้ ถ้าบัญชีประจำถูกแก้ก่อนกดส่ง ระบบจะให้ตรวจบัญชีใหม่'] });
+    // The default was removed, or never set: the draft can be saved but not sent.
+    const missing = { followsDefault: true, notReadyReason: 'payout_method_required' as const };
+    assert.deepEqual(draft(missing), { state: 'missing', line: 'ยังไม่ได้เลือกวิธีรับเงินคืน',
+      notes: ['ผู้เบิกยังไม่ได้ตั้งบัญชีรับเงินคืนประจำ เลือกรับเป็นเงินสด ระบุบัญชีสำหรับใบนี้ หรือตั้งบัญชีประจำก่อนส่งอนุมัติ'] });
+    assert.equal(logic.claimPayoutSubmitBlock({ status: 'DRAFT', payout: missing }), 'ยังไม่ได้เลือกวิธีรับเงินคืน เลือกวิธีรับเงินคืนก่อนส่งอนุมัติ');
+    assert.equal(draft({ payoutMethod: 'BANK_TRANSFER', notReadyReason: 'payout_destination_required' }).line, 'ยังไม่ได้ระบุบัญชีรับเงินคืน');
+    assert.equal(logic.claimPayoutSubmitBlock({ status: 'DRAFT', payout: { followsDefault: true, ...transfer } }), null);
+    // An account typed for this claim, by the requester or by whoever prepared it.
+    assert.deepEqual(draft({ ...transfer, source: 'REQUESTER' }).notes, ['บัญชีที่ระบุสำหรับใบนี้']);
+    assert.deepEqual(draft({ ...transfer, source: 'PREPARER', enteredByName: 'วิภา' }).notes, ['บัญชีที่ระบุสำหรับใบนี้', 'กรอกโดย วิภา']);
+    // Their name can no longer be resolved (they left the company): it is still said that someone else did.
+    assert.deepEqual(draft({ ...transfer, source: 'PREPARER', enteredByUserId: ids.approver }).notes, ['บัญชีที่ระบุสำหรับใบนี้', 'กรอกโดยผู้จัดทำ']);
+    assert.equal(draft({ followsDefault: true, ...transfer, enteredByUserId: ids.approver }).notes[1], 'บัญชีประจำนี้ตั้งโดยผู้อื่น');
+    // An action response carries no payout block for a draft: say nothing rather than call it legacy.
+    assert.equal(logic.claimPayoutView({ status: 'DRAFT' }).state, 'unknown');
+    assert.equal(card(claim({ status: 'DRAFT', payout: undefined })), '');
+
+    const html = card(claim({ status: 'DRAFT', payout: missing }), ids.requester, `/companies/${ids.company}/reimbursements/${ids.request}/edit`);
+    // The banner carries the sentence after its warning mark.
+    for (const text of ['ยังไม่ได้เลือกวิธีรับเงินคืน', 'เลือกวิธีรับเงินคืนในใบนี้', 'ตั้งบัญชีรับเงินคืนของฉัน']) assert.ok(visible(html).some((shown) => shown.endsWith(text)), text);
+    assert.match(html, new RegExp(`href="/companies/${ids.company}/reimbursements/payout-account"`));
+    // Someone else looking at the draft is not sent to "my" account page.
+    assert.ok(!visible(card(claim({ status: 'DRAFT', payout: missing }), ids.approver)).includes('ตั้งบัญชีรับเงินคืนของฉัน'));
+  });
+
+  it('says who attested a sent claim, truthfully when it was the requester', () => {
+    const sent = (payout: Partial<ReimbursementPayoutSummary>) => logic.claimPayoutView(claim({ payout: { ...transfer, ...payout } })).notes;
+    // Where the account came from (spec §17.2), then who attested it.
+    assert.deepEqual(sent({}), ['ใช้บัญชีประจำของผู้เบิก', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    assert.deepEqual(sent({ source: 'REQUESTER' }), ['ผู้เบิกระบุบัญชีนี้สำหรับใบนี้', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    assert.match(sent({ verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z' }).at(-1)!, /^ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต\.ค\. 2569/);
+    assert.match(sent({ verifiedByUserId: ids.requester, verifiedByName: 'สมชาย', verifiedAt: '2026-10-01T03:00:00.000Z' }).at(-1)!, /^ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ 1 ต\.ค\. 2569/);
+    assert.deepEqual(sent({ source: 'PREPARER', enteredByName: 'วิภา' }), ['กรอกโดย วิภา', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    assert.deepEqual(sent({ source: 'PREPARER', enteredByUserId: ids.approver }), ['กรอกโดยผู้จัดทำ', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    // A copy of the default that someone else set: the approver reads who, before the tick.
+    assert.deepEqual(sent({ enteredByUserId: ids.approver, enteredByName: 'วิภา' }), ['ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดย วิภา', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    assert.deepEqual(sent({ enteredByUserId: ids.approver }), ['ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดยผู้อื่น', 'ยังไม่มีผู้ตรวจบัญชีนี้']);
+    const approving = visible(card(claim({ payout: { ...transfer, enteredByUserId: ids.approver, enteredByName: 'วิภา', canRevealAccountNumber: true } })));
+    assert.ok(approving.includes('ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดย วิภา'));
+    assert.deepEqual(logic.claimPayoutView(claim({ payout: { payoutMethod: 'CASH' } })), { state: 'cash', line: 'รับเป็นเงินสด', notes: [] });
+    assert.deepEqual([logic.claimNeedsPayoutAttestation(claim()), logic.claimNeedsPayoutAttestation(claim({ payout: { payoutMethod: 'CASH' } }))], [true, false]);
+  });
+});
+
+// Payout spec §17.2: the card "การรับเงินคืน" says how the requester asked to be paid, the account (last 4
+// digits), where it came from, who attested it and when, and every account the claim has been sent with.
+describe('the card "การรับเงินคืน": where the account came from and the claim\'s account history', () => {
+  const SCB = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountLast4: '9012' };
+  const attested = { verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z' };
+  /** A claim sent with KBANK, approved, taken back and sent again with SCB typed by a preparer. */
+  const first = { version: 1, ...KBANK, source: 'DEFAULT_ACCOUNT' as const, frozenAt: '2026-10-01T02:00:00.000Z', ...attested, approvalStepId: 'step-1' };
+  const second = { version: 2, ...SCB, source: 'PREPARER' as const, enteredByUserId: ids.approver, enteredByName: 'วิภา', frozenAt: '2026-10-02T02:00:00.000Z' };
+  const resent = claim({ payout: { payoutMethod: 'BANK_TRANSFER', ...SCB, version: 2, source: 'PREPARER', enteredByUserId: ids.approver, enteredByName: 'วิภา' }, payoutHistory: [first, second] });
+  /** The visible texts of the history block; none when the card has no such block. */
+  const historyOf = (html: string) => { const [, block] = html.split('data-testid="reimbursement-payout-history"'); return block ? visible(`<div ${block}`) : []; };
+
+  it('says, for every sent transfer claim, where its account came from', () => {
+    const source = (payout: Partial<ReimbursementPayoutSummary>) => logic.payoutSourceText({ ...transfer, ...payout });
+    assert.equal(source({}), 'ใช้บัญชีประจำของผู้เบิก');
+    assert.equal(source({ enteredByUserId: ids.approver, enteredByName: 'วิภา' }), 'ใช้บัญชีประจำของผู้เบิก ซึ่งตั้งโดย วิภา');
+    assert.equal(source({ source: 'REQUESTER' }), 'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้');
+    assert.equal(source({ source: 'PREPARER', enteredByUserId: ids.approver, enteredByName: 'วิภา' }), 'กรอกโดย วิภา');
+    assert.equal(source({ source: 'PREPARER', enteredByUserId: ids.approver }), 'กรอกโดยผู้จัดทำ');
+    // Cash has no account, and so no origin.
+    assert.equal(logic.payoutSourceText({ payoutMethod: 'CASH' } as ReimbursementPayoutSummary), null);
+    // On the card of a sent claim, each of them stands above who attested the account.
+    for (const [payout, text] of [[{}, 'ใช้บัญชีประจำของผู้เบิก'], [{ source: 'REQUESTER' as const }, 'ผู้เบิกระบุบัญชีนี้สำหรับใบนี้'],
+      [{ source: 'PREPARER' as const, enteredByName: 'วิภา' }, 'กรอกโดย วิภา']] as const) {
+      const texts = visible(card(claim({ payout: { ...transfer, ...payout, ...attested } })));
+      assert.deepEqual(texts.slice(-2), [text, 'ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต.ค. 2569 10:00 น.']);
+    }
+  });
+
+  it('lists every account the claim has been sent with, oldest first, and marks the one in use', () => {
+    assert.deepEqual(logic.claimPayoutHistory(resent), [
+      { version: 1, current: false, line: 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · ชื่อบัญชี นาย สมชาย ใจดี',
+        notes: ['เริ่มใช้กับใบนี้เมื่อ 1 ต.ค. 2569 09:00 น.', 'ใช้บัญชีประจำของผู้เบิก', 'ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต.ค. 2569 10:00 น.'] },
+      // In use, and nobody has attested it: the account above already says so, and the row adds nothing false.
+      { version: 2, current: true, line: 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · ชื่อบัญชี นาย สมชาย ใจดี',
+        notes: ['เริ่มใช้กับใบนี้เมื่อ 2 ต.ค. 2569 09:00 น.', 'กรอกโดย วิภา'] },
+    ]);
+    assert.deepEqual(historyOf(card(resent)), [
+      'ประวัติบัญชีรับเงินของใบนี้',
+      'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · ชื่อบัญชี นาย สมชาย ใจดี', 'เริ่มใช้กับใบนี้เมื่อ 1 ต.ค. 2569 09:00 น.', 'ใช้บัญชีประจำของผู้เบิก', 'ตรวจบัญชีแล้วโดย สมศรี เมื่อ 1 ต.ค. 2569 10:00 น.',
+      'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · ชื่อบัญชี นาย สมชาย ใจดี', 'ใช้อยู่ตอนนี้', 'เริ่มใช้กับใบนี้เมื่อ 2 ต.ค. 2569 09:00 น.', 'กรอกโดย วิภา',
+    ]);
+    // The account above the history is the claim's own: the one in use.
+    const texts = visible(card(resent));
+    assert.ok(texts.indexOf('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012') < texts.indexOf('ประวัติบัญชีรับเงินของใบนี้'));
+    // A requester who attested their own account is said so here too, never as a check.
+    const own = logic.claimPayoutHistory({ requesterUserId: ids.requester, payout: transfer, payoutHistory: [{ ...first, verifiedByUserId: ids.requester }, second] });
+    assert.equal(own[0]!.notes.at(-1), 'ผู้เบิกยืนยันบัญชีของตนเอง เมื่อ 1 ต.ค. 2569 10:00 น.');
+  });
+
+  it('shows no history when there is nothing to tell beyond the account above', () => {
+    // The claim has only ever been sent with the account in use; an action response carries no history; a legacy or a cash claim has none.
+    for (const detail of [claim({ payoutHistory: [first] }), claim(), claim({ payoutHistory: [] }), claim({ payout: undefined }), claim({ payout: { payoutMethod: 'CASH' } })]) {
+      assert.deepEqual(logic.claimPayoutHistory(detail), []);
+      assert.doesNotMatch(card(detail), /reimbursement-payout-history|ประวัติบัญชีรับเงินของใบนี้/);
+    }
+    // A claim now paid in cash, or a draft that follows the default again, still tells what it was sent with before.
+    const nowCash = claim({ payout: { payoutMethod: 'CASH' }, payoutHistory: [first] });
+    assert.deepEqual(logic.claimPayoutHistory(nowCash).map((row) => [row.version, row.current]), [[1, false]]);
+    assert.ok(historyOf(card(nowCash)).includes('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · ชื่อบัญชี นาย สมชาย ใจดี'));
+    const draftAgain = claim({ status: 'DRAFT', payout: { followsDefault: true, payoutMethod: 'BANK_TRANSFER', ...SCB, source: 'DEFAULT_ACCOUNT' }, payoutHistory: [first] });
+    assert.deepEqual(logic.claimPayoutHistory(draftAgain).map((row) => [row.version, row.current]), [[1, false]]);
+    assert.ok(!historyOf(card(draftAgain, ids.requester)).includes('ใช้อยู่ตอนนี้'));
+  });
+
+  it('never shows more of an account than its last 4 digits, and offers no control in the history', () => {
+    const html = card(claim({ ...resent, payout: { ...resent.payout, canRevealAccountNumber: true } }));
+    const history = html.split('data-testid="reimbursement-payout-history"')[1]!;
+    assert.doesNotMatch(history, /<button|<a\b|แสดงเลขบัญชี/);
+    // The reveal control stays where it was: once, on the account in use.
+    assert.equal(html.match(/แสดงเลขบัญชี/g)?.length, 1);
+    // On a 390 px phone a long bank or account name wraps inside its own row, and the mark drops below it.
+    assert.match(history, /<li class="min-w-0 [^"]*"><div class="flex flex-wrap items-center gap-2"><span class="min-w-0 break-words /);
+    assert.equal(html.replace(new RegExp(Object.values(ids).join('|'), 'g'), '').match(/\d{5,}/g), null);
+    // One wording for the masked account: the shared one.
+    assert.doesNotMatch(read('./ReimbursementPayout.tsx'), /ลงท้าย/);
+    assert.doesNotMatch(read('./reimbursement-payout.logic.ts'), /ลงท้าย/);
+  });
+});
+
+// Payout spec §22 row 1: a member who changes their default after sending a claim expects the claim
+// to follow. It keeps the account it was sent with, and the requester is told so, with what to do.
+describe('the requester is told when their default changed after the claim was sent', () => {
+  const changed = claim({ payout: { ...transfer, defaultAccountChanged: true } });
+  const canStill = 'บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ถ้าต้องการให้ใบนี้ใช้บัญชีใหม่ กดปุ่มแก้ไข (เปิดกลับเป็นร่าง) ในขั้นอนุมัติ แล้วส่งอนุมัติอีกครั้ง';
+  const tooLate = 'บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว แต่ใบนี้ยังใช้บัญชีที่แสดงอยู่นี้ ซึ่งเป็นบัญชีตอนส่งอนุมัติ ตอนนี้คุณเปิดใบนี้กลับเป็นร่างเองไม่ได้แล้ว ถ้าต้องการเปลี่ยนบัญชี แจ้งผู้อนุมัติหรือผู้จ่ายเงินก่อนมีการโอน';
+
+  it('says the claim still uses the earlier account, and how to change it while that is still possible', () => {
+    assert.equal(logic.payoutDefaultChangedHint(changed, true), canStill);
+    assert.equal(logic.payoutDefaultChangedHint(changed, false), tooLate);
+    // Only the server's own yes: nothing is guessed on the page.
+    for (const payout of [transfer, { ...transfer, defaultAccountChanged: false as never }, undefined]) assert.equal(logic.payoutDefaultChangedHint(claim({ payout }), true), null);
+
+    const withdrawable = render(h(ui.ClaimPayoutCard, { companyId: ids.company, detail: changed, userId: ids.requester, payoutAccountHref: '/payout-account', canWithdraw: true }));
+    assert.ok(visible(withdrawable).includes(canStill));
+    assert.match(withdrawable, /<p class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว/);
+    assert.ok(visible(card(changed, ids.requester)).includes(tooLate));
+    assert.ok(!visible(card(claim(), ids.requester)).some((text) => text.startsWith('บัญชีรับเงินคืนประจำของคุณเปลี่ยนแล้ว')));
+  });
+
+  it('names the page own withdraw button and follows its condition', () => {
+    const page = read('./ReimbursementJourneyPage.tsx');
+    // The words in the hint are the label of the button it points to.
+    assert.match(page, /action === 'reopen' && detail\.status === 'PENDING_APPROVAL' \? 'แก้ไข \(เปิดกลับเป็นร่าง\)'/);
+    assert.match(page, /canWithdraw=\{detail\.status === 'PENDING_APPROVAL' && Boolean\(step\?\.actions\.includes\('reopen'\)\)\}/);
+    assert.match(read('./ReimbursementPayout.tsx'), /const defaultChanged = payoutDefaultChangedHint\(detail, canWithdraw\);/);
+  });
+});
+
+describe('the full number: offered only when the server allows it, never in the page itself', () => {
+  it('shows the reveal button exactly when the claim says this viewer may reveal', () => {
+    const allowed = card(claim({ payout: { ...transfer, canRevealAccountNumber: true } }));
+    assert.ok(visible(allowed).includes('แสดงเลขบัญชี'));
+    for (const text of ['การรับเงินคืน', 'โอนเข้าบัญชี', 'ผู้เบิก', 'สมชาย ใจดี', 'ชื่อบัญชี', 'นาย สมชาย ใจดี', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789', 'ยังไม่มีผู้ตรวจบัญชีนี้']) {
+      assert.ok(visible(allowed).includes(text), text);
+    }
+    for (const flag of [false, undefined]) {
+      const refused = card(claim({ payout: { ...transfer, canRevealAccountNumber: flag } }));
+      assert.doesNotMatch(refused, /แสดงเลขบัญชี|<button/, String(flag));
+      // Everything else is identical: the masked account is the same for every viewer.
+      assert.deepEqual(visible(refused), visible(allowed).filter((text) => text !== 'แสดงเลขบัญชี'));
+    }
+    assert.doesNotMatch(card(claim({ payout: { payoutMethod: 'CASH', canRevealAccountNumber: true } })), /แสดงเลขบัญชี/, 'cash has no number');
+    // Nothing on the page is a full number: only the last 4 digits are in the markup.
+    for (const html of [allowed, section({ defaultAccount: { userId: ids.requester, payoutMethod: 'BANK_TRANSFER', ...KBANK, updatedAt: '2026-10-01T03:00:00.000Z' } })]) {
+      assert.deepEqual(html.replace(new RegExp(Object.values(ids).join('|'), 'g'), '').match(/\d{5,}/g), null);
+    }
+  });
+
+  it('takes the flag from the server and asks the server for the number: no other source', () => {
+    const screen = read('./ReimbursementPayout.tsx');
+    assert.match(screen, /canReveal=\{payout\.canRevealAccountNumber === true\}/);
+    // One call for the claim's account and for a legacy claim's default: the server decides which it answers with.
+    assert.match(screen, /const reveal = async \(\) => \(await revealClaimPayoutAccount\(companyId, detail\.id\)\)\.accountNumber;/);
+    assert.match(screen, /canReveal=\{payout\.canRevealAccountNumber === true\}\s+last4=\{payout\.accountLast4\} onReveal=\{reveal\}/);
+    assert.equal(screen.match(/revealClaimPayoutAccount\(/g)?.length, 1);
+    // A default account is revealed to its owner alone; an editor of someone else's account gets no button.
+    assert.match(screen, /canReveal=\{own\}\s+last4=\{account\.accountLast4\} onReveal=\{async \(\) => \(await revealMyPayoutAccount\(companyId\)\)\.accountNumber\}/);
+    assert.match(screen, /const own = !memberUserId;/);
+    assert.doesNotMatch(screen, /localStorage|sessionStorage|console\./);
+    // The edit form always starts empty: a saved number is never loaded back into a field.
+    assert.match(screen, /setForm\(emptyPayoutAccountForm\(\)\); setMethod\(account\?\.payoutMethod \?\? 'BANK_TRANSFER'\);/);
+
+    const api = read('./reimbursement-payout.api.ts');
+    assert.deepEqual([...api.matchAll(/export function (\w+)/g)].map((match) => match[1]).sort(),
+      ['deleteMyPayoutAccount', 'getMemberPayoutAccount', 'getMyPayoutAccount', 'revealClaimPayoutAccount', 'revealMyPayoutAccount', 'setMemberPayoutAccount', 'setMyPayoutAccount']);
+    assert.equal(api.match(/\/reveal/g)?.length, 2, 'two reveal calls: my own default account and a claim');
+    // The reveal is a POST the server audits; nothing about an account ever rides in a URL.
+    assert.doesNotMatch(api, /\?|accountNumber/);
+  });
+
+  // Security review nit: the number stayed on screen when the claim or the account version under it
+  // changed with the same masked line, and when the right to reveal was withdrawn, where it also lost
+  // its hide button.
+  it('shows a revealed number only under the account it was revealed for, and only while the viewer may reveal', () => {
+    const revealed = { revealKey: 'claim-1:1', accountNumber: '0123456789' };
+    assert.equal(logic.shownAccountNumber(revealed, 'claim-1:1', true), '0123456789');
+    for (const [label, revealKey, canReveal] of [
+      ['another claim with the same masked account', 'claim-2:1', true],
+      ['another account version of the same claim', 'claim-1:2', true],
+      ['the right to reveal is gone', 'claim-1:1', false],
+    ] as const) assert.equal(logic.shownAccountNumber(revealed, revealKey, canReveal), null, label);
+    assert.equal(logic.shownAccountNumber(null, 'claim-1:1', true), null);
+
+    const screen = read('./ReimbursementPayout.tsx');
+    // What is on screen is derived on every render, so a stale number is not painted even once;
+    // the effect then drops it from memory when the claim, the account or the right changes.
+    assert.match(screen, /const shown = shownAccountNumber\(revealed, revealKey, canReveal\);/);
+    assert.match(screen, /useEffect\(\(\) => \{ setRevealed\(null\); setError\(null\); \}, \[revealKey, masked, canReveal\]\);/);
+    // The answer is the account as it is now. On a page loaded before the account changed it is the
+    // number of another account than the bank and name on the card: it is not shown, and the page says to open the claim again.
+    assert.match(screen, /const accountNumber = await onReveal\(\);\s+if \(revealedNumberMatchesCard\(accountNumber, last4\)\) setRevealed\(\{ revealKey, accountNumber \}\);\s+else setError\(errorMessage\('payout_destination_changed'\)\);/);
+    assert.deepEqual([logic.revealedNumberMatchesCard('0123456789', '6789'), logic.revealedNumberMatchesCard('0812345678', '5678')], [true, true]);
+    for (const [number, last4] of [['0123456780', '6789'], ['6789012345', '6789'], ['789', '6789']] as const) assert.equal(logic.revealedNumberMatchesCard(number, last4), false, number);
+    assert.equal(translateApiError('payout_destination_changed'), 'บัญชีรับเงินของใบนี้เปลี่ยนไปจากที่แสดงไว้ กรุณาเปิดใบใหม่ ตรวจบัญชีที่แสดงล่าสุด แล้วทำรายการอีกครั้ง');
+    // The claim and its account version, and the default as last saved, are what a number belongs to.
+    assert.match(screen, /revealKey=\{`\$\{detail\.id\}:\$\{payout\.version \?\? ''\}`\}/);
+    assert.match(screen, /revealKey=\{`\$\{companyId\}:\$\{account\.userId\}:\$\{account\.updatedAt\}`\}/);
+    // The hide control hangs on the number alone, never on the right to reveal.
+    assert.match(screen, /\{shown \? \(\s+<div[^>]*>\s+<button[^\n]*>คัดลอกเลขบัญชี<\/button>\s+<button[^\n]*onClick=\{\(\) => setRevealed\(null\)\}>ซ่อนเลขบัญชี<\/button>\s+<\/div>\s+\) : canReveal && \(/);
+    assert.equal(screen.match(/setRevealed\(/g)?.length, 3, 'reveal, hide and the reset: nothing else holds a number');
+  });
+
+  it('keeps the number a text field with a numeric keypad, so a leading zero is never lost', () => {
+    const html = section({ value: { mode: 'SPECIFIED', account: form({ accountNumber: '0012345678' }), saveAsDefault: false } });
+    const [input] = html.match(/<input aria-label="เลขบัญชี"[^>]*>/) ?? [];
+    assert.ok(input, 'the account number field');
+    for (const attribute of [/type="text"/, /inputMode="numeric"/i, /autoComplete="off"/i, /value="0012345678"/]) assert.match(input, attribute);
+    assert.doesNotMatch(html, /type="number"/);
+  });
+});
+
+describe('the receiving choice on the claim form', () => {
+  it('offers the default, cash or an account for this claim, with the bank list everyone shares', () => {
+    const mine = section({ defaultAccount: { userId: ids.requester, payoutMethod: 'BANK_TRANSFER', ...KBANK, updatedAt: '2026-10-01T03:00:00.000Z' } });
+    for (const text of ['รับเงินคืนทาง', 'ตามบัญชีรับเงินคืนประจำของฉัน', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', 'จัดการบัญชีรับเงินคืนของฉัน']) {
+      assert.ok(visible(mine).includes(text), text);
+    }
+    assert.ok(visible(section()).includes('คุณยังไม่ได้ตั้งบัญชีประจำ บันทึกร่างได้ แต่ต้องเลือกวิธีอื่นหรือตั้งบัญชีประจำก่อนส่งอนุมัติ'));
+    assert.ok(visible(section({ defaultAccount: undefined })).includes('กำลังโหลดบัญชีประจำของคุณ...'));
+    // Set by someone else: the requester is told on the form too, until they save it themselves.
+    assert.ok(visible(section({ defaultAccount: { userId: ids.requester, payoutMethod: 'BANK_TRANSFER', ...KBANK, updatedAt: '2026-10-01T03:00:00.000Z', setByOtherName: 'วิภา' } }))
+      .some((text) => /^ตั้งโดย วิภา เมื่อ .+ ตรวจว่าเป็นบัญชีของคุณ$/.test(text)));
+
+    const typing = section({ value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: true } });
+    // One bank list for the whole product: the shared one, the same array the sales screens pick from.
+    assert.equal(logic.BANK_OPTIONS, THAI_BANK_NAMES);
+    assert.equal(SALES_BANK_NAMES, THAI_BANK_NAMES);
+    assert.match(read('./ReimbursementPayout.tsx'), /\{BANK_OPTIONS\.map\(\(bank\) => <option key=\{bank\} value=\{bank\}>\{bank\}<\/option>\)\}\s+<option value=\{OTHER_BANK\}>ธนาคารอื่น<\/option>/);
+    for (const text of ['ประเภทบัญชี *', 'ธนาคาร *', 'ชื่อบัญชี *', 'เลขบัญชี *', 'บันทึกเป็นบัญชีประจำของฉัน']) assert.ok(visible(typing).includes(text), text);
+    assert.ok(!visible(section({ canSaveAsDefault: false, value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: false } })).some((text) => text.startsWith('บันทึกเป็นบัญชีประจำ')));
+    // PromptPay asks for a phone number and no bank.
+    const promptPay = visible(section({ value: { mode: 'SPECIFIED', account: form({ payoutKind: 'PROMPTPAY_PHONE' }), saveAsDefault: false } }));
+    assert.ok(promptPay.includes('เบอร์พร้อมเพย์ *') && !promptPay.includes('ธนาคาร *'));
+  });
+
+  it('files on behalf with the REQUESTER account: the preparer never sees or picks their own', () => {
+    const html = section({ forSelf: false, defaultAccount: null, canSaveAsDefault: true, value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: false } });
+    const texts = visible(html);
+    for (const text of ['ตามบัญชีรับเงินคืนประจำของผู้เบิก', 'ระบบใช้บัญชีรับเงินคืนประจำของผู้เบิกที่เลือกไว้ และแสดงบัญชีนั้นให้ตรวจในหน้าใบเบิกก่อนกดส่งอนุมัติ',
+      'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย', 'บันทึกเป็นบัญชีประจำของผู้เบิก']) assert.ok(texts.includes(text), text);
+    assert.ok(!texts.some((text) => text.includes('ของฉัน')), 'nothing on an on-behalf form speaks of "my" account');
+    assert.doesNotMatch(html, /payout-account/, 'and nothing links to the preparer own account page');
+
+    const page = read('./ReimbursementCreatePage.tsx');
+    // The preview of a default is the person's own; another member's default is never put into the form.
+    assert.match(page, /if \(forSelf\) setMyPayoutAccount\(response\.account\);/);
+    assert.equal(page.match(/setMyPayoutAccount\(/g)?.length, 2, 'the own default, and its absence when the read fails');
+    assert.match(page, /forSelf=\{requesterUserId === userId\}\s+defaultAccount=\{requesterUserId === userId \? myPayoutAccount : null\}/);
+    // Choosing another requester starts the receiving choice over.
+    assert.match(page, /setRequesterUserId\(event\.target\.value\);[^\n]*setPayout\(emptyClaimPayoutForm\(\)\);/);
+    assert.equal(page.match(/\.\.\.\(payoutInput && \{ payout: payoutInput \}\)/g)?.length, 2, 'create and update both carry the choice');
+  });
+
+  // Security review nit: the tick box was offered by a guess made on the page (the viewer holds the
+  // employee-edit right), while the server also looks at whose account it is: a peer's, another
+  // branch's, a member who is not active. The save was then refused after the form was filled in.
+  it('offers "บันทึกเป็นบัญชีประจำ" exactly where the server would take it', () => {
+    const page = read('./ReimbursementCreatePage.tsx');
+    // The server's own answer for this viewer and this requester, asked again when the requester changes.
+    assert.match(page, /void \(forSelf \? getMyPayoutAccount\(companyId\) : getMemberPayoutAccount\(companyId, requesterUserId\)\)/);
+    assert.match(page, /setMaySaveAsDefault\(response\.canEdit === true\);/);
+    assert.match(page, /useEffect\(\(\) => \{\s+setMaySaveAsDefault\(false\);/);
+    assert.match(page, /if \(!forSelf && !canEditEmployees\) return;/);
+    assert.match(page, /canSaveAsDefault=\{maySaveAsDefault\}/);
+    assert.match(page, /const payoutInput = claimPayoutInput\(payout, maySaveAsDefault\);/);
+    assert.doesNotMatch(page, /canSaveAsDefault=\{requesterUserId === userId/);
+
+    // Not offered: no box, no tick made for the person, and a tick left over from before is not sent.
+    const typing = { mode: 'SPECIFIED' as const, account: form(), saveAsDefault: true };
+    assert.ok(!visible(section({ canSaveAsDefault: false, value: typing })).some((text) => text.startsWith('บันทึกเป็นบัญชีประจำ')));
+    assert.equal('saveAsDefault' in logic.claimPayoutInput(typing, false)!, false);
+    assert.deepEqual(logic.claimPayoutInput(typing, true), { mode: 'SPECIFIED', ...logic.payoutDestinationInput(form()), saveAsDefault: true });
+    const base = logic.emptyClaimPayoutForm();
+    const pick = (offer: { canSaveAsDefault: boolean; forSelf: boolean; hasNoDefault: boolean }) => logic.chooseClaimPayoutMode(base, 'SPECIFIED', offer).saveAsDefault;
+    assert.equal(pick({ canSaveAsDefault: true, forSelf: true, hasNoDefault: true }), true, 'ticked for a requester with no default yet');
+    assert.equal(pick({ canSaveAsDefault: false, forSelf: true, hasNoDefault: true }), false, 'never ticked where it is not offered');
+    assert.equal(pick({ canSaveAsDefault: true, forSelf: false, hasNoDefault: true }), false, 'never ticked on behalf of someone');
+    assert.equal(pick({ canSaveAsDefault: true, forSelf: true, hasNoDefault: false }), false, 'a default already exists');
+    // Picking again keeps what the person chose; leaving for cash and coming back starts over.
+    assert.equal(logic.chooseClaimPayoutMode({ ...base, mode: 'SPECIFIED', saveAsDefault: false }, 'SPECIFIED', { canSaveAsDefault: true, forSelf: true, hasNoDefault: true }).saveAsDefault, false);
+    assert.match(read('./ReimbursementPayout.tsx'), /onChange\(chooseClaimPayoutMode\(value, mode, \{ canSaveAsDefault, forSelf, hasNoDefault: defaultAccount === null \}\)\)/);
+  });
+
+  it('keeps an existing draft account unless a new one is typed', () => {
+    const existing = section({ current: { ...transfer, source: 'REQUESTER' }, value: { ...logic.emptyClaimPayoutForm(), mode: 'KEEP' } });
+    for (const text of ['ใช้บัญชีที่ระบุไว้ในใบนี้', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี', 'ระบุบัญชีใหม่สำหรับใบนี้']) assert.ok(visible(existing).includes(text), text);
+    assert.ok(!visible(section({ current: { followsDefault: true, ...transfer } })).includes('ใช้บัญชีที่ระบุไว้ในใบนี้'));
+  });
+});
+
+describe('the approver attests the account version shown before approving a transfer claim', () => {
+  it('renders the attestation with a full-size touch target', () => {
+    const html = render(h(ui.PayoutAttestationCheck, { checked: false, onChange: noop }));
+    assert.deepEqual(visible(html), ['ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก', 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ']);
+    assert.match(html, /<label class="flex min-h-11 [^"]*"><input type="checkbox" class="[^"]*h-5 w-5[^"]*"/);
+    assert.doesNotMatch(html, /checked=""/);
+  });
+
+  it('binds the tick to one version, blocks approve until then, and sends that version', () => {
+    const page = read('./ReimbursementJourneyPage.tsx');
+    assert.match(page, /const \[attestedVersion, setAttestedVersion\] = useState<number \| null>\(null\);/);
+    assert.match(page, /const needsAttestation = Boolean\(step\?\.actions\.includes\('approve'\)\) && claimNeedsPayoutAttestation\(detail\);/);
+    // A claim sent again with another account version is no longer ticked.
+    assert.match(page, /const attested = needsAttestation && attestedVersion === detail\.payout\?\.version;/);
+    assert.match(page, /onChange=\{\(checked\) => setAttestedVersion\(checked \? detail\.payout\?\.version \?\? null : null\)\}/);
+    assert.match(page, /action === 'approve' && needsAttestation && !attested \? PAYOUT_ATTESTATION_REQUIRED/);
+    assert.match(page, /disabled=\{busyAction !== null \|\| previewLoadingKey !== null \|\| Boolean\(blockedReason\)\}/);
+    // Also after a stale-approval review: the version ticked must be the version about to be approved.
+    assert.match(page, /if \(claimNeedsPayoutAttestation\(target\) && verified !== target\.payout\?\.version\) \{/);
+    assert.match(page, /approveReimbursement\(companyId, requestId, undefined, target\.approvalSnapshotHash, verified \?\? undefined\)/);
+    assert.match(read('./reimbursements.api.ts'), /JSON\.stringify\(\{ comment, approvalSnapshotHash, payoutVerifiedVersion \}\)/);
+    // The card sits above the step card, so the account is read before the tick.
+    assert.ok(page.indexOf('<ClaimPayoutCard') > 0 && page.indexOf('<ClaimPayoutCard') < page.indexOf('<PayoutAttestationCheck'));
+    // A draft that cannot be sent yet says why on the submit button.
+    assert.match(page, /const readiness = receiptReadiness\.blocked \|\| !payoutBlock \? receiptReadiness : \{ blocked: true, message: payoutBlock \};/);
+  });
+
+  it('sends a transfer claim to its own page instead of approving it from the queue', () => {
+    const hub = read('./ReimbursementsPages.tsx');
+    // One rule says what a queue row offers and where its decision is made (`approvalRowOffers`); the press and both layouts ask it.
+    assert.match(hub, /if \(approvalRowOffers\(r\)\.onClaimPage\) \{ onOpenDetail\(r\.id\); return; \}/);
+    assert.equal(hub.match(/\{approvalRowOffers\(r\)\.approveLabel && <button[^\n]*onClick=\{[^\n]*approveRow\(r\)[^\n]*\{approvalRowOffers\(r\)\.approveLabel\}<\/button>\}/g)?.length, 2, 'table row and phone card');
+    const { approvalRowOffers } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+    const may = { canApprove: true, canReject: true };
+    assert.deepEqual(approvalRowOffers({ approvalActions: may, payoutMethod: 'BANK_TRANSFER' }), { approveLabel: 'ตรวจบัญชีและอนุมัติ', reject: true, onClaimPage: true });
+    assert.deepEqual(approvalRowOffers({ approvalActions: may, payoutMethod: 'CASH' }), { approveLabel: 'อนุมัติ', reject: true, onClaimPage: false });
+    assert.deepEqual(approvalRowOffers({ approvalActions: may }), { approveLabel: 'อนุมัติ', reject: true, onClaimPage: false });
+    assert.match(hub, /href=\{`\/companies\/\$\{companyId\}\/reimbursements\/payout-account`\}[^\n]*>บัญชีรับเงินคืนของฉัน<\/Link>/);
+  });
+});
+
+describe('a claim is sent with the account its page showed', () => {
+  it('sends back the token of the claim on the page with "ส่งอนุมัติ"', () => {
+    assert.match(read('./ReimbursementJourneyPage.tsx'), /submitReimbursement\(companyId, requestId, detail\.payout\?\.submitToken\)/);
+    assert.match(read('./reimbursements.api.ts'), /\/submit`, \{ method: 'POST', body: JSON\.stringify\(\{ payoutSubmitToken \}\) \}/);
+    // The card with the account sits above the step card that holds the button.
+    const page = read('./ReimbursementJourneyPage.tsx');
+    assert.ok(page.indexOf('<ClaimPayoutCard') < page.indexOf('cardActions.map(actionButton)'));
+  });
+
+  it('sends a draft paid into an account from its own page, never from a list row', () => {
+    // A list row carries no account, so there is nothing on it to have been shown: a draft that
+    // follows the default, one with an account typed into it, and a method added later all open the page.
+    for (const row of [{}, { payoutMethod: undefined }, { payoutMethod: null }, { payoutMethod: '' }, { payoutMethod: 'BANK_TRANSFER' }, { payoutMethod: 'A_METHOD_ADDED_LATER' }]) {
+      assert.equal(logic.draftRowSubmitsFromItsPage(row), true, String(row.payoutMethod));
+    }
+    // Only cash the draft itself chose depends on nothing shown.
+    assert.equal(logic.draftRowSubmitsFromItsPage({ payoutMethod: 'CASH' }), false);
+    const hub = read('./ReimbursementsPages.tsx');
+    assert.match(hub, /const submitRow = \(r: any\) => \(draftRowSubmitsFromItsPage\(r\)\s+\? onOpenDetail\(r\.id\)\s+: void action\(r\.id, \(\) => submitReimbursement\(companyId, r\.id\), 'ส่งขออนุมัติเรียบร้อยแล้ว'\)\);/);
+    assert.equal(hub.match(/\{draftRowSubmitsFromItsPage\(r\) \? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'\}/g)?.length, 2, 'table row and phone card');
+    assert.equal(hub.match(/submitReimbursement\(/g)?.length, 1, 'no other list path submits');
+  });
+});
+
+describe('the stale-approval dialog names an account change and never approves an account nobody ticked', () => {
+  const scb = { ...transfer, bankName: 'ธนาคารไทยพาณิชย์', accountLast4: '9012', version: 2 };
+  const payoutRow = (before: object, after: object) => diffApprovalFields(approvalComparable(before, 1), approvalComparable(after, 1)).find((row) => row.key === 'payout');
+
+  it('compares where the money goes back to, masked', () => {
+    assert.equal(logic.payoutComparableText({ payout: transfer }), 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี');
+    assert.equal(logic.payoutComparableText({ payout: { payoutMethod: 'CASH' } }), 'รับเป็นเงินสด');
+    assert.equal(logic.payoutComparableText({ payoutMethod: 'CASH' }), 'รับเป็นเงินสด');
+    assert.equal(logic.payoutComparableText({ payoutMethod: 'A_METHOD_ADDED_LATER' }), 'วิธีอื่น');
+    for (const none of [{}, null, undefined, { payout: null }]) assert.equal(logic.payoutComparableText(none), '');
+
+    // On the claim page both sides are details: an account changed while the page was open is named.
+    assert.deepEqual(payoutRow(claim(), claim({ payout: scb })), {
+      key: 'payout', label: 'รับเงินคืนทาง', changed: true,
+      before: 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี', after: 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · นาย สมชาย ใจดี',
+    });
+    assert.equal(payoutRow(claim(), claim())?.changed, false);
+    // In the queue the row carries the method only: a cash claim sent again as a transfer is named too.
+    assert.deepEqual([payoutRow({ payoutMethod: 'CASH' }, claim({ payout: { payoutMethod: 'CASH' } }))?.changed, payoutRow({ payoutMethod: 'CASH' }, claim())?.changed], [false, true]);
+    // A claim from before the field existed has nothing on either side.
+    assert.deepEqual(payoutRow({}, claim({ payout: undefined })), { key: 'payout', label: 'รับเงินคืนทาง', before: '—', after: '—', changed: false });
+  });
+
+  it('shows the change in the dialog and lets the caller replace the approve button', () => {
+    const diff = diffApprovalFields(approvalComparable(claim(), 1), approvalComparable(claim({ payout: scb }), 1));
+    const dialog = (props: object = {}) => {
+      Object.assign(globalThis, { document: { body: {} } }); // Modal's portal target; never touched by a server render
+      try {
+        return visible(render(h(StaleApprovalDialog, { requestNo: 'RB-202610-00001', diff, lines: [], currency: 'THB', busy: false, error: null, onClose: noop, onConfirm: noop, ...props })));
+      } finally { Reflect.deleteProperty(globalThis, 'document'); }
+    };
+    for (const text of ['รับเงินคืนทาง', 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · นาย สมชาย ใจดี', 'ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 9012 · นาย สมชาย ใจดี', 'อนุมัติด้วยข้อมูลล่าสุด']) {
+      assert.ok(dialog().includes(text), text);
+    }
+    const guarded = dialog({ confirmLabel: 'ปิดเพื่อตรวจบัญชีรับเงิน' });
+    assert.ok(guarded.includes('ปิดเพื่อตรวจบัญชีรับเงิน') && !guarded.includes('อนุมัติด้วยข้อมูลล่าสุด'));
+  });
+
+  it('approves from the dialog only an account version the approver ticked; otherwise sends them to the account', () => {
+    const page = read('./ReimbursementJourneyPage.tsx');
+    assert.match(page, /const staleReviewNeedsAttestation = !!staleReview && claimNeedsPayoutAttestation\(staleReview\.detail\)\s+&& attestedVersion !== staleReview\.detail\.payout\?\.version;/);
+    assert.match(page, /\{\.\.\.\(staleReviewNeedsAttestation && \{ confirmLabel: 'ปิดเพื่อตรวจบัญชีรับเงิน' \}\)\}/);
+    assert.match(page, /onConfirm=\{\(\) => \(staleReviewNeedsAttestation \? setStaleReview\(null\) : void approve\(\{ detail: staleReview\.detail \}\)\)\}/);
+    // When the ticked version is still the claim's version, the confirm carries it with the latest hash.
+    assert.match(page, /const verified = claimNeedsPayoutAttestation\(target\) \? attestedVersion : null;/);
+
+    const hub = read('./ReimbursementsPages.tsx');
+    // The queue row sends the hash it showed; a claim that is a transfer by now is opened, not approved.
+    assert.match(hub, /await approveReimbursement\(companyId, r\.id, undefined, r\.approvalSnapshotHash\);/);
+    assert.match(hub, /\{\.\.\.\(claimNeedsPayoutAttestation\(staleReview\.detail\) && \{ confirmLabel: 'เปิดใบเพื่อตรวจบัญชีรับเงิน' \}\)\}/);
+    assert.match(hub, /if \(claimNeedsPayoutAttestation\(review\.detail\)\) \{ setStaleReview\(null\); onOpenDetail\(review\.row\.id\); return; \}/);
+  });
+});
+
+describe('"บัญชีรับเงินคืนของฉัน" and the employee page', () => {
+  it('opens for whoever may file a claim, and says so plainly to anyone else', () => {
+    const page = visible(render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: true })));
+    for (const text of ['บัญชีรับเงินคืนของฉัน', 'บัญชีรับเงินคืนประจำ', 'กำลังโหลดบัญชีรับเงินคืน...',
+      'ตั้งครั้งเดียว ใบเบิกใหม่จะใช้บัญชีนี้เอง ใบที่ส่งไปแล้วใช้บัญชีที่บันทึกไว้กับใบนั้น ไม่เปลี่ยนตาม']) assert.ok(page.includes(text), text);
+    const refused = visible(render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: false })));
+    for (const text of ['ยังตั้งบัญชีรับเงินคืนไม่ได้', 'บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อเจ้าของกิจการหรือแอดมิน']) assert.ok(refused.includes(text), text);
+    const route = read('../../../app/(workspace)/companies/[companyId]/reimbursements/payout-account/page.tsx');
+    assert.match(route, /canManage=\{\(session\?\.permissions \?\? \[\]\)\.includes\('reimbursement\.create'\)\}/);
+  });
+
+  it('lets an employee-data editor set an employee account, tells them the owner is notified, and never reveals it to them', () => {
+    const screen = read('./ReimbursementPayout.tsx');
+    assert.match(screen, /memberUserId \? await setMemberPayoutAccount\(companyId, memberUserId, input\) : await setMyPayoutAccount\(companyId, input\)/);
+    assert.match(screen, /\{!own && <p[^>]*>หลังบันทึก คุณจะเห็นเฉพาะ 4 ตัวท้าย และเจ้าของบัญชีจะได้รับแจ้งเตือนให้ตรวจ<\/p>\}/);
+    assert.match(screen, /own \? 'บันทึกบัญชีรับเงินคืนแล้ว' : 'บันทึกบัญชีรับเงินคืนแล้ว ระบบแจ้งเจ้าของบัญชีให้ตรวจ'/);
+    // Only the account owner removes a default account.
+    assert.match(screen, /\{own && account && <button[^>]*onClick=\{\(\) => void remove\(\)\}>ลบบัญชี<\/button>\}/);
+    // Whose account an editor may set is the server's rule (a manager may not set a peer's, an admin's
+    // or another branch's): the button follows the server's answer, never a guess made on the page.
+    assert.match(screen, /setMayEdit\(response\.canEdit === true\)/);
+    assert.match(screen, /\{canEdit && mayEdit \? \(/);
+    assert.match(screen, /บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือแอดมิน ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล/);
+
+    const employee = read('../employee-access/AddEmployeePrototypePage.tsx');
+    // The viewer's own employee page uses their own path; anyone else's goes through the employee-edit path.
+    assert.match(employee, /<MemberPayoutAccountCard/);
+    assert.match(employee, /canEdit=\{!branchScopeReadOnly\}/);
+    // Not for a draft, invited, suspended or disabled employee: the notice the account owner is owed
+    // reaches active members only, and the server refuses the save for the same reason.
+    assert.match(employee, /const employeeActive = draftActivated \|\| editingEmployee\?\.status === 'ACTIVE';/);
+    assert.match(employee, /\{editingEmployee && employeeActive && viewerPermissions\.includes\('reimbursement\.create'\) && \(\s+<MemberPayoutAccountCard/);
+    assert.equal(employee.match(/<MemberPayoutAccountCard/g)?.length, 1, 'the one place an employee account is set');
+    assert.equal(translateApiError('payout_account_member_not_active'),
+      'ตั้งบัญชีรับเงินคืนแทนได้เฉพาะเมื่อเจ้าของบัญชียังใช้งานระบบอยู่ เพราะระบบต้องแจ้งเจ้าของบัญชีทุกครั้ง เปิดใช้งานสมาชิกคนนี้ก่อน หรือให้เจ้าของบัญชีตั้งเองเมื่อเข้าใช้งานได้แล้ว');
+  });
+});
+
+const MACHINE_TOKENS: Array<[string, RegExp]> = [ // ReimbursementPages.plain-thai.qa.spec.ts's set
+  ['cuid/uuid/hash-like id', /\b[a-z0-9]{20,}\b|[0-9a-f]{8}-[0-9a-f]{4}-/iu], ['enum or code', /[A-Z_]{4,}/u],
+  ['field path', /\w+\.\d+\.\w+|\b[a-zA-Z]\w*\.(?:\d|[a-z]\w*\b)/u], ['camelCase key', /\b[a-z]+[A-Z]\w*\b/u], ['snake_case code', /\b[a-z]+_[a-z_]+\b/u],
+  ['ISO date', /\d{4}-\d{2}-\d{2}/u], ['3+ decimal amount', /\d\.\d{3,}/u], ['category key or currency code', /\b(?:travel|meals|supplies|accommodation|other|THB)\b/u],
+  ['raw JSON', /[{}[\]"]/u],
+];
+
+describe('payout screens speak plain Thai and fit a 390 px phone', () => {
+  const verified = { ...transfer, verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z', canRevealAccountNumber: true };
+  const screens: Array<[string, string]> = [
+    ['claim card: transfer, may reveal', card(claim({ payout: verified }))],
+    ['claim card: self-attested', card(claim({ payout: { ...verified, verifiedByUserId: ids.requester } }), ids.requester)],
+    ['claim card: typed by a preparer', card(claim({ payout: { ...transfer, source: 'PREPARER', enteredByName: 'วิภา' } }))],
+    ['claim card: PromptPay', card(claim({ payout: { payoutMethod: 'BANK_TRANSFER', payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountLast4: '5678', version: 2 } }))],
+    ['claim card: cash', card(claim({ payout: { payoutMethod: 'CASH' } }))],
+    ['claim card: legacy', card(claim({ payout: undefined }))],
+    ['claim card: a method the API may add later', card(claim({ payout: { payoutMethod: 'A_METHOD_ADDED_LATER', accountLast4: '6789' } }))],
+    ['claim card: draft following the default', card(claim({ status: 'DRAFT', payout: { followsDefault: true, ...transfer, enteredByName: 'วิภา' } }), ids.requester)],
+    ['claim card: draft with nothing chosen', card(claim({ status: 'DRAFT', payout: { followsDefault: true, notReadyReason: 'payout_method_required' } }), ids.requester, '/edit')],
+    ['claim card: draft account missing', card(claim({ status: 'DRAFT', payout: { payoutMethod: 'BANK_TRANSFER', notReadyReason: 'payout_destination_required' } }), ids.requester, '/edit')],
+    ['form section: own, no default', section()],
+    ['form section: own, typing', section({ value: { mode: 'SPECIFIED', account: form({ bankChoice: logic.OTHER_BANK }), saveAsDefault: true } })],
+    ['form section: on behalf', section({ forSelf: false, value: { mode: 'SPECIFIED', account: form({ payoutKind: 'PROMPTPAY_PHONE' }), saveAsDefault: false } })],
+    ['form section: existing draft account', section({ current: { ...transfer, source: 'REQUESTER' }, value: { ...logic.emptyClaimPayoutForm(), mode: 'KEEP' } })],
+    ['attestation', render(h(ui.PayoutAttestationCheck, { checked: true, onChange: noop }))],
+    ['my account page', render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: true }))],
+    ['my account page: no permission', render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: false }))],
+    // New screens go at the end: the phone check below names two of the screens above by position.
+    ['claim card: the default changed, can still withdraw', render(h(ui.ClaimPayoutCard, { companyId: ids.company, detail: claim({ payout: { ...transfer, defaultAccountChanged: true } }), userId: ids.requester, payoutAccountHref: '/payout-account', canWithdraw: true }))],
+    ['claim card: the default changed, too late to withdraw', card(claim({ status: 'READY_FOR_PAYMENT', payout: { ...transfer, defaultAccountChanged: true } }), ids.requester)],
+    ['claim card: a default someone else set', card(claim({ payout: { ...transfer, enteredByUserId: ids.approver, enteredByName: 'วิภา' } }))],
+    ['claim card: typed by a preparer whose name is gone', card(claim({ payout: { ...transfer, source: 'PREPARER', enteredByUserId: ids.approver } }))],
+    ['claim card: typed by the requester for this claim', card(claim({ payout: { ...transfer, source: 'REQUESTER' } }))],
+    ['claim card: sent with two accounts', card(claim({
+      payout: { ...transfer, version: 2, accountLast4: '9012', bankName: 'ธนาคารไทยพาณิชย์', source: 'PREPARER', enteredByUserId: ids.approver, enteredByName: 'วิภา' },
+      payoutHistory: [
+        { version: 1, ...KBANK, source: 'DEFAULT_ACCOUNT', frozenAt: '2026-10-01T02:00:00.000Z', verifiedByUserId: ids.approver, verifiedByName: 'สมศรี', verifiedAt: '2026-10-01T03:00:00.000Z', approvalStepId: 'cmg7x2k9p0009stepx3c5v7b9' },
+        { version: 2, ...KBANK, bankName: 'ธนาคารไทยพาณิชย์', accountLast4: '9012', source: 'PREPARER', enteredByUserId: ids.approver, enteredByName: 'วิภา', frozenAt: '2026-10-02T02:00:00.000Z' },
+      ],
+    }))],
+    ['claim card: a long account name in the history', card(claim({
+      payout: transfer,
+      payoutHistory: [
+        { version: 1, ...KBANK, bankName: 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร', accountName: 'บริษัท ตัวอย่างชื่อบัญชีที่ยาวมากเป็นพิเศษเพื่อทดสอบการตัดบรรทัดบนหน้าจอโทรศัพท์ จำกัด (มหาชน) สาขาสำนักงานใหญ่', source: 'REQUESTER', frozenAt: '2026-10-01T02:00:00.000Z' },
+        { version: 2, ...KBANK, source: 'DEFAULT_ACCOUNT', frozenAt: '2026-10-02T02:00:00.000Z' },
+      ],
+    }))],
+  ];
+  // Texts that never pass through a render here: validation, the submit block and the server's refusals.
+  const messages = [
+    logic.LEGACY_PAYOUT_NOTE, logic.PAYOUT_ATTESTATION_TEXT, logic.PAYOUT_ATTESTATION_REQUIRED, ...Object.values(logic.PAYOUT_METHOD_TEXT), ...Object.values(logic.PAYOUT_KIND_TEXT),
+    ...[{ bankChoice: '' }, { bankChoice: logic.OTHER_BANK }, { accountName: '' }, { accountNumber: '' }, { payoutKind: 'PROMPTPAY_PHONE' as const, accountNumber: '1' }]
+      .map((overrides) => logic.payoutAccountFormError(form(overrides))!.text),
+    logic.claimPayoutSubmitBlock({ status: 'DRAFT', payout: { followsDefault: true, notReadyReason: 'payout_method_required' } })!,
+    ...['payout_method_required', 'payout_destination_required', 'payout_destination_invalid', 'payout_verification_required', 'payout_destination_changed',
+      'payout_reveal_denied', 'payout_account_not_set', 'payout_account_edit_denied', 'payout_member_not_found', 'payout_account_member_not_active'].map((code) => translateApiError(code) ?? code),
+  ];
+
+  it('carries no machine token in any state, including a method the API may add later', () => {
+    let checked = 0;
+    for (const [screen, html] of [...screens, ...messages.map((message): [string, string] => ['message', message])]) {
+      for (const raw of visible(html)) {
+        for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(raw, pattern, `${name} on ${screen}: ${raw}`);
+        checked += 1;
+      }
+    }
+    assert.ok(checked > 150, `only ${checked} texts checked`);
+    // Every refusal the server can give has its own Thai sentence, not the code.
+    assert.equal(new Set(messages).size, messages.length);
+  });
+
+  it('stacks on a phone: full-width 44 px controls, one column, long names wrap', () => {
+    for (const [screen, html] of screens) {
+      for (const [control] of html.matchAll(/<(?:button|a)\b[^>]*>/g)) {
+        // The page header's back link sits in the page's pill: as wide as its words, and 44 px high on a phone by its own box.
+        if (control.startsWith('<a ') && control.includes('-my-[13px]')) { assert.match(control, /\bmin-h-11\b/, `${screen}: ${control}`); continue; }
+        if (!control.includes('class="')) continue;
+        if (/class="[^"]*underline/.test(control)) { assert.match(control, /min-h-11/, `${screen}: ${control}`); continue; }
+        assert.match(control, /min-h-11 w-full sm:w-auto/, `${screen}: ${control}`);
+      }
+      for (const [grid] of html.matchAll(/class="[^"]*\bgrid-cols-\d[^"]*"/g)) {
+        // Two columns on a phone only for the short name pair; every form grid is one column until sm.
+        assert.match(grid, /sm:grid-cols-2|grid grid-cols-2 gap-3/, `${screen}: ${grid}`);
+      }
+      assert.doesNotMatch(html, /\bw-\[\d+px\]|min-w-\[\d+px\]|whitespace-nowrap/, `${screen}: a fixed width or an unbreakable line`);
+    }
+    const cardHtml = screens[0]![1];
+    assert.match(cardHtml, /class="[^"]*\[overflow-wrap:anywhere\][^"]*"/);
+    // Requester name and account name sit side by side so a person can compare them, and both wrap.
+    assert.match(cardHtml, /<dl class="grid grid-cols-2 gap-3"><div class="min-w-0">[\s\S]*?break-words[\s\S]*?<div class="min-w-0">[\s\S]*?break-words/);
+    assert.match(read('./ReimbursementPayout.tsx'), /break-all font-mono text-lg[^"]*" data-testid="payout-account-number"/);
+    for (const [radio] of screens[10]![1].matchAll(/<label class="[^"]*"><input type="radio"/g)) assert.match(radio, /min-h-11/);
+  });
+});

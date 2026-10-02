@@ -48,13 +48,16 @@ function toRule(r: any): NotificationRule {
   };
 }
 
+/** The two claim notices whose body prints a decision: the requester's result and finance's hold. */
+const DECISION_NOTICE_TRIGGER_KEYS = ['workflow.reimbursement_decision_requester', 'workflow.reimbursement_finance_review'];
+
 function toEvent(r: any): NotificationEvent {
   const recipient = r.recipients?.[0];
   return {
     ...r,
     severity: r.severity.toLowerCase(),
     status: r.status.toLowerCase(),
-    body: r.triggerKey === 'workflow.reimbursement_decision_requester' ? localizeReimbursementDecision(r.body) : r.body,
+    body: DECISION_NOTICE_TRIGGER_KEYS.includes(r.triggerKey) ? localizeReimbursementDecision(r.body) : r.body,
     payloadJson: r.payloadJson as Record<string, unknown>,
     sourceRefsJson: r.sourceRefsJson as Record<string, unknown>,
     readAt: recipient?.readAt,
@@ -158,6 +161,27 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
       },
     });
     return toEvent(r);
+  }
+  /**
+   * Resolves the open notices that `event` replaces: same trigger, about the same record. The
+   * record is the page the notice opens when it has one (a claim's "paid" notices are filed under
+   * each payment, but all open the same claim), else its source. `alsoTriggerKeys` are other kinds
+   * of notice about that record which the new one replaces too.
+   */
+  async resolveEarlier(
+    event: Pick<NotificationEvent, 'id' | 'companyId' | 'triggerKey' | 'sourceModule' | 'sourceType' | 'sourceId' | 'deepLinkHref'>,
+    now: Date,
+    alsoTriggerKeys: readonly string[] = [],
+  ): Promise<number> {
+    const sameRecord = event.deepLinkHref
+      ? { deepLinkHref: event.deepLinkHref }
+      : { sourceModule: event.sourceModule, sourceType: event.sourceType, sourceId: event.sourceId ?? null };
+    const triggerKey = alsoTriggerKeys.length > 0 ? { in: [event.triggerKey, ...alsoTriggerKeys] } : event.triggerKey;
+    const result = await this.prisma.client.notificationEvent.updateMany({
+      where: { companyId: event.companyId, triggerKey, status: 'OPEN', id: { not: event.id }, ...sameRecord },
+      data: { status: 'RESOLVED', resolvedAt: now },
+    });
+    return result.count;
   }
   async update(companyId: string, id: string, data: Partial<NotificationEvent>) {
     const r = await this.prisma.client.notificationEvent.update({

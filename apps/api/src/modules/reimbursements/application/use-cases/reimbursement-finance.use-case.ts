@@ -8,11 +8,10 @@ import type {
   ReimbursementFinanceQueueItem,
   ReimbursementRequestDetail,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilPeriodKey, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, looksLikeAccountNumber, reimbursementPaidNotice, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
-import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
@@ -21,16 +20,24 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
+import { assertCanReadRequestOrAssignment } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
+  duplicateBlocksPayment,
+  payoutCorrectionPhase,
+  claimApproverUserId,
+  isSamePaymentRequest,
   ageHours,
-  d,
   redactPayload,
 } from '../../domain/logic/reimbursement.logic';
+import { planPaymentPayout } from '../../domain/logic/payout-destination.logic';
+import { paymentPayoutRefusal } from '../../infrastructure/reimbursement-payout';
+import { paymentSlipAuditMetadata } from './reimbursement-payment-slip.use-case';
 
 async function appendReimbursementOutboxWithinTx(tx: any, input: {
   companyId: string;
   eventType: string;
+  aggregateType?: string;
   aggregateId: string;
   eventKey: string;
   payloadJson: Record<string, unknown>;
@@ -39,7 +46,7 @@ async function appendReimbursementOutboxWithinTx(tx: any, input: {
     data: [{
       companyId: input.companyId,
       eventType: input.eventType,
-      aggregateType: 'reimbursement_request',
+      aggregateType: input.aggregateType ?? 'reimbursement_request',
       aggregateId: input.aggregateId,
       eventKey: input.eventKey,
       payloadJson: input.payloadJson,
@@ -56,16 +63,24 @@ export class ListFinanceQueueUseCase {
 
   async execute(ctx: RequestContext): Promise<ReimbursementFinanceQueueItem[]> {
     if (!ctx.permissions.includes('reimbursement.finance_review')) throw new ForbiddenException('Missing permission: reimbursement.finance_review');
-    const rows = await this.repo.listRequests({
-      companyId: ctx.companyId,
-      statuses: ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'],
-      scopes: ctx.scopes ?? {},
-    });
+    const [rows, currentPolicy] = await Promise.all([
+      this.repo.listRequests({
+        companyId: ctx.companyId,
+        statuses: ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'],
+        scopes: ctx.scopes ?? {},
+        withDuplicateCandidates: true,
+      }),
+      this.repo.findPolicy(ctx.companyId, null).then(effectivePolicy),
+    ]);
     const now = new Date();
     return rows.map((r) => ({
       ...toRequestSummary(r),
       ageHours: r.approvedAt ? ageHours(r.approvedAt, now) : 0,
-      hasDuplicateBlocker: r.duplicateStatus === 'POSSIBLE_DUPLICATE' || r.duplicateStatus === 'CONFIRMED_DUPLICATE',
+      // The payment's own test, on the policy the claim was sent under and the candidates the rows came
+      // with. It read the status column, which after approval holds the result of the claim's expense
+      // records: a claim found possibly duplicate at submit had no mark here while its payment was refused.
+      hasDuplicateBlocker: duplicateBlocksPayment(effectivePolicyForRequest(r, currentPolicy).duplicatePolicy,
+        (r.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length),
     }));
   }
 }
@@ -85,14 +100,18 @@ export class FinanceReviewReimbursementUseCase {
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, branch scope included, ahead of every answer that depends on where
+    // the claim stands (final review item 18): the status was said before the branch was looked at.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     if (req.status !== 'FINANCE_REVIEW') {
       throw new UnprocessableEntityException(`Cannot finance-review from status ${req.status}`);
     }
-    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const now = new Date();
     const note = input.note?.trim();
     if (note && note.length > 500) throw new BadRequestException('finance_review_note_too_long');
+    // The note is copied into the requester's notification, on the web and on LINE: no account number there.
+    if (looksLikeAccountNumber(note)) throw new BadRequestException('note_contains_account_number');
     if (input.resolveDuplicate) {
       if (!ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
       if (!input.duplicateResolutionReason?.trim()) throw new BadRequestException('duplicate_resolution_reason_required');
@@ -188,6 +207,7 @@ export class FinanceReviewReimbursementUseCase {
             riskLevel: 'HIGH',
             metadataJson: { decision: input.decision, projectionReady: true },
           }, tx);
+          const approverUserId = claimApproverUserId(req);
           for (const eventType of ['reimbursement.finance_review_updated', 'reimbursement.ready_for_payment']) {
             await appendReimbursementOutboxWithinTx(tx, {
               companyId: ctx.companyId,
@@ -209,6 +229,9 @@ export class FinanceReviewReimbursementUseCase {
                   decision: input.decision,
                   amount: req.amount,
                   currency: req.currency,
+                  // A finance reviewer may not hold the pay right. The claim's approver is the next
+                  // person the ready-to-pay notice asks, before it goes to everyone able to pay.
+                  ...(approverUserId && { approverRecipientUserIds: [approverUserId] }),
                 },
               },
             });
@@ -224,7 +247,7 @@ export class FinanceReviewReimbursementUseCase {
     }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   /**
@@ -270,7 +293,7 @@ export class FinanceReviewReimbursementUseCase {
     });
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
 
   private async recordNonApproval(
@@ -340,7 +363,6 @@ export class RecordReimbursementPaymentUseCase {
   constructor(
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
-    private readonly outbox: OutboxAppendService,
     private readonly reserveNumber: ReserveDocumentNumberUseCase,
     private readonly commitNumber: CommitDocumentNumberUseCase,
     private readonly evidence: ReimbursementEvidenceService,
@@ -362,29 +384,49 @@ export class RecordReimbursementPaymentUseCase {
     // learn that a payment exists by replaying one.
     assertReimbursementBranchInScope(ctx, req.branchId);
 
-    const recorded = req.payments?.find((payment) => payment.status === 'RECORDED');
+    // The request as the repository will compare it: one object for the replay check here and the write below.
+    const payment = {
+      paidAmount: input.paidAmount,
+      currency: input.currency ?? req.currency,
+      paymentMethod: input.paymentMethod,
+      paidAt,
+      paymentReference: input.paymentReference,
+      bankAccountId: input.bankAccountId,
+      slipAttachmentId: input.slipAttachmentId,
+    };
+    // What the payer said about the payout account, as sent. Here it is held against the claim as just
+    // read, for the replay shortcut and a friendly refusal; the repository holds it against the claim
+    // again under the payment lock, which is the check that counts (spec §12.3).
+    const payoutStatement = {
+      payoutDestinationVersion: input.payoutDestinationVersion, payoutConfirmed: input.payoutConfirmed,
+      payoutDefaultToken: input.payoutDefaultToken, methodMismatchReason: input.methodMismatchReason,
+    };
+    const payoutPlan = planPaymentPayout(req, { ...payoutStatement, paymentMethod: input.paymentMethod });
+    const recorded = req.payments?.find((row) => row.status === 'RECORDED');
     if (req.paymentStatus === 'PAID' && recorded) {
-      const samePayment = d(recorded.paidAmount).eq(d(input.paidAmount))
-        && recorded.currency === (input.currency ?? req.currency)
-        && recorded.paymentMethod === input.paymentMethod
-        && recorded.paidAt.getTime() === paidAt.getTime()
-        && recorded.paymentReference === input.paymentReference
-        && recorded.bankAccountId === input.bankAccountId;
-      if (!samePayment) throw new ConflictException('reimbursement_payment_already_recorded');
+      // A replay is the same payment only if every fact matches, the slip and the account included
+      // (spec §12.7). A statement the claim refuses is not that payment either.
+      if ('error' in payoutPlan || !isSamePaymentRequest(
+        { ...recorded, ...await this.repo.findRecordedPaymentPayout(req, recorded) }, { ...payment, ...payoutPlan },
+      )) throw new ConflictException('reimbursement_payment_already_recorded');
       if (!recorded.idempotencyKey.startsWith('legacy:')) {
         await this.ensurePaymentNumber(ctx, paidAt, recorded.idempotencyKey, recorded.id, recorded.paymentNo);
       }
-      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req);
+      return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     }
+
+    // Sent back to have its payout account corrected (payout spec §14.7, §22): its status refuses the
+    // payment below anyway; this tells a payer whose form was open what happened, in their own words.
+    if (payoutCorrectionPhase(req)) throw new ConflictException('payout_correction_in_progress');
 
     // Friendly preflight before reserving a payment number; the repository
     // repeats the same proof under the payment lock to close the race.
     requireTransactionBranchId(req.branchId);
-    await this.repo.assertClaimPaymentReady(ctx.companyId, id);
+    await this.repo.assertClaimPaymentReady(ctx.companyId, id, paidAt);
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     const openDuplicates = await this.repo.listOpenDuplicateCandidates(ctx.companyId, id);
-    const duplicateBlocking = policy.duplicatePolicy === 'BLOCK_PAYMENT' && openDuplicates.length > 0;
+    const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, openDuplicates.length);
 
     const error = validatePaymentRecording({
       status: req.status,
@@ -396,8 +438,22 @@ export class RecordReimbursementPaymentUseCase {
       paidAmount: input.paidAmount,
       paymentMethod: input.paymentMethod,
       paymentReference: input.paymentReference,
+      hasSlip: Boolean(input.slipAttachmentId),
     });
     if (error) throw new UnprocessableEntityException(error);
+    // Everything that can refuse the payment is checked before a payment number is reserved: a
+    // refusal after that point would burn a number that only a retry with the same key reuses.
+    // The payer's statement about the account is one of them.
+    if ('error' in payoutPlan) throw paymentPayoutRefusal(payoutPlan.error);
+    if (payoutPlan.payoutDestinationVersion !== undefined || payoutPlan.payoutDefaultToken !== undefined) {
+      await this.repo.assertPaymentPayoutUsable(req, payoutPlan);
+    }
+    if (input.slipAttachmentId) {
+      await this.repo.assertPaymentSlipUsable({
+        companyId: ctx.companyId, requestId: id, attachmentId: input.slipAttachmentId, actorUserId: ctx.userId,
+        ...(input.confirmSignedCopyWithdrawal === true && { confirmSignedCopyWithdrawal: true }),
+      });
+    }
 
     const paymentAttemptKey = createHash('sha256')
       .update([ctx.companyId, id, clientKey ?? req.updatedAt.toISOString()].join(':'))
@@ -406,26 +462,52 @@ export class RecordReimbursementPaymentUseCase {
     const now = new Date();
     const result = await this.repo.recordPaymentAtomic({
       companyId: ctx.companyId,
+      // Audit B10: written in the payment transaction, so the requester's "paid" notice cannot be
+      // lost between the commit and a later append. One event per payment row.
+      onPaymentPersisted: (tx, payment, paymentStatus, payout) => appendReimbursementOutboxWithinTx(tx, {
+        companyId: ctx.companyId, eventType: 'reimbursement.payment_recorded', aggregateType: 'reimbursement_payment',
+        aggregateId: payment.id, eventKey: `reimbursement.payment_recorded:reimbursement_payment:${payment.id}`,
+        payloadJson: {
+          companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
+          aggregateType: 'reimbursement_payment', aggregateId: payment.id, occurredAt: now.toISOString(),
+          data: redactPayload({
+            requestId: id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, currency: input.currency ?? req.currency, sourceType: 'REIMBURSEMENT_PAYMENT', paymentStatus,
+            // What the requester is told (spec §17.3), as a finished sentence from the payment just written:
+            // the method actually used, the last 4 digits of the account the payer confirmed, the amount and
+            // whether a slip is attached. Nothing else of the payment rides in the event: not the account
+            // beyond those digits, not the slip's file id, not the payer's free-text reason.
+            paidNotice: reimbursementPaidNotice({
+              paymentMethod: payment.paymentMethod, paidAmount: payment.paidAmount, currency: payment.currency,
+              slipCount: payment.slipAttachmentId ? 1 : 0, payoutDestination: payout,
+            }),
+          }),
+        },
+      }),
       reimbursementRequestId: id,
       idempotencyKey: paymentAttemptKey,
       paymentNo: reservation.paymentNo,
-      paidAmount: input.paidAmount,
-      currency: input.currency ?? req.currency,
-      paymentMethod: input.paymentMethod,
-      paidAt,
-      paymentReference: input.paymentReference,
-      bankAccountId: input.bankAccountId,
+      ...payment,
+      // Not a fact of the payment (a replay is the same payment with or without it): the payer's word
+      // on a file that leaves ใบเบิกที่เซ็นแล้ว for good, held against the file under the payment lock.
+      ...(input.confirmSignedCopyWithdrawal === true && { confirmSignedCopyWithdrawal: true }),
+      payout: payoutStatement,
       paidByUserId: ctx.userId,
     });
     if (result.created) await this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payment.record',
       targetType: 'reimbursement_payment', targetId: result.payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-      metadataJson: { paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, paymentMethod: input.paymentMethod, requestId: id },
-    });
-    if (result.created) void this.outbox.append('reimbursement.payment_recorded', 'reimbursement_payment', result.payment.id, {
-      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
-      aggregateType: 'reimbursement_payment', aggregateId: result.payment.id, occurredAt: now.toISOString(),
-      data: redactPayload({ requestId: id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, currency: input.currency ?? req.currency, sourceType: 'REIMBURSEMENT_PAYMENT', paymentStatus: result.request.paymentStatus }),
+      metadataJson: {
+        paymentNo: reservation.paymentNo, paidAmount: input.paidAmount, paymentMethod: input.paymentMethod, requestId: id,
+        ...(result.slip && paymentSlipAuditMetadata(result.slip)),
+        // Which account the payer confirmed: its version, kind, bank and the last 4 digits. Never the
+        // number, and never the payer's free-text reason: that it differs from what was asked is enough here.
+        ...(result.payout && {
+          payoutDestinationVersion: result.payout.payoutDestinationVersion, payoutSource: result.payout.source,
+          payoutKind: result.payout.payoutKind, bankName: result.payout.bankName, accountLast4: result.payout.accountLast4,
+          ...(result.payout.payerVerified && { payerVerifiedAccount: true }),
+        }),
+        ...(result.payment.methodMismatchReason && { paidDifferentlyFromRequested: true, requestedPayoutMethod: req.payoutMethod }),
+      },
     });
     if (result.created && reservation.reservedId) {
       await this.commitNumber.execute({
@@ -436,7 +518,7 @@ export class RecordReimbursementPaymentUseCase {
       }, ctx.userId);
     }
 
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request, ctx);
   }
 
   private async reservePaymentNumber(
@@ -501,20 +583,25 @@ export class VoidReimbursementPaymentUseCase {
   async execute(ctx: RequestContext, requestId: string, paymentId: string, input: VoidReimbursementPaymentInput): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.payment.void')) throw new ForbiddenException('Missing permission: reimbursement.payment.void');
     if (!input.reason || input.reason.trim() === '') throw new BadRequestException('void_reason_required');
+    // The reason is shown on the payment row to every reader of the claim and kept in the audit row,
+    // and "transferred into the wrong account" is where a number gets typed: no account number there.
+    if (looksLikeAccountNumber(input.reason)) throw new BadRequestException('note_contains_account_number');
 
-    const req = await this.repo.findRequestById(ctx.companyId, requestId);
+    // With its relations: a replay of a void answers from this read, and that answer is a claim detail
+    // like any other (steps, payments, signatures), not a header with empty lists.
+    const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     // Before the payment lookup and well before the ledger reversal: void is the most destructive
     // action in this module (audited CRITICAL) and it reverses a posted journal.
     assertReimbursementBranchInScope(ctx, req.branchId);
     const payment = await this.repo.findPaymentById(ctx.companyId, paymentId);
     if (!payment || payment.reimbursementRequestId !== requestId) throw new NotFoundException('Payment not found');
-    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId)) ?? req);
+    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     if (payment.status !== 'RECORDED') throw new UnprocessableEntityException('Payment cannot be voided');
 
     const result = await this.repo.voidPaymentTrueReversal(ctx.companyId, requestId, paymentId, ctx.userId, input.reason, undefined, ctx.requestId ?? `reimbursement-payment-void:${paymentId}`);
 
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request!);
+    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request!, ctx);
   }
 }
 
@@ -546,6 +633,15 @@ export class ExportReimbursementEvidenceUseCase {
     // obey the same scope as reading the claim it summarizes.
     assertReimbursementBranchInScope(ctx, req.branchId);
     const signedCopies = await this.repo.listSignedClaimFormCopies(ctx.companyId, id);
+    const payments = req.payments ?? [];
+    const paymentSlips = payments.length > 0 ? await this.repo.listPaymentSlips(ctx.companyId, payments.map((payment) => payment.id)) : {};
+    // The account, as every other projection has it: bank, account name and the last 4 digits. The
+    // number itself leaves through the audited reveal alone, never through an export.
+    const payout = req.payoutMethod ? await this.repo.findClaimPayout(req) : undefined;
+    const paidInto = payments.flatMap((payment) => payment.payoutDestinationVersion ?? []);
+    const destinations = paidInto.length > 0 ? await this.repo.listPaymentPayoutDestinations(ctx.companyId, id, paidInto) : {};
+    // Who paid, as the payment row names them (invariant I4).
+    const payerNames = payments.length > 0 ? await this.repo.getUserDisplayNames(ctx.companyId, payments.map((payment) => payment.paidByUserId)) : {};
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.export',
@@ -567,6 +663,14 @@ export class ExportReimbursementEvidenceUseCase {
         status: req.status,
         paymentStatus: req.paymentStatus,
         approvalSnapshotHash: req.approvalSnapshotHash,
+        ...(payout?.payoutMethod && { payout: {
+          payoutMethod: payout.payoutMethod,
+          ...(payout.payoutMethod === 'BANK_TRANSFER' && {
+            payoutKind: payout.payoutKind, ...(payout.bankName && { bankName: payout.bankName }), accountName: payout.accountName,
+            accountLast4: payout.accountLast4, version: payout.version,
+            ...(payout.verifiedAt && { verifiedAt: payout.verifiedAt.toISOString() }),
+          }),
+        } }),
       },
       // Evidence lives on the lines: since lane C the header attachment/expense ids
       // are null for new claims, so a header-only export would carry no evidence at all.
@@ -584,7 +688,21 @@ export class ExportReimbursementEvidenceUseCase {
       // Scans of the wet-ink signed form: ids only, same redaction discipline as the lines.
       signedCopyAttachmentIds: signedCopies.map((copy) => copy.attachmentId),
       approvals: (req.approvalSteps ?? []).map((s) => ({ sequenceNo: s.sequenceNo, status: s.status, decidedAt: s.decidedAt?.toISOString(), comment: s.comment, rejectionReason: s.rejectionReason })),
-      payments: (req.payments ?? []).map((p) => ({ paymentNo: p.paymentNo, paidAmount: p.paidAmount, currency: p.currency, paymentMethod: p.paymentMethod, paidAt: p.paidAt.toISOString(), status: p.status })),
+      // The same facts the claim page shows for each payment. Slips are counted, never identified:
+      // opening one is the slip endpoint's decision, not the export's.
+      payments: payments.map((p) => ({
+        paymentNo: p.paymentNo, paidAmount: p.paidAmount, currency: p.currency, paymentMethod: p.paymentMethod,
+        // `paidOn` is the day the claim page prints: the payment's day in Thai time, which is not always
+        // the day `paidAt` reads as in UTC.
+        paidAt: p.paidAt.toISOString(), paidOn: civilDate(p.paidAt), paymentReference: p.paymentReference, status: p.status,
+        paidByUserId: p.paidByUserId, ...(payerNames[p.paidByUserId] && { paidByName: payerNames[p.paidByUserId] }),
+        slipCount: paymentSlips[p.id]?.length ?? 0,
+        // The account this payment was confirmed into (masked), when, and why the method differs from
+        // the one asked for: the same three facts the payment row on the claim page shows.
+        ...(p.payoutDestinationVersion !== undefined && destinations[p.payoutDestinationVersion] && { payoutDestination: destinations[p.payoutDestinationVersion] }),
+        ...(p.payoutConfirmedAt && { payoutConfirmedAt: p.payoutConfirmedAt.toISOString() }),
+        ...(p.methodMismatchReason && { methodMismatchReason: p.methodMismatchReason }),
+      })),
     });
   }
 }

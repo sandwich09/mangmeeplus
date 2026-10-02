@@ -5,7 +5,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { todayCivilDate } from '@watchdog-bms/contracts';
+import { looksLikeAccountNumber, todayCivilDate } from '@watchdog-bms/contracts';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -21,18 +22,38 @@ import {
   dateShort, ErrorBanner, InfoBanner, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
 } from '../expenses/ExpensesUi';
 import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
-import { fetchAttachmentPreviewBlob, previewReimbursementClaimForm, recordReimbursementPayment } from './reimbursements.api';
 import {
-  REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
+  fetchAttachmentPreviewBlob, fetchReimbursementPaymentSlipBlob, previewReimbursementClaimForm, recordReimbursementPayment,
+  uploadReimbursementPaymentSlip,
+} from './reimbursements.api';
+import {
+  PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
+  canUploadSignedCopy, canVoidRecordedPayment, claimHasNoApprover, claimInPayoutCorrection, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
+  claimStatusBadge,
 } from './reimbursements.model';
-import { buildClaimTimeline, categoryText, errorText, formatMoney, paperSignedLine, sumLineAmounts, validatePaymentForm, type ApprovalFieldDiff } from './reimbursements.logic';
+import {
+  NOTE_HAS_ACCOUNT_NUMBER,
+  approvalStepCorrectionNote, attachedFileKindText, buildClaimTimeline, canAttachPaymentSlip, categoryText, chosenPaymentSlipChoice, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
+  rowHasFinanceReview, savePaymentForm, signedCopyMisfiledHint, slipTargetPayment, sumLineAmounts, timelineDateText,
+  type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip, type PaymentSlipChoice,
+} from './reimbursements.logic';
+import { PayerConfirmationCheck } from './ReimbursementPayout';
+import {
+  PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, paymentDestinationText, paymentFormPayout, requestedPayout,
+} from './reimbursement-payout.logic';
+// The one wording for a voided payment (its own import, apart from the model block above).
+import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 
-export function StatusBadge({ status }: { status: string }) {
-  return <MangmeeBadge tone={REQUEST_STATUS_TONES[status] ?? 'slate'}>{REQUEST_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
+/**
+ * `desk`: the claim's `currentDesk`. A claim the system holds reads "รอระบบปรับสถานะ", not the status it has not left yet.
+ * `phase`: its `payoutCorrectionPhase`. A claim sent back for its payout account reads whom it waits for.
+ */
+export function StatusBadge({ status, desk, phase }: { status: string; desk?: { kind?: string } | null; phase?: string | null }) {
+  const badge = claimStatusBadge({ status, currentDesk: desk, payoutCorrectionPhase: phase });
+  return <MangmeeBadge tone={badge.tone}>{badge.label}</MangmeeBadge>;
 }
 export function PaymentBadge({ status }: { status: string }) {
   return <MangmeeBadge tone={PAYMENT_STATUS_TONES[status] ?? 'slate'}>{PAYMENT_STATUS_LABELS[status] ?? '—'}</MangmeeBadge>;
@@ -62,7 +83,7 @@ export function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
   return (
     <Modal open title={`ปฏิเสธคำขอ ${requestNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-3">
-        <p className="text-sm text-gray-500">ระบุเหตุผลที่ปฏิเสธ ผู้ขอจะเห็นข้อความนี้</p>
+        <p className="text-sm text-gray-500">ระบุเหตุผลที่ปฏิเสธ ผู้เบิกจะเห็นข้อความนี้</p>
         {error && <ErrorBanner message={error} />}
         <textarea ref={reasonRef} className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
           onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
@@ -78,17 +99,21 @@ export function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
   );
 }
 
-export function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, onClose, onConfirm }: {
+export function ReasonDialog({ title, description, confirmLabel, busy, error, danger = false, minLength = 1, initialReason = '', onClose, onConfirm }: {
   title: string;
   description: string;
   confirmLabel: string;
   busy?: boolean;
   error?: string | null;
   danger?: boolean;
+  /** The shortest reason the API takes for this action; the confirm button stays off below it. */
+  minLength?: number;
+  /** A reason already on record that the person is asked to correct. */
+  initialReason?: string;
   onClose: () => void;
   onConfirm: (reason: string) => void;
 }) {
-  const [reason, setReason] = useState('');
+  const [reason, setReason] = useState(initialReason);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
   const trimmed = reason.trim();
   useEffect(() => { reasonRef.current?.focus(); }, []);
@@ -100,10 +125,13 @@ export function ReasonDialog({ title, description, confirmLabel, busy, error, da
         <textarea ref={reasonRef} className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
           onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
           placeholder="ระบุเหตุผลให้ชัดเจน" />
-        <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
+        <div className="flex justify-between gap-3 text-xs text-gray-400">
+          <span>{minLength > 1 ? `อย่างน้อย ${minLength} ตัวอักษร` : ''}</span>
+          <span className="tabular-nums">{reason.length}/500</span>
+        </div>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || !trimmed} aria-busy={Boolean(busy)}
+          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || trimmed.length < minLength} aria-busy={Boolean(busy)}
             onClick={() => onConfirm(trimmed)}>{confirmLabel}</button>
         </div>
       </div>
@@ -121,17 +149,30 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
   const [reason, setReason] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
   const trimmed = reason.trim();
+  // The reason is shown on the payment row to every reader of the claim, so the API refuses one that looks like an
+  // account number ("โอนเข้าบัญชีผิด" is where a number gets typed). Said at the field while it is typed, by the API's
+  // own rule, and at the field again when the refusal comes from the server.
+  const typedAccountNumber = looksLikeAccountNumber(reason);
+  const reasonRefused = typedAccountNumber || error === NOTE_HAS_ACCOUNT_NUMBER;
   return (
     <Modal open title={`ยกเลิกการจ่าย ${payment.paymentNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
-        <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย" />
-        {error && <ErrorBanner message={error} />}
+        {/* Spec §12.8: a void also undoes the payment's match to a bank statement line, in the same transaction. */}
+        <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย ถ้าการจ่ายนี้จับคู่กับรายการเดินบัญชีธนาคารไว้แล้ว ระบบจะยกเลิกการจับคู่นั้นให้ด้วย" />
+        {error && error !== NOTE_HAS_ACCOUNT_NUMBER && <ErrorBanner message={error} />}
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผล *</label>
-          <textarea className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
+          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-void-reason">เหตุผล *</label>
+          <textarea id="reimbursement-void-reason" className={cx(inputClass, 'min-h-24 resize-y')} value={reason} aria-required
+            aria-invalid={reasonRefused || undefined} aria-describedby="reimbursement-void-reason-note"
             onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
             placeholder="เช่น บันทึกเลขอ้างอิงผิด หรือยกเลิกรายการโอนแล้ว" />
-          <div className="mt-1 text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
+          <div className="mt-1 flex justify-between gap-3 text-xs leading-5">
+            <span id="reimbursement-void-reason-note" role={reasonRefused ? 'alert' : undefined}
+              className={cx('min-w-0 [overflow-wrap:anywhere]', reasonRefused ? 'font-medium text-error-700' : 'text-gray-500')}>
+              {reasonRefused ? NOTE_HAS_ACCOUNT_NUMBER : 'ทุกคนที่เปิดใบนี้เห็นเหตุผลนี้ อย่าพิมพ์เลขบัญชี'}
+            </span>
+            <span className="shrink-0 tabular-nums text-gray-400">{reason.length}/{REASON_MAX_LENGTH}</span>
+          </div>
         </div>
         <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-600">
           <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />
@@ -139,7 +180,7 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
         </label>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>กลับ</button>
-          <button type="button" className={dangerClass} disabled={busy || !trimmed || !acknowledged} aria-busy={Boolean(busy)}
+          <button type="button" className={dangerClass} disabled={busy || !trimmed || !acknowledged || typedAccountNumber} aria-busy={Boolean(busy)}
             onClick={() => onConfirm(trimmed)}>ยืนยันยกเลิกการจ่าย</button>
         </div>
       </div>
@@ -147,7 +188,7 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
   );
 }
 
-export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm }: {
+export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm, confirmLabel = 'อนุมัติด้วยข้อมูลล่าสุด' }: {
   requestNo?: string;
   diff: ApprovalFieldDiff[];
   lines: any[];
@@ -156,6 +197,8 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
   error: string | null;
   onClose: () => void;
   onConfirm: () => void;
+  /** A claim now paid by transfer is not approved from here: the caller sends the approver to check the account first. */
+  confirmLabel?: string;
 }) {
   return (
     <Modal
@@ -168,7 +211,7 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
         <>
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
           <button type="button" className={successBtn} style={successBtnStyle} disabled={busy} aria-busy={Boolean(busy)} onClick={onConfirm}>
-            อนุมัติด้วยข้อมูลล่าสุด
+            {confirmLabel}
           </button>
         </>
       )}
@@ -234,19 +277,25 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
   );
 }
 
-export function MissingSavedSignatureModal({ companyId, onClose }: {
+/**
+ * Signing was refused because the signer has saved no signature. A signature saved on "ลายเซ็นของฉัน" is usable at
+ * once: nothing is waited for and nobody approves it, so the dialog says where to save one and to come back.
+ */
+export function MissingSavedSignatureModal({ companyId, requestId, onClose }: {
   companyId: string;
+  /** The claim the signer is on: the signature page offers the way back to it once a signature is saved. */
+  requestId?: string;
   onClose: () => void;
 }) {
   return (
-    <Modal open title="ยังไม่มีลายเซ็นที่พร้อมใช้งาน" size="sm" closeLabel="ไว้ภายหลัง" onClose={onClose}>
+    <Modal open title="ยังไม่มีลายเซ็นของคุณ" size="sm" closeLabel="ไว้ภายหลัง" onClose={onClose}>
       <div className="space-y-4">
         <p className="text-sm text-gray-600">
-          กรุณาบันทึกลายเซ็นในฟีเจอร์ลายเซ็นและรอให้ลายเซ็นมีสถานะพร้อมใช้งาน แล้วกลับมาลงนามอีกครั้ง
+          บันทึกลายเซ็นของคุณที่หน้าลายเซ็นของฉัน โดยเซ็นบนหน้าจอหรืออัปโหลดรูปลายเซ็น บันทึกแล้วใช้ลงนามได้ทันที จากนั้นกลับมากดลงนามในใบนี้อีกครั้ง
         </p>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ไว้ภายหลัง</button>
-          <Link href={`/companies/${companyId}/expenses/signatures`} className={btnClass}>ไปหน้าลายเซ็น</Link>
+          <Link href={`/companies/${companyId}/expenses/signatures${requestId ? `?fromClaim=${encodeURIComponent(requestId)}` : ''}`} className={btnClass}>ไปหน้าลายเซ็น</Link>
         </div>
       </div>
     </Modal>
@@ -254,12 +303,26 @@ export function MissingSavedSignatureModal({ companyId, onClose }: {
 }
 
 /**
+ * Owner 2026-10-01: six transfer slips were attached here and declared as signed forms, because the
+ * payment step had nowhere to put a slip. It has now; this says so at the uploader and in its dialog.
+ */
+const SIGNED_COPY_NOT_FOR_SLIPS = 'ช่องนี้สำหรับใบเบิกที่มีลายเซ็นเท่านั้น ไม่ใช่ที่แนบสลิปโอนเงิน สลิปโอนเงินแนบที่ขั้นจ่ายเงินคืน ตอนกดบันทึกจ่าย';
+
+/**
+ * Payout spec §14.4: while the claim's payout account is being corrected its form prints no account and no
+ * approver, so nobody signs it in the system and no scan is declared as signed. Said wherever signing is.
+ */
+const SIGNING_WAITS_FOR_CORRECTION = 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งหลังบัญชีใหม่ได้รับอนุมัติ';
+
+/**
  * A4: a scan counts as the signed record only after the attacher declares both signatures are on it for
  * THIS claim number. Without the declaration it is kept as an ordinary attachment that signs nothing.
  */
-function SignedCopyDialog({ requestNo, fileName, onClose, onSend }: {
+function SignedCopyDialog({ requestNo, fileName, canDeclare, onClose, onSend }: {
   requestNo: string;
   fileName: string;
+  /** False while the claim's payout account is being corrected: the API takes the file and refuses the declaration. */
+  canDeclare: boolean;
   onClose: () => void;
   onSend: (declared: boolean) => void;
 }) {
@@ -268,50 +331,149 @@ function SignedCopyDialog({ requestNo, fileName, onClose, onSend }: {
     <Modal open title="แนบใบเบิกที่เซ็นแล้ว" size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
         <p className="break-words text-sm text-gray-600">{fileName}</p>
-        <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
-          <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={declared} onChange={e => setDeclared(e.target.checked)} />
-          <span>สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ และตรงกับใบเบิกเลขที่ {requestNo}</span>
-        </label>
-        <p className="text-xs text-gray-500">ถ้ายังเซ็นไม่ครบ แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+        <ErrorBanner message={SIGNED_COPY_NOT_FOR_SLIPS} />
+        {canDeclare ? (
+          <>
+            <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700">
+              <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={declared} onChange={e => setDeclared(e.target.checked)} />
+              <span>สำเนานี้มีลายเซ็นผู้เบิกและผู้อนุมัติครบ และตรงกับใบเบิกเลขที่ {requestNo}</span>
+            </label>
+            <p className="text-xs text-gray-500">ถ้ายังเซ็นไม่ครบ แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+          </>
+        ) : (
+          <p className="text-sm text-gray-600">{SIGNING_WAITS_FOR_CORRECTION} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+        )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className={ghostClass} onClick={() => onSend(false)}>แนบเป็นไฟล์แนบทั่วไป</button>
-          <button type="button" className={btnClass} disabled={!declared} onClick={() => onSend(true)}>แนบสำเนาที่ลงนามครบ</button>
+          {canDeclare && <button type="button" className={btnClass} disabled={!declared} onClick={() => onSend(true)}>แนบสำเนาที่ลงนามครบ</button>}
         </div>
       </div>
     </Modal>
   );
 }
 
-/** Full payment only (MVP). A modal in the hub queue; inline in the journey card, never a modal on mobile. */
-export function PaymentForm({ companyId, request, onCancel, onDone }: { companyId: string; request: any; onCancel: () => void; onDone: () => void }) {
+/**
+ * Full payment only (MVP). A modal in the hub queue; inline in the journey card, never a modal on mobile.
+ * `request` is the claim detail where the host has it: files already attached to the claim can serve as the slip.
+ */
+export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }: {
+  companyId: string;
+  request: any;
+  onCancel: () => void;
+  onDone: () => void;
+  /**
+   * Opens a file already on the claim, so the payer sees what it is before choosing it as the slip. Every host gives
+   * it (`useClaimDocumentPreview().openSlipChoice`): the form never lists files that cannot be looked at.
+   */
+  onOpenFile: (choice: PaymentSlipChoice) => void;
+}) {
   const toast = useToast();
-  const [form, setForm] = useState({ paidAmount: String(request.outstandingAmount), paymentMethod: 'CASH', paidAt: todayCivilDate(), paymentReference: '' });
+  // The method starts from what the requester asked for (spec §12.2): the claim's own receiving method.
+  // A legacy claim asked for nothing, so nothing is chosen for its payer. เงินสด is never a fallback
+  // (owner 2026-10-01): a transfer saved under a pre-selected เงินสด is recorded wrongly and without its slip.
+  const [form, setForm] = useState({
+    paidAmount: String(request.outstandingAmount), paymentMethod: requestedPayout(request)?.payoutMethod ?? '', paidAt: todayCivilDate(), paymentReference: '',
+  });
+  // What the payer says about the account: the tick is kept with the key of the account it was given
+  // for, so it is no tick for another account version, another default or another method.
+  const [payer, setPayer] = useState({ confirmedFor: '', mismatchReason: '' });
+  const [slip, setSlip] = useState<PaymentFormSlip | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // One session for this opened form: its key makes บันทึกจ่าย after a lost answer the same payment, never a
+  // second one, and its in-flight flag makes a second press before the first has finished do nothing.
+  const session = useRef<PaymentFormSession>({ idempotencyKey: null, saving: false });
+  const attached = paymentSlipChoices(request);
+  // One rule for the fields shown and the payment the API takes (`reimbursementPaymentRule`): the
+  // slip, the confirmation of the account and the reason for another method than the one asked for.
+  const payout = paymentFormPayout(request, form.paymentMethod);
+  const slipRequired = payout.rule.slipRequired;
+  const chosen = chosenPaymentSlipChoice(slip, attached);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const v = validatePaymentForm({ ...form, outstandingAmount: String(request.outstandingAmount) });
-    if (v) { setError(v); return; }
-    setBusy(true); setError(null);
-    try {
-      await recordReimbursementPayment(companyId, request.id, { ...form, paidAt: new Date(form.paidAt).toISOString(), paymentReference: form.paymentReference || undefined });
-      onDone();
-      toast.success('บันทึกจ่ายเรียบร้อยแล้ว');
-    } catch (e2) { setError(errorText(e2)); } finally { setBusy(false); }
+    const result = await savePaymentForm({ form, outstandingAmount: String(request.outstandingAmount), slip, slipChoices: attached, session: session.current, payout, payer }, {
+      uploadSlip: (file) => uploadReimbursementPaymentSlip(companyId, request.id, file),
+      recordPayment: (body) => recordReimbursementPayment(companyId, request.id, body),
+      // Kept once uploaded: if saving then fails, the retry sends this same slip instead of uploading again.
+      onSlipUploaded: setSlip,
+      newIdempotencyKey: () => crypto.randomUUID(),
+      onBusy: (sending) => { setBusy(sending); if (sending) setError(null); },
+    });
+    if (result.status === 'refused') setError(result.text);
+    if (result.status === 'saved') { onDone(); toast.success('บันทึกจ่ายเรียบร้อยแล้ว'); }
   };
 
   return (
     <form className="space-y-3" onSubmit={submit}>
       <p className="text-xs text-gray-500">จ่ายเต็มจำนวนคงค้าง {formatMoney(request.outstandingAmount, request.currency)}</p>
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label><input className={inputClass} type="number" step="0.01" required value={form.paidAmount} onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))} /></div>
-      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วิธีจ่าย</label>
-        <ThemedSelect className={inputClass} value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>
+      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วิธีจ่าย *</label>
+        <ThemedSelect className={inputClass} aria-label="วิธีจ่าย" required value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>
+          <option value="" disabled>เลือกวิธีจ่าย</option>
           {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </ThemedSelect>
       </div>
+      {/* Spec §12.4: paying another way than the requester asked is allowed, and says why. */}
+      {payout.rule.mismatchReasonRequired && (
+        <div data-testid="reimbursement-payment-mismatch">
+          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-payment-mismatch-reason">เหตุผลที่จ่ายต่างจากที่ผู้เบิกขอ *</label>
+          <textarea id="reimbursement-payment-mismatch-reason" className={cx(inputClass, 'min-h-20 resize-y')} aria-required maxLength={REASON_MAX_LENGTH} disabled={busy}
+            value={payer.mismatchReason} onChange={e => setPayer(p => ({ ...p, mismatchReason: sanitizeReasonInput(e.target.value) }))}
+            placeholder="เช่น ผู้เบิกขอรับเป็นเงินสดแทน" />
+          <p className="mt-1 text-xs leading-5 text-gray-500">
+            ผู้เบิกขอ{payout.requestedMethodText} ประวัติการจ่ายจะแสดงว่า{PAID_DIFFERENTLY_LABEL} พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้
+          </p>
+        </div>
+      )}
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
-      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">เลขอ้างอิง {(form.paymentMethod === 'BANK_TRANSFER' || form.paymentMethod === 'CHEQUE') && '*'}</label><input className={inputClass} value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} /></div>
+      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">เลขอ้างอิง {(form.paymentMethod === 'BANK_TRANSFER' || form.paymentMethod === 'CHEQUE') && '*'}</label><input className={inputClass} aria-label="เลขอ้างอิง" value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} /></div>
+      <div data-testid="reimbursement-payment-slip">
+        <div className="mb-1.5 text-xs font-semibold text-gray-600">สลิปหรือหลักฐานการจ่าย {slipRequired && '*'}</div>
+        {/* No capture attribute, like the receipt upload: a phone offers its camera and its photo library. */}
+        <ThemedFile file={slip ? ('file' in slip ? slip.file : slip.name) : null} accept={RECEIPT_UPLOAD_ACCEPT} aria-label="สลิปหรือหลักฐานการจ่าย"
+          aria-required={slipRequired} disabled={busy} loading={busy && !!slip && 'file' in slip}
+          onChange={file => setSlip(file ? { file } : null)} />
+        <p className="mt-1 text-xs leading-5 text-gray-400">
+          {slipRequired ? 'จ่ายด้วยการโอนต้องแนบสลิป' : 'แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้'} · PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF ขนาดไม่เกิน 10 MB
+        </p>
+        {attached.length > 0 && (
+          <div className="mt-3 [overflow-wrap:anywhere]" data-testid="reimbursement-payment-slip-choices">
+            <div className="text-xs font-semibold text-gray-600">เลือกจากไฟล์ที่แนบไว้ในใบนี้</div>
+            <p className="mb-2 mt-1 text-xs leading-5 text-gray-500">ใช้แทนการแนบไฟล์ใหม่ได้ เลือกเฉพาะไฟล์ที่เป็นสลิปหรือหลักฐานการโอน เปิดดูก่อนเลือกได้</p>
+            {/* A list, not a drop-down: each file says what it is on this claim and can be opened before it is chosen. */}
+            <div role="radiogroup" aria-label="เลือกจากไฟล์ที่แนบไว้ในใบนี้" className="space-y-2">
+              {attached.map(choice => (
+                <div key={choice.attachmentId} className={cx('rounded-xl border px-3 py-2', chosen?.attachmentId === choice.attachmentId ? 'border-brand-300 bg-brand-25' : 'border-gray-200')}>
+                  <label className="flex min-h-11 cursor-pointer items-start gap-3">
+                    <input type="radio" name="reimbursement-payment-slip-choice" className="mt-0.5 h-5 w-5 shrink-0" disabled={busy}
+                      checked={chosen?.attachmentId === choice.attachmentId}
+                      onChange={() => setSlip({ attachmentId: choice.attachmentId, name: choice.label })} />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-gray-900">{choice.label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-gray-500">{choice.what}</span>
+                    </span>
+                  </label>
+                  <button type="button" className="ml-8 min-h-11 text-left text-sm text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
+                    disabled={busy} aria-busy={Boolean(busy)} onClick={() => onOpenFile(choice)}>
+                    เปิดดูไฟล์นี้
+                  </button>
+                </div>
+              ))}
+            </div>
+            {chosen?.kind === 'signed-copy' && (
+              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800" data-testid="reimbursement-payment-slip-move-note">
+                เมื่อบันทึกจ่าย ไฟล์ <span className="font-semibold">{chosen.label}</span> จะย้ายออกจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้ และย้ายกลับไม่ได้ ถ้าเคยยืนยันว่าไฟล์นี้คือใบเบิกที่ลงนามครบ ระบบจะถอนการยืนยันนั้น
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+      {/* Spec §12.3: the transfer went into the account shown. Given per account, never carried over to another. */}
+      {payout.confirmation && (
+        <PayerConfirmationCheck confirmation={payout.confirmation} checked={payer.confirmedFor === payout.confirmation.key} disabled={busy}
+          onChange={(checked) => setPayer(p => ({ ...p, confirmedFor: checked ? payout.confirmation!.key : '' }))} />
+      )}
       {error && <ErrorBanner message={error} />}
       <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
     </form>
@@ -323,7 +485,9 @@ const attachmentPreviewMimeType = (fileName: string): 'application/pdf' | 'image
 );
 type ReimbursementDocumentPreviewTarget =
   | { kind: 'claim-form'; reimbursementId: string; name: string }
-  | { kind: 'attachment'; reimbursementId: string; attachmentId: string; fileName: string; mimeType: 'application/pdf' | 'image/png' | 'image/jpeg' };
+  | { kind: 'attachment'; reimbursementId: string; attachmentId: string; fileName: string; mimeType: 'application/pdf' | 'image/png' | 'image/jpeg' }
+  // A slip is fetched through the claim's own slip endpoint, never the generic attachment download.
+  | { kind: 'payment-slip'; reimbursementId: string; paymentId: string; attachmentId: string; name: string };
 
 /**
  * ใบเบิกค่าใช้จ่าย (rendered server-side as SVG, saved as PDF from the viewer) and authenticated
@@ -367,7 +531,7 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
   const loadDocumentPreview = async (target: ReimbursementDocumentPreviewTarget) => {
     const requestId = ++previewRequestRef.current;
     claimFormSaveRequestRef.current += 1;
-    const loadingKey = target.kind === 'claim-form' ? `claim-form:${target.reimbursementId}` : `attachment:${target.attachmentId}`;
+    const loadingKey = target.kind === 'claim-form' ? `claim-form:${target.reimbursementId}` : `${target.kind}:${target.attachmentId}`;
     setPreviewLoadingKey(loadingKey);
     onError(null);
     try {
@@ -381,14 +545,16 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
         const pages = nextPreview.pageSvgDataUrls?.length ? nextPreview.pageSvgDataUrls : [nextPreview.svgDataUrl];
         setClaimForm({ name: target.name, url: pages[0]!, pages });
       } else {
-        const blob = await fetchAttachmentPreviewBlob(companyId, target.attachmentId, target.mimeType);
+        const blob = target.kind === 'payment-slip'
+          ? await fetchReimbursementPaymentSlipBlob(companyId, target.reimbursementId, target.paymentId, target.attachmentId)
+          : await fetchAttachmentPreviewBlob(companyId, target.attachmentId, target.mimeType);
         if (requestId !== previewRequestRef.current) return;
         const url = URL.createObjectURL(blob);
         releaseAttachmentPreviewUrl();
         previewUrlRef.current = url;
         setClaimForm(null);
         setClaimFormError(null);
-        setAttachmentPreview({ name: target.fileName, mimeType: blob.type, url });
+        setAttachmentPreview({ name: target.kind === 'payment-slip' ? target.name : target.fileName, mimeType: blob.type, url });
       }
       setPreviewTarget(target);
     } catch (e) {
@@ -414,6 +580,15 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
   const openAttachment = async (reimbursementId: string, attachmentId: string, fileName: string) => {
     try {
       await loadDocumentPreview({ kind: 'attachment', reimbursementId, attachmentId, fileName, mimeType: attachmentPreviewMimeType(fileName) });
+    } catch {
+      // The active request already reports its localized failure through onError.
+    }
+  };
+
+  /** The viewer names the slip by its payment, so no file name has to leave the API for people who cannot open it. */
+  const openPaymentSlip = async (reimbursementId: string, paymentId: string, attachmentId: string, name: string) => {
+    try {
+      await loadDocumentPreview({ kind: 'payment-slip', reimbursementId, paymentId, attachmentId, name });
     } catch {
       // The active request already reports its localized failure through onError.
     }
@@ -471,12 +646,21 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
         retryLabel="ลองอีกครั้ง"
         openNewTabLabel="เปิดในแท็บใหม่"
         onClose={closeDocumentPreview}
-        onRetry={previewTarget?.kind === 'attachment' ? () => loadDocumentPreview(previewTarget) : undefined}
+        onRetry={previewTarget && previewTarget.kind !== 'claim-form' ? () => loadDocumentPreview(previewTarget) : undefined}
       />}
     </>
   );
 
-  return { previewLoadingKey, closeDocumentPreview, openClaimForm, openAttachment, previewModals };
+  /**
+   * A file already on the claim, opened before it is chosen as a payment's slip (`PaymentForm`'s `onOpenFile`): a
+   * slip of an earlier payment through the slip's own endpoint, a signed copy as an attachment of the claim. One
+   * handler for every host of the payment form, so none of them lists files that cannot be looked at.
+   */
+  const openSlipChoice = (reimbursementId: string, choice: PaymentSlipChoice) => (choice.kind === 'previous-slip' && choice.paymentId
+    ? openPaymentSlip(reimbursementId, choice.paymentId, choice.attachmentId, choice.label)
+    : openAttachment(reimbursementId, choice.attachmentId, choice.fileName ?? choice.label));
+
+  return { previewLoadingKey, closeDocumentPreview, openClaimForm, openAttachment, openPaymentSlip, openSlipChoice, previewModals };
 }
 
 /** Who is paid back, why, and how much — the head of every claim view. */
@@ -485,7 +669,7 @@ export function ClaimSummaryCard({ detail }: { detail: any }) {
     <MangmeeCard className="p-4">
       <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
         <div className="min-w-0">
-          <div className="text-xs font-semibold text-gray-500">ผู้เบิก / ผู้รับเงินคืน</div>
+          <div className="text-xs font-semibold text-gray-500">ผู้เบิก</div>
           <div className="mt-1 font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? '—'}</div>
           {detail.createdByName && <div className="mt-2 text-xs text-gray-500">ผู้จัดทำ: {detail.createdByName}</div>}
           <div className="mt-3 text-xs font-semibold text-gray-500">เหตุผล</div>
@@ -509,12 +693,18 @@ function Row({ k, v }: { k: string; v: any }) {
  * Timeline, facts, lines with their evidence, signatures and signed copies, approval steps and
  * payments. Every write control repeats its own actor/permission/state check; the server re-checks.
  */
-export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenAttachment, onLineReceipt, onSign, onUploadSignedCopy, onRequestVoidPayment }: {
+export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenAttachment, onLineReceipt, onSign, onUploadSignedCopy, onRequestVoidPayment, onOpenPaymentSlip, onAttachPaymentSlip, onUseSignedCopyAsSlip }: {
   detail: any;
   userId: string;
   permissions: readonly string[];
   busy: boolean;
   onOpenAttachment: (attachmentId: string, fileName: string) => void;
+  /** Opens one slip of one payment; offered only to viewers the slip endpoint serves. */
+  onOpenPaymentSlip: (payment: any, attachmentId: string, name: string) => void;
+  /** Adds a slip to a payment already recorded (add-only). */
+  onAttachPaymentSlip: (payment: any, file: File) => void;
+  /** Moves a file out of ใบเบิกที่เซ็นแล้ว to be the slip of that payment (a slip attached there by mistake). */
+  onUseSignedCopyAsSlip: (copy: any, payment: any) => void;
   onLineReceipt: (lineNo: number, file: File | null) => void;
   /** Every block this viewer may sign, from one tap (spec §9). */
   onSign: (roles: ClaimSignatureRole[]) => void;
@@ -528,12 +718,18 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   const { canEditDraft } = reimbursementOwnActions(detail, userId, permissions);
   const signatures: any[] = detail.signatures ?? [];
   const signedCopies: any[] = detail.signedCopies ?? [];
-  const slots = claimSignatureSlots(detail);
+  // No approver block where there is no approver: a claim that needed no approval read as finished beside a block
+  // "ผู้อนุมัติ · ยังไม่ลงนาม" that nobody could ever sign.
+  const noApprover = claimHasNoApprover(detail);
+  const slots = claimSignatureSlots(detail).filter((role) => role !== 'APPROVER' || !noApprover);
   const signAction = claimSignAction(detail, userId);
   // A4: a declared paper scan signs the ผู้เบิก/ผู้อนุมัติ blocks. Newest first, so this is the copy that counts.
   const paperSigned = detail.documentSignedVia === 'PAPER' || detail.documentSignedVia === 'BOTH';
   const paperCopy = signedCopies.find((copy: any) => copy.acknowledgedAt);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
+  const correcting = claimInPayoutCorrection(detail);
+  const slipTarget = slipTargetPayment(detail, permissions);
+  const misfiledHint = signedCopyMisfiledHint(detail, permissions);
   // One receipt block for the phone card and the table cell, so the upload rules live in one place.
   const lineReceipt = (l: any) => (
     <>
@@ -567,7 +763,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
               <span className={cx('min-w-0 flex-1', step.state === 'current' ? 'font-semibold text-gray-900' : step.state === 'done' ? 'text-gray-700' : 'text-gray-400')}>
                 {step.label}
               </span>
-              {step.date && <span className="shrink-0 text-xs tabular-nums text-gray-400">{dateShort(step.date)}</span>}
+              {step.date && <span className="shrink-0 text-xs tabular-nums text-gray-400">{timelineDateText(timeline, step)}</span>}
             </li>
           ))}
         </ol>
@@ -577,8 +773,10 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <h4 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h4>
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
-          <Row k="สถานะ" v={<StatusBadge status={detail.status} />} />
-          <Row k="ตรวจสอบการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />
+          <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} phase={detail.payoutCorrectionPhase} />} />
+          {/* Only for a claim that is at, or went through, the finance review. A claim with no such step has none to speak
+              of, and one that has not reached it yet read "ไม่ต้องตรวจ" here, which is not so: the step strip names what is ahead. */}
+          {rowHasFinanceReview(detail) && <Row k="ตรวจการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />}
           {detail.financeReviewedByName && <Row k="ผู้ตรวจการเงิน" v={detail.financeReviewedByName} />}
           <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />
           <Row k="ใบเสร็จ" v={RECEIPT_REQUIREMENT_LABELS[detail.receiptRequirementStatus]} />
@@ -649,7 +847,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <div id="reimbursement-signatures" className="scroll-mt-24">
           <MangmeeCard className="p-4">
             <h4 className="mb-2 text-sm font-bold text-gray-900">ลายเซ็นในใบเบิก</h4>
-            <div className={cx('grid grid-cols-2 gap-2', slots.length > 2 && 'sm:grid-cols-4')}>
+            <div className={cx('grid gap-2', slots.length > 1 && 'grid-cols-2', slots.length > 2 && 'sm:grid-cols-4')}>
               {slots.map(role => {
                 const signed = signatures.find((s: any) => s.role === role);
                 return (
@@ -670,7 +868,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                         <>
                           <MangmeeBadge tone="brand">ลงนามบนกระดาษ</MangmeeBadge>
                           {paperCopy && (
-                            <button type="button" className="mt-1 block min-h-11 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2"
+                            <button type="button" className="mt-1 block min-h-11 min-w-11 text-left text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2"
                               onClick={() => onOpenAttachment(paperCopy.attachmentId, paperCopy.fileName)}>
                               ดูสำเนา
                             </button>
@@ -682,9 +880,11 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                 );
               })}
             </div>
+            {noApprover && <p className="mt-3 text-xs text-gray-600">ใบนี้ไม่ต้องอนุมัติตามนโยบาย จึงมีเฉพาะลายเซ็นของผู้เบิก</p>}
             {slots.length === 2 && claimSelfApproved(detail) && (
               <p className="mt-3 text-xs text-gray-600">ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท</p>
             )}
+            {correcting && <p className="mt-3 text-xs text-gray-600">{SIGNING_WAITS_FOR_CORRECTION}</p>}
             {/* One tap signs every block this viewer really acted on; the server re-checks each role. */}
             {signAction && (
               <button type="button" className={cx(ghostClass, 'mt-3 w-full sm:w-auto')} disabled={busy} aria-busy={Boolean(busy)}
@@ -708,9 +908,21 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   {signedCopies.map((copy: any) => (
                     <li key={copy.attachmentId} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2">
                       <button className="block min-h-11 max-w-full truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
+                      {/* A scan declared as signed before a correction round showed the account that was then corrected. */}
+                      {/* What the file is, before anyone opens it: a picture or a PDF, then what it was attached as. */}
                       <div className="break-words text-gray-500">
-                        {copy.acknowledgedAt ? paperSignedLine(copy) : `ไฟล์แนบทั่วไป · แนบเมื่อ ${dateShort(copy.uploadedAt)}`}
+                        {`${attachedFileKindText(copy.fileName)} · ${copy.beforePayoutCorrection ? `${SIGNED_COPY_BEFORE_CORRECTION_LABEL} · ไม่นับว่าลงนามแล้ว · แนบเมื่อ ${dateShort(copy.uploadedAt)}`
+                          : copy.acknowledgedAt ? paperSignedLine(copy) : `ไฟล์แนบทั่วไป · แนบเมื่อ ${dateShort(copy.uploadedAt)}`}`}
                       </div>
+                      {/* A slip attached here by mistake, where the row has no button of its own: what to do about it, for whoever pays. */}
+                      {misfiledHint && <div className="mt-1 break-words text-gray-500" data-testid="reimbursement-signed-copy-misfiled-hint">{misfiledHint}</div>}
+                      {/* A slip attached here by mistake moves to the payment without being uploaded again (spec §16). */}
+                      {slipTarget && (
+                        <button type="button" className="mt-1 min-h-11 text-left text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
+                          disabled={busy} aria-busy={Boolean(busy)} onClick={() => onUseSignedCopyAsSlip(copy, slipTarget)}>
+                          ใช้ไฟล์นี้เป็นสลิปการจ่าย
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -719,6 +931,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
               <div className="mt-3 block text-xs font-semibold text-gray-600">
                 แนบใบเบิกที่เซ็นแล้ว (PDF/JPG/PNG)
                 <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) setPendingCopy(file); }} />
+                <p className="mt-1.5 font-normal leading-5 text-gray-500">{SIGNED_COPY_NOT_FOR_SLIPS}</p>
               </div>
             )}
           </MangmeeCard>
@@ -726,6 +939,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             <SignedCopyDialog
               requestNo={detail.requestNo}
               fileName={pendingCopy.name}
+              canDeclare={!correcting}
               onClose={() => setPendingCopy(null)}
               onSend={(declared) => { onUploadSignedCopy(pendingCopy, declared ? detail.requestNo : undefined); setPendingCopy(null); }}
             />
@@ -741,11 +955,13 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
               <li key={s.id} className="rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold text-gray-700">ขั้นที่ {s.sequenceNo}</span>
-                  <MangmeeBadge tone={s.status === 'APPROVED' ? 'brand' : s.status === 'REJECTED' ? 'danger' : 'slate'}>
+                  {/* An approval a correction round set aside is history: it keeps its words and loses the colour of one in force. */}
+                  <MangmeeBadge tone={approvalStepCorrectionNote(s) ? 'slate' : s.status === 'APPROVED' ? 'brand' : s.status === 'REJECTED' ? 'danger' : 'slate'}>
                     {APPROVAL_STEP_STATUS_LABELS[s.status] ?? '—'}
                   </MangmeeBadge>
                 </div>
                 <div className="mt-1">{s.decidedByName ? `โดย ${s.decidedByName}` : s.approverName ? `ผู้อนุมัติ: ${s.approverName}` : '—'}</div>
+                {approvalStepCorrectionNote(s) && <div className="mt-1 text-gray-500">{approvalStepCorrectionNote(s)}</div>}
                 {s.comment && <div className="mt-1 text-gray-500">{s.comment}</div>}
                 {s.rejectionReason && <div className="mt-1 text-error-700">{s.rejectionReason}</div>}
               </li>
@@ -757,14 +973,63 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <MangmeeCard className="p-4">
           <h4 className="mb-2 text-sm font-bold text-gray-900">การจ่ายเงิน</h4>
           <ul className="space-y-2">
-            {detail.payments.map((p: any) => (
-              <li key={p.id} className="rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600">
+            {detail.payments.map((p: any) => {
+              // Every fact on this row comes from the one payment record. Everyone is told how many slips it
+              // carries; the files themselves are listed only for a viewer who may open them.
+              const slips: any[] = p.slips ?? [];
+              const slipCount = paymentSlipCount(p);
+              // The API's own verdict for this viewer, from the rule its slip endpoint enforces: ดูสลิป is
+              // never worked out here from the session's permissions, so it cannot be offered and then refused.
+              const canOpenSlip = p.viewerCanOpenSlips === true;
+              const slipName = `${p.status === 'VOIDED' ? 'สลิปของการจ่ายที่ยกเลิกแล้ว' : 'สลิปการจ่าย'} ${p.paymentNo ?? ''}`.trim();
+              return (
+              <li key={p.id} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2.5 text-xs text-gray-600" data-testid="reimbursement-payment-row">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-mono font-semibold text-gray-700">{p.paymentNo}</span>
                   <span className="font-semibold tabular-nums text-gray-900">{formatMoney(p.paidAmount, p.currency)}</span>
                 </div>
-                <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : PAYMENT_STATUS_LABELS[p.status] ?? 'สถานะการจ่าย'}</div>
+                {/* A voided payment is said in the words of the button that voids it, the same words the timeline uses. */}
+                <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : p.status === 'VOIDED' ? PAYMENT_VOIDED_LABEL : 'สถานะการจ่าย'}</div>
+                <div className="mt-1 break-words text-gray-500">{`วันที่จ่าย ${dateShort(p.paidAt)}${p.paymentReference ? ` · เลขอ้างอิง ${p.paymentReference}` : ''}`}</div>
+                {/* Where the money went, as the payer confirmed it: masked for everyone, and when they confirmed.
+                    A transfer with no account confirmed says so (a legacy claim, or a claim that asked for cash). */}
+                {paymentDestinationText(p) ? (
+                  <div className="mt-1 break-words text-gray-500">
+                    {`โอนเข้า ${paymentDestinationText(p)}${p.payoutConfirmedAt ? ` · ยืนยันเมื่อ ${formatThaiDateTime(p.payoutConfirmedAt)}` : ''}`}
+                  </div>
+                ) : p.paymentMethod === 'BANK_TRANSFER' && <div className="mt-1 text-gray-500">{PAYMENT_NO_CLAIM_ACCOUNT}</div>}
+                {p.methodMismatchReason && (
+                  <div className="mt-1 break-words text-gray-600">
+                    <MangmeeBadge tone="amber">{PAID_DIFFERENTLY_LABEL}</MangmeeBadge>
+                    <span className="ml-2">เหตุผล: {p.methodMismatchReason}</span>
+                  </div>
+                )}
                 {p.paidByName && <div className="mt-1 text-gray-500">จ่ายโดย {p.paidByName}</div>}
+                {slipCount > 0 ? (
+                  <div className="mt-1">
+                    <div className="text-gray-500">{p.status === 'VOIDED' ? 'สลิปของการจ่ายที่ยกเลิกแล้ว' : 'มีสลิปแนบ'} {slipCount} ไฟล์</div>
+                    {canOpenSlip && (
+                      <div className="flex flex-wrap gap-x-4">
+                        {slips.map((slip: any, index: number) => {
+                          const label = slips.length > 1 ? `ดูสลิป ${index + 1}` : 'ดูสลิป';
+                          return (
+                            <button key={slip.attachmentId} type="button" className="min-h-11 min-w-11 text-left text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50"
+                              disabled={busy} aria-busy={Boolean(busy)} onClick={() => onOpenPaymentSlip(p, slip.attachmentId, slips.length > 1 ? `${slipName} (${index + 1})` : slipName)}>
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : <div className="mt-1 text-gray-500">ไม่มีสลิปแนบ</div>}
+                {canAttachPaymentSlip(p, permissions) && (
+                  <div className="mt-2 font-semibold text-gray-600">
+                    {slipCount > 0 ? 'แนบสลิปเพิ่ม' : 'แนบสลิป'}
+                    <ThemedFile className="mt-1.5" file={null} accept={RECEIPT_UPLOAD_ACCEPT} aria-label={slipCount > 0 ? 'แนบสลิปเพิ่ม' : 'แนบสลิป'}
+                      disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onAttachPaymentSlip(p, file); }} />
+                  </div>
+                )}
                 {p.status === 'VOIDED' && p.voidReason && <div className="mt-1 text-error-700">เหตุผลที่ยกเลิก: {p.voidReason}</div>}
                 {canVoidRecordedPayment(p, permissions) && (
                   <button type="button" className="mt-2 min-h-11 text-error-700 underline underline-offset-4 disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onRequestVoidPayment(p)}>
@@ -772,7 +1037,8 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   </button>
                 )}
               </li>
-            ))}
+              );
+            })}
           </ul>
         </MangmeeCard>
       )}
