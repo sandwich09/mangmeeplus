@@ -214,7 +214,9 @@ function makePrisma() {
         // The one query that asks who the active System Admins are.
         if (args.where?.roles) {
           assert.deepEqual(args.where, {
-            status: 'ACTIVE', user: { status: 'ACTIVE' }, company: { status: 'ACTIVE' },
+            // A retired admin keeps the protected role; a disabled sign-in is what retires it.
+            status: 'ACTIVE', user: { status: 'ACTIVE', credential: { isNot: { status: 'DISABLED' } } },
+            company: { status: 'ACTIVE' },
             roles: { some: { role: { key: 'SYSTEM_ADMIN', status: 'ACTIVE', isSystem: true, scopeKey: 'system', companyId: null } } },
           });
           return state.systemAdmins.map((userId) => ({ userId }));

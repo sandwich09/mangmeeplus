@@ -776,12 +776,17 @@ export class DataRightsService {
    * Everyone who could be the second pair of eyes: an active person holding the SYSTEM-owned System
    * Admin role through an active membership of an active company. A company role that merely carries
    * the key is not one (`PLATFORM_SEAT_EXEMPT_ROLE`).
+   *
+   * An account whose sign-in was disabled is not a person who could take the step. The System Admin
+   * cutover retires an admin exactly that way: the protected user, membership and role rows stay and
+   * the credential becomes DISABLED (`prisma/system-admin-cutover.ts`). Production has such an
+   * account, so counting it would close the single-admin path for the one admin who is left.
    */
   private async activeSystemAdminUserIds(db: Pick<Tx, 'companyMembership'>): Promise<string[]> {
     const rows = await db.companyMembership.findMany({
       where: {
         status: 'ACTIVE',
-        user: { status: 'ACTIVE' },
+        user: { status: 'ACTIVE', credential: { isNot: { status: 'DISABLED' } } },
         company: { status: 'ACTIVE' },
         roles: { some: { role: PLATFORM_SEAT_EXEMPT_ROLE } },
       },

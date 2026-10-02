@@ -354,10 +354,22 @@ describe('data-rights single-admin mode on real PostgreSQL', { skip: !databaseUr
     assert.deepEqual(await singleAdminAudits(caseId), []);
   });
 
-  it('counts a System Admin only when the person, the membership, the company and the system role are all real and active', async () => {
+  it('counts a System Admin only when the person, the sign-in, the membership, the company and the system role are all real and active', async () => {
     await activeAdmins('admin-a', 'admin-b');
     const caseId = await reviewedCase(adminA);
     const available = async () => (await service.getCase(adminA, caseId)).singleAdminAvailable;
+    assert.equal(await available(), false);
+
+    // The System Admin cutover retires an admin by disabling the credential; the protected user,
+    // membership and role rows stay. Nobody can sign in to that account, so it is not a second person.
+    await client.userCredential.create({ data: { userId: 'admin-b', passwordHash: 'retired-account', status: 'DISABLED', expiresAt: new Date() } });
+    assert.equal(await available(), true);
+    // A temporary password is a person who has not signed in yet, and an active one a person who has.
+    await client.userCredential.update({ where: { userId: 'admin-b' }, data: { status: 'TEMPORARY', expiresAt: null } });
+    assert.equal(await available(), false);
+    await client.userCredential.update({ where: { userId: 'admin-b' }, data: { status: 'ACTIVE' } });
+    assert.equal(await available(), false);
+    await client.userCredential.delete({ where: { userId: 'admin-b' } });
     assert.equal(await available(), false);
 
     // The second admin's account is suspended: one active admin again.
