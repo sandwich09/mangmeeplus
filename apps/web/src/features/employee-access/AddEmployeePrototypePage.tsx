@@ -15,7 +15,7 @@ import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkTok
 import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
 import { isEmployeeEmail } from './employee-email.logic';
-import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
+import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -697,7 +697,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                 })}
               </div>
               {errorFieldId === 'employee-branches' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
-              {viewerBranchIds !== undefined && <p className="mt-2 text-sm text-gray-500">กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง หากต้องการเปลี่ยนขอบเขตนอกเหนือจากนี้ กรุณาติดต่อเจ้าของร้าน</p>}
+              {viewerBranchIds !== undefined && <p className="mt-2 text-sm text-gray-500">{EMPLOYEE_BRANCH_SCOPE_HELP}</p>}
               {branchPickerLocked && (
                 <div className="mt-2 text-sm font-medium text-gray-400">
                   บทบาท {allBranchRoles.map((role) => role.name).join(', ')} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
@@ -743,7 +743,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               {result ? <><div className="grid items-stretch gap-4 sm:grid-cols-2">
                 <div className="flex flex-col rounded-[14px] border border-gray-200 p-4">
                   <div className="text-[15px] font-extrabold text-gray-800">บัญชีเข้าระบบเว็บ</div>
-                  <div className="mb-2.5 mt-0.5 text-[13px] font-medium text-gray-400">ใช้เข้าหน้าเว็บแอดมิน มั่งมี</div>
+                  <div className="mb-2.5 mt-0.5 text-[13px] font-medium text-gray-400">ใช้เข้าเว็บไซต์มั่งมี</div>
                   <div className="text-sm font-semibold text-gray-700">Username</div>
                   <div className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-[15px] font-extrabold text-gray-800">{result.username}</div>
                   {result.reusedExistingAccount ? (

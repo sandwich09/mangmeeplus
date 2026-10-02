@@ -1,10 +1,12 @@
-import type { GuideLink, UserGuide } from './user-guide.model';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { GUIDE_MISSING_MENU_HELP, GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user-guide.model';
 
 /**
  * คู่มือผู้ใช้: รายงานการเงิน — เนื้อหาชุดเดียวกับคู่มือฉบับ .docx (ฉบับที่ 1.0)
  * เนื้อหาอ้างอิงหน้าจอจริงของเมนู การเงินและบัญชี › รายงานการเงิน
  */
 export function buildReportsGuide(companyId: string, permissions: readonly string[] = []): UserGuide {
+  const exporters = ['OWNER', 'ADMIN', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const;
   const reports = `/companies/${companyId}/reports`;
   const canRead = ['report.catalog.read', 'report.snapshot.read'].some((key) => permissions.includes(key));
   const openReports: GuideLink | undefined = canRead ? { label: 'เปิดเมนูรายงานการเงิน', href: reports } : undefined;
@@ -110,7 +112,7 @@ export function buildReportsGuide(companyId: string, permissions: readonly strin
               ['สถานะ', 'พร้อมใช้งาน แปลว่าเรียกสำเร็จ ส่วน ไม่มีข้อมูล แปลว่าเรียกสำเร็จแต่ไม่มีรายการเข้าเงื่อนไข'],
               ['จำนวนแถว', 'จำนวนบรรทัดของผลลัพธ์'],
               ['ความสดของข้อมูล', 'บอกว่าตัวเลขที่เห็นเป็นข้อมูลล่าสุด หรือเป็นข้อมูลชุดเดิมที่ระบบเก็บไว้จากการเรียกครั้งก่อน เพื่อให้เปิดดูได้เร็วขึ้น หากต้องการข้อมูลล่าสุด ให้กด “รีเฟรช” แล้วเรียกรายงานใหม่'],
-              ['รหัสการรัน', 'รหัสประจำการเรียกรายงานครั้งนั้น หากผลลัพธ์ผิดปกติ ให้แจ้งรหัสนี้กับผู้ดูแลระบบ เพื่อให้ตามหาได้ว่าเป็นการเรียกครั้งใด'],
+              ['รหัสการรัน', `รหัสประจำการเรียกรายงานครั้งนั้น หากผลลัพธ์ผิดปกติ ให้แจ้งรหัสนี้กับ${THAI_SYSTEM_ROLE_NAMES.ADMIN} เพื่อให้ตามหาได้ว่าเป็นการเรียกครั้งใด`],
             ],
           },
           {
@@ -170,7 +172,7 @@ export function buildReportsGuide(companyId: string, permissions: readonly strin
       {
         id: 'permissions',
         title: 'สิทธิ์ที่ต้องมี',
-        summary: 'ใช้ตารางนี้อ้างอิงเมื่อต้องแจ้งผู้ดูแลระบบขอเปิดสิทธิ์เพิ่ม',
+        summary: GUIDE_PERMISSION_REQUEST,
         iconKey: 'ShieldIcon',
         tone: 'slate',
         blocks: [
@@ -178,9 +180,9 @@ export function buildReportsGuide(companyId: string, permissions: readonly strin
             kind: 'table',
             headers: ['สิ่งที่ต้องการทำ', 'สิทธิ์ที่ต้องมี', 'บทบาทที่มักได้รับ'],
             rows: [
-              ['เปิดเมนูและเรียกดูรายงาน', 'ดูรายการรายงาน', 'ฝ่ายบัญชี, การเงิน, ผู้จัดการ, เจ้าของกิจการ'],
-              ['เปิดดูรายงานที่เคยเรียกไว้ย้อนหลัง', 'ดูรายงานที่จัดเก็บไว้', 'ฝ่ายบัญชี, ผู้ตรวจสอบ'],
-              ['ส่งออกข้อมูลเป็นไฟล์', 'ส่งออกข้อมูลรายงาน', 'ฝ่ายบัญชี, เจ้าของกิจการ'],
+              ['เปิดเมนูและเรียกดูรายงาน', 'ดูรายการรายงาน', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.FINANCE}, ${THAI_SYSTEM_ROLE_NAMES.MANAGER}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
+              ['เปิดดูรายงานที่เคยเรียกไว้ย้อนหลัง', 'ดูรายงานที่จัดเก็บไว้', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.AUDITOR_READONLY}`],
+              ['ส่งออกข้อมูลเป็นไฟล์', 'ส่งออกข้อมูลรายงาน', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
             ],
           },
         ],
@@ -197,7 +199,7 @@ export function buildReportsGuide(companyId: string, permissions: readonly strin
             items: [
               {
                 question: 'ไม่เห็นรายงานบางรายการในรายการ',
-                answer: 'บัญชีของคุณไม่มีสิทธิ์เรียกดูรายงานนั้น หรือบริษัทยังไม่ได้เปิดใช้งานรายงานกลุ่มนั้น ให้ติดต่อผู้ดูแลระบบ โดยอ้างอิงตารางในหัวข้อ “สิทธิ์ที่ต้องมี”',
+                answer: GUIDE_MISSING_MENU_HELP,
               },
               {
                 question: 'เรียกรายงานบัญชีแล้วไม่มีข้อมูล',
@@ -213,7 +215,7 @@ export function buildReportsGuide(companyId: string, permissions: readonly strin
               },
               {
                 question: 'ส่งออก CSV ไม่ได้',
-                answer: 'บัญชีไม่มีสิทธิ์ส่งออกข้อมูล ให้ติดต่อผู้ดูแลระบบเพื่อขอสิทธิ์ส่งออกข้อมูลรายงาน',
+                answer: `ถ้าคุณไม่มีสิทธิ์ส่งออกข้อมูล ให้${exporters.map((role) => THAI_SYSTEM_ROLE_NAMES[role]).join(' หรือ')}ที่มีสิทธิ์ดูข้อมูลของรายงานนั้นส่งออกให้`,
               },
             ],
           },

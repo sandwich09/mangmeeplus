@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
-import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
+import { reimbursementPayoutRoundStatus, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { buildReimbursementGuide } from './reimbursement-guide.content';
 import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content';
 import { buildExpensesGuide } from './expenses-guide.content';
@@ -109,9 +109,9 @@ describe('user guide shortcuts', () => {
 
 /** Every sentence a reader of the guide is shown. */
 function sentences(guide: UserGuide): string[] {
-  return [guide.description, ...guide.sections.flatMap((section) => [section.title, section.summary ?? '', ...section.blocks.flatMap((block) => {
+  return [guide.title, guide.eyebrow, guide.description, guide.primaryLink?.label ?? '', ...guide.sections.flatMap((section) => [section.title, section.summary ?? '', ...section.blocks.flatMap((block) => {
     switch (block.kind) {
-      case 'items': return block.items.flatMap((item) => [item.title, item.detail]);
+      case 'items': return block.items.flatMap((item) => [item.title, item.detail, item.link?.label ?? '']);
       case 'steps': return block.steps.flatMap((step) => [step.title, step.detail]);
       case 'table': return [...block.headers, ...block.rows.flat()];
       case 'note': return [block.title, block.detail];
@@ -231,5 +231,87 @@ describe('the reimbursement guide reads as the product does', () => {
     assert.deepEqual(latin.filter((word) => !['PDF', 'MB', 'LINE'].includes(word)), []);
     const amounts = read.flatMap((text) => text.match(/\d[\d,.]* บาท/g) ?? []);
     assert.deepEqual(amounts.filter((amount) => !/^\d{1,3}(,\d{3})*\.\d{2} บาท$/.test(amount)), []);
+  });
+});
+
+it('guide role tables name finance and the read-only auditor as the role picker does', () => {
+  const common = ['ฝ่ายบัญชี, ฝ่ายการเงิน, ผู้จัดการ, เจ้าของกิจการ', 'ฝ่ายบัญชี, ฝ่ายการเงิน, เจ้าของกิจการ'];
+  const values = (guide: UserGuide) => guide.sections.flatMap((section) => section.blocks.flatMap((block) => block.kind === 'table' ? block.rows.flat() : []));
+  assert.ok(values(buildExpensesGuide('co')).includes(common[0]!));
+  assert.ok(values(buildReportsGuide('co')).includes(common[0]!));
+  assert.ok(values(buildReportsGuide('co')).includes('ฝ่ายบัญชี, ผู้ตรวจสอบ (ดูอย่างเดียว)'));
+  assert.ok(values(buildTaxGuide('co')).includes(common[1]!));
+  assert.ok(values(buildExpensesGuide('co')).includes('ฝ่ายบัญชีและฝ่ายการเงิน'));
+});
+
+describe('shop guides name the company admin for the business permissions it holds', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+
+  it('names ADMIN for substitute-receipt settings in the expense guide', () => {
+    assert.ok(sentences(buildExpensesGuide('co')).includes(`${roles.OWNER}, ${roles.ADMIN}`));
+  });
+
+  it('names ADMIN throughout substitute-receipt setup and preparation', () => {
+    const read = sentences(buildSubstituteReceiptGuide('co'));
+    for (const expected of [
+      `ไปที่ ค่าใช้จ่ายและใบเสร็จ แล้วเลือก ตั้งค่าใบรับรองแทนใบเสร็จ เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าบริษัท เช่น ${roles.OWNER}และ${roles.ADMIN}`,
+      `ตั้งค่า (สำหรับ${roles.OWNER}และ${roles.ADMIN})`,
+      `${roles.OWNER}, ${roles.ADMIN}, ${roles.MANAGER}, ${roles.ACCOUNTANT}และ${roles.FINANCE}`,
+      `${roles.OWNER}, ${roles.ADMIN}`,
+    ]) assert.ok(read.includes(expected), expected);
+  });
+
+  it('names ADMIN for investigating a report run', () => {
+    const description = sentences(buildReportsGuide('co')).find((text) => text.startsWith('รหัสประจำการเรียกรายงาน'))!;
+    assert.ok(description.includes(roles.ADMIN), description);
+    assert.ok(!description.includes(roles.SYSTEM_ADMIN), description);
+  });
+});
+
+describe('shop guide permission help names business roles and separates package access', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+  const permissionHelp = `ใช้ตารางนี้บอก${roles.OWNER}ว่าต้องการสิทธิ์ใดเพิ่ม`;
+  const check = (guide: UserGuide) => {
+    for (const sentence of sentences(guide)) assert.ok(!sentence.includes(roles.SYSTEM_ADMIN), sentence);
+    assert.equal(guide.sections.find((section) => section.id === 'permissions')!.summary, permissionHelp);
+  };
+
+  it('keeps platform roles out of the expense guide and distinguishes a closed menu from missing employee rights', () => {
+    const guide = buildExpensesGuide('co');
+    check(guide);
+    const answer = sentences(guide).find((sentence) => sentence.startsWith('ถ้าเมนูเปิดใช้แล้ว'))!;
+    assert.ok(answer, 'explain employee access only after the company menu is enabled');
+    for (const text of [roles.OWNER, 'ตรวจแพ็กเกจ', 'ติดต่อทีมงาน']) assert.ok(answer.includes(text), text);
+  });
+
+  it('keeps platform roles out of the substitute guide and describes settings access by permission', () => {
+    const guide = buildSubstituteReceiptGuide('co', ['company.setup.manage']);
+    check(guide);
+    const instructions = sentences(guide).find((sentence) => sentence.includes('เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าบริษัท'))!;
+    assert.ok(instructions, 'a custom role holding company.setup.manage can open settings too');
+    assert.ok(links(guide).includes('/companies/co/settings/substitute-receipt'));
+  });
+
+  it('keeps platform roles out of the reports guide and names exporters with source access', () => {
+    const guide = buildReportsGuide('co');
+    check(guide);
+    const menuHelp = sentences(guide).find((sentence) => sentence.startsWith('ถ้าเมนูเปิดใช้แล้ว'))!;
+    for (const text of [roles.OWNER, 'ตรวจแพ็กเกจ', 'ติดต่อทีมงาน']) assert.ok(menuHelp.includes(text), text);
+    const exportHelp = sentences(guide).find((sentence) => sentence.startsWith('ถ้าคุณไม่มีสิทธิ์ส่งออกข้อมูล'))!;
+    for (const role of ['OWNER', 'ADMIN', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const) {
+      assert.ok(exportHelp.includes(roles[role]), role);
+    }
+    assert.ok(exportHelp.includes('ที่มีสิทธิ์ดูข้อมูลของรายงานนั้น'), exportHelp);
+  });
+
+  it('keeps platform roles out of the tax guide and names the holders of tax export and review rights', () => {
+    const guide = buildTaxGuide('co');
+    check(guide);
+    const exportHelp = sentences(guide).find((sentence) => sentence.startsWith('ถ้าคุณไม่มีสิทธิ์ส่งออกรายงานภาษี'))!;
+    const reviewHelp = sentences(guide).find((sentence) => sentence.startsWith('Export REVIEW_JSON'))!;
+    for (const text of [exportHelp, reviewHelp]) {
+      for (const role of ['OWNER', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const) assert.ok(text.includes(roles[role]), role);
+      for (const role of ['ADMIN', 'MANAGER'] as const) assert.ok(!text.includes(roles[role]), role);
+    }
   });
 });

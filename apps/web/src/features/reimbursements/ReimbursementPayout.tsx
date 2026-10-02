@@ -1,4 +1,5 @@
 'use client';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 // Payout account screens: the default account card (own page and employee page), the receiving
 // choice on the claim form, and the masked account on the claim page with its reveal button.
@@ -293,7 +294,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                   <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={startEdit}>{account ? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'}</button>
                   {own && account && <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void remove()}>ลบบัญชี</button>}
                 </div>
-              ) : <p className="text-xs text-gray-500">บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือแอดมิน ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล</p>}
+              ) : <p className="text-xs text-gray-500">{`บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี ${THAI_SYSTEM_ROLE_NAMES.OWNER} หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN} ส่วน${THAI_SYSTEM_ROLE_NAMES.MANAGER}และ${THAI_SYSTEM_ROLE_NAMES.HR}ตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล`}</p>}
             </>
           )}
       {confirmDialog}

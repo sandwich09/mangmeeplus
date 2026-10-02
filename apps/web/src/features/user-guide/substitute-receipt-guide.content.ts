@@ -1,4 +1,5 @@
-import type { GuideLink, UserGuide } from './user-guide.model';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user-guide.model';
 
 /**
  * คู่มือผู้ใช้: ใบรับรองแทนใบเสร็จรับเงิน — เขียนจากคู่มือฉบับเต็ม (ฉบับที่ 1.0) ด้วยภาษาที่สั้นและง่ายกว่า
@@ -55,7 +56,7 @@ export function buildSubstituteReceiptGuide(companyId: string, permissions: read
               },
               {
                 title: 'หน้าตั้งค่าอยู่คนละเมนู',
-                detail: 'ไปที่ ค่าใช้จ่ายและใบเสร็จ แล้วเลือก ตั้งค่าใบรับรองแทนใบเสร็จ เปิดได้เฉพาะเจ้าของกิจการและผู้ดูแลระบบ',
+                detail: `ไปที่ ค่าใช้จ่ายและใบเสร็จ แล้วเลือก ตั้งค่าใบรับรองแทนใบเสร็จ เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าบริษัท เช่น ${THAI_SYSTEM_ROLE_NAMES.OWNER}และ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`,
                 link: link(canOpenPolicy, 'เปิดหน้าตั้งค่า', policy),
               },
             ],
@@ -248,7 +249,7 @@ export function buildSubstituteReceiptGuide(companyId: string, permissions: read
             kind: 'note',
             tone: 'info',
             title: 'ผู้ใดอนุมัติได้',
-            detail: 'ตามหลักการ ผู้อนุมัติควรเป็นคนละคนกับผู้จ่ายเงิน เพื่อให้มีการสอบทานระหว่างกัน ยกเว้นบริษัทที่ตั้งค่าไว้แบบเจ้าของกิจการลงนามและอนุมัติด้วยตนเอง กรณีนั้นระบบจะระบุไว้ในเอกสารว่าเจ้าของลงนามทั้งสองฐานะ และบันทึกประวัติไว้ให้ตรวจสอบได้',
+            detail: `ตามหลักการ ผู้อนุมัติควรเป็นคนละคนกับผู้จ่ายเงิน เพื่อให้มีการสอบทานระหว่างกัน ยกเว้นบริษัทที่ตั้งค่าไว้แบบ${THAI_SYSTEM_ROLE_NAMES.OWNER}ลงนามและอนุมัติด้วยตนเอง กรณีนั้นระบบจะระบุไว้ในเอกสารว่าเจ้าของลงนามทั้งสองฐานะ และบันทึกประวัติไว้ให้ตรวจสอบได้`,
           },
         ],
       },
@@ -285,7 +286,7 @@ export function buildSubstituteReceiptGuide(companyId: string, permissions: read
       },
       {
         id: 'settings',
-        title: 'ตั้งค่า (สำหรับเจ้าของกิจการและผู้ดูแลระบบ)',
+        title: `ตั้งค่า (สำหรับ${THAI_SYSTEM_ROLE_NAMES.OWNER}และ${THAI_SYSTEM_ROLE_NAMES.ADMIN})`,
         summary: 'ค่าที่ตั้งในหน้านี้มีผลกับการจัดทำเอกสารทุกฉบับของบริษัท',
         iconKey: 'LockIcon',
         tone: 'slate',
@@ -294,7 +295,7 @@ export function buildSubstituteReceiptGuide(companyId: string, permissions: read
             kind: 'table',
             headers: ['รูปแบบการอนุมัติ', 'เหมาะกับ', 'ผลที่เกิดขึ้น'],
             rows: [
-              ['เจ้าของกิจการลงนามและอนุมัติด้วยตนเอง (ค่าเริ่มต้น)', 'กิจการเจ้าของคนเดียว', 'เจ้าของลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ ระบบจะระบุไว้ในเอกสารและบันทึกประวัติให้'],
+              [`${THAI_SYSTEM_ROLE_NAMES.OWNER}ลงนามและอนุมัติด้วยตนเอง (ค่าเริ่มต้น)`, 'กิจการเจ้าของคนเดียว', 'เจ้าของลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ ระบบจะระบุไว้ในเอกสารและบันทึกประวัติให้'],
               ['กำหนดผู้อนุมัติแยกจากผู้จ่ายเงิน', 'บริษัทที่ต้องการแบ่งแยกหน้าที่', 'ระบบบังคับให้ผู้จ่ายเงินและผู้อนุมัติเป็นคนละคน'],
             ],
           },
@@ -325,7 +326,7 @@ export function buildSubstituteReceiptGuide(companyId: string, permissions: read
       {
         id: 'permissions',
         title: 'สิทธิ์ที่ต้องมี และการใช้งานบนมือถือ',
-        summary: 'ใช้ตารางนี้อ้างอิงเมื่อต้องแจ้งผู้ดูแลระบบขอเปิดสิทธิ์เพิ่ม',
+        summary: GUIDE_PERMISSION_REQUEST,
         iconKey: 'GroupIcon',
         tone: 'sky',
         blocks: [
@@ -334,10 +335,10 @@ export function buildSubstituteReceiptGuide(companyId: string, permissions: read
             headers: ['สิ่งที่ต้องการทำ', 'สิทธิ์ที่ต้องมี', 'บทบาทที่มักได้รับ'],
             rows: [
               ['เปิดดูเมนูและเอกสารของตนเอง', 'ดูค่าใช้จ่ายของตนเอง', 'ทุกตำแหน่งที่ใช้งานเมนูค่าใช้จ่าย'],
-              ['จัดทำเอกสารตั้งแต่เลือกรายการจนแนบหลักฐาน', 'ตรวจสอบค่าใช้จ่าย', 'เจ้าของกิจการ, ผู้ดูแลระบบ, ผู้จัดการ, ฝ่ายบัญชีและการเงิน'],
+              ['จัดทำเอกสารตั้งแต่เลือกรายการจนแนบหลักฐาน', 'ตรวจสอบค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}, ${THAI_SYSTEM_ROLE_NAMES.MANAGER}, ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}และ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`],
               ['ลงลายมือชื่อในฐานะผู้จ่ายเงิน', 'เป็นผู้จ่ายเงินจริงที่ระบุชื่อไว้ในเอกสาร', 'เฉพาะผู้ที่จ่ายเงินไปจริง'],
-              ['อนุมัติและออกเอกสาร', 'ยืนยันค่าใช้จ่าย', 'เจ้าของกิจการ, ผู้อนุมัติที่กำหนดไว้'],
-              ['แก้ไขการตั้งค่าของเมนูนี้', 'จัดการการตั้งค่าบริษัท', 'เจ้าของกิจการ, ผู้ดูแลระบบ'],
+              ['อนุมัติและออกเอกสาร', 'ยืนยันค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ผู้อนุมัติที่กำหนดไว้`],
+              ['แก้ไขการตั้งค่าของเมนูนี้', 'จัดการการตั้งค่าบริษัท', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`],
             ],
           },
           {

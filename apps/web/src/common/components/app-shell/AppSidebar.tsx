@@ -11,6 +11,7 @@ import { Button } from '@/common/components/button';
 import { getInitials, getMangmeeMenuTone, type MangmeeTone } from '@/common/components/mangmee';
 import { AlertModal, Modal } from '@/common/components/modal';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import { roleDisplayName } from '@/features/employee-access/role-picker.logic';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { getAccountSecurityState, type AccountSecurityState } from '@/features/auth/auth.api';
@@ -80,22 +81,6 @@ const groupLabelKey: Record<string, 'nav.group.operate' | 'nav.group.finance' | 
   admin: 'nav.group.admin',
 };
 
-const roleLabelKey: Record<string, DictionaryKey> = {
-  OWNER: 'role.OWNER',
-  SYSTEM_ADMIN: 'role.SYSTEM_ADMIN',
-  ADMIN: 'role.ADMIN',
-  MANAGER: 'role.MANAGER',
-  HR: 'role.HR',
-  SALES: 'role.SALES',
-  INVENTORY: 'role.INVENTORY',
-  FINANCE: 'role.FINANCE',
-  ACCOUNTANT: 'role.ACCOUNTANT',
-  MARKETING: 'role.MARKETING',
-  STAFF: 'role.STAFF',
-  AUDITOR_READONLY: 'role.AUDITOR_READONLY',
-  COMPANY_VIEW: 'role.COMPANY_VIEW',
-};
-
 /**
  * One amber dot on a module row whose setup is unfinished (§15.4.1 E). Rendered right after the
  * label, so it lands next to the icon when the sidebar is collapsed and the label is not there.
@@ -155,9 +140,11 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   // Deduped after translation: two custom role keys both fall back to the same generic label, and
   // "เมนูผู้ใช้ · เมนูผู้ใช้" reads as a bug. First appearance keeps its position.
   const roleLabel = userRoles?.length
-    ? [...new Set(userRoles.map((role) => roleLabelKey[role]
-      ? t(roleLabelKey[role], locale)
-      : userRoleNames?.[role]?.trim() || (locale === 'th' ? 'บทบาทกำหนดเอง' : 'Custom role')))].join(' · ')
+    ? [...new Set(userRoles.map((role) => {
+      const name = userRoleNames?.[role]?.trim();
+      const label = roleDisplayName(name ? { key: role, name, isSystem: false } : role, locale);
+      return !name && label === role ? (locale === 'th' ? 'บทบาทกำหนดเอง' : 'Custom role') : label;
+    }))].join(' · ')
     : null;
   const displayUserName = userName === 'นภา' ? 'คุณนภา วงศ์ทอง' : userName;
   const footerLabel = displayUserName ?? roleLabel;

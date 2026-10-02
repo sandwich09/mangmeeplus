@@ -111,6 +111,63 @@ rules bound what a company may copy or create.
     answer `409 role_key_allocation_failed`; nothing is written, saving again works, and the message is
     "ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กรุณากดบันทึกอีกครั้ง".
 
+### R11. One displayed name for a standard role (settled 2026-10-02)
+
+`packages/contracts/src/employee-access.ts` owns `THAI_SYSTEM_ROLE_NAMES`. The Thai dictionary,
+employee and role pages, sidebar, company switcher, claim-policy options/summary/warnings, API role
+descriptions and prose naming these roles use that list. Existing English dictionary labels stay English.
+
+| Key | Thai name |
+| --- | --- |
+| OWNER | เจ้าของกิจการ |
+| ADMIN | ผู้ดูแลบริษัท |
+| SYSTEM_ADMIN | ผู้ดูแลระบบ |
+| MANAGER | ผู้จัดการ |
+| HR | ฝ่ายบุคคล |
+| SALES | ฝ่ายขาย |
+| INVENTORY | ฝ่ายคลังสินค้า |
+| FINANCE | ฝ่ายการเงิน |
+| ACCOUNTANT | ฝ่ายบัญชี |
+| MARKETING | ฝ่ายการตลาด |
+| STAFF | พนักงาน |
+| AUDITOR_READONLY | ผู้ตรวจสอบ (ดูอย่างเดียว) |
+| COMPANY_VIEW | เจ้าของบริษัท |
+| MANGMEE_SALES_LEAD | หัวหน้าทีมขายมั่งมี |
+| MANGMEE_SALES | เซลล์มั่งมี |
+
+- A system role displays the standard name. A company copy retaining the exact stored English
+  standard name also displays it. A copy the company named displays the company's name, including
+  when an employee/session reference has no `isSystem` flag. A custom key with an English name is
+  still a company-named role; never infer its identity from its name when its key is present.
+- `roleDisplayName` / `hasStandardRoleName` in the web picker logic are the shared display rule.
+  The role page imports that rule; the claim policy passes its options as company-name-aware role
+  references. Sidebar and switcher use the membership's stored name. `GET /auth/me/companies`
+  adds `roleNames` for the existing active-role selection of each membership; it keeps the same
+  membership, role, permission and plan filtering.
+- No stored role name, key, grant, assignment rule or protected-role visibility changes. The 21
+  example roles keep their own names. Generic staff, document-signature roles and review/payment
+  desks are separate concepts, not standard role labels.
+- Shop guides use the shared ADMIN name for company work that `ROLE_GRANTS.ADMIN` permits:
+  substitute-receipt setup (`company.setup.manage`), preparation (`expense.review`), and report-run
+  investigation (`report.snapshot.read`, `report.audit.read`). SYSTEM_ADMIN is the platform role.
+  None of the expense, substitute-receipt, report or tax guides names SYSTEM_ADMIN as shop help.
+  Requests for additional employee rights follow employee assignment (`access.employee.update`
+  and `roleGrantViolation`), not an assumed per-user permission editor: the individual page shows
+  rights from the employee's role. Its role-permission edit link uses `access.role.manage`.
+  OWNER is the safe recipient for general requests; ADMIN/MANAGER are restricted to subsets and
+  HR to `HR_ASSIGNABLE_ROLE_KEYS`. Only OWNER can assign FINANCE/ACCOUNTANT by default.
+  Missing employee rights and company feature availability are different causes: if a menu is
+  not enabled, ask OWNER to check the package or contact the team, not grant employee permissions.
+  Report export help names OWNER/ADMIN/FINANCE/ACCOUNTANT/AUDITOR_READONLY with access to that
+  report's source data. Tax export/review help names OWNER/FINANCE/ACCOUNTANT/AUDITOR_READONLY.
+  Substitute settings require `company.setup.manage`; OWNER/ADMIN are examples, not an exclusive
+  allow-list. Shared request/menu help is written once in the guide model and uses contracts names.
+  The expense, substitute-receipt and report guide source hashes in approved product help move
+  with those files; deploy the assistant with the web.
+- The reimbursement guide and its approved-help pin are a controller integration point owned by
+  another lane; exact outstanding sentences are in
+  `docs/agent-memory/standard-role-names-one-list-2026-10-02.md`.
+
 ### Deployment interaction
 
 `sync-permissions.ts` re-syncs system roles on every deploy. Overrides are company-scoped, so a
@@ -131,6 +188,8 @@ custom role gets.
 7. Before the first edit, the UI tells the owner what pressing save will do (a copy is created for
    this company; N employees move to it; other companies are unaffected).
 8. An audit row is written for the fork and for the permission change.
+9. All Thai role-label surfaces agree for all 15 standard keys, print no stored English standard
+   name, and preserve company-named copies on role/employee pages, sidebar, switcher and claim policy.
 
 ## Out of scope
 

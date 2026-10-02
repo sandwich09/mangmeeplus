@@ -8,7 +8,7 @@ import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-clic
 import { AlertModal } from '@/common/components/modal';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import { roleKeyDisplayName } from '@/features/employee-access/role-picker.logic';
+import { roleDisplayName } from '@/features/employee-access/role-picker.logic';
 import { branchDisplayName, branchScopeLabel } from './branch-scope-label.logic';
 import {
   fetchActiveBranches,
@@ -322,7 +322,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
               {c.companyName}
               {c.roles.length > 0 ? (
                 <span className="mt-0.5 block text-xs font-normal text-gray-400">
-                  {c.roles.map(roleKeyDisplayName).join(' · ')}
+                  {c.roles.map((key) => roleDisplayName(c.roleNames?.[key] ? { key, name: c.roleNames[key], isSystem: false } : key)).join(' · ')}
                 </span>
               ) : null}
               {c.expired ? (

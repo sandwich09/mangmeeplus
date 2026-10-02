@@ -1102,19 +1102,19 @@ const correctionDetails: Array<[string, object]> = [
 ];
 
 // Owner 2026-10-02: one thing has one name. The requester was also "ผู้ขอ", "ผู้ยื่น" and "ผู้สำรองจ่ายและรับเงินคืน", the admin
-// role "ผู้ดูแลบริษัท" beside "แอดมิน", and messages gave the policy tab and its self-approval switch names the hub never printed.
+// role names now come from the shared standard-role list, and messages gave the policy tab and its self-approval switch names the hub never printed.
 describe('one thing has one name on the claim screens (owner 2026-10-02)', () => {
   const screens = claimScreenSources();
 
   it('uses no second name for the requester, the admin role, the policy tab or its self-approval switch', () => {
-    assert.ok(screens.includes('ผู้เบิก') && screens.includes('แอดมิน') && screens.includes('ตั้งค่านโยบาย'), 'the screens were read');
-    for (const retired of ['ผู้ขอ', 'ผู้ยื่น', 'ผู้รับเงินคืน', 'ผู้สำรองจ่ายและรับเงินคืน', 'ผู้ดูแลบริษัท', 'ตั้งค่าเบิกจ่าย', 'อนุญาตให้อนุมัติคำขอตนเอง']) {
+    assert.ok(screens.includes('ผู้เบิก') && screens.includes('THAI_SYSTEM_ROLE_NAMES') && screens.includes('ตั้งค่านโยบาย'), 'the screens were read');
+    for (const retired of ['ผู้ขอ', 'ผู้ยื่น', 'ผู้รับเงินคืน', 'ผู้สำรองจ่ายและรับเงินคืน', 'แอดมิน', 'ตั้งค่าเบิกจ่าย', 'อนุญาตให้อนุมัติคำขอตนเอง']) {
       assert.equal(screens.includes(retired), false, retired);
     }
     // The sentences the API's refusals are said in, for the codes of a claim that name one of them.
     for (const code of ['reimbursement_source_payer_unlinked', 'reimbursement_source_wrong_payer', 'reimbursement_requester_unavailable', 'invalid_primary_attachment',
       'invalid_linked_expense', 'payout_account_edit_denied', 'reimbursement_policy_inactive', 'self_approval_denied']) {
-      assert.doesNotMatch(errorMessage(code), /ผู้ขอ|ผู้ยื่น|ผู้รับเงินคืน|ผู้ดูแลบริษัท|ตั้งค่าเบิกจ่าย|คำขอตนเอง"/u, code);
+      assert.doesNotMatch(errorMessage(code), /ผู้ขอ|ผู้ยื่น|ผู้รับเงินคืน|แอดมิน|ตั้งค่าเบิกจ่าย|คำขอตนเอง"/u, code);
     }
   });
 
@@ -1164,5 +1164,44 @@ describe('no customer-visible claim page text carries a machine token (Owner rul
       }
     }
     assert.ok(checked > 300, `only ${checked} texts rendered`);
+  });
+});
+
+describe('claim policy shares the employee and role-page names', () => {
+  it('renders the same Thai label on every surface for every standard role and never prints its stored English name', () => {
+    const picker = require('../employee-access/role-picker.logic') as typeof import('../employee-access/role-picker.logic');
+    const { CompanySwitcher } = require('../web-core-workspace/WorkspaceScope') as typeof import('../web-core-workspace/WorkspaceScope');
+    const switcher = (key: string, name: string) => visible(renderWithState(h(CompanySwitcher, { companyId: 'co', fallbackName: 'บริษัท' }),
+      (initial) => Array.isArray(initial) ? [{ companyId: 'co', companyName: 'บริษัท', roles: [key], roleNames: { [key]: name } }, { companyId: 'other', companyName: 'บริษัทอื่น', roles: [] }] : initial === false ? true : undefined));
+    const rolePage = require('../employee-access/EmployeeAccessPages') as typeof import('../employee-access/EmployeeAccessPages');
+    const builderName = (key: string, name: string) => renderToStaticMarkup(h(rolePage.RoleBuilder, {
+      companyId: 'co', packModules: [], allPacks: [], templates: [], roleOptionsAvailable: true,
+      initial: { key, name, isSystem: false, permissionKeys: [] }, onCancel: noop, onSubmit: async () => undefined,
+    })).match(/<input[^>]*value="([^"]*)"/)?.[1];
+    const stored = { OWNER: 'Owner', SYSTEM_ADMIN: 'System Admin', COMPANY_VIEW: 'Company owner', ADMIN: 'Admin',
+      MANAGER: 'Manager', HR: 'HR', SALES: 'Sales', INVENTORY: 'Inventory', FINANCE: 'Finance', ACCOUNTANT: 'Accountant',
+      MARKETING: 'Marketing', STAFF: 'Staff', AUDITOR_READONLY: 'Auditor (Read-only)', MANGMEE_SALES_LEAD: 'Mangmee Sales Lead', MANGMEE_SALES: 'Mangmee Sales' };
+    for (const [key, name] of Object.entries(stored)) {
+      const expected = picker.roleKeyDisplayName(key);
+      assert.equal(builderName(key, name), expected, `editor ${key}`);
+      assert.ok(switcher(key, name).includes(expected), `switcher ${key}`);
+      assert.doesNotMatch(expected, /[A-Za-z_]/u, key);
+      for (const isSystem of [true, false]) {
+        const role = { key, name, isSystem };
+        assert.equal(picker.roleDisplayName(role), expected, key);
+        assert.equal(rolePage.roleDisplayName(role, 'th'), expected, key);
+      }
+      const texts = policySettings({ ...policyForm, defaultApproverRoles: [key] }, [roleOption(key, name, false)]);
+      assert.ok(texts.includes(expected), `${key}: ${texts.join(' | ')}`);
+      assert.ok(texts.some((text) => text.includes(`บทบาท ${expected} อนุมัติได้ แต่บันทึกจ่ายไม่ได้`)), key);
+      assert.equal(texts.includes(name), false, key);
+    }
+    for (const key of ['ADMIN', 'ACCOUNTANT', 'AUDITOR_READONLY', 'CUSTOM']) {
+      const texts = policySettings({ ...policyForm, defaultApproverRoles: [key] }, [roleOption(key, 'ผู้ตรวจประจำบริษัท', false)]);
+      assert.equal(builderName(key, 'ผู้ตรวจประจำบริษัท'), 'ผู้ตรวจประจำบริษัท', `editor ${key}`);
+      assert.ok(switcher(key, 'ผู้ตรวจประจำบริษัท').includes('ผู้ตรวจประจำบริษัท'), `switcher ${key}`);
+      assert.ok(texts.includes('ผู้ตรวจประจำบริษัท'), key);
+      assert.ok(texts.some((text) => text.includes('บทบาท ผู้ตรวจประจำบริษัท อนุมัติได้ แต่บันทึกจ่ายไม่ได้')), key);
+    }
   });
 });

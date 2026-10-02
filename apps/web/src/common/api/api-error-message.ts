@@ -1,3 +1,5 @@
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
 
 // The API answers business-rule failures in English (its messages double as
@@ -597,7 +599,7 @@ const CODE_LABELS: Record<string, string> = {
   payment_method_mismatch_reason_required: 'วิธีจ่ายต่างจากที่ระบุในใบ กรุณาระบุเหตุผลก่อนกดบันทึกจ่าย ถ้าไม่เห็นช่องเหตุผล กรุณาโหลดหน้าใหม่',
   payout_reveal_denied: 'คุณไม่มีสิทธิ์ดูเลขบัญชีเต็มของใบนี้',
   payout_account_not_set: 'ยังไม่ได้ตั้งบัญชีรับเงินคืนประจำ',
-  payout_account_edit_denied: 'คุณตั้งบัญชีรับเงินคืนของคนนี้ไม่ได้ ให้เจ้าของบัญชีตั้งเอง หรือให้เจ้าของกิจการหรือแอดมินตั้งให้',
+  payout_account_edit_denied: `คุณตั้งบัญชีรับเงินคืนของคนนี้ไม่ได้ ให้เจ้าของบัญชีตั้งเอง หรือให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}ตั้งให้`,
   payout_member_not_found: 'ไม่พบพนักงานคนนี้ในบริษัท',
   // ระบบต้องแจ้งเจ้าของบัญชีทุกครั้งที่คนอื่นตั้งให้ และแจ้งได้เฉพาะสมาชิกที่ยังใช้งานอยู่
   payout_account_member_not_active: 'ตั้งบัญชีรับเงินคืนแทนได้เฉพาะเมื่อเจ้าของบัญชียังใช้งานระบบอยู่ เพราะระบบต้องแจ้งเจ้าของบัญชีทุกครั้ง เปิดใช้งานสมาชิกคนนี้ก่อน หรือให้เจ้าของบัญชีตั้งเองเมื่อเข้าใช้งานได้แล้ว',
@@ -704,7 +706,7 @@ const CODE_LABELS: Record<string, string> = {
   approver_role_not_eligible: 'บทบาทนี้ยังไม่มีสิทธิ์หรือพนักงานที่พร้อมอนุมัติ กรุณาเลือกบทบาทอื่น',
   reimbursement_approver_not_ready: 'ยังไม่มีผู้อนุมัติที่รับผิดชอบใบเบิกนี้ กรุณาให้ผู้ดูแลตรวจบทบาท สิทธิ์ และสาขา แล้วส่งใหม่',
   internal_note_body_invalid: 'กรุณาเขียนโน้ตไม่เกิน 2,000 ตัวอักษร',
-  reimbursement_policy_inactive: 'บริษัทปิดรับใบเบิกใหม่ชั่วคราว กรุณาติดต่อเจ้าของกิจการหรือแอดมิน',
+  reimbursement_policy_inactive: `บริษัทปิดรับใบเบิกใหม่ชั่วคราว กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`,
   reimbursement_policy_changed: 'นโยบายถูกแก้ไขโดยผู้ใช้อื่น ระบบยังไม่บันทึกค่าของคุณ กรุณาโหลดค่าล่าสุดแล้วตรวจสอบอีกครั้ง',
   duplicate_company_policy: 'พบนโยบายบริษัทซ้ำ ระบบยังไม่บันทึก กรุณาติดต่อผู้ดูแลระบบ',
   invalid_reimbursement_policy_snapshot: 'ข้อมูลนโยบายของใบเบิกนี้ไม่สมบูรณ์ ระบบจึงหยุดรายการไว้เพื่อความปลอดภัย กรุณาติดต่อผู้ดูแลระบบ',
@@ -750,7 +752,7 @@ const CODE_LABELS: Record<string, string> = {
   password_reuse: 'รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม',
   current_password_required: 'กรุณากรอกรหัสผ่านปัจจุบันก่อนเปลี่ยนรหัสผ่าน',
   current_password_incorrect: 'รหัสผ่านปัจจุบันไม่ถูกต้อง',
-  company_access_unavailable: 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของร้าน',
+  company_access_unavailable: `คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}`,
   // P29: business routes are refused on access because the shop has no usable package. Data is
   // intact — the copy must not read as data loss, and the only move that helps is choosing a
   // package, not retrying. Neutral between the two reasons (spec R2): the code alone cannot tell a
@@ -1164,7 +1166,7 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Access denied': CODE_LABELS['insufficient_permissions']!,
   'Branch is outside your assigned branch scope.': 'รายการนี้อยู่นอกสาขาที่คุณได้รับมอบหมาย',
   // หน้าพนักงานล็อกตัวเลือกสาขาไว้ให้แล้ว ข้อความนี้มีไว้สำหรับหน้าที่เปิดค้างก่อนข้อมูลเปลี่ยน
-  "Cannot assign access outside the requester's branch scope.": 'เปลี่ยนสาขาของพนักงานคนนี้ไม่ได้ เพราะพนักงานอยู่ในสาขาที่บัญชีของคุณเข้าไม่ถึง หรือสาขาที่เลือกอยู่นอกสาขาของคุณ กรุณาติดต่อเจ้าของร้าน',
+  "Cannot assign access outside the requester's branch scope.": `เปลี่ยนสาขาของพนักงานคนนี้ไม่ได้ เพราะพนักงานอยู่ในสาขาที่บัญชีของคุณเข้าไม่ถึง หรือสาขาที่เลือกอยู่นอกสาขาของคุณ กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}`,
   'Expense requires a receipt attachment or a missing receipt reason.':
     'ต้องแนบไฟล์ใบเสร็จ หรือระบุเหตุผลที่ไม่มีใบเสร็จ ก่อนยืนยันลงบัญชี',
   'Every VAT-bearing expense line requires a server-resolved Tax Code snapshot before confirmation.':

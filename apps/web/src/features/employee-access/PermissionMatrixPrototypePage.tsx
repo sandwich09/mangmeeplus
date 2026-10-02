@@ -206,12 +206,6 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
     () => roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null,
     [roles, selectedRoleId],
   );
-  // What the editor opens with: the name the list shows, not the stored one. A standard role is stored
-  // as "Accountant", and saving the form would hand that English name to the company's own copy.
-  const editedRole = useMemo(
-    () => selectedRole && { ...selectedRole, name: roleDisplayName(selectedRole, locale) },
-    [selectedRole, locale],
-  );
   const roleEditable = Boolean(canManageRoles && selectedRole && isRoleEditableByCompany(selectedRole));
   const selectedRow = useMemo(
     () => matrix?.rows.find((r) => r.roleId === selectedRole?.id) ?? null,
@@ -340,7 +334,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
             )}
             <RoleBuilder
               companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
-              initial={editedRole}
+              initial={selectedRole}
               onCancel={() => setMode('view')}
               onSubmit={async (body) => {
                 const updated = await updateRole(companyId, selectedRole.id, body);

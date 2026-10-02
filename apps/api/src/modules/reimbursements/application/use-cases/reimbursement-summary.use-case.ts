@@ -1,6 +1,6 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import {
-  civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
+  THAI_SYSTEM_ROLE_NAMES, civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
   type RequestContext, type ReimbursementAiSummary,
 } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
@@ -95,7 +95,7 @@ export const BACKLOG_DESK_LABELS = {
 export const SHARED_PILE_LABEL = 'กองกลาง (อนุมัติได้หลายคน)';
 /** The recovery rule (`frozenApprovalAuthority` FALLBACK → `matchesApproverRole`), so the answer names the real next
  *  step instead of guessing one (eval 2026-09-30: "ติดต่อทีม HR", "จะค้างไม่มีกำหนด"). */
-export const NO_ACTIVE_APPROVER_NOTE = 'ผู้ที่ถูกกำหนดให้อนุมัติไม่อยู่หรือไม่ได้ดูแลสาขานี้แล้ว เจ้าของร้านหรือผู้มีบทบาทอนุมัติเดิมอนุมัติแทนได้บนเว็บ';
+export const NO_ACTIVE_APPROVER_NOTE = `ผู้ที่ถูกกำหนดให้อนุมัติไม่อยู่หรือไม่ได้ดูแลสาขานี้แล้ว ${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีบทบาทอนุมัติเดิมอนุมัติแทนได้บนเว็บ`;
 const BACKLOG_DESK_NOTES: Partial<Record<keyof typeof BACKLOG_DESK_LABELS, string>> = { no_active_approver: NO_ACTIVE_APPROVER_NOTE };
 
 /**

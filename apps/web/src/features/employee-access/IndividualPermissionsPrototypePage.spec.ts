@@ -74,14 +74,12 @@ test('a role’s menu rights never scroll sideways: stacked rows on a phone, a t
 test('the role and employee pages print no English role name or status', () => {
   const matrix = readFileSync(new URL('./PermissionMatrixPrototypePage.tsx', import.meta.url), 'utf8');
   const legacy = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
-  // One list of standard role names (the dictionary's role.* entries), not a second one kept by hand.
+  // The role page reuses the same display rule as every employee picker.
   assert.doesNotMatch(legacy, /ROLE_LABEL_KEYS/);
-  assert.match(legacy, /const dictKey = `role\.\$\{key\}`;/);
-  assert.match(legacy, /dictKey in workspaceDictionary\.th\s+&& \(typeof roleOrKey === 'string' \|\| hasStandardRoleName\(/);
+  assert.match(legacy, /export \{ roleDisplayName \} from '\.\/role-picker\.logic'/);
   // The editor opens with the name the list shows.
-  assert.match(matrix, /selectedRole && \{ \.\.\.selectedRole, name: roleDisplayName\(selectedRole, locale\) \}/);
-  assert.match(matrix, /initial=\{editedRole\}/);
-  assert.doesNotMatch(matrix, /initial=\{selectedRole\}/);
+  assert.match(legacy, /useState\(initial \? roleDisplayName\(initial, locale\) : ''\)/);
+  assert.match(matrix, /initial=\{selectedRole\}/);
   assert.doesNotMatch(source, /'Draft'|>Draft</);
   // The rights a standard role keeps outside the choices are counted, not printed as one sentence per right.
   assert.match(legacy, /\{permissionCatalog\.length > 0 && \(\s*<ul /);
@@ -94,4 +92,10 @@ test('both employee branch pickers exclude inactive branches from options and re
   assert.match(wizard, /setBranches\(branchesResult\.value\.filter\(\(branch\) => branch\.status === 'ACTIVE'\)\)/);
   assert.match(wizard, /branchesResult\.value\.filter\(\(branch\) => branch\.status === 'ACTIVE'\)\.map/);
   assert.match(wizard, /employee\.branchScopeBranchIds\.filter\(\(id\) => activeBranchIds\.includes\(id\)\)/);
+});
+
+test('employees-and-rights prose uses the same standard role names as the pickers', () => {
+  const wizard = readFileSync(new URL('./AddEmployeePrototypePage.tsx', import.meta.url), 'utf8');
+  const discount = readFileSync(new URL('./DiscountPolicyPage.tsx', import.meta.url), 'utf8');
+  for (const page of [source, wizard, discount]) assert.doesNotMatch(page, /เจ้าของร้าน|แอดมิน/);
 });

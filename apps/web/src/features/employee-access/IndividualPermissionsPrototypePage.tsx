@@ -1,4 +1,5 @@
 'use client';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -40,7 +41,7 @@ import {
   updateEmployee,
 } from './employee-access.api';
 import { accountAccessNotice, MENU_GROUP_LABEL_TH, projectGrantedMenus } from './access-overview.model';
-import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
+import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { localizedErrorMessage, statusOf } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { MemberPayoutAccountLine } from '../reimbursements/ReimbursementPayout';
@@ -644,7 +645,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                         )}
                       </div>
                       {selectedIsOwner
-                        ? <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทเจ้าของกิจการเปลี่ยนไม่ได้</p>
+                        ? <p className="mt-1 text-xs font-semibold text-gray-400">{`บทบาท${THAI_SYSTEM_ROLE_NAMES.OWNER}เปลี่ยนไม่ได้`}</p>
                         : isSelfEmployee(selectedEmployee, viewerUserId)
                           ? <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>
                           : <p className="mt-1 text-xs font-semibold text-gray-400">พนักงานมีได้ 1 บทบาท หากต้องการเพิ่มสิทธิ์ให้แก้ที่บทบาทและสิทธิ์</p>}
@@ -702,7 +703,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   <h2 className="text-xl font-extrabold text-gray-900">สิทธิ์การใช้งานของ {employeeShortName(selectedEmployee)}</h2>
                   {selectedIsOwner ? (
                     <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-gray-500">
-                      สิทธิ์มาจากบทบาทเจ้าของกิจการ — ปรับสิทธิ์ไม่ได้
+                      {`สิทธิ์มาจากบทบาท${THAI_SYSTEM_ROLE_NAMES.OWNER} — ปรับสิทธิ์ไม่ได้`}
                     </p>
                   ) : (
                     <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -813,7 +814,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   <div className="min-w-0">
                     <h2 className="text-xl font-extrabold text-gray-900">สาขาที่เข้าถึงได้</h2>
                     <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-gray-500">
-                      เจ้าของร้านกำหนดสาขาที่พนักงานคนนี้เข้าถึง · เวลาเขาล็อกอินจะเห็นเฉพาะสาขาที่ได้รับมอบหมาย (อย่างน้อย 1 สาขา)
+                      {`${THAI_SYSTEM_ROLE_NAMES.OWNER}กำหนดสาขาที่พนักงานคนนี้เข้าถึง · เวลาเขาล็อกอินจะเห็นเฉพาะสาขาที่ได้รับมอบหมาย (อย่างน้อย 1 สาขา)`}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
@@ -890,12 +891,12 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 )}
                 {branchPickerLocked && (
                   <p className="mt-3 text-sm font-semibold text-gray-400">
-                    บทบาท {allBranchRoles.map(roleDisplayName).join(', ')} ต้องเห็นข้อมูลทุกสาขา จึงจำกัดสาขาไม่ได้
+                    บทบาท {allBranchRoles.map((role) => roleDisplayName(role)).join(', ')} ต้องเห็นข้อมูลทุกสาขา จึงจำกัดสาขาไม่ได้
                   </p>
                 )}
                 {viewerBranchIds !== undefined && (
                   <p className="mt-3 text-sm font-semibold text-gray-500">
-                    กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง หากต้องการเปลี่ยนขอบเขตนอกเหนือจากนี้ กรุณาติดต่อเจ้าของร้าน
+                    {EMPLOYEE_BRANCH_SCOPE_HELP}
                   </p>
                 )}
               </MangmeeCard>

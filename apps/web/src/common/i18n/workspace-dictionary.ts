@@ -1,3 +1,9 @@
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+
+const thaiRoleLabels = Object.fromEntries(
+  Object.entries(THAI_SYSTEM_ROLE_NAMES).map(([key, name]) => [`role.${key}`, name]),
+) as { [K in keyof typeof THAI_SYSTEM_ROLE_NAMES as `role.${K}`]: (typeof THAI_SYSTEM_ROLE_NAMES)[K] };
+
 export type SupportedLocale = 'th' | 'en';
 
 export const workspaceDictionary = {
@@ -36,19 +42,7 @@ export const workspaceDictionary = {
     'nav.group.growth': 'สินค้าและการดำเนินงาน',
     'nav.group.admin': 'บุคลากรและการตั้งค่า',
     // Role labels (sidebar footer)
-    'role.OWNER': 'เจ้าของร้าน',
-    'role.SYSTEM_ADMIN': 'ผู้ดูแลระบบ',
-    'role.ADMIN': 'แอดมิน',
-    'role.MANAGER': 'ผู้จัดการ',
-    'role.HR': 'ฝ่ายบุคคล',
-    'role.SALES': 'ฝ่ายขาย',
-    'role.INVENTORY': 'คลังสินค้า',
-    'role.FINANCE': 'การเงิน',
-    'role.ACCOUNTANT': 'บัญชี',
-    'role.MARKETING': 'การตลาด',
-    'role.STAFF': 'พนักงาน',
-    'role.AUDITOR_READONLY': 'ผู้ตรวจสอบ (อ่านอย่างเดียว)',
-    'role.COMPANY_VIEW': 'เจ้าของบริษัท',
+    ...thaiRoleLabels,
     // Modules
     'module.dashboard': 'แดชบอร์ด',
     'module.inbox': 'กล่องข้อความ',
@@ -1714,6 +1708,8 @@ export const workspaceDictionary = {
     'role.STAFF': 'Staff',
     'role.AUDITOR_READONLY': 'Auditor (read-only)',
     'role.COMPANY_VIEW': 'Company owner',
+    'role.MANGMEE_SALES_LEAD': 'Mangmee Sales Lead',
+    'role.MANGMEE_SALES': 'Mangmee Sales',
     // Modules
     'module.dashboard': 'Dashboard',
     'module.inbox': 'Inbox',
