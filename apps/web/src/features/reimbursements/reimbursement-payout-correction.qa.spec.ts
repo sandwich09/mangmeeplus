@@ -349,9 +349,11 @@ const attested = { verifiedByUserId: 'boss', verifiedByName: NAMES.approver };
 const version1 = { version: 1, payoutKind: KBANK.payoutKind, bankName: KBANK.bankName, accountName: KBANK.accountName, accountLast4: KBANK.accountLast4,
   source: 'DEFAULT_ACCOUNT', frozenAt: AT.submitted, ...attested, verifiedAt: AT.approved, approvalStepId: 'step-1' };
 const version2 = { version: 2, payoutKind: SCB.payoutKind, bankName: SCB.bankName, accountName: SCB.accountName, accountLast4: SCB.accountLast4, source: 'REQUESTER', frozenAt: AT.given };
-const SENT_BACK = { kind: 'SENT_BACK', at: AT.sentBack, byUserId: 'finance', byName: NAMES.payer, reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้' };
-const GIVEN = { kind: 'ACCOUNT_SUBMITTED', at: AT.given, byUserId: 'staff', byName: NAMES.requester, payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 };
-const REAPPROVED = { kind: 'REAPPROVED', at: AT.reapproved, byUserId: 'boss', byName: NAMES.approver, approvalStepId: 'step-2' };
+// Each event of a round carries the fact its words are chosen from, as the API answers it: what the claim held when it
+// was sent back, and what was answered against what the round began with. Here: an account, answered with another account.
+const SENT_BACK = { kind: 'SENT_BACK', at: AT.sentBack, byUserId: 'finance', byName: NAMES.payer, reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้', held: 'ACCOUNT' };
+const GIVEN = { kind: 'ACCOUNT_SUBMITTED', at: AT.given, byUserId: 'staff', byName: NAMES.requester, payoutMethod: 'BANK_TRANSFER', payoutVersion: 2, answer: 'NEW_ACCOUNT' };
+const REAPPROVED = { kind: 'REAPPROVED', at: AT.reapproved, byUserId: 'boss', byName: NAMES.approver, approvalStepId: 'step-2', answer: 'NEW_ACCOUNT' };
 const round = { requestedAt: AT.sentBack, requestedByUserId: 'finance', requestedByName: NAMES.payer, reasonCode: 'ACCOUNT_NUMBER_WRONG', note: 'ธนาคารแจ้งว่าไม่พบบัญชีนี้',
   previous: KBANK, previouslyApprovedAt: AT.approved };
 
@@ -371,11 +373,15 @@ const phaseA = (overrides: Record<string, unknown> = {}) => ready({
   status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', approvedAt: undefined, payoutCorrectionPhase: 'AWAITING_REQUESTER', currentDesk: { kind: 'REQUESTER' }, paymentDesk: undefined,
   payoutCorrection: { phase: 'AWAITING_REQUESTER', ...round }, approvalSteps: [setAside], payoutCorrectionHistory: [SENT_BACK], ...overrides,
 });
-/** Phase B: the requester gave the SCB account, and a new step waits for the approver the claim had. */
+/**
+ * Phase B: the requester gave the SCB account, and a new step waits for the approver the claim had. The claim says what
+ * was answered and by whom (`payoutCorrectionAnswer`, `payoutCorrectionAnsweredBy`), on its list row and on its detail.
+ */
 const phaseB = (overrides: Record<string, unknown> = {}) => phaseA({
   payoutCorrectionPhase: 'AWAITING_APPROVAL', currentDesk: { kind: 'APPROVER', names: [NAMES.approver] }, approvalSnapshotHash: 'hash-of-version-2',
   payout: { ...SCB, source: 'REQUESTER' }, payoutHistory: [version1, version2],
-  payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, submittedAt: AT.given }, approvalSteps: [setAside, step2], payoutCorrectionHistory: [SENT_BACK, GIVEN], ...overrides,
+  payoutCorrectionAnswer: 'NEW_ACCOUNT', payoutCorrectionAnsweredBy: { byUserId: 'staff', byName: NAMES.requester },
+  payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, submittedAt: AT.given, sameAsPrevious: false }, approvalSteps: [setAside, step2], payoutCorrectionHistory: [SENT_BACK, GIVEN], ...overrides,
 });
 /** After the round: approved again, back at the pay step with the new account and its new attester. */
 const reapproved = (overrides: Record<string, unknown> = {}) => ready({
@@ -384,6 +390,61 @@ const reapproved = (overrides: Record<string, unknown> = {}) => ready({
   approvalSteps: [setAside, { ...step2, status: 'APPROVED', decisionByUserId: 'boss', decidedByName: NAMES.approver, decidedAt: AT.reapproved }],
   payoutCorrectionHistory: [SENT_BACK, GIVEN, REAPPROVED], ...overrides,
 });
+
+// ---- The same round from each of the three things a claim can hold, and with each of the seven answers ----
+//
+// The fixtures above are one case: a wrong account, answered with another account. A claim is also sent back holding
+// cash, or holding nothing (it was sent before claims carried an account), and its answer is one of seven. Every word of
+// a round follows those two facts, so every screen is read in each of them.
+
+type Held = 'ACCOUNT' | 'CASH' | 'NOTHING';
+type Answer = 'NEW_ACCOUNT' | 'SAME_ACCOUNT' | 'CASH_INSTEAD' | 'ACCOUNT_INSTEAD' | 'SAME_CASH' | 'FIRST_ACCOUNT' | 'FIRST_CASH';
+const HELD: Held[] = ['ACCOUNT', 'CASH', 'NOTHING'];
+const CASH_PAYOUT = { payoutMethod: 'CASH' as const };
+/** What the claim's detail says of each: its method and account, the reason it is sent back with, and what the round then says it began with. */
+const HOLDING: Record<Held, { claim: Record<string, unknown>; reasonCode: string; previous?: object }> = {
+  ACCOUNT: { claim: {}, reasonCode: 'ACCOUNT_NUMBER_WRONG', previous: KBANK },
+  CASH: { claim: { payoutMethod: 'CASH', payout: CASH_PAYOUT, payoutHistory: undefined }, reasonCode: 'CASH_NOT_PAYABLE', previous: CASH_PAYOUT },
+  NOTHING: { claim: { payoutMethod: undefined, payout: undefined, payoutHistory: undefined }, reasonCode: 'NO_ACCOUNT_ON_CLAIM' },
+};
+/** Each answer: what the round began with, and whether an account or cash was given. */
+const ANSWERS: Record<Answer, { start: Held; given: 'ACCOUNT' | 'CASH' }> = {
+  NEW_ACCOUNT: { start: 'ACCOUNT', given: 'ACCOUNT' }, SAME_ACCOUNT: { start: 'ACCOUNT', given: 'ACCOUNT' }, CASH_INSTEAD: { start: 'ACCOUNT', given: 'CASH' },
+  ACCOUNT_INSTEAD: { start: 'CASH', given: 'ACCOUNT' }, SAME_CASH: { start: 'CASH', given: 'CASH' },
+  FIRST_ACCOUNT: { start: 'NOTHING', given: 'ACCOUNT' }, FIRST_CASH: { start: 'NOTHING', given: 'CASH' },
+};
+const ALL_ANSWERS = Object.keys(ANSWERS) as Answer[];
+/** The round as the detail carries it, for a claim that held `held` when it was sent back. */
+const roundOf = (held: Held) => ({ ...round, reasonCode: HOLDING[held].reasonCode, note: undefined, previous: HOLDING[held].previous });
+const sentBackEvent = (held: Held) => ({ ...SENT_BACK, reasonCode: HOLDING[held].reasonCode, note: undefined, held });
+/** At the pay step, holding `held`. */
+const readyHolding = (held: Held, overrides: Record<string, unknown> = {}) => ready({ ...HOLDING[held].claim, ...overrides });
+/** Sent back holding `held`: with its requester. */
+const sentBackHolding = (held: Held, overrides: Record<string, unknown> = {}) => phaseA({
+  ...HOLDING[held].claim, payoutCorrection: { phase: 'AWAITING_REQUESTER', ...roundOf(held) }, payoutCorrectionHistory: [sentBackEvent(held)], ...overrides,
+});
+/** Someone who answers for the requester: a finance reviewer may. The claim and the event then say so. */
+const ON_BEHALF = { byUserId: 'accountant', byName: 'สุภาวดี นักบัญชี', onBehalf: true as const };
+/**
+ * Answered with `answer`: waiting for its approver. The claim holds what was given: the SCB account (the very KBANK
+ * account again when it was kept), or cash. `by`: who answered, when it was not the requester.
+ */
+const answeredWith = (answer: Answer, overrides: Record<string, unknown> = {}, by?: typeof ON_BEHALF) => {
+  const { start, given } = ANSWERS[answer];
+  // An account given is the next version of the claim's account: the second where the claim had one, its first otherwise.
+  const version = start === 'ACCOUNT' ? 2 : 1;
+  const account = answer === 'SAME_ACCOUNT' ? { ...version1, version, frozenAt: AT.given, verifiedByUserId: undefined, verifiedByName: undefined, verifiedAt: undefined, approvalStepId: undefined }
+    : { ...version2, version };
+  const earlier = start === 'ACCOUNT' ? [version1] : [];
+  return phaseB({
+    ...(given === 'CASH' ? { payoutMethod: 'CASH', payout: CASH_PAYOUT, payoutHistory: earlier.length ? earlier : undefined }
+      : { payoutMethod: 'BANK_TRANSFER', payout: { ...(answer === 'SAME_ACCOUNT' ? KBANK : SCB), version, source: account.source }, payoutHistory: [...earlier, account] }),
+    payoutCorrectionAnswer: answer, payoutCorrectionAnsweredBy: by ?? { byUserId: 'staff', byName: NAMES.requester },
+    payoutCorrection: { phase: 'AWAITING_APPROVAL', ...roundOf(start), submittedAt: AT.given, sameAsPrevious: answer === 'SAME_ACCOUNT' || answer === 'SAME_CASH' },
+    payoutCorrectionHistory: [sentBackEvent(start), { ...GIVEN, ...by, payoutMethod: given === 'CASH' ? 'CASH' : 'BANK_TRANSFER', payoutVersion: given === 'CASH' ? undefined : version, answer }],
+    ...overrides,
+  });
+};
 
 describe('the send-back form (spec §14.3): inside the step card, a fixed reason, an optional note', () => {
   /** The form's own states, in the order it declares them: the reason, the note, then the banner. */
@@ -749,8 +810,10 @@ describe('the card a round\'s approvers compare (spec §14.6)', () => {
   // (it compares what it stores); the last 4 digits on a page cannot tell, so the page never decides it.
   it('says the account did not change, in place of two accounts side by side, exactly when the server says it is the same account', () => {
     const KEPT = 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี';
+    // What the server decided when it took the answer, and says on the claim: the very account it was approved with, or another.
     const kept = (sameAsPrevious?: boolean) => phaseB({
       payout: { ...KBANK, version: 2, source: 'DEFAULT_ACCOUNT' }, payoutHistory: [version1, { ...version1, version: 2, frozenAt: AT.given, verifiedAt: undefined, approvalStepId: undefined }],
+      payoutCorrectionAnswer: sameAsPrevious === undefined ? undefined : sameAsPrevious ? 'SAME_ACCOUNT' : 'NEW_ACCOUNT',
       payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, submittedAt: AT.given, ...(sameAsPrevious !== undefined && { sameAsPrevious }) },
     });
     const same = card(kept(true));
@@ -783,7 +846,7 @@ describe('the card a round\'s approvers compare (spec §14.6)', () => {
     const compareNote = 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน';
     assert.deepEqual([mine(true).texts.includes(approverNote), mine(true).texts.includes(compareNote)], [true, false]);
     assert.deepEqual([mine(false).texts.includes(approverNote), mine(false).texts.includes(compareNote)], [false, true]);
-    assert.equal(stepCard(claimPage(kept(true), auditor).html).note, 'รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่');
+    assert.equal(stepCard(claimPage(kept(true), auditor).html).note, 'รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินเดิม');
     assert.match(mine(true).html, /data-testid="reimbursement-payout-correction-same-account"/);
     assertPlainThai([...same.texts, approverNote], 'the card of an account that was kept');
   });
@@ -1051,6 +1114,34 @@ describe('the step strip and the status of a claim in a round (spec §14.2)', ()
     }
     assert.equal(exactly(claimPage(reapproved(), auditor).html, 'พร้อมจ่าย'), 2);
   });
+
+  // Before: those two labels for every claim. "แก้บัญชี" on a claim with no account or one that asked for cash, and
+  // "บัญชีรับเงินใหม่" on an account that was kept, a claim's first account, and cash.
+  it('says what the claim waits for by what it holds, then by what was answered, on the badge and in the status row', () => {
+    const WITH_REQUESTER: Record<Held, string> = { ACCOUNT: 'รอผู้เบิกแก้บัญชีรับเงิน', NOTHING: 'รอผู้เบิกเพิ่มบัญชีรับเงิน', CASH: 'รอผู้เบิกเลือกวิธีรับเงินคืน' };
+    const WITH_APPROVERS: Record<Answer, string> = {
+      NEW_ACCOUNT: 'รออนุมัติบัญชีรับเงินใหม่', SAME_ACCOUNT: 'รออนุมัติบัญชีรับเงินเดิม', CASH_INSTEAD: 'รออนุมัติการรับเป็นเงินสด',
+      ACCOUNT_INSTEAD: 'รออนุมัติบัญชีรับเงิน', SAME_CASH: 'รออนุมัติการรับเป็นเงินสด', FIRST_ACCOUNT: 'รออนุมัติบัญชีรับเงิน', FIRST_CASH: 'รออนุมัติการรับเป็นเงินสด',
+    };
+    const others = (label: string) => [...Object.values(WITH_REQUESTER), ...Object.values(WITH_APPROVERS), 'รออนุมัติ'].filter((other) => other !== label);
+    for (const held of HELD) {
+      const { html, texts } = claimPage(sentBackHolding(held), auditor);
+      assert.equal(exactly(html, WITH_REQUESTER[held]), 2, held);
+      for (const other of others(WITH_REQUESTER[held])) assert.equal(exactly(html, other), 0, `${held}: ${other}`);
+      assert.equal(model.claimStatusBadge(sentBackHolding(held)).label, WITH_REQUESTER[held]);
+      assertPlainThai(texts, `with its requester, holding ${held}`);
+    }
+    for (const answer of ALL_ANSWERS) {
+      const { html, texts } = claimPage(answeredWith(answer), auditor);
+      assert.equal(exactly(html, WITH_APPROVERS[answer]), 2, answer);
+      for (const other of others(WITH_APPROVERS[answer])) assert.equal(exactly(html, other), 0, `${answer}: ${other}`);
+      assertPlainThai(texts, `answered with ${answer}`);
+    }
+    // A claim sent back again from its waiting step holds the answer that was not taken: its words follow that.
+    assert.equal(model.claimStatusBadge(sentBackHolding('CASH', { payoutCorrection: { phase: 'AWAITING_REQUESTER', ...roundOf('ACCOUNT') } })).label, 'รอผู้เบิกเลือกวิธีรับเงินคืน');
+    // A detail with no answer on it (a page fed by an older server) says what is true of every answer.
+    assert.equal(exactly(claimPage(phaseB({ payoutCorrectionAnswer: undefined }), auditor).html, 'รออนุมัติวิธีรับเงินคืน'), 2);
+  });
 });
 
 describe('the header line, the step note, the timeline and the badge name the same party in each phase', () => {
@@ -1100,6 +1191,36 @@ describe('the header line, the step note, the timeline and the badge name the sa
     assert.match(blocked.note!, /^รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่ · ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด "ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้" คุณจึงอนุมัติบัญชีใหม่เองไม่ได้ · /u);
     assert.doesNotMatch(blocked.note!, /เปิดคำขอกลับเป็นร่าง/u);
     assert.deepEqual(blocked.actions, ['correct-payout', 'cancel', 'print']);
+  });
+
+  // Before: the reader's note and the timeline's waiting row said "รอผู้เบิกแก้บัญชีรับเงิน" of every claim sent back, and
+  // "… อนุมัติบัญชีรับเงินใหม่" of every answer.
+  it('names the same thing in the note, the timeline and the badge, for each thing a claim holds and for each answer', () => {
+    for (const held of HELD) {
+      const detail = sentBackHolding(held);
+      const label = model.claimStatusBadge(detail).label;
+      assert.equal(active(detail, auditor).note!.split(' · ').at(-1), label, held);
+      assert.deepEqual(waitingRow(detail), [`กำลัง${label}`], held);
+      assert.deepEqual(deskLine(claimPage(detail, auditor).html), ['อยู่ที่ ผู้เบิก'], held);
+    }
+    assert.deepEqual(HELD.map((held) => waitingRow(sentBackHolding(held))[0]),
+      ['กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'กำลังรอผู้เบิกเลือกวิธีรับเงินคืน', 'กำลังรอผู้เบิกเพิ่มบัญชีรับเงิน']);
+    const THING: Record<Answer, string> = {
+      NEW_ACCOUNT: 'บัญชีรับเงินใหม่', SAME_ACCOUNT: 'บัญชีรับเงินเดิม', CASH_INSTEAD: 'การรับเป็นเงินสด', ACCOUNT_INSTEAD: 'บัญชีรับเงิน',
+      SAME_CASH: 'การรับเป็นเงินสด', FIRST_ACCOUNT: 'บัญชีรับเงิน', FIRST_CASH: 'การรับเป็นเงินสด',
+    };
+    for (const answer of ALL_ANSWERS) {
+      const detail = answeredWith(answer);
+      assert.equal(active(detail, auditor).note, `รอ สมศรี ผู้จัดการ อนุมัติ${THING[answer]}`, answer);
+      assert.deepEqual(waitingRow(detail), [`กำลังรอ สมศรี ผู้จัดการ อนุมัติ${THING[answer]}`], answer);
+      assert.equal(model.claimStatusBadge(detail).label, `รออนุมัติ${THING[answer]}`, answer);
+      assert.deepEqual(deskLine(claimPage(detail, auditor).html), ['อยู่ที่ สมศรี ผู้จัดการ'], answer);
+    }
+    // No answer on the detail (a page fed by an older server): the method, which is true of every answer.
+    const unknown = phaseB({ payoutCorrectionAnswer: undefined });
+    assert.deepEqual([active(unknown, auditor).note, waitingRow(unknown)[0]], ['รอ สมศรี ผู้จัดการ อนุมัติวิธีรับเงินคืน', 'กำลังรอ สมศรี ผู้จัดการ อนุมัติวิธีรับเงินคืน']);
+    // The quick-pay dialog of a row older than its claim says the same.
+    assert.equal(logic.quickPayBlockedNote(answeredWith('SAME_CASH'), EVERYTHING, 'finance'), 'บันทึกจ่ายใบนี้ไม่ได้ · รอ สมศรี ผู้จัดการ อนุมัติการรับเป็นเงินสด');
   });
 
   it('after the approval: whoever pays, as on any claim waiting for its payment', () => {
@@ -1534,7 +1655,7 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     const ASKED = 'done:ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงินโดย วราภรณ์ การเงิน : ใบนี้ยังไม่มีบัญชีรับเงิน';
     const ADDED = `done:ผู้เบิกเพิ่มบัญชีรับเงิน · ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย ${SCB.accountLast4}`;
     const waiting = phaseA({ ...legacy, payoutCorrection: { phase: 'AWAITING_REQUESTER', ...noAccountRound }, payoutCorrectionHistory: [asked] });
-    assert.deepEqual(rows(waiting), ['done:ยื่นใบ', APPROVED, ASKED, 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
+    assert.deepEqual(rows(waiting), ['done:ยื่นใบ', APPROVED, ASKED, 'current:กำลังรอผู้เบิกเพิ่มบัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
     const given = phaseB({ payoutMethod: 'BANK_TRANSFER', payout: { ...SCB, version: 1, source: 'REQUESTER' }, payoutHistory: [first],
       payoutCorrection: { phase: 'AWAITING_APPROVAL', ...noAccountRound, submittedAt: AT.given }, payoutCorrectionHistory: [asked, gave] });
     assert.deepEqual(rows(given).slice(2, 4), [ASKED, ADDED]);
@@ -1551,7 +1672,7 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     const requester = { userId: 'staff', permissions: ['reimbursement.read_own', 'reimbursement.create'] };
     const own = claimPage({ ...waiting, payoutCorrectionActions: { canRequest: false, canSubmit: true, requesterDefault: 'ABSENT' } }, requester).texts;
     assert.ok(own.some((text) => text === `${ASKED.slice(5)} · รอคุณเพิ่มบัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินของใบนี้`), JSON.stringify(own.filter((text) => text.includes('ส่งกลับ'))));
-    assert.ok(claimPage(waiting, auditor).texts.some((text) => text === `${ASKED.slice(5)} · รอผู้เบิกแก้บัญชีรับเงิน`));
+    assert.ok(claimPage(waiting, auditor).texts.some((text) => text === `${ASKED.slice(5)} · รอผู้เบิกเพิ่มบัญชีรับเงิน`));
     for (const detail of [waiting, given, corrected]) assertPlainThai(logic.buildClaimTimeline(detail).map((row) => row.label), 'the journey of a claim that had no account');
   });
 

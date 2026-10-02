@@ -425,7 +425,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         <td className={cx(FREE_TEXT_CELL, 'min-w-20 text-gray-500')}>{categoryText(r.categoryLabelSnapshot)}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.amount, r.currency)}</td>
-                        <td><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} /></td>
+                        <td><StatusBadge claim={r} /></td>
                         <td><PaymentBadge status={r.paymentStatus} /></td>
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -467,7 +467,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                     <div className="mt-1 truncate text-xs text-gray-500">ผู้เบิก: {r.requesterDisplayNameSnapshot ?? '—'}</div>
                     <CurrentDeskLine row={r} />
                     <div className="mt-3 flex items-center justify-between gap-3">
-                      <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
+                      <StatusBadge claim={r} />
                       <span className="shrink-0 text-xs text-gray-500">{shortDate(r.incurredDate)}</span>
                     </div>
                     <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
@@ -624,7 +624,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                             {/* Said here, before the approver decides: the claim page said it only after the row was opened. */}
                             {rowMayBeDuplicate(r) && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}
                             {/* The table has no status column: a row of a correction round says what it waits for here. */}
-                            {r.payoutCorrectionPhase && <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />}
+                            {r.payoutCorrectionPhase && <StatusBadge claim={r} />}
                           </div>
                         </td>
                         <td className="text-right">
@@ -658,7 +658,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <CurrentDeskLine row={r} />
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
+                      <StatusBadge claim={r} />
                       {r.slaRisk && <MangmeeBadge tone="danger">{OVERDUE_LABEL}</MangmeeBadge>}
                       {rowMayBeDuplicate(r) && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}
                     </div>
@@ -824,7 +824,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td className={cx(FREE_TEXT_CELL, 'min-w-24')}>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
-                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}</div></td>
+                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}</div></td>
                         {withReview && <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</td>}
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -854,7 +854,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   {withReview && <div className="mt-1 truncate text-xs text-gray-500">ตรวจการเงิน: {FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</div>}
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <StatusBadge status={r.status} desk={r.currentDesk} phase={r.payoutCorrectionPhase} />
+                      <StatusBadge claim={r} />
                       {r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>

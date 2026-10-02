@@ -48,11 +48,12 @@ import {
 import { PAYMENT_VOIDED_LABEL } from './reimbursements.model';
 
 /**
- * `desk`: the claim's `currentDesk`. A claim the system holds reads "รอระบบปรับสถานะ", not the status it has not left yet.
- * `phase`: its `payoutCorrectionPhase`. A claim sent back for its payout account reads whom it waits for.
+ * The status badge of a claim, as its list or queue row or as its detail. It takes the whole claim, because the words
+ * are not the status alone: a claim the system holds reads "รอระบบปรับสถานะ" (its `currentDesk`), and a claim sent back
+ * from its pay step reads what it waits for, by what it holds and what was answered (`claimStatusBadge`).
  */
-export function StatusBadge({ status, desk, phase }: { status: string; desk?: { kind?: string } | null; phase?: string | null }) {
-  const badge = claimStatusBadge({ status, currentDesk: desk, payoutCorrectionPhase: phase });
+export function StatusBadge({ claim }: { claim: Parameters<typeof claimStatusBadge>[0] }) {
+  const badge = claimStatusBadge(claim);
   return <MangmeeBadge tone={badge.tone}>{badge.label}</MangmeeBadge>;
 }
 export function PaymentBadge({ status }: { status: string }) {
@@ -773,7 +774,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <h4 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h4>
         <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           <Row k="หมวดหมู่" v={categoryText(detail.categoryLabelSnapshot)} />
-          <Row k="สถานะ" v={<StatusBadge status={detail.status} desk={detail.currentDesk} phase={detail.payoutCorrectionPhase} />} />
+          <Row k="สถานะ" v={<StatusBadge claim={detail} />} />
           {/* Only for a claim that is at, or went through, the finance review. A claim with no such step has none to speak
               of, and one that has not reached it yet read "ไม่ต้องตรวจ" here, which is not so: the step strip names what is ahead. */}
           {rowHasFinanceReview(detail) && <Row k="ตรวจการเงิน" v={FINANCE_REVIEW_LABELS[detail.financeReviewStatus]} />}

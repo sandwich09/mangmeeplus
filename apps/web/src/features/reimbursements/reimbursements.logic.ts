@@ -22,7 +22,8 @@ import {
 } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
 import { PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText } from './reimbursement-payout.logic';
-import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS } from '@watchdog-bms/contracts';
+// The words of a round are the contracts' own, chosen there from what the claim holds and from what was answered.
+import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, reimbursementPayoutRoundApproves, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -937,11 +938,11 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   }
 
   rows.push(...history);
-  // In a round the claim waits for its requester to give the account, then for the approvers of that account: the
-  // words of its badge and of its step note, so the three name the same party (spec §14.2).
+  // In a round the claim waits for its requester, then for the approvers of what was answered: the words of its badge
+  // and of its step note, so the three name the same party and the same thing (spec §14.2).
   if (round) {
     rows.push({ key: 'correction', state: 'current', label: `กำลัง${round.phase === 'AWAITING_REQUESTER'
-      ? REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER : waitingForCorrectionApproval(detail)}` });
+      ? payoutRoundStatus(detail, round) : waitingForCorrectionApproval(detail)}` });
   }
   const paid = (detail?.payments ?? []).find((p: any) => p.status === 'RECORDED');
   rows.push(paid
@@ -1112,9 +1113,20 @@ function payoutCorrectionRound(detail: any): {
   return { ...detail.payoutCorrection, phase };
 }
 
-/** "รอ สมศรี อนุมัติบัญชีรับเงินใหม่": the step note and the timeline row of a round's waiting step name the same people. */
+/**
+ * What a claim in a round is said to wait for, in the words of its badge (contracts): while it is with its requester by
+ * what the claim holds, an account to correct, none yet, or cash; after that by what was answered.
+ */
+function payoutRoundStatus(detail: any, round: { phase: string }): string {
+  return reimbursementPayoutRoundStatus({ ...detail, payoutCorrectionPhase: round.phase }) as string;
+}
+
+/**
+ * "รอ สมศรี อนุมัติบัญชีรับเงินใหม่": the step note and the timeline row of a round's waiting step name the same people,
+ * and the thing they approve by what was answered: a new account, the account the claim had, a first one, or cash.
+ */
 function waitingForCorrectionApproval(detail: any): string {
-  return `รอ ${currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER} อนุมัติบัญชีรับเงินใหม่`;
+  return `รอ ${currentDeskText(detail?.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER} อนุมัติ${reimbursementPayoutRoundApproves(detail?.payoutCorrectionAnswer)}`;
 }
 
 /**
@@ -1134,7 +1146,8 @@ function payoutCorrectionStepNote(
       viewer.canSubmit && viewer.isRequester ? (round.reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? 'รอคุณเพิ่มบัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินของใบนี้'
         : 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินที่ถูกต้อง')
         : viewer.canSubmit ? `${REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER} คุณแก้แทนผู้เบิกได้`
-          : REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER,
+          // Everyone else reads what the claim waits for, in the words of its badge.
+          : payoutRoundStatus(detail, round),
     ].filter(Boolean).join(' · ');
   }
   const waiting = waitingForCorrectionApproval(detail);

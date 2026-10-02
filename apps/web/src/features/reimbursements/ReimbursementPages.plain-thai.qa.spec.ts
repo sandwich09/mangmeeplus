@@ -202,10 +202,11 @@ const hubClaims = ([
   status, amount: '100.0000', currentDesk: kind && { kind } }));
 
 // The same claim sent back from the pay step for its payout account, as the list API answers it in each phase:
-// PENDING_APPROVAL, first with its requester, then with the approvers its new account waits for.
-const correctionRows = ([['AWAITING_REQUESTER', { kind: 'REQUESTER' }], ['AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมชาย'] }]] as const)
-  .map(([payoutCorrectionPhase, currentDesk], index) => ({ ...draft, id: `${ids.request}round${index}`, requestNo: 'RB-202609-00007', status: 'PENDING_APPROVAL',
-    receiptRequirementStatus: 'ATTACHED', payoutMethod: 'BANK_TRANSFER', amount: '100.0000', payoutCorrectionPhase, currentDesk }));
+// PENDING_APPROVAL, first with its requester, then with the approvers its new account waits for. It was sent back
+// holding an account and answered with another account; the answer is on a waiting row only.
+const correctionRows = ([['AWAITING_REQUESTER', { kind: 'REQUESTER' }, {}], ['AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมชาย'] }, { payoutCorrectionAnswer: 'NEW_ACCOUNT' }]] as const)
+  .map(([payoutCorrectionPhase, currentDesk, answered], index) => ({ ...draft, id: `${ids.request}round${index}`, requestNo: 'RB-202609-00007', status: 'PENDING_APPROVAL',
+    receiptRequirementStatus: 'ATTACHED', payoutMethod: 'BANK_TRANSFER', amount: '100.0000', payoutCorrectionPhase, currentDesk, ...answered }));
 
 /** The source of every claim screen, as one text. A comment is not a screen, so comments are left out. */
 function claimScreenSources(): string {
@@ -316,6 +317,23 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     assert.equal(texts.some((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ'), false);
     assert.equal(rowsShown(hubTab('mine', claims, 'draft')), 1);
     assert.equal(visible(hubTab('mine', claims, 'draft')).includes('รอผู้เบิกแก้บัญชีรับเงิน'), false);
+  });
+
+  // Before: every row of a round read one of two labels, written for a wrong account replaced by another one. A claim
+  // sent back with no account, or one that asked for cash, read "รอผู้เบิกแก้บัญชีรับเงิน"; an account that was kept, a
+  // first account, or cash read "รออนุมัติบัญชีรับเงินใหม่".
+  it('says on each row of a round what that claim waits for: by what it holds, then by what was answered', () => {
+    const cases = [
+      [undefined, undefined, 'รอผู้เบิกเพิ่มบัญชีรับเงิน'], ['CASH', undefined, 'รอผู้เบิกเลือกวิธีรับเงินคืน'],
+      ['BANK_TRANSFER', 'SAME_ACCOUNT', 'รออนุมัติบัญชีรับเงินเดิม'], ['BANK_TRANSFER', 'FIRST_ACCOUNT', 'รออนุมัติบัญชีรับเงิน'], ['CASH', 'CASH_INSTEAD', 'รออนุมัติการรับเป็นเงินสด'],
+    ] as const;
+    const rows = cases.map(([payoutMethod, payoutCorrectionAnswer], index) => ({ ...correctionRows[payoutCorrectionAnswer ? 1 : 0]!, id: `${ids.request}case${index}`, payoutMethod, payoutCorrectionAnswer }));
+    const texts = visible(hubTab('mine', rows, 'review'));
+    assert.equal(rowsShown(hubTab('mine', rows, 'review')), cases.length);
+    // In the table and on the phone card of each row.
+    for (const [, , label] of cases) assert.equal(texts.filter((text) => text === label).length, 2, label);
+    for (const untrue of ['รอผู้เบิกแก้บัญชีรับเงิน', 'รออนุมัติบัญชีรับเงินใหม่', 'รออนุมัติ']) assert.equal(texts.includes(untrue), false, untrue);
+    for (const text of texts) for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(text.replaceAll('RB-202609-00007', ''), pattern, `${name}: ${text}`);
   });
 
   it('keeps the four cards two by two on a 390 px phone, each one a button that filters', () => {
