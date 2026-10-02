@@ -979,6 +979,11 @@ describe('DataRightsService single-admin mode', () => {
     await assert.rejects(() => service.startVerification(admin, caseId, 'verify-early', REASON), code('data_rights_execution_evidence_incomplete'));
     await recordRequiredEvidence(service, prisma, caseId, admin);
     await service.startVerification(admin, caseId, 'verify-self', REASON);
+    // A self-verification is still evidence: a hash that is not a SHA-256 is refused.
+    await assert.rejects(
+      () => service.recordEvidence(admin, caseId, { ...independent('independent-bad-hash', REASON), sha256: 'not-a-sha-256' }),
+      /sha256 must be 64 lowercase hexadecimal characters/,
+    );
     // The verification evidence first, itself an explicit step.
     await assert.rejects(() => service.complete(admin, caseId, complete('complete-early', REASON)), code('data_rights_completion_evidence_incomplete'));
 
