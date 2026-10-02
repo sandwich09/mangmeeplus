@@ -1015,6 +1015,12 @@ export type ReimbursementPayoutCorrection = {
   previous?: ReimbursementPayoutCorrectionAccount;
   /** When that approval was given. The claim's lines, amounts and evidence are what they were then. */
   previouslyApprovedAt?: string;
+  /**
+   * AWAITING_APPROVAL: whether the account given in the round is the very account the claim was approved
+   * with before it (the same kind, bank, account name and number, or cash both times). The server compares
+   * what it stores; the last 4 digits a page shows cannot tell. False for a claim that had no account.
+   */
+  sameAsPrevious?: boolean;
 };
 
 /** What this viewer may do about the payout account of an approved claim. The endpoints enforce the same. */

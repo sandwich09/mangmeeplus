@@ -499,6 +499,21 @@ export async function readPaymentPayoutDestinations(
 }
 
 /**
+ * Whether the account a claim holds now is the very account one of its earlier versions named: the same
+ * kind, bank, account name and number. Answered from the two stored fingerprints, and only the answer
+ * leaves: the approver of a correction round is told "the same account", never what was compared
+ * (payout spec §14.6). False for cash and for a claim with no snapshot, which have no account to compare.
+ */
+export async function claimPayoutMatchesVersion(client: any, claim: ClaimPayoutPointer, version: number): Promise<boolean> {
+  if (claim.payoutMethod !== 'BANK_TRANSFER' || !hasPayoutSnapshot(claim)) return false;
+  const row = await client.reimbursementPayoutDestination.findFirst({
+    where: { companyId: claim.companyId, reimbursementRequestId: claim.id, version, frozenAt: { not: null }, source: { not: LEGACY_PAYMENT_PAYOUT_SOURCE } },
+    select: { fingerprint: true },
+  });
+  return !!row?.fingerprint && row.fingerprint === claim.payoutFingerprint;
+}
+
+/**
  * A legacy claim's payer is shown the REQUESTER's default account as it is now (spec §15): masked,
  * with the token that names it. Null when the requester has no account to transfer into (no default,
  * or a cash default). The caller has already established that the claim is legacy and payable and

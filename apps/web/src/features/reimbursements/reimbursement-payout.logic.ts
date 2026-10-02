@@ -418,6 +418,12 @@ export const PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL = 'ส่งกลับ�
 /** Said above the send-back at the foot of the account box of a claim that waits for its payment (spec §14.3). */
 export const PAYOUT_CORRECTION_SEND_BACK_LEAD = 'ถ้าวิธีรับเงินหรือบัญชีนี้ไม่ถูกต้อง อย่าเพิ่งจ่าย ส่งกลับให้แก้ก่อน';
 export const PAYOUT_CORRECTION_ADD_ACCOUNT_LEAD = 'ใบนี้บันทึกจ่ายได้เลยโดยไม่ต้องมีบัญชีในใบ ข้อความด้านล่างใช้เมื่อต้องการให้ใบมีบัญชีที่ผู้อนุมัติตรวจแล้วเท่านั้น';
+/**
+ * Said on the approvers' card in place of the two accounts side by side, when the account given in the round is the
+ * very account the claim had (the server's answer, `payoutCorrection.sameAsPrevious`): the last 4 digits of two
+ * accounts can read alike, and of one account always do.
+ */
+export const PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL = 'บัญชีเดิม ไม่ได้เปลี่ยน';
 /** The same send-back from whoever decides the round's waiting step: it is never a refusal of the claim. */
 export const PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL = 'ส่งกลับให้แก้อีกครั้ง';
 export const PAYOUT_CORRECTION_FIX_LABEL = 'แก้บัญชีรับเงิน';

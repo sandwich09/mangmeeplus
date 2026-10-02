@@ -46,7 +46,7 @@ import {
   readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
 } from '../../infrastructure/reimbursement-payout';
 import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
-import { freezePayoutCorrection, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
+import { claimPayoutMatchesVersion, freezePayoutCorrection, readPaymentPayoutDestinations } from '../../infrastructure/reimbursement-payout';
 import { paymentTurnUserIds, payoutCorrectionRoundStart, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
 import { payoutDefaultToken } from '../../domain/logic/payout-destination.logic';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
@@ -3758,6 +3758,8 @@ function correctionWorld(options: RepoOptions = {}) {
     getUserDisplayNames: async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => names[id]).map((id) => [id, names[id]])),
     findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(activeApprovers ?? ids),
     listPaymentPayoutDestinations: (companyId: string, requestId: string, versions: number[]) => readPaymentPayoutDestinations(db, companyId, requestId, versions),
+    // The repository's own comparison of the two stored fingerprints, over the same tables.
+    claimPayoutMatchesVersion: (request: any, version: number) => claimPayoutMatchesVersion(db, request, version),
     listPaymentSlips: async () => ({}),
     areClaimProjectionsReady: async () => true,
     listRequests: async ({ statuses }: any) => (statuses.includes(claim().status) ? [{ ...claim(), approvalSteps: steps }] : []),
@@ -4190,6 +4192,51 @@ describe('payout correction: the requester gives the account and it is approved 
     await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'OTHER' });
     await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'PREVIOUS' }), (error: any) => error.getStatus() === 409 && error.message === 'payout_destination_required');
     assert.equal(legacy.claim().payoutCorrectionSubmittedAt, undefined);
+  });
+
+  // Upgrade test 2026-10-02: a requester who chose "ใช้บัญชีเดิมของใบนี้" left the approver a card with two accounts
+  // that read alike (bank, name, last 4 digits) and no word that they are one account. The server knows: it compares
+  // what it stores, and says yes or no.
+  it('says whether the account given in a round is the very account the claim had, and gives away nothing it compared', async () => {
+    const same = async (world: ReturnType<typeof correctionWorld>, id: string) => (await world.detail.execute(approverCtx(), id)).payoutCorrection?.sameAsPrevious;
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    // Not asked before an account is given: there is nothing to compare yet.
+    const waiting = await world.detail.execute(ctx(), id);
+    assert.deepEqual([waiting.payoutCorrection?.phase, 'sameAsPrevious' in waiting.payoutCorrection!], ['AWAITING_REQUESTER', false]);
+    // "The account the claim had", the same account typed again, and the default that is that account: each a new version, each the same account.
+    const kept = await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    assert.deepEqual([kept.payoutCorrection?.phase, kept.payoutCorrection?.sameAsPrevious, kept.payout?.version, kept.payoutCorrection?.previous?.version], ['AWAITING_APPROVAL', true, 2, 1]);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK });
+    assert.equal(await same(world, id), true, 'typed again, digit for digit');
+    const token = (await world.detail.execute(ctx(), id)).payoutCorrectionActions!.requesterDefault!.token;
+    await world.giveAccount.execute(ctx(), id, { mode: 'DEFAULT', defaultToken: token });
+    assert.equal(await same(world, id), true, 'the default it was sent with');
+    // Another account, the same number under another name, and another method are not.
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+    assert.equal(await same(world, id), false);
+    await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...KBANK, accountName: 'นาง สมศรี ใจดี' });
+    assert.equal(await same(world, id), false, 'the same last 4 digits under another name is another account');
+    await world.giveAccount.execute(ctx(), id, { mode: 'CASH' });
+    assert.equal(await same(world, id), false);
+    // The answer is all that leaves: no fingerprint of either account in what any reader of the claim gets.
+    await world.giveAccount.execute(ctx(), id, { mode: 'PREVIOUS' });
+    const answer = JSON.stringify(await world.detail.execute(approverCtx(), id));
+    for (const row of world.state.payoutTables.destinations) assert.equal(answer.includes(row.fingerprint), false);
+    assert.doesNotMatch(answer, /fingerprint/i);
+    assert.equal(leaksNumber(answer), false);
+
+    // Cash both times is the same receiving method; cash changed to an account is not.
+    const cash = correctionWorld();
+    const cashId = await sentBack(cash, { setDefault: null, payout: { mode: 'CASH' } });
+    assert.equal((await cash.giveAccount.execute(ctx(), cashId, { mode: 'PREVIOUS' })).payoutCorrection?.sameAsPrevious, true);
+    assert.equal((await cash.giveAccount.execute(ctx(), cashId, { mode: 'SPECIFIED', ...KBANK })).payoutCorrection?.sameAsPrevious, false);
+    // A claim that had no account of its own was given its first: never "the same".
+    const legacy = correctionWorld();
+    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assert.equal((await legacy.giveAccount.execute(ctx(), legacyId, { mode: 'SPECIFIED', ...KBANK })).payoutCorrection?.sameAsPrevious, false);
   });
 
   // Final review W11: a claim being cancelled takes no account and no approval of one, in either phase of

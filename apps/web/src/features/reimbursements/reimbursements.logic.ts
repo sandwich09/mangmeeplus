@@ -1097,7 +1097,9 @@ function journeyStepAt(detail: any, withFinance: boolean): JourneyStepKey {
  * The round a claim is in, from its detail: the phase, and who sent it back and why. Null for a claim in none,
  * and for a phase this build does not know (the claim then reads as any claim waiting for approval).
  */
-function payoutCorrectionRound(detail: any): { phase: 'AWAITING_REQUESTER' | 'AWAITING_APPROVAL'; requestedByName?: string; reasonCode?: unknown; note?: string } | null {
+function payoutCorrectionRound(detail: any): {
+  phase: 'AWAITING_REQUESTER' | 'AWAITING_APPROVAL'; requestedByName?: string; reasonCode?: unknown; note?: string; sameAsPrevious?: boolean;
+} | null {
   const phase = detail?.payoutCorrection?.phase ?? detail?.payoutCorrectionPhase;
   if (detail?.status !== 'PENDING_APPROVAL' || (phase !== 'AWAITING_REQUESTER' && phase !== 'AWAITING_APPROVAL')) return null;
   return { ...detail.payoutCorrection, phase };
@@ -1130,7 +1132,10 @@ function payoutCorrectionStepNote(
   }
   const waiting = waitingForCorrectionApproval(detail);
   return [
-    viewer.canApprove ? 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน' : waiting,
+    // The account given is the one the claim had (the server's answer): there are no two accounts to compare.
+    viewer.canApprove ? (round.sameAsPrevious === true
+      ? 'รอคุณอนุมัติบัญชีรับเงินอีกครั้ง บัญชีที่ส่งมาคือบัญชีเดิมของใบนี้ ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'
+      : 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน') : waiting,
     // The requester holds the approval this account waits on and the company's switch refuses them (spec §15).
     detail?.approvalActions?.selfApprovalBlocked === true && `ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติบัญชีใหม่เองไม่ได้`,
     !viewer.canApprove && viewer.canSubmit && (viewer.isRequester
@@ -1359,6 +1364,11 @@ export type PayoutCorrectionComparison = {
   previous: string;
   /** The account the claim has now, masked. */
   current: string;
+  /**
+   * The account the claim has now is the very account it was approved with (the server compared what it stores).
+   * The card then shows that one account under "บัญชีเดิม ไม่ได้เปลี่ยน", and no two accounts side by side.
+   */
+  same?: true;
   /** That the lines and the amount are what was approved, and when that was. */
   unchanged: string;
   /** Who sent the claim back and why, with the note they added. */
@@ -1380,6 +1390,7 @@ export function payoutCorrectionComparison(detail: any): PayoutCorrectionCompari
   return {
     previous: payoutCorrectionAccountText(round.previous),
     current: payoutCorrectionAccountText(detail.payout),
+    ...(round.sameAsPrevious === true && { same: true as const }),
     unchanged: `รายการและยอดเงิน ${formatMoney(detail.amount, detail.currency)} เท่ากับที่อนุมัติไว้${
       round.previouslyApprovedAt ? `เมื่อ ${formatThaiDateTime(round.previouslyApprovedAt)}` : ''} การอนุมัติครั้งนี้ตรวจเฉพาะบัญชีรับเงินคืน`,
     sentBack: payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode }),

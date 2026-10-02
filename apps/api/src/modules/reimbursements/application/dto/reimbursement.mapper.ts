@@ -257,6 +257,7 @@ export function toPayoutCorrection(
   r: ReimbursementRequestRecord,
   names: Record<string, string> = {},
   previousAccount?: PaymentPayoutDestinationRecord,
+  sameAsPrevious?: boolean,
 ): ReimbursementPayoutCorrection | undefined {
   const phase = payoutCorrectionPhase(r);
   if (!phase || !r.payoutCorrectionRequestedAt) return undefined;
@@ -278,6 +279,8 @@ export function toPayoutCorrection(
       }),
     } }),
     ...(approved?.at && { previouslyApprovedAt: approved.at }),
+    // Only once an account was given: whether it is the one the claim had.
+    ...(phase === 'AWAITING_APPROVAL' && sameAsPrevious !== undefined && { sameAsPrevious }),
   };
 }
 
@@ -403,8 +406,16 @@ export async function detailWithFileNames(
   // The account each payment was confirmed into. Only a payment recorded with one costs a query.
   const paidInto = (req.payments ?? []).flatMap((payment) => payment.payoutDestinationVersion ?? []);
   // In a correction round: the account the claim was approved with, to set beside the one it has now.
-  const approvedVersion = payoutCorrectionPhase(req) ? payoutCorrectionRoundStart(req)?.payoutVersion : undefined;
-  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips, payout, paymentDestinations, approvedAccounts] = await Promise.all([
+  const roundStart = payoutCorrectionPhase(req) ? payoutCorrectionRoundStart(req) : undefined;
+  const approvedVersion = roundStart?.payoutVersion;
+  // Once the round's account is given: whether it is the very account the claim was approved with. Cash
+  // both times is the same; two transfers are compared by the repository, from what it stores; a claim
+  // that had no account, or changed its method, is not.
+  const keptAccount = payoutCorrectionPhase(req) !== 'AWAITING_APPROVAL' ? undefined
+    : roundStart?.payoutMethod === 'CASH' ? req.payoutMethod === 'CASH'
+      : roundStart?.payoutMethod === 'BANK_TRANSFER' && approvedVersion !== undefined && req.payoutMethod === 'BANK_TRANSFER'
+        ? repo.claimPayoutMatchesVersion(req, approvedVersion) : false;
+  const [primaryFileName, lineFileNames, displayNames, signedCopies, policy, paymentSlips, payout, paymentDestinations, approvedAccounts, sameAsPrevious] = await Promise.all([
     evidence.getAttachmentFileName(companyId, req.primaryAttachmentId),
     evidence.getAttachmentFileNames(companyId, (req.lines ?? []).map((line) => line.attachmentId ?? '')),
     // Whoever declared a paper-signed scan, typed the account or attested it is named in the same batch.
@@ -419,6 +430,7 @@ export async function detailWithFileNames(
     payoutRead,
     paidInto.length > 0 ? repo.listPaymentPayoutDestinations(companyId, req.id, paidInto) : undefined,
     approvedVersion === undefined ? undefined : repo.listPaymentPayoutDestinations(companyId, req.id, [approvedVersion]),
+    keptAccount,
   ]);
   const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
   const receiptRequirementStatus = req.status === 'DRAFT'
@@ -449,6 +461,6 @@ export async function detailWithFileNames(
     ),
     payout: toPayoutSummary(payout, displayNames),
     paymentDestinations,
-    payoutCorrection: toPayoutCorrection(req, displayNames, approvedVersion === undefined ? undefined : approvedAccounts?.[approvedVersion]),
+    payoutCorrection: toPayoutCorrection(req, displayNames, approvedVersion === undefined ? undefined : approvedAccounts?.[approvedVersion], sameAsPrevious),
   });
 }

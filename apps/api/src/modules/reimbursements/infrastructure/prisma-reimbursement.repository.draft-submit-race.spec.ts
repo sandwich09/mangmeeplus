@@ -4510,6 +4510,31 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     }
   });
 
+  // Upgrade test 2026-10-02: a requester who kept the account the claim had left its approver a card with two accounts
+  // that read alike and no word that they are one. The detail says so, from the stored fingerprints, which stay here.
+  it('tells the approver of a round whether the account given is the very one the claim had, and gives away neither fingerprint', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER', note: 'ส่งกลับผิดใบ' });
+    assert.equal('sameAsPrevious' in (await on(0).detail.execute(manager(), claim.requestId)).payoutCorrection!, false, 'nothing is given yet');
+
+    const kept = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'PREVIOUS' });
+    assert.deepEqual([kept.payoutCorrection?.phase, kept.payoutCorrection?.sameAsPrevious, kept.payout?.version, kept.payoutCorrection?.previous?.version],
+      ['AWAITING_APPROVAL', true, 2, 1]);
+    // What the approver reads over another connection says the same, and carries nothing that was compared.
+    const shown = await on(1).detail.execute(manager(), claim.requestId);
+    assert.equal(shown.payoutCorrection?.sameAsPrevious, true);
+    const [first, second] = await accountVersionsOf(claim.requestId);
+    assert.equal(first!.fingerprint, second!.fingerprint);
+    assert.equal(JSON.stringify(shown).includes(first!.fingerprint), false);
+    assert.doesNotMatch(JSON.stringify(shown), /fingerprint/i);
+
+    // Another account in the same round is not the same account.
+    const changed = await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+    assert.deepEqual([changed.payoutCorrection?.sameAsPrevious, changed.payout?.version], [false, 3]);
+    assert.equal((await on(1).detail.execute(manager(), claim.requestId)).payoutCorrection?.sameAsPrevious, false);
+  });
+
   it('still cancels a claim in a round by the rule every claim is cancelled by: its records are voided and it closes', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     for (const phase of ['with its requester', 'with its approver'] as const) {

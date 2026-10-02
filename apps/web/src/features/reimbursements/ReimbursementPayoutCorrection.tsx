@@ -16,7 +16,8 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL, PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
+  PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL, PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL,
+  PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
   PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
   isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
@@ -252,16 +253,26 @@ export function PayoutCorrectionComparison({ detail }: { detail: any }) {
   return (
     <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3 [overflow-wrap:anywhere]" data-testid="reimbursement-payout-correction-comparison">
       <h3 className="text-sm font-bold text-gray-900">สิ่งที่เปลี่ยน: บัญชีรับเงินคืน</h3>
-      <dl className="grid gap-3 sm:grid-cols-2">
-        <div className="min-w-0">
-          <dt className="text-xs font-semibold text-gray-600">บัญชีเดิม</dt>
-          <dd className="mt-1 break-words text-sm text-gray-700">{view.previous}</dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs font-semibold text-gray-600">บัญชีใหม่</dt>
-          <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
-        </div>
-      </dl>
+      {/* The same account given again: one account and the word that it did not change, never two that read alike. */}
+      {view.same ? (
+        <dl>
+          <div className="min-w-0" data-testid="reimbursement-payout-correction-same-account">
+            <dt className="text-xs font-semibold text-gray-600">{PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL}</dt>
+            <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
+          </div>
+        </dl>
+      ) : (
+        <dl className="grid gap-3 sm:grid-cols-2">
+          <div className="min-w-0">
+            <dt className="text-xs font-semibold text-gray-600">บัญชีเดิม</dt>
+            <dd className="mt-1 break-words text-sm text-gray-700">{view.previous}</dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs font-semibold text-gray-600">บัญชีใหม่</dt>
+            <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
+          </div>
+        </dl>
+      )}
       <p className="text-sm text-gray-700">{view.unchanged}</p>
       <ul className="space-y-1 text-xs text-gray-600">
         <li>{view.sentBack}</li>

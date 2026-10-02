@@ -1260,6 +1260,8 @@ describe('a claim whose payout account is being corrected', () => {
     const repo = {
       ...base, ...ordinary,
       listPaymentPayoutDestinations: async () => ({}),
+      // This fake keeps no account rows: the account given is never the one the claim had.
+      claimPayoutMatchesVersion: async () => false,
       approvePayoutCorrectionAtomic: async (data: any) => {
         ran.push(['approvePayoutCorrectionAtomic', data]);
         const step = req.approvalSteps.find((candidate: any) => candidate.id === req.currentApprovalStepId);

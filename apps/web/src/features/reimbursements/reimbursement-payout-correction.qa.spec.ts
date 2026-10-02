@@ -10,7 +10,7 @@ import {
 import { translateApiError } from '@/common/api/api-error-message';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import {
-  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED,
+  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED,
   emptyPayoutCorrectionForm, isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
   payoutCorrectionInput, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
@@ -710,6 +710,50 @@ describe('the card a round\'s approvers compare (spec §14.6)', () => {
     assert.equal(legacy.previous, 'ไม่มี ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน');
     // An action's answer carries no history: the card still says when the account was given.
     assert.equal(logic.payoutCorrectionComparison(phaseB({ payoutCorrectionHistory: undefined }))!.submitted, 'ผู้เบิกแก้บัญชีรับเงิน เมื่อ 1 ต.ค. 2569 12:00 น.');
+  });
+
+  // Upgrade test 2026-10-02: the requester chose "ใช้บัญชีเดิมของใบนี้", and the card set the account beside itself:
+  // two lines that read alike and no word that they are one account. Whether they are one is the server's answer
+  // (it compares what it stores); the last 4 digits on a page cannot tell, so the page never decides it.
+  it('says the account did not change, in place of two accounts side by side, exactly when the server says it is the same account', () => {
+    const KEPT = 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี';
+    const kept = (sameAsPrevious?: boolean) => phaseB({
+      payout: { ...KBANK, version: 2, source: 'DEFAULT_ACCOUNT' }, payoutHistory: [version1, { ...version1, version: 2, frozenAt: AT.given, verifiedAt: undefined, approvalStepId: undefined }],
+      payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, submittedAt: AT.given, ...(sameAsPrevious !== undefined && { sameAsPrevious }) },
+    });
+    const same = card(kept(true));
+    assert.deepEqual(same.texts, [
+      'สิ่งที่เปลี่ยน: บัญชีรับเงินคืน',
+      'บัญชีเดิม ไม่ได้เปลี่ยน', KEPT,
+      'รายการและยอดเงิน 1,614.50 บาท เท่ากับที่อนุมัติไว้เมื่อ 1 ต.ค. 2569 10:00 น. การอนุมัติครั้งนี้ตรวจเฉพาะบัญชีรับเงินคืน',
+      'ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เลขบัญชีไม่ถูกต้อง', 'หมายเหตุ: ธนาคารแจ้งว่าไม่พบบัญชีนี้',
+      'ผู้เบิกแก้บัญชีรับเงิน เมื่อ 1 ต.ค. 2569 12:00 น.',
+    ]);
+    assert.equal(PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL, 'บัญชีเดิม ไม่ได้เปลี่ยน');
+    assert.equal(same.texts.filter((text) => text === KEPT).length, 1, 'the account is shown once');
+    assert.equal(logic.payoutCorrectionComparison(kept(true))!.same, true);
+    // Two accounts that read alike are still two accounts unless the server says otherwise: the same last 4 digits
+    // under the same name can be another number, and an answer from before this fact is no answer.
+    for (const answer of [false, undefined]) {
+      const two = card(kept(answer));
+      assert.deepEqual(two.texts.slice(1, 5), ['บัญชีเดิม', KEPT, 'บัญชีใหม่', KEPT], String(answer));
+      assert.equal(two.texts.includes('บัญชีเดิม ไม่ได้เปลี่ยน'), false, String(answer));
+      assert.equal('same' in logic.payoutCorrectionComparison(kept(answer))!, false, String(answer));
+    }
+    // Cash kept as cash reads the same way.
+    const cash = card(phaseB({ payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' },
+      payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, previous: { payoutMethod: 'CASH' }, submittedAt: AT.given, sameAsPrevious: true } })).texts;
+    assert.deepEqual(cash.slice(1, 3), ['บัญชีเดิม ไม่ได้เปลี่ยน', 'รับเป็นเงินสด']);
+
+    // Whoever approves is told there is one account to check, not two to compare; everyone else reads the claim's status.
+    const mine = (sameAsPrevious: boolean) => claimPage({ ...kept(sameAsPrevious), approvalActions: DECIDE }, approver);
+    const approverNote = 'รอคุณอนุมัติบัญชีรับเงินอีกครั้ง บัญชีที่ส่งมาคือบัญชีเดิมของใบนี้ ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน';
+    const compareNote = 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน';
+    assert.deepEqual([mine(true).texts.includes(approverNote), mine(true).texts.includes(compareNote)], [true, false]);
+    assert.deepEqual([mine(false).texts.includes(approverNote), mine(false).texts.includes(compareNote)], [false, true]);
+    assert.equal(stepCard(claimPage(kept(true), auditor).html).note, 'รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่');
+    assert.match(mine(true).html, /data-testid="reimbursement-payout-correction-same-account"/);
+    assertPlainThai([...same.texts, approverNote], 'the card of an account that was kept');
   });
 
   it('is shown for a claim whose new account waits for approval, and for no other claim', () => {

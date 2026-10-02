@@ -94,7 +94,7 @@ import {
 // The payment step's side of the payout (kept as its own imports, apart from the block above).
 import { planPaymentPayout, type PaymentPayoutPlan, type PaymentPayoutStatement } from '../domain/logic/payout-destination.logic';
 import {
-  assertPaymentPayoutUsable, confirmPaymentPayout, paymentPayoutRefusal, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
+  assertPaymentPayoutUsable, claimPayoutMatchesVersion, confirmPaymentPayout, paymentPayoutRefusal, readLegacyPayoutDefault, readPaymentPayoutDestinations, readRecordedPaymentPayout,
   type ConfirmedPaymentPayout,
 } from './reimbursement-payout';
 // The claim page's account history (its own import too, for the same reason).
@@ -1504,6 +1504,11 @@ export class PrismaReimbursementRepository {
   /** The masked accounts a claim's payments were confirmed into, by account version. */
   listPaymentPayoutDestinations(companyId: string, requestId: string, versions: readonly number[]) {
     return readPaymentPayoutDestinations(this.prisma.client, companyId, requestId, versions);
+  }
+
+  /** A correction round: whether the account the claim holds now is the one that version named. A yes or a no; no fingerprint leaves. */
+  claimPayoutMatchesVersion(request: ReimbursementRequestRecord, version: number): Promise<boolean> {
+    return claimPayoutMatchesVersion(this.prisma.client, request, version);
   }
 
   /** Friendly preflight of the payout proof that `recordPaymentAtomic` repeats under the payment lock. */
