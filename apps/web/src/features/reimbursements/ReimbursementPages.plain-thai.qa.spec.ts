@@ -669,7 +669,38 @@ describe('the hub\'s third tab is the pay queue where the company has no finance
   it('keeps the review column and its count for a queue that still holds such a claim, under the tab the company now has', () => {
     const html = hubTab('finance', [ready, underReview], undefined, {}, '', false);
     assert.deepEqual(tabsOf(html), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
-    for (const text of ['รอตรวจ/รอจ่าย', 'ตรวจการเงิน', 'รอตรวจสอบ', 'ไม่ต้องตรวจ']) assert.ok(visible(html).includes(text), text);
+    for (const text of ['รอตรวจ/รอจ่าย', 'ตรวจการเงิน', 'รอตรวจสอบ']) assert.ok(visible(html).includes(text), text);
+    // The claim beside it never had the step: it says nothing of a review (before: "ตรวจการเงิน: ไม่ต้องตรวจ").
+    assert.equal(visible(html).includes('ไม่ต้องตรวจ'), false);
+  });
+
+  // Upgrade test 2026-10-02, on the owner's own company: six claims wait for payment, and one of them passed a finance
+  // review while the company still had that step. Every card of the queue then read "ตรวจการเงิน: ไม่ต้องตรวจ", also the
+  // five that never had a review, and the count read "รอตรวจ/รอจ่าย" though nothing waited for one.
+  it('says a claim\'s finance review only on the claim that had one, and counts "รอจ่าย" when nothing waits for a review', () => {
+    const reviewed = { ...ready, id: `${ids.request}reviewed`, requestNo: 'RB-202609-00028', financeReviewStatus: 'APPROVED_FOR_PAYMENT' };
+    const others = [1, 2, 3].map((index) => ({ ...ready, id: `${ids.request}plain${index}`, requestNo: `RB-202609-0003${index}` }));
+    const html = hubTab('finance', [others[0]!, reviewed, others[1]!, others[2]!], undefined, {}, '', false);
+    const texts = visible(html);
+    assert.deepEqual(tabsOf(html), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวรอจ่าย']);
+    // The count: nothing in the queue waits for a review.
+    assert.ok(texts.includes('รอจ่าย') && !texts.includes('รอตรวจ/รอจ่าย'), texts.filter((text) => text.includes('รอ')).join(' | '));
+    assert.equal(texts.includes('ไม่ต้องตรวจ'), false);
+    // On the phone cards: one finance line, on the claim that was reviewed, with what happened.
+    const cards = html.slice(html.indexOf('data-testid="reimbursements-finance-card-list"')).split('<a ').slice(0, -1);
+    const lineOf = (card: string) => /ตรวจการเงิน: (?:<!-- -->)?([^<]*)</u.exec(card)?.[1] ?? null;
+    assert.deepEqual(cards.map((card) => [/RB-202609-000\d\d/u.exec(card)?.[0], lineOf(card)]),
+      [['RB-202609-00031', null], ['RB-202609-00028', 'อนุมัติจ่าย'], ['RB-202609-00032', null], ['RB-202609-00033', null]]);
+    // In the table: the column is there for that one claim, and the cells of the others are empty.
+    const table = html.slice(html.indexOf('data-testid="reimbursements-finance-table"'), html.indexOf('data-testid="reimbursements-finance-card-list"'));
+    assert.ok(visible(table).includes('ตรวจการเงิน'));
+    assert.deepEqual([...table.matchAll(/<td class="text-xs text-gray-500">([^<]*)<\/td>/gu)].map((match) => match[1]), ['—', 'อนุมัติจ่าย', '—', '—']);
+    // A queue with no such claim says nothing of a review at all, as before.
+    const plain = visible(hubTab('finance', others, undefined, {}, '', false));
+    for (const text of plain) assert.doesNotMatch(text, /การเงิน|ไม่ต้องตรวจ|รอตรวจ/u);
+    // The search finds a claim by the finance words its row shows, and no claim by words its row does not show.
+    const found = (query: string) => hubTab('finance', [others[0]!, reviewed, others[1]!], undefined, {}, query, false).match(/data-testid="reimbursements-finance-card"/gu)?.length ?? 0;
+    assert.deepEqual([found('อนุมัติจ่าย'), found('ไม่ต้องตรวจ')], [1, 0]);
   });
 
   it('names no third tab before the page is told, with a policy right or without one', () => {

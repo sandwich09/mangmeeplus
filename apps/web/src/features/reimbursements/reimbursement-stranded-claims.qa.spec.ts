@@ -523,7 +523,8 @@ describe('the status badge of a claim the system holds reads รอระบบ�
     assert.equal(hub.match(/<StatusBadge claim=\{r\} \/>/g)?.length, 6,
       'the list, its cards, the approval cards, the approval table (a row of a round), the finance table and its cards');
     assert.doesNotMatch(hub, /<StatusBadge (?!claim=\{r\} \/>)/u, 'no badge is given less than the row');
-    assert.match(hub, /claimStatusBadge\(r\)\.label,\s+FINANCE_REVIEW_LABELS\[r\.financeReviewStatus\]/);
+    // By the words its row shows: the badge's, and the finance review's where the row says one.
+    assert.match(hub, /claimStatusBadge\(r\)\.label,\s+financeLine\(r\)/);
   });
 });
 

@@ -758,10 +758,15 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
     setBusy(null);
   };
   const summary = useMemo(() => summariseQueue(data), [data]);
-  // A claim sent while the step was on still goes through it after the company turns it off: a queue that holds one
-  // keeps the words of the review, and the column that says where each claim's review stands.
+  // The policy is frozen on a claim when it is sent, so a claim sent while the company had the finance step still goes
+  // through it, or went through it, after the company turned the step off. In a company with no such step the queue
+  // speaks of a review only for that claim: its row says where its review stands, a claim that never had the step says
+  // nothing of one, and the count names a review only while a claim in the queue still waits for one.
+  const financeLine = useCallback((r: any): string | undefined => (
+    financeStep === true || rowHasFinanceReview(r) ? FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—' : undefined
+  ), [financeStep]);
   const withReview = financeStep === true || data.some(rowHasFinanceReview);
-  const words = financeQueueWords(withReview);
+  const words = financeQueueWords(financeStep === true || data.some(queueRowOffersFinanceReview));
   const filteredData = useMemo(() => data.filter(r => matchesSearch([
     r.requestNo,
     r.requesterDisplayNameSnapshot,
@@ -770,10 +775,10 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
     r.amount,
     r.currency,
     claimStatusBadge(r).label,
-    FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? r.financeReviewStatus,
+    financeLine(r),
     r.hasDuplicateBlocker ? MAY_BE_DUPLICATE_LABEL : '',
     currentDeskText(r.currentDesk),
-  ], query)), [data, query]);
+  ], query)), [data, query, financeLine]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
   const pagedData = useMemo(() => filteredData.slice(bounds.start, bounds.end), [filteredData, bounds]);
   useEffect(() => { setPage(1); }, [query]);
@@ -825,7 +830,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
                         <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}</div></td>
-                        {withReview && <td className="text-xs text-gray-500">{FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</td>}
+                        {withReview && <td className="text-xs text-gray-500">{financeLine(r) ?? '—'}</td>}
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
                             <button type="button" aria-label="ดูรายละเอียด" title="ดูรายละเอียด"
@@ -851,7 +856,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{r.requesterDisplayNameSnapshot}</span>
                   </div>
                   <CurrentDeskLine row={r} />
-                  {withReview && <div className="mt-1 truncate text-xs text-gray-500">ตรวจการเงิน: {FINANCE_REVIEW_LABELS[r.financeReviewStatus] ?? '—'}</div>}
+                  {financeLine(r) && <div className="mt-1 truncate text-xs text-gray-500">ตรวจการเงิน: {financeLine(r)}</div>}
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge claim={r} />
