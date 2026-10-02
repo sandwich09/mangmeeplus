@@ -27,6 +27,7 @@ import { SalesAgentsService } from './application/sales-agents.service';
 import { SalesCompanySearchService } from './application/sales-company-search.service';
 import { SalesDealsService } from './application/sales-deals.service';
 import { SalesReferralService } from './application/sales-referral.service';
+import { SalesRenewalService } from './application/sales-renewal.service';
 import { SalesReportsService } from './application/sales-reports.service';
 import { PLATFORM_TENANT_ID } from './application/sales-context';
 import { SalesSelfProfileDto, SalesTeamCreateDto } from './presentation/http/sales.controller';
@@ -785,7 +786,7 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
       // [amount, deal shops, referral shops, waiting for review] per agent row, and the number of deduction lines.
       const figures = async () => (await reports.summary(h.agent, { from: '2026-09', to: '2026-10' })).months.map((month) => [month.monthKey,
         month.rows.map((row) => [row.amountSatang, row.dealActivations, row.referralActivations, row.flaggedCount]), (month.deductions ?? []).length]);
-      assert.deepEqual(await figures(), [['2026-09', [[20000, 1, 1, 1]], 0]], 'waiting: no amount yet, shown as a pending flag');
+      assert.deepEqual(await figures(), [['2026-09', [[20000, 1, 0, 1]], 0]], 'waiting: no amount and no opened shop yet, counted as waiting');
 
       // "ตัดออกจากยอด": the flags stay, the review is stamped, and the shop is in no figure at all.
       const queue = await reports.reviewFlag(owner, h.shopId, true, 'เจ้าของร้านเป็นเซลล์เอง');
@@ -803,7 +804,83 @@ describe('sales console on real PostgreSQL', { skip: !databaseUrl }, () => {
       assert.deepEqual(await figures(), [['2026-10', [[-49900, 0, 0, 0]], 1], ['2026-09', [[69900, 1, 1, 0]], 0]]);
     } finally { await h.teardown(); }
   });
+
+  // ── owner 2026-10-02: a shop waiting for review is no opened shop until it is reviewed ──
+
+  it('keeps a shop waiting for review out of the opened shops, names it with its reason, and counts it in the month of its payment once confirmed', async () => {
+    const h = await harness();
+    try {
+      const owner = ctx(h.leadId, ['SYSTEM_ADMIN'], ['sales.agent_profile.manage', 'sales.report.read']);
+      const reports = new SalesReportsService({ client: h.client } as never, { log: async () => {} } as never);
+      // One agent, three shops paid in September: one counted, one waiting for review, one the Owner cut out.
+      const paidAt = new Date('2026-09-20T03:00:00Z');
+      await creditedShop(h, 'counted', 'ร้านนับแล้ว', { source: 'DEAL', amountSatang: 20000, paidAt });
+      const waitingShop = await creditedShop(h, 'waiting', 'ร้านรอตรวจ', { source: 'REFERRAL', amountSatang: 49900, paidAt,
+        flags: ['repeat_owner'], flaggedAt: paidAt });
+      await creditedShop(h, 'cut', 'ร้านตัดออก', { source: 'REFERRAL', amountSatang: 39900, paidAt, flags: ['self_referral'],
+        flaggedAt: paidAt, flagReviewedAt: new Date('2026-09-25T03:00:00Z'), flagReviewNote: 'เจ้าของร้านเป็นเซลล์เอง' });
+
+      // [amount, deal shops, referral shops, waiting] of the agent, then the shops named as waiting.
+      const september = { from: '2026-09', to: '2026-09' };
+      const figures = async (who: RequestContext, query: Record<string, string> = september) =>
+        (await reports.summary(who, query)).months.map((month) => [month.monthKey,
+          month.rows.filter((row) => row.salesUserId === h.agentId)
+            .map((row) => [row.amountSatang, row.dealActivations, row.referralActivations, row.flaggedCount]),
+          (month.waiting ?? []).filter((line) => line.salesUserId === h.agentId).map((line) => [line.companyName, line.source, line.flags])]);
+      const whileWaiting = [['2026-09', [[20000, 1, 0, 1]], [['ร้านรอตรวจ', 'REFERRAL', ['repeat_owner']]]]];
+      assert.deepEqual(await figures(h.agent), whileWaiting, 'one opened shop; the waiting shop is a count and a named line; the cut-out shop is nowhere');
+      assert.deepEqual(await figures(h.lead, { ...september, salesUserId: h.agentId }), whileWaiting, 'a lead reads the same figures');
+      assert.deepEqual(await figures(h.lead), whileWaiting, 'also when reading every team');
+      assert.deepEqual((await reports.summary(h.other, september)).months, [], 'another agent sees none of it');
+
+      // The Owner confirms it today, long after September ended. The shop and its amount count in
+      // September, the month of its payment, and nothing is booked in the month of the review.
+      await reports.reviewFlag(owner, waitingShop, false, 'ตรวจแล้ว เป็นเจ้าของคนละคน');
+      assert.deepEqual(await figures(h.agent), [['2026-09', [[69900, 1, 1, 0]], []]]);
+      const reviewMonth = bangkokMonthKey(new Date());
+      assert.deepEqual((await reports.summary(h.agent, { from: reviewMonth, to: reviewMonth })).months, []);
+    } finally { await h.teardown(); }
+  });
+
+  it('tells the Owner in the morning digest how many shops opened and how many wait, by the rule of the report', async () => {
+    const h = await harness();
+    try {
+      // The digest is written for SYSTEM_ADMIN members, so the lead is made one for this case.
+      const role = await h.client.role.upsert({ where: { scopeKey_key: { scopeKey: 'system', key: 'SYSTEM_ADMIN' } }, update: {},
+        create: { scopeKey: 'system', key: 'SYSTEM_ADMIN', name: 'SYSTEM_ADMIN', description: 'SYSTEM_ADMIN', isSystem: true } });
+      await h.client.companyMembership.create({ data: { companyId: PLATFORM_TENANT_ID, userId: h.leadId, status: 'ACTIVE',
+        roles: { create: [{ roleId: role.id }] } } });
+      // Recorded on a day no other row of any database was, so the counts are this case's alone.
+      const createdAt = new Date('2001-02-03T05:00:00Z'), paidAt = createdAt;
+      await creditedShop(h, 'counted', 'ร้านนับแล้ว', { source: 'DEAL', amountSatang: 20000, paidAt, createdAt });
+      await creditedShop(h, 'waiting', 'ร้านรอตรวจ', { source: 'REFERRAL', amountSatang: 49900, paidAt, createdAt,
+        flags: ['repeat_owner'], flaggedAt: createdAt });
+      await creditedShop(h, 'cut', 'ร้านตัดออก', { source: 'REFERRAL', amountSatang: 39900, paidAt, createdAt, flags: ['self_referral'],
+        flaggedAt: createdAt, flagReviewedAt: new Date('2001-02-03T09:00:00Z'), flagReviewNote: 'เจ้าของร้านเป็นเซลล์เอง' });
+
+      const bodies: string[] = [];
+      const renewals = new SalesRenewalService({ client: h.client } as never, { log: async () => {} } as never,
+        { executeInTransaction: async (event: { body: string }) => { bodies.push(event.body); } } as never, {} as never);
+      const sent = await renewals.dailyDigest(new Date('2001-02-04T05:00:00Z'));
+      assert.equal(sent.periodKey, '2001-02-03');
+      assert.ok(sent.notified >= 1 && bodies.length >= 1, 'the digest was written');
+      // One opened shop and its 200 baht; the waiting shop is its own count; the cut-out shop is in neither.
+      assert.match(bodies[0]!, /^ร้านเปิดใหม่เมื่อวาน 1 ร้าน \(ดีล 1 · แนะนำ 0\) รวม 200 บาท · รอตรวจ 1 ร้าน \(ยังไม่นับในยอด\) · /);
+    } finally { await h.teardown(); }
+  });
 });
+
+/** One shop credited to the harness agent, named so the report and the queue can be read back by shop. */
+async function creditedShop(h: Awaited<ReturnType<typeof harness>>, suffix: string, name: string, credit: {
+  source: 'DEAL' | 'REFERRAL'; amountSatang: number; paidAt: Date; createdAt?: Date;
+  flags?: string[]; flaggedAt?: Date; flagReviewedAt?: Date; flagReviewNote?: string;
+}): Promise<string> {
+  const companyId = `${h.tag}-${suffix}`;
+  await h.client.company.create({ data: { id: companyId, name, status: 'ACTIVE' } });
+  await h.client.salesAttribution.create({ data: { companyId, salesUserId: h.agentId, months: 1, interval: 'month',
+    sourceInvoiceId: `${companyId}-invoice`, ...credit } });
+  return companyId;
+}
 
 /** One paid, applied package invoice the way the reconciler stores it: Stripe's total and tax, and the pinned policy. */
 async function paidInvoice(h: Awaited<ReturnType<typeof harness>>, companyId: string, priceSatang: number,
