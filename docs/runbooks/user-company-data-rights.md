@@ -1,7 +1,7 @@
 # MangmeePlus — User and Company Data Rights Runbook
 
 Status: INTERIM MANUAL CONTROL — durable case orchestration is implemented; destructive execution, trusted evidence resolution, backup replay and external approvals remain release blockers
-Design of record from 2026-09-15: [P31 spec](../specs/mangmee-company-data-lifecycle-deletion-spec-th.md) / [P31 plan](../plans/mangmee-company-data-lifecycle-deletion-plan-th.md) — not yet implemented, so every procedure below still applies as written.
+Design of record from 2026-09-15: [P31 spec](../specs/mangmee-company-data-lifecycle-deletion-spec-th.md) / [P31 plan](../plans/mangmee-company-data-lifecycle-deletion-plan-th.md) — not yet implemented, except single-admin mode for a case (P31 spec §8.7, 2026-10-02; see §2 and §2.1). Every procedure below still applies as written: the case system records steps, it erases nothing.
 Effective draft: 2026-08-09
 Public notices: `/privacy`, `/data-deletion`
 
@@ -22,7 +22,36 @@ Do not tell a requester that deletion is complete merely because a row is hidden
 
 One person may hold several roles in a small team, but the executor must not approve their own evidence for a full-company irreversible deletion.
 
-**Single-admin reality (Owner confirmed 2026-09-15; corrected 2026-10-02).** This project runs with exactly one System Admin, so the rule above cannot be met by staffing. `data-rights.service.ts` enforces five distinct-actor checks (creator/approver, approver/executor, executor/verification starter, executor/independent-verification recorder, executor/completer) — stricter than this runbook requires — and the database enforces the same five again through triggers created by migration `20260809120000_data_rights_case_orchestration` (`enforce_data_rights_case_transition`, `enforce_data_rights_evidence_phase`, SQLSTATE 55000). A case opened by the only admin therefore cannot even reach `APPROVED`, and no change to the service alone can lift that: it needs a migration that replaces those two trigger functions (P31 spec §8.1). The block is not the safe failure it looks like: it stops every case, including a lawful PDPA erasure request whose 90-day clock is already running. P31 §8 resolves this the way the repo already resolved the same problem for expense approvals (`substitute-receipt.use-case.ts:43-47`): permit the single-operator path, then record truthfully that one person held every role, and replace the missing second pair of eyes with machine gates (fresh hashed inventory report, typed company name, tooling-generated evidence, and a one-day cooling-off that can only be waived with a typed reason). Until that migration ships, the smallest staffing that can finish a case is two real people: one opens the case and executes, the other approves, verifies and closes. Creating a second admin account for the same human is explicitly forbidden — it writes false dual-control evidence into a compliance record.
+**Single-admin mode (Owner decision 2026-10-02; P31 spec §8.7).** This project runs with exactly one System Admin, so the rule above cannot be met by staffing. Five steps are refused to the person who took the step before: approving a case you opened, executing a case you approved, starting verification of a case you executed, recording the independent verification of it, and closing it. `data-rights.service.ts` refuses them, and the database refuses them again through triggers (SQLSTATE 55000). The refusal was not the safe failure it looked like: it stopped every case, including a lawful PDPA erasure request whose 90-day clock was already running.
+
+While the platform has exactly one active System Admin, that admin may take each of those five steps as an explicit single-admin step. Each one needs a written reason, and the system stores a marker with the step, the reason, and an audit entry of its own (`system.data_rights.single_admin_step`, CRITICAL). The database accepts a same-person step only when the marker and reason are on the row; anything else is refused as before. Nothing a second person would have looked at is skipped: identity and company authority must be verified, all 12 category decisions recorded with current retention dates, and the required evidence attached, before the step is accepted.
+
+"Active" means the person can sign in: an admin account whose sign-in has been disabled is not counted. The account retired in the System Admin cutover of 2026-09-07 is such an account; it keeps its protected role, but nobody can sign in to it, so it is not a second person.
+
+As soon as a second active System Admin exists, the separation rules apply again in full and the single-admin path is refused, even with a reason. The second person then takes the step. Creating a second admin account for the same human is explicitly forbidden — it writes false dual-control evidence into a compliance record. The record must say one person did it, because that is what happened.
+
+This ships with migration `20261002120000_data_rights_single_admin_mode` through the normal release path. On an environment that does not have that release yet, a case opened by the only admin still cannot be approved, and the smallest staffing that can finish a case is two real people: one opens the case and executes, the other approves, verifies and closes.
+
+### 2.1 One System Admin: taking a real request through
+
+A completed case is a record, not an erasure. No step of the case system reads, changes, exports or deletes the requester's data: "start execution", "start verification" and "close the case" only change the case status, stamp who did it and when, and add a line to the case history. The real work is the manual procedure in §7, and its results go into the case as evidence references.
+
+1. **Open the case** at `/system/data-rights` (§3): reference, type, channel, target and the response deadline.
+2. **Verify identity**, and for a company workspace **verify company authority**, each with its evidence reference (§5).
+3. **Start the retention review** and record a decision for each of the 12 data categories (§6).
+4. **Approve the plan.** Because you opened the case, the page shows "ทำขั้นตอนนี้ด้วยตนเอง" with a reason field. Write why you are acting alone (at least 20 characters, for example that there is one System Admin and the request has a statutory deadline), then press "อนุมัติแผนด้วยตนเอง" and confirm. Approval confirms the plan; it deletes nothing.
+5. **Start execution** the same way ("เริ่มช่วงดำเนินการด้วยตนเอง"). This only opens the evidence phase. Do the actual work by hand as §7 describes, and record each result as an evidence reference with its SHA-256.
+6. **Start verification** once the required evidence is complete ("เริ่มตรวจยืนยันด้วยตนเอง"). Check the real evidence, not the case status.
+7. **Record the independent-verification evidence** (reference, SHA-256 and the reason field in the same form).
+8. **Close the case** ("สรุปผลและปิดเคสด้วยตนเอง"): the outcome is derived from the decisions; write the summary and the reason. The button stays off until the reason is written.
+9. **Write the completion letter** (§9). State which steps one person took and why; the case page lists them with their reasons under "ขั้นตอนที่ทำโดยผู้ดูแลระบบคนเดียวในเคสนี้". Never write that the system deleted the data.
+
+Notes:
+
+- A reason cannot be changed afterwards, and it is kept with the case permanently. Do not put the requester's personal data in it.
+- If a second System Admin is appointed while a case is open, every remaining step that follows a step you took must be taken by them. A step already recorded as single-admin stays recorded that way.
+- If the page refuses with "ต้องให้ผู้ดูแลระบบอีกคนเป็นผู้ทำ", a second System Admin now exists. Reload the page; it will say which step the other admin has to take.
+- The page shows the reason field only when the server reports one active System Admin. The server counts again when you press the button.
 
 ## 3. Intake and case record
 
@@ -32,7 +61,7 @@ One person may hold several roles in a small team, but the executor must not app
 4. Never request a password, OTP, recovery secret, or full identity-document copy by ordinary email.
 5. If the old registered email is inaccessible, select proportionate alternative evidence based on risk. Mask and delete unnecessary verification material after the verification purpose ends.
 
-The restricted System Admin surface is `/system/data-rights` and the API is `/v1/system/data-rights/cases`, guarded by the CRITICAL `system.data_rights.manage` permission. It records identity/authority checks, 12 category decisions, phase-bound evidence references, dual-control actors, blocked remediation links and an append-only action trail. It deliberately exposes no hard-delete endpoint.
+The restricted System Admin surface is `/system/data-rights` and the API is `/v1/system/data-rights/cases`, guarded by the CRITICAL `system.data_rights.manage` permission. It records identity/authority checks, 12 category decisions, phase-bound evidence references, the actor of each step (two people, or one System Admin's explicit single-admin steps with their reasons — §2), blocked remediation links and an append-only action trail. It deliberately exposes no hard-delete endpoint.
 
 ## 4. Classify before acting
 
@@ -122,6 +151,8 @@ The verifier checks the approved scope independently and records:
 
 The completion letter states what was completed, what was partially completed, what remains and why, retention end/lifecycle where known, complaint/escalation channel, and case ID. Never use “ลบถาวรทั้งหมด” unless the evidence supports that exact scope.
 
+When one System Admin took steps alone (§2.1), there was no independent verifier: the letter and the case summary must say that one person approved, executed, verified and closed the case, and give the recorded reasons. The system does not write this letter; copy the steps and reasons from the case page.
+
 ## 10. Deadlines and escalation
 
 - Track every request from receipt, not from the date convenient to the operator.
@@ -132,7 +163,7 @@ The completion letter states what was completed, what was partially completed, w
 
 ## 11. Production gates
 
-This manual runbook and the case UI are not evidence that destructive controls are operational. Current code already provides the restricted case system, immutable target scope, HMAC-pseudonymised requester contact, phase/decision matrix, overlap locks, append-only evidence/action records, independent approval/execution/verification actors for every case type, `BLOCKED` remediation and read-only exact S3 version/Object Lock inventory. Before production reliance on a completion claim:
+This manual runbook and the case UI are not evidence that destructive controls are operational. Current code already provides the restricted case system, immutable target scope, HMAC-pseudonymised requester contact, phase/decision matrix, overlap locks, append-only evidence/action records, independent approval/execution/verification actors for every case type (or, while there is one System Admin, explicit single-admin steps that are recorded as such — §2), `BLOCKED` remediation and read-only exact S3 version/Object Lock inventory. Before production reliance on a completion claim:
 
 Legal/privacy release evidence is provisioned separately from user-deletion evidence. Follow
 [`legal-release-evidence-bundle.md`](./legal-release-evidence-bundle.md) for the dedicated

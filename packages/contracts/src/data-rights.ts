@@ -222,3 +222,46 @@ export function dataRightsRequiredExecutionEvidence(caseType: DataRightsCaseType
     'BACKUP_MANIFEST',
   ];
 }
+
+/**
+ * P31 §8 single-admin mode. Five steps of a case are normally refused to the person who took the
+ * step before (creator/approver, approver/executor, executor/verification starter,
+ * executor/independent verifier, executor/completer). While the platform has exactly one active
+ * System Admin, that person may take such a step as an explicit self-step: a stored marker, a reason
+ * and an audit row of its own. With a second active System Admin the separation rules apply.
+ */
+export const DATA_RIGHTS_SINGLE_ADMIN_STEPS = [
+  'APPROVAL',
+  'EXECUTION',
+  'VERIFICATION',
+  'INDEPENDENT_VERIFICATION',
+  'COMPLETION',
+] as const;
+export type DataRightsSingleAdminStep = typeof DATA_RIGHTS_SINGLE_ADMIN_STEPS[number];
+
+/** The database refuses a shorter reason too (the two `*_single_admin_reason_check` constraints). */
+export const DATA_RIGHTS_SINGLE_ADMIN_REASON_MIN_LENGTH = 20;
+export const DATA_RIGHTS_SINGLE_ADMIN_REASON_MAX_LENGTH = 1_000;
+const DATA_RIGHTS_SINGLE_ADMIN_REASON_MIN_DISTINCT_LETTERS = 8;
+
+/** Whitespace is collapsed first, so padding cannot stand in for a reason. */
+export function normalizeDataRightsSingleAdminReason(reason: string): string {
+  return reason.replace(/\s+/gu, ' ').trim();
+}
+
+export type DataRightsSingleAdminReasonProblem = 'REQUIRED' | 'TOO_SHORT' | 'TOO_LONG' | 'TRIVIAL';
+
+/**
+ * The reason replaces what a second person would have asked, so one character repeated, digits or
+ * a word typed over and over do not count: it needs enough different letters to be a sentence.
+ */
+export function dataRightsSingleAdminReasonProblem(
+  reason: string | null | undefined,
+): DataRightsSingleAdminReasonProblem | null {
+  const text = normalizeDataRightsSingleAdminReason(reason ?? '');
+  if (!text) return 'REQUIRED';
+  if (text.length < DATA_RIGHTS_SINGLE_ADMIN_REASON_MIN_LENGTH) return 'TOO_SHORT';
+  if (text.length > DATA_RIGHTS_SINGLE_ADMIN_REASON_MAX_LENGTH) return 'TOO_LONG';
+  const letters = new Set(text.toLowerCase().match(/[\p{L}\p{M}]/gu) ?? []);
+  return letters.size < DATA_RIGHTS_SINGLE_ADMIN_REASON_MIN_DISTINCT_LETTERS ? 'TRIVIAL' : null;
+}
