@@ -94,6 +94,8 @@ export const AuditAction = {
   SALES_EVENT_BATCH_STATE_CHANGE: 'sales.event.batch_state_changed',
   SALES_EVENT_QR_ISSUE: 'sales.event.qr_issued',
   SALES_EVENT_TICKET_REVOKE: 'sales.event.ticket_revoked',
+  /** P31 §8: the one System Admin took a data-rights step a second person would normally take. */
+  SYSTEM_DATA_RIGHTS_SINGLE_ADMIN_STEP: 'system.data_rights.single_admin_step',
 } as const;
 
 export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];

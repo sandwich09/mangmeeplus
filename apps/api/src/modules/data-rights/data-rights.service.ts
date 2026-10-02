@@ -18,7 +18,9 @@ import {
   dataRightsAllowedDispositions,
   dataRightsCaseRequiresTenantAuthority,
   dataRightsCaseEvidenceRequirements,
+  dataRightsSingleAdminReasonProblem,
   isDataRightsDispositionAllowed,
+  normalizeDataRightsSingleAdminReason,
   type DataRightsAuthorityMethod,
   type DataRightsCaseStatus,
   type DataRightsCaseType,
@@ -27,12 +29,15 @@ import {
   type DataRightsEvidenceType,
   type DataRightsIdentityMethod,
   type DataRightsRequestSource,
+  type DataRightsSingleAdminStep,
 } from '@watchdog-bms/contracts';
 import type { Prisma } from '../../generated/prisma/client';
 import { AppConfigService } from '../../common/config/app-config.service';
 import { PrismaService } from '../../common/database/prisma.service';
 import { canonicalFingerprint } from '../../common/security/canonical-fingerprint';
+import { AuditAction } from '../audit/domain/models/audit-action';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
+import { PLATFORM_SEAT_EXEMPT_ROLE } from '../system-partner-management/application/plan-term-limit';
 
 export const DATA_RIGHTS_MANAGE_PERMISSION = 'system.data_rights.manage';
 export const DATA_RIGHTS_EVIDENCE_REFERENCE_PATTERN = /^(?:evidence|run|approval|case):\/\/[A-Za-z0-9][A-Za-z0-9._~:/-]{0,479}$/;
@@ -116,6 +121,14 @@ const CASE_SELECT = {
   completedAt: true,
   completedByUserId: true,
   outcomeSummary: true,
+  approvalSingleAdmin: true,
+  approvalSingleAdminReason: true,
+  executionSingleAdmin: true,
+  executionSingleAdminReason: true,
+  verificationSingleAdmin: true,
+  verificationSingleAdminReason: true,
+  completionSingleAdmin: true,
+  completionSingleAdminReason: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -132,6 +145,8 @@ type EvidenceRequirement = {
   evidenceType: DataRightsEvidenceType;
   category: DataRightsDecisionCategory | null;
 };
+/** A step its previous actor took again in single-admin mode (P31 §8). */
+type SelfStep = { step: DataRightsSingleAdminStep; reason: string };
 
 export type CreateDataRightsCaseCommand = {
   commandId: string;
@@ -170,12 +185,15 @@ export type RecordDecisionCommand = {
 export type RecordEvidenceCommand = VerificationEvidenceCommand & {
   evidenceType: DataRightsEvidenceType;
   category?: DataRightsDecisionCategory;
+  /** Only with INDEPENDENT_VERIFICATION recorded by the executor: the explicit single-admin step. */
+  singleAdminReason?: string;
 };
 
 export type CompleteCaseCommand = {
   commandId: string;
   outcome: 'COMPLETED' | 'COMPLETED_WITH_EXCEPTION';
   outcomeSummary: string;
+  singleAdminReason?: string;
 };
 
 export type CloseCaseCommand = {
@@ -495,6 +513,7 @@ export class DataRightsService {
       evidenceType: input.evidenceType,
       category: input.category ?? null,
       ...evidence.fingerprint,
+      ...this.singleAdminFingerprint(input.singleAdminReason),
     }, async (tx, row) => {
       if (TERMINAL_STATUSES.has(row.status as DataRightsCaseStatus)) {
         throw new ConflictException(`Case ${caseId} is already terminal.`);
@@ -505,10 +524,12 @@ export class DataRightsService {
         this.assertStatus(row, ['EXECUTING']);
       } else if (input.evidenceType === 'INDEPENDENT_VERIFICATION') {
         this.assertStatus(row, ['VERIFICATION']);
-        if (row.executionStartedByUserId === ctx.userId) {
-          throw new ForbiddenException('The executor cannot record independent verification.');
-        }
       }
+      const selfStep = await this.selfStep(
+        tx, ctx, 'INDEPENDENT_VERIFICATION',
+        input.evidenceType === 'INDEPENDENT_VERIFICATION' && row.executionStartedByUserId === ctx.userId,
+        input.singleAdminReason, 'The executor cannot record independent verification.',
+      );
       const decisions = await this.latestDecisions(tx, caseId);
       this.assertEvidenceMatchesDecision(
         row.caseType as DataRightsCaseType,
@@ -524,13 +545,18 @@ export class DataRightsService {
         sha256: evidence.sha256,
         note: evidence.note,
         recordedByUserId: ctx.userId,
+        ...(selfStep && { singleAdmin: true, singleAdminReason: selfStep.reason }),
       } });
-      return { toStatus: row.status, metadata: { evidenceType: input.evidenceType, category: input.category ?? null } };
+      return {
+        toStatus: row.status,
+        metadata: { evidenceType: input.evidenceType, category: input.category ?? null },
+        selfStep,
+      };
     });
   }
 
-  async approve(ctx: RequestContext, caseId: string, commandId: string): Promise<CommandResult> {
-    return this.caseCommand(ctx, caseId, commandId, 'APPROVED', {}, async (tx, row) => {
+  async approve(ctx: RequestContext, caseId: string, commandId: string, singleAdminReason?: string): Promise<CommandResult> {
+    return this.caseCommand(ctx, caseId, commandId, 'APPROVED', this.singleAdminFingerprint(singleAdminReason), async (tx, row) => {
       this.assertStatus(row, ['RETENTION_REVIEW']);
       if (!row.identityVerifiedAt) this.invalid('identity verification is required');
       if (dataRightsCaseRequiresTenantAuthority(row.caseType as DataRightsCaseType) && !row.authorityVerifiedAt) {
@@ -549,45 +575,55 @@ export class DataRightsService {
         this.assertDecisionAllowed(row.caseType as DataRightsCaseType, category, decision.disposition);
       }
       this.assertRetentionDatesCurrent(decisions);
-      if (row.createdByUserId === ctx.userId) {
-        throw new ForbiddenException('The case creator cannot approve the data-rights case.');
-      }
+      const selfStep = await this.selfStep(
+        tx, ctx, 'APPROVAL', row.createdByUserId === ctx.userId, singleAdminReason,
+        'The case creator cannot approve the data-rights case.',
+      );
       await tx.dataRightsCase.update({ where: { id: caseId }, data: {
         status: 'APPROVED', approvedAt: new Date(), approvedByUserId: ctx.userId,
+        ...(selfStep && { approvalSingleAdmin: true, approvalSingleAdminReason: selfStep.reason }),
       } });
-      return { toStatus: 'APPROVED' as const };
+      return { toStatus: 'APPROVED' as const, selfStep };
     });
   }
 
-  async startExecution(ctx: RequestContext, caseId: string, commandId: string): Promise<CommandResult> {
-    return this.caseCommand(ctx, caseId, commandId, 'EXECUTION_STARTED', {}, async (tx, row) => {
+  /**
+   * A control point, not an execution engine: it stamps the operator and opens the evidence phase.
+   * Nothing here or in any later step reads, moves or removes the target's data.
+   */
+  async startExecution(ctx: RequestContext, caseId: string, commandId: string, singleAdminReason?: string): Promise<CommandResult> {
+    return this.caseCommand(ctx, caseId, commandId, 'EXECUTION_STARTED', this.singleAdminFingerprint(singleAdminReason), async (tx, row) => {
       this.assertStatus(row, ['APPROVED']);
       const decisions = await this.latestDecisions(tx, caseId);
       for (const [category, decision] of decisions) {
         this.assertDecisionAllowed(row.caseType as DataRightsCaseType, category, decision.disposition);
       }
       this.assertRetentionDatesCurrent(decisions);
-      if (row.approvedByUserId === ctx.userId) {
-        throw new ForbiddenException('The approver cannot execute the data-rights case.');
-      }
+      const selfStep = await this.selfStep(
+        tx, ctx, 'EXECUTION', row.approvedByUserId === ctx.userId, singleAdminReason,
+        'The approver cannot execute the data-rights case.',
+      );
       await tx.dataRightsCase.update({ where: { id: caseId }, data: {
         status: 'EXECUTING', executionStartedAt: new Date(), executionStartedByUserId: ctx.userId,
+        ...(selfStep && { executionSingleAdmin: true, executionSingleAdminReason: selfStep.reason }),
       } });
-      return { toStatus: 'EXECUTING' as const };
+      return { toStatus: 'EXECUTING' as const, selfStep };
     });
   }
 
-  async startVerification(ctx: RequestContext, caseId: string, commandId: string): Promise<CommandResult> {
-    return this.caseCommand(ctx, caseId, commandId, 'VERIFICATION_STARTED', {}, async (tx, row) => {
+  async startVerification(ctx: RequestContext, caseId: string, commandId: string, singleAdminReason?: string): Promise<CommandResult> {
+    return this.caseCommand(ctx, caseId, commandId, 'VERIFICATION_STARTED', this.singleAdminFingerprint(singleAdminReason), async (tx, row) => {
       this.assertStatus(row, ['EXECUTING']);
       await this.assertExecutionEvidence(tx, row, false);
-      if (row.executionStartedByUserId === ctx.userId) {
-        throw new ForbiddenException('The executor cannot start verification of the data-rights case.');
-      }
+      const selfStep = await this.selfStep(
+        tx, ctx, 'VERIFICATION', row.executionStartedByUserId === ctx.userId, singleAdminReason,
+        'The executor cannot start verification of the data-rights case.',
+      );
       await tx.dataRightsCase.update({ where: { id: caseId }, data: {
         status: 'VERIFICATION', verificationStartedAt: new Date(), verificationStartedByUserId: ctx.userId,
+        ...(selfStep && { verificationSingleAdmin: true, verificationSingleAdminReason: selfStep.reason }),
       } });
-      return { toStatus: 'VERIFICATION' as const };
+      return { toStatus: 'VERIFICATION' as const, selfStep };
     });
   }
 
@@ -597,6 +633,7 @@ export class DataRightsService {
     return this.caseCommand(ctx, caseId, input.commandId, 'CASE_COMPLETED', {
       outcome: input.outcome,
       outcomeSummary,
+      ...this.singleAdminFingerprint(input.singleAdminReason),
     }, async (tx, row) => {
       this.assertStatus(row, ['VERIFICATION']);
       const { evidence, decisions } = await this.assertExecutionEvidence(tx, row, true);
@@ -609,9 +646,10 @@ export class DataRightsService {
       if (!hasRetentionException && input.outcome === 'COMPLETED_WITH_EXCEPTION') {
         this.invalid('COMPLETED_WITH_EXCEPTION requires a current RETAIN or RESTRICT decision');
       }
-      if (row.executionStartedByUserId === ctx.userId) {
-        throw new ForbiddenException('The executor cannot complete verification of the data-rights case.');
-      }
+      const selfStep = await this.selfStep(
+        tx, ctx, 'COMPLETION', row.executionStartedByUserId === ctx.userId, input.singleAdminReason,
+        'The executor cannot complete verification of the data-rights case.',
+      );
       if (!evidence.some((item) =>
         item.evidenceType === 'INDEPENDENT_VERIFICATION'
         && item.category === null
@@ -624,8 +662,9 @@ export class DataRightsService {
         completedAt: new Date(),
         completedByUserId: ctx.userId,
         outcomeSummary,
+        ...(selfStep && { completionSingleAdmin: true, completionSingleAdminReason: selfStep.reason }),
       } });
-      return { toStatus: input.outcome, metadata: { outcome: input.outcome } };
+      return { toStatus: input.outcome, metadata: { outcome: input.outcome }, selfStep };
     });
   }
 
@@ -653,7 +692,11 @@ export class DataRightsService {
     commandId: string,
     action: string,
     payload: Record<string, unknown>,
-    mutate: (tx: Tx, row: CaseRow) => Promise<{ toStatus: DataRightsCaseStatus; metadata?: Record<string, unknown> }>,
+    mutate: (tx: Tx, row: CaseRow) => Promise<{
+      toStatus: DataRightsCaseStatus;
+      metadata?: Record<string, unknown>;
+      selfStep?: SelfStep | null;
+    }>,
   ): Promise<CommandResult> {
     this.assertOperator(ctx);
     this.assertCommandId(commandId);
@@ -669,6 +712,22 @@ export class DataRightsService {
       const row = await tx.dataRightsCase.findUnique({ where: { id: caseId }, select: CASE_SELECT });
       if (!row) throw new NotFoundException(`Data-rights case ${caseId} was not found.`);
       const mutation = await mutate(tx, row);
+      const selfStep = mutation.selfStep ?? null;
+      // Written last, once the step itself has succeeded: its own audit row, and the label the
+      // case history shows.
+      if (selfStep) {
+        await tx.auditLog.create({ data: {
+          companyId: ctx.companyId,
+          actorUserId: ctx.userId,
+          action: AuditAction.SYSTEM_DATA_RIGHTS_SINGLE_ADMIN_STEP,
+          targetType: 'DataRightsCase',
+          targetId: caseId,
+          requestId: ctx.requestId,
+          result: 'SUCCESS',
+          riskLevel: 'CRITICAL',
+          metadataJson: { step: selfStep.step, reason: selfStep.reason, commandId },
+        } });
+      }
       await this.appendAction(tx, {
         caseId,
         commandId,
@@ -677,7 +736,9 @@ export class DataRightsService {
         toStatus: mutation.toStatus,
         ctx,
         fingerprint,
-        metadata: mutation.metadata,
+        metadata: selfStep
+          ? { ...mutation.metadata, singleAdmin: true, singleAdminReason: selfStep.reason }
+          : mutation.metadata,
       });
       return { caseId, replayed: false };
     });
@@ -695,7 +756,7 @@ export class DataRightsService {
         } },
         evidence: { orderBy: [{ recordedAt: 'asc' }, { id: 'asc' }], select: {
           id: true, evidenceType: true, category: true, reference: true, sha256: true, note: true,
-          recordedByUserId: true, recordedAt: true,
+          recordedByUserId: true, recordedAt: true, singleAdmin: true, singleAdminReason: true,
         } },
         actions: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: {
           id: true, commandId: true, action: true, fromStatus: true, toStatus: true,
@@ -704,7 +765,91 @@ export class DataRightsService {
       },
     });
     if (!row) throw new NotFoundException(`Data-rights case ${caseId} was not found.`);
-    return row;
+    // Tells the page which control to offer for a step the reader took before: the explicit
+    // self-step, or the refusal that names a second person. The step itself re-checks in its
+    // own transaction.
+    const singleAdminAvailable = (await this.activeSystemAdminUserIds(this.prisma.client)).length === 1;
+    return { ...row, singleAdminAvailable };
+  }
+
+  /**
+   * Everyone who could be the second pair of eyes: an active person holding the SYSTEM-owned System
+   * Admin role through an active membership of an active company. A company role that merely carries
+   * the key is not one (`PLATFORM_SEAT_EXEMPT_ROLE`).
+   *
+   * An account whose sign-in was disabled is not a person who could take the step. The System Admin
+   * cutover retires an admin exactly that way: the protected user, membership and role rows stay and
+   * the credential becomes DISABLED (`prisma/system-admin-cutover.ts`). Production has such an
+   * account, so counting it would close the single-admin path for the one admin who is left.
+   */
+  private async activeSystemAdminUserIds(db: Pick<Tx, 'companyMembership'>): Promise<string[]> {
+    const rows = await db.companyMembership.findMany({
+      where: {
+        status: 'ACTIVE',
+        user: { status: 'ACTIVE', credential: { isNot: { status: 'DISABLED' } } },
+        company: { status: 'ACTIVE' },
+        roles: { some: { role: PLATFORM_SEAT_EXEMPT_ROLE } },
+      },
+      select: { userId: true },
+    });
+    return [...new Set(rows.map((row) => row.userId))];
+  }
+
+  /** A retry must carry the same reason: it is part of what the command did. */
+  private singleAdminFingerprint(reason: string | undefined): { singleAdminReason?: string } {
+    return reason === undefined ? {} : { singleAdminReason: normalizeDataRightsSingleAdminReason(reason) };
+  }
+
+  /**
+   * P31 §8 single-admin mode. Five steps are refused to the person who took the step before.
+   * While that person is the platform's ONE active System Admin they may take the step as an
+   * explicit self-step: a reason that says something, a marker stored with the step and an audit
+   * row of its own (`caseCommand` writes that row and the history label once the step succeeds).
+   * With a second active System Admin the separation rule stands, because the second person
+   * exists and takes the step. Every caller gets here only after the completeness checks of its
+   * step, so a self-step never skips what a second person would have looked at.
+   *
+   * Returns null for two different people, and the reason to store for a self-step. The database
+   * repeats the rule: it refuses a same-person step whose row lacks the marker and reason.
+   */
+  private async selfStep(
+    tx: Tx,
+    ctx: RequestContext,
+    step: DataRightsSingleAdminStep,
+    samePerson: boolean,
+    reasonInput: string | undefined,
+    separationRule: string,
+  ): Promise<SelfStep | null> {
+    if (!samePerson) {
+      if (reasonInput !== undefined) {
+        throw new UnprocessableEntityException({
+          code: 'data_rights_single_admin_not_applicable',
+          message: 'A single-admin reason is only accepted for a step taken by the person who took the step before.',
+        });
+      }
+      return null;
+    }
+    const admins = await this.activeSystemAdminUserIds(tx);
+    if (admins.length !== 1 || admins[0] !== ctx.userId) {
+      throw new ForbiddenException({ code: 'data_rights_second_admin_required', message: separationRule, step });
+    }
+    const problem = dataRightsSingleAdminReasonProblem(reasonInput);
+    if (problem === 'REQUIRED') {
+      throw new UnprocessableEntityException({
+        code: 'data_rights_single_admin_reason_required',
+        message: 'The only active System Admin may take this step alone, as an explicit single-admin step with a reason.',
+        step,
+      });
+    }
+    if (problem) {
+      throw new UnprocessableEntityException({
+        code: 'data_rights_single_admin_reason_invalid',
+        message: 'The single-admin reason must be a real sentence of 20 to 1000 characters.',
+        step,
+        problem,
+      });
+    }
+    return { step, reason: normalizeDataRightsSingleAdminReason(reasonInput!) };
   }
 
   private async latestDecisions(tx: Tx, caseId: string) {

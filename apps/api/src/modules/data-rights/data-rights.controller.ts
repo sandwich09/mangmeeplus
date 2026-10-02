@@ -24,6 +24,7 @@ import {
   DATA_RIGHTS_EVIDENCE_TYPES,
   DATA_RIGHTS_IDENTITY_METHODS,
   DATA_RIGHTS_REQUEST_SOURCES,
+  DATA_RIGHTS_SINGLE_ADMIN_REASON_MAX_LENGTH,
   type DataRightsAuthorityMethod,
   type DataRightsCaseStatus,
   type DataRightsCaseType,
@@ -49,6 +50,15 @@ const PRIOR_CASE_REFERENCE = /^case:\/\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 class CommandDto {
   @IsString() @Matches(OPAQUE_KEY) commandId!: string;
+}
+
+/**
+ * A step refused to the person who took the step before. The one active System Admin sends
+ * `singleAdminReason` to take it as an explicit self-step (P31 §8); the service decides whether
+ * that is allowed and whether the reason says enough.
+ */
+export class SameActorStepDto extends CommandDto {
+  @IsString() @IsOptional() @MaxLength(DATA_RIGHTS_SINGLE_ADMIN_REASON_MAX_LENGTH) singleAdminReason?: string;
 }
 
 export class CreateCaseDto extends CommandDto {
@@ -96,11 +106,13 @@ export class RecordEvidenceDto extends CommandDto {
   @IsString() @IsNotEmpty() @MaxLength(500) @Matches(DATA_RIGHTS_EVIDENCE_REFERENCE_PATTERN) reference!: string;
   @IsDefined() @IsString() @Matches(/^[0-9a-fA-F]{64}$/) sha256!: string;
   @IsString() @IsOptional() @MaxLength(2_000) note?: string;
+  @IsString() @IsOptional() @MaxLength(DATA_RIGHTS_SINGLE_ADMIN_REASON_MAX_LENGTH) singleAdminReason?: string;
 }
 
-class CompleteCaseDto extends CommandDto {
+export class CompleteCaseDto extends CommandDto {
   @IsIn(['COMPLETED', 'COMPLETED_WITH_EXCEPTION']) outcome!: 'COMPLETED' | 'COMPLETED_WITH_EXCEPTION';
   @IsString() @IsNotEmpty() @MaxLength(4_000) outcomeSummary!: string;
+  @IsString() @IsOptional() @MaxLength(DATA_RIGHTS_SINGLE_ADMIN_REASON_MAX_LENGTH) singleAdminReason?: string;
 }
 
 export class CloseCaseDto extends CommandDto {
@@ -120,7 +132,11 @@ export class ListCasesQueryDto {
 
 type AuthedRequest = Request & { context: RequestContext };
 
-/** Internal-only case control plane. No endpoint performs deletion or calls object storage. */
+/**
+ * Internal-only case control plane. No endpoint performs deletion or calls object storage: every
+ * step, including "start execution" and "complete", only moves the case's status, stamps the
+ * operator and appends a journal row.
+ */
 @Controller('system/data-rights')
 @RequirePermissions(DATA_RIGHTS_MANAGE_PERMISSION)
 export class DataRightsController {
@@ -176,20 +192,20 @@ export class DataRightsController {
 
   @Post('cases/:caseId/approve')
   @HttpCode(200)
-  approve(@Param('caseId') caseId: string, @Body() body: CommandDto, @Req() req: AuthedRequest) {
-    return this.service.approve(req.context, caseId, body.commandId);
+  approve(@Param('caseId') caseId: string, @Body() body: SameActorStepDto, @Req() req: AuthedRequest) {
+    return this.service.approve(req.context, caseId, body.commandId, body.singleAdminReason);
   }
 
   @Post('cases/:caseId/start-execution')
   @HttpCode(200)
-  startExecution(@Param('caseId') caseId: string, @Body() body: CommandDto, @Req() req: AuthedRequest) {
-    return this.service.startExecution(req.context, caseId, body.commandId);
+  startExecution(@Param('caseId') caseId: string, @Body() body: SameActorStepDto, @Req() req: AuthedRequest) {
+    return this.service.startExecution(req.context, caseId, body.commandId, body.singleAdminReason);
   }
 
   @Post('cases/:caseId/start-verification')
   @HttpCode(200)
-  startVerification(@Param('caseId') caseId: string, @Body() body: CommandDto, @Req() req: AuthedRequest) {
-    return this.service.startVerification(req.context, caseId, body.commandId);
+  startVerification(@Param('caseId') caseId: string, @Body() body: SameActorStepDto, @Req() req: AuthedRequest) {
+    return this.service.startVerification(req.context, caseId, body.commandId, body.singleAdminReason);
   }
 
   @Post('cases/:caseId/complete')

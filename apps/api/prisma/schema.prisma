@@ -723,6 +723,18 @@ model DataRightsCase {
   completedAt                 DateTime?
   completedByUserId           String?
   outcomeSummary              String?
+  // P31 §8 single-admin mode: each pair marks a step that the person who took the previous step
+  // took again, as an explicit self-step with a reason, while the platform had one active System
+  // Admin. Two CHECK constraints keep the marker equal to "same person" and tied to its reason;
+  // the transition trigger refuses a same-person step without them.
+  approvalSingleAdmin         Boolean                      @default(false)
+  approvalSingleAdminReason   String?
+  executionSingleAdmin        Boolean                      @default(false)
+  executionSingleAdminReason  String?
+  verificationSingleAdmin     Boolean                      @default(false)
+  verificationSingleAdminReason String?
+  completionSingleAdmin       Boolean                      @default(false)
+  completionSingleAdminReason String?
   createdAt                   DateTime                     @default(now())
   updatedAt                   DateTime                     @updatedAt
   decisions                   DataRightsDecisionRecord[]
@@ -767,6 +779,9 @@ model DataRightsEvidenceRecord {
   note             String?
   recordedByUserId String
   recordedAt       DateTime                    @default(now())
+  // P31 §8: independent verification recorded by the executor as an explicit self-step.
+  singleAdmin      Boolean                     @default(false)
+  singleAdminReason String?
   case             DataRightsCase              @relation(fields: [caseId], references: [id], onDelete: Restrict)
 
   @@index([caseId, evidenceType, recordedAt])

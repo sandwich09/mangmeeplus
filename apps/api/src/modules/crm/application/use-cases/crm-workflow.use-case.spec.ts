@@ -1171,6 +1171,21 @@ describe('ConvertCrmLeadUseCase', () => {
     );
   });
 
+  it('refuses a caller whose only role key is one that no role in the registry has', async () => {
+    // The list named a key `SYSTEM`. No system role carries it, and a custom role takes its key from
+    // its name, so a role a shop named "System" passed this gate with nothing else behind it.
+    let reads = 0;
+    const repo = { findLeadById: async () => { reads += 1; return null; } } as any;
+    const convert = (roles: string[]) => new ConvertCrmLeadUseCase(repo, noopAudit, noopOutbox).execute(ctx({ roles }), 'l-6', {});
+    await assert.rejects(() => convert(['SYSTEM']), /Lead conversion requires an operational CRM role/);
+    assert.equal(reads, 0);
+    // The roles the gate is for still reach the lead (and then fail on the missing lead, not the role).
+    for (const role of ['OWNER', 'ADMIN', 'SALES', 'MANAGER', 'SYSTEM_ADMIN']) {
+      await assert.rejects(() => convert([role]), (error: Error) => !/operational CRM role/.test(error.message), role);
+    }
+    assert.equal(reads, 5);
+  });
+
   it('does not combine SALES mutation rights with FINANCE/AUDITOR company-wide read', async () => {
     const newLeadRepo = {
       findLeadById: async () => ({ id: 'l-4', companyId: 'co-1', status: 'NEW', assignedToUserId: 'sales-1', rawName: 'Bob', createdAt: new Date(), updatedAt: new Date(), source: 'MANUAL' }),
