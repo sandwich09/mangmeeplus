@@ -1065,7 +1065,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
 // under the role's title on the role page, and copied into the company's copy when it edits a standard
 // role: it says in plain Thai who the role is for and the kind of work it does.
 export const SYSTEM_ROLES: Array<{ key: string; name: string; description: string }> = [
-  { key: 'OWNER',           name: 'Owner',          description: 'ทำได้ทุกอย่างในบริษัทนี้ ทุกเมนูและทุกสิทธิ์' },
+  { key: 'OWNER',           name: 'Owner',          description: 'มีทุกสิทธิ์ที่บริษัทนี้ใช้ได้' },
   { key: 'SYSTEM_ADMIN',    name: 'System Admin',   description: 'สำหรับเจ้าหน้าที่ของมั่งมีที่ดูแลระบบ ไม่ใช่บทบาทของพนักงานในร้าน' },
   { key: 'COMPANY_VIEW',    name: 'Company owner',  description: 'สำหรับผู้ที่ต้องการดูภาพรวมของบริษัทโดยไม่แก้ไขข้อมูล เช่น ลูกค้า เอกสารขาย ค่าใช้จ่าย บัญชี และรายงาน' },
   { key: 'ADMIN',           name: 'Admin',           description: 'สำหรับผู้ดูแลงานในบริษัท: ตั้งค่าบริษัท สาขา พนักงาน และงานประจำวันของร้าน' },
