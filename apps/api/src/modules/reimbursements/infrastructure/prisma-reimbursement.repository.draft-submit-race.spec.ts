@@ -3838,13 +3838,16 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   /** The requester as the claim page knows them when they may edit their own claims. */
   const requesterWhoEdits = () => ({ ...requester(), permissions: ['reimbursement.read_own', 'reimbursement.cancel_own', 'reimbursement.update_own_draft'] });
 
-  /** The use cases of a round over one connection, with the audit rows and events written to the database. */
-  function round(index: number) {
+  /**
+   * The use cases of a round over one connection, with the audit rows and events written to the database.
+   * `notices`: the writer of the requester's notice, for a case where someone answers for a requester a notice can
+   * reach. Every other case fails if a notice is asked for at all.
+   */
+  function round(index: number, notices: unknown = { executeInTransaction: async () => { throw new Error('nobody is told of an answer here'); } }) {
     const prisma = { client: clients[index]! } as any;
     const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
     const evidence = new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), new PrismaExpenseRepository(prisma));
-    const payouts = new MemberPayoutAccountUseCase(repos[index]!, audit, { credentialEncryptionKey: roundKey } as any,
-      { executeInTransaction: async () => { throw new Error('nobody typed an account for someone else here'); } } as any);
+    const payouts = new MemberPayoutAccountUseCase(repos[index]!, audit, { credentialEncryptionKey: roundKey } as any, notices as any);
     return {
       sendBack: new RequestPayoutCorrectionUseCase(repos[index]!, audit, evidence),
       giveAccount: new SubmitPayoutCorrectionUseCase(repos[index]!, audit, evidence, payouts, new ListReimbursementApproverOptionsUseCase(prisma)),
@@ -4530,6 +4533,68 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       assert.deepEqual((await accountVersionsOf(claim.requestId)).map((account) => [account.version, account.verifiedByUserId]), [[1, MGR], [2, MGR]]);
     } finally {
       await db.companyMembership.update({ where: membership, data: { status: 'ACTIVE' } });
+    }
+  });
+
+  // Owner rule 2026-10-01 (decision D12): the person whose money it is hears of every change someone else makes for
+  // them. Before, only an account TYPED for the requester told them. With the real notification writer, because what
+  // has to hold is a matter of rows: the notice is written in the answer's own transaction, reads the account that
+  // transaction has just frozen, and is for the requester alone on both channels.
+  it('tells the requester of every answer a finance reviewer gives for them, as part of that answer, and of none they give themselves', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const writer = new CreateOrUpdateNotificationEventUseCase(null as never, null as never, null as never, null as never, null as never, { client: db } as never);
+    const claim = await approvedTransferClaim();
+    const id = claim.requestId;
+    await round(0).sendBack.execute(finance(), id, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    const told = async () => (await db.notificationRecipient.findMany({
+      where: { companyId }, orderBy: { createdAt: 'asc' },
+      select: { userId: true, event: { select: { triggerKey: true, severity: true, title: true, body: true, deepLinkHref: true, sourceType: true, sourceId: true } }, deliveries: { select: { channel: true } } },
+    })).map((row) => ({ to: row.userId, ...row.event, channels: row.deliveries.map((delivery) => delivery.channel).sort() }));
+    const anAccount = (masked: string) => `${masked} · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ใช่บัญชีของคุณ แก้ได้ทันที`;
+    const promptPay = sealPayoutDestination({ payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountNumber: '0812345678' }, roundKey)!;
+    try {
+      assert.deepEqual(await told(), []);
+      // The four choices of the form, each given by the finance reviewer: the account the claim had, cash, an account
+      // typed, and the requester's default account as it is now.
+      await round(0, writer).giveAccount.execute(finance(), id, { mode: 'PREVIOUS' });
+      await round(0, writer).giveAccount.execute(finance(), id, { mode: 'CASH' });
+      await round(0, writer).giveAccount.execute(finance(), id, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+      await repos[0]!.setMemberPayoutAccount({ companyId, userId: STAFF, actorUserId: STAFF, payoutMethod: 'BANK_TRANSFER', destination: promptPay }, async () => undefined);
+      const defaultToken = (await on(0).detail.execute(finance(), id)).payoutCorrectionActions!.requesterDefault!.token;
+      await round(0, writer).giveAccount.execute(finance(), id, { mode: 'DEFAULT', defaultToken });
+
+      const notices = await told();
+      // One notice per answer, the typed account included (it sent a notice of its own before, in other words).
+      assert.deepEqual(notices.map((notice) => [notice.title, notice.body]), [
+        [`วราภรณ์ การเงิน ยืนยันบัญชีเดิมในใบเบิกของคุณ: ${claim.requestNo}`, anAccount('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678')],
+        [`วราภรณ์ การเงิน เปลี่ยนวิธีรับเงินคืนในใบเบิกของคุณ: ${claim.requestNo}`, 'รับเป็นเงินสด · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แก้ได้ทันที'],
+        [`วราภรณ์ การเงิน แก้บัญชีรับเงินในใบเบิกของคุณ: ${claim.requestNo}`, anAccount('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112')],
+        [`วราภรณ์ การเงิน แก้บัญชีรับเงินในใบเบิกของคุณ: ${claim.requestNo}`, anAccount('พร้อมเพย์เบอร์ลงท้าย 5678')],
+      ]);
+      // To the requester alone (not the reviewer who answered, not the approver, not an owner), on the web and on LINE,
+      // never held back by quiet hours, with a link to the claim.
+      for (const notice of notices) {
+        assert.deepEqual([notice.to, notice.triggerKey, notice.severity, notice.sourceType, notice.sourceId, notice.deepLinkHref, notice.channels],
+          [STAFF, 'reimbursement.payout_account_set_by_other', 'CRITICAL', 'reimbursement_request', id, `/companies/${companyId}/reimbursements/${id}`, ['LINE', 'WEB']], notice.title);
+      }
+      assert.equal(await db.notificationEvent.count({ where: { companyId } }), 4, 'no event is written for anybody else');
+      for (const number of ['0012345678', SCB_ACCOUNT.accountNumber, '0812345678']) assert.equal(JSON.stringify(notices).includes(number), false);
+
+      // The requester's own answer tells nobody: this writer would fail the answer if it were asked.
+      const own = await round(0).giveAccount.execute(requesterWhoEdits(), id, { mode: 'CASH' });
+      assert.deepEqual([own.payoutCorrectionAnswer, (await told()).length], ['CASH_INSTEAD', 4]);
+
+      // The notice is part of the answer. When it cannot be written the answer is not taken: the claim, its account
+      // versions and its events are as they were, and the notice the transaction did write is gone with it.
+      const before = { claim: await claimRow(id), versions: (await accountVersionsOf(id)).length, events: (await eventsOf(id)).length };
+      const failsAfterWriting = { executeInTransaction: async (input: any, tx: any) => { await writer.executeInTransaction(input, tx); throw new Error('the notice could not be written'); } };
+      await assert.rejects(() => round(0, failsAfterWriting).giveAccount.execute(finance(), id, { mode: 'PREVIOUS' }), /the notice could not be written/);
+      assert.deepEqual({ claim: await claimRow(id), versions: (await accountVersionsOf(id)).length, events: (await eventsOf(id)).length }, before);
+      assert.equal((await told()).length, 4);
+    } finally {
+      await repos[0]!.removeMemberPayoutAccount(companyId, STAFF, async () => undefined);
+      await db.notificationEvent.deleteMany({ where: { companyId } });
     }
   });
 

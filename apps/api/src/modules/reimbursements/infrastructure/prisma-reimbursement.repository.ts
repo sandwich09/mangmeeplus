@@ -1474,9 +1474,12 @@ export class PrismaReimbursementRepository {
     });
   }
 
-  /** The claim's own snapshot. Never the member's default account. */
-  findClaimPayout(request: ReimbursementRequestRecord) {
-    return readClaimPayout(this.prisma.client, request);
+  /**
+   * The claim's own snapshot. Never the member's default account.
+   * `client`: a transaction, for a caller that reads what that transaction has just frozen on the claim.
+   */
+  findClaimPayout(request: Parameters<typeof readClaimPayout>[1], client: unknown = this.prisma.client) {
+    return readClaimPayout(client, request);
   }
 
   /** Every account the claim has been sent with, oldest first, masked: the claim page's account history. */
