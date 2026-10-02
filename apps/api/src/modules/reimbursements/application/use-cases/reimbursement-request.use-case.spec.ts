@@ -4693,6 +4693,42 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     const again = await cashAnswer.world.reject.execute(approverCtx(), cashAnswer.id, 'ขอให้รับเป็นการโอน');
     assert.deepEqual([again.payoutCorrection?.phase, again.payoutCorrection?.reasonCode, again.payoutCorrection?.note], ['AWAITING_REQUESTER', 'OTHER', 'ขอให้รับเป็นการโอน']);
   });
+
+  // A PromptPay destination is a phone number, which the entry form calls "เบอร์พร้อมเพย์". Before, the requester of a
+  // PromptPay claim was told "เหตุผล: เลขบัญชีไม่ถูกต้อง". The reason is the same one, under the same code: the words follow
+  // the kind of the account the claim holds when it is sent back.
+  it('tells the requester the reason in the words of the account kind: "เบอร์พร้อมเพย์" of a PromptPay number, from the pay step and from the waiting step', async () => {
+    const notice = (world: ReturnType<typeof correctionWorld>) => world.events()
+      .filter((event) => event.eventType === 'reimbursement.payout_correction_requested').at(-1)!.payloadJson.data.payoutCorrectionNotice;
+    const PROMPTPAY_WORDS = 'เหตุผล: เบอร์พร้อมเพย์ไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน';
+    const BANK_WORDS = 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน';
+
+    const promptPay = correctionWorld();
+    const promptPayId = await promptPay.ready({ setDefault: PROMPTPAY as any });
+    const sentBack = await promptPay.sendBack.execute(payerCtx(), promptPayId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.equal(notice(promptPay), PROMPTPAY_WORDS);
+    // The code on the claim, in its detail and in its audit row is the one sent: only the words differ.
+    assert.deepEqual([sentBack.payoutCorrection?.reasonCode, promptPay.claim().payoutCorrectionReasonCode, promptPay.audits[0].metadataJson.reasonCode],
+      ['ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NUMBER_WRONG']);
+
+    const bank = correctionWorld();
+    const bankId = await bank.ready();
+    await bank.sendBack.execute(payerCtx(), bankId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.equal(notice(bank), BANK_WORDS);
+
+    // From the waiting step the claim holds what was just given: the words are those of that answer, not of what the round began with.
+    await bank.giveAccount.execute(ctx(), bankId, { mode: 'SPECIFIED', ...PROMPTPAY });
+    await bank.sendBack.execute(approverCtx(), bankId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.equal(notice(bank), PROMPTPAY_WORDS);
+    await promptPay.giveAccount.execute(ctx(), promptPayId, { mode: 'SPECIFIED', ...SCB });
+    await promptPay.sendBack.execute(approverCtx(), promptPayId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.equal(notice(promptPay), BANK_WORDS);
+    // Every other reason of a PromptPay number reads as it does of any account.
+    const other = correctionWorld();
+    const otherId = await other.ready({ setDefault: PROMPTPAY as any });
+    await other.sendBack.execute(payerCtx(), otherId, { reasonCode: 'ACCOUNT_NAME_MISMATCH' });
+    assert.equal(notice(other), 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
+  });
 });
 
 // Payout spec §14.2: the words of a round. Every reader of a round chooses its words from two facts: what the claim

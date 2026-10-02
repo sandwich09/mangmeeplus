@@ -68,6 +68,8 @@ import {
 import { mayTypePayoutAccountFor, payoutDefaultToken } from './payout-destination.logic';
 // The requester's notice of a round someone else answered for them (its own import, apart from the block below).
 import { reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
+// A reason in words, by the kind of the account held (its own import, apart from the block below).
+import { reimbursementPayoutCorrectionReasonLabel, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
 import {
   isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionReasons, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
   reimbursementHubBucket, reimbursementPayoutCorrectionPhase,
@@ -1540,6 +1542,29 @@ describe('payout account correction round', () => {
     // A label, a lowercase code, an inherited key, a non-string: none is a reason.
     for (const bad of ['เลขบัญชีไม่ถูกต้อง', 'other', 'toString', 'constructor', '', undefined, null, 1, {}]) assert.equal(isReimbursementPayoutCorrectionReason(bad), false, String(bad));
     for (const text of Object.values(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS)) assert.doesNotMatch(text, /[A-Za-z_]/, text);
+  });
+
+  // A PromptPay destination is a phone number: the entry form calls it "เบอร์พร้อมเพย์" and the notices say "พร้อมเพย์เบอร์ลงท้าย …".
+  // Before, its send-back reason read "เลขบัญชีไม่ถูกต้อง" in the form, in the requester's notice and in the timeline.
+  it('words a reason by the kind of the account held: a PromptPay number is never called "เลขบัญชี", and its code stays the same', () => {
+    assert.equal(reimbursementPayoutCorrectionReasonLabel('ACCOUNT_NUMBER_WRONG', 'PROMPTPAY_PHONE'), 'เบอร์พร้อมเพย์ไม่ถูกต้อง');
+    // A bank account, and a reader with no kind to go by, read the list's own words; so does every other reason of a PromptPay number.
+    for (const code of Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS) as ReimbursementPayoutCorrectionReason[]) {
+      for (const kind of ['BANK_ACCOUNT', undefined, null] as const) assert.equal(reimbursementPayoutCorrectionReasonLabel(code, kind), REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[code], code);
+      if (code !== 'ACCOUNT_NUMBER_WRONG') assert.equal(reimbursementPayoutCorrectionReasonLabel(code, 'PROMPTPAY_PHONE'), REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[code], code);
+    }
+    // No reason a PromptPay number takes names an account number or a bank, and each is still plain Thai.
+    for (const code of reimbursementPayoutCorrectionReasons('ACCOUNT', 'PROMPTPAY_PHONE')) {
+      assert.doesNotMatch(reimbursementPayoutCorrectionReasonLabel(code, 'PROMPTPAY_PHONE'), /เลขบัญชี|ธนาคาร|[A-Za-z_]/, code);
+    }
+    // The requester's notice prints that label: the kind is the one of the account the claim held when it was sent back.
+    const body = (kind?: 'BANK_ACCOUNT' | 'PROMPTPAY_PHONE') => reimbursementPayoutSentBackNotice('ACCOUNT', 'ACCOUNT_NUMBER_WRONG', kind).body;
+    assert.deepEqual([body('PROMPTPAY_PHONE'), body('BANK_ACCOUNT'), body()], [
+      'เหตุผล: เบอร์พร้อมเพย์ไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
+      'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน', 'เหตุผล: เลขบัญชีไม่ถูกต้อง · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
+    ]);
+    // The title names no number: it is the same for both kinds.
+    assert.equal(reimbursementPayoutSentBackNotice('ACCOUNT', 'ACCOUNT_NUMBER_WRONG', 'PROMPTPAY_PHONE').title, 'ใบเบิกต้องแก้บัญชีรับเงิน');
   });
 
   // Payout spec §14.2. Every word of a round is chosen from two facts: what the claim held when it was sent back,

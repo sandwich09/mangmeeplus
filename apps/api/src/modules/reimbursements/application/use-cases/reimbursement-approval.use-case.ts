@@ -243,7 +243,8 @@ export async function sendBackForPayoutCorrection(
 
   const policy = effectivePolicyForRequest(req, effectivePolicy(await deps.repo.findPolicy(ctx.companyId, null)));
   const requestedAt = new Date();
-  const notice = reimbursementPayoutSentBackNotice(held, reasonCode);
+  // The reason is worded for the kind of account held: a PromptPay number is never called "เลขบัญชี".
+  const notice = reimbursementPayoutSentBackNotice(held, reasonCode, payoutKind);
   await deps.repo.requestPayoutCorrectionAtomic({
     companyId: ctx.companyId,
     requestId: req.id,

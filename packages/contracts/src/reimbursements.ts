@@ -892,7 +892,8 @@ export type RejectReimbursementInput = {
  *
  * Each reason is true of one thing a claim can hold: the first of a claim with no account of its own
  * (sent before claims carried one), the next five of an account, the two after them of cash. Which
- * reasons a claim takes is `reimbursementPayoutCorrectionReasons`.
+ * reasons a claim takes is `reimbursementPayoutCorrectionReasons`; what a reason is printed as is
+ * `reimbursementPayoutCorrectionReasonLabel`, which words it for the kind of account held.
  */
 export const REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS = {
   NO_ACCOUNT_ON_CLAIM: 'ใบนี้ยังไม่มีบัญชีรับเงิน',
@@ -928,6 +929,16 @@ export function reimbursementPayoutCorrectionReasons(held: ReimbursementPayoutHe
     'ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NAME_MISMATCH', ...(payoutKind === 'PROMPTPAY_PHONE' ? [] : ['BANK_WRONG' as const]),
     'ACCOUNT_UNUSABLE', 'REQUESTER_ASKED', 'OTHER',
   ];
+}
+
+/**
+ * A reason in words, by the kind of the account the claim held when it was sent back with it. The reason is the
+ * same one under the same code; only what a person reads differs: a PromptPay destination is a phone number, which
+ * the entry form calls "เบอร์พร้อมเพย์" and nothing calls "เลขบัญชี". The send-back form, the requester's notice and
+ * the claim's timeline print this, so they cannot say it differently. Without a kind: the list's own words.
+ */
+export function reimbursementPayoutCorrectionReasonLabel(reasonCode: ReimbursementPayoutCorrectionReason, payoutKind?: ReimbursementPayoutKind | null): string {
+  return payoutKind === 'PROMPTPAY_PHONE' && reasonCode === 'ACCOUNT_NUMBER_WRONG' ? 'เบอร์พร้อมเพย์ไม่ถูกต้อง' : REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode];
 }
 
 /** The note that may go with a reason. Shown on the claim page only; it may not carry an account number. */
@@ -1149,13 +1160,13 @@ export function reimbursementPayoutRoundApproves(answer: ReimbursementPayoutRoun
  * The requester's notice of a send-back (spec §17.3): the title, which the template follows with the claim
  * number, and the body. Both are finished here, where the event is written, from what the claim held and
  * the fixed list's own words: no template assembles a sentence, so no rule can print a code or anything a
- * person typed.
+ * person typed. `payoutKind`: the kind of the account held, by which the reason is worded.
  */
 export function reimbursementPayoutSentBackNotice(
-  held: ReimbursementPayoutHeld, reasonCode: ReimbursementPayoutCorrectionReason,
+  held: ReimbursementPayoutHeld, reasonCode: ReimbursementPayoutCorrectionReason, payoutKind?: ReimbursementPayoutKind | null,
 ): { title: string; body: string } {
   const words = PAYOUT_ROUND_HELD_WORDS[held];
-  return { title: words.noticeTitle, body: `เหตุผล: ${REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode]} · เปิดใบเบิกเพื่อ${words.ask}` };
+  return { title: words.noticeTitle, body: `เหตุผล: ${reimbursementPayoutCorrectionReasonLabel(reasonCode, payoutKind)} · เปิดใบเบิกเพื่อ${words.ask}` };
 }
 
 /**
