@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import type { RequestContext, SourceRef, ToolResult } from '@watchdog-bms/contracts';
-import { civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS } from '@watchdog-bms/contracts';
+import { civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL } from '@watchdog-bms/contracts';
 import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/line-draft-update.use-case';
@@ -424,7 +424,9 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
       // stood on set aside. It reads here as `reimbursement.get_approval_backlog` reads it: the claim page's words
       // for the phase in place of the status (the gateway's fixed reply prints `status` as it comes), the Thai day
       // that wait began, and nothing of the account, the reason or who sent it back. A claim being cancelled is
-      // asked for no account, so the round is not said of it.
+      // asked for no account, so the round is not said of it. It waits for no approver and no payer either
+      // (both are refused meanwhile): its status reads as the system's wait, the words of the claim page and
+      // of the backlog tool for the same claim, never as the status it has not left yet.
       const round = item.cancellationPending ? undefined : item.payoutCorrection;
       return {
         toolName: this.toolName, status: 'ok', asOf,
@@ -432,7 +434,7 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
           id: item.id, requestNo: item.requestNo ?? null, requesterDisplayName: item.requesterDisplayNameSnapshot,
           title: item.title ?? null, reason: item.reason, category: item.categoryLabelSnapshot ?? item.categoryKey,
           amount: item.amount, currency: item.currency, incurredDate: item.incurredDate,
-          status: round ? REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS[round.phase] : item.status,
+          status: item.cancellationPending ? REIMBURSEMENT_SYSTEM_WAIT_LABEL : round ? REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS[round.phase] : item.status,
           ...(round?.phase === 'AWAITING_REQUESTER' && { sentBackOn: civilDate(new Date(round.requestedAt)), note: PAYOUT_CORRECTION_NOTE }),
           ...(round?.phase === 'AWAITING_APPROVAL' && round.submittedAt && { resubmittedOn: civilDate(new Date(round.submittedAt)) }),
           financeReviewStatus: item.financeReviewStatus, paymentStatus: item.paymentStatus,

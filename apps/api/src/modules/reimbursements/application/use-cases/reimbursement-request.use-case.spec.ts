@@ -869,6 +869,35 @@ describe('a list or queue row says when its claim is being cancelled', () => {
       ['paying', false, 'PAYMENT'], ['cancel-at-payment', true, 'SYSTEM'], ['cancel-at-finance', true, 'SYSTEM'],
     ]);
   });
+
+  // Tool dry-run 2026-10-02: with one claim being cancelled the backlog said 6 waiting for approval and the
+  // summary said 7. Approval and payment are refused meanwhile, so such a claim waits for no approver and no payer.
+  it('counts a claim being cancelled in none of the assistant summary\'s four figures, where the backlog puts it on the system\'s desk', async () => {
+    const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000);
+    const claims = [
+      row('PENDING_APPROVAL', { id: 'waiting', submittedAt: hoursAgo(72) }),
+      row('PENDING_APPROVAL', { id: 'cancel-at-approval', submittedAt: hoursAgo(72), ...cancelling }),
+      row('READY_FOR_PAYMENT', { id: 'paying', outstandingAmount: '250.0000' }),
+      row('READY_FOR_PAYMENT', { id: 'cancel-at-payment', ...cancelling }),
+      row('FINANCE_REVIEW', { id: 'cancel-at-finance', financeReviewStatus: 'PENDING', ...cancelling }),
+    ];
+    const step = { id: 'step-1', companyId: 'co-1', reimbursementRequestId: 'waiting', sequenceNo: 1, status: 'PENDING', assignedApproverUserIds: ['mgr-1'], approverRoleSnapshot: 'MANAGER' };
+    const repo = {
+      listRequests: async (where: { statuses?: string[] }) => claims.filter((claim) => !where.statuses || where.statuses.includes(claim.status)),
+      findPolicy: async () => ({ ...NO_APPROVAL_POLICY, slaHours: 48 }),
+      findPendingApprovalSteps: async (_companyId: string, ids: string[]) => [step, { ...step, id: 'step-2', reimbursementRequestId: 'cancel-at-approval' }]
+        .filter((entry) => ids.includes(entry.reimbursementRequestId)),
+      findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+      getUserDisplayNames: async () => ({ 'mgr-1': 'สมศรี' }),
+    } as any;
+    const reader = ctx({ permissions: ['reimbursement.read'] });
+    const summary = await new GetReimbursementAiSummaryUseCase(repo, noopAudit).execute(reader);
+    // One claim waits for its approver (and is late), one for its payment: the three being cancelled are in no figure.
+    assert.deepEqual([summary.pendingApprovalCount, summary.overdueApprovalCount, summary.unpaidApprovedCount, summary.totalUnpaidAmount], [1, 1, 1, '250.0000']);
+    const backlog = await new GetReimbursementApprovalBacklogUseCase(repo, noopAudit).execute(reader);
+    assert.equal(backlog.awaitingApprovalCount, summary.pendingApprovalCount, 'the two tools count the same claims as waiting for approval');
+    assert.deepEqual(backlog.desks.find((desk) => desk.kind === 'status_pending')?.count, 3);
+  });
 });
 
 // Audit B3, the rest of it: whatever stops a cancellation after its intent is committed, the claim

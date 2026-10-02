@@ -172,7 +172,7 @@ describe('LINE ERP core detail tools', () => {
       payoutCorrectionPhase: 'AWAITING_REQUESTER', currentDesk: { kind: 'SYSTEM' }, cancellationPending: true,
       payoutCorrection: round('AWAITING_REQUESTER'), approvalSteps: [approvedBefore],
     }));
-    assert.equal(cancelling.status, 'PENDING_APPROVAL');
+    assert.equal(cancelling.status, BACKLOG_DESK_LABELS.status_pending);
     assert.equal(cancelling.sentBackOn, undefined);
     assert.equal(cancelling.note, undefined);
 
@@ -188,6 +188,30 @@ describe('LINE ERP core detail tools', () => {
     // Payout spec §11.2: where the claim stands, and nothing of the account, the reason or who sent it back.
     assert.doesNotMatch(JSON.stringify([withRequester, withApprover, cancelling, approvedAgain]),
       /payout|6789|1234|กสิกร|สมชาย|สมศรี|ACCOUNT_NUMBER_WRONG|payer-1|ผู้จ่าย|เลขท้าย|AWAITING_|approver-1/);
+  });
+
+  // Tool dry-run 2026-10-02: a claim whose cancellation was started came back as `status: 'PENDING_APPROVAL'` with its
+  // open step, so the fixed reply said it waits for approval. Approval and payment are refused meanwhile: it waits for
+  // the system, as the backlog tool, `list_pending_approvals` and the claim page say of the same claim.
+  it('says a claim being cancelled waits for the system, wherever it stood, and keeps the status of every other claim', async () => {
+    const claim = (overrides: Record<string, unknown>) => ({
+      id: 'rr3', companyId: 'c1', requestNo: 'RB-202610-000003', requesterUserId: 'u1', requesterDisplayNameSnapshot: 'User', reason: 'travel',
+      categoryKey: 'travel', amount: '120.00', currency: 'THB', incurredDate: '2026-10-01', status: 'PENDING_APPROVAL',
+      financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'NOT_PAYABLE', duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED',
+      postingStatus: 'not_required', paymentTotalAmount: '0', outstandingAmount: '120.00', lineCount: 1, createdAt: '', updatedAt: '',
+      payments: [], duplicateCandidates: [], approvalSteps: [{ id: 's1', sequenceNo: 1, approverUserId: 'approver-1', status: 'PENDING', assignedAt: '' }],
+      ...overrides,
+    });
+    const status = async (item: unknown) => ((await new ReimbursementGetDetailTool({ execute: async () => item } as any).execute(ctx, { reimbursementId: 'rr3' })).data as any).status;
+    const beingCancelled = { cancellationPending: true, currentDesk: { kind: 'SYSTEM' } };
+    for (const stoodAt of ['PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT']) {
+      assert.equal(await status(claim({ status: stoodAt, ...beingCancelled })), 'รอระบบปรับสถานะ', stoodAt);
+      // Not being cancelled: the status it has, as before.
+      assert.equal(await status(claim({ status: stoodAt })), stoodAt);
+    }
+    assert.equal(BACKLOG_DESK_LABELS.status_pending, 'รอระบบปรับสถานะ');
+    // A cancelled claim is finished: the detail carries no pending cancellation for it, and its status is its own.
+    assert.equal(await status(claim({ status: 'CANCELLED', currentDesk: undefined })), 'CANCELLED');
   });
 
   it('wires all eight adapters into the internal tool map', () => {

@@ -40,6 +40,9 @@ export class GetReimbursementAiSummaryUseCase {
     let totalUnpaid = d('0');
 
     for (const r of all) {
+      // Being cancelled: approval and payment are refused meanwhile, so it waits for no approver and no
+      // payer and is in none of the four figures. The backlog below and the claim page say the same of it.
+      if (r.cancellationPendingAt) continue;
       // Sent back for its account to be corrected (spec §14) and still with its requester: it waits
       // for no approver. Once the account is given, its approvers' wait counts from then.
       if (r.status === 'PENDING_APPROVAL' && payoutCorrectionPhase(r) !== 'AWAITING_REQUESTER') {
