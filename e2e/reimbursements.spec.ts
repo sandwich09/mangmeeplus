@@ -498,6 +498,54 @@ test.describe('REIMB — reimbursements', () => {
     });
   });
 
+  // Upgrade test 2026-10-02 (findings 13 and 14), the owner's own case: a claim waits for its payment with the transfer
+  // slip attached under "ใบเบิกที่เซ็นแล้ว" by mistake. Nothing sends the claim back beside the pay button, and the payer
+  // picks that file as the slip from a list that says what it is, after opening it.
+  test('REIMB-15 @p1 the payer picks a slip that sits under the signed copies, and nothing sends the claim back beside the pay button', async ({ authedPage, api, apiAs, request, companyId }) => {
+    const manager = await apiAs('MANAGER');
+    await withPolicy(api, companyId, PAYABLE, async () => {
+      const claim = await payableClaim(api, manager, companyId, '57.00');
+      const misfiled = await uploadPlainFile(api, request, companyId);
+      await json(await api.post(`${claimUrl(companyId, claim.id)}/claim-form/signed-copies`, {
+        data: { attachmentId: misfiled, acknowledgedComplete: true, confirmedRequestNo: claim.requestNo },
+      }));
+
+      await gotoCompany(authedPage, companyId, `/reimbursements/${claim.id}`);
+      // The send-back is a line of text in the account box, never a button of the pay step.
+      const stepCard = authedPage.locator('section[aria-labelledby="journey-step-title"]');
+      await expect(stepCard.getByRole('button', { name: 'บันทึกจ่าย', exact: true })).toBeVisible();
+      await expect(stepCard.getByRole('button', { name: /ส่งกลับ/ })).toHaveCount(0);
+      await expect(authedPage.getByTestId('reimbursement-payout-send-back').getByRole('button', { name: 'ส่งกลับให้แก้บัญชีรับเงิน', exact: true })).toBeVisible();
+      // Whoever pays is told on the misfiled file what to do with it.
+      await expect(authedPage.getByTestId('reimbursement-signed-copy-misfiled-hint')).toHaveText('ถ้าไฟล์นี้คือสลิปโอนเงินที่แนบผิดช่อง ไม่ต้องแนบใหม่ ตอนบันทึกจ่ายเลือกไฟล์นี้เป็นสลิปได้');
+
+      await stepCard.getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
+      await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'วิธีจ่าย', exact: true }), 'โอนเงิน');
+      await authedPage.getByRole('textbox', { name: 'เลขอ้างอิง', exact: true }).fill('E2E-TXN-PICKED');
+      // The claim asked for cash: paying by transfer says why.
+      await authedPage.locator('#reimbursement-payment-mismatch-reason').fill('โอนตามที่ผู้เบิกขอเปลี่ยน');
+
+      const choices = authedPage.getByTestId('reimbursement-payment-slip-choices');
+      await expect(choices).toContainText('ไฟล์รูปภาพ · แนบไว้ที่ใบเบิกที่เซ็นแล้ว โดยยืนยันว่าเป็นใบเบิกที่ลงนามครบ');
+      await expect(choices.getByRole('radio')).not.toBeChecked();
+      await choices.getByRole('button', { name: 'เปิดดูไฟล์นี้', exact: true }).click();
+      const viewer = authedPage.getByRole('dialog');
+      await expect(viewer).toBeVisible();
+      await viewer.getByRole('button', { name: 'ปิด' }).first().click();
+      await expect(viewer).toHaveCount(0);
+      await choices.getByRole('radio').check();
+      await expect(authedPage.getByTestId('reimbursement-payment-slip-move-note')).toContainText('จะย้ายออกจากรายการใบเบิกที่เซ็นแล้วมาเป็นสลิปของการจ่ายนี้ และย้ายกลับไม่ได้');
+      await authedPage.locator('form').getByRole('button', { name: 'บันทึกจ่าย', exact: true }).click();
+      await expect(authedPage.getByText('จ่ายแล้ว').first()).toBeVisible();
+
+      // The payment carries that file as its slip, and the file is no signed copy any more.
+      const paid = await json<Reimbursement>(await api.get(claimUrl(companyId, claim.id)));
+      const payment = paid.payments!.find((row) => row.status === 'RECORDED')!;
+      expect([paid.status, payment.paymentMethod, payment.slipCount, payment.slips.map((slip) => slip.attachmentId)]).toEqual(['PAID', 'BANK_TRANSFER', 1, [misfiled]]);
+      expect(paid.signedCopies).toEqual([]);
+    });
+  });
+
   // Payout spec §14.5 (final review W6, W8): a claim sent back by mistake keeps the account it was approved with, and a
   // press that arrives from a form left open on the claim as it was freezes nothing.
   test('REIMB-14 @p1 a claim sent back by mistake keeps the account it had, and a press from a form left open freezes nothing', async ({ api, apiAs, pageAs, companyId }) => {
