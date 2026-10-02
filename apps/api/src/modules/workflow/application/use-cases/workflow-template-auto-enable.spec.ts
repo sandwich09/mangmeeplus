@@ -366,6 +366,37 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
     }
   });
 
+  // Owner decision 2026-10-02: the finance desk's arrival notice leaves the shop owner out while anyone else can
+  // review. That template has shipped, so companies hold a rule of it: the next release brings up to date a rule the
+  // sync pinned, also one a company only switched off; a rule an admin really changed keeps what it was given.
+  it('re-pins a finance arrival rule pinned before the shop owner was left out, and leaves an admin-edited one alone', async () => {
+    const key = 'reimbursement_finance_review_pending';
+    const [catalogAction] = catalogActions(key);
+    const { lastResortRecipientRoles: _added, ...shippedConfig } = catalogAction!.configJson;
+    const shipped = [{ ...catalogAction!, configJson: shippedConfig }];
+    const adminsOwn = [{ ...catalogAction!, configJson: { ...shippedConfig, titleTemplate: 'มีใบเบิกมาถึงฝ่ายการเงิน: {{requestNo}}' } }];
+    const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, cooldownSeconds: 0, actionJson: shipped, ...over });
+    const repo = fakeRepo([
+      rule(),
+      rule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: adminsOwn, pinned: { actionJson: shipped } }),
+      rule({ companyId: 'co_3', status: 'DISABLED', updatedByUserId: 'admin_1' }),
+    ]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [key]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_3'), [key]);
+
+    const config = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson;
+    assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map((id) => config(id).lastResortRecipientRoles), [['OWNER'], undefined, ['OWNER']]);
+    // The admin's rule is exactly what the admin left: their title, and every holder of the right as before.
+    assert.deepEqual(repo.rules.find((r: any) => r.id === 'pre_1').actionJson, adminsOwn);
+    assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED');
+    // The runner reads the version snapshot, not the row.
+    const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
+    assert.deepEqual([latest.version, latest.actionSnapshotJson], [2, catalogActions(key)]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [], 'a second run changes nothing');
+  });
+
   it('is idempotent: a second run re-pins nothing and adds no version', async () => {
     const repo = fakeRepo([syncOwned()]);
     await resyncWorkflowTemplateRulesForCompany(repo, 'co_1');

@@ -173,6 +173,10 @@ describe('IngestWorkflowEventUseCase', () => {
       true,
     );
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
+    // Owner decision 2026-10-02: the people who review, not the shop owner, who holds every right and is told only
+    // when nobody else can review the claim. The desk's other notice (a claim blocked) is as it was.
+    assert.deepEqual(cfg['lastResortRecipientRoles'], ['OWNER']);
+    assert.equal(WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_finance_review')?.defaultActionJson[0]?.configJson['lastResortRecipientRoles'], undefined);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);
   });

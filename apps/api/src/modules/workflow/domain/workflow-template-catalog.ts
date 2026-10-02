@@ -363,7 +363,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     // finance decision, i.e. on finance's own action.
     key: 'reimbursement_finance_review_pending',
     name: 'Reimbursement awaiting finance review',
-    description: 'Notify everyone who can run finance review when an approved claim arrives at the finance desk.',
+    description: 'Notify the people who can run finance review on the claim (the shop owner only when nobody else can) when a claim arrives at the finance desk.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -377,6 +377,10 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
         configJson: {
           triggerKey: 'workflow.reimbursement_finance_review',
           recipientPermissions: ['reimbursement.finance_review'],
+          // Owner decision 2026-10-02: to the people who review at the finance desk and can act on the
+          // claim's branch, not to the shop owner, who holds every right and was told of every claim of
+          // every branch. The owner is told only where nobody else can review the claim.
+          lastResortRecipientRoles: ['OWNER'],
           severity: 'action',
           titleTemplate: 'ใบเบิกรอตรวจสอบการเงิน: {{requestNo}}',
           bodyTemplate: 'ยอด {{amount}} {{currency}} · รอตรวจสอบการเงิน',

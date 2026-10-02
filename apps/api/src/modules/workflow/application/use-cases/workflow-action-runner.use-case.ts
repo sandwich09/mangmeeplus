@@ -96,6 +96,9 @@ function readablePayload(payload: Record<string, unknown>): Record<string, unkno
   return readable;
 }
 
+/** A holder of a permission who can act on the record of a run, with the roles the permission resolver read for them. */
+type AbleMember = { userId: string; roles: string[] };
+
 /** The user ids that the named payload fields hold: each field is one id or a list of them. */
 function payloadUserIds(keys: unknown, payload: Record<string, unknown>): string[] {
   if (!Array.isArray(keys)) return [];
@@ -114,9 +117,14 @@ function payloadUserIds(keys: unknown, payload: Record<string, unknown>): string
  * group stands, which keeps a solo owner, an approver without the right and one who has since left.
  * `neverPreferRecipientPayloadKeys` names people who are never the preferred ones (a requester is
  * not told alone to pay their own claim) though they stay in the whole group.
- * A rule snapshot without the key keeps the whole group, exactly as before.
+ * `lastResortRecipientRoles` (owner decision 2026-10-02) is for the group itself, where the event
+ * names nobody: holders of those roles are left out while anybody else is able to act, and are the
+ * ones told when nobody else is. A claim at the finance desk goes to the people who review there,
+ * and to the shop owner only in a shop where the owner is that desk.
+ * A rule snapshot without a key keeps the whole group, exactly as before.
  */
-function narrowToPreferred(able: string[], cfg: Record<string, unknown>, payload: Record<string, unknown>): string[] {
+function narrowToPreferred(members: AbleMember[], cfg: Record<string, unknown>, payload: Record<string, unknown>): string[] {
+  const able = members.map((member) => member.userId);
   const preferKeys = Array.isArray(cfg['preferRecipientPayloadKeys']) ? cfg['preferRecipientPayloadKeys'] : [];
   const never = new Set(payloadUserIds(cfg['neverPreferRecipientPayloadKeys'], payload));
   for (const key of preferKeys) {
@@ -124,7 +132,9 @@ function narrowToPreferred(able: string[], cfg: Record<string, unknown>, payload
     const preferred = able.filter((userId) => named.has(userId) && !never.has(userId));
     if (preferred.length > 0) return preferred;
   }
-  return able;
+  const lastResortRoles: unknown[] = Array.isArray(cfg['lastResortRecipientRoles']) ? cfg['lastResortRecipientRoles'] : [];
+  const others = members.filter((member) => !member.roles.some((role) => lastResortRoles.includes(role))).map((member) => member.userId);
+  return others.length > 0 ? others : able;
 }
 
 function findTitleTemplate(actionKey: string, configJson: Record<string, unknown>, siblings: WorkflowActionDefinition[]): string | undefined {
@@ -357,21 +367,23 @@ export class ExecuteWorkflowActionUseCase {
    * copy of those rules living in the recipient query.
    * ponytail: one resolver round-trip per holder; batch it if a company ever has hundreds of them.
    */
-  private async membersAbleToAct(context: ActionRunContext, permissionKeys: string[]): Promise<string[]> {
+  private async membersAbleToAct(context: ActionRunContext, permissionKeys: string[]): Promise<AbleMember[]> {
     const holders = await this.repo.findUserIdsByPermissions(context.companyId, permissionKeys);
     if (holders.length === 0) return [];
     const branchId = await this.repo.findSourceBranchId(context.companyId, context.sourceType, context.sourceId);
-    const able = await Promise.all(holders.map(async (userId) => {
+    const able = await Promise.all(holders.map(async (userId): Promise<AbleMember[]> => {
       try {
         const access = await this.access.resolveAccess(userId, context.companyId);
-        return permissionKeys.some((key) => access.permissions.includes(key)) && isBranchInScope(access.scopes, branchId);
+        const canAct = permissionKeys.some((key) => access.permissions.includes(key)) && isBranchInScope(access.scopes, branchId);
+        // Their roles as the resolver read them (ACTIVE ones), for a notice that keeps a role as its last resort.
+        return canAct ? [{ userId, roles: access.roles ?? [] }] : [];
       } catch (err) {
         // The resolver refuses outright a member it would not let into this company at all.
-        if (err instanceof ForbiddenException) return false;
+        if (err instanceof ForbiddenException) return [];
         throw err;
       }
     }));
-    return holders.filter((_, index) => able[index]);
+    return able.flat();
   }
 
   private async createTask(actionRun: WorkflowActionRunRecord, context: ActionRunContext, cfg: Record<string, unknown>, isApprovalReview: boolean) {

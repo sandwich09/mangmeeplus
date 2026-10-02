@@ -72,10 +72,11 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
   // Shadow probe double: SEND_NOTIFICATION never reaches the CALL_WEBHOOK sweep, so a probe that
   // is never touched is the faithful stand-in here.
   const shadow = { startSweep: () => { throw new Error('no shadow sweep on this action type'); } } as any;
-  // Every holder in these tests can act; who cannot is the subject of the B12 block below.
+  // Every holder in these tests can act; who cannot is the subject of the B12 block below. `u_owner` is the shop owner.
   const access = {
-    resolveAccess: async () => ({
+    resolveAccess: async (userId: string) => ({
       permissions: ['procurement.vendor_bill.approve', 'reimbursement.payment.record', 'reimbursement.finance_review'],
+      roles: userId === 'u_owner' ? ['OWNER'] : ['STAFF'],
       scopes: {},
     }),
   } as any;
@@ -470,6 +471,35 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
         await send({ ...prefer, recipientRoles: ['AUDITOR_READONLY'], recipientPayloadKeys: ['watcherUserId'] }, { firstChoice: 'u_mgr_1', watcherUserId: 'u_watcher' }),
         ['u_auditor', 'u_mgr_1', 'u_watcher'],
       );
+    });
+
+    // Owner decision 2026-10-02: a notice that goes to everyone holding a right reached the shop owner every time,
+    // because the owner holds every right. `lastResortRecipientRoles` leaves the holders of a role out while anybody
+    // else is able to act. Before, there was no way to say so: the whole group was told.
+    it('leaves the holders of a last-resort role out while anybody else can act, and tells them when nobody else can', async () => {
+      const lastResort = { lastResortRecipientRoles: ['OWNER'] };
+      assert.deepEqual(await send(lastResort, {}), ['u_admin', 'u_mgr_1', 'u_mgr_2']);
+      // Whoever the event names comes first, as before: the owner too, when it is the owner's own turn.
+      assert.deepEqual(await send({ ...prefer, ...lastResort }, { firstChoice: 'u_owner' }), ['u_owner']);
+      assert.deepEqual(await send({ ...prefer, ...lastResort }, { firstChoice: 'u_mgr_1' }), ['u_mgr_1']);
+      // The event names nobody able to act: everyone else who is, and still not the owner.
+      assert.deepEqual(await send({ ...prefer, ...lastResort }, { firstChoice: 'u_cannot_act' }), ['u_admin', 'u_mgr_1', 'u_mgr_2']);
+      // A role nobody here holds leaves nobody out, and a list that is no list is read as none.
+      assert.deepEqual(await send({ lastResortRecipientRoles: ['AUDITOR_READONLY'] }, {}), ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2']);
+      assert.deepEqual(await send({ lastResortRecipientRoles: 'OWNER' }, {}), ['u_owner', 'u_admin', 'u_mgr_1', 'u_mgr_2']);
+
+      // Nobody but the owner can act: the owner is the one to tell.
+      const alone = async (cfg: Record<string, unknown>) => {
+        repo.findUserIdsByPermissions = mock.fn(async () => ['u_owner']);
+        await make().execute(
+          actionRun({ triggerKey: 'workflow.test', severity: 'action', recipientPermissions: ['reimbursement.payment.record'], ...cfg }),
+          { companyId: 'co_1', ruleName: 'r', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1', payload: {}, siblingActions: [] } as any,
+        );
+        return (notify.execute.mock.calls.at(-1) as any).arguments[0].recipientUserIds;
+      };
+      assert.deepEqual(await alone(lastResort), ['u_owner']);
+      // The roles are the ones the permission resolver answered for each holder: no role is looked up for this.
+      assert.ok(repo.findUserIdsByRoles.mock.calls.every((call: any) => call.arguments[1].length === 0));
     });
   });
 
@@ -1175,6 +1205,59 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff' };
     await h.useCase.execute(actionRun(cfg), context);
     assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_approver']);
+  });
+
+  // Owner decision 2026-10-02: a claim that arrives at the finance desk is announced to the people who review there
+  // and can act on its branch, and not to the shop owner, who holds every right, unless nobody else can review it.
+  // Before, every holder of the right was told, the owner included, for every claim of every branch.
+  it('announces a claim at the finance desk to its reviewers, and to the shop owner only when nobody else can review it', async () => {
+    const REVIEW = 'reimbursement.finance_review';
+    const holding = (key: string, extra: Record<string, unknown> = {}, status = 'ACTIVE') =>
+      member({ roles: [{ role: { key, status, permissions: [{ permission: { key: REVIEW } }] } }], ...extra });
+    const elsewhere = { branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] };
+    const arrival = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_finance_review_pending')!;
+    const arrivalCfg = arrival.defaultActionJson[0]!.configJson;
+    /** The arrival event of a claim its approver (u_approver) passed, run against these members. */
+    const announce = async (memberships: Record<string, unknown>, cfg: Record<string, unknown> = arrivalCfg, payload: Record<string, unknown> = {}) => {
+      const h = harness({ sourceBranchId: 'br_claim', memberships });
+      await h.useCase.execute({ ...actionRun(cfg), actionKey: arrival.defaultActionJson[0]!.actionKey }, {
+        companyId: 'co_1', ruleName: arrival.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', status: 'FINANCE_REVIEW', decision: 'APPROVED', amount: '250', currency: 'THB', requesterUserId: 'u_staff', actorUserId: 'u_approver', ...payload },
+        siblingActions: [],
+      } as any);
+      return { to: h.sent[0]?.recipientUserIds, status: h.updates.at(-1)?.status, result: h.updates.at(-1)?.resultJson };
+    };
+    assert.deepEqual(arrivalCfg['lastResortRecipientRoles'], ['OWNER']);
+
+    // The owner, an accountant and a company's own finance role all hold the right: the two who review are told.
+    const desk = { u_owner: holding('OWNER'), u_accountant: holding('ACCOUNTANT'), u_finance: holding('CUSTOM_FINANCE') };
+    assert.deepEqual((await announce(desk)).to, ['u_accountant', 'u_finance']);
+    // One reviewer for this branch is enough to leave the owner out.
+    assert.deepEqual((await announce({ ...desk, u_accountant: holding('ACCOUNTANT', elsewhere), u_finance: holding('CUSTOM_FINANCE', { branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: 'br_claim' }) })).to, ['u_finance']);
+    // Whoever cannot review THIS claim is not "somebody else": a reviewer of another branch, one whose role is switched off.
+    assert.deepEqual((await announce({ u_owner: holding('OWNER'), u_elsewhere: holding('ACCOUNTANT', elsewhere), u_off: holding('ACCOUNTANT', {}, 'DISABLED') })).to, ['u_owner']);
+    // A shop where the owner is the finance desk, alone or with a second owner.
+    assert.deepEqual((await announce({ u_owner: holding('OWNER') })).to, ['u_owner']);
+    assert.deepEqual((await announce({ u_owner: holding('OWNER'), u_owner_2: holding('OWNER') })).to, ['u_owner', 'u_owner_2']);
+    // A member who holds the owner role beside another one is the shop owner all the same.
+    const ownerAndFinance = member({ roles: [{ role: { key: 'OWNER', status: 'ACTIVE', permissions: [] } }, { role: { key: 'FINANCE', status: 'ACTIVE', permissions: [{ permission: { key: REVIEW } }] } }] });
+    assert.deepEqual((await announce({ u_owner: ownerAndFinance, u_accountant: holding('ACCOUNTANT') })).to, ['u_accountant']);
+
+    // The approver who passed the claim is its only reviewer: they are not told of what they have just done (AC11),
+    // and the owner is not told in their place. Nobody is, and nothing is retried.
+    assert.deepEqual(await announce({ u_owner: holding('OWNER'), u_approver: holding('ACCOUNTANT') }),
+      { to: undefined, status: 'SUCCEEDED', result: { skipped: true, reason: 'all_recipients_excluded' } });
+    // With another reviewer beside them, that one is told.
+    assert.deepEqual((await announce({ u_owner: holding('OWNER'), u_approver: holding('ACCOUNTANT'), u_finance: holding('CUSTOM_FINANCE') })).to, ['u_finance']);
+    // A claim nobody had to approve arrives by its own event, from whoever sent it: the same people are told.
+    assert.deepEqual((await announce(desk, arrivalCfg, { eventType: 'reimbursement.finance_review_requested', decision: undefined, actorUserId: 'u_staff' })).to, ['u_accountant', 'u_finance']);
+
+    // A rule pinned before this, or one an admin edited, has no such key: every holder who can act, as before.
+    const { lastResortRecipientRoles: _added, ...pinnedBefore } = arrivalCfg;
+    assert.deepEqual((await announce(desk, pinnedBefore)).to, ['u_owner', 'u_accountant', 'u_finance']);
+    // The desk's other notice, a claim a reviewer blocked, is as it was: everyone who reviews but the one who blocked it.
+    const blocked = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_finance_review')!.defaultActionJson[0]!.configJson;
+    assert.deepEqual((await announce(desk, blocked, { decision: 'BLOCKED', actorUserId: 'u_finance' })).to, ['u_owner', 'u_accountant']);
   });
 
   it('keeps a branch-limited payer for a company-central claim, exactly as the pay endpoint does', async () => {
