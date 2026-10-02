@@ -63,7 +63,8 @@ import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
 import { approvalWaitStartedAt, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionSourceStep, PAYOUT_CORRECTION_STEP_REASON } from './reimbursement.logic';
 import { payoutDefaultToken } from './payout-destination.logic';
 import {
-  isReimbursementPayoutCorrectionReason, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
+  isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
+  REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
   reimbursementHubBucket, reimbursementPayoutCorrectionPhase,
 } from '@watchdog-bms/contracts';
 
@@ -1496,9 +1497,17 @@ describe('payout account correction round', () => {
 
   it('offers a fixed list of reasons and words both phases in plain Thai', () => {
     assert.deepEqual(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, {
+      NO_ACCOUNT_ON_CLAIM: 'ใบนี้ยังไม่มีบัญชีรับเงิน',
       ACCOUNT_NUMBER_WRONG: 'เลขบัญชีไม่ถูกต้อง', ACCOUNT_NAME_MISMATCH: 'ชื่อบัญชีไม่ตรงกับผู้เบิก', BANK_WRONG: 'ธนาคารไม่ถูกต้อง',
       ACCOUNT_UNUSABLE: 'บัญชีปิดหรือโอนไม่ได้', REQUESTER_ASKED: 'ผู้เบิกขอเปลี่ยนบัญชี', OTHER: 'อื่น ๆ',
     });
+    // Which of them a claim takes: "the claim has no account yet" only where it has none, first in the list;
+    // every other reason either way. The send-back form and the send-back endpoint both read this.
+    const SIX = ['ACCOUNT_NUMBER_WRONG', 'ACCOUNT_NAME_MISMATCH', 'BANK_WRONG', 'ACCOUNT_UNUSABLE', 'REQUESTER_ASKED', 'OTHER'];
+    assert.deepEqual([reimbursementPayoutCorrectionReasons(true), reimbursementPayoutCorrectionReasons(false)], [SIX, ['NO_ACCOUNT_ON_CLAIM', ...SIX]]);
+    // What its requester is asked for, in the words of the notice and the claim page.
+    assert.deepEqual(['NO_ACCOUNT_ON_CLAIM', 'OTHER', 'A_REASON_ADDED_LATER', undefined].map(reimbursementPayoutCorrectionAsk),
+      ['เพิ่มบัญชีรับเงิน', 'แก้บัญชีรับเงิน', 'แก้บัญชีรับเงิน', 'แก้บัญชีรับเงิน']);
     assert.deepEqual(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, { AWAITING_REQUESTER: 'รอผู้เบิกแก้บัญชีรับเงิน', AWAITING_APPROVAL: 'รออนุมัติบัญชีรับเงินใหม่' });
     for (const code of Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS)) assert.equal(isReimbursementPayoutCorrectionReason(code), true, code);
     // A label, a lowercase code, an inherited key, a non-string: none is a reason.
