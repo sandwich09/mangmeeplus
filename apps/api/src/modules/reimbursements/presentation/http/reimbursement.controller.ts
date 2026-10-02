@@ -5,9 +5,7 @@ import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type {
   ListReimbursementsFilter,
-  RejectReimbursementInput,
   FinanceReviewReimbursementInput,
-  VoidReimbursementPaymentInput,
   ReimbursementRequestStatus,
   ReimbursementPaymentStatus,
   ReimbursementHubBucket,
@@ -23,9 +21,11 @@ import {
   InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto,
   RecordReimbursementPaymentDto,
+  RejectReimbursementDto,
   SignReimbursementClaimFormDto,
   SubmitReimbursementDto,
   UpdateReimbursementDraftDto,
+  VoidReimbursementPaymentDto,
   ReimbursementInternalNoteDto,
   ReimbursementDraftActionControlDto,
 } from './reimbursement.dtos';
@@ -300,7 +300,7 @@ export class ReimbursementController {
   @RequirePermissions('account.session.read')
   @HttpCode(200)
   @ApiOperation({ summary: 'Reject reimbursement request (current permission or frozen assignment)' })
-  rejectRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: RejectReimbursementInput) {
+  rejectRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: RejectReimbursementDto) {
     return this.withAttachmentFileName(ctx, this.reject.execute(ctx, requestId, body?.reason, body?.payoutCorrectionReasonCode));
   }
 
@@ -339,7 +339,7 @@ export class ReimbursementController {
     @ReqCtx() ctx: RequestContext,
     @Param('requestId') requestId: string,
     @Param('paymentId') paymentId: string,
-    @Body() body: VoidReimbursementPaymentInput,
+    @Body() body: VoidReimbursementPaymentDto,
   ) {
     return this.withAttachmentFileName(ctx, this.voidPayment.execute(ctx, requestId, paymentId, body));
   }

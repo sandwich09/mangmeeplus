@@ -61,6 +61,18 @@ describe('VoidReimbursementPaymentUseCase (GAP-02 true reversal)', () => {
     assert.ok(detail);
     assert.deepEqual(repo.voidPaymentTrueReversal.mock.calls[0].arguments, ['co-1', 'rb-1', 'pay-1', 'fin-1', 'จ่ายผิดบัญชี', undefined, 'req-1']);
   });
+  // Final review W1: the reason is shown on the payment row to every reader of the claim, and kept in the audit row.
+  it('refuses a reason that carries an account number, before the claim is read, and takes an ordinary one', async () => {
+    for (const reason of ['โอนเข้าบัญชี 012-3-45678-9 ผิด', 'ต้องโอนเข้า 0812345678', 'เลขบัญชีที่ถูกคือ ๑๒๓๔๕๖๗๘๙๐']) {
+      await assert.rejects(make().execute(ctx, 'rb-1', 'pay-1', { reason }), (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number', reason);
+    }
+    assert.deepEqual([repo.findRequestById.mock.callCount(), repo.voidPaymentTrueReversal.mock.callCount()], [0, 0]);
+    // What a payer really writes: the last four digits, the claim's own number, an amount.
+    for (const reason of ['โอนผิดบัญชี ที่ถูกลงท้าย 6789', 'ซ้ำกับใบ RB-202609-0003', 'โอนเกิน 1500 บาท']) {
+      await make().execute(ctx, 'rb-1', 'pay-1', { reason });
+    }
+    assert.equal(repo.voidPaymentTrueReversal.mock.callCount(), 3);
+  });
   it('propagates transaction failure without emitting a second event or committing a number', async () => {
     repo.voidPaymentTrueReversal = mock.fn(async () => { throw new UnprocessableEntityException('injected rollback'); });
     await assert.rejects(make().execute(ctx, 'rb-1', 'pay-1', { reason: 'ผิดพลาด' }), /injected rollback/);
@@ -194,8 +206,9 @@ describe('PrismaReimbursementRepository.voidPaymentTrueReversal: confirmed bank 
 // Audit B9: the void notice is rendered from this event and nothing else, so the event has to
 // carry whatever the notice reads. Producer and consumer are checked against each other here.
 describe('reimbursement.payment_voided event feeds the requester notice', () => {
-  it('carries the claim number and the requester, and every field the void notice reads', async () => {
-    const at = new Date('2026-08-10T01:00:00.000Z');
+  const at = new Date('2026-08-10T01:00:00.000Z');
+  /** A void run to its end over one fake transaction: every row and event it writes goes through `tx`. */
+  async function voidedThrough(bank: Record<string, unknown> = { bankReconciliationMatch: { findMany: async () => [] } }) {
     const request: any = {
       id: 'rb-1', companyId: 'co-1', requestNo: 'RB-202608-00021', requesterUserId: 'staff-1', status: 'PAID',
       amount: '289.0000', paymentTotalAmount: '289.0000', outstandingAmount: '0.0000', paymentStatus: 'PAID',
@@ -218,7 +231,7 @@ describe('reimbursement.payment_voided event feeds the requester notice', () => 
         update: async ({ data }: any) => data,
       },
       journalEntry: { findFirst: async () => null },
-      bankReconciliationMatch: { findMany: async () => [] },
+      ...bank,
       reimbursementRequest: {
         findFirstOrThrow: async () => request,
         update: async ({ data }: any) => { Object.assign(request, data); return request; },
@@ -231,6 +244,11 @@ describe('reimbursement.payment_voided event feeds the requester notice', () => 
     const realRepo = new PrismaReimbursementRepository({ client } as any, {} as any);
 
     await realRepo.voidPaymentTrueReversal('co-1', 'rb-1', 'pay-1', 'finance-1', 'โอนผิดบัญชี', undefined, 'http-req-1');
+    return outbox;
+  }
+
+  it('carries the claim number and the requester, and every field the void notice reads', async () => {
+    const outbox = await voidedThrough();
 
     assert.equal(outbox.length, 1);
     assert.equal(outbox[0].eventType, 'reimbursement.payment_voided');
@@ -247,5 +265,29 @@ describe('reimbursement.payment_voided event feeds the requester notice', () => 
     for (const field of [...read, ...(cfg['recipientPayloadKeys'] as string[])]) {
       assert.ok(data[field], `the void notice reads "${field}", which the event does not carry`);
     }
+  });
+
+  // Final review W10: the bank screen's own "ยกเลิกการจับคู่" writes `banking.statement_line.unmatched`. A void
+  // that undoes a match wrote that screen's audit row but not its event.
+  it('writes the bank module\'s own unmatched event for each match it undoes, through the void\'s transaction', async () => {
+    const matches = [{ id: 'match-1', statementLineId: 'line-1' }, { id: 'match-2', statementLineId: 'line-2' }];
+    const outbox = await voidedThrough({
+      bankReconciliationMatch: { findMany: async () => matches, update: async () => ({}) },
+      bankReconciliationSessionLine: { count: async () => 0 },
+      bankStatementLine: { findFirstOrThrow: async () => ({ signedAmount: '-100.0000', matches: [] }), update: async () => ({}) },
+    });
+    assert.deepEqual(outbox.map((event) => [event.eventType, event.aggregateType, event.aggregateId, event.eventKey]), [
+      ['banking.statement_line.unmatched', 'bank_statement_line', 'line-1', 'banking.statement_line.unmatched:bank_statement_line:line-1:match-1'],
+      ['banking.statement_line.unmatched', 'bank_statement_line', 'line-2', 'banking.statement_line.unmatched:bank_statement_line:line-2:match-2'],
+      ['reimbursement.payment_voided', 'reimbursement_payment', 'pay-1', 'reimbursement.payment_voided:pay-1'],
+    ]);
+    // The shape the bank screen's own unmatch writes: who, in which request, which match of which line.
+    const { occurredAt, ...payload } = outbox[0].payloadJson;
+    assert.deepEqual(payload, {
+      companyId: 'co-1', actorUserId: 'finance-1', requestId: 'http-req-1', aggregateType: 'bank_statement_line', aggregateId: 'line-1',
+      data: { matchId: 'match-1', statementLineId: 'line-1' },
+    });
+    assert.ok(!Number.isNaN(Date.parse(occurredAt)));
+    assert.deepEqual([outbox[0].companyId, outbox[0].priority, outbox[0].status], ['co-1', 'NORMAL', 'PENDING']);
   });
 });

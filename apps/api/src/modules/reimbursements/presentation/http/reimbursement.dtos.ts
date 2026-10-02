@@ -16,13 +16,17 @@ import type {
   ReimbursementClaimSignatureRole,
   ReimbursementLineInput,
   ReimbursementPaymentMethod,
+  RejectReimbursementInput,
+  ReimbursementPayoutCorrectionReason,
   ReimbursementPayoutInput,
   ReimbursementPayoutKind,
   ReimbursementPayoutMethod,
   SignReimbursementClaimFormInput,
+  SubmitReimbursementPayoutCorrectionInput,
   SubmitReimbursementRequestInput,
   UpdateReimbursementDraftInput,
   UpdateReimbursementPolicyInput,
+  VoidReimbursementPaymentInput,
 } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_MAX_LINES } from '../../domain/logic/reimbursement.logic';
 
@@ -84,9 +88,16 @@ export class RequestPayoutCorrectionDto {
   @IsString() @IsOptional() @MaxLength(2000) note?: string;
 }
 
-/** The account a claim in a round is given: a draft's three choices, and for "use the default account" the token of the default the form showed. */
-export class SubmitPayoutCorrectionDto extends ReimbursementPayoutDto {
+/**
+ * The account a claim in a round is given: a draft's three choices or the account the claim had, and
+ * for "use the default account" the token of the default the form showed.
+ */
+export class SubmitPayoutCorrectionDto extends PayoutDestinationFieldsDto {
+  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED', 'PREVIOUS']) mode!: SubmitReimbursementPayoutCorrectionInput['mode'];
+  @IsBoolean() @IsOptional() saveAsDefault?: boolean;
   @Matches(/^[0-9a-f]{32}$/) @IsOptional() defaultToken?: string;
+  // `updatedAt` of the claim the form was opened on: a full timestamp, as the detail carries it.
+  @IsDateString({ strict: true }) @Matches(/T/) @IsOptional() expectedUpdatedAt?: string;
 }
 
 export class CreateReimbursementRequestDto implements CreateReimbursementRequestInput {
@@ -131,6 +142,23 @@ export class ApproveReimbursementDto implements ApproveReimbursementInput {
   @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
   // "ตรวจบัญชีแล้ว": a whole version number, never a string that happens to look like one.
   @IsInt() @Min(1) @IsOptional() payoutVerifiedVersion?: number;
+}
+
+/**
+ * Refusing a claim. Transport bounds only: that a reason is given is the use case's own refusal
+ * (`rejection_reason_required`), and which correction reasons exist is too
+ * (`payout_correction_reason_required`); each has words on the screen. 500 is what the form allows.
+ */
+export class RejectReimbursementDto implements RejectReimbursementInput {
+  @IsString() @IsOptional() @MaxLength(500) reason!: string;
+  @IsString() @IsOptional() @MaxLength(128) approvalSnapshotHash?: string;
+  @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
+  @IsString() @IsOptional() @MaxLength(40) payoutCorrectionReasonCode?: ReimbursementPayoutCorrectionReason;
+}
+
+/** Voiding a payment: the reason, bounded like the form that asks for it. That one is given is the use case's refusal (`void_reason_required`). */
+export class VoidReimbursementPaymentDto implements VoidReimbursementPaymentInput {
+  @IsString() @IsOptional() @MaxLength(500) reason!: string;
 }
 
 export class ReimbursementDraftActionControlDto {

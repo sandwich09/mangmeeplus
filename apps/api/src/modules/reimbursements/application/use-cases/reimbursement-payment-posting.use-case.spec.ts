@@ -52,7 +52,7 @@ describe('RecordReimbursementPaymentUseCase — postingStatus lifecycle', () => 
     const reserve = { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202602-000001' }) } as any;
     const commit = { execute: async () => undefined } as any;
 
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve, commit, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any);
     const detail: any = await uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     assert.equal(detail.payments[0].postingStatus, 'pending');
   });
@@ -100,7 +100,7 @@ describe('RecordReimbursementPaymentUseCase — a payment date in a closed accou
     });
     const reserve = { execute: mock.fn(async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202608-000001' })) };
     const commit = { execute: mock.fn(async () => undefined) };
-    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, noopOutbox, reserve as any, commit as any, fakeDetailEvidence as any);
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve as any, commit as any, fakeDetailEvidence as any);
     const record = (paidAt: string): Promise<any> => uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt });
     return { repo: repo as PrismaReimbursementRepository, record, reserve, commit, written, periodReads };
   }

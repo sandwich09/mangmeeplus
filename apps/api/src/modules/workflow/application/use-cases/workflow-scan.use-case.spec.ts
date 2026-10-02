@@ -174,6 +174,16 @@ describe('payment reminder candidates (audit B9)', () => {
     });
   });
 
+  // Final review W4: the payment endpoint refuses a claim being cancelled, so nobody is late paying it.
+  it('offers no claim that is being cancelled, however long it has waited', async () => {
+    const { candidates } = provider([
+      claim({ id: 'rb-late' }),
+      claim({ id: 'rb-being-cancelled', cancellationPendingAt: hoursAgo(60) }),
+    ]);
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+    assert.deepEqual(items.map((item) => item.sourceId), ['rb-late']);
+  });
+
   // Review M1: a reminder is one push per period, not one per scan window. For a claim waiting for
   // payment the period is the time it became payable, which a void starts again.
   it('files the reminder under the time the claim became payable, and a void starts both that and the clock again', async () => {
@@ -420,6 +430,31 @@ describe('approval reminder period (review M1)', () => {
       ['rb-2', false, `round:${hoursAgo(1).toISOString()}`],
     ]);
     assert.deepEqual(items[0]!.payload['approverRecipientUserIds'], ['u_manager']);
+  });
+
+  // Final review W4: approve and reject refuse a claim being cancelled, so no approver is late with it.
+  it('chases nobody for a claim that is being cancelled, and chases its approver again once the cancellation is withdrawn', async () => {
+    const pending = (id: string, cancellationPendingAt?: Date) => ({
+      id, requestNo: `RB-${id}`, status: 'PENDING_APPROVAL', amount: '250', currency: 'THB', requesterUserId: 'u_staff',
+      submittedAt: hoursAgo(72), currentApprovalStepId: `step-${id}`, ...(cancellationPendingAt && { cancellationPendingAt }),
+      approvalSteps: [{ id: `step-${id}`, status: 'PENDING', assignedApproverUserIds: ['u_manager'], approverRoleSnapshot: 'MANAGER' }],
+    });
+    let rows = [pending('rb-waiting'), pending('rb-being-cancelled', hoursAgo(60))];
+    const reimbursementRepo = {
+      findPolicy: async () => ({ slaHours: 48 }),
+      listRequests: async () => rows,
+      findActiveApproverUserIds: async (_companyId: string, userIds: string[]) => new Set(userIds),
+    } as any;
+    const approverRoutes = {
+      resolveOwnerRecipientUserIds: async (_companyId: string, inputs: any[]) => inputs.map(() => ['u_owner']),
+      resolveSubmissionRoutesBestEffort: async () => [],
+    } as any;
+    const candidates = new WorkflowScanCandidatesProvider(reimbursementRepo, {} as any, {} as any, {} as any, {} as any, approverRoutes, {} as any);
+
+    assert.deepEqual((await candidates.forTemplate('approval_sla_breach', 'co-1', NOW)).map((item) => item.sourceId), ['rb-waiting']);
+    rows = [pending('rb-waiting'), pending('rb-being-cancelled')];
+    assert.deepEqual((await candidates.forTemplate('approval_sla_breach', 'co-1', NOW)).map((item) => [item.sourceId, item.payload['slaRisk']]),
+      [['rb-waiting', true], ['rb-being-cancelled', true]]);
   });
 
   // Payout spec §14.7: a claim sent back to have its payout account corrected is PENDING_APPROVAL. While

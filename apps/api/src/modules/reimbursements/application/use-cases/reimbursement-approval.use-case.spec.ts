@@ -57,10 +57,15 @@ function approveUC(repo: any, projections: any = { execute: async () => undefine
   };
 }
 
+/**
+ * A manager: the two decision rights and the right to read claims, as every role that approves holds.
+ * Approve and reject ask the claim detail's gate first, so a caller is told why they may not decide a
+ * claim only when they could open it.
+ */
 function ctx(overrides: Partial<any> = {}) {
   return {
     requestId: 'req-1', authSubject: 's', userId: 'approver-1', companyId: 'co-1',
-    membershipId: 'm', roles: ['MANAGER'], permissions: ['reimbursement.approve', 'reimbursement.reject'],
+    membershipId: 'm', roles: ['MANAGER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'],
     scopes: {}, authProvider: 'dev', ...overrides,
   } as any;
 }
@@ -138,7 +143,10 @@ describe('ApproveReimbursementUseCase', () => {
 
   it('rejects when missing approve permission', async () => {
     const uc = approveUC(fakeRepo(baseRequest()));
-    await assert.rejects(() => uc.execute(ctx({ permissions: [] }), 'rb-1'), /permission/i);
+    // Someone who can open the claim and may not approve it is told which right is missing.
+    await assert.rejects(() => uc.execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1'), /Missing permission: reimbursement\.approve/);
+    // Someone who cannot open it is told that and nothing else (final review item 18).
+    await assert.rejects(() => uc.execute(ctx({ permissions: [] }), 'rb-1'), /Cannot read this reimbursement/);
   });
 
   it('lets an active frozen assignee finish after a later role and permission change', async () => {
@@ -154,7 +162,7 @@ describe('ApproveReimbursementUseCase', () => {
       approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['assigned-1'] }],
     });
     await assert.rejects(
-      () => approveUC(fakeRepo(req)).execute(ctx({ roles: ['OWNER'], permissions: ['reimbursement.approve'] }), 'rb-1'),
+      () => approveUC(fakeRepo(req)).execute(ctx({ roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve'] }), 'rb-1'),
       /not_eligible_approver/,
     );
   });
@@ -238,6 +246,19 @@ describe('ApproveReimbursementUseCase', () => {
       requestId: 'rb-1', requestNo: 'RB-202601-000001',
       status: 'FINANCE_REVIEW', decision: 'APPROVED', requesterUserId: 'staff-1', amount: '500.0000', currency: 'THB',
     });
+  });
+
+  // Final review W1: the comment is kept on the step, which every reader of the claim is shown, and in the audit row.
+  it('refuses a comment that carries an account number, before anything is decided, and takes an ordinary one', async () => {
+    const events: any[] = [];
+    const req = baseRequest();
+    for (const comment of ['โอนเข้า 012-3-45678-9 ได้เลย', 'บัญชีใหม่ 1234567890']) {
+      await assert.rejects(approveUC(fakeRepo(req, FINANCE_REVIEW_ON, events)).execute(ctx(), 'rb-1', comment),
+        (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number', comment);
+    }
+    assert.deepEqual([req.status, req.approvalSteps[0].status, events], ['PENDING_APPROVAL', 'PENDING', []]);
+    const approved = await approveUC(fakeRepo(req, FINANCE_REVIEW_ON, events)).execute(ctx(), 'rb-1', 'ตรวจกับใบเสร็จแล้ว บัญชีลงท้าย 6789');
+    assert.equal(approved.status, 'FINANCE_REVIEW');
   });
 
   it('rejects approving a non-pending request', async () => {
@@ -933,7 +954,7 @@ describe('solo requester on a custom role (owner order 2026-09-21)', () => {
     } as any;
     assert.equal((await approveUC(repo).execute(solo, created.id)).status, 'READY_FOR_PAYMENT');
     const paid = await new RecordReimbursementPaymentUseCase(
-      repo, noopAudit, noopOutbox,
+      repo, noopAudit,
       { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }) } as any,
       { execute: async () => undefined } as any,
       fakeDetailEvidence as any,
@@ -1001,7 +1022,7 @@ describe('approving a claim that is paid by transfer needs the approver attestat
   it('keeps the eligibility answer first: someone who may not approve learns nothing about the attestation', async () => {
     const assigned = transferClaim({ approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['assigned-1'] }] });
     await assert.rejects(() => approveUC(fakeRepo(assigned)).execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
-    await assert.rejects(() => approveUC(fakeRepo(transferClaim())).execute(ctx({ permissions: [] }), 'rb-1'), /permission/i);
+    await assert.rejects(() => approveUC(fakeRepo(transferClaim())).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1'), /Missing permission: reimbursement\.approve/);
   });
 
   it('resumes a decision that was already made without asking for the attestation again', async () => {
@@ -1080,7 +1101,7 @@ describe('nothing is approved unseen: an approval names the claim content it saw
     }
     assert.equal(decisions.length, 0, 'nothing was decided');
     // Who may not approve at all is still told so, not asked to reload.
-    await assert.rejects(() => approveUC(repo).useCase.execute(ctx({ permissions: [] }), 'rb-1'), /permission/i);
+    await assert.rejects(() => approveUC(repo).useCase.execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1'), /Missing permission: reimbursement\.approve/);
   });
 
   it('refuses the hash of the claim as the list showed it, once the claim was withdrawn, edited and sent again', async () => {
@@ -1252,7 +1273,7 @@ describe('a claim whose payout account is being corrected', () => {
   it('offers no decision while it waits for its requester: approve and reject answer that the account is being corrected', async () => {
     const { repo, ran } = roundRepo(withRequester());
     // Also to someone who holds every right: there is no account to approve yet.
-    const owner = ctx({ roles: ['OWNER'], permissions: ['reimbursement.approve', 'reimbursement.reject'] });
+    const owner = ctx({ roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'] });
     for (const decide of [() => approveUC(repo).execute(owner, 'rb-1'), () => rejectUC(repo).execute(owner, 'rb-1', 'บัญชีไม่ถูกต้อง')]) {
       await assert.rejects(decide, (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress');
     }
@@ -1278,7 +1299,7 @@ describe('a claim whose payout account is being corrected', () => {
     const { repo, events, ran } = roundRepo(withApprovers());
     const projections = { execute: async (...args: any[]) => { projected.push(args); } };
     // The same rules as any approval: the permission, the turn, the hash that was seen, the account that was checked.
-    await assert.rejects(() => approveUC(repo, projections).execute(ctx({ permissions: [] }), 'rb-1', undefined, SEEN_HASH, 2), /Missing permission: reimbursement\.approve/);
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1', undefined, SEEN_HASH, 2), /Missing permission: reimbursement\.approve/);
     await assert.rejects(() => approveUC(repo, projections).execute(ctx({ roles: ['STAFF'] }), 'rb-1', undefined, SEEN_HASH, 2), /not_eligible_approver/);
     await assert.rejects(() => approveUC(repo, projections).useCase.execute(ctx(), 'rb-1', undefined, undefined, 2), /stale_approval_snapshot/);
     await assert.rejects(() => approveUC(repo, projections).execute(ctx(), 'rb-1'), /payout_verification_required/);

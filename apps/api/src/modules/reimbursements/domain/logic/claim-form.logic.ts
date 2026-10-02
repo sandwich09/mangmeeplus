@@ -6,7 +6,7 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
-import { civilDate, maskedPayoutAccountNumber } from '@watchdog-bms/contracts';
+import { civilDate, maskedPayoutAccountNumber, REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimFormLayout,
   ReimbursementClaimSignatureRole,
@@ -22,8 +22,8 @@ export const REIMBURSEMENT_CLAIM_FORM_TITLE_TH = 'ใบเบิกค่าใ
 const THAI_DIGITS = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
 const THAI_POSITIONS = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
 const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
-/** Same words as the web payment form. */
-const PAYMENT_METHOD_LABELS: Record<string, string> = { CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CHEQUE: 'เช็ค', OTHER: 'อื่น ๆ' };
+/** The words the claim page and the requester's notice use (invariant I4); a method with no word prints as a dash, never as its code. */
+const PAYMENT_METHOD_LABELS: Record<string, string | undefined> = REIMBURSEMENT_PAYMENT_METHOD_LABELS;
 const SAME_PERSON_NOTE = 'ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท';
 const WORD_SEGMENTER = new Intl.Segmenter('th', { granularity: 'word' });
 const GRAPHEME_SEGMENTER = new Intl.Segmenter('th', { granularity: 'grapheme' });
@@ -445,7 +445,7 @@ function repaymentText(repayment: ReimbursementClaimFormSnapshot['repayment']): 
   const paidInto = repayment.paidInto
     ? ` เข้า${repayment.paidInto.kind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(repayment.paidInto.accountLast4)}`
     : '';
-  return `การจ่ายเงินคืน: จ่ายเมื่อ ${formatDate(repayment.paidAt)} วิธี ${PAYMENT_METHOD_LABELS[repayment.method] ?? repayment.method}${paidInto} เลขอ้างอิง ${repayment.reference || '-'} บันทึกโดย ${repayment.recordedByName}`;
+  return `การจ่ายเงินคืน: จ่ายเมื่อ ${formatDate(repayment.paidAt)} วิธี ${PAYMENT_METHOD_LABELS[repayment.method] ?? '-'}${paidInto} เลขอ้างอิง ${repayment.reference || '-'} บันทึกโดย ${repayment.recordedByName}`;
 }
 
 /** Role label, wet-ink space, ลงชื่อ ruled line, name line, date line — filled only when the step happened. */

@@ -7,7 +7,7 @@ import { reimbursementHubBucket, reimbursementPaidNotice } from '@watchdog-bms/c
 import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { MaterializeClaimExpensesService } from '../application/services/materialize-claim-expenses.service';
-import { claimSnapshotFields, computeLegacySnapshotHashV1, computeSnapshotHash } from '../domain/logic/reimbursement.logic';
+import { claimSignatureAckHash, claimSnapshotFields, computeLegacySnapshotHashV1, computeSnapshotHash } from '../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from './prisma-reimbursement.repository';
 import { readReimbursementSource, resolveReimbursementSourceLines, assertReimbursementSources, assertProjectionSource } from './reimbursement-source';
 import { expenseTaxSourceChecksum } from '../../expenses/domain/logic/expense-status.logic';
@@ -51,7 +51,7 @@ import { ListFinanceQueueUseCase } from '../application/use-cases/reimbursement-
 import { toRequestSummary } from '../application/dto/reimbursement.mapper';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from '../application/use-cases/reimbursement-approval.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from '../application/use-cases/reimbursement-payout-correction.use-case';
-import { eligibleClaimSignatureRoles } from '../application/use-cases/reimbursement-claim-signature.use-case';
+import { eligibleClaimSignatureRoles, SignClaimFormUseCase } from '../application/use-cases/reimbursement-claim-signature.use-case';
 
 const TAG = `reimbursement-draft-race-${process.pid}`;
 const periodKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -92,7 +92,9 @@ function claimSystem(client: PrismaClient, repo: PrismaReimbursementRepository, 
   const orchestrator = new ReimbursementProjectionOrchestratorService(repo, expenses, new MaterializeClaimExpensesService(), confirm, audit);
   const ownCompany = <T extends { request: { companyId: string } }>(rows: T[], limit: number) => rows.filter((row) => row.request.companyId === companyId).slice(0, limit);
   const scoped = Object.create(repo, {
-    listPendingProjectionIntents: { value: async (limit = 100) => ownCompany(await repo.listPendingProjectionIntents(1000), limit) },
+    // These cases run the pass the moment a decision is on record. The minute a real pass leaves to the
+    // request that is carrying the decision out has a case of its own.
+    listPendingProjectionIntents: { value: async (limit = 100) => ownCompany(await repo.listPendingProjectionIntents(1000, new Date(Date.now() + 60_000)), limit) },
     listPendingCancellationIntents: { value: async (limit = 100) => ownCompany(await repo.listPendingCancellationIntents(1000), limit) },
   }) as PrismaReimbursementRepository;
   const reconciler = new ReimbursementProjectionReconcilerService(scoped, orchestrator, audit, voidExpense, prisma, new ListReimbursementApproverOptionsUseCase(prisma));
@@ -100,6 +102,8 @@ function claimSystem(client: PrismaClient, repo: PrismaReimbursementRepository, 
   (reconciler as any).logger = { log: () => undefined, warn: () => undefined };
   return {
     reconciler,
+    /** Builds and confirms a decided claim's expense records, and stops there. */
+    orchestrator,
     resume: new ResumeReimbursementUseCase(repo, audit, reconciler, new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), expenses)),
   };
 }
@@ -1406,6 +1410,14 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
         ['bank.match.void', 'bank_reconciliation_match', match.id, `${TAG}-finance`, 'SUCCESS', 'HIGH'],
       ]);
       assert.deepEqual(audits[1]!.metadataJson, { statementLineId: bank.lineId, reason: 'reimbursement_payment_voided', paymentId: paid.payment.id, requestId: claim.requestId });
+      // And both events: the void's own, and the bank module's own for a line that was unmatched (final review W10).
+      const events = await db.outboxEvent.findMany({ where: { companyId, aggregateId: { in: [paid.payment.id, bank.lineId] } }, orderBy: { eventType: 'asc' } });
+      assert.deepEqual(events.map((event) => [event.eventType, event.aggregateType, event.aggregateId]), [
+        ['banking.statement_line.unmatched', 'bank_statement_line', bank.lineId],
+        ['reimbursement.payment_voided', 'reimbursement_payment', paid.payment.id],
+      ]);
+      assert.deepEqual([(events[0]!.payloadJson as any).data, (events[0]!.payloadJson as any).actorUserId, (events[0]!.payloadJson as any).requestId],
+        [{ matchId: match.id, statementLineId: bank.lineId }, `${TAG}-finance`, voidRequestId]);
 
       // Nothing is stuck. The claim is paid again, and the bank screen lists the line again, offers the new
       // payment for it and no longer the voided one, and takes the match.
@@ -2821,6 +2833,8 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   const STAFF = `${S}-staff`;
   const FIN = `${S}-fin`;
   const MGR = `${S}-mgr`;
+  /** A member only where a case makes them one. */
+  const OWNER = `${S}-owner`;
   const day = new Date('2026-09-15T00:00:00.000Z');
   let clients: PrismaClient[] = [];
   let repos: PrismaReimbursementRepository[] = [];
@@ -2829,6 +2843,9 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   let accounts = { expense: '', payable: '' };
   let reachable = false;
   let sequence = 0;
+  let approverPermissionIds: string[] = [];
+  let managerRoleId = '';
+  let managerMembershipId = '';
 
   before(async () => {
     const url = databaseUrl();
@@ -2845,9 +2862,18 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     }
     reachable = true;
     const db = clients[0]!;
-    await db.user.createMany({ data: [{ id: STAFF, displayName: 'สมชาย พนักงาน' }, { id: FIN, displayName: 'วราภรณ์ การเงิน' }, { id: MGR, displayName: 'สมศรี ผู้จัดการ' }] });
+    await db.user.createMany({ data: [{ id: STAFF, displayName: 'สมชาย พนักงาน' }, { id: FIN, displayName: 'วราภรณ์ การเงิน' }, { id: MGR, displayName: 'สมศรี ผู้จัดการ' }, { id: OWNER, displayName: 'เจ้าของร้าน' }] });
     companyId = (await db.company.create({ data: { name: S, status: 'ACTIVE' }, select: { id: true } })).id;
     await db.companyMembership.createMany({ data: [STAFF, FIN, MGR].map((userId) => ({ companyId, userId, status: 'ACTIVE' as const })) });
+    // The manager really holds the role claims are routed to, with the rights an approver needs: the
+    // approval route a correction round asks for is resolved from these rows.
+    approverPermissionIds = await Promise.all(['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'].map(async (key) =>
+      (await db.permission.upsert({ where: { key }, update: {}, create: { key, description: key } })).id));
+    managerRoleId = (await db.role.create({ data: {
+      companyId, scopeKey: companyId, key: 'MANAGER', name: 'ผู้จัดการ', permissions: { create: approverPermissionIds.map((permissionId) => ({ permissionId })) },
+    }, select: { id: true } })).id;
+    managerMembershipId = (await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: MGR } }, select: { id: true } })).id;
+    await db.membershipRole.create({ data: { membershipId: managerMembershipId, roleId: managerRoleId } });
     // These claims carry no receipt, only the reason: the company lets such a line be confirmed.
     await db.reimbursementPolicy.create({ data: { companyId, allowMissingReceiptWithReason: true, createdByUserId: FIN } });
     branchId = (await db.branch.create({ data: { companyId, code: 'QA-STUCK', name: S }, select: { id: true } })).id;
@@ -2862,8 +2888,9 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       const db = clients[0]!;
       await db.auditLog.deleteMany({ where: { companyId } });
       await db.journalEntry.deleteMany({ where: { companyId } });
+      await db.role.deleteMany({ where: { scopeKey: companyId } });
       await db.company.deleteMany({ where: { id: companyId } });
-      await db.user.deleteMany({ where: { id: { in: [STAFF, FIN, MGR] } } });
+      await db.user.deleteMany({ where: { id: { in: [STAFF, FIN, MGR, OWNER] } } });
     }
     await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
   });
@@ -3102,7 +3129,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       ['READY_FOR_PAYMENT', {}, (request) => repos[0]!.requestPayoutCorrectionAtomic({ ...decision(request), actorRoles: ['FINANCE'], allowSelfApproval: false,
         requestedAt: new Date(), reasonCode: 'OTHER', onPersisted: noop })],
       ['PENDING_APPROVAL', { payoutCorrectionRequestedAt: day }, (request) => repos[0]!.submitPayoutCorrectionAtomic({ ...decision(request), submittedAt: new Date(),
-        payout: { write: { mode: 'CASH' } }, onPersisted: noop })],
+        payout: { write: { mode: 'CASH' } }, approverRouteUserIds: [], onPersisted: noop })],
       ['PENDING_APPROVAL', { payoutCorrectionRequestedAt: day, payoutCorrectionSubmittedAt: day }, (request) => repos[0]!.approvePayoutCorrectionAtomic({ ...decision(request),
         actorRoles: ['OWNER'], allowSelfApproval: false, decidedAt: new Date(), onApprovedPersisted: noop })],
     ];
@@ -3437,7 +3464,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     await clients[0]!.reimbursementRequest.update({ where: { id: unreadable.requestId }, data: { approvalPolicySnapshotJson: { schemaVersion: 99 } } });
 
     // The repository's own list, across every company in this database: at most three rows, and the newest decided claim is one of them.
-    const listed = await repos[0]!.listPendingProjectionIntents(3);
+    const listed = await repos[0]!.listPendingProjectionIntents(3, new Date(Date.now() + 60_000));
     assert.ok(listed.length <= 3);
     const found = listed.find((intent) => intent.request.id === decided[2]!.requestId);
     assert.deepEqual(found && [found.kind, found.actorUserId, found.approvalStepId], ['MANAGER', MGR, decided[2]!.stepId], 'the decided claim is found');
@@ -3452,6 +3479,30 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     // Nothing is left for a third run: a claim carried out is not carried out again.
     assert.deepEqual(ofThese(decided, await system(0).reconciler.execute()), { completed: [], failed: [], blocked: [] });
     for (const claim of decided) assert.deepEqual(await carried(claim), once(1));
+  });
+
+  // Final review W7: the scheduled pass never competes with the request that is still carrying its own decision out.
+  it('leaves a decision made less than a minute ago to the request carrying it out, and lists it once it is older', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const approved = await decidedClaim();
+    const unapproved = await noApprovalClaim();
+    const reviewed = await waitingClaim();
+    await db.reimbursementRequest.update({ where: { id: reviewed.id }, data: {
+      status: 'FINANCE_REVIEW', currentApprovalStepId: null, financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: FIN, financeReviewedAt: new Date(),
+    } });
+    const fresh = [approved.requestId, reviewed.id, unapproved.requestId];
+    const listed = async () => (await repos[0]!.listPendingProjectionIntents(1000)).filter((intent) => fresh.includes(intent.request.id)).map((intent) => intent.kind).sort();
+
+    // Decided a moment ago: on no list of the pass, though each is a decision waiting to be carried out.
+    assert.deepEqual(await listed(), []);
+    assert.deepEqual((await repos[0]!.listPendingProjectionIntents(1000, new Date(Date.now() + 60_000))).filter((intent) => fresh.includes(intent.request.id)).map((intent) => intent.kind).sort(), ['FINANCE', 'MANAGER', 'POLICY']);
+    // A person who presses "ดำเนินการต่อ" is not kept waiting: the minute is the scheduled pass's own.
+    assert.equal((await system(0).resume.execute(manager(), approved.requestId)).status, 'READY_FOR_PAYMENT');
+
+    // Still waiting a minute later: nothing is carrying them out any more, and the pass takes them.
+    await db.$executeRaw`UPDATE "ReimbursementRequest" SET "updatedAt" = now() - interval '61 seconds' WHERE "id" IN (${reviewed.id}, ${unapproved.requestId})`;
+    assert.deepEqual(await listed(), ['FINANCE', 'POLICY']);
   });
 
   it('carries a decided claim out when ดำเนินการต่อ is pressed, with no second decision, and does nothing the second time', async (t) => {
@@ -3591,6 +3642,56 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     await on(0).withdraw.execute(requester(), claim.requestId);
     assert.deepEqual(ofThese([claim], await system(1).reconciler.execute()).completed, [claim.requestId]);
     assert.deepEqual(await carried(claim), once(1));
+  });
+
+  // Final review W4: a cancellation started while a decision was being carried out. The expense records are
+  // built and confirmed, and the last write of each of the three ways to "ready for payment" is still to come.
+  it('moves no claim on to ready-for-payment, and sends no such notice, once its cancellation is pending', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const ready = (requestId: string) => db.outboxEvent.count({ where: { companyId, aggregateId: requestId, eventType: 'reimbursement.ready_for_payment' } });
+    const notify = (requestId: string) => async (tx: any) => { await tx.outboxEvent.create({ data: {
+      companyId, eventType: 'reimbursement.ready_for_payment', aggregateType: 'reimbursement_request', aggregateId: requestId,
+      eventKey: `reimbursement.ready_for_payment:reimbursement_request:${requestId}:w4`, payloadJson: {}, priority: 'NORMAL', status: 'PENDING',
+    } }); };
+
+    // Approved by its manager.
+    const approved = await decidedClaim();
+    // Passed by finance.
+    const reviewed = await waitingClaim();
+    await db.reimbursementApprovalStep.updateMany({ where: { reimbursementRequestId: reviewed.id }, data: { status: 'APPROVED', decisionByUserId: MGR, decidedAt: new Date() } });
+    await db.reimbursementRequest.update({ where: { id: reviewed.id }, data: {
+      status: 'FINANCE_REVIEW', currentApprovalStepId: null, approvedAt: new Date(), financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: FIN, financeReviewedAt: new Date(),
+    } });
+    // Sent under a policy that asks for no approval.
+    const unapproved = await noApprovalClaim();
+
+    const cases: Array<{ name: string; requestId: string; ctx: any; decision: { kind: 'MANAGER' | 'FINANCE' | 'POLICY'; actorUserId: string; approvalStepId?: string }; complete: () => Promise<{ status: string }> }> = [
+      { name: 'approval', requestId: approved.requestId, ctx: manager(), decision: { kind: 'MANAGER', actorUserId: MGR, approvalStepId: approved.stepId },
+        complete: () => repos[0]!.completeApprovalProjectionAtomic({ companyId, requestId: approved.requestId, decisionActorUserId: MGR, approvalStepId: approved.stepId, scopes: {}, completedAt: new Date(), onReadyPersisted: notify(approved.requestId) }) },
+      { name: 'finance decision', requestId: reviewed.id, ctx: finance(), decision: { kind: 'FINANCE', actorUserId: FIN },
+        complete: () => repos[0]!.completeFinanceProjectionAtomic({ companyId, requestId: reviewed.id, decisionActorUserId: FIN, scopes: {}, completedAt: new Date(), onReadyPersisted: notify(reviewed.id) }) },
+      { name: 'no-approval submit', requestId: unapproved.requestId, ctx: requester(), decision: { kind: 'POLICY', actorUserId: STAFF },
+        complete: () => repos[0]!.completePolicyProjectionAtomic({ companyId, requestId: unapproved.requestId, actorUserId: STAFF, scopes: {}, completedAt: new Date(), onReadyPersisted: notify(unapproved.requestId) }) },
+    ];
+    for (const { name, requestId, ctx, decision, complete } of cases) {
+      const decided = (await repos[0]!.findRequestById(companyId, requestId, true))!;
+      await system(0).orchestrator.execute(ctx, decided, { ...decision, allowMissingReceiptWithReason: true });
+      const standing = await claimRow(requestId);
+      assert.deepEqual((await db.expenseRecord.findMany({ where: { companyId, sourceReimbursementRequestId: requestId } })).map((expense) => expense.status), ['CONFIRMED'], name);
+
+      // The cancellation starts now (a reason the void refuses, so it stays pending until someone acts).
+      await strand({ requestId }, 'ก');
+      await assert.rejects(complete, conflict('reimbursement_cancellation_pending'), name);
+      const refused = await claimRow(requestId);
+      assert.deepEqual([refused.status, refused.paymentStatus, refused.cancellationPendingAt !== null, await ready(requestId)], [standing.status, standing.paymentStatus, true, 0], name);
+
+      // Withdrawn: the same write carries the decision out, once, with its notice.
+      await on(0).withdraw.execute(requester(), requestId);
+      assert.equal((await complete()).status, 'READY_FOR_PAYMENT', name);
+      const done = await claimRow(requestId);
+      assert.deepEqual([done.status, done.paymentStatus, done.cancellationPendingAt, await ready(requestId)], ['READY_FOR_PAYMENT', 'UNPAID', null, 1], name);
+    }
   });
 
   // ---- Payout spec §14 (AC25, AC29-AC32): the payout account of an approved claim is corrected on the same claim ----
@@ -3956,8 +4057,9 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const db = clients[0]!;
     const claim = await approvedTransferClaim();
     const signaturesOf = () => db.reimbursementClaimSignature.findMany({ where: { reimbursementRequestId: claim.requestId }, orderBy: { role: 'asc' } });
-    const sign = (role: 'REQUESTER' | 'APPROVER', userId: string) => repos[0]!.upsertClaimSignature({
-      companyId, reimbursementRequestId: claim.requestId, role, signatureAttachmentId: `${S}-signature-${userId}`, signedByUserId: userId, signedAt: new Date() });
+    const sign = async (role: 'REQUESTER' | 'APPROVER', userId: string) => repos[0]!.upsertClaimSignature({
+      companyId, reimbursementRequestId: claim.requestId, role, signatureAttachmentId: `${S}-signature-${userId}`, signedByUserId: userId, signedAt: new Date(),
+      seen: (await repos[0]!.findRequestById(companyId, claim.requestId))! });
     let scans = 0;
     const scan = async () => (await db.attachmentObject.create({ data: {
       companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${S}/signed-scan-${claim.requestId}-${++scans}`, originalFileName: `signed-${scans}.pdf`,
@@ -4010,6 +4112,267 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal((stored.metadataJson as any).reimbursementSignedCopyAck.payoutDestinationVersion, 2);
   });
 
+  // Final review S1: a signature is written under the claim's lock, onto the claim its signer was shown.
+  it('never leaves a signature on a claim sent back or withdrawn while it was being signed, whichever of the two commits first', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const PNG = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('signature')]);
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 400));
+    const signaturesOf = (requestId: string) => db.reimbursementClaimSignature.count({ where: { reimbursementRequestId: requestId } });
+    let images = 0;
+    const image = async (requestId: string, role: 'REQUESTER' | 'APPROVER', userId: string) => (await db.attachmentObject.create({ data: {
+      companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${S}/signature-${requestId}-${++images}`, originalFileName: 'signature.png',
+      mimeType: 'image/png', byteSize: PNG.length, uploadedByUserId: userId, status: 'ACTIVE', metadataJson: { generatedFor: 'reimbursement_claim_signature', requestId, role },
+    } })).id;
+    /** The sign call as the web makes it. `during` runs while the signature image is fetched: after every check, before the write. */
+    const signWhile = async (ctx: any, requestId: string, role: 'REQUESTER' | 'APPROVER', during: () => Promise<unknown>) => {
+      const shown = (await repos[0]!.findRequestById(companyId, requestId, true))!;
+      const storage = { getObject: async () => { await during(); return { bytes: PNG }; } } as any;
+      return new SignClaimFormUseCase(repos[0]!, storage, { log: async () => undefined } as any)
+        .execute(ctx, requestId, { role, signatureAttachmentId: await image(requestId, role, ctx.userId), snapshotHash: claimSignatureAckHash(shown) });
+    };
+    /** The signature row alone, written on `repo` for a claim read just now. */
+    const write = async (repo: PrismaReimbursementRepository, requestId: string) => repo.upsertClaimSignature({
+      companyId, reimbursementRequestId: requestId, role: 'REQUESTER', signatureAttachmentId: `${S}-signature-${requestId}`, signedByUserId: STAFF, signedAt: new Date(),
+      seen: (await repos[0]!.findRequestById(companyId, requestId))! });
+    /** A repository whose next transaction runs `between` right after its first statement: while it holds the lock that statement took. */
+    const holdingItsLock = (between: () => Promise<unknown>) => new PrismaReimbursementRepository({ client: new Proxy(clients[0]!, { get(target, property) {
+      if (property !== '$transaction') return Reflect.get(target, property);
+      return (work: (tx: any) => Promise<unknown>, options: any) => target.$transaction((tx: any) => {
+        let fired = false;
+        return work(new Proxy(tx, { get(inner, name) {
+          const value = Reflect.get(inner, name);
+          if (name !== '$executeRaw') return typeof value === 'function' ? value.bind(inner) : value;
+          return async (...args: unknown[]) => {
+            const result = await value.apply(inner, args);
+            if (!fired) { fired = true; await between(); }
+            return result;
+          };
+        } }));
+      }, { ...options, timeout: 20_000 });
+    } }) } as any, new PrismaDocumentSequenceRepository({ client: clients[0]! } as any));
+
+    // The send-back commits while the signature is being made: the requester's, and the approver's, are both refused.
+    for (const [role, signer] of [['REQUESTER', requester()], ['APPROVER', manager()]] as const) {
+      const claim = await approvedTransferClaim();
+      await assert.rejects(() => signWhile(signer, claim.requestId, role,
+        () => round(1).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' })), conflict('stale_claim_snapshot'), role);
+      assert.deepEqual([await signaturesOf(claim.requestId), (await claimRow(claim.requestId)).payoutCorrectionRequestedAt !== null], [0, true], role);
+    }
+
+    // The send-back holds the claim's lock when the signature arrives: the signature waits for it, then finds another claim.
+    const sentBackFirst = await approvedTransferClaim();
+    const before = (await repos[1]!.findRequestById(companyId, sentBackFirst.requestId))!;
+    let late!: Promise<unknown>;
+    let lateSettled = false;
+    await repos[1]!.requestPayoutCorrectionAtomic({
+      companyId, requestId: sentBackFirst.requestId, expectedUpdatedAt: before.updatedAt, actorUserId: FIN, actorRoles: ['FINANCE'], scopes: {}, allowSelfApproval: false,
+      requestedAt: new Date(), reasonCode: 'ACCOUNT_NUMBER_WRONG',
+      onPersisted: async () => {
+        late = write(repos[0]!, sentBackFirst.requestId).finally(() => { lateSettled = true; });
+        late.catch(() => undefined);
+        await pause();
+        assert.equal(lateSettled, false, 'the signature waits on the lock the send-back holds, it does not write beside it');
+      },
+    });
+    await assert.rejects(late, conflict('stale_claim_snapshot'));
+    assert.equal(await signaturesOf(sentBackFirst.requestId), 0);
+
+    // The signature holds the claim's lock when the send-back arrives: the send-back waits for it, then removes it.
+    const signedFirst = await approvedTransferClaim();
+    let sendBack: Promise<unknown> | undefined;
+    let sendBackSettled = false;
+    await write(holdingItsLock(async () => {
+      sendBack = round(1).sendBack.execute(finance(), signedFirst.requestId, { reasonCode: 'BANK_WRONG' }).finally(() => { sendBackSettled = true; });
+      sendBack.catch(() => undefined);
+      await pause();
+      assert.equal(sendBackSettled, false, 'the send-back waits on the lock the signature holds');
+    }), signedFirst.requestId);
+    assert.ok(sendBack, 'the signature was written inside a transaction that took the claim lock');
+    await sendBack;
+    assert.deepEqual([await signaturesOf(signedFirst.requestId), (await claimRow(signedFirst.requestId)).payoutCorrectionRequestedAt !== null], [0, true]);
+
+    // The same against a withdrawal to draft, which removes the claim's signatures too.
+    const withdrawn = await waitingClaim();
+    await assert.rejects(() => signWhile(requester(), withdrawn.id, 'REQUESTER',
+      () => repos[1]!.reopenRejectedRequest(companyId, withdrawn.id, withdrawn.updatedAt, STAFF, 'PENDING_APPROVAL')), conflict('stale_claim_snapshot'));
+    assert.deepEqual([await signaturesOf(withdrawn.id), (await claimRow(withdrawn.id)).status], [0, 'DRAFT']);
+    const signedThenWithdrawn = await waitingClaim();
+    assert.equal((await signWhile(requester(), signedThenWithdrawn.id, 'REQUESTER', async () => undefined)).role, 'REQUESTER');
+    assert.equal(await signaturesOf(signedThenWithdrawn.id), 1);
+    await repos[1]!.reopenRejectedRequest(companyId, signedThenWithdrawn.id, signedThenWithdrawn.updatedAt, STAFF, 'PENDING_APPROVAL');
+    assert.deepEqual([await signaturesOf(signedThenWithdrawn.id), (await claimRow(signedThenWithdrawn.id)).status], [0, 'DRAFT']);
+  });
+
+  // Final review S4: a build from before the correction round neither reads nor clears the round's columns.
+  it('sends a claim clear of a correction round an older build left on its row', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    // As a rollback leaves it: in a round under this build, returned to draft by the build before it,
+    // which resets what it knows of and leaves the rest.
+    const waiting = await waitingClaim();
+    await repos[0]!.reopenRejectedRequest(companyId, waiting.id, waiting.updatedAt, STAFF, 'PENDING_APPROVAL');
+    const history = [{ kind: 'SENT_BACK', at: day.toISOString(), byUserId: FIN, reasonCode: 'ACCOUNT_NUMBER_WRONG' }];
+    await db.reimbursementRequest.update({ where: { id: waiting.id }, data: {
+      payoutCorrectionRequestedAt: day, payoutCorrectionRequestedByUserId: FIN, payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG',
+      payoutCorrectionNote: 'จากรอบก่อน rollback', payoutCorrectionSubmittedAt: day, payoutCorrectionLogJson: history,
+    } });
+    const draft = (await repos[0]!.findRequestById(companyId, waiting.id))!;
+    assert.deepEqual([draft.status, draft.payoutCorrectionRequestedAt, draft.payoutCorrectionSubmittedAt], ['DRAFT', day, day]);
+
+    const requestSnapshotHash = computeSnapshotHash(claimSnapshotFields(draft));
+    await repos[0]!.submitDraftAtomic({
+      companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt, duplicateCandidates: [], evidence: { attachmentIds: [], expenseIds: [] },
+      documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${draft.id}`, reservedByUserId: STAFF },
+      approvalStep: { sequenceNo: 1, approverUserId: MGR, approverRoleSnapshot: 'MANAGER', requestSnapshotHash },
+      request: { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: STAFF, outstandingAmount: draft.amount, updatedByUserId: STAFF, approvalSnapshotHash: requestSnapshotHash },
+    } as any);
+
+    // Sent, and in no round: the five columns are written as empty by the submit itself. What happened stays on record.
+    const sent = await claimRow(waiting.id);
+    assert.deepEqual([sent.status, sent.payoutCorrectionRequestedAt, sent.payoutCorrectionRequestedByUserId, sent.payoutCorrectionReasonCode, sent.payoutCorrectionNote, sent.payoutCorrectionSubmittedAt, sent.payoutCorrectionLogJson],
+      ['PENDING_APPROVAL', null, null, null, null, null, history]);
+    // So it is an ordinary claim waiting for its approver, for every reader and every call.
+    const shown = await on(0).detail.execute(manager(), waiting.id);
+    assert.deepEqual([shown.payoutCorrectionPhase, shown.payoutCorrection, shown.currentDesk?.kind, shown.approvalActions], [undefined, undefined, 'APPROVER', { canApprove: true, canReject: true }]);
+    const pending = (await repos[0]!.findRequestById(companyId, waiting.id))!;
+    const decision = await repos[0]!.beginApprovalDecisionAtomic({
+      companyId, requestId: pending.id, expectedUpdatedAt: pending.updatedAt, expectedApprovalSnapshotHash: pending.approvalSnapshotHash,
+      actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined,
+    });
+    assert.equal(decision.resumed, false);
+  });
+
+  // Final review S2: the step of a round keeps only those of the old step's people who are on today's approval route.
+  it('asks only who is still on the approval route to approve a corrected account: a demoted approver cannot, and the owner can when nobody else is left', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    /** The claim's step as a submit freezes it: the people the route named that day. */
+    const frozenClaim = async () => {
+      const claim = await approvedTransferClaim();
+      await db.reimbursementApprovalStep.updateMany({ where: { reimbursementRequestId: claim.requestId }, data: { assignedApproverUserIdsJson: [MGR] } });
+      await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+      return claim;
+    };
+    const asked = async (requestId: string) => ((await eventsOf(requestId)).filter((event) => event.eventType === 'reimbursement.payout_correction_submitted').at(-1)!.payloadJson as any).data.approverRecipientUserIds;
+    const forbidden = (error: any) => error?.getStatus?.() === 403;
+
+    const ownerMembership = await db.companyMembership.create({ data: { companyId, userId: OWNER, status: 'ACTIVE' }, select: { id: true } });
+    const ownerRole = await db.role.create({ data: {
+      companyId, scopeKey: companyId, key: 'OWNER', name: 'เจ้าของ', permissions: { create: approverPermissionIds.map((permissionId) => ({ permissionId })) },
+    }, select: { id: true } });
+    await db.membershipRole.create({ data: { membershipId: ownerMembership.id, roleId: ownerRole.id } });
+    const owner = () => ({ ...manager(), userId: OWNER, roles: ['OWNER'] });
+    try {
+      // Still holding the role: the same approver is asked again, by name, and approves.
+      const kept = await frozenClaim();
+      await round(0).giveAccount.execute(requesterWhoEdits(), kept.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+      const [, keptStep] = await stepsOf(kept.requestId);
+      assert.deepEqual([keptStep!.status, keptStep!.approverUserId, keptStep!.assignedApproverUserIdsJson, await asked(kept.requestId)], ['PENDING', MGR, [MGR], [MGR]]);
+      const shownToManager = await on(0).detail.execute(manager(), kept.requestId);
+      assert.equal((await round(0).approve.execute(manager(), kept.requestId, undefined, shownToManager.approvalSnapshotHash, 2)).status, 'READY_FOR_PAYMENT');
+
+      // Moved to a staff role after approving the claim: still an active member of the branch, no approve right.
+      const claim = await frozenClaim();
+      await db.membershipRole.delete({ where: { membershipId_roleId: { membershipId: managerMembershipId, roleId: managerRoleId } } });
+      const demoted = () => ({ ...manager(), roles: ['STAFF'], permissions: ['reimbursement.read'] });
+      await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT });
+      const [, step] = await stepsOf(claim.requestId);
+      // The new step names nobody, and its notice asks the owner, whom the route falls to today.
+      assert.deepEqual([step!.status, step!.approverUserId, step!.assignedApproverUserIdsJson, step!.approverRoleSnapshot, await asked(claim.requestId)],
+        ['PENDING', null, null, 'MANAGER', [OWNER]]);
+      assert.equal((await claimRow(claim.requestId)).currentApproverUserId, null);
+
+      // The demoted manager is offered nothing and is refused, by the use case and by the repository under the claim's lock.
+      const shownToDemoted = await on(0).detail.execute(demoted(), claim.requestId);
+      assert.deepEqual([shownToDemoted.approvalActions, shownToDemoted.currentDesk], [{ canApprove: false, canReject: false }, { kind: 'APPROVER' }]);
+      await assert.rejects(() => round(0).approve.execute(demoted(), claim.requestId, undefined, shownToDemoted.approvalSnapshotHash, 2), forbidden);
+      await assert.rejects(() => round(0).reject.execute(demoted(), claim.requestId, 'ไม่อนุมัติ'), forbidden);
+      const pending = (await repos[0]!.findRequestById(companyId, claim.requestId))!;
+      await assert.rejects(() => repos[0]!.approvePayoutCorrectionAtomic({
+        companyId, requestId: claim.requestId, expectedUpdatedAt: pending.updatedAt, expectedApprovalSnapshotHash: pending.approvalSnapshotHash ?? undefined,
+        actorUserId: MGR, actorRoles: ['STAFF'], scopes: {}, allowSelfApproval: false, decidedAt: new Date(), payoutVerifiedVersion: 2, onApprovedPersisted: async () => undefined,
+      }), forbidden);
+      assert.deepEqual([(await claimRow(claim.requestId)).status, (await stepsOf(claim.requestId)).map((row) => row.status)], ['PENDING_APPROVAL', ['APPROVED', 'PENDING']]);
+
+      // The owner is not refused as "not the assigned approver": nobody is assigned any more.
+      const shownToOwner = await on(0).detail.execute(owner(), claim.requestId);
+      assert.deepEqual(shownToOwner.approvalActions, { canApprove: true, canReject: true });
+      const approved = await round(0).approve.execute(owner(), claim.requestId, undefined, shownToOwner.approvalSnapshotHash, 2);
+      const [, decided] = await stepsOf(claim.requestId);
+      assert.deepEqual([approved.status, decided!.status, decided!.decisionByUserId, (await accountVersionsOf(claim.requestId)).map((row) => [row.version, row.verifiedByUserId])],
+        ['READY_FOR_PAYMENT', 'APPROVED', OWNER, [[1, MGR], [2, OWNER]]]);
+    } finally {
+      await db.membershipRole.createMany({ data: [{ membershipId: managerMembershipId, roleId: managerRoleId }], skipDuplicates: true });
+      await db.role.delete({ where: { id: ownerRole.id } });
+      await db.companyMembership.delete({ where: { id: ownerMembership.id } });
+    }
+  });
+
+  // Final review W8: the page says which claim it read, and the write is held to that under the claim's lock.
+  it('takes the account of a round once per page: a late second press freezes nothing and tells nobody', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    const shown = (await on(0).detail.execute(requesterWhoEdits(), claim.requestId)).updatedAt;
+    const standing = async () => [
+      (await accountVersionsOf(claim.requestId)).map((account) => account.version),
+      (await stepsOf(claim.requestId)).map((step) => step.status),
+      (await eventsOf(claim.requestId)).filter((event) => event.eventType === 'reimbursement.payout_correction_submitted').length,
+      ((await claimRow(claim.requestId)).payoutCorrectionLogJson as any[]).map((entry) => entry.kind),
+    ];
+
+    await round(0).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT, expectedUpdatedAt: shown });
+    const taken = await standing();
+    assert.deepEqual(taken, [[1, 2], ['APPROVED', 'PENDING'], 1, ['SENT_BACK', 'ACCOUNT_SUBMITTED']]);
+
+    // The same form pressed again, on either connection, after the first was taken.
+    for (const index of [0, 1]) {
+      await assert.rejects(() => round(index).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT, expectedUpdatedAt: shown }), conflict('reimbursement_changed'));
+    }
+    assert.deepEqual(await standing(), taken);
+    // Two presses at the same instant: one is taken, whichever it is.
+    const fresh = (await on(0).detail.execute(requesterWhoEdits(), claim.requestId)).updatedAt;
+    const both = await Promise.allSettled([0, 1].map((index) => round(index).giveAccount.execute(requesterWhoEdits(), claim.requestId, { mode: 'CASH', expectedUpdatedAt: fresh })));
+    assert.deepEqual(both.map((result) => result.status).sort(), ['fulfilled', 'rejected']);
+    assert.ok(conflict('reimbursement_changed')((both.find((result) => result.status === 'rejected') as PromiseRejectedResult).reason));
+    assert.deepEqual((await standing()).slice(1), [['APPROVED', 'CANCELLED', 'PENDING'], 2, ['SENT_BACK', 'ACCOUNT_SUBMITTED', 'ACCOUNT_SUBMITTED']]);
+  });
+
+  // Final review W6: the requester left after the claim was approved, and the claim was sent back by mistake.
+  it('gives a claim the account it had back for a requester who is no longer active: the same sealed account as a new version, approved again', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const claim = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER', note: 'ส่งกลับผิดใบ' });
+    const membership = { companyId_userId: { companyId, userId: STAFF } };
+    await db.companyMembership.update({ where: membership, data: { status: 'DISABLED' } });
+    try {
+      // Nobody types an account for a member no notice can reach, in a round as on a draft.
+      await assert.rejects(() => round(0).giveAccount.execute(finance(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT }), conflict('payout_account_member_not_active'));
+      assert.deepEqual([(await accountVersionsOf(claim.requestId)).length, (await claimRow(claim.requestId)).payoutCorrectionSubmittedAt], [1, null]);
+
+      const given = await round(0).giveAccount.execute(finance(), claim.requestId, { mode: 'PREVIOUS' });
+      assert.deepEqual([given.payoutCorrection?.phase, given.payout?.version, given.payout?.accountLast4], ['AWAITING_APPROVAL', 2, '5678']);
+      const [first, second] = await accountVersionsOf(claim.requestId);
+      // The sealed columns moved as one unit into a frozen version of its own; the first is as it was.
+      assert.deepEqual([second!.version, second!.accountNumberEncrypted, second!.accountLast4, second!.fingerprint, second!.source, second!.createdByUserId, second!.frozenAt !== null, second!.verifiedByUserId],
+        [2, first!.accountNumberEncrypted, first!.accountLast4, first!.fingerprint, first!.source, first!.createdByUserId, true, null]);
+      assert.equal(openPayoutAccountNumber(second!.accountNumberEncrypted, roundKey), '0012345678');
+      assert.deepEqual([first!.version, first!.verifiedByUserId], [1, MGR]);
+      const row = await claimRow(claim.requestId);
+      assert.deepEqual([row.payoutMethod, row.payoutDestinationVersion, row.payoutFingerprint], ['BANK_TRANSFER', 2, first!.fingerprint]);
+
+      // Approved again like any other answer, by the approver who checks version 2.
+      const shown = await on(0).detail.execute(manager(), claim.requestId);
+      assert.equal((await round(0).approve.execute(manager(), claim.requestId, undefined, shown.approvalSnapshotHash, 2)).status, 'READY_FOR_PAYMENT');
+      assert.deepEqual((await accountVersionsOf(claim.requestId)).map((account) => [account.version, account.verifiedByUserId]), [[1, MGR], [2, MGR]]);
+    } finally {
+      await db.companyMembership.update({ where: membership, data: { status: 'ACTIVE' } });
+    }
+  });
+
   it('still cancels a claim in a round by the rule every claim is cancelled by: its records are voided and it closes', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     for (const phase of ['with its requester', 'with its approver'] as const) {
@@ -4034,6 +4397,38 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     await assert.rejects(() => repos[0]!.requestPayoutCorrectionAtomic({ companyId, requestId: claim.requestId, expectedUpdatedAt: read.updatedAt, actorUserId: FIN, actorRoles: ['FINANCE'], scopes: {},
       allowSelfApproval: false, requestedAt: new Date(), reasonCode: 'OTHER', onPersisted: async () => undefined }), conflict('reimbursement_cancellation_pending'));
     assert.deepEqual([(await claimRow(claim.requestId)).status, (await claimRow(claim.requestId)).payoutCorrectionRequestedAt], ['READY_FOR_PAYMENT', null]);
+
+    // Final review W11. The same inside a round, with the claim's records standing: its account is not taken
+    // while it waits for its requester, nor approved while it waits for its approver, and each call says why.
+    const withRequester = await approvedTransferClaim();
+    await round(0).sendBack.execute(finance(), withRequester.requestId, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    await strand(withRequester, 'ก');
+    const standingA = await claimRow(withRequester.requestId);
+    await assert.rejects(() => round(0).giveAccount.execute(requesterWhoEdits(), withRequester.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT }), conflict('reimbursement_cancellation_pending'));
+    await assert.rejects(() => repos[0]!.submitPayoutCorrectionAtomic({
+      companyId, requestId: withRequester.requestId, expectedUpdatedAt: standingA.updatedAt, actorUserId: STAFF, scopes: {}, submittedAt: new Date(),
+      payout: { write: { mode: 'CASH' } }, approverRouteUserIds: [MGR], onPersisted: async () => undefined,
+    }), conflict('reimbursement_cancellation_pending'));
+    assert.deepEqual([(await claimRow(withRequester.requestId)).updatedAt, (await accountVersionsOf(withRequester.requestId)).length, (await stepsOf(withRequester.requestId)).length],
+      [standingA.updatedAt, 1, 1]);
+
+    const withApprover = await claimWithANewAccount();
+    await strand(withApprover, 'ก');
+    const standingB = (await repos[0]!.findRequestById(companyId, withApprover.requestId))!;
+    await assert.rejects(() => round(0).approve.execute(manager(), withApprover.requestId, undefined, standingB.approvalSnapshotHash, 2), conflict('reimbursement_cancellation_pending'));
+    await assert.rejects(() => repos[0]!.approvePayoutCorrectionAtomic({
+      companyId, requestId: withApprover.requestId, expectedUpdatedAt: standingB.updatedAt, expectedApprovalSnapshotHash: standingB.approvalSnapshotHash, actorUserId: MGR,
+      actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, decidedAt: new Date(), payoutVerifiedVersion: 2, onApprovedPersisted: async () => undefined,
+    }), conflict('reimbursement_cancellation_pending'));
+    const afterB = await claimRow(withApprover.requestId);
+    assert.deepEqual([afterB.status, afterB.updatedAt, (await stepsOf(withApprover.requestId)).map((step) => step.status), (await accountVersionsOf(withApprover.requestId)).map((account) => account.verifiedByUserId)],
+      ['PENDING_APPROVAL', standingB.updatedAt, ['APPROVED', 'PENDING'], [MGR, null]]);
+    // Withdrawn, each goes on as if the cancellation had never been started.
+    await on(0).withdraw.execute(requester(), withApprover.requestId);
+    const shown = await on(0).detail.execute(manager(), withApprover.requestId);
+    assert.equal((await round(0).approve.execute(manager(), withApprover.requestId, undefined, shown.approvalSnapshotHash, 2)).status, 'READY_FOR_PAYMENT');
+    await on(0).withdraw.execute(requester(), withRequester.requestId);
+    assert.equal((await round(0).giveAccount.execute(requesterWhoEdits(), withRequester.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT })).payoutCorrection?.phase, 'AWAITING_APPROVAL');
   });
 
   // 3B: a claim finance passed, with no approval step, sent before claims carried an account.

@@ -79,6 +79,16 @@ export const WORKFLOW_TEMPLATE_FOLLOWS_SIBLING: Record<string, string> = {
   reimbursement_payout_correction_submitted: 'reimbursement_pending_approval',
 };
 
+// Notices of two kinds about the same record that take each other's place (final review item 15): the newer
+// one retires the open one of the other kind, as a notice already retires an earlier one of its own kind.
+// "Paid" and "payment voided" are about the same money: after a void "จ่ายเงินเบิกแล้ว" is no longer true, and
+// after the next payment "ยกเลิกการจ่ายเงินเบิก" is not. Keyed by the notice's trigger key and read by the
+// action runner, not kept in a rule's config, so a rule pinned or edited before this follows it too.
+export const WORKFLOW_NOTICE_ALSO_REPLACES: Record<string, readonly string[]> = {
+  'workflow.reimbursement_payment_voided': ['workflow.reimbursement_payment_recorded'],
+  'workflow.reimbursement_payment_recorded': ['workflow.reimbursement_payment_voided'],
+};
+
 // Step-journey spec §11/§13: every reimbursement notification links straight to that claim's
 // journey page (one page per request — no more tab/drawer routing). Rendered by the action runner
 // with the event payload + companyId (same renderer as titles); the plain sourceWebPath is the
@@ -389,7 +399,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'reimbursement_ready_for_payment',
     name: 'Reimbursement ready for payment',
-    description: 'Notify the person whose turn it is to record this reimbursement payment (whoever approved it, when they can pay), else everyone who can, when a claim is ready for payment.',
+    description: 'Notify the person whose turn it is to record this reimbursement payment (the finance reviewer who passed it, else whoever approved it, when they can pay), else everyone who can, when a claim is ready for payment.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -402,13 +412,16 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           triggerKey: 'workflow.reimbursement_ready_for_payment',
           recipientPermissions: ['reimbursement.payment.record'],
           // Owner rule 2026-10-01: whose turn it is, not everyone who can pay (a shop owner holds
-          // every right and was pushed for every claim). That is the actor of this event when they
-          // can record the payment: the approver, the finance reviewer, or whoever filed on
-          // someone's behalf a claim that needed no approval. Next, the approvers the event
-          // names: the claim's own approver when finance passed it (a finance reviewer may not
-          // hold the pay right), or the people who would have approved a claim nobody had to
-          // approve. Never the requester alone. With no such person, everyone able to pay.
-          preferRecipientPayloadKeys: ['actorUserId', 'approverRecipientUserIds'],
+          // every right and was pushed for every claim). The order is the one the claim page and
+          // the payment reminder use (`paymentTurnUserIds`): first the finance reviewer who passed
+          // the claim, whom the event names when its actor is someone else (the approver of a
+          // corrected payout account). Then the actor of this event when they can record the
+          // payment: the approver, the finance reviewer, or whoever filed on someone's behalf a
+          // claim that needed no approval. Next, the approvers the event names: the claim's own
+          // approver when finance passed it (a finance reviewer may not hold the pay right), or
+          // the people who would have approved a claim nobody had to approve. Never the requester
+          // alone. With no such person, everyone able to pay.
+          preferRecipientPayloadKeys: ['financeReviewerUserId', 'actorUserId', 'approverRecipientUserIds'],
           neverPreferRecipientPayloadKeys: ['requesterUserId'],
           severity: 'action',
           titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}',

@@ -5,8 +5,9 @@
  *
  * Two things hold for every function here:
  *  - the ciphertext is selected only by the two `…Secret` readers, which serve the audited reveal,
- *    and by the two copies that move a sealed account as one unit (submit, and the payment of a
- *    legacy claim);
+ *    and by the copies that move a sealed account as one unit: at submit, in a correction round
+ *    (the requester's default account, or the account the claim had), and at the payment of a
+ *    legacy claim;
  *  - once a claim is submitted, nothing reads the member's default account for it again. The one
  *    exception is a legacy claim, which froze no account: its payer is shown the requester's current
  *    default (`readLegacyPayoutDefault`) and a payment into it keeps a copy (`confirmPaymentPayout`).
@@ -76,6 +77,9 @@ export type DraftPayoutWrite =
   | { mode: 'DEFAULT' }
   | { mode: 'CASH' }
   | { mode: 'SPECIFIED'; destination: SealedPayoutDestination; source: 'REQUESTER' | 'PREPARER'; actorUserId: string };
+
+/** What a claim in a correction round may be given: a draft's three choices, or the account it was approved with (`payoutCorrectionRoundStart`). */
+export type CorrectionPayoutWrite = DraftPayoutWrite | { mode: 'PREVIOUS' };
 
 type ClaimPayoutPointer = {
   id: string;
@@ -349,18 +353,39 @@ export async function freezePayoutAtSubmit(tx: any, claim: ClaimPayoutPointer, i
  *
  * "Use the default account" copies the requester's default as it is now, the way a submit does, and
  * is held to what the page showed (`payoutDefaultToken`) unless that default was set in this same
- * transaction, which is then exactly what was typed.
+ * transaction, which is then exactly what was typed. "The account the claim had" copies the version
+ * the claim was approved with before the round, so a claim sent back by mistake gets its account back
+ * without anyone typing it.
  */
 export async function freezePayoutCorrection(tx: any, claim: ClaimPayoutPointer, input: {
-  write: DraftPayoutWrite;
+  write: CorrectionPayoutWrite;
   frozenAt: Date;
   seenDefaultToken?: unknown;
   defaultSetInThisTransaction?: boolean;
+  /** For "the account the claim had": what the claim was approved with when its round began. */
+  previous?: { payoutMethod?: string; payoutVersion?: number };
 }): Promise<SubmitPayoutColumns> {
   const cash: SubmitPayoutColumns = { payoutMethod: 'CASH', payoutDestinationVersion: null, payoutFingerprint: CASH_PAYOUT_FINGERPRINT };
   if (input.write.mode === 'CASH') return cash;
   const row = { companyId: claim.companyId, reimbursementRequestId: claim.id, frozenAt: input.frozenAt };
   const nextVersion = async () => ((await listVersions(tx, claim.companyId, claim.id))[0]?.version ?? 0) + 1;
+  if (input.write.mode === 'PREVIOUS') {
+    // A claim sent before claims carried a receiving method had no account of its own to keep.
+    if (!input.previous?.payoutMethod) throw new ConflictException('payout_destination_required');
+    if (input.previous.payoutMethod === 'CASH') return cash;
+    const approved = input.previous.payoutVersion === undefined ? null : await tx.reimbursementPayoutDestination.findFirst({
+      where: { companyId: claim.companyId, reimbursementRequestId: claim.id, version: input.previous.payoutVersion, frozenAt: { not: null }, source: { not: LEGACY_PAYMENT_PAYOUT_SOURCE } },
+    });
+    if (!approved) throw new ConflictException('payout_destination_changed');
+    const version = await nextVersion();
+    // Nobody types anything: the sealed columns move as one unit, with who entered that account as it was.
+    await tx.reimbursementPayoutDestination.create({ data: {
+      ...row, version, payoutKind: approved.payoutKind, bankName: approved.bankName, accountName: approved.accountName,
+      accountNumberEncrypted: approved.accountNumberEncrypted, accountLast4: approved.accountLast4, fingerprint: approved.fingerprint,
+      source: approved.source, createdByUserId: approved.createdByUserId,
+    } });
+    return { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: version, payoutFingerprint: approved.fingerprint };
+  }
   if (input.write.mode === 'SPECIFIED') {
     const version = await nextVersion();
     await tx.reimbursementPayoutDestination.create({ data: { ...row, version, ...input.write.destination, source: input.write.source, createdByUserId: input.write.actorUserId } });

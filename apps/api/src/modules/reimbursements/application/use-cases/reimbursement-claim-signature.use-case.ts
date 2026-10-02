@@ -200,6 +200,9 @@ export class SignClaimFormUseCase {
       signatureAttachmentId: signature.id,
       signedByUserId: ctx.userId,
       signedAt: new Date(),
+      // The claim every check above was made on. The write is refused if it is another claim by then
+      // (sent back for its payout account, or returned to draft, while the image was being fetched).
+      seen: req,
     });
 
     void this.audit.log({

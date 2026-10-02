@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConflictException } from '@nestjs/common';
 import {
   CompleteClaimSignatureUploadUseCase,
   InitClaimSignatureUploadUseCase,
@@ -202,6 +203,20 @@ describe('SignClaimFormUseCase', () => {
     assert.deepEqual(calls.signatureLookups, [
       { companyId: 'co-1', attachmentId: 'att-sig', userId: 'staff-1', requestId: 'rb-1', role: 'REQUESTER' },
     ]);
+  });
+
+  // Final review S1: the write names the claim its checks were made on, so the repository can refuse it
+  // under the claim's lock when the claim was sent back or returned to draft in between (real-PostgreSQL proof there).
+  it('writes the signature onto the claim it checked, and passes on the refusal of a claim that changed meanwhile', async () => {
+    const req = request({ status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', payments: [] });
+    const { repo, calls } = fakeRepo(req);
+    const input = { role: 'REQUESTER' as const, signatureAttachmentId: 'att-sig', snapshotHash: claimSignatureAckHash(req) };
+    await signUseCase(repo).execute(ctx(), 'rb-1', input);
+    assert.deepEqual([calls.upserts[0].seen.status, calls.upserts[0].seen.updatedAt, calls.upserts[0].seen.payoutCorrectionRequestedAt],
+      ['READY_FOR_PAYMENT', req.updatedAt, undefined]);
+
+    repo.upsertClaimSignature = async () => { throw new ConflictException('stale_claim_snapshot'); };
+    await assert.rejects(() => signUseCase(repo).execute(ctx(), 'rb-1', input), (error: any) => error.getStatus() === 409 && error.message === 'stale_claim_snapshot');
   });
 
   it('uses the eligible actor\'s latest active saved signature when no attachment is supplied', async () => {

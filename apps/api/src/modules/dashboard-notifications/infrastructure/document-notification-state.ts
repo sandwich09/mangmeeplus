@@ -8,7 +8,8 @@ import type { PrismaService } from '../../../common/database/prisma.service';
  * spec §14) is PENDING_APPROVAL again, so its status alone would bring the approval notice of its
  * first round back to life while nobody can approve anything. It names where the claim must stand
  * for the notice to be still to do: in no round (`NONE`), or in one of a round's two phases. Left
- * out, the status decides alone.
+ * out, the status decides alone. A claim whose cancellation is pending has nothing to do, whatever
+ * its status.
  */
 export const DOCUMENT_NOTIFICATION_STATES: Record<string, {
   sourceType: string; statuses: readonly string[]; payoutCorrection?: readonly ('NONE' | ReimbursementPayoutCorrectionPhase)[];
@@ -39,7 +40,7 @@ export async function completedDocumentNotificationIds(db: PrismaService['client
     certificates.length ? db.expenseSubstituteReceiptEvidence.findMany({ where: { companyId, id: { in: certificates } }, select: { id: true, status: true } }) : [],
     claims.length ? db.reimbursementRequest.findMany({
       where: { companyId, id: { in: claims } },
-      select: { id: true, status: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true },
+      select: { id: true, status: true, payoutCorrectionRequestedAt: true, payoutCorrectionSubmittedAt: true, cancellationPendingAt: true },
     }) : [],
   ]);
   return events.filter(event => {
@@ -51,6 +52,9 @@ export async function completedDocumentNotificationIds(db: PrismaService['client
     }
     const claim = claimRows.find(row => row.id === event.sourceId);
     if (!claim || !rule.statuses.includes(claim.status)) return true;
+    // A claim being cancelled takes no decision and no payment until that is finished or withdrawn: its
+    // notices ask for something the API refuses. Read here, not stored, so a withdrawal gives them back.
+    if (claim.cancellationPendingAt) return true;
     const phase = reimbursementPayoutCorrectionPhase(claim);
     if (rule.payoutCorrection && !rule.payoutCorrection.includes(phase ?? 'NONE')) return true;
     // A corrected account waits for approval since it was given: an approval notice from before that

@@ -6,7 +6,7 @@ import {
   ApproveReimbursementDto, AttachPaymentSlipDto, CancelReimbursementDto, CompletePaymentSlipUploadDto, CreateReimbursementRequestDto, InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
   ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, SubmitReimbursementDto, UpdateReimbursementDraftDto,
-  RequestPayoutCorrectionDto, SubmitPayoutCorrectionDto,
+  RequestPayoutCorrectionDto, SubmitPayoutCorrectionDto, RejectReimbursementDto, VoidReimbursementPaymentDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
@@ -40,6 +40,28 @@ describe('CancelReimbursementDto', () => {
     await rejects(CancelReimbursementDto, { reason: 'ซื้อซ้ำ', status: 'CANCELLED' });
     await rejects(CancelReimbursementDto, { reason: 42 });
     await rejects(CancelReimbursementDto, { reason: 'x'.repeat(501) });
+  });
+});
+
+// Final review W1: the reject and void bodies reached their use cases unvalidated (`@Body() body: <a contracts type>`).
+describe('RejectReimbursementDto and VoidReimbursementPaymentDto', () => {
+  it('take a bounded reason, and refuse a forged field, a non-string and an oversized reason', async () => {
+    const rejected = await pipe.transform({ reason: 'ใบเสร็จไม่ชัด', approvalSnapshotHash: 'a'.repeat(32), payoutCorrectionReasonCode: 'ACCOUNT_NAME_MISMATCH' },
+      { type: 'body', metatype: RejectReimbursementDto });
+    assert.deepEqual([rejected.reason, rejected.payoutCorrectionReasonCode], ['ใบเสร็จไม่ชัด', 'ACCOUNT_NAME_MISMATCH']);
+    assert.equal((await pipe.transform({ reason: 'โอนผิดบัญชี' }, { type: 'body', metatype: VoidReimbursementPaymentDto })).reason, 'โอนผิดบัญชี');
+    // That a reason is given at all stays the use case's refusal, with the code each screen has words for.
+    await pipe.transform({}, { type: 'body', metatype: RejectReimbursementDto });
+    await pipe.transform({}, { type: 'body', metatype: VoidReimbursementPaymentDto });
+    for (const metatype of [RejectReimbursementDto, VoidReimbursementPaymentDto]) {
+      await rejects(metatype, { reason: 'x'.repeat(501) });
+      await rejects(metatype, { reason: 42 });
+      await rejects(metatype, { reason: ['ก', 'ข'] });
+      await rejects(metatype, { reason: 'ซ้ำ', status: 'REJECTED' });
+      await rejects(metatype, { reason: 'ซ้ำ', voidedByUserId: 'someone-else' });
+    }
+    await rejects(RejectReimbursementDto, { reason: 'ซ้ำ', payoutCorrectionReasonCode: 'x'.repeat(41) });
+    await rejects(VoidReimbursementPaymentDto, { reason: 'ซ้ำ', payoutCorrectionReasonCode: 'OTHER' });
   });
 });
 
@@ -320,6 +342,23 @@ describe('payout correction DTOs', () => {
     await rejects(RequestPayoutCorrectionDto, { reasonCode: 7 });
     await rejects(RequestPayoutCorrectionDto, { reasonCode: 'OTHER', note: ['x'] });
     await rejects(RequestPayoutCorrectionDto, { reasonCode: 'OTHER', note: 'x'.repeat(2001) });
+  });
+
+  // Final review W8: the form says which claim it was opened on, as a timestamp and nothing else.
+  it('takes the version of the claim the form was opened on, for a round only', async () => {
+    const at = '2026-10-02T03:04:05.678Z';
+    assert.equal((await body(SubmitPayoutCorrectionDto, { mode: 'CASH', expectedUpdatedAt: at })).expectedUpdatedAt, at);
+    await body(SubmitPayoutCorrectionDto, { mode: 'CASH' });
+    for (const expectedUpdatedAt of ['yesterday', '2026-10-02', 1790000000000, { $gt: '' }]) await rejects(SubmitPayoutCorrectionDto, { mode: 'CASH', expectedUpdatedAt });
+    await rejects(UpdateReimbursementDraftDto, { payout: { mode: 'CASH', expectedUpdatedAt: at } });
+  });
+
+  // Final review W6: "the account the claim had" is a choice of a round only; a draft has no such account.
+  it('takes "the account the claim had" for a round, and not for a draft', async () => {
+    assert.equal((await body(SubmitPayoutCorrectionDto, { mode: 'PREVIOUS' })).mode, 'PREVIOUS');
+    await rejects(SubmitPayoutCorrectionDto, { mode: 'PREVIOUS', payoutDestinationVersion: 1 });
+    await rejects(CreateReimbursementRequestDto, { ...validCreate, payout: { mode: 'PREVIOUS' } });
+    await rejects(UpdateReimbursementDraftDto, { payout: { mode: 'PREVIOUS' } });
   });
 
   it('takes the three choices a draft has for the account, the token of the default the form showed, and nothing of the snapshot', async () => {

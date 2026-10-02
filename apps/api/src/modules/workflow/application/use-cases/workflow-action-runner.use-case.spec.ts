@@ -375,6 +375,33 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
       assert.equal(round2.supersedeEarlier, true);
     });
 
+    // Final review item 15: after a void the "paid" notice of the claim is no longer true, and after the next
+    // payment the "voided" one is not. Each replaces the other, whatever the rule's own config says.
+    it('has "payment voided" replace the claim\'s "paid" notice and the reverse, and no other notice replace another kind', async () => {
+      const sentFor = async (templateKey: string, configJson?: Record<string, unknown>) => {
+        const template = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === templateKey)!;
+        const [notifyAction] = template.defaultActionJson;
+        await make().execute({ ...actionRun(configJson ?? notifyAction!.configJson), actionKey: notifyAction!.actionKey, workflowRunId: `run_${templateKey}` }, {
+          companyId: 'co_1', ruleName: template.name, sourceModule: 'reimbursements', sourceType: 'reimbursement_payment', sourceId: 'pay_1',
+          triggerType: 'EVENT', siblingActions: template.defaultActionJson,
+          payload: {
+            requestId: 'rb_1', requestNo: 'RB-1', paidAmount: '250', currency: 'THB', paymentNo: 'RP-1', paidNotice: 'โอนเงิน 250.00 บาท',
+            requesterUserId: 'u_staff', actorUserId: 'u_payer', approverRecipientUserIds: ['u_manager'],
+          },
+        } as any);
+        return (notify.execute.mock.calls.at(-1) as any).arguments[0];
+      };
+
+      const voided = await sentFor('reimbursement_payment_voided');
+      assert.equal(voided.supersedeEarlier, true);
+      assert.deepEqual(voided.alsoSupersedeTriggerKeys, ['workflow.reimbursement_payment_recorded']);
+      assert.deepEqual((await sentFor('reimbursement_payment_recorded')).alsoSupersedeTriggerKeys, ['workflow.reimbursement_payment_voided']);
+      // A rule pinned before this, with the body it had then: the pairing is the notice's, not the rule's.
+      const pinned = { triggerKey: 'workflow.reimbursement_payment_voided', recipientPayloadKeys: ['requesterUserId'], severity: 'info', titleTemplate: 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}' };
+      assert.deepEqual((await sentFor('reimbursement_payment_voided', pinned)).alsoSupersedeTriggerKeys, ['workflow.reimbursement_payment_recorded']);
+      assert.equal((await sentFor('reimbursement_pending_approval')).alsoSupersedeTriggerKeys, undefined);
+    });
+
     it('gives a scan notice no period of its own, so a scan window never pushes again', async () => {
       for (const triggerType of ['SLA_SCAN', 'THRESHOLD_SCAN', 'SCHEDULE']) {
         const sent = await sendPending({ workflowRunId: `run_${triggerType}` }, { triggerType });
@@ -739,9 +766,10 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
 
     // A payment recorded by the build before this one, read by the rule after its re-pin: the event has
     // no sentence. The notice is then its title, with nothing made up underneath it.
-    it('prints only the title for a payment event written before the sentence existed', async () => {
+    // Final review W3: such an event has nothing for the body to print, and an empty body is no notice.
+    it('prints the title as the body for a payment event written before the sentence existed', async () => {
       const sent = await send(catalogConfig(), event({ paidNotice: undefined }));
-      assert.deepEqual([sent.title, sent.body], ['จ่ายเงินเบิกแล้ว: RB-202610-00007', '']);
+      assert.deepEqual([sent.title, sent.body], ['จ่ายเงินเบิกแล้ว: RB-202610-00007', 'จ่ายเงินเบิกแล้ว: RB-202610-00007']);
     });
 
     it('prints nothing of the event but the sentence: no code word, raw decimal or currency code', async () => {
@@ -863,6 +891,28 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     const sent = (notify.execute.mock.calls[0] as any).arguments[0];
     assert.equal(sent.title, 'พร้อมจ่ายเบิกจ่าย: RB-202608-00021');
     assert.equal(sent.body, 'ยอด 250.00 บาท · รอคุณบันทึกการจ่ายเงิน');
+  });
+
+  // Final review W3: the "paid" notice reads a sentence the payment event itself carries. An event
+  // written by the build before that sentence existed (between the release task and the cutover, or
+  // after a rollback) has none, and the notice went out with a title and an empty body.
+  it('falls back to the title when the rendered body is empty, and keeps a body that says something', async () => {
+    const paid = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_recorded')!;
+    const cfg = paid.defaultActionJson[0]!.configJson;
+    const send = async (payload: Record<string, unknown>) => {
+      notify.execute.mock.resetCalls();
+      await make().execute(actionRun(cfg), {
+        companyId: 'co_1', ruleName: 'Reimbursement payment recorded', sourceModule: 'reimbursements', sourceType: 'reimbursement_payment', sourceId: 'pay_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-202608-00021', requesterUserId: 'u_requester', actorUserId: 'u_payer', ...payload }, siblingActions: [],
+      } as any);
+      const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+      return [sent.title, sent.body];
+    };
+    assert.equal(cfg['bodyTemplate'], '{{paidNotice}}');
+    // The older build's event: amount and number, no finished sentence.
+    assert.deepEqual(await send({ paidAmount: '250', currency: 'THB', paymentNo: 'RBPAY-1' }), ['จ่ายเงินเบิกแล้ว: RB-202608-00021', 'จ่ายเงินเบิกแล้ว: RB-202608-00021']);
+    assert.deepEqual(await send({ paidNotice: '   ' }), ['จ่ายเงินเบิกแล้ว: RB-202608-00021', 'จ่ายเงินเบิกแล้ว: RB-202608-00021']);
+    assert.deepEqual(await send({ paidNotice: 'โอนเข้าบัญชีลงท้าย 6789 จำนวน 250.00 บาท' }), ['จ่ายเงินเบิกแล้ว: RB-202608-00021', 'โอนเข้าบัญชีลงท้าย 6789 จำนวน 250.00 บาท']);
   });
 
   it('keeps the sibling-borrowed title but not the body on the pending-approval alert', async () => {
@@ -1031,6 +1081,38 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
 
     await h.useCase.execute(actionRun(readyToPay().defaultActionJson[0]!.configJson), context);
 
+    assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_approver']);
+  });
+
+  // One order for whose turn it is to pay (owner rule 2026-10-01): the finance reviewer who passed the
+  // claim, then its approver. The claim page and the payment reminder ask in that order. After a
+  // correction round the approver is the actor of the ready-to-pay event, and the notice asked them first.
+  it('asks the finance reviewer who passed the claim before its approver, in the order the claim page and the reminder name them', async () => {
+    const cfg = readyToPay().defaultActionJson[0]!.configJson;
+    const reminder = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_sla_breach')!.defaultActionJson[0]!.configJson;
+    assert.deepEqual(cfg['preferRecipientPayloadKeys'], ['financeReviewerUserId', 'actorUserId', 'approverRecipientUserIds']);
+    assert.equal((reminder['preferRecipientPayloadKeys'] as string[])[0], 'financeReviewerUserId');
+    // The event of an approval that ends a round on a claim finance passed: the approver acted, the reviewer is named.
+    const toldAfterARound = async (memberships: Record<string, unknown>) => {
+      const h = harness({ sourceBranchId: 'br_claim', memberships });
+      const context = claimContext();
+      context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff', financeReviewerUserId: 'u_finance', approverRecipientUserIds: ['u_finance'] };
+      await h.useCase.execute(actionRun(cfg), context);
+      return h.sent[0]?.recipientUserIds;
+    };
+    const elsewhere = member({ branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'br_other' }] });
+    assert.deepEqual(await toldAfterARound({ u_owner: member(), u_approver: member(), u_finance: member() }), ['u_finance']);
+    // A reviewer who cannot record this payment is not asked: the approver is, when they can.
+    assert.deepEqual(await toldAfterARound({ u_owner: member(), u_approver: member(), u_finance: elsewhere }), ['u_approver']);
+    assert.deepEqual(await toldAfterARound({ u_owner: member(), u_approver: member() }), ['u_approver']);
+    // Neither can: everyone able to.
+    assert.deepEqual(await toldAfterARound({ u_owner: member(), u_admin: member(), u_approver: elsewhere, u_finance: elsewhere }), ['u_owner', 'u_admin']);
+
+    // A claim finance never saw is unchanged: its approver, the actor, is asked first.
+    const h = harness({ sourceBranchId: 'br_claim', memberships: { u_owner: member(), u_approver: member() } });
+    const context = claimContext();
+    context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff' };
+    await h.useCase.execute(actionRun(cfg), context);
     assert.deepEqual(h.sent[0]?.recipientUserIds, ['u_approver']);
   });
 

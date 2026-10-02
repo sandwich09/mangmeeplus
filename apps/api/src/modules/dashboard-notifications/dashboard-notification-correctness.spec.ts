@@ -315,6 +315,23 @@ describe('notices of a claim whose payout account is being corrected', () => {
     assert.deepEqual(await stillToDo({ status: 'PAID' }), []);
   });
 
+  // Final review W4: a claim being cancelled takes no decision and no payment, so none of its notices
+  // is something to do. Withdrawn, the cancellation gives them back as they were.
+  it('keeps nothing to do for a claim that is being cancelled, in any status, and gives it back once the cancellation is withdrawn', async () => {
+    const cancellationPendingAt = at('2026-10-05T03:00:00.000Z');
+    for (const claim of [
+      { status: 'PENDING_APPROVAL' },
+      { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: sentBackAt },
+      { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: accountGivenAt },
+      { status: 'READY_FOR_PAYMENT' },
+    ]) {
+      assert.notDeepEqual(await stillToDo(claim), [], claim.status);
+      assert.deepEqual(await stillToDo({ ...claim, cancellationPendingAt }), [], `${claim.status} while being cancelled`);
+    }
+    // The state is read, not stored: the same notices are to do again as soon as the claim goes on.
+    assert.deepEqual(await stillToDo({ status: 'READY_FOR_PAYMENT', cancellationPendingAt: null }), ['ready-to-pay', 'payment-reminder']);
+  });
+
   it('leaves an ordinary claim waiting for approval as it was: its approval notice and its reminder are to do', async () => {
     assert.deepEqual(await stillToDo({ status: 'PENDING_APPROVAL' }), ['first-approval', 'first-reminder', 'round-reminder']);
   });

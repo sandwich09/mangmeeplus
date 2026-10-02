@@ -12,7 +12,6 @@ import { civilDate, civilPeriodKey, looksLikeAccountNumber, reimbursementPaidNot
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
-import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
@@ -21,6 +20,7 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
+import { assertCanReadRequestOrAssignment } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
   payoutCorrectionPhase,
@@ -91,10 +91,12 @@ export class FinanceReviewReimbursementUseCase {
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, branch scope included, ahead of every answer that depends on where
+    // the claim stands (final review item 18): the status was said before the branch was looked at.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     if (req.status !== 'FINANCE_REVIEW') {
       throw new UnprocessableEntityException(`Cannot finance-review from status ${req.status}`);
     }
-    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const now = new Date();
     const note = input.note?.trim();
@@ -352,7 +354,6 @@ export class RecordReimbursementPaymentUseCase {
   constructor(
     private readonly repo: PrismaReimbursementRepository,
     private readonly audit: AuditService,
-    private readonly outbox: OutboxAppendService,
     private readonly reserveNumber: ReserveDocumentNumberUseCase,
     private readonly commitNumber: CommitDocumentNumberUseCase,
     private readonly evidence: ReimbursementEvidenceService,
@@ -569,6 +570,9 @@ export class VoidReimbursementPaymentUseCase {
   async execute(ctx: RequestContext, requestId: string, paymentId: string, input: VoidReimbursementPaymentInput): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.payment.void')) throw new ForbiddenException('Missing permission: reimbursement.payment.void');
     if (!input.reason || input.reason.trim() === '') throw new BadRequestException('void_reason_required');
+    // The reason is shown on the payment row to every reader of the claim and kept in the audit row,
+    // and "transferred into the wrong account" is where a number gets typed: no account number there.
+    if (looksLikeAccountNumber(input.reason)) throw new BadRequestException('note_contains_account_number');
 
     // With its relations: a replay of a void answers from this read, and that answer is a claim detail
     // like any other (steps, payments, signatures), not a header with empty lists.
@@ -623,6 +627,8 @@ export class ExportReimbursementEvidenceUseCase {
     const payout = req.payoutMethod ? await this.repo.findClaimPayout(req) : undefined;
     const paidInto = payments.flatMap((payment) => payment.payoutDestinationVersion ?? []);
     const destinations = paidInto.length > 0 ? await this.repo.listPaymentPayoutDestinations(ctx.companyId, id, paidInto) : {};
+    // Who paid, as the payment row names them (invariant I4).
+    const payerNames = payments.length > 0 ? await this.repo.getUserDisplayNames(ctx.companyId, payments.map((payment) => payment.paidByUserId)) : {};
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.export',
@@ -676,6 +682,7 @@ export class ExportReimbursementEvidenceUseCase {
         // `paidOn` is the day the claim page prints: the payment's day in Thai time, which is not always
         // the day `paidAt` reads as in UTC.
         paidAt: p.paidAt.toISOString(), paidOn: civilDate(p.paidAt), paymentReference: p.paymentReference, status: p.status,
+        paidByUserId: p.paidByUserId, ...(payerNames[p.paidByUserId] && { paidByName: payerNames[p.paidByUserId] }),
         slipCount: paymentSlips[p.id]?.length ?? 0,
         // The account this payment was confirmed into (masked), when, and why the method differs from
         // the one asked for: the same three facts the payment row on the claim page shows.

@@ -271,8 +271,11 @@ export class ReopenRejectedReimbursementUseCase {
   ) {}
 
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestSummary> {
-    const req = await this.repo.findRequestById(ctx.companyId, id);
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
+    // review item 18): which refusal a finance reviewer got below said whether the claim waits for approval.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
 
     const isOwner = req.requesterUserId === ctx.userId;
     const withdraw = req.status === 'PENDING_APPROVAL';
@@ -280,7 +283,6 @@ export class ReopenRejectedReimbursementUseCase {
     const canReopen = (isOwner && ctx.permissions.includes('reimbursement.update_own_draft'))
       || (!withdraw && ctx.permissions.includes('reimbursement.finance_review'));
     if (!canReopen) throw new ForbiddenException('Cannot reopen this reimbursement');
-    assertReimbursementBranchInScope(ctx, req.branchId);
     if ((req.status !== 'REJECTED' && !withdraw) || !canTransition(req.status, 'DRAFT')) {
       throw new UnprocessableEntityException(`Cannot reopen from status ${req.status}`);
     }
@@ -989,12 +991,14 @@ export class CancelReimbursementUseCase {
    * call finishes.
    */
   async execute(ctx: RequestContext, id: string, reason?: string): Promise<ReimbursementRequestSummary> {
-    const req = await this.repo.findRequestById(ctx.companyId, id);
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
+    // review item 18): "Cannot cancel from status …" was said before the branch was looked at.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
 
     if (!holdsCancelRight(ctx, req)) throw new ForbiddenException('Cannot cancel this reimbursement');
     if (!canTransition(req.status, 'CANCELLED')) throw new UnprocessableEntityException(`Cannot cancel from status ${req.status}`);
-    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const cancellationReason = cancellationReasonFor(req, reason);
     // A closed accounting period, a locked tax period, an expense record no void takes: refused here,
@@ -1148,10 +1152,11 @@ export class WithdrawReimbursementCancellationUseCase {
   ) {}
 
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestSummary> {
-    const req = await this.repo.findRequestById(ctx.companyId, id);
+    const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, branch scope included, ahead of everything else about the claim.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     if (!holdsCancelRight(ctx, req)) throw new ForbiddenException('Cannot cancel this reimbursement');
-    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const updated = await this.repo.withdrawCancellationAtomic({
       companyId: ctx.companyId,
@@ -1188,11 +1193,13 @@ export class ResumeReimbursementUseCase {
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
+    // review item 18): which refusal came back said whether a decision on the claim waits for the system.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     const waiting = await awaitingSystemOf(ctx, req, this.repo);
     if (!waiting) {
       // Nothing waits any more (pressed twice, or the scheduled run got there first). That is what
-      // was asked for, so the answer is the claim as it stands, to whoever may read it.
-      await assertCanReadRequestOrAssignment(ctx, req, this.repo);
+      // was asked for, so the answer is the claim as it stands.
       return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     }
     if (!waiting.canResume) throw new ForbiddenException('reimbursement_resume_not_allowed');

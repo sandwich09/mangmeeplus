@@ -805,6 +805,29 @@ jobs:
           pnpm --filter @watchdog-bms/api exec prisma migrate deploy
           CLAIM_PAYMENT_POSTING_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/ledger/application/use-cases/claim-payment-posting.pg.spec.ts
+      # The claim (reimbursement) proofs that only a real database can give: the claim lock and the
+      # payment lock, a send-back against a payment, a correction round in one transaction, the slip's
+      # exclusivity, a void against a bank match in both orders, the hub's counts over every page.
+      # The unit job has no database, so every case of
+      # `prisma-reimbursement.repository.draft-submit-race.spec.ts` skips there and passes by skipping
+      # (the `pretest` script lists it). Here the gate is REQUIRED: with no database to reach, the run
+      # fails instead of skipping. Its own database, like the claim payout posting above, so neither
+      # suite reads what the other left behind.
+      # The last line runs the spec of the production A5 evidence collector, which classifies the
+      # approval snapshots of claims in flight. It reads through a fake client and needs no database,
+      # but it is named `.pg.spec.ts` after the module it tests, so the default suite's wiring guard
+      # exempts it and only the production A5 workflow ran it.
+      - name: Test reimbursement claim proofs against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true'
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_reimbursement_ci
+          REIMBURSEMENT_PG_GATE_REQUIRED: 'true'
+        run: |
+          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_reimbursement_ci'
+          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          pnpm --filter @watchdog-bms/api run test:reimbursement-compatibility
+          pnpm --filter @watchdog-bms/api exec tsx --test src/scripts/production-a5-evidence.pg.spec.ts
       # Every spec above builds its subject with `new`, so none of them asks Nest to wire
       # anything: a DI mistake passes the whole suite and only fails when the container starts.
       - run: pnpm --filter @watchdog-bms/api test:boot

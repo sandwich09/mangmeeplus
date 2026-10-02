@@ -1,16 +1,20 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { ReimbursementPayoutInput, ReimbursementRequestDetail, RequestContext, SubmitReimbursementPayoutCorrectionInput } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
-import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest, type EffectivePolicy } from '../../domain/reimbursement.constants';
 import { payoutCorrectionPhase, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { detailWithFileNames } from '../dto/reimbursement.mapper';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { sendBackForPayoutCorrection } from './reimbursement-approval.use-case';
-import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
+import { MemberPayoutAccountUseCase, type DraftPayoutAudit } from './reimbursement-payout.use-case';
 import { ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { assertCanReadRequestOrAssignment, mayGivePayoutAccount, payoutCorrectionSender } from './reimbursement-request.use-case';
+
+/** What a round's answer commits and what its audit row says of it: a draft's receiving choice, or the account the claim had. */
+type CorrectionPayoutChange = Parameters<PrismaReimbursementRepository['submitPayoutCorrectionAtomic']>[0]['payout']
+  & { audit: Omit<DraftPayoutAudit, 'mode'> & { mode: DraftPayoutAudit['mode'] | 'PREVIOUS' } };
 
 /** A cancellation that was started and has not completed. A cancelled claim keeps the columns of its own, and is refused for what it is. */
 function beingCancelled(req: ReimbursementRequestRecord): boolean {
@@ -91,28 +95,40 @@ export class SubmitPayoutCorrectionUseCase {
     // The same seam as a draft's receiving choice: the account is sealed here, "save as my default" sets
     // the REQUESTER's default in the same transaction, and an account typed by someone else tells the
     // requester in that transaction too.
-    const { defaultToken, ...payout } = input as SubmitReimbursementPayoutCorrectionInput & { defaultToken?: unknown };
-    const change = await this.payouts.draftPayoutChange(ctx, req.requesterUserId, payout as ReimbursementPayoutInput);
+    const { defaultToken, expectedUpdatedAt, ...payout } = input as SubmitReimbursementPayoutCorrectionInput & { defaultToken?: unknown };
+    // "The account the claim had" (final review W6): nobody types an account for anyone, so the rules
+    // about typing one do not come into it, the one about a requester who is no longer active included.
+    const change: CorrectionPayoutChange = payout.mode === 'PREVIOUS'
+      ? { write: { mode: 'PREVIOUS' }, audit: { mode: 'PREVIOUS' } }
+      : await this.payouts.draftPayoutChange(ctx, req.requesterUserId, payout as ReimbursementPayoutInput);
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const source = payoutCorrectionSourceStep(req);
-    // Whom the event names: the approvers of the new step, or, for a claim nobody approves, the people
-    // who would have, whom the ready-to-pay notice asks first (owner rule 2026-10-01). Best effort both.
-    const approverRecipientUserIds = source
-      ? await this.stepApprovers(req, source, effectivePolicyForRequest(req, policy).allowSelfApproval)
-      : await this.approverRoutes.resolveWouldBeApproverUserIds(ctx.companyId, policy, req).catch(() => []);
+    // Who may stay on the new step, and whom its notice asks when it names nobody (final review S2).
+    const approverRouteUserIds = source ? await this.todaysApprovalRoute(req, source, policy) : [];
+    // A claim nobody approves: the people who would have, whom the ready-to-pay notice asks first
+    // (owner rule 2026-10-01). Best effort.
+    const wouldBeApproverUserIds = source ? [] : await this.approverRoutes.resolveWouldBeApproverUserIds(ctx.companyId, policy, req).catch(() => []);
 
     const submittedAt = new Date();
     await this.repo.submitPayoutCorrectionAtomic({
       companyId: ctx.companyId,
       requestId: id,
-      expectedUpdatedAt: req.updatedAt,
+      // The claim the form was opened on, when the form says which (final review W8); else the claim as
+      // just read. The repository holds the write to it under the claim's lock, so a second press that
+      // arrives after the first was taken answers "it changed" and freezes nothing.
+      expectedUpdatedAt: expectedUpdatedAt === undefined ? req.updatedAt : new Date(expectedUpdatedAt),
       actorUserId: ctx.userId,
       scopes: ctx.scopes ?? {},
       submittedAt,
       payout: change,
       seenDefaultToken: defaultToken,
       defaultSetInThisTransaction: change.audit.savedAsDefault === true,
+      approverRouteUserIds,
       onPersisted: async (tx, result) => {
+        // Whom the event names: the people the new step names; when it names nobody, whoever its
+        // recorded role, or the owner, reaches today.
+        const named = result.step ? [...new Set([...(result.step.assignedApproverUserIds ?? []), ...(result.step.approverUserId ? [result.step.approverUserId] : [])])] : [];
+        const approverRecipientUserIds = !result.step ? wouldBeApproverUserIds : named.length > 0 ? named : approverRouteUserIds;
         await this.audit.log({
           companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payout_correction.submit',
           targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
@@ -155,18 +171,29 @@ export class SubmitPayoutCorrectionUseCase {
   }
 
   /**
-   * Who the new step waits for: the people the claim's step named who can still act; when none of
-   * them can, whoever the step's recorded role, or the owner, reaches (the rule that lets them decide it).
+   * Today's approval route for the step a round takes its approvers from (final review S2), resolved
+   * the way a submit resolves one, for the step's own role and the claim's branch: the approver the
+   * step names, while they hold the approve and reject rights there; else the holders of the step's
+   * recorded role (and of the policy's other approver roles, while the policy still names that
+   * role), the owner when no holder is left, the requester when nobody else is. Nobody: the role can
+   * no longer approve, or has nobody for this branch.
    */
-  private async stepApprovers(req: ReimbursementRequestRecord, step: ReimbursementApprovalStepRecord, allowSelfApproval: boolean): Promise<string[]> {
-    const named = step.assignedApproverUserIds ?? (step.approverUserId ? [step.approverUserId] : []);
-    const active = await this.repo.findActiveApproverUserIds(req.companyId, named, req.branchId);
-    const able = named.filter((userId) => active.has(userId));
-    if (able.length > 0) return able;
-    const [route] = await this.approverRoutes.resolveSubmissionRoutesBestEffort(req.companyId, [{
-      roleKey: step.approverRoleSnapshot ?? 'MANAGER', ...(req.branchId && { branchId: req.branchId }),
-      requesterUserId: req.requesterUserId, allowSelfApproval,
-    }]).catch(() => []);
-    return route?.recipientUserIds ?? [];
+  private async todaysApprovalRoute(req: ReimbursementRequestRecord, step: ReimbursementApprovalStepRecord, policy: EffectivePolicy): Promise<string[]> {
+    const roleKey = step.approverRoleSnapshot ?? 'MANAGER';
+    const claim = {
+      companyId: req.companyId, ...(req.branchId && { branchId: req.branchId }),
+      requesterUserId: req.requesterUserId, allowSelfApproval: effectivePolicyForRequest(req, policy).allowSelfApproval,
+    };
+    try {
+      const named = step.approverUserId
+        ? await this.approverRoutes.resolveNamedSubmissionRoute({ ...claim, userId: step.approverUserId, fallbackRole: roleKey }) : null;
+      const route = named ?? await this.approverRoutes.resolveSubmissionRoute({
+        ...claim, roleKey, ...(policy.defaultApproverRoles?.includes(roleKey) && { roleKeys: policy.defaultApproverRoles }),
+      });
+      return route.recipientUserIds;
+    } catch (error) {
+      if (error instanceof BadRequestException) return [];
+      throw error;
+    }
   }
 }

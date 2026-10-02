@@ -81,9 +81,10 @@ export class WorkflowScanCandidatesProvider {
   private async approvalSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
     // Not a claim sent back to have its payout account corrected and still with its requester (payout
-    // spec §14.7): it is PENDING_APPROVAL with no step open, and no approver is late with it.
+    // spec §14.7): it is PENDING_APPROVAL with no step open, and no approver is late with it. Nor a
+    // claim being cancelled: the approve and reject calls refuse it until that is finished or withdrawn.
     const rows = (await this.reimbursementRepo.listRequests({ companyId, status: 'PENDING_APPROVAL' }))
-      .filter((request) => payoutCorrectionPhase(request) !== 'AWAITING_REQUESTER');
+      .filter((request) => payoutCorrectionPhase(request) !== 'AWAITING_REQUESTER' && !request.cancellationPendingAt);
     const inputs = rows.map((request) => {
       const requestPolicy = effectivePolicyForRequest(request, currentPolicy);
       return {
@@ -164,6 +165,8 @@ export class WorkflowScanCandidatesProvider {
     // every waiting claim wrote a skipped run row per claim per hour in every company, deadline or
     // not; a company that set none now costs one query and nothing else.
     const rows = waiting.flatMap((r) => {
+      // A claim being cancelled takes no payment until that is finished or withdrawn: nobody is late with it.
+      if (r.cancellationPendingAt) return [];
       try {
         const slaHours = effectivePolicyForRequest(r, currentPolicy).slaHours;
         return slaHours && slaHours > 0 ? [{ ...r, slaHours }] : [];
