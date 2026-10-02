@@ -179,7 +179,8 @@ export default function SalesReportsPage() {
               </div>
               <MonthFigures rows={month.rows} totals={month.totals} />
               {/* Owner 2026-10-02: a shop waiting for review is no opened shop yet. It is named here, in
-                  the month it will count in, with why it waits, so whoever brought it in can see it. */}
+                  the month it will count in, with why it waits, so whoever reads the report sees which
+                  shop is held back and why. */}
               {month.waiting.length > 0 && (
                 <div className="grid gap-2 border-t border-gray-100 pt-3">
                   <p className="text-xs font-bold text-gray-700">ร้านที่{SALES_WAITING} · {SALES_WAITING_NOTE}</p>

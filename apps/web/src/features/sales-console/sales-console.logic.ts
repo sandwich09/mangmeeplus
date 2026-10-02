@@ -690,8 +690,8 @@ export function salesWaitingNotice(count: number): string {
 }
 
 /**
- * One waiting shop as the person who brought it in reads it: which shop, whose it is, how it came
- * in, and why it waits, in the words the Owner's queue shows for the same reasons (`salesFlagLabel`).
+ * One waiting shop as the report prints it: which shop, whose it is, how it came in, and why it
+ * waits, in the words the Owner's queue shows for the same reasons (`salesFlagLabel`).
  */
 export function salesWaitingLine(waiting: SalesReportWaiting, agentName?: string): { title: string; detail: string } {
   return {
