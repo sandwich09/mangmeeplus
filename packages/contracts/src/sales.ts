@@ -224,7 +224,7 @@ export const SALES_REFERRAL_WINDOW_DAYS = 14;
  * (§17.1, owner 2026-10-02).
  */
 export const SALES_ATTRIBUTION_REFUND_WINDOW_DAYS = 60;
-/** What takes sales credit back: a refund, or a payment dispute the shop's bank won. */
+/** What takes sales credit back: a refund that succeeded, or a payment dispute that was lost. */
 export type SalesDeductionKind = 'REFUND' | 'DISPUTE';
 /** One sales code attributing more than this many shops in a Bangkok day is an anomaly (§17.1). */
 export const SALES_REFERRAL_DAILY_ANOMALY_LIMIT = 20;
