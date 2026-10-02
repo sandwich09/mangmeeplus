@@ -204,7 +204,8 @@ export function claimPayoutView(detail: { status?: string; requesterUserId?: str
   if (payout.notReadyReason || !payout.payoutMethod) {
     return {
       state: 'missing',
-      line: payout.notReadyReason === 'payout_destination_required' ? 'ยังไม่ได้ระบุบัญชีรับเงินคืน' : 'ยังไม่ได้เลือกวิธีรับเงินคืน',
+      // A claim's account is "บัญชีรับเงิน" on every screen; "บัญชีรับเงินคืน" names the member's standing account.
+      line: payout.notReadyReason === 'payout_destination_required' ? 'ยังไม่ได้ระบุบัญชีรับเงิน' : 'ยังไม่ได้เลือกวิธีรับเงินคืน',
       notes: payout.followsDefault ? ['ผู้เบิกยังไม่ได้ตั้งบัญชีรับเงินคืนประจำ เลือกรับเป็นเงินสด ระบุบัญชีสำหรับใบนี้ หรือตั้งบัญชีประจำก่อนส่งอนุมัติ'] : [],
     };
   }

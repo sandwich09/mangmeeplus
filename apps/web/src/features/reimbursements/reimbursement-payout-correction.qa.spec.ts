@@ -161,7 +161,7 @@ describe('sending a claim back for its payout account: what the form asks and se
   });
 
   it('refuses, before asking the API and in the API\'s own sentences, no reason, a note over 500 characters and a note with an account number', () => {
-    assert.equal(payoutCorrectionRequestError('', ''), 'กรุณาเลือกเหตุผลที่ส่งกลับให้แก้บัญชีรับเงิน');
+    assert.equal(payoutCorrectionRequestError('', ''), 'กรุณาเลือกเหตุผลที่ส่งกลับ');
     assert.equal(payoutCorrectionRequestError('A_REASON_ADDED_LATER', ''), translateApiError('payout_correction_reason_required'));
     assert.equal(REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, 500);
     assert.equal(payoutCorrectionRequestError('OTHER', 'ก'.repeat(501)), 'หมายเหตุต้องไม่เกิน 500 ตัวอักษร');
@@ -642,7 +642,7 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
 
   it('asks nothing of the API without a reason, or with an account number in the note, and says why', async () => {
     for (const [state, sentence] of [
-      [{ note: 'โอนไม่เข้า' }, 'กรุณาเลือกเหตุผลที่ส่งกลับให้แก้บัญชีรับเงิน'],
+      [{ note: 'โอนไม่เข้า' }, 'กรุณาเลือกเหตุผลที่ส่งกลับ'],
       [{ reasonCode: 'OTHER', note: 'เลขที่ถูกคือ 004-5-67123-4' }, translateApiError('note_contains_account_number')!],
     ] as const) {
       const done: unknown[] = [];
@@ -657,9 +657,9 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
   it('shows the server\'s sentence for a lost race or a refusal and keeps the reason and the note as typed', async () => {
     for (const [status, code, sentence] of [
       [409, 'reimbursement_changed', 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'],
-      [409, 'payout_correction_not_allowed', 'ใบนี้ส่งกลับแก้บัญชีไม่ได้ในสถานะปัจจุบัน'],
-      [409, 'payout_correction_in_progress', 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'],
-      [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ทำรายการแก้บัญชีรับเงินของใบนี้'],
+      [409, 'payout_correction_not_allowed', 'ใบนี้ส่งกลับไม่ได้ในตอนนี้ ส่งกลับได้เฉพาะใบที่รอจ่ายและยังไม่ได้บันทึกจ่าย ถ้าบันทึกจ่ายแล้วต้องยกเลิกการจ่ายก่อน'],
+      [409, 'payout_correction_in_progress', 'ใบนี้ถูกส่งกลับเรื่องวิธีรับเงินคืน และยังไม่กลับมารอจ่าย จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'],
+      [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ส่งกลับหรือเลือกวิธีรับเงินคืนของใบนี้'],
     ] as const) {
       const done: unknown[] = [];
       let reread = 0;
@@ -677,10 +677,10 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
       assert.equal(changes.some((change) => change.shown === 'BANK_WRONG' || change.shown === 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว'), false, code);
     }
     // What the person then sees: their reason still chosen, their note still in the box, and the sentence.
-    const { html, texts } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว', error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร' });
+    const { html, texts } = form(ready(), { reasonCode: 'BANK_WRONG', note: 'ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว', error: 'ใบนี้ถูกส่งกลับเรื่องวิธีรับเงินคืน และยังไม่กลับมารอจ่าย จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร' });
     assert.match(html, /<input type="radio"[^>]*checked=""[^>]*\/><span class="min-w-0">ธนาคารไม่ถูกต้อง<\/span>/);
     assert.match(html, /<textarea[^>]*>ผู้เบิกแจ้งว่าเปลี่ยนธนาคารแล้ว<\/textarea>/);
-    assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'));
+    assert.ok(texts.includes('⚠ ใบนี้ถูกส่งกลับเรื่องวิธีรับเงินคืน และยังไม่กลับมารอจ่าย จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'));
     assert.match(html, /role="alert"/);
   });
 
@@ -864,9 +864,9 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
   it('shows the server\'s sentence for a refusal and keeps the account as typed', async () => {
     for (const [status, code, sentence] of [
       [409, 'payout_destination_changed', translateApiError('payout_destination_changed')!],
-      [409, 'payout_correction_not_requested', 'ใบนี้ไม่ได้ถูกส่งกลับให้แก้บัญชีรับเงิน กรุณาเปิดใบใหม่เพื่อดูสถานะล่าสุด'],
+      [409, 'payout_correction_not_requested', 'ใบนี้ไม่ได้ถูกส่งกลับเรื่องวิธีรับเงินคืน กรุณาเปิดใบใหม่เพื่อดูสถานะล่าสุด'],
       [409, 'reimbursement_changed', 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง'],
-      [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ทำรายการแก้บัญชีรับเงินของใบนี้'],
+      [403, 'payout_correction_denied', 'คุณไม่มีสิทธิ์ส่งกลับหรือเลือกวิธีรับเงินคืนของใบนี้'],
     ] as const) {
       const done: unknown[] = [];
       const { handlers, changes } = form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED', account: typed } }, (claim) => done.push(claim));
@@ -876,10 +876,10 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
       // The form's own state (what was picked and typed) is never set again by a refusal.
       assert.equal(changes.some((change) => !!change.initial && typeof change.initial === 'object' && 'saveAsDefault' in change.initial), false, code);
     }
-    const { html, texts } = form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED', account: typed }, error: 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร' });
+    const { html, texts } = form(withDefault(phaseA()), { picked: { mode: 'SPECIFIED', account: typed }, error: 'ใบนี้ถูกส่งกลับเรื่องวิธีรับเงินคืน และยังไม่กลับมารอจ่าย จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร' });
     assert.match(html, /<input[^>]*aria-label="ชื่อบัญชี"[^>]*value="นาย สมชาย ใจดี"/);
     assert.match(html, /<input[^>]*aria-label="เลขบัญชี"[^>]*value="111-2-33444-1112"/);
-    assert.ok(texts.includes('⚠ ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'));
+    assert.ok(texts.includes('⚠ ใบนี้ถูกส่งกลับเรื่องวิธีรับเงินคืน และยังไม่กลับมารอจ่าย จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร'));
   });
 
   it('sends the claim it was opened on with the account, and tells the page when the refusal is that this claim has changed since', async () => {
@@ -2318,10 +2318,30 @@ describe('nothing pays a claim while its payout account is being corrected (AC30
     assert.equal(logic.opensPaymentFormOnArrival(true, active(phaseA(), everything)), false);
   });
 
+  // Before: every refusal of a round said "แก้บัญชีรับเงิน". A refusal is one sentence per code with nothing of the claim in it,
+  // so it must be true of a claim sent back with an account, with cash and with nothing, whatever was answered.
+  it('refuses in sentences that are true of every round: none names an account to correct, and each says what can be done', () => {
+    const SENTENCES: Record<string, string> = {
+      payout_correction_in_progress: 'ใบนี้ถูกส่งกลับเรื่องวิธีรับเงินคืน และยังไม่กลับมารอจ่าย จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร',
+      payout_correction_not_allowed: 'ใบนี้ส่งกลับไม่ได้ในตอนนี้ ส่งกลับได้เฉพาะใบที่รอจ่ายและยังไม่ได้บันทึกจ่าย ถ้าบันทึกจ่ายแล้วต้องยกเลิกการจ่ายก่อน',
+      payout_correction_denied: 'คุณไม่มีสิทธิ์ส่งกลับหรือเลือกวิธีรับเงินคืนของใบนี้',
+      payout_correction_not_requested: 'ใบนี้ไม่ได้ถูกส่งกลับเรื่องวิธีรับเงินคืน กรุณาเปิดใบใหม่เพื่อดูสถานะล่าสุด',
+      payout_correction_reason_required: 'กรุณาเลือกเหตุผลที่ส่งกลับ',
+      payout_correction_note_too_long: 'หมายเหตุต้องไม่เกิน 500 ตัวอักษร',
+    };
+    for (const [code, sentence] of Object.entries(SENTENCES)) {
+      assert.equal(translateApiError(code), sentence, code);
+      assert.doesNotMatch(sentence, /แก้บัญชี|บัญชีใหม่|อยู่ระหว่างแก้|บัญชีรับเงิน/u, code);
+    }
+    assertPlainThai(Object.values(SENTENCES), 'the refusals of a round');
+    // The name of a claim's account outside a round too: "บัญชีรับเงิน". "บัญชีรับเงินคืน" names the member's standing account.
+    assert.equal(translateApiError('payout_destination_required'), 'ยังไม่ได้ระบุบัญชีรับเงิน ระบุบัญชี หรือเลือกรับเป็นเงินสด');
+  });
+
   // Spec §22: the payer had the form open when the claim was sent back. The save is refused, and the form says why.
   it('tells a payer whose form was open that the claim is having its payout account corrected, and to press nothing again', () => {
     const refused = Object.assign(new Error('payout_correction_in_progress'), { status: 409 });
-    assert.equal(logic.paymentSaveErrorMessage('record', refused, true), 'ยังบันทึกจ่ายไม่สำเร็จ · ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร');
+    assert.equal(logic.paymentSaveErrorMessage('record', refused, true), 'ยังบันทึกจ่ายไม่สำเร็จ · ใบนี้ถูกส่งกลับเรื่องวิธีรับเงินคืน และยังไม่กลับมารอจ่าย จึงยังทำรายการนี้ไม่ได้ เปิดใบใหม่เพื่อดูว่าตอนนี้ใบรอใคร');
     // A payment that lost its race against the send-back itself is told to press save again; the next press is then refused as above.
     const lost = Object.assign(new Error('reimbursement_payment_state_changed'), { status: 409 });
     assert.match(logic.paymentSaveErrorMessage('record', lost, true), /^ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน/u);
