@@ -511,8 +511,12 @@ export function payoutCorrectionAnswerWords(
   const title = forSelf ? reimbursementPayoutRoundAsk(words.held) : words.askOnBehalf;
   return { title, button: forSelf && claim.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? words.given.askAgain : title };
 }
-/** A scan declared as signed before the round (spec §14.4): it stays in the list and no longer counts. */
-export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อนแก้บัญชีรับเงิน';
+/**
+ * A scan declared as signed before the claim was sent back (spec §14.4): it stays in the list and no longer counts.
+ * Named for the send-back alone, for good: a claim is also sent back with no account, or with cash, and what it comes
+ * back with may be what it had.
+ */
+export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อนส่งกลับ';
 
 /**
  * The API refused a form of the round because the claim is no longer as the page read it (HTTP 409): someone paid it,

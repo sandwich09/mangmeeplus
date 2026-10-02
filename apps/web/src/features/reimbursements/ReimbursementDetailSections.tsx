@@ -310,24 +310,28 @@ export function MissingSavedSignatureModal({ companyId, requestId, onClose }: {
 const SIGNED_COPY_NOT_FOR_SLIPS = 'ช่องนี้สำหรับใบเบิกที่มีลายเซ็นเท่านั้น ไม่ใช่ที่แนบสลิปโอนเงิน สลิปโอนเงินแนบที่ขั้นจ่ายเงินคืน ตอนกดบันทึกจ่าย';
 
 /**
- * Payout spec §14.4: while the claim's payout account is being corrected its form prints no account and no
- * approver, so nobody signs it in the system and no scan is declared as signed. Said wherever signing is.
+ * Payout spec §14.4: while a claim is in a payout round its form prints no destination and no approver, so nobody
+ * signs it in the system and no scan is declared as signed. Said wherever signing is, with what the claim waits for
+ * in the words of its badge: a claim with no account, one that asked for cash, and an answer that kept the account
+ * have no "account being corrected" and no "new account" to wait for. Signing comes back with the pay step.
  */
-const SIGNING_WAITS_FOR_CORRECTION = 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งหลังบัญชีใหม่ได้รับอนุมัติ';
+const signingWaitsForRound = (detail: Parameters<typeof claimStatusBadge>[0]) =>
+  `ใบนี้${claimStatusBadge(detail).label} ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งเมื่อใบกลับมารอจ่าย`;
 
 /**
  * A4: a scan counts as the signed record only after the attacher declares both signatures are on it for
  * THIS claim number. Without the declaration it is kept as an ordinary attachment that signs nothing.
  */
-function SignedCopyDialog({ requestNo, fileName, canDeclare, onClose, onSend }: {
+function SignedCopyDialog({ requestNo, fileName, waitsForRound, onClose, onSend }: {
   requestNo: string;
   fileName: string;
-  /** False while the claim's payout account is being corrected: the API takes the file and refuses the declaration. */
-  canDeclare: boolean;
+  /** While the claim is in a payout round: why no declaration is taken (the API takes the file and refuses the declaration). */
+  waitsForRound?: string;
   onClose: () => void;
   onSend: (declared: boolean) => void;
 }) {
   const [declared, setDeclared] = useState(false);
+  const canDeclare = !waitsForRound;
   return (
     <Modal open title="แนบใบเบิกที่เซ็นแล้ว" size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
@@ -342,7 +346,7 @@ function SignedCopyDialog({ requestNo, fileName, canDeclare, onClose, onSend }: 
             <p className="text-xs text-gray-500">ถ้ายังเซ็นไม่ครบ แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
           </>
         ) : (
-          <p className="text-sm text-gray-600">{SIGNING_WAITS_FOR_CORRECTION} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
+          <p className="text-sm text-gray-600">{waitsForRound} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว</p>
         )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className={ghostClass} onClick={() => onSend(false)}>แนบเป็นไฟล์แนบทั่วไป</button>
@@ -885,7 +889,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             {slots.length === 2 && claimSelfApproved(detail) && (
               <p className="mt-3 text-xs text-gray-600">ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท</p>
             )}
-            {correcting && <p className="mt-3 text-xs text-gray-600">{SIGNING_WAITS_FOR_CORRECTION}</p>}
+            {correcting && <p className="mt-3 text-xs text-gray-600">{signingWaitsForRound(detail)}</p>}
             {/* One tap signs every block this viewer really acted on; the server re-checks each role. */}
             {signAction && (
               <button type="button" className={cx(ghostClass, 'mt-3 w-full sm:w-auto')} disabled={busy} aria-busy={Boolean(busy)}
@@ -940,7 +944,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             <SignedCopyDialog
               requestNo={detail.requestNo}
               fileName={pendingCopy.name}
-              canDeclare={!correcting}
+              {...(correcting && { waitsForRound: signingWaitsForRound(detail) })}
               onClose={() => setPendingCopy(null)}
               onSend={(declared) => { onUploadSignedCopy(pendingCopy, declared ? detail.requestNo : undefined); setPendingCopy(null); }}
             />

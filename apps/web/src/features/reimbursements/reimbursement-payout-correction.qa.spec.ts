@@ -2227,14 +2227,16 @@ describe('signing and signed copies around a round (spec §14.4, AC32)', () => {
     (start) => (start === null && ++nulls === 1 ? pendingCopy : undefined));
   };
   const signButton = (texts: string[]) => texts.filter((text) => text === 'ลงนาม' || text === 'ลงนามใหม่');
-  const WAITS = 'ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งหลังบัญชีใหม่ได้รับอนุมัติ';
+  /** Why nothing is signed meanwhile: what the claim waits for, in the words of its badge, and when signing comes back. */
+  const waits = (status: string) => `ใบนี้${status} ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งเมื่อใบกลับมารอจ่าย`;
+  const WAITS = waits('รอผู้เบิกแก้บัญชีรับเงิน');
 
   it('offers no ลงนาม to anyone while a round is open, says why, and offers it again once the new account is approved', () => {
-    for (const at of [phaseA, phaseB]) {
+    for (const [at, said] of [[phaseA, WAITS], [phaseB, waits('รออนุมัติบัญชีรับเงินใหม่')]] as const) {
       for (const viewer of [requester, approver, payer]) {
         const { texts } = detailSections(at(), viewer);
         assert.deepEqual(signButton(texts), []);
-        assert.ok(texts.includes(WAITS));
+        assert.ok(texts.includes(said), said);
         assert.equal(texts.filter((text) => text === 'ยังไม่ลงนาม').length, 2, 'both blocks are empty: the signatures went with the send-back');
       }
     }
@@ -2242,22 +2244,41 @@ describe('signing and signed copies around a round (spec §14.4, AC32)', () => {
     for (const detail of [ready(), reapproved()]) {
       assert.deepEqual(signButton(detailSections(detail, requester).texts), ['ลงนาม']);
       assert.deepEqual(signButton(detailSections(detail, approver).texts), ['ลงนาม']);
-      assert.equal(detailSections(detail, requester).texts.includes(WAITS), false);
+      assert.equal(detailSections(detail, requester).texts.some((text) => text.includes('ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้')), false);
     }
     assert.deepEqual(signButton(detailSections(reapproved(), payer).texts), []);
   });
 
-  it('labels a scan declared before the round "สำเนาก่อนแก้บัญชีรับเงิน", keeps it openable, and does not count it as signed', () => {
+  // Before: "ใบนี้อยู่ระหว่างแก้บัญชีรับเงิน … ทำได้อีกครั้งหลังบัญชีใหม่ได้รับอนุมัติ" in every round: of a claim with no account, of one
+  // that asked for cash, and whatever was answered.
+  it('says why by what the claim waits for, and that signing comes back with the pay step, in every round', () => {
+    const said = (detail: object) => detailSections(detail, requester).texts.filter((text) => text.includes('ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้'));
+    assert.deepEqual(said(sentBackHolding('NOTHING')), [waits('รอผู้เบิกเพิ่มบัญชีรับเงิน')]);
+    assert.deepEqual(said(sentBackHolding('CASH')), [waits('รอผู้เบิกเลือกวิธีรับเงินคืน')]);
+    assert.deepEqual(said(answeredWith('SAME_ACCOUNT')), [waits('รออนุมัติบัญชีรับเงินเดิม')]);
+    assert.deepEqual(said(answeredWith('FIRST_ACCOUNT')), [waits('รออนุมัติบัญชีรับเงิน')]);
+    assert.deepEqual(said(answeredWith('SAME_CASH')), [waits('รออนุมัติการรับเป็นเงินสด')]);
+    for (const detail of [...HELD.map((held) => sentBackHolding(held)), ...ALL_ANSWERS.map((answer) => answeredWith(answer))]) {
+      for (const sentence of said(detail)) assert.doesNotMatch(sentence, /อยู่ระหว่างแก้|บัญชีใหม่ได้รับอนุมัติ/u);
+      assertPlainThai(said(detail), 'the signing note of a round');
+    }
+    // The dialog of a file picked meanwhile says the same, and takes the file as an ordinary attachment.
+    const dialog = detailSections(sentBackHolding('CASH'), requester, { name: 'ใบเบิกเซ็นแล้ว.pdf' }).texts;
+    assert.ok(dialog.includes(`${waits('รอผู้เบิกเลือกวิธีรับเงินคืน')} ตอนนี้แนบเป็นไฟล์แนบทั่วไปได้ ระบบจะเก็บไว้ในประวัติ แต่ยังไม่นับว่าลงนามแล้ว`));
+  });
+
+  // Before: "สำเนาก่อนแก้บัญชีรับเงิน", for good, also on a claim that was sent back with no account or with cash.
+  it('labels a scan declared before the round "สำเนาก่อนส่งกลับ", keeps it openable, and does not count it as signed', () => {
     const before = { ...COPY, beforePayoutCorrection: true as const };
     const newer = { attachmentId: 'copy-2', fileName: 'ใบเบิกเซ็นใหม่.pdf', uploadedAt: '2026-10-01T06:30:00.000Z', acknowledgedAt: '2026-10-01T06:30:00.000Z', acknowledgedByName: NAMES.requester };
     const { html, texts } = detailSections(reapproved({ signedCopies: [before] }), requester);
-    assert.ok(texts.includes('ไฟล์ PDF · สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'), texts.filter((text) => text.includes('สำเนา')).join(' | '));
+    assert.ok(texts.includes('ไฟล์ PDF · สำเนาก่อนส่งกลับ · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'), texts.filter((text) => text.includes('สำเนา')).join(' | '));
     assert.match(html, /<button[^>]*>📄 ใบเบิกเซ็นแล้ว\.pdf<\/button>/);
     assert.equal(texts.includes('ลงนามบนกระดาษ'), false, 'no block reads as signed on paper');
     assert.equal(texts.some((text) => text.includes('ลงนามบนกระดาษ · แนบเมื่อ')), false);
     // A scan declared after the round is the one that counts; the older one keeps its label beside it.
     const both = detailSections(reapproved({ documentSignedVia: 'PAPER', signedCopies: [newer, before] }), requester).texts;
-    assert.ok(both.includes('ไฟล์ PDF · ลงนามบนกระดาษ · แนบเมื่อ 1 ต.ค. 2569 โดย สมชาย พนักงาน') && both.includes('ไฟล์ PDF · สำเนาก่อนแก้บัญชีรับเงิน · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'),
+    assert.ok(both.includes('ไฟล์ PDF · ลงนามบนกระดาษ · แนบเมื่อ 1 ต.ค. 2569 โดย สมชาย พนักงาน') && both.includes('ไฟล์ PDF · สำเนาก่อนส่งกลับ · ไม่นับว่าลงนามแล้ว · แนบเมื่อ 1 ต.ค. 2569'),
       both.filter((text) => text.includes('แนบเมื่อ')).join(' | '));
     assert.equal(both.filter((text) => text === 'ลงนามบนกระดาษ').length, 2);
     // The step after payment waits for the signatures again: the copy from before the round finishes nothing.
