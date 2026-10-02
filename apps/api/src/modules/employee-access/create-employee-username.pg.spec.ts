@@ -27,6 +27,7 @@ import { ConflictException } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../generated/prisma/client';
 import { CreateEmployeeUseCase } from './application/use-cases/create-employee.use-case';
+import { CreateRoleUseCase } from './application/use-cases/create-role.use-case';
 
 const databaseUrl = process.env.EMPLOYEE_ACCESS_TEST_DATABASE_URL;
 
@@ -220,6 +221,65 @@ describe('cross-company username reuse on real PostgreSQL', { skip: !databaseUrl
       assert.equal(await run('somename'), 'employee_username_conflict');
     } finally {
       await client.$executeRawUnsafe(`DROP INDEX IF EXISTS "${indexName}"`);
+      await teardown();
+    }
+  });
+});
+
+/**
+ * Role keys lean on the same two things an in-memory fake cannot see: the unique index on
+ * Role (scopeKey, key), and the shape the driver reports its violation in. Roles whose names give
+ * the same key are numbered from one read of the keys taken; two created at the same moment read the
+ * same free key, the index refuses one of them, and that one has to read again and take the next
+ * number rather than answer with the driver's error.
+ */
+describe('role keys on real PostgreSQL', { skip: !databaseUrl }, () => {
+  /** The key a new role got, or what refused it, as a string (see `run` above). */
+  const roleKeys = (client: PrismaClient, tag: string, companyId: string) => {
+    const useCase = new CreateRoleUseCase({ client } as any);
+    return (name: string, roleTemplateKey?: string): Promise<string> => useCase.execute({
+      companyId, name, roleTemplateKey, permissionKeys: ['crm.customer.read'], requestingUserId: `${tag}-admin`, requestId: 'req-role', isOwner: true,
+    }).then((role) => role.key, (error: { name?: string; code?: string; message?: string }) => `refused:${error.name}:${error.code ?? ''}:${error.message ?? ''}`);
+  };
+
+  it('gives roles created at the same moment different keys', async () => {
+    const { client, tag, companyId, teardown } = await harness();
+    try {
+      const keyOf = roleKeys(client, tag, companyId);
+      // Thai names: none has a Latin letter, so all four ask for `ROLE`.
+      const raced = await Promise.all(['ผู้จัดการสาขา', 'หัวหน้ากะ', 'พนักงานเสิร์ฟ', 'แม่บ้าน'].map((name) => keyOf(name)));
+      assert.deepEqual(raced.slice().sort(), ['ROLE', 'ROLE_1', 'ROLE_2', 'ROLE_3']);
+
+      // A round the index refused was rolled back whole: one role and one audit row per creation.
+      const stored = await client.role.findMany({ where: { scopeKey: companyId, key: { startsWith: 'ROLE' } }, select: { id: true, key: true } });
+      assert.deepEqual(stored.map((role) => role.key).sort(), ['ROLE', 'ROLE_1', 'ROLE_2', 'ROLE_3']);
+      const audited = await client.auditLog.findMany({ where: { companyId, action: 'access.role.create' }, select: { targetId: true } });
+      assert.deepEqual(audited.map((log) => log.targetId).sort(), stored.map((role) => role.id).sort());
+    } finally {
+      await teardown();
+    }
+  });
+
+  it('numbers past five, around the keys the company already uses', async () => {
+    const { tag, client, companyId, teardown } = await harness();
+    try {
+      const keyOf = roleKeys(client, tag, companyId);
+      // The numbering used to stop at `_4`: the sixth role with a Thai name was refused.
+      const keys: string[] = [];
+      for (const name of ['ผู้จัดการสาขา', 'หัวหน้ากะ', 'แคชเชียร์', 'พนักงานขาย', 'พนักงานคลัง', 'ฝ่ายจัดซื้อ', 'ฝ่ายบัญชี']) keys.push(await keyOf(name));
+      assert.deepEqual(keys, ['ROLE', 'ROLE_1', 'ROLE_2', 'ROLE_3', 'ROLE_4', 'ROLE_5', 'ROLE_6']);
+
+      // The harness gave the company a role with the key `SALES`. It keeps it, and so does every
+      // role made from the sales example: seven of them, where the sixth used to be refused.
+      const fromOneExample: string[] = [];
+      for (const area of ['เหนือ', 'ใต้', 'ออก', 'ตก', 'กลาง', 'อีสาน', 'ออนไลน์']) fromOneExample.push(await keyOf(`ฝ่ายขายภาค${area}`, 'tpl.trading.sales'));
+      assert.deepEqual(fromOneExample, ['SALES_1', 'SALES_2', 'SALES_3', 'SALES_4', 'SALES_5', 'SALES_6', 'SALES_7']);
+
+      // The keys taken are read with a prefix match, and `_` in a LIKE pattern matches any character:
+      // `STOREXMANAGER` is read along with the keys of `STORE_MANAGER`, and must not count as one.
+      assert.equal(await keyOf('StoreXManager'), 'STOREXMANAGER');
+      assert.deepEqual([await keyOf('Store Manager'), await keyOf('Store manager')], ['STORE_MANAGER', 'STORE_MANAGER_1']);
+    } finally {
       await teardown();
     }
   });

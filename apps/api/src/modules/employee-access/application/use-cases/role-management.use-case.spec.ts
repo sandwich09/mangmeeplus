@@ -15,6 +15,17 @@ import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-con
 const COMPANY_ID = 'company-1';
 const REAL_PERMISSION = 'crm.customer.read';
 
+/**
+ * What a second role with a key already taken in the company gets from the database: P2002 in the
+ * shape `@prisma/adapter-pg` gives it, with no `meta.target` (see `uniqueConstraintFields`). Copied
+ * from a real violation of the index; `create-employee-username.pg.spec.ts` runs the same creations
+ * against PostgreSQL.
+ */
+const roleKeyTaken = () => Object.assign(new Error('Unique constraint failed on the fields: (`"scopeKey"`, `key`)'), {
+  code: 'P2002',
+  meta: { modelName: 'Role', driverAdapterError: { cause: { originalCode: '23505', kind: 'UniqueConstraintViolation', constraint: { fields: ['"scopeKey"', 'key'] } } } },
+});
+
 function makePrisma(opts: {
   role?: any;
   rolePermissions?: Array<{ roleId: string; permissionId: string }>;
@@ -45,7 +56,12 @@ function makePrisma(opts: {
         }
         return state.roles.find((row) => row.id === where.id) ?? null;
       },
+      findMany: async ({ where }: any) => state.roles
+        .filter((row) => row.scopeKey === where.scopeKey && row.key.startsWith(where.key.startsWith))
+        .map(({ key }) => ({ key })),
       create: async ({ data }: any) => {
+        // The unique index on (scopeKey, key), as the database enforces it.
+        if (state.roles.some((row) => row.scopeKey === data.scopeKey && row.key === data.key)) throw roleKeyTaken();
         const row = { id: `role-${state.roles.length + 1}`, status: 'ACTIVE', ...data };
         state.roles.push(row);
         return row;
@@ -557,6 +573,80 @@ describe('CreateRoleUseCase', () => {
     assert.equal((await create(makePrisma().prisma, COMPANY_ID, 'ผู้จัดการ', 'tpl.x.manager')).key, 'MANAGER');
     assert.equal((await create(makePrisma().prisma, COMPANY_ID, 'Store Manager')).key, 'STORE_MANAGER');
     assert.equal((await create(makePrisma().prisma, COMPANY_ID, 'Owner assistant')).key, 'OWNER_ASSISTANT');
+  });
+
+  // Seen on a local stack on 2026-10-02: the numbering stopped at `_4`, so a company's sixth role with
+  // a Thai name was refused, and the role page called it a duplicate of something.
+  const createRole = (prisma: any, name: string, roleTemplateKey?: string) => new CreateRoleUseCase(prisma).execute({
+    companyId: COMPANY_ID, name, roleTemplateKey, permissionKeys: [REAL_PERMISSION], requestingUserId: 'owner-1', requestId: 'req-key', isOwner: true,
+  });
+
+  it('numbers the roles whose Thai names give the same key, with no cap', async () => {
+    const { prisma, state } = makePrisma();
+    // What the role page sends: a name and no example key. A name with no Latin letter gives `ROLE`.
+    const names = ['ผู้จัดการ', 'หัวหน้า', 'พนักงาน', 'ผู้ช่วย'].flatMap((rank) => ['ขาย', 'คลัง', 'บัญชี', 'จัดซื้อ', 'หน้าร้าน'].map((team) => `${rank}${team}`));
+    const keys: string[] = [];
+    for (const name of names) keys.push((await createRole(prisma, name)).key);
+
+    assert.deepEqual(keys, ['ROLE', ...Array.from({ length: 19 }, (_, index) => `ROLE_${index + 1}`)]);
+    // The first five are the keys they had before; the seventh and the twentieth are new ground.
+    assert.deepEqual([keys[6], keys[19]], ['ROLE_6', 'ROLE_19']);
+    assert.deepEqual(state.roles.map((role) => role.name), names);
+    assert.equal(state.auditLogs.length, 20);
+  });
+
+  it('numbers several roles made from one example, around a key the company already uses', async () => {
+    const { prisma, state } = makePrisma();
+    // A role the company named itself holds one of the numbers. It keeps its key.
+    assert.equal((await createRole(prisma, 'Manager 2')).key, 'MANAGER_2');
+
+    const keys: string[] = [];
+    for (const branch of ['ลาดพร้าว', 'บางนา', 'รังสิต', 'ศรีราชา', 'หาดใหญ่', 'เชียงใหม่', 'ขอนแก่น']) {
+      keys.push((await createRole(prisma, `ผู้จัดการสาขา${branch}`, 'tpl.x.manager')).key);
+    }
+    // The first is the key approval routing compares (audit H-19), as before.
+    assert.deepEqual(keys, ['MANAGER', 'MANAGER_1', 'MANAGER_3', 'MANAGER_4', 'MANAGER_5', 'MANAGER_6', 'MANAGER_7']);
+    assert.equal(state.roles[0].key, 'MANAGER_2');
+    // Another example has its own numbering.
+    assert.equal((await createRole(prisma, 'แคชเชียร์', 'tpl.retail.cashier')).key, 'CASHIER');
+  });
+
+  it('gives roles created at the same moment different keys', async () => {
+    const { prisma, state } = makePrisma();
+    // All three read the keys before any of them writes, so all three first try `ROLE`.
+    const created = await Promise.all(['ผู้จัดการสาขา', 'หัวหน้ากะ', 'พนักงานเสิร์ฟ'].map((name) => createRole(prisma, name)));
+
+    assert.deepEqual(created.map((role) => role.key).sort(), ['ROLE', 'ROLE_1', 'ROLE_2']);
+    assert.deepEqual(state.roles.map((role) => role.key).sort(), ['ROLE', 'ROLE_1', 'ROLE_2']);
+    // One audit row per role: a refused round wrote nothing.
+    assert.deepEqual(state.auditLogs.map((log) => log.metadataJson.key).sort(), ['ROLE', 'ROLE_1', 'ROLE_2']);
+  });
+
+  it('answers with a code of its own when every round loses its key, and retries nothing else', async () => {
+    const { prisma, state, tx } = makePrisma();
+    let rounds = 0;
+    tx.role.create = async () => { rounds += 1; throw roleKeyTaken(); };
+    await assert.rejects(() => createRole(prisma, 'ผู้จัดการสาขา'), (error: unknown) => {
+      assert.ok(error instanceof ConflictException);
+      assert.deepEqual(error.getResponse(), {
+        code: 'role_key_allocation_failed',
+        message: 'ยังไม่ได้สร้างบทบาทนี้ เพราะมีการบันทึกบทบาทอื่นในเวลาเดียวกัน กรุณากดบันทึกอีกครั้ง',
+      });
+      return true;
+    });
+    assert.equal(rounds, 5, 'a bounded number of rounds');
+    assert.deepEqual([state.roles, state.rolePermissions, state.auditLogs], [[], [], []], 'nothing was written');
+
+    // Any other failure is thrown as it came, after one round: another table's unique index, and a plain error.
+    for (const failure of [
+      Object.assign(new Error('Unique constraint failed'), { code: 'P2002', meta: { driverAdapterError: { cause: { constraint: { fields: ['"roleId"', '"permissionId"'] } } } } }),
+      new Error('connection lost'),
+    ]) {
+      rounds = 0;
+      tx.role.create = async () => { rounds += 1; throw failure; };
+      await assert.rejects(() => createRole(prisma, 'ผู้จัดการสาขา'), (error: unknown) => error === failure);
+      assert.equal(rounds, 1);
+    }
   });
 });
 
