@@ -30,10 +30,14 @@ const noopAudit = { log: async () => undefined } as any;
 const reserve = { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }) } as any;
 const commit = { execute: async () => undefined } as any;
 
+/**
+ * A member of finance holding the rights a test names, and the right to read claims, as every role that
+ * reviews claims holds: a finance review asks the claim detail's gate before anything else about the claim.
+ */
 function ctx(perms: string[]) {
   return {
     requestId: 'req-1', authSubject: 's', userId: 'fin-1', companyId: 'co-1',
-    membershipId: 'm', roles: ['FINANCE'], permissions: perms, scopes: {}, authProvider: 'dev',
+    membershipId: 'm', roles: ['FINANCE'], permissions: ['reimbursement.read', ...perms], scopes: {}, authProvider: 'dev',
   } as any;
 }
 
@@ -89,6 +93,8 @@ function fakeRepo(req: any, opts: {
     slipChecks: [] as any[],
     slips,
     payments,
+    // The lookup the claim detail's gate makes for a claim that waits for approval: who on its step can still act.
+    findActiveApproverUserIds: async (_c: string, userIds: string[]) => new Set(userIds),
     assertPaymentSlipUsable: async (input: any) => {
       repo.slipChecks.push(input);
       if (opts.slipError) throw opts.slipError;

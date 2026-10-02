@@ -20,6 +20,7 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
+import { assertCanReadRequestOrAssignment } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
   payoutCorrectionPhase,
@@ -90,10 +91,12 @@ export class FinanceReviewReimbursementUseCase {
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, branch scope included, ahead of every answer that depends on where
+    // the claim stands (final review item 18): the status was said before the branch was looked at.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     if (req.status !== 'FINANCE_REVIEW') {
       throw new UnprocessableEntityException(`Cannot finance-review from status ${req.status}`);
     }
-    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const now = new Date();
     const note = input.note?.trim();

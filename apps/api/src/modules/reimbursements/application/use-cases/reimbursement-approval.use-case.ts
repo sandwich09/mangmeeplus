@@ -26,6 +26,7 @@ import {
   payoutCorrectionPhase,
 } from '../../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot, payoutAttestationError } from '../../domain/logic/payout-destination.logic';
+import { assertCanReadRequestOrAssignment } from './reimbursement-request.use-case';
 
 function currentApprovalStep(request: ReimbursementRequestRecord): ReimbursementApprovalStepRecord | undefined {
   return request.approvalSteps?.find((step) => step.id === request.currentApprovalStepId);
@@ -352,6 +353,9 @@ export class ApproveReimbursementUseCase {
     if (looksLikeAccountNumber(comment)) throw new BadRequestException('note_contains_account_number');
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
+    // review item 18): a caller who could not open the claim was told its status by the line below.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
     // Sent back to have its payout account corrected, and the requester has not given it yet: there is
     // nothing to approve, and the approver who presses it has an old page (payout spec §14.2).
@@ -376,7 +380,6 @@ export class ApproveReimbursementUseCase {
       });
       throw new ForbiddenException('self_approval_denied');
     }
-    if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, activeApprovers)) {
       throw new ForbiddenException('not_eligible_approver');
     }
@@ -628,6 +631,8 @@ export class RejectReimbursementUseCase {
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The gate of the claim detail, ahead of every answer that depends on where the claim stands.
+    await assertCanReadRequestOrAssignment(ctx, req, this.repo);
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot reject from status ${req.status}`);
     const correction = payoutCorrectionPhase(req);
     if (correction === 'AWAITING_REQUESTER') throw new ConflictException('payout_correction_in_progress');
@@ -642,7 +647,6 @@ export class RejectReimbursementUseCase {
     if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       throw new ForbiddenException('self_approval_denied');
     }
-    if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)) {
       throw new ForbiddenException('not_eligible_approver');
     }

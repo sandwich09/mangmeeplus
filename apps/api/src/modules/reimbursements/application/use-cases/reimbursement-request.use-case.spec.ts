@@ -182,6 +182,8 @@ function fakeRepo(options: RepoOptions = {}) {
     resolveSourceLines: async (_company: string, _user: string, _branch: string, _currency: string, lines: any[]) => lines.map(line => ({ ...line, ...(line.linkedExpenseId ? { sourceExpenseSnapshot: { schemaVersion: 1, expenseId: line.linkedExpenseId } } : {}) })),
     resolveCreateBranchId: async () => 'branch-1',
     findPolicy: async () => options.policy ?? null,
+    // The claim detail's gate, which every decision endpoint asks first: who on the waiting step can still act.
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
     getUserDisplayName: async () => 'Somchai',
     // Lane D: the detail path resolves approver/reviewer/payer names in one batch.
     getUserDisplayNames: async () => ({}),
@@ -603,7 +605,7 @@ describe('CancelReimbursementUseCase', () => {
     const state = fakeRepo();
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense);
-    const result = await cancel.execute(ctx({ permissions: ['reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว');
+    const result = await cancel.execute(ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว');
     assert.equal(result.status, 'CANCELLED');
     assert.equal(state.request.rejectionReason, 'ไม่ใช้แล้ว');
     assert.equal(state.request.paymentStatus, 'NOT_PAYABLE');
@@ -620,7 +622,7 @@ describe('CancelReimbursementUseCase', () => {
     ] });
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense);
-    const result = await cancel.execute(ctx({ permissions: ['reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว');
+    const result = await cancel.execute(ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว');
     assert.equal(result.status, 'CANCELLED');
     assert.deepEqual(state.calls.voided, ['exp-1', 'exp-2']);
   });
@@ -629,7 +631,7 @@ describe('CancelReimbursementUseCase', () => {
     const state = fakeRepo();
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense);
-    const result = await cancel.execute(ctx({ userId: 'finance-1', permissions: ['reimbursement.finance_review'] }), 'rb-1', 'ยกเลิกหลังกลับรายการจ่าย');
+    const result = await cancel.execute(ctx({ userId: 'finance-1', permissions: ['reimbursement.read', 'reimbursement.finance_review'] }), 'rb-1', 'ยกเลิกหลังกลับรายการจ่าย');
     assert.equal(result.status, 'CANCELLED');
     assert.equal(state.request.rejectionReason, 'ยกเลิกหลังกลับรายการจ่าย');
   });
@@ -641,7 +643,7 @@ describe('CancelReimbursementUseCase', () => {
     const brokenVoid = { executeForReimbursement: async () => undefined } as any;
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, brokenVoid);
     await assert.rejects(
-      () => cancel.execute(ctx({ permissions: ['reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว'),
+      () => cancel.execute(ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] }), 'rb-1', 'ไม่ใช้แล้ว'),
       /reimbursement_cancellation_projection_live/,
     );
     assert.notEqual(state.request.status, 'CANCELLED');
@@ -656,7 +658,7 @@ describe('CancelReimbursementUseCase', () => {
     // The real void: its reason rule is the one a cancellation has to satisfy. Nothing else of it is reached.
     const realVoid = new VoidExpenseUseCase({} as any, noopAudit, noopOutbox, {} as any, {} as any, {} as any);
     const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, realVoid);
-    const requester = ctx({ permissions: ['reimbursement.cancel_own'] });
+    const requester = ctx({ permissions: ['reimbursement.read_own', 'reimbursement.cancel_own'] });
 
     for (const reason of ['ก', 'ab', '  x  ']) {
       await assert.rejects(() => cancel.execute(requester, 'rb-1', reason), (error: any) => {
@@ -1125,6 +1127,8 @@ describe('a decided claim that has not moved on is visible and can be carried on
     Object.assign(state.repo, {
       findRequestById: async () => ({ ...state.request, approvalSteps: kind === 'no-approval-needed' ? [] : [step], payments: [], duplicateCandidates: [] }),
       findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+      // Whoever decided the claim's step had a part in it: the claim is theirs to read with the related-read right.
+      isUserRelatedToRequest: async (_companyId: string, _requestId: string, userId: string) => 'decisionByUserId' in step && step.decisionByUserId === userId,
       areClaimProjectionsReady: async () => world.expenseRecordsConfirmed,
       listInternalNotes: async () => [],
       getUserDisplayNames: async () => ({ 'staff-1': 'สมชาย', 'mgr-1': 'สมศรี' }),
@@ -1231,9 +1235,11 @@ describe('a decided claim that has not moved on is visible and can be carried on
   });
 
   it('keeps ดำเนินการต่อ with an approver frozen onto the step after their approve right is gone, as approving itself does', async () => {
-    const frozen = approver({ permissions: [] });
+    // Demoted since: no approve right left, and the right every member keeps to read a claim they had a part in.
+    const frozen = approver({ permissions: ['reimbursement.read_related'] });
     const claim = await claimWorld('approved', { frozenOnStep: ['mgr-1'] });
 
+    assert.equal((await claim.detail(frozen)).awaitingSystem?.canResume, true, 'offered on the page they can still open');
     assert.equal((await claim.resume.execute(frozen, 'rb-1')).status, 'READY_FOR_PAYMENT');
     assert.equal(claim.world.repairs, 1);
 
@@ -1241,6 +1247,14 @@ describe('a decided claim that has not moved on is visible and can be carried on
     const roleRouted = await claimWorld('approved');
     await assert.rejects(() => roleRouted.resume.execute(frozen, 'rb-1'), /reimbursement_resume_not_allowed/);
     assert.equal(roleRouted.world.repairs, 0);
+
+    // With no way left to open the claim, the call answers what the claim detail answers them (final review
+    // item 18): the page never offered it to them, and the scheduled run carries the decision out.
+    const noRights = approver({ permissions: [] });
+    const unreadable = await claimWorld('approved', { frozenOnStep: ['mgr-1'] });
+    await assert.rejects(() => unreadable.detail(noRights), /Cannot read this reimbursement/);
+    await assert.rejects(() => unreadable.resume.execute(noRights, 'rb-1'), /Cannot read this reimbursement/);
+    assert.equal(unreadable.world.repairs, 0);
   });
 
   it('carries the decision out once, decides nothing again, and records who asked', async () => {
@@ -1296,9 +1310,14 @@ describe('ReopenRejectedReimbursementUseCase', () => {
     const reopen = new ReopenRejectedReimbursementUseCase(state.repo, noopAudit);
     await assert.rejects(() => reopen.execute(ctx(), 'rb-1'), /Cannot reopen from status DRAFT/);
     Object.assign(state.request, { status: 'REJECTED' });
+    // Someone else who can open the claim is told they may not reopen it; someone who cannot open it is told only that.
+    await assert.rejects(
+      () => reopen.execute(ctx({ userId: 'someone-else', permissions: ['reimbursement.read', 'reimbursement.update_own_draft'] }), 'rb-1'),
+      /Cannot reopen this reimbursement/,
+    );
     await assert.rejects(
       () => reopen.execute(ctx({ userId: 'someone-else', permissions: ['reimbursement.update_own_draft'] }), 'rb-1'),
-      /Cannot reopen this reimbursement/,
+      /Cannot read this reimbursement/,
     );
   });
 
@@ -1322,7 +1341,7 @@ describe('ReopenRejectedReimbursementUseCase', () => {
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
     Object.assign(state.request, { status: 'PENDING_APPROVAL', currentApprovalStepId: 'step-1' });
     const reopen = new ReopenRejectedReimbursementUseCase(state.repo, noopAudit);
-    const finance = ctx({ userId: 'fin-1', permissions: ['reimbursement.update_own_draft', 'reimbursement.finance_review'] });
+    const finance = ctx({ userId: 'fin-1', permissions: ['reimbursement.read', 'reimbursement.update_own_draft', 'reimbursement.finance_review'] });
 
     await assert.rejects(() => reopen.execute(finance, 'rb-1'), /Cannot reopen this reimbursement/);
     state.calls.approvalSteps.push({ id: 'step-1', status: 'APPROVED' });
@@ -3583,7 +3602,7 @@ describe('payout: a note that goes into a notification carries no account number
       beginFinanceApprovalAtomic: async (data: any) => { decisions.push(data); throw new Error('stop after the guard'); },
     } as any;
     const review = new FinanceReviewReimbursementUseCase(repo, { log: async () => undefined } as any, {} as any, {} as any);
-    const finance = ctx({ userId: 'finance-1', permissions: ['reimbursement.finance_review'] });
+    const finance = ctx({ userId: 'finance-1', permissions: ['reimbursement.read', 'reimbursement.finance_review'] });
     for (const note of ['บัญชีผิด โอนเข้า 123-4-56789-0 แทน', 'พร้อมเพย์ 081 000 1234', 'เลขบัญชี 0123456789', 'โอนเข้า 123.4.56789.0', 'พร้อมเพย์ ๐๘๑๒๓๔๕๖๗๘']) {
       for (const decision of ['NEEDS_INFO', 'APPROVED_FOR_PAYMENT'] as const) {
         await assert.rejects(review.execute(finance, 'rb-1', { decision, note }), (error: any) => {
