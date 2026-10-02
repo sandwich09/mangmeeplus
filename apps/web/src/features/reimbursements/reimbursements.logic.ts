@@ -21,9 +21,12 @@ import {
   MISMATCH_REASON_HAS_ACCOUNT_NUMBER, MISMATCH_REASON_REQUIRED, PAID_DIFFERENTLY_LABEL, PAYER_CONFIRMATION_REQUIRED, REQUESTER_SELF_ATTESTED, type PaymentFormPayout,
 } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
-import { PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionSentBackText, payoutCorrectionSubmittedText, payoutRoundTexts } from './reimbursement-payout.logic';
+import {
+  PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionAnsweredText, payoutCorrectionSentBackText, payoutRoundAnswer,
+  payoutRoundTexts,
+} from './reimbursement-payout.logic';
 // The words of a round are the contracts' own, chosen there from what the claim holds and from what was answered.
-import { reimbursementPayoutRoundApproves, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYOUT_ROUND_TEXTS, reimbursementPayoutRoundApproverNote, reimbursementPayoutRoundApproves, reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
@@ -533,10 +536,14 @@ export function queueRowOffersPayment(
  */
 export function approvalRowOffers(row: {
   approvalActions?: { canApprove?: boolean; canReject?: boolean } | null; payoutMethod?: string | null; payoutCorrectionPhase?: string | null;
+  payoutCorrectionAnswer?: string | null;
 } | null | undefined): { approveLabel?: string; reject: boolean; onClaimPage: boolean } {
   const canApprove = row?.approvalActions?.canApprove === true;
   const canReject = row?.approvalActions?.canReject === true;
-  if (row?.payoutCorrectionPhase) return { ...((canApprove || canReject) && { approveLabel: 'ตรวจบัญชีรับเงินใหม่' }), reject: false, onClaimPage: true };
+  // Named for what is looked at there, by what was answered: a new account, the one the claim had, a first one, or cash.
+  if (row?.payoutCorrectionPhase) {
+    return { ...((canApprove || canReject) && { approveLabel: `ตรวจ${reimbursementPayoutRoundApproves(payoutRoundAnswer(row.payoutCorrectionAnswer))}` }), reject: false, onClaimPage: true };
+  }
   const transfer = row?.payoutMethod === 'BANK_TRANSFER';
   return { ...(canApprove && { approveLabel: transfer ? 'ตรวจบัญชีและอนุมัติ' : 'อนุมัติ' }), reject: canReject, onClaimPage: transfer };
 }
@@ -897,11 +904,7 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   // What happened to the claim after it was approved, in the order it happened: a payment taken back, and the rows
   // of each correction round. A wrong account is often found after a transfer was voided, and often before any.
   const moment = (at: unknown) => Date.parse(String(at)) || 0;
-  // An account given answers the send-back before it: a claim sent back for having none was given one, not corrected.
-  const answered = (index: number) => corrections.slice(0, index).reverse().find((event) => event.kind === 'SENT_BACK')?.reasonCode;
-  const history = [...voided, ...corrections.map((event, index) => ({
-    at: event.at, rows: payoutCorrectionTimelineRows(event, index, detail?.requesterUserId, detail?.payoutHistory, answered(index)),
-  }))]
+  const history = [...voided, ...corrections.map((event, index) => ({ at: event.at, rows: payoutCorrectionTimelineRows(event, index, detail?.payoutHistory) }))]
     .sort((left, right) => moment(left.at) - moment(right.at)).flatMap((entry) => entry.rows);
   if (status === 'CANCELLED' || status === 'VOIDED') {
     return [...rows, ...history, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
@@ -973,7 +976,8 @@ const PAYOUT_CORRECTION_STEP_REASON = 'payout_account_correction';
  */
 export function approvalStepCorrectionNote(step: { status?: string; invalidatedAt?: unknown; invalidatedReason?: string | null } | null | undefined): string | null {
   if (!step?.invalidatedAt || step.invalidatedReason !== PAYOUT_CORRECTION_STEP_REASON) return null;
-  return step.status === 'APPROVED' ? 'เก็บเป็นประวัติ: อนุมัติก่อนส่งกลับให้แก้บัญชีรับเงิน' : 'เก็บเป็นประวัติ: บัญชีที่รออนุมัติในขั้นนี้ถูกส่งกลับหรือแก้ใหม่';
+  // True of every round: what was sent back, or waited in the step, may be cash, and whoever answered again may not be the requester.
+  return step.status === 'APPROVED' ? 'เก็บเป็นประวัติ: อนุมัติก่อนใบถูกส่งกลับ' : 'เก็บเป็นประวัติ: วิธีรับเงินคืนที่รออนุมัติในขั้นนี้ถูกส่งกลับ หรือมีการเลือกอีกครั้ง';
 }
 
 /**
@@ -987,19 +991,18 @@ function payoutCorrectionGivenText(event: any, payoutHistory: readonly any[] | n
 }
 
 /**
- * One thing that happened in a correction round, as a row of the claim's journey (spec §17.2): "ส่งกลับให้แก้
- * บัญชีรับเงินโดย … : เหตุผล" with the note that went with it, "ผู้เบิกแก้บัญชีรับเงิน" with what was given,
- * "อนุมัติบัญชีรับเงินใหม่โดย …". A requester who gives the account twice (a slip of the finger put right at once)
- * gets two rows that say different things; the time alone could not tell them apart within one minute.
- * Nothing for a kind of event this build has no words for.
+ * One thing that happened in a correction round, as a row of the claim's journey (spec §17.2), each in the words of the
+ * fact its event carries: the send-back by what the claim held ("ส่งกลับให้แก้บัญชีรับเงินโดย … : เหตุผล", with the note
+ * that went with it), the answer by what it was and by who gave it ("ผู้เบิกยืนยันบัญชีเดิม", "{ชื่อ} แก้บัญชีรับเงินแทนผู้เบิก")
+ * with what was given, and the approval by what it approved ("อนุมัติการรับเป็นเงินสดโดย …"). A requester who answers twice
+ * (a slip of the finger put right at once) gets two rows that say different things; the time alone could not tell them
+ * apart within one minute. Nothing for a kind of event this build has no words for.
  */
-function payoutCorrectionTimelineRows(
-  event: any, index: number, requesterUserId?: string, payoutHistory?: readonly any[] | null, sentBackReason?: unknown,
-): ClaimTimelineRow[] {
+function payoutCorrectionTimelineRows(event: any, index: number, payoutHistory?: readonly any[] | null): ClaimTimelineRow[] {
   const given = event?.kind === 'ACCOUNT_SUBMITTED' ? payoutCorrectionGivenText(event, payoutHistory) : '';
   const label = event?.kind === 'SENT_BACK' ? `${payoutCorrectionSentBackText(event)}${event.note ? ` · ${event.note}` : ''}`
-    : event?.kind === 'ACCOUNT_SUBMITTED' ? `${payoutCorrectionSubmittedText(event, requesterUserId, sentBackReason)}${given ? ` · ${given}` : ''}`
-      : event?.kind === 'REAPPROVED' ? `อนุมัติบัญชีรับเงินใหม่${event.byName ? `โดย ${event.byName}` : ''}` : null;
+    : event?.kind === 'ACCOUNT_SUBMITTED' ? `${payoutCorrectionAnsweredText(event.answer, event)}${given ? ` · ${given}` : ''}`
+      : event?.kind === 'REAPPROVED' ? `อนุมัติ${reimbursementPayoutRoundApproves(event.answer)}${event.byName ? `โดย ${event.byName}` : ''}` : null;
   return label ? [{ key: `correction-${index}`, state: 'done', label, date: event.at }] : [];
 }
 
@@ -1151,13 +1154,15 @@ function payoutCorrectionStepNote(
     ].filter(Boolean).join(' · ');
   }
   const waiting = waitingForCorrectionApproval(detail);
+  const answer = payoutRoundAnswer(detail?.payoutCorrectionAnswer);
+  const thing = reimbursementPayoutRoundApproves(answer);
   return [
-    // The account given is the one the claim had (the server's answer): there are no two accounts to compare.
-    viewer.canApprove ? (round.sameAsPrevious === true
-      ? 'รอคุณอนุมัติบัญชีรับเงินอีกครั้ง บัญชีที่ส่งมาคือบัญชีเดิมของใบนี้ ไม่ได้เปลี่ยน ตรวจบัญชีด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน'
-      : 'รอคุณอนุมัติบัญชีรับเงินใหม่ ตรวจบัญชีเดิมกับบัญชีใหม่ด้านล่างก่อนอนุมัติ รายการและยอดเงินไม่เปลี่ยน') : waiting,
-    // The requester holds the approval this account waits on and the company's switch refuses them (spec §15).
-    detail?.approvalActions?.selfApprovalBlocked === true && `ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติบัญชีใหม่เองไม่ได้`,
+    // Whoever may approve reads what waits for them, what was done and by whom, and what to look at: two accounts to
+    // compare, one account that was kept or added, or cash, which has no account to check. Without the answer (a page
+    // fed by an older server) only what is true of every answer.
+    viewer.canApprove ? (answer ? reimbursementPayoutRoundApproverNote(answer, detail?.payoutCorrectionAnsweredBy) : `รอคุณอนุมัติ${thing} รายการและยอดเงินไม่เปลี่ยน`) : waiting,
+    // The requester holds the approval this answer waits on and the company's switch refuses them (spec §15).
+    detail?.approvalActions?.selfApprovalBlocked === true && `ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติ${thing}เองไม่ได้`,
     // While it waits, what was answered may be answered again: an account corrected, or cash changed for another choice.
     !viewer.canApprove && viewer.canSubmit && (viewer.isRequester ? words.given.againForYou : words.given.againOnBehalf),
   ].filter(Boolean).join(' · ');
@@ -1380,45 +1385,55 @@ export function paperSignedLine(copy?: { acknowledgedAt?: string; acknowledgedBy
 
 /** What the approvers of a round are shown to compare, and everyone else of the claim to read. */
 export type PayoutCorrectionComparison = {
-  /** The account the claim was approved with, masked; a claim sent before claims carried one says it had none. */
-  previous: string;
-  /** The account the claim has now, masked. */
-  current: string;
+  /** "สิ่งที่รออนุมัติ: …": the thing the approvers approve, by what was answered. */
+  title: string;
   /**
-   * The account the claim has now is the very account it was approved with (the server compared what it stores).
-   * The card then shows that one account under "บัญชีเดิม ไม่ได้เปลี่ยน", and no two accounts side by side.
+   * The names of what the card sets side by side: what the claim had, then what was given. One name where the
+   * destination was kept (the server compared what it stores): the card then shows that one destination under it,
+   * and no two that read alike.
    */
-  same?: true;
-  /** That the lines and the amount are what was approved, and when that was. */
+  labels: readonly string[];
+  /** What the claim was approved with, masked; a claim sent before claims carried an account says it had none. */
+  previous: string;
+  /** What the claim has now, masked: the answer that waits. */
+  current: string;
+  /** That the lines and the amount are what was approved, when that was, and what this approval looks at. */
   unchanged: string;
   /** Who sent the claim back and why, with the note they added. */
   sentBack: string;
   note?: string;
-  /** Who gave the account now on the claim, and when. */
+  /** Who answered, what they did, and when. */
   submitted?: string;
 };
 
+/** The card of an answer this build has no record of (a page fed by an older server): names true of every answer. */
+const UNKNOWN_ANSWER_CARD = { cardTitle: 'สิ่งที่รออนุมัติ: วิธีรับเงินคืน', cardRows: ['วิธีรับเงินคืนก่อนส่งกลับ', 'วิธีรับเงินคืนที่ส่งมา'] } as const;
+
 /**
- * The card "สิ่งที่เปลี่ยน: บัญชีรับเงินคืน" of a claim whose new account waits for approval (spec §14.6): the two
- * accounts side by side, last 4 digits only, and that nothing else of the claim moved since it was approved.
+ * The card "สิ่งที่รออนุมัติ: …" of a claim whose answer waits for approval (spec §14.6): what the claim had beside what
+ * was given, an account by its last 4 digits only, and that nothing else of the claim moved since it was approved.
+ * Its title and the names of its rows are the contracts' own for what was answered: "บัญชีเดิม" beside "บัญชีใหม่" only
+ * where an account replaced an account, "วิธีรับเงินคืน…" where cash is on either side, one row where nothing changed.
  * Null for a claim that is not there: the page then shows no card.
  */
 export function payoutCorrectionComparison(detail: any): PayoutCorrectionComparison | null {
   const round = detail?.payoutCorrection;
   if (round?.phase !== 'AWAITING_APPROVAL') return null;
-  // The round's events, latest first: the answer that waits, and the send-back it answers.
-  const latest: any[] = [...(detail.payoutCorrectionHistory ?? [])].reverse();
-  const submitted = latest.find((event: any) => event.kind === 'ACCOUNT_SUBMITTED');
+  const answer = payoutRoundAnswer(detail.payoutCorrectionAnswer);
+  const card = answer ? REIMBURSEMENT_PAYOUT_ROUND_TEXTS.answer[answer] : UNKNOWN_ANSWER_CARD;
+  // The send-back this answer answers: the latest of the round's events. What the claim held then is that event's
+  // own fact, for the claim now holds what was answered.
+  const sentBack = [...(detail.payoutCorrectionHistory ?? [])].reverse().find((event: any) => event.kind === 'SENT_BACK');
   return {
+    title: card.cardTitle,
+    labels: card.cardRows,
     previous: payoutCorrectionAccountText(round.previous),
     current: payoutCorrectionAccountText(detail.payout),
-    ...(round.sameAsPrevious === true && { same: true as const }),
     unchanged: `รายการและยอดเงิน ${formatMoney(detail.amount, detail.currency)} เท่ากับที่อนุมัติไว้${
-      round.previouslyApprovedAt ? `เมื่อ ${formatThaiDateTime(round.previouslyApprovedAt)}` : ''} การอนุมัติครั้งนี้ตรวจเฉพาะบัญชีรับเงินคืน`,
-    // What the claim held at that send-back is the event's own fact: the claim now holds what was answered.
-    sentBack: payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: latest.find((event: any) => event.kind === 'SENT_BACK')?.held }),
+      round.previouslyApprovedAt ? `เมื่อ ${formatThaiDateTime(round.previouslyApprovedAt)}` : ''} ${payoutRoundTexts(detail).given.cardChecks}`,
+    sentBack: payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: sentBack?.held }),
     ...(round.note && { note: round.note }),
-    ...(round.submittedAt && { submitted: `${payoutCorrectionSubmittedText(submitted, detail.requesterUserId, round.reasonCode)} เมื่อ ${formatThaiDateTime(round.submittedAt)}` }),
+    ...(round.submittedAt && { submitted: `${payoutCorrectionAnsweredText(answer, detail.payoutCorrectionAnsweredBy)} เมื่อ ${formatThaiDateTime(round.submittedAt)}` }),
   };
 }
 

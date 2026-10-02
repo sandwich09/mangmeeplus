@@ -226,8 +226,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     const { ok, latest } = await act(
       'approve',
       () => approveReimbursement(companyId, requestId, undefined, target.approvalSnapshotHash, verified ?? undefined),
-      // In a correction round the same call approves the new account alone, and the claim is back at its pay step.
-      target.payoutCorrectionPhase ? 'อนุมัติบัญชีรับเงินใหม่แล้ว ใบกลับไปรอจ่ายเงินคืน' : 'อนุมัติคำขอเรียบร้อยแล้ว',
+      // In a payout round the same call approves what was answered alone, and the claim is back at its pay step: said of
+      // that thing, a new account, the account the claim had, a first one, or cash.
+      target.payoutCorrectionPhase ? `อนุมัติ${reimbursementPayoutRoundApproves(target.payoutCorrectionAnswer)}แล้ว ใบกลับไปรอจ่ายเงินคืน` : 'อนุมัติคำขอเรียบร้อยแล้ว',
       (e) => { stale = !review && isStaleApprovalError(e); return stale; },
     );
     if (stale) {
@@ -526,7 +527,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
             {step.note && <p className="mt-1 text-sm text-gray-600">{step.note}</p>}
           </div>
           {step.actions.includes('submit') && readiness.blocked && readiness.message && <ErrorBanner message={readiness.message} />}
-          {/* Spec §14.6: what a round's approvers approve. The account the claim was approved with beside the new one. */}
+          {/* Spec §14.6: what a round's approvers approve. What the claim was approved with beside what was answered. */}
           {step.key === 'approval' && <PayoutCorrectionComparison detail={detail} />}
           {needsAttestation && (
             <PayoutAttestationCheck checked={attested} disabled={busyAction !== null}

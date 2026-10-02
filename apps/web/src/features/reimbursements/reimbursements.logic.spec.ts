@@ -50,11 +50,12 @@ describe('timelineDateText', () => {
   const round = {
     status: 'READY_FOR_PAYMENT', requesterUserId: 'staff', submittedAt: '2026-10-02T01:00:00.000Z', approvedAt: '2026-10-02T05:00:00.000Z',
     approvalSteps: [{ id: 's1', sequenceNo: 1, status: 'APPROVED', decidedAt: '2026-10-02T02:00:00.000Z', decidedByName: 'สมศรี', invalidatedAt: '2026-10-02T03:00:00.000Z', invalidatedReason: 'payout_account_correction' }],
+    // Each event with the fact its words are chosen from, as the API answers it: an account, answered twice with another account.
     payoutCorrectionHistory: [
-      { kind: 'SENT_BACK', at: '2026-10-02T03:00:00.000Z', byUserId: 'boss', byName: 'สมศรี', reasonCode: 'ACCOUNT_NUMBER_WRONG' },
-      { kind: 'ACCOUNT_SUBMITTED', at: '2026-10-02T03:10:00.000Z', byUserId: 'staff', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2 },
-      { kind: 'ACCOUNT_SUBMITTED', at: '2026-10-02T03:25:00.000Z', byUserId: 'staff', payoutMethod: 'BANK_TRANSFER', payoutVersion: 3 },
-      { kind: 'REAPPROVED', at: '2026-10-02T05:00:00.000Z', byUserId: 'boss', byName: 'สมศรี', approvalStepId: 's2' },
+      { kind: 'SENT_BACK', at: '2026-10-02T03:00:00.000Z', byUserId: 'boss', byName: 'สมศรี', reasonCode: 'ACCOUNT_NUMBER_WRONG', held: 'ACCOUNT' },
+      { kind: 'ACCOUNT_SUBMITTED', at: '2026-10-02T03:10:00.000Z', byUserId: 'staff', payoutMethod: 'BANK_TRANSFER', payoutVersion: 2, answer: 'NEW_ACCOUNT' },
+      { kind: 'ACCOUNT_SUBMITTED', at: '2026-10-02T03:25:00.000Z', byUserId: 'staff', payoutMethod: 'BANK_TRANSFER', payoutVersion: 3, answer: 'NEW_ACCOUNT' },
+      { kind: 'REAPPROVED', at: '2026-10-02T05:00:00.000Z', byUserId: 'boss', byName: 'สมศรี', approvalStepId: 's2', answer: 'NEW_ACCOUNT' },
     ],
   };
 

@@ -21,14 +21,15 @@ import {
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 // The correction round of payout spec §14 (its own imports, apart from the blocks above).
 import {
-  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
+  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionReasons,
   REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
   type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason,
   type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
 } from '@watchdog-bms/contracts';
 // The words of a round (payout spec §14.2): the contracts' own, chosen there from what the claim holds and from what was answered.
 import {
-  REIMBURSEMENT_PAYOUT_ROUND_TEXTS, reimbursementPayoutHeld, reimbursementPayoutRoundAsk, reimbursementPayoutRoundSendBack, type ReimbursementPayoutHeld,
+  REIMBURSEMENT_PAYOUT_ROUND_TEXTS, reimbursementPayoutHeld, reimbursementPayoutRoundAsk, reimbursementPayoutRoundDid, reimbursementPayoutRoundSendBack,
+  type ReimbursementPayoutHeld, type ReimbursementPayoutRoundAnswer,
 } from '@watchdog-bms/contracts';
 import { apiErrorCode, translateApiError } from '@/common/api/api-error-message';
 
@@ -439,12 +440,6 @@ export function payoutCorrectionSendBackTitle(claim: { payoutMethod?: string | n
   const words = payoutRoundTexts(claim);
   return claim.payoutCorrectionPhase === 'AWAITING_APPROVAL' ? words.given.sendBackAgain : reimbursementPayoutRoundSendBack(words.held);
 }
-/**
- * Said on the approvers' card in place of the two accounts side by side, when the account given in the round is the
- * very account the claim had (the server's answer, `payoutCorrection.sameAsPrevious`): the last 4 digits of two
- * accounts can read alike, and of one account always do.
- */
-export const PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL = 'บัญชีเดิม ไม่ได้เปลี่ยน';
 /** The button that saves the answer of a round, whatever is chosen: what is saved may be cash, which is no account. */
 export const PAYOUT_CORRECTION_SAVE_LABEL = 'บันทึกวิธีรับเงินคืน';
 /**
@@ -532,16 +527,23 @@ export function payoutCorrectionSentBackText(sentBack: { byName?: string | null;
 }
 
 /**
- * "ผู้เบิกแก้บัญชีรับเงิน" (spec §17.2): who gave the account of a round. It was the requester unless the claim
- * says someone else did it on their behalf, and that person is then named. `sentBackReason` is the reason of the
- * send-back it answers: a claim that had no account was given one ("ผู้เบิกเพิ่มบัญชีรับเงิน"), not corrected.
+ * What was answered in a round, where the claim or the event says it in a word this build knows. Undefined: no record
+ * of it (a page fed by an older server), or an answer added later. A reader then says what is true of every answer.
  */
-export function payoutCorrectionSubmittedText(
-  submitted: { byUserId?: string | null; byName?: string | null } | null | undefined, requesterUserId?: string | null, sentBackReason?: unknown,
-): string {
-  const onBehalf = !!submitted?.byUserId && !!requesterUserId && submitted.byUserId !== requesterUserId;
-  const did = reimbursementPayoutCorrectionAsk(sentBackReason);
-  return onBehalf ? `${submitted!.byName ?? 'ผู้จัดทำ'} ${did}แทนผู้เบิก` : `ผู้เบิก${did}`;
+export function payoutRoundAnswer(answer: unknown): ReimbursementPayoutRoundAnswer | undefined {
+  return typeof answer === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_ROUND_TEXTS.answer, answer) ? answer as ReimbursementPayoutRoundAnswer : undefined;
+}
+
+/**
+ * Who answered a round and what they did (spec §17.2), in the contracts' words for that answer: "ผู้เบิกแก้บัญชีรับเงิน" of
+ * another account, "ผู้เบิกยืนยันบัญชีเดิม" of the same one, "ผู้เบิกเปลี่ยนวิธีรับเงินคืน" between an account and cash, and so on.
+ * When someone answered for the requester (a finance reviewer may) it is said of that person, by name: no sentence says
+ * the requester did what someone else did for them. `answeredBy`: the history event of the answer, or the claim's
+ * `payoutCorrectionAnsweredBy`; either says whether it was on the requester's behalf.
+ */
+export function payoutCorrectionAnsweredText(answer: unknown, answeredBy?: { onBehalf?: boolean | null; byName?: string | null } | null): string {
+  // ponytail: with no answer on record the words are those of a method chosen, which every answer is.
+  return reimbursementPayoutRoundDid(payoutRoundAnswer(answer) ?? 'FIRST_CASH', answeredBy);
 }
 
 /**

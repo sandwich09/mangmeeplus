@@ -16,7 +16,7 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL, PAYOUT_CORRECTION_SAVE_LABEL,
+  PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAVE_LABEL,
   PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
   isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionAnswerWords, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
@@ -262,32 +262,32 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
 }
 
 /**
- * "สิ่งที่เปลี่ยน: บัญชีรับเงินคืน" (spec §14.6): what a round's approvers approve. The account the claim was
- * approved with beside the one it has now, last 4 digits only, why it was sent back, and that the lines and
- * the amount are what was approved. Shown to every reader of a claim whose new account waits for approval.
+ * "สิ่งที่รออนุมัติ: …" (spec §14.6): what a round's approvers approve, named by what was answered. What the claim was
+ * approved with beside what it has now (an account by its last 4 digits only), why it was sent back, who answered, and
+ * that the lines and the amount are what was approved. Shown to every reader of a claim whose answer waits for approval.
  */
 export function PayoutCorrectionComparison({ detail }: { detail: any }) {
   const view = payoutCorrectionComparison(detail);
   if (!view) return null;
   return (
     <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3 [overflow-wrap:anywhere]" data-testid="reimbursement-payout-correction-comparison">
-      <h3 className="text-sm font-bold text-gray-900">สิ่งที่เปลี่ยน: บัญชีรับเงินคืน</h3>
-      {/* The same account given again: one account and the word that it did not change, never two that read alike. */}
-      {view.same ? (
+      <h3 className="text-sm font-bold text-gray-900">{view.title}</h3>
+      {/* The destination that was kept: once, under the words that it did not change, never two that read alike. */}
+      {view.labels.length === 1 ? (
         <dl>
           <div className="min-w-0" data-testid="reimbursement-payout-correction-same-account">
-            <dt className="text-xs font-semibold text-gray-600">{PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL}</dt>
+            <dt className="text-xs font-semibold text-gray-600">{view.labels[0]}</dt>
             <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
           </div>
         </dl>
       ) : (
         <dl className="grid gap-3 sm:grid-cols-2">
           <div className="min-w-0">
-            <dt className="text-xs font-semibold text-gray-600">บัญชีเดิม</dt>
+            <dt className="text-xs font-semibold text-gray-600">{view.labels[0]}</dt>
             <dd className="mt-1 break-words text-sm text-gray-700">{view.previous}</dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-xs font-semibold text-gray-600">บัญชีใหม่</dt>
+            <dt className="text-xs font-semibold text-gray-600">{view.labels[1]}</dt>
             <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
           </div>
         </dl>

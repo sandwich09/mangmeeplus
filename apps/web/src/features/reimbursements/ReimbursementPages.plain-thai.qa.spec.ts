@@ -543,22 +543,34 @@ describe('the approval queue offers only what the server says this viewer can do
     assert.deepEqual(offered(hubTab('approvals', [{ ...row({ canApprove: true, canReject: false }), payoutMethod: 'CASH' }])), ['อนุมัติ', 'อนุมัติ']);
   });
 
-  // Payout spec §14.6: what a round's approvers approve is the change of account, which a row does not show. Its
-  // row leads to the claim page for whoever decides the waiting step, and offers no "ปฏิเสธ": a round never rejects.
-  it('leads a row of a correction round to the claim page: no approval in place and no ปฏิเสธ, whatever the new receiving method', () => {
-    const offered = (html: string) => visible(html).filter((text) => ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ตรวจบัญชีรับเงินใหม่', 'ปฏิเสธ'].includes(text));
-    const inRound = (approvalActions: { canApprove: boolean; canReject: boolean } | undefined, payoutMethod: string) =>
-      ({ ...correctionRows[1]!, ageHours: 3, slaRisk: false, approvalActions, payoutMethod, approvalSnapshotHash: 'hash' });
-    for (const payoutMethod of ['BANK_TRANSFER', 'CASH']) {
-      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, payoutMethod)])), ['ตรวจบัญชีรับเงินใหม่', 'ตรวจบัญชีรับเงินใหม่'], payoutMethod);
-      // Whoever may only send the new account back gets the same way in.
-      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: false, canReject: true }, payoutMethod)])), ['ตรวจบัญชีรับเงินใหม่', 'ตรวจบัญชีรับเงินใหม่'], payoutMethod);
-      assert.deepEqual(offered(hubTab('approvals', [inRound(undefined, payoutMethod)])), [], payoutMethod);
+  // Payout spec §14.6: what a round's approvers approve is what was answered, which a row does not show. Its row
+  // leads to the claim page for whoever decides the waiting step, and offers no "ปฏิเสธ": a round never rejects.
+  // Before: its one button read "ตรวจบัญชีรับเงินใหม่" whatever was answered: an account that was kept, a first one, or cash.
+  it('leads a row of a correction round to the claim page: no approval in place and no ปฏิเสธ, its button named for what was answered', () => {
+    const BUTTONS = {
+      NEW_ACCOUNT: ['BANK_TRANSFER', 'ตรวจบัญชีรับเงินใหม่', 'รออนุมัติบัญชีรับเงินใหม่'], SAME_ACCOUNT: ['BANK_TRANSFER', 'ตรวจบัญชีรับเงินเดิม', 'รออนุมัติบัญชีรับเงินเดิม'],
+      ACCOUNT_INSTEAD: ['BANK_TRANSFER', 'ตรวจบัญชีรับเงิน', 'รออนุมัติบัญชีรับเงิน'], FIRST_ACCOUNT: ['BANK_TRANSFER', 'ตรวจบัญชีรับเงิน', 'รออนุมัติบัญชีรับเงิน'],
+      CASH_INSTEAD: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'], SAME_CASH: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'],
+      FIRST_CASH: ['CASH', 'ตรวจการรับเป็นเงินสด', 'รออนุมัติการรับเป็นเงินสด'],
+    } as const;
+    const all = ['อนุมัติ', 'ตรวจบัญชีและอนุมัติ', 'ปฏิเสธ', 'ตรวจวิธีรับเงินคืน', ...Object.values(BUTTONS).map(([, button]) => button)] as string[];
+    const offered = (html: string) => visible(html).filter((text) => all.includes(text));
+    const inRound = (approvalActions: { canApprove: boolean; canReject: boolean } | undefined, payoutCorrectionAnswer?: keyof typeof BUTTONS) =>
+      ({ ...correctionRows[1]!, ageHours: 3, slaRisk: false, approvalActions, payoutMethod: payoutCorrectionAnswer ? BUTTONS[payoutCorrectionAnswer][0] : 'BANK_TRANSFER', payoutCorrectionAnswer, approvalSnapshotHash: 'hash' });
+    for (const [answer, [, button, badge]] of Object.entries(BUTTONS) as Array<[keyof typeof BUTTONS, typeof BUTTONS[keyof typeof BUTTONS]]>) {
+      // In the table and on the phone card.
+      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, answer)])), [button, button], answer);
+      // Whoever may only send the answer back gets the same way in.
+      assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: false, canReject: true }, answer)])), [button, button], answer);
+      assert.deepEqual(offered(hubTab('approvals', [inRound(undefined, answer)])), [], answer);
+      // The row says what it waits for: in the table beside its age, and on its phone card. The button names the same thing.
+      const texts = visible(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, answer)]));
+      assert.equal(texts.filter((text) => text === badge).length, 2, answer);
+      assert.equal(texts.includes('รออนุมัติ'), false, answer);
+      assert.equal(badge, `รออนุมัติ${button.slice('ตรวจ'.length)}`);
     }
-    // The row says what it waits for: in the table beside its age, and on its phone card.
-    const texts = visible(hubTab('approvals', [inRound({ canApprove: true, canReject: true }, 'BANK_TRANSFER')]));
-    assert.equal(texts.filter((text) => text === 'รออนุมัติบัญชีรับเงินใหม่').length, 2);
-    assert.equal(texts.includes('รออนุมัติ'), false);
+    // A row with no answer on it (a page fed by an older server): the method, which is true of every answer.
+    assert.deepEqual(offered(hubTab('approvals', [inRound({ canApprove: true, canReject: true })])), ['ตรวจวิธีรับเงินคืน', 'ตรวจวิธีรับเงินคืน']);
     // A row of no round has no such badge in the table, only its status on the card.
     assert.equal(visible(hubTab('approvals', [row({ canApprove: true, canReject: true })])).filter((text) => text === 'รออนุมัติ').length, 1);
   });
