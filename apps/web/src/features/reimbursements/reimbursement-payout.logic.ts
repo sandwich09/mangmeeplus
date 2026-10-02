@@ -431,9 +431,12 @@ export const SIGNED_COPY_BEFORE_CORRECTION_LABEL = 'สำเนาก่อน�
 export function isClaimStateConflict(e: unknown): boolean {
   return (e as { status?: unknown } | null)?.status === 409;
 }
-/** The API's name for a refusal: a bare Nest exception carries it as the message, one with a body as the code. */
-function refusalName(e: unknown): string | null {
-  return apiErrorCode(e) ?? (e instanceof Error ? e.message : null);
+/**
+ * Whether the API's refusal is the one named: a bare Nest exception carries its name as the message, one with a
+ * body as the code. A yes or a no only: the message itself is never handed on to be shown.
+ */
+function refusalIs(e: unknown, name: string): boolean {
+  return apiErrorCode(e) === name || (e instanceof Error && e.message.trim() === name);
 }
 /**
  * The API took no account because the claim is no longer the one the form was opened on (`reimbursement_changed`):
@@ -441,7 +444,7 @@ function refusalName(e: unknown): string | null {
  * no further version of the account and sends no further notice (spec §14.5).
  */
 export function isClaimChangedRefusal(e: unknown): boolean {
-  return refusalName(e) === 'reimbursement_changed';
+  return refusalIs(e, 'reimbursement_changed');
 }
 /** Added to such a refusal in a form that is still offered, once the page under it shows the claim as it is now. */
 export const PAYOUT_CORRECTION_REREAD_NOTE = 'หน้านี้แสดงสถานะล่าสุดของใบแล้ว ตรวจแล้วกดอีกครั้งได้';
@@ -542,7 +545,7 @@ export function payoutCorrectionPreviousAccount(detail: { payoutCorrection?: { p
  * the notice such an account always sends would reach nobody. The claim itself did not change.
  */
 export function isRequesterNotActiveRefusal(e: unknown): boolean {
-  return refusalName(e) === 'payout_account_member_not_active';
+  return refusalIs(e, 'payout_account_member_not_active');
 }
 /** Said in the account form after that refusal, in place of the choice it no longer offers: what cannot be done, why, and what still can. */
 export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงระบุบัญชีใหม่แทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้ระบุบัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
