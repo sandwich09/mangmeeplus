@@ -14,7 +14,7 @@ import {
   emptyPayoutCorrectionForm, isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   payoutCorrectionAccountText, payoutCorrectionAnsweredText, payoutCorrectionAnswerWords, payoutCorrectionCardNote, payoutCorrectionFormError,
   payoutCorrectionInput, payoutCorrectionOffers, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
-  payoutCorrectionSentBackText, payoutRoundAnswer, type PayoutCorrectionForm,
+  claimCashNote, payoutCorrectionSentBackText, payoutRoundAnswer, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
 /*
@@ -393,12 +393,20 @@ describe('an account of a round in words, masked', () => {
     for (const none of [undefined, null, {}]) assert.equal(payoutCorrectionAccountText(none as never), 'ไม่มี ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน');
   });
 
-  it('tells the reader of the card "การรับเงินคืน" which account they are looking at while the claim is in a round', () => {
-    assert.equal(payoutCorrectionCardNote({ payoutCorrectionPhase: 'AWAITING_REQUESTER', payout: KBANK }),
-      'ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือวิธีรับเงินเดิมของใบ ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
-    assert.equal(payoutCorrectionCardNote({ payoutCorrectionPhase: 'AWAITING_REQUESTER' }), 'ใบนี้ถูกส่งกลับให้ระบุบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
-    assert.equal(payoutCorrectionCardNote({ payoutCorrectionPhase: 'AWAITING_APPROVAL', payout: SCB }), 'ด้านล่างคือวิธีรับเงินใหม่ที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้');
-    assert.equal(payoutCorrectionCardNote({ payout: SCB }), null);
+  // Before: "ด้านล่างคือวิธีรับเงินเดิมของใบ" also above an answer that had just been sent back (it is not what the claim began
+  // with), "แก้บัญชีรับเงิน" above cash, "ระบุ" for the one act the claim calls "เพิ่ม", and "วิธีรับเงินใหม่ที่ผู้เบิกส่งมา" above an account
+  // that was kept and above an answer someone else gave.
+  it('tells the reader of the card "การรับเงินคืน" what they are looking at while the claim is in a round', () => {
+    const withRequester = (payoutMethod?: string) => payoutCorrectionCardNote({ payoutCorrectionPhase: 'AWAITING_REQUESTER', payoutMethod });
+    assert.equal(withRequester('BANK_TRANSFER'), 'ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือบัญชีที่ถูกส่งกลับ ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
+    assert.equal(withRequester('CASH'), 'ใบนี้ถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ด้านล่างคือวิธีรับเงินคืนที่ถูกส่งกลับ ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
+    assert.equal(withRequester(undefined), 'ใบนี้ถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
+    // While an answer waits: what was sent, and by whom. Nothing is called new: the answer may have kept what the claim had.
+    const waiting = (payoutCorrectionAnsweredBy?: object) => payoutCorrectionCardNote({ payoutCorrectionPhase: 'AWAITING_APPROVAL', payoutMethod: 'BANK_TRANSFER', payoutCorrectionAnsweredBy });
+    assert.equal(waiting({ byUserId: 'staff', byName: 'สมชาย พนักงาน' }), 'ด้านล่างคือวิธีรับเงินคืนที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้');
+    assert.equal(waiting(undefined), 'ด้านล่างคือวิธีรับเงินคืนที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้');
+    assert.equal(waiting(ON_BEHALF), 'ด้านล่างคือวิธีรับเงินคืนที่ สุภาวดี นักบัญชี ส่งมาแทนผู้เบิก รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้');
+    assert.equal(payoutCorrectionCardNote({ payoutMethod: 'BANK_TRANSFER' }), null);
   });
 });
 
@@ -1875,24 +1883,100 @@ describe('after the approval the claim is back at its pay step with the new acco
 describe('the card "การรับเงินคืน" in a round', () => {
   it('says which account it is showing: the one in question, then the new one nobody approved yet', () => {
     const a = claimPage(phaseA(), auditor).texts;
-    assert.ok(a.includes('ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือวิธีรับเงินเดิมของใบ ระหว่างนี้ยังบันทึกจ่ายไม่ได้'));
+    assert.ok(a.includes('ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือบัญชีที่ถูกส่งกลับ ระหว่างนี้ยังบันทึกจ่ายไม่ได้'));
     assert.ok(a.includes('ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678'));
     const b = claimPage(phaseB(), auditor).texts;
-    assert.ok(b.includes('ด้านล่างคือวิธีรับเงินใหม่ที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้'));
+    assert.ok(b.includes('ด้านล่างคือวิธีรับเงินคืนที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้'));
     assert.ok(b.includes('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112') && b.includes('ยังไม่มีผู้ตรวจบัญชีนี้'));
     // Never "โอนเข้าบัญชีนี้" in a round: nobody is offered the payment.
     for (const texts of [a, b]) assert.equal(texts.includes('โอนเข้าบัญชีนี้'), false);
   });
 
+  const note = (detail: object) => { const html = claimPage(detail, auditor).html; return /data-testid="reimbursement-payout-correction-note">([^<]*)</u.exec(html)?.[1] ?? null; };
+
+  // Before: "ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือวิธีรับเงินเดิมของใบ" above "ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี", and the same
+  // "เดิมของใบ" above an answer the approver had just sent back.
+  it('says of a claim with its requester what was sent back, by what the claim holds, and nothing of an account where there is none', () => {
+    assert.equal(note(sentBackHolding('ACCOUNT')), 'ใบนี้ถูกส่งกลับให้แก้บัญชีรับเงิน ด้านล่างคือบัญชีที่ถูกส่งกลับ ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
+    assert.equal(note(sentBackHolding('CASH')), 'ใบนี้ถูกส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืนอีกครั้ง ด้านล่างคือวิธีรับเงินคืนที่ถูกส่งกลับ ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
+    assert.equal(note(sentBackHolding('NOTHING')), 'ใบนี้ถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้');
+    const cash = claimPage(sentBackHolding('CASH'), auditor).texts;
+    assert.ok(cash.includes('ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี'));
+    // An answer sent back again from the waiting step is what the claim shows: "ที่ถูกส่งกลับ", never "เดิมของใบ".
+    for (const held of HELD) assert.doesNotMatch(note(sentBackHolding(held))!, /เดิมของใบ/u);
+    assert.equal(note(ready()), null);
+  });
+
+  // Before: "ด้านล่างคือวิธีรับเงินใหม่ที่ผู้เบิกส่งมา" above every answer: an account that was kept, cash that was kept, and an
+  // answer a finance reviewer gave. And "ผู้เบิกขอรับเป็นเงินสด" under cash that someone else chose for the requester.
+  it('says of an answer that waits who sent it, and of cash who chose it', () => {
+    for (const answer of ALL_ANSWERS) {
+      assert.equal(note(answeredWith(answer)), 'ด้านล่างคือวิธีรับเงินคืนที่ผู้เบิกส่งมา รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้', answer);
+      assert.equal(note(answeredWith(answer, {}, ON_BEHALF)), 'ด้านล่างคือวิธีรับเงินคืนที่ สุภาวดี นักบัญชี ส่งมาแทนผู้เบิก รอผู้อนุมัติอนุมัติก่อนจึงจ่ายได้', answer);
+    }
+    const OWN = 'ผู้เบิกขอรับเป็นเงินสด ไม่ต้องมีบัญชี';
+    const FOR_THEM = 'สุภาวดี นักบัญชี เลือกรับเป็นเงินสดแทนผู้เบิก ไม่ต้องมีบัญชี';
+    for (const answer of ['CASH_INSTEAD', 'SAME_CASH', 'FIRST_CASH'] as const) {
+      assert.ok(claimPage(answeredWith(answer), auditor).texts.includes(OWN), answer);
+      const onBehalf = claimPage(answeredWith(answer, {}, ON_BEHALF), auditor).texts;
+      assert.deepEqual([onBehalf.includes(FOR_THEM), onBehalf.includes(OWN)], [true, false], answer);
+    }
+    // After the round, and when that cash is sent back again: still whoever chose it, from the claim's history.
+    const history = answeredWith('CASH_INSTEAD', {}, ON_BEHALF).payoutCorrectionHistory;
+    const paidInCash = readyHolding('CASH', { payoutCorrectionHistory: [...history, { ...REAPPROVED, answer: 'CASH_INSTEAD' }] });
+    assert.deepEqual([claimPage(paidInCash, auditor).texts.includes(FOR_THEM), claimPage(paidInCash, auditor).texts.includes(OWN)], [true, false]);
+    assert.ok(claimPage(sentBackHolding('CASH', { payoutCorrectionHistory: history }), auditor).texts.includes(FOR_THEM));
+    // A claim that asked for cash when it was sent, and one whose requester answered with cash, read as before.
+    for (const detail of [readyHolding('CASH'), readyHolding('CASH', { payoutCorrectionHistory: answeredWith('SAME_CASH').payoutCorrectionHistory })]) {
+      assert.ok(claimPage(detail, auditor).texts.includes(OWN));
+    }
+    assert.equal(claimCashNote({}), OWN);
+  });
+
+  // Decision D8. Before: the card said "ยังไม่มีผู้ตรวจบัญชีนี้" of the account the claim was approved with, right above a
+  // history that listed that one account twice, each "เริ่มใช้กับใบนี้เมื่อ …", the second with the day it was kept.
+  it('shows an account that was kept once, never as unchecked, and tells what happened to it in one row of the history', () => {
+    /** The account history of the card, as it reads: its heading, then each row. Null: the card shows none. */
+    const historyOf = (detail: object) => {
+      const html = claimPage(detail, auditor).html;
+      const at = html.indexOf('data-testid="reimbursement-payout-history"');
+      return at < 0 ? null : visible(html.slice(html.indexOf('>', at) + 1, html.indexOf('</ol>', at)));
+    };
+    const KEPT = 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 5678 · ชื่อบัญชี นาย สมชาย ใจดี';
+    const waiting = answeredWith('SAME_ACCOUNT');
+    const texts = claimPage(waiting, auditor).texts;
+    assert.deepEqual([texts.includes('ยังไม่มีผู้ตรวจบัญชีนี้'), texts.includes('รอผู้อนุมัติตรวจบัญชีนี้อีกครั้ง')], [false, true]);
+    assert.deepEqual(historyOf(waiting), ['ประวัติบัญชีรับเงินของใบนี้', KEPT, 'ใช้อยู่ตอนนี้',
+      'เริ่มใช้กับใบนี้เมื่อ 1 ต.ค. 2569 09:00 น.', 'ใช้บัญชีประจำของผู้เบิก', 'ตรวจบัญชีแล้วโดย สมศรี ผู้จัดการ เมื่อ 1 ต.ค. 2569 10:00 น.',
+      'ผู้เบิกยืนยันบัญชีเดิม เมื่อ 1 ต.ค. 2569 12:00 น.']);
+    // Someone kept it for the requester: the row says who.
+    assert.equal(historyOf(answeredWith('SAME_ACCOUNT', {}, ON_BEHALF))!.at(-1), 'สุภาวดี นักบัญชี ยืนยันบัญชีเดิมแทนผู้เบิก เมื่อ 1 ต.ค. 2569 12:00 น.');
+    // Approved again: the same one row, now with who checked it the second time, and the card says the same above it.
+    const again = { ...waiting.payoutHistory[1], ...attested, verifiedAt: AT.reapproved, approvalStepId: 'step-2' };
+    const approved = ready({ approvedAt: AT.reapproved, payout: { ...KBANK, version: 2, source: 'DEFAULT_ACCOUNT', ...attested, verifiedAt: AT.reapproved }, payoutHistory: [version1, again],
+      payoutCorrectionHistory: [...waiting.payoutCorrectionHistory, { ...REAPPROVED, answer: 'SAME_ACCOUNT' }] });
+    assert.deepEqual(historyOf(approved)!.slice(-2), ['ผู้เบิกยืนยันบัญชีเดิม เมื่อ 1 ต.ค. 2569 12:00 น.', 'ตรวจบัญชีแล้วโดย สมศรี ผู้จัดการ เมื่อ 1 ต.ค. 2569 13:00 น.']);
+    assert.equal(historyOf(approved)!.filter((text) => text === KEPT).length, 1);
+    // The account kept and then sent back by the approver: still not said to be unchecked, and nothing waits for its check.
+    const refused = sentBackHolding('ACCOUNT', { payout: waiting.payout, payoutHistory: waiting.payoutHistory,
+      payoutCorrectionHistory: [...waiting.payoutCorrectionHistory, { kind: 'SENT_BACK', at: '2026-10-01T05:30:00.000Z', byUserId: 'boss', byName: NAMES.approver, reasonCode: 'OTHER', held: 'ACCOUNT' }] });
+    const afterRefusal = claimPage(refused, auditor).texts;
+    assert.deepEqual([afterRefusal.includes('ยังไม่มีผู้ตรวจบัญชีนี้'), afterRefusal.includes('รอผู้อนุมัติตรวจบัญชีนี้อีกครั้ง')], [false, false]);
+    // Another account is another row, and nobody has checked it yet: as before.
+    assert.equal(historyOf(phaseB())!.filter((text) => text.startsWith('เริ่มใช้กับใบนี้เมื่อ')).length, 2);
+    assert.ok(claimPage(phaseB(), auditor).texts.includes('ยังไม่มีผู้ตรวจบัญชีนี้'));
+    // Two versions that read alike are folded only where the server said the later one kept the account: never from the digits shown.
+    const alike = answeredWith('SAME_ACCOUNT', { payoutCorrectionAnswer: 'NEW_ACCOUNT', payoutCorrectionHistory: [sentBackEvent('ACCOUNT'), { ...GIVEN, answer: 'NEW_ACCOUNT' }] });
+    assert.equal(historyOf(alike)!.filter((text) => text === KEPT).length, 2);
+    assert.ok(claimPage(alike, auditor).texts.includes('ยังไม่มีผู้ตรวจบัญชีนี้'));
+  });
+
   // Plan 3.13: a claim sent before claims carried an account gets one through the same path.
   it('a claim sent before claims carried an account: says it is to be given one, then shows the account it was given', () => {
-    const legacy = { payoutMethod: undefined, payout: undefined, payoutHistory: undefined };
-    const a = claimPage(phaseA({ ...legacy, payoutCorrection: { phase: 'AWAITING_REQUESTER', ...round, previous: undefined } }), auditor).texts;
-    assert.ok(a.includes('ใบนี้ถูกส่งกลับให้ระบุบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้'));
+    const a = claimPage(sentBackHolding('NOTHING'), auditor).texts;
+    assert.ok(a.includes('ใบนี้ถูกส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน ระหว่างนี้ยังบันทึกจ่ายไม่ได้'));
     assert.ok(a.includes('ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน จึงไม่มีบัญชีที่ผ่านการอนุมัติในใบ'));
-    const given = phaseB({ payoutHistory: [{ ...version2, version: 1 }], payout: { ...SCB, version: 1, source: 'REQUESTER' },
-      payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, previous: undefined, submittedAt: AT.given } });
-    const b = stepCard(claimPage(given, auditor).html);
+    const b = stepCard(claimPage(answeredWith('FIRST_ACCOUNT'), auditor).html);
     assert.ok(visible(b.html).includes('ไม่มี ใบนี้ส่งก่อนมีช่องบัญชีรับเงิน'));
     assert.ok(visible(b.html).includes('ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย 1112 · ชื่อบัญชี นาย สมชาย ใจดี'));
   });
