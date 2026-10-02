@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "3cea655d1a6989df9bc95c5056a1048186496778",
+  "sourceRevision": "9850bdaf86538a292853d824f2f6022e124e3524",
   "checkoutBranch": "claude/reimb-payout-p3-correction-round-20261002",
   "checkoutDirty": false,
   "sourceHashes": [
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
-      "sha256": "2027e0b074e00ef436d9bf611074cab9280e64a41f727d536819acfef0147f5f"
+      "sha256": "13487b9e80425b6a0becfdb47648da1ddbe62b2d9ae3efa30c413a325b02e54f"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.ts",
@@ -9015,6 +9015,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-02T00:30:08.025Z",
-  "manifestDigest": "2fc8b5204d3aadb529e2f67fe569526f05942c50e7fae94be3937460c1ce6d00"
+  "generatedAt": "2026-10-02T04:06:37.389Z",
+  "manifestDigest": "e2c2356f28372d01ca8b6b70ad1d8f1375925050da84234cbdef780199ac72a5"
 }
