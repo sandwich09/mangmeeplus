@@ -45,9 +45,9 @@ export class CrmDailyBriefUseCase {
       ...(ctx.scopes.branchIds ? { branchIds: ctx.scopes.branchIds } : {}),
     };
     const hasCustomerScope = ownerUserId !== undefined || ctx.scopes.branchIds !== undefined;
-    const [unanswered, slaBreaches, paymentProofs, newCustomersToday, appointmentsToday, openDeals, issuedDocuments, customersWithCounterparty, conversations] = await Promise.all([
+    const [unanswered, inboxCounts, paymentProofs, newCustomersToday, appointmentsToday, openDeals, issuedDocuments, customersWithCounterparty, conversations] = await Promise.all([
       this.repo.countUnansweredConversations(ctx.companyId, customerScope),
-      this.repo.countOpenSlaBreaches(ctx.companyId, customerScope),
+      this.repo.conversationCounts(ctx.companyId, ctx.userId, assignedScopeForList(ctx), now),
       this.repo.countPaymentProofs(ctx.companyId, PAYMENT_PROOF_LINK_TARGET_TYPE, PAYMENT_PROOF_LINK_PURPOSE, customerScope),
       this.crmRepo.countCustomersBetween(ctx.companyId, dayStart, dayEnd, customerScope),
       this.crmRepo.countBookingsBetween(ctx.companyId, dayStart, dayEnd, customerScope),
@@ -100,7 +100,7 @@ export class CrmDailyBriefUseCase {
       generatedAt: now.toISOString(),
       widgets: buildDailyBriefWidgets(ctx.companyId, {
         unanswered,
-        slaBreaches,
+        slaBreaches: inboxCounts.overdueCount,
         newCustomersToday,
         appointmentsToday,
         paymentProofs,

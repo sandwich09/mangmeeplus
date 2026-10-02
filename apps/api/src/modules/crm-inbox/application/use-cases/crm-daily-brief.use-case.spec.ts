@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CrmDailyBriefUseCase } from './crm-daily-brief.use-case';
+import { PrismaCrmInboxRepository } from '../../infrastructure/prisma-crm-inbox.repository';
 
 const ctx = {
   companyId: 'co-1',
@@ -17,7 +18,7 @@ describe('CrmDailyBriefUseCase (A8)', () => {
     const calls: Record<string, any[]> = { conversations: [], counterparties: [], opportunities: [], documents: [] };
     const repo = {
       countUnansweredConversations: async () => 3,
-      countOpenSlaBreaches: async () => 1,
+      conversationCounts: async () => ({ overdueCount: 1 }),
       countPaymentProofs: async () => 4,
       reportsCustomersWithCounterparty: async (companyId: string) => {
         calls.counterparties.push(companyId);
@@ -95,7 +96,7 @@ describe('CrmDailyBriefUseCase (A8)', () => {
   it('does not query or expose sales/finance aggregates without their read permissions', async () => {
     const repo = {
       countUnansweredConversations: async () => 0,
-      countOpenSlaBreaches: async () => 0,
+      conversationCounts: async () => ({ overdueCount: 0 }),
       countPaymentProofs: async () => 0,
       reportsCustomersWithCounterparty: async () => { throw new Error('must not query accounting bridge'); },
       listConversations: async () => ({ items: [], total: 0 }),
@@ -119,9 +120,10 @@ describe('CrmDailyBriefUseCase (A8)', () => {
     assert.equal(keys.includes('overdue_payments'), false);
   });
 
-  it('intersects every customer-derived aggregate with owner and branch scope', async () => {
+  it('keeps customer aggregates scoped and counts overdue with inbox visibility', async () => {
     const seen: Record<string, any[]> = {
       inboxCounts: [],
+      overdueCounts: [],
       proof: [],
       customerCounts: [],
       bookingCounts: [],
@@ -131,7 +133,7 @@ describe('CrmDailyBriefUseCase (A8)', () => {
     };
     const repo = {
       countUnansweredConversations: async (_companyId: string, scope: any) => { seen.inboxCounts.push(scope); return 1; },
-      countOpenSlaBreaches: async (_companyId: string, scope: any) => { seen.inboxCounts.push(scope); return 1; },
+      conversationCounts: async (...args: any[]) => { seen.overdueCounts.push(args); return { overdueCount: 1 }; },
       countPaymentProofs: async (...args: any[]) => { seen.proof.push(args); return 1; },
       reportsCustomersWithCounterparty: async (...args: any[]) => {
         seen.counterparties.push(args);
@@ -172,7 +174,8 @@ describe('CrmDailyBriefUseCase (A8)', () => {
     }, {}, fixedNow);
 
     const expectedScope = { ownerUserId: 'sales-1', branchIds: ['branch-allowed'] };
-    assert.deepEqual(seen.inboxCounts, [expectedScope, expectedScope]);
+    assert.deepEqual(seen.inboxCounts, [expectedScope]);
+    assert.deepEqual(seen.overdueCounts, [['co-1', 'sales-1', 'sales-1', fixedNow]]);
     assert.deepEqual(seen.proof[0].slice(0, 3), ['co-1', 'crm_conversation', 'payment_proof']);
     assert.deepEqual(seen.proof[0][3], expectedScope);
     assert.deepEqual(seen.customerCounts[0][3], expectedScope);
@@ -197,7 +200,7 @@ describe('CrmDailyBriefUseCase (A8)', () => {
     const windows: Array<{ start: Date; end: Date }> = [];
     const repo = {
       countUnansweredConversations: async () => 1,
-      countOpenSlaBreaches: async () => 0,
+      conversationCounts: async () => ({ overdueCount: 0 }),
       countPaymentProofs: async () => 0,
       listConversations: async () => ({ items: [], total: 0 }),
     } as any;
@@ -223,4 +226,98 @@ describe('CrmDailyBriefUseCase (A8)', () => {
       '/companies/co-1/crm-reports?period=week',
     );
   });
+});
+
+// Evaluate only the Prisma where operators used by these conversation queries.
+// This exercises the real repository's predicate; it is not a PostgreSQL test.
+function matchesWhere(row: any, where: any): boolean {
+  return Object.entries(where).every(([key, value]: [string, any]) => {
+    if (key === 'AND') return value.every((part: any) => matchesWhere(row, part));
+    if (key === 'OR') return value.some((part: any) => matchesWhere(row, part));
+    if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+      if ('not' in value) return row[key] !== value.not;
+      if ('notIn' in value) return !value.notIn.includes(row[key]);
+      if ('in' in value) return value.in.includes(row[key]);
+      if ('lt' in value) return row[key] !== null && row[key] < value.lt;
+      return matchesWhere(row[key], value);
+    }
+    return row[key] === value;
+  });
+}
+
+describe('daily-brief overdue card matches the real inbox predicate and visibility', () => {
+  const past = new Date(fixedNow.getTime() - 60_000);
+  const future = new Date(fixedNow.getTime() + 60_000);
+  const row = {
+    id: 'conv-1', companyId: 'co-1', customerId: 'cust-1', status: 'OPEN', tagsJson: [],
+    assignedToUserId: null, firstRespondedAt: null, firstResponseDueAt: past, slaBreachedAt: null,
+    createdAt: past, updatedAt: past,
+    customer: { ownerUserId: 'other-user', branchId: 'other-branch' },
+  };
+
+  async function checkCard(rows: any[], viewer: any, expectedIds: string[]) {
+    const selected = (where: any) => rows.filter((item) => matchesWhere(item, where));
+    const countWheres: any[] = [];
+    let listWhere: any;
+    const repo = new PrismaCrmInboxRepository({ client: { crmConversation: {
+      count: async ({ where }: any) => { countWheres.push(where); return selected(where).length; },
+      findMany: async ({ where }: any) => { listWhere = where; return selected(where); },
+      groupBy: async () => [],
+    } } } as any);
+    repo.countPaymentProofs = async () => 0;
+    const crmRepo = { countCustomersBetween: async () => 0, countBookingsBetween: async () => 0 } as any;
+    const brief = await new CrmDailyBriefUseCase(repo, crmRepo, {} as any).execute(
+      { ...viewer, permissions: ['crm.inbox.read'] }, {}, fixedNow,
+    );
+    const scopeUserId = ['OWNER', 'MANAGER', 'COMPANY_VIEW'].some((role) => viewer.roles.includes(role))
+      ? undefined : viewer.userId;
+    const list = await repo.listConversations(viewer.companyId, {
+      overdue: true, scopeUserId, page: 1, pageSize: 100,
+    }, fixedNow);
+    assert.deepEqual(list.items.map((item) => item.id), expectedIds);
+    const widget = brief.widgets.find((item) => item.key === 'sla_breaches')!;
+    assert.equal(widget.value, expectedIds.length);
+    assert.equal(widget.value, list.total);
+    assert.equal(widget.severity, expectedIds.length ? 'critical' : 'info');
+    assert.equal(widget.href, '/companies/co-1/inbox?overdue=true');
+    // Pin the deadline instant and absence of scan/customer predicates in the chip query.
+    assert.deepEqual(countWheres[1], {
+      companyId: viewer.companyId,
+      ...(scopeUserId ? { OR: [{ assignedToUserId: scopeUserId }, { assignedToUserId: null }] } : {}),
+      status: listWhere.status, firstRespondedAt: null, firstResponseDueAt: { lt: fixedNow },
+    });
+  }
+
+  it('counts an unscanned overdue chat and excludes not-yet-due, undated, resolved and spam chats', async () => {
+    await checkCard([
+      row,
+      { ...row, id: 'at-deadline', firstResponseDueAt: fixedNow },
+      { ...row, id: 'future', firstResponseDueAt: future },
+      { ...row, id: 'undated', firstResponseDueAt: null },
+      { ...row, id: 'resolved', status: 'RESOLVED' },
+      { ...row, id: 'spam', status: 'SPAM' },
+    ], ctx, ['conv-1']);
+  });
+
+  it('excludes a scanned overdue chat after its first reply even while still open', async () => {
+    await checkCard([{
+      ...row, status: 'WAITING_CUSTOMER',
+      slaBreachedAt: new Date(fixedNow.getTime() - 30_000), firstRespondedAt: fixedNow,
+    }], ctx, []);
+  });
+
+  for (const roles of [['SALES'], ['OWNER'], ['MANAGER'], ['COMPANY_VIEW']]) {
+    it(`matches inbox assignment visibility for ${roles[0]} regardless of customer owner and branch`, async () => {
+      const viewer = { ...ctx, userId: 'sales-1', roles, scopes: { branchIds: ['branch-allowed'] } };
+      const scanned = { ...row, slaBreachedAt: past };
+      await checkCard([
+        { ...scanned, id: 'assigned-to-self', assignedToUserId: viewer.userId },
+        { ...scanned, id: 'unassigned' },
+        { ...scanned, id: 'assigned-to-other', assignedToUserId: 'other-user', customer: { ownerUserId: viewer.userId, branchId: 'branch-allowed' } },
+        { ...scanned, id: 'other-company', companyId: 'co-2' },
+      ], viewer, roles[0] === 'SALES'
+        ? ['assigned-to-self', 'unassigned']
+        : ['assigned-to-self', 'unassigned', 'assigned-to-other']);
+    });
+  }
 });

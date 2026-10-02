@@ -1390,13 +1390,6 @@ export class PrismaCrmInboxRepository {
     });
   }
 
-  /** Open SLA breaches (breached + still not resolved/spam). */
-  async countOpenSlaBreaches(companyId: string, scope: CrmCustomerAggregateScope = {}): Promise<number> {
-    return this.db.crmConversation.count({
-      where: { companyId, ...conversationCustomerWhere(scope), slaBreachedAt: { not: null }, status: { notIn: ['RESOLVED', 'SPAM'] } },
-    });
-  }
-
   /** Flagged payment proofs awaiting finance verification. */
   async countPaymentProofs(
     companyId: string,
