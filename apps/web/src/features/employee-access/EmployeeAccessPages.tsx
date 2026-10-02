@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { formatThaiTime } from '@/common/i18n/thai-date';
 import { workspaceDictionary, type DictionaryKey, type SupportedLocale } from '@/common/i18n/workspace-dictionary';
-import { hasStandardRoleName } from './role-picker.logic';
+import { hasStandardRoleName, roleTemplateChoices } from './role-picker.logic';
 import { employeeFullName } from '@watchdog-bms/contracts';
 import type {
   CapabilityPackView, RiskLevel, RolePreviewResult, RoleTemplate, PermissionCatalogItem,
@@ -932,9 +932,8 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
   const applyPreset = (tpl: RoleTemplate) => {
     // Expand the preset into pack toggles client-side; the compiled keys are identical to sending the
     // template key, but this keeps deselecting a preset pack working (the API unions template packs).
-    // Skip packs this company can't enable (not entitled) or this user can't grant — the preview would
-    // only drop them anyway.
-    setSelectedPacks(tpl.capabilityPackKeys);
+    // Only its tick boxes: a pack every role holds automatically has none, and the API adds it anyway.
+    setSelectedPacks(roleTemplateChoices(tpl, allPacks, availablePackKeys) ?? []);
     setPreservedKeys([]);
     if (!name) setName(tpl.nameTh);
   };
@@ -968,11 +967,11 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
 
   const byIndustry = useMemo(() => {
     const map = new Map<string, RoleTemplate[]>();
-    for (const t of templates.filter((tpl) => tpl.capabilityPackKeys.every((key) => availablePackKeys.has(key)))) {
+    for (const t of templates.filter((tpl) => roleTemplateChoices(tpl, allPacks, availablePackKeys))) {
       const k = t.industryTag ?? 'crosscutting'; map.set(k, [...(map.get(k) ?? []), t]);
     }
     return [...map.entries()];
-  }, [templates, availablePackKeys]);
+  }, [templates, allPacks, availablePackKeys]);
 
   return (
     <form onSubmit={submit} className={`${panelClass} min-w-0 overflow-hidden lg:col-span-2`}>

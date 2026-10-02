@@ -1,4 +1,4 @@
-import { HR_ASSIGNABLE_ROLE_KEYS, type AssignableRoleSummary, type RoleSummary } from '@watchdog-bms/contracts';
+import { HR_ASSIGNABLE_ROLE_KEYS, type AssignableRoleSummary, type CapabilityPackView, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
 
 const THAI_SYSTEM_ROLE_NAMES: Record<string, string> = {
   OWNER: 'เจ้าของกิจการ', ADMIN: 'ผู้ดูแลบริษัท', SYSTEM_ADMIN: 'ผู้ดูแลระบบ', MANAGER: 'ผู้จัดการ',
@@ -30,6 +30,23 @@ export function roleDisplayName(role: Pick<RoleSummary, 'key' | 'name'> & { isSy
 /** Thai label for a bare system-role key (company switcher, pickers). Unknown keys pass through. */
 export function roleKeyDisplayName(key: string): string {
   return THAI_SYSTEM_ROLE_NAMES[key] ?? key;
+}
+
+/**
+ * The boxes an example role ticks in the role builder, or null when the example cannot be offered.
+ * A choice every role holds automatically (a core pack, such as a person's own claims) has no box and
+ * the API gives it whatever is sent, so it neither rules the example out nor is ticked. An example is
+ * ruled out only by another of its choices that has no box here: one the company has not unlocked or
+ * this user may not give. Naming the automatic claim choice had hidden six examples since 2026-08-27.
+ */
+export function roleTemplateChoices(
+  template: Pick<RoleTemplate, 'capabilityPackKeys'>,
+  packs: Pick<CapabilityPackView, 'key' | 'isCore'>[],
+  tickable: ReadonlySet<string>,
+): string[] | null {
+  const automatic = new Set(packs.filter((pack) => pack.isCore).map((pack) => pack.key));
+  const choices = template.capabilityPackKeys.filter((key) => !automatic.has(key));
+  return choices.every((key) => tickable.has(key)) ? choices : null;
 }
 
 /** Prevent an older cached API shape from silently becoming an empty role picker. */

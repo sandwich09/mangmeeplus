@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import type { RoleSummary } from '@watchdog-bms/contracts';
-import { assignableRoleOptions, hasStandardRoleName, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName, roleKeyDisplayName } from './role-picker.logic';
+import { assignableRoleOptions, hasStandardRoleName, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName, roleKeyDisplayName, roleTemplateChoices } from './role-picker.logic';
 
 function role(id: string, assignableByCurrentUser?: boolean): RoleSummary {
   return { id, key: id.toUpperCase(), name: id, isSystem: true, status: 'ACTIVE', permissionKeys: [], assignableByCurrentUser };
@@ -114,5 +115,36 @@ describe('isOperationalRoleTargetReadOnly', () => {
 
   it('does not restrict a delegated role manager', () => {
     assert.equal(isOperationalRoleTargetReadOnly([...hrPermissions, 'access.role.manage'], { key: 'ADMIN', isSystem: true }), false);
+  });
+});
+
+// Owner report 2026-10-02: six example roles (พนักงานขาย, พนักงานคลัง, ฝ่ายขาย, คลังสินค้า, หน้าร้าน/ต้อนรับ,
+// ฝ่ายขาย/ดูแลลูกค้า) were never offered. Each names the claim choice every role holds automatically,
+// which has no tick box, and the builder read "no box" as "cannot be given".
+describe('roleTemplateChoices', () => {
+  const packs = [
+    { key: 'pack.core.basics', isCore: true },
+    { key: 'pack.reimbursement.self', isCore: true },
+    { key: 'pack.crm.view', isCore: false },
+    { key: 'pack.expense.self', isCore: false },
+    { key: 'pack.inventory.view', isCore: false }, // locked for the company, or beyond what this user may give
+  ];
+  const tickable = new Set(['pack.crm.view', 'pack.expense.self']);
+
+  it('offers an example that names an automatic choice, and ticks only the boxes there are', () => {
+    const example = { capabilityPackKeys: ['pack.crm.view', 'pack.expense.self', 'pack.reimbursement.self'] };
+    assert.deepEqual(roleTemplateChoices(example, packs, tickable), ['pack.crm.view', 'pack.expense.self']);
+    assert.deepEqual(roleTemplateChoices({ capabilityPackKeys: ['pack.crm.view'] }, packs, tickable), ['pack.crm.view']);
+  });
+
+  it('still leaves out an example with a choice that has no box for another reason', () => {
+    assert.equal(roleTemplateChoices({ capabilityPackKeys: ['pack.crm.view', 'pack.inventory.view'] }, packs, tickable), null);
+    assert.equal(roleTemplateChoices({ capabilityPackKeys: ['pack.crm.view', 'pack.gone'] }, packs, tickable), null);
+  });
+
+  it('is the rule the role builder offers and ticks examples by', () => {
+    const builder = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
+    assert.match(builder, /templates\.filter\(\(tpl\) => roleTemplateChoices\(tpl, allPacks, availablePackKeys\)\)/);
+    assert.match(builder, /setSelectedPacks\(roleTemplateChoices\(tpl, allPacks, availablePackKeys\) \?\? \[\]\)/);
   });
 });
