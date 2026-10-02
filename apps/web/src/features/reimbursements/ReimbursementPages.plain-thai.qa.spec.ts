@@ -25,6 +25,7 @@ const { ReimbursementsHubPage, PolicySettings } = require('./ReimbursementsPages
 const { ReimbursementSourceFacts } = require('./ReimbursementSourceFacts') as typeof import('./ReimbursementSourceFacts');
 const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as typeof import('./ReimbursementJourneyPage');
 const { approvalComparable, diffApprovalFields, draftSentBackNote, errorMessage, hubListKey, reimbursementListScope } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+const model = require('./reimbursements.model') as typeof import('./reimbursements.model');
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;
@@ -681,6 +682,45 @@ describe('what a person presses on a claim screen is 44 px high on a phone (owne
     const roles = [...html.matchAll(/<label class="([^"]*)"><span class="min-w-0">[^<]*<\/span><input type="checkbox"/gu)].map((match) => match[1]!);
     assert.equal(roles.length, 2, html.slice(html.indexOf('ส่งใบเบิกให้ใครอนุมัติ'), html.indexOf('ส่งใบเบิกให้ใครอนุมัติ') + 900));
     for (const cls of roles) assert.match(cls, /\bmin-h-11\b/, cls);
+  });
+});
+
+// Upgrade test 2026-10-02: a claim that needed no approval read as finished ("ลงนามในระบบครบแล้ว") beside a signature block
+// "ผู้อนุมัติ · ยังไม่ลงนาม" that nobody could ever sign.
+describe('the signature card has an approver block only where the claim has an approver (owner 2026-10-02)', () => {
+  /** The blocks of the card "ลายเซ็นในใบเบิก": each role with what it says. */
+  const blocks = (detail: object) => {
+    const html = detailSections(detail, ids.requester, ['reimbursement.read_own']);
+    const card = html.slice(html.indexOf('id="reimbursement-signatures"'), html.indexOf('id="reimbursement-signed-copies"'));
+    return {
+      roles: [...card.matchAll(/<div class="font-semibold text-gray-700">([^<]*)<\/div><div class="mt-2">(?:<span[^>]*>)?([^<]*)/gu)].map((match) => `${match[1]}: ${match[2]}`),
+      texts: visible(card), html: card,
+    };
+  };
+  const noApproval = { ...paid, documentSignedVia: null, financeReviewStatus: 'NOT_REQUIRED', financeReviewedByName: undefined, approvalSteps: [] };
+
+  it('shows the requester\'s block alone on a claim that needed no approval, and says why', () => {
+    const card = blocks(noApproval);
+    assert.deepEqual(card.roles, ['ผู้เบิก: ลงนามแล้ว']);
+    assert.ok(card.texts.includes('ใบนี้ไม่ต้องอนุมัติตามนโยบาย จึงมีเฉพาะลายเซ็นของผู้เบิก'));
+    assert.equal(card.texts.includes('ผู้อนุมัติ') || card.texts.includes('ยังไม่ลงนาม'), false);
+    // One block is as wide as the card, not half of it beside nothing.
+    assert.doesNotMatch(card.html, /class="grid gap-2 grid-cols-2/u);
+    // A declared paper copy changes nothing: there is still no approver to have signed it.
+    assert.deepEqual(blocks({ ...noApproval, documentSignedVia: 'PAPER', signatures: [] }).roles, ['ผู้เบิก: ลงนามบนกระดาษ']);
+    assert.equal(model.claimHasNoApprover(noApproval), true);
+  });
+
+  it('keeps both blocks where someone approved the claim, where it still waits for its approval, and while its account is corrected', () => {
+    assert.deepEqual(blocks({ ...paid, documentSignedVia: null }).roles, ['ผู้เบิก: ลงนามแล้ว', 'ผู้อนุมัติ: ยังไม่ลงนาม']);
+    const waiting = { ...paid, documentSignedVia: null, status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', approvedAt: undefined, payments: [], signatures: [],
+      approvalSteps: [{ id: ids.step, sequenceNo: 1, approverUserId: ids.approver, approverName: 'สมชาย', status: 'PENDING', assignedAt: '2026-09-27T03:00:00.000Z' }] };
+    assert.deepEqual(blocks(waiting).roles, ['ผู้เบิก: ยังไม่ลงนาม', 'ผู้อนุมัติ: ยังไม่ลงนาม']);
+    // A correction round sets the approval aside: the new account still has to be approved, by an approver.
+    const inRound = { ...paid, documentSignedVia: null, status: 'PENDING_APPROVAL', payoutCorrectionPhase: 'AWAITING_REQUESTER', signatures: [], payments: [],
+      approvalSteps: [{ ...(paid.approvalSteps[0] as object), invalidatedAt: '2026-09-28T01:00:00.000Z', invalidatedReason: 'payout_account_correction' }] };
+    assert.deepEqual(blocks(inRound).roles, ['ผู้เบิก: ยังไม่ลงนาม', 'ผู้อนุมัติ: ยังไม่ลงนาม']);
+    for (const detail of [paid, waiting, inRound, draft]) assert.equal(model.claimHasNoApprover(detail), false);
   });
 });
 

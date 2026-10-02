@@ -30,7 +30,7 @@ import {
   PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
-  canUploadSignedCopy, canVoidRecordedPayment, claimInPayoutCorrection, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
+  canUploadSignedCopy, canVoidRecordedPayment, claimHasNoApprover, claimInPayoutCorrection, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
   claimStatusBadge,
 } from './reimbursements.model';
@@ -706,7 +706,10 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   const { canEditDraft } = reimbursementOwnActions(detail, userId, permissions);
   const signatures: any[] = detail.signatures ?? [];
   const signedCopies: any[] = detail.signedCopies ?? [];
-  const slots = claimSignatureSlots(detail);
+  // No approver block where there is no approver: a claim that needed no approval read as finished beside a block
+  // "ผู้อนุมัติ · ยังไม่ลงนาม" that nobody could ever sign.
+  const noApprover = claimHasNoApprover(detail);
+  const slots = claimSignatureSlots(detail).filter((role) => role !== 'APPROVER' || !noApprover);
   const signAction = claimSignAction(detail, userId);
   // A4: a declared paper scan signs the ผู้เบิก/ผู้อนุมัติ blocks. Newest first, so this is the copy that counts.
   const paperSigned = detail.documentSignedVia === 'PAPER' || detail.documentSignedVia === 'BOTH';
@@ -832,7 +835,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <div id="reimbursement-signatures" className="scroll-mt-24">
           <MangmeeCard className="p-4">
             <h4 className="mb-2 text-sm font-bold text-gray-900">ลายเซ็นในใบเบิก</h4>
-            <div className={cx('grid grid-cols-2 gap-2', slots.length > 2 && 'sm:grid-cols-4')}>
+            <div className={cx('grid gap-2', slots.length > 1 && 'grid-cols-2', slots.length > 2 && 'sm:grid-cols-4')}>
               {slots.map(role => {
                 const signed = signatures.find((s: any) => s.role === role);
                 return (
@@ -865,6 +868,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                 );
               })}
             </div>
+            {noApprover && <p className="mt-3 text-xs text-gray-600">ใบนี้ไม่ต้องอนุมัติตามนโยบาย จึงมีเฉพาะลายเซ็นของผู้เบิก</p>}
             {slots.length === 2 && claimSelfApproved(detail) && (
               <p className="mt-3 text-xs text-gray-600">ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท</p>
             )}

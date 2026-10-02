@@ -191,6 +191,15 @@ function latestApprovedStep(detail: any): any {
 }
 
 /** Same test as the printed note: the requester approved their own claim, so both blocks are one person. */
+/**
+ * A claim that passed its approval step with nobody approving it (its amount is below the company's approval
+ * threshold): the form has no approver, and nobody can sign as one. A claim that still waits for its approval, or
+ * whose payout account is being corrected, has or will have an approver.
+ */
+export function claimHasNoApprover(detail: any): boolean {
+  return !!detail?.approvedAt && !claimInPayoutCorrection(detail) && !latestApprovedStep(detail);
+}
+
 export function claimSelfApproved(detail: any): boolean {
   return !!detail?.requesterUserId && latestApprovedStep(detail)?.decisionByUserId === detail.requesterUserId;
 }
