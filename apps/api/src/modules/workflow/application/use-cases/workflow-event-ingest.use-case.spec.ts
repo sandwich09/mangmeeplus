@@ -181,9 +181,8 @@ describe('IngestWorkflowEventUseCase', () => {
     );
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
     // Owner decision 2026-10-02: the people who review, not the shop owner, who holds every right and is told only
-    // when nobody else can review the claim. The desk's other notice (a claim blocked) is as it was.
+    // when nobody else can review the claim.
     assert.deepEqual(cfg['lastResortRecipientRoles'], ['OWNER']);
-    assert.equal(WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_finance_review')?.defaultActionJson[0]?.configJson['lastResortRecipientRoles'], undefined);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);
   });
@@ -214,6 +213,10 @@ describe('IngestWorkflowEventUseCase', () => {
     assert.equal(template?.status, 'AVAILABLE');
     assert.equal(template?.autoEnable, true);
     assert.deepEqual(cfg['recipientPermissions'], ['reimbursement.finance_review']);
+    // Owner decision 2026-10-02: the rule of the arrival notice. The reviewers, and the shop owner only as the last
+    // resort. The reviewer who blocked the claim is still left out, as the actor of the event.
+    assert.deepEqual(cfg['lastResortRecipientRoles'], ['OWNER']);
+    assert.deepEqual([cfg['excludeRecipientPayloadKeys'], cfg['skipWhenAllRecipientsExcluded']], [['actorUserId'], true]);
     assert.equal(cfg['triggerKey'], 'workflow.reimbursement_finance_review');
     assert.equal(cfg['severity'], 'action');
     assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK);

@@ -327,7 +327,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'reimbursement_finance_review',
     name: 'Reimbursement finance review',
-    description: 'Notify everyone who can run finance review when a claim is blocked.',
+    description: 'Notify the people who can run finance review on the claim (the shop owner only when nobody else can) when a claim is blocked.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -341,6 +341,9 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
         configJson: {
           triggerKey: 'workflow.reimbursement_finance_review',
           recipientPermissions: ['reimbursement.finance_review'],
+          // Owner decision 2026-10-02, the rule of the arrival notice below: to the reviewers who can act
+          // on the claim's branch, and to the shop owner only when nobody else can review the claim.
+          lastResortRecipientRoles: ['OWNER'],
           severity: 'action',
           titleTemplate: 'ตรวจสอบการเงินเบิกจ่าย: {{requestNo}}',
           bodyTemplate: 'ผลตรวจสอบ: {{decision}} · ยอด {{amount}} {{currency}}',

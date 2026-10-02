@@ -1293,9 +1293,6 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     // A rule pinned before this, or one an admin edited, has no such key: every holder who can act, as before.
     const { lastResortRecipientRoles: _added, ...pinnedBefore } = arrivalCfg;
     assert.deepEqual((await announce(desk, pinnedBefore)).to, ['u_owner', 'u_accountant', 'u_finance']);
-    // The desk's other notice, a claim a reviewer blocked, is as it was: everyone who reviews but the one who blocked it.
-    const blocked = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_finance_review')!.defaultActionJson[0]!.configJson;
-    assert.deepEqual((await announce(desk, blocked, { decision: 'BLOCKED', actorUserId: 'u_finance' })).to, ['u_owner', 'u_accountant']);
   });
 
   // Owner decision 2026-10-02 (the same day, after the one above): an approver who also reviews finance puts the claim
@@ -1336,6 +1333,44 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     const pinnedBefore = { ...arrivalCfg, webOnlyRecipientPayloadKeys: undefined, excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true };
     assert.deepEqual(await announce({ u_owner: holding('OWNER'), u_approver: holding('ACCOUNTANT') }, pinnedBefore),
       { to: undefined, bellOnly: undefined, status: 'SUCCEEDED', result: { skipped: true, reason: 'all_recipients_excluded' } });
+  });
+
+  // Owner decision 2026-10-02: the finance desk's other notice, a claim a reviewer blocked, follows the rule of the
+  // arrival notice. To the reviewers who can act on the claim's branch, and to the shop owner only when nobody else
+  // can review it. Before, every reviewer was told, the owner included, whoever else was at the desk.
+  it('tells the reviewers that a claim was blocked, and the shop owner only when nobody else can review it', async () => {
+    const blockedCfg = WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_finance_review')!.defaultActionJson[0]!.configJson;
+    /** u_finance blocks the claim, unless a case says who did. */
+    const block = async (memberships: Record<string, unknown>, cfg: Record<string, unknown> = blockedCfg, actorUserId = 'u_finance') => {
+      const h = harness({ sourceBranchId: 'br_claim', memberships });
+      await h.useCase.execute({ ...actionRun(cfg), actionKey: 'notify_finance_reviewer' }, {
+        companyId: 'co_1', ruleName: 'Reimbursement finance review', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', status: 'FINANCE_REVIEW', decision: 'BLOCKED', amount: '250', currency: 'THB', requesterUserId: 'u_staff', actorUserId },
+        siblingActions: [],
+      } as any);
+      return { to: h.sent[0]?.recipientUserIds, notice: h.sent[0], status: h.updates.at(-1)?.status, result: h.updates.at(-1)?.resultJson };
+    };
+    // The owner, an accountant and a finance role review; the finance role blocked the claim: the accountant is told.
+    const desk = { u_owner: holding('OWNER'), u_accountant: holding('ACCOUNTANT'), u_finance: holding('CUSTOM_FINANCE') };
+    const told = await block(desk);
+    assert.deepEqual(told.to, ['u_accountant']);
+    assert.deepEqual(blockedCfg['lastResortRecipientRoles'], ['OWNER']);
+    // The notice itself is as it was: in plain Thai, pushed on LINE too, with the link to the claim.
+    assert.deepEqual([told.notice.triggerKey, told.notice.severity, told.notice.title, told.notice.body, told.notice.deepLinkHref, told.notice.webOnlyRecipientUserIds],
+      ['workflow.reimbursement_finance_review', 'action', 'ตรวจสอบการเงินเบิกจ่าย: RB-1', 'ผลตรวจสอบ: ระงับ · ยอด 250.00 บาท', '/companies/co_1/reimbursements/rb_1', []]);
+    // The shop owner blocked it: the others are told, as before.
+    assert.deepEqual((await block(desk, blockedCfg, 'u_owner')).to, ['u_accountant', 'u_finance']);
+    // Nobody else can review this claim: the one who blocked it reviews for another branch now, another reviewer's
+    // role is switched off. The owner is the one left to tell.
+    assert.deepEqual((await block({ u_owner: holding('OWNER'), u_finance: holding('CUSTOM_FINANCE', elsewhere), u_off: holding('ACCOUNTANT', {}, 'DISABLED') })).to, ['u_owner']);
+    // The one who blocked it is the only reviewer besides the owner: they are not told of what they did, as the actor
+    // of every such notice is not, and the owner is not told in their place. Nobody is, and nothing is retried.
+    const alone = await block({ u_owner: holding('OWNER'), u_finance: holding('CUSTOM_FINANCE') });
+    assert.deepEqual([alone.to, alone.status, alone.result], [undefined, 'SUCCEEDED', { skipped: true, reason: 'all_recipients_excluded' }]);
+
+    // A rule pinned before this, or one an admin edited, has no such key: every reviewer but the one who blocked it.
+    const { lastResortRecipientRoles: _added, ...pinnedBefore } = blockedCfg;
+    assert.deepEqual((await block(desk, pinnedBefore)).to, ['u_owner', 'u_accountant']);
   });
 
   it('keeps a branch-limited payer for a company-central claim, exactly as the pay endpoint does', async () => {
