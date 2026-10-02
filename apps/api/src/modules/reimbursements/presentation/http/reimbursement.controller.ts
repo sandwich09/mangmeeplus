@@ -5,21 +5,27 @@ import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type {
   ListReimbursementsFilter,
-  ApproveReimbursementInput,
-  RejectReimbursementInput,
   FinanceReviewReimbursementInput,
-  VoidReimbursementPaymentInput,
   ReimbursementRequestStatus,
   ReimbursementPaymentStatus,
+  ReimbursementHubBucket,
 } from '@watchdog-bms/contracts';
 import {
+  AttachPaymentSlipDto,
   CompleteClaimSignatureUploadDto,
+  ApproveReimbursementDto,
+  CancelReimbursementDto,
+  CompletePaymentSlipUploadDto,
   CreateReimbursementRequestDto,
   InitClaimSignatureUploadDto,
+  InitPaymentSlipUploadDto,
   LinkReimbursementSignedCopyDto,
   RecordReimbursementPaymentDto,
+  RejectReimbursementDto,
   SignReimbursementClaimFormDto,
+  SubmitReimbursementDto,
   UpdateReimbursementDraftDto,
+  VoidReimbursementPaymentDto,
   ReimbursementInternalNoteDto,
   ReimbursementDraftActionControlDto,
 } from './reimbursement.dtos';
@@ -32,7 +38,9 @@ import {
   ListReimbursementsUseCase,
   SubmitReimbursementUseCase,
   CancelReimbursementUseCase,
+  WithdrawReimbursementCancellationUseCase,
   ReopenRejectedReimbursementUseCase,
+  ResumeReimbursementUseCase,
 } from '../../application/use-cases/reimbursement-request.use-case';
 import { ListApprovalQueueUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase } from '../../application/use-cases/reimbursement-approval.use-case';
 import {
@@ -51,6 +59,12 @@ import {
   LinkSignedClaimFormCopyUseCase,
   SignClaimFormUseCase,
 } from '../../application/use-cases/reimbursement-claim-signature.use-case';
+import {
+  AttachPaymentSlipUseCase,
+  CompletePaymentSlipUploadUseCase,
+  CreatePaymentSlipDownloadUrlUseCase,
+  InitPaymentSlipUploadUseCase,
+} from '../../application/use-cases/reimbursement-payment-slip.use-case';
 import { ReimbursementEvidenceService } from '../../application/services/reimbursement-evidence.service';
 import { ReimbursementWriteQuiesceGuard } from './reimbursement-write-quiesce.guard';
 import { LineReimbursementDraftUseCase } from '../../application/use-cases/line-reimbursement-draft.use-case';
@@ -86,6 +100,12 @@ export class ReimbursementController {
     private readonly linkSignedClaimCopy: LinkSignedClaimFormCopyUseCase,
     private readonly evidence: ReimbursementEvidenceService,
     private readonly draftActions: LineReimbursementDraftUseCase,
+    private readonly initSlip: InitPaymentSlipUploadUseCase,
+    private readonly completeSlip: CompletePaymentSlipUploadUseCase,
+    private readonly attachSlip: AttachPaymentSlipUseCase,
+    private readonly slipDownloadUrl: CreatePaymentSlipDownloadUrlUseCase,
+    private readonly withdrawCancel: WithdrawReimbursementCancellationUseCase,
+    private readonly resumeClaim: ResumeReimbursementUseCase,
   ) {}
 
   /** Decisions/payments return the same detail shape the drawer reads, receipt names included. */
@@ -176,9 +196,13 @@ export class ReimbursementController {
     @Query('requesterUserId') requesterUserId?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('bucket') bucket?: ReimbursementHubBucket,
+    @Query('search') search?: string,
   ) {
     const filter: ListReimbursementsFilter = {
-      scope, status, paymentStatus, requesterUserId,
+      scope, status, paymentStatus, requesterUserId, bucket,
+      // A repeated parameter arrives as a list: only one search text is read.
+      search: typeof search === 'string' ? search : undefined,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     };
@@ -234,8 +258,8 @@ export class ReimbursementController {
   @RequirePermissions('reimbursement.submit')
   @HttpCode(200)
   @ApiOperation({ summary: 'Submit reimbursement for approval' })
-  submitRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
-    return this.submit.execute(ctx, requestId);
+  submitRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: SubmitReimbursementDto) {
+    return this.submit.execute(ctx, requestId, body);
   }
 
   @Post(':requestId/reopen')
@@ -249,9 +273,17 @@ export class ReimbursementController {
   @Post(':requestId/cancel')
   @RequireAnyPermission('reimbursement.cancel_own', 'reimbursement.finance_review')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Cancel reimbursement request' })
-  cancelRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: { reason?: string }) {
+  @ApiOperation({ summary: 'Cancel reimbursement request, or continue a cancellation that was started and has not completed' })
+  cancelRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: CancelReimbursementDto) {
     return this.cancel.execute(ctx, requestId, body?.reason);
+  }
+
+  @Post(':requestId/cancel/withdraw')
+  @RequireAnyPermission('reimbursement.cancel_own', 'reimbursement.finance_review')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Take back a cancellation that was started and has not completed, while nothing of the claim has been voided' })
+  withdrawCancellation(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
+    return this.withdrawCancel.execute(ctx, requestId);
   }
 
   // ---- Approval ----
@@ -260,16 +292,24 @@ export class ReimbursementController {
   @RequirePermissions('account.session.read')
   @HttpCode(200)
   @ApiOperation({ summary: 'Approve reimbursement request (current permission or frozen assignment)' })
-  approveRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: ApproveReimbursementInput) {
-    return this.withAttachmentFileName(ctx, this.approve.execute(ctx, requestId, body?.comment, body?.approvalSnapshotHash));
+  approveRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: ApproveReimbursementDto) {
+    return this.withAttachmentFileName(ctx, this.approve.execute(ctx, requestId, body?.comment, body?.approvalSnapshotHash, body?.payoutVerifiedVersion));
   }
 
   @Post(':requestId/reject')
   @RequirePermissions('account.session.read')
   @HttpCode(200)
   @ApiOperation({ summary: 'Reject reimbursement request (current permission or frozen assignment)' })
-  rejectRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: RejectReimbursementInput) {
-    return this.withAttachmentFileName(ctx, this.reject.execute(ctx, requestId, body?.reason));
+  rejectRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: RejectReimbursementDto) {
+    return this.withAttachmentFileName(ctx, this.reject.execute(ctx, requestId, body?.reason, body?.payoutCorrectionReasonCode));
+  }
+
+  @Post(':requestId/resume')
+  @RequirePermissions('account.session.read')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Carry out now the decision the claim already holds (its approver, or whoever may record the payment of a claim nobody had to approve)' })
+  resumeRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
+    return this.resumeClaim.execute(ctx, requestId);
   }
 
   // ---- Finance and payment ----
@@ -299,9 +339,61 @@ export class ReimbursementController {
     @ReqCtx() ctx: RequestContext,
     @Param('requestId') requestId: string,
     @Param('paymentId') paymentId: string,
-    @Body() body: VoidReimbursementPaymentInput,
+    @Body() body: VoidReimbursementPaymentDto,
   ) {
     return this.withAttachmentFileName(ctx, this.voidPayment.execute(ctx, requestId, paymentId, body));
+  }
+
+  // ---- Payment slips ----
+  //
+  // Payment evidence with its own viewer rule (spec §11, §12.5). Writes are the payer's; opening a
+  // slip is decided in the use case, like the claim detail it belongs to.
+
+  @Post(':requestId/payments/slip-upload-intent')
+  @RequirePermissions('reimbursement.payment.record')
+  @ApiOperation({ summary: 'Start a payment slip upload for this claim' })
+  initPaymentSlip(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: InitPaymentSlipUploadDto) {
+    return this.initSlip.execute(ctx, requestId, body);
+  }
+
+  @Post(':requestId/payments/slip-uploads/:attachmentId/complete')
+  @RequirePermissions('reimbursement.payment.record')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Complete a payment slip upload' })
+  completePaymentSlip(
+    @ReqCtx() ctx: RequestContext,
+    @Param('requestId') requestId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Body() body: CompletePaymentSlipUploadDto,
+  ) {
+    return this.completeSlip.execute(ctx, requestId, attachmentId, body);
+  }
+
+  @Post(':requestId/payments/:paymentId/slips')
+  @RequirePermissions('reimbursement.payment.record')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Attach a slip to a recorded payment, or move a misfiled signed copy to be its slip' })
+  attachPaymentSlip(
+    @ReqCtx() ctx: RequestContext,
+    @Param('requestId') requestId: string,
+    @Param('paymentId') paymentId: string,
+    @Body() body: AttachPaymentSlipDto,
+  ) {
+    return this.withAttachmentFileName(ctx, this.attachSlip.execute(ctx, requestId, paymentId, body));
+  }
+
+  // `?disposition=inline` is the preview ask, as on the generic attachment download.
+  @Get(':requestId/payments/:paymentId/slips/:attachmentId/download-url')
+  @RequirePermissions('account.session.read')
+  @ApiOperation({ summary: 'Open a payment slip (requester, the claim approver, payment-record or finance-review holders)' })
+  paymentSlipDownloadUrl(
+    @ReqCtx() ctx: RequestContext,
+    @Param('requestId') requestId: string,
+    @Param('paymentId') paymentId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Query('disposition') disposition?: string,
+  ) {
+    return this.slipDownloadUrl.execute(ctx, requestId, paymentId, attachmentId, disposition === 'inline' ? 'inline' : undefined);
   }
 
   @Get(':requestId/export')

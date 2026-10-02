@@ -5,6 +5,7 @@ import {
   PrismaExpenseRepository,
   SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
 } from './prisma-expense.repository';
+import { findClaimExpenseVoidBlocker } from './expense-void-blocker';
 
 // H-04 (expenses) closure evidence: void must be a true reversal — the status
 // claim, payable zeroing, and reversing journal are one transaction, repeated
@@ -385,6 +386,82 @@ describe('voidExpenseTrueReversal (H-04)', () => {
     const expense = client.state.expenses[0];
     assert.equal(expense.status, 'VOIDED');
     assert.equal(expense.postingStatus, 'not_required');
+  });
+});
+
+// Audit B3 (reimbursement claims): cancelling a claim voids its expense records after the claim has
+// committed to cancelling. The claim now asks first what the void would refuse, through the readers
+// the void itself throws from, so the answer and the void cannot disagree.
+describe('what a claim is told would stop the void is what the void refuses', () => {
+  const blocked: Array<[string, (client: any) => void, Record<string, string>]> = [
+    ['a closed accounting period', (client) => { client.state.periods[0].status = 'CLOSED'; }, { code: 'accounting_period_locked', periodKey: '2026-07' }],
+    ['a period under closing review', (client) => { client.state.periods[0].status = 'CLOSING_REVIEW'; }, { code: 'accounting_period_locked', periodKey: '2026-07' }],
+    ['a filed PP30 period', (client) => { client.state.taxPeriods.push({ id: 'tp_1', companyId: CO, formType: 'PP30', periodKey: '2026-07', status: 'FILED' }); },
+      { code: 'tax_period_locked', periodKey: '2026-07', formType: 'PP30' }],
+    ['a journal that is not posted', (client) => { client.state.journalEntries[0].status = 'DRAFT'; }, { code: 'posting_unresolved' }],
+    ['a journal whose period row is missing', (client) => { client.state.periods.length = 0; }, { code: 'posting_unresolved' }],
+    ['a claim-born record sent back to review', (client) => { Object.assign(client.state.expenses[0], { status: 'NEEDS_REVIEW', sourceReimbursementRequestId: 'rb_1' }); },
+      { code: 'expense_not_voidable' }],
+  ];
+  const voidable: Array<[string, (client: any) => void]> = [
+    ['an open period', () => undefined],
+    ['a reopened period', (client) => { client.state.periods[0].status = 'REOPENED'; }],
+    ['a record with no journal yet', (client) => { client.state.journalEntries.length = 0; client.state.journalLines.length = 0; }],
+    ['a filed PP30 period on a record with no VAT', (client) => {
+      Object.assign(client.state.expenses[0], { inputVatClaimStatus: 'NON_CLAIMABLE', vatAmount: '0.00' });
+      client.state.expenseLines[0].taxComponentsJson = null;
+      client.state.taxPeriods.push({ id: 'tp_1', companyId: CO, formType: 'PP30', periodKey: '2026-07', status: 'FILED' });
+    }],
+  ];
+  const world = (arrange: (client: any) => void) => {
+    const client = makeClient(confirmedExpenseSeed());
+    // The fake hands a record its lines only through findFirstOrThrow; the reader asks findFirst with them included.
+    client.expenseRecord.findFirst = async ({ where }: any) => client.expenseRecord.findFirstOrThrow({ where }).catch(() => null);
+    arrange(client);
+    return { client, repo: new PrismaExpenseRepository({ client } as any) };
+  };
+
+  for (const [name, arrange, expected] of blocked) {
+    it(`${name}: reported, and the void refuses`, async () => {
+      assert.deepEqual(await findClaimExpenseVoidBlocker(world(arrange).client, CO, 'exp_1'), expected);
+      const { client, repo } = world(arrange);
+      await assert.rejects(() => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1'));
+      assert.equal(client.state.journalEntries.some((entry: any) => entry.entryType === 'REVERSAL'), false);
+    });
+  }
+
+  it('reports nothing where the void goes through, and nothing for a record there is nothing left to void', async () => {
+    for (const [name, arrange] of voidable) {
+      assert.equal(await findClaimExpenseVoidBlocker(world(arrange).client, CO, 'exp_1'), null, name);
+      const { client, repo } = world(arrange);
+      assert.equal((await repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1')).expense.status, 'VOIDED', name);
+      // Voided: asked again (a retried cancellation), there is nothing to report.
+      assert.equal(await findClaimExpenseVoidBlocker(client, CO, 'exp_1'), null, `${name}, once voided`);
+    }
+    // A claim's record that was never confirmed is closed without a journal, whatever its period.
+    const unconfirmed = world((client) => { client.state.expenses[0].status = 'READY_FOR_CONFIRMATION'; client.state.periods[0].status = 'CLOSED'; });
+    assert.equal(await findClaimExpenseVoidBlocker(unconfirmed.client, CO, 'exp_1'), null);
+    assert.equal(await findClaimExpenseVoidBlocker(world(() => undefined).client, CO, 'exp_gone'), null);
+  });
+
+  it('runs the caller\'s fence first inside both void transactions, and a refusal there changes nothing', async () => {
+    const { client, repo } = world(() => undefined);
+    const fence = async (tx: any) => { assert.equal(tx, client, 'inside the transaction'); throw new ConflictException('reimbursement_cancellation_intent_changed'); };
+    await assert.rejects(() => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1', [], fence), /reimbursement_cancellation_intent_changed/);
+    assert.deepEqual([client.state.expenses[0].status, client.state.journalEntries.length], ['CONFIRMED', 1]);
+
+    Object.assign(client.state.expenses[0], { status: 'READY_FOR_CONFIRMATION', sourceReimbursementRequestId: 'rb_1', sourceReimbursementLineId: 'rbl_1' });
+    const terminalize = (beforeVoid?: (tx: any) => Promise<void>) => repo.terminalizeUnconfirmedClaimProjection({
+      companyId: CO, expenseId: 'exp_1', reimbursementRequestId: 'rb_1', reimbursementLineId: 'rbl_1', actorUserId: 'u2', reason: 'เหตุผล',
+      eventKey: 'expense.voided:expense_record:exp_1:reimbursement-cancel', payloadJson: {}, beforeVoid,
+    });
+    await assert.rejects(() => terminalize(fence), /reimbursement_cancellation_intent_changed/);
+    assert.equal(client.state.expenses[0].status, 'READY_FOR_CONFIRMATION');
+    // A fence that passes lets the void through.
+    let fenced = 0;
+    client.outboxEvent = { createMany: async () => ({ count: 1 }) };
+    assert.equal((await terminalize(async () => { fenced += 1; })).status, 'VOIDED');
+    assert.equal(fenced, 1);
   });
 });
 

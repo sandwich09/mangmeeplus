@@ -30,7 +30,8 @@ accounting offices:
 
 ## 4. Non-goals
 
-- Auto-posting sales documents, procurement bills, supplier payments, or reimbursements in this phase.
+- Auto-posting sales documents, procurement bills, or supplier payments in this phase. Reimbursement
+  (claim) payouts were out of scope until the 2026-10-01 amendment in section 17.
 - Bypassing evidence, account mapping, tax snapshot, branch, permission, or period-close rules.
 - Automatically backfilling historical pending expenses when Auto-post is enabled.
 - Public permanent evidence links or public folders.
@@ -118,7 +119,8 @@ yet been recognized.
 - A closed period is a blocker, not an override path.
 - Partial payments are cumulative and append-only. Each `ExpensePayment.id` is its own `expense.payment`
   source, posting status, journal identity, retry boundary, and reversal boundary.
-- A claim-born expense cannot be settled through this path; it settles through `reimbursement.payment`.
+- A claim-born expense cannot be settled through this path; it settles through `reimbursement.payment`
+  (section 17).
 
 ### 7.4 Evidence and export
 
@@ -305,3 +307,137 @@ POST /v1/internal/ledger/expense-auto-post/drain
 - Retry is allowed after the cause is fixed.
 - Auto-post applies to new documents by default.
 - Historical pending documents require a separate previewed and confirmed backfill.
+
+## 17. Amendment 2026-10-01: Claim Payouts (`reimbursement.payment`)
+
+Until this amendment a recorded claim payout stayed `pending` until someone called
+`POST /posting/generate` by hand: no worker drained it and no screen offered it (finance-gaps spec
+GAP-02, follow-up (ก), never built). Period close then refuses for as long as one is pending.
+Nothing about the accounting changes here. The journal still comes from the existing canonical
+generator and its existing mapping; this amendment only makes the two existing modes reach it.
+
+### 17.1 Auto-post mode
+
+The drain selects a claim payout under the rules it already applies to an expense payment:
+
+- the company has `expense_auto_post`, `double_entry_ledger` and `expenses` enabled;
+- the payment is `RECORDED`, its posting status is `pending`, and it was created at or after the
+  activation boundary (section 7.1) — a payout recorded before Auto-post was switched on is never
+  picked up automatically;
+- no generated `reimbursement.payment` journal exists for it;
+- it waits for its accruals: every claim line has an expense record that is either `CONFIRMED` with a
+  `POSTED` accrual journal, or a confirmed duplicate that needs none. A suspected duplicate, a missing
+  expense record or an accrual still waiting keeps the payout out of the candidate set, so it stays
+  `pending`; it is not attempted and marked as an error once a minute.
+
+A frozen `reimbursement` family (an explicit disabled entitlement row) removes claim payouts from the
+drain while expense sources keep posting. `reimbursement` is not a requirement of the drain itself.
+
+A refused attempt marks that payment `posting_error`, and is not retried by the worker. Two rules
+keep that mark honest (review 2026-10-01):
+
+- It lands on a `RECORDED` payment only. A payment voided after the candidates were read keeps the
+  status its void gave it (`reversed` or `not_required`) and is counted as neither posted nor failed.
+- The journal table decides. The worker stamps `posting_error` first and reads the journal table
+  after it, in one transaction; when a posted settlement exists (another run or an accountant got
+  there first, or only the bookkeeping after the post failed) it stamps `posted` instead. The stamp
+  holds the payment row, so no settlement can commit behind that read.
+
+`ReimbursementPayment` has no error column. The reason is kept as a structured log line,
+`ledger.auto_post.claim_payout_failed`, with the company id, the payment id and the failure code,
+and it is shown again when an accountant retries from the screen.
+
+A void needs no worker step, and the worker has none: voiding a posted payout creates and posts its
+reversing entry inside the void transaction, and voiding an unposted one marks it `not_required`.
+A voided payout is never a candidate, and a reversal is never left pending for a worker to post.
+
+### 17.1.1 A post and a void of the same payout take turns
+
+The generator reads the payment as `RECORDED` and writes its journal many queries later, so a void
+could commit in between and leave a posted settlement on a voided payment. For a claim payout the
+settlement is therefore one transaction whose first statement stamps the payment `posted` with
+`status = 'RECORDED'` in its `where`. That row write and the void's own update of the same row take
+turns, and whoever is second sees the other's committed result:
+
+- the void is second: it finds the posted settlement and reverses it;
+- the post is second: it finds a voided payment, writes nothing (no journal, no journal number, no
+  stamp) and is refused with `reimbursement_payment_not_recorded`.
+
+The journal number is reserved and committed inside the same transaction, so a refused or failed
+settlement leaves no number behind. Two posters of one payout take turns in the same way; the second
+is answered with the first's journal. Other sources keep their existing, non-transactional path.
+
+### 17.2 Manual mode
+
+- The accounting-evidence screen lists recorded payouts whose posting status is `pending` or
+  `posting_error`, of any age, from the existing `GET /reimbursements/posting/pending` worklist, and
+  posts one through the existing `POST /posting/generate`.
+- The worklist is bounded: the endpoint returns at most 200 payouts, the oldest payment first, and
+  the screen draws ten at a time with "แสดงเพิ่ม". At the limit the heading says these are the first
+  200, not a total. Posting the ones shown brings the next ones in.
+- The section is on the page from the start: one line while it loads, one line when nothing is
+  waiting, and the reason with "โหลดอีกครั้ง" when the list could not be read. It never reports zero
+  for a list it has not read.
+- A row is labelled "ยังไม่ลงบัญชี" or "ลงบัญชีผิดพลาด", the same words the period-close check uses.
+  Money in another currency is named in Thai; a currency code is never printed.
+- It is shown to a user who may post to the ledger (`journal.entry.create` and `journal.entry.post`)
+  and may read the worklist (`reimbursement.finance_review`). It follows the same presentation switch
+  as the other posting buttons, so it stays hidden while the accounting screens are closed.
+- A refusal stays on screen in Thai and the row stays listed for a retry.
+- The period-close check `reimbursement_postings_complete` carries a `breakdown` of its three counts
+  (unconfirmed claim expenses, pending payouts, failed payouts). The web names each kind that is
+  pending and links to the screen that fixes it, and shows the checks when a close is refused.
+
+### 17.3 The date a payout may carry
+
+Recording a claim payment refuses a paid date that falls in an accounting period which is not
+`OPEN` or `REOPENED` (a month with no period row yet is open). The answer is 409
+`reimbursement_payment_accounting_period_locked:<month>`, the month taken from the paid date in Thai
+time, and nothing is written: no payment, no payment number, no notice. The web tells the payer to
+check the date, or to have the period reopened first when the money really left on that day. A replay
+of a payment that was already recorded is answered as recorded. This is the rule expense confirmation
+applies; before it a payout could be recorded in a closed month and then never be posted until that
+month was reopened. A payout that already sits in a closed period is still refused with
+`period_closed` when posted, and stays on the worklist.
+
+The check is a read before the write, not a lock. The period close runs its checks and then updates
+the period without one, for every source, so a close and a recording in the same instant are not
+serialized.
+
+### 17.4 Known limits (not changed by this amendment)
+
+- A company on the `TH_SME_COA_V1` chart has no reviewed mapping for a settlement (cash or bank by
+  payment method is still undecided work, chart bootstrap plan Phase 6). Its payout is refused with
+  `posting_rule_missing`, no journal is created, and the payment becomes `posting_error`. The same is
+  true of `expense.payment`.
+- A claim line typed into the claim form carries no expense category, so on that chart its accrual is
+  refused with `expense_account_unmapped:no_category` and its payout keeps waiting.
+- The historical backfill (section 11) covers expense accruals only. A payout recorded before the
+  activation boundary is posted from the screen.
+- For expense sources (`expense.record`, `expense.payment`) the worker and an accountant posting the
+  same source at the same moment still produce one journal, but the loser can leave the status flag
+  at `posting_error`, and two posters can collide on the journal number; posting again corrects it.
+  A claim payout no longer has this exposure (section 17.1.1).
+- Auto-post readiness does not check the settlement mappings. A company could pass it and still have
+  every payout refused; it fails closed.
+
+### 17.5 Acceptance
+
+- [x] A ready claim payout is posted by the drain; a payout that is not ready stays `pending`.
+- [x] Auto-post never posts a payout recorded before its activation boundary, a voided payout, or
+      one that already has a generated journal.
+- [x] After posting, the claim's paid total, the payment, the settlement journal and the expense
+      records carry the same amount, and the employee payable nets to zero.
+- [x] After a void, the settlement and its reversal net to zero and the claim, its expense records
+      and the payable read unpaid again; paying again leaves one live payment and one net settlement.
+- [x] The screen lists pending and failed payouts and a refusal does not hide the list.
+- [x] The period-close check names what is pending and where to fix it.
+- [x] A post and a void of one payout, in either order and fired together, never leave a posted
+      settlement on a voided payment; the second of two posters gets the first's journal.
+- [x] A posting stamp never lands on a voided payment, and `posting_error` never stays on a payout
+      that has a posted settlement.
+- [x] A settlement that is refused or fails midway leaves no journal, no journal number and no stamp.
+- [x] The worklist is bounded and drawn ten rows at a time.
+- [x] A payment dated in a closed accounting period is refused at recording and writes nothing.
+- [x] CI runs the candidate SQL and the row locking against PostgreSQL
+      (`claim-payment-posting.pg.spec.ts`, job "Migrations and Boot", in a database of its own).

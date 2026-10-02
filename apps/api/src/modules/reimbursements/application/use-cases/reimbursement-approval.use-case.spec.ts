@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConflictException } from '@nestjs/common';
 import { ApproveReimbursementUseCase, ListApprovalQueueUseCase, RejectReimbursementUseCase, approvalDecisionActions } from './reimbursement-approval.use-case';
 import {
   CreateReimbursementDraftUseCase,
@@ -11,6 +12,14 @@ import { ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
 import { REIMBURSEMENT_POLICY_DEFAULTS } from '../../domain/reimbursement.constants';
 import { compileRole } from '../../../employee-access/domain/logic/capability.logic';
+import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
+import {
+  applyDraftPayout, attestClaimPayout, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readSubmitPayoutPlan, writeMemberPayoutAccount,
+} from '../../infrastructure/reimbursement-payout';
+import { payoutSubmitToken, sealPayoutDestination, submitPayoutColumns } from '../../domain/logic/payout-destination.logic';
+
+/** What a submit freezes for the fixture claims below: the claim asks for cash. */
+const cashPlan = { payoutMethod: 'CASH', followsDefault: false } as const;
 
 // Evidence fake for detailWithFileNames — decision endpoints now return the same hydrated
 // detail as a GET (names + file names), so their specs feed the assembler harmless lookups.
@@ -19,6 +28,8 @@ const fakeDetailEvidence = { getAttachmentFileName: async () => undefined, getAt
 
 const noopAudit = { log: async () => undefined } as any;
 const noopOutbox = { append: async () => undefined } as any;
+// These drafts carry no payout choice of their own, so the payout use case is never reached.
+const noPayouts = {} as any;
 const readyApproverRoutes = {
   resolveNamedSubmissionRoute: async () => null,
   resolveSubmissionRoute: async ({ roleKey }: any) => ({
@@ -32,14 +43,29 @@ function submitUseCase(repo: any, audit: any, outbox: any, evidence: any) {
   return new SubmitReimbursementUseCase(repo, audit, outbox, evidence, readyApproverRoutes, noopSubmitProjections);
 }
 
+/** The claim content the fixture approver was looking at. An approval that names none is its own test below. */
+const SEEN_HASH = 'hash-the-approver-saw';
+
 function approveUC(repo: any, projections: any = { execute: async () => undefined }, audit: any = noopAudit) {
-  return new ApproveReimbursementUseCase(repo, audit, projections, fakeDetailEvidence as any);
+  const useCase = new ApproveReimbursementUseCase(repo, audit, projections, fakeDetailEvidence as any);
+  return {
+    // Every approval names what it saw; a test about anything else approves what the fixture showed.
+    execute: (context: any, id: string, comment?: string, seenHash: string | undefined = SEEN_HASH, payoutVerifiedVersion?: unknown) =>
+      useCase.execute(context, id, comment, seenHash, payoutVerifiedVersion),
+    /** The use case itself, for the calls that send no hash. */
+    useCase,
+  };
 }
 
+/**
+ * A manager: the two decision rights and the right to read claims, as every role that approves holds.
+ * Approve and reject ask the claim detail's gate first, so a caller is told why they may not decide a
+ * claim only when they could open it.
+ */
 function ctx(overrides: Partial<any> = {}) {
   return {
     requestId: 'req-1', authSubject: 's', userId: 'approver-1', companyId: 'co-1',
-    membershipId: 'm', roles: ['MANAGER'], permissions: ['reimbursement.approve', 'reimbursement.reject'],
+    membershipId: 'm', roles: ['MANAGER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'],
     scopes: {}, authProvider: 'dev', ...overrides,
   } as any;
 }
@@ -80,6 +106,9 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
     findPolicy: async () => policy,
     getUserDisplayNames: async () => ({}),
     listSignedClaimFormCopies: async () => [],
+    listPaymentSlips: async () => ({}),
+    // The claim's own masked snapshot, as the repository reads it.
+    findClaimPayout: async (claim: any) => (claim.payoutMethod ? { payoutMethod: claim.payoutMethod, ...claim.payoutSnapshot } : undefined),
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
       step.status = 'APPROVED'; step.decisionByUserId = data.actorUserId; step.decidedAt = data.decidedAt;
@@ -114,7 +143,10 @@ describe('ApproveReimbursementUseCase', () => {
 
   it('rejects when missing approve permission', async () => {
     const uc = approveUC(fakeRepo(baseRequest()));
-    await assert.rejects(() => uc.execute(ctx({ permissions: [] }), 'rb-1'), /permission/i);
+    // Someone who can open the claim and may not approve it is told which right is missing.
+    await assert.rejects(() => uc.execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1'), /Missing permission: reimbursement\.approve/);
+    // Someone who cannot open it is told that and nothing else (final review item 18).
+    await assert.rejects(() => uc.execute(ctx({ permissions: [] }), 'rb-1'), /Cannot read this reimbursement/);
   });
 
   it('lets an active frozen assignee finish after a later role and permission change', async () => {
@@ -130,7 +162,7 @@ describe('ApproveReimbursementUseCase', () => {
       approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['assigned-1'] }],
     });
     await assert.rejects(
-      () => approveUC(fakeRepo(req)).execute(ctx({ roles: ['OWNER'], permissions: ['reimbursement.approve'] }), 'rb-1'),
+      () => approveUC(fakeRepo(req)).execute(ctx({ roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve'] }), 'rb-1'),
       /not_eligible_approver/,
     );
   });
@@ -216,10 +248,41 @@ describe('ApproveReimbursementUseCase', () => {
     });
   });
 
-  it('rejects approving a non-pending request', async () => {
-    const req = baseRequest({ status: 'APPROVED' });
-    const uc = approveUC(fakeRepo(req));
-    await assert.rejects(() => uc.execute(ctx(), 'rb-1'), /Cannot approve/);
+  // Final review W1: the comment is kept on the step, which every reader of the claim is shown, and in the audit row.
+  it('refuses a comment that carries an account number, before anything is decided, and takes an ordinary one', async () => {
+    const events: any[] = [];
+    const req = baseRequest();
+    for (const comment of ['โอนเข้า 012-3-45678-9 ได้เลย', 'บัญชีใหม่ 1234567890']) {
+      await assert.rejects(approveUC(fakeRepo(req, FINANCE_REVIEW_ON, events)).execute(ctx(), 'rb-1', comment),
+        (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number', comment);
+    }
+    assert.deepEqual([req.status, req.approvalSteps[0].status, events], ['PENDING_APPROVAL', 'PENDING', []]);
+    const approved = await approveUC(fakeRepo(req, FINANCE_REVIEW_ON, events)).execute(ctx(), 'rb-1', 'ตรวจกับใบเสร็จแล้ว บัญชีลงท้าย 6789');
+    assert.equal(approved.status, 'FINANCE_REVIEW');
+  });
+
+  // The page that asked is behind the claim: someone decided it, it was cancelled, or its requester took it back.
+  // Before: 422 "Cannot approve from status CANCELLED", which no screen has words for.
+  it('answers an approval or a rejection of a claim that no longer waits with one code and no status word, before anything is written', async () => {
+    for (const status of ['DRAFT', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'REJECTED', 'CANCELLED', 'VOIDED']) {
+      const repo = fakeRepo(baseRequest({ status, currentApprovalStepId: undefined }));
+      const writes: string[] = [];
+      for (const write of ['beginApprovalDecisionAtomic', 'completeApprovalProjectionAtomic', 'rejectRequestAtomic']) repo[write] = async () => { writes.push(write); };
+      const notWaiting = (error: any) => {
+        assert.deepEqual([error.getStatus(), error.message], [409, 'reimbursement_not_awaiting_approval'], status);
+        assert.doesNotMatch(JSON.stringify(error.getResponse()), new RegExp(status), 'the answer does not say where the claim stands');
+        return true;
+      };
+      await assert.rejects(() => approveUC(repo).execute(ctx(), 'rb-1'), notWaiting);
+      await assert.rejects(() => new RejectReimbursementUseCase(repo, noopAudit, fakeDetailEvidence as any).execute(ctx(), 'rb-1', 'ยอดไม่ตรงกับใบเสร็จ'), notWaiting);
+      assert.deepEqual(writes, [], status);
+      // Whoever could not open the claim is still told that, and nothing of where it stands (final review item 18).
+      const outsider = ctx({ userId: 'someone-else', roles: ['STAFF'], permissions: ['reimbursement.read_own'] });
+      const unread = (error: any) => error.getStatus() === 403 && !/awaiting/.test(error.message);
+      await assert.rejects(() => approveUC({ ...repo, isUserRelatedToRequest: async () => false }).execute(outsider, 'rb-1'), unread, status);
+      await assert.rejects(() => new RejectReimbursementUseCase({ ...repo, isUserRelatedToRequest: async () => false }, noopAudit, fakeDetailEvidence as any)
+        .execute(outsider, 'rb-1', 'เหตุผล'), unread, status);
+    }
   });
 
   it('projects only at final manager approval when finance review is not required', async () => {
@@ -311,9 +374,9 @@ function expense(overrides: Partial<any> = {}) {
   return { id: 'exp-1', companyId: 'co-1', branchId: 'branch-1', createdByUserId: 'staff-1', ...overrides } as any;
 }
 
-function evidenceService(attachmentResult: any = null, expenseResult: any = null) {
+function evidenceService(attachmentResult: any = null, expenseResult: any = null, linkedAsPaymentSlip = false) {
   return new ReimbursementEvidenceService(
-    { findById: async () => attachmentResult, findManyByIds: async () => (attachmentResult ? [attachmentResult] : []) } as any,
+    { findById: async () => attachmentResult, findManyByIds: async () => (attachmentResult ? [attachmentResult] : []), isReimbursementPaymentSlip: async () => linkedAsPaymentSlip } as any,
     { findById: async () => expenseResult, findSubstituteEvidence: async () => null } as any,
   );
 }
@@ -353,6 +416,8 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
     getUserDisplayNames: async () => ({}),
     // Lane F: it also lists the uploaded scans of the signed claim form.
     listSignedClaimFormCopies: async () => [],
+    // And, once the claim has a payment, that payment's slips.
+    listPaymentSlips: async () => ({}),
     createRequest: async (data: any) => {
       request = draftRequest({
         ...data,
@@ -377,11 +442,18 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
       return request;
     },
     findDuplicateCandidates: async () => [],
-    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, approvalStep, onSubmittedPersisted }: any) => {
+    // The claim asks for cash: it needs no account and no attestation.
+    planSubmitPayout: async () => cashPlan,
+    findClaimPayout: async (claim: any) => (claim.payoutMethod ? { payoutMethod: claim.payoutMethod } : undefined),
+    submitDraftAtomic: async ({ expectedUpdatedAt, request: data, approvalStep, payout, onSubmittedPersisted }: any) => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
+      // As in the repository transaction: the payout columns are decided here and the hash is made from them.
+      const columns = submitPayoutColumns(cashPlan);
+      const snapshotHash = payout.snapshotHash(columns);
       const step = approvalStep ? { id: 'step-1' } : undefined;
       const documentNumber = { id: 'num-1', documentNumber: 'RB-202601-000001' };
-      Object.assign(request, data, {
+      Object.assign(request, data, columns, {
+        approvalSnapshotHash: snapshotHash,
         requestNo: documentNumber.documentNumber,
         currentApprovalStepId: step?.id ?? null,
         updatedAt: new Date(request.updatedAt.getTime() + 1),
@@ -389,6 +461,7 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
       await onSubmittedPersisted(fakeTx(events), {
         step, documentNumber, documentNumberReused: false,
         supersededDuplicateCandidateCount: 0, supersededApprovalStepCount: 0,
+        payout: { plan: cashPlan, columns },
       });
       return {
         step,
@@ -408,6 +481,8 @@ describe('Reimbursement request evidence validation', () => {
     ['cross-company', attachment({ companyId: 'co-2' })],
     ['other-user', attachment({ uploadedByUserId: 'staff-2' })],
     ['non-ACTIVE', attachment({ status: 'PENDING_UPLOAD' })],
+    // Owner 2026-10-01: payment evidence is never a claim receipt, the requester's own slip upload included.
+    ['payment-slip upload', attachment({ metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-9' } })],
   ] as const;
   const invalidExpenses = [
     ['nonexistent', null],
@@ -418,7 +493,7 @@ describe('Reimbursement request evidence validation', () => {
   for (const [name, record] of invalidAttachments) {
     it(`rejects ${name} attachment at create`, async () => {
       const state = requestRepo();
-      const uc = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(record));
+      const uc = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(record), noPayouts);
       await assert.rejects(() => uc.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] }), /invalid_primary_attachment/);
     });
 
@@ -429,10 +504,24 @@ describe('Reimbursement request evidence validation', () => {
     });
   }
 
+  // A file already linked as the slip of a payment carries no tag when it was moved there from the
+  // signed copies. Refused when the line is saved: at approval the expense record could not link it
+  // either, and the claim would be stuck in front of its approver.
+  it('rejects the slip of a payment as a line receipt, at create and at submit', async () => {
+    const create = new CreateReimbursementDraftUseCase(requestRepo().repo, noopAudit, evidenceService(attachment(), null, true), noPayouts);
+    await assert.rejects(() => create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] }),
+      (error: any) => error.getStatus() === 422 && error.message === 'invalid_primary_attachment');
+    const state = requestRepo(draftRequest({ lines: [lineRecord({ attachmentId: 'att-1' })] }));
+    await assert.rejects(() => submitUseCase(state.repo, noopAudit, noopOutbox, evidenceService(attachment(), null, true)).execute(requesterCtx(), 'rb-1'), /invalid_primary_attachment/);
+    // The same file, not a slip, is the ordinary receipt it always was.
+    await new CreateReimbursementDraftUseCase(requestRepo().repo, noopAudit, evidenceService(attachment()), noPayouts)
+      .execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
+  });
+
   for (const [name, record] of invalidExpenses) {
     it(`rejects ${name} expense at create`, async () => {
       const state = requestRepo();
-      const uc = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null, record));
+      const uc = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null, record), noPayouts);
       await assert.rejects(() => uc.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ linkedExpenseId: 'exp-1' })] }), /invalid_linked_expense/);
     });
 
@@ -445,12 +534,12 @@ describe('Reimbursement request evidence validation', () => {
 
   it('validates attachment and expense ids supplied by PATCH', async () => {
     const state = requestRepo(draftRequest());
-    const updateAttachment = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null));
+    const updateAttachment = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null), noPayouts);
     await assert.rejects(
       () => updateAttachment.execute(requesterCtx(), 'rb-1', { lines: [inputLine({ attachmentId: 'missing' })] }),
       /invalid_primary_attachment/,
     );
-    const updateExpense = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null, null));
+    const updateExpense = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(null, null), noPayouts);
     await assert.rejects(
       () => updateExpense.execute(requesterCtx(), 'rb-1', { lines: [inputLine({ linkedExpenseId: 'missing' })] }),
       /invalid_linked_expense/,
@@ -460,7 +549,7 @@ describe('Reimbursement request evidence validation', () => {
   it('passes create to submit with a valid active attachment and returns its file name on the line', async () => {
     const state = requestRepo();
     const evidence = evidenceService(attachment());
-    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
+    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const events: any[] = [];
     const outbox = { append: async (...args: any[]) => { events.push(args); } } as any;
@@ -477,7 +566,7 @@ describe('Reimbursement request evidence validation', () => {
   it('finance submits on the requester\'s behalf with the REQUESTER\'s attachment', async () => {
     const state = requestRepo();
     const evidence = evidenceService(attachment()); // uploadedByUserId: staff-1 = requester
-    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
+    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const financeCtx = ctx({ userId: 'finance-1', roles: ['FINANCE'], permissions: ['reimbursement.submit', 'reimbursement.finance_review'] });
     const submit = submitUseCase(state.repo, noopAudit, noopOutbox, evidence);
@@ -487,12 +576,12 @@ describe('Reimbursement request evidence validation', () => {
 
   it('accepts finance’s own upload on behalf of the requester but rejects a third person’s file', async () => {
     const state = requestRepo();
-    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment()));
+    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment()), noPayouts);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const financeCtx = ctx({ userId: 'finance-1', roles: ['FINANCE'], permissions: ['reimbursement.finance_review'] });
-    const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'finance-1' })));
+    const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'finance-1' })), noPayouts);
     await update.execute(financeCtx, created.id, { lines: [inputLine({ attachmentId: 'att-2' })] });
-    const thirdParty = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'other-person' })));
+    const thirdParty = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'other-person' })), noPayouts);
     await assert.rejects(
       () => thirdParty.execute(financeCtx, created.id, { lines: [inputLine({ attachmentId: 'att-3' })] }),
       /invalid_primary_attachment/,
@@ -502,9 +591,9 @@ describe('Reimbursement request evidence validation', () => {
   it('rejects submit after PATCH clears the only receipt evidence under requireReceipt', async () => {
     const state = requestRepo();
     const evidence = evidenceService(attachment());
-    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
+    const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts);
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
-    const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidence);
+    const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts);
     await update.execute(requesterCtx(), created.id, { lines: [inputLine({ attachmentId: null })] });
     const submit = submitUseCase(state.repo, noopAudit, noopOutbox, evidence);
     await assert.rejects(
@@ -541,7 +630,7 @@ describe('self-approval role exemption (audit H-17)', () => {
 
   it('lets an owner approve their own claim without the policy being opened', async () => {
     const { uc } = auditingUC(baseRequest({ requesterUserId: 'approver-1' }));
-    const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
+    const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1', undefined, SEEN_HASH);
     assert.equal(result.status, 'FINANCE_REVIEW');
   });
 
@@ -554,7 +643,7 @@ describe('self-approval role exemption (audit H-17)', () => {
         approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: role }],
       });
       const { uc } = auditingUC(mine);
-      const result = await uc.execute(ctx({ roles: [role] }), 'rb-1');
+      const result = await uc.execute(ctx({ roles: [role] }), 'rb-1', undefined, SEEN_HASH);
       assert.equal(result.status, 'FINANCE_REVIEW');
     });
   }
@@ -568,7 +657,7 @@ describe('self-approval role exemption (audit H-17)', () => {
   it('records who self-approved and that a role stood in for the policy', async () => {
     const { uc, entries } = auditingUC(baseRequest({ requesterUserId: 'approver-1' }));
 
-    await uc.execute(ctx({ roles: ['OWNER', 'ACCOUNTANT'] }), 'rb-1');
+    await uc.execute(ctx({ roles: ['OWNER', 'ACCOUNTANT'] }), 'rb-1', undefined, SEEN_HASH);
 
     const entry = auditOf(entries);
     assert.equal(entry.actorUserId, 'approver-1');
@@ -582,7 +671,7 @@ describe('self-approval role exemption (audit H-17)', () => {
 
   it('does not attach a self-approval note when approving someone else\u2019s claim', async () => {
     const { uc, entries } = auditingUC(baseRequest({ requesterUserId: 'staff-1' }));
-    await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
+    await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1', undefined, SEEN_HASH);
     assert.equal(auditOf(entries).metadataJson.selfApproval, undefined);
   });
 });
@@ -598,22 +687,83 @@ describe('decision responses are as hydrated as a GET', () => {
       getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
     } as any;
     const uc = new ApproveReimbursementUseCase(repo, noopAudit, { runApprovalProjection: async () => undefined } as any, fakeDetailEvidence as any);
-    const detail = await uc.execute(ctx(), 'rb-1');
+    const detail = await uc.execute(ctx(), 'rb-1', undefined, SEEN_HASH);
     const actor = req.approvalSteps[0].decisionByUserId;
     assert.equal(detail.approvalSteps[0]?.decidedByName, `คุณ ${actor}`);
   });
 });
 
-describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
-  function queueRepo(request: any, policy: any = null) {
-    return {
-      findPolicy: async () => policy,
-      listRequests: async () => [request],
-      findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
-      getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
-    } as any;
+function queueRepo(request: any, policy: any = null) {
+  return {
+    findPolicy: async () => policy,
+    listRequests: async () => [request],
+    findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
+    getUserDisplayNames: async (_c: string, ids: string[]) => Object.fromEntries(ids.map((id) => [id, `คุณ ${id}`])),
+  } as any;
+}
+
+// Audit B20: a viewer who may only reject was shown อนุมัติ on every queue row and got 403. A row now says what
+// its viewer can do, with the claim detail's own answer, so the hub offers a button only where the endpoint agrees.
+describe('approval queue rows carry what the viewer may do (audit B20)', () => {
+  const frozen = () => baseRequest({ approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }] });
+  const viewers: Array<[string, () => any, any, { canApprove: boolean; canReject: boolean }]> = [
+    ['holds approve and reject', baseRequest, ctx(), { canApprove: true, canReject: true }],
+    ['holds reject only', baseRequest, ctx({ permissions: ['reimbursement.reject'] }), { canApprove: false, canReject: true }],
+    ['holds approve only', baseRequest, ctx({ permissions: ['reimbursement.approve'] }), { canApprove: true, canReject: false }],
+    // The frozen assignment is the capability: a later role change takes neither button away.
+    ['was assigned the step, then lost both rights', frozen, ctx({ roles: ['STAFF'], permissions: [] }), { canApprove: true, canReject: true }],
+  ];
+
+  for (const [who, claim, viewer, expected] of viewers) {
+    it(`a viewer who ${who} gets exactly the buttons the endpoints accept`, async () => {
+      const rows = await new ListApprovalQueueUseCase(queueRepo(claim())).execute(viewer);
+      assert.deepEqual(rows.map((row) => row.approvalActions), [expected]);
+      // The claim detail answers the same for the same person.
+      assert.deepEqual(await approvalDecisionActions(viewer, claim(), fakeRepo(null)), expected);
+      // Each button the row offers works, and each one it withholds is refused.
+      const approve = approveUC(fakeRepo(claim())).execute(viewer, 'rb-1');
+      if (expected.canApprove) assert.equal((await approve).status, 'FINANCE_REVIEW');
+      else await assert.rejects(approve, /Missing permission: reimbursement\.approve/);
+      const reject = new RejectReimbursementUseCase(fakeRepo(claim()), noopAudit, fakeDetailEvidence as any).execute(viewer, 'rb-1', 'เอกสารไม่ครบ');
+      if (expected.canReject) assert.equal((await reject).status, 'REJECTED');
+      else await assert.rejects(reject, /Missing permission: reimbursement\.reject/);
+    });
   }
 
+  // Audit B3: approve and reject both answer 409 while a cancellation is pending, so the queue offers neither.
+  it('lists no row for a claim that is being cancelled, and lists it again once the cancellation is withdrawn', async () => {
+    const claim = baseRequest({ cancellationPendingAt: new Date('2026-10-01T02:00:00.000Z'), cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำ' });
+    const repo = { ...fakeRepo(claim), listRequests: async () => [claim] } as any;
+    assert.deepEqual(await new ListApprovalQueueUseCase(repo).execute(ctx()), []);
+    Object.assign(claim, { cancellationPendingAt: undefined, cancellationPendingByUserId: undefined, cancellationPendingReason: undefined });
+    assert.deepEqual((await new ListApprovalQueueUseCase(repo).execute(ctx())).map((row) => [row.id, row.approvalActions]), [['rb-1', { canApprove: true, canReject: true }]]);
+  });
+
+  it('lists no row for a viewer who can do neither', async () => {
+    const reader = ctx({ permissions: ['reimbursement.read'] });
+    assert.deepEqual(await new ListApprovalQueueUseCase(queueRepo(baseRequest())).execute(reader), []);
+    assert.deepEqual(await approvalDecisionActions(reader, baseRequest(), fakeRepo(null)), { canApprove: false, canReject: false });
+  });
+
+  // Payout Phase 1 on the same row. It carries what the viewer may do AND what the row showed (the claim hash,
+  // the receiving method). For a claim paid by transfer "may approve" means on the claim page: the row shows no
+  // account, so what the row alone could send is refused, and the hub's button opens the page instead.
+  it('a transfer claim row says who may decide and what it showed, and is not approved from the row alone', async () => {
+    const transfer = () => baseRequest({
+      approvalSnapshotHash: 'hash-as-listed', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'fp-2',
+      payoutSnapshot: { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 2, source: 'DEFAULT_ACCOUNT' },
+    });
+    const [row] = await new ListApprovalQueueUseCase(queueRepo(transfer())).execute(ctx());
+    assert.deepEqual([row!.approvalActions, row!.approvalSnapshotHash, row!.payoutMethod], [{ canApprove: true, canReject: true }, 'hash-as-listed', 'BANK_TRANSFER']);
+    assert.ok(!/6789|กสิกร|สมชาย ใจดี|fp-2/.test(JSON.stringify(row)), 'no account on a queue row');
+    await assert.rejects(() => approveUC(fakeRepo(transfer())).execute(ctx(), 'rb-1', undefined, row!.approvalSnapshotHash), /payout_verification_required/);
+    // With the account version ticked on the claim page, the same hash approves; rejecting never needed the account.
+    assert.equal((await approveUC(fakeRepo(transfer())).execute(ctx(), 'rb-1', undefined, row!.approvalSnapshotHash, 2)).status, 'FINANCE_REVIEW');
+    assert.equal((await new RejectReimbursementUseCase(fakeRepo(transfer()), noopAudit, fakeDetailEvidence as any).execute(ctx(), 'rb-1', 'บัญชีไม่ตรงกับผู้เบิก')).status, 'REJECTED');
+  });
+});
+
+describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
   it('keeps frozen work in the assignee queue after their role permissions are removed', async () => {
     const assigned = baseRequest({
       approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }],
@@ -711,6 +861,37 @@ describe('approvalDecisionActions self-approval signal (spec §15)', () => {
   });
 });
 
+// Audit B3, the server's own flags. A claim being cancelled takes no decision until that is finished or
+// withdrawn. The detail used to answer canApprove and canReject as if nothing had happened, and the claim
+// page hid the buttons itself; the answer is now the server's, for every reader of it.
+describe('a claim being cancelled offers no decision, by the server\'s own flags', () => {
+  const cancelling = { cancellationPendingAt: new Date('2026-10-01T02:00:00.000Z'), cancellationPendingByUserId: 'staff-1', cancellationPendingReason: 'ซื้อซ้ำกับใบก่อน' };
+  const none = { canApprove: false, canReject: false };
+  const frozenStep = () => baseRequest({ approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['approver-1'] }] });
+
+  it('answers no approve and no reject to whoever holds the step, and both again once the cancellation is withdrawn', async () => {
+    const holders: Array<[string, any, any]> = [
+      ['the approver the role routes it to', ctx(), baseRequest()],
+      ['an approver frozen onto the step whose rights are gone', ctx({ roles: ['STAFF'], permissions: [] }), frozenStep()],
+      ['someone who may only reject', ctx({ permissions: ['reimbursement.reject'] }), baseRequest()],
+    ];
+    for (const [who, viewer, claim] of holders) {
+      const held = await approvalDecisionActions(viewer, claim, fakeRepo(claim));
+      assert.ok(held.canApprove || held.canReject, `${who} holds the step`);
+      assert.deepEqual(await approvalDecisionActions(viewer, { ...claim, ...cancelling }, fakeRepo(claim)), none, who);
+      // Withdrawn: the claim is as it was, and so is what they may do.
+      assert.deepEqual(await approvalDecisionActions(viewer, { ...claim, cancellationPendingAt: undefined }, fakeRepo(claim)), held, who);
+    }
+  });
+
+  it('says nothing about the self-approval switch either: nothing can be decided, so nothing is explained', async () => {
+    const mine = baseRequest({ requesterUserId: 'approver-1', approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT', assignedApproverUserIds: ['owner-1'] }] });
+    const accountant = ctx({ roles: ['ACCOUNTANT'] });
+    assert.deepEqual(await approvalDecisionActions(accountant, mine, fakeRepo(null)), { ...none, selfApprovalBlocked: true });
+    assert.deepEqual(await approvalDecisionActions(accountant, { ...mine, ...cancelling }, fakeRepo(null)), none);
+  });
+});
+
 // Owner order 2026-09-21 ("ผู้ใช้คนเดียวที่กำหนดบทบาทเอง ต้องทำได้นะ"): submit found nobody but the
 // requester, so the step froze them as its approver and the snapshot froze the reason.
 describe('solo requester on a custom role (owner order 2026-09-21)', () => {
@@ -767,7 +948,7 @@ describe('solo requester on a custom role (owner order 2026-09-21)', () => {
     const submitAtomic = state.repo.submitDraftAtomic;
     state.repo.submitDraftAtomic = async (data: any) => { frozenStep = data.approvalStep; return submitAtomic(data); };
     const evidence = evidenceService();
-    const created = await new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence)
+    const created = await new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidence, noPayouts)
       .execute(solo, { ...requestInput, missingReceiptReason: 'ใบเสร็จหาย' });
     await new SubmitReimbursementUseCase(state.repo, noopAudit, noopOutbox, evidence, approverRoutes, noopSubmitProjections).execute(solo, created.id);
     assert.deepEqual(frozenStep.assignedApproverUserIdsJson, ['solo-1']);
@@ -791,12 +972,447 @@ describe('solo requester on a custom role (owner order 2026-09-21)', () => {
     } as any;
     assert.equal((await approveUC(repo).execute(solo, created.id)).status, 'READY_FOR_PAYMENT');
     const paid = await new RecordReimbursementPaymentUseCase(
-      repo, noopAudit, noopOutbox,
+      repo, noopAudit,
       { execute: async () => ({ id: 'seq-1', documentNumber: 'RBPAY-202601-000001' }) } as any,
       { execute: async () => undefined } as any,
       fakeDetailEvidence as any,
     ).execute(solo, created.id, { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
     assert.equal(paid.status, 'PAID');
     assert.equal(paidByUserId, 'solo-1');
+  });
+});
+
+// ---- Payout account: human verification at approval (owner decision P1, payout spec §10) ----
+
+describe('approving a claim that is paid by transfer needs the approver attestation', () => {
+  const transferClaim = (overrides: Partial<any> = {}) => baseRequest({
+    payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'fp-2',
+    payoutSnapshot: { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789', version: 2, source: 'DEFAULT_ACCOUNT' },
+    ...overrides,
+  });
+  /** Counts what reaches the transaction, so a refusal is proven to happen before any write. */
+  function counted(req: any, policy?: any) {
+    const repo = fakeRepo(req, policy);
+    const decisions: any[] = [];
+    const begin = repo.beginApprovalDecisionAtomic;
+    repo.beginApprovalDecisionAtomic = async (data: any) => { decisions.push(data); return begin(data); };
+    return { repo, decisions };
+  }
+
+  it('is refused without "ตรวจบัญชีแล้ว", before anything is written, also on a direct call', async () => {
+    const { repo, decisions } = counted(transferClaim());
+    await assert.rejects(() => approveUC(repo).execute(ctx(), 'rb-1'), /payout_verification_required/);
+    await assert.rejects(() => approveUC(repo).execute(ctx(), 'rb-1', 'ok', undefined, null), /payout_verification_required/);
+    assert.equal(decisions.length, 0);
+  });
+
+  it('is refused when the attestation names another snapshot version', async () => {
+    const { repo, decisions } = counted(transferClaim());
+    for (const stale of [1, 3, '2', true]) await assert.rejects(() => approveUC(repo).execute(ctx(), 'rb-1', undefined, undefined, stale), /payout_destination_changed/);
+    assert.equal(decisions.length, 0);
+  });
+
+  it('goes through with the current version, hands it to the transaction and audits who attested which version', async () => {
+    const entries: any[] = [];
+    const { repo, decisions } = counted(transferClaim());
+    const detail = await approveUC(repo, undefined, { log: async (entry: any, tx: any) => { entries.push({ ...entry, inTransaction: !!tx }); } })
+      .execute(ctx(), 'rb-1', undefined, undefined, 2);
+    assert.equal(detail.status, 'FINANCE_REVIEW');
+    assert.equal(decisions[0].payoutVerifiedVersion, 2);
+    const verify = entries.find((entry) => entry.action === 'reimbursement.payout.verify');
+    assert.deepEqual(verify.metadataJson, { version: 2, via: 'APPROVAL', approvalStepId: 'step-1', byRequester: false });
+    assert.equal(verify.inTransaction, true, 'the attestation is recorded in the decision transaction');
+    assert.equal(verify.actorUserId, 'approver-1');
+    // The answer shows the account masked; nothing in the audit or the answer is a full number.
+    assert.deepEqual([detail.payout?.accountLast4, detail.payout?.version], ['6789', 2]);
+    assert.ok(!/accountNumber|\d{6,}/.test(JSON.stringify([entries.map((entry) => entry.metadataJson), detail.payout])));
+  });
+
+  it('records the requester attesting their own account when they approve their own claim', async () => {
+    const entries: any[] = [];
+    const own = transferClaim({ requesterUserId: 'approver-1' });
+    await approveUC(fakeRepo(own), undefined, { log: async (entry: any) => { entries.push(entry); } }).execute(ctx({ roles: ['OWNER'] }), 'rb-1', undefined, undefined, 2);
+    assert.equal(entries.find((entry) => entry.action === 'reimbursement.payout.verify').metadataJson.byRequester, true);
+    // Self-approval still needs it: being the requester is not an attestation.
+    await assert.rejects(() => approveUC(fakeRepo(transferClaim({ requesterUserId: 'approver-1' }))).execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /payout_verification_required/);
+  });
+
+  it('keeps the eligibility answer first: someone who may not approve learns nothing about the attestation', async () => {
+    const assigned = transferClaim({ approvalSteps: [{ ...baseRequest().approvalSteps[0], assignedApproverUserIds: ['assigned-1'] }] });
+    await assert.rejects(() => approveUC(fakeRepo(assigned)).execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
+    await assert.rejects(() => approveUC(fakeRepo(transferClaim())).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1'), /Missing permission: reimbursement\.approve/);
+  });
+
+  it('resumes a decision that was already made without asking for the attestation again', async () => {
+    const decided = transferClaim({ approvalSteps: [{ ...baseRequest().approvalSteps[0], status: 'APPROVED', decisionByUserId: 'approver-1', decidedAt: new Date('2026-01-02T00:00:00.000Z') }] });
+    const detail = await approveUC(fakeRepo(decided, { ...REIMBURSEMENT_POLICY_DEFAULTS, financeReviewRequired: false })).execute(ctx(), 'rb-1');
+    assert.equal(detail.status, 'READY_FOR_PAYMENT');
+  });
+
+  it('asks nothing of a cash claim or a legacy claim: they approve exactly as before', async () => {
+    const entries: any[] = [];
+    const audit = { log: async (entry: any) => { entries.push(entry); } };
+    for (const claim of [baseRequest({ payoutMethod: 'CASH' }), baseRequest()]) {
+      assert.equal((await approveUC(fakeRepo(claim), undefined, audit).execute(ctx(), 'rb-1')).status, 'FINANCE_REVIEW');
+    }
+    // A stray version on a claim with no account changes nothing either.
+    assert.equal((await approveUC(fakeRepo(baseRequest())).execute(ctx(), 'rb-1', undefined, undefined, 9)).status, 'FINANCE_REVIEW');
+    assert.equal(entries.some((entry) => entry.action === 'reimbursement.payout.verify'), false, 'no attestation is invented for them');
+    // A legacy claim answers with no payout block at all.
+    assert.equal((await approveUC(fakeRepo(baseRequest())).execute(ctx(), 'rb-1')).payout, undefined);
+  });
+
+  it('shows the queue the receiving method and nothing of the account', async () => {
+    const queueRepo = {
+      findPolicy: async () => null, listRequests: async () => [transferClaim()],
+      findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids), getUserDisplayNames: async () => ({}),
+    } as any;
+    const items = await new ListApprovalQueueUseCase(queueRepo).execute(ctx());
+    assert.equal(items[0]?.payoutMethod, 'BANK_TRANSFER');
+    assert.ok(!/payoutSnapshot|bankName|accountName|accountLast4|accountNumber|fingerprint|6789/i.test(JSON.stringify(items)));
+  });
+});
+
+// Audit B2: the quick "อนุมัติ" in the queue named no claim content, and the server compared the hash
+// only when one was sent. A claim withdrawn, edited and sent again while the list was open was
+// approved with content nobody had looked at.
+describe('nothing is approved unseen: an approval names the claim content it saw', () => {
+  const queueRepo = (request: any) => ({
+    findPolicy: async () => null, listRequests: async () => [request],
+    findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids), getUserDisplayNames: async () => ({}),
+  }) as any;
+  /**
+   * Deliberately lenient: it compares the stored hash only WHEN one is sent, as the repository once
+   * did. So what this proves is the use case's own refusal of a call that names none; a fake as
+   * strict as today's transaction would hide it.
+   */
+  function comparing(req: any) {
+    const repo = fakeRepo(req);
+    const decisions: any[] = [];
+    const begin = repo.beginApprovalDecisionAtomic;
+    repo.beginApprovalDecisionAtomic = async (data: any) => {
+      if (data.expectedApprovalSnapshotHash && data.expectedApprovalSnapshotHash !== req.approvalSnapshotHash) throw new ConflictException('stale_approval_snapshot');
+      decisions.push(data);
+      return begin(data);
+    };
+    return { repo, decisions };
+  }
+
+  it('carries the claim hash on every queue row, and still no account', async () => {
+    const [row] = await new ListApprovalQueueUseCase(queueRepo(baseRequest({ approvalSnapshotHash: 'hash-as-listed' }))).execute(ctx());
+    assert.equal(row?.approvalSnapshotHash, 'hash-as-listed');
+    const [transfer] = await new ListApprovalQueueUseCase(queueRepo(baseRequest({
+      approvalSnapshotHash: 'hash-as-listed', payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1, payoutFingerprint: 'fp-1',
+    }))).execute(ctx());
+    assert.deepEqual([transfer?.approvalSnapshotHash, transfer?.payoutMethod], ['hash-as-listed', 'BANK_TRANSFER']);
+    assert.ok(!/fp-1|payoutFingerprint|payoutDestinationVersion|accountLast4|bankName/.test(JSON.stringify(transfer)));
+  });
+
+  it('refuses an approval that names no hash, with the code that makes the screen load the claim again', async () => {
+    const { repo, decisions } = comparing(baseRequest({ approvalSnapshotHash: 'hash-1' }));
+    for (const noHash of [undefined, '']) {
+      await assert.rejects(() => approveUC(repo).useCase.execute(ctx(), 'rb-1', undefined, noHash), (error: any) => {
+        assert.equal(error.getStatus?.(), 409);
+        assert.match(error.message, /stale_approval_snapshot/);
+        return true;
+      });
+    }
+    assert.equal(decisions.length, 0, 'nothing was decided');
+    // Who may not approve at all is still told so, not asked to reload.
+    await assert.rejects(() => approveUC(repo).useCase.execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1'), /Missing permission: reimbursement\.approve/);
+  });
+
+  it('refuses the hash of the claim as the list showed it, once the claim was withdrawn, edited and sent again', async () => {
+    const claim = baseRequest({ approvalSnapshotHash: 'hash-as-listed' });
+    const { repo, decisions } = comparing(claim);
+    const [row] = await new ListApprovalQueueUseCase(queueRepo(claim)).execute(ctx());
+    // While the approver's list is open, the requester withdraws, edits and sends the claim again.
+    Object.assign(claim, { reason: 'a different claim now', amount: '9000.0000', approvalSnapshotHash: 'hash-after-resend' });
+    await assert.rejects(() => approveUC(repo).useCase.execute(ctx(), 'rb-1', undefined, row!.approvalSnapshotHash), /stale_approval_snapshot/);
+    assert.deepEqual([decisions.length, claim.status, claim.approvalSteps[0].status], [0, 'PENDING_APPROVAL', 'PENDING']);
+    // Having looked at the claim as it is now, the approver approves that.
+    assert.equal((await approveUC(repo).useCase.execute(ctx(), 'rb-1', undefined, 'hash-after-resend')).status, 'FINANCE_REVIEW');
+    assert.equal(decisions[0].expectedApprovalSnapshotHash, 'hash-after-resend');
+  });
+});
+
+describe('the stored attestation names one snapshot version (attestation binding)', () => {
+  const key = Buffer.alloc(32, 5);
+  const kbank = sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789' }, key)!;
+  const scb = sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountNumber: '000123456789012' }, key)!;
+  const when = new Date('2026-10-01T04:00:00.000Z');
+
+  /** A claim, its payout tables and the three moves a claim makes: send, attest, come back to draft. */
+  function claimWorld() {
+    const tables = fakePayoutTables();
+    const db = tables.client;
+    const claim: any = { id: 'rb-1', companyId: 'co-1', requesterUserId: 'staff-1', status: 'DRAFT', payoutMethod: null, payoutDestinationVersion: null, payoutFingerprint: null };
+    return {
+      tables, db, claim,
+      setDefault: (destination: typeof kbank) => writeMemberPayoutAccount(db, { companyId: 'co-1', userId: 'staff-1', actorUserId: 'staff-1', payoutMethod: 'BANK_TRANSFER', destination }),
+      async send() {
+        // The page reads what would be frozen, and the submit transaction freezes exactly that.
+        const seenToken = payoutSubmitToken(claim.id, await readSubmitPayoutPlan(db, claim));
+        const { columns } = await freezePayoutAtSubmit(db, { ...claim }, { actorUserId: 'staff-1', frozenAt: when, seenToken });
+        Object.assign(claim, { status: 'PENDING_APPROVAL' }, columns);
+      },
+      attest: (verifiedVersion: unknown, approvalStepId = 'step-1') => attestClaimPayout(db, claim, { verifiedVersion, actorUserId: 'approver-1', verifiedAt: when, approvalStepId }),
+      async backToDraft() { Object.assign(claim, await draftPayoutAfterReopen(db, claim), { status: 'DRAFT' }); },
+      shown: () => readClaimPayout(db, claim),
+    };
+  }
+
+  it('stores who attested, when, which version and which approval step, on that version row', async () => {
+    const world = claimWorld();
+    await world.setDefault(kbank);
+    await world.send();
+    await assert.rejects(world.attest(undefined), /payout_verification_required/);
+    await assert.rejects(world.attest(2), /payout_destination_changed/);
+    assert.equal((await world.shown())?.verifiedAt, undefined);
+    await world.attest(1);
+    const row = world.tables.destinations[0]!;
+    assert.deepEqual([row.version, row.verifiedByUserId, row.verifiedAt, row.verifiedVia, row.approvalStepId], [1, 'approver-1', when, 'APPROVAL', 'step-1']);
+    assert.deepEqual([(await world.shown())?.verifiedByUserId, (await world.shown())?.version], ['approver-1', 1]);
+  });
+
+  it('a claim sent again with another account gets a new version: the old attestation no longer counts', async () => {
+    const world = claimWorld();
+    await world.setDefault(kbank);
+    await world.send();
+    await world.attest(1);
+    // Sent back to draft (finance asked for a correction), the member changes the account, sends again.
+    await world.backToDraft();
+    await world.setDefault(scb);
+    await world.send();
+    assert.equal(world.claim.payoutDestinationVersion, 2);
+    assert.equal((await world.shown())?.verifiedAt, undefined, 'the new snapshot is unattested');
+    // An approver still looking at the old page attests version 1: refused until they attest version 2.
+    await assert.rejects(world.attest(1, 'step-2'), /payout_destination_changed/);
+    assert.equal((await world.shown())?.verifiedAt, undefined);
+    await world.attest(2, 'step-2');
+    assert.deepEqual(world.tables.destinations.map((row) => [row.version, row.accountLast4, row.approvalStepId]).sort(), [[1, '6789', 'step-1'], [2, '9012', 'step-2']]);
+  });
+
+  it('a claim sent again with the SAME account keeps its version but loses the earlier attestation', async () => {
+    const world = claimWorld();
+    await world.setDefault(kbank);
+    await world.send();
+    await world.attest(1);
+    await world.backToDraft();
+    // While it is a draft, the attestation of the round before is not shown as if it still held.
+    assert.equal(world.claim.payoutMethod, null);
+    await world.send();
+    assert.equal(world.claim.payoutDestinationVersion, 1);
+    const row = world.tables.destinations[0]!;
+    assert.deepEqual([row.verifiedByUserId, row.verifiedAt, row.verifiedVia, row.approvalStepId], [null, null, null, null]);
+    assert.equal((await world.shown())?.verifiedAt, undefined);
+    await assert.rejects(world.attest(undefined, 'step-2'), /payout_verification_required/);
+    await world.attest(1, 'step-2');
+    assert.equal(world.tables.destinations[0]!.approvalStepId, 'step-2');
+  });
+
+  it('refuses an attestation when the row behind the version is not the one the claim was hashed with', async () => {
+    const world = claimWorld();
+    await world.setDefault(kbank);
+    await world.send();
+    world.claim.payoutFingerprint = scb.fingerprint; // the claim says one account, the row holds another
+    await assert.rejects(world.attest(1), /payout_destination_changed/);
+    // An account named for the claim that was never frozen cannot be attested either.
+    const draft = claimWorld();
+    Object.assign(draft.claim, await applyDraftPayout(draft.db, 'co-1', 'rb-1', { mode: 'SPECIFIED', destination: kbank, source: 'REQUESTER', actorUserId: 'staff-1' }), { payoutFingerprint: kbank.fingerprint });
+    await assert.rejects(draft.attest(1), /payout_destination_changed/);
+  });
+});
+
+// Payout spec §14 (AC29-AC32): a claim approved with a wrong payout account is sent back, on the same
+// claim, to have that account corrected, and is approved again for the account alone.
+describe('a claim whose payout account is being corrected', () => {
+  const sentBackAt = new Date('2026-10-02T03:00:00.000Z');
+  const accountGivenAt = new Date('2026-10-02T05:00:00.000Z');
+  const firstStep = baseRequest().approvalSteps[0];
+  /** The approval the claim stood on, set aside by the send-back. */
+  const setAside = () => ({
+    ...firstStep, status: 'APPROVED', decisionByUserId: 'approver-1', decidedAt: new Date('2026-01-02T00:00:00.000Z'),
+    invalidatedAt: sentBackAt, invalidatedReason: 'payout_account_correction',
+  });
+  /** Phase A: with its requester, no step waits. */
+  const withRequester = (overrides: Partial<any> = {}) => baseRequest({
+    submittedAt: new Date('2026-01-01T00:00:00.000Z'), currentApprovalStepId: null, approvalSnapshotHash: SEEN_HASH,
+    payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionRequestedByUserId: 'payer-1', payoutCorrectionReasonCode: 'ACCOUNT_NUMBER_WRONG',
+    approvalSteps: [setAside()], ...overrides,
+  });
+  /** Phase B: the requester gave a new account (version 2), which waits for the claim's approvers. */
+  const withApprovers = (overrides: Partial<any> = {}) => withRequester({
+    currentApprovalStepId: 'step-2', payoutCorrectionSubmittedAt: accountGivenAt,
+    payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'fp-2',
+    payoutSnapshot: { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountLast4: '9012', version: 2, source: 'REQUESTER' },
+    approvalSteps: [setAside(), { ...firstStep, id: 'step-2', assignedAt: accountGivenAt, requestSnapshotHash: SEEN_HASH }],
+    ...overrides,
+  });
+
+  /** The round's transactions beside the ordinary ones, each recording that it ran. */
+  function roundRepo(req: any, policy: any = null) {
+    const events: any[] = [];
+    const ran: Array<[string, any]> = [];
+    const base = fakeRepo(req, policy, events);
+    const ordinary = Object.fromEntries(['beginApprovalDecisionAtomic', 'completeApprovalProjectionAtomic', 'rejectRequestAtomic']
+      .map((name) => [name, async (data: any) => { ran.push([name, data]); return base[name](data); }]));
+    const repo = {
+      ...base, ...ordinary,
+      listPaymentPayoutDestinations: async () => ({}),
+      // This fake keeps no account rows: the account given is never the one the claim had.
+      claimPayoutMatchesVersion: async () => false,
+      approvePayoutCorrectionAtomic: async (data: any) => {
+        ran.push(['approvePayoutCorrectionAtomic', data]);
+        const step = req.approvalSteps.find((candidate: any) => candidate.id === req.currentApprovalStepId);
+        Object.assign(step, { status: 'APPROVED', decisionByUserId: data.actorUserId, decidedAt: data.decidedAt });
+        Object.assign(req, {
+          status: 'READY_FOR_PAYMENT', approvedAt: data.decidedAt, paymentStatus: 'UNPAID', currentApprovalStepId: null,
+          payoutCorrectionRequestedAt: undefined, payoutCorrectionSubmittedAt: undefined, payoutCorrectionReasonCode: undefined,
+        });
+        await data.onApprovedPersisted(fakeTx(events), step.id);
+        return req;
+      },
+      requestPayoutCorrectionAtomic: async (data: any) => {
+        ran.push(['requestPayoutCorrectionAtomic', data]);
+        const waiting = req.approvalSteps.find((candidate: any) => candidate.id === req.currentApprovalStepId);
+        Object.assign(waiting, { status: 'CANCELLED', invalidatedAt: data.requestedAt, invalidatedReason: 'payout_account_correction' });
+        Object.assign(req, {
+          currentApprovalStepId: null, payoutCorrectionRequestedAt: data.requestedAt, payoutCorrectionRequestedByUserId: data.actorUserId,
+          payoutCorrectionReasonCode: data.reasonCode, payoutCorrectionNote: data.note, payoutCorrectionSubmittedAt: undefined,
+        });
+        await data.onPersisted(fakeTx(events), { again: true, setAsideStepIds: [waiting.id], signaturesRemoved: 0, declarationsSetAside: 0 });
+        return req;
+      },
+    } as any;
+    return { repo, events, ran };
+  }
+  const recordingAudit = (entries: any[]) => ({ log: async (entry: any, tx: any) => { entries.push({ ...entry, inTransaction: !!tx }); } });
+  const rejectUC = (repo: any, audit: any = noopAudit) => new RejectReimbursementUseCase(repo, audit, fakeDetailEvidence as any);
+
+  it('offers no decision while it waits for its requester: approve and reject answer that the account is being corrected', async () => {
+    const { repo, ran } = roundRepo(withRequester());
+    // Also to someone who holds every right: there is no account to approve yet.
+    const owner = ctx({ roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.approve', 'reimbursement.reject'] });
+    for (const decide of [() => approveUC(repo).execute(owner, 'rb-1'), () => rejectUC(repo).execute(owner, 'rb-1', 'บัญชีไม่ถูกต้อง')]) {
+      await assert.rejects(decide, (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress');
+    }
+    assert.equal(ran.length, 0, 'refused before any write');
+    assert.deepEqual(await approvalDecisionActions(owner, withRequester(), fakeRepo(null)), { canApprove: false, canReject: false });
+  });
+
+  it('is in the approval queue only once the new account waits for approval, and its wait is counted from then', async () => {
+    const now = Date.now();
+    const hoursAgo = (hours: number) => new Date(now - hours * 3_600_000);
+    assert.deepEqual(await new ListApprovalQueueUseCase(queueRepo(withRequester())).execute(ctx()), [], 'with its requester: in nobody\'s queue');
+    // Sent ten days ago, the new account given three hours ago: these approvers have waited three hours.
+    const waiting = withApprovers({ submittedAt: hoursAgo(240), payoutCorrectionRequestedAt: hoursAgo(5), payoutCorrectionSubmittedAt: hoursAgo(3) });
+    const [row] = await new ListApprovalQueueUseCase(queueRepo(waiting)).execute(ctx());
+    assert.deepEqual([row!.id, row!.ageHours, row!.slaRisk, row!.payoutCorrectionPhase, row!.approvalActions],
+      ['rb-1', 3, false, 'AWAITING_APPROVAL', { canApprove: true, canReject: true }]);
+    assert.ok(!/9012|ไทยพาณิชย์|สมชาย ใจดี|fp-2/.test(JSON.stringify(row)), 'no account on a queue row');
+  });
+
+  it('is approved in one transaction that makes it ready for payment, with the ready-to-pay notice and nothing else', async () => {
+    const entries: any[] = [];
+    const projected: any[] = [];
+    const { repo, events, ran } = roundRepo(withApprovers());
+    const projections = { execute: async (...args: any[]) => { projected.push(args); } };
+    // The same rules as any approval: the permission, the turn, the hash that was seen, the account that was checked.
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx({ permissions: ['reimbursement.read'] }), 'rb-1', undefined, SEEN_HASH, 2), /Missing permission: reimbursement\.approve/);
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx({ roles: ['STAFF'] }), 'rb-1', undefined, SEEN_HASH, 2), /not_eligible_approver/);
+    await assert.rejects(() => approveUC(repo, projections).useCase.execute(ctx(), 'rb-1', undefined, undefined, 2), /stale_approval_snapshot/);
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx(), 'rb-1'), /payout_verification_required/);
+    // "ตรวจบัญชีแล้ว" for the account the claim was approved with before is not one for the account it has now.
+    await assert.rejects(() => approveUC(repo, projections).execute(ctx(), 'rb-1', undefined, SEEN_HASH, 1), /payout_destination_changed/);
+    assert.equal(ran.length, 0);
+
+    const detail = await approveUC(repo, projections, recordingAudit(entries)).execute(ctx(), 'rb-1', 'บัญชีถูกต้อง', SEEN_HASH, 2);
+    assert.deepEqual(ran.map(([name]) => name), ['approvePayoutCorrectionAtomic'], 'one transaction: not the decide-then-project pair');
+    assert.deepEqual(projected, [], 'the claim\'s expense records stand: nothing is built and nothing waits for the reconciler');
+    const [, handed] = ran[0]!;
+    assert.deepEqual([handed.payoutVerifiedVersion, handed.expectedApprovalSnapshotHash, handed.actorUserId, handed.comment], [2, SEEN_HASH, 'approver-1', 'บัญชีถูกต้อง']);
+    assert.deepEqual([detail.status, detail.payoutCorrection, detail.payoutCorrectionPhase], ['READY_FOR_PAYMENT', undefined, undefined]);
+    assert.deepEqual(detail.approvalSteps.map((step) => [step.id, step.status]), [['step-1', 'APPROVED'], ['step-2', 'APPROVED']]);
+
+    // The notice the claim's ordinary approval sends, to the same people; no second "approved" notice for the requester.
+    assert.deepEqual(events.map((event) => [event.eventType, event.eventKey]),
+      [['reimbursement.ready_for_payment', 'reimbursement.ready_for_payment:reimbursement_request:rb-1:step-2']]);
+    assert.deepEqual(events[0].payloadJson.data, {
+      requestId: 'rb-1', requestNo: 'RB-202601-000001', status: 'READY_FOR_PAYMENT', decision: 'APPROVED',
+      requesterUserId: 'staff-1', amount: '500.0000', currency: 'THB',
+    });
+    assert.equal(events[0].payloadJson.actorUserId, 'approver-1');
+    // Who approved which account version, inside the transaction, and nothing of the account.
+    assert.deepEqual(entries.map((entry) => [entry.action, entry.result, entry.inTransaction]), [
+      ['reimbursement.payout_correction.approve', 'SUCCESS', true], ['reimbursement.payout.verify', 'SUCCESS', true],
+    ]);
+    assert.deepEqual(entries[1].metadataJson, { version: 2, via: 'APPROVAL', approvalStepId: 'step-2', byRequester: false });
+    assert.deepEqual([entries[0].metadataJson.payoutMethod, entries[0].metadataJson.payoutVersion, entries[0].metadataJson.approvalStepId], ['BANK_TRANSFER', 2, 'step-2']);
+    assert.ok(!/9012|ไทยพาณิชย์|สมชาย ใจดี|fp-2|\d{8,}/.test(JSON.stringify([entries.map((entry) => entry.metadataJson), events])));
+  });
+
+  it('keeps the finance reviewer who passed the claim first in line for the ready-to-pay notice, and asks nothing of a cash account', async () => {
+    // Finance passed this claim before the round; the round does not send it through finance again.
+    const cash = withApprovers({
+      payoutMethod: 'CASH', payoutDestinationVersion: undefined, payoutFingerprint: 'cash', payoutSnapshot: undefined,
+      financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: 'fin-1',
+    });
+    const entries: any[] = [];
+    const { repo, events, ran } = roundRepo(cash, FINANCE_REVIEW_ON);
+    const detail = await approveUC(repo, undefined, recordingAudit(entries)).execute(ctx(), 'rb-1');
+    assert.deepEqual([detail.status, ran.map(([name]) => name)], ['READY_FOR_PAYMENT', ['approvePayoutCorrectionAtomic']]);
+    assert.deepEqual(events.map((event) => event.eventType), ['reimbursement.ready_for_payment']);
+    assert.deepEqual(events[0].payloadJson.data.approverRecipientUserIds, ['fin-1']);
+    assert.deepEqual(entries.map((entry) => entry.action), ['reimbursement.payout_correction.approve'], 'cash has no account to attest');
+  });
+
+  it('holds its requester to the self-approval rule when the new account comes to them to approve', async () => {
+    const own = () => withApprovers({ requesterUserId: 'approver-1', approvalSteps: [setAside(), { ...firstStep, id: 'step-2', approverRoleSnapshot: 'ACCOUNTANT', requestSnapshotHash: SEEN_HASH }] });
+    const refused = roundRepo(own());
+    await assert.rejects(() => approveUC(refused.repo).execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1', undefined, SEEN_HASH, 2), /self_approval_denied/);
+    assert.equal(refused.ran.length, 0);
+    // Where the company lets people approve their own claims, the audit says so, as for any approval.
+    const entries: any[] = [];
+    const allowed = roundRepo(own(), { ...REIMBURSEMENT_POLICY_DEFAULTS, allowSelfApproval: true });
+    await approveUC(allowed.repo, undefined, recordingAudit(entries)).execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1', undefined, SEEN_HASH, 2);
+    assert.deepEqual([allowed.ran.map(([name]) => name), allowed.ran[0]![1].allowSelfApproval], [['approvePayoutCorrectionAtomic'], true]);
+    assert.deepEqual([entries[0].action, entries[0].metadataJson.selfApproval],
+      ['reimbursement.payout_correction.approve', { approvedOwnRequest: true, via: 'company_policy', actorRoles: [] }]);
+    assert.equal(entries[1].metadataJson.byRequester, true);
+  });
+
+  it('is sent back to its requester again when the new account is refused, and is never REJECTED', async () => {
+    const entries: any[] = [];
+    const { repo, events, ran } = roundRepo(withApprovers());
+    // A note that carries the account is refused, like every note on a claim; so is a reason outside the list.
+    await assert.rejects(() => rejectUC(repo).execute(ctx(), 'rb-1', 'โอนเข้า 0123456789 แทน', 'ACCOUNT_NUMBER_WRONG'),
+      (error: any) => error.getStatus() === 400 && error.message === 'note_contains_account_number');
+    await assert.rejects(() => rejectUC(repo).execute(ctx(), 'rb-1', 'ชื่อบัญชีไม่ตรง', 'WRONG'),
+      (error: any) => error.getStatus() === 400 && error.message === 'payout_correction_reason_required');
+    await assert.rejects(() => rejectUC(repo).execute(ctx({ permissions: ['reimbursement.approve'] }), 'rb-1', 'ชื่อบัญชีไม่ตรง'), /Missing permission: reimbursement\.reject/);
+    assert.equal(ran.length, 0);
+
+    const detail = await rejectUC(repo, recordingAudit(entries)).execute(ctx(), 'rb-1', 'ชื่อบัญชีไม่ตรงกับบัตรประชาชน', 'ACCOUNT_NAME_MISMATCH');
+    assert.deepEqual(ran.map(([name]) => name), ['requestPayoutCorrectionAtomic'], 'the reject transaction is not used: REJECTED would release the claim\'s receipts');
+    const [, handed] = ran[0]!;
+    assert.deepEqual([handed.reasonCode, handed.note, handed.actorUserId], ['ACCOUNT_NAME_MISMATCH', 'ชื่อบัญชีไม่ตรงกับบัตรประชาชน', 'approver-1']);
+    assert.deepEqual([detail.status, detail.payoutCorrection?.phase, detail.payoutCorrection?.reasonCode, detail.payoutCorrection?.note],
+      ['PENDING_APPROVAL', 'AWAITING_REQUESTER', 'ACCOUNT_NAME_MISMATCH', 'ชื่อบัญชีไม่ตรงกับบัตรประชาชน']);
+    // One notice, to the requester alone, with the reason in the list's own words and nothing that was typed.
+    assert.deepEqual(events.map((event) => event.eventType), ['reimbursement.payout_correction_requested']);
+    assert.deepEqual(events[0].payloadJson.data, {
+      requestId: 'rb-1', requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', status: 'PENDING_APPROVAL',
+      payoutCorrectionNotice: 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน',
+    });
+    assert.deepEqual(entries.map((entry) => [entry.action, entry.inTransaction]), [['reimbursement.payout_correction.request', true]]);
+    assert.deepEqual([entries[0].metadataJson.reasonCode, entries[0].metadataJson.hasNote, entries[0].metadataJson.sentBackBy, entries[0].metadataJson.again],
+      ['ACCOUNT_NAME_MISMATCH', true, 'STEP_APPROVER', true]);
+    assert.ok(!JSON.stringify([entries, events]).includes('บัตรประชาชน'), 'what was typed stays on the claim');
+    // A screen that sends only the words, as the reject dialog does today, files them under "อื่น ๆ".
+    const plain = roundRepo(withApprovers());
+    await rejectUC(plain.repo).execute(ctx(), 'rb-1', 'บัญชีผิด');
+    assert.deepEqual([plain.ran[0]![1].reasonCode, plain.events[0].payloadJson.data.payoutCorrectionNotice],
+      ['OTHER', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน']);
   });
 });

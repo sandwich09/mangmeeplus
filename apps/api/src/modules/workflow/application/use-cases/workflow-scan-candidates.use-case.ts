@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
-import { ageHours, isSlaRisk } from '../../../reimbursements/domain/logic/reimbursement.logic';
+import { ageHours, approvalWaitStartedAt, isSlaRisk, payoutCorrectionPhase } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../../reimbursements/domain/reimbursement.constants';
 import { ListReimbursementApproverOptionsUseCase } from '../../../reimbursements/application/use-cases/reimbursement-policy.use-case';
 import { PrismaCrmRepository } from '../../../crm/infrastructure/prisma-crm.repository';
@@ -11,6 +11,7 @@ import { GetStockReportUseCase } from '../../../inventory/application/use-cases/
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { systemWorkerContext } from '../../../auth/domain/logic/system-worker-context';
 import type { ReimbursementRequestRecord } from '../../../reimbursements/domain/models/reimbursement.model';
+import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
 
 export type ScanCandidate = {
   sourceType: string;
@@ -44,6 +45,7 @@ export class WorkflowScanCandidatesProvider {
     private readonly citCalendar: GetCitCalendarUseCase,
     private readonly stockReport: GetStockReportUseCase,
     private readonly approverRoutes: ListReimbursementApproverOptionsUseCase,
+    private readonly workflowRepo: PrismaWorkflowRepository,
   ) {}
 
   async forTemplate(templateKey: string, companyId: string, now: Date): Promise<ScanCandidate[]> {
@@ -52,6 +54,8 @@ export class WorkflowScanCandidatesProvider {
         return this.lowStockAlert(companyId);
       case 'approval_sla_breach':
         return this.approvalSlaBreach(companyId, now);
+      case 'reimbursement_payment_sla_breach':
+        return this.paymentSlaBreach(companyId, now);
       case 'tax_due_soon':
         return this.taxDueSoon(companyId);
       case 'bank_reconciliation_aging':
@@ -76,7 +80,11 @@ export class WorkflowScanCandidatesProvider {
 
   private async approvalSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
-    const rows = await this.reimbursementRepo.listRequests({ companyId, status: 'PENDING_APPROVAL' });
+    // Not a claim sent back to have its payout account corrected and still with its requester (payout
+    // spec §14.7): it is PENDING_APPROVAL with no step open, and no approver is late with it. Nor a
+    // claim being cancelled: the approve and reject calls refuse it until that is finished or withdrawn.
+    const rows = (await this.reimbursementRepo.listRequests({ companyId, status: 'PENDING_APPROVAL' }))
+      .filter((request) => payoutCorrectionPhase(request) !== 'AWAITING_REQUESTER' && !request.cancellationPendingAt);
     const inputs = rows.map((request) => {
       const requestPolicy = effectivePolicyForRequest(request, currentPolicy);
       return {
@@ -124,7 +132,9 @@ export class WorkflowScanCandidatesProvider {
         : frozenRecipients.length > 0
           ? snapshot?.route?.effectiveTaskRole ?? step?.approverRoleSnapshot ?? inputs[index]!.roleKey
           : 'OWNER';
-      const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
+      // Since the claim was sent; for a corrected payout account, since that account was given.
+      const waitingSince = approvalWaitStartedAt(r);
+      const age = waitingSince ? ageHours(waitingSince, now) : 0;
       return {
         sourceType: 'reimbursement_request',
         sourceId: r.id,
@@ -135,9 +145,80 @@ export class WorkflowScanCandidatesProvider {
           approverTaskUserId: recipients[0],
           ownerRecipientUserIds: ownerRecipients[index],
           approverTaskRole: taskRole,
+          // One reminder per round the claim was sent in (review M1): the scan comes round every
+          // window and must not nag, and a claim sent again and late again is reminded again. A
+          // corrected payout account waiting too long is a round of its own.
+          ...(waitingSince && { notificationPeriodKey: `round:${waitingSince.toISOString()}` }),
         },
       };
     });
+  }
+
+  // Audit B9: claims waiting for payment, held to the same policy deadline as approvals. The clock
+  // starts when the claim became payable: the finance decision when there was one, else the
+  // approval; again when a recorded payment is taken back; and again when a corrected payout
+  // account is approved, which is the later of the two dates.
+  private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
+    const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
+    const waiting = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
+    // Only claims that have a deadline are looked at, and only those past it are offered. Offering
+    // every waiting claim wrote a skipped run row per claim per hour in every company, deadline or
+    // not; a company that set none now costs one query and nothing else.
+    const rows = waiting.flatMap((r) => {
+      // A claim being cancelled takes no payment until that is finished or withdrawn: nobody is late with it.
+      if (r.cancellationPendingAt) return [];
+      try {
+        const slaHours = effectivePolicyForRequest(r, currentPolicy).slaHours;
+        return slaHours && slaHours > 0 ? [{ ...r, slaHours }] : [];
+      } catch {
+        // A policy snapshot that cannot be read costs this one claim its reminder. Left to throw,
+        // it stopped the reminders of every other claim in the company, every scan.
+        return [];
+      }
+    });
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.id);
+    const approvers = await this.workflowRepo.findClaimApprovers(companyId, ids);
+    const lastVoids = await this.workflowRepo.findClaimLastPaymentVoids(companyId, ids);
+    const candidates: ScanCandidate[] = [];
+    for (const r of rows) {
+      const becamePayable = [r.financeReviewedAt, r.approvedAt].filter((at): at is Date => !!at)
+        .sort((a, b) => b.getTime() - a.getTime())[0] ?? r.submittedAt;
+      const lastVoid = lastVoids.get(r.id);
+      const payableSince = lastVoid && (!becamePayable || lastVoid > becamePayable) ? lastVoid : becamePayable;
+      const age = payableSince ? ageHours(payableSince, now) : 0;
+      if (!isSlaRisk(age, r.slaHours)) continue;
+      const approver = approvers.get(r.id);
+      // The round test of `isReimbursementClaimApprover` (contracts), over the steps that
+      // `findClaimApprovers` already held to its step conditions: no submission in force, no approver.
+      const approvedByUserId = approver && r.submittedAt && approver.decidedAt >= r.submittedAt ? approver.userId : undefined;
+      const financeReviewerUserId = r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? r.financeReviewedByUserId : undefined;
+      // Nobody passed or approved this claim: it needed no approval. Its ready-to-pay notice asked
+      // the people who would have approved it, so its reminder asks the same people, not everyone.
+      // ponytail: one route lookup per such overdue claim; batch it if a company ever has many.
+      const wouldApprove = financeReviewerUserId || approvedByUserId ? []
+        : await this.approverRoutes.resolveWouldBeApproverUserIds(companyId, currentPolicy, r).catch(() => []);
+      candidates.push({
+        sourceType: 'reimbursement_request',
+        sourceId: r.id,
+        payload: {
+          requestId: r.id, requestNo: r.requestNo, ageHours: age,
+          slaRisk: true,
+          // What is left to pay: the whole claim unless a legacy part payment was recorded.
+          amount: r.outstandingAmount, currency: r.currency,
+          // Whose turn it is to pay, for the notice to prefer (owner rule 2026-10-01): the finance
+          // reviewer who passed the claim, else whoever approved it in the round it was last sent
+          // in, else the people who would have approved a claim that needed no approval.
+          requesterUserId: r.requesterUserId,
+          ...(financeReviewerUserId && { financeReviewerUserId }),
+          ...(approvedByUserId && { approvedByUserId }),
+          ...(wouldApprove.length > 0 && { approverRecipientUserIds: wouldApprove }),
+          // One reminder per time the claim became payable (review M1), not one per scan window.
+          ...(payableSince && { notificationPeriodKey: `payable:${payableSince.toISOString()}` }),
+        },
+      });
+    }
+    return candidates;
   }
 
   private async taxDueSoon(companyId: string): Promise<ScanCandidate[]> {

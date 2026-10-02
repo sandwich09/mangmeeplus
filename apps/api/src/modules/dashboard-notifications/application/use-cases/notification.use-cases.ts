@@ -12,7 +12,7 @@ import { PrismaAlertStateRepository } from '../../infrastructure/prisma-notifica
 import { buildDedupKey, isInCooldown, computeCooldownUntil, isImplementedTrigger, isRetryable, isInQuietHours, resolveDeliveryOutcome, notificationSourceHref } from '../../domain/logic/notification.logic';
 import type { NotificationSummaryDto, NotificationPreferenceDto, NotificationRuleDto, UnreadCountDto, UpdatePreferenceDto, UpdateRuleDto } from '@watchdog-bms/contracts';
 import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
-import { IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT } from '../../domain/models/notification.model';
+import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT } from '../../domain/models/notification.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
@@ -216,6 +216,19 @@ export class CreateOrUpdateNotificationEventUseCase {
     sourceRefs?: unknown[];
     recipientUserIds: string[];
     periodKey?: string;
+    /**
+     * A newer notice of the same kind about the same record replaces the older ones: they stop
+     * showing as current, and a push of theirs still queued is dropped at egress. Off unless asked
+     * for, because other producers keep several periods open side by side.
+     */
+    supersedeEarlier?: boolean;
+    /**
+     * With `supersedeEarlier`: other kinds of notice about the same record that the new one replaces
+     * as well. "Paid" and "payment voided" of one claim name each other here.
+     */
+    alsoSupersedeTriggerKeys?: readonly string[];
+    /** Recipients who get this notice in the web bell only, with no LINE push. Everyone else gets both. */
+    webOnlyRecipientUserIds?: string[];
   }) {
     const dedupKey = buildDedupKey({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, periodKey: input.periodKey });
     const now = new Date();
@@ -231,6 +244,7 @@ export class CreateOrUpdateNotificationEventUseCase {
     let event = existing;
     if (!event || (event.status !== 'open' && !coolingDown && !['plan_term', 'billing'].includes(input.sourceModule))) {
       event = await this.events.create({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, severity: input.severity as any, title: input.title, body: input.body, payloadJson: {}, sourceRefsJson: { refs: input.sourceRefs ?? [] }, deepLinkHref: input.deepLinkHref, dedupKey, status: 'open', ruleId: rule?.id, firstSeenAt: now, lastSeenAt: now, resolvedAt: undefined });
+      if (input.supersedeEarlier) await this.events.resolveEarlier(event, now, input.alsoSupersedeTriggerKeys);
     } else {
       await this.events.update(input.companyId, event.id, { lastSeenAt: now });
     }
@@ -250,7 +264,7 @@ export class CreateOrUpdateNotificationEventUseCase {
         await this.recipients.create({ eventId: event.id, companyId: input.companyId, userId, recipientReason: 'role', readAt: undefined, dismissedAt: undefined, snoozedUntil: undefined });
       // A retry repairs partial old event/recipient writes even during cooldown. Sent/failed
       // deliveries are owned by the existing delivery worker, never recreated by this producer.
-      for (const channel of ['web', 'line'] as const) {
+      for (const channel of (input.webOnlyRecipientUserIds?.includes(userId) ? ['web'] : ['web', 'line']) as Array<'web' | 'line'>) {
         const delivery = await this.prisma.client.notificationDelivery.findFirst({
           where: { recipientId: recipient.id, channel: channel === 'web' ? 'WEB' : 'LINE' }, select: { id: true },
         });
@@ -339,7 +353,9 @@ export class ProcessQueuedDeliveryUseCase {
     const severity = event.severity.toLowerCase();
     const quiet = isInQuietHours(new Date(), preference?.quietHoursStart ?? undefined, preference?.quietHoursEnd ?? undefined, preference?.timezone ?? 'Asia/Bangkok');
 
-    if (!enabledChannels.includes('line') || !enabledTriggers.includes(event.triggerKey) || (quiet && severity !== 'critical')) {
+    // A saved list predates every trigger added after it; a notice the product owes is not dropped for that.
+    const triggerEnabled = enabledTriggers.includes(event.triggerKey) || ALWAYS_DELIVERED_TRIGGER_KEYS.includes(event.triggerKey);
+    if (!enabledChannels.includes('line') || !triggerEnabled || (quiet && severity !== 'critical')) {
       return this.deliveries.update(companyId, deliveryId, {
         status: 'suppressed',
         attemptCount: delivery.attemptCount + 1,

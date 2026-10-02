@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { BadRequestException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
-import { VoidExpenseUseCase } from './expense-draft.use-case';
+import { BadRequestException, ConflictException, ForbiddenException, UnprocessableEntityException } from '@nestjs/common';
+import { RejectExpenseUseCase, VoidExpenseUseCase } from './expense-draft.use-case';
 
 // H-04 (expenses) closure evidence: void orchestration reserves the reversal
 // entry number only when a posted journal exists, commits it only when a
@@ -118,5 +118,83 @@ describe('VoidExpenseUseCase (H-04)', () => {
     await assert.rejects(() => make().execute(ctx, 'exp_1', 'เหตุผล'), BadRequestException);
     assert.equal(s.reserveNumber.execute.mock.callCount(), 0);
     assert.equal(repo.voidExpenseTrueReversal.mock.callCount(), 0);
+  });
+});
+
+// A claim's expense records are built when the claim is approved and end with it: cancelling the claim
+// voids every one of them, with the claim's own checks. Voided or rejected on the expense screen, the
+// record left a claim that could be neither paid nor carried out (found while fixing audit B3 and B4).
+describe('an expense record that belongs to a claim ends with the claim, never from the expense screen', () => {
+  const claimRecord = (overrides: Record<string, unknown> = {}) => ({
+    id: 'exp_1', status: 'CONFIRMED', branchId: 'branch-1', grandTotalAmount: '100.00',
+    sourceReimbursementRequestId: 'claim-1', sourceReimbursementLineId: 'line-1', ...overrides,
+  });
+  function world(record: Record<string, unknown>, liveClaim: { requestId: string; requestNo: string | null } | null) {
+    const s = stubs();
+    const repo = {
+      findById: mock.fn(async () => record),
+      findLiveClaimOf: mock.fn(async () => liveClaim),
+      findPostedGeneratedJournalId: mock.fn(async () => 'je_orig'),
+      findPostedExpensePaymentJournals: mock.fn(async () => []),
+      voidExpenseTrueReversal: mock.fn(async () => ({ expense: { id: 'exp_1', status: 'VOIDED' }, reversalEntryId: 'je_rev', paymentReversalEntryId: null, paymentReversalEntryIds: [] })),
+      updateExpense: mock.fn(async () => ({ id: 'exp_1', status: 'REJECTED' })),
+    };
+    return {
+      s, repo,
+      voids: new VoidExpenseUseCase(repo as any, s.audit as any, s.outbox as any, s.reserveNumber as any, s.commitNumber as any, s.cancelNumber as any),
+      rejects: new RejectExpenseUseCase(repo as any, s.audit as any),
+    };
+  }
+  const LIVE = { requestId: 'claim-1', requestNo: 'RB-202610-00007' };
+  const refusal = (error: unknown) => {
+    assert.ok(error instanceof ConflictException);
+    const response = error.getResponse() as { code: string; message: string; reimbursementRequestId: string; requestNo?: string };
+    assert.deepEqual([response.code, response.reimbursementRequestId], ['expense_belongs_to_reimbursement', 'claim-1']);
+    // Plain Thai that says where to do it instead.
+    assert.match(response.message, /ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย ระบบจะยกเลิกรายการนี้ให้เอง/u);
+    assert.doesNotMatch(response.message, /[A-Za-z_]{4,}/u, 'no code or key in what a person reads');
+    return response;
+  };
+
+  it('refuses a void asked with expense.void, before a reversal number is reserved or anything is written, and still voids it for the claim itself', async () => {
+    const w = world(claimRecord(), LIVE);
+
+    await assert.rejects(() => w.voids.execute(ctx, 'exp_1', 'บันทึกผิด'), (error) => {
+      assert.match(refusal(error).message, /คำขอเบิก RB-202610-00007/u);
+      return true;
+    });
+
+    assert.equal(w.s.reserveNumber.execute.mock.callCount(), 0);
+    assert.equal(w.repo.voidExpenseTrueReversal.mock.callCount(), 0);
+    assert.equal(w.s.audit.log.mock.callCount(), 0);
+    // A claim that was sent before claims had numbers is still named as the place to go.
+    const unnumbered = world(claimRecord(), { requestId: 'claim-1', requestNo: null });
+    await assert.rejects(() => unnumbered.voids.execute(ctx, 'exp_1', 'บันทึกผิด'), (error) => { refusal(error); return true; });
+
+    // Cancelling the claim is the way: the claim's own void goes through, and does not ask itself for leave.
+    const asked = w.repo.findLiveClaimOf.mock.callCount();
+    const voided = await w.voids.executeForReimbursement(ctx, 'exp_1', 'ซื้อซ้ำกับใบก่อน', { reimbursementRequestId: 'claim-1', reimbursementLineId: 'line-1', branchId: 'branch-1' });
+    assert.equal(voided.status, 'VOIDED');
+    assert.equal(w.repo.voidExpenseTrueReversal.mock.callCount(), 1);
+    assert.equal(w.repo.findLiveClaimOf.mock.callCount(), asked);
+  });
+
+  it('refuses a rejection asked with expense.reject, which would have made the record deletable', async () => {
+    const w = world(claimRecord({ status: 'READY_FOR_CONFIRMATION' }), LIVE);
+
+    await assert.rejects(() => w.rejects.execute({ ...ctx, permissions: ['expense.reject'] }, 'exp_1', 'ซ้ำ'), (error) => { refusal(error); return true; });
+
+    assert.equal(w.repo.updateExpense.mock.callCount(), 0);
+  });
+
+  it('leaves every other expense as it was: one with no claim is never asked about, and one whose claim has ended is voided', async () => {
+    const plain = world({ id: 'exp_1', status: 'CONFIRMED', branchId: null, grandTotalAmount: '100.00' }, LIVE);
+    assert.equal((await plain.voids.execute(ctx, 'exp_1', 'บันทึกผิด')).status, 'VOIDED');
+    assert.equal(plain.repo.findLiveClaimOf.mock.callCount(), 0);
+
+    // The reader answers nothing for a claim that was cancelled, rejected or voided (its own case, on PostgreSQL).
+    const ended = world(claimRecord(), null);
+    assert.equal((await ended.voids.execute(ctx, 'exp_1', 'บันทึกผิด')).status, 'VOIDED');
+    assert.deepEqual((ended.repo.findLiveClaimOf.mock.calls[0] as any).arguments[0], 'co_1');
   });
 });

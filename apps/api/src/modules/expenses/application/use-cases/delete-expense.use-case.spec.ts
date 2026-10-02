@@ -23,6 +23,7 @@ const baseExpense = {
   paymentStatus: 'UNPAID',
   captureSource: 'WEB_MANUAL',
   createdByUserId: 'creator-1',
+  sourceReimbursementRequestId: null as string | null,
   updatedAt: new Date('2026-07-29T08:00:00.000Z'),
   _count: { lines: 3 },
 };
@@ -112,6 +113,8 @@ function setup(input: {
   duplicateReferencedBy?: Array<{ expenseId: string }>;
   duplicateRemaining?: Array<{ candidateExpenseId: string; status: string; resolvedByUserId: string | null }>;
   deleteCount?: number;
+  /** The reimbursement claim the expense record was built for, as the claims table holds it. */
+  claim?: { id: string; requestNo: string | null; status: string };
 } = {}) {
   const order: string[] = [];
   const auditCalls: Array<{ entry: any; tx: unknown }> = [];
@@ -185,8 +188,18 @@ function setup(input: {
       },
     ]),
   ) as unknown as Record<LinkedModel, { findFirst: ReturnType<typeof mock.fn> }>;
+  // Answers the query as the database would: by id and company, leaving out the statuses it is asked to leave out.
+  const reimbursementRequest = {
+    findFirst: mock.fn(async ({ where }: { where: { id: string; companyId: string; status: { notIn: string[] } } }) => {
+      order.push('claim.find');
+      const claim = input.claim;
+      return claim && where.id === claim.id && where.companyId === COMPANY_ID && !where.status.notIn.includes(claim.status)
+        ? { id: claim.id, requestNo: claim.requestNo } : null;
+    }),
+  };
   const tx = {
     expenseRecord,
+    reimbursementRequest,
     expenseDuplicateCandidate,
     expenseSubstituteReceiptEvidence,
     attachmentLink,
@@ -530,6 +543,45 @@ describe('DeleteExpenseUseCase', () => {
         paymentStatus: 'UNPAID',
       });
     }
+  });
+
+  // A claim's expense record ends with its claim: cancelling the claim voids it. Rejected from the expense
+  // screen it was deletable here, and the claim was left with a line it could neither pay nor build again.
+  it('refuses an expense record of a claim that still stands, says where to cancel it, and commits a DENIED audit', async () => {
+    const claimRecord = { ...baseExpense, status: 'REJECTED', sourceReimbursementRequestId: 'claim-1' };
+    for (const status of ['PENDING_APPROVAL', 'APPROVED', 'READY_FOR_PAYMENT', 'PAID']) {
+      const harness = setup({ expense: claimRecord, claim: { id: 'claim-1', requestNo: 'RB-202610-00007', status } });
+
+      await assert.rejects(
+        () => harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID),
+        (error: unknown) => {
+          assert.ok(error instanceof ConflictException, status);
+          const response = exceptionResponse(error) as { code: string; message: string; reimbursementRequestId: string; requestNo: string };
+          assert.deepEqual([response.code, response.reimbursementRequestId, response.requestNo], ['expense_belongs_to_reimbursement', 'claim-1', 'RB-202610-00007'], status);
+          // Plain Thai that names the claim and where to go.
+          assert.match(response.message, /คำขอเบิก RB-202610-00007/u);
+          assert.match(response.message, /ให้ยกเลิกที่คำขอเบิกนั้นในเมนูการเบิกจ่าย/u);
+          return true;
+        },
+      );
+
+      assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0, status);
+      assert.equal(harness.attachmentLink.deleteMany.mock.callCount(), 0, status);
+      assert.deepEqual(harness.auditCalls.map((call) => [call.entry.result, call.entry.metadataJson, call.tx === harness.tx]),
+        [['DENIED', { reason: 'EXPENSE_BELONGS_TO_REIMBURSEMENT', reimbursementRequestId: 'claim-1' }, true]], status);
+      assert.equal(harness.committed(), true, status);
+    }
+
+    // A claim that has ended holds its records no more: the delete goes on under its own rules.
+    for (const status of ['CANCELLED', 'REJECTED', 'VOIDED']) {
+      const ended = setup({ expense: claimRecord, claim: { id: 'claim-1', requestNo: 'RB-202610-00007', status } });
+      await ended.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID);
+      assert.equal(ended.expenseRecord.deleteMany.mock.callCount(), 1, status);
+    }
+    // And an expense that belongs to no claim never asks.
+    const plain = setup({ expense: { ...baseExpense, status: 'REJECTED' } });
+    await plain.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID);
+    assert.equal(plain.tx.reimbursementRequest.findFirst.mock.callCount(), 0);
   });
 
   it('returns 404 for an expense id outside the company tenant', async () => {

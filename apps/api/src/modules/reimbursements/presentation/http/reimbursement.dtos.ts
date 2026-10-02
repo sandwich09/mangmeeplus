@@ -8,15 +8,25 @@ import {
   IsString, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested,
 } from 'class-validator';
 import type {
+  ApproveReimbursementInput,
+  AttachReimbursementPaymentSlipInput,
   CreateReimbursementRequestInput,
   LinkReimbursementSignedCopyInput,
   RecordReimbursementPaymentInput,
   ReimbursementClaimSignatureRole,
   ReimbursementLineInput,
   ReimbursementPaymentMethod,
+  RejectReimbursementInput,
+  ReimbursementPayoutCorrectionReason,
+  ReimbursementPayoutInput,
+  ReimbursementPayoutKind,
+  ReimbursementPayoutMethod,
   SignReimbursementClaimFormInput,
+  SubmitReimbursementPayoutCorrectionInput,
+  SubmitReimbursementRequestInput,
   UpdateReimbursementDraftInput,
   UpdateReimbursementPolicyInput,
+  VoidReimbursementPaymentInput,
 } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_MAX_LINES } from '../../domain/logic/reimbursement.logic';
 
@@ -40,6 +50,56 @@ export class ReimbursementLineDto implements ReimbursementLineInput {
   @IsDateString({ strict: true }) @IsOptional() sourceExpenseUpdatedAt?: string;
 }
 
+// ---- Payout account ----
+//
+// Types and transport bounds only. Whether an account is complete and well formed is decided by the
+// one shared rule in contracts (`invalidPayoutDestinationField`), so the API and the web cannot drift.
+
+const PAYOUT_KINDS: ReimbursementPayoutKind[] = ['BANK_ACCOUNT', 'PROMPTPAY_PHONE'];
+const PAYOUT_METHODS: ReimbursementPayoutMethod[] = ['BANK_TRANSFER', 'CASH'];
+
+class PayoutDestinationFieldsDto {
+  @IsIn(PAYOUT_KINDS) @IsOptional() payoutKind?: ReimbursementPayoutKind;
+  @IsString() @IsOptional() @MaxLength(120) bankName?: string;
+  @IsString() @IsOptional() @MaxLength(200) accountName?: string;
+  // A string on purpose: leading zeros survive, and no client can send a number.
+  @IsString() @IsOptional() @MaxLength(40) accountNumber?: string;
+}
+
+export class ReimbursementPayoutDto extends PayoutDestinationFieldsDto {
+  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED']) mode!: ReimbursementPayoutInput['mode'];
+  @IsBoolean() @IsOptional() saveAsDefault?: boolean;
+}
+
+export class SetMemberPayoutAccountDto extends PayoutDestinationFieldsDto {
+  @IsIn(PAYOUT_METHODS) payoutMethod!: ReimbursementPayoutMethod;
+}
+
+// ---- Payout account correction round (payout spec §14) ----
+
+/**
+ * Send an approved claim back to have its payout account corrected: a reason from the fixed list, and
+ * a note at most. Only the shape is held here. Which reasons exist, how long the note may be and what
+ * it may not carry are the use case's own refusals, each with a code the screen has words for
+ * (`payout_correction_reason_required`, `payout_correction_note_too_long`, `note_contains_account_number`).
+ */
+export class RequestPayoutCorrectionDto {
+  @IsString() @IsOptional() @MaxLength(40) reasonCode?: string;
+  @IsString() @IsOptional() @MaxLength(2000) note?: string;
+}
+
+/**
+ * The account a claim in a round is given: a draft's three choices or the account the claim had, and
+ * for "use the default account" the token of the default the form showed.
+ */
+export class SubmitPayoutCorrectionDto extends PayoutDestinationFieldsDto {
+  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED', 'PREVIOUS']) mode!: SubmitReimbursementPayoutCorrectionInput['mode'];
+  @IsBoolean() @IsOptional() saveAsDefault?: boolean;
+  @Matches(/^[0-9a-f]{32}$/) @IsOptional() defaultToken?: string;
+  // `updatedAt` of the claim the form was opened on: a full timestamp, as the detail carries it.
+  @IsDateString({ strict: true }) @Matches(/T/) @IsOptional() expectedUpdatedAt?: string;
+}
+
 export class CreateReimbursementRequestDto implements CreateReimbursementRequestInput {
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) requesterUserId?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) branchId?: string;
@@ -47,6 +107,7 @@ export class CreateReimbursementRequestDto implements CreateReimbursementRequest
   @IsString() @IsNotEmpty() @MaxLength(1000) reason!: string;
   @IsString() @IsOptional() @MaxLength(3) currency?: string;
   @IsString() @IsOptional() @MaxLength(500) missingReceiptReason?: string;
+  @ValidateNested() @Type(() => ReimbursementPayoutDto) @IsOptional() payout?: ReimbursementPayoutInput;
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(REIMBURSEMENT_MAX_LINES)
   @ValidateNested({ each: true }) @Type(() => ReimbursementLineDto)
   lines!: ReimbursementLineDto[];
@@ -57,9 +118,47 @@ export class UpdateReimbursementDraftDto implements UpdateReimbursementDraftInpu
   @IsString() @unlessNullish @IsNotEmpty() @MaxLength(1000) reason?: string;
   @IsString() @unlessNullish @IsNotEmpty() @MaxLength(3) currency?: string;
   @IsString() @unlessNullish @MaxLength(500) missingReceiptReason?: string | null;
+  @ValidateNested() @Type(() => ReimbursementPayoutDto) @IsOptional() payout?: ReimbursementPayoutInput;
   @IsArray() @IsOptional() @ArrayMinSize(1) @ArrayMaxSize(REIMBURSEMENT_MAX_LINES)
   @ValidateNested({ each: true }) @Type(() => ReimbursementLineDto)
   lines?: ReimbursementLineDto[];
+}
+
+export class SubmitReimbursementDto implements SubmitReimbursementRequestInput {
+  @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
+  // What the draft's page showed as the account to be frozen (payout.submitToken).
+  @Matches(/^[0-9a-f]{32}$/) @IsOptional() payoutSubmitToken?: string;
+}
+
+export class CancelReimbursementDto {
+  // The transport bound only. Whether the reason is long enough is the expense void's own rule
+  // (`isExpenseVoidReason`), asked in the use case before anything is written.
+  @IsString() @IsOptional() @MaxLength(500) reason?: string;
+}
+
+export class ApproveReimbursementDto implements ApproveReimbursementInput {
+  @IsString() @IsOptional() @MaxLength(2000) comment?: string;
+  @IsString() @IsOptional() @MaxLength(128) approvalSnapshotHash?: string;
+  @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
+  // "ตรวจบัญชีแล้ว": a whole version number, never a string that happens to look like one.
+  @IsInt() @Min(1) @IsOptional() payoutVerifiedVersion?: number;
+}
+
+/**
+ * Refusing a claim. Transport bounds only: that a reason is given is the use case's own refusal
+ * (`rejection_reason_required`), and which correction reasons exist is too
+ * (`payout_correction_reason_required`); each has words on the screen. 500 is what the form allows.
+ */
+export class RejectReimbursementDto implements RejectReimbursementInput {
+  @IsString() @IsOptional() @MaxLength(500) reason!: string;
+  @IsString() @IsOptional() @MaxLength(128) approvalSnapshotHash?: string;
+  @IsString() @IsOptional() @MaxLength(200) idempotencyKey?: string;
+  @IsString() @IsOptional() @MaxLength(40) payoutCorrectionReasonCode?: ReimbursementPayoutCorrectionReason;
+}
+
+/** Voiding a payment: the reason, bounded like the form that asks for it. That one is given is the use case's refusal (`void_reason_required`). */
+export class VoidReimbursementPaymentDto implements VoidReimbursementPaymentInput {
+  @IsString() @IsOptional() @MaxLength(500) reason!: string;
 }
 
 export class ReimbursementDraftActionControlDto {
@@ -126,4 +225,33 @@ export class RecordReimbursementPaymentDto implements RecordReimbursementPayment
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) bankAccountId?: string;
   @IsString() @IsOptional() @MaxLength(500) note?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(128) idempotencyKey?: string;
+  @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) slipAttachmentId?: string;
+  @IsBoolean() @IsOptional() confirmSignedCopyWithdrawal?: boolean;
+  // The payer's statement about the payout account (payout spec §12.3). Shapes only: whether it is
+  // enough for this claim is decided under the payment lock by `planPaymentPayout`.
+  @IsInt() @Min(1) @IsOptional() payoutDestinationVersion?: number;
+  @IsBoolean() @IsOptional() payoutConfirmed?: boolean;
+  @Matches(/^[0-9a-f]{32}$/) @IsOptional() payoutDefaultToken?: string;
+  @IsString() @IsOptional() @MaxLength(500) methodMismatchReason?: string;
+}
+
+// ---- Payment slips ----
+//
+// Type and size are judged by the use case, which answers with the stable `payment_slip_invalid`
+// the payment form translates; here only the shape is fixed.
+
+export class InitPaymentSlipUploadDto {
+  @IsString() @IsNotEmpty() @MaxLength(255) originalFileName!: string;
+  @IsString() @IsNotEmpty() @MaxLength(255) mimeType!: string;
+  @IsInt() @Min(1) byteSize!: number;
+}
+
+export class CompletePaymentSlipUploadDto {
+  @Matches(/^[0-9a-f]{64}$/) @IsOptional() checksumSha256?: string;
+  @IsInt() @IsOptional() @Min(1) byteSize?: number;
+}
+
+export class AttachPaymentSlipDto implements AttachReimbursementPaymentSlipInput {
+  @IsString() @IsNotEmpty() @MaxLength(64) attachmentId!: string;
+  @IsBoolean() @IsOptional() confirmSignedCopyWithdrawal?: boolean;
 }

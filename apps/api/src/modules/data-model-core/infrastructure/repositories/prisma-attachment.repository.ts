@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
-import type { Prisma } from '../../../../generated/prisma/client';
+import { Prisma } from '../../../../generated/prisma/client';
 import type { AttachmentRepositoryPort } from '../../domain/ports/attachment-repository.port';
 import type {
   AttachmentRecord,
@@ -13,6 +13,30 @@ import type {
 } from '../../domain/models/attachment.model';
 import { findAttachmentLinkConflict, isAllowedAttachmentTarget } from '../../domain/logic/attachment.logic';
 import { lockFundingEvidence, assertFundingMutation } from '../../../expenses/infrastructure/substitute-funding.guard';
+import {
+  REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+  REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+  REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG,
+} from '../../../reimbursements/domain/reimbursement.constants';
+
+/**
+ * `isReimbursementPaymentSlipFile` as a query: the files that are not a reimbursement payment slip, neither
+ * linked to a payment nor uploaded to become one. For a list that offers a person files to attach as something
+ * else; attaching a slip anywhere else is refused, so it must not be offered.
+ *
+ * The tag half says "no such tag, or another tag" on purpose. A plain NOT over a JSON path is NULL, not true,
+ * for a file with no metadata or with metadata that has no `generatedFor`, which is every ordinary upload: the
+ * list would lose its receipts and keep nothing but files tagged for something else.
+ */
+export const NOT_REIMBURSEMENT_PAYMENT_SLIP_WHERE = {
+  AND: [
+    { links: { none: { targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE, purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE } } },
+    { OR: [
+      { metadataJson: { path: ['generatedFor'], equals: Prisma.DbNull } },
+      { metadataJson: { path: ['generatedFor'], not: REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG } },
+    ] },
+  ],
+} satisfies Prisma.AttachmentObjectWhereInput;
 
 @Injectable()
 export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
@@ -57,6 +81,24 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
       select: { submittedByUserId: true },
     });
     return { ownerUserId: asset?.submittedByUserId ?? null };
+  }
+
+  /**
+   * Whether these bytes are the slip of a reimbursement payment. A slip is payment evidence with a
+   * viewer rule of its own (owner decision 2026-10-01): the generic download never serves it and the
+   * generic delete never removes it. Narrow on purpose: the slip link and nothing else.
+   */
+  async isReimbursementPaymentSlip(input: FindAttachmentInput, tx?: Prisma.TransactionClient): Promise<boolean> {
+    const link = await ((tx ?? this.prisma.client) as any).attachmentLink.findFirst({
+      where: {
+        companyId: input.companyId,
+        attachmentId: input.id,
+        targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+        purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+      },
+      select: { id: true },
+    });
+    return Boolean(link);
   }
 
   async findSubstituteEvidenceRetentionHold(
@@ -203,6 +245,13 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
         OR: [{ attachmentId: { in: evidence.attachmentIds } }, { linkedExpenseId: { in: evidence.expenseIds } }] }, select: { id: true } });
       if (claim) throw new ConflictException({ code: 'substitute_source_has_live_claim', message: 'Receipt is retained by a submitted reimbursement.' });
       await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:attachment-retention`}))`;
+      // Under the lock the slip link is written with, so a link racing this delete is seen here.
+      if (await this.isReimbursementPaymentSlip(input, db)) {
+        throw new ConflictException({
+          code: 'reimbursement_payment_slip_retained',
+          message: 'Attachment is retained as reimbursement payment evidence.',
+        });
+      }
       const hold = await this.findSubstituteEvidenceRetentionHold(input, db);
       if (hold) {
         throw new ConflictException({

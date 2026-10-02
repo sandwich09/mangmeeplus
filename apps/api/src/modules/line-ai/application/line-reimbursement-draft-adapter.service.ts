@@ -19,6 +19,7 @@ import {
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { ReimbursementDraftActionRecord, ReimbursementLineRecord, ReimbursementRequestRecord } from '../../reimbursements/domain/models/reimbursement.model';
 import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
+import { NOT_REIMBURSEMENT_PAYMENT_SLIP_WHERE } from '../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { pickLineDefaultBranchId } from '../../expenses/domain/logic/line-receipt-branch.logic';
 import {
   LineReimbursementDraftUseCase,
@@ -498,11 +499,14 @@ export class LineReimbursementDraftAdapterService {
         const free = ids.filter(id => !used.includes(id));
         if (free.length) await this.prisma.client.attachmentObject.updateMany({ where: { ...staged, id: { in: free } }, data: { branchId } });
       }
+      // A payment slip is never a claim receipt: a line saved with one is refused. Whoever records payments has
+      // slips among their uploads, and they were offered here as receipts to pick.
       const attachmentRows = await this.prisma.client.attachmentObject.findMany({ where: { companyId: ctx.companyId,
         branchId: String(selectedBranch.raw['id']), status: 'ACTIVE', OR: [
           { uploadedByUserId: String(selectedRequester.raw['id']) },
           ...(ctx.permissions.includes('reimbursement.finance_review') ? [{ uploadedByUserId: ctx.userId }] : []),
-        ], ...(family === 'attachment' && query ? { originalFileName: { contains: query, mode: 'insensitive' as const } } : {}) },
+        ], ...NOT_REIMBURSEMENT_PAYMENT_SLIP_WHERE,
+        ...(family === 'attachment' && query ? { originalFileName: { contains: query, mode: 'insensitive' as const } } : {}) },
         orderBy: [{ uploadedAt: 'desc' }, { id: 'desc' }], skip: offset('attachment'), take: PAGE_SIZE + 1,
         select: { id: true, originalFileName: true, mimeType: true, checksumSha256: true, uploadedByUserId: true, branchId: true, updatedAt: true } });
       const attachmentChoices = attachmentRows.slice(0, PAGE_SIZE).map(row => this.choice(key.actionId, 'ATTACHMENT', row.originalFileName,

@@ -1,4 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import {
+  REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+  REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+  REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG,
+} from '../../../reimbursements/domain/reimbursement.constants';
 
 /** The capture capability endpoint reports this list, so no client hard-codes it (§4.1). */
 export const ALLOWED_ATTACHMENT_MIME_TYPES = [
@@ -54,6 +59,7 @@ export const SIGNATURE_ASSET_TARGET_TYPE = 'company.signature_asset';
 
 type AttachmentLinkReader = {
   attachmentLink: { findFirst(args: any): Promise<{ targetType: string } | null> };
+  attachmentObject: { findFirst(args: any): Promise<{ metadataJson?: unknown } | null> };
 };
 
 /**
@@ -64,6 +70,11 @@ type AttachmentLinkReader = {
  * expense a 403 and a blank document viewer. Loosening the gate is not the fix: it would let anyone
  * holding `expense.review` link a victim's signature onto an expense they can read and then download
  * it. So the state itself is refused, at every place a link is written.
+ *
+ * A reimbursement payment slip is exclusive in the same way (owner decision 2026-10-01): it is opened
+ * only through its claim, by the people that claim names, so it is never an expense receipt, a
+ * signed claim copy or anything OCR may read. That holds from the moment it is uploaded as a slip
+ * (the upload tag), not only once a payment carries it (the slip link).
  *
  * Runs on the caller's transaction client when there is one, so a link written moments earlier in
  * the same transaction still counts. Returns the refusal message, or `null` when the link is fine.
@@ -81,10 +92,37 @@ export async function findAttachmentLinkConflict(
     },
     select: { targetType: true },
   });
-  if (!clash) return null;
-  return isSignature
-    ? 'This file is already attached to a document, so it cannot also be saved as a personal signature.'
-    : 'A personal signature image cannot be attached to anything else.';
+  if (clash) {
+    return isSignature
+      ? 'This file is already attached to a document, so it cannot also be saved as a personal signature.'
+      : 'A personal signature image cannot be attached to anything else.';
+  }
+  if (input.targetType !== REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE && await isReimbursementPaymentSlipFile(db, input)) {
+    return 'A reimbursement payment slip cannot be attached to anything else.';
+  }
+  return null;
+}
+
+/** Whether these bytes are a reimbursement payment slip: linked to a payment, or uploaded to become one. */
+export async function isReimbursementPaymentSlipFile(
+  db: AttachmentLinkReader,
+  input: { companyId: string; attachmentId: string },
+): Promise<boolean> {
+  const slipLink = await db.attachmentLink.findFirst({
+    where: {
+      companyId: input.companyId,
+      attachmentId: input.attachmentId,
+      targetType: REIMBURSEMENT_PAYMENT_ATTACHMENT_TARGET_TYPE,
+      purpose: REIMBURSEMENT_PAYMENT_SLIP_PURPOSE,
+    },
+    select: { targetType: true },
+  });
+  if (slipLink) return true;
+  const file = await db.attachmentObject.findFirst({
+    where: { id: input.attachmentId, companyId: input.companyId },
+    select: { metadataJson: true },
+  });
+  return (file?.metadataJson as Record<string, unknown> | null | undefined)?.['generatedFor'] === REIMBURSEMENT_PAYMENT_SLIP_UPLOAD_TAG;
 }
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB

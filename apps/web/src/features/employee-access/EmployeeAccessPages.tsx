@@ -44,7 +44,7 @@ import {
 const MODULE_LABEL: Record<string, string> = {
   foundation: 'งานพื้นฐาน', company: 'ตั้งค่าบริษัท', people: 'พนักงาน',
   inventory: 'สินค้า', sales: 'ลูกค้าและการขาย', billing: 'บิลและใบเสร็จ',
-  expense: 'ค่าใช้จ่าย', reimbursement: 'ขอเงินคืน', procurement: 'ซื้อสินค้าและจ่ายผู้ขาย',
+  expense: 'ค่าใช้จ่าย', reimbursement: 'การเบิกจ่าย', procurement: 'ซื้อสินค้าและจ่ายผู้ขาย',
   banking: 'บัญชีธนาคาร', accounting: 'บัญชีและงบการเงิน', tax: 'ภาษี',
 };
 const INDUSTRY_LABEL: Record<string, string> = {

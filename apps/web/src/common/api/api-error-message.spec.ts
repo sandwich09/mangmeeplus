@@ -111,6 +111,14 @@ test('matches a conflict code that carries its detail inline', () => {
   );
 });
 
+test('a claim payment dated in a closed period tells the payer what to do, whatever the month', () => {
+  const label = 'วันที่จ่ายอยู่ในงวดบัญชีที่ปิดแล้ว จึงบันทึกการจ่ายไม่ได้ กรุณาตรวจวันที่จ่ายอีกครั้ง หากจ่ายในวันนั้นจริง ให้ผู้มีสิทธิ์เปิดงวดบัญชีก่อนแล้วจึงบันทึกใหม่';
+  assert.equal(translateApiError('reimbursement_payment_accounting_period_locked:2026-08'), label);
+  // As the API answers it: a 409 whose message is the code with the month attached.
+  assert.equal(apiErrorMessage(apiError('reimbursement_payment_accounting_period_locked:2026-08', { status: 409 })), label);
+  assert.doesNotMatch(label, /[A-Za-z_]|\d{4}-\d{2}/, 'no code and no period key reaches the payer');
+});
+
 test('translates chart-template and posting-readiness failures', () => {
   assert.match(translateApiError('coa_preview_changed')!, /Preview/);
   assert.match(translateApiError('coa_semantic_conflict')!, /รหัสเดียวกัน/);

@@ -113,4 +113,18 @@ describe('reimbursement period close gate', () => {
     assert.equal(summary.checks.at(-1)!.checkKey, 'reimbursement_postings_complete');
     assert.equal(summary.status, 'PASSED');
   });
+
+  // The refusal has to say WHAT is pending. One total cannot tell a payout nobody posted from an
+  // expense nobody confirmed, and the two are fixed on different screens.
+  it('names each kind of pending claim money, in plain Thai and as numbers a client can render', async () => {
+    const summary = await fakes({ unconfirmedClaimExpenses: 1, pendingPayments: 2, paymentErrors: 3 }).execute(ctx(), 'p-1');
+    const check = summary.checks.find((c) => c.checkKey === 'reimbursement_postings_complete')!;
+    assert.equal(check.count, 6);
+    assert.deepEqual(check.breakdown, { unconfirmedClaimExpenses: 1, pendingPayments: 2, paymentErrors: 3 });
+    assert.equal(Object.values(check.breakdown!).reduce((sum, part) => sum + part, 0), check.count, 'the parts add up to the total');
+    assert.match(check.message, /ค่าใช้จ่ายจากใบเบิกยังไม่ยืนยัน 1 รายการ/);
+    assert.match(check.message, /การจ่ายเงินเบิกยังไม่ลงบัญชี 2 รายการ/);
+    assert.match(check.message, /ลงบัญชีผิดพลาด 3 รายการ/);
+    assert.doesNotMatch(check.message, /[A-Za-z_]{3,}/, 'no machine token in the sentence');
+  });
 });

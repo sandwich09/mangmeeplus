@@ -20,6 +20,8 @@ function makePrisma(opts: {
   otherCompanyMemberships?: number;
   membershipScopeMode?: string;
   membershipBranchIds?: string[];
+  membershipDefaultBranchId?: string;
+  profileStatus?: string;
 } = {}) {
   const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any, transactions: 0, contextInvalidations: [] as any[] };
   const tx = {
@@ -41,7 +43,7 @@ function makePrisma(opts: {
   const prisma = {
     client: {
       employeeAccessProfile: {
-        findFirst: async (args: any) => args.where.identityHash ? (opts.duplicateIdentity ? { id: 'emp-2' } : null) : PROFILE,
+        findFirst: async (args: any) => args.where.identityHash ? (opts.duplicateIdentity ? { id: 'emp-2' } : null) : { ...PROFILE, status: opts.profileStatus ?? 'ACTIVE' },
         findFirstOrThrow: async () => ({
           ...PROFILE,
           displayName: 'Somchai', legalName: null, identityType: 'THAI_NATIONAL_ID', identityLast4: '0123',
@@ -51,7 +53,7 @@ function makePrisma(opts: {
         }),
       },
       companyMembership: {
-        findUniqueOrThrow: async () => ({ branchScopeMode: opts.membershipScopeMode ?? 'ALL_BRANCHES', defaultBranchId: null, branchScopes: (opts.membershipBranchIds ?? []).map((branchId) => ({ branchId })) }),
+        findUniqueOrThrow: async () => ({ branchScopeMode: opts.membershipScopeMode ?? 'ALL_BRANCHES', defaultBranchId: opts.membershipDefaultBranchId ?? null, branchScopes: (opts.membershipBranchIds ?? []).map((branchId) => ({ branchId })) }),
         count: async () => opts.otherCompanyMemberships ?? 0,
       },
       role: { findMany: async () => opts.candidateRoles ?? [] },
@@ -86,10 +88,70 @@ describe('UpdateEmployeeUseCase branch scope', () => {
     });
   }
 
-  it('preserves a restricted manager assigning only branches they hold', async () => {
-    const { prisma, writes } = makePrisma({ validBranchCount: 1 });
+  it('preserves a restricted manager assigning only branches they hold, to an employee already inside them', async () => {
+    const { prisma, writes } = makePrisma({ validBranchCount: 1, membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: ['b1'] });
     await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, requesterBranchIds: ['b1'], branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1'], defaultBranchId: 'b1' });
     assert.deepEqual(writes.scopeCreates.data, [{ membershipId: 'mem-1', branchId: 'b1' }]);
+  });
+
+  // Security review S3: only the RESULTING scope was checked, so a branch-limited editor could move a
+  // member of another branch into their own (the result is all theirs) and then act on them as one of
+  // their people. The scope the employee holds now has to be the editor's as well.
+  const intoMyBranch: UpdateEmployeeInput = { branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1'], defaultBranchId: 'b1' };
+  for (const [name, current] of [
+    ['works in another branch', { membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: ['b2'] }],
+    ['works in the editor branch and another', { membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: ['b1', 'b2'] }],
+    ['works across every branch', { membershipScopeMode: 'ALL_BRANCHES' }],
+    ['is pinned to another default branch', { membershipScopeMode: 'DEFAULT_BRANCH_ONLY', membershipDefaultBranchId: 'b2' }],
+    ['holds the editor branch but another default branch', { membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: ['b1'], membershipDefaultBranchId: 'b2' }],
+    ['holds no branch at all', { membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: [] }],
+    ['is a draft someone already scoped to another branch', { profileStatus: 'DRAFT', membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: ['b2'] }],
+    ['is a draft saved for every branch with a default branch', { profileStatus: 'DRAFT', membershipScopeMode: 'ALL_BRANCHES', membershipDefaultBranchId: 'b2' }],
+  ] as Array<[string, Parameters<typeof makePrisma>[0]]>) {
+    it(`denies and audits a restricted editor moving into their branch an employee who ${name}`, async () => {
+      const { prisma, writes } = makePrisma({ validBranchCount: 1, existingScopeRows: 1, ...current });
+      await assert.rejects(
+        () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...managerCmd, requesterBranchIds: ['b1'], ...intoMyBranch }),
+        (error: any) => { assert.equal(error.getStatus(), 403); assert.match(error.message, /outside the requester's branch scope/); return true; },
+      );
+      assert.equal(writes.transactions, 0);
+      assert.deepEqual([writes.auditArgs.data.result, writes.auditArgs.data.riskLevel, writes.auditArgs.data.actorUserId], ['DENIED', 'HIGH', 'manager-1']);
+      // The audit row says what the employee held, beside what was asked for.
+      assert.equal(writes.auditArgs.data.metadataJson.currentBranchScopeMode, current!.membershipScopeMode);
+      assert.deepEqual(writes.auditArgs.data.metadataJson.branchIds, ['b1']);
+    });
+  }
+
+  it('lets the restricted editor re-scope an employee whose every current branch is theirs', async () => {
+    const { prisma, writes } = makePrisma({ validBranchCount: 1, membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: ['b1', 'b3'], membershipDefaultBranchId: 'b3' });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...managerCmd, requesterBranchIds: ['b1', 'b3'], ...intoMyBranch });
+    assert.deepEqual(writes.scopeCreates.data, [{ membershipId: 'mem-1', branchId: 'b1' }]);
+    assert.equal(writes.auditArgs.data.result, 'SUCCESS');
+  });
+
+  it('lets whoever creates an employee give the new draft its first scope, and only that', async () => {
+    // The wizard creates the draft (column default: every branch, no rows, no default) and scopes it in its next call.
+    const { prisma, writes } = makePrisma({ validBranchCount: 1, profileStatus: 'DRAFT' });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...managerCmd, requesterBranchIds: ['b1'], ...intoMyBranch });
+    assert.deepEqual(writes.scopeCreates.data, [{ membershipId: 'mem-1', branchId: 'b1' }]);
+    // The same untouched default on an employee who is not a draft is "every branch": not theirs to narrow.
+    for (const profileStatus of ['ACTIVE', 'INVITED', 'SUSPENDED', 'DISABLED']) {
+      const active = makePrisma({ validBranchCount: 1, profileStatus });
+      await assert.rejects(() => new UpdateEmployeeUseCase(active.prisma, CONFIG).execute({ ...managerCmd, requesterBranchIds: ['b1'], ...intoMyBranch }), /outside the requester's branch scope/, profileStatus);
+      assert.equal(active.writes.transactions, 0);
+    }
+  });
+
+  it('keeps an owner or admin, who hold every branch, free to move anyone, and leaves edits that touch no scope alone', async () => {
+    // No branch list on the requester: every branch is theirs.
+    const everyBranch = makePrisma({ validBranchCount: 1, membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: ['b2'] });
+    await new UpdateEmployeeUseCase(everyBranch.prisma, CONFIG).execute({ ...baseCmd, ...intoMyBranch });
+    assert.deepEqual(everyBranch.writes.scopeCreates.data, [{ membershipId: 'mem-1', branchId: 'b1' }]);
+    // A restricted editor still edits the profile of an employee of another branch: nothing of the scope moves.
+    const profileOnly = makePrisma({ membershipScopeMode: 'SELECTED_BRANCHES', membershipBranchIds: ['b2'] });
+    await new UpdateEmployeeUseCase(profileOnly.prisma, CONFIG).execute({ ...managerCmd, requesterBranchIds: ['b1'], jobTitle: 'พนักงานขาย' });
+    assert.equal(profileOnly.writes.profileUpdate.data.jobTitle, 'พนักงานขาย');
+    assert.deepEqual([profileOnly.writes.membershipUpdate, profileOnly.writes.scopeCreates], [undefined, undefined]);
   });
 
   it('rejects branches that are not ACTIVE branches of this company', async () => {

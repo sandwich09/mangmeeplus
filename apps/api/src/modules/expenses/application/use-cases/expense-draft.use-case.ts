@@ -9,6 +9,7 @@ import { collectLineExpenseDraftQuestions, parseLineExpenseDraftContinuation, ne
 import { withPurposeNote } from '../../domain/logic/line-correction.logic';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
+import { claimOwnsExpenseError } from '../../infrastructure/expense-void-blocker';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
@@ -54,7 +55,7 @@ import { CommitDocumentNumberUseCase } from '../../../data-model-core/applicatio
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { LEDGER_SEQUENCE_KEY, civilDateToUtcDate, coerceCivilDate, utcDateToCivilDate } from '@watchdog-bms/contracts';
-import { canVoidExpenseFinancialState, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, civilPeriodKey, isExpenseVoidReason, todayCivilDate } from '@watchdog-bms/contracts';
 import type { AuditLogEntry } from '../../../audit/domain/models/audit-log.model';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
@@ -1501,6 +1502,9 @@ export class RejectExpenseUseCase {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
+    // A claim's expense record ends with its claim, never on its own: rejected here, the claim could be neither paid nor carried out.
+    const claim = r.sourceReimbursementRequestId ? await this.repo.findLiveClaimOf(ctx.companyId, r) : null;
+    if (claim) throw claimOwnsExpenseError(claim);
     const err = validateStatusTransition(r.status, 'REJECTED');
     if (err) throw new BadRequestException(err);
     const updated = await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, status: 'REJECTED', rejectedByUserId: ctx.userId, rejectedAt: new Date(), rejectReason: reason, postingStatus: 'not_required' });
@@ -1534,6 +1538,11 @@ export class VoidExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       systemReconcile?: boolean;
+      /**
+       * Runs first inside the void transaction. The claim's cancellation checks there that it still
+       * holds its intent, so a void never lands on a claim whose cancellation was withdrawn meanwhile.
+       */
+      beforeVoid?: (tx: any) => Promise<void>;
     },
   ): Promise<ExpenseRecord> {
     return this.voidExpense(ctx, expenseId, reason, authority);
@@ -1548,9 +1557,10 @@ export class VoidExpenseUseCase {
       reimbursementLineId: string;
       branchId?: string;
       systemReconcile?: boolean;
+      beforeVoid?: (tx: any) => Promise<void>;
     },
   ): Promise<ExpenseRecord> {
-    if (!reason || reason.trim().length < 3) throw new BadRequestException('Void reason must be at least 3 characters');
+    if (!isExpenseVoidReason(reason)) throw new BadRequestException('Void reason must be at least 3 characters');
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     if (authority) {
@@ -1570,6 +1580,7 @@ export class VoidExpenseUseCase {
           reimbursementLineId: authority.reimbursementLineId,
           actorUserId: ctx.userId,
           reason,
+          beforeVoid: authority.beforeVoid,
           eventKey: `expense.voided:expense_record:${expenseId}:reimbursement-cancel`,
           payloadJson: {
             companyId: ctx.companyId,
@@ -1601,6 +1612,11 @@ export class VoidExpenseUseCase {
       }
     } else {
       assertBranchInScope(ctx, r.branchId);
+      // A claim's expense record is voided by its claim alone: cancelling the claim voids every record of
+      // it, checks what would stop that before it starts, and closes the claim with them. Voided from
+      // here, the record would leave a claim that can be neither paid nor carried out.
+      const claim = r.sourceReimbursementRequestId ? await this.repo.findLiveClaimOf(ctx.companyId, r) : null;
+      if (claim) throw claimOwnsExpenseError(claim);
     }
     if (!canVoidExpenseFinancialState(r)) throw new BadRequestException(`Can only void confirmed expenses or unconfirmed expenses with recorded financial activity (current: ${r.status})`);
 
@@ -1645,6 +1661,7 @@ export class VoidExpenseUseCase {
         reason,
         reserved?.documentNumber,
         paymentReservations.map(({ paymentId, reservation }) => ({ paymentId, reversalEntryNumber: reservation.documentNumber })),
+        authority?.beforeVoid,
       );
     } catch (err) {
       // The reservations are still RESERVED here (commit happens only after a

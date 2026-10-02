@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { RequestContext } from '@watchdog-bms/contracts';
-import { GetReimbursementApprovalBacklogUseCase, NO_ACTIVE_APPROVER_NOTE, SHARED_PILE_LABEL } from './reimbursement-summary.use-case';
+import { REIMBURSEMENT_DESK_LABELS, type RequestContext } from '@watchdog-bms/contracts';
+import { GetReimbursementApprovalBacklogUseCase, NO_ACTIVE_APPROVER_NOTE, PAYOUT_CORRECTION_NOTE, SHARED_PILE_LABEL } from './reimbursement-summary.use-case';
 
 // 2026-09-30 10:00 Bangkok.
 const NOW = new Date('2026-09-30T03:00:00.000Z');
@@ -118,7 +118,8 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
 
     assert.deepEqual(result.desks, [
       { kind: 'finance', label: 'ฝ่ายการเงิน (รอตรวจสอบ)', count: 2, totalsByCurrency: [{ currency: 'THB', amount: '200.00' }], oldestApprovedOn: '2026-09-27', longestWaitDays: 3 },
-      { kind: 'payment', label: 'ฝ่ายการเงิน (รอบันทึกจ่าย)', count: 3,
+      // Before: "ฝ่ายการเงิน (รอบันทึกจ่าย)", also for the two claims here that never had a finance-review step.
+      { kind: 'payment', label: 'ผู้มีสิทธิ์บันทึกจ่าย', count: 3,
         totalsByCurrency: [{ currency: 'THB', amount: '160.00' }, { currency: 'USD', amount: '40.50' }], oldestApprovedOn: '2026-09-26', longestWaitDays: 4 },
       { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-23', longestWaitDays: 7 },
     ]);
@@ -128,6 +129,31 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
     assert.equal(result.total, 6);
     assert.equal(result.awaitingApprovalCount, 0);
     assert.deepEqual(r.calls.list.statuses, ['PENDING_APPROVAL', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'APPROVED']);
+  });
+
+  // Owner rule 2026-10-01: the answer names the same party the web names for the same claim state. The web prints
+  // REIMBURSEMENT_DESK_LABELS (reimbursements.logic.spec.ts checks its three surfaces); this is the fourth.
+  it('names the web\'s own desk for a claim with no finance step and for one finance reviews', async () => {
+    const approvedAt = new Date('2026-09-28T05:00:00.000Z');
+    const noFinanceReady = claim({ status: 'READY_FOR_PAYMENT', approvedAt });
+    const noFinanceRouting = claim({ status: 'APPROVED', approvedAt });
+    const underReview = claim({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING', approvedAt });
+    const handOffToFinance = claim({ status: 'APPROVED', financeReviewStatus: 'PENDING', approvedAt });
+    const reviewedReady = claim({ status: 'READY_FOR_PAYMENT', financeReviewStatus: 'APPROVED_FOR_PAYMENT', approvedAt });
+    const single = claim();
+    const result = await run(repo([noFinanceReady, noFinanceRouting, underReview, handOffToFinance, reviewedReady, single],
+      [step(single.id, { assignedApproverUserIds: ['mgrA'] })], { b1: ['mgrA'] }));
+    const waitingOn = Object.fromEntries(result.items.map((item) => [item.id, item.waitingOn]));
+
+    // Waiting for payment is whoever holds the pay right, finance reviewed or not: never "ฝ่ายการเงิน".
+    for (const row of [noFinanceReady, noFinanceRouting, reviewedReady]) assert.equal(waitingOn[row.id], REIMBURSEMENT_DESK_LABELS.PAYMENT);
+    assert.equal(result.desks.find((row) => row.kind === 'payment')?.label, REIMBURSEMENT_DESK_LABELS.PAYMENT);
+    assert.doesNotMatch(REIMBURSEMENT_DESK_LABELS.PAYMENT, /การเงิน/);
+    // Finance review keeps the web's word and says what it waits for.
+    for (const row of [underReview, handOffToFinance]) assert.equal(waitingOn[row.id], `${REIMBURSEMENT_DESK_LABELS.FINANCE} (รอตรวจสอบ)`);
+    assert.equal(result.desks.find((row) => row.kind === 'finance')?.label, 'ฝ่ายการเงิน (รอตรวจสอบ)');
+    // One assigned approver: the person, as the web's "อยู่ที่ สมศรี".
+    assert.equal(waitingOn[single.id], 'สมศรี');
   });
 
   it('treats a legacy role-routed step as the shared pile', async () => {
@@ -180,5 +206,29 @@ describe('GetReimbursementApprovalBacklogUseCase — whose desk (advisor spec §
     const waiting = claim();
     assert.equal('hasOwnClaims' in await run(repo([waiting], [step(waiting.id, { assignedApproverUserIds: ['mgrA'] })], { b1: ['mgrA'] }),
       ctx({ permissions: ['reimbursement.read_own'] })), false);
+  });
+
+  // Payout spec §14.7, §17.3: sent back to have its payout account corrected. No step is open while it is
+  // with its requester, and that is not a decided claim the system has yet to move on.
+  it('puts a claim that waits for its requester to correct the payout account on its own desk, and counts it for no approver', async () => {
+    const sentBackAt = new Date('2026-09-28T03:00:00.000Z');
+    const withRequester = claim({ payoutCorrectionRequestedAt: sentBackAt });
+    // The account was given on the 29th: it waits for its approver again, since then.
+    const withApprover = claim({ payoutCorrectionRequestedAt: sentBackAt, payoutCorrectionSubmittedAt: new Date('2026-09-29T03:00:00.000Z') });
+    const decided = claim();
+    const result = await run(repo([withRequester, withApprover, decided], [step(withApprover.id, { assignedApproverUserIds: ['mgrA'] })], { b1: ['mgrA'] }));
+
+    assert.deepEqual(result.desks, [
+      { kind: 'status_pending', label: 'รอระบบปรับสถานะ', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-23', longestWaitDays: 7 },
+      { kind: 'requester_correction', label: 'รอผู้เบิกแก้บัญชีรับเงิน', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }],
+        oldestSentBackOn: '2026-09-28', longestWaitDays: 2, note: PAYOUT_CORRECTION_NOTE },
+    ]);
+    assert.deepEqual(result.byApprover, [{ name: 'สมศรี', count: 1, totalsByCurrency: [{ currency: 'THB', amount: '100.00' }], oldestSubmittedOn: '2026-09-29', longestWaitDays: 1 }]);
+    assert.deepEqual(result.items.map((item) => [item.id, item.waitingOn, item.submittedOn, item.sentBackOn ?? item.resubmittedOn ?? null, item.waitDays]), [
+      [decided.id, 'รอระบบปรับสถานะ', '2026-09-23', null, 7],
+      [withRequester.id, 'รอผู้เบิกแก้บัญชีรับเงิน', '2026-09-23', '2026-09-28', 2],
+      [withApprover.id, 'สมศรี', '2026-09-23', '2026-09-29', 1],
+    ]);
+    assert.deepEqual([result.total, result.awaitingApprovalCount], [3, 1]);
   });
 });

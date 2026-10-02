@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import type { RequestContext, SourceRef, ToolResult } from '@watchdog-bms/contracts';
-import { EXPENSE_STATUS_LABELS } from '@watchdog-bms/contracts';
+import { civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL } from '@watchdog-bms/contracts';
 import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { LineDraftUpdateUseCase } from '../../../expenses/application/use-cases/line-draft-update.use-case';
@@ -10,7 +10,8 @@ import { GetDocumentUseCase, ListDocumentsUseCase } from '../../../accounting-do
 import { GetExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import { parseLineExpenseDraftContinuation } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { GetReimbursementDetailUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
-import { GetReimbursementAiSummaryUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
+import { GetReimbursementAiSummaryUseCase, PAYOUT_CORRECTION_NOTE } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
+import { PAYOUT_CORRECTION_STEP_REASON } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import {
   BUSINESS_READ_BASIS_VERSION,
@@ -419,18 +420,31 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
     if (!reimbursementId) return unavailable(this.toolName, asOf, 'REIMBURSEMENT_ID_REQUIRED');
     return safely(this.toolName, asOf, 'REIMBURSEMENT_NOT_FOUND', async () => {
       const item = await this.getDetail.execute(toCtx(ctx), reimbursementId);
+      // Payout spec §14: a claim sent back for its account is PENDING_APPROVAL by its status, with the approval it
+      // stood on set aside. It reads here as `reimbursement.get_approval_backlog` reads it: the claim page's words
+      // for the phase in place of the status (the gateway's fixed reply prints `status` as it comes), the Thai day
+      // that wait began, and nothing of the account, the reason or who sent it back. A claim being cancelled is
+      // asked for no account, so the round is not said of it. It waits for no approver and no payer either
+      // (both are refused meanwhile): its status reads as the system's wait, the words of the claim page and
+      // of the backlog tool for the same claim, never as the status it has not left yet.
+      const round = item.cancellationPending ? undefined : item.payoutCorrection;
       return {
         toolName: this.toolName, status: 'ok', asOf,
         data: {
           id: item.id, requestNo: item.requestNo ?? null, requesterDisplayName: item.requesterDisplayNameSnapshot,
           title: item.title ?? null, reason: item.reason, category: item.categoryLabelSnapshot ?? item.categoryKey,
           amount: item.amount, currency: item.currency, incurredDate: item.incurredDate,
-          status: item.status, financeReviewStatus: item.financeReviewStatus, paymentStatus: item.paymentStatus,
+          status: item.cancellationPending ? REIMBURSEMENT_SYSTEM_WAIT_LABEL : round ? REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS[round.phase] : item.status,
+          ...(round?.phase === 'AWAITING_REQUESTER' && { sentBackOn: civilDate(new Date(round.requestedAt)), note: PAYOUT_CORRECTION_NOTE }),
+          ...(round?.phase === 'AWAITING_APPROVAL' && round.submittedAt && { resubmittedOn: civilDate(new Date(round.submittedAt)) }),
+          financeReviewStatus: item.financeReviewStatus, paymentStatus: item.paymentStatus,
           receiptRequirementStatus: item.receiptRequirementStatus, postingStatus: item.postingStatus,
           paymentTotalAmount: item.paymentTotalAmount, outstandingAmount: item.outstandingAmount,
           // Count only: line detail would blow up a LINE payload for no read value.
           lineCount: item.lineCount,
-          approvalSteps: item.approvalSteps.slice(0, 10).map((step) => ({ status: step.status, sequence: step.sequenceNo, actedAt: step.decidedAt ?? null })),
+          // A step a correction round set aside is history: it is not the approval the claim stands on.
+          approvalSteps: item.approvalSteps.filter((step) => step.invalidatedReason !== PAYOUT_CORRECTION_STEP_REASON).slice(0, 10)
+            .map((step) => ({ status: step.status, sequence: step.sequenceNo, actedAt: step.decidedAt ?? null })),
           payments: item.payments.slice(0, 10).map((payment) => ({ paymentNo: payment.paymentNo, status: payment.status, paidAmount: payment.paidAmount, paidAt: payment.paidAt })),
           duplicateCount: item.duplicateCandidates.length,
         },

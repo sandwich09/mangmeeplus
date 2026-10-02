@@ -6,6 +6,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { isExpenseDeletableState } from '@watchdog-bms/contracts';
 import { branchScopeWhere, isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { claimOwnsExpenseError, findLiveClaimOf, type ExpenseClaimOwner } from '../../infrastructure/expense-void-blocker';
 
 type DeleteExpenseOutcome =
   | { kind: 'DELETED' }
@@ -13,6 +14,7 @@ type DeleteExpenseOutcome =
   | { kind: 'WRONG_STATUS' }
   | { kind: 'FORBIDDEN' }
   | { kind: 'RETENTION_LOCKED' }
+  | { kind: 'CLAIM_OWNED'; claim: ExpenseClaimOwner }
   | { kind: 'LINKED_DATA'; blocker: ExpenseLinkedDataBlocker };
 
 type ExpenseLinkedDataBlocker =
@@ -185,6 +187,7 @@ export class DeleteExpenseUseCase {
             paymentStatus: true,
             captureSource: true,
             createdByUserId: true,
+            sourceReimbursementRequestId: true,
             updatedAt: true,
             _count: { select: { lines: true } },
           },
@@ -206,6 +209,14 @@ export class DeleteExpenseUseCase {
         if (!canDelete) {
           await deny('MISSING_PERMISSION');
           return { kind: 'FORBIDDEN' };
+        }
+
+        // A claim's expense record ends with its claim, never on its own (a rejected one would otherwise
+        // be deletable here): the claim would be left with a line it can neither pay nor build again.
+        const claim = await findLiveClaimOf(tx, ctx.companyId, expense);
+        if (claim) {
+          await deny('EXPENSE_BELONGS_TO_REIMBURSEMENT', { reimbursementRequestId: claim.requestId });
+          return { kind: 'CLAIM_OWNED', claim };
         }
 
         if (!isExpenseDeletableState({
@@ -333,6 +344,7 @@ export class DeleteExpenseUseCase {
     if (outcome.kind === 'RETENTION_LOCKED') {
       throw new ConflictException(RETENTION_LOCKED_RESPONSE);
     }
+    if (outcome.kind === 'CLAIM_OWNED') throw claimOwnsExpenseError(outcome.claim);
     if (outcome.kind === 'LINKED_DATA') {
       throw new ConflictException({
         code: 'EXPENSE_HAS_LINKED_DATA',

@@ -6,6 +6,7 @@ describe('reimbursement evidence source branch', () => {
   const ctx = { companyId: 'c1', userId: 'reviewer', scopes: {} } as any;
   const service = (branchId: string | null) => new ReimbursementEvidenceService({
     findById: async () => ({ id: 'a1', companyId: 'c1', status: 'ACTIVE', uploadedByUserId: 'requester', branchId }),
+    isReimbursementPaymentSlip: async () => false,
   } as any, {
     findById: async () => ({ id: 'e1', companyId: 'c1', createdByUserId: 'requester', branchId }),
   } as any);
@@ -20,6 +21,7 @@ describe('reimbursement evidence source branch', () => {
     const certificateLookups: string[] = [];
     const service = new ReimbursementEvidenceService({
       findById: async () => ({ id: 'a1', companyId: 'c1', status: 'ACTIVE', uploadedByUserId: 'requester', branchId: 'b1' }),
+      isReimbursementPaymentSlip: async () => false,
     } as any, {
       findById: async () => ({ id: 'e1', companyId: 'c1', createdByUserId: 'colleague', payerUserId: 'requester', branchId: 'b1' }),
       findSubstituteEvidence: async (_companyId: string, id: string) => { certificateLookups.push(id); return null; },

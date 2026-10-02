@@ -1,7 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS } from '@watchdog-bms/contracts';
 import {
   APPROVAL_STEP_STATUS_LABELS,
+  claimDeskText,
+  claimStatusBadge,
   CURRENT_DESK_LABELS,
   currentDeskText,
   canVoidRecordedPayment,
@@ -13,6 +16,7 @@ import {
   reimbursementSubmitReadiness,
   DUPLICATE_STATUS_LABELS,
   eligibleSignatureRoles,
+  paymentDeskText,
   PAYMENT_STATUS_LABELS,
   PAYMENT_STATUS_TONES,
   RECEIPT_REQUIREMENT_LABELS,
@@ -95,6 +99,35 @@ describe('eligibleSignatureRoles', () => {
     });
     assert.deepEqual(eligibleSignatureRoles(blocked, 'mgr-1'), []);
     assert.deepEqual(eligibleSignatureRoles(blocked, 'acct-1'), []);
+  });
+});
+
+// Payout spec §14.4: a send-back removes the signatures and sets the approval aside. While the round is open the
+// form prints no account and no approver, and the API refuses every block; afterwards the new approval is the claim's.
+describe('eligibleSignatureRoles around a payout account correction round', () => {
+  const setAside = { status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: '2026-07-21T00:00:00.000Z', invalidatedAt: '2026-07-22T00:00:00.000Z', invalidatedReason: 'payout_account_correction' };
+
+  it('offers no block to anyone while the server reports the claim in a round', () => {
+    for (const payoutCorrectionPhase of ['AWAITING_REQUESTER', 'AWAITING_APPROVAL']) {
+      const inRound = detail({ status: 'PENDING_APPROVAL', payoutCorrectionPhase, approvalSteps: [setAside, { status: 'PENDING' }] });
+      for (const userId of ['staff-1', 'mgr-1', 'acct-1', 'fin-1']) assert.deepEqual(eligibleSignatureRoles(inRound, userId), [], `${payoutCorrectionPhase} ${userId}`);
+      assert.equal(claimSignAction(inRound, 'staff-1'), null);
+      assert.deepEqual(eligibleSignatureRoles({ ...inRound, claimFormLayout: 'LEGACY_FOUR_SIGNERS' }, 'acct-1'), []);
+    }
+  });
+
+  it('gives the approver block to whoever approved the new account, never to an approval that was set aside', () => {
+    const after = detail({ status: 'READY_FOR_PAYMENT', approvalSteps: [setAside, { status: 'APPROVED', decisionByUserId: 'mgr-2', decidedAt: '2026-07-23T00:00:00.000Z' }] });
+    assert.deepEqual(eligibleSignatureRoles(after, 'mgr-2'), ['APPROVER']);
+    assert.deepEqual(eligibleSignatureRoles(after, 'mgr-1'), []);
+    assert.deepEqual(eligibleSignatureRoles(after, 'staff-1'), ['REQUESTER']);
+    // A claim nobody approves again (its policy needs no approval): the approval set aside still signs nothing.
+    const noApproval = detail({ status: 'READY_FOR_PAYMENT', approvalSteps: [setAside] });
+    assert.deepEqual(eligibleSignatureRoles(noApproval, 'mgr-1'), []);
+    // The same-person line follows the approval in force, too.
+    const selfSetAside = detail({ requesterUserId: 'mgr-1', status: 'READY_FOR_PAYMENT', approvalSteps: [setAside] });
+    assert.equal(claimSelfApproved(selfSetAside), false);
+    assert.equal(claimSelfApproved(detail({ requesterUserId: 'mgr-1', approvalSteps: [{ ...setAside, invalidatedAt: undefined, invalidatedReason: undefined }] })), true);
   });
 });
 
@@ -264,7 +297,8 @@ describe('reimbursement status display maps', () => {
   });
 
   it('labels every desk kind the server can answer with', () => {
-    assert.deepEqual(Object.keys(CURRENT_DESK_LABELS).sort(), ['REQUESTER', 'APPROVER', 'FINANCE', 'PAYMENT'].sort());
+    // SYSTEM: a claim whose decision is made and that the system has not finished moving on (audit B3, B4).
+    assert.deepEqual(Object.keys(CURRENT_DESK_LABELS).sort(), ['REQUESTER', 'APPROVER', 'FINANCE', 'PAYMENT', 'SYSTEM'].sort());
   });
 });
 
@@ -276,10 +310,58 @@ describe('currentDeskText', () => {
 
   it('falls back to the pool label, and stays silent on a terminal claim', () => {
     assert.equal(currentDeskText({ kind: 'APPROVER' }), 'ผู้มีสิทธิ์อนุมัติ');
-    assert.equal(currentDeskText({ kind: 'REQUESTER' }), 'ผู้ยื่น');
+    // One word for the requester on every claim screen: the desk of a draft says it as the badge and the step note do.
+    assert.equal(currentDeskText({ kind: 'REQUESTER' }), 'ผู้เบิก');
     assert.equal(currentDeskText({ kind: 'FINANCE' }), 'ฝ่ายการเงิน');
-    assert.equal(currentDeskText({ kind: 'PAYMENT' }), 'ฝ่ายการเงิน (รอบันทึกจ่าย)');
+    // Before: "ฝ่ายการเงิน (รอบันทึกจ่าย)", also for a shop with no finance desk (spec §18.3).
+    assert.equal(currentDeskText({ kind: 'PAYMENT' }), 'ผู้มีสิทธิ์บันทึกจ่าย');
     assert.equal(currentDeskText(undefined), null);
     assert.equal(currentDeskText({ kind: 'SOMETHING_NEW' }), null);
+  });
+
+  it('names who can record the payment when the claim detail lists them', () => {
+    const payment = { kind: 'PAYMENT' };
+    assert.equal(currentDeskText(payment, { names: ['สมศรี'], moreCount: 0 }), 'สมศรี');
+    assert.equal(currentDeskText(payment, { names: ['สมศรี', 'วิชัย'], moreCount: 2 }), 'สมศรี หรือ วิชัย และอีก 2 คน');
+    assert.equal(paymentDeskText({ names: ['สมศรี', 'วิชัย'], moreCount: 0 }), 'สมศรี หรือ วิชัย');
+    // Nobody listed, or a list row that carries no names: the pool.
+    assert.equal(currentDeskText(payment, { names: [], moreCount: 0 }), 'ผู้มีสิทธิ์บันทึกจ่าย');
+    assert.equal(paymentDeskText({ names: [], moreCount: 0 }), null);
+    assert.equal(paymentDeskText(undefined), null);
+    // The payers belong to the payment desk only.
+    assert.equal(currentDeskText({ kind: 'APPROVER', names: ['คุณยุนกิ'] }, { names: ['สมศรี'], moreCount: 0 }), 'คุณยุนกิ');
+    assert.equal(currentDeskText({ kind: 'FINANCE' }, { names: ['สมศรี'], moreCount: 0 }), 'ฝ่ายการเงิน');
+  });
+});
+
+// Payout spec §14.2: a claim sent back from the pay step for its payout account is PENDING_APPROVAL by its
+// status. Its badge and its "อยู่ที่" line say whom it really waits for, on a list row and on the claim page alike.
+describe('a claim in a payout account correction round', () => {
+  const round = (payoutCorrectionPhase: string, currentDesk: { kind: string; names?: string[] }) => ({ status: 'PENDING_APPROVAL', payoutCorrectionPhase, currentDesk });
+
+  it('reads its phase on the badge in the words the LINE backlog uses, never รออนุมัติ', () => {
+    assert.deepEqual(claimStatusBadge(round('AWAITING_REQUESTER', { kind: 'REQUESTER' })), { label: 'รอผู้เบิกแก้บัญชีรับเงิน', tone: 'amber' });
+    assert.deepEqual(claimStatusBadge(round('AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมศรี'] })), { label: 'รออนุมัติบัญชีรับเงินใหม่', tone: 'amber' });
+    assert.deepEqual([claimStatusBadge(round('AWAITING_REQUESTER', { kind: 'REQUESTER' })).label, claimStatusBadge(round('AWAITING_APPROVAL', { kind: 'APPROVER' })).label],
+      [REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER, REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_APPROVAL]);
+    // Being cancelled in a round: the system holds it, as it holds any claim being cancelled.
+    assert.equal(claimStatusBadge(round('AWAITING_REQUESTER', { kind: 'SYSTEM' })).label, 'รอระบบปรับสถานะ');
+    // A phase this build has no words for prints the status, never the code.
+    assert.equal(claimStatusBadge(round('A_PHASE_ADDED_LATER', { kind: 'APPROVER' })).label, 'รออนุมัติ');
+    // Every claim in no round keeps the words of its status.
+    assert.equal(claimStatusBadge({ status: 'PENDING_APPROVAL', currentDesk: { kind: 'APPROVER' } }).label, 'รออนุมัติ');
+    assert.equal(claimStatusBadge({ status: 'READY_FOR_PAYMENT', currentDesk: { kind: 'PAYMENT' } }).label, 'พร้อมจ่าย');
+  });
+
+  it('is with ผู้เบิก while its requester gives the account, in the badge\'s own word, and with its approvers after', () => {
+    assert.equal(claimDeskText(round('AWAITING_REQUESTER', { kind: 'REQUESTER' })), 'ผู้เบิก');
+    assert.ok(REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER.includes(claimDeskText(round('AWAITING_REQUESTER', { kind: 'REQUESTER' }))!));
+    assert.equal(claimDeskText(round('AWAITING_APPROVAL', { kind: 'APPROVER', names: ['สมศรี', 'วิชัย'] })), 'สมศรี หรือ วิชัย');
+    assert.equal(claimDeskText(round('AWAITING_REQUESTER', { kind: 'SYSTEM' })), 'ระบบ');
+    // A draft is with its requester too, in the same word; a payment desk names its payers.
+    assert.equal(claimDeskText({ currentDesk: { kind: 'REQUESTER' } }), 'ผู้เบิก');
+    assert.equal(claimDeskText({ currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['สมศรี'], moreCount: 1 } }), 'สมศรี และอีก 1 คน');
+    assert.equal(claimDeskText({}), null);
+    assert.equal(claimDeskText(null), null);
   });
 });

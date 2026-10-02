@@ -408,7 +408,8 @@ test.describe('SET — settings', () => {
 
       await gotoCompany(page, companyId, '/reimbursements');
       await expect(page.getByRole('button', { name: 'รายการที่เกี่ยวข้อง' })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'คิวการเงิน' })).toBeVisible();
+      // The third tab is named by the company's policy: the seeded company has no finance-review step, so it is the pay queue (REIMB-13).
+      await expect(page.getByRole('button', { name: 'คิวรอจ่าย' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'คิวอนุมัติ' })).toHaveCount(0);
       await expect(page.getByRole('button', { name: 'ตั้งค่านโยบาย' })).toHaveCount(0);
     } finally {

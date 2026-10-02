@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConflictException } from '@nestjs/common';
 import {
   CompleteClaimSignatureUploadUseCase,
   InitClaimSignatureUploadUseCase,
@@ -149,6 +150,39 @@ describe('eligibleClaimSignatureRoles', () => {
     const draft = request({ status: 'DRAFT', requestNo: undefined, submittedAt: undefined });
     assert.deepEqual(eligibleClaimSignatureRoles(draft, 'staff-1'), []);
   });
+
+  // Plan task 3.6: the ผู้อนุมัติ block belongs to whoever the one rule names as the claim's approver
+  // (`isReimbursementClaimApprover`). It used to be the decider of the latest APPROVED step of any round.
+  it('lets only the approver of the round the claim was last sent in sign ผู้อนุมัติ', () => {
+    const earlier = { id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: new Date('2026-07-21T00:00:00.000Z') };
+    // Approved, returned to its requester, corrected and sent again on the 25th: the new round waits for mgr-2.
+    const sentAgain = request({
+      status: 'PENDING_APPROVAL', submittedAt: new Date('2026-07-25T00:00:00.000Z'), payments: [],
+      approvalSteps: [earlier, { id: 'st-2', sequenceNo: 1, status: 'PENDING' }],
+    });
+    assert.deepEqual(eligibleClaimSignatureRoles(sentAgain, 'mgr-1'), [], 'their approval was of an earlier round');
+    // An approval a payout account correction set aside is nobody's either, once the claim is approved again by someone else.
+    const corrected = request({ approvalSteps: [
+      { ...earlier, invalidatedAt: new Date('2026-07-22T00:00:00.000Z'), invalidatedReason: 'payout_account_correction' },
+      { id: 'st-2', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-2', decidedAt: new Date('2026-07-23T00:00:00.000Z') },
+    ] });
+    assert.deepEqual([eligibleClaimSignatureRoles(corrected, 'mgr-1'), eligibleClaimSignatureRoles(corrected, 'mgr-2')], [[], ['APPROVER']]);
+  });
+
+  // Payout spec §14.4, §17.1 (AC32): while the account is being corrected the form prints no account and
+  // no approver, so nobody signs it; a signature then would acknowledge an account its signer was not shown.
+  it('offers nobody a block while the claim payout account is being corrected', () => {
+    const sentBackAt = new Date('2026-07-24T00:00:00.000Z');
+    const setAside = { id: 'st-1', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: new Date('2026-07-21T00:00:00.000Z'), invalidatedAt: sentBackAt, invalidatedReason: 'payout_account_correction' };
+    const waitingForRequester = request({ status: 'PENDING_APPROVAL', payments: [], payoutCorrectionRequestedAt: sentBackAt, approvalSteps: [setAside] });
+    const waitingForApproval = request({ ...waitingForRequester, payoutCorrectionSubmittedAt: new Date('2026-07-25T00:00:00.000Z'), approvalSteps: [setAside, { id: 'st-2', sequenceNo: 1, status: 'PENDING' }] });
+    for (const claim of [waitingForRequester, waitingForApproval]) {
+      for (const userId of ['staff-1', 'mgr-1', 'acct-1']) assert.deepEqual(eligibleClaimSignatureRoles(claim, userId), [], userId);
+    }
+    // Approved again: the requester and the new approver sign the form that now prints the corrected account.
+    const approvedAgain = request({ status: 'READY_FOR_PAYMENT', payments: [], approvalSteps: [setAside, { id: 'st-2', sequenceNo: 1, status: 'APPROVED', decisionByUserId: 'mgr-1', decidedAt: new Date('2026-07-26T00:00:00.000Z') }] });
+    assert.deepEqual([eligibleClaimSignatureRoles(approvedAgain, 'staff-1'), eligibleClaimSignatureRoles(approvedAgain, 'mgr-1')], [['REQUESTER'], ['APPROVER']]);
+  });
 });
 
 describe('SignClaimFormUseCase', () => {
@@ -169,6 +203,20 @@ describe('SignClaimFormUseCase', () => {
     assert.deepEqual(calls.signatureLookups, [
       { companyId: 'co-1', attachmentId: 'att-sig', userId: 'staff-1', requestId: 'rb-1', role: 'REQUESTER' },
     ]);
+  });
+
+  // Final review S1: the write names the claim its checks were made on, so the repository can refuse it
+  // under the claim's lock when the claim was sent back or returned to draft in between (real-PostgreSQL proof there).
+  it('writes the signature onto the claim it checked, and passes on the refusal of a claim that changed meanwhile', async () => {
+    const req = request({ status: 'READY_FOR_PAYMENT', paymentStatus: 'UNPAID', payments: [] });
+    const { repo, calls } = fakeRepo(req);
+    const input = { role: 'REQUESTER' as const, signatureAttachmentId: 'att-sig', snapshotHash: claimSignatureAckHash(req) };
+    await signUseCase(repo).execute(ctx(), 'rb-1', input);
+    assert.deepEqual([calls.upserts[0].seen.status, calls.upserts[0].seen.updatedAt, calls.upserts[0].seen.payoutCorrectionRequestedAt],
+      ['READY_FOR_PAYMENT', req.updatedAt, undefined]);
+
+    repo.upsertClaimSignature = async () => { throw new ConflictException('stale_claim_snapshot'); };
+    await assert.rejects(() => signUseCase(repo).execute(ctx(), 'rb-1', input), (error: any) => error.getStatus() === 409 && error.message === 'stale_claim_snapshot');
   });
 
   it('uses the eligible actor\'s latest active saved signature when no attachment is supplied', async () => {
@@ -241,6 +289,16 @@ describe('SignClaimFormUseCase', () => {
       /claim_signature_role_not_eligible/,
     );
     assert.equal(calls.upserts.length, 0);
+  });
+
+  it('refuses a signature while the claim payout account is being corrected, also from its requester with a current hash', async () => {
+    const req = request({ status: 'PENDING_APPROVAL', payments: [], payoutCorrectionRequestedAt: new Date('2026-07-24T00:00:00.000Z') });
+    const { repo, calls } = fakeRepo(req);
+    await assert.rejects(
+      () => signUseCase(repo).execute(ctx(), 'rb-1', { role: 'REQUESTER', snapshotHash: claimSignatureAckHash(req) }),
+      /claim_signature_role_not_eligible/,
+    );
+    assert.deepEqual(calls.upserts, []);
   });
 
   it('rejects a stale acknowledgement: you sign what you previewed', async () => {
@@ -350,12 +408,13 @@ describe('Claim signature uploads', () => {
 });
 
 describe('LinkSignedClaimFormCopyUseCase', () => {
-  function attachments(overrides: Partial<any> = {}) {
+  function attachments(overrides: Partial<any> = {}, linkedAsPaymentSlip = false) {
     return {
       findById: async () => ({
         id: 'att-scan', companyId: 'co-1', status: 'ACTIVE', mimeType: 'application/pdf',
         uploadedByUserId: 'staff-1', originalFileName: 'signed.pdf', ...overrides,
       }),
+      isReimbursementPaymentSlip: async () => linkedAsPaymentSlip,
     } as any;
   }
 
@@ -422,6 +481,8 @@ describe('LinkSignedClaimFormCopyUseCase', () => {
     assert.deepEqual({ ...ack, acknowledgedAt: undefined }, {
       requestId: 'rb-1', requestNo: 'RB-202607-00001', acknowledgedByUserId: 'staff-1',
       acknowledgedAt: undefined, checksumSha256: 'c'.repeat(64),
+      // Which account the declared paper showed (payout spec §19): this claim carries none.
+      payoutDestinationVersion: null,
     });
     assert.match(ack.acknowledgedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.deepEqual(audits[0].metadataJson, { attachmentId: 'att-scan', acknowledgedComplete: true, ...ack });
@@ -430,6 +491,20 @@ describe('LinkSignedClaimFormCopyUseCase', () => {
     assert.deepEqual(result.map((row) => row.attachmentId), ['att-scan', 'att-old']);
     assert.equal(req.status, 'PAID');
     assert.equal(calls.upserts.length, 0);
+  });
+
+  // Payout spec §19: the declaration says which account version the declared paper showed.
+  it('records the claim account version with the declaration: the version of a transfer claim, none for cash or a legacy claim', async () => {
+    const versionOf = async (payout: Record<string, unknown>) => {
+      const { repo, calls } = fakeRepo(request(payout), { signedCopies: copies });
+      await new LinkSignedClaimFormCopyUseCase(repo, attachments(), noopAudit)
+        .execute(ctx(), 'rb-1', { attachmentId: 'att-scan', acknowledgedComplete: true, confirmedRequestNo: 'RB-202607-00001' });
+      return calls.links[0].ack.payoutDestinationVersion;
+    };
+    assert.equal(await versionOf({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 2, payoutFingerprint: 'f'.repeat(64) }), 2);
+    assert.equal(await versionOf({ payoutMethod: 'CASH', payoutFingerprint: 'cash' }), null);
+    // A method a draft once chose on a claim sent before claims carried one is not a snapshot.
+    assert.equal(await versionOf({ payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: 1 }), null);
   });
 
   it('refuses a declaration that does not name this claim\'s number', async () => {
@@ -453,6 +528,23 @@ describe('LinkSignedClaimFormCopyUseCase', () => {
       /claim_form_signed_copy_attachment_invalid/,
     );
     assert.equal(calls.links.length, 0);
+  });
+
+  // Owner 2026-10-01: a slip is payment evidence and never counts as a signed claim copy. This list is
+  // open to everyone who can read the claim, the slip is not.
+  it('refuses a payment slip as a signed copy, declared or not', async () => {
+    const slipUpload = () => attachments({ mimeType: 'image/jpeg', metadataJson: { generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' } });
+    const linkedSlip = () => attachments({}, true);
+    for (const files of [slipUpload, linkedSlip]) {
+      for (const input of [{ attachmentId: 'att-scan' }, { attachmentId: 'att-scan', acknowledgedComplete: true as const, confirmedRequestNo: 'RB-202607-00001' }]) {
+        const { repo, calls } = fakeRepo(request(), { signedCopies: copies });
+        await assert.rejects(
+          () => new LinkSignedClaimFormCopyUseCase(repo, files(), noopAudit).execute(ctx(), 'rb-1', input),
+          /claim_form_signed_copy_attachment_invalid/,
+        );
+        assert.equal(calls.links.length, 0);
+      }
+    }
   });
 
   it('rejects an attachment that is not the actor\'s own ACTIVE PDF/image', async () => {
@@ -545,17 +637,40 @@ describe('PrismaReimbursementRepository saved claim signatures', () => {
 describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () => {
   const ack = { requestId: 'rb-1', requestNo: 'RB-202607-00001', acknowledgedByUserId: 'staff-1', acknowledgedAt: '2026-07-26T10:00:00.000Z', checksumSha256: 'c'.repeat(64) };
 
-  function linkClient(metadataJson: unknown = { source: 'web' }) {
+  /**
+   * `existingLinks` are the file's links as the transaction sees them once it holds the file's lock;
+   * `claim` is the claim as a declaration reads it under the claim's own lock.
+   */
+  function linkClient(
+    metadataJson: unknown = { source: 'web' }, existingLinks: { targetType: string; purpose: string }[] = [],
+    claim: Record<string, unknown> = { status: 'READY_FOR_PAYMENT', payoutCorrectionRequestedAt: null, payoutCorrectionSubmittedAt: null },
+  ) {
     const writes: any[] = [];
+    // Everything the transaction does, in order: the lock, the re-check, the row write, the link.
+    const steps: string[] = [];
     const tx = {
-      attachmentLink: { upsert: async (args: any) => { writes.push(['upsert', args]); return { id: 'link-1' }; } },
+      $executeRaw: async (sql: TemplateStringsArray, ...values: string[]) => {
+        steps.push(sql.join('?').includes('pg_advisory_xact_lock') ? `lock:${values[0]}` : `touch:${values[0]}`);
+        return 1;
+      },
+      attachmentLink: {
+        findFirst: async ({ where }: any) => {
+          steps.push('check');
+          return existingLinks.find((link) => (typeof where.targetType === 'string' ? link.targetType === where.targetType : link.targetType !== where.targetType.not)
+            && (where.purpose === undefined || link.purpose === where.purpose)) ?? null;
+        },
+        upsert: async (args: any) => { steps.push('upsert'); writes.push(['upsert', args]); return { id: 'link-1' }; },
+      },
       attachmentObject: {
+        findFirst: async () => ({ metadataJson }),
         findFirstOrThrow: async (args: any) => { writes.push(['read', args]); return { metadataJson }; },
         update: async (args: any) => { writes.push(['update', args]); return {}; },
       },
+      reimbursementRequest: { findFirst: async () => { steps.push('claim'); return claim; } },
     };
-    const client = { attachmentLink: { findFirst: async () => null }, $transaction: async (fn: any) => fn(tx) };
-    return { repo: new PrismaReimbursementRepository({ client } as any, {} as any), writes };
+    // Nothing is read outside the transaction: a check made before the lock proves nothing.
+    const client = { $transaction: async (fn: any) => fn(tx) };
+    return { repo: new PrismaReimbursementRepository({ client } as any, {} as any), writes, steps };
   }
 
   it('stores the declaration in the scan metadata, bound to its link id, keeping existing keys', async () => {
@@ -571,6 +686,79 @@ describe('PrismaReimbursementRepository signed-copy acknowledgement (A4)', () =>
     const { repo, writes } = linkClient();
     await repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');
     assert.deepEqual(writes.map(([kind]) => kind), ['upsert']);
+  });
+
+  // Owner 2026-10-01: a payment slip is never a signed copy. A slip link is written under the file's
+  // retention lock, so this link takes the same lock and looks again inside its own transaction.
+  it('takes the file lock, then re-checks, then writes: in that order, inside one transaction', async () => {
+    const { repo, steps } = linkClient();
+    await repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');
+    assert.equal(steps[0], 'lock:co-1:att-scan:attachment-retention', 'the key a slip link and a delete of this file take');
+    assert.ok(steps.indexOf('check') > 0 && steps.indexOf('check') < steps.indexOf('upsert'), 'checked under the lock, before the link');
+    // The file's row is written too: a payment reading it under an older snapshot fails on its row lock instead of missing this link.
+    assert.ok(steps.includes('touch:att-scan') && steps.indexOf('touch:att-scan') < steps.indexOf('upsert'));
+  });
+
+  it('refuses a payment slip as a signed copy, declared or not, and writes nothing', async () => {
+    const slipLink = { targetType: 'reimbursement_payment', purpose: 'reimbursement.payment.slip' };
+    const cases: [string, ReturnType<typeof linkClient>][] = [
+      ['the slip of a payment', linkClient({ source: 'web' }, [slipLink])],
+      ['a slip upload no payment carries yet', linkClient({ generatedFor: 'reimbursement_payment_slip', requestId: 'rb-1' })],
+    ];
+    for (const [label, client] of cases) {
+      for (const declaration of [undefined, ack]) {
+        await assert.rejects(
+          () => client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1', declaration),
+          (error: any) => error.getStatus() === 422 && /payment slip cannot be attached to anything else/.test(error.message),
+          label,
+        );
+      }
+      assert.deepEqual(client.writes, [], `${label}: no link, no declaration`);
+      assert.equal(client.steps.includes('upsert'), false, label);
+      assert.equal(client.steps.some((step) => step.startsWith('touch:')), false, `${label}: the file is not written either`);
+    }
+  });
+
+  // Payout spec §14.4: a declaration says the scan is the signed form of the claim as it stands. While
+  // the claim is sent back for its payout account there is no such form, and a declaration that commits
+  // just before the send-back must be seen by it: both are decided under the claim's own lock.
+  it('refuses a declaration while the claim payout account is being corrected, under the claim lock taken before the file lock', async () => {
+    const sentBack = { status: 'PENDING_APPROVAL', payoutCorrectionRequestedAt: new Date('2026-07-27T00:00:00.000Z'), payoutCorrectionSubmittedAt: null };
+    for (const claim of [sentBack, { ...sentBack, payoutCorrectionSubmittedAt: new Date('2026-07-28T00:00:00.000Z') }]) {
+      const client = linkClient({ source: 'web' }, [], claim);
+      await assert.rejects(
+        () => client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1', ack),
+        (error: any) => error.getStatus() === 409 && error.message === 'payout_correction_in_progress',
+      );
+      assert.equal(client.writes.length, 0, 'no link and no declaration');
+      assert.deepEqual(client.steps, ['lock:co-1:rb-1:reimbursement-request', 'claim'], 'refused before the file is locked or read');
+      // The same scan filed without the declaration is an archive copy, as before.
+      await client.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1');
+      assert.deepEqual(client.writes.map(([kind]) => kind), ['upsert']);
+    }
+    // Outside a round the declaration is stored, with the claim's lock taken first: the order a payment takes the two in.
+    const open = linkClient();
+    await open.repo.linkSignedClaimFormCopy('co-1', 'rb-1', 'att-scan', 'staff-1', ack);
+    assert.deepEqual(open.steps.slice(0, 3), ['lock:co-1:rb-1:reimbursement-request', 'claim', 'lock:co-1:att-scan:attachment-retention']);
+    assert.ok(open.writes.some(([kind]) => kind === 'update'));
+  });
+
+  it('keeps a scan declared before a payout account correction in the list and stops counting it', async () => {
+    const at = new Date('2026-07-26T10:00:00.000Z');
+    const client = {
+      attachmentLink: {
+        findMany: async () => [
+          { id: 'link-2', attachmentId: 'att-new', createdAt: at, attachment: { originalFileName: 'signed-new.pdf', metadataJson: { reimbursementSignedCopyAck: { ...ack, linkId: 'link-2' } } } },
+          { id: 'link-1', attachmentId: 'att-old', createdAt: at, attachment: { originalFileName: 'signed-old.pdf', metadataJson: { reimbursementSignedCopyAck: { ...ack, linkId: 'link-1', supersededAt: '2026-07-27T00:00:00.000Z' } } } },
+        ],
+      },
+    };
+    const rows = await new PrismaReimbursementRepository({ client } as any, {} as any).listSignedClaimFormCopies('co-1', 'rb-1');
+    assert.deepEqual(rows.map((row) => [row.attachmentId, row.acknowledged, row.acknowledgedAt, row.beforePayoutCorrection]), [
+      ['att-new', true, '2026-07-26T10:00:00.000Z', undefined],
+      // Still listed, named as from before the correction, and with no declaration to show.
+      ['att-old', false, undefined, true],
+    ]);
   });
 
   it('counts a copy as acknowledged only when the stored declaration names its own link', async () => {
@@ -601,11 +789,11 @@ describe('claim detail: form layout and documentSignedVia', () => {
   async function detailOf(req: any, copies: any[] = [], storedPolicy: any = null, names: Record<string, string> = {}) {
     // Resolves only the ids it is asked for, so a name on screen proves the id was in the batch.
     const getUserDisplayNames = async (_companyId: string, ids: string[]) => Object.fromEntries(ids.filter((id) => names[id]).map((id) => [id, names[id]]));
-    const repo = { getUserDisplayNames, listSignedClaimFormCopies: async () => copies, findPolicy: async () => storedPolicy } as any;
+    const repo = { getUserDisplayNames, listSignedClaimFormCopies: async () => copies, findPolicy: async () => storedPolicy, listPaymentSlips: async () => ({}) } as any;
     const evidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
     // The detail maps every step, so the steps need the assignment time the shared fixture leaves out.
     const approvalSteps = req.approvalSteps.map((step: any) => ({ ...step, assignedAt: new Date('2026-07-20T00:00:00.000Z') }));
-    return detailWithFileNames(repo, evidence, 'co-1', { ...req, approvalSteps });
+    return detailWithFileNames(repo, evidence, 'co-1', { ...req, approvalSteps }, { userId: 'staff-1', permissions: [] });
   }
   const declared = { attachmentId: 'att-paper', fileName: 'signed.pdf', uploadedAt, acknowledged: true };
   const archived = { attachmentId: 'att-archive', fileName: 'scan.jpg', uploadedAt, acknowledged: false };
@@ -625,6 +813,20 @@ describe('claim detail: form layout and documentSignedVia', () => {
       assert.equal(detail.claimFormLayout, layout);
       assert.equal(detail.documentSignedVia, via, JSON.stringify({ claimSignatures: claimSignatures.map((row) => row.role), copies: copies.map((copy) => copy.attachmentId) }));
     }
+  });
+
+  // Payout spec §14.4, invariant I7: after a correction round the paper declared for the earlier account
+  // is shown as such and is no longer how the document was signed.
+  it('shows a scan from before a payout account correction as that, and does not count it as signed on paper', async () => {
+    const before = { attachmentId: 'att-old', fileName: 'signed-old.pdf', uploadedAt, acknowledged: false, beforePayoutCorrection: true as const };
+    const detail = await detailOf(request({ claimSignatures: [] }), [before, archived]);
+    assert.equal(detail.documentSignedVia, null);
+    assert.deepEqual(detail.signedCopies, [
+      { attachmentId: 'att-old', fileName: 'signed-old.pdf', uploadedAt: uploadedAt.toISOString(), beforePayoutCorrection: true },
+      { attachmentId: 'att-archive', fileName: 'scan.jpg', uploadedAt: uploadedAt.toISOString() },
+    ]);
+    // A scan declared after the correction counts again, beside the old one.
+    assert.equal((await detailOf(request({ claimSignatures: [] }), [declared, before])).documentSignedVia, 'PAPER');
   });
 
   it('reports financeReviewRequired from the frozen snapshot once submitted and the current policy for a draft', async () => {
@@ -666,5 +868,126 @@ describe('claim detail: form layout and documentSignedVia', () => {
     assert.deepEqual(nameless.signedCopies, [
       { attachmentId: 'att-paper', fileName: 'signed.pdf', uploadedAt: uploadedAt.toISOString(), acknowledgedAt: '2026-07-26T10:05:00.000Z' },
     ]);
+  });
+});
+
+// Spec §16: a slip attached through the "ใบเบิกที่เซ็นแล้ว" uploader declared a paper signature that
+// was never there. Moving it to be the payment slip must leave the claim's signature state as what
+// is really on the claim. Real repository, on rows held in memory, so the move itself is exercised.
+describe('moving a misfiled slip recomputes how the document was signed', () => {
+  const declaredAt = new Date('2026-07-26T10:00:00.000Z');
+  const ack = (linkId: string) => ({
+    requestId: 'rb-1', requestNo: 'RB-202607-00001', acknowledgedByUserId: 'mgr-1',
+    acknowledgedAt: '2026-07-26T10:05:00.000Z', checksumSha256: 'c'.repeat(64), linkId,
+  });
+  const matches = (row: any, where: any): boolean => Object.entries(where).every(([key, value]: [string, any]) => {
+    if (key === 'OR') return value.some((alternative: any) => matches(row, alternative));
+    if (value && typeof value === 'object' && 'in' in value) return value.in.includes(row[key]);
+    return row[key] === value;
+  });
+
+  function world(claimSignatures: any[], otherCopies: { id: string; declared: boolean }[] = []) {
+    const copyLink = (linkId: string, attachmentId: string, createdAt = declaredAt) => ({
+      id: linkId, companyId: 'co-1', attachmentId, targetType: 'reimbursement_request', targetId: 'rb-1',
+      purpose: 'reimbursement.claim_form.signed', linkedByUserId: 'mgr-1', createdAt,
+    });
+    const file = (id: string, originalFileName: string, metadataJson: unknown) => ({
+      id, companyId: 'co-1', status: 'ACTIVE', mimeType: 'image/jpeg', byteSize: 900_000,
+      checksumSha256: 'c'.repeat(64), uploadedByUserId: 'mgr-1', originalFileName, metadataJson,
+    });
+    const files: any[] = [
+      file('att-misfiled', 'สลิปโอนเงิน.jpg', { reimbursementSignedCopyAck: ack('link-misfiled') }),
+      ...otherCopies.map(({ id, declared }) => file(id, 'ใบเบิกเซ็นแล้ว.pdf', declared ? { reimbursementSignedCopyAck: ack(`link-${id}`) } : null)),
+    ];
+    let links: any[] = [
+      copyLink('link-misfiled', 'att-misfiled'),
+      ...otherCopies.map(({ id }) => copyLink(`link-${id}`, id, new Date('2026-07-25T10:00:00.000Z'))),
+    ];
+    const payments = [{ id: 'pay-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: 'RECORDED' }];
+    const linkRows = (where: any) => {
+      const { attachment, ...rest } = where;
+      return links
+        .map((link) => ({ ...link, attachment: files.find((row) => row.id === link.attachmentId) }))
+        .filter((link) => matches(link, rest) && (!attachment || matches(link.attachment, attachment)));
+    };
+    const tables = {
+      attachmentObject: {
+        findFirst: async ({ where }: any) => files.find((row) => matches(row, where)) ?? null,
+        update: async ({ where, data }: any) => Object.assign(files.find((row) => row.id === where.id), data),
+      },
+      attachmentLink: {
+        findMany: async ({ where, orderBy }: any) => {
+          const newestFirst = orderBy?.createdAt === 'desc';
+          return linkRows(where).sort((a, b) => (newestFirst ? -1 : 1) * (a.createdAt.getTime() - b.createdAt.getTime()));
+        },
+        create: async ({ data }: any) => { links.push({ id: `link-slip-${links.length}`, createdAt: new Date('2026-07-27T10:00:00.000Z'), ...data }); },
+        deleteMany: async ({ where }: any) => { links = links.filter((link) => !matches(link, where)); },
+      },
+      reimbursementPayment: {
+        findFirst: async ({ where }: any) => payments.find((row) => matches(row, where)) ?? null,
+        count: async ({ where }: any) => payments.filter((row) => matches(row, where)).length,
+      },
+      // No claim line names the misfiled file as a receipt.
+      reimbursementLine: { count: async () => 0 },
+    };
+    const client = { ...tables, $transaction: async (work: (tx: any) => Promise<unknown>) => work({ ...tables, $executeRaw: async () => 1 }) };
+    const repository = new PrismaReimbursementRepository({ client } as any, {} as any);
+    // Names and policy are not what this is about; everything about copies and slips is the real repository.
+    const repo = Object.assign(Object.create(repository), { getUserDisplayNames: async () => ({ 'mgr-1': 'มานี ผู้จัดการ' }), findPolicy: async () => null });
+    const evidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) } as any;
+    const claim = request({ claimSignatures });
+    const approvalSteps = claim.approvalSteps.map((step: any) => ({ ...step, assignedAt: new Date('2026-07-20T00:00:00.000Z') }));
+    return {
+      detail: () => detailWithFileNames(repo, evidence, 'co-1', { ...claim, approvalSteps }, { userId: 'staff-1', permissions: [] }),
+      // The payer's confirmed move: a declared copy leaves the list only on their explicit word.
+      move: () => repository.attachPaymentSlipAtomic({ companyId: 'co-1', requestId: 'rb-1', paymentId: 'pay-1', attachmentId: 'att-misfiled', actorUserId: 'fin-1', confirmSignedCopyWithdrawal: true }),
+      misfiled: files[0],
+      links: () => links,
+    };
+  }
+  const shape = (detail: any) => ({
+    via: detail.documentSignedVia,
+    copies: detail.signedCopies.map((copy: any) => [copy.attachmentId, Boolean(copy.acknowledgedAt)]),
+    signed: detail.signatures.map((row: any) => row.role),
+    slips: detail.payments.find((payment: any) => payment.id === 'pay-1').slips.map((slip: any) => slip.attachmentId),
+  });
+
+  it('leaves a claim that had only that file as its paper proof unsigned, with no declaration left behind', async () => {
+    const w = world([]);
+    assert.deepEqual(shape(await w.detail()), { via: 'PAPER', copies: [['att-misfiled', true]], signed: [], slips: [] });
+
+    assert.deepEqual(await w.move(), { created: true, slip: { attachmentId: 'att-misfiled', source: 'SIGNED_COPY', uploadedByUserId: 'mgr-1', declarationWithdrawn: true } });
+
+    assert.deepEqual(shape(await w.detail()), { via: null, copies: [], signed: [], slips: ['att-misfiled'] });
+    assert.deepEqual(w.misfiled.metadataJson, {}, 'the stored declaration is gone, not merely unlinked');
+    assert.equal(w.misfiled.status, 'ACTIVE', 'the file itself stays: nothing was uploaded again or deleted');
+    assert.deepEqual(w.links().map((link) => [link.attachmentId, link.targetType, link.purpose]), [['att-misfiled', 'reimbursement_payment', 'reimbursement.payment.slip']]);
+  });
+
+  it('leaves a claim that also had both digital signatures signed in the system, and no longer on paper', async () => {
+    const w = world([signatureRow('REQUESTER', 'staff-1'), signatureRow('APPROVER', 'mgr-1')]);
+    assert.deepEqual(shape(await w.detail()), { via: 'BOTH', copies: [['att-misfiled', true]], signed: ['REQUESTER', 'APPROVER'], slips: [] });
+
+    await w.move();
+
+    assert.deepEqual(shape(await w.detail()), { via: 'DIGITAL', copies: [], signed: ['REQUESTER', 'APPROVER'], slips: ['att-misfiled'] });
+  });
+
+  it('does not let one digital signature stand in for the withdrawn paper declaration', async () => {
+    const w = world([signatureRow('REQUESTER', 'staff-1')]);
+    assert.equal((await w.detail()).documentSignedVia, 'BOTH');
+    await w.move();
+    assert.deepEqual(shape(await w.detail()), { via: null, copies: [], signed: ['REQUESTER'], slips: ['att-misfiled'] });
+  });
+
+  it('keeps the claim signed on paper when a real declared copy remains, and unsigned when the rest are archive copies', async () => {
+    const real = world([], [{ id: 'att-real', declared: true }]);
+    await real.move();
+    assert.deepEqual(shape(await real.detail()), { via: 'PAPER', copies: [['att-real', true]], signed: [], slips: ['att-misfiled'] });
+
+    const archiveOnly = world([], [{ id: 'att-archive', declared: false }]);
+    assert.equal((await archiveOnly.detail()).documentSignedVia, 'PAPER');
+    await archiveOnly.move();
+    assert.deepEqual(shape(await archiveOnly.detail()), { via: null, copies: [['att-archive', false]], signed: [], slips: ['att-misfiled'] });
   });
 });

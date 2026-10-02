@@ -14,6 +14,8 @@ import type {
   ReimbursementPostingStatus,
   ReimbursementClaimSignatureRole,
   ReimbursementPaymentMethod,
+  ReimbursementPayoutMethod,
+  ReimbursementPayoutCorrectionReason,
   ReimbursementApproverMode,
   ReimbursementDuplicatePolicy,
   ReimbursementPolicyStatus,
@@ -80,6 +82,14 @@ export type ReimbursementPaymentRecord = {
   paidAt: Date;
   paymentReference?: string;
   bankAccountId?: string;
+  /** The slip the payment was recorded with; later slips exist only as links. */
+  slipAttachmentId?: string;
+  slipChecksumSha256?: string;
+  /** The claim's account version the transfer was confirmed into (on a legacy claim, the copy made at payment). */
+  payoutDestinationVersion?: number;
+  payoutConfirmedAt?: Date;
+  /** Why the method differs from the one the requester asked for; set exactly when it does. */
+  methodMismatchReason?: string;
   sourcePaymentRef: string;
   status: 'RECORDED' | 'VOIDED';
   voidedAt?: Date;
@@ -138,6 +148,18 @@ export type ReimbursementClaimSignatureRecord = {
   updatedAt: Date;
 };
 
+/** How a file came to be a payment slip: uploaded as one, reused from an earlier payment of the claim, or moved out of the signed copies (§16). */
+export type ReimbursementPaymentSlipSource = 'UPLOAD' | 'PREVIOUS_SLIP' | 'SIGNED_COPY';
+
+/** What linking a slip did, for the audit row. No file name, key or URL. */
+export type ReimbursementPaymentSlipLink = {
+  attachmentId: string;
+  source: ReimbursementPaymentSlipSource;
+  uploadedByUserId: string;
+  /** A moved signed copy carried a live "signed on paper" declaration, now withdrawn. */
+  declarationWithdrawn: boolean;
+};
+
 /** A4 declaration made when attaching a paper-signed scan; stored with the scan, bound to its link row. */
 export type ReimbursementSignedCopyAck = {
   requestId: string;
@@ -145,6 +167,34 @@ export type ReimbursementSignedCopyAck = {
   acknowledgedByUserId: string;
   acknowledgedAt: string;
   checksumSha256: string | null;
+  /**
+   * The account version the claim carried when the scan was declared (payout spec §19): null for cash
+   * and for a legacy claim, absent on a declaration made before this was kept.
+   */
+  payoutDestinationVersion?: number | null;
+};
+
+/**
+ * One step of a payout account correction round, as the claim keeps it (`payoutCorrectionLogJson`).
+ * Ids and codes only: the note is the one free text, and it is refused when it carries an account number.
+ */
+export type ReimbursementPayoutCorrectionLogEntry = {
+  kind: 'SENT_BACK' | 'ACCOUNT_SUBMITTED' | 'REAPPROVED';
+  at: string;
+  byUserId: string;
+  /** SENT_BACK. */
+  reasonCode?: ReimbursementPayoutCorrectionReason;
+  note?: string;
+  /**
+   * SENT_BACK from the pay step, which opens a round: what the claim was approved with and when. A
+   * claim sent back again while its new account waits carries none; the round is still that one.
+   */
+  approved?: { payoutMethod?: ReimbursementPayoutMethod; payoutVersion?: number; at?: string };
+  /** ACCOUNT_SUBMITTED: what the claim was given. */
+  payoutMethod?: ReimbursementPayoutMethod;
+  payoutVersion?: number;
+  /** REAPPROVED: the step that approved the account. */
+  approvalStepId?: string;
 };
 
 export type ReimbursementRequestRecord = {
@@ -186,6 +236,23 @@ export type ReimbursementRequestRecord = {
   missingReceiptReason?: string;
   approvalSnapshotHash?: string;
   approvalPolicySnapshotJson?: ReimbursementPolicySnapshotV1;
+  /** Undefined on a draft = follows the requester's default account; undefined once submitted = a legacy claim. */
+  payoutMethod?: ReimbursementPayoutMethod;
+  /** The claim's own account snapshot version; undefined for cash. */
+  payoutDestinationVersion?: number;
+  payoutFingerprint?: string;
+  /**
+   * A payout account correction round (payout spec §14). Set from the moment the claim is sent back
+   * from the pay step until it is ready for payment again; `payoutCorrectionPhase` reads them.
+   */
+  payoutCorrectionRequestedAt?: Date;
+  payoutCorrectionRequestedByUserId?: string;
+  payoutCorrectionReasonCode?: string;
+  payoutCorrectionNote?: string;
+  /** Set once the requester has given the account again: a new approval step waits from here. */
+  payoutCorrectionSubmittedAt?: Date;
+  /** Every step of every round, oldest first. Outlives the round. */
+  payoutCorrectionLog?: ReimbursementPayoutCorrectionLogEntry[];
   paymentTotalAmount: string;
   outstandingAmount: string;
   idempotencyKey?: string;

@@ -1664,6 +1664,28 @@ export type CompleteExpenseReceiptUploadInput = {
   operationId?: string;
 };
 
+/**
+ * The shortest reason a void takes. Cancelling a reimbursement claim voids its expense records with
+ * the claim's own reason, so the claim asks this of the reason before it starts: one rule, or a
+ * reason the claim accepted is refused halfway through the cancellation.
+ */
+export const EXPENSE_VOID_REASON_MIN_LENGTH = 3;
+export function isExpenseVoidReason(reason: string | null | undefined): boolean {
+  return !!reason && reason.trim().length >= EXPENSE_VOID_REASON_MIN_LENGTH;
+}
+
+/**
+ * Why an expense cannot be voided right now. The void refuses on these; a reimbursement claim reads
+ * them before it commits to cancelling, and shows them on a cancellation that has not finished.
+ */
+export type ExpenseVoidBlocker =
+  | { code: 'accounting_period_locked'; periodKey: string }
+  | { code: 'tax_period_locked'; periodKey: string; formType: string }
+  /** The posted journal is not in a state a reversal can be written against. */
+  | { code: 'posting_unresolved' }
+  /** The record is in a status no void takes. */
+  | { code: 'expense_not_voidable' };
+
 /** A recorded payment can precede expense confirmation (e.g. issuing a substitute receipt). */
 export function canVoidExpenseFinancialState(expense: {
   status: string; paidAmount?: { toString(): string }; journalEntryId?: string | null;

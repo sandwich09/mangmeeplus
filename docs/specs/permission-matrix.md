@@ -555,6 +555,36 @@ to a custom role built from it). `reimbursement.finance_review`, `reimbursement.
 and `reimbursement.policy.manage` are not widened — those stay FINANCE/OWNER-only, unchanged. FINANCE
 keeps its existing grants.
 
+Owner decision 2026-10-01 (payout-account spec §13.3 F1): company roles that already hold
+`reimbursement.approve` — custom roles, and system roles a company has edited — receive
+`reimbursement.payment.record` and `reimbursement.payment.void` through `COMPANY_ROLE_BACKFILLS`. A role
+saved before `pack.reimbursement.approve` carried the two keys could approve a claim and not pay it, which
+left approved claims waiting at the payment step.
+
+- Applied by `prisma/sync-permissions.ts` on every deploy; no migration.
+- Additive and idempotent: a role that already holds a key is skipped, and nothing is ever revoked.
+- Granted once (owner decision 2026-10-01): a role the sync has already granted a key to is skipped on
+  every later deploy. The audit row of that grant is the record. A later removal by the company's admin
+  is respected: the key does not come back. This holds for every entry of `COMPANY_ROLE_BACKFILLS`.
+- Anchored on `reimbursement.approve`: a role without it is never widened (finance reviewers, auditors and
+  plain members keep exactly what they had).
+- Audited: each key added to a role writes one `access.role.update` audit row with actor `SYSTEM`
+  (`actorRefId = sync-permissions`) in that role's company, at the risk level the permission registry gives
+  the key (`reimbursement.payment.record` HIGH, `reimbursement.payment.void` CRITICAL), with
+  `metadataJson.source = sync-permissions`, the added key and the anchor. This holds for every entry of
+  `COMPANY_ROLE_BACKFILLS`, not only these two keys.
+- Which roles gain a key is read inside the serializable transaction that writes the grant and its audit
+  rows, so a grant never lands without its audit row. A role edited at that same moment is not covered:
+  the role editor's transaction is not serializable, so an edit that commits in between can leave the key
+  on a role that has just lost the anchor. The window is that one transaction at deploy time; saving the
+  role again rewrites its whole permission list.
+- Consequence: a company role whose admin removes the two keys by hand keeps `reimbursement.approve` and
+  no longer records or voids payments. ตั้งค่านโยบาย warns about such a role (next point).
+- Between deploys a role created or edited without the pay right can still be chosen as approver (routing
+  needs only read, approve and reject). The approver-role option carries `canRecordPayment`, and ตั้งค่านโยบาย
+  warns that such a role approves but cannot record payment while finance review is off. It never blocks
+  the save: a company with a finance desk may split the two on purpose.
+
 The employee baseline is active only while the `reimbursement` entitlement is ON. Safe-OFF continues to strip create, draft update, submit and cancel while retaining the existing runoff permissions for claims already in flight. Company custom roles opt in through `pack.reimbursement.self`; they are never widened solely because the feature is enabled.
 
 `reimbursement.read_related` returns only records in the caller's tenant and branch scope where the caller is persisted as
@@ -576,6 +606,154 @@ reimbursement.duplicate.resolve
 reimbursement.policy.manage
 reimbursement.export
 ```
+
+#### Reimbursement claims that stopped halfway
+
+No new permission key (audit B3 and B4, 2026-10-02; step-journey spec §19). Cancelling a claim and
+carrying out its approval are both two-phase: the decision commits first, and the claim's expense
+records are voided or built after it. A claim can sit between the two. These routes finish it, and the
+claim detail says to whom each is open (`pendingCancellation.canResume`, `pendingCancellation.canWithdraw`,
+`awaitingSystem.canResume`) from the same functions the routes ask. Routes sit under
+`/companies/:companyId/reimbursements`.
+
+| Route | Route permission | Who may use it |
+|---|---|---|
+| `POST :requestId/cancel` (existing) | `reimbursement.cancel_own` or `reimbursement.finance_review` | The requester with the cancel right, or a finance reviewer, in the claim's branch scope. It also continues a cancellation that was started: by any of them, not only whoever started it. The reason on record stays, unless it is one the expense void refuses |
+| `POST :requestId/cancel/withdraw` | `reimbursement.cancel_own` or `reimbursement.finance_review` | The same people, while none of the claim's expense records has been voided |
+| `POST :requestId/resume` | `account.session.read` | Decided per claim in the use case, like approve. For an approved claim: the approver who decided it, with the claim's branch in scope and either `reimbursement.approve` or their frozen place on the step. For a claim nobody had to approve: a holder of `reimbursement.payment.record` with the claim's branch in scope. It decides nothing and attests nothing |
+| `POST /internal/reimbursements/reconcile` | `X-Worker-Token` | `@Public()`, workers only: the scheduled run of the same repair, every two minutes |
+
+While a cancellation is pending every other decision on the claim is refused with
+`reimbursement_cancellation_pending`: edit, submit, approve, reject, finance review, duplicate resolution
+and payment. The server's own flags say so: `approvalActions.canApprove` and `canReject` are false (an
+approver frozen onto the step can still read the claim), and every list and queue row carries
+`cancellationPending`. The approval queue lists no such claim; the finance queue keeps it, with no payment
+and no finance decision on its row.
+
+`expense.void`, `expense.reject` and `expense.delete` do not reach an expense record that belongs to a
+claim that still stands (any status but REJECTED, CANCELLED or VOIDED). Such a record is built when the
+claim is approved and ends with it: cancelling the claim voids it. Asked of the expense screen, all three
+answer 409 `expense_belongs_to_reimbursement` and name the claim to go to. The claim's own cancellation is
+the only path that voids one, and it needs the claim rights above, not `expense.void`.
+
+#### Voiding a payment that a bank statement line is matched to
+
+No new permission key (review fix 2026-10-01). `reimbursement.payment.void` alone undoes the confirmed bank
+match of the payment it voids: the match becomes VOIDED and the statement line's status is derived again, in
+the void's own transaction, and a `bank.match.void` audit row is written beside the `reimbursement.payment.void`
+one, both in the name of the person who voided. `bank.match.unmatch` is not asked for: a match has no meaning
+once its payment is voided, and the bank matching screen cannot reach a fully matched line to undo it there.
+
+- A line that sits in a COMPLETED reconciliation is refused (`reimbursement_payment_bank_reconciled`). Reopening
+  that reconciliation is the bank module's own act and needs `bank.reconciliation.reopen`.
+- In the other direction, `bank.match.confirm` refuses a claim payment that is no longer RECORDED
+  (`bank_match_payment_not_recorded`). The confirm reads the payment under the lock the void takes.
+
+#### Reimbursement payment slips
+
+No new permission key. A payment slip is payment evidence with readers of its own (owner decisions
+2026-10-01); it is never an expense receipt or a signed claim copy. Routes sit under
+`/companies/:companyId/reimbursements`.
+
+| Route | Route permission | Who may use it |
+|---|---|---|
+| `POST :requestId/payments/slip-upload-intent` | `reimbursement.payment.record` | Whoever may record payments, in the claim's branch scope |
+| `POST :requestId/payments/slip-uploads/:attachmentId/complete` | `reimbursement.payment.record` | The same person who started that upload, for that claim |
+| `POST :requestId/payments/:paymentId/slips` | `reimbursement.payment.record` | Whoever may record payments; adds a slip to a recorded payment, or moves a file misfiled as a signed copy. Add-only, five slips at most |
+| `GET :requestId/payments/:paymentId/slips/:attachmentId/download-url` | `account.session.read` | Decided per claim in the use case, see below |
+| `POST :requestId/payments` (existing) | `reimbursement.payment.record` | A bank transfer is refused without `slipAttachmentId` (`payment_slip_required`); other methods may carry one |
+
+Who may open a slip: the caller must first be able to read the claim (the same gate as the claim detail,
+branch scope included), and must then be one of
+
+- the requester;
+- the claim's approver: whoever may decide the step it waits on, or whoever approved its current round
+  (an approved step decided at or after the claim's current submission; an approver of a round the claim
+  was corrected and resubmitted after no longer counts);
+- a holder of `reimbursement.payment.record`;
+- a holder of `reimbursement.finance_review` (owner answer 2026-10-01), with or without the pay right.
+
+Holding `reimbursement.approve` without being routed the claim is not enough, and neither is
+`reimbursement.read`, `reimbursement.export` or `reimbursement.payment.void` alone. `AUDITOR_READONLY`,
+HR, other related readers and read-only platform accounts are told that a slip exists and how many, and
+nothing else: the claim detail gives them `slipCount` and no file id. The rule is one function,
+`canOpenReimbursementPaymentSlip` in `packages/contracts`, used by the download guard and to compute the
+detail's `viewerCanOpenSlips`, which is all the web's "ดูสลิป" button reads. The group that may see a full
+payout account number is narrower (no finance reviewers) and is decided separately, with a flag of its
+own: see "Reimbursement payout accounts" below.
+
+The generic attachment paths never serve a slip. `GET attachments/:attachmentId/download-url` refuses a
+file that is linked as a slip or carries the slip upload tag, for everyone, the payer included.
+`DELETE attachments/:attachmentId` refuses a linked slip (`reimbursement_payment_slip_retained`). No link
+of any kind can be written onto a slip file, so it cannot become an expense receipt, a signed copy, or
+input to receipt reading. Every opening and every refusal is audited with ids only.
+
+#### Reimbursement payout accounts
+
+No new permission key. A payout account says where a member's reimbursements are paid back (owner
+decisions 2026-10-01): a default per member, and a copy frozen on each claim when it is sent. A list or
+queue row carries the receiving method only. A claim detail carries the bank, the account name and the
+last 4 digits, the same for every reader; a notice and an audit row carry the bank and the last 4 digits;
+the evidence export carries nothing of the account. The full number leaves through the two `reveal` calls
+and, for a claim's own account, on the printed claim form of a reader the claim's `reveal` call would
+answer; each only after its audit row is written. Routes sit under `/companies/:companyId/reimbursements`, in a
+controller registered ahead of the claim routes so `payout-accounts/…` is matched before `:requestId`.
+
+| Route | Route permission | Who may use it |
+|---|---|---|
+| `GET payout-accounts/me` | `reimbursement.create` | The member: their own default account, last 4 digits only |
+| `PUT payout-accounts/me` | `reimbursement.create` | The member: sets their own default, a transfer account or cash |
+| `DELETE payout-accounts/me` | `reimbursement.create` | The member: removes their own default. A claim already sent keeps its own copy |
+| `POST payout-accounts/me/reveal` | `reimbursement.create` | The account owner alone: their own full number. Nobody reveals another member's default |
+| `GET payout-accounts/members/:userId` | `access.employee.read` or `access.employee.update` | An employee-data reader: last 4 digits only, and whether this viewer may set it (`canEdit`) |
+| `PUT payout-accounts/members/:userId` | `access.employee.update` | Decided per member in the use case, see below. The member's own account goes by their own right |
+| `POST :requestId/payout-destination/reveal` | `account.session.read` | Decided per claim in the use case, see below |
+| `POST :requestId/claim-form/preview` (existing) | `reimbursement.read`, `reimbursement.read_related` or `reimbursement.read_own` | Takes no option and answers with no new field. The print carries the full number for a reader the `reveal` call above would answer, and the last 4 digits for any other reader of the claim, see below |
+| `POST :requestId/submit` (existing) | `reimbursement.submit` | Takes `payoutSubmitToken`, the account the claim page showed. Refused without a receiving method (`payout_method_required`, `payout_destination_required`), and for every claim but cash the draft itself chose when the token is missing or the account changed since (`payout_destination_changed`) |
+| `POST :requestId/approve` (existing) | `account.session.read` | Requires `approvalSnapshotHash`, the claim content the approver saw. A claim paid by transfer also requires `payoutVerifiedVersion`, the account version attested (`payout_verification_required`, `payout_destination_changed`) |
+
+Who may set someone else's default account (`payoutAccountEditRefusal`), beyond holding
+`access.employee.update` in a company with the reimbursement entitlement:
+
+- the member must be ACTIVE and have an employee record. The business owner has none, so only the owner
+  sets the owner's account. A member who is not active is refused for everyone
+  (`payout_account_member_not_active`): the notice below would reach no one;
+- the product's own OWNER or ADMIN role may set any such member's account. The role is looked up on the
+  member, not read from the role key: a company role named "Admin", or a company's edited copy of the Admin
+  role, is held to the next rule;
+- any other holder may set it only for a member who does not manage people themselves, and only for a
+  member whose branches are all inside the editor's own.
+
+The account owner is told every time someone else sets their account, in the same transaction
+(`reimbursement.payout_account_set_by_other`, critical, never dropped by a saved preference list). The same
+notice goes to the requester when someone else types an account into a claim filed for them.
+
+Who may see a claim's full account number (`payoutRevealGroup`). The claim must carry an account of its
+own: a transfer claim sent with a payout snapshot, or a draft with an account typed into it. A cash claim
+and a claim sent before the field existed have none. Then:
+
+- the requester, on a draft too;
+- once the claim is sent, and only inside the viewer's branch scope:
+  - the claim's approver: whoever may decide the step it waits on, or whoever approved its current round.
+    This is the same definition the payment slip uses (`isReimbursementClaimApprover` in
+    `packages/contracts`);
+  - a holder of `reimbursement.payment.record` who can read the claim.
+
+Holding `reimbursement.approve` without being routed the claim is not enough, and neither is
+`reimbursement.finance_review`, `reimbursement.read`, `reimbursement.export` or `access.employee.update`.
+A finance reviewer without the pay right opens the payment slip and still sees the last 4 digits only. So
+do whoever prepared the claim for the requester, `AUDITOR_READONLY`, HR and other related readers. The
+reveal endpoint and the detail's `payout.canRevealAccountNumber`, which is all the web's "แสดงเลขบัญชี"
+button reads, come from this one decision. Every refusal answers `payout_reveal_denied` and is audited;
+an answer is given only after its audit row is written.
+
+The printed claim form asks the same decision for whoever requested that print (`claimPayoutRevealGroup`),
+on the two-signer form of a claim that carries its own account. Inside the group, one audit row of the
+reveal's own action is written before the number is decrypted, with `channel: CLAIM_FORM_PRINT`, and the
+number is printed on the "รับเงินคืนทาง" line. Outside the group the print is not refused: it carries the
+last 4 digits and no row is written. A cash claim, a claim sent before the field existed and the four-block
+form print no account at all, so they decrypt nothing and write no row. The payment line of the form
+carries the last 4 digits for every reader. A print is made for one request and is not stored or linked.
 
 ### Procurement related-document visibility
 
