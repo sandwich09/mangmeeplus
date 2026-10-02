@@ -876,8 +876,13 @@ export type RejectReimbursementInput = {
 /**
  * Why a claim is sent back to have its payout account corrected. A fixed list on purpose: the reason is
  * copied into the requester's notice, and free text there could carry an account number.
+ *
+ * The first is for a claim with no account of its own (sent before claims carried one): the other five
+ * presume an account that is wrong, and its sender had only "อื่น ๆ". Which reasons a claim takes is
+ * `reimbursementPayoutCorrectionReasons`.
  */
 export const REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS = {
+  NO_ACCOUNT_ON_CLAIM: 'ใบนี้ยังไม่มีบัญชีรับเงิน',
   ACCOUNT_NUMBER_WRONG: 'เลขบัญชีไม่ถูกต้อง',
   ACCOUNT_NAME_MISMATCH: 'ชื่อบัญชีไม่ตรงกับผู้เบิก',
   BANK_WRONG: 'ธนาคารไม่ถูกต้อง',
@@ -889,6 +894,24 @@ export type ReimbursementPayoutCorrectionReason = keyof typeof REIMBURSEMENT_PAY
 
 export function isReimbursementPayoutCorrectionReason(value: unknown): value is ReimbursementPayoutCorrectionReason {
   return typeof value === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, value);
+}
+
+/**
+ * The reasons a claim can be sent back with, in the order a form lists them. `claimHasAccount`: the claim
+ * carries an account of its own (`payout` on its detail). One list for the form that offers them and the
+ * API that takes them: "the claim has no account yet" is a reason only for a claim that has none.
+ */
+export function reimbursementPayoutCorrectionReasons(claimHasAccount: boolean): ReimbursementPayoutCorrectionReason[] {
+  return (Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS) as ReimbursementPayoutCorrectionReason[])
+    .filter((code) => code !== 'NO_ACCOUNT_ON_CLAIM' || !claimHasAccount);
+}
+
+/**
+ * What the requester of a claim sent back with this reason is asked to do, as the notice and the claim page
+ * say it: add an account where the claim had none, correct it otherwise.
+ */
+export function reimbursementPayoutCorrectionAsk(reasonCode: unknown): 'เพิ่มบัญชีรับเงิน' | 'แก้บัญชีรับเงิน' {
+  return reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? 'เพิ่มบัญชีรับเงิน' : 'แก้บัญชีรับเงิน';
 }
 
 /** The note that may go with a reason. Shown on the claim page only; it may not carry an account number. */

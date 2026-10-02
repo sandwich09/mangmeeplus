@@ -1,7 +1,7 @@
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type { RequestContext, ReimbursementApprovalQueueItem, ReimbursementAwaitingSystem, ReimbursementRequestDetail } from '@watchdog-bms/contracts';
 import {
-  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber,
+  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
   REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
 } from '@watchdog-bms/contracts';
 import { notAwaitingApproval, PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
@@ -227,7 +227,12 @@ export async function sendBackForPayoutCorrection(
   sentBackBy: 'PAYER' | 'APPROVER' | 'REQUESTER' | 'STEP_APPROVER',
   input: { reasonCode?: unknown; note?: unknown },
 ): Promise<ReimbursementRequestDetail> {
-  if (!isReimbursementPayoutCorrectionReason(input.reasonCode)) throw new BadRequestException('payout_correction_reason_required');
+  // One of the reasons THIS claim takes, the list its form offers: "the claim has no account yet" is no
+  // reason for a claim that carries one.
+  if (!isReimbursementPayoutCorrectionReason(input.reasonCode)
+    || !reimbursementPayoutCorrectionReasons(hasPayoutSnapshot(req)).includes(input.reasonCode)) {
+    throw new BadRequestException('payout_correction_reason_required');
+  }
   const reasonCode = input.reasonCode;
   const note = typeof input.note === 'string' ? input.note.trim() : '';
   if (note.length > REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH) throw new BadRequestException('payout_correction_note_too_long');
@@ -270,7 +275,8 @@ export async function sendBackForPayoutCorrection(
           // no template assembles it, so no rule can print a code or anything a person typed.
           data: {
             requestId: req.id, requestNo: req.requestNo, requesterUserId: req.requesterUserId, status: 'PENDING_APPROVAL',
-            payoutCorrectionNotice: `เหตุผล: ${REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode]} · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน`,
+            // A claim with no account of its own is asked to add one, not to correct one.
+            payoutCorrectionNotice: `เหตุผล: ${REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode]} · เปิดใบเบิกเพื่อ${reimbursementPayoutCorrectionAsk(reasonCode)}`,
           },
         },
       });

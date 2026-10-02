@@ -16,11 +16,11 @@ import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
-  PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL, PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
+  PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL, PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SEND_BACK_AGAIN_LABEL,
   PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
   isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
-  payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, type PayoutCorrectionForm,
+  payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
 /**
@@ -92,7 +92,7 @@ export function PayoutCorrectionRequestForm({ companyId, detail, onCancel, onDon
       <div>
         <div className={labelClass}>เหตุผลที่ส่งกลับ *</div>
         <div role="radiogroup" aria-label="เหตุผลที่ส่งกลับ" aria-required className="grid gap-2 sm:grid-cols-2">
-          {PAYOUT_CORRECTION_REASONS.map(([code, label]) => (
+          {payoutCorrectionReasons(detail).map(([code, label]) => (
             <label key={code} className={cx(choiceClass, reasonCode === code && 'border-brand-300 bg-brand-25')}>
               <input type="radio" name="payout-correction-reason" className="mt-0.5 h-5 w-5 shrink-0" checked={reasonCode === code} disabled={busy}
                 onChange={() => { setReasonCode(code); setError(null); }} />

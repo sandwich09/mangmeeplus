@@ -5,14 +5,15 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import {
   REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS, isReimbursementPayoutCorrectionReason,
+  reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
 } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import {
-  PAYOUT_CORRECTION_REASONS, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED,
+  PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED,
   emptyPayoutCorrectionForm, isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
-  payoutCorrectionInput, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
+  payoutCorrectionInput, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
   payoutCorrectionSentBackText, payoutCorrectionSubmittedText, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
@@ -129,11 +130,21 @@ const KBANK = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'BANK_ACCOUN
 const SCB = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารไทยพาณิชย์', accountName: 'นาย สมชาย ใจดี', accountLast4: '1112', version: 2 };
 
 describe('sending a claim back for its payout account: what the form asks and sends', () => {
-  it('lists the six fixed reasons in the API\'s own words and order, and prints no code for a reason it does not know', () => {
-    assert.deepEqual(PAYOUT_CORRECTION_REASONS.map(([, label]) => label),
-      ['เลขบัญชีไม่ถูกต้อง', 'ชื่อบัญชีไม่ตรงกับผู้เบิก', 'ธนาคารไม่ถูกต้อง', 'บัญชีปิดหรือโอนไม่ได้', 'ผู้เบิกขอเปลี่ยนบัญชี', 'อื่น ๆ']);
-    assert.deepEqual(PAYOUT_CORRECTION_REASONS.map(([code]) => code), Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS));
-    for (const [code, label] of PAYOUT_CORRECTION_REASONS) {
+  // Upgrade test 2026-10-02: every reason presumed a wrong account, and a claim sent before claims carried one has
+  // none. The list is the claim's: what the API takes for it, from the one function both sides read.
+  it('lists the reasons the API takes for the claim, in its own words and order, and prints no code for a reason it does not know', () => {
+    const SIX = ['เลขบัญชีไม่ถูกต้อง', 'ชื่อบัญชีไม่ตรงกับผู้เบิก', 'ธนาคารไม่ถูกต้อง', 'บัญชีปิดหรือโอนไม่ได้', 'ผู้เบิกขอเปลี่ยนบัญชี', 'อื่น ๆ'];
+    const labels = (detail: { payout?: unknown } | null | undefined) => payoutCorrectionReasons(detail).map(([, label]) => label);
+    assert.deepEqual(labels({ payout: KBANK }), SIX);
+    assert.deepEqual(labels({ payout: { payoutMethod: 'CASH' } }), SIX, 'a claim sent as cash has a receiving method to correct');
+    // No account of its own: the reason that says so comes first, and the others stay (its payer is shown the requester's default).
+    for (const legacy of [{}, { payout: undefined }, { payout: null }, null, undefined]) assert.deepEqual(labels(legacy), ['ใบนี้ยังไม่มีบัญชีรับเงิน', ...SIX]);
+    for (const claimHasAccount of [true, false]) {
+      assert.deepEqual(payoutCorrectionReasons(claimHasAccount ? { payout: KBANK } : {}).map(([code]) => code), reimbursementPayoutCorrectionReasons(claimHasAccount));
+    }
+    assert.deepEqual(reimbursementPayoutCorrectionReasons(false), Object.keys(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS));
+    assert.equal(reimbursementPayoutCorrectionReasons(true).includes('NO_ACCOUNT_ON_CLAIM'), false);
+    for (const [code, label] of payoutCorrectionReasons({})) {
       assert.equal(isReimbursementPayoutCorrectionReason(code), true);
       assert.equal(payoutCorrectionReasonText(code), label);
     }
@@ -150,7 +161,7 @@ describe('sending a claim back for its payout account: what the form asks and se
       assert.equal(payoutCorrectionRequestError('ACCOUNT_NUMBER_WRONG', note), translateApiError('note_contains_account_number'), note);
     }
     // The note is optional for every reason, อื่น ๆ included, and a document number or an amount in it is no account number.
-    for (const [code] of PAYOUT_CORRECTION_REASONS) assert.equal(payoutCorrectionRequestError(code, ''), null, code);
+    for (const [code] of payoutCorrectionReasons({})) assert.equal(payoutCorrectionRequestError(code, ''), null, code);
     assert.equal(payoutCorrectionRequestError('ACCOUNT_UNUSABLE', 'ธนาคารแจ้งว่าไม่พบบัญชีนี้ ใบ RB-202610-00007 ยอด 1614 บาท'), null);
     // Each of the three is a sentence: a label that went missing would let the form send what the API refuses.
     for (const code of ['payout_correction_reason_required', 'payout_correction_note_too_long', 'note_contains_account_number']) assert.ok(translateApiError(code), code);
@@ -174,6 +185,22 @@ describe('sending a claim back for its payout account: what the form asks and se
     // Someone else whose name can no longer be resolved is still not said to be the requester.
     assert.equal(payoutCorrectionSubmittedText({ byUserId: 'gone' }, 'staff'), 'ผู้จัดทำ แก้บัญชีรับเงินแทนผู้เบิก');
     assert.equal(payoutCorrectionSubmittedText(undefined, 'staff'), 'ผู้เบิกแก้บัญชีรับเงิน');
+  });
+
+  // The reason for a claim with no account of its own: nothing was wrong and nothing was corrected, so neither
+  // sentence says "แก้". What the requester is asked for is the contracts' word, the one their notice uses.
+  it('says a claim sent back for having no account was sent back to be given one, and that its account was added', () => {
+    assert.equal(payoutCorrectionSentBackText({ byName: 'วราภรณ์ การเงิน', reasonCode: 'NO_ACCOUNT_ON_CLAIM' }),
+      'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงินโดย วราภรณ์ การเงิน : ใบนี้ยังไม่มีบัญชีรับเงิน');
+    assert.equal(payoutCorrectionSentBackText({ reasonCode: 'NO_ACCOUNT_ON_CLAIM' }), 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน : ใบนี้ยังไม่มีบัญชีรับเงิน');
+    assert.equal(payoutCorrectionSubmittedText({ byUserId: 'staff', byName: 'สมชาย พนักงาน' }, 'staff', 'NO_ACCOUNT_ON_CLAIM'), 'ผู้เบิกเพิ่มบัญชีรับเงิน');
+    assert.equal(payoutCorrectionSubmittedText({ byUserId: 'finance', byName: 'วราภรณ์ การเงิน' }, 'staff', 'NO_ACCOUNT_ON_CLAIM'), 'วราภรณ์ การเงิน เพิ่มบัญชีรับเงินแทนผู้เบิก');
+    // Every other reason, and none, keep the words the round always had: the label of the requester's own button.
+    for (const reason of ['ACCOUNT_NUMBER_WRONG', 'OTHER', 'A_REASON_ADDED_LATER', undefined]) {
+      assert.equal(reimbursementPayoutCorrectionAsk(reason), PAYOUT_CORRECTION_FIX_LABEL, String(reason));
+      assert.equal(payoutCorrectionSubmittedText({ byUserId: 'staff' }, 'staff', reason), 'ผู้เบิกแก้บัญชีรับเงิน', String(reason));
+    }
+    assert.equal(reimbursementPayoutCorrectionAsk('NO_ACCOUNT_ON_CLAIM'), 'เพิ่มบัญชีรับเงิน');
   });
 });
 
@@ -371,7 +398,9 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
 
   it('lists the six reasons as choices of 44 px, takes a note of at most 500 characters, and is no dialog', () => {
     const { html, texts } = form(ready());
-    assert.deepEqual(texts.filter((text) => PAYOUT_CORRECTION_REASONS.some(([, label]) => label === text)), PAYOUT_CORRECTION_REASONS.map(([, label]) => label));
+    const offered = (shown: string[]) => shown.filter((text) => payoutCorrectionReasons({}).some(([, label]) => label === text));
+    assert.deepEqual(offered(texts), payoutCorrectionReasons(ready()).map(([, label]) => label));
+    assert.equal(offered(texts).includes('ใบนี้ยังไม่มีบัญชีรับเงิน'), false, 'a claim that carries an account is never offered "it has none"');
     assert.equal(html.match(/<input type="radio"/g)?.length, 6);
     assert.equal(html.match(/<label class="flex min-h-11 cursor-pointer/g)?.length, 6, 'each reason is a tap target of 44 px');
     assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/, 'no reason is chosen for the person');
@@ -385,6 +414,22 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
     // Both buttons span the card on a phone and sit side by side from sm.
     assert.equal(html.match(/class="mangmee-btn [^"]*w-full sm:w-auto"/g)?.length, 2);
     assertPlainThai(texts, 'the send-back form');
+  });
+
+  // A claim sent before claims carried an account: the form is the one that adds an account, and its first reason says why.
+  it('offers a claim with no account of its own the reason that says so, first, and sends it as chosen', async () => {
+    const legacy = ready({ payoutMethod: undefined, payout: undefined, payoutHistory: undefined });
+    const { html, texts } = form(legacy);
+    assert.equal(heading(html), 'ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงิน');
+    const labels = payoutCorrectionReasons(legacy).map(([, label]) => label);
+    assert.deepEqual([labels.length, labels[0]], [7, 'ใบนี้ยังไม่มีบัญชีรับเงิน']);
+    assert.deepEqual(texts.filter((text) => labels.includes(text)), labels);
+    assert.equal(html.match(/<label class="flex min-h-11 cursor-pointer/g)?.length, 7, 'each reason is a tap target of 44 px');
+    assert.doesNotMatch(html, /<input type="radio"[^>]*checked=""/, 'no reason is chosen for the person');
+    // Chosen, it is what the form sends: the API takes it for this claim and for no claim that carries an account.
+    assert.equal(payoutCorrectionRequestError('NO_ACCOUNT_ON_CLAIM', ''), null);
+    assert.deepEqual(payoutCorrectionRequestInput('NO_ACCOUNT_ON_CLAIM', ''), { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assertPlainThai(texts, 'the send-back form of a claim with no account');
   });
 
   it('says what will happen before the person confirms, signatures included, and from the round\'s step that the claim is not rejected', () => {
@@ -1399,6 +1444,39 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     assert.equal(same.length, 2);
     const all = logic.buildClaimTimeline(phaseB({ payoutCorrectionHistory: [SENT_BACK, GIVEN, { ...GIVEN, at: '2026-10-01T05:20:00.000Z' }] }));
     assert.notEqual(logic.timelineDateText(all, same[0]!), logic.timelineDateText(all, same[1]!));
+  });
+
+  // Upgrade test 2026-10-02: a claim sent before claims carried an account, sent back to be given one. Its rows said
+  // "ส่งกลับให้แก้บัญชีรับเงิน … : อื่น ๆ" and "ผู้เบิกแก้บัญชีรับเงิน" of an account that was never there.
+  it('tells the round of a claim that had no account as an account asked for and added, and a later round as a correction', () => {
+    const asked = { kind: 'SENT_BACK', at: AT.sentBack, byUserId: 'finance', byName: NAMES.payer, reasonCode: 'NO_ACCOUNT_ON_CLAIM' };
+    const first = { ...version2, version: 1 };
+    const gave = { ...GIVEN, payoutVersion: 1 };
+    const noAccountRound = { requestedAt: AT.sentBack, requestedByUserId: 'finance', requestedByName: NAMES.payer, reasonCode: 'NO_ACCOUNT_ON_CLAIM', previouslyApprovedAt: AT.approved };
+    const legacy = { payoutMethod: undefined, payout: undefined, payoutHistory: undefined };
+    const APPROVED = 'done:อนุมัติโดย สมศรี ผู้จัดการ';
+    const ASKED = 'done:ส่งกลับให้ผู้เบิกเพิ่มบัญชีรับเงินโดย วราภรณ์ การเงิน : ใบนี้ยังไม่มีบัญชีรับเงิน';
+    const ADDED = `done:ผู้เบิกเพิ่มบัญชีรับเงิน · ธนาคารไทยพาณิชย์ เลขบัญชีลงท้าย ${SCB.accountLast4}`;
+    const waiting = phaseA({ ...legacy, payoutCorrection: { phase: 'AWAITING_REQUESTER', ...noAccountRound }, payoutCorrectionHistory: [asked] });
+    assert.deepEqual(rows(waiting), ['done:ยื่นใบ', APPROVED, ASKED, 'current:กำลังรอผู้เบิกแก้บัญชีรับเงิน', 'future:รอบันทึกจ่าย']);
+    const given = phaseB({ payoutMethod: 'BANK_TRANSFER', payout: { ...SCB, version: 1, source: 'REQUESTER' }, payoutHistory: [first],
+      payoutCorrection: { phase: 'AWAITING_APPROVAL', ...noAccountRound, submittedAt: AT.given }, payoutCorrectionHistory: [asked, gave] });
+    assert.deepEqual(rows(given).slice(2, 4), [ASKED, ADDED]);
+    // The approver's card says the same two things: why it was sent back, and that the account was added.
+    const card = logic.payoutCorrectionComparison(given)!;
+    assert.deepEqual([card.sentBack, card.submitted?.startsWith('ผู้เบิกเพิ่มบัญชีรับเงิน เมื่อ ')], [ASKED.slice(5), true]);
+    // Sent back again from the waiting step, the claim has an account: that one is corrected.
+    const again = { kind: 'SENT_BACK', at: '2026-10-01T05:30:00.000Z', byUserId: 'boss', byName: NAMES.approver, reasonCode: 'ACCOUNT_NAME_MISMATCH' };
+    const second = { version: 2, payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกรุงเทพ', accountName: KBANK.accountName, accountLast4: '5667', source: 'REQUESTER', frozenAt: AT.reapproved };
+    const corrected = phaseB({ payoutHistory: [first, second], payoutCorrectionHistory: [asked, gave, again, { ...GIVEN, at: AT.reapproved, payoutVersion: 2 }] });
+    assert.deepEqual(rows(corrected).slice(2, 6), [ASKED, ADDED,
+      'done:ส่งกลับให้แก้บัญชีรับเงินโดย สมศรี ผู้จัดการ : ชื่อบัญชีไม่ตรงกับผู้เบิก', 'done:ผู้เบิกแก้บัญชีรับเงิน · ธนาคารกรุงเทพ เลขบัญชีลงท้าย 5667']);
+    // Its requester is asked to add an account, by the button the page shows; everyone else reads the claim's status.
+    const requester = { userId: 'staff', permissions: ['reimbursement.read_own', 'reimbursement.create'] };
+    const own = claimPage({ ...waiting, payoutCorrectionActions: { canRequest: false, canSubmit: true, requesterDefault: 'ABSENT' } }, requester).texts;
+    assert.ok(own.some((text) => text === `${ASKED.slice(5)} · รอคุณเพิ่มบัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินของใบนี้`), JSON.stringify(own.filter((text) => text.includes('ส่งกลับ'))));
+    assert.ok(claimPage(waiting, auditor).texts.some((text) => text === `${ASKED.slice(5)} · รอผู้เบิกแก้บัญชีรับเงิน`));
+    for (const detail of [waiting, given, corrected]) assertPlainThai(logic.buildClaimTimeline(detail).map((row) => row.label), 'the journey of a claim that had no account');
   });
 
   it('ends with the payment into the new account once it is paid', () => {

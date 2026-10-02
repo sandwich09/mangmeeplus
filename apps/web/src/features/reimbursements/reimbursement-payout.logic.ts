@@ -21,8 +21,8 @@ import {
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 // The correction round of payout spec §14 (its own imports, apart from the blocks above).
 import {
-  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH,
-  REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
+  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
+  REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
   type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason,
   type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
 } from '@watchdog-bms/contracts';
@@ -460,8 +460,14 @@ export const PAYOUT_CORRECTION_SUPERSEDED: Record<'send-back' | 'correct-payout'
   'correct-payout': 'ยังไม่ได้บันทึกบัญชีรับเงิน เพราะมีผู้ทำรายการกับใบนี้ไปก่อนแล้ว หน้านี้แสดงสถานะล่าสุดของใบ ดูในขั้นตอนนี้ว่าใบรอใคร และทำต่อได้ตามปุ่มที่แสดง',
 };
 
-/** The fixed reasons, in the order the form lists them. */
-export const PAYOUT_CORRECTION_REASONS = Object.entries(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS) as ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]>;
+/**
+ * The fixed reasons this claim can be sent back with, in the order the form lists them: the list the API takes for
+ * it (`reimbursementPayoutCorrectionReasons`). A claim with no account of its own has "ใบนี้ยังไม่มีบัญชีรับเงิน"
+ * first; a claim that carries one is never offered it.
+ */
+export function payoutCorrectionReasons(detail: { payout?: unknown } | null | undefined): ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]> {
+  return reimbursementPayoutCorrectionReasons(!!detail?.payout).map((code) => [code, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[code]]);
+}
 
 /** A reason in words. Empty for a reason this build has no words for: a code is never printed. */
 export function payoutCorrectionReasonText(reasonCode: unknown): string {
@@ -471,19 +477,25 @@ export function payoutCorrectionReasonText(reasonCode: unknown): string {
 /**
  * "ส่งกลับให้แก้บัญชีรับเงินโดย … : เหตุผล" (spec §14.2, §17.2). One sentence for the step note of a claim that
  * waits for its requester, for the timeline row and for the card its approvers read, so they cannot tell it differently.
+ * A claim sent back because it had no account was sent back to be given one, and is told so: nothing was corrected.
  */
 export function payoutCorrectionSentBackText(sentBack: { byName?: string | null; reasonCode?: unknown } | null | undefined): string {
   const reason = payoutCorrectionReasonText(sentBack?.reasonCode);
-  return `${PAYOUT_CORRECTION_SEND_BACK_LABEL}${sentBack?.byName ? `โดย ${sentBack.byName}` : ''}${reason ? ` : ${reason}` : ''}`;
+  const action = sentBack?.reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? PAYOUT_CORRECTION_ADD_ACCOUNT_FORM_LABEL : PAYOUT_CORRECTION_SEND_BACK_LABEL;
+  return `${action}${sentBack?.byName ? `โดย ${sentBack.byName}` : ''}${reason ? ` : ${reason}` : ''}`;
 }
 
 /**
  * "ผู้เบิกแก้บัญชีรับเงิน" (spec §17.2): who gave the account of a round. It was the requester unless the claim
- * says someone else did it on their behalf, and that person is then named.
+ * says someone else did it on their behalf, and that person is then named. `sentBackReason` is the reason of the
+ * send-back it answers: a claim that had no account was given one ("ผู้เบิกเพิ่มบัญชีรับเงิน"), not corrected.
  */
-export function payoutCorrectionSubmittedText(submitted: { byUserId?: string | null; byName?: string | null } | null | undefined, requesterUserId?: string | null): string {
+export function payoutCorrectionSubmittedText(
+  submitted: { byUserId?: string | null; byName?: string | null } | null | undefined, requesterUserId?: string | null, sentBackReason?: unknown,
+): string {
   const onBehalf = !!submitted?.byUserId && !!requesterUserId && submitted.byUserId !== requesterUserId;
-  return onBehalf ? `${submitted!.byName ?? 'ผู้จัดทำ'} แก้บัญชีรับเงินแทนผู้เบิก` : `ผู้เบิก${PAYOUT_CORRECTION_FIX_LABEL}`;
+  const did = reimbursementPayoutCorrectionAsk(sentBackReason);
+  return onBehalf ? `${submitted!.byName ?? 'ผู้จัดทำ'} ${did}แทนผู้เบิก` : `ผู้เบิก${did}`;
 }
 
 /**

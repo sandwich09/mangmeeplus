@@ -4451,4 +4451,39 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     const approved = await world.approve.execute(approverCtx(), id, undefined, world.claim().approvalSnapshotHash, 1);
     assert.deepEqual([approved.status, approved.payout?.verifiedByName], ['READY_FOR_PAYMENT', 'วิภา']);
   });
+
+  // Upgrade test 2026-10-02: every reason presumed an account that is wrong, so whoever sent a legacy claim back to be
+  // given one had only "อื่น ๆ". The reason exists for exactly that claim, and its notice asks for an account to be added.
+  it('takes "the claim has no account yet" from a claim with no account of its own and from no other, and asks its requester to add one', async () => {
+    const refused = (error: any) => error.getStatus() === 400 && error.message === 'payout_correction_reason_required';
+    const legacy = correctionWorld();
+    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    const sentBack = await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assert.deepEqual([sentBack.payoutCorrection?.phase, sentBack.payoutCorrection?.reasonCode, legacy.claim().payoutCorrectionReasonCode],
+      ['AWAITING_REQUESTER', 'NO_ACCOUNT_ON_CLAIM', 'NO_ACCOUNT_ON_CLAIM']);
+    assert.deepEqual(legacy.events().map((event) => event.payloadJson.data.payoutCorrectionNotice), ['เหตุผล: ใบนี้ยังไม่มีบัญชีรับเงิน · เปิดใบเบิกเพื่อเพิ่มบัญชีรับเงิน']);
+    assert.equal(legacy.audits[0].metadataJson.reasonCode, 'NO_ACCOUNT_ON_CLAIM');
+
+    // Once its requester has given an account the claim has one: sent back again from the waiting step, it takes the
+    // reasons of a claim with an account, and that notice asks for a correction.
+    await legacy.giveAccount.execute(ctx(), legacyId, { mode: 'SPECIFIED', ...KBANK });
+    assert.equal(hasPayoutSnapshot(legacy.claim()), true);
+    await assert.rejects(() => legacy.reject.execute(approverCtx(), legacyId, 'ชื่อบัญชีไม่ตรง', 'NO_ACCOUNT_ON_CLAIM'), refused);
+    await legacy.reject.execute(approverCtx(), legacyId, 'ชื่อบัญชีไม่ตรง', 'ACCOUNT_NAME_MISMATCH');
+    assert.equal(legacy.events().at(-1).payloadJson.data.payoutCorrectionNotice, 'เหตุผล: ชื่อบัญชีไม่ตรงกับผู้เบิก · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน');
+
+    // A claim sent with an account, by transfer or as cash, has one to correct: the reason is refused and nothing is written.
+    for (const send of [{}, { setDefault: null, payout: { mode: 'CASH' } }] as const) {
+      const world = correctionWorld();
+      const id = await world.ready(send);
+      await assert.rejects(() => world.sendBack.execute(payerCtx(), id, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' }), refused, JSON.stringify(send));
+      assert.deepEqual([world.claim().status, world.events(), world.audits], ['READY_FOR_PAYMENT', [], []]);
+    }
+    // The other reasons stay open to a legacy claim: the account its payer is shown is its requester's default, which can be wrong.
+    const other = correctionWorld();
+    const otherId = await other.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(other.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    assert.equal((await other.sendBack.execute(payerCtx(), otherId, { reasonCode: 'ACCOUNT_UNUSABLE' })).payoutCorrection?.reasonCode, 'ACCOUNT_UNUSABLE');
+  });
 });

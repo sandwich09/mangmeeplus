@@ -889,7 +889,11 @@ export function buildClaimTimeline(detail: any): ClaimTimelineRow[] {
   // What happened to the claim after it was approved, in the order it happened: a payment taken back, and the rows
   // of each correction round. A wrong account is often found after a transfer was voided, and often before any.
   const moment = (at: unknown) => Date.parse(String(at)) || 0;
-  const history = [...voided, ...corrections.map((event, index) => ({ at: event.at, rows: payoutCorrectionTimelineRows(event, index, detail?.requesterUserId, detail?.payoutHistory) }))]
+  // An account given answers the send-back before it: a claim sent back for having none was given one, not corrected.
+  const answered = (index: number) => corrections.slice(0, index).reverse().find((event) => event.kind === 'SENT_BACK')?.reasonCode;
+  const history = [...voided, ...corrections.map((event, index) => ({
+    at: event.at, rows: payoutCorrectionTimelineRows(event, index, detail?.requesterUserId, detail?.payoutHistory, answered(index)),
+  }))]
     .sort((left, right) => moment(left.at) - moment(right.at)).flatMap((entry) => entry.rows);
   if (status === 'CANCELLED' || status === 'VOIDED') {
     return [...rows, ...history, { key: 'terminal', state: 'done', label: status === 'CANCELLED' ? 'ยกเลิกคำขอ' : 'เพิกถอนรายการ' }];
@@ -981,10 +985,12 @@ function payoutCorrectionGivenText(event: any, payoutHistory: readonly any[] | n
  * gets two rows that say different things; the time alone could not tell them apart within one minute.
  * Nothing for a kind of event this build has no words for.
  */
-function payoutCorrectionTimelineRows(event: any, index: number, requesterUserId?: string, payoutHistory?: readonly any[] | null): ClaimTimelineRow[] {
+function payoutCorrectionTimelineRows(
+  event: any, index: number, requesterUserId?: string, payoutHistory?: readonly any[] | null, sentBackReason?: unknown,
+): ClaimTimelineRow[] {
   const given = event?.kind === 'ACCOUNT_SUBMITTED' ? payoutCorrectionGivenText(event, payoutHistory) : '';
   const label = event?.kind === 'SENT_BACK' ? `${payoutCorrectionSentBackText(event)}${event.note ? ` · ${event.note}` : ''}`
-    : event?.kind === 'ACCOUNT_SUBMITTED' ? `${payoutCorrectionSubmittedText(event, requesterUserId)}${given ? ` · ${given}` : ''}`
+    : event?.kind === 'ACCOUNT_SUBMITTED' ? `${payoutCorrectionSubmittedText(event, requesterUserId, sentBackReason)}${given ? ` · ${given}` : ''}`
       : event?.kind === 'REAPPROVED' ? `อนุมัติบัญชีรับเงินใหม่${event.byName ? `โดย ${event.byName}` : ''}` : null;
   return label ? [{ key: `correction-${index}`, state: 'done', label, date: event.at }] : [];
 }
@@ -1115,7 +1121,9 @@ function payoutCorrectionStepNote(
     return [
       payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode }),
       round.note && `หมายเหตุ: ${round.note}`,
-      viewer.canSubmit && viewer.isRequester ? 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินที่ถูกต้อง'
+      // A claim sent back for having no account has none that was wrong: its requester is asked to add one.
+      viewer.canSubmit && viewer.isRequester ? (round.reasonCode === 'NO_ACCOUNT_ON_CLAIM' ? 'รอคุณเพิ่มบัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินของใบนี้'
+        : 'รอคุณแก้บัญชีรับเงิน กดแก้บัญชีรับเงินแล้วเลือกวิธีรับเงินที่ถูกต้อง')
         : viewer.canSubmit ? `${REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER} คุณแก้แทนผู้เบิกได้`
           : REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS.AWAITING_REQUESTER,
     ].filter(Boolean).join(' · ');
@@ -1376,7 +1384,7 @@ export function payoutCorrectionComparison(detail: any): PayoutCorrectionCompari
       round.previouslyApprovedAt ? `เมื่อ ${formatThaiDateTime(round.previouslyApprovedAt)}` : ''} การอนุมัติครั้งนี้ตรวจเฉพาะบัญชีรับเงินคืน`,
     sentBack: payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode }),
     ...(round.note && { note: round.note }),
-    ...(round.submittedAt && { submitted: `${payoutCorrectionSubmittedText(submitted, detail.requesterUserId)} เมื่อ ${formatThaiDateTime(round.submittedAt)}` }),
+    ...(round.submittedAt && { submitted: `${payoutCorrectionSubmittedText(submitted, detail.requesterUserId, round.reasonCode)} เมื่อ ${formatThaiDateTime(round.submittedAt)}` }),
   };
 }
 
