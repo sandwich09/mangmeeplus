@@ -229,6 +229,8 @@ Error states must be plain-language and actionable: invalid secret, expired/inva
 
 Widgets (extend item 06 registry): new customers today, unanswered conversations, SLA breaches, open deal value by stage, quotations awaiting, payments waiting review/overdue, complaints open, today's appointments, team response-time, top customers, campaign performance. AI Daily Insight card (section 9.5). Large-card layout, scannable in 30 seconds, no dense charts, every card has one action.
 
+The `sla_breaches` card, labelled "รอตอบเกินกำหนด", counts exactly the conversations in its `/inbox?overdue=true` destination for the same viewer at the same instant, matching the inbox `overdueCount` chip. All three use the repository's canonical `overdueWhere(now)`: no first staff response (`firstRespondedAt = null`), a stored first-response deadline strictly before now (`firstResponseDueAt < now`), and status neither `RESOLVED` nor `SPAM`. Count newly overdue chats even before the periodic scan runs; exclude answered chats even if `slaBreachedAt` remains set. Scope this card by company and the inbox's existing assignment visibility (`assignedScopeForList`: all company chats for read-all roles; assigned-to-self plus unassigned otherwise). Do not add the brief's customer-owner or customer-branch filters, which the destination list does not apply. This is a current waiting queue in every dashboard period, not a historical count of late replies or scan events; the scan and its notices remain unchanged.
+
 ### 10.2 CRM Inbox — 3-column workspace
 
 Column 1 — Conversation list: search; filter tabs; sort by latest/SLA; row anatomy per 9.3(2); bulk assign for managers.
