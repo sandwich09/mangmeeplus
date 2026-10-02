@@ -13,7 +13,7 @@ test('restart requires explicit original non-disputed evidence and recovers with
   const charge: Record<string, unknown> = { id: 'ch_original', livemode: false, customer: account.customerId, status: 'succeeded',
     paid: true, captured: true, currency: 'thb', amount: 999000, amount_refunded: 0, disputed: false };
   const before = JSON.stringify({ account, mapped });
-  const prisma = { client: { billingIssue: { count: async () => 0 }, billingInvoice: { findMany: async () => mapped } } };
+  const prisma = { client: { billingIssue: { count: async () => 0 }, billingInvoice: { count: async () => 0, findMany: async () => mapped } } };
   const stripe = { assertAccount: async () => {}, request: async (method: string, path: string) => {
     assert.equal(method, 'GET');
     if (path === '/subscriptions/sub_original') return subscription;

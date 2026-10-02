@@ -40,6 +40,8 @@ export async function checkBillingPlanChange(input: {
   const role=await client.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic upgrade owner'}});
   const permission=await client.permission.findUniqueOrThrow({where:{key:'account.session.read'}});
   await client.rolePermission.create({data:{roleId:role.id,permissionId:permission.id}});
+  const planPermission=await client.permission.findUniqueOrThrow({where:{key:'company.plan.manage'}});
+  await client.rolePermission.create({data:{roleId:role.id,permissionId:planPermission.id}});
   const member=await client.companyMembership.create({data:{companyId,userId:input.userId,roles:{create:{roleId:role.id}}}});
   const offer={...billingOffer('BASIC_499',input.cadence ? 'month' : 'year'),availability:'AVAILABLE' as const,reason:null};
   const initialPrice = input.cadence ? 'price_BasicMonth' : 'price_BasicYear', initialAmount = offer.priceSatang;

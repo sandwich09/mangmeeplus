@@ -216,6 +216,10 @@ export type BillingStatus = {
   applyState: 'NONE' | 'PENDING' | 'APPLIED' | 'HELD' | 'FAILED';
   purchaseEligibility?: 'ELIGIBLE' | 'COMPANY_SALES_CLOSED' | 'SOURCE_REVIEW_REQUIRED' | 'ENTITLEMENT_REVIEW_REQUIRED';
   purchaseSource?: BillingPurchaseSource;
+  /** A known local purchase blocker, using the same stable codes as quote/Checkout. Provider checks still run there. */
+  purchaseBlockCode?: string | null;
+  /** The plan-change gate also applies to active one-time upgrades/cadence changes; repeating the same package remains separate. */
+  packageChangesEnabled?: boolean;
   renewalMode?: BillingPurchaseMode | 'NONE';
   enabledPurchaseModes?: BillingPurchaseMode[];
   availablePurchaseModes?: BillingPurchaseMode[];

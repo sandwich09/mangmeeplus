@@ -39,6 +39,8 @@ export async function checkBillingUpgrade(input: {
   const role=await client.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic upgrade owner'}});
   const permission=await client.permission.findUniqueOrThrow({where:{key:'account.session.read'}});
   await client.rolePermission.create({data:{roleId:role.id,permissionId:permission.id}});
+  const planPermission=await client.permission.findUniqueOrThrow({where:{key:'company.plan.manage'}});
+  await client.rolePermission.create({data:{roleId:role.id,permissionId:planPermission.id}});
   const member=await client.companyMembership.create({data:{companyId,userId:input.userId,roles:{create:{roleId:role.id}}}});
   const offer={...billingOffer('STARTER_249','year'),availability:'AVAILABLE' as const,reason:null};
   const now=Math.floor(Date.now()/1000), start=now-180*86400,end=now+185*86400;

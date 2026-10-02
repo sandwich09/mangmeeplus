@@ -24,7 +24,8 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
   try{
     await db.company.create({data:{id:companyId,name:'ร้านทดสอบสิทธิ์แพ็กเกจ',addressJson:BILLING_TEST_ADDRESS}});
     const sessionPermission=await db.permission.findUniqueOrThrow({where:{key:'account.session.read'}});
-    const role=await db.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic plan owner',permissions:{create:{permissionId:sessionPermission.id}}}});ownerRoleId=role.id;
+    const planPermission=await db.permission.findUniqueOrThrow({where:{key:'company.plan.manage'}});
+    const role=await db.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic plan owner',permissions:{create:[{permissionId:sessionPermission.id},{permissionId:planPermission.id}]}}});ownerRoleId=role.id;
     const owner=await db.companyMembership.create({data:{companyId,userId:input.userIds[0]!,roles:{create:{roleId:role.id}}}});
     await input.recordLegal(input.userIds[0]!,owner.id,companyId);
     const account=await db.billingAccount.create({data:{companyId,stripeAccountId,livemode:false,paidThrough:end,nextChargeAt:end,baseSubscriptionId:`sub_PlanFixture${randomUUID()}`}});accountId=account.id;
@@ -49,7 +50,7 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
     cases.push('admin-paid-plan-legacy-partner-and-line-queue-use-reviewed-path-without-changing-purchased-term');
 
     assert.equal((await review()).canCreate,true);assert.equal((await review()).unchanged.remainingReceipts,50);
-    for(const extra of [{reason:''},{reason:'x'.repeat(501)},{branchLimit:0},{employeeLimit:1.5},{branchLimit:2147483648},{tierKey:'ENTERPRISE_1999'},{source:'STRIPE'},{expiresAt:'not-a-date'}])assert.equal((await preview(extra)).status,400);
+    for(const extra of [{reason:''},{reason:'x'.repeat(501)},{branchLimit:0},{employeeLimit:1.5},{branchLimit:2147483648},{tierKey:'FREE_TRIAL_15'},{source:'STRIPE'},{expiresAt:'not-a-date'}])assert.equal((await preview(extra)).status,400);
     assert.equal((await preview({expiresAt:new Date(end.getTime()+1).toISOString()})).status,409);
     const first=await preview();assert.equal(first.status,200,JSON.stringify(first));
     await db.authSession.updateMany({where:{userId:{in:input.userIds.slice(0,2)}},data:{billingReauthenticatedAt:null,billingCredentialVersion:null}});
@@ -71,7 +72,7 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
     await assertBranchLimit(prisma,companyId);await assertEmployeeLimit(prisma,companyId);
     const lower=await preview({tierKey:'STARTER_249',branchLimit:1,employeeLimit:1,reason:'ลดเพดานโดยเก็บรายการเดิม'});assert.equal(lower.status,200);
     const lowered=await approve(lower.body);assert.equal(lowered.referenceId,first.body.id);assert.equal(lowered.activeBranches,2);
-    await assert.rejects(assertBranchLimit(prisma,companyId),/สูงสุด 1 สาขา/);await assert.rejects(assertEmployeeLimit(prisma,companyId),/สูงสุด 1 คน/);
+    await assert.rejects(assertBranchLimit(prisma,companyId),(e:any)=>e.getResponse().code==='plan_branch_limit_exceeded');await assert.rejects(assertEmployeeLimit(prisma,companyId),(e:any)=>e.getStatus()===422&&/1 คน/.test(e.message));
     assert.equal(await db.branch.count({where:{companyId,status:'ACTIVE'}}),2);assert.equal(await db.companyMembership.count({where:{companyId,status:'ACTIVE'}}),1);
     const revoke=await preview({type:'REVOKE_OVERRIDE',tierKey:undefined,branchLimit:undefined,employeeLimit:undefined,expiresAt:undefined,overrideId:lower.body.id});assert.equal(revoke.status,200);
     await approve(revoke.body);assert.equal((await customer()).effectiveCapacity.tierKey,'BASIC_499');await assertEmployeeLimit(prisma,companyId);

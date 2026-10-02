@@ -29,7 +29,7 @@ import { BillingCollection } from './billing-collection';
 import { BillingPriceReturn } from './billing-price-return';
 import { BillingDealSubscriptionCancel, canConvertDealSubscription } from './billing-deal-subscription-cancel';
 import { collectionContract, pendingChange, type ScheduledChange } from './billing-schedule';
-import { restartFits, restartSource, type RestartSource } from './billing-restart';
+import { restartFits, restartSource, restartReviewPending, type RestartSource } from './billing-restart';
 import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { isUpgrade, upgradeHistory, upgradePreview, type UpgradeSource } from './billing-upgrade';
 import { capacityOptions, capacityValid, capacityImpact, capacityReview, parseCapacitySelection, purchasedCapacityOffer } from './billing-capacity';
@@ -44,7 +44,7 @@ import { billingState } from '../domain/billing-state';
 import { planTermLockReason } from '../../system-partner-management/domain/logic/plan-term.logic';
 import { BillingFreeDays } from './billing-free-days';
 import { detectBillingIssue } from './billing-issues';
-import { billingPurchaseSource, packageMenuPurchaseSource } from './billing-purchase-source';
+import { billingPurchaseSource, packageMenuPurchaseSource, oneTimeSourceReady } from './billing-purchase-source';
 import type { BillingPurchaseSource } from '@watchdog-bms/contracts';
 import { billingFeaturePlan, type BillingFeaturePlan } from './billing-feature-entitlements';
 import { planMenuImpact } from './billing-plan-menus';
@@ -72,7 +72,7 @@ export function snapshotProductKind(snapshot: Pick<BillingSnapshot, 'productKind
  *  paidAt, so without the PACKAGE filter it would pass for the newest package period. */
 export const latestPackageInvoice = (db: Prisma.TransactionClient, where: Prisma.BillingInvoiceWhereInput) =>
   db.billingInvoice.findFirst({ where: { ...where, productKind: 'PACKAGE' }, orderBy: [{ periodEnd: 'desc' }, { createdAt: 'desc' }] });
-const oneTimeMode = (mode: BillingPurchaseMode | undefined) => mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE';
+const oneTimeMode = (mode: BillingPurchaseMode | 'NONE' | undefined) => mode === 'CARD_ONCE' || mode === 'PROMPTPAY_ONCE';
 /**
  * D-P5-4 — is this pinned quote an AUTO-RENEWING deal? The quote refuses every other pairing, so
  * the purchase mode alone is proof: a deal on a renewing mode pinned the deal's own recurring
@@ -387,7 +387,8 @@ export class BillingService {
     // recipient changed since this quote is BILLING_QUOTE_STALE against the column, not Stripe.
     if (!deal) offer = purchasedCapacityOffer(offer, term, existing);
     if(existing)await assertNoPendingRefund(this.prisma.client,existing);
-    if (existing?.activeEmailOperationId) throw billingError('BILLING_EMAIL_UPDATE_PENDING', 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อน');
+    if (existing && (existing.activeEmailOperationId || await pendingAdminRecipientChange(this.prisma.client, existing)))
+      throw billingError('BILLING_EMAIL_UPDATE_PENDING', 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อน');
     if (existing?.activeCollectionOperationId) throw billingError('BILLING_COLLECTION_PENDING', 'กรุณาตรวจคำสั่งต่ออายุเดิมให้เสร็จก่อนซื้อเพิ่ม');
     await this.stripe.assertAccount();
     let subscriptionConversion: BillingSnapshot['subscriptionConversion'];
@@ -426,8 +427,7 @@ export class BillingService {
         providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null } }, orderBy: { createdAt: 'desc' } }) : null;
     const previousSnapshot = previous?.contractSnapshot as BillingSnapshot | null;
     const advanceDeal = advanceDealEligible ? (() => {
-      if (!previous || previous.refundedSatang || previous.disputed || !previousSnapshot || !existing?.billingAnchorDay ||
-          previous.periodEnd.getTime() !== existing.paidThrough!.getTime() || !existing.contractAttemptId ||
+      if (!previous || !previousSnapshot || !oneTimeSourceReady(existing, previous) || !existing.contractAttemptId ||
           existing.pendingPlanChangeId || existing.termProjectionHash !== termProjectionHash(term))
         throw billingError('BILLING_PACKAGE_STATE_INVALID', 'ข้อมูลแพ็กเกจเดิมต้องตรวจสอบ กรุณาติดต่อทีมงาน');
       return { invoiceId: previous.id, contractAttemptId: existing.contractAttemptId,
@@ -436,8 +436,7 @@ export class BillingService {
     })() : undefined;
     let upgrade: UpgradeSource | undefined, oneTimeChange: BillingSnapshot['oneTimeChange'];
     const oneTime = !convertingDeal && oneTimeMode(purchaseMode) && existing?.paidThrough && existing.paidThrough > new Date() ? (() => {
-      if (!previous || previous.refundedSatang || previous.disputed || !previousSnapshot || !existing.billingAnchorDay ||
-          previous.periodEnd.getTime() !== existing.paidThrough!.getTime())
+      if (!previous || !previousSnapshot || !oneTimeSourceReady(existing, previous))
         throw billingError('BILLING_PACKAGE_STATE_INVALID', 'ข้อมูลแพ็กเกจเดิมต้องตรวจสอบ กรุณาติดต่อทีมงาน');
       const currentOffer = previousSnapshot.quote.offer;
       // §19.3: a deal appends after the running one-time term whatever tier it was, at its own
@@ -536,6 +535,8 @@ export class BillingService {
       quote.upgrade = { prorationAt: upgrade.prorationAt, nextRenewalTotalSatang: quoteTotals(offer.priceSatang, state.policy.taxTreatment).totalSatang,
         segments: upgrade.segments.map(({start,end,amountSatang,receiptUnitsAdded})=>({start,end,amountSatang,receiptUnitsAdded})) };
     }
+    // Once this source ends, this is a RESTART with different menus/capacity and payment modes.
+    if (oneTime) quote.expiresAt = new Date(Math.min(Date.parse(quote.expiresAt), Date.parse(oneTime.paidThrough))).toISOString();
     const pending = existing && repeat ? await pendingChange(this.prisma.client, existing) : null;
     if (pending) {
       const options = await capacityOptions(this.prisma.client, company.id, pending.proposed.snapshot.quote.offer);
@@ -593,7 +594,8 @@ export class BillingService {
       if (await tx.billingAttempt.findUnique({ where: { quoteId: quote.id } })) throw billingError('BILLING_QUOTE_STALE', 'กรุณาตรวจสอบราคาและยืนยันรายการใหม่');
       const snapshot = quote.snapshotJson as unknown as BillingSnapshot;
       if(account)await assertNoPendingRefund(tx,account);
-      if (account?.activeEmailOperationId) throw billingError('BILLING_EMAIL_UPDATE_PENDING', 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อน');
+      if (account && (account.activeEmailOperationId || await pendingAdminRecipientChange(tx, account)))
+        throw billingError('BILLING_EMAIL_UPDATE_PENDING', 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อน');
       if (account?.activeCollectionOperationId) throw billingError('BILLING_COLLECTION_PENDING', 'กรุณาตรวจคำสั่งต่ออายุเดิมให้เสร็จก่อนซื้อเพิ่ม');
       if (snapshot.settingsVersion !== state.settings.version) throw billingError('BILLING_QUOTE_STALE', 'การตั้งค่าการขายเปลี่ยน กรุณาตรวจสอบรายการใหม่');
       paidVariant(snapshot.quote.offer.offerKey, snapshot.quote.offer.interval);
@@ -641,11 +643,10 @@ export class BillingService {
       if (snapshot.oneTime) {
         const source = await tx.billingInvoice.findFirst({ where: { id: snapshot.oneTime.invoiceId, billingAccountId: account?.id,
           providerStatus: 'paid', applyStatus: 'APPLIED', appliedAt: { not: null } } });
-        if (!account || !source || source.refundedSatang || source.disputed || account.baseSubscriptionId ||
+        if (!account || !oneTimeSourceReady(account, source) ||
             !account.paidThrough || account.paidThrough.toISOString() !== snapshot.oneTime.paidThrough ||
             account.billingAnchorDay !== snapshot.oneTime.anchorDay || account.termProjectionHash !== snapshot.termHash ||
-            source.periodEnd.getTime() !== account.paidThrough.getTime() ||
-            (snapshot.quote.purchase?.kind === 'FULL_PACKAGE_UPGRADE' && account.paidThrough <= new Date()))
+            account.paidThrough <= new Date())
           throw billingError('BILLING_QUOTE_STALE', 'สิทธิ์หรือรายการเดิมเปลี่ยน กรุณาตรวจสอบใหม่');
       }
       if (snapshot.oneTimeChange && (!state.gates.plan_changes || account?.pendingPlanChangeId ||
@@ -933,15 +934,31 @@ export class BillingService {
     // (it has its own lease/drain) — the same gate `current()` (billing-email-recipient.ts) already
     // respects for `stored.canChange`, reused here so this can never open while that one refuses.
     const recipientAdminPending = !!(account && await pendingAdminRecipientChange(this.prisma.client, account));
+    const expiredSubscription = !!account?.baseSubscriptionId && !!account.paidThrough && account.paidThrough <= new Date();
+    const restartBlocked = expiredSubscription && (!['canceled', 'incomplete_expired'].includes(account!.subscriptionState) ||
+      !!(account!.graceEndsAt && account!.graceEndsAt > new Date()) || await restartReviewPending(this.prisma.client, account!));
+    const purchaseBlockCode = !settings?.policy ? 'BILLING_NOT_READY' : !policyReady ? 'CONTROL_POLICY_NOT_READY'
+      : held ? 'BILLING_COMPANY_HELD' : !settings.gates.new_sales ? 'BILLING_SALES_CLOSED'
+      : !eligible ? 'BILLING_COMPANY_SALES_CLOSED' : !purchaseReady ? featureReady ? 'BILLING_SOURCE_REVIEW_REQUIRED' : 'BILLING_ENTITLEMENT_REVIEW_REQUIRED'
+      : account?.activeEmailOperationId || recipientAdminPending ? 'BILLING_EMAIL_UPDATE_PENDING'
+      : account?.activeAttemptId ? 'BILLING_CHECKOUT_PENDING' : account?.activeCollectionOperationId ? 'BILLING_COLLECTION_PENDING'
+      : account?.pendingPlanChangeId && (oneTimeMode(renewalMode) || !account.baseSubscriptionId || expiredSubscription) ? 'BILLING_PLAN_CHANGE_PENDING'
+      : refundReviewPending ? 'BILLING_REFUND_PENDING' : account?.collectionPauseJson ? 'BILLING_COLLECTION_REVIEW'
+      : restartBlocked ? 'BILLING_RESTART_REVIEW'
+      : account?.paidThrough && account.paidThrough > new Date() && oneTimeMode(renewalMode) && !oneTimeSourceReady(account, invoice) ? 'BILLING_PACKAGE_STATE_INVALID'
+      : account?.paidThrough && account.paidThrough > new Date() && renewalMode === 'PROMPTPAY_RENEW' ? 'BILLING_PLAN_CHANGE_REQUIRED'
+      : !availablePurchaseModes.length ? 'BILLING_MODE_NOT_READY'
+      : !allowedActions.includes('new_sales') ? 'BILLING_REPEAT_NOT_READY' : null;
     const issues = this.config.stripeAccountId ? await this.prisma.client.billingIssue.findMany({ where: { companyId: company.id, stripeAccountId: this.stripe.accountId,
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];
-    const finalActions = allowedActions.filter(action => (action !== 'new_sales' || availablePurchaseModes.length > 0) &&
+    const finalActions = allowedActions.filter(action => (action !== 'new_sales' || !purchaseBlockCode) &&
       (!account?.collectionPauseJson || !['new_sales','plan_changes','portal_cancel_subscription'].includes(action)) &&
       (!refundReviewPending || !['new_sales', 'plan_changes', ...(account?.cancelAtPeriodEnd ? ['portal_cancel_subscription'] : [])].includes(action)));
     const dealConversionReady = !!settings?.policy && policyReady && purchaseReady && !held && eligible && settings.gates.new_sales &&
       account?.baseSubscriptionId != null && account.renewalMode === 'CARD_AUTO' && account.subscriptionState === 'active' &&
       !!account.paidThrough && account.paidThrough > new Date() && !account.cancelAtPeriodEnd && !account.graceEndsAt &&
-      !account.activeAttemptId && !account.activeCollectionOperationId && !account.pendingPlanChangeId && !refundReviewPending;
+      !account.activeAttemptId && !account.activeCollectionOperationId && !account.pendingPlanChangeId && !refundReviewPending &&
+      !account.activeEmailOperationId && !recipientAdminPending && !account.collectionPauseJson;
     // R10/S39: the APPROVED, unexpired offer this shop may pay for, with the modes ITS card may
     // show. `purchaseModes` is empty exactly where the quote would refuse, so the card falls back
     // to "ติดต่อทีมงาน" instead of opening a Checkout that cannot succeed.
@@ -982,7 +999,7 @@ export class BillingService {
         state: advanceInvoice.applyStatus === 'HELD' || advanceOperation?.state === 'BLOCKED' ? 'HELD' :
           (advanceOperation?.resultJson as { subscriptionId?: string } | null)?.subscriptionId ? 'PAID' : 'PENDING_BINDING' } : null,
       renewalInvoiceUrl, renewalInvoiceDueAt,
-      purchaseSource,
+      purchaseSource, purchaseBlockCode, packageChangesEnabled: !!settings?.gates.plan_changes,
       purchaseEligibility: !eligible ? 'COMPANY_SALES_CLOSED' : purchaseSource === 'PAID_OTHER_MODE' || purchaseSource === 'SOURCE_INCONSISTENT'
         ? 'SOURCE_REVIEW_REQUIRED' : !featureReady ? 'ENTITLEMENT_REVIEW_REQUIRED' : 'ELIGIBLE', refundReviewPending,
       policyRevision: settings?.revision?.id ?? null, ...state, subscriptionState: account?.subscriptionState ?? 'NONE',

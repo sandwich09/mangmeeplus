@@ -10,6 +10,7 @@ import { CSRF_COOKIE, CSRF_ERROR_CODE, CSRF_HEADER } from '../auth/auth-cookies.
 import { legalAcceptancePath } from '../auth/session-gate.logic';
 import { emitApiErrorToast } from '../feedback/toast-bus';
 import { ApiError } from '../models/api-error.model';
+import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 
 const API_PREFIX = '/api/v1';
 const REFRESH_ENDPOINT = '/api/auth/refresh';
@@ -109,6 +110,9 @@ function redirectToCompanyRenewal(): void {
   const { pathname } = window.location;
   const companyId = /^\/companies\/([^/]+)/.exec(pathname)?.[1];
   if (!companyId || pathname.startsWith(`/companies/${companyId}/renew`)) return;
+  // Incidental workspace reads may expire while the owner is already on a recovery-safe page.
+  // Return the business denial, but keep the purchase/Checkout return/document route usable.
+  if (isBillingCustomerRecoveryPath(pathname, decodeURIComponent(companyId))) return;
   window.location.assign(`/companies/${companyId}/renew`);
 }
 
