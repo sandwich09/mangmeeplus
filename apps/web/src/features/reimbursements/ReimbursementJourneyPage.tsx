@@ -28,7 +28,7 @@ import {
   ClaimDetailSections, ClaimSummaryCard, MissingSavedSignatureModal, PaymentForm, ReasonDialog, RejectDialog,
   StaleApprovalDialog, StatusBadge, VoidPaymentDialog, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
-import { ClaimPayoutCard, PayoutAttestationCheck } from './ReimbursementPayout';
+import { BackToClaimsLink, ClaimPayoutCard, PayoutAttestationCheck } from './ReimbursementPayout';
 import { PAYOUT_ATTESTATION_REQUIRED, claimNeedsPayoutAttestation, claimPayoutSubmitBlock } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its forms and card, and the words of its buttons.
 import { PayoutCorrectionAccountForm, PayoutCorrectionComparison, PayoutCorrectionRequestForm } from './ReimbursementPayoutCorrection';
@@ -93,7 +93,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
   const hubHref = `/companies/${companyId}/reimbursements`;
-  const back = <Link href={hubHref}>← กลับไปการเบิกจ่าย</Link>;
+  const back = <BackToClaimsLink href={hubHref} />;
   const [detail, setDetail] = useState<any | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [reloadKey, setReloadKey] = useState(0);

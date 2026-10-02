@@ -567,13 +567,14 @@ const policyForm = { id: 'policy-1', updatedAt: '2026-10-01T03:00:00.000Z', stat
 const roleOption = (key: string, name: string, canRecordPayment: boolean, selectable = true) => ({ key, name, optionLabel: name, eligibleApproverCount: 1, coverage: 'COMPLETE',
   uncoveredBranchNames: [], selectable, canRecordPayment });
 /** The settings form with the policy and the role options already loaded: the form is the component's first state. */
-const policySettings = (loaded: object, options: object[]) => {
+const policySettingsHtml = (loaded: object, options: object[]) => {
   let formLoaded = false;
-  return visible(renderWithState(h(ToastContext.Provider, { value: toast }, h(PolicySettings, { companyId: 'company-1' })), (initial) => {
+  return renderWithState(h(ToastContext.Provider, { value: toast }, h(PolicySettings, { companyId: 'company-1' })), (initial) => {
     if (initial === null && !formLoaded) { formLoaded = true; return loaded; }
     return Array.isArray(initial) && initial.length === 0 ? options : initial === true ? false : undefined;
-  }));
+  });
 };
+const policySettings = (loaded: object, options: object[]) => visible(policySettingsHtml(loaded, options));
 
 describe('ตั้งค่านโยบาย warns about an approver role that cannot record payment (spec §13.3 F2)', () => {
   const policy = policyForm, option = roleOption, settings = policySettings;
@@ -647,6 +648,39 @@ describe('the hub\'s third tab is the pay queue where the company has no finance
     // company's switch, and reads the tab by the right they hold.
     assert.deepEqual(tabsOf(hubTab('finance', [])), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวการเงิน']);
     assert.ok(visible(hubTab('finance', [])).includes('ไม่มีรายการรอการเงิน'));
+  });
+});
+
+// Phone first: whatever a person presses is 44 px high at 390 px. The real look measured 18 px (the back link of every
+// claim page), 24 px (the header of a line on the claim form) and 38 px (an approver role on the policy tab).
+describe('what a person presses on a claim screen is 44 px high on a phone (owner 2026-10-02)', () => {
+  it('gives the back link its own 44 px box on a phone, without making the pill it sits in taller', () => {
+    const html = filledCreatePage();
+    // 44 px high with 13 px taken back above and below: the pill around it still measures the 18 px of its text.
+    assert.match(html, /<a class="-my-\[13px\] inline-flex min-h-11 items-center sm:my-0 sm:min-h-0" href="\/companies\/company-1\/reimbursements">← กลับไปการเบิกจ่าย<\/a>/);
+    // One link for the claim form, the claim page and the payout-account page.
+    for (const file of ['ReimbursementCreatePage.tsx', 'ReimbursementJourneyPage.tsx', 'ReimbursementPayoutAccountPage.tsx']) {
+      const source = readFileSync(join(__dirname, file), 'utf8');
+      assert.match(source, /<BackToClaimsLink href=\{hubHref\} \/>/, file);
+      assert.doesNotMatch(source, /<Link href=\{hubHref\}>←/, file);
+    }
+  });
+
+  it('gives the header of a line on the claim form, and the button that removes a line, a 44 px height', () => {
+    const html = filledCreatePage(); // two lines
+    const headers = [...html.matchAll(/<button type="button" class="([^"]*)" aria-expanded="(?:true|false)">/gu)].map((match) => match[1]!);
+    assert.equal(headers.length, 2);
+    for (const cls of headers) assert.match(cls, /\bmin-h-11\b/, cls);
+    const removers = [...html.matchAll(/<button type="button" aria-label="ลบรายการ" class="([^"]*)">/gu)].map((match) => match[1]!);
+    assert.equal(removers.length, 2);
+    for (const cls of removers) assert.match(cls, /\bh-11 w-11\b/, cls);
+  });
+
+  it('gives each approver role on the policy tab a 44 px height', () => {
+    const html = policySettingsHtml(policyForm, [roleOption('MANAGER', 'Manager', true), roleOption('CHECKER', 'ผู้ตรวจ', false)]);
+    const roles = [...html.matchAll(/<label class="([^"]*)"><span class="min-w-0">[^<]*<\/span><input type="checkbox"/gu)].map((match) => match[1]!);
+    assert.equal(roles.length, 2, html.slice(html.indexOf('ส่งใบเบิกให้ใครอนุมัติ'), html.indexOf('ส่งใบเบิกให้ใครอนุมัติ') + 900));
+    for (const cls of roles) assert.match(cls, /\bmin-h-11\b/, cls);
   });
 });
 

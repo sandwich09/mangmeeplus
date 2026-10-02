@@ -18,7 +18,7 @@ import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestFor
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
 import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
-import { ClaimPayoutFormSection } from './ReimbursementPayout';
+import { BackToClaimsLink, ClaimPayoutFormSection } from './ReimbursementPayout';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
 import { claimPayoutFormError, claimPayoutFormOf, claimPayoutInput, emptyClaimPayoutForm, type ClaimPayoutForm } from './reimbursement-payout.logic';
 
@@ -352,7 +352,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
 
   if (editing ? !canUpdate : !canCreate) {
     return (
-      <MangmeePage eyebrow={<Link href={hubHref}>← กลับไปการเบิกจ่าย</Link>} title={editing ? 'แก้ไขคำขอเบิก' : 'สร้างคำขอเบิก'}>
+      <MangmeePage eyebrow={<BackToClaimsLink href={hubHref} />} title={editing ? 'แก้ไขคำขอเบิก' : 'สร้างคำขอเบิก'}>
         <MangmeeCard className="p-6">
           <EmptyState
             title={editing ? 'ไม่มีสิทธิ์แก้ไขคำขอเบิก' : 'ไม่มีสิทธิ์สร้างคำขอเบิก'}
@@ -365,7 +365,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
 
   if (editing && !editLoaded) {
     return (
-      <MangmeePage eyebrow={<Link href={hubHref}>← กลับไปการเบิกจ่าย</Link>} title="แก้ไขคำขอเบิก">
+      <MangmeePage eyebrow={<BackToClaimsLink href={hubHref} />} title="แก้ไขคำขอเบิก">
         <MangmeeCard className="p-6"><ErrorBanner message={error ?? 'โหลดคำขอไม่สำเร็จ'} /></MangmeeCard>
       </MangmeePage>
     );
@@ -373,7 +373,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
 
   return (
     <MangmeePage
-      eyebrow={<Link href={hubHref}>← กลับไปการเบิกจ่าย</Link>}
+      eyebrow={<BackToClaimsLink href={hubHref} />}
       title={editing ? 'แก้ไขคำขอเบิก' : 'สร้างคำขอเบิก'}
       description={editing ? 'แก้ไขข้อมูลตามเหตุผลที่ส่งกลับ แล้วบันทึกร่างก่อนส่งอนุมัติใหม่' : 'กรอกเหตุผลและรายการที่ขอเบิก ระบบจะบันทึกเป็นฉบับร่างให้ตรวจก่อนส่งอนุมัติ'}
     >
@@ -447,14 +447,14 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
               {form.lines.map((l, i) => (
                 <div key={i} className="rounded-xl border border-gray-200 p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    <button type="button" className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-left"
                       aria-expanded={!collapsedLines[i]} onClick={() => setCollapsedLines(c => ({ ...c, [i]: !c[i] }))}>
                       <span className={cx('text-gray-400 transition-transform', !collapsedLines[i] && 'rotate-90')}>▶</span>
                       <span className="shrink-0 text-sm font-bold text-gray-700">รายการที่ {i + 1}</span>
                       {collapsedLines[i] && <span className="truncate text-xs text-gray-500">{lineSummary(l)}</span>}
                     </button>
                     {form.lines.length > 1 && (
-                      <button type="button" aria-label="ลบรายการ" className="shrink-0 text-error-700 hover:text-error-700"
+                      <button type="button" aria-label="ลบรายการ" className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-error-700 hover:text-error-700"
                         onClick={() => setForm(f => ({ ...f, lines: f.lines.filter((_x, j) => j !== i) }))}>{ICON.trash}</button>
                     )}
                   </div>

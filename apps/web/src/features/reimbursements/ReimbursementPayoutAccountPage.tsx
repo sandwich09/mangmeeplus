@@ -3,16 +3,15 @@
 // "บัญชีรับเงินคืนของฉัน": a member sets the account their claims are paid back into. Reached from
 // the reimbursement hub and the claim form; it needs no access to the employee pages.
 
-import Link from 'next/link';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { EmptyState } from '@/common/components/state';
-import { MemberPayoutAccountCard } from './ReimbursementPayout';
+import { BackToClaimsLink, MemberPayoutAccountCard } from './ReimbursementPayout';
 
 export function ReimbursementPayoutAccountPage({ companyId, canManage }: { companyId: string; canManage: boolean }) {
   const hubHref = `/companies/${companyId}/reimbursements`;
   return (
     <MangmeePage
-      eyebrow={<Link href={hubHref}>← กลับไปการเบิกจ่าย</Link>}
+      eyebrow={<BackToClaimsLink href={hubHref} />}
       title="บัญชีรับเงินคืนของฉัน"
       description="ตั้งครั้งเดียว ใบเบิกใหม่จะใช้บัญชีนี้เอง ใบที่ส่งไปแล้วใช้บัญชีที่บันทึกไว้กับใบนั้น ไม่เปลี่ยนตาม"
     >

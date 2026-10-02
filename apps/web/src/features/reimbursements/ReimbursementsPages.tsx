@@ -1023,7 +1023,7 @@ export function PolicySettings({ companyId, onPolicy }: {
               <p className="mb-2 text-xs text-gray-500">เลือกได้หลายบทบาท ทุกคนในบทบาทที่เลือกอนุมัติได้ ระบบใช้ผลจากคนแรกที่อนุมัติหรือปฏิเสธ</p>
               <div className="space-y-2">
                 {roleOptions.map((option) => (
-                  <label key={option.key} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-800 transition hover:border-brand-200">
+                  <label key={option.key} className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-800 transition hover:border-brand-200">
                     <span className="min-w-0">{approverRoleName(option)}{option.selectable ? '' : ' — ยังไม่พร้อมใช้งาน'}</span>
                     <input type="checkbox" className="h-4 w-4 shrink-0" checked={selectedRoles.includes(option.key)} onChange={() => toggleRole(option.key)} />
                   </label>

@@ -26,6 +26,14 @@ import {
   type ClaimPayoutForm, type PaymentFormConfirmation, type PayoutAccountForm,
 } from './reimbursement-payout.logic';
 
+/**
+ * "← กลับไปการเบิกจ่าย" in the eyebrow pill of a claim page. The pill is 28 px high. On a phone the link's own box is
+ * 44 px high and reaches past the pill above and below, so it is a full tap target and the pill stays as it is.
+ */
+export function BackToClaimsLink({ href }: { href: string }) {
+  return <Link href={href} className="-my-[13px] inline-flex min-h-11 items-center sm:my-0 sm:min-h-0">← กลับไปการเบิกจ่าย</Link>;
+}
+
 export const labelClass = 'mb-1.5 block text-xs font-semibold text-gray-600';
 export const choiceClass = 'flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-700';
 
