@@ -22,7 +22,7 @@ import {
 } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its own imports, apart from the blocks above.
 import {
-  PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionAnsweredText, payoutCorrectionSentBackText, payoutRoundAnswer,
+  PAYOUT_METHOD_TEXT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, payoutCorrectionAccountText, payoutCorrectionAnsweredText, payoutCorrectionSentBackText, payoutKindHeldAt, payoutRoundAnswer,
   payoutRoundTexts,
 } from './reimbursement-payout.logic';
 // The words of a round are the contracts' own, chosen there from what the claim holds and from what was answered.
@@ -998,11 +998,13 @@ function payoutCorrectionGivenText(event: any, payoutHistory: readonly any[] | n
  * that went with it), the answer by what it was and by who gave it ("ผู้เบิกยืนยันบัญชีเดิม", "{ชื่อ} แก้บัญชีรับเงินแทนผู้เบิก")
  * with what was given, and the approval by what it approved ("อนุมัติการรับเป็นเงินสดโดย …"). A requester who answers twice
  * (a slip of the finger put right at once) gets two rows that say different things; the time alone could not tell them
- * apart within one minute. Nothing for a kind of event this build has no words for.
+ * apart within one minute. Nothing for a kind of event this build has no words for. The reason of a send-back reads as
+ * it did when it was given: of the kind of account the claim held then (a PromptPay number is never called "เลขบัญชี").
  */
 function payoutCorrectionTimelineRows(event: any, index: number, payoutHistory?: readonly any[] | null): ClaimTimelineRow[] {
   const given = event?.kind === 'ACCOUNT_SUBMITTED' ? payoutCorrectionGivenText(event, payoutHistory) : '';
-  const label = event?.kind === 'SENT_BACK' ? `${payoutCorrectionSentBackText(event)}${event.note ? ` · ${event.note}` : ''}`
+  const label = event?.kind === 'SENT_BACK'
+    ? `${payoutCorrectionSentBackText({ ...event, payoutKind: payoutKindHeldAt(payoutHistory, event.at) })}${event.note ? ` · ${event.note}` : ''}`
     : event?.kind === 'ACCOUNT_SUBMITTED' ? `${payoutCorrectionAnsweredText(event.answer, event)}${given ? ` · ${given}` : ''}`
       : event?.kind === 'REAPPROVED' ? `อนุมัติ${reimbursementPayoutRoundApproves(event.answer)}${event.byName ? `โดย ${event.byName}` : ''}` : null;
   return label ? [{ key: `correction-${index}`, state: 'done', label, date: event.at }] : [];
@@ -1147,8 +1149,9 @@ function payoutCorrectionStepNote(
   const words = payoutRoundTexts(detail);
   if (round.phase === 'AWAITING_REQUESTER') {
     return [
-      // With its requester the claim holds what it held when it was sent back: the send-back is said by that.
-      payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: words.held }),
+      // With its requester the claim holds what it held when it was sent back: the send-back is said by that, and its
+      // reason in the words of that kind of account.
+      payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: words.held, payoutKind: detail?.payout?.payoutKind }),
       round.note && `หมายเหตุ: ${round.note}`,
       // The requester reads what they are asked to do and the button that does it; whoever may answer for them, that
       // they may. Everyone else reads what the claim waits for, in the words of its badge.
@@ -1433,7 +1436,9 @@ export function payoutCorrectionComparison(detail: any): PayoutCorrectionCompari
     current: payoutCorrectionAccountText(detail.payout),
     unchanged: `รายการและยอดเงิน ${formatMoney(detail.amount, detail.currency)} เท่ากับที่อนุมัติไว้${
       round.previouslyApprovedAt ? `เมื่อ ${formatThaiDateTime(round.previouslyApprovedAt)}` : ''} ${payoutRoundTexts(detail).given.cardChecks}`,
-    sentBack: payoutCorrectionSentBackText({ byName: round.requestedByName, reasonCode: round.reasonCode, held: sentBack?.held }),
+    sentBack: payoutCorrectionSentBackText({
+      byName: round.requestedByName, reasonCode: round.reasonCode, held: sentBack?.held, payoutKind: payoutKindHeldAt(detail.payoutHistory, sentBack?.at),
+    }),
     ...(round.note && { note: round.note }),
     ...(round.submittedAt && { submitted: `${payoutCorrectionAnsweredText(answer, detail.payoutCorrectionAnsweredBy)} เมื่อ ${formatThaiDateTime(round.submittedAt)}` }),
   };

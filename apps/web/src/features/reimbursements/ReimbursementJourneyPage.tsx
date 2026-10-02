@@ -530,7 +530,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           {/* Spec §14.6: what a round's approvers approve. What the claim was approved with beside what was answered. */}
           {step.key === 'approval' && <PayoutCorrectionComparison detail={detail} />}
           {needsAttestation && (
-            <PayoutAttestationCheck checked={attested} disabled={busyAction !== null}
+            <PayoutAttestationCheck checked={attested} disabled={busyAction !== null} payoutKind={detail.payout?.payoutKind}
               onChange={(checked) => setAttestedVersion(checked ? detail.payout?.version ?? null : null)} />
           )}
           {cardActions.length > 0 && (

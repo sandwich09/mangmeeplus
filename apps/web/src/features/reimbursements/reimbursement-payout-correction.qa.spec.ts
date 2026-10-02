@@ -16,6 +16,8 @@ import {
   payoutCorrectionInput, payoutCorrectionOffers, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
   claimCashNote, payoutCorrectionSentBackText, payoutRoundAnswer, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
+// The account a claim held at a send-back, for the words of its reason (its own import, apart from the block above).
+import { payoutKindHeldAt } from './reimbursement-payout.logic';
 
 /*
  * Payout spec §14 on the web (plan task 3.10, and the web side of 3.11 to 3.13): a claim that waits for payment
@@ -30,6 +32,7 @@ require.extensions['.svg'] = (module) => { module.exports = () => null; };
 // Modal portals into document.body, which a server render has none of: render a dialog in place.
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const correctionUi = require('./ReimbursementPayoutCorrection') as typeof import('./ReimbursementPayoutCorrection');
+const payoutUi = require('./ReimbursementPayout') as typeof import('./ReimbursementPayout');
 const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
 const logic = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const model = require('./reimbursements.model') as typeof import('./reimbursements.model');
@@ -139,9 +142,17 @@ describe('sending a claim back for its payout account: what the form asks and se
   it('lists the reasons the API takes for what the claim holds, in its own words and order, and prints no code for a reason it does not know', () => {
     const labels = (detail: Parameters<typeof payoutCorrectionReasons>[0]) => payoutCorrectionReasons(detail).map(([, label]) => label);
     assert.deepEqual(labels(ACCOUNT_CLAIM), ['เลขบัญชีไม่ถูกต้อง', 'ชื่อบัญชีไม่ตรงกับผู้เบิก', 'ธนาคารไม่ถูกต้อง', 'บัญชีปิดหรือโอนไม่ได้', 'ผู้เบิกขอเปลี่ยนบัญชี', 'อื่น ๆ']);
-    // A PromptPay number has no bank: the reason that names one is not offered for it (the API refuses it too).
-    assert.deepEqual(labels({ payoutMethod: 'BANK_TRANSFER', payout: { ...KBANK, payoutKind: 'PROMPTPAY_PHONE' } }),
-      ['เลขบัญชีไม่ถูกต้อง', 'ชื่อบัญชีไม่ตรงกับผู้เบิก', 'บัญชีปิดหรือโอนไม่ได้', 'ผู้เบิกขอเปลี่ยนบัญชี', 'อื่น ๆ']);
+    // A PromptPay number has no bank: the reason that names one is not offered for it (the API refuses it too). And it is
+    // a phone number, which the entry form calls "เบอร์พร้อมเพย์": its first reason says so, under the same code.
+    const PROMPTPAY_CLAIM = { payoutMethod: 'BANK_TRANSFER', payout: { ...KBANK, payoutKind: 'PROMPTPAY_PHONE' as const } };
+    assert.deepEqual(labels(PROMPTPAY_CLAIM), ['เบอร์พร้อมเพย์ไม่ถูกต้อง', 'ชื่อบัญชีไม่ตรงกับผู้เบิก', 'บัญชีปิดหรือโอนไม่ได้', 'ผู้เบิกขอเปลี่ยนบัญชี', 'อื่น ๆ']);
+    assert.deepEqual(payoutCorrectionReasons(PROMPTPAY_CLAIM).map(([code]) => code), reimbursementPayoutCorrectionReasons('ACCOUNT', 'PROMPTPAY_PHONE'));
+    assert.equal(payoutCorrectionReasons(PROMPTPAY_CLAIM)[0]![0], 'ACCOUNT_NUMBER_WRONG');
+    // The same reason in words, wherever it is printed afterwards: by the kind of the account it was said of.
+    assert.deepEqual([payoutCorrectionReasonText('ACCOUNT_NUMBER_WRONG', 'PROMPTPAY_PHONE'), payoutCorrectionReasonText('ACCOUNT_NUMBER_WRONG', 'BANK_ACCOUNT'), payoutCorrectionReasonText('ACCOUNT_NUMBER_WRONG')],
+      ['เบอร์พร้อมเพย์ไม่ถูกต้อง', 'เลขบัญชีไม่ถูกต้อง', 'เลขบัญชีไม่ถูกต้อง']);
+    for (const kind of ['A_KIND_ADDED_LATER', '', null, 7]) assert.equal(payoutCorrectionReasonText('ACCOUNT_NUMBER_WRONG', kind), 'เลขบัญชีไม่ถูกต้อง', String(kind));
+    assert.equal(payoutCorrectionReasonText('ACCOUNT_NAME_MISMATCH', 'PROMPTPAY_PHONE'), 'ชื่อบัญชีไม่ตรงกับผู้เบิก');
     // Cash has no account that could be wrong: its own two reasons, and "อื่น ๆ".
     assert.deepEqual(labels(CASH_CLAIM), ['จ่ายเป็นเงินสดไม่ได้', 'ผู้เบิกขอเปลี่ยนวิธีรับเงินคืน', 'อื่น ๆ']);
     // No account of its own: sent back for that one reason, and for no other ("อื่น ๆ" included).
@@ -187,6 +198,10 @@ describe('sending a claim back for its payout account: what the form asks and se
     assert.equal(payoutCorrectionSentBackText({ reasonCode: 'BANK_WRONG', held }), 'ส่งกลับให้แก้บัญชีรับเงิน : ธนาคารไม่ถูกต้อง');
     assert.equal(payoutCorrectionSentBackText({ byName: 'สมศรี ผู้จัดการ', reasonCode: 'A_REASON_ADDED_LATER', held }), 'ส่งกลับให้แก้บัญชีรับเงินโดย สมศรี ผู้จัดการ');
     assert.equal(payoutCorrectionSentBackText({ held }), 'ส่งกลับให้แก้บัญชีรับเงิน');
+    // The account sent back was a PromptPay number: the reason is said of a phone number, never of "เลขบัญชี".
+    assert.equal(payoutCorrectionSentBackText({ byName: 'วราภรณ์ การเงิน', reasonCode: 'ACCOUNT_NUMBER_WRONG', held, payoutKind: 'PROMPTPAY_PHONE' }),
+      'ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เบอร์พร้อมเพย์ไม่ถูกต้อง');
+    assert.equal(payoutCorrectionSentBackText({ reasonCode: 'ACCOUNT_NUMBER_WRONG', held, payoutKind: 'BANK_ACCOUNT' }), 'ส่งกลับให้แก้บัญชีรับเงิน : เลขบัญชีไม่ถูกต้อง');
   });
 
   // Before: the sentence said "แก้บัญชีรับเงิน" of every send-back but one, which it knew by its reason code. A claim that
@@ -530,8 +545,8 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
     }, grabForm('reimbursement-payout-correction-request'));
   };
 
-  /** Every reason there is, as a label: what a rendered form shows of them. */
-  const ALL_REASONS = Object.values(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS) as string[];
+  /** Every reason there is, as a label: what a rendered form shows of them. One reason reads differently of a PromptPay number. */
+  const ALL_REASONS = [...Object.values(REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS), 'เบอร์พร้อมเพย์ไม่ถูกต้อง'] as string[];
   const offered = (shown: string[]) => shown.filter((text) => ALL_REASONS.includes(text));
 
   it('lists the six reasons as choices of 44 px, takes a note of at most 500 characters, and is no dialog', () => {
@@ -591,14 +606,22 @@ describe('the send-back form (spec §14.3): inside the step card, a fixed reason
     assertPlainThai(texts, 'the send-back form of a cash claim');
   });
 
-  // Decision D7: a PromptPay number has no bank, so no reason names one.
-  it('does not offer "ธนาคารไม่ถูกต้อง" for a PromptPay number', () => {
+  // Decision D7: a PromptPay number has no bank, so no reason names one. And it is a phone number, which the entry form
+  // calls "เบอร์พร้อมเพย์": before, its first reason read "เลขบัญชีไม่ถูกต้อง".
+  it('does not offer "ธนาคารไม่ถูกต้อง" for a PromptPay number, calls its number "เบอร์พร้อมเพย์", and sends the same code', async () => {
     const promptPay = ready({ payout: { ...KBANK, payoutKind: 'PROMPTPAY_PHONE', bankName: undefined } });
     const { html, texts } = form(promptPay);
-    assert.deepEqual(offered(texts), ['เลขบัญชีไม่ถูกต้อง', 'ชื่อบัญชีไม่ตรงกับผู้เบิก', 'บัญชีปิดหรือโอนไม่ได้', 'ผู้เบิกขอเปลี่ยนบัญชี', 'อื่น ๆ']);
+    assert.deepEqual(offered(texts), ['เบอร์พร้อมเพย์ไม่ถูกต้อง', 'ชื่อบัญชีไม่ตรงกับผู้เบิก', 'บัญชีปิดหรือโอนไม่ได้', 'ผู้เบิกขอเปลี่ยนบัญชี', 'อื่น ๆ']);
     assert.equal(html.match(/<input type="radio"/g)?.length, 5);
     assert.equal(heading(html), 'ส่งกลับให้แก้บัญชีรับเงิน');
     assert.ok(offered(form(ready()).texts).includes('ธนาคารไม่ถูกต้อง'), 'a bank account still has it');
+    assert.equal(offered(form(ready()).texts)[0], 'เลขบัญชีไม่ถูกต้อง', 'and its number is still an account number');
+    // The reason chosen is the one the API knows: only its words differ.
+    const picked = form(promptPay, { reasonCode: 'ACCOUNT_NUMBER_WRONG' });
+    assert.match(picked.html, /<input type="radio"[^>]*checked=""[^>]*\/><span class="min-w-0">เบอร์พร้อมเพย์ไม่ถูกต้อง<\/span>/);
+    const calls = await withApi(() => ({ status: 200, body: asAnswered(phaseA()) }), () => picked.handlers.form.onSubmit(submitEvent));
+    assert.deepEqual(calls.map((call) => call.body), [{ reasonCode: 'ACCOUNT_NUMBER_WRONG' }]);
+    assertPlainThai(texts, 'the send-back form of a PromptPay claim');
   });
 
   it('says what will happen before the person confirms, signatures included, and from the round\'s step that the claim is not rejected', () => {
@@ -2214,6 +2237,117 @@ describe('the claim\'s journey tells a correction round (spec §17.2)', () => {
     assert.deepEqual(rows(resubmitted), ['done:ยื่นใบ', FIRST, 'current:กำลังรอ วราภรณ์ การเงิน บันทึกจ่าย']);
     // An action's answer carries the round and not its history: the journey still says whom the claim waits for.
     assert.deepEqual(rows(phaseB({ payoutCorrectionHistory: undefined })), ['done:ยื่นใบ', FIRST, 'current:กำลังรอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่', 'future:รอบันทึกจ่าย']);
+  });
+});
+
+// ---- A PromptPay destination is a phone number: nothing shown with one calls it "เลขบัญชี" ----
+//
+// The entry form calls it "เบอร์พร้อมเพย์" and the notices "พร้อมเพย์เบอร์ลงท้าย …". Before, the send-back reason of a PromptPay
+// claim read "เลขบัญชีไม่ถูกต้อง" in its form, its step note, its journey and its approvers' card, its approver was told to look
+// at "เลขบัญชี และธนาคาร", and a refused reveal spoke of "เลขบัญชีเต็ม".
+describe('a claim paid into a PromptPay number: its number is "เบอร์พร้อมเพย์" on every screen of a round', () => {
+  const PROMPTPAY = { payoutMethod: 'BANK_TRANSFER' as const, payoutKind: 'PROMPTPAY_PHONE' as const, accountName: 'นาย สมชาย ใจดี', accountLast4: '5678', version: 1 };
+  const promptPayVersion = { ...version1, payoutKind: 'PROMPTPAY_PHONE' as const, bankName: undefined, source: 'REQUESTER' };
+  /** The fixtures' round on a claim approved with a PromptPay number: sent back for its number, then answered with the SCB account. */
+  const held = { payout: { ...PROMPTPAY, source: 'REQUESTER', ...attested, verifiedAt: AT.approved }, payoutHistory: [promptPayVersion] };
+  const itsRound = { ...round, previous: PROMPTPAY };
+  const withRequester = (overrides: Record<string, unknown> = {}) => phaseA({ ...held, payoutCorrection: { phase: 'AWAITING_REQUESTER', ...itsRound }, ...overrides });
+  const answered = () => phaseB({ payoutHistory: [promptPayVersion, version2], payoutCorrection: { phase: 'AWAITING_APPROVAL', ...itsRound, submittedAt: AT.given, sameAsPrevious: false } });
+  const approvedAgain = () => reapproved({ payoutHistory: [promptPayVersion, { ...version2, ...attested, verifiedAt: AT.reapproved, approvalStepId: 'step-2' }] });
+  const SENT = 'ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เบอร์พร้อมเพย์ไม่ถูกต้อง';
+  const NOTE = 'ธนาคารแจ้งว่าไม่พบบัญชีนี้';
+  const journey = (detail: object) => logic.buildClaimTimeline(detail).map((row) => row.label);
+
+  it('says the reason of a phone number in the step note, in the journey and on the approvers\' card, while the round is open and after it', () => {
+    // With its requester: the claim holds the number that was sent back.
+    assert.equal(active(withRequester(), auditor).note, `${SENT} · หมายเหตุ: ${NOTE} · รอผู้เบิกแก้บัญชีรับเงิน`);
+    assert.equal(journey(withRequester())[2], `${SENT} · ${NOTE}`);
+    // An action's answer carries neither history: the step note still says it, from the account the claim holds.
+    assert.equal(active(withRequester({ payoutHistory: undefined, payoutCorrectionHistory: undefined }), auditor).note!.split(' · ')[0], SENT);
+    // Answered with a bank account: the claim holds that one now, and the send-back is still told of the number it was about.
+    assert.equal(journey(answered())[2], `${SENT} · ${NOTE}`);
+    assert.equal(logic.payoutCorrectionComparison(answered())!.sentBack, SENT);
+    // Approved again and back at its pay step: the row stays as it was said.
+    assert.equal(journey(approvedAgain())[2], `${SENT} · ${NOTE}`);
+    // On the page itself at each of the three points: the reason of that number is nowhere said of "เลขบัญชี".
+    for (const [name, detail] of [['with its requester', withRequester()], ['answered', answered()], ['approved again', approvedAgain()]] as const) {
+      const { texts } = claimPage(detail, auditor);
+      assert.ok(texts.some((text) => text.includes('เบอร์พร้อมเพย์ไม่ถูกต้อง')), name);
+      assert.equal(texts.some((text) => text.includes('เลขบัญชีไม่ถูกต้อง')), false, name);
+      assertPlainThai(texts.filter((text) => text.includes('ไม่ถูกต้อง')), `the send-back of a PromptPay claim, ${name}`);
+    }
+    // The hub's pay dialog says the same of a claim that is with its requester.
+    assert.equal(logic.quickPayBlockedNote(withRequester(), EVERYTHING, 'finance')!.split(' · ')[1], SENT);
+  });
+
+  it('says each send-back by the account the claim held then: a bank account first, the PromptPay number given for it next', () => {
+    const promptPayAnswer = { ...promptPayVersion, version: 2, frozenAt: AT.given, verifiedByUserId: undefined, verifiedByName: undefined, verifiedAt: undefined, approvalStepId: undefined };
+    const again = { kind: 'SENT_BACK', at: '2026-10-01T05:30:00.000Z', byUserId: 'boss', byName: NAMES.approver, reasonCode: 'ACCOUNT_NUMBER_WRONG', held: 'ACCOUNT' };
+    const againRound = { ...round, requestedAt: again.at, requestedByUserId: 'boss', requestedByName: NAMES.approver, note: undefined };
+    const refused = phaseA({ payout: { ...PROMPTPAY, version: 2, source: 'REQUESTER' }, payoutHistory: [version1, promptPayAnswer],
+      payoutCorrection: { phase: 'AWAITING_REQUESTER', ...againRound }, payoutCorrectionHistory: [SENT_BACK, GIVEN, again] });
+    const AGAIN = 'ส่งกลับให้แก้บัญชีรับเงินโดย สมศรี ผู้จัดการ : เบอร์พร้อมเพย์ไม่ถูกต้อง';
+    assert.deepEqual([journey(refused)[2], journey(refused)[4]], [`ส่งกลับให้แก้บัญชีรับเงินโดย วราภรณ์ การเงิน : เลขบัญชีไม่ถูกต้อง · ${NOTE}`, AGAIN]);
+    assert.equal(active(refused, auditor).note, `${AGAIN} · รอผู้เบิกแก้บัญชีรับเงิน`);
+    // Answered once more, with a bank account: the approvers' card tells the send-back it answers, the one of the PromptPay number.
+    const answeredAgain = phaseB({ payout: { ...SCB, version: 3, source: 'REQUESTER' }, payoutHistory: [version1, promptPayAnswer, { ...version2, version: 3, frozenAt: AT.reapproved }],
+      payoutCorrection: { phase: 'AWAITING_APPROVAL', ...againRound, submittedAt: AT.reapproved, sameAsPrevious: false },
+      payoutCorrectionHistory: [SENT_BACK, GIVEN, again, { ...GIVEN, at: AT.reapproved, payoutVersion: 3 }] });
+    assert.equal(logic.payoutCorrectionComparison(answeredAgain)!.sentBack, AGAIN);
+    assert.equal(journey(answeredAgain)[4], AGAIN);
+  });
+
+  // The server says THAT a claim held an account at a send-back (`held`). Which account it was is in the claim's own account
+  // history: a claim's account is always the last one it was sent with or given, and an answer is frozen when it is taken.
+  it('finds the account a claim held at a send-back in its account history: the last one it had been sent with or given by then', () => {
+    const history = [version1, { ...promptPayVersion, version: 2, frozenAt: AT.given }];
+    assert.deepEqual([AT.sentBack, AT.given, '2026-10-01T05:30:00.000Z', AT.reapproved].map((at) => payoutKindHeldAt(history, at)),
+      ['BANK_ACCOUNT', 'PROMPTPAY_PHONE', 'PROMPTPAY_PHONE', 'PROMPTPAY_PHONE']);
+    // Before the claim had any account, with no history on the detail, or with no moment to ask about: no kind, and the
+    // reason then reads in the list's own words.
+    assert.equal(payoutKindHeldAt(history, '2026-10-01T01:00:00.000Z'), undefined);
+    for (const none of [undefined, null, []]) assert.equal(payoutKindHeldAt(none, AT.sentBack), undefined);
+    for (const at of [undefined, null, '', 'not a date']) assert.equal(payoutKindHeldAt(history, at), undefined, String(at));
+    assert.equal(payoutCorrectionSentBackText({ reasonCode: 'ACCOUNT_NUMBER_WRONG', held: 'ACCOUNT', payoutKind: payoutKindHeldAt([], AT.sentBack) }), 'ส่งกลับให้แก้บัญชีรับเงิน : เลขบัญชีไม่ถูกต้อง');
+  });
+
+  it('tells the approver of a PromptPay number to look at its name and its number, on a page whose button shows a phone number', () => {
+    const BANK = 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ';
+    const PHONE = 'ดูชื่อบัญชีและเบอร์พร้อมเพย์ในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ';
+    const waiting = (payout: object, payoutHistory: object[]) => claimPage(phaseB({ payout, payoutHistory, approvalActions: DECIDE, payoutCorrectionActions: SEND }), approver).texts;
+    const promptPay = waiting({ ...PROMPTPAY, version: 2, source: 'REQUESTER', canRevealAccountNumber: true }, [version1, { ...promptPayVersion, version: 2, frozenAt: AT.given }]);
+    assert.deepEqual([promptPay.includes(PHONE), promptPay.includes(BANK)], [true, false]);
+    assert.deepEqual([promptPay.includes('แสดงเบอร์พร้อมเพย์'), promptPay.includes('แสดงเลขบัญชี')], [true, false]);
+    // A bank account reads as it did.
+    const bank = waiting({ ...SCB, source: 'REQUESTER', canRevealAccountNumber: true }, [version1, version2]);
+    assert.deepEqual([bank.includes(BANK), bank.includes(PHONE), bank.includes('แสดงเลขบัญชี'), bank.includes('แสดงเบอร์พร้อมเพย์')], [true, false, true, false]);
+  });
+
+  // The API's refusal of a reveal has one sentence for its code, and that sentence names "เลขบัญชี".
+  it('refuses a reveal, and says a number was copied, in the words of the number it is: a phone number or an account number', async () => {
+    const promptPayClaim = ready({ payout: { ...held.payout, canRevealAccountNumber: true }, payoutHistory: held.payoutHistory });
+    const bankClaim = ready({ payout: { ...ready().payout, canRevealAccountNumber: true } });
+    /** The card with the press of one of its buttons, found by the first word on it; `revealed`: the number it already shows. */
+    const press = async (detail: Record<string, any>, word: string, revealed?: object) => {
+      let nulls = 0;
+      const card = render(h(payoutUi.ClaimPayoutCard, { companyId: 'company-1', detail, userId: 'boss', payoutAccountHref: '/payout-account' }),
+        (start) => (start === null && ++nulls === 1 ? revealed : undefined),
+        (type, _props, children) => (type === 'button' && String(children[0]).startsWith(word) ? 'button' : undefined));
+      await withApi(() => ({ status: 403, body: { statusCode: 403, message: 'payout_reveal_denied' } }), () => card.handlers.button.onClick());
+      return card.changes.map((change) => change.value).filter((value): value is string => typeof value === 'string');
+    };
+    assert.deepEqual(await press(promptPayClaim, 'แสดง'), ['คุณไม่มีสิทธิ์ดูเบอร์พร้อมเพย์เต็มของใบนี้']);
+    assert.deepEqual(await press(bankClaim, 'แสดง'), ['คุณไม่มีสิทธิ์ดูเลขบัญชีเต็มของใบนี้']);
+    assert.equal(translateApiError('payout_reveal_denied'), 'คุณไม่มีสิทธิ์ดูเลขบัญชีเต็มของใบนี้', 'the sentence of the code stays the bank account\'s');
+    // Copied: said of what was copied.
+    const copied: string[] = [];
+    Object.defineProperty(globalThis.navigator, 'clipboard', { value: { writeText: async (text: string) => { copied.push(text); } }, configurable: true });
+    try {
+      toasts.length = 0;
+      await press(promptPayClaim, 'คัดลอก', { revealKey: 'claim-1:1', accountNumber: '0812345678' });
+      await press(bankClaim, 'คัดลอก', { revealKey: 'claim-1:1', accountNumber: '0045675678' });
+    } finally { Reflect.deleteProperty(globalThis.navigator, 'clipboard'); }
+    assert.deepEqual([copied, toasts.splice(0)], [['0812345678', '0045675678'], ['คัดลอกเบอร์พร้อมเพย์แล้ว', 'คัดลอกเลขบัญชีแล้ว']]);
   });
 });
 

@@ -21,9 +21,9 @@ import {
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 // The correction round of payout spec §14 (its own imports, apart from the blocks above).
 import {
-  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionReasons,
-  REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
-  type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason,
+  isReimbursementPayoutCorrectionReason, looksLikeAccountNumber, reimbursementPayoutCorrectionReasonLabel, reimbursementPayoutCorrectionReasons,
+  REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH,
+  type ReimbursementPayoutCorrectionAccount, type ReimbursementPayoutCorrectionReason, type ReimbursementPayoutKind,
   type RequestReimbursementPayoutCorrectionInput, type SubmitReimbursementPayoutCorrectionInput,
 } from '@watchdog-bms/contracts';
 // The words of a round (payout spec §14.2): the contracts' own, chosen there from what the claim holds and from what was answered.
@@ -169,6 +169,32 @@ export function setByOtherLine(account: Pick<MemberPayoutAccountSummary, 'setByO
  */
 export function shownAccountNumber(revealed: { revealKey: string; accountNumber: string } | null, revealKey: string, canReveal: boolean): string | null {
   return canReveal && revealed?.revealKey === revealKey ? revealed.accountNumber : null;
+}
+
+/**
+ * What the screens call the full number of an account, by its kind. A bank account has an account number; a PromptPay
+ * destination is a phone number, which the entry form calls "เบอร์พร้อมเพย์" and nothing calls "เลขบัญชี". Whole labels, never
+ * put together from a noun: the guide quotes them as they read. `check`: what an approver is told to look at before the
+ * tick. `denied`: the API's refusal of a reveal, where the sentence of its code (`payout_reveal_denied`) names an account number.
+ */
+type PayoutNumberWords = Record<'show' | 'full' | 'copy' | 'copied' | 'hide' | 'check', string> & { denied?: string };
+const PAYOUT_NUMBER_WORDS: Record<'BANK_ACCOUNT' | 'PROMPTPAY_PHONE', PayoutNumberWords> = {
+  BANK_ACCOUNT: {
+    show: 'แสดงเลขบัญชี', full: 'เลขบัญชีเต็ม', copy: 'คัดลอกเลขบัญชี', copied: 'คัดลอกเลขบัญชีแล้ว', hide: 'ซ่อนเลขบัญชี',
+    check: 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ',
+  },
+  PROMPTPAY_PHONE: {
+    show: 'แสดงเบอร์พร้อมเพย์', full: 'เบอร์พร้อมเพย์เต็ม', copy: 'คัดลอกเบอร์พร้อมเพย์', copied: 'คัดลอกเบอร์พร้อมเพย์แล้ว', hide: 'ซ่อนเบอร์พร้อมเพย์',
+    check: 'ดูชื่อบัญชีและเบอร์พร้อมเพย์ในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ',
+    denied: 'คุณไม่มีสิทธิ์ดูเบอร์พร้อมเพย์เต็มของใบนี้',
+  },
+};
+export function payoutNumberWords(payoutKind?: string | null): PayoutNumberWords {
+  return PAYOUT_NUMBER_WORDS[payoutKind === 'PROMPTPAY_PHONE' ? 'PROMPTPAY_PHONE' : 'BANK_ACCOUNT'];
+}
+/** The API refused to reveal a number: the viewer's right to it went after the page was read. */
+export function isPayoutRevealDenied(e: unknown): boolean {
+  return refusalIs(e, 'payout_reveal_denied');
 }
 
 /**
@@ -564,13 +590,32 @@ export const PAYOUT_CORRECTION_SUPERSEDED: Record<'send-back' | 'correct-payout'
 export function payoutCorrectionReasons(
   detail: { payoutMethod?: string | null; payout?: Pick<ReimbursementPayoutSummary, 'payoutMethod' | 'payoutKind'> | null } | null | undefined,
 ): ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]> {
+  // Each in the words of the account the claim holds: a PromptPay number is never called "เลขบัญชี". The code sent is the same.
   return reimbursementPayoutCorrectionReasons(reimbursementPayoutHeld(detail), detail?.payout?.payoutKind)
-    .map((code) => [code, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[code]]);
+    .map((code) => [code, reimbursementPayoutCorrectionReasonLabel(code, detail?.payout?.payoutKind)]);
 }
 
-/** A reason in words. Empty for a reason this build has no words for: a code is never printed. */
-export function payoutCorrectionReasonText(reasonCode: unknown): string {
-  return isReimbursementPayoutCorrectionReason(reasonCode) ? REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS[reasonCode] : '';
+/**
+ * A reason in words, as the form offered it: by the kind of the account it was said of (`payoutKind`), where the reader
+ * knows it. Empty for a reason this build has no words for: a code is never printed.
+ */
+export function payoutCorrectionReasonText(reasonCode: unknown, payoutKind?: unknown): string {
+  return isReimbursementPayoutCorrectionReason(reasonCode)
+    ? reimbursementPayoutCorrectionReasonLabel(reasonCode, payoutKind === 'PROMPTPAY_PHONE' ? payoutKind : undefined) : '';
+}
+
+/**
+ * The kind of the account a claim held at a send-back, for the words of its reason. The server says THAT the claim held
+ * an account then (`held` on the event); which one it was is found here, in the claim's own account history: the last
+ * account it had been sent with, or given in a round, by that moment. A claim's account is always the latest one frozen
+ * for it, and a round's answer is frozen when it is taken, before any later send-back. Undefined where the detail carries
+ * no such row (an action's answer has no history): the reason then reads in the list's own words.
+ */
+export function payoutKindHeldAt(
+  payoutHistory: readonly Pick<ReimbursementPayoutVersionSummary, 'payoutKind' | 'frozenAt'>[] | null | undefined, at: unknown,
+): ReimbursementPayoutKind | undefined {
+  const moment = Date.parse(String(at));
+  return [...(payoutHistory ?? [])].reverse().find((row) => Date.parse(row.frozenAt) <= moment)?.payoutKind;
 }
 
 /**
@@ -578,10 +623,11 @@ export function payoutCorrectionReasonText(reasonCode: unknown): string {
  * waits for its requester, for the timeline row and for the card its approvers read, so they cannot tell it differently.
  * How it is said follows `held`, what the claim held at that send-back: an account to correct, none yet to add, or cash
  * to choose again. Never the reason code, which says why and not what the claim held. A send-back with no record of what
- * was held (an event from an older server) is told in words true of every claim sent back.
+ * was held (an event from an older server) is told in words true of every claim sent back. The reason is worded for the
+ * kind of the account that was held (`payoutKind`): a PromptPay number is never called "เลขบัญชี".
  */
-export function payoutCorrectionSentBackText(sentBack: { byName?: string | null; reasonCode?: unknown; held?: unknown } | null | undefined): string {
-  const reason = payoutCorrectionReasonText(sentBack?.reasonCode);
+export function payoutCorrectionSentBackText(sentBack: { byName?: string | null; reasonCode?: unknown; held?: unknown; payoutKind?: unknown } | null | undefined): string {
+  const reason = payoutCorrectionReasonText(sentBack?.reasonCode, sentBack?.payoutKind);
   const held = sentBack?.held;
   const action = typeof held === 'string' && Object.hasOwn(REIMBURSEMENT_PAYOUT_ROUND_TEXTS.held, held)
     ? reimbursementPayoutRoundSendBack(held as ReimbursementPayoutHeld) : 'ส่งกลับให้ผู้เบิกเลือกวิธีรับเงินคืน';

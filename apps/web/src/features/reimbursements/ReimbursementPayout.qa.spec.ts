@@ -376,7 +376,19 @@ describe('the full number: offered only when the server allows it, never in the 
     assert.match(screen, /revealKey=\{`\$\{detail\.id\}:\$\{payout\.version \?\? ''\}`\}/);
     assert.match(screen, /revealKey=\{`\$\{companyId\}:\$\{account\.userId\}:\$\{account\.updatedAt\}`\}/);
     // The hide control hangs on the number alone, never on the right to reveal.
-    assert.match(screen, /\{shown \? \(\s+<div[^>]*>\s+<button[^\n]*>คัดลอกเลขบัญชี<\/button>\s+<button[^\n]*onClick=\{\(\) => setRevealed\(null\)\}>ซ่อนเลขบัญชี<\/button>\s+<\/div>\s+\) : canReveal && \(/);
+    assert.match(screen, /\{shown \? \(\s+<div[^>]*>\s+<button[^\n]*>\{words\.copy\}<\/button>\s+<button[^\n]*onClick=\{\(\) => setRevealed\(null\)\}>\{words\.hide\}<\/button>\s+<\/div>\s+\) : canReveal && \(/);
+    // What those two buttons, the one that shows the number and the label over it are called follows the kind of account:
+    // a PromptPay destination is a phone number, which the entry form calls "เบอร์พร้อมเพย์" and nothing calls "เลขบัญชี".
+    assert.deepEqual([logic.payoutNumberWords('BANK_ACCOUNT'), logic.payoutNumberWords(undefined), logic.payoutNumberWords('A_KIND_ADDED_LATER')].map((words) => [words.show, words.full, words.copy, words.copied, words.hide]),
+      Array(3).fill(['แสดงเลขบัญชี', 'เลขบัญชีเต็ม', 'คัดลอกเลขบัญชี', 'คัดลอกเลขบัญชีแล้ว', 'ซ่อนเลขบัญชี']));
+    const promptPay = logic.payoutNumberWords('PROMPTPAY_PHONE');
+    assert.deepEqual([promptPay.show, promptPay.full, promptPay.copy, promptPay.copied, promptPay.hide],
+      ['แสดงเบอร์พร้อมเพย์', 'เบอร์พร้อมเพย์เต็ม', 'คัดลอกเบอร์พร้อมเพย์', 'คัดลอกเบอร์พร้อมเพย์แล้ว', 'ซ่อนเบอร์พร้อมเพย์']);
+    for (const text of Object.values(promptPay)) assert.doesNotMatch(text, /เลขบัญชี|ธนาคาร/, text);
+    // Each of the three cards that show a number says which kind it is.
+    assert.match(screen, /<AccountNumberReveal masked=\{payoutAccountLine\(account\)\} payoutKind=\{account\.payoutKind\}/);
+    assert.match(screen, /<AccountNumberReveal masked=\{maskedPayoutAccount\(legacyDefault\)\} payoutKind=\{legacyDefault\.payoutKind\}/);
+    assert.match(screen, /<AccountNumberReveal masked=\{view\.line\} payoutKind=\{payout\.payoutKind\}/);
     assert.equal(screen.match(/setRevealed\(/g)?.length, 3, 'reveal, hide and the reset: nothing else holds a number');
   });
 
@@ -474,6 +486,11 @@ describe('the approver attests the account version shown before approving a tran
     assert.deepEqual(visible(html), ['ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก', 'ดูชื่อบัญชี เลขบัญชี และธนาคารในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ']);
     assert.match(html, /<label class="flex min-h-11 [^"]*"><input type="checkbox" class="[^"]*h-5 w-5[^"]*"/);
     assert.doesNotMatch(html, /checked=""/);
+    // A PromptPay destination has a phone number and no bank: its approver is told to look at what the card shows of it.
+    assert.deepEqual(visible(render(h(ui.PayoutAttestationCheck, { checked: false, onChange: noop, payoutKind: 'PROMPTPAY_PHONE' }))),
+      ['ฉันตรวจแล้วว่าบัญชีนี้เป็นบัญชีรับเงินของผู้เบิก', 'ดูชื่อบัญชีและเบอร์พร้อมเพย์ในการ์ดการรับเงินคืนด้านบน ระบบบันทึกชื่อคุณและเวลาที่ตรวจ']);
+    assert.deepEqual(visible(render(h(ui.PayoutAttestationCheck, { checked: false, onChange: noop, payoutKind: 'BANK_ACCOUNT' }))), visible(html));
+    assert.match(read('./ReimbursementJourneyPage.tsx'), /<PayoutAttestationCheck checked=\{attested\} disabled=\{busyAction !== null\} payoutKind=\{detail\.payout\?\.payoutKind\}/);
   });
 
   it('binds the tick to one version, blocks approve until then, and sends that version', () => {
@@ -672,6 +689,8 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
         { version: 2, ...KBANK, source: 'DEFAULT_ACCOUNT', frozenAt: '2026-10-02T02:00:00.000Z' },
       ],
     }))],
+    ['claim card: PromptPay, may reveal', card(claim({ payout: { payoutMethod: 'BANK_TRANSFER', payoutKind: 'PROMPTPAY_PHONE', accountName: 'นาย สมชาย ใจดี', accountLast4: '5678', version: 2, canRevealAccountNumber: true } }))],
+    ['attestation: PromptPay', render(h(ui.PayoutAttestationCheck, { checked: true, onChange: noop, payoutKind: 'PROMPTPAY_PHONE' }))],
   ];
   // Texts that never pass through a render here: validation, the submit block and the server's refusals.
   const messages = [
@@ -681,6 +700,8 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
     logic.claimPayoutSubmitBlock({ status: 'DRAFT', payout: { followsDefault: true, notReadyReason: 'payout_method_required' } })!,
     ...['payout_method_required', 'payout_destination_required', 'payout_destination_invalid', 'payout_verification_required', 'payout_destination_changed',
       'payout_reveal_denied', 'payout_account_not_set', 'payout_account_edit_denied', 'payout_member_not_found', 'payout_account_member_not_active'].map((code) => translateApiError(code) ?? code),
+    // What a number is called by its kind, the words a render with nothing revealed never reaches included.
+    ...['BANK_ACCOUNT', 'PROMPTPAY_PHONE'].flatMap((kind) => Object.values(logic.payoutNumberWords(kind))),
   ];
 
   it('carries no machine token in any state, including a method the API may add later', () => {
