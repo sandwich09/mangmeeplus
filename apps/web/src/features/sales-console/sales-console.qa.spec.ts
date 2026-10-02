@@ -162,6 +162,20 @@ describe('sales console theme and copy', () => {
     assert.doesNotMatch(source('SalesReportsPage.tsx'), /(?:href|<Link)[^\n]*(?:billing|invoice|receipt|document)/i);
   });
 
+  it('the report prints each deduction as its own line through the reviewed Thai wording (§17.1)', () => {
+    const text = source('SalesReportsPage.tsx');
+    // Every month card lists its own deductions, and every word of a line comes from the logic
+    // module — the page itself never prints a kind, an id or a currency code.
+    assert.match(text, /month\.deductions\.map\(\(deduction, index\) =>/);
+    assert.match(text, /salesDeductionLine\(deduction,/);
+    assert.doesNotMatch(text, /deduction\.(?:kind|salesUserId)\}|THB/);
+    // Stacked, with the amount held to its own width: the line fits a 390 px phone.
+    assert.match(text, /<li key=\{`\$\{deduction\.occurredAt\}:\$\{index\}`\} className="flex items-start justify-between gap-3">\s*<div className="min-w-0">/);
+    assert.match(text, /<p className="shrink-0 text-sm font-bold text-error-700">\{line\.amount\}<\/p>/);
+    // A month that went below zero is marked, not painted as a sale.
+    assert.match(text, /tone=\{month\.totals\.amountSatang < 0 \? 'danger' : 'brand'\}/);
+  });
+
   it('a flagged attribution is only cleared or kept with a reason the Owner typed (D6)', () => {
     const text = source('SalesTeamPage.tsx');
     assert.match(text, /disabled=\{busy \|\| !flagReason\.trim\(\)\}/);
