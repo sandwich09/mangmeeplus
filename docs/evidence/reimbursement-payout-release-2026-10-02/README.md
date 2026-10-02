@@ -8,7 +8,9 @@ Two read-only SQL scripts for one short `psql -f` session each.
 | `post-release-checks.sql` | upgraded schema (new build; rules read at `19fe51537`, unchanged in the merged head) | after the release tasks finished |
 | `compare-before-after.sh` | the two output files (no database) | after the second run |
 
-Nothing here was ever run against production. Both scripts were proven on local copies only (see "How they were proven").
+Both scripts were proven on local copies (see "How they were proven"). `pre-release-checks.sql` has since run once on production, on 2026-10-02 at 14:03 Bangkok time, with the owner's permission: read-only, 314 lines, no error, script time 3.9 s; what it found is in `docs/agent-memory/reimbursement-payout-release-readiness.md`. `post-release-checks.sql` has not run on production.
+
+On that day the read-only support role (`watchdog_support_ro` with an IAM token) refused the identity available on the workstation, so the script ran through an SSM port-forward with the application's own connection string, under `default_transaction_read_only=on` and the script's own READ ONLY transaction. Every such session mails the owner a security alert: announce it first, keep it to seconds, terminate it, and check that no session is left active.
 
 ## Command lines
 
