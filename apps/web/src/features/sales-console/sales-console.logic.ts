@@ -41,6 +41,7 @@ import {
   type SalesReportDeduction,
   type SalesReportMonth,
   type SalesReportRow,
+  type SalesReportWaiting,
   type SalesRoleKey,
   type MenuEntitlementBinding,
 } from '@watchdog-bms/contracts';
@@ -674,6 +675,37 @@ export const SALES_ATTRIBUTION_SOURCE_LABELS: Record<SalesAttributionSource, str
   REFERRAL: 'แนะนำร้าน',
 };
 
+// ── shops waiting for review (§17.1, owner 2026-10-02 — no opened shop and no amount until reviewed) ──
+
+/**
+ * The words for a flagged shop the Owner has not reviewed yet. The report and the Owner's queue
+ * both print these, so one shop is never called two things on two screens.
+ */
+export const SALES_WAITING = 'รอตรวจ';
+export const SALES_WAITING_NOTE = 'ยังไม่นับในยอด';
+
+/** Said under the report while any shop waits: what waiting means, and the month the shop will count in. */
+export function salesWaitingNotice(count: number): string {
+  return `มี ${count.toLocaleString('th-TH')} ร้าน${SALES_WAITING} ยังไม่นับเป็นร้านที่เปิดและ${SALES_WAITING_NOTE} เมื่อผู้ดูแลระบบยืนยันว่าไม่ผิดปกติ จะนับในเดือนที่ร้านชำระเงิน`;
+}
+
+/**
+ * One waiting shop as the person who brought it in reads it: which shop, whose it is, how it came
+ * in, and why it waits, in the words the Owner's queue shows for the same reasons (`salesFlagLabel`).
+ */
+export function salesWaitingLine(waiting: SalesReportWaiting, agentName?: string): { title: string; detail: string } {
+  return {
+    title: waiting.companyName || 'ไม่พบชื่อร้าน',
+    detail: [agentName, SALES_ATTRIBUTION_SOURCE_LABELS[waiting.source], ...waiting.flags.map(salesFlagLabel)]
+      .filter(Boolean).join(' · '),
+  };
+}
+
+/** What "ยืนยันว่าไม่ผิดปกติ" does, said before the Owner presses it: the month named is the one that changes. */
+export function salesFlagConfirmEffect(paidAt: string | undefined): string {
+  return `ร้านนี้จะนับเป็นร้านที่เปิด และยอดจะนับให้เซลล์ในเดือนที่ร้านชำระเงิน คือ ${formatThaiMonth(paidAt)} ระบบบันทึกเหตุผลของคุณไว้`;
+}
+
 /**
  * What the Owner's queue says about a flagged row, and which decision is still open on it. The
  * state is the report's own rule (`salesCreditState`), so the words here cannot promise something
@@ -684,7 +716,7 @@ export function salesFlagReview(row: Pick<SalesAttributionFlagRow, 'flags' | 're
   label: string; tone: MangmeeTone; detail: string | null; canConfirm: boolean; canExclude: boolean;
 } {
   const state = salesCreditState(row.flags, row.reviewedAt);
-  if (state === 'WAITING') return { label: 'รอตรวจ · ยังไม่นับในยอด', tone: 'amber', detail: null, canConfirm: true, canExclude: true };
+  if (state === 'WAITING') return { label: `${SALES_WAITING} · ${SALES_WAITING_NOTE}`, tone: 'amber', detail: null, canConfirm: true, canExclude: true };
   const detail = [`ตรวจเมื่อ ${formatThaiDate(row.reviewedAt)}`, row.reviewNote ? `เหตุผล: ${row.reviewNote}` : '']
     .filter(Boolean).join(' · ');
   return state === 'EXCLUDED'
@@ -706,12 +738,12 @@ export function salesReportTotals(rows: readonly SalesReportRow[]): SalesReportT
 }
 
 /** Newest month first, biggest seller first inside it — the reading order of "who sold what". */
-export function sortSalesReportMonths(months: readonly SalesReportMonth[]): { monthKey: string; rows: SalesReportRow[]; totals: SalesReportTotals; deductions: SalesReportDeduction[] }[] {
+export function sortSalesReportMonths(months: readonly SalesReportMonth[]): { monthKey: string; rows: SalesReportRow[]; totals: SalesReportTotals; deductions: SalesReportDeduction[]; waiting: SalesReportWaiting[] }[] {
   return [...months]
     .sort((a, b) => b.monthKey.localeCompare(a.monthKey))
     .map((month) => {
       const rows = [...month.rows].sort((a, b) => b.amountSatang - a.amountSatang || a.displayName.localeCompare(b.displayName, 'th'));
-      return { monthKey: month.monthKey, rows, totals: salesReportTotals(rows), deductions: month.deductions ?? [] };
+      return { monthKey: month.monthKey, rows, totals: salesReportTotals(rows), deductions: month.deductions ?? [], waiting: month.waiting ?? [] };
     });
 }
 

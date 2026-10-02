@@ -19,7 +19,7 @@ import {
 } from './sales.api';
 import {
   agentStatusMeta, emptyAgentForm, formatBaht, normalizeSalesCodeInput, SALES_ATTRIBUTION_SOURCE_LABELS,
-  SALES_ROLE_LABELS, SALES_BANK_NAMES, salesAgentAddress, salesFlagLabel, salesFlagReview, validateAgentForm,
+  SALES_ROLE_LABELS, SALES_BANK_NAMES, salesAgentAddress, salesFlagConfirmEffect, salesFlagLabel, salesFlagReview, validateAgentForm,
   type SalesAgentFormErrors, type SalesAgentFormValues,
 } from './sales-console.logic';
 import { SalesCredentialPanel, SalesEmpty, SalesNotice } from './SalesConsoleParts';
@@ -262,7 +262,7 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
           <div>
             <h2 className="text-[15px] font-extrabold text-gray-900">รายการที่ถูกธง</h2>
             <p className="mt-0.5 text-sm leading-6 text-gray-600">
-              ร้านที่ระบบสงสัยว่าผิดปกติ ยังไม่นับรวมในยอดของเซลล์จนกว่าคุณจะตรวจ ร้านที่คุณตัดออกจะไม่นับให้เซลล์ และยังอยู่ในรายการนี้ให้ตรวจย้อนหลัง
+              ร้านที่ระบบสงสัยว่าผิดปกติ ยังไม่นับเป็นร้านที่เปิดและยังไม่นับในยอดของเซลล์จนกว่าคุณจะตรวจ ร้านที่คุณตัดออกจะไม่นับให้เซลล์ และยังอยู่ในรายการนี้ให้ตรวจย้อนหลัง
             </p>
           </div>
           {/* min-w-0: a grid item is as wide as its longest unbreakable line unless told otherwise, and
@@ -313,7 +313,7 @@ export default function SalesTeamPage({ scope }: { scope: SalesTeamScope }) {
           <p className="text-sm leading-6 text-gray-600">
             {flagDecision?.keep
               ? 'ยอดของร้านนี้จะไม่ถูกนับให้เซลล์ และรายการจะยังอยู่ให้ตรวจย้อนหลังได้'
-              : 'ยอดของร้านนี้จะถูกนับให้เซลล์ตามปกติ ระบบบันทึกเหตุผลของคุณไว้'}
+              : salesFlagConfirmEffect(flagDecision?.row.paidAt)}
           </p>
           <p className="text-sm font-semibold text-gray-800">{flagDecision?.row.companyName} · {flagDecision?.row.salesDisplayName}</p>
           <TextareaField label="เหตุผล (จำเป็น)" name="flagReason" maxLength={SALES_DEAL_REASON_MAX}

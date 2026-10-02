@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parentFeatureKey, PLAN_TIER_PRESETS, planTermStateLabel, SALES_ERROR_CODES, salesDealFeatureKeys, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportDeduction, type SalesReportMonth, type SalesReportRow } from '@watchdog-bms/contracts';
+import { parentFeatureKey, PLAN_TIER_PRESETS, planTermStateLabel, SALES_ERROR_CODES, salesDealFeatureKeys, type SalesDealStatus, type SalesDealView, type SalesMyWorkItem, type SalesMyWorkKind, type SalesDealCadence, type SalesDealSnapshot, type SalesReportDeduction, type SalesReportMonth, type SalesReportRow, type SalesReportWaiting } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 import {
   agentStatusMeta, baseTierDefaults, companyReferral, dealAutoRenew, dealBadges, dealFormFromView, dealInputFromForm,
@@ -8,8 +8,9 @@ import {
   dealWarnings, defaultSalesReportRange, emptyAgentForm, emptyDealForm, firstDealErrorField, formatBaht,
   isDealCancellable, isDealEditable, isMenuSelected, myWorkBadgeLabel, myWorkMeta,
   normalizeSalesCodeInput, parseBahtInput, referralLabel, referralWindowOpen, SALES_ACCESS_STATE_META, SALES_DEAL_MENU_BINDINGS,
-  SALES_DEAL_STATUS_META, SALES_DEDUCTION_RULE, salesAgentAddress, salesCodeError, salesDeductionLine, salesFlagLabel, salesFlagReview, salesReportLeads, salesReportRangeError,
-  salesReportRowsOf, salesReportTotals, sortMyWork, sortSalesReportMonths,
+  SALES_DEAL_STATUS_META, SALES_DEDUCTION_RULE, SALES_WAITING, SALES_WAITING_NOTE, salesAgentAddress, salesCodeError, salesDeductionLine,
+  salesFlagConfirmEffect, salesFlagLabel, salesFlagReview, salesReportLeads, salesReportRangeError,
+  salesReportRowsOf, salesReportTotals, salesWaitingLine, salesWaitingNotice, sortMyWork, sortSalesReportMonths,
   toggleMenuSelection, validateAgentForm, validateDealForm, type SalesDealFormValues,
 } from './sales-console.logic';
 
@@ -434,6 +435,53 @@ describe('the Owner\'s flag queue (§17.1 — where each flagged row stands)', (
       const review = salesFlagReview(row);
       assert.doesNotMatch(`${review.label} ${review.detail ?? ''}`, /[A-Za-z_]/);
     }
+  });
+});
+
+describe('shops waiting for review (§17.1, owner 2026-10-02 — no opened shop and no amount until reviewed)', () => {
+  const waiting = (over: Partial<SalesReportWaiting> = {}): SalesReportWaiting =>
+    ({ salesUserId: 'u1', source: 'REFERRAL', companyName: 'ร้านกาแฟดี', flags: ['repeat_owner'], ...over });
+
+  it('names the waiting shop, how it came in and why it waits, in the words of the Owner\'s queue', () => {
+    assert.deepEqual(salesWaitingLine(waiting()), { title: 'ร้านกาแฟดี', detail: 'แนะนำร้าน · เจ้าของเดิมเปิดร้านเพิ่ม' });
+    // A lead reading several เซลล์ is told whose shop it is; every reason is listed.
+    assert.deepEqual(salesWaitingLine(waiting({ source: 'DEAL', flags: ['self_referral', 'referral_anomaly'] }), 'สมหญิง'), {
+      title: 'ร้านกาแฟดี',
+      detail: `สมหญิง · ดีลพิเศษ · ${salesFlagLabel('self_referral')} · ${salesFlagLabel('referral_anomaly')}`,
+    });
+  });
+
+  it('calls a waiting shop the same thing in the report and in the queue', () => {
+    assert.equal(SALES_WAITING, 'รอตรวจ');
+    assert.equal(salesFlagReview({ flags: ['self_referral'], reviewedAt: null, reviewNote: null }).label, `${SALES_WAITING} · ${SALES_WAITING_NOTE}`);
+    assert.equal(salesWaitingNotice(1234),
+      'มี 1,234 ร้านรอตรวจ ยังไม่นับเป็นร้านที่เปิดและยังไม่นับในยอด เมื่อผู้ดูแลระบบยืนยันว่าไม่ผิดปกติ จะนับในเดือนที่ร้านชำระเงิน');
+  });
+
+  it('tells the Owner which month gains the shop before it is confirmed, in Bangkok time', () => {
+    assert.equal(salesFlagConfirmEffect('2026-09-20T03:00:00.000Z'),
+      'ร้านนี้จะนับเป็นร้านที่เปิด และยอดจะนับให้เซลล์ในเดือนที่ร้านชำระเงิน คือ ก.ย. 2569 ระบบบันทึกเหตุผลของคุณไว้');
+    // Paid at 00:30 on 1 October in Bangkok: the report counts it in October, and so does this sentence.
+    assert.match(salesFlagConfirmEffect('2026-09-30T17:30:00.000Z'), /คือ ต\.ค\. 2569 /);
+  });
+
+  it('never shows an id, a key or an English word — not even for a reason or a source it does not know', () => {
+    const line = salesWaitingLine({ ...waiting({ companyName: '' }), source: 'PARTNER_V2', flags: ['referral_anomaly_v2'] } as unknown as SalesReportWaiting, 'สมหญิง');
+    assert.equal(line.title, 'ไม่พบชื่อร้าน');
+    for (const text of [line.title, line.detail, SALES_WAITING, SALES_WAITING_NOTE, salesWaitingNotice(2), salesFlagConfirmEffect('2026-09-20T03:00:00.000Z')]) {
+      assert.doesNotMatch(text, /[A-Za-z_]/, text);
+    }
+  });
+
+  it('keeps each month\'s waiting shops with it, and an answer without the list still renders', () => {
+    const row = { salesUserId: 'u1', displayName: 'สมชาย', teamLeadUserId: null, teamLeadDisplayName: null,
+      dealActivations: 0, referralActivations: 0, amountSatang: 0, flaggedCount: 1 };
+    const [october, september] = sortSalesReportMonths([
+      { monthKey: '2026-09', rows: [row] },
+      { monthKey: '2026-10', rows: [row], waiting: [waiting()] },
+    ]);
+    assert.deepEqual(october!.waiting, [waiting()]);
+    assert.deepEqual(september!.waiting, []);
   });
 });
 
