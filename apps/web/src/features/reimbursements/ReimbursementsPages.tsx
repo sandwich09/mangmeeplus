@@ -19,7 +19,7 @@ import {
   claimDeskText, claimStatusBadge, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
 import {
-  baht0, dateShort, ICON, KPI, StatCard, ErrorBanner,
+  dateShort, ICON, KPI, StatCard, ErrorBanner,
   inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
 } from '../expenses/ExpensesUi';
 import {
@@ -335,7 +335,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     { key: 'draft', icon: ICON.edit, label: 'ร่างรอส่ง', value: summary.counts.draft, tone: KPI.amber },
     { key: 'review', icon: ICON.clock, label: 'รออนุมัติ/ตรวจสอบ', value: summary.counts.review, tone: KPI.purple },
     { key: 'payment', icon: ICON.wallet, label: 'รอจ่ายเงินคืน', value: summary.counts.payment, tone: KPI.sky },
-    { key: 'all', icon: ICON.doc, label: 'ยอดรวมที่ขอเบิก', value: baht0(summary.totalAmount), tone: KPI.brand },
+    { key: 'all', icon: ICON.doc, label: 'ยอดรวมที่ขอเบิก', value: formatMoney(summary.totalAmount, 'THB'), tone: KPI.brand },
   ] as const : [];
 
   return (
@@ -559,7 +559,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <StatCard icon={ICON.clock} label="รอคุณอนุมัติ" value={summary.count} {...KPI.amber} />
-            <StatCard icon={ICON.wallet} label="ยอดรวมที่รออนุมัติ" value={baht0(summary.totalAmount)} {...KPI.purple} />
+            <StatCard icon={ICON.wallet} label="ยอดรวมที่รออนุมัติ" value={formatMoney(summary.totalAmount, 'THB')} {...KPI.purple} />
             <StatCard icon={ICON.alert} label={OVERDUE_LABEL} value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />
           </div>
           <MangmeeCard className="p-4">
@@ -767,7 +767,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <StatCard icon={ICON.clock} label={words.waiting} value={summary.count} {...KPI.sky} />
-            <StatCard icon={ICON.wallet} label="ยอดคงค้างรวม" value={baht0(summary.outstandingAmount)} {...KPI.purple} />
+            <StatCard icon={ICON.wallet} label="ยอดคงค้างรวม" value={formatMoney(summary.outstandingAmount, 'THB')} {...KPI.purple} />
             <StatCard icon={ICON.alert} label="พบรายการที่อาจซ้ำ" value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />
           </div>
           <MangmeeCard className="p-4">

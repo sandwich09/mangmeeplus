@@ -278,7 +278,7 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     const html = hubTab('mine', hubClaims);
     // Before: คำขอทั้งหมด 7 and รออนุมัติ/ตรวจสอบ 3 (the two approved claims counted as waiting for approval).
     assert.deepEqual(numbers(cardsOf(html), true),
-      { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '฿700' });
+      { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '700.00 บาท' });
     const chips = numbers(chipsOf(html), false);
     assert.deepEqual(chips, { 'ทั้งหมด': '7', 'ร่าง': '1', 'รออนุมัติ/ตรวจสอบ': '1', 'รอจ่าย': '2', 'จ่ายแล้ว': '1', 'ปฏิเสธ/ยกเลิก': '2' });
     assert.equal(rowsShown(html), 7);
@@ -299,7 +299,7 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
   it('shows a claim in a payout account correction round where the server counts it, with its phase and whom it waits for', () => {
     const claims = [...hubClaims, ...correctionRows];
     const html = hubTab('mine', claims);
-    assert.deepEqual(numbers(cardsOf(html), true), { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '3', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '฿900' });
+    assert.deepEqual(numbers(cardsOf(html), true), { 'ร่างรอส่ง': '1', 'รออนุมัติ/ตรวจสอบ': '3', 'รอจ่ายเงินคืน': '2', 'ยอดรวมที่ขอเบิก': '900.00 บาท' });
     assert.deepEqual([numbers(chipsOf(html), false)['ร่าง'], numbers(chipsOf(html), false)['รออนุมัติ/ตรวจสอบ']], ['1', '3']);
     const review = hubTab('mine', claims, 'review');
     assert.equal(rowsShown(review), 3);
@@ -348,7 +348,7 @@ describe('the hub takes its list lazily and says when a page did not load (revie
     // Before: the hub walked every page before it showed anything, and counted the rows it had loaded.
     const html = hubTab('mine', many, undefined, of230);
     const texts = visible(html);
-    assert.deepEqual(cardNumbers(html), ['0', '0', '230', '฿23,000']);
+    assert.deepEqual(cardNumbers(html), ['0', '0', '230', '23,000.00 บาท']);
     assert.ok(texts.includes('ทั้งหมด 230 รายการ'));
     // Ten rows a table page, out of the server's 230: the pager counts the whole list, not the rows held.
     assert.equal(rowsShown(html), 10);
@@ -368,7 +368,7 @@ describe('the hub takes its list lazily and says when a page did not load (revie
     // A filter was tapped and its first page has not arrived: the cards stay, the old rows do not.
     const switching = hubTab('mine', hubClaims, undefined, { key: 'the list held before the tap' });
     assert.equal(rowsShown(switching), 0);
-    assert.deepEqual(cardNumbers(switching), ['1', '1', '2', '฿700']);
+    assert.deepEqual(cardNumbers(switching), ['1', '1', '2', '700.00 บาท']);
     const texts = visible(switching);
     assert.ok(texts.includes('กำลังโหลด...') && texts.includes('กำลังโหลดรายการ...'));
     for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก|ไม่พบรายการ/u);
@@ -397,7 +397,7 @@ describe('the hub takes its list lazily and says when a page did not load (revie
     assert.ok(texts.includes(`⚠ โหลดรายการได้ไม่ครบ รายการด้านล่างยังไม่ใช่ทั้งหมด · ${reason}`), texts.join(' | '));
     assert.ok(texts.includes('ลองอีกครั้ง'));
     assert.equal(rowsShown(html), 10);
-    assert.deepEqual(cardNumbers(html), ['0', '0', '230', '฿23,000']);
+    assert.deepEqual(cardNumbers(html), ['0', '0', '230', '23,000.00 บาท']);
     for (const text of texts) assert.doesNotMatch(text, /ยังไม่มีคำขอเบิก/u);
     // The retry is a full-width button on a phone.
     assert.match(html, /data-testid="reimbursements-mine-load-failed">.*?<button type="button" class="[^"]*\bmin-h-11 w-full sm:w-auto\b[^"]*">ลองอีกครั้ง<\/button>/su);
@@ -417,8 +417,8 @@ describe('the hub search is asked of the API, and the cards count what it found 
 
   it('shows the found claims with the cards, chips and line counting them, and each filter shows the rows its number says', () => {
     const html = hubTab('mine', found, undefined, {}, 'แท็กซี่');
-    // Before: the cards kept the whole shop's 1, 1, 2 and ฿700 beside three rows, and the chip ทั้งหมด said 7.
-    assert.deepEqual(cardNumbers(html), ['1', '0', '1', '฿300']);
+    // Before: the cards kept the whole shop's 1, 1, 2 and 700 baht beside three rows, and the chip ทั้งหมด said 7.
+    assert.deepEqual(cardNumbers(html), ['1', '0', '1', '300.00 บาท']);
     assert.deepEqual(chipNumbers(html), ['3', '1', '0', '1', '1', '0']);
     assert.equal(rowsShown(html), 3);
     const texts = visible(html);
@@ -647,6 +647,21 @@ describe('the hub\'s third tab is the pay queue where the company has no finance
     // company's switch, and reads the tab by the right they hold.
     assert.deepEqual(tabsOf(hubTab('finance', [])), ['รายการที่เกี่ยวข้อง', 'คิวอนุมัติ', 'คิวการเงิน']);
     assert.ok(visible(hubTab('finance', [])).includes('ไม่มีรายการรอการเงิน'));
+  });
+});
+
+// The three totals read "฿7,219.5": a currency sign, and a satang digit dropped. Every other amount of a claim reads "7,219.50 บาท".
+describe('the totals on the hub read as money in baht, like every other amount of a claim (owner 2026-09-27/29)', () => {
+  const ready = { ...queueRow, status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', hasDuplicateBlocker: false, currentDesk: { kind: 'PAYMENT' } };
+  const MONEY = /^\d{1,3}(,\d{3})*\.\d{2} บาท$/u;
+
+  it('shows the total of each tab as "1,234.50 บาท", with no currency sign and both satang digits', () => {
+    for (const [tab, html] of [['mine', hubTab('mine', hubClaims)], ['approvals', hubTab('approvals', [queueRow])], ['finance', hubTab('finance', [ready], undefined, {}, '', false)]] as const) {
+      const texts = visible(html);
+      assert.ok(texts.some((text) => MONEY.test(text)), `${tab}: ${JSON.stringify(texts.filter((text) => /\d/u.test(text)))}`);
+      for (const text of texts) assert.doesNotMatch(text, /฿|THB/u, `${tab}: ${text}`);
+    }
+    assert.ok(visible(hubTab('mine', hubClaims)).includes('700.00 บาท'));
   });
 });
 
