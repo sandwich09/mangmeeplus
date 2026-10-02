@@ -193,13 +193,16 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'approval_sla_breach',
     name: 'Approval SLA breach',
-    description: 'Escalate to owner/manager when a pending reimbursement approval exceeds the policy SLA age.',
+    description: 'Remind the approvers of a claim (the shop owner only when none of them can act) when it has waited for approval longer than the policy SLA age.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'SLA_SCAN',
     defaultConditionJson: { field: 'slaRisk', op: 'EQ', value: true },
     defaultActionJson: [
-      { actionKey: 'escalate_sla', actionType: 'SEND_NOTIFICATION', configJson: { triggerKey: 'workflow.approval_sla_breach', recipientPayloadKeys: ['approverRecipientUserIds', 'ownerRecipientUserIds'], severity: 'critical' } },
+      // Owner decision 2026-10-02: to the claim's approvers only. The owner was added to every reminder
+      // (`ownerRecipientUserIds`), whoever the approvers were. The scan names the owner AS the approvers
+      // when none of them can act any more, which is the one case the owner is told.
+      { actionKey: 'escalate_sla', actionType: 'SEND_NOTIFICATION', configJson: { triggerKey: 'workflow.approval_sla_breach', recipientPayloadKeys: ['approverRecipientUserIds'], severity: 'critical' } },
       { actionKey: 'create_escalation_task', actionType: 'CREATE_WORKFLOW_TASK', configJson: { titleTemplate: 'ใบเบิกรออนุมัติเกินกำหนด: {{requestNo}}', priority: 'CRITICAL', assigneeUserPayloadKey: 'approverTaskUserId', assigneeRolePayloadKey: 'approverTaskRole' } },
     ],
     requiredPermissions: ['reimbursement.approve'],

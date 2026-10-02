@@ -654,6 +654,48 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     });
   });
 
+  // Owner decision 2026-10-02: a claim that has waited for approval past the company's deadline is the business of
+  // its approvers. Before, the reminder added the shop owner to every one of them, whoever the approvers were.
+  describe('approval reminder notice (owner decision 2026-10-02)', () => {
+    const sla = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'approval_sla_breach')!;
+    const notifyAction = () => sla().defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')!;
+    // What the scan hands the rule for a claim past its deadline: its approvers, and the owner named apart.
+    const runReminder = (payload: Record<string, unknown>, cfg: Record<string, unknown> = notifyAction().configJson) => make().execute(
+      { ...actionRun(cfg), actionKey: notifyAction().actionKey },
+      {
+        companyId: 'co_1', ruleName: sla().name, triggerType: 'SLA_SCAN', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: {
+          requestId: 'rb_1', requestNo: 'RB-202610-00007', ageHours: 80, slaRisk: true, amount: '250', currency: 'THB',
+          ownerRecipientUserIds: ['u_owner'], notificationPeriodKey: 'round:2026-10-01T03:00:00.000Z', ...payload,
+        },
+        siblingActions: sla().defaultActionJson,
+      } as any,
+    );
+    const reminded = () => (notify.execute.mock.calls.at(-1) as any).arguments[0];
+
+    it('reminds the approvers of the claim, and the shop owner only when the scan names the owner as the one to approve it', async () => {
+      await runReminder({ approverRecipientUserIds: ['u_manager', 'u_manager_2'], approverTaskUserId: 'u_manager', approverTaskRole: 'MANAGER' });
+
+      assert.deepEqual(reminded().recipientUserIds, ['u_manager', 'u_manager_2']);
+      assert.deepEqual(notifyAction().configJson['recipientPayloadKeys'], ['approverRecipientUserIds']);
+      // The notice itself is as it was: the same trigger, title, link and once-per-round period.
+      assert.deepEqual([reminded().triggerKey, reminded().severity, reminded().title, reminded().deepLinkHref, reminded().periodKey],
+        ['workflow.approval_sla_breach', 'critical', 'ใบเบิกรออนุมัติเกินกำหนด: RB-202610-00007', '/companies/co_1/reimbursements/rb_1', 'round:2026-10-01T03:00:00.000Z']);
+
+      // None of the claim's approvers can act any more: the scan names the owner as the one who approves it now.
+      await runReminder({ approverRecipientUserIds: ['u_owner'], approverTaskUserId: 'u_owner', approverTaskRole: 'OWNER' });
+      assert.deepEqual(reminded().recipientUserIds, ['u_owner']);
+      // A shop owner who is one of the claim's approvers is reminded as that.
+      await runReminder({ approverRecipientUserIds: ['u_owner', 'u_manager'], approverTaskUserId: 'u_manager', approverTaskRole: 'MANAGER' });
+      assert.deepEqual(reminded().recipientUserIds, ['u_owner', 'u_manager']);
+
+      // A rule pinned before this, or one an admin edited to say so, names the owner itself: the owner is still added.
+      const pinnedBefore = { ...notifyAction().configJson, recipientPayloadKeys: ['approverRecipientUserIds', 'ownerRecipientUserIds'] };
+      await runReminder({ approverRecipientUserIds: ['u_manager'], approverTaskUserId: 'u_manager', approverTaskRole: 'MANAGER' }, pinnedBefore);
+      assert.deepEqual(reminded().recipientUserIds, ['u_manager', 'u_owner']);
+    });
+  });
+
   // Audit B15: `decision` is a code word in the event payload. A notice says it in the words the
   // claim page uses, whatever the rule snapshot holds, because LINE pushes the stored text as it is.
   describe('claim notices never print a decision code word (audit B15)', () => {

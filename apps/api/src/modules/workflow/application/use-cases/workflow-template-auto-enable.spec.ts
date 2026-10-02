@@ -397,6 +397,38 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [], 'a second run changes nothing');
   });
 
+  // Owner decision 2026-10-02: the approval reminder goes to the claim's approvers and no longer adds the shop owner.
+  // That template has shipped too: a rule the sync pinned stops naming the owner at the next release, the task beside
+  // the notice is as it was, and a rule an admin really changed goes on naming whoever it named.
+  it('re-pins an approval reminder rule pinned while it still added the shop owner, and leaves an admin-edited one alone', async () => {
+    const key = 'approval_sla_breach';
+    const [notice, task] = catalogActions(key);
+    const shipped = [{ ...notice!, configJson: { ...notice!.configJson, recipientPayloadKeys: ['approverRecipientUserIds', 'ownerRecipientUserIds'] } }, task!];
+    const adminsOwn = [{ ...shipped[0]!, configJson: { ...shipped[0]!.configJson, severity: 'action' } }, task!];
+    // A scan rule keeps the default cooldown, which is what `syncOwned` seeds.
+    const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, actionJson: shipped, ...over });
+    const repo = fakeRepo([
+      rule(),
+      rule({ companyId: 'co_2', updatedByUserId: 'admin_1', actionJson: adminsOwn, pinned: { actionJson: shipped } }),
+      rule({ companyId: 'co_3', status: 'DISABLED', updatedByUserId: 'admin_1' }),
+    ]);
+
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [key]);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_2'), []);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_3'), [key]);
+
+    const named = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson.recipientPayloadKeys;
+    assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map(named),
+      [['approverRecipientUserIds'], ['approverRecipientUserIds', 'ownerRecipientUserIds'], ['approverRecipientUserIds']]);
+    assert.deepEqual(repo.rules.find((r: any) => r.id === 'pre_1').actionJson, adminsOwn);
+    assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED');
+    const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
+    assert.deepEqual([latest.version, latest.cooldownSeconds, latest.actionSnapshotJson], [2, 3600, catalogActions(key)]);
+    // The task of the reminder is assigned as before.
+    assert.deepEqual(latest.actionSnapshotJson[1], task);
+    assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), [], 'a second run changes nothing');
+  });
+
   it('is idempotent: a second run re-pins nothing and adds no version', async () => {
     const repo = fakeRepo([syncOwned()]);
     await resyncWorkflowTemplateRulesForCompany(repo, 'co_1');
