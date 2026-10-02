@@ -261,10 +261,28 @@ describe('ApproveReimbursementUseCase', () => {
     assert.equal(approved.status, 'FINANCE_REVIEW');
   });
 
-  it('rejects approving a non-pending request', async () => {
-    const req = baseRequest({ status: 'APPROVED' });
-    const uc = approveUC(fakeRepo(req));
-    await assert.rejects(() => uc.execute(ctx(), 'rb-1'), /Cannot approve/);
+  // The page that asked is behind the claim: someone decided it, it was cancelled, or its requester took it back.
+  // Before: 422 "Cannot approve from status CANCELLED", which no screen has words for.
+  it('answers an approval or a rejection of a claim that no longer waits with one code and no status word, before anything is written', async () => {
+    for (const status of ['DRAFT', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID', 'PAID', 'REJECTED', 'CANCELLED', 'VOIDED']) {
+      const repo = fakeRepo(baseRequest({ status, currentApprovalStepId: undefined }));
+      const writes: string[] = [];
+      for (const write of ['beginApprovalDecisionAtomic', 'completeApprovalProjectionAtomic', 'rejectRequestAtomic']) repo[write] = async () => { writes.push(write); };
+      const notWaiting = (error: any) => {
+        assert.deepEqual([error.getStatus(), error.message], [409, 'reimbursement_not_awaiting_approval'], status);
+        assert.doesNotMatch(JSON.stringify(error.getResponse()), new RegExp(status), 'the answer does not say where the claim stands');
+        return true;
+      };
+      await assert.rejects(() => approveUC(repo).execute(ctx(), 'rb-1'), notWaiting);
+      await assert.rejects(() => new RejectReimbursementUseCase(repo, noopAudit, fakeDetailEvidence as any).execute(ctx(), 'rb-1', 'ยอดไม่ตรงกับใบเสร็จ'), notWaiting);
+      assert.deepEqual(writes, [], status);
+      // Whoever could not open the claim is still told that, and nothing of where it stands (final review item 18).
+      const outsider = ctx({ userId: 'someone-else', roles: ['STAFF'], permissions: ['reimbursement.read_own'] });
+      const unread = (error: any) => error.getStatus() === 403 && !/awaiting/.test(error.message);
+      await assert.rejects(() => approveUC({ ...repo, isUserRelatedToRequest: async () => false }).execute(outsider, 'rb-1'), unread, status);
+      await assert.rejects(() => new RejectReimbursementUseCase({ ...repo, isUserRelatedToRequest: async () => false }, noopAudit, fakeDetailEvidence as any)
+        .execute(outsider, 'rb-1', 'เหตุผล'), unread, status);
+    }
   });
 
   it('projects only at final manager approval when finance review is not required', async () => {

@@ -198,8 +198,9 @@ export function approveReimbursement(companyId: string, id: string, comment?: st
     method: 'POST', body: JSON.stringify({ comment, approvalSnapshotHash, payoutVerifiedVersion }), suppressErrorToast: true,
   });
 }
+/** Like the approval: the claim page (its dialog, or its step card) and the approval queue answer a refusal themselves, so no error toast says it a second time. */
 export function rejectReimbursement(companyId: string, id: string, reason: string) {
-  return apiFetch<any>(`${base(companyId)}/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+  return apiFetch<any>(`${base(companyId)}/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }), suppressErrorToast: true });
 }
 /** "ดำเนินการต่อ": has the system carry out now the decision the claim already holds. It decides nothing, so it sends nothing. */
 export function resumeReimbursement(companyId: string, id: string) {

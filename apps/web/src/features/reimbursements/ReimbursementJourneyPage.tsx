@@ -237,7 +237,12 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       else setActionError(STALE_APPROVAL_NOTHING_TO_APPROVE);
       return;
     }
-    if (!ok) return;
+    if (!ok) {
+      // Refused from the dialog of an edited claim, and nothing is left for this viewer to approve (decided, cancelled or
+      // taken back meanwhile): that dialog can do nothing more, so it closes and the step card says what was not done.
+      if (review && !activeJourneyStep(buildJourneySteps(latest, permissions, userId))?.actions.includes('approve')) setStaleReview(null);
+      return;
+    }
     setStaleReview(null);
     // AC03: an approver who may also pay gets the form at once; everyone else just sees the next step.
     if (activeJourneyStep(buildJourneySteps(latest, permissions, userId))?.actions.includes('pay')) setPayOpen(true);
@@ -598,7 +603,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
         error={actionError}
         onClose={() => setRejecting(false)}
         onConfirm={async (reason) => {
-          if ((await act('reject', () => rejectReimbursement(companyId, requestId, reason), 'ปฏิเสธคำขอเรียบร้อยแล้ว')).ok) setRejecting(false);
+          const { ok, latest } = await act('reject', () => rejectReimbursement(companyId, requestId, reason), 'ปฏิเสธคำขอเรียบร้อยแล้ว');
+          // Refused because the claim is no longer this viewer's to reject (decided, cancelled or taken back meanwhile):
+          // the dialog can do nothing more, so it closes and the step card says what was not done, over the claim as it is now.
+          if (ok || !activeJourneyStep(buildJourneySteps(latest, permissions, userId))?.actions.includes('reject')) setRejecting(false);
         }}
       />}
       {reasonAction && reasonDialog && <ReasonDialog

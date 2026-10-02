@@ -4,7 +4,7 @@ import {
   isReimbursementPayoutCorrectionReason, looksLikeAccountNumber,
   REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
 } from '@watchdog-bms/contracts';
-import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
+import { notAwaitingApproval, PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
@@ -356,7 +356,9 @@ export class ApproveReimbursementUseCase {
     // The gate of the claim detail, ahead of every answer that depends on where the claim stands (final
     // review item 18): a caller who could not open the claim was told its status by the line below.
     await assertCanReadRequestOrAssignment(ctx, req, this.repo);
-    if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
+    // Decided, cancelled or taken back to a draft since the approver's page was loaded: said as that,
+    // with a code the screen has words for, and never as the status the claim now has.
+    if (req.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
     // Sent back to have its payout account corrected, and the requester has not given it yet: there is
     // nothing to approve, and the approver who presses it has an old page (payout spec §14.2).
     const correction = payoutCorrectionPhase(req);
@@ -633,7 +635,7 @@ export class RejectReimbursementUseCase {
     if (!req) throw new NotFoundException('Reimbursement request not found');
     // The gate of the claim detail, ahead of every answer that depends on where the claim stands.
     await assertCanReadRequestOrAssignment(ctx, req, this.repo);
-    if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot reject from status ${req.status}`);
+    if (req.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
     const correction = payoutCorrectionPhase(req);
     if (correction === 'AWAITING_REQUESTER') throw new ConflictException('payout_correction_in_progress');
 

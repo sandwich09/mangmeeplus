@@ -1573,3 +1573,87 @@ describe('nothing pays a claim while its payout account is being corrected (AC30
     assert.match(logic.paymentSaveErrorMessage('record', lost, true), /^ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน/u);
   });
 });
+
+// ---- A decision on a claim that no longer waits for approval (any claim whose page is behind it, in a round or not) ----
+
+describe('an approval or a rejection of a claim that no longer waits is answered in words, over the claim as it is now', () => {
+  const pendingStep = { id: 'step-1', sequenceNo: 1, status: 'PENDING', approverUserId: 'boss', approverName: NAMES.approver, assignedAt: AT.submitted };
+  /** A cash claim waiting for its approver: decided from its own page, with nothing to attest. */
+  const waiting = (overrides: Record<string, unknown> = {}) => ready({
+    status: 'PENDING_APPROVAL', paymentStatus: 'NOT_PAYABLE', approvedAt: undefined, currentDesk: { kind: 'APPROVER', names: [NAMES.approver] }, paymentDesk: undefined,
+    payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' }, payoutHistory: undefined, approvalSteps: [pendingStep], approvalActions: DECIDE, approvalSnapshotHash: 'hash-1', ...overrides,
+  });
+  /** The same claim, cancelled by its requester while the approver's page was open. */
+  const cancelled = waiting({ status: 'CANCELLED', currentDesk: undefined, approvalActions: { canApprove: false, canReject: false }, approvalSteps: [{ ...pendingStep, status: 'CANCELLED' }] });
+  // As the API answers it: 409, and the code as the message of a bare exception. It was 422 "Cannot approve from status CANCELLED".
+  const NOT_WAITING = { status: 409, body: { statusCode: 409, message: 'reimbursement_not_awaiting_approval', error: 'Conflict' } };
+  const SENTENCE = 'ใบนี้ไม่ได้รออนุมัติแล้ว จึงยังไม่ได้บันทึกการตัดสินของคุณ อาจมีผู้อนุมัติหรือปฏิเสธไปก่อน หรือคำขอถูกยกเลิกหรือเปิดกลับเป็นร่างไปแล้ว โหลดหน้านี้ใหม่เพื่อดูสถานะล่าสุด';
+  const grabDecision = (type: unknown, _props: unknown, children: unknown[]) => (type === 'button' && children[0] === 'อนุมัติ' ? 'approve'
+    : type === sections.RejectDialog ? 'reject' : undefined);
+  /** The approver's page with the reject dialog open. Which of the page's `false` states holds it is found by the dialog it shows. */
+  const withRejectDialog = (detail: object) => {
+    for (let falseState = 1; falseState < 12; falseState += 1) {
+      let nulls = 0;
+      let falses = 0;
+      try {
+        const page = render(h(ReimbursementJourneyPage, { companyId: 'company-1', requestId: 'claim-1', userId: approver.userId, permissions: approver.permissions }), (start) => {
+          if (start === null) { nulls += 1; return nulls === 2 ? detail : undefined; }
+          if (start === false) { falses += 1; return falses === falseState ? true : undefined; }
+          return undefined;
+        }, grabDecision);
+        if (page.handlers.reject && page.texts.includes('ปฏิเสธคำขอ RB-202610-00007')) return page;
+      } catch { /* that state opens something this claim has not */ }
+    }
+    return null;
+  };
+  const dialogClosed = (page: ReturnType<typeof render>) => page.changes.some((change) => change.initial === false && change.shown === true && change.value === false);
+
+  it('says the sentence the screens have for it, in plain Thai, and no status word', () => {
+    assert.equal(translateApiError('reimbursement_not_awaiting_approval'), SENTENCE);
+    assert.equal(logic.errorText(Object.assign(new Error('reimbursement_not_awaiting_approval'), { status: 409 })), SENTENCE);
+    assertPlainThai([SENTENCE], 'the refusal');
+  });
+
+  it('approve: nothing is approved, the page reads the claim again and says what was not done, with no dialog and no toast', async () => {
+    const page = claimPage(waiting(), approver, undefined, grabDecision);
+    assert.deepEqual(stepCard(page.html).buttons, ['อนุมัติ', 'ปฏิเสธ', 'พิมพ์ใบเบิก']);
+    toasts.length = 0;
+    const calls = await withApi((_url, method) => (method === 'POST' ? NOT_WAITING : { status: 200, body: asAnswered(cancelled) }), () => page.handlers.approve.onClick());
+    assert.deepEqual(calls.map((call) => [call.method, call.url.split('/').pop()]), [['POST', 'approve'], ['GET', 'claim-1']]);
+    assert.ok(page.changes.some((change) => change.value === SENTENCE), 'the step card says it');
+    assert.ok(page.changes.some((change) => (change.value as { status?: string } | null)?.status === 'CANCELLED'), 'over the claim as it is now');
+    assert.equal(page.changes.some((change) => !!(change.value as { before?: unknown } | null)?.before), false, 'no dialog offering to approve it again');
+    assert.deepEqual(toasts, []);
+    // What that page then shows: a closed claim, with nothing left to decide.
+    assert.deepEqual(stepCard(claimPage(cancelled, approver).html).buttons, ['พิมพ์ใบเบิก']);
+
+    // The same refusal from the dialog of a claim edited after it was sent ("อนุมัติด้วยข้อมูลล่าสุด"): that dialog closes too.
+    const grabStale = (type: unknown) => (type === sections.StaleApprovalDialog ? 'stale' : undefined);
+    let review: ReturnType<typeof render> | null = null;
+    for (let nullState = 3; nullState < 30 && !review; nullState += 1) {
+      const candidate = opened(waiting(), approver, { nullState, value: { before: waiting(), detail: waiting({ reason: 'ไปพบลูกค้าที่เชียงใหม่', approvalSnapshotHash: 'hash-2' }) } }, grabStale);
+      if (candidate?.handlers.stale) review = candidate;
+    }
+    assert.ok(review, 'the page with the dialog of an edited claim open');
+    await withApi((_url, method) => (method === 'POST' ? NOT_WAITING : { status: 200, body: asAnswered(cancelled) }), () => review!.handlers.stale.onConfirm());
+    assert.ok(review.changes.some((change) => change.value === SENTENCE));
+    assert.ok(review.changes.some((change) => !!(change.shown as { before?: unknown } | null)?.before && change.value === null), 'the dialog closes');
+  });
+
+  it('reject: the dialog it can no longer finish closes, and the step card says what was not done', async () => {
+    const page = withRejectDialog(waiting());
+    assert.ok(page, 'the page with the reject dialog open');
+    const calls = await withApi((_url, method) => (method === 'POST' ? NOT_WAITING : { status: 200, body: asAnswered(cancelled) }), () => page.handlers.reject.onConfirm('ยอดไม่ตรงกับใบเสร็จ'));
+    assert.deepEqual(calls.map((call) => [call.method, call.url.split('/').pop(), call.body]),
+      [['POST', 'reject', { reason: 'ยอดไม่ตรงกับใบเสร็จ' }], ['GET', 'claim-1', undefined]]);
+    assert.ok(page.changes.some((change) => change.value === SENTENCE));
+    assert.ok(dialogClosed(page), 'the dialog closes');
+
+    // A refusal the approver can still put right, on a claim that still waits: the dialog stays, with what was typed.
+    const still = withRejectDialog(waiting())!;
+    await withApi((_url, method) => (method === 'POST' ? { status: 400, body: { statusCode: 400, message: 'note_contains_account_number' } } : { status: 200, body: asAnswered(waiting()) }),
+      () => still.handlers.reject.onConfirm('โอนเข้าบัญชี 123-4-56789-0 ไม่ได้'));
+    assert.ok(still.changes.some((change) => change.value === translateApiError('note_contains_account_number')));
+    assert.equal(dialogClosed(still), false);
+  });
+});

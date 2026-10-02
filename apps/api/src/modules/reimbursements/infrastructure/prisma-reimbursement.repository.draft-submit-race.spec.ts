@@ -655,6 +655,39 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       'the losing transaction must not leave a second decided step behind');
   });
 
+  // The check under the claim's lock: what a decision gets when the claim it read as waiting was decided,
+  // cancelled or taken back before the decision reached the lock. Before: 422 "Cannot approve from status REJECTED".
+  it('answers a decision that arrives after the claim stopped waiting with one refusal, for approve and reject alike, and writes nothing', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const notWaiting = (error: any) => {
+      assert.deepEqual([error?.getStatus?.(), errorMessage(error)], [409, 'reimbursement_not_awaiting_approval']);
+      assert.doesNotMatch(JSON.stringify(error.getResponse()), /DRAFT|REJECTED|CANCELLED|FINANCE_REVIEW/, 'the answer does not say where the claim stands');
+      return true;
+    };
+    const moves: Array<[string, (pending: NonNullable<Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>>, approverUserId: string) => Promise<unknown>]> = [
+      ['REJECTED', (pending, approverUserId) => repos[0]!.rejectRequestAtomic(rejectionInput(pending, approverUserId))],
+      ['FINANCE_REVIEW', (pending, approverUserId) => repos[0]!.beginApprovalDecisionAtomic({
+        ...decisionInput(pending, approverUserId),
+        financeRequestPatch: { status: 'FINANCE_REVIEW', approvedAt: new Date(), currentApproverUserId: null, currentApprovalStepId: null, financeReviewStatus: 'PENDING', paymentStatus: 'UNPAID', updatedByUserId: approverUserId },
+      })],
+      ['CANCELLED', (pending) => repos[0]!.cancelRequestAtomic(companyId, pending.id, 'PENDING_APPROVAL', pending.updatedAt,
+        { status: 'CANCELLED', cancelledAt: new Date(), paymentStatus: 'NOT_PAYABLE', updatedByUserId: `${TAG}-user` })],
+      ['DRAFT', (pending) => repos[0]!.reopenRejectedRequest(companyId, pending.id, pending.updatedAt, `${TAG}-user`, 'PENDING_APPROVAL')],
+    ];
+    for (const [status, move] of moves) {
+      const { pending, approverUserId } = await submitValidPending(`late-decision-${status}`);
+      await move(pending, approverUserId);
+      const moved = await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: pending.id }, include: { approvalSteps: true } });
+      assert.equal(moved.status, status);
+      // The other connection still holds the claim as it read it: waiting.
+      await assert.rejects(() => repos[1]!.beginApprovalDecisionAtomic(decisionInput(pending, approverUserId)), notWaiting, status);
+      await assert.rejects(() => repos[1]!.rejectRequestAtomic(rejectionInput(pending, approverUserId)), notWaiting, status);
+      const after = await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: pending.id }, include: { approvalSteps: true } });
+      assert.deepEqual([after.status, after.updatedAt, after.approvalSteps.map((step: any) => [step.status, step.decidedAt])],
+        [moved.status, moved.updatedAt, moved.approvalSteps.map((step: any) => [step.status, step.decidedAt])], status);
+    }
+  });
+
   it('blocks approval after a requester cancellation intent has started', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const { pending, approverUserId } = await submitValidPending('approve-during-cancel');

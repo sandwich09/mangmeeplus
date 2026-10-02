@@ -266,6 +266,17 @@ export function reimbursementRelatedToUserWhere(
   };
 }
 
+/**
+ * Approve or reject reached a claim that no longer waits for approval: someone decided it, it was
+ * cancelled, or its requester took it back to a draft after the caller's page was loaded. One code
+ * for both calls and for the check before the lock and under it, and never the status word: the
+ * screen says what happened in its own words and reads the claim again. 409, like every other
+ * answer to a page that is behind its claim (it used to be a 422 "Cannot approve from status …").
+ */
+export function notAwaitingApproval(): ConflictException {
+  return new ConflictException('reimbursement_not_awaiting_approval');
+}
+
 @Injectable()
 export class PrismaReimbursementRepository {
   async resolveCreateBranchId(companyId: string, scopes: BranchScopes, selectedBranchId?: string | null): Promise<string> {
@@ -1727,9 +1738,7 @@ export class PrismaReimbursementRepository {
         include: { lines: { orderBy: { lineNo: 'asc' } } },
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
-      if (row.status !== 'PENDING_APPROVAL') {
-        throw new UnprocessableEntityException(`Cannot approve from status ${row.status}`);
-      }
+      if (row.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
       if (row.cancellationPendingAt) {
         throw new ConflictException('reimbursement_cancellation_pending');
       }
@@ -2566,9 +2575,7 @@ export class PrismaReimbursementRepository {
         include: { lines: { orderBy: { lineNo: 'asc' } } },
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
-      if (row.status !== 'PENDING_APPROVAL') {
-        throw new UnprocessableEntityException(`Cannot reject from status ${row.status}`);
-      }
+      if (row.status !== 'PENDING_APPROVAL') throw notAwaitingApproval();
       this.assertNotBeingCancelled(row);
       // REJECTED releases the claim's receipts to other claims. A claim whose payout account is being
       // corrected was approved and has its expense records, so refusing its new account sends it back to

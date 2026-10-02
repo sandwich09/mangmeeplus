@@ -554,6 +554,18 @@ describe('errorText', () => {
     assert.match(errorText(new Error('lines_required')), /1 รายการ/);
     assert.equal(errorText(undefined), 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
   });
+  // An approval or a rejection of a claim that was decided, cancelled or taken back meanwhile. The API answered 422
+  // "Cannot approve from status …" with no code, and the page could say only that something should be checked.
+  it('says a claim no longer waits for approval, what may have happened and to reload, and never the claim\'s status word', () => {
+    const sentence = 'ใบนี้ไม่ได้รออนุมัติแล้ว จึงยังไม่ได้บันทึกการตัดสินของคุณ อาจมีผู้อนุมัติหรือปฏิเสธไปก่อน หรือคำขอถูกยกเลิกหรือเปิดกลับเป็นร่างไปแล้ว โหลดหน้านี้ใหม่เพื่อดูสถานะล่าสุด';
+    // As the API answers it (a bare Nest exception carries its name as the message), and as a body with a code.
+    assert.equal(errorText(Object.assign(new Error('reimbursement_not_awaiting_approval'), { status: 409 })), sentence);
+    assert.equal(errorText(Object.assign(new Error('API error 409'), { status: 409, code: 'reimbursement_not_awaiting_approval' })), sentence);
+    assert.doesNotMatch(sentence, /[A-Za-z_]/);
+    // The answer before: the page's sentence for any refusal it has no words for.
+    assert.equal(errorText(Object.assign(new Error('Cannot approve from status CANCELLED'), { status: 422 })),
+      'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง');
+  });
 });
 
 describe('formatMoney', () => {
