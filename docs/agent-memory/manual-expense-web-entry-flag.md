@@ -4,7 +4,7 @@
 
 Everything below this section is kept unchanged as history. Where it disagrees with this section, this section wins.
 
-Status: IN PROGRESS on branch `claude/manual-expense-web-entry-20261002` (worktree `/private/tmp/mangmee-manual-expense-entry-20261002`, from develop `608b4a6f5`). Not pushed, not released. Phase state: P0, P1, P2 and P3 done; P4–P6 follow in their own commits and update this section.
+Status: IN PROGRESS on branch `claude/manual-expense-web-entry-20261002` (worktree `/private/tmp/mangmee-manual-expense-entry-20261002`, from develop `608b4a6f5`). Not pushed, not released. Phase state: P0–P4 done; P5 and P6 follow in their own commits and update this section.
 
 Owner: thawatchai / Claude (implementation lane; the controller session reviews, pushes and merges).
 
@@ -32,6 +32,7 @@ Artifacts (this branch):
 - `partner.controller.ts` (`PUT :partnerCompanyId/manual-expense-web-entry`), `get-partner-detail.use-case.ts`, the module, `packages/contracts/src/partner-management.ts`
 - P2: `auth.controller.ts` (`me()` answers `manualExpenseWebEntry`), `apps/web/src/common/models/web-session.model.ts`, `workspace-scope.api.ts` (type and fingerprint), `apps/web/src/features/expenses/manual-expense-entry.logic.ts` (`canOpenManualWeb`), `apps/api/prisma/seed.ts` (a "shown" row for `seed-local-company` and `seed-local-company-2`).
 - P3: `manual-expense-entry.logic.ts` (admission and view), `ManualExpenseEntryNotEnabled.tsx`, `ExpensesPages.tsx` (hub admission, list button, open-form note), `web-core-workspace.logic.ts` + `WorkspaceLayout.tsx` (sidebar item), `IncomeExpenseLedgerPage.tsx`, `ai-suggestions.logic.ts` + `AiSuggestionsPages.tsx`, `features/user-guide/expenses-guide-manual-entry.ts`, the five server pages, four dictionary keys (Thai and English).
+- P4: `PartnerDetailPage.tsx` (the switch under the "บันทึกด้วยมือ" row, its own state, handler and confirmation; the "เมนูย่อย" expander is no longer disabled by the entitlement locks), `system-partners.logic.ts` (`manualWebEntryRow` and every sentence the operator reads), `system-partners.api.ts`.
 - With P1: `apps/web/src/common/api/api-error-message.ts` (Thai text of the 409 code; the web coverage spec demands one for every code of this API module).
 - Spec v3.1, plan, this note.
 
@@ -41,9 +42,11 @@ Verification (real runs, 2026-10-02):
 - P2: `auth.controller.spec.ts` 24 pass (20 before; the 4 new ones were red before the change). `workspace-scope.api.spec.ts` 6 pass and the new `manual-expense-entry.logic.spec.ts` 4 pass (red before). Nine single-line reverts each failed their named test (the `/auth/me` field, ignoring the row, reading another company; the fingerprint field and its missing-means-shown reading; the helper's permission, missing-means-shown, company and value clauses). `api-error-coverage.spec.ts` was red without the Thai text of the 409 code and is green with it (68 pass with its two neighbours). API typecheck exit 0, web typecheck exit 0. `prisma/seed.ts` is outside the API typecheck (`include` is `src/**`); it is exercised by the local stack in P6.
 - P3: six spec files, 124 tests pass (the new and changed ones were red before the change: 14 failing, two files not loadable). 27 single-line reverts each failed their named test: admission (withdrawn, admitted while closed, no late admission), the closed note, the setting's missing-means-shown reading, the sidebar item (and its permission), the AI card, the guide (link kept, no note, another section touched), the not-enabled state (a button the reader cannot open, no contact line, the sentence), and the wiring of the list button, the hub state, the hub admission, the note after save, the three ledger places, the layout and the five server pages. Whole web suite: 2684 pass, 0 fail, exit 0. Web typecheck exit 0. `approved-knowledge.spec.ts` 9 pass; the pinned guide file's hash is unchanged.
 - The admission and the texts are proven in a browser in P6; the unit level proves the logic, the rendered not-enabled state and the wiring by source.
+- P4: `system-partners.logic.spec.ts` and the new `manual-web-entry-switch.qa.spec.ts`, 58 pass (16 were red before the change). 19 single-line reverts each failed their named test: the saved-not-pending rule, the three conditions of the standing note, asking only before hiding, the upload warning, three sentences, the command and its version, no reload on success, the re-read on 409, the confirmation, the lock rule, the expander, the row's place, the page prop and the click handler. Web typecheck exit 0. Seen in a browser at 390 and 1280 px (P6).
+- A save of the switch does not reload the partner detail, and a 409 re-reads the detail for this value only: a reload would have reset package changes the operator had made and not saved yet.
 
 Next:
-- P4 admin switch. P5 PostgreSQL invariants. P6 browser evidence and docs.
+- P5 PostgreSQL invariants. P6 browser evidence and docs.
 
 ## Update 2026-10-01 — independent review and spec v3.0 (current state)
 
