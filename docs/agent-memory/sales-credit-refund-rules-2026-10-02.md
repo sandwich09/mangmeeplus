@@ -125,6 +125,8 @@ Verification of the waiting-shop change (2026-10-02, on `claude/sales-waiting-no
 - Browser, 390 px: the same rendered markup with the app's compiled CSS and fonts, served as static pages. The report as one salesperson and as a lead, the queue, and the confirm box, with a 75-character shop name written without a space and three reasons on one shop. No horizontal scroll on any of the four.
 - Not done: a signed-in look against a running API (it needs an account password typed in), the Playwright e2e suite, any UAT or production system.
 
+Artifacts of the waiting-shop change: `13bae91fe` the rule in contracts; `bbe6a8dc1` the report; `53140a928` the digest; `978664ea5` the PostgreSQL tests; `4c826bd5a` the screens and their tests; `94e25f2b6` the phone wrap of a long shop name; `3355b7a12` and `611eceaf0` docs; then the commit that records this line.
+
 Next for the waiting-shop branch: coordinator review; the owner's word on the two points it leaves open (a late confirmation changes a closed month; an ordinary salesperson cannot open the report); then push and PR. It has no migration.
 
 Next: coordinator review; the owner's answer on the two open questions; then push, PR and the release path with a migration (UAT, then promote). After the release, run query (1) on production to see whether any existing referral row sits on the old base.
