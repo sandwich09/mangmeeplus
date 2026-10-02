@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { todayCivilDate } from '@watchdog-bms/contracts';
+import { looksLikeAccountNumber, todayCivilDate } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -35,6 +35,7 @@ import {
   claimStatusBadge,
 } from './reimbursements.model';
 import {
+  NOTE_HAS_ACCOUNT_NUMBER,
   approvalStepCorrectionNote, buildClaimTimeline, canAttachPaymentSlip, categoryText, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
   savePaymentForm, slipTargetPayment, sumLineAmounts, timelineDateText, type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip,
 } from './reimbursements.logic';
@@ -147,18 +148,30 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
   const [reason, setReason] = useState('');
   const [acknowledged, setAcknowledged] = useState(false);
   const trimmed = reason.trim();
+  // The reason is shown on the payment row to every reader of the claim, so the API refuses one that looks like an
+  // account number ("โอนเข้าบัญชีผิด" is where a number gets typed). Said at the field while it is typed, by the API's
+  // own rule, and at the field again when the refusal comes from the server.
+  const typedAccountNumber = looksLikeAccountNumber(reason);
+  const reasonRefused = typedAccountNumber || error === NOTE_HAS_ACCOUNT_NUMBER;
   return (
     <Modal open title={`ยกเลิกการจ่าย ${payment.paymentNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
         {/* Spec §12.8: a void also undoes the payment's match to a bank statement line, in the same transaction. */}
         <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย ถ้าการจ่ายนี้จับคู่กับรายการเดินบัญชีธนาคารไว้แล้ว ระบบจะยกเลิกการจับคู่นั้นให้ด้วย" />
-        {error && <ErrorBanner message={error} />}
+        {error && error !== NOTE_HAS_ACCOUNT_NUMBER && <ErrorBanner message={error} />}
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผล *</label>
-          <textarea className={cx(inputClass, 'min-h-24 resize-y')} value={reason}
+          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-void-reason">เหตุผล *</label>
+          <textarea id="reimbursement-void-reason" className={cx(inputClass, 'min-h-24 resize-y')} value={reason} aria-required
+            aria-invalid={reasonRefused || undefined} aria-describedby="reimbursement-void-reason-note"
             onChange={e => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH}
             placeholder="เช่น บันทึกเลขอ้างอิงผิด หรือยกเลิกรายการโอนแล้ว" />
-          <div className="mt-1 text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
+          <div className="mt-1 flex justify-between gap-3 text-xs leading-5">
+            <span id="reimbursement-void-reason-note" role={reasonRefused ? 'alert' : undefined}
+              className={cx('min-w-0 [overflow-wrap:anywhere]', reasonRefused ? 'font-medium text-error-700' : 'text-gray-500')}>
+              {reasonRefused ? NOTE_HAS_ACCOUNT_NUMBER : 'ทุกคนที่เปิดใบนี้เห็นเหตุผลนี้ อย่าพิมพ์เลขบัญชี'}
+            </span>
+            <span className="shrink-0 tabular-nums text-gray-400">{reason.length}/{REASON_MAX_LENGTH}</span>
+          </div>
         </div>
         <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 text-sm text-gray-600">
           <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)} />
@@ -166,7 +179,7 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
         </label>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>กลับ</button>
-          <button type="button" className={dangerClass} disabled={busy || !trimmed || !acknowledged} aria-busy={Boolean(busy)}
+          <button type="button" className={dangerClass} disabled={busy || !trimmed || !acknowledged || typedAccountNumber} aria-busy={Boolean(busy)}
             onClick={() => onConfirm(trimmed)}>ยืนยันยกเลิกการจ่าย</button>
         </div>
       </div>

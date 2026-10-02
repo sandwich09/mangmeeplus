@@ -7,6 +7,7 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import { REIMBURSEMENT_PAYMENT_METHOD_LABELS, reimbursementPaidNotice, reimbursementPaymentHowText, reimbursementPaymentRule } from '@watchdog-bms/contracts';
 import { ToastContext } from '@/common/components/toast/use-toast';
 import { translateApiError } from '@/common/api/api-error-message';
+import { REASON_MAX_LENGTH } from '@/common/forms/sanitize';
 
 /*
  * The payment step of a claim that carries a receiving account (payout spec §12.1 to §12.4, §15, §17.2;
@@ -716,12 +717,15 @@ describe('pay step: plain Thai on a 390 px phone (Owner rule 2026-09-27/29)', ()
 // Spec §12.8: voiding a payment also undoes its match to a bank statement line, in the same transaction. The
 // dialog said what happens to the journal and to the claim, and nothing of the bank match.
 describe('the void dialog says everything a void undoes', () => {
-  const dialog = () => {
+  /** The dialog with a reason typed and the acknowledgement ticked or not, and what the page passes it after a refusal. */
+  const dialog = (state: { reason?: string; acknowledged?: boolean; error?: string } = {}) => {
     Object.assign(globalThis, { document: { body: {} } }); // Modal's portal target; never touched by a server render
     try {
-      return renderWithState(h(sections.VoidPaymentDialog, { payment: { id: ids.payment, paymentNo: 'RBPAY-202610-00001' }, onClose: noop, onConfirm: noop }), () => undefined);
+      return renderWithState(h(sections.VoidPaymentDialog, { payment: { id: ids.payment, paymentNo: 'RBPAY-202610-00001' }, error: state.error, onClose: noop, onConfirm: noop }),
+        (initial) => (initial === '' ? state.reason : initial === false ? state.acknowledged : undefined));
     } finally { Reflect.deleteProperty(globalThis, 'document'); }
   };
+  const confirm = (html: string) => /<button type="button" class="[^"]*"( disabled="")? aria-busy="false">ยืนยันยกเลิกการจ่าย<\/button>/.exec(html);
 
   it('names the journal, the claim going back to wait for payment, and the bank match', () => {
     const texts = visible(dialog());
@@ -740,5 +744,55 @@ describe('the void dialog says everything a void undoes', () => {
       for (const [name, pattern] of MACHINE_TOKENS) assert.doesNotMatch(shown, pattern, `${name}: ${raw}`);
     }
     assert.match(html, /<button type="button" class="[^"]*" disabled="" aria-busy="false">ยืนยันยกเลิกการจ่าย<\/button>/);
+    // A reason and the acknowledgement together turn it on; either alone does not.
+    assert.equal(confirm(dialog({ reason: 'บันทึกเลขอ้างอิงผิด', acknowledged: true }))?.[1], undefined);
+    assert.ok(confirm(dialog({ reason: 'บันทึกเลขอ้างอิงผิด' }))?.[1]);
+    assert.ok(confirm(dialog({ acknowledged: true }))?.[1]);
+  });
+
+  // Final review: the API refuses a void reason that looks like an account number, and holds the body to 500 characters.
+  it('says at the reason field, in the API\'s own sentence, that an account number is not typed there, and keeps the confirm off', () => {
+    const sentence = translateApiError('note_contains_account_number')!;
+    assert.equal(logic.NOTE_HAS_ACCOUNT_NUMBER, sentence, 'the sentence the page passes the dialog for that refusal');
+    assert.equal(logic.errorText(Object.assign(new Error('note_contains_account_number'), { status: 400 })), sentence);
+    const field = (html: string) => /<textarea id="reimbursement-void-reason"[^>]*>[\s\S]*?<\/textarea><div[^>]*>([\s\S]*?)<\/div><\/div>/.exec(html)?.[0] ?? '';
+
+    const plain = dialog({ reason: 'โอนผิดบัญชี ลงท้าย 1234', acknowledged: true });
+    assert.ok(visible(field(plain)).includes('ทุกคนที่เปิดใบนี้เห็นเหตุผลนี้ อย่าพิมพ์เลขบัญชี'), field(plain));
+    assert.doesNotMatch(field(plain), /aria-invalid|role="alert"/);
+    assert.equal(confirm(plain)?.[1], undefined, 'the last 4 digits are no account number');
+
+    const typed = dialog({ reason: 'โอนเข้าบัญชี 111-2-33444-1112 ผิด', acknowledged: true });
+    assert.match(field(typed), /<textarea id="reimbursement-void-reason"[^>]*aria-invalid="true"[^>]*aria-describedby="reimbursement-void-reason-note"/);
+    assert.match(field(typed), new RegExp(`<span id="reimbursement-void-reason-note" role="alert"[^>]*>${sentence}</span>`));
+    assert.ok(confirm(typed)?.[1], 'nothing is asked of the API with an account number in the reason');
+    assert.equal(visible(typed).filter((text) => text.includes(sentence)).length, 1, 'said once, at the field');
+
+    // The same refusal from the server, for a reason this build's rule let through: at the field, not in the banner above.
+    const refused = dialog({ reason: 'ยกเลิกรายการโอนแล้ว', acknowledged: true, error: sentence });
+    assert.match(field(refused), new RegExp(`role="alert"[^>]*>${sentence}</span>`));
+    assert.equal(refused.includes(`⚠ ${sentence}`), false);
+    assert.equal(confirm(refused)?.[1], undefined, 'the person changes the reason and presses again');
+    // Any other refusal is about the payment, not the field: it stays in the banner.
+    const other = dialog({ reason: 'ยกเลิกรายการโอนแล้ว', acknowledged: true, error: 'รายการจ่ายนี้ถูกยกเลิกไปแล้ว' });
+    assert.ok(visible(other).includes('⚠ รายการจ่ายนี้ถูกยกเลิกไปแล้ว'));
+    assert.doesNotMatch(field(other), /role="alert"/);
+  });
+
+  it('holds the void reason and the reject reason to the 500 characters the API takes, and counts them', () => {
+    const html = dialog({ reason: 'ก'.repeat(120) });
+    assert.match(html, /<textarea id="reimbursement-void-reason"[^>]*maxLength="500"/);
+    assert.ok(visible(html).includes('120/500'));
+    Object.assign(globalThis, { document: { body: {} } });
+    try {
+      const reject = renderWithState(h(sections.RejectDialog, { requestNo: 'RB-202610-00007', onClose: noop, onConfirm: noop }), (initial) => (initial === '' ? 'ข'.repeat(40) : undefined));
+      assert.match(reject, /<textarea[^>]*maxLength="500"/);
+      assert.ok(visible(reject).includes('40/500'));
+    } finally { Reflect.deleteProperty(globalThis, 'document'); }
+    // The bound the API validates the two bodies with.
+    const dtos = read('../../../../api/src/modules/reimbursements/presentation/http/reimbursement.dtos.ts');
+    assert.match(dtos, /class RejectReimbursementDto[^}]*@MaxLength\(500\) reason!: string;/);
+    assert.match(dtos, /class VoidReimbursementPaymentDto[^}]*@MaxLength\(500\) reason!: string;/);
+    assert.equal(REASON_MAX_LENGTH, 500);
   });
 });

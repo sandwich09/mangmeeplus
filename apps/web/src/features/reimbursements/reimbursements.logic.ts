@@ -133,6 +133,12 @@ export function errorText(e: unknown): string {
   return errorMessage(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด', e);
 }
 
+/**
+ * The API's sentence for a note or a reason that looks like an account number, exactly as `errorText` gives it for
+ * that refusal: a form that knows the sentence shows it at the field it is about, and not in a banner above the form.
+ */
+export const NOTE_HAS_ACCOUNT_NUMBER = errorText(new Error('note_contains_account_number'));
+
 export const STALE_APPROVAL_CODE = 'stale_approval_snapshot';
 
 /** True when the API rejected an approval because the claim changed after submit (HTTP 409). */
