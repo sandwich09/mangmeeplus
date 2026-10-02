@@ -61,7 +61,7 @@ import {
 import { claimApproverUserId, paymentTurnUserIds } from './reimbursement.logic';
 // A payout account correction round (payout spec §14).
 import { approvalWaitStartedAt, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionSourceStep, PAYOUT_CORRECTION_STEP_REASON } from './reimbursement.logic';
-import { payoutDefaultToken } from './payout-destination.logic';
+import { mayTypePayoutAccountFor, payoutDefaultToken } from './payout-destination.logic';
 import {
   isReimbursementPayoutCorrectionReason, reimbursementPayoutCorrectionAsk, reimbursementPayoutCorrectionReasons,
   REIMBURSEMENT_PAYOUT_CORRECTION_PHASE_LABELS, REIMBURSEMENT_PAYOUT_CORRECTION_REASON_LABELS,
@@ -1493,6 +1493,15 @@ describe('payout account correction round', () => {
     const others = [payoutDefaultToken('rb-1', { ...kbank, fingerprint: 'b'.repeat(64) }), payoutDefaultToken('rb-1', { payoutMethod: 'CASH' } as any), payoutDefaultToken('rb-2', kbank)];
     assert.equal(new Set([token, ...others]).size, 4);
     assert.ok(!String(token).includes('a'.repeat(64)), 'the token carries no fingerprint');
+  });
+
+  // The one rule behind the refusal `payout_account_member_not_active` and the claim detail that says it up front
+  // (`payoutCorrectionActions.submitModes`): an account typed for someone else needs someone to tell.
+  it('lets someone else type a member\'s account only for a member a notice can reach', () => {
+    assert.equal(mayTypePayoutAccountFor({ membershipStatus: 'ACTIVE' }), true);
+    for (const member of [{ membershipStatus: 'DISABLED' }, { membershipStatus: 'INVITED' }, { membershipStatus: 'active' }, { membershipStatus: null }, {}, null, undefined]) {
+      assert.equal(mayTypePayoutAccountFor(member), false, JSON.stringify(member));
+    }
   });
 
   it('offers a fixed list of reasons and words both phases in plain Thai', () => {

@@ -565,7 +565,27 @@ export function payoutCorrectionPreviousAccount(detail: { payoutCorrection?: { p
 export function isRequesterNotActiveRefusal(e: unknown): boolean {
   return refusalIs(e, 'payout_account_member_not_active');
 }
-/** Said in the account form after that refusal, in place of the choice it no longer offers: what cannot be done, why, and what still can. */
+/**
+ * Whether the account form of a round offers this choice: the server's list of what its endpoint takes from this
+ * viewer (`payoutCorrectionActions.submitModes`), so nobody fills in a choice only to have it refused. An answer
+ * without the list (from before the server gave one) offers every choice, and the endpoint's refusal still closes one.
+ */
+export function payoutCorrectionOffers(
+  detail: { payoutCorrectionActions?: { submitModes?: readonly string[] | null; [flag: string]: unknown } | null } | null | undefined, mode: Exclude<PayoutCorrectionForm['mode'], ''>,
+): boolean {
+  const modes = detail?.payoutCorrectionActions?.submitModes;
+  return !Array.isArray(modes) || modes.includes(mode);
+}
+/**
+ * The server said up front that an account cannot be typed on this requester's behalf because they are no longer an
+ * active member: the form says so in place of that choice, before anyone types.
+ */
+export function payoutCorrectionTypingRefusedUpFront(
+  detail: { payoutCorrectionActions?: { specifiedRefusal?: string | null; [flag: string]: unknown } | null } | null | undefined,
+): boolean {
+  return detail?.payoutCorrectionActions?.specifiedRefusal === 'REQUESTER_NOT_ACTIVE';
+}
+/** Said in the account form in place of the choice it does not offer: what cannot be done, why, and what still can. */
 export const PAYOUT_CORRECTION_TYPING_REFUSED = 'ผู้เบิกของใบนี้ไม่ได้ใช้งานระบบแล้ว จึงระบุบัญชีใหม่แทนผู้เบิกไม่ได้ เพราะระบบต้องแจ้งผู้เบิกทุกครั้งที่มีผู้ระบุบัญชีแทน เลือกวิธีรับเงินคืนจากตัวเลือกที่เหลือ';
 
 export function emptyPayoutCorrectionForm(): PayoutCorrectionForm {

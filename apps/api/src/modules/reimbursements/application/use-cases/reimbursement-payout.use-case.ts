@@ -15,6 +15,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
 import {
   isBlankPayoutDestination,
+  mayTypePayoutAccountFor,
   openPayoutAccountNumber,
   payoutAccountEditRefusal,
   sealPayoutDestination,
@@ -142,7 +143,7 @@ export class MemberPayoutAccountUseCase {
     // as for a default account: the requester is told, in the transaction that saves the draft, so
     // the account cannot be on the claim without its notice — and only a member a notice can reach
     // (an active one) may have an account typed for them at all.
-    if ((await this.repo.findPayoutMember(ctx.companyId, requesterUserId))?.membershipStatus !== 'ACTIVE') {
+    if (!mayTypePayoutAccountFor(await this.repo.findPayoutMember(ctx.companyId, requesterUserId))) {
       throw new ConflictException('payout_account_member_not_active');
     }
     const editorName = (await this.repo.getUserDisplayNames(ctx.companyId, [ctx.userId]))[ctx.userId] ?? UNNAMED_MEMBER;

@@ -369,6 +369,16 @@ export function payoutSubmitToken(claimId: string, plan: SubmitPayoutPlan): stri
 }
 
 /**
+ * Whether someone else may type the account a member's money goes to (payout spec §14.5): only for a
+ * member a notice can reach, an active one, because the account never goes onto a claim without its
+ * requester being told. The one rule for the write that refuses (`payout_account_member_not_active`)
+ * and for the claim detail that says so before anyone types.
+ */
+export function mayTypePayoutAccountFor(member: { membershipStatus?: string | null } | null | undefined): boolean {
+  return member?.membershipStatus === 'ACTIVE';
+}
+
+/**
  * Names the requester's default account as a correction form shows it (payout spec §14.5), by the
  * token a draft's page gets for the same account: choosing "use the default account" sends it back, and
  * a default that is no longer that account refuses the correction. Undefined: there is no default to use.

@@ -13,7 +13,7 @@ import {
   PAYOUT_CORRECTION_FIX_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAME_ACCOUNT_LABEL, PAYOUT_CORRECTION_STALE_PRESS, PAYOUT_CORRECTION_SUPERSEDED, PAYOUT_CORRECTION_TYPING_REFUSED,
   emptyPayoutCorrectionForm, isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   payoutCorrectionAccountText, payoutCorrectionCardNote, payoutCorrectionFormError,
-  payoutCorrectionInput, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
+  payoutCorrectionInput, payoutCorrectionOffers, payoutCorrectionPreviousAccount, payoutCorrectionReasonText, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
   payoutCorrectionSentBackText, payoutCorrectionSubmittedText, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
@@ -539,6 +539,38 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     assert.doesNotMatch(html, /role="dialog"/);
     assert.equal(html.match(/<label class="flex min-h-11 cursor-pointer/g)?.length, 4);
     assertPlainThai(texts, 'the account form');
+  });
+
+  // Upgrade test 2026-10-02: the form offered a finance reviewer the choice to type an account for a requester who had
+  // left, and said it could not be taken only after the save was refused. The server now lists what its endpoint takes
+  // from this viewer (`submitModes`), and why typing is not on the list.
+  it('offers exactly the choices the server lists for this viewer, and says before anyone types why typing is not one of them', () => {
+    const listed = (submitModes: string[], more: object = {}) => ({ ...phaseA(), payoutCorrectionActions: { canRequest: false, canSubmit: true, requesterDefault: DEFAULT, submitModes, ...more } });
+    assert.deepEqual(choices(form(listed(['DEFAULT', 'SPECIFIED', 'CASH', 'PREVIOUS']), { userId: 'finance' }).texts),
+      ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
+    // The requester is no longer an active member: typing is not offered, and the sentence that says why is on the
+    // form from the start, as what the form is and not as something that went wrong.
+    const gone = form(listed(['DEFAULT', 'CASH', 'PREVIOUS'], { specifiedRefusal: 'REQUESTER_NOT_ACTIVE' }), { userId: 'finance' });
+    assert.deepEqual(choices(gone.texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', KEEP]);
+    assert.ok(gone.texts.includes(PAYOUT_CORRECTION_TYPING_REFUSED));
+    assert.equal(gone.texts.includes(`⚠ ${PAYOUT_CORRECTION_TYPING_REFUSED}`), false, 'known up front: a note, not an error banner');
+    assert.match(gone.html, /data-testid="reimbursement-payout-correction-typing-note"/);
+    // An account left in the form's state is never shown as fields under a choice that is not offered.
+    const stale = form(listed(['CASH', 'PREVIOUS'], { specifiedRefusal: 'REQUESTER_NOT_ACTIVE' }), { userId: 'finance', picked: { mode: 'SPECIFIED', account: typed } });
+    assert.deepEqual([choices(stale.texts), stale.texts.includes('เลขบัญชี *')], [['รับเป็นเงินสด', KEEP], false]);
+    // Every choice is offered only when listed: a claim that had no account keeps none, a requester with no default has none to use.
+    assert.deepEqual(choices(form(listed(['SPECIFIED', 'CASH'])).texts), ['รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้']);
+    assert.deepEqual(choices(form(listed(['CASH'])).texts), ['รับเป็นเงินสด']);
+    // No sentence where typing is offered, or where the server gave no reason for leaving it out.
+    for (const detail of [listed(['DEFAULT', 'SPECIFIED', 'CASH', 'PREVIOUS']), listed(['CASH']), withDefault(phaseA())]) {
+      assert.equal(form(detail, { userId: 'finance' }).texts.some((text) => text.includes(PAYOUT_CORRECTION_TYPING_REFUSED)), false);
+    }
+    // The rule: the list decides; an answer without one (from before the server gave it) offers every choice.
+    for (const mode of ['DEFAULT', 'SPECIFIED', 'CASH', 'PREVIOUS'] as const) {
+      assert.equal(payoutCorrectionOffers(listed(['CASH']), mode), mode === 'CASH', mode);
+      assert.equal(payoutCorrectionOffers(withDefault(phaseA()), mode), true, mode);
+    }
+    assertPlainThai(gone.texts, 'the account form for a requester who left');
   });
 
   it('offers no default the requester has not set, and none that is cash: cash is its own choice', () => {

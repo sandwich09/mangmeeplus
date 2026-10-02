@@ -4037,7 +4037,8 @@ describe('payout correction: the requester gives the account and it is approved 
     const flags = async (viewer: any) => (await world.detail.execute(viewer, id)).payoutCorrectionActions;
     const kbankDefault = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountLast4: '6789' };
     const requesterFlags = await flags(ctx());
-    assert.deepEqual({ ...requesterFlags, requesterDefault: { ...requesterFlags!.requesterDefault, token: 'x' } }, { canRequest: false, canSubmit: true, requesterDefault: { ...kbankDefault, token: 'x' } });
+    assert.deepEqual({ ...requesterFlags, requesterDefault: { ...requesterFlags!.requesterDefault, token: 'x' } },
+      { canRequest: false, canSubmit: true, requesterDefault: { ...kbankDefault, token: 'x' }, submitModes: ['DEFAULT', 'SPECIFIED', 'CASH', 'PREVIOUS'] });
     assert.equal(requesterFlags!.requesterDefault!.token, payoutDefaultToken(id, await world.state.repo.findMemberPayoutAccount('co-1', 'staff-1')));
     assert.deepEqual((await flags(financeCtx()))?.canSubmit, true, 'on the requester\'s behalf, as for a draft');
     for (const viewer of [approverCtx(), payerCtx(), readerCtx()]) {
@@ -4047,6 +4048,52 @@ describe('payout correction: the requester gives the account and it is approved 
     assert.deepEqual(world.audits.map((entry) => [entry.action, entry.result]), Array(3).fill(['reimbursement.payout_correction.submit', 'DENIED']));
     assert.deepEqual([world.claim().payoutCorrectionSubmittedAt, world.events()], [undefined, []]);
     assert.equal(leaksNumber(requesterFlags), false);
+  });
+
+  // Upgrade test 2026-10-02: a finance reviewer filled in an account for a requester who had left, and was told it
+  // could not be taken only after pressing save. The detail now lists the choices the endpoint takes from this viewer.
+  it('says up front which choices the account endpoint takes from this viewer, and the endpoint takes those and refuses the rest', async () => {
+    const offered = async (world: ReturnType<typeof correctionWorld>, viewer: any, id: string) => {
+      const actions = (await world.detail.execute(viewer, id)).payoutCorrectionActions;
+      return [actions?.submitModes, actions?.specifiedRefusal];
+    };
+    const refused = (code: string) => (error: any) => error.getStatus() === 409 && error.message === code;
+
+    // An active requester with a default, on a claim approved with an account: every choice, for them and for a finance reviewer.
+    const world = correctionWorld();
+    const id = await sentBack(world);
+    for (const viewer of [ctx(), financeCtx()]) assert.deepEqual(await offered(world, viewer, id), [['DEFAULT', 'SPECIFIED', 'CASH', 'PREVIOUS'], undefined], viewer.userId);
+    // Whoever may not give the account is told nothing of its choices.
+    assert.equal((await world.detail.execute(approverCtx(), id)).payoutCorrectionActions, undefined);
+
+    // The requester left: nobody types an account for them, and the detail says so before anyone tries. They have no
+    // default either, so that choice is not listed.
+    const gone = correctionWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus: 'DISABLED' } } });
+    const goneId = await sentBack(gone, { setDefault: null, payout: { mode: 'SPECIFIED', ...KBANK } });
+    assert.deepEqual(await offered(gone, financeCtx(), goneId), [['CASH', 'PREVIOUS'], 'REQUESTER_NOT_ACTIVE']);
+    await assert.rejects(() => gone.giveAccount.execute(financeCtx(), goneId, { mode: 'SPECIFIED', ...SCB }), refused('payout_account_member_not_active'));
+    await assert.rejects(() => gone.giveAccount.execute(financeCtx(), goneId, { mode: 'DEFAULT', defaultToken: 'x' }), refused('payout_method_required'));
+    assert.equal(gone.claim().payoutCorrectionSubmittedAt, undefined, 'the two unlisted choices wrote nothing');
+    assert.equal((await gone.giveAccount.execute(financeCtx(), goneId, { mode: 'PREVIOUS' })).payoutCorrection?.phase, 'AWAITING_APPROVAL');
+    // Still the same list while the account waits for approval, where it may be given again; cash is taken too.
+    assert.deepEqual(await offered(gone, financeCtx(), goneId), [['CASH', 'PREVIOUS'], 'REQUESTER_NOT_ACTIVE']);
+    assert.equal((await gone.giveAccount.execute(financeCtx(), goneId, { mode: 'CASH' })).payout?.payoutMethod, 'CASH');
+    // An inactive requester who set a default before leaving: the default is theirs and nobody types it, so it is listed and taken.
+    const left = correctionWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus: 'DISABLED' } } });
+    const leftId = await sentBack(left);
+    assert.deepEqual(await offered(left, financeCtx(), leftId), [['DEFAULT', 'CASH', 'PREVIOUS'], 'REQUESTER_NOT_ACTIVE']);
+    const token = (await left.detail.execute(financeCtx(), leftId)).payoutCorrectionActions!.requesterDefault!.token;
+    assert.equal((await left.giveAccount.execute(financeCtx(), leftId, { mode: 'DEFAULT', defaultToken: token })).payoutCorrection?.phase, 'AWAITING_APPROVAL');
+
+    // A claim that had no account of its own has none to keep: that choice is not listed, and is refused.
+    const legacy = correctionWorld();
+    const legacyId = await legacy.ready({ setDefault: null, payout: { mode: 'CASH' } });
+    Object.assign(legacy.claim(), { payoutMethod: undefined, payoutFingerprint: undefined, payoutDestinationVersion: undefined });
+    await legacy.sendBack.execute(payerCtx(), legacyId, { reasonCode: 'NO_ACCOUNT_ON_CLAIM' });
+    assert.deepEqual(await offered(legacy, ctx(), legacyId), [['SPECIFIED', 'CASH'], undefined]);
+    await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'PREVIOUS' }), refused('payout_destination_required'));
+    await assert.rejects(() => legacy.giveAccount.execute(ctx(), legacyId, { mode: 'DEFAULT', defaultToken: 'x' }), refused('payout_method_required'));
+    assert.equal((await legacy.giveAccount.execute(ctx(), legacyId, { mode: 'SPECIFIED', ...KBANK })).payout?.accountLast4, '6789');
   });
 
   it('freezes the new account as a new version, asks the same approvers again and shows them both accounts', async () => {

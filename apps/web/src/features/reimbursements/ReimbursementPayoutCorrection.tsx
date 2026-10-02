@@ -21,7 +21,8 @@ import {
   PAYOUT_CORRECTION_SEND_BACK_LABEL, PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
   isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
-  payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, type PayoutCorrectionForm,
+  payoutCorrectionOffers, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes,
+  payoutCorrectionTypingRefusedUpFront, type PayoutCorrectionForm,
 } from './reimbursement-payout.logic';
 
 /**
@@ -150,9 +151,12 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   const [error, setError] = useState<string | null>(null);
   const [invalidField, setInvalidField] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
-  // Typing an account for a requester who is no longer an active member is the server's to refuse, and it says so
-  // only when asked: once it has, that choice is not offered again and the form says why.
+  // Typing an account for a requester who is no longer an active member is the server's to refuse. The claim detail
+  // says so up front (`submitModes`), and the form then never offers the choice; a page read before the requester
+  // left learns it from the refusal, after which the choice is not offered again. Either way the form says why.
   const [typing, setTyping] = useState<'offered' | 'refused'>('offered');
+  const offers = (mode: Exclude<PayoutCorrectionForm['mode'], ''>) => payoutCorrectionOffers(detail, mode);
+  const typingOffered = typing === 'offered' && offers('SPECIFIED');
   const sending = useRef(false);
   const heading = useFocusOnOpen();
   // The requester's default account as it is now, masked, with the token that names it. Cash as a default is
@@ -210,13 +214,17 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
         <p className="mt-1 text-sm text-gray-600">เลือกวิธีรับเงินคืนของใบนี้ใหม่ เลขที่ใบ รายการ และยอดเงินไม่เปลี่ยน</p>
       </div>
       <div role="radiogroup" aria-label="รับเงินคืนทาง" aria-required className="space-y-2">
-        {defaultAccount && option('DEFAULT', forSelf ? 'ใช้บัญชีรับเงินคืนประจำของฉัน' : 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', payoutAccountWithName(defaultAccount))}
-        {option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
-        {typing === 'offered' && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน')}
-        {previousAccount && option('PREVIOUS', PAYOUT_CORRECTION_PREVIOUS_LABEL, `${payoutCorrectionAccountText(previousAccount)} · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง`)}
+        {defaultAccount && offers('DEFAULT') && option('DEFAULT', forSelf ? 'ใช้บัญชีรับเงินคืนประจำของฉัน' : 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', payoutAccountWithName(defaultAccount))}
+        {offers('CASH') && option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
+        {typingOffered && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน')}
+        {previousAccount && offers('PREVIOUS') && option('PREVIOUS', PAYOUT_CORRECTION_PREVIOUS_LABEL, `${payoutCorrectionAccountText(previousAccount)} · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง`)}
       </div>
-      {typing === 'refused' && <ErrorBanner message={PAYOUT_CORRECTION_TYPING_REFUSED} />}
-      {form.mode === 'SPECIFIED' && typing === 'offered' && (
+      {/* Known before anyone typed: said as what the form is, not as something that went wrong. */}
+      {typing === 'refused' ? <ErrorBanner message={PAYOUT_CORRECTION_TYPING_REFUSED} />
+        : payoutCorrectionTypingRefusedUpFront(detail) && (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="reimbursement-payout-correction-typing-note">{PAYOUT_CORRECTION_TYPING_REFUSED}</p>
+        )}
+      {form.mode === 'SPECIFIED' && typingOffered && (
         <div className="space-y-3 border-t border-gray-100 pt-3">
           <PayoutAccountFields value={form.account} onChange={(account) => change({ account })} disabled={busy} invalidField={invalidField} />
           {canSaveAsDefault && (

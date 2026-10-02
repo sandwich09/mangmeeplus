@@ -4483,9 +4483,16 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const db = clients[0]!;
     const claim = await approvedTransferClaim();
     await round(0).sendBack.execute(finance(), claim.requestId, { reasonCode: 'OTHER', note: 'ส่งกลับผิดใบ' });
+    // What the claim detail tells whoever fills the account form, before anyone types: the choices the endpoint takes.
+    const offered = async () => {
+      const actions = (await on(0).detail.execute(finance(), claim.requestId)).payoutCorrectionActions;
+      return { typing: actions?.submitModes?.includes('SPECIFIED'), kept: actions?.submitModes?.includes('PREVIOUS'), cash: actions?.submitModes?.includes('CASH'), why: actions?.specifiedRefusal };
+    };
+    assert.deepEqual(await offered(), { typing: true, kept: true, cash: true, why: undefined }, 'while the requester is an active member');
     const membership = { companyId_userId: { companyId, userId: STAFF } };
     await db.companyMembership.update({ where: membership, data: { status: 'DISABLED' } });
     try {
+      assert.deepEqual(await offered(), { typing: false, kept: true, cash: true, why: 'REQUESTER_NOT_ACTIVE' }, 'once the requester is no longer one');
       // Nobody types an account for a member no notice can reach, in a round as on a draft.
       await assert.rejects(() => round(0).giveAccount.execute(finance(), claim.requestId, { mode: 'SPECIFIED', ...SCB_ACCOUNT }), conflict('payout_account_member_not_active'));
       assert.deepEqual([(await accountVersionsOf(claim.requestId)).length, (await claimRow(claim.requestId)).payoutCorrectionSubmittedAt], [1, null]);

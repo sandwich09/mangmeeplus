@@ -1035,6 +1035,19 @@ export type ReimbursementPayoutCorrectionActions = {
    * Absent when the requester has set none.
    */
   requesterDefault?: ReimbursementPayoutCorrectionAccount & { token: string };
+  /**
+   * With `canSubmit`: the choices `PUT :requestId/payout-destination` takes from this viewer for this claim,
+   * decided by the endpoint's own rules, so a form offers exactly these and nobody fills in a choice only to
+   * have it refused. `DEFAULT` is there when the requester has a default to use (`requesterDefault`),
+   * `PREVIOUS` when the claim was approved with an account or cash before the round, `CASH` always, and
+   * `SPECIFIED` unless the viewer would type the account of a requester no notice can reach.
+   */
+  submitModes?: SubmitReimbursementPayoutCorrectionInput['mode'][];
+  /**
+   * Why `SPECIFIED` is not among `submitModes`: the requester is no longer an active member, so an account
+   * typed on their behalf would be on the claim without anyone being told (`payout_account_member_not_active`).
+   */
+  specifiedRefusal?: 'REQUESTER_NOT_ACTIVE';
 };
 
 /**

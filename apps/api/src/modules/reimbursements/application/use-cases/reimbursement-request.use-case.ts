@@ -38,7 +38,7 @@ import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './
 import { approvalDecisionActions, awaitingSystemOf } from './reimbursement-approval.use-case';
 import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import {
-  defaultChangedSinceSubmit, hasPayoutSnapshot, payoutDefaultToken, payoutRevealGroup, payoutSubmitToken,
+  defaultChangedSinceSubmit, hasPayoutSnapshot, mayTypePayoutAccountFor, payoutDefaultToken, payoutRevealGroup, payoutSubmitToken,
   type PayoutRevealGroup, type SubmitPayoutColumns,
 } from '../../domain/logic/payout-destination.logic';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
@@ -60,6 +60,7 @@ import {
   PAYMENT_RECORDING_STATUSES,
   paymentTurnUserIds,
   payoutCorrectionPhase,
+  payoutCorrectionRoundStart,
   d,
   decStr,
 } from '../../domain/logic/reimbursement.logic';
@@ -1313,6 +1314,10 @@ export async function payoutCorrectionActionsOf(
   // What "use the default account" would copy, for whoever fills the form: the requester's default as it is now.
   const account = canSubmit ? await repo.findMemberPayoutAccount(req.companyId, req.requesterUserId) : null;
   const token = payoutDefaultToken(req.id, account);
+  // Typing an account for someone else needs a requester a notice can reach: the write's own rule
+  // (`draftPayoutChange`), asked here so the form says it before anyone types.
+  const typingRefused = canSubmit && req.requesterUserId !== ctx.userId
+    && !mayTypePayoutAccountFor(await repo.findPayoutMember(req.companyId, req.requesterUserId));
   return {
     canRequest,
     canSubmit,
@@ -1324,6 +1329,18 @@ export async function payoutCorrectionActionsOf(
       ...(account.accountLast4 && { accountLast4: account.accountLast4 }),
       token,
     } }),
+    // The choices the account endpoint takes from this viewer, each by the rule that would refuse it there:
+    // the default needs one to use, typing needs a requester who is told, and "the account the claim had"
+    // needs the claim to have had one (`freezePayoutCorrection`). Cash is always taken.
+    ...(canSubmit && {
+      submitModes: [
+        ...(account && token ? ['DEFAULT' as const] : []),
+        ...(typingRefused ? [] : ['SPECIFIED' as const]),
+        'CASH' as const,
+        ...(payoutCorrectionRoundStart(req)?.payoutMethod ? ['PREVIOUS' as const] : []),
+      ],
+      ...(typingRefused && { specifiedRefusal: 'REQUESTER_NOT_ACTIVE' as const }),
+    }),
   };
 }
 
