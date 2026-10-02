@@ -25,7 +25,9 @@ import type {
   ReimbursementLineRecord,
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
-import { claimSignatureAckHash, computeReceiptRequirement, currentDesk, payoutCorrectionPhase, payoutCorrectionRoundStart } from '../../domain/logic/reimbursement.logic';
+import {
+  claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment, payoutCorrectionPhase, payoutCorrectionRoundStart,
+} from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
@@ -95,7 +97,9 @@ export function toRequestSummary(
     ...(r.cancellationPendingAt && r.status !== 'CANCELLED' && r.status !== 'VOIDED' ? { cancellationPending: true as const } : {}),
     financeReviewStatus: r.financeReviewStatus,
     paymentStatus: r.paymentStatus,
-    duplicateStatus: r.duplicateStatus,
+    // With the claim's own candidates where they were loaded: a candidate still open is a possible
+    // duplicate whatever the column says once the claim's expense records exist (`claimDuplicateStatus`).
+    duplicateStatus: claimDuplicateStatus(r.duplicateStatus, r.duplicateCandidates),
     receiptRequirementStatus: r.receiptRequirementStatus,
     ...(options.allowMissingReceiptWithReason !== undefined
       ? { allowMissingReceiptWithReason: options.allowMissingReceiptWithReason }
@@ -434,10 +438,10 @@ export async function detailWithFileNames(
     // The same value the approval and payment paths act on.
     financeReviewRequired: requestPolicy.financeReviewRequired,
     allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
-    // The payment gate's own test (open candidates under BLOCK_PAYMENT). Not `duplicateStatus`:
-    // once projections run, that field carries the expense-level result, not these candidates.
-    duplicateBlocksPayment: requestPolicy.duplicatePolicy === 'BLOCK_PAYMENT'
-      && (req.duplicateCandidates ?? []).some((candidate) => candidate.status === 'OPEN'),
+    // The payment gate's own test, by the gate's own function: the page marks the claim exactly when
+    // recording its payment would answer `duplicate_unresolved`.
+    duplicateBlocksPayment: duplicateBlocksPayment(requestPolicy.duplicatePolicy,
+      (req.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length),
     paymentSlips,
     viewerCanOpenSlips: canOpenReimbursementPaymentSlip(
       { userId: viewer.userId, permissions: viewer.permissions },

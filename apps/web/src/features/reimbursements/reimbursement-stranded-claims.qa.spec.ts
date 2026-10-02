@@ -526,3 +526,36 @@ describe('the status badge of a claim the system holds reads รอระบบ�
     assert.match(hub, /claimStatusBadge\(r\)\.label,\s+FINANCE_REVIEW_LABELS\[r\.financeReviewStatus\]/);
   });
 });
+
+// A possible duplicate is one fact on every surface: the server's `duplicateBlocksPayment` on the claim and
+// `hasDuplicateBlocker` on its pay-queue row are the payment's own test. The claim page read the status word for its
+// finance approval instead, which after approval held the result of the claim's expense records.
+describe('the claim page clears a duplicate block at the finance approval exactly when the server says the payment is blocked', () => {
+  const underReview = (overrides: Record<string, unknown> = {}) => claim({
+    status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING', financeReviewRequired: true, currentDesk: { kind: 'FINANCE' },
+    duplicateStatus: 'POSSIBLE_DUPLICATE', duplicateCandidates: [{ id: 'd1', candidateType: 'AMOUNT_DATE_VENDOR', status: 'OPEN', score: 80 }], ...overrides,
+  });
+  const reviewer = { userId: 'accountant', permissions: ['reimbursement.read', 'reimbursement.finance_review'] };
+  const resolver = { userId: 'finance', permissions: [...reviewer.permissions, 'reimbursement.duplicate.resolve'] };
+  const sent = async (detail: object, viewer: typeof reviewer) => (await press(detail, viewer, 'อนุมัติจ่าย'))[0]?.body;
+
+  // The status word is not the test: an answer that says the payment is blocked is followed whatever the word reads.
+  it('sends the override with the approval for a blocked claim, and keeps the button off for a reviewer who may not clear it', async () => {
+    for (const duplicateStatus of ['POSSIBLE_DUPLICATE', 'NO_MATCH']) {
+      const blocked = underReview({ duplicateBlocksPayment: true, duplicateStatus });
+      assert.deepEqual(await sent(blocked, resolver), { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: true, duplicateResolutionReason: 'ตรวจสอบแล้วไม่ซ้ำ' }, duplicateStatus);
+      assert.deepEqual(button(claimPage(blocked, reviewer), 'อนุมัติจ่าย'), { shown: true, disabled: true }, duplicateStatus);
+      assert.ok(visible(claimPage(blocked, reviewer)).includes('รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ'), duplicateStatus);
+    }
+  });
+
+  // A company whose policy only warns: the claim still reads as a possible duplicate, and nothing is blocked or cleared.
+  it('sends no override, and holds nobody back, for a claim that reads as a possible duplicate and is not blocked', async () => {
+    const warned = underReview({ duplicateBlocksPayment: false });
+    for (const viewer of [reviewer, resolver]) {
+      assert.deepEqual(await sent(warned, viewer), { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: false });
+      assert.deepEqual(button(claimPage(warned, viewer), 'อนุมัติจ่าย'), { shown: true, disabled: false });
+    }
+    assert.ok(visible(claimPage(warned, reviewer)).includes('อาจเป็นรายการซ้ำ ต้องตรวจสอบ'), 'the claim still says it may be a duplicate');
+  });
+});

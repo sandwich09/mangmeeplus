@@ -47,7 +47,7 @@ import {
 import { ReimbursementProjectionOrchestratorService } from '../application/services/reimbursement-projection-orchestrator.service';
 import { ReimbursementProjectionReconcilerService } from '../application/services/reimbursement-projection-reconciler.service';
 import { ListReimbursementApproverOptionsUseCase } from '../application/use-cases/reimbursement-policy.use-case';
-import { ListFinanceQueueUseCase } from '../application/use-cases/reimbursement-finance.use-case';
+import { FinanceReviewReimbursementUseCase, ListFinanceQueueUseCase } from '../application/use-cases/reimbursement-finance.use-case';
 import { toRequestSummary } from '../application/dto/reimbursement.mapper';
 import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from '../application/use-cases/reimbursement-approval.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from '../application/use-cases/reimbursement-payout-correction.use-case';
@@ -3358,6 +3358,70 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal((await approve((await repos[0]!.findRequestById(companyId, waiting.id))!)).resumed, false);
   });
 
+  // ---- A possible duplicate after approval: one fact, the claim's own open candidates ----
+
+  /** A claim that may repeat another one, approved by its manager and carried out by the system: at the pay step. */
+  async function approvedPossibleDuplicate() {
+    const other = await waitingClaim();
+    const waiting = await waitingClaim(1, 'unset', other.id);
+    await repos[0]!.beginApprovalDecisionAtomic({
+      companyId, requestId: waiting.id, expectedUpdatedAt: waiting.updatedAt, expectedApprovalSnapshotHash: waiting.approvalSnapshotHash,
+      actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
+      decidedAt: new Date(), financeRequestPatch: {}, onDecisionPersisted: async () => undefined,
+    });
+    assert.equal((await system(0).resume.execute(manager(), waiting.id)).status, 'READY_FOR_PAYMENT');
+    return { requestId: waiting.id, amount: waiting.amount };
+  }
+  /** What each surface says of the claim, and what recording its payment answers. */
+  async function duplicateFacts(claim: { requestId: string; amount: string }, attempt: string) {
+    const queueRow = (await new ListFinanceQueueUseCase(repos[0]!).execute(finance())).find((row) => row.id === claim.requestId);
+    const detail = await on(0).detail.execute(finance(), claim.requestId);
+    const listRow = (await new ListReimbursementsUseCase(repos[0]!).execute(finance(), { status: 'READY_FOR_PAYMENT', pageSize: 100 })).items.find((row) => row.id === claim.requestId);
+    const payment = await repos[0]!.recordPaymentAtomic({ companyId, reimbursementRequestId: claim.requestId, idempotencyKey: `${S}-dup-${attempt}-${claim.requestId}`,
+      paidAmount: claim.amount, currency: 'THB', paymentMethod: 'CASH', paidAt: new Date(), paidByUserId: FIN })
+      .then((paid) => paid.request.status, (error) => `${error.getStatus?.()} ${errorMessage(error)}`);
+    return {
+      queue: [queueRow?.hasDuplicateBlocker, queueRow?.duplicateStatus], detail: [detail.duplicateBlocksPayment, detail.duplicateStatus],
+      list: listRow?.duplicateStatus, payment,
+    };
+  }
+
+  it('marks a possible duplicate on the pay-queue row and the claim detail exactly while its payment is refused for it', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await approvedPossibleDuplicate();
+    // Why the two disagreed: carrying the approval out writes the result of the claim's expense records into the
+    // status column, and those records know nothing of the claim's own candidate, which is still open.
+    const stored = await clients[0]!.reimbursementRequest.findUniqueOrThrow({ where: { id: claim.requestId }, include: { duplicateCandidates: true } });
+    assert.deepEqual([stored.status, stored.duplicateStatus, stored.duplicateCandidates.map((candidate) => candidate.status)], ['READY_FOR_PAYMENT', 'NO_MATCH', ['OPEN']]);
+
+    // Before: the queue row had no mark, the detail said "none found", and the payment was refused all the same.
+    assert.deepEqual(await duplicateFacts(claim, 'blocked'), {
+      queue: [true, 'POSSIBLE_DUPLICATE'], detail: [true, 'POSSIBLE_DUPLICATE'], list: 'POSSIBLE_DUPLICATE', payment: '422 duplicate_unresolved',
+    });
+
+    // Whoever records the payment clears it with a reason: no mark anywhere, checked and not "none found", and the payment is taken.
+    const prisma = { client: clients[0]! } as any;
+    const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
+    const resolve = new FinanceReviewReimbursementUseCase(repos[0]!, audit, { execute: async () => { throw new Error('nothing is built for a resolve'); } } as any,
+      new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), new PrismaExpenseRepository(prisma)));
+    const resolved = await resolve.execute(finance(), claim.requestId, { resolveDuplicate: true, duplicateResolutionReason: 'ใบเสร็จคนละใบกัน' });
+    assert.deepEqual([resolved.duplicateBlocksPayment, resolved.duplicateStatus], [false, 'OVERRIDDEN']);
+    assert.deepEqual(await duplicateFacts(claim, 'cleared'), { queue: [false, 'OVERRIDDEN'], detail: [false, 'OVERRIDDEN'], list: 'OVERRIDDEN', payment: 'PAID' });
+  });
+
+  it('marks no payment block on a claim whose policy only warns: its candidate still reads as a possible duplicate, and it is paid', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const claim = await approvedPossibleDuplicate();
+    // Sent under a policy that warns and does not block. Set once the claim is at the pay step: nothing reads its hash there.
+    await clients[0]!.reimbursementRequest.update({ where: { id: claim.requestId }, data: { approvalPolicySnapshotJson: {
+      schemaVersion: 1, policyId: 'pol', policyVersion: 'v1', approvalRequiredFromAmount: '1.00', requiresApproval: true,
+      route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+      allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'WARN', financeReviewRequired: false,
+    } } });
+    const facts = await duplicateFacts(claim, 'warned');
+    assert.deepEqual([facts.queue, facts.detail, facts.list, facts.payment], [[false, 'POSSIBLE_DUPLICATE'], [false, 'POSSIBLE_DUPLICATE'], 'POSSIBLE_DUPLICATE', 'PAID']);
+  });
+
   // ---- A claim's expense record ends with its claim ----
 
   it('refuses to void, reject or delete a standing claim\'s expense record from the expense screen, and the claim goes on as if nobody had asked', async (t) => {
@@ -3405,7 +3469,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
    * A claim sent for approval and waiting for its approver. Every line has an amount of its own: the
    * same person, day and amount twice is parked as a possible duplicate instead of being confirmed.
    */
-  async function waitingClaim(lines = 1, payBy: 'unset' | 'transfer' = 'unset') {
+  async function waitingClaim(lines = 1, payBy: 'unset' | 'transfer' = 'unset', duplicateOfRequestId?: string) {
     const index = ++sequence;
     const amounts = Array.from({ length: lines }, () => 1000 + ++sequence);
     // A claim paid by transfer is sent with the requester's default account, which the submit freezes onto it.
@@ -3420,9 +3484,12 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
       lines: amounts.map((amount, line) => ({ lineNo: line + 1, incurredDate: day, description: `รายการ ${line + 1}`, categoryKey: 'travel', amount: `${amount}.0000` })),
     });
     const requestSnapshotHash = computeSnapshotHash(claimSnapshotFields(draft));
-    const sent = { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: STAFF, outstandingAmount: draft.amount, updatedByUserId: STAFF };
+    // What a submit writes for a claim that may repeat another one: the candidate, and the status that says so.
+    const duplicateCandidates = duplicateOfRequestId ? [{ candidateType: 'AMOUNT_DATE_VENDOR', candidateRequestId: duplicateOfRequestId, score: 80 }] : [];
+    const sent = { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: STAFF, outstandingAmount: draft.amount, updatedByUserId: STAFF,
+      ...(duplicateOfRequestId && { duplicateStatus: 'POSSIBLE_DUPLICATE' }) };
     await repos[0]!.submitDraftAtomic({
-      companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt, duplicateCandidates: [], evidence: { attachmentIds: [], expenseIds: [] },
+      companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt, duplicateCandidates, evidence: { attachmentIds: [], expenseIds: [] },
       documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${draft.id}`, reservedByUserId: STAFF },
       ...(payBy === 'transfer' ? {
         approvalStep: { sequenceNo: 1, approverUserId: MGR, approverRoleSnapshot: 'MANAGER' }, request: sent,

@@ -78,6 +78,7 @@ import {
   deriveHeaderFromLines,
   computeReceiptRequirement,
   currentDesk,
+  duplicateBlocksPayment,
 } from '../domain/logic/reimbursement.logic';
 import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay, isExpenseVoidReason } from '@watchdog-bms/contracts';
 import { findClaimExpenseVoidBlocker, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
@@ -187,7 +188,16 @@ export type ListRequestsWhere = {
   search?: string;
   skip?: number;
   take?: number;
+  /** Load each claim's own duplicate candidates too: a queue whose rows say whether a duplicate refuses the payment. */
+  withDuplicateCandidates?: boolean;
 };
+
+/**
+ * A claim's own duplicate candidates that still say something: open, or cleared by a person. The
+ * ones a resubmit superseded are history. What a list row needs for `claimDuplicateStatus` and
+ * `duplicateBlocksPayment`; the claim detail loads every candidate.
+ */
+const LIVE_DUPLICATE_CANDIDATES = { where: { status: { in: ['OPEN', 'OVERRIDDEN'] as any } } };
 
 /** The claims of a list scope that share the fields the hub counts on. */
 export type ReimbursementRequestGroup = {
@@ -3081,7 +3091,8 @@ export class PrismaReimbursementRepository {
     const [rows, groups] = await Promise.all([
       this.prisma.client.reimbursementRequest.findMany({
         where: where.bucket === undefined ? scope : { ...scope, AND: [...scope.AND, hubBucketWhere(where.bucket)] },
-        include: { _count: { select: { lines: true } } },
+        // The page's rows report the same duplicate status as the claim's own page: one batched read for the page.
+        include: { _count: { select: { lines: true } }, duplicateCandidates: LIVE_DUPLICATE_CANDIDATES },
         // The same stable order as `listRequests`: OFFSET pages need every row to keep its place.
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: where.skip,
@@ -3115,6 +3126,7 @@ export class PrismaReimbursementRepository {
         ...(where.status === 'PENDING_APPROVAL' && {
           approvalSteps: { where: { status: 'PENDING' as any } },
         }),
+        ...(where.withDuplicateCandidates && { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES }),
       },
       // F2 (tuning-6b): rows created in the same instant (seeded data, bulk imports) came back in
       // arbitrary order under createdAt alone, so the LINE list's "1./2." numbering ("ใบที่สอง") could
@@ -3392,10 +3404,9 @@ export class PrismaReimbursementRepository {
       const policy = effectivePolicyForRequest(this.toRequest(request), effectivePolicy(await tx.reimbursementPolicy.findFirst({
         where: { companyId: data.companyId, branchId: null },
       }).then((row: any) => row ? this.toPolicy(row) : null)));
-      const duplicateBlocking = policy.duplicatePolicy === 'BLOCK_PAYMENT'
-        && await tx.reimbursementDuplicateCandidate.count({
-          where: { companyId: data.companyId, reimbursementRequestId: data.reimbursementRequestId, status: 'OPEN' },
-        }) > 0;
+      const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, await tx.reimbursementDuplicateCandidate.count({
+        where: { companyId: data.companyId, reimbursementRequestId: data.reimbursementRequestId, status: 'OPEN' },
+      }));
       const error = validatePaymentRecording({
         status: request.status,
         financeReviewRequired: policy.financeReviewRequired,

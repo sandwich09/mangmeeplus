@@ -23,6 +23,7 @@ import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import { assertCanReadRequestOrAssignment } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
+  duplicateBlocksPayment,
   payoutCorrectionPhase,
   claimApproverUserId,
   isSamePaymentRequest,
@@ -62,16 +63,24 @@ export class ListFinanceQueueUseCase {
 
   async execute(ctx: RequestContext): Promise<ReimbursementFinanceQueueItem[]> {
     if (!ctx.permissions.includes('reimbursement.finance_review')) throw new ForbiddenException('Missing permission: reimbursement.finance_review');
-    const rows = await this.repo.listRequests({
-      companyId: ctx.companyId,
-      statuses: ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'],
-      scopes: ctx.scopes ?? {},
-    });
+    const [rows, currentPolicy] = await Promise.all([
+      this.repo.listRequests({
+        companyId: ctx.companyId,
+        statuses: ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'],
+        scopes: ctx.scopes ?? {},
+        withDuplicateCandidates: true,
+      }),
+      this.repo.findPolicy(ctx.companyId, null).then(effectivePolicy),
+    ]);
     const now = new Date();
     return rows.map((r) => ({
       ...toRequestSummary(r),
       ageHours: r.approvedAt ? ageHours(r.approvedAt, now) : 0,
-      hasDuplicateBlocker: r.duplicateStatus === 'POSSIBLE_DUPLICATE' || r.duplicateStatus === 'CONFIRMED_DUPLICATE',
+      // The payment's own test, on the policy the claim was sent under and the candidates the rows came
+      // with. It read the status column, which after approval holds the result of the claim's expense
+      // records: a claim found possibly duplicate at submit had no mark here while its payment was refused.
+      hasDuplicateBlocker: duplicateBlocksPayment(effectivePolicyForRequest(r, currentPolicy).duplicatePolicy,
+        (r.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length),
     }));
   }
 }
@@ -417,7 +426,7 @@ export class RecordReimbursementPaymentUseCase {
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     const openDuplicates = await this.repo.listOpenDuplicateCandidates(ctx.companyId, id);
-    const duplicateBlocking = policy.duplicatePolicy === 'BLOCK_PAYMENT' && openDuplicates.length > 0;
+    const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, openDuplicates.length);
 
     const error = validatePaymentRecording({
       status: req.status,

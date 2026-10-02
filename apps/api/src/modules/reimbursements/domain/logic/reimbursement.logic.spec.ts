@@ -17,6 +17,8 @@ import {
   computeReceiptRequirement,
   validateRejectionReason,
   validatePaymentRecording,
+  duplicateBlocksPayment,
+  claimDuplicateStatus,
   validatePaymentReference,
   isSamePaymentRequest,
   computeOutstanding,
@@ -376,6 +378,14 @@ describe('payment recording (MVP full-payment)', () => {
   it('rejects duplicate blocker', () => {
     assert.equal(validatePaymentRecording({ ...base, duplicateBlocking: true }), 'duplicate_unresolved');
   });
+  // One test for the payment, the claim detail's `duplicateBlocksPayment` and the pay-queue row's `hasDuplicateBlocker`.
+  it('is refused for a duplicate exactly while the claim\'s policy blocks payment and a candidate of its own is open', () => {
+    for (const [policy, open, blocks] of [['BLOCK_PAYMENT', 1, true], ['BLOCK_PAYMENT', 3, true], ['BLOCK_PAYMENT', 0, false],
+      ['WARN', 2, false], ['BLOCK_SUBMIT', 2, false]] as const) {
+      assert.equal(duplicateBlocksPayment(policy, open), blocks, `${policy} with ${open} open`);
+      assert.equal(validatePaymentRecording({ ...base, duplicateBlocking: duplicateBlocksPayment(policy, open) }), blocks ? 'duplicate_unresolved' : null);
+    }
+  });
   it('rejects overpayment', () => {
     assert.equal(validatePaymentRecording({ ...base, paidAmount: '500.01' }), 'payment_over_approved_amount');
   });
@@ -711,6 +721,35 @@ describe('duplicate scoring (over lines)', () => {
       { ...a, lines: [{ lineNo: 1, attachmentId: null, linkedExpenseId: null }] },
     );
     assert.equal(match.sharedLineNo, undefined);
+  });
+});
+
+// A claim found possibly duplicate at submit read "ไม่พบรายการซ้ำ" after approval (the column then holds the result of
+// its expense records) while its candidates were still open and its payment refused.
+describe('a claim\'s duplicate status is one fact with its own candidates', () => {
+  const open = { status: 'OPEN' };
+  const cleared = { status: 'OVERRIDDEN' };
+  const superseded = { status: 'DISMISSED' };
+
+  it('reads a possible duplicate while a candidate is open, whatever the expense records said', () => {
+    for (const stored of ['NO_MATCH', 'OVERRIDDEN', 'POSSIBLE_DUPLICATE']) assert.equal(claimDuplicateStatus(stored, [open, cleared]), 'POSSIBLE_DUPLICATE', stored);
+    // A duplicate a person confirmed on the expense side stays the stronger word.
+    assert.equal(claimDuplicateStatus('CONFIRMED_DUPLICATE', [open]), 'CONFIRMED_DUPLICATE');
+  });
+
+  it('reads as checked once a person cleared every candidate, never as none found', () => {
+    assert.equal(claimDuplicateStatus('NO_MATCH', [cleared, superseded]), 'OVERRIDDEN');
+    // What the expense records still say is kept.
+    assert.equal(claimDuplicateStatus('POSSIBLE_DUPLICATE', [cleared]), 'POSSIBLE_DUPLICATE');
+    assert.equal(claimDuplicateStatus('OVERRIDDEN', [cleared]), 'OVERRIDDEN');
+  });
+
+  it('leaves the column alone with no candidate that counts, for a draft, and where the candidates were not loaded', () => {
+    assert.equal(claimDuplicateStatus('NO_MATCH', []), 'NO_MATCH');
+    assert.equal(claimDuplicateStatus('NO_MATCH', [superseded]), 'NO_MATCH');
+    // A draft: the candidates of the round before are replaced when it is sent again.
+    assert.equal(claimDuplicateStatus('NOT_CHECKED', [open]), 'NOT_CHECKED');
+    for (const notLoaded of [undefined, null]) assert.equal(claimDuplicateStatus('NO_MATCH', notLoaded), 'NO_MATCH');
   });
 });
 

@@ -649,8 +649,10 @@ export function financeQueueWords(financeStep: boolean): { tab: string; descript
 }
 
 /**
- * Whether a row's claim may repeat another claim. Every list and queue row carries `duplicateStatus`, and this is the
- * test the server makes the finance queue's `hasDuplicateBlocker` with, so an approval row warns by the same rule.
+ * Whether a row's claim may repeat another claim: the warning of an approval-queue row, before anyone decides. Every
+ * list and queue row carries `duplicateStatus`, which the server reports with the claim's own open candidates, so it
+ * never reads "none found" while one is open. Whether the PAYMENT is refused for it is another fact, the server's
+ * `hasDuplicateBlocker` on a pay-queue row and `duplicateBlocksPayment` on the claim: the mark of the pay queue.
  */
 export function rowMayBeDuplicate(row: { duplicateStatus?: string | null } | null | undefined): boolean {
   return row?.duplicateStatus === 'POSSIBLE_DUPLICATE' || row?.duplicateStatus === 'CONFIRMED_DUPLICATE';

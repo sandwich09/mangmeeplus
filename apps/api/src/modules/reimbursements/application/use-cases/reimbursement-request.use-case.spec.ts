@@ -862,7 +862,7 @@ describe('a list or queue row says when its claim is being cancelled', () => {
   it('keeps such a claim in the finance queue, where whoever may finish or withdraw the cancellation works, and marks it', async () => {
     const rows = [row('READY_FOR_PAYMENT', { id: 'paying' }), row('READY_FOR_PAYMENT', { id: 'cancel-at-payment', ...cancelling }),
       row('FINANCE_REVIEW', { id: 'cancel-at-finance', financeReviewStatus: 'PENDING', ...cancelling })];
-    const queue = await new ListFinanceQueueUseCase({ listRequests: async () => rows } as any)
+    const queue = await new ListFinanceQueueUseCase({ listRequests: async () => rows, findPolicy: async () => null } as any)
       .execute(ctx({ userId: 'fin-1', permissions: ['reimbursement.read', 'reimbursement.finance_review', 'reimbursement.payment.record'] }));
 
     assert.deepEqual(queue.map((item) => [item.id, item.cancellationPending ?? false, item.currentDesk?.kind]), [

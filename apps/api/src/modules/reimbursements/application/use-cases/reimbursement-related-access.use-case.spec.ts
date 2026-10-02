@@ -559,6 +559,7 @@ describe('reimbursement related-view ABAC', () => {
     let received: any;
     const useCase = new ListFinanceQueueUseCase({
       listRequests: async (where: any) => { received = where; return []; },
+      findPolicy: async () => null,
     } as any);
     await useCase.execute(ctx({ permissions: ['reimbursement.finance_review'] }));
     assert.deepEqual(received.scopes, { branchIds: ['branch-1'] });

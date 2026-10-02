@@ -325,8 +325,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const attested = needsAttestation && attestedVersion === detail.payout?.version;
   const staleReviewNeedsAttestation = !!staleReview && claimNeedsPayoutAttestation(staleReview.detail)
     && attestedVersion !== staleReview.detail.payout?.version;
-  const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
-    && !permissions.includes('reimbursement.duplicate.resolve');
+  // The server's own answer to "would this claim's payment be refused for a duplicate": the fact the pay-queue row
+  // marks (`hasDuplicateBlocker`). The finance approval clears the block exactly when there is one, as the queue's does.
+  const duplicateBlocks = detail.duplicateBlocksPayment === true;
+  const duplicateResolutionBlocked = duplicateBlocks && !permissions.includes('reimbursement.duplicate.resolve');
   const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
   const desk = claimDeskText(detail);
   const handlers: Partial<Record<JourneyAction, () => void>> = {
@@ -368,8 +370,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     resume: () => void act('resume', () => resumeReimbursement(companyId, requestId), 'ดำเนินการต่อเรียบร้อยแล้ว'),
     'finance-approve': () => void act('finance-approve', () => financeReviewReimbursement(companyId, requestId, {
       decision: 'APPROVED_FOR_PAYMENT',
-      resolveDuplicate: detail.duplicateStatus === 'POSSIBLE_DUPLICATE',
-      duplicateResolutionReason: detail.duplicateStatus === 'POSSIBLE_DUPLICATE' ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined,
+      resolveDuplicate: duplicateBlocks,
+      duplicateResolutionReason: duplicateBlocks ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined,
     }), detail.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'),
     'finance-return': () => { setActionError(null); setReasonAction('finance-return'); },
     'finance-block': () => { setActionError(null); setReasonAction('finance-block'); },

@@ -659,6 +659,42 @@ export type PaymentEligibilityInput = {
  */
 export const PAYMENT_RECORDING_STATUSES: readonly ReimbursementRequestStatus[] = ['APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'];
 
+// ---- A possible duplicate: one fact, from the claim's own candidates ----
+//
+// Submit records the other claims this one may repeat as candidates, OPEN until a person clears them.
+// The claim's `duplicateStatus` column says the same until its expense records are built; from then on
+// the column holds the result of THOSE records, which know nothing of the candidates. So a claim
+// found possibly duplicate at submit read NO_MATCH after approval while its payment was still refused.
+// Every answer now reads the candidates through the two rules below.
+
+/**
+ * Whether an unresolved duplicate refuses the claim's payment: the policy the claim was sent under
+ * blocks payment, and a candidate is still open. The one test. Recording a payment asks it before
+ * the payment lock and under it (`duplicate_unresolved`), the claim detail reports it as
+ * `duplicateBlocksPayment` and a pay-queue row as `hasDuplicateBlocker`, so a row and a claim page
+ * carry the mark exactly when the payment would be refused for it.
+ */
+export function duplicateBlocksPayment(duplicatePolicy: string, openCandidates: number): boolean {
+  return duplicatePolicy === 'BLOCK_PAYMENT' && openCandidates > 0;
+}
+
+/**
+ * A claim's duplicate status as an answer reports it: the stored column (its expense records' result
+ * once they exist) together with the claim's own candidates. A candidate still open is a possible
+ * duplicate whatever the records say; candidates a person cleared read as checked, never as "none
+ * found". A draft (NOT_CHECKED) says nothing yet: the candidates of an earlier round are replaced
+ * when it is sent again. `candidates` undefined: they were not loaded, and the column is all there is.
+ */
+export function claimDuplicateStatus<Status extends string>(
+  stored: Status,
+  candidates: readonly { status: string }[] | null | undefined,
+): Status | 'POSSIBLE_DUPLICATE' | 'OVERRIDDEN' {
+  if (!candidates || stored === 'CONFIRMED_DUPLICATE' || stored === 'NOT_CHECKED') return stored;
+  if (candidates.some((candidate) => candidate.status === 'OPEN')) return 'POSSIBLE_DUPLICATE';
+  if (stored === 'POSSIBLE_DUPLICATE') return stored;
+  return candidates.some((candidate) => candidate.status === 'OVERRIDDEN') ? 'OVERRIDDEN' : stored;
+}
+
 /** Returns a stable error code, or null if payment is allowed. Enforces MVP full-payment. */
 export function validatePaymentRecording(input: PaymentEligibilityInput): string | null {
   if (!PAYMENT_RECORDING_STATUSES.includes(input.status)) return 'invalid_status_transition';
