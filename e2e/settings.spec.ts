@@ -496,10 +496,11 @@ test.describe('SET — settings', () => {
     await expect(owner.getByRole('button', { name: 'เพิ่ม' })).toBeEnabled();
 
     // COMPANY_VIEW holds access.role.read but not access.role.manage. The old read-only
-    // banner is gone — the page is invisible now: direct navigation bounces to the dashboard.
+    // banner is gone — the page stays closed: direct navigation shows the no-access state in place.
     const viewer = await pageAs('COMPANY_VIEW');
     await gotoCompany(viewer, companyId, '/settings/permissions');
-    await expect(viewer).toHaveURL(new RegExp(`/companies/${companyId}/dashboard`));
+    await expect(viewer).toHaveURL(new RegExp(`/companies/${companyId}/settings/permissions$`));
+    await expect(viewer.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true })).toBeVisible();
     await expect(viewer.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toHaveCount(0);
     await expect(viewer.getByText(/อ่านอย่างเดียว/)).toHaveCount(0);
   });
