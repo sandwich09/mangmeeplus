@@ -51,8 +51,9 @@ for (const width of [390, 1280]) {
     await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/settings/profile#shop$`));
     expect((await freshIdentity).ok()).toBe(true);
     await expect(page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true })).toBeVisible();
+    // The field's name carries its hint (6f7451735 rewrote it for the billing documents).
     await expect(page.getByRole('textbox', {
-      name: 'ชื่อจดทะเบียน ชื่อตามหนังสือรับรอง ไม่ใช่ชื่อร้านที่ใช้เรียกกัน',
+      name: 'ชื่อจดทะเบียน ใช้ชื่อจดทะเบียนบนใบแจ้งหนี้และใบเสร็จ หากเว้นว่างจะใช้ชื่อร้านที่สมัครไว้',
       exact: true,
     })).toBeVisible();
 
@@ -76,7 +77,10 @@ for (const width of [390, 1280]) {
   });
 }
 
-test('a LINE owner corrects an unverified account email and adds an optional password without a username', async ({
+// b89652eed (spec signup-optional-email-otp-billing §6): the account email changes only through the OTP
+// panel (account-email-otp-ux.spec.ts), so the direct correction of an unverified address is gone. The
+// backup password stays, in its own "รหัสผ่านสำรอง" section.
+test('a LINE owner with an unverified account email adds an optional password without a username', async ({
   authedPage: page,
   companyId,
 }, info) => {
@@ -93,29 +97,16 @@ test('a LINE owner corrects an unverified account email and adds an optional pas
     username: null,
     emailDeliveryEnabled: false,
   };
-  const emailBodies: Array<Record<string, unknown>> = [];
   const passwordBodies: Array<Record<string, unknown>> = [];
+  let emailCommands = 0;
 
   await page.route('**/api/v1/auth/account/security', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(account) });
   });
-  await page.route('**/api/v1/auth/me/email/unverified', async (route) => {
-    const body = route.request().postDataJSON() as Record<string, unknown>;
-    emailBodies.push(body);
-    if (body['newEmail'] === 'used@example.com') {
-      await route.fulfill({
-        status: 409,
-        contentType: 'application/json',
-        body: JSON.stringify({ code: 'account_email_conflict', message: 'another account owns this email' }),
-      });
-      return;
-    }
-    account = { ...account, email: String(body['newEmail']).trim().toLowerCase() };
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ email: account.email, emailVerified: false }),
-    });
+  await page.route('**/api/v1/auth/account/email/otp**', async (route) => {
+    if (route.request().method() !== 'GET') emailCommands++;
+    await route.fulfill({ json: { email: account.email, emailVerified: false, emailRevision: 1, emailRequirement: 'UNVERIFIED',
+      hasPassword: account.hasPassword, emailLoginEnabled: false, lineLinked: true, serverNow: new Date().toISOString(), challenge: null } });
   });
   await page.route('**/api/v1/auth/me/password/set', async (route) => {
     passwordBodies.push(route.request().postDataJSON() as Record<string, unknown>);
@@ -125,40 +116,19 @@ test('a LINE owner corrects an unverified account email and adds an optional pas
 
   await gotoCompany(page, companyId, '/settings/profile#account');
   await expect(page.getByRole('heading', { name: 'บัญชีของฉัน', exact: true })).toBeVisible();
-  await expect(page.getByText('owner.typo@example.com', { exact: true })).toHaveCount(2);
-  await expect(page.getByText('ยังไม่ยืนยัน', { exact: true })).toBeVisible();
+  const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
+  await expect(emailPanel.getByText('owner.typo@example.com', { exact: true })).toBeVisible();
+  await expect(emailPanel.getByText('ยังไม่ยืนยัน', { exact: true })).toBeVisible();
+
+  await page.locator('summary').filter({ hasText: 'รหัสผ่านสำรอง' }).click();
   await expect(page.getByRole('textbox', { name: 'ชื่อผู้ใช้', exact: true })).toHaveCount(0);
-
-  await page.getByRole('button', { name: 'แก้ไขอีเมลบัญชี', exact: true }).click();
-  const email = page.getByRole('textbox', { name: 'อีเมลบัญชี', exact: true });
-  await email.fill(' Corrected.Owner@example.com ');
-  await page.getByRole('button', { name: 'บันทึกอีเมลบัญชี', exact: true }).click();
-  await expect(page.getByText('corrected.owner@example.com', { exact: true })).toHaveCount(2);
-  expect(emailBodies[0]).toEqual({
-    newEmail: 'Corrected.Owner@example.com',
-    expectedEmail: 'owner.typo@example.com',
-  });
-
+  await expect(page.getByText(/^หลังตั้งรหัสผ่านแล้ว ใช้อีเมล owner\.typo@example\.com เข้าเว็บได้$/)).toBeVisible();
   await page.getByLabel(/รหัสผ่านใหม่/).fill('backup-password');
   await page.getByLabel('พิมพ์รหัสผ่านอีกครั้ง', { exact: true }).fill('backup-password');
   await page.getByRole('button', { name: 'ตั้งรหัสผ่านสำรอง', exact: true }).click();
   await expect(page.getByRole('link', { name: 'เปลี่ยนรหัสผ่าน', exact: true })).toBeVisible();
   expect(passwordBodies).toEqual([{ password: 'backup-password' }]);
-
-  await page.getByRole('button', { name: 'แก้ไขอีเมลบัญชี', exact: true }).click();
-  await email.fill('used@example.com');
-  await page.getByLabel(/รหัสผ่านปัจจุบัน/).fill('backup-password');
-  await page.getByRole('button', { name: 'บันทึกอีเมลบัญชี', exact: true }).click();
-  await expect(page.getByText('อีเมลนี้มีบัญชีอื่นใช้อยู่แล้วค่ะ กรุณาใช้อีเมลอื่น อีเมลบัญชีของคุณยังไม่เปลี่ยน', { exact: true })).toBeVisible();
-  expect(emailBodies[1]).toEqual({
-    newEmail: 'used@example.com',
-    expectedEmail: 'corrected.owner@example.com',
-    currentPassword: 'backup-password',
-  });
-  await page.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
-  await expect(page.getByText('corrected.owner@example.com', { exact: true })).toHaveCount(1);
-  await expect(page.getByRole('link', { name: 'ไปหน้าเข้าสู่ระบบ', exact: true })).toHaveCount(0);
-  await expect(page.getByText(/ยังเปิดส่งอีเมลยืนยันไม่ได้/)).toHaveCount(0);
+  expect(emailCommands).toBe(0);
   await page.screenshot({ path: info.outputPath('unverified-account-email-mobile.png'), fullPage: true });
   await expectNoClientError(page);
 });
@@ -176,7 +146,8 @@ for (const width of [1280, 390]) {
     await expect(page.getByLabel('ชื่อจดทะเบียน', { exact: false })).toBeHidden();
     await expect(page.locator('input[type=password]:visible')).toHaveCount(0);
     await page.getByRole('button', { name: 'เปลี่ยนอีเมล', exact: true }).click();
-    await page.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true }).fill('draft@example.com');
+    // The label text ends in the required mark (aria-hidden " *", 14df7093c): match the field's accessible name.
+    await page.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true }).fill('draft@example.com');
     await expect(page.getByRole('heading', { name: 'เข้าสู่ระบบด้วยรหัสทางอีเมล' })).toBeHidden();
     const sections = page.getByRole('navigation', { name: 'หมวดการตั้งค่า' });
     await sections.getByRole('button', { name: 'ข้อมูลร้าน', exact: true }).click();
