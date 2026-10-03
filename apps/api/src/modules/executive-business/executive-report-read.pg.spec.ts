@@ -484,6 +484,12 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     const lastPage = await list('2026-09', { pageSize: 4, page: 99 });
     assert.deepEqual([lastPage.sort, lastPage.pagination, lastPage.items.length], [{ sortBy: 'joinedAt', sortDir: 'desc' }, { page: 4, pageSize: 4, total: 16, totalPages: 4 }, 4]);
     assert.equal((await list('2026-09')).items[0]!.id, 'c-late');
+    // The filters in force come back with their words, the report's and the list's own (spec §16.2).
+    const filtered = await list('2026-09', { discovery: 'WEBSITE', usageGroup: 'NOT_STARTED', paidInPeriod: 'true', usageAssessed: 'true' });
+    assert.deepEqual([filtered.appliedFilters, filtered.pagination.total], [{
+      global: { industry: { value: 'ALL', label: 'ทุกธุรกิจ' }, discovery: { value: 'WEBSITE', label: 'Website' }, referringSales: { value: 'ALL', label: 'ทั้งหมด' } },
+      directory: { usageGroup: { value: 'NOT_STARTED', label: 'จ่ายแล้ว ยังไม่เริ่มใช้' }, usageAssessed: { value: 'true', label: 'ไม่รวมบริษัทที่ยังประเมินไม่ได้' },
+        paidInPeriod: { value: 'true', label: 'ชำระในเดือน' } } }, 2]);
     // Each list filter on its own.
     for (const [filters, count] of [[{ planState: 'ADMIN_HOLD' }, 1], [{ signupRail: 'email-otp' }, 1], [{ signupRail: 'ADMIN_CREATED' }, 4], [{ usageAssessed: 'false' }, 4],
       [{ usageAssessed: 'true' }, 12], [{ positiveNetInPeriod: 'true' }, 8], [{ receiptAdoption: 'NOT_ENTITLED' }, 1], [{ paidEver: 'NO' }, 2]] as const)

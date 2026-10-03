@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
-  DBD_TSIC_ACTIVITIES, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_PAID_EVER_REASONS, EXECUTIVE_PURCHASE_GROUPS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
+  DBD_TSIC_ACTIVITIES, EXECUTIVE_FLAG_LABELS, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_PAID_EVER_REASONS, EXECUTIVE_PURCHASE_GROUPS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
   billingPlanLabel,
   type ExecutiveAnalysis, type ExecutiveAnalysisQuery, type ExecutiveCompanies, type ExecutiveCompaniesQuery, type ExecutiveCompanyDetail,
   type ExecutiveCompanyHistory, type ExecutiveCompanyRow, type ExecutiveCompareSide, type ExecutiveContext, type ExecutiveDrilldownFilters,
@@ -724,11 +724,11 @@ function directoryOf(query: ExecutiveCompaniesQuery): DirectoryFilters {
 }
 const DIRECTORY_KEYS = ['companyStatus', 'planState', 'usageGroup', 'paidEver', 'receiptAdoption', 'spendCohort', 'signupRail'] as const;
 const FLAG_KEYS = ['usageAssessed', 'activeInPeriod', 'paidInPeriod', 'positiveNetInPeriod', 'fullyRefunded'] as const;
-/** The list filters in force, with their words; a flag is echoed as its value only, its words are the web's chip. */
+/** The list filters in force, with their words (spec §16.2 appliedFilters). */
 function directoryLabels(query: ExecutiveCompaniesQuery): Record<string, ExecutiveOption> {
   const result: Record<string, ExecutiveOption> = {};
   for (const key of DIRECTORY_KEYS) if (query[key] && query[key] !== 'ALL') result[key] = { value: query[key]!, label: L[key][query[key]!]! };
-  for (const key of FLAG_KEYS) if (query[key]) result[key] = { value: query[key]!, label: '' };
+  for (const key of FLAG_KEYS) if (query[key]) result[key] = { value: query[key]!, label: EXECUTIVE_FLAG_LABELS[key][query[key]!]! };
   return result;
 }
 function auditableDirectory(query: ExecutiveCompaniesQuery): Record<string, string> {

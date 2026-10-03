@@ -62,6 +62,14 @@ export const EXECUTIVE_REPORT_LABELS: Record<'industry' | 'discovery' | 'referri
   signupRail: { ALL: 'ทั้งหมด', 'official-site': 'สมัครทางเว็บไซต์', 'line-oa': 'สมัครทาง LINE', 'email-otp': 'สมัครด้วยรหัสอีเมล', ADMIN_CREATED: 'ผู้ดูแลสร้าง', UNKNOWN: 'ไม่ระบุ' },
 };
 export type ExecutiveFilterKey = keyof typeof EXECUTIVE_REPORT_LABELS;
+/** The words of the list's yes/no filters as chips: the card or line each one opens (plain-language spec, N02, N03, N05, N12). */
+export const EXECUTIVE_FLAG_LABELS: Record<'usageAssessed' | 'activeInPeriod' | 'paidInPeriod' | 'positiveNetInPeriod' | 'fullyRefunded', Readonly<Record<string, string>>> = {
+  usageAssessed: { false: 'ยังประเมินไม่ได้', true: 'ไม่รวมบริษัทที่ยังประเมินไม่ได้' },
+  activeInPeriod: { true: 'ใช้งานในเดือน' },
+  paidInPeriod: { true: 'ชำระในเดือน' },
+  positiveNetInPeriod: { true: 'จ่ายมากกว่ายอดคืนในเดือน' },
+  fullyRefunded: { true: 'คืนเงินเต็มจำนวน' },
+};
 /** A province, channel, group or rail nobody recorded (plain-language spec: ไม่ทราบ … → ไม่ระบุ). */
 export const EXECUTIVE_UNKNOWN_LABEL = 'ไม่ระบุ';
 /** The package of a company with no package data at all (no term row). */
