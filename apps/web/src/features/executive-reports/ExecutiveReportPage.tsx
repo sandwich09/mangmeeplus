@@ -77,6 +77,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const params = new URLSearchParams(paramsString);
   const exportOpen = params.get('export') === '1' && canExport(context);
   const [exportNotice, setExportNotice] = useState('');
+  const [exportDenied, setExportDenied] = useState(false);
   const [data, setData] = useState<ReportData | null>(null);
   const [history, setHistory] = useState<ExecutiveCompanyHistory | null>(null);
   const [dataKey, setDataKey] = useState('');
@@ -187,6 +188,9 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     window.history.replaceState(ownHistoryState(window.history.state), '', `${window.location.pathname}?${next}`);
   }, []);
   const reloadExport = useCallback(() => { closeExport(); setExportNotice(W.export.expired); setAttempt(n => n + 1); }, [closeExport]);
+  // API13 refuses a lost export or contacts right with the same code as a lost read right: re-read the rights first, so only a
+  // reader who lost the report itself gets the report's denial (plain-language spec, E5 denial).
+  const denyExport = useCallback(() => { setExportDenied(true); void shared.refresh(new AbortController().signal).catch(() => {}); }, [shared]);
   const visibleData = dataKey === requestKey ? data : null;
   const retry = retryWait > 0 ? undefined : () => setAttempt(n => n + 1);
   const failed = shared.failure ?? failure;
@@ -213,8 +217,9 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     <MangmeePage eyebrow={W.report} title={title} actions={<div className="flex flex-wrap gap-2">{canExport(context) && !exportOpen && <Button variant="secondary" loading={loading} disabled={loading || !!failed || !!problem || !visibleData} onClick={() => { const next = new URLSearchParams(params); next.set('export', '1'); setExportNotice(''); navigateParams(next); }}>{W.export.action}</Button>}{section === 'overview' ? <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.allCompanies}</ReportLink> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}</div>}>
       <div className="space-y-4">
         {exportNotice && <p role="status">{exportNotice}</p>}
+        {exportDenied && context && !canExport(context) && <p role="status">{W.export.denied}</p>}
         {canExport(context) && !exportOpen && (loading || failed || problem || !visibleData) && <p role="status">{loading ? W.loading : problem ? W[problem] : failed?.text ?? W.noData}</p>}
-        {exportOpen && context && visibleData && <ExecutiveExportPanel key={requestKey} section={section} params={params} context={context} data={visibleData} search={search} targetCompanyId={targetCompanyId} close={closeExport} reload={reloadExport} deny={shared.deny} />}
+        {exportOpen && context && visibleData && <ExecutiveExportPanel key={requestKey} section={section} params={params} context={context} data={visibleData} search={search} targetCompanyId={targetCompanyId} close={closeExport} reload={reloadExport} deny={denyExport} />}
         {context && !exportOpen && <>
           <div className="flex min-w-0 flex-wrap items-center gap-3">
             <div className="w-44"><label htmlFor="executive-month" className="text-sm">{W.month}</label><ThemedDate id="executive-month" aria-label={W.month} aria-invalid={!!fieldErrors.month} aria-describedby={fieldErrors.month ? 'executive-month-error' : undefined} mode="month" allowClear={false} value={normalizedMonth(params, context)} min={context.months?.first} max={context.months?.last ?? context.currentMonth} selectable={context.builtMonths} onChange={event => event.target.value && update({ month: event.target.value })} className="!min-h-11 !text-base" />{fieldErrors.month && <FieldError id="executive-month-error">{fieldErrors.month}</FieldError>}</div>
