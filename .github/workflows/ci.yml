@@ -799,6 +799,8 @@ jobs:
           # The LINE capture-result drain claims every company's finished-read event; no spec above emits one.
           LINE_CAPTURE_DELIVERY_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/application/line-capture-delivery.pg.spec.ts
+          LINE_CONVERSATION_CONTEXT_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test src/modules/line-ai/application/line-conversation-context.pg.spec.ts
       # Claim payout posting: the auto-post candidate SQL and the row locking between a post and a
       # void run nowhere else. Its own database, because the drain reads every ACTIVE company: in
       # the shared one it would also drain what the specs above left behind.

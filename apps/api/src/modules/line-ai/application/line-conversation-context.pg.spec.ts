@@ -6,10 +6,11 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { LineConversationContextService, invalidateLineConversationState, lineConversationId, type LineConversationOwner } from './line-conversation-context.service';
-const url = process.env.BILLING_TEST_DATABASE_URL;
+// ci.yml "Migrations and Boot" sets its own variable; `run-line-ai-whole-chain-acceptance.mjs --reliability-postgres` sets BILLING_TEST_DATABASE_URL.
+const url = process.env.LINE_CONVERSATION_CONTEXT_TEST_DATABASE_URL ?? process.env.BILLING_TEST_DATABASE_URL;
 test('G3 owner/CAS/lifecycle and explicit preference replay/expiry use actual PostgreSQL', { skip: !url }, async () => {
   const parsed = new URL(url!); assert.ok(['localhost', '127.0.0.1'].includes(parsed.hostname));
-  assert.ok((parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927') || (parsed.port === '5432' && parsed.pathname === '/watchdog_postmark_ci'));
+  assert.ok(parsed.pathname.endsWith('_ci') || parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${parsed.pathname}: only a disposable local *_ci database`);
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
   const company = await client.company.create({ data: { name: `context-${randomUUID()}` } }), userId = `user-${randomUUID()}`;
   const service = new LineConversationContextService({ client } as PrismaService);
@@ -41,7 +42,7 @@ test('G3 owner/CAS/lifecycle and explicit preference replay/expiry use actual Po
 
 test('QA task binding survives process-local maps and never restores another OA or lifecycle', { skip: !url }, async () => {
   const parsed = new URL(url!); assert.ok(['localhost', '127.0.0.1'].includes(parsed.hostname));
-  assert.ok((parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927') || (parsed.port === '5432' && parsed.pathname === '/watchdog_postmark_ci'));
+  assert.ok(parsed.pathname.endsWith('_ci') || parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${parsed.pathname}: only a disposable local *_ci database`);
   const { ProcessLineWebhookUseCase } = await import('./use-cases/process-line-webhook.use-case');
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
   const company = await client.company.create({ data: { name: `qa-task-${randomUUID()}` } });
@@ -72,7 +73,7 @@ test('QA task binding survives process-local maps and never restores another OA 
 
 test('actual role/scope/status writers invalidate retained context atomically and preserve unrelated owners', { skip: !url }, async () => {
   const parsed = new URL(url!); assert.ok(['localhost', '127.0.0.1'].includes(parsed.hostname));
-  assert.ok((parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927') || (parsed.port === '5432' && parsed.pathname === '/watchdog_postmark_ci'));
+  assert.ok(parsed.pathname.endsWith('_ci') || parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${parsed.pathname}: only a disposable local *_ci database`);
   const { UpdateRoleUseCase } = await import('../../employee-access/application/use-cases/update-role.use-case');
   const { UpdateEmployeeUseCase } = await import('../../employee-access/application/use-cases/update-employee.use-case');
   const { SetEmployeeStatusUseCase } = await import('../../employee-access/application/use-cases/set-employee-status.use-case');
