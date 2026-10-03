@@ -4,9 +4,10 @@ import { SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useState } from 'react';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { ErrorState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-import { getTaxProfile, updateTaxSignature, uploadCompanyTaxSignatureAttachment, type CompanyTaxProfile } from './tax.api';
+import { getTaxSignature, updateTaxSignature, uploadCompanyTaxSignatureAttachment, type CompanyTaxSignature } from './tax.api';
 
 const field = 'mangmee-input w-full';
 const button = 'rounded-lg bg-brand-600 px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50';
@@ -21,7 +22,7 @@ const button = 'rounded-lg bg-brand-600 px-4 py-2 text-sm font-bold text-white d
 export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
   const toast = useToast();
   const canManage = permissions.includes('company.tax_signature.manage');
-  const [profile, setProfile] = useState<CompanyTaxProfile | null>(null);
+  const [profile, setProfile] = useState<CompanyTaxSignature | null>(null);
   const [mode, setMode] = useState<'BLANK' | 'AUTO_STAMP'>('BLANK');
   const [pendingAttachmentId, setPendingAttachmentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,20 +30,20 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    setLoading(true); setError('');
+    setLoading(true); setProfile(null); setError('');
     try {
-      const next = await getTaxProfile(companyId);
+      const next = await getTaxSignature(companyId);
       setProfile(next);
       setMode(next.signatureMode);
       setPendingAttachmentId(null);
     } catch (cause) { setError(apiErrorMessage(cause)); } finally { setLoading(false); }
   }, [companyId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (canManage) void load(); }, [load, canManage]);
 
   if (!canManage) {
     return (
       <MangmeePage title="ลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ">
-        <MangmeeCard><p className="text-sm text-gray-600">คุณยังไม่มีสิทธิ์จัดการลายเซ็นผู้จ่ายเงินของบริษัท</p></MangmeeCard>
+        <MangmeeCard className="p-4 sm:p-5"><p className="text-sm text-gray-600">คุณยังไม่มีสิทธิ์จัดการลายเซ็นผู้จ่ายเงินของบริษัท</p></MangmeeCard>
       </MangmeePage>
     );
   }
@@ -80,8 +81,10 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
       title="ลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ"
       description="เลือกว่าจะให้ระบบประทับรูปลายเซ็นลงหนังสือรับรองหัก ณ ที่จ่ายที่ออกในระบบโดยอัตโนมัติ หรือเว้นว่างไว้ให้พิมพ์แล้วเซ็นเอง"
     >
-      <MangmeeCard>
-        {loading ? <p className="text-sm text-gray-500">กำลังโหลด...</p> : (
+      <MangmeeCard className="p-4 sm:p-5">
+        {loading ? <p className="text-sm text-gray-500">กำลังโหลด...</p> : !profile ? (
+          <ErrorState description={error} onRetry={() => void load()} />
+        ) : (
           <div className="grid gap-4 sm:max-w-md">
             <label className="flex items-center gap-2 text-sm">
               <input type="radio" name="signatureMode" checked={mode === 'BLANK'} onChange={() => setMode('BLANK')} disabled={busy} />
@@ -93,7 +96,7 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
             </label>
             {mode === 'AUTO_STAMP' && (
               <div className="grid gap-2">
-                <span className="text-xs font-medium text-gray-600">รูปลายเซ็น ({SIGNATURE_FILE_TYPES_LABEL})</span>
+                <span className="text-xs font-medium text-gray-600">รูปลายเซ็น · {SIGNATURE_FILE_TYPES_LABEL}</span>
                 <input className={field} type="file" accept="image/png,image/jpeg" onChange={onFileChange} disabled={busy} />
                 {hasStoredSignature && <p className="text-xs text-gray-500">มีรูปลายเซ็นที่บันทึกไว้แล้ว — อัปโหลดใหม่เพื่อเปลี่ยน</p>}
               </div>

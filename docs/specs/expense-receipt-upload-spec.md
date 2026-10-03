@@ -1704,3 +1704,9 @@ an operator decision, not authorization to migrate a shared database in local de
 Sold expense/reimbursement upload pickers, validation and guides share Thai file-format names and use “เมกะไบต์” for size. Allowed source formats, size limits and file bytes do not change. Stored attachment MIME values and recognized foreign-currency codes are displayed as Thai names, with a Thai fallback for unknown currencies. Capture failure notices may say the file is saved only when that is true; an offer to fill details manually is qualified by edit permission rather than promised to an upload-only employee. Expense status errors do not echo enums or tell a voided/confirmed document to return to review without an allowed transition.
 
 The camera and dropzone hints describe this web upload flow only; they do not promise LINE intake when the shop may have disabled that feature.
+
+## Browser regression amendment — 2026-10-04
+
+The expense review form chooses wording from the same dictionary according to whether the displayed field can be edited. Read-only users see missing/invalid facts, without instructions to fill, select, shorten or correct fields. Editors retain existing prompts. This applies to every validation issue and extraction-missing hint, including the summary and document classification section. No edit permission is granted by the wording change.
+
+A partial or paused read displays its reason before the existing permission-safe help. Informational notices have no success tick. Document type and tax-evidence selectors use the full form width and wrap the selected label when necessary, including the review pane at 1280 px.

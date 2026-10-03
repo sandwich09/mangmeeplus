@@ -1,5 +1,6 @@
+import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { ExpenseCapturePausedReason, ExpenseCaptureReadStatus } from '@watchdog-bms/contracts';
-import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
+import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 
 /**
  * Read status → what the user is told (appendix §10, spec §17.2/§17.6).
@@ -128,4 +129,13 @@ export function captureReadAgainAllowed(input: {
   if (!input.canExtract) return false;
   if (captureReadFailed(input.readStatus)) return false;
   return input.noticeTone !== 'error';
+}
+
+/** A stopped read's reason precedes the shared, permission-safe help sentence. */
+export function captureReadNoticeText(file: ExpenseReadStatusFile | null | undefined, locale: SupportedLocale): string {
+  const notice = captureReadNotice(file);
+  if (!notice) return '';
+  const reason = capturePausedReasonKey(file?.pausedReason ?? null);
+  const message = Object.entries(notice.params ?? {}).reduce((text, [key, value]) => text.replace(`{${key}}`, value), t(notice.messageKey, locale));
+  return [reason ? t(reason, locale) : null, message].filter(Boolean).join(' — ');
 }

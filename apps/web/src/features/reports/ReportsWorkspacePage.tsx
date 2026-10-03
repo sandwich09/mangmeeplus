@@ -115,7 +115,9 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
       listReportExports(companyId),
       listReportRuns(companyId),
     ]);
+    const historyFailure = [savedViews, recentExports, recentRuns].find(result => result.status === 'rejected');
     try {
+      setError(historyFailure?.status === 'rejected' ? err(historyFailure.reason) : null);
       setViews(savedViews.status === 'fulfilled' ? savedViews.value : []);
       setExports(recentExports.status === 'fulfilled' ? recentExports.value : []);
       setRuns(recentRuns.status === 'fulfilled' ? recentRuns.value.items : []);
@@ -125,7 +127,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
         setDatasets([]);
         setResult(null);
         setHistoryOnly(disabled);
-        setError(disabled ? null : err(catalog.reason));
+        if (!disabled) setError(err(catalog.reason));
         return;
       }
       setHistoryOnly(false);
@@ -253,13 +255,13 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
       eyebrow="การเงินและบัญชี"
       title={historyOnly ? 'ประวัติรายงาน' : 'รายงาน'}
       description={historyOnly
-        ? 'ไฟล์รายงานที่สร้างไว้ก่อนปิดฟีเจอร์ ดาวน์โหลดได้เท่าที่คุณมีสิทธิ์'
+        ? 'แสดงเฉพาะประวัติและไฟล์รายงานที่คุณมีสิทธิ์ดู'
         : 'รายงานสำเร็จรูป มุมมองที่บันทึกไว้ และการส่งออกข้อมูลแบบตรวจสอบสิทธิ์'}
       actions={(
         <div className="flex flex-wrap gap-2">
           <button className={ghostClass} onClick={() => void refresh()} disabled={loading} aria-busy={Boolean(loading)}>รีเฟรช</button>
-          <button className={ghostClass} onClick={() => void saveView()} disabled={busyAction !== null || historyOnly || !selected || selected.status !== 'ENABLED'} aria-busy={Boolean(busyAction === 'view')}>{busyAction === 'view' ? 'กำลังบันทึก...' : 'บันทึกมุมมอง'}</button>
-          <button className={btnClass} onClick={() => void requestExport('CSV')} disabled={busyAction !== null || historyOnly || !result || !selected} aria-busy={Boolean(busyAction === 'export')}>{busyAction === 'export' ? 'กำลังส่งออก...' : 'ส่งออก CSV'}</button>
+          {!loading && !historyOnly && <button className={ghostClass} onClick={() => void saveView()} disabled={busyAction !== null || historyOnly || !selected || selected.status !== 'ENABLED'} aria-busy={Boolean(busyAction === 'view')}>{busyAction === 'view' ? 'กำลังบันทึก...' : 'บันทึกมุมมอง'}</button>}
+          {!loading && !historyOnly && <button className={btnClass} onClick={() => void requestExport('CSV')} disabled={busyAction !== null || historyOnly || !result || !selected} aria-busy={Boolean(busyAction === 'export')}>{busyAction === 'export' ? 'กำลังส่งออก...' : 'ส่งออก CSV'}</button>}
         </div>
       )}
     >
@@ -304,7 +306,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   </button>
                 )
               ))}
-              {views.length === 0 && <p className="text-sm text-gray-400">ยังไม่มีมุมมองที่บันทึกไว้</p>}
+              {!loading && !error && views.length === 0 && <p className="text-sm text-gray-400">ยังไม่มีมุมมองที่บันทึกไว้</p>}
             </div>
           </MangmeeCard>
 
@@ -317,7 +319,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   <div className="text-xs text-gray-500">{run.rowCount.toLocaleString('th-TH')} แถว · {formatThaiDateTime(run.computedAt ?? run.createdAt, '-')}</div>
                 </div>
               ))}
-              {runs.length === 0 && <p className="text-sm text-gray-400">ยังไม่มีประวัติรายงานที่คุณดูได้</p>}
+              {!loading && !error && runs.length === 0 && <p className="text-sm text-gray-400">ยังไม่มีประวัติรายงานที่คุณดูได้</p>}
               {runCursor && <button className="min-h-11 text-sm font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void loadMoreRuns()} disabled={busyAction !== null} aria-busy={Boolean(busyAction === 'runs')}>{busyAction === 'runs' ? 'กำลังโหลด...' : 'ดูประวัติเพิ่ม'}</button>}
             </div>
           </MangmeeCard>
@@ -341,7 +343,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   )}
                 </div>
               ))}
-              {exports.length === 0 && <p className="text-sm text-gray-400">ยังไม่มีการส่งออกล่าสุด</p>}
+              {!loading && !error && exports.length === 0 && <p className="text-sm text-gray-400">ยังไม่มีไฟล์รายงานที่คุณดูได้</p>}
             </div>
           </MangmeeCard>
         </aside>

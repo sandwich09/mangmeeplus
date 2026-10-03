@@ -110,7 +110,7 @@ export function ErrorBanner({ message, focus = false }: { message: string; focus
   return <div ref={ref} tabIndex={-1} role="alert" className="rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm font-medium text-error-700">⚠ {message}</div>;
 }
 export function InfoBanner({ message }: { message: string }) {
-  return <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3 text-sm font-medium text-brand-700">✓ {message}</div>;
+  return <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3 text-sm font-medium text-brand-700">{message}</div>;
 }
 export function isForbidden(message: string): boolean {
   return /Insufficient permissions|Missing permission|Forbidden/i.test(message);

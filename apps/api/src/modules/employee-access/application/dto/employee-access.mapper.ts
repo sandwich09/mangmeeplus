@@ -1,3 +1,4 @@
+import { entitledRoleMenus, filterPermissionsByEntitlement } from '../../domain/logic/feature-gate.logic';
 import type { EmployeeSummary, RoleSummary, PermissionCatalogItem } from '@watchdog-bms/contracts';
 import { SYSTEM_ROLES } from '../../../auth/permission-registry';
 import { maskIdentityNumber } from '../../domain/logic/employee-access.logic';
@@ -121,10 +122,15 @@ const FORMER_STANDARD_DESCRIPTIONS: Record<string, string> = {
 };
 const STANDARD_DESCRIPTIONS = new Map(SYSTEM_ROLES.map((role) => [role.key, role.description]));
 
-export function toRoleSummary(row: RoleRow): RoleSummary {
-  const description = row.description && row.description === FORMER_STANDARD_DESCRIPTIONS[row.key]
+export function toRoleSummary(row: RoleRow, entitled?: Set<string> | null): RoleSummary {
+  let description = row.description && row.description === FORMER_STANDARD_DESCRIPTIONS[row.key]
     ? STANDARD_DESCRIPTIONS.get(row.key)
     : row.description;
+  if (entitled != null && (row.isSystem || description === STANDARD_DESCRIPTIONS.get(row.key))) {
+    const granted = new Set(filterPermissionsByEntitlement(row.permissions.map(p => p.permission.key), entitled));
+    const labels = entitledRoleMenus(entitled).filter(menu => menu.actions.view?.some(key => granted.has(key))).map(menu => menu.labelTh);
+    description = labels.length ? `เมนูที่บทบาทนี้มีสิทธิ์ใช้: ${labels.join(' · ')}` : 'สิทธิ์ของบทบาทขึ้นอยู่กับเมนูที่บริษัทเปิดใช้';
+  }
   return {
     id: row.id,
     key: row.key,

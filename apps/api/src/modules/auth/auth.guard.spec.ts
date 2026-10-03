@@ -1026,3 +1026,45 @@ it('executive account errors carry safe codes and the request id without leaking
     }
   }
 });
+
+describe('sold 50 ทวิ signature read boundary', () => {
+  it('allows ENTERPRISE signature managers, refuses STARTER and non-managers, keeps full tax closed', async () => {
+    const { TaxController } = await import('../tax/presentation/http/tax.controller');
+    const { filterPermissionsByEntitlement } = await import('../employee-access/domain/logic/feature-gate.logic');
+    const { evaluateEntitledFeatureKeys } = await import('../employee-access/application/entitlement.helper');
+    const { TIER_FEATURE_PRESETS, ALL_FEATURE_ENTITLEMENT_KEYS } = await import('@watchdog-bms/contracts');
+    const handler = (TaxController.prototype as any).getTaxSignature;
+    assert.equal(typeof handler, 'function');
+    assert.equal(Reflect.getMetadata(PATH_METADATA, handler), 'tax/profile/signature');
+    const check = (keys: readonly string[], grants: string[], method = handler) => {
+      const entitled = evaluateEntitledFeatureKeys(ALL_FEATURE_ENTITLEMENT_KEYS.map(featureKey => ({ featureKey, enabled: keys.includes(featureKey) })));
+      const context = { permissions: filterPermissionsByEntitlement(grants, entitled) };
+      return new DenyByDefaultGuard(new Reflector()).canActivate({
+        getHandler: () => method, getClass: () => TaxController,
+        switchToHttp: () => ({ getRequest: () => ({ context }) }),
+      } as any);
+    };
+    const grants = ['company.tax_signature.manage', 'tax.profile.read'];
+    assert.equal(check(TIER_FEATURE_PRESETS.ENTERPRISE_1999, grants), true);
+    assert.throws(() => check(TIER_FEATURE_PRESETS.STARTER_249, grants), ForbiddenException);
+    assert.throws(() => check(TIER_FEATURE_PRESETS.ENTERPRISE_1999, ['wht.certificate.issue']), ForbiddenException);
+    assert.throws(() => check(TIER_FEATURE_PRESETS.ENTERPRISE_1999, grants, TaxController.prototype.getProfile), ForbiddenException);
+  });
+
+  it('reads only signature fields for the request company and defaults safely when no profile exists', async () => {
+    const { TaxController } = await import('../tax/presentation/http/tax.controller');
+    let row: any = { signatureMode: 'AUTO_STAMP', signatureImageAttachmentId: 'signature-1' };
+    const repo = { prisma: { client: { companyTaxProfile: { findUnique: async (query: any) => {
+      assert.deepEqual(query, { where: { companyId: 'company-1' }, select: { signatureMode: true, signatureImageAttachmentId: true } });
+      return row;
+    } } } } };
+    const value = new TaxController(...[...Array(12).fill({}), repo, {}] as ConstructorParameters<typeof TaxController>);
+    const get = (value as any).getTaxSignature;
+    assert.equal(typeof get, 'function');
+    const ctx = { companyId: 'company-1' };
+    assert.deepEqual(await get.call(value, ctx, 'company-1'), row);
+    row = null;
+    assert.deepEqual(await get.call(value, ctx, 'company-1'), { signatureMode: 'BLANK', signatureImageAttachmentId: null });
+    await assert.rejects(() => get.call(value, ctx, 'another-company'), ForbiddenException);
+  });
+});
