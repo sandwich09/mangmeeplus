@@ -44,12 +44,19 @@ test('a 409 says so in Thai and reads the latest value again, without resetting 
 });
 
 test('the switch is locked by the company lock and the saved parent features only, not by the entitlement locks', () => {
-  assert.match(section, /disabled=\{fieldsLocked \|\| webEntrySaving \|\| !webEntryRow\.parentOpen\}/);
-  assert.match(section, /const webEntryRow = manualWebEntryRow\(entitlements, webEntry \?\? \{ enabled: false \}\);/);
-  // The name of the switch is what it controls; its state is aria-checked.
-  assert.match(section, /checked=\{webEntry\.enabled\}[\s\S]{0,400}label=\{MANUAL_WEB_ENTRY_COPY\.label\}/);
+  assert.match(section, /disabled=\{webEntrySaving \|\| !webEntryRow\.editable\}/);
+  assert.match(section, /const webEntryRow = manualWebEntryRow\(entitlements, webEntry \?\? \{ enabled: false \}, fieldsLocked\);/);
+  // The name of the switch is what it controls; its state (aria-checked) and the word beside it say
+  // what the shop sees, which is not the stored value while the feature is off or the company closed.
+  assert.match(section, /checked=\{webEntryRow\.shown\}[\s\S]{0,400}label=\{MANUAL_WEB_ENTRY_COPY\.label\}/);
+  assert.match(section, /\{webEntryRow\.shown \? MANUAL_WEB_ENTRY_COPY\.shown : MANUAL_WEB_ENTRY_COPY\.notShown\}/);
+  assert.doesNotMatch(section, /webEntry\.enabled \? MANUAL_WEB_ENTRY_COPY\.shown/);
   // …and pressing it runs the handler above, never the pending set of the feature command.
   assert.match(section, /label=\{MANUAL_WEB_ENTRY_COPY\.label\}\s+onClick=\{\(\) => void toggleManualWebEntry\(\)\}/);
+});
+
+test('the package notice names the menu switch only while that switch can be pressed', () => {
+  assert.match(section, /\{featurePackageEditingNotice\(controlsLocked, Boolean\(webEntry\) && webEntryRow\.editable\)\}/);
 });
 
 test('the submenu list can be opened while the entitlement switches are locked, or the row could not be reached', () => {

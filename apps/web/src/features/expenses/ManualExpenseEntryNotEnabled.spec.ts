@@ -26,7 +26,7 @@ test('says the page is not enabled for the shop and offers the two ways on that 
     ['/companies/co-1/expenses/upload', 'อัปโหลดใบเสร็จ'],
     ['/companies/co-1/expenses', 'ไปหน้ารายการค่าใช้จ่าย'],
   ]);
-  assert.doesNotMatch(html, /กรุณาติดต่อผู้ดูแลร้านของคุณ/);
+  assert.doesNotMatch(html, /กรุณาติดต่อ/);
 });
 
 test('offers only the button the reader may open', async () => {
@@ -34,10 +34,13 @@ test('offers only the button the reader may open', async () => {
   assert.deepEqual(hrefs(await render(['expense.create', 'expense.receipt.upload'])), [['/companies/co-1/expenses/upload', 'อัปโหลดใบเสร็จ']]);
 });
 
-test('with no button to offer, asks the reader to contact the shop administrator and leaves no link behind', async () => {
+// The reader lacks the rights to upload and to open the list. Only the business owner can grant every
+// right, so the owner is the one to ask; "ผู้ดูแลร้าน" is no role a shop has.
+test('with no button to offer, asks the reader to contact the business owner and leaves no link behind', async () => {
   const html = await render(['expense.create']);
   assert.match(html, />หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ</);
-  assert.match(html, />กรุณาติดต่อผู้ดูแลร้านของคุณ</);
+  assert.match(html, />กรุณาติดต่อเจ้าของกิจการ</);
+  assert.doesNotMatch(html, /ผู้ดูแลร้าน/);
   assert.deepEqual(hrefs(html), []);
   assert.doesNotMatch(html, /<button/);
 });

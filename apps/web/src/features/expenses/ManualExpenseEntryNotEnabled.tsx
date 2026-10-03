@@ -11,8 +11,8 @@ import { canAccessExpenseTab, type ExpenseCapabilities } from './expenses.model'
  * What the manual expense page shows to a holder of `expense.create` while the company does not
  * show that page (manual-expense-web-entry-flag spec §7.1, §8). A screen state, not a refusal: the
  * server answered 200 and the API would still take the save, so nothing here speaks of permission.
- * Only the ways on that this reader may open are offered; with none, the shop administrator is the
- * one to ask.
+ * Only the ways on that this reader may open are offered; with none, the business owner is the one to
+ * ask: the reader lacks the rights to upload and to open the list, and only the owner can grant every right.
  */
 export function ManualExpenseEntryNotEnabled({ companyId, caps }: { companyId: string; caps: ExpenseCapabilities }) {
   const locale = useWorkspaceLocale();
@@ -27,7 +27,7 @@ export function ManualExpenseEntryNotEnabled({ companyId, caps }: { companyId: s
           {canList && <Link className={ghostClass} href={`/companies/${companyId}/expenses`}>{t('expenses.manual_entry_go_list', locale)}</Link>}
         </div>
       ) : (
-        <p className="text-sm text-gray-600">{t('expenses.manual_entry_contact_admin', locale)}</p>
+        <p className="text-sm text-gray-600">{t('expenses.manual_entry_contact_owner', locale)}</p>
       )}
     </MangmeeCard>
   );

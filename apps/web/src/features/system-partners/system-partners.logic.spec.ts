@@ -462,6 +462,14 @@ describe('feature package editing guidance', () => {
     }
   });
 
+  // The manual-expense web menu switch is no entitlement: it still works while the package switches
+  // wait for their rights to be prepared, so a notice that said nothing could change would be untrue.
+  it('names the one switch that still works while the package switches are locked, and only while it does', () => {
+    assert.equal(featurePackageEditingNotice(true, true), 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “แสดงเมนูบันทึกด้วยมือบนเว็บ”');
+    assert.equal(featurePackageEditingNotice(true, false), 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้');
+    assert.equal(featurePackageEditingNotice(false, true), 'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ');
+  });
+
   it('explains review and save when editable without promising every feature can change', () => {
     assert.equal(
       featurePackageEditingNotice(false),
@@ -613,6 +621,24 @@ describe('manual-expense web entry row', () => {
     }
   });
 
+  // A state word next to the switch says what the shop sees. With the manual-expense feature saved off,
+  // or the company closed, the shop sees no menu whatever is stored, so the row must not say "แสดง".
+  it('says the menu is shown only while the shop can see it', () => {
+    assert.equal(manualWebEntryRow(enabledState(), setting(true)).shown, true);
+    assert.equal(manualWebEntryRow(enabledState(), setting(false)).shown, false);
+    for (const off of ['expenses.manual', 'expenses']) {
+      assert.equal(manualWebEntryRow(enabledState(off), setting(true)).shown, false, off);
+    }
+    assert.equal(manualWebEntryRow(enabledState(), setting(true), true).shown, false, 'disabled or archived company');
+  });
+
+  it('can be pressed only while the company is open and the manual-expense feature is saved on', () => {
+    assert.equal(manualWebEntryRow(enabledState(), setting(true)).editable, true);
+    assert.equal(manualWebEntryRow([], setting(false)).editable, true, 'a shop without entitlement rows');
+    assert.equal(manualWebEntryRow(enabledState('expenses.manual'), setting(true)).editable, false);
+    assert.equal(manualWebEntryRow(enabledState(), setting(false), true).editable, false);
+  });
+
   it('asks before hiding only, and never before showing', () => {
     assert.deepEqual(manualWebEntryRow(enabledState(), setting(false)).confirmLines(true), []);
     assert.deepEqual(manualWebEntryRow(enabledState('expenses.upload'), setting(false)).confirmLines(true), []);
@@ -647,7 +673,7 @@ describe('manual-expense web entry row', () => {
   it('words the switch, its description and the result exactly as the spec does', () => {
     assert.deepEqual(MANUAL_WEB_ENTRY_COPY, {
       label: 'แสดงเมนูบันทึกด้วยมือบนเว็บ',
-      description: 'ค่าเริ่มต้นของทุกร้านคือไม่แสดง เปิดเพื่อให้ร้านนี้เห็นเมนูและปุ่มที่พาไปหน้าบันทึกด้วยมือบนเว็บ การปิดไม่ได้ห้ามการบันทึกรายจ่ายด้วยมือ พนักงานยังบันทึกผ่านใบรับรองแทนใบเสร็จ การพิมพ์ใน LINE และการแก้รายการเดิมได้ตามสิทธิ์เดิม',
+      description: 'ค่าเริ่มต้นของทุกร้านคือไม่แสดง เปิดเพื่อให้ร้านนี้เห็นเมนูและปุ่มที่พาไปหน้าบันทึกด้วยมือบนเว็บ การปิดไม่ได้ห้ามการบันทึกรายจ่ายด้วยมือ ใบรับรองแทนใบเสร็จ การพิมพ์ใน LINE และการแก้รายการเดิมยังใช้ได้ตามสิทธิ์และช่องทางที่ร้านมี',
       shown: 'แสดง',
       notShown: 'ไม่แสดง',
       confirmHideLabel: 'ซ่อนเมนู',

@@ -1241,7 +1241,8 @@ export const workspaceDictionary = {
     // was never switched on and for one that was switched off again: "ไม่ได้เปิดใช้", never "ยังไม่เปิดใช้".
     'expenses.manual_entry_not_enabled': 'หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ',
     'expenses.manual_entry_go_list': 'ไปหน้ารายการค่าใช้จ่าย',
-    'expenses.manual_entry_contact_admin': 'กรุณาติดต่อผู้ดูแลร้านของคุณ',
+    // The reader lacks the rights to upload and to open the list; only the business owner can grant every right.
+    'expenses.manual_entry_contact_owner': 'กรุณาติดต่อเจ้าของกิจการ',
     'expenses.manual_entry_closed_notice': 'หน้านี้ถูกปิดสำหรับร้านของคุณแล้ว คุณยังบันทึกรายการที่กำลังกรอกได้',
     'expenses.manual_summary_title': 'สรุปก่อนบันทึก',
     'expenses.manual_before_tax': 'ยอดก่อนภาษี',
@@ -2870,7 +2871,7 @@ export const workspaceDictionary = {
     'expenses.manual_read_only': 'Read only: this account cannot create expenses',
     'expenses.manual_entry_not_enabled': 'Manual entry is not enabled for your shop',
     'expenses.manual_entry_go_list': 'Go to the expense list',
-    'expenses.manual_entry_contact_admin': 'Please contact your shop administrator',
+    'expenses.manual_entry_contact_owner': 'Please contact the business owner',
     'expenses.manual_entry_closed_notice': 'This page has been closed for your shop. You can still save the entry you are filling in.',
     'expenses.manual_summary_title': 'Summary before saving',
     'expenses.manual_before_tax': 'Before tax',

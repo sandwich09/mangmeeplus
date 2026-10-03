@@ -954,7 +954,7 @@ function PackageMenuSection({
 
   // From the SAVED rows on purpose: a parent feature the operator has switched but not saved yet
   // changes nothing for the shop, so it changes nothing here either.
-  const webEntryRow = manualWebEntryRow(entitlements, webEntry ?? { enabled: false });
+  const webEntryRow = manualWebEntryRow(entitlements, webEntry ?? { enabled: false }, fieldsLocked);
 
   const toggleManualWebEntry = async () => {
     if (!webEntry || webEntrySaving) return;
@@ -1135,7 +1135,7 @@ function PackageMenuSection({
             </span>
           </div>
           <p className="mt-2 text-xs leading-5 text-gray-500">
-            {featurePackageEditingNotice(controlsLocked)}
+            {featurePackageEditingNotice(controlsLocked, Boolean(webEntry) && webEntryRow.editable)}
           </p>
         </div>
 
@@ -1336,12 +1336,12 @@ function PackageMenuSection({
                                       <div className="mt-2 rounded-lg border border-gray-200 bg-white p-3 sm:ml-4">
                                         <div className="flex items-center gap-3">
                                           <p className="min-w-0 flex-1 text-sm font-bold text-gray-800">{MANUAL_WEB_ENTRY_COPY.label}</p>
-                                          <span className={`shrink-0 text-xs font-bold ${webEntry.enabled ? 'text-brand-700' : 'text-gray-500'}`}>
-                                            {webEntry.enabled ? MANUAL_WEB_ENTRY_COPY.shown : MANUAL_WEB_ENTRY_COPY.notShown}
+                                          <span className={`shrink-0 text-xs font-bold ${webEntryRow.shown ? 'text-brand-700' : 'text-gray-500'}`}>
+                                            {webEntryRow.shown ? MANUAL_WEB_ENTRY_COPY.shown : MANUAL_WEB_ENTRY_COPY.notShown}
                                           </span>
                                           <EntitlementSwitch
-                                            checked={webEntry.enabled}
-                                            disabled={fieldsLocked || webEntrySaving || !webEntryRow.parentOpen}
+                                            checked={webEntryRow.shown}
+                                            disabled={webEntrySaving || !webEntryRow.editable}
                                             disabledReason={webEntryRow.parentOffMessage ?? undefined}
                                             label={MANUAL_WEB_ENTRY_COPY.label}
                                             onClick={() => void toggleManualWebEntry()}

@@ -75,6 +75,18 @@ test('the guide page applies the company setting to the result of the pinned gui
   assert.match(page, /manualExpenseWebEntryShown\(session\) \? guide : withManualEntryNotEnabled\(guide\)/);
 });
 
+// The upload page's "ไม่มีไฟล์ใบเสร็จ/ใบกำกับภาษี? บันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับเงิน" link
+// leads to the substitute-receipt flow, where only a holder of expense.review may record a new expense or
+// prepare a certificate. Offered to everyone who may create, it promised manual entry to staff who can do
+// neither there, and with the manual page hidden by default they have no other way on the web.
+test('the upload page offers the no-document link only to someone the substitute-receipt flow lets use it', () => {
+  assert.match(read('src/features/expenses/ExpensesPages.tsx'),
+    /\{\.\.\.\(caps\.canCreate && caps\.canReview \? \{ onNoDocument: \(\) => router\.push\(`\/companies\/\$\{companyId\}\/expenses\/substitute-receipts\/new`\) \} : \{\}\)\}/);
+  // …the gate the substitute-receipt hub puts on its create button, and the wizard on both of its ways in.
+  assert.match(read('src/features/expenses/SubstituteReceiptHubPage.tsx'), /actions=\{canReview \? \(/);
+  assert.match(read('src/features/expenses/SubstituteReceiptWizardPage.tsx'), /const canReview = !viewOnly && permissions\.includes\('expense\.review'\);/);
+});
+
 test('no other file links to the manual page: a new entrance must come here and take the predicate', () => {
   const linking = [...sources('src'), ...sources('app')]
     // The route, not the `manual-expense-entry.logic` import path.

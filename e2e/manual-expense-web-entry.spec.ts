@@ -27,6 +27,8 @@ const CONFIRM_HIDE = 'ซ่อนเมนูบันทึกด้วยม�
 const CONFIRM_UPLOAD_OFF = 'ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ ถ้าซ่อนเมนูนี้ด้วย พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่ายจะไม่มีปุ่มสร้างรายจ่ายบนเว็บ';
 const UPLOAD_OFF_NOTE = 'ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ และไม่ได้แสดงเมนูบันทึกด้วยมือ พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่ายจึงไม่มีปุ่มสร้างรายจ่ายบนเว็บ';
 const PARENT_OFF = 'เปิดฟีเจอร์บันทึกด้วยมือและบันทึกก่อน จึงจะตั้งค่านี้ได้';
+// The seeded shop's package switches wait for its rights to be prepared; the menu switch does not.
+const LOCKED_EXCEPT_SWITCH = `ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “${SWITCH}”`;
 const AUDIT_ACTION = 'system.partner_manual_expense_web_entry.update';
 
 const databaseUrl = process.env['DATABASE_URL'];
@@ -149,6 +151,7 @@ test.describe('manual-expense web entry — the setting a system admin switches 
 
       // ── 2. The admin switches it on: one press, no question, saved at once ────────────────────
       const { card, toggle } = await openManualRow(admin, SHOP);
+      await expect(admin.getByText(LOCKED_EXCEPT_SWITCH, { exact: true })).toBeVisible();
       await expect(toggle).toHaveAttribute('aria-checked', 'false');
       await expect(toggle).toBeEnabled();
       await expect(card.getByText('ไม่แสดง', { exact: true })).toBeVisible();
@@ -311,16 +314,30 @@ test.describe('manual-expense web entry — the setting a system admin switches 
       await admin.unroute('**/manual-expense-web-entry');
       expect(await client.companyWebEntrySetting.findUnique({ where: { companyId } })).toMatchObject({ manualExpenseEntryEnabled: true, version: 5 });
 
-      // The manual-expense feature saved as off: the stored value is shown, locked, with the way out.
+      // The manual-expense feature saved as off: the shop sees no menu whatever is stored, so the row
+      // says "ไม่แสดง", locked, with the way out. The stored "shown" waits, unchanged.
       await entitlement('expenses.manual', false);
       ({ card, toggle } = await openManualRow(admin, companyId));
-      await expect(toggle).toHaveAttribute('aria-checked', 'true');
+      await expect(toggle).toHaveAttribute('aria-checked', 'false');
       await expect(toggle).toBeDisabled();
+      await expect(card.getByText('ไม่แสดง', { exact: true })).toBeVisible();
+      await expect(card.getByText('แสดง', { exact: true })).toHaveCount(0);
       await expect(card.getByText(PARENT_OFF, { exact: true })).toBeVisible();
       await expect(card.getByText(UPLOAD_OFF_NOTE, { exact: true })).toHaveCount(0);
-      expect((await client.companyWebEntrySetting.findUnique({ where: { companyId } }))!.version).toBe(5);
+      expect(await client.companyWebEntrySetting.findUnique({ where: { companyId } })).toMatchObject({ manualExpenseEntryEnabled: true, version: 5 });
       await toggle.scrollIntoViewIfNeeded();
       await admin.screenshot({ path: test.info().outputPath('admin-390-parent-off.png') });
+      await admin.setViewportSize({ width: 1280, height: 900 });
+      expect(await fitsTheScreen(admin)).toBeLessThanOrEqual(1);
+      await toggle.scrollIntoViewIfNeeded();
+      await admin.screenshot({ path: test.info().outputPath('admin-1280-parent-off.png') });
+      await admin.setViewportSize({ width: 390, height: 844 });
+      // The feature back on: the stored value is what the shop sees again, without anyone pressing the switch.
+      await entitlement('expenses.manual', true);
+      ({ card, toggle } = await openManualRow(admin, companyId));
+      await expect(toggle).toHaveAttribute('aria-checked', 'true');
+      await expect(toggle).toBeEnabled();
+      await expect(card.getByText('แสดง', { exact: true })).toBeVisible();
       await expectNoClientError(admin);
     } finally {
       await client.auditLog.deleteMany({ where: { companyId } }).catch(() => {});

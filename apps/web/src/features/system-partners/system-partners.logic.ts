@@ -405,7 +405,9 @@ export const MANUAL_WEB_ENTRY_SUBMENU_KEY = 'expenses.manual';
 
 export const MANUAL_WEB_ENTRY_COPY = {
   label: 'แสดงเมนูบันทึกด้วยมือบนเว็บ',
-  description: 'ค่าเริ่มต้นของทุกร้านคือไม่แสดง เปิดเพื่อให้ร้านนี้เห็นเมนูและปุ่มที่พาไปหน้าบันทึกด้วยมือบนเว็บ การปิดไม่ได้ห้ามการบันทึกรายจ่ายด้วยมือ พนักงานยังบันทึกผ่านใบรับรองแทนใบเสร็จ การพิมพ์ใน LINE และการแก้รายการเดิมได้ตามสิทธิ์เดิม',
+  // "ตามสิทธิ์และช่องทางที่ร้านมี": the substitute-receipt flow needs the review right, and typing in LINE
+  // needs a shop whose LINE is connected; neither is every shop's or every employee's.
+  description: 'ค่าเริ่มต้นของทุกร้านคือไม่แสดง เปิดเพื่อให้ร้านนี้เห็นเมนูและปุ่มที่พาไปหน้าบันทึกด้วยมือบนเว็บ การปิดไม่ได้ห้ามการบันทึกรายจ่ายด้วยมือ ใบรับรองแทนใบเสร็จ การพิมพ์ใน LINE และการแก้รายการเดิมยังใช้ได้ตามสิทธิ์และช่องทางที่ร้านมี',
   shown: 'แสดง',
   notShown: 'ไม่แสดง',
   confirmHideLabel: 'ซ่อนเมนู',
@@ -424,12 +426,20 @@ const MANUAL_WEB_ENTRY_UPLOAD_OFF_NOTE = 'ร้านนี้ปิดอั�
 const MANUAL_WEB_ENTRY_PARENT_OFF = 'เปิดฟีเจอร์บันทึกด้วยมือและบันทึกก่อน จึงจะตั้งค่านี้ได้';
 
 /**
- * What the row says and allows, from the SAVED entitlements — never the pending set — and the
- * stored setting. With the manual-expense feature off nobody holds expense.create, so the stored
- * value is shown locked and the only message is how to unlock it.
+ * What the row says and allows, from the SAVED entitlements — never the pending set — the stored
+ * setting and whether the company is closed (disabled or archived). With the manual-expense feature
+ * off nobody holds expense.create, so the switch is locked and the only message is how to unlock it.
  */
-export function manualWebEntryRow(saved: readonly Entitlement[], setting: { enabled: boolean }): {
+export function manualWebEntryRow(saved: readonly Entitlement[], setting: { enabled: boolean }, companyLocked = false): {
   parentOpen: boolean;
+  /** The switch can be pressed: the company is open and the manual-expense feature is saved on. */
+  editable: boolean;
+  /**
+   * What the shop sees, for the switch's state and the word beside it. Not the stored value: with the
+   * feature off or the company closed nobody sees the menu, whatever is stored. The stored value
+   * takes effect again, unchanged, once the feature is on and the company open.
+   */
+  shown: boolean;
   parentOffMessage: string | null;
   uploadOffNote: string | null;
   /** What to ask before saving `next`. Empty when nothing needs asking: showing the menu never does. */
@@ -439,6 +449,8 @@ export function manualWebEntryRow(saved: readonly Entitlement[], setting: { enab
   const uploadOff = !entitlementEnabled(saved, 'expenses.upload');
   return {
     parentOpen,
+    editable: parentOpen && !companyLocked,
+    shown: parentOpen && !companyLocked && setting.enabled,
     parentOffMessage: parentOpen ? null : MANUAL_WEB_ENTRY_PARENT_OFF,
     uploadOffNote: parentOpen && uploadOff && !setting.enabled ? MANUAL_WEB_ENTRY_UPLOAD_OFF_NOTE : null,
     confirmLines: (next) => (next ? [] : [MANUAL_WEB_ENTRY_CONFIRM_HIDE, ...(uploadOff ? [MANUAL_WEB_ENTRY_CONFIRM_UPLOAD_OFF] : [])]),
@@ -452,11 +464,16 @@ export function manualWebEntryRow(saved: readonly Entitlement[], setting: { enab
  */
 export const NORMALIZATION_PENDING_NOTICE = 'ระบบกำลังเตรียมสิทธิ์ให้ ไม่ต้องดำเนินการ';
 
-/** Use the screen's existing lock state; copy must not promise an unavailable command. */
-export function featurePackageEditingNotice(controlsLocked: boolean): string {
-  return controlsLocked
-    ? 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้'
-    : 'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ';
+/**
+ * Use the screen's existing lock state; copy must not promise an unavailable command, nor deny one
+ * that works: the manual-expense web menu switch is no entitlement and stays usable while the
+ * package switches are locked (`menuSettingEditable`), so the notice names it then.
+ */
+export function featurePackageEditingNotice(controlsLocked: boolean, menuSettingEditable = false): string {
+  if (!controlsLocked) return 'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ';
+  return menuSettingEditable
+    ? `ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “${MANUAL_WEB_ENTRY_COPY.label}”`
+    : 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้';
 }
 
 /** A refused save changed NOTHING; a refused disable must say the switch is still on. */
