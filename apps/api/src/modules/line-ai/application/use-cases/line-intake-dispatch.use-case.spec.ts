@@ -1068,7 +1068,7 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(h.routeRequests.length, 0);
     assert.doesNotMatch(h.replies[0] ?? '', /ยอดขายวันนี้เท่าไหร่/);
     assert.doesNotMatch(h.replies[0] ?? '', /ส่งรูปใบเสร็จ/);
-    assert.match(h.replies[0] ?? '', /ติดต่อผู้ดูแลระบบของบริษัท/);
+    assert.match(h.replies[0] ?? '', /ผู้มีสิทธิ์จัดการบทบาท/);
   });
 
   it('reduces a stored capability reply to a fixed hint without copying any trailing private facts', async () => {
@@ -2439,7 +2439,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.captureState.readFailures.length, 0, 'nothing to close: no job was created');
     assert.equal(h.captureState.attempts.at(-1).outcome, 'STORED_READ_FAILED');
     assert.equal(h.captureState.attempts.at(-1).targetType, 'expense');
-    assert.match(h.replies[0] ?? '', /อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลต่อได้ที่นี่/);
+    assert.match(h.replies[0] ?? '', /อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้/);
     assert.match(h.replies[0] ?? '', /expenses\/expense-1/);
     assert.ok(!/expenses\/capture/.test(h.replies[0] ?? ''));
     assert.ok(!/1\).*ใบเสร็จ/.test(h.replies[0] ?? ''), 'no numbered clarify for a failed read');
@@ -2600,7 +2600,7 @@ describe('LINE intake dispatch – media path', () => {
       if (persistsAsDraft) {
         // Truthful copy (appendix §25): a draft exists, so the reply says so rather than claiming
         // "ยังไม่ได้สร้างรายการ" beside a link to the record it created.
-        assert.match(h.replies[0] ?? "", /เก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน กดกรอกข้อมูลต่อได้ที่นี่/);
+        assert.match(h.replies[0] ?? "", /เก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้/);
         assert.match(h.replies[0] ?? '', /expenses\/expense-1/);
         // The OCR route already classified this picture: no second read is queued for the draft,
         // and the attempt says the read is DONE (a non-receipt), not "still reading".
@@ -6017,7 +6017,7 @@ describe('LINE capture answers and §17.5 status questions', () => {
       await h.useCase.executeReceiptUpload({ ...FILE_EVENT, fileSize: 12 * 1024 * 1024 });
     } finally { restore(); }
     await h.useCase.execute({ ...answer('ไฟล์ใหญ่ไปหรือเปล่า'), webhookEventId: 'evt-status-oversize' });
-    assert.match(h.replies.at(-1) ?? '', /ขนาด 12\.0 MB เกินขนาดที่ระบบรับได้ 10\.0 MB/);
+    assert.match(h.replies.at(-1) ?? '', /ขนาด 12\.0 เมกะไบต์ เกินขนาดที่ระบบรับได้ 10\.0 เมกะไบต์/);
     assert.match(h.replies.at(-1) ?? '', /เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ/);
     assert.equal(h.turnRequests.length, 0);
   });

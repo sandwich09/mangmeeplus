@@ -1,3 +1,4 @@
+import { JPEG_LABEL, PNG_LABEL } from '@watchdog-bms/contracts';
 import { expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType,
@@ -1233,17 +1234,17 @@ export function isWetSignedScanAttachment(
 
 export const MIME_TYPE_LABELS: Record<string, string> = {
   'application/pdf': 'เอกสาร PDF',
-  'image/jpeg': 'รูปภาพ JPEG',
-  'image/jpg': 'รูปภาพ JPEG',
-  'image/png': 'รูปภาพ PNG',
-  'image/svg+xml': 'เอกสาร SVG',
+  'image/jpeg': `รูปภาพ${JPEG_LABEL}`,
+  'image/jpg': `รูปภาพ${JPEG_LABEL}`,
+  'image/png': `รูปภาพ${PNG_LABEL}`,
+  'image/svg+xml': 'ภาพเวกเตอร์',
 };
 
 export const SUBSTITUTE_RECEIPT_STATUS_LABELS: Record<string, string> = {
   PREPARED: 'เตรียมแล้ว รอผู้จ่ายลงนาม',
   PAYER_CERTIFIED: 'ผู้จ่ายลงนามแล้ว รออนุมัติ',
   ISSUED: 'ออกเอกสารสมบูรณ์แล้ว',
-  SUPERSEDED: 'ยกเลิก version นี้แล้ว',
+  SUPERSEDED: 'ยกเลิกฉบับนี้แล้ว',
 };
 
 export function expenseValueLabel(labels: Record<string, string>, value: string | null | undefined, fallback = 'ข้อมูลจากระบบ'): string {

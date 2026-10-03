@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { apiErrorCode, apiErrorMessage, translateApiError } from './api-error-message';
-import { GENERIC_UPLOAD_ERROR_MESSAGE, uploadErrorMessage } from '../files/upload-file.logic';
+import { GENERIC_UPLOAD_ERROR_MESSAGE, UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE, uploadErrorMessage } from '../files/upload-file.logic';
 
 /** Default-open customer features, plus the billing/renewal boundary. */
 const OPEN_MODULES = [
@@ -353,7 +353,7 @@ describe('upload errors reaching the translator', () => {
   });
 
   it('keeps the client-side validation messages exactly as they are', () => {
-    assert.equal(uploadErrorMessage(new Error('รองรับเฉพาะไฟล์ PNG, JPG และ JPEG')), 'รองรับเฉพาะไฟล์ PNG, JPG และ JPEG');
+    assert.equal(uploadErrorMessage(new Error(UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE)), UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE);
   });
 
   it('still falls back to the generic line for something genuinely unknown', () => {

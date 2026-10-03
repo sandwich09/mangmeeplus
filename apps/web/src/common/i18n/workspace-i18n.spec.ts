@@ -70,7 +70,7 @@ describe('AI money refusal copy on the expense screens', () => {
       for (const [index, text] of texts.entries()) {
         assert.notEqual(text, keys[index], `${keys[index]} is missing from the ${locale} dictionary`);
         // The file is kept and manual entry stays open on every one of them.
-        assert.match(text, locale === 'th' ? /เอกสารถูกเก็บแล้ว/ : /it is saved/);
+        assert.match(text, locale === 'th' ? /เก็บเอกสารแล้ว/ : /it is saved/);
         assert.equal(/satang|สตางค์|บาท|THB/.test(text), false, `${keys[index]} must not name money`);
       }
       assert.equal(new Set(texts).size, texts.length, 'each reason reads differently');

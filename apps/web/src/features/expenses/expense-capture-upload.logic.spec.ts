@@ -83,15 +83,15 @@ describe('capture size and type gate', () => {
 
   it('takes the limit from the server capability, not from a number typed into the client', () => {
     assert.equal(captureFileRejection({ name: 'big.pdf', type: 'application/pdf', size: 10_485_761 }, capability), 'too_large');
-    // The 4 MiB PDF ceiling is gone: a 9.8 MB PDF is read automatically now.
+    // The 4 MiB PDF ceiling is gone: a 9.8 เมกะไบต์ PDF is read automatically now.
     assert.equal(captureFileRejection({ name: 'scan.pdf', type: 'application/pdf', size: 9_800_000 }, capability), null);
     assert.equal(captureFileRejection({ name: 'sheet.xlsx', type: 'application/vnd.ms-excel', size: 10 }, capability), 'unsupported');
     assert.equal(captureFileRejection({ name: 'photo.jpg', type: 'image/jpeg', size: 10 }, null), null);
   });
 
   it('prints megabytes the way the message does, to one decimal', () => {
-    assert.equal(captureMegabytes(10_485_760), '10.0 MB');
-    assert.equal(captureMegabytes(9_800_000), '9.3 MB');
+    assert.equal(captureMegabytes(10_485_760), '10.0 เมกะไบต์');
+    assert.equal(captureMegabytes(9_800_000), '9.3 เมกะไบต์');
   });
 
   /**
@@ -106,11 +106,11 @@ describe('capture size and type gate', () => {
       assert.equal(captureFileRejection({ name, type, size: limit }, { maxBytes: limit, allowedMimeTypes: [type] }), null);
       assert.equal(captureFileRejection({ name, type, size: limit + 1 }, { maxBytes: limit, allowedMimeTypes: [type] }), 'too_large');
     }
-    // `{size} MB … {limit} MB`, the sentence the panel builds — LINE says "ขนาด 10.0 MB … 10.0 MB".
+    // `{size} เมกะไบต์ … {limit} เมกะไบต์`, the sentence the panel builds — LINE says "ขนาด 10.0 เมกะไบต์ … 10.0 เมกะไบต์".
     const sentence = workspaceDictionary.th['expenses.capture.upload_too_large']
       .replace('{size}', captureMegabytes(limit + 1))
       .replace('{limit}', captureMegabytes(limit));
-    assert.match(sentence, /10\.0 MB/);
+    assert.match(sentence, /10\.0 เมกะไบต์/);
     assert.equal(sentence.includes('{size}') || sentence.includes('{limit}'), false);
   });
 

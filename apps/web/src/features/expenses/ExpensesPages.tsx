@@ -1,5 +1,7 @@
 'use client';
 
+import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+
 import { isExpenseEvidenceFile, expenseEvidenceAssessment, expenseEvidenceInputError, EXPENSE_RECEIPT_SOURCE_TYPES, type ExpenseEvidenceAssessment } from '@watchdog-bms/contracts';
 
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent, type DragEvent, type FormEvent, type MutableRefObject, type ReactNode } from 'react';
@@ -338,7 +340,7 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
     const rejection = captureFileRejection(file, capability);
     if (rejection === 'unsupported') {
       return capability
-        ? messageWithParams(t('expenses.capture.upload_unsupported', locale), { types: 'JPG, PNG, HEIC, PDF' })
+        ? messageWithParams(t('expenses.capture.upload_unsupported', locale), { types: ATTACHMENT_SOURCE_TYPES_LABEL })
         : t('expenses.upload_unsupported_file', locale);
     }
     if (rejection === 'too_large' && capability) {
@@ -363,7 +365,7 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
         prepared.push(ready.file);
         // The resize note belongs to the one-file screen; a list of files shows its own sizes.
         if (picked.length === 1 && ready.resized) {
-          setFileNotice(`${t('expenses.upload_resized', locale)} ${(ready.file.size / 1024 / 1024).toFixed(2)} MB`);
+          setFileNotice(`${t('expenses.upload_resized', locale)} ${(ready.file.size / 1024 / 1024).toFixed(2)} เมกะไบต์`);
         }
       }
       setSelectedFiles(prepared);

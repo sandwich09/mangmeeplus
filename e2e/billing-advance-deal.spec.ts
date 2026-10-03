@@ -93,7 +93,7 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
     const dealCard = page.getByRole('region', { name: 'ข้อเสนอพิเศษสำหรับร้านคุณ', exact: true });
     await expect(dealCard).toBeVisible();
     await expect(dealCard.getByRole('radio', { name: 'บัตร · ต่ออายุอัตโนมัติ', exact: true })).toBeVisible();
-    if (purchaseMode === 'PROMPTPAY_RENEW') await dealCard.getByRole('radio', { name: 'PromptPay QR · สแกนบิลทุกงวด', exact: true }).check();
+    if (purchaseMode === 'PROMPTPAY_RENEW') await dealCard.getByRole('radio', { name: 'พร้อมเพย์ QR · สแกนบิลทุกงวด', exact: true }).check();
     await dealCard.getByRole('button', { name: 'เลือกข้อเสนอนี้', exact: true }).click();
     await expect(page.getByRole('alert').filter({ hasText: 'รายการหมดอายุหรือข้อมูลเปลี่ยน' })).toBeVisible();
     await dealCard.getByRole('button', { name: 'เลือกข้อเสนอนี้', exact: true }).click();
@@ -114,7 +114,7 @@ for (const purchaseMode of ['CARD_AUTO', 'PROMPTPAY_RENEW'] as const) {
     ]);
 
     await page.getByLabel('ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไข', { exact: false }).check();
-    const checkout = page.getByRole('button', { name: 'ยืนยันและไปชำระที่ Stripe', exact: true });
+    const checkout = page.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true });
     await checkout.click();
     await expect(page.getByRole('alert').filter({ hasText: 'บริการที่จำเป็นยังไม่พร้อมใช้งาน' })).toBeVisible();
     await expect(checkout).toBeEnabled();

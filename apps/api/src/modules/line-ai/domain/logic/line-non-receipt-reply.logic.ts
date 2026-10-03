@@ -1,3 +1,4 @@
+import { EXPENSE_MANUAL_EDIT_HELP_TH, EXPENSE_READ_FAILED_HELP_TH, EXPENSE_READ_PARTIAL_HELP_TH } from '@watchdog-bms/contracts';
 import type { BusinessDocumentClassification } from '@watchdog-bms/contracts';
 
 /**
@@ -24,8 +25,8 @@ const continueTail = (link?: string, capturedDraft?: boolean): string => {
   // what exists. Claiming "ยังไม่ได้สร้างรายการ" over a draft the customer can open is the one thing
   // §18.4 forbids here.
   return capturedDraft
-    ? `\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน กด${CONTINUE_IN_WEB_LABEL}ได้ที่นี่: ${link}`
-    : `\n${CONTINUE_IN_WEB_LABEL}ได้ที่นี่: ${link}`;
+    ? `\nเก็บไฟล์ไว้ในรายการร่างแล้ว ยังไม่ยืนยัน ${EXPENSE_MANUAL_EDIT_HELP_TH}: ${link}`
+    : `\n${EXPENSE_MANUAL_EDIT_HELP_TH}: ${link}`;
 };
 
 /** §10.2: the courier signals that split one `DELIVERY_NOTE` into NR01 vs NR02. */
@@ -151,16 +152,14 @@ export function capturePausedReasonTh(reason: string | null | undefined): string
 
 /** §17.6 exactly: "เก็บไฟล์ไว้แล้ว" is claimed only by a caller that has the persisted identity. */
 export const CAPTURE_READ_FAILED_REPLY = (link: string): string =>
-  `อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กด${CONTINUE_IN_WEB_LABEL}ได้ที่นี่\n${link}`;
+  `${EXPENSE_READ_FAILED_HELP_TH}\n${link}`;
 
-// The partial/paused sentences of §17.6 say "กรอกข้อมูลส่วนที่ขาด", not "กรอกข้อมูลต่อส่วนที่ขาด" —
-// spelled out rather than composed from the button label, which belongs to the other two.
 export const CAPTURE_READ_PARTIAL_REPLY = (link: string): string =>
-  `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n${link}`;
+  `${EXPENSE_READ_PARTIAL_HELP_TH}\n${link}`;
 
 export const CAPTURE_READ_PAUSED_REPLY = (link: string, pausedReason: string | null | undefined): string =>
   `เก็บไฟล์ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ (${capturePausedReasonTh(pausedReason)}) `
-  + `กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n${link}`;
+  + `${EXPENSE_MANUAL_EDIT_HELP_TH}\n${link}`;
 
 /**
  * The DONE summary the LINE result push sends when the group stays a group.

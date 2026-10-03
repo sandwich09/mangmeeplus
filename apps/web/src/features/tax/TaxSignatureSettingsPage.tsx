@@ -1,5 +1,7 @@
 'use client';
 
+import { SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
+
 import { useCallback, useEffect, useState } from 'react';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { useToast } from '@/common/components/toast';
@@ -40,7 +42,7 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
   if (!canManage) {
     return (
       <MangmeePage title="ลายเซ็นผู้จ่ายเงินสำหรับ 50 ทวิ">
-        <MangmeeCard><p className="text-sm text-gray-600">หน้านี้สำหรับเจ้าของบริษัทเท่านั้น</p></MangmeeCard>
+        <MangmeeCard><p className="text-sm text-gray-600">คุณยังไม่มีสิทธิ์จัดการลายเซ็นผู้จ่ายเงินของบริษัท</p></MangmeeCard>
       </MangmeePage>
     );
   }
@@ -91,7 +93,7 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
             </label>
             {mode === 'AUTO_STAMP' && (
               <div className="grid gap-2">
-                <span className="text-xs font-medium text-gray-600">รูปลายเซ็น (PNG หรือ JPEG)</span>
+                <span className="text-xs font-medium text-gray-600">รูปลายเซ็น ({SIGNATURE_FILE_TYPES_LABEL})</span>
                 <input className={field} type="file" accept="image/png,image/jpeg" onChange={onFileChange} disabled={busy} />
                 {hasStoredSignature && <p className="text-xs text-gray-500">มีรูปลายเซ็นที่บันทึกไว้แล้ว — อัปโหลดใหม่เพื่อเปลี่ยน</p>}
               </div>

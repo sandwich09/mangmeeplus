@@ -253,6 +253,9 @@ export type LineCapabilityGroupId = (typeof LINE_CAPABILITY_GROUPS)[number]['id'
  * follow-up from the stored reply preview alone, so these openings are a contract between the two apps:
  * the gateway spec pins its copy against this list and the API matches on it.
  */
+export const LINE_CAPABILITY_NO_ACCESS_TH = 'ตอนนี้บัญชีของคุณยังไม่มีรายการที่น้องมั่งมีเปิดให้ผ่าน LINE ได้ค่ะ กรุณาให้ผู้มีสิทธิ์จัดการบทบาทตรวจสิทธิ์ของคุณ และให้ผู้มีสิทธิ์จัดการแพ็กเกจตรวจเมนูที่ร้านเปิดใช้นะคะ';
+export const LINE_FEATURE_DISABLED_HELP_TH = 'หากต้องการใช้ ให้ผู้มีสิทธิ์จัดการแพ็กเกจตรวจแพ็กเกจหรือติดต่อทีมงานนะคะ';
+
 export const LINE_CAPABILITY_REPLY_PREFIXES = [
   'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์',
   'Nong Mangmee can find and summarize work data',

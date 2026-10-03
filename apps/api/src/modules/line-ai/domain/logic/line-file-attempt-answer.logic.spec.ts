@@ -69,12 +69,12 @@ describe('§17.5 question detection', () => {
 describe('§17.5 answer table', () => {
   it('oversize quotes the real size and the real limit, and never widens into another cause', () => {
     const text = fileAttemptAnswer(attempt({ reasonCode: 'oversize_declared', declaredFileSize: 12 * 1024 * 1024 }));
-    assert.equal(text, 'ไฟล์ invoice.pdf ขนาด 12.0 MB เกินขนาดที่ระบบรับได้ 10.0 MB จึงยังไม่ได้เก็บไฟล์นี้ — เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ');
+    assert.equal(text, 'ไฟล์ invoice.pdf ขนาด 12.0 เมกะไบต์ เกินขนาดที่ระบบรับได้ 10.0 เมกะไบต์ จึงยังไม่ได้เก็บไฟล์นี้ — เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ');
   });
 
   it('an unsupported type names the kinds the capability really listed', () => {
     const text = fileAttemptAnswer(attempt({ stage: 'SECURITY', reasonCode: 'METADATA_REJECTED' }));
-    assert.match(text, /กรุณาเลือก PDF, PNG, JPG/);
+    assert.match(text, /กรุณาเลือก PDF, พีเอ็นจี, เจเพ็ก/);
   });
 
   it('a download failure with no known cause says exactly that — never "too large" or "expired"', () => {
@@ -90,8 +90,8 @@ describe('§17.5 answer table', () => {
 
   for (const [outcome, pattern] of [
     ['STORED_READING', /กำลังอ่านเอกสารอยู่/],
-    ['STORED_READ_FAILED', /แต่อ่านข้อมูลไม่สำเร็จ กดกรอกข้อมูลต่อได้ที่นี่/],
-    ['STORED_READ_PARTIAL', /ยังอ่านข้อมูลไม่ครบ กดกรอกข้อมูลส่วนที่ขาดต่อ/],
+    ['STORED_READ_FAILED', /แต่อ่านข้อมูลไม่สำเร็จ ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้/],
+    ['STORED_READ_PARTIAL', /ยังอ่านข้อมูลไม่ครบ ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้/],
     ['STORED_READ_DONE', /อ่านไฟล์ invoice\.pdf เสร็จแล้วค่ะ/],
     ['STORED', /ยังไม่ได้อ่านข้อมูลอัตโนมัติ/],
   ] as const) {
@@ -138,4 +138,11 @@ describe('§17.5 answer table', () => {
     assert.equal(mediaWordTh('image'), 'รูป');
     assert.match(fileAttemptAnswer(attempt({ messageType: 'image', fileNameSanitized: null, stage: 'PERSIST', reasonCode: 'persist_failed' })), /ระบบเก็บรูปนี้ไม่สำเร็จ/);
   });
+});
+
+it('unknown allowed file types never expose MIME tokens', () => {
+  const text = fileAttemptAnswer(attempt({ stage: 'SECURITY', reasonCode: 'METADATA_REJECTED',
+    capability: { allowedMimeTypes: ['application/x-new-format'] } }));
+  assert.doesNotMatch(text, /x-new-format|X-NEW-FORMAT|application/);
+  assert.match(text, /ไฟล์ชนิดที่ระบบรองรับ/);
 });

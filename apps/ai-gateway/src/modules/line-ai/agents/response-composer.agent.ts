@@ -7,7 +7,7 @@
  * back to the deterministic text when the model is unavailable or breaks grounding.
  */
 import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineAiConversationContext, LineAiValueCandidates, LineAiResponsePreferences, LineCapabilityGroupId } from '@watchdog-bms/contracts';
-import { LINE_CAPABILITY_GROUPS, LINE_TOOL_REGISTRY, canAdvertiseReceiptCapture, hasToolFeature, hasToolPermissions, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
+import { LINE_CAPABILITY_NO_ACCESS_TH, LINE_FEATURE_DISABLED_HELP_TH, LINE_CAPABILITY_GROUPS, LINE_TOOL_REGISTRY, canAdvertiseReceiptCapture, hasToolFeature, hasToolPermissions, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import { MANGMEE_PERSONA_PROMPT } from './mangmee-persona';
@@ -73,7 +73,7 @@ export const CASUAL_CONVERSATION_SYSTEM_PROMPT = [
   // Owner 2026-08-30: the audience talks in fandom terms, so banter may too — but only in TROPES.
   // A named idol retires and a named series ages; a trope never does. The live-facts rule below is
   // the only caveat the Owner wants: no blanket "ข้อมูลอาจไม่ล่าสุด" line, it kills the flavour.
-  'Fandom banter is welcome in GENRE terms — ซีรีส์/ละคร, วายไทย, ยุทธภพ/เทพเซียน, ไอดอล tropes such as มรสุมทุก EP, คู่จิ้น, ฝึกวิชา, or center — but NEVER volunteer the name of a real person, group, show, or brand yourself. When the user names one and asks for its current news or status, the live-facts rule below applies; add no staleness disclaimer of any kind.',
+  'Fandom banter is welcome in GENRE terms — ซีรีส์/ละคร, วายไทย, ยุทธภพ/เทพเซียน, ไอดอล tropes such as มรสุมทุกตอน, คู่จิ้น, ฝึกวิชา, or คนสำคัญ — but NEVER volunteer the name of a real person, group, show, or brand yourself. When the user names one and asks for its current news or status, the live-facts rule below applies; add no staleness disclaimer of any kind.',
   'For tax or accounting specifics that depend on the user\'s own case, give the general principle first, then add one short line suggesting they confirm with their accountant — do not refuse to explain.',
   'Never state THIS company\'s numbers, records, or results in this lane — if asked, invite them to ask the business question directly (e.g. "ลองถามว่า ค่าใช้จ่ายเดือนนี้เท่าไหร่ ได้เลยค่ะ").',
   'Never claim live external facts you cannot check here (today\'s news, weather, prices, exchange rates) — say you cannot check live info and offer what you do know in general.',
@@ -131,7 +131,7 @@ const CAPABILITY_COPY = {
     // Nothing usable at all: honest, no capability list, and it does not blame the company's plan —
     // the caller cannot tell a missing permission from a switched-off feature, and neither should
     // this reply pretend to.
-    none: 'ตอนนี้บัญชีของคุณยังไม่มีข้อมูลที่น้องมั่งมีดึงให้ผ่าน LINE ได้เลยค่ะ กรุณาติดต่อผู้ดูแลระบบของบริษัทเพื่อตรวจสอบสิทธิ์การใช้งานนะคะ',
+    none: LINE_CAPABILITY_NO_ACCESS_TH,
     groups: {
       sales: { line: '• ยอดขายและเอกสารขาย', example: 'ยอดขายวันนี้เท่าไหร่' },
       expenses: { line: '• ค่าใช้จ่ายและใบเสร็จ', example: 'ค่าใช้จ่ายเดือนนี้เท่าไหร่' },
@@ -364,7 +364,7 @@ export function featureDisabledReply(toolNames: readonly string[], language: str
   if (labels.length === 0) return COPY[lang].disabled;
   const joined = labels.join(lang === 'th' ? ' และ ' : ' and ');
   return lang === 'th'
-    ? `📋 บริษัทนี้ยังไม่ได้เปิดใช้งาน${joined}ค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ`
+    ? `📋 บริษัทนี้ยังไม่ได้เปิดใช้งาน${joined}ค่ะ\n${LINE_FEATURE_DISABLED_HELP_TH}`
     : `📋 This company has not enabled ${joined}.\nAn owner or administrator can enable it in the web app.`;
 }
 

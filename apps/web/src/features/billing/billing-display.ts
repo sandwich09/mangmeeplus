@@ -53,7 +53,7 @@ export const BILLING_RECIPIENT_WAIT_TEXT = 'แก้อีเมลรับเ
 /** One wording for both pickers on the package page: the catalog's and the deal card's (R10/S39). */
 export function billingPurchaseModeLabel(mode: BillingPurchaseMode): string {
   return mode === 'CARD_AUTO' ? 'บัตร · ต่ออายุอัตโนมัติ' : mode === 'CARD_ONCE' ? 'บัตร · จ่ายครั้งเดียว'
-    : mode === 'PROMPTPAY_ONCE' ? 'PromptPay QR · จ่ายครั้งเดียว' : 'PromptPay QR · สแกนบิลทุกงวด';
+    : mode === 'PROMPTPAY_ONCE' ? 'พร้อมเพย์ QR · จ่ายครั้งเดียว' : 'พร้อมเพย์ QR · สแกนบิลทุกงวด';
 }
 
 export function billingApprovalLabel(mode: BillingApprovalMode): string {

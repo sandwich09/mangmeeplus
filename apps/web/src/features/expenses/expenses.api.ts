@@ -1,3 +1,4 @@
+import { SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { removeSubstituteReceiptDisplayMetadata } from '@watchdog-bms/contracts';
 import type {
   ExpenseSummary, ExpenseDetail, ExpenseCategorySummary, ExpenseStatus,
@@ -315,7 +316,7 @@ async function assertPreviewBlobSignature(blob: Blob, mimeType: string): Promise
 }
 
 async function checkedPreviewBlob(response: Response, expectedMimeType?: string): Promise<Blob> {
-  if (!response.ok) throw new Error(`ไม่สามารถโหลดไฟล์เพื่อดูตัวอย่างได้ (HTTP ${response.status})`);
+  if (!response.ok) throw new Error(apiErrorMessage({ status: response.status }));
   // The storage response is authoritative when older DTOs expose only an attachment ID.
   // It must still be one of the renderer's exact allowlisted MIME types.
   const actual = checkedPreviewMimeType(response.headers.get('content-type') ?? '');
@@ -699,7 +700,7 @@ function downloadBlob(blob: Blob, fileName: string): void {
 
 export async function submitSubstitutePaperFile(companyId: string, expenseId: string, evidenceId: string, file: File, input: Omit<import('@watchdog-bms/contracts').SubmitSubstituteReceiptPaperInput, 'attachmentId' | 'checksumSha256' | 'byteSize'>): Promise<SubstituteReceiptEvidenceSummary> {
   file = await prepareAttachmentUpload(file);
-  if (!['application/pdf', 'image/png', 'image/jpeg'].includes(file.type) || file.size > 10_000_000) throw new Error('ใช้ PDF, PNG หรือ JPEG ขนาดไม่เกิน 10 MB');
+  if (!['application/pdf', 'image/png', 'image/jpeg'].includes(file.type) || file.size > 10_000_000) throw new Error(`ใช้ PDF หรือ${SIGNATURE_FILE_TYPES_LABEL} ขนาดไม่เกิน 10 เมกะไบต์`);
   const base = `/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/paper`;
   const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(`${base}/upload-intent`, {
     method: 'POST', body: JSON.stringify({ originalFileName: file.name, mimeType: file.type, byteSize: file.size }),

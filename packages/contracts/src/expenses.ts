@@ -1695,3 +1695,24 @@ export function canVoidExpenseFinancialState(expense: {
     && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)
     && (Number(expense.paidAmount ?? 0) > 0 || Boolean(expense.journalEntryId) || expense.postingStatus === 'posted'));
 }
+
+/** Thai names shared by upload pickers, validation, API errors and guides. */
+export const JPEG_LABEL = 'เจเพ็ก';
+export const PNG_LABEL = 'พีเอ็นจี';
+export const STORED_IMAGE_TYPES_LABEL = `${JPEG_LABEL}, ${PNG_LABEL}`;
+export const IMAGE_SOURCE_TYPES_LABEL = `${STORED_IMAGE_TYPES_LABEL}, ฮีอิก, ฮีฟ, กิฟ`;
+export const ATTACHMENT_SOURCE_TYPES_LABEL = `PDF หรือรูปภาพ (${IMAGE_SOURCE_TYPES_LABEL})`;
+export const SIGNATURE_FILE_TYPES_LABEL = `รูปภาพ (${STORED_IMAGE_TYPES_LABEL})`;
+export const SIGNATURE_FILE_REQUIRED_MESSAGE = `ไฟล์ลายเซ็นต้องเป็น${SIGNATURE_FILE_TYPES_LABEL} ขนาดไม่เกิน 2 เมกะไบต์`;
+export const SIGNATURE_FILE_TOO_LARGE_MESSAGE = 'ไฟล์ลายเซ็นต้องมีขนาดไม่เกิน 2 เมกะไบต์';
+export const UPLOAD_FILE_TYPE_MISMATCH_MESSAGE = `ไฟล์นี้มีชนิดไฟล์ไม่ตรงกับข้อมูลภายใน ระบบจึงแนบไม่ได้ กรุณาเลือกไฟล์ใหม่ หรือบันทึกเป็น PDF หรือ${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
+export const UPLOAD_HEIC_CONVERSION_MESSAGE = `แปลงรูปไม่สำเร็จ กรุณาบันทึกรูปเป็น${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
+
+/** The same binary-megabyte display on web and LINE; limits themselves are unchanged. */
+export const expenseCaptureMegabytes = (bytes: number): string => `${(bytes / 1_048_576).toFixed(1)} เมกะไบต์`;
+
+export const EXPENSE_MANUAL_EDIT_HELP_TH = 'ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้';
+
+export const EXPENSE_SAVED_MANUAL_HELP_TH = `เก็บไฟล์ไว้แล้ว ${EXPENSE_MANUAL_EDIT_HELP_TH}`;
+export const EXPENSE_READ_FAILED_HELP_TH = `อ่านข้อมูลไม่สำเร็จค่ะ ${EXPENSE_SAVED_MANUAL_HELP_TH}`;
+export const EXPENSE_READ_PARTIAL_HELP_TH = `อ่านข้อมูลได้บางส่วนค่ะ ${EXPENSE_SAVED_MANUAL_HELP_TH}`;

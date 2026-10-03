@@ -3,9 +3,9 @@ import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 
 const sources = {
-  expenses: { file: 'expenses-guide.content.ts', hash: '255e946bef7d9214bc4035f54605a8cce95f2fd1ee608e99e05c0eb7aa1ed7d8' },
-  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '4244ded04517368c1aca422d7e057a9babf4955bc7ba2aa5196838f7817197b0' },
-  'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '4b8052caed394b1be7c44d88189f8068eb7f84750339111dc7ac23bceea98b76' },
+  expenses: { file: 'expenses-guide.content.ts', hash: '08dbb27a0465a294b243976f814717518938888e9af979e6ae0424002a1212d5' },
+  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '013078416e268b89892e90c3dba2a1ae505e9f487b3f7a98f49efd634d6c4432' },
+  'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '8abcde427c8df626472db6d8709e144d843b83e8655b1934c343b410765bfc99' },
   reports: { file: 'reports-guide.content.ts', hash: 'a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4' },
 } as const;
 

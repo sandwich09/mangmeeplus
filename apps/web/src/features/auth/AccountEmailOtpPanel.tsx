@@ -8,7 +8,7 @@ import { accountEmailOtpCommand, getAccountEmailOtp, type AccountEmailOtpState }
 const button = 'mangmee-btn mangmee-btn-secondary min-h-11';
 const primaryButton = 'mangmee-btn mangmee-btn-primary min-h-11';
 const field = 'mangmee-input mt-2 block min-h-11 w-full min-w-0';
-const steps = ['กรอกอีเมล', 'ยืนยันตัวตน', 'ยืนยันรหัส OTP'];
+const steps = ['กรอกอีเมล', 'ยืนยันตัวตน', 'กรอกรหัสยืนยัน'];
 export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (state: AccountEmailOtpState) => void; reauthReturnTo?: string }) {
   const id = useId(), callback = useRef(onState); callback.current = onState;
   const [state, setState] = useState<AccountEmailOtpState | null>(null);
@@ -130,14 +130,14 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
   const lineReauthButton = <div className="space-y-4">
     {state?.hasPassword && <div className="flex items-center gap-3 text-sm text-gray-500"><span className="h-px flex-1 bg-gray-200" /><span>หรือ</span><span className="h-px flex-1 bg-gray-200" /></div>}
     {inLineBrowser
-      ? <div className="space-y-2 rounded-xl bg-gray-50 p-3"><p className="text-sm text-gray-600">ยืนยันตัวตนผ่าน LINE ทำในเบราว์เซอร์ของ LINE ไม่ได้ กรุณาเปิดหน้านี้ใน Safari หรือ Chrome ก่อน</p><button type="button" className={`${button} w-full justify-center`} disabled={busy} aria-busy={busy} onClick={reopenOutsideLine}>เปิดหน้านี้ใน Safari/Chrome</button></div>
+      ? <div className="space-y-2 rounded-xl bg-gray-50 p-3"><p className="text-sm text-gray-600">ยืนยันตัวตนผ่าน LINE ทำในเบราว์เซอร์ของ LINE ไม่ได้ กรุณาเปิดหน้านี้ในเบราว์เซอร์ภายนอกก่อน</p><button type="button" className={`${button} w-full justify-center`} disabled={busy} aria-busy={busy} onClick={reopenOutsideLine}>เปิดหน้านี้ในเบราว์เซอร์ภายนอก</button></div>
       : <button type="button" className={`${button} w-full justify-center`} disabled={busy} aria-busy={busy} onClick={reauthenticate}>ยืนยันตัวตนผ่าน LINE</button>}
   </div>;
   return <section className="mangmee-card min-w-0 space-y-5 p-5 sm:p-6" aria-labelledby={`${id}-title`}>
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0">
         <h2 id={`${id}-title`} className="text-base font-semibold text-gray-900">อีเมลบัญชีของฉัน</h2>
-        <p className="mt-1 text-sm leading-6 text-gray-500">ใช้เข้าสู่ระบบด้วยรหัส OTP และรับแจ้งเตือนบัญชี · ถ้ายืนยันแล้ว การซื้อครั้งแรกจะใช้อีเมลนี้รับเอกสาร · เปลี่ยนอีเมลรับเอกสารได้ที่หน้าแพ็กเกจ</p>
+        <p className="mt-1 text-sm leading-6 text-gray-500">ใช้เข้าสู่ระบบด้วยรหัสยืนยัน และรับแจ้งเตือนบัญชี · ถ้ายืนยันแล้ว การซื้อครั้งแรกจะใช้อีเมลนี้รับเอกสาร · เปลี่ยนอีเมลรับเอกสารได้ที่หน้าแพ็กเกจ</p>
       </div>
       {state?.emailRequirement === 'READY' && !editing && <button type="button" className={button} onClick={() => { setEmail(''); setPassword(''); setShowPassword(false); setError(''); setNotice(''); setEditingLogin(false); setStep('email'); setEditing(true); }}>เปลี่ยนอีเมล</button>}
       {state?.emailRequirement === 'READY' && editing && <button type="button" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-900" aria-label="ปิดการแก้ไข" title="ปิดการแก้ไข" disabled={busy} onClick={() => { setEditing(false); setPassword(''); setShowPassword(false); setError(''); setNotice(''); }}>
@@ -177,7 +177,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
           {sameVerifiedEmail && <p role="status" className="text-sm text-gray-600">อีเมลนี้ยืนยันแล้ว หากต้องการเปลี่ยน กรุณากรอกอีเมลใหม่</p>}
           <div className="flex justify-end"><button className={primaryButton} disabled={busy || !email.trim() || sameVerifiedEmail} aria-busy={busy}>ถัดไป</button></div>
         </form> : <form onSubmit={e => { e.preventDefault(); send(); }} className="max-w-2xl space-y-4">
-          <p className="break-words text-sm text-gray-600">ยืนยันตัวตนเพื่อส่งรหัส OTP 6 หลักไปที่ <strong>{email}</strong></p>
+          <p className="break-words text-sm text-gray-600">ยืนยันตัวตนเพื่อส่งรหัสยืนยัน 6 หลักไปที่ <strong>{email}</strong></p>
           {challenge && challenge.status !== 'USED' && <p role="status">รหัสเดิมหมดอายุหรือใช้ไม่ได้แล้ว กรุณาขอรหัสใหม่</p>}
           {passwordRequired && passwordField}
           {state.lineLinked && Date.now() >= lineReauthUntil && lineReauthButton}
@@ -192,7 +192,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
           <div>
             <h3 className="text-base font-semibold text-gray-900">เข้าสู่ระบบด้วยรหัสทางอีเมล</h3>
             <p className="mt-1 text-sm text-gray-600">{state.emailLoginEnabled ? 'เปิดใช้งานอยู่' : 'ยังไม่เปิดใช้งาน'}</p>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">เมื่อเปิดใช้งาน ระบบจะส่งรหัสยืนยันแบบใช้ครั้งเดียว (OTP) 6 หลักไปที่อีเมลของคุณทุกครั้งที่เข้าสู่ระบบ ใช้รหัสนี้แทนรหัสผ่าน</p>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">เมื่อเปิดใช้งาน ระบบจะส่งรหัสยืนยันแบบใช้ครั้งเดียว 6 หลักไปที่อีเมลของคุณทุกครั้งที่เข้าสู่ระบบ ใช้รหัสนี้แทนรหัสผ่าน</p>
           </div>
           {!editingLogin && <button type="button" className={button} onClick={() => { setPassword(''); setEditingLogin(true); }}>เปลี่ยนวิธีเข้าสู่ระบบ</button>}
         </div>

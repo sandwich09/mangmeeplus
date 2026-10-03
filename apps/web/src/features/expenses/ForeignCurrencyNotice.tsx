@@ -9,6 +9,8 @@
  * `aiVerificationSummaryJson.recognizedFields` (ReceiptOcrFieldResult.currency). An absent,
  * malformed, or THB code renders nothing at all.
  */
+const currencyNames = new Intl.DisplayNames(['th'], { type: 'currency', fallback: 'none' });
+
 export function ForeignCurrencyNotice({ summary }: { summary: Record<string, unknown> | null }) {
   const recognized = summary?.['recognizedFields'];
   const raw = recognized && typeof recognized === 'object' && !Array.isArray(recognized)
@@ -17,9 +19,10 @@ export function ForeignCurrencyNotice({ summary }: { summary: Record<string, unk
   // The gateway already bounds this, but it crosses a service boundary before it is printed here.
   const code = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
   if (!/^[A-Z]{3}$/.test(code) || code === 'THB') return null;
+  const currencyName = currencyNames.of(code) ?? 'ต่างประเทศ';
   return (
     <div role="alert" className="rounded-xl border border-warning-100 bg-warning-50 px-4 py-3 text-sm font-medium text-warning-700">
-      ⚠ เอกสารนี้เป็นสกุลเงิน {code} ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก
+      ⚠ เอกสารนี้เป็นสกุลเงิน {currencyName} ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก
     </div>
   );
 }

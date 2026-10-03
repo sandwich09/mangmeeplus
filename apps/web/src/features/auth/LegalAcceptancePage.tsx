@@ -49,7 +49,7 @@ type Copy = {
 
 const COPY: Record<LegalAcceptanceLocale, Copy> = {
   th: {
-    title: 'ก่อนเริ่มใช้งาน MangmeePlus',
+    title: 'ก่อนเริ่มใช้งานมั่งมี',
     intro: 'โปรดอ่านเอกสารฉบับเต็มและยืนยันทั้ง 3 รายการด้านล่าง การยืนยันนี้ใช้กับบัญชีของคุณทุกกิจการ และระบบจะถามอีกครั้งเฉพาะเมื่อเอกสารออกฉบับใหม่',
     requiredLegend: '* ข้อมูลจำเป็น',
     termsHeading: 'ข้อกำหนดการใช้งาน',
@@ -58,7 +58,7 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
     effectiveLabel: 'วันที่เอกสารมีผลใช้บังคับ',
     attestation: 'เมื่อกดยืนยัน ระบบจะบันทึกวันเวลา ฉบับเอกสารและค่าตรวจสอบไฟล์ ข้อความที่คุณยืนยัน บัญชีผู้ยืนยัน และกิจการที่อ้างอิง ไว้เป็นหลักฐานแบบเพิ่มได้อย่างเดียว',
     openDocument: 'เปิดอ่านเอกสารฉบับเต็ม',
-    privacyNotConsent: 'การรับทราบนี้ไม่ใช่การให้ความยินยอม ไม่เป็นการสละสิทธิของคุณตาม PDPA และไม่ทำให้ MangmeePlus ใช้ข้อมูลนอกเหนือจากฐานกฎหมายและวัตถุประสงค์ที่แจ้งไว้',
+    privacyNotConsent: 'การรับทราบนี้ไม่ใช่การให้ความยินยอม ไม่เป็นการสละสิทธิของคุณตามกฎหมายคุ้มครองข้อมูลส่วนบุคคล และไม่ทำให้มั่งมีใช้ข้อมูลนอกเหนือจากฐานกฎหมายและวัตถุประสงค์ที่แจ้งไว้',
     submit: 'ยืนยันและเริ่มใช้งาน',
     logout: 'ออกจากระบบ',
     loading: 'กำลังตรวจสอบเอกสารที่ต้องยืนยัน…',
@@ -231,14 +231,14 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
           </span>
           <div>
             <p className="doc-gate-brand-name">
-              มั่ง<span style={{ color: 'var(--doc-gold)' }}>มี</span> MangmeePlus
+              มั่ง<span style={{ color: 'var(--doc-gold)' }}>มี</span>
             </p>
-            <p className="doc-gate-brand-sub doc-display">Secure business workspace</p>
+            <p className="doc-gate-brand-sub doc-display">พื้นที่ทำงานของร้าน</p>
           </div>
         </div>
 
         <div className="doc-gate-lede">
-          <p className="doc-gate-eyebrow doc-display">Legal acceptance</p>
+          <p className="doc-gate-eyebrow doc-display">รับทราบข้อกำหนด</p>
           <h1 className="doc-gate-title">{copy.title}</h1>
           <p className="doc-gate-intro">{copy.intro}</p>
         </div>

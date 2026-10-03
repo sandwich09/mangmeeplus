@@ -189,7 +189,7 @@ describe('LINE capture result push (appendix §3)', () => {
     const label = makeNotifier({ payload: { status: 'DONE', classification: { contentKind: 'DOCUMENT', documentKind: 'DELIVERY_NOTE', missingRequiredSignals: ['PARCEL_LABEL_SIGNAL'] } } });
     await label.notifier.execute();
     assert.match(pushedText(label), /ใบนี้เป็นใบปะหน้าพัสดุค่ะ/);
-    assert.match(pushedText(label), /กรอกข้อมูลต่อได้ที่นี่: /);
+    assert.match(pushedText(label), /ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้: /);
     assert.equal(label.closes.length, 0);
 
     const nonBusiness = makeNotifier({ payload: { status: 'DONE', classification: { contentKind: 'NON_DOCUMENT_IMAGE', documentKind: 'NON_FINANCIAL_IMAGE' } } });

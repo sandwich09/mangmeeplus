@@ -91,7 +91,7 @@ function HeroPanel({ locale }: { locale: 'th' | 'en' }) {
         <div aria-hidden className="login-float-1 relative mt-9 max-w-[400px] rounded-[20px] bg-white p-5 shadow-[0_30px_60px_rgba(0,0,0,.22)]">
           <div className="flex flex-wrap items-center justify-between">
             <span className="text-[13px] font-semibold text-gray-500">ภาพรวมวันนี้ · สาขาสยาม</span>
-            <span className="rounded-lg bg-brand-100 px-2.5 py-1 text-[11px] font-bold text-brand-700">LIVE</span>
+            <span className="rounded-lg bg-brand-100 px-2.5 py-1 text-[11px] font-bold text-brand-700">ตัวอย่าง</span>
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-extrabold text-gray-900">฿24,150</span>
@@ -646,7 +646,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </details>
           ) : passwordForm}
 
-          {!linkMode && <><Link href={nextPath ? `/email-access?next=${encodeURIComponent(nextPath)}` : "/email-access"} className="mt-3 block rounded-xl border px-4 py-3 text-center text-base font-semibold text-brand-700">{locale === 'th' ? 'เข้าสู่ระบบด้วยรหัส OTP' : 'Sign in with an email code'}</Link><p className="mt-2 text-center text-sm text-gray-500">{locale === 'th' ? 'รับรหัส 6 หลักทางอีเมล เพื่อใช้แทนรหัสผ่าน' : 'Get a 6-digit code by email instead of using a password.'}</p></>}
+          {!linkMode && <><Link href={nextPath ? `/email-access?next=${encodeURIComponent(nextPath)}` : "/email-access"} className="mt-3 block rounded-xl border px-4 py-3 text-center text-base font-semibold text-brand-700">{t('auth.email_access.title', locale)}</Link><p className="mt-2 text-center text-sm text-gray-500">{locale === 'th' ? 'รับรหัส 6 หลักทางอีเมล เพื่อใช้แทนรหัสผ่าน' : 'Get a 6-digit code by email instead of using a password.'}</p></>}
 
           {lineLeadLane ? null : (
             <>
@@ -659,7 +659,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
               {lineLoginState === 'loading'
                 ? (locale === 'th' ? 'กำลังตรวจสอบการเข้าสู่ระบบด้วย LINE…' : 'Checking LINE sign-in…')
                 : lineLoginState === 'unavailable'
-                  ? (locale === 'th' ? 'ยังไม่เปิดให้เข้าสู่ระบบด้วย LINE ในขณะนี้ ใช้รหัสผ่านหรือเข้าสู่ระบบด้วยรหัส OTP ทางอีเมลได้' : 'LINE sign-in is not enabled right now. Use your password or an email code.')
+                  ? (locale === 'th' ? 'ยังไม่เปิดให้เข้าสู่ระบบด้วย LINE ในขณะนี้ ใช้รหัสผ่านหรือเข้าสู่ระบบด้วยรหัสยืนยันทางอีเมลได้' : 'LINE sign-in is not enabled right now. Use your password or an email code.')
                   : (locale === 'th' ? 'ตรวจสอบสถานะ LINE ไม่สำเร็จ' : 'Could not check LINE sign-in availability.')}
               {lineLoginState === 'error' && <button type="button" onClick={() => setLineCheck(value => value + 1)} className="mx-auto block min-h-11 px-3 font-semibold text-brand-700 underline">{locale === 'th' ? 'ลองตรวจสอบอีกครั้ง' : 'Try again'}</button>}
             </div>

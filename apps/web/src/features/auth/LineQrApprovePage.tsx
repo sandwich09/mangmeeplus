@@ -20,9 +20,9 @@ const passwordLoginHref = (code: string) => `/login?line=qr-approve&next=${encod
 export function LineQrNeedLogin({ code, lineLoginAvailable }: { code: string; lineLoginAvailable: boolean }) {
   return (
     <div role="alert" className="mt-6">
-      <h1 className="text-xl font-bold text-gray-900">เซสชันหมดอายุ</h1>
+      <h1 className="text-xl font-bold text-gray-900">การเข้าสู่ระบบหมดอายุ</h1>
       <p className="mt-2 text-[15px] leading-7 text-gray-600">
-        เซสชันบนเบราว์เซอร์นี้หมดอายุแล้ว เข้าสู่ระบบอีกครั้ง แล้วระบบจะพากลับมาที่หน้านี้เพื่อกดยืนยัน QR เดิมยังใช้ได้ถ้ายังไม่หมดเวลา
+        การเข้าสู่ระบบบนเบราว์เซอร์นี้หมดอายุแล้ว เข้าสู่ระบบอีกครั้ง แล้วระบบจะพากลับมาที่หน้านี้เพื่อกดยืนยัน QR เดิมยังใช้ได้ถ้ายังไม่หมดเวลา
       </p>
       {lineLoginAvailable ? (
         <button
@@ -125,7 +125,7 @@ export default function LineQrApprovePage({ code }: { code: string }) {
           <>
             <h1 className="mt-6 text-xl font-bold text-gray-900">ยืนยันการเข้าสู่ระบบบนคอมพิวเตอร์</h1>
             <p className="mt-2 text-[15px] leading-7 text-gray-600">
-              มีการขอเข้าสู่ระบบ MangmeePlus จากเบราว์เซอร์บนคอมพิวเตอร์ ถ้าไม่ใช่คุณ อย่ากดยืนยัน
+              มีการขอเข้าสู่ระบบ มั่งมี จากเบราว์เซอร์บนคอมพิวเตอร์ ถ้าไม่ใช่คุณ อย่ากดยืนยัน
             </p>
             <div className="mt-6 space-y-3">
               <Button
