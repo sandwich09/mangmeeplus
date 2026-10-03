@@ -125,4 +125,3 @@ it('leaves the manual-expense guidance out when the company does not show that p
   // The setting never offers the card to a session that may not create.
   assert.deepEqual(permittedUsageGuidance(['expense.review'], true).map((g) => g.path), ['expenses']);
 });
-
