@@ -40,6 +40,11 @@ describe('InventoryHealthProvider', () => {
     assert.equal(widget.metrics[1].value, 1);
   });
 
+  it('uses the existing Thai wording for the reorder-point metric', async () => {
+    const [widget] = await makeSut().collectMetrics(input());
+    assert.equal(widget.metrics[1].label, 'สินค้าต่ำกว่าจุดสั่งซื้อ');
+  });
+
   it('degrades to an unavailable widget instead of throwing when the query fails', async () => {
     const [widget] = await makeSut({ throws: true }).collectMetrics(input());
     assert.equal(widget.unavailableReason, 'ข้อมูลคลังสินค้าไม่พร้อมใช้งาน');

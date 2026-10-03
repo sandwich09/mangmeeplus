@@ -577,6 +577,8 @@ UI rules:
 - Rule test mode never performs actions.
 - Dead-letter replay shows current source-state warnings before queuing.
 - Every detail view should include audit/source refs and web deep links.
+- Shop-facing template names, descriptions, availability reasons, trigger/source labels, statuses, and run explanations use Thai display text; never fall back to raw enum or module keys.
+- Preserve names and task details already entered or configured by a company. Open product decision: the advanced rule editor and webhook setup expose raw JSON keys, event keys, and endpoint addresses; confirm whether these remain admin-only technical inputs or need a Thai setup flow.
 
 ## 16. LINE and LIFF Behavior
 

@@ -232,6 +232,7 @@ Audit metadata must not contain generated password, QR token, full ID/passport, 
 - Before the wizard is finished, the system stores the employee profile and membership as `DRAFT`; draft membership never resolves as active access.
 - Repeating create with the same company + identity resumes the existing draft without creating a second user/profile; an active or otherwise non-draft identity still returns a duplicate conflict.
 - Pressing Finish atomically activates the employee profile and `CompanyMembership`.
+- The Thai Add Employee wizard uses the established Thai term for username and the existing Thai wording for a draft. Date guidance uses Thai words rather than machine format examples.
 - Temporary password is shown once, stored only as a hash, expires, and requires change.
 - QR/account-link token links LINE only after verified identity and active membership check.
 - Employee can use web and LINE AI only within assigned permissions.
@@ -246,7 +247,7 @@ Audit metadata must not contain generated password, QR token, full ID/passport, 
 Supersedes the temporary-password rules above for newly created employees:
 
 - Employee creation collects `birthDate` (new profile field).
-- The generated initial password is the employee's date of birth (exact format fixed at implementation time; recommend `DDMMYYYY`, and record whether พ.ศ. or ค.ศ. as an implementation decision).
+- The generated initial password is the employee's date of birth as eight digits, in day-month-Gregorian-year order with no separators.
 - The system does not force a password change on first login. Owner explicitly accepted the weaker-credential risk on 2026-07-06.
 - Because there is no forced change, the birthdate initial password must not carry the 72-hour expiry of the old random flow (otherwise the account locks itself); no-expiry is part of the same accepted risk.
 - Existing protections stay: login rate limiting/lockout, password never in logs/audit/list responses (a birthdate password is also PII), and employees can still change their password themselves.

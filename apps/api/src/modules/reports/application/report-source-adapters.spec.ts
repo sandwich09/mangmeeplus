@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ReportDatasetDefinitionDto, RequestContext } from '@watchdog-bms/contracts';
-import { findReportDefinition } from '../domain/report-catalog';
+import { findReportDefinition, REPORT_CATALOG } from '../domain/report-catalog';
 import { buildReportCsv } from '../domain/report-csv.logic';
 import { ReportSourceAdapters } from './report-source-adapters';
 
@@ -31,6 +33,29 @@ const ctx: RequestContext = {
 };
 
 const unused = { execute: async () => { throw new Error('unused dependency'); } };
+
+describe('shop-facing report catalogue and export headings', () => {
+  it('uses Thai labels for every catalogue field and report export column', () => {
+    const catalogText = REPORT_CATALOG.flatMap((report) => [
+      report.title, report.description,
+      ...report.supportedFilters.map((field) => field.label),
+      ...report.supportedDimensions.map((field) => field.label),
+      ...report.supportedMeasures.map((field) => field.label),
+    ]);
+    const adapterSource = readFileSync(join(__dirname, 'report-source-adapters.ts'), 'utf8');
+    const exportHeadings = [...adapterSource.matchAll(/label:\s*'([^']+)'/g)].map((match) => match[1]!);
+    const sourceRefLabels = [...adapterSource.matchAll(/sourceRef\(ctx\.companyId,\s*(?:'([^']+)'|`([^`]+)`)/g)]
+      .map((match) => match[1] ?? match[2]!);
+    assert.match(adapterSource, /function reportSourceRef[\s\S]*findReportDefinition\(datasetCode\)\?\.title/);
+    for (const report of REPORT_CATALOG) assert.ok(adapterSource.includes(`reportSourceRef(ctx.companyId, '${report.code}'`), report.code);
+    const allowedEnglish = /\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g;
+    for (const label of [...catalogText, ...exportHeadings, ...sourceRefLabels]) {
+      const text = label.replace(allowedEnglish, '');
+      assert.match(text, /[\u0E00-\u0E7F]/, label);
+      assert.doesNotMatch(text, /[A-Za-z]/, label);
+    }
+  });
+});
 
 function enabled(code: string): ReportDatasetDefinitionDto {
   const definition = findReportDefinition(code);

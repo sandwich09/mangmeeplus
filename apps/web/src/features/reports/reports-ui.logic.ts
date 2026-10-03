@@ -1,4 +1,5 @@
-import type { ReportExportRequestDto, ReportExportStatus, ReportQueryStatus } from '@watchdog-bms/contracts';
+import type { ReportExportRequestDto, ReportExportStatus, ReportFieldType, ReportQueryStatus } from '@watchdog-bms/contracts';
+import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 
 const STATUS_LABELS: Record<ReportExportStatus, string> = {
   QUEUED: 'รอดำเนินการ',
@@ -43,7 +44,41 @@ const RUN_STATUS_LABELS: Record<ReportQueryStatus, string> = {
 };
 
 export function reportRunStatusText(status: ReportQueryStatus): string {
-  return RUN_STATUS_LABELS[status];
+  return RUN_STATUS_LABELS[status] ?? 'สถานะอื่น';
+}
+
+export function defaultReportViewName(title: string, date = new Date()): string {
+  return `${title} ${formatThaiDate(date)}`;
+}
+
+export function reportChartKindText(kind: string): string {
+  return ({ table: 'ตาราง', kpi: 'ตัวเลขสรุป', bar: 'กราฟแท่ง', line: 'กราฟเส้น', aging_bucket: 'ช่วงอายุหนี้' } as Record<string, string>)[kind] ?? 'รูปแบบอื่น';
+}
+
+export function reportFilterOptionText(option: string): string {
+  return ({ own: 'รายการของฉัน', all: 'ทุกรายการ' } as Record<string, string>)[option] ?? 'ตัวเลือกอื่น';
+}
+
+export function reportViewVisibilityText(visibility: string): string {
+  return ({ PRIVATE: 'เฉพาะฉัน', COMPANY: 'ทั้งบริษัท' } as Record<string, string>)[visibility] ?? 'ขอบเขตอื่น';
+}
+
+export function reportValueText(value: unknown, type?: ReportFieldType, key?: string): string {
+  if (value === null || value === undefined || value === '') return '-';
+  if (key === 'periodKey') return formatThaiMonth(value as string, '-');
+  if (type === 'date') return formatThaiDate(value as string, '-');
+  if (type === 'datetime') return formatThaiDateTime(value as string, '-');
+  if (type === 'boolean' && typeof value === 'boolean') return value ? 'ใช่' : 'ไม่ใช่';
+  if (type === 'money') {
+    const amount = typeof value === 'number' ? value : Number(value);
+    if (Number.isFinite(amount)) return `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
+  }
+  if (type === 'number') {
+    const amount = typeof value === 'number' ? value : Number(value);
+    if (Number.isFinite(amount)) return amount.toLocaleString('th-TH');
+  }
+  if (typeof value === 'number') return value.toLocaleString('th-TH');
+  return String(value);
 }
 
 export function reportFreshnessText(status: 'fresh' | 'stale' | 'unknown'): string {

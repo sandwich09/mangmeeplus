@@ -23,6 +23,7 @@ import { ListWorkflowTasksUseCase } from '../../workflow/application/use-cases/w
 import { ListWorkflowRulesUseCase } from '../../workflow/application/use-cases/workflow-rule.use-case';
 import { ListWorkflowDeadLettersUseCase } from '../../workflow/application/use-cases/workflow-dead-letter.use-case';
 import { ListSuggestionsUseCase } from '../../ai-draft/application/use-cases/ai-suggestion-query.use-case';
+import { findReportDefinition } from '../domain/report-catalog';
 import { REPORT_SYNC_EXPORT_MAX_ROWS } from '../domain/report-query-validator.logic';
 
 type ValidatedQuery = {
@@ -188,6 +189,10 @@ function sourceRef(companyId: string, label: string, module: string, entityType:
   return { label, module, entityType, entityId, asOf: computedAt(), permissionChecked: true, webPath };
 }
 
+function reportSourceRef(companyId: string, datasetCode: string, module: string, entityType: string, webPath: string, entityId?: string): ReportSourceRefDto {
+  return sourceRef(companyId, findReportDefinition(datasetCode)?.title ?? 'รายงาน', module, entityType, webPath, entityId);
+}
+
 function chartFromRows(rows: AdapterResult['rows'], labelKey: string, valueKey: string, label: string, kind: NonNullable<ValidatedQuery['chartKind']>) {
   if (kind === 'table') return undefined;
   return {
@@ -286,12 +291,12 @@ export class ReportSourceAdapters {
       endingBalance: line.endingBalance,
     }));
     return baseResult(definition, query, rows, [
-      { key: 'accountCode', label: 'Account code', type: 'string' },
-      { key: 'accountName', label: 'Account', type: 'string' },
-      { key: 'totalDebit', label: 'Debit', type: 'money' },
-      { key: 'totalCredit', label: 'Credit', type: 'money' },
-      { key: 'endingBalance', label: 'Ending', type: 'money' },
-    ], { sourceRefs: [sourceRef(ctx.companyId, `General Ledger ${periodKey}`, 'ledger', 'general_ledger', `/companies/${ctx.companyId}/reports`)] });
+      { key: 'accountCode', label: 'รหัสบัญชี', type: 'string' },
+      { key: 'accountName', label: 'บัญชี', type: 'string' },
+      { key: 'totalDebit', label: 'เดบิต', type: 'money' },
+      { key: 'totalCredit', label: 'เครดิต', type: 'money' },
+      { key: 'endingBalance', label: 'ยอดคงเหลือ', type: 'money' },
+    ], { sourceRefs: [reportSourceRef(ctx.companyId, 'financial.general_ledger', 'ledger', 'general_ledger', `/companies/${ctx.companyId}/reports`)] });
   }
 
   private async trialBalanceReport(ctx: RequestContext, definition: ReportDatasetDefinitionDto, query: ValidatedQuery): Promise<AdapterResult> {
@@ -306,16 +311,16 @@ export class ReportSourceAdapters {
       balance: line.balance,
     }));
     return baseResult(definition, query, rows, [
-      { key: 'accountCode', label: 'Account code', type: 'string' },
-      { key: 'accountName', label: 'Account', type: 'string' },
-      { key: 'accountClass', label: 'Class', type: 'string' },
-      { key: 'totalDebit', label: 'Debit', type: 'money' },
-      { key: 'totalCredit', label: 'Credit', type: 'money' },
-      { key: 'balance', label: 'Balance', type: 'money' },
+      { key: 'accountCode', label: 'รหัสบัญชี', type: 'string' },
+      { key: 'accountName', label: 'บัญชี', type: 'string' },
+      { key: 'accountClass', label: 'ประเภทบัญชี', type: 'string' },
+      { key: 'totalDebit', label: 'เดบิต', type: 'money' },
+      { key: 'totalCredit', label: 'เครดิต', type: 'money' },
+      { key: 'balance', label: 'ยอดคงเหลือ', type: 'money' },
     ], {
       totals: { totalDebit: tb.totalDebit, totalCredit: tb.totalCredit, difference: tb.difference },
       chart: chartFromRows(rows, 'accountCode', 'balance', 'Balance', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, `Trial Balance ${periodKey}`, 'ledger', 'trial_balance', `/companies/${ctx.companyId}/reports`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'financial.trial_balance', 'ledger', 'trial_balance', `/companies/${ctx.companyId}/reports`)],
     });
   }
 
@@ -324,12 +329,12 @@ export class ReportSourceAdapters {
     const report = await this.pnl.execute(ctx, periodKey);
     const rows = report.sections.map((section) => ({ section: section.section, total: section.total }));
     return baseResult(definition, query, rows, [
-      { key: 'section', label: 'Section', type: 'string' },
-      { key: 'total', label: 'Total', type: 'money' },
+      { key: 'section', label: 'หมวด', type: 'string' },
+      { key: 'total', label: 'ยอดรวม', type: 'money' },
     ], {
       totals: { revenue: report.revenue, grossProfit: report.grossProfit, netProfit: report.netProfit },
       chart: chartFromRows(rows, 'section', 'total', 'Total', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, `P&L ${periodKey}`, 'ledger', 'profit_and_loss', `/companies/${ctx.companyId}/reports`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'financial.profit_and_loss', 'ledger', 'profit_and_loss', `/companies/${ctx.companyId}/reports`)],
     });
   }
 
@@ -338,12 +343,12 @@ export class ReportSourceAdapters {
     const report = await this.balanceSheet.execute(ctx, periodKey);
     const rows = report.sections.map((section) => ({ section: section.section, total: section.total }));
     return baseResult(definition, query, rows, [
-      { key: 'section', label: 'Section', type: 'string' },
-      { key: 'total', label: 'Total', type: 'money' },
+      { key: 'section', label: 'หมวด', type: 'string' },
+      { key: 'total', label: 'ยอดรวม', type: 'money' },
     ], {
       totals: { totalAssets: report.totalAssets, totalLiabilities: report.totalLiabilities, totalEquity: report.totalEquity },
       chart: chartFromRows(rows, 'section', 'total', 'Total', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, `Balance Sheet ${periodKey}`, 'ledger', 'balance_sheet', `/companies/${ctx.companyId}/reports`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'financial.balance_sheet', 'ledger', 'balance_sheet', `/companies/${ctx.companyId}/reports`)],
     });
   }
 
@@ -382,20 +387,20 @@ export class ReportSourceAdapters {
       ? { totals: {}, warnings: ['mixed_currency_total_unavailable'], sourcePermissionsUsed: [] }
       : await this.ledgerControlReconciliation(ctx, query, 'accounts_receivable', outstandingAmount);
     return baseResult(definition, { ...query, page: 1 }, detail.rows, [
-      { key: 'documentNumber', label: 'Document', type: 'string' },
-      { key: 'counterpartyName', label: 'Customer', type: 'string' },
-      { key: 'documentDate', label: 'Document date', type: 'date' },
-      { key: 'dueDate', label: 'Due date', type: 'date' },
-      { key: 'outstandingAmount', label: 'Outstanding', type: 'money' },
-      { key: 'currency', label: 'Currency', type: 'string' },
-      { key: 'paymentStatus', label: 'Payment', type: 'string' },
+      { key: 'documentNumber', label: 'เลขที่เอกสาร', type: 'string' },
+      { key: 'counterpartyName', label: 'ลูกค้า', type: 'string' },
+      { key: 'documentDate', label: 'วันที่เอกสาร', type: 'date' },
+      { key: 'dueDate', label: 'วันครบกำหนด', type: 'date' },
+      { key: 'outstandingAmount', label: 'ยอดค้างชำระ', type: 'money' },
+      { key: 'currency', label: 'สกุลเงิน', type: 'string' },
+      { key: 'paymentStatus', label: 'สถานะการชำระ', type: 'string' },
     ], {
       status: detail.total === 0 ? 'EMPTY' : 'READY',
       page: query.page,
       pageSize: query.pageSize,
       total: detail.total,
       totals: { outstandingAmount, ...reconciliation.totals },
-      sourceRefs: [sourceRef(ctx.companyId, 'AR Aging', 'accounting-documents', 'ar_aging', `/companies/${ctx.companyId}/accounting`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'ar.aging', 'accounting-documents', 'ar_aging', `/companies/${ctx.companyId}/accounting`)],
       warnings: reconciliation.warnings,
       sourcePermissionsUsed: ['accounting.document.read', ...reconciliation.sourcePermissionsUsed],
     });
@@ -415,16 +420,16 @@ export class ReportSourceAdapters {
     }));
     const reconciliation = await this.ledgerControlReconciliation(ctx, query, 'accounts_payable', aging.totalOutstanding);
     return baseResult(definition, query, rows, [
-      { key: 'supplierDisplayName', label: 'Supplier', type: 'string' },
-      { key: 'totalOutstanding', label: 'Outstanding', type: 'money' },
-      { key: 'notDue', label: 'Not due', type: 'money' },
-      { key: 'days0To30', label: '0-30', type: 'money' },
-      { key: 'days31To60', label: '31-60', type: 'money' },
-      { key: 'days61To90', label: '61-90', type: 'money' },
-      { key: 'days91Plus', label: '91+', type: 'money' },
+      { key: 'supplierDisplayName', label: 'ผู้ขาย', type: 'string' },
+      { key: 'totalOutstanding', label: 'ยอดค้างชำระ', type: 'money' },
+      { key: 'notDue', label: 'ยังไม่ถึงกำหนด', type: 'money' },
+      { key: 'days0To30', label: 'ค้างไม่เกิน 30 วัน', type: 'money' },
+      { key: 'days31To60', label: 'ค้าง 31 ถึง 60 วัน', type: 'money' },
+      { key: 'days61To90', label: 'ค้าง 61 ถึง 90 วัน', type: 'money' },
+      { key: 'days91Plus', label: 'ค้างเกิน 90 วัน', type: 'money' },
     ], {
       totals: { totalOutstanding: aging.totalOutstanding, ...reconciliation.totals },
-      sourceRefs: [sourceRef(ctx.companyId, 'AP Aging', 'procurement', 'ap_aging', `/companies/${ctx.companyId}/accounts-payable`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'ap.aging', 'procurement', 'ap_aging', `/companies/${ctx.companyId}/accounts-payable`)],
       warnings: reconciliation.warnings,
       sourcePermissionsUsed: ['procurement.ap.report', ...reconciliation.sourcePermissionsUsed],
     });
@@ -476,16 +481,16 @@ export class ReportSourceAdapters {
       warnings.push('crm_scope_forbidden');
     }
     return baseResult(definition, query, rows, [
-      { key: 'source', label: 'Source', type: 'string' },
-      { key: 'currency', label: 'Currency', type: 'string' },
-      { key: 'count', label: 'Count', type: 'number' },
-      { key: 'amount', label: 'Amount', type: 'money' },
+      { key: 'source', label: 'ช่องทาง', type: 'string' },
+      { key: 'currency', label: 'สกุลเงิน', type: 'string' },
+      { key: 'count', label: 'จำนวนรายการ', type: 'number' },
+      { key: 'amount', label: 'ยอดเงิน', type: 'money' },
     ], {
       status: rows.length > 0 && warnings.length > 0 ? 'PARTIAL' : rows.length === 0 ? 'FORBIDDEN' : 'READY',
       warnings,
       sourcePermissionsUsed,
       chart: chartFromRows(rows, 'source', 'amount', 'Amount', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, 'Sales Summary', 'reports', 'sales_summary', `/companies/${ctx.companyId}/reports`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'sales.summary', 'reports', 'sales_summary', `/companies/${ctx.companyId}/reports`)],
     });
   }
 
@@ -499,11 +504,11 @@ export class ReportSourceAdapters {
       { metric: 'stuck_opportunities', value: crm.stuckOpportunities },
     ];
     return baseResult(definition, query, rows, [
-      { key: 'metric', label: 'Metric', type: 'string' },
-      { key: 'value', label: 'Value', type: 'number' },
+      { key: 'metric', label: 'รายการ', type: 'string' },
+      { key: 'value', label: 'จำนวน', type: 'number' },
     ], {
       chart: chartFromRows(rows, 'metric', 'value', 'Value', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, 'CRM Pipeline', 'crm', 'pipeline_summary', `/companies/${ctx.companyId}/crm`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'sales.pipeline', 'crm', 'pipeline_summary', `/companies/${ctx.companyId}/crm`)],
     });
   }
 
@@ -516,13 +521,13 @@ export class ReportSourceAdapters {
       isLowStock: item.isLowStock ?? false,
     }));
     return baseResult(definition, query, rows, [
-      { key: 'productId', label: 'Product', type: 'string' },
-      { key: 'locationId', label: 'Location', type: 'string' },
-      { key: 'quantity', label: 'Quantity', type: 'number' },
-      { key: 'isLowStock', label: 'Low stock', type: 'boolean' },
+      { key: 'productId', label: 'สินค้า', type: 'string' },
+      { key: 'locationId', label: 'ที่เก็บสินค้า', type: 'string' },
+      { key: 'quantity', label: 'จำนวน', type: 'number' },
+      { key: 'isLowStock', label: 'สินค้าใกล้ถึงจุดสั่งซื้อ', type: 'boolean' },
     ], {
       chart: chartFromRows(rows, 'productId', 'quantity', 'Quantity', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, 'Stock Balance', 'inventory', 'stock_balance', `/companies/${ctx.companyId}/inventory`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'inventory.stock_balance', 'inventory', 'stock_balance', `/companies/${ctx.companyId}/inventory`)],
       warnings: ['inventory_valuation_not_available'],
     });
   }
@@ -546,19 +551,19 @@ export class ReportSourceAdapters {
       occurredAt: iso(movement.occurredAt),
     }));
     return baseResult(definition, sourcePage ? { ...query, page: 1 } : query, rows, [
-      { key: 'movementNumber', label: 'Movement', type: 'string' },
-      { key: 'productId', label: 'Product', type: 'string' },
-      { key: 'locationId', label: 'Location', type: 'string' },
-      { key: 'movementType', label: 'Type', type: 'string' },
-      { key: 'direction', label: 'Direction', type: 'string' },
-      { key: 'quantity', label: 'Quantity', type: 'number' },
-      { key: 'occurredAt', label: 'Occurred', type: 'datetime' },
+      { key: 'movementNumber', label: 'เลขที่เคลื่อนไหว', type: 'string' },
+      { key: 'productId', label: 'สินค้า', type: 'string' },
+      { key: 'locationId', label: 'ที่เก็บสินค้า', type: 'string' },
+      { key: 'movementType', label: 'ประเภทความเคลื่อนไหว', type: 'string' },
+      { key: 'direction', label: 'ทิศทาง', type: 'string' },
+      { key: 'quantity', label: 'จำนวน', type: 'number' },
+      { key: 'occurredAt', label: 'วันและเวลาที่เกิดรายการ', type: 'datetime' },
     ], {
       status: (sourcePage?.total ?? rows.length) === 0 ? 'EMPTY' : 'READY',
       page: query.page,
       pageSize: query.pageSize,
       total: sourcePage?.total ?? rows.length,
-      sourceRefs: [sourceRef(ctx.companyId, 'Stock Movement', 'inventory', 'stock_movement', `/companies/${ctx.companyId}/inventory/reports/stock`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'inventory.stock_movement', 'inventory', 'stock_movement', `/companies/${ctx.companyId}/inventory/reports/stock`)],
     });
   }
 
@@ -566,12 +571,12 @@ export class ReportSourceAdapters {
     const report = await this.stockReport.execute(ctx, { lowStockOnly: true });
     const rows = report.items.map((item) => ({ productId: item.productId, locationId: item.locationId, quantity: item.quantity }));
     return baseResult(definition, query, rows, [
-      { key: 'productId', label: 'Product', type: 'string' },
-      { key: 'locationId', label: 'Location', type: 'string' },
-      { key: 'quantity', label: 'Quantity', type: 'number' },
+      { key: 'productId', label: 'สินค้า', type: 'string' },
+      { key: 'locationId', label: 'ที่เก็บสินค้า', type: 'string' },
+      { key: 'quantity', label: 'จำนวน', type: 'number' },
     ], {
       chart: chartFromRows(rows, 'productId', 'quantity', 'Quantity', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, 'Reorder Risk', 'inventory', 'reorder_report', `/companies/${ctx.companyId}/inventory`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'inventory.reorder', 'inventory', 'reorder_report', `/companies/${ctx.companyId}/inventory`)],
     });
   }
 
@@ -585,17 +590,17 @@ export class ReportSourceAdapters {
       fromDate: str(query.filters.fromDate), toDate: str(query.filters.toDate),
     });
     return baseResult(definition, query, rows, [
-      { key: 'status', label: 'Status', type: 'string' },
-      { key: 'currency', label: 'Currency', type: 'string' },
-      { key: 'count', label: 'Count', type: 'number' },
-      { key: 'grandTotalAmount', label: 'Total', type: 'money' },
-      { key: 'paidAmount', label: 'Paid', type: 'money' },
-      { key: 'outstandingAmount', label: 'Outstanding', type: 'money' },
+      { key: 'status', label: 'สถานะ', type: 'string' },
+      { key: 'currency', label: 'สกุลเงิน', type: 'string' },
+      { key: 'count', label: 'จำนวนรายการ', type: 'number' },
+      { key: 'grandTotalAmount', label: 'ยอดรวม', type: 'money' },
+      { key: 'paidAmount', label: 'ชำระแล้ว', type: 'money' },
+      { key: 'outstandingAmount', label: 'ยอดค้างชำระ', type: 'money' },
     ], {
       status: rows.length === 0 ? 'EMPTY' : expenseAuthority === 'expense.read_own' ? 'PARTIAL' : 'READY',
       warnings: expenseAuthority === 'expense.read_own' ? ['แสดงเฉพาะรายการค่าใช้จ่ายที่คุณสร้าง'] : [],
       chart: chartFromRows(rows, 'status', 'grandTotalAmount', 'Total', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, 'Expense Summary', 'expenses', 'expense_summary', `/companies/${ctx.companyId}/expenses`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'expense.summary', 'expenses', 'expense_summary', `/companies/${ctx.companyId}/expenses`)],
       sourcePermissionsUsed: [expenseAuthority],
     });
   }
@@ -628,24 +633,24 @@ export class ReportSourceAdapters {
       whtAmount: expense.whtAmount,
     }));
     return baseResult(definition, sourcePage ? { ...query, page: 1 } : query, rows, [
-      { key: 'expenseNumber', label: 'Expense', type: 'string' },
-      { key: 'uploadedAt', label: 'Uploaded', type: 'datetime' },
-      { key: 'expenseDate', label: 'Document date', type: 'date' },
-      { key: 'vendorName', label: 'Vendor', type: 'string' },
-      { key: 'sourceDocumentType', label: 'Source type', type: 'string' },
-      { key: 'taxEvidenceStatus', label: 'Tax evidence', type: 'string' },
-      { key: 'expenseStatus', label: 'Status', type: 'string' },
-      { key: 'inputVatClaimStatus', label: 'Input VAT claim', type: 'string' },
-      { key: 'category', label: 'Category', type: 'string' },
-      { key: 'grandTotalAmount', label: 'Total', type: 'money' },
-      { key: 'vatAmount', label: 'VAT', type: 'money' },
-      { key: 'whtAmount', label: 'WHT', type: 'money' },
+      { key: 'expenseNumber', label: 'เลขที่ค่าใช้จ่าย', type: 'string' },
+      { key: 'uploadedAt', label: 'วันและเวลาที่อัปโหลด', type: 'datetime' },
+      { key: 'expenseDate', label: 'วันที่เอกสาร', type: 'date' },
+      { key: 'vendorName', label: 'ผู้ขาย', type: 'string' },
+      { key: 'sourceDocumentType', label: 'ประเภทเอกสารต้นทาง', type: 'string' },
+      { key: 'taxEvidenceStatus', label: 'สถานะหลักฐานภาษี', type: 'string' },
+      { key: 'expenseStatus', label: 'สถานะ', type: 'string' },
+      { key: 'inputVatClaimStatus', label: 'สถานะภาษีซื้อ', type: 'string' },
+      { key: 'category', label: 'หมวดค่าใช้จ่าย', type: 'string' },
+      { key: 'grandTotalAmount', label: 'ยอดรวม', type: 'money' },
+      { key: 'vatAmount', label: 'ภาษีมูลค่าเพิ่ม', type: 'money' },
+      { key: 'whtAmount', label: 'ภาษีหัก ณ ที่จ่าย', type: 'money' },
     ], {
       status: (sourcePage?.total ?? rows.length) === 0 ? 'EMPTY' : 'READY',
       page: query.page,
       pageSize: query.pageSize,
       total: sourcePage?.total ?? rows.length,
-      sourceRefs: [sourceRef(ctx.companyId, 'Accountant Evidence', 'expenses', 'accountant_evidence', `/companies/${ctx.companyId}/expenses`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'expense.accountant_evidence', 'expenses', 'accountant_evidence', `/companies/${ctx.companyId}/expenses`)],
     });
   }
 
@@ -665,20 +670,20 @@ export class ReportSourceAdapters {
       amount: row.taxAmount,
     }));
     return baseResult(definition, query, rows, [
-      { key: 'taxType', label: 'Tax type', type: 'string' },
-      { key: 'formType', label: 'Form', type: 'string' },
-      { key: 'periodKey', label: 'Period', type: 'string' },
-      { key: 'status', label: 'Status', type: 'string' },
-      { key: 'dueDate', label: 'Due date', type: 'date' },
-      { key: 'activeEventCount', label: 'Events', type: 'number' },
-      { key: 'reviewIssueCount', label: 'Review issues', type: 'number' },
-      { key: 'openIssueCount', label: 'Open issues', type: 'number' },
-      { key: 'taxableBase', label: 'Taxable base', type: 'money' },
-      { key: 'amount', label: 'Tax amount', type: 'money' },
+      { key: 'taxType', label: 'ประเภทภาษี', type: 'string' },
+      { key: 'formType', label: 'แบบภาษี', type: 'string' },
+      { key: 'periodKey', label: 'งวด', type: 'string' },
+      { key: 'status', label: 'สถานะ', type: 'string' },
+      { key: 'dueDate', label: 'วันครบกำหนด', type: 'date' },
+      { key: 'activeEventCount', label: 'จำนวนรายการ', type: 'number' },
+      { key: 'reviewIssueCount', label: 'จำนวนรายการที่ต้องตรวจ', type: 'number' },
+      { key: 'openIssueCount', label: 'จำนวนรายการที่ยังเปิดอยู่', type: 'number' },
+      { key: 'taxableBase', label: 'ฐานภาษี', type: 'money' },
+      { key: 'amount', label: 'ยอดภาษี', type: 'money' },
     ], {
       totals: { amount: summary.totalTaxAmount, openIssueCount: summary.openIssueCount },
       chart: chartFromRows(rows, 'formType', 'amount', 'Tax amount', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, `Tax Summary ${periodKey}`, 'tax', 'tax_summary', `/companies/${ctx.companyId}/tax`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'tax.summary', 'tax', 'tax_summary', `/companies/${ctx.companyId}/tax`)],
     });
   }
 
@@ -694,17 +699,17 @@ export class ReportSourceAdapters {
       lastStatementDate: item.lastStatementDate ?? null,
     }));
     return baseResult(definition, query, rows, [
-      { key: 'bankAccountDisplayName', label: 'Bank account', type: 'string' },
-      { key: 'currency', label: 'Currency', type: 'string' },
-      { key: 'lastReconciledDate', label: 'Last reconciled', type: 'date' },
-      { key: 'lastReconciledBalance', label: 'Last balance', type: 'money' },
-      { key: 'unreconciledLineCount', label: 'Unreconciled', type: 'number' },
-      { key: 'unmatchedLineCount', label: 'Unmatched', type: 'number' },
-      { key: 'pendingAdjustmentCount', label: 'Pending adjustments', type: 'number' },
-      { key: 'lastStatementDate', label: 'Last statement', type: 'date' },
+      { key: 'bankAccountDisplayName', label: 'บัญชีธนาคาร', type: 'string' },
+      { key: 'currency', label: 'สกุลเงิน', type: 'string' },
+      { key: 'lastReconciledDate', label: 'วันที่กระทบยอดล่าสุด', type: 'date' },
+      { key: 'lastReconciledBalance', label: 'ยอดเงินล่าสุด', type: 'money' },
+      { key: 'unreconciledLineCount', label: 'รายการที่ยังไม่กระทบยอด', type: 'number' },
+      { key: 'unmatchedLineCount', label: 'รายการที่ยังไม่จับคู่', type: 'number' },
+      { key: 'pendingAdjustmentCount', label: 'รายการปรับปรุงที่รอดำเนินการ', type: 'number' },
+      { key: 'lastStatementDate', label: 'วันที่รายการเดินบัญชีล่าสุด', type: 'date' },
     ], {
       chart: chartFromRows(rows, 'bankAccountDisplayName', 'unreconciledLineCount', 'Unreconciled', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, 'Cash Position', 'banking', 'cash_position', `/companies/${ctx.companyId}/banking`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'bank.cash_position', 'banking', 'cash_position', `/companies/${ctx.companyId}/banking`)],
     });
   }
 
@@ -781,14 +786,14 @@ export class ReportSourceAdapters {
     }
 
     return baseResult(definition, query, rows, [
-      { key: 'metric', label: 'Metric', type: 'string' },
-      { key: 'value', label: 'Value', type: 'number' },
-      { key: 'severity', label: 'Severity', type: 'string' },
+      { key: 'metric', label: 'รายการ', type: 'string' },
+      { key: 'value', label: 'จำนวน', type: 'number' },
+      { key: 'severity', label: 'ระดับความสำคัญ', type: 'string' },
     ], {
       status: warnings.length > 0 ? 'PARTIAL' : 'READY',
       warnings,
       chart: chartFromRows(rows, 'metric', 'value', 'Value', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, 'Workflow SLA', 'workflow', 'workflow_sla', `/companies/${ctx.companyId}/workflow`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'ops.workflow_sla', 'workflow', 'workflow_sla', `/companies/${ctx.companyId}/workflow`)],
       sourcePermissionsUsed,
     });
   }
@@ -810,10 +815,10 @@ export class ReportSourceAdapters {
       }];
     }));
     return baseResult(definition, query, rows, [
-      { key: 'metric', label: 'Metric', type: 'string' },
-      { key: 'value', label: 'Value', type: 'string' },
-      { key: 'severity', label: 'Severity', type: 'string' },
-      { key: 'freshnessStatus', label: 'Freshness', type: 'string' },
+      { key: 'metric', label: 'รายการ', type: 'string' },
+      { key: 'value', label: 'จำนวน', type: 'string' },
+      { key: 'severity', label: 'ระดับความสำคัญ', type: 'string' },
+      { key: 'freshnessStatus', label: 'ความใหม่ของข้อมูล', type: 'string' },
     ], {
       status: snapshot.freshnessStatus === 'fresh' ? (rows.length ? 'READY' : 'EMPTY') : 'STALE',
       freshness: {
@@ -822,7 +827,7 @@ export class ReportSourceAdapters {
         freshnessStatus: snapshot.freshnessStatus === 'fresh' ? 'fresh' : snapshot.freshnessStatus === 'stale' ? 'stale' : 'unknown',
         staleReason: snapshot.freshnessStatus === 'fresh' ? undefined : snapshot.freshnessStatus,
       },
-      sourceRefs: [sourceRef(ctx.companyId, 'Dashboard Health', 'dashboard-notifications', 'dashboard_snapshot', `/companies/${ctx.companyId}/dashboard`, snapshot.id)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'ops.dashboard_health', 'dashboard-notifications', 'dashboard_snapshot', `/companies/${ctx.companyId}/dashboard`, snapshot.id)],
       sourcePermissionsUsed: [...sourcePermissionsUsed],
     });
   }
@@ -855,12 +860,12 @@ export class ReportSourceAdapters {
       })),
     ];
     return baseResult(definition, query, rows, [
-      { key: 'metric', label: 'Metric', type: 'string' },
-      { key: 'value', label: 'Value', type: 'number' },
-      { key: 'severity', label: 'Severity', type: 'string' },
+      { key: 'metric', label: 'รายการ', type: 'string' },
+      { key: 'value', label: 'จำนวน', type: 'number' },
+      { key: 'severity', label: 'ระดับความสำคัญ', type: 'string' },
     ], {
       chart: chartFromRows(rows, 'metric', 'value', 'Value', query.chartKind ?? 'table'),
-      sourceRefs: [sourceRef(ctx.companyId, 'AI Suggestion Summary', 'ai-draft', 'ai_suggestion_summary', `/companies/${ctx.companyId}/ai-suggestions`)],
+      sourceRefs: [reportSourceRef(ctx.companyId, 'ai.suggestion_summary', 'ai-draft', 'ai_suggestion_summary', `/companies/${ctx.companyId}/ai-suggestions`)],
       sourcePermissionsUsed: [broad ? 'ai.suggestion.read' : 'ai.suggestion.read_own'],
     });
   }

@@ -12,7 +12,7 @@ import { PrismaAlertStateRepository } from '../../infrastructure/prisma-notifica
 import { buildDedupKey, isInCooldown, computeCooldownUntil, isImplementedTrigger, isRetryable, isInQuietHours, resolveDeliveryOutcome, notificationSourceHref } from '../../domain/logic/notification.logic';
 import type { NotificationSummaryDto, NotificationPreferenceDto, NotificationRuleDto, UnreadCountDto, UpdatePreferenceDto, UpdateRuleDto } from '@watchdog-bms/contracts';
 import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
-import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT } from '../../domain/models/notification.model';
+import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT, notificationRuleDisplayName } from '../../domain/models/notification.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
@@ -849,7 +849,7 @@ function toRuleDto(rule: any): NotificationRuleDto {
     id: rule.id,
     companyId: rule.companyId,
     triggerKey: rule.triggerKey,
-    name: rule.name,
+    name: notificationRuleDisplayName(rule.triggerKey),
     severity: rule.severity,
     conditionJson: rule.conditionJson,
     recipientPolicyJson: rule.recipientPolicyJson,

@@ -154,7 +154,6 @@ export function normalizeRule(raw: RawRule): NotificationRule {
     companyId: raw.companyId,
     triggerKey: raw.triggerKey,
     label: raw.name,
-    description: raw.triggerKey,
     status: raw.status,
     severity: raw.severity,
     channels,

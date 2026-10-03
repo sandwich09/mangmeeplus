@@ -77,7 +77,7 @@ test.describe('SET — settings', () => {
     await gotoCompany(authedPage, companyId, '/settings/employees');
     await authedPage.getByLabel(/^ชื่อ \*/).fill(firstName);
     await authedPage.getByLabel(/^นามสกุล \*/).fill(lastName);
-    await authedPage.getByLabel(/^Username \*/).fill(username);
+    await authedPage.getByLabel(/^ชื่อผู้ใช้ \*/).fill(username);
     await authedPage.getByLabel(/^วันเดือนปีเกิด/).fill('01/01/1990');
     await authedPage.getByLabel(/^เลขบัตรประชาชน/).fill(`1${suffix.slice(-12)}`);
     await authedPage.getByRole('button', { name: /^ถัดไป/ }).click();

@@ -1575,7 +1575,7 @@ export const workspaceDictionary = {
     'employee.error.phone_conflict': 'เบอร์โทรศัพท์นี้ถูกใช้กับพนักงานคนอื่นแล้ว',
     'employee.error.email_conflict': 'อีเมลนี้ถูกใช้ในระบบแล้ว',
     'employee.error.email_must_differ': 'ต้องระบุอีเมลของบริษัทนี้ที่ไม่ซ้ำกับอีเมลบัญชีเดิมของพนักงาน',
-    'employee.error.username_conflict': 'Username นี้ถูกใช้ในระบบแล้ว',
+    'employee.error.username_conflict': 'ชื่อผู้ใช้นี้ถูกใช้ในระบบแล้ว',
     // ทะเบียนคู่ค้า (สเปค §11.1) — ไม่มีตัวเลือกประเภทคู่ค้าที่ใดเลย ใช้ป้ายการใช้งานแทน (A5)
     'counterparties.title': 'คู่ค้า',
     'counterparties.description': 'ทะเบียนร้านค้าและลูกค้า ระบบเพิ่มให้เองจากใบที่บันทึก แก้ไขเพิ่มเติมได้ที่นี่',
