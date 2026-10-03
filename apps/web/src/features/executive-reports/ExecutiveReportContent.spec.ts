@@ -121,6 +121,15 @@ test('the "other" detail of the signup channel shows only for a company that cho
   assert.match(render({ key: 'OTHER', label: 'อื่น ๆ', otherText: 'งานอีเวนต์' }), /อื่น ๆ\s+งานอีเวนต์/);
   assert.match(render({ key: 'OTHER', label: 'อื่น ๆ' }), /อื่น ๆ\s+ไม่ระบุ/);
 });
+test('detail and compare content do not repeat the "no report filters" sentence the page already shows', async () => {
+  const { CompanyContent, AnalysisContent } = await content();
+  const detail = { ...envelope, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;
+  const detailText = text(renderToStaticMarkup(React.createElement(CompanyContent, { data: detail, tab: 'company', history: null, admin: false, nav, contactReadAt: '' })));
+  assert.doesNotMatch(detailText, /หน้านี้ไม่ใช้ตัวกรองของรายงาน/); assert.match(detailText, /ใบเสร็จค่าใช้จ่ายที่ลูกค้าเพิ่ม/);
+  const side = { key: 'A', label: 'ก', companies: count(1), netReceiptsSatang: cash(0), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(0), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(0), drilldownFilters: {} };
+  const compareText = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'B' }, difference: { companies: 0, netReceiptsSatang: 0, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis, nav: { ...nav, from: 'compare' }, seller: null })));
+  assert.doesNotMatch(compareText, /หน้านี้ไม่ใช้ตัวกรองของรายงาน/); assert.match(compareText, /ใบเสร็จค่าใช้จ่ายที่ลูกค้าเพิ่ม/);
+});
 test('history shows only the event/date/plan allowlist and Buddhist dates', async () => {
   const { CompanyContent } = await content();
   const data = { ...envelope, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' } }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;

@@ -216,7 +216,7 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
       ['companies', W.companyCount, 'count'], ['netReceiptsSatang', W.net, 'money'], ['netReceiptsPerCompanySatang', W.netPerCompany, 'averageMoney'],
       ['expenseReceiptCount', W.receiptCount, 'count'], ['expenseReceiptsPerCompany', W.receiptsPerCompany, 'average'], ['everAddedReceiptShare', W.adoptionShare, 'ratio'], ['activeCompanies', W.active, 'count'],
     ] as const;
-    return <><p>{W.receiptDefinition} · {W.compareBase}</p>
+    return <><p>{W.receiptDefinition}</p>
       <div className="flex flex-wrap gap-4">{[c.sideA, c.sideB].map((side, i) => <div key={i}><p>{i === 0 ? W.sideA : W.sideB} · {thaiLabel(side.label, side.key)} · {W.base(countText(side.companies))}</p>{side.drilldownFilters ? <DrillLink filters={side.drilldownFilters} nav={nav}>{W.listGroup}</DrillLink> : <ReportLink href={companyLink(side.key, nav.params)} remember={nav.remember}>{W.detail}</ReportLink>}</div>)}</div>
       <ReportTable title={W.compare} columns={[{ label: W.item }, { label: W.sideA }, { label: W.sideB }, { label: W.difference }]} rows={metrics.map(([key, label, kind]) => ({ key, cells: [label, ...[c.sideA, c.sideB].map(side => {
         const metric = side[key];
@@ -234,7 +234,7 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }
   const monthTitle = reportMonth(data.period.month);
   return <>
     <p>{[company.registeredName, company.provinceLabel, company.industryGroup.label].filter(Boolean).join(' · ')}</p>
-    <p className="text-sm">{W.detailBase} · {W.receiptDefinition}</p>
+    <p className="text-sm">{W.receiptDefinition}</p>
     <Reasons codes={data.monthReasonCodes} />
     {month && <div className="grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-4">{([[W.net, <Figure key="net" value={month.money.netReceiptsSatang} moneyValue netValue />], [W.receiptCount, <Figure key="receipts" value={sourceCount(month.usage.expenseReceiptCountInPeriod, data.coverage.usage)} />], [W.days, <Figure key="days" value={sourceCount(month.usage.activeDays, data.coverage.usage)} />], [W.ai, <Figure key="ai" value={sourceCount(month.usage.aiRequests, data.coverage.usage)} />]] as Array<[string, ReactNode]>).map(([label, value]) => <MangmeeStatCard key={label} label={`${label} ${monthTitle}`} value={value} />)}</div>}
     {tab === 'history' ? history && <Card title={W.history}>{history.items.length === 0 ? <EmptyState title={W.noHistory} description="" /> : <ol className="space-y-3">{history.items.map((event, index) => <li key={index} className="border-b py-3"><p>{reportDateTime(event.at)}</p><p>{EXECUTIVE_HISTORY_EVENT_LABELS[event.kind]} {event.planLabel}</p></li>)}</ol>}</Card> : tab === 'usage' ? month && <>
