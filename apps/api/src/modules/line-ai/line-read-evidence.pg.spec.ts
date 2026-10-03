@@ -70,7 +70,8 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
         const reordered = { ...original, data: Object.fromEntries(Object.entries(original.data as object).reverse()) };
         assert.equal(lineReadResultHash(reordered), lineReadResultHash(original));
         const saved = await client.lineReadEvidence.findUniqueOrThrow({ where: { id } });
-        assert.doesNotMatch(JSON.stringify(saved), /Synthetic private vendor|123\.45/);
+        // R-M1 keeps the shop name in readMemory.shownItems on purpose; an amount is never stored.
+        assert.doesNotMatch(JSON.stringify(saved), /123\.45/);
         assert.notEqual(lineReadResultHash({ ...original, data: { ...(original.data as object), asOf: 'business-date' } }), lineReadResultHash(original));
       });
 
