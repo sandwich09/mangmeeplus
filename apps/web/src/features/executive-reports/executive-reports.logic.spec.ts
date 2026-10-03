@@ -140,10 +140,14 @@ test('rate-limit retry time uses only a valid returned number and never a diagno
   assert.equal(retryDelaySeconds({ status: 500, details: { retryAfterSeconds: 31 } }), 0);
 });
 test('back keeps the source history entry across filter/page pushes and names the actual source screen', async () => {
-  const { reportHistoryState, backSection } = await logic();
-  const source = { __NA: true, executiveBack: '/system/executive/compare?by=company&a=one&b=two', executiveBackDistance: 1 };
+  const { reportHistoryState, ownHistoryState, backSection } = await logic();
+  const source = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: ['tree'], executiveBack: '/system/executive/compare?by=company&a=one&b=two', executiveBackDistance: 1 };
   const next = reportHistoryState(source, 'ร้าน ก', false);
-  assert.equal(next.__NA, true); assert.equal(next.executiveBackDistance, 2); assert.equal(next.executiveSearch, 'ร้าน ก');
+  // A state that still carries Next's own keys is taken by Next's patched pushState for its own call: the router would keep the old URL.
+  assert.equal(next.__NA, undefined); assert.equal(next.__PRIVATE_NEXTJS_INTERNALS_TREE, undefined);
+  assert.deepEqual(ownHistoryState({ ...source, _N: true }), { executiveBack: source.executiveBack, executiveBackDistance: 1 });
+  assert.deepEqual(ownHistoryState(null), {});
+  assert.equal(next.executiveBack, source.executiveBack); assert.equal(next.executiveBackDistance, 2); assert.equal(next.executiveSearch, 'ร้าน ก');
   assert.equal(reportHistoryState(next, '', true).executiveBackDistance, 2);
   assert.equal(reportHistoryState(next, '', true).executiveSearch, '');
   assert.equal(backSection(source.executiveBack), 'compare');

@@ -41,4 +41,7 @@ test('search stays in the history entry with a 300ms debounce, back has a direct
   assert.match(page, /executiveSearch/); assert.match(page, /300/); assert.match(page, /popstate/);
   assert.match(page, /history\.back\(\)/); assert.match(page, /router\.push\(fallback\)/);
   assert.match(page, /navigateParams\(clearedParams\(params\), false, ''\)/);
+  // A URL change keeps only our own history keys, so Next's router (useSearchParams) follows it.
+  assert.doesNotMatch(page, /replaceState\(window\.history\.state, '', `/);
+  assert.doesNotMatch(page, /replaceState\(\{ \.\.\.window\.history\.state, executiveSearch: term \}, '', `/);
 });
