@@ -12,9 +12,9 @@ export const W = {
   companyTab: 'ข้อมูลบริษัท', usageTab: 'การใช้งานและรายรับ', history: 'ประวัติบริษัท',
   month: 'เดือนรายงาน', filters: 'ตัวกรอง', clear: 'ล้างตัวกรอง', retry: 'ลองอีกครั้ง', loading: 'กำลังอ่านข้อมูล…', readFailed: 'อ่านข้อมูลไม่สำเร็จ กรุณาลองใหม่',
   noData: 'ยังไม่มีข้อมูลของเดือนนี้', empty: 'ไม่พบบริษัทที่ตรงกับตัวกรอง', noHistory: 'ยังไม่มีประวัติบริษัท', noRows: 'ไม่มีรายการตามเงื่อนไขที่เลือก',
-  allCompanies: 'ดูบริษัททั้งหมด', allRanks: 'ดูอันดับทั้งหมด', listGroup: 'ดูรายชื่อลูกค้ากลุ่มนี้', previousMonth: 'ดูเดือนที่แล้ว',
+  allCompanies: 'ดูบริษัททั้งหมด', allRanks: 'ดูอันดับทั้งหมด', rank: 'อันดับ', listGroup: 'ดูรายชื่อลูกค้ากลุ่มนี้', previousMonth: 'ดูเดือนที่แล้ว',
   choose: 'เลือกสองกลุ่มที่ต้องการเปรียบเทียบ', same: 'เลือกคนละกลุ่มหรือคนละบริษัทเพื่อเปรียบเทียบ', chooseCompanies: 'เลือกสองบริษัทจากรายชื่อบริษัทลูกค้า',
-  sideA: 'ฝั่งแรก', sideB: 'ฝั่งที่สอง', difference: 'ต่างกัน (ฝั่งแรกลบฝั่งที่สอง)', swap: 'สลับฝั่ง', dimension: 'เปรียบเทียบตาม',
+  sideA: 'ฝั่งแรก', sideB: 'ฝั่งที่สอง', difference: 'ต่างกัน (ฝั่งแรกลบฝั่งที่สอง)', item: 'รายการ', swap: 'สลับฝั่ง', dimension: 'เปรียบเทียบตาม',
   compareBase: 'เริ่มจากบริษัทลูกค้าทั้งหมดในเดือนที่เลือก หน้านี้ไม่ใช้ตัวกรองของรายงาน',
   detailBase: 'รายละเอียดใช้เฉพาะบริษัทและเดือนที่เลือก หน้านี้ไม่ใช้ตัวกรองของรายงาน',
   compareList: 'รายชื่อนี้มาจากหน้าเปรียบเทียบ ไม่ใช้ตัวกรองของรายงาน',
@@ -43,7 +43,7 @@ export const W = {
   purchase: 'ประเภทการซื้อ', trend: 'แนวโน้มยอดรับสุทธิ 6 เดือน', unmatched: 'เงินที่ยังไม่ผูกบริษัท', excludedNet: 'ยอดรับของบริษัททดสอบและบริษัทของมั่งมี (ไม่รวมในรายงาน)', unclassifiedNet: 'ยอดรับของบริษัทที่ยังไม่ได้จัดประเภท', disputes: 'ใบที่มีข้อโต้แย้งการชำระ',
   creditAmount: 'ยอดชำระครั้งแรกสะสม', creditedSeller: 'เซลล์ที่ได้รับยอดขายครั้งแรก', creditAt: 'วันที่นับยอดให้เซลล์', waiting: 'รอตรวจ',
   creditNotes: ['รายการที่ติดธงและยังไม่ตรวจนับเป็นศูนย์', 'คืนเงินหลัง 60 วันไม่หักจากยอดนี้', 'ฐานของยอดนี้อาจต่างจากยอดรับ ห้ามนำยอดนี้ไปบวกหรือลบกับยอดรับ'],
-  email: 'อีเมลเจ้าของบัญชี', phoneNumber: 'เบอร์โทรเจ้าของบัญชี', contactMissing: 'ยังไม่มีข้อมูล', multipleOwners: 'มีเจ้าของหลายบัญชี', noOwner: 'ไม่พบบัญชีเจ้าของปัจจุบัน',
+  email: 'อีเมลเจ้าของบัญชี', phoneNumber: 'เบอร์โทรเจ้าของบัญชี', contactMissing: 'ยังไม่มีข้อมูล', contactNotPermitted: 'ไม่มีสิทธิ์ดูข้อมูลติดต่อ', multipleOwners: 'มีเจ้าของหลายบัญชี', noOwner: 'ไม่พบบัญชีเจ้าของปัจจุบัน',
   management: 'บริษัทและผู้ใช้งาน', unknown: EXECUTIVE_UNKNOWN_LABEL,
   wait: (n: number) => `กรุณารอ ${n} วินาทีแล้วลองใหม่`,
   unitCompany: 'บริษัท', unitReceipt: 'ใบ', unitDay: 'วัน', unitRequest: 'ครั้ง', point: 'จุด',
@@ -73,6 +73,7 @@ export const RANK_LABELS = { expenseReceiptCount: { label: W.receiptCount, unit:
 const THAI_NAMES: Record<string, string> = { Website: 'เว็บไซต์', IG: 'อินสตาแกรม', TikTok: 'ติ๊กต็อก', Facebook: 'เฟซบุ๊ก', LINE: W.line, AI: 'ปัญญาประดิษฐ์' };
 export const thaiLabel = (label: string, code?: string) => {
   const suffix = code ? ` · ${code}` : '';
-  const name = code && label === code ? W.unknown : suffix && label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+  // A label that is only its code is a seller with no name left; a known product word ("IG" is both) stays a name.
+  const name = code && label === code && !Object.hasOwn(THAI_NAMES, label) ? W.unknown : suffix && label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
   return name.replace(/\s+UAT\b/g, '').replace(/(ทาง|ผ่าน) (?=LINE\b)/g, '$1').replace(/ค่า (?=AI\b)/g, 'ค่า').replace(/\b(Website|IG|TikTok|Facebook|LINE|AI)\b/g, word => THAI_NAMES[word]!);
 };

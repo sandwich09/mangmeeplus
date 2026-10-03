@@ -14,6 +14,8 @@ test('account routes and header require manage permission, including direct deta
   assert.match(source('../../../app/system/layout.tsx'), /executiveUsersAllowed=\{result.session.permissions.includes\('system.executive_user.manage'\)\}/);
   assert.match(source('../../common/components/app-shell/SystemHeader.tsx'), /section.href !== '\/system\/executive-users' \|\| executiveUsersAllowed/);
   for (const path of ['page.tsx', 'new/page.tsx', '[userId]/page.tsx']) assert.match(source(`../../../app/system/executive-users/${path}`), /ExecutiveUser/);
+  // `/system` hands each page the bare column: without its own container the pages sit flush against a phone's edge.
+  assert.match(layout, /<main className="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">/);
 });
 
 test('list handles stale responses, URL filters, text-only empty results, mobile cards and shared paging', () => {

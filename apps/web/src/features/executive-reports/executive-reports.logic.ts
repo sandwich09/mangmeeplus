@@ -156,9 +156,18 @@ export function retryDelaySeconds(error: unknown): number {
   const seconds = e?.details?.retryAfterSeconds ?? e?.retryAfterSeconds;
   return e?.status === 429 && typeof seconds === 'number' && Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 0;
 }
+/**
+ * Our own keys of a history entry. Next's patched pushState/replaceState treat a state that carries its `__NA`/`_N` as its own
+ * call and leave the router (useSearchParams) on the old URL; without them Next follows the new URL and adds its keys back.
+ */
+export function ownHistoryState(state: Record<string, unknown> | null): Record<string, unknown> {
+  const { __NA: _na, _N: _n, __PRIVATE_NEXTJS_INTERNALS_TREE: _tree, ...own } = state ?? {};
+  return own;
+}
 export function reportHistoryState(previous: Record<string, unknown> | null, search: string, replace: boolean): Record<string, unknown> {
-  const distance = typeof previous?.executiveBackDistance === 'number' && Number.isSafeInteger(previous.executiveBackDistance) ? previous.executiveBackDistance : 1;
-  return { ...previous, executiveSearch: search, ...(previous?.executiveBack ? { executiveBackDistance: distance + (replace ? 0 : 1) } : {}) };
+  const own = ownHistoryState(previous);
+  const distance = typeof own.executiveBackDistance === 'number' && Number.isSafeInteger(own.executiveBackDistance) ? own.executiveBackDistance : 1;
+  return { ...own, executiveSearch: search, ...(own.executiveBack ? { executiveBackDistance: distance + (replace ? 0 : 1) } : {}) };
 }
 export function backSection(path: string): ReportSection {
   const route = path.split('?')[0];

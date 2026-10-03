@@ -19,6 +19,8 @@ test('the system shell and report gate use the exact permission, and the header 
   assert.match(header, /EXECUTIVE_ACCESS_DENIED_EVENT/);
   assert.match(header, /thaiLabel\(environment\)/);
   assert.match(header, /thaiLabel\(section.label\)/);
+  // Report routes only: '/system/executive-users' (an admin page) keeps the admin console's own menu words.
+  assert.doesNotMatch(header, /pathname\.startsWith\('\/system\/executive'\)/);
 });
 test('reads use authenticated fetch, no tenant target header, and reload/abort protect the entire answer', () => {
   const api = source('./executive-reports.api.ts'), page = source('./ExecutiveReportPage.tsx');
@@ -41,4 +43,7 @@ test('search stays in the history entry with a 300ms debounce, back has a direct
   assert.match(page, /executiveSearch/); assert.match(page, /300/); assert.match(page, /popstate/);
   assert.match(page, /history\.back\(\)/); assert.match(page, /router\.push\(fallback\)/);
   assert.match(page, /navigateParams\(clearedParams\(params\), false, ''\)/);
+  // A change the reader makes keeps only our own history keys, so Next's router (useSearchParams) follows it.
+  assert.match(page, /const state = reportHistoryState\(window\.history\.state, searchValue, replace\)/);
+  assert.match(page, /replaceState\(\{ \.\.\.ownHistoryState\(window\.history\.state\), executiveSearch: term \}, '', `/);
 });

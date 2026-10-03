@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import {
   EXECUTIVE_HISTORY_EVENT_LABELS, EXECUTIVE_REPORT_LABELS as LABELS, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
   type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveCompanyHistory,
@@ -116,13 +116,17 @@ const rowStatus = (row: Pick<ExecutiveCompanyRow, 'paidEver' | 'usageGroup' | 'u
 function referrer(row: ExecutiveCompanyRow['referrer']): string {
   return `${thaiLabel(row.label, row.salesCode)}${row.source === 'ADMIN' ? ` ${EXECUTIVE_REFERRER_ADMIN_SUFFIX}` : ''}`;
 }
+// A row renders twice (phone card and table row): each toggle needs its own id, or every label selects the first company.
+function CompareToggle({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: () => void }) {
+  return <SwitchField id={useId()} label={W.selectCompare} checked={checked} disabled={disabled} onChange={onChange} />;
+}
 export function CompaniesContent({ data, nav, selected, select }: { data: ExecutiveCompanies; nav: Navigation; selected: string[]; select: (id: string) => void }) {
   return <>
     <p className="text-sm">{W.receiptDefinition}</p>
     <p role="status">{W.found(data.pagination.total)} · {W.net} <span>{moneyText(data.summary.netReceiptsSatang)}</span> · {W.sort} {sortLabel(data.sort.sortBy, data.sort.sortDir)}</p>
     <Reasons codes={data.summary.netReceiptsSatang.reasonCodes} />
     {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <ReportTable title={W.companies} columns={[{ label: W.company }, { label: W.origin, secondary: true }, { label: W.service }, { label: W.active }, { label: W.net }]} rows={data.items.map(row => ({ key: row.id, cells: [
-      <div key="company" className="text-left"><SwitchField label={W.selectCompare} checked={selected.includes(row.id)} disabled={selected.length === 2 && !selected.includes(row.id)} onChange={() => select(row.id)} />
+      <div key="company" className="text-left"><CompareToggle checked={selected.includes(row.id)} disabled={selected.length === 2 && !selected.includes(row.id)} onChange={() => select(row.id)} />
         <ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember}>{row.displayName}</ReportLink>
         {row.registeredName && <p>{row.registeredName}</p>}<p>{row.provinceLabel} · {row.industryGroup.label}</p><p>{W.joined} {reportDate(row.joinedAt)}</p><p>{LABELS.companyStatus[row.companyStatus] ?? W.unknown}</p>
       </div>,
@@ -131,7 +135,7 @@ export function CompaniesContent({ data, nav, selected, select }: { data: Execut
       <div key="usage"><p>{W.receiptCount}</p><Figure value={sourceCount(row.metrics.expenseReceiptCountInPeriod, data.coverage.usage)} /><p>{LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown}</p>
         <DetailValues rows={[[W.days, <Figure key="days" value={sourceCount(row.metrics.activeDays, data.coverage.usage)} />], [W.users, <Figure key="users" value={sourceCount(row.metrics.activeUsers, data.coverage.usage)} />], [W.documents, <Figure key="docs" value={sourceCount(row.metrics.documents, data.coverage.usage)} />], [W.ai, <Figure key="ai" value={sourceCount(row.metrics.aiRequests, data.coverage.usage)} />], [W.lastActivity, reportDateTime(row.lastActivityAt)]]} />
       </div>,
-      <div key="money"><Figure value={sourceMoney(row.metrics.netReceiptsSatang, data.coverage.money)} moneyValue netValue />{row.rank !== undefined && <p>{W.ranking} {row.rank}</p>}{data.sort.sortBy === 'netReceipts' && <p>{W.cumulativeShare} {row.cumulativeShare ? ratioText(row.cumulativeShare) : W.notInShare}</p>}</div>,
+      <div key="money"><Figure value={sourceMoney(row.metrics.netReceiptsSatang, data.coverage.money)} moneyValue netValue />{row.rank !== undefined && <p>{W.rank} {row.rank}</p>}{data.sort.sortBy === 'netReceipts' && <p>{W.cumulativeShare} {row.cumulativeShare ? ratioText(row.cumulativeShare) : W.notInShare}</p>}</div>,
     ] }))} />}
     <p className="text-sm">{W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
     {data.sort.sortBy === 'netReceipts' && <p className="text-sm">{W.tieOrder}</p>}
@@ -187,7 +191,7 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
     const rank = data.usageRanking;
     return <Card title={W.rankTitle}><p>{W.receiptDefinition} · {W.rankBase(rank.total, RANK_LABELS[rank.metric].label)}</p><Reasons codes={rank.reasonCodes} />
       {!rank.items.length && <EmptyState title={W.noRows} description="" />}
-      <ol>{rank.items.map(row => <li key={row.id} className="min-w-0 border-b py-2"><ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember}>{row.rank}. {row.displayName}</ReportLink><p className="text-sm">{row.registeredName} · {row.provinceLabel}</p><p>{countText(sourceCount(row.value, rank))} {RANK_LABELS[rank.metric].unit}</p><div className="h-3 rounded border border-gray-700 bg-brand-800" aria-hidden="true" style={{ width: `${row.value / Math.max(1, rank.items[0]?.value ?? 1) * 100}%` }} /></li>)}</ol>
+      <ol>{rank.items.map(row => <li key={row.id} className="min-w-0 border-b py-2"><ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember}>{row.rank}. {row.displayName}</ReportLink><p className="text-sm">{[row.registeredName, row.provinceLabel].filter(Boolean).join(' · ')}</p><p>{countText(sourceCount(row.value, rank))} {RANK_LABELS[rank.metric].unit}</p><div className="h-3 rounded border border-gray-700 bg-brand-800" aria-hidden="true" style={{ width: `${row.value / Math.max(1, rank.items[0]?.value ?? 1) * 100}%` }} /></li>)}</ol>
       {rankingTieText(rank.boundaryTie, rank.metric) && <p>{rankingTieText(rank.boundaryTie, rank.metric)}</p>}
       <DrillLink nav={nav} filters={rank.drilldownFilters}>{W.allRanks}</DrillLink>
     </Card>;
@@ -198,10 +202,11 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
     if (seller === 'credited' && data.creditedSellers) return <Card title={`${W.credited} · ${W.current}`}><p>{W.through(reportDateTime(data.creditedSellers.asOf))}</p>{W.creditNotes.map(note => <p key={note} className="text-sm">{note}</p>)}
       <ReportTable title={W.credited} columns={[{ label: W.creditedSeller }, { label: W.companyCount }, { label: W.creditAmount }]} rows={data.creditedSellers.rows.map((row, i) => ({ key: String(i), cells: [thaiLabel(row.seller.label ?? W.unknown, row.seller.salesCode), <div key="counts">{row.companies}<p>{W.waiting} {row.waiting}</p></div>, money(row.creditSatang)] }))} />
     </Card>;
+    const rowsAre = data.view === 'industry' ? W.group : data.view === 'discovery' ? W.discovery : W.referring;
     return <Card title={data.view === 'industry' ? W.group : data.view === 'discovery' ? W.filterLabels.discovery : W.referring}>
       <p>{W.base(countText(data.population.eligibleCount))} · {reportMonth(data.period.month)}</p>
       {data.industryCoverage && <p>{W.industryCoverage(data.industryCoverage.numerator, data.industryCoverage.denominator)}</p>}
-      <ReportTable title={W.customers} columns={[{ label: W.group }, { label: W.companyCount }, { label: W.paid }, { label: W.filterLabels.paidEver }, { label: W.active }, { label: W.net }]} rows={data.groups.map(row => ({ key: row.key, cells: [<DrillLink key="name" nav={nav} filters={row.drilldownFilters}>{thaiLabel(row.label, row.key)}</DrillLink>, <div key="companies">{row.companies.count} · {ratioText(row.companies.share)}<div aria-hidden="true" className="h-2 border bg-brand-800" style={{ width: `${row.companies.share.value ?? 0}%` }} /></div>, <Figure key="paid" value={row.companiesWithReceipts} />, row.paidEverCompanies, <Figure key="active" value={row.activeCompanies} />, <Figure key="money" value={row.netReceiptsSatang} moneyValue netValue />] }))} />
+      <ReportTable title={W.customers} columns={[{ label: rowsAre }, { label: W.companyCount }, { label: W.paid }, { label: W.filterLabels.paidEver }, { label: W.active }, { label: W.net }]} rows={data.groups.map(row => ({ key: row.key, cells: [<DrillLink key="name" nav={nav} filters={row.drilldownFilters}>{thaiLabel(row.label, row.key)}</DrillLink>, <div key="companies">{row.companies.count} · {ratioText(row.companies.share)}<div aria-hidden="true" className="h-2 border bg-brand-800" style={{ width: `${row.companies.share.value ?? 0}%` }} /></div>, <Figure key="paid" value={row.companiesWithReceipts} />, row.paidEverCompanies, <Figure key="active" value={row.activeCompanies} />, <Figure key="money" value={row.netReceiptsSatang} moneyValue netValue />] }))} />
       {data.roundingNote && <p>{W.rounding}</p>}
     </Card>;
   }
@@ -211,14 +216,14 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
       ['companies', W.companyCount, 'count'], ['netReceiptsSatang', W.net, 'money'], ['netReceiptsPerCompanySatang', W.netPerCompany, 'averageMoney'],
       ['expenseReceiptCount', W.receiptCount, 'count'], ['expenseReceiptsPerCompany', W.receiptsPerCompany, 'average'], ['everAddedReceiptShare', W.adoptionShare, 'ratio'], ['activeCompanies', W.active, 'count'],
     ] as const;
-    return <><p>{W.receiptDefinition} · {W.compareBase}</p>
+    return <><p>{W.receiptDefinition}</p>
       <div className="flex flex-wrap gap-4">{[c.sideA, c.sideB].map((side, i) => <div key={i}><p>{i === 0 ? W.sideA : W.sideB} · {thaiLabel(side.label, side.key)} · {W.base(countText(side.companies))}</p>{side.drilldownFilters ? <DrillLink filters={side.drilldownFilters} nav={nav}>{W.listGroup}</DrillLink> : <ReportLink href={companyLink(side.key, nav.params)} remember={nav.remember}>{W.detail}</ReportLink>}</div>)}</div>
-      <ReportTable title={W.compare} columns={[{ label: W.group }, { label: W.sideA }, { label: W.sideB }, { label: W.difference }]} rows={metrics.map(([key, label, kind]) => ({ key, cells: [label, ...[c.sideA, c.sideB].map(side => {
+      <ReportTable title={W.compare} columns={[{ label: W.item }, { label: W.sideA }, { label: W.sideB }, { label: W.difference }]} rows={metrics.map(([key, label, kind]) => ({ key, cells: [label, ...[c.sideA, c.sideB].map(side => {
         const metric = side[key];
         if (kind === 'count' || kind === 'money') return <Figure key={side.key} value={metric as ExecutiveCount} moneyValue={kind === 'money'} netValue={kind === 'money'} />;
         const value = metric?.value;
         return value === null || value === undefined ? '—' : kind === 'averageMoney' ? money(value) : ratioText(metric as Parameters<typeof ratioText>[0], kind === 'ratio' ? '%' : '');
-      }), c.difference[key] === null ? '—' : kind === 'money' || kind === 'averageMoney' ? <span>{money(c.difference[key]!)}{negativeMoneyNote(c.difference[key]) && kind === 'money' ? <p>{W.difference}</p> : null}</span> : `${c.difference[key]}${kind === 'ratio' ? ` ${W.point}` : ''}`] }))} />
+      }), c.difference[key] === null ? '—' : kind === 'money' || kind === 'averageMoney' ? <span>{money(c.difference[key]!)}{negativeMoneyNote(c.difference[key]) && kind === 'money' ? <p>{W.difference}</p> : null}</span> : `${c.difference[key]!.toLocaleString('th-TH', kind === 'count' ? undefined : { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${kind === 'ratio' ? ` ${W.point}` : ''}`] }))} />
     </>;
   }
   return <EmptyState title={W.noRows} description="" />;
@@ -228,8 +233,8 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }
   const company = data.company, month = data.month;
   const monthTitle = reportMonth(data.period.month);
   return <>
-    <p>{company.registeredName} · {company.provinceLabel} · {company.industryGroup.label}</p>
-    <p className="text-sm">{W.detailBase} · {W.receiptDefinition}</p>
+    <p>{[company.registeredName, company.provinceLabel, company.industryGroup.label].filter(Boolean).join(' · ')}</p>
+    <p className="text-sm">{W.receiptDefinition}</p>
     <Reasons codes={data.monthReasonCodes} />
     {month && <div className="grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-4">{([[W.net, <Figure key="net" value={month.money.netReceiptsSatang} moneyValue netValue />], [W.receiptCount, <Figure key="receipts" value={sourceCount(month.usage.expenseReceiptCountInPeriod, data.coverage.usage)} />], [W.days, <Figure key="days" value={sourceCount(month.usage.activeDays, data.coverage.usage)} />], [W.ai, <Figure key="ai" value={sourceCount(month.usage.aiRequests, data.coverage.usage)} />]] as Array<[string, ReactNode]>).map(([label, value]) => <MangmeeStatCard key={label} label={`${label} ${monthTitle}`} value={value} />)}</div>}
     {tab === 'history' ? history && <Card title={W.history}>{history.items.length === 0 ? <EmptyState title={W.noHistory} description="" /> : <ol className="space-y-3">{history.items.map((event, index) => <li key={index} className="border-b py-3"><p>{reportDateTime(event.at)}</p><p>{EXECUTIVE_HISTORY_EVENT_LABELS[event.kind]} {event.planLabel}</p></li>)}</ol>}</Card> : tab === 'usage' ? month && <>
@@ -245,8 +250,8 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }
         <p>{W.paid}: {month.paidInMonth ? W.paid : data.coverage.money.coverage === 'complete' ? W.noReceipts : LABELS.paidEver.UNKNOWN} · {W.positive}: {month.positiveNetInMonth ? W.positive : data.coverage.money.coverage === 'complete' ? W.noPositiveNet : LABELS.paidEver.UNKNOWN}</p>
       </Card>
     </> : tab === 'company' && <>
-      <Card title={W.filterLabels.discovery}><DetailValues rows={[[W.filterLabels.discovery, thaiLabel(company.discovery.label)], [LABELS.discovery.OTHER!, company.discovery.otherText || W.unknown], [W.filterLabels.signupRail, thaiLabel(LABELS.signupRail[company.signupRail] ?? W.unknown)], [W.referring, referrer(company.referrer)], [W.creditedSeller, thaiLabel(company.creditedSeller.label || W.unknown, company.creditedSeller.salesCode)], [W.creditAmount, company.creditedSeller.creditSatang === undefined ? '—' : money(company.creditedSeller.creditSatang)], [W.creditAt, reportDateTime(company.creditedSeller.creditedAt)]]} /><p className="text-sm">{W.current} · {W.through(reportDateTime(data.build.asOf))}</p>{W.creditNotes.map(note => <p key={note} className="text-sm">{note}</p>)}</Card>
-      <Card title={W.companyTab}><DetailValues rows={[[W.company, company.displayName], [W.registered, company.registeredName || W.unknown], [W.group, company.industryGroup.label], [W.businessType, company.businessTypeLabel || company.businessTypeOtherText || W.unknown], [W.province, company.provinceLabel], [W.joined, reportDate(company.joinedAt)], [W.filterLabels.companyStatus, LABELS.companyStatus[company.companyStatus] ?? W.unknown], ...contactFields(company.ownerContact).map(([field, value]): [string, ReactNode] => [W[field], value])]} />{company.ownerContact.status !== 'NOT_PERMITTED' && <p className="text-sm">{W.contactAt(reportDateTime(contactReadAt))}</p>}</Card>
+      <Card title={W.filterLabels.discovery}><DetailValues rows={[[W.filterLabels.discovery, thaiLabel(company.discovery.label)], ...(company.discovery.key === 'OTHER' ? [[LABELS.discovery.OTHER!, company.discovery.otherText || W.unknown] as [string, ReactNode]] : []), [W.filterLabels.signupRail, thaiLabel(LABELS.signupRail[company.signupRail] ?? W.unknown)], [W.referring, referrer(company.referrer)], [W.creditedSeller, thaiLabel(company.creditedSeller.label || W.unknown, company.creditedSeller.salesCode)], [W.creditAmount, company.creditedSeller.creditSatang === undefined ? '—' : money(company.creditedSeller.creditSatang)], [W.creditAt, reportDateTime(company.creditedSeller.creditedAt)]]} /><p className="text-sm">{W.current} · {W.through(reportDateTime(data.build.asOf))}</p>{W.creditNotes.map(note => <p key={note} className="text-sm">{note}</p>)}</Card>
+      <Card title={W.companyTab}><DetailValues rows={[[W.company, company.displayName], [W.registered, company.registeredName || W.unknown], [W.group, company.industryGroup.label], [W.businessType, company.businessTypeLabel || company.businessTypeOtherText || W.unknown], [W.province, company.provinceLabel], [W.joined, reportDate(company.joinedAt)], [W.filterLabels.companyStatus, LABELS.companyStatus[company.companyStatus] ?? W.unknown], ...contactFields(company.ownerContact).map(([field, value]): [string, ReactNode] => [W[field], value])]} />{company.ownerContact.status === 'NOT_PERMITTED' ? <p className="text-sm">{W.contactNotPermitted}</p> : <p className="text-sm">{W.contactAt(reportDateTime(contactReadAt))}</p>}</Card>
       <Card title={W.service}><p>{W.current} · {W.through(reportDateTime(data.build.asOf))}</p><DetailValues rows={[[W.plan, company.planLabel], [W.filterLabels.planState, <div key="state">{LABELS.planState[company.planState] ?? W.unknown}{company.planState === 'ADMIN_HOLD' && <p>{LABELS.companyStatus[company.companyStatus] ?? W.unknown}</p>}</div>], [W.planEnds, reportDate(company.planEndsAt)], [W.members, company.currentActiveMemberCount], [W.branches, company.currentBranchCount], [W.lastActivity, reportDateTime(company.lastActivityAt)]]} /></Card>
       {admin && <ReportLink href={`/system/partners/${encodeURIComponent(company.id)}`} remember={nav.remember}>{W.management}</ReportLink>}
     </>}
