@@ -27,7 +27,8 @@ test.describe('@smoke reference — ready modules render under real auth', () =>
     await expectNoClientError(authedPage);
 
     await authedPage.goto(`/companies/${companyId}/accounting`);
-    await expect(authedPage.getByRole('heading', { name: /Accounting documents/i })).toBeVisible();
+    // The document list's heading, Thai since a9f3d33fb (it read "Accounting documents" before).
+    await expect(authedPage.getByRole('heading', { name: 'เอกสารบัญชี', exact: true })).toBeVisible();
     await expectNoClientError(authedPage);
 
     await authedPage.goto(`/companies/${companyId}/reports`);
