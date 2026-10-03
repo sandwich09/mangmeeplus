@@ -15,6 +15,12 @@ export type WebSession = {
   canSkipCurrentPassword: boolean;
   /** Current access token is blocked from business routes until the legal release is acknowledged. */
   legalAcceptanceRequired: boolean;
+  /**
+   * The company's screen setting "แสดงเมนูบันทึกด้วยมือบนเว็บ". Not an authority: read it only through
+   * `canOpenManualWeb`. Optional because an older API answers without it, and a missing value shows
+   * the entrances.
+   */
+  manualExpenseWebEntry?: boolean;
 };
 
 export type SessionState =

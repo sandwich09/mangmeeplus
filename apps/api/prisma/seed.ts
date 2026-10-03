@@ -2961,6 +2961,18 @@ async function main() {
   });
   await seedBloomDemoWorkspace(company2.id, owner.id, branch2.id);
 
+  // "แสดงเมนูบันทึกด้วยมือบนเว็บ": a company without a row reads as NOT shown
+  // (MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW), and the demo and e2e journeys open that page — so both
+  // demo companies are switched on here, in the seed, instead of in each test. Re-seeding restores
+  // the value; the setting's version is left alone.
+  for (const tenantCompany of [company, company2]) {
+    await prisma.companyWebEntrySetting.upsert({
+      where: { companyId: tenantCompany.id },
+      update: { manualExpenseEntryEnabled: true },
+      create: { companyId: tenantCompany.id, manualExpenseEntryEnabled: true },
+    });
+  }
+
   // Default document sequences (monthly reset, padding 5)
   const DEFAULT_SEQUENCES = [
     { documentType: 'accounting.quotation',    prefixTemplate: 'QT-{YYYY}{MM}-{SEQ}' },

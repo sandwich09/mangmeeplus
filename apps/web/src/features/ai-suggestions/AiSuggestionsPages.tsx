@@ -58,8 +58,12 @@ function ErrorBanner({ message }: { message: string }) {
 
 const TABS = SUGGESTION_TABS;
 
-export function AiSuggestionsHubPage({ companyId, permissions = [] }: { companyId: string; permissions?: string[] }) {
-  const guidance = permittedUsageGuidance(permissions);
+export function AiSuggestionsHubPage({ companyId, permissions = [], canOpenManualExpense }: {
+  companyId: string; permissions?: string[];
+  /** `canOpenManualWeb` of the server session; left out, the permission decides. */
+  canOpenManualExpense?: boolean;
+}) {
+  const guidance = permittedUsageGuidance(permissions, canOpenManualExpense);
   const canRequest = permissions.some((key) => ['ai.suggestion.request', 'ai.draft.request'].includes(key));
   const [tab, setTab] = useState<string>('new');
   const [rows, setRows] = useState<any[]>([]);

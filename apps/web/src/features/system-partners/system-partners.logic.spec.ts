@@ -25,6 +25,9 @@ import {
   toggleMenuCard,
   toggleMenuGroup,
   toggleSubmenu,
+  manualWebEntryRow,
+  MANUAL_WEB_ENTRY_COPY,
+  MANUAL_WEB_ENTRY_SUBMENU_KEY,
   NORMALIZATION_PENDING_NOTICE,
   NOT_DISABLED_NOTICE,
 } from './system-partners.logic';
@@ -459,6 +462,14 @@ describe('feature package editing guidance', () => {
     }
   });
 
+  // The manual-expense web menu switch is no entitlement: it still works while the package switches
+  // wait for their rights to be prepared, so a notice that said nothing could change would be untrue.
+  it('names the one switch that still works while the package switches are locked, and only while it does', () => {
+    assert.equal(featurePackageEditingNotice(true, true), 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “แสดงเมนูบันทึกด้วยมือบนเว็บ”');
+    assert.equal(featurePackageEditingNotice(true, false), 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้');
+    assert.equal(featurePackageEditingNotice(false, true), 'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ');
+  });
+
   it('explains review and save when editable without promising every feature can change', () => {
     assert.equal(
       featurePackageEditingNotice(false),
@@ -556,5 +567,126 @@ describe('refused save resets pending state', () => {
     const reset = server.map(({ featureKey, enabled }) => ({ featureKey, enabled }));
     assert.deepEqual(changedEntitlements(server, reset), []);
     assert.deepEqual(diffEntitlements(server, reset), { turningOn: [], turningOff: [] });
+  });
+});
+
+// manual-expense-web-entry-flag spec §8. "แสดงเมนูบันทึกด้วยมือบนเว็บ" sits under the "บันทึกด้วยมือ" row
+// but is a per-company screen setting with its own command — never a key of the entitlement set.
+describe('manual-expense web entry row', () => {
+  const setting = (enabled: boolean) => ({ enabled, version: enabled ? 1 : 0 });
+
+  it('hangs under the manual-expense submenu and is no entitlement key', () => {
+    assert.equal(MANUAL_WEB_ENTRY_SUBMENU_KEY, 'expenses.manual');
+    const expenses = FEATURE_CATALOG.find((feature) => feature.key === 'expenses')!;
+    assert.ok(expenses.submenus.some((submenu) => submenu.key === MANUAL_WEB_ENTRY_SUBMENU_KEY));
+    // AC01: the catalog did not grow, and nothing in it names a web entry.
+    assert.equal(ALL_FEATURE_ENTITLEMENT_KEYS.length, 62);
+    assert.ok(!ALL_FEATURE_ENTITLEMENT_KEYS.some((key) => /web_entry|webEntry/i.test(key)));
+  });
+
+  it('never rides in a preset, a group or card toggle, or the entitlement change set', () => {
+    const server = enabledState();
+    const onlyCatalogKeys = (rows: ReadonlyArray<{ featureKey: string }>) => rows.every((row) => ALL_FEATURE_ENTITLEMENT_KEYS.includes(row.featureKey));
+    for (const presetKey of Object.keys(FEATURE_PACKAGE_PRESETS) as Array<keyof typeof FEATURE_PACKAGE_PRESETS>) {
+      const next = applyPreset(server, presetKey);
+      assert.ok(onlyCatalogKeys(next), presetKey);
+      assert.ok(onlyCatalogKeys(changedEntitlements(server, next)), presetKey);
+    }
+    const expensesCard = buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, server).find((card) => card.navKey === 'expenses')!;
+    for (const next of [toggleMenuGroup(server, [expensesCard], false), toggleMenuCard(server, binding('expenses'), false), toggleSubmenu(server, 'expenses.manual', false)]) {
+      assert.ok(onlyCatalogKeys(next));
+      assert.ok(onlyCatalogKeys(changedEntitlements(server, next)));
+      const diff = diffEntitlements(server, next);
+      assert.ok(onlyCatalogKeys([...diff.turningOn, ...diff.turningOff]));
+    }
+  });
+
+  it('can be switched for a shop whose manual-expense feature is on, also a shop without entitlement rows', () => {
+    for (const saved of [enabledState(), []]) {
+      const row = manualWebEntryRow(saved, setting(false));
+      assert.equal(row.parentOpen, true);
+      assert.equal(row.parentOffMessage, null);
+    }
+  });
+
+  it('cannot be switched while the parent features that are SAVED are off, and says what to do', () => {
+    for (const off of ['expenses.manual', 'expenses']) {
+      for (const stored of [true, false]) {
+        const row = manualWebEntryRow(enabledState(off), setting(stored));
+        assert.equal(row.parentOpen, false, off);
+        assert.equal(row.parentOffMessage, 'เปิดฟีเจอร์บันทึกด้วยมือและบันทึกก่อน จึงจะตั้งค่านี้ได้', off);
+        // With the feature off nobody can create at all, and the row already says why.
+        assert.equal(row.uploadOffNote, null, off);
+      }
+    }
+  });
+
+  // A state word next to the switch says what the shop sees. With the manual-expense feature saved off,
+  // or the company closed, the shop sees no menu whatever is stored, so the row must not say "แสดง".
+  it('says the menu is shown only while the shop can see it', () => {
+    assert.equal(manualWebEntryRow(enabledState(), setting(true)).shown, true);
+    assert.equal(manualWebEntryRow(enabledState(), setting(false)).shown, false);
+    for (const off of ['expenses.manual', 'expenses']) {
+      assert.equal(manualWebEntryRow(enabledState(off), setting(true)).shown, false, off);
+    }
+    assert.equal(manualWebEntryRow(enabledState(), setting(true), true).shown, false, 'disabled or archived company');
+  });
+
+  it('can be pressed only while the company is open and the manual-expense feature is saved on', () => {
+    assert.equal(manualWebEntryRow(enabledState(), setting(true)).editable, true);
+    assert.equal(manualWebEntryRow([], setting(false)).editable, true, 'a shop without entitlement rows');
+    assert.equal(manualWebEntryRow(enabledState('expenses.manual'), setting(true)).editable, false);
+    assert.equal(manualWebEntryRow(enabledState(), setting(false), true).editable, false);
+  });
+
+  it('asks before hiding only, and never before showing', () => {
+    assert.deepEqual(manualWebEntryRow(enabledState(), setting(false)).confirmLines(true), []);
+    assert.deepEqual(manualWebEntryRow(enabledState('expenses.upload'), setting(false)).confirmLines(true), []);
+    assert.deepEqual(manualWebEntryRow(enabledState(), setting(true)).confirmLines(false), [
+      'ซ่อนเมนูบันทึกด้วยมือของร้านนี้ใช่ไหม พนักงานที่กำลังกรอกอยู่จะบันทึกต่อได้ แต่ถ้าหน้าเว็บถูกโหลดใหม่จะกลับเข้าหน้านี้ไม่ได้ แนะนำให้ปิดนอกเวลางาน',
+    ]);
+  });
+
+  it('adds the receipt-upload warning to the confirmation when the shop has upload off', () => {
+    assert.deepEqual(manualWebEntryRow(enabledState('expenses.upload'), setting(true)).confirmLines(false), [
+      'ซ่อนเมนูบันทึกด้วยมือของร้านนี้ใช่ไหม พนักงานที่กำลังกรอกอยู่จะบันทึกต่อได้ แต่ถ้าหน้าเว็บถูกโหลดใหม่จะกลับเข้าหน้านี้ไม่ได้ แนะนำให้ปิดนอกเวลางาน',
+      'ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ ถ้าซ่อนเมนูนี้ด้วย พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่ายจะไม่มีปุ่มสร้างรายจ่ายบนเว็บ',
+    ]);
+  });
+
+  it('keeps a standing note while upload is off and the menu is not shown, whoever pressed nothing', () => {
+    const note = 'ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ และไม่ได้แสดงเมนูบันทึกด้วยมือ พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่ายจึงไม่มีปุ่มสร้างรายจ่ายบนเว็บ';
+    assert.equal(manualWebEntryRow(enabledState('expenses.upload'), setting(false)).uploadOffNote, note);
+    // Shown, or upload on: staff have a create button, so there is nothing to note.
+    assert.equal(manualWebEntryRow(enabledState('expenses.upload'), setting(true)).uploadOffNote, null);
+    assert.equal(manualWebEntryRow(enabledState(), setting(false)).uploadOffNote, null);
+  });
+
+  it('reads the SAVED entitlements, never the pending ones the operator has not saved yet', () => {
+    const saved = enabledState('expenses.manual');
+    const pending = toggleSubmenu(saved, 'expenses.manual', true);
+    assert.equal(entitlementEnabled(pending, 'expenses.manual'), true);
+    // The page passes `entitlements` (the server rows): the row stays closed until the save.
+    assert.equal(manualWebEntryRow(saved, setting(false)).parentOpen, false);
+  });
+
+  it('words the switch, its description and the result exactly as the spec does', () => {
+    assert.deepEqual(MANUAL_WEB_ENTRY_COPY, {
+      label: 'แสดงเมนูบันทึกด้วยมือบนเว็บ',
+      description: 'ค่าเริ่มต้นของทุกร้านคือไม่แสดง เปิดเพื่อให้ร้านนี้เห็นเมนูและปุ่มที่พาไปหน้าบันทึกด้วยมือบนเว็บ การปิดไม่ได้ห้ามการบันทึกรายจ่ายด้วยมือ ใบรับรองแทนใบเสร็จ การพิมพ์ใน LINE และการแก้รายการเดิมยังใช้ได้ตามสิทธิ์และช่องทางที่ร้านมี',
+      shown: 'แสดง',
+      notShown: 'ไม่แสดง',
+      confirmHideLabel: 'ซ่อนเมนู',
+      cancelHideLabel: 'ยังไม่ซ่อน',
+      savedShown: 'แสดงเมนูบันทึกด้วยมือแล้ว',
+      savedHidden: 'ซ่อนเมนูบันทึกด้วยมือแล้ว',
+    });
+    // The 409 text lives with the other API codes, one place for the page and for any other caller.
+    assert.equal(translateApiError('manual_expense_web_entry_version_conflict'), 'ค่านี้ถูกเปลี่ยนไปแล้ว กรุณาตรวจค่าล่าสุดก่อนบันทึกอีกครั้ง');
+    // No sentence speaks of a missing permission of the reader, a closed system, or "not yet".
+    const all = [...Object.values(MANUAL_WEB_ENTRY_COPY), ...manualWebEntryRow(enabledState('expenses.upload'), setting(true)).confirmLines(false),
+      manualWebEntryRow(enabledState('expenses.upload'), setting(false)).uploadOffNote, manualWebEntryRow(enabledState('expenses.manual'), setting(false)).parentOffMessage].join(' ');
+    // …and none carries an English word or a code token; LINE is the product's own name.
+    assert.doesNotMatch(all, /คุณไม่มีสิทธิ์|ระบบถูกปิด|ยังไม่แสดง|ยังไม่เปิดใช้|(?<![A-Za-z])(?!LINE(?![A-Za-z]))[A-Za-z]{2,}/);
   });
 });

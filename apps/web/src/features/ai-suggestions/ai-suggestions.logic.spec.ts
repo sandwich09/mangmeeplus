@@ -112,3 +112,17 @@ it('shows usage guidance only for permitted actions', async () => {
   assert.deepEqual(own.map((g) => g.path), ['expenses/manual']);
   assert.ok(!JSON.stringify(own).includes('CRM'));
 });
+
+// manual-expense-web-entry-flag spec §9.1: the "บันทึกค่าใช้จ่ายด้วยมือ" card follows the one predicate.
+it('leaves the manual-expense guidance out when the company does not show that page', async () => {
+  const { permittedUsageGuidance } = await import('./ai-suggestions.logic');
+  const permissions = ['expense.receipt.upload', 'expense.create', 'expense.review'];
+  const paths = (canOpenManualExpense?: boolean) => permittedUsageGuidance(permissions, canOpenManualExpense).map((g) => g.path);
+  assert.deepEqual(paths(true), ['expenses/upload', 'expenses/manual', 'expenses']);
+  assert.deepEqual(paths(false), ['expenses/upload', 'expenses']);
+  // Said nothing: the permission decides, as before.
+  assert.deepEqual(paths(), ['expenses/upload', 'expenses/manual', 'expenses']);
+  // The setting never offers the card to a session that may not create.
+  assert.deepEqual(permittedUsageGuidance(['expense.review'], true).map((g) => g.path), ['expenses']);
+});
+

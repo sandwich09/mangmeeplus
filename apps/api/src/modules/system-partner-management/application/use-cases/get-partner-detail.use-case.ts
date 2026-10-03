@@ -13,6 +13,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { isCurrentEntitlementNormalization } from '../../../employee-access/application/normalize-entitlements';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
+import { manualExpenseWebEntryState } from '../../domain/logic/manual-expense-web-entry.logic';
 
 const PLATFORM_DISABLE_REASON = 'ฟีเจอร์พื้นฐานของระบบปิดไม่ได้';
 
@@ -67,6 +68,7 @@ export class GetPartnerDetailUseCase {
           orderBy: { featureKey: 'asc' },
         },
         aiConfiguration: { select: { modelId: true, updatedAt: true } },
+        webEntrySetting: { select: { manualExpenseEntryEnabled: true, version: true } },
         entitlementSet: { select: { setVersion: true } },
         entitlementNormalization: {
           select: { status: true, normalizerVersion: true, cohortKind: true },
@@ -186,6 +188,8 @@ export class GetPartnerDetailUseCase {
       // The command imports this exact predicate too; a stale version or missing cohort can never
       // make the screen editable while the write path still refuses it.
       entitlementNormalizationPending: !isCurrentEntitlementNormalization(c.entitlementNormalization),
+      // A screen setting with its own version, readable whatever state the entitlement rows are in.
+      manualExpenseWebEntry: manualExpenseWebEntryState(c.webEntrySetting),
       planState: planTermState(c.planTerm, now, c.status),
       ...(c.planTerm && c.planTerm.termEndsAt.getTime() <= now.getTime() ? { lockReason: planTermLockReason(c.planTerm) } : {}),
     };

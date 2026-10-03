@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BadRequestException, ForbiddenException, ValidationPipe, type ExecutionContext } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException, ValidationPipe, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { OwnerNameBodyDto, PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetOcrConfigBodyDto } from './partner.controller';
+import { OwnerNameBodyDto, PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetManualExpenseWebEntryBodyDto, SetOcrConfigBodyDto } from './partner.controller';
 import { SystemAiBudgetController } from './system-ai-budget.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
@@ -10,6 +10,8 @@ import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.
 import { ALL_FEATURE_ENTITLEMENT_KEYS } from '@watchdog-bms/contracts';
 import { NORMALIZER_VERSION } from '../../../employee-access/application/normalize-entitlements';
 import { GetPartnerDetailUseCase } from '../../application/use-cases/get-partner-detail.use-case';
+import { SetPartnerManualExpenseWebEntryUseCase } from '../../application/use-cases/set-partner-manual-expense-web-entry.use-case';
+import { MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, manualExpenseWebEntryState } from '../../domain/logic/manual-expense-web-entry.logic';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 import 'reflect-metadata';
 
@@ -53,6 +55,7 @@ function makeUCs() {
         fieldLatched: { registeredName: false, addressJson: false }, allowedChangeKinds: ['CORRECTION', 'LEGAL_CHANGE'], companyId }),
     } as any,
     listThaiAddresses: { execute: async (postalCode: string) => ([{ postalCode, provinceCode: '10', provinceTh: 'กรุงเทพมหานคร', districtCode: '1', districtTh: 'ดุสิต', subdistrictCode: '1', subdistrictTh: 'ดุสิต' }]) } as any,
+    setManualExpenseWebEntry: { execute: async (cmd: any) => ({ enabled: cmd.enabled, version: 1 }) } as any,
   };
 }
 
@@ -67,7 +70,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
     uc.getPlanTerm, {execute:async()=>({items:[],nextCursor:null})} as any, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
     uc.timeline, uc.lineMessage, uc.aiCreditHolds, uc.setOwnerName,
-    uc.updateIdentity, uc.listThaiAddresses,
+    uc.updateIdentity, uc.listThaiAddresses, uc.setManualExpenseWebEntry,
   );
 }
 
@@ -214,6 +217,30 @@ describe('PartnerController', () => {
     }
   });
 
+  it('setManualExpenseWebEntry() passes the absolute value, the CAS version and the admin context', async () => {
+    let called: any;
+    const ctrl = makeCtrl({ setManualExpenseWebEntry: { execute: async (cmd: any) => { called = cmd; return { enabled: cmd.enabled, version: 3 }; } } as any });
+    const result = await ctrl.setManualExpenseWebEntry('co-1', { enabled: true, expectedVersion: 2 }, makeReq());
+    assert.deepEqual(called, { companyId: 'co-1', enabled: true, expectedVersion: 2, requestingAdminUserId: 'admin-1', requestId: 'req-1' });
+    assert.deepEqual(result, { enabled: true, version: 3 });
+  });
+
+  it('the manual-expense web-entry DTO takes exactly the value and the CAS version', async () => {
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const run = (body: Record<string, unknown>) =>
+      pipe.transform(body, { type: 'body', metatype: SetManualExpenseWebEntryBodyDto }) as Promise<any>;
+    assert.deepEqual({ ...(await run({ enabled: false, expectedVersion: 0 })) }, { enabled: false, expectedVersion: 0 });
+    assert.equal((await run({ enabled: true, expectedVersion: 7 })).expectedVersion, 7);
+    for (const poison of [
+      {}, { enabled: true }, { expectedVersion: 0 }, { enabled: 'true', expectedVersion: 0 },
+      { enabled: true, expectedVersion: -1 }, { enabled: true, expectedVersion: 1.5 },
+      // Not an entitlement command and not a quota change: neither a feature list nor a reason belongs here.
+      { enabled: true, expectedVersion: 0, features: [] }, { enabled: true, expectedVersion: 0, reason: 'x' },
+    ]) {
+      await assert.rejects(() => run(poison), BadRequestException, JSON.stringify(poison));
+    }
+  });
+
   it('the ai-model body DTO keeps null (clear) and absent (leave alone) distinguishable', async () => {
     // The exact global pipe main.ts registers, against the DTO the ai-model route binds.
     const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
@@ -285,6 +312,8 @@ describe('PartnerController', () => {
       ['setFeatureEntitlements', 'system.partner_feature.manage'],
       ['setAiModelConfig', 'system.partner_ai_model.manage'],
       ['setOcrConfiguration', 'system.partner_ai_model.manage'],
+      // A screen setting shown under a feature row: the feature-management key, no new permission.
+      ['setManualExpenseWebEntry', 'system.partner_feature.manage'],
       ['aiAdjustments', 'system.partner_ai_model.manage'],
       // Read-only meter: reuses the partner detail read permission, no new permission (spec §7.7).
       ['aiUsage', 'system.partner_dashboard.read'],
@@ -478,7 +507,7 @@ describe('PartnerController', () => {
 
   it('no route uses a :companyId param (auth guard would demand membership in the CUSTOMER company)', () => {
     const proto = PartnerController.prototype as unknown as Record<string, unknown>;
-    for (const method of ['list', 'detail', 'update', 'transitionLifecycle', 'setFeatureEntitlements', 'setAiModelConfig', 'setOcrConfiguration', 'aiUsage']) {
+    for (const method of ['list', 'detail', 'update', 'transitionLifecycle', 'setFeatureEntitlements', 'setAiModelConfig', 'setOcrConfiguration', 'setManualExpenseWebEntry', 'aiUsage']) {
       const path: string | string[] | undefined = Reflect.getMetadata('path', proto[method] as object);
       const paths = Array.isArray(path) ? path : [path ?? ''];
       for (const p of paths) {
@@ -514,6 +543,7 @@ function detailCompany(marker: { status: string; normalizerVersion: number; coho
     entitlementNormalization: marker,
     signupRequests: [],
     memberships: [],
+    webEntrySetting: null as { manualExpenseEntryEnabled: boolean; version: number } | null,
   };
 }
 
@@ -554,6 +584,176 @@ describe('GetPartnerDetailUseCase — truthful feature-command readiness', () =>
     ]) {
       const result = await detailUseCase(detailCompany(marker)).execute('co-1');
       assert.equal(result.entitlementNormalizationPending, true, JSON.stringify(marker));
+    }
+  });
+});
+
+// "แสดงเมนูบันทึกด้วยมือบนเว็บ" (manual-expense-web-entry-flag spec §5): a per-company screen setting
+// that is NOT an entitlement. One place says what a company without a row reads as; the partner
+// detail, GET /auth/me and the command below all read through it.
+describe('manual-expense web entry — what a company without a row reads as', () => {
+  it('is decided in one place: not shown until the system admin switches it on (owner 2026-10-02)', () => {
+    assert.equal(MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, false);
+    assert.deepEqual(manualExpenseWebEntryState(null), { enabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, version: 0 });
+    assert.deepEqual(manualExpenseWebEntryState(undefined), { enabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, version: 0 });
+  });
+
+  it('lets a stored row say either value, whatever the no-row reading is', () => {
+    assert.deepEqual(manualExpenseWebEntryState({ manualExpenseEntryEnabled: true, version: 0 }), { enabled: true, version: 0 });
+    assert.deepEqual(manualExpenseWebEntryState({ manualExpenseEntryEnabled: false, version: 4 }), { enabled: false, version: 4 });
+  });
+
+  it('the partner detail answers the value and its version for a company that has no row', async () => {
+    const result = await detailUseCase(detailCompany({
+      status: 'COMPLETED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'EXPLICIT',
+    })).execute('co-1');
+    assert.deepEqual(result.manualExpenseWebEntry, { enabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, version: 0 });
+  });
+
+  it('the partner detail answers the stored value, also while the entitlement rows are not prepared yet', async () => {
+    const row = detailCompany({ status: 'STARTED', normalizerVersion: NORMALIZER_VERSION, cohortKind: 'LEGACY' });
+    row.webEntrySetting = { manualExpenseEntryEnabled: true, version: 3 };
+    const result = await detailUseCase(row).execute('co-1');
+    assert.deepEqual(result.manualExpenseWebEntry, { enabled: true, version: 3 });
+    assert.equal(result.entitlementNormalizationPending, true);
+  });
+});
+
+/**
+ * A transaction client that knows only the four things the command may touch. Reaching for anything
+ * else — an entitlement table, the entitlement set, a LINE conversation table, a billing table —
+ * throws, so "the switch never touches authority, money or LINE" is a property of every case below.
+ */
+function webEntryHarness(init: {
+  company?: { id: string; status: string } | null;
+  row?: { manualExpenseEntryEnabled: boolean; version: number } | null;
+} = {}) {
+  const company = init.company === undefined ? { id: 'co-1', status: 'ACTIVE' } : init.company;
+  let row = init.row ?? null;
+  const audits: any[] = [];
+  const writes: any[] = [];
+  const locks: unknown[] = [];
+  let insideTransaction = false;
+  const only = <T extends object>(name: string, target: T): T => new Proxy(target, {
+    get(obj, key) {
+      if (key in obj) return (obj as any)[key];
+      throw new Error(`${name}.${String(key)} must not be touched by the manual-expense web-entry command`);
+    },
+  });
+  const tx = only('tx', {
+    $queryRaw: async (...args: unknown[]) => { locks.push(args); return []; },
+    company: only('tx.company', { findUnique: async () => company }),
+    companyWebEntrySetting: only('tx.companyWebEntrySetting', {
+      findUnique: async () => row,
+      upsert: async (args: any) => {
+        assert.ok(insideTransaction, 'the write must happen inside the transaction');
+        writes.push(args);
+        row = row
+          ? { manualExpenseEntryEnabled: args.update.manualExpenseEntryEnabled, version: row.version + args.update.version.increment }
+          : { manualExpenseEntryEnabled: args.create.manualExpenseEntryEnabled, version: args.create.version };
+        return row;
+      },
+    }),
+    auditLog: only('tx.auditLog', {
+      create: async (args: any) => {
+        assert.ok(insideTransaction, 'the audit row must be written inside the same transaction as the value');
+        audits.push(args.data);
+      },
+    }),
+  });
+  const prisma = { client: only('client', {
+    $transaction: async (run: (client: typeof tx) => Promise<unknown>) => {
+      insideTransaction = true;
+      try { return await run(tx); } finally { insideTransaction = false; }
+    },
+  }) } as any;
+  const run = (enabled: unknown, expectedVersion: unknown) => new SetPartnerManualExpenseWebEntryUseCase(prisma).execute({
+    companyId: 'co-1', enabled: enabled as boolean, expectedVersion: expectedVersion as number,
+    requestingAdminUserId: 'admin-1', requestId: 'req-1',
+  });
+  return { run, audits, writes, locks, row: () => row };
+}
+
+describe('SetPartnerManualExpenseWebEntryUseCase', () => {
+  it('changes a company that has no row: one row at version 1 and one audit row, in one transaction', async () => {
+    // Written against the no-row reading, not against "shown" or "hidden": it holds whichever the default is.
+    const target = !MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW;
+    const h = webEntryHarness();
+    assert.deepEqual(await h.run(target, 0), { enabled: target, version: 1 });
+    assert.deepEqual(h.row(), { manualExpenseEntryEnabled: target, version: 1 });
+    assert.equal(h.writes.length, 1);
+    assert.deepEqual(h.writes[0].create, {
+      companyId: 'co-1', manualExpenseEntryEnabled: target, version: 1, updatedBySystemAdminUserId: 'admin-1',
+    });
+    assert.deepEqual(h.audits, [{
+      companyId: 'co-1', actorUserId: 'admin-1', action: 'system.partner_manual_expense_web_entry.update',
+      targetType: 'company', targetId: 'co-1', requestId: 'req-1', result: 'SUCCESS', riskLevel: 'MEDIUM',
+      metadataJson: { entryPoint: 'SYSTEM_PARTNER_ADMIN', fromEnabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, toEnabled: target, fromVersion: 0, toVersion: 1 },
+    }]);
+    assert.equal(h.locks.length, 1, 'the company row is locked once, before it is read');
+  });
+
+  it('switches a stored value: the version goes up by one and the change is audited once', async () => {
+    const h = webEntryHarness({ row: { manualExpenseEntryEnabled: true, version: 1 } });
+    assert.deepEqual(await h.run(false, 1), { enabled: false, version: 2 });
+    assert.deepEqual(h.writes[0].update, {
+      manualExpenseEntryEnabled: false, version: { increment: 1 }, updatedBySystemAdminUserId: 'admin-1',
+    });
+    assert.equal(h.audits.length, 1);
+    assert.deepEqual(h.audits[0].metadataJson, {
+      entryPoint: 'SYSTEM_PARTNER_ADMIN', fromEnabled: true, toEnabled: false, fromVersion: 1, toVersion: 2,
+    });
+  });
+
+  it('asking for the value the company already has writes nothing, audits nothing and keeps the version', async () => {
+    // No row reads as the default: asking for the default creates no row.
+    const empty = webEntryHarness();
+    assert.deepEqual(await empty.run(MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, 0), { enabled: MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, version: 0 });
+    assert.equal(empty.row(), null);
+    // A repeated press, or a retry after a lost response, carries a version that is now old: still no conflict.
+    const stored = webEntryHarness({ row: { manualExpenseEntryEnabled: true, version: 3 } });
+    assert.deepEqual(await stored.run(true, 2), { enabled: true, version: 3 });
+    for (const h of [empty, stored]) {
+      assert.deepEqual(h.writes, []);
+      assert.deepEqual(h.audits, []);
+    }
+  });
+
+  it('refuses a real change made from an old version with 409 and the current version, writing nothing', async () => {
+    const h = webEntryHarness({ row: { manualExpenseEntryEnabled: true, version: 2 } });
+    await assert.rejects(() => h.run(false, 1), (error: unknown) => {
+      assert.ok(error instanceof ConflictException);
+      assert.deepEqual((error.getResponse() as any).code, 'manual_expense_web_entry_version_conflict');
+      assert.equal((error.getResponse() as any).currentVersion, 2);
+      return true;
+    });
+    assert.deepEqual(h.row(), { manualExpenseEntryEnabled: true, version: 2 });
+    assert.deepEqual([h.writes, h.audits], [[], []]);
+  });
+
+  it('refuses a disabled or archived company with the partner metadata lock, writing nothing', async () => {
+    for (const status of ['DISABLED', 'ARCHIVED']) {
+      const h = webEntryHarness({ company: { id: 'co-1', status } });
+      await assert.rejects(() => h.run(!MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, 0), (error: unknown) => {
+        assert.ok(error instanceof UnprocessableEntityException, status);
+        assert.match(error.message, new RegExp(`^Company is ${status}:`));
+        return true;
+      });
+      assert.deepEqual([h.writes, h.audits], [[], []], status);
+    }
+  });
+
+  it('answers 404 for a company that does not exist', async () => {
+    const h = webEntryHarness({ company: null });
+    await assert.rejects(() => h.run(!MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW, 0), NotFoundException);
+    assert.deepEqual([h.writes, h.audits], [[], []]);
+  });
+
+  it('rejects a value that is not a boolean and a version that is not a whole number from 0, before any read', async () => {
+    for (const [enabled, expectedVersion] of [['true', 0], [1, 0], [undefined, 0], [true, -1], [true, 1.5], [true, '0'], [true, undefined]] as const) {
+      const h = webEntryHarness();
+      await assert.rejects(() => h.run(enabled, expectedVersion), UnprocessableEntityException, JSON.stringify([enabled, expectedVersion]));
+      assert.deepEqual([h.locks, h.writes, h.audits], [[], [], []]);
     }
   });
 });
