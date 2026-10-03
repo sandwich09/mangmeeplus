@@ -158,6 +158,11 @@ function RevenueContent({ data }: { data: ExecutiveAnalysis & { revenue: NonNull
     </Card>
   </>;
 }
+// Counts and both shares of a group as the backend returned them; the page divides nothing.
+function spendGroupText(data: ExecutiveSpendConcentration, key: 'TOP20' | 'REST' | 'TO80'): string {
+  const [count, companies, weight] = key === 'TOP20' ? [data.topCount, data.topCompanyShare, data.topShare] : key === 'REST' ? [data.restCount, data.restCompanyShare, data.restShare] : [data.prefix80Count, data.prefix80CompanyShare, data.prefix80Share];
+  return count === null ? '—' : `${W.groupCompanies(count, data.population, ratioText(companies))} · ${W.ofWeight(ratioText(weight))}`;
+}
 function SpendContent({ data, nav }: { data: ExecutiveSpendConcentration; nav: Navigation }) {
   const blocked = data.topCount === null;
   return <Card title={W.spendTitle(reportMonth(nav.params.get('month')))}>
@@ -166,11 +171,11 @@ function SpendContent({ data, nav }: { data: ExecutiveSpendConcentration; nav: N
     {data.reasonCodes.includes('BILLING_SCAN_NOT_COMPLETE') && <p>{W.partialRanking}</p>}
     {blocked ? data.reasonCodes.includes('TOO_FEW_COMPANIES') && <ReportLink href={`${menuHref('companies', nav.params)}&sortBy=netReceipts&sortDir=desc`} remember={nav.remember}>{W.allRanks}</ReportLink> : <>
       <div className="flex h-11 overflow-hidden rounded border border-gray-700" role="group" aria-label={W.top}><Link href={drilldownHref(nav.params, nav.from, data.drilldownFilters.TOP20!)} onClick={nav.remember} aria-label={LABELS.spendCohort.TOP20} className="bg-brand-800" style={{ width: `${data.topShare?.value ?? 0}%` }} /><Link href={drilldownHref(nav.params, nav.from, data.drilldownFilters.REST!)} onClick={nav.remember} aria-label={LABELS.spendCohort.REST} className="flex-1 border bg-gray-100" /></div>
-      {(['TOP20', 'REST', 'TO80'] as const).map(key => <div key={key}><DrillLink nav={nav} filters={data.drilldownFilters[key]!}>{LABELS.spendCohort[key]}{key === 'TOP20' ? ` · ${data.topCount} ${W.unitCompany} · ${ratioText(data.topShare)}` : key === 'TO80' ? ` · ${data.prefix80Count} ${W.unitCompany} · ${ratioText(data.prefix80Share)}` : ''}</DrillLink>
+      {(['TOP20', 'REST', 'TO80'] as const).map(key => <div key={key}><DrillLink nav={nav} filters={data.drilldownFilters[key]!}>{LABELS.spendCohort[key]} · {spendGroupText(data, key)}</DrillLink>
         {key !== 'REST' && spendTieText(key === 'TOP20' ? data.boundaryTie : data.prefix80BoundaryTie) && <div><DrillLink nav={nav} filters={data.drilldownFilters[key === 'TOP20' ? 'BOUNDARY_TIE' : 'TO80_BOUNDARY_TIE']!}>{spendTieText(key === 'TOP20' ? data.boundaryTie : data.prefix80BoundaryTie)}</DrillLink></div>}
       </div>)}
-      <p>{W.companyCount} {data.topCount} / {data.population} · {W.positive} {data.positiveCompanyCount}</p>
-      {data.positiveCompanyCount < data.topTargetCount && <p>{W.fewPositive}</p>}
+      <p>{W.positive} {data.positiveCompanyCount.toLocaleString('th-TH')} {W.unitCompany}{data.nonPositiveCount > 0 && ` · ${W.nonPositive(data.nonPositiveCount)}`}</p>
+      {data.positiveCompanyCount < data.topTargetCount && <p>{W.fewPositive}</p>}{data.roundingNote && <p className="text-sm">{W.rounding}</p>}
     </>}
     <DetailValues rows={[[W.positiveNet, moneyText(sourceMoney(data.positiveNetTotalSatang, data))], [W.net, moneyText(sourceMoney(data.signedNetTotalSatang, data))], [W.negativeTotal, moneyText(sourceMoney(data.negativeNetSatang, data))]]} />
     {data.receiptsWithoutPositiveNet > 0 && <p>{W.refundedDifference(data.receiptsWithoutPositiveNet)}</p>}
@@ -236,8 +241,7 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }
         ]} />
         <ReportTable title={W.usage} columns={[{ label: W.discovery }, { label: W.days }, { label: W.users }, { label: W.receiptCount }]} rows={(['Line', 'Web'] as const).map(channel => ({ key: channel, cells: [channel === 'Line' ? W.line : W.web, <Figure key="days" value={sourceCount(month.usage[`activeDays${channel}`], data.coverage.usage)} />, <Figure key="users" value={sourceCount(month.usage[`activeUsers${channel}`], data.coverage.usage)} />, <Figure key="receipts" value={sourceCount(month.usage[`expenseReceipts${channel}`], data.coverage.usage)} />] }))} />
       </Card>
-      <Card title={W.revenue}><p>{W.moneyDefinition} · {W.vatIncluded}</p><DetailValues rows={([[W.receipts, month.money.receiptsSatang], [W.refunds, month.money.refundsSatang], [W.net, month.money.netReceiptsSatang], [W.tax, month.money.taxSatang], [W.fees, month.money.feesSatang]] as Array<[string, ExecutiveMoney]>).map(([label, value]) => [label, <Figure key={label} value={value} moneyValue netValue={label === W.net} />])} />
-        <p>{W.aiCost}: {money(month.money.aiCostSatang)}</p>
+      <Card title={W.revenue}><p>{W.moneyDefinition} · {W.vatIncluded}</p><DetailValues rows={([[W.receipts, month.money.receiptsSatang], [W.refunds, month.money.refundsSatang], [W.net, month.money.netReceiptsSatang], [W.tax, month.money.taxSatang], [W.fees, month.money.feesSatang], [W.aiCost, month.money.aiCostSatang]] as Array<[string, ExecutiveMoney]>).map(([label, value]) => [label, <Figure key={label} value={value} moneyValue netValue={label === W.net} />])} />
         <p>{W.paid}: {month.paidInMonth ? W.paid : data.coverage.money.coverage === 'complete' ? W.noReceipts : LABELS.paidEver.UNKNOWN} · {W.positive}: {month.positiveNetInMonth ? W.positive : data.coverage.money.coverage === 'complete' ? W.noPositiveNet : LABELS.paidEver.UNKNOWN}</p>
       </Card>
     </> : tab === 'company' && <>

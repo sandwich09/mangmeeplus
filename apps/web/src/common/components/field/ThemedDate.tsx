@@ -43,6 +43,8 @@ export type ThemedDateProps = {
   placeholder?: string;
   min?: string;
   max?: string;
+  /** When given, only these values (same format as `value`) can be picked; `min`/`max` still apply. */
+  selectable?: readonly string[];
   /** Optional business-day override for Today/highlighting; defaults to the browser day. */
   today?: string;
   id?: string;
@@ -58,11 +60,12 @@ export type ThemedDateProps = {
 };
 
 // ISO date/month strings compare correctly as plain strings; clamp to the picker's
-// granularity so a `min`/`max` day bound also gates the month grid.
-function outOfRange(iso: string, min: string | undefined, max: string | undefined, len: number): boolean {
+// granularity so a `min`/`max` day bound also gates the month grid. A `selectable` list
+// leaves out every other value inside that range.
+export function outOfRange(iso: string, min: string | undefined, max: string | undefined, len: number, selectable?: readonly string[]): boolean {
   if (min && iso < min.slice(0, len)) return true;
   if (max && iso > max.slice(0, len)) return true;
-  return false;
+  return selectable !== undefined && !selectable.includes(iso);
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -82,7 +85,7 @@ function todayParts(value?: string) {
   return { year: now.getFullYear(), month: now.getMonth(), day: now.getDate() };
 }
 
-export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, allowClear = true, className, placeholder, min, max, today: businessToday, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
+export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, allowClear = true, className, placeholder, min, max, selectable, today: businessToday, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
   const locale = useWorkspaceLocale();
   const monthsAbbr = MONTHS_ABBR[locale] ?? MONTHS_ABBR.th;
   const monthsFull = MONTHS_FULL[locale] ?? MONTHS_FULL.th;
@@ -113,7 +116,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
   }, [parts, mode, placeholder, monthsAbbr, labels, locale]);
 
   function emit(next: string) {
-    if (next && outOfRange(next, min, max, mode === 'month' ? 7 : 10)) return;
+    if (next && outOfRange(next, min, max, mode === 'month' ? 7 : 10, selectable)) return;
     setInner(next);
     onChange?.({ target: { value: next } });
     setOpen(false);
@@ -221,7 +224,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
               {monthsAbbr.map((name, index) => {
                 const selected = !!parts && parts.year === view.year && parts.month === index;
                 const isNow = today.year === view.year && today.month === index;
-                const blocked = outOfRange(`${view.year}-${pad(index + 1)}`, min, max, 7);
+                const blocked = outOfRange(`${view.year}-${pad(index + 1)}`, min, max, 7, selectable);
                 return (
                   <button
                     key={name}
@@ -248,7 +251,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
                   if (day === null) return <span key={`e${index}`} />;
                   const selected = !!parts && parts.year === view.year && parts.month === view.month && parts.day === day;
                   const isNow = today.year === view.year && today.month === view.month && today.day === day;
-                  const blocked = outOfRange(`${view.year}-${pad(view.month + 1)}-${pad(day)}`, min, max, 10);
+                  const blocked = outOfRange(`${view.year}-${pad(view.month + 1)}-${pad(day)}`, min, max, 10, selectable);
                   return (
                     <button
                       key={day}
@@ -273,7 +276,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
           {allowClear && <button type="button" onClick={() => emit('')} className="rounded-lg px-2 py-1 text-gray-500 hover:bg-gray-100">{labels.clear}</button>}
           <button
             type="button"
-            disabled={outOfRange(todayValue, min, max, mode === 'month' ? 7 : 10)}
+            disabled={outOfRange(todayValue, min, max, mode === 'month' ? 7 : 10, selectable)}
             onClick={() => emit(todayValue)}
             className="rounded-lg px-2 py-1 text-brand-600 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-30"
           >

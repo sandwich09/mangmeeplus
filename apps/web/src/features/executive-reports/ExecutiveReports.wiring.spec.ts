@@ -32,7 +32,7 @@ test('reads use authenticated fetch, no tenant target header, and reload/abort p
 test('Thai shared fields, all detail tabs, history paging and responsive tables are wired without exports', () => {
   const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts');
   for (const component of ['MangmeePage', 'MangmeeCard', 'MangmeeStatCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
-  assert.match(all, /allowClear=\{false\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table/);
+  assert.match(all, /allowClear=\{false\}/); assert.match(all, /selectable=\{context\.builtMonths\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table/);
   assert.match(all, /ExecutiveCompanyHistory/); assert.match(all, /EXECUTIVE_HISTORY_EVENT_LABELS/);
   assert.doesNotMatch(all, /mangmee-table-scroll|<select\b|<textarea\b|export=1|ส่งออก|data-rights|localStorage/);
 });
