@@ -236,3 +236,20 @@ A web test reads all 14 warning codes from the API sources and requires words of
   the enable dialog, and keep the rule's own draft requests from triggering it again (the default 3600 s cooldown
   would be the only brake).
 - Test: `workflow-action-runner.use-case.spec.ts` (registered) red 88 / 3 → 91 / 0. Spec: workflow UI rules.
+
+### Addition A: role words in automation templates and the notification rule name
+
+Template texts now take role names from `THAI_SYSTEM_ROLE_NAMES` and say whom the template really notifies
+or assigns (its `recipientRoles`, `lastResortRecipientRoles`, `assigneeRole`): สรุปประจำวัน (name and text) →
+เจ้าของกิจการและผู้ดูแลบริษัท (was เจ้าของร้าน / ผู้ดูแล); low stock → แจ้งฝ่ายคลังสินค้าและเจ้าของกิจการ และสร้างงานให้
+ฝ่ายคลังสินค้า; stockout risk and sales below target no longer claim a task they do not create (the latter named
+หัวหน้าทีม, it notifies เจ้าของกิจการและผู้จัดการ); approval reminder and the two finance-review notices name
+เจ้าของกิจการ; tax due soon names ฝ่ายบัญชีและเจ้าของกิจการ, task to ฝ่ายบัญชี; follow-up due names ฝ่ายขายและผู้จัดการ,
+task to ฝ่ายขาย (was ผู้ดูแลฝ่ายขาย); the connection template no longer says ผู้ดูแล. The same check found four more
+in the class, fixed: vendor bill pending (also notifies ฝ่ายบัญชี; “ผู้ขายส่ง” → “มีใบวางบิลส่งขออนุมัติ”), overdue
+invoice (notifies only ฝ่ายการเงิน, no task), opportunity stuck (หัวหน้าฝ่ายขาย → ผู้จัดการ, its real recipient and
+assignee), correction requester (the sender is ผู้ตรวจสอบด้านการเงิน, who may be the owner, not ฝ่ายการเงิน). The
+notification rule name `daily_owner_summary` (notification.model.ts) → สรุปประจำวันสำหรับเจ้าของกิจการและผู้ดูแลบริษัท,
+the people DailyOwnerSummary sends to. Former names for the rename sync stay English only (the lane 3b Thai
+names never shipped). Tests: workflow template spec red 34 / 2 (also against the old catalogue) → 36 / 0;
+notification DTO spec red 10 / 1 → 11 / 0.

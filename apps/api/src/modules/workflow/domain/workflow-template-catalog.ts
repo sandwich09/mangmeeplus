@@ -1,4 +1,4 @@
-import { reimbursementFinanceBlockedRequesterNotice } from '@watchdog-bms/contracts';
+import { reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES as ROLE } from '@watchdog-bms/contracts';
 import type { WorkflowActionDefinition, WorkflowConditionNode, WorkflowTemplateStatus, WorkflowTriggerType } from '@watchdog-bms/contracts';
 
 export type WorkflowTemplateSeed = {
@@ -138,8 +138,8 @@ export const WORKFLOW_TEMPLATE_FORMER_NAMES: Record<string, readonly string[]> =
 export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'daily_owner_summary',
-    name: 'สรุปประจำวันสำหรับเจ้าของร้าน',
-    description: 'ส่งลิงก์สรุปภาพรวมธุรกิจให้เจ้าของร้านหรือผู้ดูแลทุกวันเวลาเจ็ดโมงเช้าตามเวลาของบริษัท',
+    name: `สรุปประจำวันสำหรับ${ROLE.OWNER}และ${ROLE.ADMIN}`,
+    description: `ส่งลิงก์สรุปภาพรวมธุรกิจให้${ROLE.OWNER}และ${ROLE.ADMIN}ทุกวันเวลาเจ็ดโมงเช้าตามเวลาของบริษัท`,
     category: 'dashboard',
     sourceModule: 'dashboard',
     triggerType: 'SCHEDULE',
@@ -156,7 +156,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'low_stock_alert',
     name: 'แจ้งเตือนสินค้าใกล้ถึงจุดสั่งซื้อ',
-    description: 'แจ้งผู้ดูแลคลังสินค้าหรือเจ้าของร้านและสร้างงานเมื่อสินค้าคงเหลือไม่เกินจุดสั่งซื้อ',
+    description: `แจ้ง${ROLE.INVENTORY}และ${ROLE.OWNER} และสร้างงานให้${ROLE.INVENTORY} เมื่อสินค้าคงเหลือไม่เกินจุดสั่งซื้อ`,
     category: 'inventory',
     sourceModule: 'inventory',
     triggerType: 'THRESHOLD_SCAN',
@@ -173,7 +173,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'stockout_risk',
     name: 'ความเสี่ยงสินค้าขาด',
-    description: 'แจ้งเจ้าของร้านหรือผู้ดูแลคลังสินค้าและสร้างงานให้ตรวจการสั่งซื้อ เมื่อจำนวนสินค้าที่คาดว่าจะเหลือน้อยกว่าที่กำหนด',
+    description: `แจ้ง${ROLE.OWNER}และ${ROLE.INVENTORY} เมื่อจำนวนสินค้าที่คาดว่าจะเหลือน้อยกว่าที่กำหนด`,
     category: 'inventory',
     sourceModule: 'inventory',
     triggerType: 'THRESHOLD_SCAN',
@@ -229,7 +229,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'approval_sla_breach',
     name: 'รายการเบิกจ่ายรออนุมัติเกินกำหนด',
-    description: 'เตือนผู้อนุมัติของรายการเบิกจ่าย โดยแจ้งเจ้าของร้านเมื่อไม่มีผู้อนุมัติดำเนินการได้ เมื่อรายการรออนุมัติเกินเวลาที่กำหนด',
+    description: `เตือนและสร้างงานให้ผู้อนุมัติของรายการเบิกจ่ายเมื่อรายการรออนุมัติเกินเวลาที่กำหนด โดยแจ้ง${ROLE.OWNER}แทนเมื่อไม่มีผู้อนุมัติคนใดดำเนินการได้`,
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'SLA_SCAN',
@@ -329,7 +329,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'reimbursement_correction_requester',
     name: 'แจ้งแก้ไขคำขอเบิกค่าใช้จ่าย',
-    description: 'แจ้งผู้ขอเบิกเมื่อฝ่ายการเงินส่งคำขอกลับมาให้แก้ไข',
+    description: 'แจ้งผู้ขอเบิกเมื่อผู้ตรวจสอบด้านการเงินส่งคำขอกลับมาให้แก้ไข',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -391,7 +391,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'reimbursement_finance_review',
     name: 'รายการเบิกจ่ายติดขัดระหว่างตรวจการเงิน',
-    description: 'แจ้งผู้ตรวจสอบด้านการเงินเมื่อรายการติดขัด โดยแจ้งเจ้าของร้านเมื่อไม่มีผู้ตรวจสอบคนอื่น',
+    description: `แจ้งผู้ตรวจสอบด้านการเงินเมื่อรายการติดขัด โดยแจ้ง${ROLE.OWNER}เมื่อไม่มีผู้ตรวจสอบคนอื่น`,
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -434,7 +434,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     // finance decision, i.e. on finance's own action.
     key: 'reimbursement_finance_review_pending',
     name: 'รายการเบิกจ่ายรอตรวจการเงิน',
-    description: 'แจ้งผู้ตรวจสอบด้านการเงินเมื่อรายการมาถึงคิวตรวจสอบ โดยแจ้งเจ้าของร้านเมื่อไม่มีผู้ตรวจสอบคนอื่น',
+    description: `แจ้งผู้ตรวจสอบด้านการเงินเมื่อรายการมาถึงคิวตรวจสอบ โดยแจ้ง${ROLE.OWNER}เมื่อไม่มีผู้ตรวจสอบคนอื่น`,
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -681,7 +681,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'vendor_bill_pending_approval',
     name: 'ใบวางบิลรออนุมัติ',
-    description: 'แจ้งฝ่ายการเงินและสร้างงานเมื่อผู้ขายส่งใบวางบิลเพื่อขออนุมัติ',
+    description: `แจ้ง${ROLE.FINANCE}และ${ROLE.ACCOUNTANT} และสร้างงานให้${ROLE.FINANCE} เมื่อมีใบวางบิลส่งขออนุมัติ`,
     category: 'procurement',
     sourceModule: 'procurement',
     triggerType: 'EVENT',
@@ -724,7 +724,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'tax_due_soon',
     name: 'ใกล้ถึงกำหนดยื่นภาษี',
-    description: 'แจ้งฝ่ายบัญชีหรือเจ้าของร้านและสร้างงานตรวจสอบเมื่อใกล้กำหนดยื่นภาษีนิติบุคคลและยังไม่ได้ยื่น',
+    description: `แจ้ง${ROLE.ACCOUNTANT}และ${ROLE.OWNER} และสร้างงานตรวจสอบให้${ROLE.ACCOUNTANT} เมื่อใกล้กำหนดยื่นภาษีเงินได้นิติบุคคลและยังไม่ได้ยื่น`,
     category: 'tax',
     sourceModule: 'tax',
     triggerType: 'SCHEDULE',
@@ -764,7 +764,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'overdue_invoice_follow_up',
     name: 'ติดตามใบแจ้งหนี้เกินกำหนด',
-    description: 'แจ้งฝ่ายการเงินหรือฝ่ายขายและสร้างงานติดตามเมื่อใบแจ้งหนี้ที่ออกแล้วเกินกำหนดและยังไม่ได้ชำระ',
+    description: `แจ้ง${ROLE.FINANCE} เมื่อใบแจ้งหนี้ที่ออกแล้วเกินกำหนดและยังไม่ได้ชำระ`,
     category: 'accounting',
     sourceModule: 'accounting-documents',
     triggerType: 'THRESHOLD_SCAN',
@@ -781,7 +781,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'crm_follow_up_due',
     name: 'ถึงกำหนดติดตามลูกค้า',
-    description: 'แจ้งผู้ดูแลฝ่ายขายและสร้างลิงก์ไปยังงานติดตาม เมื่องานติดตามลูกค้าที่ยังเปิดอยู่เลยกำหนด',
+    description: `แจ้ง${ROLE.SALES}และ${ROLE.MANAGER} และสร้างงานติดตามลูกค้าให้${ROLE.SALES} เมื่องานติดตามลูกค้าที่ยังเปิดอยู่เลยกำหนด`,
     category: 'crm',
     sourceModule: 'crm',
     triggerType: 'THRESHOLD_SCAN',
@@ -798,7 +798,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'crm_opportunity_stuck',
     name: 'โอกาสการขายไม่มีความคืบหน้า',
-    description: 'แจ้งหัวหน้าฝ่ายขายและสร้างงานตรวจสอบเมื่อโอกาสการขายที่เปิดอยู่ไม่มีการเปลี่ยนขั้นตอนเป็นเวลาหลายวัน',
+    description: `แจ้ง${ROLE.MANAGER} และสร้างงานตรวจสอบให้${ROLE.MANAGER} เมื่อโอกาสการขายที่เปิดอยู่ไม่มีการเปลี่ยนขั้นตอนเป็นเวลาหลายวัน`,
     category: 'crm',
     sourceModule: 'crm',
     triggerType: 'SCHEDULE',
@@ -815,7 +815,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'sales_below_target',
     name: 'ยอดขายต่ำกว่าเป้าหมาย',
-    description: 'แจ้งเจ้าของร้านหรือหัวหน้าทีมและสร้างงานตรวจสอบเมื่อยอดขายจริงต่ำกว่าเป้าหมายตามวันที่กำหนด',
+    description: `แจ้ง${ROLE.OWNER}และ${ROLE.MANAGER} เมื่อยอดขายจริงต่ำกว่าเป้าหมายตามวันที่กำหนด`,
     category: 'crm',
     sourceModule: 'reports-bi',
     triggerType: 'SCHEDULE',
@@ -848,7 +848,7 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'outbound_webhook',
     name: 'ส่งข้อมูลไปยังระบบภายนอก',
-    description: 'ส่งข้อมูลที่ลงชื่อรับรองแล้วไปยังที่อยู่เชื่อมต่อระบบภายนอกที่ผู้ดูแลกำหนดเมื่อเกิดเหตุการณ์ที่เลือก โดยเริ่มจากปิดไว้เสมอ',
+    description: 'ส่งข้อมูลที่ลงชื่อรับรองแล้วไปยังการเชื่อมต่อระบบภายนอกที่บริษัทตั้งไว้ เมื่อเกิดเหตุการณ์ที่เลือก การเชื่อมต่อที่เพิ่มใหม่จะปิดใช้งานไว้ก่อนเสมอ',
     category: 'integration',
     sourceModule: 'workflow',
     triggerType: 'EVENT',

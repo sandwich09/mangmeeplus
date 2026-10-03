@@ -75,6 +75,8 @@ describe('UpdateNotificationRuleDto', () => {
 describe('shop-facing notification rule names', () => {
   it('uses Thai names for known and future trigger keys without exposing the key', () => {
     assert.equal(notificationRuleDisplayName('stock_low'), 'สินค้าต่ำกว่าจุดสั่งซื้อ');
+    // Sent to every active เจ้าของกิจการ and ผู้ดูแลบริษัท (DailyOwnerSummary), named from the one role list.
+    assert.equal(notificationRuleDisplayName('daily_owner_summary'), 'สรุปประจำวันสำหรับเจ้าของกิจการและผู้ดูแลบริษัท');
     for (const triggerKey of [...IMPLEMENTED_TRIGGER_KEYS, 'future_internal_key']) {
       const label = notificationRuleDisplayName(triggerKey);
       assert.match(label, /[\u0E00-\u0E7F]/);

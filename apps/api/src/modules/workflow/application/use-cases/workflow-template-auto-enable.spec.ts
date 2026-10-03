@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -29,6 +30,31 @@ describe('shop-facing workflow template text', () => {
         assert.match(withoutAllowedTerms, /[\u0E00-\u0E7F]/, template.key);
         assert.doesNotMatch(withoutAllowedTerms, /[A-Za-z]/, template.key);
       }
+    }
+  });
+
+  // Roles are named from the one list (THAI_SYSTEM_ROLE_NAMES), true to whom each template notifies or assigns.
+  it('names every role a template notifies or assigns, by the one-list name, and no other role or old word', () => {
+    // The approval reminder's scan names the owner as the approvers when none of them can act any more.
+    const throughPayload: Record<string, string[]> = { approval_sla_breach: ['OWNER'] };
+    for (const template of WORKFLOW_TEMPLATE_CATALOG) {
+      const text = `${template.name} ${template.description}`;
+      assert.doesNotMatch(text, /เจ้าของร้าน|ผู้ดูแลคลังสินค้า|ผู้ดูแล(?!บริษัท|ระบบ)|หัวหน้า/u, template.key);
+      const roles = new Set(template.defaultActionJson.flatMap((action) => {
+        const config = action.configJson as Record<string, unknown>;
+        return [config.recipientRoles, config.lastResortRecipientRoles, config.assigneeRole].flat().filter((role): role is string => typeof role === 'string');
+      }));
+      for (const role of roles) assert.ok(template.description.includes(THAI_SYSTEM_ROLE_NAMES[role as keyof typeof THAI_SYSTEM_ROLE_NAMES]), `${template.key} does not name ${role}`);
+      for (const [role, word] of Object.entries(THAI_SYSTEM_ROLE_NAMES)) {
+        if (text.includes(word)) assert.ok(roles.has(role) || throughPayload[template.key]?.includes(role), `${template.key} names ${role}, whom it neither notifies nor assigns`);
+      }
+    }
+  });
+
+  it('says a template creates a task only when it has a task action', () => {
+    for (const template of WORKFLOW_TEMPLATE_CATALOG) {
+      const createsTask = template.defaultActionJson.some((action) => ['CREATE_WORKFLOW_TASK', 'CREATE_APPROVAL_REVIEW_REQUEST'].includes(action.actionType));
+      if (/สร้างงาน/.test(template.description)) assert.ok(createsTask, template.key);
     }
   });
 

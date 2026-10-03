@@ -1,4 +1,5 @@
 // Domain models for Notification (Item 06) — no framework imports
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 export type NotificationSeverity = 'critical' | 'action' | 'insight' | 'info';
 export type NotificationChannel = 'web' | 'line';
@@ -28,7 +29,8 @@ export type NotificationRule = {
 };
 
 const NOTIFICATION_RULE_DISPLAY_NAMES: Record<string, string> = {
-  daily_owner_summary: 'สรุปประจำวันสำหรับเจ้าของร้าน',
+  // DailyOwnerSummary sends it to every active OWNER and ADMIN.
+  daily_owner_summary: `สรุปประจำวันสำหรับ${THAI_SYSTEM_ROLE_NAMES.OWNER}และ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`,
   stock_low: 'สินค้าต่ำกว่าจุดสั่งซื้อ',
   stockout_risk: 'ความเสี่ยงสินค้าขาด',
   sales_today_low: 'ยอดขายวันนี้ต่ำกว่าเป้าหมาย',
