@@ -88,7 +88,7 @@ Use a **fresh, unauthenticated** context here (plain `@playwright/test` `test` o
 
 | ID | Pri | Steps | Expected |
 |---|---|---|---|
-| ACCT-01 | P0 | `goto('/companies/:id/accounting')` | `heading Accounting documents` + `heading New document` visible |
+| ACCT-01 | P0 | `goto('/companies/:id/accounting')` | `heading เอกสารบัญชี` + `heading สร้างเอกสารใหม่` visible |
 | ACCT-02 | P1 | Create a new document (pick a type, add a line item qty×price, save) | Document created with a running number; totals computed; appears in list |
 | ACCT-03 | P1 | Open the created doc; verify totals | Subtotal/VAT/total match line math; status is Draft |
 | ACCT-04 | P1 | Confirm/issue the document | Status transitions; document number assigned; assert via `api` list |
