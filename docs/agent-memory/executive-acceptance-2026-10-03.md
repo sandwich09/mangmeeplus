@@ -231,3 +231,31 @@ Verification:
 - The billing, build and read Postgres specs were not run here; CI runs them at merge.
 
 Next: controller review; decide the date fallback and the money KPI style; take `9c100dd0d`.
+
+## Excel export re-check after the fixes (round 4)
+
+Status: Done 2026-10-04 on the program head `512db03eb` (the Codex fix of the round-3 findings and develop's sold-features fixes, fast-forwarded), plus one fix commit `a381e5935` on this branch; not pushed.
+Scope: the same 13 workbooks downloaded through the browser on a fresh stack, checked without calculating (zip/XML, and openpyxl: 0 warnings), with Quick Look renders. A 390 px smoke covered the earlier polish items. Files: lane folder `workbooks-r4/` (before the fix below) and `workbooks-r4-final/` (after it).
+
+Results:
+
+1. **Dates:** every date and date-time cell is Thai text, e.g. "30 ก.ย. 2569" and "30 ก.ย. 2569 09:00 น.". Quick Look shows them as written. Rows keep the screen's order, and missing dates stay blank.
+2. **Money cards:** they keep the card font and fill with the money format (Quick Look: "1,745.00" in the card style). Fixed in `a381e5935`: an unavailable money card (July) lost its card box, because the writer dropped empty styled cells.
+3. **Revenue chart-data rows:** each row's qualifier equals the screen's for the same month and group, in both the chart rows and the table:
+   - partial: "ยอดเฉพาะรายการที่ยืนยันแล้ว"
+   - before collection: "ยังไม่มีตัวเลข"
+   - add-on: "ยังไม่เปิดขาย"
+   - complete: none
+   Also in `a381e5935`: cards and the other chart rows without a figure now say "ยังไม่มีตัวเลข" too, instead of "ยังไม่มีข้อมูล".
+4. **Count and detail cards:** list files say "พบ N บริษัท" with N equal to the screen's count (23, 4 filtered, 6 in July). The detail cards equal the detail screen: net receipts 2,471.00, receipts in month 5, active days 9.
+5. **Print:** the dashboard has fit-to-page, landscape A4 (1×1) and print area A1:X46. Source description rows 3–5 have no fixed height and wrap.
+6. **Privacy:** no e-mail, phone or contact column or line without the contacts option. With it, the values for all 23 companies and the detail equal what each detail screen shows that reader.
+7. **Smoke at 390:**
+   - August reads "อย่างน้อย" and partial money; July reads "—ยังไม่มีตัวเลข" and "ยังไม่เปิดขาย".
+   - The detail's reasons [1]–[3] appear once each, with 37 references.
+   - The month picker offers October after a build, with no reload.
+   - A lost read right shows "คุณไม่มีสิทธิ์ใช้งานส่วนนี้"; a lost export right shows "คุณไม่มีสิทธิ์ส่งออกไฟล์นี้" with the report kept.
+
+Verification: export spec red, then green — 31/32 (exit 1), then 49/49 with the expense and tax export specs (exit 0); API typecheck exit 0; API build exit 0; maintenance pins exit 0; `git diff --check 512db03eb..HEAD` exit 0; round-4 checker exit 0 with 0 problems on all 13 files; e2e passed on a fresh seed, on full data and on `a381e5935`.
+
+Left: Quick Look thumbnails ignore the print setup, so the one-page print was checked in the file, not printed. Excel and a phone were not available here.
