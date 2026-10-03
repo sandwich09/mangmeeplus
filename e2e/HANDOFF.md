@@ -117,8 +117,9 @@ corepack pnpm exec playwright test e2e/billing-admin-menu-ux.spec.ts e2e/billing
 - `mangmee_ux` is not optional: `billing-admin-menu-ux.spec.ts:29` and
   `billing-admin-directory.spec.ts:206,395` assert `url.pathname === '/mangmee_ux'`, and a
   `beforeAll` that trips that assert strands the other 11 tests in the file.
-- `BILLING_MODE=test` opens only the `billing-admin-directory` issue-queue suite
-  (`billing-admin-directory.spec.ts:119`); the others need just the DB and the account id.
+- `BILLING_MODE=test` must reach the **API**: with billing `disabled` the admin pages read no
+  issues, settings or documents (5 of the 12 `billing-admin-menu-ux` tests fail, 2026-10-04). In the
+  test process it also opens the `billing-admin-directory` issue-queue suite (`billing-admin-directory.spec.ts:119`).
 - Migrate and seed that database like any other (`prisma migrate deploy` → `prisma/seed.ts` →
   `prisma/sync-feature-launch-gates.ts`); the specs create and delete their own companies.
 - No Stripe request can succeed here and none is made: `STRIPE_SECRET_KEY` stays unset and the
