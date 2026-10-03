@@ -14,7 +14,7 @@ import {
 import {
   TEMPLATE_STATUS_LABELS, RULE_STATUS_LABELS, RUN_STATUS_LABELS, ACTION_RUN_STATUS_LABELS,
   TASK_STATUS_LABELS, TASK_PRIORITY_LABELS, DEAD_LETTER_RESOLUTION_LABELS, STATUS_BADGE_COLORS,
-  PRIORITY_BADGE_COLORS, workflowStatusText, workflowTriggerText, workflowSourceModuleText,
+  PRIORITY_BADGE_COLORS, WORKFLOW_TAB_LABELS, workflowStatusText, workflowTriggerText, workflowSourceModuleText,
 } from './workflow.model';
 import {
   validateWebhookForm,
@@ -39,14 +39,6 @@ const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
 const ghostClass = 'rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
 const dangerClass = 'rounded bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50';
-const WORKFLOW_TAB_LABELS: Record<WorkflowTab, string> = {
-  templates: 'เทมเพลต',
-  rules: 'กฎอัตโนมัติ',
-  runs: 'ประวัติการทำงาน',
-  tasks: 'งานที่มอบหมาย',
-  'dead-letters': 'ข้อผิดพลาดค้าง',
-  webhooks: 'เชื่อมต่อระบบภายนอก',
-};
 
 function StatusBadge({ status, labels }: { status: string; labels: Record<string, string> }) {
   return <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_BADGE_COLORS[status] ?? 'bg-gray-100 text-gray-600'}`}>{workflowStatusText(labels, status)}</span>;

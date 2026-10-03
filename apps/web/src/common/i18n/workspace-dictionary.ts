@@ -1,4 +1,4 @@
-import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { STOCK_MOVEMENT_TYPE_LABELS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 const thaiRoleLabels = Object.fromEntries(
   Object.entries(THAI_SYSTEM_ROLE_NAMES).map(([key, name]) => [`role.${key}`, name]),
@@ -146,14 +146,14 @@ export const workspaceDictionary = {
     'inventory.movement.reason': 'เหตุผล',
     'inventory.movement.actor': 'ผู้ดำเนินการ',
     'inventory.movement.occurred_at': 'เวลา',
-    'inventory.movement.STOCK_IN': 'รับเข้า',
-    'inventory.movement.STOCK_OUT': 'จ่ายออก',
-    'inventory.movement.TRANSFER_IN': 'รับโอน',
-    'inventory.movement.TRANSFER_OUT': 'โอนออก',
-    'inventory.movement.COUNT_ADJUSTMENT_IN': 'ปรับนับ (เพิ่ม)',
-    'inventory.movement.COUNT_ADJUSTMENT_OUT': 'ปรับนับ (ลด)',
-    'inventory.movement.ADJUSTMENT_IN': 'ปรับเพิ่ม',
-    'inventory.movement.ADJUSTMENT_OUT': 'ปรับลด',
+    'inventory.movement.STOCK_IN': STOCK_MOVEMENT_TYPE_LABELS.STOCK_IN,
+    'inventory.movement.STOCK_OUT': STOCK_MOVEMENT_TYPE_LABELS.STOCK_OUT,
+    'inventory.movement.TRANSFER_IN': STOCK_MOVEMENT_TYPE_LABELS.TRANSFER_IN,
+    'inventory.movement.TRANSFER_OUT': STOCK_MOVEMENT_TYPE_LABELS.TRANSFER_OUT,
+    'inventory.movement.COUNT_ADJUSTMENT_IN': STOCK_MOVEMENT_TYPE_LABELS.COUNT_ADJUSTMENT_IN,
+    'inventory.movement.COUNT_ADJUSTMENT_OUT': STOCK_MOVEMENT_TYPE_LABELS.COUNT_ADJUSTMENT_OUT,
+    'inventory.movement.ADJUSTMENT_IN': STOCK_MOVEMENT_TYPE_LABELS.ADJUSTMENT_IN,
+    'inventory.movement.ADJUSTMENT_OUT': STOCK_MOVEMENT_TYPE_LABELS.ADJUSTMENT_OUT,
     'inventory.balance.quantity': 'ยอดคงเหลือ',
     'inventory.balance.low_stock': 'สต็อกต่ำ',
     'inventory.status.ACTIVE': 'ใช้งาน',

@@ -1,33 +1,45 @@
 import {
-  EXPENSE_PAYMENT_STATUS_LABELS,
+  ACCOUNTING_DOCUMENT_STATUS_LABELS as DOCUMENT_STATUS,
+  ACCOUNTING_DOCUMENT_TYPE_LABELS as DOCUMENT_TYPE,
+  ACCOUNTING_PAYMENT_STATUS_LABELS,
+  AI_RISK_LEVEL_LABELS,
+  AI_SUGGESTION_NEEDS_DATA_LABEL,
+  AI_SUGGESTION_STATUS_LABELS,
   EXPENSE_STATUS_LABELS,
   LEDGER_ACCOUNT_CLASS_LABELS,
+  NOTIFICATION_SEVERITY_LABELS,
+  REPORT_CURRENCY_WORDS,
+  REPORT_FRESHNESS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS,
+  STOCK_MOVEMENT_TYPE_LABELS,
   TAX_EVIDENCE_STATUS_LABELS,
+  WORKFLOW_DEAD_LETTER_RESOLUTION_LABELS as DEAD_LETTER,
+  WORKFLOW_RULE_STATUS_LABELS as RULE,
+  WORKFLOW_RUN_STATUS_LABELS as RUN,
+  WORKFLOW_TAB_LABELS as AUTOMATION,
+  WORKFLOW_TASK_STATUS_LABELS as TASK,
   type ReportResultDto,
 } from '@watchdog-bms/contracts';
 
 type Words = Readonly<Record<string, string>>;
 
-// A foreign currency keeps its code, as on every other page; only the baht has a Thai word.
-const CURRENCY: Words = { THB: 'บาท' };
-// The notification words where they exist (แจ้งเพื่อทราบ, สำคัญ).
-const SEVERITY: Words = { normal: 'ปกติ', info: 'แจ้งเพื่อทราบ', warning: 'ควรตรวจสอบ', critical: 'สำคัญ' };
+// The notification words for the levels they share (แจ้งเพื่อทราบ, สำคัญ); ปกติ and ควรตรวจสอบ are the report's own.
+const SEVERITY: Words = { normal: 'ปกติ', info: NOTIFICATION_SEVERITY_LABELS.info, warning: 'ควรตรวจสอบ', critical: NOTIFICATION_SEVERITY_LABELS.critical };
 
 /**
  * The words a person reads for the machine values report rows carry (enum names, metric keys), by report and
  * column. The rows themselves keep the machine values: the assistant's report tool reads `source`, `section` and
  * ISO currencies from the same rows. The report page and the CSV get them through reportResultForPeople.
- * Words that already have a shared label (contracts) come from it; the others match the page that shows the thing.
+ * Every word a page also shows comes from its shared list in contracts; only words no page shows are written here.
  */
 export const REPORT_VALUE_TEXT: Readonly<Record<string, Readonly<Record<string, Words>>>> = {
   'financial.trial_balance': { accountClass: LEDGER_ACCOUNT_CLASS_LABELS },
   'financial.profit_and_loss': { section: LEDGER_ACCOUNT_CLASS_LABELS },
   'financial.balance_sheet': { section: LEDGER_ACCOUNT_CLASS_LABELS },
-  'ar.aging': { paymentStatus: { ...EXPENSE_PAYMENT_STATUS_LABELS, OVERDUE: 'เกินกำหนดชำระ' }, currency: CURRENCY },
+  'ar.aging': { paymentStatus: ACCOUNTING_PAYMENT_STATUS_LABELS, currency: REPORT_CURRENCY_WORDS },
   'sales.summary': {
-    source: { issued_invoices: 'ใบแจ้งหนี้ที่ออกแล้ว', crm_open_pipeline: 'โอกาสการขายที่ยังเปิดอยู่' },
-    currency: CURRENCY,
+    source: { issued_invoices: `${DOCUMENT_TYPE.INVOICE}ที่${DOCUMENT_STATUS.ISSUED}`, crm_open_pipeline: 'โอกาสการขายที่ยังเปิดอยู่' },
+    currency: REPORT_CURRENCY_WORDS,
   },
   'sales.pipeline': {
     metric: {
@@ -39,13 +51,10 @@ export const REPORT_VALUE_TEXT: Readonly<Record<string, Readonly<Record<string, 
     },
   },
   'inventory.stock_movement': {
-    movementType: {
-      STOCK_IN: 'รับเข้า', STOCK_OUT: 'จ่ายออก', TRANSFER_IN: 'รับโอน', TRANSFER_OUT: 'โอนออก',
-      COUNT_ADJUSTMENT_IN: 'ปรับนับ (เพิ่ม)', COUNT_ADJUSTMENT_OUT: 'ปรับนับ (ลด)', ADJUSTMENT_IN: 'ปรับเพิ่ม', ADJUSTMENT_OUT: 'ปรับลด',
-    },
+    movementType: STOCK_MOVEMENT_TYPE_LABELS,
     direction: { IN: 'เข้า', OUT: 'ออก' },
   },
-  'expense.summary': { status: EXPENSE_STATUS_LABELS, currency: CURRENCY },
+  'expense.summary': { status: EXPENSE_STATUS_LABELS, currency: REPORT_CURRENCY_WORDS },
   'expense.accountant_evidence': {
     sourceDocumentType: SOURCE_DOCUMENT_TYPE_LABELS,
     taxEvidenceStatus: TAX_EVIDENCE_STATUS_LABELS,
@@ -63,36 +72,32 @@ export const REPORT_VALUE_TEXT: Readonly<Record<string, Readonly<Record<string, 
       EXPORTED: 'สร้างไฟล์ยื่นแบบแล้ว', FILED: 'ยื่นแบบแล้ว', PAID: 'ชำระแล้ว', CLOSED: 'ปิดงวดแล้ว', AMENDED: 'ยื่นแบบเพิ่มเติมแล้ว',
     },
   },
-  'bank.cash_position': { currency: CURRENCY },
+  'bank.cash_position': { currency: REPORT_CURRENCY_WORDS },
   'ops.workflow_sla': {
     metric: {
-      workflow_runs_total: 'การทำงานของกฎอัตโนมัติทั้งหมด',
-      workflow_runs_failed: 'การทำงานที่ล้มเหลว',
-      workflow_runs_partial_failed: 'การทำงานที่สำเร็จบางส่วน',
-      workflow_tasks_open: 'งานที่มอบหมายที่ยังเปิดอยู่',
-      workflow_tasks_snoozed: 'งานที่มอบหมายที่เลื่อนแจ้งเตือน',
-      workflow_tasks_overdue_visible: 'งานที่มอบหมายที่เกินกำหนด',
-      workflow_rules_enabled: 'กฎอัตโนมัติที่เปิดใช้งาน',
-      workflow_dead_letters_open: 'ข้อผิดพลาดค้างที่ยังไม่แก้ไข',
+      workflow_runs_total: `การทำงานของ${AUTOMATION.rules}ทั้งหมด`,
+      workflow_runs_failed: `การทำงานที่${RUN.FAILED}`,
+      workflow_runs_partial_failed: `การทำงานที่${RUN.PARTIAL_FAILED}`,
+      workflow_tasks_open: `${AUTOMATION.tasks}ที่ยัง${TASK.OPEN}`,
+      workflow_tasks_snoozed: `${AUTOMATION.tasks}ที่${TASK.SNOOZED}`,
+      workflow_tasks_overdue_visible: `${AUTOMATION.tasks}ที่เกินกำหนด`,
+      workflow_rules_enabled: `${AUTOMATION.rules}ที่${RULE.ENABLED}`,
+      workflow_dead_letters_open: `${AUTOMATION['dead-letters']}ที่${DEAD_LETTER.OPEN}`,
     },
     severity: SEVERITY,
   },
   'ops.dashboard_health': {
     severity: SEVERITY,
-    freshnessStatus: { fresh: 'ข้อมูลล่าสุด', stale: 'ข้อมูลอาจไม่ล่าสุด', partial: 'ข้อมูลไม่ครบทุกส่วน', unavailable: 'ยังไม่มีข้อมูล' },
+    // The dashboard snapshot also has partial (some cards missing) and unavailable (no card at all).
+    freshnessStatus: { fresh: REPORT_FRESHNESS_LABELS.fresh, stale: REPORT_FRESHNESS_LABELS.stale, partial: 'ข้อมูลไม่ครบทุกส่วน', unavailable: 'ยังไม่มีข้อมูล' },
   },
   'ai.suggestion_summary': {
     metric: {
       ai_suggestions_total: 'คำแนะนำจาก AI ทั้งหมด',
-      ai_suggestions_high_risk: 'คำแนะนำจาก AI ที่ต้องระวัง',
-      ai_suggestions_needs_data_visible: 'คำแนะนำจาก AI ที่ยังขาดข้อมูล',
-      ai_suggestions_new: 'คำแนะนำจาก AI สถานะใหม่',
-      ai_suggestions_in_review: 'คำแนะนำจาก AI ที่กำลังตรวจสอบ',
-      ai_suggestions_blocked_by_permission: 'คำแนะนำจาก AI ที่สิทธิ์ไม่เพียงพอ',
-      ai_suggestions_blocked_by_source_state: 'คำแนะนำจาก AI ที่ข้อมูลต้นทางเปลี่ยน',
-      ai_suggestions_failed: 'คำแนะนำจาก AI ที่สร้างไม่สำเร็จ',
-      ai_suggestions_source_draft_created: 'คำแนะนำจาก AI ที่สร้างร่างแล้ว',
-      ai_suggestions_dismissed: 'คำแนะนำจาก AI ที่ปิดแล้ว',
+      ai_suggestions_high_risk: `คำแนะนำจาก AI ที่${AI_RISK_LEVEL_LABELS.HIGH}`,
+      ai_suggestions_needs_data_visible: `คำแนะนำจาก AI ที่${AI_SUGGESTION_NEEDS_DATA_LABEL}`,
+      // ai_suggestions_<status> rows, one per status the adapter counts.
+      ...Object.fromEntries(Object.entries(AI_SUGGESTION_STATUS_LABELS).map(([status, word]) => [`ai_suggestions_${status.toLowerCase()}`, `คำแนะนำจาก AI สถานะ${word}`])),
     },
     severity: SEVERITY,
   },

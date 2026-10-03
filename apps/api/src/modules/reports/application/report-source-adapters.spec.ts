@@ -2,10 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as contracts from '@watchdog-bms/contracts';
 import { LEDGER_ACCOUNT_CLASS_LABELS, type ReportDatasetDefinitionDto, type RequestContext } from '@watchdog-bms/contracts';
 import { findReportDefinition, REPORT_CATALOG } from '../domain/report-catalog';
 import { buildReportCsv } from '../domain/report-csv.logic';
-import { reportResultForPeople } from '../domain/report-row-text.logic';
+import { REPORT_VALUE_TEXT, reportResultForPeople } from '../domain/report-row-text.logic';
 import { ReportSourceAdapters } from './report-source-adapters';
 
 const ctx: RequestContext = {
@@ -550,5 +551,37 @@ describe('one word for equity and for income tax', () => {
       columns: [{ key: 'section', label: 'หมวด', type: 'string' }], rows: [{ section: value }] }).rows[0]!.section;
     assert.equal(section('financial.balance_sheet', 'EQUITY'), 'ส่วนของเจ้าของ');
     assert.equal(section('financial.profit_and_loss', 'TAX_EXPENSE'), 'ภาษีเงินได้');
+  });
+});
+
+// Owner 2026-10-02: one source for a word. Words the pages also show come from contracts, never a copy here.
+describe('report words come from the shared lists', () => {
+  const shared = contracts as unknown as Record<string, Record<string, string> | string | undefined>;
+  const list = (name: string) => (shared[name] ?? {}) as Record<string, string>;
+  const words = (code: string, column: string) => REPORT_VALUE_TEXT[code]![column]!;
+
+  it('uses the shared lists themselves for movement types and receivable payment status', () => {
+    assert.ok(shared.STOCK_MOVEMENT_TYPE_LABELS, 'STOCK_MOVEMENT_TYPE_LABELS');
+    assert.equal(words('inventory.stock_movement', 'movementType'), shared.STOCK_MOVEMENT_TYPE_LABELS);
+    assert.ok(shared.ACCOUNTING_PAYMENT_STATUS_LABELS, 'ACCOUNTING_PAYMENT_STATUS_LABELS');
+    assert.equal(words('ar.aging', 'paymentStatus'), shared.ACCOUNTING_PAYMENT_STATUS_LABELS);
+  });
+
+  it('builds the other words from the shared ones', () => {
+    assert.equal(words('ar.aging', 'currency').THB, list('REPORT_CURRENCY_WORDS').THB);
+    for (const level of ['info', 'critical']) assert.equal(words('ops.workflow_sla', 'severity')[level], list('NOTIFICATION_SEVERITY_LABELS')[level], level);
+    for (const state of ['fresh', 'stale']) assert.equal(words('ops.dashboard_health', 'freshnessStatus')[state], list('REPORT_FRESHNESS_LABELS')[state], state);
+    assert.equal(words('sales.summary', 'source').issued_invoices, `${list('ACCOUNTING_DOCUMENT_TYPE_LABELS').INVOICE}ที่${list('ACCOUNTING_DOCUMENT_STATUS_LABELS').ISSUED}`);
+    const tabs = list('WORKFLOW_TAB_LABELS');
+    const workflow = words('ops.workflow_sla', 'metric');
+    assert.equal(workflow.workflow_runs_failed, `การทำงานที่${list('WORKFLOW_RUN_STATUS_LABELS').FAILED}`);
+    assert.equal(workflow.workflow_tasks_open, `${tabs.tasks}ที่ยัง${list('WORKFLOW_TASK_STATUS_LABELS').OPEN}`);
+    assert.equal(workflow.workflow_rules_enabled, `${tabs.rules}ที่${list('WORKFLOW_RULE_STATUS_LABELS').ENABLED}`);
+    assert.equal(workflow.workflow_dead_letters_open, `${tabs['dead-letters']}ที่${list('WORKFLOW_DEAD_LETTER_RESOLUTION_LABELS').OPEN}`);
+    const ai = words('ai.suggestion_summary', 'metric');
+    assert.equal(ai.ai_suggestions_high_risk, `คำแนะนำจาก AI ที่${list('AI_RISK_LEVEL_LABELS').HIGH}`);
+    assert.equal(ai.ai_suggestions_needs_data_visible, `คำแนะนำจาก AI ที่${shared.AI_SUGGESTION_NEEDS_DATA_LABEL}`);
+    for (const [status, word] of Object.entries(list('AI_SUGGESTION_STATUS_LABELS'))) assert.equal(ai[`ai_suggestions_${status.toLowerCase()}`], `คำแนะนำจาก AI สถานะ${word}`, status);
+    assert.ok(Object.keys(list('AI_SUGGESTION_STATUS_LABELS')).length > 0, 'AI_SUGGESTION_STATUS_LABELS');
   });
 });

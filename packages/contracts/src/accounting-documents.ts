@@ -515,6 +515,37 @@ export const ACCOUNTING_SEQUENCE_KEYS = {
   DEBIT_NOTE: 'accounting.debit_note',
 } as const;
 
+// The accounting document pages and the report rows (receivables, sales) use these words.
+export const ACCOUNTING_DOCUMENT_TYPE_LABELS: Record<AccountingDocumentType, string> = {
+  QUOTATION: 'ใบเสนอราคา',
+  INVOICE: 'ใบแจ้งหนี้',
+  BILLING_NOTE: 'ใบวางบิล',
+  RECEIPT: 'ใบเสร็จรับเงิน',
+  TAX_INVOICE: 'ใบกำกับภาษี',
+  CREDIT_NOTE: 'ใบลดหนี้',
+  DEBIT_NOTE: 'ใบเพิ่มหนี้',
+};
+
+export const ACCOUNTING_DOCUMENT_STATUS_LABELS: Record<AccountingDocumentStatus, string> = {
+  DRAFT: 'ร่าง',
+  PENDING_APPROVAL: 'รอการอนุมัติ',
+  APPROVED: 'อนุมัติแล้ว',
+  REJECTED: 'ถูกปฏิเสธ',
+  ISSUED: 'ออกแล้ว',
+  VOIDED: 'ยกเลิกแล้ว',
+  CREDITED: 'ออกใบลดหนี้แล้ว',
+  DEBITED: 'ออกใบเพิ่มหนี้แล้ว',
+  CLOSED: 'ปิดแล้ว',
+};
+
+export const ACCOUNTING_PAYMENT_STATUS_LABELS: Record<AccountingPaymentStatus, string> = {
+  UNPAID: 'ยังไม่ชำระ',
+  PARTIALLY_PAID: 'ชำระบางส่วน',
+  PAID: 'ชำระแล้ว',
+  OVERDUE: 'เกินกำหนด',
+  VOIDED: 'ยกเลิกแล้ว',
+};
+
 export const ACCOUNTING_OUTPUT_TAX_CODE_LABELS: Record<AccountingOutputTaxCode, string> = {
   O7: 'ภาษีขาย 7%',
   OX: 'ยกเว้นภาษีขาย',

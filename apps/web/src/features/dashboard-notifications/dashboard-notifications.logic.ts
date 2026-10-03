@@ -1,4 +1,5 @@
 import type { DashboardWidget, DashboardFreshness, NotificationChannel, NotificationItem, NotificationSeverity, DashboardMetricValue } from './dashboard-notifications.model';
+import { NOTIFICATION_SEVERITY_LABELS } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 
@@ -45,13 +46,7 @@ export function severityColor(severity: NotificationSeverity): string {
 }
 
 export function severityLabel(severity: NotificationSeverity): string {
-  const labels: Record<NotificationSeverity, string> = {
-    critical: 'สำคัญ',
-    action: 'ต้องดำเนินการ',
-    insight: 'ข้อมูลเชิงลึก',
-    info: 'แจ้งเพื่อทราบ',
-  };
-  return labels[severity] ?? severity;
+  return NOTIFICATION_SEVERITY_LABELS[severity] ?? severity;
 }
 
 /** Header bell badge: hidden at 0, capped at 99+. */

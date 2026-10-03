@@ -177,3 +177,20 @@ the SME chart-of-accounts template's account names ภาษีเงินไ�
 (2132-05), which are company data seeded into charts, and the CIT tax-type words (correct for CIT). Spec:
 `double-entry-ledger-closing-spec.md` §11.2. Tests: report adapters red 34 / 1 → 35 / 0; web ledger red 9 / 2 →
 11 / 0; assistant business-read semantics red 192 / 1 → 193 / 0.
+
+### R7: one source for the words the report rows share with pages
+
+Moved into contracts, with the words the pages showed: `STOCK_MOVEMENT_TYPE_LABELS` (inventory; the Thai
+dictionary entries `inventory.movement.*` now point at it), `AI_SUGGESTION_STATUS_LABELS`,
+`AI_RISK_LEVEL_LABELS`, `AI_SUGGESTION_NEEDS_DATA_LABEL` (the AI suggestion page's copies deleted),
+`NOTIFICATION_SEVERITY_LABELS` (severityLabel), `REPORT_FRESHNESS_LABELS` and `REPORT_CURRENCY_WORDS`
+(reports page), `WORKFLOW_TAB_LABELS` and the rule, run, task and dead-letter status lists (automation page),
+`ACCOUNTING_DOCUMENT_TYPE_LABELS`, `ACCOUNTING_DOCUMENT_STATUS_LABELS`, `ACCOUNTING_PAYMENT_STATUS_LABELS`
+(accounting document pages). The web modules keep their export names, pointing at the same objects. The
+report map builds every shared word from them; only words no page shows stay in it (severity ปกติ and
+ควรตรวจสอบ, dashboard freshness partial/unavailable, movement direction, tax, input-VAT and CRM metric words).
+Words that changed on report rows as a result: receivables payment status now matches the accounting pages
+(OVERDUE เกินกำหนด, VOIDED ยกเลิกแล้ว); AI metrics read คำแนะนำจาก AI สถานะ<status word> and
+คำแนะนำจาก AI ที่ต้องการข้อมูล (the page's word). Tests: new web `common/i18n/one-source-words.spec.ts` red
+0 / 4 → green 4 / 0 (identity and word checks per page); API adapters “report words come from the shared
+lists” red 35 / 2 → green 37 / 0.

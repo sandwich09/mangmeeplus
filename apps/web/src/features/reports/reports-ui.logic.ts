@@ -1,4 +1,4 @@
-import type { ReportExportRequestDto, ReportExportStatus, ReportFieldType, ReportQueryStatus } from '@watchdog-bms/contracts';
+import { REPORT_FRESHNESS_LABELS, type ReportExportRequestDto, type ReportExportStatus, type ReportFieldType, type ReportQueryStatus } from '@watchdog-bms/contracts';
 import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 
 const STATUS_LABELS: Record<ReportExportStatus, string> = {
@@ -81,7 +81,7 @@ export function reportValueText(value: unknown, type?: ReportFieldType, key?: st
 }
 
 export function reportFreshnessText(status: 'fresh' | 'stale' | 'unknown'): string {
-  return status === 'fresh' ? 'ข้อมูลล่าสุด' : status === 'stale' ? 'ข้อมูลอาจไม่ล่าสุด' : 'ยังตรวจเวลาอัปเดตไม่ได้';
+  return REPORT_FRESHNESS_LABELS[status] ?? REPORT_FRESHNESS_LABELS.unknown;
 }
 
 export function isReportsFeatureDisabled(error: unknown): boolean {

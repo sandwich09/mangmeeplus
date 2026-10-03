@@ -1,25 +1,24 @@
+import {
+  WORKFLOW_DEAD_LETTER_RESOLUTION_LABELS,
+  WORKFLOW_RULE_STATUS_LABELS,
+  WORKFLOW_RUN_STATUS_LABELS,
+  WORKFLOW_TAB_LABELS as SHARED_WORKFLOW_TAB_LABELS,
+  WORKFLOW_TASK_STATUS_LABELS,
+} from '@watchdog-bms/contracts';
+import type { WorkflowTab } from './workflow.logic';
+
+// The automation page's words come from contracts, where the automation report reads them too.
+export const WORKFLOW_TAB_LABELS: Record<WorkflowTab, string> = SHARED_WORKFLOW_TAB_LABELS;
+
 export const TEMPLATE_STATUS_LABELS: Record<string, string> = {
   AVAILABLE: 'พร้อมใช้งาน',
   UNAVAILABLE: 'ยังใช้งานไม่ได้',
   DEPRECATED: 'เลิกใช้',
 };
 
-export const RULE_STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'แบบร่าง',
-  ENABLED: 'เปิดใช้งาน',
-  DISABLED: 'ปิดใช้งาน',
-  ARCHIVED: 'เก็บถาวร',
-};
+export const RULE_STATUS_LABELS: Record<string, string> = WORKFLOW_RULE_STATUS_LABELS;
 
-export const RUN_STATUS_LABELS: Record<string, string> = {
-  QUEUED: 'รอดำเนินการ',
-  RUNNING: 'กำลังทำงาน',
-  SUCCEEDED: 'สำเร็จ',
-  PARTIAL_FAILED: 'สำเร็จบางส่วน',
-  FAILED: 'ล้มเหลว',
-  SKIPPED: 'ข้าม',
-  CANCELED: 'ยกเลิก',
-};
+export const RUN_STATUS_LABELS: Record<string, string> = WORKFLOW_RUN_STATUS_LABELS;
 
 export const ACTION_RUN_STATUS_LABELS: Record<string, string> = {
   QUEUED: 'รอดำเนินการ',
@@ -32,12 +31,7 @@ export const ACTION_RUN_STATUS_LABELS: Record<string, string> = {
   CANCELED: 'ยกเลิก',
 };
 
-export const TASK_STATUS_LABELS: Record<string, string> = {
-  OPEN: 'เปิดอยู่',
-  SNOOZED: 'เลื่อนแจ้งเตือน',
-  DONE: 'เสร็จสิ้น',
-  CANCELED: 'ยกเลิก',
-};
+export const TASK_STATUS_LABELS: Record<string, string> = WORKFLOW_TASK_STATUS_LABELS;
 
 export const TASK_PRIORITY_LABELS: Record<string, string> = {
   LOW: 'ต่ำ',
@@ -46,12 +40,7 @@ export const TASK_PRIORITY_LABELS: Record<string, string> = {
   CRITICAL: 'เร่งด่วน',
 };
 
-export const DEAD_LETTER_RESOLUTION_LABELS: Record<string, string> = {
-  OPEN: 'ยังไม่แก้ไข',
-  REPLAYED: 'ลองใหม่แล้ว',
-  IGNORED: 'ละเว้น',
-  RESOLVED_EXTERNALLY: 'แก้ไขจากภายนอก',
-};
+export const DEAD_LETTER_RESOLUTION_LABELS: Record<string, string> = WORKFLOW_DEAD_LETTER_RESOLUTION_LABELS;
 
 export const STATUS_BADGE_COLORS: Record<string, string> = {
   AVAILABLE: 'bg-green-100 text-green-700',
