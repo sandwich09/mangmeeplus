@@ -837,3 +837,35 @@ Verification:
   substitute-receipt API specs rc 0, 123 / 0 / 0; API typecheck rc 0; whole-chain acceptance rc 0, 8 suites,
   3694 / 0 / 0 (no manifest regeneration needed); web suite rc 0, 2681 tests in 552 suites, 2681 / 0 / 0;
   web typecheck rc 0. `git diff --check` rc 0. Browser, PostgreSQL and printed PDFs not checked.
+
+## Follow-up 2026-10-03 (English sweep): the reports guide's report names and headings
+
+After lane 3b (`1ad3115e4`) made the report catalogue and result headings Thai, the pinned reports guide
+still named the 18 reports in English, gave English example headings, said “Period” for the filter now
+labelled “งวด”, and described a result card (“รหัสการรัน”) that lane 3b removed from the page.
+
+**Changed** (`reports-guide.content.ts`): the catalogue table's first column is the catalogue titles
+(`report-catalog.ts`), in catalogue order; the example headings are the adapter's column labels for
+งบทดลอง and สรุปค่าใช้จ่าย (the latter has six columns, สกุลเงิน included, where the old example listed
+five); the run step and the FAQ name “งวด” or the date range instead of “Period”; the empty-result note
+names งบทดลอง and บัญชีแยกประเภท; the run-id row is gone (the page shows only สถานะ, จำนวนแถว,
+ความสดของข้อมูล); the automation row's description says ระบบอัตโนมัติ, the word of its own name and of the
+page, instead of “เวิร์กโฟลว์”. The other “ใช้ดูอะไร” descriptions are unchanged. The ADMIN run-
+investigation sentence went with the row; the role names of the permission and export rows are unchanged.
+
+**Guard** (`user-guide.content.spec.ts`, describe “the reports guide uses the words the reports page
+shows”): reads `report-catalog.ts` and `report-source-adapters.ts` from disk (the guide cannot import API
+code) and the page's result cards from `ReportsWorkspacePage.tsx`, so a renamed report, heading or card
+fails the web suite; and no English letters in any guide sentence except LINE, QR, AI, PDF, VAT, Excel, CSV.
+The old test “names ADMIN for investigating a report run” was removed with the row it tested.
+
+Pin: `reports` `1fad122c…` → `2b48f07ea0261d1d1e2f1b1be164f04b21e2d708cbbcd4b1b4df8108dc7f6511`.
+Card `report.access` (anchor `overview`): still true; the overview section is unchanged and the card
+says nothing about names, headings or the run id. Its generic “ผู้ดูแล” stays the open point recorded in
+follow-up 1. No other card cites the reports guide.
+
+Verification: guide spec red rc 1, 26 / 4 / 0 of 30 (all four new tests); green rc 0, 30 / 0 / 0.
+approved-knowledge red rc 1, 8 / 1 / 0 (reports pin vs edited file); green rc 0, 9 / 0 / 0. The LINE-AI
+capability manifest was already stale at the branch head for two files lane 3b changed
+(`report-source-adapters.ts`, `ReportsWorkspacePage.tsx`); regenerated once at the end of this batch, see
+`docs/agent-memory/english-left-on-pages-2026-10-02.md`.

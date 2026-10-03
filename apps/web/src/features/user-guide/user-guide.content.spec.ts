@@ -344,11 +344,41 @@ describe('shop guides name the company admin for the business permissions it hol
     // In the designated-approver mode only the listed approvers may approve, the owner included.
     assert.equal(holders(rows(buildSubstituteReceiptGuide('co'), 'permissions'), 'อนุมัติและออกเอกสาร'), `${confirmers} ถ้าบริษัทกำหนดรายชื่อผู้อนุมัติ ต้องเป็นคนในรายชื่อนั้น`);
   });
+});
 
-  it('names ADMIN for investigating a report run', () => {
-    const description = sentences(buildReportsGuide('co')).find((text) => text.startsWith('รหัสประจำการเรียกรายงาน'))!;
-    assert.ok(description.includes(roles.ADMIN), description);
-    assert.ok(!description.includes(roles.SYSTEM_ADMIN), description);
+// The guide cannot import API code, so it copies the report words; these checks read the sources and fail on any drift.
+describe('the reports guide uses the words the reports page shows', () => {
+  const guide = buildReportsGuide('co');
+  const root = join(__dirname, '../../../../..');
+  const catalogue = readFileSync(join(root, 'apps/api/src/modules/reports/domain/report-catalog.ts'), 'utf8');
+  const titles = new Map([...catalogue.matchAll(/code: '([^']+)',\s+version: \d+,\s+title: '([^']+)'/g)].map((match) => [match[1]!, match[2]!]));
+  const table = (id: string) => guide.sections.find((section) => section.id === id)!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows : []));
+
+  it('names every report by its catalogue title, in catalogue order', () => {
+    assert.equal(titles.size, 18);
+    assert.deepEqual(table('catalog').map((row) => row[0]), [...titles.values()]);
+  });
+
+  it('gives as examples the column headings those reports really have', () => {
+    const adapters = readFileSync(join(root, 'apps/api/src/modules/reports/application/report-source-adapters.ts'), 'utf8');
+    const headings = (method: string) => {
+      const body = adapters.slice(adapters.indexOf(`private async ${method}(`));
+      return [...body.slice(0, body.indexOf('private async ', 1)).matchAll(/\{ key: '\w+', label: '([^']+)', type: '\w+' \}/g)].map((match) => match[1]).join(' · ');
+    };
+    const detail = sentences(guide).find((text) => text.startsWith('หัวคอลัมน์เปลี่ยนไปตามรายงานที่เลือก'))!;
+    assert.ok(detail.includes(`${titles.get('financial.trial_balance')}มีคอลัมน์ ${headings('trialBalanceReport')}`), detail);
+    assert.ok(detail.includes(`${titles.get('expense.summary')}มีคอลัมน์ ${headings('expenseSummaryReport')}`), detail);
+  });
+
+  it('describes only the result cards the page shows', () => {
+    const page = readFileSync(join(__dirname, '../reports/ReportsWorkspacePage.tsx'), 'utf8');
+    const cards = [...page.matchAll(/<div className="text-xs font-medium uppercase text-gray-500">([^<]+)<\/div>/g)].map((match) => match[1]);
+    assert.ok(cards.length >= 3, 'the page still has result cards');
+    assert.deepEqual(table('run').map((row) => row[0]), cards);
+  });
+
+  it('shows no English word but the product names kept as they are', () => {
+    for (const text of sentences(guide)) assert.doesNotMatch(text.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, ''), /[A-Za-z]/, text);
   });
 });
 
