@@ -19,6 +19,8 @@ test('the system shell and report gate use the exact permission, and the header 
   assert.match(header, /EXECUTIVE_ACCESS_DENIED_EVENT/);
   assert.match(header, /thaiLabel\(environment\)/);
   assert.match(header, /thaiLabel\(section.label\)/);
+  // Report routes only: '/system/executive-users' (an admin page) keeps the admin console's own menu words.
+  assert.doesNotMatch(header, /pathname\.startsWith\('\/system\/executive'\)/);
 });
 test('reads use authenticated fetch, no tenant target header, and reload/abort protect the entire answer', () => {
   const api = source('./executive-reports.api.ts'), page = source('./ExecutiveReportPage.tsx');
