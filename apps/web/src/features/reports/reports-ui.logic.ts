@@ -108,7 +108,11 @@ const WARNING_LABELS: Record<string, string> = {
   ledger_control_account_not_found_or_unposted: 'ยังไม่พบบัญชียอดคุมหรือรายการที่ลงบัญชีแล้วสำหรับช่วงนี้',
   ledger_control_mismatch: 'ยอดรายงานต่างจากยอดคุมบัญชี กรุณาให้นักบัญชีตรวจสอบ',
   accounting_documents_scope_forbidden: 'สรุปนี้ไม่รวมเอกสารขาย เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',
-  crm_scope_forbidden: 'สรุปนี้ไม่รวม CRM เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',
+  crm_scope_forbidden: 'สรุปนี้ไม่รวมโอกาสการขาย เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',
+  // The open-opportunity value adds every opportunity's estimate whatever its currency (no unit is shown for it).
+  crm_pipeline_currency_unavailable: 'มูลค่าโอกาสการขายรวมทุกรายการโดยไม่แยกสกุลเงิน จึงไม่แสดงหน่วยเงินของยอดนี้',
+  // Receivables in more than one currency: no single total, and no comparison with the ledger control account.
+  mixed_currency_total_unavailable: 'ใบแจ้งหนี้มีมากกว่าหนึ่งสกุลเงิน จึงไม่รวมยอดค้างชำระเป็นยอดเดียวและไม่ได้เทียบกับยอดคุมบัญชี',
   inventory_valuation_not_available: 'รายงานนี้แสดงจำนวนสินค้า ยังไม่รวมมูลค่าสินค้า',
   workflow_run_scope_forbidden: 'สรุปนี้ไม่รวมประวัติการทำงาน เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',
   workflow_task_scope_forbidden: 'สรุปนี้ไม่รวมงานค้าง เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',

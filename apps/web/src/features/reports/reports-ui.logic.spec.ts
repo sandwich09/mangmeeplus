@@ -118,3 +118,28 @@ describe('report money units', () => {
     assert.match(workspaceSource, /reportValueText\(sourceValue, chartValueType, undefined, reportMoneyUnit\(result\.rows\[i\]\)\)/);
   });
 });
+
+// Every warning the report API can send has its own words: the generic sentence (scope and permissions) is untrue
+// for a currency gap. The codes are read from the API sources, so a new code without words fails here.
+describe('report warnings say what happened', () => {
+  const api = join(dirname(fileURLToPath(import.meta.url)), '../../../../api/src/modules/reports/application');
+  const sources = ['report-source-adapters.ts', 'report.use-cases.ts'].map((file) => readFileSync(join(api, file), 'utf8')).join('\n');
+  const codes = [...new Set([...sources.matchAll(/warnings(?:\.push\(|: \[)'([a-z_]+)'|unavailableReason: '([a-z_]+)'|\?\? '([a-z_]+_not_ready)'|\? \['([a-z_]+)'\] : \[\]/g)]
+    .map((match) => match[1] ?? match[2] ?? match[3] ?? match[4]!))];
+  const generic = reportWarningText('a_code_the_page_does_not_know');
+
+  it('has words of its own for every code, with no English', () => {
+    assert.ok(codes.length >= 14, `found ${codes.length} codes`);
+    for (const code of codes) {
+      const text = reportWarningText(code);
+      assert.notEqual(text, generic, code);
+      assert.doesNotMatch(text.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, ''), /[A-Za-z]/, code);
+    }
+  });
+
+  it('says what the currency gaps mean', () => {
+    assert.match(reportWarningText('crm_pipeline_currency_unavailable'), /ไม่แยกสกุลเงิน/);
+    assert.match(reportWarningText('mixed_currency_total_unavailable'), /มากกว่าหนึ่งสกุลเงิน/);
+    assert.match(reportWarningText('crm_scope_forbidden'), /โอกาสการขาย/);
+  });
+});

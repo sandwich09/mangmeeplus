@@ -204,3 +204,13 @@ defaults to THB; payables aging is THB by construction). Table cells and chart p
 row i of the same page. The accountant evidence report gained a สกุลเงิน column, since an expense can be in a
 foreign currency. Spec: reports-bi-spec.md formatting rule. Tests: web reports-ui red 12 / 2 → 14 / 0 (a USD
 row reads “12.34 USD”); API adapters “accountant evidence currency” red 37 / 1 → 38 / 0.
+
+### R3: report warnings
+
+`crm_scope_forbidden`: “สรุปนี้ไม่รวม CRM เพราะ…” → “สรุปนี้ไม่รวมโอกาสการขาย เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น”.
+`crm_pipeline_currency_unavailable` (fell to the generic scope/permission sentence): “มูลค่าโอกาสการขายรวมทุกรายการ
+โดยไม่แยกสกุลเงิน จึงไม่แสดงหน่วยเงินของยอดนี้”. Fact: opportunities record a currency, but the open-pipeline total adds
+every `amountEstimate` whatever its currency, and since R1 that row shows no unit.
+`mixed_currency_total_unavailable` (same fallback): “ใบแจ้งหนี้มีมากกว่าหนึ่งสกุลเงิน จึงไม่รวมยอดค้างชำระเป็นยอดเดียว
+และไม่ได้เทียบกับยอดคุมบัญชี”. Fact: the receivables total is null and the ledger-control comparison is skipped.
+A web test reads all 14 warning codes from the API sources and requires words of their own: red 14 / 2 → 16 / 0.
