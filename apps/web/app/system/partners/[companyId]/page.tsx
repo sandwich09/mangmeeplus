@@ -22,6 +22,8 @@ export default async function SystemPartnerDetailRoute({
       key={companyId}
       companyId={companyId}
       canManageMembers={session?.permissions.includes('system.partner_member.manage') ?? false}
+      canManageReportLabels={session?.permissions.includes('system.partner_company.update') ?? false}
+      isPlatformCompany={session?.companyId === companyId}
       canEditIdentity={session?.permissions.includes('system.identity_reconciliation.resolve') ?? false}
       supportRequestId={first(query.support)}
       supportAskerRef={first(query.asker)}
