@@ -542,7 +542,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       const businessType = page.getByRole('combobox', { name: 'ประเภทธุรกิจ' });
       await expect(businessType).toBeEnabled();
       await businessType.click();
-      await page.getByPlaceholder('ค้นหาชื่อธุรกิจหรือรหัส TSIC').fill('01112');
+      await page.getByPlaceholder('ค้นหาชื่อธุรกิจหรือรหัสประเภทธุรกิจ').fill('01112');
       await page.getByRole('option', { name: /01112/ }).click();
       const vatStatus = page.locator('#vat-status');
       await expect(vatStatus).toBeEnabled();

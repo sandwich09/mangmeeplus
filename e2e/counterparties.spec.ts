@@ -80,7 +80,7 @@ test.describe('CP — counterparty registry permissions', () => {
     const accountantApi = await apiAs('ACCOUNTANT');
     const accountantPage = await pageAs('ACCOUNTANT');
     await gotoCompany(accountantPage, companyId, `/counterparties/${created.id}`);
-    await expect(accountantPage.getByText('ดูอย่างเดียว ขอสิทธิ์ จัดการคู่ค้า จากเจ้าของหรือผู้ดูแลระบบจึงจะแก้ไขได้', { exact: true })).toBeVisible();
+    await expect(accountantPage.getByText('ดูอย่างเดียว ขอสิทธิ์จัดการคู่ค้าจากเจ้าของกิจการหรือผู้มีสิทธิ์จัดการบทบาทจึงจะแก้ไขได้', { exact: true })).toBeVisible();
     await expect(accountantPage.getByRole('textbox', { name: 'ชื่อที่แสดง', exact: true })).toBeDisabled();
     await expect(accountantPage.getByRole('button', { name: 'บันทึก', exact: true })).toHaveCount(0);
 

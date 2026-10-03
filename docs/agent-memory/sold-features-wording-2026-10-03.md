@@ -976,3 +976,84 @@ The initial focused run after the wording edit exposed one stale assertion (57 p
 | expenses.upload_capture_hint; camera card on the web upload page | ถ่ายใบเสร็จให้เห็นยอดรวมและวันที่ชัด ๆ · หรือส่งเข้ามาทาง LINE ก็ได้ | ถ่ายใบเสร็จให้เห็นยอดรวมและวันที่ชัด ๆ |
 
 Camera/dropzone promise regression: `pnpm --filter @watchdog-bms/web exec node --import tsx --test --test-name-pattern='permission guidance' src/common/i18n/sold-features-wording.spec.ts` exited 1 before the camera-copy fix (1 test / 0 pass / 1 fail). After the fix, `pnpm --filter @watchdog-bms/web exec node --import tsx --test src/common/i18n/sold-features-wording.spec.ts` exited 0 (9 tests / 9 pass / 0 fail). The required locked web typecheck was rerun and exited 0; the complete web suite was rerun with all S3_* variables removed and exited 0 (2,780 tests / 2,780 pass / 0 fail / 0 skipped, 571 suites). Final `git diff --check` exited 0. Temporary logs removed after recording these results.
+
+## Controller review follow-up — 2026-10-03
+
+Status: The three controller-reported defects are fixed. Focused specs and gateway typecheck pass; the requested API package/whole-chain runs are blocked by the sandbox IPC restriction. E2E collection passes; browser execution remains for the controller.
+Owner: Codex implementation lane; controller retains commit responsibility.
+Scope: CommonJS-compatible spec path, stale wording expectations, W00 manifest source hashes and the requested verification commands. No production behavior or new user-facing text changes.
+Decisions: Use the neighbouring gateway spec's `resolve(__dirname, ...)` pattern; retain the existing manifest generator and review its source-hash delta. The controller explicitly requested the API package test script and whole-chain runner through heavy.sh; run those exact commands once and report any sandbox refusal without retrying another way.
+Open questions: None.
+Artifacts: response-composer.agent.spec.ts; line-capture-result-notifier.use-case.spec.ts; generated capability manifest; this running note.
+Verification: Reproduced notifier failure (exit 1), frozen manifest drift (exit 1), and gateway TS1343 typecheck failure (exit 2). Counts and final commands follow after completion.
+Next: Controller reviews/commits the uncommitted follow-up and reruns the blocked API package/whole-chain commands and the nine updated E2E files in its browser environment.
+
+
+### Controller follow-up changes and scan outcome
+
+- `response-composer.agent.spec.ts` uses `resolve(__dirname, 'accounting-summary.agent.ts')`, matching `approved-knowledge.spec.ts`. No production change.
+- `line-capture-result-notifier.use-case.spec.ts` had one stale occurrence of the old continuation sentence; its expectation now includes “ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้: ”. The other read-result assertions already match the unchanged sentence prefixes.
+- Searched 1,052 API/gateway/web spec/test and E2E files against 257 deleted Thai literal/JSX fragments from the accepted wording commit, plus targeted searches for regex-escaped and partial old phrases. Updated nine E2E files and two web specs as part of requested item 2. Remaining scan hits are unchanged fragments, negative regression assertions, fixtures representing caller-provided descriptions, or unchanged operator/preview copy. In particular “ค่าบริการ (Service charge)” remains caller-supplied test data, and the preview's “Stripe (จำลอง)” heading was not changed by the accepted sweep.
+- The two web upload tests now exercise their existing passthrough assertions with `UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE`; no behavior assertion was removed and no new user-facing wording introduced.
+- E2E selector changes only: billing checkout/provider/payment-mode labels, expense-number column, email-code copy, business-type search placeholder, and counterparty read-only notice. Browser checks were not run: lane rule 6 prohibits browsers and servers. Playwright `--list` loads every touched E2E file without starting either.
+
+Changed E2E files and final collection counts (counts include configured project variants, **not passes**):
+
+| File | Collected |
+|---|---:|
+| e2e/billing-admin-menu-ux.spec.ts | 12 |
+| e2e/billing-advance-deal.spec.ts | 2 |
+| e2e/billing-no-setup.spec.ts | 8 |
+| e2e/billing-preview.spec.ts | 2 |
+| e2e/counterparties.spec.ts | 2 |
+| e2e/login.spec.ts | 10 |
+| e2e/plan-term-billing-readiness.spec.ts | 33 |
+| e2e/profile-completeness-card.spec.ts | 5 |
+| e2e/responsive.spec.ts | 540 |
+| Total | 614 |
+
+### Manifest review
+
+Regenerated `docs/research/mangmee-ai-capability-manifest-2026-09-27.json` using the existing spec's update switch and the lane's node/tsx-loader form of the documented command. Source-hash comparison against HEAD was asserted to contain exactly:
+
+| Source | Old SHA-256 | New SHA-256 |
+|---|---|---|
+| apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts | f200690d4372d4de1229a07cd8e4b6ac699c83af6b13d02d548b3f9a879e3edc | bb458a1388a2158338f4290d916de62803496cf10a616d935779788a88220779 |
+| packages/contracts/src/ai-tools.ts | b4d49ab0da593517f891c00856d9d4f1eb046130c4241eaa74b0d9ca0839c6a7 | 4a0d46de4ddf1cea4e6b5e5d0c3ed15ea773473d86f3b0f74daa032b4492ead7 |
+
+The only other generated changes are `sourceRevision`, `checkoutBranch`, `checkoutDirty`, `generatedAt` and `manifestDigest`. Registry, routes, DI wiring, capabilities and all other source hashes are identical. Verification script exit 0.
+
+### Follow-up verification — exact commands and observed results
+
+The heavy wrapper used below is `/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh`.
+
+| Check | Before | After |
+|---|---|---|
+| Notifier spec | exit 1; 33 tests, 32 pass, 1 fail, 0 skipped | exit 0; 33 pass, 0 fail, 0 skipped |
+| Frozen manifest spec | exit 1; 4 tests, 3 pass, 1 fail, 0 skipped | exit 0; 4 pass, 0 fail, 0 skipped |
+| Manifest update invocation | — | exit 0; 4 pass, 0 fail, 0 skipped |
+| Gateway typecheck | exit 2; TS1343 | exit 0; no errors; test counts not applicable |
+| Gateway composer spec | — | exit 0; 113 pass, 0 fail, 0 skipped |
+| Both changed web specs | — | exit 0; 24 pass, 0 fail, 0 skipped |
+| E2E collection (initial eight files) | — | exit 0; 581 collected, 0 executed |
+| E2E collection (final nine files) | — | exit 0; 614 collected, 0 executed |
+| API package `test` | — | exit 1; pretest tsx IPC listen EPERM; 0 tests executed |
+| Whole-chain acceptance | — | exit 1; initial suites 4/4 and 5/5 passed; reliability-gateway-v2 failed to start due to tsx IPC listen EPERM; subsequent suites not run |
+| git diff --check | — | exit 0; no whitespace errors |
+
+```sh
+pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/line-ai/application/use-cases/line-capture-result-notifier.use-case.spec.ts
+UPDATE_LINE_AI_CAPABILITY_MANIFEST=1 pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/line-ai/line-ai-capability-manifest.spec.ts
+pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/line-ai/line-ai-capability-manifest.spec.ts
+pnpm --filter @watchdog-bms/ai-gateway exec node --import tsx --test src/modules/line-ai/agents/response-composer.agent.spec.ts
+pnpm --filter @watchdog-bms/web exec node --import tsx --test src/common/api/api-error-coverage.spec.ts src/common/files/upload-file.logic.spec.ts
+/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh pnpm --filter @watchdog-bms/api test
+/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh pnpm --filter @watchdog-bms/ai-gateway typecheck
+/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh node scripts/run-line-ai-whole-chain-acceptance.mjs
+pnpm exec playwright test e2e/billing-advance-deal.spec.ts e2e/billing-preview.spec.ts e2e/billing-no-setup.spec.ts e2e/billing-admin-menu-ux.spec.ts e2e/login.spec.ts e2e/responsive.spec.ts e2e/counterparties.spec.ts e2e/profile-completeness-card.spec.ts --list
+pnpm exec playwright test e2e/billing-advance-deal.spec.ts e2e/billing-preview.spec.ts e2e/billing-no-setup.spec.ts e2e/billing-admin-menu-ux.spec.ts e2e/login.spec.ts e2e/responsive.spec.ts e2e/counterparties.spec.ts e2e/profile-completeness-card.spec.ts e2e/plan-term-billing-readiness.spec.ts --list
+```
+
+The API package script stopped in its pretest hook before the main `test` script could execute. The whole-chain runner completed `catalog-contract` (4 tests) and `controlled-image-harness-contract` (5 tests), then its tsx child failed before executing `reliability-gateway-v2`. Per lane rule 6/command-refusal rule, neither refused command was retried through another launcher or sandbox workaround. These two commands and browser execution remain for the controller; no full acceptance pass is claimed.
+
+No package.json, application implementation, contracts source, schema, migration, paid-invoice.ts or billing-schedule.ts change in this follow-up. No guide/card text or pins changed. User-facing words are unchanged from the accepted commit. Temporary scan/test logs were removed after recording results here; all changes are uncommitted.

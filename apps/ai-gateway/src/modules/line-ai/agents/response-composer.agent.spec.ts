@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_CAPABILITY_REPLY_PREFIXES } from '@watchdog-bms/contracts';
@@ -1036,7 +1037,7 @@ it('curated LINE jokes use plain Thai words', () => {
 });
 
 it('the shared specialist fallback describes unavailable data without guessing an endpoint failure', () => {
-  const source = readFileSync(new URL('./accounting-summary.agent.ts', import.meta.url), 'utf8');
+  const source = readFileSync(resolve(__dirname, 'accounting-summary.agent.ts'), 'utf8');
   assert.doesNotMatch(source, /ไม่พบข้อมูลบัญชี \(endpoint ยังไม่พร้อม\)/);
   assert.match(source, /ยังไม่มีข้อมูลที่พร้อมแสดงในขณะนี้/);
 });

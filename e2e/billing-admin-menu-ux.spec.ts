@@ -140,7 +140,7 @@ test('invoice documents keep refunds secondary, hide internal IDs and never ask 
   } }));
   const writes = observeWrites(page);
   await login(page); await page.goto(`${base}/invoices/${invoiceId}`);
-  await expect(page.getByRole('region', { name: 'เอกสารจาก Stripe', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'เอกสารจากผู้ให้บริการรับชำระเงิน', exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'รายละเอียดการปรับยอด', exact: true })).toBeHidden();
   await page.getByText('ประวัติคืนเงินและเอกสารปรับยอด', { exact: true }).click();
   await expect(page.locator('a[href^="mailto:"]')).toHaveCount(0);
@@ -258,8 +258,8 @@ test('documents explain source mismatch, missing, denied and unavailable states 
   await login(page);
   // The real isolated invoice intentionally lacks a Stripe customer binding.
   await page.goto(`${base}/invoices/${invoiceId}`);
-  await expect(page.getByRole('heading',{name:'ข้อมูลรายการนี้ยังยืนยันกับ Stripe ไม่ได้',exact:true})).toBeVisible();
-  const states=[{status:403,code:'FORBIDDEN',title:'บัญชีนี้เปิดเอกสารไม่ได้'},{status:404,code:'NOT_FOUND',title:'ไม่พบเอกสารของรายการนี้'},{status:503,code:'BILLING_NOT_CONFIGURED',title:'ยังเชื่อมต่อเอกสารจาก Stripe ไม่ได้'},{status:409,code:'BILLING_DOCUMENT_PENDING',title:'เอกสารยังไม่พร้อมเปิด'}];
+  await expect(page.getByRole('heading',{name:'ข้อมูลรายการนี้ยังยืนยันกับผู้ให้บริการรับชำระเงินไม่ได้',exact:true})).toBeVisible();
+  const states=[{status:403,code:'FORBIDDEN',title:'บัญชีนี้เปิดเอกสารไม่ได้'},{status:404,code:'NOT_FOUND',title:'ไม่พบเอกสารของรายการนี้'},{status:503,code:'BILLING_NOT_CONFIGURED',title:'ยังเชื่อมต่อเอกสารจากผู้ให้บริการรับชำระเงินไม่ได้'},{status:409,code:'BILLING_DOCUMENT_PENDING',title:'เอกสารยังไม่พร้อมเปิด'}];
   for(const state of states){
     await page.route(`**/api/v1${base}/invoices/${invoiceId}/adjustments/*`,r=>r.fulfill({status:state.status,json:{code:state.code,message:state.code}}));
     await page.reload();
