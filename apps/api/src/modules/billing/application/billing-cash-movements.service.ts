@@ -186,6 +186,27 @@ export class BillingCashMovementsService {
   }
 
   /**
+   * One company's paid package invoices of this mode, for the executive company history (executive spec §16.1 API06): when
+   * each took effect (`appliedAt`), its kind by the same rule as the money, and the package it bought. An invoice whose
+   * package was never applied has no such moment and is left out.
+   */
+  async companyPackagePurchases(companyId: string): Promise<Array<{ appliedAt: Date; purchaseKind: BillingPurchaseKind; tierKey: string | null }>> {
+    const scope = this.scope();
+    if (!scope) return [];
+    const rows = await this.prisma.client.$queryRaw<Array<Omit<Row, 'observation' | 'disputed'> & { appliedAt: Date; tierKey: string | null }>>(Prisma.sql`
+      SELECT i."appliedAt", i."productKind", i."sourceAttemptId", i."subscriptionId", i."offerSnapshot"->>'offerKey' AS "tierKey",
+             a."quoteSnapshot"->'quote'->'purchase'->>'kind' AS "quoteKind",
+             a."quoteSnapshot"->'subscriptionConversion' IS NOT NULL AS "subscriptionConversion"
+        FROM "BillingInvoice" i
+        JOIN "BillingAccount" b ON b.id = i."billingAccountId"
+        LEFT JOIN "BillingAttempt" a ON a.id = i."sourceAttemptId"
+       WHERE b."companyId" = ${companyId} AND b."stripeAccountId" = ${scope.stripeAccountId} AND b.livemode = ${scope.livemode}
+         AND i."providerStatus" = 'paid' AND i."paidSatang" > 0 AND i."productKind" = 'PACKAGE' AND i."appliedAt" IS NOT NULL`);
+    return rows.map((row) => ({ appliedAt: row.appliedAt, tierKey: row.tierKey, purchaseKind: billingPurchaseKind({ productKind: row.productKind ?? 'PACKAGE',
+      sourceAttemptId: row.sourceAttemptId, subscriptionId: row.subscriptionId, quoteKind: row.quoteKind, subscriptionConversion: row.subscriptionConversion === true }) }));
+  }
+
+  /**
    * One entry per company that has a plan term or a billing account in this mode. Three set reads,
    * never one per company; the purchase source is billing's own rule, not a copy of it.
    */

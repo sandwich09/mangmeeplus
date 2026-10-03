@@ -37,14 +37,15 @@ const ERRORS = {
   EXECUTIVE_QUERY_INVALID: [400, 'ตัวกรองไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง'],
   EXECUTIVE_ACCESS_DENIED: [403, 'ไม่มีสิทธิ์จัดการบัญชีผู้บริหาร'],
   ACCOUNT_NOT_FOUND: [404, 'ไม่พบบัญชีผู้บริหาร'],
+  COMPANY_NOT_FOUND: [404, 'ไม่พบบริษัทนี้ในรายงาน'],
   ACCOUNT_ALREADY_EXISTS: [409, 'ชื่อผู้ใช้หรืออีเมลนี้ถูกใช้แล้ว'],
   ACCOUNT_REVOKED: [409, 'บัญชีนี้ถูกปิดจากทางอื่นของระบบ หน้านี้เปิดคืนไม่ได้'],
   ACCOUNT_PROTECTED: [422, 'ไม่สามารถเปลี่ยนบัญชีผู้ดูแลระบบด้วยคำสั่งนี้ได้'],
-  SOURCE_UNAVAILABLE: [503, 'ไม่สามารถอ่านข้อมูลบัญชีได้ในขณะนี้'],
+  SOURCE_UNAVAILABLE: [503, 'ระบบยังอ่านข้อมูลส่วนนี้ไม่ได้ กรุณาลองใหม่ภายหลัง'],
 } as const;
-export function executiveError(requestId: string, code: keyof typeof ERRORS, field?: string): HttpException {
-  const [status, message] = ERRORS[code];
-  return new HttpException({ code, message, requestId, ...(field ? { fieldErrors: { [field]: code } } : {}) }, status);
+/** `message` replaces the fixed text where a page needs other words for the same code (a report denies reading, not managing). */
+export function executiveError(requestId: string, code: keyof typeof ERRORS, field?: string, message: string = ERRORS[code][1]): HttpException {
+  return new HttpException({ code, message, requestId, ...(field ? { fieldErrors: { [field]: code } } : {}) }, ERRORS[code][0]);
 }
 
 @Injectable()

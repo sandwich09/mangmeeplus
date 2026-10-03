@@ -37,14 +37,17 @@ type ExecutiveRequest = Request & { context: RequestContext };
 
 /** Give the existing validation/permission/platform gates the executive error envelope. */
 @Catch(HttpException)
-class ExecutiveAccountExceptionFilter implements ExceptionFilter {
+export class ExecutiveAccountExceptionFilter implements ExceptionFilter {
+  /** The words of a 403 on this controller's page; the code is EXECUTIVE_ACCESS_DENIED on every executive route. */
+  constructor(private readonly deniedMessage?: string) {}
+
   catch(error: HttpException, host: ArgumentsHost) {
     const http = host.switchToHttp();
     const req = http.getRequest<ExecutiveRequest>();
     const status = error.getStatus();
     const payload = error.getResponse();
     const requestId = req.context?.requestId ?? String(req.headers['x-request-id'] ?? '');
-    const mapped = status === 403 ? executiveError(requestId, 'EXECUTIVE_ACCESS_DENIED')
+    const mapped = status === 403 ? executiveError(requestId, 'EXECUTIVE_ACCESS_DENIED', undefined, this.deniedMessage)
       : status === 400 && !(typeof payload === 'object' && 'code' in payload)
         ? executiveError(requestId, req.method === 'GET' ? 'EXECUTIVE_QUERY_INVALID' : 'INVALID_INPUT') : error;
     http.getResponse<Response>().setHeader('Cache-Control', 'no-store');
