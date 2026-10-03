@@ -2,7 +2,7 @@
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 
 const sources = {
-  expenses: { file: 'expenses-guide.content.ts', hash: '73f50c3324ed2051b4881206cd68b1beb2542b21fcd67875eb68f07d92d42982' },
+  expenses: { file: 'expenses-guide.content.ts', hash: '886680e3a68df08d437822a90e304b20177fb49416291ada5f39c48bd5b6cc8e' },
   reimbursements: { file: 'reimbursement-guide.content.ts', hash: 'e385693b9836dcd83d14843b2d02a49e72f4df17a9e2f80e3f1124c7c0609bca' },
   'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: 'a444dd458af1b3ec395175b720a08fd58e3de0ec913b46cb985d262565b1c705' },
   reports: { file: 'reports-guide.content.ts', hash: '8bf9239b344d299117b3e228ce9aec503809758458f14cec8c316b1143b40baa' },
@@ -36,7 +36,7 @@ export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
   releaseRange: { min: '2.4.0', maxExclusive: '2.5.0' }, contentHash: '',
   cards: [
     card('expense.start', 'expenses', 'overview', 'เริ่มบันทึกค่าใช้จ่าย', ['เริ่มลงค่าใช้จ่ายยังไง', 'รายจ่ายเข้าระบบแล้วทำอะไรต่อ'],
-      'เลือกสาขาของรายการ แล้วนำใบเสร็จเข้าระบบหรือบันทึกด้วยมือ ระบบเก็บเป็นฉบับร่างให้ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ ยอดเงิน และไฟล์แนบก่อนยืนยัน การบันทึกร่างยังไม่ใช่การยืนยันเอกสารหรือจ่ายเงินค่ะ', expenseReaders),
+      'เลือกสาขาของรายการ แล้วนำใบเสร็จเข้าระบบหรือบันทึกด้วยมือตามช่องทางที่เปิดใช้สำหรับร้านของคุณและสิทธิ์ที่คุณมี ระบบเก็บเป็นฉบับร่างให้ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ ยอดเงิน และไฟล์แนบก่อนยืนยัน การบันทึกร่างยังไม่ใช่การยืนยันเอกสารหรือจ่ายเงินค่ะ', expenseReaders),
     card('expense.status', 'expenses', 'overview', 'สถานะเอกสารกับสถานะจ่ายเงิน', ['ยืนยันแล้วแปลว่าจ่ายแล้วไหม', 'ทำไมสถานะมีสองบรรทัด'],
       'สถานะเอกสารบอกว่าตรวจไปถึงขั้นใด ส่วนสถานะชำระเงินบอกว่าจ่ายให้ผู้ขายหรือยัง เป็นคนละเรื่องกันค่ะ เอกสารที่ยืนยันแล้วอาจยังไม่จ่ายเงิน และรายการที่จ่ายแล้วอาจยังตรวจเอกสารไม่ครบ', expenseReaders),
     card('expense.find', 'expenses', 'list', 'ค้นหารายการค่าใช้จ่าย', ['หาบิลร้านเดิมยังไง', 'ดูรายการตามสถานะที่ไหน'],
