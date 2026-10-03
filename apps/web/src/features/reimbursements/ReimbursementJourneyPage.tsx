@@ -408,7 +408,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       : action === 'approve' && needsAttestation && !attested ? PAYOUT_ATTESTATION_REQUIRED
         : action === 'finance-approve' && duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined;
     return (
-      <button key={action} type="button" className={className} title={blockedReason}
+      <button key={action} type="button" className={className} title={action === 'submit' ? undefined : blockedReason}
+        aria-describedby={action === 'submit' && blockedReason ? 'claim-submit-readiness' : undefined}
         disabled={busyAction !== null || previewLoadingKey !== null || Boolean(blockedReason)} aria-busy={working}
         onClick={handlers[action]}>
         {working ? 'กำลังดำเนินการ...' : label}
@@ -526,7 +527,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
             <h2 id="journey-step-title" className="mt-1 text-lg font-bold text-gray-900">{step.label}</h2>
             {step.note && <p className="mt-1 text-sm text-gray-600">{step.note}</p>}
           </div>
-          {step.actions.includes('submit') && readiness.blocked && readiness.message && <ErrorBanner message={readiness.message} />}
+          {step.actions.includes('submit') && readiness.blocked && readiness.message && <div id="claim-submit-readiness"><ErrorBanner message={readiness.message} /></div>}
           {/* Spec §14.6: what a round's approvers approve. What the claim was approved with beside what was answered. */}
           {step.key === 'approval' && <PayoutCorrectionComparison detail={detail} />}
           {needsAttestation && (
@@ -571,7 +572,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
               )}
             </div>
           )}
-          {actionError && <ErrorBanner message={actionError} />}
+          {actionError && !(step.actions.includes('submit') && readiness.blocked && actionError === readiness.message) && <ErrorBanner message={actionError} />}
         </section>
       )}
 

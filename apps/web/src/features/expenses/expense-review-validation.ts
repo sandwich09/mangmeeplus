@@ -1,6 +1,14 @@
-import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
+import { workspaceDictionary, type SupportedLocale, type DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { EXPENSE_DECIMAL_18_4_PATTERN, isCalculatedExpenseRounding, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { EXPENSE_LINE_CHARGE_KINDS, calculateManualExpenseTotals, expenseChargeKindAllowsNegative, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
+
+/** The same facts have prompts only when this reader can edit the form. */
+export function expenseReviewMessage(key: DictionaryKey, locale: SupportedLocale, canEdit: boolean, params?: Record<string, string>): string {
+  const readonlyKey = `${key}_readonly` as DictionaryKey;
+  const message = !canEdit && workspaceDictionary[locale][readonlyKey]
+    ? workspaceDictionary[locale][readonlyKey] : workspaceDictionary[locale][key];
+  return Object.entries(params ?? {}).reduce((text, [name, value]) => text.replace(`{${name}}`, value), message);
+}
 
 export type ExpenseFieldIssue = {
   field: string;

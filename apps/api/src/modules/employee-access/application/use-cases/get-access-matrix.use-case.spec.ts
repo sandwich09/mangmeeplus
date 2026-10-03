@@ -89,10 +89,10 @@ describe('GetAccessMatrixUseCase', () => {
     const matrix = await useCase.execute('company-1');
     const row = matrix.rows[0]!;
 
-    assert.equal(row.menus.dashboard?.view, false, 'dashboard entitlement off strips dashboard.read');
+    assert.equal(row.menus.dashboard, undefined, 'dashboard entitlement off strips dashboard.read');
     assert.equal(row.menus.inbox?.view, true, 'crm enabled keeps inbox');
-    assert.equal(row.menus.reports?.view, false, 'reports feature off strips report.catalog.read');
-    assert.equal(row.menus.journal?.view, false, 'ledger feature off strips ledger.journal.read');
+    assert.equal(row.menus.reports, undefined, 'reports feature off strips report.catalog.read');
+    assert.equal(row.menus.journal, undefined, 'ledger feature off strips ledger.journal.read');
   });
 
   it('keeps every granted menu when the company has no entitlement rows (legacy fail-open)', async () => {
@@ -106,4 +106,13 @@ describe('GetAccessMatrixUseCase', () => {
 
     assert.equal(matrix.rows[0]!.menus.reports?.view, true);
   });
+});
+
+it('STARTER matrix contains only purchased menus, including menus a role has no grant for', async () => {
+  const { TIER_FEATURE_PRESETS, ALL_FEATURE_ENTITLEMENT_KEYS } = await import('@watchdog-bms/contracts');
+  const keys: readonly string[] = TIER_FEATURE_PRESETS.STARTER_249;
+  const matrix = await new GetAccessMatrixUseCase(fakeListRoles([]), fakePrisma(
+    ALL_FEATURE_ENTITLEMENT_KEYS.map(featureKey => ({ featureKey, enabled: keys.includes(featureKey) })),
+  )).execute('company-1');
+  assert.deepEqual(matrix.menus.map(menu => menu.id), ['dashboard', 'expenses', 'roles', 'notifications']);
 });

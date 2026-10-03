@@ -1114,3 +1114,7 @@ E2E/smoke:
 - Revisit production export row/size limits after real customer data volume is known.
 - Revisit manager finance-summary scope before beta if owner wants broader manager visibility.
 - Revisit spreadsheet writer only if repo later standardizes on a different XLSX package than `exceljs`.
+
+## Browser regression amendment — 2026-10-04
+
+The retained-report history route remains available under its existing artifact-read permission gates when Reports is not enabled. Its description states only that it displays accessible history/files; it must not imply that this company previously purchased Reports or that files exist. With a successful empty read it says there are no accessible report files. Loading or failed reads must not be described as an empty result. History-only mode has no save-view or create-export button, including a disabled button; permitted retained-artifact downloads retain their existing checks.

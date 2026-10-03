@@ -496,12 +496,25 @@ test.describe('SET — settings', () => {
     await expect(owner.getByRole('button', { name: 'เพิ่ม' })).toBeEnabled();
 
     // COMPANY_VIEW holds access.role.read but not access.role.manage. The old read-only
-    // banner is gone — the page is invisible now: direct navigation bounces to the dashboard.
+    // banner is gone — the page stays closed: direct navigation shows the no-access state in place.
     const viewer = await pageAs('COMPANY_VIEW');
     await gotoCompany(viewer, companyId, '/settings/permissions');
-    await expect(viewer).toHaveURL(new RegExp(`/companies/${companyId}/dashboard`));
+    await expect(viewer).toHaveURL(new RegExp(`/companies/${companyId}/settings/permissions$`));
+    await expect(viewer.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true })).toBeVisible();
     await expect(viewer.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toHaveCount(0);
     await expect(viewer.getByText(/อ่านอย่างเดียว/)).toHaveCount(0);
+  });
+
+  // Browser check 2026-10-04: STAFF opening the shop profile got a bare lock page, no header and no way back. The
+  // profile address first reads the billing status for package recovery; STAFF may not read it, and the failed read
+  // chose the shell-less recovery view. Someone who cannot open the profile is now refused like on any other page.
+  test('SET-PROFILE-DENIED @p1 a person who cannot open the shop profile is refused inside the shell, with a way back', async ({ pageAs, companyId }) => {
+    const staff = await pageAs('STAFF');
+    await gotoCompany(staff, companyId, '/settings/profile');
+    await expect(staff).toHaveURL(new RegExp(`/companies/${companyId}/settings/profile$`));
+    await expect(staff.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true })).toBeVisible();
+    await expect(staff.getByRole('link', { name: 'กลับไปหน้าที่ใช้ได้' })).toBeVisible();
+    await expect(staff.locator('header')).toBeVisible();
   });
 });
 

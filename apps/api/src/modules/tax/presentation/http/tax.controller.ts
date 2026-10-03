@@ -146,6 +146,18 @@ export class TaxController {
     return row ?? { companyId: ctx.companyId, vatRegistered: false, branchPolicy: 'HEAD_OFFICE_ONLY', taxReviewerRole: 'ACCOUNTANT', signatureMode: 'BLANK', signatureImageAttachmentId: null };
   }
 
+  @Get('tax/profile/signature')
+  @RequirePermissions('company.tax_signature.manage')
+  @ApiOperation({ summary: 'Read only the company WHT-certificate signature settings' })
+  async getTaxSignature(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string) {
+    assertRouteCompany(ctx, companyId);
+    const row = await this.taxRepo.prisma.client.companyTaxProfile.findUnique({
+      where: { companyId: ctx.companyId },
+      select: { signatureMode: true, signatureImageAttachmentId: true },
+    });
+    return row ?? { signatureMode: 'BLANK', signatureImageAttachmentId: null };
+  }
+
   // WHT certificate system issuance plan §3.3 (Decision B): OWNER-only, deliberately a DIFFERENT
   // permission than `tax.profile.manage` (which FINANCE/ACCOUNTANT already hold) — a company's
   // authorized-signatory signature is more sensitive than ordinary tax configuration.

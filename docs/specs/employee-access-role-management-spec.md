@@ -278,3 +278,9 @@ Supersedes the temporary-password rules above for newly created employees:
 ## 15. Owner Update 2026-08-29 — One Role per Employee
 
 Employee create/role replacement selects exactly one role. Extra capabilities belong in the existing role-permission editor, not another employee role assignment. Keep job title descriptive and separate; show the saved role consistently in the employee header, list and permission summary. Existing grant, self-change, protected-role, branch and audit rules remain. See `docs/specs/employee-single-role-spec.md` for acceptance and the legacy-data transition boundary.
+
+## Browser regression amendment — 2026-10-04
+
+The role matrix hides menus outside the company's purchased, ready menu bindings, following the package-menu visibility pattern. A purchased menu still appears when the selected role has no grant for it. The matrix and package-aware descriptions share one menu projection, with action cells still derived from entitlement-filtered role permissions. Legacy companies with no entitlement rows keep the existing unconfigured behavior.
+
+Shop role lists and by-id reads never expose platform roles, including `SYSTEM_ADMIN` and historical company copies. Platform-tenant visibility remains intact. Standard-role descriptions (including unchanged copies of the standard description) describe granted menus in the current package; custom descriptions remain the company's wording. No role grants or assignment rules change.
