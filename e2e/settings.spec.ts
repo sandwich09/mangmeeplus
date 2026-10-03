@@ -262,7 +262,7 @@ test.describe('SET — settings', () => {
     const rowWidth = await employeeRow.evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
     expect(rowWidth.scrollWidth, 'multi-role employee row must not overflow').toBeLessThanOrEqual(rowWidth.clientWidth + 1);
     const summary = authedPage.getByTestId('access-permission-summary');
-    await expect(summary).toContainText(`สิทธิ์มาจากบทบาท ${assignedRoles.map(roleDisplayName).join(', ')}`);
+    await expect(summary).toContainText(`สิทธิ์มาจากบทบาท ${assignedRoles.map((role) => roleDisplayName(role)).join(', ')}`);
     await expect(summary).toContainText('ระบบรวมสิทธิ์จากทุกบทบาท');
     await expect(summary.getByText(`แสดงสิทธิ์ ${expectedMenuIds.length} เมนู`)).toBeVisible();
     await expect(authedPage.getByText('ข้อมูลเดิมมีหลายบทบาท ให้ผู้มีสิทธิ์เลือก 1 บทบาทเพื่อแทนที่ทั้งหมด')).toBeVisible();

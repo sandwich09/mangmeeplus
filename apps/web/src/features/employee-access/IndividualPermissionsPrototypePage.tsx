@@ -115,7 +115,7 @@ function colorForRole(role: DisplayRole): string {
 function RoleBadge({ role, withCaret = false, className }: { role: DisplayRole; withCaret?: boolean; className?: string }) {
   const color = colorForRole(role);
   return (
-    <span title={roleDisplayName(role)} className={cx('inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-extrabold', className)} style={{ color, backgroundColor: `${color}1F` }}>
+    <span title={roleDisplayName(role)} className={cx('inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-extrabold', className)} style={{ color, backgroundColor: `${color}1F` }}>
       {roleDisplayName(role)}
       {withCaret && <ChevronDownIcon className="h-3.5 w-3.5" />}
     </span>
@@ -180,8 +180,10 @@ function EmployeeRow({ employee, roles, selected, onSelect }: { employee: Employ
         </span>
       </span>
       {roles.length > 0 && (
-        <span className="flex max-w-32 shrink-0 flex-col items-end gap-1">
-          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full truncate" />)}
+        // 160 px holds every standard role name on one line ("ผู้ตรวจสอบ (ดูอย่างเดียว)" is 148 px); a longer
+        // company-made name wraps inside its chip instead of being cut at the column's edge.
+        <span className="flex max-w-40 shrink-0 flex-col items-end gap-1">
+          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full py-1 text-right leading-tight" />)}
         </span>
       )}
     </button>

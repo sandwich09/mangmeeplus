@@ -845,3 +845,33 @@ test.describe('Desktop card-view parity', () => {
     });
   }
 });
+
+// Browser check 2026-10-03: the employee list of the access overview cut the chip "ผู้ตรวจสอบ (ดูอย่างเดียว)" to
+// "ผู้ตรวจสอบ (ดูอย่างเดีย" at 390 and at 1280 px (one line in a 128 px column, no ellipsis). A role chip carries its
+// name in `title`; each must show that whole name and stay inside its row, and the page must not scroll sideways.
+test.describe('Employee list role chips', () => {
+  test.beforeEach(async ({ isMobile }) => {
+    test.skip(isMobile === true, 'Sets both widths itself; runs once, in chromium.');
+  });
+
+  for (const width of [390, 1280]) {
+    test(`${width}px — /settings/access-overview shows every role chip's whole name inside its row`, async ({ authedPage, companyId }) => {
+      await authedPage.setViewportSize({ width, height: 900 });
+      await gotoAndSettle(authedPage, companyId, '/settings/access-overview');
+      await expect(authedPage.locator('span[title="ผู้ตรวจสอบ (ดูอย่างเดียว)"]').first()).toBeVisible();
+
+      const cut = await authedPage.locator('span[title]').evaluateAll((chips) => chips.flatMap((chip) => {
+        const name = chip.getAttribute('title') ?? '';
+        if (!name || chip.textContent?.trim() !== name) return [];
+        const box = chip.getBoundingClientRect();
+        const row = chip.closest('button')?.getBoundingClientRect();
+        const clipped = chip.scrollWidth > chip.clientWidth + 1 || chip.scrollHeight > chip.clientHeight + 1;
+        const outside = row ? box.left < row.left - 1 || box.right > row.right + 1 || box.bottom > row.bottom + 1 : false;
+        return clipped || outside ? [`${name}: ${chip.scrollWidth}x${chip.scrollHeight} in ${chip.clientWidth}x${chip.clientHeight}${outside ? ', outside its row' : ''}`] : [];
+      }));
+      expect(cut, 'every role chip shows its whole name inside its row').toEqual([]);
+      const overflow = await authedPage.evaluate(() => (document.scrollingElement?.scrollWidth ?? 0) - window.innerWidth);
+      expect(overflow, 'the page does not scroll sideways').toBeLessThanOrEqual(1);
+    });
+  }
+});

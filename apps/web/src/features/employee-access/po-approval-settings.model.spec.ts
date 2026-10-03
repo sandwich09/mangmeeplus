@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   derivePoApprovalRules,
   getPoApprovalDemo,
@@ -20,13 +21,30 @@ describe('po approval settings model', () => {
     assert.equal(getPoApprovalRuleForAmount(10001).id, 'owner-or-manager');
   });
 
-  it('builds the design demo flow for auto approve amount', () => {
+  // Browser check 2026-10-03: a tier with no approver read "Auto approve" and "อนุมัติอัตโนมัติ", and the demo began with
+  // "พนักงาน", the name of one role, for whoever creates the order. The rule only says the tier needs no approval.
+  it('builds the demo flow for a tier with no approver in the rule’s own words', () => {
     const demo = getPoApprovalDemo('100');
 
     assert.equal(demo.rule.id, 'auto');
-    assert.equal(demo.statusLabel, 'Auto approve ทันที');
-    assert.equal(demo.steps[0], 'พนักงานสร้างใบสั่งซื้อ ฿100 — เข้าเงื่อนไขขั้นที่ 1');
-    assert.equal(demo.steps[1], 'อนุมัติอัตโนมัติ — ไม่ต้องรอใคร');
+    assert.equal(demo.statusLabel, 'ไม่ต้องอนุมัติ');
+    assert.equal(demo.steps[0], 'สร้างใบสั่งซื้อ ฿100 — เข้าเงื่อนไขขั้นที่ 1');
+    assert.equal(demo.steps[1], 'ขั้นนี้ไม่ต้องรอใครอนุมัติ');
+  });
+
+  it('names approver roles from the one list and joins several with "หรือ"', () => {
+    const manager = getPoApprovalDemo('5000');
+    assert.equal(manager.statusLabel, 'รอผู้จัดการอนุมัติ');
+    assert.equal(manager.steps[1], 'ส่งให้ผู้จัดการอนุมัติ');
+    const either = getPoApprovalDemo('20000');
+    assert.equal(either.rule.approverLabel, 'ผู้จัดการ หรือ เจ้าของกิจการ');
+    assert.equal(either.statusLabel, 'รอผู้จัดการ หรือ เจ้าของกิจการอนุมัติ');
+    assert.equal(getPoApprovalDemo('100').rule.approverLabel, 'ไม่มี (ไม่ต้องอนุมัติ)');
+    for (const rule of derivePoApprovalRules([{ id: 'x', approverRoleKeys: ['ACCOUNTANT', 'FINANCE'] }])) {
+      assert.equal(rule.approverLabel, 'ฝ่ายบัญชี หรือ ฝ่ายการเงิน');
+    }
+    const page = readFileSync(new URL('./PoApprovalSettingsPage.tsx', import.meta.url), 'utf8');
+    assert.doesNotMatch(page, /Auto approve|กดปุ่มเลือกผู้อนุมัติ/);
   });
 
   it('normalizes formatted input before simulation', () => {
@@ -45,9 +63,9 @@ describe('po approval settings model', () => {
     assert.equal(rules[1]!.conditionLabel, 'มากกว่า ฿1,000 ถึง');
     assert.equal(rules[2]!.conditionLabel, 'มากกว่า ฿10,000');
     assert.equal(rules[1]!.inputValue, '10000');
-    assert.equal(poApprovalBadgeLabel([]), 'Auto approve');
-    assert.equal(rules[1]!.badgeLabel, 'MANAGER');
-    assert.equal(rules[2]!.badgeLabel, 'คนใดคนหนึ่งใน 2');
+    assert.equal(poApprovalBadgeLabel([]), 'ไม่ต้องอนุมัติ');
+    assert.equal(rules[1]!.badgeLabel, 'ผู้จัดการ');
+    assert.equal(rules[2]!.badgeLabel, 'คนใดคนหนึ่งใน 2 บทบาท');
   });
 
   it('splits and removes tiers while re-stitching contiguous bounds', () => {

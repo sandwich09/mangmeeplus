@@ -45,8 +45,9 @@ export class CrmDailyBriefUseCase {
       ...(ctx.scopes.branchIds ? { branchIds: ctx.scopes.branchIds } : {}),
     };
     const hasCustomerScope = ownerUserId !== undefined || ctx.scopes.branchIds !== undefined;
-    const [unanswered, inboxCounts, paymentProofs, newCustomersToday, appointmentsToday, openDeals, issuedDocuments, customersWithCounterparty, conversations] = await Promise.all([
-      this.repo.countUnansweredConversations(ctx.companyId, customerScope),
+    // Both inbox cards count the inbox list they open, for this viewer: the inbox's own counts, in its own
+    // assignment scope (no customer-owner or customer-branch filter, which that list does not apply).
+    const [inboxCounts, paymentProofs, newCustomersToday, appointmentsToday, openDeals, issuedDocuments, customersWithCounterparty, conversations] = await Promise.all([
       this.repo.conversationCounts(ctx.companyId, ctx.userId, assignedScopeForList(ctx), now),
       this.repo.countPaymentProofs(ctx.companyId, PAYMENT_PROOF_LINK_TARGET_TYPE, PAYMENT_PROOF_LINK_PURPOSE, customerScope),
       this.crmRepo.countCustomersBetween(ctx.companyId, dayStart, dayEnd, customerScope),
@@ -99,7 +100,7 @@ export class CrmDailyBriefUseCase {
     return {
       generatedAt: now.toISOString(),
       widgets: buildDailyBriefWidgets(ctx.companyId, {
-        unanswered,
+        unanswered: inboxCounts.unansweredCount,
         slaBreaches: inboxCounts.overdueCount,
         newCustomersToday,
         appointmentsToday,

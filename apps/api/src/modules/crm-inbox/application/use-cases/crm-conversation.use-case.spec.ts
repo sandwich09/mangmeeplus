@@ -648,7 +648,7 @@ describe('ListCrmConversationsUseCase — scope + assignee filter', () => {
       },
       conversationCounts: async (companyId: string, meUserId: string, scopeUserId?: string) => {
         calls.counts.push({ companyId, meUserId, scopeUserId });
-        return { statusCounts: {}, overdueCount: 0, mineCount: 3, unassignedCount: 2 };
+        return { statusCounts: {}, overdueCount: 0, mineCount: 3, unassignedCount: 2, unansweredCount: 4 };
       },
       customerDisplayNames: async () => new Map(),
       userDisplayNames: async () => new Map(),
@@ -682,6 +682,14 @@ describe('ListCrmConversationsUseCase — scope + assignee filter', () => {
     await uc.execute(ctx(), {});
     assert.equal(repo.calls.list[2].filter.assignedToUserId, undefined);
     await assert.rejects(() => uc.execute(ctx(), { assignee: 'everyone' as any }), /assignee/);
+  });
+
+  // The dashboard card "ยังไม่ได้ตอบ" opens ?unanswered=true and shows the chip's count.
+  it('passes the unanswered filter through and returns the count for its chip', async () => {
+    const repo = makeListRepo();
+    const result = await new ListCrmConversationsUseCase(repo).execute(ctx(), { unanswered: true } as any);
+    assert.equal(repo.calls.list[0].filter.unanswered, true);
+    assert.equal((result as any).unansweredCount, 4);
   });
 
   it('passes the customerId filter through for Customer 360 tabs', async () => {
