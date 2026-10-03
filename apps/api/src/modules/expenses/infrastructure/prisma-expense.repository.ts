@@ -3314,6 +3314,15 @@ export class PrismaExpenseRepository {
     });
   }
 
+  /** Names of these categories whatever their status: an archived category still names the expenses filed under it. */
+  async listCategoryNames(companyId: string, ids: string[]): Promise<Array<{ id: string; name: string }>> {
+    if (ids.length === 0) return [];
+    return this.prisma.client.expenseCategory.findMany({
+      where: { id: { in: ids }, OR: [{ companyId }, { companyId: null }] },
+      select: { id: true, name: true },
+    });
+  }
+
   async listCategories(companyId: string): Promise<ExpenseCategorySummary[]> {
     const cats = await this.prisma.client.expenseCategory.findMany({
       where: { OR: [{ companyId }, { companyId: null }] },

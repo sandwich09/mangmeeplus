@@ -30,10 +30,11 @@ export class PrismaMovementRepository implements MovementRepositoryPort {
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { occurredAt: 'desc' },
+        include: { product: { select: { name: true } }, location: { select: { name: true } } },
       }),
       this.prisma.client.stockMovement.count({ where }),
     ]);
-    return { items: items.map(toMovement), total, page, pageSize };
+    return { items: items.map((row) => ({ ...toMovement(row), productName: row.product.name, locationName: row.location.name })), total, page, pageSize };
   }
 
   async create(input: CreateMovementInput): Promise<StockMovement> {

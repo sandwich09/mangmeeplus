@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
-import type { WorkflowActionDefinition } from '@watchdog-bms/contracts';
+import { WORKFLOW_TAB_LABELS, type WorkflowActionDefinition } from '@watchdog-bms/contracts';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
@@ -260,7 +260,7 @@ export class ExecuteWorkflowActionUseCase {
       case 'REQUEST_AI_DRAFT':
         return this.requestAiDraft(actionRun, context, cfg);
       case 'CREATE_REPORT_EXPORT_DRAFT':
-        return this.createDisabledFallbackTask(actionRun, context, cfg);
+        return this.createDisabledFallbackTask(actionRun, context, 'ระบบยังเตรียมไฟล์ส่งออกรายงานให้อัตโนมัติไม่ได้ จึงสร้างงานนี้ไว้ให้ส่งออกเองจากหน้ารายงาน');
       case 'NOOP_DISABLED_TEMPLATE':
         return { resultJson: { skipped: true, reason: cfg['reason'] ?? 'template disabled' } };
       default:
@@ -330,7 +330,7 @@ export class ExecuteWorkflowActionUseCase {
     }
     const readable = readablePayload(context.payload);
     const titleTemplate = findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);
-    const title = titleTemplate ? renderTemplate(titleTemplate, readable) : `${context.ruleName} — WatchDog Workflow`;
+    const title = titleTemplate ? renderTemplate(titleTemplate, readable) : `แจ้งเตือนจาก${WORKFLOW_TAB_LABELS.rules}: ${context.ruleName}`;
     // Own config only (no sibling fallback like the title): a body borrowed from a sibling action
     // is how the notification ended up printing its own title twice.
     const bodyTemplate = typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined;
@@ -517,9 +517,7 @@ export class ExecuteWorkflowActionUseCase {
     const templateKey = typeof cfg['templateKey'] === 'string' ? (cfg['templateKey'] as string) : undefined;
     const requesterUserId = typeof cfg['requesterUserId'] === 'string' ? (cfg['requesterUserId'] as string) : undefined;
     if (!templateKey || !requesterUserId) {
-      return this.createDisabledFallbackTask(actionRun, context, {
-        reason: 'REQUEST_AI_DRAFT requires templateKey and requesterUserId in the action config',
-      });
+      return this.createDisabledFallbackTask(actionRun, context, 'กฎนี้ตั้งค่าการขอให้ AI ช่วยร่างไม่ครบ (ยังไม่ได้ระบุผู้ขอหรือแบบร่าง) ระบบจึงสร้างงานนี้ไว้ให้ดำเนินการเอง');
     }
     try {
       const request = await this.aiDraft.createFromWorkflow({
@@ -537,7 +535,8 @@ export class ExecuteWorkflowActionUseCase {
     }
   }
 
-  private async createDisabledFallbackTask(actionRun: WorkflowActionRunRecord, context: ActionRunContext, cfg: Record<string, unknown>) {
+  /** A task in the rule's place when it cannot do its step itself; `description` says why, in the shop's words. */
+  private async createDisabledFallbackTask(actionRun: WorkflowActionRunRecord, context: ActionRunContext, description: string) {
     const existing = await this.repo.findTaskByActionRunId(context.companyId, actionRun.id);
     if (existing) return { resultJson: { alreadyExisted: true }, targetType: 'workflow_task', targetId: existing.id };
     const task = await this.repo.createTask({
@@ -547,8 +546,8 @@ export class ExecuteWorkflowActionUseCase {
       sourceModule: context.sourceModule,
       sourceType: context.sourceType,
       sourceId: context.sourceId,
-      title: `[Review needed] ${context.ruleName}`,
-      description: `${actionRun.actionType} is not yet available (${cfg['reason'] ?? 'provider not implemented'}). This task was created as a safe fallback for manual follow-up.`,
+      title: `ต้องดำเนินการเอง: ${context.ruleName}`,
+      description,
       priority: 'NORMAL',
     });
     return { resultJson: { fallback: true }, targetType: 'workflow_task', targetId: task.id };

@@ -15,7 +15,7 @@ import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkTok
 import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
 import { isEmployeeEmail } from './employee-email.logic';
-import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
+import { EMPLOYEE_BRANCH_SCOPE_HELP, assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -130,7 +130,7 @@ function LineOaCard({ lineLink, enabled }: { lineLink?: EmployeeLineLinkPackage 
     <div className="rounded-[14px] border border-brand-100 bg-[#F5FBF6] p-4">
       <div className="mb-1 flex items-center gap-2">
         <span className="flex h-[22px] w-[22px] items-center justify-center rounded-md bg-[#06C755] text-[12.5px] font-extrabold text-white">L</span>
-        <span className="text-[15px] font-extrabold text-gray-800">เชื่อม LINE OA</span>
+        <span className="text-[15px] font-extrabold text-gray-800">เชื่อมต่อ LINE</span>
       </div>
       <div className="mb-3 text-[13px] font-medium leading-6 text-gray-400">
         {enabled ? 'ให้พนักงานสแกน QR / กดลิงก์ เพื่อผูก LINE เข้าระบบ' : 'กด “เสร็จสิ้น” เพื่อเปิดใช้งานพนักงานก่อน แล้วจึงสแกน QR'}
@@ -317,14 +317,14 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
       if (!firstName.trim()) return { message: 'กรุณากรอกชื่อ', fieldId: 'employee-first-name' };
       if (!lastName.trim()) return { message: 'กรุณากรอกนามสกุล', fieldId: 'employee-last-name' };
       if (!editingEmployee && !dob) return { message: 'กรุณากรอกวันเดือนปีเกิด', fieldId: 'employee-date-of-birth' };
-      if (dob && !employeeDateToIso(dob)) return { message: 'วันเดือนปีเกิดไม่ถูกต้อง กรุณาใช้รูปแบบ DD/MM/YYYY และปี ค.ศ.', fieldId: 'employee-date-of-birth' };
-      if (!editingEmployee && !username.trim()) return { message: 'กรุณากรอก Username', fieldId: 'employee-username' };
-      if (!editingEmployee && !/^[a-zA-Z0-9._-]+$/.test(username.trim())) return { message: 'Username ใช้ได้เฉพาะ a-z, A-Z, 0-9, จุด, ขีดกลาง และขีดล่าง', fieldId: 'employee-username' };
+      if (dob && !employeeDateToIso(dob)) return { message: 'วันเดือนปีเกิดไม่ถูกต้อง กรุณาตรวจสอบวัน เดือน และปี ค.ศ.', fieldId: 'employee-date-of-birth' };
+      if (!editingEmployee && !username.trim()) return { message: 'กรุณากรอกชื่อผู้ใช้', fieldId: 'employee-username' };
+      if (!editingEmployee && !/^[a-zA-Z0-9._-]+$/.test(username.trim())) return { message: 'ชื่อผู้ใช้ใช้ได้เฉพาะตัวอักษรละติน ตัวเลข จุด ขีดกลาง และขีดล่าง', fieldId: 'employee-username' };
       if ((!editingEmployee || idCard) && !/^[0-9]{13}$/.test(idCard)) return { message: 'เลขบัตรประชาชนต้องมี 13 หลัก', fieldId: 'employee-identity' };
     }
     if (targetStep === 2) {
       if (!email.trim()) return { message: 'กรุณากรอกอีเมล', fieldId: 'employee-email' };
-      if (!isEmployeeEmail(email)) return { message: 'อีเมลไม่ถูกต้อง กรุณาใช้รูปแบบ เช่น name@company.com', fieldId: 'employee-email' };
+      if (!isEmployeeEmail(email)) return { message: 'ที่อยู่อีเมลไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง', fieldId: 'employee-email' };
       if (!phone) return { message: 'กรุณากรอกเบอร์โทรศัพท์', fieldId: 'employee-phone' };
       if (!/^0[0-9]{9}$/.test(phone)) return { message: 'เบอร์โทรศัพท์ต้องเป็นตัวเลข 10 หลักและขึ้นต้นด้วย 0', fieldId: 'employee-phone' };
     }
@@ -571,7 +571,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
 
         <MangmeeCard className="p-5 sm:p-[26px]">
           <div className="text-[19px] font-extrabold text-gray-900">{isEditing ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'}</div>
-          <div className="mt-1 text-[15px] font-medium text-gray-500">{isEditing ? 'แก้ไขข้อมูลทีละขั้น · พนักงาน Draft จะยังใช้งานไม่ได้จนกด “เสร็จสิ้น”' : 'สร้างบัญชีผู้ใช้ทีละขั้น · ระบบเก็บเป็นแบบร่างจนกด “เสร็จสิ้น”'}</div>
+          <div className="mt-1 text-[15px] font-medium text-gray-500">{isEditing ? 'แก้ไขข้อมูลทีละขั้น · พนักงานแบบร่างจะยังใช้งานไม่ได้จนกด “เสร็จสิ้น”' : 'สร้างบัญชีผู้ใช้ทีละขั้น · ระบบเก็บเป็นแบบร่างจนกด “เสร็จสิ้น”'}</div>
 
           <ThemedSteps
             className="mb-[22px] mt-[22px]"
@@ -602,8 +602,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <TextField label="ชื่อเล่น" optional="(ใช้แสดงในหน้าจองคิวและสิทธิ์รายบุคคล)" value={nickname} onChange={(event) => { setNickname(event.target.value); setError(''); }} placeholder="เช่น มีน" />
-                {!editingEmployee && <TextField id="employee-username" label="Username" required error={errorFieldId === 'employee-username' ? error : undefined} value={username} onChange={(event) => { setUsername(event.target.value); setError(''); setConfirmExistingUser(false); }} placeholder="เช่น somchai.j" />}
-                <TextField id="employee-date-of-birth" label="วันเดือนปีเกิด (ค.ศ.)" required={!editingEmployee} optional={editingEmployee ? '(ถ้ามี)' : undefined} error={errorFieldId === 'employee-date-of-birth' ? error : undefined} value={dob} onChange={(event) => { setDob(formatEmployeeDateInput(event.target.value)); setError(''); }} inputMode="numeric" placeholder="DD/MM/YYYY เช่น 28/09/1998" maxLength={10} />
+                {!editingEmployee && <TextField id="employee-username" label="ชื่อผู้ใช้" required error={errorFieldId === 'employee-username' ? error : undefined} value={username} onChange={(event) => { setUsername(event.target.value); setError(''); setConfirmExistingUser(false); }} placeholder="กรอกชื่อผู้ใช้" />}
+                <TextField id="employee-date-of-birth" label="วันเดือนปีเกิด (ค.ศ.)" required={!editingEmployee} optional={editingEmployee ? '(ถ้ามี)' : undefined} error={errorFieldId === 'employee-date-of-birth' ? error : undefined} value={dob} onChange={(event) => { setDob(formatEmployeeDateInput(event.target.value)); setError(''); }} inputMode="numeric" placeholder="กรอกวันเดือนปีเกิด" maxLength={10} />
                 <TextField
                   id="employee-identity"
                   label="เลขบัตรประชาชน"
@@ -624,8 +624,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
             <div>
               <div className="mb-3 text-[13px] font-extrabold tracking-[.04em] text-brand-600">1 · ช่องทางติดต่อ</div>
               <div className="grid gap-4 sm:grid-cols-2">
-                <TextField id="employee-email" type="email" inputMode="email" autoComplete="email" maxLength={254} label="อีเมล (ใช้เข้าสู่ระบบ)" required error={errorFieldId === 'employee-email' ? error : undefined} value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} placeholder="name@room45.co" />
-                <TextField id="employee-phone" type="tel" label="เบอร์โทรศัพท์" required error={errorFieldId === 'employee-phone' ? error : undefined} value={phone} onChange={(event) => { setPhone(digits(event.target.value, 10)); setError(''); }} inputMode="tel" maxLength={10} placeholder="08xxxxxxxx (10 หลัก)" inputClassName="tracking-[.04em]" />
+                <TextField id="employee-email" type="email" inputMode="email" autoComplete="email" maxLength={254} label="อีเมล (ใช้เข้าสู่ระบบ)" required error={errorFieldId === 'employee-email' ? error : undefined} value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} placeholder="กรอกที่อยู่อีเมล" />
+                <TextField id="employee-phone" type="tel" label="เบอร์โทรศัพท์" required error={errorFieldId === 'employee-phone' ? error : undefined} value={phone} onChange={(event) => { setPhone(digits(event.target.value, 10)); setError(''); }} inputMode="tel" maxLength={10} placeholder="กรอกหมายเลขโทรศัพท์ 10 หลัก" inputClassName="tracking-[.04em]" />
               </div>
 
               <div className="mb-3 mt-6 border-t border-gray-100 pt-5 text-[13px] font-extrabold tracking-[.04em] text-brand-600">2 · ที่อยู่ <span className="font-normal normal-case text-gray-400">(ถ้ามี)</span></div>
@@ -697,7 +697,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                 })}
               </div>
               {errorFieldId === 'employee-branches' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
-              {viewerBranchIds !== undefined && <p className="mt-2 text-sm text-gray-500">กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง หากต้องการเปลี่ยนขอบเขตนอกเหนือจากนี้ กรุณาติดต่อเจ้าของร้าน</p>}
+              {viewerBranchIds !== undefined && <p className="mt-2 text-sm text-gray-500">{EMPLOYEE_BRANCH_SCOPE_HELP}</p>}
               {branchPickerLocked && (
                 <div className="mt-2 text-sm font-medium text-gray-400">
                   บทบาท {allBranchRoles.map((role) => role.name).join(', ')} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
@@ -743,8 +743,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               {result ? <><div className="grid items-stretch gap-4 sm:grid-cols-2">
                 <div className="flex flex-col rounded-[14px] border border-gray-200 p-4">
                   <div className="text-[15px] font-extrabold text-gray-800">บัญชีเข้าระบบเว็บ</div>
-                  <div className="mb-2.5 mt-0.5 text-[13px] font-medium text-gray-400">ใช้เข้าหน้าเว็บแอดมิน มั่งมี</div>
-                  <div className="text-sm font-semibold text-gray-700">Username</div>
+                  <div className="mb-2.5 mt-0.5 text-[13px] font-medium text-gray-400">ใช้เข้าเว็บไซต์มั่งมี</div>
+                  <div className="text-sm font-semibold text-gray-700">ชื่อผู้ใช้</div>
                   <div className="mt-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-[15px] font-extrabold text-gray-800">{result.username}</div>
                   {result.reusedExistingAccount ? (
                     <>
@@ -758,7 +758,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                         <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[15px] font-extrabold tracking-[.06em] text-gray-800">{result.temporaryPassword}</span>
                         <button type="button" onClick={() => void navigator.clipboard?.writeText(result.temporaryPassword)} className="shrink-0 px-1.5 text-[13px] font-extrabold text-brand-600">คัดลอก</button>
                       </div>
-                      <div className="mt-auto pt-3 text-[12.5px] font-medium leading-6 text-gray-400">ใช้วันเดือนปีเกิดรูปแบบ DDMMYYYY · ระบบจะให้พนักงานตั้งรหัสผ่านใหม่เมื่อเข้าใช้งานครั้งแรก</div>
+                      <div className="mt-auto pt-3 text-[12.5px] font-medium leading-6 text-gray-400">ใช้ตัวเลขวัน เดือน และปี ค.ศ. รวม 8 หลัก เรียงต่อกัน · ระบบจะให้พนักงานตั้งรหัสผ่านใหม่เมื่อเข้าใช้งานครั้งแรก</div>
                     </>
                   )}
                 </div>
@@ -769,7 +769,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               <div className="mt-[18px] flex flex-wrap items-center gap-4 rounded-[14px] border border-gray-200 bg-gray-50 px-[22px] py-5">
                 <div className="min-w-[180px] flex-1">
                   <div className="text-base font-extrabold text-gray-900">ส่งข้อมูลเข้าใช้งานให้พนักงาน</div>
-                  <div className="mt-0.5 text-[13px] font-medium text-gray-600">{result.reusedExistingAccount ? 'แจ้งพนักงานว่าเข้าใช้งานบริษัทนี้ได้ด้วยบัญชีเดิมที่มีอยู่แล้ว — ไม่ต้องส่งรหัสผ่านใหม่' : 'ต้องตั้งค่าอีเมล (SMTP) ของบริษัทก่อนจึงจะส่งอัตโนมัติได้ — ตอนนี้กรุณาส่ง Username/รหัสผ่านด้านบนให้พนักงานเอง'}</div>
+                  <div className="mt-0.5 text-[13px] font-medium text-gray-600">{result.reusedExistingAccount ? 'แจ้งพนักงานว่าเข้าใช้งานบริษัทนี้ได้ด้วยบัญชีเดิมที่มีอยู่แล้ว — ไม่ต้องส่งรหัสผ่านใหม่' : 'ต้องตั้งค่าการส่งอีเมลของบริษัทก่อน ระบบจึงจะส่งให้อัตโนมัติได้ — ตอนนี้กรุณาส่งชื่อผู้ใช้และรหัสผ่านด้านบนให้พนักงานเอง'}</div>
                 </div>
               </div>
               </> : (
@@ -788,11 +788,11 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
 
           {confirmExistingUser && (
             <div className="mt-4 rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              <div className="font-extrabold">Username นี้มีบัญชีในระบบอยู่แล้ว</div>
-              <div className="mt-1 font-medium leading-6">หากเป็นคนเดียวกัน (เช่น เจ้าของอีกบริษัท) กด “ยืนยันเพิ่มเข้าบริษัท” เพื่อเพิ่มเข้าบริษัทนี้โดยใช้บัญชีเดิม — พนักงานจะเข้าระบบด้วยรหัสผ่านเดิม ไม่มีการตั้งรหัสใหม่ · <b>ต้องกรอกอีเมล (ขั้นตอนช่องทางติดต่อ) ที่ไม่ซ้ำกับอีเมลบัญชีเดิม</b> · หากเป็นคนละคน กรุณาแก้ไข Username ให้ไม่ซ้ำ</div>
+              <div className="font-extrabold">ชื่อผู้ใช้นี้มีบัญชีในระบบอยู่แล้ว</div>
+              <div className="mt-1 font-medium leading-6">หากเป็นคนเดียวกัน (เช่น เจ้าของอีกบริษัท) กด “ยืนยันเพิ่มเข้าบริษัท” เพื่อเพิ่มเข้าบริษัทนี้โดยใช้บัญชีเดิม — พนักงานจะเข้าระบบด้วยรหัสผ่านเดิม ไม่มีการตั้งรหัสใหม่ · <b>ต้องกรอกอีเมล (ขั้นตอนช่องทางติดต่อ) ที่ไม่ซ้ำกับอีเมลบัญชีเดิม</b> · หากเป็นคนละคน กรุณาแก้ไขชื่อผู้ใช้ให้ไม่ซ้ำ</div>
               <div className="mt-2.5 flex flex-wrap gap-2">
                 <button type="button" onClick={() => void confirmLinkExistingUser()} disabled={saving} aria-busy={Boolean(saving)} className="flex h-10 items-center justify-center rounded-lg bg-brand-500 px-4 text-sm font-extrabold text-white hover:bg-brand-600 disabled:opacity-60">ยืนยันเพิ่มเข้าบริษัท</button>
-                <button type="button" onClick={() => { setConfirmExistingUser(false); setStep(1); }} className="flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-extrabold text-gray-600 hover:bg-gray-50">แก้ไข Username</button>
+                <button type="button" onClick={() => { setConfirmExistingUser(false); setStep(1); }} className="flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-extrabold text-gray-600 hover:bg-gray-50">แก้ไขชื่อผู้ใช้</button>
               </div>
             </div>
           )}

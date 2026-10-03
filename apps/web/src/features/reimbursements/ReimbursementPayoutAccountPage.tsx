@@ -1,4 +1,5 @@
 'use client';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 // "บัญชีรับเงินคืนของฉัน": a member sets the account their claims are paid back into. Reached from
 // the reimbursement hub and the claim form; it needs no access to the employee pages.
@@ -24,7 +25,7 @@ export function ReimbursementPayoutAccountPage({ companyId, canManage }: { compa
         />
       ) : (
         <MangmeeCard className="p-6">
-          <EmptyState title="ยังตั้งบัญชีรับเงินคืนไม่ได้" description="บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อเจ้าของกิจการหรือแอดมิน" />
+          <EmptyState title="ยังตั้งบัญชีรับเงินคืนไม่ได้" description={`บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`} />
         </MangmeeCard>
       )}
     </MangmeePage>

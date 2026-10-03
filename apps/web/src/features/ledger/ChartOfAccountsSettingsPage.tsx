@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ChartTemplateApplyMode, LedgerAccountClass } from '@watchdog-bms/contracts';
+import { LEDGER_ACCOUNT_CLASS_LABELS, type ChartTemplateApplyMode } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -24,17 +24,6 @@ import {
   filterChartAccounts,
   requestIdFromError,
 } from './chart-master.logic';
-
-const ACCOUNT_CLASS_LABELS: Record<LedgerAccountClass, string> = {
-  ASSET: 'สินทรัพย์',
-  LIABILITY: 'หนี้สิน',
-  EQUITY: 'ส่วนของเจ้าของ',
-  REVENUE: 'รายได้',
-  COST: 'ต้นทุน',
-  EXPENSE: 'ค่าใช้จ่าย',
-  TAX_EXPENSE: 'ภาษีเงินได้',
-  SUSPENSE: 'บัญชีพัก',
-};
 
 const FIELD_LABELS: Record<string, string> = {
   nameTh: 'ชื่อบัญชี',
@@ -483,7 +472,7 @@ export function ChartOfAccountsSettingsPage({
                   onChange={(event) => setAccountClass(event.target.value)}
                 >
                   <option value="">ทุกหมวด</option>
-                  {Object.entries(ACCOUNT_CLASS_LABELS).map(([value, label]) => (
+                  {Object.entries(LEDGER_ACCOUNT_CLASS_LABELS).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </ThemedSelect>
@@ -513,7 +502,7 @@ export function ChartOfAccountsSettingsPage({
                       {account.nameEn && <div className="text-xs text-gray-500">{account.nameEn}</div>}
                     </td>
                     <td>
-                      <div>{ACCOUNT_CLASS_LABELS[account.accountClass]}</div>
+                      <div>{LEDGER_ACCOUNT_CLASS_LABELS[account.accountClass]}</div>
                       <div className="text-xs text-gray-500">{account.normalBalance}</div>
                     </td>
                     <td>

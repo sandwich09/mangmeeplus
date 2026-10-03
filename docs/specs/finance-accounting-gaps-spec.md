@@ -132,7 +132,7 @@ Preset นี้ถึงมือผู้ใช้จริงแล้ว —
 | ข้อ | Logic จากทีม | สถานะ |
 |---|---|---|
 | 1 | พนักงานผู้สร้างใบเบิกเห็นสถานะของตัวเอง (อนุมัติแล้ว/รอการเงินโอนคืน) | ✅ มีอยู่แล้ว — ทุก role ที่สร้างใบเบิกได้ถือ `reimbursement.read_own` และ detail แสดง status/paymentStatus |
-| 2 | บัญชี + owner เห็นรายการที่การเงินยังไม่โอน/ค้างจ่าย | ✅ มีอยู่แล้ว — ACCOUNTANT ถือ `reimbursement.read` + `finance_review` → เห็น `/finance-queue` (FINANCE_REVIEW / READY_FOR_PAYMENT / PARTIALLY_PAID); OWNER เห็นทุกอย่าง |
+| 2 | ฝ่ายบัญชี + owner เห็นรายการที่ฝ่ายการเงินยังไม่โอน/ค้างจ่าย | ✅ มีอยู่แล้ว — ACCOUNTANT ถือ `reimbursement.read` + `finance_review` → เห็น `/finance-queue` (FINANCE_REVIEW / READY_FOR_PAYMENT / PARTIALLY_PAID); OWNER เห็นทุกอย่าง |
 | 3 | สิทธิ์การเห็นนี้ set ให้ role อื่นได้ **โดย owner เท่านั้น** | ✅ ทำแล้ว — `ownerGatedGrantViolation` (`employee-access.logic.ts`): การใส่ `reimbursement.read` ลง custom role (create/update) ต้องถือ `access.role.financial.assign` ซึ่งเป็นของ OWNER คนเดียว — ปิดช่องที่ ADMIN (ถือทั้ง `access.role.manage` และ `reimbursement.read`) แจกสิทธิ์นี้เองได้ |
 | 4 | ผู้อนุมัติ = manager/admin/owner | ✅ ทำแล้ว — ดู GAP-06.6 |
 | 5 | **Default ADMIN ให้ permission ใครไม่ได้** จนกว่า owner จะมอบ | ✅ ทำแล้ว (เคาะขอบเขต: ตัดเฉพาะจัดการ role) — ถอน `access.role.manage` / `admin.role.manage` / `access.role_template.manage` ออกจาก ADMIN default; owner มอบอำนาจโดยสร้าง custom role ที่มี key เหล่านี้แล้ว assign ให้แอดมินที่ไว้ใจ (ADMIN คนอื่น assign role นั้นต่อไม่ได้เพราะติด subset rule) — ADMIN ยังจ้างพนักงาน + แต่งตั้ง role ที่สิทธิ์ ⊆ ของตัวเองได้ตามเดิม |

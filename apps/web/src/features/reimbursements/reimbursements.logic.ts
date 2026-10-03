@@ -1028,6 +1028,17 @@ export function paymentFactsText(payment: any): string {
 // Who a claim waits for, in the words of its desk: the timeline row and the step note print the same sentence,
 // built from the pool label the "อยู่ที่ …" line and the LINE backlog answer use.
 const WAITING_FOR_FINANCE = `รอ${CURRENT_DESK_LABELS.FINANCE}ตรวจ`;
+
+/**
+ * An act taken at the finance-review step ("ระงับการจ่าย", "ส่งกลับให้แก้ไข"), who took it and the reason they gave.
+ * Whoever holds the finance-review right takes it (the owner, the claim's approver, anyone given the right), so the
+ * sentence names the step and that person, never a department, as the done row does ("ตรวจการเงินแล้ว โดย …").
+ */
+function financeStepActNote(act: string, detail: any): string {
+  const by = detail?.financeReviewedByName ? ` โดย ${detail.financeReviewedByName}` : '';
+  return `${act}ที่ขั้นตรวจการเงิน${by}${detail?.financeReviewNote ? `: ${detail.financeReviewNote}` : ''}`;
+}
+
 /** The one person who records, or recorded, a claim's payment. Never "ฝ่ายการเงิน": most shops have no finance desk. */
 const PAYER = 'ผู้บันทึกจ่าย';
 /** "รอ สมศรี หรือ วิชัย บันทึกจ่าย" when the detail names who can pay; otherwise the pool, which already says it. */
@@ -1217,7 +1228,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       note = status === 'CANCELLED' ? `ยกเลิกคำขอแล้ว${detail?.rejectionReason ? `: ${detail.rejectionReason}` : ''}` : 'เพิกถอนรายการแล้ว';
     } else if (key === 'items') {
       if (review === 'NEEDS_INFO') {
-        note = detail?.financeReviewNote ? `ฝ่ายการเงินขอให้แก้ไข: ${detail.financeReviewNote}` : 'ฝ่ายการเงินขอให้แก้ไข';
+        note = financeStepActNote('ส่งกลับให้แก้ไข', detail);
         if (own.canEditDraft) actions.push('edit');
         if (own.canSubmit) actions.push('submit');
       } else {
@@ -1268,7 +1279,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         if (review === 'PENDING') actions.push('finance-block');
       }
       note = review === 'BLOCKED'
-        ? `ฝ่ายการเงินระงับการจ่าย${detail?.financeReviewNote ? `: ${detail.financeReviewNote}` : ''}`
+        ? financeStepActNote('ระงับการจ่าย', detail)
         : actions.length > 0 ? 'ตรวจใบเสร็จและรายการซ้ำ แล้วอนุมัติจ่ายหรือส่งกลับให้แก้ไข' : WAITING_FOR_FINANCE;
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
@@ -1374,7 +1385,7 @@ export function activeJourneyStep(steps: readonly JourneyStep[]): JourneyStep | 
  * release read that way with nobody having sent it back).
  */
 export function draftSentBackNote(detail: any): string | null {
-  if (detail?.financeReviewStatus === 'NEEDS_INFO') return `ฝ่ายการเงินขอให้แก้ไข${detail.financeReviewNote ? `: ${detail.financeReviewNote}` : ''}`;
+  if (detail?.financeReviewStatus === 'NEEDS_INFO') return financeStepActNote('ส่งกลับให้แก้ไข', detail);
   // The step the claim was last put before: rejected means its approver sent it back; cancelled means the requester withdrew it.
   const moment = (step: any) => Date.parse(String(step?.assignedAt ?? step?.decidedAt ?? '')) || 0;
   const last = [...(detail?.approvalSteps ?? [])].sort((left, right) => moment(left) - moment(right)).at(-1);

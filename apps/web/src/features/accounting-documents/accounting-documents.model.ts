@@ -1,5 +1,12 @@
 // Web-side model types for accounting documents (mirrors backend contracts)
-import type { TaxHeaderSummary, TransactionTaxComponentPreview, TransactionTaxSnapshot } from '@watchdog-bms/contracts';
+import {
+  ACCOUNTING_DOCUMENT_STATUS_LABELS,
+  ACCOUNTING_DOCUMENT_TYPE_LABELS,
+  ACCOUNTING_PAYMENT_STATUS_LABELS,
+  type TaxHeaderSummary,
+  type TransactionTaxComponentPreview,
+  type TransactionTaxSnapshot,
+} from '@watchdog-bms/contracts';
 
 export type AccountingDocumentType =
   | 'QUOTATION' | 'INVOICE' | 'BILLING_NOTE' | 'RECEIPT'
@@ -124,35 +131,11 @@ export type PaginatedResult<T> = {
   pageSize: number;
 };
 
-export const DOCUMENT_TYPE_LABELS: Record<AccountingDocumentType, string> = {
-  QUOTATION: 'ใบเสนอราคา',
-  INVOICE: 'ใบแจ้งหนี้',
-  BILLING_NOTE: 'ใบวางบิล',
-  RECEIPT: 'ใบเสร็จรับเงิน',
-  TAX_INVOICE: 'ใบกำกับภาษี',
-  CREDIT_NOTE: 'ใบลดหนี้',
-  DEBIT_NOTE: 'ใบเพิ่มหนี้',
-};
+export const DOCUMENT_TYPE_LABELS: Record<AccountingDocumentType, string> = ACCOUNTING_DOCUMENT_TYPE_LABELS;
 
-export const DOCUMENT_STATUS_LABELS: Record<AccountingDocumentStatus, string> = {
-  DRAFT: 'ร่าง',
-  PENDING_APPROVAL: 'รอการอนุมัติ',
-  APPROVED: 'อนุมัติแล้ว',
-  REJECTED: 'ถูกปฏิเสธ',
-  ISSUED: 'ออกแล้ว',
-  VOIDED: 'ยกเลิกแล้ว',
-  CREDITED: 'ออกใบลดหนี้แล้ว',
-  DEBITED: 'ออกใบเพิ่มหนี้แล้ว',
-  CLOSED: 'ปิดแล้ว',
-};
+export const DOCUMENT_STATUS_LABELS: Record<AccountingDocumentStatus, string> = ACCOUNTING_DOCUMENT_STATUS_LABELS;
 
-export const PAYMENT_STATUS_LABELS: Record<AccountingPaymentStatus, string> = {
-  UNPAID: 'ยังไม่ชำระ',
-  PARTIALLY_PAID: 'ชำระบางส่วน',
-  PAID: 'ชำระแล้ว',
-  OVERDUE: 'เกินกำหนด',
-  VOIDED: 'ยกเลิกแล้ว',
-};
+export const PAYMENT_STATUS_LABELS: Record<AccountingPaymentStatus, string> = ACCOUNTING_PAYMENT_STATUS_LABELS;
 
 export const PAYMENT_METHOD_LABELS: Record<AccountingPaymentMethod, string> = {
   CASH: 'เงินสด',

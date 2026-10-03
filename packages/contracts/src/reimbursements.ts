@@ -1332,7 +1332,7 @@ export const REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER: Partial<Record<R
 };
 
 /**
- * The requester's notice when someone else answered a round for them (spec §17.3; owner rule 2026-10-01: the
+ * The requester's notice when someone else chose a draft destination or answered a round for them (spec §17.3; owner rule 2026-10-01: the
  * person whose money it is hears of every change made for them). The title is the timeline's own row of that
  * answer, said to the requester: "{ชื่อ} ยืนยันบัญชีเดิมในใบเบิกของคุณ". Whoever sends it follows the title with
  * the claim number, as a template does for the other two notices of a round. The body is what the claim holds
@@ -1345,13 +1345,34 @@ export function reimbursementPayoutAnsweredForRequesterNotice(
   answer: ReimbursementPayoutRoundAnswer | null | undefined,
   byName: string | null | undefined,
   given: { payoutMethod?: string | null; payoutKind?: ReimbursementPayoutKind | null; bankName?: string | null; accountLast4?: string | null } | null | undefined,
+  facts: { draft?: boolean; alsoSavedAsDefault?: boolean } = {},
 ): { title: string; body: string } {
   const did = typeof answer === 'string' && Object.hasOwn(PAYOUT_ROUND_ANSWER_WORDS, answer) ? PAYOUT_ROUND_ANSWER_WORDS[answer].did : 'เลือกวิธีรับเงินคืน';
   const account = given?.payoutMethod === 'BANK_TRANSFER' && given.accountLast4 ? maskedPayoutAccount(given) : undefined;
-  const holds = account ?? (given?.payoutMethod === 'CASH' ? 'รับเป็นเงินสด' : undefined);
+  const holds = account ?? (given?.payoutMethod === 'CASH' ? 'รับเป็นเงินสด' : facts.draft ? 'ยังไม่ได้ระบุวิธีรับเงินคืน' : undefined);
+  const next = facts.draft
+    ? 'เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แจ้งผู้จัดทำใบเบิก'
+    : `เปิดใบเบิกเพื่อตรวจ ${account ? 'ถ้าไม่ใช่บัญชีของคุณ' : 'ถ้าไม่ถูกต้อง'} แก้ได้ทันที`;
   return {
     title: `${payoutRoundDoer({ onBehalf: true, byName }).who}${did}ในใบเบิกของคุณ`,
-    body: `${holds ? `${holds} · ` : ''}เปิดใบเบิกเพื่อตรวจ ${account ? 'ถ้าไม่ใช่บัญชีของคุณ' : 'ถ้าไม่ถูกต้อง'} แก้ได้ทันที`,
+    body: `${holds ? `${holds} · ` : ''}${next}${facts.alsoSavedAsDefault ? ' · บันทึกบัญชีนี้เป็นบัญชีรับเงินคืนประจำของคุณด้วย' : ''}`,
+  };
+}
+
+export const REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE = 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย';
+
+/** What the preparer is told about the requester's notice, by the kind of save. */
+export function reimbursementPayoutOnBehalfNotice(inDraft = false): string {
+  return inDraft
+    ? 'เมื่อคุณเลือกหรือเปลี่ยนวิธีรับเงินคืนแทนผู้เบิก ผู้เบิกที่ยังใช้งานอยู่จะได้รับแจ้งเตือน ถ้าบันทึกโดยไม่เปลี่ยนจะไม่แจ้งซ้ำ'
+    : 'ผู้เบิกจะได้รับแจ้งเตือนทุกครั้งที่มีผู้เลือกวิธีรับเงินคืนแทน ไม่ว่าเลือกแบบใด';
+}
+
+/** A finance block stays on the finance desk; its optional free-text reason belongs on the claim page only. */
+export function reimbursementFinanceBlockedRequesterNotice(): { title: string; body: string } {
+  return {
+    title: 'ใบเบิกของคุณถูกระงับการจ่าย',
+    body: 'ใบเบิกยังอยู่ขั้นตรวจการเงิน รอผู้ตรวจการเงินดำเนินการต่อ หากผู้ตรวจระบุเหตุผล อ่านได้ในใบเบิก',
   };
 }
 

@@ -492,13 +492,14 @@ export class PrismaCrmInboxRepository {
     return row ? this.toConversation(row) : null;
   }
 
+  /** Unanswered: no first staff reply yet and not resolved or spam, due or not. */
+  private unansweredWhere(): Record<string, unknown> {
+    return { status: { notIn: ['RESOLVED', 'SPAM'] }, firstRespondedAt: null };
+  }
+
   /** First-response SLA overdue: customer still waiting for the first reply past due. */
   private overdueWhere(now: Date): Record<string, unknown> {
-    return {
-      status: { notIn: ['RESOLVED', 'SPAM'] },
-      firstRespondedAt: null,
-      firstResponseDueAt: { lt: now },
-    };
+    return { ...this.unansweredWhere(), firstResponseDueAt: { lt: now } };
   }
 
   async listConversations(
@@ -507,6 +508,8 @@ export class PrismaCrmInboxRepository {
       status?: string;
       search?: string;
       overdue?: boolean;
+      /** Still waiting for the first staff reply (the dashboard card "ยังไม่ได้ตอบ" opens this list). */
+      unanswered?: boolean;
       tag?: string;
       /** Exact assignee filter: user id, or null for the unassigned queue. */
       assignedToUserId?: string | null;
@@ -531,6 +534,7 @@ export class PrismaCrmInboxRepository {
     // Spam is muted out of every view except an explicit SPAM filter.
     where['status'] = filter.status ?? { not: 'SPAM' };
     if (filter.overdue) Object.assign(where, this.overdueWhere(now));
+    if (filter.unanswered) Object.assign(where, this.unansweredWhere());
     // jsonb containment (@>) on the tags array — exact tag match.
     if (filter.tag) where['tagsJson'] = { array_contains: [filter.tag] };
     if (filter.assignedToUserId !== undefined) where['assignedToUserId'] = filter.assignedToUserId;
@@ -566,17 +570,17 @@ export class PrismaCrmInboxRepository {
     return { items: rows.map((r: any) => this.toConversation(r)), total };
   }
 
-  /** Chip counts within the caller's visibility scope: per-status + overdue + mine/unassigned. */
+  /** Chip counts within the caller's visibility scope: per-status + overdue + unanswered + mine/unassigned. */
   async conversationCounts(
     companyId: string,
     meUserId: string,
     scopeUserId?: string,
     now = new Date(),
-  ): Promise<{ statusCounts: Record<string, number>; overdueCount: number; mineCount: number; unassignedCount: number }> {
+  ): Promise<{ statusCounts: Record<string, number>; overdueCount: number; unansweredCount: number; mineCount: number; unassignedCount: number }> {
     const scoped: Record<string, unknown> = { companyId };
     if (scopeUserId) scoped['OR'] = [{ assignedToUserId: scopeUserId }, { assignedToUserId: null }];
     const notSpam = { status: { not: 'SPAM' } };
-    const [grouped, overdueCount, mineCount, unassignedCount] = await Promise.all([
+    const [grouped, overdueCount, mineCount, unassignedCount, unansweredCount] = await Promise.all([
       this.db.crmConversation.groupBy({
         by: ['status'],
         where: scoped as any,
@@ -585,10 +589,11 @@ export class PrismaCrmInboxRepository {
       this.db.crmConversation.count({ where: { ...scoped, ...this.overdueWhere(now) } as any }),
       this.db.crmConversation.count({ where: { companyId, assignedToUserId: meUserId, ...notSpam } as any }),
       this.db.crmConversation.count({ where: { companyId, assignedToUserId: null, ...notSpam } as any }),
+      this.db.crmConversation.count({ where: { ...scoped, ...this.unansweredWhere() } as any }),
     ]);
     const statusCounts: Record<string, number> = {};
     for (const g of grouped as any[]) statusCounts[g.status] = g._count._all;
-    return { statusCounts, overdueCount, mineCount, unassignedCount };
+    return { statusCounts, overdueCount, unansweredCount, mineCount, unassignedCount };
   }
 
   async reportsBranchCustomerIds(companyId: string, branchId?: string, ownerUserId?: string): Promise<string[]> {
@@ -1382,20 +1387,6 @@ export class PrismaCrmInboxRepository {
   }
 
   // ---- A8 daily brief counts ----
-
-  /** Conversations with no first staff response yet (excludes resolved/spam). */
-  async countUnansweredConversations(companyId: string, scope: CrmCustomerAggregateScope = {}): Promise<number> {
-    return this.db.crmConversation.count({
-      where: { companyId, ...conversationCustomerWhere(scope), firstRespondedAt: null, status: { notIn: ['RESOLVED', 'SPAM'] } },
-    });
-  }
-
-  /** Open SLA breaches (breached + still not resolved/spam). */
-  async countOpenSlaBreaches(companyId: string, scope: CrmCustomerAggregateScope = {}): Promise<number> {
-    return this.db.crmConversation.count({
-      where: { companyId, ...conversationCustomerWhere(scope), slaBreachedAt: { not: null }, status: { notIn: ['RESOLVED', 'SPAM'] } },
-    });
-  }
 
   /** Flagged payment proofs awaiting finance verification. */
   async countPaymentProofs(

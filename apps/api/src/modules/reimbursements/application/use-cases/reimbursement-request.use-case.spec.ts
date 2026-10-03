@@ -47,7 +47,7 @@ import { MemberPayoutAccountUseCase } from './reimbursement-payout.use-case';
 import { fakePayoutTables } from '../../infrastructure/reimbursement-payout.fixture';
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import {
-  applyDraftPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readClaimPayoutSecret,
+  applyDraftPayoutChange, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit, readClaimPayout, readClaimPayoutSecret,
   readDraftDefaultPayout, readLegacyPayoutDefault, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan, writeMemberPayoutAccount,
 } from '../../infrastructure/reimbursement-payout';
 import { attestClaimPayout, confirmPaymentPayout, readClaimPayoutVersions } from '../../infrastructure/reimbursement-payout';
@@ -207,16 +207,14 @@ function fakeRepo(options: RepoOptions = {}) {
       };
       if (!options.noDefaultPayout && !payout) request.payoutMethod = 'CASH';
       if (payout) {
-        Object.assign(request, await applyDraftPayout(payoutDb, data.companyId, request.id, payout.write));
-        await payout.onPersisted?.(fakeTx(calls.outbox), request.id);
+        Object.assign(request, await applyDraftPayoutChange(payoutDb, request, payout, true));
       }
       return request;
     },
     updateDraftRequest: async (companyId: string, id: string, expectedUpdatedAt: Date, data: any, lines?: any[], payout?: any) => {
       assert.equal(expectedUpdatedAt, request.updatedAt);
       if (payout) {
-        Object.assign(request, await applyDraftPayout(payoutDb, companyId, id, payout.write));
-        await payout.onPersisted?.(fakeTx(calls.outbox), id);
+        Object.assign(request, await applyDraftPayoutChange(payoutDb, request, payout));
       }
       Object.assign(request, data, { updatedAt: new Date(request.updatedAt.getTime() + 1) });
       if (lines) request.lines = lines.map((line: any, index: number) => ({
@@ -3390,30 +3388,105 @@ describe('payout: filing a claim on behalf of someone', () => {
 
   // Security review S2: the per-claim path told nobody. Whoever types where the requester's money
   // goes on a claim filed for them is named to the requester, exactly as for a default account.
-  it('tells the requester, and nobody else, every time someone else types the account on their claim', async () => {
+  it('tells the requester, and nobody else, when someone else changes the draft destination', async () => {
     const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
     const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
     assert.equal(world.notifications.length, 1);
     const notice = world.notifications[0];
     // To the requester alone: not the preparer, not the shop owner, not an approver.
     assert.deepEqual(notice.recipientUserIds, ['staff-1']);
-    assert.equal(notice.title, 'อรทัย ระบุบัญชีรับเงินในใบเบิกของคุณ');
-    assert.match(notice.body, /^ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 ระบุเมื่อ .+ ถ้าไม่ใช่บัญชีของคุณ เปิดใบเบิกแล้วแก้ได้ทันที$/);
+    assert.equal(notice.title, 'อรทัย เลือกวิธีรับเงินคืนในใบเบิกของคุณ');
+    assert.equal(notice.body, 'ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789 · เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แจ้งผู้จัดทำใบเบิก');
     assert.equal(notice.deepLinkHref, `/companies/co-1/reimbursements/${draft.id}`);
     assert.deepEqual([notice.triggerKey, notice.severity, notice.sourceType, notice.sourceId], ['reimbursement.payout_account_set_by_other', 'critical', 'reimbursement_request', draft.id]);
 
     // Changed again by the preparer: a notice of its own. Typed by the requester: none.
     await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...PROMPTPAY } });
     assert.equal(world.notifications.length, 2);
-    assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 ระบุเมื่อ /);
+    assert.match(world.notifications[1].body, /^พร้อมเพย์เบอร์ลงท้าย 5678 · เปิดใบเบิก/);
     assert.notEqual(world.notifications[1].periodKey, notice.periodKey);
     await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
-    // Cash, or following the requester's own default, types no account for anyone.
+    // Cash and the standing account are choices too.
     await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'CASH' } });
     await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'DEFAULT' } });
-    assert.equal(world.notifications.length, 2);
+    assert.equal(world.notifications.length, 4);
     assert.ok(world.notifications.every((entry) => entry.recipientUserIds.length === 1 && entry.recipientUserIds[0] === 'staff-1'));
     assert.equal(leaksNumber(world.notifications), false);
+  });
+
+  it('announces every changed draft destination once, including first cash and standing-account choices', async () => {
+    for (const initial of [{ mode: 'CASH' }, { mode: 'DEFAULT' }, { mode: 'SPECIFIED', ...KBANK }] as const) {
+      const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+      await world.payouts.setOwn(ctx(), PROMPTPAY);
+      const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: initial }));
+      assert.equal(world.notifications.length, 1, initial.mode);
+      assert.deepEqual(world.notifications[0].recipientUserIds, ['staff-1']);
+      assert.match(world.notifications[0].body, initial.mode === 'CASH' ? /รับเป็นเงินสด/ : initial.mode === 'DEFAULT' ? /พร้อมเพย์เบอร์ลงท้าย 5678/ : /ธนาคารกสิกรไทย เลขบัญชีลงท้าย 6789/);
+      await world.update.execute(financeCtx(), draft.id, { payout: initial });
+      assert.equal(world.notifications.length, 1, 'identical save is silent');
+      await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB } });
+      assert.equal(world.notifications.length, 2, 'next destination is a new notice');
+      assert.notEqual(world.notifications[0].periodKey, world.notifications[1].periodKey);
+      await world.update.execute(ctx(), draft.id, { payout: { mode: 'CASH' } });
+      await world.update.execute(ctx(), draft.id, { payout: { mode: 'DEFAULT' } });
+      assert.equal(world.notifications.length, 2, 'own choices are silent');
+      assert.equal(leaksNumber(world.notifications), false);
+    }
+  });
+
+  it('reads the requester membership once for a typed draft account, including a standing-account save', async () => {
+    for (const saveAsDefault of [false, true]) {
+      const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+      const findMember = world.state.repo.findPayoutMember.bind(world.state.repo);
+      let reads = 0;
+      world.state.repo.findPayoutMember = async (...args: Parameters<typeof findMember>) => { reads++; return findMember(...args); };
+      const editor = ctx({ userId: 'finance-1', permissions: [...financeCtx().permissions, 'access.employee.update'] });
+      const change = await world.payouts.draftPayoutChange(editor, 'staff-1', { mode: 'SPECIFIED', ...KBANK, saveAsDefault });
+      assert.equal(reads, 1, `saveAsDefault=${saveAsDefault}`);
+      assert.ok(change.onChanged, 'the same active membership authorizes the notice');
+    }
+  });
+
+  it('compares the full sealed draft destination and does not repeat a typed-account save', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK } }));
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...KBANK } });
+    assert.equal(world.notifications.length, 1);
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'SPECIFIED', ...KBANK, accountNumber: '9999956789' } });
+    assert.equal(world.notifications.length, 2, 'the same last four digits are not the same account');
+    assert.equal(leaksNumber(world.notifications), false);
+    assert.doesNotMatch(JSON.stringify(world.notifications), /9999956789/);
+  });
+
+  it('keeps automatic draft defaults silent and accepts cash/default changes for inactive requesters without a notice', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const draft = await world.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }));
+    assert.equal(world.notifications.length, 0);
+    await world.update.execute(financeCtx(), draft.id, { payout: { mode: 'CASH' } });
+    assert.equal(world.notifications.length, 1);
+    for (const membershipStatus of ['DRAFT', 'INVITED', 'SUSPENDED', 'DISABLED']) {
+      const inactive = payoutWorld({ payoutMembers: { 'staff-1': { ...EMPLOYEE, membershipStatus } } });
+      const id = (await inactive.create.execute(financeCtx(), claimInput({ requesterUserId: 'staff-1' }))).id;
+      await inactive.update.execute(financeCtx(), id, { payout: { mode: 'CASH' } });
+      assert.equal(inactive.state.request.payoutMethod, 'CASH');
+      await inactive.update.execute(financeCtx(), id, { payout: { mode: 'DEFAULT' } });
+      assert.equal(inactive.state.request.payoutMethod, null);
+      assert.equal(inactive.notifications.length, 0);
+    }
+  });
+
+  it('combines a draft account and its standing-account save into one claim notice, leaving standalone saves alone', async () => {
+    const world = payoutWorld({ payoutMembers: { 'staff-1': EMPLOYEE } });
+    const editor = ctx({ userId: 'finance-1', permissions: [...financeCtx().permissions, 'access.employee.update'] });
+    const draft = await world.create.execute(editor, claimInput({ requesterUserId: 'staff-1', payout: { mode: 'SPECIFIED', ...KBANK, saveAsDefault: true } }));
+    assert.deepEqual(world.notifications.map(n => n.sourceType), ['reimbursement_request']);
+    assert.match(world.notifications[0].body, /บันทึกบัญชีนี้เป็นบัญชีรับเงินคืนประจำของคุณด้วย/);
+    assert.equal((await world.payouts.getOwn(ctx())).account?.accountLast4, '6789');
+    await world.update.execute(ctx(), draft.id, { payout: { mode: 'SPECIFIED', ...SCB, saveAsDefault: true } });
+    assert.equal(world.notifications.length, 1, 'own combined save is silent');
+    await world.payouts.setForMember(editor, 'staff-1', PROMPTPAY);
+    assert.deepEqual(world.notifications.map(n => n.sourceType), ['reimbursement_request', 'member_payout_account']);
+    assert.equal(leaksNumber([world.notifications, world.audits]), false);
   });
 
   it('types no account for a requester a notice cannot reach', async () => {
@@ -4995,16 +5068,16 @@ describe('payout correction: who answered, when someone answers for the requeste
     assert.equal(world.notifications.length, 2);
   });
 
-  // "Save as the requester's default" by someone who may set it changes two things of the requester's: their standing
-  // account, and where this claim is paid. Each has its own page to check and to correct, and each is told.
-  it('tells the requester of the answer and of their default account, when whoever answered also saved the account as their default', async () => {
+  // One act, one notice: the claim also says the standing account was saved.
+  it('combines a round answer and its standing-account save into one claim notice', async () => {
     const { world, id } = await holding('ACCOUNT');
     const owner = ctx({ userId: 'owner-1', roles: ['OWNER'], permissions: ['reimbursement.read', 'reimbursement.create', 'reimbursement.finance_review', 'access.employee.update'] });
     await world.giveAccount.execute(owner, id, { mode: 'SPECIFIED', saveAsDefault: true, ...SCB });
     assert.deepEqual(world.notifications.map((notice) => [notice.recipientUserIds, notice.sourceType, notice.title, notice.deepLinkHref]), [
-      [['staff-1'], 'member_payout_account', 'เจ้าของร้าน ตั้งบัญชีรับเงินคืนของคุณ', '/companies/co-1/reimbursements/payout-account'],
       [['staff-1'], 'reimbursement_request', 'เจ้าของร้าน แก้บัญชีรับเงินในใบเบิกของคุณ: RB-202601-000001', `/companies/co-1/reimbursements/${id}`],
     ]);
+    assert.match(world.notifications[0].body, /บันทึกบัญชีนี้เป็นบัญชีรับเงินคืนประจำของคุณด้วย/);
+    assert.equal((await world.payouts.getOwn(ctx())).account?.accountLast4, '9012');
     assert.equal(leaksNumber(world.notifications), false);
   });
 

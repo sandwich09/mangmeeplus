@@ -13,6 +13,9 @@
  * (resyncWorkflowTemplateRulesForCompany) — otherwise a template fix only ever reaches companies
  * created after it. Rules an admin created or edited are skipped there too.
  *
+ * A rule still named its template's former default (English before 2026-10-03) gets the template's
+ * current name (renameDefaultNamedTemplateRulesForCompany); a name the company chose is never touched.
+ *
  * Last, it closes approval tasks whose claim no longer waits for approval (closeSettledClaimTasks).
  *
  * Runs on production boot after migrate deploy + sync-permissions.
@@ -24,6 +27,7 @@ import { PrismaWorkflowRepository } from '../src/modules/workflow/infrastructure
 import {
   autoEnableWorkflowTemplatesForCompany,
   closeSettledClaimTasksAtRelease,
+  renameDefaultNamedTemplateRulesForCompany,
   resyncWorkflowTemplateRulesForCompany,
 } from '../src/modules/workflow/application/use-cases/workflow-template.use-case';
 
@@ -58,11 +62,13 @@ async function main() {
   let rulesCreated = 0;
   let companiesTouched = 0;
   let rulesResynced = 0;
+  let rulesRenamed = 0;
   for (const company of companies) {
     const enabledKeys = await autoEnableWorkflowTemplatesForCompany(repo, company.id);
     if (enabledKeys.length > 0) companiesTouched += 1;
     rulesCreated += enabledKeys.length;
     rulesResynced += (await resyncWorkflowTemplateRulesForCompany(repo, company.id)).length;
+    rulesRenamed += (await renameDefaultNamedTemplateRulesForCompany(repo, company.id)).length;
   }
 
   // Audit B8: approval tasks left open for claims already approved, rejected or paid. Idempotent,
@@ -76,6 +82,7 @@ async function main() {
     + `${autoEnableCount} auto-enable templates checked against ${companies.length} active companies, `
     + `${rulesCreated} rules created across ${companiesTouched} companies (admin-owned rules untouched), `
     + `${rulesResynced} sync-owned rules re-pinned to their catalog definition, `
+    + `${rulesRenamed} rules still named a former template default renamed, `
     + (staleTasksClosed === null
       ? 'closing stale approval tasks FAILED (see the error above).'
       : `${staleTasksClosed} approval tasks closed for claims no longer waiting for approval.`),

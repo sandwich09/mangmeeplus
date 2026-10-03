@@ -1,3 +1,9 @@
+import { STOCK_MOVEMENT_TYPE_LABELS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+
+const thaiRoleLabels = Object.fromEntries(
+  Object.entries(THAI_SYSTEM_ROLE_NAMES).map(([key, name]) => [`role.${key}`, name]),
+) as { [K in keyof typeof THAI_SYSTEM_ROLE_NAMES as `role.${K}`]: (typeof THAI_SYSTEM_ROLE_NAMES)[K] };
+
 export type SupportedLocale = 'th' | 'en';
 
 export const workspaceDictionary = {
@@ -36,19 +42,7 @@ export const workspaceDictionary = {
     'nav.group.growth': 'สินค้าและการดำเนินงาน',
     'nav.group.admin': 'บุคลากรและการตั้งค่า',
     // Role labels (sidebar footer)
-    'role.OWNER': 'เจ้าของร้าน',
-    'role.SYSTEM_ADMIN': 'ผู้ดูแลระบบ',
-    'role.ADMIN': 'แอดมิน',
-    'role.MANAGER': 'ผู้จัดการ',
-    'role.HR': 'ฝ่ายบุคคล',
-    'role.SALES': 'ฝ่ายขาย',
-    'role.INVENTORY': 'คลังสินค้า',
-    'role.FINANCE': 'การเงิน',
-    'role.ACCOUNTANT': 'บัญชี',
-    'role.MARKETING': 'การตลาด',
-    'role.STAFF': 'พนักงาน',
-    'role.AUDITOR_READONLY': 'ผู้ตรวจสอบ (อ่านอย่างเดียว)',
-    'role.COMPANY_VIEW': 'เจ้าของบริษัท',
+    ...thaiRoleLabels,
     // Modules
     'module.dashboard': 'แดชบอร์ด',
     'module.inbox': 'กล่องข้อความ',
@@ -152,14 +146,14 @@ export const workspaceDictionary = {
     'inventory.movement.reason': 'เหตุผล',
     'inventory.movement.actor': 'ผู้ดำเนินการ',
     'inventory.movement.occurred_at': 'เวลา',
-    'inventory.movement.STOCK_IN': 'รับเข้า',
-    'inventory.movement.STOCK_OUT': 'จ่ายออก',
-    'inventory.movement.TRANSFER_IN': 'รับโอน',
-    'inventory.movement.TRANSFER_OUT': 'โอนออก',
-    'inventory.movement.COUNT_ADJUSTMENT_IN': 'ปรับนับ (เพิ่ม)',
-    'inventory.movement.COUNT_ADJUSTMENT_OUT': 'ปรับนับ (ลด)',
-    'inventory.movement.ADJUSTMENT_IN': 'ปรับเพิ่ม',
-    'inventory.movement.ADJUSTMENT_OUT': 'ปรับลด',
+    'inventory.movement.STOCK_IN': STOCK_MOVEMENT_TYPE_LABELS.STOCK_IN,
+    'inventory.movement.STOCK_OUT': STOCK_MOVEMENT_TYPE_LABELS.STOCK_OUT,
+    'inventory.movement.TRANSFER_IN': STOCK_MOVEMENT_TYPE_LABELS.TRANSFER_IN,
+    'inventory.movement.TRANSFER_OUT': STOCK_MOVEMENT_TYPE_LABELS.TRANSFER_OUT,
+    'inventory.movement.COUNT_ADJUSTMENT_IN': STOCK_MOVEMENT_TYPE_LABELS.COUNT_ADJUSTMENT_IN,
+    'inventory.movement.COUNT_ADJUSTMENT_OUT': STOCK_MOVEMENT_TYPE_LABELS.COUNT_ADJUSTMENT_OUT,
+    'inventory.movement.ADJUSTMENT_IN': STOCK_MOVEMENT_TYPE_LABELS.ADJUSTMENT_IN,
+    'inventory.movement.ADJUSTMENT_OUT': STOCK_MOVEMENT_TYPE_LABELS.ADJUSTMENT_OUT,
     'inventory.balance.quantity': 'ยอดคงเหลือ',
     'inventory.balance.low_stock': 'สต็อกต่ำ',
     'inventory.status.ACTIVE': 'ใช้งาน',
@@ -1581,7 +1575,7 @@ export const workspaceDictionary = {
     'employee.error.phone_conflict': 'เบอร์โทรศัพท์นี้ถูกใช้กับพนักงานคนอื่นแล้ว',
     'employee.error.email_conflict': 'อีเมลนี้ถูกใช้ในระบบแล้ว',
     'employee.error.email_must_differ': 'ต้องระบุอีเมลของบริษัทนี้ที่ไม่ซ้ำกับอีเมลบัญชีเดิมของพนักงาน',
-    'employee.error.username_conflict': 'Username นี้ถูกใช้ในระบบแล้ว',
+    'employee.error.username_conflict': 'ชื่อผู้ใช้นี้ถูกใช้ในระบบแล้ว',
     // ทะเบียนคู่ค้า (สเปค §11.1) — ไม่มีตัวเลือกประเภทคู่ค้าที่ใดเลย ใช้ป้ายการใช้งานแทน (A5)
     'counterparties.title': 'คู่ค้า',
     'counterparties.description': 'ทะเบียนร้านค้าและลูกค้า ระบบเพิ่มให้เองจากใบที่บันทึก แก้ไขเพิ่มเติมได้ที่นี่',
@@ -1714,6 +1708,8 @@ export const workspaceDictionary = {
     'role.STAFF': 'Staff',
     'role.AUDITOR_READONLY': 'Auditor (read-only)',
     'role.COMPANY_VIEW': 'Company owner',
+    'role.MANGMEE_SALES_LEAD': 'Mangmee Sales Lead',
+    'role.MANGMEE_SALES': 'Mangmee Sales',
     // Modules
     'module.dashboard': 'Dashboard',
     'module.inbox': 'Inbox',

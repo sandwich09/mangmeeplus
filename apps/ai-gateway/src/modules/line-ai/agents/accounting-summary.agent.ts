@@ -5,7 +5,7 @@
 import type { AgentContext } from './agent-types';
 import { periodFact } from './agent-types';
 import type { AgentIntentItem, SpecialistOutput, AgentFact, AgentToolCall } from '@watchdog-bms/contracts';
-import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
+import { LEDGER_ACCOUNT_CLASS_LABELS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
 import type { ErpToolClient } from '../infrastructure/erp-tool.client';
 import { formatExpenseExplainReply } from './expense-explain-formatter';
 import { formatDraftUpdateReply } from './draft-update-formatter';
@@ -319,7 +319,7 @@ export class AccountingSummaryAgent {
         const balance = data['balanceSheet'] as Record<string, unknown> | undefined;
         if (trial) pushFacts({ label: 'งบทดลอง', value: `เดบิต ${String(trial['totalDebit'] ?? '-')}, เครดิต ${String(trial['totalCredit'] ?? '-')}, ผลต่าง ${String(trial['difference'] ?? '-')}` });
         if (pnl) pushFacts({ label: 'กำไรขาดทุน', value: `รายได้ ${String(pnl['revenue'] ?? '-')}, กำไรสุทธิ ${String(pnl['netProfit'] ?? '-')}` });
-        if (balance) pushFacts({ label: 'งบดุล', value: `สินทรัพย์ ${String(balance['totalAssets'] ?? '-')}, หนี้สิน ${String(balance['totalLiabilities'] ?? '-')}, ส่วนของผู้ถือหุ้น ${String(balance['totalEquity'] ?? '-')}` });
+        if (balance) pushFacts({ label: 'งบดุล', value: `${LEDGER_ACCOUNT_CLASS_LABELS.ASSET} ${String(balance['totalAssets'] ?? '-')}, ${LEDGER_ACCOUNT_CLASS_LABELS.LIABILITY} ${String(balance['totalLiabilities'] ?? '-')}, ${LEDGER_ACCOUNT_CLASS_LABELS.EQUITY} ${String(balance['totalEquity'] ?? '-')}` });
         if (data['currency'] === null) pushFacts({ label: 'สกุลเงิน', value: 'แหล่งข้อมูลรายงานบัญชีนี้ไม่ได้ระบุสกุลเงิน' });
       } else if (tool.name === 'procurement.get_summary') {
         if (typeof data['total'] !== 'number') { readFailed = true; toolData.pop(); continue; }

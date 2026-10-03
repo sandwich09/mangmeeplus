@@ -1,35 +1,49 @@
-import { HR_ASSIGNABLE_ROLE_KEYS, type AssignableRoleSummary, type CapabilityPackView, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
+import { workspaceDictionary, type DictionaryKey, type SupportedLocale } from '../../common/i18n/workspace-dictionary';
+import { t } from '../../common/i18n/workspace-i18n.logic';
+import { THAI_SYSTEM_ROLE_NAMES, HR_ASSIGNABLE_ROLE_KEYS, type AssignableRoleSummary, type CapabilityPackView, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
 
-const THAI_SYSTEM_ROLE_NAMES: Record<string, string> = {
-  OWNER: 'เจ้าของกิจการ', ADMIN: 'ผู้ดูแลบริษัท', SYSTEM_ADMIN: 'ผู้ดูแลระบบ', MANAGER: 'ผู้จัดการ',
-  HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'ฝ่ายคลังสินค้า', FINANCE: 'ฝ่ายการเงิน',
-  ACCOUNTANT: 'ฝ่ายบัญชี', MARKETING: 'ฝ่ายการตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ (ดูอย่างเดียว)',
-  COMPANY_VIEW: 'เจ้าของบริษัท',
-  MANGMEE_SALES_LEAD: 'หัวหน้าทีมขายมั่งมี', MANGMEE_SALES: 'เซลล์มั่งมี',
-};
+export const EMPLOYEE_BRANCH_SCOPE_HELP = `กำหนดได้เฉพาะสาขาที่บัญชีของคุณเข้าถึง หากต้องการเปลี่ยนขอบเขตนอกเหนือจากนี้ กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}`;
 
 /**
- * The name the API stores for each standard role a company may edit. Editing one gives the company
+ * The name the API stores for each standard role. Editing one gives the company
  * its own copy, which starts out with this name: a copy still carrying it was never named by the
  * company, so it reads as the standard role and not as "Accountant".
  */
 const STANDARD_ROLE_NAMES: Record<string, string> = {
+  OWNER: 'Owner', SYSTEM_ADMIN: 'System Admin', COMPANY_VIEW: 'Company owner',
+  MANGMEE_SALES_LEAD: 'Mangmee Sales Lead', MANGMEE_SALES: 'Mangmee Sales',
   ADMIN: 'Admin', MANAGER: 'Manager', HR: 'HR', SALES: 'Sales', INVENTORY: 'Inventory', FINANCE: 'Finance',
   ACCOUNTANT: 'Accountant', MARKETING: 'Marketing', STAFF: 'Staff', AUDITOR_READONLY: 'Auditor (Read-only)',
 };
 
 /** A standard role, or a company's copy of one that the company has not given a name of its own. */
 export function hasStandardRoleName(role: Pick<RoleSummary, 'key' | 'name'> & { isSystem?: boolean }): boolean {
-  return role.isSystem !== false || role.name === STANDARD_ROLE_NAMES[role.key];
+  return role.isSystem === true || role.name === STANDARD_ROLE_NAMES[role.key];
 }
 
-export function roleDisplayName(role: Pick<RoleSummary, 'key' | 'name'> & { isSystem?: boolean }): string {
-  return hasStandardRoleName(role) ? THAI_SYSTEM_ROLE_NAMES[role.key] ?? role.name : role.name;
+const ROLE_NAME_TO_KEY: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(STANDARD_ROLE_NAMES).map(([key, name]) => [name.toLowerCase(), key])),
+  sysadmin: 'SYSTEM_ADMIN', auditor: 'AUDITOR_READONLY', 'auditor (readonly)': 'AUDITOR_READONLY',
+};
+
+/** Standard roles translate; a company's named copy keeps its name on every surface. */
+export function roleDisplayName(
+  roleOrKey: (Pick<RoleSummary, 'key' | 'name'> & { isSystem?: boolean }) | string,
+  locale: SupportedLocale = 'th',
+): string {
+  const rawName = typeof roleOrKey === 'string' ? roleOrKey : roleOrKey?.name;
+  const normalizedName = String(rawName ?? '').trim().toLowerCase();
+  const rawKey = typeof roleOrKey === 'string' ? ROLE_NAME_TO_KEY[normalizedName] ?? roleOrKey : roleOrKey?.key;
+  const key = String(rawKey ?? ROLE_NAME_TO_KEY[normalizedName] ?? '').trim().toUpperCase();
+  const dictKey = `role.${key}`;
+  const standard = dictKey in workspaceDictionary.th
+    && (typeof roleOrKey === 'string' || hasStandardRoleName({ key, name: String(rawName ?? ''), isSystem: roleOrKey?.isSystem }));
+  return standard ? t(dictKey as DictionaryKey, locale) : (rawName || 'บทบาทที่กำหนดเอง');
 }
 
 /** Thai label for a bare system-role key (company switcher, pickers). Unknown keys pass through. */
 export function roleKeyDisplayName(key: string): string {
-  return THAI_SYSTEM_ROLE_NAMES[key] ?? key;
+  return roleDisplayName(key);
 }
 
 /**

@@ -132,6 +132,9 @@ blocks, the line:
 
 `ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ`
 
+> Superseded 2026-10-03: since the 2026-08-10 owner/admin/manager self-approval exemption, this wording is printed
+> only when the approver holds OWNER; anyone else is named. See `docs/specs/expense-receipt-upload-spec.md`.
+
 Use the data the renderer already receives (payer userId vs approver userId); do not add a parameter if an
 existing one already carries both. Keep the existing layout maths intact — the footnote is one extra line under
 the signature row, and the SVG height must account for it so nothing overlaps or clips.
