@@ -320,3 +320,13 @@ export type ExecutiveCompanyDetail = ExecutiveEnvelope & {
 };
 export type ExecutiveHistoryEvent = { kind: ExecutiveHistoryEventKind; at: string; planLabel?: string };
 export type ExecutiveCompanyHistory = { requestId: string; items: ExecutiveHistoryEvent[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } };
+
+/** API13: server chooses the template. All filters apply to the entire result, never a page. */
+export const EXECUTIVE_EXPORT_REPORT_KEYS = ['overview', 'companies', 'usage', 'revenue', 'customers', 'compare', 'detail'] as const;
+export type ExecutiveExportReportKey = typeof EXECUTIVE_EXPORT_REPORT_KEYS[number];
+export type ExecutiveExportFilters = Omit<ExecutiveCompaniesQuery, 'month' | 'buildId' | 'sortBy' | 'sortDir' | 'page' | 'pageSize'>;
+export type ExecutiveExportBody = {
+  buildId: string; reportKey: ExecutiveExportReportKey; subview?: string; month: string; filters: ExecutiveExportFilters;
+  sortBy?: ExecutiveSortBy; sortDir?: 'asc' | 'desc'; comparison?: { dimension: string; sideA: string; sideB: string };
+  targetCompanyId?: string; includeContacts: boolean; format: 'xlsx';
+};

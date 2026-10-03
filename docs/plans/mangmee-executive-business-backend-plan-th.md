@@ -62,7 +62,7 @@ Current scope คือ S0a, S1, S5, S0b, S2, S3, S4 และ S8 เฉพา�
 EX-05/06 และ case summaries/actions ไม่ถูกสร้างเลย (ไม่มี route เมนู หรือ permission) รวม saved route เดิม; API06 ไม่มี case data
 เจ้าของสั่งเริ่มเขียนโค้ดของ S1, S5, S2, S3, S4 และ S8 เมื่อ 2 ต.ค. 2569; S6/S7 ยังพัก
 
-**สถานะ E3a (2026-10-03):** S3 ส่วน API01–API06 มี diff แล้วตาม BE §16.6 บนกิ่ง `claude/executive-read-api-20261003` (รวมเข้ากิ่งงานผู้บริหารแล้ว ยังไม่เข้า develop; รอบสองเพิ่มสามช่องที่หน้ารายงาน E4b ขอ ท้าย BE §16.6); เคสตรวจรับ REP/PAY/USE/SRC/PX01–04/12 ฝั่งหลังบ้านพิสูจน์ด้วยฐานข้อมูลจริงใน `executive-report-read.pg.spec.ts` เท่าที่ไม่ใช่เรื่องหน้าจอ; API13 (ส่งออก) ยังไม่ทำ หน้าเว็บอยู่ในงาน E4a/E4b รายละเอียดใน memory `executive-read-api-2026-10-03.md`
+**สถานะ E3a (2026-10-03):** S3 ส่วน API01–API06 มี diff แล้วตาม BE §16.6 บนกิ่ง `claude/executive-read-api-20261003` (รวมเข้ากิ่งงานผู้บริหารแล้ว ยังไม่เข้า develop; รอบสองเพิ่มสามช่องที่หน้ารายงาน E4b ขอ ท้าย BE §16.6); เคสตรวจรับ REP/PAY/USE/SRC/PX01–04/12 ฝั่งหลังบ้านพิสูจน์ด้วยฐานข้อมูลจริงใน `executive-report-read.pg.spec.ts` เท่าที่ไม่ใช่เรื่องหน้าจอ; API13 (ส่งออก) มี diff ใน lane E5 แล้ว รอ controller ตรวจ PostgreSQL/เบราว์เซอร์และรับงาน ตาม memory `executive-excel-export-2026-10-03.md` หน้าเว็บอยู่ในงาน E4a/E4b รายละเอียดใน memory `executive-read-api-2026-10-03.md`
 
 **สถานะ E1 (2026-10-02):** S1 ฝั่ง API และ S5 มี diff แล้วตาม BE §17.4; ไม่แก้เว็บ ไม่เปลี่ยน schema ไม่แตะไฟล์ maintenance ที่ตรึงไว้ การตรวจใน lane ใช้ spec เดิมที่ลงทะเบียนอยู่ ไม่มี `package.json` เปลี่ยน รายละเอียด red/green อยู่ใน memory หัวข้อ Implementation, stage E1
 ผู้ควบคุมตัดสิน lifecycle แล้ว 2026-10-02 ตามนิยาม UI §9.2 (ไม่ใช่ข้อตัดสินใจใหม่ของเจ้าของ): รับเฉพาะ membership ACTIVE/SUSPENDED/DISABLED; DRAFT/INVITED ไม่อยู่ในรายการและรายละเอียด/คำสั่งคืน ACCOUNT_NOT_FOUND; ตรวจ user ที่ไม่ ACTIVE, membership DISABLED หรือ credential หาย/DISABLED เป็น REVOKED ก่อน SUSPENDED; credential TEMPORARY หรือ ACTIVE ที่หมดอายุเป็น PENDING_ACTIVATION พร้อม temporaryPasswordExpiresAt; ที่เหลือเป็น ACTIVE เมื่อ credential ยังใช้ได้
@@ -209,6 +209,6 @@ Q35 (ทางตันของผู้ดูแลคนเดียวใน
 Ownerระบุ `outputs/company-infographic-20261001/company-receipts-dashboard-v4.xlsx` เป็นแม่แบบตาม [Excel spec §8](../specs/mangmee-executive-excel-export-spec-th.md#8-แม่แบบและหลักฐานตรวจอ่าน-2026-10-01)
 มตินี้แทนsummary-only/optional-company/values-only: ค่าเริ่มต้นเป็นDashboardเขียว–ทอง + nativecharts/สูตร + รายบริษัทที่เป็นsource, 2ชีตหลัก; ตารางคำนวณใต้Dashboardและmetadataในsource
 ต้องแยกsource28ก.ย.ของแม่แบบจากfictional30ก.ย.ของเดโม; ไม่ยกสูตรblank=0หรือreceiptทุกสถานะมาเปลี่ยนBE Q03โดยปริยาย
-API13รับtemplateKeyแทนincludeCompanies; serverเลือกversion/hash. XG03ต้องตรวจnativechart/formula/cache/renderเพิ่ม; writerเดิมsingle-sheetยังทำไม่ได้
+API13 ไม่รับ templateKey หรือ includeCompanies ตาม BE §16.4; server เลือกรุ่นแม่แบบเอง E5 ต่อ shared writer เป็นหลายชีตพร้อม chart/formula/cache แล้ว รอ controller ตรวจการเปิดไฟล์จริงตาม XG03
 EXL13–14เพิ่มintegrationacceptance; baseline188/47deferredไม่เปลี่ยนและไม่มีgapimplementationปิดจากการอ่านแม่แบบ. ไม่แก้ไฟล์อ้างอิงและไม่สร้างXLSXใหม่รอบนี้
 แม่แบบที่เก็บใน repository ต้องสร้างใหม่จากข้อมูลสมมติ ไฟล์ของเจ้าของมีข้อมูลจริงและห้ามนำมาตัดแถวแล้วเก็บ เพราะชื่อบริษัทจริงยังค้างในแคชของกราฟและตารางข้อความร่วมของไฟล์ (RB-27, BE §16.4)

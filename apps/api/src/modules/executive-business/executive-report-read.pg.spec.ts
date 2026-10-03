@@ -143,7 +143,7 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url.toString() }) });
     const billing = new BillingCashMovementsService({ client } as never, { billingMode: 'live', stripeAccountId: STRIPE } as never);
     const build = new ExecutiveReportBuildUseCase({ client } as never, billing);
-    report = new ExecutiveReportReadService({ client } as never, new AuditService(new PrismaAuditRepository({ client } as never), { error: () => undefined } as never), billing);
+    report = new ExecutiveReportReadService({ client } as never, new AuditService(new PrismaAuditRepository({ client } as never), { error: () => undefined } as never), billing, { resolveAccess: async () => ({ permissions: ['system.executive.read', 'system.executive.export', 'system.executive.contact.read'] }) } as never);
     report.clock = () => clock;
 
     // Masters and people.
@@ -622,6 +622,26 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     assert.equal(await client.auditLog.count({ where: { action: { startsWith: 'executive.' }, companyId: { not: null } } }), 0);
   });
 
+  it('API13 files match real overview/list figures, contacts are opt-in and export audit never belongs to the customer', async () => {
+    const ctx = reader(['system.executive.read', 'system.executive.export', 'system.executive.contact.read']);
+    const screen = await report.overview(ctx, { month: '2026-09' });
+    const body = { reportKey: 'overview', month: '2026-09', filters: {}, buildId: screen.build.id, format: 'xlsx', includeContacts: false } as const;
+    const output = await report.export(ctx, body), parts = workbookParts(output.file), dashboard = parts.get('xl/worksheets/sheet1.xml')!;
+    assert.equal(output.rowCount, valueOf(screen.metrics.companies));
+    assert.match(cellXml(dashboard, 'B7'), new RegExp(`<v>${valueOf(screen.metrics.companies)}</v>`));
+    assert.match(cellXml(dashboard, 'R7'), new RegExp(`<v>${valueOf(screen.metrics.netReceiptsSatang)! / 100}</v>`));
+    assert.doesNotMatch(parts.get('xl/worksheets/sheet2.xml')!, /อีเมลเจ้าของบัญชี|เบอร์โทรเจ้าของบัญชี|owner-a/);
+    const listed = await report.companies(ctx, { month: '2026-09', paidEver: 'YES', pageSize: 1 });
+    const filtered = await report.export(ctx, { ...body, reportKey: 'companies', filters: { paidEver: 'YES' } });
+    assert.equal(filtered.rowCount, listed.pagination.total);
+    const contact = await report.export(ctx, { ...body, reportKey: 'detail', targetCompanyId: 'c-a', includeContacts: true });
+    const detail = workbookParts(contact.file).get('xl/worksheets/sheet2.xml')!;
+    assert.match(detail, /owner-a@example.test/); assert.match(cellXml(detail, 'AK7'), /t="inlineStr"/);
+    assert.match(detail, /มีข้อมูลส่วนบุคคล ใช้ภายในเท่านั้น/);
+    const audit = await client.auditLog.findFirst({ where: { action: 'executive.export.created', requestId: ctx.requestId }, orderBy: { createdAt: 'desc' } });
+    assert.equal(audit!.companyId, null); assert.doesNotMatch(JSON.stringify(audit!.metadataJson), /owner-a|0811111111|ร้านอาหารเอ/);
+  });
+
   // Last, because it changes the data: a late payment for September arrives and a new round writes a new set (PAY-11, FE-23).
   it('labels a finished month that a later round revised, and tells a screen holding the old set', async () => {
     const before = await overview('2026-09');
@@ -632,6 +652,7 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
       const billing = new BillingCashMovementsService({ client } as never, { billingMode: 'live', stripeAccountId: STRIPE } as never);
       assert.equal((await new ExecutiveReportBuildUseCase({ client } as never, billing).rebuild(clock)).status, 'BUILT');
       const after = await report.overview(reader(), { month: '2026-09', buildId: before.build.id });
+      await assert.rejects(() => report.export(reader(['system.executive.read', 'system.executive.export']), { reportKey: 'overview', month: '2026-09', filters: {}, buildId: before.build.id, format: 'xlsx', includeContacts: false }), error => codeOf(error) === 'EXECUTIVE_SNAPSHOT_EXPIRED');
       assert.deepEqual([after.buildChanged, after.build.monthRevision, after.build.monthRevisedAt, valueOf(after.metrics.netReceiptsSatang)],
         [true, before.build.monthRevision + 1, clock.toISOString(), 1_822_643 + 10_000]);
       await opens('2026-09', 'after the revision', after.metrics.netReceiptsSatang.drilldownFilters, 16, 1_832_643);
@@ -720,4 +741,361 @@ describe('executive report read rules', () => {
     assert.deepEqual([unread.restCount, unread.restShare, unread.topCompanyShare, unread.roundingNote, unread.nonPositiveCount], [null, null, null, false, 10]);
     assert.equal(spendGroupsOf(rows.slice(0, 9), false).cumulative.size, 9);
   });
+});
+
+// API13 and the writer also run without PostgreSQL; CI already registers this file.
+import { inflateRawSync } from 'node:zlib';
+import * as xlsxWriter from '../../common/export/xlsx.logic';
+function workbookParts(file: Buffer): Map<string, string> {
+  const parts = new Map<string, string>();
+  for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+    const method = file.readUInt16LE(offset + 8), size = file.readUInt32LE(offset + 18);
+    const nameLength = file.readUInt16LE(offset + 26), extraLength = file.readUInt16LE(offset + 28);
+    const start = offset + 30 + nameLength + extraLength;
+    const data = file.subarray(start, start + size);
+    parts.set(file.subarray(offset + 30, offset + 30 + nameLength).toString(), (method === 8 ? inflateRawSync(data) : data).toString());
+    offset = start + size;
+  }
+  return parts;
+}
+const cellXml = (sheet: string, ref: string) => sheet.match(new RegExp(`<c r="${ref}"[^>]*>([\\s\\S]*?)</c>`))?.[0] ?? '';
+const fixtureWorkbook = async (count = 3) => {
+  const { buildExecutiveWorkbook } = await import('./domain/executive-export.logic');
+  return buildExecutiveWorkbook({ title: 'รายงานสมมติ', month: '2026-09', metadata: ['ข้อมูลสมมติ'],
+    columns: ['บริษัท', 'ยอดรับสุทธิในเดือน'], rows: Array.from({ length: count }, (_, i) => [`ร้านสมมติ ${i + 1}`, i === 0 ? -12.34 : 25]),
+    kpis: [{ label: 'บริษัทลูกค้า', value: count, formula: count ? `COUNTA('รายบริษัท'!A7:A${6 + count})` : '0' }],
+    panels: Array.from({ length: 4 }, (_, i) => ({ title: `กลุ่มสมมติ ${i + 1}`, kind: i ? 'bar' as const : 'doughnut' as const,
+      labels: ['เคยเพิ่มใบเสร็จ', 'ยังประเมินไม่ได้'], values: [2, null], formulas: ['2', 'IF(1=1,"",0)'] })) });
+};
+describe('executive workbook without a calculating reader', () => {
+  it('writes two Thai sheets, bounded cached formulas, four bound native charts and compressed parts', async () => {
+    const file = await fixtureWorkbook(), parts = workbookParts(file), overview = parts.get('xl/worksheets/sheet1.xml')!;
+    assert.equal(file.readUInt16LE(8), 8);
+    assert.match(parts.get('xl/workbook.xml')!, /name="ภาพรวม"/); assert.match(parts.get('xl/workbook.xml')!, /name="รายบริษัท"/);
+    assert.match(parts.get('xl/workbook.xml')!, /A1:X46/); assert.match(overview, /r="48"/);
+    assert.match(overview, /COUNTA\('รายบริษัท'!A7:A9\)/); assert.match(cellXml(overview, 'B7'), /<v>3<\/v>/);
+    assert.match(parts.get('xl/worksheets/sheet2.xml')!, /ySplit="6"/); assert.match(parts.get('xl/worksheets/sheet2.xml')!, /autoFilter ref="A6:B9"/);
+    assert.doesNotMatch(parts.get('xl/worksheets/sheet2.xml')!, /mergeCells/);
+    assert.match(cellXml(parts.get('xl/worksheets/sheet2.xml')!, 'B7'), /<v>-12.34<\/v>/);
+    for (let i = 1; i <= 4; i++) {
+      const chart = parts.get(`xl/charts/chart${i}.xml`)!;
+      assert.match(chart, i === 1 ? /doughnutChart/ : /barChart/);
+      assert.match(chart, /'ภาพรวม'!\$/); assert.match(chart, /strCache/); assert.match(chart, /numCache/);
+      assert.match(chart, /<c:pt idx="0"><c:v>2<\/c:v>/); assert.doesNotMatch(chart, /<c:pt idx="1"><c:v>0<\/c:v>/);
+    }
+    assert.doesNotMatch([...parts.values()].join(''), /A78|NOW\(|TODAY\(|externalLink/);
+  });
+  it('keeps formula-like text explicit, numbers numeric, unknown blank and Bangkok Buddhist dates numeric', () => {
+    const build = (xlsxWriter as any).buildWorkbook;
+    const date = (xlsxWriter as any).xlsxThaiDate;
+    assert.equal(typeof build, 'function'); assert.equal(typeof date, 'function');
+    const inputs = ['=1+1', '+1', '-1', '@x', '\tx', '\rx', '=*?~>\u0001'];
+    const parts = workbookParts(build([{ name: 'ทดสอบ', rows: [inputs, [0, -1.25, null, date('2026-09-30T18:30:00Z', true)] ] }]));
+    const sheet = parts.get('xl/worksheets/sheet1.xml')!;
+    inputs.forEach((_, i) => assert.match(cellXml(sheet, `${String.fromCharCode(65 + i)}1`), /t="inlineStr"/));
+    assert.doesNotMatch(sheet, /<f>|\u0001/); assert.match(sheet, /> x</); assert.match(sheet, /=\*\?~&gt;/);
+    assert.match(cellXml(sheet, 'A2'), /<v>0<\/v>/); assert.doesNotMatch(cellXml(sheet, 'B2'), /inlineStr/);
+    assert.equal(cellXml(sheet, 'C2'), ''); assert.match(cellXml(sheet, 'D2'), /<v>\d/);
+    assert.match(parts.get('xl/styles.xml')!, /\[\$-107041E\]/);
+    assert.equal(date('2026-09-30T18:30:00Z', true).value, (Date.parse('2026-10-01T01:30:00Z') - Date.UTC(1899, 11, 30)) / 86400000);
+  });
+  it('handles zero and non-template row counts and rejects invalid sheets, finite numbers and sizes', async () => {
+    for (const n of [0, 1, 73]) {
+      const parts = workbookParts(await fixtureWorkbook(n));
+      assert.match(cellXml(parts.get('xl/worksheets/sheet1.xml')!, 'B7'), new RegExp(`<v>${n}</v>`));
+      assert.doesNotMatch(parts.get('xl/worksheets/sheet1.xml')!, /A7:A6|A78/);
+    }
+    const build = (xlsxWriter as any).buildWorkbook;
+    for (const name of ['bad/name', 'x'.repeat(32), '']) assert.throws(() => build([{ name, rows: [] }]));
+    assert.throws(() => build([{ name: 'ดี', rows: [[NaN]] }])); assert.throws(() => build([{ name: 'ดี', rows: [[Infinity]] }]));
+    assert.throws(() => build([{ name: 'ดี', rows: [['x'.repeat(32768)]] }]));
+    assert.throws(() => build([{ name: 'ดี', rows: Array.from({ length: 1048577 }, () => []) }]));
+    assert.throws(() => build([{ name: 'ดี', rows: [['ข้อมูล']] }], { maxBytes: 1 }));
+  });
+});
+
+describe('API13 without PostgreSQL', () => {
+  const exporter = (): RequestContext => ({ requestId: 'export-request', authSubject: 'reader', userId: 'exec-reader', companyId: PLATFORM_TENANT_ID,
+    membershipId: 'member', roles: [], permissions: ['system.executive.read', 'system.executive.export'], scopes: {}, authProvider: 'watchdog' });
+  const request = () => ({ reportKey: 'overview', month: '2026-09', filters: {}, buildId: 'old', format: 'xlsx', includeContacts: false } as const);
+  const service = () => {
+    const audits: any[] = [];
+    const report = new ExecutiveReportReadService({ client: {} } as never, { logOrThrow: async (entry: any) => { audits.push(entry); } } as never, {} as never, { resolveAccess: async () => exporter() } as never);
+    return { report, audits };
+  };
+  it('refuses missing rights and tenant spoofing, and audits each denied attempt without personal data', async () => {
+    const { report, audits } = service();
+    for (const ctx of [{ ...exporter(), permissions: ['system.executive.read'] }, { ...exporter(), companyId: 'customer' }]) {
+      await assert.rejects(() => (report as any).export(ctx, request()), (e) => statusOf(e) === 403 && codeOf(e) === 'EXECUTIVE_ACCESS_DENIED');
+    }
+    assert.equal(audits.length, 2); assert.ok(audits.every(row => !row.companyId && row.result === 'DENIED' && row.metadataJson.exportReference));
+  });
+  it('rejects expired builds before building, records the reference and releases the per-user slot', async () => {
+    const { report, audits } = service();
+    (report as any).load = async (_ctx: unknown, _query: unknown, _global: boolean, extra: any) => { const data = { build: { id: 'new' } }; return { data, extra: await extra({}, data) }; };
+    for (let i = 0; i < 2; i++) await assert.rejects(() => (report as any).export(exporter(), request()), (e) => statusOf(e) === 409 && codeOf(e) === 'EXECUTIVE_SNAPSHOT_EXPIRED');
+    assert.equal(audits.length, 2); assert.equal(audits[0].metadataJson.outcome, 'EXECUTIVE_SNAPSHOT_EXPIRED');
+    assert.notEqual(audits[0].metadataJson.exportReference, audits[1].metadataJson.exportReference);
+  });
+  it('rejects forged totals, paging, templates, dormant filters, invalid contact requests and invalid comparison', async () => {
+    const { report } = service();
+    for (const body of [{ ...request(), total: 1 }, { ...request(), page: 1 }, { ...request(), templateKey: 'v4' },
+      { ...request(), filters: { paidEver: 'YES' } }, { ...request(), includeContacts: true },
+      { ...request(), reportKey: 'compare', comparison: { dimension: 'industry', sideA: 'FOOD', sideB: 'FOOD' } }]) {
+      await assert.rejects(() => (report as any).export(exporter(), body), (e) => statusOf(e) === 400 || statusOf(e) === 403);
+    }
+  });
+});
+
+/** No-network source rows for the real load()/export()/overview() path. No client totals enter this fixture. */
+function exportSourceFixture(n = 15) {
+  const when = new Date('2026-10-03T02:30:00Z'), since = new Date('2026-08-01T00:00:00Z');
+  const profiles = Array.from({ length: n }, (_, i) => ({ companyId: `fiction-${i}`, reportClassification: 'CUSTOMER', companyCreatedAt: since,
+    companyStatus: 'ACTIVE', planState: 'ACTIVE', planTierKey: 'STARTER_249', industryGroup: 'FOOD_ACCOMMODATION', provinceCode: null, discovery: 'OTHER',
+    signupRail: 'official-site', referrerKind: 'NONE', creditedSalesUserId: null, referrerSalesUserId: null, referralSource: null, receiptAdoption: i === 0 ? 'UNKNOWN' : i % 2 ? 'EVER' : 'NEVER',
+    expenseReceiptCountLifetime: i % 2 ? 2 : 0, firstActivityAt: null, lastActivityAt: null, lastWebEntryAt: null, lastLineActivityAt: null, salesCreditPaidAt: null }));
+  const rows = profiles.map((p, i) => ({ companyId: p.companyId, month: '2026-09', reportClassification: 'CUSTOMER', paidEver: i === 0 ? 'UNKNOWN' : 'YES', paidEverReason: i === 0 ? 'MANUAL_TERM_NO_RECEIPT' : null,
+    fullyRefunded: false, usageGroup: i === 0 ? null : 'ACTIVE', usageUnassessedReason: i === 0 ? 'PAYMENT_HISTORY_INCOMPLETE' : null,
+    receiptsSatang: i === 0 ? 0 : 2500, refundsSatang: i === 0 ? 1234 : 0, feesSatang: 12, aiCostSatang: 4, taxSatang: 0,
+    activeDays: i === 0 ? 0 : 1, activeUsers: i === 0 ? 0 : 1, confirmedExpensesLine: 0, confirmedExpensesWeb: i === 0 ? 0 : 1, issuedDocuments: 0,
+    aiRequests: i === 0 ? 0 : 2, expenseReceiptsLine: 0, expenseReceiptsWeb: i === 0 ? 0 : 1, moneyByPurchaseKind: {}, disputedInvoiceCount: 0, countersHeld: false }));
+  const companies = profiles.map((p, i) => ({ id: p.companyId, name: `ร้านสมมติ ${i + 1}`, registeredName: `บริษัท สมมติ ${i + 1} จำกัด`, businessTypeCode: 'OTHER', businessTypeOther: '=*?~>สมมติ' }));
+  const build = { id: 'fixture-build', asOf: when, definitionVersion: 'fixture-version', dimensionVersion: '1', unclassifiedCount: 0, billingSince: since, billingDataThrough: when, aiUsageSince: since };
+  let transactions = 0, contacts = 0;
+  let permissions = ['system.executive.read', 'system.executive.export', 'system.executive.contact.read'];
+  const audits: any[] = [];
+  const tx: any = { authSession: { findUnique: async () => null }, executiveReportBuild: { findFirst: async () => build }, executiveReportMonth: { findFirst: async () => ({ month: '2026-08' }), findUnique: async () => ({ revision: 1, revisedAt: null, asOf: when, billingCoveredThrough: when, untiedCount: 0, untiedReceiptsSatang: 0, untiedRefundsSatang: 0, untiedOtherSatang: 0, beforeFirstBuild: false }), findMany: async () => [] },
+    executiveCompanyMonth: { findMany: async () => rows, groupBy: async () => [] }, executiveCompanyProfile: { findMany: async () => profiles }, $queryRaw: async (parts: TemplateStringsArray) => parts.join('').includes('pg_try_advisory_xact_lock') ? [{ locked: true }] : [],
+    company: { findMany: async () => companies }, companySignupRequest: { findMany: async () => [] }, user: { findMany: async () => [], findUnique: async () => ({ displayName: 'ผู้ส่งออกสมมติ', status: 'ACTIVE' }) }, salesAgentProfile: { findMany: async () => [] },
+    companyMembership: { findMany: async () => { contacts++; return [{ user: { email: null, phoneNumber: null } }]; } } };
+  const report = new ExecutiveReportReadService({ client: { ...tx, $transaction: async (fn: any, config: any) => { transactions++; assert.equal(config.isolationLevel, 'RepeatableRead'); return fn(tx); } } } as never,
+    { log: async (entry: any) => { audits.push(entry); }, logOrThrow: async (entry: any) => { audits.push(entry); } } as never, {} as never,
+    { resolveAccess: async () => ({ permissions }) } as never);
+  report.clock = () => when;
+  const ctx: RequestContext = { requestId: 'fixture-request', authSubject: 'fictional', userId: 'fictional-exporter', companyId: PLATFORM_TENANT_ID, membershipId: 'fictional-member', roles: [], permissions, scopes: {}, authProvider: 'watchdog' };
+  const body = { reportKey: 'overview', month: '2026-09', filters: {}, buildId: build.id, format: 'xlsx', includeContacts: false } as const;
+  return { report, ctx, body, audits, tx, build, rows, companies, profiles, stats: () => ({ transactions, contacts }), revoke: () => { permissions = []; } };
+}
+describe('API13 snapshot to workbook agreement', () => {
+  it('matches overview and all filtered list rows, preserves negatives, ties, unknowns and no personal audit data', async () => {
+    const f = exportSourceFixture(), overview = await f.report.overview(f.ctx, { month: f.body.month });
+    const output = await f.report.export(f.ctx, f.body), parts = workbookParts(output.file), sheet = parts.get('xl/worksheets/sheet1.xml')!;
+    assert.match(cellXml(sheet, 'B7'), new RegExp(`<v>${overview.metrics.companies.value}</v>`));
+    assert.match(cellXml(sheet, 'J7'), new RegExp(`<v>${overview.metrics.activeCompanies.value}</v>`));
+    assert.match(cellXml(sheet, 'R7'), new RegExp(`<v>${overview.metrics.netReceiptsSatang.value! / 100}</v>`));
+    assert.equal(output.rowCount, 15); assert.equal(f.stats().transactions, 2); assert.equal(f.stats().contacts, 0);
+    const source = parts.get('xl/worksheets/sheet2.xml')!;
+    assert.equal(cellXml(source, 'T7'), ''); assert.match(cellXml(source, 'AB7'), /<v>-12.34<\/v>/);
+    assert.doesNotMatch([...parts.values()].join(''), /fiction-0|fixture-build|fixture-version|@|081\d{7}/);
+    const companies = await f.report.companies(f.ctx, { month: f.body.month, paidEver: 'YES', pageSize: 1, sortBy: 'netReceipts' });
+    const filtered = await f.report.export(f.ctx, { ...f.body, reportKey: 'companies', filters: { paidEver: 'YES' }, sortBy: 'netReceipts', sortDir: 'desc' });
+    assert.equal(filtered.rowCount, companies.pagination.total); assert.equal(filtered.rowCount, 14);
+    const top = await f.report.export(f.ctx, { ...f.body, reportKey: 'revenue', subview: 'top', sortBy: 'netReceipts' });
+    const topSheet = workbookParts(top.file).get('xl/worksheets/sheet2.xml')!;
+    assert.match(workbookParts(top.file).get('xl/charts/chart1.xml')!, /<c:dPt><c:idx val="1"\/>[\s\S]*?<a:srgbClr val="D1D5DB"/);
+    assert.match(cellXml(topSheet, 'AI7'), /<v>1<\/v>/); assert.match(cellXml(topSheet, 'AI8'), /<v>1<\/v>/);
+    const audit = f.audits.at(-1); assert.equal(audit.metadataJson.exportReference, top.exportReference); assert.equal(audit.companyId, undefined);
+    assert.doesNotMatch(JSON.stringify(audit.metadataJson), /ร้านสมมติ|บริษัท สมมติ|ผู้ส่งออกสมมติ|email|phone/);
+  });
+  it('blanks unavailable money and cost, labels partial values, keeps contact columns opt-in and rechecks revocation', async () => {
+    const f = exportSourceFixture(); f.build.billingSince = new Date('2026-10-01T00:00:00Z'); f.build.aiUsageSince = new Date('2026-10-01T00:00:00Z');
+    const out = await f.report.export(f.ctx, f.body), parts = workbookParts(out.file), source = parts.get('xl/worksheets/sheet2.xml')!;
+    for (const ref of ['Z7', 'AA7', 'AB7', 'AC7', 'AD7']) assert.equal(cellXml(source, ref), '');
+    assert.match(cellXml(source, 'AI7'), /ข้อมูลการชำระไม่ครบ/);
+    assert.doesNotMatch(source, /อีเมลเจ้าของบัญชี|เบอร์โทรเจ้าของบัญชี/); assert.equal(f.stats().contacts, 0);
+    const contacts = await f.report.export(f.ctx, { ...f.body, reportKey: 'companies', includeContacts: true });
+    assert.match(workbookParts(contacts.file).get('xl/worksheets/sheet2.xml')!, /อีเมลเจ้าของบัญชี|เบอร์โทรเจ้าของบัญชี/);
+    assert.equal(f.stats().contacts, 15);
+    f.revoke(); await assert.rejects(() => f.report.export(f.ctx, f.body), e => statusOf(e) === 403 && codeOf(e) === 'EXECUTIVE_ACCESS_DENIED');
+    const partial = exportSourceFixture(); partial.build.billingDataThrough = new Date('2026-09-15T00:00:00Z');
+    partial.tx.executiveReportMonth.findUnique = async () => ({ revision: 1, revisedAt: null, asOf: partial.build.asOf, billingCoveredThrough: new Date('2026-09-15T00:00:00Z'), untiedCount: 0, beforeFirstBuild: true });
+    const partialXml = workbookParts((await partial.report.export(partial.ctx, partial.body)).file).get('xl/worksheets/sheet1.xml')!;
+    assert.match(cellXml(partialXml, 'J11'), /อย่างน้อย/); assert.match(cellXml(partialXml, 'R11'), /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
+  });
+  it('rejects empty and oversized scopes, one concurrent request per actor, and audit failures before returning bytes', async () => {
+    const empty = exportSourceFixture(0); await assert.rejects(() => empty.report.export(empty.ctx, empty.body), e => codeOf(e) === 'EXECUTIVE_EXPORT_EMPTY');
+    const large = exportSourceFixture(10001); await assert.rejects(() => large.report.export(large.ctx, large.body), e => codeOf(e) === 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
+    const busy = exportSourceFixture(); let release!: () => void; let block = true;
+    busy.tx.user.findUnique = async () => { if (block) { block = false; await new Promise<void>(resolve => { release = resolve; }); } return { displayName: 'ผู้ส่งออกสมมติ', status: 'ACTIVE' }; };
+    const pending = busy.report.export(busy.ctx, busy.body);
+    await new Promise(resolve => setImmediate(resolve));
+    await assert.rejects(() => busy.report.export(busy.ctx, busy.body), e => statusOf(e) === 429);
+    release(); await pending;
+    assert.equal(busy.audits.filter(row => row.action === 'executive.export.created').length, 2);
+    const broken = exportSourceFixture(); (broken.report as any).audit.logOrThrow = async () => { throw new Error('audit unavailable'); };
+    await assert.rejects(() => broken.report.export(broken.ctx, broken.body), /audit unavailable/);
+  });
+  it('exports 1000 companies inside the byte and time limits with cached figures', async () => {
+    const f = exportSourceFixture(1000), began = Date.now(), out = await f.report.export(f.ctx, f.body);
+    assert.equal(out.rowCount, 1000); assert.ok(out.file.length <= 20 * 1024 * 1024); assert.ok(Date.now() - began < 30000);
+    assert.match(cellXml(workbookParts(out.file).get('xl/worksheets/sheet1.xml')!, 'B7'), /<v>1000<\/v>/);
+  });
+});
+
+it('the fictional reference workbook is reproducible and every part contains only the invented company names and no contact-like data', async () => {
+  const { fictionalExecutiveWorkbook, FICTIONAL_EXECUTIVE_COMPANIES } = await import('./fixtures/executive-export.fixture');
+  const dir = join(__dirname, '../../../../..', 'docs/fixtures/executive');
+  const files = readdirSync(dir).filter(name => name.endsWith('.xlsx'));
+  assert.equal(files.length, 1);
+  assert.deepEqual(readFileSync(join(dir, files[0]!)), fictionalExecutiveWorkbook());
+  for (const name of files) {
+    for (const [part, xml] of workbookParts(readFileSync(join(dir, name)))) {
+      assert.doesNotMatch(xml, /[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|(?<!\d)(?:0[2-9][ -]?(?:\d[ -]?){7,8}|\+?66[2-9](?:[ -]?\d){7,8})(?!\d)/, part);
+      const companyNames = [...xml.matchAll(/<t[^>]*>(ร้าน[^<]+)<\/t>|<c:v>(ร้าน[^<]+)<\/c:v>/g)].map(match => match[1] ?? match[2]);
+      for (const company of companyNames) assert.ok(FICTIONAL_EXECUTIVE_COMPANIES.includes(company!), `${part}: only invented companies`);
+    }
+  }
+});
+
+it('rechecks the current account and session before returning a file', async () => {
+  const f = exportSourceFixture();
+  f.ctx.sessionId = 'fictional-session';
+  f.tx.authSession.findUnique = async () => ({ userId: f.ctx.userId, status: 'REVOKED', expiresAt: new Date('2030-01-01') });
+  await assert.rejects(() => f.report.export(f.ctx, f.body), e => codeOf(e) === 'EXECUTIVE_ACCESS_DENIED');
+});
+
+it('HTTP export has both permissions, validated bodies, binary/no-store headers and an audit for failures before the action', async () => {
+  const { ExecutiveReportController, ExecutiveExportDto, ExecutiveReportExceptionFilter } = await import('./presentation/http/executive-report.controller');
+  const { ValidationPipe, ForbiddenException } = await import('@nestjs/common');
+  const { GLOBAL_VALIDATION_PIPE_OPTIONS } = await import('../../common/pipes/validation-pipe.options');
+  const { REQUIRED_PERMISSIONS_KEY } = await import('../../common/security/permissions.decorator');
+  assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ExecutiveReportController.prototype.export), ['system.executive.read', 'system.executive.export']);
+  assert.equal(Reflect.getMetadata('path', ExecutiveReportController.prototype.export), 'exports');
+  const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+  const f = exportSourceFixture();
+  await assert.rejects(() => pipe.transform({ ...f.body, total: 999 }, { type: 'body', metatype: ExecutiveExportDto }));
+  const headers: Record<string, string> = {}; let sent: unknown;
+  const res: any = { setHeader: (k: string, v: string) => { headers[k] = v; }, send: (file: unknown) => { sent = file; }, status: () => res, json: (body: unknown) => { sent = body; } };
+  const controller = new ExecutiveReportController(f.report);
+  await controller.export(f.body as never, { context: f.ctx } as never, res);
+  assert.ok(Buffer.isBuffer(sent)); assert.equal(headers['Cache-Control'], 'no-store'); assert.equal(headers['X-Export-Row-Count'], '15');
+  assert.equal(headers['Content-Disposition'], 'attachment; filename="executive-report.xlsx"');
+  const audits: any[] = [];
+  const filter = new ExecutiveReportExceptionFilter({ logOrThrow: async (entry: any) => { audits.push(entry); } } as never);
+  const req = { method: 'POST', path: '/v1/system/executive/exports', headers: {}, context: f.ctx, body: { ...f.body, filters: { q: 'secret-name@example.test' } } };
+  await filter.catch(new ForbiddenException('diagnostic'), { switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }) } as never);
+  assert.equal((sent as any).code, 'EXECUTIVE_ACCESS_DENIED'); assert.equal((sent as any).message, 'คุณไม่มีสิทธิ์ส่งออกไฟล์นี้'); assert.equal(audits.length, 1);
+  assert.doesNotMatch(JSON.stringify(audits[0]), /secret-name|diagnostic/); assert.equal(audits[0].companyId, undefined);
+  await filter.catch(new ForbiddenException(), { switchToHttp: () => ({ getRequest: () => ({ ...req, path: '/V1/SYSTEM/EXECUTIVE/EXPORTS' }), getResponse: () => res }) } as never);
+  assert.equal(audits.length, 2); assert.equal((sent as any).message, 'คุณไม่มีสิทธิ์ส่งออกไฟล์นี้');
+});
+
+it('the export slot is shared across API instances through a transaction advisory lock', async () => {
+  const f = exportSourceFixture();
+  f.tx.$queryRaw = async (parts: TemplateStringsArray) => parts.join('').includes('pg_try_advisory_xact_lock') ? [{ locked: false }] : [];
+  // The fixture client keeps a copy of $queryRaw; exercise the actual transaction callback on tx.
+  await assert.rejects(() => f.report.export(f.ctx, f.body), e => statusOf(e) === 429);
+});
+
+
+it('exports each analysis branch with the read API figures and preserves free company names in comparison', async () => {
+  const f = exportSourceFixture();
+  f.companies[0]!.name = 'ร้าน LINE · fiction-0';
+  const cacheValues = (xml: string) => [...(xml.match(/<c:numCache>([\s\S]*?)<\/c:numCache>/)?.[1] ?? '').matchAll(/<c:pt idx="\d+"><c:v>([^<]+)<\/c:v>/g)].map(m => Number(m[1]));
+  for (const view of ['industry', 'discovery', 'sales'] as const) {
+    const read = await f.report.analysis(f.ctx, { month: f.body.month, section: 'customers', view });
+    const parts = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'customers', subview: view })).file);
+    assert.deepEqual(cacheValues(parts.get('xl/charts/chart1.xml')!), read.groups!.map(group => group.companies.count));
+    assert.deepEqual(cacheValues(parts.get('xl/charts/chart2.xml')!), read.groups!.map(group => group.netReceiptsSatang.value! / 100));
+  }
+  const revenue = await f.report.analysis(f.ctx, { month: f.body.month, section: 'revenue', view: 'summary' });
+  const revenueSheet = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'revenue', subview: 'summary' })).file).get('xl/worksheets/sheet1.xml')!;
+  assert.match(cellXml(revenueSheet, 'B7'), new RegExp(`<v>${revenue.revenue!.receiptsSatang.value! / 100}</v>`));
+  assert.match(cellXml(revenueSheet, 'J7'), new RegExp(`<v>${revenue.revenue!.refundsSatang.value! / 100}</v>`));
+  assert.match(revenueSheet, /ยังไม่เปิดขาย/);
+  const comparison = { dimension: 'company', sideA: 'fiction-0', sideB: 'fiction-1' };
+  const compared = await f.report.analysis(f.ctx, { month: f.body.month, section: 'compare', ...comparison });
+  const pair = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'compare', comparison })).file);
+  assert.match(pair.get('xl/charts/chart1.xml')!, /ร้าน LINE · fiction-0/);
+  assert.deepEqual(cacheValues(pair.get('xl/charts/chart2.xml')!), [compared.comparison!.sideA.netReceiptsSatang.value! / 100, compared.comparison!.sideB.netReceiptsSatang.value! / 100]);
+  assert.match(pair.get('xl/worksheets/sheet2.xml')!, /ฝั่งแรก|ฝั่งที่สอง/);
+  const detail = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'detail', targetCompanyId: 'fiction-0' })).file);
+  assert.equal(detail.has('xl/charts/chart4.xml'), false); assert.doesNotMatch([...detail.values()].join(''), /doughnutChart/);
+  const rank = await f.report.analysis(f.ctx, { month: f.body.month, section: 'usage', view: 'ranking', metric: 'aiRequests' });
+  const ranked = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'usage', subview: 'ranking', sortBy: 'aiRequests' })).file);
+  assert.deepEqual(cacheValues(ranked.get('xl/charts/chart2.xml')!), rank.usageRanking!.items.map(item => item.value));
+  assert.match(ranked.get('xl/worksheets/sheet1.xml')!, /'รายบริษัท'!Y7/);
+  const credited = await f.report.export(f.ctx, { ...f.body, reportKey: 'customers', subview: 'creditedSales' });
+  assert.match(workbookParts(credited.file).get('xl/worksheets/sheet1.xml')!, /ยอดขายครั้งแรกของเซลล์/);
+});
+
+it('keeps unavailable concentration totals blank and labels partial usage', async () => {
+  const f = exportSourceFixture(); f.build.billingSince = new Date('2026-10-01');
+  const top = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'revenue', subview: 'top' })).file).get('xl/worksheets/sheet1.xml')!;
+  const tableRows = [...top.matchAll(/<row r="\d+"[^>]*>[\s\S]*?<\/row>/g)];
+  const header = tableRows.findIndex(row => row[0].includes('บริษัทลูกค้า') && row[0].includes('ยอดติดลบรวม'));
+  assert.ok(header >= 0); assert.doesNotMatch(tableRows[header + 1]![0], /<v>/);
+  f.tx.executiveReportMonth.findUnique = async () => ({ revision: 1, asOf: new Date('2026-08-01'), billingCoveredThrough: f.build.asOf, beforeFirstBuild: true });
+  const rank = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'usage', subview: 'ranking' })).file);
+  assert.match(cellXml(rank.get('xl/worksheets/sheet2.xml')!, 'AI7'), /<v>1<\/v>/);
+  assert.match(rank.get('xl/worksheets/sheet2.xml')!, /ข้อมูลการใช้งานไม่ครบ/);
+});
+
+it('allows the full 10000-company ranking even when the dashboard calculation table adds rows', async () => {
+  const f = exportSourceFixture(10000);
+  const out = await f.report.export(f.ctx, { ...f.body, reportKey: 'usage', subview: 'ranking' });
+  assert.equal(out.rowCount, 10000);
+  const source = workbookParts(out.file).get('xl/worksheets/sheet2.xml')!;
+  assert.match(source, /autoFilter ref="A6:AJ10006"/);
+});
+
+
+it('writes company names, registered names, discovery details and business descriptions as text for every formula prefix', async () => {
+  for (const prefix of ['=', '+', '-', '@', '\t', '\r']) {
+    const f = exportSourceFixture(1), text = `${prefix}สมมติ*?~`;
+    f.companies[0]!.name = text; f.companies[0]!.registeredName = `${text}จดทะเบียน`; f.companies[0]!.businessTypeOther = text;
+    f.tx.companySignupRequest.findMany = async () => [{ companyId: 'fiction-0', discoverySourceOther: text }];
+    const parts = workbookParts((await f.report.export(f.ctx, f.body)).file), source = parts.get('xl/worksheets/sheet2.xml')!;
+    for (const ref of ['A7', 'B7', 'E7', 'K7']) assert.match(cellXml(source, ref), /t="inlineStr"/);
+    assert.doesNotMatch([...parts.values()].join(''), /<f>[^<]*สมมติ/);
+    assert.doesNotMatch(source, /\t|\r/);
+  }
+});
+
+it('explains each blocked concentration from its actual reason without saying known report data is absent', async () => {
+  for (const [n, nonPositive, expected] of [[9, false, 'บริษัทน้อยเกินไปสำหรับการแบ่งกลุ่ม'], [15, true, 'ไม่มีบริษัทที่จ่ายมากกว่ายอดคืนเงินในเดือน จึงยังคำนวณสัดส่วนรายรับไม่ได้']] as const) {
+    const f = exportSourceFixture(n);
+    if (nonPositive) f.rows.forEach(row => { row.receiptsSatang = 0; });
+    const parts = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'revenue', subview: 'top' })).file);
+    assert.match(parts.get('xl/worksheets/sheet1.xml')!, new RegExp(expected));
+    assert.match(parts.get('xl/worksheets/sheet2.xml')!, new RegExp(expected));
+    assert.doesNotMatch(parts.get('xl/worksheets/sheet1.xml')!, /ยังไม่มีข้อมูล/);
+  }
+});
+
+it('maps a transaction that exceeds the export time limit to the same bounded-export refusal before sending bytes', async t => {
+  const { performance } = await import('node:perf_hooks');
+  let calls = 0;
+  const clock = t.mock.method(performance, 'now', () => calls++ ? 30001 : 0);
+  try {
+    const f = exportSourceFixture();
+    (f.report as any).load = async () => { throw new Error('transaction expired'); };
+    await assert.rejects(() => f.report.export(f.ctx, f.body), e => codeOf(e) === 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
+    assert.equal(f.audits.at(-1).metadataJson.bytes, 0);
+    calls = 0;
+    const contacts = exportSourceFixture();
+    await assert.rejects(() => contacts.report.export(contacts.ctx, { ...contacts.body, reportKey: 'companies', includeContacts: true }), e => codeOf(e) === 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
+    assert.equal(contacts.stats().contacts, 0, 'do not keep reading personal contacts after the time budget is spent');
+  } finally { clock.mock.restore(); }
+});
+
+it('a failed audit before the export action returns an unavailable response without an unhandled filter rejection', async () => {
+  const { ExecutiveReportExceptionFilter } = await import('./presentation/http/executive-report.controller');
+  const { ForbiddenException } = await import('@nestjs/common');
+  const f = exportSourceFixture(); let status = 0, payload: any;
+  const response = { setHeader: () => {}, status: (n: number) => { status = n; return response; }, json: (body: any) => { payload = body; } };
+  const filter = new ExecutiveReportExceptionFilter({ logOrThrow: async () => { throw Error('audit diagnostic'); } } as never);
+  const request = { method: 'POST', path: '/v1/system/executive/exports', headers: {}, context: f.ctx };
+  await filter.catch(new ForbiddenException(), { switchToHttp: () => ({ getRequest: () => request, getResponse: () => response }) } as never);
+  assert.equal(status, 503); assert.equal(payload.code, 'SOURCE_UNAVAILABLE'); assert.doesNotMatch(JSON.stringify(payload), /audit diagnostic/);
+});
+
+it('keeps all four native charts when a ranking has no positive items, without inventing a zero chart value', async () => {
+  const f = exportSourceFixture(1);
+  const parts = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'usage', subview: 'ranking' })).file);
+  assert.equal([...parts.keys()].filter(name => /^xl\/charts\/chart\d+\.xml$/.test(name)).length, 4);
+  assert.match(parts.get('xl/worksheets/sheet1.xml')!, /ไม่มีรายการตามเงื่อนไขที่เลือก/);
+  const empty = parts.get('xl/charts/chart2.xml')!;
+  assert.match(empty, /'ภาพรวม'!\$G\$\d+:\$G\$\d+/);
+  assert.doesNotMatch(empty.match(/<c:numCache>[\s\S]*?<\/c:numCache>/)![0], /<c:pt idx=/);
 });

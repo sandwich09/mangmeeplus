@@ -1,7 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+import { HttpException, Injectable } from '@nestjs/common';
 import {
   DBD_TSIC_ACTIVITIES, EXECUTIVE_FLAG_LABELS, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_PAID_EVER_REASONS, EXECUTIVE_PURCHASE_GROUPS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
-  billingPlanLabel,
+  billingPlanLabel, EXECUTIVE_EXPORT_REPORT_KEYS, EXECUTIVE_WORDS as W, EXECUTIVE_REFERRER_ADMIN_SUFFIX, executiveThaiLabel, executiveComparisonLabel, executiveExportColumns,
+  type ExecutiveExportBody,
   type ExecutiveAnalysis, type ExecutiveAnalysisQuery, type ExecutiveCompanies, type ExecutiveCompaniesQuery, type ExecutiveCompanyDetail,
   type ExecutiveCompanyHistory, type ExecutiveCompanyRow, type ExecutiveCompareSide, type ExecutiveContext, type ExecutiveDrilldownFilters,
   type ExecutiveEnvelope, type ExecutiveFilterKey, type ExecutiveGroupRow, type ExecutiveHistoryEvent, type ExecutiveHistoryEventKind,
@@ -9,6 +12,10 @@ import {
   type ExecutiveRatio, type ExecutiveReasonCode, type ExecutiveReceiptAdoption, type ExecutiveReportQuery, type ExecutiveSeller, type ExecutiveSortBy,
   type ExecutiveSourceCoverage, type ExecutiveSpendConcentration,
 } from '@watchdog-bms/contracts';
+import { xlsxThaiDate, columnName, type WorkbookCell } from '../../../common/export/xlsx.logic';
+import { PermissionResolverService } from '../../access-control/application/permission-resolver.service';
+import { assertPlatformTenant } from '../../sales-console/application/sales-context';
+import { buildExecutiveWorkbook, exportDateTime, exportMonth, type ExportFigure, type ExportPanel, type ExportTable } from '../domain/executive-export.logic';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { Prisma, type ExecutiveCompanyMonth, type ExecutiveCompanyProfile, type ExecutiveReportBuild, type ExecutiveReportMonth } from '../../../generated/prisma/client';
 import { AuditService } from '../../audit/application/audit.service';
@@ -60,7 +67,10 @@ const VIEWS: Record<ExecutiveAnalysisQuery['section'], string[]> = { usage: ['ad
  */
 @Injectable()
 export class ExecutiveReportReadService {
-  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly billing: BillingCashMovementsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService, private readonly billing: BillingCashMovementsService, private readonly access: PermissionResolverService) {}
+
+  // Reject a duplicate in-process before reading; the transaction advisory lock also covers other instances.
+  private readonly exporting = new Set<string>();
 
   /** The time this report is read at: the current month, and how old the data set is. Tests set it; nothing else does. */
   clock = () => new Date();
@@ -268,6 +278,213 @@ export class ExecutiveReportReadService {
     };
     await this.companyAudit(ctx, targetCompanyId, query.month, ownerContact.status === 'OK' && (!!ownerContact.email || !!ownerContact.phoneNumber));
     return result;
+  }
+
+  // ── API13 ────────────────────────────────────────────────────────────────────────────────────
+
+  async export(ctx: RequestContext, body: ExecutiveExportBody): Promise<{ file: Buffer; exportReference: string; rowCount: number }> {
+    const started = performance.now(), exportReference = randomUUID();
+    let ownsSlot = false, rowCount = 0, bytes = 0, data: DataSet | undefined, query: ExecutiveCompaniesQuery | undefined;
+    let includesContacts = false, outcome = 'FAILED';
+    let auditComparison: ExecutiveExportBody['comparison'];
+    try {
+      assertPlatformTenant(ctx);
+      if (!['system.executive.read', 'system.executive.export'].every(key => ctx.permissions.includes(key))) throw executiveError(ctx.requestId, 'EXECUTIVE_ACCESS_DENIED', undefined, W.export.denied);
+      const validatedQuery = exportQueryOf(ctx, body);
+      query = validatedQuery;
+      includesContacts = body.includeContacts;
+      if (includesContacts && !ctx.permissions.includes('system.executive.contact.read')) throw executiveError(ctx.requestId, 'EXECUTIVE_ACCESS_DENIED', undefined, W.export.denied);
+      if (this.exporting.has(ctx.userId)) throw new HttpException({ code: 'RATE_LIMITED', message: W.export.busy, requestId: ctx.requestId, retryAfterSeconds: 1 }, 429);
+      this.exporting.add(ctx.userId); ownsSlot = true;
+      const detail = body.reportKey === 'detail', comparing = body.reportKey === 'compare';
+      const loaded = await this.load(ctx, validatedQuery, !detail && !comparing, async (tx, set) => {
+        const query = validatedQuery;
+        data = set;
+        if (body.buildId !== set.build.id) throw executiveError(ctx.requestId, 'EXECUTIVE_SNAPSHOT_EXPIRED');
+        // A transaction-scoped lock is released on every completion/failure, including another API instance.
+        const [lock] = await tx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock(6013, hashtext(${ctx.userId})) AS locked`;
+        if (!lock?.locked) throw new HttpException({ code: 'RATE_LIMITED', message: W.export.busy, requestId: ctx.requestId, retryAfterSeconds: 1 }, 429);
+        // Everything except the owner's current contact is read inside the report snapshot.
+        const ids = [...set.profiles.keys()];
+        const [companies, others, credit, actor, trend, addOnSold] = await Promise.all([
+          tx.company.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, registeredName: true, businessTypeCode: true, businessTypeOther: true } }),
+          otherTextsOf(tx, ids), cumulativeCreditOf(tx), tx.user.findUnique({ where: { id: ctx.userId }, select: { displayName: true } }),
+          body.reportKey === 'revenue' && body.subview === 'summary' ? trendOf(tx, set) : Promise.resolve([]),
+          body.reportKey === 'revenue' && body.subview === 'summary' ? addOnEverSold(tx) : Promise.resolve(false),
+        ]);
+        const extra = { companies: new Map(companies.map(row => [row.id, row])), names: new Map(companies.map(row => [row.id, { name: row.name, registeredName: row.registeredName }])), others, credit, actor: actor?.displayName ?? '', trend, addOnSold };
+
+        const groups = spendGroupsOf(set.scope, moneyIncomplete(set.money));
+        const spendStatus = moneyIncomplete(set.money) ? W.partialRanking : groups.blocked.map(reason => reason === 'TOO_FEW_COMPANIES' ? W.fewCompanies : reason === 'NO_POSITIVE_NET' ? W.noPositiveCompanies : W.partialRanking).join(' · ');
+        const directory = directoryOf(query), cohort = directory.spendCohort === 'ALL' ? null : groups.members[directory.spendCohort as keyof SpendGroups['members']];
+        let list = set.scope, comparison: ExecutiveAnalysis['comparison'];
+        const sideOf = new Map<string, string>();
+        if (detail) {
+          const profile = set.profiles.get(body.targetCompanyId!);
+          if (profile?.reportClassification !== 'CUSTOMER' || !extra.companies.has(body.targetCompanyId!)) throw executiveError(ctx.requestId, 'COMPANY_NOT_FOUND');
+          list = set.rows.filter(row => row.companyId === body.targetCompanyId);
+          if (!list.length) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_EMPTY');
+        } else if (comparing) {
+          const pair = body.comparison!;
+          comparison = this.compareOf(ctx, set, pair.dimension, pair.sideA, pair.sideB, extra.names);
+          auditComparison = pair;
+          const belongs = (row: ReportRow, key: string) => pair.dimension === 'company' ? row.companyId === key : pair.dimension === 'industry' ? industryKeyOf(row) === key : pair.dimension === 'discovery' ? row.profile.discovery === key : referrerKeyOf(row, set.salesCodeOf) === key;
+          list = set.population.filter(row => belongs(row, pair.sideA) || belongs(row, pair.sideB));
+          for (const row of list) sideOf.set(row.companyId, `${belongs(row, pair.sideA) ? W.sideA : W.sideB} · ${executiveComparisonLabel(belongs(row, pair.sideA) ? comparison.sideA : comparison.sideB, comparison.dimension)}`);
+        } else if (body.reportKey === 'companies') {
+          const search = query.q?.trim().toLocaleLowerCase('th');
+          list = list.filter(row => matchesDirectory(row, directory, cohort) && (!search || [extra.names.get(row.companyId)?.name, extra.names.get(row.companyId)?.registeredName, provinceOf(set, row.profile)].some(text => text?.toLocaleLowerCase('th').includes(search))));
+        }
+        if (!list.length) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_EMPTY');
+        if (list.length > 10_000) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
+        const sortBy = query.sortBy ?? 'joinedAt', sortDir = query.sortDir ?? DEFAULT_DIR[sortBy];
+        list = sortedBy(list, sortValueOf(sortBy, row => extra.names.get(row.companyId)?.name ?? null), sortDir);
+        rowCount = list.length;
+        const metric = sortBy === 'netReceipts' ? netOf : (METRIC_OF as Partial<Record<string, (row: ReportRow) => number>>)[sortBy];
+        const ranks = metric && !(sortBy === 'netReceipts' && moneyIncomplete(set.money)) ? ranksOf(sortedBy(set.scope, metric, 'desc'), metric) : null;
+        const contactAt = this.clock(), columns = executiveExportColumns(body.reportKey, body.subview, includesContacts);
+        const costs = aiCostCoverageOf({ start: set.range.start, end: set.range.end, aiUsageSince: set.build.aiUsageSince });
+        const rows: WorkbookCell[][] = [];
+        for (const row of list) {
+          if (performance.now() - started > 30_000) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
+          const company = this.rowOf(set, row, extra.names, extra.others.get(row.companyId)), profile = row.profile, live = extra.companies.get(row.companyId);
+          const money = (satang: number) => set.money.coverage === 'unavailable' ? null : { value: satang / 100, style: 3 };
+          const usage = (n: number) => set.usage.coverage === 'unavailable' ? null : n;
+          const notes = [set.usage.coverage !== 'complete' ? W.export.usageMissing : '', set.money.coverage !== 'complete' ? W.export.moneyMissing : '', costs.coverage !== 'complete' ? W.export.aiMissing : '',
+            profile.receiptAdoption === 'UNKNOWN' ? L.receiptAdoption.UNKNOWN : '', row.paidEverReason === 'MANUAL_TERM_NO_RECEIPT' ? W.manualTerm : '', body.reportKey === 'revenue' && body.subview === 'top' ? spendStatus : ''].filter(Boolean).join(' · ');
+          const cells: WorkbookCell[] = [company.displayName, company.registeredName, company.provinceLabel, executiveThaiLabel(company.industryGroup.label),
+            live?.businessTypeCode === 'OTHER' ? live.businessTypeOther : DBD_LABEL.get(live?.businessTypeCode ?? '') ?? null, xlsxThaiDate(company.joinedAt),
+            L.companyStatus[company.companyStatus] ?? W.unknown, executiveThaiLabel(company.planLabel), L.planState[company.planState] ?? W.unknown,
+            executiveThaiLabel(company.discovery.label), company.discovery.otherText ?? null, executiveThaiLabel(L.signupRail[company.signupRail] ?? W.unknown),
+            executiveThaiLabel(company.referrer.label, company.referrer.salesCode) + (company.referrer.source === 'ADMIN' ? ` ${EXECUTIVE_REFERRER_ADMIN_SUFFIX}` : ''),
+            company.creditedSeller.label ? executiveThaiLabel(company.creditedSeller.label, company.creditedSeller.salesCode) : null,
+            profile.creditedSalesUserId ? { value: (extra.credit.get(row.companyId) ?? 0) / 100, style: 3 } : null, xlsxThaiDate(iso(profile.salesCreditPaidAt)),
+            L.paidEver[row.paidEver]!, row.fullyRefunded ? EXECUTIVE_FLAG_LABELS.fullyRefunded.true! : row.usageGroup ? L.usageGroup[row.usageGroup]! : L.paidEver.UNKNOWN!,
+            L.receiptAdoption[profile.receiptAdoption]!, profile.receiptAdoption === 'UNKNOWN' || profile.receiptAdoption === 'NOT_ENTITLED' ? null : profile.expenseReceiptCountLifetime,
+            usage(expenseReceiptsOf(row)), usage(row.activeDays), usage(row.activeUsers), usage(documentsOf(row)), usage(row.aiRequests),
+            money(row.receiptsSatang), money(row.refundsSatang), money(netOf(row)), money(row.feesSatang), costs.coverage === 'unavailable' ? null : { value: row.aiCostSatang / 100, style: 3 },
+            xlsxThaiDate(iso(profile.firstActivityAt)), xlsxThaiDate(iso(profile.lastActivityAt), true), xlsxThaiDate(iso(profile.lastWebEntryAt), true), xlsxThaiDate(iso(profile.lastLineActivityAt), true)];
+          if (body.reportKey === 'usage' && body.subview === 'ranking') cells.push(ranks?.get(row.companyId) ?? null);
+          if (body.reportKey === 'revenue' && body.subview === 'top') cells.push(ranks?.get(row.companyId) ?? null, set.money.coverage === 'complete' ? { value: Math.max(netOf(row), 0) / 100, style: 3 } : null,
+            groups.cumulative.get(row.companyId)?.value == null ? null : { value: groups.cumulative.get(row.companyId)!.value! / 100, style: 6 },
+            groups.blocked.length ? null : L.spendCohort[groups.members.TOP20.has(row.companyId) ? 'TOP20' : 'REST']!, groups.blocked.length ? null : groups.members.TO80.has(row.companyId) ? W.export.yes : W.export.no);
+          if (comparing) cells.push(sideOf.get(row.companyId)!);
+          cells.push(notes);
+          if (includesContacts) {
+            const contact = await this.ownerContactOf(ctx, row.companyId);
+            const reason = contact.status === 'OK' ? (!contact.email || !contact.phoneNumber ? W.contactMissing : '') : contact.status === 'MULTIPLE_OWNERS' ? W.multipleOwners : contact.status === 'NO_CURRENT_OWNER' ? W.noOwner : W.export.unavailable;
+            cells.push(contact.status === 'OK' ? contact.email ?? null : null, contact.status === 'OK' ? contact.phoneNumber ?? null : null, reason);
+          }
+          rows.push(cells);
+        }
+        const envelope = this.envelope(ctx, set, query, directoryLabels(query));
+        const range = (c: number) => `'รายบริษัท'!${columnName(c)}7:${columnName(c)}${6 + rows.length}`;
+        const count = (label: string, n: number, source: ExecutiveSourceCoverage, formula?: string): ExportFigure => ({ label, value: source.coverage === 'unavailable' ? null : n,
+          status: source.coverage === 'partial' ? W.atLeast : undefined, ...(source.coverage !== 'unavailable' && formula ? { formula } : {}) });
+        const sumFormula = (c: number, source: ExecutiveSourceCoverage) => source.coverage === 'unavailable' ? undefined : `SUM(${range(c)})`;
+        const kpis: ExportFigure[] = [count(W.companyCount, list.length, set.populationCoverage, `COUNTA(${range(1)})`),
+          count(W.active, list.filter(row => row.activeDays > 0).length, set.usage, `COUNTIF(${range(22)},">0")`),
+          { label: W.net, value: set.money.coverage === 'unavailable' ? null : sum(list, netOf) / 100, formula: sumFormula(28, set.money), style: 3, status: set.money.coverage === 'partial' ? W.partialMoney : undefined }];
+        const adoption = this.adoptionOf(set, list);
+        let panels: ExportPanel[] = [{ title: W.adoptionTitle, kind: 'doughnut', labels: adoption.segments.map(segment => L.receiptAdoption[segment.key]!), values: adoption.segments.map(segment => segment.count),
+          formulas: adoption.segments.map(segment => `COUNTIF(${range(19)},"${L.receiptAdoption[segment.key]}")`) },
+          { title: W.lifetimeReceipts, kind: 'bar', labels: W.export.buckets, values: [rows.filter(row => row[19] === 0).length, rows.filter(row => typeof row[19] === 'number' && row[19] >= 1 && row[19] <= 5).length, rows.filter(row => typeof row[19] === 'number' && row[19] >= 6).length],
+            formulas: [`COUNTIFS(${range(20)},"=0",${range(20)},"<>")`, `COUNTIFS(${range(20)},">=1",${range(20)},"<=5")`, `COUNTIF(${range(20)},">=6")`], status: W.export.bucketsDefinition },
+          { title: W.paidUsage, kind: 'bar', labels: Object.values(L.usageGroup).slice(1), values: this.paidUsageOf(set, list).groups.map(group => group.count),
+            formulas: Object.values(L.usageGroup).slice(1).map(label => `COUNTIF(${range(18)},"${label}")`) },
+          { title: W.net, kind: 'bar', labels: [W.receipts, W.refunds, W.net], values: [sum(list, row => row.receiptsSatang), sum(list, row => row.refundsSatang), sum(list, netOf)].map(n => set.money.coverage === 'unavailable' ? null : n / 100),
+            formulas: [26, 27, 28].map(c => sumFormula(c, set.money) ?? 'IF(1=1,"",0)'), status: set.money.coverage === 'partial' ? W.partialMoney : undefined, style: 3 }];
+        const tables: ExportTable[] = [];
+        if (body.reportKey === 'usage' && body.subview === 'ranking') {
+          const ranking = this.rankingOf(set, sortBy as ExecutiveRankingMetric, extra.names);
+          panels[1] = { title: W.rankTitle, kind: 'bar', labels: ranking.items.map(row => row.displayName), values: ranking.items.map(row => row.value), formulas: ranking.items.map(item => `'รายบริษัท'!${columnName(sortBy === 'expenseReceiptCount' ? 21 : sortBy === 'activeDays' ? 22 : 25)}${7 + list.findIndex(row => row.companyId === item.id)}`), status: set.usage.coverage === 'partial' ? W.atLeast : undefined };
+          tables.push({ title: W.ranking, headers: [W.export.rank, W.company, EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === sortBy)!.label], rows: rows.map(row => [row[34]!, row[0]!, row[sortBy === 'expenseReceiptCount' ? 20 : sortBy === 'activeDays' ? 21 : 24]!]) });
+        }
+        if (body.reportKey === 'revenue' && body.subview === 'summary') {
+          const revenue = this.revenueOf(set, extra.trend, extra.addOnSold);
+          panels[0] = { title: W.purchase, kind: 'bar', labels: revenue.byPurchaseGroup.map(group => group.label), values: revenue.byPurchaseGroup.map(group => figureValue(group.netReceiptsSatang, 100)), style: 3 };
+          panels[1] = { title: W.trend, kind: 'bar', labels: revenue.trend.map(point => exportMonth(point.month)), values: revenue.trend.map(point => figureValue(point.netReceiptsSatang, 100)), style: 3 };
+          tables.push({ title: W.purchase, headers: [W.purchase, W.receipts, W.refunds, W.net, W.fees, W.tax, W.export.notes], rows: revenue.byPurchaseGroup.map(group => [group.label,
+            ...[group.receiptsSatang, group.refundsSatang, group.netReceiptsSatang, group.feesSatang, group.taxSatang].map(figure => ({ value: figureValue(figure, 100), style: 3 })), group.netReceiptsSatang.coverage === 'complete' ? '' : group.netReceiptsSatang.reasonCodes.includes('ADDON_NOT_ON_SALE') ? W.addOnNotSold : group.netReceiptsSatang.coverage === 'unavailable' ? W.export.moneyMissing : W.partialMoney]) });
+          tables.push({ title: W.unmatched, headers: [W.receipts, W.refunds], rows: [[{ value: envelope.unmatchedMoney.receiptsSatang / 100, style: 3 }, { value: envelope.unmatchedMoney.refundsSatang / 100, style: 3 }]] });
+          kpis[0] = { label: W.receipts, value: figureValue(revenue.receiptsSatang, 100), formula: sumFormula(26, set.money), style: 3, status: set.money.coverage === 'partial' ? W.partialMoney : undefined };
+          kpis[1] = { label: W.refunds, value: figureValue(revenue.refundsSatang, 100), formula: sumFormula(27, set.money), style: 3, status: set.money.coverage === 'partial' ? W.partialMoney : undefined };
+        }
+        if (body.reportKey === 'revenue' && body.subview === 'top') {
+          const negativeNote = `${W.negativeTotal} · ${W.notInShare}`;
+          panels[0] = { title: W.top, kind: 'doughnut', labels: [L.spendCohort.TOP20!, L.spendCohort.REST!], values: [groups.topShare?.value == null ? null : groups.topShare.value / 100, groups.restShare?.value == null ? null : groups.restShare.value / 100], style: 6, colors: ['14532D', 'D1D5DB'],
+            status: spendStatus || undefined };
+          const payers = sortedBy(list.filter(row => netOf(row) > 0), netOf, 'desc').slice(0, 10);
+          panels[1] = { title: W.cumulativeShare, kind: 'bar', labels: payers.map(row => extra.names.get(row.companyId)?.name ?? ''), values: payers.map(row => groups.cumulative.get(row.companyId)?.value == null ? null : groups.cumulative.get(row.companyId)!.value! / 100), style: 6 };
+          panels[2] = { title: W.positiveNet, kind: 'bar', labels: [W.positiveNet, W.negativeTotal], values: set.money.coverage === 'unavailable' ? [null, null] : [groups.positiveNetTotalSatang / 100, groups.negativeNetSatang / 100], style: 3, status: negativeNote };
+          tables.push({ title: W.positiveNet, headers: [W.companyCount, W.positiveNet, W.negativeTotal, W.export.notes], rows: [[set.money.coverage === 'unavailable' ? null : groups.positiveCompanyCount, { value: set.money.coverage === 'unavailable' ? null : groups.positiveNetTotalSatang / 100, style: 3 }, { value: set.money.coverage === 'unavailable' ? null : groups.negativeNetSatang / 100, style: 3 }, negativeNote]] });
+        }
+        if (body.reportKey === 'customers') {
+          const grouped = this.groupsOf(set, body.subview === 'creditedSales' ? 'sales' : body.subview as 'industry' | 'discovery' | 'sales', extra.credit);
+          const groupLabel = (group: ExecutiveGroupRow) => executiveThaiLabel(group.label, set.sellers.get(group.key)?.salesCode ?? group.key);
+          const labels = grouped.groups!.map(groupLabel);
+          panels[0] = { title: W.companyCount, kind: 'bar', labels, values: grouped.groups!.map(group => group.companies.count) };
+          panels[1] = { title: W.net, kind: 'bar', labels, values: grouped.groups!.map(group => figureValue(group.netReceiptsSatang, 100)), style: 3 };
+          panels[2] = { title: W.active, kind: 'bar', labels, values: grouped.groups!.map(group => figureValue(group.activeCompanies)), status: set.usage.coverage === 'partial' ? W.atLeast : undefined };
+          panels[3] = { title: W.paid, kind: 'bar', labels, values: grouped.groups!.map(group => figureValue(group.companiesWithReceipts)), status: set.money.coverage === 'partial' ? W.atLeast : undefined };
+          tables.push({ title: W.customers, headers: [W.group, W.companyCount, W.net, W.active, W.export.notes], rows: grouped.groups!.map(group => [groupLabel(group), group.companies.count, { value: figureValue(group.netReceiptsSatang, 100), style: 3 }, figureValue(group.activeCompanies), set.populationCoverage.coverage === 'partial' || group.netReceiptsSatang.coverage === 'partial' ? W.atLeast : '']) });
+          if (body.subview === 'creditedSales') {
+            panels[0] = { title: W.creditAmount, kind: 'bar', labels: grouped.creditedSellers!.rows.map(row => executiveThaiLabel(row.seller.label ?? '', row.seller.salesCode)), values: grouped.creditedSellers!.rows.map(row => row.creditSatang / 100), style: 3 };
+            tables.push({ title: W.credited, headers: [W.sales, W.companyCount, W.waiting, W.creditAmount], rows: grouped.creditedSellers!.rows.map(row => [executiveThaiLabel(row.seller.label ?? '', row.seller.salesCode), row.companies, row.waiting, { value: row.creditSatang / 100, style: 3 }]) });
+          }
+        }
+        if (comparison) {
+          const pair = [comparison.sideA, comparison.sideB];
+          panels = [{ title: W.companyCount, kind: 'bar', labels: pair.map(side => executiveComparisonLabel(side, comparison!.dimension)), values: pair.map(side => figureValue(side.companies)) },
+            { title: W.net, kind: 'bar', labels: pair.map(side => executiveComparisonLabel(side, comparison!.dimension)), values: pair.map(side => figureValue(side.netReceiptsSatang, 100)), style: 3 },
+            { title: W.receiptCount, kind: 'bar', labels: pair.map(side => executiveComparisonLabel(side, comparison!.dimension)), values: pair.map(side => figureValue(side.expenseReceiptCount)) },
+            { title: W.active, kind: 'bar', labels: pair.map(side => executiveComparisonLabel(side, comparison!.dimension)), values: pair.map(side => figureValue(side.activeCompanies)) }];
+          const metrics = ['companies', 'netReceiptsSatang', 'netReceiptsPerCompanySatang', 'expenseReceiptCount', 'expenseReceiptsPerCompany', 'everAddedReceiptShare', 'activeCompanies'] as const;
+          const labels = [W.companyCount, W.net, W.netPerCompany, W.receiptCount, W.receiptsPerCompany, W.adoptionShare, W.active];
+          tables.push({ title: W.compare, headers: [W.figure, W.sideA, W.sideB, W.difference], rows: metrics.map((key, i) => {
+            const money = key.includes('Satang'), rate = key === 'everAddedReceiptShare', scale = money || rate ? 100 : 1, style = money ? 3 : rate ? 6 : 0;
+            return [labels[i]!, ...pair.map(side => ({ value: figureValue(side[key], scale), style })), { value: comparison!.difference[key] == null ? null : comparison!.difference[key]! / (money ? 100 : 1), style: money ? 3 : 0 }];
+          }) });
+        }
+        if (detail) panels = panels.filter(panel => panel.kind !== 'doughnut');
+        const sort = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === sortBy)!;
+        const filters = [...Object.values(envelope.appliedFilters.global), ...Object.values(envelope.appliedFilters.directory)].filter(option => option.value !== 'ALL').map(option => executiveThaiLabel(option.label, option.value));
+        const metadata = [W.through(exportDateTime(envelope.dataThrough.oldest ?? set.build.asOf)), `${W.filters} · ${[...filters, ...(query.q ? [`${W.search} · ${query.q}`] : []), ...(comparison ? [executiveComparisonLabel(comparison.sideA, comparison.dimension), executiveComparisonLabel(comparison.sideB, comparison.dimension)] : [])].join(' · ') || W.export.none}`,
+          `${W.sort} · ${sortDir === sort.sortDir ? sort.label : sort.label.replace('มาก → น้อย', 'น้อย → มาก').replace('ก → ฮ', 'ฮ → ก').replace('ล่าสุดก่อน', 'เก่าสุดก่อน')}`, W.found(list.length), W.excluded,
+          W.moneyDefinition, W.vatIncluded, W.receiptDefinition, W.documentDefinition, W.usersDefinition, W.aiDefinition,
+          W.export.sentBy(extra.actor, exportDateTime(this.clock())), `${W.export.reference} · ${exportReference}`,
+          ...(set.money.coverage !== 'complete' ? [W.export.moneyMissing] : []), ...(set.usage.coverage !== 'complete' ? [W.export.usageMissing] : []),
+          ...envelope.dataThrough.lagging.map(source => source === 'billing' && envelope.dataThrough.billing ? W.moneyThrough(exportDateTime(envelope.dataThrough.billing)) : ''),
+          ...(includesContacts ? [W.export.personal, W.contactAt(exportDateTime(contactAt))] : [])];
+        const file = buildExecutiveWorkbook({ title: W[body.reportKey], month: body.month, metadata, columns, rows, kpis, panels, tables });
+        bytes = file.length;
+        const [current, currentActor, session] = await Promise.all([
+          this.access.resolveAccess(ctx.userId, ctx.companyId),
+          this.prisma.client.user.findUnique({ where: { id: ctx.userId }, select: { status: true } }),
+          ctx.sessionId ? this.prisma.client.authSession.findUnique({ where: { id: ctx.sessionId }, select: { userId: true, status: true, expiresAt: true } }) : Promise.resolve(null),
+        ]);
+        if (currentActor?.status !== 'ACTIVE' || (ctx.sessionId && (!session || session.userId !== ctx.userId || session.status !== 'ACTIVE' || session.expiresAt <= this.clock()))) throw executiveError(ctx.requestId, 'EXECUTIVE_ACCESS_DENIED', undefined, W.export.denied);
+        if (!['system.executive.read', 'system.executive.export', ...(includesContacts ? ['system.executive.contact.read'] : [])].every(key => current.permissions.includes(key))) throw executiveError(ctx.requestId, 'EXECUTIVE_ACCESS_DENIED', undefined, W.export.denied);
+        if (performance.now() - started > 30_000) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
+        return { file, exportReference, rowCount };
+      });
+      outcome = 'SUCCESS';
+      return loaded.extra;
+    } catch (error) {
+      const mapped = error instanceof HttpException && error.getStatus() === 403 ? executiveError(ctx.requestId, 'EXECUTIVE_ACCESS_DENIED', undefined, W.export.denied)
+        : error instanceof Error && (error.message === 'XLSX_LIMIT' || (!(error instanceof HttpException) && performance.now() - started > 30_000)) ? executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED') : error;
+      outcome = mapped instanceof HttpException ? String((mapped.getResponse() as { code?: string }).code ?? (mapped.getStatus() === 403 ? 'EXECUTIVE_ACCESS_DENIED' : 'FAILED')) : 'FAILED';
+      throw mapped;
+    } finally {
+      try {
+        await this.audit.logOrThrow({ actorUserId: ctx.userId, action: 'executive.export.created', targetType: 'ExecutiveExport', requestId: ctx.requestId,
+          result: outcome === 'SUCCESS' ? 'SUCCESS' : outcome === 'EXECUTIVE_ACCESS_DENIED' ? 'DENIED' : 'FAILED', riskLevel: includesContacts ? 'MEDIUM' : 'LOW',
+          metadataJson: { exportReference, reportKey: query ? body.reportKey : null, subview: query ? body.subview ?? null : null, month: query?.month ?? null,
+            filters: data && query ? { ...data.global, ...auditableDirectory(query) } : {}, comparison: auditComparison ?? null,
+            sortBy: query?.sortBy ?? null, sortDir: query?.sortDir ?? null, hasSearch: !!query?.q, rowCount, companyCount: rowCount, bytes, includesContacts, outcome,
+            buildId: data?.build.id ?? null, definitionVersion: data?.build.definitionVersion ?? null, templateVersion: 'executive-v4-1' } });
+      } finally { if (ownsSlot) this.exporting.delete(ctx.userId); }
+    }
   }
 
   // ── API06 ────────────────────────────────────────────────────────────────────────────────────
@@ -747,4 +964,46 @@ function sortValueOf(sortBy: ExecutiveSortBy, nameOf: (row: ReportRow) => string
     case 'lastActivityAt': return (row) => row.profile.lastActivityAt?.getTime() ?? null;
     default: return METRIC_OF[sortBy];
   }
+}
+
+const figureValue = (figure: { value: number | null; knownValue?: number } | null, scale = 1) => figure ? (figure.value ?? figure.knownValue ?? null) === null ? null : (figure.value ?? figure.knownValue!) / scale : null;
+
+/** Reject unused and untrusted fields before reading data; shared filters use the read API's enums. */
+function exportQueryOf(ctx: RequestContext, body: ExecutiveExportBody): ExecutiveCompaniesQuery {
+  const invalid = (field: string): never => { throw executiveError(ctx.requestId, 'EXECUTIVE_QUERY_INVALID', field); };
+  if (!body || typeof body !== 'object') return invalid('body');
+  const allowed = ['buildId', 'reportKey', 'subview', 'month', 'filters', 'sortBy', 'sortDir', 'comparison', 'targetCompanyId', 'includeContacts', 'format'];
+  for (const key of Object.keys(body)) if (!allowed.includes(key)) invalid(key);
+  if (!EXECUTIVE_EXPORT_REPORT_KEYS.includes(body.reportKey)) invalid('reportKey');
+  if (typeof body.buildId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(body.buildId)) invalid('buildId');
+  if (body.format !== 'xlsx') invalid('format');
+  if (typeof body.includeContacts !== 'boolean') invalid('includeContacts');
+  if (body.includeContacts && !['companies', 'detail'].includes(body.reportKey)) invalid('includeContacts');
+  if (!body.filters || typeof body.filters !== 'object' || Array.isArray(body.filters)) invalid('filters');
+  const globals = ['industry', 'discovery', 'referringSales'];
+  const filterKeys = body.reportKey === 'companies' ? [...globals, ...DIRECTORY_KEYS, ...FLAG_KEYS, 'q'] : ['compare', 'detail'].includes(body.reportKey) ? [] : globals;
+  for (const [key, value] of Object.entries(body.filters)) {
+    if (!filterKeys.includes(key) || typeof value !== 'string') invalid(key);
+    if (key === 'q') { if (value.length > 120) invalid(key); }
+    else if (key === 'referringSales') { if (!/^[A-Za-z0-9_-]{1,40}$/.test(value)) invalid(key); }
+    else if (!(L[key as ExecutiveFilterKey]?.[value] ?? EXECUTIVE_FLAG_LABELS[key as keyof typeof EXECUTIVE_FLAG_LABELS]?.[value])) invalid(key);
+  }
+  const views = { usage: ['adoption', 'ranking'], revenue: ['summary', 'top'], customers: ['industry', 'discovery', 'sales', 'creditedSales'] };
+  if (Object.hasOwn(views, body.reportKey)) { if (!views[body.reportKey as keyof typeof views].includes(body.subview!)) invalid('subview'); }
+  else if (body.subview !== undefined) invalid('subview');
+  if (body.sortBy !== undefined && !EXECUTIVE_SORT_OPTIONS.some(option => option.sortBy === body.sortBy)) invalid('sortBy');
+  if (body.sortDir !== undefined && !['asc', 'desc'].includes(body.sortDir)) invalid('sortDir');
+  const ranked = body.reportKey === 'usage' && body.subview === 'ranking', top = body.reportKey === 'revenue' && body.subview === 'top';
+  if (body.reportKey !== 'companies' && !ranked && !top && (body.sortBy !== undefined || body.sortDir !== undefined)) invalid('sortBy');
+  if (ranked && body.sortBy !== undefined && !Object.hasOwn(METRIC_OF, body.sortBy)) invalid('sortBy');
+  if ((ranked || top) && body.sortDir !== undefined && body.sortDir !== 'desc') invalid('sortDir');
+  if (top && body.sortBy !== undefined && body.sortBy !== 'netReceipts') invalid('sortBy');
+  if (body.reportKey === 'detail') { if (typeof body.targetCompanyId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(body.targetCompanyId)) invalid('targetCompanyId'); }
+  else if (body.targetCompanyId !== undefined) invalid('targetCompanyId');
+  if (body.reportKey === 'compare') {
+    const pair = body.comparison;
+    if (!pair || Object.keys(pair).some(key => !['dimension', 'sideA', 'sideB'].includes(key)) || !['industry', 'discovery', 'referringSales', 'company'].includes(pair.dimension)) invalid('comparison');
+    if (!pair!.sideA || !pair!.sideB || pair!.sideA === pair!.sideB || ![pair!.sideA, pair!.sideB].every(side => typeof side === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(side))) invalid('comparison');
+  } else if (body.comparison !== undefined) invalid('comparison');
+  return { month: body.month, buildId: body.buildId, ...body.filters, ...(body.sortBy ? { sortBy: body.sortBy } : ranked ? { sortBy: 'expenseReceiptCount' } : top ? { sortBy: 'netReceipts' } : {}), ...(body.sortDir ? { sortDir: body.sortDir } : ranked || top ? { sortDir: 'desc' } : {}) };
 }

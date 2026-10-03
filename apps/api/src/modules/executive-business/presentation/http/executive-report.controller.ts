@@ -1,14 +1,18 @@
-import { Controller, Get, Header, Param, Query, Req, UseFilters } from '@nestjs/common';
+import { ArgumentsHost, Body, Catch, Controller, HttpException, Injectable, Get, Header, HttpCode, Param, Post, Query, Req, Res, UseFilters } from '@nestjs/common';
 import { Transform, Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
-import type { Request } from 'express';
+import { IsBoolean, IsIn, IsInt, IsObject, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import type { Request, Response } from 'express';
 import {
-  EXECUTIVE_RANKING_METRICS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
+  EXECUTIVE_WORDS as W, EXECUTIVE_EXPORT_REPORT_KEYS, type ExecutiveExportBody, type ExecutiveExportFilters, EXECUTIVE_RANKING_METRICS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
   type ExecutiveAnalysisQuery, type ExecutiveCompaniesQuery, type ExecutiveHistoryQuery, type ExecutiveRankingMetric, type ExecutiveReportQuery, type ExecutiveSortBy,
 } from '@watchdog-bms/contracts';
+import { randomUUID } from 'node:crypto';
+import { AuditService } from '../../../audit/application/audit.service';
+import { XLSX_MIME_TYPE } from '../../../../common/export/xlsx.logic';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { assertPlatformTenant } from '../../../sales-console/application/sales-context';
+import { executiveError } from '../../application/executive-users.service';
 import { ExecutiveReportReadService } from '../../application/executive-report-read.service';
 import { ExecutiveAccountExceptionFilter } from './executive-users.controller';
 
@@ -66,7 +70,46 @@ export class ExecutiveHistoryQueryDto implements ExecutiveHistoryQuery {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize?: number;
 }
 
-type ExecutiveRequest = Request & { context: RequestContext };
+/** Nested filters and report-specific fields are checked by exportQueryOf before any snapshot is read. */
+export class ExecutiveExportDto implements ExecutiveExportBody {
+  @IsString() @IsNotEmpty() @MaxLength(64) buildId!: string;
+  @IsIn(EXECUTIVE_EXPORT_REPORT_KEYS) reportKey!: ExecutiveExportBody['reportKey'];
+  @IsString() @Matches(MONTH) month!: string;
+  @IsObject() filters!: ExecutiveExportFilters;
+  @IsOptional() @IsString() @MaxLength(40) subview?: string;
+  @IsOptional() @IsIn(EXECUTIVE_SORT_OPTIONS.map(option => option.sortBy)) sortBy?: ExecutiveSortBy;
+  @IsOptional() @IsIn(['asc', 'desc']) sortDir?: 'asc' | 'desc';
+  @IsOptional() @IsObject() comparison?: ExecutiveExportBody['comparison'];
+  @IsOptional() @IsString() @MaxLength(64) targetCompanyId?: string;
+  @IsBoolean() includeContacts!: boolean;
+  @IsIn(['xlsx']) format!: 'xlsx';
+}
+
+type ExecutiveRequest = Request & { context: RequestContext; executiveExportAttempted?: boolean };
+
+/** Guard/DTO failures happen before the action; record those without copying an untrusted body into audit. */
+@Catch(HttpException)
+@Injectable()
+export class ExecutiveReportExceptionFilter extends ExecutiveAccountExceptionFilter {
+  constructor(private readonly audit: AuditService) { super('คุณไม่มีสิทธิ์ดูรายงานนี้'); }
+  override async catch(error: HttpException, host: ArgumentsHost) {
+    const req = host.switchToHttp().getRequest<ExecutiveRequest>();
+    // This controller's only POST route is API13; do not depend on the spelling of a matched URL.
+    const exporting = req.method === 'POST';
+    if (exporting && !req.executiveExportAttempted) {
+      try {
+        await this.audit.logOrThrow({ actorUserId: req.context?.userId, action: 'executive.export.created', targetType: 'ExecutiveExport',
+          requestId: req.context?.requestId ?? String(req.headers['x-request-id'] ?? ''), result: error.getStatus() === 403 ? 'DENIED' : 'FAILED', riskLevel: 'LOW',
+          metadataJson: { exportReference: randomUUID(), outcome: ({ 400: 'INVALID_INPUT', 403: 'EXECUTIVE_ACCESS_DENIED', 429: 'RATE_LIMITED', 503: 'SOURCE_UNAVAILABLE' } as Record<number, string>)[error.getStatus()] ?? 'FAILED', rowCount: 0, companyCount: 0, bytes: 0, includesContacts: false } });
+      } catch {
+        super.catch(executiveError(req.context?.requestId ?? '', 'SOURCE_UNAVAILABLE'), host);
+        return;
+      }
+    }
+    if (exporting) new ExecutiveAccountExceptionFilter(W.export.denied).catch(error, host);
+    else super.catch(error, host);
+  }
+}
 
 /**
  * The executive report's read routes (executive backend spec §16.1 API01–API06). Every route needs `system.executive.read`
@@ -74,7 +117,7 @@ type ExecutiveRequest = Request & { context: RequestContext };
  * `X-Company-Id` header, which AuthGuard reads as the caller's own company (RB-01).
  */
 @Controller('system/executive')
-@UseFilters(new ExecutiveAccountExceptionFilter('คุณไม่มีสิทธิ์ดูรายงานนี้'))
+@UseFilters(ExecutiveReportExceptionFilter)
 export class ExecutiveReportController {
   constructor(private readonly report: ExecutiveReportReadService) {}
 
@@ -108,6 +151,23 @@ export class ExecutiveReportController {
   analysis(@Query() query: ExecutiveAnalysisQueryDto, @Req() req: ExecutiveRequest) {
     assertPlatformTenant(req.context);
     return this.report.analysis(req.context, query);
+  }
+
+  @Post('exports')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  @RequirePermissions('system.executive.read', 'system.executive.export')
+  async export(@Body() body: ExecutiveExportDto, @Req() req: ExecutiveRequest, @Res() res: Response) {
+    req.executiveExportAttempted = true;
+    const result = await this.report.export(req.context, body);
+    res.setHeader('Content-Type', XLSX_MIME_TYPE);
+    res.setHeader('Content-Disposition', 'attachment; filename="executive-report.xlsx"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Export-Reference', result.exportReference);
+    res.setHeader('X-Export-Row-Count', String(result.rowCount));
+    res.setHeader('X-Export-Company-Count', String(result.rowCount));
+    res.setHeader('X-Request-Id', req.context.requestId);
+    res.send(result.file);
   }
 
   @Get('companies/:targetCompanyId')
