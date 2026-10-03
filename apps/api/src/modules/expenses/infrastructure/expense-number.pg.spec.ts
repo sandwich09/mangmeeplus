@@ -206,6 +206,8 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
   });
   it('numbers multi-month claim projections atomically and reuses each line on concurrent retry', async () => {
     const rb = new PrismaReimbursementRepository(prisma, allocator);
+    // A claim's requester and creator must be active members of the company and branch (reimbursement-approval-spec.md §8.1 step 3).
+    await client.companyMembership.create({ data: { companyId, userId } });
     let request = await rb.createRequest({ companyId, branchId, requesterUserId: userId, createdByUserId: userId,
       requesterDisplayNameSnapshot: 'Projection tester', reason: 'Two months', currency: 'THB', categoryKey: 'travel',
       amount: '200', incurredDate: new Date('2030-05-01'), receiptRequirementStatus: 'WAIVED_BY_POLICY',
