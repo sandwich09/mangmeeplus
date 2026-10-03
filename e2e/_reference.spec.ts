@@ -33,7 +33,7 @@ test.describe('@smoke reference — ready modules render under real auth', () =>
     await authedPage.goto(`/companies/${companyId}/reports`);
     await expect(authedPage.getByRole('heading', { name: /^(รายงาน|Reports and BI|Reports)$/i })).toBeVisible();
     // The export-center aside repeats the dataset title per export row — first() keeps strict mode happy.
-    await expect(authedPage.getByText('Trial Balance', { exact: true }).first()).toBeVisible();
+    await expect(authedPage.getByText('งบทดลอง', { exact: true }).first()).toBeVisible();
     await expectNoClientError(authedPage);
   });
 

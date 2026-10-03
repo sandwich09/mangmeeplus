@@ -1,4 +1,17 @@
-import type { DashboardWidget, DashboardFreshness, NotificationItem, NotificationSeverity } from './dashboard-notifications.model';
+import type { DashboardWidget, DashboardFreshness, NotificationChannel, NotificationItem, NotificationSeverity, DashboardMetricValue } from './dashboard-notifications.model';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { t } from '@/common/i18n/workspace-i18n.logic';
+
+export function dashboardMetricValueText(metric: DashboardMetricValue): string {
+  if (metric.value === null || metric.value === undefined || metric.value === '') return '—';
+  if (metric.key === 'last_movement_at') return formatThaiDateTime(String(metric.value));
+  if (typeof metric.value === 'number') return `${metric.value.toLocaleString('th-TH')}${metric.unit ? ` ${metric.unit}` : ''}`;
+  return metric.unit ? `${metric.value} ${metric.unit}` : String(metric.value);
+}
+
+export function notificationRuleChannelsText(channels: readonly NotificationChannel[]): string {
+  return channels.map((channel) => channel === 'line' ? 'LINE' : channel === 'web' ? t('notification.delivery.channel.web', 'th') : 'ช่องทางอื่น').join(', ');
+}
 
 export function visibleNotifications(items: NotificationItem[], filter: 'all' | 'unread'): NotificationItem[] {
   return filter === 'unread' ? items.filter((item) => !item.read && item.status !== 'resolved') : items;

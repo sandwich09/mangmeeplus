@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isReportsFeatureDisabled, reportExportErrorText, reportExportStatusText, reportFreshnessText, reportRunStatusText, reportWarningText } from './reports-ui.logic';
+import { defaultReportViewName, isReportsFeatureDisabled, reportChartKindText, reportExportErrorText, reportExportStatusText, reportFilterOptionText, reportFreshnessText, reportRunStatusText, reportValueText, reportViewVisibilityText, reportWarningText } from './reports-ui.logic';
 
 const workspaceSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ReportsWorkspacePage.tsx'), 'utf8');
 
@@ -42,6 +42,31 @@ describe('reports history-only detection', () => {
     assert.equal(isReportsFeatureDisabled({ code: 'feature_not_enabled', status: 403 }), true);
     assert.equal(isReportsFeatureDisabled({ code: 'company_access_unavailable', status: 403 }), false);
     assert.equal(isReportsFeatureDisabled(Object.assign(new Error('network down'), { status: 500 })), false);
+  });
+});
+
+describe('saved report view default name', () => {
+  it('uses the Thai short date while keeping the report name intact', () => {
+    assert.equal(defaultReportViewName('รายงานยอดขาย', new Date('2026-10-01T17:00:00.000Z')), 'รายงานยอดขาย 2 ต.ค. 2569');
+  });
+});
+
+describe('report page enum labels', () => {
+  it('does not show chart, scope, or saved-view visibility keys', () => {
+    assert.equal(reportChartKindText('table'), 'ตาราง');
+    assert.equal(reportChartKindText('aging_bucket'), 'ช่วงอายุหนี้');
+    assert.equal(reportFilterOptionText('own'), 'รายการของฉัน');
+    assert.equal(reportFilterOptionText('all'), 'ทุกรายการ');
+    assert.equal(reportViewVisibilityText('COMPANY'), 'ทั้งบริษัท');
+    assert.equal(reportValueText(1234.5, 'money'), '1,234.50 บาท');
+    assert.equal(reportValueText('1234', 'number'), '1,234');
+    assert.equal(reportValueText(true, 'boolean'), 'ใช่');
+    assert.equal(reportValueText('2026-07', 'string', 'periodKey'), 'ก.ค. 2569');
+    assert.doesNotMatch(workspaceSource, /\{view\.datasetCode\}|\{result\.runId\}|dataset\.sourceModule/);
+    assert.doesNotMatch(workspaceSource, />\{category\}:/);
+    assert.match(workspaceSource, /CATEGORY_LABEL\[category\][^\n]+count\.toLocaleString\('th-TH'\)/);
+    assert.match(workspaceSource, /enabledDatasets\.length\.toLocaleString\('th-TH'\)/);
+    assert.match(workspaceSource, /เกณฑ์ความใหม่ของข้อมูลไม่เกิน/);
   });
 });
 

@@ -5,7 +5,7 @@ export const TEMPLATE_STATUS_LABELS: Record<string, string> = {
 };
 
 export const RULE_STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'ร่าง',
+  DRAFT: 'แบบร่าง',
   ENABLED: 'เปิดใช้งาน',
   DISABLED: 'ปิดใช้งาน',
   ARCHIVED: 'เก็บถาวร',
@@ -93,3 +93,29 @@ export const TRIGGER_TYPE_LABELS: Record<string, string> = {
   MANUAL_TEST: 'ทดสอบ',
   MANUAL_REPLAY: 'ทำซ้ำ',
 };
+
+const SOURCE_MODULE_LABELS: Record<string, string> = {
+  dashboard: 'ภาพรวมธุรกิจ',
+  inventory: 'คลังสินค้า',
+  reimbursements: 'การเบิกจ่าย',
+  procurement: 'จัดซื้อ',
+  tax: 'ภาษี',
+  banking: 'ธนาคาร',
+  'accounting-documents': 'เอกสารบัญชี',
+  crm: 'ลูกค้าสัมพันธ์',
+  'reports-bi': 'รายงาน',
+  'ai-draft': 'คำแนะนำจาก AI',
+  workflow: 'ระบบอัตโนมัติ',
+};
+
+export function workflowStatusText(labels: Record<string, string>, value?: string | null): string {
+  return value ? labels[value] ?? 'สถานะอื่น' : 'ไม่มีสถานะ';
+}
+
+export function workflowTriggerText(value: string): string {
+  return workflowStatusText(TRIGGER_TYPE_LABELS, value);
+}
+
+export function workflowSourceModuleText(value?: string | null): string {
+  return value ? SOURCE_MODULE_LABELS[value] ?? 'ส่วนงานอื่น' : 'ไม่มีข้อมูลส่วนงาน';
+}

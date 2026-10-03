@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  dashboardMetricValueText,
+  notificationRuleChannelsText,
   notificationBadgeText,
   severityColor,
   severityLabel,
@@ -31,6 +33,19 @@ describe('visibleNotifications', () => {
     const items = [notification('unread', false), notification('read', true)];
     assert.deepEqual(visibleNotifications(items, 'unread').map((item) => item.id), ['unread']);
     assert.deepEqual(visibleNotifications(items, 'all').map((item) => item.id), ['unread', 'read']);
+  });
+});
+
+describe('dashboard stock metric display', () => {
+  it('formats stock timestamps and counts for Thai readers', () => {
+    assert.equal(dashboardMetricValueText({ key: 'last_movement_at', label: 'การเคลื่อนไหวล่าสุด', value: '2026-10-02T01:23:00.000Z', freshness: 'fresh' }), '2 ต.ค. 2569 08:23 น.');
+    assert.equal(dashboardMetricValueText({ key: 'low_stock_count', label: 'สินค้าต่ำกว่าจุดสั่งซื้อ', value: 12345, unit: 'รายการ', freshness: 'fresh' }), '12,345 รายการ');
+  });
+});
+
+describe('notification rule channels', () => {
+  it('reuses the Thai web-channel dictionary term and keeps LINE', () => {
+    assert.equal(notificationRuleChannelsText(['web', 'line']), 'เว็บ, LINE');
   });
 });
 

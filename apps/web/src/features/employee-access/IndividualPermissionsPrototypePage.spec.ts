@@ -99,3 +99,9 @@ test('employees-and-rights prose uses the same standard role names as the picker
   const discount = readFileSync(new URL('./DiscountPolicyPage.tsx', import.meta.url), 'utf8');
   for (const page of [source, wizard, discount]) assert.doesNotMatch(page, /เจ้าของร้าน|แอดมิน/);
 });
+
+test('the add-employee wizard presents the account and birth-date instructions in Thai', () => {
+  const wizard = readFileSync(new URL('./AddEmployeePrototypePage.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(wizard, /(?:label=|>)(?:"|')?Username(?:"|')?|DDMMYYYY|DD\/MM\/YYYY|\bSMTP\b|\bDraft\b|\bOA\b|08xxxxxxxx|name@room45\.co|name@company\.com|a-z, A-Z, 0-9|กรุณากรอก Username|รูปแบบ เช่น/);
+  assert.doesNotMatch(wizard, /กรุณากรอก Username|แก้ไข Username/);
+});

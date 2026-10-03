@@ -883,6 +883,11 @@ UI rules:
 - Do not use marketing landing page. First screen is actual Reports workspace.
 - Do not show fake sample metrics.
 - Long labels must fit table headers, cards, tabs, and buttons on mobile/desktop.
+- The shop-facing report catalogue, filters, measures, and result-column labels use Thai display text from the catalogue/source adapter. CSV exports reuse those same result-column labels. Keep report codes and source-module keys out of the workspace.
+- Assistant-facing report source references use the report title from that same catalogue; do not maintain a second report-name list.
+- Propose a saved-view name with the report title and the shared Thai short date. Preserve names that a company has already saved or typed.
+- Format report dates and times with the shared Thai date helpers, period keys as Thai short months, numeric values with Thai grouping, booleans as ใช่/ไม่ใช่, and money as two decimal places followed by บาท.
+- Show the dataset's `freshnessSlaSeconds` as a Thai freshness threshold in minutes, not as a promise that the source updated within that interval.
 - Export/download buttons are hidden or disabled when permission or source export permission missing.
 - Drill-down links open source module pages and source pages re-check permission.
 - If source module missing, show unavailable state with module name and no fake zero.

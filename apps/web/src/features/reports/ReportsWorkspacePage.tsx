@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
-import type { ReportDatasetDefinitionDto, ReportDatasetStatus, ReportExportRequestDto, ReportFieldType, ReportFilterValue, ReportResultDto, ReportRunHistoryItemDto, ReportViewDto } from '@watchdog-bms/contracts';
-import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
+import type { ReportDatasetDefinitionDto, ReportDatasetStatus, ReportExportRequestDto, ReportFilterValue, ReportResultDto, ReportRunHistoryItemDto, ReportViewDto } from '@watchdog-bms/contracts';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { useToast } from '@/common/components/toast';
@@ -19,7 +19,7 @@ import {
   listReportViews,
   runReportQuery,
 } from './reports.api';
-import { isReportsFeatureDisabled, reportExportErrorText, reportExportStatusText, reportFreshnessText, reportRunStatusText, reportWarningText } from './reports-ui.logic';
+import { defaultReportViewName, isReportsFeatureDisabled, reportChartKindText, reportExportErrorText, reportExportStatusText, reportFilterOptionText, reportFreshnessText, reportRunStatusText, reportValueText, reportViewVisibilityText, reportWarningText } from './reports-ui.logic';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 
 const inputClass = 'mangmee-input';
@@ -60,14 +60,6 @@ function defaultFilters(dataset?: ReportDatasetDefinitionDto): Record<string, Re
     else if (filter.options?.length) filters[filter.key] = filter.options[0] ?? '';
   }
   return filters;
-}
-
-function valueText(value: unknown, type?: ReportFieldType) {
-  if (value === null || value === undefined || value === '') return '-';
-  if (type === 'date') return formatThaiDate(value as string, '-');
-  if (type === 'datetime') return formatThaiDateTime(value as string, '-');
-  if (typeof value === 'number') return value.toLocaleString('th-TH');
-  return String(value);
 }
 
 function downloadTextFile(fileName: string, mimeType: string, content: string) {
@@ -185,7 +177,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
     try {
       const view = await createReportView(companyId, {
         datasetCode: selected.code,
-        name: `${selected.title} ${todayCivilDate()}`,
+        name: defaultReportViewName(selected.title),
         filters,
         chartConfig: { chartKind: chartKind as any },
       });
@@ -290,10 +282,6 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                     </span>
                     <span className="mt-1 block text-xs text-gray-500">{CATEGORY_LABEL[dataset.category] ?? 'รายงาน'}</span>
                   </button>
-                  <details className="px-3 pb-2 text-xs text-gray-500">
-                    <summary className="flex min-h-11 cursor-pointer items-center">รายละเอียดสำหรับฝ่ายสนับสนุน</summary>
-                    <div>{dataset.code} · {dataset.sourceModule}</div>
-                  </details>
                 </div>
               ))}
               {!loading && datasets.length === 0 && <div className="px-3 py-6 text-center text-sm text-gray-400">ยังไม่มีรายงานให้เลือก</div>}
@@ -312,7 +300,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                 ) : (
                   <button key={view.id} className="block min-h-11 w-full rounded-lg border border-gray-200 px-3 py-2 text-left text-sm hover:bg-gray-50" onClick={() => applyView(view)}>
                     <span className="font-medium text-gray-900">{view.name}</span>
-                    <span className="mt-1 block text-xs text-gray-500">{view.datasetCode} · {view.visibility}</span>
+                    <span className="mt-1 block text-xs text-gray-500">{reportViewVisibilityText(view.visibility)}</span>
                   </button>
                 )
               ))}
@@ -343,7 +331,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   {item.id === requestedExportId && <p className="font-semibold text-brand-700">ไฟล์จากการแจ้งเตือน</p>}
                   <div className="flex justify-between gap-2"><span>{item.datasetTitle ?? 'รายงานเดิม'}</span><span>{reportExportStatusText(item.status)}</span></div>
                   <div className="text-xs text-gray-500">
-                    {item.format} · {item.rowCount} แถว · {formatThaiDateTime(item.createdAt, '-')}{reportExportErrorText(item, historyOnly) ? ` · ${reportExportErrorText(item, historyOnly)}` : ''}
+                    {item.format} · {item.rowCount.toLocaleString('th-TH')} แถว · {formatThaiDateTime(item.createdAt, '-')}{reportExportErrorText(item, historyOnly) ? ` · ${reportExportErrorText(item, historyOnly)}` : ''}
                   </div>
                   {(item.warnings ?? []).length > 0 && <div className="mt-1 text-xs text-amber-700">ข้อมูลบางส่วน · {item.warnings!.map(reportWarningText).join(' · ')}</div>}
                   {item.status === 'READY' && (
@@ -367,13 +355,9 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   <p className="mt-1 text-sm text-gray-500">{selected.description}</p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">{CATEGORY_LABEL[selected.category] ?? 'รายงาน'}</span>
-                    <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">สดใหม่ {selected.freshnessSlaSeconds} วิ</span>
-                    {selected.unavailableReason && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">{selected.unavailableReason}</span>}
+                    <span className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">เกณฑ์ความใหม่ของข้อมูลไม่เกิน {Math.ceil(selected.freshnessSlaSeconds / 60).toLocaleString('th-TH')} นาที</span>
+                    {selected.unavailableReason && <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">{reportWarningText(selected.unavailableReason)}</span>}
                   </div>
-                  <details className="mt-2 text-xs text-gray-500">
-                    <summary className="flex min-h-11 cursor-pointer items-center">รายละเอียดสำหรับฝ่ายสนับสนุน</summary>
-                    <div>{selected.code} · {selected.sourceModule}</div>
-                  </details>
                 </div>
                 <button className={selected.status === 'ENABLED' ? btnClass : dangerClass} onClick={() => void run()} disabled={running || selected.status !== 'ENABLED'} aria-busy={Boolean(running)}>
                   {running ? 'กำลังทำงาน...' : selected.status === 'ENABLED' ? 'เรียกรายงาน' : STATUS_LABEL[selected.status]}
@@ -386,7 +370,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                     {filter.label}
                     {filter.options?.length ? (
                       <ThemedSelect className={inputClass} value={String(filters[filter.key] ?? '')} onChange={(e) => updateFilter(filter.key, e.target.value)}>
-                        {filter.options.map((option) => <option key={option} value={option}>{option}</option>)}
+                        {filter.options.map((option) => <option key={option} value={option}>{reportFilterOptionText(option)}</option>)}
                       </ThemedSelect>
                     ) : filter.type === 'date' ? (
                       <ThemedDate className={inputClass} value={String(filters[filter.key] ?? '')} onChange={(e) => updateFilter(filter.key, e.target.value)} />
@@ -404,7 +388,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                 <label className="flex min-w-40 flex-col gap-1 text-xs font-medium text-gray-600">
                   รูปแบบ
                   <ThemedSelect className={inputClass} value={chartKind} onChange={(e) => { setChartKind(e.target.value); setResult(null); }}>
-                    {selected.supportedChartKinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                    {selected.supportedChartKinds.map((kind) => <option key={kind} value={kind}>{reportChartKindText(kind)}</option>)}
                   </ThemedSelect>
                 </label>
               </div>
@@ -426,10 +410,6 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   <div className="text-xs font-medium uppercase text-gray-500">ความสดของข้อมูล</div>
                   <div className="mt-1 text-lg font-bold text-gray-900">{reportFreshnessText(result.freshness.freshnessStatus)}</div>
                 </MangmeeCard>
-                <MangmeeCard className="px-4 py-3">
-                  <div className="text-xs font-medium uppercase text-gray-500">รหัสการรัน</div>
-                  <div className="mt-1 truncate text-sm font-bold text-gray-900">{result.runId}</div>
-                </MangmeeCard>
               </div>
 
               {result.warnings.length > 0 && (
@@ -442,13 +422,14 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   <div className="mt-3 grid gap-2">
                     {result.chart.labels.map((label, i) => {
                       const sourceValue = result.chart?.series[0]?.values[i] ?? 0;
+                      const chartValueType = selected?.supportedMeasures.find((measure) => measure.key === result.chart?.series[0]?.key)?.type;
                       const value = Number(sourceValue);
                       const max = Math.max(...(result.chart?.series[0]?.values.map((v) => Number(v ?? 0)) ?? [1]), 1);
                       return (
                         <div key={`${label}-${i}`} className="grid grid-cols-[160px_minmax(0,1fr)_80px] items-center gap-3 text-sm">
                           <span className="truncate text-gray-600">{label}</span>
                           <span className="h-2 rounded-full bg-brand-100"><span className="block h-2 rounded-full bg-brand-500" style={{ width: `${Math.max(4, (value / max) * 100)}%` }} /></span>
-                          <span className="text-right font-medium text-gray-900">{valueText(sourceValue)}</span>
+                          <span className="text-right font-medium text-gray-900">{reportValueText(sourceValue, chartValueType)}</span>
                         </div>
                       );
                     })}
@@ -466,7 +447,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                     <tbody>
                       {result.rows.map((row, rowIndex) => (
                         <tr key={rowIndex}>
-                          {result.columns.map((column) => <td key={column.key}>{valueText(row[column.key], column.type)}</td>)}
+                          {result.columns.map((column) => <td key={column.key}>{reportValueText(row[column.key], column.type, column.key)}</td>)}
                         </tr>
                       ))}
                       {result.rows.length === 0 && <tr><td className="px-3 py-8 text-center text-gray-400" colSpan={Math.max(result.columns.length, 1)}>ไม่มีข้อมูลสำหรับรายงานนี้</td></tr>}
@@ -492,8 +473,8 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
           <MangmeeCard className="p-4">
             <h2 className="text-sm font-semibold text-gray-900">ภาพรวมรายการรายงาน</h2>
             <div className="mt-3 flex flex-wrap gap-2 text-sm">
-              {categoryCounts.map(([category, count]) => <span key={category} className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">{category}: {count}</span>)}
-              <span className="rounded-full bg-[#ECFDF3] px-2 py-1 text-[#027A48]">เปิดใช้งานแล้ว: {enabledDatasets.length}</span>
+              {categoryCounts.map(([category, count]) => <span key={category} className="rounded-full bg-gray-100 px-2 py-1 text-gray-700">{CATEGORY_LABEL[category] ?? 'รายงาน'}: {count.toLocaleString('th-TH')}</span>)}
+              <span className="rounded-full bg-[#ECFDF3] px-2 py-1 text-[#027A48]">เปิดใช้งานแล้ว: {enabledDatasets.length.toLocaleString('th-TH')}</span>
             </div>
           </MangmeeCard>
         </section>

@@ -27,6 +27,24 @@ export type NotificationRule = {
   updatedAt: Date;
 };
 
+const NOTIFICATION_RULE_DISPLAY_NAMES: Record<string, string> = {
+  daily_owner_summary: 'สรุปประจำวันสำหรับเจ้าของร้าน',
+  stock_low: 'สินค้าต่ำกว่าจุดสั่งซื้อ',
+  stockout_risk: 'ความเสี่ยงสินค้าขาด',
+  sales_today_low: 'ยอดขายวันนี้ต่ำกว่าเป้าหมาย',
+  invoice_overdue: 'ใบแจ้งหนี้เกินกำหนด',
+  tax_due_soon: 'ใกล้ถึงกำหนดยื่นภาษี',
+  approval_pending: 'รายการรออนุมัติ',
+  follow_up_due: 'ถึงกำหนดติดตามลูกค้า',
+  campaign_opportunity: 'โอกาสทำการตลาด',
+  report_ready: 'รายงานพร้อมดาวน์โหลด',
+  system_security_alert: 'แจ้งเตือนความปลอดภัยของระบบ',
+};
+
+export function notificationRuleDisplayName(triggerKey: string): string {
+  return NOTIFICATION_RULE_DISPLAY_NAMES[triggerKey] ?? 'กฎการแจ้งเตือน';
+}
+
 export type NotificationEvent = {
   id: string;
   companyId: string;

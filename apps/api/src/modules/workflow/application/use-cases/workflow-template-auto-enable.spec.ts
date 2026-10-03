@@ -11,8 +11,50 @@ import {
   WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS,
   WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG,
 } from '../../domain/workflow-template-catalog';
+import { nextActionHint, summarizeAction, summarizeCondition, summarizeTrigger } from '../../domain/logic/workflow-explanation.logic';
+import { toTemplateSummary } from '../dto/workflow.mapper';
 
 const AUTO_ENABLE_KEYS = WORKFLOW_TEMPLATE_CATALOG.filter((t) => t.autoEnable).map((t) => t.key);
+
+describe('shop-facing workflow template text', () => {
+  it('keeps all system template names and descriptions in Thai', () => {
+    for (const template of WORKFLOW_TEMPLATE_CATALOG) {
+      for (const text of [template.name, template.description, template.unavailableReason ?? '']) {
+        if (!text) continue;
+        const withoutAllowedTerms = text.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, '');
+        assert.match(withoutAllowedTerms, /[\u0E00-\u0E7F]/, template.key);
+        assert.doesNotMatch(withoutAllowedTerms, /[A-Za-z]/, template.key);
+      }
+    }
+  });
+
+  it('keeps run explanations in Thai without exposing trigger details or action keys', () => {
+    const explanation = [
+      summarizeTrigger('SLA_SCAN', 'inventory', 'stock.low'),
+      summarizeCondition({ matched: false, errors: ['condition.invalid_key'] } as any),
+      summarizeAction({ actionKey: 'send_alert_1', actionType: 'SEND_NOTIFICATION', configJson: {} } as any, 'FAILED_RETRYABLE'),
+      nextActionHint('FAILED'),
+    ].join(' ');
+    const withoutAllowedTerms = explanation.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, '');
+    assert.match(withoutAllowedTerms, /[\u0E00-\u0E7F]/);
+    assert.doesNotMatch(withoutAllowedTerms, /[A-Za-z]/);
+    assert.doesNotMatch(explanation, /inventory|stock\.low|send_alert_1|condition\.invalid_key/);
+  });
+
+  it('uses current catalogue copy if a stored template row still has the old English values', () => {
+    const seed = WORKFLOW_TEMPLATE_CATALOG.find((template) => template.key === 'daily_owner_summary')!;
+    const view = toTemplateSummary({
+      id: 'template-1', key: seed.key, name: 'Daily owner summary', description: 'Old English description',
+      unavailableReason: 'Old English reason', category: seed.category, sourceModule: seed.sourceModule,
+      triggerType: seed.triggerType, defaultConditionJson: seed.defaultConditionJson, defaultActionJson: seed.defaultActionJson,
+      requiredPermissions: seed.requiredPermissions, requiredSourceModules: seed.requiredSourceModules,
+      defaultEnabled: seed.defaultEnabled, status: seed.status,
+    } as any);
+    assert.equal(view.name, seed.name);
+    assert.equal(view.description, seed.description);
+    assert.equal(view.unavailableReason, seed.unavailableReason);
+  });
+});
 
 type FakeRule = {
   id: string; companyId: string; templateId: string; name: string; description?: string;
@@ -106,7 +148,7 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
     assert.equal(repo.versions.length, AUTO_ENABLE_KEYS.length);
     assert.ok(repo.versions.every((v: any) => v.status === 'ENABLED' && v.version === 1));
     // EVENT rules must carry the catalog trigger binding or they subscribe to nothing.
-    const pending = repo.rules.find((r: any) => r.name === 'Reimbursement pending approval');
+    const pending = repo.rules.find((r: any) => r.name === 'คำขอเบิกค่าใช้จ่ายรออนุมัติ');
     assert.deepEqual(pending.triggerConfigJson, WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_pending_approval']);
   });
 
@@ -245,8 +287,8 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
       if (!rule) continue;
       assert.equal(rule.cooldownSeconds, WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS[template.key] ?? 3600, template.key);
     }
-    assert.equal(repo.rules.find((r: any) => r.name === 'Reimbursement pending approval').cooldownSeconds, 0);
-    assert.equal(repo.rules.find((r: any) => r.name === 'Approval SLA breach').cooldownSeconds, 3600);
+    assert.equal(repo.rules.find((r: any) => r.name === 'คำขอเบิกค่าใช้จ่ายรออนุมัติ').cooldownSeconds, 0);
+    assert.equal(repo.rules.find((r: any) => r.name === 'รายการเบิกจ่ายรออนุมัติเกินกำหนด').cooldownSeconds, 3600);
   });
 });
 
