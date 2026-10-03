@@ -1,5 +1,28 @@
 # Agent Memory: manual-expense-web-entry-flag
 
+## Update 2026-10-03 — follow-up round P7 (every sentence true in every shop)
+
+Status: P7 BUILT on the same branch, after the develop merge `27dfb9828`. Not pushed, not merged, not released. The implementation section below stays true except where this section changes it.
+
+Why: the owner confirmed on 2026-10-03 that every shop, existing ones included, starts with the menu hidden. Sentences that were true only for a shop with the menu shown became defects. The controller ordered the whole class fixed (items 1–7 of the follow-up brief).
+
+What changed (old → new words are in spec appendix C, "รอบแก้ถ้อยคำ 3 ต.ค. 2569"):
+- The pinned guide `expenses-guide.content.ts`: six sentences now say when manual entry is there ("(เมื่อเปิดใช้สำหรับร้านของคุณ)" and the like): overview item and step, the submenu summary, the manual section's summary (condition first: a folded section clamps its summary to two lines), the no-receipt link (who sees it) and the "ไม่พบเมนูย่อยบางรายการ" answer. The submenu row, the channel label of saved records and the rights table were left: true either way, reasons written in the test. The pin in `approved-product-help.ts` moved to the committed file's SHA-256. All six cards citing this guide were reviewed: only `expense.start` named manual entry.
+- LINE card `expense.start`: "…หรือบันทึกด้วยมือตามช่องทางที่เปิดใช้สำหรับร้านของคุณและสิทธิ์ที่คุณมี…" (readers are expense.read/read_own holders, the read-only auditor included, so the rights clause is needed too). The ai-gateway must ship in the same release.
+- Admin row: the switch and the word beside it say what the shop sees (`manualWebEntryRow(...).shown`): "ไม่แสดง", switch off and locked, while the saved manual-expense feature is off or the company is disabled/archived; the stored value is untouched and applies again later. `editable` replaces the inline lock rule.
+- Package notice while the package switches are locked: names the menu switch when it can be pressed ("ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “แสดงเมนูบันทึกด้วยมือบนเว็บ”").
+- Admin description: "…ยังใช้ได้ตามสิทธิ์และช่องทางที่ร้านมี" (found in this round: it assumed every shop has LINE).
+- Not-shown page: "กรุณาติดต่อเจ้าของกิจการ" (key renamed to `expenses.manual_entry_contact_owner`). Switch to the shared rights-request sentence when batch A is on develop (the controller will say when).
+- Upload page link "ไม่มีไฟล์ใบเสร็จ/ใบกำกับภาษี? บันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับเงิน (ใบทดแทน)": shown only to holders of both expense.create and expense.review (found in this round: the wizard lets only reviewers record or certify, so STAFF, SALES, INVENTORY, MARKETING and ACCOUNTANT were offered something they could not do, and with the menu hidden they have no web manual entry at all).
+- `expense-receipt-upload-spec.md`: the two lines that said the upload tab links to manual entry now say what the code does.
+
+Verification (2026-10-03, real runs):
+- Every new or changed test was run on the old code first and failed (logs `r2-red-*.log` in the lane's scratch): contact line 1, admin logic and wiring 6, guide 2, upload link 1, LINE card 1; then green.
+- 19 single-line reverts each failed the named test (the `shown`/`editable` rules, the notice, the description, the page's checked/word/lock/notice wiring, the upload gate, the contact line, four guide sentences, the card body, the pin, the clamp position). Three reverts of the page wiring, run through the browser test, each failed at the line that checks it.
+- Web typecheck exit 0; whole web suite 2713 pass, 0 fail (no S3 variables); ai-gateway typecheck exit 0; `approved-knowledge.spec.ts` 10 pass; LINE-AI whole-chain acceptance exit 0 (3,695 tests across its suites, 0 fail); maintenance pins `status=current`; `git diff --check` clean. The capability manifest hashes none of the touched files, so it was not regenerated.
+- Browser (fresh throwaway stack, all migrations, seed): the new e2e 2 pass (locked state at 390 and 1280, the notice, the stored value back when the feature returns); TAX-11B-03 pass; evidence INV-11 for upload and manual on a phone and at 1280 pass. A scratch look at 390 and 1280 of the guide in both shop states, the upload page for an owner (link) and a staff member (no link), and the admin notice at five widths: 29 screenshots, widest overflow 0 px.
+- Not checked in a browser: the not-shown page's contact line (no seeded user holds create without upload and list); its render test covers the markup.
+
 ## Update 2026-10-02 — implementation (current state)
 
 Everything below this section is kept unchanged as history. Where it disagrees with this section, this section wins.
