@@ -228,7 +228,7 @@ static check อย่างเดียวไม่ยืนยัน open drop
 Ownerระบุ `outputs/company-infographic-20261001/company-receipts-dashboard-v4.xlsx` เป็นแม่แบบตาม [Excel spec §8](../specs/mangmee-executive-excel-export-spec-th.md#8-แม่แบบและหลักฐานตรวจอ่าน-2026-10-01)
 มตินี้แทนsummary-only/optional-company/values-only: ค่าเริ่มต้นเป็นDashboardเขียว–ทอง + nativecharts/สูตร + รายบริษัทที่เป็นsource, 2ชีตหลัก; ตารางคำนวณใต้Dashboardและmetadataในsource
 ต้องแยกsource28ก.ย.ของแม่แบบจากfictional30ก.ย.ของเดโม; ไม่ยกสูตรblank=0หรือreceiptทุกสถานะมาเปลี่ยนBE Q03โดยปริยาย
-API13รับtemplateKeyแทนincludeCompanies; serverเลือกversion/hash. XG03ต้องตรวจnativechart/formula/cache/renderเพิ่ม; writerเดิมsingle-sheetยังทำไม่ได้
+API13 ไม่รับ templateKey หรือ includeCompanies ตาม BE §16.4; server เลือกรุ่นแม่แบบเอง E5 มี diff แผงส่งออกและ shared writer หลายชีตพร้อม chart/formula/cache แล้ว รอ controller ตรวจ XG03 และมือถือ ตาม memory `executive-excel-export-2026-10-03.md`
 EXL13–14เพิ่มintegrationacceptance; baseline188/47deferredไม่เปลี่ยนและไม่มีgapimplementationปิดจากการอ่านแม่แบบ. ไม่แก้ไฟล์อ้างอิงและไม่สร้างXLSXใหม่รอบนี้
 แม่แบบที่จะเก็บใน repository ต้องสร้างใหม่จากข้อมูลสมมติ ไม่ใช่ไฟล์ของ Owner ที่ตัดแถวออก และ server ต้องเขียนค่าที่คำนวณแล้วของทุกสูตร (Excel spec §8, RB-27)
 

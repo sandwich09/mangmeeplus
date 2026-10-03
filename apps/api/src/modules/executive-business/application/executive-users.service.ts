@@ -1,6 +1,6 @@
 import { HttpException, Injectable } from '@nestjs/common';
 import {
-  EXECUTIVE_ACCOUNT_STATUSES, EXECUTIVE_ROLE_KEYS,
+  EXECUTIVE_ACCOUNT_STATUSES, EXECUTIVE_ROLE_KEYS, EXECUTIVE_WORDS as W,
   type ExecutiveAccountStatus, type ExecutiveUserAccessBody, type ExecutiveUserCreateBody,
   type ExecutiveUserCreateResult, type ExecutiveUserCredential, type ExecutiveUserListDto,
   type ExecutiveUserListQuery, type ExecutiveUserReasonBody, type ExecutiveUserStatusBody, type ExecutiveUserView,
@@ -41,6 +41,9 @@ const ERRORS = {
   ACCOUNT_ALREADY_EXISTS: [409, 'ชื่อผู้ใช้หรืออีเมลนี้ถูกใช้แล้ว'],
   ACCOUNT_REVOKED: [409, 'บัญชีนี้ถูกปิดจากทางอื่นของระบบ หน้านี้เปิดคืนไม่ได้'],
   ACCOUNT_PROTECTED: [422, 'ไม่สามารถเปลี่ยนบัญชีผู้ดูแลระบบด้วยคำสั่งนี้ได้'],
+  EXECUTIVE_SNAPSHOT_EXPIRED: [409, W.export.expired],
+  EXECUTIVE_EXPORT_LIMIT_EXCEEDED: [422, W.export.limit],
+  EXECUTIVE_EXPORT_EMPTY: [422, W.export.empty],
   SOURCE_UNAVAILABLE: [503, 'ระบบยังอ่านข้อมูลส่วนนี้ไม่ได้ กรุณาลองใหม่ภายหลัง'],
 } as const;
 /** `message` replaces the fixed text where a page needs other words for the same code (a report denies reading, not managing). */

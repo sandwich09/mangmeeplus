@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type MutableRefObject } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type MutableRefObject } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   EXECUTIVE_SORT_OPTIONS,
@@ -19,6 +19,8 @@ import {
   swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, reportFilterChips, menuHref, reportDateTime, reportDate, pageNumber, reasonText,
   EXECUTIVE_ACCESS_DENIED_EVENT, sortLabel, retryDelaySeconds, reportHistoryState, ownHistoryState, backSection, type ReportSection,
 } from './executive-reports.logic';
+import { ExecutiveExportPanel } from './ExecutiveExportPanel';
+import { canExport } from './executive-export.logic';
 import { W, REPORT_VIEWS, DETAIL_TABS, RANK_LABELS, thaiLabel } from './executive-reports.words';
 import { OverviewContent, CompaniesContent, AnalysisContent, CompanyContent, ReportLink, Reasons } from './ExecutiveReportContent';
 
@@ -73,6 +75,8 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const pathname = usePathname(), router = useRouter(), searchParams = useSearchParams();
   const paramsString = searchParams.toString();
   const params = new URLSearchParams(paramsString);
+  const exportOpen = params.get('export') === '1' && canExport(context);
+  const [exportNotice, setExportNotice] = useState('');
   const [data, setData] = useState<ReportData | null>(null);
   const [history, setHistory] = useState<ExecutiveCompanyHistory | null>(null);
   const [dataKey, setDataKey] = useState('');
@@ -85,10 +89,11 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const [contactReadAt, setContactReadAt] = useState('');
   const [retryWait, setRetryWait] = useRetryWait();
   const [backTitle, setBackTitle] = useState<string | null>(null);
-  const requestKey = `${section}:${targetCompanyId ?? ''}:${paramsString}:${search}`;
   const tab = DETAIL_TABS.find(tab => tab.value === params.get('tab'))?.value ?? 'company';
   const problem = context && section === 'compare' ? comparisonProblem(params, context) : null;
   const queryKey = context ? JSON.stringify(reportQuery(section, params, context, search)) : null;
+  const historyPage = section === 'detail' && tab === 'history' ? pageNumber(params.get('page')) : 1;
+  const requestKey = `${section}:${targetCompanyId ?? ''}:${queryKey}:${tab}:${historyPage}`;
 
   function navigateParams(next: URLSearchParams, replace = false, searchValue = term) {
     const href = `${pathname}?${next}`;
@@ -139,7 +144,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     const next = new URLSearchParams(paramsString);
     next.set('month', normalizedMonth(next, context));
     for (const key of GLOBAL_FILTERS) next.set(FILTER_URL[key], filterValue(key, next, context));
-    next.delete('q'); next.delete('search'); next.delete('buildId'); next.delete('export');
+    next.delete('q'); next.delete('search'); next.delete('buildId'); if (next.get('export') !== '1' || !canExport(context)) next.delete('export');
     // URL only (Next's own state keeps the router where it is): every read normalises the same way, so a router update would read twice.
     if (next.toString() !== paramsString) window.history.replaceState(window.history.state, '', `${pathname}?${next}`);
   }, [context, paramsString, pathname]);
@@ -175,8 +180,13 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     return () => controller.abort();
     // Depend on the normalised query, not context identity: refreshing builtMonths must not read the report a third time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryKey, section, targetCompanyId, paramsString, search, attempt, problem, tab]);
+  }, [queryKey, section, targetCompanyId, attempt, problem, tab, historyPage]);
 
+  const closeExport = useCallback(() => {
+    const next = new URLSearchParams(window.location.search); next.delete('export');
+    window.history.replaceState(ownHistoryState(window.history.state), '', `${window.location.pathname}?${next}`);
+  }, []);
+  const reloadExport = useCallback(() => { closeExport(); setExportNotice(W.export.expired); setAttempt(n => n + 1); }, [closeExport]);
   const visibleData = dataKey === requestKey ? data : null;
   const retry = retryWait > 0 ? undefined : () => setAttempt(n => n + 1);
   const failed = shared.failure ?? failure;
@@ -200,9 +210,12 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const { active: activeLabels, picked: pickLabels } = context ? reportFilterChips(visibleData?.appliedFilters, picked, context) : { active: [], picked: [] };
   const pagination = section === 'companies' && visibleData && 'pagination' in visibleData ? visibleData.pagination : tab === 'history' && section === 'detail' ? history?.pagination : null;
   return <main className="executive-report mx-auto min-w-0 max-w-7xl p-4 text-base [overflow-wrap:anywhere] sm:p-6 [&_button]:min-h-11 [&_button]:min-w-11 [&_.mangmee-stat-value]:!text-lg [&_.mangmee-stat-card]:!p-3 [&_.mangmee-stat-sub]:!text-sm">
-    <MangmeePage eyebrow={W.report} title={title} actions={section === 'overview' ? <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.allCompanies}</ReportLink> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}>
+    <MangmeePage eyebrow={W.report} title={title} actions={<div className="flex flex-wrap gap-2">{canExport(context) && !exportOpen && <Button variant="secondary" loading={loading} disabled={loading || !!failed || !!problem || !visibleData} onClick={() => { const next = new URLSearchParams(params); next.set('export', '1'); setExportNotice(''); navigateParams(next); }}>{W.export.action}</Button>}{section === 'overview' ? <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.allCompanies}</ReportLink> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}</div>}>
       <div className="space-y-4">
-        {context && <>
+        {exportNotice && <p role="status">{exportNotice}</p>}
+        {canExport(context) && !exportOpen && (loading || failed || problem || !visibleData) && <p role="status">{loading ? W.loading : problem ? W[problem] : failed?.text ?? W.noData}</p>}
+        {exportOpen && context && visibleData && <ExecutiveExportPanel key={requestKey} section={section} params={params} context={context} data={visibleData} search={search} targetCompanyId={targetCompanyId} close={closeExport} reload={reloadExport} deny={shared.deny} />}
+        {context && !exportOpen && <>
           <div className="flex min-w-0 flex-wrap items-center gap-3">
             <div className="w-44"><label htmlFor="executive-month" className="text-sm">{W.month}</label><ThemedDate id="executive-month" aria-label={W.month} aria-invalid={!!fieldErrors.month} aria-describedby={fieldErrors.month ? 'executive-month-error' : undefined} mode="month" allowClear={false} value={normalizedMonth(params, context)} min={context.months?.first} max={context.months?.last ?? context.currentMonth} selectable={context.builtMonths} onChange={event => event.target.value && update({ month: event.target.value })} className="!min-h-11 !text-base" />{fieldErrors.month && <FieldError id="executive-month-error">{fieldErrors.month}</FieldError>}</div>
             {visibleData && <><span className="text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.period.isPartialMonth && <><MangmeeBadge tone="amber">{W.partialMonth}</MangmeeBadge>{context.months && visibleData.period.month > context.months.first && <Button variant="ghost" onClick={() => { const date = new Date(`${visibleData.period.month}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); update({ month: date.toISOString().slice(0, 7) }); }}>{W.previousMonth}</Button>}</>}{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
@@ -241,7 +254,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
         {!context && !shared.failure && <LoadingState label={W.loading} />}
         {context && problem && <EmptyState title={W[problem]} description="" />}
         {context && !problem && !failed && !visibleData && <LoadingState label={W.loading} />}
-        <CoverLoader active={loading && !!visibleData} label={W.loading}>
+        {!exportOpen && <><CoverLoader active={loading && !!visibleData} label={W.loading}>
           <div className="min-w-0 space-y-4" aria-busy={loading}>
             {visibleData && section === 'overview' && <OverviewContent data={visibleData as ExecutiveOverview} nav={nav} />}
             {visibleData && section === 'companies' && <CompaniesContent data={visibleData as ExecutiveCompanies} nav={nav} selected={selected} select={selectCompany} />}
@@ -249,7 +262,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
             {visibleData && ['usage', 'revenue', 'customers', 'compare'].includes(section) && <AnalysisContent data={visibleData as ExecutiveAnalysis} nav={nav} seller={params.get('seller')} />}
           </div>
         </CoverLoader>
-        {pagination && pagination.totalPages > 0 && <Pagination page={pagination.page} totalPages={pagination.totalPages} disabled={loading} onPageChange={page => update({ page: String(page) })} />}
+        {pagination && pagination.totalPages > 0 && <Pagination page={pagination.page} totalPages={pagination.totalPages} disabled={loading} onPageChange={page => update({ page: String(page) })} />}</>}
       </div>
     </MangmeePage>
   </main>;

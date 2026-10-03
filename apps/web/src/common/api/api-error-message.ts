@@ -1,4 +1,4 @@
-import { THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
+import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
 
@@ -10,6 +10,9 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECU
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
   INVALID_INPUT: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
+  EXECUTIVE_SNAPSHOT_EXPIRED: W.export.expired,
+  EXECUTIVE_EXPORT_LIMIT_EXCEEDED: W.export.limit,
+  EXECUTIVE_EXPORT_EMPTY: W.export.empty,
   EXECUTIVE_ACCESS_DENIED: 'คุณไม่มีสิทธิ์ใช้งานส่วนนี้',
   ACCOUNT_NOT_FOUND: 'ไม่พบบัญชีผู้บริหาร',
   ACCOUNT_ALREADY_EXISTS: 'ชื่อผู้ใช้หรืออีเมลนี้ถูกใช้แล้ว',
@@ -26,16 +29,16 @@ const CODE_LABELS: Record<string, string> = {
   ADDON_NOT_ON_SALE: 'ยังไม่เปิดขาย',
   CLASSIFICATION_INCOMPLETE: 'ยังไม่ได้จัดประเภทบริษัทครบ',
   INDUSTRY_NOT_PROVIDED: EXECUTIVE_UNKNOWN_LABEL,
-  HISTORY_BEFORE_COLLECTION: 'ยังไม่มีข้อมูลของช่วงนี้ เพราะเป็นช่วงก่อนที่ระบบเริ่มเก็บ',
-  HISTORY_BEFORE_FIRST_BUILD: 'ข้อมูลก่อนเริ่มทำรายงาน นับได้เฉพาะรายการที่ยังเหลืออยู่',
-  SOURCE_ROWS_PURGED: 'ใช้จำนวนที่เคยบันทึกไว้ เพราะรายการต้นทางถูกลบแล้ว',
+  HISTORY_BEFORE_COLLECTION: W.historyBeforeCollection,
+  HISTORY_BEFORE_FIRST_BUILD: W.historyBeforeFirstBuild,
+  SOURCE_ROWS_PURGED: W.sourceRowsPurged,
   SOURCE_STALE: 'ข้อมูลยังไม่ได้อัปเดต',
   NOT_YET_REGISTERED: 'บริษัทนี้ยังไม่สมัครในช่วงรายงานนี้',
   NOT_ENTITLED: EXECUTIVE_REPORT_LABELS.receiptAdoption.NOT_ENTITLED!,
-  TOO_FEW_COMPANIES: 'บริษัทน้อยเกินไปสำหรับการแบ่งกลุ่ม',
-  NO_POSITIVE_NET: 'ไม่มีบริษัทที่จ่ายมากกว่ายอดคืนเงินในเดือน จึงยังคำนวณสัดส่วนรายรับไม่ได้',
+  TOO_FEW_COMPANIES: W.fewCompanies,
+  NO_POSITIVE_NET: W.noPositiveCompanies,
   BILLING_SOURCE_REVIEW: 'ข้อมูลการชำระต้องตรวจสอบ',
-  MANUAL_TERM_NO_RECEIPT: 'ผู้ดูแลตั้งแพ็กเกจให้ ไม่มีหลักฐานรับเงินในระบบ',
+  MANUAL_TERM_NO_RECEIPT: W.manualTerm,
   LEGACY_NO_TERM: 'ร้านรุ่นก่อนมีระบบแพ็กเกจ ไม่มีข้อมูลการชำระ',
   RATE_LIMITED: 'เรียกดูถี่เกินไป กรุณารอสักครู่แล้วลองใหม่',
   EMAIL_ACCESS_INVALID: 'รหัสหมดอายุหรือใช้ไม่ได้แล้ว กรุณาขอรหัสทางอีเมลใหม่',
@@ -1417,11 +1420,11 @@ const API_KINDS = new Set([...Object.keys(KIND_LABELS), 'unknown']);
 const OTHER_CLIENT_ERROR = 'ทำรายการไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง';
 const GENERIC_API_ERROR = 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง';
 
-// Coverage changes the meaning of historical reasons; the shared Thai seam owns both forms.
+// Coverage selects historical reasons from the shared screen/workbook words.
 const EXECUTIVE_REASON_STATE_LABELS: Record<string, Partial<Record<ExecutiveCoverage, string>>> = {
-  HISTORY_BEFORE_COLLECTION: { partial: 'ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้ ช่วงก่อนเริ่มเก็บยังประเมินไม่ได้' },
-  HISTORY_BEFORE_FIRST_BUILD: { unavailable: 'ยังไม่มีตัวเลขของช่วงก่อนเริ่มทำรายงาน' },
-  SOURCE_ROWS_PURGED: { unavailable: 'รายการต้นทางถูกลบแล้ว จึงไม่มีตัวเลขของส่วนนี้' },
+  HISTORY_BEFORE_COLLECTION: { partial: W.historyBeforeCollectionPartial },
+  HISTORY_BEFORE_FIRST_BUILD: { unavailable: W.historyBeforeFirstBuildUnavailable },
+  SOURCE_ROWS_PURGED: { unavailable: W.sourceRowsPurgedUnavailable },
 };
 
 export function executiveReasonMessage(code: string, coverage?: ExecutiveCoverage): string {

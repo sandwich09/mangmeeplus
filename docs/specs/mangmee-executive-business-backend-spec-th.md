@@ -2,11 +2,11 @@
 
 **Implementation E1 — 2026-10-02:** เจ้าของสั่งเริ่มแล้ว; รอบนี้ทำเฉพาะ S1 ฝั่ง API และ S5 (API07–10/API14/API15) ตาม §17.4 ด้านล่าง ยังไม่ใช่การเปิดใช้จริง ไม่มีงานเว็บหรือรายงาน S2–S4 ใน diff นี้ ส่วนลบข้อมูลยังพักและไม่สร้างในโค้ด
 
-**Implementation E3a — 2026-10-03:** API01–API06 อ่านจากตารางสรุปของขั้น S2 ตาม §16.6 ด้านล่าง รวมเข้ากิ่งงานผู้บริหารแล้วและหน้ารายงาน E4b เรียกใช้ ยังไม่เข้า develop และยังไม่ขึ้นระบบ; ช่องที่หน้ารายงานขอเพิ่มสามข้ออยู่ท้าย §16.6; ยังไม่มี API13 (การส่งออก)
+**Implementation E3a — 2026-10-03:** API01–API06 อ่านจากตารางสรุปของขั้น S2 ตาม §16.6 ด้านล่าง รวมเข้ากิ่งงานผู้บริหารแล้วและหน้ารายงาน E4b เรียกใช้ ยังไม่เข้า develop และยังไม่ขึ้นระบบ; ช่องที่หน้ารายงานขอเพิ่มสามข้ออยู่ท้าย §16.6; API13 มี diff ใน lane E5 (ดู §16.7) รอ controller ตรวจรับ
 
 คำที่แสดงบนหน้าจอล่าสุด: [ใช้คำที่คนทั่วไปเข้าใจ](mangmee-executive-plain-language-spec-th.md) — เมนู “รายรับ”, แท็บ “ลูกค้าที่สร้างรายรับสูง”; identifiers/สูตรเดิมคงไว้
 
-ส่งออกล่าสุด: [Export Excel](mangmee-executive-excel-export-spec-th.md) — Excel Dashboard เขียว–ทองตามไฟล์v4, native charts/สูตร/ข้อมูลต้นทางสองชีต; ขอบเขตตามหน้าที่ดูและทุกหน้าของผลกรอง; ยังเป็นสเปก/เดโม
+ส่งออกล่าสุด: [Export Excel](mangmee-executive-excel-export-spec-th.md) — Excel Dashboard เขียว–ทองตามไฟล์v4, native charts/สูตร/ข้อมูลต้นทางสองชีต; ขอบเขตตามหน้าที่ดูและทุกหน้าของผลกรอง; มี diff E5 แล้ว รอ controller ตรวจรับ
 
 โครงหน้าล่าสุด: [เมนูย่อยและการเปรียบเทียบ](mangmee-executive-navigation-comparison-spec-th.md) แยกหน้าสรุป/วิเคราะห์เพื่อไม่ต้องเลื่อนทุกหัวข้อรวมกัน; โครงเมนูนี้ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) — D2 ของสเปกหน้าจอ; ยังเป็นเอกสารและเดโม
 
@@ -1093,7 +1093,7 @@ taxId ที่อยู่เต็ม และชื่อเจ้าขอ�
 
 ### 16.1 Endpoint inventory
 
-API07–API10/API14/API15 มี implementation ใน E1 (ดูสถานะตรวจรับและข้อเปิด §17.4); API01–API06 มี implementation ใน E3a (§16.6); API13 ยังเป็น **PROPOSED**; prefix API จริงคือ `/v1`
+API07–API10/API14/API15 มี implementation ใน E1 (ดูสถานะตรวจรับและข้อเปิด §17.4); API01–API06 มี implementation ใน E3a (§16.6); API13 มี implementation diff ใน E5 (§16.7) รอตรวจรับ; prefix API จริงคือ `/v1`
 ใช้ validation/authenticated fetch/error presentation ที่มีอยู่ และ `Cache-Control: no-store` บน authenticated responses
 ตารางนี้เป็นรายการ endpoint ชุดเดียวของงานนี้ (API01–API15) เอกสารฉบับอื่นอ้างรหัสจากตารางนี้ ไม่เขียนรายการของตนเอง (RB-18)
 
@@ -1834,4 +1834,18 @@ Q-EXL-CONTACT RESOLVED (D02) — Owner เลือก `User.email` / `User.phon
 - ไม่ส่ง `contactUserId`, `contactSource`, `contactCoverage` ไปยังหน้าจอหรือไฟล์ เหลือเพียง `ownerContact { status, email?, phoneNumber? }`
 - เห็นบนจอเฉพาะผู้มี `system.executive.contact.read` (Q14) และอยู่ในไฟล์เฉพาะเมื่อเลือกและมีสิทธิ์ (Q33)
 
-ไม่มีการแก้ระบบบัญชี/สมัครหรืออ่านฐานข้อมูลสดในรอบนี้; application export ยัง NOT_IMPLEMENTED
+รอบเอกสารนั้นไม่แก้ระบบบัญชี/สมัครและยังไม่มี application export; สถานะการลงมือทำปัจจุบันอยู่ใน E5 §16.7 ถัดไป
+
+### 16.7 สัญญาที่ลงมือทำใน E5 — 2026-10-03
+
+API13 มี diff แล้ว ยังไม่ commit/merge/deploy หลักฐานและงานตรวจรับที่ค้างอยู่ใน `docs/agent-memory/executive-excel-export-2026-10-03.md`
+
+- `reportKey`: `overview`, `companies`, `usage`, `revenue`, `customers`, `compare`, `detail` ตาม section ของหน้ารายงาน; `subview`: usage `adoption`/`ranking`, revenue `summary`/`top`, customers `industry`/`discovery`/`sales`/`creditedSales` (มุมยอดขายครั้งแรก); หน้าอื่นไม่รับ subview
+- sort ของอันดับการใช้งานใช้ `sortBy` metric และ `desc`; รายรับมุม top ใช้ `netReceipts`/`desc`; รายชื่อใช้ sort เดิมของ API03; หน้าอื่นไม่รับ sort ด้าน detail ใช้ targetCompanyId, compare ใช้ comparison อย่างเดียว ทั้งสองไม่รับตัวกรองร่วม
+- ไม่รับ templateKey จาก client ตาม §16.4/Excel §5; server ใช้รุ่น `executive-v4-1` และบันทึกใน audit
+- ใช้ `load()` เดียวกับหน้าจอใน REPEATABLE READ พร้อมข้อมูลเสริมใน snapshot; advisory lock `6013/hashtext(userId)` อยู่ตลอดการสร้างไฟล์ และถูกปล่อยอัตโนมัติเมื่อ transaction จบ
+- ต้องมี read/export ณ คำขอและตรวจซ้ำก่อนคืนไฟล์ รวมสถานะ User/session; ขอ contact ต้องเป็นรายชื่อหรือรายละเอียดและมีสิทธิ์ contact ของตนเอง มิฉะนั้นปฏิเสธ ไม่ลดสิทธิ์เงียบ ๆ
+- เงื่อนไข อันดับ และ cohort ของรายชื่อใช้ฐานร่วมเดิมก่อนกรองรายชื่อ; ไม่รับ page/pageSize หรือยอดจาก client; ชุดเก่าคืน 409, ไม่มีบริษัทคืน 422, เกินเพดานคืน 422, งานซ้อนคืน 429 พร้อมเวลารอ
+- คืน binary โดยตรงพร้อม no-store, ชื่อสำรอง ASCII คงที่, X-Export-Reference, X-Export-Row-Count, X-Export-Company-Count และ X-Request-Id; หน้าเว็บตั้งชื่อไทย ไม่มีสำเนาไฟล์บน server
+- `executive.export.created` เขียนก่อนปล่อยไฟล์และไม่ส่งไฟล์เมื่อเขียน audit ไม่ได้; บันทึกกรณี guard/DTO ปฏิเสธก่อนถึง action ด้วย และกรณีเขียน audit ก่อน action ไม่ได้คืน 503 โดยไม่ปล่อยไฟล์หรือทิ้ง Promise rejection ไม่เก็บ body, คำค้น ชื่อ อีเมล หรือเบอร์โทร; ไม่ตั้ง companyId ของลูกค้า
+- PostgreSQL test เพิ่มใน `executive-report-read.pg.spec.ts`: ตัวเลขจริงตรง overview/list, contact opt-in, audit privacy และปฏิเสธ build ก่อนรอบสร้างใหม่; lane รันเฉพาะเคสที่ไม่ต้องมีฐานข้อมูล controller ต้องรันส่วน PostgreSQL
