@@ -51,8 +51,9 @@ for (const width of [390, 1280]) {
     await expect(page).toHaveURL(new RegExp(`/companies/${companyId}/settings/profile#shop$`));
     expect((await freshIdentity).ok()).toBe(true);
     await expect(page.getByRole('heading', { name: 'ข้อมูลร้าน', exact: true })).toBeVisible();
+    // The field's name carries its hint (6f7451735 rewrote it for the billing documents).
     await expect(page.getByRole('textbox', {
-      name: 'ชื่อจดทะเบียน ชื่อตามหนังสือรับรอง ไม่ใช่ชื่อร้านที่ใช้เรียกกัน',
+      name: 'ชื่อจดทะเบียน ใช้ชื่อจดทะเบียนบนใบแจ้งหนี้และใบเสร็จ หากเว้นว่างจะใช้ชื่อร้านที่สมัครไว้',
       exact: true,
     })).toBeVisible();
 
@@ -76,6 +77,8 @@ for (const width of [390, 1280]) {
   });
 }
 
+// b89652eed (spec signup-optional-email-otp-billing §6): the account email changes only through the OTP
+// panel (account-email-otp-ux.spec.ts); the backup password lives in its own "รหัสผ่านสำรอง" section.
 for (const width of [390, 1280]) test(`a LINE owner sets a backup password without a username and refreshes email guidance at ${width}px`, async ({
   authedPage: page,
   companyId,
@@ -88,12 +91,13 @@ for (const width of [390, 1280]) test(`a LINE owner sets a backup password witho
   };
   let revision = 0;
   const passwordBodies: Array<Record<string, unknown>> = [];
+  let emailCommands = 0;
   await page.route('**/api/v1/auth/account/security', route => route.fulfill({ json: account }));
-  await page.route('**/api/v1/auth/account/email/otp', route => route.fulfill({ json: {
+  await page.route('**/api/v1/auth/account/email/otp**', route => { if (route.request().method() !== 'GET') emailCommands++; return route.fulfill({ json: {
     email: account.email, emailVerified: account.emailVerified, emailRevision: revision,
     emailRequirement: 'UNVERIFIED', hasPassword: account.hasPassword, emailLoginEnabled: false,
     lineLinked: true, serverNow: new Date().toISOString(), challenge: null,
-  } }));
+  } }); });
   await page.route('**/api/v1/auth/me/password/set', async route => {
     passwordBodies.push(route.request().postDataJSON() as Record<string, unknown>);
     account = { ...account, hasPassword: true };
@@ -102,6 +106,7 @@ for (const width of [390, 1280]) test(`a LINE owner sets a backup password witho
   });
 
   await gotoCompany(page, companyId, '/settings/profile#account');
+  await expect(page.getByRole('heading', { name: 'บัญชีของฉัน', exact: true })).toBeVisible();
   const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
   const backupHint = emailPanel.getByText('หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน', { exact: true });
   await expect(backupHint).toBeVisible();
@@ -109,6 +114,7 @@ for (const width of [390, 1280]) test(`a LINE owner sets a backup password witho
   await expect(page.getByRole('textbox', { name: 'ชื่อผู้ใช้', exact: true })).toHaveCount(0);
   await emailPanel.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true }).fill('draft@example.com');
   await page.locator('summary').filter({ hasText: 'รหัสผ่านสำรอง' }).click();
+  await expect(page.getByText(/^หลังตั้งรหัสผ่านแล้ว ใช้อีเมล owner@example\.com คู่กับรหัสผ่านเข้าเว็บได้$/)).toBeVisible();
   await page.getByLabel('รหัสผ่านใหม่', { exact: false }).fill('backup-password');
   await page.getByLabel('พิมพ์รหัสผ่านอีกครั้ง', { exact: true }).fill('backup-password');
   // Fail if the update depends on a full navigation or the panel's 15-second poll.
@@ -117,6 +123,7 @@ for (const width of [390, 1280]) test(`a LINE owner sets a backup password witho
   await page.getByRole('button', { name: 'ตั้งรหัสผ่านสำรอง', exact: true }).click();
   await expect(page.getByRole('link', { name: 'เปลี่ยนรหัสผ่าน', exact: true })).toBeVisible();
   await expect(backupHint).toHaveCount(0, { timeout: 5000 });
+  expect(emailCommands).toBe(0); // setting a password sends nothing to the e-mail panel's server side
   await expect(emailPanel.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true })).toHaveValue('draft@example.com');
   await emailPanel.getByRole('button', { name: 'ถัดไป', exact: true }).click();
   await expect(emailPanel.getByLabel('รหัสผ่านปัจจุบัน', { exact: true })).toBeVisible();
@@ -140,7 +147,8 @@ for (const width of [1280, 390]) {
     await expect(page.getByLabel('ชื่อจดทะเบียน', { exact: false })).toBeHidden();
     await expect(page.locator('input[type=password]:visible')).toHaveCount(0);
     await page.getByRole('button', { name: 'เปลี่ยนอีเมล', exact: true }).click();
-    await page.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true }).fill('draft@example.com');
+    // The label text ends in the required mark (aria-hidden " *", 14df7093c): match the field's accessible name.
+    await page.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true }).fill('draft@example.com');
     await expect(page.getByRole('heading', { name: 'เข้าสู่ระบบด้วยรหัสทางอีเมล' })).toBeHidden();
     const sections = page.getByRole('navigation', { name: 'หมวดการตั้งค่า' });
     await sections.getByRole('button', { name: 'ข้อมูลร้าน', exact: true }).click();

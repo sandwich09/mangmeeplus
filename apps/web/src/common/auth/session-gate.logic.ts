@@ -1,5 +1,6 @@
 // Pure decisions for the server-side session gates (login route, company/system layouts).
 // Framework-free so they stay unit-testable; the callers own the cookie/fetch/redirect plumbing.
+import { EXECUTIVE_ROLE_KEYS } from '@watchdog-bms/contracts';
 import { sanitizeNextPath } from './middleware.logic';
 import type { WebSession } from '../models/web-session.model';
 
@@ -58,6 +59,18 @@ export function canOpenSystemBilling(session: WebSession, path: string): boolean
   return Boolean(pathname && (pathname === '/system/billing' || pathname.startsWith('/system/billing/'))) && session.permissions.includes('system.billing.read');
 }
 
+export const EXECUTIVE_HOME_PATH = '/system/executive';
+export function canOpenSystemExecutive(session: WebSession, path: string): boolean {
+  const pathname = sanitizeNextPath(path)?.split(/[?#]/)[0];
+  return Boolean(pathname && (pathname === EXECUTIVE_HOME_PATH || pathname.startsWith(`${EXECUTIVE_HOME_PATH}/`)))
+    && session.permissions.includes('system.executive.read');
+}
+/** Any executive role (read, export, contacts) or report permission, and nothing beyond the report and the own account. */
+export function isExecutiveOnlySession(session: WebSession): boolean {
+  return (session.roles.some(role => (EXECUTIVE_ROLE_KEYS as readonly string[]).includes(role)) || session.permissions.some(key => key.startsWith('system.executive.')))
+    && !isSystemAdmin(session) && session.permissions.every(key => key.startsWith('system.executive.') || key.startsWith('account.'));
+}
+
 // A landing target that lands back on /login (or on '/', which redirects to /login) would bounce
 // the signed-in user straight back here — the redirect loop this gate exists to prevent.
 function usableLanding(path: string | null): string | null {
@@ -104,7 +117,9 @@ export function resolveLoginLanding(
   // S07/S29: a sales-only session owns exactly one area. Its remembered home is the platform
   // tenant's dashboard (the login BFF derives it from `companyId`), and following that would land
   // it on a workspace the shell immediately bounces — so anything outside /sales is dropped here.
-  const landing = isSalesOnlySession(session)
+  const landing = isExecutiveOnlySession(session)
+    ? [explicit, home].find(path => path && canOpenSystemExecutive(session, path)) ?? EXECUTIVE_HOME_PATH
+    : isSalesOnlySession(session)
     ? [explicit, home].find((path) => path?.startsWith('/sales')) ?? SALES_HOME_PATH
     : explicit
       ?? home
@@ -171,6 +186,7 @@ export function resolvePostLegalAcceptanceTarget(
   session: WebSession,
 ): string {
   const explicit = usablePostAcceptanceLanding(sanitizeNextPath(next));
+  if (isExecutiveOnlySession(session)) return explicit && canOpenSystemExecutive(session, explicit) ? explicit : EXECUTIVE_HOME_PATH;
   if (isSalesOnlySession(session)) return explicit?.startsWith('/sales') ? explicit : SALES_HOME_PATH;
   if (explicit) return explicit;
   if (isSystemAdmin(session)) return '/system/partners';

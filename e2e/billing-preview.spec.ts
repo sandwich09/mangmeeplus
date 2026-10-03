@@ -466,11 +466,15 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(capacityRepair).toContainText('กรุณาเลือกสาขาและผู้ใช้ล่าสุด');
   await page.getByRole('button', { name: 'เลือกสิทธิ์สำหรับรอบที่จ่ายแล้ว', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'เลือกสาขาและผู้ใช้ที่จะใช้งานต่อ', exact: true })).toBeVisible();
+  // 'pending' is a return from Checkout whose attempt is still open: since 9217e6227 the page waits for
+  // the payment provider and offers no way to end, resume or redo it (the one-tap "เลือกแพ็กเกจใหม่" is
+  // driven in billing-no-setup.spec.ts).
   await scenario.selectOption('pending');
-  await page.getByRole('button', { name: 'เลือกแพ็กเกจใหม่', exact: true }).click();
-  await expect(page.getByText('ยุติหน้าชำระเงินเดิมแล้ว เลือกแพ็กเกจใหม่ได้เลย', { exact: true })).toBeVisible();
-  await expect(plans).toBeVisible();
-  await expect(page.getByRole('button', { name: 'ยุติรายการที่ยังไม่ชำระ' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'กำลังตรวจสอบรายการชำระเงิน', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'ตรวจผลการชำระเงินอีกครั้ง', exact: true })).toBeVisible();
+  for (const name of ['เลือกแพ็กเกจใหม่', 'กลับไปยังรายการเดิม', 'ยุติรายการที่ยังไม่ชำระ'])
+    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+  await expect(plans).toHaveCount(0);
   await scenario.selectOption('start');
   await expect(plans).toBeVisible();
   await plans.getByRole('button', { name: 'วิธีชำระอื่น' }).click();

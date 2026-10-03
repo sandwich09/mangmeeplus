@@ -1,11 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { BrandedState } from '@/common/components/state';
+import { BrandedState, ForbiddenState } from '@/common/components/state';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useLocale } from '@/common/i18n/use-locale';
 
-export default function SystemAccessDenied() {
+export default function SystemAccessDenied({ executive = false }: { executive?: boolean }) {
   const [locale] = useLocale();
+  if (executive) return <ForbiddenState title={apiErrorMessage({ code: 'EXECUTIVE_ACCESS_DENIED' })} description="" helpText="" />;
   const th = locale === 'th';
   return (
     <BrandedState
