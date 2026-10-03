@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
-import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
+import { reimbursementPayoutRoundStatus, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { buildReimbursementGuide } from './reimbursement-guide.content';
 import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content';
 import { buildExpensesGuide } from './expenses-guide.content';
@@ -109,9 +109,9 @@ describe('user guide shortcuts', () => {
 
 /** Every sentence a reader of the guide is shown. */
 function sentences(guide: UserGuide): string[] {
-  return [guide.description, ...guide.sections.flatMap((section) => [section.title, section.summary ?? '', ...section.blocks.flatMap((block) => {
+  return [guide.title, guide.eyebrow, guide.description, guide.primaryLink?.label ?? '', ...guide.sections.flatMap((section) => [section.title, section.summary ?? '', ...section.blocks.flatMap((block) => {
     switch (block.kind) {
-      case 'items': return block.items.flatMap((item) => [item.title, item.detail]);
+      case 'items': return block.items.flatMap((item) => [item.title, item.detail, item.link?.label ?? '']);
       case 'steps': return block.steps.flatMap((step) => [step.title, step.detail]);
       case 'table': return [...block.headers, ...block.rows.flat()];
       case 'note': return [block.title, block.detail];
@@ -231,5 +231,267 @@ describe('the reimbursement guide reads as the product does', () => {
     assert.deepEqual(latin.filter((word) => !['PDF', 'MB', 'LINE'].includes(word)), []);
     const amounts = read.flatMap((text) => text.match(/\d[\d,.]* บาท/g) ?? []);
     assert.deepEqual(amounts.filter((amount) => !/^\d{1,3}(,\d{3})*\.\d{2} บาท$/.test(amount)), []);
+  });
+});
+
+it('guide role tables name finance and the read-only auditor as the role picker does', () => {
+  const common = ['ฝ่ายบัญชี, ฝ่ายการเงิน, ผู้จัดการ, เจ้าของกิจการ', 'ฝ่ายบัญชี, ฝ่ายการเงิน, เจ้าของกิจการ'];
+  const values = (guide: UserGuide) => guide.sections.flatMap((section) => section.blocks.flatMap((block) => block.kind === 'table' ? block.rows.flat() : []));
+  assert.ok(values(buildExpensesGuide('co')).includes(common[0]!));
+  assert.ok(values(buildReportsGuide('co')).includes(common[0]!));
+  assert.ok(values(buildReportsGuide('co')).includes('ฝ่ายบัญชี, ผู้ตรวจสอบ (ดูอย่างเดียว)'));
+  assert.ok(values(buildTaxGuide('co')).includes(common[1]!));
+  assert.ok(values(buildExpensesGuide('co')).includes('ฝ่ายบัญชีและฝ่ายการเงิน'));
+});
+
+it('the claim guide names every standard role as the role picker does', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+  const guide = buildReimbursementGuide('co');
+  const read = sentences(guide);
+  const rows = (id: string) => guide.sections.find((section) => section.id === id)!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows : []));
+  const holders = (item: string) => rows('permissions').find((row) => row[1] === item)?.[2];
+  assert.equal(holders('อนุมัติการเบิก'), `${roles.OWNER} ${roles.ADMIN} ${roles.MANAGER}`);
+  assert.equal(holders('ตรวจสอบการเบิก'), `${roles.OWNER} ${roles.ACCOUNTANT}`);
+  assert.equal(holders('ตรวจ/จ่ายการเบิก'), `${roles.OWNER} ${roles.FINANCE}`);
+  assert.equal(holders('ตั้งนโยบายการเบิก'), `${roles.OWNER} ${roles.ADMIN}`);
+  assert.equal(holders('สิทธิ์แก้ไขข้อมูลพนักงาน'), `${roles.OWNER} ${roles.ADMIN} และ${roles.MANAGER}กับ${roles.HR}ในสาขาที่ตนดูแล`);
+  assert.equal(rows('tabs').find((row) => row[0] === 'ตั้งค่านโยบาย')?.[1], `${roles.OWNER} และ${roles.ADMIN}`);
+  // Approving one's own claim without the policy switch, and approving then paying: the three roles that hold it.
+  const approvers = `${roles.OWNER} ${roles.ADMIN} และ${roles.MANAGER}`;
+  for (const part of ['อนุมัติคำขอของตัวเองได้ ระบบบันทึกไว้', 'ทำได้อยู่แล้วโดยไม่ต้องเปิด', 'ทำได้อยู่แล้ว บทบาทที่บริษัทสร้างเอง', 'อนุมัติคำขอของตัวเองได้ บทบาทอื่นจะเห็น']) {
+    assert.ok(read.find((sentence) => sentence.includes(part))?.includes(approvers), part);
+  }
+  // A role is never called by a word outside the one list ("เจ้าของบัญชี" is the account's owner, not a role).
+  for (const text of read) assert.doesNotMatch(text, /แอดมิน|เจ้าของ(?!กิจการ|บัญชี)/u, text);
+});
+
+// The claim policy is changed by whoever holds reimbursement.policy.manage: the owner and the company admin by default.
+it('the claim guide never says the owner alone changes the claim policy', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+  const guide = buildReimbursementGuide('co');
+  const read = sentences(guide);
+  for (const text of read) assert.doesNotMatch(text, new RegExp(`${roles.OWNER}เปิด`, 'u'), text);
+  assert.equal(guide.sections.find((section) => section.id === 'policy')!.title, `ตั้งค่านโยบายของบริษัท (สำหรับ${roles.OWNER}และ${roles.ADMIN})`);
+  assert.equal(guide.sections.find((section) => section.id === 'finance')!.summary, 'มีเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” เท่านั้น');
+  // What a switch does is said of the company; whom to ask names both holders.
+  for (const said of [
+    'งานตรวจการเงินมีต่อเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” ในหน้าตั้งค่านโยบาย',
+    `${roles.OWNER}หรือ${roles.ADMIN}เปิด “ตรวจการเงินก่อนจ่าย” ได้ที่หน้าตั้งค่านโยบาย`,
+    'บทบาทอื่นทำได้เมื่อบริษัทเปิด “ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้”',
+    `ขอให้${roles.OWNER}หรือ${roles.ADMIN}เปิดในหน้าตั้งค่านโยบาย`,
+  ]) assert.ok(read.some((text) => text.includes(said)), said);
+});
+
+it('the substitute-receipt guide calls the owner by the one name', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+  const read = sentences(buildSubstituteReceiptGuide('co'));
+  // "กิจการเจ้าของคนเดียว" is a kind of business (a sole proprietorship), not a role.
+  for (const text of read) assert.doesNotMatch(text, /เจ้าของ(?!กิจการ|คนเดียว)/u, text);
+  const said = `${roles.OWNER}ลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ`;
+  assert.ok(read.some((text) => text.includes(said)), said);
+});
+
+// The wizard offers online and paper signing; the signing section covers both, in the words of the screens.
+it('the substitute-receipt guide describes paper signing as the screens do', () => {
+  const guide = buildSubstituteReceiptGuide('co');
+  const text = sentences({ ...guide, sections: guide.sections.filter((section) => section.id === 'sign') }).join('\n');
+  const screens = ['SubstituteReceiptWizardPage.tsx', 'SubstitutePaperSigningPanel.tsx']
+    .map((name) => readFileSync(join(__dirname, '../expenses', name), 'utf8')).join('\n');
+  for (const quote of ['เลือกวิธีลงนาม', 'ลงนามออนไลน์', 'พิมพ์และเซ็นบนกระดาษ', 'ผู้ลงนามทั้งสองส่วนเป็นคนเดียวกัน (ต้องผ่านนโยบายบริษัท)', 'ยื่นฉบับลงนามเพื่อตรวจรับ',
+    'ตรวจสอบเอกสารฉบับเต็มและข้อมูลที่ถอดจากกระดาษ', 'หน้าถัดไป', 'อ่านครบทุกหน้าและตรวจเทียบข้อมูลแล้ว', 'ตรวจรับและจัดเก็บฉบับสมบูรณ์']) {
+    assert.ok(text.includes(`“${quote}”`), quote);
+    assert.ok(screens.includes(quote), `${quote} is on a screen`);
+  }
+  // In the owner-self mode one person may sign both lines; the certificate says who, not always the owner.
+  assert.doesNotMatch(text, /ว่าเจ้าของ(กิจการ)?ลงนามทั้งสองฐานะ/u);
+  assert.ok(text.includes('ถ้าคนเดียวลงนามทั้งสองฐานะ ระบบจะระบุไว้ในเอกสาร'), 'one person signing both is noted, whoever it is');
+});
+
+describe('shop guides name the company admin for the business permissions it holds', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+
+  it('names ADMIN for substitute-receipt settings in the expense guide', () => {
+    assert.ok(sentences(buildExpensesGuide('co')).includes(`${roles.OWNER}, ${roles.ADMIN}`));
+  });
+
+  it('names ADMIN throughout substitute-receipt setup and preparation', () => {
+    const read = sentences(buildSubstituteReceiptGuide('co'));
+    for (const expected of [
+      `ไปที่ ค่าใช้จ่ายและใบเสร็จ แล้วเลือก ตั้งค่าใบรับรองแทนใบเสร็จ เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าบริษัท เช่น ${roles.OWNER}และ${roles.ADMIN}`,
+      `ตั้งค่า (สำหรับ${roles.OWNER}และ${roles.ADMIN})`,
+      `${roles.OWNER}, ${roles.ADMIN}, ${roles.MANAGER}และ${roles.FINANCE}`,
+      `${roles.OWNER}, ${roles.ADMIN}`,
+    ]) assert.ok(read.includes(expected), expected);
+  });
+
+  // Defaults from ROLE_GRANTS and the route guards: expense.review OWNER/ADMIN/MANAGER/FINANCE; expense.confirm and
+  // expense.category.manage OWNER/ADMIN/FINANCE. ACCOUNTANT holds none of them, so no guide names ฝ่ายบัญชี for them.
+  it('names who can review, confirm, manage categories and prepare a substitute receipt by default', () => {
+    const rows = (guide: UserGuide, id: string) => guide.sections.find((section) => section.id === id)!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows : []));
+    const holders = (table: string[][], act: string) => table.find((row) => row[0] === act)?.[2];
+    const reviewers = `${roles.OWNER}, ${roles.ADMIN}, ${roles.MANAGER}, ${roles.FINANCE}`;
+    const confirmers = `${roles.OWNER}, ${roles.ADMIN}, ${roles.FINANCE}`;
+    const expenses = buildExpensesGuide('co');
+    assert.equal(holders(rows(expenses, 'overview'), 'รอตรวจสอบ'), `ผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย เช่น ${reviewers}`);
+    assert.equal(holders(rows(expenses, 'overview'), 'พร้อมยืนยัน'), `ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย เช่น ${confirmers}`);
+    assert.equal(holders(rows(expenses, 'submenus'), 'หมวดหมู่'), confirmers);
+    assert.equal(holders(rows(expenses, 'submenus'), 'ใบรับรองแทนใบเสร็จ'), reviewers);
+    assert.equal(holders(rows(expenses, 'permissions'), 'ตรวจความครบถ้วนและยืนยันเอกสาร'), confirmers);
+    assert.equal(holders(rows(expenses, 'permissions'), 'เพิ่มหรือแก้ไขหมวดหมู่'), confirmers);
+    const categories = sentences({ ...expenses, sections: expenses.sections.filter((section) => section.id === 'categories') });
+    for (const text of categories) assert.ok(!text.includes(roles.ACCOUNTANT), text);
+    assert.ok(categories.some((text) => text.includes(`ผู้มีสิทธิ์จัดการหมวดหมู่เสมอ เช่น ${roles.OWNER} ${roles.ADMIN} และ${roles.FINANCE}`)));
+    // In the designated-approver mode only the listed approvers may approve, the owner included.
+    assert.equal(holders(rows(buildSubstituteReceiptGuide('co'), 'permissions'), 'อนุมัติและออกเอกสาร'), `${confirmers} ถ้าบริษัทกำหนดรายชื่อผู้อนุมัติ ต้องเป็นคนในรายชื่อนั้น`);
+  });
+});
+
+// The guide cannot import API code, so it copies the report words; these checks read the sources and fail on any drift.
+describe('the reports guide uses the words the reports page shows', () => {
+  const guide = buildReportsGuide('co');
+  const root = join(__dirname, '../../../../..');
+  const catalogue = readFileSync(join(root, 'apps/api/src/modules/reports/domain/report-catalog.ts'), 'utf8');
+  const titles = new Map([...catalogue.matchAll(/code: '([^']+)',\s+version: \d+,\s+title: '([^']+)'/g)].map((match) => [match[1]!, match[2]!]));
+  const table = (id: string) => guide.sections.find((section) => section.id === id)!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows : []));
+
+  it('names every report by its catalogue title, in catalogue order', () => {
+    assert.equal(titles.size, 18);
+    assert.deepEqual(table('catalog').map((row) => row[0]), [...titles.values()]);
+  });
+
+  it('gives as examples the column headings those reports really have', () => {
+    const adapters = readFileSync(join(root, 'apps/api/src/modules/reports/application/report-source-adapters.ts'), 'utf8');
+    const headings = (method: string) => {
+      const body = adapters.slice(adapters.indexOf(`private async ${method}(`));
+      return [...body.slice(0, body.indexOf('private async ', 1)).matchAll(/\{ key: '\w+', label: '([^']+)', type: '\w+' \}/g)].map((match) => match[1]).join(' · ');
+    };
+    const detail = sentences(guide).find((text) => text.startsWith('หัวคอลัมน์เปลี่ยนไปตามรายงานที่เลือก'))!;
+    assert.ok(detail.includes(`${titles.get('financial.trial_balance')}มีคอลัมน์ ${headings('trialBalanceReport')}`), detail);
+    assert.ok(detail.includes(`${titles.get('expense.summary')}มีคอลัมน์ ${headings('expenseSummaryReport')}`), detail);
+  });
+
+  it('describes only the result cards the page shows', () => {
+    const page = readFileSync(join(__dirname, '../reports/ReportsWorkspacePage.tsx'), 'utf8');
+    const cards = [...page.matchAll(/<div className="text-xs font-medium uppercase text-gray-500">([^<]+)<\/div>/g)].map((match) => match[1]);
+    assert.ok(cards.length >= 3, 'the page still has result cards');
+    assert.deepEqual(table('run').map((row) => row[0]), cards);
+  });
+
+  it('shows no English word but the product names kept as they are', () => {
+    for (const text of sentences(guide)) assert.doesNotMatch(text.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, ''), /[A-Za-z]/, text);
+  });
+
+  // The guide's own rule: a word in “ ” is on a screen, letter for letter (or names a section of this guide).
+  it('quotes only words the reports page shows', () => {
+    const shown = [
+      readFileSync(join(__dirname, '../reports/ReportsWorkspacePage.tsx'), 'utf8'),
+      readFileSync(join(__dirname, '../reports/reports-ui.logic.ts'), 'utf8'),
+      readFileSync(join(__dirname, '../../common/i18n/workspace-dictionary.ts'), 'utf8'),
+      ...guide.sections.map((section) => section.title),
+    ].join('\n');
+    const quotes = [...new Set(sentences(guide).flatMap((text) => [...text.matchAll(/“([^”]+)”/g)].map((match) => match[1]!)))];
+    assert.ok(quotes.length >= 8, 'the guide quotes the page');
+    assert.deepEqual(quotes.filter((quote) => !shown.includes(quote)), []);
+  });
+
+  // Untrue before (2026-10-03): runs keep no rows; every run computes afresh (only ภาพรวมการทำงาน reads the dashboard's
+  // stored numbers); the page lists every report and marks the ones you cannot open; the export card is
+  // “ไฟล์รายงานที่ส่งออก” and does not show who exported; ledger reports cover the selected period only; reports do
+  // not follow the top-bar branch choice.
+  it('says what the page and the reports really do', () => {
+    const text = sentences(guide).join('\n');
+    for (const untrue of ['ย้อนกลับไปเปิดผลลัพธ์เดิม', 'ชุดเดิมที่ระบบเก็บไว้', 'แสดงเฉพาะรายงานที่บัญชีของคุณมีสิทธิ์', 'ศูนย์ส่งออกข้อมูล',
+      'ว่าใครส่งข้อมูลชุดใด', 'ณ วันสิ้นงวด', 'ใช้กับข้อมูลทั้งบริษัทหรือเฉพาะบางส่วน', 'บริษัทตัวอย่าง', 'ให้ตรงกันก่อนเทียบตัวเลข']) {
+      assert.equal(text.includes(untrue), false, untrue);
+    }
+    for (const fact of ['ไม่ได้เก็บผลลัพธ์', '“ไม่มีสิทธิ์”', '“ไฟล์รายงานที่ส่งออก”', '“ทุกสาขา (รวม)”']) assert.ok(text.includes(fact), fact);
+  });
+});
+
+describe('shop guide permission help names business roles and separates package access', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+  const permissionHelp = `ใช้ตารางนี้บอก${roles.OWNER}ว่าต้องการสิทธิ์ใดเพิ่ม`;
+  const check = (guide: UserGuide) => {
+    for (const sentence of sentences(guide)) assert.ok(!sentence.includes(roles.SYSTEM_ADMIN), sentence);
+    assert.equal(guide.sections.find((section) => section.id === 'permissions')!.summary, permissionHelp);
+  };
+
+  it('keeps platform roles out of the expense guide and distinguishes a closed menu from missing employee rights', () => {
+    const guide = buildExpensesGuide('co');
+    check(guide);
+    const answer = sentences(guide).find((sentence) => sentence.startsWith('ถ้าเมนูเปิดใช้แล้ว'))!;
+    assert.ok(answer, 'explain employee access only after the company menu is enabled');
+    for (const text of [roles.OWNER, 'ตรวจแพ็กเกจ', 'ติดต่อทีมงาน']) assert.ok(answer.includes(text), text);
+  });
+
+  it('keeps platform roles out of the substitute guide and describes settings access by permission', () => {
+    const guide = buildSubstituteReceiptGuide('co', ['company.setup.manage']);
+    check(guide);
+    const instructions = sentences(guide).find((sentence) => sentence.includes('เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าบริษัท'))!;
+    assert.ok(instructions, 'a custom role holding company.setup.manage can open settings too');
+    assert.ok(links(guide).includes('/companies/co/settings/substitute-receipt'));
+  });
+
+  it('keeps platform roles out of the reports guide and names exporters with source access', () => {
+    const guide = buildReportsGuide('co');
+    check(guide);
+    const menuHelp = sentences(guide).find((sentence) => sentence.startsWith('ถ้าเมนูเปิดใช้แล้ว'))!;
+    for (const text of [roles.OWNER, 'ตรวจแพ็กเกจ', 'ติดต่อทีมงาน']) assert.ok(menuHelp.includes(text), text);
+    const exportHelp = sentences(guide).find((sentence) => sentence.startsWith('ถ้าคุณไม่มีสิทธิ์ส่งออกข้อมูล'))!;
+    for (const role of ['OWNER', 'ADMIN', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const) {
+      assert.ok(exportHelp.includes(roles[role]), role);
+    }
+    assert.ok(exportHelp.includes('ที่มีสิทธิ์ดูข้อมูลของรายงานนั้น'), exportHelp);
+  });
+
+  it('keeps platform roles out of the tax guide and names the holders of tax export and review rights', () => {
+    const guide = buildTaxGuide('co');
+    check(guide);
+    const exportHelp = sentences(guide).find((sentence) => sentence.startsWith('ถ้าคุณไม่มีสิทธิ์ส่งออกรายงานภาษี'))!;
+    const reviewHelp = sentences(guide).find((sentence) => sentence.startsWith('Export REVIEW_JSON'))!;
+    for (const text of [exportHelp, reviewHelp]) {
+      for (const role of ['OWNER', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const) assert.ok(text.includes(roles[role]), role);
+      for (const role of ['ADMIN', 'MANAGER'] as const) assert.ok(!text.includes(roles[role]), role);
+    }
+  });
+
+  it('keeps platform roles out of the claim guide and sends every request for rights to the owner', () => {
+    const guide = buildReimbursementGuide('co');
+    check(guide);
+    const said = (part: string) => sentences(guide).find((sentence) => sentence.includes(part)) ?? part;
+    // A missing menu, tab or button, or the page's own refusal: only the owner can give every right in the table.
+    for (const [part, ask] of [
+      ['แสดงว่าบัญชีของคุณยังไม่มีสิทธิ์ใช้งาน', `ให้แจ้ง${roles.OWNER} โดยบอกสิ่งที่ต้องการทำ`],
+      ['ถ้าไม่พบแท็บหรือปุ่มที่ต้องใช้', `ให้แจ้ง${roles.OWNER}ตรวจสิทธิ์ของคุณ`],
+      ['ข้อความคือ “บัญชีนี้ยังไม่มีสิทธิ์ใช้งานหน้าการเบิกจ่าย”', `ให้ติดต่อ${roles.OWNER} โดยอ้างตาราง`],
+    ]) assert.ok(said(part).includes(ask), said(part));
+    // Rights come with a role: a role that has the item, or the item added to the role, for everyone in it.
+    const howToAsk = said('อ้างข้อในคอลัมน์กลางของตารางนี้');
+    for (const text of [`แจ้ง${roles.OWNER}ว่าต้องการทำสิ่งใด`, 'เปลี่ยนบทบาทของคุณเป็นบทบาทที่มีข้อนั้น', 'เลือกข้อนั้นให้บทบาทของคุณ', 'ทุกคนในบทบาทเดียวกัน']) {
+      assert.ok(howToAsk.includes(text), text);
+    }
+  });
+});
+
+
+describe('claim notification gaps in the guide', () => {
+  it('explains changed draft choices, combined standing saves, and the requester finance-block notice', () => {
+    const guide = buildReimbursementGuide('co', OWNER, ['OWNER']);
+    const text = sentences(guide).join(' ');
+    const notify = guide.sections.find(s => s.id === 'notify')!;
+    const rows = notify.blocks.flatMap(b => b.kind === 'table' ? b.rows : []);
+    assert.ok(rows.some(r => r[0].includes('ระงับ') && r[1].includes('ผู้เบิก') && r[2].includes('เหตุผล')));
+    assert.ok(rows.some(r => r[0].includes('ร่าง') && r[2].includes('เงินสด') && r[2].includes('บัญชีรับเงินคืนประจำ')));
+    assert.match(text, /ถ้าบันทึกโดยไม่เปลี่ยนจะไม่แจ้งซ้ำ/);
+    assert.match(text, /ใบร่างที่ทำแทนผู้เบิก: แจ้งเมื่อวิธีรับเงินคืนเปลี่ยน/);
+    assert.doesNotMatch(text, /ปลายทาง/);
+    const draft = rows.find(r => r[0].includes('ร่าง'))!;
+    assert.equal(draft[1], 'ผู้เบิกที่ยังใช้งานอยู่ เมื่อวิธีรับเงินคืนหรือบัญชีเปลี่ยน');
+    assert.match(draft[2], /เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แจ้งผู้จัดทำใบเบิก/);
+    assert.doesNotMatch(draft[2], /ผู้ตรวจการเงิน/);
+    assert.ok(rows.some(r => r[0].includes('ระงับ') && r[1].includes('ไม่รวมคนที่ระงับและผู้เบิก')));
+    assert.match(text, /แจ้งเตือนเดียว/);
+    assert.match(text, /บัญชีรับเงินคืนประจำ/);
+    assert.doesNotMatch(text, /เจ้าของบัญชีได้รับแจ้งทุกครั้ง/);
   });
 });

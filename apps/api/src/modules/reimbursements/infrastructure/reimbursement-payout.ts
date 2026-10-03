@@ -78,6 +78,12 @@ export type DraftPayoutWrite =
   | { mode: 'CASH' }
   | { mode: 'SPECIFIED'; destination: SealedPayoutDestination; source: 'REQUESTER' | 'PREPARER'; actorUserId: string };
 
+export type DraftPayoutChange = {
+  write: DraftPayoutWrite;
+  onPersisted?: (tx: any, requestId: string) => Promise<void>;
+  onChanged?: (tx: any, requestId: string, given: ClaimPayoutRecord | undefined) => Promise<void>;
+};
+
 /** What a claim in a correction round may be given: a draft's three choices, or the account it was approved with (`payoutCorrectionRoundStart`). */
 export type CorrectionPayoutWrite = DraftPayoutWrite | { mode: 'PREVIOUS' };
 
@@ -277,6 +283,24 @@ export async function applyDraftPayout(tx: any, companyId: string, requestId: st
   if (working) await tx.reimbursementPayoutDestination.update({ where: { id: working.id }, data: columns });
   else await tx.reimbursementPayoutDestination.create({ data: { companyId, reimbursementRequestId: requestId, version, ...columns } });
   return { payoutMethod: 'BANK_TRANSFER', payoutDestinationVersion: version, payoutFingerprint: null };
+}
+
+/** Draft creation and edits use the same comparison, inside their transaction and request lock.
+ * The submit token compares method, following the default and the full keyed destination fingerprint,
+ * never random ciphertext, a working-row version or just the last four digits.
+ */
+export async function applyDraftPayoutChange(tx: any, claim: ClaimPayoutPointer, change: DraftPayoutChange, creating = false): Promise<Record<string, unknown>> {
+  const before = change.onChanged && !creating ? payoutSubmitToken(claim.id, await readSubmitPayoutPlan(tx, claim)) : undefined;
+  const columns = await applyDraftPayout(tx, claim.companyId, claim.id, change.write);
+  await change.onPersisted?.(tx, claim.id);
+  if (change.onChanged) {
+    const after = { ...claim, ...columns };
+    if (creating || before !== payoutSubmitToken(claim.id, await readSubmitPayoutPlan(tx, after))) {
+      const given = await readDraftDefaultPayout(tx, after) ?? await readClaimPayout(tx, after);
+      await change.onChanged(tx, claim.id, given);
+    }
+  }
+  return columns;
 }
 
 /** The freeze a submit would make, from what is stored right now. */

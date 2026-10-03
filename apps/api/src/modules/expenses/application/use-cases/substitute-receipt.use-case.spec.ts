@@ -930,6 +930,46 @@ describe('reusable personal signature (R9)', () => {
     assert.equal(entries[1].metadataJson.selfApproved, true);
   });
 
+  // OWNER_SELF also lets an admin or a manager sign both lines; the issued certificate says the owner only when it was.
+  it('names a company admin who signs both lines by name, and keeps the owner wording for the owner', async () => {
+    const issued = async (roles: string[]) => {
+      const written: any[] = [];
+      const recording = { ...storage, putObject: async (input: any) => { written.push(input); return storage.putObject(input); } };
+      let certifiedInput: any;
+      const repo = signingRepo({
+        findById: async () => expense(),
+        findActiveMemberIdentity: async (_company: string, userId: string) => ({ userId, displayName: 'สมชาย' }),
+        markSubstituteEvidenceCertified: async (input: any) => { certifiedInput = input; return prepared({ status: 'PAYER_CERTIFIED' }); },
+        issueSubstituteEvidence: async () => prepared({ status: 'ISSUED' }),
+      });
+      const preview = await new PreviewSubstituteReceiptUseCase(repo).execute(ctx('payer-1'), 'exp-1', 'sub-A', { payerPosition: '' });
+      await new CertifySubstituteReceiptUseCase(repo, recording, audit, notification, cleanup)
+        .execute(ctx('payer-1', ['expense.confirm'], roles), 'exp-1', 'sub-A', {
+          payerPosition: '', certificationAcknowledged: true, previewChecksumSha256: preview.previewChecksumSha256,
+          expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+        });
+      const certifiedEvidence = prepared({
+        id: 'sub-A', status: 'PAYER_CERTIFIED', payerPosition: '',
+        snapshotJson: certifiedInput.snapshotJson, snapshotChecksumSha256: certifiedInput.snapshotChecksumSha256,
+        payerSignatureAttachmentId: certifiedInput.payerSignatureAttachmentId,
+        payerSignatureChecksumSha256: certifiedInput.payerSignatureChecksumSha256,
+        certifiedArtifactAttachmentId: 'certified-artifact',
+        certifiedArtifactChecksumSha256: certifiedInput.artifact.checksumSha256, certifiedAt: now,
+      });
+      await new ApproveSubstituteReceiptUseCase({ ...repo, findSubstituteEvidence: async () => certifiedEvidence }, recording, audit, cleanup)
+        .execute(ctx('payer-1', ['expense.confirm'], roles), 'exp-1', 'sub-A', {
+          approverPosition: '', approvalAcknowledged: true,
+          certifiedArtifactChecksumSha256: certifiedInput.artifact.checksumSha256,
+          expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+        });
+      return written.find((input) => input.objectKey.includes('-issued-')).bytes.toString('utf8') as string;
+    };
+    const byAdmin = await issued(['ADMIN']);
+    assert.doesNotMatch(byAdmin, /ลงนามโดยเจ้าของกิจการ/);
+    assert.ok(byAdmin.includes('ลงนามโดย สมชาย ในฐานะผู้จ่ายเงินและผู้อนุมัติ'), 'the admin is named');
+    assert.ok((await issued(['OWNER'])).includes('ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ'), 'the owner wording is unchanged');
+  });
+
   it('refuses a blank signature attachment id instead of quietly using the saved signature', async () => {
     const repo = signingRepo();
     for (const signatureAttachmentId of ['', '   ']) {

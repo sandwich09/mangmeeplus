@@ -78,7 +78,7 @@ export function buildDailyBriefWidgets(
 ): DailyBriefWidget[] {
   const inbox = `/companies/${companyId}/inbox`;
   const widgets: DailyBriefWidget[] = [
-    { key: 'unanswered', label: 'ยังไม่ได้ตอบ', value: c.unanswered, href: inbox, severity: c.unanswered > 0 ? 'action' : 'info' },
+    { key: 'unanswered', label: 'ยังไม่ได้ตอบ', value: c.unanswered, href: `${inbox}?unanswered=true`, severity: c.unanswered > 0 ? 'action' : 'info' },
     { key: 'sla_breaches', label: 'รอตอบเกินกำหนด', value: c.slaBreaches, href: `${inbox}?overdue=true`, severity: c.slaBreaches > 0 ? 'critical' : 'info' },
     { key: 'new_customers_today', label: `ลูกค้าใหม่${periodLabel}`, value: c.newCustomersToday, href: `/companies/${companyId}/crm`, severity: 'info' },
     { key: 'appointments_today', label: `นัดหมาย${periodLabel}`, value: c.appointmentsToday, href: `/companies/${companyId}/bookings`, severity: c.appointmentsToday > 0 ? 'action' : 'info' },

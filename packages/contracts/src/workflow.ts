@@ -37,6 +37,47 @@ export type WorkflowDeadLetterResolutionStatus = 'OPEN' | 'REPLAYED' | 'IGNORED'
 export type WorkflowWebhookStatus = 'DISABLED' | 'ENABLED';
 export type WorkflowEventInboxStatus = 'RECEIVED' | 'MATCHED' | 'SKIPPED' | 'FAILED';
 
+// The automation page and the automation report name things with these words.
+export const WORKFLOW_TAB_LABELS = {
+  templates: 'เทมเพลต',
+  rules: 'กฎอัตโนมัติ',
+  runs: 'ประวัติการทำงาน',
+  tasks: 'งานที่มอบหมาย',
+  'dead-letters': 'ข้อผิดพลาดค้าง',
+  webhooks: 'เชื่อมต่อระบบภายนอก',
+} as const satisfies Record<string, string>;
+
+export const WORKFLOW_RULE_STATUS_LABELS: Record<WorkflowRuleStatus, string> = {
+  DRAFT: 'แบบร่าง',
+  ENABLED: 'เปิดใช้งาน',
+  DISABLED: 'ปิดใช้งาน',
+  ARCHIVED: 'เก็บถาวร',
+};
+
+export const WORKFLOW_RUN_STATUS_LABELS: Record<WorkflowRunStatus, string> = {
+  QUEUED: 'รอดำเนินการ',
+  RUNNING: 'กำลังทำงาน',
+  SUCCEEDED: 'สำเร็จ',
+  PARTIAL_FAILED: 'สำเร็จบางส่วน',
+  FAILED: 'ล้มเหลว',
+  SKIPPED: 'ข้าม',
+  CANCELED: 'ยกเลิก',
+};
+
+export const WORKFLOW_TASK_STATUS_LABELS: Record<WorkflowTaskStatus, string> = {
+  OPEN: 'เปิดอยู่',
+  SNOOZED: 'เลื่อนแจ้งเตือน',
+  DONE: 'เสร็จสิ้น',
+  CANCELED: 'ยกเลิก',
+};
+
+export const WORKFLOW_DEAD_LETTER_RESOLUTION_LABELS: Record<WorkflowDeadLetterResolutionStatus, string> = {
+  OPEN: 'ยังไม่แก้ไข',
+  REPLAYED: 'ลองใหม่แล้ว',
+  IGNORED: 'ละเว้น',
+  RESOLVED_EXTERNALLY: 'แก้ไขจากภายนอก',
+};
+
 // ---- Condition tree (constrained JSON only — no code/SQL execution) ----
 
 export type WorkflowConditionLeaf = {

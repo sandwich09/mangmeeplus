@@ -290,3 +290,129 @@ describe('production A5 reimbursement dual-build compatibility (real PostgreSQL)
     assert.equal(await invariant(), 'PASS');
   });
 });
+
+// Fifth round: exercise the actual transaction/notification writers. No server or egress is involved.
+describe('claim payout notice gaps (real PostgreSQL)', { skip: databaseUrl === '' && !gateRequired }, () => {
+  let db: import('../generated/prisma/client').PrismaClient;
+  let repo: import('../modules/reimbursements/infrastructure/prisma-reimbursement.repository').PrismaReimbursementRepository;
+  let payouts: import('../modules/reimbursements/application/use-cases/reimbursement-payout.use-case').MemberPayoutAccountUseCase;
+  let writer: import('../modules/dashboard-notifications/application/use-cases/notification.use-cases').CreateOrUpdateNotificationEventUseCase;
+  let companyId: string;
+  let branchId: string;
+  const requester = `${marker}_notice_requester`;
+  const preparer = `${marker}_notice_preparer`;
+  const account = { payoutMethod: 'BANK_TRANSFER', payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'สมชาย', accountNumber: '0123456789' } as const;
+  const ctx = (userId = preparer) => ({ companyId, userId, requestId: marker, authSubject: userId, membershipId: marker, authProvider: 'dev' as const, roles: [], permissions: ['reimbursement.create', 'access.employee.update', 'reimbursement.finance_review'], scopes: {} });
+
+  before(async () => {
+    if (!databaseUrl) throw new Error('reimbursement_pg_gate_database_url_required');
+    const { PrismaClient } = await import('../generated/prisma/client');
+    const { PrismaPg } = await import('@prisma/adapter-pg');
+    const { PrismaReimbursementRepository } = await import('../modules/reimbursements/infrastructure/prisma-reimbursement.repository');
+    const { MemberPayoutAccountUseCase } = await import('../modules/reimbursements/application/use-cases/reimbursement-payout.use-case');
+    const { CreateOrUpdateNotificationEventUseCase } = await import('../modules/dashboard-notifications/application/use-cases/notification.use-cases');
+    db = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+    await db.user.createMany({ data: [{ id: requester, displayName: 'สมชาย' }, { id: preparer, displayName: 'อรทัย' }] });
+    companyId = (await db.company.create({ data: { name: marker, status: 'ACTIVE' } })).id;
+    await db.companyMembership.createMany({ data: [requester, preparer].map(userId => ({ companyId, userId, status: 'ACTIVE' as const, branchScopeMode: 'ALL_BRANCHES' as const })) });
+    branchId = (await db.branch.create({ data: { companyId, code: 'NOTICE', name: 'สาขาทดสอบ' } })).id;
+    const membership = await db.companyMembership.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: requester } } });
+    await db.employeeAccessProfile.create({ data: {
+      companyId, userId: requester, membershipId: membership.id, displayName: 'สมชาย', identityType: 'THAI_NATIONAL_ID',
+      identityLast4: '0002', identityHash: `${marker}_identity`, identityEncryptedRef: 'sealed', phoneNumber: `${marker}_phone`, status: 'ACTIVE', createdByUserId: preparer,
+    } });
+    repo = new PrismaReimbursementRepository({ client: db } as never, {} as never);
+    writer = new CreateOrUpdateNotificationEventUseCase(null as never, null as never, null as never, null as never, null as never, { client: db } as never);
+    payouts = new MemberPayoutAccountUseCase(repo, { log: async () => undefined } as never, { credentialEncryptionKey: Buffer.alloc(32, 7) } as never, writer);
+  });
+  after(async () => {
+    if (!db) return;
+    try {
+      if (companyId) await db.company.delete({ where: { id: companyId } });
+      await db.user.deleteMany({ where: { id: { in: [requester, preparer] } } });
+    } finally { await db.$disconnect(); }
+  });
+  const notices = (sourceId: string) => db.notificationRecipient.findMany({ where: { companyId, event: { sourceId } }, include: { event: true, deliveries: true } });
+  const draft = (payout?: Parameters<typeof repo.createRequest>[1]) => repo.createRequest({
+    companyId, branchId, requesterUserId: requester, requesterDisplayNameSnapshot: 'สมชาย', createdByUserId: preparer,
+    reason: 'ค่าเดินทาง', categoryKey: 'travel', amount: '10.0000', currency: 'THB', incurredDate: new Date('2026-10-02'), receiptRequirementStatus: 'WAIVED_BY_POLICY',
+    lines: [{ lineNo: 1, description: 'ค่าเดินทาง', categoryKey: 'travel', amount: '10.0000', incurredDate: new Date('2026-10-02') }],
+  }, payout);
+
+  it('commits each changed draft choice with one claim notice and rolls back the combined default save if its notice fails', async () => {
+    await payouts.setOwn(ctx(requester), account);
+    const automatic = await draft();
+    assert.equal((await notices(automatic.id)).length, 0);
+    for (const mode of ['CASH', 'DEFAULT'] as const) {
+      const claim = await draft(await payouts.draftPayoutChange(ctx(), requester, { mode }));
+      const sent = await notices(claim.id);
+      assert.equal(sent.length, 1, mode);
+      assert.equal(sent[0]!.userId, requester);
+      assert.equal(sent[0]!.deliveries.length, 2);
+      await repo.updateDraftRequest(companyId, claim.id, claim.updatedAt, {}, undefined, await payouts.draftPayoutChange(ctx(), requester, { mode }));
+      assert.equal((await notices(claim.id)).length, 1, 'same destination stays silent');
+    }
+    const combined = await draft(await payouts.draftPayoutChange(ctx(), requester, { mode: 'SPECIFIED', ...account, saveAsDefault: true }));
+    assert.equal((await notices(combined.id)).length, 1);
+    assert.match((await notices(combined.id))[0]!.event.body!, /บัญชีรับเงินคืนประจำ/);
+    assert.equal((await notices(requester)).length, 0, 'no standalone default notice for a claim act');
+    const before = await repo.findMemberPayoutAccount(companyId, requester);
+    const claimBefore = await repo.findRequestById(companyId, combined.id);
+    const countBefore = await db.notificationEvent.count({ where: { companyId } });
+    const { MemberPayoutAccountUseCase } = await import('../modules/reimbursements/application/use-cases/reimbursement-payout.use-case');
+    const fails = new MemberPayoutAccountUseCase(repo, { log: async () => undefined } as never, { credentialEncryptionKey: Buffer.alloc(32, 7) } as never, {
+      executeInTransaction: async (input: any, tx: any) => { await writer.executeInTransaction(input, tx); throw new Error('notice failed'); },
+    } as never);
+    await assert.rejects(repo.updateDraftRequest(companyId, combined.id, combined.updatedAt, {}, undefined,
+      await fails.draftPayoutChange(ctx(), requester, { mode: 'SPECIFIED', ...account, accountNumber: '9999956789', saveAsDefault: true })), /notice failed/);
+    assert.deepEqual(await repo.findMemberPayoutAccount(companyId, requester), before);
+    assert.deepEqual(await repo.findRequestById(companyId, combined.id), claimBefore);
+    assert.equal(await db.notificationEvent.count({ where: { companyId } }), countBefore);
+    const own = await repo.updateDraftRequest(companyId, combined.id, combined.updatedAt, {}, undefined, await payouts.draftPayoutChange(ctx(requester), requester, { mode: 'CASH' }));
+    assert.equal((await notices(combined.id)).length, 1);
+    await db.companyMembership.update({ where: { companyId_userId: { companyId, userId: requester } }, data: { status: 'SUSPENDED' } });
+    try {
+      const changed = await repo.updateDraftRequest(companyId, combined.id, own.updatedAt, {}, undefined, await payouts.draftPayoutChange(ctx(), requester, { mode: 'DEFAULT' }));
+      assert.equal(changed.payoutMethod, undefined);
+      assert.equal((await notices(combined.id)).length, 1);
+    } finally {
+      await db.companyMembership.update({ where: { companyId_userId: { companyId, userId: requester } }, data: { status: 'ACTIVE' } });
+    }
+    assert.doesNotMatch(JSON.stringify(await db.notificationEvent.findMany({ where: { companyId } })), /0123456789|9999956789/);
+  });
+
+  it('delivers the finance-block notice once per act, never to its actor or an inactive requester', async () => {
+    const { WORKFLOW_TEMPLATE_CATALOG } = await import('../modules/workflow/domain/workflow-template-catalog');
+    const { ExecuteWorkflowActionUseCase } = await import('../modules/workflow/application/use-cases/workflow-action-runner.use-case');
+    const template = WORKFLOW_TEMPLATE_CATALOG.find(t => t.key === 'reimbursement_finance_blocked_requester')!;
+    assert.ok(template);
+    const action = template.defaultActionJson[0]!;
+    const claim = await draft();
+    const runner = new ExecuteWorkflowActionUseCase({
+      findUserIdsByRoles: async () => [], findUserIdsByPermissions: async () => [], updateActionRun: async (_id: string, update: any) => { assert.notEqual(update.status, 'FAILED_FINAL'); assert.notEqual(update.status, 'FAILED_RETRYABLE'); },
+    } as never, {} as never, {} as never, {
+      execute: (input: any) => db.$transaction(tx => writer.executeInTransaction(input, tx)),
+    } as never, {} as never, {} as never, {} as never);
+    const send = (runId: string, actorUserId = preparer) => runner.execute({ id: runId, companyId, workflowRunId: runId, actionType: 'SEND_NOTIFICATION', actionKey: action.actionKey, actionConfigSnapshotJson: action.configJson, status: 'QUEUED', idempotencyKey: runId, attemptCount: 0, createdAt: new Date(), updatedAt: new Date() }, {
+      companyId, ruleName: template.name, triggerType: 'EVENT', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: claim.id,
+      payload: { requestId: claim.id, requesterUserId: requester, actorUserId, decision: 'BLOCKED', note: 'ห้ามคัดลอก 0123456789' }, siblingActions: [],
+    });
+    await send('block-1');
+    await send('block-1');
+    assert.equal((await notices(claim.id)).length, 1);
+    assert.equal((await notices(claim.id))[0]!.deliveries.length, 2);
+    await send('block-own', requester);
+    assert.equal((await notices(claim.id)).length, 1);
+    await db.companyMembership.update({ where: { companyId_userId: { companyId, userId: requester } }, data: { status: 'SUSPENDED' } });
+    try {
+      await send('block-inactive');
+      assert.equal((await notices(claim.id)).length, 1);
+    } finally {
+      await db.companyMembership.update({ where: { companyId_userId: { companyId, userId: requester } }, data: { status: 'ACTIVE' } });
+    }
+    await send('block-2');
+    const sent = await notices(claim.id);
+    assert.equal(sent.length, 2);
+    assert.ok(sent.every(n => n.userId === requester && !/0123456789|ห้ามคัดลอก/.test(n.event.body!)));
+  });
+});

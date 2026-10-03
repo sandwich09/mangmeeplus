@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type { CrmDailyBriefWidget } from '@watchdog-bms/contracts';
 import { getDashboard, generateSnapshot } from './dashboard-notifications.api';
 import { canForceGenerateSnapshot } from './dashboard-home.logic';
+import { dashboardMetricValueText } from './dashboard-notifications.logic';
 import { getCrmDailyBrief } from '@/features/crm-inbox/crm-inbox.api';
 import type { DashboardSnapshot, DashboardWidget, DashboardMetricValue, DashboardPeriodKind } from './dashboard-notifications.model';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -103,12 +104,6 @@ const SEVERITY_TONE: Record<NonNullable<DashboardMetricValue['severity']>, { tex
   normal: { text: '#027A48', bg: '#ECFDF3' },
 };
 
-function formatMetricValue(metric: DashboardMetricValue): string {
-  if (metric.value === null || metric.value === undefined || metric.value === '') return '—';
-  if (typeof metric.value === 'number') return `${metric.value.toLocaleString('en-US')}${metric.unit ? ` ${metric.unit}` : ''}`;
-  return metric.unit ? `${metric.value} ${metric.unit}` : String(metric.value);
-}
-
 function MetricRow({ metric }: { metric: DashboardMetricValue }) {
   const tone = SEVERITY_TONE[metric.severity ?? 'normal'];
   const href = metric.sourceRefs?.[0]?.href;
@@ -119,7 +114,7 @@ function MetricRow({ metric }: { metric: DashboardMetricValue }) {
         className="tabular-nums rounded-full px-3 py-1 text-[15px] font-extrabold"
         style={metric.freshness === 'unavailable' ? undefined : { color: tone.text, backgroundColor: tone.bg }}
       >
-        {metric.freshness === 'unavailable' ? '—' : formatMetricValue(metric)}
+        {metric.freshness === 'unavailable' ? '—' : dashboardMetricValueText(metric)}
       </span>
     </div>
   );

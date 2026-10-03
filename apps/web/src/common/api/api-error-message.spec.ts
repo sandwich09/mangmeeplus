@@ -504,3 +504,10 @@ test('explains a locked shop without claiming a package ran out or data was lost
   assert.equal(message, 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลทั้งหมดยังอยู่ครบ');
   assert.doesNotMatch(message, /ครบกำหนด|company_term_expired/);
 });
+
+test('employee and claim refusals name the standard OWNER and ADMIN roles consistently', () => {
+  assert.equal(translateApiError('company_access_unavailable'), 'คุณไม่มีสิทธิ์เข้าใช้บริษัทนี้แล้ว กรุณาติดต่อเจ้าของกิจการ');
+  assert.equal(translateApiError("Cannot assign access outside the requester's branch scope."), 'เปลี่ยนสาขาของพนักงานคนนี้ไม่ได้ เพราะพนักงานอยู่ในสาขาที่บัญชีของคุณเข้าไม่ถึง หรือสาขาที่เลือกอยู่นอกสาขาของคุณ กรุณาติดต่อเจ้าของกิจการ');
+  assert.equal(translateApiError('payout_account_edit_denied'), 'คุณตั้งบัญชีรับเงินคืนของคนนี้ไม่ได้ ให้เจ้าของบัญชีตั้งเอง หรือให้เจ้าของกิจการหรือผู้ดูแลบริษัทตั้งให้');
+  assert.equal(translateApiError('reimbursement_policy_inactive'), 'บริษัทปิดรับใบเบิกใหม่ชั่วคราว กรุณาติดต่อเจ้าของกิจการหรือผู้ดูแลบริษัท');
+});

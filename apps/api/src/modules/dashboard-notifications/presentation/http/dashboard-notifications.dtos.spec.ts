@@ -6,6 +6,7 @@ import {
   DailyOwnerSummaryDto, GenerateDashboardSnapshotDto,
   UpdateNotificationPreferenceDto, UpdateNotificationRuleDto,
 } from './dashboard-notifications.dtos';
+import { IMPLEMENTED_TRIGGER_KEYS, notificationRuleDisplayName } from '../../domain/models/notification.model';
 
 const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 
@@ -68,6 +69,19 @@ describe('UpdateNotificationRuleDto', () => {
     await rejects(UpdateNotificationRuleDto, { cooldownMinutes: -1 });
     await rejects(UpdateNotificationRuleDto, { status: 'enabled', triggerKey: 'other.trigger' });
     await rejects(UpdateNotificationRuleDto, { status: 'enabled', companyId: 'other' });
+  });
+});
+
+describe('shop-facing notification rule names', () => {
+  it('uses Thai names for known and future trigger keys without exposing the key', () => {
+    assert.equal(notificationRuleDisplayName('stock_low'), 'สินค้าต่ำกว่าจุดสั่งซื้อ');
+    // Sent to every active เจ้าของกิจการ and ผู้ดูแลบริษัท (DailyOwnerSummary), named from the one role list.
+    assert.equal(notificationRuleDisplayName('daily_owner_summary'), 'สรุปประจำวันสำหรับเจ้าของกิจการและผู้ดูแลบริษัท');
+    for (const triggerKey of [...IMPLEMENTED_TRIGGER_KEYS, 'future_internal_key']) {
+      const label = notificationRuleDisplayName(triggerKey);
+      assert.match(label, /[\u0E00-\u0E7F]/);
+      assert.doesNotMatch(label, /[A-Za-z]/);
+    }
   });
 });
 

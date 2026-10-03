@@ -19,6 +19,8 @@ Decisions:
 - Owner, 2026-10-02: the legal documents for stored bank accounts (privacy notice, processing register, retention table, data-rights runbook) may follow the release. Data-deletion requests are the next feature and are on hold: nothing is to be designed or added for them now.
 - Owner, 2026-10-02: the accountant's questions about posting claim payouts are answered when the accounting screens open. Until then no claim payout is posted on the standard chart (it is refused for want of a reviewed mapping), and every unposted payout of any age stays on the worklist.
 
+- Notices implemented in lane 2 (fifth round, 2026-10-02; controller verification pending): changed cash, standing-account and typed-account choices on drafts notify the active requester once; a claim/default combined save uses one claim notice; `reimbursement_finance_blocked_requester` tells the requester about a finance block. Automatic draft default selection remains silent. Controller decisions of 2026-10-02: the first explicit standing-account save on a draft already following it stays silent; a requester who also reviews finance gets only the requester notice, because the desk excludes the requester before its owner fallback.
+
 Production facts (read on 2026-10-02 14:03 with `pre-release-checks.sql`, read-only, counts only, 314 lines, no error):
 
 - 114 companies, 88 active. No company has the finance-review step on; none has reminder hours.
@@ -35,7 +37,6 @@ Open questions:
 - `e2e/settings.spec.ts` SET-08E expects the tab "คิวรอจ่าย", true for the seeded company. REIMB-03 and REIMB-13 turn the finance step on for a moment, so a whole-suite run with parallel workers can make SET-08E read "คิวการเงิน". No workflow runs these files, and nothing typechecks `e2e/`.
 - Three tests of `e2e/responsive.spec.ts` fail on develop before and after this work (the shell's hover at 1024 and 1280 px; the expense grid's column count). Stale tests; not fixed here.
 - Wording outside this round, for the owner to order: two Thai vocabularies for the standard roles (role page and employee pages); English on the reports page, the automation page, the notification rules page, the dashboard stock card and the add-employee wizard; the dashboard card "รอตอบเกินกำหนด" counts by another rule than the list it opens.
-- Notices not changed: a draft filed for someone with cash or the standing account tells nobody; "save as default" by someone else in a round sends two notices; nothing tells the requester that their claim was blocked at the finance-review step.
 - The timeline takes the account kind of a past send-back from the claim's account history; exact wording there would need the kind on the send-back event.
 
 Artifacts:
@@ -60,7 +61,11 @@ Verification of the wording round (code of `04031e162`; the commit after it adds
 
 Release notes for whoever deploys:
 
-- Between the template sync and the new code going live, production's runner knows neither of the two new recipient keys of the finance-review notices; a notice in that window would go to every holder. No company has the finance step today.
+- The same catalog-driven release sync also creates `reimbursement_finance_blocked_requester`, event `reimbursement.finance_review_updated`, condition BLOCKED + requester present, zero cooldown, requester only and actor excluded. Its initial switch follows `reimbursement_decision_requester`. It is an implemented, always-delivered trigger in the new build. No migration.
+- The new template contains complete Thai title/body from contracts and uses existing recipient/exclusion keys, so it does not need a new event field in the sync-to-code window. The older runner can render it and create the web notice; its old implemented-trigger allow-list does not include the new key, so LINE delivery is suppressed until the new code is live (not later replayed merely by upgrading). This is a code reading; production was not queried by this lane.
+
+- `reimbursement_finance_review` has not shipped. The release sync simply creates/pins its final shape with `excludeRecipientPayloadKeys: ['actorUserId', 'requesterUserId']` and `lastResortRecipientRoles: ['OWNER']`; no special migration or rewrite is needed. The new runner excludes both before weighing the fallback. If the owner is the blocker there is no desk notice and the requester gets their notice; if the owner is the requester there is no desk notice and the owner gets only their requester notice (in both cases, the other excluded person is the only other reviewer).
+- Between the template sync and the new code going live, the old runner ignores the new last-resort and bell-only keys but understands both exclusion payload keys. Finance arrival would reach every eligible holder, including its actor on both channels; a block would reach every eligible holder except blocker and requester. The requester receives the new requester template as described above. No company has the finance step today, per the controller; live production was not checked by this lane.
 - A notification rule a shop edited is left as it is by the sync and keeps its old recipients; production has none.
 
 Next:

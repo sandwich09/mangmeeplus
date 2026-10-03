@@ -89,9 +89,9 @@ import {
   type FrozenPayoutPlan, type SealedPayoutDestination, type SubmitPayoutColumns, type SubmitPayoutPlan,
 } from '../domain/logic/payout-destination.logic';
 import {
-  applyDraftPayout, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit,
+  applyDraftPayoutChange, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit,
   readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan,
-  writeMemberPayoutAccount, type DraftPayoutWrite, type MemberPayoutAccountRecord,
+  writeMemberPayoutAccount, type DraftPayoutChange, type MemberPayoutAccountRecord,
 } from './reimbursement-payout';
 // The payment step's side of the payout (kept as its own imports, apart from the block above).
 import { planPaymentPayout, type PaymentPayoutPlan, type PaymentPayoutStatement } from '../domain/logic/payout-destination.logic';
@@ -169,7 +169,7 @@ function activeApproverMembershipWhere(
 }
 
 /** A draft's receiving choice plus anything that must commit with it (setting the default account, its audit row, the requester's notice). */
-export type DraftPayoutChange = { write: DraftPayoutWrite; onPersisted?: (tx: any, requestId: string) => Promise<void> };
+export type { DraftPayoutChange } from './reimbursement-payout';
 
 /** How long the scheduled pass leaves a fresh decision to the request that is carrying it out. */
 const PROJECTION_INTENT_MIN_AGE_MS = 60_000;
@@ -602,8 +602,7 @@ export class PrismaReimbursementRepository {
       });
       await this.replaceLines(tx, data.companyId, created.id, data.lines);
       if (payout) {
-        await tx.reimbursementRequest.update({ where: { id: created.id }, data: await applyDraftPayout(tx, data.companyId, created.id, payout.write) });
-        await payout.onPersisted?.(tx, created.id);
+        await tx.reimbursementRequest.update({ where: { id: created.id }, data: await applyDraftPayoutChange(tx, created, payout, true) });
       }
       return created;
     });
@@ -625,14 +624,14 @@ export class PrismaReimbursementRepository {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
       await this.lockRequest(tx, companyId, requestId);
-      const payoutColumns = payout ? await applyDraftPayout(tx, companyId, requestId, payout.write) : {};
+      const before = payout ? await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId, id: requestId } }) : undefined;
+      const payoutColumns = payout ? await applyDraftPayoutChange(tx, before, payout) : {};
       const changed = await tx.reimbursementRequest.updateMany({
         // Not while the draft is being cancelled (audit B3): answered like any other change under the editor.
         where: { id: requestId, companyId, status: 'DRAFT', updatedAt: expectedUpdatedAt, cancellationPendingAt: null },
         data: { ...data, ...payoutColumns, updatedAt: this.nextVersion(expectedUpdatedAt) },
       });
       if (changed.count !== 1) throw this.draftChanged();
-      await payout?.onPersisted?.(tx, requestId);
       const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId, id: requestId }, include: { lines: true } });
       await assertReimbursementSources(tx, { ...sourceRequest, lines: lines ?? sourceRequest.lines.map((line: any) => ({ ...line, sourceExpenseSnapshot: line.sourceExpenseSnapshotJson, attachmentSnapshot: line.attachmentSnapshotJson })) });
       if (lines) {

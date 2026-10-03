@@ -86,7 +86,7 @@ export class InventoryHealthProvider {
         },
         {
           key: 'low_stock_count',
-          label: 'สินค้าต่ำกว่า Reorder Point',
+          label: 'สินค้าต่ำกว่าจุดสั่งซื้อ',
           value: lowStockProducts.length,
           unit: 'รายการ',
           severity: lowStockProducts.length > 0 ? 'warning' : 'normal',

@@ -99,7 +99,7 @@ describe('dashboard-notifications.api normalizers', () => {
       id: 'r1',
       companyId: 'c1',
       triggerKey: 'stock_low',
-      name: 'Low Stock Alert',
+      name: 'สินค้าต่ำกว่าจุดสั่งซื้อ',
       severity: 'action',
       conditionJson: {},
       recipientPolicyJson: {},
@@ -109,7 +109,7 @@ describe('dashboard-notifications.api normalizers', () => {
       status: 'enabled',
     });
 
-    assert.equal(rule.label, 'Low Stock Alert');
+    assert.equal(rule.label, 'สินค้าต่ำกว่าจุดสั่งซื้อ');
     assert.deepEqual(rule.channels, ['web', 'line']);
   });
 });

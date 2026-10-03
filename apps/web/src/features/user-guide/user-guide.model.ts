@@ -1,4 +1,8 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+
+export const GUIDE_PERMISSION_REQUEST = `ใช้ตารางนี้บอก${THAI_SYSTEM_ROLE_NAMES.OWNER}ว่าต้องการสิทธิ์ใดเพิ่ม`;
+export const GUIDE_MISSING_MENU_HELP = `ถ้าเมนูเปิดใช้แล้วแต่คุณไม่มีสิทธิ์ ให้แจ้ง${THAI_SYSTEM_ROLE_NAMES.OWNER}ตามตารางสิทธิ์ ถ้าเมนูยังไม่ได้เปิดใช้ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}ตรวจแพ็กเกจหรือติดต่อทีมงาน`;
 
 /** A link out of the manual and into the screen it describes. */
 export type GuideLink = { label: string; href: string };

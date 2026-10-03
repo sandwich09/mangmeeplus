@@ -1301,7 +1301,7 @@ export class ApproveSubstituteReceiptUseCase {
         wetSignedScanChecksumSha256: scanChecksum,
         approver: approverDetails,
       })
-      : renderSubstituteReceiptSvg(snapshot, payerSignature!.dataUrl, approverDetails, approverSignature!.dataUrl);
+      : renderSubstituteReceiptSvg(snapshot, payerSignature!.dataUrl, approverDetails, approverSignature!.dataUrl, { approverIsOwner: ctx.roles.includes('OWNER') });
     const checksumSha256 = sha256(bytes);
     const objectKey = `${ctx.companyId}/generated/expense-substitute/${expenseId}/v${evidence.version}-issued-${checksumSha256}-${randomUUID()}.svg`;
     const stored = await this.storage.putObject({ objectKey, mimeType: 'image/svg+xml', bytes });

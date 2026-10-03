@@ -62,3 +62,18 @@ describe('notification mutation integrity', () => {
     assert.match(bellSource, /catch \(err\) \{\s*toast\.error\(err\)/);
   });
 });
+
+describe('notification rules wording', () => {
+  it('does not print trigger keys or machine channel names', () => {
+    assert.doesNotMatch(centerSource, /rule\.description|rule\.triggerKey/);
+    // Channel names reach the rule card through notificationRuleDetailText, which uses notificationRuleChannelsText.
+    assert.match(centerSource, /notificationRuleDetailText\(rule\)/);
+    assert.doesNotMatch(centerSource, /channel === 'web' \? 'Web'/);
+    assert.doesNotMatch(centerSource, /Web ยังบันทึกทุกแจ้งเตือนเสมอ/);
+  });
+
+  it('uses native time controls instead of showing API-format time examples', () => {
+    assert.equal((centerSource.match(/type="time"/g) ?? []).length, 2);
+    assert.doesNotMatch(centerSource, /placeholder="(?:22:00|07:00)"/);
+  });
+});

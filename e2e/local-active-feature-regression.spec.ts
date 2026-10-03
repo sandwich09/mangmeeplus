@@ -67,7 +67,7 @@ for (const width of [390, 1280]) {
     await gotoCompany(page, companyId, '/settings/employees');
     await page.getByRole('textbox', { name: 'ชื่อ *', exact: true }).fill('ทดสอบ');
     await page.getByRole('textbox', { name: 'นามสกุล *', exact: true }).fill('ยังไม่บันทึก');
-    await page.getByRole('textbox', { name: 'Username *', exact: true }).fill('regression.no.save');
+    await page.getByRole('textbox', { name: 'ชื่อผู้ใช้ *', exact: true }).fill('regression.no.save');
     await page.getByRole('textbox', { name: 'วันเดือนปีเกิด (ค.ศ.) *', exact: true }).fill('01/01/1980');
     await page.getByRole('textbox', { name: 'เลขบัตรประชาชน *', exact: true }).fill('0000000000000');
     await page.getByRole('button', { name: 'ถัดไป ›', exact: true }).click();

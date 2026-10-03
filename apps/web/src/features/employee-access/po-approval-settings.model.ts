@@ -1,5 +1,6 @@
 import type { PoApprovalRule as PoApprovalPolicyRule } from '@watchdog-bms/contracts';
 import type { MangmeeTone } from '@/common/components/mangmee';
+import { roleKeyDisplayName } from './role-picker.logic';
 
 export type PoApprovalRule = PoApprovalPolicyRule & {
   step: number;
@@ -36,10 +37,18 @@ export function poApprovalConditionLabel(rule: PoApprovalPolicyRule): string {
   return `มากกว่า ฿${formatBahtAmount(rule.minExclusive)} ถึง`;
 }
 
+// A tier with no approver role needs no approval: that is all the rule says, so no word claims the system approves it.
+const NO_APPROVAL = 'ไม่ต้องอนุมัติ';
+
+/** A tier's approver roles by their names in the one list; any one of them approves, hence "หรือ". */
+function approverNames(approverRoleKeys: readonly string[]): string {
+  return approverRoleKeys.map((key) => roleKeyDisplayName(key)).join(' หรือ ');
+}
+
 export function poApprovalBadgeLabel(approverRoleKeys: readonly string[]): string {
-  if (approverRoleKeys.length === 0) return 'Auto approve';
-  if (approverRoleKeys.length === 1) return approverRoleKeys[0]!;
-  return `คนใดคนหนึ่งใน ${approverRoleKeys.length}`;
+  if (approverRoleKeys.length === 0) return NO_APPROVAL;
+  if (approverRoleKeys.length === 1) return roleKeyDisplayName(approverRoleKeys[0]!);
+  return `คนใดคนหนึ่งใน ${approverRoleKeys.length} บทบาท`;
 }
 
 export function derivePoApprovalRules(rules: readonly PoApprovalPolicyRule[]): PoApprovalRule[] {
@@ -53,7 +62,7 @@ export function derivePoApprovalRules(rules: readonly PoApprovalPolicyRule[]): P
       ...(rule.maxInclusive === undefined ? {} : { inputValue: String(rule.maxInclusive) }),
       badgeLabel: poApprovalBadgeLabel(rule.approverRoleKeys),
       badgeTone: tone,
-      approverLabel: rule.approverRoleKeys.length ? rule.approverRoleKeys.join(' · ') : 'อัตโนมัติ (ไม่ต้องอนุมัติ)',
+      approverLabel: rule.approverRoleKeys.length ? approverNames(rule.approverRoleKeys) : `ไม่มี (${NO_APPROVAL})`,
       stepTone: tone,
     };
   });
@@ -136,15 +145,15 @@ export function getPoApprovalDemo(
 ): PoApprovalDemo {
   const amount = typeof value === 'number' ? value : parseApprovalAmount(value);
   const rule = getPoApprovalRuleForAmount(amount, rules);
-  const autoApprove = rule.approverRoleKeys.length === 0;
+  const noApprover = rule.approverRoleKeys.length === 0;
 
   return {
     rule,
     amount,
-    statusLabel: autoApprove ? 'Auto approve ทันที' : `รอ${rule.approverLabel}อนุมัติ`,
+    statusLabel: noApprover ? NO_APPROVAL : `รอ${rule.approverLabel}อนุมัติ`,
     steps: [
-      `พนักงานสร้างใบสั่งซื้อ ฿${formatBahtAmount(amount)} — เข้าเงื่อนไขขั้นที่ ${rule.step}`,
-      autoApprove ? 'อนุมัติอัตโนมัติ — ไม่ต้องรอใคร' : `ส่งให้ ${rule.approverLabel} อนุมัติ`,
+      `สร้างใบสั่งซื้อ ฿${formatBahtAmount(amount)} — เข้าเงื่อนไขขั้นที่ ${rule.step}`,
+      noApprover ? 'ขั้นนี้ไม่ต้องรอใครอนุมัติ' : `ส่งให้${rule.approverLabel}อนุมัติ`,
       'สร้างรายการซื้อ/รายจ่ายของวันนั้นใน “ค่าใช้จ่าย+ใบเสร็จ”',
     ],
   };

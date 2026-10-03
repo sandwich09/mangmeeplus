@@ -1,4 +1,5 @@
 'use client';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 import { useEffect, useState } from 'react';
 import { MangmeeCard, cx } from '@/common/components/mangmee';
@@ -171,7 +172,7 @@ export function DiscountPolicyPage({ companyId }: { companyId: string }) {
               <div className="min-w-0">
                 <h2 className="text-lg font-extrabold text-gray-900">อนุญาตให้ AI ให้ส่วนลดอัตโนมัติ</h2>
                 <p className="mt-1 text-sm font-medium leading-6 text-gray-500">
-                  เมื่อเปิด ระบบจะเสนอส่วนลดให้ลูกค้าเครดิตดี/ประจำ ตามค่ากลางด้านล่างโดยไม่ต้องให้แอดมินกดเอง
+                  {`เมื่อเปิด ระบบจะเสนอส่วนลดให้ลูกค้าเครดิตดี/ประจำ ตามค่ากลางด้านล่างโดยไม่ต้องให้${THAI_SYSTEM_ROLE_NAMES.ADMIN}กดเอง`}
                 </p>
               </div>
               <button

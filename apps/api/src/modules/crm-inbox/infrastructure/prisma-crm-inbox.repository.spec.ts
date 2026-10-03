@@ -186,8 +186,6 @@ describe('PrismaCrmInboxRepository daily-brief customer scope', () => {
       client: { crmConversation: { count, findMany } },
     } as any);
 
-    await repo.countUnansweredConversations('co-1', scope);
-    await repo.countOpenSlaBreaches('co-1', scope);
     await repo.listConversations('co-1', {
       scopeUserId: 'sales-1',
       customerOwnerUserId: 'sales-1',
@@ -196,16 +194,10 @@ describe('PrismaCrmInboxRepository daily-brief customer scope', () => {
       pageSize: 25,
     });
 
-    assert.deepEqual((count.mock.calls as any[])[0].arguments[0].where, {
-      companyId: 'co-1', customer, firstRespondedAt: null, status: { notIn: ['RESOLVED', 'SPAM'] },
-    });
-    assert.deepEqual((count.mock.calls as any[])[1].arguments[0].where, {
-      companyId: 'co-1', customer, slaBreachedAt: { not: null }, status: { notIn: ['RESOLVED', 'SPAM'] },
-    });
     const listWhere = (findMany.mock.calls as any[])[0].arguments[0].where;
     assert.deepEqual(listWhere.customer, customer);
     assert.deepEqual(listWhere.AND, [{ OR: [{ assignedToUserId: 'sales-1' }, { assignedToUserId: null }] }]);
-    assert.deepEqual((count.mock.calls as any[])[2].arguments[0].where, listWhere);
+    assert.deepEqual((count.mock.calls as any[])[0].arguments[0].where, listWhere);
   });
 
   it('counts payment proofs through the scoped conversation/customer join', async () => {

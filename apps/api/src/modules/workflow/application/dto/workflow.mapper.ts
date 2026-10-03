@@ -18,15 +18,17 @@ import type {
   WorkflowDeadLetterRecord,
   WorkflowWebhookEndpointRecord,
 } from '../../domain/models/workflow.model';
+import { WORKFLOW_TEMPLATE_CATALOG } from '../../domain/workflow-template-catalog';
 
 const iso = (d?: Date): string | undefined => (d ? d.toISOString() : undefined);
 
 export function toTemplateSummary(t: WorkflowTemplateRecord): WorkflowTemplateSummary {
+  const display = WORKFLOW_TEMPLATE_CATALOG.find((seed) => seed.key === t.key);
   return {
     id: t.id,
     key: t.key,
-    name: t.name,
-    description: t.description,
+    name: display?.name ?? 'แบบตั้งต้นอื่น',
+    description: display?.description ?? 'ยังไม่มีรายละเอียด',
     category: t.category,
     sourceModule: t.sourceModule,
     triggerType: t.triggerType,
@@ -36,7 +38,7 @@ export function toTemplateSummary(t: WorkflowTemplateRecord): WorkflowTemplateSu
     requiredSourceModules: t.requiredSourceModules,
     defaultEnabled: t.defaultEnabled,
     status: t.status,
-    unavailableReason: t.unavailableReason,
+    unavailableReason: display?.unavailableReason,
   };
 }
 
