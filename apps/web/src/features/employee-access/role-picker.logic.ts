@@ -8,6 +8,7 @@ export const EMPLOYEE_BRANCH_SCOPE_HELP = `กำหนดได้เฉพา�
  * The name the API stores for each standard role. Editing one gives the company
  * its own copy, which starts out with this name: a copy still carrying it was never named by the
  * company, so it reads as the standard role and not as "Accountant".
+ * COMPANY_VIEW keeps its legacy stored alias here; the dictionary supplies today's viewer label.
  */
 const STANDARD_ROLE_NAMES: Record<string, string> = {
   OWNER: 'Owner', SYSTEM_ADMIN: 'System Admin', COMPANY_VIEW: 'Company owner',

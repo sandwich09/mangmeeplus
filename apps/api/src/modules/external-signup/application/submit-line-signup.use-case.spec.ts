@@ -466,7 +466,7 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     const h = harness({ displayName: null });
     await h.useCase.execute(CMD, NOW);
     // A neutral label, never an empty string that would render as a blank row in the admin queue.
-    assert.equal(h.created[0].ownerDisplayName, 'เจ้าของร้าน');
+    assert.equal(h.created[0].ownerDisplayName, 'เจ้าของกิจการ');
     assert.equal(h.created[0].lineDisplayName, undefined);
   });
 

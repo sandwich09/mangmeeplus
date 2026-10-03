@@ -296,7 +296,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
       const coverage = result.semanticCoverage?.[0];
       assert.equal(coverage?.status, 'handled');
       assert.equal(coverage?.reasonCode, 'PACKAGE_MANAGER_REQUIRED');
-      assert.equal(result.replyText, 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
+      assert.equal(result.replyText, 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
       assert.deepEqual(result.webLinks, []);
     });
   }
@@ -373,7 +373,7 @@ describe('billing.get_package_usage: P8 for a non-manager, composed rules for a 
     const data = { packages: [{ name: 'เริ่มต้น (STARTER)', branches: 1, users: 2, monthly: { price: '249', vat: '17.43', payable: '266.43', receiptReads: 30 },
       yearly: { price: '2,490', vat: '174.30', payable: '2,664.30', receiptReads: 360, months: 12, averagePerMonth: '207.50', savingVersusMonthly: '498', pricedAsMonths: 10 },
       menus: ['ผู้ช่วย AI ทาง LINE', 'ค่าใช้จ่ายและใบเสร็จ'] }], vatNote: 'ราคานี้ยังไม่รวม VAT 7% ยอดที่ชำระสุทธิคือราคารวม VAT',
-      usersNote: 'จำนวนผู้ใช้รวมเจ้าของร้าน', yearlyReceiptsNote: 'แบบรายปีได้สิทธิ์อ่านใบเสร็จของทั้งปีทันทีเมื่อชำระสำเร็จ', aiCreditPerMonth: 80 };
+      usersNote: 'จำนวนผู้ใช้รวมเจ้าของกิจการ', yearlyReceiptsNote: 'แบบรายปีได้สิทธิ์อ่านใบเสร็จของทั้งปีทันทีเมื่อชำระสำเร็จ', aiCreditPerMonth: 80 };
     const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
     const invoked: string[] = [];
     const provider: IModelProvider = { async generateText(input: ProviderInput): Promise<ProviderOutput> {

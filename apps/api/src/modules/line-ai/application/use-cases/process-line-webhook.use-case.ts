@@ -1,4 +1,4 @@
-import { LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { PDFDocument } from 'pdf-lib';
@@ -266,7 +266,7 @@ export type LineLegalAcceptancePreflight =
 const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\nเปิดเว็บแอปเพื่อเชื่อมต่อได้เลยค่ะ';
 // ── P10-L §7 copy. Owner-editable; no plus sign anywhere a customer reads (write "และ"). ──
 /** The staff door of §3.1: the employee link is issued by the owner, never self-served. */
-const EMPLOYEE_DOOR_REPLY = '👋 ยินดีต้อนรับค่ะ ถ้าคุณเป็นพนักงาน ให้เจ้าของร้านเปิดเมนู "พนักงาน" ในเว็บแอป '
+const EMPLOYEE_DOOR_REPLY = `👋 ยินดีต้อนรับค่ะ ถ้าคุณเป็นพนักงาน ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}เปิดเมนู "พนักงาน" ในเว็บแอป `
   + 'แล้วส่งลิงก์เชื่อม LINE มาให้นะคะ กดลิงก์นั้นครั้งเดียวก็ใช้งานได้เลยค่ะ (ไม่ต้องสมัครร้านใหม่นะคะ)';
 /** L-17: the greeting for someone the system already knows. Short on purpose — they came back. */
 const WELCOME_BACK_REPLY = '👋 ยินดีต้อนรับกลับมานะคะ ส่งรูปใบเสร็จ หรือถามยอดขายในแชทนี้ได้เลยค่ะ '
@@ -356,7 +356,7 @@ const SUPPORT_THREAD_TEXT_MAX_LENGTH = 2000;
 const SUPPORT_THREAD_MAX_MESSAGES = 500;
 const SUPPORT_THREAD_MAX_MEDIA = 50;
 const PACKAGE_CHANGE_ACCEPTED_REPLY = '📦 รับคำขอแล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ (จันทร์–เสาร์ 9:00–18:00) นะคะ';
-const PACKAGE_CHANGE_NOT_OWNER_REPLY = '📦 การเปลี่ยนแพ็กเกจต้องให้เจ้าของร้านเป็นคนขอนะคะ รบกวนแจ้งเจ้าของร้านให้พิมพ์ '
+const PACKAGE_CHANGE_NOT_OWNER_REPLY = `📦 หากต้องการเปลี่ยนแพ็กเกจ รบกวนแจ้ง${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจให้พิมพ์ `
   + '"ขอเปลี่ยนแพ็กเกจ" ในแชทนี้ได้เลยค่ะ';
 const PACKAGE_CHANGE_UNAVAILABLE_REPLY = '📦 ตอนนี้เปิดคำขอเปลี่ยนแพ็กเกจให้ไม่ได้ค่ะ รบกวนติดต่อทีมงานที่ 098-256-5628 นะคะ';
 /** What the admin queue shows for a request that came from a chat button with no tier chosen. */
@@ -471,7 +471,7 @@ const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบ�
 /** C3: what someone who is NOT the owner of a locked shop hears. No tier, no date, no price — the
  *  same "ask the shop owner" rule the web banner follows — but it no longer tells a connected
  *  employee to connect an account they already connected. */
-export const PACKAGE_REQUIRED_MEMBER_REPLY = 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน แล้วน้องมั่งมีจะกลับมาช่วยได้เต็มที่นะคะ';
+export const PACKAGE_REQUIRED_MEMBER_REPLY = `ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน แล้วน้องมั่งมีจะกลับมาช่วยได้เต็มที่นะคะ`;
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = `📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\n${LINE_FEATURE_DISABLED_HELP_TH}`;
 /**

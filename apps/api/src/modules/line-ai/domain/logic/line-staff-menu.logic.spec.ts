@@ -1,12 +1,31 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, linePostbackCommandText, staffMenuCommand, COMPANY_PICKER_OPEN_WEB_HINT, COMPANY_PICKER_OPEN_WEB_LABEL, COMPANY_PICKER_SELECT_LABEL, EMPLOYEE_DOOR_COMMAND, LINE_FOLLOW_EVENT_TEXT, PACKAGE_CALLBACK_COMMAND, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND, RESUME_AI_ALIASES, RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND, STAFF_OA_URL, VIEW_PACKAGES_COMMAND } from './line-staff-menu.logic';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
 import { isPublicPolicyFollowUp, resolvePublicPolicyAnswer } from './line-public-policy.logic';
 import { buildPublicPolicyCardMessage } from './line-business-card.logic';
+
+for (const path of [
+  '../../../../common/security/liff-page.security.ts',
+  '../../../access-control/domain/logic/plan-manager.logic.ts',
+  '../../../external-signup/application/submit-line-signup.use-case.ts',
+  './line-event-discount.logic.ts', './line-staff-menu.logic.ts', './line-ai-formatter.logic.ts',
+  '../../application/use-cases/erp-package-tools.use-case.ts',
+  '../../application/use-cases/process-line-webhook.use-case.ts',
+]) {
+  it(`sold LINE owner-role guidance uses the contracts name: ${path}`, () => {
+    const text = readFileSync(join(__dirname, path), 'utf8');
+    assert.deepEqual(text.match(/เจ้าของบริษัท|เจ้าของร้าน|เจ้าของธุรกิจ|หากต้องการสิทธิ์เพิ่มเติม กรุณาติดต่อผู้ดูแลระบบ/gu) ?? [], [], path);
+    assert.match(text, /THAI_SYSTEM_ROLE_NAMES\.OWNER/, path);
+    if (path.endsWith('process-line-webhook.use-case.ts')) {
+      const refusal = text.slice(text.indexOf('const PACKAGE_CHANGE_NOT_OWNER_REPLY'), text.indexOf('const PACKAGE_CHANGE_UNAVAILABLE_REPLY'));
+      assert.match(refusal, /ผู้มีสิทธิ์จัดการแพ็กเกจ/);
+    }
+  });
+}
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
 // permission dimension on its own. Feature gating has its own cases at the end of the suite.
@@ -740,7 +759,7 @@ describe('promotion menu (rich menu v2 ver2)', () => {
     const employee = actions('employee');
     assert.equal(employee.filter((action: any) => action.type === 'uri' && !action.uri.includes('official.')).length, 0,
       'the package page is the owner\'s to open');
-    assert.match(JSON.stringify(buildPromotionCard('employee')), /เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
+    assert.match(JSON.stringify(buildPromotionCard('employee')), /เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
     // Glossary 2026-09-29: no English on a customer card.
     assert.match(JSON.stringify(buildPromotionCard('owner')), /🎁 แพ็กเกจที่เหมาะกับร้านคุณ/);
     assert.doesNotMatch(JSON.stringify(buildPromotionCard('owner')), /Package/);

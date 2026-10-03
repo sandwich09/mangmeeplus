@@ -1,4 +1,4 @@
-import { formatThaiDate, mapThaiDigits, type SpecialistOutput, type ToolResult } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, formatThaiDate, mapThaiDigits, type SpecialistOutput, type ToolResult } from '@watchdog-bms/contracts';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -197,7 +197,7 @@ export const PACKAGE_MANAGER_REQUIRED = 'PACKAGE_MANAGER_REQUIRED';
 export function packageManagerRequiredReplyText(english: boolean): string {
   return english
     ? 'For this shop\'s package and credit, please ask the shop owner or someone who manages the package.'
-    : 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ';
+    : `เรื่องแพ็กเกจและเครดิตของร้าน ถาม${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ`;
 }
 
 // Owner 2026-09-30 (no upsell): a package answer tells nobody how or where to buy, change, upgrade or renew a package

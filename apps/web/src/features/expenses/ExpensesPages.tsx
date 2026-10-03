@@ -1,6 +1,6 @@
 'use client';
 
-import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 
 import { isExpenseEvidenceFile, expenseEvidenceAssessment, expenseEvidenceInputError, EXPENSE_RECEIPT_SOURCE_TYPES, type ExpenseEvidenceAssessment } from '@watchdog-bms/contracts';
 
@@ -526,7 +526,7 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
                   cannot buy, so they are told who can instead of being sent to a page that bounces. */}
               {canManagePlan
                 ? <Link href={`/companies/${companyId}/billing`} className="inline-flex min-h-11 items-center underline">เปลี่ยนแพ็กเกจ</Link>
-                : <span className="inline-flex min-h-11 items-center">แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจให้เปลี่ยนแพ็กเกจ</span>}
+                : <span className="inline-flex min-h-11 items-center">แจ้ง{THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจให้เปลี่ยนแพ็กเกจ</span>}
               {blockedExpenseId && (
                 <Link href={`/companies/${companyId}/expenses/${blockedExpenseId}`} className="inline-flex min-h-11 items-center underline">
                   กรอกใบเสร็จที่เพิ่งอัปโหลดเอง

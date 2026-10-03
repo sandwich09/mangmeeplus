@@ -7,6 +7,7 @@ import { roleGrantViolation } from '../../domain/logic/employee-access.logic';
 import { filterPermissionsByEntitlement } from '../../domain/logic/feature-gate.logic';
 import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
 import { loadEntitledFeatureKeys } from '../entitlement.helper';
+import { companyRoleReadWhere } from '../company-role-read-where';
 
 /** Requester context for the per-role grant decision; omitted by request-less readers (access matrix). */
 export type RoleListRequester = {
@@ -22,7 +23,7 @@ export class ListRolesUseCase {
   async execute(companyId: string, requester?: RoleListRequester): Promise<RoleSummary[]> {
     const [rows, entitled] = await Promise.all([
       this.prisma.client.role.findMany({
-        where: { OR: [{ scopeKey: 'system' }, { scopeKey: companyId }] },
+        where: companyRoleReadWhere(companyId),
         include: ROLE_INCLUDE,
         orderBy: [{ isSystem: 'desc' }, { name: 'asc' }],
       }),

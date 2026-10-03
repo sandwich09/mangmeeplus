@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { BILLING_PAID_TIERS } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, BILLING_PAID_TIERS } from '@watchdog-bms/contracts';
 import { fetchServerSessionResult } from '@/common/auth/server-session';
 import { legalAcceptancePath } from '@/common/auth/session-gate.logic';
 import BillingCompanyPicker from '@/features/billing/BillingCompanyPicker';
@@ -18,7 +18,7 @@ export default async function BillingCompaniesPage({ searchParams }: { searchPar
   if (result.status === 'signed_out') redirect(`/login?next=${encodeURIComponent(next)}`);
   if (result.status === 'platform_closed') redirect('/maintenance');
   if (result.status === 'unavailable') throw new Error('Cannot reach the authentication service. Please try again.');
-  if (result.status === 'forbidden') return <main className="mx-auto max-w-xl space-y-4 p-8"><h1 className="text-2xl font-bold">ยังเข้าถึงบริษัทไม่ได้</h1><p>กรุณาติดต่อเจ้าของบริษัทหรือทีมมั่งมีเพื่อตรวจสอบสิทธิ์</p><a className="underline" href="mailto:contact@mangmeeplus.com">ติดต่อทีมมั่งมี</a></main>;
+  if (result.status === 'forbidden') return <main className="mx-auto max-w-xl space-y-4 p-8"><h1 className="text-2xl font-bold">ยังเข้าถึงบริษัทไม่ได้</h1><p>กรุณาติดต่อ{THAI_SYSTEM_ROLE_NAMES.OWNER}หรือทีมมั่งมีเพื่อตรวจสอบสิทธิ์</p><a className="underline" href="mailto:contact@mangmeeplus.com">ติดต่อทีมมั่งมี</a></main>;
   if (result.session.mustChangePassword) redirect(`/change-password?next=${encodeURIComponent(next)}`);
   if (result.session.legalAcceptanceRequired !== false) redirect(legalAcceptancePath(next, result.session.companyId));
   return <BillingCompanyPicker query={query.toString()} fromCompany={fromCompany} />;

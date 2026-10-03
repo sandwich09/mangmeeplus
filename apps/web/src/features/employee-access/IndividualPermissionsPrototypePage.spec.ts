@@ -4,6 +4,20 @@ import { test } from 'node:test';
 
 const source = readFileSync(new URL('./IndividualPermissionsPrototypePage.tsx', import.meta.url), 'utf8');
 
+test('employee identity and full role chips wrap on separate grid rows without competing for width', () => {
+  const row = source.slice(source.indexOf('function EmployeeRow('), source.indexOf('function BranchAccessChip('));
+  assert.match(row, /grid[^']*grid-cols-\[38px_minmax\(0,1fr\)\]/);
+  assert.match(row, /<span className="[^"]*\[overflow-wrap:anywhere\][^"]*">\{employeeShortName\(employee\)\}/);
+  assert.doesNotMatch(row, /truncate[^"}]*">\{employeeShortName\(employee\)\}/);
+  assert.match(row, /<span className="[^"]*col-start-2[^\"]*flex-wrap/);
+  assert.match(row, /<RoleBadge[^>]*className="[^"]*max-w-full[^"]*whitespace-normal[^"]*\[overflow-wrap:anywhere\]/);
+  assert.doesNotMatch(row, /max-w-40|line-clamp-|role\.name\.slice|aria-hidden/);
+  // The full shared label remains real text; accessibility does not depend on hovering a title.
+  const badge = source.slice(source.indexOf('function RoleBadge('), source.indexOf('function DraftBadge('));
+  assert.match(badge, /rounded-full/);
+  assert.match(badge, />\s*\{roleDisplayName\(role\)\}/);
+});
+
 test('role changes replace rather than append and refresh every card from the saved employee', () => {
   assert.match(source, /const updated = await updateEmployee\(companyId, selectedEmployee\.id, \{ roleIds: \[roleId\] \}\)/);
   assert.match(source, /setEmployees\(\(current\) => current\.map\(\(employee\) => employee\.id === updated\.id \? updated : employee\)\)/);

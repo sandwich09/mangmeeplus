@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { addCivilDays, billingPlanLabel, civilDate, DEFAULT_CHAT_CREDIT_SATANG, packageMenuLabels, type BillingOffer, type BillingTaxTreatment,
+import { THAI_SYSTEM_ROLE_NAMES, addCivilDays, billingPlanLabel, civilDate, DEFAULT_CHAT_CREDIT_SATANG, packageMenuLabels, type BillingOffer, type BillingTaxTreatment,
   type SourceRef, type ToolResult } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -167,7 +167,7 @@ export class BillingGetPackageCatalogTool implements ErpReadToolPort {
       data: {
         packages,
         vatNote: VAT_NOTES[catalog.taxTreatment ?? 'UNKNOWN'],
-        usersNote: 'จำนวนผู้ใช้รวมเจ้าของร้าน',
+        usersNote: `จำนวนผู้ใช้รวม${THAI_SYSTEM_ROLE_NAMES.OWNER}`,
         yearlyReceiptsNote: 'แบบรายปีได้สิทธิ์อ่านใบเสร็จของทั้งปีทันทีเมื่อชำระสำเร็จ',
         // The package page's own line on every package card ("เครดิต AI 80 เครดิต/เดือน").
         aiCreditPerMonth: DEFAULT_CHAT_CREDIT_SATANG / 100,

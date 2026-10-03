@@ -199,7 +199,7 @@ describe('item 3: a read-only role asking to record, upload, or capture (spec §
     // step — the old text ("ดูข้อมูลได้อย่างเดียว... ไม่สามารถ...") had neither.
     assert.ok(text.includes('อ่านอย่างเดียว'), text);
     assert.ok(text.includes('ไม่มีสิทธิ์'), text);
-    assert.ok(text.includes('ผู้ดูแลบริษัท'), text);
+    assert.ok(text.includes('เจ้าของกิจการหรือผู้มีสิทธิ์จัดการบทบาท'), text);
   });
 
   it('states the same read-only boundary and next step in English', () => {

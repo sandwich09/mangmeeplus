@@ -4,6 +4,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { NON_EDITABLE_ROLE_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 import { CreateRoleUseCase } from './create-role.use-case';
 import { GetRoleUseCase } from './get-role.use-case';
+import { GetAccessMatrixUseCase } from './get-access-matrix.use-case';
 import { ListRolesUseCase } from './list-roles.use-case';
 import { PreviewRoleUseCase } from './preview-role.use-case';
 import { UpdateRoleUseCase } from './update-role.use-case';
@@ -14,6 +15,81 @@ import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-con
 
 const COMPANY_ID = 'company-1';
 const REAL_PERMISSION = 'crm.customer.read';
+
+describe('COMPANY_VIEW is visible only to a company holding it', () => {
+  // Evaluate the actual query, including nested relation filters: an unscoped holder must not
+  // make the shared system role visible in another shop. Real PostgreSQL is a controller check.
+  function matches(value: any, where: any): boolean {
+    return Object.entries(where).every(([key, condition]: [string, any]) => {
+      if (key === 'OR') return condition.some((part: any) => matches(value, part));
+      if (key === 'AND') return [condition].flat().every((part: any) => matches(value, part));
+      if (key === 'not') return value !== condition;
+      if (key === 'some') return value.some((item: any) => matches(item, condition));
+      return typeof condition === 'object' && condition !== null
+        ? matches(value[key], condition) : value[key] === condition;
+    });
+  }
+
+  function fixture(companyId: string, holderCompanyId?: string, membershipStatus = 'ACTIVE') {
+    const rows = ['OWNER', 'COMPANY_VIEW'].map((key) => ({
+      id: key, key, name: key, scopeKey: 'system', isSystem: true, status: 'ACTIVE', description: null,
+      permissions: [{ permission: { key: REAL_PERMISSION } }],
+      memberships: key === 'COMPANY_VIEW' && holderCompanyId
+        ? [{ membership: { companyId: holderCompanyId, status: membershipStatus } }] : [],
+    }));
+    rows.push({ ...rows[0]!, id: 'foreign-role', key: 'CUSTOM', scopeKey: 'another-shop', isSystem: false });
+    const prisma = { client: {
+      role: {
+        findMany: async ({ where }: any) => rows.filter((row) => matches(row, where)),
+        findFirst: async ({ where }: any) => rows.find((row) => matches(row, where)) ?? null,
+      },
+      companyFeatureEntitlement: { findMany: async () => [] },
+    } } as any;
+    return { prisma, rows, visible: holderCompanyId === companyId };
+  }
+
+  it('preview answers not found for missing and other-company ids, like a hidden role', async () => {
+    const { prisma } = fixture(COMPANY_ID);
+    for (const roleId of ['missing-role', 'foreign-role']) {
+      await assert.rejects(() => new PreviewRoleUseCase(prisma).execute({
+        companyId: COMPANY_ID, roleId, isOwner: true, granterPermissionKeys: [], permissionKeys: [],
+      }), (error: unknown) => error instanceof NotFoundException);
+    }
+  });
+
+  for (const reader of ['list/pickers/filters', 'detail', 'matrix', 'preview'] as const) {
+    it(`${reader}: absent, other-company and own-company memberships in shops and the platform`, async () => {
+      for (const companyId of [COMPANY_ID, PLATFORM_TENANT_ID]) {
+        for (const [holderCompanyId, membershipStatus] of [
+          [undefined, 'ACTIVE'], ['another-shop', 'ACTIVE'], [companyId, 'ACTIVE'], [companyId, 'DISABLED'],
+        ]) {
+          const { prisma, rows, visible } = fixture(companyId, holderCompanyId, membershipStatus);
+          const before = structuredClone(rows);
+          const context = `${companyId}, holder=${holderCompanyId}`;
+          const list = new ListRolesUseCase(prisma);
+          if (reader === 'list/pickers/filters') {
+            const roles = await list.execute(companyId, { permissions: [], isOwner: true });
+            assert.deepEqual(roles.map((role) => role.key), visible ? ['OWNER', 'COMPANY_VIEW'] : ['OWNER'], context);
+            if (visible) assert.equal(roles.find((role) => role.key === 'COMPANY_VIEW')?.assignableByCurrentUser, false);
+          } else if (reader === 'matrix') {
+            const matrix = await new GetAccessMatrixUseCase(list, prisma).execute(companyId);
+            assert.deepEqual(matrix.rows.map((row) => row.roleKey), visible ? ['OWNER', 'COMPANY_VIEW'] : ['OWNER'], context);
+          } else {
+            const read = () => reader === 'detail'
+              ? new GetRoleUseCase(prisma).execute(companyId, 'COMPANY_VIEW')
+              : new PreviewRoleUseCase(prisma).execute({ companyId, roleId: 'COMPANY_VIEW', isOwner: true, granterPermissionKeys: [], permissionKeys: [] });
+            if (visible) {
+              const result = await read();
+              if ('key' in result) assert.equal(result.key, 'COMPANY_VIEW');
+              else assert.ok(result.removedVsCurrent?.includes(REAL_PERMISSION));
+            } else await assert.rejects(read, (error: unknown) => error instanceof NotFoundException, context);
+          }
+          assert.deepEqual(rows, before, 'reading never mutates memberships or grants');
+        }
+      }
+    });
+  }
+});
 
 /**
  * What a second role with a key already taken in the company gets from the database: P2002 in the

@@ -347,7 +347,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       await page.goto(`/companies/${rig.companyId}/renew`);
       // Staff share the lock title, get a body naming who can buy, and no purchase CTA (card or banner).
       await expect(page.getByRole('heading', { name: 'แพ็กเกจหมดอายุแล้ว', exact: true })).toBeVisible();
-      await expect(page.getByText('แพ็กเกจของร้านหมดอายุแล้ว ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ ข้อมูลทั้งหมดยังอยู่ครบ', { exact: true })).toBeVisible();
+      await expect(page.getByText('แพ็กเกจของร้านหมดอายุแล้ว ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ ข้อมูลทั้งหมดยังอยู่ครบ', { exact: true })).toBeVisible();
       await expect(page.getByRole('link', { name: 'เลือกแพ็กเกจ', exact: true })).toHaveCount(0);
     } finally { await ctx.close(); }
     await rig.db.companyMembership.updateMany({ where: { userId: staff.id }, data: { status: 'DISABLED' } });

@@ -164,14 +164,14 @@ function EmployeeRow({ employee, roles, selected, onSelect }: { employee: Employ
     <button
       type="button" onClick={onSelect}
       className={cx(
-        'flex min-h-[64px] w-full items-center gap-3 rounded-[11px] border px-[11px] py-2.5 text-left transition',
+        'grid min-h-[64px] w-full grid-cols-[38px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-[11px] border px-[11px] py-2.5 text-left transition',
         selected ? 'border-brand-300 bg-brand-25 shadow-[inset_3px_0_0_var(--color-brand-500)]' : 'border-gray-200 bg-white hover:border-brand-100 hover:bg-gray-50',
       )}
     >
       <EmployeeAvatar employee={employee} color={primaryRole ? colorForRole(primaryRole) : '#667085'} active={active} />
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0">
         <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[14px] font-extrabold text-gray-900">{employeeShortName(employee)}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere] text-[14px] font-extrabold text-gray-900">{employeeShortName(employee)}</span>
           {employee.status === 'DRAFT' ? <DraftBadge /> : <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-brand-500' : 'bg-gray-300')} />}
         </span>
         <span className="mt-1 block break-words text-[12px] font-semibold text-gray-500">{employee.jobTitle || 'ยังไม่ระบุตำแหน่งงาน'}</span>
@@ -180,10 +180,8 @@ function EmployeeRow({ employee, roles, selected, onSelect }: { employee: Employ
         </span>
       </span>
       {roles.length > 0 && (
-        // 160 px holds every standard role name on one line ("ผู้ตรวจสอบ (ดูอย่างเดียว)" is 148 px); a longer
-        // company-made name wraps inside its chip instead of being cut at the column's edge.
-        <span className="flex max-w-40 shrink-0 flex-col items-end gap-1">
-          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full py-1 text-right leading-tight" />)}
+        <span className="col-start-2 flex min-w-0 flex-wrap gap-1">
+          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full whitespace-normal [overflow-wrap:anywhere] py-1 leading-tight" />)}
         </span>
       )}
     </button>
