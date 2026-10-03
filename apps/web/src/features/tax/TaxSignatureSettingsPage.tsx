@@ -96,7 +96,7 @@ export function TaxSignatureSettingsPage({ companyId, permissions }: { companyId
             </label>
             {mode === 'AUTO_STAMP' && (
               <div className="grid gap-2">
-                <span className="text-xs font-medium text-gray-600">รูปลายเซ็น ({SIGNATURE_FILE_TYPES_LABEL})</span>
+                <span className="text-xs font-medium text-gray-600">รูปลายเซ็น · {SIGNATURE_FILE_TYPES_LABEL}</span>
                 <input className={field} type="file" accept="image/png,image/jpeg" onChange={onFileChange} disabled={busy} />
                 {hasStoredSignature && <p className="text-xs text-gray-500">มีรูปลายเซ็นที่บันทึกไว้แล้ว — อัปโหลดใหม่เพื่อเปลี่ยน</p>}
               </div>

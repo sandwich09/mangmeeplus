@@ -93,6 +93,14 @@ test('signature settings read their narrow endpoint, keep padding and offer no s
   assert.match(html, /mangmee-card[^\"]*p-4/);
 });
 
+// Browser check 2026-10-04: the image field read "รูปลายเซ็น ( รูปภาพ (เจเพ็ก, พีเอ็นจี) )", parentheses inside parentheses.
+test('the signature image field names its file types once, without nested parentheses', () => {
+  const html = visible(render(h(TaxSignatureSettingsPage, { companyId: 'c', permissions: ['company.tax_signature.manage'] }),
+    (_initial, index) => index === 0 ? { signatureMode: 'AUTO_STAMP', signatureImageAttachmentId: null } : index === 1 ? 'AUTO_STAMP' : index === 3 ? false : undefined));
+  assert.match(html, /รูปลายเซ็น ·\s+รูปภาพ \(เจเพ็ก, พีเอ็นจี\)/);
+  assert.doesNotMatch(html, /รูปลายเซ็น\s*\(\s*รูปภาพ/);
+});
+
 test('denied URLs stay inside the shell with an explanation and a reachable return link', () => {
   const page = source('./WorkspaceLayout.tsx');
   assert.doesNotMatch(page, /!canAccessCurrentPath[^\n]*router\.replace/);
