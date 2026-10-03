@@ -17,7 +17,7 @@ describe('LINE recovery PostgreSQL lifecycle and concurrency', { skip: !database
   it('serializes requests and claims, invalidates old recovery after every credential rotation, and preserves denied flows', async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname), 'only an explicit local test database is allowed');
-    assert.match(url.pathname, /_recovery_review_/);
+    assert.ok(url.pathname.includes('_recovery_review_') || url.pathname.endsWith('_ci'), `refusing to write to ${url.pathname}: only a disposable local *_ci database`);
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const tag = `recovery-${randomUUID()}`;
     const companyId = `${tag}-company`;
@@ -44,7 +44,14 @@ describe('LINE recovery PostgreSQL lifecycle and concurrency', { skip: !database
     const login = new PasswordLoginUseCase(prisma, issueToken, legal);
     const credential = () => client.userCredential.findUniqueOrThrow({ where: { userId } });
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
-    const request = async () => { await requester.execute({ username }); await flush(); return messages.at(-1)!; };
+    // Delivery is detached and re-reads the LINE identity before the push (679490d0b): one tick is not
+    // enough, and returning early hands back the previous request's password.
+    const request = async () => {
+      const sent = messages.length, deadline = Date.now() + 5_000;
+      await requester.execute({ username });
+      while (messages.length === sent) { assert.ok(Date.now() < deadline, 'the recovery message was never pushed'); await flush(); }
+      return messages.at(-1)!;
+    };
     const rejects = (password: string) => assert.rejects(() => login.execute(username, password), (error: unknown) => error instanceof UnauthorizedException);
     try {
       await client.company.create({ data: { id: companyId, name: tag } });
