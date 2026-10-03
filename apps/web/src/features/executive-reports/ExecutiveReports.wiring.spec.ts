@@ -181,3 +181,21 @@ test('web re-exports one shared words source including later report polish and s
   assert.equal(executiveReasonMessage('SOURCE_ROWS_PURGED', 'partial'), W.sourceRowsPurged);
   assert.equal(executiveReasonMessage('SOURCE_ROWS_PURGED', 'unavailable'), W.sourceRowsPurgedUnavailable);
 });
+
+test('an export refused for the export or contacts right re-reads the rights; only a lost read right denies the report (plain-language spec, E5 denial)', async () => {
+  const page = source('./ExecutiveReportPage.tsx');
+  // The report-wide denial would say the report itself is closed and empty the report menu while the reader can still read it.
+  assert.match(page, /<ExecutiveExportPanel [^>]*deny=\{denyExport\}/);
+  assert.match(page, /exportDenied && context && !canExport\(context\) && <p role="status">\{W\.export\.denied\}<\/p>/);
+  const file = ts.createSourceFile('page.tsx', page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const body = (file.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'ExecutiveReportPage') as ts.FunctionDeclaration).body!.statements;
+  const declaration = body.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]).find(node => node.name.getText(file) === 'denyExport');
+  assert.ok(declaration?.initializer, 'denyExport handler');
+  const calls: string[] = [];
+  const shared = { refresh: async () => { calls.push('refresh'); }, deny: () => { calls.push('deny'); } };
+  const js = ts.transpileModule(`return ${declaration!.initializer!.getText(file)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const denyExport = new Function('shared', 'setExportDenied', 'useCallback', js)(shared, (value: boolean) => calls.push(`exportDenied=${value}`), (fn: unknown) => fn);
+  denyExport();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(calls, ['exportDenied=true', 'refresh']);
+});

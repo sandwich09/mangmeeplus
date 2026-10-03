@@ -173,3 +173,61 @@ Verification:
 - `git diff --check`: exit 0. Only the six scoped code/test/doc files changed.
 
 Next: controller reviews/commits, runs `pnpm exec playwright test e2e/executive-report.spec.ts` on the seeded stack with WORKER_INTERNAL_TOKEN set, and runs the API read pg command with its test database configured. At 390 and 1280 px, inspect all detail tabs with partial/unavailable figures and several adjacent reason links: each link's bounding box at least 44 × 44, small visible number, steady figure rows, no target overlap or horizontal overflow, correct destination on tap and keyboard activation. In the usage/revenue tab, check affirmative values for a paid company, independent flags after a full refund, confirmed negatives without receipts, and unknown negatives with incomplete money coverage. These browser measurements and interactions are not checked in this lane.
+
+## Excel export re-check (round 3)
+
+Status: Done 2026-10-04 on the program head `b7d7f36af` (Excel export and develop merged, fast-forwarded), plus one fix commit `9c100dd0d` on this branch; not pushed.
+Owner: browser-acceptance lane; the controller reviews, pushes and merges.
+Scope: the export action and preparation panel (UI spec, Excel spec §2) and the workbooks (Excel spec §3–§4, §9) at 390 and 1280 px, on a freshly built throwaway stack with the round 1–2 data. Rights were switched by SQL for the view checks and on the admin page for the mid-panel removals. Thirteen workbooks were downloaded through the browser; they and the screen data each one was compared with are in the lane folder (`workbooks/`).
+
+Results:
+
+1. The action shows on all 13 report screens (overview, list, adoption, ranking, revenue summary, top payers, three customer views, compare, three detail tabs) only for a reader with the export right; with the right removed there is no action anywhere, and a URL carrying `export=1` opens the report. The contacts option appears only on the list and the detail, only with both rights, and starts unticked. A System Admin sees both. "สร้างไฟล์ Excel" sits inside the first 390×844 screen (lowest edge 487–531 px). A comparison without two groups disables the action with its reason; an empty list disables the create button with "ไม่มีบริษัทตามเงื่อนไข จึงไม่มีไฟล์ให้สร้าง".
+2. The panel:
+   - Opening or closing it reads nothing.
+   - Browser Back and "← กลับ…" keep page 2 and its sort, and the report filter, list filter and search; a reload with the panel open keeps the search.
+   - A double press, or three presses in one task, sends one request and gives one file.
+   - Server and network errors (503, 429 with a countdown and a disabled button, both 422s, 400, 500, network failure, a non-workbook answer) are worded in Thai and give no file.
+   - Leaving while the file is made (Back or the menu) drops the late file.
+   - A new build while the panel is open gives one 409; the panel closes with "ข้อมูลรายงานเก่าแล้ว กรุณาโหลดใหม่ก่อนสร้างไฟล์"; the report reloads once; nothing is exported until the next press, which exports.
+3. Workbooks, read without calculating (zip and XML) and with openpyxl:
+   - **Package:** clean; no external, macro or pivot parts; compressed. The workbook asks for a full recalculation on open.
+   - **Formulas:** every cached formula value equals what the formula gives from the sheet's own cells, so a calculating reader opens on the same numbers.
+   - **Charts:** native, with caches equal to their cells — four per file, three on the detail with no doughnut.
+   - **Rows:** company rows equal the screen in order (names, counts, money, dates, last use).
+   - **Overview:** KPIs equal the screen cards; the groups equal the screen groups. August keeps "อย่างน้อย" and "ยอดเฉพาะรายการที่ยืนยันแล้ว".
+   - **Revenue:** September purchase groups equal the screen.
+   - **July:** money cells are blank, with the reason in "หมายเหตุข้อมูล".
+   - **Contacts:** columns appear only when ticked (leading 0 kept; no-owner reason given).
+   - **Words:** the month reads "ก.ย. 2569"; the file name is Thai; Content-Disposition is an ASCII fallback; no codes, ids or ISO dates.
+4. Read right removed while the panel is open: "คุณไม่มีสิทธิ์ใช้งานส่วนนี้", empty menu, no file. Export or contacts right removed on the admin page while the panel is open: fixed in `9c100dd0d` (before the fix: the same report-wide denial and an empty menu). The report stays, with "คุณไม่มีสิทธิ์ส่งออกไฟล์นี้" and no action; or, for the contacts right, the panel stays with that sentence and no contacts option. No file either way.
+5. `e2e/executive-report.spec.ts` passed on a fresh seed (11.3 s), on full data (8.8 s) and on the final code `9c100dd0d` (10.1 s). Round 1–2 journeys J1–J5 re-run: pass (my probes now pick the page's own sentence where the export reason repeats it); 393 screens, no sideways scroll, no page error.
+
+Decisions: the export denial re-reads the rights through the report context and keeps the report-wide denial for a lost read right only (plain-language spec, E5 denial line).
+
+Open questions (left for the controller/owner):
+
+- **Dates show as numbers in Apple's viewer.** Quick Look, the macOS engine behind the iPhone Files viewer, shows every date cell as its serial number (46295): it does not read the `[$-107041E]d mmm bbbb` format. A control file renders `d mmm yyyy` and `dd/mm/yyyy` as dates. Excel spec §4 says that when any reader shows a number, all date columns switch to Thai text through `formatThaiExportDate`, and the choice is recorded in the spec; that is a format decision, so it is not changed here. Excel and a real phone were not available.
+- **Money KPI cards are plain.** They use the money cell style instead of the KPI style: the third card on every dashboard and all three on revenue have no fill and small text. The fix touches the shared writer's style table and the binary reference fixture.
+- **Revenue chart-data rows lack the screen's qualifiers.** August purchase groups and the August point of September's trend carry no "ยอดเฉพาะรายการที่ยืนยันแล้ว". The add-on row says "ยังไม่มีข้อมูล" where the screen and the file's own table say "ยังไม่เปิดขาย". The panel has one status per chart, not one per row.
+- **Detail and list KPIs.** The detail file's KPI reads "บริษัทลูกค้า 1 · อย่างน้อย". The list and detail files reuse the overview's population "อย่างน้อย" while the list screen says "พบ 23 บริษัท".
+- **Repeated reasons.** The export action's reason line repeats the page's own sentence: twice in loading, no-data and error states, and four times on a comparison without groups.
+- **Layout (minor):**
+  - The dashboard has no page setup, so printing splits A1:X46 across pages.
+  - Row 4 of the dashboard is 72 pt tall.
+  - The list sheet's A5 holds the whole description in one fixed-height row.
+- **Screen words vs specs (minor).** "ใช้ผ่านไลน์ล่าสุด" / "สมัครทางไลน์" follow the screen-words rule (plain-language spec, line 8); Excel spec §4.1 and some plain-language tables still say "LINE".
+- **Numbers not checked.** The Numbers app on this Mac did not answer automation (a permission prompt or first-launch dialog was waiting), so no Numbers render was made.
+- **Charts not seen.** Charts are proved only by parsing; no renderer here draws them.
+
+Artifacts: lane folder `workbooks/` (13 files, the screen JSON and text next to each, `check-report.json`, `openpyxl-read.txt`, Quick Look renders in `look/`), `check_xlsx.py`, `numbers-read.js`, probe `probe-specs/r3-export.spec.ts`, screenshots `shots/r3-*`, logs `final-run3.log`, `r3-d1-red/green.log`, `e2e-r3-exec01-*.log`, `final-checks-r3.log`.
+
+Verification:
+
+- Export wiring spec red, then green: 13/14 (exit 1), then 20/20 with the export logic spec (exit 0).
+- Browser re-check of 4a–4c after the fix: pass. The panel probe re-run after the fix: pass.
+- Maintenance pins `--check`: exit 0.
+- Web typecheck (native tsc, under the heavy lock): exit 0. Whole web suite (under the heavy lock, without S3_* variables): exit 0, 2879/2879 tests, 572 suites, 0 skipped. `git diff --check b7d7f36af..HEAD`: exit 0.
+- The billing, build and read Postgres specs were not run here; CI runs them at merge.
+
+Next: controller review; decide the date fallback and the money KPI style; take `9c100dd0d`.
