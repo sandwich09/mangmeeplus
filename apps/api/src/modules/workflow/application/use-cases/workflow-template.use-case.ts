@@ -11,6 +11,7 @@ import {
   WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS,
   WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG,
   WORKFLOW_TEMPLATE_FOLLOWS_SIBLING,
+  WORKFLOW_TEMPLATE_FORMER_NAMES,
 } from '../../domain/workflow-template-catalog';
 
 /** Catalog cooldown for a template key, falling back to the global default. */
@@ -154,6 +155,29 @@ export async function resyncWorkflowTemplateRulesForCompany(
     }
   }
   return resyncedKeys;
+}
+
+/**
+ * A rule keeps the name it was created with, so a rule made before its template's name changed still reads
+ * the old default (all English until 2026-10-03) on the automation page, in its runs, and as the title of
+ * tasks it creates without one of their own. Such a rule gets the template's current name, whoever created
+ * it and whatever its state; any other name is the company's and stays. The name only: who last edited the
+ * rule is left as it was, because that is how the resync above tells an admin's edit from its own. Runs
+ * from prisma/sync-workflow-templates.ts.
+ */
+export async function renameDefaultNamedTemplateRulesForCompany(repo: PrismaWorkflowRepository, companyId: string): Promise<string[]> {
+  const renamedKeys: string[] = [];
+  for (const seed of WORKFLOW_TEMPLATE_CATALOG) {
+    const formerNames = WORKFLOW_TEMPLATE_FORMER_NAMES[seed.key];
+    const template = formerNames ? await repo.findTemplateByKey(seed.key) : null;
+    if (!formerNames || !template) continue;
+    for (const rule of await repo.listRules({ companyId, templateId: template.id })) {
+      if (!formerNames.includes(rule.name)) continue;
+      await repo.updateRule(companyId, rule.id, { name: seed.name });
+      renamedKeys.push(seed.key);
+    }
+  }
+  return renamedKeys;
 }
 
 /**

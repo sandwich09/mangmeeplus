@@ -6,8 +6,8 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { formatThaiTime } from '@/common/i18n/thai-date';
-import { workspaceDictionary, type DictionaryKey, type SupportedLocale } from '@/common/i18n/workspace-dictionary';
-import { hasStandardRoleName, roleTemplateChoices } from './role-picker.logic';
+import { type SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import { roleDisplayName, roleTemplateChoices } from './role-picker.logic';
 import { employeeFullName } from '@watchdog-bms/contracts';
 import type {
   CapabilityPackView, RiskLevel, RolePreviewResult, RoleTemplate, PermissionCatalogItem,
@@ -97,37 +97,7 @@ function assignableRoles(roles: any[]) {
   return roles.filter((r) => r.status === 'ACTIVE' && !NON_ASSIGNABLE_ROLE_KEYS.includes(r.key));
 }
 
-const ROLE_NAME_TO_KEY: Record<string, string> = {
-  owner: 'OWNER',
-  'system admin': 'SYSTEM_ADMIN',
-  sysadmin: 'SYSTEM_ADMIN',
-  admin: 'ADMIN',
-  manager: 'MANAGER',
-  hr: 'HR',
-  sales: 'SALES',
-  inventory: 'INVENTORY',
-  finance: 'FINANCE',
-  accountant: 'ACCOUNTANT',
-  marketing: 'MARKETING',
-  staff: 'STAFF',
-  auditor: 'AUDITOR_READONLY',
-  'auditor (read-only)': 'AUDITOR_READONLY',
-  'auditor (readonly)': 'AUDITOR_READONLY',
-};
-
-export function roleDisplayName(roleOrKey: any, locale: SupportedLocale) {
-  const rawKey = typeof roleOrKey === 'string' ? roleOrKey : roleOrKey?.key;
-  const rawName = typeof roleOrKey === 'string' ? roleOrKey : roleOrKey?.name;
-  const normalizedName = String(rawName ?? '').trim().toLowerCase();
-  const key = String(rawKey ?? ROLE_NAME_TO_KEY[normalizedName] ?? '').trim().toUpperCase();
-  // Every standard role has its `role.<KEY>` entry in the dictionary: a second list kept by hand here
-  // is how "Company owner" came to be printed in English. A company's copy of a standard role keeps
-  // the name the company gave it; only a copy still carrying the stored English name reads as standard.
-  const dictKey = `role.${key}`;
-  const standard = dictKey in workspaceDictionary.th
-    && (typeof roleOrKey === 'string' || hasStandardRoleName({ key, name: String(rawName ?? ''), isSystem: roleOrKey?.isSystem }));
-  return standard ? t(dictKey as DictionaryKey, locale) : (rawName || 'บทบาทที่กำหนดเอง');
-}
+export { roleDisplayName } from './role-picker.logic';
 
 export const panelClass = 'rounded-lg border border-gray-200 bg-white shadow-[0_1px_3px_rgba(16,24,40,.06)]';
 export const mutedPanelClass = 'rounded-lg border border-gray-200 bg-gray-50/70';
@@ -908,7 +878,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
     [allPacks],
   );
 
-  const [name, setName] = useState(initial?.name ?? '');
+  const [name, setName] = useState(initial ? roleDisplayName(initial, locale) : '');
   const [description, setDescription] = useState(initial?.description ?? '');
   // Round-trip an edited role: visible packs become toggles; unmatched keys stay preserved but hidden.
   const initSelected = useMemo(

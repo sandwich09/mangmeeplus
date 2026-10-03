@@ -35,7 +35,7 @@ describe('buildDailyBriefWidgets', () => {
     assert.equal(widgets.length, 10);
     const by = Object.fromEntries(widgets.map((w) => [w.key, w]));
     assert.equal(by['unanswered'].value, 3);
-    assert.equal(by['unanswered'].href, '/companies/co-1/inbox');
+    assert.equal(by['unanswered'].href, '/companies/co-1/inbox?unanswered=true');
     assert.equal(by['sla_breaches'].href, '/companies/co-1/inbox?overdue=true');
     assert.equal(by['appointments_today'].href, '/companies/co-1/bookings');
     assert.equal(by['payment_proofs'].href, '/companies/co-1/crm/payment-proofs');

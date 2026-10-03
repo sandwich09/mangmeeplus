@@ -7,6 +7,7 @@ import {
   SubmitReimbursementUseCase,
   UpdateReimbursementDraftUseCase,
 } from './reimbursement-request.use-case';
+import { NO_ACTIVE_APPROVER_NOTE } from './reimbursement-summary.use-case';
 import { RecordReimbursementPaymentUseCase } from './reimbursement-finance.use-case';
 import { ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
@@ -1416,4 +1417,8 @@ describe('a claim whose payout account is being corrected', () => {
     assert.deepEqual([plain.ran[0]![1].reasonCode, plain.events[0].payloadJson.data.payoutCorrectionNotice],
       ['OTHER', 'เหตุผล: อื่น ๆ · เปิดใบเบิกเพื่อแก้บัญชีรับเงิน']);
   });
+});
+
+it('the missing-approver recovery note names OWNER as the standard role label does', () => {
+  assert.equal(NO_ACTIVE_APPROVER_NOTE, 'ผู้ที่ถูกกำหนดให้อนุมัติไม่อยู่หรือไม่ได้ดูแลสาขานี้แล้ว เจ้าของกิจการหรือผู้มีบทบาทอนุมัติเดิมอนุมัติแทนได้บนเว็บ');
 });

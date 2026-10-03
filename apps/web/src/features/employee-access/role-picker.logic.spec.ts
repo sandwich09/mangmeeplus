@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
 import type { RoleSummary } from '@watchdog-bms/contracts';
 import { assignableRoleOptions, hasStandardRoleName, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee, roleDisplayName, roleKeyDisplayName, roleTemplateChoices } from './role-picker.logic';
 
@@ -146,5 +147,26 @@ describe('roleTemplateChoices', () => {
     const builder = readFileSync(new URL('./EmployeeAccessPages.tsx', import.meta.url), 'utf8');
     assert.match(builder, /templates\.filter\(\(tpl\) => roleTemplateChoices\(tpl, allPacks, availablePackKeys\)\)/);
     assert.match(builder, /setSelectedPacks\(roleTemplateChoices\(tpl, allPacks, availablePackKeys\) \?\? \[\]\)/);
+  });
+});
+
+// Lane 3a: the dictionary drives role pages and the footer; the picker drives employees and the switcher.
+describe('one Thai standard-role name', () => {
+  it('gives every role key the same name on dictionary and picker surfaces', () => {
+    const stored = {
+      OWNER: 'Owner', SYSTEM_ADMIN: 'System Admin', COMPANY_VIEW: 'Company owner', ADMIN: 'Admin',
+      MANAGER: 'Manager', HR: 'HR', SALES: 'Sales', INVENTORY: 'Inventory', FINANCE: 'Finance',
+      ACCOUNTANT: 'Accountant', MARKETING: 'Marketing', STAFF: 'Staff', AUDITOR_READONLY: 'Auditor (Read-only)',
+      MANGMEE_SALES_LEAD: 'Mangmee Sales Lead', MANGMEE_SALES: 'Mangmee Sales',
+    };
+    for (const [key, name] of Object.entries(stored)) {
+      const expected = roleKeyDisplayName(key);
+      assert.doesNotMatch(expected, /[A-Za-z_]/u, key);
+      assert.equal(roleDisplayName(name), expected, `${key} stored name without a key`);
+      assert.equal((workspaceDictionary.th as Record<string, string>)[`role.${key}`], expected, key);
+      for (const isSystem of [true, false]) assert.equal(roleDisplayName({ key, name, isSystem }), expected, `${key} system=${isSystem}`);
+      assert.equal(roleDisplayName({ key, name }), expected, `${key} employee role reference`);
+      for (const isSystem of [false, undefined]) assert.equal(roleDisplayName({ key, name: 'ชื่อที่บริษัทตั้งเอง', isSystem }), 'ชื่อที่บริษัทตั้งเอง', key);
+    }
   });
 });

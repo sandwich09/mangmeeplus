@@ -1,3 +1,4 @@
+import { reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES as ROLE } from '@watchdog-bms/contracts';
 import type { WorkflowActionDefinition, WorkflowConditionNode, WorkflowTemplateStatus, WorkflowTriggerType } from '@watchdog-bms/contracts';
 
 export type WorkflowTemplateSeed = {
@@ -31,6 +32,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   reimbursement_pending_approval: { eventType: 'reimbursement.request_submitted' },
   reimbursement_decision_requester: { eventTypes: ['reimbursement.approved', 'reimbursement.rejected'] },
   reimbursement_correction_requester: { eventType: 'reimbursement.correction_requested' },
+  reimbursement_finance_blocked_requester: { eventType: 'reimbursement.finance_review_updated' },
   reimbursement_finance_review: { eventType: 'reimbursement.finance_review_updated' },
   // Two ways a claim arrives at the finance desk: a person approved it, or it needed no approval
   // and was sent straight there. The second wrote an event no rule listened to, so nobody was told.
@@ -56,6 +58,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_pending_approval: 0,
   reimbursement_decision_requester: 0,
   reimbursement_correction_requester: 0,
+  reimbursement_finance_blocked_requester: 0,
   reimbursement_finance_review: 0,
   reimbursement_finance_review_pending: 0,
   reimbursement_ready_for_payment: 0,
@@ -70,6 +73,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
 // did not ask for "payment voided", and one who disabled the approval reminder did not ask for the
 // payment reminder. The admin can still enable it; nothing else about auto-enable changes.
 export const WORKFLOW_TEMPLATE_FOLLOWS_SIBLING: Record<string, string> = {
+  reimbursement_finance_blocked_requester: 'reimbursement_decision_requester',
   reimbursement_payment_voided: 'reimbursement_payment_recorded',
   reimbursement_payment_sla_breach: 'approval_sla_breach',
   // The two notices of a payout account correction (payout spec §17.3): "your claim needs its account
@@ -95,6 +99,38 @@ export const WORKFLOW_NOTICE_ALSO_REPLACES: Record<string, readonly string[]> = 
 // fallback when an action has no deepLinkPathTemplate (see workflow-action-runner.use-case.ts).
 export const REIMBURSEMENT_REQUEST_LINK = '/companies/{{companyId}}/reimbursements/{{requestId}}';
 
+// The name each template shipped with before its current one, from this file's history (every name was
+// English until 2026-10-03). A rule copies its template's name when it is created and keeps it, so a rule
+// still named one of these was never named by its company; the release sync gives it the current name
+// (renameDefaultNamedTemplateRulesForCompany). Any other name is the company's own and is never touched.
+export const WORKFLOW_TEMPLATE_FORMER_NAMES: Record<string, readonly string[]> = {
+  daily_owner_summary: ['Daily owner summary'],
+  low_stock_alert: ['Low stock alert'],
+  stockout_risk: ['Stockout risk'],
+  reimbursement_pending_approval: ['Reimbursement pending approval'],
+  approval_sla_breach: ['Approval SLA breach'],
+  reimbursement_payment_sla_breach: ['Reimbursement payment SLA breach'],
+  reimbursement_decision_requester: ['Reimbursement decision requester alert'],
+  reimbursement_correction_requester: ['Reimbursement correction requester alert'],
+  reimbursement_finance_review: ['Reimbursement finance review'],
+  reimbursement_finance_review_pending: ['Reimbursement awaiting finance review'],
+  reimbursement_ready_for_payment: ['Reimbursement ready for payment'],
+  reimbursement_payment_recorded: ['Reimbursement payment recorded'],
+  reimbursement_payment_voided: ['Reimbursement payment voided'],
+  reimbursement_payout_correction_requested: ['Reimbursement payout account correction requested'],
+  reimbursement_payout_correction_submitted: ['Reimbursement payout account awaiting approval'],
+  vendor_bill_pending_approval: ['Vendor bill pending'],
+  vendor_bill_second_approval: ['Vendor bill awaiting second approval'],
+  tax_due_soon: ['Tax due soon'],
+  bank_reconciliation_aging: ['Bank reconciliation aging'],
+  overdue_invoice_follow_up: ['Overdue invoice follow-up'],
+  crm_follow_up_due: ['CRM follow-up due'],
+  crm_opportunity_stuck: ['Opportunity stuck'],
+  sales_below_target: ['Sales below target'],
+  ai_draft_requested: ['AI draft requested'],
+  outbound_webhook: ['Outbound webhook'],
+};
+
 // First-pass template catalog (spec section 18). Availability reflects the ACTUAL
 // current repo state as of item 16 implementation: a template is AVAILABLE only when
 // its source module already exposes the event and/or read API the trigger needs.
@@ -102,8 +138,8 @@ export const REIMBURSEMENT_REQUEST_LINK = '/companies/{{companyId}}/reimbursemen
 export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     key: 'daily_owner_summary',
-    name: 'Daily owner summary',
-    description: 'Send Owner/Admin a daily dashboard summary link at 07:00 company time.',
+    name: `สรุปประจำวันสำหรับ${ROLE.OWNER}และ${ROLE.ADMIN}`,
+    description: `ส่งลิงก์สรุปภาพรวมธุรกิจให้${ROLE.OWNER}และ${ROLE.ADMIN}ทุกวันเวลาเจ็ดโมงเช้าตามเวลาของบริษัท`,
     category: 'dashboard',
     sourceModule: 'dashboard',
     triggerType: 'SCHEDULE',
@@ -115,12 +151,12 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     requiredSourceModules: ['dashboard'],
     defaultEnabled: false,
     status: 'DEPRECATED',
-    unavailableReason: 'Daily owner summaries are produced by the dedicated notification scheduler.',
+    unavailableReason: 'ระบบแจ้งสรุปประจำวันผ่านการตั้งค่าการแจ้งเตือนโดยเฉพาะ',
   },
   {
     key: 'low_stock_alert',
-    name: 'Low stock alert',
-    description: 'Notify inventory/owner and create a task when a product balance is at or below its reorder point.',
+    name: 'แจ้งเตือนสินค้าใกล้ถึงจุดสั่งซื้อ',
+    description: `แจ้ง${ROLE.INVENTORY}และ${ROLE.OWNER} และสร้างงานให้${ROLE.INVENTORY} เมื่อสินค้าคงเหลือไม่เกินจุดสั่งซื้อ`,
     category: 'inventory',
     sourceModule: 'inventory',
     triggerType: 'THRESHOLD_SCAN',
@@ -136,8 +172,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'stockout_risk',
-    name: 'Stockout risk',
-    description: 'Notify owner/inventory and create a reorder review task when projected days-of-stock fall below a threshold.',
+    name: 'ความเสี่ยงสินค้าขาด',
+    description: `แจ้ง${ROLE.OWNER}และ${ROLE.INVENTORY} เมื่อจำนวนสินค้าที่คาดว่าจะเหลือน้อยกว่าที่กำหนด`,
     category: 'inventory',
     sourceModule: 'inventory',
     triggerType: 'THRESHOLD_SCAN',
@@ -149,12 +185,12 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     requiredSourceModules: ['inventory'],
     defaultEnabled: false,
     status: 'UNAVAILABLE',
-    unavailableReason: 'Inventory module does not yet expose a stockout-risk (days-left) projection read API.',
+    unavailableReason: 'ส่วนงานคลังสินค้ายังไม่มีข้อมูลคาดการณ์จำนวนวันที่สินค้าเหลือ',
   },
   {
     key: 'reimbursement_pending_approval',
-    name: 'Reimbursement pending approval',
-    description: 'Notify the assigned approver and create an approval-review task when a reimbursement request is submitted.',
+    name: 'คำขอเบิกค่าใช้จ่ายรออนุมัติ',
+    description: 'แจ้งผู้อนุมัติและสร้างงานตรวจสอบเมื่อมีคำขอเบิกค่าใช้จ่ายส่งเข้ามา',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -192,8 +228,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'approval_sla_breach',
-    name: 'Approval SLA breach',
-    description: 'Remind the approvers of a claim (the shop owner only when none of them can act) when it has waited for approval longer than the policy SLA age.',
+    name: 'รายการเบิกจ่ายรออนุมัติเกินกำหนด',
+    description: `เตือนและสร้างงานให้ผู้อนุมัติของรายการเบิกจ่ายเมื่อรายการรออนุมัติเกินเวลาที่กำหนด โดยแจ้ง${ROLE.OWNER}แทนเมื่อไม่มีผู้อนุมัติคนใดดำเนินการได้`,
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'SLA_SCAN',
@@ -216,8 +252,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     // chased. Same scan, same policy deadline and same cadence as the approval reminder above;
     // only a notice, because a task per scan window would pile up (audit B8).
     key: 'reimbursement_payment_sla_breach',
-    name: 'Reimbursement payment SLA breach',
-    description: 'Remind the person whose turn it is to record the payment (whoever passed or approved the claim, when they can pay), else everyone who can, when a claim has waited for payment longer than the policy SLA age.',
+    name: 'รายการเบิกจ่ายรอบันทึกการจ่ายเกินกำหนด',
+    description: 'เตือนผู้มีหน้าที่บันทึกการจ่ายเงินตามลำดับสิทธิ์ เมื่อรายการเบิกจ่ายรอบันทึกการจ่ายเกินเวลาที่กำหนด หากไม่มีผู้ใดทำได้ให้เตือนทุกคนที่มีสิทธิ์',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'SLA_SCAN',
@@ -256,8 +292,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'reimbursement_decision_requester',
-    name: 'Reimbursement decision requester alert',
-    description: 'Notify the requester when their reimbursement is approved or rejected.',
+    name: 'แจ้งผลคำขอเบิกค่าใช้จ่าย',
+    description: 'แจ้งผู้ขอเบิกเมื่อคำขอได้รับอนุมัติหรือถูกปฏิเสธ',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -292,8 +328,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'reimbursement_correction_requester',
-    name: 'Reimbursement correction requester alert',
-    description: 'Notify the requester when finance returns a reimbursement draft for correction.',
+    name: 'แจ้งแก้ไขคำขอเบิกค่าใช้จ่าย',
+    description: 'แจ้งผู้ขอเบิกเมื่อผู้ตรวจสอบด้านการเงินส่งคำขอกลับมาให้แก้ไข',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -325,9 +361,37 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     status: 'AVAILABLE',
   },
   {
+    key: 'reimbursement_finance_blocked_requester',
+    name: 'แจ้งผู้เบิกเมื่อระงับการจ่าย',
+    description: 'แจ้งผู้เบิกเมื่อผู้ตรวจการเงินระงับการจ่าย ให้เปิดใบเบิกดูรายละเอียดและรอผู้ตรวจการเงินดำเนินการต่อ',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'EVENT',
+    defaultConditionJson: { type: 'ALL', conditions: [{ field: 'decision', op: 'EQ', value: 'BLOCKED' }, { field: 'requesterUserId', op: 'EXISTS' }] },
+    defaultActionJson: [{
+      actionKey: 'notify_requester_finance_blocked',
+      actionType: 'SEND_NOTIFICATION',
+      configJson: {
+        triggerKey: 'workflow.reimbursement_finance_blocked_requester',
+        recipientPayloadKeys: ['requesterUserId'],
+        severity: 'info',
+        titleTemplate: `${reimbursementFinanceBlockedRequesterNotice().title}: {{requestNo}}`,
+        bodyTemplate: reimbursementFinanceBlockedRequesterNotice().body,
+        deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+        excludeRecipientPayloadKeys: ['actorUserId'],
+        skipWhenAllRecipientsExcluded: true,
+      },
+    }],
+    requiredPermissions: ['reimbursement.read_own'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
     key: 'reimbursement_finance_review',
-    name: 'Reimbursement finance review',
-    description: 'Notify the people who can run finance review on the claim (the shop owner only when nobody else can) when a claim is blocked.',
+    name: 'รายการเบิกจ่ายติดขัดระหว่างตรวจการเงิน',
+    description: `แจ้งผู้ตรวจสอบด้านการเงินเมื่อรายการติดขัด โดยแจ้ง${ROLE.OWNER}เมื่อไม่มีผู้ตรวจสอบคนอื่น`,
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -352,7 +416,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // own action — a solo owner submitting/approving/paying their own claim gets none of
           // these pushes. An owner-only company excluding the sole recipient is expected, not a
           // failure (H-18), so this is a graceful skip rather than a dead-lettered retry.
-          excludeRecipientPayloadKeys: ['actorUserId'],
+          // The requester gets the requester notice even when they can review finance (controller decision 2026-10-02).
+          excludeRecipientPayloadKeys: ['actorUserId', 'requesterUserId'],
           skipWhenAllRecipientsExcluded: true,
         },
       },
@@ -368,8 +433,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     // learned nothing when a claim ARRIVED — the sibling template above only fires on a BLOCKED
     // finance decision, i.e. on finance's own action.
     key: 'reimbursement_finance_review_pending',
-    name: 'Reimbursement awaiting finance review',
-    description: 'Notify the people who can run finance review on the claim (the shop owner only when nobody else can) when a claim arrives at the finance desk.',
+    name: 'รายการเบิกจ่ายรอตรวจการเงิน',
+    description: `แจ้งผู้ตรวจสอบด้านการเงินเมื่อรายการมาถึงคิวตรวจสอบ โดยแจ้ง${ROLE.OWNER}เมื่อไม่มีผู้ตรวจสอบคนอื่น`,
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -408,8 +473,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'reimbursement_ready_for_payment',
-    name: 'Reimbursement ready for payment',
-    description: 'Notify the person whose turn it is to record this reimbursement payment (the finance reviewer who passed it, else whoever approved it, when they can pay), else everyone who can, when a claim is ready for payment.',
+    name: 'รายการเบิกจ่ายพร้อมบันทึกการจ่าย',
+    description: 'แจ้งผู้มีหน้าที่บันทึกการจ่ายเงินตามลำดับสิทธิ์เมื่อรายการพร้อมจ่าย หากไม่มีผู้ใดทำได้ให้เตือนทุกคนที่มีสิทธิ์',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -457,8 +522,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'reimbursement_payment_recorded',
-    name: 'Reimbursement payment recorded',
-    description: 'Notify the requester when their reimbursement has been paid.',
+    name: 'แจ้งเมื่อบันทึกการจ่ายเงินแล้ว',
+    description: 'แจ้งผู้ขอเบิกเมื่อบันทึกการจ่ายเงินแล้ว',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -499,8 +564,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   {
     // Audit B9: a requester told "paid" was never told when that payment was taken back.
     key: 'reimbursement_payment_voided',
-    name: 'Reimbursement payment voided',
-    description: 'Notify the requester when a recorded payment of their reimbursement is voided.',
+    name: 'แจ้งเมื่อยกเลิกรายการจ่ายเงิน',
+    description: 'แจ้งผู้ขอเบิกเมื่อยกเลิกรายการจ่ายเงินที่บันทึกไว้',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -539,8 +604,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     // Payout spec §14, §17.3: an approved claim was sent back to have its payout account corrected.
     // To the requester alone, the one person it concerns (owner rule 2026-10-01).
     key: 'reimbursement_payout_correction_requested',
-    name: 'Reimbursement payout account correction requested',
-    description: 'Notify the requester when their approved reimbursement is sent back to have its payout account corrected.',
+    name: 'แจ้งแก้ไขบัญชีรับเงินคืน',
+    description: 'แจ้งผู้ขอเบิกเมื่อบัญชีรับเงินที่อนุมัติแล้วถูกส่งกลับมาให้แก้ไข',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -580,8 +645,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     // alone: the people the claim had, or whoever its recorded role or the owner reaches when none of
     // them can act any more. A notice only: the approval is asked for on the claim's own page.
     key: 'reimbursement_payout_correction_submitted',
-    name: 'Reimbursement payout account awaiting approval',
-    description: 'Notify the approvers of the new step when the requester has given the payout account of a claim sent back for correction.',
+    name: 'บัญชีรับเงินคืนที่แก้ไขแล้วรออนุมัติ',
+    description: 'แจ้งผู้อนุมัติขั้นตอนถัดไปเมื่อผู้ขอเบิกส่งบัญชีรับเงินที่แก้ไขแล้ว',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
@@ -615,8 +680,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'vendor_bill_pending_approval',
-    name: 'Vendor bill pending',
-    description: 'Notify finance/accountant and create a task when a vendor bill is submitted for approval.',
+    name: 'ใบวางบิลรออนุมัติ',
+    description: `แจ้ง${ROLE.FINANCE}และ${ROLE.ACCOUNTANT} และสร้างงานให้${ROLE.FINANCE} เมื่อมีใบวางบิลส่งขออนุมัติ`,
     category: 'procurement',
     sourceModule: 'procurement',
     triggerType: 'EVENT',
@@ -632,8 +697,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'vendor_bill_second_approval',
-    name: 'Vendor bill awaiting second approval',
-    description: 'Notify the other eligible approvers when a bill at or above the dual-approval threshold has its first approval recorded and waits for a second, different approver (H-07).',
+    name: 'ใบวางบิลรอผู้อนุมัติคนถัดไป',
+    description: 'แจ้งผู้อนุมัติคนถัดไปเมื่อใบวางบิลที่ต้องอนุมัติสองคนผ่านการอนุมัติครั้งแรกและรอผู้อนุมัติอีกคน',
     category: 'procurement',
     sourceModule: 'procurement',
     triggerType: 'EVENT',
@@ -658,8 +723,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'tax_due_soon',
-    name: 'Tax due soon',
-    description: 'Notify accountant/owner and create a checklist task when a CIT period is due soon and not yet filed.',
+    name: 'ใกล้ถึงกำหนดยื่นภาษี',
+    description: `แจ้ง${ROLE.ACCOUNTANT}และ${ROLE.OWNER} และสร้างงานตรวจสอบให้${ROLE.ACCOUNTANT} เมื่อใกล้กำหนดยื่นภาษีเงินได้นิติบุคคลและยังไม่ได้ยื่น`,
     category: 'tax',
     sourceModule: 'tax',
     triggerType: 'SCHEDULE',
@@ -681,8 +746,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'bank_reconciliation_aging',
-    name: 'Bank reconciliation aging',
-    description: 'Notify finance and create a task when an unmatched bank statement line ages past a threshold.',
+    name: 'รายการเดินบัญชีธนาคารที่ยังไม่จับคู่เกินกำหนด',
+    description: 'แจ้งฝ่ายการเงินและสร้างงานเมื่อพบรายการเดินบัญชีธนาคารที่ยังไม่จับคู่เกินเวลาที่กำหนด',
     category: 'banking',
     sourceModule: 'banking',
     triggerType: 'THRESHOLD_SCAN',
@@ -698,8 +763,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'overdue_invoice_follow_up',
-    name: 'Overdue invoice follow-up',
-    description: 'Notify finance/sales and create a follow-up task when an issued invoice is overdue and unpaid.',
+    name: 'ติดตามใบแจ้งหนี้เกินกำหนด',
+    description: `แจ้ง${ROLE.FINANCE} เมื่อใบแจ้งหนี้ที่ออกแล้วเกินกำหนดและยังไม่ได้ชำระ`,
     category: 'accounting',
     sourceModule: 'accounting-documents',
     triggerType: 'THRESHOLD_SCAN',
@@ -711,12 +776,12 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     requiredSourceModules: ['accounting-documents'],
     defaultEnabled: false,
     status: 'UNAVAILABLE',
-    unavailableReason: 'Accounting Documents module does not yet expose an overdue/due-date filtered read API or event.',
+    unavailableReason: 'ส่วนงานเอกสารบัญชียังไม่มีข้อมูลหรือเหตุการณ์สำหรับค้นหารายการตามวันครบกำหนด',
   },
   {
     key: 'crm_follow_up_due',
-    name: 'CRM follow-up due',
-    description: 'Notify the sales owner and create a task link when a CRM follow-up task is open and overdue.',
+    name: 'ถึงกำหนดติดตามลูกค้า',
+    description: `แจ้ง${ROLE.SALES}และ${ROLE.MANAGER} และสร้างงานติดตามลูกค้าให้${ROLE.SALES} เมื่องานติดตามลูกค้าที่ยังเปิดอยู่เลยกำหนด`,
     category: 'crm',
     sourceModule: 'crm',
     triggerType: 'THRESHOLD_SCAN',
@@ -732,8 +797,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'crm_opportunity_stuck',
-    name: 'Opportunity stuck',
-    description: 'Notify the sales manager and create a review task when an open opportunity has had no stage change for N days.',
+    name: 'โอกาสการขายไม่มีความคืบหน้า',
+    description: `แจ้ง${ROLE.MANAGER} และสร้างงานตรวจสอบให้${ROLE.MANAGER} เมื่อโอกาสการขายที่เปิดอยู่ไม่มีการเปลี่ยนขั้นตอนเป็นเวลาหลายวัน`,
     category: 'crm',
     sourceModule: 'crm',
     triggerType: 'SCHEDULE',
@@ -749,8 +814,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'sales_below_target',
-    name: 'Sales below target',
-    description: 'Notify owner/manager and create a review task when actual sales fall below target by a cutoff date.',
+    name: 'ยอดขายต่ำกว่าเป้าหมาย',
+    description: `แจ้ง${ROLE.OWNER}และ${ROLE.MANAGER} เมื่อยอดขายจริงต่ำกว่าเป้าหมายตามวันที่กำหนด`,
     category: 'crm',
     sourceModule: 'reports-bi',
     triggerType: 'SCHEDULE',
@@ -762,12 +827,12 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     requiredSourceModules: ['reports-bi'],
     defaultEnabled: false,
     status: 'UNAVAILABLE',
-    unavailableReason: 'Sales target / BI data source (Master Implementation Checklist item 18) is not yet implemented.',
+    unavailableReason: 'ส่วนงานข้อมูลยอดขายและเป้าหมายยังไม่มีข้อมูลให้ใช้งาน',
   },
   {
     key: 'ai_draft_requested',
-    name: 'AI draft requested',
-    description: 'Request a safe AI draft (item 17) on behalf of a configured requester when an event occurs. Set templateKey and requesterUserId in the action config; the draft is reviewed and applied only in web.',
+    name: 'ขอให้ AI ช่วยร่างข้อมูล',
+    description: 'ขอให้ AI ช่วยร่างข้อมูลแทนผู้ขอที่ตั้งค่าไว้เมื่อเกิดเหตุการณ์ ผู้ใช้ต้องตรวจและนำร่างไปใช้ในเว็บ',
     category: 'ai',
     sourceModule: 'ai-draft',
     triggerType: 'EVENT',
@@ -782,8 +847,8 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
   },
   {
     key: 'outbound_webhook',
-    name: 'Outbound webhook',
-    description: 'Call a signed, allowlisted, admin-configured webhook endpoint when a selected event occurs. Disabled by default.',
+    name: 'ส่งข้อมูลไปยังระบบภายนอก',
+    description: 'ส่งข้อมูลที่ลงชื่อรับรองแล้วไปยังการเชื่อมต่อระบบภายนอกที่บริษัทตั้งไว้ เมื่อเกิดเหตุการณ์ที่เลือก การเชื่อมต่อที่เพิ่มใหม่จะปิดใช้งานไว้ก่อนเสมอ',
     category: 'integration',
     sourceModule: 'workflow',
     triggerType: 'EVENT',

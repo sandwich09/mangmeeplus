@@ -97,7 +97,9 @@ only permissions the resolver proves the requester owns but the current entitlem
 
 - สิทธิ์รายบุคคล (`IndividualPermissionsPrototypePage`): listbox options = roles where `assignableByCurrentUser || role.id === currentRoleId`; self row and degenerate lists per R4/R7; owner-row edit menu hidden per R5; 403 on change triggers reload per R10.
 - Add/edit wizard (`AddEmployeePrototypePage`): chips use the same predicate (replacing the client-side `hasPrivilegedGrant` approximation); self-target renders the role section read-only.
-- Sidebar (`AppSidebar` via `WorkspaceShell`): user area lists all held roles per R9.
+- Sidebar (`AppSidebar` via `WorkspaceShell`): user area lists all held roles per R9. Labels use
+  the shared standard-role names and company-copy display rule in `company-role-override-spec.md` R11;
+  the company switcher follows the same rule using the stored membership role names.
 - Loading/empty/forbidden states: existing patterns kept ("ยังไม่มีบทบาทให้เลือก", read-only badges, generic forbidden text).
 
 ### LINE/LIFF

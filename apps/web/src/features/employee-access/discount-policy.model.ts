@@ -1,3 +1,5 @@
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+
 export type DiscountOverrideRole = 'owner' | 'manager' | 'any';
 
 export type DiscountStepField = 'defaultPct' | 'maxPct' | 'vipPct' | 'regularPct';
@@ -23,9 +25,10 @@ export const DISCOUNT_POLICY_DEFAULTS: DiscountPolicyState = {
 };
 
 export const DISCOUNT_OVERRIDE_OPTIONS: Array<{ id: DiscountOverrideRole; label: string }> = [
-  { id: 'owner', label: 'เจ้าของร้านเท่านั้น' },
-  { id: 'manager', label: 'เจ้าของและผู้จัดการ' },
-  { id: 'any', label: 'พนักงานขายขึ้นไป' },
+  { id: 'owner', label: `${THAI_SYSTEM_ROLE_NAMES.OWNER}เท่านั้น` },
+  { id: 'manager', label: `${THAI_SYSTEM_ROLE_NAMES.OWNER}และ${THAI_SYSTEM_ROLE_NAMES.MANAGER}` },
+  // 'any' keeps no role out, and no role ranks above another, so this option names every role.
+  { id: 'any', label: 'ทุกบทบาท' },
 ];
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));

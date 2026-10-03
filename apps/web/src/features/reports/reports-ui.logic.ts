@@ -1,4 +1,5 @@
-import type { ReportExportRequestDto, ReportExportStatus, ReportQueryStatus } from '@watchdog-bms/contracts';
+import { REPORT_CURRENCY_WORDS, REPORT_FRESHNESS_LABELS, type ReportExportRequestDto, type ReportExportStatus, type ReportFieldType, type ReportQueryStatus } from '@watchdog-bms/contracts';
+import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 
 const STATUS_LABELS: Record<ReportExportStatus, string> = {
   QUEUED: 'รอดำเนินการ',
@@ -43,11 +44,57 @@ const RUN_STATUS_LABELS: Record<ReportQueryStatus, string> = {
 };
 
 export function reportRunStatusText(status: ReportQueryStatus): string {
-  return RUN_STATUS_LABELS[status];
+  return RUN_STATUS_LABELS[status] ?? 'สถานะอื่น';
+}
+
+export function defaultReportViewName(title: string, date = new Date()): string {
+  return `${title} ${formatThaiDate(date)}`;
+}
+
+export function reportChartKindText(kind: string): string {
+  return ({ table: 'ตาราง', kpi: 'ตัวเลขสรุป', bar: 'กราฟแท่ง', line: 'กราฟเส้น', aging_bucket: 'ช่วงอายุหนี้' } as Record<string, string>)[kind] ?? 'รูปแบบอื่น';
+}
+
+export function reportFilterOptionText(option: string): string {
+  return ({ own: 'รายการของฉัน', all: 'ทุกรายการ' } as Record<string, string>)[option] ?? 'ตัวเลือกอื่น';
+}
+
+export function reportViewVisibilityText(visibility: string): string {
+  return ({ PRIVATE: 'เฉพาะฉัน', COMPANY: 'ทั้งบริษัท' } as Record<string, string>)[visibility] ?? 'ขอบเขตอื่น';
+}
+
+/**
+ * The unit of a money cell in a row. The API sends the row's currency as a word: บาท for THB, the code of
+ * another currency, or null when the source does not know it (then no unit). A report without a currency
+ * column is in the company's base currency, which is baht.
+ */
+export function reportMoneyUnit(row: Record<string, unknown> | undefined): string | null {
+  if (!row || !('currency' in row)) return REPORT_CURRENCY_WORDS.THB;
+  return typeof row.currency === 'string' && row.currency ? row.currency : null;
+}
+
+export function reportValueText(value: unknown, type?: ReportFieldType, key?: string, moneyUnit: string | null = REPORT_CURRENCY_WORDS.THB): string {
+  if (value === null || value === undefined || value === '') return '-';
+  if (key === 'periodKey') return formatThaiMonth(value as string, '-');
+  if (type === 'date') return formatThaiDate(value as string, '-');
+  if (type === 'datetime') return formatThaiDateTime(value as string, '-');
+  if (type === 'money') {
+    const amount = typeof value === 'number' ? value : Number(value);
+    if (Number.isFinite(amount)) {
+      const text = amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return moneyUnit ? `${text} ${moneyUnit}` : text;
+    }
+  }
+  if (type === 'number') {
+    const amount = typeof value === 'number' ? value : Number(value);
+    if (Number.isFinite(amount)) return amount.toLocaleString('th-TH');
+  }
+  if (typeof value === 'number') return value.toLocaleString('th-TH');
+  return String(value);
 }
 
 export function reportFreshnessText(status: 'fresh' | 'stale' | 'unknown'): string {
-  return status === 'fresh' ? 'ข้อมูลล่าสุด' : status === 'stale' ? 'ข้อมูลอาจไม่ล่าสุด' : 'ยังตรวจเวลาอัปเดตไม่ได้';
+  return REPORT_FRESHNESS_LABELS[status] ?? REPORT_FRESHNESS_LABELS.unknown;
 }
 
 export function isReportsFeatureDisabled(error: unknown): boolean {
@@ -61,7 +108,11 @@ const WARNING_LABELS: Record<string, string> = {
   ledger_control_account_not_found_or_unposted: 'ยังไม่พบบัญชียอดคุมหรือรายการที่ลงบัญชีแล้วสำหรับช่วงนี้',
   ledger_control_mismatch: 'ยอดรายงานต่างจากยอดคุมบัญชี กรุณาให้นักบัญชีตรวจสอบ',
   accounting_documents_scope_forbidden: 'สรุปนี้ไม่รวมเอกสารขาย เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',
-  crm_scope_forbidden: 'สรุปนี้ไม่รวม CRM เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',
+  crm_scope_forbidden: 'สรุปนี้ไม่รวมโอกาสการขาย เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',
+  // The open-opportunity value adds every opportunity's estimate whatever its currency (no unit is shown for it).
+  crm_pipeline_currency_unavailable: 'มูลค่าโอกาสการขายรวมทุกรายการโดยไม่แยกสกุลเงิน จึงไม่แสดงหน่วยเงินของยอดนี้',
+  // Receivables in more than one currency: no single total, and no comparison with the ledger control account.
+  mixed_currency_total_unavailable: 'ใบแจ้งหนี้มีมากกว่าหนึ่งสกุลเงิน จึงไม่รวมยอดค้างชำระเป็นยอดเดียวและไม่ได้เทียบกับยอดคุมบัญชี',
   inventory_valuation_not_available: 'รายงานนี้แสดงจำนวนสินค้า ยังไม่รวมมูลค่าสินค้า',
   workflow_run_scope_forbidden: 'สรุปนี้ไม่รวมประวัติการทำงาน เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',
   workflow_task_scope_forbidden: 'สรุปนี้ไม่รวมงานค้าง เพราะคุณไม่มีสิทธิ์ดูส่วนนั้น',

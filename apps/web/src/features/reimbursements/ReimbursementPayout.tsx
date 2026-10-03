@@ -1,4 +1,7 @@
 'use client';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+
+import { reimbursementPayoutOnBehalfNotice, REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE } from '@watchdog-bms/contracts';
 
 // Payout account screens: the default account card (own page and employee page), the receiving
 // choice on the claim form, and the masked account on the claim page with its reveal button.
@@ -293,7 +296,7 @@ export function MemberPayoutAccountCard({ companyId, memberUserId, canEdit, titl
                   <button type="button" className={cx(btnClass, 'min-h-11 w-full sm:w-auto')} onClick={startEdit}>{account ? 'แก้ไขบัญชี' : 'ตั้งบัญชีรับเงินคืน'}</button>
                   {own && account && <button type="button" className={cx(ghostClass, 'min-h-11 w-full sm:w-auto')} disabled={busy} aria-busy={busy} onClick={() => void remove()}>ลบบัญชี</button>}
                 </div>
-              ) : <p className="text-xs text-gray-500">บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือแอดมิน ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล</p>}
+              ) : <p className="text-xs text-gray-500">{`บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี ${THAI_SYSTEM_ROLE_NAMES.OWNER} หรือ${THAI_SYSTEM_ROLE_NAMES.ADMIN} ส่วน${THAI_SYSTEM_ROLE_NAMES.MANAGER}และ${THAI_SYSTEM_ROLE_NAMES.HR}ตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล`}</p>}
             </>
           )}
       {confirmDialog}
@@ -360,10 +363,10 @@ export function ClaimPayoutFormSection({ value, onChange, forSelf, defaultAccoun
         )}
         {option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
         {hasOwnAccount && option('KEEP', 'ใช้บัญชีที่ระบุไว้ในใบนี้', `${payoutAccountLine(current)}${current?.accountName ? ` · ${current.accountName}` : ''}`)}
-        {/* On a draft filed for someone only an account typed for them tells them: said beside that choice, and of no other. */}
         {option('SPECIFIED', hasOwnAccount ? 'ระบุบัญชีใหม่สำหรับใบนี้' : 'ระบุบัญชีสำหรับใบนี้',
-          forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน')}
+          forSelf ? null : REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE)}
       </div>
+      {!forSelf && <p className="mt-3 text-sm text-gray-600">{reimbursementPayoutOnBehalfNotice(true)}</p>}
       {value.mode === 'SPECIFIED' && (
         <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
           <PayoutAccountFields value={value.account} onChange={(account) => onChange({ ...value, account })} invalidField={invalidField} />

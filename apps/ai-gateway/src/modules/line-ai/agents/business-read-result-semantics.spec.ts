@@ -99,6 +99,16 @@ describe('business-read result semantics', () => {
     });
   }
 
+  // One word for equity, true for a sole proprietor, a partnership and a company (LEDGER_ACCOUNT_CLASS_LABELS).
+  it('ledger.get_report_summary: names equity with the shared ledger word', async () => {
+    const output = await specialist('ledger.get_report_summary', { status: 'ok', data: {
+      currency: 'THB', balanceSheet: { totalAssets: '10.00', totalLiabilities: '4.00', totalEquity: '6.00' },
+    } }).run(ctx, intent('ledger.get_report_summary'), 1);
+    const sheet = output.facts.find((fact) => fact.value.includes('totalEquity') || fact.value.includes('6.00'))!;
+    assert.match(sheet.value, /สินทรัพย์ 10\.00, หนี้สิน 4\.00, ส่วนของเจ้าของ 6\.00/);
+    assert.doesNotMatch(sheet.value, /ผู้ถือหุ้น/);
+  });
+
   it('unavailable/error are failed reads, not successful empty results', async () => {
     for (const [name, status] of [['accounting.get_summary', 'unavailable'], ['inventory.list_low_stock', 'error']] as const) {
       const output = await specialist(name, { status }).run(ctx, intent(name), 1);

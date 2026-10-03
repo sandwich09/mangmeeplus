@@ -573,6 +573,7 @@ Widget rules:
 - No metric card may show `0` when the source is unavailable. Use unavailable/partial state.
 - Drill-down links must be hidden or disabled if user lacks source permission.
 - Stale snapshots must show computed time.
+- In Thai, label inventory below its reorder point as `สินค้าต่ำกว่าจุดสั่งซื้อ`; use the existing `inventory.product.reorder_point` term for the threshold. Show movement timestamps with the shared Thai short date and time, and group displayed numbers using the Thai locale.
 - Critical/action notifications should be visible near top without using decorative marketing layout.
 - User layout preferences can wait unless implementation cost is low; widget enable/disable config is enough.
 
@@ -841,6 +842,8 @@ Rule management page:
 - Edit implemented rules only.
 - Future unsupported rules visible as disabled/unavailable.
 - Rule test must be explicit and audit-safe.
+- Display rule names from the Thai trigger-name mapping, channel names from the existing Thai dictionary, and statuses as Thai labels. Do not show trigger keys or channel enum values.
+- A rule card's detail line shows “ช่องทาง: …” only when the rule lists channels; with none it shows only the cooldown (2026-10-03). Note: delivery reads each person's channel preferences, not the rule's `channelPolicyJson`.
 
 ## 21. Security, Audit, and Compliance Rules
 

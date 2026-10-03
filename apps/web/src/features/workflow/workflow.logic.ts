@@ -33,9 +33,9 @@ export function parseWorkflowTab(
 
 export function validateWebhookForm(input: { name: string; url: string; secretRef: string; allowedEventTypes: string }): string | null {
   if (!input.name || input.name.trim() === '') return 'กรุณาระบุชื่อ';
-  if (!/^https:\/\//.test(input.url)) return 'URL ต้องเป็น https://';
-  if (!input.secretRef || input.secretRef.trim() === '') return 'กรุณาระบุ signing secret';
-  if (!input.allowedEventTypes || input.allowedEventTypes.trim() === '') return 'กรุณาระบุ event type ที่อนุญาตอย่างน้อย 1 รายการ';
+  if (!/^https:\/\//.test(input.url)) return 'กรุณากรอกที่อยู่เว็บไซต์ที่ปลอดภัย';
+  if (!input.secretRef || input.secretRef.trim() === '') return 'กรุณากรอกรหัสลับสำหรับเชื่อมต่อ';
+  if (!input.allowedEventTypes || input.allowedEventTypes.trim() === '') return 'กรุณาระบุรายการเหตุการณ์ที่อนุญาตอย่างน้อยหนึ่งรายการ';
   return null;
 }
 
@@ -44,11 +44,11 @@ export function parseAllowedEventTypes(raw: string): string[] {
 }
 
 export function parseJsonSafely(raw: string): { value?: unknown; error?: string } {
-  if (!raw || raw.trim() === '') return { error: 'กรุณาระบุ JSON' };
+  if (!raw || raw.trim() === '') return { error: 'กรุณาระบุข้อมูลคำสั่งอัตโนมัติ' };
   try {
     return { value: JSON.parse(raw) };
   } catch {
-    return { error: 'รูปแบบ JSON ไม่ถูกต้อง' };
+    return { error: 'ข้อมูลคำสั่งอัตโนมัติไม่ถูกต้อง' };
   }
 }
 

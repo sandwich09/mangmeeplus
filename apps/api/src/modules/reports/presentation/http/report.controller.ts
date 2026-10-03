@@ -18,6 +18,7 @@ import {
   RunReportQueryUseCase,
   UpdateReportViewUseCase,
 } from '../../application/report.use-cases';
+import { reportResultForPeople } from '../../domain/report-row-text.logic';
 
 @ApiTags('reports')
 @Controller('companies/:companyId/reports')
@@ -48,8 +49,9 @@ export class ReportController {
   @RequirePermissions(REPORT_PERMISSION_KEYS.CATALOG_READ, REPORT_PERMISSION_KEYS.DATASET_READ, REPORT_PERMISSION_KEYS.QUERY_RUN)
   @HttpCode(200)
   @ApiOperation({ summary: 'Run a report query' })
-  queryHandler(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Body() body: ReportQueryInput) {
-    return this.queryReport.execute(ctx, companyId, body);
+  async queryHandler(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Body() body: ReportQueryInput) {
+    // The page a person reads; the assistant's report tool calls the use case and keeps the machine values.
+    return reportResultForPeople(await this.queryReport.execute(ctx, companyId, body));
   }
 
   @Get('runs/:runId')

@@ -100,9 +100,9 @@ Use a **fresh, unauthenticated** context here (plain `@playwright/test` `test` o
 
 | ID | Pri | Steps | Expected |
 |---|---|---|---|
-| RPT-01 | P0 | `goto('/companies/:id/reports')` | `heading Reports and BI` + text `Trial Balance` visible |
+| RPT-01 | P0 | `goto('/companies/:id/reports')` | heading `รายงาน` + text `งบทดลอง` visible |
 | RPT-02 | P1 | Click `Run report` | `Result table` appears with rows |
-| RPT-03 | P1 | Click `Save view` | Saved view appears in the aside with a date stamp |
+| RPT-03 | P1 | Click `Save view` | Saved view appears in the aside with a Thai short date |
 | RPT-04 | P0 | Click `Export CSV`; await download | Download filename ends `.csv`; aside shows an export with status `READY` |
 | RPT-05 | P1 | Reload page | Saved view + `READY` export persist |
 | RPT-06 | P1 | `api.get('/companies/:id/reports/exports')` | 200; some item `status==='READY'` |
