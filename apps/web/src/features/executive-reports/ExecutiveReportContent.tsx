@@ -29,7 +29,7 @@ export function Reasons({ codes, coverage }: { codes: readonly string[]; coverag
     const words = reasonText(code, coverage);
     const index = notes?.notes.indexOf(words) ?? -1;
     return notes && index >= 0
-      ? <sup key={code} className="ml-1"><a href={`#${notes.id}-${index + 1}`} aria-label={W.reasonReference(index + 1)} className="text-brand-800 underline">[{index + 1}]</a></sup>
+      ? <sup key={code} className="ml-1"><a href={`#${notes.id}-${index + 1}`} aria-label={W.reasonReference(index + 1)} className="-my-3 inline-flex min-h-11 min-w-11 items-center justify-center align-middle text-brand-800 underline">[{index + 1}]</a></sup>
       : <p key={code} className="text-sm text-gray-600">{words}</p>;
   })}</>;
 }
@@ -263,7 +263,7 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }
         <ReportTable title={W.usage} columns={[{ label: W.discovery }, { label: W.days }, { label: W.users }, { label: W.receiptCount }]} rows={(['Line', 'Web'] as const).map(channel => ({ key: channel, cells: [channel === 'Line' ? W.line : W.web, <Figure key="days" value={sourceCount(month.usage[`activeDays${channel}`], data.coverage.usage)} />, <Figure key="users" value={sourceCount(month.usage[`activeUsers${channel}`], data.coverage.usage)} />, <Figure key="receipts" value={sourceCount(month.usage[`expenseReceipts${channel}`], data.coverage.usage)} />] }))} />
       </Card>
       <Card title={W.revenue}><p>{W.moneyDefinition} · {W.vatIncluded}</p><DetailValues rows={([[W.receipts, month.money.receiptsSatang], [W.refunds, month.money.refundsSatang], [W.net, month.money.netReceiptsSatang], [W.tax, month.money.taxSatang], [W.fees, month.money.feesSatang], [W.aiCost, month.money.aiCostSatang]] as Array<[string, ExecutiveMoney]>).map(([label, value]) => [label, <Figure key={label} value={value} moneyValue netValue={label === W.net} measured={label === W.aiCost} />])} />
-        <p>{W.paid}: {month.paidInMonth ? W.paid : data.coverage.money.coverage === 'complete' ? W.noReceipts : LABELS.paidEver.UNKNOWN} · {W.positive}: {month.positiveNetInMonth ? W.positive : data.coverage.money.coverage === 'complete' ? W.noPositiveNet : LABELS.paidEver.UNKNOWN}</p>
+        <p>{W.paid}: {month.paidInMonth ? W.yes : data.coverage.money.coverage === 'complete' ? W.noReceipts : LABELS.paidEver.UNKNOWN} · {W.positive}: {month.positiveNetInMonth ? W.yes : data.coverage.money.coverage === 'complete' ? W.noPositiveNet : LABELS.paidEver.UNKNOWN}</p>
       </Card>
     </> : tab === 'company' && <>
       <Card title={W.filterLabels.discovery}><DetailValues rows={[[W.filterLabels.discovery, thaiLabel(company.discovery.label)], ...(company.discovery.key === 'OTHER' ? [[LABELS.discovery.OTHER!, company.discovery.otherText || W.unknown] as [string, ReactNode]] : []), [W.filterLabels.signupRail, thaiLabel(LABELS.signupRail[company.signupRail] ?? W.unknown)], [W.referring, referrer(company.referrer)], [W.creditedSeller, thaiLabel(company.creditedSeller.label || W.unknown, company.creditedSeller.salesCode)], [W.creditAmount, company.creditedSeller.creditSatang === undefined ? '—' : money(company.creditedSeller.creditSatang)], [W.creditAt, reportDateTime(company.creditedSeller.creditedAt)]]} /><p className="text-sm">{W.current} · {W.through(reportDateTime(data.build.asOf))}</p>{W.creditNotes.map(note => <p key={note} className="text-sm">{note}</p>)}</Card>

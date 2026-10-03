@@ -154,3 +154,22 @@ Verification:
 - The billing and build Postgres specs changed by the owner-answers commits were not run here; CI runs them at merge (`ci.yml` lines 797–803).
 
 Next: controller review; take `0ca55cdca` into the program branch.
+
+## Detail touch targets and flag values (2026-10-03)
+
+Status: Done in this lane; uncommitted diff ready for controller review. Both changed tests failed before the production fixes and pass after them; locked web checks pass. Browser acceptance remains with the controller.
+Owner: executive-polish2 implementation lane; controller reviews, commits and checks the browser.
+Scope: two remaining detail defects: small reason links and field labels repeated as boolean values.
+Decisions: keep superscript reason numbers, give each link its own 44 × 44 minimum target with vertical margin compensation; use one shared Thai affirmative for both monthly payment flags and preserve confirmed-negative/unknown branches. No API, contract, dependency or schema change.
+Open questions: none for these two fixes. Browser geometry is not checked in this lane because browsers and servers are unavailable.
+Artifacts: `ExecutiveReportContent.tsx`, its content spec, `executive-reports.words.ts`, and the UI/plain-language specs.
+Verification:
+
+- `pnpm --filter @watchdog-bms/web exec node --import tsx --test --test-reporter=spec src/features/executive-reports/ExecutiveReportContent.spec.ts`: before fixes exit 1, 17 passed / 2 failed (payment flags repeated both labels; reason links lacked target classes); after fixes exit 0, 19 passed / 0 failed. Flag cases cover paid with positive net, paid with full refund, and unpaid across complete/partial/unavailable coverage. Reason assertions preserve superscripts, accessible names, destinations, minimum target classes and vertical compensation without negative horizontal margins.
+- `pnpm --filter @watchdog-bms/web exec node --import tsx --test --test-reporter=spec src/features/executive-reports/executive-reports.logic.spec.ts src/features/executive-reports/ExecutiveReports.wiring.spec.ts`: exit 0, 31 passed / 0 failed.
+- Old-wording sweep: `rg -n -g '*.spec.*' -g '*.test.*' -g '*e2e*' 'ชำระในเดือน|จ่ายมากกว่ายอดคืนในเดือน' apps/api apps/ai-gateway apps/web e2e`, exit 0. Hits only in the content spec, executive logic spec, and API read pg spec; their filter-label expectations remain valid.
+- `env -u EXECUTIVE_REPORT_READ_TEST_DATABASE_URL pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/executive-business/executive-report-read.pg.spec.ts`: exit 0, 4 rule tests passed / 0 failed; real-PostgreSQL suite skipped. Database behaviour is not checked here (no database/network permitted).
+- Heavy wrapper `/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh` with `pnpm --filter @watchdog-bms/web typecheck`: exit 0, route generation and TypeScript passed. The same wrapper with `pnpm --filter @watchdog-bms/web exec node --import tsx --test 'src/**/*.spec.ts'`: exit 0, 2,858 passed / 0 failed / 0 skipped, 572 suites. Both commands received an environment with all S3_* keys removed.
+- `git diff --check`: exit 0. Only the six scoped code/test/doc files changed.
+
+Next: controller reviews/commits, runs `pnpm exec playwright test e2e/executive-report.spec.ts` on the seeded stack with WORKER_INTERNAL_TOKEN set, and runs the API read pg command with its test database configured. At 390 and 1280 px, inspect all detail tabs with partial/unavailable figures and several adjacent reason links: each link's bounding box at least 44 × 44, small visible number, steady figure rows, no target overlap or horizontal overflow, correct destination on tap and keyboard activation. In the usage/revenue tab, check affirmative values for a paid company, independent flags after a full refund, confirmed negatives without receipts, and unknown negatives with incomplete money coverage. These browser measurements and interactions are not checked in this lane.

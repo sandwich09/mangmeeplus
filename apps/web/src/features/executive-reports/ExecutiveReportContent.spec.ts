@@ -170,12 +170,26 @@ test('unavailable money never becomes zero in reconciliation; trend has a signed
   assert.doesNotMatch(text(html), /0\.00 บาท/); assert.match(html, /y1="100" y2="100"/); assert.doesNotMatch(html, /<rect /);
 });
 
-test('a confirmed month without receipts says no money received rather than unknown payment', async () => {
+test('company payment flags show Thai values, preserving confirmed negatives and incomplete unknowns', async () => {
   const { CompanyContent } = await content();
   const data = { ...envelope, coverage: { usage: { coverage: 'complete', reasonCodes: [] }, money: { coverage: 'complete', reasonCodes: [] } }, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' }, expenseReceiptCountLifetime: 0 }, monthReasonCodes: [], month: { paidEver: { value: 'NO' }, usageGroup: 'NOT_PAID', paidInMonth: false, positiveNetInMonth: false, fullyRefunded: false, usage: { activeDays: 0, activeDaysLine: 0, activeDaysWeb: 0, activeUsers: 0, activeUsersLine: 0, activeUsersWeb: 0, documents: 0, aiRequests: 0, expenseReceiptCountInPeriod: 0, expenseReceiptsLine: 0, expenseReceiptsWeb: 0 }, money: { receiptsSatang: cash(0), refundsSatang: cash(0), netReceiptsSatang: cash(0), feesSatang: cash(0), taxSatang: cash(0), aiCostSatang: cash(0) } } } as unknown as ExecutiveCompanyDetail;
   const visible = text(renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' })));
   assert.match(visible, /ไม่มีเงินรับในเดือน/); assert.match(visible, /ยอดรับไม่มากกว่ายอดคืนในเดือน/);
   assert.doesNotMatch(visible, /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
+  const actual: string[] = [], expected: string[] = [];
+  for (const coverage of ['complete', 'partial', 'unavailable'] as const) {
+    for (const [paidInMonth, positiveNetInMonth] of [[true, true], [true, false], [false, false]]) {
+      const metric = (amount: number): ExecutiveMoney => coverage === 'complete' ? cash(amount) : coverage === 'partial'
+        ? { ...cash(amount), value: null, knownValue: amount, coverage, reasonCodes: ['HISTORY_BEFORE_COLLECTION'] } : missing;
+      const receipts = paidInMonth ? 100 : 0, refunds = paidInMonth && !positiveNetInMonth ? 100 : 0;
+      const variant = { ...data, coverage: { ...data.coverage, money: { coverage, reasonCodes: [] } }, month: { ...data.month!, paidInMonth, positiveNetInMonth,
+        money: { ...data.month!.money, receiptsSatang: metric(receipts), refundsSatang: metric(refunds), netReceiptsSatang: metric(receipts - refunds) } } };
+      const html = renderToStaticMarkup(React.createElement(CompanyContent, { data: variant, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' }));
+      actual.push(html.match(/<p>(ชำระในเดือน:.*?)<\/p>/)?.[1] ?? '');
+      expected.push(`ชำระในเดือน: ${paidInMonth ? 'ใช่' : coverage === 'complete' ? 'ไม่มีเงินรับในเดือน' : 'ยังประเมินไม่ได้'} · จ่ายมากกว่ายอดคืนในเดือน: ${positiveNetInMonth ? 'ใช่' : coverage === 'complete' ? 'ยอดรับไม่มากกว่ายอดคืนในเดือน' : 'ยังประเมินไม่ได้'}`);
+    }
+  }
+  assert.deepEqual(actual, expected);
 });
 
 test('spend groups show each group as the backend counts it: companies of all, share of the weight, and the companies at 0 or below', async () => {
@@ -232,6 +246,17 @@ test('company detail explains each distinct reason once and links each affected 
   for (const note of notes) assert.match(html, new RegExp(`href="#${note}"`));
   for (const dd of [...html.matchAll(/<dd[^>]*>(.*?)<\/dd>/g)].map(match => match[1]).filter(value => /อย่างน้อย|ยังไม่มีตัวเลข|ยอดเฉพาะช่วงที่วัดได้/.test(value))) {
     assert.match(dd, /href="#/);
+  }
+  const references = [...html.matchAll(/<sup[^>]*><a href="#([^"]+)" aria-label="ดูเหตุผลข้อ (\d+)" class="([^"]+)">\[(\d+)\]<\/a><\/sup>/g)];
+  assert.ok(references.length > notes.length); // Several adjacent references share each note.
+  for (const [, target, number, classes, visibleNumber] of references) {
+    assert.equal(target, notes[Number(number) - 1]);
+    assert.equal(visibleNumber, number);
+    // Reserve horizontal space for each touch target; compensate vertically to keep figure rows compact.
+    for (const required of ['inline-flex', 'min-h-11', 'min-w-11', '-my-3', 'items-center', 'justify-center', 'align-middle']) {
+      assert.ok(classes.split(' ').includes(required), `reason ${number}: missing ${required}`);
+    }
+    assert.doesNotMatch(classes, /(?:^| )-m(?:x|l|r)-/);
   }
   assert.match(visible, /อย่างน้อย 1/); assert.match(visible, /ยังไม่มีตัวเลข/); assert.match(visible, /12\.34 บาท \(ยอดเฉพาะช่วงที่วัดได้\)/);
 });
