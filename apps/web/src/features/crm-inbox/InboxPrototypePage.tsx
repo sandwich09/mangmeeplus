@@ -546,6 +546,15 @@ export function InboxPrototypePage({
     setComposeText(text);
   }, []);
 
+  // A dashboard card can open a chip past the edge of the strip on a phone ("ยังไม่ได้ตอบ" is the third): scroll the strip
+  // sideways, never the page, so the chip that is on can be seen.
+  const showActiveChip = useCallback((chip: HTMLButtonElement | null) => {
+    const strip = chip?.parentElement;
+    if (!chip || !strip) return;
+    const [c, box] = [chip.getBoundingClientRect(), strip.getBoundingClientRect()];
+    if (c.right > box.right) strip.scrollLeft += Math.ceil(c.right - box.right) + 8;
+    else if (c.left < box.left) strip.scrollLeft -= Math.ceil(box.left - c.left) + 8;
+  }, []);
   const chips = useMemo(
     () => buildStatusChips({ total, statusCounts, overdueCount, unansweredCount, mineCount, unassignedCount }),
     [total, statusCounts, overdueCount, unansweredCount, mineCount, unassignedCount],
@@ -574,6 +583,7 @@ export function InboxPrototypePage({
             return (
               <button
                 key={f.id}
+                ref={active ? showActiveChip : undefined}
                 type="button"
                 onClick={() => {
                   setStatusFilter(f.id);
