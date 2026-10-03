@@ -92,3 +92,18 @@ Run `pnpm exec playwright test e2e/profile-completeness-card.spec.ts e2e/account
 
 ## Next
 Controller: review the diff, run the browser command/matrix above (including E2E red/green where required), then commit. No code work remains pending in this lane.
+
+## Browser check (controller's Claude lane, 2026-10-04, head 2cda540b3 → 8aba1827d)
+
+Local throwaway stack (fresh migrate + seed, web without `S3_*`). Account and OTP answers given to the browser where
+LINE re-authentication, e-mail delivery and OTP cannot run locally; the page, panel and password form are real.
+- E2E: `profile-completeness-card.spec.ts` first run 4 passed, 2 failed — the merged LINE-owner test typed the draft
+  through an exact `getByLabel('อีเมลที่ต้องการยืนยัน')`, which the aria-hidden " *" (14df7093c) defeats; fixed in
+  8aba1827d (accessible name). Then 6/6 ×3; `account-email-otp-ux.spec.ts` 7/7 ×3. The merged assertions (heading,
+  "…คู่กับรหัสผ่านเข้าเว็บได้", no e-mail command, no navigation, draft kept) pass as written.
+- LINE-only owner (no e-mail, username, password), 390 and 1280: "หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ใน
+  หน้าบัญชีของฉัน" shows, the username is asked; after "ตั้งรหัสผ่านสำรอง" the sentence is gone within 75 ms, the typed draft
+  e-mail stays, the password section reads ตั้งค่าแล้ว; two OTP re-reads, no loop, no sideways scroll.
+- Password account changing its e-mail (three steps, code, done) and e-mail login on → off: sentences match each state,
+  the old address stays shown until the code is confirmed; no sideways scroll.
+- Noticed, not changed: with no e-mail at all the panel shows "ยังไม่ได้ผูกอีเมล" next to the badge "ยังไม่ยืนยัน".
