@@ -1,6 +1,7 @@
 import { EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS } from '@watchdog-bms/contracts';
 
 const COMPANY_CUSTOMERS = 'บริษัทลูกค้า';
+const WEIGHT = 'ยอดที่ใช้คำนวณสัดส่วน';
 
 // Page copy only. Filter values, orders, purchase groups and event names stay in contracts.
 export const W = {
@@ -33,7 +34,7 @@ export const W = {
   moneyDefinition: 'เงินที่ลูกค้าจ่ายให้มั่งมี หักคืนเงิน ยังไม่หักค่าธรรมเนียมหรือต้นทุน', vatIncluded: 'รวมภาษีมูลค่าเพิ่ม',
   atLeast: 'อย่างน้อย', partialMoney: 'ยอดเฉพาะรายการที่ยืนยันแล้ว', negative: 'คืนเงินมากกว่าเงินรับ',
   followUp: 'เรื่องที่ควรดูต่อ', paidUsage: 'ชำระเงินแล้ว ใช้งานเป็นอย่างไร', rankTitle: 'บริษัทที่ใช้งานมากที่สุด',
-  positive: EXECUTIVE_FLAG_LABELS.positiveNetInPeriod.true!, positiveNet: 'ยอดรับสุทธิที่เป็นบวก', weight: 'ยอดที่ใช้คำนวณสัดส่วน', weightDefinition: 'ยอดจ่ายหลังหักคืนเงินที่มากกว่า 0',
+  positive: EXECUTIVE_FLAG_LABELS.positiveNetInPeriod.true!, positiveNet: 'ยอดรับสุทธิที่เป็นบวก', weight: WEIGHT, weightDefinition: 'ยอดจ่ายหลังหักคืนเงินที่มากกว่า 0',
   negativeTotal: 'ยอดติดลบรวม', notInShare: 'ไม่นับในสัดส่วน', cumulativeShare: 'สัดส่วนสะสม',
   tieOrder: 'ถ้ายอดเท่ากัน บริษัทที่สมัครก่อนอยู่ก่อน', partialRanking: 'ข้อมูลการรับเงินยังไม่ครบ จึงยังจัดอันดับทั้งหมดไม่ได้', fewPositive: 'มีบริษัทที่จ่ายมากกว่ายอดคืนไม่ถึง 20% ของบริษัททั้งหมด',
   rounding: 'ผลรวมไม่เท่ากับ 100.0% เพราะการปัดเศษ', chartHint: 'แตะสีหรือชื่อกลุ่มเพื่อดูบริษัท',
@@ -57,6 +58,9 @@ export const W = {
   refundedDifference: (n: number) => `ต่างจาก “ชำระในเดือน” ${n.toLocaleString('th-TH')} บริษัทเพราะยอดรับไม่มากกว่ายอดคืนในเดือน`,
   rankBase: (n: number, label: string) => `10 อันดับแรกจาก ${n.toLocaleString('th-TH')} บริษัท ตาม${label}`,
   rankingTie: (n: number, value: string, unit: string) => `มีอีก ${n.toLocaleString('th-TH')} บริษัทที่ค่าเท่ากับอันดับสุดท้ายที่แสดง (${value} ${unit})`,
+  groupCompanies: (n: number, of: number, share: string) => `${n.toLocaleString('th-TH')} จาก ${of.toLocaleString('th-TH')} บริษัท (${share})`,
+  ofWeight: (share: string) => `${share} ของ${WEIGHT}`,
+  nonPositive: (n: number) => `ยอดรับสุทธิในเดือนเป็น 0 หรือติดลบ ${n.toLocaleString('th-TH')} บริษัท`,
   spendTie: (n: number, amount: string) => `มีอีก ${n.toLocaleString('th-TH')} บริษัทที่จ่ายเท่ากับลำดับสุดท้ายของกลุ่ม (${amount}) แต่อยู่นอกกลุ่ม`,
   spendTitle: (month: string) => `รายรับในเดือน ${month} มาจากลูกค้ากลุ่มใด`,
 };

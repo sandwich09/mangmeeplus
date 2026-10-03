@@ -62,3 +62,15 @@ test('validation state and description are exposed by the visible picker', async
   assert.match(html, /<button[^>]*aria-invalid="true"/);
   assert.match(html, /<button[^>]*aria-required="true"/);
 });
+
+test('a list of selectable values disables the rest inside min and max (report months that are not built yet)', async () => {
+  const { outOfRange } = await import('./ThemedDate');
+  const built = ['2026-06', '2026-10'];
+  assert.equal(outOfRange('2026-11', '2026-06', '2026-11', 7, built), true, 'in range but not in the list');
+  assert.equal(outOfRange('2026-10', '2026-06', '2026-11', 7, built), false);
+  assert.equal(outOfRange('2026-05', '2026-06', '2026-11', 7, ['2026-05']), true, 'the range still applies to a listed value');
+  assert.equal(outOfRange('2026-11', '2026-06', '2026-11', 7), false, 'without a list only the range applies');
+  // The same check guards the pick itself, the month grid, the day grid and the "this month"/"today" button.
+  const source = readFileSync(new URL('./ThemedDate.tsx', import.meta.url), 'utf8');
+  assert.equal((source.match(/outOfRange\(.*, selectable\)/g) ?? []).length, 4);
+});

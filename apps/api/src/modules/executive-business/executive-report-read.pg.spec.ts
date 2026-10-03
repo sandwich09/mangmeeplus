@@ -30,7 +30,7 @@ import { BillingCashMovementsService } from '../billing/application/billing-cash
 import { PLATFORM_TENANT_ID } from '../sales-console/application/sales-context';
 import { ExecutiveReportBuildUseCase } from './application/executive-report-build.use-case';
 import { ExecutiveReportReadService } from './application/executive-report-read.service';
-import { combined, countOf, moneyCoverageOf, ranksOf, roundRatio, roundingNote, shareOf, sortedBy, spendGroupsOf, usageCoverageOf, type ReportRow } from './domain/executive-read.logic';
+import { aiCostCoverageOf, combined, countOf, moneyCoverageOf, ranksOf, roundRatio, roundingNote, shareOf, sortedBy, spendGroupsOf, usageCoverageOf, type ReportRow } from './domain/executive-read.logic';
 import { executiveMonthOf, executiveMonthRange } from './domain/executive-report.logic';
 
 const databaseUrl = process.env.EXECUTIVE_REPORT_READ_TEST_DATABASE_URL;
@@ -163,7 +163,8 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
 
     // No data set yet: the report says it cannot answer, never zeros; the context still answers.
     await assert.rejects(report.overview(reader(), { month: '2026-09' }), (error) => statusOf(error) === 503 && codeOf(error) === 'SOURCE_UNAVAILABLE');
-    assert.equal((await report.context(reader())).build, null);
+    const unbuilt = await report.context(reader());
+    assert.deepEqual([unbuilt.build, unbuilt.months, unbuilt.builtMonths], [null, null, []]);
     const first = await build.rebuild(FIRST_BUILD);
     assert.equal(first.status, 'BUILT');
     firstBuildId = (first as { buildId: string }).buildId;
@@ -399,16 +400,24 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     const top = (await report.analysis(reader(), { month: '2026-09', section: 'revenue', view: 'top' })).spendConcentration!;
     assert.deepEqual({ population: top.population, positive: top.positiveCompanyCount, total: top.positiveNetTotalSatang, signed: top.signedNetTotalSatang,
       negative: top.negativeNetSatang, notPositive: top.receiptsWithoutPositiveNet, target: top.topTargetCount, topCount: top.topCount, topShare: top.topShare,
-      prefix80: top.prefix80Count, prefix80Share: top.prefix80Share, tie: top.boundaryTie, tie80: top.prefix80BoundaryTie, coverage: top.coverage },
+      prefix80: top.prefix80Count, prefix80Share: top.prefix80Share, tie: top.boundaryTie, tie80: top.prefix80BoundaryTie, coverage: top.coverage,
+      nonPositive: top.nonPositiveCount, rest: top.restCount, restShare: top.restShare,
+      companyShares: [top.topCompanyShare, top.prefix80CompanyShare, top.restCompanyShare], roundingNote: top.roundingNote },
     // N = 16, K = ceil(16 × 0.2) = 4: the fourth place is one of four companies paying 299,000; the one that joined last stays outside.
+    // The rest is N − 4 = 12 companies, the eight paying 0 or less among them, with 475,543 of the positive total.
     { population: 16, positive: 8, total: 1_872_543, signed: 1_822_643, negative: -49_900, notPositive: 1, target: 4, topCount: 4,
       topShare: { value: 74.6, numerator: 1_397_000, denominator: 1_872_543 }, prefix80: 5, prefix80Share: { value: 90.6, numerator: 1_696_000, denominator: 1_872_543 },
-      tie: { count: 1, netSatang: 299_000 }, tie80: { count: 0, netSatang: 299_000 }, coverage: 'complete' });
+      tie: { count: 1, netSatang: 299_000 }, tie80: { count: 0, netSatang: 299_000 }, coverage: 'complete',
+      nonPositive: 8, rest: 12, restShare: { value: 25.4, numerator: 475_543, denominator: 1_872_543 },
+      companyShares: [{ value: 25, numerator: 4, denominator: 16 }, { value: 31.3, numerator: 5, denominator: 16 }, { value: 75, numerator: 12, denominator: 16 }],
+      roundingNote: false });
     const ids = async (cohort: string) => (await list('2026-09', top.drilldownFilters[cohort as 'TOP20'])).items.map((row) => row.id);
     assert.deepEqual(await ids('TOP20'), ['c-a', 'c-b', 'c-c', 'c-d']);
     assert.deepEqual(await ids('TO80'), ['c-a', 'c-b', 'c-c', 'c-d', 'c-dup1']);
     assert.deepEqual(await ids('BOUNDARY_TIE'), ['c-b', 'c-c', 'c-d', 'c-dup1']);
-    assert.equal((await ids('REST')).length, 12);
+    assert.equal((await ids('REST')).length, top.restCount);
+    // The companies paying 0 or less are counted on the same companies as the groups.
+    assert.equal((await list('2026-09', { pageSize: 100 })).items.filter((row) => row.metrics.netReceiptsSatang <= 0).length, top.nonPositiveCount);
     const tied = await list('2026-09', top.drilldownFilters.BOUNDARY_TIE!);
     assert.equal(valueOf(tied.summary.netReceiptsSatang), 4 * 299_000);
     // Ranks share a place (1, 2, 2, 2, 2, 6); the cumulative share checks the 80% edge; nothing positive, no share.
@@ -424,11 +433,14 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     // Fewer than ten companies in scope: no groups, and a list asked for a group is empty with the reason.
     const few = (await report.analysis(reader(), { month: '2026-09', section: 'revenue', view: 'top', industry: 'FOOD_ACCOMMODATION' })).spendConcentration!;
     assert.deepEqual([few.coverage, few.reasonCodes, few.topCount, few.boundaryTie, few.drilldownFilters], ['unavailable', ['TOO_FEW_COMPANIES'], null, undefined, {}]);
+    assert.deepEqual([few.restCount, few.restShare, few.topCompanyShare, few.prefix80CompanyShare, few.restCompanyShare, few.roundingNote, few.nonPositiveCount],
+      [null, null, null, null, null, false, 0]);
     const empty = await list('2026-09', { industry: 'FOOD_ACCOMMODATION', spendCohort: 'TOP20' });
     assert.deepEqual([empty.pagination.total, empty.reasonCodes], [0, ['TOO_FEW_COMPANIES']]);
     // October's money is not read whole: no group and no rank that may still change.
     const october = (await report.analysis(reader(), { month: '2026-10', section: 'revenue', view: 'top' })).spendConcentration!;
     assert.deepEqual([october.coverage, october.reasonCodes], ['unavailable', ['BILLING_SCAN_NOT_COMPLETE']]);
+    assert.deepEqual([october.restCount, october.restShare, october.restCompanyShare, october.positiveCompanyCount, october.nonPositiveCount], [null, null, null, 1, 15]);
     assert.equal((await list('2026-10', { sortBy: 'netReceipts' })).items[0]!.rank, undefined);
   });
 
@@ -501,7 +513,8 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     try {
       clock = at('2026-10-31T17:30:00Z'); // 1 November 00:30 Bangkok: the month exists, no round has built it yet
       await assert.rejects(overview('2026-11'), (error) => statusOf(error) === 503 && codeOf(error) === 'SOURCE_UNAVAILABLE');
-      assert.deepEqual((await report.context(reader())).months, { first: '2026-06', last: '2026-11' });
+      const november = await report.context(reader());
+      assert.deepEqual([november.months, november.builtMonths], [{ first: '2026-06', last: '2026-11' }, ['2026-06', '2026-07', '2026-08', '2026-09', '2026-10']]);
       // Two hourly rounds missed: every answer says the set is old (SOURCE_STALE) and still answers from it.
       clock = new Date(NOW.getTime() + 3 * 3_600_000);
       assert.deepEqual((await overview('2026-09')).reasonCodes, ['SOURCE_STALE']);
@@ -517,8 +530,9 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
 
   it('answers the context with the filter options, the months and what the caller may do', async () => {
     const context = await report.context(reader(['system.executive.read', 'system.executive.export']));
-    assert.deepEqual([context.currentMonth, context.defaultMonth, context.months, context.earliestAvailableMonth],
-      ['2026-10', '2026-10', { first: '2026-06', last: '2026-10' }, { aiUsage: '2026-07', receiptReading: '2026-08', billing: '2026-08', discovery: '2026-08' }]);
+    assert.deepEqual([context.currentMonth, context.defaultMonth, context.months, context.builtMonths, context.earliestAvailableMonth],
+      ['2026-10', '2026-10', { first: '2026-06', last: '2026-10' }, ['2026-06', '2026-07', '2026-08', '2026-09', '2026-10'],
+        { aiUsage: '2026-07', receiptReading: '2026-08', billing: '2026-08', discovery: '2026-08' }]);
     assert.deepEqual(context.capabilities, { readReport: { allowed: true }, export: { allowed: true }, seeContacts: { allowed: false }, manageAccounts: { allowed: false } });
     assert.deepEqual(context.filters.referringSales.map((option) => option.value), ['ALL', 'S002', 'S001', 'NONE', 'UNKNOWN', 'UNRESOLVED']);
     assert.deepEqual(context.filters.spendCohort.map((option) => option.value), ['ALL', 'TOP20', 'REST', 'TO80']);
@@ -536,8 +550,14 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     assert.deepEqual([company.displayName, company.registeredName, company.provinceLabel, company.industryGroup, company.businessTypeLabel, company.planLabel, company.timeBasis],
       ['ร้านอาหารเอ', 'บริษัท เอ จำกัด', 'เชียงใหม่', { key: 'FOOD_ACCOMMODATION', label: 'ร้านอาหารและที่พัก' }, 'การบริการด้านอาหารในภัตตาคาร/ร้านอาหาร', 'เริ่มต้น (STARTER)', 'CURRENT']);
     assert.deepEqual(company.creditedSeller, { label: 'เซลล์สอง · S002', salesCode: 'S002', creditSatang: 24_900, creditedAt: '2026-09-10T04:00:00.000Z', state: 'COUNTED' });
-    assert.deepEqual([month!.paidEver, month!.usageGroup, valueOf(month!.money.netReceiptsSatang), valueOf(month!.money.feesSatang), month!.money.aiCostSatang,
-      month!.usage.activeDays, month!.usage.expenseReceiptCountInPeriod], [{ value: 'YES' }, 'ACTIVE', 500_000, 1_000, 0, 1, 1]);
+    assert.deepEqual([month!.paidEver, month!.usageGroup, valueOf(month!.money.netReceiptsSatang), valueOf(month!.money.feesSatang),
+      month!.usage.activeDays, month!.usage.expenseReceiptCountInPeriod], [{ value: 'YES' }, 'ACTIVE', 500_000, 1_000, 1, 1]);
+    // The measured AI cost has its own coverage: the meter's first row was 29 July, so July holds only what was measured since.
+    const cost = { currency: 'THB' };
+    assert.deepEqual(month!.money.aiCostSatang, { value: 0, coverage: 'complete', reasonCodes: [], ...cost });
+    assert.deepEqual((await report.company(reader(), 'c-a', { month: '2026-10' })).month!.money.aiCostSatang, { value: 10, coverage: 'complete', reasonCodes: [], ...cost });
+    assert.deepEqual((await report.company(reader(), 'c-old', { month: '2026-07' })).month!.money.aiCostSatang,
+      { value: null, knownValue: 0, coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], ...cost });
     // "Paid, not started" of a shop that joined before the first build carries the note that its deleted rows were never seen.
     assert.deepEqual([detail.monthReasonCodes, (await report.company(reader(), 'c-e', { month: '2026-09' })).monthReasonCodes], [[], ['HISTORY_BEFORE_FIRST_BUILD']]);
     const other = await report.company(reader(), 'c-d', { month: '2026-09' });
@@ -656,6 +676,11 @@ describe('executive report read rules', () => {
     assert.deepEqual(usageCoverageOf({ start: at('2026-08-31T17:00:00Z'), beforeFirstBuild: true, aiUsageSince: at('2026-09-02T00:00:00Z') }),
       { coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_FIRST_BUILD', 'HISTORY_BEFORE_COLLECTION'] });
     assert.deepEqual(usageCoverageOf({ start: at('2026-08-31T17:00:00Z'), beforeFirstBuild: false, aiUsageSince: null }), { coverage: 'complete', reasonCodes: [] });
+    // The measured AI cost: nothing metered yet is a true 0; a month that began before the meter's first row holds part of it; one that ended before holds none.
+    const july = { start: at('2026-06-30T17:00:00Z'), end: at('2026-07-31T17:00:00Z') };
+    for (const since of [null, july.start]) assert.deepEqual(aiCostCoverageOf({ ...july, aiUsageSince: since }), { coverage: 'complete', reasonCodes: [] });
+    assert.deepEqual(aiCostCoverageOf({ ...july, aiUsageSince: at('2026-07-29T00:00:00Z') }), { coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] });
+    assert.deepEqual(aiCostCoverageOf({ ...july, aiUsageSince: july.end }), { coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] });
   });
 
   it('ranks with shared places, ties broken by joining first, blanks last in both directions', () => {
@@ -678,11 +703,21 @@ describe('executive report read rules', () => {
     assert.equal(groups.members.BOUNDARY_TIE.size, 14);
     assert.equal(groups.members.TO80_BOUNDARY_TIE.size, 14);
     assert.equal(groups.members.REST.size, 72 - 15);
+    // The rest is everyone outside the 20% group; each group as a share of the 72 companies; the ten paying nothing are counted apart.
+    assert.deepEqual([groups.restCount, groups.nonPositiveCount, groups.topCompanyShare?.value, groups.prefix80CompanyShare?.value, groups.restCompanyShare?.value,
+      groups.topShare?.value, groups.restShare?.value, groups.roundingNote], [57, 10, 20.8, 18.1, 79.2, 84.5, 15.5, false]);
+    // Two halves that both round up miss 100.0: in money (62.35 + 37.65 → 62.4 + 37.7), or in companies (12.25 + 87.75 → 12.3 + 87.8).
+    const money = spendGroupsOf([row('m-1', 700), row('m-2', 547), row('m-3', 500), row('m-4', 253), ...Array.from({ length: 6 }, (_, i) => row(`m-zero-${i}`, 0))], false);
+    assert.deepEqual([money.topShare?.value, money.restShare?.value, money.topCompanyShare?.value, money.restCompanyShare?.value, money.roundingNote], [62.4, 37.7, 20, 80, true]);
+    const companies = spendGroupsOf([...Array.from({ length: 49 }, (_, i) => row(`p-${i}`, 1_000)), ...Array.from({ length: 351 }, (_, i) => row(`z-${i}`, 0))], false);
+    assert.deepEqual([companies.topCount, companies.topShare?.value, companies.restShare?.value, companies.topCompanyShare?.value, companies.restCompanyShare?.value,
+      companies.roundingNote], [49, 100, 0, 12.3, 87.8, true]);
     // Under ten companies, nothing to spend, or money not read whole: no group; ranks still exist unless the money may change.
     assert.deepEqual(spendGroupsOf(rows.slice(0, 9), false).blocked, ['TOO_FEW_COMPANIES']);
     assert.deepEqual(spendGroupsOf(rows.slice(-10), false).blocked, ['NO_POSITIVE_NET']);
     const unread = spendGroupsOf(rows, true);
     assert.deepEqual([unread.blocked, unread.topCount, unread.cumulative.size], [['BILLING_SCAN_NOT_COMPLETE'], null, 0]);
+    assert.deepEqual([unread.restCount, unread.restShare, unread.topCompanyShare, unread.roundingNote, unread.nonPositiveCount], [null, null, null, false, 10]);
     assert.equal(spendGroupsOf(rows.slice(0, 9), false).cumulative.size, 9);
   });
 });

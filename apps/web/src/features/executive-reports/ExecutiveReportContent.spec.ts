@@ -86,11 +86,13 @@ test('history shows only the event/date/plan allowlist and Buddhist dates', asyn
 });
 test('small or incomplete spend groups show the reason instead of a fabricated group, while returned ties stay exact', async () => {
   const { AnalysisContent } = await content();
-  const spend = { population: 9, positiveCompanyCount: 1, positiveNetTotalSatang: 100, signedNetTotalSatang: 100, negativeNetSatang: 0, receiptsWithoutPositiveNet: 0, topCount: null, coverage: 'unavailable', reasonCodes: ['TOO_FEW_COMPANIES'], drilldownFilters: {} };
+  const spend = { population: 9, positiveCompanyCount: 1, nonPositiveCount: 8, positiveNetTotalSatang: 100, signedNetTotalSatang: 100, negativeNetSatang: 0, receiptsWithoutPositiveNet: 0, topCount: null,
+    restCount: null, restShare: null, topCompanyShare: null, prefix80CompanyShare: null, restCompanyShare: null, roundingNote: false, coverage: 'unavailable', reasonCodes: ['TOO_FEW_COMPANIES'], drilldownFilters: {} };
   const data = { ...envelope, spendConcentration: spend } as unknown as ExecutiveAnalysis;
   const small = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav, seller: null })));
-  assert.match(small, /บริษัทน้อยเกินไปสำหรับการแบ่งกลุ่ม/); assert.doesNotMatch(small, /20% แรก|0\.00 บาท/);
-  const tied = { ...data, spendConcentration: { ...spend, topCount: 1, prefix80Count: 1, topShare: { value: 100 }, prefix80Share: { value: 100 }, boundaryTie: { count: 7, netSatang: 299000 }, prefix80BoundaryTie: { count: 9, netSatang: 299000 }, coverage: 'complete', reasonCodes: [], drilldownFilters: { TOP20: {}, REST: {}, TO80: {}, BOUNDARY_TIE: {}, TO80_BOUNDARY_TIE: {} } } } as unknown as ExecutiveAnalysis;
+  assert.match(small, /บริษัทน้อยเกินไปสำหรับการแบ่งกลุ่ม/); assert.doesNotMatch(small, /20% แรก|0\.00 บาท|จาก 9 บริษัท \(|หรือติดลบ/);
+  const tied = { ...data, spendConcentration: { ...spend, topCount: 1, prefix80Count: 1, topShare: { value: 100 }, prefix80Share: { value: 100 }, restCount: 8, restShare: { value: 0 },
+    topCompanyShare: { value: 11.1 }, prefix80CompanyShare: { value: 11.1 }, restCompanyShare: { value: 88.9 }, boundaryTie: { count: 7, netSatang: 299000 }, prefix80BoundaryTie: { count: 9, netSatang: 299000 }, coverage: 'complete', reasonCodes: [], drilldownFilters: { TOP20: {}, REST: {}, TO80: {}, BOUNDARY_TIE: {}, TO80_BOUNDARY_TIE: {} } } } as unknown as ExecutiveAnalysis;
   const visible = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: tied, nav, seller: null })));
   assert.match(visible, /มีอีก 7 บริษัท/); assert.match(visible, /มีอีก 9 บริษัท/); assert.match(visible, /2,990\.00 บาท/);
   assert.match(renderToStaticMarkup(React.createElement(AnalysisContent, { data: tied, nav, seller: null })), /role="group"/);
@@ -106,8 +108,44 @@ test('unavailable money never becomes zero in reconciliation; trend has a signed
 
 test('a confirmed month without receipts says no money received rather than unknown payment', async () => {
   const { CompanyContent } = await content();
-  const data = { ...envelope, coverage: { usage: { coverage: 'complete', reasonCodes: [] }, money: { coverage: 'complete', reasonCodes: [] } }, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' }, expenseReceiptCountLifetime: 0 }, monthReasonCodes: [], month: { paidEver: { value: 'NO' }, usageGroup: 'NOT_PAID', paidInMonth: false, positiveNetInMonth: false, fullyRefunded: false, usage: { activeDays: 0, activeDaysLine: 0, activeDaysWeb: 0, activeUsers: 0, activeUsersLine: 0, activeUsersWeb: 0, documents: 0, aiRequests: 0, expenseReceiptCountInPeriod: 0, expenseReceiptsLine: 0, expenseReceiptsWeb: 0 }, money: { receiptsSatang: cash(0), refundsSatang: cash(0), netReceiptsSatang: cash(0), feesSatang: cash(0), taxSatang: cash(0), aiCostSatang: 0 } } } as unknown as ExecutiveCompanyDetail;
+  const data = { ...envelope, coverage: { usage: { coverage: 'complete', reasonCodes: [] }, money: { coverage: 'complete', reasonCodes: [] } }, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' }, expenseReceiptCountLifetime: 0 }, monthReasonCodes: [], month: { paidEver: { value: 'NO' }, usageGroup: 'NOT_PAID', paidInMonth: false, positiveNetInMonth: false, fullyRefunded: false, usage: { activeDays: 0, activeDaysLine: 0, activeDaysWeb: 0, activeUsers: 0, activeUsersLine: 0, activeUsersWeb: 0, documents: 0, aiRequests: 0, expenseReceiptCountInPeriod: 0, expenseReceiptsLine: 0, expenseReceiptsWeb: 0 }, money: { receiptsSatang: cash(0), refundsSatang: cash(0), netReceiptsSatang: cash(0), feesSatang: cash(0), taxSatang: cash(0), aiCostSatang: cash(0) } } } as unknown as ExecutiveCompanyDetail;
   const visible = text(renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' })));
   assert.match(visible, /ไม่มีเงินรับในเดือน/); assert.match(visible, /ยอดรับไม่มากกว่ายอดคืนในเดือน/);
   assert.doesNotMatch(visible, /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
+});
+
+test('spend groups show each group as the backend counts it: companies of all, share of the weight, and the companies at 0 or below', async () => {
+  const { AnalysisContent } = await content();
+  const ratio = (value: number) => ({ value, numerator: 0, denominator: 0 });
+  const spend = {
+    population: 16, positiveCompanyCount: 8, nonPositiveCount: 8, positiveNetTotalSatang: 1872543, signedNetTotalSatang: 1822643, negativeNetSatang: -49900, receiptsWithoutPositiveNet: 1,
+    topTargetCount: 4, topCount: 4, topShare: ratio(74.6), prefix80Count: 5, prefix80Share: ratio(90.6), restCount: 12, restShare: ratio(25.4),
+    topCompanyShare: ratio(25), prefix80CompanyShare: ratio(31.3), restCompanyShare: ratio(75), roundingNote: false,
+    boundaryTie: { count: 1, netSatang: 299000 }, prefix80BoundaryTie: { count: 0, netSatang: 299000 }, periodBasis: 'SELECTED_MONTH', coverage: 'complete', reasonCodes: [],
+    drilldownFilters: { TOP20: { spendCohort: 'TOP20' }, REST: { spendCohort: 'REST' }, TO80: { spendCohort: 'TO80' }, BOUNDARY_TIE: { spendCohort: 'BOUNDARY_TIE' }, TO80_BOUNDARY_TIE: { spendCohort: 'TO80_BOUNDARY_TIE' } },
+  };
+  const render = (figures: Partial<typeof spend>) => text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, spendConcentration: { ...spend, ...figures } } as unknown as ExecutiveAnalysis, nav, seller: null })));
+  const visible = render({});
+  for (const words of ['ลูกค้าที่จ่ายสูงสุด 20% แรก · 4 จาก 16 บริษัท (25.0%) · 74.6% ของยอดที่ใช้คำนวณสัดส่วน', 'ลูกค้านอกกลุ่มที่จ่ายสูงสุด 20% แรก · 12 จาก 16 บริษัท (75.0%) · 25.4% ของยอดที่ใช้คำนวณสัดส่วน',
+    'บริษัทที่รวมยอดรับถึง 80% · 5 จาก 16 บริษัท (31.3%) · 90.6% ของยอดที่ใช้คำนวณสัดส่วน', 'ยอดรับสุทธิในเดือนเป็น 0 หรือติดลบ 8 บริษัท']) assert.ok(visible.includes(words), words);
+  assert.doesNotMatch(visible, /เพราะการปัดเศษ/);
+  assert.match(render({ roundingNote: true }), /ผลรวมไม่เท่ากับ 100\.0% เพราะการปัดเศษ/);
+  assert.doesNotMatch(render({ nonPositiveCount: 0 }), /หรือติดลบ/);
+});
+
+test('the measured AI cost keeps its own coverage: what was measured is not the whole month, and a month before measuring has no figure', async () => {
+  const { CompanyContent } = await content();
+  const month = { paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', paidInMonth: true, positiveNetInMonth: true, fullyRefunded: false,
+    usage: { activeDays: 1, activeDaysLine: 0, activeDaysWeb: 1, activeUsers: 1, activeUsersLine: 0, activeUsersWeb: 1, documents: 1, aiRequests: 0, expenseReceiptCountInPeriod: 1, expenseReceiptsLine: 0, expenseReceiptsWeb: 1 },
+    money: { receiptsSatang: cash(500000), refundsSatang: cash(0), netReceiptsSatang: cash(500000), feesSatang: cash(1000), taxSatang: cash(0) } };
+  const cost = (aiCostSatang: ExecutiveMoney) => {
+    const data = { ...envelope, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' } }, monthReasonCodes: [], month: { ...month, money: { ...month.money, aiCostSatang } } } as unknown as ExecutiveCompanyDetail;
+    const html = renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' }));
+    return text(/<dt[^>]*>ต้นทุนผู้ช่วยและการอ่านใบเสร็จที่วัดได้<\/dt><dd[^>]*>(.*?)<\/dd>/.exec(html)?.[1] ?? '');
+  };
+  assert.match(cost(cash(1234)), /12\.34 บาท/);
+  const partial = cost({ value: null, knownValue: 1234, coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], currency: 'THB' });
+  assert.match(partial, /12\.34 บาท \(ยอดเฉพาะรายการที่ยืนยันแล้ว\)/); assert.match(partial, /ก่อนที่ระบบเริ่มเก็บ/);
+  const before = cost(missing);
+  assert.match(before, /—/); assert.match(before, /ก่อนที่ระบบเริ่มเก็บ/); assert.doesNotMatch(before, /บาท/);
 });

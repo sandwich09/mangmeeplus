@@ -189,9 +189,17 @@ export type ExecutiveReceiptAdoption = {
 export type ExecutiveTie = { count: number; netSatang: number };
 export type ExecutiveSpendConcentration = {
   population: number; positiveCompanyCount: number; positiveNetTotalSatang: number; signedNetTotalSatang: number; negativeNetSatang: number;
+  /** `population − positiveCompanyCount`: net of the month 0 or below, companies with no money at all included. Like `positiveCompanyCount`, under `coverage`. */
+  nonPositiveCount: number;
   /** Paid in the month but not more than was refunded in the month: why "ชำระในเดือน" is larger than `positiveCompanyCount`. */
   receiptsWithoutPositiveNet: number;
   topTargetCount: number; topCount: number | null; topShare: ExecutiveRatio | null; prefix80Count: number | null; prefix80Share: ExecutiveRatio | null;
+  /** Everyone in scope outside the 20% group (`population − topCount`, those paying 0 or less included) and its part of the positive total. */
+  restCount: number | null; restShare: ExecutiveRatio | null;
+  /** Each group's companies as a share of `population`: the 20% group is K = ceil(N × 0.2) companies, which is not exactly 20%. */
+  topCompanyShare: ExecutiveRatio | null; prefix80CompanyShare: ExecutiveRatio | null; restCompanyShare: ExecutiveRatio | null;
+  /** The shares of the 20% group and of the rest, in money or in companies, miss 100.0 only because of rounding (UI spec: a note says so). */
+  roundingNote: boolean;
   boundaryTie?: ExecutiveTie; prefix80BoundaryTie?: ExecutiveTie;
   periodBasis: 'SELECTED_MONTH'; coverage: ExecutiveCoverage; reasonCodes: ExecutiveReasonCode[];
   drilldownFilters: Partial<Record<'TOP20' | 'REST' | 'TO80' | 'BOUNDARY_TIE' | 'TO80_BOUNDARY_TIE', ExecutiveDrilldownFilters>>;
@@ -205,6 +213,8 @@ export type ExecutiveContext = {
   currentMonth: string; defaultMonth: string;
   /** Months that can be asked for, oldest first; null before the first build. */
   months: { first: string; last: string } | null;
+  /** The months the data set holds, oldest first: a month in `months` but not here has not been built yet (503 until it is). */
+  builtMonths: string[];
   /** First month each source holds data for (`YYYY-MM`); null = the source has no row yet. */
   earliestAvailableMonth: Record<'aiUsage' | 'receiptReading' | 'billing' | 'discovery', string | null>;
   build: Omit<ExecutiveBuildRef, 'monthRevision' | 'monthRevisedAt'> | null;
@@ -299,7 +309,8 @@ export type ExecutiveCompanyDetail = ExecutiveEnvelope & {
   month: null | {
     paidEver: { value: 'YES' | 'NO' | 'UNKNOWN'; reason?: string }; fullyRefunded: boolean; paidInMonth: boolean; positiveNetInMonth: boolean;
     usageGroup: 'NOT_STARTED' | 'INACTIVE' | 'ACTIVE' | 'NOT_PAID' | null; usageUnassessedReason?: string;
-    money: ExecutiveMoneyRow & { aiCostSatang: number };
+    /** `aiCostSatang`: the measured cost of the assistant and of receipt reading, with its own coverage (spec §16.6). */
+    money: ExecutiveMoneyRow & { aiCostSatang: ExecutiveMoney };
     usage: { activeDays: number; activeDaysLine: number; activeDaysWeb: number; activeUsers: number; activeUsersLine: number; activeUsersWeb: number;
       documents: number; confirmedExpensesLine: number; confirmedExpensesWeb: number; issuedDocuments: number; aiRequests: number;
       expenseReceiptCountInPeriod: number; expenseReceiptsLine: number; expenseReceiptsWeb: number };

@@ -13,12 +13,10 @@ Decisions:
 - Labels/options/events are reused from contracts. Page copy and product transliteration have one report dictionary; reason/error copy has one common dictionary. Latest lane rule overrides the earlier seller-code/English-label wording: omit returned seller code suffixes, translate product/control labels, use first/second Thai sides, omit UAT token; render the two existing operator menu labels in Thai while on report routes, including admin readers. User-entered names/contacts remain actual values.
 - Money is satang converted to two decimals; dates/months reuse Thai/Buddhist helpers. Only complete negative net has the refund-over-receipts explanation; negative fees/tax/costs, comparison differences and partial net do not prove that claim. Partial receipt/net flags do not invent a negative assertion. The received-money/non-positive-net difference never proves full refunds.
 - Contact NOT_PERMITTED renders neither labels nor values, even if forbidden values are supplied. Other contact statuses use only allowed payload fields. History shows event/date/plan allowlist only. Company id appears in links, never visible copy.
-- API05 measured AI cost is raw satang with a “ที่วัดได้” label; its contract has no cost coverage. Do not invent coverage or describe it as total cost.
+- API05 measured AI cost carries its own coverage since E3a round 2 (2026-10-03, backend spec §16.6): it renders through the shared figure (partial = confirmed-only money with its reason; unavailable = no figure with its reason). Still “ที่วัดได้”, never total cost.
 
 Open questions:
-- API04 spendConcentration has TOP20/TO80 counts and spend shares, but no REST count/share, no group company-share percentages, and no non-positive company count. UI asks for them and forbids frontend report arithmetic. Should E3a add those report fields? This lane leaves those figures absent and retains group drill links; it does not compute report figures.
-- API01 gives first/last/default/current month, not per-month successful builds. Should it add the available-month list to disable unbuilt months? This lane allows the returned month range and handles missing-build 503 accurately.
-- Measured AI cost has no own coverage/reasons; not checked whether the next backend revision needs them. The current screen promises only measured cost.
+- Answered by E3a round 2 (2026-10-03, backend spec §16.6), wired on the same branch: API04 `spendConcentration` returns `restCount`, `restShare`, `topCompanyShare` / `prefix80CompanyShare` / `restCompanyShare`, `nonPositiveCount` and `roundingNote`, shown as returned (no web arithmetic); API01 returns `builtMonths` and the month picker disables the other months (`ThemedDate` `selectable`); API05 `aiCostSatang` has its own coverage (rule proposed, owner to confirm).
 
 Artifacts:
 - apps/web/app/system/executive/: permission layout and seven route pages.
