@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import {
   EXECUTIVE_HISTORY_EVENT_LABELS, EXECUTIVE_REPORT_LABELS as LABELS, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
   type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveCompanyHistory,
@@ -116,13 +116,17 @@ const rowStatus = (row: Pick<ExecutiveCompanyRow, 'paidEver' | 'usageGroup' | 'u
 function referrer(row: ExecutiveCompanyRow['referrer']): string {
   return `${thaiLabel(row.label, row.salesCode)}${row.source === 'ADMIN' ? ` ${EXECUTIVE_REFERRER_ADMIN_SUFFIX}` : ''}`;
 }
+// A row renders twice (phone card and table row): each toggle needs its own id, or every label selects the first company.
+function CompareToggle({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: () => void }) {
+  return <SwitchField id={useId()} label={W.selectCompare} checked={checked} disabled={disabled} onChange={onChange} />;
+}
 export function CompaniesContent({ data, nav, selected, select }: { data: ExecutiveCompanies; nav: Navigation; selected: string[]; select: (id: string) => void }) {
   return <>
     <p className="text-sm">{W.receiptDefinition}</p>
     <p role="status">{W.found(data.pagination.total)} · {W.net} <span>{moneyText(data.summary.netReceiptsSatang)}</span> · {W.sort} {sortLabel(data.sort.sortBy, data.sort.sortDir)}</p>
     <Reasons codes={data.summary.netReceiptsSatang.reasonCodes} />
     {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <ReportTable title={W.companies} columns={[{ label: W.company }, { label: W.origin, secondary: true }, { label: W.service }, { label: W.active }, { label: W.net }]} rows={data.items.map(row => ({ key: row.id, cells: [
-      <div key="company" className="text-left"><SwitchField label={W.selectCompare} checked={selected.includes(row.id)} disabled={selected.length === 2 && !selected.includes(row.id)} onChange={() => select(row.id)} />
+      <div key="company" className="text-left"><CompareToggle checked={selected.includes(row.id)} disabled={selected.length === 2 && !selected.includes(row.id)} onChange={() => select(row.id)} />
         <ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember}>{row.displayName}</ReportLink>
         {row.registeredName && <p>{row.registeredName}</p>}<p>{row.provinceLabel} · {row.industryGroup.label}</p><p>{W.joined} {reportDate(row.joinedAt)}</p><p>{LABELS.companyStatus[row.companyStatus] ?? W.unknown}</p>
       </div>,

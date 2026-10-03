@@ -61,6 +61,15 @@ test('directory uses the all-result summary rather than row sums and wraps unkno
   assert.doesNotMatch(visible, /internal-company|ADMIN_HOLD|MANUAL_TERM|Facebook|LINE/);
   assert.match(html, /table-fixed/); assert.match(html, /md:hidden/); assert.match(html, /companies\/internal-company\?/); // the id is only in the detail link
 });
+test('each compare toggle has its own id, so its label selects its own company', async () => {
+  const { CompaniesContent } = await content();
+  const data = { ...envelope, summary: { netReceiptsSatang: cash(0) }, items: [company, { ...company, id: 'second-company' }], pagination: { total: 2 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
+  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav, selected: [], select: () => {} }));
+  const ids = [...html.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)].map(([input]) => input.match(/id="([^"]+)"/)?.[1]);
+  assert.equal(ids.length, 4); // two rows, each as a phone card and as a table row
+  assert.equal(new Set(ids).size, 4, `duplicate ids: ${ids.join(', ')}`);
+  for (const id of ids) assert.ok(html.includes(`for="${id}"`), `label for ${id}`);
+});
 test('group tables and comparisons preserve null averages and the backend difference', async () => {
   const { AnalysisContent } = await content();
   const side = { key: 'UNKNOWN', label: 'ไม่ระบุ', companies: count(1), netReceiptsSatang: cash(999), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(12), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(0), drilldownFilters: { industry: 'UNKNOWN' } };
