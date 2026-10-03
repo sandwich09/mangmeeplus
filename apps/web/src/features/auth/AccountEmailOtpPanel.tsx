@@ -64,6 +64,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo, refreshKey }: { 
     void refresh().catch(e => { if (mounted.current) setError(apiErrorMessage(e)); });
   }, [refresh, refreshKey]);
   const challenge = state?.challenge;
+  const hasEmail = Boolean(state?.email?.trim());
   const pending = challenge?.status === 'PENDING' && Date.parse(challenge.expiresAt) > now;
   const retrySeconds = Math.max(0, Math.ceil((Math.max(rateLimitUntil, challenge ? Date.parse(challenge.retryAt) : 0) - now) / 1000));
   const sameVerifiedEmail = Boolean(state?.emailVerified && email.trim().toLowerCase() === state.email?.trim().toLowerCase());
@@ -150,8 +151,8 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo, refreshKey }: { 
       </button>}
     </div>
     <div className="flex flex-wrap items-center gap-3 rounded-xl bg-gray-50 px-4 py-3">
-      {state && <p className="min-w-0 break-all text-base font-semibold text-gray-900">{state.email ?? 'ยังไม่ได้ผูกอีเมล'}</p>}
-      {state && <MangmeeBadge tone={state.emailVerified ? 'brand' : 'amber'}>{state.emailVerified ? 'ยืนยันแล้ว' : 'ยังไม่ยืนยัน'}</MangmeeBadge>}
+      {state && <p className="min-w-0 break-all text-base font-semibold text-gray-900">{hasEmail ? state.email : 'ยังไม่ได้ผูกอีเมล'}</p>}
+      {state && hasEmail && <MangmeeBadge tone={state.emailVerified ? 'brand' : 'amber'}>{state.emailVerified ? 'ยืนยันแล้ว' : 'ยังไม่ยืนยัน'}</MangmeeBadge>}
     </div>
     {editingEmail && <div className="max-w-2xl space-y-5">
       <ol aria-label="ขั้นตอนการยืนยันอีเมล" className="grid grid-cols-3 gap-2">
@@ -165,7 +166,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo, refreshKey }: { 
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-red-800">{error}</p>}
     {notice && <p role="status" className="rounded-xl bg-green-50 p-3 text-green-800">{notice}</p>}
     {!state ? <button type="button" className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void run(refresh)}>โหลดข้อมูลอีเมลอีกครั้ง</button> : <>
-      {state.emailRequirement === 'CHANGE_PENDING' && <p className="rounded-xl bg-amber-50 p-3">กำลังรอยืนยันอีเมลใหม่ กรุณายืนยันหรือยกเลิกคำขอนี้ก่อน อีเมลเดิมยังคงอยู่</p>}
+      {state.emailRequirement === 'CHANGE_PENDING' && <p className="rounded-xl bg-amber-50 p-3">กำลังรอยืนยันอีเมลใหม่ กรุณายืนยันหรือยกเลิกคำขอนี้ก่อน{hasEmail && ' อีเมลเดิมยังคงอยู่'}</p>}
       {editingEmail && <>
         {pending ? <form onSubmit={e => { e.preventDefault(); if (challenge) void run(() => accountEmailOtpCommand(`/${challenge.id}/confirm`, { code }), 'ยืนยันอีเมลเรียบร้อยแล้ว'); }} className="max-w-2xl space-y-4">
           {reauthNeeded && <div className="space-y-3 rounded-xl bg-gray-50 p-4"><p>ยืนยันตัวตนอีกครั้งก่อนขอรหัสใหม่</p>{state.hasPassword && passwordField}{state.lineLinked && lineReauthButton}</div>}
@@ -216,6 +217,6 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo, refreshKey }: { 
       </div>}
       {!state.hasPassword && !state.emailLoginEnabled && <p className="text-gray-600">หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน</p>}
     </>}
-    <details className="group border-t border-gray-100 pt-4 text-sm text-gray-500" open={Boolean(error)}><summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 font-medium [&::-webkit-details-marker]:hidden">ไม่ได้รับรหัสยืนยันทางอีเมล<svg aria-hidden="true" className="h-4 w-4 shrink-0 group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg></summary><p className="mt-2">ตรวจกล่องจดหมายขยะ หรือขอรหัสใหม่เมื่อครบเวลาที่ระบุ หากยังไม่ได้รับ ติดต่อทีมงาน 098-256-5628</p></details>
+    {(hasEmail || challenge?.email?.trim()) && <details className="group border-t border-gray-100 pt-4 text-sm text-gray-500" open={Boolean(error)}><summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 font-medium [&::-webkit-details-marker]:hidden">ไม่ได้รับรหัสยืนยันทางอีเมล<svg aria-hidden="true" className="h-4 w-4 shrink-0 group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg></summary><p className="mt-2">ตรวจกล่องจดหมายขยะ หรือขอรหัสใหม่เมื่อครบเวลาที่ระบุ หากยังไม่ได้รับ ติดต่อทีมงาน 098-256-5628</p></details>}
   </section>;
 }

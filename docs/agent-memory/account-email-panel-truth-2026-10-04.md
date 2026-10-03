@@ -1,7 +1,7 @@
 # Agent Memory: account-email-panel-truth-2026-10-04
 
 ## Status
-Controller revision complete: established LINE app name restored throughout this lane, spelling-only regressions removed, and focused checks, web typecheck, whole web suite and whitespace check passed. All accepted behavior changes remain. Diff is uncommitted; browser execution remains with the controller.
+No-email wording follow-up complete on the controller-provided current head d623d57df: tests-first red/green evidence, 93 focused checks, web typecheck, 2,950 whole-web checks and whitespace check passed. The controller reports the previous browser checks passed; this follow-up's browser check remains with the controller. Only the explicitly requested read-only `git diff --check` was used; no Git mutation or head change.
 
 ## Owner
 Account/profile implementation lane. Controller reviews, commits, and runs browser checks.
@@ -22,7 +22,8 @@ Refresh the shared account-email panel after the containing page refreshes its a
 | Case | Sentence / rendering decision |
 | --- | --- |
 | All email states, including loading | ยืนยันอีเมลเพื่อใช้กับบัญชีของคุณ · อีเมลรับเอกสารจัดการแยกที่หน้าแพ็กเกจ (no promise of enabled login or first-purchase recipient) |
-| No email / saved unverified email / verified email | ยังไม่ได้ผูกอีเมล / ยังไม่ยืนยัน / ยืนยันแล้ว, from the OTP response; loading must not assert no email |
+| No stored email (null, empty or whitespace) | ยังไม่ได้ผูกอีเมล only; no verified/unverified badge. Loading must not assert no email |
+| Stored unverified / verified email | ยังไม่ยืนยัน / ยืนยันแล้ว badge beside the actual stored email |
 | No usable password and email login off; any username/email/LINE combination | หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน |
 | Usable password exists, or email login on | No invitation to set a password in the email panel |
 | Verified ready email, email login on / off | เปิดใช้งานอยู่ / ยังไม่เปิดใช้งาน; explanation: เมื่อเลือกเข้าสู่ระบบด้วยรหัสทางอีเมล ให้นำรหัสยืนยันแบบใช้ครั้งเดียว 6 หลักที่ได้รับมากรอกแทนรหัสผ่าน |
@@ -30,11 +31,14 @@ Refresh the shared account-email panel after the containing page refreshes its a
 | No credential, existing username | Show stored username; do not request a new username |
 | No credential, existing email, no username; verified or unverified | หลังตั้งรหัสผ่านแล้ว ใช้อีเมล … คู่กับรหัสผ่านเข้าเว็บได้; no username input |
 | Credential exists | ตั้งค่าแล้ว; heading จัดการรหัสผ่านสำรอง; บัญชีนี้มีรหัสผ่านอยู่แล้วค่ะ + เปลี่ยนรหัสผ่าน link; no first-password form |
-| No credential, email login enabled | Existing email reauthentication link, then optional first-password form |
+| No credential, email login enabled and stored email exists | Existing email reauthentication link, then optional first-password form; without a stored email use the existing LINE option when linked |
 | No credential, email login off, LINE linked | ยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่าน; existing server 5-minute proof still required |
 | No credential, email login off, no LINE link | Do not offer a LINE reauthentication link for an unlinked account; no new recovery policy invented |
 | LINE reauthentication / LINE in-app browser / return success or failure | Existing conditional actions and proof lifetime, with “LINE” in user text; errors do not claim success |
-| Pending OTP | Existing target, attempts, expiry and delivery-specific sentences remain tied to server facts |
+| First email pending, no stored email | Show challenge target, attempts, expiry and delivery facts; no account-verification badge and no claim that an old email remains |
+| Pending OTP with stored email | Existing target, attempts, expiry and delivery-specific sentences; show อีเมลเดิมยังคงอยู่ only for the stored address |
+| No stored email and no challenge target | Hide delivery troubleshooting that assumes an email; keep instructions to enter an address and the step labels |
+| Stored email or challenge target exists | Keep delivery troubleshooting available |
 
 ## Open questions
 None requiring a new product rule. Credential-existence versus usability is a pre-existing API distinction, preserved explicitly.
@@ -91,7 +95,7 @@ Run `pnpm exec playwright test e2e/profile-completeness-card.spec.ts e2e/account
 | `/account/email` | Standalone shared panel, password account and LINE-only account; verify initial loading and reauthentication return | 390, 1280 (manual) |
 
 ## Next
-Controller: review the diff, run the browser command/matrix above (including E2E red/green where required), then commit. No code work remains pending in this lane.
+Controller: review the no-email follow-up, run its browser matrix below, then commit. The earlier accepted refresh/wording changes and browser-agent fix are retained. No code work remains pending in this lane.
 
 ## Browser check (controller's Claude lane, 2026-10-04, head 2cda540b3 → 8aba1827d)
 
@@ -107,3 +111,25 @@ LINE re-authentication, e-mail delivery and OTP cannot run locally; the page, pa
 - Password account changing its e-mail (three steps, code, done) and e-mail login on → off: sentences match each state,
   the old address stays shown until the code is confirmed; no sideways scroll.
 - Noticed, not changed: with no e-mail at all the panel shows "ยังไม่ได้ผูกอีเมล" next to the badge "ยังไม่ยืนยัน".
+
+## No-email follow-up (controller-reported head d623d57df)
+
+- Worked on the existing files without changing head or controller/browser edits. The controller's prior browser pass above is reported evidence, not a browser run by this lane.
+- API fact: `emailRequirement()` returns `CHANGE_PENDING` before checking for missing email. A first-email challenge therefore exists without any old account email. The panel now derives stored-address presence once using trimmed email, gates both badge variants, and includes the old-address sentence only when that address exists.
+- With no stored email and no challenge target, omit delivery troubleshooting. A first-email challenge still shows its destination, code form, delivery status and help. General instructions to enter/verify an address remain available; they describe the next action, not a current verification state.
+- The first-password section no longer offers email reauthentication when the account has no email, even if the separate email-login flag remains true; the existing linked-LINE alternative is retained. No API/security policy changed.
+- Changed this follow-up: `AccountEmailOtpPanel.tsx`, `CompanyProfilePage.tsx`, `CompanyProfilePage.qa.spec.ts`, the signup/email specification and this note. No E2E file was edited; the controller's accessible-name fix remains intact.
+
+### No-email verification
+
+| Command | Red | Green / current result |
+| --- | --- | --- |
+| `pnpm --filter @watchdog-bms/web exec node --import tsx --test src/features/company-profile/CompanyProfilePage.qa.spec.ts` | Tests first on current production: exit 1, 61 passed / 20 failed. Failures: 16 no-email matrix combinations; three first-email challenge cases (null, empty, whitespace); delivery-help guard. The first run before adding the help-specific assertion was 62 passed / 19 failed. | Exit 0, 81 passed / 0 failed. |
+| Same command, with only the original first-password email-link condition temporarily restored by hand | Exit 1, 77 passed / 4 failed: no password, no email, email-login flag true, with/without username and LINE. Restored the fix immediately afterward. | Covered by the final focused command below. |
+| `pnpm --filter @watchdog-bms/web exec node --import tsx --test src/features/auth/AccountEmailOtpPanel.state.spec.ts src/features/auth/AccountEmailOtpPanel.qa.spec.ts src/features/company-profile/CompanyProfilePage.qa.spec.ts` | Red evidence above; existing refresh behavior retained. | Exit 0, 93 passed / 0 failed / 0 skipped. |
+| Required `heavy.sh pnpm --filter @watchdog-bms/web typecheck` | Not a regression test. | Exit 0; route generation and TypeScript completed. |
+| Required `heavy.sh` + exact Python `S3_*` cleanup / whole web command recorded above | Not a regression test. | Exit 0, 2,950 passed / 0 failed / 0 skipped, 573 suites. |
+
+- Grepped spec/test files across API, AI gateway, web and `e2e/` for the affected labels and sentences. No stale no-email badge expectation found. `e2e/profile-completeness-card.spec.ts:113` expects the unverified badge with `owner@example.com`, so it remains correct. `e2e/customer-billing-ux.spec.ts` already expects no account-email help on its unrelated billing surface. Other matches describe document states, not account email. Focused account specs were run; unrelated document tests are covered by the whole web suite.
+- Browser check for this follow-up: **not checked**, browser/server use prohibited here. Controller should inspect profile `#account` and `/account/email` at 390 and 1280 px for LINE-only/no-email, stored unverified, stored verified, and first-email pending states. No-email: no verification badge or old-address claim; first-email pending: target/code/help remain usable.
+- `git diff --check`: exit 0, no whitespace errors; this was the only Git command used for this follow-up. No commits, staging, head changes or other Git operations were performed.

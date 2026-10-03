@@ -556,7 +556,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 <p className="text-sm text-gray-600">
                   ตั้งรหัสผ่านสำรองได้ตามสะดวก หากเพิ่งยืนยันตัวตนไม่เกิน 5 นาที กรอกรหัสผ่านใหม่ได้เลย
                 </p>
-                {emailLoginEnabled ? <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/email-access?next=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>รับรหัสทางอีเมลเพื่อยืนยันตัวตนอีกครั้ง</Link> : account?.lineLinked ? <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/api/auth/line-login/start?purpose=email-reauth&returnTo=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>ยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่าน</Link> : null}
+                {emailLoginEnabled && account?.email?.trim() ? <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/email-access?next=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>รับรหัสทางอีเมลเพื่อยืนยันตัวตนอีกครั้ง</Link> : account?.lineLinked ? <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/api/auth/line-login/start?purpose=email-reauth&returnTo=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>ยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่าน</Link> : null}
                 {usernameRequired ? (
                   <TextField
                     label="ชื่อผู้ใช้"
