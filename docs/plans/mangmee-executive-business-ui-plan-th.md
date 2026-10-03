@@ -4,11 +4,12 @@
 
 มติล่าสุด 2026-10-01: **พักและซ่อน EX-05/06 และคำร้องใน EX-04**; scope ปัจจุบันเป็นรายงานและบัญชีผู้บริหาร. Checkmarks เกี่ยวกับโครงคำร้อง/hold ด้านล่างเป็นประวัติเดโมเดิม ไม่ใช่ feature ที่เปิดในเดโมปัจจุบันหรือเกณฑ์ตรวจรับรอบนี้
 
-สถานะ: **สเปกฝั่งหน้าจอแก้ตามผลตรวจทานอิสระ 2026-10-01 แล้ว — ต้นแบบเป็นรุ่นรอบแก้คำ 2026-10-01 และยังไม่ตรงกับสเปกที่แก้ — ข้อตัดสินใจ D2, D7 และ Q10–Q36 ตัดสินแล้ว 2 ต.ค. 2569 (เจ้าของ: ตามที่แนะนำ) การตัดสินใจปิดครบ — เจ้าของยังไม่ได้สั่งเริ่ม implement — ยังไม่เริ่ม application/backend integration**
-วันที่: 2026-10-01 · ปรับสถานะล่าสุด: 2026-10-02
+สถานะ: **E4b สร้างหน้ารายงาน EX-01–04 เชื่อม API01–API06 ตามขั้นของใช้ร่วม/รายงาน/รายละเอียดแล้ว รอ controller ตรวจผลต่างและตรวจเบราว์เซอร์ บัญชี/ป้ายพาร์ทเนอร์เป็นอีก lane; ไม่สร้างการส่งออกหรือคำร้องที่พักไว้ รายการตรวจรับยังไม่ทำเครื่องหมายผ่านจนตรวจจริง**
+วันที่: 2026-10-01 · ปรับสถานะล่าสุด: 2026-10-03
 Spec: [หน้าจอและธีม](../specs/mangmee-executive-business-ui-spec-th.md)
 Backend: [มติธุรกิจและโครงหลังบ้าน](../specs/mangmee-executive-business-backend-spec-th.md)
 Memory: [Executive business demo](../agent-memory/executive-business-demo.md)
+E4b evidence / contract gaps / browser checklist: [Executive web report 2026-10-03](../agent-memory/executive-web-report-2026-10-03.md)
 ผลตรวจทาน: [หน้าจอ](../research/mangmee-executive-spec-review-ui-2026-10-01-th.md), [หลังบ้าน](../research/mangmee-executive-spec-review-backend-2026-10-01-th.md), [ข้อบกพร่องของต้นแบบ](../research/mangmee-executive-prototype-defects-2026-10-01-th.md)
 
 ## แก้ไขหลังการตรวจทานอิสระ 2026-10-01

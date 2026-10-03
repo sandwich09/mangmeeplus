@@ -1,0 +1,113 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { ExecutiveCount, ExecutiveMoney, ExecutiveEnvelope, ExecutiveOverview, ExecutiveCompanies, ExecutiveAnalysis, ExecutiveCompanyDetail, ExecutiveCompanyHistory } from '@watchdog-bms/contracts';
+
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+require.extensions['.svg'] = module => { module.exports = () => null; };
+const content = () => import('./ExecutiveReportContent');
+const count = (value: number): ExecutiveCount => ({ value, coverage: 'complete', reasonCodes: [] });
+const cash = (value: number): ExecutiveMoney => ({ ...count(value), currency: 'THB' });
+const missing: ExecutiveMoney = { value: null, coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], currency: 'THB' };
+const nav = { params: new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK'), from: 'overview', remember: () => {} };
+const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+const envelope = {
+  build: { id: 'internal-build', asOf: '2026-10-01T05:00:00Z' }, period: { month: '2026-09' },
+  population: { eligibleCount: count(72), unclassifiedCount: 0, excludedTestInternalNetReceiptsSatang: 0, unclassifiedNetReceiptsSatang: 0 },
+  coverage: { usage: { coverage: 'partial', reasonCodes: ['ACTIVITY_HISTORY_INCOMPLETE'] }, money: { coverage: 'complete', reasonCodes: [] } },
+  unmatchedMoney: { count: 0, receiptsSatang: 0, refundsSatang: 0, otherSatang: 0 },
+} as unknown as ExecutiveEnvelope;
+const company = {
+  id: 'internal-company', displayName: 'บริษัท' + 'ก'.repeat(120), registeredName: 'บริษัทจดทะเบียน', provinceLabel: 'เชียงใหม่', industryGroup: { key: 'UNKNOWN', label: 'ไม่ระบุ' },
+  joinedAt: '2026-09-01T05:00:00Z', companyStatus: 'ACTIVE', planState: 'ADMIN_HOLD', planLabel: 'ยังไม่มีข้อมูลแพ็กเกจ',
+  discovery: { key: 'FACEBOOK', label: 'Facebook', otherText: 'ก'.repeat(200) }, signupRail: 'line-oa', referrer: { kind: 'NONE', label: 'ไม่มีเซลล์ผู้แนะนำ' },
+  creditedSeller: {}, paidEver: { value: 'UNKNOWN', reason: 'MANUAL_TERM_NO_RECEIPT' }, fullyRefunded: false, usageGroup: null, usageUnassessedReason: 'ACTIVITY_HISTORY_INCOMPLETE', receiptAdoption: 'UNKNOWN',
+  metrics: { receiptsSatang: 0, refundsSatang: 100, netReceiptsSatang: -100, activeDays: 0, activeUsers: 0, documents: 0, aiRequests: 0, expenseReceiptCountInPeriod: 0, expenseReceiptCountLifetime: 0 }, lastActivityAt: null,
+};
+
+test('rendered partial and unavailable figures retain their reasons and negative amounts have words', async () => {
+  const { Figure } = await content();
+  const partial = renderToStaticMarkup(React.createElement(Figure, { value: { value: null, knownValue: 38, coverage: 'partial', reasonCodes: ['ACTIVITY_HISTORY_INCOMPLETE'] } }));
+  assert.match(text(partial), /อย่างน้อย 38/); assert.match(text(partial), /ข้อมูลการใช้งานไม่ครบ/);
+  const unavailable = text(renderToStaticMarkup(React.createElement(Figure, { value: missing, moneyValue: true })));
+  assert.match(unavailable, /—/); assert.match(unavailable, /ก่อนที่ระบบเริ่มเก็บ/); assert.doesNotMatch(unavailable, /0\.00/);
+  assert.match(text(renderToStaticMarkup(React.createElement(Figure, { value: cash(-123450), moneyValue: true, netValue: true }))), /คืนเงินมากกว่าเงินรับ/);
+  assert.doesNotMatch(text(renderToStaticMarkup(React.createElement(Figure, { value: cash(-100), moneyValue: true }))), /คืนเงินมากกว่าเงินรับ/);
+  assert.doesNotMatch(text(renderToStaticMarkup(React.createElement(Figure, { value: { ...cash(-100), value: null, knownValue: -100, coverage: 'partial' }, moneyValue: true, netValue: true }))), /คืนเงินมากกว่าเงินรับ/);
+});
+test('overview renders four server metrics, a partial count, and four receipt groups with independent drill queries', async () => {
+  const { OverviewContent } = await content();
+  const data = { ...envelope, metrics: {
+    companies: { ...count(72), unclassifiedCount: 2, drilldownFilters: {} }, activeCompanies: { value: null, knownValue: 38, coverage: 'partial', reasonCodes: ['ACTIVITY_HISTORY_INCOMPLETE'], drilldownFilters: { activeInPeriod: 'true' }, breakdown: { notPaid: 1, paymentUnknown: 0 } },
+    companiesWithReceipts: { ...count(59), drilldownFilters: { paidInPeriod: 'true' } }, netReceiptsSatang: { ...cash(24580600), drilldownFilters: {} },
+  }, expenseReceiptAdoption: { population: 72, segments: ['EVER', 'NEVER', 'UNKNOWN', 'NOT_ENTITLED'].map(key => ({ key, count: 18, share: { value: 25 }, drilldownFilters: { receiptAdoption: key } })), reasonCodes: [], roundingNote: false },
+  paidUsage: { groups: [{ key: 'NOT_STARTED', count: 20, drilldownFilters: { usageGroup: 'NOT_STARTED' } }, { key: 'INACTIVE', count: 3, drilldownFilters: { usageGroup: 'INACTIVE' } }] }, spendConcentration: { topShare: { value: 83.4 }, reasonCodes: [] } } as unknown as ExecutiveOverview;
+  const html = renderToStaticMarkup(React.createElement(OverviewContent, { data, nav }));
+  assert.equal((html.match(/mangmee-stat-card/g) ?? []).length, 4);
+  for (const words of ['อย่างน้อย 38', '245,806.00 บาท', 'ยังไม่ได้จัดประเภท 2 บริษัท', 'ไม่มีในแพ็กเกจ', 'ก.ย. 2569']) assert.ok(text(html).includes(words), words);
+  assert.doesNotMatch(text(html), /internal-|NOT_ENTITLED|FACEBOOK/);
+  assert.match(html, /pick=activeInPeriod%3Dtrue/);
+  assert.match(html, /role="group" aria-label="การเริ่มใช้ใบเสร็จ"/);
+  assert.match(html, /aria-label="เคยเพิ่มใบเสร็จ · 18 บริษัท · 25\.0%"/);
+});
+test('directory uses the all-result summary rather than row sums and wraps unknown usage instead of inventing zero', async () => {
+  const { CompaniesContent } = await content();
+  const data = { ...envelope, summary: { netReceiptsSatang: cash(123450) }, items: [company], pagination: { total: 72 }, sort: { sortBy: 'netReceipts', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
+  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav, selected: [], select: () => {} }));
+  const visible = text(html);
+  assert.match(visible, /พบ 72 บริษัท/); assert.match(visible, /1,234\.50 บาท/); assert.match(visible, /อย่างน้อย 0/); assert.match(visible, /ข้อมูลการใช้งานไม่ครบ/);
+  assert.match(visible, /ผู้ดูแลตั้งแพ็กเกจให้/); assert.match(visible, /คืนเงินมากกว่าเงินรับ/); assert.match(visible, /เฟซบุ๊ก/); assert.match(visible, /สมัครทางไลน์/);
+  assert.doesNotMatch(visible, /internal-company|ADMIN_HOLD|MANUAL_TERM|Facebook|LINE/);
+  assert.match(html, /table-fixed/); assert.match(html, /md:hidden/); assert.match(html, /companies\/internal-company\?/); // the id is only in the detail link
+});
+test('group tables and comparisons preserve null averages and the backend difference', async () => {
+  const { AnalysisContent } = await content();
+  const side = { key: 'UNKNOWN', label: 'ไม่ระบุ', companies: count(1), netReceiptsSatang: cash(999), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(12), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(0), drilldownFilters: { industry: 'UNKNOWN' } };
+  const data = { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'OTHER', label: 'อื่น ๆ' }, difference: { companies: 9, netReceiptsSatang: -123450, netReceiptsPerCompanySatang: null, expenseReceiptCount: null, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis;
+  const visible = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav: { ...nav, from: 'compare' }, seller: null })));
+  assert.match(visible, /ต่างกัน \(ฝั่งแรกลบฝั่งที่สอง\)/); assert.match(visible, /-1,234\.50 บาท/); assert.match(visible, /—/); assert.doesNotMatch(visible, /NaN|Infinity|A ลบ B/);
+});
+test('company contact values and labels disappear without permission and never fall back to supplied forbidden values', async () => {
+  const { CompanyContent } = await content();
+  const make = (status: ExecutiveCompanyDetail['company']['ownerContact']['status']) => ({ ...envelope, company: { ...company, ownerContact: { status, email: 'hidden@example.test', phoneNumber: '0812345678' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: ['NOT_YET_REGISTERED'] }) as unknown as ExecutiveCompanyDetail;
+  const render = (status: ExecutiveCompanyDetail['company']['ownerContact']['status']) => text(renderToStaticMarkup(React.createElement(CompanyContent, { data: make(status), tab: 'company', history: null, admin: false, nav, contactReadAt: '2026-10-03T05:00:00Z' })));
+  assert.doesNotMatch(render('NOT_PERMITTED'), /อีเมลเจ้าของบัญชี|เบอร์โทรเจ้าของบัญชี|hidden@example|0812345678/);
+  assert.match(render('NOT_PERMITTED'), /บริษัทนี้ยังไม่สมัคร/);
+  assert.match(render('MULTIPLE_OWNERS'), /มีเจ้าของหลายบัญชี/); assert.doesNotMatch(render('MULTIPLE_OWNERS'), /hidden@example|0812345678/);
+  assert.match(render('OK'), /hidden@example\.test/); assert.match(render('OK'), /ข้อมูลบัญชี ณ 3 ต\.ค\. 2569/);
+});
+test('history shows only the event/date/plan allowlist and Buddhist dates', async () => {
+  const { CompanyContent } = await content();
+  const data = { ...envelope, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' } }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;
+  const history = { items: [{ kind: 'PACKAGE_RENEWED', at: '2026-09-30T05:00:00Z', planLabel: 'ร้านเติบโต', actorName: 'hidden-actor', reason: 'hidden-reason' }] } as unknown as ExecutiveCompanyHistory;
+  const visible = text(renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'history', history, admin: false, nav, contactReadAt: '' })));
+  assert.match(visible, /ต่ออายุแพ็กเกจ ร้านเติบโต/); assert.match(visible, /30 ก\.ย\. 2569 12:00 น\./); assert.doesNotMatch(visible, /hidden-|PACKAGE_RENEWED|internal-company/);
+});
+test('small or incomplete spend groups show the reason instead of a fabricated group, while returned ties stay exact', async () => {
+  const { AnalysisContent } = await content();
+  const spend = { population: 9, positiveCompanyCount: 1, positiveNetTotalSatang: 100, signedNetTotalSatang: 100, negativeNetSatang: 0, receiptsWithoutPositiveNet: 0, topCount: null, coverage: 'unavailable', reasonCodes: ['TOO_FEW_COMPANIES'], drilldownFilters: {} };
+  const data = { ...envelope, spendConcentration: spend } as unknown as ExecutiveAnalysis;
+  const small = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav, seller: null })));
+  assert.match(small, /บริษัทน้อยเกินไปสำหรับการแบ่งกลุ่ม/); assert.doesNotMatch(small, /20% แรก|0\.00 บาท/);
+  const tied = { ...data, spendConcentration: { ...spend, topCount: 1, prefix80Count: 1, topShare: { value: 100 }, prefix80Share: { value: 100 }, boundaryTie: { count: 7, netSatang: 299000 }, prefix80BoundaryTie: { count: 9, netSatang: 299000 }, coverage: 'complete', reasonCodes: [], drilldownFilters: { TOP20: {}, REST: {}, TO80: {}, BOUNDARY_TIE: {}, TO80_BOUNDARY_TIE: {} } } } as unknown as ExecutiveAnalysis;
+  const visible = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: tied, nav, seller: null })));
+  assert.match(visible, /มีอีก 7 บริษัท/); assert.match(visible, /มีอีก 9 บริษัท/); assert.match(visible, /2,990\.00 บาท/);
+  assert.match(renderToStaticMarkup(React.createElement(AnalysisContent, { data: tied, nav, seller: null })), /role="group"/);
+});
+
+test('unavailable money never becomes zero in reconciliation; trend has a signed zero baseline and gaps', async () => {
+  const { AnalysisContent } = await content();
+  const moneyRow = { receiptsSatang: missing, refundsSatang: missing, netReceiptsSatang: missing, feesSatang: missing, taxSatang: missing };
+  const data = { ...envelope, coverage: { ...envelope.coverage, money: { coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] } }, revenue: { ...moneyRow, byPurchaseGroup: [{ key: 'FIRST_PURCHASE', label: 'ซื้อครั้งแรก', ...moneyRow }], disputedInvoiceCount: 0, trend: [{ month: '2026-09', isPartialMonth: false, ...moneyRow }] } } as unknown as ExecutiveAnalysis;
+  const html = renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav, seller: null }));
+  assert.doesNotMatch(text(html), /0\.00 บาท/); assert.match(html, /y1="100" y2="100"/); assert.doesNotMatch(html, /<rect /);
+});
+
+test('a confirmed month without receipts says no money received rather than unknown payment', async () => {
+  const { CompanyContent } = await content();
+  const data = { ...envelope, coverage: { usage: { coverage: 'complete', reasonCodes: [] }, money: { coverage: 'complete', reasonCodes: [] } }, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' }, expenseReceiptCountLifetime: 0 }, monthReasonCodes: [], month: { paidEver: { value: 'NO' }, usageGroup: 'NOT_PAID', paidInMonth: false, positiveNetInMonth: false, fullyRefunded: false, usage: { activeDays: 0, activeDaysLine: 0, activeDaysWeb: 0, activeUsers: 0, activeUsersLine: 0, activeUsersWeb: 0, documents: 0, aiRequests: 0, expenseReceiptCountInPeriod: 0, expenseReceiptsLine: 0, expenseReceiptsWeb: 0 }, money: { receiptsSatang: cash(0), refundsSatang: cash(0), netReceiptsSatang: cash(0), feesSatang: cash(0), taxSatang: cash(0), aiCostSatang: 0 } } } as unknown as ExecutiveCompanyDetail;
+  const visible = text(renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' })));
+  assert.match(visible, /ไม่มีเงินรับในเดือน/); assert.match(visible, /ยอดรับไม่มากกว่ายอดคืนในเดือน/);
+  assert.doesNotMatch(visible, /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
+});
