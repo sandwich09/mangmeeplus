@@ -614,9 +614,8 @@ export class ReportSourceAdapters {
       const result = await this.expenses.execute(ctx, { ...filter, page, pageSize });
       return { items: result.data, total: result.total };
     }, REPORT_SYNC_EXPORT_MAX_ROWS);
-    // ponytail: active categories only (listCategoryCandidates); an archived category's expenses print no name.
-    // Add the name to the expense list query if accountants need archived ones too.
-    const categoryNames = new Map((await this.expenses.listCategoryCandidates(ctx.companyId)).map((category) => [category.id, category.name]));
+    const categoryIds = [...new Set(expenses.map((expense) => expense.expenseCategoryId).filter((id): id is string => Boolean(id)))];
+    const categoryNames = new Map((await this.expenses.listCategoryNames(ctx.companyId, categoryIds)).map((category) => [category.id, category.name]));
     const rows = expenses.map((expense) => ({
       expenseNumber: expense.expenseNumber ?? null,
       uploadedAt: iso(expense.uploadedAt ?? expense.createdAt),

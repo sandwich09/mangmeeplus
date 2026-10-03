@@ -506,6 +506,7 @@ describe('report rows and CSV a person reads', () => {
         vendorNameSnapshot: 'ร้านกาแฟ', sourceDocumentType: 'ABBREVIATED_TAX_INVOICE', taxEvidenceStatus: 'SUPPORTING_ONLY', status: 'CONFIRMED', inputVatClaimStatus: 'NON_CLAIMABLE',
         expenseCategoryId: 'cat_internal_1', taxCategory: 'SERVICE_FEE', accountHintKey: 'expense.meals', currency: 'THB', grandTotalAmount: '5.0000', vatAmount: '0.0000', whtAmount: '0.0000' }], total: 1 }),
       listCategoryCandidates: async () => [{ id: 'cat_internal_1', name: 'ค่าอาหารและเครื่องดื่ม' }],
+      listCategoryNames: async () => [{ id: 'cat_internal_1', name: 'ค่าอาหารและเครื่องดื่ม' }],
     },
     taxSummary: { execute: async () => ({ periodKey: '2026-09', totalTaxAmount: '1.0000', openIssueCount: 1, rows: [
       { taxType: 'WHT', formType: 'PND53', periodKey: '2026-09', status: 'NEEDS_REVIEW', dueDate: null, activeEventCount: 1, reviewIssueCount: 1, openIssueCount: 1, taxableBase: '100.0000', taxAmount: '3.0000' },
@@ -601,5 +602,23 @@ describe('accountant evidence currency', () => {
     assert.ok(raw.columns.some((column) => column.key === 'currency' && column.label === 'สกุลเงิน'), 'currency column');
     const shown = reportResultForPeople({ ...raw, dataset: enabled('expense.accountant_evidence') });
     assert.deepEqual(shown.rows.map((row) => row.currency), ['USD', 'บาท']);
+  });
+});
+
+// A category the company archived still names the expenses filed under it.
+describe('accountant evidence category', () => {
+  it('shows the name of an archived category', async () => {
+    const asked: unknown[] = [];
+    const adapter = adapters({ expenses: {
+      execute: async () => ({ data: [{ id: 'exp_1', expenseNumber: 'EXP-1', status: 'CONFIRMED', currency: 'THB', expenseCategoryId: 'cat_archived',
+        grandTotalAmount: '1.0000', vatAmount: '0.0000', whtAmount: '0.0000' }], total: 1 }),
+      // Active categories only: the archived one is not among them.
+      listCategoryCandidates: async () => [{ id: 'cat_active', name: 'ค่าเดินทาง' }],
+      listCategoryNames: async (companyId: string, ids: string[]) => { asked.push([companyId, ids]); return [{ id: 'cat_archived', name: 'ค่าใช้จ่ายสำนักงานเดิม' }]; },
+    } });
+    const result = await adapter.execute({ ...ctx, permissions: [...ctx.permissions, 'expense.export'] }, enabled('expense.accountant_evidence'),
+      { filters: {}, chartKind: 'table', page: 1, pageSize: 100 });
+    assert.equal(result.rows[0]?.category, 'ค่าใช้จ่ายสำนักงานเดิม');
+    assert.deepEqual(asked, [['company-1', ['cat_archived']]]);
   });
 });

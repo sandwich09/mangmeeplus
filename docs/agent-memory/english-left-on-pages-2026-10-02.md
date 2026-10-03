@@ -272,3 +272,11 @@ company day, any character outside Thai, ASCII letters, digits, `_` and `-` beco
 สรุปคำแนะนำจาก-AI-2026-10-03.csv; was financial.general_ledger-2026-10-03.csv). Also replaced a literal BOM
 character inside a round-1 test string with `﻿`. Tests: CSV logic red 2 / 2 → 4 / 0; export file name red
 35 / 1 → 36 / 0.
+
+### R6: archived expense categories keep their names
+
+The accountant evidence report looked names up with `listCategoryCandidates` (active categories only), so an
+expense filed under an archived category showed none. New `ListExpensesUseCase.listCategoryNames(companyId, ids)`
+→ `PrismaExpenseRepository.listCategoryNames`: the names of exactly the categories the rows use, any status,
+this company's or the shared ones. Test: adapters red 38 / 1 → 39 / 0. The Prisma query itself is typechecked,
+not run against a database here.
