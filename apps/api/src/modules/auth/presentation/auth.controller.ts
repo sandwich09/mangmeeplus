@@ -44,6 +44,7 @@ import { CURRENT_LEGAL_DOCUMENTS, legalAcceptanceStatements, planTermLockReason,
 import { currentLegalRelease } from '../application/legal-acceptance.service';
 // The one place the signup form's length limit is decided; the input must not drift from it.
 import { LINE_SIGNUP_COMPANY_NAME_MAX } from '../../external-signup/domain/line-signup.logic';
+import { manualExpenseWebEntryState } from '../../system-partner-management/domain/logic/manual-expense-web-entry.logic';
 import {
   ExchangeLiffSessionUseCase,
   type ExchangeLiffSessionResult,
@@ -1015,7 +1016,7 @@ export class AuthController {
   @ApiResponse({ status: 200, description: 'Current user context' })
   async me(@Req() req: Request & { context: RequestContext }) {
     const { userId, companyId, membershipId, roles, permissions, scopes, authProvider } = req.context;
-    const [user, credential, legalAcceptance, membership, session] = await Promise.all([
+    const [user, credential, legalAcceptance, membership, session, webEntrySetting] = await Promise.all([
       this.prisma.client.user.findUnique({ where: { id: userId }, select: { displayName: true } }),
       this.prisma.client.userCredential.findUnique({ where: { userId }, select: { mustChangePassword: true, updatedAt: true } }),
       this.legalAcceptance.getStatus(req.context),
@@ -1029,6 +1030,10 @@ export class AuthController {
           select: { passwordCredentialVersion: true },
         })
         : Promise.resolve(null),
+      this.prisma.client.companyWebEntrySetting.findUnique({
+        where: { companyId },
+        select: { manualExpenseEntryEnabled: true, version: true },
+      }),
     ]);
     // AuthGuard exempts /v1/auth/* from the temporary-password block, so this route answers for a
     // blocked session too — and it is the only way such a session can learn that it is blocked.
@@ -1051,6 +1056,11 @@ export class AuthController {
         passwordCredentialVersion: session?.passwordCredentialVersion,
       }),
       legalAcceptanceRequired: legalAcceptance.required,
+      // A screen setting of the company in this context, not an authority: the web uses it only to
+      // show or hide the entrances to the manual expense page (spec §6.1). Read here, beside the
+      // rest of this answer — never through ResolvedAccess or RequestContext, so it cannot reach a
+      // guard, a use case or LINE.
+      manualExpenseWebEntry: manualExpenseWebEntryState(webEntrySetting).enabled,
     };
   }
 

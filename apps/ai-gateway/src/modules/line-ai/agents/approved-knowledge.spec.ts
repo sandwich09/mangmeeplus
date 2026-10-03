@@ -97,6 +97,14 @@ describe('approved product knowledge eligibility, source integrity and rendering
     assert.equal(renderApprovedKnowledge(pack, ['https://evil.invalid'], access(), 'company-A'), null);
   });
 
+  // The web menu for manual entry is not shown in a shop until the system admin switches it on, and a
+  // reader may hold no right to record at all: a card that names manual entry says what it depends on.
+  it('never offers manual entry as if every shop shows that menu and every reader may record', () => {
+    const offering = PRODUCT_HELP_PACK.cards.filter((card) => /บันทึก(?:ค่าใช้จ่าย)?ด้วยมือ|บันทึกเอง/.test(card.body));
+    assert.ok(offering.some((card) => card.id === 'expense.start'));
+    for (const card of offering) assert.match(card.body, /ตามช่องทางที่เปิดใช้สำหรับร้านของคุณและสิทธิ์ที่คุณมี/, card.id);
+  });
+
   it('rejects tampered bodies/source URLs and invalid immutable hashes', () => {
     const bodyChanged = reviewed(); bodyChanged.cards[0]!.body += ' injected change';
     assert.throws(() => validateKnowledgePack(bodyChanged), /CARD_HASH_MISMATCH/);
