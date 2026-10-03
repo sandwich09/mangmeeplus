@@ -282,6 +282,8 @@ AUDITOR_READONLY: expense.read, expense.evidence.read, expense.export
 SALES, INVENTORY, MARKETING, STAFF: employee baseline
 ```
 
+Owner decision 2026-10-03 (“ตามแนะนำหมด”): `ACCOUNTANT` (ฝ่ายบัญชี) keeps the defaults above: neither `expense.review` nor `expense.confirm` is granted by default. The owner may explicitly grant them; this decision changes no default permissions.
+
 `ADMIN` works the expense module owner-equal (owner decision 2026-07-26): intake, review, confirm, reject, void, payment recording, duplicate resolution, and substitute-receipt preparation/approval. `expense.signature.approve` stays owner-level; `expense.ocr.request` and `expense.ai.verify` stay service-lane (`expense.review` already covers reviewer-triggered extraction).
 
 `expense.delete` hard-deletes DRAFT expenses only. OWNER, ADMIN, and FINANCE hold it by default and may delete any company draft; otherwise, a draft's creator holding `expense.update` may delete their own draft.

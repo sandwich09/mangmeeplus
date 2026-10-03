@@ -172,17 +172,88 @@ describe('billing cash movements on real PostgreSQL', { skip: !databaseUrl }, ()
     const shape = (id: string) => { const row = only(rows, `txn_${tag}${id}`); return [row.kind, row.tie, row.amountSatang, row.companyId, row.purchaseKind].join(' '); };
     assert.equal(shape('payout'), 'PAYOUT EXCLUDED -900000  UNKNOWN');
     assert.equal(shape('missing'), 'RECEIPT UNTIED 24900  UNKNOWN');
-    assert.equal(shape('pending'), 'REFUND EXCLUDED 24900  UNKNOWN');
+    // The pending refund still names its invoice's kind: a paid-ahead SCHEDULED_CHANGE is RENEWAL (owner 2026-10-03).
+    assert.equal(shape('pending'), 'REFUND EXCLUDED 24900  RENEWAL');
     assert.equal(shape('failed'), 'REFUND EXCLUDED 100  UNKNOWN');
     assert.equal(shape('lostrefund'), 'REFUND UNTIED 5000  UNKNOWN');
     assert.equal(shape('adjust'), 'OTHER UNTIED -1500  UNKNOWN');
     assert.equal(only(rows, `txn_${tag}usd`).currency, 'USD');
     assert.equal(only(rows, `txn_${tag}usd`).tie, 'UNTIED');
-    // SCHEDULED_CHANGE is the company's money, but its purchase kind is not proven: a coverage gap, not "upgrade".
-    assert.equal(shape('change'), `RECEIPT COMPANY 49900 ${company} UNKNOWN`);
+    // Owner 2026-10-03: a paid-ahead tier/interval change is a renewal.
+    assert.equal(shape('change'), `RECEIPT COMPANY 49900 ${company} RENEWAL`);
     // What a caller adds up for companies is exactly the COMPANY rows.
     assert.equal(rows.filter((row) => row.tie === 'COMPANY').reduce((sum, row) => sum + row.amountSatang, 0), 49_900);
   });
+
+  for (const [name, quoteKind, priorEnd, expected, conversion] of [
+    ['scheduled change', 'SCHEDULED_CHANGE', null, 'RENEWAL', false],
+    ['live conversion', 'INITIAL', '2026-09-20T03:00:00Z', 'RENEWAL', true],
+    ['ended conversion', 'INITIAL', '2026-09-01T03:00:00Z', 'RETURN', true],
+    ['live deal without conversion', 'INITIAL', '2026-09-20T03:00:00Z', 'RENEWAL', false],
+    ['ended deal without conversion', 'INITIAL', '2026-09-01T03:00:00Z', 'RETURN', false],
+    ['end-boundary conversion', 'INITIAL', '2026-09-15T03:00:00Z', 'RETURN', true],
+    ['advance deal', 'ADVANCE_DEAL', '2026-09-20T03:00:00Z', 'RENEWAL', false],
+    ['late advance deal', 'ADVANCE_DEAL', '2026-09-01T03:00:00Z', 'RETURN', false],
+    ['live one-time deal', 'REPEAT', '2026-09-20T03:00:00Z', 'RENEWAL', false],
+    ['ended one-time deal', 'RESTART', '2026-09-01T03:00:00Z', 'RETURN', false],
+    ['never-paid deal', 'INITIAL', null, 'FIRST_PURCHASE', false],
+    ['ordinary first purchase', 'INITIAL', null, 'FIRST_PURCHASE', false],
+    ['subscription cycle', null, null, 'RENEWAL', false],
+    ['ordinary restart', 'RESTART', '2026-09-01T03:00:00Z', 'RETURN', false],
+  ] as const) {
+    it(`uses payment-time history for ${name} in cash and company purchases, once per movement`, async () => {
+      const companyId = `kind-${randomUUID()}`;
+      await client.company.create({ data: { id: companyId, name: 'spec' } });
+      const b = await client.billingAccount.create({ data: { companyId, stripeAccountId: account, livemode: true,
+        // Today's package ends much later; it must not change the old purchase kind.
+        paidThrough: at('2027-01-01T00:00:00Z') } });
+      const paidAt = at('2026-09-15T03:00:00Z'), appliedAt = at('2026-10-05T03:00:00Z');
+      const makeInvoice = (data: Record<string, unknown> = {}) => client.billingInvoice.create({ data: {
+        billingAccountId: b.id, providerInvoiceId: `in_${randomUUID()}`, offerSnapshot: { offerKey: 'BASIC' },
+        policyRevisionId: 'p', currency: 'THB', totalSatang: 10000, paidSatang: 10000, taxSatang: 0,
+        periodStart: at('2026-08-01T00:00:00Z'), periodEnd: at('2026-09-01T03:00:00Z'),
+        providerStatus: 'paid', evidenceHash: 'h', applyStatus: 'APPLIED', appliedAt: at('2026-08-01T00:00:00Z'), ...data } });
+      if (priorEnd) await makeInvoice({ periodEnd: at(priorEnd) });
+      // None of these proves a live paid package at this payment, even on a never-paid shop.
+      await makeInvoice({ productKind: 'CHAT_CREDIT', periodEnd: at('2027-01-01T00:00:00Z') });
+      await makeInvoice({ paidSatang: 0, periodEnd: at('2027-01-01T00:00:00Z') });
+      await makeInvoice({ applyStatus: 'HELD', appliedAt: null, periodEnd: at('2027-01-01T00:00:00Z') });
+      await makeInvoice({ appliedAt: at('2026-09-16T00:00:00Z'), periodEnd: at('2027-01-01T00:00:00Z') });
+      const otherMode = await client.billingAccount.create({ data: { companyId, stripeAccountId: account, livemode: false } });
+      await makeInvoice({ billingAccountId: otherMode.id, periodEnd: at('2027-01-01T00:00:00Z') });
+      const isDeal = !['scheduled change', 'ordinary first purchase', 'subscription cycle', 'ordinary restart'].includes(name);
+      const dealId = `deal-${randomUUID()}`;
+      const a = quoteKind ? await client.billingAttempt.create({ data: { billingAccountId: b.id, initiatingUserId: 'spec',
+        quoteId: randomUUID(), channel: 'web', idempotencyKey: randomUUID(), requestHash: 'h', policyRevisionId: 'p',
+        consentRevision: 'c', consentAt: paidAt, quoteSnapshot: { quote: { purchase: { kind: quoteKind } },
+          ...(isDeal ? { deal: { requestId: dealId } } : {}),
+          ...(conversion ? { subscriptionConversion: { subscriptionId: 'old-sub', paidThrough: priorEnd } } : {}) } } }) : null;
+      const current = await makeInvoice({ sourceAttemptId: a?.id ?? null, subscriptionId: quoteKind ? null : 'cycle-sub',
+        periodStart: appliedAt, periodEnd: at('2026-11-05T03:00:00Z'), appliedAt });
+      if (isDeal) await client.packageChangeRequest.create({ data: { id: dealId, companyId, requestedByUserId: 'spec',
+        requestedTierKey: 'BASIC', kind: 'SALES_DEAL', status: 'APPLIED', paymentRef: current.id, verifiedAt: paidAt } });
+      // History works before any balance scan: a paid-ahead deal's verifiedAt precedes its application.
+      const purchases = await live.companyPackagePurchases(companyId);
+      assert.equal(purchases.filter(p => p.appliedAt.getTime() === appliedAt.getTime()).length, 1);
+      assert.equal(purchases.find(p => p.appliedAt.getTime() === appliedAt.getTime())?.purchaseKind, expected);
+      const job = (await scanJob({ since: '2026-09-01T00:00:00Z', until: '2026-10-01T00:00:00Z' })).id;
+      const id = `txn_${randomUUID()}`, refundId = `txn_${randomUUID()}`;
+      const observation = { classification: 'MATCHED', invoiceId: current.id, companyId, accountId: b.id, taxSatang: 0 };
+      await finding(job, { id, type: 'charge', amount: 10000, created: paidAt.toISOString() }, observation);
+      const reread = (await scanJob({ since: '2026-09-01T00:00:00Z', until: '2026-10-01T00:00:00Z' })).id;
+      await finding(reread, { id, type: 'charge', amount: 10000, created: paidAt.toISOString() }, observation);
+      await finding(job, { id: refundId, type: 'refund', amount: -1000, created: '2026-09-29T03:00:00Z' }, { ...observation, refundState: 'succeeded' });
+      const rows = (await live.movements(SEPTEMBER)).filter(r => r.invoiceId === current.id);
+      assert.deepEqual(rows.map(r => r.purchaseKind), [expected, expected]);
+      assert.equal(rows.reduce((sum, r) => sum + (r.kind === 'REFUND' ? -r.amountSatang : r.amountSatang), 0), 9000);
+      if (isDeal) {
+        // A held/deleted deal source can lack verifiedAt: both readers use the original charge, never the refund's date.
+        await client.packageChangeRequest.update({ where: { id: dealId }, data: { verifiedAt: null } });
+        assert.equal((await live.companyPackagePurchases(companyId)).find(p => p.appliedAt.getTime() === appliedAt.getTime())?.purchaseKind, expected);
+        assert.deepEqual((await live.movements(SEPTEMBER)).filter(r => r.invoiceId === current.id).map(r => r.purchaseKind), [expected, expected]);
+      }
+    });
+  }
 
   it('never mixes TEST with LIVE, or one provider account with another', async () => {
     const other = `acct_other${randomUUID().replaceAll('-', '')}`;
@@ -388,6 +459,7 @@ describe('billingPurchaseKind — executive spec §14.1 table', () => {
     assert.equal(attemptInvoice('INITIAL'), 'FIRST_PURCHASE');
     assert.equal(attemptInvoice('INITIAL', { subscriptionId: 'sub_first_cycle' }), 'FIRST_PURCHASE');
     assert.equal(attemptInvoice('REPEAT'), 'RENEWAL');
+    assert.equal(attemptInvoice('SCHEDULED_CHANGE'), 'RENEWAL');
     assert.equal(attemptInvoice('ADVANCE_DEAL'), 'RENEWAL');
     assert.equal(attemptInvoice('RESTART'), 'RETURN');
     // A subscription started again after it expired is a return, although it is that subscription's first cycle.
@@ -402,7 +474,6 @@ describe('billingPurchaseKind — executive spec §14.1 table', () => {
 
   it('answers UNKNOWN for what the table cannot prove, never a guess', () => {
     assert.equal(billingPurchaseKind(null), 'UNKNOWN');
-    assert.equal(attemptInvoice('SCHEDULED_CHANGE'), 'UNKNOWN');
     assert.equal(attemptInvoice('INITIAL', { subscriptionConversion: true }), 'UNKNOWN');
     assert.equal(attemptInvoice(null), 'UNKNOWN');
     assert.equal(attemptInvoice('SOMETHING_NEW'), 'UNKNOWN');

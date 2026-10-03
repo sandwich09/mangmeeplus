@@ -58,7 +58,7 @@ export const EXECUTIVE_REPORT_LABELS: Record<'industry' | 'discovery' | 'referri
   // The two TIE values are opened from a sentence under a group, not offered in the filter (API01 leaves them out).
   spendCohort: { ALL: 'ทุกบริษัท', TOP20: 'ลูกค้าที่จ่ายสูงสุด 20% แรก', REST: 'ลูกค้านอกกลุ่มที่จ่ายสูงสุด 20% แรก', TO80: 'บริษัทที่รวมยอดรับถึง 80%',
     BOUNDARY_TIE: 'จ่ายเท่ากับลำดับสุดท้ายของลูกค้าที่จ่ายสูงสุด 20% แรก', TO80_BOUNDARY_TIE: 'จ่ายเท่ากับลำดับสุดท้ายของบริษัทที่รวมยอดรับถึง 80%' },
-  // 'email-otp': PROPOSED wording (the admin queue's words), waiting for the owner (spec §15).
+  // 'email-otp': existing wording approved by the owner on 2026-10-03 (spec §15, D12).
   signupRail: { ALL: 'ทั้งหมด', 'official-site': 'สมัครทางเว็บไซต์', 'line-oa': 'สมัครทาง LINE', 'email-otp': 'สมัครด้วยรหัสอีเมล', ADMIN_CREATED: 'ผู้ดูแลสร้าง', UNKNOWN: 'ไม่ระบุ' },
 };
 export type ExecutiveFilterKey = keyof typeof EXECUTIVE_REPORT_LABELS;
@@ -309,7 +309,7 @@ export type ExecutiveCompanyDetail = ExecutiveEnvelope & {
   month: null | {
     paidEver: { value: 'YES' | 'NO' | 'UNKNOWN'; reason?: string }; fullyRefunded: boolean; paidInMonth: boolean; positiveNetInMonth: boolean;
     usageGroup: 'NOT_STARTED' | 'INACTIVE' | 'ACTIVE' | 'NOT_PAID' | null; usageUnassessedReason?: string;
-    /** `aiCostSatang`: the measured cost of the assistant and of receipt reading, with its own coverage (spec §16.6). */
+    /** `aiCostSatang`: the measured cost of the assistant and of receipt reading, with its own coverage (spec §16.6, approved by the owner 2026-10-03). */
     money: ExecutiveMoneyRow & { aiCostSatang: ExecutiveMoney };
     usage: { activeDays: number; activeDaysLine: number; activeDaysWeb: number; activeUsers: number; activeUsersLine: number; activeUsersWeb: number;
       documents: number; confirmedExpensesLine: number; confirmedExpensesWeb: number; issuedDocuments: number; aiRequests: number;

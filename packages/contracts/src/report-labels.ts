@@ -15,7 +15,7 @@ export function isReportClassification(value: unknown): value is ReportClassific
 
 /**
  * Version 1 of the readable industry groups, by the section (A–U) of the shop's DBD business type.
- * PROPOSED content: the owner reviews it before the report is opened. A change of content is a new
+ * All 12 groups approved by the owner on 2026-10-03 ("ตามแนะนำหมด"). A change of content is a new
  * version, because the report keeps one mapping version per data set (`dimensionVersion`).
  */
 export const REPORT_INDUSTRY_GROUP_VERSION = 1;

@@ -8,6 +8,7 @@ import { findReportDefinition, REPORT_CATALOG } from '../domain/report-catalog';
 import { buildReportCsv } from '../domain/report-csv.logic';
 import { REPORT_VALUE_TEXT, reportResultForPeople } from '../domain/report-row-text.logic';
 import { ReportSourceAdapters } from './report-source-adapters';
+import { billingPurchaseKind } from '../../billing/application/billing-cash-movements.service';
 
 const ctx: RequestContext = {
   requestId: 'req-1',
@@ -659,5 +660,45 @@ describe('report descriptions say what the reports compute', () => {
     const guide = readFileSync(join(__dirname, '../../../../../web/src/features/user-guide/reports-guide.content.ts'), 'utf8');
     const rows = [...guide.matchAll(/^ +\['([^']+)', '([^']+)', '([^']+)'\],$/gm)].map((match) => [match[1], match[3]]);
     assert.deepEqual(rows, REPORT_CATALOG.map((report) => [report.title, report.description]));
+  });
+});
+
+// Kept in this registered report-source spec: the API test script lists no billing/executive unit spec.
+describe('executive purchase kinds — owner answers 2026-10-03', () => {
+  const paidAt = new Date('2026-09-15T03:00:00Z');
+  const live = new Date('2026-10-01T03:00:00Z'), ended = new Date('2026-09-01T03:00:00Z');
+  const kind = (quoteKind: string, extra = {}) => billingPurchaseKind({ productKind: 'PACKAGE', sourceAttemptId: 'attempt',
+    subscriptionId: null, quoteKind, subscriptionConversion: false, isDeal: false, paidAt, previousPaidThrough: null, ...extra });
+
+  it('counts a paid-ahead tier or interval change as renewal', () => {
+    assert.equal(kind('SCHEDULED_CHANGE'), 'RENEWAL');
+  });
+  for (const quoteKind of ['INITIAL', 'ADVANCE_DEAL', 'REPEAT', 'RESTART']) {
+    for (const [history, previousPaidThrough, expected] of [['live', live, 'RENEWAL'], ['ended', ended, 'RETURN']] as const) {
+      it(`files a ${quoteKind} deal on a ${history} paid shop from history at payment`, () => {
+        assert.equal(kind(quoteKind, { isDeal: true, subscriptionConversion: quoteKind === 'INITIAL', previousPaidThrough }), expected);
+      });
+    }
+  }
+  it('counts a conversion paid exactly at the old package end as a return', () => {
+    assert.equal(kind('INITIAL', { isDeal: true, subscriptionConversion: true, previousPaidThrough: paidAt }), 'RETURN');
+  });
+  it('does not need a conversion marker to recognize a returning deal customer', () => {
+    assert.equal(kind('INITIAL', { isDeal: true, previousPaidThrough: ended }), 'RETURN');
+  });
+  it('keeps a never-paid deal and an ordinary first purchase as first purchases', () => {
+    assert.equal(kind('INITIAL', { isDeal: true }), 'FIRST_PURCHASE');
+    assert.equal(kind('INITIAL'), 'FIRST_PURCHASE');
+    assert.equal(kind('INITIAL', { subscriptionId: 'first-cycle' }), 'FIRST_PURCHASE');
+  });
+  it('keeps subscription cycles and ordinary restarts in their existing kinds', () => {
+    assert.equal(kind('INITIAL', { sourceAttemptId: null, subscriptionId: 'subscription', isDeal: true }), 'RENEWAL');
+    assert.equal(kind('RESTART'), 'RETURN');
+    assert.equal(kind('UPGRADE'), 'UPGRADE');
+    assert.equal(kind('FULL_PACKAGE_UPGRADE'), 'UPGRADE');
+  });
+  it('leaves missing deal payment time or missing conversion history unknown', () => {
+    assert.equal(kind('INITIAL', { isDeal: true, previousPaidThrough: live, paidAt: null }), 'UNKNOWN');
+    assert.equal(kind('INITIAL', { isDeal: true, subscriptionConversion: true }), 'UNKNOWN');
   });
 });
