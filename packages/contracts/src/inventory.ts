@@ -16,6 +16,18 @@ export type StockMovementType =
   | 'ADJUSTMENT_OUT';
 export type StockMovementDirection = 'IN' | 'OUT';
 
+/** The one Thai word per movement type: the inventory pages (dictionary) and the report rows read it. */
+export const STOCK_MOVEMENT_TYPE_LABELS: Record<StockMovementType, string> = {
+  STOCK_IN: 'รับเข้า',
+  STOCK_OUT: 'จ่ายออก',
+  TRANSFER_IN: 'รับโอน',
+  TRANSFER_OUT: 'โอนออก',
+  COUNT_ADJUSTMENT_IN: 'ปรับนับ (เพิ่ม)',
+  COUNT_ADJUSTMENT_OUT: 'ปรับนับ (ลด)',
+  ADJUSTMENT_IN: 'ปรับเพิ่ม',
+  ADJUSTMENT_OUT: 'ปรับลด',
+};
+
 // --- Product ---
 export type ProductSummary = {
   id: string;

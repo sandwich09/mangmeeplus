@@ -1414,6 +1414,72 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     assert.deepEqual((await block(desk, pinnedBefore)).to, ['u_owner', 'u_accountant']);
   });
 
+  it('tells the requester once about a finance block in all three desk shapes, never their own block', async () => {
+    const template = WORKFLOW_TEMPLATE_CATALOG.find(t => t.key === 'reimbursement_finance_blocked_requester');
+    assert.ok(template, 'requester block template must exist');
+    const now = new Date();
+    assert.equal(evaluateCondition(template.defaultConditionJson, { decision: 'BLOCKED', requesterUserId: 'u_staff' }, now).matched, true);
+    for (const payload of [{ decision: 'BLOCKED' }, { decision: 'APPROVED_FOR_PAYMENT', requesterUserId: 'u_staff' }, { decision: 'NEEDS_INFO', requesterUserId: 'u_staff' }]) {
+      assert.equal(evaluateCondition(template.defaultConditionJson, payload, now).matched, false);
+    }
+    assert.equal(template.name, 'แจ้งผู้เบิกเมื่อระงับการจ่าย');
+    assert.doesNotMatch(template.description, /[a-zA-Z_]/);
+    for (const [desk, actorUserId] of [
+      [{ u_owner: holding('OWNER'), u_finance: holding('FINANCE'), u_accountant: holding('ACCOUNTANT') }, 'u_finance'],
+      [{ u_owner: holding('OWNER'), u_finance: holding('FINANCE') }, 'u_finance'],
+      [{ u_owner: holding('OWNER') }, 'u_owner'],
+    ] as const) {
+      const h = harness({ sourceBranchId: 'br_claim', memberships: desk });
+      const action: { actionKey: string; configJson: Record<string, unknown> } = template.defaultActionJson[0]!;
+      const context = {
+        companyId: 'co_1', ruleName: template.name, triggerType: 'EVENT', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', requesterUserId: 'u_staff', actorUserId, decision: 'BLOCKED', note: 'ห้ามคัดลอก 0123456789' }, siblingActions: [],
+      };
+      await h.useCase.execute({ ...actionRun(action.configJson), actionKey: action.actionKey }, context);
+      assert.equal(h.sent.length, 1);
+      const notice = h.sent[0];
+      assert.deepEqual(notice.recipientUserIds, ['u_staff']);
+      assert.equal(notice.title, 'ใบเบิกของคุณถูกระงับการจ่าย: RB-1');
+      assert.equal(notice.body, 'ใบเบิกยังอยู่ขั้นตรวจการเงิน รอผู้ตรวจการเงินดำเนินการต่อ หากผู้ตรวจระบุเหตุผล อ่านได้ในใบเบิก');
+      assert.equal(notice.deepLinkHref, '/companies/co_1/reimbursements/rb_1');
+      assert.equal(notice.periodKey, actionRun(action.configJson).workflowRunId);
+      assert.doesNotMatch(notice.body, /0123456789|ห้ามคัดลอก|BLOCKED/);
+      await h.useCase.execute({ ...actionRun(action.configJson), actionKey: action.actionKey }, { ...context, payload: { ...context.payload, requesterUserId: actorUserId } });
+      assert.equal(h.sent.length, 1, 'requester who blocked their own claim gets none');
+    }
+  });
+
+  it('gives a requester who reviews finance only their requester notice and weighs the desk fallback after both exclusions', async () => {
+    const templates = ['reimbursement_finance_review', 'reimbursement_finance_blocked_requester'].map(key => WORKFLOW_TEMPLATE_CATALOG.find(t => t.key === key)!);
+    const reviewer = holding('ACCOUNTANT');
+    const owner = holding('OWNER');
+    for (const { memberships, requesterUserId, actorUserId, deskRecipients } of [
+      { memberships: { u_owner: owner, u_blocker: reviewer, u_requester: reviewer, u_other: reviewer }, requesterUserId: 'u_requester', actorUserId: 'u_blocker', deskRecipients: ['u_other'] },
+      { memberships: { u_owner: owner, u_blocker: reviewer, u_requester: reviewer }, requesterUserId: 'u_requester', actorUserId: 'u_blocker', deskRecipients: ['u_owner'] },
+      { memberships: { u_owner: owner, u_requester: reviewer }, requesterUserId: 'u_requester', actorUserId: 'u_owner', deskRecipients: [] },
+      { memberships: { u_owner: owner, u_blocker: reviewer }, requesterUserId: 'u_owner', actorUserId: 'u_blocker', deskRecipients: [] },
+      // An ordinary requester leaves the desk's recipients unchanged.
+      { memberships: { u_owner: owner, u_blocker: reviewer, u_other: reviewer }, requesterUserId: 'u_staff', actorUserId: 'u_blocker', deskRecipients: ['u_other'] },
+      { memberships: { u_owner: owner, u_blocker: reviewer }, requesterUserId: 'u_staff', actorUserId: 'u_blocker', deskRecipients: ['u_owner'] },
+      { memberships: { u_owner: owner }, requesterUserId: 'u_staff', actorUserId: 'u_owner', deskRecipients: [] },
+      // The requester blocks their own claim: neither template tells them.
+      { memberships: { u_owner: owner, u_requester: reviewer }, requesterUserId: 'u_requester', actorUserId: 'u_requester', deskRecipients: ['u_owner'] },
+    ]) {
+      const h = harness({ sourceBranchId: 'br_claim', memberships });
+      for (const template of templates) {
+        const action = template.defaultActionJson[0]!;
+        await h.useCase.execute({ ...actionRun(action.configJson), actionKey: action.actionKey }, {
+          companyId: 'co_1', ruleName: template.name, triggerType: 'EVENT', sourceModule: 'reimbursements', sourceType: 'reimbursement_request', sourceId: 'rb_1',
+          payload: { requestId: 'rb_1', requestNo: 'RB-1', requesterUserId, actorUserId, decision: 'BLOCKED', amount: '250', currency: 'THB' }, siblingActions: [],
+        });
+      }
+      const requesterNotices = h.sent.filter(n => n.recipientUserIds.includes(requesterUserId));
+      assert.deepEqual(requesterNotices.map(n => n.triggerKey), requesterUserId === actorUserId ? [] : ['workflow.reimbursement_finance_blocked_requester']);
+      assert.deepEqual(h.sent.filter(n => n.triggerKey === 'workflow.reimbursement_finance_review').flatMap(n => n.recipientUserIds), deskRecipients);
+      assert.ok(h.sent.every(n => !n.recipientUserIds.includes(actorUserId)));
+    }
+  });
+
   it('keeps a branch-limited payer for a company-central claim, exactly as the pay endpoint does', async () => {
     const h = harness({
       sourceBranchId: null,
@@ -1665,5 +1731,58 @@ describe('a scan keeps one open task per rule and record (the overdue-approval r
       // The same rule: the task's run and the asking run belong to one rule.
       workflowRun: { rule: { runs: { some: { id: 'run_9' } } } },
     } });
+  });
+});
+
+// Owner 2026-10-02: text a shop user reads is plain Thai and true. These are the words a rule's notice and task
+// fall back to when the rule has none of its own; what the runner does is unchanged.
+describe('fallback words of a rule, in Thai', () => {
+  const english = (text: string) => /[A-Za-z]/.test(text.replace(/\bAI\b/g, ''));
+  const ruleContext: any = {
+    companyId: 'co_1', ruleName: 'กฎของร้านทดสอบ', sourceModule: 'procurement', sourceType: 'vendor_bill', sourceId: 'bill_1',
+    payload: { billId: 'bill_1' }, siblingActions: [],
+  };
+  const run = (actionType: string, configJson: Record<string, unknown>): any => ({
+    id: 'ar_9', workflowRunId: 'run_9', actionKey: 'fallback_case', actionType, actionConfigSnapshotJson: configJson,
+    attemptCount: 0, idempotencyKey: 'run_9:fallback_case', startedAt: undefined,
+  });
+  let repo: any;
+  let notify: any;
+  beforeEach(() => {
+    repo = {
+      updateActionRun: mock.fn(async () => undefined),
+      findUserIdsByRoles: mock.fn(async () => []),
+      findUserIdsByPermissions: mock.fn(async () => ['u_1']),
+      findSourceBranchId: mock.fn(async () => null),
+      findTaskByActionRunId: mock.fn(async () => null),
+      createTask: mock.fn(async (data: any) => ({ id: 'task_9', ...data })),
+    };
+    notify = { execute: mock.fn(async () => ({ skipped: false, event: { id: 'ne_9' } })) };
+  });
+  const access = { resolveAccess: async () => ({ permissions: ['procurement.vendor_bill.approve'], roles: ['STAFF'], scopes: {} }) } as any;
+  const make = () => new ExecuteWorkflowActionUseCase(repo, {} as any, {} as any, notify, {} as any, {} as any, access);
+
+  it('titles a notice that has no title of its own by its rule', async () => {
+    await make().execute(run('SEND_NOTIFICATION', { recipientPermissions: ['procurement.vendor_bill.approve'] }), ruleContext);
+    const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+    assert.equal(sent.title, 'แจ้งเตือนจากกฎอัตโนมัติ: กฎของร้านทดสอบ');
+  });
+
+  it('asks for the AI draft by hand when the rule names no requester, as before but in Thai', async () => {
+    await make().execute(run('REQUEST_AI_DRAFT', { templateKey: 'workflow_review_checklist', requesterUserId: '' }), ruleContext);
+    assert.equal(repo.createTask.mock.callCount(), 1);
+    const task = (repo.createTask.mock.calls[0] as any).arguments[0];
+    assert.equal(task.title, 'ต้องดำเนินการเอง: กฎของร้านทดสอบ');
+    assert.equal(english(task.description), false, task.description);
+    assert.match(task.description, /ยังไม่ได้ระบุผู้ขอหรือแบบร่าง/);
+    assert.deepEqual((repo.updateActionRun.mock.calls.at(-1) as any).arguments[1].resultJson, { fallback: true });
+  });
+
+  it('asks for a report export by hand when a rule wants one, in Thai', async () => {
+    await make().execute(run('CREATE_REPORT_EXPORT_DRAFT', { reason: 'provider not implemented' }), ruleContext);
+    const task = (repo.createTask.mock.calls[0] as any).arguments[0];
+    assert.equal(task.title, 'ต้องดำเนินการเอง: กฎของร้านทดสอบ');
+    assert.equal(english(task.description), false, task.description);
+    assert.match(task.description, /หน้ารายงาน/);
   });
 });

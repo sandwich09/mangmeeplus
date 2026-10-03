@@ -7,7 +7,7 @@ type AuditPage = { data: Array<{ action: string }> };
 
 async function runTrialBalance(page: any, companyId: string) {
   await gotoCompany(page, companyId, '/reports');
-  await page.locator('aside').getByRole('button', { name: /Trial Balance/i }).first().click();
+  await page.locator('aside').getByRole('button', { name: /งบทดลอง/ }).first().click();
   await page.getByRole('button', { name: /เรียกรายงาน|Run report/i }).click();
   await expect(page.getByText(/ตารางผลลัพธ์|Result table/i)).toBeVisible();
 }
@@ -16,7 +16,7 @@ test.describe('RPT — reports & BI', () => {
   test('RPT-01 @smoke reports catalog renders Trial Balance', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/reports');
     await expect(authedPage.getByRole('heading', { name: /^(รายงาน|Reports and BI|Reports)$/i })).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: /Trial Balance/i }).first()).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: /งบทดลอง/ }).first()).toBeVisible();
   });
 
   test('RPT-02 @p1 runs report and shows result table', async ({ authedPage, companyId }) => {
@@ -26,9 +26,9 @@ test.describe('RPT — reports & BI', () => {
 
   test('RPT-03 @p1 saves a dated report view', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/reports');
-    await authedPage.locator('aside').getByRole('button', { name: /Trial Balance/i }).first().click();
+    await authedPage.locator('aside').getByRole('button', { name: /งบทดลอง/ }).first().click();
     await authedPage.getByRole('button', { name: /บันทึกมุมมอง|Save view/i }).click();
-    await expect(authedPage.locator('aside').getByText(/\d{4}-\d{2}-\d{2}/).first()).toBeVisible();
+    await expect(authedPage.locator('aside').getByText(/งบทดลอง \d{1,2} [ก-๙.]+ 25\d{2}/).first()).toBeVisible();
   });
 
   test('RPT-04 @smoke exports CSV and shows READY export', async ({ authedPage, companyId }) => {
@@ -47,9 +47,9 @@ test.describe('RPT — reports & BI', () => {
     await authedPage.getByRole('button', { name: /ส่งออก CSV|Export CSV/i }).click();
     await downloadPromise;
     await authedPage.reload();
-    await expect(authedPage.getByRole('button', { name: /Trial Balance/i }).first()).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: /งบทดลอง/ }).first()).toBeVisible();
     await expect(authedPage.locator('aside').getByText('พร้อมดาวน์โหลด').first()).toBeVisible();
-    await expect(authedPage.locator('aside').getByText(/\d{4}-\d{2}-\d{2}/).first()).toBeVisible();
+    await expect(authedPage.locator('aside').getByText(/งบทดลอง \d{1,2} [ก-๙.]+ 25\d{2}/).first()).toBeVisible();
   });
 
   test('RPT-06 @p1 exports API exposes READY item', async ({ api, companyId }) => {

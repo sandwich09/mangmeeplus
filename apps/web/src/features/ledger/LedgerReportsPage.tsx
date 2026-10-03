@@ -24,7 +24,7 @@ import {
   type PnlReport,
   type TrialBalance,
 } from './ledger.api';
-import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilPeriodKey, LEDGER_ACCOUNT_CLASS_LABELS, todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 import { useConfirm } from '@/common/components/modal';
 import { periodCloseCheckCopy } from './ledger.logic';
@@ -249,12 +249,12 @@ export function LedgerReportsPage({ companyId }: { companyId: string }) {
           <MangmeeCard className="p-4">
             <h2 className="text-sm font-semibold text-gray-900">งบการเงิน</h2>
             <dl className="mt-3 space-y-2 text-sm">
-              <div className="flex justify-between"><dt className="text-gray-500">รายได้</dt><dd className="font-medium">{money(pnl?.revenue)}</dd></div>
-              <div className="flex justify-between"><dt className="text-gray-500">ต้นทุน</dt><dd className="font-medium">{money(pnl?.totalCost)}</dd></div>
-              <div className="flex justify-between"><dt className="text-gray-500">ค่าใช้จ่าย</dt><dd className="font-medium">{money(pnl?.totalExpense)}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-500">{LEDGER_ACCOUNT_CLASS_LABELS.REVENUE}</dt><dd className="font-medium">{money(pnl?.revenue)}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-500">{LEDGER_ACCOUNT_CLASS_LABELS.COST}</dt><dd className="font-medium">{money(pnl?.totalCost)}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-500">{LEDGER_ACCOUNT_CLASS_LABELS.EXPENSE}</dt><dd className="font-medium">{money(pnl?.totalExpense)}</dd></div>
               <div className="flex justify-between border-t border-gray-100 pt-2"><dt className="text-gray-500">กำไรสุทธิ</dt><dd className="font-bold">{money(pnl?.netProfit)}</dd></div>
-              <div className="flex justify-between"><dt className="text-gray-500">หนี้สิน</dt><dd className="font-medium">{money(balanceSheet?.totalLiabilities)}</dd></div>
-              <div className="flex justify-between"><dt className="text-gray-500">ส่วนของเจ้าของ</dt><dd className="font-medium">{money(balanceSheet?.totalEquity)}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-500">{LEDGER_ACCOUNT_CLASS_LABELS.LIABILITY}</dt><dd className="font-medium">{money(balanceSheet?.totalLiabilities)}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-500">{LEDGER_ACCOUNT_CLASS_LABELS.EQUITY}</dt><dd className="font-medium">{money(balanceSheet?.totalEquity)}</dd></div>
             </dl>
           </MangmeeCard>
 

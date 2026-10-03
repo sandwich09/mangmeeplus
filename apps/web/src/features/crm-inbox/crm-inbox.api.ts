@@ -86,12 +86,13 @@ export function updateChannelSettings(
 
 export function listConversations(
   companyId: string,
-  filter?: { status?: CrmConversationStatus; search?: string; overdue?: boolean; tag?: string; assignee?: 'me' | 'none'; customerId?: string; page?: number; pageSize?: number },
+  filter?: { status?: CrmConversationStatus; search?: string; overdue?: boolean; unanswered?: boolean; tag?: string; assignee?: 'me' | 'none'; customerId?: string; page?: number; pageSize?: number },
 ): Promise<ListCrmConversationsResult> {
   const params = new URLSearchParams();
   if (filter?.status) params.set('status', filter.status);
   if (filter?.search) params.set('search', filter.search);
   if (filter?.overdue) params.set('overdue', 'true');
+  if (filter?.unanswered) params.set('unanswered', 'true');
   if (filter?.tag) params.set('tag', filter.tag);
   if (filter?.assignee) params.set('assignee', filter.assignee);
   if (filter?.customerId) params.set('customerId', filter.customerId);

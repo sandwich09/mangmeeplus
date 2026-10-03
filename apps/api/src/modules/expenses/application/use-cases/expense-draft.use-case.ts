@@ -293,6 +293,11 @@ export class ListExpensesUseCase {
     return categories.map((category) => ({ id: category.id, name: category.name }));
   }
 
+  /** The names of the categories expenses were filed under, archived ones included (reports, exports). */
+  listCategoryNames(companyId: string, ids: string[]): Promise<Array<{ id: string; name: string }>> {
+    return this.repo.listCategoryNames(companyId, ids);
+  }
+
   /** Vendor candidates for `vendorName` resolution, scoped exactly like every other AI read here:
    *  read_own sees only its own createdByUserId, read_related only its actor relation. */
   async readAiVendorCandidates(ctx: RequestContext, branchId?: string): Promise<Array<{ id: string; name: string }>> {

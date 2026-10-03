@@ -1115,7 +1115,7 @@ describe('buildJourneySteps', () => {
     assert.deepEqual(active({ ...review, financeReviewStatus: 'APPROVED_FOR_PAYMENT' }, FINANCE, 'fin').actions, ['finance-approve', 'cancel', 'print']);
     const blocked = active({ ...review, financeReviewStatus: 'BLOCKED', financeReviewNote: 'รอใบกำกับฉบับจริง' }, FINANCE, 'fin');
     assert.deepEqual(blocked.actions, ['finance-approve', 'finance-return', 'cancel', 'print']);
-    assert.equal(blocked.note, 'ฝ่ายการเงินระงับการจ่าย: รอใบกำกับฉบับจริง');
+    assert.equal(blocked.note, 'ระงับการจ่ายที่ขั้นตรวจการเงิน: รอใบกำกับฉบับจริง');
     // Approved and still being routed to finance: nothing to decide yet.
     assert.deepEqual(active(claim({ ...approved, status: 'APPROVED', financeReviewStatus: 'PENDING' }), FINANCE, 'fin').actions, ['cancel', 'print']);
     assert.deepEqual(active(review, APPROVER, 'boss').actions, ['print']);
@@ -1124,7 +1124,24 @@ describe('buildJourneySteps', () => {
   it('leads a finance correction with the edit and carries finance\'s note', () => {
     const corrected = active(claim({ financeReviewStatus: 'NEEDS_INFO', financeReviewNote: 'แนบใบเสร็จตัวจริง' }), STAFF, 'staff');
     assert.deepEqual(corrected.actions, ['edit', 'submit', 'cancel']);
-    assert.equal(corrected.note, 'ฝ่ายการเงินขอให้แก้ไข: แนบใบเสร็จตัวจริง');
+    assert.equal(corrected.note, 'ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน: แนบใบเสร็จตัวจริง');
+  });
+
+  // Browser check 2026-10-03: a blocked claim read "ฝ่ายการเงินระงับการจ่าย" whoever blocked it, and a returned one
+  // "ฝ่ายการเงินขอให้แก้ไข". Whoever holds the finance-review right blocks or returns (the owner, the claim's approver,
+  // anyone given it), so the note says what was done at which step and, as the done row does ("ตรวจการเงินแล้ว โดย …"),
+  // by whom.
+  it('says what was done at the finance-review step and by whom, never naming a department', () => {
+    const blocked = claim({ ...approved, status: 'FINANCE_REVIEW', financeReviewStatus: 'BLOCKED', financeReviewedByName: 'อรอนงค์ ใจดี' });
+    assert.equal(active({ ...blocked, financeReviewNote: 'รอใบกำกับฉบับจริง' }, OWNER, 'owner').note,
+      'ระงับการจ่ายที่ขั้นตรวจการเงิน โดย อรอนงค์ ใจดี: รอใบกำกับฉบับจริง');
+    assert.equal(active(blocked, STAFF, 'staff').note, 'ระงับการจ่ายที่ขั้นตรวจการเงิน โดย อรอนงค์ ใจดี');
+    const returned = claim({ financeReviewStatus: 'NEEDS_INFO', financeReviewedByName: 'อรอนงค์ ใจดี', financeReviewNote: 'แนบใบเสร็จตัวจริง' });
+    assert.equal(active(returned, STAFF, 'staff').note, 'ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน โดย อรอนงค์ ใจดี: แนบใบเสร็จตัวจริง');
+    // The block dialog says who carries the claim on: whoever reviews it, not a department.
+    const sources = ['reimbursements.logic.ts', 'ReimbursementJourneyPage.tsx'].map((file) => readFileSync(join(__dirname, file), 'utf8')).join('\n');
+    assert.doesNotMatch(sources, /ฝ่ายการเงิน(ระงับ|ขอให้แก้ไข|จะอนุมัติ)/);
+    assert.match(sources, /จนกว่าผู้ตรวจการเงินจะอนุมัติจ่ายหรือส่งกลับให้แก้ไข/);
   });
 
   it('lets the requester withdraw a claim nobody has decided yet, beside cancel', () => {

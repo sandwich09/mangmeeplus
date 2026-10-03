@@ -429,12 +429,11 @@ describe('the receiving choice on the claim form', () => {
     const html = section({ forSelf: false, defaultAccount: null, canSaveAsDefault: true, value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: false } });
     const texts = visible(html);
     for (const text of ['ตามบัญชีรับเงินคืนประจำของผู้เบิก', 'ระบบใช้บัญชีรับเงินคืนประจำของผู้เบิกที่เลือกไว้ และแสดงบัญชีนั้นให้ตรวจในหน้าใบเบิกก่อนกดส่งอนุมัติ',
-      'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน', 'บันทึกเป็นบัญชีประจำของผู้เบิก']) assert.ok(texts.includes(text), text);
-    // On a draft only an account typed for the requester tells them: the form says so beside that choice, and of no other.
-    // (Following the requester's standing account, or cash, on a draft filed for them sends no notice.)
+      'เมื่อคุณเลือกหรือเปลี่ยนวิธีรับเงินคืนแทนผู้เบิก ผู้เบิกที่ยังใช้งานอยู่จะได้รับแจ้งเตือน ถ้าบันทึกโดยไม่เปลี่ยนจะไม่แจ้งซ้ำ', 'บันทึกเป็นบัญชีประจำของผู้เบิก']) assert.ok(texts.includes(text), text);
+    // Every changed draft choice is announced, and identical saves stay silent.
     for (const mode of ['DEFAULT', 'CASH', 'SPECIFIED'] as const) {
       const told = visible(section({ forSelf: false, defaultAccount: null, value: { mode, account: logic.emptyPayoutAccountForm(), saveAsDefault: false } })).filter((text) => text.includes('แจ้งเตือน'));
-      assert.deepEqual(told, ['กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย และผู้เบิกจะได้รับแจ้งเตือน'], mode);
+      assert.deepEqual(told, ['เมื่อคุณเลือกหรือเปลี่ยนวิธีรับเงินคืนแทนผู้เบิก ผู้เบิกที่ยังใช้งานอยู่จะได้รับแจ้งเตือน ถ้าบันทึกโดยไม่เปลี่ยนจะไม่แจ้งซ้ำ'], mode);
     }
     // The requester filling their own draft is told of no notice.
     assert.deepEqual(visible(section({ value: { mode: 'SPECIFIED', account: logic.emptyPayoutAccountForm(), saveAsDefault: false } })).filter((text) => text.includes('แจ้งเตือน')), []);
@@ -618,7 +617,7 @@ describe('"บัญชีรับเงินคืนของฉัน" and 
     for (const text of ['บัญชีรับเงินคืนของฉัน', 'บัญชีรับเงินคืนประจำ', 'กำลังโหลดบัญชีรับเงินคืน...',
       'ตั้งครั้งเดียว ใบเบิกใหม่จะใช้บัญชีนี้เอง ใบที่ส่งไปแล้วใช้บัญชีที่บันทึกไว้กับใบนั้น ไม่เปลี่ยนตาม']) assert.ok(page.includes(text), text);
     const refused = visible(render(h(ReimbursementPayoutAccountPage, { companyId: ids.company, canManage: false })));
-    for (const text of ['ยังตั้งบัญชีรับเงินคืนไม่ได้', 'บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อเจ้าของกิจการหรือแอดมิน']) assert.ok(refused.includes(text), text);
+    for (const text of ['ยังตั้งบัญชีรับเงินคืนไม่ได้', 'บัญชีนี้ยังไม่มีสิทธิ์สร้างคำขอเบิก กรุณาติดต่อเจ้าของกิจการหรือผู้ดูแลบริษัท']) assert.ok(refused.includes(text), text);
     const route = read('../../../app/(workspace)/companies/[companyId]/reimbursements/payout-account/page.tsx');
     assert.match(route, /canManage=\{\(session\?\.permissions \?\? \[\]\)\.includes\('reimbursement\.create'\)\}/);
   });
@@ -634,7 +633,17 @@ describe('"บัญชีรับเงินคืนของฉัน" and 
     // or another branch's): the button follows the server's answer, never a guess made on the page.
     assert.match(screen, /setMayEdit\(response\.canEdit === true\)/);
     assert.match(screen, /\{canEdit && mayEdit \? \(/);
-    assert.match(screen, /บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือแอดมิน ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล/);
+    const runtime = require('react') as typeof React;
+    const realUseState = runtime.useState;
+    let falseStates = 0;
+    Reflect.set(runtime, 'useState', (initial: unknown) => {
+      const [value, set] = (realUseState as (value: unknown) => [unknown, unknown])(initial);
+      return [initial === false && ++falseStates === 2 ? true : value, set]; // the account has loaded, remains read-only
+    });
+    try {
+      const words = visible(render(h(ui.MemberPayoutAccountCard, { companyId: ids.company, memberUserId: ids.requester, canEdit: false })));
+      assert.ok(words.includes('บัญชีนี้ตั้งหรือแก้ได้โดยเจ้าของบัญชี เจ้าของกิจการ หรือผู้ดูแลบริษัท ส่วนผู้จัดการและฝ่ายบุคคลตั้งให้ได้เฉพาะพนักงานในสาขาที่ตนดูแล'));
+    } finally { Reflect.set(runtime, 'useState', realUseState); }
 
     const employee = read('../employee-access/AddEmployeePrototypePage.tsx');
     // The viewer's own employee page uses their own path; anyone else's goes through the employee-edit path.

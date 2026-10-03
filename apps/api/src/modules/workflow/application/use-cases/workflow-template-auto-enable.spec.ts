@@ -1,8 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   autoEnableWorkflowTemplatesForCompany,
   closeSettledClaimTasksAtRelease,
+  renameDefaultNamedTemplateRulesForCompany,
   resyncWorkflowTemplateRulesForCompany,
   WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID,
 } from './workflow-template.use-case';
@@ -10,9 +14,77 @@ import {
   WORKFLOW_TEMPLATE_CATALOG,
   WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS,
   WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG,
+  WORKFLOW_TEMPLATE_FORMER_NAMES,
 } from '../../domain/workflow-template-catalog';
+import { nextActionHint, summarizeAction, summarizeCondition, summarizeTrigger } from '../../domain/logic/workflow-explanation.logic';
+import { toTemplateSummary } from '../dto/workflow.mapper';
 
 const AUTO_ENABLE_KEYS = WORKFLOW_TEMPLATE_CATALOG.filter((t) => t.autoEnable).map((t) => t.key);
+
+describe('shop-facing workflow template text', () => {
+  it('keeps all system template names and descriptions in Thai', () => {
+    for (const template of WORKFLOW_TEMPLATE_CATALOG) {
+      for (const text of [template.name, template.description, template.unavailableReason ?? '']) {
+        if (!text) continue;
+        const withoutAllowedTerms = text.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, '');
+        assert.match(withoutAllowedTerms, /[\u0E00-\u0E7F]/, template.key);
+        assert.doesNotMatch(withoutAllowedTerms, /[A-Za-z]/, template.key);
+      }
+    }
+  });
+
+  // Roles are named from the one list (THAI_SYSTEM_ROLE_NAMES), true to whom each template notifies or assigns.
+  it('names every role a template notifies or assigns, by the one-list name, and no other role or old word', () => {
+    // The approval reminder's scan names the owner as the approvers when none of them can act any more.
+    const throughPayload: Record<string, string[]> = { approval_sla_breach: ['OWNER'] };
+    for (const template of WORKFLOW_TEMPLATE_CATALOG) {
+      const text = `${template.name} ${template.description}`;
+      assert.doesNotMatch(text, /เจ้าของร้าน|ผู้ดูแลคลังสินค้า|ผู้ดูแล(?!บริษัท|ระบบ)|หัวหน้า/u, template.key);
+      const roles = new Set(template.defaultActionJson.flatMap((action) => {
+        const config = action.configJson as Record<string, unknown>;
+        return [config.recipientRoles, config.lastResortRecipientRoles, config.assigneeRole].flat().filter((role): role is string => typeof role === 'string');
+      }));
+      for (const role of roles) assert.ok(template.description.includes(THAI_SYSTEM_ROLE_NAMES[role as keyof typeof THAI_SYSTEM_ROLE_NAMES]), `${template.key} does not name ${role}`);
+      for (const [role, word] of Object.entries(THAI_SYSTEM_ROLE_NAMES)) {
+        if (text.includes(word)) assert.ok(roles.has(role) || throughPayload[template.key]?.includes(role), `${template.key} names ${role}, whom it neither notifies nor assigns`);
+      }
+    }
+  });
+
+  it('says a template creates a task only when it has a task action', () => {
+    for (const template of WORKFLOW_TEMPLATE_CATALOG) {
+      const createsTask = template.defaultActionJson.some((action) => ['CREATE_WORKFLOW_TASK', 'CREATE_APPROVAL_REVIEW_REQUEST'].includes(action.actionType));
+      if (/สร้างงาน/.test(template.description)) assert.ok(createsTask, template.key);
+    }
+  });
+
+  it('keeps run explanations in Thai without exposing trigger details or action keys', () => {
+    const explanation = [
+      summarizeTrigger('SLA_SCAN', 'inventory', 'stock.low'),
+      summarizeCondition({ matched: false, errors: ['condition.invalid_key'] } as any),
+      summarizeAction({ actionKey: 'send_alert_1', actionType: 'SEND_NOTIFICATION', configJson: {} } as any, 'FAILED_RETRYABLE'),
+      nextActionHint('FAILED'),
+    ].join(' ');
+    const withoutAllowedTerms = explanation.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, '');
+    assert.match(withoutAllowedTerms, /[\u0E00-\u0E7F]/);
+    assert.doesNotMatch(withoutAllowedTerms, /[A-Za-z]/);
+    assert.doesNotMatch(explanation, /inventory|stock\.low|send_alert_1|condition\.invalid_key/);
+  });
+
+  it('uses current catalogue copy if a stored template row still has the old English values', () => {
+    const seed = WORKFLOW_TEMPLATE_CATALOG.find((template) => template.key === 'daily_owner_summary')!;
+    const view = toTemplateSummary({
+      id: 'template-1', key: seed.key, name: 'Daily owner summary', description: 'Old English description',
+      unavailableReason: 'Old English reason', category: seed.category, sourceModule: seed.sourceModule,
+      triggerType: seed.triggerType, defaultConditionJson: seed.defaultConditionJson, defaultActionJson: seed.defaultActionJson,
+      requiredPermissions: seed.requiredPermissions, requiredSourceModules: seed.requiredSourceModules,
+      defaultEnabled: seed.defaultEnabled, status: seed.status,
+    } as any);
+    assert.equal(view.name, seed.name);
+    assert.equal(view.description, seed.description);
+    assert.equal(view.unavailableReason, seed.unavailableReason);
+  });
+});
 
 type FakeRule = {
   id: string; companyId: string; templateId: string; name: string; description?: string;
@@ -23,7 +95,7 @@ type FakeRule = {
 };
 
 type SeedRule = {
-  templateKey: string; companyId?: string; status?: string;
+  templateKey: string; companyId?: string; status?: string; name?: string;
   createdByUserId?: string; updatedByUserId?: string; cooldownSeconds?: number;
   /** Defaults to the template's own action definition, so only the named field is "stale". */
   actionJson?: unknown;
@@ -44,7 +116,7 @@ function fakeRepo(seedRules: SeedRule[] = []) {
       id: `pre_${index}`,
       companyId: r.companyId ?? 'co_1',
       templateId: template.id,
-      name: 'preexisting', status: r.status ?? 'DISABLED', triggerType: 'EVENT',
+      name: r.name ?? 'preexisting', status: r.status ?? 'DISABLED', triggerType: 'EVENT',
       triggerConfigJson: WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG[template.key] ?? {},
       conditionJson: template.defaultConditionJson,
       actionJson: r.actionJson ?? template.defaultActionJson,
@@ -106,7 +178,7 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
     assert.equal(repo.versions.length, AUTO_ENABLE_KEYS.length);
     assert.ok(repo.versions.every((v: any) => v.status === 'ENABLED' && v.version === 1));
     // EVENT rules must carry the catalog trigger binding or they subscribe to nothing.
-    const pending = repo.rules.find((r: any) => r.name === 'Reimbursement pending approval');
+    const pending = repo.rules.find((r: any) => r.name === 'คำขอเบิกค่าใช้จ่ายรออนุมัติ');
     assert.deepEqual(pending.triggerConfigJson, WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG['reimbursement_pending_approval']);
   });
 
@@ -207,6 +279,21 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
     }
   });
 
+  it('creates the requester block notice following the requester decision switch, once per company', async () => {
+    for (const status of ['ENABLED', 'DISABLED', undefined]) {
+      const repo = fakeRepo(status ? [{ templateKey: 'reimbursement_decision_requester', status }] : []);
+      const enabled = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
+      const template = repo.templates.find((t: any) => t.key === 'reimbursement_finance_blocked_requester');
+      assert.ok(template);
+      const rule = repo.rules.find((r: any) => r.templateId === template.id);
+      assert.equal(rule.status, status ?? 'ENABLED');
+      assert.equal(enabled.includes(template.key), status !== 'DISABLED');
+      assert.deepEqual(rule.triggerConfigJson, { eventType: 'reimbursement.finance_review_updated' });
+      assert.equal(rule.cooldownSeconds, 0);
+      assert.deepEqual(await autoEnableWorkflowTemplatesForCompany(repo, 'co_1'), []);
+    }
+  });
+
   it('leaves other companies alone', async () => {
     const repo = fakeRepo([{ templateKey: 'reimbursement_pending_approval', companyId: 'co_2', status: 'DISABLED' }]);
     const created = await autoEnableWorkflowTemplatesForCompany(repo, 'co_1');
@@ -230,8 +317,8 @@ describe('autoEnableWorkflowTemplatesForCompany', () => {
       if (!rule) continue;
       assert.equal(rule.cooldownSeconds, WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS[template.key] ?? 3600, template.key);
     }
-    assert.equal(repo.rules.find((r: any) => r.name === 'Reimbursement pending approval').cooldownSeconds, 0);
-    assert.equal(repo.rules.find((r: any) => r.name === 'Approval SLA breach').cooldownSeconds, 3600);
+    assert.equal(repo.rules.find((r: any) => r.name === 'คำขอเบิกค่าใช้จ่ายรออนุมัติ').cooldownSeconds, 0);
+    assert.equal(repo.rules.find((r: any) => r.name === 'รายการเบิกจ่ายรออนุมัติเกินกำหนด').cooldownSeconds, 3600);
   });
 });
 
@@ -403,11 +490,12 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
   });
 
   // Owner decision 2026-10-02: the finance desk's "blocked" notice takes the rule of the arrival notice, the shop owner
-  // only as the last resort. It has shipped as well, and is re-pinned the same way.
+  // only as the last resort. The release pins this unshipped template with the requester excluded too.
   it('re-pins a finance "blocked" rule pinned before the shop owner was left out, and leaves an admin-edited one alone', async () => {
     const key = 'reimbursement_finance_review';
     const [catalogAction] = catalogActions(key);
-    const { lastResortRecipientRoles: _lastResort, ...shippedConfig } = catalogAction!.configJson;
+    const { lastResortRecipientRoles: _lastResort, ...withoutLastResort } = catalogAction!.configJson;
+    const shippedConfig = { ...withoutLastResort, excludeRecipientPayloadKeys: ['actorUserId'] };
     const shipped = [{ ...catalogAction!, configJson: shippedConfig }];
     const adminsOwn = [{ ...catalogAction!, configJson: { ...shippedConfig, bodyTemplate: 'ฝ่ายการเงินระงับใบนี้ ยอด {{amount}} {{currency}}' } }];
     const rule = (over: Partial<SeedRule> = {}) => syncOwned({ templateKey: key, cooldownSeconds: 0, actionJson: shipped, ...over });
@@ -423,8 +511,9 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     const config = (id: string) => repo.rules.find((r: any) => r.id === id).actionJson[0].configJson;
     assert.deepEqual(['pre_0', 'pre_1', 'pre_2'].map((id) => config(id).lastResortRecipientRoles), [['OWNER'], undefined, ['OWNER']]);
-    // Nothing else of the rule moved: the same people's right, the same words, the actor still left out.
-    assert.deepEqual({ ...config('pre_0'), lastResortRecipientRoles: undefined }, { ...shippedConfig, lastResortRecipientRoles: undefined });
+    // The requester gets their own notice, including when they can also review finance.
+    assert.deepEqual(config('pre_0').excludeRecipientPayloadKeys, ['actorUserId', 'requesterUserId']);
+    assert.deepEqual({ ...config('pre_0'), lastResortRecipientRoles: undefined, excludeRecipientPayloadKeys: undefined }, { ...shippedConfig, lastResortRecipientRoles: undefined, excludeRecipientPayloadKeys: undefined });
     assert.deepEqual(repo.rules.find((r: any) => r.id === 'pre_1').actionJson, adminsOwn);
     assert.equal(repo.rules.find((r: any) => r.id === 'pre_2').status, 'DISABLED');
     const latest = repo.versions.filter((v: any) => v.ruleId === 'pre_0').sort((a: any, b: any) => b.version - a.version)[0];
@@ -540,6 +629,57 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), []);
     assert.equal(repo.rules.find((r: any) => r.id === 'pre_0').cooldownSeconds, 3600);
+  });
+});
+
+// Owner 2026-10-02/03: no English on the automation page. A rule copies its template's name when it is
+// created and keeps it, so rules made before the names were Thai still read in English.
+describe('renameDefaultNamedTemplateRulesForCompany', () => {
+  const nameOf = (key: string) => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === key)!.name;
+
+  it('gives a rule still named its template\'s old default the current name, whoever created it and in any state', async () => {
+    const repo = fakeRepo([
+      { templateKey: 'reimbursement_pending_approval', name: 'Reimbursement pending approval', status: 'ENABLED',
+        createdByUserId: WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, updatedByUserId: WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID },
+      { templateKey: 'low_stock_alert', name: 'Low stock alert', status: 'DISABLED', updatedByUserId: 'admin_2' },
+      { templateKey: 'tax_due_soon', name: 'Tax due soon', status: 'ARCHIVED' },
+    ]);
+
+    const renamed = await renameDefaultNamedTemplateRulesForCompany(repo, 'co_1');
+
+    assert.deepEqual([...renamed].sort(), ['low_stock_alert', 'reimbursement_pending_approval', 'tax_due_soon']);
+    assert.deepEqual(repo.rules.map((r: any) => r.name), [nameOf('reimbursement_pending_approval'), nameOf('low_stock_alert'), nameOf('tax_due_soon')]);
+    // The name only: who last edited a rule is how the content resync tells an admin's edit from its own.
+    assert.deepEqual(repo.rules.map((r: any) => r.updatedByUserId), [WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, 'admin_2', undefined]);
+    assert.deepEqual(repo.rules.map((r: any) => [r.status, r.currentVersion]), [['ENABLED', 1], ['DISABLED', 1], ['ARCHIVED', 1]]);
+    assert.equal(repo.versions.length, 3);
+  });
+
+  it('never renames a rule its company named, and a second run changes nothing', async () => {
+    const repo = fakeRepo([
+      { templateKey: 'low_stock_alert', name: 'แจ้งสต๊อกด่วน' },
+      { templateKey: 'low_stock_alert', name: 'Stock check' },
+      { templateKey: 'low_stock_alert', name: 'low stock alert' },
+      { templateKey: 'low_stock_alert', name: 'Low stock alert', companyId: 'co_2' },
+      { templateKey: 'low_stock_alert', name: 'Low stock alert' },
+    ]);
+
+    assert.deepEqual(await renameDefaultNamedTemplateRulesForCompany(repo, 'co_1'), ['low_stock_alert']);
+    assert.deepEqual(repo.rules.map((r: any) => r.name), ['แจ้งสต๊อกด่วน', 'Stock check', 'low stock alert', 'Low stock alert', nameOf('low_stock_alert')]);
+    assert.deepEqual(await renameDefaultNamedTemplateRulesForCompany(repo, 'co_1'), []);
+  });
+
+  it('keeps old names only for real catalogue templates, never a current name', () => {
+    const current = new Set(WORKFLOW_TEMPLATE_CATALOG.map((t) => t.name));
+    for (const [key, former] of Object.entries(WORKFLOW_TEMPLATE_FORMER_NAMES)) {
+      assert.ok(WORKFLOW_TEMPLATE_CATALOG.some((t) => t.key === key), key);
+      for (const name of former) assert.equal(current.has(name), false, name);
+    }
+  });
+
+  it('runs for every company at each release, in the template sync', () => {
+    const script = readFileSync(join(__dirname, '../../../../../prisma/sync-workflow-templates.ts'), 'utf8');
+    assert.match(script, /renameDefaultNamedTemplateRulesForCompany\(repo, company\.id\)/);
   });
 });
 

@@ -4,7 +4,7 @@
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import type { PlanTermLockReason, PlanTermState } from '@watchdog-bms/contracts';
 
-export type MyCompany = { companyId: string; companyName: string; roles: string[]; canManagePlan?: boolean; expired?: boolean; planState?: PlanTermState; lockReason?: PlanTermLockReason };
+export type MyCompany = { companyId: string; companyName: string; roles: string[]; roleNames?: Record<string, string>; canManagePlan?: boolean; expired?: boolean; planState?: PlanTermState; lockReason?: PlanTermLockReason };
 
 export async function fetchMyCompanies(): Promise<MyCompany[]> {
   const body = await authedApiFetch<{ data: MyCompany[] }>('/v1/auth/me/companies');

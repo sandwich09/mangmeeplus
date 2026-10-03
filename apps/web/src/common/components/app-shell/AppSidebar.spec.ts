@@ -1,3 +1,6 @@
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { roleDisplayName, roleKeyDisplayName } from '@/features/employee-access/role-picker.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -133,5 +136,36 @@ describe('lineLinkMenuRow', () => {
       badgeKey: 'shell.line_link.badge_linked',
       disabled: true,
     });
+  });
+});
+
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+require.extensions['.svg'] = (module) => { module.exports = () => null; };
+const { SidebarProvider } = require('./SidebarContext') as typeof import('./SidebarContext');
+const { default: AppSidebar } = require('./AppSidebar') as typeof import('./AppSidebar');
+const sidebar = (key: string, name: string, locale: 'th' | 'en' = 'th') => renderToStaticMarkup(
+  React.createElement(SidebarProvider, null, React.createElement(AppSidebar, {
+    navItems: [], locale, userName: 'สมชาย', userRoles: [key], userRoleNames: { [key]: name },
+  })),
+);
+
+describe('sidebar standard-role names', () => {
+  it('renders the same Thai name as employee pickers for every standard role, with no stored English name', () => {
+    const stored = { OWNER: 'Owner', SYSTEM_ADMIN: 'System Admin', COMPANY_VIEW: 'Company owner', ADMIN: 'Admin',
+      MANAGER: 'Manager', HR: 'HR', SALES: 'Sales', INVENTORY: 'Inventory', FINANCE: 'Finance', ACCOUNTANT: 'Accountant',
+      MARKETING: 'Marketing', STAFF: 'Staff', AUDITOR_READONLY: 'Auditor (Read-only)', MANGMEE_SALES_LEAD: 'Mangmee Sales Lead', MANGMEE_SALES: 'Mangmee Sales' };
+    for (const [key, name] of Object.entries(stored)) {
+      const html = sidebar(key, name);
+      assert.ok(html.includes(roleKeyDisplayName(key)), key);
+      assert.equal(html.includes(`>${name}<`), false, key);
+    }
+  });
+
+  it('preserves company-named copies and custom roles while translating unnamed standard copies', () => {
+    for (const key of ['ADMIN', 'ACCOUNTANT', 'AUDITOR_READONLY', 'CUSTOM']) {
+      assert.ok(sidebar(key, 'ผู้ช่วยประจำบริษัท').includes('ผู้ช่วยประจำบริษัท'), key);
+    }
+    assert.ok(sidebar('ACCOUNTANT', 'Accountant').includes(roleDisplayName({ key: 'ACCOUNTANT', name: 'Accountant', isSystem: false })));
+    assert.ok(sidebar('ACCOUNTANT', 'Accountant', 'en').includes('Accountant'));
   });
 });

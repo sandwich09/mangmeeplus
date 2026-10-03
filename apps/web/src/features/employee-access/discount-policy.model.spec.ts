@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DISCOUNT_POLICY_DEFAULTS,
+  DISCOUNT_OVERRIDE_OPTIONS,
   saveDiscountPolicy,
   setDiscountOverrideRole,
   stepDiscountPolicy,
@@ -57,4 +58,15 @@ describe('discount policy model', () => {
     assert.equal(saved.saved, true);
     assert.equal(saved.overrideRole, 'owner');
   });
+});
+
+it('discount override options name OWNER and MANAGER as the employee picker does', () => {
+  assert.equal(DISCOUNT_OVERRIDE_OPTIONS.find((option) => option.id === 'owner')!.label, 'เจ้าของกิจการเท่านั้น');
+  assert.equal(DISCOUNT_OVERRIDE_OPTIONS.find((option) => option.id === 'manager')!.label, 'เจ้าของกิจการและผู้จัดการ');
+});
+
+// Browser check 2026-10-03: the third option read "พนักงานขายขึ้นไป", a name outside the one list, and "ขึ้นไป" ranks roles
+// the code never ranks. Its value is 'any', which keeps no role out, so the option names every role.
+it('the third discount override option says every role, which is what its value means', () => {
+  assert.equal(DISCOUNT_OVERRIDE_OPTIONS.find((option) => option.id === 'any')!.label, 'ทุกบทบาท');
 });

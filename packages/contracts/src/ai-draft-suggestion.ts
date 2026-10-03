@@ -83,6 +83,29 @@ export type AiCandidateActionStatus =
 
 export type AiRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 
+// The AI suggestion pages and the AI suggestion report use these words.
+export const AI_SUGGESTION_STATUS_LABELS: Record<AiSuggestionStatus, string> = {
+  NEW: 'ใหม่',
+  IN_REVIEW: 'กำลังตรวจสอบ',
+  ACCEPTED_FOR_SOURCE_DRAFT: 'อนุมัติให้สร้างร่าง',
+  SOURCE_DRAFT_CREATED: 'สร้างร่างแล้ว',
+  DISMISSED: 'ปิดแล้ว',
+  SUPERSEDED: 'มีคำแนะนำใหม่กว่า',
+  EXPIRED: 'หมดอายุ',
+  BLOCKED_BY_SOURCE_STATE: 'ข้อมูลต้นทางเปลี่ยน',
+  BLOCKED_BY_PERMISSION: 'สิทธิ์ไม่เพียงพอ',
+  FAILED: 'สร้างไม่สำเร็จ',
+};
+
+export const AI_RISK_LEVEL_LABELS: Record<AiRiskLevel, string> = {
+  LOW: 'ปกติ',
+  MEDIUM: 'ควรตรวจสอบ',
+  HIGH: 'ต้องระวัง',
+};
+
+/** A suggestion the AI could not complete without more data (`needsData`). */
+export const AI_SUGGESTION_NEEDS_DATA_LABEL = 'ต้องการข้อมูล';
+
 export type AiSuggestionTemplateStatus = 'AVAILABLE' | 'UNAVAILABLE' | 'DEPRECATED';
 
 export type AiProviderMode = 'deterministic' | 'fake' | 'bedrock' | 'openai' | 'disabled';

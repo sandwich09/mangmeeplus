@@ -24,6 +24,8 @@ import {
   formatRelativeTime,
   internalNotificationHref,
   visibleNotifications,
+  notificationRuleChannelsText,
+  notificationRuleDetailText,
 } from './dashboard-notifications.logic';
 import type { NotificationItem, NotificationRule, NotificationPreference, NotificationSeverity } from './dashboard-notifications.model';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
@@ -310,7 +312,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
                   onClick={() => toggleChannel(channel)}
                   className={`inline-flex min-h-11 items-center rounded-md px-3 py-1.5 text-sm font-medium sm:min-h-0 ${pref.enabledChannels.includes(channel) ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700'} disabled:opacity-60`}
                 >
-                  {channel === 'web' ? 'Web' : 'LINE'}
+                  {notificationRuleChannelsText([channel])}
                 </button>
               ))}
             </div>
@@ -319,27 +321,27 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
             <label className="text-sm font-medium text-gray-700">
               เริ่มเวลาเงียบ
               <input
+                type="time"
                 value={pref.quietHoursStart ?? ''}
                 disabled={saving}
                 onChange={(event) => updateQuietHours('quietHoursStart', event.target.value)}
                 onBlur={() => save(pref)}
-                placeholder="22:00"
                 className="mt-1 min-h-11 w-full rounded-md border border-gray-300 px-3 py-2 text-sm sm:min-h-0"
               />
             </label>
             <label className="text-sm font-medium text-gray-700">
               สิ้นสุดเวลาเงียบ
               <input
+                type="time"
                 value={pref.quietHoursEnd ?? ''}
                 disabled={saving}
                 onChange={(event) => updateQuietHours('quietHoursEnd', event.target.value)}
                 onBlur={() => save(pref)}
-                placeholder="07:00"
                 className="mt-1 min-h-11 w-full rounded-md border border-gray-300 px-3 py-2 text-sm sm:min-h-0"
               />
             </label>
           </div>
-          <p className="text-xs text-gray-400">Web ยังบันทึกทุกแจ้งเตือนเสมอ ส่วน LINE ถูกกดตาม preference และ quiet hours</p>
+          <p className="text-xs text-gray-400">หน้าเว็บบันทึกทุกการแจ้งเตือนเสมอ ส่วน LINE จะส่งตามการตั้งค่าและช่วงเวลางดแจ้งเตือน</p>
         </div>
       )}
     </div>
@@ -391,8 +393,7 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
           <div key={rule.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 p-4">
             <div>
               <p className="text-sm font-medium text-gray-900">{rule.label}</p>
-              {rule.description && <p className="text-xs text-gray-500">{rule.description}</p>}
-              <p className="text-xs text-gray-400">ช่องทาง: {rule.channels.join(', ')} · คูลดาวน์ {rule.cooldownMinutes} นาที</p>
+              <p className="text-xs text-gray-400">{notificationRuleDetailText(rule)}</p>
             </div>
             {rule.status !== 'system' && (
               <button

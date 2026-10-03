@@ -529,3 +529,18 @@ describe('AuthController LIFF page security (H-08)', () => {
     }
   });
 });
+
+it('company switcher receives each membership’s stored role names, including company-named standard copies', async () => {
+  let query: any;
+  const prisma = { client: { companyMembership: { findMany: async (input: any) => {
+    query = input;
+    return ['Accountant', 'ผู้ตรวจประจำบริษัท'].map((name, index) => ({
+      companyId: `co-${index}`, company: { name: `บริษัท ${index}`, status: 'ACTIVE', planTerm: null },
+      roles: [{ role: { key: 'ACCOUNTANT', name, permissions: [] } }],
+    }));
+  } } } };
+  const result = await AuthController.prototype.myCompanies.call({ prisma } as any, { context: { userId: 'u1' } } as any);
+  assert.equal(query.select.roles.select.role.select.name, true);
+  assert.deepEqual(result.data.map((company: any) => company.roleNames), [{ ACCOUNTANT: 'Accountant' }, { ACCOUNTANT: 'ผู้ตรวจประจำบริษัท' }]);
+  assert.deepEqual(result.data.map((company) => company.roles), [['ACCOUNTANT'], ['ACCOUNTANT']]);
+});

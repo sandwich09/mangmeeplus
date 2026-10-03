@@ -67,14 +67,15 @@ for (const width of [390, 1280]) {
     await gotoCompany(page, companyId, '/settings/employees');
     await page.getByRole('textbox', { name: 'ชื่อ *', exact: true }).fill('ทดสอบ');
     await page.getByRole('textbox', { name: 'นามสกุล *', exact: true }).fill('ยังไม่บันทึก');
-    await page.getByRole('textbox', { name: 'Username *', exact: true }).fill('regression.no.save');
+    await page.getByRole('textbox', { name: 'ชื่อผู้ใช้ *', exact: true }).fill('regression.no.save');
     await page.getByRole('textbox', { name: 'วันเดือนปีเกิด (ค.ศ.) *', exact: true }).fill('01/01/1980');
     await page.getByRole('textbox', { name: 'เลขบัตรประชาชน *', exact: true }).fill('0000000000000');
     await page.getByRole('button', { name: 'ถัดไป ›', exact: true }).click();
     await page.getByRole('textbox', { name: 'อีเมล (ใช้เข้าสู่ระบบ) *', exact: true }).fill('regression@example.test');
     await page.getByRole('textbox', { name: 'เบอร์โทรศัพท์ *', exact: true }).fill('0800000000');
     await page.getByRole('button', { name: 'ถัดไป ›', exact: true }).click();
-    await expect(page.getByRole('button', { name: '+ ฝ่ายบัญชี', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    // A person holds one role, so the buttons show the bare role name ("✓ " only once chosen) and none is chosen yet.
+    await expect(page.getByRole('button', { name: 'ฝ่ายบัญชี', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(page.locator('#employee-default-branch')).toHaveText(branch.name);
     const emailSummary = page.getByText('regression@example.test', { exact: true });
     await expect(emailSummary).toBeVisible();

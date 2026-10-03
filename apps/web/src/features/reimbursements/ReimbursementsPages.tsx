@@ -36,6 +36,7 @@ import {
 } from './ReimbursementDetailSections';
 import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
+import { roleDisplayName } from '../employee-access/role-picker.logic';
 import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
@@ -58,20 +59,8 @@ const OVERDUE_LABEL = 'เกินกำหนด';
 const MAY_BE_DUPLICATE_LABEL = 'อาจซ้ำ';
 /** The deadline itself: how long a claim may wait for its approval, and then for its payment. */
 const DEADLINE_LABEL = 'กำหนดเวลาอนุมัติและจ่าย';
-const APPROVER_ROLE_LABELS: Record<string, string> = {
-  OWNER: 'เจ้าของกิจการ', ADMIN: 'แอดมิน', MANAGER: 'ผู้จัดการ', FINANCE: 'การเงิน',
-  ACCOUNTANT: 'บัญชี', HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'คลังสินค้า',
-  MARKETING: 'การตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ',
-};
-const STANDARD_ROLE_NAMES: Record<string, string> = {
-  OWNER: 'Owner', ADMIN: 'Admin', MANAGER: 'Manager', FINANCE: 'Finance', ACCOUNTANT: 'Accountant',
-  HR: 'HR', SALES: 'Sales', INVENTORY: 'Inventory', MARKETING: 'Marketing', STAFF: 'Staff',
-  AUDITOR_READONLY: 'Auditor (Read-only)',
-};
-const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' | 'name'>) => {
-  if (!option) return '';
-  return option.name === STANDARD_ROLE_NAMES[option.key] ? (APPROVER_ROLE_LABELS[option.key] ?? option.name) : option.name;
-};
+const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' | 'name'>) =>
+  option ? roleDisplayName({ ...option, isSystem: false }) : '';
 const shortDate = (iso?: string) => dateShort(iso);
 /*
  * A queue is a table where the card that holds it is wide enough for the table, and cards below that: the fix of

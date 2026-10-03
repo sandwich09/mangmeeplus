@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import type {
   SubstituteReceiptApprovalMode,
   SubstituteReceiptCashEvidencePolicy,
@@ -108,7 +109,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
                   <input type="radio" name="approval-mode" checked={approvalMode === 'OWNER_SELF'} onChange={() => { setApprovalMode('OWNER_SELF'); setSaved(false); }} className="mt-1 accent-brand-700" />
                   <span>
                     <span className="font-bold text-gray-900">เจ้าของกิจการลงนามและอนุมัติด้วยตนเอง (ค่าเริ่มต้น)</span>
-                    <span className="mt-1 block text-sm leading-6 text-gray-500">เหมาะกับกิจการเจ้าของคนเดียว ระบบจะระบุในเอกสารว่าเจ้าของลงนามทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ และบันทึกประวัติไว้ตรวจสอบย้อนหลัง</span>
+                    <span className="mt-1 block text-sm leading-6 text-gray-500">เหมาะกับกิจการเจ้าของคนเดียว เมื่อ{THAI_SYSTEM_ROLE_NAMES.OWNER}ลงนามทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ ระบบจะระบุไว้ในเอกสาร และบันทึกประวัติไว้ตรวจสอบย้อนหลัง</span>
                   </span>
                 </label>
                 <label className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${approvalMode === 'DESIGNATED_APPROVERS' ? 'border-brand-200 bg-brand-25' : 'border-gray-200'}`}>
