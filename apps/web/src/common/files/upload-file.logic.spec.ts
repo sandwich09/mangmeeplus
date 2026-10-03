@@ -62,7 +62,7 @@ describe('web upload file policy', () => {
 
   it('hides other technical upload failures behind one generic message', () => {
     assert.equal(uploadErrorMessage(new Error('ECONNRESET storage.internal')), GENERIC_UPLOAD_ERROR_MESSAGE);
-    assert.equal(uploadErrorMessage(new Error('รองรับเฉพาะไฟล์ PNG, JPG และ JPEG')), 'รองรับเฉพาะไฟล์ PNG, JPG และ JPEG');
+    assert.equal(uploadErrorMessage(new Error(UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE)), UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE);
   });
 
   it('keeps a stable machine code while sanitizing the wrapped upload message', async () => {

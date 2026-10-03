@@ -18,13 +18,13 @@ async function render(summary: Record<string, unknown> | null): Promise<string> 
 
 test('a foreign-currency document warns with its own code, and never offers a converted amount', async () => {
   const html = await render(summaryWith('USD'));
-  assert.match(html, /เอกสารนี้เป็นสกุลเงิน USD/);
+  assert.match(html, /เอกสารนี้เป็นสกุลเงิน ดอลลาร์สหรัฐ/);
   assert.match(html, /ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท/);
   assert.match(html, /กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก/);
   assert.match(html, /role="alert"/);
   // Warning only: the reviewer edits the amount and proceeds. No FX rate is applied or suggested.
   assert.doesNotMatch(html, /อัตราแลกเปลี่ยน|แปลงค่า|\+/);
-  assert.match(await render(summaryWith('eur')), /เอกสารนี้เป็นสกุลเงิน EUR/, 'the code is normalized');
+  assert.match(await render(summaryWith('eur')), /เอกสารนี้เป็นสกุลเงิน ยูโร/, 'the code is normalized');
 });
 
 test('a baht document and an unread currency render nothing at all', async () => {
@@ -51,4 +51,10 @@ test('the review page renders the notice in the shared notices block, above the 
   // Warning, not a gate: the import and that one line are the page's ONLY currency touchpoints, so
   // no confirm/blocker path (owned elsewhere) can start refusing on a foreign document.
   assert.deepEqual(new Set(page.match(/\w*[Cc]urrency\w*/g)), new Set(['ForeignCurrencyNotice']));
+});
+
+test('unknown foreign currencies keep the warning without echoing a code', async () => {
+  const html = await render(summaryWith('ZZZ'));
+  assert.match(html, /สกุลเงิน ต่างประเทศ/);
+  assert.doesNotMatch(html, /ZZZ/);
 });

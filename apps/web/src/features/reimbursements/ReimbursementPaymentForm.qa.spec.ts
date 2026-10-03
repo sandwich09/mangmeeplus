@@ -1,3 +1,4 @@
+import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -151,7 +152,7 @@ describe('payment form: the slip', () => {
     assert.doesNotMatch(input[0], /capture/);
     assert.match(input[0], /aria-label="สลิปหรือหลักฐานการจ่าย"/);
     assert.match(input[0], /aria-required="true"/);
-    assert.ok(visible(html).some((text) => text.includes('PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF ขนาดไม่เกิน 10 MB')));
+    assert.ok(visible(html).some((text) => text.includes(`${ATTACHMENT_SOURCE_TYPES_LABEL} ขนาดไม่เกิน 10 เมกะไบต์`)));
   });
 
   it('shows the file the payer picked, and the one already uploaded when saving failed', () => {

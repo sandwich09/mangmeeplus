@@ -1,3 +1,4 @@
+import { LINE_FEATURE_DISABLED_HELP_TH, SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { isLineAiRolloutAllowed } from '@watchdog-bms/config';
 import { validateLineAiSourceRefV2, parseLineAiSemanticCoverage, parseLineAiSemanticSubrequests, type LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { PDFDocument } from 'pdf-lib';
@@ -472,7 +473,7 @@ const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบ�
  *  employee to connect an account they already connected. */
 export const PACKAGE_REQUIRED_MEMBER_REPLY = 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน แล้วน้องมั่งมีจะกลับมาช่วยได้เต็มที่นะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
-const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
+const EXPENSE_FEATURE_DISABLED_REPLY = `📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\n${LINE_FEATURE_DISABLED_HELP_TH}`;
 /**
  * The CLOSED-route copy the runbook left unwritten (`feature-launch-control.md` OPEN-9).
  *
@@ -502,9 +503,9 @@ const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้อง�
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
 const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
 const CLARIFY_REPLY = '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการเก็บลายเซ็นประจำตัว ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"';
-const MUTATION_REFUSAL_REPLY = '🔒 น้องมั่งมีไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี หรือยื่นภาษีได้ค่ะ\nกรุณาทำรายการในเว็บแอป MangmeePlus นะคะ';
+const MUTATION_REFUSAL_REPLY = '🔒 น้องมั่งมีไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี หรือยื่นภาษีได้ค่ะ\nกรุณาทำรายการในเว็บมั่งมีนะคะ';
 const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่งรูป/ไฟล์หลักฐานค่าใช้จ่ายเพื่อบันทึกร่าง หรือส่งรูปลายเซ็นเพื่อเก็บเป็นลายเซ็นประจำตัวค่ะ\nการยืนยัน/จ่ายเงิน/ลงบัญชีต้องทำในเว็บแอปนะคะ';
-const MEDIA_SECURITY_REJECTED_REPLY = '⚠️ ไม่สามารถรับไฟล์นี้ได้ค่ะ กรุณาส่งไฟล์ PDF, PNG, JPG หรือ JPEG ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัยนะคะ';
+const MEDIA_SECURITY_REJECTED_REPLY = `⚠️ ไม่สามารถรับไฟล์นี้ได้ค่ะ กรุณาส่งไฟล์ PDF หรือ${SIGNATURE_FILE_TYPES_LABEL} ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัยนะคะ`;
 /** RECEIPT-05 (owner decision 2026-07-12): the ONE clarify question asked when media arrives
  *  with a business-question caption, instead of silently discarding the image. */
 const MEDIA_CLARIFY_REPLY = [

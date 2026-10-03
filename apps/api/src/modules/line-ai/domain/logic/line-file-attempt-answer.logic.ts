@@ -1,3 +1,5 @@
+import { EXPENSE_MANUAL_EDIT_HELP_TH, expenseCaptureMegabytes, JPEG_LABEL, PNG_LABEL, SIGNATURE_FILE_TYPES_LABEL } from '@watchdog-bms/contracts';
+
 /**
  * Spec §17.5 as a pure table: attempt facts in, one Thai sentence out.
  *
@@ -39,15 +41,6 @@ export const FILE_ATTEMPT_AMBIGUOUS_LEAD = 'หมายถึงไฟล์ไ
 
 /** The word the customer used. §17.1: "คำว่ารูป/ไฟล์/เอกสารตรงกับสิ่งที่ส่ง". */
 export const mediaWordTh = (messageType: 'image' | 'file'): string => (messageType === 'file' ? 'ไฟล์' : 'รูป');
-
-/**
- * One decimal, always — the SAME shape `captureMegabytes` prints on the web (§4.1 parity).
- *
- * It used to drop the decimal above 10 MB and strip a trailing `.0`, so the one number a customer
- * compares across the two lanes came out as "10 MB" here and "10.0 MB" there, on the same file
- * against the same limit.
- */
-const megabytes = (bytes: number): string => (bytes / 1_048_576).toFixed(1);
 
 const named = (attempt: LineFileAttemptFacts): string =>
   attempt.fileNameSanitized ? `${mediaWordTh(attempt.messageType)} ${attempt.fileNameSanitized}` : `${mediaWordTh(attempt.messageType)}ที่ส่งมา`;
@@ -126,14 +119,14 @@ function rejectionSentence(attempt: LineFileAttemptFacts): string {
   const limit = attempt.capability.maxBytes;
   const measured = attempt.measuredByteSize ?? attempt.declaredFileSize;
   if ((attempt.reasonCode === 'oversize_declared' || attempt.reasonCode === 'oversize_measured') && limit && measured) {
-    return `ไฟล์ ${attempt.fileNameSanitized ?? 'ที่ส่งมา'} ขนาด ${megabytes(measured)} MB `
-      + `เกินขนาดที่ระบบรับได้ ${megabytes(limit)} MB จึงยังไม่ได้เก็บไฟล์นี้ — `
+    return `ไฟล์ ${attempt.fileNameSanitized ?? 'ที่ส่งมา'} ขนาด ${expenseCaptureMegabytes(measured)} `
+      + `เกินขนาดที่ระบบรับได้ ${expenseCaptureMegabytes(limit)} จึงยังไม่ได้เก็บไฟล์นี้ — `
       + 'เลือกไฟล์ที่เล็กกว่าแล้วส่งอีกครั้งได้เลยค่ะ';
   }
   if (attempt.reasonCode === 'METADATA_REJECTED' || attempt.reasonCode === 'EXTENSION_MIME_MISMATCH') {
     const kinds = attempt.capability.allowedMimeTypes?.length
       ? attempt.capability.allowedMimeTypes.map(mimeLabel).filter((label, index, all) => all.indexOf(label) === index).join(', ')
-      : 'PDF, PNG, JPG';
+      : `PDF หรือ${SIGNATURE_FILE_TYPES_LABEL}`;
     return `ไฟล์ชนิดนี้ยังไม่รองรับค่ะ จึงยังไม่ได้เก็บไฟล์นี้ — กรุณาเลือก ${kinds} แล้วส่งอีกครั้งนะคะ`;
   }
   if (attempt.reasonCode === 'CONTENT_REJECTED' || attempt.reasonCode === 'MALWARE_DETECTED'
@@ -156,9 +149,9 @@ function storedSentence(attempt: LineFileAttemptFacts): string {
     case 'STORED_READING':
       return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ${link}`;
     case 'STORED_READ_FAILED':
-      return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ แต่อ่านข้อมูลไม่สำเร็จ กดกรอกข้อมูลต่อได้ที่นี่${link || ''}`;
+      return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ แต่อ่านข้อมูลไม่สำเร็จ ${EXPENSE_MANUAL_EDIT_HELP_TH}${link || ''}`;
     case 'STORED_READ_PARTIAL':
-      return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่${link || ''}`;
+      return `เก็บ${namedInline(attempt)}ไว้แล้วค่ะ แต่ยังอ่านข้อมูลไม่ครบ ${EXPENSE_MANUAL_EDIT_HELP_TH}${link || ''}`;
     case 'STORED_READ_DONE':
       return `อ่าน${namedInline(attempt)}เสร็จแล้วค่ะ${attempt.currentStatus ? ` สถานะตอนนี้ ${attempt.currentStatus}` : ''}${link}`;
     case 'STORED':
@@ -174,9 +167,9 @@ const linkTail = (attempt: LineFileAttemptFacts): string =>
 
 function mimeLabel(mimeType: string): string {
   if (mimeType === 'application/pdf') return 'PDF';
-  if (mimeType === 'image/png') return 'PNG';
-  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') return 'JPG';
-  return mimeType.split('/').pop()?.toUpperCase() ?? mimeType;
+  if (mimeType === 'image/png') return PNG_LABEL;
+  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') return JPEG_LABEL;
+  return 'ไฟล์ชนิดที่ระบบรองรับ';
 }
 
 /**

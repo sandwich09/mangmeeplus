@@ -190,7 +190,7 @@ for (const width of [1280, 390]) {
     await expect(page.getByRole('button', { name: 'ยืนยันเปิดการเข้าด้วยอีเมล' })).toBeVisible();
     await page.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
     await expect(page.locator('input[type=password]:visible')).toHaveCount(0);
-    await expect(page.getByText(/รหัสยืนยันแบบใช้ครั้งเดียว \(OTP\) 6 หลัก/)).toBeVisible();
+    await expect(page.getByText(/รหัสยืนยันแบบใช้ครั้งเดียว 6 หลัก/)).toBeVisible();
     await page.locator('summary').filter({ hasText: 'เบอร์มือถือ' }).click();
     const phone = page.getByLabel('เบอร์มือถือ', { exact: false });
     await phone.fill('abc 099-999-9999 123');

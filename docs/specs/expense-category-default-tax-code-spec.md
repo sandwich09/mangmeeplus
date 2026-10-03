@@ -85,7 +85,7 @@ Schema: one nullable column, `ExpenseCategory.defaultInputTaxCode String?`. No n
 
 | Surface | Behavior |
 | --- | --- |
-| หมวดหมู่ค่าใช้จ่าย — list | A "Tax Code เริ่มต้น" column showing the code, or `—`. Hidden entirely under SIMPLE capture |
+| หมวดหมู่ค่าใช้จ่าย — list | A “รหัสภาษีเริ่มต้น” column showing the configured Thai display name, or `—`; an unavailable stored definition is labelled “รหัสภาษีเดิม”. The same dictionary key labels the create form. Hidden entirely under SIMPLE capture |
 | หมวดหมู่ค่าใช้จ่าย — create/edit | A picker of the company's ACTIVE input Tax Codes, plus "ไม่กำหนด". Hidden under SIMPLE |
 | Expense review — line Tax Code picker | Pre-selects the suggestion when the line has none. A short note names where it came from, so the reviewer knows it is a suggestion and not a stored value |
 | Manual capture | No change — there is no category picker there |

@@ -50,7 +50,7 @@ base.describe('LOGIN — auth & session', () => {
       await expect(page.getByRole('status')).toContainText('ยังไม่เปิดให้เข้าสู่ระบบด้วย LINE');
       await expect(lineButton).toBeDisabled();
       await expect(page.getByRole('button', { name: 'สแกน QR ด้วย LINE เพื่อเข้าสู่เว็บไซต์' })).toHaveCount(0);
-      await expect(page.getByRole('link', { name: 'เข้าสู่ระบบด้วยรหัส OTP', exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'เข้าสู่ระบบด้วยรหัสยืนยัน', exact: true })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await page.screenshot({ path: testInfo.outputPath(`login-line-unavailable-${width}.png`), fullPage: true });
 

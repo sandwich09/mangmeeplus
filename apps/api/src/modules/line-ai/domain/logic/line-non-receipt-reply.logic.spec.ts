@@ -86,7 +86,7 @@ describe('§18.4 NR01–NR09 reply table', () => {
     assert.deepEqual([...NON_RECEIPT_PERSISTING_CASES], ['NR01', 'NR02', 'NR03', 'NR08']);
     for (const nr of NON_RECEIPT_PERSISTING_CASES) {
       const withLink = nonReceiptReply(nr, { classification: classification(), captureLink: LINK });
-      assert.match(withLink, /กรอกข้อมูลต่อได้ที่นี่: https:\/\//, `${nr} offers the CTA when the bytes are kept`);
+      assert.match(withLink, /ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้: https:\/\//, `${nr} offers the CTA when the bytes are kept`);
       const without = nonReceiptReply(nr, { classification: classification() });
       assert.ok(!/กรอกข้อมูลต่อ/.test(without), `${nr} says nothing about a link it does not have`);
     }
@@ -95,8 +95,8 @@ describe('§18.4 NR01–NR09 reply table', () => {
   });
 
   it('NR09 / §17.6: the three read outcomes each name their own state and never each other', () => {
-    assert.equal(CAPTURE_READ_FAILED_REPLY(LINK), `อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลต่อได้ที่นี่\n${LINK}`);
-    assert.equal(CAPTURE_READ_PARTIAL_REPLY(LINK), `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว กดกรอกข้อมูลส่วนที่ขาดต่อได้ที่นี่\n${LINK}`);
+    assert.equal(CAPTURE_READ_FAILED_REPLY(LINK), `อ่านข้อมูลไม่สำเร็จค่ะ เก็บไฟล์ไว้แล้ว ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้\n${LINK}`);
+    assert.equal(CAPTURE_READ_PARTIAL_REPLY(LINK), `อ่านข้อมูลได้บางส่วนค่ะ เก็บไฟล์ไว้แล้ว ผู้มีสิทธิ์แก้ไขสามารถกรอกข้อมูลต่อบนเว็บได้\n${LINK}`);
     // Wave-2 credit wording, unchanged: one sentence for every ceiling that stops a document read.
     assert.match(CAPTURE_READ_PAUSED_REPLY(LINK, 'ai_credit'), /เครดิตสำหรับการอ่านเอกสารไม่พอ/);
     assert.ok(!usesRetiredAiMoneyWording(CAPTURE_READ_PAUSED_REPLY(LINK, 'ai_credit')), 'the retired budget words never appear');

@@ -1698,3 +1698,9 @@ an operator decision, not authorization to migrate a shared database in local de
 - The upload page has no receipt-date input (owner follow-up 2026-09-17). Read the date from AI; if unread, leave the review field empty for the user. An omitted date is unknown, never a confirmed upload/today date.
 - Use the existing `dateStatus`/`dateResolution` contract: a date explicitly entered by the user takes precedence over re-extraction; otherwise use the date read from the receipt.
 - If unread, list/review show no document date and confirmation stays blocked by the existing date-review guard. Preserve legacy records; no data migration. The required database date remains an internal placeholder only while `dateStatus=unverified`.
+
+## Thai wording and saved-file guidance — 2026-10-03
+
+Sold expense/reimbursement upload pickers, validation and guides share Thai file-format names and use “เมกะไบต์” for size. Allowed source formats, size limits and file bytes do not change. Stored attachment MIME values and recognized foreign-currency codes are displayed as Thai names, with a Thai fallback for unknown currencies. Capture failure notices may say the file is saved only when that is true; an offer to fill details manually is qualified by edit permission rather than promised to an upload-only employee. Expense status errors do not echo enums or tell a voided/confirmed document to return to review without an allowed transition.
+
+The camera and dropzone hints describe this web upload flow only; they do not promise LINE intake when the shop may have disabled that feature.

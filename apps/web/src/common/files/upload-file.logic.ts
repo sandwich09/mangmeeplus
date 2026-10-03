@@ -1,4 +1,5 @@
 import { translateApiError } from '../api/api-error-message';
+import { ATTACHMENT_SOURCE_TYPES_LABEL, IMAGE_SOURCE_TYPES_LABEL, SIGNATURE_FILE_TYPES_LABEL, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watchdog-bms/contracts';
 
 export const ATTACHMENT_UPLOAD_ACCEPT =
   '.pdf,.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,application/pdf,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/heic-sequence,image/heif-sequence,image/gif';
@@ -6,13 +7,13 @@ export const IMAGE_UPLOAD_ACCEPT =
   '.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/heic-sequence,image/heif-sequence,image/gif';
 export const GENERIC_UPLOAD_ERROR_MESSAGE = 'ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง';
 export const UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE =
-  'ไฟล์นี้มีชนิดไฟล์ไม่ตรงกับข้อมูลภายใน ระบบจึงแนบไม่ได้ กรุณาเลือกไฟล์ใหม่ หรือบันทึกเป็น PDF/JPG/PNG แล้วลองอีกครั้ง';
+  UPLOAD_FILE_TYPE_MISMATCH_MESSAGE;
 export const UPLOAD_IMAGE_READ_ERROR_MESSAGE =
-  'ระบบอ่านรูปนี้ไม่ได้ กรุณาเลือกรูปใหม่ หรือบันทึกเป็น JPG/PNG แล้วลองอีกครั้ง';
+  `ระบบอ่านรูปนี้ไม่ได้ กรุณาเลือกรูปใหม่ หรือบันทึกเป็น${SIGNATURE_FILE_TYPES_LABEL} แล้วลองอีกครั้ง`;
 export const UPLOAD_HEIC_CONVERSION_ERROR_MESSAGE =
-  'แปลงรูป HEIC/HEIF ไม่สำเร็จ กรุณาบันทึกรูปเป็น JPG/PNG แล้วลองอีกครั้ง';
+  UPLOAD_HEIC_CONVERSION_MESSAGE;
 export const UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE =
-  'รองรับเฉพาะไฟล์ PDF, JPG/JPEG, PNG, HEIC/HEIF และ GIF';
+  `รองรับเฉพาะไฟล์ ${ATTACHMENT_SOURCE_TYPES_LABEL}`;
 
 const MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
   pdf: 'application/pdf',
@@ -41,7 +42,7 @@ export function classifyUploadSourceFile(file: UploadFileDescriptor, policy: Upl
 
 export function uploadSourceFileValidationError(file: UploadFileDescriptor, policy: UploadFilePolicy = 'attachment'): string | null {
   return classifyUploadSourceFile(file, policy) === 'unsupported'
-    ? policy === 'image' ? 'รองรับเฉพาะไฟล์ JPG/JPEG, PNG, HEIC/HEIF และ GIF' : UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE
+    ? policy === 'image' ? `รองรับเฉพาะไฟล์ รูปภาพ (${IMAGE_SOURCE_TYPES_LABEL})` : UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE
     : null;
 }
 
@@ -67,8 +68,8 @@ export function uploadFileValidationError(
   const expectedMimeType = attachmentMimeTypeForFileName(file.name);
   if (!expectedMimeType || (policy === 'image' && expectedMimeType === 'application/pdf')) {
     return policy === 'image'
-      ? 'รองรับเฉพาะไฟล์ PNG, JPG และ JPEG'
-      : 'รองรับเฉพาะไฟล์ PDF, PNG, JPG และ JPEG';
+      ? `รองรับเฉพาะไฟล์ ${SIGNATURE_FILE_TYPES_LABEL}`
+      : `รองรับเฉพาะไฟล์ PDF หรือ${SIGNATURE_FILE_TYPES_LABEL}`;
   }
   if (file.type.toLowerCase() !== expectedMimeType) {
     return UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE;

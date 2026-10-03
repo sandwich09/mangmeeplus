@@ -13,7 +13,7 @@ const PAGE_LABELS: Record<string, string> = {
   BILLING_EMAIL_CHANGED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการชำระเงินใหม่',
   BILLING_EMAIL_VERIFICATION_REQUIRED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการชำระเงินใหม่',
   // The shared text says "กดอัปเดตข้อมูล"; the button beside this page's error box is "ลองใหม่".
-  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการชำระเงินเดิมกับ Stripe กรุณารอสักครู่แล้วกดลองใหม่',
+  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดลองใหม่',
 };
 
 export function errorStatus(error: unknown): number | undefined {

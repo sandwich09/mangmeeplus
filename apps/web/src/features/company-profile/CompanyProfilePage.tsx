@@ -395,7 +395,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               <label htmlFor="business-type" className="mb-2 block text-sm font-medium text-gray-900">ประเภทธุรกิจ</label>
               <ThemedSelect
                 id="business-type" aria-label="ประเภทธุรกิจ" searchable
-                searchPlaceholder="ค้นหาชื่อธุรกิจหรือรหัส TSIC"
+                searchPlaceholder="ค้นหาชื่อธุรกิจหรือรหัสประเภทธุรกิจ"
                 value={businessTypeCode} disabled={!canEditShop || shopSaving}
                 onChange={(event) => {
                   setBusinessTypeCode(event.target.value);
@@ -406,7 +406,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 <option value="OTHER">อื่น ๆ</option>
                 {DBD_TSIC_ACTIVITIES.map((row) => <option key={row.code} value={row.code}>{`${row.code} — ${row.label}`}</option>)}
               </ThemedSelect>
-              <p className="mt-1 text-sm text-gray-500">เลือกกิจกรรมหลักของร้าน อ้างอิง <a href="https://tsic.dbd.go.th/index" target="_blank" rel="noreferrer" className="underline">รหัสธุรกิจ DBD (TSIC)</a></p>
+              <p className="mt-1 text-sm text-gray-500">เลือกกิจกรรมหลักของร้าน อ้างอิง <a href="https://tsic.dbd.go.th/index" target="_blank" rel="noreferrer" className="underline">รหัสประเภทธุรกิจของกรมพัฒนาธุรกิจการค้า</a></p>
             </div>
             {businessTypeCode === 'OTHER' && (
               <TextField label="ระบุประเภทธุรกิจอื่น ๆ" value={businessTypeOther}
@@ -564,7 +564,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                     autoComplete="username"
                     disabled={passwordSaving}
                     required
-                    hint="ใช้คู่กับรหัสผ่านตอนเข้าจากคอมพิวเตอร์ ตัวอักษร a-z ตัวเลข จุด ขีด อย่างน้อย 4 ตัว"
+                    hint="ใช้คู่กับรหัสผ่านตอนเข้าจากคอมพิวเตอร์ ตัวอักษรอังกฤษพิมพ์เล็ก ตัวเลข จุด ขีดกลาง หรือขีดล่าง ตั้งแต่ 4 ถึง 64 ตัว"
                     onChange={(event) => setNewUsername(event.target.value)}
                   />
                 ) : account?.username ? (

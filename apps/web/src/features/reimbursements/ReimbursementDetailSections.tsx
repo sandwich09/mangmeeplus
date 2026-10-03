@@ -1,5 +1,7 @@
 'use client';
 
+import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+
 // The claim detail as sections, shared by the hub drawer and the journey page while both exist
 // (the drawer goes in Phase 6). Markup moved from the drawer; test ids are kept on it.
 
@@ -441,7 +443,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
           aria-required={slipRequired} disabled={busy} loading={busy && !!slip && 'file' in slip}
           onChange={file => setSlip(file ? { file } : null)} />
         <p className="mt-1 text-xs leading-5 text-gray-400">
-          {slipRequired ? 'จ่ายด้วยการโอนต้องแนบสลิป' : 'แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้'} · PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF ขนาดไม่เกิน 10 MB
+          {slipRequired ? 'จ่ายด้วยการโอนต้องแนบสลิป' : 'แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้'} · {ATTACHMENT_SOURCE_TYPES_LABEL} ขนาดไม่เกิน 10 เมกะไบต์
         </p>
         {attached.length > 0 && (
           <div className="mt-3 [overflow-wrap:anywhere]" data-testid="reimbursement-payment-slip-choices">
@@ -749,7 +751,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
       {canEditDraft && !l.sourceExpenseSnapshot && (
         <div className="mt-1 space-y-1">
           <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
-          <p className="leading-5 text-gray-400">PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF</p>
+          <p className="leading-5 text-gray-400">{ATTACHMENT_SOURCE_TYPES_LABEL}</p>
           {l.attachmentId && <button className="min-h-11 text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
         </div>
       )}
@@ -935,7 +937,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
               )}
             {canAttachSignedCopy && (
               <div className="mt-3 block text-xs font-semibold text-gray-600">
-                แนบใบเบิกที่เซ็นแล้ว (PDF/JPG/PNG)
+                แนบใบเบิกที่เซ็นแล้ว
                 <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) setPendingCopy(file); }} />
                 <p className="mt-1.5 font-normal leading-5 text-gray-500">{SIGNED_COPY_NOT_FOR_SLIPS}</p>
               </div>

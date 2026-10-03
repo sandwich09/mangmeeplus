@@ -17,7 +17,7 @@ test('a success return waits for Stripe: no cancel, resume, new choice or banner
   assert.match(page, /const oneTapCancel = canEndCheckout && /);
   assert.match(page, /\{canEndCheckout && !oneTapCancel && \(confirmCheckoutCancel \?/);
   // The no-package box ("เลือกแพ็กเกจเพื่อเริ่มใช้งาน") gives way to the waiting line.
-  assert.match(page, /\{noPackage && awaitingStripe \? <div[^>]*>\s*<p[^>]*>กำลังรอผลการชำระเงินจาก Stripe<\/p>/);
+  assert.match(page, /\{noPackage && awaitingStripe \? <div[^>]*>\s*<p[^>]*>กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน<\/p>/);
   // The locked banner's own "เลือกแพ็กเกจ" stays off the return page.
   assert.match(banner, /const onReturnPage = pathname === `\/companies\/\$\{encodeURIComponent\(companyId\)\}\/billing\/return`;/);
   assert.match(banner, /\{canManagePlan && !onReturnPage && \(/);

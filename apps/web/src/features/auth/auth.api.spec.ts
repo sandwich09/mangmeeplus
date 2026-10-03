@@ -78,7 +78,7 @@ describe('changePassword', () => {
     };
     await assert.rejects(changePassword('synthetic-current', 'synthetic-new'), (error: any) => {
       assert.equal(error.statusCode, 401);
-      assert.equal(localizedErrorMessage(error, 'th'), 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+      assert.equal(localizedErrorMessage(error, 'th'), 'การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่');
       return true;
     });
     assert.deepEqual(calls, ['/api/auth/change-password', '/api/auth/refresh']);

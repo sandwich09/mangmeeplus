@@ -1,5 +1,7 @@
 'use client';
 
+import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -511,7 +513,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                         </div>
                       )}
                       {l.linkedExpenseId && !l.file && <p className="mt-2 text-xs text-gray-500">เชื่อมกับค่าใช้จ่ายที่บันทึกไว้</p>}
-                      <p className="mt-1 text-xs leading-5 text-gray-400">รองรับ PDF, JPG/JPEG, PNG, HEIC/HEIF และ GIF ระบบจะแปลงรูปให้อัตโนมัติก่อนแนบ</p>
+                      <p className="mt-1 text-xs leading-5 text-gray-400">รองรับ {ATTACHMENT_SOURCE_TYPES_LABEL} ระบบจะแปลงรูปให้อัตโนมัติก่อนแนบ</p>
                     </div>
                   </div>
                 </div>

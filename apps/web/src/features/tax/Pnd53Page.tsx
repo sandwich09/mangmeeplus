@@ -1,5 +1,7 @@
 'use client';
 
+import { taxPeriodStatusLabel, taxReviewIssueLabel } from './tax.logic';
+import { formatThaiMonth } from '@/common/i18n/thai-date';
 import { useCallback, useEffect, useState } from 'react';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { ForbiddenState } from '@/common/components/state';
@@ -80,7 +82,7 @@ export function Pnd53Page({ companyId, permissions }: { companyId: string; permi
         งวดภาษี
         <select className="mangmee-input mt-1" value={periodId} disabled={busy || loading} onChange={(event) => { setPeriodId(event.target.value); setTotals(null); }}>
           {periods.length === 0 && <option value="">ยังไม่มีงวด ภ.ง.ด.53</option>}
-          {periods.map((period) => <option key={period.id} value={period.id}>{period.periodKey} · {period.status}</option>)}
+          {periods.map((period) => <option key={period.id} value={period.id}>{formatThaiMonth(period.periodKey)} · {taxPeriodStatusLabel(period.status)}</option>)}
         </select>
       </label>
       {canPrepare && periodId && <div className="flex flex-wrap gap-2">
@@ -106,10 +108,10 @@ export function Pnd53Page({ companyId, permissions }: { companyId: string; permi
       {issuesLoading && <p role="status" className="text-sm text-gray-500">กำลังตรวจรายการที่ต้องแก้ไข...</p>}
       {issues.length > 0 && <section className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4" aria-label="รายการที่ต้องแก้ไขก่อนออกแบบ">
         <p className="font-semibold">แก้ไขรายการต้นทางและซิงค์อีกครั้งก่อนออกแบบ ({issues.length} รายการ)</p>
-        {issues.map((issue) => <div key={issue.id} className="space-y-2 border-t border-amber-200 pt-2 text-sm">
-          <p>{issue.description}</p>
+        {issues.map((issue, index) => <div key={issue.id} className="space-y-2 border-t border-amber-200 pt-2 text-sm">
+          <p>{taxReviewIssueLabel(issue.issueCode)}</p>
           {canPrepare && <div className="flex flex-wrap gap-2">
-            <input className="mangmee-input flex-1" aria-label={`เหตุผลปิดข้อทักท้วง ${issue.issueCode}`} placeholder="เหตุผลที่ตรวจและแก้ไขแล้ว"
+            <input className="mangmee-input flex-1" aria-label={`เหตุผลปิดข้อทักท้วง ${index + 1}`} placeholder="เหตุผลที่ตรวจและแก้ไขแล้ว"
               value={issueNotes[issue.id] ?? ''} onChange={(event) => setIssueNotes((current) => ({ ...current, [issue.id]: event.target.value }))} />
             <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy || !issueNotes[issue.id]?.trim()} aria-busy={busy}
               onClick={() => void run(async () => { await resolvePnd53Issue(companyId, issue.id, issueNotes[issue.id]!); setIssues(await listPnd53Issues(companyId, periodId)); setMessage('บันทึกการตรวจรายการแล้ว'); })}>
