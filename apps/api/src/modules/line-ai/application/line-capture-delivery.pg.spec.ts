@@ -12,10 +12,11 @@ import { LineConversationContextService } from './line-conversation-context.serv
 import { LineLedgerDeliveryService } from './line-ledger-delivery.service';
 import { hashMessagePreview } from '../domain/logic/line-ai-classifier.logic';
 
-const url = process.env.BILLING_TEST_DATABASE_URL;
+// ci.yml "Migrations and Boot" sets its own variable; `run-line-ai-whole-chain-acceptance.mjs --reliability-postgres` sets BILLING_TEST_DATABASE_URL.
+const url = process.env.LINE_CAPTURE_DELIVERY_TEST_DATABASE_URL ?? process.env.BILLING_TEST_DATABASE_URL;
 test('DI capture outbox freezes real PostgreSQL source, replays after UNKNOWN/flag-off and refuses source revocation', { skip: !url }, async t => {
   const parsed = new URL(url!); assert.ok(['localhost', '127.0.0.1'].includes(parsed.hostname));
-  assert.ok(parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927' || parsed.port === '5432' && parsed.pathname === '/watchdog_postmark_ci');
+  assert.ok(parsed.pathname.endsWith('_ci') || parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${parsed.pathname}: only a disposable local *_ci database`);
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) }), prisma = { client } as PrismaService;
   const tag = randomUUID(), userId = `capture-${tag}`, lineUserId = `U${tag}`, channelId = `oa-${tag}`;
   const company = await client.company.create({ data: { name: `capture-${tag}` } });
