@@ -11,7 +11,7 @@ import { CoverLoader, LoadingState, ErrorState, ForbiddenState } from '@/common/
 import { Pagination } from '@/common/components/data-table/Pagination';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { listExecutiveUsers } from './executive-users.api';
-import { executiveWords as words, EXECUTIVE_USERS_TITLE, executiveFilters, executiveListUrl, executiveRights, executiveStatus, executiveStatusOptions } from './executive-users.logic';
+import { executiveWords as words, EXECUTIVE_USERS_TITLE, executiveFilters, executiveListUrl, executiveRights, executiveStatus, executiveStatusTone, executiveStatusOptions } from './executive-users.logic';
 
 const userHref = (user: ExecutiveUserView) => `/system/executive-users/${encodeURIComponent(user.userId)}`;
 const lastEntry = (user: ExecutiveUserView) => user.lastWebEntryAt ? formatThaiDateTime(user.lastWebEntryAt) : words.missing;
@@ -69,7 +69,7 @@ export default function ExecutiveUsersPage() {
                   <Link href={userHref(user)} className="flex min-h-11 items-center font-semibold text-brand-800">{user.displayName}</Link>
                   <p className="text-sm text-gray-600">{words.username}: {user.username}</p>
                   <p className="mt-2 text-sm text-gray-600">{words.rights}: {executiveRights(user)}</p>
-                  <p className="my-2"><MangmeeBadge>{executiveStatus(user.status)}</MangmeeBadge></p>
+                  <p className="my-2"><MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></p>
                   <p className="text-sm text-gray-600">{words.lastEntry}: {lastEntry(user)}</p>
                 </MangmeeCard>)}</div>
                 <table className="hidden w-full table-fixed text-left text-sm md:table">
@@ -77,7 +77,7 @@ export default function ExecutiveUsersPage() {
                   <thead><tr>{[words.account, words.rights, words.status, words.lastEntry].map(label => <th key={label} scope="col" className="p-3">{label}</th>)}</tr></thead>
                   <tbody>{data.items.map(user => <tr key={user.userId} className="border-t border-gray-200">
                     <td className="break-words p-3"><Link href={userHref(user)} className="flex min-h-11 items-center font-semibold text-brand-800">{user.displayName}</Link><p>{user.username}</p></td>
-                    <td className="break-words p-3">{executiveRights(user)}</td><td className="p-3">{executiveStatus(user.status)}</td><td className="p-3">{lastEntry(user)}</td>
+                    <td className="break-words p-3">{executiveRights(user)}</td><td className="p-3"><MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></td><td className="p-3">{lastEntry(user)}</td>
                   </tr>)}</tbody>
                 </table>
               </>}

@@ -1,10 +1,10 @@
 import {
   EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, EXECUTIVE_SORT_OPTIONS, type ExecutiveContext, type ExecutiveCount, type ExecutiveMoney,
-  type ExecutiveRatio, type ExecutiveSourceCoverage, type ExecutiveOwnerContact, type ExecutiveDrilldownFilters, type ExecutiveRankingMetric,
+  type ExecutiveRatio, type ExecutiveSourceCoverage, type ExecutiveOwnerContact, type ExecutiveDrilldownFilters, type ExecutiveRankingMetric, type ExecutiveEnvelope,
 } from '@watchdog-bms/contracts';
 import { deserializeListQuery } from '../../common/functions/list-query';
 import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '../../common/i18n/thai-date';
-import { apiErrorCode, apiErrorMessage } from '../../common/api/api-error-message';
+import { apiErrorCode, executiveReasonMessage } from '../../common/api/api-error-message';
 import { W, RANK_LABELS, REPORT_VIEWS, thaiLabel } from './executive-reports.words';
 
 export type ReportSection = 'overview' | 'companies' | 'usage' | 'revenue' | 'customers' | 'compare' | 'detail';
@@ -75,12 +75,20 @@ export function drilldownHref(params: URLSearchParams, from: string, filters: Ex
 }
 export function drillLabels(filters: ExecutiveDrilldownFilters, context: ExecutiveContext): string[] {
   return Object.entries(filters).flatMap(([key, value]) => {
-    if (['sortBy', 'sortDir'].includes(key)) return [];
+    if (value === 'ALL' || ['sortBy', 'sortDir'].includes(key)) return [];
     const label = EXECUTIVE_REPORT_LABELS[key as keyof typeof EXECUTIVE_REPORT_LABELS]?.[value]
       ?? EXECUTIVE_FLAG_LABELS[key as keyof typeof EXECUTIVE_FLAG_LABELS]?.[value]
       ?? context.filters.referringSales.find(option => option.value === value)?.label ?? W.unknown;
     return [thaiLabel(label, value)];
   });
+}
+export function reportFilterChips(applied: ExecutiveEnvelope['appliedFilters'] | undefined, picked: ExecutiveDrilldownFilters | null, context: ExecutiveContext): { picked: string[]; active: string[] } {
+  return {
+    picked: picked ? drillLabels(picked, context) : [],
+    active: [...Object.entries(applied?.global ?? {}), ...Object.entries(applied?.directory ?? {})]
+      .filter(([key, option]) => option.value !== 'ALL' && picked?.[key as keyof ExecutiveDrilldownFilters] !== option.value)
+      .map(([, option]) => thaiLabel(option.label, option.value)),
+  };
 }
 export function changedParams(params: URLSearchParams, changes: Record<string, string>): URLSearchParams {
   const next = new URLSearchParams(params);
@@ -111,7 +119,7 @@ export function swappedParams(params: URLSearchParams): URLSearchParams {
 }
 export const money = (satang: number) => `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
 export const countText = (figure: ExecutiveCount) => figure.value !== null ? figure.value.toLocaleString('th-TH') : figure.knownValue !== undefined ? `${W.atLeast} ${figure.knownValue.toLocaleString('th-TH')}` : '—';
-export const moneyText = (figure: ExecutiveMoney) => figure.value !== null ? money(figure.value) : figure.knownValue !== undefined ? `${money(figure.knownValue)} (${W.partialMoney})` : '—';
+export const moneyText = (figure: ExecutiveMoney, measured = false) => figure.value !== null ? money(figure.value) : figure.knownValue !== undefined ? `${money(figure.knownValue)} (${measured ? W.partialMeasuredMoney : W.partialMoney})` : '—';
 export const ratioText = (figure: ExecutiveRatio | null | undefined, unit = '%') => figure?.value === null || figure?.value === undefined ? '—' : `${figure.value.toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${unit}`;
 export const reportMonth = formatThaiMonth, reportDate = formatThaiDate, reportDateTime = formatThaiDateTime;
 export function sourceCount(value: number, source: ExecutiveSourceCoverage): ExecutiveCount {
@@ -119,7 +127,7 @@ export function sourceCount(value: number, source: ExecutiveSourceCoverage): Exe
 }
 export const sourceMoney = (value: number, source: ExecutiveSourceCoverage): ExecutiveMoney => ({ ...sourceCount(value, source), currency: 'THB' });
 export const negativeMoneyNote = (value: number | null | undefined) => value !== null && value !== undefined && value < 0 ? W.negative : null;
-export const reasonText = (code: string) => apiErrorMessage({ code });
+export const reasonText = executiveReasonMessage;
 export function queryFieldErrors(error: unknown): Record<string, string> {
   const e = error as { fieldErrors?: unknown; details?: { fieldErrors?: unknown } };
   const fields = e?.fieldErrors ?? e?.details?.fieldErrors;
@@ -136,9 +144,11 @@ export function reportFailure(error: unknown, monthRequested = true): { kind: 'd
 export function keepLoadedReport(error: unknown, historyOnly: boolean): boolean {
   return reportFailure(error, !historyOnly).kind === 'error' && (historyOnly || (error as { status?: number })?.status === undefined);
 }
-export async function readCurrentBuild<T extends { build: { id: string }; buildChanged: boolean }>(load: (buildId?: string) => Promise<T>, buildId?: string): Promise<{ data: T; changed: boolean }> {
+export async function readCurrentBuild<T extends { build: { id: string }; buildChanged: boolean }>(load: (buildId?: string) => Promise<T>, buildId?: string, refreshContext?: () => Promise<void>): Promise<{ data: T; changed: boolean }> {
   const first = await load(buildId);
-  return { data: first.buildChanged ? await load(first.build.id) : first, changed: first.buildChanged };
+  const data = first.buildChanged ? await load(first.build.id) : first;
+  if (first.buildChanged) await refreshContext?.();
+  return { data, changed: first.buildChanged };
 }
 export function contactFields(contact: ExecutiveOwnerContact): Array<['email' | 'phoneNumber', string]> {
   if (contact.status === 'NOT_PERMITTED') return [];

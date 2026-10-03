@@ -23,7 +23,7 @@ export default async function SystemLayout({ children }: { children: ReactNode }
     throw new Error('Cannot reach the authentication service. Please try again.');
   }
   if (result.status === 'forbidden' || (!isSystemAdmin(result.session) && !canOpenSystemBilling(result.session, returnTo) && !canOpenSystemExecutive(result.session, returnTo))) {
-    return <SystemAccessDenied />;
+    return <SystemAccessDenied executive={result.status === 'signed_in' && isExecutiveOnlySession(result.session)} />;
   }
   if (result.session.mustChangePassword) {
     redirect(`/change-password?next=${encodeURIComponent(returnTo)}`);

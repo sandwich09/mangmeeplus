@@ -58,6 +58,14 @@ describe('executive report entry', () => {
     assert.equal(only(session({ roles: ['SYSTEM_ADMIN'], permissions: ['system.executive.read'] })), false);
     assert.equal(only(session({ permissions: ['system.executive.read', 'expenses.read'] })), false);
   });
+  it('still recognises an executive-only session after its report read right is removed', () => {
+    const revoked = session({ roles: ['MANGMEE_EXECUTIVE'], permissions: ['account.read'] });
+    assert.equal(gates.canOpenSystemExecutive(revoked, '/system/executive'), false);
+    assert.equal(gates.isExecutiveOnlySession(revoked), true);
+    assert.equal(gates.isExecutiveOnlySession(session({ roles: ['MANGMEE_EXECUTIVE'], permissions: ['expenses.read'] })), false);
+    assert.equal(gates.isExecutiveOnlySession(session({ roles: ['SYSTEM_ADMIN', 'MANGMEE_EXECUTIVE'], permissions: ['account.read'] })), false);
+    assert.equal(gates.isExecutiveOnlySession(session({ permissions: ['account.read'] })), false);
+  });
 });
 
 describe('billing delegate shell boundary', () => {

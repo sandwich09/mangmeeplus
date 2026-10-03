@@ -94,6 +94,45 @@ test('build changes reload exactly once even if the next build changes again', a
   const result = await readCurrentBuild(async (buildId) => { calls.push(buildId); return { build: { id: `build-${calls.length}` }, buildChanged: true }; }, 'old');
   assert.deepEqual(calls, ['old', 'build-1']); assert.equal(result.data.build.id, 'build-2'); assert.equal(result.changed, true);
 });
+test('a changed build refreshes context once after the reload, including newly built months', async () => {
+  const { readCurrentBuild } = await logic();
+  let builtMonths = ['2026-09'];
+  const calls: string[] = [];
+  const load = async (id?: string) => { calls.push(id ?? ''); return { build: { id: 'new' }, buildChanged: id === 'old' }; };
+  const refresh = async () => { calls.push('context'); builtMonths = ['2026-09', '2026-10']; };
+  const result = await readCurrentBuild(load, 'old', refresh);
+  assert.deepEqual(calls, ['old', 'new', 'context']);
+  assert.deepEqual(builtMonths, ['2026-09', '2026-10']); assert.equal(result.changed, true);
+  calls.length = 0;
+  await readCurrentBuild(load, 'new', refresh);
+  assert.deepEqual(calls, ['new']);
+});
+test('every contracted reason/state pair has Thai words and historical reasons distinguish missing from counted data', async () => {
+  const { reasonText } = await logic();
+  const overrides = {
+    HISTORY_BEFORE_COLLECTION: { partial: 'ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้ ช่วงก่อนเริ่มเก็บยังประเมินไม่ได้', unavailable: apiErrorMessage({ code: 'HISTORY_BEFORE_COLLECTION' }) },
+    HISTORY_BEFORE_FIRST_BUILD: { partial: apiErrorMessage({ code: 'HISTORY_BEFORE_FIRST_BUILD' }), unavailable: 'ยังไม่มีตัวเลขของช่วงก่อนเริ่มทำรายงาน' },
+    SOURCE_ROWS_PURGED: { partial: apiErrorMessage({ code: 'SOURCE_ROWS_PURGED' }), unavailable: 'รายการต้นทางถูกลบแล้ว จึงไม่มีตัวเลขของส่วนนี้' },
+  };
+  const differences: string[] = [];
+  for (const code of new Set([...EXECUTIVE_REASON_CODES, ...EXECUTIVE_PAID_EVER_REASONS])) {
+    for (const state of ['partial', 'unavailable'] as const) {
+      const expected = overrides[code as keyof typeof overrides]?.[state] ?? apiErrorMessage({ code });
+      if (reasonText(code, state) !== expected) differences.push(`${code} × ${state}`);
+      assert.doesNotMatch(reasonText(code, state), /[A-Za-z_]/);
+    }
+  }
+  assert.deepEqual(differences, []);
+});
+test('drill chips omit empty/all/sort-only conditions and applied filters already named by the drill', async () => {
+  const { reportFilterChips } = await logic();
+  const applied = { global: { discovery: { value: 'FACEBOOK', label: 'Facebook' }, industry: { value: 'UNKNOWN', label: 'ไม่ระบุ' } }, directory: { usageGroup: { value: 'ACTIVE', label: EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE! } } };
+  assert.deepEqual(reportFilterChips(applied, { discovery: 'FACEBOOK' }, context), { picked: ['เฟซบุ๊ก'], active: ['ไม่ระบุ', EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE] });
+  for (const picked of [null, {}, { discovery: 'ALL' }, { sortBy: 'netReceipts', sortDir: 'desc' }] as const) {
+    assert.deepEqual(reportFilterChips(applied, picked, context).picked, []);
+  }
+  assert.deepEqual(reportFilterChips(applied, { industry: 'UNKNOWN', usageGroup: 'ACTIVE' }, context), { picked: ['ไม่ระบุ', EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE], active: ['เฟซบุ๊ก'] });
+});
 test('403 clears data, no-build 503 is no data yet, and other failures stay errors', async () => {
   const { reportFailure } = await logic();
   assert.equal(reportFailure({ status: 403 }).kind, 'denied');

@@ -16,14 +16,14 @@ import { WorkspaceLocaleContext } from '@/common/i18n/locale-context';
 import { getExecutiveContext, getExecutiveReport, getExecutiveHistory, type ReportData } from './executive-reports.api';
 import {
   FILTER_URL, GLOBAL_FILTERS, DIRECTORY_FILTERS, reportQuery, reportView, filterValue, normalizedMonth, changedParams, clearedParams, comparisonProblem,
-  swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, drillLabels, menuHref, reportDateTime, reportDate, pageNumber, reasonText,
+  swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, reportFilterChips, menuHref, reportDateTime, reportDate, pageNumber, reasonText,
   EXECUTIVE_ACCESS_DENIED_EVENT, sortLabel, retryDelaySeconds, reportHistoryState, ownHistoryState, backSection, type ReportSection,
 } from './executive-reports.logic';
 import { W, REPORT_VIEWS, DETAIL_TABS, RANK_LABELS, thaiLabel } from './executive-reports.words';
 import { OverviewContent, CompaniesContent, AnalysisContent, CompanyContent, ReportLink, Reasons } from './ExecutiveReportContent';
 
 type Failure = ReturnType<typeof reportFailure>;
-type ReportContext = { context: ExecutiveContext | null; failure: Failure | null; retry?: () => void; retryWait: number; build: MutableRefObject<string | undefined>; admin: boolean; deny: () => void };
+type ReportContext = { context: ExecutiveContext | null; failure: Failure | null; retry?: () => void; retryWait: number; build: MutableRefObject<string | undefined>; admin: boolean; deny: () => void; refresh: (signal: AbortSignal) => Promise<void> };
 const Context = createContext<ReportContext | null>(null);
 let navigationOrigin: string | null = null;
 function rememberNavigation() { navigationOrigin = window.location.pathname + window.location.search; }
@@ -43,17 +43,28 @@ export function ExecutiveReportProvider({ children, admin }: { children: ReactNo
   const [attempt, setAttempt] = useState(0);
   const [retryWait, setRetryWait] = useRetryWait();
   const build = useRef<string | undefined>(undefined);
+  async function refresh(signal: AbortSignal) {
+    try {
+      const result = await getExecutiveContext(signal);
+      if (signal.aborted) return;
+      if (!result.capabilities.readReport.allowed) throw { code: 'EXECUTIVE_ACCESS_DENIED', status: 403 };
+      setFailure(null); setContext(result); build.current = result.build?.id;
+    } catch (error) {
+      if (!signal.aborted) {
+        const failed = reportFailure(error, false);
+        setFailure(failed); setRetryWait(retryDelaySeconds(error));
+        if (failed.kind === 'denied') { setContext(null); window.dispatchEvent(new Event(EXECUTIVE_ACCESS_DENIED_EVENT)); }
+      }
+      throw error;
+    }
+  }
   useEffect(() => {
     const controller = new AbortController();
     setFailure(null); setContext(null); setRetryWait(0);
-    getExecutiveContext(controller.signal).then(result => {
-      if (controller.signal.aborted) return;
-      if (!result.capabilities.readReport.allowed) { setFailure({ kind: 'denied', text: reasonText('EXECUTIVE_ACCESS_DENIED') }); window.dispatchEvent(new Event(EXECUTIVE_ACCESS_DENIED_EVENT)); return; }
-      setContext(result); build.current = result.build?.id;
-    }).catch(error => { if (!controller.signal.aborted) { const failed = reportFailure(error, false); setFailure(failed); setRetryWait(retryDelaySeconds(error)); if (failed.kind === 'denied') window.dispatchEvent(new Event(EXECUTIVE_ACCESS_DENIED_EVENT)); } });
+    void refresh(controller.signal).catch(() => {}); // refresh owns the provider's failure state
     return () => controller.abort();
   }, [attempt]);
-  return <WorkspaceLocaleContext.Provider value="th"><Context.Provider value={{ context, failure, retry: retryWait > 0 ? undefined : () => setAttempt(n => n + 1), retryWait, build, admin, deny: () => { setContext(null); setFailure({ kind: 'denied', text: reasonText('EXECUTIVE_ACCESS_DENIED') }); window.dispatchEvent(new Event(EXECUTIVE_ACCESS_DENIED_EVENT)); } }}>{children}</Context.Provider></WorkspaceLocaleContext.Provider>;
+  return <WorkspaceLocaleContext.Provider value="th"><Context.Provider value={{ context, failure, retry: retryWait > 0 ? undefined : () => setAttempt(n => n + 1), retryWait, build, admin, refresh, deny: () => { setContext(null); setFailure({ kind: 'denied', text: reasonText('EXECUTIVE_ACCESS_DENIED') }); window.dispatchEvent(new Event(EXECUTIVE_ACCESS_DENIED_EVENT)); } }}>{children}</Context.Provider></WorkspaceLocaleContext.Provider>;
 }
 
 export default function ExecutiveReportPage({ section, targetCompanyId }: { section: ReportSection; targetCompanyId?: string }) {
@@ -77,6 +88,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const requestKey = `${section}:${targetCompanyId ?? ''}:${paramsString}:${search}`;
   const tab = DETAIL_TABS.find(tab => tab.value === params.get('tab'))?.value ?? 'company';
   const problem = context && section === 'compare' ? comparisonProblem(params, context) : null;
+  const queryKey = context ? JSON.stringify(reportQuery(section, params, context, search)) : null;
 
   function navigateParams(next: URLSearchParams, replace = false, searchValue = term) {
     const href = `${pathname}?${next}`;
@@ -139,7 +151,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     let readingHistory = false;
     setLoading(true); setFailure(null); setFieldErrors({}); setUpdated(false); setRetryWait(0);
     // One response owns every card/table; nothing from an older request may overwrite it.
-    readCurrentBuild(buildId => getExecutiveReport(section, { ...query, ...(buildId ? { buildId } : {}) }, controller.signal, targetCompanyId), shared.build.current)
+    readCurrentBuild(buildId => getExecutiveReport(section, { ...query, ...(buildId ? { buildId } : {}) }, controller.signal, targetCompanyId), shared.build.current, () => shared.refresh(controller.signal))
       .then(async result => {
         if (controller.signal.aborted) return;
         shared.build.current = result.data.build.id;
@@ -161,9 +173,9 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
         if (failed.kind === 'denied') shared.deny();
       }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-    // shared actions are intentionally excluded: provider renders are not new report requests.
+    // Depend on the normalised query, not context identity: refreshing builtMonths must not read the report a third time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context, section, targetCompanyId, paramsString, search, attempt, problem, tab]);
+  }, [queryKey, section, targetCompanyId, paramsString, search, attempt, problem, tab]);
 
   const visibleData = dataKey === requestKey ? data : null;
   const retry = retryWait > 0 ? undefined : () => setAttempt(n => n + 1);
@@ -184,9 +196,8 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
       {context.filters[key].map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, option.value)}</option>)}
     </SelectField>;
   }
-  const activeLabels = visibleData ? [...Object.values(visibleData.appliedFilters.global), ...Object.values(visibleData.appliedFilters.directory)].filter(option => option.value !== 'ALL') : [];
   const picked = drillFilters(params);
-  const pickLabels = picked && context ? drillLabels(picked, context) : [];
+  const { active: activeLabels, picked: pickLabels } = context ? reportFilterChips(visibleData?.appliedFilters, picked, context) : { active: [], picked: [] };
   const pagination = section === 'companies' && visibleData && 'pagination' in visibleData ? visibleData.pagination : tab === 'history' && section === 'detail' ? history?.pagination : null;
   return <main className="executive-report mx-auto min-w-0 max-w-7xl p-4 text-base [overflow-wrap:anywhere] sm:p-6 [&_button]:min-h-11 [&_button]:min-w-11 [&_.mangmee-stat-value]:!text-lg [&_.mangmee-stat-card]:!p-3 [&_.mangmee-stat-sub]:!text-sm">
     <MangmeePage eyebrow={W.report} title={title} actions={section === 'overview' ? <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.allCompanies}</ReportLink> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}>
@@ -196,18 +207,18 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
             <div className="w-44"><label htmlFor="executive-month" className="text-sm">{W.month}</label><ThemedDate id="executive-month" aria-label={W.month} aria-invalid={!!fieldErrors.month} aria-describedby={fieldErrors.month ? 'executive-month-error' : undefined} mode="month" allowClear={false} value={normalizedMonth(params, context)} min={context.months?.first} max={context.months?.last ?? context.currentMonth} selectable={context.builtMonths} onChange={event => event.target.value && update({ month: event.target.value })} className="!min-h-11 !text-base" />{fieldErrors.month && <FieldError id="executive-month-error">{fieldErrors.month}</FieldError>}</div>
             {visibleData && <><span className="text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.period.isPartialMonth && <><MangmeeBadge tone="amber">{W.partialMonth}</MangmeeBadge>{context.months && visibleData.period.month > context.months.first && <Button variant="ghost" onClick={() => { const date = new Date(`${visibleData.period.month}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); update({ month: date.toISOString().slice(0, 7) }); }}>{W.previousMonth}</Button>}</>}{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
           </div>
-          {section === 'compare' || section === 'detail' ? <p className="text-sm">{section === 'compare' ? W.compareBase : W.detailBase}</p> : <details><summary className="flex min-h-11 cursor-pointer items-center font-semibold">{W.filters} · {filterCount}</summary><div className="grid min-w-0 gap-3 py-3 sm:grid-cols-3">{GLOBAL_FILTERS.map(filterControl)}</div></details>}
+          {section === 'compare' || section === 'detail' ? <p className="text-sm">{section === 'compare' ? W.compareBase : W.detailBase}</p> : <details><summary className="flex min-h-11 cursor-pointer items-center font-semibold">{W.reportFilters} · {filterCount}</summary><div className="grid min-w-0 gap-3 py-3 sm:grid-cols-3">{GLOBAL_FILTERS.map(filterControl)}</div></details>}
           {section === 'companies' && <>
             <div className="grid min-w-0 gap-3 sm:grid-cols-2"><TextField id="executive-search" label={W.search} type="search" maxLength={120} value={term} hint={W.searchHint} error={fieldErrors.q} className="!min-h-11 !text-base" onChange={event => { setTerm(event.target.value); window.history.replaceState({ ...window.history.state, executiveSearch: event.target.value }, '', window.location.href); }} />
               <SelectField id="executive-sort" label={W.sort} value={String(reportQuery('companies', params, context).sortBy)} error={fieldErrors.sortBy ?? fieldErrors.sortDir} className="!min-h-11 !text-base" onChange={event => { const sort = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === event.target.value)!; update({ sortBy: sort.sortBy, sortDir: sort.sortDir }); }}>{context.sortOptions.map(option => <option key={option.sortBy} value={option.sortBy}>{sortLabel(option.sortBy, option.sortBy === reportQuery('companies', params, context).sortBy ? String(reportQuery('companies', params, context).sortDir) : option.sortDir)}</option>)}</SelectField>
             </div>
-            <details><summary className="flex min-h-11 cursor-pointer items-center font-semibold">{W.filters} · {DIRECTORY_FILTERS.filter(key => filterValue(key, params, context) !== 'ALL').length}</summary><div className="grid min-w-0 gap-3 py-3 sm:grid-cols-3">{DIRECTORY_FILTERS.map(filterControl)}</div></details>
+            <details><summary className="flex min-h-11 cursor-pointer items-center font-semibold">{W.companyFilters} · {DIRECTORY_FILTERS.filter(key => filterValue(key, params, context) !== 'ALL').length}</summary><div className="grid min-w-0 gap-3 py-3 sm:grid-cols-3">{DIRECTORY_FILTERS.map(filterControl)}</div></details>
             {from === 'compare' && <p>{W.compareList}</p>}
-            {params.has('pick') && picked && <div className="flex flex-wrap items-center gap-2"><span>{W.pick}</span>{pickLabels?.map((label, i) => <MangmeeBadge key={i}>{thaiLabel(label)}</MangmeeBadge>)}<Button variant="ghost" onClick={() => update({ pick: '' })}>{W.removePick}</Button></div>}
+            {pickLabels.length > 0 && <div className="flex flex-wrap items-center gap-2"><span>{W.pick}</span>{pickLabels.map((label, i) => <MangmeeBadge key={i}>{label}</MangmeeBadge>)}<Button variant="ghost" onClick={() => update({ pick: '' })}>{W.removePick}</Button></div>}
             {selected.length === 2 && <ReportLink href={`${menuHref('compare', params)}&by=company&a=${encodeURIComponent(selected[0])}&b=${encodeURIComponent(selected[1])}`} remember={rememberNavigation}>{W.compareTwo}</ReportLink>}
           </>}
           {section !== 'compare' && section !== 'detail' && (filterCount > 0 || DIRECTORY_FILTERS.some(key => params.get(FILTER_URL[key]) && params.get(FILTER_URL[key]) !== 'ALL') || term || params.has('pick')) && <Button variant="secondary" onClick={clear}>{W.clear}</Button>}
-          <div className="flex flex-wrap gap-2">{activeLabels.map((option, i) => <MangmeeBadge key={i}>{thaiLabel(option.label, option.value)}</MangmeeBadge>)}</div>
+          <div className="flex flex-wrap gap-2">{activeLabels.map((label, i) => <MangmeeBadge key={i}>{label}</MangmeeBadge>)}</div>
           {(section === 'usage' || section === 'revenue' || section === 'customers') && <>
             <nav className="flex flex-wrap gap-2" aria-label={W[section]}>{REPORT_VIEWS[section].map(view => <Button key={view.value} variant={reportView(section, params) === view.value ? 'primary' : 'secondary'} aria-pressed={reportView(section, params) === view.value} onClick={() => update({ view: view.value })}>{view.label}</Button>)}</nav>
             {section === 'usage' && reportView(section, params) === 'ranking' && <SelectField label={W.ranking} value={Object.hasOwn(RANK_LABELS, params.get('rank') ?? '') ? params.get('rank')! : 'expenseReceiptCount'} error={fieldErrors.metric} className="!min-h-11 !text-base" onChange={event => update({ rank: event.target.value })}>{Object.entries(RANK_LABELS).map(([value, words]) => <option key={value} value={value}>{words.label}</option>)}</SelectField>}

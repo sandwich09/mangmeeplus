@@ -51,3 +51,44 @@ Verification:
 - No API, contract or migration change, so no API typecheck or pg spec was run.
 
 Next: controller review; owner wording for D3 (and D10/D14); push with the program branch.
+
+## Fixed after acceptance
+
+Status: Done in this implementation lane, 2026-10-03; uncommitted diff ready for controller review. Focused checks, final locked typecheck, final locked whole web suite and diff whitespace check pass; browser acceptance belongs to the controller.
+Owner: executive-polish lane; controller owns review, commit and browser acceptance.
+Scope: state-aware reasons and measured-cost wording, detail reason references, refreshed month availability, executive denial, filter chips/toggle names, account status colours and shared field dropdown naming. No API read logic, billing, legal page, export, schema or dependency changes.
+Decisions:
+
+- Coverage is passed through every figure, adoption chart, ranking, company-list summary and spend reason renderer. The shared Thai API-message seam owns the three state-dependent historical reasons. All 38 contracted reason/sub-reason × partial/unavailable pairs are checked. Partial measured cost uses its own time-coverage qualifier; billing amounts keep their confirmation qualifier.
+- Company detail deduplicates actual reason sentences once per page, including row-status reasons, and gives each affected figure a numbered link to its reason. Different sentences for unavailable and partial data remain separate; every figure retains its state words.
+- A changed-build reload refreshes API01 with the same abort signal. The normalised query, rather than the context object's identity, controls report reads so a new builtMonths list does not cause a third report read. Refresh errors belong to the context, including denial and retry delay.
+- The executive role identifies an executive-only session even after its read right is removed. This changes presentation/landing only; report access still requires the read permission. System and sales denial gates use the existing EXECUTIVE_ACCESS_DENIED words for those sessions.
+- Drill chips omit ALL, empty and sort-only conditions and remove matching applied-filter chips by key and value. The two filter toggles name their own scopes. Account status labels and theme tones share one mapping: active/brand, waiting/amber, suspended/danger, revoked/slate.
+- The dropdown fix is the one-line SelectField label forwarding change. AST audit found all 24 SelectField call sites have a label, with no aria-label override. Initial audit found 103 unnamed direct ThemedSelect sites including the wrapper; after the fix, 102 other direct call sites lack explicit aria names (some have surrounding labels). They are outside this scoped diff, including forbidden billing files; actual browser names there are not checked. Scope clarification was requested; no response received, so the stated minimal scope was retained.
+
+Open questions: broader direct-ThemedSelect accessibility work needs controller scoping; no unresolved product decision in the executive fixes. Suspended sign-in's shared message and the repeated paid-in-month detail label remain as noted in the original acceptance, outside this brief.
+
+Artifacts: scoped working-tree diff; updated `docs/specs/mangmee-executive-plain-language-spec-th.md` and `docs/specs/mangmee-executive-business-ui-spec-th.md`. No API/contract/schema/package.json, billing, legal-page or Excel-export edits.
+
+Verification:
+
+Focused red command: `pnpm --filter @watchdog-bms/web exec node --import tsx --test <file>`; green adds `--test-reporter=spec` before `<file>`.
+
+| File under apps/web | Red on original implementation | Green |
+|---|---|---|
+| src/features/executive-reports/executive-reports.logic.spec.ts | exit 1; 19 passed / 3 failed (context refresh, reason states, chips) | exit 0; 22 passed / 0 failed |
+| src/features/executive-reports/ExecutiveReportContent.spec.ts | exit 1; 15 passed / 4 failed (counted reasons, measured cost, repeated reasons, denial) | exit 0; 19 passed / 0 failed |
+| src/features/executive-reports/ExecutiveReports.wiring.spec.ts | exit 1; 5 passed / 3 failed (context refresh wiring, denial gates, chip/toggle wiring) | exit 0; 9 passed / 0 failed after the added refresh-error check |
+| src/common/auth/session-gate.logic.spec.ts | exit 1; 36 passed / 1 failed (executive session after read removal) | exit 0; 37 passed / 0 failed |
+| src/features/executive-users/executive-users.qa.spec.ts | exit 1; 10 passed / 1 failed (status tones and all badge placements) | exit 0; 11 passed / 0 failed |
+| src/common/components/field/ThemedSelect.spec.ts | exit 1; 1 passed / 1 failed (field label name at both selected values) | exit 0; 2 passed / 0 failed |
+
+- The extra context-refresh error wiring test was added before its error handling: reporter=spec run exit 1, 8 passed / 1 failed, then exit 0, 9 passed / 0 failed.
+- Strengthened reason-pair test, with the old reasonText production line restored for one run: reporter=spec run exit 1, 21 passed / 1 failed, listing all three changed pairs; restored fix exit 0, 22 passed / 0 failed.
+- Independent repetition proof, with the old Reasons rendering line restored for one run: `pnpm --filter @watchdog-bms/web exec node --import tsx --test --test-reporter=spec --test-name-pattern='company detail explains' src/features/executive-reports/ExecutiveReportContent.spec.ts` exit 1, 0 passed / 1 failed: the unchanged first-build sentence appeared 22 times instead of once. Restored fix, whole content file exit 0, 19 passed / 0 failed.
+- Locked web typecheck: `/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh pnpm --filter @watchdog-bms/web typecheck` exit 0, including the final repeat after strengthening the tests; route type generation succeeded and tsc emitted no errors.
+- Locked whole web suite: the same heavy.sh with `pnpm --filter @watchdog-bms/web exec node --import tsx --test 'src/**/*.spec.ts'`, launched with all environment keys starting S3_ removed, exit 0; 2,858 passed, 0 failed, 0 skipped, 572 suites. Final repeat after strengthening the tests also exited 0 with the same counts (34.1 seconds).
+- `git diff --check`: exit 0, no whitespace errors.
+- Browser, e2e, live permission removal and real build refresh: not checked because this lane has no browser, servers, network or database.
+
+Next: controller reviews/commits the diff and runs `pnpm exec playwright test e2e/executive-report.spec.ts` on the seeded stack with WORKER_INTERNAL_TOKEN set (otherwise the spec skips). At 390 and 1280 px, re-check August partial usage/adoption/cost, July unavailable money/cost, mixed company-detail reason references and all tabs, missing-month build becoming selectable without full reload (and one reload only), context-refresh failure/retry/denial, empty/sort-only/drilled chips, both filter-toggle names, four account badge colours in list/detail, combobox field names after changing selections, and executive-only denial on `/system/executive`, `/system/partners` and `/sales/deals` after read permission removal. Check an admin and a mixed session retain their prior gate behaviour.

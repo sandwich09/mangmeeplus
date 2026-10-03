@@ -36,6 +36,17 @@ test('rendered partial and unavailable figures retain their reasons and negative
   assert.doesNotMatch(text(renderToStaticMarkup(React.createElement(Figure, { value: cash(-100), moneyValue: true }))), /คืนเงินมากกว่าเงินรับ/);
   assert.doesNotMatch(text(renderToStaticMarkup(React.createElement(Figure, { value: { ...cash(-100), value: null, knownValue: -100, coverage: 'partial' }, moneyValue: true, netValue: true }))), /คืนเงินมากกว่าเงินรับ/);
 });
+test('figures and receipt adoption use counted-data reasons when a number is shown', async () => {
+  const { Figure, OverviewContent } = await content();
+  const partial = { value: null, knownValue: 3, coverage: 'partial' as const, reasonCodes: ['HISTORY_BEFORE_COLLECTION' as const] };
+  const figure = text(renderToStaticMarkup(React.createElement(Figure, { value: partial })));
+  assert.match(figure, /อย่างน้อย 3/); assert.match(figure, /ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้/);
+  assert.doesNotMatch(figure, /ยังไม่มีข้อมูลของช่วงนี้/);
+  const data = { ...envelope, metrics: { companies: { ...count(3), drilldownFilters: {} }, activeCompanies: { ...count(0), drilldownFilters: {}, breakdown: { notPaid: 0, paymentUnknown: 0 } }, companiesWithReceipts: { ...count(0), drilldownFilters: {} }, netReceiptsSatang: { ...cash(0), drilldownFilters: {} } },
+    expenseReceiptAdoption: { population: 3, coverage: 'partial', segments: [{ key: 'UNKNOWN', count: 3, share: { value: 100 }, drilldownFilters: { receiptAdoption: 'UNKNOWN' } }], reasonCodes: ['HISTORY_BEFORE_COLLECTION'], roundingNote: false }, paidUsage: { groups: [] }, spendConcentration: { topShare: { value: null }, reasonCodes: [] } } as unknown as ExecutiveOverview;
+  const adoption = text(renderToStaticMarkup(React.createElement(OverviewContent, { data, nav })));
+  assert.match(adoption, /ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้/); assert.doesNotMatch(adoption, /ยังไม่มีข้อมูลของช่วงนี้/);
+});
 test('overview renders four server metrics, a partial count, and four receipt groups with independent drill queries', async () => {
   const { OverviewContent } = await content();
   const data = { ...envelope, metrics: {
@@ -198,7 +209,36 @@ test('the measured AI cost keeps its own coverage: what was measured is not the 
   };
   assert.match(cost(cash(1234)), /12\.34 บาท/);
   const partial = cost({ value: null, knownValue: 1234, coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], currency: 'THB' });
-  assert.match(partial, /12\.34 บาท \(ยอดเฉพาะรายการที่ยืนยันแล้ว\)/); assert.match(partial, /ก่อนที่ระบบเริ่มเก็บ/);
+  assert.match(partial, /12\.34 บาท \(ยอดเฉพาะช่วงที่วัดได้\)/); assert.doesNotMatch(partial, /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
   const before = cost(missing);
-  assert.match(before, /—/); assert.match(before, /ก่อนที่ระบบเริ่มเก็บ/); assert.doesNotMatch(before, /บาท/);
+  assert.match(before, /—/); assert.match(before, /ยังไม่มีตัวเลข/); assert.doesNotMatch(before, /บาท/);
+});
+
+test('company detail explains each distinct reason once and links each affected figure to it, preserving mixed states', async () => {
+  const { CompanyContent } = await content();
+  const usage = { activeDays: 1, activeDaysLine: 0, activeDaysWeb: 1, activeUsers: 1, activeUsersLine: 0, activeUsersWeb: 1, documents: 1, aiRequests: 0, expenseReceiptCountInPeriod: 1, expenseReceiptsLine: 0, expenseReceiptsWeb: 1 };
+  const partialCash: ExecutiveMoney = { value: null, knownValue: 1234, coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], currency: 'THB' };
+  const data = { ...envelope, coverage: { ...envelope.coverage, usage: { coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION', 'HISTORY_BEFORE_FIRST_BUILD'] } },
+    company: { ...company, ownerContact: { status: 'NOT_PERMITTED' } }, monthReasonCodes: ['HISTORY_BEFORE_FIRST_BUILD'],
+    month: { paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', usage, money: { receiptsSatang: missing, refundsSatang: missing, netReceiptsSatang: missing, taxSatang: missing, feesSatang: missing, aiCostSatang: partialCash } },
+  } as unknown as ExecutiveCompanyDetail;
+  const html = renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' }));
+  const visible = text(html);
+  for (const sentence of ['ข้อมูลก่อนเริ่มทำรายงาน นับได้เฉพาะรายการที่ยังเหลืออยู่', 'ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้ ช่วงก่อนเริ่มเก็บยังประเมินไม่ได้', 'ยังไม่มีข้อมูลของช่วงนี้ เพราะเป็นช่วงก่อนที่ระบบเริ่มเก็บ']) {
+    assert.equal(visible.split(sentence).length - 1, 1, sentence);
+  }
+  const notes = [...html.matchAll(/<p id="([^"]+)"[^>]*>/g)].map(match => match[1]);
+  assert.equal(notes.length, 3);
+  for (const note of notes) assert.match(html, new RegExp(`href="#${note}"`));
+  for (const dd of [...html.matchAll(/<dd[^>]*>(.*?)<\/dd>/g)].map(match => match[1]).filter(value => /อย่างน้อย|ยังไม่มีตัวเลข|ยอดเฉพาะช่วงที่วัดได้/.test(value))) {
+    assert.match(dd, /href="#/);
+  }
+  assert.match(visible, /อย่างน้อย 1/); assert.match(visible, /ยังไม่มีตัวเลข/); assert.match(visible, /12\.34 บาท \(ยอดเฉพาะช่วงที่วัดได้\)/);
+});
+
+test('executive denial uses the report error words instead of the admin-console state', async () => {
+  const { default: Denied } = await import('../auth/SystemAccessDenied');
+  const visible = text(renderToStaticMarkup(React.createElement(Denied, { executive: true })));
+  assert.match(visible, /คุณไม่มีสิทธิ์ใช้งานส่วนนี้/);
+  assert.doesNotMatch(visible, /ส่วนผู้ดูแลแพลตฟอร์ม|กลับไปยังพื้นที่ทำงาน|Platform access/);
 });

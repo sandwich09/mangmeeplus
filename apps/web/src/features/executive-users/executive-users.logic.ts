@@ -4,6 +4,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '../../common/api/api-error-message';
 import { formatThaiDateTime } from '../../common/i18n/thai-date';
+import type { MangmeeTone } from '../../common/components/mangmee';
 
 export const EXECUTIVE_USERS_TITLE = 'บัญชีผู้บริหาร';
 export const executiveWords = {
@@ -29,10 +30,12 @@ export const EXECUTIVE_RIGHTS = {
 export const EXECUTIVE_EXPORT_NOTE = 'ไฟล์มีข้อมูลบริษัทตามสิทธิ์และตัวกรองที่เลือก และดาวน์โหลดไปแล้วเรียกคืนไม่ได้';
 export const EXECUTIVE_CONTACT_NOTE = 'เห็นอีเมลและเบอร์โทรของเจ้าของร้าน ซึ่งเป็นข้อมูลส่วนบุคคล';
 export const EXECUTIVE_CONTACT_EXPORT_NOTE = 'ข้อมูลติดต่อจะอยู่ในไฟล์ได้ต้องมีทั้งสิทธิ์ส่งออกและสิทธิ์ดูข้อมูลติดต่อ';
-const STATUS_WORDS: Record<ExecutiveAccountStatus, string> = {
-  PENDING_ACTIVATION: 'รอเปิดใช้งาน', ACTIVE: 'เปิดใช้งาน', SUSPENDED: 'ระงับ', REVOKED: 'ถอนสิทธิ์แล้ว',
+const STATUS_WORDS: Record<ExecutiveAccountStatus, { label: string; tone: MangmeeTone }> = {
+  PENDING_ACTIVATION: { label: 'รอเปิดใช้งาน', tone: 'amber' }, ACTIVE: { label: 'เปิดใช้งาน', tone: 'brand' },
+  SUSPENDED: { label: 'ระงับ', tone: 'danger' }, REVOKED: { label: 'ถอนสิทธิ์แล้ว', tone: 'slate' },
 };
-export const executiveStatus = (status: ExecutiveAccountStatus) => STATUS_WORDS[status];
+export const executiveStatus = (status: ExecutiveAccountStatus) => STATUS_WORDS[status].label;
+export const executiveStatusTone = (status: ExecutiveAccountStatus) => STATUS_WORDS[status].tone;
 export const executiveStatusOptions = EXECUTIVE_ACCOUNT_STATUSES.map(value => ({ value, label: executiveStatus(value) }));
 export function executiveRights(user: Pick<ExecutiveUserView, 'canRead' | 'canExport' | 'canSeeContacts'>): string {
   return (Object.keys(EXECUTIVE_RIGHTS) as Array<keyof typeof EXECUTIVE_RIGHTS>).filter(key => user[key]).map(key => EXECUTIVE_RIGHTS[key]).join(' · ') || 'ไม่มีสิทธิ์รายงาน';

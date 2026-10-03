@@ -1,12 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, type ReactNode } from 'react';
+import { createContext, useContext, useId, type ReactNode } from 'react';
 import {
   EXECUTIVE_HISTORY_EVENT_LABELS, EXECUTIVE_REPORT_LABELS as LABELS, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
   type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveCompanyHistory,
   type ExecutiveCount, type ExecutiveMoney, type ExecutiveDrilldownFilters, type ExecutiveReceiptAdoption,
-  type ExecutivePaidUsage, type ExecutiveSpendConcentration, type ExecutiveCompanyRow,
+  type ExecutivePaidUsage, type ExecutiveSpendConcentration, type ExecutiveCompanyRow, type ExecutiveCoverage,
 } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeeStatCard, MangmeeBadge } from '@/common/components/mangmee';
 import { SwitchField } from '@/common/components/field/Field';
@@ -22,14 +22,23 @@ export function ReportLink({ href, children, remember }: { href: string; childre
 export function DrillLink({ filters, children, nav }: { filters: ExecutiveDrilldownFilters; children: ReactNode; nav: Navigation }) {
   return <ReportLink href={drilldownHref(nav.params, nav.from, filters)} remember={nav.remember}>{children}</ReportLink>;
 }
-export function Reasons({ codes }: { codes: readonly string[] }) {
-  return <>{[...new Set(codes)].map(code => <p key={code} className="text-sm text-gray-600">{reasonText(code)}</p>)}</>;
+const ReasonNotes = createContext<{ id: string; notes: string[] } | null>(null);
+export function Reasons({ codes, coverage }: { codes: readonly string[]; coverage?: ExecutiveCoverage }) {
+  const notes = useContext(ReasonNotes);
+  return <>{[...new Set(codes)].map(code => {
+    const words = reasonText(code, coverage);
+    const index = notes?.notes.indexOf(words) ?? -1;
+    return notes && index >= 0
+      ? <sup key={code} className="ml-1"><a href={`#${notes.id}-${index + 1}`} aria-label={W.reasonReference(index + 1)} className="text-brand-800 underline">[{index + 1}]</a></sup>
+      : <p key={code} className="text-sm text-gray-600">{words}</p>;
+  })}</>;
 }
-export function Figure({ value, moneyValue = false, netValue = false }: { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean }) {
+export function Figure({ value, moneyValue = false, netValue = false, measured = false }: { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean }) {
   return <div className="min-w-0 break-words [overflow-wrap:anywhere]">
-    <span>{moneyValue ? moneyText(value as ExecutiveMoney) : countText(value)}</span>
+    <span>{moneyValue ? moneyText(value as ExecutiveMoney, measured) : countText(value)}</span>
+    {value.coverage === 'unavailable' && <span className="ml-1 text-sm text-gray-600">{W.unavailableFigure}</span>}
     {netValue && value.coverage === 'complete' && negativeMoneyNote(value.value) && <p className="text-sm text-gray-600">{W.negative}</p>}
-    <Reasons codes={value.reasonCodes} />
+    <Reasons codes={value.reasonCodes} coverage={value.coverage} />
   </div>;
 }
 function DetailValues({ rows }: { rows: Array<[string, ReactNode]> }) {
@@ -60,7 +69,7 @@ function ReceiptAdoption({ data, nav }: { data: ExecutiveReceiptAdoption; nav: N
       <ul>{data.segments.map(segment => <li key={segment.key} className="min-w-0"><DrillLink nav={nav} filters={segment.drilldownFilters}><span className={`mr-2 h-4 w-4 shrink-0 border ${segmentClasses[segment.key]}`} aria-hidden="true" />{LABELS.receiptAdoption[segment.key]} · {segment.count.toLocaleString('th-TH')} {W.unitCompany} · {ratioText(segment.share)}</DrillLink></li>)}</ul>
       <p className="text-sm text-gray-600">{W.chartHint}</p>
     </>}
-    <Reasons codes={data.reasonCodes} />{data.roundingNote && <p className="text-sm">{W.rounding}</p>}
+    <Reasons codes={data.reasonCodes} coverage={data.coverage} />{data.roundingNote && <p className="text-sm">{W.rounding}</p>}
   </Card>;
 }
 function PaidUsage({ data, nav }: { data: ExecutivePaidUsage; nav: Navigation }) {
@@ -97,7 +106,7 @@ export function OverviewContent({ data, nav }: { data: ExecutiveOverview; nav: N
     <Card title={W.followUp}>
       {data.paidUsage.groups.filter(group => group.key === 'NOT_STARTED' || group.key === 'INACTIVE').map(group => <div key={group.key}><DrillLink nav={nav} filters={group.drilldownFilters}>{LABELS.usageGroup[group.key]} · {group.count.toLocaleString('th-TH')} {W.unitCompany}</DrillLink></div>)}
       <ReportLink href={`${menuHref('revenue', nav.params)}&view=top`} remember={nav.remember}>{W.top} · {ratioText(data.spendConcentration.topShare)}</ReportLink>
-      <Reasons codes={data.spendConcentration.reasonCodes} />
+      <Reasons codes={data.spendConcentration.reasonCodes} coverage={data.spendConcentration.coverage} />
     </Card>
   </>;
 }
@@ -124,7 +133,7 @@ export function CompaniesContent({ data, nav, selected, select }: { data: Execut
   return <>
     <p className="text-sm">{W.receiptDefinition}</p>
     <p role="status">{W.found(data.pagination.total)} · {W.net} <span>{moneyText(data.summary.netReceiptsSatang)}</span> · {W.sort} {sortLabel(data.sort.sortBy, data.sort.sortDir)}</p>
-    <Reasons codes={data.summary.netReceiptsSatang.reasonCodes} />
+    <Reasons codes={data.summary.netReceiptsSatang.reasonCodes} coverage={data.summary.netReceiptsSatang.coverage} />
     {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <ReportTable title={W.companies} columns={[{ label: W.company }, { label: W.origin, secondary: true }, { label: W.service }, { label: W.active }, { label: W.net }]} rows={data.items.map(row => ({ key: row.id, cells: [
       <div key="company" className="text-left"><CompareToggle checked={selected.includes(row.id)} disabled={selected.length === 2 && !selected.includes(row.id)} onChange={() => select(row.id)} />
         <ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember}>{row.displayName}</ReportLink>
@@ -171,7 +180,7 @@ function SpendContent({ data, nav }: { data: ExecutiveSpendConcentration; nav: N
   const blocked = data.topCount === null;
   return <Card title={W.spendTitle(reportMonth(nav.params.get('month')))}>
     <p>{W.base(data.population)} · {W.weight}: {W.weightDefinition}</p>
-    <Reasons codes={data.reasonCodes} />
+    <Reasons codes={data.reasonCodes} coverage={data.coverage} />
     {data.reasonCodes.includes('BILLING_SCAN_NOT_COMPLETE') && <p>{W.partialRanking}</p>}
     {blocked ? data.reasonCodes.includes('TOO_FEW_COMPANIES') && <ReportLink href={`${menuHref('companies', nav.params)}&sortBy=netReceipts&sortDir=desc`} remember={nav.remember}>{W.allRanks}</ReportLink> : <>
       <div className="flex h-11 overflow-hidden rounded border border-gray-700" role="group" aria-label={W.top}><Link href={drilldownHref(nav.params, nav.from, data.drilldownFilters.TOP20!)} onClick={nav.remember} aria-label={LABELS.spendCohort.TOP20} className="bg-brand-800" style={{ width: `${data.topShare?.value ?? 0}%` }} /><Link href={drilldownHref(nav.params, nav.from, data.drilldownFilters.REST!)} onClick={nav.remember} aria-label={LABELS.spendCohort.REST} className="flex-1 border bg-gray-100" /></div>
@@ -189,7 +198,7 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
   if (data.expenseReceiptAdoption && data.paidUsage) return <><ReceiptAdoption data={data.expenseReceiptAdoption} nav={nav} /><PaidUsage data={data.paidUsage} nav={nav} /></>;
   if (data.usageRanking) {
     const rank = data.usageRanking;
-    return <Card title={W.rankTitle}><p>{W.receiptDefinition} · {W.rankBase(rank.total, RANK_LABELS[rank.metric].label)}</p><Reasons codes={rank.reasonCodes} />
+    return <Card title={W.rankTitle}><p>{W.receiptDefinition} · {W.rankBase(rank.total, RANK_LABELS[rank.metric].label)}</p><Reasons codes={rank.reasonCodes} coverage={rank.coverage} />
       {!rank.items.length && <EmptyState title={W.noRows} description="" />}
       <ol>{rank.items.map(row => <li key={row.id} className="min-w-0 border-b py-2"><ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember}>{row.rank}. {row.displayName}</ReportLink><p className="text-sm">{[row.registeredName, row.provinceLabel].filter(Boolean).join(' · ')}</p><p>{countText(sourceCount(row.value, rank))} {RANK_LABELS[rank.metric].unit}</p><div className="h-3 rounded border border-gray-700 bg-brand-800" aria-hidden="true" style={{ width: `${row.value / Math.max(1, rank.items[0]?.value ?? 1) * 100}%` }} /></li>)}</ol>
       {rankingTieText(rank.boundaryTie, rank.metric) && <p>{rankingTieText(rank.boundaryTie, rank.metric)}</p>}
@@ -232,10 +241,17 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
 export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }: { data: ExecutiveCompanyDetail; tab: string; history: ExecutiveCompanyHistory | null; admin: boolean; nav: Navigation; contactReadAt: string }) {
   const company = data.company, month = data.month;
   const monthTitle = reportMonth(data.period.month);
-  return <>
+  const id = useId();
+  const sources = month ? [data.coverage.usage, month.money.netReceiptsSatang, ...(tab === 'usage' ? Object.values(month.money) : [])] : [];
+  const notes = [...new Set([
+    ...data.monthReasonCodes.map(code => reasonText(code)),
+    ...sources.flatMap(source => source.reasonCodes.map(code => reasonText(code, source.coverage))),
+    ...(tab === 'usage' && month ? [month.paidEver.reason, month.usageUnassessedReason].filter((code): code is NonNullable<typeof code> => !!code).map(code => reasonText(code)) : []),
+  ])];
+  return <ReasonNotes.Provider value={{ id, notes }}>
     <p>{[company.registeredName, company.provinceLabel, company.industryGroup.label].filter(Boolean).join(' · ')}</p>
     <p className="text-sm">{W.receiptDefinition}</p>
-    <Reasons codes={data.monthReasonCodes} />
+    {notes.map((note, index) => <p key={note} id={`${id}-${index + 1}`} className="text-sm text-gray-600">[{index + 1}] {note}</p>)}
     {month && <div className="grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-4">{([[W.net, <Figure key="net" value={month.money.netReceiptsSatang} moneyValue netValue />], [W.receiptCount, <Figure key="receipts" value={sourceCount(month.usage.expenseReceiptCountInPeriod, data.coverage.usage)} />], [W.days, <Figure key="days" value={sourceCount(month.usage.activeDays, data.coverage.usage)} />], [W.ai, <Figure key="ai" value={sourceCount(month.usage.aiRequests, data.coverage.usage)} />]] as Array<[string, ReactNode]>).map(([label, value]) => <MangmeeStatCard key={label} label={`${label} ${monthTitle}`} value={value} />)}</div>}
     {tab === 'history' ? history && <Card title={W.history}>{history.items.length === 0 ? <EmptyState title={W.noHistory} description="" /> : <ol className="space-y-3">{history.items.map((event, index) => <li key={index} className="border-b py-3"><p>{reportDateTime(event.at)}</p><p>{EXECUTIVE_HISTORY_EVENT_LABELS[event.kind]} {event.planLabel}</p></li>)}</ol>}</Card> : tab === 'usage' ? month && <>
       <Card title={W.usageTab}>{rowStatus(month)}<p>{W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
@@ -246,7 +262,7 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }
         ]} />
         <ReportTable title={W.usage} columns={[{ label: W.discovery }, { label: W.days }, { label: W.users }, { label: W.receiptCount }]} rows={(['Line', 'Web'] as const).map(channel => ({ key: channel, cells: [channel === 'Line' ? W.line : W.web, <Figure key="days" value={sourceCount(month.usage[`activeDays${channel}`], data.coverage.usage)} />, <Figure key="users" value={sourceCount(month.usage[`activeUsers${channel}`], data.coverage.usage)} />, <Figure key="receipts" value={sourceCount(month.usage[`expenseReceipts${channel}`], data.coverage.usage)} />] }))} />
       </Card>
-      <Card title={W.revenue}><p>{W.moneyDefinition} · {W.vatIncluded}</p><DetailValues rows={([[W.receipts, month.money.receiptsSatang], [W.refunds, month.money.refundsSatang], [W.net, month.money.netReceiptsSatang], [W.tax, month.money.taxSatang], [W.fees, month.money.feesSatang], [W.aiCost, month.money.aiCostSatang]] as Array<[string, ExecutiveMoney]>).map(([label, value]) => [label, <Figure key={label} value={value} moneyValue netValue={label === W.net} />])} />
+      <Card title={W.revenue}><p>{W.moneyDefinition} · {W.vatIncluded}</p><DetailValues rows={([[W.receipts, month.money.receiptsSatang], [W.refunds, month.money.refundsSatang], [W.net, month.money.netReceiptsSatang], [W.tax, month.money.taxSatang], [W.fees, month.money.feesSatang], [W.aiCost, month.money.aiCostSatang]] as Array<[string, ExecutiveMoney]>).map(([label, value]) => [label, <Figure key={label} value={value} moneyValue netValue={label === W.net} measured={label === W.aiCost} />])} />
         <p>{W.paid}: {month.paidInMonth ? W.paid : data.coverage.money.coverage === 'complete' ? W.noReceipts : LABELS.paidEver.UNKNOWN} · {W.positive}: {month.positiveNetInMonth ? W.positive : data.coverage.money.coverage === 'complete' ? W.noPositiveNet : LABELS.paidEver.UNKNOWN}</p>
       </Card>
     </> : tab === 'company' && <>
@@ -255,5 +271,5 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }
       <Card title={W.service}><p>{W.current} · {W.through(reportDateTime(data.build.asOf))}</p><DetailValues rows={[[W.plan, company.planLabel], [W.filterLabels.planState, <div key="state">{LABELS.planState[company.planState] ?? W.unknown}{company.planState === 'ADMIN_HOLD' && <p>{LABELS.companyStatus[company.companyStatus] ?? W.unknown}</p>}</div>], [W.planEnds, reportDate(company.planEndsAt)], [W.members, company.currentActiveMemberCount], [W.branches, company.currentBranchCount], [W.lastActivity, reportDateTime(company.lastActivityAt)]]} /></Card>
       {admin && <ReportLink href={`/system/partners/${encodeURIComponent(company.id)}`} remember={nav.remember}>{W.management}</ReportLink>}
     </>}
-  </>;
+  </ReasonNotes.Provider>;
 }

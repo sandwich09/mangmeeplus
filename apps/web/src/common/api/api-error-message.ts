@@ -1,4 +1,4 @@
-import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
 
@@ -1416,6 +1416,17 @@ const KIND_LABELS: Record<string, string> = {
 const API_KINDS = new Set([...Object.keys(KIND_LABELS), 'unknown']);
 const OTHER_CLIENT_ERROR = 'ทำรายการไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง';
 const GENERIC_API_ERROR = 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง';
+
+// Coverage changes the meaning of historical reasons; the shared Thai seam owns both forms.
+const EXECUTIVE_REASON_STATE_LABELS: Record<string, Partial<Record<ExecutiveCoverage, string>>> = {
+  HISTORY_BEFORE_COLLECTION: { partial: 'ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้ ช่วงก่อนเริ่มเก็บยังประเมินไม่ได้' },
+  HISTORY_BEFORE_FIRST_BUILD: { unavailable: 'ยังไม่มีตัวเลขของช่วงก่อนเริ่มทำรายงาน' },
+  SOURCE_ROWS_PURGED: { unavailable: 'รายการต้นทางถูกลบแล้ว จึงไม่มีตัวเลขของส่วนนี้' },
+};
+
+export function executiveReasonMessage(code: string, coverage?: ExecutiveCoverage): string {
+  return (coverage && EXECUTIVE_REASON_STATE_LABELS[code]?.[coverage]) || apiErrorMessage({ code });
+}
 
 /** Translates one API message/code. Returns null when nothing is known about it. */
 export function translateApiError(raw: string): string | null {
