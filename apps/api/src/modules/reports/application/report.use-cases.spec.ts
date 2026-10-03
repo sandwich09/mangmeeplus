@@ -933,6 +933,21 @@ describe('report words where a person reads them', () => {
 
     await create.execute(ctx, 'company-1', { datasetCode: 'sales.summary', format: 'CSV' });
 
-    assert.equal(stored[0]!.toString('utf8'), '﻿ช่องทาง,สกุลเงิน,ยอดเงิน\nใบแจ้งหนี้ที่ออกแล้ว,บาท,5.0000\nโอกาสการขายที่ยังเปิดอยู่,,9.0000');
+    assert.equal(stored[0]!.toString('utf8'), '\uFEFFช่องทาง,สกุลเงิน,ยอดเงิน\nใบแจ้งหนี้ที่ออกแล้ว,บาท,5.0000\nโอกาสการขายที่ยังเปิดอยู่,,9.0000');
+  });
+
+  it('names the file by the report title and the company day, not the report code', async () => {
+    let created: any;
+    const storage = { putObject: async (input: { objectKey: string; bytes: Buffer }) => ({ bucket: 'reports', objectKey: input.objectKey, objectVersionId: 'v1', storageProvider: 'test', byteSize: input.bytes.byteLength, checksumSha256: sha256(input.bytes.toString('utf8')) }) };
+    const repo = { createRun: async (data: any) => ({ id: data.id }), createExport: async (data: any) => { created = data; return { id: 'export-1', ...data }; } };
+    const runQuery = { executeForExport: async () => ({ ...salesSummary(), sourcePermissionsUsed: ['accounting.document.read'], pendingRun: pendingRun('run-1') }) };
+    const create = new CreateReportExportUseCase(
+      repo as any, runQuery as any, { log: async () => undefined } as any, { execute: async () => undefined } as any,
+      entitlement(true) as any, storage as any, { enqueue: async () => true } as any,
+    );
+
+    await create.execute(ctx, 'company-1', { datasetCode: 'sales.summary', format: 'CSV' });
+
+    assert.match(created.fileName, /^สรุปยอดขาย-\d{4}-\d{2}-\d{2}-ข้อมูลบางส่วน\.csv$/);
   });
 });

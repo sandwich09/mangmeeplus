@@ -24,7 +24,7 @@ import { ObjectVersionCleanupService } from '../../data-model-core/application/s
 import { REPORT_CATALOG, findReportDefinition } from '../domain/report-catalog';
 import { canRunReport, hasSourcePermission, visibleDatasetStatus } from '../domain/report-permission.logic';
 import { REPORT_MAX_PAGE_SIZE, REPORT_SYNC_EXPORT_MAX_ROWS, validateReportQuery } from '../domain/report-query-validator.logic';
-import { buildReportCsv, sha256 } from '../domain/report-csv.logic';
+import { buildReportCsv, reportCsvFileName, sha256 } from '../domain/report-csv.logic';
 import { reportResultForPeople } from '../domain/report-row-text.logic';
 import { PrismaReportRepository, type CreateReportRunData } from '../infrastructure/prisma-report.repository';
 import { ReportSourceAdapters } from './report-source-adapters';
@@ -691,7 +691,7 @@ export class CreateReportExportUseCase {
           input,
           status: 'READY',
           rowCount: result.rows.length,
-          fileName: `${input.datasetCode.replace(/[^a-z0-9_.-]/gi, '_')}-${todayCivilDate()}${result.status === 'PARTIAL' ? '-ข้อมูลบางส่วน' : ''}.csv`,
+          fileName: reportCsvFileName(definition.title, todayCivilDate(), result.status === 'PARTIAL'),
           fileMimeType: mimeType,
           fileSizeBytes: stored.byteSize,
           storageKey: encodeStorageKey(stored),

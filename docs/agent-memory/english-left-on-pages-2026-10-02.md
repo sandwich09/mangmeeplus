@@ -262,3 +262,13 @@ because delivery does not read the rule's `channelPolicyJson` at all: it follows
 preferences (`enabledChannelsJson`). The same fact means even a listed channel (“ช่องทาง: LINE”) describes a stored
 setting with no effect; reported for the owner, not changed. Tests: web notification logic red 6 / 2 → 8 / 0;
 lane 3b's page assertion moved to the helper (page spec 5 / 0).
+
+### R5: CSV dates and file name
+
+`buildReportCsv` writes `date` columns as the company day (`civilDate`, Asia/Bangkok; a `YYYY-MM-DD` value stays)
+and `datetime` columns as `YYYY-MM-DD HH:mm` in Asia/Bangkok, so 2026-09-02T03:05Z reads 2026-09-02 10:05; the page
+still gets ISO values because its own Thai formatter reads them. `reportCsvFileName`: the Thai title and the
+company day, any character outside Thai, ASCII letters, digits, `_` and `-` becomes `-` (so
+สรุปคำแนะนำจาก-AI-2026-10-03.csv; was financial.general_ledger-2026-10-03.csv). Also replaced a literal BOM
+character inside a round-1 test string with `﻿`. Tests: CSV logic red 2 / 2 → 4 / 0; export file name red
+35 / 1 → 36 / 0.
