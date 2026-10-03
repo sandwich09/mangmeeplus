@@ -3012,7 +3012,7 @@ describe('ProcessLineWebhookUseCase', () => {
       await useCase.execute({ ...BASE_EVENT });
 
       assert.equal(sentMessages[0].type, 'text');
-      assert.match(replies[0] ?? '', /ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน/);
+      assert.match(replies[0] ?? '', /ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน/);
       assert.doesNotMatch(JSON.stringify(sentMessages), /co-owned/);
     });
 
@@ -3025,7 +3025,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await useCase.execute({ ...BASE_EVENT });
 
-      assert.match(replies[0] ?? '', /ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน/);
+      assert.match(replies[0] ?? '', /ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน/);
       assert.doesNotMatch(replies[0] ?? '', /เชื่อมต่อบัญชี/, 'never ask a linked employee to link again');
       // Same privacy rule as the web banner: staff see no package, date, price or contact detail.
       assert.doesNotMatch(replies[0] ?? '', /098-256-5628|company-1|billing/);
@@ -4386,9 +4386,9 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.equal(sentMessages[0].type, 'flex');
       assert.equal(sentMessages[0].contents.footer, undefined, 'no package button for a member');
       assert.match(sentMessages[0].altText, /ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง ตอนนี้ครบแล้วค่ะ/);
-      assert.match(sentMessages[0].altText, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
+      assert.match(sentMessages[0].altText, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
       assert.equal(sentMessages[1].type, 'text');
-      assert.match(sentMessages[1].text, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
+      assert.match(sentMessages[1].text, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
       assert.doesNotMatch(JSON.stringify(sentMessages), /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
     });
 
@@ -5307,7 +5307,7 @@ describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion 
 
     const rendered = JSON.stringify(h.sentMessages);
     assert.match(rendered, /เครดิต AI ของเดือนนี้หมดแล้วค่ะ/);
-    assert.match(rendered, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
+    assert.match(rendered, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
     assert.doesNotMatch(rendered, /ดูแพ็กเกจ|ขอเปลี่ยนแพ็กเกจ|โปรโมชั่น/);
     assert.equal(h.sentMessages[0].contents.footer, undefined);
   });
@@ -5524,7 +5524,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
 
       const card = h.sentMessages[0];
       assert.deepEqual((card.contents.footer?.contents ?? []).map((button: any) => button.action.label), buttons);
-      if (buttons.length === 0) assert.match(card.altText, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
+      if (buttons.length === 0) assert.match(card.altText, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
     }
   });
 
@@ -5592,7 +5592,7 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
             assert.equal(turn.delivered[0].type, 'flex', 'the card, never the try-again line');
             assert.match(turn.delivered[0].canonicalText, sentence);
             assert.deepEqual((turn.delivered[0].contents.footer?.contents ?? []).map((button: any) => button.action.label), buttons);
-            if (buttons.length === 0) assert.match(turn.delivered[0].canonicalText, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ$/);
+            if (buttons.length === 0) assert.match(turn.delivered[0].canonicalText, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ$/);
             assert.equal(turn.final.status, status);
             assert.equal(turn.final.errorCode, code);
           }
@@ -8253,7 +8253,7 @@ describe('LINE: ถามส่วนลด (sales-event spec §8.1, Owner UAT 2
   it('someone who cannot choose the package is told who asks; the package button needs a shop that can use it now', async () => {
     const member = discountLane({ lineEventDiscount: async () => { throw new ForbiddenException('ต้องได้รับสิทธิ์จัดการแพ็กเกจบริษัท'); } });
     await member.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-member', messageText: 'ส่วนลดค่ามั่งมี' });
-    assert.equal(member.replies[0], 'ส่วนลดจากงานใช้ตอนซื้อแพ็กเกจของร้าน เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจสอบถามในแชทนี้ได้เลยค่ะ');
+    assert.equal(member.replies[0], 'ส่วนลดจากงานใช้ตอนซื้อแพ็กเกจของร้าน เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจสอบถามในแชทนี้ได้เลยค่ะ');
     const paying = discountLane({ lineEventDiscount: async () => ({ ...view, path: 'CREDIT' }) });
     await paying.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-discount-paying', messageText: 'ส่วนลด' });
     assert.match(paying.sentMessages[0].contents.body.contents[1].text, /ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ/);

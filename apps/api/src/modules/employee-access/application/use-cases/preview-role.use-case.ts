@@ -5,6 +5,7 @@ import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-con
 import { compileRole, summarizeCapabilities, toEffectivePermissions } from '../../domain/logic/capability.logic';
 import { ownerGatedGrantViolation, platformOnlyRoleRefused } from '../../domain/logic/employee-access.logic';
 import { loadEntitledFeatureKeys } from '../entitlement.helper';
+import { companyRoleReadWhere } from '../company-role-read-where';
 
 export type PreviewRoleCommand = RolePreviewInput & {
   companyId: string;
@@ -19,9 +20,10 @@ export class PreviewRoleUseCase {
   async execute(cmd: PreviewRoleCommand): Promise<RolePreviewResult> {
     const entitled = await loadEntitledFeatureKeys(this.prisma, cmd.companyId);
     const role = cmd.roleId ? await this.prisma.client.role.findFirst({
-      where: { id: cmd.roleId, OR: [{ scopeKey: 'system' }, { scopeKey: cmd.companyId }] },
+      where: { id: cmd.roleId, ...companyRoleReadWhere(cmd.companyId) },
       include: { permissions: { select: { permission: { select: { key: true } } } } },
     }) : null;
+    if (cmd.roleId && !role) throw new NotFoundException('Role not found');
     // RB-34: the diff below would hand a shop the permission set of a platform-only role.
     if (role && platformOnlyRoleRefused(role.key, cmd.companyId === PLATFORM_TENANT_ID)) throw new NotFoundException('Role not found');
     const granterScope = cmd.isOwner ? null : new Set(cmd.granterPermissionKeys);

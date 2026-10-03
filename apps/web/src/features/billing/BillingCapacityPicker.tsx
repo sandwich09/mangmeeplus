@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useId, useRef, useState } from 'react';
-import { PLAN_TIER_PRESETS, type PlanTierKey, type BillingCapacityOptions, type BillingCapacitySelection } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, PLAN_TIER_PRESETS, type PlanTierKey, type BillingCapacityOptions, type BillingCapacitySelection } from '@watchdog-bms/contracts';
 import { MangmeeBadge } from '@/common/components/mangmee';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { CheckCircleIcon } from '@/common/icons';
@@ -59,7 +59,7 @@ export default function BillingCapacityPicker({ options, repair, scheduledAt, cu
         {options.branches.some(branch => !branch.required) && <button ref={branchesToggle} type="button" className={button} aria-expanded={showAdditionalBranches} aria-controls={branchesListId} onClick={() => setShowAdditionalBranches(value => !value)}>{showAdditionalBranches ? 'ซ่อนสาขาที่ยังไม่เลือก' : remainingBranches > 0 ? 'เลือกสาขาเพิ่ม' : 'ดูสาขาที่ไม่ได้เลือก'}</button>}
         {remainingBranches > 0 && <p className="text-sm text-gray-500">เลือกเพิ่มได้อีก {remainingBranches} สาขา หรือเปิดใช้งานภายหลังที่เมนูสาขา</p>}
       </fieldset>
-      <fieldset disabled={busy} className="min-w-0 space-y-2"><legend className="mb-2 font-semibold">ผู้ใช้ <span className="ml-2 text-sm font-normal text-gray-500">เลือก {members.length} / {options.employeeLimit} รวมเจ้าของ</span></legend>
+      <fieldset disabled={busy} className="min-w-0 space-y-2"><legend className="mb-2 font-semibold">ผู้ใช้ <span className="ml-2 text-sm font-normal text-gray-500">เลือก {members.length} / {options.employeeLimit} รวม{THAI_SYSTEM_ROLE_NAMES.OWNER}</span></legend>
         <div id={membersListId} className="space-y-2">{options.memberships.filter(member => showAdditionalMembers || members.some(m => m.id === member.id)).map(member => {
           const selected = members.find(m => m.id === member.id);
           const atLimit = !selected && members.length >= options.employeeLimit;
@@ -84,7 +84,7 @@ export default function BillingCapacityPicker({ options, repair, scheduledAt, cu
     </div>
     <div className="space-y-2 border-t border-gray-200 pt-4">
       {suspendedBranches + suspendedMembers > 0 ? <><p className="font-medium">เมื่อเริ่มแพ็กเกจใหม่ จะพัก {suspendedBranches} สาขา · {suspendedMembers} ผู้ใช้</p><p className="text-sm text-gray-500">รายการที่ไม่เลือกจะถูกพัก ข้อมูลและเอกสารเดิมยังอยู่ เปิดกลับได้จากเมนูสาขาหรือพนักงาน ภายในจำนวนที่แพ็กเกจรองรับ</p></> : <p className="text-sm text-gray-500">คงสาขาและผู้ใช้ทั้งหมด ไม่มีรายการที่ถูกพัก</p>}
-      {!valid && <p role="status" className="text-sm text-amber-800">ต้องคงสำนักงานใหญ่และเจ้าของ เลือกไม่เกินจำนวนที่แพ็กเกจรองรับ และกำหนดสาขาที่มีสิทธิ์ให้ผู้ใช้ทุกคน</p>}
+      {!valid && <p role="status" className="text-sm text-amber-800">ต้องคงสำนักงานใหญ่และ{THAI_SYSTEM_ROLE_NAMES.OWNER} เลือกไม่เกินจำนวนที่แพ็กเกจรองรับ และกำหนดสาขาที่มีสิทธิ์ให้ผู้ใช้ทุกคน</p>}
       {blockedByWork && <p className="text-sm text-amber-800">มีรายการเบิกหรืออนุมัติค้าง ทำให้จำนวนที่ต้องคงไว้เกินแพ็กเกจ กรุณา<a className="font-semibold underline" href={`/companies/${options.companyId}/reimbursements`}>จัดการรายการเบิกค้าง</a>ก่อน หรือเลือกแพ็กเกจที่รองรับจำนวนปัจจุบัน</p>}
     </div>
     <label className="flex min-h-11 items-start gap-3 py-2"><input type="checkbox" className={checkbox} checked={accepted} disabled={busy} onChange={event => setAccepted(event.target.checked)} />ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว</label>

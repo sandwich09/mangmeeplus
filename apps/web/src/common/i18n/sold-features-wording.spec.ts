@@ -14,6 +14,21 @@ import { billingPurchaseModeLabel } from '../../features/billing/billing-display
 import { filterSettingsMenuItems, filterSettingsSidebarItems } from '../../features/web-core-workspace/settings-menu.logic';
 
 const source = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+
+for (const path of [
+  '../app/billing/companies/page.tsx', 'common/i18n/workspace-dictionary.ts',
+  'features/plan-term/plan-term.logic.ts', 'features/billing/billing-error-text.ts',
+  'features/billing/BillingPage.tsx', 'features/billing/BillingCapacityPicker.tsx', 'features/company-profile/CompanyProfilePage.tsx',
+  'features/external-signup/SignupPage.tsx', 'features/external-signup/SignupWelcomePage.tsx',
+  'features/employee-access/AddEmployeePrototypePage.tsx',
+  'features/expenses/ExpensesPages.tsx',
+]) {
+  test(`sold owner-role guidance uses the contracts name: ${path}`, () => {
+    const text = source(path);
+    assert.deepEqual(text.match(/เจ้าของบริษัท|เจ้าของร้าน|เจ้าของธุรกิจ|(?:รวม|และ)เจ้าของ(?!กิจการ)|เจ้าของหรือผู้ดูแลสิทธิ์|เจ้าของอีกบริษัท/gu) ?? [], [], path);
+    assert.match(text, /THAI_SYSTEM_ROLE_NAMES\.OWNER/, path);
+  });
+}
 const remainingEnglish = (text: string) => text.replace(/\{\w+\}/g, '').replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, '').match(/[A-Za-z]+/g) ?? [];
 function thaiLiterals(path: string): string[] {
   const ast = ts.createSourceFile(path, source(path), ts.ScriptTarget.Latest, true);

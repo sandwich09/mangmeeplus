@@ -5,7 +5,7 @@ import { billingProfileReturnHref } from '@/features/billing/billing-profile-nav
 import { billingApi } from '@/features/billing/billing.api';
 import { AccountEmailOtpPanel } from '@/features/auth/AccountEmailOtpPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { todayCivilDate, DBD_TSIC_ACTIVITIES, COMPANY_BUSINESS_TYPE_OTHER_MAX, type CompanyIdentityResponse, type CompanyLegalAddress, type VatRegistrationStatus } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, todayCivilDate, DBD_TSIC_ACTIVITIES, COMPANY_BUSINESS_TYPE_OTHER_MAX, type CompanyIdentityResponse, type CompanyLegalAddress, type VatRegistrationStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { ChevronDownIcon } from '@/common/icons';
@@ -371,8 +371,8 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             <div className="mb-4">
               <Banner tone="note">
                 {full
-                  ? 'บัญชีของคุณดูข้อมูลนี้ได้อย่างเดียว ถ้าต้องการแก้ไข ให้เจ้าของร้านเป็นคนแก้นะคะ'
-                  : 'บัญชีของคุณเห็นข้อมูลนี้ได้บางส่วน ถ้าต้องการดูหรือแก้ไขทั้งหมด ให้เจ้าของร้านเป็นคนทำนะคะ'}
+                  ? `บัญชีของคุณดูข้อมูลนี้ได้อย่างเดียว ถ้าต้องการแก้ไข ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}เป็นคนแก้นะคะ`
+                  : `บัญชีของคุณเห็นข้อมูลนี้ได้บางส่วน ถ้าต้องการดูหรือแก้ไขทั้งหมด ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}เป็นคนทำนะคะ`}
               </Banner>
             </div>
           )}
@@ -458,7 +458,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               <p className="mt-1 mb-3 text-sm text-gray-600">
                 {canManageVat
                   ? 'ตอบไว้เพื่อให้ระบบออกเอกสารภาษีได้ถูกต้องค่ะ แล้วกดปุ่มบันทึกด้านล่างครั้งเดียว'
-                  : 'บัญชีของคุณดูได้อย่างเดียว ให้เจ้าของร้านหรือผู้ทำบัญชีเป็นคนตอบนะคะ'}
+                  : `บัญชีของคุณดูได้อย่างเดียว ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ทำบัญชีเป็นคนตอบนะคะ`}
               </p>
               {/* The answer is form state, nothing more. It used to save on change and reload the
                   page's data, which re-seeded — and so erased — everything typed above (UAT

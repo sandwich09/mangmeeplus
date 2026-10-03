@@ -522,7 +522,7 @@ describe('P10-L webhook doors', () => {
     const h = harness();
     await h.useCase.execute(event(EMPLOYEE_DOOR_COMMAND));
 
-    assert.match(rendered(h), /ให้เจ้าของร้านเปิดเมนู/);
+    assert.match(rendered(h), /ให้เจ้าของกิจการเปิดเมนู/);
     assert.match(rendered(h), /ไม่ต้องสมัครร้านใหม่/);
     assert.equal(outcome(h), 'line_employee_door');
   });
@@ -837,7 +837,7 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
     await h.useCase.execute(event(EMPLOYEE_DOOR_COMMAND));
 
     assert.deepEqual(h.supportUpdates, []);
-    assert.match(rendered(h), /ให้เจ้าของร้านเปิดเมนู/);
+    assert.match(rendered(h), /ให้เจ้าของกิจการเปิดเมนู/);
     assert.equal(outcome(h), 'line_employee_door');
   });
 
@@ -1459,7 +1459,7 @@ describe('P10-L package change from LINE (§3.7)', () => {
     await h.useCase.execute(event('ขอเปลี่ยนแพ็คเกจ'));
 
     assert.equal(h.packageChanges.length, 0);
-    assert.match(rendered(h), /ต้องให้เจ้าของร้านเป็นคนขอ/);
+    assert.match(rendered(h), /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจให้พิมพ์/);
     assert.equal(outcome(h), 'package_change_denied');
   });
 
@@ -1599,7 +1599,7 @@ describe('โปรโมชั่น card leads into the app, per audience', ()
     await h.useCase.execute(event('โปรโมชั่น'));
 
     assert.equal(rendered(h).includes('/companies/co-1/billing'), false, 'the package page is owner-only');
-    assert.match(rendered(h), /เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
+    assert.match(rendered(h), /เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจ/);
     assert.deepEqual(actions(h).map((action: any) => action.label), ['ดูรายละเอียดบนเว็บ', 'คุยกับทีมงาน']);
     assert.equal(outcome(h), 'staff_menu_promotion');
   });

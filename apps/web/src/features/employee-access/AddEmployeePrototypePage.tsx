@@ -3,7 +3,7 @@
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ALL_BRANCH_ROLE_KEYS, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, ALL_BRANCH_ROLE_KEYS, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary } from '@watchdog-bms/contracts';
 import { ThaiAddressFields } from '@/common/components/field/ThaiAddressFields';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
@@ -660,7 +660,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                     {selectedRoles.map((role) => <span key={role.id} className="inline-flex rounded-[9px] border border-gray-200 bg-gray-50 px-3.5 py-2 text-[14.5px] font-extrabold text-gray-500">{role.name}</span>)}
                   </div>
                   <div className="mt-2 text-sm font-medium text-gray-400">
-                    {editingSelf ? 'บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้' : 'บทบาทระดับนี้ต้องให้เจ้าของหรือผู้ดูแลสิทธิ์เป็นผู้เปลี่ยน'}
+                    {editingSelf ? 'บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้' : `บทบาทระดับนี้ต้องให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้ดูแลสิทธิ์เป็นผู้เปลี่ยน`}
                   </div>
                 </>
               ) : (
@@ -789,7 +789,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
           {confirmExistingUser && (
             <div className="mt-4 rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               <div className="font-extrabold">ชื่อผู้ใช้นี้มีบัญชีในระบบอยู่แล้ว</div>
-              <div className="mt-1 font-medium leading-6">หากเป็นคนเดียวกัน (เช่น เจ้าของอีกบริษัท) กด “ยืนยันเพิ่มเข้าบริษัท” เพื่อเพิ่มเข้าบริษัทนี้โดยใช้บัญชีเดิม — พนักงานจะเข้าระบบด้วยรหัสผ่านเดิม ไม่มีการตั้งรหัสใหม่ · <b>ต้องกรอกอีเมล (ขั้นตอนช่องทางติดต่อ) ที่ไม่ซ้ำกับอีเมลบัญชีเดิม</b> · หากเป็นคนละคน กรุณาแก้ไขชื่อผู้ใช้ให้ไม่ซ้ำ</div>
+              <div className="mt-1 font-medium leading-6">หากเป็นคนเดียวกัน (เช่น {THAI_SYSTEM_ROLE_NAMES.OWNER}อีกบริษัท) กด “ยืนยันเพิ่มเข้าบริษัท” เพื่อเพิ่มเข้าบริษัทนี้โดยใช้บัญชีเดิม — พนักงานจะเข้าระบบด้วยรหัสผ่านเดิม ไม่มีการตั้งรหัสใหม่ · <b>ต้องกรอกอีเมล (ขั้นตอนช่องทางติดต่อ) ที่ไม่ซ้ำกับอีเมลบัญชีเดิม</b> · หากเป็นคนละคน กรุณาแก้ไขชื่อผู้ใช้ให้ไม่ซ้ำ</div>
               <div className="mt-2.5 flex flex-wrap gap-2">
                 <button type="button" onClick={() => void confirmLinkExistingUser()} disabled={saving} aria-busy={Boolean(saving)} className="flex h-10 items-center justify-center rounded-lg bg-brand-500 px-4 text-sm font-extrabold text-white hover:bg-brand-600 disabled:opacity-60">ยืนยันเพิ่มเข้าบริษัท</button>
                 <button type="button" onClick={() => { setConfirmExistingUser(false); setStep(1); }} className="flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-extrabold text-gray-600 hover:bg-gray-50">แก้ไขชื่อผู้ใช้</button>
