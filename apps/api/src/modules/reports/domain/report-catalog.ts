@@ -1,4 +1,4 @@
-import { REPORT_PERMISSION_KEYS, type ReportDatasetDefinitionDto } from '@watchdog-bms/contracts';
+import { LEDGER_ACCOUNT_CLASS_LABELS as LEDGER_WORDS, REPORT_PERMISSION_KEYS, type ReportDatasetDefinitionDto } from '@watchdog-bms/contracts';
 
 const runReportPermissions = [REPORT_PERMISSION_KEYS.CATALOG_READ, REPORT_PERMISSION_KEYS.DATASET_READ, REPORT_PERMISSION_KEYS.QUERY_RUN];
 
@@ -74,7 +74,7 @@ export const REPORT_CATALOG: CatalogDefinition[] = [
     code: 'financial.balance_sheet',
     version: 1,
     title: 'งบแสดงฐานะการเงิน',
-    description: 'สินทรัพย์ หนี้สิน และส่วนของเจ้าของจากรายการบัญชีที่ผ่านรายการแล้ว',
+    description: `${LEDGER_WORDS.ASSET} ${LEDGER_WORDS.LIABILITY} และ${LEDGER_WORDS.EQUITY}จากรายการบัญชีที่ผ่านรายการแล้ว`,
     category: 'FINANCIAL',
     sourceModule: 'ledger',
     requiredReportPermissions: runReportPermissions,

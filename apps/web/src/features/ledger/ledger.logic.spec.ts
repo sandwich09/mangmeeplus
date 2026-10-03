@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { periodCloseCheckCopy } from './ledger.logic.js';
 
@@ -96,5 +98,23 @@ describe('claim money on the period close check', () => {
     const { readFileSync } = await import('node:fs');
     const page = readFileSync(new URL('./LedgerReportsPage.tsx', import.meta.url), 'utf8');
     assert.match(page, /links\?\.map\(\(link\) => \(\s*<a key=\{link\.path\} className="flex min-h-11 items-center[^"]*" href=\{`\/companies\/\$\{companyId\}\$\{link\.path\}`\}>\{link\.label\} →<\/a>/);
+  });
+});
+
+// One word per account class, from LEDGER_ACCOUNT_CLASS_LABELS (contracts): the chart of accounts and the
+// statements card show the same words as the report rows.
+describe('ledger pages name account classes from the shared list', () => {
+  const page = (file: string) => readFileSync(join(__dirname, file), 'utf8');
+
+  it('has no copy of its own on the chart of accounts', () => {
+    const chart = page('ChartOfAccountsSettingsPage.tsx');
+    assert.doesNotMatch(chart, /ACCOUNT_CLASS_LABELS: Record<LedgerAccountClass, string> = \{/);
+    assert.match(chart, /LEDGER_ACCOUNT_CLASS_LABELS/);
+  });
+
+  it('labels the statements card with the shared class words', () => {
+    const reports = page('LedgerReportsPage.tsx');
+    for (const word of ['รายได้', 'ต้นทุน', 'ค่าใช้จ่าย', 'หนี้สิน', 'ส่วนของเจ้าของ']) assert.equal(reports.includes(`>${word}</dt>`), false, word);
+    for (const key of ['REVENUE', 'COST', 'EXPENSE', 'LIABILITY', 'EQUITY']) assert.match(reports, new RegExp(`LEDGER_ACCOUNT_CLASS_LABELS\\.${key}\\}`), key);
   });
 });

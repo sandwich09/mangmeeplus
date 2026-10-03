@@ -160,3 +160,20 @@ only), and the release sync against a database.
 Next: controller reviews, runs the report e2e and a browser pass (reports, automation, connections tab),
 and deploys the assistant with the web (the reports pin moved). The rule renames happen at the next
 release's template sync.
+
+## Batch A round 2 (2026-10-03, coordinator; closes batch A)
+
+### R2: one word for equity (and for income tax)
+
+`LEDGER_ACCOUNT_CLASS_LABELS` (contracts): EQUITY ส่วนของผู้ถือหุ้น → ส่วนของเจ้าของ, and TAX_EXPENSE
+ภาษีเงินได้นิติบุคคล → ภาษีเงินได้, both true for a sole proprietor, a partnership and a company. TAX_EXPENSE had
+to be chosen too: the chart-of-accounts page kept its own copy that already said ภาษีเงินได้, and one list
+needs one word. Where the shared label now shows: report rows and CSV (trial-balance class, P&L and
+balance-sheet sections, their chart labels); the balance-sheet catalogue description (built from the labels);
+the chart-of-accounts settings page (class filter and column; its own copy deleted); the ledger reports
+page's statements card (รายได้, ต้นทุน, ค่าใช้จ่าย, หนี้สิน, ส่วนของเจ้าของ were inline words); the assistant's
+ledger report fact (สินทรัพย์, หนี้สิน, ส่วนของเจ้าของ). The API's DTO validation uses only the keys. Not changed:
+the SME chart-of-accounts template's account names ภาษีเงินได้นิติบุคคล (6000-00) and ภาษีเงินได้นิติบุคคลค้างจ่าย
+(2132-05), which are company data seeded into charts, and the CIT tax-type words (correct for CIT). Spec:
+`double-entry-ledger-closing-spec.md` §11.2. Tests: report adapters red 34 / 1 → 35 / 0; web ledger red 9 / 2 →
+11 / 0; assistant business-read semantics red 192 / 1 → 193 / 0.

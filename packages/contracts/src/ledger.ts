@@ -403,14 +403,16 @@ export type PeriodCloseRunSummary = {
 };
 
 // ─── Thai label constants ─────────────────────────────────────────────────────
+// One word per class for every page and report. A shop may be a sole proprietor, a partnership or a company,
+// so the words are the ones true for all three: ส่วนของเจ้าของ, not ส่วนของผู้ถือหุ้น; ภาษีเงินได้, not ภาษีเงินได้นิติบุคคล.
 export const LEDGER_ACCOUNT_CLASS_LABELS: Record<LedgerAccountClass, string> = {
   ASSET:       'สินทรัพย์',
   LIABILITY:   'หนี้สิน',
-  EQUITY:      'ส่วนของผู้ถือหุ้น',
+  EQUITY:      'ส่วนของเจ้าของ',
   REVENUE:     'รายได้',
   COST:        'ต้นทุน',
   EXPENSE:     'ค่าใช้จ่าย',
-  TAX_EXPENSE: 'ภาษีเงินได้นิติบุคคล',
+  TAX_EXPENSE: 'ภาษีเงินได้',
   SUSPENSE:    'บัญชีพัก',
 };
 

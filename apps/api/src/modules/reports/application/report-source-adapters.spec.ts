@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ReportDatasetDefinitionDto, RequestContext } from '@watchdog-bms/contracts';
+import { LEDGER_ACCOUNT_CLASS_LABELS, type ReportDatasetDefinitionDto, type RequestContext } from '@watchdog-bms/contracts';
 import { findReportDefinition, REPORT_CATALOG } from '../domain/report-catalog';
 import { buildReportCsv } from '../domain/report-csv.logic';
 import { reportResultForPeople } from '../domain/report-row-text.logic';
@@ -538,4 +538,17 @@ describe('report rows and CSV a person reads', () => {
       assert.deepEqual(raw.rows, kept);
     });
   }
+});
+
+// A shop may be a sole proprietor, a partnership or a company: ส่วนของเจ้าของ and ภาษีเงินได้ are true for each.
+describe('one word for equity and for income tax', () => {
+  it('names them with the shared ledger words on the statements and in the balance-sheet description', () => {
+    assert.equal(LEDGER_ACCOUNT_CLASS_LABELS.EQUITY, 'ส่วนของเจ้าของ');
+    assert.equal(LEDGER_ACCOUNT_CLASS_LABELS.TAX_EXPENSE, 'ภาษีเงินได้');
+    assert.ok(findReportDefinition('financial.balance_sheet')!.description.includes(LEDGER_ACCOUNT_CLASS_LABELS.EQUITY));
+    const section = (code: string, value: string) => reportResultForPeople({ dataset: enabled(code), chart: undefined,
+      columns: [{ key: 'section', label: 'หมวด', type: 'string' }], rows: [{ section: value }] }).rows[0]!.section;
+    assert.equal(section('financial.balance_sheet', 'EQUITY'), 'ส่วนของเจ้าของ');
+    assert.equal(section('financial.profit_and_loss', 'TAX_EXPENSE'), 'ภาษีเงินได้');
+  });
 });
