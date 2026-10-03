@@ -529,7 +529,7 @@ for (const width of [1280, 390]) {
     expect(attempts).toBe(1);
     await dialog.getByRole('button', { name: 'สร้างสาขาใหม่ก่อน' }).click();
     await expect(page.getByRole('dialog', { name: 'เพิ่มสาขา', exact: true })).toBeVisible();
-    await dialog.getByLabel('รหัสสาขา (A-Z, 0-9)', { exact: true }).fill('TESTUX');
+    await dialog.getByLabel('รหัสสาขา (ตัวอักษรอังกฤษหรือตัวเลข)', { exact: true }).fill('TESTUX');
     await dialog.getByLabel('ชื่อสาขา', { exact: true }).fill('สาขาทดสอบ ไม่บันทึกจริง');
     await dialog.getByLabel('รหัสสาขาภาษี (5 หลัก ไม่บังคับ)', { exact: false }).fill('123');
     await expect(dialog.getByRole('button', { name: 'บันทึกสาขาใหม่' })).toBeDisabled();

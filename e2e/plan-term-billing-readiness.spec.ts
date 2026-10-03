@@ -243,7 +243,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     await authedPage.goto(`/companies/${rig.companyId}/settings/branches`);
     await expect(authedPage.getByRole('heading', { name: 'สาขา', exact: true })).toBeVisible();
     await authedPage.getByRole('button', { name: '+ เพิ่มสาขา', exact: true }).click();
-    await authedPage.getByLabel('รหัสสาขา (A-Z, 0-9)').fill('AFTERPAY');
+    await authedPage.getByLabel('รหัสสาขา (ตัวอักษรอังกฤษหรือตัวเลข)').fill('AFTERPAY');
     await authedPage.getByLabel('ชื่อสาขา', { exact: true }).fill('Created after simulated payment');
     await authedPage.getByRole('button', { name: 'บันทึกสาขาใหม่', exact: true }).click();
     await expect(authedPage.getByText('Created after simulated payment', { exact: true })).toBeVisible();
