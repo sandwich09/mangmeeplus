@@ -854,9 +854,9 @@ describe('the edit page speaks of a reason for sending back only for a draft som
     const plain = editPage(null);
     assert.ok(plain.includes('แก้ไขคำขอเบิก') && plain.includes(JUST_EDITED), JSON.stringify(plain.slice(0, 12)));
     assert.equal(plain.some((text) => text.includes('ส่งกลับ')), false, 'nobody sent it back');
-    const returned = editPage('ฝ่ายการเงินขอให้แก้ไข: แนบใบเสร็จตัวจริง');
+    const returned = editPage('ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน: แนบใบเสร็จตัวจริง');
     assert.ok(returned.includes(SENT_BACK));
-    assert.ok(returned.includes('⚠ ฝ่ายการเงินขอให้แก้ไข: แนบใบเสร็จตัวจริง'), 'the reason is on the page that speaks of it');
+    assert.ok(returned.includes('⚠ ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน: แนบใบเสร็จตัวจริง'), 'the reason is on the page that speaks of it');
     assert.equal(returned.includes(JUST_EDITED), false);
   });
 
@@ -864,8 +864,11 @@ describe('the edit page speaks of a reason for sending back only for a draft som
     const step = (status: string, assignedAt: string, extra: object = {}) => ({ id: `step-${assignedAt}`, sequenceNo: 1, status, assignedAt, ...extra });
     assert.equal(draftSentBackNote({ ...draft }), null, 'never sent');
     assert.equal(draftSentBackNote({ ...draft, approvalSteps: [] }), null);
-    assert.equal(draftSentBackNote({ ...draft, financeReviewStatus: 'NEEDS_INFO', financeReviewNote: 'แนบใบเสร็จตัวจริง' }), 'ฝ่ายการเงินขอให้แก้ไข: แนบใบเสร็จตัวจริง');
-    assert.equal(draftSentBackNote({ ...draft, financeReviewStatus: 'NEEDS_INFO' }), 'ฝ่ายการเงินขอให้แก้ไข');
+    // Whoever holds the finance-review right returns a claim, so the note names the step and that person, not a department.
+    assert.equal(draftSentBackNote({ ...draft, financeReviewStatus: 'NEEDS_INFO', financeReviewNote: 'แนบใบเสร็จตัวจริง' }), 'ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน: แนบใบเสร็จตัวจริง');
+    assert.equal(draftSentBackNote({ ...draft, financeReviewStatus: 'NEEDS_INFO' }), 'ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน');
+    assert.equal(draftSentBackNote({ ...draft, financeReviewStatus: 'NEEDS_INFO', financeReviewedByName: 'อรอนงค์ ใจดี', financeReviewNote: 'แนบใบเสร็จตัวจริง' }),
+      'ส่งกลับให้แก้ไขที่ขั้นตรวจการเงิน โดย อรอนงค์ ใจดี: แนบใบเสร็จตัวจริง');
     // Rejected, then reopened by its requester: the step it was last put before says why.
     const rejected = step('REJECTED', '2026-09-28T02:00:00.000Z', { rejectionReason: 'ยอดไม่ตรงกับใบเสร็จ' });
     assert.equal(draftSentBackNote({ ...draft, approvalSteps: [rejected] }), 'ผู้อนุมัติปฏิเสธคำขอนี้: ยอดไม่ตรงกับใบเสร็จ');

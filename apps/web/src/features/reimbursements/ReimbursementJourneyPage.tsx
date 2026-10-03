@@ -74,7 +74,7 @@ const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string;
   },
   'finance-block': {
     title: 'ระงับการจ่าย', confirmLabel: 'ระงับการจ่าย', success: 'ระงับการจ่ายแล้ว', danger: true,
-    description: 'ระบุเหตุผล ใบเบิกจะค้างที่ขั้นตรวจการเงินจนกว่าฝ่ายการเงินจะอนุมัติจ่ายหรือส่งกลับให้แก้ไข',
+    description: 'ระบุเหตุผล ใบเบิกจะค้างที่ขั้นตรวจการเงินจนกว่าผู้ตรวจการเงินจะอนุมัติจ่ายหรือส่งกลับให้แก้ไข',
   },
   'resolve-duplicate': {
     title: 'ปลดรายการซ้ำ', confirmLabel: 'ยืนยันว่าไม่ซ้ำ', success: 'ปลดรายการซ้ำแล้ว',
