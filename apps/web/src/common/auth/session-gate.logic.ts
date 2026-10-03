@@ -1,5 +1,6 @@
 // Pure decisions for the server-side session gates (login route, company/system layouts).
 // Framework-free so they stay unit-testable; the callers own the cookie/fetch/redirect plumbing.
+import { EXECUTIVE_ROLE_KEYS } from '@watchdog-bms/contracts';
 import { sanitizeNextPath } from './middleware.logic';
 import type { WebSession } from '../models/web-session.model';
 
@@ -64,9 +65,10 @@ export function canOpenSystemExecutive(session: WebSession, path: string): boole
   return Boolean(pathname && (pathname === EXECUTIVE_HOME_PATH || pathname.startsWith(`${EXECUTIVE_HOME_PATH}/`)))
     && session.permissions.includes('system.executive.read');
 }
+/** Any executive role (read, export, contacts) or report permission, and nothing beyond the report and the own account. */
 export function isExecutiveOnlySession(session: WebSession): boolean {
-  return (session.roles.includes('MANGMEE_EXECUTIVE') || session.permissions.includes('system.executive.read')) && !isSystemAdmin(session)
-    && session.permissions.every(key => key.startsWith('system.executive.') || key.startsWith('account.'));
+  return (session.roles.some(role => (EXECUTIVE_ROLE_KEYS as readonly string[]).includes(role)) || session.permissions.some(key => key.startsWith('system.executive.')))
+    && !isSystemAdmin(session) && session.permissions.every(key => key.startsWith('system.executive.') || key.startsWith('account.'));
 }
 
 // A landing target that lands back on /login (or on '/', which redirects to /login) would bounce
