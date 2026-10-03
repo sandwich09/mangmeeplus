@@ -135,7 +135,7 @@ export function CompaniesContent({ data, nav, selected, select }: { data: Execut
       <div key="usage"><p>{W.receiptCount}</p><Figure value={sourceCount(row.metrics.expenseReceiptCountInPeriod, data.coverage.usage)} /><p>{LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown}</p>
         <DetailValues rows={[[W.days, <Figure key="days" value={sourceCount(row.metrics.activeDays, data.coverage.usage)} />], [W.users, <Figure key="users" value={sourceCount(row.metrics.activeUsers, data.coverage.usage)} />], [W.documents, <Figure key="docs" value={sourceCount(row.metrics.documents, data.coverage.usage)} />], [W.ai, <Figure key="ai" value={sourceCount(row.metrics.aiRequests, data.coverage.usage)} />], [W.lastActivity, reportDateTime(row.lastActivityAt)]]} />
       </div>,
-      <div key="money"><Figure value={sourceMoney(row.metrics.netReceiptsSatang, data.coverage.money)} moneyValue netValue />{row.rank !== undefined && <p>{W.ranking} {row.rank}</p>}{data.sort.sortBy === 'netReceipts' && <p>{W.cumulativeShare} {row.cumulativeShare ? ratioText(row.cumulativeShare) : W.notInShare}</p>}</div>,
+      <div key="money"><Figure value={sourceMoney(row.metrics.netReceiptsSatang, data.coverage.money)} moneyValue netValue />{row.rank !== undefined && <p>{W.rank} {row.rank}</p>}{data.sort.sortBy === 'netReceipts' && <p>{W.cumulativeShare} {row.cumulativeShare ? ratioText(row.cumulativeShare) : W.notInShare}</p>}</div>,
     ] }))} />}
     <p className="text-sm">{W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
     {data.sort.sortBy === 'netReceipts' && <p className="text-sm">{W.tieOrder}</p>}

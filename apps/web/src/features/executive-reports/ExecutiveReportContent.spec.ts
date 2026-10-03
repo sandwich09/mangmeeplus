@@ -53,9 +53,11 @@ test('overview renders four server metrics, a partial count, and four receipt gr
 });
 test('directory uses the all-result summary rather than row sums and wraps unknown usage instead of inventing zero', async () => {
   const { CompaniesContent } = await content();
-  const data = { ...envelope, summary: { netReceiptsSatang: cash(123450) }, items: [company], pagination: { total: 72 }, sort: { sortBy: 'netReceipts', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
+  const data = { ...envelope, summary: { netReceiptsSatang: cash(123450) }, items: [{ ...company, rank: 4 }], pagination: { total: 72 }, sort: { sortBy: 'netReceipts', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
   const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav, selected: [], select: () => {} }));
   const visible = text(html);
+  // The rank is the place in the chosen order (here by net receipts), not a usage rank.
+  assert.match(visible, /อันดับ 4/); assert.doesNotMatch(visible, /อันดับการใช้/);
   assert.match(visible, /พบ 72 บริษัท/); assert.match(visible, /1,234\.50 บาท/); assert.match(visible, /อย่างน้อย 0/); assert.match(visible, /ข้อมูลการใช้งานไม่ครบ/);
   assert.match(visible, /ผู้ดูแลตั้งแพ็กเกจให้/); assert.match(visible, /คืนเงินมากกว่าเงินรับ/); assert.match(visible, /เฟซบุ๊ก/); assert.match(visible, /สมัครทางไลน์/);
   assert.doesNotMatch(visible, /internal-company|ADMIN_HOLD|MANUAL_TERM|Facebook|LINE/);
