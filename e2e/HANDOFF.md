@@ -124,6 +124,13 @@ corepack pnpm exec playwright test e2e/billing-admin-menu-ux.spec.ts e2e/billing
 - No Stripe request can succeed here and none is made: `STRIPE_SECRET_KEY` stays unset and the
   specs only need the id to match the `BillingAccount.stripeAccountId` rows they insert.
 
+### `plan-term-billing-readiness.spec.ts` needs the LINE web handoff switched on
+
+Start the **API** with `LINE_WEB_HANDOFF_ENABLED=true LINE_LIFF_ID=1234567890-test` (synthetic, as
+in `docs/evidence/stripe-line-web-gap-2026-09-11/README.md`). Without them the handoff exchange
+answers a bare 403 ("LINE login is not enabled."): BC03 lands on `/login?line=handoff-expired`,
+GW02 shows "เปิดหน้าเว็บไม่สำเร็จ", and the GW04 rechecks fail on their `targetPath` assertion.
+
 ---
 
 ## 4. Fixtures, auth & seed data
