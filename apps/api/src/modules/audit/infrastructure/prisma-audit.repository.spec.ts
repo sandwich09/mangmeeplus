@@ -85,6 +85,10 @@ describe('PrismaAuditRepository.getCompanyLogs own-trail filter (RB-38)', () => 
     row('expense.create', 'merged-1'),
   ];
   const platformSide = [
+    row('executive.user.created', 'owner-1'),
+    row('executive.report.read', null),
+    row('executive.company.read', 'both-1'),
+    row('executive.export.created', 'staff-1'),
     row('sales.attribution.flag_reviewed', 'admin-1'),
     row('sales.referral.changed', 'admin-1'),
     row('sales.deal.approved', 'agent-1'),
@@ -145,7 +149,7 @@ describe('PrismaAuditRepository.getCompanyLogs own-trail filter (RB-38)', () => 
     // write with no user (a sweep) is not stopped by who the actor is, only by its action name.
     const modules = join(__dirname, '../..');
     const sources = (readdirSync(modules, { recursive: true, encoding: 'utf8' }) as string[])
-      .filter((file) => /^(sales-console|system-[a-z-]+)\//.test(file) && file.endsWith('.ts') && !file.endsWith('.spec.ts'));
+      .filter((file) => /^(sales-console|executive-business|system-[a-z-]+)\//.test(file) && file.endsWith('.ts') && !file.endsWith('.spec.ts'));
     const actions = sources.flatMap((file) => [...readFileSync(join(modules, file), 'utf8')
       .matchAll(/\baction:\s*[^,\n]*?['`]([a-z_]+\.[a-z0-9_.]*)/g)].map((match) => match[1]!));
     assert.ok(actions.length >= 30, `expected the platform audit writes, found ${actions.length}`);

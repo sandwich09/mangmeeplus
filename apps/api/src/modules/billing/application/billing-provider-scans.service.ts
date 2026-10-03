@@ -16,7 +16,8 @@ const SCHEDULE='CONFIGURE_PROVIDER_SCANS';
 const SCHEDULE_DEFAULTS={enabled:false,intervalHours:24,initialLookbackHours:48};
 type ScheduleConfig=typeof SCHEDULE_DEFAULTS;
 type ScheduleSource=ScheduleConfig & {membershipId:string;actorCompanyId:string};
-function scheduleConfig(value:unknown):ScheduleConfig|null {
+/** Shared with the daily balance scan (billing-settlement.service.ts): one definition of a valid published schedule. */
+export function scheduleConfig(value:unknown):ScheduleConfig|null {
   const input=value as ScheduleConfig|null;
   return input&&typeof input.enabled==='boolean'&&Number.isInteger(input.intervalHours)&&input.intervalHours>=1&&input.intervalHours<=168&&
     Number.isInteger(input.initialLookbackHours)&&input.initialLookbackHours>=1&&input.initialLookbackHours<=672?{enabled:input.enabled,intervalHours:input.intervalHours,initialLookbackHours:input.initialLookbackHours}:null;
