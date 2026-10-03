@@ -357,3 +357,9 @@ Current implementation and measured boundaries are recorded in [local evidence](
 
 - Password reauthentication accepts the existing login/password contract, including passwords longer than128 characters. Do not truncate a password or force an existing user to rotate it solely to link email; request-body and persistent attempt budgets remain enforced.
 - (2026-09-28, DQ2: portal ไม่ตรวจ email proof แล้ว; ยังตรวจ company/customer/settings/authority และ portal config ห้ามแก้อีเมล) Recheck current company/customer/settings/authority/~~email proof~~ after Stripe creates a payment-method portal session and before returning its URL. A concurrent change withholds that capability; an unexposed provider session does not authorize a new charge. Native portal configuration must refuse customer email editing so it cannot bypass account OTP/company recipient consent.
+
+## คำที่ผู้ใช้เห็น — 2026-10-03
+
+หน้าเข้าสู่ระบบ ยืนยันอีเมล และอีเมลบัญชีใช้ “รหัสยืนยัน” หรือ “รหัสยืนยันแบบใช้ครั้งเดียว” แทนตัวย่อภาษาอังกฤษ จำนวนหลัก อายุรหัส และการตรวจตัวตนคงเดิม เมนูรหัสผ่านภาษาไทยใช้ “เปลี่ยนรหัสผ่าน” และภาพตัวอย่างบนหน้าเข้าสู่ระบบระบุ “ตัวอย่าง” ไม่อ้างว่าเป็นข้อมูลร้านแบบสด
+
+Login progress and expiry copy uses “การเข้าสู่ระบบ”, not the technical loanword “เซสชัน”. The shared 401 translator reads the existing Thai dictionary sentence; the LINE QR expiry page uses the same plain-language term without changing the QR/session lifetime.

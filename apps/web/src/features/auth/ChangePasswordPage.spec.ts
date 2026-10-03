@@ -62,7 +62,7 @@ describe('ChangePasswordPage new-password rules', () => {
     const wrongPassword = { statusCode: 400, code: 'current_password_incorrect' };
     assert.equal(localizedErrorMessage(wrongPassword, 'th', overrides), 'รหัสผ่านปัจจุบันไม่ถูกต้อง');
     assert.equal(localizedErrorMessage(wrongPassword, 'en', overrides), 'Current password is incorrect.');
-    assert.equal(localizedErrorMessage({ statusCode: 401 }, 'th', overrides), 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+    assert.equal(localizedErrorMessage({ statusCode: 401 }, 'th', overrides), 'การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่');
   });
 
   it('names the reuse rule in both locales', async () => {

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_CAPABILITY_REPLY_PREFIXES } from '@watchdog-bms/contracts';
@@ -41,7 +43,7 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
 
   it('does not invent capabilities for a member whose permissions open nothing', () => {
     const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH', { permissions: [] });
-    assert.match(reply, /ติดต่อผู้ดูแลระบบของบริษัท/);
+    assert.match(reply, /ผู้มีสิทธิ์จัดการบทบาท/);
     assert.doesNotMatch(reply, /•/);
   });
 
@@ -799,7 +801,7 @@ describe('ResponseComposerAgent – capability help', () => {
   it('falls back honestly when the caller can reach nothing (AC-7)', () => {
     const reply = ask([], ALL_ON);
     assert.doesNotMatch(reply, /^•/mu);
-    assert.match(reply, /ติดต่อผู้ดูแลระบบของบริษัท/);
+    assert.match(reply, /ผู้มีสิทธิ์จัดการบทบาท/);
   });
 
   it('leaks no feature key, permission key, or tool name in either language (AC-8)', () => {
@@ -1016,4 +1018,26 @@ describe('ResponseComposerAgent.composeAnswer – grounded breakdown guard (W-06
     // The grounded amount itself, re-spelled in Thai numerals, is not an invented number.
     assert.notEqual(await agent.polishLanguage(GROUNDED, polished('ยอดทั้งหมด ๑๑,๘๗๕.๐๐ บาท ยังไม่จ่าย ๐'), {}), GROUNDED);
   });
+});
+
+it('sold feature help names an owner permission check without promising a shop feature switch', () => {
+  const agent = new ResponseComposerAgent();
+  const empty = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH', { permissions: [] });
+  assert.doesNotMatch(empty, /ผู้ดูแลระบบของบริษัท/);
+  const reply = agent.compose({
+    status: 'UNROUTABLE', language: 'th', intents: [], requiresHumanReview: false,
+    refusals: [{ request: 'ค่าใช้จ่ายเดือนนี้', reason: 'feature_disabled' }],
+  }, [], 'ค่าใช้จ่ายเดือนนี้', 'th-TH', { featureDisabledTools: ['expense.list_recent'] });
+  assert.match(reply.replyText, /ตรวจแพ็กเกจหรือติดต่อทีมงาน/);
+  assert.doesNotMatch(reply.replyText, /เปิดฟีเจอร์ในเว็บแอป/);
+});
+
+it('curated LINE jokes use plain Thai words', () => {
+  for (const joke of MANGMEE_JOKE_BANK) assert.doesNotMatch(joke.text, /\b(?:EP|center)\b/);
+});
+
+it('the shared specialist fallback describes unavailable data without guessing an endpoint failure', () => {
+  const source = readFileSync(resolve(__dirname, 'accounting-summary.agent.ts'), 'utf8');
+  assert.doesNotMatch(source, /ไม่พบข้อมูลบัญชี \(endpoint ยังไม่พร้อม\)/);
+  assert.match(source, /ยังไม่มีข้อมูลที่พร้อมแสดงในขณะนี้/);
 });

@@ -120,3 +120,7 @@ The loop the owner described is the new edge plus the two that already exist: re
 - **Q2 — permission.** v1 reuses `expense.confirm` (R4). A dedicated `expense.return` key would let a company grant returning without granting confirming, at the cost of touching the registry and every capability pack. Worth it?
 - **Q3 — notification.** v1 relies on the creator seeing the record in their list. Should a return also raise a dashboard notification or a LINE message, given the creator may not open the app for days?
 - **Q4 — repeat returns.** Nothing here limits how many times a document may round-trip. Is a count or a "returned twice → escalate" rule wanted, or is the audit trail enough?
+
+## Guide wording — 2026-10-03
+
+The expense guide (overview, evidence and FAQ) must describe the existing guarded “ส่งกลับแก้ไข” path. It must not claim that every confirmed expense must be cancelled and recreated, or can never be edited again. Ask a permitted user to check whether return-for-correction is available; otherwise check the cancellation conditions. Linked reimbursement source records still follow their claim workflow. No state transition or permission changes.

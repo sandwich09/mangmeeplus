@@ -44,7 +44,7 @@ export const EVENT_DISCOUNT_ONE_PER_PAYMENT = 'ใช้ได้ครั้ง
 export const eventDiscountHelpText = (firstBillOnly = false) =>
   `${firstBillOnly ? 'ลดเฉพาะบิลแรก รอบถัดไปคิดราคาเต็ม' : 'ลดเฉพาะการจ่ายครั้งนี้'} งานเดียวกันใช้ได้ร้านละครั้ง`;
 /** A renewing mode on a shop that is not starting a package (it cannot take the discount): where the discount does apply. */
-export const eventDiscountOneTimeOnlyText = (view: View) => `มีส่วนลดจากงาน ${view.eventName} ใช้ได้เมื่อจ่ายครั้งเดียวด้วยบัตรหรือ PromptPay`;
+export const eventDiscountOneTimeOnlyText = (view: View) => `มีส่วนลดจากงาน ${view.eventName} ใช้ได้เมื่อจ่ายครั้งเดียวด้วยบัตรหรือพร้อมเพย์`;
 /** SD-O13, the confirm step of a discounted renewing first bill: what the next round costs and when. */
 export const eventDiscountNextRoundText = (mode: BillingPurchaseMode | undefined, fullPrice: string, at: string) =>
   `รอบถัดไป ${fullPrice} ${mode === 'CARD_AUTO' ? 'ตัดบัตรอัตโนมัติ' : ''}วันที่ ${day(at)}`;

@@ -46,7 +46,7 @@ describe('three-lane parity: the 10 MiB PDF boundary (plan W02)', () => {
     assert.equal(validateAttachmentMeta('image/jpeg', LIMIT, LIMIT), null);
   });
 
-  it('prints the size and the limit the same way the web does: `{size} MB … {limit} MB`', () => {
+  it('prints the size and the limit the same way the web does: `{size} เมกะไบต์ … {limit} เมกะไบต์`', () => {
     const text = fileAttemptAnswer({
       ref: '1', messageType: 'file', fileNameSanitized: 'bill.pdf',
       stage: 'DOWNLOAD', reasonCode: 'oversize_declared', outcome: 'REJECTED',
@@ -56,8 +56,8 @@ describe('three-lane parity: the 10 MiB PDF boundary (plan W02)', () => {
     });
     // One decimal, both numbers — `captureMegabytes` on the web prints exactly these two strings
     // for the same bytes (`expense-capture-upload.logic.spec.ts`).
-    assert.match(text, /ขนาด 10\.0 MB/);
-    assert.match(text, /เกินขนาดที่ระบบรับได้ 10\.0 MB/);
+    assert.match(text, /ขนาด 10\.0 เมกะไบต์/);
+    assert.match(text, /เกินขนาดที่ระบบรับได้ 10\.0 เมกะไบต์/);
     assert.match(text, /จึงยังไม่ได้เก็บไฟล์นี้/, 'and it says the file was NOT kept');
   });
 });

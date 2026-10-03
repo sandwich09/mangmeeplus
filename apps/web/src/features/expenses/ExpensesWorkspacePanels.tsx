@@ -1,5 +1,9 @@
 'use client';
 
+import { t } from '@/common/i18n/workspace-i18n.logic';
+import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { IMAGE_SOURCE_TYPES_LABEL, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watchdog-bms/contracts';
+
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEventHandler, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -92,6 +96,7 @@ export function IconBtn({ title, tone, disabled, loading = false, onClick, child
 
 // ── Category management ───────────────────────────────────────────────────────
 export function CategoryManagePanel({ companyId }: { companyId: string }) {
+  const locale = useWorkspaceLocale();
   const toast = useToast();
   // Company-level screen with no document date, so the policy is read for today.
   const showsTax = showsTaxCapture(useExpenseCapturePolicy(companyId).mode);
@@ -198,7 +203,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
         ) : (
           <div className="mangmee-table-scroll">
             <table className="mangmee-table">
-              <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? ['Tax Code เริ่มต้น'] : []), 'ที่มา', 'เปิดใช้', ''].map((h) => <th key={h} className={cx('!text-[13px]', (h === 'ที่มา' || h === 'เปิดใช้') && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
+              <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? [t('expenses.category_default_tax_code', locale)] : []), 'ที่มา', 'เปิดใช้', ''].map((h) => <th key={h} className={cx('!text-[13px]', (h === 'ที่มา' || h === 'เปิดใช้') && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
               <tbody>
                 {categories.length === 0 && <tr><td colSpan={showsTax ? 5 : 4} className="py-8 text-center text-gray-500">ไม่มีหมวดหมู่</td></tr>}
                 {categories.map((c) => {
@@ -222,9 +227,9 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
                             disabled={updatingId === c.id}
                             onChange={(e) => void runUpdate(c.id, { defaultInputTaxCode: e.target.value || null })}>
                             <option value="">ไม่กำหนด</option>
-                            {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.externalCode} · {code.displayName}</option>)}
+                            {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
                           </ThemedSelect>
-                        ) : <span className="text-gray-400">{c.defaultInputTaxCode ?? '—'}</span>}
+                        ) : <span className="text-gray-400">{c.defaultInputTaxCode ? taxCodes.find((code) => code.externalCode === c.defaultInputTaxCode)?.displayName ?? 'รหัสภาษีเดิม' : '—'}</span>}
                       </td>}
                       <td className="whitespace-nowrap text-xs text-gray-500">{owned ? 'ของบริษัท' : 'ค่าเริ่มต้นระบบ'}</td>
                       <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned || updatingId === c.id} loading={updatingId === c.id} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
@@ -252,12 +257,12 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
           <label className="text-sm font-semibold text-gray-700">ชื่อหมวดหมู่ *</label>
           <input className={inputClass} placeholder="เช่น ค่าโฆษณาออนไลน์" value={name} onChange={(e) => setName(stripDisallowed(e.target.value))} />
           {showsTax && <>
-            <label className="text-sm font-semibold text-gray-700">Tax Code เริ่มต้น</label>
+            <label className="text-sm font-semibold text-gray-700">{t('expenses.category_default_tax_code', locale)}</label>
             <ThemedSelect className={inputClass} value={newTaxCode} onChange={(e) => setNewTaxCode(e.target.value)}>
               <option value="">ไม่กำหนด</option>
-              {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.externalCode} · {code.displayName}</option>)}
+              {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.displayName}</option>)}
             </ThemedSelect>
-            <p className="text-xs text-gray-500">ใช้เป็นค่าตั้งต้นของรายการที่ยังไม่ได้เลือก Tax Code เท่านั้น ผู้ตรวจเปลี่ยนได้เสมอ</p>
+            <p className="text-xs text-gray-500">ใช้เป็นค่าตั้งต้นของรายการที่ยังไม่ได้เลือกรหัสภาษี ผู้มีสิทธิ์แก้ไขเปลี่ยนได้ก่อนยืนยันเอกสาร</p>
           </>}
           </div>
       </Modal>
@@ -370,7 +375,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
     setPreparedFile(null); setPreparingFile(false); setPreview(null); setDerivedBlob(null); setFileName(file?.name ?? ''); setActionError(null);
     if (!file) return;
     if (classifySignatureUploadFile(file.name, file.type) === 'unsupported') {
-      setActionError('รองรับไฟล์ PNG, JPG/JPEG/JPE, HEIC/HEIF และ GIF');
+      setActionError(`รองรับรูปภาพ (${IMAGE_SOURCE_TYPES_LABEL})`);
       return;
     }
     setPreparingFile(true);
@@ -381,7 +386,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
     } catch (cause) {
       if (requestId === prepareRequestRef.current) {
         setActionError(cause instanceof HeicDecodeError
-          ? 'ไม่สามารถอ่านไฟล์ HEIC/HEIF ได้ กรุณาลองถ่ายใหม่หรือใช้ไฟล์ JPG'
+          ? UPLOAD_HEIC_CONVERSION_MESSAGE
           : uploadErrorMessage(cause));
       }
     } finally {
@@ -599,7 +604,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
                   {fileName ? <span className="font-semibold text-brand-700">✓ {fileName}</span> : (
                     <>
                       <span>เลือกรูปลายเซ็นหรือถ่ายรูป</span>
-                      <span className="text-xs text-gray-400">PNG, JPG/JPEG/JPE, HEIC/HEIF หรือ GIF</span>
+                      <span className="text-xs text-gray-400">{IMAGE_SOURCE_TYPES_LABEL}</span>
                     </>
                   )}
                   <input ref={fileRef} type="file" accept={SIGNATURE_UPLOAD_ACCEPT} className="hidden" disabled={saving || preparingFile || previewing} onChange={(e) => void selectSignatureFile(e.target.files?.[0] ?? null)} />
@@ -1112,8 +1117,8 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
               {packageResult.skippedEvidence.length > 0 && <p className="mt-1 font-semibold text-warning-700">⚠ ข้ามไฟล์แนบ {packageResult.skippedEvidence.length} ไฟล์ที่คุณไม่มีสิทธิ์เปิด ชุดเอกสารนี้จึงยังไม่ครบ</p>}
               <p className="mt-1 text-xs text-gray-500">ดาวน์โหลดไฟล์รายการ Excel แล้ว · สร้างเมื่อ {formatThaiDateTime(packageResult.generatedAt)} · ลิงก์ดาวน์โหลดตรวจสิทธิ์รายไฟล์และระบุวันหมดอายุในรายการหลักฐาน</p>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs text-gray-500">รายการหลักฐาน (JSON) — ลิงก์ดาวน์โหลดไฟล์แนบทุกไฟล์ มีวันหมดอายุ</span>
-                <button className={ghostClass} onClick={downloadManifest}>ดาวน์โหลดรายการหลักฐาน (JSON)</button>
+                <span className="text-xs text-gray-500">รายการลิงก์ดาวน์โหลดหลักฐาน — ลิงก์มีวันหมดอายุ</span>
+                <button className={ghostClass} onClick={downloadManifest}>ดาวน์โหลดรายการลิงก์หลักฐาน</button>
               </div>
             </MangmeeCard>
           )}

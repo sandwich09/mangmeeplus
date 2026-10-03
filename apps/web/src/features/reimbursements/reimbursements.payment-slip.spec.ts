@@ -63,7 +63,7 @@ describe('payment form rules', () => {
   it('never tells a payer who has transferred the money to transfer it again', () => {
     assert.equal(
       paymentSaveErrorMessage('slip-upload', refused('payment_slip_invalid', 422), false),
-      'อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพ ขนาดไม่เกิน 10 MB แล้วลองใหม่',
+      'อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพที่รองรับ ขนาดไม่เกิน 10 เมกะไบต์ แล้วลองใหม่',
     );
     const afterSlip = paymentSaveErrorMessage('record', refused('payment_reference_required', 422), true);
     assert.equal(afterSlip, 'แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');

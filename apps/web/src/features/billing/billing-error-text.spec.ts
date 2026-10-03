@@ -72,7 +72,7 @@ describe('package page error text', () => {
       assert.doesNotMatch(text, /เลขอ้างอิง/);
     }
     // A code the page knows still wins over the bare status.
-    assert.equal(errorText({ status: 503, code: 'BILLING_CHECKOUT_PENDING' }), 'ระบบกำลังตรวจรายการชำระเงินเดิมกับ Stripe กรุณารอสักครู่แล้วกดลองใหม่');
+    assert.equal(errorText({ status: 503, code: 'BILLING_CHECKOUT_PENDING' }), 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดลองใหม่');
   });
 
   it('says what the QR-member refusal means and drops the dead legacy mapping', () => {
