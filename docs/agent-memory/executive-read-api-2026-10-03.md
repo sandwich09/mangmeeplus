@@ -1,6 +1,6 @@
 # Agent Memory: executive report — read API (stage E3a)
 
-Status: BUILT on branch `claude/executive-read-api-20261003` (from `claude/executive-program-20261002` at `4e2b0d4dd`, stages E1 + E2), waiting for the controller's review. Not pushed, not merged, not deployed.
+Status: round 1 merged into `claude/executive-program-20261002`; round 2 (three fields the web screens asked for, API and web) BUILT on branch `claude/executive-read-api-20261003` after a fast-forward to the program head `258afa3a2`, waiting for the controller's review. Not pushed, not deployed.
 
 Owner: implementation lane of 2026-10-03; the controller session reviews, verifies, pushes and merges.
 
@@ -46,4 +46,13 @@ Verification (local `postgres:18.3-alpine`, every migration applied; logs and re
 - Neighbours unchanged in behaviour: `billing-cash-movements.pg.spec.ts` 13, `sales-console.pg.spec.ts` 24, `executive-report-build.pg.spec.ts` 23, `injectable-di-token.spec.ts` 3.
 - API typecheck, contracts build, web typecheck and the boot smoke pass; final exit codes are in the lane's report.
 
-Next: the controller reviews; then the web stage (E4) builds on the contracts above, and the Excel stage (API13) reads through the same service.
+Round 2 (2026-10-03, after the web screens E4a/E4b joined the program branch at `258afa3a2`; this branch fast-forwarded to it):
+
+- The web lane found three figures it needed and, rightly, did not compute on the web. Added, API and web together, in the shared contracts:
+  - API04 `spendConcentration`: `restCount` (N − the 20% group, those at 0 or below included; equals the rows of `spendCohort=REST`), `restShare` (the rest's part of the positive total), `topCompanyShare` / `prefix80CompanyShare` / `restCompanyShare` (each group's companies of N), `nonPositiveCount` (N − `positiveCompanyCount`), `roundingNote` (20% group + rest miss 100.0 in money or in companies only by rounding). Group figures are null when there are no groups, like `topCount`; `nonPositiveCount` is a plain count under the object's coverage, like `positiveCompanyCount`. All from `spendGroupsOf`, rounded by `shareOf`.
+  - API01 `builtMonths`: the month headers of the definition version, oldest first; a month in `months` but not listed answers 503 until a round builds it.
+  - API05 `month.money.aiCostSatang` is now `ExecutiveMoney` with its own coverage (`aiCostCoverageOf`). The spec had no rule; proposed the smallest true one (owner to confirm), written in spec §16.6: no meter row at all → complete; month from the meter's first row on → complete; first row inside the month → partial (HISTORY_BEFORE_COLLECTION, `knownValue` = what was measured); month over before it → unavailable (HISTORY_BEFORE_COLLECTION). No HISTORY_BEFORE_FIRST_BUILD: every round sums the meter again.
+- Web (`apps/web/src/features/executive-reports/`): each spend group line shows "N จาก M บริษัท (x%) · y% ของยอดที่ใช้คำนวณสัดส่วน" from the returned figures, the 0-or-below count and the rounding note when returned; the detail shows the AI cost through the shared figure (coverage and reason); the month picker disables months not in `builtMonths` through a new optional `selectable` list on the shared `ThemedDate` (the same check guards the pick, the month grid, the day grid and the this-month button).
+- Found, not changed: the production maintenance pins are stale at the program head `258afa3a2` (`--check` exit 1) because E4b changed three pinned web files (`apps/web/src/common/auth/session-gate.logic.ts`, `apps/web/app/(workspace)/companies/[companyId]/layout.tsx`, `apps/web/app/system/layout.tsx`). This branch touches no pinned file, so it did not refresh them.
+
+Next: the controller reviews; the Excel stage (API13) reads through the same service and can rely on the round-2 fields.
