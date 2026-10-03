@@ -631,6 +631,8 @@ export class ReportSourceAdapters {
       expenseStatus: expense.status,
       inputVatClaimStatus: expense.inputVatClaimStatus,
       category: (expense.expenseCategoryId && categoryNames.get(expense.expenseCategoryId)) || null,
+      // An expense may be in a foreign currency; the page and the CSV must not read its amounts as baht.
+      currency: expense.currency ?? null,
       grandTotalAmount: expense.grandTotalAmount,
       vatAmount: expense.vatAmount,
       whtAmount: expense.whtAmount,
@@ -645,6 +647,7 @@ export class ReportSourceAdapters {
       { key: 'expenseStatus', label: 'สถานะ', type: 'string' },
       { key: 'inputVatClaimStatus', label: 'สถานะภาษีซื้อ', type: 'string' },
       { key: 'category', label: 'หมวดค่าใช้จ่าย', type: 'string' },
+      { key: 'currency', label: 'สกุลเงิน', type: 'string' },
       { key: 'grandTotalAmount', label: 'ยอดรวม', type: 'money' },
       { key: 'vatAmount', label: 'ภาษีมูลค่าเพิ่ม', type: 'money' },
       { key: 'whtAmount', label: 'ภาษีหัก ณ ที่จ่าย', type: 'money' },

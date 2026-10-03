@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defaultReportViewName, isReportsFeatureDisabled, reportChartKindText, reportExportErrorText, reportExportStatusText, reportFilterOptionText, reportFreshnessText, reportRunStatusText, reportValueText, reportViewVisibilityText, reportWarningText } from './reports-ui.logic';
+import * as reportsUi from './reports-ui.logic';
 
 const workspaceSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'ReportsWorkspacePage.tsx'), 'utf8');
 
@@ -94,5 +95,26 @@ describe('report export history reachability', () => {
     assert.match(workspaceSource, /\{exports\.map\(\(item\) => \(/);
     assert.doesNotMatch(workspaceSource, /exports\.slice\(/);
     assert.match(workspaceSource, /min-h-11[^\n]+downloadExport\(item\)/);
+  });
+});
+
+// A money cell says บาท only when its row is in baht. The API sends the row's currency as a word (THB as บาท,
+// another currency as its code, null when the source does not know it); reports without a currency column are
+// in the company's base currency, which is baht.
+describe('report money units', () => {
+  const unitOf = (reportsUi as unknown as { reportMoneyUnit?: (row?: Record<string, unknown>) => string | null }).reportMoneyUnit;
+
+  it('takes the unit from the row', () => {
+    assert.equal(typeof unitOf, 'function', 'reportMoneyUnit');
+    const usd = { source: 'ใบแจ้งหนี้ที่ออกแล้ว', currency: 'USD', amount: '12.3400' };
+    assert.equal(reportValueText(usd.amount, 'money', 'amount', unitOf!(usd)), '12.34 USD');
+    assert.equal(reportValueText('1234.5', 'money', 'amount', unitOf!({ currency: 'บาท' })), '1,234.50 บาท');
+    assert.equal(reportValueText('9', 'money', 'amount', unitOf!({ currency: null })), '9.00');
+    assert.equal(reportValueText('9', 'money', 'balance', unitOf!({ accountCode: '1100-00' })), '9.00 บาท');
+  });
+
+  it('uses the row unit in the table and in the chart', () => {
+    assert.match(workspaceSource, /reportValueText\(row\[column\.key\], column\.type, column\.key, reportMoneyUnit\(row\)\)/);
+    assert.match(workspaceSource, /reportValueText\(sourceValue, chartValueType, undefined, reportMoneyUnit\(result\.rows\[i\]\)\)/);
   });
 });

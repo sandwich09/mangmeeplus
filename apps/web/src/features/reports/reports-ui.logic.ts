@@ -1,4 +1,4 @@
-import { REPORT_FRESHNESS_LABELS, type ReportExportRequestDto, type ReportExportStatus, type ReportFieldType, type ReportQueryStatus } from '@watchdog-bms/contracts';
+import { REPORT_CURRENCY_WORDS, REPORT_FRESHNESS_LABELS, type ReportExportRequestDto, type ReportExportStatus, type ReportFieldType, type ReportQueryStatus } from '@watchdog-bms/contracts';
 import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 
 const STATUS_LABELS: Record<ReportExportStatus, string> = {
@@ -63,14 +63,27 @@ export function reportViewVisibilityText(visibility: string): string {
   return ({ PRIVATE: 'เฉพาะฉัน', COMPANY: 'ทั้งบริษัท' } as Record<string, string>)[visibility] ?? 'ขอบเขตอื่น';
 }
 
-export function reportValueText(value: unknown, type?: ReportFieldType, key?: string): string {
+/**
+ * The unit of a money cell in a row. The API sends the row's currency as a word: บาท for THB, the code of
+ * another currency, or null when the source does not know it (then no unit). A report without a currency
+ * column is in the company's base currency, which is baht.
+ */
+export function reportMoneyUnit(row: Record<string, unknown> | undefined): string | null {
+  if (!row || !('currency' in row)) return REPORT_CURRENCY_WORDS.THB;
+  return typeof row.currency === 'string' && row.currency ? row.currency : null;
+}
+
+export function reportValueText(value: unknown, type?: ReportFieldType, key?: string, moneyUnit: string | null = REPORT_CURRENCY_WORDS.THB): string {
   if (value === null || value === undefined || value === '') return '-';
   if (key === 'periodKey') return formatThaiMonth(value as string, '-');
   if (type === 'date') return formatThaiDate(value as string, '-');
   if (type === 'datetime') return formatThaiDateTime(value as string, '-');
   if (type === 'money') {
     const amount = typeof value === 'number' ? value : Number(value);
-    if (Number.isFinite(amount)) return `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
+    if (Number.isFinite(amount)) {
+      const text = amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return moneyUnit ? `${text} ${moneyUnit}` : text;
+    }
   }
   if (type === 'number') {
     const amount = typeof value === 'number' ? value : Number(value);

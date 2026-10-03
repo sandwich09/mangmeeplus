@@ -60,6 +60,7 @@ export const REPORT_VALUE_TEXT: Readonly<Record<string, Readonly<Record<string, 
     taxEvidenceStatus: TAX_EVIDENCE_STATUS_LABELS,
     expenseStatus: EXPENSE_STATUS_LABELS,
     inputVatClaimStatus: { CLAIMABLE: 'ใช้ภาษีซื้อได้', NON_CLAIMABLE: 'ใช้ภาษีซื้อไม่ได้', NEEDS_REVIEW: 'รอตรวจว่าใช้ภาษีซื้อได้หรือไม่' },
+    currency: REPORT_CURRENCY_WORDS,
   },
   'tax.summary': {
     taxType: { VAT: 'ภาษีมูลค่าเพิ่ม', WHT: 'ภาษีหัก ณ ที่จ่าย', CIT: 'ภาษีเงินได้นิติบุคคล', CUSTOMS: 'อากรและภาษีนำเข้า' },

@@ -194,3 +194,13 @@ Words that changed on report rows as a result: receivables payment status now ma
 คำแนะนำจาก AI ที่ต้องการข้อมูล (the page's word). Tests: new web `common/i18n/one-source-words.spec.ts` red
 0 / 4 → green 4 / 0 (identity and word checks per page); API adapters “report words come from the shared
 lists” red 35 / 2 → green 37 / 0.
+
+### R1: money says บาท only for baht
+
+`reportMoneyUnit(row)` (web): the row's currency word from the API (บาท for THB, another currency's code), no
+unit when the source does not know the currency (the open-opportunity row of สรุปยอดขาย), and บาท for reports
+without a currency column (ledger, tax, payables: the company's base currency, which is only ever read and
+defaults to THB; payables aging is THB by construction). Table cells and chart points use it; chart point i is
+row i of the same page. The accountant evidence report gained a สกุลเงิน column, since an expense can be in a
+foreign currency. Spec: reports-bi-spec.md formatting rule. Tests: web reports-ui red 12 / 2 → 14 / 0 (a USD
+row reads “12.34 USD”); API adapters “accountant evidence currency” red 37 / 1 → 38 / 0.

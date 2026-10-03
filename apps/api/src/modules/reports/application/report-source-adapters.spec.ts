@@ -504,7 +504,7 @@ describe('report rows and CSV a person reads', () => {
       readReportSummary: async () => [{ status: 'READY_FOR_CONFIRMATION', currency: 'THB', count: 1, grandTotalAmount: '5.0000', paidAmount: '0.0000', outstandingAmount: '5.0000' }],
       execute: async () => ({ data: [{ id: 'exp_internal_1', expenseNumber: null, uploadedAt: new Date('2026-09-03T03:00:00.000Z'), expenseDate: new Date('2026-09-03T00:00:00.000Z'),
         vendorNameSnapshot: 'ร้านกาแฟ', sourceDocumentType: 'ABBREVIATED_TAX_INVOICE', taxEvidenceStatus: 'SUPPORTING_ONLY', status: 'CONFIRMED', inputVatClaimStatus: 'NON_CLAIMABLE',
-        expenseCategoryId: 'cat_internal_1', taxCategory: 'SERVICE_FEE', accountHintKey: 'expense.meals', grandTotalAmount: '5.0000', vatAmount: '0.0000', whtAmount: '0.0000' }], total: 1 }),
+        expenseCategoryId: 'cat_internal_1', taxCategory: 'SERVICE_FEE', accountHintKey: 'expense.meals', currency: 'THB', grandTotalAmount: '5.0000', vatAmount: '0.0000', whtAmount: '0.0000' }], total: 1 }),
       listCategoryCandidates: async () => [{ id: 'cat_internal_1', name: 'ค่าอาหารและเครื่องดื่ม' }],
     },
     taxSummary: { execute: async () => ({ periodKey: '2026-09', totalTaxAmount: '1.0000', openIssueCount: 1, rows: [
@@ -583,5 +583,23 @@ describe('report words come from the shared lists', () => {
     assert.equal(ai.ai_suggestions_needs_data_visible, `คำแนะนำจาก AI ที่${shared.AI_SUGGESTION_NEEDS_DATA_LABEL}`);
     for (const [status, word] of Object.entries(list('AI_SUGGESTION_STATUS_LABELS'))) assert.equal(ai[`ai_suggestions_${status.toLowerCase()}`], `คำแนะนำจาก AI สถานะ${word}`, status);
     assert.ok(Object.keys(list('AI_SUGGESTION_STATUS_LABELS')).length > 0, 'AI_SUGGESTION_STATUS_LABELS');
+  });
+});
+
+// A money cell reads บาท only for a row in baht, so every report with amounts in more than one currency must
+// carry the row's currency. Expenses can be in a foreign currency.
+describe('accountant evidence currency', () => {
+  it('shows each expense in its own currency: baht as บาท, another currency by its code', async () => {
+    const expense = (id: string, currency: string) => ({ id, expenseNumber: `EXP-${id}`, status: 'CONFIRMED', currency, grandTotalAmount: '10.0000', vatAmount: '0.0000', whtAmount: '0.0000' });
+    const adapter = adapters({ expenses: {
+      execute: async () => ({ data: [expense('1', 'USD'), expense('2', 'THB')], total: 2 }),
+      listCategoryCandidates: async () => [],
+      listCategoryNames: async () => [],
+    } });
+    const raw = await adapter.execute({ ...ctx, permissions: [...ctx.permissions, 'expense.export'] }, enabled('expense.accountant_evidence'),
+      { filters: {}, chartKind: 'table', page: 1, pageSize: 100 });
+    assert.ok(raw.columns.some((column) => column.key === 'currency' && column.label === 'สกุลเงิน'), 'currency column');
+    const shown = reportResultForPeople({ ...raw, dataset: enabled('expense.accountant_evidence') });
+    assert.deepEqual(shown.rows.map((row) => row.currency), ['USD', 'บาท']);
   });
 });

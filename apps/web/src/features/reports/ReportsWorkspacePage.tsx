@@ -19,7 +19,7 @@ import {
   listReportViews,
   runReportQuery,
 } from './reports.api';
-import { defaultReportViewName, isReportsFeatureDisabled, reportChartKindText, reportExportErrorText, reportExportStatusText, reportFilterOptionText, reportFreshnessText, reportRunStatusText, reportValueText, reportViewVisibilityText, reportWarningText } from './reports-ui.logic';
+import { defaultReportViewName, isReportsFeatureDisabled, reportChartKindText, reportExportErrorText, reportExportStatusText, reportFilterOptionText, reportFreshnessText, reportMoneyUnit, reportRunStatusText, reportValueText, reportViewVisibilityText, reportWarningText } from './reports-ui.logic';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 
 const inputClass = 'mangmee-input';
@@ -429,7 +429,8 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                         <div key={`${label}-${i}`} className="grid grid-cols-[160px_minmax(0,1fr)_80px] items-center gap-3 text-sm">
                           <span className="truncate text-gray-600">{label}</span>
                           <span className="h-2 rounded-full bg-brand-100"><span className="block h-2 rounded-full bg-brand-500" style={{ width: `${Math.max(4, (value / max) * 100)}%` }} /></span>
-                          <span className="text-right font-medium text-gray-900">{reportValueText(sourceValue, chartValueType)}</span>
+                          {/* Chart points are the first rows of the same page, in order. */}
+                          <span className="text-right font-medium text-gray-900">{reportValueText(sourceValue, chartValueType, undefined, reportMoneyUnit(result.rows[i]))}</span>
                         </div>
                       );
                     })}
@@ -447,7 +448,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                     <tbody>
                       {result.rows.map((row, rowIndex) => (
                         <tr key={rowIndex}>
-                          {result.columns.map((column) => <td key={column.key}>{reportValueText(row[column.key], column.type, column.key)}</td>)}
+                          {result.columns.map((column) => <td key={column.key}>{reportValueText(row[column.key], column.type, column.key, reportMoneyUnit(row))}</td>)}
                         </tr>
                       ))}
                       {result.rows.length === 0 && <tr><td className="px-3 py-8 text-center text-gray-400" colSpan={Math.max(result.columns.length, 1)}>ไม่มีข้อมูลสำหรับรายงานนี้</td></tr>}
