@@ -170,7 +170,7 @@ for (const scenario of [
     assert.deepEqual(replies, [], 'no try-again line for a refusal that cannot change this month');
     assert.equal(cards.length, 1); assert.equal(cards[0].type, 'flex'); assert.match(cards[0].canonicalText, scenario.sentence);
     assert.deepEqual((cards[0].contents.footer?.contents ?? []).map((button: any) => button.action.label), scenario.buttons);
-    if (!scenario.buttons.length) assert.match(cards[0].canonicalText, /แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ$/);
+    if (!scenario.buttons.length) assert.match(cards[0].canonicalText, /แจ้งเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ$/);
     assert.deepEqual(statuses, [`${scenario.status}:${scenario.code}`]);
   } else {
     assert.deepEqual(cards, []); assert.deepEqual(replies, ['ยังตอบคำถามนี้ไม่สำเร็จค่ะ กรุณาลองใหม่']);

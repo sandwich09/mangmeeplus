@@ -1,3 +1,4 @@
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import type { BillingDocumentResendResult } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 
@@ -30,7 +31,7 @@ export function errorStatus(error: unknown): number | undefined {
 export function errorText(error: unknown): string {
   const status = errorStatus(error), code = apiErrorCode(error);
   if (status === 401) return 'กรุณาเข้าสู่ระบบอีกครั้ง';
-  if (status === 403) return 'บัญชีนี้ยังไม่มีสิทธิ์จัดการแพ็กเกจของร้านนี้ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจดำเนินการ';
+  if (status === 403) return `บัญชีนี้ยังไม่มีสิทธิ์จัดการแพ็กเกจของร้านนี้ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจดำเนินการ`;
   if (status === 429 && code !== 'BILLING_RESEND_LIMIT' && code !== 'EMAIL_OTP_RATE_LIMITED') return 'กรุณารอสักครู่แล้วลองใหม่';
   const mapped = code ? (Object.hasOwn(PAGE_LABELS, code) ? PAGE_LABELS[code] : translateApiError(code)) : null;
   if (mapped) return mapped;

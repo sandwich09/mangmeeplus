@@ -153,7 +153,7 @@ describe('lock reason', () => {
   // page told them the shop was "พักการใช้งานชั่วคราว" when it simply had no package.
   it('tells staff who can choose the package, in the words of the lock reason', () => {
     for (const copy of Object.values(PLAN_LOCK_COPY)) {
-      assert.match(copy.staff, /ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจ/);
+      assert.match(copy.staff, /ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจ/);
       assert.doesNotMatch(copy.staff, /พัก|ปิดใช้งาน|ต่ออายุ/);
     }
     assert.doesNotMatch(PLAN_LOCK_COPY.no_package.staff, /หมดอายุ/);

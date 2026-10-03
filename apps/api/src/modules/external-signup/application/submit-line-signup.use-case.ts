@@ -1,3 +1,4 @@
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import {
   BadRequestException, ConflictException, Injectable, NotFoundException, UnprocessableEntityException,
 } from '@nestjs/common';
@@ -537,7 +538,7 @@ export class SubmitLineSignupUseCase {
         externalSignupId: input.externalSignupId,
         payloadHash: input.payloadHash,
         companyName: input.companyName,
-        ownerDisplayName: verified.displayName ?? 'เจ้าของร้าน',
+        ownerDisplayName: verified.displayName ?? THAI_SYSTEM_ROLE_NAMES.OWNER,
         contactEmail: input.contactEmail,
         intakePolicyVersion: LINE_OPTIONAL_EMAIL_POLICY,
         consentVersion: evidence.documentVersion,

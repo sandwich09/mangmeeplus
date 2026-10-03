@@ -17,7 +17,7 @@
  * eligible subrequest) and runSemanticTurnV2 (every subrequest, so a mixed message still answers
  * its allowed part) apply BEFORE any tool is offered or called.
  */
-import { hasToolFeature } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, hasToolFeature } from '@watchdog-bms/contracts';
 import type { LineAiSemanticSubrequestV2 } from '@watchdog-bms/contracts';
 
 export type ScopePolicyLanguage = 'th' | 'en';
@@ -223,7 +223,7 @@ export function readOnlyCaptureReplyText(text: string, permissions: readonly str
   if (EXPENSE_CREATE_PERMISSIONS.some((permission) => permissions.includes(permission))) return undefined;
   return language === 'en'
     ? "Your account has read-only access, so you can't record or submit a receipt yet. Ask your company admin to grant that permission first."
-    : 'บัญชีของคุณเป็นสิทธิ์แบบอ่านอย่างเดียวค่ะ จึงยังไม่มีสิทธิ์บันทึกหรือส่งใบเสร็จเข้าระบบ ถ้าต้องการบันทึก ให้ผู้ดูแลบริษัทเพิ่มสิทธิ์ให้ก่อนนะคะ';
+    : `บัญชีของคุณเป็นสิทธิ์แบบอ่านอย่างเดียวค่ะ จึงยังไม่มีสิทธิ์บันทึกหรือส่งใบเสร็จเข้าระบบ ถ้าต้องการบันทึก ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการบทบาทเพิ่มสิทธิ์ให้ก่อนนะคะ`;
 }
 
 // ---- Combined entry point ----------------------------------------------------------------------

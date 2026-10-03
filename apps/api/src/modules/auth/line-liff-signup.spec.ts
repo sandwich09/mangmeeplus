@@ -549,7 +549,7 @@ describe('P10-L LIFF client script', () => {
         await settle(); await settle();
 
         assert.equal(h.elements['progress-title']!.textContent, 'เปิดร้านแล้ว รอเลือกแพ็กเกจ');
-        assert.match(h.elements['progress-text']!.textContent, /ร้านนิด ยังไม่มีแพ็กเกจ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
+        assert.match(h.elements['progress-text']!.textContent, /ร้านนิด ยังไม่มีแพ็กเกจ ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
         assert.equal(h.calls.length, 1, 'no handoff is prepared for someone who cannot buy');
         assert.equal(h.elements.support!.hidden, false);
       });
@@ -580,7 +580,7 @@ describe('P10-L LIFF client script', () => {
         await settle(); await settle();
 
         assert.equal(h.elements['progress-title']!.textContent, 'แพ็กเกจหมดอายุแล้ว');
-        assert.match(h.elements['progress-text']!.textContent, /^ร้านนิด แพ็กเกจหมดอายุแล้ว ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
+        assert.match(h.elements['progress-text']!.textContent, /^ร้านนิด แพ็กเกจหมดอายุแล้ว ให้เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ/);
         assert.doesNotMatch(h.elements['progress-text']!.textContent, /ร้านนิด หมดอายุ|เปิดให้แล้ว/);
       });
 
@@ -963,7 +963,7 @@ describe('P10-L LIFF client script', () => {
         assert.equal(h.elements['phone-number']!.value, '081-234-5678');
         assert.equal(h.elements['contact-email']!.attributes['aria-invalid'], 'true');
         assert.match(h.elements['contact-email-error']!.textContent, /shop@example.com/);
-        assert.match(h.elements['contact-email-error']!.textContent, /อีเมลเจ้าของร้าน/);
+        assert.match(h.elements['contact-email-error']!.textContent, /อีเมลเจ้าของกิจการ/);
         assert.deepEqual(h.focused, ['contact-email']);
         assert.equal(h.elements.link!.disabled, false);
       }

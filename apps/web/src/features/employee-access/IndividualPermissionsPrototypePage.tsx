@@ -164,14 +164,14 @@ function EmployeeRow({ employee, roles, selected, onSelect }: { employee: Employ
     <button
       type="button" onClick={onSelect}
       className={cx(
-        'flex min-h-[64px] w-full items-center gap-3 rounded-[11px] border px-[11px] py-2.5 text-left transition',
+        'grid min-h-[64px] w-full grid-cols-[38px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-[11px] border px-[11px] py-2.5 text-left transition',
         selected ? 'border-brand-300 bg-brand-25 shadow-[inset_3px_0_0_var(--color-brand-500)]' : 'border-gray-200 bg-white hover:border-brand-100 hover:bg-gray-50',
       )}
     >
       <EmployeeAvatar employee={employee} color={primaryRole ? colorForRole(primaryRole) : '#667085'} active={active} />
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0">
         <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[14px] font-extrabold text-gray-900">{employeeShortName(employee)}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere] text-[14px] font-extrabold text-gray-900">{employeeShortName(employee)}</span>
           {employee.status === 'DRAFT' ? <DraftBadge /> : <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-brand-500' : 'bg-gray-300')} />}
         </span>
         <span className="mt-1 block break-words text-[12px] font-semibold text-gray-500">{employee.jobTitle || 'ยังไม่ระบุตำแหน่งงาน'}</span>
@@ -180,10 +180,8 @@ function EmployeeRow({ employee, roles, selected, onSelect }: { employee: Employ
         </span>
       </span>
       {roles.length > 0 && (
-        // 160 px holds every standard role name on one line ("ผู้ตรวจสอบ (ดูอย่างเดียว)" is 148 px); a longer
-        // company-made name wraps inside its chip instead of being cut at the column's edge.
-        <span className="flex max-w-40 shrink-0 flex-col items-end gap-1">
-          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full py-1 text-right leading-tight" />)}
+        <span className="col-start-2 flex min-w-0 flex-wrap gap-1">
+          {roles.map((role) => <RoleBadge key={role.id} role={role} className="max-w-full whitespace-normal [overflow-wrap:anywhere] py-1 leading-tight" />)}
         </span>
       )}
     </button>
@@ -622,24 +620,24 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                             type="button"
                             disabled={busy}
                             onClick={() => setRolePickerOpen((open) => !open)}
-                            className="inline-flex h-9 max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1 hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-60"
                             aria-haspopup="listbox"
                             aria-label="เปลี่ยนบทบาทพนักงาน"
                             aria-expanded={rolePickerOpen}
                           >
-                            <span className="max-w-52 truncate text-sm font-extrabold text-gray-700">{selectedRoleNames}</span>
+                            <span className="max-w-52 text-left text-sm font-extrabold text-gray-700 [overflow-wrap:anywhere]">{selectedRoleNames}</span>
                             <ChevronDownIcon className="h-4 w-4 shrink-0 text-gray-400" />
                           </button>
                         )}
                         {rolePickerOpen && !rolePickerReadOnly && (
-                          <div role="listbox" className="absolute left-0 top-10 z-20 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+                          <div role="listbox" className="absolute left-0 top-full z-20 mt-1 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
                             {roleOptions.map((role) => (
                               <button
                                 key={role.id} type="button" role="option" aria-selected={selectedRoleIds.length === 1 && selectedRoleIds[0] === role.id} disabled={busy} aria-busy={Boolean(busy)}
                                 onClick={() => void changeSelectedRole(role.id)}
                                 className={cx('flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-extrabold hover:bg-gray-50 disabled:opacity-60', selectedRoleIds.includes(role.id) ? 'text-brand-700' : 'text-gray-700')}
                               >
-                                <span className="min-w-0 truncate">{roleDisplayName(role)}</span>
+                                <span className="min-w-0 [overflow-wrap:anywhere]">{roleDisplayName(role)}</span>
                                 {selectedRoleIds.includes(role.id) && <CheckLineIcon className="h-4 w-4 shrink-0" />}
                               </button>
                             ))}
