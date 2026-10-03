@@ -15,7 +15,7 @@ import { AuditService } from '../../audit/application/audit.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { BillingCashMovementsService } from '../../billing/application/billing-cash-movements.service';
 import {
-  combined, countOf, documentsOf, expenseReceiptsOf, industryKeyOf, isMonth, matchesDirectory, matchesGlobal, moneyCoverageOf, moneyOf, netOf,
+  aiCostCoverageOf, combined, countOf, documentsOf, expenseReceiptsOf, industryKeyOf, isMonth, matchesDirectory, matchesGlobal, moneyCoverageOf, moneyOf, netOf,
   ranksOf, referrerKeyOf, roundRatio, roundingNote, shareOf, sortedBy, spendGroupsOf, usageCoverageOf,
   type DirectoryFilters, type GlobalFilters, type ReportRow, type SpendGroups,
 } from '../domain/executive-read.logic';
@@ -69,16 +69,16 @@ export class ExecutiveReportReadService {
 
   async context(ctx: RequestContext): Promise<ExecutiveContext> {
     const currentMonth = executiveMonthOf(this.clock());
-    const { build, first, sellers } = await this.prisma.client.$transaction(async (tx) => {
+    const { build, built, sellers } = await this.prisma.client.$transaction(async (tx) => {
       const build = await latestBuild(tx);
-      if (!build) return { build: null, first: null, sellers: [] as Seller[] };
-      const [first, referrers] = await Promise.all([
-        tx.executiveReportMonth.findFirst({ where: { definitionVersion: VERSION }, orderBy: { month: 'asc' }, select: { month: true } }),
+      if (!build) return { build: null, built: [] as string[], sellers: [] as Seller[] };
+      const [months, referrers] = await Promise.all([
+        tx.executiveReportMonth.findMany({ where: { definitionVersion: VERSION }, orderBy: { month: 'asc' }, select: { month: true } }),
         tx.executiveCompanyProfile.findMany({ where: { reportClassification: 'CUSTOMER', referrerKind: 'KNOWN' }, distinct: ['referrerSalesUserId'],
           select: { referrerSalesUserId: true } }),
       ]);
       const sellers = await sellersOf(tx, referrers.map((row) => row.referrerSalesUserId));
-      return { build, first, sellers: [...sellers.values()] };
+      return { build, built: months.map((row) => row.month), sellers: [...sellers.values()] };
     }, SNAPSHOT);
     const has = (permission: string) => ({ allowed: ctx.permissions.includes(permission) });
     const options = (key: ExecutiveFilterKey, leaveOut: string[] = []) =>
@@ -97,7 +97,8 @@ export class ExecutiveReportReadService {
       },
       sortOptions: EXECUTIVE_SORT_OPTIONS,
       currentMonth, defaultMonth: currentMonth, // Q32: the current month
-      months: build && first ? { first: first.month, last: currentMonth } : null,
+      months: build && built.length ? { first: built[0]!, last: currentMonth } : null,
+      builtMonths: built, // the month headers a round wrote: the months API02–API05 can answer
       earliestAvailableMonth: { aiUsage: monthOf(build?.aiUsageSince ?? null), receiptReading: monthOf(build?.ocrUsageSince ?? null),
         billing: monthOf(build?.billingSince ?? null), discovery: monthOf(build?.discoverySince ?? null) },
       build: build ? { id: build.id, asOf: build.asOf.toISOString(), definitionVersion: build.definitionVersion, dimensionVersion: build.dimensionVersion } : null,
@@ -256,7 +257,8 @@ export class ExecutiveReportReadService {
       month: row && {
         paidEver: base.paidEver, fullyRefunded: row.fullyRefunded, paidInMonth: row.receiptsSatang > 0, positiveNetInMonth: netOf(row) > 0,
         usageGroup: base.usageGroup, ...(row.usageUnassessedReason ? { usageUnassessedReason: row.usageUnassessedReason } : {}),
-        money: { ...moneyRowOf([row], data.money), aiCostSatang: row.aiCostSatang },
+        money: { ...moneyRowOf([row], data.money),
+          aiCostSatang: moneyOf(row.aiCostSatang, aiCostCoverageOf({ start: data.range.start, end: data.range.end, aiUsageSince: data.build.aiUsageSince })) },
         usage: { activeDays: row.activeDays, activeDaysLine: row.activeDaysLine, activeDaysWeb: row.activeDaysWeb, activeUsers: row.activeUsers,
           activeUsersLine: row.activeUsersLine, activeUsersWeb: row.activeUsersWeb, documents: documentsOf(row), confirmedExpensesLine: row.confirmedExpensesLine,
           confirmedExpensesWeb: row.confirmedExpensesWeb, issuedDocuments: row.issuedDocuments, aiRequests: row.aiRequests,

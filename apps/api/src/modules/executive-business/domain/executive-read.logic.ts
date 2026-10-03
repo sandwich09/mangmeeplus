@@ -63,6 +63,17 @@ export function usageCoverageOf(month: { start: Date; beforeFirstBuild: boolean;
   return partialOf(reasons);
 }
 
+/**
+ * The month's measured AI cost (the meter's rows, by the month it filed them in): it exists from the meter's first row on.
+ * A month that ended before it holds no cost data ("no data", never 0); one that began before it holds only what was
+ * measured since. No meter row at all means nothing was metered yet, so 0 is true. Never "before the first build": every
+ * round sums the meter again, and nothing deletes the meter rows of a company that is still there (spec §12.3).
+ */
+export function aiCostCoverageOf(month: { start: Date; end: Date; aiUsageSince: Date | null }): ExecutiveSourceCoverage {
+  if (!month.aiUsageSince || month.aiUsageSince <= month.start) return COMPLETE;
+  return { coverage: month.aiUsageSince >= month.end ? 'unavailable' : 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] };
+}
+
 /** One rule for every count (§9.1): partial → `value: null` with `knownValue`; unavailable → neither. */
 export function countOf(value: number, source: ExecutiveSourceCoverage): ExecutiveCount {
   if (source.coverage === 'unavailable') return { value: null, coverage: 'unavailable', reasonCodes: source.reasonCodes };
@@ -132,8 +143,10 @@ export function ranksOf(sorted: readonly ReportRow[], valueOf: (row: ReportRow) 
 export type SpendGroups = {
   /** Empty when there are groups; otherwise why not (then no group, no tie, no cohort member). */
   blocked: ExecutiveReasonCode[];
-  population: number; positiveCompanyCount: number; positiveNetTotalSatang: number; signedNetTotalSatang: number; negativeNetSatang: number;
+  population: number; positiveCompanyCount: number; nonPositiveCount: number; positiveNetTotalSatang: number; signedNetTotalSatang: number; negativeNetSatang: number;
   topTargetCount: number; topCount: number | null; topShare: ExecutiveRatio | null; prefix80Count: number | null; prefix80Share: ExecutiveRatio | null;
+  restCount: number | null; restShare: ExecutiveRatio | null;
+  topCompanyShare: ExecutiveRatio | null; prefix80CompanyShare: ExecutiveRatio | null; restCompanyShare: ExecutiveRatio | null; roundingNote: boolean;
   boundaryTie?: ExecutiveTie; prefix80BoundaryTie?: ExecutiveTie;
   /** Members of each list filter (`spendCohort`), computed on the companies in scope only. */
   members: Record<'TOP20' | 'REST' | 'TO80' | 'BOUNDARY_TIE' | 'TO80_BOUNDARY_TIE', Set<string>>;
@@ -144,6 +157,7 @@ export type SpendGroups = {
 /**
  * `net_i` of the selected month, `w_i = max(net_i, 0)`, N = every company in scope, K = ceil(N × 0.2); the 80% group is the
  * shortest prefix whose sum reaches 80% in whole satang. Groups never grow for ties at their edge: the tie is counted instead.
+ * The rest is N minus the 20% group, those paying 0 or less included; each group is also a share of N (usage-Pareto spec §5).
  */
 export function spendGroupsOf(rows: readonly ReportRow[], moneyIncomplete: boolean): SpendGroups {
   const positives = sortedBy(rows.filter((row) => netOf(row) > 0), netOf, 'desc');
@@ -154,10 +168,11 @@ export function spendGroupsOf(rows: readonly ReportRow[], moneyIncomplete: boole
   if (positiveTotal === 0) blocked.push('NO_POSITIVE_NET');
   const empty = () => new Set<string>();
   const result: SpendGroups = {
-    blocked, population: rows.length, positiveCompanyCount: positives.length, positiveNetTotalSatang: positiveTotal,
+    blocked, population: rows.length, positiveCompanyCount: positives.length, nonPositiveCount: rows.length - positives.length, positiveNetTotalSatang: positiveTotal,
     signedNetTotalSatang: rows.reduce((sum, row) => sum + netOf(row), 0),
     negativeNetSatang: rows.reduce((sum, row) => sum + Math.min(netOf(row), 0), 0),
     topTargetCount: Math.ceil(rows.length / 5), topCount: null, topShare: null, prefix80Count: null, prefix80Share: null,
+    restCount: null, restShare: null, topCompanyShare: null, prefix80CompanyShare: null, restCompanyShare: null, roundingNote: false,
     members: { TOP20: empty(), REST: empty(), TO80: empty(), BOUNDARY_TIE: empty(), TO80_BOUNDARY_TIE: empty() }, cumulative: new Map(),
   };
   if (moneyIncomplete) return result; // no rank that may still change (spec §13.6)
@@ -179,8 +194,13 @@ export function spendGroupsOf(rows: readonly ReportRow[], moneyIncomplete: boole
   positives.slice(0, topCount).forEach((row) => result.members.TOP20.add(row.companyId));
   positives.slice(0, prefix80).forEach((row) => result.members.TO80.add(row.companyId));
   rows.forEach((row) => { if (!result.members.TOP20.has(row.companyId)) result.members.REST.add(row.companyId); });
+  const topShare = shareOf(prefixSum(topCount), positiveTotal), restShare = shareOf(positiveTotal - prefixSum(topCount), positiveTotal);
+  const restCount = result.members.REST.size; // N − topCount: the list of the rest has exactly this many rows
+  const topCompanyShare = shareOf(topCount, rows.length), restCompanyShare = shareOf(restCount, rows.length);
   return Object.assign(result, {
-    topCount, topShare: shareOf(prefixSum(topCount), positiveTotal), prefix80Count: prefix80, prefix80Share: shareOf(prefixSum(prefix80), positiveTotal),
+    topCount, topShare, prefix80Count: prefix80, prefix80Share: shareOf(prefixSum(prefix80), positiveTotal),
+    restCount, restShare, topCompanyShare, prefix80CompanyShare: shareOf(prefix80, rows.length), restCompanyShare,
+    roundingNote: roundingNote([topShare, restShare]) || roundingNote([topCompanyShare, restCompanyShare]),
     boundaryTie: tieAt(topCount, result.members.TOP20, result.members.BOUNDARY_TIE),
     prefix80BoundaryTie: tieAt(prefix80, result.members.TO80, result.members.TO80_BOUNDARY_TIE),
   });
