@@ -181,3 +181,5 @@ Controller review/commit and environment verification only:
 ## Controller note (2026-10-04)
 
 The starter-preset change (adding `dashboard_notifications.preferences` and `dashboard_notifications.rules` to every paid tier) was HELD BACK by the controller: it changes what the packages grant and leaves existing paid shops without it, so it goes to the owner first. Without it, a STARTER user who types those addresses gets the shell's no-access state (no silent bounce).
+
+Owner decision, 2026-10-04: "ยังไม่ต้องทำอะไรกับเรื่องนี้ ใช้แค่กระดิ่งกับการแจ้งเตือนทุกอย่างแบบเดิมไปก่อน" — the starter preset stays without the notification settings subfeatures; the held-back change is dropped. A STARTER user typing those addresses gets the shell's no-access state.
