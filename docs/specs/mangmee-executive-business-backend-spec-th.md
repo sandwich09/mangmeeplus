@@ -1838,13 +1838,15 @@ Q-EXL-CONTACT RESOLVED (D02) — Owner เลือก `User.email` / `User.phon
 
 ### 16.7 สัญญาที่ลงมือทำใน E5 — 2026-10-03
 
-API13 มี diff แล้ว ยังไม่ commit/merge/deploy หลักฐานและงานตรวจรับที่ค้างอยู่ใน `docs/agent-memory/executive-excel-export-2026-10-03.md`
+API13 รวมเข้า program ใน `f576b821e` แล้ว และรวม develop ใน `b7d7f36af` ตามสถานะจากผู้ควบคุม; การตรวจระบบจริงยังไม่รับรองจาก unit test หลักฐานและงานตรวจรับที่ค้างอยู่ใน `docs/agent-memory/executive-excel-export-2026-10-03.md`
 
 - `reportKey`: `overview`, `companies`, `usage`, `revenue`, `customers`, `compare`, `detail` ตาม section ของหน้ารายงาน; `subview`: usage `adoption`/`ranking`, revenue `summary`/`top`, customers `industry`/`discovery`/`sales`/`creditedSales` (มุมยอดขายครั้งแรก); หน้าอื่นไม่รับ subview
 - sort ของอันดับการใช้งานใช้ `sortBy` metric และ `desc`; รายรับมุม top ใช้ `netReceipts`/`desc`; รายชื่อใช้ sort เดิมของ API03; หน้าอื่นไม่รับ sort ด้าน detail ใช้ targetCompanyId, compare ใช้ comparison อย่างเดียว ทั้งสองไม่รับตัวกรองร่วม
 - ไม่รับ templateKey จาก client ตาม §16.4/Excel §5; server ใช้รุ่น `executive-v4-1` และบันทึกใน audit
 - ใช้ `load()` เดียวกับหน้าจอใน REPEATABLE READ พร้อมข้อมูลเสริมใน snapshot; advisory lock `6013/hashtext(userId)` อยู่ตลอดการสร้างไฟล์ และถูกปล่อยอัตโนมัติเมื่อ transaction จบ
 - ต้องมี read/export ณ คำขอและตรวจซ้ำก่อนคืนไฟล์ รวมสถานะ User/session; ขอ contact ต้องเป็นรายชื่อหรือรายละเอียดและมีสิทธิ์ contact ของตนเอง มิฉะนั้นปฏิเสธ ไม่ลดสิทธิ์เงียบ ๆ
+- metadata ของ API13 ต้องมีทั้ง `system.executive.read` และ `system.executive.export`; endpoint อื่นยังตรวจชุดสิทธิ์ตรงตาม §16.1 ไม่มีการยกเว้นจากชื่อ role ผู้เรียก API13 ตรวจ `assertPlatformTenant` ที่ทางเข้าของ export service ก่อนอ่านข้อมูล เพื่อให้บันทึกทุกความพยายามรวมการปฏิเสธได้ ส่วนเส้นทางเดิมยังตรวจบริบทที่ controller ตามเดิม
+- filter ของ report เป็น class ที่ Nest สร้างผ่าน provider พร้อม AuditService และการจัดการข้อผิดพลาดเป็น async; test ต้องใช้ instance ที่มี audit dependency และรอผล ทุก response 403 ของบัญชี/รายงาน/ส่งออกใช้ `EXECUTIVE_ACCESS_DENIED` พร้อม `requestId` และคำคงที่ของงานนั้น ไม่ส่งคำ guard หรือ validation เดิม ถ้าบันทึก audit ก่อน action ไม่สำเร็จ คืน 503 `SOURCE_UNAVAILABLE` ตามกติกาปิดการส่งออกเมื่อบันทึกไม่ได้ โดยไม่คืนไฟล์หรือรายละเอียด audit
 - เงื่อนไข อันดับ และ cohort ของรายชื่อใช้ฐานร่วมเดิมก่อนกรองรายชื่อ; ไม่รับ page/pageSize หรือยอดจาก client; ชุดเก่าคืน 409, ไม่มีบริษัทคืน 422, เกินเพดานคืน 422, งานซ้อนคืน 429 พร้อมเวลารอ
 - คืน binary โดยตรงพร้อม no-store, ชื่อสำรอง ASCII คงที่, X-Export-Reference, X-Export-Row-Count, X-Export-Company-Count และ X-Request-Id; หน้าเว็บตั้งชื่อไทย ไม่มีสำเนาไฟล์บน server
 - `executive.export.created` เขียนก่อนปล่อยไฟล์และไม่ส่งไฟล์เมื่อเขียน audit ไม่ได้; บันทึกกรณี guard/DTO ปฏิเสธก่อนถึง action ด้วย และกรณีเขียน audit ก่อน action ไม่ได้คืน 503 โดยไม่ปล่อยไฟล์หรือทิ้ง Promise rejection ไม่เก็บ body, คำค้น ชื่อ อีเมล หรือเบอร์โทร; ไม่ตั้ง companyId ของลูกค้า

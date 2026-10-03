@@ -30,3 +30,29 @@ Verification:
 - Real PostgreSQL, browser behavior/geometry, mobile downloads and opening the workbook: not checked because this lane prohibits database/network, servers and browsers. No git writes, package.json edits, migrations or forbidden billing-file edits.
 
 Next: controller reviews/stages/commits the merge. Run the full API suite (`pnpm --filter @watchdog-bms/api test`) and the real-PostgreSQL read/export spec with EXECUTIVE_REPORT_READ_TEST_DATABASE_URL configured (`pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/executive-business/executive-report-read.pg.spec.ts`). Run `pnpm exec playwright test e2e/executive-report.spec.ts e2e/expenses.spec.ts` on the seeded stack with WORKER_INTERNAL_TOKEN. Check all seven report routes at 390/1280 px: open/close/Back export panel without report rereads, initial URLs missing defaults, search/paging/drill context, expiry reload-once, permission loss and contact opt-in; open actual XLSX and verify mobile handoff. These checks are not checked here because network, databases, browsers and servers are prohibited.
+
+## Follow-up: API boundary verification after controller merges
+
+Status: Done; both stale tests corrected and all requested local checks passed. Controller committed the resolution as `f576b821e`, then merged develop as `b7d7f36af`; this follow-up started from a clean working tree and remains uncommitted.
+Owner: merge implementation lane; controller reviews and commits.
+Scope: two stale auth.guard.spec.ts checks, backend spec clarification and this running note. Production code and user-facing words are unchanged.
+Decisions:
+
+- API13's permission metadata correctly requires read plus export. Keep exact equality for every handler, require each permission independently, enumerate all 13 handlers and preserve role-name independence/no-store/platform-context checks.
+- API13 deliberately checks tenant in ExecutiveReportReadService.export so denied attempts are audited. The test now exercises that real service entry point with a failing source-read stub for tenant denial; successful binary delivery still uses the existing service-stub pattern. All other routes retain their prior controller-level tenant checks.
+- ExecutiveReportExceptionFilter changed from an inline instance to an injectable class registered as a module provider, and catch is async for pre-action audits. The test must instantiate the registered class with an audit mock and await it; the account filter remains an inline instance. Extend the safe-envelope checks to report/export, preserving account coverage.
+- Product behavior conforms to the current E1/E5 rule for these cases: 403 responses use EXECUTIVE_ACCESS_DENIED, fixed Thai words and requestId; validation is mapped to safe codes. An unavailable pre-action audit intentionally returns 503 SOURCE_UNAVAILABLE without bytes, as the existing export spec test requires. No user-facing text changes.
+
+Open questions: none identified.
+Artifacts: `apps/api/src/modules/auth/auth.guard.spec.ts`, `docs/specs/mangmee-executive-business-backend-spec-th.md`, this note.
+Verification:
+
+- Baseline `pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/auth/auth.guard.spec.ts`: exit 1, 46 passed / 2 failed, 6 suites. Exact failures: API13 metadata includes export permission; report filter metadata has no instance catch method.
+- Green auth-only command (same command as baseline): exit 0, 48 passed / 0 failed, 6 suites. Both changed tests pass.
+- Final auth and shared-filter command: `pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/auth/auth.guard.spec.ts src/common/filters/all-exceptions.filter.spec.ts`; exit 0, 61 passed / 0 failed / 0 skipped, 9 suites.
+- Build rules: `env -u EXECUTIVE_REPORT_BUILD_TEST_DATABASE_URL pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/executive-business/executive-report-build.pg.spec.ts`; exit 0, 6 passed / 0 failed, 2 suites. The real-PostgreSQL describe is explicitly skipped; Node's summary reports 0 skipped tests because its database suite has no instantiated tests.
+- Read/export rules, workbook, controller/filter: `env -u EXECUTIVE_REPORT_READ_TEST_DATABASE_URL pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/executive-business/executive-report-read.pg.spec.ts`; exit 0, 26 passed / 0 failed, 5 suites. The real-PostgreSQL describe is explicitly skipped (summary again reports 0 skipped tests). These two pg specs are every spec under executive-business; their independent no-database tests all ran.
+- Locked API typecheck: `/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh pnpm --filter @watchdog-bms/api typecheck`; exit 0, TypeScript emitted no errors.
+- `git diff --check`: exit 0. `git status --short`: exit 0, only the three scoped files are modified. No git writes, production changes, dependency edits, database/network/browser/server use or sandbox refusals.
+
+Next: controller reviews and commits the uncommitted three-file diff. Real PostgreSQL/HTTP/browser checks are not checked because this lane forbids database/network, servers and browsers. Controller runs the two executive pg spec commands with their respective EXECUTIVE_REPORT_BUILD_TEST_DATABASE_URL and EXECUTIVE_REPORT_READ_TEST_DATABASE_URL configured against the test database.
