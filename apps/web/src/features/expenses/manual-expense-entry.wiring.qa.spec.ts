@@ -26,6 +26,16 @@ test('the server pages hand the one predicate to every screen that links to the 
   assert.match(read(`${COMPANY}/ai-suggestions/page.tsx`), /canOpenManualExpense=\{canOpenManualWeb\(session, companyId\)\}/);
 });
 
+// Whom the not-shown state sends a reader to depends on who reads it: the server knows the roles.
+test('the server pages tell the hub whether the reader is the owner, and the hub tells the not-shown state', () => {
+  for (const page of [`${COMPANY}/expenses/manual/page.tsx`, `${COMPANY}/expenses/page.tsx`]) {
+    assert.match(read(page), /readerIsOwner=\{session\?\.roles\.includes\('OWNER'\) \?\? false\}/, page);
+  }
+  assert.match(read('src/features/expenses/ExpensesPages.tsx'), /<ManualExpenseEntryNotEnabled companyId=\{companyId\} caps=\{caps\} readerIsOwner=\{readerIsOwner\} \/>/);
+  // The owner's name comes from the one list of role names, not a literal.
+  assert.match(read('src/common/i18n/workspace-dictionary.ts'), /'expenses\.manual_entry_contact_owner': `กรุณาติดต่อ\$\{THAI_SYSTEM_ROLE_NAMES\.OWNER\}`,/);
+});
+
 test('the manual page always renders the hub: the server never answers 403 or redirects because of the setting', () => {
   const page = read(`${COMPANY}/expenses/manual/page.tsx`);
   assert.doesNotMatch(page, /redirect\(|notFound\(|requireRoutePermission|forbidden/i);
@@ -64,7 +74,7 @@ test('the manual tab renders by its admission: the not-enabled state, the form, 
   // A revoked permission still wins (the Forbidden state), and the not-enabled state replaces the
   // whole create area — it is not rendered inside the branch fieldset.
   assert.match(hub, /const manualNotEnabled = tab === 'manual' && !forbidden && manualView === 'not_enabled';/);
-  assert.match(hub, /\{forbidden \? <StateBanner error="Forbidden" \/> : manualNotEnabled \? <ManualExpenseEntryNotEnabled companyId=\{companyId\} caps=\{caps\} \/> : \(/);
+  assert.match(hub, /\{forbidden \? <StateBanner error="Forbidden" \/> : manualNotEnabled \? <ManualExpenseEntryNotEnabled companyId=\{companyId\} caps=\{caps\} readerIsOwner=\{readerIsOwner\} \/> : \(/);
   assert.match(hub, /<ManualExpensePanel [^>]*entryClosed=\{manualView === 'form_closed'\}/);
   // The note stands only while an entry is in progress: not once the draft is saved.
   assert.match(hub, /\{entryClosed && !savedExpenseId && <p role="status"[^>]*>\{t\('expenses\.manual_entry_closed_notice', locale\)\}<\/p>\}/);

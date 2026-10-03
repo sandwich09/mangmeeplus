@@ -1236,7 +1236,9 @@ export const workspaceDictionary = {
     'expenses.manual_entry_not_enabled': 'หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ',
     'expenses.manual_entry_go_list': 'ไปหน้ารายการค่าใช้จ่าย',
     // The reader lacks the rights to upload and to open the list; only the business owner can grant every right.
-    'expenses.manual_entry_contact_owner': 'กรุณาติดต่อเจ้าของกิจการ',
+    'expenses.manual_entry_contact_owner': `กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}`,
+    // …and the owner, who holds every right the package allows, asks the team: only the platform's admin switches the page on.
+    'expenses.manual_entry_contact_team': 'กรุณาติดต่อทีมงานเพื่อเปิดหน้านี้ให้ร้านของคุณ',
     'expenses.manual_entry_closed_notice': 'หน้านี้ถูกปิดสำหรับร้านของคุณแล้ว คุณยังบันทึกรายการที่กำลังกรอกได้',
     'expenses.manual_summary_title': 'สรุปก่อนบันทึก',
     'expenses.manual_before_tax': 'ยอดก่อนภาษี',
@@ -2868,6 +2870,7 @@ export const workspaceDictionary = {
     'expenses.manual_entry_not_enabled': 'Manual entry is not enabled for your shop',
     'expenses.manual_entry_go_list': 'Go to the expense list',
     'expenses.manual_entry_contact_owner': 'Please contact the business owner',
+    'expenses.manual_entry_contact_team': 'Please contact the team to open this page for your shop',
     'expenses.manual_entry_closed_notice': 'This page has been closed for your shop. You can still save the entry you are filling in.',
     'expenses.manual_summary_title': 'Summary before saving',
     'expenses.manual_before_tax': 'Before tax',

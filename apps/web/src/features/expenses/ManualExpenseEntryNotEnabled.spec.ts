@@ -2,16 +2,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { expenseCapabilities } from './expenses.model';
 
 // Match the shared field tests when tsx renders Next's automatic-JSX components in Node. The
 // component is imported inside `render`, after this line: ExpensesUi builds its icons at load.
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 
-async function render(permissions: string[]): Promise<string> {
+async function render(permissions: string[], readerIsOwner = false): Promise<string> {
   const { ManualExpenseEntryNotEnabled } = await import('./ManualExpenseEntryNotEnabled');
   return renderToStaticMarkup(
-    React.createElement(ManualExpenseEntryNotEnabled, { companyId: 'co-1', caps: expenseCapabilities(permissions) }),
+    React.createElement(ManualExpenseEntryNotEnabled, { companyId: 'co-1', caps: expenseCapabilities(permissions), readerIsOwner }),
   );
 }
 const hrefs = (html: string) => [...html.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g)].map((match) => [match[1], match[2]]);
@@ -40,13 +41,31 @@ test('with no button to offer, asks the reader to contact the business owner and
   const html = await render(['expense.create']);
   assert.match(html, />หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ</);
   assert.match(html, />กรุณาติดต่อเจ้าของกิจการ</);
-  assert.doesNotMatch(html, /ผู้ดูแลร้าน/);
+  assert.ok(html.includes(`>กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}<`), 'the owner is named from the one list of role names');
+  assert.doesNotMatch(html, /ผู้ดูแลร้าน|ทีมงาน/);
   assert.deepEqual(hrefs(html), []);
   assert.doesNotMatch(html, /<button/);
 });
 
+// The owner holds every right the package allows, so "contact the owner" would send them to
+// themselves (a package with the list and upload off). Only the platform's team switches this page on.
+test('tells an owner with no button to offer to contact the team, never to contact the owner', async () => {
+  const html = await render(['expense.create'], true);
+  assert.match(html, />หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ</);
+  assert.match(html, />กรุณาติดต่อทีมงานเพื่อเปิดหน้านี้ให้ร้านของคุณ</);
+  assert.ok(!html.includes(THAI_SYSTEM_ROLE_NAMES.OWNER), 'no sentence sends the owner to the owner');
+  assert.deepEqual(hrefs(html), []);
+  // With a button to offer, the owner reads the same buttons as anyone else.
+  assert.deepEqual(hrefs(await render(['expense.create', 'expense.read', 'expense.receipt.upload'], true)), [
+    ['/companies/co-1/expenses/upload', 'อัปโหลดใบเสร็จ'],
+    ['/companies/co-1/expenses', 'ไปหน้ารายการค่าใช้จ่าย'],
+  ]);
+});
+
 test('never words the state as a missing permission, a hidden page or a closed system', async () => {
   for (const permissions of [['expense.create'], ['expense.create', 'expense.read', 'expense.receipt.upload']]) {
-    assert.doesNotMatch(await render(permissions), /ไม่มีสิทธิ์|ซ่อน|ยังไม่เปิดใช้|ระบบ|Forbidden/);
+    for (const readerIsOwner of [false, true]) {
+      assert.doesNotMatch(await render(permissions, readerIsOwner), /ไม่มีสิทธิ์|ซ่อน|ยังไม่เปิดใช้|ระบบ|Forbidden/);
+    }
   }
 });

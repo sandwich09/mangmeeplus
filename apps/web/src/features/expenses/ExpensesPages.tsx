@@ -2904,10 +2904,12 @@ const TAB_META: Record<ExpensesTab, { labelKey: DictionaryKey; descKey: Dictiona
   evidence: { labelKey: 'expenses.tab_evidence', descKey: 'expenses.tab_evidence_desc' },
 };
 
-export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', manualEntryOpen }: {
+export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', manualEntryOpen, readerIsOwner = false }: {
   companyId: string; userId: string; permissions: string[]; tab?: ExpensesTab;
   /** `canOpenManualWeb` of the server session, from the list and the manual page. Left out, the permission decides. */
   manualEntryOpen?: boolean;
+  /** The reader holds the OWNER role: whom the not-shown state of the manual page sends them to. */
+  readerIsOwner?: boolean;
 }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
@@ -2969,7 +2971,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list', 
       // The description tells the reader what to fill in; with no form to fill it would be untrue.
       description={manualNotEnabled ? undefined : t(meta.descKey, locale)}
     >
-      {forbidden ? <StateBanner error="Forbidden" /> : manualNotEnabled ? <ManualExpenseEntryNotEnabled companyId={companyId} caps={caps} /> : (
+      {forbidden ? <StateBanner error="Forbidden" /> : manualNotEnabled ? <ManualExpenseEntryNotEnabled companyId={companyId} caps={caps} readerIsOwner={readerIsOwner} /> : (
         <>
           {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} canOpenManual={canOpenManual} userId={userId} onSelect={openListExpense} />}
           {(tab === 'upload' || tab === 'manual') && <>

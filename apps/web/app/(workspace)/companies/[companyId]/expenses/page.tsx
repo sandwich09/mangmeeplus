@@ -9,5 +9,5 @@ export default async function ExpensesPage({
 }) {
   const { companyId } = await params;
   const session = await fetchServerSession(companyId);
-  return <ExpensesHubPage companyId={companyId} userId={session?.userId ?? ''} permissions={session?.permissions ?? []} manualEntryOpen={canOpenManualWeb(session, companyId)} />;
+  return <ExpensesHubPage companyId={companyId} userId={session?.userId ?? ''} permissions={session?.permissions ?? []} manualEntryOpen={canOpenManualWeb(session, companyId)} readerIsOwner={session?.roles.includes('OWNER') ?? false} />;
 }
