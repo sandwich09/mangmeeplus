@@ -89,6 +89,7 @@ export class ListCrmConversationsUseCase {
         status: filter.status,
         search,
         overdue: filter.overdue,
+        unanswered: filter.unanswered,
         tag: filter.tag?.trim() || undefined,
         assignedToUserId: filter.assignee === 'me' ? ctx.userId : filter.assignee === 'none' ? null : undefined,
         scopeUserId,
@@ -112,6 +113,7 @@ export class ListCrmConversationsUseCase {
       pageSize,
       statusCounts: counts.statusCounts as ListCrmConversationsResult['statusCounts'],
       overdueCount: counts.overdueCount,
+      unansweredCount: counts.unansweredCount,
       mineCount: counts.mineCount,
       unassignedCount: counts.unassignedCount,
     };

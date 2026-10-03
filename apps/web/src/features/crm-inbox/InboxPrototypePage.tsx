@@ -60,6 +60,8 @@ import {
   INBOX_PAGE_SIZE,
   buildStatusChips,
   chipColor,
+  chipFromSearch,
+  chipListFilter,
   visibleMessages as visibleThreadMessages,
   type InboxChipId,
 } from './inbox-prototype.model';
@@ -196,6 +198,7 @@ export function InboxPrototypePage({
   const [total, setTotal] = useState(0);
   const [statusCounts, setStatusCounts] = useState<Partial<Record<CrmConversationStatus, number>>>({});
   const [overdueCount, setOverdueCount] = useState(0);
+  const [unansweredCount, setUnansweredCount] = useState(0);
   const [mineCount, setMineCount] = useState(0);
   const [unassignedCount, setUnassignedCount] = useState(0);
   const [listLoading, setListLoading] = useState(true);
@@ -249,7 +252,7 @@ export function InboxPrototypePage({
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
-    if (params.get('overdue') === 'true') setStatusFilter('overdue');
+    setStatusFilter(chipFromSearch(window.location.search));
     const tag = params.get('tag');
     if (tag) setTagFilter(tag);
   }, []);
@@ -259,13 +262,8 @@ export function InboxPrototypePage({
       const token = ++listAbort.current;
       if (!silent) setListLoading(true);
       try {
-        const status = INBOX_STATUS_ORDER.includes(statusFilter as CrmConversationStatus)
-          ? (statusFilter as CrmConversationStatus)
-          : undefined;
         const result = await listConversations(companyId, {
-          status,
-          overdue: statusFilter === 'overdue' ? true : undefined,
-          assignee: statusFilter === 'mine' ? 'me' : statusFilter === 'unassigned' ? 'none' : undefined,
+          ...chipListFilter(statusFilter),
           tag: tagFilter ?? undefined,
           search: debouncedSearch || undefined,
           page,
@@ -276,6 +274,7 @@ export function InboxPrototypePage({
         setTotal(result.total);
         setStatusCounts(result.statusCounts ?? {});
         setOverdueCount(result.overdueCount ?? 0);
+        setUnansweredCount(result.unansweredCount ?? 0);
         setMineCount(result.mineCount ?? 0);
         setUnassignedCount(result.unassignedCount ?? 0);
         setListError(null);
@@ -548,8 +547,8 @@ export function InboxPrototypePage({
   }, []);
 
   const chips = useMemo(
-    () => buildStatusChips({ total, statusCounts, overdueCount, mineCount, unassignedCount }),
-    [total, statusCounts, overdueCount, mineCount, unassignedCount],
+    () => buildStatusChips({ total, statusCounts, overdueCount, unansweredCount, mineCount, unassignedCount }),
+    [total, statusCounts, overdueCount, unansweredCount, mineCount, unassignedCount],
   );
   const totalPages = Math.max(1, Math.ceil(total / INBOX_PAGE_SIZE));
   const messages = useMemo(() => visibleThreadMessages(detail?.messages ?? [], isNoteMode), [detail, isNoteMode]);
