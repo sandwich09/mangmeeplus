@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
+import { COMPANY_PROFILE_SETTINGS_PATH, isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 import { billingApi } from '@/features/billing/billing.api';
 import { BillingWorkspaceContext } from '@/features/billing/BillingCustomerFrame';
 import { usePathname, useRouter } from 'next/navigation';
@@ -30,6 +30,7 @@ import { fetchPlanTermNotice, PLAN_TERM_CHANGED_EVENT, type PlanTermNotice } fro
 import { isLockedShellPath } from '@/features/plan-term/plan-term.logic';
 import { accessContextFingerprint, fetchMyContext, type MyContext } from './workspace-scope.api';
 import { MenuFilterProvider } from './MenuFilterScope';
+import { canSeeRoute } from './route-permissions';
 import { NotificationBell } from '@/features/dashboard-notifications/NotificationBell';
 import { ACCESS_CONTEXT_STALE_EVENT } from '@/common/api/authed-fetch';
 import { checklistIsComplete } from '@/features/company-profile/company-profile.logic';
@@ -133,8 +134,11 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
   // Owner 2026-09-20: a shop with no usable package has no business shell at all, on any path.
   if (notice?.derivedState === 'EXPIRED')
     return <LockedWorkspaceLayout companyId={companyId} session={session} notice={notice}>{children}</LockedWorkspaceLayout>;
-  // Layouts survive client navigation; resolve billing access on both entry paths.
-  if (isBillingCustomerRecoveryPath(pathname, companyId) || pathname === `/companies/${encodeURIComponent(companyId)}/settings/profile`)
+  // Layouts survive client navigation; resolve billing access on both entry paths. The profile joins the recovery
+  // frame only for someone who may open it: anyone else is refused in the business shell, like on any other page,
+  // instead of falling into the shell-less recovery view when their billing read is refused.
+  if (isBillingCustomerRecoveryPath(pathname, companyId) || (pathname === `/companies/${encodeURIComponent(companyId)}/settings/profile`
+    && canSeeRoute(COMPANY_PROFILE_SETTINGS_PATH, session.permissions)))
     return <BillingWorkspaceLayout companyId={companyId} session={session}>{children}</BillingWorkspaceLayout>;
   return <BusinessWorkspaceLayout companyId={companyId} session={session} notice={notice}>{children}</BusinessWorkspaceLayout>;
 }
