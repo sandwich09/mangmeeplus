@@ -37,6 +37,8 @@ export type ThemedDateProps = {
   onChange?: (event: { target: { value: string } }) => void;
   mode?: Mode;
   disabled?: boolean;
+  /** Required report months have no clear action; other pickers retain it. */
+  allowClear?: boolean;
   className?: string;
   placeholder?: string;
   min?: string;
@@ -80,7 +82,7 @@ function todayParts(value?: string) {
   return { year: now.getFullYear(), month: now.getMonth(), day: now.getDate() };
 }
 
-export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, className, placeholder, min, max, today: businessToday, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
+export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, allowClear = true, className, placeholder, min, max, today: businessToday, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
   const locale = useWorkspaceLocale();
   const monthsAbbr = MONTHS_ABBR[locale] ?? MONTHS_ABBR.th;
   const monthsFull = MONTHS_FULL[locale] ?? MONTHS_FULL.th;
@@ -268,7 +270,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
         </div>
 
         <div className="mt-2 flex shrink-0 items-center justify-between border-t border-gray-100 pt-2 text-[13px] font-bold">
-          <button type="button" onClick={() => emit('')} className="rounded-lg px-2 py-1 text-gray-500 hover:bg-gray-100">{labels.clear}</button>
+          {allowClear && <button type="button" onClick={() => emit('')} className="rounded-lg px-2 py-1 text-gray-500 hover:bg-gray-100">{labels.clear}</button>}
           <button
             type="button"
             disabled={outOfRange(todayValue, min, max, mode === 'month' ? 7 : 10)}

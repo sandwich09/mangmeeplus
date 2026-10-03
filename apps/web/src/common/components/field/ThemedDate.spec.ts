@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
+
+test('a required report month can hide clearing while existing date fields remain clearable', () => {
+  const source = readFileSync(new URL('./ThemedDate.tsx', import.meta.url), 'utf8');
+  assert.match(source, /allowClear = true/);
+  assert.match(source, /\{allowClear && <button[^\n]*emit\(''\)/);
+});
 
 test('name prop renders an sr-only form input carrying the value and required flag', async () => {
   const { ThemedDate } = await import('./ThemedDate');

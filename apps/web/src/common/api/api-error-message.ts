@@ -1,4 +1,4 @@
-import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
+import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
 
 // The API answers business-rule failures in English (its messages double as
 // operator/log text). This is the single seam where those reach a Thai screen.
@@ -7,6 +7,30 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  EXECUTIVE_ACCESS_DENIED: 'คุณไม่มีสิทธิ์ดูรายงานนี้',
+  EXECUTIVE_QUERY_INVALID: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
+  COMPANY_NOT_FOUND: 'ไม่พบบริษัทนี้ในรายงาน',
+  SOURCE_UNAVAILABLE: 'ระบบยังอ่านข้อมูลส่วนนี้ไม่ได้ กรุณาลองใหม่ภายหลัง',
+  ACTIVITY_HISTORY_INCOMPLETE: 'ข้อมูลการใช้งานไม่ครบ',
+  PAYMENT_HISTORY_INCOMPLETE: 'ข้อมูลการชำระไม่ครบ',
+  BILLING_SCAN_NOT_COMPLETE: 'ยอดเงินของเดือนนี้ยังอ่านไม่ครบ',
+  UNMATCHED_MONEY: 'มีเงินที่ยังไม่ผูกบริษัท ยอดนี้ยังไม่อยู่ในยอดของบริษัทใด',
+  PURCHASE_KIND_UNKNOWN: 'มีรายการเงินที่ยังไม่จัดประเภทการซื้อ',
+  ADDON_NOT_ON_SALE: 'ยังไม่เปิดขาย',
+  CLASSIFICATION_INCOMPLETE: 'ยังไม่ได้จัดประเภทบริษัทครบ',
+  INDUSTRY_NOT_PROVIDED: EXECUTIVE_UNKNOWN_LABEL,
+  HISTORY_BEFORE_COLLECTION: 'ยังไม่มีข้อมูลของช่วงนี้ เพราะเป็นช่วงก่อนที่ระบบเริ่มเก็บ',
+  HISTORY_BEFORE_FIRST_BUILD: 'ข้อมูลก่อนเริ่มทำรายงาน นับได้เฉพาะรายการที่ยังเหลืออยู่',
+  SOURCE_ROWS_PURGED: 'ใช้จำนวนที่เคยบันทึกไว้ เพราะรายการต้นทางถูกลบแล้ว',
+  SOURCE_STALE: 'ข้อมูลยังไม่ได้อัปเดต',
+  NOT_YET_REGISTERED: 'บริษัทนี้ยังไม่สมัครในช่วงรายงานนี้',
+  NOT_ENTITLED: EXECUTIVE_REPORT_LABELS.receiptAdoption.NOT_ENTITLED!,
+  TOO_FEW_COMPANIES: 'บริษัทน้อยเกินไปสำหรับการแบ่งกลุ่ม',
+  NO_POSITIVE_NET: 'ไม่มีบริษัทที่จ่ายมากกว่ายอดคืนเงินในเดือน จึงยังคำนวณสัดส่วนรายรับไม่ได้',
+  BILLING_SOURCE_REVIEW: 'ข้อมูลการชำระต้องตรวจสอบ',
+  MANUAL_TERM_NO_RECEIPT: 'ผู้ดูแลตั้งแพ็กเกจให้ ไม่มีหลักฐานรับเงินในระบบ',
+  LEGACY_NO_TERM: 'ร้านรุ่นก่อนมีระบบแพ็กเกจ ไม่มีข้อมูลการชำระ',
+  RATE_LIMITED: 'เรียกดูถี่เกินไป กรุณารอสักครู่แล้วลองใหม่',
   EMAIL_ACCESS_INVALID: 'รหัสหมดอายุหรือใช้ไม่ได้แล้ว กรุณาขอรหัสทางอีเมลใหม่',
   EMAIL_ACCESS_EXISTING_ACCOUNT: 'กรุณาเข้าสู่บัญชีเดิมด้วยรหัสผ่านหรือ LINE ก่อน',
   EMAIL_SIGNUP_CHANGED: 'ข้อมูลบัญชีเปลี่ยนแล้ว กรุณาเข้าสู่ระบบอีกครั้ง',
