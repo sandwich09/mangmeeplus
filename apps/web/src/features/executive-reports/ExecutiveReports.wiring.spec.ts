@@ -31,6 +31,34 @@ test('reads use authenticated fetch, no tenant target header, and reload/abort p
   assert.match(page, /retry: retryWait > 0 \? undefined/);
   assert.ok(page.indexOf('setData(result.data)') < page.indexOf('await getExecutiveHistory'));
 });
+test('a build change refreshes provider context without turning its new object into another report reload', () => {
+  const page = source('./ExecutiveReportPage.tsx');
+  assert.match(page, /shared\.refresh\(controller.signal\)/);
+  assert.match(page, /setContext\(result\)/);
+  assert.match(page, /const queryKey =/);
+  assert.doesNotMatch(page, /\}, \[context, section/);
+});
+test('context refresh failures use context error handling rather than claiming the month has no data', () => {
+  const page = source('./ExecutiveReportPage.tsx');
+  const refresh = page.slice(page.indexOf('async function refresh('), page.indexOf('useEffect(() => {', page.indexOf('async function refresh(')));
+  assert.match(refresh, /reportFailure\(error, false\)/);
+  assert.match(refresh, /setFailure\(failed\)/);
+  assert.match(refresh, /signal.aborted/);
+});
+test('system and sales denial gates select report wording for executive-only sessions', () => {
+  for (const route of ['system', 'sales']) {
+    assert.match(source(`../../../app/${route}/layout.tsx`), /<SystemAccessDenied executive=\{result.status === 'signed_in' && isExecutiveOnlySession\(result.session\)\}/);
+  }
+});
+test('directory chips hide empty drill rows and each filter toggle names its own scope', async () => {
+  const page = source('./ExecutiveReportPage.tsx');
+  assert.match(page, /reportFilterChips/);
+  assert.match(page, /pickLabels.length > 0 &&/);
+  assert.match(page, /\{W.reportFilters\} · \{filterCount\}/);
+  assert.match(page, /\{W.companyFilters\} · \{DIRECTORY_FILTERS/);
+  const { W } = await import('./executive-reports.words');
+  assert.equal(W.reportFilters, 'ตัวกรองรายงาน'); assert.equal(W.companyFilters, 'ตัวกรองรายชื่อบริษัท');
+});
 test('Thai shared fields, all detail tabs, history paging and responsive tables are wired without exports', () => {
   const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts');
   for (const component of ['MangmeePage', 'MangmeeCard', 'MangmeeStatCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));

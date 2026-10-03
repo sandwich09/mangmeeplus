@@ -65,7 +65,7 @@ export function canOpenSystemExecutive(session: WebSession, path: string): boole
     && session.permissions.includes('system.executive.read');
 }
 export function isExecutiveOnlySession(session: WebSession): boolean {
-  return session.permissions.includes('system.executive.read') && !isSystemAdmin(session)
+  return (session.roles.includes('MANGMEE_EXECUTIVE') || session.permissions.includes('system.executive.read')) && !isSystemAdmin(session)
     && session.permissions.every(key => key.startsWith('system.executive.') || key.startsWith('account.'));
 }
 

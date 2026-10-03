@@ -24,6 +24,12 @@ test('list handles stale responses, URL filters, text-only empty results, mobile
   assert.match(s, /items.length === 0/); assert.match(s, /md:hidden/); assert.match(s, /hidden.*md:table/); assert.match(s, /table-fixed/);
   assert.doesNotMatch(s, /<EmptyState|mangmee-table-scroll/);
 });
+test('every account status uses a distinct theme tone in mobile, desktop and detail badges', async () => {
+  const { executiveStatusTone } = await import('./executive-users.logic');
+  assert.deepEqual(['ACTIVE', 'PENDING_ACTIVATION', 'SUSPENDED', 'REVOKED'].map(status => executiveStatusTone(status as Parameters<typeof executiveStatusTone>[0])), ['brand', 'amber', 'danger', 'slate']);
+  assert.equal((source('ExecutiveUsersPage.tsx').match(/<MangmeeBadge tone=\{executiveStatusTone\(user.status\)\}/g) ?? []).length, 2);
+  assert.match(source('ExecutiveUserPage.tsx'), /<MangmeeBadge tone=\{executiveStatusTone\(user.status\)\}/);
+});
 
 test('create form uses shared fields and unticked rights; preserves typed values and attaches field errors', () => {
   const s = source('ExecutiveUserPage.tsx');

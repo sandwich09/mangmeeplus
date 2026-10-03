@@ -13,7 +13,7 @@ import { createExecutiveUser, getExecutiveUser, commandExecutiveUser } from './e
 import {
   executiveWords as words, EXECUTIVE_USERS_TITLE, EXECUTIVE_RIGHTS, EXECUTIVE_EXPORT_NOTE, EXECUTIVE_CONTACT_NOTE, EXECUTIVE_CONTACT_EXPORT_NOTE,
   emptyExecutiveForm, validateExecutiveForm, executiveCreateBody, executiveFieldErrors, executiveActions,
-  executiveActionLabel, executiveConfirmation, executiveCommand, executiveStatus, executiveRights, executiveExpiryNotice,
+  executiveActionLabel, executiveConfirmation, executiveCommand, executiveStatus, executiveStatusTone, executiveRights, executiveExpiryNotice,
   type ExecutiveAction, type ExecutiveForm, type ExecutiveFormErrors,
 } from './executive-users.logic';
 
@@ -134,7 +134,7 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
           [words.displayName, user.displayName], [words.username, user.username], [words.phoneNumber, user.phoneNumber || words.unspecified],
           [words.email, user.email || words.unspecified], [words.rights, executiveRights(user)], [words.lastEntry, user.lastWebEntryAt ? formatThaiDateTime(user.lastWebEntryAt) : words.missing],
         ].map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-sm text-gray-600">{label}</dt><dd className="mt-1">{value}</dd></div>)}</dl>
-        <p>{words.status}: <MangmeeBadge>{executiveStatus(user.status)}</MangmeeBadge></p>
+        <p>{words.status}: <MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></p>
         {expiryNotice && <p className="text-sm text-gray-600">{expiryNotice}</p>}
         {protectedAccount || user.status === 'REVOKED' ? <p className="text-sm text-gray-600">{apiErrorMessage({ code: protectedAccount ? 'ACCOUNT_PROTECTED' : 'ACCOUNT_REVOKED' })}</p>
           : <div className="flex flex-wrap gap-3">{executiveActions(user, protectedAccount).map(action => <Button key={action} variant={action === 'suspend' ? 'danger' : 'secondary'} loading={busy} disabled={busy || refreshRequired} onClick={() => void act(action)}>{executiveActionLabel(user, action)}</Button>)}</div>}

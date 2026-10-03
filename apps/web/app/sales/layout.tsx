@@ -3,7 +3,7 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import SalesHeader from '@/common/components/app-shell/SalesHeader';
 import { fetchServerSessionResult } from '@/common/auth/server-session';
-import { canOpenSales, legalAcceptancePath, salesGateReturnPath } from '@/common/auth/session-gate.logic';
+import { canOpenSales, isExecutiveOnlySession, legalAcceptancePath, salesGateReturnPath } from '@/common/auth/session-gate.logic';
 import { REQUEST_PATH_HEADER } from '@/common/auth/auth-cookies.constants';
 import SystemAccessDenied from '@/features/auth/SystemAccessDenied';
 
@@ -25,7 +25,7 @@ export default async function SalesLayout({ children }: { children: ReactNode })
     throw new Error('Cannot reach the authentication service. Please try again.');
   }
   if (result.status === 'forbidden' || !canOpenSales(result.session)) {
-    return <SystemAccessDenied />;
+    return <SystemAccessDenied executive={result.status === 'signed_in' && isExecutiveOnlySession(result.session)} />;
   }
   // Q3/S28: a new เซลล์ signs in with a one-time password, so this gate is on the journey's
   // critical path rather than an edge case.
