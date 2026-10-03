@@ -33,7 +33,11 @@ async function login(page: any, username: string, password: string, next = `/com
   await page.getByRole('button', { name: /^(เข้าสู่ระบบ|Sign in)$/i }).click();
   await page.waitForURL(/\/(?:legal-acceptance(?:[/?]|$)|companies\/)/);
   await ensureBrowserLegalAcceptance(page.context(), COMPANY_ID);
-  await page.goto(next);
+  // A fresh account lands on the legal-acceptance page, which moves on to `next` by itself once the acceptance
+  // above is recorded: this navigation can race it and be aborted (net::ERR_ABORTED). Either way the page has
+  // to end up at `next`.
+  await page.goto(next).catch((error: Error) => { if (!/ERR_ABORTED/.test(error.message)) throw error; });
+  await page.waitForURL((url: URL) => `${url.pathname}${url.search}` === next);
 }
 
 test.describe('XC — cross-cutting', () => {
@@ -60,10 +64,10 @@ test.describe('XC — cross-cutting', () => {
 
   test('XC-03 @p1 companyView cannot reach the manage-only permissions screen', async ({ page }) => {
     await login(page, SEED_USERS.companyView.username, SEED_USERS.companyView.password, `/companies/${COMPANY_ID}/settings/permissions`);
-    await page.goto(`/companies/${COMPANY_ID}/settings/permissions`);
-    // access.role.manage is required to SEE the page since the visibility rework —
-    // the route bounces to the dashboard instead of rendering read-only controls.
-    await expect(page).toHaveURL(new RegExp(`/companies/${COMPANY_ID}/dashboard`));
+    // access.role.manage is required to SEE the page. Since 0e1a81d8b a denied page is refused in place, inside
+    // the shell with a way back, instead of bouncing to the dashboard (SET-09 checks the same for qa.company).
+    await expect(page).toHaveURL(new RegExp(`/companies/${COMPANY_ID}/settings/permissions$`));
+    await expect(page.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toHaveCount(0);
   });
 

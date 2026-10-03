@@ -1,6 +1,6 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
-import { FEATURE_CATALOG, scrubRecordText } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, FEATURE_CATALOG, scrubRecordText } from '@watchdog-bms/contracts';
 
 /**
  * P10-L. The exact words on a button ARE the command, so the label and the matcher can never drift:
@@ -347,7 +347,7 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
         { type: 'text', text: '🎁 แพ็กเกจที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
         { type: 'text', text: 'รายเดือน 249 / 499 / 999 บาท และแพ็กเกจธุรกิจ 1,999 บาท ที่เพิ่มเอกสารภาษี ภ.ง.ด.53 และ 50 ทวิ เลือกและชำระในแอปได้เองค่ะ', size: 'sm', color: '#475467', wrap: true },
         ...(audience === 'employee'
-          ? [{ type: 'text', text: 'เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจให้ร้านนะคะ', size: 'sm', color: '#667085', wrap: true }]
+          ? [{ type: 'text', text: `${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเป็นคนเลือกแพ็กเกจให้ร้านนะคะ`, size: 'sm', color: '#667085', wrap: true }]
           : []),
       ] },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [

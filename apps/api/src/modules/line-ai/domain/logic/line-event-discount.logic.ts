@@ -1,3 +1,4 @@
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import type { BillingEventDiscountTicket, BillingEventDiscountView } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 
@@ -68,7 +69,7 @@ export function lineEventDiscountAnswer(facts: LineEventDiscountFacts): { text: 
 }
 
 /** Someone who cannot choose the shop's package (the read is owner/plan-manager only). */
-export const EVENT_DISCOUNT_MEMBER_REPLY = 'ส่วนลดจากงานใช้ตอนซื้อแพ็กเกจของร้าน เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจสอบถามในแชทนี้ได้เลยค่ะ';
+export const EVENT_DISCOUNT_MEMBER_REPLY = `ส่วนลดจากงานใช้ตอนซื้อแพ็กเกจของร้าน ${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจสอบถามในแชทนี้ได้เลยค่ะ`;
 
 /** The answer as one card; the package page button (one-tap handoff) only when the shop can use it now. */
 export function buildEventDiscountCard(facts: LineEventDiscountFacts, packageUrl?: string): LineReplyMessage {

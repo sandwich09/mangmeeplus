@@ -79,7 +79,7 @@ describe('sales-event LIFF page', () => {
     const html = method.call({ config: { lineLiffId: '123-test' } }, { headers: {}, protocol: 'https', get: () => 'api.example.test' } as any) as string;
     assert.match(html, /data-liff-mode="event-discount"/);
     assert.equal([...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].filter(([, body]) => body!.trim()).length, 0);
-    assert.match(html, /ส่วนลดนี้เป็นของบัญชี LINE นี้ ใช้ได้เมื่อคุณเป็นเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจของร้าน/);
+    assert.match(html, /ส่วนลดนี้เป็นของบัญชี LINE นี้ ใช้ได้เมื่อคุณเป็นเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจของร้าน/);
     for (const text of [html, LIFF_EVENT_DISCOUNT_PAGE.content, LIFF_PAGE_SCRIPT]) assert.doesNotMatch(text, /ตั๋ว/);
     assert.ok(!PAGE_IDS.includes('open-web'), 'one button: "เปิดมั่งมี" both prepares and opens');
   });

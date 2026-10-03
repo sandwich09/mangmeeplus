@@ -93,7 +93,7 @@ describe('reimbursement.list_pending_approvals forbidden outcome (REIMBURSEMENT_
 
 describe('billing.get_package_usage forbidden outcome (PACKAGE_MANAGER_REQUIRED, advisor spec P8)', () => {
   it('sends the asker to the owner or a package manager, with no figure and no link, in Thai and English', () => {
-    assert.equal(packageManagerRequiredReplyText(false), 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
+    assert.equal(packageManagerRequiredReplyText(false), 'เรื่องแพ็กเกจและเครดิตของร้าน ถามเจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ');
     assert.match(packageManagerRequiredReplyText(true), /ask the shop owner or someone who manages the package/);
     for (const text of [packageManagerRequiredReplyText(false), packageManagerRequiredReplyText(true)]) assert.doesNotMatch(text, /\d|https?:|\/companies\//u);
   });

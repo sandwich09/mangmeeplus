@@ -189,7 +189,7 @@ export const THAI_SYSTEM_ROLE_NAMES = {
   OWNER: 'เจ้าของกิจการ', ADMIN: 'ผู้ดูแลบริษัท', SYSTEM_ADMIN: 'ผู้ดูแลระบบ', MANAGER: 'ผู้จัดการ',
   HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'ฝ่ายคลังสินค้า', FINANCE: 'ฝ่ายการเงิน',
   ACCOUNTANT: 'ฝ่ายบัญชี', MARKETING: 'ฝ่ายการตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ (ดูอย่างเดียว)',
-  COMPANY_VIEW: 'เจ้าของบริษัท',
+  COMPANY_VIEW: 'ผู้ดูภาพรวมบริษัท',
   MANGMEE_SALES_LEAD: 'หัวหน้าทีมขายมั่งมี', MANGMEE_SALES: 'เซลล์มั่งมี',
 } as const;
 

@@ -22,8 +22,8 @@ describe('isAssignableRoleCatalog', () => {
   // Owner report 2026-10-02: "Company owner" was printed in English, and so was a standard role once a
   // company had edited it, because the company's copy keeps the English name the API stores.
   it('never prints the English name the API stores for a standard role', () => {
-    assert.equal(roleDisplayName({ key: 'COMPANY_VIEW', name: 'Company owner', isSystem: true }), 'เจ้าของบริษัท');
-    assert.equal(roleKeyDisplayName('COMPANY_VIEW'), 'เจ้าของบริษัท');
+    assert.equal(roleDisplayName({ key: 'COMPANY_VIEW', name: 'Company owner', isSystem: true }), 'ผู้ดูภาพรวมบริษัท');
+    assert.equal(roleKeyDisplayName('COMPANY_VIEW'), 'ผู้ดูภาพรวมบริษัท');
     const copy = { key: 'ACCOUNTANT', name: 'Accountant', isSystem: false };
     assert.equal(hasStandardRoleName(copy), true);
     assert.equal(roleDisplayName(copy), 'ฝ่ายบัญชี');
@@ -41,6 +41,16 @@ describe('isAssignableRoleCatalog', () => {
     assert.equal(isAssignableRoleCatalog([role('sales')]), false);
     assert.equal(isAssignableRoleCatalog({ roles: MANAGER_VIEW }), false);
   });
+});
+
+it('translates the stored company-view name on every Thai surface and calls it a viewer in English', () => {
+  for (const isSystem of [true, false, undefined]) {
+    const stored = { key: 'COMPANY_VIEW', name: 'Company owner', isSystem };
+    assert.equal(roleDisplayName(stored), 'ผู้ดูภาพรวมบริษัท');
+    assert.equal(roleDisplayName(stored, 'en'), 'Company viewer');
+  }
+  assert.equal(roleDisplayName('Company owner'), 'ผู้ดูภาพรวมบริษัท');
+  assert.equal(roleDisplayName('COMPANY_VIEW', 'en'), 'Company viewer');
 });
 
 describe('assignableRoleOptions', () => {

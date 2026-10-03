@@ -1,9 +1,19 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
 import { AccountingSummaryAgent, ALLOWED_TOOLS as ACCOUNTING_TOOLS } from './accounting-summary.agent';
 import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_TOOLS } from './inventory.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
+
+for (const path of ['business-read-result-semantics.ts', 'line-ai-scope-policy.logic.ts']) {
+  it(`sold assistant owner-role guidance uses the contracts name: ${path}`, () => {
+    const text = readFileSync(join(__dirname, '../domain/logic', path), 'utf8');
+    assert.deepEqual(text.match(/เจ้าของบริษัท|เจ้าของร้าน|ให้ผู้ดูแลบริษัทเพิ่มสิทธิ์ให้ก่อน/gu) ?? [], [], path);
+    assert.match(text, /THAI_SYSTEM_ROLE_NAMES\.OWNER/, path);
+  });
+}
 
 const ctx = { companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' };
 const READ_CATEGORIES = new Set(['read_summary', 'read_detail', 'report']);

@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { EMPLOYEE_TITLE_PREFIXES, employeeFullName, isRoleEditableByCompany, NON_EDITABLE_ROLE_KEYS } from './employee-access.js';
+import { EMPLOYEE_TITLE_PREFIXES, employeeFullName, isRoleEditableByCompany, NON_EDITABLE_ROLE_KEYS, THAI_SYSTEM_ROLE_NAMES } from './employee-access.js';
+
+it('names COMPANY_VIEW as a company viewer, distinct from the owner', () => {
+  assert.equal(THAI_SYSTEM_ROLE_NAMES.COMPANY_VIEW, 'ผู้ดูภาพรวมบริษัท');
+  assert.notEqual(THAI_SYSTEM_ROLE_NAMES.COMPANY_VIEW, THAI_SYSTEM_ROLE_NAMES.OWNER);
+});
 
 describe('isRoleEditableByCompany', () => {
   it('rejects every platform-managed role key', () => {

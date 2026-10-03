@@ -3,9 +3,9 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "bc60b3a871e140bbbfca08d7f96fb752730e9de9",
-  "checkoutBranch": "claude/sold-features-fixes-20261004",
-  "checkoutDirty": false,
+  "sourceRevision": "930a7cc327d3f25b4cd0b385d0b0a1f585e47ca7",
+  "checkoutBranch": "claude/roles-company-view-20261004",
+  "checkoutDirty": true,
   "sourceHashes": [
     {
       "path": "apps/ai-gateway/src/common/usage/ai-budget-provider.ts",
@@ -73,7 +73,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-package-tools.use-case.ts",
-      "sha256": "a869005a686cf60cbbbad4d959d5b62b524261f835610782aad68754c99bc772"
+      "sha256": "8101359d1c8396a996a90ec271a9699acc8ca698a698bde15d0345cf26a47157"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-procurement-ledger-tools.use-case.ts",
@@ -109,7 +109,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts",
-      "sha256": "bb458a1388a2158338f4290d916de62803496cf10a616d935779788a88220779"
+      "sha256": "ba7dbff57b4485fe1be8936a8cc0419a6c0ce77677021bdc95bb825e9c7dcbe7"
     },
     {
       "path": "apps/api/src/modules/line-ai/domain/logic/line-preference-command.logic.ts",
@@ -9015,6 +9015,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-03T18:24:09.586Z",
-  "manifestDigest": "04add3a474a0830e04bc640aec405fdecf8090018167b21b47fdf6921da0318b"
+  "generatedAt": "2026-10-03T20:10:09.518Z",
+  "manifestDigest": "fb87bb6bf81bf93eff45ddcbb9af8a545b02fdbc7370e2429645d8593b157f7a"
 }

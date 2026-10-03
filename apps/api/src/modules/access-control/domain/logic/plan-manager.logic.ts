@@ -1,3 +1,4 @@
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 // Spec: docs/specs/mangmee-purchase-without-setup-spec-th.md §18.2 R-C11 (Owner D-PF-10): LINE and the
 // web answer "who may manage this shop's package" with ONE predicate — an ACTIVE member whose ACTIVE
 // role grants `company.plan.manage` — the same rule billing.service.ts assertOwner enforces for
@@ -7,7 +8,7 @@
 export const PLAN_MANAGE_PERMISSION_KEY = 'company.plan.manage';
 /** Advisor spec §2.2 (Owner 2026-09-30): what a reader WITHOUT the permission above is told in place
  *  of a purchase, package-change or view-packages button. */
-export const ASK_PLAN_MANAGER_TH = 'หากต้องการใช้ต่อ แจ้งเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ';
+export const ASK_PLAN_MANAGER_TH = `หากต้องการใช้ต่อ แจ้ง${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจได้นะคะ`;
 
 type RoleWithPermissions = {
   status?: string | null;
