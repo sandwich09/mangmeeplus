@@ -1,16 +1,16 @@
 // Permission registry: canonical source of truth for permission keys and role grants.
 // Imported by seed.ts and tested by permission-registry.spec.ts.
 import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
-import { BILLING_PERMISSIONS, SALES_PERMISSION_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
+import { BILLING_PERMISSIONS, EXECUTIVE_PERMISSION_KEYS, EXECUTIVE_ROLE_KEYS, SALES_PERMISSION_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 
 /**
  * RB-34 — THE list of platform-only roles: มั่งมี's own staff roles. They are system roles, so every
  * company's role query finds them, but they mean something only inside the platform company.
  * Outside it a company cannot list, read, copy, assign or route an approval to one, and no custom
  * role may take its key (`platformOnlyRoleRefused`, `reservedRoleKey`). A new platform-only role
- * (the executive-report role, when it is built) joins HERE and nowhere else.
+ * joins HERE and nowhere else.
  */
-export const PLATFORM_ONLY_ROLE_KEYS: readonly string[] = [...SALES_ROLE_KEYS];
+export const PLATFORM_ONLY_ROLE_KEYS: readonly string[] = [...SALES_ROLE_KEYS, ...EXECUTIVE_ROLE_KEYS];
 
 /**
  * Roles that belong to the PLATFORM, not to a customer company. They hold no business
@@ -90,6 +90,10 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'system.shared_line_credential.manage', description: 'Read and replace shared Messaging credentials for the existing OA', riskLevel: 'CRITICAL' },
   // Item 10A partner management permissions
   { key: 'system.partner_dashboard.read',           description: 'Read partner company list and detail (metadata only)', riskLevel: 'MEDIUM' },
+  { key: 'system.executive.read', description: 'ดูรายงานผู้บริหาร', riskLevel: 'MEDIUM' },
+  { key: 'system.executive.export', description: 'ส่งออกรายงานผู้บริหาร', riskLevel: 'HIGH' },
+  { key: 'system.executive.contact.read', description: 'ดูข้อมูลติดต่อเจ้าของร้านในรายงานผู้บริหาร', riskLevel: 'HIGH' },
+  { key: 'system.executive_user.manage', description: 'จัดการบัญชีผู้บริหาร', riskLevel: 'CRITICAL' },
   { key: 'system.partner_company.create',           description: 'Create new partner company',                          riskLevel: 'HIGH' },
   { key: 'system.partner_company.update',           description: 'Update partner company profile metadata',             riskLevel: 'MEDIUM' },
   { key: 'system.partner_company.lifecycle.manage', description: 'Activate/inactivate/archive partner company',         riskLevel: 'CRITICAL' },
@@ -533,6 +537,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   SYSTEM_ADMIN: [
     'system.shared_line_credential.manage',
     ...BILLING_PERMISSIONS,
+    ...EXECUTIVE_PERMISSION_KEYS,
     'account.session.read',
     'account.password.change',
     'account.identity.link',
@@ -566,6 +571,15 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     // Sales console: the Owner is the single admin, so every sales authority lands here too —
     // including the PII key neither sales role may ever hold (R5/R11/S10).
     ...SALES_PERMISSION_KEYS,
+  ],
+  MANGMEE_EXECUTIVE: [
+    'account.session.read', 'account.password.change', 'account.identity.link', 'system.executive.read',
+  ],
+  MANGMEE_EXECUTIVE_EXPORT: [
+    'account.session.read', 'account.password.change', 'account.identity.link', 'system.executive.export',
+  ],
+  MANGMEE_EXECUTIVE_CONTACT: [
+    'account.session.read', 'account.password.change', 'account.identity.link', 'system.executive.contact.read',
   ],
   // ── มั่งมี sales team (spec §5). Platform-tenant memberships, never a shop's. ──
   // S29 is the whole point of these two lists: no business permission of ANY kind, so the
@@ -1079,6 +1093,9 @@ export const SYSTEM_ROLES: Array<{ key: string; name: string; description: strin
   { key: 'MARKETING',       name: 'Marketing',       description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.MARKETING}: ดูข้อมูลลูกค้าและรายงาน` },
   { key: 'STAFF',           name: 'Staff',           description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.STAFF}ทั่วไป: บันทึกค่าใช้จ่ายและขอเบิกของตัวเอง` },
   { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.AUDITOR_READONLY}: ดูข้อมูลของบริษัทเพื่อตรวจสอบโดยไม่แก้ไข` },
+  { key: 'MANGMEE_EXECUTIVE', name: 'ผู้บริหารมั่งมี', description: 'สำหรับผู้บริหารมั่งมีที่ดูรายงานผู้บริหาร' },
+  { key: 'MANGMEE_EXECUTIVE_EXPORT', name: 'สิทธิ์ส่งออกรายงานสำหรับผู้บริหาร', description: 'สิทธิ์เพิ่มเติมสำหรับส่งออกรายงานผู้บริหาร' },
+  { key: 'MANGMEE_EXECUTIVE_CONTACT', name: 'สิทธิ์ดูข้อมูลติดต่อสำหรับผู้บริหาร', description: 'สิทธิ์เพิ่มเติมสำหรับดูข้อมูลติดต่อเจ้าของร้านในรายงานผู้บริหาร' },
   // S06: prefixed so they can never be confused with the tenant role `SALES` above, which is a
   // shop's own sales employee. UI wording is "ทีมขายมั่งมี" / "เซลล์".
   { key: 'MANGMEE_SALES_LEAD', name: 'Mangmee Sales Lead', description: 'Mangmee sales team lead: all teams deals, approvals, team accounts' },

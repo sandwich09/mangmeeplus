@@ -191,3 +191,18 @@ describe('capture lineage in the accountant export', () => {
     assert.equal(buildAccountantIndexRow({ ...nonVatExpense, captureSource: 'SOME_FUTURE_LANE' }).source_channel, 'OTHER');
   });
 });
+
+it('shared XLSX text cells remove invalid XML controls and flatten lines, and reject non-finite amounts and invalid sheet names', async () => {
+  const { buildXlsx } = await import('../../../../common/export/xlsx.logic');
+  const file = buildXlsx([['=1\u0001\t\r\nx', 12.34]], 'รายงาน');
+  let xml = '';
+  for (let offset = 0; file.readUInt32LE(offset) === 0x04034b50;) {
+    const size = file.readUInt32LE(offset + 18), nameLength = file.readUInt16LE(offset + 26), extraLength = file.readUInt16LE(offset + 28);
+    const start = offset + 30 + nameLength + extraLength;
+    if (file.subarray(offset + 30, offset + 30 + nameLength).toString() === 'xl/worksheets/sheet1.xml') xml = file.subarray(start, start + size).toString();
+    offset = start + size;
+  }
+  assert.ok(xml);
+  assert.ok(!xml.includes('\u0001')); assert.ok(xml.includes('=1   x')); assert.ok(xml.includes('<v>12.34</v>'));
+  assert.throws(() => buildXlsx([[NaN]], 'รายงาน')); assert.throws(() => buildXlsx([[1]], 'invalid/name'));
+});

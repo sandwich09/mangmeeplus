@@ -26,3 +26,15 @@ test('renders a themed combobox and keeps the selected form value', async () => 
   // surrounding table's overflow clip.
   assert.doesNotMatch(html, /role="listbox"/);
 });
+
+test('SelectField names its combobox with the field label for every selected value', async () => {
+  const { SelectField } = await import('./Field');
+  for (const value of ['ACTIVE', 'SUSPENDED']) {
+    const html = renderToStaticMarkup(React.createElement(SelectField, { label: 'สถานะบัญชี', value },
+      React.createElement('option', { value: 'ACTIVE' }, 'เปิดใช้งาน'),
+      React.createElement('option', { value: 'SUSPENDED' }, 'ระงับ')));
+    const trigger = html.match(/<summary[^>]*>/)?.[0] ?? '';
+    assert.match(trigger, /aria-label="สถานะบัญชี"/);
+    assert.doesNotMatch(trigger, /aria-label="(?:เปิดใช้งาน|ระงับ)"/);
+  }
+});

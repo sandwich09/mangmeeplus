@@ -17,6 +17,8 @@ import { PLATFORM_TENANT_ID, SalesAgentActiveGuard } from '../sales-console/appl
 import { SalesConsoleModule } from '../sales-console/sales-console.module';
 import { SystemSalesAttributionController, SystemSalesReferralController } from '../sales-console/presentation/http/system-sales-agents.controller';
 import { SystemIdentityReconciliationController } from '../system-identity-reconciliation/presentation/http/system-identity-reconciliation.controller';
+import { ExecutiveReportController } from '../executive-business/presentation/http/executive-report.controller';
+import { ExecutiveUsersController } from '../executive-business/presentation/http/executive-users.controller';
 
 // Minimal mock factory for ExecutionContext
 function makeContext(opts: {
@@ -795,6 +797,9 @@ describe('platform routes and the companyId path parameter (RB-40)', () => {
       [SystemSalesAttributionController, 'review'],
       [SystemIdentityReconciliationController, 'generateForCompany'],
       [SystemIdentityReconciliationController, 'repairTaxId'],
+      // Executive report API05/API06 (spec §16.1): the shop is `:targetCompanyId`, where the reader holds no membership.
+      [ExecutiveReportController, 'company'],
+      [ExecutiveReportController, 'history'],
     ];
     for (const [controller, handler] of routes) {
       const request = { method: 'POST', path: '/v1/system/x', headers: { authorization: 'Bearer valid.token' }, cookies: {}, params: declaredParams(controller, handler, 'shop-1'), context: undefined as any };
@@ -812,20 +817,23 @@ describe('platform routes and the companyId path parameter (RB-40)', () => {
     );
   });
 
-  it('no route under system/ declares a parameter named companyId', () => {
+  it('no route under system/ or sales/ declares a parameter named companyId', () => {
     const files = (readdirSync(MODULES, { recursive: true, encoding: 'utf8' }) as string[]).filter((file) => file.endsWith('.controller.ts'));
     let systemControllers = 0;
+    let salesControllers = 0;
     const offenders = files.flatMap((file) => readFileSync(join(MODULES, file), 'utf8')
       // One block per controller class: its decorator, then the route decorators it owns.
       .split(/(?=@Controller\()/)
       .flatMap((block) => {
         const prefix = /^@Controller\(\s*['"`]([^'"`]*)/.exec(block)?.[1];
-        if (prefix === undefined || !/^system(\/|$)/.test(prefix)) return [];
+        if (prefix === undefined || !/^(system|sales)(\/|$)/.test(prefix)) return [];
         systemControllers += 1;
+        if (/^sales(\/|$)/.test(prefix)) salesControllers += 1;
         return [prefix, ...[...block.matchAll(/@(?:Get|Post|Put|Patch|Delete|All)\(\s*['"`]([^'"`]*)/g)].map((match) => `${prefix}/${match[1]}`)]
           .filter((path) => /:companyId\b/.test(path))
           .map((path) => `${file}: ${path}`);
       }));
+    assert.ok(salesControllers >= 3, `expected sales controllers in the scan, found ${salesControllers}`);
     assert.ok(systemControllers >= 15, `expected to scan the platform controllers, found ${systemControllers}`);
     assert.deepEqual(offenders, [], 'AuthGuard resolves :companyId as the caller membership; name the target :partnerCompanyId');
   });
@@ -879,6 +887,145 @@ describe('SalesAgentActiveGuard (RB-36)', () => {
   });
 });
 
+// E1: enumerate the module's actual route handlers, including E3 reads and the API13 export.
+describe('executive account boundary (E1)', () => {
+  it('requires permission and platform context on every route, independent of caller role names', async () => {
+    const { ExecutiveBusinessModule } = await import('../executive-business/executive-business.module');
+    const controllers = Reflect.getMetadata('controllers', ExecutiveBusinessModule) as any[];
+    const { ExecutiveReportReadService } = await import('../executive-business/application/executive-report-read.service');
+    const { METHOD_METADATA, HEADERS_METADATA } = await import('@nestjs/common/constants');
+    let checked = 0;
+    // Exact permissions per handler; API13 also takes the binary response.
+    const routes = new Map<unknown, { permissions: (method: string) => string[]; args: (method: string, req: unknown) => unknown[] }>([
+      [ExecutiveUsersController, { permissions: () => ['system.executive_user.manage'],
+        args: (method, req) => method === 'list' || method === 'create' ? [{}, req] : method === 'detail' ? ['target', req] : ['target', {}, req] }],
+      [ExecutiveReportController, { permissions: method => method === 'export' ? ['system.executive.read', 'system.executive.export'] : ['system.executive.read'],
+        args: (method, req) => method === 'export' ? [{}, req, { setHeader: () => {}, send: () => {} }] : method === 'context' ? [req] : method === 'company' || method === 'history' ? ['target', {}, req] : [{}, req] }],
+    ]);
+    assert.deepEqual(controllers.map((controller) => controller.name), ['ExecutiveUsersController', 'ExecutiveReportController']);
+    for (const Controller of controllers) {
+      const { permissions, args } = routes.get(Controller)!;
+      const calls: string[] = [];
+      const service = new Proxy({}, { get: (_target, method: string) => () => { calls.push(method); return Promise.resolve(method === 'export' ? { file: Buffer.alloc(0), exportReference: 'export-test', rowCount: 0 } : {}); } });
+      const controller = new Controller(service);
+      for (const method of Object.getOwnPropertyNames(Controller.prototype).filter((name) => Reflect.hasMetadata(METHOD_METADATA, Controller.prototype[name]))) {
+        checked++;
+        const handler = Controller.prototype[method];
+        const context = { userId: 'caller', companyId: PLATFORM_TENANT_ID, roles: [] as string[], permissions: permissions(method), requestId: 'e1-guard' };
+        assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), context.permissions, method);
+        assert.ok(Reflect.getMetadata(HEADERS_METADATA, handler).some((h: any) => h.name === 'Cache-Control' && h.value === 'no-store'));
+        const request = { context: { ...context, companyId: 'customer-company' } };
+        const http = { getHandler: () => handler, getClass: () => Controller, switchToHttp: () => ({ getRequest: () => request }) } as any;
+        assert.equal(new DenyByDefaultGuard(new Reflector()).canActivate(http), true);
+        // API13 checks tenant inside the service so every attempted export is audited.
+        // Exercise that real entry point; a permissive service stub would bypass its tenant boundary.
+        const readSource = mock.fn(() => assert.fail('denied export must not read report data'));
+        const tenantController = method === 'export' ? new Controller(new ExecutiveReportReadService(
+          { client: { $transaction: readSource } } as never, { logOrThrow: async () => {} } as never, {} as never, {} as never,
+        )) : controller;
+        await assert.rejects(async () => tenantController[method](...args(method, request)), (e: any) => e.getStatus() === 403, method);
+        assert.equal(readSource.mock.callCount(), 0, method);
+        assert.equal(calls.length, 0, method);
+        request.context = { ...context };
+        await controller[method](...args(method, request));
+        assert.equal(calls.length, 1, method); calls.length = 0;
+        for (const missing of context.permissions) {
+          request.context = { ...context, roles: ['MANGMEE_EXECUTIVE', 'SYSTEM_ADMIN'], permissions: context.permissions.filter(permission => permission !== missing) };
+          assert.throws(() => new DenyByDefaultGuard(new Reflector()).canActivate(http), ForbiddenException, `${method}: missing ${missing}`);
+        }
+      }
+    }
+    assert.equal(checked, 13);
+    const app = readFileSync(join(__dirname, '../../app.module.ts'), 'utf8');
+    assert.match(app, /imports:\s*\[[\s\S]*?ExecutiveBusinessModule/);
+  });
+
+  it('accepts only the documented command/query keys and rejects invalid values at the HTTP boundary', async () => {
+    const { ValidationPipe } = await import('@nestjs/common');
+    const { GLOBAL_VALIDATION_PIPE_OPTIONS } = await import('../../common/pipes/validation-pipe.options');
+    const dto = await import('../executive-business/presentation/http/executive-users.controller');
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    for (const [metatype, body] of [
+      [dto.ExecutiveUserCreateDto, { username: 'reader', displayName: 'ผู้บริหาร', canExport: false, canSeeContacts: false }],
+      [dto.ExecutiveUserStatusDto, { status: 'SUSPENDED', reason: 'เหตุผล' }],
+      [dto.ExecutiveUserCredentialDto, { reason: 'เหตุผล' }],
+      [dto.ExecutiveUserAccessDto, { canExport: false, canSeeContacts: true, reason: 'เหตุผล' }],
+      [dto.ExecutiveUserListQueryDto, { q: 'reader', status: 'ACTIVE', page: 1, pageSize: 20 }],
+    ] as const) {
+      const metadata = { type: 'body' as const, metatype };
+      assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(await pipe.transform(body, metadata)))).sort(), Object.keys(body).sort());
+      await assert.rejects(pipe.transform({ ...body, roles: ['SYSTEM_ADMIN'] }, metadata));
+    }
+    for (const body of [{ page: 0 }, { pageSize: 101 }, { status: 'DISABLED' }, { page: 'x' }, { page: 1.5 }]) {
+      await assert.rejects(pipe.transform(body, { type: 'query', metatype: dto.ExecutiveUserListQueryDto }));
+    }
+    const parsed = await pipe.transform({ page: '2', pageSize: '10' }, { type: 'query', metatype: dto.ExecutiveUserListQueryDto });
+    assert.equal(parsed.page, 2); assert.equal(parsed.pageSize, 10);
+  });
+
+  // E3, spec §12.4: a report query value outside the contract is 400 at the HTTP boundary, never widened to ALL.
+  it('accepts only the report query of spec §12.4 and refuses anything else at the HTTP boundary', async () => {
+    const { ValidationPipe } = await import('@nestjs/common');
+    const { GLOBAL_VALIDATION_PIPE_OPTIONS } = await import('../../common/pipes/validation-pipe.options');
+    const dto = await import('../executive-business/presentation/http/executive-report.controller');
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const query = (metatype: unknown, value: Record<string, unknown>) => pipe.transform(value, { type: 'query', metatype: metatype as never });
+    const list = { month: '2026-09', buildId: 'b1', industry: 'FOOD_ACCOMMODATION', discovery: 'BEFORE_COLLECTION', referringSales: 'S001', companyStatus: 'ARCHIVED',
+      planState: 'ADMIN_HOLD', usageGroup: 'NOT_STARTED', usageAssessed: 'false', activeInPeriod: 'true', paidInPeriod: 'true', positiveNetInPeriod: 'true', paidEver: 'UNKNOWN',
+      fullyRefunded: 'true', receiptAdoption: 'NOT_ENTITLED', spendCohort: 'TO80_BOUNDARY_TIE', signupRail: 'email-otp', q: '  ร้านซ้ำ  ', sortBy: 'netReceipts', sortDir: 'asc',
+      page: '3', pageSize: '100' };
+    const parsed = await query(dto.ExecutiveCompaniesQueryDto, list);
+    assert.deepEqual([parsed.q, parsed.page, parsed.pageSize, Object.keys(parsed).length], ['ร้านซ้ำ', 3, 100, Object.keys(list).length]);
+    for (const bad of [{ month: '2026-13' }, { month: '2569-9' }, { month: undefined }, { industry: 'MINING' }, { discovery: 'LINE' }, { referringSales: 'S 001' },
+      { companyStatus: 'DELETED' }, { usageGroup: 'UNKNOWN' }, { usageAssessed: 'maybe' }, { activeInPeriod: 'false' }, { paidEver: 'MAYBE' }, { spendCohort: 'TOP10' },
+      { signupRail: 'partner-api' }, { q: 'ก'.repeat(121) }, { sortBy: 'id' }, { sortDir: 'up' }, { page: '0' }, { pageSize: '101' }, { page: '1.5' }, { companyId: 'shop-1' }])
+      await assert.rejects(query(dto.ExecutiveCompaniesQueryDto, { ...list, ...bad }), JSON.stringify(bad));
+    await query(dto.ExecutiveAnalysisQueryDto, { month: '2026-09', section: 'compare', dimension: 'company', sideA: 'a', sideB: 'b' });
+    for (const bad of [{ section: 'deletion' }, { view: 'list' }, { metric: 'documents' }, { dimension: 'province' }, { q: 'x' }])
+      await assert.rejects(query(dto.ExecutiveAnalysisQueryDto, { month: '2026-09', section: 'usage', ...bad }), JSON.stringify(bad));
+    await assert.rejects(query(dto.ExecutiveCompanyQueryDto, { month: '2026-09', industry: 'ALL' }));
+    await assert.rejects(query(dto.ExecutiveHistoryQueryDto, { pageSize: '101' }));
+  });
+});
+
+
+it('executive account errors carry safe codes and the request id without leaking guard/validation messages', async () => {
+  const { EXCEPTION_FILTERS_METADATA } = await import('@nestjs/common/constants');
+  const { BadRequestException } = await import('@nestjs/common');
+  const { ExecutiveBusinessModule } = await import('../executive-business/executive-business.module');
+  const { executiveError } = await import('../executive-business/application/executive-users.service');
+  // Account filters are instances; the report filter is an injectable class with async export audit.
+  const denied = (controller: Function) => {
+    const filter = Reflect.getMetadata(EXCEPTION_FILTERS_METADATA, controller)[0];
+    if (typeof filter !== 'function') return filter;
+    assert.ok(Reflect.getMetadata('providers', ExecutiveBusinessModule).includes(filter));
+    return new filter({ logOrThrow: async () => {} });
+  };
+  const words: string[] = [];
+  for (const [controller, method] of [[ExecutiveUsersController, 'GET'], [ExecutiveReportController, 'GET'], [ExecutiveReportController, 'POST']] as const) {
+    const response = { setHeader: () => response, status: () => response, json: (value: { message: string; code: string }) => { assert.equal(value.code, 'EXECUTIVE_ACCESS_DENIED'); words.push(value.message); } };
+    await denied(controller).catch(new ForbiddenException('No active company membership.'), { switchToHttp: () => ({ getRequest: () => ({ method, headers: {} }), getResponse: () => response }) });
+  }
+  assert.deepEqual(words, ['ไม่มีสิทธิ์จัดการบัญชีผู้บริหาร', 'คุณไม่มีสิทธิ์ดูรายงานนี้', 'คุณไม่มีสิทธิ์ส่งออกไฟล์นี้']);
+  for (const controller of [ExecutiveUsersController, ExecutiveReportController]) {
+    const filter = denied(controller);
+    for (const [method, error, expectedCode] of [
+      ['POST', new ForbiddenException('sales_console_platform_tenant_required'), 'EXECUTIVE_ACCESS_DENIED'],
+      ['POST', new BadRequestException(['canExport must be a boolean']), 'INVALID_INPUT'],
+      ['GET', new BadRequestException(['page must be a number']), 'EXECUTIVE_QUERY_INVALID'],
+      ['GET', executiveError('request-e1', 'COMPANY_NOT_FOUND'), 'COMPANY_NOT_FOUND'],
+      ['GET', executiveError('request-e1', 'SOURCE_UNAVAILABLE'), 'SOURCE_UNAVAILABLE'],
+    ] as const) {
+      let result: any; let status: number | undefined; let cache: string | undefined;
+      const response = { setHeader: (name: string, value: string) => { assert.equal(name, 'Cache-Control'); cache = value; }, status: (value: number) => { status = value; return response; }, json: (value: any) => { result = value; } };
+      await filter.catch(error, { switchToHttp: () => ({ getRequest: () => ({ method, headers: { 'x-request-id': 'request-e1' } }), getResponse: () => response }) });
+      assert.equal(status, error.getStatus()); assert.equal(cache, 'no-store');
+      assert.deepEqual(Object.keys(result).sort(), ['code', 'message', 'requestId']);
+      assert.equal(result.code, expectedCode); assert.equal(result.requestId, 'request-e1');
+      assert.doesNotMatch(result.message, /[A-Za-z]/);
+    }
+  }
+});
 
 describe('sold 50 ทวิ signature read boundary', () => {
   it('allows ENTERPRISE signature managers, refuses STARTER and non-managers, keeps full tax closed', async () => {

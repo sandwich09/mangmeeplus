@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnprocessableEntityException, ValidationPipe, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { OwnerNameBodyDto, PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetManualExpenseWebEntryBodyDto, SetOcrConfigBodyDto } from './partner.controller';
+import { OwnerNameBodyDto, PartnerAiCreditHoldActionBodyDto, PartnerController, SetAiModelBodyDto, SetFeaturesBodyDto, SetManualExpenseWebEntryBodyDto, SetOcrConfigBodyDto, UpdateProfileBodyDto } from './partner.controller';
 import { SystemAiBudgetController } from './system-ai-budget.controller';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
@@ -89,6 +89,28 @@ describe('PartnerController', () => {
   it('detail() returns result from GetPartnerDetailUseCase', async () => {
     const result = await makeCtrl().detail('co-1') as any;
     assert.equal(result.id, 'co-1');
+  });
+
+  it('list() forwards the report-label filters (executive spec §16.1)', async () => {
+    let query: any;
+    const ctrl = makeCtrl({ listPartners: { execute: async (value: any) => { query = value; return { items: [], total: 0, page: 1, pageSize: 20 }; } } as any });
+    await ctrl.list('ACTIVE', '2', '50', 'ร้าน', 'UNCLASSIFIED', 'UNSET');
+    assert.deepEqual(query, { q: 'ร้าน', status: 'ACTIVE', page: 2, pageSize: 50, reportClassification: 'UNCLASSIFIED', reportIndustryGroup: 'UNSET' });
+  });
+
+  it('the profile body takes the two report labels: a listed value or null (clear), nothing else', async () => {
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    const run = (body: Record<string, unknown>) => pipe.transform(body, { type: 'body', metatype: UpdateProfileBodyDto }) as Promise<any>;
+    const set = await run({ reportClassification: 'TEST', reportIndustryGroup: 'FOOD_ACCOMMODATION' });
+    assert.equal(set.reportClassification, 'TEST');
+    assert.equal(set.reportIndustryGroup, 'FOOD_ACCOMMODATION');
+    const cleared = await run({ reportClassification: null, reportIndustryGroup: null });
+    assert.equal(cleared.reportClassification, null);
+    assert.equal(cleared.reportIndustryGroup, null);
+    for (const poison of [{ reportClassification: 'VIP' }, { reportClassification: 'customer' }, { reportClassification: 1 },
+      { reportIndustryGroup: 'RESTAURANTS' }, { reportIndustryGroup: ['FINANCE'] }, { reportClassifiedByUserId: 'someone' }]) {
+      await assert.rejects(() => run(poison), BadRequestException, JSON.stringify(poison));
+    }
   });
 
   it('update() passes companyId and admin context to use case', async () => {

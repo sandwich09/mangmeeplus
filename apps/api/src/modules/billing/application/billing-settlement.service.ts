@@ -14,11 +14,12 @@ import { assertMappedCharge } from './billing-financial';
 import { assertOriginalInvoiceCharge } from './billing-refund-source';
 import { originalInvoice } from './billing-invoice-details';
 import { settlementPage, settlementPayout, type SettlementMovement, type SettlementPayout } from './billing-settlement-source';
+import { scheduleConfig } from './billing-provider-scans.service';
 
 const TYPE='SCAN_PROVIDER_BALANCE',FINDING='OBSERVE_PROVIDER_BALANCE',RUN='system.billing.reconcile.run';
 const stale=()=>billingError('CONTROL_PREVIEW_STALE','งานหรือข้อมูลเปลี่ยนแล้ว กรุณาโหลดผลล่าสุด');
 const json=(v:unknown)=>v as Prisma.InputJsonValue;
-type Source={since:number;until:number;membershipId:string;actorCompanyId:string};
+type Source={since:number;until:number;membershipId:string;actorCompanyId:string;scheduleId?:string};
 type Totals={grossCharges:string;knownTax:string;unknownTaxCharges:number;fees:string;netMovement:string;payouts:string;payoutReversals:string;excluded:number};
 type Progress={totals:Totals;cursor:string|null;pages:number;seen:number;matched:number;different:number;manual:number;missing:number;failures:number;retryAt:string|null};
 const empty=():Progress=>({totals:{grossCharges:'0',knownTax:'0',unknownTaxCharges:0,fees:'0',netMovement:'0',payouts:'0',payoutReversals:'0',excluded:0},cursor:null,pages:0,seen:0,matched:0,different:0,manual:0,missing:0,failures:0,retryAt:null});
@@ -190,8 +191,36 @@ export class BillingSettlementService{
       });
     }
   }
+  /**
+   * Executive spec §14.1 (Q21): one balance scan per finished Bangkok day, queued by the worker that already drains
+   * these jobs. It runs only while the provider-scan schedule (CONFIGURE_PROVIDER_SCANS) is published and enabled, as
+   * that schedule's owner, whose permission `actor()` checks again on every page. The key is the day, so a second
+   * call, a second task and a restart all find the same job.
+   */
+  async scheduleDaily(){
+    const day=86400,until=Math.floor((Date.now()/1000+7*3600)/day)*day-7*3600,key=`scheduled-settlement:${until}`;
+    const unique={stripeAccountId_livemode_idempotencyKey:{stripeAccountId:this.stripe.accountId,livemode:this.stripe.livemode,idempotencyKey:key}};
+    if(await this.prisma.client.billingOperation.findUnique({where:unique,select:{id:true}}))return;
+    await this.prisma.client.$transaction(async tx=>{
+      await this.lock(tx);if(await tx.billingOperation.findUnique({where:unique,select:{id:true}}))return;
+      const publication=await tx.billingOperation.findFirst({where:{...this.where(),type:'CONFIGURE_PROVIDER_SCANS',state:'SUCCEEDED'},orderBy:[{sourceVersion:'desc'},{id:'desc'}]});
+      if(!publication||!scheduleConfig(publication.proposedJson)?.enabled)return;
+      let context:RequestContext;
+      try{context=await this.admin.authorizeOperation(publication,RUN,tx);await this.access(context,RUN,tx);}catch{return;}
+      if(await tx.billingOperation.count({where:{...this.where(),state:{in:['QUEUED','RUNNING']}}})>=5)return;
+      // ponytail: a day the worker missed is read by the next job (from where the last scheduled one ended, 31 days at most);
+      // a failed job keeps its own window for the admin, so one bad day never stops the days after it.
+      const last=await tx.billingOperation.findFirst({where:{...this.where(),idempotencyKey:{startsWith:'scheduled-settlement:'}},orderBy:[{createdAt:'desc'},{id:'desc'}],select:{proposedJson:true}});
+      const since=Math.max(until-31*day,Math.min(until-day,last?(last.proposedJson as Source).until:until-day));
+      const p:Source={since,until,membershipId:context.membershipId,actorCompanyId:context.companyId,scheduleId:publication.id},reason=`อ่านยอดอัตโนมัติรายวัน · การตั้งค่ารุ่น ${publication.sourceVersion+1}`;
+      const saved=await tx.billingOperation.create({data:{...this.where(),state:'QUEUED',proposedJson:json(p),reason,sourceVersion:0,initiatorUserId:context.userId,
+        requestHash:configurationHash([TYPE,p,reason,context.userId]),idempotencyKey:key,expiresAt:new Date(Date.now()+31*day*1000),resultJson:json(empty())}});
+      await this.audit(tx,saved,'scheduled');
+    });
+  }
   async drain(){
     if(!this.stripe.enabled)return {processed:0,failed:0};
+    await this.scheduleDaily();
     const rows=await this.prisma.client.billingOperation.findMany({where:{...this.where(),state:{in:['QUEUED','RUNNING']},OR:[{leaseUntil:null},{leaseUntil:{lte:new Date()}}]},orderBy:[{updatedAt:'asc'},{id:'asc'}],take:5});
     const row=rows.find(r=>!(r.resultJson as Progress).retryAt||Date.parse((r.resultJson as Progress).retryAt!)<=Date.now());if(!row)return {processed:0,failed:0};
     try{await this.execute(row);return {processed:1,failed:0};}catch{return {processed:1,failed:1};}

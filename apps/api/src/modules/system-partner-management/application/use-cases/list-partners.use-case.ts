@@ -2,19 +2,29 @@ import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import {
+  PARTNER_REPORT_CLASSIFICATION_FILTERS,
+  PARTNER_REPORT_INDUSTRY_GROUP_FILTERS,
   planTermLockReason,
   planTermState,
+  reportIndustryGroupOf,
   type LineContextHealth,
   type PaginatedPartnersDto,
   type PartnerCompanySummaryDto,
+  type PartnerReportClassificationFilter,
+  type PartnerReportIndustryGroupFilter,
   type PlanTierKey,
 } from '@watchdog-bms/contracts';
+import { reportClassificationOf, reportLabelWhere } from '../../domain/logic/report-labels.logic';
 
 export type ListPartnersQuery = {
   q?: string;
   status?: string;
   page?: number;
   pageSize?: number;
+  /** Executive spec §16.1: ALL (default) / CUSTOMER / TEST / INTERNAL / UNCLASSIFIED. */
+  reportClassification?: string;
+  /** Executive spec §16.1: ALL (default) / UNSET. */
+  reportIndustryGroup?: string;
 };
 
 @Injectable()
@@ -32,6 +42,12 @@ export class ListPartnersUseCase {
     if (q.length > 120 || (query.status && !['ACTIVE', 'DISABLED', 'ARCHIVED', 'SUSPENDED'].includes(query.status))) {
       throw new UnprocessableEntityException('คำค้นหรือสถานะบริษัทไม่ถูกต้อง');
     }
+    if ((query.reportClassification !== undefined && !(PARTNER_REPORT_CLASSIFICATION_FILTERS as readonly string[]).includes(query.reportClassification))
+      || (query.reportIndustryGroup !== undefined && !(PARTNER_REPORT_INDUSTRY_GROUP_FILTERS as readonly string[]).includes(query.reportIndustryGroup))) {
+      throw new UnprocessableEntityException('ตัวกรองประเภทบริษัทหรือกลุ่มธุรกิจไม่ถูกต้อง');
+    }
+    const labels = reportLabelWhere({ reportClassification: query.reportClassification as PartnerReportClassificationFilter | undefined,
+      reportIndustryGroup: query.reportIndustryGroup as PartnerReportIndustryGroupFilter | undefined });
     const skip = (page - 1) * pageSize;
     if (!Number.isSafeInteger(skip) || skip > 2_147_483_647) throw new UnprocessableEntityException('หน้ารายการไม่ถูกต้อง');
 
@@ -42,6 +58,7 @@ export class ListPartnersUseCase {
         { registeredName: { contains: q, mode: 'insensitive' as const } },
         { id: q },
       ] } : {}),
+      ...(labels.length ? { AND: labels } : {}),
     };
 
     // ponytail: explicit select — never touch business tables
@@ -62,6 +79,9 @@ export class ListPartnersUseCase {
           activatedAt: true,
           disabledAt: true,
           archivedAt: true,
+          businessTypeCode: true,
+          reportClassification: true,
+          reportIndustryGroup: true,
           planTerm: { select: { tierKey: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } },
           featureEntitlements: {
             where: { enabled: true },
@@ -111,6 +131,8 @@ export class ListPartnersUseCase {
         planState: planTermState(c.planTerm, now, c.status),
         ...(c.planTerm && c.planTerm.termEndsAt.getTime() <= now.getTime() ? { lockReason: planTermLockReason(c.planTerm) } : {}),
         ...(c.planTerm ? { tierKey: c.planTerm.tierKey as PlanTierKey, termEndsAt: c.planTerm.termEndsAt.toISOString() } : {}),
+        reportClassification: reportClassificationOf(c),
+        reportIndustryGroup: reportIndustryGroupOf(c)?.group ?? null,
       };
     });
 

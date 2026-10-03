@@ -27,11 +27,15 @@ import {
   PARTNER_ADJUSTMENT_REASON_MAX_LENGTH,
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
+  REPORT_CLASSIFICATIONS,
+  REPORT_INDUSTRY_GROUPS,
   USER_LEGAL_IDENTITY_CHANGE_KINDS,
   VAT_FACT_STATUSES,
   type CompanyLegalAddress,
   type LegalIdentityCorrectionReason,
   type PlanTierKey,
+  type ReportClassification,
+  type ReportIndustryGroup,
   type UserLegalIdentityChangeKind,
   type VatFactStatus,
 } from '@watchdog-bms/contracts';
@@ -72,13 +76,16 @@ import { PartnerAiCreditHoldsUseCase } from '../../application/use-cases/partner
 /** Derived from the frozen catalog so the DTO can never drift from the presets it validates. */
 const PLAN_TIER_KEYS = Object.keys(PLAN_TIER_PRESETS) as PlanTierKey[];
 
-class UpdateProfileBodyDto {
+export class UpdateProfileBodyDto {
   @IsString() @IsOptional() name?: string;
   @IsString() @IsOptional() brandName?: string;
   @IsString() @IsOptional() timezone?: string;
   @IsString() @IsOptional() locale?: string;
   @IsString() @IsOptional() phone?: string;
   @IsString() @IsOptional() email?: string;
+  // Executive spec §12.2, §15: null clears the label (IsOptional lets null through to the use case).
+  @IsIn([...REPORT_CLASSIFICATIONS]) @IsOptional() reportClassification?: ReportClassification | null;
+  @IsIn(REPORT_INDUSTRY_GROUPS.map((group) => group.key)) @IsOptional() reportIndustryGroup?: ReportIndustryGroup | null;
 }
 
 // Purchase without setup PR E (R-E3, DQ9): same fields as CompanyIdentityController's own
@@ -280,12 +287,16 @@ export class PartnerController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('q') q?: string,
+    @Query('reportClassification') reportClassification?: string,
+    @Query('reportIndustryGroup') reportIndustryGroup?: string,
   ) {
     return this.listPartners.execute({
       q,
       status,
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
+      reportClassification,
+      reportIndustryGroup,
     });
   }
 
