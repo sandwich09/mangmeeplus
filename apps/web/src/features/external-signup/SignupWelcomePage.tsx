@@ -1,4 +1,5 @@
 'use client';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 import { Suspense, useEffect, useState } from 'react';
 import type { AccountMergeCompanyOutcomeDto, AccountMergePreviewDto } from '@watchdog-bms/contracts';
@@ -61,7 +62,7 @@ const MERGE_OUTCOME_TH: Record<AccountMergeCompanyOutcomeDto['outcome'], string>
 };
 
 const MERGE_BLOCK_TH: Record<string, string> = {
-  last_active_owner: 'ร้านนี้จะไม่เหลือเจ้าของร้าน',
+  last_active_owner: `ร้านนี้จะไม่เหลือ${THAI_SYSTEM_ROLE_NAMES.OWNER}`,
   role_conflict: 'สองบัญชีมีสิทธิ์ในร้านนี้ไม่เหมือนกัน',
   target_membership_inactive: 'สิทธิ์ของบัญชีเดิมในร้านนี้ถูกปิดอยู่',
 };

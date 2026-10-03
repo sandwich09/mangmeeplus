@@ -4,7 +4,7 @@
  * are composed by the AI Gateway and rendered by `formatLineReply`.
  * No NestJS, Prisma, HTTP, LINE SDK, AI provider, or storage imports.
  */
-import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiRefusalReason } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiRefusalReason } from '@watchdog-bms/contracts';
 // One base-URL resolution for the whole app. The previous local const fell back to the production
 // host, so any environment without WEB_BASE_URL/PUBLIC_BASE_URL sent its users to production.
 import { webLink } from '../../../../common/http/web-link';
@@ -33,7 +33,7 @@ export const REFUSAL_MESSAGES: Record<LineAiRefusalReason, string> = {
     'ทำได้ในเว็บนะคะ',
   forbidden:
     '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ\n' +
-    'หากต้องการสิทธิ์เพิ่มเติม กรุณาติดต่อผู้ดูแลระบบนะคะ',
+    `หากต้องการสิทธิ์เพิ่มเติม กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการบทบาทนะคะ`,
   unlinked_user:
     '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\n' +
     'แตะ "เชื่อมต่อบัญชี" หรือเข้าสู่ระบบผ่านเว็บแอปค่ะ',

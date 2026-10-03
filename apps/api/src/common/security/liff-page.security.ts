@@ -1,3 +1,4 @@
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { PRIVATE_NO_STORE } from '../middleware/api-cache-control.middleware';
 
@@ -149,7 +150,7 @@ export const LIFF_EVENT_DISCOUNT_PAGE = {
         <div id="companies" hidden></div>
         <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่</a></p>
         <p id="signup-hint" class="note" hidden>ถ้ามีบัญชีมั่งมีอยู่แล้ว ให้เข้าสู่ระบบด้วย LINE นี้ก่อน</p>
-        <p class="note">ส่วนลดนี้เป็นของบัญชี LINE นี้ ใช้ได้เมื่อคุณเป็นเจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจของร้าน ถ้าจะใช้กับร้านที่คุณทำงานอยู่ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจสแกนรับเอง</p>
+        <p class="note">ส่วนลดนี้เป็นของบัญชี LINE นี้ ใช้ได้เมื่อคุณเป็น${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจของร้าน ถ้าจะใช้กับร้านที่คุณทำงานอยู่ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจสแกนรับเอง</p>
       </section>
       <p><button id="link" type="button" hidden>ลองอีกครั้ง</button></p>
       <pre id="detail"></pre>`,
@@ -200,7 +201,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const START_REASON_TH = {
     suspended: 'ร้านนี้ถูกระงับการใช้งานอยู่ค่ะ ติดต่อทีมงานเพื่อเปิดใช้อีกครั้งได้นะคะ',
     expired: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ค่ะ เข้าสู่ระบบบนเว็บแล้วเลือกแพ็กเกจเพื่อเริ่มใช้งานได้เลยนะคะ',
-    no_membership: 'บัญชี LINE นี้ยังไม่ได้อยู่ในร้านไหนค่ะ ให้เจ้าของร้านส่งลิงก์เชิญให้อีกครั้งนะคะ'
+    no_membership: 'บัญชี LINE นี้ยังไม่ได้อยู่ในร้านไหนค่ะ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}ส่งลิงก์เชิญให้อีกครั้งนะคะ'
   };
   /** R-C2: the two lock states a shop can be in, as the short state chip. A chip never goes inside a
    *  sentence ("ร้าน หมดอายุ"): sentences use LOCK_SENTENCE_TH, and both states are fixed the same way,
@@ -231,7 +232,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const SUPPORT_TH = 'ติดต่อทีมงาน โทร 098-256-5628 หรืออีเมล contact@mangmeeplus.com (จันทร์–เสาร์ 9:00–18:00)';
   /** Owner 2026-09-05 wording, with the example that makes the rule unambiguous. */
   const PHONE_RULE_TH = 'ใส่เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0 เช่น 0812345678';
-  const EMAIL_RULE_TH = 'ใส่อีเมลเจ้าของร้านให้ถูกต้อง เช่น shop@example.com ยาวไม่เกิน 254 ตัวอักษร';
+  const EMAIL_RULE_TH = 'ใส่อีเมล${THAI_SYSTEM_ROLE_NAMES.OWNER}ให้ถูกต้อง เช่น shop@example.com ยาวไม่เกิน 254 ตัวอักษร';
 
   /**
    * What went wrong, and what to do about it — for every refusal this page can actually receive.
@@ -245,8 +246,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     line_signup_phone_required: { tone: 'warning', text: 'ยังไม่ได้ใส่เบอร์มือถือ', advice: PHONE_RULE_TH, field: 'phone-number' },
     line_signup_phone_invalid: { tone: 'warning', text: 'เบอร์มือถือยังไม่ถูกต้อง', advice: PHONE_RULE_TH, field: 'phone-number' },
     line_signup_legacy_evidence_required: { tone: 'warning', text: 'คำขอเดิมยังมีข้อมูลไม่ครบ', advice: 'กดขอความช่วยเหลือด้านล่างให้เจ้าหน้าที่ตรวจคำขอเดิม หรือโทร 098-256-5628 โดยไม่ต้องสมัครซ้ำ' },
-    line_signup_email_required: { tone: 'warning', text: 'ยังไม่ได้ใส่อีเมลเจ้าของร้าน', advice: EMAIL_RULE_TH, field: 'contact-email' },
-    line_signup_email_invalid: { tone: 'warning', text: 'อีเมลเจ้าของร้านยังไม่ถูกต้อง', advice: EMAIL_RULE_TH, field: 'contact-email' },
+    line_signup_email_required: { tone: 'warning', text: 'ยังไม่ได้ใส่อีเมล${THAI_SYSTEM_ROLE_NAMES.OWNER}', advice: EMAIL_RULE_TH, field: 'contact-email' },
+    line_signup_email_invalid: { tone: 'warning', text: 'อีเมล${THAI_SYSTEM_ROLE_NAMES.OWNER}ยังไม่ถูกต้อง', advice: EMAIL_RULE_TH, field: 'contact-email' },
     invalid_companyName: { tone: 'warning', text: 'ยังไม่ได้ใส่ชื่อร้าน', advice: 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ', field: 'company-name' },
     invalid_referralCode: { tone: 'warning', text: 'โค้ดแนะนำในลิงก์ไม่ถูกต้อง', advice: 'ปิดหน้านี้แล้วเปิดใหม่จากเมนูใน LINE โดยไม่ต้องใช้ลิงก์เดิมนะคะ' },
     line_signup_discovery_source_invalid: { tone: 'warning', text: 'ช่องทางที่เลือกยังไม่ถูกต้อง', advice: 'เลือกช่องทางที่รู้จักเราจากตัวเลือกอีกครั้งนะคะ', field: 'discovery-source' },
@@ -804,7 +805,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
             : manager ? 'เปิดร้านแล้ว ขั้นต่อไปเลือกแพ็กเกจ' : 'เปิดร้านแล้ว รอเลือกแพ็กเกจ';
           document.getElementById('progress-text').textContent = manager
             ? shop + (opened ? ' เปิดให้แล้วค่ะ ' : ' ' + LOCK_SENTENCE_TH[key] + ' ') + LOCK_HINT_TH[key] + ' ระบบจะพาไปหน้าแพ็กเกจในเบราว์เซอร์ให้ค่ะ'
-            : shop + ' ' + LOCK_SENTENCE_TH[key] + ' ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน แล้วเข้าใช้งานได้เลยค่ะ';
+            : shop + ' ' + LOCK_SENTENCE_TH[key] + ' ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจก่อน แล้วเข้าใช้งานได้เลยค่ะ';
           // Prepare the handoff NOW so the primary button is one tap (GW02 only forbids opening it
           // without a gesture) — and not with #retry-status as its busy button: a tap on that very
           // button can be what rendered this, and the two overlapping runs left it "กำลังตรวจสอบ…".
@@ -1056,7 +1057,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       setMessage(document.getElementById('updated-contact-email-error'), EMAIL_RULE_TH);
       input.setAttribute('aria-invalid', 'true');
       if (input.focus) input.focus();
-      throw refusal({ tone: 'warning', text: 'อีเมลเจ้าของร้านยังไม่ถูกต้อง', advice: EMAIL_RULE_TH });
+      throw refusal({ tone: 'warning', text: SIGNUP_GUIDANCE.line_signup_email_invalid.text, advice: EMAIL_RULE_TH });
     }
     input.removeAttribute('aria-invalid');
     setMessage(document.getElementById('updated-contact-email-error'), '');

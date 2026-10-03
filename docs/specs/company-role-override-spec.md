@@ -58,7 +58,8 @@ feature.
   keep returning 403.
   - `OWNER` — the owner could strip `access.role.manage` from themselves and permanently lock the
     company out of its own settings.
-  - `SYSTEM_ADMIN`, `COMPANY_VIEW` — platform-operator roles, not roles a company's employees hold.
+  - `SYSTEM_ADMIN` — platform-operator role. `COMPANY_VIEW` — demo company overview role;
+    existing company memberships keep it, but a company cannot assign or edit it.
 - **R7.** Disabling a system role stays forbidden. An override, being a company role, may be
   disabled under the existing rules.
 - **R8.** Permission-scope rules are unchanged: `compileRole`, `hasNonCoreCapability` ("at least one
@@ -117,6 +118,14 @@ rules bound what a company may copy or create.
 employee and role pages, sidebar, company switcher, claim-policy options/summary/warnings, API role
 descriptions and prose naming these roles use that list. Existing English dictionary labels stay English.
 
+The same rule covers sold starter/account/profile/login, billing/package and LINE-linking guidance,
+and the LINE assistant's sold-feature replies (2026-10-04 follow-up). Sentences naming the `OWNER`
+role interpolate `THAI_SYSTEM_ROLE_NAMES.OWNER`, including fallback role labels. Package actions
+also name a person with package-management permission where the existing permission rule allows
+one. Permission guidance may name the owner or a person allowed to manage roles. This changes no
+permission rule. Bank-account holders, data owners, platform operators, personal names and unsold
+module wording are different concepts and are not renamed as `OWNER`.
+
 | Key | Thai name |
 | --- | --- |
 | OWNER | เจ้าของกิจการ |
@@ -131,7 +140,7 @@ descriptions and prose naming these roles use that list. Existing English dictio
 | MARKETING | ฝ่ายการตลาด |
 | STAFF | พนักงาน |
 | AUDITOR_READONLY | ผู้ตรวจสอบ (ดูอย่างเดียว) |
-| COMPANY_VIEW | เจ้าของบริษัท |
+| COMPANY_VIEW | ผู้ดูภาพรวมบริษัท |
 | MANGMEE_SALES_LEAD | หัวหน้าทีมขายมั่งมี |
 | MANGMEE_SALES | เซลล์มั่งมี |
 
@@ -167,6 +176,20 @@ descriptions and prose naming these roles use that list. Existing English dictio
 - The reimbursement guide and its approved-help pin are a controller integration point owned by
   another lane; exact outstanding sentences are in
   `docs/agent-memory/standard-role-names-one-list-2026-10-02.md`.
+
+### R12. Company overview role visibility (2026-10-04)
+
+`COMPANY_VIEW` appears in a company's role list, by-id read/preview, access matrix and role
+pickers/filters only when a membership of that company holds that role. Membership status does
+not change this existence rule. A holder in another company does not make it visible. The same
+rule applies to the platform company. A hidden by-id role answers 404, like an unknown id.
+Assignment pickers still exclude ungrantable roles except their existing current-role display.
+
+The predicate is shared by role readers in the existing role query; the matrix and employee
+pickers/filters consume that list. Existing memberships, grants, assignment/edit restrictions,
+session resolution and routing stay unchanged. `COMPANY_VIEW` is not added to either platform-role
+key list. The Thai name comes from `THAI_SYSTEM_ROLE_NAMES`; the English locale says `Company viewer`.
+The old stored English name remains a recognized alias, never a Thai-page fallback.
 
 ### Deployment interaction
 

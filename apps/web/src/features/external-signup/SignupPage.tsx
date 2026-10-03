@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { SIGNUP_DISCOVERY_OTHER_MAX, SIGNUP_DISCOVERY_SOURCE_OPTIONS, type PublicCompanySignupBody, type SignupDiscoverySource } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, SIGNUP_DISCOVERY_OTHER_MAX, SIGNUP_DISCOVERY_SOURCE_OPTIONS, type PublicCompanySignupBody, type SignupDiscoverySource } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
 import { SelectField, SwitchField, TextField } from '@/common/components/field';
 import { trimmed } from '@/common/forms/trim';
@@ -259,7 +259,7 @@ export default function SignupPage() {
                 {/* It is the DISPLAY name, not the login name — the login name is chosen on the
                     claim page, and reading this as "your username" made people type one here. */}
                 <p className="-mt-3 text-[13px] leading-6 text-gray-500">
-                  ชื่อจริงของเจ้าของร้าน ใช้แสดงในระบบ ไม่ใช่ชื่อสำหรับเข้าสู่ระบบ
+                  ชื่อจริงของ{THAI_SYSTEM_ROLE_NAMES.OWNER} ใช้แสดงในระบบ ไม่ใช่ชื่อสำหรับเข้าสู่ระบบ
                 </p>
                 <TextField
                   label="อีเมล"

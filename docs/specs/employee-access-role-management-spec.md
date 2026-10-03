@@ -135,6 +135,9 @@ Navigation:
 Employees list:
 
 - Name, phone, masked ID/passport, role chips, status, web credential state, LINE link state, and last login/link timestamps when available.
+- Employee names and role chips remain fully readable at 390 and 1280 px: role chips occupy a
+  separate line below the employee identity and long text wraps, including names without spaces.
+  Full text is always visible and available to screen readers; short names retain the chip styling.
 
 Create employee:
 
@@ -284,3 +287,8 @@ Employee create/role replacement selects exactly one role. Extra capabilities be
 The role matrix hides menus outside the company's purchased, ready menu bindings, following the package-menu visibility pattern. A purchased menu still appears when the selected role has no grant for it. The matrix and package-aware descriptions share one menu projection, with action cells still derived from entitlement-filtered role permissions. Legacy companies with no entitlement rows keep the existing unconfigured behavior.
 
 Shop role lists and by-id reads never expose platform roles, including `SYSTEM_ADMIN` and historical company copies. Platform-tenant visibility remains intact. Standard-role descriptions (including unchanged copies of the standard description) describe granted menus in the current package; custom descriptions remain the company's wording. No role grants or assignment rules change.
+
+`COMPANY_VIEW` is visible only if a membership of the requesting company holds it, including in
+the platform company. The shared role query covers list/detail/preview; the matrix, employee role
+filters and pickers consume the list. Memberships and grant/edit restrictions stay unchanged.
+Its display name is `ผู้ดูภาพรวมบริษัท` from the contracts name list (see company-role-override-spec R12).

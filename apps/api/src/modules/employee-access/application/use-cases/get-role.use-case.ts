@@ -5,6 +5,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
 import { PLATFORM_ROLE_KEYS } from '../../../auth/permission-registry';
 import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
+import { companyRoleReadWhere } from '../company-role-read-where';
 
 @Injectable()
 export class GetRoleUseCase {
@@ -12,7 +13,7 @@ export class GetRoleUseCase {
 
   async execute(companyId: string, roleId: string): Promise<RoleDetail> {
     const row = await this.prisma.client.role.findFirst({
-      where: { id: roleId, OR: [{ scopeKey: 'system' }, { scopeKey: companyId }] },
+      where: { id: roleId, ...companyRoleReadWhere(companyId) },
       include: ROLE_INCLUDE,
     });
     // RB-34: the list hides a platform-only role from a shop, so its id must not read it either.

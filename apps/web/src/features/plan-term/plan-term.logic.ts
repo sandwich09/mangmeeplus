@@ -1,4 +1,4 @@
-import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
+import { THAI_SYSTEM_ROLE_NAMES, isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 import type { PlanLockReason, PlanTermNotice } from './plan-term.api';
 
 export const PLAN_TERM_RENEW_PHONE = '098-256-5628';
@@ -59,13 +59,13 @@ export const PLAN_LOCK_COPY: Record<PlanLockReason, { banner: string; title: str
     banner: 'ร้านนี้ยังไม่มีแพ็กเกจที่ใช้งานได้ · เลือกแพ็กเกจเพื่อเริ่มใช้งาน',
     title: 'ยังไม่มีแพ็กเกจ',
     body: 'เลือกแพ็กเกจเพื่อเริ่มใช้งาน ข้อมูลร้านและการตั้งค่าของคุณอยู่ครบ',
-    staff: 'ร้านนี้ยังไม่มีแพ็กเกจ ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อเริ่มใช้งาน',
+    staff: `ร้านนี้ยังไม่มีแพ็กเกจ ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อเริ่มใช้งาน`,
   },
   trial_ended: {
     banner: 'แพ็กเกจของร้านหมดอายุแล้ว · เลือกแพ็กเกจเพื่อใช้งานต่อ',
     title: 'แพ็กเกจหมดอายุแล้ว',
     body: 'ข้อมูลทั้งหมดยังอยู่ครบ ไม่มีอะไรหาย เมื่อเลือกแพ็กเกจแล้วใช้งานต่อได้ทันที',
-    staff: 'แพ็กเกจของร้านหมดอายุแล้ว ให้เจ้าของร้านหรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ',
+    staff: `แพ็กเกจของร้านหมดอายุแล้ว ให้${THAI_SYSTEM_ROLE_NAMES.OWNER}หรือผู้มีสิทธิ์จัดการแพ็กเกจเลือกแพ็กเกจเพื่อใช้งานต่อ`,
   },
 };
 
