@@ -12,6 +12,7 @@ import { PartnerLifecycleTransitionUseCase } from './application/use-cases/partn
 import { SetPartnerFeaturesUseCase } from './application/use-cases/set-partner-features.use-case';
 import { SetPartnerAiModelUseCase } from './application/use-cases/set-partner-ai-model.use-case';
 import { SetPartnerOcrConfigUseCase } from './application/use-cases/set-partner-ocr-config.use-case';
+import { SetPartnerManualExpenseWebEntryUseCase } from './application/use-cases/set-partner-manual-expense-web-entry.use-case';
 import { GetPartnerAiUsageUseCase } from './application/use-cases/get-partner-ai-usage.use-case';
 import { GetPlatformAiBudgetUseCase } from './application/use-cases/get-platform-ai-budget.use-case';
 import { SetPlatformAiBudgetUseCase } from './application/use-cases/set-platform-ai-budget.use-case';
@@ -70,6 +71,7 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
     SetPartnerFeaturesUseCase,
     SetPartnerAiModelUseCase,
     SetPartnerOcrConfigUseCase,
+    SetPartnerManualExpenseWebEntryUseCase,
     GetPartnerAiUsageUseCase,
     GetPlatformAiBudgetUseCase,
     SetPlatformAiBudgetUseCase,

@@ -168,6 +168,9 @@ export function buildNavItems(
     ...ROUTE_PERMISSION_RULES.flatMap((rule) => rule.anyOf),
   ],
   _roles: readonly string[] = [],
+  // `canOpenManualWeb` of the session (manual-expense-web-entry-flag spec §9.1). A caller that says
+  // nothing keeps the permission rule, so the company setting can only ever hide the item.
+  canOpenManualExpense: boolean = userPermissions.includes('expense.create'),
 ): NavItem[] {
   const moduleMap = new Map(modules.map((mod) => [mod.key, mod]));
   // 'notifications' stays here so the module never renders as a top-level row: the notification
@@ -264,7 +267,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (hasAnyPermission(userPermissions, ['expense.create'])) {
+      if (canOpenManualExpense && hasAnyPermission(userPermissions, ['expense.create'])) {
         childItems.push({
           key: 'expenses.manual',
           label: t('expenses.tab_manual' as Parameters<typeof t>[0], locale),

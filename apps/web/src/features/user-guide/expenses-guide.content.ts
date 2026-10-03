@@ -37,7 +37,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             items: [
               {
                 title: 'เมนูนี้ใช้ทำอะไร',
-                detail: 'รวมรายจ่ายไว้ที่เดียว เริ่มจากอัปโหลดใบเสร็จหรือบันทึกเอง โดยเลือกสาขาที่เป็นเจ้าของรายการก่อน',
+                detail: 'รวมรายจ่ายไว้ที่เดียว เริ่มจากอัปโหลดใบเสร็จหรือบันทึกเอง (เมื่อเปิดใช้สำหรับร้านของคุณ) โดยเลือกสาขาที่เป็นเจ้าของรายการก่อน',
                 link: link(canRead, 'เปิดรายการค่าใช้จ่าย', expenses),
               },
             ],
@@ -54,7 +54,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
           {
             kind: 'steps',
             steps: [
-              { title: 'นำเข้าระบบ', detail: 'เลือกสาขาที่ต้องการบันทึก แล้วอัปโหลดใบเสร็จให้ AI อ่าน หรือบันทึกด้วยมือ' },
+              { title: 'นำเข้าระบบ', detail: 'เลือกสาขาที่ต้องการบันทึก แล้วอัปโหลดใบเสร็จให้ AI อ่าน หรือบันทึกด้วยมือ (เมื่อเปิดใช้สำหรับร้านของคุณ)' },
               { title: 'ระบบสร้างเป็นฉบับร่าง', detail: 'ยังแก้ไขได้ และยังไม่ถือเป็นค่าใช้จ่ายทางบัญชี' },
               { title: 'ตรวจความครบถ้วน', detail: 'ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ ยอดเงิน VAT และไฟล์แนบ' },
               { title: 'ยืนยันเอกสาร', detail: 'เมื่อยืนยันแล้วจะแก้ไขไม่ได้ หากผิดต้องยกเลิกแล้วบันทึกใหม่' },
@@ -83,7 +83,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
       {
         id: 'submenus',
         title: 'เมนูย่อยทั้ง 8 รายการ',
-        summary: 'แต่ละเมนูย่อยมีหน้าที่ต่างกัน และแสดงเฉพาะรายการที่บัญชีของคุณมีสิทธิ์ใช้',
+        summary: 'แต่ละเมนูย่อยมีหน้าที่ต่างกัน และแสดงเฉพาะรายการที่บัญชีของคุณมีสิทธิ์ใช้ ส่วนบันทึกด้วยมือแสดงเมื่อเปิดใช้สำหรับร้านของคุณด้วย',
         iconKey: 'GroupIcon',
         tone: 'sky',
         blocks: [
@@ -216,7 +216,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
               },
               {
                 title: 'กรณีไม่มีใบเสร็จ',
-                detail: 'ที่ท้ายหน้ามีลิงก์สำหรับบันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับเงิน ใช้เมื่อจ่ายเงินไปจริงแต่ผู้รับเงินออกใบเสร็จให้ไม่ได้',
+                detail: 'ผู้มีสิทธิ์สร้างและตรวจสอบค่าใช้จ่ายจะเห็นลิงก์ที่ท้ายหน้าสำหรับบันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับเงิน ใช้เมื่อจ่ายเงินไปจริงแต่ผู้รับเงินออกใบเสร็จให้ไม่ได้',
               },
             ],
           },
@@ -231,7 +231,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
       {
         id: 'manual',
         title: 'บันทึกด้วยมือ',
-        summary: 'ใช้เมื่อต้องการควบคุมรายละเอียดด้วยตนเอง เช่น บิลหลายรายการ มีส่วนลด หรือมีค่าบริการแยก',
+        summary: 'ใช้ได้เมื่อเปิดใช้สำหรับร้านของคุณ เหมาะเมื่อต้องการควบคุมรายละเอียดด้วยตนเอง เช่น บิลหลายรายการ มีส่วนลด หรือมีค่าบริการแยก',
         iconKey: 'PlusIcon',
         tone: 'amber',
         blocks: [
@@ -383,7 +383,8 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             items: [
               {
                 question: 'ไม่พบเมนูย่อยบางรายการในแถบเมนูซ้าย',
-                answer: GUIDE_MISSING_MENU_HELP,
+                // The shared answer, and the one menu a shop sees only once it is switched on for that shop.
+                answer: `${GUIDE_MISSING_MENU_HELP} ส่วนเมนูบันทึกด้วยมือต้องเปิดใช้สำหรับร้านของคุณด้วย จึงจะแสดง`,
               },
               {
                 question: 'อัปโหลดใบเสร็จแล้วข้อมูลที่ AI อ่านได้ไม่ครบ',

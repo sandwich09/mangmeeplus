@@ -514,6 +514,24 @@ describe('buildNavItems', () => {
     ]);
   });
 
+  // manual-expense-web-entry-flag spec §9.1: the sidebar item follows the one predicate
+  // (`canOpenManualWeb`), passed in by the layout. Desktop and phone render this same list.
+  it('leaves the manual-entry item out when the company does not show it, and nothing else', () => {
+    const permissions = ['expense.read', 'expense.read_own', 'expense.receipt.upload', 'expense.create', 'expense.category.manage', 'expense.signature.manage', 'company.setup.manage', 'expense.evidence.read'];
+    const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+    const keys = (canOpenManualExpense?: boolean) => buildNavItems(modules, 'owner-company', 'th', {}, permissions, [], canOpenManualExpense)
+      .find((nav) => nav.key === 'expenses')?.subItems?.map((sub) => sub.key);
+    const all = ['expenses.list', 'expenses.upload', 'expenses.manual', 'expenses.categories', 'expenses.substitute_receipt', 'expenses.substitute_receipt_policy', 'expenses.evidence'];
+
+    assert.deepEqual(keys(true), all);
+    assert.deepEqual(keys(false), all.filter((key) => key !== 'expenses.manual'));
+    // A caller that says nothing keeps the permission rule: the setting can only ever hide.
+    assert.deepEqual(keys(), all);
+    // And it never shows the item to a session that may not create.
+    assert.equal(buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, ['expense.read_own']), 'co', 'th', {}, ['expense.read_own'])
+      .find((nav) => nav.key === 'expenses')?.subItems?.some((sub) => sub.key === 'expenses.manual'), false);
+  });
+
   it('keeps the rarely used personal signature page out of the Expenses submenu', () => {
     for (const permission of ['expense.signature.self_manage', 'expense.confirm', 'expense.signature.manage']) {
       const permissions = ['expense.read_own', permission];
