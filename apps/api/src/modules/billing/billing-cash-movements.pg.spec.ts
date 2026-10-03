@@ -172,7 +172,8 @@ describe('billing cash movements on real PostgreSQL', { skip: !databaseUrl }, ()
     const shape = (id: string) => { const row = only(rows, `txn_${tag}${id}`); return [row.kind, row.tie, row.amountSatang, row.companyId, row.purchaseKind].join(' '); };
     assert.equal(shape('payout'), 'PAYOUT EXCLUDED -900000  UNKNOWN');
     assert.equal(shape('missing'), 'RECEIPT UNTIED 24900  UNKNOWN');
-    assert.equal(shape('pending'), 'REFUND EXCLUDED 24900  UNKNOWN');
+    // The pending refund still names its invoice's kind: a paid-ahead SCHEDULED_CHANGE is RENEWAL (owner 2026-10-03).
+    assert.equal(shape('pending'), 'REFUND EXCLUDED 24900  RENEWAL');
     assert.equal(shape('failed'), 'REFUND EXCLUDED 100  UNKNOWN');
     assert.equal(shape('lostrefund'), 'REFUND UNTIED 5000  UNKNOWN');
     assert.equal(shape('adjust'), 'OTHER UNTIED -1500  UNKNOWN');
