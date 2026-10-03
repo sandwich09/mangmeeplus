@@ -79,6 +79,19 @@ test('group tables and comparisons preserve null averages and the backend differ
   const visible = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav: { ...nav, from: 'compare' }, seller: null })));
   assert.match(visible, /ต่างกัน \(ฝั่งแรกลบฝั่งที่สอง\)/); assert.match(visible, /-1,234\.50 บาท/); assert.match(visible, /—/); assert.doesNotMatch(visible, /NaN|Infinity|A ลบ B/);
 });
+test('each table names its first column for what its rows are, and differences use the Thai number format', async () => {
+  const { AnalysisContent } = await content();
+  const firstHeader = (html: string) => html.match(/<thead><tr><th[^>]*>([^<]*)<\/th>/)?.[1];
+  const group = { key: 'IG', label: 'IG', companies: { count: 1, share: { value: 100, numerator: 1, denominator: 1 } }, companiesWithReceipts: count(1), paidEverCompanies: 1, activeCompanies: count(1), netReceiptsSatang: cash(100), drilldownFilters: { discovery: 'IG' } };
+  const groups = (view: string) => renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, view, groups: [group] } as unknown as ExecutiveAnalysis, nav, seller: null }));
+  assert.equal(firstHeader(groups('industry')), 'กลุ่มธุรกิจ');
+  assert.equal(firstHeader(groups('discovery')), 'ช่องทาง');
+  assert.equal(firstHeader(groups('sales')), 'เซลล์ผู้แนะนำ');
+  const side = { key: 'A', label: 'ก', companies: count(1234), netReceiptsSatang: cash(0), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(0), expenseReceiptsPerCompany: { value: 1.5 }, everAddedReceiptShare: { value: 50 }, activeCompanies: count(0), drilldownFilters: {} };
+  const compare = renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'B' }, difference: { companies: 1234, netReceiptsSatang: 0, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: 0, everAddedReceiptShare: -12.5, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis, nav: { ...nav, from: 'compare' }, seller: null }));
+  assert.equal(firstHeader(compare), 'รายการ');
+  assert.match(text(compare), /1,234 /); assert.match(text(compare), /0\.0 /); assert.match(text(compare), /-12\.5 จุด/);
+});
 test('company contact values and labels disappear without permission and never fall back to supplied forbidden values', async () => {
   const { CompanyContent } = await content();
   const make = (status: ExecutiveCompanyDetail['company']['ownerContact']['status']) => ({ ...envelope, company: { ...company, ownerContact: { status, email: 'hidden@example.test', phoneNumber: '0812345678' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: ['NOT_YET_REGISTERED'] }) as unknown as ExecutiveCompanyDetail;

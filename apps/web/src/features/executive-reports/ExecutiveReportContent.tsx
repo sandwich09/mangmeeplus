@@ -202,10 +202,11 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
     if (seller === 'credited' && data.creditedSellers) return <Card title={`${W.credited} · ${W.current}`}><p>{W.through(reportDateTime(data.creditedSellers.asOf))}</p>{W.creditNotes.map(note => <p key={note} className="text-sm">{note}</p>)}
       <ReportTable title={W.credited} columns={[{ label: W.creditedSeller }, { label: W.companyCount }, { label: W.creditAmount }]} rows={data.creditedSellers.rows.map((row, i) => ({ key: String(i), cells: [thaiLabel(row.seller.label ?? W.unknown, row.seller.salesCode), <div key="counts">{row.companies}<p>{W.waiting} {row.waiting}</p></div>, money(row.creditSatang)] }))} />
     </Card>;
+    const rowsAre = data.view === 'industry' ? W.group : data.view === 'discovery' ? W.discovery : W.referring;
     return <Card title={data.view === 'industry' ? W.group : data.view === 'discovery' ? W.filterLabels.discovery : W.referring}>
       <p>{W.base(countText(data.population.eligibleCount))} · {reportMonth(data.period.month)}</p>
       {data.industryCoverage && <p>{W.industryCoverage(data.industryCoverage.numerator, data.industryCoverage.denominator)}</p>}
-      <ReportTable title={W.customers} columns={[{ label: W.group }, { label: W.companyCount }, { label: W.paid }, { label: W.filterLabels.paidEver }, { label: W.active }, { label: W.net }]} rows={data.groups.map(row => ({ key: row.key, cells: [<DrillLink key="name" nav={nav} filters={row.drilldownFilters}>{thaiLabel(row.label, row.key)}</DrillLink>, <div key="companies">{row.companies.count} · {ratioText(row.companies.share)}<div aria-hidden="true" className="h-2 border bg-brand-800" style={{ width: `${row.companies.share.value ?? 0}%` }} /></div>, <Figure key="paid" value={row.companiesWithReceipts} />, row.paidEverCompanies, <Figure key="active" value={row.activeCompanies} />, <Figure key="money" value={row.netReceiptsSatang} moneyValue netValue />] }))} />
+      <ReportTable title={W.customers} columns={[{ label: rowsAre }, { label: W.companyCount }, { label: W.paid }, { label: W.filterLabels.paidEver }, { label: W.active }, { label: W.net }]} rows={data.groups.map(row => ({ key: row.key, cells: [<DrillLink key="name" nav={nav} filters={row.drilldownFilters}>{thaiLabel(row.label, row.key)}</DrillLink>, <div key="companies">{row.companies.count} · {ratioText(row.companies.share)}<div aria-hidden="true" className="h-2 border bg-brand-800" style={{ width: `${row.companies.share.value ?? 0}%` }} /></div>, <Figure key="paid" value={row.companiesWithReceipts} />, row.paidEverCompanies, <Figure key="active" value={row.activeCompanies} />, <Figure key="money" value={row.netReceiptsSatang} moneyValue netValue />] }))} />
       {data.roundingNote && <p>{W.rounding}</p>}
     </Card>;
   }
@@ -217,12 +218,12 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
     ] as const;
     return <><p>{W.receiptDefinition} · {W.compareBase}</p>
       <div className="flex flex-wrap gap-4">{[c.sideA, c.sideB].map((side, i) => <div key={i}><p>{i === 0 ? W.sideA : W.sideB} · {thaiLabel(side.label, side.key)} · {W.base(countText(side.companies))}</p>{side.drilldownFilters ? <DrillLink filters={side.drilldownFilters} nav={nav}>{W.listGroup}</DrillLink> : <ReportLink href={companyLink(side.key, nav.params)} remember={nav.remember}>{W.detail}</ReportLink>}</div>)}</div>
-      <ReportTable title={W.compare} columns={[{ label: W.group }, { label: W.sideA }, { label: W.sideB }, { label: W.difference }]} rows={metrics.map(([key, label, kind]) => ({ key, cells: [label, ...[c.sideA, c.sideB].map(side => {
+      <ReportTable title={W.compare} columns={[{ label: W.item }, { label: W.sideA }, { label: W.sideB }, { label: W.difference }]} rows={metrics.map(([key, label, kind]) => ({ key, cells: [label, ...[c.sideA, c.sideB].map(side => {
         const metric = side[key];
         if (kind === 'count' || kind === 'money') return <Figure key={side.key} value={metric as ExecutiveCount} moneyValue={kind === 'money'} netValue={kind === 'money'} />;
         const value = metric?.value;
         return value === null || value === undefined ? '—' : kind === 'averageMoney' ? money(value) : ratioText(metric as Parameters<typeof ratioText>[0], kind === 'ratio' ? '%' : '');
-      }), c.difference[key] === null ? '—' : kind === 'money' || kind === 'averageMoney' ? <span>{money(c.difference[key]!)}{negativeMoneyNote(c.difference[key]) && kind === 'money' ? <p>{W.difference}</p> : null}</span> : `${c.difference[key]}${kind === 'ratio' ? ` ${W.point}` : ''}`] }))} />
+      }), c.difference[key] === null ? '—' : kind === 'money' || kind === 'averageMoney' ? <span>{money(c.difference[key]!)}{negativeMoneyNote(c.difference[key]) && kind === 'money' ? <p>{W.difference}</p> : null}</span> : `${c.difference[key]!.toLocaleString('th-TH', kind === 'count' ? undefined : { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${kind === 'ratio' ? ` ${W.point}` : ''}`] }))} />
     </>;
   }
   return <EmptyState title={W.noRows} description="" />;
