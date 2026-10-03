@@ -13,7 +13,7 @@ test('G3/G6 durable delivery PostgreSQL leases, immutable replay, cancellation a
   const parsed = new URL(url!);
   assert.ok(['localhost', '127.0.0.1'].includes(parsed.hostname));
   assert.ok((parsed.port === '15439' && ['/watchdog_bms_ai_reliability_20260927', '/watchdog_delivery_integrity_test_20260927'].includes(parsed.pathname))
-    || (parsed.port === '5432' && parsed.pathname === '/watchdog_postmark_ci'));
+    || parsed.pathname.endsWith('_ci'), `refusing to write to ${parsed.pathname}: only a disposable local *_ci database`);
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
   const service = new LineLedgerDeliveryService({ client } as PrismaService), tag = randomUUID(), now = new Date();
   const events: string[] = [];

@@ -16,7 +16,7 @@ const databaseUrl = process.env.BILLING_TEST_DATABASE_URL;
 test('paid package rights apply atomically on local PostgreSQL', { skip: !databaseUrl }, async () => {
   const url = new URL(databaseUrl!);
   assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
-  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(url.pathname) || url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927');
+  assert.ok(url.pathname.endsWith('_ci') || url.pathname === '/mangmee_billing_20260912' || url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${url.pathname}: only a disposable local *_ci database`);
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const companyId = `billing-feature-${randomUUID()}`;
   const otherCompanyId = `billing-feature-other-${randomUUID()}`;
@@ -91,7 +91,7 @@ test('paid package rights apply atomically on local PostgreSQL', { skip: !databa
 test('a paid catalog conversion closes only an earlier unpaid LINE package request', { skip: !databaseUrl }, async () => {
   const url = new URL(databaseUrl!);
   assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
-  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(url.pathname) || url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927');
+  assert.ok(url.pathname.endsWith('_ci') || url.pathname === '/mangmee_billing_20260912' || url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${url.pathname}: only a disposable local *_ci database`);
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const companyId = `billing-request-${randomUUID()}`;
   let accountId = '';

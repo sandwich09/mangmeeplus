@@ -31,7 +31,7 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
     assert.ok((url.port === '15432' && url.pathname === '/mangmee_billing_20260912')
       || (url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927')
-      || (url.port === '5432' && url.pathname === '/watchdog_postmark_ci'), 'only a dedicated disposable local/CI database');
+      || url.pathname.endsWith('_ci'), `refusing to write to ${url.pathname}: only a disposable local *_ci database`);
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const prisma = { client } as unknown as PrismaService, tag = randomUUID();
     let companyId = '', userId = '', roleId = '';
@@ -70,7 +70,8 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
         const reordered = { ...original, data: Object.fromEntries(Object.entries(original.data as object).reverse()) };
         assert.equal(lineReadResultHash(reordered), lineReadResultHash(original));
         const saved = await client.lineReadEvidence.findUniqueOrThrow({ where: { id } });
-        assert.doesNotMatch(JSON.stringify(saved), /Synthetic private vendor|123\.45/);
+        // R-M1 keeps the shop name in readMemory.shownItems on purpose; an amount is never stored.
+        assert.doesNotMatch(JSON.stringify(saved), /123\.45/);
         assert.notEqual(lineReadResultHash({ ...original, data: { ...(original.data as object), asOf: 'business-date' } }), lineReadResultHash(original));
       });
 

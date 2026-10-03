@@ -25,7 +25,7 @@ describe('LINE delivery actor access on isolated PostgreSQL', { skip: !databaseU
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
     assert.ok((url.port === '15432' && url.pathname === '/mangmee_billing_20260912')
       || (url.port === '15439' && url.pathname === '/watchdog_bms_ai_reliability_20260927')
-      || (url.port === '5432' && url.pathname === '/watchdog_postmark_ci'), 'only a dedicated disposable local/CI database');
+      || url.pathname.endsWith('_ci'), `refusing to write to ${url.pathname}: only a disposable local *_ci database`);
     client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     await client.$queryRaw`SELECT 1`;
   });
