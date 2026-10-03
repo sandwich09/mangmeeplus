@@ -26,7 +26,7 @@ export function buildExecutiveWorkbook(input: ExecutiveWorkbook): Buffer {
   input.kpis.forEach((figure, i) => {
     const c = [2, 10, 18][i]!;
     put(7, c, { value: figure.value, ...(figure.formula ? { formula: figure.formula } : {}), style: figure.style === 3 ? 11 : figure.style ?? 7 });
-    put(10, c, figure.label); put(11, c, figure.status ?? (figure.value === null ? W.export.noData : ''));
+    put(10, c, figure.label); put(11, c, figure.status ?? (figure.value === null ? W.unavailableFigure : ''));
     merges.push(`${columnName(c)}7:${columnName(c + 6)}9`, `${columnName(c)}10:${columnName(c + 6)}10`, `${columnName(c)}11:${columnName(c + 6)}11`);
   });
   put(43, 2, { value: input.metadata.join(' · '), style: 9 }); put(48, 2, { value: W.export.calculations, style: 2 });
@@ -43,7 +43,7 @@ export function buildExecutiveWorkbook(input: ExecutiveWorkbook): Buffer {
     labels.forEach((label, n) => {
       put(next, 2, label);
       put(next, 7, { value: values[n] ?? null, ...(panel.formulas?.[n] ? { formula: panel.formulas[n] } : {}), style: panel.style ?? 0 });
-      put(next, 8, panel.statuses?.[n] ?? status ?? (values[n] === null ? W.export.noData : '')); next++;
+      put(next, 8, panel.statuses?.[n] ?? status ?? (values[n] === null ? W.unavailableFigure : '')); next++;
     });
     charts.push({ ...panel, labels, values, labelRange: `'${EXECUTIVE_EXPORT_SHEETS[0]}'!$B$${start}:$B$${next - 1}`, valueRange: `'${EXECUTIVE_EXPORT_SHEETS[0]}'!$G$${start}:$G$${next - 1}`,
       from: [c - 1, r], to: [left ? 11 : 23, top ? 26 : 40] });

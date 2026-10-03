@@ -991,6 +991,15 @@ describe('API13 snapshot to workbook agreement', () => {
     const out = await f.report.export(f.ctx, f.body), parts = workbookParts(out.file), source = parts.get('xl/worksheets/sheet2.xml')!;
     for (const ref of ['Z7', 'AA7', 'AB7', 'AC7', 'AD7']) assert.equal(cellXml(source, ref), '');
     assert.match(cellXml(source, 'AI7'), /ข้อมูลการชำระไม่ครบ/);
+    // The money card keeps its card box without a number, and every unavailable figure uses the screen's words.
+    const dashboard = parts.get('xl/worksheets/sheet1.xml')!;
+    assert.match(dashboard, /<c r="R7" s="11"\/>/);
+    assert.match(cellXml(dashboard, 'R11'), /ยังไม่มีตัวเลข/);
+    const netRows = [...dashboard.matchAll(/<row r="(\d+)"[^>]*>[\s\S]*?<\/row>/g)]
+      .filter(row => Number(row[1]) > 48 && /เงินรับในเดือน|คืนเงินในเดือน|ยอดรับสุทธิในเดือน/.test(cellXml(row[0], `B${row[1]}`)) && cellXml(row[0], `H${row[1]}`));
+    assert.equal(netRows.length, 3);
+    for (const row of netRows) assert.match(cellXml(row[0], `H${row[1]}`), /ยังไม่มีตัวเลข/);
+    assert.doesNotMatch(dashboard, /ยังไม่มีข้อมูล/);
     assert.doesNotMatch(source, /อีเมลเจ้าของบัญชี|เบอร์โทรเจ้าของบัญชี/); assert.equal(f.stats().contacts, 0);
     const contacts = await f.report.export(f.ctx, { ...f.body, reportKey: 'companies', includeContacts: true });
     assert.match(workbookParts(contacts.file).get('xl/worksheets/sheet2.xml')!, /อีเมลเจ้าของบัญชี|เบอร์โทรเจ้าของบัญชี/);

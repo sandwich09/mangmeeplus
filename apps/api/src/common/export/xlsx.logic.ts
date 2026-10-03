@@ -181,7 +181,8 @@ function workbookCell(cell: WorkbookCell, ref: string): string {
     if (!typed.formula || typed.formula.includes('[') || typed.formula.length > 8192) throw new Error('XLSX_INVALID_FORMULA');
     return `<c r="${ref}" s="${style}"${typeof value === 'number' ? '' : ' t="str"'}><f>${xml(typed.formula)}</f><v>${xml(value)}</v></c>`;
   }
-  if (value === null) return '';
+  // A figure that is not known yet stays blank but keeps its look (a dashboard card keeps its box).
+  if (value === null) return typed.style ? `<c r="${ref}" s="${style}"/>` : '';
   return typeof value === 'number' ? `<c r="${ref}" s="${style}"><v>${value}</v></c>`
     : `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;
 }
