@@ -14,6 +14,14 @@ export function notificationRuleChannelsText(channels: readonly NotificationChan
   return channels.map((channel) => channel === 'line' ? 'LINE' : channel === 'web' ? t('notification.delivery.channel.web', 'th') : 'ช่องทางอื่น').join(', ');
 }
 
+/** The detail line under a rule. A rule that lists no channel leaves that part out (delivery follows each person's settings). */
+export function notificationRuleDetailText(rule: { channels: readonly NotificationChannel[]; cooldownMinutes: number }): string {
+  return [
+    ...(rule.channels.length > 0 ? [`ช่องทาง: ${notificationRuleChannelsText(rule.channels)}`] : []),
+    `พักการแจ้งเตือน ${rule.cooldownMinutes.toLocaleString('th-TH')} นาที`,
+  ].join(' · ');
+}
+
 export function visibleNotifications(items: NotificationItem[], filter: 'all' | 'unread'): NotificationItem[] {
   return filter === 'unread' ? items.filter((item) => !item.read && item.status !== 'resolved') : items;
 }

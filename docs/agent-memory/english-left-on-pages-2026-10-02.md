@@ -253,3 +253,12 @@ notification rule name `daily_owner_summary` (notification.model.ts) → สร�
 the people DailyOwnerSummary sends to. Former names for the rename sync stay English only (the lane 3b Thai
 names never shipped). Tests: workflow template spec red 34 / 2 (also against the old catalogue) → 36 / 0;
 notification DTO spec red 10 / 1 → 11 / 0.
+
+### Addition B: a notification rule with no channel
+
+The rules page read “ช่องทาง:  · พักการแจ้งเตือน … นาที” for a rule listing no channel. `notificationRuleDetailText`
+leaves the channel part out in that case (“พักการแจ้งเตือน 60 นาที”) instead of saying no channel was chosen,
+because delivery does not read the rule's `channelPolicyJson` at all: it follows each person's channel
+preferences (`enabledChannelsJson`). The same fact means even a listed channel (“ช่องทาง: LINE”) describes a stored
+setting with no effect; reported for the owner, not changed. Tests: web notification logic red 6 / 2 → 8 / 0;
+lane 3b's page assertion moved to the helper (page spec 5 / 0).

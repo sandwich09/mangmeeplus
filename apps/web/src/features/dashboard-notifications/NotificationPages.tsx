@@ -25,6 +25,7 @@ import {
   internalNotificationHref,
   visibleNotifications,
   notificationRuleChannelsText,
+  notificationRuleDetailText,
 } from './dashboard-notifications.logic';
 import type { NotificationItem, NotificationRule, NotificationPreference, NotificationSeverity } from './dashboard-notifications.model';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
@@ -392,7 +393,7 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
           <div key={rule.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 p-4">
             <div>
               <p className="text-sm font-medium text-gray-900">{rule.label}</p>
-              <p className="text-xs text-gray-400">ช่องทาง: {notificationRuleChannelsText(rule.channels)} · พักการแจ้งเตือน {rule.cooldownMinutes.toLocaleString('th-TH')} นาที</p>
+              <p className="text-xs text-gray-400">{notificationRuleDetailText(rule)}</p>
             </div>
             {rule.status !== 'system' && (
               <button

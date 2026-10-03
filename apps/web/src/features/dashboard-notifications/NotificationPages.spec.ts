@@ -66,7 +66,8 @@ describe('notification mutation integrity', () => {
 describe('notification rules wording', () => {
   it('does not print trigger keys or machine channel names', () => {
     assert.doesNotMatch(centerSource, /rule\.description|rule\.triggerKey/);
-    assert.match(centerSource, /notificationRuleChannelsText\(rule\.channels\)/);
+    // Channel names reach the rule card through notificationRuleDetailText, which uses notificationRuleChannelsText.
+    assert.match(centerSource, /notificationRuleDetailText\(rule\)/);
     assert.doesNotMatch(centerSource, /channel === 'web' \? 'Web'/);
     assert.doesNotMatch(centerSource, /Web ยังบันทึกทุกแจ้งเตือนเสมอ/);
   });

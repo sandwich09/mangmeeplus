@@ -843,6 +843,7 @@ Rule management page:
 - Future unsupported rules visible as disabled/unavailable.
 - Rule test must be explicit and audit-safe.
 - Display rule names from the Thai trigger-name mapping, channel names from the existing Thai dictionary, and statuses as Thai labels. Do not show trigger keys or channel enum values.
+- A rule card's detail line shows “ช่องทาง: …” only when the rule lists channels; with none it shows only the cooldown (2026-10-03). Note: delivery reads each person's channel preferences, not the rule's `channelPolicyJson`.
 
 ## 21. Security, Audit, and Compliance Rules
 

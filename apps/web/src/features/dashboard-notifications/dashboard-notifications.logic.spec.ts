@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import * as logic from './dashboard-notifications.logic';
 import {
   dashboardMetricValueText,
   notificationRuleChannelsText,
@@ -55,5 +58,23 @@ describe('severity presentation', () => {
     const labels = severities.map(severityLabel);
     assert.deepEqual(labels, ['สำคัญ', 'ต้องดำเนินการ', 'ข้อมูลเชิงลึก', 'แจ้งเพื่อทราบ']);
     assert.equal(new Set(severities.map(severityColor)).size, severities.length);
+  });
+});
+
+// A rule that lists no channel read "ช่องทาง:  ·". Delivery follows each person's own channel settings, so the
+// part is left out rather than claiming the rule has no way to reach anyone.
+describe('notification rule detail line', () => {
+  const lineOf = (logic as unknown as { notificationRuleDetailText?: (rule: { channels: string[]; cooldownMinutes: number }) => string }).notificationRuleDetailText;
+
+  it('leaves the channel part out when the rule lists none', () => {
+    assert.equal(typeof lineOf, 'function', 'notificationRuleDetailText');
+    assert.equal(lineOf!({ channels: [], cooldownMinutes: 60 }), 'พักการแจ้งเตือน 60 นาที');
+    assert.equal(lineOf!({ channels: ['line'], cooldownMinutes: 1440 }), 'ช่องทาง: LINE · พักการแจ้งเตือน 1,440 นาที');
+  });
+
+  it('is the line the rules page shows', () => {
+    const page = readFileSync(join(__dirname, 'NotificationPages.tsx'), 'utf8');
+    assert.match(page, /notificationRuleDetailText\(rule\)/);
+    assert.doesNotMatch(page, /ช่องทาง: \{notificationRuleChannelsText/);
   });
 });
