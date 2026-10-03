@@ -108,8 +108,18 @@ test('company contact values and labels disappear without permission and never f
   const render = (status: ExecutiveCompanyDetail['company']['ownerContact']['status']) => text(renderToStaticMarkup(React.createElement(CompanyContent, { data: make(status), tab: 'company', history: null, admin: false, nav, contactReadAt: '2026-10-03T05:00:00Z' })));
   assert.doesNotMatch(render('NOT_PERMITTED'), /อีเมลเจ้าของบัญชี|เบอร์โทรเจ้าของบัญชี|hidden@example|0812345678/);
   assert.match(render('NOT_PERMITTED'), /บริษัทนี้ยังไม่สมัคร/);
+  // UI spec §8.1, plain-language spec: a reader without the right sees that, instead of the two fields.
+  assert.match(render('NOT_PERMITTED'), /ไม่มีสิทธิ์ดูข้อมูลติดต่อ/); assert.doesNotMatch(render('OK'), /ไม่มีสิทธิ์ดูข้อมูลติดต่อ/);
   assert.match(render('MULTIPLE_OWNERS'), /มีเจ้าของหลายบัญชี/); assert.doesNotMatch(render('MULTIPLE_OWNERS'), /hidden@example|0812345678/);
   assert.match(render('OK'), /hidden@example\.test/); assert.match(render('OK'), /ข้อมูลบัญชี ณ 3 ต\.ค\. 2569/);
+});
+test('the "other" detail of the signup channel shows only for a company that chose "อื่น ๆ"', async () => {
+  const { CompanyContent } = await content();
+  const make = (discovery: object) => ({ ...envelope, company: { ...company, discovery, ownerContact: { status: 'NOT_PERMITTED' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: [] }) as unknown as ExecutiveCompanyDetail;
+  const render = (discovery: object) => text(renderToStaticMarkup(React.createElement(CompanyContent, { data: make(discovery), tab: 'company', history: null, admin: false, nav, contactReadAt: '' })));
+  assert.doesNotMatch(render({ key: 'SALES', label: 'เซลล์ของมั่งมี' }), /อื่น ๆ/);
+  assert.match(render({ key: 'OTHER', label: 'อื่น ๆ', otherText: 'งานอีเวนต์' }), /อื่น ๆ\s+งานอีเวนต์/);
+  assert.match(render({ key: 'OTHER', label: 'อื่น ๆ' }), /อื่น ๆ\s+ไม่ระบุ/);
 });
 test('history shows only the event/date/plan allowlist and Buddhist dates', async () => {
   const { CompanyContent } = await content();
