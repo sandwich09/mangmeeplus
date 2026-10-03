@@ -65,13 +65,15 @@ function renderEmail(account: Partial<AccountEmailOtpState> = {}, step = 'email'
  * Renders the page in its post-load state. `useState` is keyed on the initial value: `identity`
  * and `account` both start `null`, `loading` starts `true` — the three the effect would have set.
  */
-function renderLoaded(options: { permissions: string[]; identity?: unknown; account?: unknown }): string {
+function renderLoaded(options: { permissions: string[]; identity?: unknown; account?: unknown; emailLoginEnabled?: boolean }): string {
   const identity = options.identity ?? FULL_IDENTITY;
   const account = options.account ?? LINE_ONLY_ACCOUNT;
   const realUseState = reactRuntime.useState;
   let nullsSeen = 0;
+  let loginInjected = false;
   Reflect.set(reactRuntime, 'useState', (initialState: unknown) => {
     const state = (realUseState as (init: unknown) => [unknown, (value: unknown) => void])(initialState);
+    if (initialState === false && !loginInjected) { loginInjected = true; return [options.emailLoginEnabled ?? false, state[1]]; }
     if (initialState === null) {
       nullsSeen += 1;
       if (nullsSeen === 1) return [identity, state[1]];
@@ -102,6 +104,37 @@ const OWNER = ['company.setup.read', 'company.legal_identity.read', 'company.leg
 const FINANCE = ['company.setup.read', 'company.vat_registration.read'];
 /** Can SEE the real values but may not change them — reading and writing are separate keys. */
 const READ_ONLY_AUDITOR = ['company.setup.read', 'company.legal_identity.read'];
+
+describe('account email and password copy follows the available account facts', () => {
+  for (const hasPassword of [false, true]) for (const username of [null, 'shop.owner']) {
+    for (const emailState of ['missing', 'unverified', 'verified'] as const) for (const emailLoginEnabled of [false, true]) {
+      for (const lineLinked of [false, true]) {
+        it(`password=${hasPassword}, username=${Boolean(username)}, email=${emailState}, email login=${emailLoginEnabled}, LINE=${lineLinked}`, () => {
+          const email = emailState === 'missing' ? null : 'owner@example.com';
+          const emailVerified = emailState === 'verified';
+          const account = { ...LINE_ONLY_ACCOUNT, hasPassword, username, email, emailVerified, lineLinked };
+          const panel = renderEmail({ ...account, emailLoginEnabled, emailRequirement: emailVerified ? 'READY' : email ? 'UNVERIFIED' : 'MISSING' });
+          assert.match(panel, /ยืนยันอีเมลเพื่อใช้กับบัญชีของคุณ · อีเมลรับเอกสารจัดการแยกที่หน้าแพ็กเกจ/);
+          assert.doesNotMatch(panel.replace(/\bLINE\b/g, ''), /ให้ตั้งชื่อผู้ใช้และรหัสผ่านสำรอง|ทุกครั้งที่เข้าสู่ระบบ|[A-Z]{2,}/);
+          assert.equal(panel.includes('หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน'), !hasPassword && !emailLoginEnabled);
+          assert.equal(panel.includes('เข้าสู่ระบบด้วยรหัสทางอีเมล'), emailVerified);
+          if (emailVerified) {
+            assert.ok(panel.includes(emailLoginEnabled ? '>เปิดใช้งานอยู่<' : '>ยังไม่เปิดใช้งาน<'));
+            assert.match(panel, /เมื่อเลือกเข้าสู่ระบบด้วยรหัสทางอีเมล ให้นำรหัสยืนยันแบบใช้ครั้งเดียว 6 หลักที่ได้รับมากรอกแทนรหัสผ่าน/);
+          }
+          const page = renderLoaded({ permissions: OWNER, account, emailLoginEnabled });
+          assert.match(page, /จัดการรหัสผ่านสำรอง/);
+          assert.equal(/autocomplete="username"/i.test(page), !hasPassword && !username && !email);
+          assert.equal(page.includes('href="/change-password"'), hasPassword);
+          assert.equal(page.includes('ยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่าน'), !hasPassword && !emailLoginEnabled && lineLinked);
+          assert.equal(page.includes('รับรหัสทางอีเมลเพื่อยืนยันตัวตนอีกครั้ง'), !hasPassword && emailLoginEnabled);
+          if (!hasPassword && !username && email) assert.match(page, /หลังตั้งรหัสผ่านแล้ว ใช้อีเมล.*คู่กับรหัสผ่านเข้าเว็บได้/);
+          if (!hasPassword && username) assert.match(page, /ชื่อผู้ใช้สำหรับเข้าจากคอมพิวเตอร์คือ.*shop\.owner/);
+        });
+      }
+    }
+  }
+});
 
 describe('the shop section respects the permission that would refuse the save', () => {
   it('gives an owner writable boxes and a save button', () => {

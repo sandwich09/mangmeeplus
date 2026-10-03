@@ -76,90 +76,54 @@ for (const width of [390, 1280]) {
   });
 }
 
-test('a LINE owner corrects an unverified account email and adds an optional password without a username', async ({
+for (const width of [390, 1280]) test(`a LINE owner sets a backup password without a username and refreshes email guidance at ${width}px`, async ({
   authedPage: page,
   companyId,
 }, info) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width, height: 900 });
   let account = {
-    email: 'owner.typo@example.com',
-    emailVerified: false,
-    emailVerifiedAt: null,
-    pendingEmail: null,
-    pendingEmailExpiresAt: null,
-    lineLinked: true,
-    phoneNumber: null,
-    hasPassword: false,
-    username: null,
-    emailDeliveryEnabled: false,
+    email: 'owner@example.com', emailVerified: false, emailVerifiedAt: null,
+    pendingEmail: null, pendingEmailExpiresAt: null, lineLinked: true,
+    phoneNumber: null, hasPassword: false, username: null, emailDeliveryEnabled: true,
   };
-  const emailBodies: Array<Record<string, unknown>> = [];
+  let revision = 0;
   const passwordBodies: Array<Record<string, unknown>> = [];
-
-  await page.route('**/api/v1/auth/account/security', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(account) });
-  });
-  await page.route('**/api/v1/auth/me/email/unverified', async (route) => {
-    const body = route.request().postDataJSON() as Record<string, unknown>;
-    emailBodies.push(body);
-    if (body['newEmail'] === 'used@example.com') {
-      await route.fulfill({
-        status: 409,
-        contentType: 'application/json',
-        body: JSON.stringify({ code: 'account_email_conflict', message: 'another account owns this email' }),
-      });
-      return;
-    }
-    account = { ...account, email: String(body['newEmail']).trim().toLowerCase() };
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ email: account.email, emailVerified: false }),
-    });
-  });
-  await page.route('**/api/v1/auth/me/password/set', async (route) => {
+  await page.route('**/api/v1/auth/account/security', route => route.fulfill({ json: account }));
+  await page.route('**/api/v1/auth/account/email/otp', route => route.fulfill({ json: {
+    email: account.email, emailVerified: account.emailVerified, emailRevision: revision,
+    emailRequirement: 'UNVERIFIED', hasPassword: account.hasPassword, emailLoginEnabled: false,
+    lineLinked: true, serverNow: new Date().toISOString(), challenge: null,
+  } }));
+  await page.route('**/api/v1/auth/me/password/set', async route => {
     passwordBodies.push(route.request().postDataJSON() as Record<string, unknown>);
     account = { ...account, hasPassword: true };
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ username: null }) });
+    revision++;
+    await route.fulfill({ json: { username: null } });
   });
 
   await gotoCompany(page, companyId, '/settings/profile#account');
-  await expect(page.getByRole('heading', { name: 'บัญชีของฉัน', exact: true })).toBeVisible();
-  await expect(page.getByText('owner.typo@example.com', { exact: true })).toHaveCount(2);
-  await expect(page.getByText('ยังไม่ยืนยัน', { exact: true })).toBeVisible();
+  const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
+  const backupHint = emailPanel.getByText('หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน', { exact: true });
+  await expect(backupHint).toBeVisible();
+  await expect(emailPanel.getByText('ยังไม่ยืนยัน', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'ชื่อผู้ใช้', exact: true })).toHaveCount(0);
-
-  await page.getByRole('button', { name: 'แก้ไขอีเมลบัญชี', exact: true }).click();
-  const email = page.getByRole('textbox', { name: 'อีเมลบัญชี', exact: true });
-  await email.fill(' Corrected.Owner@example.com ');
-  await page.getByRole('button', { name: 'บันทึกอีเมลบัญชี', exact: true }).click();
-  await expect(page.getByText('corrected.owner@example.com', { exact: true })).toHaveCount(2);
-  expect(emailBodies[0]).toEqual({
-    newEmail: 'Corrected.Owner@example.com',
-    expectedEmail: 'owner.typo@example.com',
-  });
-
-  await page.getByLabel(/รหัสผ่านใหม่/).fill('backup-password');
+  await emailPanel.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true }).fill('draft@example.com');
+  await page.locator('summary').filter({ hasText: 'รหัสผ่านสำรอง' }).click();
+  await page.getByLabel('รหัสผ่านใหม่', { exact: false }).fill('backup-password');
   await page.getByLabel('พิมพ์รหัสผ่านอีกครั้ง', { exact: true }).fill('backup-password');
+  // Fail if the update depends on a full navigation or the panel's 15-second poll.
+  let navigations = 0;
+  page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++; });
   await page.getByRole('button', { name: 'ตั้งรหัสผ่านสำรอง', exact: true }).click();
   await expect(page.getByRole('link', { name: 'เปลี่ยนรหัสผ่าน', exact: true })).toBeVisible();
+  await expect(backupHint).toHaveCount(0, { timeout: 5000 });
+  await expect(emailPanel.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true })).toHaveValue('draft@example.com');
+  await emailPanel.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+  await expect(emailPanel.getByLabel('รหัสผ่านปัจจุบัน', { exact: true })).toBeVisible();
   expect(passwordBodies).toEqual([{ password: 'backup-password' }]);
-
-  await page.getByRole('button', { name: 'แก้ไขอีเมลบัญชี', exact: true }).click();
-  await email.fill('used@example.com');
-  await page.getByLabel(/รหัสผ่านปัจจุบัน/).fill('backup-password');
-  await page.getByRole('button', { name: 'บันทึกอีเมลบัญชี', exact: true }).click();
-  await expect(page.getByText('อีเมลนี้มีบัญชีอื่นใช้อยู่แล้วค่ะ กรุณาใช้อีเมลอื่น อีเมลบัญชีของคุณยังไม่เปลี่ยน', { exact: true })).toBeVisible();
-  expect(emailBodies[1]).toEqual({
-    newEmail: 'used@example.com',
-    expectedEmail: 'corrected.owner@example.com',
-    currentPassword: 'backup-password',
-  });
-  await page.getByRole('button', { name: 'ยกเลิก', exact: true }).click();
-  await expect(page.getByText('corrected.owner@example.com', { exact: true })).toHaveCount(1);
-  await expect(page.getByRole('link', { name: 'ไปหน้าเข้าสู่ระบบ', exact: true })).toHaveCount(0);
-  await expect(page.getByText(/ยังเปิดส่งอีเมลยืนยันไม่ได้/)).toHaveCount(0);
-  await page.screenshot({ path: info.outputPath('unverified-account-email-mobile.png'), fullPage: true });
+  expect(navigations).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath(`account-password-refresh-${width}.png`), fullPage: true });
   await expectNoClientError(page);
 });
 

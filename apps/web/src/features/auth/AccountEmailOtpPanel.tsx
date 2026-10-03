@@ -8,8 +8,10 @@ import { accountEmailOtpCommand, getAccountEmailOtp, type AccountEmailOtpState }
 const button = 'mangmee-btn mangmee-btn-secondary min-h-11';
 const primaryButton = 'mangmee-btn mangmee-btn-primary min-h-11';
 const field = 'mangmee-input mt-2 block min-h-11 w-full min-w-0';
+const sameEmailMessage = 'อีเมลนี้ยืนยันแล้ว หากต้องการเปลี่ยน กรุณากรอกอีเมลใหม่';
+const loginSavedMessage = 'บันทึกวิธีเข้าสู่ระบบแล้ว';
 const steps = ['กรอกอีเมล', 'ยืนยันตัวตน', 'กรอกรหัสยืนยัน'];
-export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (state: AccountEmailOtpState) => void; reauthReturnTo?: string }) {
+export function AccountEmailOtpPanel({ onState, reauthReturnTo, refreshKey }: { refreshKey?: object | null; onState?: (state: AccountEmailOtpState) => void; reauthReturnTo?: string }) {
   const id = useId(), callback = useRef(onState); callback.current = onState;
   const [state, setState] = useState<AccountEmailOtpState | null>(null);
   const [email, setEmail] = useState(''), [password, setPassword] = useState(''), [code, setCode] = useState('');
@@ -34,7 +36,6 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
   useEffect(() => {
     mounted.current = true;
     setInLineBrowser(isLineInAppBrowser(navigator.userAgent));
-    void refresh().catch(e => { if (mounted.current) setError(apiErrorMessage(e)); });
     const visible = () => { if (!running.current && document.visibilityState === 'visible') void refresh().catch(() => {}); };
     const poll = window.setInterval(visible, 15_000);
     const tick = window.setInterval(() => setNow(Date.now() + offset.current), 1000);
@@ -58,6 +59,10 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
     if (line?.startsWith('email-reauth')) { const url = new URL(window.location.href); url.searchParams.delete('line'); window.history.replaceState(null, '', url.pathname + url.search + url.hash); }
     return () => { mounted.current = false; window.clearInterval(poll); window.clearInterval(tick); window.removeEventListener('focus', visible); document.removeEventListener('visibilitychange', visible); };
   }, [refresh]);
+  // Reuse the containing page's account read; do not remount and lose the editor draft.
+  useEffect(() => {
+    void refresh().catch(e => { if (mounted.current) setError(apiErrorMessage(e)); });
+  }, [refresh, refreshKey]);
   const challenge = state?.challenge;
   const pending = challenge?.status === 'PENDING' && Date.parse(challenge.expiresAt) > now;
   const retrySeconds = Math.max(0, Math.ceil((Math.max(rateLimitUntil, challenge ? Date.parse(challenge.retryAt) : 0) - now) / 1000));
@@ -72,7 +77,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
   }, [currentStep, editingEmail, pending]);
   async function run(work: () => Promise<AccountEmailOtpState>, success?: string) {
     if (running.current) return; running.current = true; setBusy(true); setError(''); setNotice('');
-    try { const next = await work(); apply(next); setPassword(''); setShowPassword(false); setReauthNeeded(false); request.current = null; if (next.challenge?.status === 'USED') { setEditing(false); setStep('email'); } if (success) setNotice(success); if (success === 'บันทึกวิธีเข้าสู่ระบบแล้ว') setEditingLogin(false); return next; }
+    try { const next = await work(); apply(next); setPassword(''); setShowPassword(false); setReauthNeeded(false); request.current = null; if (next.challenge?.status === 'USED') { setEditing(false); setStep('email'); } if (success) setNotice(success); if (success === loginSavedMessage) setEditingLogin(false); return next; }
     catch (e) {
       setError(apiErrorMessage(e));
       if (apiErrorCode(e) === 'EMAIL_REAUTH_REQUIRED') { setReauthNeeded(true); setLineReauthUntil(0); }
@@ -92,7 +97,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
   }
   function send(resend = false) {
     if (!state || running.current || retrySeconds > 0) return;
-    if (!resend && sameVerifiedEmail) { setError('อีเมลนี้ยืนยันแล้ว หากต้องการเปลี่ยน กรุณากรอกอีเมลใหม่'); return; }
+    if (!resend && sameVerifiedEmail) { setError(sameEmailMessage); return; }
     if ((!resend || reauthNeeded) && passwordRequired && !password) { setError('กรุณากรอกรหัสผ่านปัจจุบันก่อนขอรหัสยืนยัน'); return; }
     const target = (resend ? challenge?.email ?? email : email).trim().toLowerCase();
     const fingerprint = target;
@@ -137,7 +142,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0">
         <h2 id={`${id}-title`} className="text-base font-semibold text-gray-900">อีเมลบัญชีของฉัน</h2>
-        <p className="mt-1 text-sm leading-6 text-gray-500">ใช้เข้าสู่ระบบด้วยรหัสยืนยัน และรับแจ้งเตือนบัญชี · ถ้ายืนยันแล้ว การซื้อครั้งแรกจะใช้อีเมลนี้รับเอกสาร · เปลี่ยนอีเมลรับเอกสารได้ที่หน้าแพ็กเกจ</p>
+        <p className="mt-1 text-sm leading-6 text-gray-500">ยืนยันอีเมลเพื่อใช้กับบัญชีของคุณ · อีเมลรับเอกสารจัดการแยกที่หน้าแพ็กเกจ</p>
       </div>
       {state?.emailRequirement === 'READY' && !editing && <button type="button" className={button} onClick={() => { setEmail(''); setPassword(''); setShowPassword(false); setError(''); setNotice(''); setEditingLogin(false); setStep('email'); setEditing(true); }}>เปลี่ยนอีเมล</button>}
       {state?.emailRequirement === 'READY' && editing && <button type="button" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100 hover:text-gray-900" aria-label="ปิดการแก้ไข" title="ปิดการแก้ไข" disabled={busy} onClick={() => { setEditing(false); setPassword(''); setShowPassword(false); setError(''); setNotice(''); }}>
@@ -145,7 +150,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
       </button>}
     </div>
     <div className="flex flex-wrap items-center gap-3 rounded-xl bg-gray-50 px-4 py-3">
-      <p className="min-w-0 break-all text-base font-semibold text-gray-900">{state?.email ?? 'ยังไม่ได้ผูกอีเมล'}</p>
+      {state && <p className="min-w-0 break-all text-base font-semibold text-gray-900">{state.email ?? 'ยังไม่ได้ผูกอีเมล'}</p>}
       {state && <MangmeeBadge tone={state.emailVerified ? 'brand' : 'amber'}>{state.emailVerified ? 'ยืนยันแล้ว' : 'ยังไม่ยืนยัน'}</MangmeeBadge>}
     </div>
     {editingEmail && <div className="max-w-2xl space-y-5">
@@ -174,7 +179,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
         </form> : step === 'email' ? <form onSubmit={e => { e.preventDefault(); if (!busy && email.trim() && !sameVerifiedEmail) { setError(''); setNotice(''); setStep('identity'); } }} className="max-w-2xl space-y-4">
           <p className="text-sm text-gray-600">กรอกอีเมลที่ต้องการใช้ แล้วกดถัดไปเพื่อยืนยันตัวตน</p>
           <label className="block" htmlFor={`${id}-email`}>อีเมลที่ต้องการยืนยัน<span className="text-red-600" aria-hidden="true"> *</span><input id={`${id}-email`} className={field} type="email" autoComplete="email" maxLength={254} value={email} required disabled={busy} onChange={e => { setEmail(e.target.value); request.current = null; }} /></label>
-          {sameVerifiedEmail && <p role="status" className="text-sm text-gray-600">อีเมลนี้ยืนยันแล้ว หากต้องการเปลี่ยน กรุณากรอกอีเมลใหม่</p>}
+          {sameVerifiedEmail && <p role="status" className="text-sm text-gray-600">{sameEmailMessage}</p>}
           <div className="flex justify-end"><button className={primaryButton} disabled={busy || !email.trim() || sameVerifiedEmail} aria-busy={busy}>ถัดไป</button></div>
         </form> : <form onSubmit={e => { e.preventDefault(); send(); }} className="max-w-2xl space-y-4">
           <p className="break-words text-sm text-gray-600">ยืนยันตัวตนเพื่อส่งรหัสยืนยัน 6 หลักไปที่ <strong>{email}</strong></p>
@@ -192,13 +197,13 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
           <div>
             <h3 className="text-base font-semibold text-gray-900">เข้าสู่ระบบด้วยรหัสทางอีเมล</h3>
             <p className="mt-1 text-sm text-gray-600">{state.emailLoginEnabled ? 'เปิดใช้งานอยู่' : 'ยังไม่เปิดใช้งาน'}</p>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">เมื่อเปิดใช้งาน ระบบจะส่งรหัสยืนยันแบบใช้ครั้งเดียว 6 หลักไปที่อีเมลของคุณทุกครั้งที่เข้าสู่ระบบ ใช้รหัสนี้แทนรหัสผ่าน</p>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">เมื่อเลือกเข้าสู่ระบบด้วยรหัสทางอีเมล ให้นำรหัสยืนยันแบบใช้ครั้งเดียว 6 หลักที่ได้รับมากรอกแทนรหัสผ่าน</p>
           </div>
           {!editingLogin && <button type="button" className={button} onClick={() => { setPassword(''); setEditingLogin(true); }}>เปลี่ยนวิธีเข้าสู่ระบบ</button>}
         </div>
         {editingLogin && <form className="space-y-4 rounded-xl bg-gray-50 p-4" onSubmit={event => {
           event.preventDefault();
-          void run(() => accountEmailOtpCommand('/login-method', { enabled: !state.emailLoginEnabled, ...(password ? { currentPassword: password } : {}) }), 'บันทึกวิธีเข้าสู่ระบบแล้ว');
+          void run(() => accountEmailOtpCommand('/login-method', { enabled: !state.emailLoginEnabled, ...(password ? { currentPassword: password } : {}) }), loginSavedMessage);
         }}>
           <p className="text-sm text-gray-600">ยืนยันตัวตนก่อน{state.emailLoginEnabled ? 'ปิด' : 'เปิด'}การเข้าสู่ระบบด้วยอีเมล</p>
           {state.hasPassword && passwordField}
@@ -209,7 +214,7 @@ export function AccountEmailOtpPanel({ onState, reauthReturnTo }: { onState?: (s
           </div>
         </form>}
       </div>}
-      {!state.hasPassword && !state.emailLoginEnabled && <p className="text-gray-600">อีเมลที่ยืนยันแล้วไม่ใช่รหัสผ่าน หากต้องการเข้าเว็บโดยไม่ใช้ LINE ให้ตั้งชื่อผู้ใช้และรหัสผ่านสำรองในหน้าบัญชีของฉัน</p>}
+      {!state.hasPassword && !state.emailLoginEnabled && <p className="text-gray-600">หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน</p>}
     </>}
     <details className="group border-t border-gray-100 pt-4 text-sm text-gray-500" open={Boolean(error)}><summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 font-medium [&::-webkit-details-marker]:hidden">ไม่ได้รับรหัสยืนยันทางอีเมล<svg aria-hidden="true" className="h-4 w-4 shrink-0 group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg></summary><p className="mt-2">ตรวจกล่องจดหมายขยะ หรือขอรหัสใหม่เมื่อครบเวลาที่ระบุ หากยังไม่ได้รับ ติดต่อทีมงาน 098-256-5628</p></details>
   </section>;
