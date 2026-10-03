@@ -60,7 +60,8 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: info.outputPath(`manual-${width}-selected.png`), fullPage: true });
     await gotoCompany(page, companyId, '/expenses/upload');
     await expect(page.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveText(branchName(chosen));
-    await expect(page.getByRole('textbox', { name: 'เช่น ค่ากาแฟทีมงาน', exact: true })).toBeEnabled();
+    // The note field is labelled "หมายเหตุ (ไม่บังคับ)"; "เช่น ค่ากาแฟทีมงาน" is only its placeholder.
+    await expect(page.getByRole('textbox', { name: 'หมายเหตุ (ไม่บังคับ)', exact: true })).toBeEnabled();
     await page.screenshot({ path: info.outputPath(`upload-${width}-inherited.png`), fullPage: true });
     expect(errors).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();

@@ -11,6 +11,9 @@ const ACTIVE_TOP = 'aside a.menu-item[data-active="true"], aside button.menu-ite
 const ACTIVE_SUB = 'aside a.menu-dropdown-item-active';
 
 async function activeRows(page: import('@playwright/test').Page) {
+  // The workspace mounts the sidebar only once its plan-term read has answered ("กำลังเปิดหน้า…"
+  // until then), and allTextContents() does not wait: read the rows when the sidebar is there.
+  await expect(page.locator('aside nav')).toBeVisible();
   return {
     top: await page.locator(ACTIVE_TOP).allTextContents(),
     sub: await page.locator(ACTIVE_SUB).allTextContents(),
