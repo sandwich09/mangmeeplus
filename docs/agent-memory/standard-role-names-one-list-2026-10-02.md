@@ -4,7 +4,7 @@ Status: reimbursement guide closed 2026-10-03 on `claude/batch-a-roles-notices-2
 Owner: Codex lane 3a; controller owns commit, full verification, PostgreSQL and browser checks.
 Scope: one Thai label for all 15 standard role keys; company-named copies keep their names; employees-and-rights, claims, guides, API role descriptions and fallback notices. Controller follow-up authorizes three assistant source hashes only; no help-card body edit. No package manifest, schema, migration, public, sales-console or platform-admin edits. The reimbursement guide and its pin are owned by another lane.
 Decisions: the approved labels move from the employee picker to `packages/contracts/src/employee-access.ts`, because API role descriptions and the approval-backlog note also name standard roles. Consumers interpolate the shared labels. The English dictionary keeps its current English labels. Company-copy recognition is reused, including the sidebar and claim policy.
-Open questions: reimbursement guide/pin: both pending lists closed 2026-10-03 (see "Reimbursement guide closed" at the end); the meaning points noticed there are for the owner. At the time of follow-up 2 the existing pending sentences were unchanged, with five additional platform-role help sentences listed below. No SYSTEM_ADMIN text remains in the four edited guides. Default employee delegation limits, the lack of a per-user permission editor, and an existing spec/code discrepancy are recorded in follow-up 2. Sales-console aliases, company-owned descriptions and protected-role visibility remain out of scope.
+Open questions: reimbursement guide/pin: both pending lists closed 2026-10-03, and the policy-actor sentences and the substitute guide's bare “เจ้าของ” fixed in the follow-up (sections at the end). Still open, for the owner: the substitute certificate prints “ลงนามโดยเจ้าของกิจการ…” even when a company admin signs both, and card `substitute.review-sign` says signing is done on the web though a paper path exists. At the time of follow-up 2 the existing pending sentences were unchanged, with five additional platform-role help sentences listed below. No SYSTEM_ADMIN text remains in the four edited guides. Default employee delegation limits, the lack of a per-user permission editor, and an existing spec/code discrepancy are recorded in follow-up 2. Sales-console aliases, company-owned descriptions and protected-role visibility remain out of scope.
 Artifacts: inventory, changes and wording table to be recorded below; preceding investigation: `ui-wording-roles-sla-signature-2026-10-02.md` section 1.
 Verification: initial red/green evidence below: 428 focused tests passed (16 files), no failures/skips; contracts build twice rc 0; locked API typecheck rc 0; locked web typecheck rc 0 after correcting two integration errors. Follow-up red/green: guide specs rc 1 (13 pass/3 fail) then rc 0 (16 pass/0 fail); approved-knowledge rc 1 (8 pass/1 fail, source hash mismatch) then rc 0 (9 pass/0 fail), no skips. Final diff/integrity checks recorded in the follow-up section. Network, servers, Docker, browser and real PostgreSQL are unavailable by lane rules. Follow-up 2: guide specs rc 1 (15 pass/5 fail, twice) then rc 0 (20 pass/0 fail); approved-knowledge rc 1 (8 pass/1 fail) then rc 0 (9 pass/0 fail), no skips. Initial typechecks are historical evidence; not rerun in this follow-up.
 Next: reimbursement guide/pin integrated 2026-10-03 (closing section at the end); controller runs full suites, real PostgreSQL and browser checks, then reviews and pushes. Deploy the assistant with the web because this lane now changes three hashes in apps/ai-gateway; deployment not attempted here.
@@ -660,3 +660,64 @@ Noticed, not changed (meaning outside this lane, for the owner): ADMIN also hold
 เจ้าของกิจการเปิด “ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้””, and the policy section is titled
 “(สำหรับเจ้าของกิจการ)” while the tabs table names both. The substitute-receipt guide still has two bare
 “เจ้าของ” back-references (settings note and the default signing mode row).
+
+## Follow-up 2026-10-03: who changes the claim policy; the substitute guide's owner name
+
+Coordinator scope after review of `4a313786c`: the meaning points noticed above are in scope.
+
+Checked in code: the policy write is `PUT /companies/:companyId/reimbursement-policy` with
+`@RequirePermissions('reimbursement.policy.manage')`; the use case checks nothing more and writes
+`financeReviewRequired` and `allowSelfApproval` as given. Holders: OWNER and ADMIN by default (and any
+company role given the key). Gate: `reimbursement.policy.manage` falls under the `reimbursement.` prefix
+rule and is not in `RETAINED_REIMBURSEMENT_PERMISSIONS`, so with the company's claim feature off nobody
+can change the policy; no separate plan gate applies to either switch. A sentence that states a
+condition (“only when it is on”) now says it of the company, as the guide's FAQ already did (“บริษัทยัง
+ไม่เปิด …”); a sentence that says who can do it, or whom to ask, names both holders.
+
+| Line (by text) | Old | New | Check |
+| --- | --- | --- | --- |
+| tabs note “งานของฝ่ายการเงินมีเฉพาะบริษัทที่เปิดขั้นตรวจการเงิน” | …งานตรวจการเงินมีต่อเมื่อเจ้าของกิจการเปิด “ตรวจการเงินก่อนจ่าย” ในหน้าตั้งค่านโยบาย… | …งานตรวจการเงินมีต่อเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” ในหน้าตั้งค่านโยบาย… | Condition on the switch; actor irrelevant (`reimbursement.policy.manage`: OWNER, ADMIN, custom holders) |
+| flow note “บริษัทที่มีฝ่ายการเงินแยกจากผู้อนุมัติ เพิ่มขั้นตรวจการเงินได้” | …เจ้าของกิจการเปิด “ตรวจการเงินก่อนจ่าย” ได้ที่หน้าตั้งค่านโยบาย… | …เจ้าของกิจการหรือผู้ดูแลบริษัทเปิด “ตรวจการเงินก่อนจ่าย” ได้ที่หน้าตั้งค่านโยบาย… | Who can: `reimbursement.policy.manage` → OWNER, ADMIN |
+| approve note “อนุมัติคำขอของตัวเอง” | …บทบาทอื่นทำได้เมื่อเจ้าของกิจการเปิด “ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้”… | …บทบาทอื่นทำได้เมื่อบริษัทเปิด “ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้”… | Condition on the switch (`allowSelfApproval`, same permission) |
+| finance section summary | มีเมื่อเจ้าของกิจการเปิด “ตรวจการเงินก่อนจ่าย” เท่านั้น | มีเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” เท่านั้น | Condition on the switch |
+| policy section title | ตั้งค่านโยบายของบริษัท (สำหรับเจ้าของกิจการ) | ตั้งค่านโยบายของบริษัท (สำหรับเจ้าของกิจการและผู้ดูแลบริษัท) | Audience = holders of `reimbursement.policy.manage`; matches the tabs table and the substitute guide's settings title |
+| FAQ “อนุมัติคำขอของตัวเองไม่ได้” | …หรือขอให้เจ้าของกิจการเปิดในหน้าตั้งค่านโยบาย… | …หรือขอให้เจ้าของกิจการหรือผู้ดูแลบริษัทเปิดในหน้าตั้งค่านโยบาย… | Whom to ask: OWNER, ADMIN |
+| substitute `sign` note “ผู้ใดอนุมัติได้” | …กรณีนั้นระบบจะระบุไว้ในเอกสารว่าเจ้าของลงนามทั้งสองฐานะ… | …ว่าเจ้าของกิจการลงนามทั้งสองฐานะ… | Owner role: the certificate prints “ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ” |
+| substitute settings table, mode “เจ้าของกิจการลงนามและอนุมัติด้วยตนเอง (ค่าเริ่มต้น)” | เจ้าของลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ… | เจ้าของกิจการลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ… | Owner role (true: OWNER may sign both under `OWNER_SELF`) |
+
+Render check against `4a313786c`: claim guide 6 of 686 sentences changed, substitute guide 2 of 239,
+all listed above; every “ ” quote unchanged. Checked and left as they are: the quick-start owner
+persona (“ถ้าคุณคือ เจ้าของกิจการ หมายถึง คุณกำหนดกติกาของทั้งบริษัท” addresses the owner and does not say
+only), the finance persona's tab name for the owner, “เมื่อเจ้าของกิจการถอดสิทธิ์บันทึกจ่าย…” (role
+rights, `access.role.manage`, owner-only among standard roles), and “กิจการเจ้าของคนเดียว” (a sole
+proprietorship, not a role; the settings screen's own words).
+
+Product finding, not changed (outside guide wording): under `OWNER_SELF` the API lets OWNER, ADMIN and
+MANAGER sign as payer and approver (`selfApprovalPermitted` uses `SELF_APPROVAL_EXEMPT_ROLES`; approving
+also needs `expense.confirm`, so among standard roles OWNER and ADMIN), but the certificate prints
+“ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ” whenever approver = payer
+(`substitute-receipt.logic.ts` `selfSigned`), so a company admin who signs both gets a certificate
+saying the owner signed. The settings caption also says a bare “เจ้าของ”. Needs an owner decision on
+the printed words.
+
+Pins (`approved-product-help.ts`): `reimbursements` `8bee70d8…` → `4244ded04517368c1aca422d7e057a9babf4955bc7ba2aa5196838f7817197b0`;
+`substitute-receipts` `54b29bc6…` → `48d96348acf6fb0a8114fdb5a893510eedbf8b4e560710164cef7c5b7f7e1d77`.
+Card bodies unchanged. `reimbursement.meaning`: still true (quick-start untouched this round).
+`reimbursement.roles`: still true (the tabs note now says the company turns the step on; the card says
+nothing about who). `substitute.meaning`, `substitute.evidence`: still true (sections untouched).
+`substitute.review-sign`: this edit does not change it, but it is not true in every case: it says
+signing, confirming and approving are done on the web, while the wizard also offers paper signing
+(`signatureMode` `PAPER`: signed on paper, uploaded, accepted on the web); the guide's `sign` section
+does not describe the paper path either. Earlier gap, body not edited; needs a guide and card review.
+
+Verification:
+
+- Guide spec: red rc 1, 23 pass / 2 fail / 0 skip of 25 (the claim test fails on “…เจ้าของกิจการเปิด
+  “ตรวจการเงินก่อนจ่าย”…”, the substitute test on “…เจ้าของลงนามทั้งสองฐานะ…”); green rc 0, 25 / 0 / 0.
+- approved-knowledge: red rc 1, 8 / 1 / 0 (pin `8bee…` vs file `4244…`; the substitute file's new hash
+  also differs from its old pin); green rc 0, 9 / 0 / 0.
+- Under `/tmp/mangmee-heavy.lock` (taken 07:01:24, released 07:01:55), no `S3_*` variables:
+  `pnpm --filter @watchdog-bms/web exec node --import tsx --test 'src/**/*.spec.ts'` rc 0, 2679 tests
+  in 552 suites, 2679 pass / 0 fail / 0 cancelled / 0 skipped; `pnpm --filter @watchdog-bms/web typecheck`
+  rc 0 (incremental). `git diff --check` rc 0. Browser, PostgreSQL and live assistant output not checked.
+- Deploy the assistant with the web: two pins moved.

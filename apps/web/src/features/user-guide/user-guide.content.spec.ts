@@ -265,6 +265,33 @@ it('the claim guide names every standard role as the role picker does', () => {
   for (const text of read) assert.doesNotMatch(text, /แอดมิน|เจ้าของ(?!กิจการ|บัญชี)/u, text);
 });
 
+// The claim policy is changed by whoever holds reimbursement.policy.manage: the owner and the company admin by default.
+it('the claim guide never says the owner alone changes the claim policy', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+  const guide = buildReimbursementGuide('co');
+  const read = sentences(guide);
+  for (const text of read) assert.doesNotMatch(text, new RegExp(`${roles.OWNER}เปิด`, 'u'), text);
+  assert.equal(guide.sections.find((section) => section.id === 'policy')!.title, `ตั้งค่านโยบายของบริษัท (สำหรับ${roles.OWNER}และ${roles.ADMIN})`);
+  assert.equal(guide.sections.find((section) => section.id === 'finance')!.summary, 'มีเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” เท่านั้น');
+  // What a switch does is said of the company; whom to ask names both holders.
+  for (const said of [
+    'งานตรวจการเงินมีต่อเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” ในหน้าตั้งค่านโยบาย',
+    `${roles.OWNER}หรือ${roles.ADMIN}เปิด “ตรวจการเงินก่อนจ่าย” ได้ที่หน้าตั้งค่านโยบาย`,
+    'บทบาทอื่นทำได้เมื่อบริษัทเปิด “ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้”',
+    `ขอให้${roles.OWNER}หรือ${roles.ADMIN}เปิดในหน้าตั้งค่านโยบาย`,
+  ]) assert.ok(read.some((text) => text.includes(said)), said);
+});
+
+it('the substitute-receipt guide calls the owner by the one name', () => {
+  const roles = THAI_SYSTEM_ROLE_NAMES;
+  const read = sentences(buildSubstituteReceiptGuide('co'));
+  // "กิจการเจ้าของคนเดียว" is a kind of business (a sole proprietorship), not a role.
+  for (const text of read) assert.doesNotMatch(text, /เจ้าของ(?!กิจการ|คนเดียว)/u, text);
+  for (const said of [`ระบบจะระบุไว้ในเอกสารว่า${roles.OWNER}ลงนามทั้งสองฐานะ`, `${roles.OWNER}ลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ`]) {
+    assert.ok(read.some((text) => text.includes(said)), said);
+  }
+});
+
 describe('shop guides name the company admin for the business permissions it holds', () => {
   const roles = THAI_SYSTEM_ROLE_NAMES;
 

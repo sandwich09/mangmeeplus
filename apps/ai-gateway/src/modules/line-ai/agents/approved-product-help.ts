@@ -3,8 +3,8 @@ import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type P
 
 const sources = {
   expenses: { file: 'expenses-guide.content.ts', hash: 'f3c0df5ef8679e1281d4333e21277187f373fbdd477081f7eb4f374045717fd5' },
-  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '8bee70d8c61b19aa39091a0b0427314a9bb01035919c645c92fd6accd77362ca' },
-  'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '54b29bc6bd4c7bbacf0de8e1278ed8b4065da95f739e1f8a0cdd7df36f9e3ce6' },
+  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '4244ded04517368c1aca422d7e057a9babf4955bc7ba2aa5196838f7817197b0' },
+  'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '48d96348acf6fb0a8114fdb5a893510eedbf8b4e560710164cef7c5b7f7e1d77' },
   reports: { file: 'reports-guide.content.ts', hash: '1fad122c4ef5fb475b02cd07e12513e0d6a90c2b97fc3760739094f530dd17fc' },
 } as const;
 
