@@ -26,8 +26,7 @@ export type CaptureUploadEntry = {
   expenseId?: string;
 };
 
-/** bytes → "9.8 MB". One decimal, because the limits users meet are whole-ish megabytes. */
-export const captureMegabytes = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+export { expenseCaptureMegabytes as captureMegabytes } from '@watchdog-bms/contracts';
 
 /** UXE-04/UXE-05, from the server's own capability — never from a number typed into the client. */
 export function captureFileRejection(

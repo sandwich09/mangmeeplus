@@ -210,3 +210,7 @@ The API carries a second, older capability lane: `isCapabilityQuestion` + `build
 ## Package access follow-up 2026-09-11
 
 [Package spec§9](mangmee-package-entitlements-spec-th.md) and [AP17–AP24](../plans/mangmee-package-entitlements-plan-th.md) extend help-copy gating to historical model inputs, ACTIVErole projection, changed branch scopes, prepared/replayed context and final delivery. AX01/AX02 have bounded local repairs; AX03/AX04 source-history and send-time fences still need implementation/evidence. Default starter has7menus but AI may advertise only actions this actor can perform, not one tool per menu. Company services overview remains distinct from personal action authority; no feature/plan purchase opens Enterprise or SYSTEM50ทวิ. Earlier baseline measurements describe their original date, not current runtime or deployed status.
+
+## Shared customer wording — 2026-10-03
+
+The API receipt refusal and gateway feature-disabled answer reuse `LINE_FEATURE_DISABLED_HELP_TH` from contracts. They ask a permitted package manager to check the package or contact the team; they never promise that a shop owner/administrator can switch features on in the shop web app. Empty capability answers and API follow-ups reuse `LINE_CAPABILITY_NO_ACCESS_TH`: role permissions and enabled shop menus are separate checks, and a shop administrator is not a platform administrator. Curated jokes use Thai words rather than English episode/fandom shorthand.

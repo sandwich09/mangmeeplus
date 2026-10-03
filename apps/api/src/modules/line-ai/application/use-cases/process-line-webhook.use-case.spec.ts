@@ -1,3 +1,4 @@
+import { capabilityFollowUpReply } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
@@ -2060,6 +2061,8 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ระบบค่าใช้จ่ายและเอกสาร/);
+    assert.match(replies[0] ?? '', /ตรวจแพ็กเกจหรือติดต่อทีมงาน/);
+    assert.doesNotMatch(replies[0] ?? '', /เปิดฟีเจอร์ในเว็บแอป/);
     assert.equal((replies[0] ?? '').includes('ไม่มีสิทธิ์'), false);
     assert.equal((updates.at(-1) as any).data.status, 'feature_disabled');
   });
@@ -8256,4 +8259,10 @@ describe('LINE: ถามส่วนลด (sales-event spec §8.1, Owner UAT 2
     assert.match(paying.sentMessages[0].contents.body.contents[1].text, /ร้านนี้ต่ออายุแบบตัดเงินอัตโนมัติ/);
     assert.equal(paying.sentMessages[0].contents.footer, undefined);
   });
+});
+
+it('capability follow-up distinguishes shop permission management from platform administration', () => {
+  const reply = capabilityFollowUpReply('ยังไง', { permissions: [] });
+  assert.match(reply, /ผู้มีสิทธิ์จัดการบทบาท/);
+  assert.doesNotMatch(reply, /ผู้ดูแลระบบของบริษัท/);
 });

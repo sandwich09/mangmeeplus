@@ -135,7 +135,7 @@ export function TransactionTaxLineSelector({
         {!allowNoTax && <option value="">เลือกประเภทภาษี</option>}
         {choices.map((item) => (
           <option key={item.id} value={item.id}>
-            {taxChoiceLabel(item)} ({item.externalCode})
+            {taxChoiceLabel(item)}
           </option>
         ))}
       </ThemedSelect>
