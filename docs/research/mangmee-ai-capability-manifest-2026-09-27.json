@@ -2,9 +2,9 @@
   "schemaVersion": "line-ai-capability-manifest/v1",
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
-  "baseRevision": "e5102a3e9eea54880e1f88cd04b4c8ef9c1cabb1",
-  "sourceRevision": "c3891076dec6f0211c302f1b55c138d50fb0801d",
-  "checkoutBranch": "claude/reimb-payout-round-wording-20261002",
+  "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
+  "sourceRevision": "bbaa239ec7f0452fa0c779568dcbd2d132010749",
+  "checkoutBranch": "claude/batch-a-roles-notices-20261003",
   "checkoutDirty": false,
   "sourceHashes": [
     {
@@ -153,7 +153,7 @@
     },
     {
       "path": "apps/api/src/modules/reports/application/report-source-adapters.ts",
-      "sha256": "4b6e292fbfc256734bdca1c97140a02ba82750f64a7fd56a9e290a91188f5e11"
+      "sha256": "adebaca0290649c75915bd0ce784734e717baefdf81507bf0dc880c60c5c93af"
     },
     {
       "path": "apps/api/src/modules/reports/domain/report-query-validator.logic.ts",
@@ -165,7 +165,7 @@
     },
     {
       "path": "apps/web/src/features/reports/ReportsWorkspacePage.tsx",
-      "sha256": "eb77ff75f5054891ceb3ba06a14f4cc0bdafa103efb06306e89f8e3a9794bbc8"
+      "sha256": "aac217091de2c6f980fa64c5eb9ecf6f3e023860e098d1f2c283ec4a71348fac"
     },
     {
       "path": "docs/plans/mangmee-ai-implementation-index-2026-09-27.md",
@@ -9015,6 +9015,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-02T08:36:17.128Z",
-  "manifestDigest": "ee47aa564a342a3cf745f5ce624e16f08a5c9f6df167805ac62961c66111d33d"
+  "generatedAt": "2026-10-03T02:31:15.212Z",
+  "manifestDigest": "0c2d273983fb04e225bbbedb42b75e8ad791c84f69be10ca39ffc556ef2146a3"
 }
