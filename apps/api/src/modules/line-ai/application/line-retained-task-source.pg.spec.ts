@@ -15,7 +15,7 @@ const url = process.env.BILLING_TEST_DATABASE_URL;
 
 test('selected mixed action restores only its original clause across restart with current input/grant and rejects stale owner/source', { skip: !url }, async () => {
   const address = new URL(url!); assert.ok(['localhost', '127.0.0.1'].includes(address.hostname));
-  assert.ok(address.port === '15439' && address.pathname === '/watchdog_bms_ai_reliability_20260927' || address.port === '5432' && address.pathname === '/watchdog_postmark_ci');
+  assert.ok(address.pathname.endsWith('_ci') || address.port === '15439' && address.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${address.pathname}: only a disposable local *_ci database`);
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) }), prisma = { client } as PrismaService;
   const company = await client.company.create({ data: { name: `retained-${randomUUID()}` } });
   const user = await client.user.create({ data: { displayName: 'Synthetic retained input' } });

@@ -29,8 +29,7 @@ describe('LINE reimbursement runtime adapter on actual PostgreSQL', { skip: !dat
   it('keeps one current action, rejects transplanted/stale choices, blocks overflow, and writes no request before confirm', async () => {
     const parsed = new URL(databaseUrl!);
     assert.equal(parsed.hostname, '127.0.0.1');
-    assert.equal(parsed.port, '15439');
-    assert.equal(parsed.pathname, '/watchdog_bms_ai_reliability_20260927');
+    assert.ok(parsed.pathname.endsWith('_ci') || parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${parsed.pathname}: only a disposable local *_ci database`);
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl!, max: 12 }) });
     const tag = `reimbursement-adapter-${randomUUID()}`;
     const companyId = `${tag}-company`, channelId = `${tag}-oa`;
