@@ -129,6 +129,7 @@ function makePrisma(opts: {
 
   const prisma = {
     client: {
+      companyFeatureEntitlement: { findMany: async () => [] },
       permission: { findMany: async ({ where }: any) => where.key.in.map((key: string) => ({ id: `perm-${key}`, key })) },
       role: {
         // Mirrors the real Prisma where-clause: matches system-scoped OR company-scoped roles by id.
@@ -286,14 +287,14 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
 
   it('offers the owner every assignable role except OWNER/SYSTEM_ADMIN and disabled ones', async () => {
     assert.deepEqual(await flagsFor({ permissions: [], isOwner: true }), {
-      OWNER: false, SYSTEM_ADMIN: false, ADMIN: true, MANAGER: true, FINANCE: true, SALES: true, ARCHIVED: false,
+      OWNER: false, ADMIN: true, MANAGER: true, FINANCE: true, SALES: true, ARCHIVED: false,
     });
   });
 
   it('hides financial and people-manager roles from a default admin', async () => {
     assert.deepEqual(
       await flagsFor({ permissions: ['crm.customer.read', 'ledger.account.manage', 'access.employee.update'], isOwner: false }),
-      { OWNER: false, SYSTEM_ADMIN: false, ADMIN: true, MANAGER: false, FINANCE: false, SALES: true, ARCHIVED: false },
+      { OWNER: false, ADMIN: true, MANAGER: false, FINANCE: false, SALES: true, ARCHIVED: false },
     );
   });
 
@@ -327,13 +328,13 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
   it('adds people-manager roles once the admin holds access.role.manage, financial still owner-gated', async () => {
     assert.deepEqual(
       await flagsFor({ permissions: ['crm.customer.read', 'ledger.account.manage', 'access.role.manage'], isOwner: false }),
-      { OWNER: false, SYSTEM_ADMIN: false, ADMIN: true, MANAGER: true, FINANCE: false, SALES: true, ARCHIVED: false },
+      { OWNER: false, ADMIN: true, MANAGER: true, FINANCE: false, SALES: true, ARCHIVED: false },
     );
   });
 
   it('drops roles whose permissions exceed a manager’s own', async () => {
     assert.deepEqual(await flagsFor({ permissions: ['crm.customer.read'], isOwner: false }), {
-      OWNER: false, SYSTEM_ADMIN: false, ADMIN: false, MANAGER: false, FINANCE: false, SALES: true, ARCHIVED: false,
+      OWNER: false, ADMIN: false, MANAGER: false, FINANCE: false, SALES: true, ARCHIVED: false,
     });
   });
 
@@ -420,7 +421,7 @@ describe('a platform-only role reached by its id (RB-34)', () => {
   const notFound = (error: unknown) => error instanceof NotFoundException && error.message === 'Role not found';
 
   it('answers "not found" to a shop that reads one, and still reads it inside the platform company', async () => {
-    for (const key of SALES_ROLE_KEYS) {
+    for (const key of ['SYSTEM_ADMIN', ...SALES_ROLE_KEYS]) {
       await assert.rejects(() => new GetRoleUseCase(fixture(key).prisma).execute(COMPANY_ID, SYSTEM_ID), notFound, key);
       await assert.rejects(() => new GetRoleUseCase(fixtureWithCopy(key).prisma).execute(COMPANY_ID, COPY_ID), notFound, `${key} copy`);
       const read = await new GetRoleUseCase(fixture(key, PLATFORM_TENANT_ID).prisma).execute(PLATFORM_TENANT_ID, SYSTEM_ID);
@@ -892,4 +893,30 @@ describe('DisableRoleUseCase', () => {
     await useCase.execute({ companyId: COMPANY_ID, roleId: 'role-1', requestingUserId: 'admin-1', requestId: 'req-1' });
     assert.equal(state.auditLogs[0].action, 'access.role.disable');
   });
+});
+
+it('shops never list SYSTEM_ADMIN, including a historical company copy; platform keeps it', async () => {
+  const rows = [
+    { id: 'system-admin', key: 'SYSTEM_ADMIN', scopeKey: 'system', isSystem: true },
+    { id: 'copy-admin', key: 'SYSTEM_ADMIN', scopeKey: COMPANY_ID, isSystem: false },
+  ].map(row => ({ ...row, name: 'System Admin', description: null, status: 'ACTIVE', permissions: [] }));
+  const prisma = { client: { role: { findMany: async () => rows }, companyFeatureEntitlement: { findMany: async () => [] } } } as any;
+  assert.deepEqual(await new ListRolesUseCase(prisma).execute(COMPANY_ID), []);
+  assert.ok((await new ListRolesUseCase(prisma).execute(PLATFORM_TENANT_ID)).length > 0);
+});
+
+it('standard role descriptions do not promise work the package does not sell', async () => {
+  const { TIER_FEATURE_PRESETS, ALL_FEATURE_ENTITLEMENT_KEYS } = await import('@watchdog-bms/contracts');
+  const keys: readonly string[] = TIER_FEATURE_PRESETS.STARTER_249;
+  const rows = ['ACCOUNTANT', 'FINANCE', 'SALES', 'INVENTORY', 'MANAGER'].map(key => ({
+    id: key, key, name: key, scopeKey: 'system', isSystem: true, status: 'ACTIVE',
+    description: SYSTEM_ROLES.find(role => role.key === key)!.description,
+    permissions: [{ permission: { key: 'expense.read' } }, { permission: { key: 'ledger.journal.read' } }],
+  }));
+  const prisma = { client: { role: { findMany: async () => rows }, companyFeatureEntitlement: { findMany: async () =>
+    ALL_FEATURE_ENTITLEMENT_KEYS.map(featureKey => ({ featureKey, enabled: keys.includes(featureKey) })) } } } as any;
+  for (const role of await new ListRolesUseCase(prisma).execute(COMPANY_ID)) {
+    assert.match(role.description!, /ค่าใช้จ่าย/);
+    assert.doesNotMatch(role.description!, /ลงบัญชี|ปิดงวด|ทำภาษี|ธนาคาร|ใบเสนอราคา|รับ-จ่ายสินค้า|ใบขอซื้อ/);
+  }
 });

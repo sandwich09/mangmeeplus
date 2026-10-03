@@ -23,6 +23,8 @@ export type ThemedSelectProps = {
   children?: ReactNode;
   /** Filter plain-text options by label or value inside a large dropdown. */
   searchable?: boolean;
+  /** Keep long selected labels readable in narrow forms. */
+  wrapLabel?: boolean;
   searchPlaceholder?: string;
   id?: string;
   'aria-label'?: string;
@@ -44,7 +46,7 @@ function collectOptions(children: ReactNode): ThemedOption[] {
   return options;
 }
 
-export function ThemedSelect({ value, defaultValue, onChange, disabled = false, required = false, name, className, children, id, searchable = false, searchPlaceholder = 'ค้นหาตัวเลือก', 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid }: ThemedSelectProps) {
+export function ThemedSelect({ value, defaultValue, onChange, disabled = false, required = false, name, className, children, id, searchable = false, wrapLabel = false, searchPlaceholder = 'ค้นหาตัวเลือก', 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid }: ThemedSelectProps) {
   const triggerId = useId();
   const listboxId = useId();
   const detailsRef = useRef<HTMLDetailsElement>(null);
@@ -140,7 +142,7 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
           className,
         )}
       >
-        <span className={cx('min-w-0 truncate', selected?.label ? 'text-gray-800' : 'text-gray-400')}>{selected?.label ?? ''}</span>
+        <span className={cx('min-w-0', wrapLabel ? 'whitespace-normal break-words' : 'truncate', selected?.label ? 'text-gray-800' : 'text-gray-400')}>{selected?.label ?? ''}</span>
         <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5 shrink-0 text-gray-500 transition group-open:rotate-180">
           <path d="m5 7.5 5 5 5-5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

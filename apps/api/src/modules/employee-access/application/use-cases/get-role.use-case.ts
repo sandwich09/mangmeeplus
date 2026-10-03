@@ -1,8 +1,9 @@
+import { loadEntitledFeatureKeys } from '../entitlement.helper';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RoleDetail } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
-import { platformOnlyRoleRefused } from '../../domain/logic/employee-access.logic';
+import { PLATFORM_ROLE_KEYS } from '../../../auth/permission-registry';
 import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
 
 @Injectable()
@@ -15,8 +16,8 @@ export class GetRoleUseCase {
       include: ROLE_INCLUDE,
     });
     // RB-34: the list hides a platform-only role from a shop, so its id must not read it either.
-    if (!row || platformOnlyRoleRefused(row.key, companyId === PLATFORM_TENANT_ID)) throw new NotFoundException('Role not found');
+    if (!row || (companyId !== PLATFORM_TENANT_ID && PLATFORM_ROLE_KEYS.includes(row.key))) throw new NotFoundException('Role not found');
 
-    return toRoleSummary(row);
+    return toRoleSummary(row, await loadEntitledFeatureKeys(this.prisma, companyId));
   }
 }

@@ -8,7 +8,7 @@
 // is not stripped unless a prefix rule explicitly owns it. PREFIX_FEATURE_RULES covers feature
 // keys that have no gated capability pack yet. Permissions mapped to nothing are not feature-gated.
 import { CAPABILITY_PACKS } from '../registries/capability-pack.registry';
-import { FEATURE_CATALOG, REPORT_PERMISSION_KEYS } from '@watchdog-bms/contracts';
+import { FEATURE_CATALOG, REPORT_PERMISSION_KEYS, MENU_REGISTRY, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
 
 const SUBFEATURE_RULES = FEATURE_CATALOG.flatMap((feature) =>
   feature.submenus.map((submenu) => ({ ...submenu, parentKey: feature.key })),
@@ -137,4 +137,13 @@ export function featureKeyDeniedByEntitlement(permission: string, entitled: Set<
   const features = gatedFeaturesByPermission.get(permission);
   if (features && !features.some((featureKey) => entitled.has(featureKey))) return features[0];
   return undefined;
+}
+
+/** Same purchased-menu projection as the package cards; no empty boxes for unsold menus. */
+export function entitledRoleMenus(entitled: ReadonlySet<string> | null) {
+  return MENU_REGISTRY.filter(menu => {
+    if (entitled === null) return true;
+    const binding = MENU_ENTITLEMENT_BINDINGS.find(binding => binding.navKey === menu.id);
+    return binding?.status === 'ready' && binding.entitlementKeys.every(key => entitled.has(key));
+  });
 }

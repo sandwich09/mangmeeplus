@@ -139,7 +139,7 @@ export const MENUS: MenuSpec[] = [
 /**
  * Sub-menu entries. `routeGuard` matters:
  *   'own'    — the route has its own rule in canAccessWorkspacePath, so a role outside
- *              `visibleTo` is bounced on direct navigation.
+ *              `visibleTo` is refused on direct navigation (no-access state inside the shell).
  *   'parent' — the route only inherits the parent module's gate. A role outside
  *              `visibleTo` still *loads* the page and must be refused by the page itself
  *              (expenses uses canAccessExpenseTab). Assert the in-page refusal, NOT a redirect.
@@ -286,9 +286,9 @@ export async function expectSubmenuExpanded(page: Page, parentLabel: string): Pr
 /**
  * Navigate straight to a menu's URL and assert the outcome for this role.
  *
- * A denied route is not a 403 page: WorkspaceLayout calls
- * `router.replace('/companies/:id/dashboard')`, so the observable result is a
- * redirect to the dashboard with the guarded content never painted.
+ * A denied route keeps its address: WorkspaceLayout renders the no-access state inside the
+ * workspace shell, with a link to a page this session can open, and never paints the guarded
+ * content (it used to bounce to the dashboard).
  *
  * Only valid for entries whose guard is 'own' (or top-level menus). Sub-pages marked
  * routeGuard:'parent' inherit the parent module gate and DO load — assert the page's own
@@ -306,8 +306,9 @@ export async function expectRouteAccess(
   if (spec.visibleTo.includes(role)) {
     await expect(page, `${role} should stay on ${target}`).toHaveURL(new RegExp(`${spec.path.replace(/\//g, '\\/')}(\\?|$|\\/)`));
   } else {
-    await expect(page, `${role} must be bounced off ${target}`).toHaveURL(
-      new RegExp(`/companies/${companyId}/dashboard`),
-    );
+    await expect(page, `${role} must be refused on ${target}, not sent elsewhere`).toHaveURL(new RegExp(`${spec.path.replace(/\//g, '\\/')}(\\?|$|\\/)`));
+    await expect(page.getByText('ไม่มีสิทธิ์เข้าถึง', { exact: true }), `${role} must see the no-access state on ${target}`).toBeVisible();
+    await expect(page.getByRole('link', { name: 'กลับไปหน้าที่ใช้ได้' }), `${role} needs a way back from ${target}`).toBeVisible();
+    await expect(page.locator('header'), `${role} keeps the workspace shell on ${target}`).toBeVisible();
   }
 }
