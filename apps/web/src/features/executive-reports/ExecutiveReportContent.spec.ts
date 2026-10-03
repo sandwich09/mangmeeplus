@@ -92,6 +92,16 @@ test('each table names its first column for what its rows are, and differences u
   assert.equal(firstHeader(compare), 'รายการ');
   assert.match(text(compare), /1,234 /); assert.match(text(compare), /0\.0 /); assert.match(text(compare), /-12\.5 จุด/);
 });
+test('a company without a registered name starts its line with the province, not with a separator', async () => {
+  const { AnalysisContent, CompanyContent } = await content();
+  const ranking = { metric: 'expenseReceiptCount', total: 1, coverage: 'complete', reasonCodes: [], drilldownFilters: {},
+    items: [{ id: 'internal-company', displayName: 'ร้าน ก', registeredName: null, provinceLabel: 'เชียงใหม่', value: 3, rank: 1 }] };
+  const ranked = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, usageRanking: ranking } as unknown as ExecutiveAnalysis, nav, seller: null })));
+  assert.match(ranked, /เชียงใหม่/); assert.doesNotMatch(ranked, /·\s+เชียงใหม่/);
+  const detail = { ...envelope, company: { ...company, registeredName: null, ownerContact: { status: 'NOT_PERMITTED' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;
+  const head = text(renderToStaticMarkup(React.createElement(CompanyContent, { data: detail, tab: 'history', history: null, admin: false, nav, contactReadAt: '' })));
+  assert.match(head, /เชียงใหม่ · ไม่ระบุ/); assert.doesNotMatch(head, /^\s*·/);
+});
 test('company contact values and labels disappear without permission and never fall back to supplied forbidden values', async () => {
   const { CompanyContent } = await content();
   const make = (status: ExecutiveCompanyDetail['company']['ownerContact']['status']) => ({ ...envelope, company: { ...company, ownerContact: { status, email: 'hidden@example.test', phoneNumber: '0812345678' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: ['NOT_YET_REGISTERED'] }) as unknown as ExecutiveCompanyDetail;

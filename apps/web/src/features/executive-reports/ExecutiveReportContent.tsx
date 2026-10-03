@@ -191,7 +191,7 @@ export function AnalysisContent({ data, nav, seller }: { data: ExecutiveAnalysis
     const rank = data.usageRanking;
     return <Card title={W.rankTitle}><p>{W.receiptDefinition} · {W.rankBase(rank.total, RANK_LABELS[rank.metric].label)}</p><Reasons codes={rank.reasonCodes} />
       {!rank.items.length && <EmptyState title={W.noRows} description="" />}
-      <ol>{rank.items.map(row => <li key={row.id} className="min-w-0 border-b py-2"><ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember}>{row.rank}. {row.displayName}</ReportLink><p className="text-sm">{row.registeredName} · {row.provinceLabel}</p><p>{countText(sourceCount(row.value, rank))} {RANK_LABELS[rank.metric].unit}</p><div className="h-3 rounded border border-gray-700 bg-brand-800" aria-hidden="true" style={{ width: `${row.value / Math.max(1, rank.items[0]?.value ?? 1) * 100}%` }} /></li>)}</ol>
+      <ol>{rank.items.map(row => <li key={row.id} className="min-w-0 border-b py-2"><ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember}>{row.rank}. {row.displayName}</ReportLink><p className="text-sm">{[row.registeredName, row.provinceLabel].filter(Boolean).join(' · ')}</p><p>{countText(sourceCount(row.value, rank))} {RANK_LABELS[rank.metric].unit}</p><div className="h-3 rounded border border-gray-700 bg-brand-800" aria-hidden="true" style={{ width: `${row.value / Math.max(1, rank.items[0]?.value ?? 1) * 100}%` }} /></li>)}</ol>
       {rankingTieText(rank.boundaryTie, rank.metric) && <p>{rankingTieText(rank.boundaryTie, rank.metric)}</p>}
       <DrillLink nav={nav} filters={rank.drilldownFilters}>{W.allRanks}</DrillLink>
     </Card>;
@@ -233,7 +233,7 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt }
   const company = data.company, month = data.month;
   const monthTitle = reportMonth(data.period.month);
   return <>
-    <p>{company.registeredName} · {company.provinceLabel} · {company.industryGroup.label}</p>
+    <p>{[company.registeredName, company.provinceLabel, company.industryGroup.label].filter(Boolean).join(' · ')}</p>
     <p className="text-sm">{W.detailBase} · {W.receiptDefinition}</p>
     <Reasons codes={data.monthReasonCodes} />
     {month && <div className="grid min-w-0 grid-cols-2 gap-2 lg:grid-cols-4">{([[W.net, <Figure key="net" value={month.money.netReceiptsSatang} moneyValue netValue />], [W.receiptCount, <Figure key="receipts" value={sourceCount(month.usage.expenseReceiptCountInPeriod, data.coverage.usage)} />], [W.days, <Figure key="days" value={sourceCount(month.usage.activeDays, data.coverage.usage)} />], [W.ai, <Figure key="ai" value={sourceCount(month.usage.aiRequests, data.coverage.usage)} />]] as Array<[string, ReactNode]>).map(([label, value]) => <MangmeeStatCard key={label} label={`${label} ${monthTitle}`} value={value} />)}</div>}
