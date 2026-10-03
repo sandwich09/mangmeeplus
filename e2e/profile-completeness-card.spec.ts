@@ -112,7 +112,9 @@ for (const width of [390, 1280]) test(`a LINE owner sets a backup password witho
   await expect(backupHint).toBeVisible();
   await expect(emailPanel.getByText('ยังไม่ยืนยัน', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'ชื่อผู้ใช้', exact: true })).toHaveCount(0);
-  await emailPanel.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true }).fill('draft@example.com');
+  // The label ends in the aria-hidden required mark (14df7093c): match the field's accessible name.
+  const draftEmail = emailPanel.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true });
+  await draftEmail.fill('draft@example.com');
   await page.locator('summary').filter({ hasText: 'รหัสผ่านสำรอง' }).click();
   await expect(page.getByText(/^หลังตั้งรหัสผ่านแล้ว ใช้อีเมล owner@example\.com คู่กับรหัสผ่านเข้าเว็บได้$/)).toBeVisible();
   await page.getByLabel('รหัสผ่านใหม่', { exact: false }).fill('backup-password');
@@ -124,7 +126,7 @@ for (const width of [390, 1280]) test(`a LINE owner sets a backup password witho
   await expect(page.getByRole('link', { name: 'เปลี่ยนรหัสผ่าน', exact: true })).toBeVisible();
   await expect(backupHint).toHaveCount(0, { timeout: 5000 });
   expect(emailCommands).toBe(0); // setting a password sends nothing to the e-mail panel's server side
-  await expect(emailPanel.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true })).toHaveValue('draft@example.com');
+  await expect(draftEmail).toHaveValue('draft@example.com');
   await emailPanel.getByRole('button', { name: 'ถัดไป', exact: true }).click();
   await expect(emailPanel.getByLabel('รหัสผ่านปัจจุบัน', { exact: true })).toBeVisible();
   expect(passwordBodies).toEqual([{ password: 'backup-password' }]);
