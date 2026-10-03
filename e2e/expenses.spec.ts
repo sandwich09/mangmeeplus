@@ -157,13 +157,16 @@ test.describe('EXP — expenses + receipts', () => {
     await expect(authedPage.getByRole('button', { name: /ทั้งหมด/ })).toBeVisible();
     await expect(authedPage.getByRole('button', { name: /ฉบับร่าง/ })).toBeVisible();
     await expect(authedPage.getByRole('button', { name: /รอตรวจสอบ/ })).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: /ยืนยันแล้ว/ })).toBeVisible();
+    // The chip is named with its count ("ยืนยันแล้ว 0"); the export button "ส่งออกเอกสารยืนยันแล้ว"
+    // carries the same word, so the chip is matched from the start of its name.
+    await expect(authedPage.getByRole('button', { name: /^ยืนยันแล้ว/ })).toBeVisible();
   });
 
   test('EXP-02 @p1 summary tiles render numeric values', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/expenses');
-    for (const label of [/ค่าใช้จ่ายรวม/, /ภาษีซื้อ \(VAT\)/, /ค้างจ่าย/, /เกินกำหนดชำระ/]) {
-      await expect(authedPage.getByText(label)).toBeVisible();
+    // The cards render twice: in the grid, and again inside the phone-only "ดูสรุปยอด" fold-out.
+    for (const label of ['ยอดค่าใช้จ่ายตามวันที่เอกสาร', 'VAT ตามเอกสาร', 'ค้างจ่ายที่ยืนยันแล้ว', 'เกินกำหนดชำระ']) {
+      await expect(authedPage.getByText(label, { exact: true }).filter({ visible: true })).toBeVisible();
     }
     await expect(authedPage.locator('main, #workspace-main').getByText(/฿|0|1|2|3|4|5|6|7|8|9/).first()).toBeVisible();
   });
@@ -179,23 +182,25 @@ test.describe('EXP — expenses + receipts', () => {
 
   test('EXP-04 @p1 expense detail renders totals and transitions', async ({ authedPage, api, companyId }) => {
     const created = await createExpense(api, companyId);
-    const detail = await json<FullExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`));
-    const capturePolicy = await json<{ mode: 'FULL' | 'SIMPLE' }>(await api.get(
-      `companies/${companyId}/expenses/capture-policy?on=${civilDate(new Date(detail.expenseDate))}`,
-    ));
     await gotoCompany(authedPage, companyId, `/expenses?expenseId=${created.id}`);
+    // createExpense() leaves the vendor name empty. Until it is filled the money card reads
+    // "ยังแสดงยอดล่าสุดไม่ได้: กรุณากรอกชื่อผู้ขาย" in place of the totals, and ถัดไป stays disabled.
+    await authedPage.getByRole('textbox', { name: /ชื่อผู้ขาย/ }).first().fill('E2E Vendor');
     // guided stepper opens on the vendor+items step, where the money summary lives
     await expect(authedPage.getByText('ยอดก่อนหักส่วนลด', { exact: true })).toBeVisible();
-    // This fixture has no tax: a non-VAT company's SIMPLE capture deliberately hides VAT rows.
-    expect(['FULL', 'SIMPLE']).toContain(capturePolicy.mode);
-    const taxableBase = authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true });
-    if (capturePolicy.mode === 'FULL') await expect(taxableBase).toBeVisible();
-    else await expect(taxableBase).toHaveCount(0);
+    // This fixture carries no VAT (NO_VAT, nothing charged). Since 4361ed0b7 the tax-base and VAT rows
+    // show only for money that carries VAT, whatever the company's capture mode (FULL or SIMPLE).
+    await expect(authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true })).toHaveCount(0);
     await expect(authedPage.getByText('ยอดรวมทั้งสิ้น', { exact: true })).toBeVisible();
-    // The stepper is display-only: reach the final step through ถัดไป. A vendor name is
-    // required first — createExpense() leaves it empty, which disables ถัดไป by validation.
-    await authedPage.getByRole('textbox', { name: /ชื่อผู้ขาย/ }).first().fill('E2E Vendor');
+    // The stepper is display-only: reach the final step through ถัดไป.
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    // Step 2 lets ถัดไป through only after a saved document review (0283a3d0b). With no file attached
+    // the one complete review is "ไม่มีใบเสร็จ" with a substitute receipt (expenseEvidenceInputError).
+    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'ประเภทเอกสาร', exact: true }), 'เอกสารค่าใช้จ่ายอื่น');
+    await authedPage.getByRole('button', { name: 'เอกสารมีปัญหา / เลือกหลักฐาน', exact: true }).click();
+    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'ปัญหาของเอกสาร', exact: true }), 'ไม่มีใบเสร็จ');
+    await chooseThemedOption(authedPage, authedPage.getByRole('combobox', { name: 'ทางใช้หลักฐาน', exact: true }), 'จัดทำใบรับรองแทนใบเสร็จ');
+    await authedPage.getByRole('button', { name: 'บันทึกการตรวจ', exact: true }).click();
     await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(authedPage.getByRole('button', { name: /ส่งตรวจสอบ/ })).toBeVisible();
   });
@@ -515,7 +520,8 @@ test.describe('EXP — expenses + receipts', () => {
     await api.post(`companies/${companyId}/expenses/${created.id}/mark-ready`, { data: {} });
     await api.post(`companies/${companyId}/expenses/${created.id}/confirm`, { data: {} });
     await gotoCompany(authedPage, companyId, '/expenses');
-    await authedPage.getByRole('button', { name: /ยืนยันแล้ว/ }).click();
+    // The chip, not the export button "ส่งออกเอกสารยืนยันแล้ว" (see EXP-01).
+    await authedPage.getByRole('button', { name: /^ยืนยันแล้ว/ }).click();
     await expect(authedPage.getByText(/ยืนยันแล้ว/).first()).toBeVisible();
   });
 });
@@ -527,7 +533,9 @@ test.describe('EXP — expenses + receipts', () => {
 // posts a full ISO timestamp, so it reproduces the condition exactly.
 test('EXP-24 @p1 day-range filter still finds an expense stamped with a time', async ({ api, companyId }) => {
   const created = await createExpense(api, companyId, '777.00');
-  const today = new Date().toISOString().slice(0, 10);
+  // The API stores the instant's calendar day in Asia/Bangkok, so "today" is that day too. The UTC
+  // day (toISOString) is still yesterday from 00:00 to 06:59 Bangkok time.
+  const today = civilDate(new Date());
 
   const sameDay = await json<ExpenseList>(
     await api.get(`companies/${companyId}/expenses?fromDate=${today}&toDate=${today}&pageSize=200`),
@@ -901,7 +909,8 @@ test('EXP-28 @p1 distinguishes rejected, uncertain, and conflicting expense paym
     await amount.fill('41');
     await expect(notice).toHaveCount(0); // a rejected first attempt must not warn about duplicate payment on edit
     await submit.click();
-    await expect(page.getByRole('alert').filter({ hasText: 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน' }).first()).toBeVisible();
+    // A 403 reads the shared permission text (api-error-message.ts insufficient_permissions, since f98946566).
+    await expect(page.getByRole('alert').filter({ hasText: 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อผู้ดูแลสิทธิ์ของบริษัท' }).first()).toBeVisible();
     await expect(submit).toBeEnabled();
     await expect(notice).toHaveCount(0);
     await expect(retry).toHaveCount(0);
@@ -1190,6 +1199,9 @@ for (const width of [1280, 390]) {
     const trigger = page.getByRole('button', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true });
     const listSearch = page.getByPlaceholder('ค้นหาผู้ขาย / เลขที่เอกสาร', { exact: true });
     await trigger.scrollIntoViewIfNeeded();
+    // The brand fonts swap in once loaded (font-display: swap) and widen the Thai label by ~5 px, so
+    // measure after they have loaded: only the dialog may move things in this test.
+    await page.evaluate(async () => { await document.fonts.ready; });
     const before = { trigger: await trigger.boundingBox(), list: await listSearch.boundingBox() };
     await trigger.click();
     const dialog = page.getByRole('dialog', { name: 'ส่งออกเอกสารยืนยันแล้ว', exact: true });

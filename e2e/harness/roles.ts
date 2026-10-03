@@ -147,15 +147,15 @@ export const MENUS: MenuSpec[] = [
 export type SubMenuSpec = MenuSpec & { parent: string; routeGuard: 'own' | 'parent' };
 
 export const SUB_MENUS: SubMenuSpec[] = [
-  // ค่าใช้จ่ายและใบเสร็จ — 7 children (the catalogue lists 6; ลายเซ็นของฉัน is the 7th)
+  // ค่าใช้จ่ายและใบเสร็จ — its children, plus ลายเซ็นของฉัน, which must stay out of it
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.list',       th: 'รายการค่าใช้จ่าย',        en: 'Expenses',        path: 'expenses',            visibleTo: ALL },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.upload',     th: 'อัปโหลดใบเสร็จ',          en: 'Upload receipt',  path: 'expenses/upload',     visibleTo: ['OWNER', 'ADMIN', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.manual',     th: 'บันทึกด้วยมือ',           en: 'Manual entry',    path: 'expenses/manual',     visibleTo: ['OWNER', 'ADMIN', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.categories', th: 'หมวดหมู่',                en: 'Categories',      path: 'expenses/categories', visibleTo: ['OWNER', 'ADMIN', 'FINANCE'] },
-  // "ลายเซ็นของฉัน" (owner decision 2026-08-20, superseding the 2026-08-05 park): a signature is a
-  // personal asset, so the entry belongs to whoever performs either signing act, plus the
-  // housekeeping holder. Roles granting expense.review / expense.confirm / expense.signature.manage.
-  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.signatures', th: 'ลายเซ็นของฉัน',           en: 'My signature',    path: 'expenses/signatures', visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'] },
+  // "ลายเซ็นของฉัน" left this submenu on 2026-09-21 (f98946566, settings polish): the page is
+  // rarely used, so it is opened from the personal profile page and from the signing steps that
+  // need it. The route and its permissions are unchanged; no role sees the entry here any more.
+  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.signatures', th: 'ลายเซ็นของฉัน',           en: 'My signature',    path: 'expenses/signatures', visibleTo: [] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.substitute_receipts', th: 'ใบรับรองแทนใบเสร็จ', en: 'Substitute receipts', path: 'expenses/substitute-receipts', visibleTo: ALL },
   { parent: 'expenses', routeGuard: 'own',    key: 'expenses.substitute', th: 'ตั้งค่าใบรับรองแทนใบเสร็จ', en: 'Substitute receipt settings', path: 'settings/substitute-receipt', visibleTo: ['OWNER', 'ADMIN'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.evidence',   th: 'หลักฐานทางบัญชี',         en: 'Accounting evidence', path: 'expenses/evidence', visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },

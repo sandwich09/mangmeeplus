@@ -15,15 +15,17 @@ test.describe('TAX-11B — transaction Tax Code journeys', () => {
     // Document type is now ThemedSelect (details/summary + role="option" buttons, a themed
     // drop-in for a native <select> -- see common/components/field/ThemedSelect.tsx), not a
     // real <select>, so it needs an open-then-click-option interaction instead of selectOption().
-    const type = authedPage.getByRole('combobox', { name: 'Document type' });
+    const type = authedPage.getByRole('combobox', { name: 'ประเภทเอกสาร', exact: true });
     await type.click();
     await authedPage.getByRole('option', { name: 'ใบกำกับภาษี', exact: true }).click();
     await expect(authedPage.getByTestId('transaction-tax-selector')).toBeVisible();
 
+    // A receipt is no longer typed in this form (it is made from an issued invoice's payment,
+    // "สร้างใบเสร็จจากยอดรับชำระ"), so the non-tax document here is an invoice, and the form says why.
     await type.click();
-    await authedPage.getByRole('option', { name: 'ใบเสร็จรับเงิน', exact: true }).click();
+    await authedPage.getByRole('option', { name: 'ใบแจ้งหนี้', exact: true }).click();
     await expect(authedPage.getByTestId('transaction-tax-selector')).toHaveCount(0);
-    await expect(authedPage.getByText(/ไม่มี Tax Code และไม่สร้าง VAT ซ้ำ/)).toBeVisible();
+    await expect(authedPage.getByText('ใบแจ้งหนี้ ไม่ใช่เอกสารภาษี จึงไม่กำหนด Tax Code', { exact: true })).toBeVisible();
 
     await type.click();
     await authedPage.getByRole('option', { name: 'ใบเสนอราคา', exact: true }).click();

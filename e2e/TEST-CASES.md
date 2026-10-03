@@ -75,9 +75,9 @@ Use a **fresh, unauthenticated** context here (plain `@playwright/test` `test` o
 | ID | Pri | Steps | Expected |
 |---|---|---|---|
 | EXP-01 | P0 | `goto('/companies/:id/expenses')` | `table` visible; text `Posting`/`ค่าใช้จ่าย` present; status filter chips (`ทั้งหมด/ฉบับร่าง/รอตรวจสอบ/ยืนยันแล้ว/ปฏิเสธ`) render |
-| EXP-02 | P1 | On list, read summary tiles | Totals (`ค่าใช้จ่ายรวม`, `ภาษีซื้อ (VAT)`, `ค้างจ่าย`, `เกินกำหนดชำระ`) render numeric values |
+| EXP-02 | P1 | On list, read summary tiles | Totals (`ยอดค่าใช้จ่ายตามวันที่เอกสาร`, `VAT ตามเอกสาร`, `ค้างจ่ายที่ยืนยันแล้ว`, `เกินกำหนดชำระ`) render numeric values |
 | EXP-03 | P0 | Create a new expense (open create panel `รายการค่าใช้จ่าย`; fill vendor, amount=`1000`, category; save as draft) | Draft created; appears in list with status `ฉบับร่าง/Draft` |
-| EXP-04 | P1 | Open the created expense `/expenses/:id` | Detail renders totals (`ยอดก่อนหักส่วนลด`, `ส่วนลด`, `ฐานภาษี`), status transitions available |
+| EXP-04 | P1 | Open the created expense `/expenses/:id`; fill the vendor name (totals wait for it); in step 2 save the document review (no file: `ไม่มีใบเสร็จ` → `จัดทำใบรับรองแทนใบเสร็จ`) | Detail renders totals (`ยอดก่อนหักส่วนลด`, `ยอดรวมทั้งสิ้น`; `ฐานภาษี` only when the money carries VAT); step 3 offers `ส่งตรวจสอบ` |
 | EXP-05 | P1 | Move draft → submit for review → confirm | Status changes to `รอตรวจสอบ` then `ยืนยันแล้ว`; assert final status via `api` |
 | EXP-06 | P2 | Upload receipt (`อัปโหลดใบเสร็จ`) | **Quarantine (`test.fixme`) unless MinIO up.** If up: file attaches, appears as evidence |
 | EXP-07 | P2 | Filter by status chip `ยืนยันแล้ว` | List filters to confirmed only |
@@ -88,7 +88,7 @@ Use a **fresh, unauthenticated** context here (plain `@playwright/test` `test` o
 
 | ID | Pri | Steps | Expected |
 |---|---|---|---|
-| ACCT-01 | P0 | `goto('/companies/:id/accounting')` | `heading Accounting documents` + `heading New document` visible |
+| ACCT-01 | P0 | `goto('/companies/:id/accounting')` | `heading เอกสารบัญชี` + `heading สร้างเอกสารใหม่` visible |
 | ACCT-02 | P1 | Create a new document (pick a type, add a line item qty×price, save) | Document created with a running number; totals computed; appears in list |
 | ACCT-03 | P1 | Open the created doc; verify totals | Subtotal/VAT/total match line math; status is Draft |
 | ACCT-04 | P1 | Confirm/issue the document | Status transitions; document number assigned; assert via `api` list |

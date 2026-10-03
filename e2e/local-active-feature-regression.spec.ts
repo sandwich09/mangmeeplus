@@ -74,7 +74,8 @@ for (const width of [390, 1280]) {
     await page.getByRole('textbox', { name: 'อีเมล (ใช้เข้าสู่ระบบ) *', exact: true }).fill('regression@example.test');
     await page.getByRole('textbox', { name: 'เบอร์โทรศัพท์ *', exact: true }).fill('0800000000');
     await page.getByRole('button', { name: 'ถัดไป ›', exact: true }).click();
-    await expect(page.getByRole('button', { name: '+ ฝ่ายบัญชี', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    // A person holds one role, so the buttons show the bare role name ("✓ " only once chosen) and none is chosen yet.
+    await expect(page.getByRole('button', { name: 'ฝ่ายบัญชี', exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect(page.locator('#employee-default-branch')).toHaveText(branch.name);
     const emailSummary = page.getByText('regression@example.test', { exact: true });
     await expect(emailSummary).toBeVisible();
