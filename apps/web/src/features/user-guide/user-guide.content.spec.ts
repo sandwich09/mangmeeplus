@@ -319,9 +319,30 @@ describe('shop guides name the company admin for the business permissions it hol
     for (const expected of [
       `ไปที่ ค่าใช้จ่ายและใบเสร็จ แล้วเลือก ตั้งค่าใบรับรองแทนใบเสร็จ เปิดได้เฉพาะผู้ที่มีสิทธิ์ตั้งค่าบริษัท เช่น ${roles.OWNER}และ${roles.ADMIN}`,
       `ตั้งค่า (สำหรับ${roles.OWNER}และ${roles.ADMIN})`,
-      `${roles.OWNER}, ${roles.ADMIN}, ${roles.MANAGER}, ${roles.ACCOUNTANT}และ${roles.FINANCE}`,
+      `${roles.OWNER}, ${roles.ADMIN}, ${roles.MANAGER}และ${roles.FINANCE}`,
       `${roles.OWNER}, ${roles.ADMIN}`,
     ]) assert.ok(read.includes(expected), expected);
+  });
+
+  // Defaults from ROLE_GRANTS and the route guards: expense.review OWNER/ADMIN/MANAGER/FINANCE; expense.confirm and
+  // expense.category.manage OWNER/ADMIN/FINANCE. ACCOUNTANT holds none of them, so no guide names ฝ่ายบัญชี for them.
+  it('names who can review, confirm, manage categories and prepare a substitute receipt by default', () => {
+    const rows = (guide: UserGuide, id: string) => guide.sections.find((section) => section.id === id)!.blocks.flatMap((block) => (block.kind === 'table' ? block.rows : []));
+    const holders = (table: string[][], act: string) => table.find((row) => row[0] === act)?.[2];
+    const reviewers = `${roles.OWNER}, ${roles.ADMIN}, ${roles.MANAGER}, ${roles.FINANCE}`;
+    const confirmers = `${roles.OWNER}, ${roles.ADMIN}, ${roles.FINANCE}`;
+    const expenses = buildExpensesGuide('co');
+    assert.equal(holders(rows(expenses, 'overview'), 'รอตรวจสอบ'), `ผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย เช่น ${reviewers}`);
+    assert.equal(holders(rows(expenses, 'overview'), 'พร้อมยืนยัน'), `ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย เช่น ${confirmers}`);
+    assert.equal(holders(rows(expenses, 'submenus'), 'หมวดหมู่'), confirmers);
+    assert.equal(holders(rows(expenses, 'submenus'), 'ใบรับรองแทนใบเสร็จ'), reviewers);
+    assert.equal(holders(rows(expenses, 'permissions'), 'ตรวจความครบถ้วนและยืนยันเอกสาร'), confirmers);
+    assert.equal(holders(rows(expenses, 'permissions'), 'เพิ่มหรือแก้ไขหมวดหมู่'), confirmers);
+    const categories = sentences({ ...expenses, sections: expenses.sections.filter((section) => section.id === 'categories') });
+    for (const text of categories) assert.ok(!text.includes(roles.ACCOUNTANT), text);
+    assert.ok(categories.some((text) => text.includes(`ผู้มีสิทธิ์จัดการหมวดหมู่เสมอ เช่น ${roles.OWNER} ${roles.ADMIN} และ${roles.FINANCE}`)));
+    // In the designated-approver mode only the listed approvers may approve, the owner included.
+    assert.equal(holders(rows(buildSubstituteReceiptGuide('co'), 'permissions'), 'อนุมัติและออกเอกสาร'), `${confirmers} ถ้าบริษัทกำหนดรายชื่อผู้อนุมัติ ต้องเป็นคนในรายชื่อนั้น`);
   });
 
   it('names ADMIN for investigating a report run', () => {

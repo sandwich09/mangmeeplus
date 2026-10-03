@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { buildSubstituteCertificationText, canonicalSnapshotHash, renderSubstituteReceiptSvg, thaiBahtText, withoutSubstituteReceiptPrintMetadata } from './substitute-receipt.logic';
 
 describe('substitute receipt evidence', () => {
@@ -57,7 +58,12 @@ describe('substitute receipt evidence', () => {
     assert.match(artifact, /ผู้จ่ายเงิน\/ผู้รับรอง · 14 ก\.\u0e04\. 2569/);
     assert.match(artifact, /บันทึกค่าใช้จ่าย \(ข้อความ\)/);
     assert.match(artifact, /วิธีชำระเงิน: เงินสด/);
-    assert.match(artifact, /ผู้ดูแลระบบ/);
+    // An old (schema 1) snapshot kept a role key as the position: it prints the one list's name for that role.
+    assert.ok(artifact.includes(`สมชาย &lt;script&gt; · ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`), 'admin');
+    assert.doesNotMatch(artifact, /ผู้ดูแลระบบ/);
+    const byAccountant = renderSubstituteReceiptSvg({ ...snapshot, payer: { ...snapshot.payer, position: 'accountant' } }).toString('utf8');
+    assert.ok(byAccountant.includes(`สมชาย &lt;script&gt; · ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}`), 'accountant');
+    assert.doesNotMatch(byAccountant, /นักบัญชี/);
     assert.match(artifact, /เจ้าของกิจการ/);
     assert.match(artifact, /หลักฐาน\.png — หลักฐานประกอบ/);
     assert.match(artifact, /<line x1="45" y1="357" x2="805" y2="357"\/>/);

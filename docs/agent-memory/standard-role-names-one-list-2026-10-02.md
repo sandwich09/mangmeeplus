@@ -4,7 +4,7 @@ Status: reimbursement guide closed 2026-10-03 on `claude/batch-a-roles-notices-2
 Owner: Codex lane 3a; controller owns commit, full verification, PostgreSQL and browser checks.
 Scope: one Thai label for all 15 standard role keys; company-named copies keep their names; employees-and-rights, claims, guides, API role descriptions and fallback notices. Controller follow-up authorizes three assistant source hashes only; no help-card body edit. No package manifest, schema, migration, public, sales-console or platform-admin edits. The reimbursement guide and its pin are owned by another lane.
 Decisions: the approved labels move from the employee picker to `packages/contracts/src/employee-access.ts`, because API role descriptions and the approval-backlog note also name standard roles. Consumers interpolate the shared labels. The English dictionary keeps its current English labels. Company-copy recognition is reused, including the sidebar and claim policy.
-Open questions: reimbursement guide/pin: both pending lists closed 2026-10-03, and the policy-actor sentences and the substitute guide's bare “เจ้าของ” fixed in the follow-up (sections at the end). Round 3 fixed the certificate's one-person line, the settings caption, and the paper path in the guide and card `substitute.review-sign`. Still open: who may sign both lines under OWNER_SELF (coordinator asks the owner), and guide rows that name ฝ่ายบัญชี for expense review/confirmation it does not hold (round 3 section). At the time of follow-up 2 the existing pending sentences were unchanged, with five additional platform-role help sentences listed below. No SYSTEM_ADMIN text remains in the four edited guides. Default employee delegation limits, the lack of a per-user permission editor, and an existing spec/code discrepancy are recorded in follow-up 2. Sales-console aliases, company-owned descriptions and protected-role visibility remain out of scope.
+Open questions: reimbursement guide/pin: both pending lists closed 2026-10-03, and the policy-actor sentences and the substitute guide's bare “เจ้าของ” fixed in the follow-up (sections at the end). Round 3 fixed the certificate's one-person line, the settings caption, and the paper path in the guide and card `substitute.review-sign`. Round 4 fixed every guide line naming a role for an act it lacks the right for, and the old certificate position labels; batch A's wording is closed. Still open, for the owner (coordinator asks): who may sign both lines under OWNER_SELF, and whether any role's default rights should change. At the time of follow-up 2 the existing pending sentences were unchanged, with five additional platform-role help sentences listed below. No SYSTEM_ADMIN text remains in the four edited guides. Default employee delegation limits, the lack of a per-user permission editor, and an existing spec/code discrepancy are recorded in follow-up 2. Sales-console aliases, company-owned descriptions and protected-role visibility remain out of scope.
 Artifacts: inventory, changes and wording table to be recorded below; preceding investigation: `ui-wording-roles-sla-signature-2026-10-02.md` section 1.
 Verification: initial red/green evidence below: 428 focused tests passed (16 files), no failures/skips; contracts build twice rc 0; locked API typecheck rc 0; locked web typecheck rc 0 after correcting two integration errors. Follow-up red/green: guide specs rc 1 (13 pass/3 fail) then rc 0 (16 pass/0 fail); approved-knowledge rc 1 (8 pass/1 fail, source hash mismatch) then rc 0 (9 pass/0 fail), no skips. Final diff/integrity checks recorded in the follow-up section. Network, servers, Docker, browser and real PostgreSQL are unavailable by lane rules. Follow-up 2: guide specs rc 1 (15 pass/5 fail, twice) then rc 0 (20 pass/0 fail); approved-knowledge rc 1 (8 pass/1 fail) then rc 0 (9 pass/0 fail), no skips. Initial typechecks are historical evidence; not rerun in this follow-up.
 Next: reimbursement guide/pin integrated 2026-10-03 (closing section at the end); controller runs full suites, real PostgreSQL and browser checks, then reviews and pushes. Deploy the assistant with the web because this lane now changes three hashes in apps/ai-gateway; deployment not attempted here.
@@ -772,3 +772,68 @@ Verification:
   rc 0; `node scripts/run-line-ai-whole-chain-acceptance.mjs` rc 0, 8 suites, 3694 / 0 / 0 (no manifest
   regeneration needed); web suite rc 0, 2680 tests in 552 suites, 2680 / 0 / 0; web typecheck rc 0.
   `git diff --check` rc 0. Browser, PostgreSQL and a printed PDF from a live stack not checked.
+
+## Follow-up 2026-10-03 (round 4): roles named for acts they cannot do; old certificate position labels
+
+Coordinator, after accepting `391a0d583`; this round closes batch A's wording.
+
+**Facts used** (`ROLE_GRANTS`, shop roles only): `expense.review` OWNER, ADMIN, MANAGER, FINANCE;
+`expense.confirm` and `expense.category.manage` OWNER, ADMIN, FINANCE; ACCOUNTANT holds none of the three.
+Route guards: `reviewer-mark-ready` `expense.review` (the creator may also mark their own record ready
+with `expense.update`); `confirm` `expense.confirm`; category writes and the categories submenu
+`expense.category.manage`; substitute preparation and paper upload `expense.review`; substitute
+approval `expense.confirm` plus `isEligibleSubstituteReceiptApprover` (designated mode: only listed
+approvers, the owner included). No role's rights were changed.
+
+**Sweep.** Every sentence naming a standard role in all five guides was dumped with its section and
+checked. Expenses: the 8 cells below. Substitute: the 2 rows below. Claim, reports, tax: every named
+role holds the right for its act (on-behalf claims: `reimbursement.finance_review`; report run
+investigation: `report.audit.read`; tax sync `tax.event.sync`, recompute `tax.report.recompute`, WHT
+category `tax.config.manage`); “ผู้ทำบัญชี”/“นักบัญชี” there are occupations, not roles. The expenses
+overview's reading table (which sections to read) is a recommendation, not a permission claim.
+
+| Line (by text) | Old | New | Permission fact |
+| --- | --- | --- | --- |
+| Expenses status table, “รอตรวจสอบ”, who acts next | ฝ่ายบัญชี | ผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย เช่น เจ้าของกิจการ, ผู้ดูแลบริษัท, ผู้จัดการ, ฝ่ายการเงิน | `expense.review` (`reviewer-mark-ready`) |
+| Expenses status table, “พร้อมยืนยัน”, who acts next | ฝ่ายบัญชี | ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย เช่น เจ้าของกิจการ, ผู้ดูแลบริษัท, ฝ่ายการเงิน | `expense.confirm` (`confirm`) |
+| Expenses submenu “หมวดหมู่”, who mainly uses it | ฝ่ายบัญชี, เจ้าของกิจการ | เจ้าของกิจการ, ผู้ดูแลบริษัท, ฝ่ายการเงิน | Submenu gate and writes: `expense.category.manage` |
+| Expenses submenu “ใบรับรองแทนใบเสร็จ” (make the document) | ฝ่ายบัญชี | เจ้าของกิจการ, ผู้ดูแลบริษัท, ผู้จัดการ, ฝ่ายการเงิน | Preparation: `expense.review` |
+| Expenses categories summary | …สำหรับฝ่ายบัญชีและเจ้าของกิจการ | …สำหรับเจ้าของกิจการ ผู้ดูแลบริษัท และฝ่ายการเงิน | `expense.category.manage` |
+| Expenses categories note “AI เลือกได้เฉพาะหมวดที่เปิดใช้งาน” | …การจัดหมวดจึงยังอยู่ในความควบคุมของฝ่ายบัญชีเสมอ | …อยู่ในความควบคุมของผู้มีสิทธิ์จัดการหมวดหมู่เสมอ เช่น เจ้าของกิจการ ผู้ดูแลบริษัท และฝ่ายการเงิน | `expense.category.manage` |
+| Expenses permissions, “ตรวจความครบถ้วนและยืนยันเอกสาร” | ฝ่ายบัญชี, เจ้าของกิจการ | เจ้าของกิจการ, ผู้ดูแลบริษัท, ฝ่ายการเงิน | Both `expense.review` and `expense.confirm` (MANAGER reviews only) |
+| Expenses permissions, “เพิ่มหรือแก้ไขหมวดหมู่” | ฝ่ายบัญชี, เจ้าของกิจการ | เจ้าของกิจการ, ผู้ดูแลบริษัท, ฝ่ายการเงิน | `expense.category.manage` |
+| Substitute permissions, “จัดทำเอกสารตั้งแต่เลือกรายการจนแนบหลักฐาน” | เจ้าของกิจการ, ผู้ดูแลบริษัท, ผู้จัดการ, ฝ่ายบัญชีและฝ่ายการเงิน | เจ้าของกิจการ, ผู้ดูแลบริษัท, ผู้จัดการและฝ่ายการเงิน | `expense.review` |
+| Substitute permissions, “อนุมัติและออกเอกสาร” | เจ้าของกิจการ, ผู้อนุมัติที่กำหนดไว้ | เจ้าของกิจการ, ผู้ดูแลบริษัท, ฝ่ายการเงิน ถ้าบริษัทกำหนดรายชื่อผู้อนุมัติ ต้องเป็นคนในรายชื่อนั้น | `expense.confirm` + approval mode; in designated mode an unlisted owner cannot approve |
+
+Who-acts cells say the right with examples (“ผู้มีสิทธิ์ … เช่น …”), as the substitute guide's settings
+sentence does, since a company may give the right to other roles; tables keep their headers and each
+guide's summary already sends the reader to the owner for more rights.
+
+**Old certificate position labels.** Produced only by `POSITION_LABELS` in
+`substitute-receipt.logic.ts` (since the 2026-08-07 import), applied when a snapshot predates
+`schemaVersion: 2` (2026-09-10). New snapshots and every production certification text print the
+position as typed (`literal = true`), so new-schema certificates never used the map. Old snapshots are
+still rendered on demand: approving a pre-2026-09-10 payer-certified record (a new issued certificate),
+a historical copy without a stored file, and an old frozen paper form's acceptance page. The map now
+reads the one list: `admin` ผู้ดูแลระบบ → ผู้ดูแลบริษัท, `accountant` นักบัญชี → ฝ่ายบัญชี (owner, manager,
+staff, finance were already the list's names). Stored documents are not rewritten. Old/new byte
+comparison: every schema-2 certificate identical; schema-1 differs only for `admin` and `accountant`.
+The web has no such map; “นักบัญชี” elsewhere is the outside accountant in assistant disclaimers.
+
+Pins: `expenses` `f3c0df5e…` → `2cf217f23324ee6b022f2a498e40fba49eeec8eace3a449459414c420acb2974`;
+`substitute-receipts` `6028a96d…` → `4b8052caed394b1be7c44d88189f8068eb7f84750339111dc7ac23bceea98b76`.
+Cards checked, no body change: the six expenses cards and three substitute cards name no role for these
+acts (“นักบัญชี” in `expense.export` is the outside accountant receiving the export).
+
+Verification:
+
+- Guide spec: red rc 1, 25 / 2 / 0 of 27 (the new test, and the prior test that pinned the substitute
+  row with ฝ่ายบัญชี, now corrected); green rc 0, 27 / 0 / 0. Render set-diff: expenses 8 sentences,
+  substitute 2, nothing else.
+- Renderer spec: red rc 1, 6 / 1 / 0 (old `admin` printed “ผู้ดูแลระบบ”); green rc 0, 7 / 0 / 0.
+  Use-case spec rc 0, 51 / 0 / 0.
+- approved-knowledge: red rc 1, 8 / 1 / 0 (expenses pin `f3c0…` vs file `2cf2…`); green rc 0, 9 / 0 / 0.
+- Under `/tmp/mangmee-heavy.lock` (taken 07:35:15, released 07:37:46), no `S3_*` variables: the seven
+  substitute-receipt API specs rc 0, 123 / 0 / 0; API typecheck rc 0; whole-chain acceptance rc 0, 8 suites,
+  3694 / 0 / 0 (no manifest regeneration needed); web suite rc 0, 2681 tests in 552 suites, 2681 / 0 / 0;
+  web typecheck rc 0. `git diff --check` rc 0. Browser, PostgreSQL and printed PDFs not checked.

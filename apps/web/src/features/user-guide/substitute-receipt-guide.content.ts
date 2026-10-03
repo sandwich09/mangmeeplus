@@ -361,9 +361,9 @@ export function buildSubstituteReceiptGuide(companyId: string, permissions: read
             headers: ['สิ่งที่ต้องการทำ', 'สิทธิ์ที่ต้องมี', 'บทบาทที่มักได้รับ'],
             rows: [
               ['เปิดดูเมนูและเอกสารของตนเอง', 'ดูค่าใช้จ่ายของตนเอง', 'ทุกตำแหน่งที่ใช้งานเมนูค่าใช้จ่าย'],
-              ['จัดทำเอกสารตั้งแต่เลือกรายการจนแนบหลักฐาน', 'ตรวจสอบค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}, ${THAI_SYSTEM_ROLE_NAMES.MANAGER}, ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}และ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`],
+              ['จัดทำเอกสารตั้งแต่เลือกรายการจนแนบหลักฐาน', 'ตรวจสอบค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}, ${THAI_SYSTEM_ROLE_NAMES.MANAGER}และ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`],
               ['ลงลายมือชื่อในฐานะผู้จ่ายเงิน', 'เป็นผู้จ่ายเงินจริงที่ระบุชื่อไว้ในเอกสาร', 'เฉพาะผู้ที่จ่ายเงินไปจริง'],
-              ['อนุมัติและออกเอกสาร', 'ยืนยันค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ผู้อนุมัติที่กำหนดไว้`],
+              ['อนุมัติและออกเอกสาร', 'ยืนยันค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}, ${THAI_SYSTEM_ROLE_NAMES.FINANCE} ถ้าบริษัทกำหนดรายชื่อผู้อนุมัติ ต้องเป็นคนในรายชื่อนั้น`],
               ['แก้ไขการตั้งค่าของเมนูนี้', 'จัดการการตั้งค่าบริษัท', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`],
             ],
           },

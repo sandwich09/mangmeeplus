@@ -14,6 +14,9 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
   const link = (allowed: boolean, label: string, href: string): GuideLink | undefined =>
     (allowed ? { label, href } : undefined);
   const canRead = has('expense.read', 'expense.read_own');
+  // Default holders in ROLE_GRANTS: expense.review → reviewers; expense.confirm and expense.category.manage → confirmers.
+  const reviewers = [THAI_SYSTEM_ROLE_NAMES.OWNER, THAI_SYSTEM_ROLE_NAMES.ADMIN, THAI_SYSTEM_ROLE_NAMES.MANAGER, THAI_SYSTEM_ROLE_NAMES.FINANCE].join(', ');
+  const confirmers = [THAI_SYSTEM_ROLE_NAMES.OWNER, THAI_SYSTEM_ROLE_NAMES.ADMIN, THAI_SYSTEM_ROLE_NAMES.FINANCE].join(', ');
 
   return {
     key: 'expenses',
@@ -63,8 +66,8 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             headers: ['สถานะเอกสาร', 'ความหมาย', 'ผู้ที่ต้องดำเนินการต่อ'],
             rows: [
               ['ฉบับร่าง', 'บันทึกไว้แล้วแต่ยังไม่ได้ตรวจ ยังแก้ไขและลบได้', 'ผู้บันทึก'],
-              ['รอตรวจสอบ', 'ข้อมูลเข้าระบบแล้ว รอผู้มีสิทธิ์ตรวจความครบถ้วน', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
-              ['พร้อมยืนยัน', 'ตรวจครบทุกข้อแล้ว รอกดยืนยัน', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
+              ['รอตรวจสอบ', 'ข้อมูลเข้าระบบแล้ว รอผู้มีสิทธิ์ตรวจความครบถ้วน', `ผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย เช่น ${reviewers}`],
+              ['พร้อมยืนยัน', 'ตรวจครบทุกข้อแล้ว รอกดยืนยัน', `ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย เช่น ${confirmers}`],
               ['ยืนยันแล้ว', 'ใช้เป็นหลักฐานทางบัญชีได้ และแก้ไขไม่ได้อีก', 'ส่งออกชุดหลักฐานให้สำนักงานบัญชี'],
               ['ปฏิเสธ', 'ตรวจแล้วไม่ผ่าน พร้อมเหตุผลที่ผู้บันทึกอ่านได้', 'ผู้บันทึก (แก้ไขแล้วส่งใหม่)'],
             ],
@@ -91,8 +94,8 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
               ['รายการค่าใช้จ่าย', 'ดูเอกสารทั้งหมด ค้นหา กรองตามสถานะ และเปิดตรวจรายละเอียด', 'ทุกฝ่าย'],
               ['อัปโหลดใบเสร็จ', 'ส่งรูปใบเสร็จให้ AI อ่านข้อมูลอัตโนมัติ แล้วสร้างเป็นฉบับร่าง', `พนักงาน, ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}`],
               ['บันทึกด้วยมือ', 'บันทึกรายละเอียดค่าใช้จ่ายด้วยตนเอง พร้อมระบุ VAT และภาษีหัก ณ ที่จ่ายตามเอกสาร', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
-              ['หมวดหมู่', 'จัดกลุ่มค่าใช้จ่ายเพื่อออกรายงานและลงบัญชี', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
-              ['ใบรับรองแทนใบเสร็จ', 'ทำเอกสารแทนใบเสร็จเมื่อผู้รับเงินออกใบเสร็จให้ไม่ได้ (มีคู่มือแยกเล่ม)', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
+              ['หมวดหมู่', 'จัดกลุ่มค่าใช้จ่ายเพื่อออกรายงานและลงบัญชี', confirmers],
+              ['ใบรับรองแทนใบเสร็จ', 'ทำเอกสารแทนใบเสร็จเมื่อผู้รับเงินออกใบเสร็จให้ไม่ได้ (มีคู่มือแยกเล่ม)', reviewers],
               ['ตั้งค่าใบรับรองแทนใบเสร็จ', 'กำหนดรูปแบบการอนุมัติและหลักฐานที่ต้องแนบ', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`],
               ['ลายเซ็นของฉัน', 'บันทึกลายเซ็นเพื่อใช้ลงนามเอกสารตามสิทธิ์', 'ผู้ลงนาม'],
               ['หลักฐานทางบัญชี', 'ตรวจเอกสารที่ยืนยันแล้วให้ครบ แล้วส่งชุดเอกสารให้สำนักงานบัญชี', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
@@ -269,7 +272,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
       {
         id: 'categories',
         title: 'หมวดหมู่',
-        summary: `จัดกลุ่มค่าใช้จ่ายเพื่อออกรายงานและลงบัญชี สำหรับ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}และ${THAI_SYSTEM_ROLE_NAMES.OWNER}`,
+        summary: `จัดกลุ่มค่าใช้จ่ายเพื่อออกรายงานและลงบัญชี สำหรับ${THAI_SYSTEM_ROLE_NAMES.OWNER} ${THAI_SYSTEM_ROLE_NAMES.ADMIN} และ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`,
         iconKey: 'TagIcon',
         tone: 'lime',
         blocks: [
@@ -299,7 +302,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             kind: 'note',
             tone: 'info',
             title: 'AI เลือกได้เฉพาะหมวดที่เปิดใช้งาน',
-            detail: `ระบบไม่อนุญาตให้ AI สร้างหรือแก้ไขหมวดหมู่ด้วยตนเอง AI จะเลือกได้เฉพาะจากหมวดที่บริษัทเปิดใช้งานไว้เท่านั้น การจัดหมวดจึงยังอยู่ในความควบคุมของ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}เสมอ`,
+            detail: `ระบบไม่อนุญาตให้ AI สร้างหรือแก้ไขหมวดหมู่ด้วยตนเอง AI จะเลือกได้เฉพาะจากหมวดที่บริษัทเปิดใช้งานไว้เท่านั้น การจัดหมวดจึงยังอยู่ในความควบคุมของผู้มีสิทธิ์จัดการหมวดหมู่เสมอ เช่น ${THAI_SYSTEM_ROLE_NAMES.OWNER} ${THAI_SYSTEM_ROLE_NAMES.ADMIN} และ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`,
           },
         ],
       },
@@ -361,8 +364,8 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
               ['เปิดดูเฉพาะรายการของตนเอง', 'ดูค่าใช้จ่ายของตนเอง', 'พนักงานทุกคน'],
               ['อัปโหลดใบเสร็จให้ AI อ่าน', 'อัปโหลดใบเสร็จ', `พนักงาน, ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}`],
               ['บันทึกค่าใช้จ่ายด้วยมือ', 'สร้างค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`],
-              ['ตรวจความครบถ้วนและยืนยันเอกสาร', 'ตรวจสอบและยืนยันค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
-              ['เพิ่มหรือแก้ไขหมวดหมู่', 'จัดการหมวดหมู่ค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
+              ['ตรวจความครบถ้วนและยืนยันเอกสาร', 'ตรวจสอบและยืนยันค่าใช้จ่าย', confirmers],
+              ['เพิ่มหรือแก้ไขหมวดหมู่', 'จัดการหมวดหมู่ค่าใช้จ่าย', confirmers],
               ['เปิดหน้าหลักฐานทางบัญชี', 'ดูหลักฐานทางบัญชี', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
             ],
           },
