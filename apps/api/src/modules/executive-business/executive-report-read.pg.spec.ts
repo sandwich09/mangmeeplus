@@ -205,8 +205,8 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     await receipt('c-dup1', await paidInvoice('c-dup1', 299_000, { disputed: true }), 299_000, '2026-09-07T04:00:00Z');
     await shop('c-dup2', { name: 'ร้านซ้ำ', registeredName: 'ห้างหุ้นส่วน ซ้ำสอง', addressJson: null, reportIndustryGroup: 'RETAIL_WHOLESALE' });
     await term('c-dup2', 'STARTER_249', 0, 0); // the "no package" marker: never bought
-    // c-e: paid, never used. The owner of c-a is also one of its members: two shops, still two companies (REP-04).
-    await shop('c-e'); await signup('c-e', '2026-08-09T05:00:00Z', 'official-site', 'WEBSITE'); await term('c-e', 'STARTER_249', 60);
+    // c-e: paid, never used; it joined before the first build. The owner of c-a is also one of its members: two shops, still two companies (REP-04).
+    await shop('c-e', { createdAt: at('2026-08-01T02:00:00Z') }); await signup('c-e', '2026-08-09T05:00:00Z', 'official-site', 'WEBSITE'); await term('c-e', 'STARTER_249', 60);
     await receipt('c-e', await paidInvoice('c-e', 100_000), 100_000, '2026-09-08T04:00:00Z');
     await client.companyMembership.create({ data: { companyId: 'c-e', userId: ownerA } });
     // c-old: joined in July, before questions to the assistant were kept and before the channel question existed; paid in August, silent since.
@@ -532,6 +532,8 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     assert.deepEqual(company.creditedSeller, { label: 'เซลล์สอง · S002', salesCode: 'S002', creditSatang: 24_900, creditedAt: '2026-09-10T04:00:00.000Z', state: 'COUNTED' });
     assert.deepEqual([month!.paidEver, month!.usageGroup, valueOf(month!.money.netReceiptsSatang), valueOf(month!.money.feesSatang), month!.money.aiCostSatang,
       month!.usage.activeDays, month!.usage.expenseReceiptCountInPeriod], [{ value: 'YES' }, 'ACTIVE', 500_000, 1_000, 0, 1, 1]);
+    // "Paid, not started" of a shop that joined before the first build carries the note that its deleted rows were never seen.
+    assert.deepEqual([detail.monthReasonCodes, (await report.company(reader(), 'c-e', { month: '2026-09' })).monthReasonCodes], [[], ['HISTORY_BEFORE_FIRST_BUILD']]);
     const other = await report.company(reader(), 'c-d', { month: '2026-09' });
     assert.deepEqual(other.company.discovery, { key: 'OTHER', label: 'อื่น ๆ', otherText: 'งานอีเวนต์' });
     // Outside the report's customers, or unknown: one answer that does not tell whether the company exists.
@@ -598,6 +600,7 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
   it('labels a finished month that a later round revised, and tells a screen holding the old set', async () => {
     const before = await overview('2026-09');
     await receipt('c-e', await paidInvoice('c-e', 10_000), 10_000, '2026-09-28T04:00:00Z');
+    await client.expenseRecord.deleteMany({ where: { companyId: 'c-d' } }); // its rows are gone; its counted use is not
     clock = at('2026-10-16T03:00:00.000Z'); // the next day: a full round
     try {
       const billing = new BillingCashMovementsService({ client } as never, { billingMode: 'live', stripeAccountId: STRIPE } as never);
@@ -606,6 +609,8 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
       assert.deepEqual([after.buildChanged, after.build.monthRevision, after.build.monthRevisedAt, valueOf(after.metrics.netReceiptsSatang)],
         [true, before.build.monthRevision + 1, clock.toISOString(), 1_822_643 + 10_000]);
       await opens('2026-09', 'after the revision', after.metrics.netReceiptsSatang.drilldownFilters, 16, 1_832_643);
+      const kept = await report.company(reader(), 'c-d', { month: '2026-09' });
+      assert.deepEqual([kept.month!.usage.activeDays, kept.month!.usageGroup, kept.monthReasonCodes], [1, 'ACTIVE', ['SOURCE_ROWS_PURGED']]);
     } finally { clock = NOW; }
   });
 });
