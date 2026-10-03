@@ -248,10 +248,10 @@ Supersedes the temporary-password rules above for newly created employees:
 
 - Employee creation collects `birthDate` (new profile field).
 - The generated initial password is the employee's date of birth as eight digits, in day-month-Gregorian-year order with no separators.
-- The system does not force a password change on first login. Owner explicitly accepted the weaker-credential risk on 2026-07-06.
-- Because there is no forced change, the birthdate initial password must not carry the 72-hour expiry of the old random flow (otherwise the account locks itself); no-expiry is part of the same accepted risk.
+- The new credential is created with `mustChangePassword=true`, so the employee must set a new password at the first sign-in with it; the wizard tells the owner so. (Corrected 2026-10-03: this line used to say the change was not forced, while `create-employee.use-case.ts` has forced it since the 2026-08-07 import. The code is the rule. An employee added from an account they already have keeps their own password.)
+- The birthdate initial password does not carry the 72-hour expiry of the old random flow (`expiresAt=null`), so an employee who first signs in late is asked to change it, not locked out. Owner accepted the weaker-credential risk of a birthdate password on 2026-07-06.
 - Existing protections stay: login rate limiting/lockout, password never in logs/audit/list responses (a birthdate password is also PII), and employees can still change their password themselves.
-- Acceptance criterion "Temporary password is shown once, stored only as a hash, expires, and requires change" no longer applies to the birthdate flow except "stored only as a hash".
+- Acceptance criterion "Temporary password is shown once, stored only as a hash, expires, and requires change" applies to the birthdate flow only as "stored only as a hash" and "requires change".
 
 ## 14. Owner Update 2026-07-11 — Draft Employee Provisioning
 
