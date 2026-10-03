@@ -1,8 +1,9 @@
+import { PLATFORM_ROLE_KEYS } from '../../../auth/permission-registry';
 import { Injectable } from '@nestjs/common';
 import type { RoleSummary } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { PLATFORM_TENANT_ID } from '../../../sales-console/application/sales-context';
-import { platformOnlyRoleRefused, roleGrantViolation } from '../../domain/logic/employee-access.logic';
+import { roleGrantViolation } from '../../domain/logic/employee-access.logic';
 import { filterPermissionsByEntitlement } from '../../domain/logic/feature-gate.logic';
 import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
 import { loadEntitledFeatureKeys } from '../entitlement.helper';
@@ -32,11 +33,11 @@ export class ListRolesUseCase {
     // RB-34: a shop is not shown a platform-only role at all — neither the system row nor a copy of
     // it the shop made before the by-id routes refused that; the platform company is.
     const platformTenant = companyId === PLATFORM_TENANT_ID;
-    const visible = rows.filter((row) => !platformOnlyRoleRefused(row.key, platformTenant)
+    const visible = rows.filter((row) => (platformTenant || !PLATFORM_ROLE_KEYS.includes(row.key))
       && !(row.scopeKey === 'system' && overriddenKeys.has(row.key)));
 
     return visible.map((row) => {
-      const summary = toRoleSummary(row);
+      const summary = toRoleSummary(row, entitled);
       // The card's "N สิทธิ์" must agree with the access matrix, which is entitlement-filtered too.
       return {
         ...summary,

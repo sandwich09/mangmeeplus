@@ -204,3 +204,9 @@ Route-readiness gate นี้เป็น**คนละแกนกับ** bil
 - แก้ permission ของ `POST tax/wht-certificates` (เพิ่ม `wht.certificate.issue`) ต้องเช็คว่าไม่กระทบ endpoint เดิมที่ Tax workspace ใช้อยู่ (อาจต้องรับได้ทั้งสอง permission หรือแยก route ใหม่ให้ AP/Expenses เรียกแทน — implementation ตัดสินใจตอนเขียนแผน)
 - Expenses ต้อง migration เพิ่ม field income-category ก่อน — เดินตาม pattern migration ของ wht-settlement-capture-spec (additive เท่านั้น)
 - **ข้อขัดแย้งที่ยังไม่ได้แก้ในเอกสารอื่น (owner decision 2026-09-22, §2 goal 4/§12 finding 9):** สเปกนี้ตอนนี้ขัดแย้งโดยตรงกับ (1) feature-entitlement-decoupling-spec.md บรรทัด 331 ("thai_tax and Tax-workspace issue permission are not required" สำหรับ SYSTEM_INITIAL_ISSUE) และ (2) mangmee-package-entitlements-spec-th.md ที่ยังวาง 50 ทวิ/ภ.ง.ด.53 เป็น feature-readiness lock ที่ตั้งใจแยกจาก billing tier เสมอ ([:99,105](../../docs/specs/mangmee-package-entitlements-spec-th.md)) — สอง spec นั้น**ไม่ได้ถูกแก้ไขในรอบนี้** (นอกสโคปของ docs task นี้) ต้องแจ้งผู้ดูแล billing/entitlement docs ให้ทราบและพิจารณาแก้ไข/ประสาน wording ให้ตรงกัน ก่อนใครอ่านเอกสารทั้งสามชุดแล้วเข้าใจผิดว่า design ยังไม่กลับด้าน
+
+## Browser regression amendment — 2026-10-04
+
+The 50 ทวิ company signature page reads `GET /companies/:companyId/tax/profile/signature`, protected by the existing `company.tax_signature.manage` permission (entitled through `wht_50bis`, or legacy `thai_tax`). It returns only `signatureMode` and `signatureImageAttachmentId`, with `BLANK`/null defaults. Route company must match the request company. ENTERPRISE signature managers can read and save this setting; STARTER and non-managers cannot. The full `tax/profile` endpoint and other Tax workspace data retain their existing tax-only permission gates. This page does not serve PND53.
+
+Controls appear only after successful loading; failed loading offers retry, not a default-value save. The card keeps inner padding at 390 px. No schema change is required.

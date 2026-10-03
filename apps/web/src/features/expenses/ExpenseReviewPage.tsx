@@ -32,7 +32,7 @@ import {
   listWhtHandoffs, issueSystemWhtCertificate, correctSystemWhtCertificate, issueSystemWhtReplacementCopy,
 } from './expenses.api';
 import {
-  capturePausedReasonKey, captureReadAgainAllowed, captureReadIsRunning, captureReadNotice,
+  captureReadNoticeText, captureReadAgainAllowed, captureReadIsRunning, captureReadNotice,
   type ExpenseReadStatusFile,
 } from './expense-capture-status.logic';
 import {
@@ -841,13 +841,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // §17.2 mapping of the durable read job. DONE says nothing here — the filled fields are the
   // result — so only a running read or an ending that did NOT read everything speaks.
   const readNotice = readState && readState.status !== 'DONE' ? captureReadNotice(readState) : null;
-  const readPausedKey = capturePausedReasonKey(readState?.pausedReason ?? null);
-  const readNoticeText = readNotice
-    ? Object.entries(readNotice.params ?? {}).reduce(
-      (message, [key, value]) => message.replace(`{${key}}`, value),
-      t(readNotice.messageKey, locale),
-    ) + (readPausedKey ? ` (${t(readPausedKey, locale)})` : '')
-    : '';
+  const readNoticeText = captureReadNoticeText(readState, locale);
   // Appendix §25: the reader found more than one document in this one file, and the ENGINE already
   // split them — the first onto this draft, each further one onto its own ordinary draft. There is
   // no group page and no button: the notice says what was created and links to it.
@@ -1379,13 +1373,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               longer sit under a label that claims 7%. */}
           {moneyHasVat && <>
             <MoneyRow label={<AiFieldLabel label={`${t('expenses.vat', locale)} (${expenseValueLabel(EXPENSE_VAT_MODE_LABELS, moneyVatMode, 'รอตรวจ VAT')}${!previewTotals && vatModeRequiresRate(detail.vatMode) ? ` · ${effectiveVatRateLabel(detail.lines.filter((line) => !isCalculatedExpenseRounding(line)))}` : ''})`} field="vatAmount" summary={previewTotals ? null : aiMap} />} value={money.vatAmount} />
-            <AiFieldMissingHint field="vatAmount" summary={previewTotals ? null : aiMap} />
+            <AiFieldMissingHint canEdit={canMutateDraft && !readySourceDraftMessage} field="vatAmount" summary={previewTotals ? null : aiMap} />
           </>}
           <div className="mt-1 flex flex-wrap items-center justify-between border-t border-dashed border-gray-200 py-3">
             <span className="text-sm font-semibold text-gray-700"><AiFieldLabel label={t('expenses.grand_total', locale)} field="total" summary={previewTotals ? null : aiMap} /></span>
             <span className="tabular-nums text-2xl font-black text-gray-900">{baht(money.grandTotalAmount)}</span>
           </div>
-          <AiFieldMissingHint field="total" summary={previewTotals ? null : aiMap} />
+          <AiFieldMissingHint canEdit={canMutateDraft && !readySourceDraftMessage} field="total" summary={previewTotals ? null : aiMap} />
           {moneyHasWht && (
             <div className="flex flex-wrap items-center justify-between py-1.5 text-sm">
               <span className="text-gray-500">{t('expenses.wht', locale)}</span>

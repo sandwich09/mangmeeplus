@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 import { billingApi } from '@/features/billing/billing.api';
@@ -6,7 +7,7 @@ import { BillingWorkspaceContext } from '@/features/billing/BillingCustomerFrame
 import { usePathname, useRouter } from 'next/navigation';
 import { WorkspaceShell } from '@/common/components/app-shell/WorkspaceShell';
 import { stripThaiTitlePrefix } from '@/common/components/mangmee';
-import { BrandedState } from '@/common/components/state';
+import { ForbiddenState } from '@/common/components/state';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { WORKSPACE_ICON_NODES as ICON_MAP } from './design-icons';
 import type { WebSession } from '@/common/models/web-session.model';
@@ -274,14 +275,7 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
 
   const canAccessCurrentPath = canAccessWorkspacePath(WORKSPACE_MODULES, session.permissions, companyId, pathname);
 
-  // Audit H-15: this used to send every inaccessible path to /dashboard unconditionally. Turning
-  // dashboard_notifications off strips dashboard.* — it is not a platform-invariant feature — so the
-  // redirect target was inaccessible too, and the `return null` below turned every page in the
-  // company into a blank document: no header, no company switcher, no explanation. One click in the
-  // partner console did that.
-  //
-  // The landing is now the first page this session can actually open, whatever combination of
-  // features is off, rather than one hardcoded guess.
+  // Keep denied pages in the shell and offer a page this session can actually open.
   const fallbackHref = useMemo(() => {
     const target = filteredModules.find((module) => canAccessWorkspacePath(
       WORKSPACE_MODULES, session.permissions, companyId, module.buildHref(companyId),
@@ -289,30 +283,7 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
     return target?.buildHref(companyId) ?? null;
   }, [filteredModules, session.permissions, companyId]);
 
-  React.useEffect(() => {
-    if (!canAccessCurrentPath && fallbackHref && fallbackHref !== pathname) router.replace(fallbackHref);
-  }, [canAccessCurrentPath, fallbackHref, pathname, router]);
-
   const activeKey = getActiveModuleKey(filteredModules, companyId, pathname);
-
-  if (!canAccessCurrentPath) {
-    // WEB-06: while the redirect above is in flight, say where the user is going. `null` rendered a
-    // white page, which on a slow phone is indistinguishable from a hung site.
-    // With nowhere to send them, the explicit no-access state below stands instead.
-    return fallbackHref ? (
-      <main className="flex min-h-dvh items-center justify-center bg-brand-25 p-6">
-        <p role="status" aria-live="polite" className="rounded-2xl border border-brand-100 bg-white px-6 py-5 text-center text-base font-semibold text-gray-700 shadow-[var(--shadow-theme-sm)]">
-          กำลังพาไปหน้าที่ใช้ได้…
-        </p>
-      </main>
-    ) : (
-      <BrandedState
-        eyebrow="การเข้าถึงบริษัท"
-        title="ยังไม่มีหน้าที่คุณเปิดได้ในบริษัทนี้"
-        description="ยังเปิดหน้างานไม่ได้ กรุณาให้ผู้มีสิทธิ์จัดการบทบาทตรวจสิทธิ์ของคุณ และให้ผู้มีสิทธิ์จัดการแพ็กเกจตรวจเมนูที่ร้านเปิดใช้"
-      />
-    );
-  }
 
   return (
     <BranchFilterProvider companyId={companyId} onContextLoaded={applyLatestAccessContext}>
@@ -339,7 +310,12 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
         navItems={navItems}
         activeKey={activeKey ?? undefined}
       >
-        <MenuFilterProvider menuKey={menuKey}>{children}</MenuFilterProvider>
+        <MenuFilterProvider menuKey={menuKey}>{canAccessCurrentPath ? children : (
+          <div className="mangmee-page text-center">
+            <ForbiddenState />
+            {fallbackHref && <Link className="mangmee-btn mangmee-btn-secondary" href={fallbackHref}>กลับไปหน้าที่ใช้ได้</Link>}
+          </div>
+        )}</MenuFilterProvider>
       </WorkspaceShell>
       </div>
     </BranchFilterProvider>

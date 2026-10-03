@@ -90,7 +90,7 @@ import {
   ICON, KPI, StatCard, StatusBadge, TAX_TONE, ErrorBanner, InfoBanner, StateBanner, HowItWorks,
 } from './ExpensesUi';
 import { generateSourceJournal } from '../ledger/ledger.api';
-import { validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
+import { expenseReviewMessage, validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
 import { isExpenseSourceDraftMissing } from './expense-source-draft.model';
 import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
@@ -166,12 +166,12 @@ function validationInputClass(issue?: ExpenseFieldIssue): string {
   return cx(inputClass, issue?.severity === 'error' && 'border-error-500 ring-1 ring-error-500');
 }
 
-function FieldIssueNote({ issue }: { issue?: ExpenseFieldIssue }) {
+export function FieldIssueNote({ issue, canEdit }: { issue?: ExpenseFieldIssue; canEdit: boolean }) {
   const locale = useWorkspaceLocale();
   if (!issue) return null;
   return (
     <p className={cx('mt-1 text-xs', issue.severity === 'error' ? 'text-error-500' : 'text-warning-700')}>
-      {messageWithParams(t(issue.messageKey, locale), issue.params)}
+      {expenseReviewMessage(issue.messageKey, locale, canEdit, issue.params)}
     </p>
   );
 }
@@ -198,10 +198,10 @@ export function AiFieldLabel({ label, field, summary }: { label: ReactNode; fiel
   );
 }
 
-export function AiFieldMissingHint({ field, summary }: { field: AiReviewField; summary: Record<string, unknown> | null }) {
+export function AiFieldMissingHint({ field, summary, canEdit }: { field: AiReviewField; summary: Record<string, unknown> | null; canEdit: boolean }) {
   const locale = useWorkspaceLocale();
   return expenseAiFieldProvenance(summary, field)?.missing
-    ? <p className="mt-1 text-xs text-warning-700">{t('expenses.ai_field_missing', locale)}</p>
+    ? <p className="mt-1 text-xs text-warning-700">{expenseReviewMessage('expenses.ai_field_missing', locale, canEdit)}</p>
     : null;
 }
 
@@ -1012,13 +1012,13 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           </summary>
         )}
         <div className={checkBillBlocked ? 'mt-3 space-y-3 border-t border-gray-100 pt-3' : 'space-y-3'}>
-        <div ref={documentFieldsRef} className="grid scroll-mt-24 grid-cols-1 gap-3 sm:grid-cols-3">
+        <div ref={documentFieldsRef} className="grid scroll-mt-24 grid-cols-1 gap-3">
         <div>
           <div className="mb-1 flex min-h-6 items-center gap-1.5 text-xs font-medium text-gray-600">
             {t('expenses.doc_type', locale)}
             <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_doc_type', locale)} />
           </div>
-          <ThemedSelect aria-label={t('expenses.doc_type', locale)} className={inputClass} value={docType} onChange={(e) => setDocType(e.target.value as ExpenseDetail['sourceDocumentType'])} disabled={busy || !isMutable || !canReview}>
+          <ThemedSelect aria-label={t('expenses.doc_type', locale)} wrapLabel className={inputClass} value={docType} onChange={(e) => setDocType(e.target.value as ExpenseDetail['sourceDocumentType'])} disabled={busy || !isMutable || !canReview}>
             {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
         </div>
@@ -1027,7 +1027,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             {t('expenses.tax_evidence_status', locale)}
             <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_tax_status', locale)} />
           </div>
-          <ThemedSelect aria-label={t('expenses.tax_evidence_status', locale)} className={inputClass} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as ExpenseDetail['taxEvidenceStatus'])} disabled={busy || !isMutable || !canReview}>
+          <ThemedSelect aria-label={t('expenses.tax_evidence_status', locale)} wrapLabel className={inputClass} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as ExpenseDetail['taxEvidenceStatus'])} disabled={busy || !isMutable || !canReview}>
             {Object.entries(TAX_EVIDENCE_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
           {detail.taxEvidenceReasonCode && <p className="mt-1 text-xs text-gray-400">{t('expenses.reason_label', locale)}: {expenseValueLabel(TAX_EVIDENCE_REASON_LABELS, detail.taxEvidenceReasonCode)}</p>}
@@ -1053,7 +1053,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               {t('expenses.category_ai_suggested', locale)}: {aiCategorySuggestion.categoryName} · {t('expenses.category_ai_suggested_apply', locale)}
             </button>
           )}
-          <AiFieldMissingHint field="category" summary={detail.aiVerificationSummaryJson} />
+          <AiFieldMissingHint canEdit={isMutable && canReview} field="category" summary={detail.aiVerificationSummaryJson} />
         </div>
       </div>
       <div className="space-y-3">
@@ -1233,7 +1233,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     + (vatSourceError ? 1 : 0) + sourceCategoryIncompleteIndexes.length;
   const firstBlockingIssue = issues.find((issue) => issue.severity === 'error');
   const firstBlockingMessage = firstBlockingIssue
-    ? messageWithParams(t(firstBlockingIssue.messageKey, locale), firstBlockingIssue.params)
+    ? expenseReviewMessage(firstBlockingIssue.messageKey, locale, isMutable, firstBlockingIssue.params)
     : vatSourceError ?? sourceCategoryMessage;
   const liveTotals = useExpenseReviewTotals(companyId, detail, values,
     isMutable && (canReview || !detail.sourceDraft), firstBlockingMessage, totalsRetry, onTotalsChange);
@@ -1528,8 +1528,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <label>
           <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.vendor_name', locale)} field="vendorNameSnapshot" summary={detail.aiVerificationSummaryJson} /></span>
           <input className={validationInputClass(vendorNameIssue)} aria-invalid={vendorNameIssue?.severity === 'error' || undefined} value={values.vendorNameSnapshot} onChange={(e) => setValues((v) => ({ ...v, vendorNameSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
-          <FieldIssueNote issue={vendorNameIssue} />
-          <AiFieldMissingHint field="vendorNameSnapshot" summary={detail.aiVerificationSummaryJson} />
+          <FieldIssueNote canEdit={isMutable} issue={vendorNameIssue} />
+          <AiFieldMissingHint canEdit={isMutable} field="vendorNameSnapshot" summary={detail.aiVerificationSummaryJson} />
           {!vendorNameIssue && sourceMissingNote('vendorName')}
         </label>
         <div>
@@ -1541,8 +1541,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               insertion into a complete number — typing the missing leading 0 in front did nothing.
               taxIdDigits already caps the stored value at 13 digits, dropping the overflow. */}
           <input id={`expense-vendor-tax-${detail.id}`} className={validationInputClass(vendorTaxIdIssue)} aria-invalid={vendorTaxIdIssue?.severity === 'error' || undefined} inputMode="numeric" placeholder="0-0000-00000-00-0" value={formatTaxId(values.vendorTaxIdSnapshot)} onChange={(e) => setValues((v) => ({ ...v, vendorTaxIdSnapshot: taxIdDigits(e.target.value) }))} disabled={!isMutable || busy} />
-          <FieldIssueNote issue={vendorTaxIdIssue} />
-          <AiFieldMissingHint field="vendorTaxIdSnapshot" summary={detail.aiVerificationSummaryJson} />
+          <FieldIssueNote canEdit={isMutable} issue={vendorTaxIdIssue} />
+          <AiFieldMissingHint canEdit={isMutable} field="vendorTaxIdSnapshot" summary={detail.aiVerificationSummaryJson} />
         </div>
         {/* Vendor address spec §11.2: under the tax id, a 3-row textarea, the same AI badge as every
             other read field. No maxLength — §8 says an over-long address is refused with a way
@@ -1553,9 +1553,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           <textarea aria-label={t('expenses.vendor_address', locale)} className={cx(validationInputClass(vendorAddressIssue), 'resize-y')} rows={3}
             aria-invalid={vendorAddressIssue?.severity === 'error' || undefined} value={values.vendorAddressSnapshot}
             onChange={(e) => setValues((v) => ({ ...v, vendorAddressSnapshot: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
-          <FieldIssueNote issue={vendorAddressIssue} />
+          <FieldIssueNote canEdit={isMutable} issue={vendorAddressIssue} />
           {!vendorAddressIssue && <p className="mt-1 text-xs text-gray-500">{t('expenses.vendor_address_hint', locale)}</p>}
-          <AiFieldMissingHint field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} />
+          <AiFieldMissingHint canEdit={isMutable} field="vendorAddressSnapshot" summary={detail.aiVerificationSummaryJson} />
           {/* §7 case c / A4: ONE quiet line, no button and nothing to choose. The owner rejected the
               compare-and-choose panel in round 1; the registry already kept the newest address (or
               kept its own when locked), and the history lives on the counterparty page. */}
@@ -1600,14 +1600,14 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <label>
           <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.document_number', locale)} field="vendorDocumentNumber" summary={detail.aiVerificationSummaryJson} /></span>
           <input className={validationInputClass(documentNumberIssue)} aria-invalid={documentNumberIssue?.severity === 'error' || undefined} value={values.vendorDocumentNumber} onChange={(e) => setValues((v) => ({ ...v, vendorDocumentNumber: stripDisallowed(e.target.value) }))} disabled={!isMutable || busy} />
-          <FieldIssueNote issue={documentNumberIssue} />
-          <AiFieldMissingHint field="vendorDocumentNumber" summary={detail.aiVerificationSummaryJson} />
+          <FieldIssueNote canEdit={isMutable} issue={documentNumberIssue} />
+          <AiFieldMissingHint canEdit={isMutable} field="vendorDocumentNumber" summary={detail.aiVerificationSummaryJson} />
         </label>
         <label>
           <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.expense_date', locale)} field="expenseDate" summary={detail.aiVerificationSummaryJson} /></span>
           <ThemedDate aria-label={t('expenses.expense_date', locale)} className={validationInputClass(expenseDateIssue)} aria-invalid={expenseDateIssue?.severity === 'error' || undefined} value={values.expenseDate} onChange={(e) => setValues((v) => ({ ...v, expenseDate: e.target.value }))} disabled={!isMutable || busy} />
-          <FieldIssueNote issue={expenseDateIssue} />
-          <AiFieldMissingHint field="expenseDate" summary={detail.aiVerificationSummaryJson} />
+          <FieldIssueNote canEdit={isMutable} issue={expenseDateIssue} />
+          <AiFieldMissingHint canEdit={isMutable} field="expenseDate" summary={detail.aiVerificationSummaryJson} />
           <p className="mt-1 text-sm text-gray-500">{!isMutable ? "ข้อมูลวันที่ตามเอกสารที่บันทึกไว้" : detail.expenseNumber ? `แก้วันที่ได้ เลขรายจ่าย ${detail.expenseNumber} จะคงเดิม` : 'ตรวจวันที่เอกสารให้ตรงกับหลักฐานก่อนบันทึก วันที่จ่ายบันทึกแยกในขั้นตอนชำระเงิน'}</p>
           {!expenseDateIssue && sourceMissingNote('expenseDate')}
         </label>
@@ -1849,7 +1849,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               {!detail.vendorEntityKindSnapshot && <option value="">{t('expenses.category_unspecified', locale)}</option>}
               {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </ThemedSelect>
-            <FieldIssueNote issue={payeeEntityKindIssue} />
+            <FieldIssueNote canEdit={isMutable} issue={payeeEntityKindIssue} />
           </div>
         )}
         {/* WHT certificate system issuance plan §1.2 (S2/S3): the income category a 50 ทวิ
@@ -1870,7 +1870,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               {!detail.whtCategoryCode && <option value="">{t('expenses.category_unspecified', locale)}</option>}
               {whtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
             </ThemedSelect>
-            <FieldIssueNote issue={whtCategoryIssue} />
+            <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
           </div>
         )}
       </div>
@@ -1885,7 +1885,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       {values.lines.length === 0 && (
         <div>
           <p className="rounded-xl bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">{t('expenses.no_line_items', locale)}</p>
-          <FieldIssueNote issue={linesIssue} />
+          <FieldIssueNote canEdit={isMutable} issue={linesIssue} />
         </div>
       )}
       {productEntries.map(({ line, index }) => {
@@ -1915,7 +1915,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             <label className="sm:col-span-2">
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_description', locale)}</span>
               <textarea aria-label={t('expenses.line_description', locale)} className={cx(validationInputClass(descriptionIssue), 'resize-y')} rows={2} aria-invalid={descriptionIssue?.severity === 'error' || undefined} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
-              <FieldIssueNote issue={descriptionIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={descriptionIssue} />
               {!descriptionIssue && (sourceMissingNote('description', line.sourceItemRef) ?? sourceMissingNote('review', line.sourceItemRef))}
             </label>
             {detail.sourceDraft && !line.chargeKind && (
@@ -1939,19 +1939,19 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_quantity', locale)}</span>
               <input type="number" min="0" step="0.0001" className={validationInputClass(quantityIssue)} aria-invalid={quantityIssue?.severity === 'error' || undefined} value={line.quantity} onChange={(e) => updateLine(index, 'quantity', e.target.value)} disabled={!isMutable || busy} />
-              <FieldIssueNote issue={quantityIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={quantityIssue} />
               {!quantityIssue && sourceMissingNote('quantity', line.sourceItemRef)}
             </label>
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_unit_price', locale)}</span>
               <input type="number" min="0" step="0.0001" className={validationInputClass(unitPriceIssue)} aria-invalid={unitPriceIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
-              <FieldIssueNote issue={unitPriceIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={unitPriceIssue} />
               {!unitPriceIssue && sourceMissingNote('unitPrice', line.sourceItemRef)}
             </label>
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_discount', locale)}</span>
               <input type="number" min="0" step="0.0001" className={validationInputClass(discountIssue)} aria-invalid={discountIssue?.severity === 'error' || undefined} value={line.discountAmount} onChange={(e) => updateLine(index, 'discountAmount', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
-              <FieldIssueNote issue={discountIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={discountIssue} />
             </label>
             {/* Spec §19g decision 4: a rate, a preset, or the VAT amount the document prints — all
                 three write the same stored decimal fraction. The bare 0–1 box asked reviewers to
@@ -1983,7 +1983,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
                 {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
               </ThemedSelect>
-              <FieldIssueNote issue={vatRateIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={vatRateIssue} />
               {showCustomRate && (
                 <label className="mt-2 block">
                   <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_vat_percent', locale)}</span>
@@ -2073,7 +2073,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                   <option key={kind} value={kind}>{EXPENSE_LINE_CHARGE_KIND_LABELS[kind]}</option>
                 ))}
               </ThemedSelect>
-              <FieldIssueNote issue={orderIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={orderIssue} />
             </div>
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_description', locale)}</span>
@@ -2084,7 +2084,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               {/* No `min`: ปัดเศษ is the one kind a bill prints as a deduction, and the validator is
                   what refuses a minus sign on any other kind. */}
               <input type="number" step="0.0001" className={validationInputClass(amountIssue ?? quantityIssue)} aria-invalid={amountIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
-              <FieldIssueNote issue={amountIssue ?? quantityIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={amountIssue ?? quantityIssue} />
               {chargeKind === 'ROUNDING' && <p className="mt-1 text-xs text-gray-500">{t('expenses.rounding_explanation', locale)}</p>}
             </label>
             {showsVatCard && <div>
@@ -2112,7 +2112,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 <option value="custom">{t('expenses.vat_rate_preset_custom', locale)}</option>
                 {!showCustomRate && line.vatRate.trim() === '' && <option value="unset">{t('expenses.vat_rate_preset_unset', locale)}</option>}
               </ThemedSelect>
-              <FieldIssueNote issue={vatRateIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={vatRateIssue} />
               {showCustomRate && (
                 <label className="mt-2 block">
                   <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_vat_percent', locale)}</span>
@@ -2147,7 +2147,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 <option value="RATE">{t('expenses.wht_unit_percent', locale)}</option>
                 <option value="AMOUNT">{t('expenses.wht_unit_baht', locale)}</option>
               </ThemedSelect>
-              <FieldIssueNote issue={whtUnitIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={whtUnitIssue} />
             </label>
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
@@ -2164,7 +2164,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: whtInput.inputType, value: event.target.value } })); }}
                 disabled={!isMutable || busy}
               />
-              <FieldIssueNote issue={whtValueIssue} />
+              <FieldIssueNote canEdit={isMutable} issue={whtValueIssue} />
             </label>
           </div>
           {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
@@ -2178,14 +2178,14 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 setValues((current) => { const next = { ...whtInput, ...current.whtInput };
                   if (base === '') delete next.baseAmount; else next.baseAmount = base;
                   return { ...current, whtInput: next }; }); }} />
-            <FieldIssueNote issue={fieldIssue(issues, 'whtInput.baseAmount')} />
+            <FieldIssueNote canEdit={isMutable} issue={fieldIssue(issues, 'whtInput.baseAmount')} />
             <span className="mt-1 block text-xs text-gray-500">{t('expenses.wht_base_hint', locale)}</span>
           </label>}
           <p className="mt-1 text-xs text-gray-500">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_amount_hint' : 'expenses.wht_percent_hint', locale)}</p>
         </div>
       )}
 
-      {totalIssues.map((issue, index) => <FieldIssueNote key={`${issue.messageKey}-${index}`} issue={issue} />)}
+      {totalIssues.map((issue, index) => <FieldIssueNote canEdit={isMutable} key={`${issue.messageKey}-${index}`} issue={issue} />)}
 
       {isMutable && busy && <p className="text-center text-xs text-gray-500">{t('expenses.saving', locale)}</p>}
     </MangmeeCard>
