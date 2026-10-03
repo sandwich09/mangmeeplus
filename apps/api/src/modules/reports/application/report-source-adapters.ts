@@ -295,7 +295,7 @@ export class ReportSourceAdapters {
       { key: 'accountName', label: 'บัญชี', type: 'string' },
       { key: 'totalDebit', label: 'เดบิต', type: 'money' },
       { key: 'totalCredit', label: 'เครดิต', type: 'money' },
-      { key: 'endingBalance', label: 'ยอดคงเหลือ', type: 'money' },
+      { key: 'endingBalance', label: 'ยอดสุทธิในงวด', type: 'money' },
     ], { sourceRefs: [reportSourceRef(ctx.companyId, 'financial.general_ledger', 'ledger', 'general_ledger', `/companies/${ctx.companyId}/reports`)] });
   }
 
@@ -316,7 +316,7 @@ export class ReportSourceAdapters {
       { key: 'accountClass', label: 'ประเภทบัญชี', type: 'string' },
       { key: 'totalDebit', label: 'เดบิต', type: 'money' },
       { key: 'totalCredit', label: 'เครดิต', type: 'money' },
-      { key: 'balance', label: 'ยอดคงเหลือ', type: 'money' },
+      { key: 'balance', label: 'ยอดสุทธิในงวด', type: 'money' },
     ], {
       totals: { totalDebit: tb.totalDebit, totalCredit: tb.totalCredit, difference: tb.difference },
       chart: chartFromRows(rows, 'accountCode', 'balance', 'Balance', query.chartKind ?? 'table'),

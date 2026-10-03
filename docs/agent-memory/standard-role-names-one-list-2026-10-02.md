@@ -869,3 +869,11 @@ approved-knowledge red rc 1, 8 / 1 / 0 (reports pin vs edited file); green rc 0,
 capability manifest was already stale at the branch head for two files lane 3b changed
 (`report-source-adapters.ts`, `ReportsWorkspacePage.tsx`); regenerated once at the end of this batch, see
 `docs/agent-memory/english-left-on-pages-2026-10-02.md`.
+
+## Follow-up 2026-10-03 (round 2): the reports guide true to the code; card report.access
+
+Pin: `reports` `2b48f07e…` → `a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4` (guide sentences made
+true to the code; details in `docs/agent-memory/english-left-on-pages-2026-10-02.md`, section R8). Card
+`report.access` (anchor `overview`): untrue before (only permitted reports shown; roles see different lists;
+generic ผู้ดูแล); body rewritten to the guide's overview and the one-list owner name (`THAI_SYSTEM_ROLE_NAMES.OWNER`).
+No other card cites the reports guide. approved-knowledge red 8 / 1 → 9 / 0.

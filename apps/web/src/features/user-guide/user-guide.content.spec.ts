@@ -380,6 +380,32 @@ describe('the reports guide uses the words the reports page shows', () => {
   it('shows no English word but the product names kept as they are', () => {
     for (const text of sentences(guide)) assert.doesNotMatch(text.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, ''), /[A-Za-z]/, text);
   });
+
+  // The guide's own rule: a word in “ ” is on a screen, letter for letter (or names a section of this guide).
+  it('quotes only words the reports page shows', () => {
+    const shown = [
+      readFileSync(join(__dirname, '../reports/ReportsWorkspacePage.tsx'), 'utf8'),
+      readFileSync(join(__dirname, '../reports/reports-ui.logic.ts'), 'utf8'),
+      readFileSync(join(__dirname, '../../common/i18n/workspace-dictionary.ts'), 'utf8'),
+      ...guide.sections.map((section) => section.title),
+    ].join('\n');
+    const quotes = [...new Set(sentences(guide).flatMap((text) => [...text.matchAll(/“([^”]+)”/g)].map((match) => match[1]!)))];
+    assert.ok(quotes.length >= 8, 'the guide quotes the page');
+    assert.deepEqual(quotes.filter((quote) => !shown.includes(quote)), []);
+  });
+
+  // Untrue before (2026-10-03): runs keep no rows; every run computes afresh (only ภาพรวมการทำงาน reads the dashboard's
+  // stored numbers); the page lists every report and marks the ones you cannot open; the export card is
+  // “ไฟล์รายงานที่ส่งออก” and does not show who exported; ledger reports cover the selected period only; reports do
+  // not follow the top-bar branch choice.
+  it('says what the page and the reports really do', () => {
+    const text = sentences(guide).join('\n');
+    for (const untrue of ['ย้อนกลับไปเปิดผลลัพธ์เดิม', 'ชุดเดิมที่ระบบเก็บไว้', 'แสดงเฉพาะรายงานที่บัญชีของคุณมีสิทธิ์', 'ศูนย์ส่งออกข้อมูล',
+      'ว่าใครส่งข้อมูลชุดใด', 'ณ วันสิ้นงวด', 'ใช้กับข้อมูลทั้งบริษัทหรือเฉพาะบางส่วน', 'บริษัทตัวอย่าง', 'ให้ตรงกันก่อนเทียบตัวเลข']) {
+      assert.equal(text.includes(untrue), false, untrue);
+    }
+    for (const fact of ['ไม่ได้เก็บผลลัพธ์', '“ไม่มีสิทธิ์”', '“ไฟล์รายงานที่ส่งออก”', '“ทุกสาขา (รวม)”']) assert.ok(text.includes(fact), fact);
+  });
 });
 
 describe('shop guide permission help names business roles and separates package access', () => {

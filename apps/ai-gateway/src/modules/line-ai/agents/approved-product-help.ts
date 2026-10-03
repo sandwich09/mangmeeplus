@@ -1,11 +1,12 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 
 const sources = {
   expenses: { file: 'expenses-guide.content.ts', hash: '2cf217f23324ee6b022f2a498e40fba49eeec8eace3a449459414c420acb2974' },
   reimbursements: { file: 'reimbursement-guide.content.ts', hash: '4244ded04517368c1aca422d7e057a9babf4955bc7ba2aa5196838f7817197b0' },
   'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '4b8052caed394b1be7c44d88189f8068eb7f84750339111dc7ac23bceea98b76' },
-  reports: { file: 'reports-guide.content.ts', hash: '2b48f07ea0261d1d1e2f1b1be164f04b21e2d708cbbcd4b1b4df8108dc7f6511' },
+  reports: { file: 'reports-guide.content.ts', hash: 'a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4' },
 } as const;
 
 function card(
@@ -58,7 +59,7 @@ export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
     card('substitute.review-sign', 'substitute-receipts', 'sign', 'อ่านเอกสารก่อนลงนาม', ['ทำไมกดลงชื่อไม่ได้', 'ต้องอ่านฉบับเต็มก่อนอนุมัติไหม'],
       'ถ้าลงนามออนไลน์ ขั้นตอนลงลายมือชื่อและอนุมัติบังคับให้เปิดอ่านเอกสารฉบับเต็มก่อนค่ะ ผู้ลงนามและผู้อนุมัติต้องตรวจฉบับที่ตรงกับขั้นตอนของตน การลงนาม ยืนยันคำรับรอง และอนุมัติออกเอกสารทำบนเว็บด้วยสิทธิ์ที่กำหนด ถ้าพิมพ์และเซ็นบนกระดาษ ผู้ตรวจรับต้องเปิดอ่านฉบับที่อัปโหลดให้ครบทุกหน้าก่อนตรวจรับบนเว็บ', substituteReaders),
     card('report.access', 'reports', 'overview', 'รายงานที่แต่ละคนเรียกดูได้', ['ทำไมฉันเห็นรายงานน้อยกว่าเจ้าของ', 'ส่งออกแล้วตรวจสิทธิ์อีกไหม'],
-      'ระบบแสดงเฉพาะรายงานที่บัญชีของคุณมีสิทธิ์เรียกดู และตรวจสิทธิ์อีกครั้งเมื่อส่งออกค่ะ ผู้ใช้ต่างบทบาทจึงเห็นรายงานไม่เท่ากัน ถ้าต้องใช้รายงานเพิ่ม ให้ผู้ดูแลตรวจสิทธิ์ก่อน', ['report.catalog.read', 'report.snapshot.read']),
+      `ทุกคนที่เปิดเมนูรายงานได้จะเห็นรายการรายงานครบค่ะ รายงานที่บัญชีของคุณยังไม่มีสิทธิ์เรียกดูจะมีป้าย “ไม่มีสิทธิ์” และเรียกดูไม่ได้ และระบบตรวจสิทธิ์อีกครั้งเมื่อส่งออก ถ้าต้องใช้รายงานเพิ่ม ให้แจ้ง${THAI_SYSTEM_ROLE_NAMES.OWNER}ว่าต้องการสิทธิ์ใด`, ['report.catalog.read', 'report.snapshot.read']),
   ],
 };
 PRODUCT_HELP_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_PACK);

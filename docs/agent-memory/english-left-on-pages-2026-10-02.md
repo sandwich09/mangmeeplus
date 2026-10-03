@@ -280,3 +280,31 @@ expense filed under an archived category showed none. New `ListExpensesUseCase.l
 → `PrismaExpenseRepository.listCategoryNames`: the names of exactly the categories the rows use, any status,
 this company's or the shared ones. Test: adapters red 38 / 1 → 39 / 0. The Prisma query itself is typechecked,
 not run against a database here.
+
+### R8: guide and catalogue sentences true to the code
+
+Facts checked in code: the catalogue returns all 18 reports to anyone with `report.catalog.read`; those the
+user cannot run carry status FORBIDDEN, shown as “ไม่มีสิทธิ์” with the run button disabled. Runs store no rows,
+and the history list is not clickable. Every run computes afresh; only ภาพรวมการทำงาน reads the dashboard's stored
+snapshot (refreshed by the 15-minute sweep or on demand). “รีเฟรช” reloads the lists, not a result. A saved view is
+named automatically (title + date); clicking it restores report, filters and format without running. The export card
+is “ไฟล์รายงานที่ส่งออก”: own files, or everyone's with export-manage rights; files expire after 7 days; it does not
+show who exported. Reports ignore the top-bar branch choice (other pages use it). Ledger reports sum only the
+selected period's posted lines: `GetGeneralLedgerUseCase` sets `openingBalance: '0.0000'`, `getAccountBalances`
+groups lines of the one period, and nothing posts opening or closing balances. The receivables report lists
+invoices, with no aging buckets.
+
+Changed: all 18 catalogue descriptions now say what the rows hold (shared words for ledger classes, invoice,
+issued, movement types, automation names, the needs-data word), and the guide's report table copies them word for
+word (API test reads the guide file). Ledger “ยอดคงเหลือ” columns (general ledger, trial balance; catalogue measures
+and adapter columns) → “ยอดสุทธิในงวด”; guide example heading follows. Guide sentences rewritten: the overview note
+(all reports listed, “ไม่มีสิทธิ์”), the left column and export item (“ไฟล์รายงานที่ส่งออก”, 7 days, own vs all),
+catalogue summary and card note, the freshness row, a new note that ledger reports are per period, saved views,
+run history (no stored results), the CSV item (5,000 rows, Thai-titled file, Thailand time), the export note, the
+history permission row (ดูประวัติการเรียกรายงาน / ดูประวัติรายงาน), the FAQ question on “ไม่มีสิทธิ์”, the branch
+FAQ (“ทุกสาขา (รวม)”), the stale-data FAQ, and the run summary (ตัวกรอง, not only งวด). Pin `reports` `2b48f07e…` →
+`a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4`. Card `report.access` was untrue (only
+permitted reports shown, roles see different lists, “ผู้ดูแล”); body now: everyone who can open the menu sees all
+reports, those without rights are marked “ไม่มีสิทธิ์”, rights are checked again on export, ask เจ้าของกิจการ (one
+list) for more. Tests: API adapters red 39 / 3 → 42 / 0; web guide red 30 / 2 → 32 / 0; approved-knowledge red
+8 / 1 → 9 / 0.

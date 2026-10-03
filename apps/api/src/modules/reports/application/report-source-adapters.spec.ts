@@ -622,3 +622,42 @@ describe('accountant evidence category', () => {
     assert.deepEqual(asked, [['company-1', ['cat_archived']]]);
   });
 });
+
+// Owner 2026-10-02: every sentence true in every case. The catalogue describes what each report's rows hold.
+describe('report descriptions say what the reports compute', () => {
+  const description = (code: string) => findReportDefinition(code)!.description;
+
+  it('describes each report by its rows, not by what it does not show', () => {
+    // The ledger use cases sum the selected period's posted lines only: openingBalance is 0 and nothing is carried forward.
+    for (const code of ['financial.general_ledger', 'financial.trial_balance']) assert.match(description(code), /ไม่รวมยอดยกมาจากงวดก่อน/, code);
+    assert.match(description('financial.balance_sheet'), /ในงวดที่เลือกเท่านั้น/);
+    assert.doesNotMatch(description('financial.profit_and_loss'), /กำไรสุทธิ/);
+    assert.doesNotMatch(description('ar.aging'), /แยกตามช่วง/);
+    assert.doesNotMatch(description('sales.pipeline'), /แยกตามขั้นตอน/);
+    assert.match(description('sales.summary'), /ยังเปิดอยู่ตอนนี้/);
+    assert.doesNotMatch(description('expense.summary'), /สถานะการชำระเงิน/);
+    assert.doesNotMatch(description('expense.accountant_evidence'), /ไฟล์แนบ/);
+    assert.doesNotMatch(description('ops.dashboard_health'), /แจ้งเตือน/);
+  });
+
+  it('labels the ledger balance columns as the net of the period', async () => {
+    for (const [code, key] of [['financial.general_ledger', 'endingBalance'], ['financial.trial_balance', 'balance']] as const) {
+      assert.equal(findReportDefinition(code)!.supportedMeasures.find((measure) => measure.key === key)?.label, 'ยอดสุทธิในงวด', code);
+    }
+    const ledger = adapters({
+      generalLedger: { execute: async () => [] },
+      trialBalance: { execute: async () => ({ lines: [], totalDebit: '0', totalCredit: '0', difference: '0' }) },
+    });
+    for (const [code, key] of [['financial.general_ledger', 'endingBalance'], ['financial.trial_balance', 'balance']] as const) {
+      const result = await ledger.execute(ctx, enabled(code), { filters: { periodKey: '2026-09' }, chartKind: 'table', page: 1, pageSize: 100 });
+      assert.equal(result.columns.find((column) => column.key === key)?.label, 'ยอดสุทธิในงวด', code);
+    }
+  });
+
+  // The guide cannot import API code, so it copies the catalogue's words; this reads the guide and fails on any drift.
+  it('is copied word for word by the reports guide', () => {
+    const guide = readFileSync(join(__dirname, '../../../../../web/src/features/user-guide/reports-guide.content.ts'), 'utf8');
+    const rows = [...guide.matchAll(/^ +\['([^']+)', '([^']+)', '([^']+)'\],$/gm)].map((match) => [match[1], match[3]]);
+    assert.deepEqual(rows, REPORT_CATALOG.map((report) => [report.title, report.description]));
+  });
+});
