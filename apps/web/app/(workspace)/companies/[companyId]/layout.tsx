@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation';
 import WorkspaceLayoutClient from '@/features/web-core-workspace/WorkspaceLayout';
 import { fetchServerSession, fetchServerSessionResult } from '@/common/auth/server-session';
 import CompanyAccessUnavailable from '@/features/auth/CompanyAccessUnavailable';
-import { companyGateReturnPath, isSalesOnlySession, legalAcceptancePath, SALES_HOME_PATH } from '@/common/auth/session-gate.logic';
+import { companyGateReturnPath, isSalesOnlySession, isExecutiveOnlySession, EXECUTIVE_HOME_PATH, legalAcceptancePath, SALES_HOME_PATH } from '@/common/auth/session-gate.logic';
 import { REQUEST_PATH_HEADER } from '@/common/auth/auth-cookies.constants';
 
 export default async function CompanyWorkspaceLayout({
@@ -45,6 +45,7 @@ export default async function CompanyWorkspaceLayout({
   // shell would be opening มั่งมี's internal company as if it were their shop. They hold no business
   // permission, so every page behind here would 403 anyway — send them to their own console instead.
   if (isSalesOnlySession(sessionResult.session)) redirect(SALES_HOME_PATH);
+  if (isExecutiveOnlySession(sessionResult.session)) redirect(EXECUTIVE_HOME_PATH);
   // Return to the page that was actually opened, not the dashboard: a LINE deep link tapped by a
   // user with a pending password change or an unaccepted legal release used to lose its destination.
   if (sessionResult.session.mustChangePassword) {

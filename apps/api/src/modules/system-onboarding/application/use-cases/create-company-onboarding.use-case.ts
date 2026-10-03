@@ -277,6 +277,9 @@ export class CreateCompanyOnboardingUseCase {
           name: cmd.companyName,
           ...(companyContactEmail ? { email: companyContactEmail } : {}),
           ...(taxId ? { taxId, legalIdentityVersion: 1 } : {}),
+          // Executive spec §12.2 (Q16): a shop from the normal signup is a customer from its first day; one the
+          // admin creates by hand stays unclassified until the admin labels it. No user id: the system chose.
+          ...(cmd.linkSignupRequestId ? { reportClassification: 'CUSTOMER', reportClassifiedAt: new Date() } : {}),
         },
       });
       if (taxId) {

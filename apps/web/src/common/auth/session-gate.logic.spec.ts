@@ -18,6 +18,7 @@ import {
   systemGateReturnPath,
 } from './session-gate.logic';
 import type { WebSession } from '../models/web-session.model';
+import * as gates from './session-gate.logic';
 
 function session(overrides: Partial<WebSession> = {}): WebSession {
   return {
@@ -34,6 +35,42 @@ function session(overrides: Partial<WebSession> = {}): WebSession {
     ...overrides,
   };
 }
+
+describe('executive report entry', () => {
+  const executive = () => session({ roles: ['MANGMEE_EXECUTIVE'], permissions: ['system.executive.read', 'account.read'] });
+  it('opens only the report subtree by read permission, including a permission without the named role', () => {
+    const canOpen = (gates as unknown as { canOpenSystemExecutive: (s: WebSession, p: string) => boolean }).canOpenSystemExecutive;
+    for (const path of ['/system/executive', '/system/executive/companies/c1?month=2026-09']) {
+      assert.equal(canOpen(executive(), path), true);
+      assert.equal(canOpen(session({ permissions: ['system.executive.read'] }), path), true);
+      assert.equal(canOpen(session({ roles: ['MANGMEE_EXECUTIVE'] }), path), false);
+    }
+    for (const path of ['/system/partners', '/system/executive-users', '/system/executive-other', '/system/executive/../partners']) assert.equal(canOpen(executive(), path), false);
+  });
+  it('lands an executive on reports through login/legal gates and ignores a remembered company home', () => {
+    assert.equal(resolveLoginLanding(null, '/companies/c1/dashboard', executive()), '/system/executive');
+    assert.equal(resolveLoginLanding('/system/executive/usage?month=2026-09', undefined, executive()), '/system/executive/usage?month=2026-09');
+    assert.equal(resolvePostLegalAcceptanceTarget('/companies/c1/dashboard', executive()), '/system/executive');
+  });
+  it('keeps company business users and admins distinct from executive-only sessions', () => {
+    const only = (gates as unknown as { isExecutiveOnlySession: (s: WebSession) => boolean }).isExecutiveOnlySession;
+    assert.equal(only(executive()), true);
+    assert.equal(only(session({ roles: ['SYSTEM_ADMIN'], permissions: ['system.executive.read'] })), false);
+    assert.equal(only(session({ permissions: ['system.executive.read', 'expenses.read'] })), false);
+  });
+  it('still recognises an executive-only session after its report read right is removed', () => {
+    const revoked = session({ roles: ['MANGMEE_EXECUTIVE'], permissions: ['account.read'] });
+    assert.equal(gates.canOpenSystemExecutive(revoked, '/system/executive'), false);
+    assert.equal(gates.isExecutiveOnlySession(revoked), true);
+    assert.equal(gates.isExecutiveOnlySession(session({ roles: ['MANGMEE_EXECUTIVE'], permissions: ['expenses.read'] })), false);
+    assert.equal(gates.isExecutiveOnlySession(session({ roles: ['SYSTEM_ADMIN', 'MANGMEE_EXECUTIVE'], permissions: ['account.read'] })), false);
+    assert.equal(gates.isExecutiveOnlySession(session({ permissions: ['account.read'] })), false);
+    // The base read role itself gone while the export/contact roles stay: still an executive, never the admin console's words.
+    const baseRoleGone = session({ roles: ['MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT'], permissions: ['account.read', 'system.executive.export', 'system.executive.contact.read'] });
+    assert.equal(gates.isExecutiveOnlySession(baseRoleGone), true);
+    assert.equal(gates.isExecutiveOnlySession(session({ roles: ['MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_SALES'], permissions: ['account.read', 'system.executive.export', 'sales.deal.read'] })), false);
+  });
+});
 
 describe('billing delegate shell boundary', () => {
   it('opens only billing paths with the exact read grant, without opening other system sections', () => {

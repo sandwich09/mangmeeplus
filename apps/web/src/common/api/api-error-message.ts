@@ -1,8 +1,8 @@
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
-import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
-import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
+import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
 
 // The API answers business-rule failures in English (its messages double as
 // operator/log text). This is the single seam where those reach a Thai screen.
@@ -11,6 +11,38 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  INVALID_INPUT: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
+  EXECUTIVE_SNAPSHOT_EXPIRED: W.export.expired,
+  EXECUTIVE_EXPORT_LIMIT_EXCEEDED: W.export.limit,
+  EXECUTIVE_EXPORT_EMPTY: W.export.empty,
+  EXECUTIVE_ACCESS_DENIED: 'คุณไม่มีสิทธิ์ใช้งานส่วนนี้',
+  ACCOUNT_NOT_FOUND: 'ไม่พบบัญชีผู้บริหาร',
+  ACCOUNT_ALREADY_EXISTS: 'ชื่อผู้ใช้หรืออีเมลนี้ถูกใช้แล้ว',
+  ACCOUNT_REVOKED: 'บัญชีนี้ถูกปิดจากทางอื่นของระบบ หน้านี้เปิดคืนไม่ได้',
+  ACCOUNT_PROTECTED: 'บัญชีผู้ดูแลระบบระงับหรือแก้สิทธิ์จากหน้านี้ไม่ได้',
+  EXECUTIVE_QUERY_INVALID: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
+  COMPANY_NOT_FOUND: 'ไม่พบบริษัทนี้ในรายงาน',
+  SOURCE_UNAVAILABLE: 'ระบบยังอ่านข้อมูลส่วนนี้ไม่ได้ กรุณาลองใหม่ภายหลัง',
+  ACTIVITY_HISTORY_INCOMPLETE: 'ข้อมูลการใช้งานไม่ครบ',
+  PAYMENT_HISTORY_INCOMPLETE: 'ข้อมูลการชำระไม่ครบ',
+  BILLING_SCAN_NOT_COMPLETE: 'ยอดเงินของเดือนนี้ยังอ่านไม่ครบ',
+  UNMATCHED_MONEY: 'มีเงินที่ยังไม่ผูกบริษัท ยอดนี้ยังไม่อยู่ในยอดของบริษัทใด',
+  PURCHASE_KIND_UNKNOWN: 'มีรายการเงินที่ยังไม่จัดประเภทการซื้อ',
+  ADDON_NOT_ON_SALE: W.addOnNotSold,
+  CLASSIFICATION_INCOMPLETE: 'ยังไม่ได้จัดประเภทบริษัทครบ',
+  INDUSTRY_NOT_PROVIDED: EXECUTIVE_UNKNOWN_LABEL,
+  HISTORY_BEFORE_COLLECTION: W.historyBeforeCollection,
+  HISTORY_BEFORE_FIRST_BUILD: W.historyBeforeFirstBuild,
+  SOURCE_ROWS_PURGED: W.sourceRowsPurged,
+  SOURCE_STALE: 'ข้อมูลยังไม่ได้อัปเดต',
+  NOT_YET_REGISTERED: 'บริษัทนี้ยังไม่สมัครในช่วงรายงานนี้',
+  NOT_ENTITLED: EXECUTIVE_REPORT_LABELS.receiptAdoption.NOT_ENTITLED!,
+  TOO_FEW_COMPANIES: W.fewCompanies,
+  NO_POSITIVE_NET: W.noPositiveCompanies,
+  BILLING_SOURCE_REVIEW: 'ข้อมูลการชำระต้องตรวจสอบ',
+  MANUAL_TERM_NO_RECEIPT: W.manualTerm,
+  LEGACY_NO_TERM: 'ร้านรุ่นก่อนมีระบบแพ็กเกจ ไม่มีข้อมูลการชำระ',
+  RATE_LIMITED: 'เรียกดูถี่เกินไป กรุณารอสักครู่แล้วลองใหม่',
   EMAIL_ACCESS_INVALID: 'รหัสหมดอายุหรือใช้ไม่ได้แล้ว กรุณาขอรหัสทางอีเมลใหม่',
   EMAIL_ACCESS_EXISTING_ACCOUNT: 'กรุณาเข้าสู่บัญชีเดิมด้วยรหัสผ่านหรือ LINE ก่อน',
   EMAIL_SIGNUP_CHANGED: 'ข้อมูลบัญชีเปลี่ยนแล้ว กรุณาเข้าสู่ระบบอีกครั้ง',
@@ -1389,6 +1421,17 @@ const KIND_LABELS: Record<string, string> = {
 const API_KINDS = new Set([...Object.keys(KIND_LABELS), 'unknown']);
 const OTHER_CLIENT_ERROR = 'ทำรายการไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง';
 const GENERIC_API_ERROR = 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง';
+
+// Coverage selects historical reasons from the shared screen/workbook words.
+const EXECUTIVE_REASON_STATE_LABELS: Record<string, Partial<Record<ExecutiveCoverage, string>>> = {
+  HISTORY_BEFORE_COLLECTION: { partial: W.historyBeforeCollectionPartial },
+  HISTORY_BEFORE_FIRST_BUILD: { unavailable: W.historyBeforeFirstBuildUnavailable },
+  SOURCE_ROWS_PURGED: { unavailable: W.sourceRowsPurgedUnavailable },
+};
+
+export function executiveReasonMessage(code: string, coverage?: ExecutiveCoverage): string {
+  return (coverage && EXECUTIVE_REASON_STATE_LABELS[code]?.[coverage]) || apiErrorMessage({ code });
+}
 
 /** Translates one API message/code. Returns null when nothing is known about it. */
 export function translateApiError(raw: string): string | null {

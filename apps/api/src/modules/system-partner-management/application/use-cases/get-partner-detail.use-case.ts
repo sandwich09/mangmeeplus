@@ -6,6 +6,9 @@ import {
   parentFeatureKey,
   planTermLockReason,
   planTermState,
+  REPORT_INDUSTRY_GROUP_VERSION,
+  isReportIndustryGroup,
+  reportIndustryGroupOf,
   type LineContextHealth,
   type PartnerCompanyDetailDto,
   type SignupDiscoverySource,
@@ -13,6 +16,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { isCurrentEntitlementNormalization } from '../../../employee-access/application/normalize-entitlements';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
+import { reportClassificationOf } from '../../domain/logic/report-labels.logic';
 import { manualExpenseWebEntryState } from '../../domain/logic/manual-expense-web-entry.logic';
 
 const PLATFORM_DISABLE_REASON = 'ฟีเจอร์พื้นฐานของระบบปิดไม่ได้';
@@ -56,6 +60,10 @@ export class GetPartnerDetailUseCase {
         referralSalesUserId: true,
         referredAt: true,
         referralSource: true,
+        reportClassification: true,
+        reportClassifiedAt: true,
+        reportClassifiedByUserId: true,
+        reportIndustryGroup: true,
         signupRequests: {
           // Read the original company-linked signup, including completed/archived shops.
           // A later return-to-existing request must not replace acquisition attribution.
@@ -141,6 +149,30 @@ export class GetPartnerDetailUseCase {
       }
       : null;
 
+    // Executive spec §16.1: the two report labels with who set them and when. The classification keeps both on
+    // its own row; the industry group's come from the audit row the profile update writes.
+    const industryGroup = isReportIndustryGroup(c.reportIndustryGroup) ? c.reportIndustryGroup : null;
+    const industryGroupSet = industryGroup ? await this.prisma.client.auditLog.findFirst({
+      where: { action: 'system.partner_company.update', targetType: 'company', targetId: c.id,
+        metadataJson: { path: ['changedFields'], array_contains: ['reportIndustryGroup'] } },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], select: { actorUserId: true, createdAt: true },
+    }) : null;
+    const labelUserIds = [...new Set([c.reportClassifiedByUserId, industryGroupSet?.actorUserId].filter((id): id is string => !!id))];
+    const labelUsers = new Map((labelUserIds.length ? await this.prisma.client.user.findMany({ where: { id: { in: labelUserIds } },
+      select: { id: true, displayName: true } }) : []).map((user) => [user.id, { userId: user.id, displayName: user.displayName }]));
+    const classifiedBy = c.reportClassifiedByUserId ? labelUsers.get(c.reportClassifiedByUserId) : undefined;
+    const industryGroupSetBy = industryGroupSet?.actorUserId ? labelUsers.get(industryGroupSet.actorUserId) : undefined;
+    const reportLabels: PartnerCompanyDetailDto['reportLabels'] = {
+      classification: reportClassificationOf(c),
+      ...(c.reportClassifiedAt ? { classifiedAt: c.reportClassifiedAt.toISOString() } : {}),
+      ...(classifiedBy ? { classifiedBy } : {}),
+      industryGroup,
+      ...(industryGroupSet ? { industryGroupSetAt: industryGroupSet.createdAt.toISOString() } : {}),
+      ...(industryGroupSetBy ? { industryGroupSetBy } : {}),
+      effectiveIndustryGroup: reportIndustryGroupOf(c)?.group ?? null,
+      industryGroupVersion: REPORT_INDUSTRY_GROUP_VERSION,
+    };
+
     return {
       id: c.id,
       name: c.name,
@@ -192,6 +224,7 @@ export class GetPartnerDetailUseCase {
       manualExpenseWebEntry: manualExpenseWebEntryState(c.webEntrySetting),
       planState: planTermState(c.planTerm, now, c.status),
       ...(c.planTerm && c.planTerm.termEndsAt.getTime() <= now.getTime() ? { lockReason: planTermLockReason(c.planTerm) } : {}),
+      reportLabels,
     };
   }
 }

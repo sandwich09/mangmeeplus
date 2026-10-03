@@ -105,6 +105,7 @@ export function SelectField({ id, label, showRequiredMark, error, hint, classNam
     <FieldFrame id={fieldId} label={label} showRequiredMark={showRequiredMark} error={error} hint={hint}>
       <ThemedSelect
         id={fieldId}
+        aria-label={label}
         aria-invalid={!!error}
         aria-describedby={describedBy || undefined}
         className={`${inputClass} ${className ?? ''}`}
