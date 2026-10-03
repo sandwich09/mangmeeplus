@@ -183,7 +183,8 @@ test.describe('AP — accounts payable', () => {
   });
 
   test('AP-04 @p1 leaves the source number optional for repeated blank-number form entries', async ({ authedPage, api, companyId }) => {
-    await useWorkspaceBranch(authedPage, companyId, (await firstActiveBranch(api, companyId)).id);
+    const branch = await firstActiveBranch(api, companyId);
+    await useWorkspaceBranch(authedPage, companyId, branch.id);
     await gotoCompany(authedPage, companyId, '/accounts-payable');
     const form = authedPage.locator('form').filter({ has: authedPage.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }) });
     const sourceNumber = form.getByLabel('เลขที่เอกสารผู้ขาย (ถ้ามี)', { exact: true });
@@ -191,6 +192,9 @@ test.describe('AP — accounts payable', () => {
     await form.getByLabel('รายละเอียดสินค้า/บริการ', { exact: true }).fill(unique('UI no-number bill'));
     await form.getByLabel('ราคาต่อหน่วย (บาท)', { exact: true }).fill('100.00');
     await expect(form.getByRole('combobox', { name: 'ผู้ขาย', exact: true })).toHaveAttribute('aria-disabled', 'false');
+    // The form takes the header's branch only once the branch list has loaded; a save before that is
+    // refused on the page with "กรุณาเลือกสาขาของรายการ" and sends nothing.
+    await expect(form.getByRole('combobox', { name: 'สาขาของรายการ', exact: true })).toHaveText(branchOptionName(branch));
     await expect(submit).toBeEnabled();
     const createdIds: string[] = [];
 
@@ -276,7 +280,8 @@ test.describe('AP — accounts payable', () => {
       releaseSupplierResponse();
     }
     const alert = form.locator('..').locator(':scope > [role="alert"]');
-    await expect(alert).toHaveText('คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน');
+    // A 403 reads the shared permission text (api-error-message.ts insufficient_permissions, since f98946566).
+    await expect(alert).toHaveText('คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อผู้ดูแลสิทธิ์ของบริษัท');
     // Let the committed error's passive effects run before asserting no focus/scroll change.
     await authedPage.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     await expect(activeControl).toBeFocused();

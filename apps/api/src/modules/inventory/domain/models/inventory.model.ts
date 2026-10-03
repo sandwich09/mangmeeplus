@@ -95,6 +95,9 @@ export type StockMovement = {
   actorUserId: string;
   occurredAt: Date;
   createdAt: Date;
+  /** Set by the movement list, for pages and reports that show the product and place by name. */
+  productName?: string;
+  locationName?: string;
 };
 
 export type StockBalance = {
@@ -102,4 +105,6 @@ export type StockBalance = {
   locationId: string;
   quantity: string; // Decimal as string, >= 0 always
   isLowStock?: boolean;
+  productName?: string;
+  locationName?: string;
 };

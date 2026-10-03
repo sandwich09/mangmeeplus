@@ -194,6 +194,8 @@ export type ListCrmConversationsFilter = {
   search?: string;
   /** Only first-response-SLA-overdue conversations (เกิน 30 นาที). */
   overdue?: boolean;
+  /** Only conversations still waiting for their first staff reply, due or not (resolved and spam excluded). */
+  unanswered?: boolean;
   /** Only conversations carrying this tag (exact match). */
   tag?: string;
   /** 'me' = assigned to the caller; 'none' = unassigned (pickup queue). */
@@ -212,6 +214,8 @@ export type ListCrmConversationsResult = {
   /** Visibility-scoped counts (ignore status/search filters) for the inbox filter chips. */
   statusCounts?: Partial<Record<CrmConversationStatus, number>>;
   overdueCount?: number;
+  /** Conversations still waiting for their first staff reply (resolved and spam excluded). */
+  unansweredCount?: number;
   /** Conversations assigned to the caller (non-spam). */
   mineCount?: number;
   /** Unassigned conversations awaiting pickup (non-spam). */

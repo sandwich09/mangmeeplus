@@ -1,5 +1,6 @@
 // Permission registry: canonical source of truth for permission keys and role grants.
 // Imported by seed.ts and tested by permission-registry.spec.ts.
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { BILLING_PERMISSIONS, EXECUTIVE_PERMISSION_KEYS, EXECUTIVE_ROLE_KEYS, SALES_PERMISSION_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 
 /**
@@ -1082,16 +1083,16 @@ export const SYSTEM_ROLES: Array<{ key: string; name: string; description: strin
   { key: 'OWNER',           name: 'Owner',          description: 'มีทุกสิทธิ์ที่บริษัทนี้ใช้ได้' },
   { key: 'SYSTEM_ADMIN',    name: 'System Admin',   description: 'สำหรับเจ้าหน้าที่ของมั่งมีที่ดูแลระบบ ไม่ใช่บทบาทของพนักงานในร้าน' },
   { key: 'COMPANY_VIEW',    name: 'Company owner',  description: 'สำหรับผู้ที่ต้องการดูภาพรวมของบริษัทโดยไม่แก้ไขข้อมูล เช่น ลูกค้า เอกสารขาย ค่าใช้จ่าย บัญชี และรายงาน' },
-  { key: 'ADMIN',           name: 'Admin',           description: 'สำหรับผู้ดูแลงานในบริษัท: ตั้งค่าบริษัท สาขา พนักงาน และงานประจำวันของร้าน' },
-  { key: 'MANAGER',         name: 'Manager',         description: 'สำหรับผู้จัดการ: ดูแลทีมและอนุมัติงาน เช่น ใบขอซื้อและการเบิกจ่าย' },
-  { key: 'HR',              name: 'HR',              description: 'สำหรับฝ่ายบุคคล: เพิ่ม แก้ไข และปิดบัญชีพนักงาน และกำหนดบทบาทให้พนักงานได้บางบทบาท' },
-  { key: 'SALES',           name: 'Sales',           description: 'สำหรับฝ่ายขาย: ดูแลลูกค้าและทำใบเสนอราคา' },
-  { key: 'INVENTORY',       name: 'Inventory',       description: 'สำหรับฝ่ายคลังสินค้า: รับ-จ่ายสินค้า นับและปรับสต๊อก และบันทึกรับของ' },
-  { key: 'FINANCE',         name: 'Finance',         description: 'สำหรับฝ่ายการเงิน: ออกเอกสารขาย รับเงิน จ่ายเงิน กระทบยอดธนาคาร และเตรียมภาษี' },
-  { key: 'ACCOUNTANT',      name: 'Accountant',      description: 'สำหรับฝ่ายบัญชี: ลงบัญชี ปิดงวด ทำภาษี และกระทบยอดธนาคาร' },
-  { key: 'MARKETING',       name: 'Marketing',       description: 'สำหรับฝ่ายการตลาด: ดูข้อมูลลูกค้าและรายงาน' },
-  { key: 'STAFF',           name: 'Staff',           description: 'สำหรับพนักงานทั่วไป: บันทึกค่าใช้จ่ายและขอเบิกของตัวเอง' },
-  { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: 'สำหรับผู้ตรวจสอบ: ดูข้อมูลของบริษัทเพื่อตรวจสอบโดยไม่แก้ไข' },
+  { key: 'ADMIN',           name: 'Admin',           description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.ADMIN}: ตั้งค่าบริษัท สาขา พนักงาน และงานประจำวันของร้าน` },
+  { key: 'MANAGER',         name: 'Manager',         description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.MANAGER}: ดูแลทีมและอนุมัติงาน เช่น ใบขอซื้อและการเบิกจ่าย` },
+  { key: 'HR',              name: 'HR',              description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.HR}: เพิ่ม แก้ไข และปิดบัญชีพนักงาน และกำหนดบทบาทให้พนักงานได้บางบทบาท` },
+  { key: 'SALES',           name: 'Sales',           description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.SALES}: ดูแลลูกค้าและทำใบเสนอราคา` },
+  { key: 'INVENTORY',       name: 'Inventory',       description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.INVENTORY}: รับ-จ่ายสินค้า นับและปรับสต๊อก และบันทึกรับของ` },
+  { key: 'FINANCE',         name: 'Finance',         description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.FINANCE}: ออกเอกสารขาย รับเงิน จ่ายเงิน กระทบยอดธนาคาร และเตรียมภาษี` },
+  { key: 'ACCOUNTANT',      name: 'Accountant',      description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}: ลงบัญชี ปิดงวด ทำภาษี และกระทบยอดธนาคาร` },
+  { key: 'MARKETING',       name: 'Marketing',       description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.MARKETING}: ดูข้อมูลลูกค้าและรายงาน` },
+  { key: 'STAFF',           name: 'Staff',           description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.STAFF}ทั่วไป: บันทึกค่าใช้จ่ายและขอเบิกของตัวเอง` },
+  { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.AUDITOR_READONLY}: ดูข้อมูลของบริษัทเพื่อตรวจสอบโดยไม่แก้ไข` },
   { key: 'MANGMEE_EXECUTIVE', name: 'ผู้บริหารมั่งมี', description: 'สำหรับผู้บริหารมั่งมีที่ดูรายงานผู้บริหาร' },
   { key: 'MANGMEE_EXECUTIVE_EXPORT', name: 'สิทธิ์ส่งออกรายงานสำหรับผู้บริหาร', description: 'สิทธิ์เพิ่มเติมสำหรับส่งออกรายงานผู้บริหาร' },
   { key: 'MANGMEE_EXECUTIVE_CONTACT', name: 'สิทธิ์ดูข้อมูลติดต่อสำหรับผู้บริหาร', description: 'สิทธิ์เพิ่มเติมสำหรับดูข้อมูลติดต่อเจ้าของร้านในรายงานผู้บริหาร' },

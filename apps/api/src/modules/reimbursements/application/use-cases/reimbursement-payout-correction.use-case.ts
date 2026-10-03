@@ -183,7 +183,7 @@ export class SubmitPayoutCorrectionUseCase {
           // In the words of the answer, with what the claim holds now as this transaction froze it: of an
           // account, its bank and last 4 digits. To the requester alone, whether the claim now waits for
           // its approvers or, having none, is ready for payment.
-          const notice = reimbursementPayoutAnsweredForRequesterNotice(result.answer, answeredByName, await this.repo.findClaimPayout({ ...req, ...result.columns }, tx));
+          const notice = reimbursementPayoutAnsweredForRequesterNotice(result.answer, answeredByName, await this.repo.findClaimPayout({ ...req, ...result.columns }, tx), { alsoSavedAsDefault: change.audit.savedAsDefault });
           await this.payouts.tellClaimRequester(tx, ctx.companyId, id, req.requesterUserId,
             { title: req.requestNo ? `${notice.title}: ${req.requestNo}` : notice.title, body: notice.body });
         }

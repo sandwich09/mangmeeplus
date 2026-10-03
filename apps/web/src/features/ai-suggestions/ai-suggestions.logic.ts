@@ -1,18 +1,19 @@
 // Pure helpers for the AI Suggestions review UI (item 17).
 
-import type {
-  AiCandidateActionStatus,
-  AiCandidateActionType,
-  AiReviewDecision,
-  AiRiskLevel,
-  AiSuggestionStatus,
+import {
+  AI_RISK_LEVEL_LABELS,
+  AI_SUGGESTION_NEEDS_DATA_LABEL,
+  AI_SUGGESTION_STATUS_LABELS,
+  type AiCandidateActionStatus,
+  type AiCandidateActionType,
+  type AiReviewDecision,
 } from '@watchdog-bms/contracts';
 
 export type SuggestionTab = { key: string; label: string; status?: string; needsData?: boolean };
 
 export const SUGGESTION_TABS: SuggestionTab[] = [
   { key: 'new', label: 'ใหม่', status: 'NEW' },
-  { key: 'needs_data', label: 'ต้องการข้อมูล', status: 'NEW', needsData: true },
+  { key: 'needs_data', label: AI_SUGGESTION_NEEDS_DATA_LABEL, status: 'NEW', needsData: true },
   { key: 'in_review', label: 'กำลังรีวิว', status: 'IN_REVIEW' },
   { key: 'accepted', label: 'สร้างร่างแล้ว', status: 'SOURCE_DRAFT_CREATED' },
   { key: 'blocked', label: 'ถูกบล็อก', status: 'BLOCKED_BY_SOURCE_STATE' },
@@ -32,24 +33,7 @@ export function formatConfidencePct(confidence: number | undefined): string {
   return `${Math.round((confidence ?? 0) * 100)}%`;
 }
 
-const RISK_LABELS: Record<AiRiskLevel, string> = {
-  LOW: 'ปกติ',
-  MEDIUM: 'ควรตรวจสอบ',
-  HIGH: 'ต้องระวัง',
-};
 
-const SUGGESTION_STATUS_LABELS: Record<AiSuggestionStatus, string> = {
-  NEW: 'ใหม่',
-  IN_REVIEW: 'กำลังตรวจสอบ',
-  ACCEPTED_FOR_SOURCE_DRAFT: 'อนุมัติให้สร้างร่าง',
-  SOURCE_DRAFT_CREATED: 'สร้างร่างแล้ว',
-  DISMISSED: 'ปิดแล้ว',
-  SUPERSEDED: 'มีคำแนะนำใหม่กว่า',
-  EXPIRED: 'หมดอายุ',
-  BLOCKED_BY_SOURCE_STATE: 'ข้อมูลต้นทางเปลี่ยน',
-  BLOCKED_BY_PERMISSION: 'สิทธิ์ไม่เพียงพอ',
-  FAILED: 'สร้างไม่สำเร็จ',
-};
 
 const ACTION_LABELS: Record<AiCandidateActionType, string> = {
   CREATE_CRM_FOLLOW_UP_DRAFT: 'สร้างร่างติดตามลูกค้า',
@@ -85,11 +69,11 @@ const REVIEW_DECISION_LABELS: Record<AiReviewDecision, string> = {
 const GENERIC_NEEDS_DATA_REASON = 'ระบบยังมีข้อมูลไม่พอ กรุณาตรวจสอบข้อมูลต้นทางก่อนดำเนินการต่อ';
 
 export function aiRiskLabel(value: string): string {
-  return (RISK_LABELS as Partial<Record<string, string>>)[value] ?? 'ควรตรวจสอบ';
+  return (AI_RISK_LEVEL_LABELS as Partial<Record<string, string>>)[value] ?? 'ควรตรวจสอบ';
 }
 
 export function aiSuggestionStatusLabel(value: string): string {
-  return (SUGGESTION_STATUS_LABELS as Partial<Record<string, string>>)[value] ?? 'รอตรวจสอบ';
+  return (AI_SUGGESTION_STATUS_LABELS as Partial<Record<string, string>>)[value] ?? 'รอตรวจสอบ';
 }
 
 export function aiActionLabel(value: string): string {
@@ -161,8 +145,15 @@ export function canCreateSourceDraft(
 }
 
 
-/** Code-owned usage guidance never invents an action outside the effective permission set. */
-export function permittedUsageGuidance(permissions: readonly string[]) {
+/**
+ * Code-owned usage guidance never invents an action outside the effective permission set — nor a
+ * page the company does not show: `canOpenManualExpense` is `canOpenManualWeb` of the session, and
+ * a caller that says nothing keeps the permission rule.
+ */
+export function permittedUsageGuidance(
+  permissions: readonly string[],
+  canOpenManualExpense: boolean = permissions.includes('expense.create'),
+) {
   return [
     { path: 'expenses/upload', permission: 'expense.receipt.upload', title: 'อัปโหลดใบเสร็จ', help: 'แนบเอกสาร รออ่านข้อมูล แล้วตรวจยอดและหลักฐานก่อนส่งตรวจ' },
     { path: 'expenses/manual', permission: 'expense.create', title: 'บันทึกค่าใช้จ่ายด้วยมือ', help: 'กรอกผู้รับเงิน รายการและยอด พร้อมแนบหลักฐานหรือระบุเหตุผลที่ไม่มีใบเสร็จ' },
@@ -170,5 +161,5 @@ export function permittedUsageGuidance(permissions: readonly string[]) {
     { path: 'reimbursements', permission: 'reimbursement.create', title: 'ขอเบิกคืนเงินสำรองจ่าย', help: 'เลือกเอกสารต้นทางที่รองรับ ตรวจข้อมูล แล้วส่งตามลำดับอนุมัติ' },
     { path: 'expenses/evidence', permission: 'expense.evidence.read', title: 'ตรวจหลักฐานทางบัญชี', help: 'ตรวจรายการยืนยันแล้วและความครบของหลักฐานก่อนส่งต่อบัญชี' },
     { path: 'settings/employees', permission: 'access.employee.update', title: 'จัดการพนักงาน', help: 'กำหนดบทบาทและสาขาที่พนักงานทำงานได้' },
-  ].filter((item) => permissions.includes(item.permission));
+  ].filter((item) => permissions.includes(item.permission) && (item.path !== 'expenses/manual' || canOpenManualExpense));
 }

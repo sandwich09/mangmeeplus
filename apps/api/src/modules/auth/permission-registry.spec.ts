@@ -569,3 +569,8 @@ it('executive catalog names and descriptions are plain Thai', () => {
     assert.match(text, /[ก-๙]/); assert.doesNotMatch(text, /[A-Za-z]/);
   }
 });
+
+it('standard-role descriptions name the same administrator and read-only auditor as the role labels', () => {
+  assert.ok(SYSTEM_ROLES.find((role) => role.key === 'ADMIN')!.description.includes('ผู้ดูแลบริษัท'));
+  assert.ok(SYSTEM_ROLES.find((role) => role.key === 'AUDITOR_READONLY')!.description.includes('ผู้ตรวจสอบ (ดูอย่างเดียว)'));
+});

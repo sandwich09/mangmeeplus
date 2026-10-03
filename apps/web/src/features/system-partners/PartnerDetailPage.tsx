@@ -53,6 +53,7 @@ import {
   setPartnerFeatures,
   setPartnerAiModel,
   setPartnerOcrConfig,
+  setPartnerManualExpenseWebEntry,
   setPartnerVatRegistration,
   getPartnerAiUsage,
   getPartnerMembers,
@@ -172,6 +173,9 @@ import {
   toggleMenuCard,
   toggleMenuGroup,
   toggleSubmenu,
+  manualWebEntryRow,
+  MANUAL_WEB_ENTRY_COPY,
+  MANUAL_WEB_ENTRY_SUBMENU_KEY,
   NORMALIZATION_PENDING_NOTICE,
   type Entitlement,
 } from './system-partners.logic';
@@ -858,6 +862,7 @@ function PackageMenuSection({
   companyId,
   entitlements,
   setVersion,
+  manualExpenseWebEntry,
   fieldsLocked,
   normalizationPending,
   showToast,
@@ -866,6 +871,8 @@ function PackageMenuSection({
   companyId: string;
   entitlements: PartnerFeatureEntitlementDto[];
   setVersion: number;
+  /** The stored screen setting and its own version; absent only when an older API answered. */
+  manualExpenseWebEntry?: PartnerCompanyDetailDto['manualExpenseWebEntry'];
   fieldsLocked: boolean;
   normalizationPending: boolean;
   showToast: (message: string, variant: 'success' | 'error') => void;
@@ -882,12 +889,19 @@ function PackageMenuSection({
   const [reviewOpen, setReviewOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const commandId = useRef<string | null>(null);
+  // "แสดงเมนูบันทึกด้วยมือบนเว็บ": a screen setting, not an entitlement. Its value, version and saving
+  // state live apart from `pending`, and it is saved by its own command the moment it is pressed.
+  const [webEntry, setWebEntry] = useState(manualExpenseWebEntry);
+  const [webEntrySaving, setWebEntrySaving] = useState(false);
+  const { confirm, confirmDialog } = useConfirm();
 
   useEffect(() => {
     setPending(entitlements.map(({ featureKey, enabled }) => ({ featureKey, enabled })));
     setReviewOpen(false);
     commandId.current = null;
   }, [entitlements]);
+
+  useEffect(() => { setWebEntry(manualExpenseWebEntry); }, [manualExpenseWebEntry?.enabled, manualExpenseWebEntry?.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cards = buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, pending);
   const filteredCards = filterMenuCards(cards, search);
@@ -937,6 +951,39 @@ function PackageMenuSection({
 
   const updateAutoPost = (next: boolean) => {
     updatePending(toggleSubmenu(pending, 'expense_auto_post', next));
+  };
+
+  // From the SAVED rows on purpose: a parent feature the operator has switched but not saved yet
+  // changes nothing for the shop, so it changes nothing here either.
+  const webEntryRow = manualWebEntryRow(entitlements, webEntry ?? { enabled: false }, fieldsLocked);
+
+  const toggleManualWebEntry = async () => {
+    if (!webEntry || webEntrySaving) return;
+    const next = !webEntry.enabled;
+    const lines = webEntryRow.confirmLines(next);
+    if (lines.length > 0 && !(await confirm({
+      message: <>{lines.map((line, index) => (
+        <span key={line} className={index === 0 ? 'block' : 'mt-3 block font-semibold text-amber-800'}>{line}</span>
+      ))}</>,
+      confirmLabel: MANUAL_WEB_ENTRY_COPY.confirmHideLabel, cancelLabel: MANUAL_WEB_ENTRY_COPY.cancelHideLabel,
+    }))) return;
+    setWebEntrySaving(true);
+    try {
+      const saved = await setPartnerManualExpenseWebEntry(companyId, { enabled: next, expectedVersion: webEntry.version });
+      // Kept here rather than reloading the detail: a reload would reset the package changes the
+      // operator has made and not saved yet, and this setting is no part of them.
+      setWebEntry(saved);
+      showToast(saved.enabled ? MANUAL_WEB_ENTRY_COPY.savedShown : MANUAL_WEB_ENTRY_COPY.savedHidden, 'success');
+    } catch (err) {
+      showToast(apiErrorMessage(err), 'error');
+      // Somebody else changed it first: show what is stored now, again without touching `pending`.
+      if ((err as { status?: number }).status === 409) {
+        const latest = await getPartnerDetail(companyId).catch(() => null);
+        if (latest?.manualExpenseWebEntry) setWebEntry(latest.manualExpenseWebEntry);
+      }
+    } finally {
+      setWebEntrySaving(false);
+    }
   };
 
   const saveChanges = async () => {
@@ -1057,6 +1104,7 @@ function PackageMenuSection({
           </details>
         )}
       </Modal>
+      {confirmDialog}
 
       <section className="mangmee-card">
         <div className="mangmee-card-header flex flex-wrap items-start justify-between gap-4">
@@ -1088,7 +1136,7 @@ function PackageMenuSection({
             </span>
           </div>
           <p className="mt-2 text-xs leading-5 text-gray-500">
-            {featurePackageEditingNotice(controlsLocked)}
+            {featurePackageEditingNotice(controlsLocked, Boolean(webEntry) && webEntryRow.editable)}
           </p>
         </div>
 
@@ -1220,10 +1268,12 @@ function PackageMenuSection({
 
                         {card.submenus.length > 0 && (
                           <div className="border-t border-gray-100 px-4 py-3">
+                            {/* Opening the list is reading, not editing: it stays available while the
+                                entitlement switches are locked, or a shop whose rows are still being
+                                prepared could never reach the screen setting under "บันทึกด้วยมือ". */}
                             <button
                               type="button"
-                              className="mangmee-badge mangmee-badge-brand disabled:opacity-50"
-                              disabled={controlsLocked}
+                              className="mangmee-badge mangmee-badge-brand"
                               aria-expanded={expanded}
                               aria-controls={`submenus-${card.navKey}`}
                               onClick={() => setExpandedKeys((current) => (
@@ -1255,7 +1305,8 @@ function PackageMenuSection({
                                     ? disableBlockForChange(entitlements, next, entitlements)
                                     : null;
                                   return (
-                                    <div key={submenu.key} className="flex items-start gap-3 py-3">
+                                    <div key={submenu.key} className="py-3">
+                                    <div className="flex items-start gap-3">
                                       <div className="min-w-0 flex-1">
                                         <p className="text-sm font-bold text-gray-800">{submenu.labelTh}</p>
                                         <p className="mt-0.5 text-xs leading-5 text-gray-500">
@@ -1281,6 +1332,33 @@ function PackageMenuSection({
                                         label={`${submenu.enabled ? 'ปิด' : 'เปิด'}เมนู ${submenu.labelTh}`}
                                         onClick={() => updatePending(next)}
                                       />
+                                    </div>
+                                    {submenu.key === MANUAL_WEB_ENTRY_SUBMENU_KEY && webEntry && (
+                                      <div className="mt-2 rounded-lg border border-gray-200 bg-white p-3 sm:ml-4">
+                                        <div className="flex items-center gap-3">
+                                          <p className="min-w-0 flex-1 text-sm font-bold text-gray-800">{MANUAL_WEB_ENTRY_COPY.label}</p>
+                                          <span className={`shrink-0 text-xs font-bold ${webEntryRow.shown ? 'text-brand-700' : 'text-gray-500'}`}>
+                                            {webEntryRow.shown ? MANUAL_WEB_ENTRY_COPY.shown : MANUAL_WEB_ENTRY_COPY.notShown}
+                                          </span>
+                                          <EntitlementSwitch
+                                            checked={webEntryRow.shown}
+                                            disabled={webEntrySaving || !webEntryRow.editable}
+                                            disabledReason={webEntryRow.parentOffMessage ?? undefined}
+                                            label={MANUAL_WEB_ENTRY_COPY.label}
+                                            onClick={() => void toggleManualWebEntry()}
+                                          />
+                                        </div>
+                                        <p className="mt-1 text-xs leading-5 text-gray-500">{MANUAL_WEB_ENTRY_COPY.description}</p>
+                                        {webEntryRow.parentOffMessage && (
+                                          <p className="mt-2 text-xs font-medium leading-5 text-amber-700">{webEntryRow.parentOffMessage}</p>
+                                        )}
+                                        {webEntryRow.uploadOffNote && (
+                                          <p role="note" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-900">
+                                            {webEntryRow.uploadOffNote}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
                                     </div>
                                   );
                                 })}
@@ -3594,7 +3672,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
         <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 text-sm text-gray-600">ข้อมูลอ้างอิงบริษัท</summary><dl className="grid gap-4 py-3 sm:grid-cols-3"><ReadOnlyField label="รหัสบริษัท" value={detail.id}/><ReadOnlyField label="วันที่เปิดใช้งาน" value={formatDate(detail.activatedAt)}/><ReadOnlyField label="วันที่ปิดใช้งาน" value={formatDate(detail.disabledAt)}/></dl></details>
       </section>}
       {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} canManageMembers={canManageMembers} showToast={showToast}/></section>}
-      {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
+      {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} manualExpenseWebEntry={detail.manualExpenseWebEntry} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
       {opened('ai')&&<section hidden={view!=='ai'} aria-label="เครดิต AI และอ่านรูปของบริษัท" className="space-y-5"><p className="text-gray-600">ดูว่าเงื่อนไขไหนใช้กับร้านนี้ ปรับเครดิตแชต จำนวนอ่านรูป และเพดานความปลอดภัย ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
         <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
         <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปลี่ยนรุ่น AI ของบริษัท</summary>

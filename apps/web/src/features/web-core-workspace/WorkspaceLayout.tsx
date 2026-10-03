@@ -32,6 +32,7 @@ import { MenuFilterProvider } from './MenuFilterScope';
 import { NotificationBell } from '@/features/dashboard-notifications/NotificationBell';
 import { ACCESS_CONTEXT_STALE_EVENT } from '@/common/api/authed-fetch';
 import { checklistIsComplete } from '@/features/company-profile/company-profile.logic';
+import { canOpenManualWeb } from '@/features/expenses/manual-expense-entry.logic';
 import { useProfileChecklist } from '@/features/company-profile/use-profile-checklist';
 
 type Props = {
@@ -243,9 +244,12 @@ function BusinessWorkspaceLayout({ children, companyId, session, notice = null }
     [session.permissions],
   );
 
+  // A company setting, not a permission: it reaches the sidebar through the same predicate as every
+  // other entrance to the manual expense page, and the fingerprint above refreshes it in open tabs.
+  const canOpenManual = canOpenManualWeb(session, companyId);
   const allNavItems = useMemo(
-    () => buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles),
-    [filteredModules, companyId, locale, session.permissions, session.roles],
+    () => buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles, canOpenManual),
+    [filteredModules, companyId, locale, session.permissions, session.roles, canOpenManual],
   );
 
   // §15.4.1 E: the Owner asked for a mark on ตั้งค่าบริษัท "จนกว่าจะตั้งครบ". Only the holder of the

@@ -1,4 +1,4 @@
-import { removeSubstituteReceiptDisplayMetadata } from '@watchdog-bms/contracts';
+import { removeSubstituteReceiptDisplayMetadata, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
 
@@ -30,9 +30,11 @@ const EVIDENCE_PURPOSE_LABELS: Record<string, string> = {
   'expense.receipt.supporting': 'หลักฐานประกอบ',
   'expense.payment.evidence': 'หลักฐานการจ่ายเงิน',
 };
+// Old (schema 1) snapshots kept a role key as the signer's position. They can still be rendered (an approval or a
+// historical copy), so the key prints as the one list names that role; stored documents are never rewritten.
 const POSITION_LABELS: Record<string, string> = {
-  admin: 'ผู้ดูแลระบบ', owner: 'เจ้าของกิจการ', manager: 'ผู้จัดการ', staff: 'พนักงาน',
-  finance: 'ฝ่ายการเงิน', accountant: 'นักบัญชี',
+  admin: THAI_SYSTEM_ROLE_NAMES.ADMIN, owner: THAI_SYSTEM_ROLE_NAMES.OWNER, manager: THAI_SYSTEM_ROLE_NAMES.MANAGER,
+  staff: THAI_SYSTEM_ROLE_NAMES.STAFF, finance: THAI_SYSTEM_ROLE_NAMES.FINANCE, accountant: THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT,
 };
 
 export type SubstituteReceiptEvidenceRef = {
@@ -176,7 +178,7 @@ export function renderSubstituteReceiptSvg(
   payerSignatureDataUrl?: string,
   approver?: SubstituteReceiptApprover,
   approverSignatureDataUrl?: string,
-  options: { unsignedForm?: boolean; paperForm?: boolean } = {},
+  options: { unsignedForm?: boolean; paperForm?: boolean; approverIsOwner?: boolean } = {},
 ): Buffer {
   if (payerSignatureDataUrl) assertSignatureDataUrl(payerSignatureDataUrl);
   if (approver && !approverSignatureDataUrl) throw new Error('Approver signature is required.');
@@ -245,6 +247,11 @@ export function renderSubstituteReceiptSvg(
   }
   const signaturesStart = evidenceY + 58;
   const selfSigned = Boolean(approver?.userId && approver.userId === snapshot.payer.userId);
+  // OWNER_SELF also lets an admin or a manager sign both lines: the owner is named only when the approval
+  // checked that role, anyone else by the name printed under the approver's signature.
+  const selfSignedNote = options.approverIsOwner
+    ? 'ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ'
+    : `ลงนามโดย ${approver?.name ?? ''} ในฐานะผู้จ่ายเงินและผู้อนุมัติ`;
   const height = signaturesStart + 220 + (selfSigned ? 28 : 0);
   // The PDF renderer maps these SVG-space positions to raster rows and prefers them over its
   // legacy low-ink fallback. They are boundaries between logical blocks, never arbitrary text rows.
@@ -322,7 +329,7 @@ export function renderSubstituteReceiptSvg(
     <text x="240" y="${signaturesStart + 140}" text-anchor="middle">${xml(snapshot.payer.roleLabel ?? 'ผู้จ่ายเงิน/ผู้รับรอง')}${payerSignatureDataUrl ? ` · ${xml(formatDate(snapshot.payer.certifiedAt))}` : ' · รอลงนาม'}</text>
     ${approverBlock}
     `}
-    ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555">ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ</text>` : ''}
+    ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555"${fitToWidth(selfSignedNote, 760)}>${xml(selfSignedNote)}</text>` : ''}
   </g>
 </svg>`;
   return Buffer.from(svg, 'utf8');

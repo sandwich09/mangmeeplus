@@ -100,6 +100,16 @@ export type ReportFreshnessDto = {
   staleReason?: string;
 };
 
+/** The report page's freshness card and the report rows that carry a freshness use these words. */
+export const REPORT_FRESHNESS_LABELS: Record<ReportFreshnessDto['freshnessStatus'], string> = {
+  fresh: 'ข้อมูลล่าสุด',
+  stale: 'ข้อมูลอาจไม่ล่าสุด',
+  unknown: 'ยังตรวจเวลาอัปเดตไม่ได้',
+};
+
+/** Report rows and amounts: the baht has a Thai word; another currency keeps its code, as on every other page. */
+export const REPORT_CURRENCY_WORDS: Readonly<Record<string, string>> = { THB: 'บาท' };
+
 export type ReportChartDto = {
   kind: ReportChartKind;
   labels: string[];

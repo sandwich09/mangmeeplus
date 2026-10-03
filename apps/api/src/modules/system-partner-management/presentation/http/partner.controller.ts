@@ -53,6 +53,7 @@ import { PartnerLifecycleTransitionUseCase } from '../../application/use-cases/p
 import { SetPartnerFeaturesUseCase } from '../../application/use-cases/set-partner-features.use-case';
 import { SetPartnerAiModelUseCase } from '../../application/use-cases/set-partner-ai-model.use-case';
 import { SetPartnerOcrConfigUseCase } from '../../application/use-cases/set-partner-ocr-config.use-case';
+import { SetPartnerManualExpenseWebEntryUseCase } from '../../application/use-cases/set-partner-manual-expense-web-entry.use-case';
 import { GetPartnerAiUsageUseCase } from '../../application/use-cases/get-partner-ai-usage.use-case';
 import { ListPartnerMembersUseCase } from '../../application/use-cases/list-partner-members.use-case';
 import { PartnerMemberLineUnlinkUseCase } from '../../application/use-cases/partner-member-line-unlink.use-case';
@@ -184,6 +185,13 @@ export class SetOcrConfigBodyDto {
   @Type(() => Number) @IsInt() @Min(0) expectedVersion!: number;
 }
 
+// Absolute desired state with the setting's own CAS version. No reason field: this is a screen
+// setting, not a quota or an entitlement, and the console confirms before hiding.
+export class SetManualExpenseWebEntryBodyDto {
+  @IsBoolean() enabled!: boolean;
+  @IsInt() @Min(0) expectedVersion!: number;
+}
+
 export class PartnerAiAdjustmentHistoryQueryDto {
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(100) cursor?: string;
 }
@@ -267,6 +275,7 @@ export class PartnerController {
     private readonly setOwnerName: SetPartnerOwnerNameUseCase,
     private readonly updateIdentity: UpdatePartnerIdentityUseCase,
     private readonly listThaiAddresses: ListThaiAddressesUseCase,
+    private readonly setManualExpenseWebEntryUseCase: SetPartnerManualExpenseWebEntryUseCase,
   ) {}
 
   @Get()
@@ -576,6 +585,28 @@ export class PartnerController {
       enabled: dto.enabled,
       ...(dto.receiptQuotaEnforced !== undefined ? { receiptQuotaEnforced: dto.receiptQuotaEnforced } : {}),
       monthlyLimit: dto.monthlyLimit,
+      expectedVersion: dto.expectedVersion,
+      requestingAdminUserId: req.context.userId,
+      requestId: req.context.requestId,
+    });
+  }
+
+  // A screen setting shown under the manual-expense feature row, so it rides the feature-management
+  // key — but it is NOT part of the feature command: its own version, no entitlement row, no setVersion.
+  @Put(':partnerCompanyId/manual-expense-web-entry')
+  @RequirePermissions('system.partner_feature.manage')
+  @ApiOperation({ summary: 'Show or hide the web entrances to the manual expense page for one partner company' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 409, description: 'The setting changed after the operator loaded it; reload before saving' })
+  @ApiResponse({ status: 422, description: 'Company is DISABLED/ARCHIVED — metadata is read-only' })
+  setManualExpenseWebEntry(
+    @Param('partnerCompanyId') companyId: string,
+    @Body() dto: SetManualExpenseWebEntryBodyDto,
+    @Req() req: AuthedRequest,
+  ) {
+    return this.setManualExpenseWebEntryUseCase.execute({
+      companyId,
+      enabled: dto.enabled,
       expectedVersion: dto.expectedVersion,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,

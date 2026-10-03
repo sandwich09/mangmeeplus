@@ -7,7 +7,7 @@
 // because the claim moved on (409) also has the page read the claim again, so what is under the form is true.
 
 import { useEffect, useRef, useState } from 'react';
-import { REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE, REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
 import { cx } from '@/common/components/mangmee';
 import { sanitizeReasonInput } from '@/common/forms/sanitize';
 import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
@@ -225,7 +225,7 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       <div role="radiogroup" aria-label="รับเงินคืนทาง" aria-required className="space-y-2">
         {defaultAccount && offers('DEFAULT') && option('DEFAULT', forSelf ? 'ใช้บัญชีรับเงินคืนประจำของฉัน' : 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', payoutAccountWithName(defaultAccount))}
         {offers('CASH') && option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
-        {typingOffered && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย')}
+        {typingOffered && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE)}
         {previousAccount && offers('PREVIOUS') && option('PREVIOUS', PAYOUT_CORRECTION_PREVIOUS_LABEL, `${payoutCorrectionAccountText(previousAccount)} · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง`)}
       </div>
       {/* Known before anyone typed: said as what the form is, not as something that went wrong. */}

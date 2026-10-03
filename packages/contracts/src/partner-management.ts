@@ -152,9 +152,29 @@ export type PartnerCompanyDetailDto = {
    * refused (`company_entitlement_normalization_pending`). The package screen renders read-only.
    */
   entitlementNormalizationPending: boolean;
+  /** Always present, also for a company that has no stored row (it then carries the default and version 0). */
+  manualExpenseWebEntry: PartnerManualExpenseWebEntryDto;
   planState?: PlanTermState;
   lockReason?: PlanTermLockReason;
   reportLabels: PartnerReportLabelsDto;
+};
+
+/**
+ * "แสดงเมนูบันทึกด้วยมือบนเว็บ": a per-company screen setting shown under the manual-expense feature.
+ * It hides or shows the web entrances to the manual expense page and is NOT an entitlement — it is
+ * saved by its own command, outside the feature command and its `setVersion`.
+ */
+export type PartnerManualExpenseWebEntryDto = {
+  enabled: boolean;
+  /** The setting's own CAS version: 0 until the first change, then +1 per real change. */
+  version: number;
+};
+
+/** Absolute desired state; sending the value the company already has is a no-op. */
+export type SetPartnerManualExpenseWebEntryDto = {
+  enabled: boolean;
+  /** `version` from the latest partner detail read. */
+  expectedVersion: number;
 };
 
 export type PartnerMembershipStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED' | 'DISABLED';

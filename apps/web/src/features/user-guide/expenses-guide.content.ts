@@ -1,4 +1,5 @@
-import type { GuideLink, UserGuide } from './user-guide.model';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { GUIDE_MISSING_MENU_HELP, GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user-guide.model';
 
 /**
  * คู่มือผู้ใช้: ค่าใช้จ่ายและใบเสร็จ — เนื้อหาชุดเดียวกับคู่มือฉบับ .docx (ฉบับที่ 1.0)
@@ -13,6 +14,9 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
   const link = (allowed: boolean, label: string, href: string): GuideLink | undefined =>
     (allowed ? { label, href } : undefined);
   const canRead = has('expense.read', 'expense.read_own');
+  // Default holders in ROLE_GRANTS: expense.review → reviewers; expense.confirm and expense.category.manage → confirmers.
+  const reviewers = [THAI_SYSTEM_ROLE_NAMES.OWNER, THAI_SYSTEM_ROLE_NAMES.ADMIN, THAI_SYSTEM_ROLE_NAMES.MANAGER, THAI_SYSTEM_ROLE_NAMES.FINANCE].join(', ');
+  const confirmers = [THAI_SYSTEM_ROLE_NAMES.OWNER, THAI_SYSTEM_ROLE_NAMES.ADMIN, THAI_SYSTEM_ROLE_NAMES.FINANCE].join(', ');
 
   return {
     key: 'expenses',
@@ -33,7 +37,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             items: [
               {
                 title: 'เมนูนี้ใช้ทำอะไร',
-                detail: 'รวมรายจ่ายไว้ที่เดียว เริ่มจากอัปโหลดใบเสร็จหรือบันทึกเอง โดยเลือกสาขาที่เป็นเจ้าของรายการก่อน',
+                detail: 'รวมรายจ่ายไว้ที่เดียว เริ่มจากอัปโหลดใบเสร็จหรือบันทึกเอง (เมื่อเปิดใช้สำหรับร้านของคุณ) โดยเลือกสาขาที่เป็นเจ้าของรายการก่อน',
                 link: link(canRead, 'เปิดรายการค่าใช้จ่าย', expenses),
               },
             ],
@@ -43,14 +47,14 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             headers: ['หน้าที่ของผู้อ่าน', 'หัวข้อที่ควรอ่าน'],
             rows: [
               ['พนักงานผู้บันทึกค่าใช้จ่าย', 'หัวข้อ 1, 2, 4 และ 5'],
-              ['ฝ่ายบัญชีและการเงิน', 'หัวข้อ 1, 2, 3, 5, 6 และ 7'],
-              ['ผู้จัดการและเจ้าของกิจการ', 'หัวข้อ 1, 2, 6 และ 7'],
+              [`${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}และ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`, 'หัวข้อ 1, 2, 3, 5, 6 และ 7'],
+              [`${THAI_SYSTEM_ROLE_NAMES.MANAGER}และ${THAI_SYSTEM_ROLE_NAMES.OWNER}`, 'หัวข้อ 1, 2, 6 และ 7'],
             ],
           },
           {
             kind: 'steps',
             steps: [
-              { title: 'นำเข้าระบบ', detail: 'เลือกสาขาที่ต้องการบันทึก แล้วอัปโหลดใบเสร็จให้ AI อ่าน หรือบันทึกด้วยมือ' },
+              { title: 'นำเข้าระบบ', detail: 'เลือกสาขาที่ต้องการบันทึก แล้วอัปโหลดใบเสร็จให้ AI อ่าน หรือบันทึกด้วยมือ (เมื่อเปิดใช้สำหรับร้านของคุณ)' },
               { title: 'ระบบสร้างเป็นฉบับร่าง', detail: 'ยังแก้ไขได้ และยังไม่ถือเป็นค่าใช้จ่ายทางบัญชี' },
               { title: 'ตรวจความครบถ้วน', detail: 'ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ ยอดเงิน VAT และไฟล์แนบ' },
               { title: 'ยืนยันเอกสาร', detail: 'เมื่อยืนยันแล้วจะแก้ไขไม่ได้ หากผิดต้องยกเลิกแล้วบันทึกใหม่' },
@@ -62,8 +66,8 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             headers: ['สถานะเอกสาร', 'ความหมาย', 'ผู้ที่ต้องดำเนินการต่อ'],
             rows: [
               ['ฉบับร่าง', 'บันทึกไว้แล้วแต่ยังไม่ได้ตรวจ ยังแก้ไขและลบได้', 'ผู้บันทึก'],
-              ['รอตรวจสอบ', 'ข้อมูลเข้าระบบแล้ว รอผู้มีสิทธิ์ตรวจความครบถ้วน', 'ฝ่ายบัญชี'],
-              ['พร้อมยืนยัน', 'ตรวจครบทุกข้อแล้ว รอกดยืนยัน', 'ฝ่ายบัญชี'],
+              ['รอตรวจสอบ', 'ข้อมูลเข้าระบบแล้ว รอผู้มีสิทธิ์ตรวจความครบถ้วน', `ผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย เช่น ${reviewers}`],
+              ['พร้อมยืนยัน', 'ตรวจครบทุกข้อแล้ว รอกดยืนยัน', `ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย เช่น ${confirmers}`],
               ['ยืนยันแล้ว', 'ใช้เป็นหลักฐานทางบัญชีได้ และแก้ไขไม่ได้อีก', 'ส่งออกชุดหลักฐานให้สำนักงานบัญชี'],
               ['ปฏิเสธ', 'ตรวจแล้วไม่ผ่าน พร้อมเหตุผลที่ผู้บันทึกอ่านได้', 'ผู้บันทึก (แก้ไขแล้วส่งใหม่)'],
             ],
@@ -79,7 +83,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
       {
         id: 'submenus',
         title: 'เมนูย่อยทั้ง 8 รายการ',
-        summary: 'แต่ละเมนูย่อยมีหน้าที่ต่างกัน และแสดงเฉพาะรายการที่บัญชีของคุณมีสิทธิ์ใช้',
+        summary: 'แต่ละเมนูย่อยมีหน้าที่ต่างกัน และแสดงเฉพาะรายการที่บัญชีของคุณมีสิทธิ์ใช้ ส่วนบันทึกด้วยมือแสดงเมื่อเปิดใช้สำหรับร้านของคุณด้วย',
         iconKey: 'GroupIcon',
         tone: 'sky',
         blocks: [
@@ -88,13 +92,13 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             headers: ['เมนูย่อย', 'ใช้ทำอะไร', 'ใครใช้เป็นหลัก'],
             rows: [
               ['รายการค่าใช้จ่าย', 'ดูเอกสารทั้งหมด ค้นหา กรองตามสถานะ และเปิดตรวจรายละเอียด', 'ทุกฝ่าย'],
-              ['อัปโหลดใบเสร็จ', 'ส่งรูปใบเสร็จให้ AI อ่านข้อมูลอัตโนมัติ แล้วสร้างเป็นฉบับร่าง', 'พนักงาน, ฝ่ายบัญชี'],
-              ['บันทึกด้วยมือ', 'บันทึกรายละเอียดค่าใช้จ่ายด้วยตนเอง พร้อมระบุ VAT และภาษีหัก ณ ที่จ่ายตามเอกสาร', 'ฝ่ายบัญชี'],
-              ['หมวดหมู่', 'จัดกลุ่มค่าใช้จ่ายเพื่อออกรายงานและลงบัญชี', 'ฝ่ายบัญชี, เจ้าของกิจการ'],
-              ['ใบรับรองแทนใบเสร็จ', 'ทำเอกสารแทนใบเสร็จเมื่อผู้รับเงินออกใบเสร็จให้ไม่ได้ (มีคู่มือแยกเล่ม)', 'ฝ่ายบัญชี'],
-              ['ตั้งค่าใบรับรองแทนใบเสร็จ', 'กำหนดรูปแบบการอนุมัติและหลักฐานที่ต้องแนบ', 'เจ้าของกิจการ, ผู้ดูแลระบบ'],
+              ['อัปโหลดใบเสร็จ', 'ส่งรูปใบเสร็จให้ AI อ่านข้อมูลอัตโนมัติ แล้วสร้างเป็นฉบับร่าง', `พนักงาน, ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}`],
+              ['บันทึกด้วยมือ', 'บันทึกรายละเอียดค่าใช้จ่ายด้วยตนเอง พร้อมระบุ VAT และภาษีหัก ณ ที่จ่ายตามเอกสาร', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
+              ['หมวดหมู่', 'จัดกลุ่มค่าใช้จ่ายเพื่อออกรายงานและลงบัญชี', confirmers],
+              ['ใบรับรองแทนใบเสร็จ', 'ทำเอกสารแทนใบเสร็จเมื่อผู้รับเงินออกใบเสร็จให้ไม่ได้ (มีคู่มือแยกเล่ม)', reviewers],
+              ['ตั้งค่าใบรับรองแทนใบเสร็จ', 'กำหนดรูปแบบการอนุมัติและหลักฐานที่ต้องแนบ', `${THAI_SYSTEM_ROLE_NAMES.OWNER}, ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`],
               ['ลายเซ็นของฉัน', 'บันทึกลายเซ็นเพื่อใช้ลงนามเอกสารตามสิทธิ์', 'ผู้ลงนาม'],
-              ['หลักฐานทางบัญชี', 'ตรวจเอกสารที่ยืนยันแล้วให้ครบ แล้วส่งชุดเอกสารให้สำนักงานบัญชี', 'ฝ่ายบัญชี'],
+              ['หลักฐานทางบัญชี', 'ตรวจเอกสารที่ยืนยันแล้วให้ครบ แล้วส่งชุดเอกสารให้สำนักงานบัญชี', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
             ],
           },
         ],
@@ -212,7 +216,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
               },
               {
                 title: 'กรณีไม่มีใบเสร็จ',
-                detail: 'ที่ท้ายหน้ามีลิงก์สำหรับบันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับเงิน ใช้เมื่อจ่ายเงินไปจริงแต่ผู้รับเงินออกใบเสร็จให้ไม่ได้',
+                detail: 'ผู้มีสิทธิ์สร้างและตรวจสอบค่าใช้จ่ายจะเห็นลิงก์ที่ท้ายหน้าสำหรับบันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับเงิน ใช้เมื่อจ่ายเงินไปจริงแต่ผู้รับเงินออกใบเสร็จให้ไม่ได้',
               },
             ],
           },
@@ -227,7 +231,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
       {
         id: 'manual',
         title: 'บันทึกด้วยมือ',
-        summary: 'ใช้เมื่อต้องการควบคุมรายละเอียดด้วยตนเอง เช่น บิลหลายรายการ มีส่วนลด หรือมีค่าบริการแยก',
+        summary: 'ใช้ได้เมื่อเปิดใช้สำหรับร้านของคุณ เหมาะเมื่อต้องการควบคุมรายละเอียดด้วยตนเอง เช่น บิลหลายรายการ มีส่วนลด หรือมีค่าบริการแยก',
         iconKey: 'PlusIcon',
         tone: 'amber',
         blocks: [
@@ -268,7 +272,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
       {
         id: 'categories',
         title: 'หมวดหมู่',
-        summary: 'จัดกลุ่มค่าใช้จ่ายเพื่อออกรายงานและลงบัญชี สำหรับฝ่ายบัญชีและเจ้าของกิจการ',
+        summary: `จัดกลุ่มค่าใช้จ่ายเพื่อออกรายงานและลงบัญชี สำหรับ${THAI_SYSTEM_ROLE_NAMES.OWNER} ${THAI_SYSTEM_ROLE_NAMES.ADMIN} และ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`,
         iconKey: 'TagIcon',
         tone: 'lime',
         blocks: [
@@ -298,7 +302,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             kind: 'note',
             tone: 'info',
             title: 'AI เลือกได้เฉพาะหมวดที่เปิดใช้งาน',
-            detail: 'ระบบไม่อนุญาตให้ AI สร้างหรือแก้ไขหมวดหมู่ด้วยตนเอง AI จะเลือกได้เฉพาะจากหมวดที่บริษัทเปิดใช้งานไว้เท่านั้น การจัดหมวดจึงยังอยู่ในความควบคุมของฝ่ายบัญชีเสมอ',
+            detail: `ระบบไม่อนุญาตให้ AI สร้างหรือแก้ไขหมวดหมู่ด้วยตนเอง AI จะเลือกได้เฉพาะจากหมวดที่บริษัทเปิดใช้งานไว้เท่านั้น การจัดหมวดจึงยังอยู่ในความควบคุมของผู้มีสิทธิ์จัดการหมวดหมู่เสมอ เช่น ${THAI_SYSTEM_ROLE_NAMES.OWNER} ${THAI_SYSTEM_ROLE_NAMES.ADMIN} และ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`,
           },
         ],
       },
@@ -348,7 +352,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
       {
         id: 'permissions',
         title: 'สิทธิ์ที่ต้องมี',
-        summary: 'ใช้ตารางนี้อ้างอิงเมื่อต้องแจ้งผู้ดูแลระบบขอเปิดสิทธิ์เพิ่ม',
+        summary: GUIDE_PERMISSION_REQUEST,
         iconKey: 'UserIcon',
         tone: 'slate',
         blocks: [
@@ -356,13 +360,13 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             kind: 'table',
             headers: ['สิ่งที่ต้องการทำ', 'สิทธิ์ที่ต้องมี', 'บทบาทที่มักได้รับ'],
             rows: [
-              ['เปิดดูรายการค่าใช้จ่ายของบริษัท', 'ดูค่าใช้จ่าย', 'ฝ่ายบัญชี, การเงิน, ผู้จัดการ, เจ้าของกิจการ'],
+              ['เปิดดูรายการค่าใช้จ่ายของบริษัท', 'ดูค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.FINANCE}, ${THAI_SYSTEM_ROLE_NAMES.MANAGER}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
               ['เปิดดูเฉพาะรายการของตนเอง', 'ดูค่าใช้จ่ายของตนเอง', 'พนักงานทุกคน'],
-              ['อัปโหลดใบเสร็จให้ AI อ่าน', 'อัปโหลดใบเสร็จ', 'พนักงาน, ฝ่ายบัญชี'],
-              ['บันทึกค่าใช้จ่ายด้วยมือ', 'สร้างค่าใช้จ่าย', 'ฝ่ายบัญชี, การเงิน'],
-              ['ตรวจความครบถ้วนและยืนยันเอกสาร', 'ตรวจสอบและยืนยันค่าใช้จ่าย', 'ฝ่ายบัญชี, เจ้าของกิจการ'],
-              ['เพิ่มหรือแก้ไขหมวดหมู่', 'จัดการหมวดหมู่ค่าใช้จ่าย', 'ฝ่ายบัญชี, เจ้าของกิจการ'],
-              ['เปิดหน้าหลักฐานทางบัญชี', 'ดูหลักฐานทางบัญชี', 'ฝ่ายบัญชี, เจ้าของกิจการ'],
+              ['อัปโหลดใบเสร็จให้ AI อ่าน', 'อัปโหลดใบเสร็จ', `พนักงาน, ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}`],
+              ['บันทึกค่าใช้จ่ายด้วยมือ', 'สร้างค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`],
+              ['ตรวจความครบถ้วนและยืนยันเอกสาร', 'ตรวจสอบและยืนยันค่าใช้จ่าย', confirmers],
+              ['เพิ่มหรือแก้ไขหมวดหมู่', 'จัดการหมวดหมู่ค่าใช้จ่าย', confirmers],
+              ['เปิดหน้าหลักฐานทางบัญชี', 'ดูหลักฐานทางบัญชี', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
             ],
           },
         ],
@@ -379,7 +383,8 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             items: [
               {
                 question: 'ไม่พบเมนูย่อยบางรายการในแถบเมนูซ้าย',
-                answer: 'บัญชีของคุณยังไม่มีสิทธิ์ใช้เมนูนั้น ให้ติดต่อผู้ดูแลระบบ โดยอ้างอิงตารางในหัวข้อ “สิทธิ์ที่ต้องมี”',
+                // The shared answer, and the one menu a shop sees only once it is switched on for that shop.
+                answer: `${GUIDE_MISSING_MENU_HELP} ส่วนเมนูบันทึกด้วยมือต้องเปิดใช้สำหรับร้านของคุณด้วย จึงจะแสดง`,
               },
               {
                 question: 'อัปโหลดใบเสร็จแล้วข้อมูลที่ AI อ่านได้ไม่ครบ',

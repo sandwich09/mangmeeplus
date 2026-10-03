@@ -1,10 +1,13 @@
-import type { GuideLink, UserGuide } from './user-guide.model';
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user-guide.model';
 
 /**
  * คู่มือผู้ใช้: ภาษี — เนื้อหาชุดเดียวกับคู่มือฉบับ .docx (ฉบับที่ 1.0)
  * เนื้อหาอ้างอิงหน้าจอจริงของเมนู การเงินและบัญชี › ภาษี
  */
 export function buildTaxGuide(companyId: string, permissions: readonly string[] = []): UserGuide {
+  const exporters = ['OWNER', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY'] as const;
+  const exporterNames = exporters.map((role) => THAI_SYSTEM_ROLE_NAMES[role]).join(' หรือ');
   const tax = `/companies/${companyId}/tax`;
   const canRead = ['tax.profile.read', 'tax.config.read', 'tax.period.read', 'tax.event.read', 'tax.report.read']
     .some((key) => permissions.includes(key));
@@ -93,7 +96,7 @@ export function buildTaxGuide(companyId: string, permissions: readonly string[] 
               },
               {
                 title: 'การส่งออกข้อมูล 4 รูปแบบ',
-                detail: 'Export REVIEW_JSON เป็นไฟล์ข้อมูลดิบพร้อมผลการตรวจ สำหรับให้ผู้ทำบัญชีหรือผู้ดูแลระบบตรวจเชิงลึก ไม่เหมาะกับการเปิดอ่านทั่วไป · Export CSV และ Export XLSX สำหรับส่งสำนักงานบัญชี · Export PDF สำหรับพิมพ์เก็บเข้าแฟ้ม',
+                detail: `Export REVIEW_JSON เป็นไฟล์ข้อมูลดิบพร้อมผลการตรวจ สำหรับให้${exporterNames}ตรวจเชิงลึก ไม่เหมาะกับการเปิดอ่านทั่วไป · Export CSV และ Export XLSX สำหรับส่งสำนักงานบัญชี · Export PDF สำหรับพิมพ์เก็บเข้าแฟ้ม`,
               },
             ],
           },
@@ -158,7 +161,7 @@ export function buildTaxGuide(companyId: string, permissions: readonly string[] 
       {
         id: 'permissions',
         title: 'สิทธิ์ที่ต้องมี',
-        summary: 'ใช้ตารางนี้อ้างอิงเมื่อต้องแจ้งผู้ดูแลระบบขอเปิดสิทธิ์เพิ่ม',
+        summary: GUIDE_PERMISSION_REQUEST,
         iconKey: 'ShieldIcon',
         tone: 'slate',
         blocks: [
@@ -166,10 +169,10 @@ export function buildTaxGuide(companyId: string, permissions: readonly string[] 
             kind: 'table',
             headers: ['สิ่งที่ต้องการทำ', 'สิทธิ์ที่ต้องมี', 'บทบาทที่มักได้รับ'],
             rows: [
-              ['เปิดดูงวดภาษีและรายการภาษี', 'ดูข้อมูลภาษี', 'ฝ่ายบัญชี, การเงิน, เจ้าของกิจการ'],
-              ['ซิงค์แหล่งข้อมูลและคำนวณรายงาน', 'จัดการงวดภาษี', 'ฝ่ายบัญชี'],
-              ['เปิดใช้งานหมวดหัก ณ ที่จ่าย', 'ตั้งค่าภาษี', 'ฝ่ายบัญชี, เจ้าของกิจการ'],
-              ['ส่งออกไฟล์ภาษี', 'ส่งออกรายงานภาษี', 'ฝ่ายบัญชี'],
+              ['เปิดดูงวดภาษีและรายการภาษี', 'ดูข้อมูลภาษี', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.FINANCE}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
+              ['ซิงค์แหล่งข้อมูลและคำนวณรายงาน', 'จัดการงวดภาษี', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
+              ['เปิดใช้งานหมวดหัก ณ ที่จ่าย', 'ตั้งค่าภาษี', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
+              ['ส่งออกไฟล์ภาษี', 'ส่งออกรายงานภาษี', THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT],
             ],
           },
         ],
@@ -206,7 +209,7 @@ export function buildTaxGuide(companyId: string, permissions: readonly string[] 
               },
               {
                 question: 'ส่งออกไฟล์ไม่ได้',
-                answer: 'บัญชีไม่มีสิทธิ์ส่งออกรายงานภาษี ให้ติดต่อผู้ดูแลระบบ โดยอ้างอิงตารางในหัวข้อ “สิทธิ์ที่ต้องมี”',
+                answer: `ถ้าคุณไม่มีสิทธิ์ส่งออกรายงานภาษี ให้${exporterNames}ส่งออกให้`,
               },
             ],
           },

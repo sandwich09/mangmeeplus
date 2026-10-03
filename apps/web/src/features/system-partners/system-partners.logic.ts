@@ -395,6 +395,68 @@ export function changedEntitlements(
   ));
 }
 
+// ── "แสดงเมนูบันทึกด้วยมือบนเว็บ" (manual-expense-web-entry-flag spec §8) ─────────────────────────
+// A per-company SCREEN SETTING shown under the "บันทึกด้วยมือ" submenu row. It is not an entitlement
+// key: it is saved by its own command, behind its own version, and never enters the pending set, a
+// preset, a group toggle or the review. Every sentence the operator reads about it is here.
+
+/** The submenu row the switch hangs under. */
+export const MANUAL_WEB_ENTRY_SUBMENU_KEY = 'expenses.manual';
+
+export const MANUAL_WEB_ENTRY_COPY = {
+  label: 'แสดงเมนูบันทึกด้วยมือบนเว็บ',
+  // "ตามสิทธิ์และช่องทางที่ร้านมี": the substitute-receipt flow needs the review right, and typing in LINE
+  // needs a shop whose LINE is connected; neither is every shop's or every employee's.
+  description: 'ค่าเริ่มต้นของทุกร้านคือไม่แสดง เปิดเพื่อให้ร้านนี้เห็นเมนูและปุ่มที่พาไปหน้าบันทึกด้วยมือบนเว็บ การปิดไม่ได้ห้ามการบันทึกรายจ่ายด้วยมือ ใบรับรองแทนใบเสร็จ การพิมพ์ใน LINE และการแก้รายการเดิมยังใช้ได้ตามสิทธิ์และช่องทางที่ร้านมี',
+  shown: 'แสดง',
+  notShown: 'ไม่แสดง',
+  confirmHideLabel: 'ซ่อนเมนู',
+  cancelHideLabel: 'ยังไม่ซ่อน',
+  savedShown: 'แสดงเมนูบันทึกด้วยมือแล้ว',
+  savedHidden: 'ซ่อนเมนูบันทึกด้วยมือแล้ว',
+} as const;
+
+const MANUAL_WEB_ENTRY_CONFIRM_HIDE = 'ซ่อนเมนูบันทึกด้วยมือของร้านนี้ใช่ไหม พนักงานที่กำลังกรอกอยู่จะบันทึกต่อได้ แต่ถ้าหน้าเว็บถูกโหลดใหม่จะกลับเข้าหน้านี้ไม่ได้ แนะนำให้ปิดนอกเวลางาน';
+// "พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่าย", not every employee: a holder of expense.review and
+// expense.create still creates an expense inside the substitute-receipt wizard. And "ไม่ได้แสดง", not
+// "ยังไม่แสดง": the note is also true for a shop that was shown and then hidden.
+const MANUAL_WEB_ENTRY_CONFIRM_UPLOAD_OFF = 'ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ ถ้าซ่อนเมนูนี้ด้วย พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่ายจะไม่มีปุ่มสร้างรายจ่ายบนเว็บ';
+const MANUAL_WEB_ENTRY_UPLOAD_OFF_NOTE = 'ร้านนี้ปิดอัปโหลดใบเสร็จอยู่ และไม่ได้แสดงเมนูบันทึกด้วยมือ พนักงานที่ไม่มีสิทธิ์ตรวจสอบค่าใช้จ่ายจึงไม่มีปุ่มสร้างรายจ่ายบนเว็บ';
+// "และบันทึก": the rule reads the SAVED rows, so switching the feature on without saving is not enough.
+const MANUAL_WEB_ENTRY_PARENT_OFF = 'เปิดฟีเจอร์บันทึกด้วยมือและบันทึกก่อน จึงจะตั้งค่านี้ได้';
+
+/**
+ * What the row says and allows, from the SAVED entitlements — never the pending set — the stored
+ * setting and whether the company is closed (disabled or archived). With the manual-expense feature
+ * off nobody holds expense.create, so the switch is locked and the only message is how to unlock it.
+ */
+export function manualWebEntryRow(saved: readonly Entitlement[], setting: { enabled: boolean }, companyLocked = false): {
+  parentOpen: boolean;
+  /** The switch can be pressed: the company is open and the manual-expense feature is saved on. */
+  editable: boolean;
+  /**
+   * What the shop sees, for the switch's state and the word beside it. Not the stored value: with the
+   * feature off or the company closed nobody sees the menu, whatever is stored. The stored value
+   * takes effect again, unchanged, once the feature is on and the company open.
+   */
+  shown: boolean;
+  parentOffMessage: string | null;
+  uploadOffNote: string | null;
+  /** What to ask before saving `next`. Empty when nothing needs asking: showing the menu never does. */
+  confirmLines: (next: boolean) => string[];
+} {
+  const parentOpen = entitlementEnabled(saved, MANUAL_WEB_ENTRY_SUBMENU_KEY);
+  const uploadOff = !entitlementEnabled(saved, 'expenses.upload');
+  return {
+    parentOpen,
+    editable: parentOpen && !companyLocked,
+    shown: parentOpen && !companyLocked && setting.enabled,
+    parentOffMessage: parentOpen ? null : MANUAL_WEB_ENTRY_PARENT_OFF,
+    uploadOffNote: parentOpen && uploadOff && !setting.enabled ? MANUAL_WEB_ENTRY_UPLOAD_OFF_NOTE : null,
+    confirmLines: (next) => (next ? [] : [MANUAL_WEB_ENTRY_CONFIRM_HIDE, ...(uploadOff ? [MANUAL_WEB_ENTRY_CONFIRM_UPLOAD_OFF] : [])]),
+  };
+}
+
 /**
  * F1.5.1 item 1 — the API refuses every entitlement command until the company's rows are
  * normalized. The screen says the same sentence the API answers with, so the operator reads one
@@ -402,11 +464,16 @@ export function changedEntitlements(
  */
 export const NORMALIZATION_PENDING_NOTICE = 'ระบบกำลังเตรียมสิทธิ์ให้ ไม่ต้องดำเนินการ';
 
-/** Use the screen's existing lock state; copy must not promise an unavailable command. */
-export function featurePackageEditingNotice(controlsLocked: boolean): string {
-  return controlsLocked
-    ? 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้'
-    : 'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ';
+/**
+ * Use the screen's existing lock state; copy must not promise an unavailable command, nor deny one
+ * that works: the manual-expense web menu switch is no entitlement and stays usable while the
+ * package switches are locked (`menuSettingEditable`), so the notice names it then.
+ */
+export function featurePackageEditingNotice(controlsLocked: boolean, menuSettingEditable = false): string {
+  if (!controlsLocked) return 'ตรวจสอบรายการที่เลือกก่อนบันทึก การเปลี่ยนแปลงจะมีผลเมื่อบันทึกสำเร็จ';
+  return menuSettingEditable
+    ? `ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้ ยกเว้นสวิตช์ “${MANUAL_WEB_ENTRY_COPY.label}”`
+    : 'ขณะนี้ยังเปิดหรือปิดฟีเจอร์ไม่ได้';
 }
 
 /** A refused save changed NOTHING; a refused disable must say the switch is still on. */

@@ -1,3 +1,9 @@
+import { STOCK_MOVEMENT_TYPE_LABELS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+
+const thaiRoleLabels = Object.fromEntries(
+  Object.entries(THAI_SYSTEM_ROLE_NAMES).map(([key, name]) => [`role.${key}`, name]),
+) as { [K in keyof typeof THAI_SYSTEM_ROLE_NAMES as `role.${K}`]: (typeof THAI_SYSTEM_ROLE_NAMES)[K] };
+
 export type SupportedLocale = 'th' | 'en';
 
 export const workspaceDictionary = {
@@ -36,19 +42,7 @@ export const workspaceDictionary = {
     'nav.group.growth': 'สินค้าและการดำเนินงาน',
     'nav.group.admin': 'บุคลากรและการตั้งค่า',
     // Role labels (sidebar footer)
-    'role.OWNER': 'เจ้าของร้าน',
-    'role.SYSTEM_ADMIN': 'ผู้ดูแลระบบ',
-    'role.ADMIN': 'แอดมิน',
-    'role.MANAGER': 'ผู้จัดการ',
-    'role.HR': 'ฝ่ายบุคคล',
-    'role.SALES': 'ฝ่ายขาย',
-    'role.INVENTORY': 'คลังสินค้า',
-    'role.FINANCE': 'การเงิน',
-    'role.ACCOUNTANT': 'บัญชี',
-    'role.MARKETING': 'การตลาด',
-    'role.STAFF': 'พนักงาน',
-    'role.AUDITOR_READONLY': 'ผู้ตรวจสอบ (อ่านอย่างเดียว)',
-    'role.COMPANY_VIEW': 'เจ้าของบริษัท',
+    ...thaiRoleLabels,
     // Modules
     'module.dashboard': 'แดชบอร์ด',
     'module.inbox': 'กล่องข้อความ',
@@ -152,14 +146,14 @@ export const workspaceDictionary = {
     'inventory.movement.reason': 'เหตุผล',
     'inventory.movement.actor': 'ผู้ดำเนินการ',
     'inventory.movement.occurred_at': 'เวลา',
-    'inventory.movement.STOCK_IN': 'รับเข้า',
-    'inventory.movement.STOCK_OUT': 'จ่ายออก',
-    'inventory.movement.TRANSFER_IN': 'รับโอน',
-    'inventory.movement.TRANSFER_OUT': 'โอนออก',
-    'inventory.movement.COUNT_ADJUSTMENT_IN': 'ปรับนับ (เพิ่ม)',
-    'inventory.movement.COUNT_ADJUSTMENT_OUT': 'ปรับนับ (ลด)',
-    'inventory.movement.ADJUSTMENT_IN': 'ปรับเพิ่ม',
-    'inventory.movement.ADJUSTMENT_OUT': 'ปรับลด',
+    'inventory.movement.STOCK_IN': STOCK_MOVEMENT_TYPE_LABELS.STOCK_IN,
+    'inventory.movement.STOCK_OUT': STOCK_MOVEMENT_TYPE_LABELS.STOCK_OUT,
+    'inventory.movement.TRANSFER_IN': STOCK_MOVEMENT_TYPE_LABELS.TRANSFER_IN,
+    'inventory.movement.TRANSFER_OUT': STOCK_MOVEMENT_TYPE_LABELS.TRANSFER_OUT,
+    'inventory.movement.COUNT_ADJUSTMENT_IN': STOCK_MOVEMENT_TYPE_LABELS.COUNT_ADJUSTMENT_IN,
+    'inventory.movement.COUNT_ADJUSTMENT_OUT': STOCK_MOVEMENT_TYPE_LABELS.COUNT_ADJUSTMENT_OUT,
+    'inventory.movement.ADJUSTMENT_IN': STOCK_MOVEMENT_TYPE_LABELS.ADJUSTMENT_IN,
+    'inventory.movement.ADJUSTMENT_OUT': STOCK_MOVEMENT_TYPE_LABELS.ADJUSTMENT_OUT,
     'inventory.balance.quantity': 'ยอดคงเหลือ',
     'inventory.balance.low_stock': 'สต็อกต่ำ',
     'inventory.status.ACTIVE': 'ใช้งาน',
@@ -1236,6 +1230,16 @@ export const workspaceDictionary = {
     'expenses.manual_receipt_upload_failed': 'บันทึกฉบับร่างแล้ว แต่แนบใบเสร็จไม่สำเร็จ',
     'expenses.manual_open_saved': 'เปิดรายการที่บันทึกไว้',
     'expenses.manual_read_only': 'อ่านอย่างเดียว: บัญชีนี้ไม่มีสิทธิ์สร้างรายการค่าใช้จ่าย',
+    // "แสดงเมนูบันทึกด้วยมือบนเว็บ" (manual-expense-web-entry-flag spec §8). The web only knows whether the
+    // shop shows the menu, not whether it ever did, so every sentence is true both for a shop that
+    // was never switched on and for one that was switched off again: "ไม่ได้เปิดใช้", never "ยังไม่เปิดใช้".
+    'expenses.manual_entry_not_enabled': 'หน้าบันทึกด้วยมือไม่ได้เปิดใช้สำหรับร้านของคุณ',
+    'expenses.manual_entry_go_list': 'ไปหน้ารายการค่าใช้จ่าย',
+    // The reader lacks the rights to upload and to open the list; only the business owner can grant every right.
+    'expenses.manual_entry_contact_owner': `กรุณาติดต่อ${THAI_SYSTEM_ROLE_NAMES.OWNER}`,
+    // …and the owner, who holds every right the package allows, asks the team: only the platform's admin switches the page on.
+    'expenses.manual_entry_contact_team': 'กรุณาติดต่อทีมงานเพื่อเปิดหน้านี้ให้ร้านของคุณ',
+    'expenses.manual_entry_closed_notice': 'หน้านี้ถูกปิดสำหรับร้านของคุณแล้ว คุณยังบันทึกรายการที่กำลังกรอกได้',
     'expenses.manual_summary_title': 'สรุปก่อนบันทึก',
     'expenses.manual_before_tax': 'ยอดก่อนภาษี',
     'expenses.manual_no_tax_code': 'ไม่ได้เลือกประเภทภาษี',
@@ -1581,7 +1585,7 @@ export const workspaceDictionary = {
     'employee.error.phone_conflict': 'เบอร์โทรศัพท์นี้ถูกใช้กับพนักงานคนอื่นแล้ว',
     'employee.error.email_conflict': 'อีเมลนี้ถูกใช้ในระบบแล้ว',
     'employee.error.email_must_differ': 'ต้องระบุอีเมลของบริษัทนี้ที่ไม่ซ้ำกับอีเมลบัญชีเดิมของพนักงาน',
-    'employee.error.username_conflict': 'Username นี้ถูกใช้ในระบบแล้ว',
+    'employee.error.username_conflict': 'ชื่อผู้ใช้นี้ถูกใช้ในระบบแล้ว',
     // ทะเบียนคู่ค้า (สเปค §11.1) — ไม่มีตัวเลือกประเภทคู่ค้าที่ใดเลย ใช้ป้ายการใช้งานแทน (A5)
     'counterparties.title': 'คู่ค้า',
     'counterparties.description': 'ทะเบียนร้านค้าและลูกค้า ระบบเพิ่มให้เองจากใบที่บันทึก แก้ไขเพิ่มเติมได้ที่นี่',
@@ -1714,6 +1718,8 @@ export const workspaceDictionary = {
     'role.STAFF': 'Staff',
     'role.AUDITOR_READONLY': 'Auditor (read-only)',
     'role.COMPANY_VIEW': 'Company owner',
+    'role.MANGMEE_SALES_LEAD': 'Mangmee Sales Lead',
+    'role.MANGMEE_SALES': 'Mangmee Sales',
     // Modules
     'module.dashboard': 'Dashboard',
     'module.inbox': 'Inbox',
@@ -2861,6 +2867,11 @@ export const workspaceDictionary = {
     'expenses.manual_receipt_upload_failed': 'Draft saved, but attaching the receipt failed',
     'expenses.manual_open_saved': 'Open the saved draft',
     'expenses.manual_read_only': 'Read only: this account cannot create expenses',
+    'expenses.manual_entry_not_enabled': 'Manual entry is not enabled for your shop',
+    'expenses.manual_entry_go_list': 'Go to the expense list',
+    'expenses.manual_entry_contact_owner': 'Please contact the business owner',
+    'expenses.manual_entry_contact_team': 'Please contact the team to open this page for your shop',
+    'expenses.manual_entry_closed_notice': 'This page has been closed for your shop. You can still save the entry you are filling in.',
     'expenses.manual_summary_title': 'Summary before saving',
     'expenses.manual_before_tax': 'Before tax',
     'expenses.manual_no_tax_code': 'No Tax Code',

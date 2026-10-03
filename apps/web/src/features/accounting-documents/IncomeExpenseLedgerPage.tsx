@@ -275,7 +275,11 @@ function EntryCard({ entry, today, canReceivePayment, onReceivePayment }: { entr
   );
 }
 
-export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId: string; permissions: readonly string[] }) {
+export function IncomeExpenseLedgerPage({ companyId, permissions, canOpenManualExpense }: {
+  companyId: string; permissions: readonly string[];
+  /** `canOpenManualWeb` of the server session: the one rule for every link to the manual expense page. */
+  canOpenManualExpense: boolean;
+}) {
   const router = useRouter();
   const toast = useToast();
   const today = useMemo(() => todayCivilDate('Asia/Bangkok'), []);
@@ -403,11 +407,10 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
   };
 
   const canUploadExpense = permissions.includes('expense.receipt.upload');
-  const canCreateExpense = permissions.includes('expense.create');
   const canReceivePayment = permissions.includes('accounting.payment.create');
   const expenseEmptyAction = canUploadExpense
     ? { href: `/companies/${companyId}/expenses/upload`, label: 'อัปโหลดใบเสร็จรายการแรก' }
-    : canCreateExpense
+    : canOpenManualExpense
       ? { href: `/companies/${companyId}/expenses/manual`, label: 'กรอกรายจ่ายรายการแรก' }
       : null;
   const emptyAction = type === 'EXPENSE'
@@ -632,14 +635,14 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
           )}
         </MangmeeCard>
 
-        {(canCreateSalesRoot || canUploadExpense || canCreateExpense) && (
+        {(canCreateSalesRoot || canUploadExpense || canOpenManualExpense) && (
           <MangmeeCard className="p-4 sm:p-5">
             <h2 className="text-lg font-bold text-gray-900">เพิ่มรายการใหม่</h2>
             <p className="mt-1 text-base text-gray-600">เลือกวิธีที่ตรงกับเอกสารในมือ</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               {canCreateSalesRoot && <Link href={`/companies/${companyId}/sales-documents`} className="mangmee-btn mangmee-btn-secondary min-h-14 text-base">บันทึกรายรับ</Link>}
               {canUploadExpense && <Link href={`/companies/${companyId}/expenses/upload`} className="mangmee-btn mangmee-btn-secondary min-h-14 text-base">ถ่ายหรืออัปโหลดใบเสร็จ</Link>}
-              {canCreateExpense && <Link href={`/companies/${companyId}/expenses/manual`} className="mangmee-btn mangmee-btn-secondary min-h-14 text-base">กรอกรายจ่ายเอง</Link>}
+              {canOpenManualExpense && <Link href={`/companies/${companyId}/expenses/manual`} className="mangmee-btn mangmee-btn-secondary min-h-14 text-base">กรอกรายจ่ายเอง</Link>}
             </div>
           </MangmeeCard>
         )}

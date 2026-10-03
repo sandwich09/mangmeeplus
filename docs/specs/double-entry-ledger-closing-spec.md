@@ -555,6 +555,7 @@ Web owns full ledger workspace:
 - General Ledger report screen with account/date/period filters and source drill-down.
 - Trial Balance screen that always shows debit total, credit total, and difference.
 - P&L and Balance Sheet baseline screens grouped by report group and account class.
+- Account classes are named from `LEDGER_ACCOUNT_CLASS_LABELS` (contracts) on every page, report row and assistant fact, never a page's own copy. The words are true for a sole proprietor, a partnership and a company: EQUITY is ส่วนของเจ้าของ and TAX_EXPENSE is ภาษีเงินได้ (2026-10-03).
 - Period close checklist screen showing passed/failed checks and fix links.
 - Forbidden, readonly, empty, loading, validation-error, and posting-error states.
 

@@ -27,13 +27,14 @@ test.describe('@smoke reference — ready modules render under real auth', () =>
     await expectNoClientError(authedPage);
 
     await authedPage.goto(`/companies/${companyId}/accounting`);
-    await expect(authedPage.getByRole('heading', { name: /Accounting documents/i })).toBeVisible();
+    // The document list's heading, Thai since a9f3d33fb (it read "Accounting documents" before).
+    await expect(authedPage.getByRole('heading', { name: 'เอกสารบัญชี', exact: true })).toBeVisible();
     await expectNoClientError(authedPage);
 
     await authedPage.goto(`/companies/${companyId}/reports`);
     await expect(authedPage.getByRole('heading', { name: /^(รายงาน|Reports and BI|Reports)$/i })).toBeVisible();
     // The export-center aside repeats the dataset title per export row — first() keeps strict mode happy.
-    await expect(authedPage.getByText('Trial Balance', { exact: true }).first()).toBeVisible();
+    await expect(authedPage.getByText('งบทดลอง', { exact: true }).first()).toBeVisible();
     await expectNoClientError(authedPage);
   });
 

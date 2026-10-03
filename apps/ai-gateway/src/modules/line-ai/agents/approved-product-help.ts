@@ -1,11 +1,12 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 
 const sources = {
-  expenses: { file: 'expenses-guide.content.ts', hash: '73f50c3324ed2051b4881206cd68b1beb2542b21fcd67875eb68f07d92d42982' },
-  reimbursements: { file: 'reimbursement-guide.content.ts', hash: 'e385693b9836dcd83d14843b2d02a49e72f4df17a9e2f80e3f1124c7c0609bca' },
-  'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: 'a444dd458af1b3ec395175b720a08fd58e3de0ec913b46cb985d262565b1c705' },
-  reports: { file: 'reports-guide.content.ts', hash: '8bf9239b344d299117b3e228ce9aec503809758458f14cec8c316b1143b40baa' },
+  expenses: { file: 'expenses-guide.content.ts', hash: '255e946bef7d9214bc4035f54605a8cce95f2fd1ee608e99e05c0eb7aa1ed7d8' },
+  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '4244ded04517368c1aca422d7e057a9babf4955bc7ba2aa5196838f7817197b0' },
+  'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '4b8052caed394b1be7c44d88189f8068eb7f84750339111dc7ac23bceea98b76' },
+  reports: { file: 'reports-guide.content.ts', hash: 'a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4' },
 } as const;
 
 function card(
@@ -36,7 +37,7 @@ export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
   releaseRange: { min: '2.4.0', maxExclusive: '2.5.0' }, contentHash: '',
   cards: [
     card('expense.start', 'expenses', 'overview', 'เริ่มบันทึกค่าใช้จ่าย', ['เริ่มลงค่าใช้จ่ายยังไง', 'รายจ่ายเข้าระบบแล้วทำอะไรต่อ'],
-      'เลือกสาขาของรายการ แล้วนำใบเสร็จเข้าระบบหรือบันทึกด้วยมือ ระบบเก็บเป็นฉบับร่างให้ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ ยอดเงิน และไฟล์แนบก่อนยืนยัน การบันทึกร่างยังไม่ใช่การยืนยันเอกสารหรือจ่ายเงินค่ะ', expenseReaders),
+      'เลือกสาขาของรายการ แล้วนำใบเสร็จเข้าระบบหรือบันทึกด้วยมือตามช่องทางที่เปิดใช้สำหรับร้านของคุณและสิทธิ์ที่คุณมี ระบบเก็บเป็นฉบับร่างให้ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ ยอดเงิน และไฟล์แนบก่อนยืนยัน การบันทึกร่างยังไม่ใช่การยืนยันเอกสารหรือจ่ายเงินค่ะ', expenseReaders),
     card('expense.status', 'expenses', 'overview', 'สถานะเอกสารกับสถานะจ่ายเงิน', ['ยืนยันแล้วแปลว่าจ่ายแล้วไหม', 'ทำไมสถานะมีสองบรรทัด'],
       'สถานะเอกสารบอกว่าตรวจไปถึงขั้นใด ส่วนสถานะชำระเงินบอกว่าจ่ายให้ผู้ขายหรือยัง เป็นคนละเรื่องกันค่ะ เอกสารที่ยืนยันแล้วอาจยังไม่จ่ายเงิน และรายการที่จ่ายแล้วอาจยังตรวจเอกสารไม่ครบ', expenseReaders),
     card('expense.find', 'expenses', 'list', 'ค้นหารายการค่าใช้จ่าย', ['หาบิลร้านเดิมยังไง', 'ดูรายการตามสถานะที่ไหน'],
@@ -56,9 +57,9 @@ export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
     card('substitute.evidence', 'substitute-receipts', 'evidence', 'หลักฐานรายการกับหลักฐานชำระเงิน', ['สลิปกับรูปของซื้อใช้แทนกันไหม', 'ทำไมต้องแนบหลักฐานสองแบบ'],
       'หลักฐานประกอบรายการบอกว่าซื้ออะไร เช่น บิลเขียนมือ ภาพสินค้า หรือข้อความยืนยันคำสั่งซื้อ ส่วนหลักฐานชำระเงินบอกว่าจ่ายจริง เช่น สลิปโอนหรือใบสำคัญรับเงินที่ลงชื่อแล้วค่ะ จึงใช้ตอบคนละคำถาม', substituteReaders),
     card('substitute.review-sign', 'substitute-receipts', 'sign', 'อ่านเอกสารก่อนลงนาม', ['ทำไมกดลงชื่อไม่ได้', 'ต้องอ่านฉบับเต็มก่อนอนุมัติไหม'],
-      'ขั้นตอนลงลายมือชื่อและอนุมัติบังคับให้เปิดอ่านเอกสารฉบับเต็มก่อนค่ะ ผู้ลงนามและผู้อนุมัติต้องตรวจฉบับที่ตรงกับขั้นตอนของตน การลงนาม ยืนยันคำรับรอง และอนุมัติออกเอกสารทำบนเว็บด้วยสิทธิ์ที่กำหนด', substituteReaders),
+      'ถ้าลงนามออนไลน์ ขั้นตอนลงลายมือชื่อและอนุมัติบังคับให้เปิดอ่านเอกสารฉบับเต็มก่อนค่ะ ผู้ลงนามและผู้อนุมัติต้องตรวจฉบับที่ตรงกับขั้นตอนของตน การลงนาม ยืนยันคำรับรอง และอนุมัติออกเอกสารทำบนเว็บด้วยสิทธิ์ที่กำหนด ถ้าพิมพ์และเซ็นบนกระดาษ ผู้ตรวจรับต้องเปิดอ่านฉบับที่อัปโหลดให้ครบทุกหน้าก่อนตรวจรับบนเว็บ', substituteReaders),
     card('report.access', 'reports', 'overview', 'รายงานที่แต่ละคนเรียกดูได้', ['ทำไมฉันเห็นรายงานน้อยกว่าเจ้าของ', 'ส่งออกแล้วตรวจสิทธิ์อีกไหม'],
-      'ระบบแสดงเฉพาะรายงานที่บัญชีของคุณมีสิทธิ์เรียกดู และตรวจสิทธิ์อีกครั้งเมื่อส่งออกค่ะ ผู้ใช้ต่างบทบาทจึงเห็นรายงานไม่เท่ากัน ถ้าต้องใช้รายงานเพิ่ม ให้ผู้ดูแลตรวจสิทธิ์ก่อน', ['report.catalog.read', 'report.snapshot.read']),
+      `ทุกคนที่เปิดเมนูรายงานได้จะเห็นรายการรายงานครบค่ะ รายงานที่บัญชีของคุณยังไม่มีสิทธิ์เรียกดูจะมีป้าย “ไม่มีสิทธิ์” และเรียกดูไม่ได้ และระบบตรวจสิทธิ์อีกครั้งเมื่อส่งออก ถ้าต้องใช้รายงานเพิ่ม ให้แจ้ง${THAI_SYSTEM_ROLE_NAMES.OWNER}ว่าต้องการสิทธิ์ใด`, ['report.catalog.read', 'report.snapshot.read']),
   ],
 };
 PRODUCT_HELP_PACK.contentHash = knowledgePackHash(PRODUCT_HELP_PACK);

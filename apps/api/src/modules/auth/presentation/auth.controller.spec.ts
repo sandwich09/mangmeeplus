@@ -13,6 +13,7 @@ import { SetAiAssistantPreferenceUseCase } from '../application/use-cases/set-ai
 import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION } from '@watchdog-bms/contracts';
 import { AcceptLegalDocumentsDto, AuthController, EmployeeLineLinkDto, LineExchangeDto, LineLinkDto, PasswordResetRequestDto } from './auth.controller';
 import { LIFF_PAGE_SCRIPT } from '../../../common/security/liff-page.security';
+import { MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW } from '../../system-partner-management/domain/logic/manual-expense-web-entry.logic';
 
 const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 
@@ -299,7 +300,8 @@ describe('AuthController password change session binding', () => {
 // AuthGuard exempts /v1/auth/* from the temporary-password block, so GET /auth/me answers a blocked
 // session too — and is therefore the only place it can learn that every other route is closed to it.
 describe('AuthController me()', () => {
-  function makeMeController(mustChangePassword: boolean | null, proofMatches = true) {
+  /** `webEntryRows`: the stored "แสดงเมนูบันทึกด้วยมือบนเว็บ" rows by company id; a company absent from it has no row. */
+  function makeMeController(mustChangePassword: boolean | null, proofMatches = true, webEntryRows: Record<string, boolean> = {}, companyId = 'company-1') {
     const stub = {} as any;
     const credentialUpdatedAt = new Date('2026-09-23T00:00:00.000Z');
     const prisma = {
@@ -308,8 +310,13 @@ describe('AuthController me()', () => {
         userCredential: { findUnique: async () => (mustChangePassword === null ? null : { mustChangePassword, updatedAt: credentialUpdatedAt }) },
         authSession: { findUnique: async () => ({ passwordCredentialVersion: proofMatches ? credentialUpdatedAt : new Date('2026-09-22T00:00:00.000Z') }) },
         companyMembership: { findFirst: async (query: any) => {
-          assert.deepEqual(query.where, { id: 'm-1', companyId: 'company-1', userId: 'user-1', status: 'ACTIVE' });
+          assert.deepEqual(query.where, { id: 'm-1', companyId, userId: 'user-1', status: 'ACTIVE' });
           return { roles: query.select.roles.where.role.key.in.map((key: string) => ({ role: { key, name: key === 'CUSTOM_QA' ? 'QA named role' : 'Owner' } })) };
+        } },
+        companyWebEntrySetting: { findUnique: async (query: any) => {
+          // Exactly one row, by the company the request context resolved to — never a list, never another company.
+          assert.deepEqual(query.where, { companyId });
+          return companyId in webEntryRows ? { manualExpenseEntryEnabled: webEntryRows[companyId], version: 1 } : null;
         } },
       },
     } as any;
@@ -355,6 +362,38 @@ describe('AuthController me()', () => {
   // LINE-only users have no credential row; absent must never read as blocked.
   it('treats a missing credential as not blocked', async () => {
     assert.equal((await makeMeController(null).me(context)).mustChangePassword, false);
+  });
+
+  // manual-expense-web-entry-flag spec §6.1: one boolean, of the company in the request context.
+  it('reports the manual-expense web entry of a company that has no row through the one default', async () => {
+    const result = await makeMeController(false).me(context);
+    assert.equal(result.manualExpenseWebEntry, MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW);
+  });
+
+  it('reports the stored manual-expense web entry, shown or hidden', async () => {
+    assert.equal((await makeMeController(false, true, { 'company-1': true }).me(context)).manualExpenseWebEntry, true);
+    assert.equal((await makeMeController(false, true, { 'company-1': false }).me(context)).manualExpenseWebEntry, false);
+  });
+
+  it('never answers one company with the manual-expense web entry of another', async () => {
+    const rows = { 'company-1': false, 'company-2': true };
+    const meIn = async (companyId: string) => (await makeMeController(false, true, rows, companyId)
+      .me({ context: { ...context.context, companyId } } as any)).manualExpenseWebEntry;
+    assert.equal(await meIn('company-1'), false);
+    assert.equal(await meIn('company-2'), true);
+    // A third company has no row: it reads the default, not a neighbour's value.
+    assert.equal(await meIn('company-3'), MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW);
+  });
+
+  it('does not let the manual-expense web entry change the permissions it answers with', async () => {
+    const withPermissions = { context: { ...context.context, permissions: ['expense.create', 'expense.update', 'expense.receipt.upload'] } } as any;
+    const shown = await makeMeController(false, true, { 'company-1': true }).me(withPermissions);
+    const hidden = await makeMeController(false, true, { 'company-1': false }).me(withPermissions);
+    const { manualExpenseWebEntry: a, ...restShown } = shown;
+    const { manualExpenseWebEntry: b, ...restHidden } = hidden;
+    assert.deepEqual([a, b], [true, false]);
+    assert.deepEqual(restShown, restHidden);
+    assert.deepEqual(shown.permissions, ['expense.create', 'expense.update', 'expense.receipt.upload']);
   });
 });
 
@@ -489,4 +528,19 @@ describe('AuthController LIFF page security (H-08)', () => {
       globalThis.fetch = originalFetch;
     }
   });
+});
+
+it('company switcher receives each membership’s stored role names, including company-named standard copies', async () => {
+  let query: any;
+  const prisma = { client: { companyMembership: { findMany: async (input: any) => {
+    query = input;
+    return ['Accountant', 'ผู้ตรวจประจำบริษัท'].map((name, index) => ({
+      companyId: `co-${index}`, company: { name: `บริษัท ${index}`, status: 'ACTIVE', planTerm: null },
+      roles: [{ role: { key: 'ACCOUNTANT', name, permissions: [] } }],
+    }));
+  } } } };
+  const result = await AuthController.prototype.myCompanies.call({ prisma } as any, { context: { userId: 'u1' } } as any);
+  assert.equal(query.select.roles.select.role.select.name, true);
+  assert.deepEqual(result.data.map((company: any) => company.roleNames), [{ ACCOUNTANT: 'Accountant' }, { ACCOUNTANT: 'ผู้ตรวจประจำบริษัท' }]);
+  assert.deepEqual(result.data.map((company) => company.roles), [['ACCOUNTANT'], ['ACCOUNTANT']]);
 });

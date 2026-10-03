@@ -52,9 +52,17 @@ export class PrismaBalanceQuery implements BalanceQueryPort {
       map.set(key, entry);
     }
 
-    return Array.from(map.entries()).map(([key, { inQty, outQty }]) => {
+    const balances = Array.from(map.entries()).map(([key, { inQty, outQty }]) => {
       const [productId, locationId] = key.split(':');
       return { productId: productId!, locationId: locationId!, quantity: decimalUnitsToString(inQty > outQty ? inQty - outQty : 0n) };
     });
+    // Names for pages and reports that show the product and place, never the internal id.
+    const [products, locations] = await Promise.all([
+      this.prisma.client.product.findMany({ where: { companyId, id: { in: [...new Set(balances.map((b) => b.productId))] } }, select: { id: true, name: true } }),
+      this.prisma.client.inventoryLocation.findMany({ where: { companyId, id: { in: [...new Set(balances.map((b) => b.locationId))] } }, select: { id: true, name: true } }),
+    ]);
+    const productNames = new Map(products.map((row) => [row.id, row.name]));
+    const locationNames = new Map(locations.map((row) => [row.id, row.name]));
+    return balances.map((balance) => ({ ...balance, productName: productNames.get(balance.productId), locationName: locationNames.get(balance.locationId) }));
   }
 }

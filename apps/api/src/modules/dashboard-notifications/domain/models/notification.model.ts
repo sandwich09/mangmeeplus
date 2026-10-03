@@ -1,4 +1,5 @@
 // Domain models for Notification (Item 06) — no framework imports
+import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 export type NotificationSeverity = 'critical' | 'action' | 'insight' | 'info';
 export type NotificationChannel = 'web' | 'line';
@@ -26,6 +27,25 @@ export type NotificationRule = {
   createdAt: Date;
   updatedAt: Date;
 };
+
+const NOTIFICATION_RULE_DISPLAY_NAMES: Record<string, string> = {
+  // DailyOwnerSummary sends it to every active OWNER and ADMIN.
+  daily_owner_summary: `สรุปประจำวันสำหรับ${THAI_SYSTEM_ROLE_NAMES.OWNER}และ${THAI_SYSTEM_ROLE_NAMES.ADMIN}`,
+  stock_low: 'สินค้าต่ำกว่าจุดสั่งซื้อ',
+  stockout_risk: 'ความเสี่ยงสินค้าขาด',
+  sales_today_low: 'ยอดขายวันนี้ต่ำกว่าเป้าหมาย',
+  invoice_overdue: 'ใบแจ้งหนี้เกินกำหนด',
+  tax_due_soon: 'ใกล้ถึงกำหนดยื่นภาษี',
+  approval_pending: 'รายการรออนุมัติ',
+  follow_up_due: 'ถึงกำหนดติดตามลูกค้า',
+  campaign_opportunity: 'โอกาสทำการตลาด',
+  report_ready: 'รายงานพร้อมดาวน์โหลด',
+  system_security_alert: 'แจ้งเตือนความปลอดภัยของระบบ',
+};
+
+export function notificationRuleDisplayName(triggerKey: string): string {
+  return NOTIFICATION_RULE_DISPLAY_NAMES[triggerKey] ?? 'กฎการแจ้งเตือน';
+}
 
 export type NotificationEvent = {
   id: string;
@@ -125,6 +145,7 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   // the requester is told when a recorded payment of their claim is taken back.
   'workflow.reimbursement_payment_sla_breach',
   'workflow.reimbursement_payment_voided',
+  'workflow.reimbursement_finance_blocked_requester',
   'workflow.reimbursement_decision_requester',
   'workflow.reimbursement_correction_requester',
   'workflow.reimbursement_finance_review',
@@ -177,6 +198,7 @@ export const ALWAYS_DELIVERED_TRIGGER_KEYS: string[] = [
   // pay a claim that has waited past the company's deadline. Both are about money a person is owed,
   // and everyone who saved a preference row before today would otherwise get them on the web bell only.
   'workflow.reimbursement_payment_voided',
+  'workflow.reimbursement_finance_blocked_requester',
   'workflow.reimbursement_payment_sla_breach',
   // A claim held back from payment until its payout account is corrected, and the account then waiting
   // for approval: neither person asked for the wait, and the money is paid only after both have acted.

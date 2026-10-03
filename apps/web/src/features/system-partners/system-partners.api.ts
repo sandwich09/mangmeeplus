@@ -15,6 +15,8 @@ import type {
   SetPartnerAiModelDto,
   SetPartnerOcrConfigDto,
   PartnerOcrConfigDto,
+  PartnerManualExpenseWebEntryDto,
+  SetPartnerManualExpenseWebEntryDto,
   SetSharedLineCredentialDto,
   SharedLineCredentialMetadataDto,
   PartnerFeatureEntitlementDto,
@@ -236,6 +238,18 @@ export async function setPartnerOcrConfig(
   dto: SetPartnerOcrConfigDto,
 ): Promise<PartnerOcrConfigDto> {
   return apiFetch<PartnerOcrConfigDto>(`/v1/system/partners/${companyId}/ocr-config`, {
+    method: 'PUT',
+    body: JSON.stringify(dto),
+    suppressErrorToast: true,
+  });
+}
+
+/** "แสดงเมนูบันทึกด้วยมือบนเว็บ": its own command and version, outside the feature command. */
+export async function setPartnerManualExpenseWebEntry(
+  companyId: string,
+  dto: SetPartnerManualExpenseWebEntryDto,
+): Promise<PartnerManualExpenseWebEntryDto> {
+  return apiFetch<PartnerManualExpenseWebEntryDto>(`/v1/system/partners/${encodeURIComponent(companyId)}/manual-expense-web-entry`, {
     method: 'PUT',
     body: JSON.stringify(dto),
     suppressErrorToast: true,

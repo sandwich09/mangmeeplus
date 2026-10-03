@@ -170,6 +170,8 @@ a solo SME owner must be able to finish the whole flow alone, with zero prior se
   adds the footnote "ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ" and the audit log records
   `selfApproved: true`. When the payer is a non-owner employee, an approver (any OWNER, or configured
   `approverUserIds` if set) is still required — self-approval never extends beyond the owner.
+  (Superseded: the 2026-08-10 exemption covers owner/admin/manager, and since 2026-10-03 the footnote names
+  the owner only when the approver holds OWNER, anyone else by name; see `docs/specs/expense-receipt-upload-spec.md`.)
 - **`DESIGNATED_APPROVERS`** — current behaviour: approver must be in `approverUserIds`, ≠ payer,
   branch-eligible. Companies with segregation-of-duties needs opt into this in settings.
 

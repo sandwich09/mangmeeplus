@@ -2,6 +2,14 @@
 
 export type NotificationSeverity = 'critical' | 'action' | 'insight' | 'info';
 
+/** The bell and the notification pages show these; report rows reuse the words for the same levels. */
+export const NOTIFICATION_SEVERITY_LABELS: Record<NotificationSeverity, string> = {
+  critical: 'สำคัญ',
+  action: 'ต้องดำเนินการ',
+  insight: 'ข้อมูลเชิงลึก',
+  info: 'แจ้งเพื่อทราบ',
+};
+
 export type NotificationChannel = 'web' | 'line';
 
 export type NotificationEventStatus = 'open' | 'resolved' | 'suppressed' | 'expired';
