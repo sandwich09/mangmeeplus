@@ -1,6 +1,6 @@
 # Agent Memory: English left on signed-in pages
 
-Status: lane 3b complete; batch A follow-up (items 1–6, section at the end) complete on `claude/batch-a-roles-notices-20261003`, not pushed; browser, real PostgreSQL and a release-sync run remain with the controller
+Status: lane 3b complete; batch A follow-up items 1–6 and round 2 (R1–R8, additions A and B; sections at the end) complete on `claude/batch-a-roles-notices-20261003`, not pushed; browser, real PostgreSQL and a release-sync run remain with the controller
 Owner: lane 3b; batch A follow-up by the controller's subagent
 Scope: Report catalogue, report column labels and CSV headings, assistant-facing report source labels, report view defaults/values, workflow automation text, notification rule text, add-employee wizard, dashboard stock card. No package.json, migration, Prisma schema, `apps/api/src/modules/line-ai`, `apps/ai-gateway`, or pinned user-guide content changes.
 Decisions: Reuse the Thai report catalogue for API source-reference labels; CSV headings reuse report result column definitions. Map rule names to trigger-based Thai labels and map system workflow template copy from the template catalogue, including stale stored template summaries. Preserve company-entered saved-view/rule/template names and custom text. Keep the English dictionary block unchanged. Format system dates/times/numbers with the shared Thai helpers/locale. Use native time controls for quiet-hours inputs so the page does not print API-format time examples. Remove report IDs/source keys from the workspace and replace workflow rule-test JSON output with a Thai, side-effect-accurate summary.
@@ -308,3 +308,16 @@ permitted reports shown, roles see different lists, “ผู้ดูแล”)
 reports, those without rights are marked “ไม่มีสิทธิ์”, rights are checked again on export, ask เจ้าของกิจการ (one
 list) for more. Tests: API adapters red 39 / 3 → 42 / 0; web guide red 30 / 2 → 32 / 0; approved-knowledge red
 8 / 1 → 9 / 0.
+
+### Round 2 verification and next
+
+Commits: `358ea7642` (R2), `563bc18bf` (R7), `e734304e2` (R1), `70a319401` (R3), `0db16fb04` (R4), `4a2fa61e5` (A),
+`f3efac17a` (B), `f6bac833b` (R5), `a48b6b943` (R6), `578fe9bb3` (R8), `2786e94d3` (W00 manifest).
+Checks: contracts build rc 0; contracts specs rc 0, 344 / 0 / 0; API typecheck rc 0; web typecheck rc 0 (next-env
+unchanged); whole web suite rc 0, 2710 tests in 565 suites, 2710 / 0 / 0; whole-chain rc 0, 8 suites, 3694 / 0 / 0 (after the manifest regeneration; parity named
+exactly report-source-adapters.ts and ReportsWorkspacePage.tsx). Focused API: adapters 42/0, use cases 36/0, CSV 4/0,
+action runner 91/0, template auto-enable 36/0, template use case 5/0, notification DTOs 11/0, assistant report tool
+5/0, manifest 4/0; assistant: approved-knowledge 9/0, business-read semantics 193/0. git diff --check rc 0.
+Not run: browser, real PostgreSQL (category-name and inventory queries typechecked only), release sync on a database.
+Next: controller review; browser pass on reports (money units, warnings, guide), automation (fallback tasks, template
+texts), notification rules; deploy the assistant with the web (pin moved, card body changed).
