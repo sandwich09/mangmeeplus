@@ -37,6 +37,12 @@ test('a paid advance deal ends the polling and is never told to contact the team
   assert.match(page, /\{returning && !confirmed && timedOut && !status\.pendingDeal && <p role="status">ยังยืนยันผลไม่ได้/);
 });
 
+// A browser runs a timer longer than 2^31-1 ms (about 24.8 days) at once: a quote valid that long
+// (or a device clock that far behind) read as expired the moment it was shown, so it could never be paid.
+test('the quote clock is clamped like the other deadline timers, so a valid quote never shows as expired', () => {
+  assert.match(page, /window\.setTimeout\(\(\) => setQuoteExpired\(true\), Math\.min\(2_147_483_647, remaining\)\)/);
+});
+
 test('a canceled return does not poll, unless the old Checkout turned out paid', () => {
   assert.match(polling, /if \(checkoutCanceled && returnAttempt\?\.paymentState !== 'PAID'\) return;/);
 });

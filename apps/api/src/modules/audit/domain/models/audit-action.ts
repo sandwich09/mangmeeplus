@@ -106,7 +106,7 @@ export type AuditActionValue = (typeof AuditAction)[keyof typeof AuditAction];
  * namespace. A company's own audit list never returns them, whoever the actor is. Prefixes.
  */
 export const PLATFORM_AUDIT_ACTION_PREFIXES: readonly string[] = [
-  'system.', 'sales.',
+  'system.', 'sales.', 'executive.',
   'signup.request.', 'signup.line.package_change_decided', 'signup.line.trial_guards_failed',
   'auth.identity.repointed', 'ai.credit_hold.', 'ai.credit_breach.',
 ];

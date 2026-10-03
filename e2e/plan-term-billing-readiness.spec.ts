@@ -246,7 +246,8 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     await authedPage.getByLabel('รหัสสาขา (ตัวอักษรอังกฤษหรือตัวเลข)').fill('AFTERPAY');
     await authedPage.getByLabel('ชื่อสาขา', { exact: true }).fill('Created after simulated payment');
     await authedPage.getByRole('button', { name: 'บันทึกสาขาใหม่', exact: true }).click();
-    await expect(authedPage.getByText('Created after simulated payment', { exact: true })).toBeVisible();
+    // The list is a table here and a card list below md (630b6cae0): one name per layout.
+    await expect(authedPage.getByRole('cell', { name: 'Created after simulated payment', exact: true })).toBeVisible();
     expect(await rig.db.branch.count({ where: { companyId: rig.companyId, code: 'AFTERPAY' } })).toBe(1);
     expect(await rig.db.branch.count({ where: { companyId: rig.companyId, code: 'EXISTING' } })).toBe(1);
     expect((await rig.db.companyOcrMonthlyUsage.findFirstOrThrow({ where: { companyId: rig.companyId } })).usedCount).toBe(7);
@@ -440,9 +441,12 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
     try {
       await authedPage.goto(`/companies/${rig.companyId}/renew`);
       await expect.poll(() => delayed).toBeGreaterThan(0);
-      await authedPage.getByRole('button', { name: 'สลับบริษัท', exact: true }).click();
+      // 02b7a15bd: nothing business-shaped mounts before the term is known, the company switcher
+      // included, so while A's notice is held the owner leaves by address. The switcher is a full
+      // document navigation as well (window.location.assign).
+      await expect(authedPage.getByRole('status').filter({ hasText: 'กำลังเปิดหน้า…' })).toBeVisible();
       const other = await rig.db.company.findUniqueOrThrow({ where: { id: rig.otherCompanyId } });
-      await authedPage.getByRole('button', { name: new RegExp(other.name) }).click();
+      await authedPage.goto(`/companies/${rig.otherCompanyId}/dashboard`);
       await expect(authedPage).toHaveURL(new RegExp(`/companies/${rig.otherCompanyId}/dashboard`));
       release();
       await Promise.all(completions);
@@ -664,7 +668,7 @@ test.describe('Billing readiness — SIMULATED payment / real existing access st
       const page = await context.newPage();
       await page.goto(`/account/email?company=${rig.companyId}`);
       await expect(page.getByRole('heading', { name: 'จัดการอีเมลบัญชี', exact: true })).toBeVisible();
-      await expect(page.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true })).toBeVisible();
+      await expect(page.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true })).toBeVisible();
       await page.getByRole('link', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/companies/${rig.companyId}/billing$`));
       await expect(page.getByRole('heading', { name: /ยังไม่มีแพ็กเกจ/ })).toBeVisible();
@@ -879,7 +883,11 @@ test.describe('GW web + LINE round trips — real local app, simulated LINE proo
       if (blocked === 'admin-hold') await rig.expire('DISABLED', false);
       if (blocked === 'revoked-membership') await rig.db.companyMembership.updateMany({ where: { companyId: rig.companyId, userId: user.id }, data: { status: 'SUSPENDED' } });
       if (blocked === 'unlinked') await rig.db.externalIdentity.deleteMany({ where: { userId: user.id } });
-      expect((await request.post(`${urls.api}/auth/line/handoff/exchange`, { data: { token } })).status()).toBe(403);
+      const refused = await request.post(`${urls.api}/auth/line/handoff/exchange`, { data: { token } });
+      expect(refused.status()).toBe(403);
+      // A refused KNOWN token names its target; a bare 403 is the switched-off handoff
+      // (LINE_WEB_HANDOFF_ENABLED unset), which would pass this test without any recheck.
+      expect(await refused.json()).toMatchObject({ targetPath: `/companies/${rig.companyId}/renew` });
     });
   }
 });

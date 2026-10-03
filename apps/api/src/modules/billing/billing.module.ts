@@ -4,6 +4,7 @@ import { BillingAddOnAdminGrantsService } from './application/billing-addon-admi
 import { BillingCheckoutExpiryService } from './application/billing-checkout-expiry.service';
 import { BillingBatchesService } from './application/billing-batches.service';
 import { BillingSettlementService } from './application/billing-settlement.service';
+import { BillingCashMovementsService } from './application/billing-cash-movements.service';
 import { Module } from '@nestjs/common';
 import { BillingReadinessService } from './application/billing-readiness.service';
 import { BillingRefundsService } from './application/billing-refunds.service';
@@ -29,11 +30,12 @@ import { BillingAdminController, BillingCatalogController, BillingController, Bi
 @Module({
   imports: [SystemPartnerManagementModule, AuthModule, DataModelCoreModule, DashboardNotificationsModule],
   controllers: [BillingAdminController, BillingCatalogController, BillingController, BillingInternalController, StripeEventsController],
-  providers: [BillingPlanAdjustmentsService, BillingReceiptAdjustmentsService, BillingAddOnAdminGrantsService, BillingBatchesService, BillingCheckoutExpiryService, BillingSettlementService, BillingRefundsService, BillingDocumentAdminService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingRecipientOtpService, BillingReconcilerService, SalesDealPriceService, StripeClient, RedisRateLimitService,
+  providers: [BillingPlanAdjustmentsService, BillingReceiptAdjustmentsService, BillingAddOnAdminGrantsService, BillingBatchesService, BillingCheckoutExpiryService, BillingSettlementService, BillingCashMovementsService, BillingRefundsService, BillingDocumentAdminService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingRecipientOtpService, BillingReconcilerService, SalesDealPriceService, StripeClient, RedisRateLimitService,
     { provide: STRIPE_FETCH, useFactory: () => globalThis.fetch.bind(globalThis) }],
   // D-P5-3: the sales console approves the deal; the per-company Stripe Price is a billing write,
   // so its one writer lives here and is lent out rather than reimplemented next door.
   // BillingService: the sales-event console checks a batch's discount against `catalog()` prices.
-  exports: [SalesDealPriceService, BillingService],
+  // BillingCashMovementsService: the executive report reads money only through billing's own reader.
+  exports: [SalesDealPriceService, BillingService, BillingCashMovementsService],
 })
 export class BillingModule {}

@@ -380,7 +380,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     if (!quote) return;
     const remaining = Date.parse(quote.expiresAt) - Date.now();
     if (remaining <= 0) { setQuoteExpired(true); return; }
-    const timer = window.setTimeout(() => setQuoteExpired(true), remaining);
+    const timer = window.setTimeout(() => setQuoteExpired(true), Math.min(2_147_483_647, remaining));
     return () => window.clearTimeout(timer);
   }, [quote?.quoteId, quote?.expiresAt]);
   const requoteSame = () => action(async () => {

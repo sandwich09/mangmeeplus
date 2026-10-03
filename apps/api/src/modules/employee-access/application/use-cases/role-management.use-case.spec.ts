@@ -450,7 +450,7 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
   it('does not list a copy of a platform-only role a shop made before the by-id routes refused it (RB-34)', async () => {
     // PATCH roles/:id used to fork one into a company role with the same key. That copy is scoped to
     // the shop, so a filter that drops only the system row put it straight back in the role list.
-    for (const key of SALES_ROLE_KEYS) {
+    for (const key of [...SALES_ROLE_KEYS, 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT']) {
       const rows = (scope: string) => [
         { id: 'system-sales', scopeKey: 'system', key: 'SALES', name: 'Sales', description: null, isSystem: true, status: 'ACTIVE', permissions: [] },
         { id: 'system-platform-only', scopeKey: 'system', key, name: key, description: null, isSystem: true, status: 'ACTIVE', permissions: [] },
@@ -497,7 +497,7 @@ describe('a platform-only role reached by its id (RB-34)', () => {
   const notFound = (error: unknown) => error instanceof NotFoundException && error.message === 'Role not found';
 
   it('answers "not found" to a shop that reads one, and still reads it inside the platform company', async () => {
-    for (const key of ['SYSTEM_ADMIN', ...SALES_ROLE_KEYS]) {
+    for (const key of ['SYSTEM_ADMIN', ...SALES_ROLE_KEYS, 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT']) {
       await assert.rejects(() => new GetRoleUseCase(fixture(key).prisma).execute(COMPANY_ID, SYSTEM_ID), notFound, key);
       await assert.rejects(() => new GetRoleUseCase(fixtureWithCopy(key).prisma).execute(COMPANY_ID, COPY_ID), notFound, `${key} copy`);
       const read = await new GetRoleUseCase(fixture(key, PLATFORM_TENANT_ID).prisma).execute(PLATFORM_TENANT_ID, SYSTEM_ID);
@@ -512,7 +512,7 @@ describe('a platform-only role reached by its id (RB-34)', () => {
     const preview = (prisma: any, companyId: string, roleId: string) => new PreviewRoleUseCase(prisma).execute({
       companyId, roleId, permissionKeys: [REAL_PERMISSION], granterPermissionKeys: [], isOwner: true,
     });
-    for (const key of SALES_ROLE_KEYS) {
+    for (const key of [...SALES_ROLE_KEYS, 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT']) {
       await assert.rejects(() => preview(fixture(key).prisma, COMPANY_ID, SYSTEM_ID), notFound, key);
       await assert.rejects(() => preview(fixtureWithCopy(key).prisma, COMPANY_ID, COPY_ID), notFound, `${key} copy`);
       const inPlatform = await preview(fixture(key, PLATFORM_TENANT_ID).prisma, PLATFORM_TENANT_ID, SYSTEM_ID);
@@ -524,7 +524,7 @@ describe('a platform-only role reached by its id (RB-34)', () => {
     const rename = (prisma: any, companyId: string, roleId: string) => new UpdateRoleUseCase(prisma).execute({
       companyId, roleId, name: 'ทีมขายของร้าน', requestingUserId: 'owner-1', requestId: 'req-fork', isOwner: true,
     });
-    for (const key of SALES_ROLE_KEYS) {
+    for (const key of [...SALES_ROLE_KEYS, 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT']) {
       const shop = fixture(key);
       await assert.rejects(() => rename(shop.prisma, COMPANY_ID, SYSTEM_ID), notFound, key);
       assert.deepEqual(shop.state.roles.map((role) => role.id), [SYSTEM_ID], `${key}: nothing was copied`);

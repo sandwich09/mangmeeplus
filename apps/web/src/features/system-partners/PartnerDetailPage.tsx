@@ -43,6 +43,7 @@ import {
   companyReferral, normalizeSalesCodeInput, referralLabel, referralWindowOpen, salesCodeError,
   type CompanyReferralView,
 } from '@/features/sales-console/sales-console.logic';
+import PartnerReportLabels from './PartnerReportLabels';
 import PartnerAiAdjustmentHistory from './PartnerAiAdjustmentHistory';
 import PartnerPlanAdjustmentHistory from './PartnerPlanAdjustmentHistory';
 import {
@@ -3208,11 +3209,13 @@ function ShopMessageSection({ companyId, supportRequestId, supportAskerRef, show
 
 const COMPANY_VIEWS = [{key:'overview',label:'ภาพรวม'}, {key:'members',label:'สมาชิก'}, {key:'package',label:'แพ็กเกจและฟีเจอร์'}, {key:'ai',label:'เครดิต AI และอ่านรูป'}, {key:'contact',label:'ติดต่อและประวัติ'}] as const;
 
-export default function PartnerDetailPage({ companyId, canManageMembers = false, canEditIdentity = false, supportRequestId, supportAskerRef }: {
+export default function PartnerDetailPage({ companyId, canManageMembers = false, canEditIdentity = false, canManageReportLabels = false, isPlatformCompany = false, supportRequestId, supportAskerRef }: {
   companyId: string;
   canManageMembers?: boolean;
   /** F19: the API's PATCH …/identity gates on this; hide the button rather than let it 403. */
   canEditIdentity?: boolean;
+  canManageReportLabels?: boolean;
+  isPlatformCompany?: boolean;
   /** From `?support=`/`?asker=` on the support inbox's "เปิดหน้าร้าน" link — see the route file. */
   supportRequestId?: string;
   supportAskerRef?: string;
@@ -3521,7 +3524,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
           locked, never the admin "ปิดใช้งาน" badge — so the status badge hides while the lock chip shows. */}
       <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold text-gray-900">{detail.name}</h1>{lockedState ? <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">{planTermStateLabel(lockedState)}</span> : <StatusBadge status={currentStatus}/>}</div>{detail.brandName&&<p className="text-gray-600">ชื่อร้าน / แบรนด์: {detail.brandName}</p>}<p className="text-gray-600">เลือกเรื่องที่ต้องการดูแล ข้อมูลทั่วไปอยู่ในภาพรวม</p></header>
       <nav aria-label="หมวดข้อมูลบริษัท" className="flex flex-wrap gap-x-5 border-b border-gray-200">{COMPANY_VIEWS.map(item=><Link key={item.key} href={viewUrl(item.key)} scroll={false} aria-current={view===item.key?'page':undefined} className={`inline-flex min-h-14 items-center border-b-2 px-1 font-semibold ${view===item.key?'border-brand-700 text-brand-800':'border-transparent text-gray-600 hover:text-gray-900'}`} onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();window.history.pushState(null,'',viewUrl(item.key));}}>{item.label}</Link>)}</nav>
-      {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{lockedState ? (lockedState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : 'แพ็กเกจหมดอายุ') : STATUS_LABEL[currentStatus]} {termLocked ? 'แก้ข้อมูลบริษัทและข้อมูลติดต่อได้ ส่วนฟีเจอร์และ AI อ่านได้อย่างเดียว' : 'ข้อมูลบริษัท ฟีเจอร์ และ AI จึงอ่านได้อย่างเดียว'} {lockedState ? 'ลูกค้าซื้อแพ็กเกจเองได้จากหน้าแพ็กเกจ หรือต่ออายุได้ในหมวดแพ็กเกจ' : 'เปลี่ยนสถานะได้ในหมวดภาพรวม'}</p>}
+      {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{lockedState ? (lockedState === 'NO_PACKAGE' ? 'ยังไม่มีแพ็กเกจ' : 'แพ็กเกจหมดอายุ') : STATUS_LABEL[currentStatus]} {termLocked ? 'แก้ข้อมูลบริษัทและข้อมูลติดต่อได้ ส่วนฟีเจอร์และ AI อ่านได้อย่างเดียว' : 'ข้อมูลบริษัทและการตั้งค่าบริการอ่านได้อย่างเดียว ยกเว้นข้อมูลสำหรับรายงานผู้บริหาร'} {lockedState ? 'ลูกค้าซื้อแพ็กเกจเองได้จากหน้าแพ็กเกจ หรือต่ออายุได้ในหมวดแพ็กเกจ' : 'เปลี่ยนสถานะได้ในหมวดภาพรวม'}</p>}
       {opened('overview')&&<section hidden={view!=='overview'} aria-label="ภาพรวมบริษัท" className="space-y-5">
         <SectionCard title="ข้อมูลบริษัท">
           <div className="grid gap-4 sm:grid-cols-3">
@@ -3549,6 +3552,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
             <Link className="inline-flex min-h-11 items-center px-2 text-brand-800 underline underline-offset-4" href={`/system/billing/companies/${encodeURIComponent(companyId)}`}>ดูการชำระเงินของบริษัท</Link>
           </div>
         </SectionCard>
+        <PartnerReportLabels detail={detail} canManage={canManageReportLabels} isPlatformCompany={isPlatformCompany} onSaved={setDetail} />
         {/* Purchase without setup PR E (R-E3): registered name / tax id / address */}
         {identityEditMode && !profileLocked && identityControl && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">

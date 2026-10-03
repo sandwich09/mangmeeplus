@@ -1334,3 +1334,29 @@ describe('CreateCompanyOnboardingUseCase P29 default term', () => {
     assert.equal(result.onboardingRunId, 'run-1');
   });
 });
+
+// Executive spec §12.2 (Q16): the report label is written with the company, in the same transaction.
+describe('CreateCompanyOnboardingUseCase report classification', () => {
+  it('labels a company from the normal signup CUSTOMER, and leaves an admin-created one unclassified', async () => {
+    const signup = makePrisma({});
+    const links: any[] = [];
+    const inner = signup.client.$transaction;
+    signup.client.$transaction = (fn: (tx: any) => Promise<any>) => inner((tx: any) => fn({
+      ...tx,
+      companySignupRequest: { updateMany: async (args: any) => { links.push(args); return { count: 1 }; } },
+    }));
+    const before = Date.now();
+    await new CreateCompanyOnboardingUseCase(signup, configMock, legalMock).execute(makeCmd({ linkSignupRequestId: 'signup-1' }));
+    const data = signup.companyCreates()[0].data;
+    assert.equal(data.reportClassification, 'CUSTOMER');
+    assert.ok(data.reportClassifiedAt instanceof Date && data.reportClassifiedAt.getTime() >= before);
+    assert.equal(data.reportClassifiedByUserId, undefined, 'the system chose; no person is named');
+    assert.equal(links[0].where.id, 'signup-1');
+
+    const admin = makePrisma({});
+    await new CreateCompanyOnboardingUseCase(admin, configMock, legalMock).execute(makeCmd());
+    const adminData = admin.companyCreates()[0].data;
+    assert.equal('reportClassification' in adminData, false);
+    assert.equal('reportClassifiedAt' in adminData, false);
+  });
+});
