@@ -92,3 +92,65 @@ Focused red command: `pnpm --filter @watchdog-bms/web exec node --import tsx --t
 - Browser, e2e, live permission removal and real build refresh: not checked because this lane has no browser, servers, network or database.
 
 Next: controller reviews/commits the diff and runs `pnpm exec playwright test e2e/executive-report.spec.ts` on the seeded stack with WORKER_INTERNAL_TOKEN set (otherwise the spec skips). At 390 and 1280 px, re-check August partial usage/adoption/cost, July unavailable money/cost, mixed company-detail reason references and all tabs, missing-month build becoming selectable without full reload (and one reload only), context-refresh failure/retry/denial, empty/sort-only/drilled chips, both filter-toggle names, four account badge colours in list/detail, combobox field names after changing selections, and executive-only denial on `/system/executive`, `/system/partners` and `/sales/deals` after read permission removal. Check an admin and a mixed session retain their prior gate behaviour.
+
+## Browser re-check after the fixes (round 2)
+
+Status: Done 2026-10-03 on the program head `13fd99c01` (fast-forwarded), plus one fix commit `0ca55cdca` on this branch; not pushed.
+Owner: browser-acceptance lane; the controller reviews, pushes and merges.
+Scope: the nine re-check items at 390 and 1280 px, on a freshly built throwaway stack with the round-1 data, the build run through the internal rebuild call. One September payment of each purchase kind was added, all fictional: a SCHEDULED_CHANGE payment; deals for a shop whose package was still running, a shop whose package had ended, and a shop that never paid.
+
+Results:
+
+1. Words, August and July on ten screens each (overview, companies, usage, ranking, revenue, top payers, customers, compare, detail usage and company tabs): no "ยังไม่มีข้อมูลของช่วงนี้…" beside a shown number; each one sits under "— ยังไม่มีตัวเลข". Partial figures read "ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้ ช่วงก่อนเริ่มเก็บยังประเมินไม่ได้" or "ข้อมูลก่อนเริ่มทำรายงาน นับได้เฉพาะรายการที่ยังเหลืออยู่". AI cost: July "— ยังไม่มีตัวเลข", August "3.00 บาท (ยอดเฉพาะช่วงที่วัดได้)", September 6.00 บาท.
+2. Company detail (August): each reason once, numbered 1–3, on all three tabs. The figures point to them through links named "ดูเหตุผลข้อ N" (7, 37 and 7 links).
+3. With October's build rows deleted, the month picker disables October. After a build round and "ลองอีกครั้ง", October becomes selectable at 390 and 1280 without a reload, and picking it loads the month.
+4. Read permission removed from the executive role: the open page and the report, partners, executive-users and sales URLs all show "คุณไม่มีสิทธิ์ใช้งานส่วนนี้", and the menu is empty.
+   - Edge found and fixed in `0ca55cdca`: when the base role row itself was removed (export/contacts roles left), every URL fell back to the admin console's denial. After the fix, five URLs were re-checked, the workspace URL included.
+   - A System Admin is unchanged: report, partners, executive-users and sales all open.
+   - A mixed session (the seeded sales lead plus the executive role) is unchanged: report and sales open; partners and executive-users show the admin console's denial.
+5. An empty pick and a sort-only pick show no "เงื่อนไขที่กดมา" row. A real pick shows its chip once. The toggles read "ตัวกรองรายงาน · N" and "ตัวกรองรายชื่อบริษัท · N".
+6. Account status colours are the same in cards, table and detail:
+
+   | Status | Background | Text |
+   |---|---|---|
+   | รอเปิดใช้งาน | #FFFAEB | #B54708 |
+   | เปิดใช้งาน | #ECFDF3 | #15803D |
+   | ระงับ | #FEF3F2 | #B42318 |
+   | ถอนสิทธิ์แล้ว | #F2F4F7 | #475467 |
+
+7. Every report dropdown's accessible name is its field label: overview, companies, ranking, sales view and compare.
+8. September purchase groups:
+
+   | Group | Total | Includes |
+   |---|---|---|
+   | ซื้อครั้งแรก | 6,938.00 | the never-paid deal, 4,444.00 |
+   | ต่ออายุ | 7,414.00 | SCHEDULED_CHANGE 1,111.00, live deal 2,222.00, ended deal 3,333.00 |
+   | อัปเกรด | 999.00 | — |
+
+   Company histories show "ต่ออายุแพ็กเกจ" for the first three payments and "ซื้อแพ็กเกจ" for the never-paid deal. The deal payments carry no change-request row, so their time is the charge time, the reader's documented fallback.
+9. e2e `e2e/executive-report.spec.ts` passed on a fresh seed (9.2 s), on full data (8.2 s) and on the final code `0ca55cdca` (11.5 s).
+   - The round-1 journeys J1–J5 were re-run on this code and all pass: 378 screens, no sideways scroll, no page error. The words sweep is clean.
+
+Decisions: `isExecutiveOnlySession` recognises any of the three executive roles or any `system.executive.*` permission. It still never applies with the admin role or with any permission beyond the report and the account. This changes presentation and landing only; the report still needs the read permission. Maintenance pins were refreshed (validator and workflow).
+
+Open questions:
+
+- A person holding both a sales role and an executive role lands after sign-in on the platform workspace page "ยังไม่มีหน้าที่คุณเปิดได้ในบริษัทนี้". From there, nothing leads to the report or the sales console.
+  - This is the generic fallback of `resolveLoginLanding`, and this round did not change it.
+  - The UI spec §3.1 defines only executive-only, admin and billing-only accounts, and Q12 makes executives separate accounts.
+  - The owner decides only if such accounts are expected.
+- Minor: the numbered reason links are 15–17 × 18 px at 390 (13.5 px text), inline after the figures.
+- Minor, from round 1: "ชำระในเดือน: ชำระในเดือน" on the detail repeats its label.
+
+Artifacts: lane folder (see above); round 2 screenshots `shots/r2-*`; logs `final-run2.log`, `r2-d20-red/green.log`, `e2e-r2-exec01-*.log`, `final-checks-r2.log`.
+
+Verification:
+
+- Session-gate spec red, then green: 36/37 (exit 1), then 37/37 (exit 0).
+- Maintenance pins `--check`: exit 0.
+- Web typecheck (native tsc, under the heavy lock): exit 0.
+- Whole web suite (under the heavy lock, without S3_* variables): exit 0, 2858/2858 tests, 572 suites, 0 skipped.
+- `git diff --check 13fd99c01..HEAD`: exit 0.
+- The billing and build Postgres specs changed by the owner-answers commits were not run here; CI runs them at merge (`ci.yml` lines 797–803).
+
+Next: controller review; take `0ca55cdca` into the program branch.

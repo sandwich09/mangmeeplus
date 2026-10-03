@@ -65,6 +65,10 @@ describe('executive report entry', () => {
     assert.equal(gates.isExecutiveOnlySession(session({ roles: ['MANGMEE_EXECUTIVE'], permissions: ['expenses.read'] })), false);
     assert.equal(gates.isExecutiveOnlySession(session({ roles: ['SYSTEM_ADMIN', 'MANGMEE_EXECUTIVE'], permissions: ['account.read'] })), false);
     assert.equal(gates.isExecutiveOnlySession(session({ permissions: ['account.read'] })), false);
+    // The base read role itself gone while the export/contact roles stay: still an executive, never the admin console's words.
+    const baseRoleGone = session({ roles: ['MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT'], permissions: ['account.read', 'system.executive.export', 'system.executive.contact.read'] });
+    assert.equal(gates.isExecutiveOnlySession(baseRoleGone), true);
+    assert.equal(gates.isExecutiveOnlySession(session({ roles: ['MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_SALES'], permissions: ['account.read', 'system.executive.export', 'sales.deal.read'] })), false);
   });
 });
 
