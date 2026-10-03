@@ -1,13 +1,13 @@
 # Agent Memory: English left on signed-in pages
 
-Status: implementation complete; browser verification remains with the controller
-Owner: lane 3b
+Status: lane 3b complete; batch A follow-up (items 1–6, section at the end) complete on `claude/batch-a-roles-notices-20261003`, not pushed; browser, real PostgreSQL and a release-sync run remain with the controller
+Owner: lane 3b; batch A follow-up by the controller's subagent
 Scope: Report catalogue, report column labels and CSV headings, assistant-facing report source labels, report view defaults/values, workflow automation text, notification rule text, add-employee wizard, dashboard stock card. No package.json, migration, Prisma schema, `apps/api/src/modules/line-ai`, `apps/ai-gateway`, or pinned user-guide content changes.
 Decisions: Reuse the Thai report catalogue for API source-reference labels; CSV headings reuse report result column definitions. Map rule names to trigger-based Thai labels and map system workflow template copy from the template catalogue, including stale stored template summaries. Preserve company-entered saved-view/rule/template names and custom text. Keep the English dictionary block unchanged. Format system dates/times/numbers with the shared Thai helpers/locale. Use native time controls for quiet-hours inputs so the page does not print API-format time examples. Remove report IDs/source keys from the workspace and replace workflow rule-test JSON output with a Thai, side-effect-accurate summary.
 Open questions: (1) `docs/specs/employee-access-role-management-spec.md` says DOB-derived passwords do not force a first-login change, while `create-employee.use-case.ts` sets `mustChangePassword: true` and the wizard says the employee must change it; which rule controls? [Closed 2026-10-03 by batch A item 5: the code controls; the spec was corrected.] (2) Should old system-seeded workflow rule names be displayed from the Thai template catalogue, or should every stored name remain untouched because it may be company-custom? [Closed 2026-10-03 by batch A item 3: the release sync renames rules still carrying a former default; other names stay.] (3) Report rows can still contain generated metric keys, severity/freshness enums, and source IDs; should these become Thai display values, remain as business/export values, or be omitted? [Closed 2026-10-03 by batch A item 2: Thai words from one API map at the page and CSV; ids replaced by numbers and names.] The Reports workspace localizes the `periodKey` display, while CSV still carries its source value. (4) Should raw condition/action/sample JSON and webhook event-key/endpoint fields remain available in the explicitly technical workflow editor, or should shop users get a Thai form? (5) The pinned report guide still contains English report names and column labels; it was intentionally not changed under the lane restriction. [Closed 2026-10-03 by batch A item 1, below.] The birth-date field continues to show its editable day/month/year form after input; no input-format behavior was changed.
 Artifacts: `apps/api/src/modules/reports/domain/report-catalog.ts`, `apps/api/src/modules/reports/application/report-source-adapters.ts`, report UI logic/page/spec; workflow catalogue/mapper/explanations and page/spec; notification model/use cases/page/logic/spec; employee wizard/dictionary/spec; dashboard stock provider/page/logic/spec; E2E selector updates in `e2e/reports.spec.ts` and `e2e/_reference.spec.ts`, plus `e2e/TEST-CASES.md`; four corresponding specs; this note.
 Verification: Red then green: report API labels (old code 15 pass/1 fail; final 16/16), workflow API text (old code 26 pass/1 fail; final 29/29), notification API names (10/1; 11/11), stock reorder label (6/1; 7/7), employee wording including removal of “OA” (10/1; 11/11), dashboard metric/channel formatting (4/1; 6/6), notification page wording (3/1; 4/4); added quiet-hours control check (4/1; 5/5), report view/value/enum text (old period value 11/1 and ungrouped numeric string 11/1; final 12/12), workflow page text (old label fallback failed; 13/13). The assistant-facing report source label regression was separately red at 15/1 on `General Ledger ${periodKey}` and green at 16/16. API typecheck passed (exit 0); web typecheck passed after final UI changes (exit 0); `git diff --check` passed (exit 0). Browser/E2E and real-PostgreSQL specs were not run because this lane forbids browsers and has no database.
-Next: Controller runs the changed report E2E selectors in a browser, the real-PostgreSQL specs, and reviews the listed product questions and narrow-layout risks. No package script or dependency changes were made.
+Next: (batch A) see "Batch A verification and next" at the end. (lane 3b) Controller runs the changed report E2E selectors in a browser, the real-PostgreSQL specs, and reviews the listed product questions and narrow-layout risks. No package script or dependency changes were made.
 
 ## Batch A follow-up (2026-10-03, branch `claude/batch-a-roles-notices-20261003`)
 
@@ -115,3 +115,48 @@ applied where a person reads, not in the adapters:
 - Limits: an archived expense category prints no name (`listCategoryCandidates` is active-only); words that
   exist only in web files (movement types from the dictionary, AI suggestion statuses, notification severity,
   freshness) are copied, matching letter for letter, because the API cannot import web code.
+
+### Item 6: left as they are (controller decision)
+
+The automation page's advanced JSON editor for conditions, actions and the test sample; the connections
+form's address, secret and event fields (technical inputs); and text a company stored (saved-view names,
+custom rule names, task text, dead-letter notes, connection names). Not changed.
+
+### Noticed in batch A, not changed
+
+- Report page money cells always end in “บาท” (lane 3b), so a USD row in อายุหนี้ลูกหนี้การค้า, สรุปยอดขาย,
+  สรุปค่าใช้จ่าย or สถานะเงินสด reads “… บาท” beside “USD”; charts likewise. Needs the row's currency as the unit.
+- Balance-sheet rows now say ส่วนของผู้ถือหุ้น (the shared ledger label) while the catalogue description
+  says ส่วนของเจ้าของ: one word should be chosen for both (a product wording call).
+- Report warnings: `crm_scope_forbidden` says “CRM”; `crm_pipeline_currency_unavailable` and
+  `mixed_currency_total_unavailable` have no words and fall to “…ตรวจสอบขอบเขตข้อมูลและสิทธิ์ของคุณ”, which is
+  untrue for a currency gap.
+- CSV: dates are UTC ISO timestamps; the file name is the report code (`financial.general_ledger-….csv`).
+  Chart series labels in the adapters are English (not shown on the page). Dashboard-health rows drop the
+  metric unit. Totals (e.g. net profit) are not shown on the page.
+- Stock-balance filters “สินค้า” and “ที่เก็บสินค้า” are free-text boxes that expect internal ids. The
+  inventory pages print raw ids (`InventoryPages.tsx` balance list and movement table); the balance and
+  movement queries now carry names they could use. The assistant's inventory tools label sources by product id.
+- Workflow action runner English: notification title fallback “… — WatchDog Workflow”, fallback task
+  “[Review needed] …” with an English description (every run of an enabled “ขอให้ AI ช่วยร่างข้อมูล” rule, whose
+  default requester is empty), audit note “Workflow rule … fired.”.
+- Tax pages: period badges print raw status codes, form labels carry “(VAT)/(WHT …)/(CIT …)”, the pinned tax
+  guide's status table starts with `NEEDS_REVIEW`; accounts-payable shows `PP36_RECEIPT`/`PAYMENT_EVIDENCE`.
+- Words copied from web-only files into the API map (movement types, AI suggestion statuses, notification
+  severity, freshness): moving those labels to contracts would make them one source.
+
+### Batch A verification and next
+
+Commits: `f4359f9d5` (item 1), `64c93e00a` (item 4), `55a616b6c` (item 5), `dc0a226de` (item 3), `bbaa239ec`
+(item 2), `82faad193` (W00 manifest). Under `/tmp/mangmee-heavy.lock`, no `S3_*` variables: API typecheck
+rc 0; web typecheck rc 0 (`next-env.d.ts` unchanged); whole web suite rc 0, 2696 tests in 560 suites,
+2696 / 0 / 0; whole-chain acceptance rc 0, 8 suites, 3694 / 0 / 0 (after the manifest regeneration; before
+it, parity failed on exactly `report-source-adapters.ts` and `ReportsWorkspacePage.tsx`). Focused, final:
+workflow template auto-enable 34 / 0, workflow template use case 5 / 0, report adapters 34 / 0, report use
+cases 35 / 0, report CSV 2 / 0, inventory stock movement 40 / 0, assistant report tool 5 / 0; web guide
+30 / 0, workflow logic 15 / 0, reports UI 12 / 0; approved-knowledge 9 / 0. `git diff --check` rc 0.
+Not run: browser, real PostgreSQL (the inventory name lookups and the movement `include` are typechecked
+only), and the release sync against a database.
+Next: controller reviews, runs the report e2e and a browser pass (reports, automation, connections tab),
+and deploys the assistant with the web (the reports pin moved). The rule renames happen at the next
+release's template sync.
