@@ -1,4 +1,5 @@
 import { deflateRawSync } from 'node:zlib';
+import { formatThaiExportDate } from './thai-date.logic';
 
 /**
  * Minimal dependency-free .xlsx writer (stored-zip OOXML, single sheet).
@@ -139,7 +140,7 @@ function crc32Table(): number[] {
 export type WorkbookCell = XlsxCell | null | { value: XlsxCell | null; style?: number; formula?: string };
 export type WorkbookSheet = {
   name: string; rows: WorkbookCell[][]; widths?: number[]; freezeRows?: number; filter?: string;
-  merges?: string[]; printArea?: string; charts?: WorkbookChart[];
+  merges?: string[]; printArea?: string; charts?: WorkbookChart[]; autoHeightRows?: number[];
 };
 export type WorkbookChart = {
   title: string; kind: 'doughnut' | 'bar'; labels: string[]; values: (number | null)[];
@@ -153,13 +154,13 @@ const relation = (id: string, type: string, target: string) => `<Relationship Id
 const relationships = (entries: string[]) => `${declaration}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${entries.join('')}</Relationships>`;
 const override = (part: string, kind: string) => `<Override PartName="/${part}" ContentType="application/vnd.openxmlformats-officedocument.${kind}+xml"/>`;
 
-/** Bangkok wall time as an Excel date serial, with the Thai Buddhist calendar, never a text date. */
-export function xlsxThaiDate(at: string | Date | null, withTime = false): WorkbookCell {
+/** Thai text dates stay readable in viewers that ignore Buddhist-calendar number formats. */
+export function xlsxThaiDate(at: string | Date | null, withTime = false): string | null {
   if (at === null) return null;
   const ms = new Date(at).getTime();
   if (!Number.isFinite(ms)) throw new Error('XLSX_INVALID_DATE');
-  const local = (ms + 7 * 3_600_000 - Date.UTC(1899, 11, 30)) / 86_400_000;
-  return { value: withTime ? local : Math.floor(local), style: withTime ? 5 : 4 };
+  const date = new Date(ms), day = formatThaiExportDate(date.toISOString());
+  return withTime ? `${day} ${new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false }).format(date)} น.` : day;
 }
 
 function checkSheet(rows: WorkbookCell[][], name: string) {
@@ -175,7 +176,7 @@ function workbookCell(cell: WorkbookCell, ref: string): string {
   if (cell === null) return '';
   const typed = typeof cell === 'object' ? cell : { value: cell };
   const style = typed.style ?? 0, value = typed.value;
-  if (!Number.isInteger(style) || style < 0 || style > 10) throw new Error('XLSX_INVALID_STYLE');
+  if (!Number.isInteger(style) || style < 0 || style > 11) throw new Error('XLSX_INVALID_STYLE');
   if (typed.formula !== undefined) {
     if (!typed.formula || typed.formula.includes('[') || typed.formula.length > 8192) throw new Error('XLSX_INVALID_FORMULA');
     return `<c r="${ref}" s="${style}"${typeof value === 'number' ? '' : ' t="str"'}><f>${xml(typed.formula)}</f><v>${xml(value)}</v></c>`;
@@ -195,12 +196,15 @@ export function buildWorkbook(sheets: WorkbookSheet[], limits: { maxBytes?: numb
     checkSheet(sheet.rows, sheet.name);
     const id = i + 1, freeze = sheet.freezeRows ?? 0, widths = sheet.widths ?? Array.from({ length: Math.max(1, ...sheet.rows.map(row => row.length)) }, () => 22);
     if (widths.some(width => !Number.isFinite(width) || width <= 0 || width > 255)) throw new Error('XLSX_INVALID_WIDTH');
-    const data = sheet.rows.map((row, r) => `<row r="${r + 1}" ht="${r + 1 === freeze ? 72 : 24}" customHeight="1">${row.map((cell, c) => workbookCell(cell, `${columnName(c + 1)}${r + 1}`)).join('')}</row>`).join('');
-    const sheetXml = `${declaration}<worksheet xmlns="${MAIN_NS}" xmlns:r="${OFFICE_NS}"><sheetViews><sheetView showGridLines="0" workbookViewId="0">`
+    const data = sheet.rows.map((row, r) => `<row r="${r + 1}"${sheet.autoHeightRows?.includes(r + 1) ? '' : ` ht="${r + 1 === freeze && sheet.filter ? 72 : 24}" customHeight="1"`}>${row.map((cell, c) => workbookCell(cell, `${columnName(c + 1)}${r + 1}`)).join('')}</row>`).join('');
+    const sheetXml = `${declaration}<worksheet xmlns="${MAIN_NS}" xmlns:r="${OFFICE_NS}">`
+      + (sheet.printArea ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '')
+      + '<sheetViews><sheetView showGridLines="0" workbookViewId="0">'
       + (freeze ? `<pane ySplit="${freeze}" topLeftCell="A${freeze + 1}" activePane="bottomLeft" state="frozen"/>` : '')
       + `</sheetView></sheetViews><cols>${widths.map((width, c) => `<col min="${c + 1}" max="${c + 1}" width="${width}" customWidth="1"/>`).join('')}</cols><sheetData>${data}</sheetData>`
       + (sheet.filter ? `<autoFilter ref="${xml(sheet.filter)}"/>` : '')
       + (sheet.merges?.length ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map(ref => `<mergeCell ref="${xml(ref)}"/>`).join('')}</mergeCells>` : '')
+      + (sheet.printArea ? '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="1"/>' : '')
       + (sheet.charts?.length ? '<drawing r:id="drawing"/>' : '') + '</worksheet>';
     files[`xl/worksheets/sheet${id}.xml`] = Buffer.from(sheetXml);
     types.push(override(`xl/worksheets/sheet${id}.xml`, 'spreadsheetml.worksheet'));
@@ -243,6 +247,6 @@ function chartXml(chart: WorkbookChart): string {
 }
 function workbookStyles(): string {
   const formats = ['#,##0.00;[Red]-#,##0.00', '[$-107041E]d mmm bbbb', '[$-107041E]d mmm bbbb hh:mm" น."', '0.0%'];
-  const xfs = [[0, 0, 0], [1, 2, 0], [1, 2, 0], [0, 0, 164], [0, 0, 165], [0, 0, 166], [0, 0, 167], [2, 3, 0], [0, 3, 0], [0, 4, 0], [0, 5, 0]];
+  const xfs = [[0, 0, 0], [1, 2, 0], [1, 2, 0], [0, 0, 164], [0, 0, 165], [0, 0, 166], [0, 0, 167], [2, 3, 0], [0, 3, 0], [0, 4, 0], [0, 5, 0], [2, 3, 164]];
   return `${declaration}<styleSheet xmlns="${MAIN_NS}"><numFmts count="4">${formats.map((format, i) => `<numFmt numFmtId="${164 + i}" formatCode="${xml(format)}"/>`).join('')}</numFmts><fonts count="3"><font><sz val="11"/><color rgb="FF1A2E22"/><name val="Tahoma"/></font><font><b/><sz val="12"/><color rgb="FFFFFFFF"/><name val="Tahoma"/></font><font><b/><sz val="24"/><color rgb="FF14532D"/><name val="Tahoma"/></font></fonts><fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${['14532D', 'DCFCE7', 'FEF3C7', 'E5E7EB'].map(color => `<fill><patternFill patternType="solid"><fgColor rgb="FF${color}"/><bgColor indexed="64"/></patternFill></fill>`).join('')}</fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.map(([font, fill, format]) => `<xf numFmtId="${format}" fontId="${font}" fillId="${fill}" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center" wrapText="1"${format ? ' horizontal="right"' : ''}/></xf>`).join('')}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 }

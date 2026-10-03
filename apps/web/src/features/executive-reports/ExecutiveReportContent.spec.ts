@@ -36,6 +36,27 @@ test('rendered partial and unavailable figures retain their reasons and negative
   assert.doesNotMatch(text(renderToStaticMarkup(React.createElement(Figure, { value: cash(-100), moneyValue: true }))), /คืนเงินมากกว่าเงินรับ/);
   assert.doesNotMatch(text(renderToStaticMarkup(React.createElement(Figure, { value: { ...cash(-100), value: null, knownValue: -100, coverage: 'partial' }, moneyValue: true, netValue: true }))), /คืนเงินมากกว่าเงินรับ/);
 });
+test('screen and workbook money qualifiers use the same facts and Thai words for every coverage and add-on sale state', async () => {
+  const { Figure } = await content();
+  const contracts = await import('@watchdog-bms/contracts');
+  const qualifier = contracts.executiveMoneyQualifier;
+  assert.equal(typeof qualifier, 'function');
+  const W = contracts.EXECUTIVE_WORDS;
+  const cases: Array<[ExecutiveMoney, boolean, string]> = [
+    [cash(0), false, ''],
+    [{ ...cash(0), value: null, knownValue: 0, coverage: 'partial' }, false, W.partialMoney],
+    [{ ...cash(100), value: null, knownValue: 100, coverage: 'partial', reasonCodes: ['PURCHASE_KIND_UNKNOWN'] }, false, W.partialMoney],
+    [{ ...cash(100), value: null, knownValue: 100, coverage: 'partial' }, true, W.partialMeasuredMoney],
+    [missing, false, W.unavailableFigure],
+    [{ ...missing, reasonCodes: ['ADDON_NOT_ON_SALE'] }, false, W.addOnNotSold],
+  ];
+  for (const [value, measured, expected] of cases) {
+    assert.equal(qualifier(value, measured), expected);
+    const shown = text(renderToStaticMarkup(React.createElement(Figure, { value, moneyValue: true, measured })));
+    if (expected) assert.ok(shown.includes(expected), shown);
+    assert.doesNotMatch(qualifier(value, measured), /[A-Za-z_]/);
+  }
+});
 test('figures and receipt adoption use counted-data reasons when a number is shown', async () => {
   const { Figure, OverviewContent } = await content();
   const partial = { value: null, knownValue: 3, coverage: 'partial' as const, reasonCodes: ['HISTORY_BEFORE_COLLECTION' as const] };
