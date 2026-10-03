@@ -1733,3 +1733,56 @@ describe('a scan keeps one open task per rule and record (the overdue-approval r
     } });
   });
 });
+
+// Owner 2026-10-02: text a shop user reads is plain Thai and true. These are the words a rule's notice and task
+// fall back to when the rule has none of its own; what the runner does is unchanged.
+describe('fallback words of a rule, in Thai', () => {
+  const english = (text: string) => /[A-Za-z]/.test(text.replace(/\bAI\b/g, ''));
+  const ruleContext: any = {
+    companyId: 'co_1', ruleName: 'กฎของร้านทดสอบ', sourceModule: 'procurement', sourceType: 'vendor_bill', sourceId: 'bill_1',
+    payload: { billId: 'bill_1' }, siblingActions: [],
+  };
+  const run = (actionType: string, configJson: Record<string, unknown>): any => ({
+    id: 'ar_9', workflowRunId: 'run_9', actionKey: 'fallback_case', actionType, actionConfigSnapshotJson: configJson,
+    attemptCount: 0, idempotencyKey: 'run_9:fallback_case', startedAt: undefined,
+  });
+  let repo: any;
+  let notify: any;
+  beforeEach(() => {
+    repo = {
+      updateActionRun: mock.fn(async () => undefined),
+      findUserIdsByRoles: mock.fn(async () => []),
+      findUserIdsByPermissions: mock.fn(async () => ['u_1']),
+      findSourceBranchId: mock.fn(async () => null),
+      findTaskByActionRunId: mock.fn(async () => null),
+      createTask: mock.fn(async (data: any) => ({ id: 'task_9', ...data })),
+    };
+    notify = { execute: mock.fn(async () => ({ skipped: false, event: { id: 'ne_9' } })) };
+  });
+  const access = { resolveAccess: async () => ({ permissions: ['procurement.vendor_bill.approve'], roles: ['STAFF'], scopes: {} }) } as any;
+  const make = () => new ExecuteWorkflowActionUseCase(repo, {} as any, {} as any, notify, {} as any, {} as any, access);
+
+  it('titles a notice that has no title of its own by its rule', async () => {
+    await make().execute(run('SEND_NOTIFICATION', { recipientPermissions: ['procurement.vendor_bill.approve'] }), ruleContext);
+    const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+    assert.equal(sent.title, 'แจ้งเตือนจากกฎอัตโนมัติ: กฎของร้านทดสอบ');
+  });
+
+  it('asks for the AI draft by hand when the rule names no requester, as before but in Thai', async () => {
+    await make().execute(run('REQUEST_AI_DRAFT', { templateKey: 'workflow_review_checklist', requesterUserId: '' }), ruleContext);
+    assert.equal(repo.createTask.mock.callCount(), 1);
+    const task = (repo.createTask.mock.calls[0] as any).arguments[0];
+    assert.equal(task.title, 'ต้องดำเนินการเอง: กฎของร้านทดสอบ');
+    assert.equal(english(task.description), false, task.description);
+    assert.match(task.description, /ยังไม่ได้ระบุผู้ขอหรือแบบร่าง/);
+    assert.deepEqual((repo.updateActionRun.mock.calls.at(-1) as any).arguments[1].resultJson, { fallback: true });
+  });
+
+  it('asks for a report export by hand when a rule wants one, in Thai', async () => {
+    await make().execute(run('CREATE_REPORT_EXPORT_DRAFT', { reason: 'provider not implemented' }), ruleContext);
+    const task = (repo.createTask.mock.calls[0] as any).arguments[0];
+    assert.equal(task.title, 'ต้องดำเนินการเอง: กฎของร้านทดสอบ');
+    assert.equal(english(task.description), false, task.description);
+    assert.match(task.description, /หน้ารายงาน/);
+  });
+});

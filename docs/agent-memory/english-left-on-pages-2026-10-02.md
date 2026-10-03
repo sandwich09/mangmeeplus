@@ -214,3 +214,25 @@ every `amountEstimate` whatever its currency, and since R1 that row shows no uni
 `mixed_currency_total_unavailable` (same fallback): “ใบแจ้งหนี้มีมากกว่าหนึ่งสกุลเงิน จึงไม่รวมยอดค้างชำระเป็นยอดเดียว
 และไม่ได้เทียบกับยอดคุมบัญชี”. Fact: the receivables total is null and the ledger-control comparison is skipped.
 A web test reads all 14 warning codes from the API sources and requires words of their own: red 14 / 2 → 16 / 0.
+
+### R4: a rule's fallback words
+
+`workflow-action-runner.use-case.ts`, behaviour unchanged (same task, same result `{ fallback: true }`):
+- Notice without a title of its own: “<rule> — WatchDog Workflow” → “แจ้งเตือนจากกฎอัตโนมัติ: <rule>” (the automation
+  tab word from contracts).
+- Fallback task title “[Review needed] <rule>” → “ต้องดำเนินการเอง: <rule>”; the English description (action type and
+  config reason) → per case: report-export draft “ระบบยังเตรียมไฟล์ส่งออกรายงานให้อัตโนมัติไม่ได้ จึงสร้างงานนี้ไว้ให้ส่งออกเอง
+  จากหน้ารายงาน”; AI draft without requester or template “กฎนี้ตั้งค่าการขอให้ AI ช่วยร่างไม่ครบ (ยังไม่ได้ระบุผู้ขอหรือแบบร่าง)
+  ระบบจึงสร้างงานนี้ไว้ให้ดำเนินการเอง”. The audit note is unchanged.
+- The AI-draft template (`ai_draft_requested`, “ขอให้ AI ช่วยร่างข้อมูล”): its one action requests a draft for
+  `requesterUserId`, which defaults to '' and can only be set by typing a user id into the advanced JSON editor;
+  `requestAiDraft` treats '' as missing and creates the fallback task instead, once per action run, so no draft
+  is ever requested. Its trigger is the event `ai.draft_requested`, and nothing in the API emits that event (the
+  AI draft module appends no outbox events), so an enabled rule does not run by itself today; the task appears
+  only when one of its action runs is replayed by hand. Smallest correct fix, for the owner: mark the template
+  UNAVAILABLE in the catalogue with a true Thai reason (the release sync writes the status; enabling an unavailable
+  template is already refused at `workflow-template.use-case.ts:220`; existing rules never fire). Making it work
+  instead needs three things: emit `ai.draft_requested` from the draft flow, let the owner pick the requester in
+  the enable dialog, and keep the rule's own draft requests from triggering it again (the default 3600 s cooldown
+  would be the only brake).
+- Test: `workflow-action-runner.use-case.spec.ts` (registered) red 88 / 3 → 91 / 0. Spec: workflow UI rules.
