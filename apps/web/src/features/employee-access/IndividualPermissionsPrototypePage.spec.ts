@@ -18,6 +18,17 @@ test('employee identity and full role chips wrap on separate grid rows without c
   assert.match(badge, />\s*\{roleDisplayName\(role\)\}/);
 });
 
+// A company may give a role a long name, and the picker is where it is chosen: a cut name hides the end that
+// tells two long names apart, so neither the current value nor an option may cut it (browser check 2026-10-04).
+test('the role picker shows a long role name in full, as the current value and as every option', () => {
+  const picker = source.slice(source.indexOf('ref={rolePickerRef}'), source.indexOf('{selectedIsOwner'));
+  assert.doesNotMatch(picker, /\btruncate\b/);
+  assert.doesNotMatch(picker, /className="inline-flex h-9 /, 'a fixed height would clip the wrapped current value');
+  assert.match(picker, /role="listbox" className="absolute left-0 top-full /, 'the open list starts below a value that wrapped');
+  assert.match(picker, /<span className="[^"]*\[overflow-wrap:anywhere\][^"]*">\{selectedRoleNames\}<\/span>/);
+  assert.match(picker, /<span className="[^"]*\[overflow-wrap:anywhere\][^"]*">\{roleDisplayName\(role\)\}<\/span>/);
+});
+
 test('role changes replace rather than append and refresh every card from the saved employee', () => {
   assert.match(source, /const updated = await updateEmployee\(companyId, selectedEmployee\.id, \{ roleIds: \[roleId\] \}\)/);
   assert.match(source, /setEmployees\(\(current\) => current\.map\(\(employee\) => employee\.id === updated\.id \? updated : employee\)\)/);

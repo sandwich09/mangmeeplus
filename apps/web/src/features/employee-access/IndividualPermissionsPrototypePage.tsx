@@ -620,24 +620,24 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                             type="button"
                             disabled={busy}
                             onClick={() => setRolePickerOpen((open) => !open)}
-                            className="inline-flex h-9 max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1 hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-60"
                             aria-haspopup="listbox"
                             aria-label="เปลี่ยนบทบาทพนักงาน"
                             aria-expanded={rolePickerOpen}
                           >
-                            <span className="max-w-52 truncate text-sm font-extrabold text-gray-700">{selectedRoleNames}</span>
+                            <span className="max-w-52 text-left text-sm font-extrabold text-gray-700 [overflow-wrap:anywhere]">{selectedRoleNames}</span>
                             <ChevronDownIcon className="h-4 w-4 shrink-0 text-gray-400" />
                           </button>
                         )}
                         {rolePickerOpen && !rolePickerReadOnly && (
-                          <div role="listbox" className="absolute left-0 top-10 z-20 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+                          <div role="listbox" className="absolute left-0 top-full z-20 mt-1 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
                             {roleOptions.map((role) => (
                               <button
                                 key={role.id} type="button" role="option" aria-selected={selectedRoleIds.length === 1 && selectedRoleIds[0] === role.id} disabled={busy} aria-busy={Boolean(busy)}
                                 onClick={() => void changeSelectedRole(role.id)}
                                 className={cx('flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-extrabold hover:bg-gray-50 disabled:opacity-60', selectedRoleIds.includes(role.id) ? 'text-brand-700' : 'text-gray-700')}
                               >
-                                <span className="min-w-0 truncate">{roleDisplayName(role)}</span>
+                                <span className="min-w-0 [overflow-wrap:anywhere]">{roleDisplayName(role)}</span>
                                 {selectedRoleIds.includes(role.id) && <CheckLineIcon className="h-4 w-4 shrink-0" />}
                               </button>
                             ))}
