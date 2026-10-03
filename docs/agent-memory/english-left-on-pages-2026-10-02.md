@@ -32,3 +32,16 @@ reconciliation per account; ภาพรวมการทำงาน “สุ
 signals). Catalogue descriptions: อายุหนี้ลูกหนี้การค้า says “แยกตามช่วงเวลาค้างชำระ” but its rows are
 invoices with due dates (only the payable report has buckets); งบกำไรขาดทุน mentions กำไรสุทธิ, which is in
 `totals` and not shown on the page.
+
+### Item 4: two automation-page wordings
+
+- Template dialog, cooldown field: “พักการแจ้งเตือน (วินาที)” → “เว้นระยะก่อนทำงานซ้ำ (วินาที)”. Fact:
+  `WorkflowRunnerUseCase` returns SKIPPED (`isRuleInCooldown`) before any action when the rule ran fewer than
+  N seconds ago (N ≤ 0 means no wait), so tasks and notices are held back alike. The notification-rules
+  page's “พักการแจ้งเตือน … นาที” is right for notices and is kept.
+- Connections tab warning: “การเชื่อมต่อระบบภายนอกปิดไว้เสมอ ต้องเปิดใช้งานเอง…” → “การเชื่อมต่อระบบภายนอกที่เพิ่มใหม่จะ
+  ปิดใช้งานไว้ก่อนเสมอ ต้องกดเปิดใช้งานเองหลังตรวจสอบที่อยู่เว็บไซต์และรายการเหตุการณ์ที่อนุญาตแล้ว”. Fact:
+  `createWebhookEndpoint` always stores DISABLED; only the enable action (which needs at least one event)
+  switches it on. The words are the form's own field names and the badge's ปิดใช้งาน.
+- Spec: `docs/specs/workflow-automation-spec.md` UI rules. Test: `workflow.logic.spec.ts` (page source), red
+  13 / 2 → green 15 / 0.

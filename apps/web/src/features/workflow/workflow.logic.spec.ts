@@ -70,6 +70,18 @@ describe('automation page text', () => {
     assert.doesNotMatch(workflowPageSource, /sourceId\.slice|labels\[status\]\s*\?\?\s*status/);
     assert.doesNotMatch(workflowPageSource, /Action runs|Condition JSON|Action JSON|(?:['"]|>)Webhook(?:['"<])/);
   });
+
+  // isRuleInCooldown skips the whole run (tasks, notices and every other action) while the rule ran less than N seconds ago.
+  it('names the rule cooldown by what it holds back: the rule running again', () => {
+    assert.match(workflowPageSource, />เว้นระยะก่อนทำงานซ้ำ \(วินาที\)</);
+    assert.doesNotMatch(workflowPageSource, /พักการแจ้งเตือน/);
+  });
+
+  // createWebhookEndpoint always stores DISABLED; only the enable action switches a connection on.
+  it('says a new connection starts switched off, not that connections are always off', () => {
+    assert.match(workflowPageSource, />การเชื่อมต่อระบบภายนอกที่เพิ่มใหม่จะปิดใช้งานไว้ก่อนเสมอ ต้องกดเปิดใช้งานเองหลังตรวจสอบที่อยู่เว็บไซต์และรายการเหตุการณ์ที่อนุญาตแล้ว</);
+    assert.doesNotMatch(workflowPageSource, /ปิดไว้เสมอ/);
+  });
 });
 
 describe('automation labels', () => {

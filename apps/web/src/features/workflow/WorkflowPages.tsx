@@ -170,7 +170,7 @@ function EnableTemplateModal({ companyId, template, onClose, onDone }: { company
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} required />
         </label>
         <label className="block text-sm">
-          <span className="mb-1 block text-gray-600">พักการแจ้งเตือน (วินาที)</span>
+          <span className="mb-1 block text-gray-600">เว้นระยะก่อนทำงานซ้ำ (วินาที)</span>
           <input className={inputClass} type="number" min="0" value={cooldownSeconds} onChange={(e) => setCooldownSeconds(e.target.value)} />
         </label>
         <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -667,7 +667,7 @@ function WebhooksTab({ companyId }: { companyId: string }) {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-amber-600">การเชื่อมต่อระบบภายนอกปิดไว้เสมอ ต้องเปิดใช้งานเองหลังตรวจสอบที่อยู่และรายการเหตุการณ์แล้ว</p>
+      <p className="text-xs text-amber-600">การเชื่อมต่อระบบภายนอกที่เพิ่มใหม่จะปิดใช้งานไว้ก่อนเสมอ ต้องกดเปิดใช้งานเองหลังตรวจสอบที่อยู่เว็บไซต์และรายการเหตุการณ์ที่อนุญาตแล้ว</p>
       {error && <ErrorBanner message={error} />}
       <button className={btnClass} onClick={() => setShowForm((s) => !s)}>{showForm ? 'ปิดแบบฟอร์ม' : '+ เพิ่มการเชื่อมต่อ'}</button>
       {showForm && (

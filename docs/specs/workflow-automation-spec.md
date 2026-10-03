@@ -578,6 +578,7 @@ UI rules:
 - Dead-letter replay shows current source-state warnings before queuing.
 - Every detail view should include audit/source refs and web deep links.
 - Shop-facing template names, descriptions, availability reasons, trigger/source labels, statuses, and run explanations use Thai display text; never fall back to raw enum or module keys.
+- Label the cooldown by what it does: “เว้นระยะก่อนทำงานซ้ำ (วินาที)”. A rule that ran fewer than that many seconds ago is skipped whole, so no task, notice or other action comes from it. The webhook warning says a newly added connection starts switched off and someone must switch it on; it must not say connections are always off.
 - Preserve names and task details already entered or configured by a company. Open product decision: the advanced rule editor and webhook setup expose raw JSON keys, event keys, and endpoint addresses; confirm whether these remain admin-only technical inputs or need a Thai setup flow.
 
 ## 16. LINE and LIFF Behavior
