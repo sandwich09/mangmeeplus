@@ -1,8 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   autoEnableWorkflowTemplatesForCompany,
   closeSettledClaimTasksAtRelease,
+  renameDefaultNamedTemplateRulesForCompany,
   resyncWorkflowTemplateRulesForCompany,
   WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID,
 } from './workflow-template.use-case';
@@ -10,6 +13,7 @@ import {
   WORKFLOW_TEMPLATE_CATALOG,
   WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS,
   WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG,
+  WORKFLOW_TEMPLATE_FORMER_NAMES,
 } from '../../domain/workflow-template-catalog';
 import { nextActionHint, summarizeAction, summarizeCondition, summarizeTrigger } from '../../domain/logic/workflow-explanation.logic';
 import { toTemplateSummary } from '../dto/workflow.mapper';
@@ -65,7 +69,7 @@ type FakeRule = {
 };
 
 type SeedRule = {
-  templateKey: string; companyId?: string; status?: string;
+  templateKey: string; companyId?: string; status?: string; name?: string;
   createdByUserId?: string; updatedByUserId?: string; cooldownSeconds?: number;
   /** Defaults to the template's own action definition, so only the named field is "stale". */
   actionJson?: unknown;
@@ -86,7 +90,7 @@ function fakeRepo(seedRules: SeedRule[] = []) {
       id: `pre_${index}`,
       companyId: r.companyId ?? 'co_1',
       templateId: template.id,
-      name: 'preexisting', status: r.status ?? 'DISABLED', triggerType: 'EVENT',
+      name: r.name ?? 'preexisting', status: r.status ?? 'DISABLED', triggerType: 'EVENT',
       triggerConfigJson: WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG[template.key] ?? {},
       conditionJson: template.defaultConditionJson,
       actionJson: r.actionJson ?? template.defaultActionJson,
@@ -599,6 +603,57 @@ describe('resyncWorkflowTemplateRulesForCompany', () => {
 
     assert.deepEqual(await resyncWorkflowTemplateRulesForCompany(repo, 'co_1'), []);
     assert.equal(repo.rules.find((r: any) => r.id === 'pre_0').cooldownSeconds, 3600);
+  });
+});
+
+// Owner 2026-10-02/03: no English on the automation page. A rule copies its template's name when it is
+// created and keeps it, so rules made before the names were Thai still read in English.
+describe('renameDefaultNamedTemplateRulesForCompany', () => {
+  const nameOf = (key: string) => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === key)!.name;
+
+  it('gives a rule still named its template\'s old default the current name, whoever created it and in any state', async () => {
+    const repo = fakeRepo([
+      { templateKey: 'reimbursement_pending_approval', name: 'Reimbursement pending approval', status: 'ENABLED',
+        createdByUserId: WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, updatedByUserId: WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID },
+      { templateKey: 'low_stock_alert', name: 'Low stock alert', status: 'DISABLED', updatedByUserId: 'admin_2' },
+      { templateKey: 'tax_due_soon', name: 'Tax due soon', status: 'ARCHIVED' },
+    ]);
+
+    const renamed = await renameDefaultNamedTemplateRulesForCompany(repo, 'co_1');
+
+    assert.deepEqual([...renamed].sort(), ['low_stock_alert', 'reimbursement_pending_approval', 'tax_due_soon']);
+    assert.deepEqual(repo.rules.map((r: any) => r.name), [nameOf('reimbursement_pending_approval'), nameOf('low_stock_alert'), nameOf('tax_due_soon')]);
+    // The name only: who last edited a rule is how the content resync tells an admin's edit from its own.
+    assert.deepEqual(repo.rules.map((r: any) => r.updatedByUserId), [WORKFLOW_AUTO_ENABLE_ACTOR_USER_ID, 'admin_2', undefined]);
+    assert.deepEqual(repo.rules.map((r: any) => [r.status, r.currentVersion]), [['ENABLED', 1], ['DISABLED', 1], ['ARCHIVED', 1]]);
+    assert.equal(repo.versions.length, 3);
+  });
+
+  it('never renames a rule its company named, and a second run changes nothing', async () => {
+    const repo = fakeRepo([
+      { templateKey: 'low_stock_alert', name: 'แจ้งสต๊อกด่วน' },
+      { templateKey: 'low_stock_alert', name: 'Stock check' },
+      { templateKey: 'low_stock_alert', name: 'low stock alert' },
+      { templateKey: 'low_stock_alert', name: 'Low stock alert', companyId: 'co_2' },
+      { templateKey: 'low_stock_alert', name: 'Low stock alert' },
+    ]);
+
+    assert.deepEqual(await renameDefaultNamedTemplateRulesForCompany(repo, 'co_1'), ['low_stock_alert']);
+    assert.deepEqual(repo.rules.map((r: any) => r.name), ['แจ้งสต๊อกด่วน', 'Stock check', 'low stock alert', 'Low stock alert', nameOf('low_stock_alert')]);
+    assert.deepEqual(await renameDefaultNamedTemplateRulesForCompany(repo, 'co_1'), []);
+  });
+
+  it('keeps old names only for real catalogue templates, never a current name', () => {
+    const current = new Set(WORKFLOW_TEMPLATE_CATALOG.map((t) => t.name));
+    for (const [key, former] of Object.entries(WORKFLOW_TEMPLATE_FORMER_NAMES)) {
+      assert.ok(WORKFLOW_TEMPLATE_CATALOG.some((t) => t.key === key), key);
+      for (const name of former) assert.equal(current.has(name), false, name);
+    }
+  });
+
+  it('runs for every company at each release, in the template sync', () => {
+    const script = readFileSync(join(__dirname, '../../../../../prisma/sync-workflow-templates.ts'), 'utf8');
+    assert.match(script, /renameDefaultNamedTemplateRulesForCompany\(repo, company\.id\)/);
   });
 });
 

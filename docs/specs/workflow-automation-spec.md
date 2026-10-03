@@ -579,6 +579,7 @@ UI rules:
 - Every detail view should include audit/source refs and web deep links.
 - Shop-facing template names, descriptions, availability reasons, trigger/source labels, statuses, and run explanations use Thai display text; never fall back to raw enum or module keys.
 - Label the cooldown by what it does: “เว้นระยะก่อนทำงานซ้ำ (วินาที)”. A rule that ran fewer than that many seconds ago is skipped whole, so no task, notice or other action comes from it. The webhook warning says a newly added connection starts switched off and someone must switch it on; it must not say connections are always off.
+- A rule copies its template's name when created. At each release the template sync renames a rule whose name is still exactly a name its template shipped before (`WORKFLOW_TEMPLATE_FORMER_NAMES`, the English names used until 2026-10-03) to the template's current name, whatever its status or creator, and changes nothing else on the rule. Any other name is the company's and is kept.
 - Preserve names and task details already entered or configured by a company. Open product decision: the advanced rule editor and webhook setup expose raw JSON keys, event keys, and endpoint addresses; confirm whether these remain admin-only technical inputs or need a Thai setup flow.
 
 ## 16. LINE and LIFF Behavior

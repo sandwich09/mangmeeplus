@@ -99,6 +99,38 @@ export const WORKFLOW_NOTICE_ALSO_REPLACES: Record<string, readonly string[]> = 
 // fallback when an action has no deepLinkPathTemplate (see workflow-action-runner.use-case.ts).
 export const REIMBURSEMENT_REQUEST_LINK = '/companies/{{companyId}}/reimbursements/{{requestId}}';
 
+// The name each template shipped with before its current one, from this file's history (every name was
+// English until 2026-10-03). A rule copies its template's name when it is created and keeps it, so a rule
+// still named one of these was never named by its company; the release sync gives it the current name
+// (renameDefaultNamedTemplateRulesForCompany). Any other name is the company's own and is never touched.
+export const WORKFLOW_TEMPLATE_FORMER_NAMES: Record<string, readonly string[]> = {
+  daily_owner_summary: ['Daily owner summary'],
+  low_stock_alert: ['Low stock alert'],
+  stockout_risk: ['Stockout risk'],
+  reimbursement_pending_approval: ['Reimbursement pending approval'],
+  approval_sla_breach: ['Approval SLA breach'],
+  reimbursement_payment_sla_breach: ['Reimbursement payment SLA breach'],
+  reimbursement_decision_requester: ['Reimbursement decision requester alert'],
+  reimbursement_correction_requester: ['Reimbursement correction requester alert'],
+  reimbursement_finance_review: ['Reimbursement finance review'],
+  reimbursement_finance_review_pending: ['Reimbursement awaiting finance review'],
+  reimbursement_ready_for_payment: ['Reimbursement ready for payment'],
+  reimbursement_payment_recorded: ['Reimbursement payment recorded'],
+  reimbursement_payment_voided: ['Reimbursement payment voided'],
+  reimbursement_payout_correction_requested: ['Reimbursement payout account correction requested'],
+  reimbursement_payout_correction_submitted: ['Reimbursement payout account awaiting approval'],
+  vendor_bill_pending_approval: ['Vendor bill pending'],
+  vendor_bill_second_approval: ['Vendor bill awaiting second approval'],
+  tax_due_soon: ['Tax due soon'],
+  bank_reconciliation_aging: ['Bank reconciliation aging'],
+  overdue_invoice_follow_up: ['Overdue invoice follow-up'],
+  crm_follow_up_due: ['CRM follow-up due'],
+  crm_opportunity_stuck: ['Opportunity stuck'],
+  sales_below_target: ['Sales below target'],
+  ai_draft_requested: ['AI draft requested'],
+  outbound_webhook: ['Outbound webhook'],
+};
+
 // First-pass template catalog (spec section 18). Availability reflects the ACTUAL
 // current repo state as of item 16 implementation: a template is AVAILABLE only when
 // its source module already exposes the event and/or read API the trigger needs.
