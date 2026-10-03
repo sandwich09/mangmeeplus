@@ -1,5 +1,5 @@
 import type { LineAiConversationContext, LineCapabilityGroupId } from '@watchdog-bms/contracts';
-import { canAdvertiseReceiptCapture, LINE_CAPABILITY_GROUPS, LINE_CAPABILITY_REPLY_PREFIXES, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
+import { LINE_CAPABILITY_NO_ACCESS_TH, canAdvertiseReceiptCapture, LINE_CAPABILITY_GROUPS, LINE_CAPABILITY_REPLY_PREFIXES, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
 import { normalizeLineText } from './line-ai-classifier.logic';
 
 /** A routing hint only; every capability example is rebuilt from current access. */
@@ -94,7 +94,7 @@ const COPY = {
     intro: 'ตัวอย่างค่ะ',
     receipt: '• ส่งรูปใบเสร็จ/สลิปเพื่อสร้างร่างค่าใช้จ่ายให้ตรวจสอบ',
     closing: 'น้องมั่งมีจะใช้เฉพาะข้อมูลที่สิทธิ์ปัจจุบันของคุณเข้าถึงได้ ส่วนการอนุมัติ จ่ายเงิน ออกเอกสาร และลงบัญชีขั้นสุดท้ายยังทำในเว็บค่ะ',
-    none: 'ตอนนี้บัญชีของคุณยังไม่มีข้อมูลที่น้องมั่งมีดึงให้ผ่าน LINE ได้เลยค่ะ กรุณาติดต่อผู้ดูแลระบบของบริษัทเพื่อตรวจสอบสิทธิ์การใช้งานนะคะ',
+    none: LINE_CAPABILITY_NO_ACCESS_TH,
   },
   en: {
     intro: 'For example:',

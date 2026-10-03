@@ -14,7 +14,7 @@ test('expense-focused branch creation excludes warehouse without removing the ot
 
 test('historical warehouse branches retain their label and editing does not rewrite their type', () => {
   assert.match(source, /WAREHOUSE: 'คลังสินค้า'/);
-  assert.match(source, /TYPE_LABELS\[b\.type\] \?\? b\.type/);
+  assert.match(source, /TYPE_LABELS\[b\.type\] \?\? 'ไม่ทราบประเภท'/);
   const editPayload = source.match(/await updateBranch\(companyId, editing\.id, \{([\s\S]*?)\}\);/)?.[1];
   assert.ok(editPayload);
   assert.match(editPayload, /name: editing\.name\.trim\(\)/);

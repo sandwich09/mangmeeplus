@@ -20,12 +20,12 @@ const documentError=(cause:unknown)=>{
   const status=(cause as {status?:number})?.status,code=apiErrorCode(cause);
   if(status===401||status===403)return {title:'บัญชีนี้เปิดเอกสารไม่ได้',detail:'กลับไปเลือกรายการที่คุณมีสิทธิ์ดู หากเพิ่งเปลี่ยนบัญชี ให้เข้าสู่ระบบอีกครั้ง',kind:'access'};
   if(status===404)return {title:'ไม่พบเอกสารของรายการนี้',detail:'กลับไปเลือกรายการชำระเงินของบริษัทอีกครั้ง',kind:'missing'};
-  if(code==='BILLING_DOCUMENT_BINDING')return {title:'ข้อมูลรายการนี้ยังยืนยันกับ Stripe ไม่ได้',detail:'ระบบยังเปิดเอกสารไม่ได้ เพราะข้อมูลการชำระเงินของรายการนี้ไม่ตรงหรือไม่ครบสำหรับตรวจสอบกับ Stripe',kind:'binding'};
-  if(code==='BILLING_DOCUMENT_PENDING')return {title:'เอกสารยังไม่พร้อมเปิด',detail:'Stripe ยังไม่มีเอกสารหรือหลักฐานที่ครบสำหรับรายการนี้ ลองตรวจข้อมูลอีกครั้งภายหลัง',kind:'pending'};
-  if(code==='BILLING_NOT_CONFIGURED'||status===503)return {title:'ยังเชื่อมต่อเอกสารจาก Stripe ไม่ได้',detail:'ตรวจสถานะการเชื่อมต่อ แล้วกลับมาอ่านรายการเดิมอีกครั้ง',kind:'connection'};
-  return {title:'อ่านข้อมูลจาก Stripe ไม่สำเร็จ',detail:'ลองอ่านข้อมูลอีกครั้ง ระบบยังไม่ได้เปลี่ยนยอดเงินหรือแพ็กเกจ',kind:'retry'};
+  if(code==='BILLING_DOCUMENT_BINDING')return {title:'ข้อมูลรายการนี้ยังยืนยันกับผู้ให้บริการรับชำระเงินไม่ได้',detail:'ระบบยังเปิดเอกสารไม่ได้ เพราะข้อมูลการชำระเงินของรายการนี้ไม่ตรงหรือไม่ครบสำหรับตรวจสอบกับผู้ให้บริการรับชำระเงิน',kind:'binding'};
+  if(code==='BILLING_DOCUMENT_PENDING')return {title:'เอกสารยังไม่พร้อมเปิด',detail:'ผู้ให้บริการรับชำระเงินยังไม่มีเอกสารหรือหลักฐานที่ครบสำหรับรายการนี้ ลองตรวจข้อมูลอีกครั้งภายหลัง',kind:'pending'};
+  if(code==='BILLING_NOT_CONFIGURED'||status===503)return {title:'ยังเชื่อมต่อเอกสารจากผู้ให้บริการรับชำระเงินไม่ได้',detail:'ตรวจสถานะการเชื่อมต่อ แล้วกลับมาอ่านรายการเดิมอีกครั้ง',kind:'connection'};
+  return {title:'อ่านข้อมูลจากผู้ให้บริการรับชำระเงินไม่สำเร็จ',detail:'ลองอ่านข้อมูลอีกครั้ง ระบบยังไม่ได้เปลี่ยนยอดเงินหรือแพ็กเกจ',kind:'retry'};
 };
-const labels={pending:'รอดำเนินการคืนเงิน',requires_action:'ต้องทำขั้นตอนเพิ่มเติม',succeeded:'Stripe ดำเนินการคืนเงินสำเร็จ',failed:'คืนเงินไม่สำเร็จ',canceled:'ยกเลิกการคืนเงิน',unknown:'ยังยืนยันสถานะคืนเงินไม่ได้',issued:'ออกเอกสารแล้ว',void:'เอกสารถูกยกเลิก'};
+const labels={pending:'รอดำเนินการคืนเงิน',requires_action:'ต้องทำขั้นตอนเพิ่มเติม',succeeded:'ผู้ให้บริการรับชำระเงินดำเนินการคืนเงินสำเร็จ',failed:'คืนเงินไม่สำเร็จ',canceled:'ยกเลิกการคืนเงิน',unknown:'ยังยืนยันสถานะคืนเงินไม่ได้',issued:'ออกเอกสารแล้ว',void:'เอกสารถูกยกเลิก'};
 export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,preview}:{companyId:string;invoiceId:string;admin?:boolean;preview?: { read: (kind: BillingAdjustmentKind) => Promise<BillingAdjustments>; open: (kind: string) => void; back: () => void; resend?: () => Promise<BillingDocumentResendResult> }}) {
   const base=admin?`/system/billing/companies/${encodeURIComponent(companyId)}`:`/companies/${encodeURIComponent(companyId)}/billing`;
   const back=admin?`${base}?view=payments`:`/companies/${encodeURIComponent(companyId)}/billing#billing-history`;
@@ -98,15 +98,15 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
   }
   const content = <>
     {admin && <><Link className={billingLink} href={back}>กลับไปประวัติการชำระเงิน</Link>
-    <header><h1 className="text-2xl font-semibold text-gray-900">ใบแจ้งหนี้และใบเสร็จ</h1><p className="mt-2 text-gray-600">เปิดเอกสารจาก Stripe ของรายการชำระเงินนี้</p></header></>}
-    {loading&&<p role="status">กำลังตรวจข้อมูลกับ Stripe…</p>}
+    <header><h1 className="text-2xl font-semibold text-gray-900">ใบแจ้งหนี้และใบเสร็จ</h1><p className="mt-2 text-gray-600">เปิดเอกสารจากผู้ให้บริการรับชำระเงินสำหรับรายการชำระเงินนี้</p></header></>}
+    {loading&&<p role="status">กำลังตรวจข้อมูลกับผู้ให้บริการรับชำระเงิน…</p>}
     {error&&<section role="alert" className="space-y-4 rounded-xl border border-gray-200 bg-white p-5 sm:p-6"><h2 className="text-lg font-semibold">{error.title}</h2><p className="text-gray-600">{!admin&&error.kind==='connection'?'การเชื่อมต่อยังไม่พร้อม กรุณาลองอีกครั้งภายหลัง':error.detail}</p>
       <div className="flex flex-wrap gap-3">{['retry','pending','connection'].includes(error.kind)&&<button className={button} disabled={loading||opening} onClick={()=>setReload(n=>n+1)}>ลองอ่านข้อมูลอีกครั้ง</button>}
-      {admin&&error.kind==='connection'?<Link className={billingLink} href="/system/billing/configuration-checks">ดูสถานะการเชื่อมต่อ Stripe</Link>:<Link className={billingLink} href={back}>ดูรายการชำระเงินของ{admin?'บริษัท':'คุณ'}</Link>}
+      {admin&&error.kind==='connection'?<Link className={billingLink} href="/system/billing/configuration-checks">ดูสถานะการเชื่อมต่อ ผู้ให้บริการรับชำระเงิน</Link>:<Link className={billingLink} href={back}>ดูรายการชำระเงินของ{admin?'บริษัท':'คุณ'}</Link>}
       {!admin&&<a className={billingLink} href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมงาน</a>}</div>
     </section>}
     {data&&<>
-      <section aria-label="เอกสารจาก Stripe" className="mangmee-card space-y-4 p-5 sm:p-6">
+      <section aria-label="เอกสารจากผู้ให้บริการรับชำระเงิน" className="mangmee-card space-y-4 p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-lg font-semibold">{data.invoiceNumber??'เอกสารของรายการนี้'}</h2><button className="min-h-11 px-2 text-sm text-gray-600 underline" disabled={loading||opening} onClick={()=>setReload(n=>n+1)}>อัปเดตข้อมูล</button></div>
         {data.canOpenDocuments?<div className="divide-y divide-gray-100">{([['receipt','ใบเสร็จรับเงิน','หลักฐานรับชำระเงินจากลูกค้า'],['invoice','ใบแจ้งหนี้','รายละเอียดราคาและยอดเรียกเก็บ'],['pdf','ไฟล์ PDF ใบแจ้งหนี้','สำหรับดาวน์โหลดและเก็บเอกสาร']] as const).map(([documentKind,title,description])=><div key={documentKind} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><h3 className="font-medium">{title}</h3><p className="mt-1 text-gray-600">{description}</p></div><button className={button} disabled={opening} onClick={()=>void open(documentKind)}>เปิด{title}</button></div>)}
           {!admin&&data.documentActions?.canResend&&<div className="flex flex-wrap items-center justify-between gap-3 py-4"><div className="min-w-0"><h3 className="font-medium">ส่งเอกสารไปอีเมลอีกครั้ง</h3><p className="mt-1 break-all text-gray-600">ส่งเอกสารของรายการนี้ไปที่ {data.recipientEmail??'อีเมลรับเอกสารของบริษัท'}</p>
@@ -119,12 +119,12 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
       <details className="rounded-xl border border-gray-200 bg-white p-5 sm:p-6" open={adjustmentsOpen} onToggle={e=>setAdjustmentsOpen(e.currentTarget.open)}>
         <summary className="min-h-11 cursor-pointer py-2 font-semibold">ประวัติคืนเงินและเอกสารปรับยอด</summary>
         <section aria-label="รายละเอียดการปรับยอด" className="mt-4 space-y-4">
-          <p className="text-gray-600">ดูผลคืนเงินจาก Stripe และเอกสารปรับยอด ธนาคารอาจใช้เวลาบันทึกเงินคืน ส่วนแพ็กเกจลูกค้าต้องตรวจแยก</p>
+          <p className="text-gray-600">ดูผลคืนเงินจากผู้ให้บริการรับชำระเงิน และเอกสารปรับยอด ธนาคารอาจใช้เวลาบันทึกเงินคืน ส่วนแพ็กเกจลูกค้าต้องตรวจแยก</p>
           <label className="block max-w-sm">รายการที่ต้องการดู<ThemedSelect aria-label="รายการที่ต้องการดู" className="mt-2 min-h-11 w-full !text-base" value={kind} disabled={opening||loading} onChange={e=>{setKind(e.target.value as BillingAdjustmentKind);setCursor(null);}}><option value="refunds">รายการคืนเงิน</option><option value="credit-notes">เอกสารปรับยอด</option></ThemedSelect></label>
           {!data.items.length&&<p className="rounded-lg bg-gray-50 p-4 text-gray-600">{kind==='refunds'?'ยังไม่มีรายการคืนเงิน':'ยังไม่มีเอกสารปรับยอด'}</p>}
           {data.items.map(item=><article key={item.id} className="space-y-2 rounded-lg border border-gray-200 p-4"><h3 className="font-medium">{item.number??(data.kind==='refunds'?'รายการคืนเงิน':'เอกสารปรับยอด')}</h3><p>{money(item.amountSatang)} · {labels[item.status]}</p><p className="text-gray-600">{time(item.createdAt)}</p>
-            {item.status==='requires_action'&&<p>{admin?'ตรวจคำแนะนำจาก Stripe และผลคำขอคืนเงินเดิมก่อนดำเนินการต่อ':'ตรวจอีเมลคำแนะนำจาก Stripe หรือติดต่อทีมงาน'}</p>}
-            {(item.status==='failed'||item.status==='unknown')&&<p>{admin?'ตรวจผลคืนเงินของรายการเดิมใน Stripe ก่อนสร้างคำขอเพิ่ม':'ติดต่อทีมงานเพื่อตรวจรายการเดิมก่อนดำเนินการต่อ'}</p>}
+            {item.status==='requires_action'&&<p>{admin?'ตรวจคำแนะนำจากผู้ให้บริการรับชำระเงิน และผลคำขอคืนเงินเดิมก่อนดำเนินการต่อ':'ตรวจอีเมลคำแนะนำจากผู้ให้บริการรับชำระเงิน หรือติดต่อทีมงาน'}</p>}
+            {(item.status==='failed'||item.status==='unknown')&&<p>{admin?'ตรวจผลคืนเงินของรายการเดิมกับผู้ให้บริการรับชำระเงิน ก่อนสร้างคำขอเพิ่ม':'ติดต่อทีมงานเพื่อตรวจรายการเดิมก่อนดำเนินการต่อ'}</p>}
             {data.kind==='credit-notes'&&data.canOpenDocuments&&<button className={button} disabled={opening} onClick={()=>void open('credit-note',item.id)}>เปิด PDF เอกสารปรับยอด</button>}
           </article>)}
           {data.nextCursor&&<button className={button} disabled={opening||loading} onClick={()=>setCursor(data.nextCursor)}>รายการหน้าถัดไป</button>}{cursor&&<button className={button} disabled={opening||loading} onClick={()=>setCursor(null)}>กลับไปหน้าแรก</button>}
@@ -152,12 +152,12 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false,
           {resendMessage&&<p role="status">{resendMessage}</p>}
           {resendResult&&<button className={button} disabled={opening} onClick={()=>void open('receipt')}>เปิดใบเสร็จรับเงิน</button>}
           {recipientReview.canChange?<Link className={billingLink} href={`${base}/invoices/${encodeURIComponent(invoiceId)}/recipient`}>เปลี่ยนอีเมลผู้รับเอกสาร</Link>
-            :recipientReview.blockedReason&&<p className="text-gray-600">{{BILLING_RECIPIENT_BUSY:'บริษัทมีรายการซื้อ คำสั่งต่ออายุ หรือคำขอเปลี่ยนผู้รับของลูกค้าค้างอยู่ รอให้เสร็จก่อนเปลี่ยนอีเมลผู้รับ',BILLING_RECIPIENT_NO_CUSTOMER:'บริษัทนี้ยังไม่มีบัญชีลูกค้าใน Stripe จึงยังไม่มีผู้รับเอกสารให้เปลี่ยน'}[recipientReview.blockedReason]??'ยังเปลี่ยนผู้รับเอกสารไม่ได้ในตอนนี้'}</p>}
+            :recipientReview.blockedReason&&<p className="text-gray-600">{{BILLING_RECIPIENT_BUSY:'บริษัทมีรายการซื้อ คำสั่งต่ออายุ หรือคำขอเปลี่ยนผู้รับของลูกค้าค้างอยู่ รอให้เสร็จก่อนเปลี่ยนอีเมลผู้รับ',BILLING_RECIPIENT_NO_CUSTOMER:'บริษัทนี้ยังไม่มีบัญชีลูกค้ากับผู้ให้บริการรับชำระเงิน จึงยังไม่มีผู้รับเอกสารให้เปลี่ยน'}[recipientReview.blockedReason]??'ยังเปลี่ยนผู้รับเอกสารไม่ได้ในตอนนี้'}</p>}
         </div>:<p role="alert" className="py-3 text-red-700">ยังโหลดข้อมูลส่วนนี้ไม่ได้ <button type="button" className="min-h-11 underline" onClick={()=>setReload(n=>n+1)}>ลองอีกครั้ง</button></p>}
       </details>}
     </>}
     <details className="text-sm text-gray-600"><summary className="min-h-11 cursor-pointer py-2">{admin?'ข้อมูลอ้างอิงสำหรับตรวจสอบ':'เลขอ้างอิงสำหรับแจ้งทีมงาน'}</summary><p className="break-all">{admin?`รหัสรายการ ใช้ค้นประวัติในระบบ: ${invoiceId}`:billingSupportReference(invoiceId)}</p></details>
   </>;
   return admin ? <main className="mx-auto max-w-4xl space-y-5 break-words p-4 text-base sm:p-8">{content}</main>
-    : <BillingCustomerFrame title="เอกสารการชำระเงิน" description="เปิดเอกสารจาก Stripe ของรายการชำระเงินนี้" backHref={back} backLabel="กลับไปประวัติการชำระเงิน" onBack={preview?.back} showBackInWorkspace>{content}</BillingCustomerFrame>;
+    : <BillingCustomerFrame title="เอกสารการชำระเงิน" description="เปิดเอกสารจากผู้ให้บริการรับชำระเงินสำหรับรายการชำระเงินนี้" backHref={back} backLabel="กลับไปประวัติการชำระเงิน" onBack={preview?.back} showBackInWorkspace>{content}</BillingCustomerFrame>;
 }

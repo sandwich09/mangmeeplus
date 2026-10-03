@@ -1,3 +1,4 @@
+import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { GUIDE_MISSING_MENU_HELP, GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user-guide.model';
 
@@ -13,6 +14,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
   const has = (...keys: string[]) => keys.some((key) => permissions.includes(key));
   const link = (allowed: boolean, label: string, href: string): GuideLink | undefined =>
     (allowed ? { label, href } : undefined);
+  const correctionHelp = 'หากข้อมูลผิดหลังยืนยัน ให้ผู้มีสิทธิ์ตรวจว่ารายการส่งกลับแก้ไขได้หรือไม่ ถ้าทำได้ ให้กด “ส่งกลับแก้ไข” ก่อนแก้ข้อมูล หากทำไม่ได้ ให้ตรวจเงื่อนไขการยกเลิกเอกสารก่อนดำเนินการ';
   const canRead = has('expense.read', 'expense.read_own');
   // Default holders in ROLE_GRANTS: expense.review → reviewers; expense.confirm and expense.category.manage → confirmers.
   const reviewers = [THAI_SYSTEM_ROLE_NAMES.OWNER, THAI_SYSTEM_ROLE_NAMES.ADMIN, THAI_SYSTEM_ROLE_NAMES.MANAGER, THAI_SYSTEM_ROLE_NAMES.FINANCE].join(', ');
@@ -57,7 +59,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
               { title: 'นำเข้าระบบ', detail: 'เลือกสาขาที่ต้องการบันทึก แล้วอัปโหลดใบเสร็จให้ AI อ่าน หรือบันทึกด้วยมือ (เมื่อเปิดใช้สำหรับร้านของคุณ)' },
               { title: 'ระบบสร้างเป็นฉบับร่าง', detail: 'ยังแก้ไขได้ และยังไม่ถือเป็นค่าใช้จ่ายทางบัญชี' },
               { title: 'ตรวจความครบถ้วน', detail: 'ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ ยอดเงิน VAT และไฟล์แนบ' },
-              { title: 'ยืนยันเอกสาร', detail: 'เมื่อยืนยันแล้วจะแก้ไขไม่ได้ หากผิดต้องยกเลิกแล้วบันทึกใหม่' },
+              { title: 'ยืนยันเอกสาร', detail: correctionHelp },
               { title: 'ส่งให้สำนักงานบัญชี', detail: 'ส่งออกชุดรายการและหลักฐานที่ยืนยันแล้ว เพื่อให้สำนักงานบัญชีตรวจและบันทึกบัญชี' },
             ],
           },
@@ -68,7 +70,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
               ['ฉบับร่าง', 'บันทึกไว้แล้วแต่ยังไม่ได้ตรวจ ยังแก้ไขและลบได้', 'ผู้บันทึก'],
               ['รอตรวจสอบ', 'ข้อมูลเข้าระบบแล้ว รอผู้มีสิทธิ์ตรวจความครบถ้วน', `ผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย เช่น ${reviewers}`],
               ['พร้อมยืนยัน', 'ตรวจครบทุกข้อแล้ว รอกดยืนยัน', `ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย เช่น ${confirmers}`],
-              ['ยืนยันแล้ว', 'ใช้เป็นหลักฐานทางบัญชีได้ และแก้ไขไม่ได้อีก', 'ส่งออกชุดหลักฐานให้สำนักงานบัญชี'],
+              ['ยืนยันแล้ว', 'ยืนยันแล้ว ต้องตรวจเงื่อนไขก่อนส่งกลับแก้ไขหรือยกเลิก', 'ส่งออกชุดหลักฐานให้สำนักงานบัญชี'],
               ['ปฏิเสธ', 'ตรวจแล้วไม่ผ่าน พร้อมเหตุผลที่ผู้บันทึกอ่านได้', 'ผู้บันทึก (แก้ไขแล้วส่งใหม่)'],
             ],
           },
@@ -207,7 +209,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             items: [
               {
                 title: 'ไฟล์ที่รองรับ',
-                detail: 'JPG/JPEG · PNG · HEIC (รูปจากไอโฟน) และ PDF รูปที่ใหญ่เกินไประบบจะย่อให้อัตโนมัติ',
+                detail: `${ATTACHMENT_SOURCE_TYPES_LABEL} รูปที่ใหญ่เกินไประบบจะย่อให้อัตโนมัติ`,
                 link: link(has('expense.receipt.upload'), 'เปิดหน้าอัปโหลดใบเสร็จ', `${expenses}/upload`),
               },
               {
@@ -248,7 +250,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
                 detail: 'กด “เพิ่มรายการ” เพื่อเพิ่มบรรทัดตามที่พิมพ์บนเอกสาร แต่ละบรรทัดกรอกรายละเอียด จำนวน ราคาต่อหน่วย และส่วนลด',
               },
               {
-                title: 'ค่าบริการ (Service charge)',
+                title: 'ค่าบริการ',
                 detail: 'หากบิลคิดค่าบริการแยก ให้กรอกยอดที่พิมพ์บนบิล ระบบจะบันทึกเป็นบรรทัดของตัวเอง ตรวจอัตรา VAT ของค่าบริการให้ตรงกับเอกสาร',
               },
               {
@@ -317,7 +319,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             kind: 'steps',
             steps: [
               { title: 'ยืนยันเอกสารในแท็บรายการ', detail: 'เอกสารต้องผ่านการยืนยันก่อน จึงจะมาปรากฏในหน้านี้' },
-              { title: 'เปิดดูรายการที่ขึ้นเครื่องหมายเตือน', detail: 'คลิกแถวนั้นเพื่อดูรายละเอียด (เอกสารที่ยืนยันแล้วแก้ไขไม่ได้)' },
+              { title: 'เปิดดูรายการที่ขึ้นเครื่องหมายเตือน', detail: 'คลิกแถวนั้นเพื่อดูรายละเอียดและขั้นตอนที่ทำต่อได้ตามสถานะและสิทธิ์' },
               { title: 'ส่งออกให้สำนักงานบัญชี', detail: 'ส่งออก Excel พร้อมรายการลิงก์ดาวน์โหลดหลักฐานทุกฉบับในชุดเดียว' },
             ],
           },
@@ -344,8 +346,8 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
           {
             kind: 'note',
             tone: 'warn',
-            title: 'เอกสารที่ยืนยันแล้วแก้ไขไม่ได้',
-            detail: 'หากพบว่าข้อมูลผิดหลังยืนยันไปแล้ว ต้องยกเลิกเอกสารฉบับนั้นแล้วบันทึกใหม่ ระบบออกแบบเช่นนี้เพื่อให้หลักฐานที่ส่งให้สำนักงานบัญชีตรงกับที่บันทึกไว้เสมอ',
+            title: 'แก้ข้อมูลหลังยืนยันเอกสาร',
+            detail: correctionHelp,
           },
         ],
       },
@@ -361,7 +363,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             headers: ['สิ่งที่ต้องการทำ', 'สิทธิ์ที่ต้องมี', 'บทบาทที่มักได้รับ'],
             rows: [
               ['เปิดดูรายการค่าใช้จ่ายของบริษัท', 'ดูค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.FINANCE}, ${THAI_SYSTEM_ROLE_NAMES.MANAGER}, ${THAI_SYSTEM_ROLE_NAMES.OWNER}`],
-              ['เปิดดูเฉพาะรายการของตนเอง', 'ดูค่าใช้จ่ายของตนเอง', 'พนักงานทุกคน'],
+              ['เปิดดูเฉพาะรายการของตนเอง', 'ดูค่าใช้จ่ายของตนเอง', 'ผู้มีสิทธิ์ดูค่าใช้จ่ายของตนเอง'],
               ['อัปโหลดใบเสร็จให้ AI อ่าน', 'อัปโหลดใบเสร็จ', `พนักงาน, ${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}`],
               ['บันทึกค่าใช้จ่ายด้วยมือ', 'สร้างค่าใช้จ่าย', `${THAI_SYSTEM_ROLE_NAMES.ACCOUNTANT}, ${THAI_SYSTEM_ROLE_NAMES.FINANCE}`],
               ['ตรวจความครบถ้วนและยืนยันเอกสาร', 'ตรวจสอบและยืนยันค่าใช้จ่าย', confirmers],
@@ -400,7 +402,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
               },
               {
                 question: 'แก้ไขเอกสารไม่ได้',
-                answer: 'เอกสารที่ยืนยันแล้วแก้ไขไม่ได้ หากเป็นต้นทางของใบเบิกที่ส่งแล้ว ให้เปิดใบเบิกเพื่อดูสถานะและดำเนินการแก้ไขตามขั้นตอนของใบเบิก',
+                answer: `${correctionHelp} หากเป็นต้นทางของใบเบิกที่ส่งแล้ว ให้เปิดใบเบิกเพื่อดูสถานะและขั้นตอนแก้ไขของใบเบิก`,
               },
               {
                 question: 'ยอดในการ์ดสรุปไม่ตรงกับที่คาดไว้',

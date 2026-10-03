@@ -58,7 +58,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(plans).toHaveCount(0);
   const quoteHeading = await page.getByRole('heading', { name: /^ยืนยันซื้อ .* รายปี$/ }).boundingBox();
   expect(quoteHeading!.y).toBeGreaterThanOrEqual(width < 640 ? 112 : 68);
-  const checkout = page.getByRole('button', { name: 'ยืนยันและไปชำระที่ Stripe', exact: true });
+  const checkout = page.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true });
   await expect(checkout).toBeDisabled();
   const quoteBack = await expectTopBack('กลับไปเลือกแพ็กเกจ', page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true }));
   await page.getByLabel('ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไขการชำระเงินและต่ออายุอัตโนมัติ', { exact: true }).check();
@@ -245,7 +245,7 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await repeatReview.getByRole('button', { name: 'กลับไปดูราคาอัปเกรดจ่ายส่วนต่าง' }).click();
   await expect(repeatReview).toContainText('ชำระส่วนต่างและเริ่ม มืออาชีพ (PRO)');
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
-  await plans.getByRole('radio', { name: 'PromptPay QR · จ่ายครั้งเดียว' }).check();
+  await plans.getByRole('radio', { name: 'พร้อมเพย์ QR · จ่ายครั้งเดียว' }).check();
   const oneTimeStarter = plans.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) });
   await oneTimeStarter.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'ยืนยันแพ็กเกจรอบถัดไป: เริ่มต้น (STARTER) รายเดือน', exact: true })).toBeVisible();
@@ -479,11 +479,11 @@ for (const width of [1280, 390]) test(`BILLING-PREVIEW full journey uses no bill
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' })).toContainText('ไม่มีการตัดเงินงวดถัดไป');
   await expect(page.getByLabel('ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไขจ่ายครั้งเดียว')).toBeVisible();
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
-  await plans.getByRole('radio', { name: 'PromptPay QR · จ่ายครั้งเดียว' }).check();
+  await plans.getByRole('radio', { name: 'พร้อมเพย์ QR · จ่ายครั้งเดียว' }).check();
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' })).toContainText('ไม่มีการตัดเงินงวดถัดไป');
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();
-  await plans.getByRole('radio', { name: 'PromptPay QR · สแกนบิลทุกงวด' }).check();
+  await plans.getByRole('radio', { name: 'พร้อมเพย์ QR · สแกนบิลทุกงวด' }).check();
   await plans.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).first().click();
   await expect(page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ' })).toContainText('ต้องเปิดบิลและสแกน QR เอง');
   await page.getByRole('button', { name: 'กลับไปเลือกแพ็กเกจ', exact: true }).click();

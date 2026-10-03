@@ -1,3 +1,5 @@
+import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
+import { SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
 import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
@@ -65,13 +67,13 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_RECIPIENT_BOUNCED: 'อีเมลรับเอกสารปัจจุบันส่งไม่ถึง กรุณาแก้อีเมลรับเอกสารก่อน แล้วจึงส่งเอกสารซ้ำ',
   // Purchase without setup PR E (2026-09-27): admin document tools.
   BILLING_RECIPIENT_BUSY: 'บริษัทมีรายการซื้อ คำสั่งต่ออายุ หรือคำขอเปลี่ยนผู้รับของลูกค้าค้างอยู่ รอให้เสร็จก่อน',
-  BILLING_RECIPIENT_NO_CUSTOMER: 'บริษัทนี้ยังไม่มีบัญชีลูกค้าใน Stripe จึงยังไม่มีผู้รับเอกสารให้เปลี่ยน',
+  BILLING_RECIPIENT_NO_CUSTOMER: 'บริษัทนี้ยังไม่มีบัญชีลูกค้ากับผู้ให้บริการรับชำระเงิน จึงยังไม่มีผู้รับเอกสารให้เปลี่ยน',
   BILLING_RECIPIENT_INVALID: 'รูปแบบอีเมลไม่ถูกต้อง',
   BILLING_LOOKUP_TOO_SHORT: 'เลขอ้างอิงต้องมีอย่างน้อย 8 ตัวอักษร',
   BILLING_LOOKUP_AMBIGUOUS: 'เลขอ้างอิงนี้ตรงหลายรายการ ให้ใช้เลขใบแจ้งหนี้หรือรหัสเต็ม',
   // A sales-event discount serial that no shop has used yet (sales-event spec SD-E20).
   BILLING_LOOKUP_EVENT_TICKET_UNUSED: 'ส่วนลดจากงานนี้ยังไม่ได้ใช้กับร้านใด จึงยังไม่มีร้านให้เปิดดู',
-  EMAIL_OTP_REQUIRED: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP',
+  EMAIL_OTP_REQUIRED: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัสยืนยัน',
   EMAIL_REAUTH_REQUIRED: 'กรุณากรอกรหัสผ่านปัจจุบัน หรือยืนยันตัวตนผ่าน LINE อีกครั้ง',
   EMAIL_DELIVERY_UNAVAILABLE: 'ยังส่งรหัสไม่ได้ กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน 098-256-5628',
   EMAIL_OTP_INVALID: 'รหัสไม่ถูกต้อง กรุณาตรวจรหัส 6 หลักจากอีเมลล่าสุด',
@@ -163,23 +165,23 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_CAP_SELECTION_REQUIRED: 'จำนวนสาขาหรือผู้ใช้เกินแพ็กเกจที่เลือก กรุณาเลือกสิทธิ์ที่จะใช้ต่อก่อนยืนยัน',
   // Purchase without setup (pr-d §2.3 ก, RV28): every `billingError('X')` has Thai here, so the package
   // page falls through to this map (billing-error-text.ts) instead of keeping a second copy.
-  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการชำระเงินเดิมกับ Stripe กรุณารอสักครู่แล้วกดอัปเดตข้อมูล',
+  BILLING_CHECKOUT_PENDING: 'ระบบกำลังตรวจรายการชำระเงินเดิมกับผู้ให้บริการรับชำระเงิน กรุณารอสักครู่แล้วกดอัปเดตข้อมูล',
   BILLING_PURCHASE_PENDING: 'มีรายการชำระเงินเดิมที่ระบบกำลังตรวจอยู่ กรุณารอสักครู่แล้วลองใหม่',
   BILLING_COLLECTION_PENDING: 'มีคำสั่งเรื่องการต่ออายุที่ยังไม่เสร็จ กรุณาตรวจในแท็บการต่ออายุและชำระเงินให้เสร็จก่อนซื้อเพิ่ม',
   BILLING_COLLECTION_CLOSED: 'ยังจัดการการต่ออายุผ่านเว็บไม่ได้ในตอนนี้ กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
   BILLING_COLLECTION_REVIEW: 'ข้อมูลการต่ออายุเปลี่ยนไปแล้ว กรุณาโหลดข้อมูลล่าสุดแล้วเริ่มคำสั่งใหม่ หากยังไม่ได้ให้ติดต่อทีมงานพร้อมเลขอ้างอิง',
   BILLING_CONSENT_REQUIRED: 'กรุณาติ๊กยอมรับเงื่อนไขก่อนไปชำระเงิน',
-  BILLING_DOCUMENT_BINDING: 'ข้อมูลรายการนี้ยังยืนยันกับ Stripe ไม่ได้ กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_DOCUMENT_BINDING: 'ข้อมูลรายการนี้ยังยืนยันกับผู้ให้บริการรับชำระเงินไม่ได้ กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
   BILLING_EXISTING_SUBSCRIPTION: 'มีรายการชำระเงินเดิมที่ยังไม่จบ กรุณาตรวจสถานะรายการเดิมก่อนเริ่มรายการใหม่',
   BILLING_IDEMPOTENCY_CONFLICT: 'รายการนี้ถูกส่งซ้ำด้วยข้อมูลที่ต่างจากเดิม กรุณาโหลดหน้าใหม่แล้วเริ่มรายการอีกครั้ง',
   BILLING_IDEMPOTENCY_REQUIRED: 'ส่งรายการไม่ครบ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
   // Not renewal-only any more: a first purchase can throw this too (item 11, 2026-09-29 review).
-  BILLING_MAPPING_MISMATCH: 'ข้อมูลการชำระเงินของร้านไม่ตรงกับ Stripe กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
+  BILLING_MAPPING_MISMATCH: 'ข้อมูลการชำระเงินของร้านไม่ตรงกับผู้ให้บริการรับชำระเงิน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
   BILLING_MODE_CHANGE_PENDING: 'เปลี่ยนวิธีชำระเงินได้เมื่อแพ็กเกจปัจจุบันสิ้นสุด ตอนนี้เลือกวิธีชำระแบบเดิม หรือรอให้ครบกำหนดก่อน',
   BILLING_OFFER_UNAVAILABLE: 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน กรุณาเลือกแพ็กเกจอื่น',
   BILLING_PACKAGE_STATE_INVALID: 'ข้อมูลแพ็กเกจเดิมของบริษัทต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
   BILLING_PLAN_CHANGE_PENDING: 'มีแพ็กเกจที่ชำระล่วงหน้ารอเริ่มใช้งานอยู่ กรุณาตรวจรายการเดิมในแท็บการต่ออายุและชำระเงิน',
-  BILLING_PRICE_MISMATCH: 'ราคาในระบบไม่ตรงกับ Stripe กรุณาลองใหม่ภายหลัง หากยังไม่ได้ให้ติดต่อทีมงาน',
+  BILLING_PRICE_MISMATCH: 'ราคาในระบบไม่ตรงกับผู้ให้บริการรับชำระเงิน กรุณาลองใหม่ภายหลัง หากยังไม่ได้ให้ติดต่อทีมงาน',
   BILLING_REPEAT_REVIEW: 'รายการซื้อซ้ำต้องให้ทีมงานตรวจก่อน กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง',
   BILLING_TAX_MISMATCH: 'การตั้งค่าภาษีของระบบยังไม่พร้อม กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน',
   BILLING_UPGRADE_BOUNDARY: 'ใกล้วันเปลี่ยนรอบแล้ว กรุณาตรวจสถานะใหม่หลังเปลี่ยนรอบ หรือติดต่อทีมงาน',
@@ -192,7 +194,7 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_CADENCE_PENDING_CHANGE: 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป กรุณาตรวจสอบและยกเลิกรายการนั้นในแท็บการต่ออายุและชำระเงิน ก่อนซื้อรายปี',
   BILLING_REPEAT_NOT_READY: 'การซื้อซ้ำหรือเปลี่ยนแพ็กเกจระหว่างรอบยังไม่เปิดให้บริการ กรุณาติดต่อทีมงาน หรือรอให้แพ็กเกจปัจจุบันสิ้นสุดแล้วซื้อใหม่',
   BILLING_RESTART_REVIEW: 'ต้องตรวจสมาชิกหรือยอดค้างเดิมก่อนเริ่มแพ็กเกจใหม่ กรุณาติดต่อทีมงานพร้อมเลขบริษัท',
-  BILLING_DOCUMENT_PENDING: 'Stripe กำลังเตรียมเอกสาร กรุณาลองเปิดอีกครั้ง',
+  BILLING_DOCUMENT_PENDING: 'ผู้ให้บริการรับชำระเงินกำลังเตรียมเอกสาร กรุณาลองเปิดอีกครั้ง',
   BILLING_PORTAL_UNAVAILABLE: 'ยังเปิดหน้าแก้บัตรไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง',
   BILLING_PORTAL_CONFIG_MISMATCH: 'ทีมงานต้องตรวจการตั้งค่าหน้าแก้บัตรก่อน กรุณาติดต่อทีมงาน',
   BILLING_COMPANY_HELD: 'ร้านนี้ถูกพักใช้งานโดยผู้ดูแล กรุณาติดต่อทีมงาน',
@@ -407,7 +409,7 @@ const CODE_LABELS: Record<string, string> = {
   // หน้าจับคู่รายการธนาคาร: รายการที่เลือกมาจากหน้าที่เปิดค้างไว้ และการจ่ายเงินคืนนั้นถูกยกเลิกไปแล้ว
   bank_match_payment_not_recorded: 'การจ่ายเงินคืนรายการนี้ถูกยกเลิกไปแล้ว จึงจับคู่ไม่ได้ กรุณากดรีเฟรชแล้วเลือกรายการอื่น',
   bank_match_state_changed: 'รายการนี้ถูกเปลี่ยนระหว่างจับคู่ กรุณากดรีเฟรชแล้วลองอีกครั้ง',
-  output_tax_code_line_mismatch: 'Tax Code ที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจ Tax Code ก่อนบันทึก',
+  output_tax_code_line_mismatch: 'รหัสภาษีที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจรหัสภาษีก่อนบันทึก',
   posting_rule_missing: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี',
   expense_payment_exceeds_outstanding: 'ยอดจ่ายต้องมากกว่า 0 และไม่เกินยอดคงเหลือที่ต้องจ่าย',
   expense_payment_changed: 'ยอดหรือสถานะการจ่ายถูกเปลี่ยนระหว่างบันทึก กรุณาโหลดรายการใหม่แล้วลองอีกครั้ง',
@@ -422,7 +424,7 @@ const CODE_LABELS: Record<string, string> = {
   expense_confirmation_source_version_changed: 'เอกสารถูกแก้ไขระหว่างยืนยัน กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   expense_confirmation_source_checksum_changed: 'ข้อมูลเอกสารเปลี่ยนไประหว่างยืนยัน กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   expense_confirmation_substitute_evidence_changed: 'ใบรับรองแทนใบเสร็จเปลี่ยนไประหว่างยืนยัน กรุณาเปิดใหม่แล้วลองอีกครั้ง',
-  expense_confirmation_tax_line_changed: 'รายการภาษีเปลี่ยนไประหว่างยืนยัน กรุณาตรวจ Tax Code แล้วลองอีกครั้ง',
+  expense_confirmation_tax_line_changed: 'รายการภาษีเปลี่ยนไประหว่างยืนยัน กรุณาตรวจรหัสภาษีแล้วลองอีกครั้ง',
   expense_confirmation_tax_evidence_changed: 'หลักฐานภาษีเปลี่ยนไประหว่างยืนยัน กรุณาตรวจสอบแล้วลองอีกครั้ง',
   expense_confirmation_accounting_period_locked: 'งวดบัญชีของเอกสารนี้ปิดแล้ว ต้องเปิดงวดก่อนจึงจะยืนยันได้',
   expense_confirmation_tax_period_locked: 'งวดภาษีของเอกสารนี้ยื่นหรือปิดแล้ว จึงยืนยันเข้างวดนี้ไม่ได้',
@@ -470,13 +472,13 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_VAT_OVERRIDE_INVALID:
     'ยังใช้ยอด VAT ตามเอกสารไม่ได้ กรุณาตรวจยอดต้นฉบับและอัตรา VAT ให้ครบ บันทึกข้อมูลล่าสุด แล้วเลือกรายการที่มี VAT เพื่อรับส่วนต่างพร้อมระบุเหตุผล',
   EXPENSE_VAT_TAX_TOLERANCE_REQUIRED:
-    'VAT ตามเอกสารต่างเกินเกณฑ์ของ Tax Code กรุณาตรวจเอกสารและ Tax Code ก่อนยืนยัน การเลือกใช้ยอดตามเอกสารไม่สามารถข้ามเกณฑ์ภาษีนี้ได้',
+    'VAT ตามเอกสารต่างเกินเกณฑ์ของรหัสภาษี กรุณาตรวจเอกสารและรหัสภาษีก่อนยืนยัน การเลือกใช้ยอดตามเอกสารไม่สามารถข้ามเกณฑ์ภาษีนี้ได้',
   EXPENSE_VAT_TAX_RATE_CONFLICT:
-    'อัตรา VAT ของรายการไม่ตรงกับ Tax Code กรุณาแก้อัตราหรือเลือก Tax Code ให้ตรงกับเอกสารก่อนยืนยัน',
+    'อัตรา VAT ของรายการไม่ตรงกับรหัสภาษี กรุณาแก้อัตราหรือเลือกรหัสภาษีให้ตรงกับเอกสารก่อนยืนยัน',
   EXPENSE_VAT_OVERRIDE_STALE:
     'ข้อมูลค่าใช้จ่ายเปลี่ยนแล้ว กรุณาโหลดใหม่ ตรวจยอด VAT ล่าสุด แล้วเลือกใช้ยอดตามเอกสารอีกครั้ง',
   expense_confirmation_accepted_vat_changed:
-    'ยอด VAT ขั้นสุดท้ายไม่ตรงกับยอดที่ยอมรับ กรุณาตรวจเอกสารและ Tax Code อีกครั้ง ยังไม่มีการยืนยันรายการ',
+    'ยอด VAT ขั้นสุดท้ายไม่ตรงกับยอดที่ยอมรับ กรุณาตรวจเอกสารและรหัสภาษีอีกครั้ง ยังไม่มีการยืนยันรายการ',
   EXPENSE_CHANGED_DURING_DELETE: 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง',
   EXPENSE_NOT_DELETABLE: 'ลบรายการค่าใช้จ่ายนี้ไม่ได้ในสถานะปัจจุบัน กรุณาตรวจสอบสถานะเอกสาร',
   EXPENSE_HAS_LINKED_DATA: 'ลบรายการไม่ได้ เพราะมีข้อมูลอื่นเชื่อมโยงอยู่ กรุณาตรวจสอบรายการที่เกี่ยวข้องก่อน',
@@ -489,8 +491,8 @@ const CODE_LABELS: Record<string, string> = {
   accounting_tax_invoice_already_exists: 'เอกสารต้นทางนี้มีใบกำกับภาษีที่ยังใช้งานอยู่แล้ว กรุณาเปิดใบเดิมแทนการสร้างซ้ำ',
   quotation_command_conflict: 'คำสั่งนี้เคยใช้สร้างใบเสนอราคาด้วยรายละเอียดอื่นแล้ว กรุณาโหลดข้อมูลใหม่ก่อนลองอีกครั้ง',
   // Substitute-receipt lifecycle
-  substitute_evidence_locks_lines: 'ใบรับรองแทนใบเสร็จที่ลงนามแล้วล็อกรายการไว้ ต้องจัดทำ version แก้ไขก่อนจึงจะแก้ได้',
-  substitute_evidence_locks_expense: 'ใบรับรองแทนใบเสร็จที่ลงนามแล้วล็อกข้อมูลเอกสารไว้ ต้องจัดทำ version แก้ไขก่อนจึงจะแก้ได้',
+  substitute_evidence_locks_lines: 'ใบรับรองแทนใบเสร็จที่ลงนามแล้วล็อกรายการไว้ ต้องจัดทำฉบับแก้ไขก่อนจึงจะแก้ได้',
+  substitute_evidence_locks_expense: 'ใบรับรองแทนใบเสร็จที่ลงนามแล้วล็อกข้อมูลเอกสารไว้ ต้องจัดทำฉบับแก้ไขก่อนจึงจะแก้ได้',
   substitute_evidence_nonclaimable: 'เอกสารที่ใช้ใบรับรองแทนใบเสร็จ ขอคืนภาษีซื้อไม่ได้และใช้เป็นหลักฐานภาษีไม่ได้',
   // The company answered "not registered" for this document's date. VAT paid is cost, not a claim.
   input_vat_not_available_company_not_vat_registered:
@@ -558,7 +560,7 @@ const CODE_LABELS: Record<string, string> = {
   document_kind_ineligible:
     'ใบเสนอราคา ใบสั่งซื้อ ใบนัดหมาย ใบจอง หรือรูปที่ไม่ใช่ค่าใช้จ่าย ใช้จัดทำใบรับรองแทนใบเสร็จไม่ได้ กรุณาแนบหลักฐานค่าใช้จ่าย',
   currency_not_supported:
-    'ขณะนี้ใบรับรองแทนใบเสร็จรองรับเฉพาะรายการสกุลเงินบาท (THB)',
+    'ขณะนี้ใบรับรองแทนใบเสร็จรองรับเฉพาะรายการสกุลเงินบาท',
   reviewed_total_required:
     'กรุณาตรวจสอบและยืนยันยอดรวมที่มากกว่า 0 ก่อนจัดทำใบรับรองแทนใบเสร็จ',
   reviewed_items_required:
@@ -654,11 +656,11 @@ const CODE_LABELS: Record<string, string> = {
   claim_form_requires_submitted: 'พิมพ์แบบฟอร์มได้หลังส่งใบเบิกแล้ว เพราะใบร่างยังไม่มีเลขที่เอกสาร',
   claim_signature_role_not_eligible: 'คุณไม่ได้อยู่ในรายชื่อผู้ลงนามของใบเบิกนี้',
   claim_saved_signature_required: 'ยังไม่มีลายเซ็นของคุณ กรุณาบันทึกลายเซ็นที่หน้าลายเซ็นของฉันก่อน บันทึกแล้วใช้ลงนามได้ทันที',
-  claim_signature_must_be_png_or_jpeg_max_2mb: 'ไฟล์ลายเซ็นต้องเป็น PNG หรือ JPEG ขนาดไม่เกิน 2 MB',
-  claim_signature_too_large: 'ไฟล์ลายเซ็นใหญ่เกิน 2 MB กรุณาย่อขนาดแล้วอัปโหลดใหม่',
+  claim_signature_must_be_png_or_jpeg_max_2mb: SIGNATURE_FILE_REQUIRED_MESSAGE,
+  claim_signature_too_large: 'ไฟล์ลายเซ็นใหญ่เกิน 2 เมกะไบต์ กรุณาย่อขนาดแล้วอัปโหลดใหม่',
   claim_signature_attachment_invalid: 'ไม่พบไฟล์ลายเซ็นของคุณสำหรับใบเบิกนี้ กรุณาอัปโหลดใหม่',
   claim_signature_upload_not_found: 'ไม่พบไฟล์ลายเซ็นที่กำลังอัปโหลด กรุณาเลือกไฟล์ใหม่',
-  claim_signature_bytes_mismatch: 'ไฟล์ลายเซ็นไม่ใช่รูปภาพตามชนิดที่ระบุ กรุณาอัปโหลดไฟล์ PNG หรือ JPEG',
+  claim_signature_bytes_mismatch: `ไฟล์ลายเซ็นไม่ใช่รูปภาพตามชนิดที่ระบุ กรุณาอัปโหลด${SIGNATURE_FILE_TYPES_LABEL}`,
   claim_signature_checksum_mismatch: 'ไฟล์ลายเซ็นถูกเปลี่ยนหลังอัปโหลด กรุณาลงนามใหม่',
   claim_signature_unreadable: 'อ่านไฟล์ลายเซ็นไม่ได้ กรุณาอัปโหลดไฟล์ใหม่',
   claim_form_signed_copy_denied: 'คุณไม่มีสิทธิ์แนบสำเนาแบบฟอร์มที่ลงนามแล้วของใบเบิกนี้',
@@ -683,7 +685,7 @@ const CODE_LABELS: Record<string, string> = {
   reimbursement_payment_number_conflict: 'เลขที่ใบจ่ายไม่ตรงกับที่จองไว้ กรุณาลองใหม่อีกครั้ง',
   // สลิปการจ่ายเงินคืน
   payment_slip_required: 'จ่ายด้วยการโอนต้องแนบสลิป',
-  payment_slip_invalid: 'ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพ ขนาดไม่เกิน 10 MB แล้วลองใหม่',
+  payment_slip_invalid: 'ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพที่รองรับ ขนาดไม่เกิน 10 เมกะไบต์ แล้วลองใหม่',
   // ไฟล์ที่เลือกจากใบเบิกที่เซ็นแล้วไม่ได้ผิดชนิดหรือขนาด แต่ถูกใช้เป็นหลักฐานของรายการอื่นอยู่ด้วย
   payment_slip_in_use_elsewhere: 'ไฟล์นี้ถูกใช้เป็นใบเสร็จหรือเอกสารของรายการอื่นด้วย จึงใช้เป็นสลิปไม่ได้ กรุณาแนบสลิปเป็นไฟล์ใหม่',
   // A declared signed copy offered as the slip without the payer's confirmation (a page loaded before the
@@ -848,7 +850,7 @@ const CODE_LABELS: Record<string, string> = {
   // ถ้ายังไม่มีทั้งอีเมลบัญชีและชื่อผู้ใช้ รหัสผ่านที่ตั้งไว้จะใช้เข้าระบบไม่ได้เลย
   username_required: 'บัญชีนี้ยังไม่มีอีเมลบัญชี กรุณาตั้งชื่อผู้ใช้ไว้ใช้คู่กับรหัสผ่าน',
   // ต้องบอกกติกาให้ครบ เพราะคนไทยจะพิมพ์ชื่อไทยเป็นอย่างแรก
-  invalid_username: 'ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 จุด ขีด และขีดล่าง ยาว 4 ถึง 64 ตัว (ภาษาไทยใช้ไม่ได้ค่ะ)',
+  invalid_username: 'ชื่อผู้ใช้ใช้ได้เฉพาะตัวอักษรอังกฤษพิมพ์เล็ก ตัวเลข จุด ขีด และขีดล่าง ยาว 4 ถึง 64 ตัว (ภาษาไทยใช้ไม่ได้ค่ะ)',
   // `username_taken` already has copy above, shared with the Flow B claim screen.
   // Same sentence the profile form shows before it submits (PHONE_ERROR_MESSAGE in
   // features/company-profile/company-profile.logic.ts): one rule must not have two wordings.
@@ -863,7 +865,7 @@ const CODE_LABELS: Record<string, string> = {
   // ---- ตั้งค่าบริษัทและ VAT ----
   // จนถึง L-E ข้อความนี้ชี้ไปหน้าที่ยังไม่มีอยู่จริง ตอนนี้มีแล้วจึงเรียกชื่อเมนูตรง ๆ
   company_tax_identity_incomplete: 'ข้อมูลผู้เสียภาษีของบริษัทยังไม่ครบ กรุณากรอกให้ครบที่ ตั้งค่า › ข้อมูลร้านและบัญชีของฉัน ก่อน',
-  company_business_type_invalid: 'เลือกประเภทธุรกิจจากรายการ DBD หรือเลือกอื่น ๆ',
+  company_business_type_invalid: 'เลือกประเภทธุรกิจจากรายการของกรมพัฒนาธุรกิจการค้า หรือเลือกอื่น ๆ',
   company_business_type_other_required: 'กรุณาระบุประเภทธุรกิจอื่น ๆ',
   company_business_type_other_invalid: 'ระบุประเภทธุรกิจอื่น ๆ ไม่เกิน 200 ตัวอักษร',
   company_business_type_version_conflict: 'ประเภทธุรกิจถูกแก้ไขแล้ว กรุณาโหลดหน้าใหม่ก่อนบันทึกอีกครั้ง',
@@ -1041,8 +1043,8 @@ const CODE_LABELS: Record<string, string> = {
   functional_currency_fx_required: 'รายการสกุลเงินต่างประเทศต้องมีอัตราแลกเปลี่ยนที่ตรวจสอบแล้วก่อนลงบัญชี',
   journal_already_reversed: 'รายการบัญชีนี้ถูกกลับรายการแล้ว กรุณาตรวจประวัติแทนการทำซ้ำ',
   ledger_account_not_postable: 'บัญชีที่เลือกลงรายการไม่ได้หรือไม่ได้ใช้งาน กรุณาเลือกบัญชีใหม่',
-  legacy_o0_tax_review_required: 'รายการภาษีอัตรา 0% ต้องระบุเหตุผลและใช้ Tax Code ที่ตรวจสอบแล้วก่อนลงบัญชี',
-  legacy_tax_snapshot_review_required: 'ข้อมูลภาษีเดิมยังไม่ผ่านการตรวจสอบ กรุณาตรวจ Tax Code ของรายการก่อนลงบัญชี',
+  legacy_o0_tax_review_required: 'รายการภาษีอัตรา 0% ต้องระบุเหตุผลและใช้รหัสภาษีที่ตรวจสอบแล้วก่อนลงบัญชี',
+  legacy_tax_snapshot_review_required: 'ข้อมูลภาษีเดิมยังไม่ผ่านการตรวจสอบ กรุณาตรวจรหัสภาษีของรายการก่อนลงบัญชี',
   manual_journal_account_not_available: 'บัญชีที่เลือกไม่พร้อมใช้งานหรืออยู่นอกบริษัท กรุณาเลือกใหม่',
   manual_journal_branch_not_available: 'สาขาที่เลือกไม่พร้อมใช้งานหรืออยู่นอกบริษัท กรุณาเลือกใหม่',
   manual_journal_provenance_forbidden: 'ข้อมูลต้นทางและข้อมูลภาษีของรายการบัญชีถูกกำหนดโดยระบบ กรุณาโหลดหน้าใหม่แล้วกรอกเฉพาะช่องที่แสดง',
@@ -1056,22 +1058,22 @@ const CODE_LABELS: Record<string, string> = {
   unsupported_posting_source: 'แหล่งที่มาของรายการนี้ไม่รองรับการลงบัญชีอัตโนมัติ กรุณาใช้เมนูบันทึกรายการบัญชีด้วยตนเอง',
 
   // ---- การตั้งค่าภาษี ----
-  tax_code_import_blocked: 'ยังนำเข้า Tax Code ไม่ได้ กรุณาแก้ข้อผิดพลาดในตัวอย่างก่อนยืนยัน',
+  tax_code_import_blocked: 'ยังนำเข้ารหัสภาษีไม่ได้ กรุณาแก้ข้อผิดพลาดในตัวอย่างก่อนยืนยัน',
   pp36_historical_tax_snapshot_changed: 'ข้อมูลภาษี ภ.พ.36 เดิมเปลี่ยนแล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบอีกครั้ง',
   overlapping_active_profile_identity: 'มีชุดตั้งค่าภาษีที่ใช้งานในช่วงเวลาเดียวกัน กรุณาปรับช่วงวันที่ไม่ให้ซ้อนกัน',
   overlapping_default_profile: 'มีชุดตั้งค่าภาษีเริ่มต้นในช่วงเวลาเดียวกัน กรุณาปรับช่วงวันที่ไม่ให้ซ้อนกัน',
-  invalid_tax_code_definition: 'ข้อมูล Tax Code ไม่ถูกต้อง กรุณาตรวจรหัส อัตรา และเงื่อนไข',
-  missing_account_rule: 'Tax Code นี้ยังไม่มีกฎผูกบัญชีที่จำเป็น กรุณาตั้งค่าบัญชีให้ครบ',
-  missing_report_rule: 'Tax Code นี้ยังไม่มีกฎลงแบบภาษีที่จำเป็น กรุณาตั้งค่าช่องรายงานให้ครบ',
+  invalid_tax_code_definition: 'ข้อมูลรหัสภาษีไม่ถูกต้อง กรุณาตรวจรหัส อัตรา และเงื่อนไข',
+  missing_account_rule: 'รหัสภาษีนี้ยังไม่มีกฎผูกบัญชีที่จำเป็น กรุณาตั้งค่าบัญชีให้ครบ',
+  missing_report_rule: 'รหัสภาษีนี้ยังไม่มีกฎลงแบบภาษีที่จำเป็น กรุณาตั้งค่าช่องรายงานให้ครบ',
   invalid_account_rule: 'กฎผูกบัญชีภาษีไม่ถูกต้อง กรุณาตรวจบัญชี บทบาท และช่วงวันที่',
   account_rule_effective_window_incomplete: 'กรุณาระบุวันเริ่มและวันสิ้นสุดของกฎผูกบัญชีให้ครบทั้งคู่',
   invalid_report_rule: 'กฎลงแบบภาษีไม่ถูกต้อง กรุณาตรวจแบบ ช่อง และแหล่งยอด',
   report_rule_effective_window_incomplete: 'กรุณาระบุวันเริ่มและวันสิ้นสุดของกฎลงแบบภาษีให้ครบทั้งคู่',
   tax_profile_incomplete: 'ชุดตั้งค่าภาษียังไม่ครบ กรุณาแก้รายการที่ระบบระบุก่อนเปิดใช้งาน',
-  profile_has_no_definitions: 'ชุดตั้งค่าภาษียังไม่มี Tax Code กรุณาเพิ่มอย่างน้อยหนึ่งรายการ',
+  profile_has_no_definitions: 'ชุดตั้งค่าภาษียังไม่มีรหัสภาษี กรุณาเพิ่มอย่างน้อยหนึ่งรายการ',
   profile_already_active: 'ชุดตั้งค่าภาษีนี้เปิดใช้งานอยู่แล้ว กรุณาโหลดสถานะล่าสุด',
   profile_readiness_blockers_truncated: 'พบรายการที่ต้องแก้มากกว่าที่แสดง กรุณาแก้รายการที่เห็นแล้วตรวจความพร้อมอีกครั้ง',
-  invalid_tax_code_semantics: 'ความหมายหรือเงื่อนไขของ Tax Code ขัดกัน กรุณาตรวจประเภทภาษีและอัตรา',
+  invalid_tax_code_semantics: 'ความหมายหรือเงื่อนไขของรหัสภาษีขัดกัน กรุณาตรวจประเภทภาษีและอัตรา',
   legacy_transaction_tax_remediation_blocked: 'ยังแก้ข้อมูลภาษีเดิมไม่ได้ เพราะมีรายการที่ต้องตรวจ กรุณาดำเนินการตามรายการตรวจสอบก่อน',
   wht_handoff_link_command_reused: 'คำขอแนบหนังสือรับรองนี้ถูกใช้กับรายการอื่นแล้ว กรุณาโหลดงานใหม่',
   wht_handoff_not_linkable: 'สถานะของงานนี้ยังแนบหนังสือรับรองไม่ได้ กรุณาตรวจสถานะล่าสุด',
@@ -1129,7 +1131,7 @@ const CODE_LABELS: Record<string, string> = {
 // Several upload rejections differ only in which check caught the file; the user's next move is
 // the same, so they share one sentence rather than four near-identical ones.
 const UPLOAD_TYPE_MISMATCH =
-  'ไฟล์นี้มีชนิดไฟล์ไม่ตรงกับข้อมูลภายใน ระบบจึงแนบไม่ได้ กรุณาเลือกไฟล์ใหม่ หรือบันทึกเป็น PDF/JPG/PNG แล้วลองอีกครั้ง';
+  UPLOAD_FILE_TYPE_MISMATCH_MESSAGE;
 const UPLOAD_QUOTA_EXCEEDED = 'มีไฟล์ที่ค้างอัปโหลดอยู่หลายรายการ กรุณาอัปโหลดให้เสร็จหรือรอสักครู่แล้วลองใหม่';
 const UPLOAD_CONTENT_REJECTED =
   'ระบบตรวจไฟล์นี้ไม่ผ่านความปลอดภัย จึงไม่รับไฟล์ กรุณาใช้ไฟล์อื่น หรือถ่ายรูป/สแกนเอกสารเป็นภาพแล้วอัปโหลดแทน';
@@ -1193,7 +1195,7 @@ const MESSAGE_LABELS: Record<string, string> = {
   'WHT amount cannot exceed the document total or leave a negative payable.': 'ยอดภาษีหัก ณ ที่จ่ายเกินยอดเอกสาร กรุณาตรวจยอดและฐานภาษี',
   'Sales cannot approve their own quotation issue request': 'ผู้ส่งขออนุมัติไม่สามารถอนุมัติใบเสนอราคาของตนเองได้ กรุณาให้ผู้มีสิทธิ์คนอื่นอนุมัติ',
   'Tax branch code must be 5 digits.': 'รหัสสาขาภาษีต้องเป็นตัวเลข 5 หลัก หรือเว้นว่างหากไม่มี',
-  'Branch code must be 1-20 uppercase alphanumeric characters, underscores, or hyphens.': 'รหัสสาขาต้องยาว 1–20 ตัว ใช้ A–Z, 0–9, ขีดกลาง หรือขีดล่างเท่านั้น',
+  'Branch code must be 1-20 uppercase alphanumeric characters, underscores, or hyphens.': 'รหัสสาขาต้องยาว 1–20 ตัว ใช้ตัวอักษรอังกฤษพิมพ์ใหญ่ ตัวเลข ขีดกลาง หรือขีดล่างเท่านั้น',
   'Duplicate value: a record with the same unique field(s) already exists. Fields: companyId, supplierId, supplierDocumentNumber':
     CODE_LABELS['duplicate_supplier_document_number']!,
   'Insufficient permissions.': CODE_LABELS['insufficient_permissions']!,
@@ -1204,7 +1206,7 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Expense requires a receipt attachment or a missing receipt reason.':
     'ต้องแนบไฟล์ใบเสร็จ หรือระบุเหตุผลที่ไม่มีใบเสร็จ ก่อนยืนยันลงบัญชี',
   'Every VAT-bearing expense line requires a server-resolved Tax Code snapshot before confirmation.':
-    'ทุกบรรทัดที่มี VAT ต้องเลือก Tax Code ก่อนยืนยันลงบัญชี',
+    'ทุกบรรทัดที่มี VAT ต้องเลือกรหัสภาษีก่อนยืนยันลงบัญชี',
   'Expense confirmation is available on the authenticated web only.':
     'ยืนยันลงบัญชีได้จากหน้าเว็บที่เข้าสู่ระบบแล้วเท่านั้น',
   'A current issued ใบรับรองแทนใบเสร็จรับเงิน artifact is required; a text reason or legacy timestamp is not sufficient.':
@@ -1222,7 +1224,7 @@ const MESSAGE_LABELS: Record<string, string> = {
   'The same file cannot serve as both source/supporting evidence and payment evidence.':
     'ไฟล์เดียวกันใช้เป็นทั้งหลักฐานต้นทางและหลักฐานการจ่ายไม่ได้ ต้องแนบคนละไฟล์',
   'Current company policy requires separate payment evidence for cash expenses. Supersede and prepare a new version.':
-    'นโยบายบริษัทกำหนดให้รายการเงินสดต้องมีหลักฐานการจ่ายแยกไฟล์ กรุณายกเลิก version นี้แล้วจัดทำ version ใหม่',
+    'นโยบายบริษัทกำหนดให้รายการเงินสดต้องมีหลักฐานการจ่ายแยกไฟล์ กรุณายกเลิกฉบับนี้แล้วจัดทำฉบับใหม่',
   'The reviewed preview no longer matches. Generate and review a new preview before signing.':
     'ตัวอย่างที่ตรวจไว้ไม่ตรงกับฉบับปัจจุบัน กรุณาสร้างและตรวจตัวอย่างใหม่ก่อนลงนาม',
   'Cannot reach the authentication service. Please try again.':
@@ -1235,7 +1237,7 @@ const MESSAGE_LABELS: Record<string, string> = {
   'A finance override does not make a quotation, order, appointment, booking, reservation, or non-expense image eligible for substitute evidence.':
     'แม้การเงินจะยืนยันประเภทเอกสารแทน AI แล้ว ใบเสนอราคา/ใบสั่งซื้อ/ใบนัด/การจอง หรือรูปที่ไม่ใช่ค่าใช้จ่าย ก็ยังใช้ใบรับรองแทนใบเสร็จไม่ได้',
   'ใบรับรองแทนใบเสร็จรับเงิน currently supports THB expenses only.':
-    'ใบรับรองแทนใบเสร็จรับเงินรองรับเฉพาะรายการสกุลเงินบาท (THB)',
+    'ใบรับรองแทนใบเสร็จรับเงินรองรับเฉพาะรายการสกุลเงินบาท',
   'A positive reviewed total is required.': 'ยอดรวมที่ตรวจแล้วต้องมากกว่า 0',
   [`A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} expense lines.`]:
     CODE_LABELS['substitute_receipt_too_many_lines']!,
@@ -1266,29 +1268,29 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Payment date is required because the payer certifies an amount already paid for company business.':
     'กรุณาระบุวันที่จ่ายเงิน เพราะผู้จ่ายรับรองยอดที่ได้จ่ายไปแล้ว',
   'Linked source/payment evidence changed. Finance must prepare a new version.':
-    'หลักฐานที่ผูกไว้ถูกเปลี่ยน การเงินต้องจัดทำ version ใหม่',
+    'หลักฐานที่ผูกไว้ถูกเปลี่ยน การเงินต้องจัดทำฉบับใหม่',
   'Expense details changed after preparation. Finance must prepare a new version.':
-    'ข้อมูลเอกสารถูกแก้ไขหลังจัดทำ การเงินต้องจัดทำ version ใหม่',
+    'ข้อมูลเอกสารถูกแก้ไขหลังจัดทำ การเงินต้องจัดทำฉบับใหม่',
   'The payer must acknowledge the certification statement.': 'ผู้จ่ายต้องยอมรับคำรับรองก่อนลงนาม',
   'The approver must acknowledge approval.': 'ผู้อนุมัติต้องยอมรับการอนุมัติก่อน',
   'The payer must certify an immutable snapshot before approval.': 'ผู้จ่ายเงินต้องลงนามรับรองก่อนจึงจะอนุมัติได้',
-  'The certified payer signature checksum is missing.': 'ไม่พบข้อมูลตรวจสอบลายเซ็นของผู้จ่ายที่รับรองแล้ว กรุณาจัดทำ version ใหม่',
+  'The certified payer signature checksum is missing.': 'ไม่พบข้อมูลตรวจสอบลายเซ็นของผู้จ่ายที่รับรองแล้ว กรุณาจัดทำฉบับใหม่',
   'Approval must acknowledge the current payer-certified artifact checksum.':
     'เอกสารฉบับที่ผู้จ่ายลงนามถูกเปลี่ยน กรุณาเปิดตรวจฉบับล่าสุดก่อนอนุมัติ',
-  'The payer signature changed after certification.': 'ลายเซ็นผู้จ่ายถูกเปลี่ยนหลังการรับรอง กรุณาจัดทำ version ใหม่',
-  'Certified snapshot checksum is invalid.': 'ข้อมูลรับรองไม่สมบูรณ์ กรุณาจัดทำ version ใหม่',
+  'The payer signature changed after certification.': 'ลายเซ็นผู้จ่ายถูกเปลี่ยนหลังการรับรอง กรุณาจัดทำฉบับใหม่',
+  'Certified snapshot checksum is invalid.': 'ข้อมูลรับรองไม่สมบูรณ์ กรุณาจัดทำฉบับใหม่',
   'Substitute evidence changed. Reload before cancelling or correcting it.':
     'ใบรับรองแทนใบเสร็จถูกเปลี่ยนแปลง กรุณาเปิดใหม่ก่อนยกเลิกหรือแก้ไข',
   'Only an unconfirmed expense can cancel or replace substitute evidence.':
     'ยกเลิกหรือแก้ใบรับรองแทนใบเสร็จได้เฉพาะเอกสารที่ยังไม่ยืนยันเท่านั้น',
-  'Substitute evidence changed while superseding.': 'ใบรับรองแทนใบเสร็จถูกเปลี่ยนระหว่างยกเลิก version กรุณาเปิดใหม่แล้วลองอีกครั้ง',
+  'Substitute evidence changed while superseding.': 'ใบรับรองแทนใบเสร็จถูกเปลี่ยนระหว่างยกเลิกฉบับ กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   'Idempotency key was already used with different substitute-receipt data.':
     'มีการจัดทำใบรับรองด้วยข้อมูลอื่นไปแล้ว กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   // Signature uploads (certify/approve)
-  'Per-certificate signature must be a PNG/JPEG file up to 2 MB.': 'ไฟล์ลายเซ็นต้องเป็น PNG/JPEG ขนาดไม่เกิน 2 MB',
+  'Per-certificate signature must be a PNG/JPEG file up to 2 MB.': SIGNATURE_FILE_REQUIRED_MESSAGE,
   'Pending signature upload not found for this signer.': 'ไม่พบไฟล์ลายเซ็นที่กำลังอัปโหลดของผู้ลงนามนี้ กรุณาเลือกไฟล์ใหม่',
   'Signature bytes do not match the declared PNG/JPEG MIME type.': 'ไฟล์ลายเซ็นไม่ใช่รูปภาพตามชนิดที่ระบุ',
-  'Signature image must be at most 2 MB.': 'ไฟล์ลายเซ็นต้องมีขนาดไม่เกิน 2 MB',
+  'Signature image must be at most 2 MB.': SIGNATURE_FILE_TOO_LARGE_MESSAGE,
   'Signature checksum does not match storage.': 'ไฟล์ลายเซ็นถูกเปลี่ยนแปลงหลังอัปโหลด กรุณาลงนามใหม่',
   // Confirm rules beyond the receipt slot
   'Expense has unresolved duplicate warning. Dismiss or override before confirming.':
@@ -1298,7 +1300,7 @@ const MESSAGE_LABELS: Record<string, string> = {
   'Expense date is required for confirmation.': 'ต้องระบุวันที่ค่าใช้จ่ายก่อนยืนยันลงบัญชี',
   'Grand total amount is invalid.': 'ยอดรวมไม่ถูกต้อง',
   'A receipt, substitute receipt, or supporting-only document cannot retain a Tax Code.':
-    'ใบเสร็จ ใบรับรองแทน หรือหลักฐานประกอบ ใช้ Tax Code ไม่ได้ (ต้องเป็นใบกำกับภาษี)',
+    'ใบเสร็จ ใบรับรองแทน หรือหลักฐานประกอบ ใช้รหัสภาษีไม่ได้ (ต้องเป็นใบกำกับภาษี)',
   'A receipt, substitute receipt, or supporting-only document cannot claim input VAT.':
     'ใบเสร็จ ใบรับรองแทน หรือหลักฐานประกอบ ขอคืนภาษีซื้อไม่ได้',
   'Domestic input VAT requires a reviewed TAX_INVOICE with usable tax evidence.':
@@ -1315,7 +1317,7 @@ const MESSAGE_LABELS: Record<string, string> = {
     'ต้องระบุเหตุผลการยืนยันประเภทเอกสาร ไม่เกิน 500 ตัวอักษร',
   'Re-run document classification before overriding this expense.': 'กรุณาสั่งให้ AI อ่านเอกสารใหม่ก่อนยืนยันประเภทเอกสาร',
   'Remove the existing Tax Code lines before classifying this document as a receipt, substitute receipt, or supporting-only evidence.':
-    'กรุณานำ Tax Code ออกจากรายการก่อนจัดประเภทเอกสารเป็นใบเสร็จ/ใบรับรองแทน/หลักฐานประกอบ',
+    'กรุณานำรหัสภาษีออกจากรายการก่อนจัดประเภทเอกสารเป็นใบเสร็จ/ใบรับรองแทน/หลักฐานประกอบ',
   // Void / payment
   'Posting state changed while voiding. Retry the void.': 'สถานะการลงบัญชีเปลี่ยนระหว่างยกเลิกเอกสาร กรุณาลองอีกครั้ง',
   'Expense changed before void. Reload and retry.': 'เอกสารถูกแก้ไขก่อนยกเลิก กรุณาเปิดใหม่แล้วลองอีกครั้ง',
@@ -1372,9 +1374,9 @@ const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => string]>
   [/^Tax branch code ".*" already exists in this company\.$/, () => 'รหัสสาขาภาษีนี้ถูกใช้ในบริษัทแล้ว กรุณาตรวจสอบสาขาเดิมหรือใช้รหัสอื่น'],
   [/^Branch code ".*" already exists in this company\.$/, () => 'รหัสสาขานี้ถูกใช้ในบริษัทแล้ว กรุณาใช้รหัสอื่น'],
   [/^Cannot confirm expense in status (\S+)\.$/,
-    (m) => `ยืนยันลงบัญชีไม่ได้ในสถานะปัจจุบัน (${m[1]}) — ต้องตรวจเอกสารจนพร้อมยืนยันก่อน`],
+    () => 'ยืนยันค่าใช้จ่ายไม่ได้ในสถานะปัจจุบัน กรุณาเปิดรายการเพื่อตรวจสถานะล่าสุด'],
   [/^Cannot prepare substitute evidence in status (\S+)\.$/,
-    (m) => `จัดทำใบรับรองแทนใบเสร็จไม่ได้ในสถานะปัจจุบันของเอกสาร (${m[1]})`],
+    () => 'จัดทำใบรับรองแทนใบเสร็จไม่ได้ในสถานะปัจจุบัน กรุณาเปิดรายการเพื่อตรวจสถานะล่าสุด'],
   // Plan 13.11.B: "ยังไม่แน่ใจ" saves as a draft but blocks confirmation, and the block names the line.
   [/^The VAT mode says VAT applies but line (\d+) has no VAT rate\./,
     (m) => `รายการที่ ${m[1]} ยังไม่ได้ระบุว่ามี VAT หรือไม่ กรุณาเลือกให้ครบทุกรายการก่อนยืนยัน`],
@@ -1390,7 +1392,7 @@ const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => string]>
 /** Generic last resort, so an unmapped failure still reads as Thai. */
 const STATUS_LABELS: Record<number, string> = {
   400: 'ทำรายการต่อไม่ได้ กรุณาตรวจข้อมูลที่กรอกและเงื่อนไขของรายการ แล้วลองอีกครั้ง',
-  401: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',
+  401: workspaceDictionary.th['error.session_expired'],
   403: CODE_LABELS['insufficient_permissions']!,
   404: 'ไม่พบข้อมูลที่ต้องการ',
   409: 'รายการนี้ดำเนินการต่อไม่ได้ในสถานะปัจจุบัน กรุณาโหลดข้อมูลล่าสุดและตรวจสอบอีกครั้ง',

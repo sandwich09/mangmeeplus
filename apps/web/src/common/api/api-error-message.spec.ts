@@ -23,7 +23,7 @@ test('resend and recipient-code limits keep their own sentence and add only a sh
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
 test('explains document VAT acceptance without suggesting a bypass of Tax Code rules', () => {
-  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_TOLERANCE_REQUIRED' })), /เกินเกณฑ์ของ Tax Code/);
+  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_TOLERANCE_REQUIRED' })), /เกินเกณฑ์ของรหัสภาษี/);
   assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_TAX_RATE_CONFLICT' })), /อัตรา VAT ของรายการไม่ตรง/);
   assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_VAT_OVERRIDE_INVALID' })), /ตรวจยอดต้นฉบับและอัตรา VAT/);
 });
@@ -54,7 +54,7 @@ test('distinguishes a wrong current password from an expired session', () => {
     status: 400, code: 'current_password_incorrect',
   })), 'รหัสผ่านปัจจุบันไม่ถูกต้อง');
   assert.equal(apiErrorMessage(apiError('No active session.', { status: 401 })),
-    'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+    'การเข้าสู่ระบบหมดอายุ กรุณาเข้าสู่ระบบใหม่');
 });
 
 test('explains missing and invalid transaction source branches in plain Thai', () => {
@@ -124,7 +124,7 @@ test('translates chart-template and posting-readiness failures', () => {
   assert.match(translateApiError('coa_semantic_conflict')!, /รหัสเดียวกัน/);
   assert.match(translateApiError('coa_posting_readiness_incomplete')!, /ยังไม่พร้อม/);
   assert.match(translateApiError('ledger_account_invalid_for_bank')!, /ธนาคาร/);
-  assert.match(translateApiError('output_tax_code_line_mismatch')!, /Tax Code/);
+  assert.match(translateApiError('output_tax_code_line_mismatch')!, /รหัสภาษี/);
   assert.match(translateApiError('posting_rule_missing')!, /ยังไม่มีกฎลงบัญชี/);
 });
 
@@ -267,10 +267,10 @@ test('translates the document-number 409 family', () => {
   );
 });
 
-test('renders parameterized sentences with the parameter kept visible', () => {
+test('keeps human period references while hiding expense status enums', () => {
   assert.equal(
     translateApiError('Cannot confirm expense in status DRAFT.'),
-    'ยืนยันลงบัญชีไม่ได้ในสถานะปัจจุบัน (DRAFT) — ต้องตรวจเอกสารจนพร้อมยืนยันก่อน',
+    'ยืนยันค่าใช้จ่ายไม่ได้ในสถานะปัจจุบัน กรุณาเปิดรายการเพื่อตรวจสถานะล่าสุด',
   );
   assert.match(translateApiError('Accounting period 2026-07 is not open; reopen it before voiding.')!, /2026-07/);
   assert.match(translateApiError('PP30/2026-07 is locked; use an adjustment or amended filing workflow.')!, /PP30 2026-07/);
@@ -289,7 +289,7 @@ test('translates the substitute-receipt eligibility refusals', () => {
     ['valid_receipt_normal_path', /ขั้นตอนปกติ/],
     ['classification_ineligible', /แนบหลักฐานค่าใช้จ่าย/],
     ['document_kind_ineligible', /ใช้จัดทำ.*ไม่ได้/],
-    ['currency_not_supported', /เงินบาท \(THB\)/],
+    ['currency_not_supported', /เงินบาท/],
     ['reviewed_total_required', /ยืนยันยอดรวม/],
     ['reviewed_items_required', /รายละเอียดรายการค่าใช้จ่าย/],
     ['reviewed_category_required', /เลือกหมวดค่าใช้จ่ายหรือบัญชี/],

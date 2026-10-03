@@ -209,3 +209,7 @@ default branch `accounting.payment.received`:
 - Payment ที่เคยสร้างผ่าน API ด้วย wht > 0 (ถ้ามีใน UAT/prod) เคยโพสต์ journal แบบ net-only ผิดมาก่อน — migration ไม่แก้ย้อนหลัง ต้อง audit ด้วย query `SupplierPayment.whtAmount > 0` ก่อน deploy แล้วแก้ด้วย manual journal ถ้าพบ
 - การสลับ validation `Σ alloc == netPaid` → `== gross` ต้องมี test ยืนยัน caller เดิม (wht=0) ไม่สะดุด
 - หมวดเงินได้ยัง DRAFT ทั้งหมด: ฟีเจอร์ฝั่งจ่ายจะกดใช้ไม่ได้จนกว่านักบัญชีเปิดใช้หมวด (by design) — ต้องสื่อสารตอนเปิดฟีเจอร์
+
+## Enterprise PND53 wording — 2026-10-03
+
+The dedicated PND53 page translates every current TaxPeriodStatus and stored review-issue code to Thai at the display boundary, formats the monthly period in Thai, and uses Thai fallbacks for unknown values. Stored diagnostics, source IDs and issue codes are not customer copy or accessible input labels. Review-note labels use the displayed row number. The 50 ทวิ signature picker shares Thai file-format names with other signature pickers; its denied state describes missing permission without claiming a role title is the permission. No filing, export or signature behaviour changes.

@@ -364,7 +364,7 @@ function EmployeesView({ companyId }: { companyId: string }) {
           <p className="flex items-center gap-2 text-sm font-semibold text-brand-800"><CheckCircleIcon className="h-4 w-4" /> สร้างพนักงานสำเร็จ</p>
           <p className="text-sm text-gray-700">ชื่อผู้ใช้: <span className="font-mono font-semibold">{handoff.username}</span></p>
           <p className="text-sm text-gray-700">รหัสผ่าน: <span className="font-mono font-semibold">{handoff.temporaryPassword}</span></p>
-          <p className="text-xs text-gray-500">ใช้วันเดือนปีเกิดรูปแบบ DDMMYYYY — ไม่ต้องเปลี่ยนรหัสผ่านตอนเข้าสู่ระบบครั้งแรก</p>
+          <p className="text-xs text-gray-500">ใช้วันเดือนปีเกิดเป็นตัวเลข 8 หลัก เรียงวัน เดือน ปี ค.ศ. — ไม่ต้องเปลี่ยนรหัสผ่านตอนเข้าสู่ระบบครั้งแรก</p>
           {handoff.lineLink && (
             <>
               <p className="text-xs text-gray-600">QR เชื่อม LINE ของพนักงานคนนี้ (ใช้ได้ครั้งเดียว ผูกกับผู้ใช้นี้เท่านั้น) — หากหมดอายุ สร้างใหม่ได้จากปุ่ม “สร้าง QR เชื่อม LINE”</p>
@@ -473,7 +473,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
           <SectionTitle title="ข้อมูลส่วนตัว" />
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <div>
-          <FieldLabel>Username</FieldLabel>
+          <FieldLabel>ชื่อผู้ใช้</FieldLabel>
           <input className={inputClass} required pattern="[a-zA-Z0-9._-]+" value={username} onChange={(e) => setUsername(e.target.value)} />
         </div>
           <div>
@@ -788,7 +788,7 @@ function RolesView({ companyId }: { companyId: string }) {
       </div>
       <div className={`${panelClass} flex flex-wrap items-center justify-between gap-3 p-4`}>
         <SectionTitle eyebrow="ตั้งชื่อหน้าที่และเลือกงาน" title="กำหนดหน้าที่พนักงาน">
-          ตั้งชื่อได้ตามบริษัท เช่น CEO, CTO หรือ CFO แล้วเลือกว่างานอะไรที่คนชื่อนี้ทำได้
+          ตั้งชื่อตามหน้าที่ในบริษัท แล้วเลือกงานที่บทบาทนี้ทำได้
         </SectionTitle>
         <button className={showCreate ? ghostClass : btnClass} disabled={!canEditRoles} onClick={() => setShowCreate((v) => !v)}>
           {showCreate ? 'ยกเลิก' : <><PlusIcon className="h-4 w-4" /> เพิ่มหน้าที่</>}
@@ -1041,7 +1041,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
                   )}
                 </details>
               )}
-              <p className="mt-1 text-[11px] text-gray-400">พนักงานทุกคนเข้าใช้ระบบ ดูหน้าหลัก และรับการแจ้งเตือนได้อยู่แล้ว</p>
+              <p className="mt-1 text-[11px] text-gray-400">การเข้าใช้งานขึ้นอยู่กับสถานะบัญชี สิทธิ์ และเมนูที่ร้านเปิดใช้</p>
             </div>
           )}
 
@@ -1201,7 +1201,7 @@ function MatrixRow({ companyId, row, open, onToggle }: {
               <div className={`${panelClass} space-y-3 p-4`}>
                 <div className="text-sm font-bold text-gray-800">ทำอะไรได้บ้าง ({detail.capabilities.length} กลุ่มงาน)</div>
                 <div className="flex flex-wrap gap-1">
-                  {detail.capabilities.length === 0 && <span className="text-[11px] text-gray-400">สิทธิ์พื้นฐานเท่านั้น (เข้าสู่ระบบ, แดชบอร์ด, แจ้งเตือน)</span>}
+                  {detail.capabilities.length === 0 && <span className="text-[11px] text-gray-400">สิทธิ์พื้นฐานตามเมนูที่ร้านเปิดใช้</span>}
                   {detail.capabilities.map((c) => (
                     <span key={c.packKey} className="inline-flex items-center gap-1 rounded-full bg-brand-50 border border-brand-100 px-2.5 py-1 text-[11px] font-semibold text-brand-700">
                       {c.nameTh}<RiskBadge risk={c.riskLevel} />

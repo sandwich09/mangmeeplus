@@ -28,9 +28,9 @@ for (const width of [1280, 390]) {
     await expect(plans.getByRole('radio', { name: 'บัตร · ต่ออายุอัตโนมัติ' })).toBeChecked();
     const otherModes = plans.getByRole('button', { name: 'วิธีชำระอื่น' });
     await expect(otherModes).toHaveAttribute('aria-expanded', 'false');
-    await expect(plans.getByRole('radio', { name: 'PromptPay QR · จ่ายครั้งเดียว' })).toBeHidden();
+    await expect(plans.getByRole('radio', { name: 'พร้อมเพย์ QR · จ่ายครั้งเดียว' })).toBeHidden();
     await otherModes.click();
-    await expect(plans.getByRole('radio', { name: 'PromptPay QR · จ่ายครั้งเดียว' })).toBeVisible();
+    await expect(plans.getByRole('radio', { name: 'พร้อมเพย์ QR · จ่ายครั้งเดียว' })).toBeVisible();
     await plans.getByRole('button', { name: 'รายปี', exact: true }).click();
     await expect(plans).toContainText('เฉลี่ยเดือนละ');
     await plans.getByRole('button', { name: 'รายเดือน', exact: true }).click();
@@ -45,7 +45,7 @@ for (const width of [1280, 390]) {
     await expect(documents.getByRole('link', { name: 'แก้ไขข้อมูลร้าน' })).toHaveAttribute('href', /returnTo=billing/);
     await expect(documents.getByRole('button', { name: 'แก้อีเมลรับเอกสาร' })).toHaveCount(0);
     await review.getByRole('checkbox').check();
-    await review.getByRole('button', { name: 'ยืนยันและไปชำระที่ Stripe', exact: true }).click();
+    await review.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true }).click();
     await page.waitForURL(/checkout\.stripe\.com/);
     await expect(page.getByRole('heading', { name: 'Stripe (จำลอง)' })).toBeVisible();
 
@@ -54,7 +54,7 @@ for (const width of [1280, 390]) {
     // redo the payment, and the locked banner has no "เลือกแพ็กเกจ" of its own.
     await page.locator('#pay').click();
     await page.waitForURL(new RegExp(`/billing/return\\?attempt=${ATTEMPT}$`));
-    const waiting = page.getByText('กำลังรอผลการชำระเงินจาก Stripe', { exact: true });
+    const waiting = page.getByText('กำลังรอผลการชำระเงินจากผู้ให้บริการรับชำระเงิน', { exact: true });
     await expect(waiting).toBeVisible();
     const readsBefore = s.log.attempts;
     await expect.poll(() => s.log.attempts - readsBefore, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
@@ -128,7 +128,7 @@ for (const width of [1280, 390]) {
       .getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
     const review = page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true });
     await review.getByRole('checkbox').check();
-    await review.getByRole('button', { name: 'ยืนยันและไปชำระที่ Stripe', exact: true }).click();
+    await review.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true }).click();
     await page.waitForURL(/checkout\.stripe\.com/);
     await page.locator('#back').click();
     await page.waitForURL(/checkout=canceled/);
@@ -158,7 +158,7 @@ for (const width of [1280, 390]) {
     await page.goto(`/companies/${companyId}/billing`);
     await expect(newChoice).toBeVisible();
     await newChoice.click();
-    await expect(page.getByRole('status').filter({ hasText: 'กำลังตรวจผลรายการเดิมกับ Stripe' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'กำลังตรวจผลรายการเดิมกับผู้ให้บริการรับชำระเงิน' })).toBeVisible();
     await expect(plans).toHaveCount(0);
     expect(s.log.cancels).toBe(3);
     await expectNoClientError(page);
@@ -174,10 +174,10 @@ for (const width of [1280, 390]) {
     const plans = page.getByRole('region', { name: 'เลือกแพ็กเกจ', exact: true });
     const starter = plans.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) });
     await plans.getByRole('button', { name: 'วิธีชำระอื่น' }).click();
-    await plans.getByRole('radio', { name: 'PromptPay QR · จ่ายครั้งเดียว' }).check();
+    await plans.getByRole('radio', { name: 'พร้อมเพย์ QR · จ่ายครั้งเดียว' }).check();
     await starter.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
     const review = page.getByRole('region', { name: 'ยืนยันซื้อแพ็กเกจ', exact: true });
-    const checkout = review.getByRole('button', { name: 'ยืนยันและไปชำระที่ Stripe', exact: true });
+    const checkout = review.getByRole('button', { name: 'ยืนยันและไปหน้าชำระเงิน', exact: true });
 
     // G10/F16: an expired price says so, and re-quotes the same choice in one tap.
     await expect(review.getByRole('status').filter({ hasText: 'ราคานี้หมดอายุแล้ว กดตรวจสอบราคาใหม่' })).toBeVisible();
@@ -200,7 +200,7 @@ for (const width of [1280, 390]) {
     s.checkoutResult = 'UNKNOWN';
     await review.getByRole('checkbox').check();
     await checkout.click();
-    await expect(page.getByRole('status').filter({ hasText: 'กำลังตรวจกับ Stripe' })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'กำลังตรวจกับผู้ให้บริการรับชำระเงิน' })).toBeVisible();
     await expect(checkout).toHaveCount(0);
     await page.waitForTimeout(2500);
     expect(s.log.checkouts).toHaveLength(2);

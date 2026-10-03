@@ -131,7 +131,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
               </p>
               {settings?.invalidApproverUserIds.length ? (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  ผู้อนุมัติเดิมบางคนไม่มีสิทธิ์หรือไม่ active แล้ว กรุณาเลือกผู้อนุมัติใหม่ก่อนบันทึก
+                  ผู้อนุมัติเดิมบางคนไม่มีสิทธิ์หรือไม่ได้ใช้งานแล้ว กรุณาเลือกผู้อนุมัติใหม่ก่อนบันทึก
                 </div>
               ) : null}
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -193,7 +193,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
           <div className="grid content-start gap-5">
             <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm leading-7 text-amber-900">
               <h2 className="text-lg font-extrabold">ขอบเขตทางภาษี</h2>
-              <p className="mt-2">การตั้งค่านี้เป็น control ภายในบริษัท ไม่ทำให้เอกสารกลายเป็นใบกำกับภาษี และไม่สร้างสิทธิ์ภาษีซื้อโดยอัตโนมัติ</p>
+              <p className="mt-2">การตั้งค่านี้เป็นการควบคุมภายในบริษัท ไม่ทำให้เอกสารกลายเป็นใบกำกับภาษี และไม่สร้างสิทธิ์ภาษีซื้อโดยอัตโนมัติ</p>
               <a className="mt-3 inline-flex min-h-11 items-center font-bold underline sm:min-h-0" href="https://www.rd.go.th/fileadmin/download/15277290359.pdf" target="_blank" rel="noreferrer">ดูคู่มือกรมสรรพากร</a>
             </section>
             <MangmeeCard className="p-5">

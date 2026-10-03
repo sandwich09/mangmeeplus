@@ -32,7 +32,7 @@ test('every purchase mode has Thai wording, with no enum name left on screen', (
   for (const mode of ['CARD_AUTO', 'CARD_ONCE', 'PROMPTPAY_ONCE', 'PROMPTPAY_RENEW'] as const) {
     assert.doesNotMatch(billingPurchaseModeLabel(mode), /[A-Z_]{4,}/);
   }
-  assert.equal(billingPurchaseModeLabel('PROMPTPAY_ONCE'), 'PromptPay QR · จ่ายครั้งเดียว');
+  assert.equal(billingPurchaseModeLabel('PROMPTPAY_ONCE'), 'พร้อมเพย์ QR · จ่ายครั้งเดียว');
 });
 
 test('provider acceptance, destination delivery and web recording remain different facts', () => {

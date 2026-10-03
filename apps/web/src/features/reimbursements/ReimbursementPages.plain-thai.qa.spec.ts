@@ -1,3 +1,4 @@
+import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -257,7 +258,7 @@ describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
     const cardTexts = visible(cards);
     for (const text of ['ค่าแท็กซี่', '1,234.50 บาท', '27 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'วัตถุประสงค์: ไปพบลูกค้า',
       'ปากกาและแฟ้ม', '380.00 บาท', '26 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'ร้านเครื่องเขียนสมใจ', 'รวมเป็นเงิน', '1,614.50 บาท',
-      'PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF', 'นำไฟล์ออก']) assert.ok(cardTexts.includes(text), text);
+      ATTACHMENT_SOURCE_TYPES_LABEL, 'นำไฟล์ออก']) assert.ok(cardTexts.includes(text), text);
     // The typed line takes a receipt upload; the line picked from a saved bill keeps that bill's files instead.
     assert.equal(cards.match(/type="file"/gu)?.length, 1);
     assert.equal(table.match(/type="file"/gu)?.length, 1);

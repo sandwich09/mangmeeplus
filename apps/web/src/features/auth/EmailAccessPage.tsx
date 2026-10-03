@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 import { sanitizeNextPath } from '@/common/auth/middleware.logic';
 import { legalAcceptancePath } from '@/common/auth/session-gate.logic';
 import { rememberPendingRedirect } from './auth.logic';
@@ -70,12 +71,12 @@ export default function EmailAccessPage() {
   }
   return <main className="min-h-dvh bg-gray-50 px-4 py-8 text-gray-900"><section className="mangmee-card mx-auto max-w-md space-y-5 p-5 sm:p-8">
     <Link href="/login" className="inline-block py-2 text-brand-700">← กลับหน้าเข้าสู่ระบบ</Link>
-    <h1 className="text-2xl font-bold">เข้าสู่ระบบด้วยรหัส OTP</h1>
-    <p className="text-base leading-7 text-gray-600">กรอกอีเมลเพื่อรับรหัสยืนยันแบบใช้ครั้งเดียว (OTP) 6 หลัก แล้วนำรหัสมากรอกในขั้นตอนถัดไป</p>
+    <h1 className="text-2xl font-bold">{t('auth.email_access.title', 'th')}</h1>
+    <p className="text-base leading-7 text-gray-600">กรอกอีเมลเพื่อรับรหัสยืนยันแบบใช้ครั้งเดียว 6 หลัก แล้วนำรหัสมากรอกในขั้นตอนถัดไป</p>
     {error && <p ref={alert} tabIndex={-1} role="alert" className="rounded-xl bg-red-50 p-3 text-red-800">{error}</p>}
     {step === 'email' && <form className="space-y-5" onSubmit={e => { e.preventDefault(); send(); }}>
       <label className="block" htmlFor="access-email">อีเมลของคุณ<input id="access-email" className={field} type="email" autoComplete="email" maxLength={254} required value={email} disabled={!ready || busy} onChange={e => { setEmail(e.target.value); key.current = ''; }} /></label>
-      <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy || wait > 0} aria-busy={busy}>{!ready ? 'กำลังเตรียมหน้า…' : busy ? 'กำลังส่งรหัส…' : wait ? `ขอรหัสใหม่ได้ใน ${wait} วินาที` : 'ส่งรหัส OTP ไปที่อีเมล'}</button>
+      <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy || wait > 0} aria-busy={busy}>{!ready ? 'กำลังเตรียมหน้า…' : busy ? 'กำลังส่งรหัส…' : wait ? `ขอรหัสใหม่ได้ใน ${wait} วินาที` : 'ส่งรหัสยืนยัน ไปที่อีเมล'}</button>
     </form>}
     {step === 'code' && <form className="space-y-4" onSubmit={e => { e.preventDefault(); void run(async () => apply(await call('confirm', { code }))); }}>
       <p className="break-words">อีเมล <strong>{email}</strong></p><p role="status" className="text-gray-600">{notice}</p>
@@ -95,7 +96,7 @@ export default function EmailAccessPage() {
       <button className="mangmee-btn mangmee-btn-primary min-h-12 w-full text-base" disabled={!ready || busy} aria-busy={busy}>{busy ? 'กำลังเปิดร้าน…' : 'เปิดร้าน'}</button>
     </form>}
     {step === 'status' && <div className="space-y-4"><h2 className="text-xl font-semibold">{state === 'REJECTED' || state === 'SUSPENDED' ? 'กรุณาติดต่อทีมงานเรื่องคำขอของคุณ' : 'ทีมงานกำลังตรวจคำขอของคุณ'}</h2><p>{['PENDING_REVIEW', 'RECEIVED', 'VALIDATED', 'REJECTED'].includes(state) ? 'ร้านยังไม่เปิด กลับมาตรวจสถานะได้ด้วยอีเมลเดิม' :'กำลังดำเนินการกับคำขอเดิม กรุณากดตรวจสถานะอีกครั้ง หากยังเข้าไม่ได้ให้ติดต่อทีมงาน'}</p><button className={button} disabled={!ready || busy} aria-busy={busy} onClick={() => void run(async () => apply(await call('status')))}>ตรวจสถานะอีกครั้ง</button></div>}
-    {step === 'existing' && <div className="space-y-4"><h2 className="text-xl font-semibold">ยืนยันอีเมลสำเร็จแล้ว แต่บัญชีนี้ใช้ OTP เข้าไม่ได้</h2><p>กรุณาเข้าสู่ระบบด้วยรหัสผ่านหรือ LINE เดิม หากยังเข้าไม่ได้ให้ติดต่อทีมงาน</p><Link className={`${button} block text-center`} href="/login">เข้าสู่ระบบด้วยรหัสผ่านหรือ LINE</Link><Link className="block py-2 text-brand-700" href="/forgot-password">ลืมรหัสผ่าน</Link></div>}
+    {step === 'existing' && <div className="space-y-4"><h2 className="text-xl font-semibold">ยืนยันอีเมลสำเร็จแล้ว แต่บัญชีนี้เข้าสู่ระบบด้วยรหัสยืนยันทางอีเมลไม่ได้</h2><p>กรุณาเข้าสู่ระบบด้วยรหัสผ่านหรือ LINE เดิม หากยังเข้าไม่ได้ให้ติดต่อทีมงาน</p><Link className={`${button} block text-center`} href="/login">เข้าสู่ระบบด้วยรหัสผ่านหรือ LINE</Link><Link className="block py-2 text-brand-700" href="/forgot-password">ลืมรหัสผ่าน</Link></div>}
     <p className="text-sm leading-6 text-gray-600">ติดปัญหา ติดต่อทีมงาน <a className="underline" href="tel:0982565628">098-256-5628</a></p>
   </section></main>;
 }

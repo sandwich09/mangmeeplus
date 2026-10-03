@@ -45,7 +45,7 @@ const url = process.env.BILLING_TEST_DATABASE_URL;
 test('accepted ledger request is durable before Redis, immutable on duplicate enqueue and never reconstructable from Redis alone', { skip: !url }, async () => {
   const address = new URL(url!);
   assert.ok(['localhost', '127.0.0.1'].includes(address.hostname));
-  assert.ok((address.port === '15439' && address.pathname === '/watchdog_bms_ai_reliability_20260927') || (address.port === '5432' && address.pathname === '/watchdog_postmark_ci'));
+  assert.ok(address.pathname.endsWith('_ci') || address.port === '15439' && address.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${address.pathname}: only a disposable local *_ci database`);
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
   const f = await fixture(`ledger-${randomUUID()}`), prisma = { client } as PrismaService;
   const redis = new FakeRedis(), service = new LineAiLedgerService({ lineAiLedgerEnabled: true, lineAiLedgerMaxLen: 200, lineAiLedgerTtlSeconds: 3600 } as never, { log: async () => {} } as never, prisma);

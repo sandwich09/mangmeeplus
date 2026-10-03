@@ -255,7 +255,7 @@ describe('expenses.api URL helpers', () => {
 
   it('rejects empty, unsupported, mismatched, and failed attachment preview responses', async () => {
     mockAttachmentPreviewResponse(new Response(null, { status: 404 }));
-    await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1', 'image/png'), /HTTP 404/);
+    await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1', 'image/png'), /ไม่พบข้อมูลที่ต้องการ/);
 
     mockAttachmentPreviewResponse(new Response(new Uint8Array(), { headers: { 'content-type': 'image/png' } }));
     await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1', 'image/png'), /ไม่มีข้อมูล/);

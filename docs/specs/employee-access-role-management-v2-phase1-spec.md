@@ -533,3 +533,7 @@ export type UpdateRoleInput = {
   capabilityPackKeys?: string[];     // NEW
 };
 ```
+
+## Customer wording — 2026-10-03
+
+Role guidance must describe the work the current permissions allow. The baseline grant is not a promise that every account can sign in or use dashboard/notifications: account state and enabled shop menus still apply. The role editor says “การเข้าใช้งานขึ้นอยู่กับสถานะบัญชี สิทธิ์ และเมนูที่ร้านเปิดใช้”. Rights requests go to the owner or a holder of role-management permission; ADMIN does not acquire that permission by its title. Standard role names remain sourced from `THAI_SYSTEM_ROLE_NAMES`.

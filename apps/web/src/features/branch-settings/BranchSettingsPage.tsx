@@ -149,16 +149,16 @@ export default function BranchSettingsPage({ companyId, permissions = [], roles 
               <tbody>{branches.map(b => <tr key={b.id}>
                 <td className="font-semibold text-gray-900">{b.name}</td>
                 <td>{b.code}</td>
-                <td>{TYPE_LABELS[b.type] ?? b.type}</td>
+                <td>{TYPE_LABELS[b.type] ?? 'ไม่ทราบประเภท'}</td>
                 <td>{b.taxBranchCode ?? 'ยังไม่ระบุ'}</td>
-                <td><MangmeeBadge tone={b.status === 'ACTIVE' ? 'brand' : 'slate'}>{STATUS_LABELS[b.status] ?? b.status}</MangmeeBadge></td>
+                <td><MangmeeBadge tone={b.status === 'ACTIVE' ? 'brand' : 'slate'}>{STATUS_LABELS[b.status] ?? 'ไม่ทราบสถานะ'}</MangmeeBadge></td>
                 {canManage && <td className="text-right"><button type="button" className="mangmee-btn mangmee-btn-secondary" aria-label={`แก้ไขสาขา ${b.name}`} onClick={() => openEdit(b)}>แก้ไข</button></td>}
               </tr>)}</tbody>
             </table>
           </div>
           <div className="divide-y divide-gray-100 md:hidden">{branches.map(b => <div key={b.id} className="space-y-4 p-5">
-            <div className="flex items-start justify-between gap-3"><h3 className="min-w-0 break-words font-semibold text-gray-900">{b.name}</h3><MangmeeBadge tone={b.status === 'ACTIVE' ? 'brand' : 'slate'}>{STATUS_LABELS[b.status] ?? b.status}</MangmeeBadge></div>
-            <dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-gray-500">รหัสสาขา</dt><dd className="mt-1 break-words text-gray-900">{b.code}</dd></div><div><dt className="text-gray-500">ประเภท</dt><dd className="mt-1 text-gray-900">{TYPE_LABELS[b.type] ?? b.type}</dd></div><div><dt className="text-gray-500">รหัสสาขาภาษี</dt><dd className="mt-1 text-gray-900">{b.taxBranchCode ?? 'ยังไม่ระบุ'}</dd></div></dl>
+            <div className="flex items-start justify-between gap-3"><h3 className="min-w-0 break-words font-semibold text-gray-900">{b.name}</h3><MangmeeBadge tone={b.status === 'ACTIVE' ? 'brand' : 'slate'}>{STATUS_LABELS[b.status] ?? 'ไม่ทราบสถานะ'}</MangmeeBadge></div>
+            <dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-gray-500">รหัสสาขา</dt><dd className="mt-1 break-words text-gray-900">{b.code}</dd></div><div><dt className="text-gray-500">ประเภท</dt><dd className="mt-1 text-gray-900">{TYPE_LABELS[b.type] ?? 'ไม่ทราบประเภท'}</dd></div><div><dt className="text-gray-500">รหัสสาขาภาษี</dt><dd className="mt-1 text-gray-900">{b.taxBranchCode ?? 'ยังไม่ระบุ'}</dd></div></dl>
             {canManage && <button type="button" className="mangmee-btn mangmee-btn-secondary w-full" aria-label={`แก้ไขสาขา ${b.name}`} onClick={() => openEdit(b)}>แก้ไข</button>}
           </div>)}</div>
         </>}
@@ -167,8 +167,8 @@ export default function BranchSettingsPage({ companyId, permissions = [], roles 
         {errorBanner}
         {creating && <div className="grid gap-5 py-2 sm:grid-cols-2">
           <label className="text-sm text-gray-700">
-            รหัสสาขา (A-Z, 0-9)
-            <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="เช่น BKK01" />
+            รหัสสาขา (ตัวอักษรอังกฤษหรือตัวเลข)
+            <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="เช่น 001" />
           </label>
           <label className="text-sm text-gray-700">
             ชื่อสาขา

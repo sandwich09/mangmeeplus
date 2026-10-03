@@ -11,7 +11,7 @@ const url = process.env.BILLING_TEST_DATABASE_URL;
 test('v2 raw batch freezes all parts transactionally before dispatch and survives flag-off replay', { skip: !url }, async () => {
   const parsed = new URL(url!);
   assert.ok(['localhost', '127.0.0.1'].includes(parsed.hostname));
-  assert.ok(parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927' || parsed.port === '5432' && parsed.pathname === '/watchdog_postmark_ci');
+  assert.ok(parsed.pathname.endsWith('_ci') || parsed.port === '15439' && parsed.pathname === '/watchdog_bms_ai_reliability_20260927', `refusing to write to ${parsed.pathname}: only a disposable local *_ci database`);
   const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
   const id = randomUUID(), ids = [`${id}-1`, `${id}-2`, `${id}-3`], events: any[] = [];
   const config: any = { lineAiBufferDebounceMs: 60_000, lineAiBufferMaxWaitMs: 60_000,

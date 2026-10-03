@@ -77,7 +77,7 @@ const CARD_VIEW_CASES = [
     url: /\/expenses\/[^/?#]+$/,
     // Named, not counted: a bare 5 could not say that the expense number had been given a column of its own, the first.
     // The last is the action column, whose heading only a screen reader reads.
-    columns: ['เลขรายจ่าย (EXP)', 'ผู้ขาย / หมวดหมู่', 'วันที่เอกสาร / เข้าระบบ', 'ยอดรวม', 'สถานะ', 'การทำงาน'],
+    columns: ['เลขรายจ่าย', 'ผู้ขาย / หมวดหมู่', 'วันที่เอกสาร / เข้าระบบ', 'ยอดรวม', 'สถานะ', 'การทำงาน'],
   },
   {
     route: '/accounting',

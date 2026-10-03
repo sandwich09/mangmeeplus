@@ -1,3 +1,4 @@
+import { translateApiError } from '@/common/api/api-error-message';
 import {
   todayCivilDate,
   normalizeCompanyBusinessType,
@@ -375,7 +376,7 @@ export function buildShopSave(
       const code = (error as Error).message;
       return { error: code === 'company_business_type_other_required' ? 'กรุณาระบุประเภทธุรกิจอื่น ๆ'
         : code === 'company_business_type_other_invalid' ? 'ระบุประเภทธุรกิจอื่น ๆ ไม่เกิน 200 ตัวอักษร'
-          : 'เลือกประเภทธุรกิจจากรายการ DBD หรือเลือกอื่น ๆ' };
+          : translateApiError('company_business_type_invalid')! };
     }
     if (value.code !== (current?.businessType?.code ?? null) || value.other !== (current?.businessType?.other ?? null)) {
       businessTypePatch = { ...value, expectedVersion: current?.businessType?.version ?? 0 };
@@ -429,7 +430,7 @@ export const PHONE_ERROR_MESSAGE = 'เบอร์มือถือต้อ�
 
 /** Mirrors `USERNAME_PATTERN` in `apps/api/.../account-profile.use-case.ts`; both reject `สมชาย`. */
 export const USERNAME_PATTERN = /^[a-z0-9._-]{4,64}$/;
-export const INVALID_USERNAME_MESSAGE = 'ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 จุด ขีด และขีดล่าง ยาว 4 ถึง 64 ตัว (ภาษาไทยใช้ไม่ได้ค่ะ)';
+export const INVALID_USERNAME_MESSAGE = translateApiError('invalid_username')!;
 
 export type AccountLoginState = { username: string | null; email?: string | null; emailVerified: boolean } | null;
 

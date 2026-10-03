@@ -15,8 +15,8 @@ test('inside the LINE browser, reauth offers a reopen instead of a dead-end redi
   // RV23: `reauthenticate()` sends the browser to /login, which finds no session inside LINE's own
   // browser and lands empty — the fix is to leave that browser first.
   assert.match(source, /const lineReauthButton =[\s\S]*?\{inLineBrowser\s*\n\s*\? </);
-  assert.match(source, /เปิดหน้านี้ใน Safari\/Chrome/);
-  assert.match(source, /ทำในเบราว์เซอร์ของ LINE ไม่ได้ กรุณาเปิดหน้านี้ใน Safari หรือ Chrome ก่อน/);
+  assert.match(source, /เปิดหน้านี้ในเบราว์เซอร์ภายนอก/);
+  assert.match(source, /ทำในเบราว์เซอร์ของ LINE ไม่ได้ กรุณาเปิดหน้านี้ในเบราว์เซอร์ภายนอกก่อน/);
   assert.match(source, /onClick=\{reopenOutsideLine\}/);
 });
 

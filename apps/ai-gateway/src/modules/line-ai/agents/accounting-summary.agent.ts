@@ -514,7 +514,7 @@ export class AccountingSummaryAgent {
     return {
       agent: 'accounting',
       status: facts.length > 0 ? 'SUCCEEDED' : 'UNSUPPORTED',
-      summary: facts.length > 0 ? facts.map((f) => `${f.label}: ${f.value}`).join(', ') : 'ไม่พบข้อมูลบัญชี (endpoint ยังไม่พร้อม)',
+      summary: facts.length > 0 ? facts.map((f) => `${f.label}: ${f.value}`).join(', ') : 'ยังไม่มีข้อมูลที่พร้อมแสดงในขณะนี้',
       facts,
       suggestions: [],
       toolCalls,
