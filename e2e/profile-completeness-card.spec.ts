@@ -78,58 +78,61 @@ for (const width of [390, 1280]) {
 }
 
 // b89652eed (spec signup-optional-email-otp-billing §6): the account email changes only through the OTP
-// panel (account-email-otp-ux.spec.ts), so the direct correction of an unverified address is gone. The
-// backup password stays, in its own "รหัสผ่านสำรอง" section.
-test('a LINE owner with an unverified account email adds an optional password without a username', async ({
+// panel (account-email-otp-ux.spec.ts); the backup password lives in its own "รหัสผ่านสำรอง" section.
+for (const width of [390, 1280]) test(`a LINE owner sets a backup password without a username and refreshes email guidance at ${width}px`, async ({
   authedPage: page,
   companyId,
 }, info) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width, height: 900 });
   let account = {
-    email: 'owner.typo@example.com',
-    emailVerified: false,
-    emailVerifiedAt: null,
-    pendingEmail: null,
-    pendingEmailExpiresAt: null,
-    lineLinked: true,
-    phoneNumber: null,
-    hasPassword: false,
-    username: null,
-    emailDeliveryEnabled: false,
+    email: 'owner@example.com', emailVerified: false, emailVerifiedAt: null,
+    pendingEmail: null, pendingEmailExpiresAt: null, lineLinked: true,
+    phoneNumber: null, hasPassword: false, username: null, emailDeliveryEnabled: true,
   };
+  let revision = 0;
   const passwordBodies: Array<Record<string, unknown>> = [];
   let emailCommands = 0;
-
-  await page.route('**/api/v1/auth/account/security', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(account) });
-  });
-  await page.route('**/api/v1/auth/account/email/otp**', async (route) => {
-    if (route.request().method() !== 'GET') emailCommands++;
-    await route.fulfill({ json: { email: account.email, emailVerified: false, emailRevision: 1, emailRequirement: 'UNVERIFIED',
-      hasPassword: account.hasPassword, emailLoginEnabled: false, lineLinked: true, serverNow: new Date().toISOString(), challenge: null } });
-  });
-  await page.route('**/api/v1/auth/me/password/set', async (route) => {
+  await page.route('**/api/v1/auth/account/security', route => route.fulfill({ json: account }));
+  await page.route('**/api/v1/auth/account/email/otp**', route => { if (route.request().method() !== 'GET') emailCommands++; return route.fulfill({ json: {
+    email: account.email, emailVerified: account.emailVerified, emailRevision: revision,
+    emailRequirement: 'UNVERIFIED', hasPassword: account.hasPassword, emailLoginEnabled: false,
+    lineLinked: true, serverNow: new Date().toISOString(), challenge: null,
+  } }); });
+  await page.route('**/api/v1/auth/me/password/set', async route => {
     passwordBodies.push(route.request().postDataJSON() as Record<string, unknown>);
     account = { ...account, hasPassword: true };
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ username: null }) });
+    revision++;
+    await route.fulfill({ json: { username: null } });
   });
 
   await gotoCompany(page, companyId, '/settings/profile#account');
   await expect(page.getByRole('heading', { name: 'บัญชีของฉัน', exact: true })).toBeVisible();
   const emailPanel = page.getByRole('region', { name: 'อีเมลบัญชีของฉัน', exact: true });
-  await expect(emailPanel.getByText('owner.typo@example.com', { exact: true })).toBeVisible();
+  const backupHint = emailPanel.getByText('หากต้องการใช้รหัสผ่านเข้าสู่ระบบ จัดการรหัสผ่านสำรองได้ในหน้าบัญชีของฉัน', { exact: true });
+  await expect(backupHint).toBeVisible();
   await expect(emailPanel.getByText('ยังไม่ยืนยัน', { exact: true })).toBeVisible();
-
-  await page.locator('summary').filter({ hasText: 'รหัสผ่านสำรอง' }).click();
   await expect(page.getByRole('textbox', { name: 'ชื่อผู้ใช้', exact: true })).toHaveCount(0);
-  await expect(page.getByText(/^หลังตั้งรหัสผ่านแล้ว ใช้อีเมล owner\.typo@example\.com เข้าเว็บได้$/)).toBeVisible();
-  await page.getByLabel(/รหัสผ่านใหม่/).fill('backup-password');
+  // The label ends in the aria-hidden required mark (14df7093c): match the field's accessible name.
+  const draftEmail = emailPanel.getByRole('textbox', { name: 'อีเมลที่ต้องการยืนยัน', exact: true });
+  await draftEmail.fill('draft@example.com');
+  await page.locator('summary').filter({ hasText: 'รหัสผ่านสำรอง' }).click();
+  await expect(page.getByText(/^หลังตั้งรหัสผ่านแล้ว ใช้อีเมล owner@example\.com คู่กับรหัสผ่านเข้าเว็บได้$/)).toBeVisible();
+  await page.getByLabel('รหัสผ่านใหม่', { exact: false }).fill('backup-password');
   await page.getByLabel('พิมพ์รหัสผ่านอีกครั้ง', { exact: true }).fill('backup-password');
+  // Fail if the update depends on a full navigation or the panel's 15-second poll.
+  let navigations = 0;
+  page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++; });
   await page.getByRole('button', { name: 'ตั้งรหัสผ่านสำรอง', exact: true }).click();
   await expect(page.getByRole('link', { name: 'เปลี่ยนรหัสผ่าน', exact: true })).toBeVisible();
+  await expect(backupHint).toHaveCount(0, { timeout: 5000 });
+  expect(emailCommands).toBe(0); // setting a password sends nothing to the e-mail panel's server side
+  await expect(draftEmail).toHaveValue('draft@example.com');
+  await emailPanel.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+  await expect(emailPanel.getByLabel('รหัสผ่านปัจจุบัน', { exact: true })).toBeVisible();
   expect(passwordBodies).toEqual([{ password: 'backup-password' }]);
-  expect(emailCommands).toBe(0);
-  await page.screenshot({ path: info.outputPath('unverified-account-email-mobile.png'), fullPage: true });
+  expect(navigations).toBe(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath(`account-password-refresh-${width}.png`), fullPage: true });
   await expectNoClientError(page);
 });
 

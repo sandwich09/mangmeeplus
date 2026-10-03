@@ -235,3 +235,21 @@ SQL verification by the controller (disposable local containers, removed afterwa
 | PostgreSQL 18.3 | after one executive build (`rebuild()` → BUILT, FULL) | post | 0 | Q8 latest present 1, stale 0, FULL today 1, mismatches and dangling pointers 0; Q9 months before billing collection 1 (no billing history: unavailable, as expected) |
 
 Not covered by this rehearsal: production sizes and lock waits (P2 on production), the provider back-read and the daily scan (Q9 coverage), and real data shapes. The production PostgreSQL version is still to be read by the deployer; both 16 and 18.3 accept the files.
+
+## Candidate update (2026-10-04, after #992, #994 and #996)
+
+Three more merges reached develop and main after the inventory above. They add **no migration** (the ten-name list,
+both SQL files and their expected counts stay valid) and no release task. Freeze and re-audit the candidate as §
+"Evidence scope" says; it is now develop `fe812b214` and its main twin.
+
+| People / feature | What changes | Evidence |
+|---|---|---|
+| Shop billing buyer (#992) | A valid quote no longer reads "ราคานี้หมดอายุแล้ว" the moment it is shown when the device clock is more than about 24.8 days behind the server (the quote timer is clamped like the other deadline timers). Purchase-path e2e tests follow the current product; their environment needs are in `e2e/HANDOFF.md`. | `stale-e2e-sold-2026-10-04.md`; `BillingPage.tsx`, `BillingPage.qa.spec.ts`. |
+| Shop role administrators (#994) | The demo overview role (`COMPANY_VIEW`) shows only in a company where a member holds it; its name is "ผู้ดูภาพรวมบริษัท" (was "เจ้าของบริษัท"). Long role names wrap on employee rows and in the role picker. Known and left: update/disable of the hidden role id answer 403 rather than 404. | `roles-company-view-2026-10-04.md`; `company-role-read-where.ts`, list/get/preview role use cases, `company-role-override-spec.md` R12. |
+| Every shop user, LINE and the assistant (#994) | Sentences that name the shop owner say "เจ้าของกิจการ" (34 places in 21 files: billing, package banners, company profile, signup, expenses, employee form, LIFF pages, LINE and assistant replies). Package changes are offered to anyone who can manage packages; a refused shop user is sent to the owner or whoever manages roles, not to "ผู้ดูแลระบบ". Deterministic replies only; the W00 manifest was regenerated, so the assistant must ship from this same candidate (§4). | same note; `line-ai` API replies, `business-read-result-semantics.ts`, `line-ai-scope-policy.logic.ts`. |
+| Account owners (#996) | The profile page's e-mail panel re-reads the account after any change on the page and its sentences match the account (no "ยังไม่ยืนยัน" badge without an e-mail; no stale "ตั้งชื่อผู้ใช้และรหัสผ่านสำรอง" after a password is set). | `account-email-panel-truth-2026-10-04.md`; `AccountEmailOtpPanel.tsx`, `CompanyProfilePage.tsx`, `signup-optional-email-otp-billing-spec-th.md`. |
+
+Acceptance additions (§7): the roles page of a real shop shows no "ผู้ดูภาพรวมบริษัท"; a staff member of a shop without a
+package reads "เจ้าของกิจการหรือผู้มีสิทธิ์จัดการแพ็กเกจ"; a LINE-only owner who sets a backup password sees the e-mail
+panel change at once. Verification of each merge: 17-step local integration verification and a browser check at 390
+and 1280 px, recorded in the three task notes.
