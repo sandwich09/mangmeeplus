@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { EXECUTIVE_USERS_TITLE } from '@/features/executive-users/executive-users.logic';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { AlertModal } from '@/common/components/modal';
 import {
@@ -47,13 +48,14 @@ const SECTIONS = [
   { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน', group: 'คำขอและการติดต่อ' },
   { href: '/system/data-rights', label: 'คำขอเกี่ยวกับข้อมูล', group: 'คำขอและการติดต่อ' },
   { href: '/system/email-delivery', label: 'สถานะอีเมล', group: 'คำขอและการติดต่อ' },
+  { href: '/system/executive-users', label: EXECUTIVE_USERS_TITLE, group: 'ตั้งค่าระบบ' },
   { href: '/system/sales-team', label: 'ทีมขาย', group: 'ตั้งค่าระบบ' },
   { href: '/system/line-settings', label: 'ตั้งค่า LINE', group: 'ตั้งค่าระบบ' },
   { href: '/system/ai-budget', label: 'เพดานความปลอดภัยค่า AI', group: 'ตั้งค่าระบบ' },
   { href: '/system/platform-access', label: 'เปิด–ปิดบริการ', group: 'ตั้งค่าระบบ' },
 ];
 
-const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; emailAllowed?: boolean; environment?: string }> = ({ billingOnly = false, billingAllowed = false, emailAllowed = false, environment }) => {
+const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; emailAllowed?: boolean; executiveUsersAllowed?: boolean; environment?: string }> = ({ billingOnly = false, billingAllowed = false, emailAllowed = false, executiveUsersAllowed = false, environment }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
@@ -62,7 +64,7 @@ const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; 
   useEffect(() => setMenuOpen(false), [pathname]);
   const openSupportCount = useOpenSupportCount(pathname, !billingOnly);
   const sections = SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' :
-    (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed));
+    (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed) && (section.href !== '/system/executive-users' || executiveUsersAllowed));
   const groups = [...new Set(sections.map(section => section.group))];
 
   const handleSignOut = async () => {

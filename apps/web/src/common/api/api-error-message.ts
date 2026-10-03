@@ -7,6 +7,14 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  INVALID_INPUT: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
+  EXECUTIVE_QUERY_INVALID: 'ตัวกรองไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง',
+  EXECUTIVE_ACCESS_DENIED: 'คุณไม่มีสิทธิ์ใช้งานส่วนนี้',
+  ACCOUNT_NOT_FOUND: 'ไม่พบบัญชีผู้บริหาร',
+  ACCOUNT_ALREADY_EXISTS: 'ชื่อผู้ใช้หรืออีเมลนี้ถูกใช้แล้ว',
+  ACCOUNT_REVOKED: 'บัญชีนี้ถูกปิดจากทางอื่นของระบบ หน้านี้เปิดคืนไม่ได้',
+  ACCOUNT_PROTECTED: 'บัญชีผู้ดูแลระบบระงับหรือแก้สิทธิ์จากหน้านี้ไม่ได้',
+  SOURCE_UNAVAILABLE: 'ระบบยังอ่านข้อมูลส่วนนี้ไม่ได้ กรุณาลองใหม่ภายหลัง',
   EMAIL_ACCESS_INVALID: 'รหัสหมดอายุหรือใช้ไม่ได้แล้ว กรุณาขอรหัสทางอีเมลใหม่',
   EMAIL_ACCESS_EXISTING_ACCOUNT: 'กรุณาเข้าสู่บัญชีเดิมด้วยรหัสผ่านหรือ LINE ก่อน',
   EMAIL_SIGNUP_CHANGED: 'ข้อมูลบัญชีเปลี่ยนแล้ว กรุณาเข้าสู่ระบบอีกครั้ง',

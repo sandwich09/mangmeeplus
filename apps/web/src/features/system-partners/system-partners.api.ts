@@ -2,6 +2,8 @@ import type { SharedLineMessagingSettings } from '@watchdog-bms/contracts';
 import type {
   PartnerAiAdjustmentHistory,
   PartnerPlanAdjustmentHistory,
+  PartnerReportClassificationFilter,
+  PartnerReportIndustryGroupFilter,
   PaginatedPartnersDto,
   PartnerCompanyDetailDto,
   PartnerCompanyStatus,
@@ -137,10 +139,14 @@ export async function listPartners(params?: {
   status?: string;
   page?: number;
   pageSize?: number;
+  reportClassification?: PartnerReportClassificationFilter;
+  reportIndustryGroup?: PartnerReportIndustryGroupFilter;
 }): Promise<PaginatedPartnersDto> {
   const q = new URLSearchParams();
   if (params?.q) q.set('q', params.q);
   if (params?.status) q.set('status', params.status);
+  if (params?.reportClassification) q.set('reportClassification', params.reportClassification);
+  if (params?.reportIndustryGroup) q.set('reportIndustryGroup', params.reportIndustryGroup);
   if (params?.page) q.set('page', String(params.page));
   if (params?.pageSize) q.set('pageSize', String(params.pageSize));
   const qs = q.toString() ? `?${q.toString()}` : '';
