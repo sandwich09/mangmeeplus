@@ -179,7 +179,8 @@ test('all billing routes retain a readable heading, recovery navigation and mobi
     await expectNoClientError(page);
     results.push({ template, route, heading: await page.getByRole('heading', { level: 1 }).innerText(), alerts: await page.getByRole('alert').allTextContents(), width: 390, overflow });
   }
-  expect(templates).toHaveLength(37);
+  // A tripwire: a new admin page must join this sweep. 57d90305d added the two recipient-change pages.
+  expect(templates).toHaveLength(39);
   expect(errors).toEqual([]);
   expect(writes).toEqual([]);
   await testInfo.attach('billing-route-review', { body: JSON.stringify(results, null, 2), contentType: 'application/json' });
