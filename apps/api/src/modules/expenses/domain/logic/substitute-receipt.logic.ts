@@ -176,7 +176,7 @@ export function renderSubstituteReceiptSvg(
   payerSignatureDataUrl?: string,
   approver?: SubstituteReceiptApprover,
   approverSignatureDataUrl?: string,
-  options: { unsignedForm?: boolean; paperForm?: boolean } = {},
+  options: { unsignedForm?: boolean; paperForm?: boolean; approverIsOwner?: boolean } = {},
 ): Buffer {
   if (payerSignatureDataUrl) assertSignatureDataUrl(payerSignatureDataUrl);
   if (approver && !approverSignatureDataUrl) throw new Error('Approver signature is required.');
@@ -245,6 +245,11 @@ export function renderSubstituteReceiptSvg(
   }
   const signaturesStart = evidenceY + 58;
   const selfSigned = Boolean(approver?.userId && approver.userId === snapshot.payer.userId);
+  // OWNER_SELF also lets an admin or a manager sign both lines: the owner is named only when the approval
+  // checked that role, anyone else by the name printed under the approver's signature.
+  const selfSignedNote = options.approverIsOwner
+    ? 'ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ'
+    : `ลงนามโดย ${approver?.name ?? ''} ในฐานะผู้จ่ายเงินและผู้อนุมัติ`;
   const height = signaturesStart + 220 + (selfSigned ? 28 : 0);
   // The PDF renderer maps these SVG-space positions to raster rows and prefers them over its
   // legacy low-ink fallback. They are boundaries between logical blocks, never arbitrary text rows.
@@ -322,7 +327,7 @@ export function renderSubstituteReceiptSvg(
     <text x="240" y="${signaturesStart + 140}" text-anchor="middle">${xml(snapshot.payer.roleLabel ?? 'ผู้จ่ายเงิน/ผู้รับรอง')}${payerSignatureDataUrl ? ` · ${xml(formatDate(snapshot.payer.certifiedAt))}` : ' · รอลงนาม'}</text>
     ${approverBlock}
     `}
-    ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555">ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ</text>` : ''}
+    ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555"${fitToWidth(selfSignedNote, 760)}>${xml(selfSignedNote)}</text>` : ''}
   </g>
 </svg>`;
   return Buffer.from(svg, 'utf8');

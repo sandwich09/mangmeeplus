@@ -4,7 +4,7 @@ Status: reimbursement guide closed 2026-10-03 on `claude/batch-a-roles-notices-2
 Owner: Codex lane 3a; controller owns commit, full verification, PostgreSQL and browser checks.
 Scope: one Thai label for all 15 standard role keys; company-named copies keep their names; employees-and-rights, claims, guides, API role descriptions and fallback notices. Controller follow-up authorizes three assistant source hashes only; no help-card body edit. No package manifest, schema, migration, public, sales-console or platform-admin edits. The reimbursement guide and its pin are owned by another lane.
 Decisions: the approved labels move from the employee picker to `packages/contracts/src/employee-access.ts`, because API role descriptions and the approval-backlog note also name standard roles. Consumers interpolate the shared labels. The English dictionary keeps its current English labels. Company-copy recognition is reused, including the sidebar and claim policy.
-Open questions: reimbursement guide/pin: both pending lists closed 2026-10-03, and the policy-actor sentences and the substitute guide's bare “เจ้าของ” fixed in the follow-up (sections at the end). Still open, for the owner: the substitute certificate prints “ลงนามโดยเจ้าของกิจการ…” even when a company admin signs both, and card `substitute.review-sign` says signing is done on the web though a paper path exists. At the time of follow-up 2 the existing pending sentences were unchanged, with five additional platform-role help sentences listed below. No SYSTEM_ADMIN text remains in the four edited guides. Default employee delegation limits, the lack of a per-user permission editor, and an existing spec/code discrepancy are recorded in follow-up 2. Sales-console aliases, company-owned descriptions and protected-role visibility remain out of scope.
+Open questions: reimbursement guide/pin: both pending lists closed 2026-10-03, and the policy-actor sentences and the substitute guide's bare “เจ้าของ” fixed in the follow-up (sections at the end). Round 3 fixed the certificate's one-person line, the settings caption, and the paper path in the guide and card `substitute.review-sign`. Still open: who may sign both lines under OWNER_SELF (coordinator asks the owner), and guide rows that name ฝ่ายบัญชี for expense review/confirmation it does not hold (round 3 section). At the time of follow-up 2 the existing pending sentences were unchanged, with five additional platform-role help sentences listed below. No SYSTEM_ADMIN text remains in the four edited guides. Default employee delegation limits, the lack of a per-user permission editor, and an existing spec/code discrepancy are recorded in follow-up 2. Sales-console aliases, company-owned descriptions and protected-role visibility remain out of scope.
 Artifacts: inventory, changes and wording table to be recorded below; preceding investigation: `ui-wording-roles-sla-signature-2026-10-02.md` section 1.
 Verification: initial red/green evidence below: 428 focused tests passed (16 files), no failures/skips; contracts build twice rc 0; locked API typecheck rc 0; locked web typecheck rc 0 after correcting two integration errors. Follow-up red/green: guide specs rc 1 (13 pass/3 fail) then rc 0 (16 pass/0 fail); approved-knowledge rc 1 (8 pass/1 fail, source hash mismatch) then rc 0 (9 pass/0 fail), no skips. Final diff/integrity checks recorded in the follow-up section. Network, servers, Docker, browser and real PostgreSQL are unavailable by lane rules. Follow-up 2: guide specs rc 1 (15 pass/5 fail, twice) then rc 0 (20 pass/0 fail); approved-knowledge rc 1 (8 pass/1 fail) then rc 0 (9 pass/0 fail), no skips. Initial typechecks are historical evidence; not rerun in this follow-up.
 Next: reimbursement guide/pin integrated 2026-10-03 (closing section at the end); controller runs full suites, real PostgreSQL and browser checks, then reviews and pushes. Deploy the assistant with the web because this lane now changes three hashes in apps/ai-gateway; deployment not attempted here.
@@ -721,3 +721,54 @@ Verification:
   in 552 suites, 2679 pass / 0 fail / 0 cancelled / 0 skipped; `pnpm --filter @watchdog-bms/web typecheck`
   rc 0 (incremental). `git diff --check` rc 0. Browser, PostgreSQL and live assistant output not checked.
 - Deploy the assistant with the web: two pins moved.
+
+## Follow-up 2026-10-03 (round 3): the certificate's one-person line, the settings caption, paper signing
+
+Coordinator, after accepting `d0938d085`: the two findings above are truth defects; fix them.
+
+**Spec check.** No spec under `docs/specs/` states or mandates the printed line. It came from the
+2026-08-06 plans (`substitute-receipt-approval-mode-20260806-codex-handoff.md` §5,
+`substitute-receipt-standalone-menu-plan.md` §6), written when only OWNER could self-approve; the
+2026-08-10 exemption in `expense-receipt-upload-spec.md` covers owner/admin/manager. The rule now
+lives in that spec paragraph; both plans carry a superseded note. Who may sign both is unchanged.
+
+| Line (by text) | Old | New | Code fact |
+| --- | --- | --- | --- |
+| Issued online certificate, note under the two signatures (`substitute-receipt.logic.ts`) | always “ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ” when approver = payer | approving session holds OWNER: same words, byte-identical; anyone else: “ลงนามโดย <approver name as printed under the signature> ในฐานะผู้จ่ายเงินและผู้อนุมัติ” | `selfApprovalPermitted` = OWNER_SELF + `SELF_APPROVAL_EXEMPT_ROLES` (OWNER, ADMIN, MANAGER); approval also needs `expense.confirm`. The use case passes `approverIsOwner: ctx.roles.includes('OWNER')`; the certificate is rendered once at approval and stored, so issued ones are not rewritten |
+| Settings caption, mode “เจ้าของกิจการลงนามและอนุมัติด้วยตนเอง (ค่าเริ่มต้น)” | เหมาะกับกิจการเจ้าของคนเดียว ระบบจะระบุในเอกสารว่าเจ้าของลงนามทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ และบันทึกประวัติไว้ตรวจสอบย้อนหลัง | เหมาะกับกิจการเจ้าของคนเดียว เมื่อเจ้าของกิจการลงนามทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ ระบบจะระบุไว้ในเอกสาร และบันทึกประวัติไว้ตรวจสอบย้อนหลัง | “เจ้าของ” meant OWNER (now from the list). Stated as a condition: once an admin who signs both is named, “the document says the owner signed” would be false |
+| Guide `sign` summary | ทั้งสองขั้นบังคับให้เปิดอ่านเอกสารฉบับเต็มก่อน จึงจะกดปุ่มได้ | ลงนามออนไลน์หรือบนกระดาษก็ได้ ขั้นลงนาม อนุมัติ และตรวจรับในระบบ ต้องเปิดอ่านฉบับเต็มก่อน | Wizard offers `DIGITAL`/`PAPER`; online signing and approval need the full preview (`certifiedPreviewed`); paper acceptance needs every page opened and “อ่านครบทุกหน้าและตรวจเทียบข้อมูลแล้ว” |
+| Guide `sign`, new item “เลือกวิธีลงนามก่อนเริ่ม” | — | ที่ขั้น “เลือกวิธีลงนาม” เลือก “ลงนามออนไลน์” … หรือ “พิมพ์และเซ็นบนกระดาษ” … ใช้ได้แม้ไม่มีบัญชีในระบบ … วิธีลงนามจะผูกกับเวอร์ชันนั้น | Method step words in `SubstituteReceiptWizardPage.tsx` |
+| Guide `sign`, new items “บนกระดาษ: …” (fill and sign; upload; accept) | — | paper form blanks, no saved signature; uploader holds “ตรวจสอบค่าใช้จ่าย”, PDF/PNG/JPEG ≤ 10 MB (PDF ≤ 5 pages), names/positions/dates from the paper, same-person tick, “ยื่นฉบับลงนามเพื่อตรวจรับ”, nothing issued or paid yet; acceptor is an approver under the company policy, opens every page, three declarations, “ตรวจรับและจัดเก็บฉบับสมบูรณ์”, recorded as acceptor not signer; final file = upload + system acceptance page; keep the paper | Upload routes `@RequirePermissions('expense.review')`, `byteSize > 10_000_000` refused; accept route `expense.confirm` + `isEligibleSubstituteReceiptApprover`; `samePerson` needs `selfApprovalPermitted`; panel words in `SubstitutePaperSigningPanel.tsx` |
+| Guide `sign` note “ผู้ใดอนุมัติได้” | …กรณีนั้นระบบจะระบุไว้ในเอกสารว่าเจ้าของกิจการลงนามทั้งสองฐานะ… | …ถ้าคนเดียวลงนามทั้งสองฐานะ ระบบจะระบุไว้ในเอกสารและบันทึกประวัติไว้ให้ตรวจสอบได้ | Online: the line above; paper: acceptance page row “ลงนามสองฐานะโดยคนเดียว”; both audited |
+| Card `substitute.review-sign` body | ขั้นตอนลงลายมือชื่อและอนุมัติบังคับให้เปิดอ่านเอกสารฉบับเต็มก่อนค่ะ … ทำบนเว็บด้วยสิทธิ์ที่กำหนด | ถ้าลงนามออนไลน์ ขั้นตอนลงลายมือชื่อและอนุมัติบังคับให้เปิดอ่านเอกสารฉบับเต็มก่อนค่ะ … ทำบนเว็บด้วยสิทธิ์ที่กำหนด ถ้าพิมพ์และเซ็นบนกระดาษ ผู้ตรวจรับต้องเปิดอ่านฉบับที่อัปโหลดให้ครบทุกหน้าก่อนตรวจรับบนเว็บ | Same facts; title, questions and access unchanged |
+
+Old/new evidence: certificate bytes compared old vs new renderer: owner signing both, two signers
+(owner flag on or off), payer only, unsigned form and paper form are identical; only the non-owner
+one-person line differs. Guide render set-diff: 2 sentences replaced, 8 added, all other substitute
+sentences unchanged; claim guide unchanged.
+
+Pins: `substitute-receipts` `48d96348…` → `6028a96dc8bcec053155aede1fb5fcc20bb5c8d2e3ac4dc3048bacc6e1b09db4`;
+`reimbursements` unchanged. Cards: `substitute.review-sign` now true for both routes; `substitute.meaning`,
+`substitute.evidence` still true (sections untouched); claim cards unaffected. The capability manifest
+hashes none of the touched files. Deploy API, web and assistant together.
+
+Noticed, not changed (same class, for the coordinator): ACCOUNTANT holds neither `expense.review` nor
+`expense.confirm`, yet the expenses guide's status table names ฝ่ายบัญชี as who acts next for
+“รอตรวจสอบ” and “พร้อมยืนยัน”, its permission row “ตรวจความครบถ้วนและยืนยันเอกสาร” names ฝ่ายบัญชี and
+เจ้าของกิจการ, and the substitute guide's row “จัดทำเอกสารตั้งแต่เลือกรายการจนแนบหลักฐาน” includes
+ฝ่ายบัญชี. Legacy (schema 1) certificate position labels map `admin` to “ผู้ดูแลระบบ” and `accountant`
+to “นักบัญชี”.
+
+Verification:
+
+- Renderer spec `substitute-receipt.logic.spec.ts`: red rc 1, 6 / 1 / 0 of 7 (non-owner case printed
+  the owner wording); green rc 0, 7 / 0 / 0.
+- Use-case spec `substitute-receipt.use-case.spec.ts` (after `prisma generate` in this worktree): red
+  rc 1, 50 / 1 / 0 of 51 (an admin signing both got “ลงนามโดยเจ้าของกิจการ”); green rc 0, 51 / 0 / 0.
+- Guide spec: red rc 1, 25 / 1 / 0 of 26 (no paper path); green rc 0, 26 / 0 / 0.
+- approved-knowledge: red rc 1, 8 / 1 / 0 (pin `48d9…` vs file `6028…`); green rc 0, 9 / 0 / 0.
+- Under `/tmp/mangmee-heavy.lock` (taken 07:20:15, released 07:22:36), no `S3_*` variables: the seven
+  registered substitute-receipt API specs rc 0, 123 / 0 / 0; `pnpm --filter @watchdog-bms/api typecheck`
+  rc 0; `node scripts/run-line-ai-whole-chain-acceptance.mjs` rc 0, 8 suites, 3694 / 0 / 0 (no manifest
+  regeneration needed); web suite rc 0, 2680 tests in 552 suites, 2680 / 0 / 0; web typecheck rc 0.
+  `git diff --check` rc 0. Browser, PostgreSQL and a printed PDF from a live stack not checked.

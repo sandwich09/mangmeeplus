@@ -70,13 +70,23 @@ describe('substitute receipt evidence', () => {
     assert.doesNotMatch(artifact, /มิใช่ใบกำกับภาษี/);
     assert.doesNotMatch(artifact, /ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ/);
     assert.doesNotMatch(artifact, /<script|foreignObject|onload=/);
-    const selfSignedArtifact = renderSubstituteReceiptSvg(
+    // One person signed both lines. The note names the owner only when the approval checked the OWNER role;
+    // anyone else is named as the certificate prints them under the approver's signature.
+    const selfSigned = (approverIsOwner: boolean) => renderSubstituteReceiptSvg(
       snapshot,
       'data:image/png;base64,aGVsbG8=',
-      { userId: 'user-1', name: 'สมชาย', position: 'owner', approvedAt: '2026-07-13T11:00:00.000Z' },
+      { userId: 'user-1', name: 'สมชาย', position: '', approvedAt: '2026-07-13T11:00:00.000Z' },
       'data:image/jpeg;base64,d29ybGQ=',
+      { approverIsOwner },
     ).toString('utf8');
-    assert.match(selfSignedArtifact, /ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ/);
+    const ownerNote = 'ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ';
+    const namedNote = 'ลงนามโดย สมชาย ในฐานะผู้จ่ายเงินและผู้อนุมัติ';
+    assert.match(selfSigned(true), new RegExp(`<text x="425" y="\\d+" text-anchor="middle" font-size="13" fill="#555">${ownerNote}</text>`));
+    const byAnother = selfSigned(false);
+    assert.doesNotMatch(byAnother, /ลงนามโดยเจ้าของกิจการ/);
+    assert.ok(byAnother.includes(namedNote), 'a signer whose role was not checked is named');
+    // Nothing else on the certificate differs.
+    assert.equal(byAnother.replace(namedNote, ownerNote), selfSigned(true));
     assert.equal(canonicalSnapshotHash(snapshot), canonicalSnapshotHash(structuredClone(snapshot)));
     const reverseJsonKeys = (value: unknown): unknown => Array.isArray(value)
       ? value.map(reverseJsonKeys)

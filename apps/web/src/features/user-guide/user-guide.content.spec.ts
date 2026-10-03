@@ -287,9 +287,24 @@ it('the substitute-receipt guide calls the owner by the one name', () => {
   const read = sentences(buildSubstituteReceiptGuide('co'));
   // "กิจการเจ้าของคนเดียว" is a kind of business (a sole proprietorship), not a role.
   for (const text of read) assert.doesNotMatch(text, /เจ้าของ(?!กิจการ|คนเดียว)/u, text);
-  for (const said of [`ระบบจะระบุไว้ในเอกสารว่า${roles.OWNER}ลงนามทั้งสองฐานะ`, `${roles.OWNER}ลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ`]) {
-    assert.ok(read.some((text) => text.includes(said)), said);
+  const said = `${roles.OWNER}ลงนามได้ทั้งในฐานะผู้จ่ายเงินและผู้อนุมัติ`;
+  assert.ok(read.some((text) => text.includes(said)), said);
+});
+
+// The wizard offers online and paper signing; the signing section covers both, in the words of the screens.
+it('the substitute-receipt guide describes paper signing as the screens do', () => {
+  const guide = buildSubstituteReceiptGuide('co');
+  const text = sentences({ ...guide, sections: guide.sections.filter((section) => section.id === 'sign') }).join('\n');
+  const screens = ['SubstituteReceiptWizardPage.tsx', 'SubstitutePaperSigningPanel.tsx']
+    .map((name) => readFileSync(join(__dirname, '../expenses', name), 'utf8')).join('\n');
+  for (const quote of ['เลือกวิธีลงนาม', 'ลงนามออนไลน์', 'พิมพ์และเซ็นบนกระดาษ', 'ผู้ลงนามทั้งสองส่วนเป็นคนเดียวกัน (ต้องผ่านนโยบายบริษัท)', 'ยื่นฉบับลงนามเพื่อตรวจรับ',
+    'ตรวจสอบเอกสารฉบับเต็มและข้อมูลที่ถอดจากกระดาษ', 'หน้าถัดไป', 'อ่านครบทุกหน้าและตรวจเทียบข้อมูลแล้ว', 'ตรวจรับและจัดเก็บฉบับสมบูรณ์']) {
+    assert.ok(text.includes(`“${quote}”`), quote);
+    assert.ok(screens.includes(quote), `${quote} is on a screen`);
   }
+  // In the owner-self mode one person may sign both lines; the certificate says who, not always the owner.
+  assert.doesNotMatch(text, /ว่าเจ้าของ(กิจการ)?ลงนามทั้งสองฐานะ/u);
+  assert.ok(text.includes('ถ้าคนเดียวลงนามทั้งสองฐานะ ระบบจะระบุไว้ในเอกสาร'), 'one person signing both is noted, whoever it is');
 });
 
 describe('shop guides name the company admin for the business permissions it holds', () => {

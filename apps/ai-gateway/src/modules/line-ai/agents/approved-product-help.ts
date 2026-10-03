@@ -4,7 +4,7 @@ import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type P
 const sources = {
   expenses: { file: 'expenses-guide.content.ts', hash: 'f3c0df5ef8679e1281d4333e21277187f373fbdd477081f7eb4f374045717fd5' },
   reimbursements: { file: 'reimbursement-guide.content.ts', hash: '4244ded04517368c1aca422d7e057a9babf4955bc7ba2aa5196838f7817197b0' },
-  'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '48d96348acf6fb0a8114fdb5a893510eedbf8b4e560710164cef7c5b7f7e1d77' },
+  'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '6028a96dc8bcec053155aede1fb5fcc20bb5c8d2e3ac4dc3048bacc6e1b09db4' },
   reports: { file: 'reports-guide.content.ts', hash: '1fad122c4ef5fb475b02cd07e12513e0d6a90c2b97fc3760739094f530dd17fc' },
 } as const;
 
@@ -56,7 +56,7 @@ export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
     card('substitute.evidence', 'substitute-receipts', 'evidence', 'หลักฐานรายการกับหลักฐานชำระเงิน', ['สลิปกับรูปของซื้อใช้แทนกันไหม', 'ทำไมต้องแนบหลักฐานสองแบบ'],
       'หลักฐานประกอบรายการบอกว่าซื้ออะไร เช่น บิลเขียนมือ ภาพสินค้า หรือข้อความยืนยันคำสั่งซื้อ ส่วนหลักฐานชำระเงินบอกว่าจ่ายจริง เช่น สลิปโอนหรือใบสำคัญรับเงินที่ลงชื่อแล้วค่ะ จึงใช้ตอบคนละคำถาม', substituteReaders),
     card('substitute.review-sign', 'substitute-receipts', 'sign', 'อ่านเอกสารก่อนลงนาม', ['ทำไมกดลงชื่อไม่ได้', 'ต้องอ่านฉบับเต็มก่อนอนุมัติไหม'],
-      'ขั้นตอนลงลายมือชื่อและอนุมัติบังคับให้เปิดอ่านเอกสารฉบับเต็มก่อนค่ะ ผู้ลงนามและผู้อนุมัติต้องตรวจฉบับที่ตรงกับขั้นตอนของตน การลงนาม ยืนยันคำรับรอง และอนุมัติออกเอกสารทำบนเว็บด้วยสิทธิ์ที่กำหนด', substituteReaders),
+      'ถ้าลงนามออนไลน์ ขั้นตอนลงลายมือชื่อและอนุมัติบังคับให้เปิดอ่านเอกสารฉบับเต็มก่อนค่ะ ผู้ลงนามและผู้อนุมัติต้องตรวจฉบับที่ตรงกับขั้นตอนของตน การลงนาม ยืนยันคำรับรอง และอนุมัติออกเอกสารทำบนเว็บด้วยสิทธิ์ที่กำหนด ถ้าพิมพ์และเซ็นบนกระดาษ ผู้ตรวจรับต้องเปิดอ่านฉบับที่อัปโหลดให้ครบทุกหน้าก่อนตรวจรับบนเว็บ', substituteReaders),
     card('report.access', 'reports', 'overview', 'รายงานที่แต่ละคนเรียกดูได้', ['ทำไมฉันเห็นรายงานน้อยกว่าเจ้าของ', 'ส่งออกแล้วตรวจสิทธิ์อีกไหม'],
       'ระบบแสดงเฉพาะรายงานที่บัญชีของคุณมีสิทธิ์เรียกดู และตรวจสิทธิ์อีกครั้งเมื่อส่งออกค่ะ ผู้ใช้ต่างบทบาทจึงเห็นรายงานไม่เท่ากัน ถ้าต้องใช้รายงานเพิ่ม ให้ผู้ดูแลตรวจสิทธิ์ก่อน', ['report.catalog.read', 'report.snapshot.read']),
   ],
