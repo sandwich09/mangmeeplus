@@ -369,8 +369,8 @@ export class ReportSourceAdapters {
         if (exportMode || (outputIndex >= start && outputIndex < end)) {
           result.rows.push({
             documentId: doc.id,
-            documentNumber: doc.documentNumber ?? doc.id,
-            counterpartyName: displayName(doc.counterpartySnapshotJson, 'Unknown customer'),
+            documentNumber: doc.documentNumber ?? null,
+            counterpartyName: displayName(doc.counterpartySnapshotJson, 'ไม่ระบุชื่อลูกค้า'),
             documentDate: iso(doc.documentDate),
             dueDate: iso(doc.dueDate ?? doc.documentDate),
             outstandingAmount: doc.outstandingAmount,
@@ -515,18 +515,18 @@ export class ReportSourceAdapters {
   private async stockBalanceReport(ctx: RequestContext, definition: ReportDatasetDefinitionDto, query: ValidatedQuery): Promise<AdapterResult> {
     const report = await this.stockReport.execute(ctx, { productId: str(query.filters.productId), locationId: str(query.filters.locationId) });
     const rows = report.items.map((item) => ({
-      productId: item.productId,
-      locationId: item.locationId,
+      productName: item.productName ?? null,
+      locationName: item.locationName ?? null,
       quantity: item.quantity,
       isLowStock: item.isLowStock ?? false,
     }));
     return baseResult(definition, query, rows, [
-      { key: 'productId', label: 'สินค้า', type: 'string' },
-      { key: 'locationId', label: 'ที่เก็บสินค้า', type: 'string' },
+      { key: 'productName', label: 'สินค้า', type: 'string' },
+      { key: 'locationName', label: 'ที่เก็บสินค้า', type: 'string' },
       { key: 'quantity', label: 'จำนวน', type: 'number' },
       { key: 'isLowStock', label: 'สินค้าใกล้ถึงจุดสั่งซื้อ', type: 'boolean' },
     ], {
-      chart: chartFromRows(rows, 'productId', 'quantity', 'Quantity', query.chartKind ?? 'table'),
+      chart: chartFromRows(rows, 'productName', 'quantity', 'Quantity', query.chartKind ?? 'table'),
       sourceRefs: [reportSourceRef(ctx.companyId, 'inventory.stock_balance', 'inventory', 'stock_balance', `/companies/${ctx.companyId}/inventory`)],
       warnings: ['inventory_valuation_not_available'],
     });
@@ -542,9 +542,9 @@ export class ReportSourceAdapters {
       REPORT_SYNC_EXPORT_MAX_ROWS,
     );
     const rows = movements.map((movement) => ({
-      movementNumber: movement.movementNumber ?? movement.id,
-      productId: movement.productId,
-      locationId: movement.locationId,
+      movementNumber: movement.movementNumber ?? null,
+      productName: movement.productName ?? null,
+      locationName: movement.locationName ?? null,
       movementType: movement.movementType,
       direction: movement.direction,
       quantity: movement.quantity,
@@ -552,8 +552,8 @@ export class ReportSourceAdapters {
     }));
     return baseResult(definition, sourcePage ? { ...query, page: 1 } : query, rows, [
       { key: 'movementNumber', label: 'เลขที่เคลื่อนไหว', type: 'string' },
-      { key: 'productId', label: 'สินค้า', type: 'string' },
-      { key: 'locationId', label: 'ที่เก็บสินค้า', type: 'string' },
+      { key: 'productName', label: 'สินค้า', type: 'string' },
+      { key: 'locationName', label: 'ที่เก็บสินค้า', type: 'string' },
       { key: 'movementType', label: 'ประเภทความเคลื่อนไหว', type: 'string' },
       { key: 'direction', label: 'ทิศทาง', type: 'string' },
       { key: 'quantity', label: 'จำนวน', type: 'number' },
@@ -569,13 +569,13 @@ export class ReportSourceAdapters {
 
   private async reorderReport(ctx: RequestContext, definition: ReportDatasetDefinitionDto, query: ValidatedQuery): Promise<AdapterResult> {
     const report = await this.stockReport.execute(ctx, { lowStockOnly: true });
-    const rows = report.items.map((item) => ({ productId: item.productId, locationId: item.locationId, quantity: item.quantity }));
+    const rows = report.items.map((item) => ({ productName: item.productName ?? null, locationName: item.locationName ?? null, quantity: item.quantity }));
     return baseResult(definition, query, rows, [
-      { key: 'productId', label: 'สินค้า', type: 'string' },
-      { key: 'locationId', label: 'ที่เก็บสินค้า', type: 'string' },
+      { key: 'productName', label: 'สินค้า', type: 'string' },
+      { key: 'locationName', label: 'ที่เก็บสินค้า', type: 'string' },
       { key: 'quantity', label: 'จำนวน', type: 'number' },
     ], {
-      chart: chartFromRows(rows, 'productId', 'quantity', 'Quantity', query.chartKind ?? 'table'),
+      chart: chartFromRows(rows, 'productName', 'quantity', 'Quantity', query.chartKind ?? 'table'),
       sourceRefs: [reportSourceRef(ctx.companyId, 'inventory.reorder', 'inventory', 'reorder_report', `/companies/${ctx.companyId}/inventory`)],
     });
   }
@@ -614,8 +614,11 @@ export class ReportSourceAdapters {
       const result = await this.expenses.execute(ctx, { ...filter, page, pageSize });
       return { items: result.data, total: result.total };
     }, REPORT_SYNC_EXPORT_MAX_ROWS);
+    // ponytail: active categories only (listCategoryCandidates); an archived category's expenses print no name.
+    // Add the name to the expense list query if accountants need archived ones too.
+    const categoryNames = new Map((await this.expenses.listCategoryCandidates(ctx.companyId)).map((category) => [category.id, category.name]));
     const rows = expenses.map((expense) => ({
-      expenseNumber: expense.expenseNumber ?? expense.id,
+      expenseNumber: expense.expenseNumber ?? null,
       uploadedAt: iso(expense.uploadedAt ?? expense.createdAt),
       expenseDate: iso(expense.expenseDate),
       vendorName: expense.vendorNameSnapshot ?? '',
@@ -627,7 +630,7 @@ export class ReportSourceAdapters {
       // (CONFIRMED + TAX_INVOICE + USABLE_FOR_TAX + CLAIMABLE) and checks them against the images.
       expenseStatus: expense.status,
       inputVatClaimStatus: expense.inputVatClaimStatus,
-      category: expense.taxCategory ?? expense.accountHintKey ?? '',
+      category: (expense.expenseCategoryId && categoryNames.get(expense.expenseCategoryId)) || null,
       grandTotalAmount: expense.grandTotalAmount,
       vatAmount: expense.vatAmount,
       whtAmount: expense.whtAmount,

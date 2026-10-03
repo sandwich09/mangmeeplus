@@ -60,7 +60,8 @@ describe('report page enum labels', () => {
     assert.equal(reportViewVisibilityText('COMPANY'), 'ทั้งบริษัท');
     assert.equal(reportValueText(1234.5, 'money'), '1,234.50 บาท');
     assert.equal(reportValueText('1234', 'number'), '1,234');
-    assert.equal(reportValueText(true, 'boolean'), 'ใช่');
+    // Yes/no and every other machine value arrive as words from the API (reports/domain/report-row-text.logic.ts).
+    assert.equal(reportValueText('ใช่', 'boolean'), 'ใช่');
     assert.equal(reportValueText('2026-07', 'string', 'periodKey'), 'ก.ค. 2569');
     assert.doesNotMatch(workspaceSource, /\{view\.datasetCode\}|\{result\.runId\}|dataset\.sourceModule/);
     assert.doesNotMatch(workspaceSource, />\{category\}:/);

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { ReportDatasetDefinitionDto, RequestContext } from '@watchdog-bms/contracts';
 import { findReportDefinition, REPORT_CATALOG } from '../domain/report-catalog';
 import { buildReportCsv } from '../domain/report-csv.logic';
+import { reportResultForPeople } from '../domain/report-row-text.logic';
 import { ReportSourceAdapters } from './report-source-adapters';
 
 const ctx: RequestContext = {
@@ -82,18 +83,18 @@ function assertSourceChanged(error: unknown): true {
 
 function adapters(overrides: Record<string, unknown>) {
   return new ReportSourceAdapters(
-    unused as any,
+    (overrides.generalLedger ?? unused) as any,
     (overrides.trialBalance ?? unused) as any,
-    unused as any,
-    unused as any,
+    (overrides.pnl ?? unused) as any,
+    (overrides.balanceSheet ?? unused) as any,
     (overrides.documents ?? unused) as any,
-    unused as any,
+    (overrides.stockReport ?? unused) as any,
     (overrides.movements ?? unused) as any,
     (overrides.expenses ?? unused) as any,
     (overrides.apAging ?? unused) as any,
-    unused as any,
+    (overrides.cashPosition ?? unused) as any,
     (overrides.dashboardSnapshot ?? unused) as any,
-    unused as any,
+    (overrides.crmSummary ?? unused) as any,
     (overrides.taxSummary ?? unused) as any,
     (overrides.workflowRuns ?? unused) as any,
     (overrides.workflowTasks ?? unused) as any,
@@ -469,4 +470,72 @@ describe('ReportSourceAdapters item 18 remaining datasets', () => {
     assert.ok(scopes.every((scope) => scope === 'own'));
     assert.deepEqual(result.sourcePermissionsUsed, ['ai.suggestion.read_own']);
   });
+});
+
+// Owner 2026-10-02: a page or a file a shop user reads shows no key, enum name, id or English word.
+// Every name in these fixtures is Thai, so any English letter left in a cell is a key, an enum name, an id, true/false
+// or an English fallback. Kept: the names the owner allows, and ISO timestamps in the CSV.
+const machineValue = (value: unknown) => typeof value === 'string'
+  && /[A-Za-z]/.test(value.replace(/\b(?:LINE|QR|AI|PDF|VAT|Excel|CSV)\b/g, '').replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, ''));
+
+describe('report rows and CSV a person reads', () => {
+  // Every source answers with what it really stores: enum constants, metric keys, an ISO currency, internal ids,
+  // and records without a number, a customer name or a category name of their own.
+  const sources = adapters({
+    generalLedger: { execute: async () => [{ accountCode: '1100-00', accountNameTh: 'เงินสด', totalDebit: '10.0000', totalCredit: '0.0000', endingBalance: '10.0000' }] },
+    trialBalance: { execute: async () => ({ periodKey: '2026-09', totalDebit: '10.0000', totalCredit: '10.0000', difference: '0.0000', lines: [
+      { accountId: 'acc_cash', accountCode: '1100-00', accountNameTh: 'เงินสด', accountClass: 'ASSET', reportGroup: 'cash', totalDebit: '10.0000', totalCredit: '0.0000', balance: '10.0000' },
+      { accountId: 'acc_sales', accountCode: '4100-00', accountNameTh: 'รายได้จากการขาย', accountClass: 'REVENUE', reportGroup: 'revenue', totalDebit: '0.0000', totalCredit: '10.0000', balance: '10.0000' },
+    ] }) },
+    pnl: { execute: async () => ({ revenue: '4', grossProfit: '3', netProfit: '1', sections: ['REVENUE', 'COST', 'EXPENSE', 'TAX_EXPENSE'].map((section) => ({ section, total: '1.0000' })) }) },
+    balanceSheet: { execute: async () => ({ totalAssets: '1', totalLiabilities: '1', totalEquity: '1', sections: ['ASSET', 'LIABILITY', 'EQUITY'].map((section) => ({ section, total: '1.0000' })) }) },
+    documents: {
+      execute: async () => ({ data: [{ id: 'doc_internal_1', documentNumber: null, status: 'ISSUED', outstandingAmount: '5.0000', currency: 'THB', paymentStatus: 'OVERDUE',
+        counterpartySnapshotJson: {}, documentDate: new Date('2026-09-01T00:00:00.000Z'), dueDate: new Date('2026-09-30T00:00:00.000Z') }], total: 1 }),
+      aggregateByType: async () => ({ total: 1, byType: { INVOICE: { totalsByCurrency: [{ currency: 'THB', count: 1, totalAmount: '5.00' }] } } }),
+    },
+    apAging: { execute: async () => ({ totalOutstanding: '0', suppliers: [{ supplierId: 'sup_internal_1', supplierDisplayName: 'ร้านวัสดุก่อสร้าง', totalOutstanding: '0', buckets: [] }] }) },
+    crmSummary: { execute: async () => ({ pipelineOpenCount: 2, pipelineTotalAmount: '1000.00', followUpsDueToday: 1, followUpsOverdue: 1, unassignedLeads: 0, stuckOpportunities: 1 }) },
+    stockReport: { execute: async () => ({ items: [{ productId: 'prod_internal_1', productName: 'กาแฟคั่ว', locationId: 'loc_internal_1', locationName: 'หน้าร้าน', quantity: '2', isLowStock: true }] }) },
+    movements: { execute: async (_ctx: RequestContext, filter: { page?: number; pageSize?: number }) => pageOf([{ id: 'mov_internal_1', productId: 'prod_internal_1', productName: 'กาแฟคั่ว',
+      locationId: 'loc_internal_1', locationName: 'หน้าร้าน', movementType: 'COUNT_ADJUSTMENT_OUT', direction: 'OUT', quantity: '1', occurredAt: new Date('2026-09-02T03:00:00.000Z') }], filter) },
+    expenses: {
+      readReportSummary: async () => [{ status: 'READY_FOR_CONFIRMATION', currency: 'THB', count: 1, grandTotalAmount: '5.0000', paidAmount: '0.0000', outstandingAmount: '5.0000' }],
+      execute: async () => ({ data: [{ id: 'exp_internal_1', expenseNumber: null, uploadedAt: new Date('2026-09-03T03:00:00.000Z'), expenseDate: new Date('2026-09-03T00:00:00.000Z'),
+        vendorNameSnapshot: 'ร้านกาแฟ', sourceDocumentType: 'ABBREVIATED_TAX_INVOICE', taxEvidenceStatus: 'SUPPORTING_ONLY', status: 'CONFIRMED', inputVatClaimStatus: 'NON_CLAIMABLE',
+        expenseCategoryId: 'cat_internal_1', taxCategory: 'SERVICE_FEE', accountHintKey: 'expense.meals', grandTotalAmount: '5.0000', vatAmount: '0.0000', whtAmount: '0.0000' }], total: 1 }),
+      listCategoryCandidates: async () => [{ id: 'cat_internal_1', name: 'ค่าอาหารและเครื่องดื่ม' }],
+    },
+    taxSummary: { execute: async () => ({ periodKey: '2026-09', totalTaxAmount: '1.0000', openIssueCount: 1, rows: [
+      { taxType: 'WHT', formType: 'PND53', periodKey: '2026-09', status: 'NEEDS_REVIEW', dueDate: null, activeEventCount: 1, reviewIssueCount: 1, openIssueCount: 1, taxableBase: '100.0000', taxAmount: '3.0000' },
+      { taxType: 'CUSTOMS', formType: 'CUSTOMS_SUPPORT', periodKey: '2026-09', status: 'AMENDED', dueDate: null, activeEventCount: 1, reviewIssueCount: 0, openIssueCount: 0, taxableBase: '0.0000', taxAmount: '0.0000' },
+    ] }) },
+    cashPosition: { execute: async () => [{ bankAccountDisplayName: 'บัญชีออมทรัพย์ร้าน', currency: 'THB', lastReconciledDate: null, lastReconciledBalance: null, unreconciledLineCount: 1, unmatchedLineCount: 0, pendingAdjustmentCount: 0, lastStatementDate: null }] },
+    workflowRuns: { execute: async (_ctx: RequestContext, filter: { status?: string }) => ({ items: [], total: filter.status ? 1 : 3, page: 1, pageSize: 1 }) },
+    workflowTasks: { execute: async (_ctx: RequestContext, filter: { status?: string; page?: number; pageSize?: number }) => pageOf(filter.status === 'OPEN' ? [{ dueAt: '2000-01-01T00:00:00.000Z' }] : [], filter) },
+    workflowRules: { execute: async () => ({ items: [], total: 2, page: 1, pageSize: 1 }) },
+    workflowDeadLetters: { execute: async () => ({ items: [], total: 1, page: 1, pageSize: 1 }) },
+    dashboardSnapshot: { execute: async () => ({ id: 'snapshot_internal_1', companyId: 'company-1', generatedAt: '2026-09-03T00:00:00.000Z', freshnessStatus: 'stale', widgets: [{
+      title: 'สุขภาพคลังสินค้า', metrics: [
+        { label: 'สินค้าต่ำกว่าจุดสั่งซื้อ', value: 2, severity: 'warning', sourceRefs: [{ permissionKey: 'inventory.report.read' }] },
+        { label: 'สินค้าที่ใช้งาน', value: 9, sourceRefs: [{ permissionKey: 'inventory.report.read' }] },
+      ] }] }) },
+    aiSuggestions: { execute: async (_ctx: RequestContext, filter: { status?: string; riskLevel?: string; page?: number; pageSize?: number }) => (
+      !filter.status && !filter.riskLevel ? pageOf([{ needsData: true }], filter) : { items: [], total: 1, page: 1, pageSize: 1 }) },
+  });
+  const everyone = { ...ctx, permissions: [...ctx.permissions, 'crm.report.read', 'inventory.report.read', 'inventory.movement.read', 'expense.read', 'expense.export', 'bank.cash.read', 'dashboard.read'] };
+
+  for (const report of REPORT_CATALOG) {
+    it(`${report.code}: no key, enum name, id or English word reaches the page or the CSV`, async () => {
+      const raw = await sources.execute(everyone, enabled(report.code), { filters: {}, chartKind: report.supportedChartKinds.includes('bar') ? 'bar' : 'table', page: 1, pageSize: 100 });
+      assert.ok(raw.rows.length > 0, 'the sources gave this report rows');
+      const kept = JSON.parse(JSON.stringify(raw.rows));
+      const shown = reportResultForPeople({ ...raw, dataset: enabled(report.code) });
+      const cells = shown.rows.flatMap((row) => shown.columns.map((column) => row[column.key]));
+      assert.deepEqual([...cells, ...(shown.chart?.labels ?? [])].filter(machineValue), [], 'page cells and chart labels');
+      assert.deepEqual(buildReportCsv(shown).split(/[\n,]/).filter(machineValue), [], 'CSV cells');
+      // The assistant's report tool reads the same adapter rows and keys on these values; they stay as they are.
+      assert.deepEqual(raw.rows, kept);
+    });
+  }
 });

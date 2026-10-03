@@ -886,3 +886,53 @@ describe('bounded complete CSV export', () => {
     assert.equal(fixture.repo.createExport.mock.callCount(), 0);
   });
 });
+
+// Owner 2026-10-02: the report page and the CSV file show Thai words, not the keys the rows carry.
+describe('report words where a person reads them', () => {
+  const salesSummary = () => ({
+    runId: 'run-1', dataset: findReportDefinition('sales.summary')!, status: 'PARTIAL' as const, computedAt: now,
+    freshness: { computedAt: now, sourceModules: ['accounting-documents'], freshnessStatus: 'fresh' as const },
+    warnings: ['crm_pipeline_currency_unavailable'],
+    columns: [
+      { key: 'source', label: 'ช่องทาง', type: 'string' as const },
+      { key: 'currency', label: 'สกุลเงิน', type: 'string' as const },
+      { key: 'amount', label: 'ยอดเงิน', type: 'money' as const },
+    ],
+    rows: [{ source: 'issued_invoices', currency: 'THB', amount: '5.0000' }, { source: 'crm_open_pipeline', currency: null, amount: '9.0000' }],
+    sourceRefs: [], filters: {}, page: 1, pageSize: 100, total: 2,
+  });
+
+  it('answers the report page in Thai and leaves the use case result to the assistant, which keys on these values', async () => {
+    const result = salesSummary();
+    const none = {} as any;
+    const controller = new ReportController(none, { execute: async () => result } as any, none, none, none, none, none, none, none, none, none, none);
+
+    const shown = await controller.queryHandler(ctx, 'company-1', { datasetCode: 'sales.summary' } as any);
+
+    assert.deepEqual(shown.rows, [
+      { source: 'ใบแจ้งหนี้ที่ออกแล้ว', currency: 'บาท', amount: '5.0000' },
+      { source: 'โอกาสการขายที่ยังเปิดอยู่', currency: null, amount: '9.0000' },
+    ]);
+    assert.deepEqual(result.rows.map((row) => row.source), ['issued_invoices', 'crm_open_pipeline']);
+  });
+
+  it('writes the same words into the CSV file', async () => {
+    const stored: Buffer[] = [];
+    const storage = {
+      putObject: async (input: { objectKey: string; bytes: Buffer }) => {
+        stored.push(input.bytes);
+        return { bucket: 'reports', objectKey: input.objectKey, objectVersionId: 'version-1', storageProvider: 'test', byteSize: input.bytes.byteLength, checksumSha256: sha256(input.bytes.toString('utf8')) };
+      },
+    };
+    const repo = { createRun: async (data: any) => ({ id: data.id }), createExport: async (data: any) => ({ id: 'export-1', ...data }) };
+    const runQuery = { executeForExport: async () => ({ ...salesSummary(), sourcePermissionsUsed: ['accounting.document.read'], pendingRun: pendingRun('run-1') }) };
+    const create = new CreateReportExportUseCase(
+      repo as any, runQuery as any, { log: async () => undefined } as any, { execute: async () => undefined } as any,
+      entitlement(true) as any, storage as any, { enqueue: async () => true } as any,
+    );
+
+    await create.execute(ctx, 'company-1', { datasetCode: 'sales.summary', format: 'CSV' });
+
+    assert.equal(stored[0]!.toString('utf8'), '﻿ช่องทาง,สกุลเงิน,ยอดเงิน\nใบแจ้งหนี้ที่ออกแล้ว,บาท,5.0000\nโอกาสการขายที่ยังเปิดอยู่,,9.0000');
+  });
+});

@@ -4,7 +4,7 @@ Status: implementation complete; browser verification remains with the controlle
 Owner: lane 3b
 Scope: Report catalogue, report column labels and CSV headings, assistant-facing report source labels, report view defaults/values, workflow automation text, notification rule text, add-employee wizard, dashboard stock card. No package.json, migration, Prisma schema, `apps/api/src/modules/line-ai`, `apps/ai-gateway`, or pinned user-guide content changes.
 Decisions: Reuse the Thai report catalogue for API source-reference labels; CSV headings reuse report result column definitions. Map rule names to trigger-based Thai labels and map system workflow template copy from the template catalogue, including stale stored template summaries. Preserve company-entered saved-view/rule/template names and custom text. Keep the English dictionary block unchanged. Format system dates/times/numbers with the shared Thai helpers/locale. Use native time controls for quiet-hours inputs so the page does not print API-format time examples. Remove report IDs/source keys from the workspace and replace workflow rule-test JSON output with a Thai, side-effect-accurate summary.
-Open questions: (1) `docs/specs/employee-access-role-management-spec.md` says DOB-derived passwords do not force a first-login change, while `create-employee.use-case.ts` sets `mustChangePassword: true` and the wizard says the employee must change it; which rule controls? [Closed 2026-10-03 by batch A item 5: the code controls; the spec was corrected.] (2) Should old system-seeded workflow rule names be displayed from the Thai template catalogue, or should every stored name remain untouched because it may be company-custom? [Closed 2026-10-03 by batch A item 3: the release sync renames rules still carrying a former default; other names stay.] (3) Report rows can still contain generated metric keys, severity/freshness enums, and source IDs; should these become Thai display values, remain as business/export values, or be omitted? The Reports workspace localizes the `periodKey` display, while CSV still carries its source value. (4) Should raw condition/action/sample JSON and webhook event-key/endpoint fields remain available in the explicitly technical workflow editor, or should shop users get a Thai form? (5) The pinned report guide still contains English report names and column labels; it was intentionally not changed under the lane restriction. [Closed 2026-10-03 by batch A item 1, below.] The birth-date field continues to show its editable day/month/year form after input; no input-format behavior was changed.
+Open questions: (1) `docs/specs/employee-access-role-management-spec.md` says DOB-derived passwords do not force a first-login change, while `create-employee.use-case.ts` sets `mustChangePassword: true` and the wizard says the employee must change it; which rule controls? [Closed 2026-10-03 by batch A item 5: the code controls; the spec was corrected.] (2) Should old system-seeded workflow rule names be displayed from the Thai template catalogue, or should every stored name remain untouched because it may be company-custom? [Closed 2026-10-03 by batch A item 3: the release sync renames rules still carrying a former default; other names stay.] (3) Report rows can still contain generated metric keys, severity/freshness enums, and source IDs; should these become Thai display values, remain as business/export values, or be omitted? [Closed 2026-10-03 by batch A item 2: Thai words from one API map at the page and CSV; ids replaced by numbers and names.] The Reports workspace localizes the `periodKey` display, while CSV still carries its source value. (4) Should raw condition/action/sample JSON and webhook event-key/endpoint fields remain available in the explicitly technical workflow editor, or should shop users get a Thai form? (5) The pinned report guide still contains English report names and column labels; it was intentionally not changed under the lane restriction. [Closed 2026-10-03 by batch A item 1, below.] The birth-date field continues to show its editable day/month/year form after input; no input-format behavior was changed.
 Artifacts: `apps/api/src/modules/reports/domain/report-catalog.ts`, `apps/api/src/modules/reports/application/report-source-adapters.ts`, report UI logic/page/spec; workflow catalogue/mapper/explanations and page/spec; notification model/use cases/page/logic/spec; employee wizard/dictionary/spec; dashboard stock provider/page/logic/spec; E2E selector updates in `e2e/reports.spec.ts` and `e2e/_reference.spec.ts`, plus `e2e/TEST-CASES.md`; four corresponding specs; this note.
 Verification: Red then green: report API labels (old code 15 pass/1 fail; final 16/16), workflow API text (old code 26 pass/1 fail; final 29/29), notification API names (10/1; 11/11), stock reorder label (6/1; 7/7), employee wording including removal of “OA” (10/1; 11/11), dashboard metric/channel formatting (4/1; 6/6), notification page wording (3/1; 4/4); added quiet-hours control check (4/1; 5/5), report view/value/enum text (old period value 11/1 and ungrouped numeric string 11/1; final 12/12), workflow page text (old label fallback failed; 13/13). The assistant-facing report source label regression was separately red at 15/1 on `General Ledger ${periodKey}` and green at 16/16. API typecheck passed (exit 0); web typecheck passed after final UI changes (exit 0); `git diff --check` passed (exit 0). Browser/E2E and real-PostgreSQL specs were not run because this lane forbids browsers and has no database.
 Next: Controller runs the changed report E2E selectors in a browser, the real-PostgreSQL specs, and reviews the listed product questions and narrow-layout risks. No package script or dependency changes were made.
@@ -81,3 +81,37 @@ employee added from an existing account keeps their password. Docs only; no test
   rules reach it), the fallback task `[Review needed] ${ruleName}` with an English description (reached by
   every run of an enabled “ขอให้ AI ช่วยร่างข้อมูล” rule, whose default `requesterUserId` is ''), and the
   audit note `Workflow rule "…" fired.`.
+
+### Item 2: machine values in report rows and CSV (open question 3)
+
+Decision (controller): rows and CSV a person reads show Thai words from one map at the API source; internal ids
+are not shown. Where rows go: `RunReportQueryUseCase` serves the page (POST query), the CSV export, and the
+assistant's `reports.get_monthly_report_summary`, which keys on `row.source === 'crm_open_pipeline'`, builds fact
+ids from `row.source`/`row.section` and checks `row.currency` as an ISO code. Runs keep no rows. So the words are
+applied where a person reads, not in the adapters:
+
+- `reports/domain/report-row-text.logic.ts`: `REPORT_VALUE_TEXT` (report → column → words) and
+  `reportResultForPeople` (rows, ใช่/ไม่ใช่ for yes/no, chart labels). Reused contract labels: ledger account
+  class (trial balance class, P&L and balance-sheet sections), expense status, source document type, tax
+  evidence status, expense payment status (+ OVERDUE for receivables). Applied in `ReportController.queryHandler`
+  and before `buildReportCsv` in `CreateReportExportUseCase`.
+- Adapters: no id fallback for document, movement or expense numbers (null → "-" on the page, empty in the CSV);
+  a customer without a name shows ไม่ระบุชื่อลูกค้า (was "Unknown customer"); the three stock reports show product and
+  storage-location names (`StockBalance`/`StockMovement` gain optional names, filled by the balance query and
+  the movement list); the accountant-evidence category is the company's expense category name (was
+  `taxCategory`/`accountHintKey` codes), the same thing the expenses accountant index prints under the same heading.
+- Web: the yes/no branch in `reportValueText` was a now-unreachable second copy of ใช่/ไม่ใช่ and is removed.
+- Every value found (red run, identity transform): ASSET/REVENUE/…; REVENUE/COST/EXPENSE/TAX_EXPENSE; OVERDUE, THB,
+  Unknown customer, the document id; issued_invoices, crm_open_pipeline; the five pipeline metric keys; product,
+  location and movement ids; COUNT_ADJUSTMENT_OUT, OUT; READY_FOR_CONFIRMATION; ABBREVIATED_TAX_INVOICE,
+  CONFIRMED, NON_CLAIMABLE, SUPPORTING_ONLY, SERVICE_FEE, the expense id; WHT, PND53, NEEDS_REVIEW, CUSTOMS,
+  CUSTOMS_SUPPORT, AMENDED; the eight workflow metric keys, info/warning/critical; stale; the ten AI metric keys;
+  and `true` in the CSV.
+- Tests: `report-source-adapters.spec.ts` runs all 18 reports with sources that return their real machine values
+  and rejects any English letter (except the kept names and ISO timestamps) in page cells, chart labels and CSV,
+  and checks the adapter rows the assistant reads are unchanged: red 18 / 16 → green 34 / 0. Yes/no mutation:
+  without the branch the CSV shows `true` (red). `report.use-cases.spec.ts`: page answer and CSV file in Thai,
+  use-case result untouched: red 33 / 2 → green 35 / 0. Web `reports-ui.logic.spec.ts` 12 / 0.
+- Limits: an archived expense category prints no name (`listCategoryCandidates` is active-only); words that
+  exist only in web files (movement types from the dictionary, AI suggestion statuses, notification severity,
+  freshness) are copied, matching letter for letter, because the API cannot import web code.

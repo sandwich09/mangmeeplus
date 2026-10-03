@@ -888,6 +888,8 @@ UI rules:
 - Propose a saved-view name with the report title and the shared Thai short date. Preserve names that a company has already saved or typed.
 - Format report dates and times with the shared Thai date helpers, period keys as Thai short months, numeric values with Thai grouping, booleans as ใช่/ไม่ใช่, and money as two decimal places followed by บาท.
 - Show the dataset's `freshnessSlaSeconds` as a Thai freshness threshold in minutes, not as a promise that the source updated within that interval.
+- Result rows and CSV files show words, never the machine values rows carry. `reports/domain/report-row-text.logic.ts` holds the one map, per report and column (statuses, ledger sections and classes, metric keys, severity, freshness, tax type, form and period status, movement type and direction, input-VAT claim, THB as บาท; other currencies keep their code), plus ใช่/ไม่ใช่ and the chart labels taken from those columns; shared contract labels are reused. The report page's query response and the CSV export pass through it. The adapter rows keep the machine values because the assistant's report tool keys on them.
+- Rows show document numbers and the names people know (product, storage location, the company's expense category, customer), never an internal id. A record without a number shows none; a customer without a name shows ไม่ระบุชื่อลูกค้า.
 - Export/download buttons are hidden or disabled when permission or source export permission missing.
 - Drill-down links open source module pages and source pages re-check permission.
 - If source module missing, show unavailable state with module name and no fake zero.

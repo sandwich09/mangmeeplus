@@ -68,7 +68,6 @@ export function reportValueText(value: unknown, type?: ReportFieldType, key?: st
   if (key === 'periodKey') return formatThaiMonth(value as string, '-');
   if (type === 'date') return formatThaiDate(value as string, '-');
   if (type === 'datetime') return formatThaiDateTime(value as string, '-');
-  if (type === 'boolean' && typeof value === 'boolean') return value ? 'ใช่' : 'ไม่ใช่';
   if (type === 'money') {
     const amount = typeof value === 'number' ? value : Number(value);
     if (Number.isFinite(amount)) return `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;

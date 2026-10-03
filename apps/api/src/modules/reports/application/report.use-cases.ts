@@ -25,6 +25,7 @@ import { REPORT_CATALOG, findReportDefinition } from '../domain/report-catalog';
 import { canRunReport, hasSourcePermission, visibleDatasetStatus } from '../domain/report-permission.logic';
 import { REPORT_MAX_PAGE_SIZE, REPORT_SYNC_EXPORT_MAX_ROWS, validateReportQuery } from '../domain/report-query-validator.logic';
 import { buildReportCsv, sha256 } from '../domain/report-csv.logic';
+import { reportResultForPeople } from '../domain/report-row-text.logic';
 import { PrismaReportRepository, type CreateReportRunData } from '../infrastructure/prisma-report.repository';
 import { ReportSourceAdapters } from './report-source-adapters';
 import { ReportEntitlementService, type ReportEntitlementStamp } from './report-entitlement.service';
@@ -652,7 +653,7 @@ export class CreateReportExportUseCase {
     // transaction repeats the same exact-generation check to cover a transition during upload.
     await this.entitlement.withEnabledFence(companyId, entitlementStamp, async () => undefined);
 
-    const csv = buildReportCsv(result);
+    const csv = buildReportCsv(reportResultForPeople(result));
     const hash = sha256(csv);
     const csvBytes = Buffer.from(csv, 'utf8');
     const csvByteSize = csvBytes.byteLength;
