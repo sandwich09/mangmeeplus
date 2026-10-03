@@ -149,7 +149,7 @@ describe('employee-access.logic', () => {
   });
 
   it('keeps the Mangmee sales roles inside the platform company, whoever asks (RB-34)', () => {
-    for (const key of ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES']) {
+    for (const key of ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES', 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT']) {
       const role = { key, isSystem: true, permissionKeys: ROLE_GRANTS[key]! };
       // A shop OWNER may grant every company permission, and these are not company permissions.
       assert.match(roleGrantViolation([role], [], undefined, true) ?? '', /platform company/, key);
@@ -164,7 +164,7 @@ describe('employee-access.logic', () => {
   it('asks one question about one list wherever a platform-only role could reach a shop (RB-34)', () => {
     // The list is the registry's, and it is the list the platform-role invariants are built from:
     // a key added there is refused by every surface below without touching any of them.
-    assert.deepEqual([...PLATFORM_ONLY_ROLE_KEYS], ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES']);
+    assert.deepEqual([...PLATFORM_ONLY_ROLE_KEYS], ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES', 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT']);
     assert.deepEqual([...PLATFORM_ROLE_KEYS], ['SYSTEM_ADMIN', ...PLATFORM_ONLY_ROLE_KEYS]);
     for (const key of PLATFORM_ONLY_ROLE_KEYS) {
       assert.equal(platformOnlyRoleRefused(key, false), true, key);

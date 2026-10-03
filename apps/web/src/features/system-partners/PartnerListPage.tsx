@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { planTermStateLabel } from '@watchdog-bms/contracts';
+import { SelectField } from '@/common/components/field';
+import { REPORT_CLASSIFICATION_TITLE, REPORT_INDUSTRY_TITLE, classificationFilterOptions, industryFilterOptions, partnerReportFilters, partnerListUrl } from './report-labels.logic';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -27,6 +29,9 @@ export default function PartnerListPage() {
   const isUsers = searchParams.get('view') === 'users';
   const q = searchParams.get('q') ?? '';
   const status = searchParams.get('status') ?? '';
+  const reportFilters = partnerReportFilters(searchParams);
+  const { reportClassification, reportIndustryGroup } = reportFilters;
+  const hasFilters = Boolean(q || status || reportClassification !== 'ALL' || reportIndustryGroup !== 'ALL');
   const rawPage = Number(searchParams.get('page') ?? 1);
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
   const [term, setTerm] = useState(q);
@@ -38,9 +43,7 @@ export default function PartnerListPage() {
   const pageSize = 20;
 
   function url(changes: Record<string, string>) {
-    const params = new URLSearchParams(searchParams.toString());
-    for (const [key, value] of Object.entries(changes)) value ? params.set(key, value) : params.delete(key);
-    return `/system/partners${params.size ? `?${params}` : ''}`;
+    return partnerListUrl(searchParams, changes);
   }
   function update(changes: Record<string, string>) {
     // Same-page filters are client reads; update the URL immediately so a pending route
@@ -53,7 +56,7 @@ export default function PartnerListPage() {
     let active = true;
     setLoading(true);
     setError(null);
-    listPartners({ q, status: status || undefined, page, pageSize }).then(result => {
+    listPartners({ q, status: status || undefined, page, pageSize, ...reportFilters }).then(result => {
       if (!active) return;
       setItems(result.items);
       setTotal(result.total);
@@ -61,10 +64,10 @@ export default function PartnerListPage() {
       if (active) setError((err as { status?: number }).status === 403 ? 'คุณไม่มีสิทธิ์ดูรายชื่อบริษัท' : apiErrorMessage(err));
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [q, status, page, isUsers, retry]);
+  }, [q, status, reportClassification, reportIndustryGroup, page, isUsers, retry]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const clear = () => { setTerm(''); update({ q: '', status: '', page: '' }); setRetry(value => value + 1); };
+  const clear = () => { setTerm(''); update({ q: '', status: '', reportClassification: 'ALL', reportIndustryGroup: 'ALL', page: '' }); setRetry(value => value + 1); };
 
   return (
     <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
@@ -89,7 +92,7 @@ export default function PartnerListPage() {
         {isUsers ? <UserLookupSection /> : (
           <section aria-label="รายชื่อบริษัท" aria-busy={loading}>
             <div className="space-y-4 p-4 sm:p-6">
-              <form onSubmit={event => { event.preventDefault(); update({ q: term.trim(), page: '' }); setRetry(value => value + 1); }} className="flex flex-col gap-3 lg:flex-row lg:items-end">
+              <form onSubmit={event => { event.preventDefault(); update({ q: term.trim(), page: '' }); setRetry(value => value + 1); }} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 xl:items-end">
                 <div className="min-w-0 flex-1">
                   <label htmlFor="company-search" className="mb-2 block text-sm font-medium text-gray-700">ค้นหาบริษัท</label>
                   <div className="flex gap-2">
@@ -97,14 +100,22 @@ export default function PartnerListPage() {
                     <button type="submit" className="min-h-11 rounded-lg border border-gray-300 px-4 font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-brand-700">ค้นหา</button>
                   </div>
                 </div>
-                <div className="w-full lg:w-52">
+                <div className="min-w-0">
                   <label id="company-status-label" className="mb-2 block text-sm font-medium text-gray-700">สถานะบริษัท</label>
                   <ThemedSelect aria-label="สถานะบริษัท" className="min-h-11 !text-base" value={status} onChange={e => update({ status: e.target.value, page: '' })}>
                     <option value="">ทุกสถานะ</option>
                     {Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                   </ThemedSelect>
                 </div>
-                <button type="button" onClick={clear} title="ล้างคำค้นและสถานะที่เลือก" className="min-h-11 shrink-0 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-brand-700">ล้างตัวกรอง</button>
+                <SelectField label={REPORT_CLASSIFICATION_TITLE} name="reportClassification" value={reportClassification}
+                  onChange={event => update({ reportClassification: event.target.value })}>
+                  {classificationFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </SelectField>
+                <SelectField label={REPORT_INDUSTRY_TITLE} name="reportIndustryGroup" value={reportIndustryGroup}
+                  onChange={event => update({ reportIndustryGroup: event.target.value })}>
+                  {industryFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </SelectField>
+                <button type="button" onClick={clear} title="ล้างคำค้นและตัวกรองที่เลือก" className="min-h-11 shrink-0 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-brand-700">ล้างตัวกรอง</button>
               </form>
               <p role="status" className="text-sm text-gray-600">{loading ? 'กำลังค้นหาบริษัท…' : error ? 'ยังโหลดรายชื่อไม่ได้' : `พบ ${total.toLocaleString('th-TH')} บริษัท${q ? ` สำหรับ “${q}”` : ''}`}</p>
             </div>
@@ -113,14 +124,14 @@ export default function PartnerListPage() {
               <p>{error}</p><button type="button" onClick={() => setRetry(value => value + 1)} className="mt-2 min-h-11 underline">ลองอีกครั้ง</button>
             </div> : loading ? <div className="space-y-4 border-t border-gray-100 p-6" aria-hidden="true">{[1, 2, 3].map(row => <div key={row} className="h-14 animate-pulse rounded bg-gray-100" />)}</div> : items.length === 0 ? (
               <div className="border-t border-gray-100 px-4 py-12 text-center">
-                <p className="font-medium text-gray-800">{total > 0 ? 'ไม่มีรายการในหน้านี้' : q || status ? 'ไม่พบบริษัทที่ตรงกับการค้นหา' : 'ยังไม่มีบริษัทในระบบ'}</p>
-                <p className="mt-2 text-sm text-gray-600">{q || status ? 'ลองเปลี่ยนคำค้นหรือเลือกสถานะอื่น' : total > 0 ? 'กลับไปหน้าแรกเพื่อดูรายการล่าสุด' : 'เมื่อเพิ่มบริษัทแล้ว รายชื่อจะแสดงที่นี่'}</p>
-                {total > 0 ? <button onClick={() => update({ page: '' })} className="mt-3 min-h-11 px-3 text-brand-800 underline">กลับหน้าแรก</button> : (q || status) && <button onClick={clear} className="mt-3 min-h-11 px-3 text-brand-800 underline">แสดงบริษัททั้งหมด</button>}
+                <p className="font-medium text-gray-800">{total > 0 ? 'ไม่มีรายการในหน้านี้' : hasFilters ? 'ไม่พบบริษัทที่ตรงกับการค้นหา' : 'ยังไม่มีบริษัทในระบบ'}</p>
+                <p className="mt-2 text-sm text-gray-600">{hasFilters ? 'ลองเปลี่ยนคำค้นหรือตัวกรอง' : total > 0 ? 'กลับไปหน้าแรกเพื่อดูรายการล่าสุด' : 'เมื่อเพิ่มบริษัทแล้ว รายชื่อจะแสดงที่นี่'}</p>
+                {total > 0 ? <button onClick={() => update({ page: '' })} className="mt-3 min-h-11 px-3 text-brand-800 underline">กลับหน้าแรก</button> : hasFilters && <button onClick={clear} className="mt-3 min-h-11 px-3 text-brand-800 underline">แสดงบริษัททั้งหมด</button>}
               </div>
             ) : (
               <>
                 <table className="w-full table-fixed border-t border-gray-200 text-left text-sm sm:text-base">
-                  <caption className="sr-only">รายชื่อบริษัทที่ตรงกับคำค้นและสถานะที่เลือก</caption>
+                  <caption className="sr-only">รายชื่อบริษัทที่ตรงกับคำค้นและตัวกรองที่เลือก</caption>
                   <thead className="bg-gray-50 text-sm text-gray-600"><tr>
                     <th scope="col" className="w-[44%] px-4 py-3 sm:w-[36%] sm:px-6">บริษัท</th>
                     <th scope="col" className="w-[27%] px-2 py-3 sm:w-[18%]">สถานะ</th>

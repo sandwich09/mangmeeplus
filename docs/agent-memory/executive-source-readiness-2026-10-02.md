@@ -1,0 +1,133 @@
+# Agent Memory: executive report — source readiness (stage S2)
+
+Status: BUILT on branch `claude/executive-source-readiness-20261002` (from `claude/executive-program-20261002`), waiting for the controller's review. Part B (money facts), Part C (summary tables and their build), Part A (company labels) and Part D (two verifications) are built and verified locally, one commit each. Nothing is pushed, merged or deployed.
+
+Owner: implementation lane of 2026-10-02; the controller session reviews, verifies, pushes and merges.
+
+Scope: stage S2 of `docs/plans/mangmee-executive-business-backend-plan-th.md` §2.1 rows 1–11, backend only: the money facts the billing module hands to the report, the summary tables and their build, the company labels, and two verifications. No executive read API (S3), no web (S4), nothing of the data-deletion part.
+
+Decisions:
+
+- Billing reads the scan's own rows; there is no projection table. A finding row (`BillingOperation` type `OBSERVE_PROVIDER_BALANCE`) is never deleted by any code and already holds the provider id, time, amounts, fee, the matched invoice and company and the invoice's tax. A second table would be a copy to keep in step. The reader walks every finding row of the account and mode; if that walk ever shows in the build's duration, the next step is an expression index on the movement id and time, or a projection.
+- One reader for everything outside billing: `BillingCashMovementsService` (`apps/api/src/modules/billing/application/billing-cash-movements.service.ts`), exported by `BillingModule`. It takes the account and mode from `AppConfigService` and holds no provider client, so it cannot call the provider.
+- A movement is counted once per provider transaction id, by the row read last (`observedAt`, then `createdAt`, then `id`). The latest read wins in both directions: a movement a later scan put back under review stops being the company's.
+- `tie` says where a movement is counted: `COMPANY` (a charge or a succeeded refund the scan matched to an invoice and company), `UNTIED` (everything the scan could not match or left for a manual check: `LOCAL_MISSING`, `MANUAL`, `DIFFERENT`, other movement kinds), `EXCLUDED` (a payout, or a refund the scan saw in any state but `succeeded`).
+- The daily balance scan rides the existing provider-scan schedule: `BillingSettlementService.scheduleDaily()`, called from the drain the `billing-discovery` worker already runs every 10 seconds. It queues one job per finished Bangkok day, only while the schedule (`CONFIGURE_PROVIDER_SCANS`) is published, valid and enabled, as that schedule's owner. The owner's permission is checked when the job is queued and again on every page (`actor()`). No new worker, no new setting, no environment switch, and `billing-schedule.ts` is not involved (that file is about subscription schedules at the provider).
+- The daily job starts where the last scheduled job ended (31 days at most), so a day the worker missed is read by the next job. A failed job keeps its own window for the admin; it does not stop the days after it.
+- `purchaseKind` is computed in the reader from the invoice row and the attempt it came from (table below). Owner 2026-10-03 resolved the two former UNKNOWN cases: SCHEDULED_CHANGE is RENEWAL, and sales deals use paid-package history at payment (see executive-owner-answers-2026-10-03.md).
+- Four summary tables, not three: `ExecutiveCompanyMonth`, `ExecutiveCompanyProfile`, `ExecutiveReportBuild`, and `ExecutiveReportMonth` for what belongs to a month and to no company (money not tied to a company, how far the provider was read, the month's revision, the "before the first build" mark). Columns are in spec §12.3.
+- One round is one transaction that takes the advisory lock first, stays idle while every source is read as a set through other connections, and writes at the end. A round that cannot take the lock answers `SKIPPED`. A read that fails rolls the transaction back: nothing is written and the build pointer does not move. No failed-round row is kept.
+- The worker has one timer, every hour. The API decides the daily round: the first round of a Bangkok day with no `FULL` build of the definition version is `FULL` (every month back to the month the first company was created); the others are `HOURLY` (every profile, the current and the previous month).
+- `asOf` is fixed before the round reads; every time-based read is bounded by it, and a month still running ends there.
+- When a source began to keep data is read from the data, not from a migration date: `aiUsageSince`, `ocrUsageSince`, `discoverySince`, `billingSince` are the earliest row of each source and are stored on the build row. They can only be later than the true go-live, so the error is on the side of "not assessable", never "never".
+- A month's stored answer is final once the month had ended and the provider had been read to its end (or no online payment could exist in it). Only a change after that raises `revision`. Without this every month would be "revised" on its first morning, when the money of its last day arrives.
+- A month that is over, for a shop with a paid invoice today and no dated receipt before the month's end: `NO` only if the provider was read from the first billing account to that month's end and no untied receipt lies before it; otherwise `UNKNOWN` with `BILLING_SCAN_NOT_COMPLETE` or `UNMATCHED_MONEY`.
+- `referrerKind`: an id with a sales profile is `KNOWN`, an id without one `UNRESOLVED`; no id is `UNKNOWN` when the shop said "sales" or signed up before the question existed, `NONE` otherwise.
+- A question to the assistant is one distinct `requestId`; a row with no request id counts as its own request, so a month with such rows never shows active days and zero questions.
+- The company label columns and the industry-group mapping landed with Part C, because the build reads them. Part A adds how they are written.
+- One reading of the labels for the admin page and the report: `reportClassificationOf` and `reportLabelWhere` in `apps/api/src/modules/system-partner-management/domain/logic/report-labels.logic.ts` (company management owns the labels; the build imports the first). The platform company is `INTERNAL` whatever its row says; a stored value outside the list reads as unclassified.
+- The labels are written through the existing `PATCH /v1/system/partners/:partnerCompanyId` and its existing audit row (`system.partner_company.update`), whose metadata now carries each label's `from`/`to`. The classification keeps who and when on the company row; the industry group's who and when are read from the latest audit row that changed it.
+- Labels stay editable on a held or archived company (the population counts every lifecycle). The other profile fields keep their lock: a request that mixes both on a locked company is refused whole.
+- Provisioning from a signup request writes `CUSTOMER` in the company's own transaction; the admin-created path writes nothing.
+- The one-time job for older companies is `apps/api/prisma/report-label-backfill.ts`, called from `sync-permissions.ts` `main()`, which every release already runs after `migrate deploy` (Kamal `release.py`, `recover-release-intent.yml`, `run-release-task.sh`, `start-production.sh`). It works once: its first run writes a marker audit row (no target) and later runs find it and change nothing, so a label the admin clears afterwards is not put back. It takes an advisory lock, so containers booting together label once. Proof of a signup company: a `CompanySignupRequest` whose `companyId` names it. Only onboarding writes that column, for the company it creates from the request, in the same transaction (`create-company-onboarding.use-case.ts`), and `completeProvisioning` writes the same id; the schema comment says it "only ever means provisioned here", and a request that points at an existing shop uses `resolvedExistingCompanyId` instead.
+- The signup rail has a third value in the code, `email-otp`; the build stores it as it is. Owner approved its existing label in `EXECUTIVE_REPORT_LABELS.signupRail` on 2026-10-03 (spec §15).
+- The partner list answers an unknown filter value with 422, like its existing `q`/`status` filters; spec §12.4's 400 is the report's rule, not this endpoint's.
+
+`purchaseKind` evidence (spec §14.1 table; line numbers at commit of Part B):
+
+| Spec row | Kind | Evidence in the code | Contradicts or not covered |
+|---|---|---|---|
+| First cycle of a subscription, or a one-time purchase with `quote.purchase.kind = INITIAL` | FIRST_PURCHASE | `billing.service.ts` `quote()` L526: INITIAL only when none of advance deal, full-package upgrade, scheduled change, repeat, running one-time term, restart applies. The attempt keeps the quote (`checkout()` L668 `quoteSnapshot`). The invoice points at the attempt: `billing-reconciler.service.ts` `reconcileOneTime` L560, and `applyInvoice` L1326 for the first cycle of a subscription (`paid-invoice.ts` L56 `subscription_create`) | (a) A subscription started again after expiry also has a first cycle; its quote says RESTART, so it is filed RETURN, not FIRST_PURCHASE. (b) Owner 2026-10-03: a deal quoted INITIAL with subscriptionConversion is RENEWAL if the old paid package is live at payment, RETURN if it has ended. The shared billing reader also checks other deal quote paths against paid history. (c) INITIAL is also the first ONLINE purchase of a shop whose earlier package the admin set by hand |
+| Subscription invoice with `sourceAttemptId` null, ordinary `REPEAT` (sales deals use the history row below) | RENEWAL | Null `sourceAttemptId` is written only by `applyInvoice` L1326, for a later cycle (`subscription_cycle`, and every PromptPay-renew subscription invoice). REPEAT: `quote()` L526 `repeat \|\| oneTime`, written by `billing-repeat.ts` `recordPayment` L462 or `reconcileOneTime` L560. ADVANCE_DEAL: L526, written by `reconcileAdvanceDeal` L735 | A renewal invoice's own `contractSnapshot` can still say INITIAL (it is the contract the subscription started with), so the reader never reads the invoice snapshot. A renewal that also applies a plan change scheduled for the renewal date is still RENEWAL |
+| Ordinary `RESTART` (sales deals use the history row below) | RETURN | `quote()` L420 `restart` (a subscription whose paid period ended) or `purchaseSource === 'PAID_EXPIRED_CURRENT_MODE'` (`billing-purchase-source.ts` L38) | none found |
+| `UPGRADE`, `FULL_PACKAGE_UPGRADE` | UPGRADE | UPGRADE: `quote()` L533 requires `isUpgrade()`; FULL_PACKAGE_UPGRADE: L456–459 requires `isUpgrade()` | unchanged |
+| `SCHEDULED_CHANGE` | RENEWAL | `oneTimeChange`: lower tier or another interval, paid ahead | Owner approved 2026-10-03; no longer UNKNOWN |
+| Sales deals (`INITIAL` with conversion, `ADVANCE_DEAL`, `REPEAT`, `RESTART`) | RENEWAL / RETURN / FIRST_PURCHASE | Billing's prior paid-through at the verified payment time, through one reader for cash and company history | Owner approved 2026-10-03; live / ended / never paid respectively |
+| `productKind` `CHAT_CREDIT` or `RECEIPT_IMAGE` | ADD_ON | `BillingInvoice.productKind` (default `PACKAGE`) | No code writes `productKind` on an invoice or an attempt today, so this cannot occur until add-ons are sold. The report must say "not on sale" (`ADDON_NOT_ON_SALE`), not 0 |
+| Cannot be filed, or no matched invoice | UNKNOWN | reader: no matched invoice, unknown product kind, neither attempt nor subscription, a quote without `purchase.kind` (none found: the field exists since the first billing commit `97d98a2ea`, 2026-09-14), or missing required deal payment/history evidence | — |
+
+Industry groups, version 1 (`packages/contracts/src/report-labels.ts`; all 12 groups approved by the owner 2026-10-03). A shop's group is the admin's choice if set, else the group of the section (A–U) of its own DBD business type code. Code counts are from the master list in the repo (`dbd-tsic-master.ts`, 1,098 codes, every one mapped; counted by running the mapping):
+
+| Group key | Label on screen | DBD sections | Codes | What it holds |
+|---|---|---|---|---|
+| RETAIL_WHOLESALE | ค้าปลีกและค้าส่ง | G | 168 | shops selling goods, wholesale, vehicle trade and repair |
+| FOOD_ACCOMMODATION | ร้านอาหารและที่พัก | I | 18 | restaurants, cafés, drink shops, hotels and other lodging |
+| MANUFACTURING | การผลิต | C | 382 | making or processing goods |
+| CONSTRUCTION_PROPERTY | ก่อสร้างและอสังหาริมทรัพย์ | F, L | 28 | building, contractors, renting and selling property |
+| TRANSPORT_LOGISTICS | ขนส่งและคลังสินค้า | H | 52 | moving goods or people, storage, post and couriers |
+| PROFESSIONAL_BUSINESS | บริการวิชาชีพและบริการธุรกิจ | M, N | 72 | accounting, law, design, consulting, rental, cleaning, staffing, travel agents |
+| TECH_MEDIA | เทคโนโลยีและสื่อ | J | 54 | software, IT services, publishing, broadcasting, telecom |
+| HEALTH_EDUCATION | สุขภาพและการศึกษา | P, Q | 49 | schools, tutoring, clinics, care |
+| PERSONAL_LEISURE | บริการส่วนบุคคลและนันทนาการ | R, S | 57 | beauty, laundry, repair of personal goods, arts, sport, entertainment, associations |
+| AGRICULTURE | เกษตร ประมง และป่าไม้ | A | 106 | farming, livestock, fishing, forestry |
+| FINANCE | การเงินและประกันภัย | K | 43 | lending, insurance, other financial services |
+| OTHER_INDUSTRY | กิจการอื่น | B, D, E, O, T, U | 69 | mining, energy, water and waste, public administration, households, international bodies |
+| (no group) | ไม่ระบุ | — | — | no business type chosen yet, `OTHER` with free text, or a code not in the list; the admin can set a group |
+
+How many companies fall in each group in production was not checked (no production read in this stage). After the first build in an environment it is one read-only query: `SELECT "industryGroup", "industryGroupSource", count(*) FROM "ExecutiveCompanyProfile" WHERE "reportClassification" = 'CUSTOMER' GROUP BY 1, 2 ORDER BY 3 DESC`. Before any build: `SELECT count(*) FILTER (WHERE "businessTypeCode" IS NULL) AS none, count(*) FILTER (WHERE "businessTypeCode" = 'OTHER') AS other_text, count(*) FILTER (WHERE "businessTypeCode" ~ '^[0-9]{5}$') AS coded, count(*) AS companies FROM "Company"`. The section of a code is also its first two digits by the ISIC rev. 4 division ranges (checked: 0 of 1,098 codes differ), so a count by group needs no application code if it is ever wanted before a build.
+
+Before/after counts of the one-time label job (read-only; run before the release and again after it, and keep both results with the release record):
+
+```sql
+SELECT COALESCE("reportClassification", 'UNCLASSIFIED') AS label, count(*) AS companies,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM "CompanySignupRequest" s WHERE s."companyId" = c.id)) AS from_signup
+FROM "Company" c GROUP BY 1 ORDER BY 1;
+SELECT "targetId" IS NULL AS marker, count(*), min("createdAt"), max(("metadataJson"->>'labelledCustomer')) AS customer, max(("metadataJson"->>'labelledInternal')) AS internal
+FROM "AuditLog" WHERE "requestId" = 'report-label-backfill:v1' GROUP BY 1;
+```
+
+Expected after: every company with a signup request is `CUSTOMER` unless it already had a label; the platform company is `INTERNAL`; `UNCLASSIFIED` holds exactly the admin-created companies (the admin's work list). One marker row, and one row per labelled company.
+
+Open questions:
+
+- A refund still pending when the scan read it is never counted as a refund unless a later scan reads the same window again (the scan files it for a manual check, the report follows the spec and leaves it out). The daily job reads each day once, shortly after midnight. Spec §14.1 has no rule for this. The month row keeps their number (`unsuccessfulRefundCount`) so the read stage can say so.
+- The hourly round builds two months. A company's older months are written by the daily full round, so a label changed today reaches months older than the previous one within a day, not within the hour.
+- `ExecutiveReportBuild` rows are never deleted (about 9,000 a year). Nothing reads old ones except "the first build"; a retention rule is not in the spec.
+- Whether the provider-scan schedule is published and enabled in production was not checked (no production read in this stage). The daily balance scan does not start until it is.
+- Test shops the team made through the public signup are labelled `CUSTOMER` by the one-time job like every signup company; the admin moves them to `TEST` (the list's `CUSTOMER` filter finds them).
+
+Artifacts:
+
+- Reader and coverage: `apps/api/src/modules/billing/application/billing-cash-movements.service.ts`
+- Daily job: `scheduleDaily()` in `apps/api/src/modules/billing/application/billing-settlement.service.ts`
+- Real-PostgreSQL spec: `apps/api/src/modules/billing/billing-cash-movements.pg.spec.ts`, run by `.github/workflows/ci.yml` (job "Migrations and Boot") with `BILLING_CASH_MOVEMENTS_TEST_DATABASE_URL`
+- Migrations: `20261003090000_company_report_labels` (four nullable columns on `Company`), `20261003091000_executive_report_summary` (four tables)
+- Build: `apps/api/src/modules/executive-business/` — `executive-report-build.module.ts`, `application/executive-report-build.use-case.ts`, `domain/executive-report.logic.ts`, `presentation/http/executive-internal.controller.ts` (`POST /v1/internal/executive/rebuild`, worker token)
+- Worker: `apps/workers/src/modules/executive/executive-rebuild-worker.ts` (hourly), registered in `apps/workers/src/main.ts`; that file is pinned by the production maintenance validator, so the two pins were re-synced with `infra/security/sync-production-maintenance-release-pins.mjs`
+- Labels and mapping: `packages/contracts/src/report-labels.ts`
+- Real-PostgreSQL spec of the build: `apps/api/src/modules/executive-business/executive-report-build.pg.spec.ts`, run by the same CI job with `EXECUTIVE_REPORT_BUILD_TEST_DATABASE_URL`; it builds its own scratch database from the migration files
+- Labels: `report-labels.logic.ts` (above), the profile update, detail and list use cases and `partner.controller.ts` in `apps/api/src/modules/system-partner-management/`, the contracts in `packages/contracts/src/partner-management.ts`, provisioning in `create-company-onboarding.use-case.ts`
+- One-time job: `apps/api/prisma/report-label-backfill.ts`, called from `apps/api/prisma/sync-permissions.ts`
+- Real-PostgreSQL spec of the labels and the job: `apps/api/src/modules/system-partner-management/report-labels.pg.spec.ts`, run by the same CI job with `REPORT_LABELS_TEST_DATABASE_URL`; it builds its own scratch database from the migration files
+- Working notes outside the repository: the lane's scratch folder `exec-s2/NOTES.md`
+
+Verification:
+
+- Part B: `billing-cash-movements.pg.spec.ts` 12 tests pass on a local `postgres:18.3-alpine` with every migration applied. Each behaviour was also run against the production code with that behaviour removed, and failed (dedup, provider time, exclusions, mode scope, safe-integer check, coverage, schedule enabled, catch-up, authority).
+- Part C: `executive-report-build.pg.spec.ts` 22 tests pass (16 on real PostgreSQL, 6 rule tables). 32 single-line changes of the production code were each run against it; every one failed at least one test.
+- Part D: `executive-report-build.pg.spec.ts` 23 tests pass with the void test added.
+- Part A: `report-labels.pg.spec.ts` 3 tests pass (the one-time job incl. three concurrent runs, the list filters and the build's `unclassifiedCount` against them, the update and detail round trip); unit tests added to `update-partner-profile.use-case.spec.ts` (13 pass), `partner.controller.spec.ts` (35 pass), `create-company-onboarding.spec.ts` (43 pass). Red runs listed in the final report of the lane.
+- Not run: the extended billing smoke suite (`extended-tests.yml`, real browser and Redis). Read instead: `billing-scan-schedule-smoke.ts` counts only `/v1/events` reads and event-scan rows, so the extra balance job its enabled schedule now queues does not meet any of its assertions; it is left queued for retry there because the fake provider has no `/balance_transactions` route.
+
+Part D — the two verifications (plan §2.1 rows 10–11):
+
+- Row 11, answered by a test that runs: voiding a confirmed expense keeps `confirmedAt` and `confirmedByUserId`. The test (`keeps the confirm action of an expense that is voided afterwards`, in `executive-report-build.pg.spec.ts`) confirms an expense, voids it through `PrismaExpenseRepository.voidExpenseTrueReversal` on real PostgreSQL (the transaction the web void and a claim cancellation both end in for a confirmed expense; an unconfirmed claim expense goes through `terminalizeUnconfirmedClaimProjection`, which never had a confirmation), then builds the report for a shop the build has never seen and finds the confirmation counted (`confirmedExpensesWeb` 1, `countersHeld` false). With the void changed to clear the two columns, the test fails (red run recorded in the lane's report). A confirmed or voided expense cannot be deleted either (`isExpenseDeletableState` allows only drafts, rejected ones and zero-total unconfirmed ones).
+- Row 10 was not answered: it needs the production deploy history, and this stage had no production access. The report does not depend on it: every "since" date (`aiUsageSince`, `ocrUsageSince`, `discoverySince`, `billingSince`) is the first row of its source, stored on each build row. What is known from the repository: the production read of 2026-10-02 14:03 (`docs/agent-memory/reimbursement-payout-release-readiness.md`) counted 266 applied migrations, the last being `20260930150000_signup_discovery_source_sales`, so both migrations were live in production by then; that is an upper bound, not the day.
+
+For the controller — the records that answer row 10 (read-only, under `docs/runbooks/cloud-environment-operations.md`, owner told first):
+
+1. Production `_prisma_migrations`: `SELECT migration_name, started_at, finished_at, rolled_back_at FROM "_prisma_migrations" WHERE migration_name IN ('20260729120000_ai_usage_ledger', '20260826200000_external_signup_core', '20260827120000_company_ocr_governance', '20260912150000_stripe_postmark_billing', '20260917140000_ai_usage_metadata', '20260917190000_line_signup_discovery_source', '20260930150000_signup_discovery_source_sales') ORDER BY finished_at`. `finished_at` is when `migrate deploy` applied each one in production: the AI usage table, the signup requests, the OCR usage table, billing, the AI event kind, the discovery answer, and the SALES answer.
+2. The first row of each source, which is what the build uses: `SELECT min("createdAt") FROM "AiUsageEvent"`, `… FROM "CompanyOcrUsageEvent"`, `SELECT min("createdAt") FROM "CompanySignupRequest" WHERE "discoverySource" IS NOT NULL`, `SELECT min("createdAt") FROM "BillingAccount" WHERE livemode`. After the first build these are on `ExecutiveReportBuild` (`aiUsageSince`, `ocrUsageSince`, `discoverySince`, `billingSince`) and need no separate read.
+3. The production release runs between 2026-09-17 and 2026-10-02 (run ids and release receipts), only to cross-check item 1; the database rows are the record.
+
+Operator steps — the one-time back-read (owner approved 2026-10-02; only after this code is live in production):
+
+1. Tell the owner before opening a production session, and follow `docs/runbooks/uat-production-v2-deployment.md` and `docs/runbooks/cloud-environment-operations.md`.
+2. Find the first day of online payment: the earliest live `BillingAccount.createdAt` (`SELECT min("createdAt") FROM "BillingAccount" WHERE livemode`), read-only. Billing code first shipped 2026-09-14, so September 2026 is the earliest possible month.
+3. As the System Admin, open `/system/billing/settlements` (or `POST /v1/system/billing/settlements` with an `Idempotency-Key` header of 16–120 characters and `{ windowStart, windowEnd, reason }`). One window is at most 31 days, written as `YYYY-MM-DDTHH:MM:SSZ`, and must end at least one minute in the past.
+4. Use Bangkok month windows that touch each other, so every month is covered whole: `2026-08-31T17:00:00Z` to `2026-09-30T17:00:00Z` for September 2026, then `2026-09-30T17:00:00Z` to the last Bangkok midnight (`…T17:00:00Z` of the day before). At most five jobs can be waiting at once; the worker reads 25 movements every 10 seconds.
+5. Record for every window: the job id, the window, the final state (`SUCCEEDED`), and the counts seen / matched / different / manual / missing. A window that opened a review case (`SETTLEMENT_REVIEW`) is read again after the case is settled: the report takes the latest read of each movement.
+6. Then publish the provider-scan schedule as enabled at `/system/billing/provider-scans`. From that day the system reads the previous day by itself.
+7. The report shows a month's money as complete only when successful windows cover the whole month; the build picks the back-read up in its next daily full round.
+
+Next: the controller reviews the four commits, pushes and merges; then the release (migrations, the one-time label job inside `sync-permissions.ts`), the owner's answers above, the admin's labelling of the rest, the back-read after the code is live, and the read stage (S3).

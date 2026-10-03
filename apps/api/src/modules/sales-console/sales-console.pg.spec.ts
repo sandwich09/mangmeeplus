@@ -893,3 +893,73 @@ async function paidInvoice(h: Awaited<ReturnType<typeof harness>>, companyId: st
     periodStart: now, periodEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), providerStatus: 'paid',
     evidenceHash: 'evidence', applyStatus: 'APPLIED', appliedAt: now } });
 }
+
+// E1 uses the registered platform-account PG suite; no new spec file or package script.
+it('E1: suspension blocks a fresh password login and the next request; access changes resolve on the next request', { skip: !databaseUrl }, async () => {
+  const { ExecutiveUsersService } = await import('../executive-business/application/executive-users.service');
+  const { PasswordLoginUseCase } = await import('../auth/application/use-cases/password-login.use-case');
+  const { PrismaPermissionResolverRepository } = await import('../access-control/infrastructure/prisma-permission-resolver.repository');
+  const { AuditService } = await import('../audit/application/audit.service');
+  const { PrismaAuditRepository } = await import('../audit/infrastructure/prisma-audit.repository');
+  const { EXECUTIVE_ROLE_KEYS } = await import('@watchdog-bms/contracts');
+  const { ROLE_GRANTS } = await import('../auth/permission-registry');
+  const h = await harness();
+  const prisma = { client: h.client } as any;
+  const actor = { ...h.lead, requestId: `${h.tag}-executive`, permissions: ['system.executive_user.manage'], roles: [] };
+  const audit = new AuditService(new PrismaAuditRepository(prisma), logger);
+  const service = new ExecutiveUsersService(prisma, audit);
+  const resolver = new PrismaPermissionResolverRepository(prisma);
+  try {
+    for (const key of EXECUTIVE_ROLE_KEYS) {
+      const role = await h.client.role.upsert({ where: { scopeKey_key: { scopeKey: 'system', key } }, update: {}, create: { scopeKey: 'system', key, name: key, isSystem: true } });
+      for (const permissionKey of ROLE_GRANTS[key]!) {
+        const permission = await h.client.permission.upsert({ where: { key: permissionKey }, update: {}, create: { key: permissionKey, description: permissionKey } });
+        await h.client.rolePermission.upsert({ where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } }, update: {}, create: { roleId: role.id, permissionId: permission.id } });
+      }
+    }
+    const created = await service.create(actor, { username: `${h.tag}-executive`, displayName: 'ผู้บริหารทดสอบ', canExport: true, canSeeContacts: true });
+    const userId = created.user.userId;
+    assert.equal(await h.client.companyMembership.count({ where: { userId } }), 1);
+    const tokenId = `${h.tag}-session`;
+    const issuer = { execute: async () => {
+      await h.client.authSession.create({ data: { userId, tokenId, expiresAt: new Date(Date.now() + 3600000) } });
+      return { accessToken: 'test-access', refreshToken: 'test-refresh', expiresIn: 900 };
+    } } as any;
+    const login = new PasswordLoginUseCase(prisma, issuer, { getStatus: async () => ({ required: false }) } as any);
+    await login.execute(created.user.username, created.credential.temporaryPassword);
+    const input = { userId, companyId: PLATFORM_TENANT_ID };
+    assert.ok((await resolver.resolveForUser(input)).permissions.includes('system.executive.export'));
+    await service.setAccess(actor, userId, { canExport: false, canSeeContacts: false, reason: 'ยกเลิกสิทธิ์เพิ่มเติม' });
+    const next = await resolver.resolveForUser(input);
+    assert.ok(next.permissions.includes('system.executive.read'));
+    assert.ok(!next.permissions.includes('system.executive.export'));
+    assert.ok(!next.permissions.includes('system.executive.contact.read'));
+    assert.equal((await h.client.authSession.findUniqueOrThrow({ where: { tokenId } })).status, 'ACTIVE');
+    await service.setStatus(actor, userId, { status: 'SUSPENDED', reason: 'หยุดใช้บัญชี' });
+    assert.equal((await h.client.authSession.findUniqueOrThrow({ where: { tokenId } })).status, 'REVOKED');
+    await assert.rejects(login.execute(created.user.username, created.credential.temporaryPassword), (e: any) => e.getStatus() === 403 && e.getResponse().code === 'company_access_unavailable');
+    await assert.rejects(resolver.resolveForUser(input), (e: any) => e.getStatus() === 403);
+    const { AuthGuard } = await import('../auth/presentation/auth.guard');
+    const { ResolveRequestContextUseCase } = await import('../auth/application/use-cases/resolve-request-context.use-case');
+    const { PermissionResolverService } = await import('../access-control/application/permission-resolver.service');
+    const { Reflector } = await import('@nestjs/core');
+    const { ExecutiveUsersController } = await import('../executive-business/presentation/http/executive-users.controller');
+    const guard = new AuthGuard(new Reflector(), { verify: async () => ({ subject: userId, tokenId }) } as any,
+      {} as any, new ResolveRequestContextUseCase(prisma, new PermissionResolverService(resolver)),
+      { isProduction: true } as any, prisma, { isRequired: async () => false } as any);
+    for (const method of ['list', 'detail', 'create', 'status', 'credential', 'access'] as const) {
+      const req = { method: 'GET', path: '/v1/system/executive-users', params: {}, cookies: {}, headers: { authorization: 'Bearer test-access' } };
+      await assert.rejects(guard.canActivate({ getHandler: () => ExecutiveUsersController.prototype[method], getClass: () => ExecutiveUsersController,
+        switchToHttp: () => ({ getRequest: () => req }) } as any), (e: any) => e.getStatus() === 401 && /revoked/.test(e.message));
+    }
+    await service.setStatus(actor, userId, { status: 'ACTIVE', reason: 'กลับมาใช้บัญชี' });
+    assert.ok((await resolver.resolveForUser(input)).permissions.includes('system.executive.read'));
+    const rows = await h.client.auditLog.findMany({ where: { requestId: actor.requestId }, orderBy: { createdAt: 'asc' } });
+    assert.equal(rows.length, 4);
+    assert.ok(rows.every((row) => row.companyId === null && row.actorUserId === actor.userId && row.targetId === userId));
+    assert.ok(!JSON.stringify(rows).includes(created.credential.temporaryPassword));
+  } finally {
+    await h.client.auditLog.deleteMany({ where: { requestId: actor.requestId } });
+    await h.teardown();
+  }
+});

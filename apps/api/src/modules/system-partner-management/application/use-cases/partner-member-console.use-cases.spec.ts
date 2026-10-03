@@ -73,7 +73,7 @@ describe('SetPartnerOwnerNameUseCase', () => {
       id: 'user-1', isSystemProtected: false,
       memberships: {
         some: { companyId: 'co-1', roles: { some: { role: { key: 'OWNER' } } } },
-        none: { roles: { some: { role: { key: { in: ['SYSTEM_ADMIN', 'MANGMEE_SALES_LEAD', 'MANGMEE_SALES'] } } } } },
+        none: { roles: { some: { role: { key: { in: ['SYSTEM_ADMIN', 'MANGMEE_SALES_LEAD', 'MANGMEE_SALES', 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT'] } } } } },
       },
     };
     const tx = {
@@ -299,5 +299,320 @@ describe('SetPartnerMemberContactUseCase', () => {
     await assert.rejects(() => uc.execute({ ...cmd, email: 'not-an-email' }), UnprocessableEntityException);
     await assert.rejects(() => uc.execute({ ...cmd, phoneNumber: 'abc' }), UnprocessableEntityException);
     await assert.rejects(() => uc.execute({ ...cmd }), UnprocessableEntityException);
+  });
+});
+
+// E1 account commands live here because this platform-account spec is registered in API CI.
+describe('ExecutiveUsersService (E1)', () => {
+  const keys = ['MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT'];
+  const context = { userId: 'admin', requestId: 'request-e1', companyId: 'seed-watchdog-system-company',
+    roles: [], permissions: ['system.executive_user.manage'] } as any;
+  const body = { username: 'report.reader', displayName: 'ผู้บริหาร', canExport: false, canSeeContacts: false };
+  const errorCode = (code: string, status: number) => (error: any) => error.getStatus() === status && error.getResponse().code === code;
+  async function fixture() {
+    const { ExecutiveUsersService } = await import('../../../executive-business/application/executive-users.service');
+    const writes: string[] = [];
+    const state = { users: [] as any[], members: [] as any[], audits: [] as any[], sessions: [] as any[], auditFails: false, uniqueField: '' };
+    const role = (key: string) => ({ id: key, key, scopeKey: 'system', companyId: null, isSystem: true, status: 'ACTIVE',
+      permissions: [{ permission: { key: ['system.executive.read', 'system.executive.export', 'system.executive.contact.read'][keys.indexOf(key)] } }] });
+    const matches = (row: any, where: any): boolean => !where || Object.entries(where).every(([key, cond]: [string, any]) => {
+      if (key === 'AND') return (Array.isArray(cond) ? cond : [cond]).every((c: any) => matches(row, c));
+      if (key === 'OR') return cond.some((c: any) => matches(row, c));
+      if (key === 'NOT') return !matches(row, cond);
+      const value = row[key];
+      if (cond === null || typeof cond !== 'object') return value === cond;
+      if ('some' in cond || 'none' in cond) return (!cond.some || value.some((r: any) => matches(r, cond.some))) && (!cond.none || !value.some((r: any) => matches(r, cond.none)));
+      if ('is' in cond) return value !== null && matches(value, cond.is);
+      if ('in' in cond) return cond.in.includes(value);
+      if ('equals' in cond) return typeof value === 'string' && value.toLowerCase() === cond.equals.toLowerCase();
+      if ('not' in cond) return value !== cond.not;
+      if ('contains' in cond) return typeof value === 'string' && value.toLowerCase().includes(cond.contains.toLowerCase());
+      return matches(value, cond);
+    });
+    const memberRows = () => state.members.map((m) => ({ branchScopes: [], branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null, company: { status: 'ACTIVE', planTerm: null }, ...m, user: { ...state.users.find((u) => u.id === m.userId), memberships: state.members.filter((r) => r.userId === m.userId) } }));
+    const tx: any = {
+      companyFeatureEntitlement: { findMany: async () => [] },
+      role: { findMany: async ({ where }: any) => [...keys, 'SYSTEM_ADMIN'].map(role).filter((r) => matches(r, where)) },
+      user: {
+        findFirst: async ({ where }: any) => state.users.find((u) => matches({ ...u, memberships: memberRows().filter((m) => m.userId === u.id) }, where)) ?? null,
+        create: async ({ data }: any) => {
+          const field = state.uniqueField || ['username', 'email'].find((key) => data[key] && state.users.some((u) => u[key] === data[key]));
+          if (field) throw Object.assign(new Error('unique'), { code: 'P2002', meta: { driverAdapterError: { cause: { constraint: { fields: [`"${field}"`] } } } } });
+          const user = { id: `user-${state.users.length}`, email: null, phoneNumber: null, credential: null, sessions: [], ...data };
+          state.users.push(user); return user;
+        },
+      },
+      userCredential: {
+        create: async ({ data }: any) => { state.users.find((u) => u.id === data.userId).credential = data; },
+        update: async ({ where, data }: any) => { writes.push('credential'); return Object.assign(state.users.find((u) => u.id === where.userId).credential, data); },
+      },
+      companyMembership: {
+        create: async ({ data }: any) => { const row = { id: `member-${state.members.length}`, roles: [], ...data }; state.members.push(row); return row; },
+        findFirst: async ({ where }: any) => memberRows().find((m) => matches(m, where)) ?? null,
+        findMany: async ({ where }: any) => memberRows().filter((m) => matches(m, where)),
+        update: async ({ where, data }: any) => { writes.push('membership'); return Object.assign(state.members.find((m) => m.id === where.id), data); },
+      },
+      membershipRole: {
+        createMany: async ({ data }: any) => { writes.push('roles'); for (const r of data) { const m = state.members.find((m) => m.id === r.membershipId); if (!m.roles.some((r2: any) => r2.role.id === r.roleId)) m.roles.push({ role: role(r.roleId) }); } return { count: data.length }; },
+        deleteMany: async ({ where }: any) => { writes.push('roles'); const m = state.members.find((m) => m.id === where.membershipId); m.roles = m.roles.filter((r: any) => !where.roleId.in.includes(r.role.id)); return { count: 1 }; },
+      },
+      authSession: { updateMany: async ({ where, data }: any) => { writes.push('sessions'); const rows = state.sessions.filter((s) => matches(s, where)); rows.forEach((s) => Object.assign(s, data)); return { count: rows.length }; } },
+    };
+    let serializationFailure = false;
+    const prisma = { client: { ...tx, $transaction: async (run: any, options: any) => {
+      const before = structuredClone(state);
+      try {
+        const result = await run(tx);
+        if (serializationFailure) { serializationFailure = false; throw Object.assign(new Error('serialization conflict'), { code: 'P2034' }); }
+        assert.equal(options?.isolationLevel, 'Serializable');
+        return result;
+      } catch (error) { Object.assign(state, before); throw error; }
+    } } } as any;
+    const audit = { log: async (entry: any, client: any) => { assert.equal(client, tx); writes.push('audit'); if (state.auditFails) throw new Error('audit unavailable'); state.audits.push(entry); } } as any;
+    return { state, writes, prisma, service: new ExecutiveUsersService(prisma, audit), failOnce: () => { serializationFailure = true; } };
+  }
+  it('creates a dedicated account with temporary credential, default-off add-ons and one safe transactional audit', async () => {
+    const { state, service } = await fixture();
+    const result = await service.create(context, { ...body, username: ' Report.Reader ', phoneNumber: ' 0812345678 ', email: ' REPORT@EXAMPLE.COM ' });
+    assert.deepEqual(Object.keys(result).sort(), ['credential', 'user']);
+    assert.deepEqual(Object.keys(result.user).sort(), ['canExport', 'canRead', 'canSeeContacts', 'displayName', 'email', 'lastWebEntryAt', 'phoneNumber', 'status', 'temporaryPasswordExpiresAt', 'userId', 'username']);
+    assert.deepEqual(Object.keys(result.credential).sort(), ['expiresAt', 'temporaryPassword', 'userId', 'username']);
+    assert.equal(result.user.username, 'report.reader'); assert.equal(result.user.email, 'report@example.com');
+    assert.equal(result.user.status, 'PENDING_ACTIVATION'); assert.equal(result.user.lastWebEntryAt, null);
+    assert.equal(result.user.temporaryPasswordExpiresAt, result.credential.expiresAt);
+    assert.equal(state.members.length, 1); assert.equal(state.members[0].companyId, context.companyId);
+    assert.deepEqual(state.members[0].roles.map((r: any) => r.role.key), [keys[0]]);
+    const credential = state.users[0].credential;
+    assert.equal(credential.status, 'TEMPORARY'); assert.equal(credential.mustChangePassword, true);
+    assert.ok(verifyPassword(result.credential.temporaryPassword, credential.passwordHash));
+    assert.ok(credential.expiresAt > new Date()); assert.equal(credential.tempPasswordEncrypted ?? null, null);
+    assert.equal(state.audits.length, 1);
+    const audit = state.audits[0];
+    assert.deepEqual([audit.action, audit.actorUserId, audit.targetType, audit.targetId, audit.requestId, audit.companyId ?? null],
+      ['executive.user.created', context.userId, 'User', result.user.userId, context.requestId, null]);
+    assert.deepEqual(Object.keys(audit.metadataJson).sort(), ['from', 'reason', 'to']);
+    for (const secret of [result.credential.temporaryPassword, credential.passwordHash, '0812345678', 'report@example.com', body.displayName]) assert.ok(!JSON.stringify(audit).includes(secret));
+  });
+  it('creates only the requested export/contact add-on roles', async () => {
+    for (const canExport of [false, true]) for (const canSeeContacts of [false, true]) {
+      const { state, service } = await fixture();
+      const result = await service.create(context, { ...body, canExport, canSeeContacts });
+      assert.deepEqual(state.members[0].roles.map((r: any) => r.role.key), [keys[0], ...(canExport ? [keys[1]] : []), ...(canSeeContacts ? [keys[2]] : [])]);
+      assert.equal(result.user.canExport, canExport); assert.equal(result.user.canSeeContacts, canSeeContacts);
+    }
+  });
+  it('maps username/email conflicts, including database races, and never attaches an existing user', async () => {
+    for (const field of ['username', 'email']) {
+      const { state, service } = await fixture(); state.uniqueField = field;
+      await assert.rejects(service.create(context, { ...body, email: 'a@example.com' }), errorCode('ACCOUNT_ALREADY_EXISTS', 409));
+      assert.deepEqual([state.users.length, state.members.length, state.audits.length], [0, 0, 0]);
+    }
+    const { state, service } = await fixture();
+    await service.create(context, body);
+    await assert.rejects(service.create(context, body), errorCode('ACCOUNT_ALREADY_EXISTS', 409));
+    assert.equal(state.users.length, 1);
+  });
+  it('validates account input before any write', async () => {
+    for (const changed of [{ username: 'x' }, { displayName: ' ' }, { displayName: 'ก'.repeat(121) }, { email: 'bad' }, { email: 'a'.repeat(321) }, { phoneNumber: '1'.repeat(21) }, { canExport: 'yes' }, { canSeeContacts: null }]) {
+      const { state, service } = await fixture();
+      await assert.rejects(service.create(context, { ...body, ...changed } as any), errorCode('INVALID_INPUT', 400));
+      assert.equal(state.users.length, 0);
+    }
+  });
+  it('rejects non-string email input with the account validation envelope before any write', async () => {
+    for (const email of [42, {}, []]) {
+      const { state, writes, service } = await fixture();
+      await assert.rejects(service.create(context, { ...body, email } as any), errorCode('INVALID_INPUT', 400));
+      assert.equal(state.users.length, 0); assert.deepEqual(writes, []);
+    }
+  });
+  it('lists and reads only executive accounts, computes four statuses, filters before pagination, and excludes admins', async () => {
+    const { state, service } = await fixture();
+    for (let i = 0; i < 6; i++) await service.create(context, { ...body, username: `reader.${i}` });
+    state.users[1].credential.status = 'ACTIVE'; state.users[1].credential.expiresAt = null;
+    state.users[1].sessions = [{ issuedAt: new Date('2026-10-02T01:00:00Z') }];
+    state.members[2].status = 'SUSPENDED'; state.members[3].status = 'DISABLED'; state.users[4].status = 'DISABLED';
+    state.members[5].roles.push({ role: { key: 'SYSTEM_ADMIN', scopeKey: 'system', isSystem: true, status: 'ACTIVE' } });
+    const all = await service.list(context, {});
+    assert.deepEqual(all.items.map((u: any) => u.status), ['PENDING_ACTIVATION', 'ACTIVE', 'SUSPENDED', 'REVOKED', 'REVOKED']);
+    assert.deepEqual(all.pagination, { page: 1, pageSize: 20, total: 5, totalPages: 1 });
+    assert.equal(all.items[1].lastWebEntryAt, '2026-10-02T01:00:00.000Z');
+    assert.deepEqual(await service.detail(context, state.users[1].id), all.items[1]);
+    const page = await service.list(context, { status: 'REVOKED', page: 2, pageSize: 1, q: 'reader' });
+    assert.equal(page.items[0].userId, state.users[4].id); assert.equal(page.pagination.total, 2);
+    await assert.rejects(service.detail(context, state.users[5].id), errorCode('ACCOUNT_NOT_FOUND', 404));
+    await assert.rejects(service.detail(context, 'unknown'), errorCode('ACCOUNT_NOT_FOUND', 404));
+  });
+  it('suspends and reactivates the membership, revokes sessions, and retries without another side effect', async () => {
+    const { state, service } = await fixture(); const result = await service.create(context, body);
+    state.sessions.push({ userId: result.user.userId, status: 'ACTIVE' }, { userId: 'other', status: 'ACTIVE' });
+    const suspended = await service.setStatus(context, result.user.userId, { status: 'SUSPENDED', reason: ' หยุดใช้ ' });
+    assert.equal(suspended.status, 'SUSPENDED'); assert.equal(state.members[0].status, 'SUSPENDED');
+    assert.deepEqual(state.sessions.map((s: any) => s.status), ['REVOKED', 'ACTIVE']);
+    await service.setStatus(context, result.user.userId, { status: 'SUSPENDED', reason: 'หยุดใช้' });
+    assert.equal(state.audits.length, 2);
+    const active = await service.setStatus(context, result.user.userId, { status: 'ACTIVE', reason: 'กลับมาใช้' });
+    assert.equal(active.status, 'PENDING_ACTIVATION'); assert.equal(state.members[0].status, 'ACTIVE');
+    assert.equal(state.audits[1].metadataJson.reason, 'หยุดใช้');
+    assert.equal(state.audits[2].action, 'executive.user.reactivated');
+  });
+  it('requires a reason for status, credential and access commands even on a retry', async () => {
+    const { state, service } = await fixture(); const { user } = await service.create(context, body);
+    for (const reason of ['', ' ', 'ก'.repeat(501)]) {
+      await assert.rejects(service.setStatus(context, user.userId, { status: 'ACTIVE', reason }), errorCode('INVALID_INPUT', 400));
+      await assert.rejects(service.resetCredential(context, user.userId, { reason }), errorCode('INVALID_INPUT', 400));
+      await assert.rejects(service.setAccess(context, user.userId, { canExport: false, canSeeContacts: false, reason }), errorCode('INVALID_INPUT', 400));
+    }
+    assert.equal(state.audits.length, 1);
+  });
+  it('protects any system-admin target for all commands, including self, before executive lookup', async () => {
+    const { state, service } = await fixture(); const { user } = await service.create(context, body);
+    state.members[0].roles = [{ role: { key: 'SYSTEM_ADMIN', scopeKey: 'system', isSystem: true, status: 'ACTIVE' } }];
+    const self = { ...context, userId: user.userId };
+    await assert.rejects(service.setStatus(self, user.userId, { status: 'SUSPENDED', reason: 'เหตุผล' }), errorCode('ACCOUNT_PROTECTED', 422));
+    await assert.rejects(service.resetCredential(self, user.userId, { reason: 'เหตุผล' }), errorCode('ACCOUNT_PROTECTED', 422));
+    await assert.rejects(service.setAccess(self, user.userId, { canExport: true, canSeeContacts: true, reason: 'เหตุผล' }), errorCode('ACCOUNT_PROTECTED', 422));
+    assert.equal(state.audits.length, 1); assert.equal(state.members[0].status, 'ACTIVE');
+  });
+  it('resets a credential once, revokes sessions and exposes no credential on subsequent reads', async () => {
+    const { state, service } = await fixture(); const original = await service.create(context, body);
+    state.sessions.push({ userId: original.user.userId, status: 'ACTIVE' });
+    const reset = await service.resetCredential(context, original.user.userId, { reason: 'ลืมรหัสผ่าน' });
+    assert.notEqual(reset.temporaryPassword, original.credential.temporaryPassword);
+    assert.ok(verifyPassword(reset.temporaryPassword, state.users[0].credential.passwordHash));
+    assert.equal(state.sessions[0].status, 'REVOKED'); assert.equal(state.audits[1].action, 'executive.user.credential_issued');
+    assert.ok(!JSON.stringify(state.audits).includes(reset.temporaryPassword));
+    assert.ok(!JSON.stringify(await service.detail(context, original.user.userId)).includes(reset.temporaryPassword));
+  });
+  it('adds and removes only add-on roles and returns effective access without another audit on retry', async () => {
+    const { state, service, prisma } = await fixture(); const { user } = await service.create(context, body);
+    const { PrismaPermissionResolverRepository } = await import('../../../access-control/infrastructure/prisma-permission-resolver.repository');
+    const resolver = new PrismaPermissionResolverRepository(prisma);
+    let view = await service.setAccess(context, user.userId, { canExport: true, canSeeContacts: true, reason: 'อนุญาต' });
+    assert.equal(view.canExport, true); assert.equal(view.canSeeContacts, true);
+    assert.ok((await resolver.resolveForUser({ userId: user.userId, companyId: context.companyId })).permissions.includes('system.executive.export'));
+    view = await service.setAccess(context, user.userId, { canExport: false, canSeeContacts: false, reason: 'ยกเลิก' });
+    assert.equal(view.canExport, false); assert.equal(view.canSeeContacts, false);
+    const next = await resolver.resolveForUser({ userId: user.userId, companyId: context.companyId });
+    assert.deepEqual(next.permissions, ['system.executive.read']);
+    assert.deepEqual(state.members[0].roles.map((r: any) => r.role.key), [keys[0]]);
+    await service.setAccess(context, user.userId, { canExport: false, canSeeContacts: false, reason: 'ยกเลิก' });
+    assert.equal(state.audits.length, 3); assert.equal(state.audits[2].action, 'executive.user.access_changed');
+  });
+  it('loads a mixed roster with total statuses and expiry dates, including unusable credentials', async () => {
+    const { state, service } = await fixture(); await service.create(context, body);
+    const originalUser = state.users.pop(), originalMember = state.members.pop();
+    const past = new Date(0), future = new Date('2099-01-01T00:00:00Z');
+    const revoked = ['REVOKED', 'REVOKED', 'REVOKED'];
+    const pending = ['PENDING_ACTIVATION', 'SUSPENDED', 'REVOKED'];
+    const active = ['ACTIVE', 'SUSPENDED', 'REVOKED'];
+    const cases = [
+      { credential: null, statuses: revoked },
+      { credential: { status: 'DISABLED', expiresAt: null }, statuses: revoked },
+      ...[null, past, future].map((expiresAt) => ({ credential: { status: 'TEMPORARY', expiresAt }, statuses: pending })),
+      { credential: { status: 'ACTIVE', expiresAt: past }, statuses: pending },
+      ...[null, future].map((expiresAt) => ({ credential: { status: 'ACTIVE', expiresAt }, statuses: active })),
+    ];
+    const expected: { userId: string; status: string; temporaryPasswordExpiresAt: string | null }[] = [];
+    for (const userStatus of ['ACTIVE', 'SUSPENDED', 'DISABLED']) {
+      for (const [index, membershipStatus] of ['ACTIVE', 'SUSPENDED', 'DISABLED'].entries()) {
+        for (const { credential, statuses } of cases) {
+          const userId = `mixed-${expected.length}`;
+          const status = userStatus === 'ACTIVE' ? statuses[index] : 'REVOKED';
+          state.users.push({ ...originalUser, id: userId, status: userStatus, credential });
+          state.members.push({ ...originalMember, id: userId, userId, status: membershipStatus });
+          expected.push({ userId, status, temporaryPasswordExpiresAt: status === 'PENDING_ACTIVATION' ? credential?.expiresAt?.toISOString() ?? null : null });
+        }
+      }
+    }
+    const all = await service.list(context, { pageSize: 100 });
+    assert.equal(all.pagination.total, expected.length);
+    assert.deepEqual(all.items.map(({ userId, status, temporaryPasswordExpiresAt }) => ({ userId, status, temporaryPasswordExpiresAt })), expected);
+    for (const item of all.items) assert.deepEqual(await service.detail(context, item.userId), item);
+    const pendingPage = await service.list(context, { status: 'PENDING_ACTIVATION', pageSize: 1, page: 2 });
+    assert.equal(pendingPage.pagination.total, 4);
+    assert.equal(pendingPage.items[0].temporaryPasswordExpiresAt, past.toISOString());
+  });
+  for (const status of ['DRAFT', 'INVITED']) it(`excludes ${status} memberships from the roster, detail and all commands`, async () => {
+    const { state, writes, service } = await fixture(); const { user } = await service.create(context, body);
+    state.members[0].status = status;
+    const visible = await service.create(context, { ...body, username: 'visible.reader' });
+    state.sessions.push({ userId: user.userId, status: 'ACTIVE' });
+    writes.length = 0; const before = structuredClone(state);
+    assert.deepEqual((await service.list(context, {})).items.map((row) => row.userId), [visible.user.userId]);
+    for (const run of [
+      () => service.detail(context, user.userId),
+      () => service.setStatus(context, user.userId, { status: 'ACTIVE', reason: 'เหตุผล' }),
+      () => service.setStatus(context, user.userId, { status: 'SUSPENDED', reason: 'เหตุผล' }),
+      () => service.resetCredential(context, user.userId, { reason: 'เหตุผล' }),
+      () => service.setAccess(context, user.userId, { canExport: true, canSeeContacts: true, reason: 'เหตุผล' }),
+    ]) await assert.rejects(run(), errorCode('ACCOUNT_NOT_FOUND', 404));
+    assert.deepEqual(state, before); assert.deepEqual(writes, []);
+  });
+  for (const cause of ['disabled user', 'suspended user', 'disabled membership', 'missing credential', 'disabled credential']) {
+    for (const command of ['reactivate', 'suspend', 'reset credential', 'change access', 'repeat access']) {
+      it(`refuses ${command} for a revoked account (${cause}) without attempting any write`, async () => {
+        const { state, writes, service } = await fixture(); const { user } = await service.create(context, body);
+        if (cause === 'disabled user') state.users[0].status = 'DISABLED';
+        if (cause === 'suspended user') state.users[0].status = 'SUSPENDED';
+        if (cause === 'disabled membership') state.members[0].status = 'DISABLED';
+        if (cause === 'missing credential') state.users[0].credential = null;
+        if (cause === 'disabled credential') state.users[0].credential.status = 'DISABLED';
+        state.sessions.push({ userId: user.userId, status: 'ACTIVE' });
+        writes.length = 0; const before = structuredClone(state);
+        const result = command === 'reset credential' ? service.resetCredential(context, user.userId, { reason: 'เหตุผล' })
+          : command === 'change access' || command === 'repeat access'
+            ? service.setAccess(context, user.userId, { canExport: command === 'change access', canSeeContacts: false, reason: 'เหตุผล' })
+            : service.setStatus(context, user.userId, { status: command === 'reactivate' ? 'ACTIVE' : 'SUSPENDED', reason: 'เหตุผล' });
+        await assert.rejects(result, (error: any) => {
+          assert.equal(error.getStatus(), 409);
+          assert.deepEqual(error.getResponse(), { code: 'ACCOUNT_REVOKED', message: 'บัญชีนี้ถูกปิดจากทางอื่นของระบบ หน้านี้เปิดคืนไม่ได้', requestId: context.requestId });
+          return true;
+        });
+        assert.deepEqual(state, before); assert.deepEqual(writes, []);
+      });
+    }
+  }
+  it('reissues an expired credential and changes access while suspended before reopening', async () => {
+    const { state, service } = await fixture(); const { user } = await service.create(context, body);
+    state.users[0].credential.status = 'ACTIVE'; state.users[0].credential.expiresAt = new Date(0);
+    const access = await service.setAccess(context, user.userId, { canExport: true, canSeeContacts: true, reason: 'อนุญาต' });
+    assert.equal(access.status, 'PENDING_ACTIVATION'); assert.equal(access.canExport, true);
+    await service.setStatus(context, user.userId, { status: 'SUSPENDED', reason: 'รหัสผ่านรั่วไหล' });
+    const reset = await service.resetCredential(context, user.userId, { reason: 'ออกรหัสใหม่' });
+    assert.ok(verifyPassword(reset.temporaryPassword, state.users[0].credential.passwordHash));
+    assert.equal(state.members[0].status, 'SUSPENDED');
+    assert.equal((await service.detail(context, user.userId)).temporaryPasswordExpiresAt, null);
+    const suspendedAccess = await service.setAccess(context, user.userId, { canExport: false, canSeeContacts: false, reason: 'ยกเลิก' });
+    assert.equal(suspendedAccess.status, 'SUSPENDED'); assert.equal(suspendedAccess.canExport, false);
+    const reopened = await service.setStatus(context, user.userId, { status: 'ACTIVE', reason: 'กลับมาใช้' });
+    assert.equal(reopened.status, 'PENDING_ACTIVATION'); assert.equal(reopened.temporaryPasswordExpiresAt, reset.expiresAt);
+  });
+  it('retries rolled-back serialization conflicts without duplicate commands or audit rows', async () => {
+    const { state, service, failOnce } = await fixture();
+    failOnce(); const { user } = await service.create(context, body);
+    failOnce(); await service.setStatus(context, user.userId, { status: 'SUSPENDED', reason: 'เหตุผล' });
+    failOnce(); await service.setAccess(context, user.userId, { canExport: true, canSeeContacts: false, reason: 'เหตุผล' });
+    failOnce(); await service.resetCredential(context, user.userId, { reason: 'เหตุผล' });
+    assert.equal(state.users.length, 1); assert.equal(state.members.length, 1); assert.equal(state.audits.length, 4);
+  });
+  it('reports target permissions from active grants rather than a role name', async () => {
+    const { state, service } = await fixture(); const { user } = await service.create(context, { ...body, canExport: true, canSeeContacts: true });
+    state.members[0].roles.find((r: any) => r.role.key === keys[1]).role.permissions = [];
+    state.members[0].roles.find((r: any) => r.role.key === keys[2]).role.status = 'DISABLED';
+    const view = await service.detail(context, user.userId);
+    assert.equal(view.canRead, true); assert.equal(view.canExport, false); assert.equal(view.canSeeContacts, false);
+  });
+  it('rolls every command back if its transactional audit fails' , async () => {
+    const { state, service } = await fixture(); state.auditFails = true;
+    await assert.rejects(service.create(context, body), /audit unavailable/); assert.equal(state.users.length, 0);
+    state.auditFails = false; const { user } = await service.create(context, body);
+    state.sessions.push({ userId: user.userId, status: 'ACTIVE' }); state.auditFails = true;
+    const before = structuredClone(state);
+    for (const run of [
+      () => service.setStatus(context, user.userId, { status: 'SUSPENDED', reason: 'เหตุผล' }),
+      () => service.resetCredential(context, user.userId, { reason: 'เหตุผล' }),
+      () => service.setAccess(context, user.userId, { canExport: true, canSeeContacts: true, reason: 'เหตุผล' }),
+    ]) { await assert.rejects(run(), /audit unavailable/); assert.deepEqual(state, before); }
   });
 });

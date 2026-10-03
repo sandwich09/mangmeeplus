@@ -53,7 +53,7 @@ describe('roleKeyFromName (audit H-19)', () => {
 // with nothing reserved, and role keys are what the owner, platform and routing checks compare.
 describe('reservedRoleKey', () => {
   it('reserves a system or platform role key that the NAME derives', () => {
-    for (const name of ['System Admin', 'system_admin', 'Owner', 'Company View', 'Admin', 'Manager', 'Staff', 'Auditor Readonly', 'Mangmee Sales', 'MANGMEE SALES LEAD']) {
+    for (const name of ['System Admin', 'system_admin', 'Owner', 'Company View', 'Admin', 'Manager', 'Staff', 'Auditor Readonly', 'Mangmee Sales', 'MANGMEE SALES LEAD', 'Mangmee Executive', 'Mangmee Executive Export', 'Mangmee Executive Contact']) {
       assert.equal(reservedRoleKey(name), true, name);
       // Naming a preset does not launder a name that already yields the key.
       assert.equal(reservedRoleKey(name, 'tpl.x.manager'), true, `${name} with a preset`);

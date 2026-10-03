@@ -535,6 +535,41 @@ describe('permission-registry', () => {
   });
 });
 
+
+describe('executive platform permission matrix (E1)', () => {
+  const grants = {
+    MANGMEE_EXECUTIVE: 'system.executive.read',
+    MANGMEE_EXECUTIVE_EXPORT: 'system.executive.export',
+    MANGMEE_EXECUTIVE_CONTACT: 'system.executive.contact.read',
+  };
+  for (const [role, permission] of Object.entries(grants)) {
+    it(`${role} has exactly its account baseline and executive permission`, () => {
+      assert.deepEqual(ROLE_GRANTS[role], ['account.session.read', 'account.password.change', 'account.identity.link', permission]);
+      assert.ok(SYSTEM_ROLES.some(({ key }) => key === role));
+      assert.ok(PLATFORM_ONLY_ROLE_KEYS.includes(role));
+      assert.ok(PLATFORM_ROLE_KEYS.includes(role));
+    });
+  }
+  it('only the platform administrator receives all four executive permissions', () => {
+    for (const permission of [...Object.values(grants), 'system.executive_user.manage']) {
+      assert.ok(PERMISSION_KEYS.includes(permission));
+      assert.ok(ROLE_GRANTS.SYSTEM_ADMIN!.includes(permission));
+      assert.ok(!COMPANY_PERMISSION_KEYS.includes(permission));
+      for (const role of companyRoleKeys()) assert.ok(!ROLE_GRANTS[role]!.includes(permission), role);
+    }
+  });
+});
+
+it('executive catalog names and descriptions are plain Thai', () => {
+  const roles = SYSTEM_ROLES.filter(({ key }) => key.startsWith('MANGMEE_EXECUTIVE'));
+  assert.equal(roles.length, 3);
+  const permissions = PERMISSIONS.filter(({ key }) => key.startsWith('system.executive'));
+  assert.equal(permissions.length, 4);
+  for (const text of [...roles.flatMap(({ name, description }) => [name, description]), ...permissions.map(({ description }) => description)]) {
+    assert.match(text, /[ก-๙]/); assert.doesNotMatch(text, /[A-Za-z]/);
+  }
+});
+
 it('standard-role descriptions name the same administrator and read-only auditor as the role labels', () => {
   assert.ok(SYSTEM_ROLES.find((role) => role.key === 'ADMIN')!.description.includes('ผู้ดูแลบริษัท'));
   assert.ok(SYSTEM_ROLES.find((role) => role.key === 'AUDITOR_READONLY')!.description.includes('ผู้ตรวจสอบ (ดูอย่างเดียว)'));
