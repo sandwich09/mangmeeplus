@@ -502,7 +502,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             setEmailLoginEnabled(Boolean(next.emailLoginEnabled));
             setAccount(current => current && ({ ...current, email: next.email, emailVerified: next.emailVerified, pendingEmail: next.emailRequirement === 'CHANGE_PENDING' ? next.challenge?.email ?? null : null }));
             invalidateChecklist();
-          }} />
+          }} refreshKey={account} />
 
           <details className="mangmee-card group mt-5 p-5 sm:p-6">
             <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 [&::-webkit-details-marker]:hidden">
@@ -545,7 +545,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               <span className="flex shrink-0 items-center gap-2 text-sm font-semibold text-brand-700"><span className="group-open:hidden">จัดการ</span><span className="hidden group-open:inline">ปิด</span><ChevronDownIcon aria-hidden="true" className="h-5 w-5 group-open:rotate-180" /></span>
             </summary>
             <div className="mt-4 grid gap-4">
-            <h3 className="text-sm font-semibold text-gray-900">ตั้งรหัสผ่านสำรอง</h3>
+            <h3 className="text-sm font-semibold text-gray-900">จัดการรหัสผ่านสำรอง</h3>
             {account?.hasPassword ? (
               <p className="text-sm text-gray-600">
                 บัญชีนี้มีรหัสผ่านอยู่แล้วค่ะ{' '}
@@ -556,7 +556,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 <p className="text-sm text-gray-600">
                   ตั้งรหัสผ่านสำรองได้ตามสะดวก หากเพิ่งยืนยันตัวตนไม่เกิน 5 นาที กรอกรหัสผ่านใหม่ได้เลย
                 </p>
-                {emailLoginEnabled ? <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/email-access?next=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>รับรหัสทางอีเมลเพื่อยืนยันตัวตนอีกครั้ง</Link> : <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/api/auth/line-login/start?purpose=email-reauth&returnTo=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>ยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่าน</Link>}
+                {emailLoginEnabled && account?.email?.trim() ? <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/email-access?next=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>รับรหัสทางอีเมลเพื่อยืนยันตัวตนอีกครั้ง</Link> : account?.lineLinked ? <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/api/auth/line-login/start?purpose=email-reauth&returnTo=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>ยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่าน</Link> : null}
                 {usernameRequired ? (
                   <TextField
                     label="ชื่อผู้ใช้"
@@ -576,7 +576,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                   </p>
                 ) : account?.email ? (
                   <p className="text-sm text-gray-600">
-                    หลังตั้งรหัสผ่านแล้ว ใช้อีเมล <strong className="text-gray-900">{account.email}</strong> เข้าเว็บได้
+                    หลังตั้งรหัสผ่านแล้ว ใช้อีเมล <strong className="text-gray-900">{account.email}</strong> คู่กับรหัสผ่านเข้าเว็บได้
                   </p>
                 ) : null}
                 <TextField
