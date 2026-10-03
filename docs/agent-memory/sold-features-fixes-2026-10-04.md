@@ -1,7 +1,7 @@
 # Agent Memory: sold-features-fixes-2026-10-04
 
 ## Status
-Implementation and sandbox verification complete; ready for controller review. Changes remain uncommitted.
+Done 2026-10-04: committed, browser-checked (STARTER, upload-only, STAFF, ENTERPRISE at 390/1280) and the 17-step integration verification (full API suite, whole-chain, real-PostgreSQL specs) green on the final head; PR to develop with its main twin. The notification-preset change described below was dropped by the owner (see the controller note at the end).
 
 ## Owner
 Codex implementation lane; controller owns commits, PostgreSQL and browser verification.
@@ -14,11 +14,10 @@ Read-only expense facts; narrow company tax signature read; package-aware role m
 - Signature settings will read only signature fields using the existing signature management permission; full tax profile remains tax-only. This page is specific to 50 ทวิ, not PND53.
 - Role matrix hides unsold menus, following existing package/menu filtering.
 - Reports keep the existing retained-artifact path; no assertion that a shop previously bought reports, no creation/export action in history-only mode.
-- Notification preset currently omits preferences/rules subfeatures. Explicitly disabled subfeatures remain disabled; preset correction does not rewrite stored customer entitlements.
+- Notification preset omits preferences/rules subfeatures. The lane proposed adding them; the owner kept the preset as it is (2026-10-04), so no preset change ships.
 
 ## Open questions
-- Browser and real PostgreSQL not checked: prohibited/unavailable in this lane.
-- Existing paid snapshots with explicit false notification subfeatures are not rewritten. Controller must distinguish preset omissions from intentional overrides before reapplying corrected entitlements; no migration/data change is included.
+- Browser and real PostgreSQL were not available in this lane; the controller ran both afterwards (see Status).
 - Saved STAFF screenshot shows one visible receipt warning; the HTML also repeats it as the disabled button title. Fixed that duplication through aria-describedby, and suppressed identical submit errors. Live reproduction not checked.
 
 ## Artifacts
@@ -54,8 +53,6 @@ Changed paths:
 - `docs/specs/reports-bi-spec.md`
 - `docs/specs/web-core-workspace-spec.md`
 - `docs/specs/wht-certificate-system-issuance-spec.md`
-- `packages/contracts/src/feature-entitlements.spec.ts`
-- `packages/contracts/src/menu-entitlements.ts`
 - `apps/web/src/features/web-core-workspace/sold-features-regressions.spec.ts`
 - This memory file.
 
@@ -72,7 +69,7 @@ Command prefixes:
 
 | Command | Red (old behavior) | Final green |
 | --- | --- | --- |
-| C `src/feature-entitlements.spec.ts` | exit 1: 25 pass, 1 fail | exit 0: 26 pass, 0 fail |
+| C `src/feature-entitlements.spec.ts` (dropped with the preset change) | exit 1: 25 pass, 1 fail | exit 0: 26 pass, 0 fail |
 | A `src/modules/auth/auth.guard.spec.ts src/modules/employee-access/application/use-cases/get-access-matrix.use-case.spec.ts src/modules/employee-access/application/use-cases/role-management.use-case.spec.ts` | exit 1: 81 pass, 11 fail | exit 0: 92 pass, 0 fail |
 | W `src/features/web-core-workspace/sold-features-regressions.spec.ts` | exit 1: 0 pass, 8 fail (initial 8 tests) | exit 0: 9 pass, 0 fail |
 | W `--test-name-pattern='never describes loading' src/features/web-core-workspace/sold-features-regressions.spec.ts` | exit 1: 0 pass, 1 fail before the last empty-state fix | included in final 9 pass |
@@ -102,7 +99,7 @@ Red API cases (each green after restoration):
 
 Red web cases (each green after restoration): read-only extraction hints; all validation facts/editor wording; unfinished-read reason order/no tick; wrapping selectors; narrow signature endpoint/error/padding; denied URL shell and route permission rules; truthful retained report history/no export; one receipt-policy warning; loading/failed history is not an empty result.
 
-Red contracts case: every paid tier contains preferences and rules subfeatures.
+Red contracts case (dropped with the preset change): every paid tier contains preferences and rules subfeatures.
 
 Raw local test logs are ignored `.sold-*.log` files; these counts are recorded here so the diff carries the evidence.
 
@@ -173,7 +170,7 @@ Read-only field variants below; editable text is unchanged. Parameters are inter
 Controller review/commit and environment verification only:
 - Run full API `pnpm --filter @watchdog-bms/api test`, plus the PostgreSQL jobs already specified by `.github/workflows/ci.yml` against a real test database. No new PG test was added.
 - Run `pnpm e2e e2e/expenses.spec.ts e2e/reimbursements.spec.ts e2e/settings.spec.ts e2e/dashboard.spec.ts e2e/notifications.spec.ts` against the configured browser stack.
-- STARTER owner, 390 and 1280: apply corrected preset in test setup; notification preferences/rules at both URL families; role matrix contains purchased menus only and no platform roles; accountant description matches package; unsold tax/CRM/inventory/tax-code URLs show forbidden in shell; report history with no artifacts has no export/save action. Also test existing accessible retained export and read failure.
+- STARTER owner, 390 and 1280: notification preferences/rules addresses show the shell's no-access state (preset unchanged); role matrix contains purchased menus only and no platform roles; accountant description matches package; unsold tax/CRM/inventory/tax-code URLs show forbidden in shell; report history with no artifacts has no export/save action. Also test existing accessible retained export and read failure.
 - Upload-only role: read-only expense with failed/partial/paused read, missing vendor/date/lines/amount/WHT facts; no action prompts, reason first, no tick. Compare editor prompts on the same expense. Check full dropdown labels at 1280 and phone wrapping.
 - STAFF: own draft receipt policy warning once, including disabled button accessibility and an identical prior submit error; unrelated errors remain. /settings/profile retains header/navigation and an explicit link to a reachable page.
 - ENTERPRISE owner, 390: signature GET/PATCH succeed without thai_tax, blank/default and existing signature modes load, failed GET has retry and no editable/save controls, padding visible. Confirm STARTER and a non-manager remain refused and the full Tax workspace stays closed. PND53 continues through its existing narrow routes.
@@ -183,3 +180,5 @@ Controller review/commit and environment verification only:
 The starter-preset change (adding `dashboard_notifications.preferences` and `dashboard_notifications.rules` to every paid tier) was HELD BACK by the controller: it changes what the packages grant and leaves existing paid shops without it, so it goes to the owner first. Without it, a STARTER user who types those addresses gets the shell's no-access state (no silent bounce).
 
 Owner decision, 2026-10-04: "ยังไม่ต้องทำอะไรกับเรื่องนี้ ใช้แค่กระดิ่งกับการแจ้งเตือนทุกอย่างแบบเดิมไปก่อน" — the starter preset stays without the notification settings subfeatures; the held-back change is dropped. A STARTER user typing those addresses gets the shell's no-access state.
+
+Controller verification, 2026-10-04: browser check of the four journeys passed (one more fix: a STAFF user opening the shop profile is refused inside the shell with a way back); 17-step integration verification green on the final head (full API suite, whole-chain, boot, real-PostgreSQL specs).
