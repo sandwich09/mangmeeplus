@@ -652,6 +652,47 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
   // Plan §2.1 row 11, spec §13.3: cancelling a confirmed expense must not erase that it was confirmed. Run through the
   // expense module's own void transaction (`voidExpenseTrueReversal`, which the web void and a claim cancellation both
   // end in for a confirmed expense), on real PostgreSQL, so a trigger or a later write would show too.
+  it('builds owner-approved purchase kinds with every receipt and refund in exactly one kind', async () => {
+    const cases = [
+      ['SCHEDULED_CHANGE', false, null, 'RENEWAL'],
+      ['INITIAL', true, '2026-09-20T03:00:00Z', 'RENEWAL'],
+      ['INITIAL', true, '2026-09-01T03:00:00Z', 'RETURN'],
+      ['INITIAL', true, null, 'FIRST_PURCHASE'],
+      ['INITIAL', false, null, 'FIRST_PURCHASE'],
+      [null, false, null, 'RENEWAL'],
+      ['RESTART', false, null, 'RETURN'],
+    ] as const;
+    const ids: string[] = [];
+    for (const [kind, deal, previousEnd] of cases) {
+      const id = next('owner-answer'); ids.push(id);
+      await company(id, { reportClassification: 'CUSTOMER' });
+      const invoiceId = await paidInvoice(id, 10000);
+      const invoice = await client.billingInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
+      const dealId = next('deal');
+      await client.billingAttempt.update({ where: { id: invoice.sourceAttemptId! }, data: { quoteSnapshot: {
+        quote: { purchase: { kind: kind ?? 'INITIAL' } }, ...(deal ? { deal: { requestId: dealId } } : {}),
+        ...(deal && previousEnd ? { subscriptionConversion: { subscriptionId: 'old-sub', paidThrough: previousEnd } } : {}),
+      } } });
+      await client.billingInvoice.update({ where: { id: invoiceId }, data: { applyStatus: 'APPLIED', appliedAt: at('2026-10-01T03:00:00Z'),
+        ...(kind ? {} : { sourceAttemptId: null, subscriptionId: 'cycle-sub' }) } });
+      if (previousEnd) await client.billingInvoice.create({ data: { billingAccountId: invoice.billingAccountId,
+        providerInvoiceId: `in_${randomUUID()}`, offerSnapshot: {}, policyRevisionId: 'p', currency: 'THB', totalSatang: 5000, paidSatang: 5000,
+        periodStart: at('2026-08-01T00:00:00Z'), periodEnd: at(previousEnd), providerStatus: 'paid', evidenceHash: 'h',
+        applyStatus: 'APPLIED', appliedAt: at('2026-08-01T00:00:00Z') } });
+      if (deal) await client.packageChangeRequest.create({ data: { id: dealId, companyId: id, requestedByUserId: 'spec', requestedTierKey: 'BASIC',
+        kind: 'SALES_DEAL', status: 'APPLIED', paymentRef: invoiceId, verifiedAt: at('2026-09-15T03:00:00Z') } });
+      await receipt(id, invoiceId, 10000, '2026-09-15T03:00:00Z');
+      await refund(id, invoiceId, 1000, '2026-09-29T03:00:00Z');
+    }
+    built(await build.rebuild(nextDay()));
+    for (const [index, [, , , expected]] of cases.entries()) {
+      const row = (await monthRow(ids[index]!, '2026-09'))!;
+      assert.equal(row.receiptsSatang, 10000);
+      assert.equal(row.refundsSatang, 1000);
+      assert.deepEqual(row.moneyByPurchaseKind, { [expected]: { receiptsSatang: 10000, refundsSatang: 1000, feesSatang: 0, taxSatang: 0 } });
+    }
+  });
+
   it('keeps the confirm action of an expense that is voided afterwards', async () => {
     const shop = next('voided-shop');
     await company(shop, { reportClassification: 'CUSTOMER' });

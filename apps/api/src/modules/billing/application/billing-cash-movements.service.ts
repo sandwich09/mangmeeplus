@@ -71,7 +71,7 @@ export type BillingCompanyPayment = {
 
 const PAYOUT_TYPES = ['payout', 'payout_failure', 'payout_cancel'];
 const QUOTE_KIND: Record<string, BillingPurchaseKind> = {
-  INITIAL: 'FIRST_PURCHASE', REPEAT: 'RENEWAL', ADVANCE_DEAL: 'RENEWAL', RESTART: 'RETURN',
+  INITIAL: 'FIRST_PURCHASE', REPEAT: 'RENEWAL', ADVANCE_DEAL: 'RENEWAL', SCHEDULED_CHANGE: 'RENEWAL', RESTART: 'RETURN',
   UPGRADE: 'UPGRADE', FULL_PACKAGE_UPGRADE: 'UPGRADE',
 };
 
@@ -81,19 +81,67 @@ const QUOTE_KIND: Record<string, BillingPurchaseKind> = {
  * - `sourceAttemptId` is null only on a subscription's own later cycle (`applyInvoice`, the one
  *   writer that leaves it null): a renewal. Its `contractSnapshot` may still say INITIAL, because it
  *   is the contract the subscription started with, so the snapshot is never read for these.
- * - Every other invoice was paid through one Checkout attempt, whose quote names the purchase.
- * - UNKNOWN is a coverage gap, not a guess: SCHEDULED_CHANGE is a change to a lower tier or another
- *   billing interval paid ahead (never the same-interval upgrade the table files it under), and a
- *   deal that replaces a live subscription is quoted INITIAL although the shop paid before.
+ * - Other invoices name their purchase in the Checkout quote. Owner 2026-10-03: a paid-ahead
+ *   SCHEDULED_CHANGE is RENEWAL, including a cheaper tier or another billing interval.
+ * - A sales deal's quote can say INITIAL (subscriptionConversion), ADVANCE_DEAL, REPEAT or
+ *   RESTART. Use billing's prior paid-through evidence at the verified payment time: still live
+ *   is RENEWAL, ended (including equality) is RETURN, no prior paid package is FIRST_PURCHASE.
+ *   Never compare with today's account/term or the later application/refund time. A subsequent
+ *   subscription cycle remains a renewal even when its starting contract was a deal.
+ * - Missing payment/history evidence stays UNKNOWN; one payment always has exactly one kind.
  */
-export function billingPurchaseKind(invoice: { productKind: string; sourceAttemptId: string | null; subscriptionId: string | null;
-  quoteKind: string | null; subscriptionConversion: boolean } | null): BillingPurchaseKind {
+export function billingPurchaseKind(invoice: { productKind: string | null; sourceAttemptId: string | null; subscriptionId: string | null;
+  quoteKind: string | null; subscriptionConversion: boolean | null; isDeal?: boolean;
+  paidAt?: Date | null; previousPaidThrough?: Date | null } | null): BillingPurchaseKind {
   if (!invoice) return 'UNKNOWN';
   if (invoice.productKind !== 'PACKAGE') return billingProductKind(invoice.productKind) ? 'ADD_ON' : 'UNKNOWN';
   if (!invoice.sourceAttemptId) return invoice.subscriptionId ? 'RENEWAL' : 'UNKNOWN';
-  if (invoice.quoteKind === 'INITIAL' && invoice.subscriptionConversion) return 'UNKNOWN';
+  if (invoice.isDeal || invoice.subscriptionConversion) {
+    if (!invoice.paidAt || (invoice.subscriptionConversion && !invoice.previousPaidThrough)) return 'UNKNOWN';
+    if (invoice.previousPaidThrough) return invoice.previousPaidThrough > invoice.paidAt ? 'RENEWAL' : 'RETURN';
+    return invoice.quoteKind === 'INITIAL' ? 'FIRST_PURCHASE' : 'UNKNOWN';
+  }
   return QUOTE_KIND[invoice.quoteKind ?? ''] ?? 'UNKNOWN';
 }
+
+/**
+ * Shared by cash (and therefore the executive build) and company history. Billing freezes the
+ * previous paid-through in the quote; prior applied paid PACKAGE invoices also cover expired
+ * one-time deals whose RESTART quote has no previousPaidThrough. Later invoices, add-ons, unpaid
+ * and unapplied packages cannot supply this history. The account pins provider account and mode.
+ * applyDealRequest/reconcileAdvanceDeal persist the verified payment time in verifiedAt; while a
+ * payment is held or its deal row is gone, the scan's original charge supplies it. No appliedAt,
+ * periodStart, observation time, current plan or sales-credit amount stands in for payment time.
+ */
+const purchaseHistoryJoins = Prisma.sql`
+  LEFT JOIN LATERAL (
+    SELECT a."quoteSnapshot"->'quote'->'purchase'->>'kind' AS "quoteKind",
+           a."quoteSnapshot"->'subscriptionConversion' IS NOT NULL AS "subscriptionConversion",
+           COALESCE(a."dealRequestId" IS NOT NULL OR a."quoteSnapshot" ? 'deal'
+             OR a."quoteSnapshot" ? 'subscriptionConversion' OR a."quoteSnapshot" ? 'advanceDeal', false) AS "isDeal"
+  ) purchase ON true
+  LEFT JOIN "PackageChangeRequest" d ON d.id = a."quoteSnapshot"->'deal'->>'requestId'
+    AND d."companyId" = b."companyId" AND d.kind = 'SALES_DEAL' AND d."paymentRef" = i.id
+  LEFT JOIN LATERAL (
+    SELECT COALESCE(d."verifiedAt", (
+      SELECT to_timestamp((p."proposedJson"->'movement'->>'created')::double precision) AT TIME ZONE 'UTC'
+        FROM "BillingOperation" p
+       WHERE p.type = 'OBSERVE_PROVIDER_BALANCE' AND p."companyId" IS NULL
+         AND p."stripeAccountId" = b."stripeAccountId" AND p.livemode = b.livemode
+         AND p."proposedJson"->>'invoiceId' = i.id AND p."proposedJson"->'movement'->>'type' = 'charge'
+       ORDER BY p."observedAt" DESC NULLS LAST, p."createdAt" DESC, p.id DESC LIMIT 1
+    )) AS "paidAt"
+  ) payment ON purchase."isDeal"
+  LEFT JOIN LATERAL (
+    SELECT GREATEST(
+      (a."quoteSnapshot"->'subscriptionConversion'->>'paidThrough')::timestamptz AT TIME ZONE 'UTC',
+      (a."quoteSnapshot"->'quote'->'purchase'->>'previousPaidThrough')::timestamptz AT TIME ZONE 'UTC',
+      (SELECT MAX(h."periodEnd") FROM "BillingInvoice" h
+        WHERE h."billingAccountId" = i."billingAccountId" AND h.id <> i.id AND h."productKind" = 'PACKAGE'
+          AND h."providerStatus" = 'paid' AND h."paidSatang" > 0 AND h."applyStatus" = 'APPLIED'
+          AND h."appliedAt" <= payment."paidAt")
+    ) AS "previousPaidThrough"
+  ) history ON purchase."isDeal"`;
 
 /** Where the unbroken coverage that contains `from` ends; null when `from` itself was never read. */
 export function billingCoveredThrough(ranges: readonly BillingCashRange[], from: Date): Date | null {
@@ -101,7 +149,8 @@ export function billingCoveredThrough(ranges: readonly BillingCashRange[], from:
 }
 
 type Row = { observation: Prisma.JsonValue; productKind: string | null; sourceAttemptId: string | null; subscriptionId: string | null;
-  disputed: boolean | null; quoteKind: string | null; subscriptionConversion: boolean | null };
+  disputed: boolean | null; quoteKind: string | null; subscriptionConversion: boolean | null;
+  isDeal: boolean; paidAt: Date | null; previousPaidThrough: Date | null };
 type Observation = { movement?: { id?: unknown; type?: unknown; currency?: unknown; amount?: unknown; fee?: unknown; net?: unknown; created?: unknown; balanceType?: unknown };
   classification?: unknown; refundState?: unknown; taxSatang?: unknown; invoiceId?: unknown; companyId?: unknown };
 const invalid = () => new Error('billing.cash_movement_invalid');
@@ -130,11 +179,12 @@ export class BillingCashMovementsService {
       SELECT DISTINCT ON (o."proposedJson"->'movement'->>'id')
              o."proposedJson" AS observation, i."productKind" AS "productKind", i."sourceAttemptId" AS "sourceAttemptId",
              i."subscriptionId" AS "subscriptionId", i.disputed AS disputed,
-             a."quoteSnapshot"->'quote'->'purchase'->>'kind' AS "quoteKind",
-             a."quoteSnapshot"->'subscriptionConversion' IS NOT NULL AS "subscriptionConversion"
+             purchase.*, payment."paidAt", history."previousPaidThrough"
         FROM "BillingOperation" o
         LEFT JOIN "BillingInvoice" i ON i.id = o."proposedJson"->>'invoiceId'
+        LEFT JOIN "BillingAccount" b ON b.id = i."billingAccountId"
         LEFT JOIN "BillingAttempt" a ON a.id = i."sourceAttemptId"
+        ${purchaseHistoryJoins}
        WHERE o.type = 'OBSERVE_PROVIDER_BALANCE' AND o."companyId" IS NULL
          AND o."stripeAccountId" = ${scope.stripeAccountId} AND o.livemode = ${scope.livemode}
          AND (o."proposedJson"->'movement'->>'created')::bigint >= ${since}::bigint
@@ -152,7 +202,8 @@ export class BillingCashMovementsService {
       const tie = kind === 'PAYOUT' || unsuccessfulRefund ? 'EXCLUDED' : money && matched ? 'COMPANY' : 'UNTIED';
       const amount = satang(movement.amount), counted = tie === 'COMPANY';
       const invoice = row.productKind === null ? null : { productKind: row.productKind, sourceAttemptId: row.sourceAttemptId,
-        subscriptionId: row.subscriptionId, quoteKind: row.quoteKind, subscriptionConversion: row.subscriptionConversion === true };
+        subscriptionId: row.subscriptionId, quoteKind: row.quoteKind, subscriptionConversion: row.subscriptionConversion === true,
+        isDeal: row.isDeal, paidAt: row.paidAt, previousPaidThrough: row.previousPaidThrough };
       return {
         providerTransactionId: movement.id, occurredAt: new Date(satang(movement.created) * 1000), kind, tie,
         currency: movement.currency.toUpperCase(), amountSatang: kind === 'REFUND' ? -amount : amount,
@@ -195,15 +246,14 @@ export class BillingCashMovementsService {
     if (!scope) return [];
     const rows = await this.prisma.client.$queryRaw<Array<Omit<Row, 'observation' | 'disputed'> & { appliedAt: Date; tierKey: string | null }>>(Prisma.sql`
       SELECT i."appliedAt", i."productKind", i."sourceAttemptId", i."subscriptionId", i."offerSnapshot"->>'offerKey' AS "tierKey",
-             a."quoteSnapshot"->'quote'->'purchase'->>'kind' AS "quoteKind",
-             a."quoteSnapshot"->'subscriptionConversion' IS NOT NULL AS "subscriptionConversion"
+             purchase.*, payment."paidAt", history."previousPaidThrough"
         FROM "BillingInvoice" i
         JOIN "BillingAccount" b ON b.id = i."billingAccountId"
         LEFT JOIN "BillingAttempt" a ON a.id = i."sourceAttemptId"
+        ${purchaseHistoryJoins}
        WHERE b."companyId" = ${companyId} AND b."stripeAccountId" = ${scope.stripeAccountId} AND b.livemode = ${scope.livemode}
          AND i."providerStatus" = 'paid' AND i."paidSatang" > 0 AND i."productKind" = 'PACKAGE' AND i."appliedAt" IS NOT NULL`);
-    return rows.map((row) => ({ appliedAt: row.appliedAt, tierKey: row.tierKey, purchaseKind: billingPurchaseKind({ productKind: row.productKind ?? 'PACKAGE',
-      sourceAttemptId: row.sourceAttemptId, subscriptionId: row.subscriptionId, quoteKind: row.quoteKind, subscriptionConversion: row.subscriptionConversion === true }) }));
+    return rows.map((row) => ({ appliedAt: row.appliedAt, tierKey: row.tierKey, purchaseKind: billingPurchaseKind(row) }));
   }
 
   /**
