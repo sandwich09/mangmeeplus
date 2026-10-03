@@ -150,3 +150,23 @@ Next:
 - Not checked: real PostgreSQL matching specs with unchanged old-word personal-name fixtures: external-signup `line-signup-duplicate-email.pg.spec.ts`, system-partner-management `manual-expense-web-entry.pg.spec.ts`, sales-console `sales-console.pg.spec.ts`, and reimbursements `prisma-reimbursement.repository.draft-submit-race.spec.ts` (database-backed despite its filename). Controller owns database runs.
 - `git diff --check`: exit 0 after all code/spec/doc edits; own temporary evidence files removed after recording results here.
 - Not checked: full API/LINE whole-chain scripts that use the sandbox-incompatible tsx CLI; focused node-loader specs were run instead. No sandbox-refused command was retried.
+
+## Browser check (controller's Claude lane, 2026-10-04, head 04c752eba → 9c3e7130c)
+
+Local throwaway stack (own PostgreSQL/Redis/MinIO, fresh migrate + seed, web without `S3_*`), 390 and 1280 px.
+- COMPANY_VIEW: the seed gives both demo companies a holder, so a shop with only its owner was added for the check.
+  There: role list, by-id read (404), preview (404), access matrix, role filter and add-employee page show no
+  ผู้ดูภาพรวมบริษัท; the demo company shows it (role list, filter, qa.company's sidebar). qa.company signs in to the
+  dashboard and is refused the roles page in place. Noticed, not changed: PATCH and disable of the hidden id answer
+  403 ("managed by MangmeePlus" / "Protected system roles") instead of 404; assigning it answers 403.
+- Long role names: employee rows keep the full name and wrap the chips (no cut, no sideways scroll); standard chips
+  keep their size, font and padding (develop vs branch measured), now under the name. Enter on a focused row and a
+  tap both open the employee. Defect found and fixed (34b88cea3): the panel's role picker cut a long name (current
+  value and options); they wrap now, the list opens below the value, a short name still looks the same.
+- Owner word: every listed web and LIFF sentence reads เจ้าของกิจการ (billing company-list refusal, staff banners,
+  billing refusal, read-only profile full/partial and VAT, receipt limit, HR protected-role edit, offer confirmation,
+  capacity picker, LIFF start/no shop, signup e-mail errors, locked-shop staff, event discount).
+- E2E (fresh stack per file): plan-term-billing-readiness 33/33 (handoff env), line-signup-contact-email 7/7,
+  settings 21/21, _roles-reference 8/8, employee-job-title 2/2, cross-cutting 5/5 + 1 fixme after 9c3e7130c
+  (XC-03 was stale on develop too: denied pages are refused in place since 0e1a81d8b; plus a legal-page race).
+- Checks after the fixes: web typecheck exit 0, whole web suite exit 0 (2905/2905, no `S3_*`), `git diff --check` exit 0.
