@@ -584,3 +584,7 @@ Web core implementation can add typed adapters and fixtures only when backend co
 ## Linked Plan
 
 - [[plans/web-core-workspace-plan|Web Core Workspace Plan]]
+
+## Browser regression amendment — 2026-10-04
+
+Opening a workspace URL without its required permission retains the normal shell, header and navigation and renders the existing forbidden state. When a reachable module exists, offer an explicit link back to it; do not silently redirect. This also applies to STAFF opening company profile settings and owners opening unsold Tax, CRM, Inventory or tax-code settings. Permission/entitlement gates remain closed; the denied child page is not rendered.

@@ -130,6 +130,12 @@ export function getTaxProfile(companyId: string): Promise<CompanyTaxProfile> {
   return apiFetch(`/v1/companies/${companyId}/tax/profile`);
 }
 
+export type CompanyTaxSignature = Pick<CompanyTaxProfile, 'signatureMode' | 'signatureImageAttachmentId'>;
+
+export function getTaxSignature(companyId: string): Promise<CompanyTaxSignature> {
+  return apiFetch(`/v1/companies/${companyId}/tax/profile/signature`);
+}
+
 /** §3.3 (Decision B): OWNER-only (`company.tax_signature.manage`). */
 export function updateTaxSignature(companyId: string, body: { signatureMode: 'BLANK' | 'AUTO_STAMP'; signatureAttachmentId?: string }): Promise<{ signatureMode: 'BLANK' | 'AUTO_STAMP'; signatureImageAttachmentId: string | null }> {
   return apiFetch(`/v1/companies/${companyId}/tax/profile/signature`, { method: 'PATCH', body: JSON.stringify(body) });

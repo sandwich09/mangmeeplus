@@ -75,8 +75,8 @@ test.describe('harness: access matrix', () => {
     }
   });
 
-  test('a denied route redirects to the dashboard @smoke', async ({ pageAs, companyId }) => {
-    // STAFF has no booking permission, so /bookings must bounce.
+  test('a denied route shows the no-access state inside the shell @smoke', async ({ pageAs, companyId }) => {
+    // STAFF has no booking permission, so /bookings is refused in place.
     const staff = await pageAs('STAFF');
     await expectRouteAccess(staff, companyId, 'booking', 'STAFF');
 
