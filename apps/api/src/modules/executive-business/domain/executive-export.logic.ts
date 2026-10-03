@@ -1,9 +1,8 @@
 import { EXECUTIVE_EXPORT_SHEETS, EXECUTIVE_WORDS as W } from '@watchdog-bms/contracts';
-import { buildWorkbook, columnName, type WorkbookCell, type WorkbookChart } from '../../../common/export/xlsx.logic';
-import { formatThaiExportDate } from '../../../common/export/thai-date.logic';
+import { buildWorkbook, columnName, xlsxThaiDate, type WorkbookCell, type WorkbookChart } from '../../../common/export/xlsx.logic';
 
 export type ExportFigure = { label: string; value: number | null; formula?: string; status?: string; style?: number };
-export type ExportPanel = { title: string; kind: WorkbookChart['kind']; labels: string[]; values: (number | null)[]; formulas?: string[]; status?: string; colors?: string[]; style?: number };
+export type ExportPanel = { title: string; kind: WorkbookChart['kind']; labels: string[]; values: (number | null)[]; formulas?: string[]; status?: string; statuses?: string[]; colors?: string[]; style?: number };
 export type ExportTable = { title: string; headers: string[]; rows: WorkbookCell[][] };
 export type ExecutiveWorkbook = { title: string; month: string; metadata: string[]; columns: string[]; rows: WorkbookCell[][];
   kpis: ExportFigure[]; panels: ExportPanel[]; tables?: ExportTable[] };
@@ -12,7 +11,7 @@ export function exportMonth(month: string): string {
   return new Intl.DateTimeFormat('th-TH-u-ca-buddhist', { month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(new Date(`${month}-01T00:00:00Z`));
 }
 export function exportDateTime(at: Date | string): string {
-  return `${formatThaiExportDate(new Date(at).toISOString())} ${new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(at))} น.`;
+  return xlsxThaiDate(at, true)!;
 }
 /** v4 geometry rebuilt from the structure-only reference; no template values or files are imported. */
 export function buildExecutiveWorkbook(input: ExecutiveWorkbook): Buffer {
@@ -26,7 +25,7 @@ export function buildExecutiveWorkbook(input: ExecutiveWorkbook): Buffer {
   put(2, 2, { value: input.title, style: 1 }); put(4, 2, `${W.month} · ${exportMonth(input.month)}`);
   input.kpis.forEach((figure, i) => {
     const c = [2, 10, 18][i]!;
-    put(7, c, { value: figure.value, ...(figure.formula ? { formula: figure.formula } : {}), style: figure.style ?? 7 });
+    put(7, c, { value: figure.value, ...(figure.formula ? { formula: figure.formula } : {}), style: figure.style === 3 ? 11 : figure.style ?? 7 });
     put(10, c, figure.label); put(11, c, figure.status ?? (figure.value === null ? W.export.noData : ''));
     merges.push(`${columnName(c)}7:${columnName(c + 6)}9`, `${columnName(c)}10:${columnName(c + 6)}10`, `${columnName(c)}11:${columnName(c + 6)}11`);
   });
@@ -44,7 +43,7 @@ export function buildExecutiveWorkbook(input: ExecutiveWorkbook): Buffer {
     labels.forEach((label, n) => {
       put(next, 2, label);
       put(next, 7, { value: values[n] ?? null, ...(panel.formulas?.[n] ? { formula: panel.formulas[n] } : {}), style: panel.style ?? 0 });
-      put(next, 8, status ?? (values[n] === null ? W.export.noData : '')); next++;
+      put(next, 8, panel.statuses?.[n] ?? status ?? (values[n] === null ? W.export.noData : '')); next++;
     });
     charts.push({ ...panel, labels, values, labelRange: `'${EXECUTIVE_EXPORT_SHEETS[0]}'!$B$${start}:$B$${next - 1}`, valueRange: `'${EXECUTIVE_EXPORT_SHEETS[0]}'!$G$${start}:$G$${next - 1}`,
       from: [c - 1, r], to: [left ? 11 : 23, top ? 26 : 40] });
@@ -60,7 +59,7 @@ export function buildExecutiveWorkbook(input: ExecutiveWorkbook): Buffer {
   const source: WorkbookCell[][] = [[{ value: input.title, style: 1 }], [`${W.month} · ${exportMonth(input.month)}`], [input.metadata[0] ?? ''], [input.metadata[1] ?? ''], [input.metadata.slice(2).join(' · ')], input.columns.map(value => ({ value, style: 2 })), ...input.rows];
   return buildWorkbook([
     { name: EXECUTIVE_EXPORT_SHEETS[0], rows, widths: Array.from({ length: 24 }, () => 7.11), freezeRows: 4, merges, printArea: 'A1:X46', charts },
-    { name: EXECUTIVE_EXPORT_SHEETS[1], rows: source, widths: input.columns.map((_, i) => i === 0 ? 38 : i === 1 || i === 34 ? 32 : 24), freezeRows: 6,
+    { name: EXECUTIVE_EXPORT_SHEETS[1], rows: source, widths: input.columns.map((_, i) => i === 0 ? 38 : i === 1 || i === 34 ? 32 : 24), freezeRows: 6, autoHeightRows: [3, 4, 5],
       filter: `A6:${columnName(input.columns.length)}${Math.max(6, source.length)}` },
   ]);
 }

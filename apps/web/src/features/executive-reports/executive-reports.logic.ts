@@ -1,5 +1,5 @@
 import {
-  EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, EXECUTIVE_SORT_OPTIONS, type ExecutiveContext, type ExecutiveCount, type ExecutiveMoney,
+  EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, EXECUTIVE_SORT_OPTIONS, executiveMoneyQualifier, type ExecutiveContext, type ExecutiveCount, type ExecutiveMoney,
   type ExecutiveRatio, type ExecutiveSourceCoverage, type ExecutiveOwnerContact, type ExecutiveDrilldownFilters, type ExecutiveRankingMetric, type ExecutiveEnvelope,
 } from '@watchdog-bms/contracts';
 import { deserializeListQuery } from '../../common/functions/list-query';
@@ -119,7 +119,7 @@ export function swappedParams(params: URLSearchParams): URLSearchParams {
 }
 export const money = (satang: number) => `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
 export const countText = (figure: ExecutiveCount) => figure.value !== null ? figure.value.toLocaleString('th-TH') : figure.knownValue !== undefined ? `${W.atLeast} ${figure.knownValue.toLocaleString('th-TH')}` : '—';
-export const moneyText = (figure: ExecutiveMoney, measured = false) => figure.value !== null ? money(figure.value) : figure.knownValue !== undefined ? `${money(figure.knownValue)} (${measured ? W.partialMeasuredMoney : W.partialMoney})` : '—';
+export const moneyText = (figure: ExecutiveMoney, measured = false) => figure.value !== null ? money(figure.value) : figure.knownValue !== undefined ? `${money(figure.knownValue)} (${executiveMoneyQualifier(figure, measured)})` : '—';
 export const ratioText = (figure: ExecutiveRatio | null | undefined, unit = '%') => figure?.value === null || figure?.value === undefined ? '—' : `${figure.value.toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${unit}`;
 export const reportMonth = formatThaiMonth, reportDate = formatThaiDate, reportDateTime = formatThaiDateTime;
 export function sourceCount(value: number, source: ExecutiveSourceCoverage): ExecutiveCount {

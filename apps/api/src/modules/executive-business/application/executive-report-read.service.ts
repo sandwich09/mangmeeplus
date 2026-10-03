@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { HttpException, Injectable } from '@nestjs/common';
 import {
   DBD_TSIC_ACTIVITIES, EXECUTIVE_FLAG_LABELS, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_PAID_EVER_REASONS, EXECUTIVE_PURCHASE_GROUPS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
-  billingPlanLabel, EXECUTIVE_EXPORT_REPORT_KEYS, EXECUTIVE_WORDS as W, EXECUTIVE_REFERRER_ADMIN_SUFFIX, executiveThaiLabel, executiveComparisonLabel, executiveExportColumns,
+  billingPlanLabel, EXECUTIVE_EXPORT_REPORT_KEYS, EXECUTIVE_WORDS as W, EXECUTIVE_REFERRER_ADMIN_SUFFIX, executiveThaiLabel, executiveComparisonLabel, executiveExportColumns, executiveMoneyQualifier,
   type ExecutiveExportBody,
   type ExecutiveAnalysis, type ExecutiveAnalysisQuery, type ExecutiveCompanies, type ExecutiveCompaniesQuery, type ExecutiveCompanyDetail,
   type ExecutiveCompanyHistory, type ExecutiveCompanyRow, type ExecutiveCompareSide, type ExecutiveContext, type ExecutiveDrilldownFilters,
@@ -385,6 +385,9 @@ export class ExecutiveReportReadService {
         const kpis: ExportFigure[] = [count(W.companyCount, list.length, set.populationCoverage, `COUNTA(${range(1)})`),
           count(W.active, list.filter(row => row.activeDays > 0).length, set.usage, `COUNTIF(${range(22)},">0")`),
           { label: W.net, value: set.money.coverage === 'unavailable' ? null : sum(list, netOf) / 100, formula: sumFormula(28, set.money), style: 3, status: set.money.coverage === 'partial' ? W.partialMoney : undefined }];
+        if (body.reportKey === 'companies') kpis[0] = { label: W.companyCount, value: list.length, formula: `COUNTA(${range(1)})`, status: W.found(list.length) };
+        if (detail) kpis.splice(0, 3, kpis[2]!, count(W.receiptCount, sum(list, expenseReceiptsOf), set.usage, sumFormula(21, set.usage)),
+          count(W.days, sum(list, row => row.activeDays), set.usage, sumFormula(22, set.usage)));
         const adoption = this.adoptionOf(set, list);
         let panels: ExportPanel[] = [{ title: W.adoptionTitle, kind: 'doughnut', labels: adoption.segments.map(segment => L.receiptAdoption[segment.key]!), values: adoption.segments.map(segment => segment.count),
           formulas: adoption.segments.map(segment => `COUNTIF(${range(19)},"${L.receiptAdoption[segment.key]}")`) },
@@ -402,10 +405,10 @@ export class ExecutiveReportReadService {
         }
         if (body.reportKey === 'revenue' && body.subview === 'summary') {
           const revenue = this.revenueOf(set, extra.trend, extra.addOnSold);
-          panels[0] = { title: W.purchase, kind: 'bar', labels: revenue.byPurchaseGroup.map(group => group.label), values: revenue.byPurchaseGroup.map(group => figureValue(group.netReceiptsSatang, 100)), style: 3 };
-          panels[1] = { title: W.trend, kind: 'bar', labels: revenue.trend.map(point => exportMonth(point.month)), values: revenue.trend.map(point => figureValue(point.netReceiptsSatang, 100)), style: 3 };
+          panels[0] = { title: W.purchase, kind: 'bar', labels: revenue.byPurchaseGroup.map(group => group.label), values: revenue.byPurchaseGroup.map(group => figureValue(group.netReceiptsSatang, 100)), statuses: revenue.byPurchaseGroup.map(group => executiveMoneyQualifier(group.netReceiptsSatang)), style: 3 };
+          panels[1] = { title: W.trend, kind: 'bar', labels: revenue.trend.map(point => exportMonth(point.month)), values: revenue.trend.map(point => figureValue(point.netReceiptsSatang, 100)), statuses: revenue.trend.map(point => executiveMoneyQualifier(point.netReceiptsSatang)), style: 3 };
           tables.push({ title: W.purchase, headers: [W.purchase, W.receipts, W.refunds, W.net, W.fees, W.tax, W.export.notes], rows: revenue.byPurchaseGroup.map(group => [group.label,
-            ...[group.receiptsSatang, group.refundsSatang, group.netReceiptsSatang, group.feesSatang, group.taxSatang].map(figure => ({ value: figureValue(figure, 100), style: 3 })), group.netReceiptsSatang.coverage === 'complete' ? '' : group.netReceiptsSatang.reasonCodes.includes('ADDON_NOT_ON_SALE') ? W.addOnNotSold : group.netReceiptsSatang.coverage === 'unavailable' ? W.export.moneyMissing : W.partialMoney]) });
+            ...[group.receiptsSatang, group.refundsSatang, group.netReceiptsSatang, group.feesSatang, group.taxSatang].map(figure => ({ value: figureValue(figure, 100), style: 3 })), executiveMoneyQualifier(group.netReceiptsSatang)]) });
           tables.push({ title: W.unmatched, headers: [W.receipts, W.refunds], rows: [[{ value: envelope.unmatchedMoney.receiptsSatang / 100, style: 3 }, { value: envelope.unmatchedMoney.refundsSatang / 100, style: 3 }]] });
           kpis[0] = { label: W.receipts, value: figureValue(revenue.receiptsSatang, 100), formula: sumFormula(26, set.money), style: 3, status: set.money.coverage === 'partial' ? W.partialMoney : undefined };
           kpis[1] = { label: W.refunds, value: figureValue(revenue.refundsSatang, 100), formula: sumFormula(27, set.money), style: 3, status: set.money.coverage === 'partial' ? W.partialMoney : undefined };

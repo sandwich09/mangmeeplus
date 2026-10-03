@@ -759,9 +759,9 @@ function workbookParts(file: Buffer): Map<string, string> {
   return parts;
 }
 const cellXml = (sheet: string, ref: string) => sheet.match(new RegExp(`<c r="${ref}"[^>]*>([\\s\\S]*?)</c>`))?.[0] ?? '';
-const fixtureWorkbook = async (count = 3) => {
+const fixtureWorkbook = async (count = 3, metadata = ['ข้อมูลสมมติ']) => {
   const { buildExecutiveWorkbook } = await import('./domain/executive-export.logic');
-  return buildExecutiveWorkbook({ title: 'รายงานสมมติ', month: '2026-09', metadata: ['ข้อมูลสมมติ'],
+  return buildExecutiveWorkbook({ title: 'รายงานสมมติ', month: '2026-09', metadata,
     columns: ['บริษัท', 'ยอดรับสุทธิในเดือน'], rows: Array.from({ length: count }, (_, i) => [`ร้านสมมติ ${i + 1}`, i === 0 ? -12.34 : 25]),
     kpis: [{ label: 'บริษัทลูกค้า', value: count, formula: count ? `COUNTA('รายบริษัท'!A7:A${6 + count})` : '0' }],
     panels: Array.from({ length: 4 }, (_, i) => ({ title: `กลุ่มสมมติ ${i + 1}`, kind: i ? 'bar' as const : 'doughnut' as const,
@@ -785,7 +785,7 @@ describe('executive workbook without a calculating reader', () => {
     }
     assert.doesNotMatch([...parts.values()].join(''), /A78|NOW\(|TODAY\(|externalLink/);
   });
-  it('keeps formula-like text explicit, numbers numeric, unknown blank and Bangkok Buddhist dates numeric', () => {
+  it('keeps formula-like text explicit, numbers numeric, unknown blank and Bangkok Buddhist dates readable without number formats', () => {
     const build = (xlsxWriter as any).buildWorkbook;
     const date = (xlsxWriter as any).xlsxThaiDate;
     assert.equal(typeof build, 'function'); assert.equal(typeof date, 'function');
@@ -795,9 +795,23 @@ describe('executive workbook without a calculating reader', () => {
     inputs.forEach((_, i) => assert.match(cellXml(sheet, `${String.fromCharCode(65 + i)}1`), /t="inlineStr"/));
     assert.doesNotMatch(sheet, /<f>|\u0001/); assert.match(sheet, /> x</); assert.match(sheet, /=\*\?~&gt;/);
     assert.match(cellXml(sheet, 'A2'), /<v>0<\/v>/); assert.doesNotMatch(cellXml(sheet, 'B2'), /inlineStr/);
-    assert.equal(cellXml(sheet, 'C2'), ''); assert.match(cellXml(sheet, 'D2'), /<v>\d/);
-    assert.match(parts.get('xl/styles.xml')!, /\[\$-107041E\]/);
-    assert.equal(date('2026-09-30T18:30:00Z', true).value, (Date.parse('2026-10-01T01:30:00Z') - Date.UTC(1899, 11, 30)) / 86400000);
+    assert.equal(cellXml(sheet, 'C2'), ''); assert.match(cellXml(sheet, 'D2'), /t="inlineStr"[\s\S]*1 ต.ค. 2569 01:30 น./);
+    assert.equal(date('2026-09-30T18:30:00Z'), '1 ต.ค. 2569');
+    assert.equal(date(new Date('2026-09-30T18:30:00Z'), true), '1 ต.ค. 2569 01:30 น.');
+    assert.equal(date(null), null); assert.throws(() => date('invalid'), /XLSX_INVALID_DATE/);
+  });
+  it('prints only the dashboard on one landscape page, keeps its month row compact and lets source descriptions wrap', async () => {
+    const description = 'คำอธิบายสมมติที่ยาวและต้องอ่านได้ครบ '.repeat(30);
+    const parts = workbookParts(await fixtureWorkbook(3, ['ข้อมูลถึงเวลาสมมติ', 'ตัวกรองสมมติ', description])), dashboard = parts.get('xl/worksheets/sheet1.xml')!, source = parts.get('xl/worksheets/sheet2.xml')!;
+    assert.match(parts.get('xl/workbook.xml')!, /name="_xlnm.Print_Area" localSheetId="0">'ภาพรวม'!A1:X46/);
+    assert.match(dashboard, /<sheetPr><pageSetUpPr fitToPage="1"\/><\/sheetPr>/);
+    assert.match(dashboard, /<pageSetup[^>]*orientation="landscape"[^>]*fitToWidth="1"[^>]*fitToHeight="1"/);
+    assert.match(dashboard, /<row r="4" ht="24" customHeight="1">/);
+    for (const row of [3, 4, 5]) assert.match(source, new RegExp(`<row r="${row}">`));
+    assert.ok(cellXml(source, 'A5').includes(description));
+    assert.match(source, /<row r="6" ht="72" customHeight="1">/);
+    assert.match(parts.get('xl/styles.xml')!, /wrapText="1"/);
+    assert.doesNotMatch(source, /pageSetup|mergeCells/);
   });
   it('handles zero and non-template row counts and rejects invalid sheets, finite numbers and sizes', async () => {
     for (const n of [0, 1, 73]) {
@@ -877,6 +891,81 @@ function exportSourceFixture(n = 15) {
   return { report, ctx, body, audits, tx, build, rows, companies, profiles, stats: () => ({ transactions, contacts }), revoke: () => { permissions = []; } };
 }
 describe('API13 snapshot to workbook agreement', () => {
+  it('writes every source date as Thai text, including Bangkok day rollover and blank missing dates', async () => {
+    const f = exportSourceFixture(1), at = new Date('2026-09-30T18:30:00Z');
+    Object.assign(f.profiles[0]!, { companyCreatedAt: at, salesCreditPaidAt: at, firstActivityAt: at, lastActivityAt: at, lastWebEntryAt: at, lastLineActivityAt: at });
+    const source = workbookParts((await f.report.export(f.ctx, f.body)).file).get('xl/worksheets/sheet2.xml')!;
+    for (const ref of ['F7', 'P7', 'AE7']) assert.match(cellXml(source, ref), /t="inlineStr"[\s\S]*1 ต.ค. 2569/);
+    for (const ref of ['AF7', 'AG7', 'AH7']) assert.match(cellXml(source, ref), /t="inlineStr"[\s\S]*1 ต.ค. 2569 01:30 น./);
+    f.profiles[0]!.lastLineActivityAt = null;
+    assert.equal(cellXml(workbookParts((await f.report.export(f.ctx, f.body)).file).get('xl/worksheets/sheet2.xml')!, 'AH7'), '');
+  });
+  it('gives money KPI values the same card font and fill as count cards while retaining numeric money formatting', async () => {
+    const f = exportSourceFixture();
+    for (const body of [f.body, { ...f.body, reportKey: 'companies' }, { ...f.body, reportKey: 'detail', targetCompanyId: 'fiction-0' },
+      { ...f.body, reportKey: 'usage', subview: 'adoption' }, { ...f.body, reportKey: 'customers', subview: 'industry' },
+      { ...f.body, reportKey: 'compare', comparison: { dimension: 'company', sideA: 'fiction-0', sideB: 'fiction-1' } },
+      { ...f.body, reportKey: 'revenue', subview: 'top' }, { ...f.body, reportKey: 'revenue', subview: 'summary' }] as const) {
+      const parts = workbookParts((await f.report.export(f.ctx, body)).file), sheet = parts.get('xl/worksheets/sheet1.xml')!;
+      const styles = [...parts.get('xl/styles.xml')!.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)![1]!.matchAll(/<xf\b[\s\S]*?<\/xf>/g)].map(match => match[0]);
+      for (const ref of ['B7', 'J7', 'R7']) {
+        const cell = cellXml(sheet, ref), style = styles[Number(cell.match(/ s="(\d+)"/)![1])]!;
+        assert.match(style, /fontId="2"/); assert.match(style, /fillId="3"/);
+        const moneyCard = body.reportKey === 'detail' ? ref === 'B7' : body.reportKey === 'revenue' && 'subview' in body && body.subview === 'summary' || ref === 'R7';
+        assert.match(style, moneyCard ? /numFmtId="164"/ : /numFmtId="0"/); assert.doesNotMatch(cell, /t="inlineStr"/);
+      }
+      assert.match(cellXml(parts.get('xl/worksheets/sheet2.xml')!, 'AB7'), / s="3"/);
+    }
+  });
+  it('qualifies each revenue chart-data row from its own coverage and add-on sale state', async () => {
+    const f = exportSourceFixture(); f.build.billingSince = new Date('2026-08-15T00:00:00Z');
+    const headers = ['2026-08', '2026-09'].map(month => ({ month, asOf: f.build.asOf, billingCoveredThrough: month === '2026-08' ? new Date('2026-08-15T00:00:00Z') : f.build.asOf, untiedCount: 0 }));
+    f.tx.executiveReportMonth.findMany = async () => headers;
+    const notes = (sheet: string, label: string) => {
+      const row = [...sheet.matchAll(/<row r="(\d+)"[^>]*>[\s\S]*?<\/row>/g)].find(match => cellXml(match[0], `B${match[1]}`).includes(`>${label}</t>`));
+      assert.ok(row, label); return cellXml(row[0], `H${row[1]}`);
+    };
+    for (const partial of [false, true]) {
+      f.build.billingDataThrough = new Date(partial ? '2026-09-15T00:00:00Z' : '2026-10-03T02:30:00Z');
+      f.tx.executiveReportMonth.findUnique = async () => ({ revision: 1, asOf: f.build.asOf, billingCoveredThrough: f.build.billingDataThrough, untiedCount: 0, untiedReceiptsSatang: 0, untiedRefundsSatang: 0, untiedOtherSatang: 0, beforeFirstBuild: false });
+      const data = await f.report.analysis(f.ctx, { month: f.body.month, section: 'revenue', view: 'summary' });
+      const sheet = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'revenue', subview: 'summary' })).file).get('xl/worksheets/sheet1.xml')!;
+      for (const group of data.revenue!.byPurchaseGroup) {
+        assert.match(notes(sheet, group.label), new RegExp(group.key === 'ADD_ON' ? 'ยังไม่เปิดขาย' : partial ? 'ยอดเฉพาะรายการที่ยืนยันแล้ว' : '^<c[^>]*><is><t[^>]*></t></is></c>$'));
+      }
+      assert.match(notes(sheet, 'ส.ค. 2569'), /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
+      assert.match(notes(sheet, 'ก.ค. 2569'), /ยังไม่มีตัวเลข/);
+      assert.doesNotMatch(notes(sheet, 'ก.ย. 2569'), /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
+    }
+    f.tx.$queryRaw = async (parts: TemplateStringsArray) => [{ [parts.join('').includes('pg_try_advisory_xact_lock') ? 'locked' : 'sold']: true }];
+    const sold = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'revenue', subview: 'summary' })).file).get('xl/worksheets/sheet1.xml')!;
+    assert.doesNotMatch(notes(sold, 'ส่วนเสริม'), /ยังไม่เปิดขาย/);
+    f.build.billingDataThrough = f.build.asOf;
+    f.rows[0]!.moneyByPurchaseKind = { UNKNOWN: { receiptsSatang: 100, refundsSatang: 0, feesSatang: 0, taxSatang: 0 } };
+    const unclassified = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'revenue', subview: 'summary' })).file).get('xl/worksheets/sheet1.xml')!;
+    assert.match(notes(unclassified, 'ซื้อครั้งแรก'), /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
+  });
+  it('uses the exact filtered list count instead of the population lower bound', async () => {
+    const f = exportSourceFixture(); f.build.unclassifiedCount = 1;
+    f.tx.executiveReportMonth.findUnique = async () => ({ revision: 1, asOf: f.build.asOf, billingCoveredThrough: f.build.asOf, beforeFirstBuild: true, untiedCount: 0 });
+    const list = await f.report.companies(f.ctx, { month: f.body.month, paidEver: 'YES' });
+    const sheet = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'companies', filters: { paidEver: 'YES' } })).file).get('xl/worksheets/sheet1.xml')!;
+    assert.match(cellXml(sheet, 'B7'), new RegExp(`<v>${list.pagination.total}</v>`));
+    assert.match(cellXml(sheet, 'B11'), new RegExp(`พบ ${list.pagination.total} บริษัท`));
+    assert.doesNotMatch(cellXml(sheet, 'B11'), /อย่างน้อย/);
+  });
+  it('uses the detail screen metrics instead of a one-company population card', async () => {
+    const f = exportSourceFixture(); f.build.unclassifiedCount = 1;
+    f.tx.company.findUnique = async () => f.companies[1];
+    f.tx.executiveCompanyMonth.aggregate = async () => ({ _sum: { salesCreditSatang: 0 } });
+    f.tx.executiveReportBuild.aggregate = async () => ({ _min: { asOf: f.build.asOf } });
+    const detail = await f.report.company(f.ctx, 'fiction-1', { month: f.body.month });
+    const single = workbookParts((await f.report.export(f.ctx, { ...f.body, reportKey: 'detail', targetCompanyId: 'fiction-1' })).file).get('xl/worksheets/sheet1.xml')!;
+    assert.match(cellXml(single, 'B10'), /ยอดรับสุทธิในเดือน/);
+    assert.match(cellXml(single, 'J10'), /ใบเสร็จในเดือน/); assert.match(cellXml(single, 'J7'), new RegExp(`<v>${detail.month!.usage.expenseReceiptCountInPeriod}</v>`));
+    assert.match(cellXml(single, 'R10'), /วันใช้งาน/); assert.match(cellXml(single, 'R7'), new RegExp(`<v>${detail.month!.usage.activeDays}</v>`));
+    assert.doesNotMatch(cellXml(single, 'B10'), /บริษัทลูกค้า/);
+  });
   it('matches overview and all filtered list rows, preserves negatives, ties, unknowns and no personal audit data', async () => {
     const f = exportSourceFixture(), overview = await f.report.overview(f.ctx, { month: f.body.month });
     const output = await f.report.export(f.ctx, f.body), parts = workbookParts(output.file), sheet = parts.get('xl/worksheets/sheet1.xml')!;

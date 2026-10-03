@@ -1,4 +1,4 @@
-import { EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS } from './executive-business.js';
+import { EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, type ExecutiveSourceCoverage } from './executive-business.js';
 
 const COMPANY_CUSTOMERS = 'บริษัทลูกค้า';
 const WEIGHT = 'ยอดที่ใช้คำนวณสัดส่วน';
@@ -80,6 +80,12 @@ export const EXECUTIVE_WORDS = {
   spendTie: (n: number, amount: string) => `มีอีก ${n.toLocaleString('th-TH')} บริษัทที่จ่ายเท่ากับลำดับสุดท้ายของกลุ่ม (${amount}) แต่อยู่นอกกลุ่ม`,
   spendTitle: (month: string) => `รายรับในเดือน ${month} มาจากลูกค้ากลุ่มใด`,
 };
+/** Screen figures and workbook chart rows choose qualifiers from the same source facts. */
+export function executiveMoneyQualifier(source: ExecutiveSourceCoverage, measured = false): string {
+  if (source.reasonCodes.includes('ADDON_NOT_ON_SALE')) return EXECUTIVE_WORDS.addOnNotSold;
+  if (source.coverage === 'partial') return measured ? EXECUTIVE_WORDS.partialMeasuredMoney : EXECUTIVE_WORDS.partialMoney;
+  return source.coverage === 'unavailable' ? EXECUTIVE_WORDS.unavailableFigure : '';
+}
 // Contract labels contain familiar product names; the lane requires Thai-only control text.
 const THAI_NAMES: Record<string, string> = { Website: 'เว็บไซต์', IG: 'อินสตาแกรม', TikTok: 'ติ๊กต็อก', Facebook: 'เฟซบุ๊ก', LINE: EXECUTIVE_WORDS.line, AI: 'ปัญญาประดิษฐ์' };
 export const executiveThaiLabel = (label: string, code?: string) => {

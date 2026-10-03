@@ -28,7 +28,7 @@ const CODE_LABELS: Record<string, string> = {
   BILLING_SCAN_NOT_COMPLETE: 'ยอดเงินของเดือนนี้ยังอ่านไม่ครบ',
   UNMATCHED_MONEY: 'มีเงินที่ยังไม่ผูกบริษัท ยอดนี้ยังไม่อยู่ในยอดของบริษัทใด',
   PURCHASE_KIND_UNKNOWN: 'มีรายการเงินที่ยังไม่จัดประเภทการซื้อ',
-  ADDON_NOT_ON_SALE: 'ยังไม่เปิดขาย',
+  ADDON_NOT_ON_SALE: W.addOnNotSold,
   CLASSIFICATION_INCOMPLETE: 'ยังไม่ได้จัดประเภทบริษัทครบ',
   INDUSTRY_NOT_PROVIDED: EXECUTIVE_UNKNOWN_LABEL,
   HISTORY_BEFORE_COLLECTION: W.historyBeforeCollection,
