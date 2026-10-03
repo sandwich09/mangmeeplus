@@ -73,6 +73,7 @@ export const RANK_LABELS = { expenseReceiptCount: { label: W.receiptCount, unit:
 const THAI_NAMES: Record<string, string> = { Website: 'เว็บไซต์', IG: 'อินสตาแกรม', TikTok: 'ติ๊กต็อก', Facebook: 'เฟซบุ๊ก', LINE: W.line, AI: 'ปัญญาประดิษฐ์' };
 export const thaiLabel = (label: string, code?: string) => {
   const suffix = code ? ` · ${code}` : '';
-  const name = code && label === code ? W.unknown : suffix && label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+  // A label that is only its code is a seller with no name left; a known product word ("IG" is both) stays a name.
+  const name = code && label === code && !Object.hasOwn(THAI_NAMES, label) ? W.unknown : suffix && label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
   return name.replace(/\s+UAT\b/g, '').replace(/(ทาง|ผ่าน) (?=LINE\b)/g, '$1').replace(/ค่า (?=AI\b)/g, 'ค่า').replace(/\b(Website|IG|TikTok|Facebook|LINE|AI)\b/g, word => THAI_NAMES[word]!);
 };

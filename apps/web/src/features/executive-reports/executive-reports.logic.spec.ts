@@ -161,6 +161,8 @@ test('screen labels translate product words and omit returned seller codes and e
   assert.equal(thaiLabel('Facebook / IG / TikTok / Website'), 'เฟซบุ๊ก / อินสตาแกรม / ติ๊กต็อก / เว็บไซต์');
   assert.equal(thaiLabel('คุณฟ้า · S003', 'S003'), 'คุณฟ้า');
   assert.equal(thaiLabel('S003', 'S003'), 'ไม่ระบุ');
+  // A channel whose word is its own value (Instagram: label and value are both "IG") is a known name, not a missing one.
+  assert.equal(thaiLabel('IG', 'IG'), 'อินสตาแกรม');
   assert.equal(thaiLabel('ระบบทดสอบ UAT'), 'ระบบทดสอบ');
   assert.equal(thaiLabel('ตั้งค่า LINE'), 'ตั้งค่า ไลน์');
   assert.equal(thaiLabel('เพดานความปลอดภัยค่า AI'), 'เพดานความปลอดภัยค่าปัญญาประดิษฐ์');
