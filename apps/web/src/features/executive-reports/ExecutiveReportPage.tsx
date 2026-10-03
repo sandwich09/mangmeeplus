@@ -128,7 +128,8 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     next.set('month', normalizedMonth(next, context));
     for (const key of GLOBAL_FILTERS) next.set(FILTER_URL[key], filterValue(key, next, context));
     next.delete('q'); next.delete('search'); next.delete('buildId'); next.delete('export');
-    if (next.toString() !== paramsString) window.history.replaceState(ownHistoryState(window.history.state), '', `${pathname}?${next}`);
+    // URL only (Next's own state keeps the router where it is): every read normalises the same way, so a router update would read twice.
+    if (next.toString() !== paramsString) window.history.replaceState(window.history.state, '', `${pathname}?${next}`);
   }, [context, paramsString, pathname]);
 
   useEffect(() => {
@@ -150,7 +151,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
         const pagination = companyHistory?.pagination ?? ('pagination' in result.data ? result.data.pagination : null);
         if (pagination && pageNumber(new URLSearchParams(paramsString).get('page')) !== pagination.page) {
           const next = new URLSearchParams(window.location.search); next.set('page', String(pagination.page));
-          window.history.replaceState(ownHistoryState(window.history.state), '', `${pathname}?${next}`);
+          window.history.replaceState(window.history.state, '', `${pathname}?${next}`); // URL only, as above
         }
       }).catch(error => {
         if (controller.signal.aborted) return;
