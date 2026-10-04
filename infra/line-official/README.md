@@ -21,8 +21,12 @@ esbuild bundles the shared helpers, card JSON and images; Lambda supplies SDK v3
 
 Read the current cloud/deployment runbooks before operations. Use a non-root
 platform/deployment session for account 311414082667, region ap-southeast-1.
-Existing watchdog-bedrock-dev denied CreateSecret and ValidateTemplate; do
-not fall back to root or broaden ERP roles. Check both dedicated names before deployment; channel-secret is verified absent.
+Existing watchdog-bedrock-dev denied CreateSecret and ValidateTemplate. For this
+2026-10-04 publication only, the owner explicitly selected profile thawatchai
+(account root) after the non-root platform-session request. Use that scoped owner
+override solely for the new OA stack; do not broaden ERP roles. Acceptance signing
+still uses the existing non-root Production KMS authority. Check both dedicated
+names before deployment; channel-secret was previously verified absent.
 If either already exists, reconcile its owner/version instead of overwriting it.
 The stack declares only these names:
 
@@ -37,7 +41,7 @@ owner-approved credential file, never argv, Git, logs, Outputs or chat.
 
 Publication boundaries:
 
-1. Verify non-root account identity, clean reviewed manifest and zero active operation.
+1. Verify the owner-approved account identity, clean reviewed manifest and zero active operation.
    Run provider ValidateTemplate; create one scoped CREATE change set with
    PromoteLive=false and CAPABILITY_NAMED_IAM. Retain its ID and exact resource diff.
    Execute that change set once and monitor it to terminal.

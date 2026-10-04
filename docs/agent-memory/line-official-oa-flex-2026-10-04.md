@@ -1,6 +1,6 @@
 # Agent Memory: Official OA Flex replies — 2026-10-04
 
-Status: Isolated OA-only publication implemented and locally verified; waiting for authorized non-root platform session. PR #999 admin-merged to main at owner instruction; exact source c4e6a7a815ee9b797ef34d39a6beb43b6f62e65e, merge 6865e27ec9099a0dfadb43f77855ba24b44e3d85. Local checks and LINE schema pass. Remote CI cannot start because GitHub reports account payment/spending-limit failure. Deployment blocked pending CI; native replies remain live and no Flex/customer messages sent.
+Status: Isolated OA-only publication implemented and locally verified; owner-approved scoped provisioning is in progress. PR #999 admin-merged to main at owner instruction; exact source c4e6a7a815ee9b797ef34d39a6beb43b6f62e65e, merge 6865e27ec9099a0dfadb43f77855ba24b44e3d85. Local checks and LINE schema pass. Remote CI cannot start because GitHub reports account payment/spending-limit failure. Owner replaced remote CI with local checks for the isolated OA publication; native replies remain live and no Flex/customer messages sent.
 Owner: Codex + product owner
 Scope: Public marketing replies for MangmeePlus Official @107ewccg only; Contact and Social cards each have three compact actions. Owner explicitly authorized API/reply implementation after the earlier Manager-only scope.
 
@@ -62,3 +62,9 @@ Owner scope reply: isolate only the OA cards. Independent Function URL publicati
 - Release-pin check PASS/current48; git diff --check PASS. No repeat full ERP typecheck/security suite because isolated source does not touch ERP/controller/build inputs already checked in PR999.
 - Non-root CreateSecret denied after private-file CLI parsing; no Secrets Manager write succeeded. Channel-secret absence is verified; access-token absence has not been independently checked. Do not assume or overwrite an existing dedicated resource before deployment. No CF change set, function, role, staging/live endpoint, ERP deployment, native-reply change or customer message created/sent.
 - Missing authority request: owner to open a non-root platform-admin session for account311414082667 and provide its CLI profile name. Requirement source is cloud-environment-operations.md non-root bootstrap guidance; no root attempt/IAM privilege escalation. Native replies remain live; endpoint remains unset.
+
+## Scoped owner profile override / prepared publication
+
+- Owner replied “ใช้ thawatchai” to the non-root platform-session question. Actual STS confirms account311414082667/root. This explicit choice supersedes the non-root default only for provisioning the new isolated OA stack; no ERP roles/resources/gates are changed. Existing non-root Production authority signs acceptance.
+- Provider ValidateTemplate PASS for the prepared inline template, with CAPABILITY_NAMED_IAM and only ChannelSecret/ChannelAccessToken/PromoteLive parameters. No stack/change-set write yet.
+- Draft PR https://github.com/MangmeeDev/mangmeeplus/pull/1000 attached to the task. Final clean candidate is rebuilt after this documentation update; retain exact hashes in the isolated release ledger.

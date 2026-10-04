@@ -22,6 +22,7 @@ Spec: `docs/specs/line-official-oa-flex-replies-spec-th.md`
 - [x] Existing non-root Production preflight passed; no ERP deployment. UAT is stopped and stays unchanged
 - [x] Dedicated secret creation denied to existing non-root writer; no credential was provisioned and no IAM escalation
 - [x] Build standalone Lambda artifact by reusing existing mapper/verifier/JSON/icons; local tests 5/5 and scoped template assertions PASS
-- [ ] Prepare narrow CloudFormation change set and obtain an authorized non-root platform/deployment session
+- [x] Provider ValidateTemplate passed; owner explicitly selected thawatchai for this new OA stack after the non-root session request. KMS signing remains non-root
+- [ ] Prepare and review the narrow CloudFormation change set
 - [ ] Publish staging immutable version, check actual provider/three icon paths, promote live to the same version
 - [ ] Verify and enable Official webhook; stop only native Social/Contact; retain signed ledger and owner phone result
