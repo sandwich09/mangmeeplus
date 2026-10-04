@@ -1,5 +1,7 @@
 'use client';
 
+import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
+
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
@@ -1271,10 +1273,10 @@ function WhtHandoffDetail({ companyId, handoff, canLink, permissions, onLinked, 
               picks one path. */}
           {canIssueSystemWhtCertificate(handoff, permissions) && (
             <div>
-              <h4 className="mb-2 text-sm font-semibold text-gray-900">พิมพ์เอกสารทวิ 50</h4>
+              <h4 className="mb-2 text-sm font-semibold text-gray-900">{workspaceDictionary.th['wht.print_certificate']}</h4>
               {issueError && <ErrorBanner message={issueError} />}
               <button type="button" className={btnClass} style={{ minHeight: 44, minWidth: 44 }} aria-busy={issuing} disabled={issuing} onClick={() => void doIssue()}>
-                {issuing ? 'กำลังพิมพ์เอกสาร...' : 'พิมพ์เอกสารทวิ 50'}
+                {issuing ? 'กำลังพิมพ์เอกสาร...' : workspaceDictionary.th['wht.print_certificate']}
               </button>
             </div>
           )}

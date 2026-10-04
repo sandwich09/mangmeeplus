@@ -1078,7 +1078,7 @@ const CODE_LABELS: Record<string, string> = {
   wht_handoff_link_command_reused: 'คำขอแนบหนังสือรับรองนี้ถูกใช้กับรายการอื่นแล้ว กรุณาโหลดงานใหม่',
   wht_handoff_not_linkable: 'สถานะของงานนี้ยังแนบหนังสือรับรองไม่ได้ กรุณาตรวจสถานะล่าสุด',
   wht_handoff_already_linked: 'หนังสือรับรองนี้ถูกแนบไว้แล้ว กรุณาตรวจเอกสารที่เชื่อมอยู่',
-  wht_handoff_not_issuable: 'สถานะของรายการนี้เปลี่ยนไปแล้ว ไม่สามารถพิมพ์เอกสารทวิ 50 ได้ในตอนนี้ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
+  wht_handoff_not_issuable: workspaceDictionary.th['wht.print_certificate_not_issuable'],
   wht_system_issuance_unavailable: 'ระบบยังไม่เปิดการออกหนังสือรับรองอัตโนมัติ',
   wht_handoff_form_type_unresolved: 'ไม่สามารถระบุแบบ ภ.ง.ด. ได้ กรุณาตรวจสอบประเภทผู้รับเงินก่อนออกเอกสาร',
   wht_handoff_income_category_missing: 'ไม่มีข้อมูลประเภทเงินได้/อัตราหัก ณ ที่จ่ายในรายการนี้ กรุณากรอกให้ครบก่อนออกเอกสาร',

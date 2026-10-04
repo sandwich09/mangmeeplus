@@ -41,7 +41,7 @@ import {
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS,
   insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange, changeExpenseVatSourceType,
   formatTaxId, taxIdDigits, reviewValues, incompleteSourceReviewLine,
-  expenseReviewWithholdsTax, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
+  expenseReviewWithholdsTax, changeExpenseReviewWhtInput, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseCaptureCapabilityDto, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput } from '@watchdog-bms/contracts';
@@ -1170,9 +1170,14 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   // seeded categories are DRAFT until an accountant activates them), so a fetch failure must not
   // block reviewing or confirming an ordinary expense.
   const [whtCategories, setWhtCategories] = useState<WhtIncomeCategoryOption[]>([]);
+  const [whtCategoriesState, setWhtCategoriesState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [withholdingEnabled, setWithholdingEnabled] = useState(() => expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount));
   useEffect(() => {
     let active = true;
-    void listExpenseWhtIncomeCategories(companyId).then((categories) => { if (active) setWhtCategories(categories); }).catch(() => { if (active) setWhtCategories([]); });
+    setWhtCategoriesState('loading');
+    void listExpenseWhtIncomeCategories(companyId).then((categories) => {
+      if (active) { setWhtCategories(categories); setWhtCategoriesState('ready'); }
+    }).catch(() => { if (active) { setWhtCategories([]); setWhtCategoriesState('error'); } });
     return () => { active = false; };
   }, [companyId]);
   useEffect(() => {
@@ -1288,7 +1293,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     : null;
 
   useEffect(() => {
-    setValues(reviewValues(detail)); setVatEditors({}); setVatSourceDirty(false); setTaxFactsDirty(false);
+    setValues(reviewValues(detail)); setWithholdingEnabled(expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount)); setVatEditors({}); setVatSourceDirty(false); setTaxFactsDirty(false);
     setVatOverrideReason(''); setVatOverrideLineNumber(null);
   }, [detail.id, detail.updatedAt]);
   useEffect(() => {
@@ -1836,43 +1841,6 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             )}
           </div>
         )}
-        {/* RA-18: the payee's taxpayer class decides ภ.ง.ด.3 vs ภ.ง.ด.53, so it is only asked for when
-            this document actually withholds tax, and confirmation blocks until it is picked — never
-            guessed. The blank choice disappears once a class is stored because the update contract has
-            no clear-to-null idiom for the vendor snapshot fields, so re-picking it would be a no-op. */}
-        {withholdsTax && (
-          <div className="sm:col-span-2">
-            <span className="mb-1 block text-xs font-medium text-gray-600">
-              <label htmlFor={`expense-payee-entity-kind-${detail.id}`}>{t('expenses.payee_entity_kind', locale)}</label>
-            </span>
-            <ThemedSelect id={`expense-payee-entity-kind-${detail.id}`} aria-label={t('expenses.payee_entity_kind', locale)} className={validationInputClass(payeeEntityKindIssue)} aria-invalid={payeeEntityKindIssue?.severity === 'error' || undefined} value={values.vendorEntityKindSnapshot ?? ''} onChange={(e) => setValues((v) => ({ ...v, vendorEntityKindSnapshot: e.target.value as BuyerEntityKind | '' }))} disabled={!isMutable || busy}>
-              {!detail.vendorEntityKindSnapshot && <option value="">{t('expenses.category_unspecified', locale)}</option>}
-              {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-            </ThemedSelect>
-            <FieldIssueNote canEdit={isMutable} issue={payeeEntityKindIssue} />
-          </div>
-        )}
-        {/* WHT certificate system issuance plan §1.2 (S2/S3): the income category a 50 ทวิ
-            certificate needs to print, same "only asked for when withholding tax" gate as the payee
-            taxpayer class above. Picking a category fills whtRate from its defaultRate — mirroring
-            the AP settlement form's suggestion behaviour — but the rate is not independently
-            editable here, unlike AP: this is a classification field, not a new payment entry. */}
-        {withholdsTax && (
-          <div className="sm:col-span-2">
-            <span className="mb-1 block text-xs font-medium text-gray-600">
-              <label htmlFor={`expense-wht-category-${detail.id}`}>{t('expenses.wht_income_category', locale)}</label>
-            </span>
-            <ThemedSelect id={`expense-wht-category-${detail.id}`} aria-label={t('expenses.wht_income_category', locale)} className={validationInputClass(whtCategoryIssue)} aria-invalid={whtCategoryIssue?.severity === 'error' || undefined} value={values.whtCategoryCode ?? ''} onChange={(e) => {
-              const code = e.target.value;
-              const picked = whtCategories.find((item) => item.code === code);
-              setValues((v) => ({ ...v, whtCategoryCode: code, whtRate: picked ? String(Number(picked.defaultRate)) : '' }));
-            }} disabled={!isMutable || busy}>
-              {!detail.whtCategoryCode && <option value="">{t('expenses.category_unspecified', locale)}</option>}
-              {whtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
-            </ThemedSelect>
-            <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
-          </div>
-        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
@@ -2128,62 +2096,115 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         );
       })}
 
-      {values.lines.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-          <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
-            <span>{t('expenses.document_wht_rate', locale)}</span>
-            <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_wht_rate', locale)} />
-          </span>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_input_unit', locale)}</span>
-              <ThemedSelect
-                className={validationInputClass(whtUnitIssue)}
-                aria-invalid={whtUnitIssue?.severity === 'error' || undefined}
-                value={whtInput.inputType}
-              onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: event.target.value as ExpenseWhtInput['inputType'], value: '' } })); }}
-                disabled={!isMutable || busy}
-              >
-                <option value="RATE">{t('expenses.wht_unit_percent', locale)}</option>
-                <option value="AMOUNT">{t('expenses.wht_unit_baht', locale)}</option>
+      <fieldset data-testid="expense-withholding" className="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-3">
+        <legend className="px-1 text-sm font-semibold text-gray-800">{t('expenses.wht_choice', locale)}</legend>
+        <ThemedSelect aria-label={t('expenses.wht_choice', locale)} value={withholdingEnabled ? 'YES' : 'NO'}
+          onChange={(event) => {
+            const enabled = event.target.value === 'YES';
+            setWithholdingEnabled(enabled); setTaxFactsDirty(true); setError(null);
+            if (!enabled) setValues((current) => changeExpenseReviewWhtInput(current, { inputType: 'RATE', value: '' }));
+          }} disabled={!isMutable || busy}>
+          <option value="NO">{t('expenses.wht_no', locale)}</option>
+          <option value="YES">{t('expenses.wht_yes', locale)}</option>
+        </ThemedSelect>
+        {withholdingEnabled && (
+          <div className="mt-3 grid grid-cols-1 gap-3">
+            <div>
+              <span className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor={`expense-payee-entity-kind-${detail.id}`}>{t('expenses.payee_entity_kind', locale)}</label>
+              </span>
+              <ThemedSelect id={`expense-payee-entity-kind-${detail.id}`} aria-label={t('expenses.payee_entity_kind', locale)} className={validationInputClass(payeeEntityKindIssue)} aria-invalid={payeeEntityKindIssue?.severity === 'error' || undefined} value={values.vendorEntityKindSnapshot ?? ''} onChange={(e) => setValues((v) => ({ ...v, vendorEntityKindSnapshot: e.target.value as BuyerEntityKind | '' }))} disabled={!isMutable || busy}>
+                {!detail.vendorEntityKindSnapshot && <option value="">{t('expenses.category_unspecified', locale)}</option>}
+                {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
               </ThemedSelect>
-              <FieldIssueNote canEdit={isMutable} issue={whtUnitIssue} />
-            </label>
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
-              <input
-                id={`expense-wht-rate-${detail.id}`}
-                type="number"
-                inputMode="decimal"
-                min="0"
-                max={whtInput.inputType === 'RATE' ? '100' : undefined}
-                step="0.01"
-                className={validationInputClass(whtValueIssue)}
-                aria-invalid={whtValueIssue?.severity === 'error' || undefined}
-                value={whtInput.value}
-                onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: whtInput.inputType, value: event.target.value } })); }}
-                disabled={!isMutable || busy}
-              />
-              <FieldIssueNote canEdit={isMutable} issue={whtValueIssue} />
-            </label>
+              <FieldIssueNote canEdit={isMutable} issue={payeeEntityKindIssue} />
+            </div>
+            <div>
+              <span className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor={`expense-wht-category-${detail.id}`}>{t('expenses.wht_income_category', locale)}</label>
+              </span>
+              <ThemedSelect id={`expense-wht-category-${detail.id}`} aria-label={t('expenses.wht_income_category', locale)} className={validationInputClass(whtCategoryIssue)} aria-invalid={whtCategoryIssue?.severity === 'error' || undefined} value={values.whtCategoryCode ?? ''} onChange={(e) => {
+                const code = e.target.value;
+                const picked = whtCategories.find((item) => item.code === code);
+                if (!picked) return;
+                const rate = String(Number(picked.defaultRate));
+                setTaxFactsDirty(true);
+                setValues((v) => ({ ...v, whtCategoryCode: code, whtRate: rate,
+                  whtInput: { inputType: 'RATE', value: rate, ...(v.whtInput?.baseAmount !== undefined && { baseAmount: v.whtInput.baseAmount }) } }));
+              }} disabled={!isMutable || busy}>
+                {!values.whtCategoryCode && <option value="">{t('expenses.category_unspecified', locale)}</option>}
+                {values.whtCategoryCode && !whtCategories.some((item) => item.code === values.whtCategoryCode) && <option value={values.whtCategoryCode}>{t('expenses.wht_category_recorded', locale)}</option>}
+                {whtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
+              </ThemedSelect>
+              <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
+            </div>
+            {whtCategoriesState === 'loading' && <p className="text-sm text-gray-600">{t('expenses.wht_categories_loading', locale)}</p>}
+            {whtCategoriesState === 'error' && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_failed', locale)}</p>}
+            {whtCategoriesState === 'ready' && whtCategories.length === 0 && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_empty', locale)}</p>}
+            <div className="grid grid-cols-1 gap-3">
+              <label>
+                <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_input_unit', locale)}</span>
+                <ThemedSelect
+                  aria-label={t('expenses.wht_input_unit', locale)}
+                  className={validationInputClass(whtUnitIssue)}
+                  aria-invalid={whtUnitIssue?.severity === 'error' || undefined}
+                  value={whtInput.inputType}
+                  onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: event.target.value as ExpenseWhtInput['inputType'], value: '0' } })); }}
+                  disabled={!isMutable || busy}
+                >
+                  <option value="RATE">{t('expenses.wht_unit_percent', locale)}</option>
+                  <option value="AMOUNT">{t('expenses.wht_unit_baht', locale)}</option>
+                </ThemedSelect>
+                <FieldIssueNote canEdit={isMutable} issue={whtUnitIssue} />
+              </label>
+              <label>
+                <span className="mb-1 block text-xs font-medium text-gray-600">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
+                <input
+                  id={`expense-wht-rate-${detail.id}`}
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  max={whtInput.inputType === 'RATE' ? '100' : undefined}
+                  step="0.01"
+                  className={validationInputClass(whtValueIssue)}
+                  aria-invalid={whtValueIssue?.severity === 'error' || undefined}
+                  value={whtInput.value}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setTaxFactsDirty(true); setError(null);
+                    setValues((current) => changeExpenseReviewWhtInput(current, { inputType: whtInput.inputType, value,
+                      ...(current.whtInput?.baseAmount !== undefined && { baseAmount: current.whtInput.baseAmount }) }));
+                    if (value.trim() === '') setWithholdingEnabled(false);
+                  }}
+                  disabled={!isMutable || busy}
+                />
+                <FieldIssueNote canEdit={isMutable} issue={whtValueIssue} />
+              </label>
+            </div>
+            {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
+            {(Number(whtInput.value) > 0 || whtInput.baseAmount !== undefined) && <label className="mt-3 block">
+              <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.wht_base', locale)}</span>
+              <input type="number" inputMode="decimal" min="0" step="0.01"
+                aria-invalid={Boolean(fieldIssue(issues, 'whtInput.baseAmount'))}
+                className={validationInputClass(fieldIssue(issues, 'whtInput.baseAmount'))}
+                value={whtInput.baseAmount ?? ''} disabled={!isMutable || busy}
+                onChange={(event) => { setTaxFactsDirty(true); const base = event.target.value;
+                  setValues((current) => { const next = { ...whtInput, ...current.whtInput };
+                    if (base === '') delete next.baseAmount; else next.baseAmount = base;
+                    return { ...current, whtInput: next }; }); }} />
+              <FieldIssueNote canEdit={isMutable} issue={fieldIssue(issues, 'whtInput.baseAmount')} />
+              <span className="mt-1 block text-xs text-gray-500">{t('expenses.wht_base_hint', locale)}</span>
+            </label>}
+            <p className="mt-1 text-xs text-gray-500">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_amount_hint' : 'expenses.wht_percent_hint', locale)}</p>
+
+            {liveTotals?.status === 'ready' && liveTotals.totals
+              ? <MoneyRow label={t('expenses.wht', locale)} value={liveTotals.totals.whtAmount} />
+              : !isMutable
+                ? <MoneyRow label={t('expenses.wht', locale)} value={detail.whtAmount} />
+                : <p className="text-sm text-gray-600">{t(liveTotals?.status === 'error' ? 'expenses.wht_calculation_pending' : 'expenses.wht_calculating', locale)}</p>}
           </div>
-          {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
-          {(Number(whtInput.value) > 0 || whtInput.baseAmount !== undefined) && <label className="mt-3 block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.wht_base', locale)}</span>
-            <input type="number" inputMode="decimal" min="0" step="0.01"
-              aria-invalid={Boolean(fieldIssue(issues, 'whtInput.baseAmount'))}
-              className={validationInputClass(fieldIssue(issues, 'whtInput.baseAmount'))}
-              value={whtInput.baseAmount ?? ''} disabled={!isMutable || busy}
-              onChange={(event) => { setTaxFactsDirty(true); const base = event.target.value;
-                setValues((current) => { const next = { ...whtInput, ...current.whtInput };
-                  if (base === '') delete next.baseAmount; else next.baseAmount = base;
-                  return { ...current, whtInput: next }; }); }} />
-            <FieldIssueNote canEdit={isMutable} issue={fieldIssue(issues, 'whtInput.baseAmount')} />
-            <span className="mt-1 block text-xs text-gray-500">{t('expenses.wht_base_hint', locale)}</span>
-          </label>}
-          <p className="mt-1 text-xs text-gray-500">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_amount_hint' : 'expenses.wht_percent_hint', locale)}</p>
-        </div>
-      )}
+        )}
+      </fieldset>
 
       {totalIssues.map((issue, index) => <FieldIssueNote canEdit={isMutable} key={`${issue.messageKey}-${index}`} issue={issue} />)}
 
