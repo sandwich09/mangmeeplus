@@ -6,7 +6,7 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
-import { civilDate, maskedPayoutAccountNumber, REIMBURSEMENT_PAYMENT_METHOD_LABELS, REIMBURSEMENT_SELF_APPROVED_NOTE } from '@watchdog-bms/contracts';
+import { civilDate, maskedPayoutAccountNumber, REIMBURSEMENT_PAYMENT_METHOD_LABELS, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, REIMBURSEMENT_SELF_APPROVED_NOTE } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimFormLayout,
   ReimbursementClaimSignatureRole,
@@ -448,7 +448,7 @@ function repaymentText(repayment: ReimbursementClaimFormSnapshot['repayment']): 
   const paidInto = repayment.paidInto
     ? ` เข้า${repayment.paidInto.kind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(repayment.paidInto.accountLast4)}`
     : '';
-  return `การจ่ายเงินคืน: จ่ายเมื่อ ${formatDate(repayment.paidAt)} วิธี ${PAYMENT_METHOD_LABELS[repayment.method] ?? '-'}${paidInto} เลขอ้างอิง ${repayment.reference || '-'} บันทึกโดย ${repayment.recordedByName}`;
+  return `การจ่ายเงินคืน: จ่ายเมื่อ ${formatDate(repayment.paidAt)} วิธี ${PAYMENT_METHOD_LABELS[repayment.method] ?? '-'}${paidInto} ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.neutralLabel} ${repayment.reference || '-'} บันทึกโดย ${repayment.recordedByName}`;
 }
 
 /** Role label, wet-ink space, ลงชื่อ ruled line, name line, date line — filled only when the step happened. */

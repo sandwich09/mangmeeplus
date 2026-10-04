@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import {
-  isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPayoutCorrectionPhase,
+  isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPaymentReferenceRequired, reimbursementPayoutCorrectionPhase,
   reimbursementPayoutHeld, reimbursementPayoutRoundAnswer, reimbursementPayoutRoundStatus, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, todayCivilDate,
 } from '@watchdog-bms/contracts';
 import type {
@@ -816,7 +816,7 @@ export function validatePaymentRecording(input: PaymentEligibilityInput): string
   // MVP: full payment only — paid must clear the outstanding amount within the satang tolerance.
   if (outstanding.sub(paid).gte(SETTLE_EPSILON)) return 'partial_payment_not_allowed';
 
-  if (!validatePaymentReference(input.paymentMethod, input.paymentReference)) return 'payment_reference_required';
+  if (!validatePaymentReference(input.paymentMethod, input.paymentReference, input.hasSlip)) return 'payment_reference_required';
   // Owner decision D3: a transfer is recorded with its slip. Claims approved before the slip
   // existed are paid under the same rule, so nothing here reads the claim's age.
   if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return 'payment_slip_required';
@@ -856,11 +856,8 @@ export function isSamePaymentRequest(
     && same(recorded.payoutDefaultToken, requested.payoutDefaultToken);
 }
 
-export function validatePaymentReference(method: ReimbursementPaymentMethod, reference?: string): boolean {
-  if (method === 'BANK_TRANSFER' || method === 'CHEQUE') {
-    return !!reference && reference.trim() !== '';
-  }
-  return true;
+export function validatePaymentReference(method: ReimbursementPaymentMethod, reference?: string, hasSlip = false): boolean {
+  return !reimbursementPaymentReferenceRequired(method, hasSlip) || !!reference?.trim();
 }
 
 // ---- Payment totals ----

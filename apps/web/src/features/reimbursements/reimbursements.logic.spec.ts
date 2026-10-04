@@ -19,9 +19,10 @@ const line = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('paymentReferenceRequired', () => {
-  it('requires reference for bank transfer and cheque', () => {
-    assert.equal(paymentReferenceRequired('BANK_TRANSFER'), true);
+  it('requires only a cheque number without evidence', () => {
+    assert.equal(paymentReferenceRequired('BANK_TRANSFER'), false);
     assert.equal(paymentReferenceRequired('CHEQUE'), true);
+    assert.equal(paymentReferenceRequired('CHEQUE', true), false);
     assert.equal(paymentReferenceRequired('CASH'), false);
   });
 });
@@ -145,9 +146,9 @@ describe('validatePaymentForm', () => {
   it('rejects overpayment', () => {
     assert.ok(validatePaymentForm({ ...ok, paidAmount: '600' }));
   });
-  it('requires reference for bank transfer', () => {
-    assert.ok(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER' }));
-    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1', hasSlip: true }), null);
+  it('requires a transfer slip and accepts it without a reference', () => {
+    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER' }), 'จ่ายด้วยการโอนต้องแนบสลิป');
+    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER', hasSlip: true }), null);
   });
 });
 
@@ -1073,7 +1074,7 @@ describe('buildJourneySteps', () => {
     }
     // Whoever can pay keeps the form and its own instruction, named payers or not.
     const payer = active(two, [...APPROVER, 'reimbursement.payment.record'], 'boss');
-    assert.deepEqual([payer.actions, payer.note], [['pay', 'print'], 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง หากโอนเงิน ต้องแนบสลิป ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า']);
+    assert.deepEqual([payer.actions, payer.note], [['pay', 'print'], 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่ายและวันที่ เมื่อโอนเงิน ต้องแนบสลิป จะกรอกเลขที่อ้างอิงการโอนด้วยก็ได้ หากจ่ายเช็ค กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย เงินสดและวิธีอื่นกรอกเลขที่เอกสารการจ่ายได้ถ้ามี ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า']);
   });
 
   // Phase 0.6 (spec §13.3 F1): the deploy-time back-fill gives a company role that approves the two pay keys, and
@@ -1260,7 +1261,7 @@ describe('who a claim waits for is the same on every surface', () => {
     assert.ok(toldApprover.includes(`ผู้ที่บันทึกจ่ายได้: ${currentDeskText(detail.currentDesk, detail.paymentDesk)} `), toldApprover);
     // Whoever is offered the payment reads what to do, not who to wait for; the header and the timeline still say who.
     const forPayer = activeJourneyStep(buildJourneySteps(detail, ['reimbursement.payment.record'], 'payer'))!;
-    assert.deepEqual([forPayer.actions.includes('pay'), forPayer.note], [true, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง หากโอนเงิน ต้องแนบสลิป ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า']);
+    assert.deepEqual([forPayer.actions.includes('pay'), forPayer.note], [true, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่ายและวันที่ เมื่อโอนเงิน ต้องแนบสลิป จะกรอกเลขที่อ้างอิงการโอนด้วยก็ได้ หากจ่ายเช็ค กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย เงินสดและวิธีอื่นกรอกเลขที่เอกสารการจ่ายได้ถ้ามี ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า']);
   });
 
   it('names the finance desk while finance reviews, then the same payment desk', () => {

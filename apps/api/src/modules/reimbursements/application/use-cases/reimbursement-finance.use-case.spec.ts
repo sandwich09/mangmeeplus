@@ -317,10 +317,10 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
     }
   });
 
-  it('requires reference for bank transfer', async () => {
+  it('requires a slip for a bank transfer even when its reference is blank', async () => {
     const req = financeReviewedRequest();
     const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, reserve, commit, fakeDetailEvidence as any);
-    await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER', paidAt: '2026-02-01T00:00:00.000Z' }), /payment_reference_required/);
+    await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'BANK_TRANSFER', paidAt: '2026-02-01T00:00:00.000Z' }), /payment_slip_required/);
   });
 
   it('reuses the server attempt key after a transaction fault and commits once on retry', async () => {
@@ -2237,6 +2237,33 @@ it('keeps an existing future-dated claim payment replayable and voidable without
   await new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any).execute(ctx(['reimbursement.payment.void']), 'rb-1', repo.payments[0].id, { reason: 'บันทึกวันผิด' });
   assert.deepEqual([repo.payments[0].status, repo.payments[0].paidAt.toISOString()], ['VOIDED', input.paidAt]);
 });
+
+for (const [paymentMethod, hasSlip, paymentReference, allowed] of [
+  ['BANK_TRANSFER', true, undefined, true], ['CHEQUE', false, undefined, false],
+  ['CHEQUE', true, undefined, true], ['CHEQUE', false, 'CHQ-1', true],
+  ['CASH', false, undefined, true], ['OTHER', false, undefined, true],
+] as const) {
+  it(`reference or evidence agrees at preflight and under lock: ${paymentMethod} evidence=${hasSlip} reference=${paymentReference ?? 'none'}`, async () => {
+    const input = { paidAmount: '500', paymentMethod, paidAt: '2026-02-01T00:00:00.000Z', paymentReference, ...(hasSlip && { slipAttachmentId: 'att-slip-1' }) };
+    const repo = fakeRepo(financeReviewedRequest());
+    const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any);
+    const h = atomicPaymentHarness();
+    if (hasSlip) h.addFile(slipUpload());
+    const lockedInput = { ...atomicPaymentInput, ...input, paidAt: new Date(input.paidAt) };
+    if (!allowed) {
+      await assert.rejects(() => uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', input), /payment_reference_required/);
+      await assert.rejects(() => h.repo.recordPaymentAtomic(lockedInput), /payment_reference_required/);
+      assert.equal(repo.payments.length, 0);
+      assert.equal(h.writes.paymentCreates, 0);
+    } else {
+      assert.equal((await uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', input)).status, 'PAID');
+      const recorded = await h.repo.recordPaymentAtomic(lockedInput);
+      assert.equal(recorded.payment.paymentReference, paymentReference);
+      assert.equal((await h.repo.recordPaymentAtomic(lockedInput)).created, false);
+      if (paymentReference) await assert.rejects(() => h.repo.recordPaymentAtomic({ ...lockedInput, paymentReference: 'CHQ-2' }), /reimbursement_payment_idempotency_conflict/);
+    }
+  });
+}
 
 describe('PrismaReimbursementRepository.recordPaymentAtomic (H-06)', () => {
   it('serializes a deterministic two-request race and creates one payment', async () => {

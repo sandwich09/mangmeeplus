@@ -3,6 +3,11 @@ import { test } from 'node:test';
 
 import { apiErrorMessage, translateApiError } from './api-error-message';
 
+test('the payment-reference code asks for a cheque number or evidence', () => {
+  assert.equal(translateApiError('payment_reference_required'), 'กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย');
+  assert.equal(apiErrorMessage({ code: 'payment_reference_required' }), 'กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย');
+});
+
 test('the future-payment-date code displays the shared Thai refusal', () => {
   assert.equal(translateApiError('payment_date_in_future'), 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้');
   assert.equal(apiErrorMessage({ code: 'payment_date_in_future' }), 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้');

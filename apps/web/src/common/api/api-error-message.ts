@@ -1,6 +1,6 @@
 import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
-import { PAYMENT_DATE_IN_FUTURE, REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, PAYMENT_DATE_IN_FUTURE, REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
 import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
@@ -693,6 +693,7 @@ const CODE_LABELS: Record<string, string> = {
 
   // ---- รายการเบิกจ่าย: จ่ายเงินและยกเลิก ----
   payment_date_invalid: 'วันที่จ่ายเงินไม่ถูกต้อง',
+  payment_reference_required: REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.requiredMessage,
   [PAYMENT_DATE_IN_FUTURE.code]: PAYMENT_DATE_IN_FUTURE.message,
   // ระบบรับเฉพาะการจ่ายเต็มยอดคงค้าง ทั้งสองข้อความจึงบอกยอดที่ต้องกรอก
   payment_amount_invalid: 'จำนวนเงินที่จ่ายต้องมากกว่า 0 กรุณากรอกยอดคงค้างของใบเบิกแล้วกดบันทึกจ่ายอีกครั้ง',
