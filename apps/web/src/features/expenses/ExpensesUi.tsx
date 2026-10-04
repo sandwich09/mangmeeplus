@@ -23,6 +23,8 @@ export const inputClass = 'mangmee-input';
 export const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
 export const ghostClass = 'mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50';
 export const dangerClass = 'mangmee-btn mangmee-btn-danger disabled:cursor-not-allowed disabled:opacity-50';
+/** A phone needs 44 px to tap. The hit area grows around a small control; how the control looks does not change. */
+export const tapTargetClass = "relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-full before:min-w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']";
 export const successBtn = 'mangmee-btn text-white disabled:cursor-not-allowed disabled:opacity-50';
 export const successBtnStyle = { background: 'linear-gradient(150deg,var(--color-brand-700),var(--color-brand-800))', borderColor: 'var(--color-brand-700)' } as const;
 

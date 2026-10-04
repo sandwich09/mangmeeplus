@@ -111,3 +111,14 @@ test('the cancel-payment dialog has one button that begins ยกเลิก: t
   assert.match(page, /t\(correctionAllowed && !correctionAction\?\.paymentId \? 'expenses\.cancel' : 'expenses\.close', 'th'\)/);
   assert.equal(correction.EXPENSE_CORRECTION_WORDS.cancelPayment, 'ยกเลิกรายการจ่ายนี้');
 });
+
+test('small controls on the expense screens keep 44 px of tappable height on a phone without looking different', () => {
+  const ui = readFileSync(new URL('./ExpensesUi.tsx', import.meta.url), 'utf8');
+  assert.match(ui, /export const tapTargetClass = "relative before:absolute[^"]*before:h-11[^"]*before:min-w-11[^"]*"/);
+  assert.match(page, /<Link className=\{tapTargetClass\} href=\{`\/companies\/\$\{companyId\}\/expenses`\}/, 'back to the list');
+  assert.match(page, /cx\(tapTargetClass, 'mt-1 rounded font-semibold underline/, 'the footer pointer to the field');
+  assert.match(page, /navChips\.map[\s\S]{0,260}cx\(tapTargetClass,/, 'section chips on the confirmed view');
+  assert.match(page, /guided \? 'gap-y-1\.5' : 'gap-y-3\.5'/, 'wrapped chip rows do not share a hit area');
+  const pages = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
+  assert.equal((pages.match(/cx\(tapTargetClass, 'flex h-8 w-8/g) ?? []).length, 2, 'remove-line on products and on charges');
+});

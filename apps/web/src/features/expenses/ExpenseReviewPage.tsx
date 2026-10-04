@@ -59,6 +59,7 @@ import type { ExtractionNotice } from './ExpensesPages';
 import {
   baht, btnClass, dangerClass, dateShort, err, ErrorBanner, ghostClass, ICON,
   InfoBanner, inputClass, StatusBadge, successBtn, successBtnStyle, TAX_TONE,
+  tapTargetClass,
 } from './ExpensesUi';
 import { ForeignCurrencyNotice } from './ForeignCurrencyNotice';
 import { generateSourceJournal } from '../ledger/ledger.api';
@@ -830,7 +831,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
 
   // A real anchor, not a button: it navigates to another URL, so cmd/middle-click must open a tab
   // and assistive tech must announce a link rather than an action.
-  const backLink = <Link href={`/companies/${companyId}/expenses`}>← {t('expenses.back_to_list', locale)}</Link>;
+  const backLink = <Link className={tapTargetClass} href={`/companies/${companyId}/expenses`}>← {t('expenses.back_to_list', locale)}</Link>;
 
   if (loading && !detail) {
     return (
@@ -1215,7 +1216,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             {step === 'data' && validationBlockMessage && (
               <div className="max-w-lg rounded-lg border border-warning-100 bg-warning-50 px-3 py-2 text-sm text-warning-700">
                 <p id={`expense-review-block-${detail.id}`} role="status">{validationBlockMessage}</p>
-                <button type="button" className="mt-1 rounded font-semibold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" onClick={() => {
+                <button type="button" className={cx(tapTargetClass, 'mt-1 rounded font-semibold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2')} onClick={() => {
                   const section = vendorRef.current;
                   const target = section?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? section;
                   target?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
@@ -1826,7 +1827,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           {detail.correctionCapabilities?.canReopen && <button type="button" className={cx(ghostClass, 'whitespace-nowrap')} disabled={actionLoading} onClick={() => { setCorrectionReason(''); setCorrectionError(null); setCorrectionAction({}); }}>{EXPENSE_CORRECTION_WORDS.reopen}</button>}
         </div>}
         {paymentNotice && !isConfirmed && <div ref={paymentNoticeRef} tabIndex={-1} className="w-full scroll-mt-[calc(var(--app-header-h)+1rem)]"><ErrorBanner message={paymentNotice} /></div>}
-        {!sourceOnlyDraft && <><div ref={reviewStartRef} className="scroll-mt-[var(--app-header-h)]" /><div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: 'var(--app-header-h)' }}>
+        {!sourceOnlyDraft && <><div ref={reviewStartRef} className="scroll-mt-[var(--app-header-h)]" /><div className={cx('sticky z-10 flex flex-wrap gap-x-1.5 border-b border-gray-100 bg-white px-4 py-2.5',
+          // Wrapped chip rows keep 14 px between them so each chip's 44 px hit area stays its own.
+          guided ? 'gap-y-1.5' : 'gap-y-3.5')} style={{ top: 'var(--app-header-h)' }}>
           {isMutable && detail.correctionOpenedAt && <p role="status" className="h-5 w-full whitespace-nowrap text-xs font-semibold leading-5 text-warning-800">{EXPENSE_CORRECTION_WORDS.correcting}</p>}
           {guided ? (
             <ThemedSteps steps={steps.map((entry, index) => ({
@@ -1844,7 +1847,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             }))} />
           ) : navChips.map((chip) => (
             <button key={chip.key} type="button" onClick={() => chip.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:border-brand-200 hover:text-brand-700">
+              className={cx(tapTargetClass, 'rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:border-brand-200 hover:text-brand-700')}>
               {t(chip.key, locale)}
             </button>
           ))}
