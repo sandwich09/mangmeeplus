@@ -1,5 +1,17 @@
 # Agent Memory: Official OA Flex replies — 2026-10-04
 
+Status: PUBLISHED_OA_ONLY_OWNER_ACCEPTED; provider OPEN, signatures verified, owner confirmed both cards and actions working.
+Owner: Codex + product owner
+Scope: Marketing OA @107ewccg only; compact Contact/Social cards. No ERP/UAT/system OA deployment.
+Decisions: Local checks and isolated OA publication expressly authorized; scoped thawatchai provisioning override, existing non-root KMS signing. Contact gold/sage/teal, Social rose/blue/mint, cream surfaces/forest headings; three actions each.
+Open questions: None for this publication.
+Artifacts: [Exact release and recovery](../evidence/line-official-oa-isolated-publication-2026-10-04.md), PR1000 merged, private credential file outside Git, signed local ledger/proofs.
+Verification: Local tests5/5; actual staging/live PNG/hash/HMAC/LINE schema/empty webhook checks PASS; same immutable version1; native cutover proven; ECDSA_SHA_256 signature verified under non-root authority. GitHub CI billing blocked, not claimed passed.
+Next: No remaining publication work. Any revision uses the standalone staging/version/change-set path; do not deploy ERP main.
+
+## Historical implementation and preparation notes
+
+
 Status: Isolated OA-only publication implemented and locally verified; owner-approved scoped provisioning is in progress. PR #999 admin-merged to main at owner instruction; exact source c4e6a7a815ee9b797ef34d39a6beb43b6f62e65e, merge 6865e27ec9099a0dfadb43f77855ba24b44e3d85. Local checks and LINE schema pass. Remote CI cannot start because GitHub reports account payment/spending-limit failure. Owner replaced remote CI with local checks for the isolated OA publication; native replies remain live and no Flex/customer messages sent.
 Owner: Codex + product owner
 Scope: Public marketing replies for MangmeePlus Official @107ewccg only; Contact and Social cards each have three compact actions. Owner explicitly authorized API/reply implementation after the earlier Manager-only scope.
@@ -71,3 +83,7 @@ Owner scope reply: isolate only the OA cards. Independent Function URL publicati
 
 - Before first cloud write, root preflight confirmed stack/function/role and both dedicated secrets absent. Lambda AccountLimit is10 concurrent executions, so reserved10 would violate AWS unreserved allowance. Removed reservation rather than changing account quotas; account limit remains10. No stack write/retry occurred.
 - Current primary cloud inventory now records an independently owner-started UAT at10:04UTC; this OA operation has not changed UAT. Earlier stopped state is historical.
+
+## Owner phone acceptance completed
+
+Owner replied “ได้รับครบทั้งสองใบ ปุ่มใช้งานได้” after testing both Contact and Social in Official OA. Supplemental acceptance digest 4d936c4818b308a49958859226a391ccf5107b88fa4ea4f2541dedbbd5f8bd1a is signed/verified ECDSA_SHA_256 under existing non-root authority, bound to original live acceptance b99f4f5f4dc95f3084fc18758a2f946e8741ac3b29ca7cfa1a3604daddf3b5f1. Original signed artifacts preserved. No further cloud, webhook or native mutation was needed.
