@@ -406,6 +406,36 @@ export function canOpenReimbursementPaymentSlip(viewer: ReimbursementPayoutViewe
   return isReimbursementPayoutParty(viewer, claim) || viewer.permissions.includes('reimbursement.finance_review');
 }
 
+export const REIMBURSEMENT_POLICY_TAB_LABEL = 'ตั้งค่านโยบาย';
+export const REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL = 'ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้';
+export const REIMBURSEMENT_SELF_APPROVAL_HELP = `ให้ผู้อนุมัติคนอื่นตัดสินแทน หรือให้ผู้มีสิทธิ์ตั้งค่านโยบายเปิด "${REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL}" ใน${REIMBURSEMENT_POLICY_TAB_LABEL} ใบที่เก็บนโยบายไว้ตอนส่งต้องเปิดกลับเป็นร่างและส่งอนุมัติใหม่เมื่อยังไม่มีใครตัดสิน เพื่อใช้นโยบายที่เปิด`;
+export const REIMBURSEMENT_SELF_APPROVAL_DENIED = `ไม่สามารถอนุมัติคำขอของตนเองได้ตามนโยบายที่ใบนี้ใช้ ${REIMBURSEMENT_SELF_APPROVAL_HELP}`;
+
+export type ReimbursementDuplicateReason = 'ATTACHMENT_CHECKSUM' | 'EXPENSE_LINK' | 'AMOUNT_DATE_VENDOR' | 'MANUAL' | 'EXPENSE_DOCUMENT' | 'EXPENSE_CONFIRMATION';
+const POSSIBLE_OTHER_CLAIM_TEXT = 'อาจซ้ำกับคำขอเบิกอื่น';
+export const REIMBURSEMENT_DUPLICATE_REASON_TEXT: Record<ReimbursementDuplicateReason, string> = {
+  ATTACHMENT_CHECKSUM: 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น',
+  EXPENSE_LINK: 'ใช้รายการค่าใช้จ่ายเดียวกับคำขอเบิกอื่น',
+  AMOUNT_DATE_VENDOR: POSSIBLE_OTHER_CLAIM_TEXT,
+  MANUAL: POSSIBLE_OTHER_CLAIM_TEXT,
+  EXPENSE_DOCUMENT: 'เอกสารค่าใช้จ่ายของใบนี้อาจซ้ำกับเอกสารเดิม',
+  EXPENSE_CONFIRMATION: 'เอกสารค่าใช้จ่ายของใบนี้ยังรอยืนยันหลังปลดรายการซ้ำ',
+};
+export const REIMBURSEMENT_DUPLICATE_CLEAR_HELP = 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล เพื่อปลดและยืนยันเอกสารก่อนบันทึกจ่าย ถ้าการยืนยันยังไม่เสร็จ กดปลดรายการซ้ำอีกครั้ง';
+export function reimbursementDuplicateReasonText(reasons: readonly string[] = []): string {
+  return [...new Set(reasons.filter(reason => Object.hasOwn(REIMBURSEMENT_DUPLICATE_REASON_TEXT, reason)).map(reason => REIMBURSEMENT_DUPLICATE_REASON_TEXT[reason as ReimbursementDuplicateReason]))].join(' และ ') || POSSIBLE_OTHER_CLAIM_TEXT;
+}
+export const REIMBURSEMENT_DUPLICATE_FINANCE_HELP = 'ตรวจว่าไม่ซ้ำแล้ว ให้ผู้ตรวจการเงินที่มีสิทธิ์ปลดรายการซ้ำอนุมัติจ่ายพร้อมเหตุผลก่อนบันทึกจ่าย';
+export const REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED = 'บันทึกการตรวจรายการซ้ำแล้ว';
+export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [], financeReview = false): string {
+  return `ติดรายการซ้ำ: ${reimbursementDuplicateReasonText(reasons)} ${financeReview ? REIMBURSEMENT_DUPLICATE_FINANCE_HELP : REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`;
+}
+export const REIMBURSEMENT_DUPLICATE_UNRESOLVED = 'พบรายการที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ';
+export function reimbursementDuplicateSubmitNotice(reasons: readonly string[] = []): string {
+  return `พบรายการที่อาจซ้ำ: ${reimbursementDuplicateReasonText(reasons)} ยังส่งใบนี้ไม่ได้ ตรวจและแก้หลักฐาน หรือให้ผู้มีสิทธิ์ตั้งค่านโยบายตรวจนโยบายรายการซ้ำก่อนส่งอีกครั้ง`;
+}
+export const REIMBURSEMENT_DUPLICATE_POLICY_NOTE = 'ใบเสร็จหรือรายการค่าใช้จ่ายเดียวกันตรวจข้ามผู้เบิกทั้งบริษัท ความคล้ายของยอดและวันตรวจเฉพาะผู้เบิกเดียวกัน ใบที่เก็บนโยบายระงับการจ่ายไว้ตอนส่งจ่ายไม่ได้เมื่อรายการซ้ำของใบยังไม่ตัดสิน หรือเอกสารค่าใช้จ่ายของใบยังอาจซ้ำ ต้องตรวจแล้วปลดรายการซ้ำพร้อมเหตุผล และยืนยันเอกสารก่อนจ่าย';
+
 // ---- Duplicate candidate ----
 
 export type ReimbursementDuplicateCandidateSummary = {
@@ -811,8 +841,9 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   approvalSteps: ReimbursementApprovalStepSummary[];
   payments: ReimbursementPaymentSummary[];
   duplicateCandidates: ReimbursementDuplicateCandidateSummary[];
-  /** An open duplicate candidate under this claim's BLOCK_PAYMENT policy: payment is refused until it is cleared. */
+  /** An unresolved claim candidate or own expense duplicate under the claim's frozen BLOCK_PAYMENT policy. */
   duplicateBlocksPayment?: boolean;
+  duplicateReasons?: ReimbursementDuplicateReason[];
   signatures: ReimbursementClaimSignatureSummary[];
   /** Uploaded scans/photos of the wet-ink signed form, newest first. */
   signedCopies: ReimbursementSignedCopySummary[];
@@ -1635,6 +1666,7 @@ export type ReimbursementApprovalQueueItem = ReimbursementRequestSummary & {
 export type ReimbursementFinanceQueueItem = ReimbursementRequestSummary & {
   ageHours: number;
   hasDuplicateBlocker: boolean;
+  duplicateReasons?: ReimbursementDuplicateReason[];
 };
 
 // ---- Source ref for item 13 bank reconciliation ----

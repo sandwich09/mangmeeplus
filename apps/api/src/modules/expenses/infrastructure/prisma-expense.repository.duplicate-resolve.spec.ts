@@ -349,3 +349,13 @@ describe('PrismaExpenseRepository duplicate-candidate resolution', () => {
     assert.equal(visible?.duplicateOfExpenseId, 'expense-other-branch');
   });
 });
+
+
+it('a claim-bound dismissal can clear a hidden cross-branch candidate, but cannot claim another source expense', async () => {
+  const h = harness();
+  Object.assign(h.store.expenses.find(e => e.id === 'expense-1')!, { sourceReimbursementRequestId: 'rb-1' });
+  const input: any = { companyId: 'co-1', expenseId: 'expense-1', candidateId: 'cand-cross-branch', actorUserId: 'payer', action: 'dismiss', reason: 'คนละการซื้อ', scopes: { branchIds: ['branch-a'] }, reimbursementRequestId: 'rb-1', reimbursementBranchId: 'branch-a' };
+  await assert.rejects(() => h.repo.resolveDuplicateCandidate({ ...input, reimbursementRequestId: 'rb-other' }, async () => undefined), /reimbursement_projection_source_mismatch/);
+  await h.repo.resolveDuplicateCandidate(input, async () => undefined);
+  assert.equal(h.store.candidates.find(c => c.id === 'cand-cross-branch')!.status, 'DISMISSED');
+});

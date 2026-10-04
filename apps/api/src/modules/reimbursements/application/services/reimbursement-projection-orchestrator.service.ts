@@ -69,6 +69,15 @@ export class ReimbursementProjectionOrchestratorService {
       });
     }
 
+    await this.confirmProjections(ctx, request, projections, decision.allowMissingReceiptWithReason, scopes, decision.actorUserId, decision.systemReconcile);
+  }
+
+  async reconcileExisting(ctx: RequestContext, request: ReimbursementRequestRecord, allowMissingReceiptWithReason: boolean): Promise<void> {
+    const projections = await this.reimbursements.listClaimProjections(ctx.companyId, request.id);
+    await this.confirmProjections(ctx, request, projections.map(row => ({ expenseId: row.id, reimbursementLineId: row.sourceReimbursementLineId })), allowMissingReceiptWithReason, ctx.scopes ?? {}, ctx.userId);
+  }
+
+  private async confirmProjections(ctx: RequestContext, request: ReimbursementRequestRecord, projections: { expenseId: string; reimbursementLineId: string }[], allowMissingReceiptWithReason: boolean, scopes: { branchIds?: string[] }, actorUserId: string, systemReconcile?: boolean): Promise<void> {
     for (const projection of projections) {
       const expense = await this.expenses.findByIdWithRelations(ctx.companyId, projection.expenseId, undefined, scopes);
       if (!expense) throw new ConflictException('reimbursement_projection_source_mismatch');
@@ -86,7 +95,7 @@ export class ReimbursementProjectionOrchestratorService {
         this.expenses,
         ctx.companyId,
         projection.expenseId,
-        decision.actorUserId,
+        actorUserId,
         scopes,
       );
       if (duplicate.duplicateStatus === 'POSSIBLE_DUPLICATE'
@@ -97,8 +106,8 @@ export class ReimbursementProjectionOrchestratorService {
         reimbursementRequestId: request.id,
         reimbursementLineId: projection.reimbursementLineId,
         branchId: request.branchId,
-        allowMissingReceiptWithReason: decision.allowMissingReceiptWithReason,
-        systemReconcile: decision.systemReconcile,
+        allowMissingReceiptWithReason,
+        systemReconcile,
       });
     }
   }

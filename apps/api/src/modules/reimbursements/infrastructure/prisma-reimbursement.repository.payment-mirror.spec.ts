@@ -141,7 +141,7 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
     tx.reimbursementPayment.create = async (input: any) => { paymentCreates++; return create(input); };
     const payment = { companyId: 'co-1', reimbursementRequestId: 'rb-1', idempotencyKey: 'duplicate-payment',
       paidAmount: '289.0000', currency: 'THB', paymentMethod: 'CASH', paidAt: PAID_AT, paidByUserId: 'finance-1' };
-    await assert.rejects(() => repo.recordPaymentAtomic(payment), /duplicate_unresolved/);
+    await assert.rejects(() => repo.recordPaymentAtomic(payment), (error: any) => error.getResponse().code === 'duplicate_unresolved');
     assert.equal(paymentCreates, 0);
     assert.equal(request.paymentStatus, 'UNPAID');
     assert.deepEqual(expenseUpdates, []);
@@ -293,5 +293,34 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
     });
     assert.equal(request.outstandingAmount, '580.0000');
     assert.equal(request.status, 'READY_FOR_PAYMENT');
+  });
+});
+
+
+describe('payment source duplicate gate', () => {
+  it('refuses an unresolved own expense under the lock, but leaves WARN payable', async () => {
+    for (const duplicatePolicy of ['BLOCK_PAYMENT', 'WARN']) {
+      const h = recordHarness();
+      h.request.approvalPolicySnapshotJson = { schemaVersion: 1, policyId: 'p', policyVersion: 'test', approvalRequiredFromAmount: '1', requiresApproval: false, route: null, allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy, financeReviewRequired: false };
+      h.request.sourceExpenses = [{ status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'POSSIBLE_DUPLICATE' }];
+      const result = h.repo.recordPaymentAtomic({ companyId: 'co-1', reimbursementRequestId: 'rb-1', paidByUserId: 'payer', currency: 'THB', paidAmount: '289', paymentMethod: 'CASH', paidAt: PAID_AT, idempotencyKey: 'dup', scopes: {} } as any);
+      if (duplicatePolicy === 'BLOCK_PAYMENT') { await assert.rejects(result, (error: any) => error.getResponse().code === 'duplicate_unresolved'); assert.equal(h.expenseUpdates.length, 0); }
+      else await result;
+    }
+  });
+  it('queries strong evidence across the company without limiting it to the soft scan', async () => {
+    const queries: any[] = [];
+    const client: any = { attachmentObject: { findMany: async () => [{ id: 'other-file', checksumSha256: 'same' }] }, reimbursementRequest: {
+      findMany: async (query: any) => { queries.push(query); return []; },
+    } };
+    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    await (repo.findDuplicateCandidates as any)('co-1', 'one', 'rb-1', { attachmentIds: ['mine'], attachmentChecksums: { mine: 'same' }, expenseIds: ['source'] });
+    const strong = queries.find(q => !q.where.requesterUserId);
+    assert.ok(strong, 'strong evidence has a separate company-wide query');
+    assert.equal(strong.take, undefined);
+    assert.equal(strong.where.companyId, 'co-1');
+    assert.match(JSON.stringify(strong.where), /other-file/);
+    assert.match(JSON.stringify(strong.where), /source/);
+    assert.equal(queries.find(q => q.where.requesterUserId === 'one').take, 50);
   });
 });

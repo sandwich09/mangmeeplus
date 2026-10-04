@@ -304,7 +304,9 @@ function fakeRepo(options: RepoOptions = {}) {
       calls.claimQueries.push({ companyId, excludeId, attachmentIds, expenseIds });
       return options.claimedElsewhere ?? [];
     },
+    findReceiptChecksums: async () => ({}),
     findDuplicateCandidates: async () => options.duplicateCandidates ?? [],
+    recordBlockedSubmitDuplicates: async (data: any) => { calls.duplicates.push(...data.candidates); request.duplicateStatus = 'POSSIBLE_DUPLICATE'; await data.onPersisted(fakeTx(calls.outbox)); },
     createDuplicateCandidate: async (data: any) => { calls.duplicates.push(data); },
     createApprovalStep: async () => ({ id: 'step-1' }),
     submitDraftAtomic: async ({ expectedUpdatedAt, request: data, duplicateCandidates, approvalStep, payout, onSubmittedPersisted }: any) => {
@@ -1741,6 +1743,29 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     }]);
   });
 
+  for (const duplicatePolicy of ['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT']) {
+    it(`cross-requester checksum match under ${duplicatePolicy}`, async () => {
+      const state = fakeRepo({ policy: { ...requireReceipt, duplicatePolicy }, duplicateCandidates: [{
+        id: 'rb-secret', requestNo: 'RB-SECRET', requesterUserId: 'other-person', amount: '999', currency: 'THB',
+        incurredDate: new Date('2026-02-01'), categoryKey: 'other', reason: 'private',
+        lines: [{ lineNo: 1, attachmentId: 'other-file', attachmentChecksum: 'same' }],
+      }] });
+      (state.repo as any).findReceiptChecksums = async () => ({ 'my-file': 'same' });
+      await draftWith(state, [inputLine({ attachmentId: 'my-file' })]);
+      if (duplicatePolicy === 'BLOCK_SUBMIT') {
+        await assert.rejects(() => useCases(state).submit.execute(ctx(), 'rb-1'), (error: any) => error.getResponse().code === 'duplicate_unresolved');
+        assert.equal(state.request.status, 'DRAFT');
+        assert.equal(state.calls.duplicates.length, 1, 'blocked draft keeps its detected candidate');
+      } else {
+        await useCases(state).submit.execute(ctx(), 'rb-1');
+        assert.equal(state.calls.duplicates.length, 1);
+        assert.equal(state.calls.duplicates[0].candidateType, 'ATTACHMENT_CHECKSUM');
+        assert.equal(state.calls.duplicates[0].reason, 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น');
+        assert.ok(!JSON.stringify(state.calls.outbox).includes('RB-SECRET'));
+      }
+    });
+  }
+
   it('records a duplicate candidate naming the line that shares a receipt', async () => {
     const state = fakeRepo({
       duplicateCandidates: [{
@@ -1756,7 +1781,7 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.equal(state.calls.duplicates.length, 1);
     assert.equal(state.calls.duplicates[0].candidateType, 'ATTACHMENT_CHECKSUM');
     assert.equal(state.calls.duplicates[0].candidateAttachmentId, 'att-1');
-    assert.match(state.calls.duplicates[0].reason, /line 2/);
+    assert.equal(state.calls.duplicates[0].reason, 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น');
   });
 });
 
@@ -3824,7 +3849,7 @@ describe('payout: a note that goes into a notification carries no account number
       recordFinanceReviewAtomic: async (data: any) => { decisions.push(data); throw new Error('stop after the guard'); },
       beginFinanceApprovalAtomic: async (data: any) => { decisions.push(data); throw new Error('stop after the guard'); },
     } as any;
-    const review = new FinanceReviewReimbursementUseCase(repo, { log: async () => undefined } as any, {} as any, {} as any);
+    const review = new FinanceReviewReimbursementUseCase(repo, { log: async () => undefined } as any, {} as any, {} as any, {} as any);
     const finance = ctx({ userId: 'finance-1', permissions: ['reimbursement.read', 'reimbursement.finance_review'] });
     for (const note of ['บัญชีผิด โอนเข้า 123-4-56789-0 แทน', 'พร้อมเพย์ 081 000 1234', 'เลขบัญชี 0123456789', 'โอนเข้า 123.4.56789.0', 'พร้อมเพย์ ๐๘๑๒๓๔๕๖๗๘']) {
       for (const decision of ['NEEDS_INFO', 'APPROVED_FOR_PAYMENT'] as const) {

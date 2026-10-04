@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { EXPENSE_VOID_REASON_MIN_LENGTH, reimbursementPayoutRoundApproves } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DUPLICATE_CLEAR_HELP, REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED, EXPENSE_VOID_REASON_MIN_LENGTH, reimbursementPayoutRoundApproves } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
@@ -77,8 +77,8 @@ const REASON_DIALOGS: Record<ReasonAction, { title: string; description: string;
     description: 'ระบุเหตุผล ใบเบิกจะค้างที่ขั้นตรวจการเงินจนกว่าผู้ตรวจการเงินจะอนุมัติจ่ายหรือส่งกลับให้แก้ไข',
   },
   'resolve-duplicate': {
-    title: 'ปลดรายการซ้ำ', confirmLabel: 'ยืนยันว่าไม่ซ้ำ', success: 'ปลดรายการซ้ำแล้ว',
-    description: 'ตรวจแล้วว่าใบนี้ไม่ได้เบิกซ้ำกับคำขออื่น ระบุเหตุผลที่ยืนยันว่าไม่ซ้ำ ระบบจะบันทึกชื่อคุณและเหตุผลนี้ไว้ แล้วจึงบันทึกจ่ายได้',
+    title: 'ปลดรายการซ้ำ', confirmLabel: 'ยืนยันว่าไม่ซ้ำ', success: REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED,
+    description: `${REIMBURSEMENT_DUPLICATE_CLEAR_HELP} ระบบจะบันทึกชื่อคุณและเหตุผลนี้ไว้`,
   },
 };
 

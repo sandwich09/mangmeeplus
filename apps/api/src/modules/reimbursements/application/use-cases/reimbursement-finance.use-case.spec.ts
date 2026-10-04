@@ -291,7 +291,7 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
   it('blocks payment when duplicates are unresolved and policy blocks payment', async () => {
     const req = financeReviewedRequest();
     const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req, { openDuplicates: 1 }), noopAudit, reserve, commit, fakeDetailEvidence as any);
-    await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /duplicate_unresolved/);
+    await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), (error: any) => error.getResponse().code === 'duplicate_unresolved');
   });
 
   it('uses the submitted duplicate policy rather than today’s switch, and refuses before number reservation', async () => {
@@ -306,7 +306,7 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
         { execute: async (...args: any[]) => { reservations++; return (reserve.execute as any)(...args); } } as any, commit, fakeDetailEvidence as any);
       const payment = uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
       if (blocked) {
-        await assert.rejects(payment, /duplicate_unresolved/);
+        await assert.rejects(payment, (error: any) => error.getResponse().code === 'duplicate_unresolved');
         assert.equal(reservations, 0);
         assert.equal(repo.payments.length, 0);
         assert.equal(req.paymentStatus, 'UNPAID');
@@ -1284,7 +1284,7 @@ describe('FinanceReviewReimbursementUseCase', () => {
       projectionCalls.push(args);
       if (projectionError) throw projectionError;
     } } as any;
-    return new FinanceReviewReimbursementUseCase(repo, noopAudit, projections, fakeDetailEvidence as any);
+    return new FinanceReviewReimbursementUseCase(repo, noopAudit, projections, fakeDetailEvidence as any, { executeForReimbursement: async () => 0 } as any);
   }
 
   it('approves for payment and moves to READY_FOR_PAYMENT', async () => {
@@ -1319,7 +1319,7 @@ describe('FinanceReviewReimbursementUseCase', () => {
     const audits: any[] = [];
     const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
     const projections = { execute: async (...args: any[]) => { calls.push(args); } } as any;
-    const uc = new FinanceReviewReimbursementUseCase(fakeRepo(req), audit, projections, fakeDetailEvidence as any);
+    const uc = new FinanceReviewReimbursementUseCase(fakeRepo(req), audit, projections, fakeDetailEvidence as any, { executeForReimbursement: async () => 0 } as any);
 
     await uc.execute(ctx(['reimbursement.finance_review']), 'rb-1', { decision: 'APPROVED_FOR_PAYMENT' });
 
@@ -1419,7 +1419,7 @@ describe('FinanceReviewReimbursementUseCase', () => {
       const audits: any[] = [];
       const projectionCalls: any[] = [];
       const uc = new FinanceReviewReimbursementUseCase(repo, { log: async (entry: any) => { audits.push(entry); } } as any,
-        { execute: async (...args: any[]) => { projectionCalls.push(args); } } as any, fakeDetailEvidence as any);
+        { execute: async (...args: any[]) => { projectionCalls.push(args); } } as any, fakeDetailEvidence as any, { executeForReimbursement: async () => 0 } as any);
 
       await uc.execute(ctx(['reimbursement.duplicate.resolve']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: ' ใบเสร็จคนละใบกัน ' });
 
@@ -2848,3 +2848,127 @@ describe('PrismaReimbursementRepository: sending a claim back for its payout acc
     }
   });
 });
+
+
+describe('own expense duplicates agree at every payment surface', () => {
+  it('refuses before number reservation and marks detail/queue; WARN stays payable', async () => {
+    for (const duplicatePolicy of ['BLOCK_PAYMENT', 'WARN']) {
+      const req = financeReviewedRequest({ possibleDuplicateExpenseCount: 1, duplicateStatus: 'POSSIBLE_DUPLICATE', approvalPolicySnapshotJson: { schemaVersion: 1, policyId: 'p', policyVersion: 'v', approvalRequiredFromAmount: '1', requiresApproval: false, route: null, allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy, financeReviewRequired: false } });
+      const repo = fakeRepo(req, { policy: { duplicatePolicy: duplicatePolicy === 'WARN' ? 'BLOCK_PAYMENT' : 'WARN' } });
+      repo.listRequests = async () => [req];
+      const detail = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', req, ctx([]));
+      const { ListFinanceQueueUseCase } = await import('./reimbursement-finance.use-case');
+      const queue = await new ListFinanceQueueUseCase(repo).execute(ctx(['reimbursement.finance_review']));
+      assert.equal(detail.duplicateBlocksPayment, duplicatePolicy === 'BLOCK_PAYMENT');
+      assert.equal(queue[0].hasDuplicateBlocker, detail.duplicateBlocksPayment);
+      let reserved = 0;
+      const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, { execute: async (...args: any[]) => { reserved++; return (reserve.execute as any)(...args); } } as any, commit, fakeDetailEvidence as any);
+      const result = uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500', paymentMethod: 'CASH', paidAt: '2026-02-01' });
+      if (duplicatePolicy === 'BLOCK_PAYMENT') { await assert.rejects(result, (error: any) => error.getResponse().code === 'duplicate_unresolved'); assert.equal(reserved, 0); assert.equal(repo.payments.length, 0); }
+      else await result;
+    }
+  });
+  it('hides unreadable duplicate targets and historic reason text, while full readers keep references', async () => {
+    const req = financeReviewedRequest({ duplicateCandidates: [{ id: 'own-candidate', candidateType: 'ATTACHMENT_CHECKSUM', candidateRequestId: 'secret', candidateExpenseId: 'secret-expense', score: 100, status: 'OPEN', reason: 'RB-SECRET private claimant 999' }] });
+    const repo = fakeRepo(req);
+    repo.findRequestById = async () => ({ ...req, id: 'secret', requesterUserId: 'other', branchId: 'branch-2' });
+    for (const viewer of [{ ...ctx([]), permissions: ['reimbursement.read_own'], userId: 'staff-1' }, ctx([]), { ...ctx([]), scopes: { branchIds: ['branch-1'] } }]) {
+      const detail = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', req, viewer);
+      const row = detail.duplicateCandidates[0];
+      if (viewer.permissions.includes('reimbursement.read') && !viewer.scopes.branchIds) assert.equal(row.candidateRequestId, 'secret');
+      else { assert.equal(row.candidateRequestId, undefined); assert.equal(row.candidateExpenseId, undefined); assert.equal(row.reason, 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น'); }
+    }
+    req.duplicateCandidates![0].candidateRequestId = undefined;
+    const orphaned = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', req, { ...ctx([]), permissions: ['reimbursement.read_own'], userId: 'staff-1' });
+    assert.equal(orphaned.duplicateCandidates[0].candidateExpenseId, undefined);
+    assert.equal(orphaned.duplicateCandidates[0].reason, 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น');
+  });
+});
+
+
+it('clears own expense candidates through the expense module, reconciles, confirms and then permits payment; retry completes an interrupted confirmation', async () => {
+  const { ResolveDuplicateUseCase } = await import('../../../expenses/application/use-cases/expense-upload.use-case');
+  const { ReimbursementProjectionOrchestratorService } = await import('../services/reimbursement-projection-orchestrator.service');
+  const req = financeReviewedRequest({ possibleDuplicateExpenseCount: 1, duplicateConfirmationPendingCount: 0, duplicateStatus: 'POSSIBLE_DUPLICATE', financeReviewStatus: 'NOT_REQUIRED' });
+  const repo = fakeRepo(req);
+  const expense: any = { id: 'projection', sourceReimbursementRequestId: 'rb-1', sourceReimbursementLineId: 'line-1', branchId: 'branch-1', status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'POSSIBLE_DUPLICATE', duplicateCandidates: [{ id: 'expense-candidate', status: 'OPEN' }] };
+  const audits: any[] = [];
+  const audit: any = { log: async (entry: any) => { audits.push(entry); } };
+  const expenseRepo: any = {
+    listClaimDuplicates: async () => expense.status === 'CONFIRMED' ? [] : [{ ...expense, duplicateCandidates: expense.duplicateCandidates.filter((candidate: any) => candidate.status === 'OPEN') }],
+    resolveDuplicateCandidate: async (input: any, within: any, db: any) => {
+      assert.equal(input.reimbursementRequestId, 'rb-1');
+      assert.equal(input.action, 'dismiss');
+      assert.ok(db, 'join the claim resolution transaction');
+      expense.duplicateCandidates[0].status = 'DISMISSED'; expense.duplicateStatus = 'OVERRIDDEN';
+      req.possibleDuplicateExpenseCount = 0; req.duplicateConfirmationPendingCount = 1;
+      await within(db);
+    },
+    findByIdWithRelations: async () => expense,
+    runDuplicateCheck: async () => ({ openCandidates: 0, duplicateStatus: expense.duplicateStatus }),
+  };
+  repo.listClaimProjections = async () => [{ id: expense.id, sourceReimbursementLineId: 'line-1' }];
+  repo.refreshClaimProjectionState = async () => { assert.equal(expense.status, 'CONFIRMED'); req.duplicateStatus = 'OVERRIDDEN'; req.duplicateConfirmationPendingCount = 0; };
+  let failConfirmation = true;
+  const projections = new ReimbursementProjectionOrchestratorService(repo, expenseRepo, {} as any, {
+    executeForReimbursement: async (_ctx: any, id: string) => { assert.equal(id, expense.id); if (failConfirmation) throw new Error('confirmation interrupted'); expense.status = 'CONFIRMED'; },
+  } as any, audit);
+  const resolve = new (FinanceReviewReimbursementUseCase as any)(repo, audit, projections, fakeDetailEvidence, new ResolveDuplicateUseCase(expenseRepo, audit));
+  const clear = (permission = 'reimbursement.payment.record') => resolve.execute(ctx([permission]), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'คนละการซื้อ' });
+  await assert.rejects(clear, /confirmation interrupted/);
+  assert.equal(req.duplicateConfirmationPendingCount, 1);
+  const stalled = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', req, ctx([]));
+  assert.equal(stalled.duplicateBlocksPayment, true);
+  assert.ok(stalled.duplicateReasons?.includes('EXPENSE_CONFIRMATION'));
+  failConfirmation = false;
+  await clear('reimbursement.duplicate.resolve');
+  assert.equal(expense.status, 'CONFIRMED');
+  assert.ok(audits.some(row => row.action === 'expense.duplicate.dismiss'));
+  assert.ok(audits.some(row => row.action === 'reimbursement.duplicate.resolve'));
+  const detail = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', req, ctx([]));
+  assert.equal(detail.duplicateBlocksPayment, false);
+  await new RecordReimbursementPaymentUseCase(repo, noopAudit, reserve, commit, fakeDetailEvidence as any).execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500', paymentMethod: 'CASH', paidAt: '2026-02-01' });
+  assert.equal(req.status, 'PAID');
+});
+
+
+it('an own possible-duplicate expense independently refuses payment before any number reservation', async () => {
+  const req = financeReviewedRequest({ possibleDuplicateExpenseCount: 1 });
+  const repo = fakeRepo(req);
+  let reserved = 0;
+  const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, { execute: async (...args: any[]) => { reserved++; return (reserve.execute as any)(...args); } } as any, commit, fakeDetailEvidence as any);
+  await assert.rejects(() => uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500', paymentMethod: 'CASH', paidAt: '2026-02-01' }), (error: any) => {
+    const response = error.getResponse();
+    assert.match(response.message, /เอกสารค่าใช้จ่ายของใบนี้อาจซ้ำกับเอกสารเดิม/);
+    assert.equal(response.duplicatePhase, 'PAYMENT');
+    return response.code === 'duplicate_unresolved';
+  });
+  assert.equal(reserved, 0);
+  assert.equal(repo.payments.length, 0);
+});
+
+for (const [reason, code] of [['ก'.repeat(501), 'duplicate_resolution_reason_required'], ['ตรวจแล้วโอนเข้า 004-5-67123-4', 'note_contains_account_number']]) {
+  it(`refuses an unsafe duplicate-clear reason (${code}) before any write or audit`, async () => {
+    const req = financeReviewedRequest({ possibleDuplicateExpenseCount: 1 });
+    const repo = fakeRepo(req);
+    let audits = 0;
+    const before = JSON.stringify(req);
+    const uc = new FinanceReviewReimbursementUseCase(repo, { log: async () => { audits++; } } as any, {} as any, fakeDetailEvidence as any, { executeForReimbursement: async () => 0 } as any);
+    await assert.rejects(() => uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: reason }), (error: any) => error.getStatus() === 400 && error.message === code);
+    assert.equal(JSON.stringify(req), before);
+    assert.equal(audits, 0);
+  });
+}
+
+for (const [reason, code] of [['ก'.repeat(501), 'duplicate_resolution_reason_required'], ['ตรวจแล้วโอนเข้า 004-5-67123-4', 'note_contains_account_number']]) {
+  it(`finance review also refuses an unsafe duplicate-clear reason (${code}) before any write or audit`, async () => {
+    const req = financeReviewedRequest({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' });
+    const repo = fakeRepo(req);
+    let audits = 0;
+    const before = JSON.stringify(req);
+    const uc = new FinanceReviewReimbursementUseCase(repo, { log: async () => { audits++; } } as any, {} as any, fakeDetailEvidence as any, {} as any);
+    await assert.rejects(() => uc.execute(ctx(['reimbursement.finance_review', 'reimbursement.duplicate.resolve']), 'rb-1', { decision: 'BLOCKED', note: 'ตรวจแล้ว', resolveDuplicate: true, duplicateResolutionReason: reason }), (error: any) => error.getStatus() === 400 && error.message === code);
+    assert.equal(JSON.stringify(req), before);
+    assert.equal(audits, 0);
+  });
+}

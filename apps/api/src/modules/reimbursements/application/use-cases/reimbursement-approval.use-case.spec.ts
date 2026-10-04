@@ -441,6 +441,7 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
       Object.assign(request, data);
       return request;
     },
+    findReceiptChecksums: async () => ({}),
     findDuplicateCandidates: async () => [],
     // The claim asks for cash: it needs no account and no attestation.
     planSubmitPayout: async () => cashPlan,

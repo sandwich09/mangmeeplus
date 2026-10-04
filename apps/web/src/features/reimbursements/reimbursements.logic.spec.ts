@@ -8,7 +8,7 @@ import {
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
   approverNotReadyHelp, approverPaymentWarning, hubCardFilter, hubList, hubListStatusText, hubNextPage, NO_HUB_LIST, QUEUE_PAGE_SIZE, withHubPage,
-  financeQueueWords, rowHasFinanceReview, rowMayBeDuplicate, timelineDateText,
+  queueRowOffersPayment, financeQueueWords, rowHasFinanceReview, rowMayBeDuplicate, timelineDateText,
   type HubFilter,
 } from './reimbursements.logic';
 import { currentDeskText } from './reimbursements.model';
@@ -510,7 +510,7 @@ describe('errorMessage', () => {
     assert.match(errorMessage('self_approval_denied'), /นโยบายที่ใบนี้ใช้/);
     assert.doesNotMatch(errorMessage('self_approval_denied'), /การตั้งค่าปัจจุบัน/);
     // The tab and the toggle as the hub prints them: the names had drifted ("ตั้งค่าเบิกจ่าย", "อนุญาตให้อนุมัติคำขอตนเอง").
-    assert.ok(errorMessage('self_approval_denied').endsWith('เปิดได้ที่ ตั้งค่านโยบาย › "ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"'));
+    assert.match(errorMessage('self_approval_denied'), /ให้ผู้มีสิทธิ์ตั้งค่านโยบายเปิด "ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้" ในตั้งค่านโยบาย/);
     assert.match(errorMessage('claim_form_requires_submitted'), /เลขที่เอกสาร/);
     for (const code of ['stale_approval_snapshot', 'expense_already_claimed', 'attachment_already_claimed',
       'duplicate_unresolved', 'partial_payment_not_allowed', 'missing_receipt_reason_required',
@@ -1168,7 +1168,7 @@ describe('buildJourneySteps', () => {
       ] });
     const resolver = active(blocked, [...OWNER, 'reimbursement.duplicate.resolve'], 'owner');
     assert.deepEqual(resolver.actions, ['resolve-duplicate', 'cancel', 'print'], 'no pay button the API would refuse');
-    assert.equal(resolver.note, 'ติดรายการซ้ำ: ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้');
+    assert.equal(resolver.note, 'ติดรายการซ้ำ: ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล เพื่อปลดและยืนยันเอกสารก่อนบันทึกจ่าย ถ้าการยืนยันยังไม่เสร็จ กดปลดรายการซ้ำอีกครั้ง');
     // Owner 2026-09-21: only the requester and the approver take part, so the approver who records
     // the payment clears the block too. The requester still sees whose desk it is.
     const payer = active(blocked, [...APPROVER, 'reimbursement.payment.record'], 'boss');
@@ -1190,13 +1190,13 @@ describe('buildJourneySteps', () => {
     const custom = [...STAFF, 'reimbursement.approve', 'reimbursement.reject'];
     const manager = active(own, [...custom, 'reimbursement.policy.manage'], 'solo');
     assert.deepEqual(manager.actions, ['policy-settings', 'reopen', 'cancel', 'print']);
-    assert.match(manager.note ?? '', /^รอ เจ้าของ อนุมัติ · ใบนี้เป็นของคุณเอง และนโยบายที่ใบนี้ใช้ปิด/);
+    assert.match(manager.note ?? '', /^รอ เจ้าของ อนุมัติ · ไม่สามารถอนุมัติคำขอของตนเองได้ตามนโยบายที่ใบนี้ใช้/);
     assert.doesNotMatch(manager.note ?? '', /บริษัทยังไม่เปิด/);
     assert.match(manager.note ?? '', /"ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"/);
-    assert.match(manager.note ?? '', /เปิดได้ที่ตั้งค่านโยบาย แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่$/);
+    assert.match(manager.note ?? '', /เก็บนโยบายไว้ตอนส่งต้องเปิดกลับเป็นร่างและส่งอนุมัติใหม่/);
     const member = active(own, custom, 'solo');
     assert.deepEqual(member.actions, ['reopen', 'cancel', 'print']);
-    assert.match(member.note ?? '', /ขอให้เจ้าของกิจการเปิดในตั้งค่านโยบาย/);
+    assert.match(member.note ?? '', /ให้ผู้มีสิทธิ์ตั้งค่านโยบายเปิด/);
     // No server flag, no hint: an ordinary wait reads as before.
     assert.equal(active({ ...own, approvalActions: { canApprove: false, canReject: false } }, custom, 'solo').note, 'รอ เจ้าของ อนุมัติ');
   });
@@ -1332,3 +1332,43 @@ describe('policyDecisionPreview', () => {
       'บทบาทที่เลือก (ถ้าไม่มี เจ้าของกิจการ) → จ่ายเงินคืน');
   });
 });
+
+
+it('the claim refusal and journey share the frozen-policy way forward', () => {
+  const note = buildJourneySteps({ id: 'rb', status: 'PENDING_APPROVAL', requesterUserId: 'u', approvalActions: { selfApprovalBlocked: true }, approvalSteps: [], lines: [] }, ['reimbursement.policy.manage'], 'u').find(s => s.key === 'approval')!.note!;
+  const refusal = errorText({ code: 'self_approval_denied' });
+  assert.ok(note.includes(refusal));
+  assert.match(refusal, /เก็บนโยบายไว้ตอนส่ง/);
+});
+
+it('payment names its own expense document duplicate and the clearing action', () => {
+  const step = buildJourneySteps({ id: 'rb', branchId: 'b', status: 'READY_FOR_PAYMENT', duplicateStatus: 'POSSIBLE_DUPLICATE', duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_DOCUMENT'], lines: [] }, ['reimbursement.payment.record'], 'u').find(s => s.key === 'payment')!;
+  assert.match(step.note!, /เอกสารค่าใช้จ่ายของใบนี้อาจซ้ำกับเอกสารเดิม/);
+  assert.match(step.note!, /ปลดรายการซ้ำ/);
+  assert.ok(!step.actions.includes('pay'));
+});
+
+
+it('the pay queue offers no payout shortcut while duplicates block or cleared expenses still need confirmation', () => {
+  const row = { status: 'READY_FOR_PAYMENT', branchId: 'b' };
+  const permissions = ['reimbursement.payment.record'];
+  assert.equal(queueRowOffersPayment({ ...row, hasDuplicateBlocker: true } as any, permissions), false);
+  assert.equal(queueRowOffersPayment({ ...row, hasDuplicateBlocker: false, duplicateReasons: ['EXPENSE_CONFIRMATION'] } as any, permissions), false);
+  assert.equal(queueRowOffersPayment({ ...row, hasDuplicateBlocker: false } as any, permissions), true);
+});
+
+it('WARN still offers the retry after an interrupted duplicate-clear confirmation', () => {
+  const step = buildJourneySteps({ id: 'rb', branchId: 'b', status: 'READY_FOR_PAYMENT', duplicateBlocksPayment: false, duplicateReasons: ['EXPENSE_CONFIRMATION'], lines: [] }, ['reimbursement.payment.record'], 'u').find(s => s.key === 'payment')!;
+  assert.ok(step.actions.includes('resolve-duplicate'));
+  assert.ok(!step.actions.includes('pay'));
+  assert.match(step.note!, /รอยืนยันหลังปลดรายการซ้ำ/);
+});
+
+
+for (const [reason, words] of [['ATTACHMENT_CHECKSUM', 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น'], ['EXPENSE_LINK', 'ใช้รายการค่าใช้จ่ายเดียวกับคำขอเบิกอื่น']] as const) {
+  it(`payment uses the server reason ${reason} even without target candidate references`, () => {
+    const step = buildJourneySteps({ id: 'rb', branchId: 'b', status: 'READY_FOR_PAYMENT', duplicateBlocksPayment: true, duplicateReasons: [reason], duplicateCandidates: [], lines: [] }, ['reimbursement.payment.record'], 'u').find(s => s.key === 'payment')!;
+    assert.ok(step.note!.includes(words));
+    assert.ok(step.note!.includes('ปลดรายการซ้ำ'));
+  });
+}

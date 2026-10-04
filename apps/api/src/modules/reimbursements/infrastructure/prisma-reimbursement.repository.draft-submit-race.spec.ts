@@ -1,3 +1,4 @@
+import { ResolveDuplicateUseCase } from '../../expenses/application/use-cases/expense-upload.use-case';
 /** Real PostgreSQL proof that an edit and submit cannot both commit. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -3395,6 +3396,30 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.equal((await approve((await repos[0]!.findRequestById(companyId, waiting.id))!)).resumed, false);
   });
 
+  it('blocks an expense-only duplicate on detail, queue and locked payment, then dismisses, confirms and pays through the real modules', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const target = await approvedPossibleDuplicate();
+    const claim = await approvedPossibleDuplicate();
+    const db = clients[0]!;
+    const [own] = await repos[0]!.listClaimProjections(companyId, claim.requestId);
+    const [other] = await repos[0]!.listClaimProjections(companyId, target.requestId);
+    // Reproduce the recorded gap: only the expense scan noticed, no claim candidate exists.
+    await db.reimbursementDuplicateCandidate.deleteMany({ where: { companyId, reimbursementRequestId: claim.requestId } });
+    await db.expenseRecord.update({ where: { id: own!.id }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'POSSIBLE_DUPLICATE', postingStatus: 'pending' } });
+    await db.reimbursementRequest.update({ where: { id: claim.requestId }, data: { duplicateStatus: 'POSSIBLE_DUPLICATE' } });
+    await db.expenseDuplicateCandidate.create({ data: { companyId, expenseId: own!.id, candidateExpenseId: other!.id, reasonCodesJson: ['MANUAL'], score: 80 } });
+    assert.deepEqual(await duplicateFacts(claim, 'expense-only'), { queue: [true, 'POSSIBLE_DUPLICATE'], detail: [true, 'POSSIBLE_DUPLICATE'], list: 'POSSIBLE_DUPLICATE', payment: '422 duplicate_unresolved' });
+    const prisma = { client: db } as any;
+    const expenses = new PrismaExpenseRepository(prisma);
+    const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
+    const resolve = new FinanceReviewReimbursementUseCase(repos[0]!, audit, system(0).orchestrator,
+      new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), expenses), new ResolveDuplicateUseCase(expenses, audit));
+    await resolve.execute(finance(), claim.requestId, { resolveDuplicate: true, duplicateResolutionReason: 'ตรวจแล้วเป็นคนละการซื้อ' });
+    assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } })).status, 'CONFIRMED');
+    assert.equal(await db.auditLog.count({ where: { companyId, targetId: own!.id, action: 'expense.duplicate.dismiss' } }), 1);
+    assert.deepEqual(await duplicateFacts(claim, 'expense-cleared'), { queue: [false, 'OVERRIDDEN'], detail: [false, 'OVERRIDDEN'], list: 'OVERRIDDEN', payment: 'PAID' });
+  });
+
   // ---- A possible duplicate after approval: one fact, the claim's own open candidates ----
 
   /** A claim that may repeat another one, approved by its manager and carried out by the system: at the pay step. */
@@ -3416,7 +3441,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const listRow = (await new ListReimbursementsUseCase(repos[0]!).execute(finance(), { status: 'READY_FOR_PAYMENT', pageSize: 100 })).items.find((row) => row.id === claim.requestId);
     const payment = await repos[0]!.recordPaymentAtomic({ companyId, reimbursementRequestId: claim.requestId, idempotencyKey: `${S}-dup-${attempt}-${claim.requestId}`,
       paidAmount: claim.amount, currency: 'THB', paymentMethod: 'CASH', paidAt: new Date(), paidByUserId: FIN })
-      .then((paid) => paid.request.status, (error) => `${error.getStatus?.()} ${errorMessage(error)}`);
+      .then((paid) => paid.request.status, (error) => `${error.getStatus?.()} ${errorCode(error)}`);
     return {
       queue: [queueRow?.hasDuplicateBlocker, queueRow?.duplicateStatus], detail: [detail.duplicateBlocksPayment, detail.duplicateStatus],
       list: listRow?.duplicateStatus, payment,
@@ -3440,7 +3465,7 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     const prisma = { client: clients[0]! } as any;
     const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
     const resolve = new FinanceReviewReimbursementUseCase(repos[0]!, audit, { execute: async () => { throw new Error('nothing is built for a resolve'); } } as any,
-      new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), new PrismaExpenseRepository(prisma)));
+      new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), new PrismaExpenseRepository(prisma)), { executeForReimbursement: async () => 0 } as any);
     const resolved = await resolve.execute(finance(), claim.requestId, { resolveDuplicate: true, duplicateResolutionReason: 'ใบเสร็จคนละใบกัน' });
     assert.deepEqual([resolved.duplicateBlocksPayment, resolved.duplicateStatus], [false, 'OVERRIDDEN']);
     assert.deepEqual(await duplicateFacts(claim, 'cleared'), { queue: [false, 'OVERRIDDEN'], detail: [false, 'OVERRIDDEN'], list: 'OVERRIDDEN', payment: 'PAID' });

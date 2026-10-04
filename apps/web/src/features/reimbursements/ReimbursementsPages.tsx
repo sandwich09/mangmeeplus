@@ -37,7 +37,7 @@ import {
 import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
 import { roleDisplayName } from '../employee-access/role-picker.logic';
-import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateBlockNotice, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
 /** Every banner in this feature goes through here, so API error codes never reach the user raw. */
@@ -822,7 +822,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td className={cx(FREE_TEXT_CELL, 'min-w-24')}>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
-                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}</div></td>
+                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge><span className="text-xs text-amber-800">{reimbursementDuplicateBlockNotice(r.duplicateReasons, r.status === 'FINANCE_REVIEW')}</span></>}</div></td>
                         {withReview && <td className="text-xs text-gray-500">{financeLine(r) ?? '—'}</td>}
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -853,7 +853,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge claim={r} />
-                      {r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}
+                      {(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge><span className="text-xs text-amber-800">{reimbursementDuplicateBlockNotice(r.duplicateReasons, r.status === 'FINANCE_REVIEW')}</span></>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
                   </div>

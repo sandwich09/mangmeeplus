@@ -1,5 +1,5 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
-import { THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_SELF_APPROVAL_DENIED, REIMBURSEMENT_DUPLICATE_UNRESOLVED, REIMBURSEMENT_POLICY_TAB_LABEL, REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 // The words for a payment method are shared with the server's notice (their own import, apart from the line above).
 import { REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
@@ -12,10 +12,10 @@ export const REIMBURSEMENT_CREATE_UNAVAILABLE = `ขณะนี้ไม่ส�
  * The hub's policy tab and its self-approval switch, by the names the screens print. Every message that sends a
  * person there quotes these, so a message cannot name a tab or a switch the page does not show.
  */
-export const POLICY_TAB_LABEL = 'ตั้งค่านโยบาย';
-export const SELF_APPROVAL_SWITCH_LABEL = 'ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้';
+export const POLICY_TAB_LABEL = REIMBURSEMENT_POLICY_TAB_LABEL;
+export const SELF_APPROVAL_SWITCH_LABEL = REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL;
 
-export const SELF_APPROVAL_POLICY_NOTE = 'เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบเบิกของตัวเองได้ เมื่อปิด ทุกบทบาทอนุมัติใบของตัวเองไม่ได้ ยกเว้นตอนส่งมีผู้เบิกเป็นผู้อนุมัติได้เพียงคนเดียว ใบที่ส่งแล้วใช้ผู้อนุมัติที่กำหนดไว้ตอนส่ง';
+export const SELF_APPROVAL_POLICY_NOTE = 'เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบเบิกของตัวเองได้ เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด ยกเว้นเมื่อตอนส่ง ผู้เบิกเป็นคนเดียวที่อนุมัติใบนี้ได้ ใบที่ส่งไปแล้วใช้ผู้อนุมัติตามที่กำหนดไว้ตอนส่ง';
 export const CLAIM_SIGN_LABEL = 'ลงนามในใบเบิก';
 export const CLAIM_RESIGN_LABEL = 'ลงนามใหม่';
 
@@ -321,12 +321,12 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted
   // self-approval had no reason to look for the switch. Quotes the tab's and the toggle's own labels —
   // a message that paraphrases a control is a message you cannot search the settings page with.
-  self_approval_denied: `ไม่สามารถอนุมัติคำขอของตนเองได้ตามนโยบายที่ใบนี้ใช้ — เปิดได้ที่ ${POLICY_TAB_LABEL} › "${SELF_APPROVAL_SWITCH_LABEL}"`,
+  self_approval_denied: REIMBURSEMENT_SELF_APPROVAL_DENIED,
   reimbursement_changed: 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง',
   stale_approval_snapshot: 'คำขอถูกแก้ไขหลังส่งอนุมัติ กรุณาเปิดดูรายละเอียดใหม่ก่อนตัดสินใจ',
   expense_already_claimed: 'ค่าใช้จ่ายนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว',
   attachment_already_claimed: 'ใบเสร็จนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว',
-  duplicate_unresolved: 'พบรายการที่อาจซ้ำ ต้องตรวจสอบให้เรียบร้อยก่อน',
+  duplicate_unresolved: REIMBURSEMENT_DUPLICATE_UNRESOLVED,
   partial_payment_not_allowed: 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น',
   claim_form_requires_submitted: 'ต้องส่งคำขอให้ได้เลขที่เอกสารก่อนจึงจะพิมพ์ใบเบิกได้',
   lines_required: 'ต้องมีอย่างน้อย 1 รายการ',
