@@ -17,13 +17,19 @@
 
 Configuration: `LINE_OFFICIAL_REPLY_ENABLED` default false, `LINE_OFFICIAL_CHANNEL_SECRET`, `LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN`. เปิด flag ได้เมื่อมีทั้งสอง credential. ตรวจ bot info ว่า token เป็น `@107ewccg` ก่อน provision/เปิด webhook; ไม่พิมพ์ credential ใน logs, docs หรือ Git.
 
-Runtime ใช้ Kamal normal release; config contract เปลี่ยนจึงใช้ isolated Production hotfix ไม่ได้. Production เปิด flag ผ่าน tracked `infra/kamal/config.json`; UAT คงปิดเพื่อไม่ใช้ bot ของ Production ซ้ำ. Controller resolve เฉพาะ Secrets Manager `watchdog-bms/production/line-official/channel-secret` และ `channel-access-token`, ตรวจ current ARN/version, bot basic ID และบันทึก versions ผ่าน inventory เดิม. ก่อน mutation ตรวจ AWSCURRENT ว่าไม่เปลี่ยน เช่นเดียวกับ Postmark. ไม่แก้ parked ECS configuration หรือ shared system credentials. Production validator ต้องปฏิเสธ enabled flag ที่ไม่มี dedicated credentials/HTTPS web origin.
+Runtime publication: owner explicitly selected “แยกเฉพาะการ์ด OA” on 2026-10-04 after reviewing that main would ship 891 other changed files and 10 migrations. Publish an independent marketing Lambda Function URL, with immutable staging/live aliases to the same reviewed artifact. This is an Official OA service release, not an ERP/Kamal release; no ERP container, database, source, customer gate or UAT host is changed. Local validation replaces GitHub CI under the owner's instruction; record that exception and do not claim GitHub CI passed.
+
+The standalone bundle reuses the existing TypeScript keyword mapper, raw-body signature verifier, card JSON and three PNGs. No new dependency or package.json change. It handles only GET of the three exact icon paths and POST /webhook. Staging verifies HMAC and payload handling without sending replies; live replies use the dedicated token. Runtime trust is restricted to the fixed account/region, two exact Official Secrets Manager resources, and its own log group. The function has a 10-second timeout and capped concurrency. It has no ERP, database, worker, AI, VPC, IAM-write or system-OA access. Public URLs use NONE transport auth and explicit URL-only invoke permissions; POST still requires LINE HMAC.
+
+Credentials remain outside Git and go only to Secrets Manager `watchdog-bms/production/line-official/channel-secret` and `channel-access-token`. Use an existing non-root deployment/platform session; do not use root or broaden existing ERP roles to publish this service. Deployment requires a reviewed change set, exact immutable source/bundle hashes, staging HMAC/icon/schema/provider proof, live-version equality and provider endpoint readback. Retain per-operation evidence and sign acceptance using the existing approved KMS signing authority when available. Record ERP UAT/READY/PROD workflow run IDs as NOT_DISPATCHED. Native Social/Contact transition happens only after live provider verification; owner phone acceptance is recorded separately and never fabricated.
+
+The API route and tracked Kamal flag from PR999 are retained as future full-ERP integration, not deployed by this isolated service publication.
 
 รับเฉพาะ message/text จาก source/user ที่มี reply token. คำ Social Media/โซเชียล/ติดตามน้องมั่งมี ส่ง Social; ติดต่อมั่งมีทีม/ติดต่อเรา/Contact Us ส่ง Contact. คำอื่น, follow, image, group และ room ตอบ HTTP 200 โดยไม่ส่งข้อความ เพื่อให้เจ้าหน้าที่และ native replies ทำงานตามเดิม. Empty signed webhook verification ตอบ 200. Signature ผิด/หายหรือ route ปิดต้องไม่ส่งข้อความ.
 
 Reply ใช้ LINE single-use reply token โดยตรงและ timeout จำกัด ไม่มีการบันทึก LINE user หรือข้อความใน DB. ไม่ retry push ไม่สร้าง conversation. Provider/network failure ต้องปรากฏเป็น structured error ที่ไม่เปิดเผย token หรือ payload.
 
-PNG assets ใช้ public web origin ของระบบและ path `/assets/line/official-oa-{instagram,facebook,tiktok}.png`. ก่อนใช้จริงต้องเผยแพร่และตรวจ HTTP 200/image/png; URLs ใน draft ยังไม่ใช่หลักฐานว่าเผยแพร่แล้ว.
+PNG assets ใช้ HTTPS Function URL ของบริการ OA แยกและ path `/assets/line/official-oa-{instagram,facebook,tiktok}.png`. ก่อนใช้จริงต้องเผยแพร่และตรวจ HTTP 200/image/png; URLs ใน draft ยังไม่ใช่หลักฐานว่าเผยแพร่แล้ว.
 
 ## Acceptance
 
@@ -32,4 +38,4 @@ PNG assets ใช้ public web origin ของระบบและ path `/ass
 - Contact ไม่มีข้อมูลซ้ำใน body; ปุ่ม email แสดง address และคัดลอกได้ โทรและเว็บไซต์เปิดปลายทางเดิม
 - Social กระชับ มี logo ตัดกับพื้น ไม่มีดำกลืนกัน และทั้งสามลิงก์ถูกต้อง
 - Provider validation และ owner phone acceptance ผ่านก่อนปิด native replies ของสองคำนี้
-- การขึ้น UAT/Production ต้องตาม `docs/runbooks/uat-production-v2-deployment.md`; local tests หรือ Manager API activation ไม่ถือว่าระบบ live สำเร็จ
+- การขึ้น ERP UAT/Production ต้องตาม `docs/runbooks/uat-production-v2-deployment.md`; OA แยกใช้ staged immutable artifact/provider proof และ signed isolated-service ledger ข้างต้น. Local tests หรือ Manager API activation ไม่ถือว่าระบบ live สำเร็จ
