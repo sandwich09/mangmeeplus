@@ -101,7 +101,8 @@ test('B5: one read status, retained content, and export busy only while creating
   const page = source('./ExecutiveReportPage.tsx');
   assert.doesNotMatch(page, /loading=\{loading\}[^\n]*W\.export\.action|loading \? W\.loading/);
   assert.match(page, /const visibleData = !periodInvalid && samePeriod && context[^\n]*\? data : null/);
-  assert.match(page, /reading && !!visibleData/); assert.match(page, /inert=\{reading/);
+  // The whole report is covered while it is read again; a tab's own read covers only its panel (see the panel test).
+  assert.match(page, /const covered = reading && !panelRead;/); assert.match(page, /covered && !!visibleData/); assert.match(page, /inert=\{covered/);
   assert.doesNotMatch(page, /\[queryKey, section, targetCompanyId, attempt, problem, tab/);
   assert.match(page, /\[.*historyPage.*\]/);
 });

@@ -86,6 +86,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const [history, setHistory] = useState<ExecutiveCompanyHistory | null>(null);
   const [dataKey, setDataKey] = useState('');
   const [dataParams, setDataParams] = useState('');
+  const [dataQuery, setDataQuery] = useState<Record<string, string | number>>({});
   const [failure, setFailure] = useState<Failure | null>(null);
   const [historyFailure, setHistoryFailure] = useState<Failure | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -97,6 +98,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const [retryWait, setRetryWait] = useRetryWait();
   const [backTitle, setBackTitle] = useState<string | null>(null);
   const tabFocus = useRef<string | null>(null);
+  const panelHeight = useRef(0);
   const tab = DETAIL_TABS.find(tab => tab.value === (params.get('view') ?? params.get('tab')))?.value ?? 'company';
   const queryKey = context && !periodInvalid ? JSON.stringify(reportQuery(section, params, context, search)) : null;
   const historyPage = section === 'detail' && tab === 'history' ? pageNumber(params.get('page')) : 1;
@@ -173,7 +175,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
       .then(result => {
         if (controller.signal.aborted) return;
         shared.build.current = result.data.build.id;
-        setData(result.data); setDataKey(requestKey); setDataParams(paramsString); setUpdated(result.changed); setContactReadAt(new Date().toISOString());
+        setData(result.data); setDataKey(requestKey); setDataParams(paramsString); setDataQuery(query); setUpdated(result.changed); setContactReadAt(new Date().toISOString());
         const pagination = 'pagination' in result.data ? result.data.pagination : null;
         if (pagination && pageNumber(new URLSearchParams(paramsString).get('page')) !== pagination.page) {
           const next = new URLSearchParams(window.location.search); next.set('page', String(pagination.page));
@@ -239,7 +241,18 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const from = params.get('origin');
   const origin = ['overview', 'usage', 'revenue', 'customers'].includes(from ?? '') ? from as Exclude<ReportSection, 'detail' | 'companies'> : 'overview';
   const fallback = section === 'detail' ? menuHref('companies', params) : menuHref(origin, params);
-  const effectiveQuery = context ? reportQuery(section, params, context, search) : {};
+  const effectiveQuery: Record<string, string | number> = context ? reportQuery(section, params, context, search) : {};
+  // A tab that needs a read of its own (the same report, period and filters as on screen, another view; or a company's history): only its panel
+  // loads. The heading, period row, status, figures and tab bar stay as they are and in use, so the pressed tab keeps the keyboard.
+  const currentView = section === 'detail' ? tab : section === 'usage' || section === 'revenue' || section === 'customers' ? reportView(section, params) : '';
+  const tabRead = !!data && dataKey !== requestKey && effectiveQuery.view !== undefined && effectiveQuery.view !== dataQuery.view
+    && Object.keys({ ...effectiveQuery, ...dataQuery }).every(key => key === 'view' || key === 'metric' || effectiveQuery[key] === dataQuery[key]);
+  // A company's history is read after its tab is shown: until it is there, the panel is loading (never an empty panel in between).
+  const historyPending = section === 'detail' && tab === 'history' && !loading && (historyLoading || (!history && !historyFailure));
+  const panelRead = !!visibleData && !failed && ((reading && tabRead) || historyPending)
+    ? { view: currentView, label: (section === 'detail' ? DETAIL_TABS : REPORT_VIEWS[section as 'usage' | 'revenue' | 'customers']).find(item => item.value === currentView)?.label, minHeight: panelHeight.current } : undefined;
+  const covered = reading && !panelRead;
+  const switchTab = (changes: Record<string, string>, view: string, keyboard?: boolean) => { panelHeight.current = document.getElementById('executive-panel')?.offsetHeight ?? 0; tabFocus.current = keyboard ? view : null; update(changes); };
   const filterValues = Object.fromEntries((section === 'companies' ? [...GLOBAL_FILTERS, ...DIRECTORY_FILTERS] : GLOBAL_FILTERS).map(key => [key, String(effectiveQuery[key] ?? 'ALL')]));
   const picked = drillFilters(params);
   const pickLabels = context && picked ? Object.entries(picked).flatMap(([key, value]) => {
@@ -276,12 +289,12 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
         {periodInvalid && <p role="alert" className="text-sm text-red-700">{P.invalid}</p>}
         {context && !periodInvalid && !failed && !visibleData && <ReportSkeleton />}
         {!exportOpen && <><div id="executive-results" className="relative min-h-32 scroll-mt-32">
-          <CoverLoader active={reading && !!visibleData} label={W.loading} />
-          <div className={`min-w-0 space-y-4 ${reading ? "opacity-50" : ""}`} aria-busy={reading} aria-hidden={reading && !!visibleData ? true : undefined} inert={reading && !!visibleData}>
+          <CoverLoader active={covered && !!visibleData} label={W.loading} />
+          <div className={`min-w-0 space-y-4 ${covered ? "opacity-50" : ""}`} aria-busy={covered} aria-hidden={covered && !!visibleData ? true : undefined} inert={covered && !!visibleData}>
             {visibleData && section === 'overview' && <OverviewContent data={visibleData as ExecutiveOverview} nav={nav} />}
             {visibleData && section === 'companies' && <CompaniesContent data={visibleData as ExecutiveCompanies} nav={nav} onNote={noteChanged} sortColumn={sortBy => update({ sortBy, sortDir: effectiveQuery.sortBy === sortBy ? effectiveQuery.sortDir === 'asc' ? 'desc' : 'asc' : sortBy === 'companyName' ? 'asc' : 'desc' })} />}
-            {visibleData && section === 'detail' && <CompanyContent data={visibleData as ExecutiveCompanyDetail} tab={tab} history={history} admin={shared.admin} nav={nav} contactReadAt={contactReadAt} onNote={noteChanged} tabs={<ExecutiveTabs label={W.detail} tabs={DETAIL_TABS} value={tab} onChange={(view, keyboard) => { tabFocus.current = keyboard ? view : null; update({ view, tab: "" }); }} />} />}
-            {visibleData && ['usage', 'revenue', 'customers'].includes(section) && <AnalysisContent data={visibleData as ExecutiveAnalysis} nav={nav} seller={params.get('seller')} tabs={<><ExecutiveTabs label={W[section]} tabs={REPORT_VIEWS[section as 'usage' | 'revenue' | 'customers']} value={reportView(section as 'usage' | 'revenue' | 'customers', params)} onChange={(view, keyboard) => { tabFocus.current = keyboard ? view : null; update({ view }); }} />{section === 'customers' && reportView(section, params) === 'sales' && <SelectField label={W.sales} frameClassName="md:!flex-row md:!items-center md:!gap-2 [&>span:first-child]:shrink-0 md:[&>details]:flex-none" value={params.get('seller') === 'credited' ? 'credited' : 'referring'} className="!min-h-11 !text-base" onChange={event => update({ seller: event.target.value })}><option value="referring">{W.referring}</option><option value="credited">{W.credited}</option></SelectField>}</>} rankingControl={section === 'usage' && reportView(section, params) === 'ranking' ? <SelectField label={W.ranking} frameClassName="md:!flex-row md:!items-center md:!gap-2 [&>span:first-child]:shrink-0 md:[&>details]:flex-none" value={Object.hasOwn(RANK_LABELS, params.get('rank') ?? '') ? params.get('rank')! : 'expenseReceiptCount'} error={fieldErrors.metric} className="!min-h-11 !text-base" onChange={event => update({ rank: event.target.value })}>{Object.entries(RANK_LABELS).map(([value, words]) => <option key={value} value={value}>{words.label}</option>)}</SelectField> : undefined} />}
+            {visibleData && section === 'detail' && <CompanyContent data={visibleData as ExecutiveCompanyDetail} tab={tab} history={history} admin={shared.admin} nav={nav} contactReadAt={contactReadAt} onNote={noteChanged} reading={panelRead} tabs={<ExecutiveTabs label={W.detail} tabs={DETAIL_TABS} value={tab} onChange={(view, keyboard) => switchTab({ view, tab: "" }, view, keyboard)} />} />}
+            {visibleData && ['usage', 'revenue', 'customers'].includes(section) && <AnalysisContent data={visibleData as ExecutiveAnalysis} nav={nav} seller={params.get('seller')} reading={panelRead} tabs={<><ExecutiveTabs label={W[section]} tabs={REPORT_VIEWS[section as 'usage' | 'revenue' | 'customers']} value={reportView(section as 'usage' | 'revenue' | 'customers', params)} onChange={(view, keyboard) => switchTab({ view }, view, keyboard)} />{section === 'customers' && reportView(section, params) === 'sales' && <SelectField label={W.sales} frameClassName="md:!flex-row md:!items-center md:!gap-2 [&>span:first-child]:shrink-0 md:[&>details]:flex-none" value={params.get('seller') === 'credited' ? 'credited' : 'referring'} className="!min-h-11 !text-base" onChange={event => update({ seller: event.target.value })}><option value="referring">{W.referring}</option><option value="credited">{W.credited}</option></SelectField>}</>} rankingControl={section === 'usage' && reportView(section, params) === 'ranking' ? <SelectField label={W.ranking} frameClassName="md:!flex-row md:!items-center md:!gap-2 [&>span:first-child]:shrink-0 md:[&>details]:flex-none" value={Object.hasOwn(RANK_LABELS, params.get('rank') ?? '') ? params.get('rank')! : 'expenseReceiptCount'} error={fieldErrors.metric} className="!min-h-11 !text-base" onChange={event => update({ rank: event.target.value })}>{Object.entries(RANK_LABELS).map(([value, words]) => <option key={value} value={value}>{words.label}</option>)}</SelectField> : undefined} />}
           </div>
         </div>
         {pagination && pagination.totalPages > 1 && <Pagination prominent page={pagination.page} totalPages={pagination.totalPages} disabled={reading} onPageChange={page => { update({ page: String(page) }); document.getElementById('executive-results')?.scrollIntoView(); }} />}</>}

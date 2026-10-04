@@ -113,7 +113,8 @@ test('the trend reads every chosen monthly-series point, preserves unavailable g
   const data = { ...detail, period: { from: '2025-01', to: '2026-01', includesOpenMonth: false }, unmatchedMoney: { count: 0, receiptsSatang: 0, refundsSatang: 0 }, population: { eligibleCount: count, unclassifiedCount: 0, excludedTestInternalNetReceiptsSatang: 0, unclassifiedNetReceiptsSatang: 0 }, periodSummary: undefined, company: undefined, revenue: { receiptsSatang: cash, refundsSatang: cash, netReceiptsSatang: cash, taxSatang: cash, feesSatang: cash, disputedInvoiceCount: null, byPurchaseGroup: [], trend: [] }, monthlySeries: [{ metric: 'netReceiptsSatang', points }] };
   const markup = render(AnalysisContent, { data, seller: null, nav: { params: new URLSearchParams('from=2025-01&to=2026-01&view=trend'), from: 'revenue', remember() {}, navigate() {} } });
   assert.equal((markup.match(/<g><title>/g) ?? []).length, 12); assert.equal((markup.match(/data-unavailable="true"/g) ?? []).length, 1);
-  assert.match(markup, /overflow-x-auto/); assert.match(markup, /min-width:832px/); assert.match(markup, /ม.ค. 69/);
+  // Thirteen months, each as wide as its value needs (the short value on a phone): wider than a card, so the chart scrolls sideways.
+  assert.match(markup, /overflow-x-auto/); assert.match(markup, /--chart-phone:calc\(13 \* \(4\.95ch \+ [\d.]+rem\)\);--chart-desktop:calc\(13 \* \(7\.2ch \+ [\d.]+rem\)\)/); assert.match(markup, /ม.ค. 69/);
 });
 test('history requests pin the applied range and build, without sending the old month or origin', async t => {
   const { getExecutiveHistory } = await import('./executive-reports.api');

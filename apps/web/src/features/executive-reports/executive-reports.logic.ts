@@ -234,3 +234,10 @@ export const figureNumber = (value: ExecutiveCount, moneyValue = false) => {
   const number = value.value ?? value.knownValue;
   return number === undefined ? '–' : (moneyValue ? number / 100 : number).toLocaleString('th-TH', moneyValue ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : undefined);
 };
+/** The same figure as a phone's chart prints it: whole units, and from one million the short Thai form. The figure in full stays in its accessible name. */
+export const shortFigureNumber = (value: ExecutiveCount, moneyValue = false) => {
+  const number = value.value ?? value.knownValue;
+  if (number === undefined) return '–';
+  const amount = moneyValue ? number / 100 : number;
+  return Math.abs(amount) >= 1_000_000 ? new Intl.NumberFormat('th-TH', { notation: 'compact', compactDisplay: 'long', maximumFractionDigits: 1 }).format(amount) : amount.toLocaleString('th-TH', { maximumFractionDigits: 0 });
+};

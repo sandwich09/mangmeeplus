@@ -164,6 +164,38 @@ test('revenue trend has a fixed height, bar labels, signed baseline, gaps and on
   assert.match(html, /y="100"/); assert.match(html, /--color-red-600/);
   assert.equal(html.replace(/<[^>]*>/g, '').split(W.historyBeforeCollectionPartial).length - 1, 1);
   assert.equal(html.replace(/<[^>]*>/g, '').split(W.historyBeforeCollection).length - 1, 1);
+  // Owner 2026-10-05: a value sits over the middle of its bar (three rows of the same equal columns, no gap) and two values never touch:
+  // every month is as wide as its value needs, the short value on a phone and the full one from a tablet up; more months than fit scroll sideways.
+  const labels = html.match(/<div class="executive-trend-labels grid items-end tabular-nums" style="grid-template-columns:repeat\(3, minmax\(0, 1fr\)\)">[\s\S]*?<\/div>/)?.[0] ?? '';
+  assert.equal((labels.match(/<span class="flex min-w-0 justify-center">/g) ?? []).length, 3);
+  assert.match(labels, /aria-label="100\.00 บาท[^"]*"[^>]*><span class="md:hidden">100<\/span><span class="max-md:hidden">100\.00<\/span>/);
+  assert.match(labels, /<span class="md:hidden">-100<\/span><span class="max-md:hidden">-100\.00<\/span>/);
+  assert.match(html, /<div class="grid text-center text-xs text-gray-600" style="grid-template-columns:repeat\(3, minmax\(0, 1fr\)\)">/); assert.doesNotMatch(html.match(/executive-trend-labels[\s\S]*?<\/svg>[\s\S]*?<\/div>/)![0], /gap-2/);
+  assert.match(html, /<div class="overflow-x-auto"><div class="min-w-\[var\(--chart-phone\)\] text-sm md:min-w-\[var\(--chart-desktop\)\]" style="--chart-phone:calc\(3 \* \(4\.4ch \+ 0\.625rem\)\);--chart-desktop:calc\(3 \* \(5\.85ch \+ 0\.625rem\)\)">/);
+  assert.match(source('./ExecutiveReportContent.tsx'), /const showLatest = \(scroller: HTMLDivElement \| null\) => \{ if \(scroller\) scroller\.scrollLeft = scroller\.scrollWidth; \};/);
+});
+test('a tab that needs its own read loads inside its panel: the figures and the tab bar stay in place and in use', async () => {
+  const { AnalysisContent, CompanyContent } = await content();
+  const { companyFacts } = await import('./executive-company.fixture');
+  const reading = { view: 'top', label: 'ลูกค้าที่สร้างรายรับสูง', minHeight: 367 };
+  const tabs = React.createElement('div', { role: 'tablist' }, 'TABS');
+  const revenue = { receiptsSatang: cash(100), refundsSatang: cash(0), netReceiptsSatang: cash(100), taxSatang: cash(0), feesSatang: cash(0), byPurchaseGroup: [{ key: 'FIRST', label: 'ซื้อครั้งแรก', receiptsSatang: cash(100), refundsSatang: cash(0), netReceiptsSatang: cash(100), taxSatang: cash(0), feesSatang: cash(0) }], disputedInvoiceCount: 0, trend: [] };
+  const loading = htmlOf(AnalysisContent, { data: { ...envelope, revenue } as unknown as ExecutiveAnalysis, nav, seller: null, tabs, reading });
+  // The five figures and the tab bar are there as before; the old tab's table is not; the panel says it is loading, under the new tab's name.
+  assert.equal((loading.match(/data-executive-kpi(?=[ =>])/g) ?? []).length, 5); assert.ok(loading.indexOf('TABS') < loading.indexOf('id="executive-panel"')); assert.ok(!loading.includes('ซื้อครั้งแรก'));
+  assert.match(loading, /<div id="executive-panel" role="tabpanel" aria-labelledby="executive-tab-top" aria-label="ลูกค้าที่สร้างรายรับสูง" aria-busy="true" style="min-height:367px"><div class="relative h-64 overflow-hidden rounded-xl">/);
+  assert.ok(loading.includes(W.loading)); assert.equal(loading.split('id="executive-panel"').length - 1, 1);
+  // The same for a report without figures above its tabs, and for a company's history.
+  const groups = htmlOf(AnalysisContent, { data: { ...envelope, view: 'industry', groups: [] } as unknown as ExecutiveAnalysis, nav, seller: null, tabs, reading: { view: 'discovery', minHeight: 0 } });
+  assert.match(groups, /TABS<\/div><div id="executive-panel" role="tabpanel" aria-labelledby="executive-tab-discovery" aria-busy="true" style="min-height:0"><div class="relative h-64 /);
+  const history = htmlOf(CompanyContent, { data: { ...envelope, company: { ...company, ...companyFacts(), creditedSeller: {}, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail, tab: 'history', history: null, admin: false, nav, contactReadAt: '', tabs, reading: { view: 'history', label: 'ประวัติบริษัท', minHeight: 578 } });
+  assert.match(history, /TABS<\/div><div id="executive-panel" role="tabpanel" aria-labelledby="executive-tab-history" aria-label="ประวัติบริษัท" aria-busy="true" style="min-height:578px">/);
+  // The page covers the whole report only for a read that is not a tab's own, measures the panel a tab replaces, and never shows an empty history panel.
+  const page = source('./ExecutiveReportPage.tsx');
+  assert.match(page, /const covered = reading && !panelRead;/); assert.match(page, /<CoverLoader active=\{covered && !!visibleData\} label=\{W\.loading\} \/>/); assert.match(page, /inert=\{covered && !!visibleData\}/);
+  assert.match(page, /panelHeight\.current = document\.getElementById\('executive-panel'\)\?\.offsetHeight \?\? 0; tabFocus\.current = keyboard \? view : null; update\(changes\);/);
+  assert.match(page, /const historyPending = section === 'detail' && tab === 'history' && !loading && \(historyLoading \|\| \(!history && !historyFailure\)\);/);
+  assert.equal((page.match(/reading=\{panelRead\}/g) ?? []).length, 2); assert.equal((page.match(/switchTab\(/g) ?? []).length, 2);
 });
 
 test('money lag appears once in the status detail and not in any KPI', async () => {

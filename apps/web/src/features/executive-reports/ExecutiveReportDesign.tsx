@@ -7,7 +7,7 @@ import { MangmeeCard } from '@/common/components/mangmee';
 import { ChevronDownIcon } from '@/common/icons';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { W } from './executive-reports.words';
-import { countText, moneyText, reasonText, figureNumber, hoistedSource, reportDate, reportDateTime } from './executive-reports.logic';
+import { countText, moneyText, reasonText, figureNumber, shortFigureNumber, hoistedSource, reportDate, reportDateTime } from './executive-reports.logic';
 
 export const EXECUTIVE_PAGE_CLASS = 'min-w-0 text-gray-900 [&_button]:min-h-11 [&_button]:min-w-11 [&_button]:focus-visible:outline-2 [&_button]:focus-visible:outline-offset-2 [&_button]:focus-visible:outline-brand-700';
 export function ExecutivePage({ eyebrow, title, description, actions, controls, children, compact = false, className = '' }: { eyebrow?: ReactNode; title: ReactNode; description?: ReactNode; actions?: ReactNode; controls?: ReactNode; children: ReactNode; compact?: boolean; className?: string }) {
@@ -22,19 +22,19 @@ export function ExecutivePage({ eyebrow, title, description, actions, controls, 
 export const ReasonNotes = createContext(false);
 const ColumnMark = createContext<Record<string, readonly string[]> | null>(null);
 const KpiScale = createContext({ digits: 11, size: 18 });
-type FigureProps = { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; source?: string; mark?: boolean; unit?: string };
+type FigureProps = { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; source?: string; mark?: boolean; unit?: string; /** A chart label: a phone prints the short figure; the full one stays in the accessible name. */ short?: boolean };
 const reasons = (value: { reasonCodes: readonly string[]; coverage: ExecutiveCoverage; affectedMonths?: Array<{ month: string; reasonCodes: readonly string[] }> }) => [...new Set(value.reasonCodes.map(code => reasonText(code, value.coverage, value.affectedMonths?.filter(m => m.reasonCodes.includes(code)).map(m => m.month))))].join(' · ');
 export function IncompleteDot({ reason }: { reason: string }) {
   return <span role="img" aria-label={`${W.incompleteLegend}${reason && reason !== W.incompleteLegend ? ` — ${reason}` : ''}`} title={reason || W.incompleteLegend} className="executive-dot ml-1 inline-block size-1.5 shrink-0 rounded-full bg-gold-500 align-middle" />;
 }
-export function Figure({ value, moneyValue = false, netValue = false, measured = false, source = measured ? 'aiCost' : moneyValue ? 'money' : 'usage', mark = true, unit }: FigureProps) {
+export function Figure({ value, moneyValue = false, netValue = false, measured = false, source = measured ? 'aiCost' : moneyValue ? 'money' : 'usage', mark = true, unit, short = false }: FigureProps) {
   const columnCodes = useContext(ColumnMark)?.[source];
   const reason = reasons(value);
   const qualified = value.value === null && value.knownValue === undefined ? W.unavailableFigure : moneyValue ? moneyText(value as ExecutiveMoney, measured) : countText(value);
   const negative = netValue && value.coverage === 'complete' && (value.value ?? 0) < 0 ? W.negative : '';
   const showDot = mark && value.coverage !== 'complete' && (columnCodes === undefined || value.reasonCodes.some(code => !columnCodes.includes(code)));
   return <span className={`executive-figure relative inline-flex items-center whitespace-nowrap tabular-nums ${unit ? 'mr-3' : ''} ${(value.value ?? value.knownValue) === 0 ? 'text-gray-600' : moneyValue && (value.value ?? value.knownValue ?? 0) < 0 ? 'text-red-700' : ''}`} aria-label={[`${qualified}${unit && !moneyValue ? ` ${unit}` : ''}`, reason, negative].filter(Boolean).join(' — ')}>
-    {figureNumber(value, moneyValue)}{unit && <span className="ml-1">{unit}</span>}{showDot && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={reason} /></span>}
+    {short ? <><span className="md:hidden">{shortFigureNumber(value, moneyValue)}</span><span className="max-md:hidden">{figureNumber(value, moneyValue)}</span></> : figureNumber(value, moneyValue)}{unit && <span className="ml-1">{unit}</span>}{showDot && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={reason} /></span>}
   </span>;
 }
 // The old ReasonNotes mechanism now has one expandable, unnumbered detail per page.

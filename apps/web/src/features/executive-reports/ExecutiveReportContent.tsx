@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useId, type ReactNode } from 'react';
+import { useId, type CSSProperties, type ReactNode } from 'react';
 import {
   EXECUTIVE_SHEET_WORDS as S, EXECUTIVE_COMPANY_SHEET_COLUMNS, EXECUTIVE_SORT_OPTIONS, COMPANY_TEAM_NOTE_WORDS as N, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_PERIOD_WORDS as P, EXECUTIVE_HISTORY_EVENT_LABELS, executivePeriodReportLabels, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
   type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveCompanyHistory,
@@ -13,9 +13,9 @@ import { ExecutiveSectionCard as Card, ExecutiveKpi, ExecutiveKpiStrip, Executiv
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { ExecutiveCompanyNote, ExecutiveNoteAction, type NoteChange } from './ExecutiveCompanyNote';
 import { Button } from '@/common/components/button';
-import { EmptyState } from '@/common/components/state';
+import { CoverLoader, EmptyState } from '@/common/components/state';
 import { W, RANK_LABELS, REPORT_VIEWS, DETAIL_TABS, COMPANY_GROUPS as G, thaiLabel } from './executive-reports.words';
-import { money, ratioText, reportDate, reportDateTime, periodText, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber, hoistedSource, drillFilters, INFOGRAPHIC_FILTERS } from './executive-reports.logic';
+import { money, ratioText, reportDate, reportDateTime, periodText, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber, shortFigureNumber, hoistedSource, drillFilters, INFOGRAPHIC_FILTERS } from './executive-reports.logic';
 
 const LABELS = executivePeriodReportLabels();
 type Navigation = { params: URLSearchParams; from: string; remember: () => void; navigate: (href: string) => void };
@@ -32,6 +32,20 @@ export function ReportSkeleton() {
   return <div role="status" aria-busy="true" className="space-y-4"><span className="sr-only">{W.loading}</span><div aria-hidden="true" className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[0, 1, 2, 3].map(key => <MangmeeCard key={key} className="h-32 bg-gray-50 p-4 motion-safe:animate-pulse"><span className="block h-4 w-2/3 rounded bg-gray-200" /></MangmeeCard>)}</div><MangmeeCard className="h-64 bg-gray-50 p-4 motion-safe:animate-pulse"><span aria-hidden="true" className="block h-4 w-1/3 rounded bg-gray-200" /></MangmeeCard></div>;
 }
 export { Figure } from './ExecutiveReportDesign';
+/**
+ * How wide the widest of a chart's labels is, in `ch` of the label's own font: a digit or a letter is about 0.9, the marks between digits about
+ * half of that, a Thai mark above or below a letter nothing. Never narrower than the month's name under the bar.
+ */
+const labelWidth = (labels: string[]) => Math.round(100 * Math.max(4.4, ...labels.map(label => [...label].reduce((width, char) => width + (/[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(char) ? 0 : /[.,\s]/.test(char) ? 0.45 : 0.9), 0)))) / 100;
+/** A chart wider than its card opens on its latest months. */
+const showLatest = (scroller: HTMLDivElement | null) => { if (scroller) scroller.scrollLeft = scroller.scrollWidth; };
+/** A tab that needs a read of its own: which tab, and how tall the panel it replaces was. */
+export type PanelRead = { view: string; label?: string; minHeight: number };
+/** The panel while its tab is being read: everything above it stays in place and in use, and the loading state sits where the answer will be. */
+function PanelLoading({ read }: { read: PanelRead }) {
+  // As tall as the panel it replaces, so nothing below moves; the loading state itself is at the top, where the reader is looking.
+  return <div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${read.view}`} aria-label={read.label} aria-busy="true" style={{ minHeight: read.minHeight }}><div className="relative h-64 overflow-hidden rounded-xl"><CoverLoader active label={W.loading} /></div></div>;
+}
 function DetailValues({ rows }: { rows: Array<[string, ReactNode]> }) {
   return <dl className="grid min-w-0 gap-3 sm:grid-cols-2">{rows.map(([label, value]) => <div key={label} className="min-w-0 break-words [overflow-wrap:anywhere]"><dt className="text-xs text-gray-600">{label}</dt><dd className="text-base">{value}</dd></div>)}</dl>;
 }
@@ -238,24 +252,27 @@ export function CompaniesContent({ data, nav, sortColumn, onNote }: { data: Exec
   </ReportNotes>;
 }
 
-function RevenueContent({ data, nav, tabs }: { data: ExecutiveAnalysis & { revenue: NonNullable<ExecutiveAnalysis['revenue']> }; nav: Navigation; tabs: ReactNode }) {
+function RevenueContent({ data, nav, tabs, reading }: { data: ExecutiveAnalysis & { revenue: NonNullable<ExecutiveAnalysis['revenue']> }; nav: Navigation; tabs: ReactNode; reading?: PanelRead }) {
   const revenue = data.revenue, view = reportView('revenue', nav.params), pattern = useId();
   const monthly = data.monthlySeries?.find(series => series.metric === 'netReceiptsSatang');
   const trend = monthly ? monthly.points.map(point => ({ month: point.month, netReceiptsSatang: { ...point.metricValue, currency: 'THB' as const, affectedMonths: point.metricValue.affectedMonths ?? [{ month: point.month, reasonCodes: point.metricValue.reasonCodes }] } })) : revenue.trend;
   const columns = { gridTemplateColumns: `repeat(${Math.max(1, trend.length)}, minmax(0, 1fr))` };
   const figures: Array<[string, ExecutiveMoney]> = [[W.shortNet, revenue.netReceiptsSatang], [W.shortReceipts, revenue.receiptsSatang], [W.shortRefunds, revenue.refundsSatang], [W.tax, revenue.taxSatang], [W.shortFees, revenue.feesSatang]];
   const trendSource = hoistedSource(trend.map(point => ({ coverage: point.netReceiptsSatang.coverage, source: 'money' })));
+  // Between two values of the chart: a little air, and room for a value's own amber dot where the title does not carry it for all of them.
+  const labelGap = trendSource ? '0.625rem' : '1rem';
   const max = Math.max(1, ...trend.map(point => Math.abs(point.netReceiptsSatang.value ?? point.netReceiptsSatang.knownValue ?? 0)));
   const moneyColumn = (label: string, secondary = false) => ({ label: W.unitInHeader(label, W.unitBaht), width: 136, ...(secondary ? { hide: 'narrow' as const, mobile: false } : label === W.shortRefunds ? { hide: 'narrow' as const } : {}) });
   const unmatchedRows: Array<[string, ExecutiveCount, boolean]> = [[W.unmatched, sourceCount(data.unmatchedMoney.count, data.coverage.money), false], [W.shortReceipts, sourceMoney(data.unmatchedMoney.receiptsSatang, data.coverage.money), true], [W.shortRefunds, sourceMoney(data.unmatchedMoney.refundsSatang, data.coverage.money), true], [W.excludedNet, sourceMoney(data.population.excludedTestInternalNetReceiptsSatang, data.coverage.money), true], [W.unclassifiedNet, sourceMoney(data.population.unclassifiedNetReceiptsSatang, data.coverage.money), true], [W.disputes, sourceCount(revenue.disputedInvoiceCount, data.coverage.money), false]];
   return <>
     <ExecutiveKpiStrip>{figures.map(([label, figure], i) => <ExecutiveKpi key={label} iconName="money" label={label} figure={figure} moneyValue netValue={i === 0} unit={W.unitBaht} comparison={figure.comparison ?? data.periodComparisons?.[(["netReceiptsSatang", "receiptsSatang", "refundsSatang", "taxSatang", "feesSatang"] as const)[i]]} emphasis={i === 0} />)}</ExecutiveKpiStrip>
-    {tabs}<div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${view}`} aria-label={REPORT_VIEWS.revenue.find(tab => tab.value === view)?.label}>
+    {tabs}{reading ? <PanelLoading read={reading} /> : <div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${view}`} aria-label={REPORT_VIEWS.revenue.find(tab => tab.value === view)?.label}>
     {view === 'top' && data.spendConcentration && <SpendContent data={data.spendConcentration} nav={nav} />}
     {view === 'summary' && <Card title={W.purchase}><ReportTable title={W.purchase} columns={[{ label: W.purchase, width: 240 }, moneyColumn(W.shortReceipts), moneyColumn(W.shortRefunds), moneyColumn(W.shortNet), moneyColumn(W.tax, true), moneyColumn(W.shortFees, true)]} rows={revenue.byPurchaseGroup.map(row => ({ key: row.key, cells: [row.label, <Figure key="receipts" value={row.receiptsSatang} moneyValue />, <Figure key="refunds" value={row.refundsSatang} moneyValue />, <Figure key="net" value={row.netReceiptsSatang} moneyValue netValue />, <Figure key="tax" value={row.taxSatang} moneyValue />, <Figure key="fees" value={row.feesSatang} moneyValue />] }))} /><p className="text-xs text-gray-600">{W.moneyDefinition} · {W.vatIncluded}{revenue.byPurchaseGroup.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && ` · ${W.negative}`}</p></Card>}
     {view === 'unmatched' && <Card title={W.unmatched}><ReportTable title={W.unmatched} columns={[{ label: W.item, width: 440 }, { label: W.unitInHeader(W.quantity, `${W.quantity} / ${W.unitBaht}`), width: 180 }]} rows={unmatchedRows.map(([label, value, cash]) => ({ key: label, cells: [label, <Figure key={label} value={value} moneyValue={cash} source="money" />] }))} />{data.population.unclassifiedCount > 0 && <p className="text-xs text-gray-600">{W.unclassified(data.population.unclassifiedCount)}</p>}</Card>}
     {view === 'trend' && <Card title={<span className="relative">{W.unitInHeader(W.trend, W.unitBaht)}{trendSource && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={[...new Set(trend.flatMap(point => point.netReceiptsSatang.reasonCodes.map(code => reasonText(code, point.netReceiptsSatang.coverage, [point.month]))))].join(' · ')} /></span>}</span>}>
-      <div className="overflow-x-auto"><div style={trend.length >= 12 ? { minWidth: trend.length * 64 } : undefined}><div className="executive-trend-labels grid items-end gap-2 text-center text-sm tabular-nums" style={columns}>{trend.map(point => <Figure key={point.month} value={point.netReceiptsSatang} moneyValue mark={!trendSource} />)}</div>
+      {/* Every month is as wide as its value needs (the short value on a phone), so two values never touch and the last one stays inside the card; more months than fit scroll sideways. A value sits over the middle of its bar: the three rows share the same equal columns, with no gap. */}
+      <div ref={showLatest} className="overflow-x-auto"><div className="min-w-[var(--chart-phone)] text-sm md:min-w-[var(--chart-desktop)]" style={{ '--chart-phone': `calc(${trend.length} * (${labelWidth(trend.map(point => shortFigureNumber(point.netReceiptsSatang, true)))}ch + ${labelGap}))`, '--chart-desktop': `calc(${trend.length} * (${labelWidth(trend.map(point => figureNumber(point.netReceiptsSatang, true)))}ch + ${labelGap}))` } as CSSProperties}><div className="executive-trend-labels grid items-end tabular-nums" style={columns}>{trend.map(point => <span key={point.month} className="flex min-w-0 justify-center"><Figure value={point.netReceiptsSatang} moneyValue mark={!trendSource} short /></span>)}</div>
       <svg viewBox="0 0 360 200" height="200" preserveAspectRatio="none" role="img" aria-label={W.trend} className="block h-[200px] w-full">
         <defs><pattern id={pattern} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--color-gray-100)" /><line x1="0" x2="0" y1="0" y2="6" stroke="var(--color-gray-400)" strokeWidth="2" /></pattern></defs>
         {[25, 50, 75, 125, 150, 175].map(y => <line key={y} x1="0" x2="360" y1={y} y2={y} stroke="var(--color-gray-100)" />)}
@@ -267,12 +284,12 @@ function RevenueContent({ data, nav, tabs }: { data: ExecutiveAnalysis & { reven
           return <g key={point.month}><title>{reportShortMonth(point.month)}: {figureNumber(point.netReceiptsSatang, true)}</title><rect x={x} y={value < 0 ? 100 : 100 - height} width={width} height={Math.max(1, height)} fill={value < 0 ? 'var(--color-red-600)' : 'var(--color-brand-800)'} /></g>;
         })}
       </svg>
-      <div className="grid gap-2 text-center text-xs text-gray-600" style={columns}>{trend.map(point => <p key={point.month}>{reportShortMonth(point.month)}</p>)}</div>
+      <div className="grid text-center text-xs text-gray-600" style={columns}>{trend.map(point => <p key={point.month}>{reportShortMonth(point.month)}</p>)}</div>
       </div></div>
       {trend.some(point => point.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(point.netReceiptsSatang.value)) && <p className="text-xs text-red-700">{W.negative}</p>}
       <p className="text-xs text-gray-600">{W.moneyDefinition}</p>
     </Card>}
-    </div>
+    </div>}
   </>;
 }
 function SpendContent({ data, nav }: { data: ExecutiveSpendConcentration; nav: Navigation }) {
@@ -298,12 +315,13 @@ function SpendContent({ data, nav }: { data: ExecutiveSpendConcentration; nav: N
 function Share({ count, share }: { count: number | null; share: Parameters<typeof ratioText>[0] }) {
   return <div className={`ml-auto w-28 whitespace-nowrap text-right tabular-nums ${(count === null || count === 0) && share?.value === 0 ? "text-gray-600" : ""}`}>{count !== null && `${count.toLocaleString('th-TH')} · `}{ratioText(share)}<div aria-hidden="true" className="mt-1 h-1 overflow-hidden rounded bg-gray-100"><div className="h-full rounded bg-brand-700" style={{ width: `${share?.value ?? 0}%` }} /></div></div>;
 }
-export function AnalysisContent({ data, nav, seller, rankingControl, tabs }: { data: ExecutiveAnalysis; nav: Navigation; seller: string | null; rankingControl?: ReactNode; tabs?: ReactNode }) {
+export function AnalysisContent({ data, nav, seller, rankingControl, tabs, reading }: { data: ExecutiveAnalysis; nav: Navigation; seller: string | null; rankingControl?: ReactNode; tabs?: ReactNode; reading?: PanelRead }) {
   const section = data.revenue || data.spendConcentration ? 'revenue' : data.expenseReceiptAdoption || data.usageRanking ? 'usage' : data.groups ? 'customers' : null;
   const selected = section ? reportView(section, nav.params) : '';
   const tabBar = tabs ?? (section && <ExecutiveTabs label={W[section]} tabs={REPORT_VIEWS[section]} value={selected} onChange={view => { const next = new URLSearchParams(nav.params); next.set('view', view); nav.navigate(menuHref(section, next, { view })); }} />);
   let panel: ReactNode;
-  if (data.revenue) panel = <RevenueContent data={data as ExecutiveAnalysis & { revenue: NonNullable<ExecutiveAnalysis['revenue']> }} nav={nav} tabs={tabBar} />;
+  if (data.revenue) panel = <RevenueContent data={data as ExecutiveAnalysis & { revenue: NonNullable<ExecutiveAnalysis['revenue']> }} nav={nav} tabs={tabBar} reading={reading} />;
+  else if (reading) panel = <>{tabBar}<PanelLoading read={reading} /></>;
   else if (data.expenseReceiptAdoption && data.paidUsage) panel = <>{tabBar}<div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${selected}`} aria-label={REPORT_VIEWS.usage.find(tab => tab.value === selected)?.label}>{selected === 'paid' ? <PaidUsage data={data.paidUsage} nav={nav} /> : <ReceiptAdoption data={data.expenseReceiptAdoption} nav={nav} />}</div></>;
   else if (data.usageRanking) {
     const rank = data.usageRanking;
@@ -324,7 +342,7 @@ export function AnalysisContent({ data, nav, seller, rankingControl, tabs }: { d
   return <ReportNotes data={data} periodOnly={section === 'revenue'} sources={section === 'revenue' ? ['money'] : ['money', 'usage']}>{panel}</ReportNotes>;
 }
 
-export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, tabs, onNote }: { data: ExecutiveCompanyDetail; tab: string; history: ExecutiveCompanyHistory | null; admin: boolean; nav: Navigation; contactReadAt: string; tabs?: ReactNode; onNote?: NoteChange }) {
+export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, tabs, onNote, reading }: { data: ExecutiveCompanyDetail; tab: string; history: ExecutiveCompanyHistory | null; admin: boolean; nav: Navigation; contactReadAt: string; tabs?: ReactNode; onNote?: NoteChange; reading?: PanelRead }) {
   const company = data.company;
   const month = data.periodSummary !== undefined ? data.periodSummary : data.month && { ...data.month, coverage: data.coverage, paidInPeriod: data.month.paidInMonth || (data.coverage.money.coverage === 'complete' ? false : null), positiveNetInPeriod: data.month.positiveNetInMonth || (data.coverage.money.coverage === 'complete' ? false : null) };
   const usageCoverage = month?.coverage.usage ?? data.coverage.usage;
@@ -333,7 +351,7 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, 
   return <ReportNotes data={data} sources={tab === 'usage' ? ['money', 'usage', 'aiCost'] : ['money', 'usage']}>
     {month && <ExecutiveKpiStrip columns={2}>{figures.map(([label, figure, moneyValue, icon, unit]) => <ExecutiveKpi key={label} iconName={icon} label={label} figure={figure} moneyValue={moneyValue} netValue={moneyValue} unit={unit} comparison={figure.comparison ?? data.periodComparisons?.[moneyValue ? "netReceiptsSatang" : icon === "receipt" ? "expenseReceiptCount" : icon === "calendar" ? "activeDays" : "aiRequests"]} />)}</ExecutiveKpiStrip>}
     <p className="text-xs text-gray-600">{W.receiptDefinition}</p>
-    {tabBar}<div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${tab}`} aria-label={DETAIL_TABS.find(item => item.value === tab)?.label}>
+    {tabBar}{reading ? <PanelLoading read={reading} /> : <div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${tab}`} aria-label={DETAIL_TABS.find(item => item.value === tab)?.label}>
     {tab === 'history' ? history && <Card title={W.history}>{history.items.length === 0 ? <EmptyState title={W.noHistory} description="" /> : <ReportTable title={W.history} columns={[{ label: W.item, width: 340 }, { label: W.historyAt, width: 160, align: 'left' }, { label: W.shortPlan, width: 160, align: 'left' }]} rows={history.items.map((event, index) => ({ key: String(index), cells: [EXECUTIVE_HISTORY_EVENT_LABELS[event.kind], reportDateTime(event.at), event.planLabel] }))} />}</Card> : tab === 'usage' ? month && <div className="grid min-w-0 gap-3 xl:grid-cols-2">
       <Card title={W.usageTab}>{rowStatus(month)}<p>{W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
         <DetailValues rows={[
@@ -357,6 +375,6 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, 
       </div>
       {admin && <ReportLink href={`/system/partners/${encodeURIComponent(company.id)}`} remember={nav.remember}>{W.management}</ReportLink>}
     </>}
-    </div>
+    </div>}
   </ReportNotes>;
 }

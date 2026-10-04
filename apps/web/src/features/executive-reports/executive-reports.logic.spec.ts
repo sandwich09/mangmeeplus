@@ -194,3 +194,16 @@ test('drilled condition chips use the same Thai words without showing a seller c
   const named = { ...context, filters: { ...context.filters, referringSales: [{ value: 'S003', label: 'คุณฟ้า · S003' }] } };
   assert.deepEqual(drillLabels({ referringSales: 'S003', discovery: 'FACEBOOK', paidInPeriod: 'true', sortBy: 'netReceipts', sortDir: 'desc' }, named), ['คุณฟ้า', 'เฟซบุ๊ก', 'ชำระในช่วงนี้']);
 });
+
+test('a chart label on a phone is the whole figure under a million and the short Thai form from a million, never an English letter', async () => {
+  const { shortFigureNumber, figureNumber } = await logic();
+  const money = (satang: number) => ({ value: satang, coverage: 'complete' as const, reasonCodes: [] });
+  for (const [satang, short, full] of [[1510200, '15,102', '15,102.00'], [9900, '99', '99.00'], [0, '0', '0.00'], [-250050, '-2,501', '-2,500.50'], [99999940, '999,999', '999,999.40'], [453060000, '4.5 ล้าน', '4,530,600.00'], [-1250000000, '-12.5 ล้าน', '-12,500,000.00'], [150000000000, '1.5 พันล้าน', '1,500,000,000.00']] as const) {
+    assert.equal(shortFigureNumber(money(satang), true), short); assert.equal(figureNumber(money(satang), true), full);
+    assert.doesNotMatch(shortFigureNumber(money(satang), true), /[A-Za-z]/);
+  }
+  // A figure the report does not have reads "–"; one it knows in part reads what is known, as the full figure does.
+  assert.equal(shortFigureNumber({ value: null, coverage: 'unavailable', reasonCodes: [] }, true), '–');
+  assert.equal(shortFigureNumber({ value: null, knownValue: 1510200, coverage: 'partial', reasonCodes: [] }, true), '15,102');
+  assert.equal(shortFigureNumber({ value: 1234567, coverage: 'complete', reasonCodes: [] }), '1.2 ล้าน'); assert.equal(shortFigureNumber({ value: 1234, coverage: 'complete', reasonCodes: [] }), '1,234');
+});
