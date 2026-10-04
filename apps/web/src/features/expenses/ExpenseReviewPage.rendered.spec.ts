@@ -5,7 +5,7 @@ import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import { ToastContext } from '@/common/components/toast/use-toast';
-import { expenseEvidenceFingerprint } from '@watchdog-bms/contracts';
+import { expenseEvidenceFingerprint, EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 
 (globalThis as any).React = React;
 const svg = require.extensions['.svg'];
@@ -45,7 +45,7 @@ function expense(over: any = {}) {
 
 // Repo's loaded-page SSR idiom. Only portal transport is replaced; actual page/dialog contents
 // and handlers render. Page hook names locate state slots, so adding a state does not shift fixtures.
-function harness(initial: Record<string, any> = {}) {
+function harness(initial: Record<string, any> = {}, permissions = OWNER) {
   const state: Record<string, any> = { detail: expense(), loading: false, step: 'review', paidAmount: '500', paidAt: '2026-10-04', ...initial };
   const names = [...readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8').matchAll(/const \[(\w+),[^\]]+\] = useState/g)].map(m => m[1]!);
   const nodes: Array<{ tag: string; props: any }> = [];
@@ -68,7 +68,7 @@ function harness(initial: Record<string, any> = {}) {
     const capture = stub(policy, 'useExpenseCapturePolicy', () => ({ mode: 'SIMPLE', vatStatus: 'NOT_REGISTERED' }));
     try { html = renderToStaticMarkup(h(AppRouterContext.Provider, { value: { push: noop, replace: noop, back: noop, prefetch: noop } as any },
       h(ToastContext.Provider, { value: { success: (message: string) => successes.push(message), error: () => { throw Error('refusal must stay by its action'); }, warning: noop } },
-        h(ExpenseReviewPage, { companyId: 'co', expenseId: 'e1', userId: 'owner', permissions: OWNER, canSelfApprove: true })))); }
+        h(ExpenseReviewPage, { companyId: 'co', expenseId: 'e1', userId: 'owner', permissions, canSelfApprove: true })))); }
     finally { runtime.useState = realState; runtime.createElement = realCreate; modal.mock.restore(); capture.mock.restore(); confirm.mock.restore(); }
     return html;
   }
@@ -330,8 +330,46 @@ test('recheck 1: a payment refusal after external reopen is scrolled into view a
     assert.match(message, /เอกสารถูกเปิดแก้ไขแล้ว/);
     assert.equal(html.split(message).length - 1, 1);
     assert.deepEqual(focusNotice(page, 'paymentNoticeRef', message), { focused: 1, scrolled: 1 });
-    assert.match(html, /tabindex="-1"[^>]*scroll-mt-\[calc\(var\(--app-header-h\)\+1rem\)\]/);
+    assert.match(html, /tabindex="-1" class="w-full scroll-mt-\[calc\(var\(--app-header-h\)\+1rem\)\]"[^>]*><div[^>]*role="alert"[^>]*rounded-xl border[^>]*bg-error-50[^>]*text-error-700[^>]*>⚠ /);
+    assert.ok(html.indexOf(message) < html.indexOf('style="top:var(--app-header-h)"'));
+    assert.match(html, /class="sticky z-10[^>]*style="top:var\(--app-header-h\)"/);
   } finally { record.mock.restore(); get.mock.restore(); }
+});
+
+test('round 7: unconfirmed and refreshed stale-pay notices use one boxed alert even for a read-only viewer', () => {
+  for (const message of [EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed, EXPENSE_CORRECTION_WORDS.sourceRefreshed]) {
+    const page = harness({ paymentNotice: message, detail: expense({ status: 'NEEDS_REVIEW' }) }, ['expense.read']);
+    const html = page.render();
+    assert.equal(visible(html).split(message).length - 1, 1);
+    assert.match(html, /role="alert"[^>]*bg-error-50[^>]*>⚠ /);
+    assert.deepEqual(focusNotice(page, 'paymentNoticeRef', message), { focused: 1, scrolled: 1 });
+  }
+});
+
+test('round 7: exactly one full excess remedy follows the visible review/confirm action or stays in payment history', () => {
+  const full = 'จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายด้านล่างก่อนยืนยัน';
+  for (const status of ['NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']) {
+    for (const step of ['data', 'evidence', 'review']) {
+      const html = harness({ step, detail: expense({ status, paidAmount: '700', outstandingAmount: '0', payments: [payment] }) }).render();
+      assert.equal(visible(html).split(full).length - 1, 1, `${status}/${step}`);
+      const card = html.match(/data-testid="expense-payment-overpayment"[^>]*>([\s\S]*?)<\/p>/)?.[1];
+      assert.ok(card);
+      assert.match(card, /จ่ายเกินยอดสุทธิ ฿200.00/);
+      assert.doesNotMatch(card, /<span/);
+      assert.equal(card.includes(full), step !== 'review');
+      assert.equal(html.includes('id="expense-review-overpayment"'), step === 'review');
+      if (status === 'READY_FOR_CONFIRMATION' && step === 'review') assert.match(html, /<button[^>]*disabled=""[^>]*>ยืนยันเอกสาร<\/button>/);
+    }
+  }
+  // A reviewer without confirmation rights has no blocked confirm action to carry the sentence.
+  const detail = expense({ status: 'READY_FOR_CONFIRMATION', paidAmount: '700', payments: [payment] });
+  for (const permissions of [['expense.read', 'expense.review'], ['expense.read'], ['expense.read', 'expense.confirm']]) {
+    const html = harness({ detail }, permissions).render();
+    assert.equal(visible(html).split(full).length - 1, 1);
+    const card = html.match(/data-testid="expense-payment-overpayment"[^>]*>([\s\S]*?)<\/p>/)?.[1];
+    assert.ok(card);
+    assert.equal(card.includes(full), !permissions.includes('expense.confirm'));
+  }
 });
 
 test('recheck 3: editing prices shows an adjacent excess cue and sending for review warns without blocking', async () => {
@@ -357,6 +395,9 @@ test('recheck 4: stale reopen names the already open document and focuses a usab
     page.render(); const html = await page.act('form', 'expense-correction-form', 'onSubmit');
     const message = 'เอกสารเปิดแก้ไขอยู่แล้ว กรุณาตรวจข้อมูลล่าสุด';
     assert.equal(page.state.correctionError, message); assert.match(dialog(html), /เอกสารเปิดแก้ไขอยู่แล้ว/);
+    assert.doesNotMatch(dialog(html), /<textarea|type="submit"|>ยกเลิก<\/button>/);
+    assert.equal((dialog(html).match(/<button/g) ?? []).length, 1);
+    assert.match(dialog(html), />ปิด<\/button>/);
     assert.deepEqual(focusNotice(page, 'correctionCloseRef', message), { focused: 1, scrolled: 0 });
     const modal = page.nodes.find(n => n.props.open === true && n.props.title === 'แก้ไขเอกสาร');
     assert.ok(modal); modal.props.onClose(); assert.equal(page.state.correctionAction, null);
@@ -373,6 +414,12 @@ test('recheck 5: an already cancelled payment refreshes and reports the fact wit
     assert.equal(reads, 1); assert.match(dialog(html), /รายการจ่ายนี้ถูกยกเลิกแล้ว/);
     assert.deepEqual(page.successes, []); assert.equal(page.state.correctionReason, 'เหตุผลคนที่สอง');
     assert.equal(page.state.detail.payments[0].cancellationReason, 'เหตุผลเดิม');
+    assert.doesNotMatch(dialog(html), /<textarea|type="submit"|>ยกเลิก<\/button>/);
+    assert.equal((dialog(html).match(/<button/g) ?? []).length, 1);
+    assert.match(dialog(html), />ปิด<\/button>/);
+    assert.deepEqual(focusNotice(page, 'correctionCloseRef', page.state.correctionError), { focused: 1, scrolled: 0 });
+    const modal = page.nodes.find(n => n.props.open === true && n.props.title === 'ยกเลิกรายการจ่ายนี้');
+    assert.ok(modal); modal.props.footer.props.children[0].props.onClick(); assert.equal(page.state.correctionAction, null);
   } finally { cancel.mock.restore(); get.mock.restore(); }
 });
 
