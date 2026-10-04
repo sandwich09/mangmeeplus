@@ -763,6 +763,7 @@ class Release:
         overrides = make_overrides(self.target,self.build['sourceCommit'],self.build['agentcore']['sha256'],configured,captured)
         if getattr(self, 'release_path', 'main') != 'hotfix':
             overrides['api-web'].update(self.postmark_configuration(capture))
+            overrides['api-web'].update(self.official_configuration(capture, configured['api-web']))
         self.secrets.update(v for values in overrides.values() for v in values.values() if isinstance(v,str) and len(v)>=8)
         write(self.work/'overrides.json',overrides)
         self.envdir = self.work/'environments'
@@ -805,6 +806,40 @@ class Release:
         return dict(settings['environment'], **values, EMAIL_PROVIDER=settings['provider'],
             WEB_BASE_URL=self.target['publicUrl'].rstrip('/'))
 
+    def official_configuration(self, capture, configured):
+        if configured.get('LINE_OFFICIAL_REPLY_ENABLED') != 'true':
+            return {}
+        require(self.args.environment == 'production' and self.target['publicUrl'].rstrip('/') == 'https://mangmeeplus.com',
+                'Official OA credentials are scoped to Production')
+        values, versions = {}, read(capture/'secret-versions.json')
+        for key, suffix in (('LINE_OFFICIAL_CHANNEL_SECRET', 'channel-secret'),
+                            ('LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN', 'channel-access-token')):
+            name = 'watchdog-bms/production/line-official/'+suffix
+            data = self.aws(['secretsmanager','get-secret-value','--secret-id',name,'--version-stage','AWSCURRENT'])
+            value = data.get('SecretString')
+            require(data.get('Name') == name and data.get('ARN', '').startswith(
+                    f'arn:aws:secretsmanager:{REGION}:{ACCOUNT}:secret:'+name+'-') and
+                    'AWSCURRENT' in data.get('VersionStages', []) and data.get('VersionId') and
+                    isinstance(value, str) and bool(value.strip()), 'Invalid current Official OA secret version')
+            self.secrets.add(value)
+            values[key] = value
+            versions[data['ARN']] = {'versionId':data['VersionId'], 'value':value}
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        request = urllib.request.Request('https://api.line.me/v2/bot/info', headers={
+            'Authorization':'Bearer '+values['LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN']})
+        try:
+            with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
+                require(response.status == 200, 'Official OA bot preflight unavailable')
+                bot = json.loads(response.read(65536))
+        except (urllib.error.URLError, TimeoutError, ValueError):
+            raise ValueError('Official OA bot preflight unavailable') from None
+        require(isinstance(bot, dict) and bot.get('basicId') == '@107ewccg', 'Official OA token belongs to a different bot')
+        write(capture/'secret-versions.json', versions)
+        write(capture/'official-oa-readiness.json', {'basicId':bot['basicId'], 'outbound':'native-identity-checked'})
+        return values
+
     def config_freshness(self):
         if 'controllerManifest' in self.receipt:
             require(controller_manifest()==self.receipt['controllerManifest'], 'Controller changed during release')
@@ -815,11 +850,12 @@ class Release:
         before,after=read(self.work/'capture-evidence.json'),read(self.work/'recapture-evidence.json')
         require(before['secretVersions']==after['secretVersions'], 'Secrets rotated after capture; stop before runtime mutation')
         for ref, version in self.manifest['secretVersions'].items():
-            if '/postmark/' in ref:
+            if '/postmark/' in ref or '/line-official/' in ref:
+                provider = 'Postmark' if '/postmark/' in ref else 'Official OA'
                 current = self.aws(['secretsmanager','describe-secret','--secret-id',ref])
                 active = [key for key, stages in current.get('VersionIdsToStages', {}).items() if 'AWSCURRENT' in stages]
                 require(current.get('ARN') == ref and not current.get('DeletedDate') and active == [version],
-                    'Postmark secret rotated after capture; stop before runtime mutation')
+                    provider+' secret rotated after capture; stop before runtime mutation')
         require({s:v['configurationSha256'] for s,v in before['services'].items()}==
                 {s:v['configurationSha256'] for s,v in after['services'].items()}, 'Configuration changed after capture')
         self.receipt['configFreshnessVerifiedAt']=after['readAt']

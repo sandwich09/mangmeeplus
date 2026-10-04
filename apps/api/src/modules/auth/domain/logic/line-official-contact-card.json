@@ -1,0 +1,243 @@
+{
+  "type": "flex",
+  "altText": "ติดต่อมั่งมีทีม: contact@mangmeeplus.com โทร 098-256-5628",
+  "contents": {
+    "type": "bubble",
+    "size": "kilo",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "xs",
+      "paddingAll": "16px",
+      "paddingBottom": "8px",
+      "backgroundColor": "#F7F4E8",
+      "contents": [
+        {
+          "type": "text",
+          "text": "MANGMEE PLUS",
+          "size": "10px",
+          "color": "#437054",
+          "weight": "bold",
+          "wrap": true
+        },
+        {
+          "type": "text",
+          "text": "ติดต่อมั่งมีทีม",
+          "size": "20px",
+          "color": "#164D35",
+          "weight": "bold",
+          "wrap": true
+        }
+      ]
+    },
+    "footer": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "sm",
+      "paddingAll": "12px",
+      "paddingTop": "8px",
+      "backgroundColor": "#F7F4E8",
+      "contents": [
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "spacing": "sm",
+          "alignItems": "center",
+          "paddingAll": "10px",
+          "height": "56px",
+          "cornerRadius": "10px",
+          "backgroundColor": "#ECD9AA",
+          "action": {
+            "type": "clipboard",
+            "label": "คัดลอกอีเมล",
+            "clipboardText": "contact@mangmeeplus.com"
+          },
+          "contents": [
+            {
+              "type": "box",
+              "layout": "vertical",
+              "width": "28px",
+              "height": "28px",
+              "cornerRadius": "8px",
+              "backgroundColor": "#FCF4DC",
+              "justifyContent": "center",
+              "flex": 0,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "✉︎",
+                  "size": "18px",
+                  "color": "#806027",
+                  "align": "center"
+                }
+              ]
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "spacing": "none",
+              "flex": 1,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "contact@mangmeeplus.com",
+                  "size": "12px",
+                  "color": "#20382E",
+                  "weight": "regular",
+                  "wrap": true,
+                  "adjustMode": "shrink-to-fit"
+                },
+                {
+                  "type": "text",
+                  "text": "แตะเพื่อคัดลอกอีเมล",
+                  "size": "11px",
+                  "color": "#4C6255",
+                  "wrap": true
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "›",
+              "size": "20px",
+              "color": "#806027",
+              "flex": 0
+            }
+          ]
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "spacing": "sm",
+          "alignItems": "center",
+          "paddingAll": "10px",
+          "height": "56px",
+          "cornerRadius": "10px",
+          "backgroundColor": "#CFE2CB",
+          "action": {
+            "type": "uri",
+            "label": "โทร 098-256-5628",
+            "uri": "tel:0982565628"
+          },
+          "contents": [
+            {
+              "type": "box",
+              "layout": "vertical",
+              "width": "28px",
+              "height": "28px",
+              "cornerRadius": "8px",
+              "backgroundColor": "#175337",
+              "justifyContent": "center",
+              "flex": 0,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "☎︎",
+                  "size": "18px",
+                  "color": "#FFFFFF",
+                  "align": "center"
+                }
+              ]
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "spacing": "none",
+              "flex": 1,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "098-256-5628",
+                  "size": "15px",
+                  "color": "#20382E",
+                  "weight": "bold",
+                  "wrap": true
+                },
+                {
+                  "type": "text",
+                  "text": "แตะเพื่อโทรหาทีมมั่งมี",
+                  "size": "11px",
+                  "color": "#4C6255",
+                  "wrap": true
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "›",
+              "size": "20px",
+              "color": "#175337",
+              "flex": 0
+            }
+          ]
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "spacing": "sm",
+          "alignItems": "center",
+          "paddingAll": "10px",
+          "height": "56px",
+          "cornerRadius": "10px",
+          "backgroundColor": "#CFE3DB",
+          "action": {
+            "type": "uri",
+            "label": "เว็บไซต์อย่างเป็นทางการ",
+            "uri": "https://official.mangmeeplus.com/"
+          },
+          "contents": [
+            {
+              "type": "box",
+              "layout": "vertical",
+              "width": "28px",
+              "height": "28px",
+              "cornerRadius": "8px",
+              "backgroundColor": "#F1F7F0",
+              "justifyContent": "center",
+              "flex": 0,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "↗",
+                  "size": "18px",
+                  "color": "#2F6855",
+                  "align": "center"
+                }
+              ]
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "spacing": "none",
+              "flex": 1,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "เว็บไซต์อย่างเป็นทางการ",
+                  "size": "14px",
+                  "color": "#20382E",
+                  "weight": "bold",
+                  "wrap": true
+                },
+                {
+                  "type": "text",
+                  "text": "official.mangmeeplus.com",
+                  "size": "11px",
+                  "color": "#4C6255",
+                  "wrap": true
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "›",
+              "size": "20px",
+              "color": "#2F6855",
+              "flex": 0
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

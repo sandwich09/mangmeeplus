@@ -265,6 +265,9 @@ export const apiConfigSchema = baseConfigSchema.extend({
   LINE_MESSAGING_CHANNEL_ID: z.string().optional(),
   LINE_MESSAGING_CHANNEL_SECRET: z.string().optional(),
   LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: z.string().optional(),
+  LINE_OFFICIAL_REPLY_ENABLED: envBoolean.default(false),
+  LINE_OFFICIAL_CHANNEL_SECRET: z.string().optional(),
+  LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN: z.string().optional(),
   // LINE AI message buffering (docs/specs/line-ai-message-buffering-spec.md §13)
   LINE_AI_BUFFER_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2000),
   LINE_AI_BUFFER_MAX_WAIT_MS: z.coerce.number().int().positive().default(8000),
@@ -736,6 +739,15 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
     }
   };
 
+  if (isApiConfig && bool(config['LINE_OFFICIAL_REPLY_ENABLED'])) {
+    for (const key of ['LINE_OFFICIAL_CHANNEL_SECRET', 'LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN']) {
+      if (!str(config[key]).trim()) errors.push(`${key} is required when Official OA replies are enabled`);
+    }
+    if (!str(config['WEB_BASE_URL']).startsWith('https://')) {
+      errors.push('WEB_BASE_URL must use HTTPS when Official OA replies are enabled');
+    }
+  }
+
   // Repo-generated: we control the generator, so demand real length, novelty, and entropy.
   for (const key of ['WORKER_INTERNAL_TOKEN', 'AI_GATEWAY_INTERNAL_SECRET', 'WATCHDOG_JWT_SECRET_ARN']) {
     checkSecret(key, 'repo');
@@ -749,6 +761,8 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
     'LINE_LOGIN_CHANNEL_SECRET',
     'LINE_MESSAGING_CHANNEL_SECRET',
     'LINE_MESSAGING_CHANNEL_ACCESS_TOKEN',
+    'LINE_OFFICIAL_CHANNEL_SECRET',
+    'LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN',
     'OPENAI_API_KEY',
     'S3_SECRET_ACCESS_KEY',
   ]) {
