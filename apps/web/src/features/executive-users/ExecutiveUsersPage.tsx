@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import type { ExecutiveAccountStatus, ExecutiveUserListDto, ExecutiveUserView } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { EXECUTIVE_PAGE_CLASS, ExecutivePage, ExecutiveSectionCard, ExecutiveTable } from '../executive-reports/ExecutiveReportDesign';
@@ -12,9 +12,14 @@ import { CoverLoader, LoadingState, ErrorState, ForbiddenState } from '@/common/
 import { Pagination } from '@/common/components/data-table/Pagination';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { listExecutiveUsers } from './executive-users.api';
-import { executiveWords as words, EXECUTIVE_USERS_TITLE, executiveFilters, executiveListUrl, executiveRights, executiveStatus, executiveStatusTone, executiveStatusOptions } from './executive-users.logic';
+import { executiveWords as words, EXECUTIVE_USERS_TITLE, executiveFilters, executiveListUrl, executiveRightList, executiveStatus, executiveStatusTone, executiveStatusOptions } from './executive-users.logic';
 
 const userHref = (user: ExecutiveUserView) => `/system/executive-users/${encodeURIComponent(user.userId)}`;
+/** Every right an account holds, never cut: a line breaks between two rights, not inside one that fits. */
+function Rights({ user }: { user: ExecutiveUserView }) {
+  const rights = executiveRightList(user);
+  return <span className="block whitespace-normal">{rights.map((right, index) => <Fragment key={right}><span className="inline-block">{right}{index < rights.length - 1 && '\u00a0·'}</span>{' '}</Fragment>)}</span>;
+}
 const lastEntry = (user: ExecutiveUserView) => user.lastWebEntryAt ? formatThaiDateTime(user.lastWebEntryAt) : words.missing;
 
 export default function ExecutiveUsersPage() {
@@ -65,7 +70,7 @@ export default function ExecutiveUsersPage() {
             : <>
               <p role="status" className="mb-3 text-sm text-gray-600">{words.found(data.pagination.total)}</p>
               {data.items.length === 0 ? <p className="py-8 text-center text-gray-600">{page > 1 ? words.emptyPage : words.empty}</p> : <>
-                <ExecutiveTable title={words.caption} columns={[{ label: words.account, width: 260 }, { label: words.rights, width: 260, align: 'left' }, { label: words.status, width: 120, align: 'left' }, { label: words.lastEntry, width: 180, align: 'left' }]} rows={data.items.map(user => ({ key: user.userId, href: userHref(user), cells: [<div key="account"><span className="block truncate" title={user.displayName}>{user.displayName}</span><span className="block truncate text-xs font-normal text-gray-600" title={user.username}>{user.username}</span></div>, <span key="rights" className="block truncate" title={executiveRights(user)}>{executiveRights(user)}</span>, <MangmeeBadge key="status" tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge>, lastEntry(user)] }))} />
+                <ExecutiveTable title={words.caption} columns={[{ label: words.account, width: 200 }, { label: words.rights, width: 454, align: 'left', wide: true }, { label: words.status, width: 110, align: 'left' }, { label: words.lastEntry, width: 170, align: 'left' }]} rows={data.items.map(user => ({ key: user.userId, href: userHref(user), cells: [<div key="account"><span className="block truncate" title={user.displayName}>{user.displayName}</span><span className="block truncate text-xs font-normal text-gray-600" title={user.username}>{user.username}</span></div>, <Rights key="rights" user={user} />, <MangmeeBadge key="status" tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge>, lastEntry(user)] }))} />
               </>}
               {page > 1 && data.items.length === 0 && <Button variant="secondary" loading={loading} onClick={() => update({ page: 1 })}>{words.firstPage}</Button>}
               {data.pagination.totalPages > 1 && <Pagination page={page} totalPages={data.pagination.totalPages} disabled={loading} onPageChange={page => update({ page })} />}

@@ -12,7 +12,7 @@ import { useInputPrompt } from '@/common/components/modal';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { createExecutiveUser, getExecutiveUser, commandExecutiveUser } from './executive-users.api';
 import {
-  executiveWords as words, EXECUTIVE_USERS_TITLE, EXECUTIVE_RIGHTS, EXECUTIVE_EXPORT_NOTE, EXECUTIVE_CONTACT_NOTE, EXECUTIVE_CONTACT_EXPORT_NOTE,
+  executiveWords as words, EXECUTIVE_USERS_TITLE, EXECUTIVE_RIGHTS, EXECUTIVE_EXPORT_NOTE, EXECUTIVE_CONTACT_NOTE, EXECUTIVE_CONTACT_EXPORT_NOTE, EXECUTIVE_NOTE_RIGHT_NOTE,
   emptyExecutiveForm, validateExecutiveForm, executiveCreateBody, executiveFieldErrors, executiveActions,
   executiveActionLabel, executiveConfirmation, executiveCommand, executiveStatus, executiveStatusTone, executiveRights, executiveExpiryNotice,
   type ExecutiveAction, type ExecutiveForm, type ExecutiveFormErrors,
@@ -102,7 +102,7 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
     if (!user || busyRef.current || refreshRequired || !executiveActions(user, protectedAccount).includes(action)) return;
     busyRef.current = true; setBusy(true);
     try {
-      const reason = await promptInput({ title: executiveActionLabel(user, action), message: <span className="whitespace-pre-line [overflow-wrap:anywhere]">{executiveConfirmation(user, action)}</span>,
+      const reason = await promptInput({ title: <span className="block text-pretty">{executiveActionLabel(user, action)}</span>, message: <span className="whitespace-pre-line [overflow-wrap:anywhere]">{executiveConfirmation(user, action)}</span>,
         label: words.reasonLabel, required: true, initialValue: reasonDraft, variant: action === 'suspend' ? 'danger' : 'primary' });
       if (reason === null) return;
       setReasonDraft(reason);
@@ -131,7 +131,7 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
       {notice && <p role="status" className="text-sm text-brand-800">{notice}</p>}
       {error && <ErrorState description={error} onRetry={currentUserId ? () => setRetry(value => value + 1) : undefined} />}
       {loading ? <LoadingState label={words.loadingAccount} /> : user ? <ExecutiveSectionCard title={words.account} actions={protectedAccount || user.status === 'REVOKED' ? <p className="text-sm text-gray-600">{apiErrorMessage({ code: protectedAccount ? 'ACCOUNT_PROTECTED' : 'ACCOUNT_REVOKED' })}</p>
-          : <div className="grid w-full gap-2 sm:flex sm:flex-wrap">{executiveActions(user, protectedAccount).filter(action => action !== 'suspend').map(action => <Button key={action} variant="secondary" loading={busy} disabled={busy || refreshRequired} onClick={() => void act(action)}>{executiveActionLabel(user, action)}</Button>)}{executiveActions(user, protectedAccount).includes('suspend') && <div className="mt-2 border-t border-gray-200 pt-2 sm:ml-2 sm:mt-0 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0"><Button variant="danger" className="w-full sm:w-auto" loading={busy} disabled={busy || refreshRequired} onClick={() => void act('suspend')}>{executiveActionLabel(user, 'suspend')}</Button></div>}</div>}>
+          : <div className="grid w-full gap-2 sm:flex sm:flex-wrap">{executiveActions(user, protectedAccount).filter(action => action !== 'suspend').map(action => <Button key={action} variant="secondary" className="text-pretty" loading={busy} disabled={busy || refreshRequired} onClick={() => void act(action)}>{executiveActionLabel(user, action)}</Button>)}{executiveActions(user, protectedAccount).includes('suspend') && <div className="mt-2 border-t border-gray-200 pt-2 sm:ml-2 sm:mt-0 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0"><Button variant="danger" className="w-full sm:w-auto" loading={busy} disabled={busy || refreshRequired} onClick={() => void act('suspend')}>{executiveActionLabel(user, 'suspend')}</Button></div>}</div>}>
         <dl className="grid gap-4 sm:grid-cols-2">{[
           [words.displayName, user.displayName], [words.username, user.username], [words.phoneNumber, user.phoneNumber || words.unspecified],
           [words.email, user.email || words.unspecified], [words.rights, executiveRights(user)], [words.lastEntry, user.lastWebEntryAt ? formatThaiDateTime(user.lastWebEntryAt) : words.missing],
@@ -152,6 +152,8 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
           <p className="text-sm text-gray-600">{EXECUTIVE_EXPORT_NOTE}</p>
           <SwitchField label={EXECUTIVE_RIGHTS.canSeeContacts} name="canSeeContacts" checked={values.canSeeContacts} disabled={busy} onChange={event => set('canSeeContacts', event.target.checked)} />
           <p className="text-sm text-gray-600">{EXECUTIVE_CONTACT_NOTE} {EXECUTIVE_CONTACT_EXPORT_NOTE}</p>
+          <SwitchField label={EXECUTIVE_RIGHTS.canEditCompanyNote} name="canEditCompanyNote" checked={values.canEditCompanyNote} disabled={busy} onChange={event => set('canEditCompanyNote', event.target.checked)} />
+          <p className="text-sm text-gray-600">{EXECUTIVE_NOTE_RIGHT_NOTE}</p>
           <div className="flex flex-wrap gap-3"><Button type="submit" loading={busy}>{words.save}</Button><Link href="/system/executive-users" className="mangmee-btn mangmee-btn-secondary hover:bg-brand-25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{words.cancel}</Link></div>
         </form>
       </ExecutiveSectionCard>}

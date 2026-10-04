@@ -22,6 +22,8 @@ test('list handles stale responses, URL filters, text-only empty results, mobile
   const s = source('ExecutiveUsersPage.tsx');
   for (const token of ['executiveFilters', 'executiveListUrl', 'AbortController', 'signal.aborted', 'CoverLoader', 'ForbiddenState', 'Pagination', 'SelectField', 'TextField']) assert.ok(s.includes(token), token);
   assert.match(s, /items.length === 0/); assert.match(s, /<ExecutiveTable/);
+  // Every right of an account is readable in the list: not cut, on its own line of the phone card.
+  assert.match(s, /label: words.rights, width: 454, align: 'left', wide: true/); assert.match(s, /executiveRightList\(user\)/); assert.doesNotMatch(s, /truncate" title=\{executiveRights/);
   const table = source('../executive-reports/ExecutiveReportDesign.tsx');
   assert.match(table, /md:hidden/); assert.match(table, /hidden.*md:table/); assert.match(table, /table-fixed/);
   assert.doesNotMatch(s, /<EmptyState|mangmee-table-scroll/);
@@ -35,7 +37,9 @@ test('every account status uses a distinct theme tone in mobile, desktop and det
 
 test('create form uses shared fields and unticked rights; preserves typed values and attaches field errors', () => {
   const s = source('ExecutiveUserPage.tsx');
-  for (const token of ['emptyExecutiveForm', 'validateExecutiveForm', 'executiveCreateBody', 'executiveFieldErrors', 'TextField', 'SwitchField', 'canExport', 'canSeeContacts']) assert.ok(s.includes(token), token);
+  for (const token of ['emptyExecutiveForm', 'validateExecutiveForm', 'executiveCreateBody', 'executiveFieldErrors', 'TextField', 'SwitchField', 'canExport', 'canSeeContacts', 'canEditCompanyNote']) assert.ok(s.includes(token), token);
+  // Three rights, each a switch with what it means under it; the note right is the third.
+  assert.equal((s.match(/<SwitchField /g) ?? []).length, 3); assert.ok(s.indexOf('name="canSeeContacts"') < s.indexOf('name="canEditCompanyNote"')); assert.match(s, /\{EXECUTIVE_NOTE_RIGHT_NOTE\}/);
   assert.doesNotMatch(s, /setValues\(emptyExecutiveForm/);
   assert.match(s, /setCredential\(result.credential\)/);
 });
