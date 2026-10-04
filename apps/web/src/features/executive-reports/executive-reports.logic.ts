@@ -1,5 +1,5 @@
 import {
-  EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, EXECUTIVE_SORT_OPTIONS, EXECUTIVE_PERIOD_WORDS as P, executivePeriodLabel, executivePeriodFilterLabel, executivePeriodSortLabel, executiveMoneyQualifier, type ExecutiveContext, type ExecutiveCount, type ExecutiveMoney,
+  EXECUTIVE_REPORT_LABELS, EXECUTIVE_SHEET_WORDS as S, EXECUTIVE_FLAG_LABELS, EXECUTIVE_SORT_OPTIONS, EXECUTIVE_PERIOD_WORDS as P, executivePeriodLabel, executivePeriodFilterLabel, executivePeriodSortLabel, executiveMoneyQualifier, type ExecutiveContext, type ExecutiveCount, type ExecutiveMoney,
   type ExecutiveRatio, type ExecutiveSourceCoverage, type ExecutiveOwnerContact, type ExecutiveDrilldownFilters, type ExecutiveRankingMetric,
 } from '@watchdog-bms/contracts';
 import { deserializeListQuery } from '../../common/functions/list-query';
@@ -9,9 +9,13 @@ import { W, RANK_LABELS, REPORT_VIEWS, thaiLabel } from './executive-reports.wor
 
 export type ReportSection = 'overview' | 'companies' | 'usage' | 'revenue' | 'customers' | 'compare' | 'detail';
 export const EXECUTIVE_ACCESS_DENIED_EVENT = 'watchdog:executive-access-denied';
-export const FILTER_URL = { industry: 'filter_industry', discovery: 'filter_discovery', referringSales: 'filter_sales', companyStatus: 'filter_companyStatus', planState: 'filter_planState', usageGroup: 'filter_usage', paidEver: 'filter_paidEver', receiptAdoption: 'filter_receipt', spendCohort: 'filter_spend', signupRail: 'filter_signupRail' } as const;
+export const FILTER_URL = { industry: 'filter_industry', discovery: 'filter_discovery', referringSales: 'filter_sales', companyStatus: 'filter_companyStatus', planState: 'filter_planState', usageGroup: 'filter_usage', paidEver: 'filter_paidEver', receiptAdoption: 'filter_receipt', spendCohort: 'filter_spend', signupRail: 'filter_signupRail', receiptBucket: 'filter_receiptBucket', packageLabel: 'filter_packageLabel', churned: 'filter_churned', neverUsed: 'filter_neverUsed', receiptAdded7: 'filter_receiptAdded7', receiptAdded30: 'filter_receiptAdded30', receiptDays30AtLeast2: 'filter_receiptDays30AtLeast2' } as const;
+export const INFOGRAPHIC_FILTERS = [
+  { key: 'neverUsed', value: 'true', label: S.neverUsed }, { key: 'receiptAdded7', value: 'true', label: S.receipts7 }, { key: 'receiptAdded30', value: 'true', label: S.receipts30 }, { key: 'churned', value: 'true', label: S.churn },
+  ...(['ZERO', 'ONE_TO_FIVE', 'SIX_PLUS'] as const).map(value => ({ key: 'receiptBucket', value, label: S.receiptBucket[value] })),
+] as const;
 export const GLOBAL_FILTERS = ['industry', 'discovery', 'referringSales'] as const;
-export const DIRECTORY_FILTERS = ['companyStatus', 'planState', 'usageGroup', 'paidEver', 'receiptAdoption', 'spendCohort', 'signupRail'] as const;
+export const DIRECTORY_FILTERS = ['companyStatus', 'planState', 'usageGroup', 'paidEver', 'receiptAdoption', 'spendCohort', 'signupRail', 'receiptBucket', 'packageLabel', 'churned', 'neverUsed', 'receiptAdded7', 'receiptAdded30', 'receiptDays30AtLeast2'] as const;
 export const reportPath = (section: string) => section === 'overview' ? '/system/executive' : `/system/executive/${section}`;
 export const pageNumber = (raw: string | null) => raw && /^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) && Number(raw) > 0 ? Number(raw) : 1;
 export function reportContextParams(params: URLSearchParams): URLSearchParams {
@@ -59,9 +63,15 @@ export function selectedPeriod(params: URLSearchParams, context: ExecutiveContex
 export function periodText(period: { from?: string; to?: string; month?: string }): string {
   return executivePeriodLabel(period.from ?? period.month!, period.to ?? period.month!);
 }
+export function filterOptions(key: keyof typeof FILTER_URL, context: ExecutiveContext) {
+  return key in EXECUTIVE_FLAG_LABELS ? [{ value: 'ALL', label: EXECUTIVE_REPORT_LABELS.companyStatus.ALL! }, { value: 'true', label: EXECUTIVE_FLAG_LABELS[key as keyof typeof EXECUTIVE_FLAG_LABELS].true! }] : context.filters[key as keyof typeof context.filters] ?? [];
+}
+export function filterLabel(key: keyof typeof FILTER_URL): string {
+  return key === 'receiptBucket' ? S.receiptDistribution : key === 'packageLabel' ? S.package : key in EXECUTIVE_FLAG_LABELS ? EXECUTIVE_FLAG_LABELS[key as keyof typeof EXECUTIVE_FLAG_LABELS].true! : W.filterLabels[key as keyof typeof W.filterLabels];
+}
 export function filterValue(key: keyof typeof FILTER_URL, params: URLSearchParams, context: ExecutiveContext): string {
   const value = params.get(FILTER_URL[key]);
-  return context.filters[key].some(option => option.value === value) ? value! : 'ALL';
+  return filterOptions(key, context).some(option => option.value === value) ? value! : 'ALL';
 }
 export function reportView(section: 'usage' | 'revenue' | 'customers', params: URLSearchParams): string {
   return REPORT_VIEWS[section].find(view => view.value === params.get('view'))?.value ?? REPORT_VIEWS[section][0].value;
@@ -69,15 +79,16 @@ export function reportView(section: 'usage' | 'revenue' | 'customers', params: U
 export function drillFilters(params: URLSearchParams): ExecutiveDrilldownFilters | null {
   if (!params.has('pick')) return null;
   const picked = new URLSearchParams(params.get('pick') ?? '');
-  const allowed = [...Object.keys(FILTER_URL), 'usageAssessed', 'activeInPeriod', 'paidInPeriod', 'positiveNetInPeriod', 'fullyRefunded', 'sortBy', 'sortDir'];
+  const allowed = [...Object.keys(FILTER_URL), 'usageAssessed', 'activeInPeriod', 'paidInPeriod', 'positiveNetInPeriod', 'fullyRefunded', 'atDataDate', 'sortBy', 'sortDir'];
   if ([...picked.keys()].some(key => !allowed.includes(key))) return null;
   const result = Object.fromEntries(picked) as ExecutiveDrilldownFilters;
   for (const [key, value] of Object.entries(result)) {
-    if (key in EXECUTIVE_REPORT_LABELS && key !== 'referringSales' && !Object.hasOwn(EXECUTIVE_REPORT_LABELS[key as keyof typeof EXECUTIVE_REPORT_LABELS], value)) return null;
+    if (key in EXECUTIVE_REPORT_LABELS && key !== 'referringSales' && key !== 'packageLabel' && !Object.hasOwn(EXECUTIVE_REPORT_LABELS[key as keyof typeof EXECUTIVE_REPORT_LABELS], value)) return null;
+    if (key === 'packageLabel' && (!value.trim() || value.length > 120 || /[\x00-\x1f]/.test(value))) return null;
     if (key === 'referringSales' && !/^[A-Za-z0-9_-]{1,40}$/.test(value)) return null;
     if (key === 'sortBy' && !EXECUTIVE_SORT_OPTIONS.some(option => option.sortBy === value)) return null;
     if (key === 'sortDir' && !['asc', 'desc'].includes(value)) return null;
-    if (['activeInPeriod', 'paidInPeriod', 'positiveNetInPeriod', 'fullyRefunded'].includes(key) && value !== 'true') return null;
+    if (['activeInPeriod', 'paidInPeriod', 'positiveNetInPeriod', 'fullyRefunded', 'churned', 'neverUsed', 'receiptAdded7', 'receiptAdded30', 'receiptDays30AtLeast2', 'atDataDate'].includes(key) && value !== 'true') return null;
     if (key === 'usageAssessed' && !['true', 'false'].includes(value)) return null;
   }
   return result;
@@ -103,7 +114,7 @@ export function reportQuery(section: ReportSection, params: URLSearchParams, con
   const directory = Object.fromEntries(DIRECTORY_FILTERS.flatMap(key => { const value = filterValue(key, params, context); return value === 'ALL' ? [] : [[key, value]]; }));
   const list = deserializeListQuery(params);
   const order = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === list.sortBy) ?? EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === picked?.sortBy) ?? EXECUTIVE_SORT_OPTIONS[0];
-  return { from, to, ...(picked ?? global), ...directory, sortBy: order.sortBy, sortDir: list.sortDir ?? picked?.sortDir ?? order.sortDir, page: pageNumber(params.get('page')), pageSize: 20, ...(search.trim() ? { q: search.trim().slice(0, 120) } : {}) };
+  return { from, to, ...(picked ?? global), ...directory, ...(Object.entries({ ...picked, ...directory }).some(([key, value]) => ['neverUsed', 'receiptAdded7', 'receiptAdded30', 'receiptDays30AtLeast2', 'receiptBucket', 'packageLabel'].includes(key) && value !== 'ALL') ? { atDataDate: 'true' } : {}), sortBy: order.sortBy, sortDir: list.sortDir ?? picked?.sortDir ?? order.sortDir, page: pageNumber(params.get('page')), pageSize: 20, ...(search.trim() ? { q: search.trim().slice(0, 120) } : {}) };
 }
 export function drilldownHref(params: URLSearchParams, from: string, filters: ExecutiveDrilldownFilters): string {
   const next = reportContextParams(params);
@@ -115,10 +126,10 @@ export function drilldownHref(params: URLSearchParams, from: string, filters: Ex
 }
 export function drillLabels(filters: ExecutiveDrilldownFilters, context: ExecutiveContext): string[] {
   return Object.entries(filters).flatMap(([key, value]) => {
-    if (value === 'ALL' || ['sortBy', 'sortDir', 'from', 'to'].includes(key)) return [];
-    const label = (key === 'referringSales' ? undefined : executivePeriodFilterLabel(key, value))
+    if (value === 'ALL' || ['sortBy', 'sortDir', 'from', 'to', 'atDataDate'].includes(key)) return [];
+    const label = key === 'packageLabel' ? value : (key === 'referringSales' ? undefined : executivePeriodFilterLabel(key, value))
       ?? context.filters.referringSales.find(option => option.value === value)?.label ?? W.unknown;
-    return [thaiLabel(label, value)];
+    return [thaiLabel(label, key === 'packageLabel' ? undefined : value)];
   });
 }
 export function changedParams(params: URLSearchParams, changes: Record<string, string>): URLSearchParams {

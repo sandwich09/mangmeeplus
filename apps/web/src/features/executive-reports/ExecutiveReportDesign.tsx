@@ -21,7 +21,7 @@ export function ExecutivePage({ eyebrow, title, description, actions, controls, 
 }
 export const ReasonNotes = createContext(false);
 const ColumnMark = createContext<Record<string, readonly string[]> | null>(null);
-const KpiScale = createContext({ digits: 11, unitWidth: 42 });
+const KpiScale = createContext({ digits: 11, unitWidth: 42, size: 18 });
 type FigureProps = { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; source?: string; mark?: boolean; unit?: string };
 const reasons = (value: { reasonCodes: readonly string[]; coverage: ExecutiveCoverage; affectedMonths?: Array<{ month: string; reasonCodes: readonly string[] }> }) => [...new Set(value.reasonCodes.map(code => reasonText(code, value.coverage, value.affectedMonths?.filter(m => m.reasonCodes.includes(code)).map(m => m.month))))].join(' · ');
 export function IncompleteDot({ reason }: { reason: string }) {
@@ -160,23 +160,26 @@ export function ExecutiveSectionCard({ title, children, actions, className = '' 
 export function ExecutiveKpiStrip({ children, columns = 3 }: { children: ReactNode; columns?: 2 | 3 }) {
   const tiles = (node: ReactNode): Array<{ figure?: ExecutiveCount; moneyValue?: boolean; value?: ReactNode; unit?: string }> => Children.toArray(node).flatMap(child => isValidElement<{ children?: ReactNode; figure?: ExecutiveCount; moneyValue?: boolean; value?: ReactNode; unit?: string }>(child) ? child.type === ExecutiveKpi ? [child.props] : tiles(child.props.children) : []);
   const values = tiles(children);
-  const scale = { digits: Math.max(1, ...values.map(p => p.figure ? figureNumber(p.figure, p.moneyValue).length : String(p.value ?? '').length)), unitWidth: Math.max(0, ...values.map(p => (p.unit?.length ?? 0) * 9)) };
-  return <KpiScale.Provider value={scale}><div data-executive-kpi-strip className={`grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2 ${columns === 3 ? 'xl:grid-cols-3' : ''}`}>{children}</div></KpiScale.Provider>;
+  const scale = { digits: Math.max(1, ...values.map(p => p.figure ? figureNumber(p.figure, p.moneyValue).length : String(p.value ?? '').length)), unitWidth: Math.max(0, ...values.map(p => (p.unit?.length ?? 0) * 9)), size: 26 };
+  scale.size = scale.digits > 10 ? 16 : scale.digits > 7 ? 18 : 26;
+  const five = values.length === 5, four = values.length === 4;
+  const fallback = (five || four) && scale.digits * 0.62 * 16 + scale.unitWidth * 2 / 3 + 64 > 180;
+  return <KpiScale.Provider value={scale}><div data-executive-kpi-strip data-kpi-fallback={fallback} className={`grid min-w-0 grid-cols-2 gap-2 ${five ? 'md:grid-cols-3 md:[&>*:first-child]:col-span-2 min-[1200px]:[&>*:first-child]:col-span-1' : columns === 3 ? 'md:grid-cols-3' : ''} ${fallback ? `min-[1200px]:grid-cols-3 ${four ? 'min-[1200px]:[&>*:first-child]:col-span-3' : 'min-[1200px]:[&>*:first-child]:col-span-2'}` : five ? 'min-[1200px]:grid-cols-5' : four ? 'min-[1200px]:grid-cols-4' : ''}`}>{children}</div></KpiScale.Provider>;
 }
 export function comparisonLine(comparison: ExecutivePeriodComparison): string {
   const qualifier = executivePeriodComparisonQualifier(comparison);
   const change = comparison.status === 'COMPLETE' && comparison.percentChange !== null ? P.change(`${comparison.percentChange > 0 ? '+' : ''}${comparison.percentChange.toLocaleString('th-TH', { maximumFractionDigits: 1 })}%`) : '';
   return [change, qualifier].filter(Boolean).join(' · ');
 }
-export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = false, measured = false, unit, value, sub, comparison, iconName = 'chart', emphasis = false, arrow = false }: { label: string; figure?: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; unit?: string; value?: ReactNode; sub?: ReactNode; comparison?: ExecutivePeriodComparison; iconName?: string; emphasis?: boolean; arrow?: boolean }) {
+export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = false, measured = false, unit, value, sub, supporting, comparison, iconName = 'chart', emphasis = false, arrow = false }: { label: string; figure?: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; unit?: string; value?: ReactNode; sub?: ReactNode; supporting?: string; comparison?: ExecutivePeriodComparison; iconName?: string; emphasis?: boolean; arrow?: boolean }) {
   const Icon = DesignIcons[iconName];
   const incomplete = figure && figure.coverage !== 'complete';
   const scale = useContext(KpiScale);
-  return <section data-executive-kpi className={`flex h-26 min-w-0 items-center gap-3 rounded-xl border px-3 py-2 shadow-theme-sm transition-colors group-hover:border-brand-300 group-hover:bg-brand-25 ${emphasis ? 'border-brand-300 bg-brand-25' : 'border-gray-200 bg-white'}`}>
-    <span data-executive-icon aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700"><Icon className="size-5" /></span>
-    <div className="min-w-0 flex-1 [container-type:inline-size]" style={{ '--executive-kpi-digits': scale.digits * 0.62, '--executive-kpi-unit-width': `${scale.unitWidth + 4}px` } as CSSProperties}>
+  return <section data-executive-kpi className={`relative flex h-26 min-w-0 flex-col justify-center gap-1 rounded-xl border px-2 py-2 shadow-theme-sm transition-colors group-hover:border-brand-300 group-hover:bg-brand-25 ${emphasis ? 'border-brand-300 bg-brand-25' : 'border-gray-200 bg-white'}`}>
+    <div className="min-w-0 w-full">
       <div className="grid grid-cols-[minmax(0,1fr)_1rem] gap-1"><div data-executive-label className="min-h-8 text-[13px] font-normal leading-4 text-gray-600" title={label}>{label}</div><span aria-hidden="true" className="text-brand-700">{arrow ? '→' : ''}</span></div>
-      <div className="flex flex-nowrap items-baseline gap-x-1"><div data-executive-value className={`whitespace-nowrap text-[length:min(26px,calc((100cqw_-_var(--executive-kpi-unit-width))/var(--executive-kpi-digits)))] font-semibold leading-8 tabular-nums ${value === 0 || value === "0" ? "text-gray-600" : ""}`}>{figure ? <Figure value={figure} moneyValue={moneyValue} measured={measured} netValue={netValue} mark={false} /> : value}</div>{unit && <span className="shrink-0 whitespace-nowrap text-[13px] leading-4 text-gray-600">{unit}</span>}</div>
+      <div className="flex flex-nowrap items-center gap-2"><span data-executive-icon aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700"><Icon className="size-4" /></span><div className="flex min-w-0 flex-nowrap items-baseline gap-x-1"><div data-executive-value style={{ fontSize: scale.size }} className={`whitespace-nowrap font-semibold leading-7 tabular-nums ${value === 0 || value === "0" ? "text-gray-600" : ""}`}>{figure ? <Figure value={figure} moneyValue={moneyValue} measured={measured} netValue={netValue} mark={false} /> : value}</div>{unit && <span className="shrink-0 whitespace-nowrap text-[13px] leading-4 text-gray-600">{unit}</span>}</div></div>
+      {supporting && <div data-executive-supporting className="h-3 truncate pr-7 text-[11px] leading-3 text-gray-600" title={supporting}>{supporting}</div>}
       <div data-executive-sub className="flex h-4 items-center text-xs text-gray-600" style={incomplete ? { color: 'var(--color-warning-700)' } : undefined}>{incomplete ? <><IncompleteDot reason={reasons(figure)} /><span className="ml-1 truncate">{figure.coverage === 'unavailable' ? W.unavailableFigure : moneyValue ? (executiveMoneyQualifier(figure, measured) === W.addOnNotSold ? W.addOnNotSold : measured ? W.measuredOnly : W.confirmedOnly) : W.countAtLeast}</span></> : <span className="ml-1 truncate" title={comparison ? comparisonLine(comparison) : undefined}>{comparison ? <><span aria-hidden="true" className={comparison.absoluteChange !== null && comparison.absoluteChange > 0 ? "text-brand-700" : comparison.absoluteChange !== null && comparison.absoluteChange < 0 ? "text-red-700" : "text-gray-600"}>{comparison.status === "COMPLETE" && comparison.absoluteChange !== null ? comparison.absoluteChange > 0 ? "↑ " : "↓ " : ""}</span>{comparisonLine(comparison)}</> : sub}</span>}</div>
     </div>
   </section>;
