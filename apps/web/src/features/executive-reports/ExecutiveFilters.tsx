@@ -21,13 +21,13 @@ export function ExecutiveFilters({ context, values, errors, apply, clear, direct
   const chips = [...applied, ...extra];
   const valueKey = JSON.stringify(values);
   useEffect(() => { panel.current?.hidePopover(); }, [valueKey]);
-  return <div className="flex min-w-0 flex-1 items-center gap-2">
+  return <div className="grid min-w-min flex-1 grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
     <span ref={trigger} className="shrink-0"><Button variant="secondary" popoverTarget={id} aria-expanded={open} aria-controls={id} aria-haspopup="dialog" icon={<DesignIcons.filter className="size-5 text-brand-700" />} onClick={() => {
       setDraft(values);
       const rect = trigger.current?.getBoundingClientRect();
       if (rect) setPosition({ left: `${rect.left}px`, top: `${Math.min(rect.bottom + 8, Math.max(8, window.innerHeight - 440))}px` });
     }}>{W.filters}{' '}<span className="rounded-full bg-brand-50 px-2 py-0.5 text-brand-800 tabular-nums">{chips.length}</span></Button></span>
-    {chips.length > 0 && <div data-filter-chips className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">{chips.map(({ key, label, remove }) => <Button key={key} title={label} variant="secondary" className="shrink-0 whitespace-nowrap !rounded-full !border-brand-200 !bg-brand-25 !text-brand-800" aria-label={W.removeFilter(`${Object.hasOwn(FILTER_URL, key) ? `${filterLabel(key as keyof typeof FILTER_URL)} · ` : ''}${label}`)} onClick={remove}>
+    {chips.length > 0 && <div data-filter-chips className="flex min-w-0 items-center gap-2 overflow-x-auto">{chips.map(({ key, label, remove }) => <Button key={key} title={label} variant="secondary" className="shrink-0 whitespace-nowrap !rounded-full !border-brand-200 !bg-brand-25 !text-brand-800" aria-label={W.removeFilter(`${Object.hasOwn(FILTER_URL, key) ? `${filterLabel(key as keyof typeof FILTER_URL)} · ` : ''}${label}`)} onClick={remove}>
       <span>{label}</span><span aria-hidden="true">×</span>
     </Button>)}</div>}
     <div ref={panel} id={id} popover="auto" role="dialog" aria-labelledby={`${id}-title`} onToggle={event => { if (event.target === event.currentTarget) setOpen(event.newState === 'open'); }}

@@ -228,6 +228,8 @@ export function hoistedSource(values: Array<{ coverage: string; source: string; 
 }
 export const reportShortDate = (date: string | null | undefined) => reportDate(date, '–').replace(/25(\d{2})$/, '$1');
 export const reportShortMonth = (month: string) => reportMonth(month).replace(/25(\d{2})$/, '$1');
+/** A date with its time and a two-digit year, as the tables print dates: for the narrow lines of a phone. */
+export const reportShortDateTime = (at: string | null | undefined) => reportDateTime(at).replace(/\b25(\d{2})\b/, '$1');
 export const figureNumber = (value: ExecutiveCount, moneyValue = false) => {
   const number = value.value ?? value.knownValue;
   return number === undefined ? '–' : (moneyValue ? number / 100 : number).toLocaleString('th-TH', moneyValue ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : undefined);

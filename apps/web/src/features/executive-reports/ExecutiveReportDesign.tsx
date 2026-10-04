@@ -21,7 +21,7 @@ export function ExecutivePage({ eyebrow, title, description, actions, controls, 
 }
 export const ReasonNotes = createContext(false);
 const ColumnMark = createContext<Record<string, readonly string[]> | null>(null);
-const KpiScale = createContext({ digits: 11, unitWidth: 42, size: 18 });
+const KpiScale = createContext({ digits: 11, size: 18 });
 type FigureProps = { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; source?: string; mark?: boolean; unit?: string };
 const reasons = (value: { reasonCodes: readonly string[]; coverage: ExecutiveCoverage; affectedMonths?: Array<{ month: string; reasonCodes: readonly string[] }> }) => [...new Set(value.reasonCodes.map(code => reasonText(code, value.coverage, value.affectedMonths?.filter(m => m.reasonCodes.includes(code)).map(m => m.month))))].join(' · ');
 export function IncompleteDot({ reason }: { reason: string }) {
@@ -160,11 +160,12 @@ export function ExecutiveSectionCard({ title, children, actions, className = '' 
 export function ExecutiveKpiStrip({ children, columns = 3 }: { children: ReactNode; columns?: 2 | 3 }) {
   const tiles = (node: ReactNode): Array<{ figure?: ExecutiveCount; moneyValue?: boolean; value?: ReactNode; unit?: string }> => Children.toArray(node).flatMap(child => isValidElement<{ children?: ReactNode; figure?: ExecutiveCount; moneyValue?: boolean; value?: ReactNode; unit?: string }>(child) ? child.type === ExecutiveKpi ? [child.props] : tiles(child.props.children) : []);
   const values = tiles(children);
-  const scale = { digits: Math.max(1, ...values.map(p => p.figure ? figureNumber(p.figure, p.moneyValue).length : String(p.value ?? '').length)), unitWidth: Math.max(0, ...values.map(p => (p.unit?.length ?? 0) * 9)), size: 26 };
-  scale.size = scale.digits > 10 ? 16 : scale.digits > 7 ? 18 : 26;
+  const scale = { digits: Math.max(1, ...values.map(p => p.figure ? figureNumber(p.figure, p.moneyValue).length : String(p.value ?? '').length)), size: 26 };
+  // One size for the whole strip, small enough for its longest figure in the narrowest tile (five in a row at 1200 px): digits never wrap.
+  scale.size = scale.digits > 12 ? 14 : scale.digits > 10 ? 16 : scale.digits > 7 ? 18 : 26;
   const five = values.length === 5, four = values.length === 4;
-  const fallback = (five || four) && scale.digits * 0.62 * 16 + scale.unitWidth * 2 / 3 + 64 > 180;
-  return <KpiScale.Provider value={scale}><div data-executive-kpi-strip data-kpi-fallback={fallback} className={`grid min-w-0 grid-cols-2 gap-2 ${five ? 'md:grid-cols-3 md:[&>*:first-child]:col-span-2 min-[1200px]:[&>*:first-child]:col-span-1' : columns === 3 ? 'md:grid-cols-3' : ''} ${fallback ? `min-[1200px]:grid-cols-3 ${four ? 'min-[1200px]:[&>*:first-child]:col-span-3' : 'min-[1200px]:[&>*:first-child]:col-span-2'}` : five ? 'min-[1200px]:grid-cols-5' : four ? 'min-[1200px]:grid-cols-4' : ''}`}>{children}</div></KpiScale.Provider>;
+  // Five tiles: two a row on a phone with the last one across the row, 3 + 2 from 768 px, one row of five from 1200 px. No empty slot at any width.
+  return <KpiScale.Provider value={scale}><div data-executive-kpi-strip className={`grid min-w-0 grid-cols-2 gap-2 ${five ? 'max-md:[&>*:last-child]:col-span-2 md:max-[1200px]:grid-cols-6 md:max-[1200px]:[&>*]:col-span-2 md:max-[1200px]:[&>*:nth-child(n+4)]:col-span-3 min-[1200px]:grid-cols-5' : `${columns === 3 ? 'md:grid-cols-3' : ''} ${four ? 'min-[1200px]:grid-cols-4' : ''}`}`}>{children}</div></KpiScale.Provider>;
 }
 export function comparisonLine(comparison: ExecutivePeriodComparison): string {
   const qualifier = executivePeriodComparisonQualifier(comparison);

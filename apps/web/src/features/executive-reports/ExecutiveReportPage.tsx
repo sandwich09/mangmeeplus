@@ -17,7 +17,7 @@ import { WorkspaceLocaleContext } from '@/common/i18n/locale-context';
 import { getExecutiveContext, getExecutiveReport, getExecutiveHistory, type ReportData } from './executive-reports.api';
 import {
   FILTER_URL, GLOBAL_FILTERS, DIRECTORY_FILTERS, reportQuery, reportView, filterValue, selectedPeriod, periodParams, periodText, changedParams, clearedParams,
-  reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, drillLabels, menuHref, executiveHref, reportDateTime, pageNumber, reasonText,
+  reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, drillLabels, menuHref, executiveHref, reportDateTime, reportShortDateTime, pageNumber, reasonText,
   EXECUTIVE_ACCESS_DENIED_EVENT, sortLabel, retryDelaySeconds, reportHistoryState, ownHistoryState, backSection, type ReportSection,
 } from './executive-reports.logic';
 import { EXECUTIVE_PAGE_CLASS, ExecutivePage, ExecutiveTabs, ReasonNotes, ReportStatus } from './ExecutiveReportDesign';
@@ -259,7 +259,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
           <div className="executive-time-row flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-gray-200 bg-white px-2 py-0">
             {selectedPeriod(params, context) && <span className="shrink-0 text-xs text-gray-700">{periodText(selectedPeriod(params, context)!)}</span>}
             {section !== 'detail' && <ExecutiveFilters directory={section === 'companies'} context={context} values={filterValues} errors={fieldErrors} apply={update} clear={clear} extra={pickLabels.map(({ key, label }) => ({ key, label, remove: () => { const next = new URLSearchParams(picked as Record<string, string>); next.delete(key); update({ pick: next.toString() }); } }))} />}
-            {visibleData && <><span className="whitespace-nowrap text-xs sm:text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
+            {visibleData && <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 max-md:basis-full max-md:pb-2">{/* Two-digit years on a phone, so the two dates share its second line. */}<span className="whitespace-nowrap text-xs sm:text-sm"><span className="md:hidden">{W.through(reportShortDateTime(visibleData.dataThrough.oldest))}</span><span className="max-md:hidden">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span></span>{visibleData.build.monthRevisedAt && <MangmeeBadge><span className="md:hidden">{W.revised(reportShortDateTime(visibleData.build.monthRevisedAt))}</span><span className="max-md:hidden">{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</span></MangmeeBadge>}</div>}
           </div>
           {visibleData && <ReportStatus periodOnly={section === 'revenue'} data={section === 'detail' && tab === 'history' && history?.sourceStatus && history.period ? { ...visibleData, sourceStatus: history.sourceStatus, period: history.period } : visibleData} sources={section === 'revenue' ? ['money'] : section === 'detail' && tab === 'usage' ? ['money', 'usage', 'aiCost'] : ['money', 'usage']} />}
           {section === 'detail' && <p className="text-sm">{P.selectedBase}</p>}
