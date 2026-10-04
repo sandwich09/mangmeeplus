@@ -82,6 +82,9 @@ test.describe('EXEC — executive report', () => {
 
       // ── the companies card opens a list of exactly its count ──
       const card = page.locator('main div.grid.grid-cols-2 > a').first();
+      await expect(page.getByRole('button', { name: 'ดูบริษัททั้งหมด', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'ดูอันดับการใช้', exact: true })).toBeVisible();
+      await expect(card.locator('.mangmee-stat-value')).toHaveCSS('font-size', '24px');
       await expect(card).toContainText('บริษัทลูกค้า');
       const count = Number((await card.innerText()).match(/บริษัทลูกค้า\s+(?:อย่างน้อย\s+)?([\d,]+)/)?.[1]?.replace(/,/g, ''));
       expect(count).toBeGreaterThan(0);

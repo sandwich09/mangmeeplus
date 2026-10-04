@@ -45,7 +45,7 @@ export default function ExecutiveUsersPage() {
   const clear = () => { setTerm(''); update({ q: '', status: undefined }); };
   return <MangmeePage title={EXECUTIVE_USERS_TITLE} eyebrow={words.admin}
     className="min-w-0 [overflow-wrap:anywhere] [&_button]:min-h-11 [&_button]:min-w-11"
-    actions={!denied && <Link href="/system/executive-users/new" className="mangmee-btn mangmee-btn-primary">{words.add}</Link>}>
+    actions={!denied && <Link href="/system/executive-users/new" className="mangmee-btn mangmee-btn-primary hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{words.add}</Link>}>
     {denied ? <ForbiddenState description={error ?? undefined} /> : <>
       <MangmeeCard className="p-4">
         <form className="grid gap-3 md:grid-cols-[1fr_14rem_auto_auto] md:items-end" onSubmit={event => { event.preventDefault(); update({ q: term }); setRetry(value => value + 1); }}>
@@ -57,8 +57,7 @@ export default function ExecutiveUsersPage() {
           <Button type="submit" loading={loading}>{words.search}</Button>
           <Button type="button" variant="secondary" loading={loading} onClick={clear}>{words.clear}</Button>
         </form>
-      </MangmeeCard>
-      <div className="relative min-h-32" aria-busy={loading}>
+      <div className="relative mt-4 min-h-32" aria-busy={loading}>
         <CoverLoader active={loading && data !== null} label={words.loadingList} />
         {error ? <ErrorState description={error} onRetry={() => setRetry(value => value + 1)} />
           : !data ? <LoadingState label={words.loadingList} />
@@ -66,7 +65,7 @@ export default function ExecutiveUsersPage() {
               <p role="status" className="mb-3 text-sm text-gray-600">{words.found(data.pagination.total)}</p>
               {data.items.length === 0 ? <p className="py-8 text-center text-gray-600">{page > 1 ? words.emptyPage : words.empty}</p> : <>
                 <div className="grid gap-3 md:hidden">{data.items.map(user => <MangmeeCard key={user.userId} className="min-w-0 p-4">
-                  <Link href={userHref(user)} className="flex min-h-11 items-center font-semibold text-brand-800">{user.displayName}</Link>
+                  <Link href={userHref(user)} className="flex min-h-11 items-center rounded-lg font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{user.displayName}</Link>
                   <p className="text-sm text-gray-600">{words.username}: {user.username}</p>
                   <p className="mt-2 text-sm text-gray-600">{words.rights}: {executiveRights(user)}</p>
                   <p className="my-2"><MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></p>
@@ -76,7 +75,7 @@ export default function ExecutiveUsersPage() {
                   <caption className="sr-only">{words.caption}</caption>
                   <thead><tr>{[words.account, words.rights, words.status, words.lastEntry].map(label => <th key={label} scope="col" className="p-3">{label}</th>)}</tr></thead>
                   <tbody>{data.items.map(user => <tr key={user.userId} className="border-t border-gray-200">
-                    <td className="break-words p-3"><Link href={userHref(user)} className="flex min-h-11 items-center font-semibold text-brand-800">{user.displayName}</Link><p>{user.username}</p></td>
+                    <td className="break-words p-3"><Link href={userHref(user)} className="flex min-h-11 items-center rounded-lg font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{user.displayName}</Link><p>{user.username}</p></td>
                     <td className="break-words p-3">{executiveRights(user)}</td><td className="p-3"><MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></td><td className="p-3">{lastEntry(user)}</td>
                   </tr>)}</tbody>
                 </table>
@@ -85,6 +84,7 @@ export default function ExecutiveUsersPage() {
               {data.pagination.totalPages > 1 && <Pagination page={page} totalPages={data.pagination.totalPages} disabled={loading} onPageChange={page => update({ page })} />}
             </>}
       </div>
+      </MangmeeCard>
     </>}
   </MangmeePage>;
 }
