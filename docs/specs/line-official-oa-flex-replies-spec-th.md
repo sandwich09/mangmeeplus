@@ -1,0 +1,35 @@
+# การ์ดตอบกลับ LINE Official OA
+
+สถานะ: owner อนุญาตเชื่อม API และพัฒนาระบบตอบกลับ 2026-10-04; ยังไม่เปิดใช้งานจริง
+
+## ผลลัพธ์และขอบเขต
+
+ผู้ติดตาม MangmeePlus Official `@107ewccg` กด Social Media หรือติดต่อมั่งมีทีมใน rich menu เดิม แล้วได้รับการ์ด Flex ขนาด kilo ที่มีสามปุ่ม ช่องทางนี้ตอบข้อมูลสาธารณะและลิงก์เท่านั้น ไม่เข้า AI, OCR, บัญชีบริษัท, identity binding หรือ support inbox ของ OA ระบบ `@458wpnio`.
+
+- Contact: ตัดข้อความอีเมล/โทรที่ซ้ำใน body; แสดงอีเมลบนปุ่มคัดลอก `contact@mangmeeplus.com`, ปุ่มโทร `tel:0982565628`, และเว็บไซต์ `https://official.mangmeeplus.com/`. ใช้พื้นครีม `#F7F4E8`, หัวข้อเขียวเข้ม `#164D35`, และปุ่มทองอ่อน/เขียวใบไม้/ฟ้าอมเขียวเพื่อเข้าคู่ rich menu. Owner รับรูปแบบกะทัดรัดแล้วและขอเพิ่มน้ำหนักสี; ไม่กลับไปใช้หัวข้อทึบ/ปุ่มเขียวทั้งสาม
+- Social: สามพื้นที่กดสำหรับ Instagram, Facebook และ TikTok; คง URLs และ query parameters ที่เจ้าของให้มา มีไอคอน PNG ของแพลตฟอร์มบนพื้นชมพู/ฟ้า/มิ้นต์ที่มีน้ำหนักและพื้นครีมร่วมกับ Contact. ชื่อแอปอ่านได้โดยไม่พึ่งสี; TikTok ดำตัดกับมิ้นต์และ Facebook น้ำเงินตัดกับฟ้า
+- อีเมลลงทะเบียนนักพัฒนาเป็น `admin_mangmee@mangmeeplus.com`; ไม่เปลี่ยนอีเมลติดต่อสาธารณะ. LINE Developers profile แสดง verified; owner ยอมรับ Developer registration และ Messaging API terms เอง. Provider `MangmeePlus` ID `2005600429`; channel `2011854342` ของ Official OA เปิดใช้แล้ว
+- วิธีใช้งาน, Package, Greeting และ manual chat ใช้ native Manager เดิม. ปิดเฉพาะ native auto replies ของ Social/Contact หลัง webhook ใช้งานได้แล้ว เพื่อไม่ตอบซ้ำ
+
+## Contract และขอบเขตความปลอดภัย
+
+`POST /v1/line/official/webhook` เป็น public endpoint ซึ่งตรวจ HMAC-SHA256 ของ raw body ด้วย secret ของ Official OA ก่อนอ่าน events. ใช้ secret/token ชุดเฉพาะของช่องนี้เท่านั้น; ไม่มี fallback ไป shared system LINE credentials.
+
+Configuration: `LINE_OFFICIAL_REPLY_ENABLED` default false, `LINE_OFFICIAL_CHANNEL_SECRET`, `LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN`. เปิด flag ได้เมื่อมีทั้งสอง credential. ตรวจ bot info ว่า token เป็น `@107ewccg` ก่อน provision/เปิด webhook; ไม่พิมพ์ credential ใน logs, docs หรือ Git.
+
+Runtime ใช้ Kamal normal release; config contract เปลี่ยนจึงใช้ isolated Production hotfix ไม่ได้. Production เปิด flag ผ่าน tracked `infra/kamal/config.json`; UAT คงปิดเพื่อไม่ใช้ bot ของ Production ซ้ำ. Controller resolve เฉพาะ Secrets Manager `watchdog-bms/production/line-official/channel-secret` และ `channel-access-token`, ตรวจ current ARN/version, bot basic ID และบันทึก versions ผ่าน inventory เดิม. ก่อน mutation ตรวจ AWSCURRENT ว่าไม่เปลี่ยน เช่นเดียวกับ Postmark. ไม่แก้ parked ECS configuration หรือ shared system credentials. Production validator ต้องปฏิเสธ enabled flag ที่ไม่มี dedicated credentials/HTTPS web origin.
+
+รับเฉพาะ message/text จาก source/user ที่มี reply token. คำ Social Media/โซเชียล/ติดตามน้องมั่งมี ส่ง Social; ติดต่อมั่งมีทีม/ติดต่อเรา/Contact Us ส่ง Contact. คำอื่น, follow, image, group และ room ตอบ HTTP 200 โดยไม่ส่งข้อความ เพื่อให้เจ้าหน้าที่และ native replies ทำงานตามเดิม. Empty signed webhook verification ตอบ 200. Signature ผิด/หายหรือ route ปิดต้องไม่ส่งข้อความ.
+
+Reply ใช้ LINE single-use reply token โดยตรงและ timeout จำกัด ไม่มีการบันทึก LINE user หรือข้อความใน DB. ไม่ retry push ไม่สร้าง conversation. Provider/network failure ต้องปรากฏเป็น structured error ที่ไม่เปิดเผย token หรือ payload.
+
+PNG assets ใช้ public web origin ของระบบและ path `/assets/line/official-oa-{instagram,facebook,tiktok}.png`. ก่อนใช้จริงต้องเผยแพร่และตรวจ HTTP 200/image/png; URLs ใน draft ยังไม่ใช่หลักฐานว่าเผยแพร่แล้ว.
+
+## Acceptance
+
+- Signed known keywords ส่งเพียงหนึ่ง Flex ที่มีสาม action ถูกปลายทาง
+- Signature จาก OA ระบบต้องไม่ผ่าน route Official และข้อความที่ไม่อยู่ใน scope ไม่เรียก outbound API
+- Contact ไม่มีข้อมูลซ้ำใน body; ปุ่ม email แสดง address และคัดลอกได้ โทรและเว็บไซต์เปิดปลายทางเดิม
+- Social กระชับ มี logo ตัดกับพื้น ไม่มีดำกลืนกัน และทั้งสามลิงก์ถูกต้อง
+- Provider validation และ owner phone acceptance ผ่านก่อนปิด native replies ของสองคำนี้
+- การขึ้น UAT/Production ต้องตาม `docs/runbooks/uat-production-v2-deployment.md`; local tests หรือ Manager API activation ไม่ถือว่าระบบ live สำเร็จ

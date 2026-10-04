@@ -32,6 +32,43 @@ def target(kind='dev'):
 
 
 class Contracts(unittest.TestCase):
+    def test_official_oa_resolves_only_its_production_secrets_and_checks_bot_identity(self):
+        r=m.Release.__new__(m.Release);r.args=argparse.Namespace(environment='production')
+        r.target={'publicUrl':'https://mangmeeplus.com'};r.secrets=set()
+        calls=[]
+        def secret(args):
+            calls.append(args)
+            name=args[3]
+            return {'Name':name,'ARN':f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:'+name+'-abcdef',
+                'VersionStages':['AWSCURRENT'],'VersionId':'official-v1','SecretString':'synthetic-'+name.rsplit('/',1)[1]}
+        r.aws=secret
+        class Response(io.BytesIO):
+            status=200
+        with tempfile.TemporaryDirectory() as tmp, patch.object(m.urllib.request,'build_opener') as opener:
+            capture=Path(tmp);m.write(capture/'secret-versions.json',{'existing':{'versionId':'v0'}})
+            self.assertEqual(r.official_configuration(capture,{}),{})
+            self.assertEqual(calls,[]);opener.assert_not_called()
+            r.args.environment='uat'
+            with self.assertRaisesRegex(ValueError,'scoped to Production'):
+                r.official_configuration(capture,{'LINE_OFFICIAL_REPLY_ENABLED':'true'})
+            self.assertEqual(calls,[])
+            r.args.environment='production'
+            opener.return_value.open.return_value=Response(b'{"basicId":"@107ewccg"}')
+            values=r.official_configuration(capture,{'LINE_OFFICIAL_REPLY_ENABLED':'true'})
+            self.assertEqual(set(values),{'LINE_OFFICIAL_CHANNEL_SECRET','LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN'})
+            self.assertEqual([call[3] for call in calls],[
+                'watchdog-bms/production/line-official/channel-secret',
+                'watchdog-bms/production/line-official/channel-access-token'])
+            request=opener.return_value.open.call_args.args[0]
+            self.assertEqual(request.full_url,'https://api.line.me/v2/bot/info')
+            self.assertEqual(request.get_header('Authorization'),'Bearer synthetic-channel-access-token')
+            versions=m.read(capture/'secret-versions.json')
+            self.assertEqual(len(versions),3);self.assertIn('existing',versions)
+            self.assertEqual(m.read(capture/'official-oa-readiness.json')['basicId'],'@107ewccg')
+            opener.return_value.open.return_value=Response(b'{"basicId":"@458wpnio"}')
+            with self.assertRaisesRegex(ValueError,'different bot'):
+                r.official_configuration(capture,{'LINE_OFFICIAL_REPLY_ENABLED':'true'})
+
     def test_timeout_terminates_the_entire_local_command_process_group(self):
         class Process:
             pid = 9876
@@ -813,12 +850,14 @@ class Contracts(unittest.TestCase):
             after['secretVersions']['secret']='v1';after['services']['api-web']['configurationSha256']='new'
             with self.assertRaisesRegex(ValueError,'Configuration changed'):r.config_freshness()
             after['services']['api-web']['configurationSha256']='old'
-            ref=f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:watchdog-bms/uat/postmark/token-abcdef'
-            r.manifest={'secretVersions':{ref:'v1'}}
-            r.aws=lambda args:{'ARN':ref,'VersionIdsToStages':{'v1':['AWSCURRENT']}}
-            r.config_freshness()
-            r.aws=lambda args:{'ARN':ref,'VersionIdsToStages':{'v2':['AWSCURRENT']}}
-            with self.assertRaisesRegex(ValueError,'Postmark secret rotated'):r.config_freshness()
+            for path, provider in [('uat/postmark/token', 'Postmark'),
+                                   ('production/line-official/channel-secret', 'Official OA')]:
+                ref=f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:watchdog-bms/'+path+'-abcdef'
+                r.manifest={'secretVersions':{ref:'v1'}}
+                r.aws=lambda args:{'ARN':ref,'VersionIdsToStages':{'v1':['AWSCURRENT']}}
+                r.config_freshness()
+                r.aws=lambda args:{'ARN':ref,'VersionIdsToStages':{'v2':['AWSCURRENT']}}
+                with self.assertRaisesRegex(ValueError,provider+' secret rotated'):r.config_freshness()
 
     def test_rollback_rejects_migrations_wrong_hosts_and_mixed_old_sources(self):
         for failure in ('normal','environment','hosts','sources'):
