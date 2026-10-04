@@ -23,6 +23,7 @@ import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtHandoffPayeeAdd
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { todayCivilDate } from '@watchdog-bms/contracts';
+import { W as WHT_CATALOG_WORDS } from '@/features/system-wht-income-categories/wht-income-categories.words';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
 import { LoadingState } from '@/common/components/state/LoadingState';
@@ -608,6 +609,7 @@ function CreateSupplierPaymentForm({ companyId, canCreate, onCreated }: { compan
   const [error, setError] = useState('');
   // Withholding: blank means none. Kept as strings so a half-typed rate does not become 0.
   const [whtCategories, setWhtCategories] = useState<WhtIncomeCategoryOption[]>([]);
+  const [whtCatalogState, setWhtCatalogState] = useState<'loading' | 'loaded' | 'failed'>('loading');
   const [whtCategoryCode, setWhtCategoryCode] = useState('');
   const [whtRate, setWhtRate] = useState('');
   const [whtAmount, setWhtAmount] = useState('');
@@ -619,9 +621,10 @@ function CreateSupplierPaymentForm({ companyId, canCreate, onCreated }: { compan
         const next = [...(approved.data ?? []), ...(partial.data ?? [])].filter((bill) => Number(bill.outstandingAmount) > 0);
         setBills(next); setBillId((current) => current || next[0]?.id || '');
       }).catch((cause) => setError(err(cause)));
-    // An empty catalog is a valid state — the seeded categories are DRAFT until an accountant
-    // activates them — so this failing must not block recording a plain payment.
-    listWhtIncomeCategories(companyId).then(setWhtCategories).catch(() => setWhtCategories([]));
+    // Withholding needs a loaded catalog; a read failure must not block a plain payment.
+    setWhtCatalogState('loading'); setWhtCategories([]);
+    listWhtIncomeCategories(companyId).then(rows => { setWhtCategories(rows); setWhtCatalogState('loaded'); })
+      .catch(() => { setWhtCategories([]); setWhtCatalogState('failed'); });
   }, [canCreate, companyId]);
   const bill = bills.find((item) => item.id === billId);
   const billWhtAmount = bill?.whtAmount ?? '0';
@@ -691,8 +694,12 @@ function CreateSupplierPaymentForm({ companyId, canCreate, onCreated }: { compan
         <legend className="px-1 text-xs font-bold text-gray-700">หัก ณ ที่จ่าย</legend>
         {billCarriesWht
           ? <p className="text-xs text-gray-600">ใบแจ้งหนี้นี้หักภาษี ณ ที่จ่ายไว้แล้วตอนตั้งหนี้ ({billWhtAmount}) จึงหักซ้ำที่การจ่ายไม่ได้</p>
+          : whtCatalogState === 'loading'
+            ? <p className="text-xs text-gray-500">{WHT_CATALOG_WORDS.loading}</p>
+          : whtCatalogState === 'failed'
+            ? <p className="text-xs text-amber-800">{WHT_CATALOG_WORDS.loadFailed}</p>
           : whtCategories.length === 0
-            ? <p className="text-xs text-amber-800">ยังไม่มีหมวดเงินได้ที่เปิดใช้งาน — ให้ผู้ทำบัญชีตรวจและเปิดใช้หมวดก่อนจึงจะหักภาษี ณ ที่จ่ายได้</p>
+            ? <p className="text-xs text-amber-800">{WHT_CATALOG_WORDS.noActive}</p>
             : <div className="grid gap-3 sm:grid-cols-3">
               <ThemedSelect
                 aria-label="หมวดเงินได้"
