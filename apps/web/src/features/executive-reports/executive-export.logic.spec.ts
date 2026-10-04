@@ -13,8 +13,8 @@ test('export body uses the shown build and full canonical query, removes paging 
   assert.deepEqual(body, { buildId: 'shown-build', reportKey: 'companies', from: '2026-09', to: '2026-09', filters: { paidEver: 'YES', q: 'ร้าน' }, sortBy: 'netReceipts', sortDir: 'desc', format: 'xlsx', includeContacts: false });
   const detail = exportBody('detail', params, context, 'shown', '', 'target', true);
   assert.deepEqual(detail.filters, {}); assert.equal(detail.targetCompanyId, 'target'); assert.equal(detail.includeContacts, false);
-  const compare = exportBody('compare', new URLSearchParams('month=2026-09&by=company&a=a&b=b&filter_discovery=OTHER'), context, 'shown', 'search');
-  assert.deepEqual(compare.filters, {}); assert.deepEqual(compare.comparison, { dimension: 'company', sideA: 'a', sideB: 'b' });
+  // No screen asks for a comparison file any more (owner 2026-10-05): the sides of an old address are never sent.
+  assert.equal('comparison' in exportBody('companies', new URLSearchParams('month=2026-09&by=company&a=a&b=b'), context, 'shown'), false);
   const ranking = exportBody('usage', new URLSearchParams('month=2026-09&view=ranking&rank=activeDays'), context, 'shown');
   assert.equal(ranking.subview, 'ranking'); assert.equal(ranking.sortBy, 'activeDays');
 });

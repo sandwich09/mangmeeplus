@@ -7,7 +7,7 @@ import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '../../commo
 import { apiErrorCode, executiveReasonMessage } from '../../common/api/api-error-message';
 import { W, RANK_LABELS, REPORT_VIEWS, thaiLabel } from './executive-reports.words';
 
-export type ReportSection = 'overview' | 'companies' | 'usage' | 'revenue' | 'customers' | 'compare' | 'detail';
+export type ReportSection = 'overview' | 'companies' | 'usage' | 'revenue' | 'customers' | 'detail';
 export const EXECUTIVE_ACCESS_DENIED_EVENT = 'watchdog:executive-access-denied';
 export const FILTER_URL = { industry: 'filter_industry', discovery: 'filter_discovery', referringSales: 'filter_sales', companyStatus: 'filter_companyStatus', planState: 'filter_planState', usageGroup: 'filter_usage', paidEver: 'filter_paidEver', receiptAdoption: 'filter_receipt', spendCohort: 'filter_spend', signupRail: 'filter_signupRail', receiptBucket: 'filter_receiptBucket', packageLabel: 'filter_packageLabel', churned: 'filter_churned', neverUsed: 'filter_neverUsed', receiptAdded7: 'filter_receiptAdded7', receiptAdded30: 'filter_receiptAdded30', receiptDays30AtLeast2: 'filter_receiptDays30AtLeast2' } as const;
 export const INFOGRAPHIC_FILTERS = [
@@ -98,10 +98,6 @@ export function reportQuery(section: ReportSection, params: URLSearchParams, con
   if (!period) return {};
   const { from, to } = period;
   if (section === 'detail') return { from, to };
-  if (section === 'compare') {
-    const dimension = ['industry', 'discovery', 'referringSales', 'company'].includes(params.get('by') ?? '') ? params.get('by')! : 'industry';
-    return { from, to, section, dimension, sideA: params.get('a') ?? '', sideB: params.get('b') ?? '' };
-  }
   const global = Object.fromEntries(GLOBAL_FILTERS.map(key => [key, filterValue(key, params, context)]));
   if (section === 'overview') return { from, to, ...global };
   if (section !== 'companies') {
@@ -151,15 +147,6 @@ export function clearedParams(params: URLSearchParams): URLSearchParams {
   const next = reportContextParams(params);
   for (const key of GLOBAL_FILTERS) next.set(FILTER_URL[key], 'ALL');
   return next;
-}
-export function comparisonProblem(params: URLSearchParams, context: ExecutiveContext): 'choose' | 'same' | null {
-  const by = params.get('by') ?? 'industry', a = params.get('a'), b = params.get('b');
-  if (!a || !b || !['industry', 'discovery', 'referringSales', 'company'].includes(by)) return 'choose';
-  if (by !== 'company' && (!context.filters[by as 'industry' | 'discovery' | 'referringSales'].some(option => option.value === a && a !== 'ALL') || !context.filters[by as 'industry' | 'discovery' | 'referringSales'].some(option => option.value === b && b !== 'ALL'))) return 'choose';
-  return a === b ? 'same' : null;
-}
-export function swappedParams(params: URLSearchParams): URLSearchParams {
-  return changedParams(params, { a: params.get('b') ?? '', b: params.get('a') ?? '' });
 }
 export const money = (satang: number) => `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${W.unitBaht}`;
 export const countText = (figure: ExecutiveCount) => figure.value !== null ? figure.value.toLocaleString('th-TH') : figure.knownValue !== undefined ? `${W.atLeast} ${figure.knownValue.toLocaleString('th-TH')}` : '—';
@@ -231,7 +218,7 @@ export function reportHistoryState(previous: Record<string, unknown> | null, sea
 export function backSection(path: string): ReportSection {
   const route = path.split('?')[0];
   if (route.startsWith('/system/executive/companies/')) return 'detail';
-  return (['usage', 'revenue', 'customers', 'compare', 'companies'] as const).find(section => route === reportPath(section)) ?? 'overview';
+  return (['usage', 'revenue', 'customers', 'companies'] as const).find(section => route === reportPath(section)) ?? 'overview';
 }
 
 /** All rendered values must share an incomplete source before a column can carry its mark. */

@@ -89,7 +89,7 @@ test('overview renders four server metrics, a partial count, and four receipt gr
 test('directory uses the all-result summary rather than row sums and wraps unknown usage instead of inventing zero', async () => {
   const { CompaniesContent } = await content();
   const data = { ...envelope, summary: { netReceiptsSatang: cash(123450) }, items: [{ ...company, rank: 4 }], pagination: { total: 72 }, sort: { sortBy: 'netReceipts', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
-  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav, selected: [], select: () => {} }));
+  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav }));
   const visible = text(html);
   // The rank is the place in the chosen order (here by net receipts), not a usage rank.
   assert.match(visible, /อันดับ/); assert.match(html, />4<\/td>/); assert.doesNotMatch(visible, /อันดับการใช้/);
@@ -98,23 +98,14 @@ test('directory uses the all-result summary rather than row sums and wraps unkno
   assert.doesNotMatch(visible, /internal-company|ADMIN_HOLD|MANUAL_TERM|Facebook|LINE/);
   assert.match(html, /table-fixed/); assert.match(html, /md:hidden/); assert.match(html, /companies\/internal-company\?/); // the id is only in the detail link
 });
-test('each compare toggle has its own id, so its label selects its own company', async () => {
+test('the company list offers no comparison: no checkbox, no column and no link to it (owner 2026-10-05)', async () => {
   const { CompaniesContent } = await content();
   const data = { ...envelope, summary: { netReceiptsSatang: cash(0) }, items: [company, { ...company, id: 'second-company' }], pagination: { total: 2 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
-  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav, selected: [], select: () => {} }));
-  const ids = [...html.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)].map(([input]) => input.match(/id="([^"]+)"/)?.[1]);
-  assert.equal(ids.length, 2); // one responsive row and checkbox per company
-  assert.equal(new Set(ids).size, 2, `duplicate ids: ${ids.join(', ')}`);
-  for (const id of ids) assert.ok(html.includes(`for="${id}"`), `label for ${id}`);
+  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav }));
+  assert.doesNotMatch(html, /type="checkbox"|executive\/compare/);
+  assert.doesNotMatch(text(html) + accessible(html), /เทียบ/);
 });
-test('group tables and comparisons preserve null averages and the backend difference', async () => {
-  const { AnalysisContent } = await content();
-  const side = { key: 'UNKNOWN', label: 'ไม่ระบุ', companies: count(1), netReceiptsSatang: cash(999), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(12), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(0), drilldownFilters: { industry: 'UNKNOWN' } };
-  const data = { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'OTHER', label: 'อื่น ๆ' }, difference: { companies: 9, netReceiptsSatang: -123450, netReceiptsPerCompanySatang: null, expenseReceiptCount: null, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis;
-  const visible = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav: { ...nav, from: 'compare' }, seller: null })));
-  assert.match(visible, /ต่างกัน \(ฝั่งแรกลบฝั่งที่สอง\)/); assert.match(visible, /-1,234\.50/); assert.match(visible, /–/); assert.doesNotMatch(visible, /NaN|Infinity|A ลบ B/);
-});
-test('each table names its first column for what its rows are, and differences use the Thai number format', async () => {
+test('each table names its first column for what its rows are', async () => {
   const { AnalysisContent } = await content();
   const firstHeader = (html: string) => text(html.match(/<thead[^>]*><tr><th[^>]*>(.*?)<\/th>/)?.[1] ?? '').trim();
   const group = { key: 'IG', label: 'IG', companies: { count: 1, share: { value: 100, numerator: 1, denominator: 1 } }, companiesWithReceipts: count(1), paidEverCompanies: 1, activeCompanies: count(1), netReceiptsSatang: cash(100), drilldownFilters: { discovery: 'IG' } };
@@ -122,11 +113,6 @@ test('each table names its first column for what its rows are, and differences u
   assert.equal(firstHeader(groups('industry')), 'กลุ่มธุรกิจ');
   assert.equal(firstHeader(groups('discovery')), 'ช่องทาง');
   assert.equal(firstHeader(groups('sales')), 'เซลล์ผู้แนะนำ');
-  const side = { key: 'A', label: 'ก', companies: count(1234), netReceiptsSatang: cash(0), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(0), expenseReceiptsPerCompany: { value: 1.5 }, everAddedReceiptShare: { value: 50 }, activeCompanies: count(0), drilldownFilters: {} };
-  const compare = renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'B' }, difference: { companies: 1234, netReceiptsSatang: 0, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: 0, everAddedReceiptShare: -12.5, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis, nav: { ...nav, from: 'compare' }, seller: null }));
-  assert.equal(firstHeader(compare), 'รายการ');
-  for (const cell of compare.match(/<td[^>]*>[\s\S]*?<\/td>/g) ?? []) assert.doesNotMatch(text(cell.replace(/<span class="[^"]*md:hidden"[^>]*>[\s\S]*?<\/span>/g, "")), /บาท|จุด/);
-  assert.match(text(compare), /1,234 /); assert.match(text(compare), /0\.0 /); assert.match(text(compare), /-12\.5/);
 });
 test('a company without a registered name keeps its province and group in the information card without a stray header', async () => {
   const { AnalysisContent, CompanyContent } = await content();
@@ -158,14 +144,11 @@ test('the "other" detail of the signup channel shows only for a company that cho
   assert.match(render({ key: 'OTHER', label: 'อื่น ๆ', otherText: 'งานอีเวนต์' }), /อื่น ๆ\s+งานอีเวนต์/);
   assert.match(render({ key: 'OTHER', label: 'อื่น ๆ' }), /อื่น ๆ\s+ไม่ระบุ/);
 });
-test('detail and compare content do not repeat the "no report filters" sentence the page already shows', async () => {
-  const { CompanyContent, AnalysisContent } = await content();
+test('detail content does not repeat the "no report filters" sentence the page already shows', async () => {
+  const { CompanyContent } = await content();
   const detail = { ...envelope, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;
   const detailText = text(renderToStaticMarkup(React.createElement(CompanyContent, { data: detail, tab: 'company', history: null, admin: false, nav, contactReadAt: '' })));
   assert.doesNotMatch(detailText, /หน้านี้ไม่ใช้ตัวกรองของรายงาน/); assert.match(detailText, /ใบเสร็จค่าใช้จ่ายที่ลูกค้าเพิ่ม/);
-  const side = { key: 'A', label: 'ก', companies: count(1), netReceiptsSatang: cash(0), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(0), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(0), drilldownFilters: {} };
-  const compareText = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'B' }, difference: { companies: 0, netReceiptsSatang: 0, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis, nav: { ...nav, from: 'compare' }, seller: null })));
-  assert.doesNotMatch(compareText, /หน้านี้ไม่ใช้ตัวกรองของรายงาน/); assert.match(compareText, /ใบเสร็จค่าใช้จ่ายที่ลูกค้าเพิ่ม/);
 });
 test('history shows only the event/date/plan allowlist and Buddhist dates', async () => {
   const { CompanyContent } = await content();

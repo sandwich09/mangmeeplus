@@ -65,13 +65,12 @@ const company = {
   paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', receiptAdoption: 'EVER', fullyRefunded: false,
   metrics: { expenseReceiptCountLifetime: 27, expenseReceiptCountInPeriod: 7, activeDays: 3, activeUsers: 2, documents: 4, aiRequests: 5, netReceiptsSatang: 10000 }, lastActivityAt: '2026-09-30T00:00:00Z',
 };
-test('directory uses explicit receipt columns, labelled secondary summaries and one comparison checkbox per company', async () => {
+test('directory uses explicit receipt columns, labelled secondary summaries and no comparison checkbox', async () => {
   const { CompaniesContent } = await content();
-  const html = htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(10000) }, items: [company], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav, selected: [], select: () => {} });
+  const html = htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(10000) }, items: [company], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
   assert.match(html, /executive-company-row/); assert.match(html, /executive-usage-summary/);
   assert.ok((html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').includes(W.lifetimeReceipts)); assert.doesNotMatch(html.match(/<section aria-label="บริษัทลูกค้า"[\s\S]*?<\/section>/)?.[0] ?? '', /<dl/);
-  assert.equal((html.match(/type="checkbox"/g) ?? []).length, 1);
-  assert.match(html, /sr-only[^>]*>เลือกเพื่อเปรียบเทียบ/);
+  assert.doesNotMatch(html, /type="checkbox"|เปรียบเทียบ/);
   assert.equal((html.match(/>เคยชำระเงิน</g) ?? []).length, 1);
   for (const label of [W.tableReceipts, W.days, W.users, W.documents, W.ai, W.lastActivity, W.shortPlan, W.tableNet]) assert.ok(html.includes(label), label);
   assert.match(html, /งานร้านค้า/); assert.match(html, /สมัครทางไลน์/);
@@ -159,17 +158,6 @@ test('top payers show the exact cohorts and shares in compact shared tables with
   assert.match(html, /<table/); assert.match(html, /70.0%/); assert.match(html, /80.0%/);
   assert.match(html, /<a[^>]*>[\s\S]*บริษัทที่รวมยอดรับถึง 80%/);
   assert.match(html, /text-xs[^>]*>มีอีก/);
-});
-
-test('comparison groups controls in one card and results in another with side buttons and no repeated difference words', async () => {
-  const page = source('./ExecutiveReportPage.tsx');
-  assert.match(page, /executive-compare-controls/); assert.match(page, /md:grid-cols-\[minmax\(8rem,12rem\)_minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
-  const { AnalysisContent } = await content();
-  const side = { key: 'FOOD', label: 'ร้านอาหาร', companies: count(12), netReceiptsSatang: cash(100), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(1), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(1), drilldownFilters: {} };
-  const html = htmlOf(AnalysisContent, { data: { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'OTHER', label: 'อื่น ๆ' }, difference: { companies: 0, netReceiptsSatang: -100, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis, nav, seller: null });
-  assert.match(html, /executive-compare-result/); assert.match(html, /ฝั่งแรก · ร้านอาหาร/);
-  assert.equal((html.match(/<button/g) ?? []).length, 2);
-  assert.doesNotMatch(html, /<p>ต่างกัน \(ฝั่งแรกลบฝั่งที่สอง\)<\/p>/);
 });
 
 test('company information and origin sit beside each other without stray header lines', async () => {

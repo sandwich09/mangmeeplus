@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useId, type ReactNode } from 'react';
 import {
-  executiveComparisonLabel, EXECUTIVE_SHEET_WORDS as S, EXECUTIVE_COMPANY_SHEET_COLUMNS, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_PERIOD_WORDS as P, EXECUTIVE_HISTORY_EVENT_LABELS, executivePeriodReportLabels, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
+  EXECUTIVE_SHEET_WORDS as S, EXECUTIVE_COMPANY_SHEET_COLUMNS, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_PERIOD_WORDS as P, EXECUTIVE_HISTORY_EVENT_LABELS, executivePeriodReportLabels, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
   type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveCompanyHistory,
   type ExecutiveCount, type ExecutiveMoney, type ExecutiveDrilldownFilters, type ExecutiveReceiptAdoption,
   type ExecutiveAsOfFigures, type ExecutiveAsOfCount, type ExecutivePaidUsage, type ExecutiveSpendConcentration, type ExecutiveCompanyRow,
@@ -135,11 +135,7 @@ const rowStatus = (row: StatusRow) => <MangmeeBadge className="max-w-full" tone=
 function referrer(row: ExecutiveCompanyRow['referrer']): string {
   return `${thaiLabel(row.label, row.salesCode)}${row.source === 'ADMIN' ? ` ${EXECUTIVE_REFERRER_ADMIN_SUFFIX}` : ''}`;
 }
-function CompareToggle({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: () => void }) {
-  const id = useId();
-  return <label onClick={event => event.stopPropagation()} htmlFor={id} className="relative z-10 flex shrink-0 min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg hover:bg-gray-100 focus-within:ring-2 focus-within:ring-brand-700"><input id={id} type="checkbox" checked={checked} disabled={disabled} onChange={onChange} className="size-4 accent-brand-800" /><span className="sr-only">{W.selectCompare}</span></label>;
-}
-export function CompaniesContent({ data, nav, selected, select, sortColumn }: { data: ExecutiveCompanies; nav: Navigation; selected: string[]; select: (id: string) => void; sortColumn?: (key: string) => void }) {
+export function CompaniesContent({ data, nav, sortColumn }: { data: ExecutiveCompanies; nav: Navigation; sortColumn?: (key: string) => void }) {
   const ranked = ['netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests'].includes(data.sort.sortBy);
   const netSort = data.sort.sortBy === 'netReceipts';
   const churnFilter = nav.params.get('filter_churned') === 'true' || drillFilters(nav.params)?.churned === 'true';
@@ -147,7 +143,7 @@ export function CompaniesContent({ data, nav, selected, select, sortColumn }: { 
   const sort = (key: string) => data.sort.sortBy === key ? data.sort.sortDir === 'asc' ? 'ascending' as const : 'descending' as const : undefined;
   const columns: ReportColumn[] = [
     ...(ranked ? [{ label: W.rank, width: 64, mobile: false, source: netSort ? data.coverage.money : data.coverage.usage, sourceName: netSort ? 'money' : 'usage' }] : []),
-    { label: W.shortCompare, width: 44, control: true }, { label: W.company, width: netSort ? 200 : 220, sort: sort('companyName'), onSort: sortColumn && (() => sortColumn('companyName')) },
+    { label: W.company, width: netSort ? 200 : 220, sort: sort('companyName'), onSort: sortColumn && (() => sortColumn('companyName')) },
     { label: W.group, width: 160, hide: 'always', mobile: false, align: 'left' },
     { label: W.plan, width: 136, hide: churnFilter || ranked && data.sort.sortBy !== 'expenseReceiptCount' || data.sort.sortBy === 'lastActivityAt' ? 'always' : 'narrow', mobile: false, align: 'left' },
     { label: W.status, width: 140, hide: churnFilter ? 'always' : 'narrow', mobile: false, align: 'left' },
@@ -165,10 +161,10 @@ export function CompaniesContent({ data, nav, selected, select, sortColumn }: { 
     <div data-executive-quick-filters className="flex min-w-0 items-center gap-2 overflow-x-auto">{INFOGRAPHIC_FILTERS.map(({ key, value, label }) => <DrillLink key={`${key}-${value}`} nav={nav} filters={{ ...(drillFilters(nav.params) ?? {}), [key]: value, ...(['churned'].includes(key) ? {} : { atDataDate: 'true' }) }} className="flex min-h-11 shrink-0 items-center rounded-full border border-gray-200 px-3 text-xs text-brand-800">{label}</DrillLink>)}<Button variant="secondary" onClick={() => { const panel = document.getElementById('executive-filter-packageLabel')?.closest<HTMLElement>('[popover]'); if (panel) document.querySelector<HTMLButtonElement>(`button[popovertarget="${panel.id}"]`)?.click(); }}>{S.package}</Button></div>
     <p role="status" className="text-sm tabular-nums">{W.found(data.pagination.total)} · {W.shortNet} <Figure value={data.summary.netReceiptsSatang} moneyValue netValue unit={W.unitBaht} /></p>
     {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <section aria-label={W.companies} className="rounded-xl border border-gray-200 bg-white">
-      <ReportTable title={W.companies} compactMobile columns={columns} nameIndex={ranked ? 2 : 1} remember={nav.remember} rows={data.items.map(row => ({
+      <ReportTable title={W.companies} compactMobile columns={columns} nameIndex={ranked ? 1 : 0} remember={nav.remember} rows={data.items.map(row => ({
         key: row.id, href: companyLink(row.id, nav.params), className: 'executive-company-row', cells: [
-          ...(ranked ? [row.rank ?? '–'] : []), <CompareToggle key="compare" checked={selected.includes(row.id)} disabled={selected.length === 2 && !selected.includes(row.id)} onChange={() => select(row.id)} />,
-          <div key="name" className="min-w-0 pr-28 md:pr-0"><span className="block truncate" title={row.displayName}>{row.displayName}</span><span className="block truncate text-xs font-normal text-gray-600">{row.provinceLabel} · {W.joinedShort(reportShortDate(row.joinedAt))}</span></div>,
+          ...(ranked ? [row.rank ?? '–'] : []),
+          <div key="name" className="min-w-0 pr-16 md:pr-0"><span className="block truncate" title={row.displayName}>{row.displayName}</span><span className="block truncate text-xs font-normal text-gray-600">{row.provinceLabel} · {W.joinedShort(reportShortDate(row.joinedAt))}</span></div>,
           <span key="group" className="block whitespace-normal" title={row.industryGroup.label}>{row.industryGroup.label}</span>,
           <span key="plan" className="flex min-w-0 flex-col items-start gap-1"><MangmeeBadge className="max-w-full"><span className="min-w-0 truncate" title={row.planLabel}>{row.planLabel}</span></MangmeeBadge>{row.planState !== 'ACTIVE' && <span className="text-xs leading-4 text-gray-600">{LABELS.planState[row.planState] ?? W.unknown}</span>}</span>, rowStatus(row),
           <Figure key="lifetime" value={sourceCount(row.metrics.expenseReceiptCountLifetime, row.coverage?.usage ?? data.coverage.usage)} />,
@@ -267,21 +263,8 @@ export function AnalysisContent({ data, nav, seller, rankingControl, tabs }: { d
       <ReportTable title={W.customers} remember={nav.remember} columns={[{ label: rowsAre, width: 190 }, { label: W.unitCompany, width: 140, source: data.population.eligibleCount, sourceName: 'company' }, { label: W.paid, width: 100 }, { label: W.filterLabels.paidEver, width: 110 }, { label: W.active, width: 110 }, { label: W.unitInHeader(W.shortNet, W.unitBaht), width: 140 }]} rows={data.groups.map(row => ({ key: row.key, href: drilldownHref(nav.params, nav.from, row.drilldownFilters), cells: [<span key="label" className="block truncate" title={thaiLabel(row.label, row.key)}>{thaiLabel(row.label, row.key)}</span>, <Share key="share" count={row.companies.count} share={row.companies.share} />, <Figure key="paid" value={row.companiesWithReceipts} />, row.paidEverCompanies.toLocaleString('th-TH'), <Figure key="active" value={row.activeCompanies} />, <Figure key="money" value={row.netReceiptsSatang} moneyValue netValue />] }))} />
       <p className="text-xs text-gray-600">{data.groups.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && `${W.negative} · `}{W.baseLabel} <Figure value={data.population.eligibleCount} unit={W.unitCompany} /> · {periodText(data.period)}</p>{data.industryCoverage && <p className="text-xs text-gray-600">{W.industryCoverage(data.industryCoverage.numerator, data.industryCoverage.denominator)}</p>}{data.roundingNote && <p className="text-xs text-gray-600">{W.rounding}</p>}
     </Card>}</div></>;
-  } else if (data.comparison) {
-    const c = data.comparison;
-    const metrics = [['companies', W.companyCount, 'count'], ['netReceiptsSatang', W.shortNet, 'money'], ['netReceiptsPerCompanySatang', W.netPerCompany, 'averageMoney'], ['expenseReceiptCount', W.receiptCount, 'count'], ['expenseReceiptsPerCompany', W.receiptsPerCompany, 'average'], ['everAddedReceiptShare', W.adoptionShare, 'ratio'], ['activeCompanies', W.active, 'count']] as const;
-    panel = <Card title={`${W.compare} · ${executiveComparisonLabel(c.sideA, c.dimension)} · ${executiveComparisonLabel(c.sideB, c.dimension)}`} className="executive-compare-result">
-      <div className="grid grid-cols-2 gap-3">{[c.sideA, c.sideB].map((side, i) => <div key={i} className="flex min-w-0 flex-wrap items-center justify-between gap-2"><h3 className="truncate text-sm font-semibold">{i === 0 ? W.sideA : W.sideB} · {executiveComparisonLabel(side, c.dimension)}</h3><Button variant="secondary" className="text-xs" onClick={() => openReport(nav, side.drilldownFilters ? drilldownHref(nav.params, nav.from, side.drilldownFilters) : companyLink(side.key, nav.params))}>{side.drilldownFilters ? W.listGroup : W.detail}</Button></div>)}</div>
-      <ReportTable title={W.compare} columns={[{ label: W.item, width: 300 }, { label: W.unitInHeader(W.sideA, `${W.quantity} / ${W.unitBaht} / %`), width: 210 }, { label: W.unitInHeader(W.sideB, `${W.quantity} / ${W.unitBaht} / %`), width: 210 }, { label: W.unitInHeader(W.shortDifference, `${W.quantity} / ${W.unitBaht} / ${W.point}`), width: 210 }]} rows={metrics.map(([key, label, kind]) => ({ key, cells: [label, ...[c.sideA, c.sideB].map(side => {
-        const metric = side[key];
-        if (kind === 'count' || kind === 'money') return <Figure key={side.key} value={metric as ExecutiveCount} moneyValue={kind === 'money'} netValue={kind === 'money'} />;
-        const value = metric?.value;
-        return value === null || value === undefined ? '–' : kind === 'averageMoney' ? figureNumber({ value, coverage: 'complete', reasonCodes: [] }, true) : ratioText(metric as Parameters<typeof ratioText>[0], '');
-      }), c.difference[key] === null ? '–' : kind === 'money' || kind === 'averageMoney' ? figureNumber({ value: c.difference[key]!, coverage: 'complete', reasonCodes: [] }, true) : c.difference[key]!.toLocaleString('th-TH', kind === 'count' ? undefined : { minimumFractionDigits: 1, maximumFractionDigits: 1 })] }))} />
-      <p className="text-xs text-gray-600">{W.receiptDefinition} · {W.difference} · {W.point}{[c.sideA, c.sideB].some(side => side.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(side.netReceiptsSatang.value)) && ` · ${W.negative}`}</p>
-    </Card>;
   } else panel = <EmptyState title={W.noRows} description="" />;
-  return <ReportNotes data={data} periodOnly={section === 'revenue' || !!data.comparison} sources={section === 'revenue' ? ['money'] : ['money', 'usage']}>{panel}</ReportNotes>;
+  return <ReportNotes data={data} periodOnly={section === 'revenue'} sources={section === 'revenue' ? ['money'] : ['money', 'usage']}>{panel}</ReportNotes>;
 }
 
 export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, tabs }: { data: ExecutiveCompanyDetail; tab: string; history: ExecutiveCompanyHistory | null; admin: boolean; nav: Navigation; contactReadAt: string; tabs?: ReactNode }) {

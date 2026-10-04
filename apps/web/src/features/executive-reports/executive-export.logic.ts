@@ -6,12 +6,11 @@ import { reportQuery, reasonText, retryDelaySeconds, type ReportSection } from '
 export const canExport = (context: ExecutiveContext | null) => !!context?.capabilities.readReport.allowed && !!context.capabilities.export.allowed;
 export const canExportContacts = (section: ReportSection, context: ExecutiveContext | null) => canExport(context) && ['companies', 'detail'].includes(section) && !!context?.capabilities.seeContacts.allowed;
 export function exportBody(section: ReportSection, params: URLSearchParams, context: ExecutiveContext, buildId: string, search = '', targetCompanyId?: string, includeContacts = false): ExecutiveExportBody {
-  const { from, to, page: _page, pageSize: _pageSize, section: _section, view, metric, dimension, sideA, sideB, sortBy, sortDir, ...filters } = reportQuery(section, params, context, search);
+  const { from, to, page: _page, pageSize: _pageSize, section: _section, view, metric, sortBy, sortDir, ...filters } = reportQuery(section, params, context, search);
   return { buildId, reportKey: section, from: String(from), to: String(to), filters, format: 'xlsx', includeContacts: includeContacts && canExportContacts(section, context),
     ...(view ? { subview: section === 'customers' && view === 'sales' && params.get('seller') === 'credited' ? 'creditedSales' : String(view) } : {}),
     ...(metric || sortBy ? { sortBy: String(metric ?? sortBy) as ExecutiveExportBody['sortBy'], sortDir: (metric ? 'desc' : sortDir) as 'asc' | 'desc' } : {}),
     ...(section === 'revenue' && view === 'top' ? { sortBy: 'netReceipts', sortDir: 'desc' } : {}),
-    ...(section === 'compare' ? { comparison: { dimension: String(dimension), sideA: String(sideA), sideB: String(sideB) } } : {}),
     ...(section === 'detail' ? { targetCompanyId } : {}) };
 }
 export function exportFileName(section: ReportSection, from: string, now = new Date(), to = from): string {
