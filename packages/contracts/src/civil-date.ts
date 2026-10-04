@@ -109,6 +109,16 @@ export function todayCivilDate(timeZone: string = DEFAULT_COMPANY_TIME_ZONE, now
   return civilDate(now, timeZone);
 }
 
+export const PAYMENT_DATE_IN_FUTURE = {
+  code: 'payment_date_in_future',
+  message: 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้',
+} as const;
+
+/** Payments compare calendar days in Bangkok, including when the input is an instant. */
+export function isFuturePaymentDate(value: string | Date, today: CivilDate = todayCivilDate()): boolean {
+  return coerceCivilDate(value) > today;
+}
+
 /**
  * Day arithmetic for `F <= today + 365` (§5.3(5)). Done in UTC on purpose: UTC has no DST, so
  * adding 86_400_000 ms is always exactly one calendar day, which is not true of a local clock.

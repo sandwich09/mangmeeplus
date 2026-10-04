@@ -2172,6 +2172,72 @@ const atomicPaymentInput = {
   paidByUserId: 'fin-1',
 };
 
+for (const [now, yesterday, today, tomorrow] of [
+  ['2026-10-04T12:00:00.000Z', '2026-10-03', '2026-10-04', '2026-10-05'],
+  ['2026-10-04T17:30:00.000Z', '2026-10-04', '2026-10-05', '2026-10-06'],
+]) {
+  it(`claim payment preflight permits yesterday/today and refuses tomorrow before reserving a number at ${now}`, async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date(now!) });
+    for (const day of [yesterday, today, tomorrow]) {
+      const req = financeReviewedRequest();
+      const repo = fakeRepo(req);
+      let reservations = 0;
+      const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, { execute: async (...args: any[]) => {
+        reservations++;
+        return (reserve.execute as any)(...args);
+      } } as any, commit, fakeDetailEvidence as any);
+      const result = uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', { paidAmount: '500', paymentMethod: 'CASH', paidAt: day! });
+      if (day === tomorrow) {
+        await assert.rejects(result, (error: any) => {
+          assert.deepEqual(error.getResponse(), { code: 'payment_date_in_future', message: 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้' });
+          return error.getStatus() === 400;
+        });
+        assert.equal(reservations, 0);
+        assert.equal(repo.payments.length, 0);
+      } else {
+        assert.equal((await result).status, 'PAID');
+        assert.equal(reservations, 1);
+      }
+    }
+  });
+
+  it(`locked claim payment permits yesterday/today and refuses tomorrow without writes at ${now}`, async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date(now!) });
+    for (const day of [yesterday, today, tomorrow]) {
+      const h = atomicPaymentHarness();
+      const result = h.repo.recordPaymentAtomic({ ...atomicPaymentInput, paidAt: new Date(day!) });
+      if (day === tomorrow) {
+        await assert.rejects(result, (error: any) => {
+          assert.deepEqual(error.getResponse(), { code: 'payment_date_in_future', message: 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้' });
+          return error.getStatus() === 400;
+        });
+        assert.ok(h.writes.locks > 0);
+        assert.deepEqual([h.writes.paymentCreates, h.writes.requestUpdates, h.state().payments.length], [0, 0, 0]);
+      } else assert.equal((await result).created, true);
+    }
+  });
+}
+
+it('keeps an existing future-dated claim payment replayable and voidable without changing its paid date', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-05T03:00:00.000Z') });
+  const req = financeReviewedRequest();
+  const repo = fakeRepo(req);
+  const numbering = { execute: async () => ({ id: 'seq-future', documentNumber: 'RBPAY-202610-000001', status: 'RESERVED' }) } as any;
+  const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, numbering, commit, fakeDetailEvidence as any);
+  const input = { paidAmount: '500', paymentMethod: 'CASH' as const, paidAt: '2026-10-05T00:00:00.000Z', idempotencyKey: 'existing-future' };
+  await uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', input);
+  const locked = atomicPaymentHarness();
+  const lockedInput = { ...atomicPaymentInput, paidAt: new Date(input.paidAt) };
+  await locked.repo.recordPaymentAtomic(lockedInput);
+  t.mock.timers.setTime(new Date('2026-10-04T03:00:00.000Z').getTime());
+  assert.equal((await uc.execute(ctx(['reimbursement.payment.record']), 'rb-1', input)).status, 'PAID');
+  assert.equal(repo.payments.length, 1);
+  assert.equal((await locked.repo.recordPaymentAtomic(lockedInput)).created, false);
+  assert.equal(locked.state().payments.length, 1);
+  await new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any).execute(ctx(['reimbursement.payment.void']), 'rb-1', repo.payments[0].id, { reason: 'บันทึกวันผิด' });
+  assert.deepEqual([repo.payments[0].status, repo.payments[0].paidAt.toISOString()], ['VOIDED', input.paidAt]);
+});
+
 describe('PrismaReimbursementRepository.recordPaymentAtomic (H-06)', () => {
   it('serializes a deterministic two-request race and creates one payment', async () => {
     const h = atomicPaymentHarness();

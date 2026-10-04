@@ -29,6 +29,42 @@ const { approvalComparable, diffApprovalFields, draftSentBackNote, errorMessage,
 const model = require('./reimbursements.model') as typeof import('./reimbursements.model');
 const reactRuntime = require('react') as typeof React;
 
+for (const [now, yesterday, today, tomorrow] of [
+  ['2026-10-04T12:00:00.000Z', '2026-10-03', '2026-10-04', '2026-10-05'],
+  ['2026-10-04T17:30:00.000Z', '2026-10-04', '2026-10-05', '2026-10-06'],
+]) {
+  it(`the payment form caps its calendar at Bangkok today, explains and disables a future paid date at ${now}`, (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date(now!) });
+    const previousDocument = globalThis.document;
+    // Open the real calendar in the existing static renderer; no browser or storage is used.
+    Object.assign(globalThis, { document: { body: {} } });
+    try {
+      for (const paidAt of [yesterday, today, tomorrow]) {
+        let falseStates = 0;
+        const html = renderWithState(React.createElement(ToastContext.Provider, { value: toast }, React.createElement(sections.PaymentForm, {
+          companyId: 'company-1', request: { outstandingAmount: '500', currency: 'THB' }, onCancel: noop, onDone: noop, onOpenFile: noop,
+        })), (initial) => {
+          if (initial && typeof initial === 'object' && 'paidAmount' in initial) return { ...initial, paidAt, paymentMethod: 'CASH' };
+          if (initial === false && ++falseStates > 1) return true; // Leave the form idle; open its field popovers.
+          return undefined;
+        });
+        const submit = /<button\b([^>]*\btype="submit"[^>]*)>/.exec(html)?.[1];
+        assert.ok(submit, 'payment submit button rendered');
+        assert.equal(/\bdisabled=""/.test(submit), paidAt === tomorrow, paidAt);
+        assert.equal(html.includes('วันที่จ่ายเงินจริงต้องไม่เกินวันนี้'), paidAt === tomorrow, paidAt);
+        for (const [day, blocked] of [[today, false], [tomorrow, true]] as const) {
+          const attrs = new RegExp(`<button\\b([^>]*)>${Number(day!.slice(-2))}</button>`).exec(html)?.[1];
+          assert.ok(attrs, `calendar day ${day} rendered`);
+          assert.equal(/\bdisabled=""/.test(attrs), blocked, `calendar day ${day}`);
+        }
+      }
+    } finally {
+      if (previousDocument === undefined) Reflect.deleteProperty(globalThis, 'document');
+      else globalThis.document = previousDocument;
+    }
+  });
+}
+
 const h = React.createElement;
 const noop = () => undefined;
 const router = { back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop, bfcacheId: 'test' };

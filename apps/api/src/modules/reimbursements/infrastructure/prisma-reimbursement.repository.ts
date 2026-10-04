@@ -2,7 +2,7 @@ import { serializableTransaction } from '../../../common/database/serializable-t
 import { isSerializationFailure } from '../../../common/database/prisma-error';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import {
-  civilDate, civilPeriodKey, hasPrivilegedGrant, todayCivilDate, LEDGER_SEQUENCE_KEY,
+  civilDate, civilPeriodKey, hasPrivilegedGrant, todayCivilDate, LEDGER_SEQUENCE_KEY, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
   REIMBURSEMENT_PAYMENT_SLIP_MAX_BYTES, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES,
 } from '@watchdog-bms/contracts';
 import { expenseDraftNumberingEnabled, expenseNumberInTransaction } from '../../expenses/infrastructure/expense-number';
@@ -10,7 +10,7 @@ import { resolveReimbursementSourceLines, assertReimbursementSources, readReimbu
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { isDeepStrictEqual } from 'node:util';
 import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
-import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { reimbursementDuplicateBlockNotice, reimbursementHubBucket } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimSignatureRole, ReimbursementHubBucket, ReimbursementPayoutCorrectionReason, ReimbursementPayoutRoundAnswer, ReimbursementRequestStatus,
@@ -3472,6 +3472,7 @@ export class PrismaReimbursementRepository {
       // Its status refuses the payment anyway (payout spec §14.7); this says why in the payer's words.
       if (payoutCorrectionPhase(request)) throw new ConflictException('payout_correction_in_progress');
       requireTransactionBranchId(request.branchId);
+      if (isFuturePaymentDate(data.paidAt)) throw new BadRequestException(PAYMENT_DATE_IN_FUTURE);
       await assertReimbursementSources(tx, this.toRequest(request));
 
       const policy = effectivePolicyForRequest(this.toRequest(request), effectivePolicy(await tx.reimbursementPolicy.findFirst({
