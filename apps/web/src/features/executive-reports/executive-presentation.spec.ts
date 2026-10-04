@@ -72,7 +72,7 @@ test('directory uses explicit receipt columns, labelled secondary summaries and 
   assert.equal((html.match(/type="checkbox"/g) ?? []).length, 1);
   assert.match(html, /sr-only[^>]*>เลือกเพื่อเปรียบเทียบ/);
   assert.equal((html.match(/>เคยชำระเงิน</g) ?? []).length, 1);
-  for (const label of [W.receiptCount, W.days, W.users, W.documents, W.ai, W.lastActivity, W.shortPlan, W.shortNet]) assert.ok(html.includes(label), label);
+  for (const label of [W.tableReceipts, W.days, W.users, W.documents, W.ai, W.lastActivity, W.shortPlan, W.tableNet]) assert.ok(html.includes(label), label);
   assert.match(html, /งานร้านค้า/); assert.match(html, /สมัครทางไลน์/);
 });
 

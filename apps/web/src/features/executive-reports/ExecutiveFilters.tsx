@@ -21,15 +21,15 @@ export function ExecutiveFilters({ context, values, errors, apply, clear, direct
   const chips = [...applied, ...extra];
   const valueKey = JSON.stringify(values);
   useEffect(() => { panel.current?.hidePopover(); }, [valueKey]);
-  return <div className="flex min-w-0 flex-wrap items-center gap-2">
-    <span ref={trigger}><Button variant="secondary" popoverTarget={id} aria-expanded={open} aria-controls={id} aria-haspopup="dialog" icon={<DesignIcons.filter className="size-5 text-brand-700" />} onClick={() => {
+  return <div className="flex min-w-0 flex-1 items-center gap-2">
+    <span ref={trigger} className="shrink-0"><Button variant="secondary" popoverTarget={id} aria-expanded={open} aria-controls={id} aria-haspopup="dialog" icon={<DesignIcons.filter className="size-5 text-brand-700" />} onClick={() => {
       setDraft(values);
       const rect = trigger.current?.getBoundingClientRect();
       if (rect) setPosition({ left: `${rect.left}px`, top: `${Math.min(rect.bottom + 8, Math.max(8, window.innerHeight - 440))}px` });
     }}>{W.filters}{' '}<span className="rounded-full bg-brand-50 px-2 py-0.5 text-brand-800 tabular-nums">{chips.length}</span></Button></span>
-    {chips.map(({ key, label, remove }) => <Button key={key} variant="secondary" className="max-w-full !rounded-full !border-brand-200 !bg-brand-25 !text-brand-800" aria-label={W.removeFilter(`${Object.hasOwn(FILTER_URL, key) ? `${W.filterLabels[key as keyof typeof FILTER_URL]} · ` : ''}${label}`)} onClick={remove}>
-      <span className="min-w-0 whitespace-normal">{label}</span><span aria-hidden="true">×</span>
-    </Button>)}
+    {chips.length > 0 && <div data-filter-chips className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">{chips.map(({ key, label, remove }) => <Button key={key} title={label} variant="secondary" className="shrink-0 whitespace-nowrap !rounded-full !border-brand-200 !bg-brand-25 !text-brand-800" aria-label={W.removeFilter(`${Object.hasOwn(FILTER_URL, key) ? `${W.filterLabels[key as keyof typeof FILTER_URL]} · ` : ''}${label}`)} onClick={remove}>
+      <span>{label}</span><span aria-hidden="true">×</span>
+    </Button>)}</div>}
     <div ref={panel} id={id} popover="auto" role="dialog" aria-labelledby={`${id}-title`} onToggle={event => { if (event.target === event.currentTarget) setOpen(event.newState === 'open'); }}
       style={{ '--filter-left': position.left, '--filter-top': position.top } as CSSProperties}
       className="fixed left-0 right-0 bottom-0 top-auto m-0 w-full max-w-none max-h-[85dvh] overflow-y-auto rounded-t-2xl border border-gray-200 bg-white p-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))] text-gray-900 shadow-xl [&:not(:popover-open)]:hidden backdrop:bg-gray-900/40 md:bottom-auto md:left-[min(var(--filter-left),calc(100vw_-_24rem_-_1rem))] md:right-auto md:top-[var(--filter-top)] md:max-h-[calc(100dvh_-_var(--filter-top)_-_1rem)] md:w-96 md:max-w-[calc(100vw_-_2rem)] md:rounded-xl md:backdrop:bg-transparent">

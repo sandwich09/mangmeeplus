@@ -65,7 +65,7 @@ test('shared tables keep column structure fixed with dots, explicit widths, stic
   const marked = render(cash), complete = render({ ...cash, value: 9900, coverage: 'complete', reasonCodes: [] });
   const headers = (m: string) => m.match(/<th\b[^>]*>/g);
   assert.deepEqual(headers(marked), headers(complete));
-  assert.match(marked, /<colgroup>/); assert.match(marked, /<col style="width:[\d.]+%"/); assert.match(marked, /xl:min-w-0/); assert.match(marked, /md:sticky md:left-0/);
+  assert.match(marked, /<colgroup\b/); assert.match(marked, /<col[^>]*style="width:\d+px"/); assert.doesNotMatch(marked, /min-width:|max-h-/); assert.match(marked, /md:sticky md:left-0/);
   assert.match(marked, /whitespace-nowrap/); assert.match(marked, /border-gray-100/);
   assert.match(marked, /grid-cols-2/); assert.match(marked, /md:hidden/);
   const zero = html(Table, { title: W.companies, columns: [{ label: W.company }, { label: W.days }], rows: [{ key: "zero", cells: ["ร้าน ก", 0] }] });
@@ -115,7 +115,7 @@ test('directory columns, closed row expanders and conditional rank/share replace
   const render = (sortBy: string) => html(CompaniesContent, { data: { ...envelope, items: [{ ...row, rank: 1, cumulativeShare: { value: 100 } }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy, sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav, selected: [], select() {} });
   const plain = render('joinedAt'), ranked = render('netReceipts');
   const head = plain.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
-  const labels = ['บริษัท', 'กลุ่มธุรกิจ', 'แพ็กเกจ', 'สถานะ', 'ใบเสร็จสะสม', 'ใบเสร็จในเดือน', 'วันใช้งาน', 'ใช้ระบบล่าสุด', 'ยอดรับสุทธิ'];
+  const labels = ['บริษัท', 'กลุ่มธุรกิจ', 'แพ็กเกจ', 'สถานะ', 'ใบเสร็จสะสม', 'ใบเสร็จเดือน', 'วันใช้งาน', 'ใช้ระบบล่าสุด', 'สุทธิ'];
   let last = -1; for (const label of labels) { const at = head.indexOf(label); assert.ok(at > last, label); last = at; }
   assert.match(plain, /aria-expanded="false"/); assert.doesNotMatch(plain, /<details[^>]* open/);
   assert.doesNotMatch(head, /สะสม %|อันดับ/); assert.match(ranked.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '', /สะสม %/);
@@ -192,7 +192,7 @@ test('row clicks open the link; comparison and expander events never navigate an
   const node = file.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'ExecutiveTable')!;
   const code = ts.transpileModule(node.getText(file).replace(/^export /, '') + '\nreturn ExecutiveTable;', { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
   let expanded: string[] = [], navigations = 0, stopped = 0;
-  const deps = { React, W, useState: () => [expanded, (next: (old: string[]) => string[]) => expanded = next(expanded)], useId: () => 'table', isValidElement: React.isValidElement, Fragment: React.Fragment, Figure: design.Figure, IncompleteDot: design.IncompleteDot, ColumnMark: React.createContext(null), Link: 'a', hoistedSource: logic.hoistedSource, reasons: () => '', columnAlign: () => '' };
+  const deps = { React, W, useState: () => [expanded, (next: (old: string[]) => string[]) => expanded = next(expanded)], useId: () => 'table', isValidElement: React.isValidElement, Fragment: React.Fragment, Figure: design.Figure, IncompleteDot: design.IncompleteDot, ColumnMark: React.createContext(null), Link: 'a', hoistedSource: logic.hoistedSource, reasons: () => '', columnAlign: () => '', desktopColumn: () => 'md:table-cell', ChevronDownIcon: () => null };
   const Table = new Function('deps', `const {${Object.keys(deps).join(',')}}=deps; ${code}`)(deps);
   const rows = [{ key: 'one', href: '/system/executive/companies/one', cells: ['ร้าน ก', 6], details: 'ข้อมูลรอง' }];
   const elements = (node: React.ReactNode): React.ReactElement<any>[] => React.Children.toArray(node).flatMap(child => React.isValidElement<any>(child) ? [child, ...elements((child.props as { children?: React.ReactNode }).children)] : []);
@@ -207,6 +207,9 @@ test('row clicks open the link; comparison and expander events never navigate an
   assert.equal(stopped, 1); assert.deepEqual(expanded, ['one']);
   assert.equal(render().find(element => element.type === 'button')!.props['aria-expanded'], true);
   assert.equal(render().find(element => element.props.id === 'table-one')!.props.hidden, false);
+  const card = render().find(element => element.type === 'tbody')!;
+  assert.ok(elements(card).some(element => element.props.id === 'table-one'));
+  assert.ok(elements(render().find(element => element.type === 'button')!).some(element => element.props.children === W.less));
 });
 
 test('complete selected-period data never receives an incomplete heading just because another source is late', async () => {

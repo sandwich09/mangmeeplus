@@ -112,45 +112,53 @@ function companyLink(id: string, params: URLSearchParams): string {
 }
 type StatusRow = Pick<ExecutiveCompanyRow, 'paidEver' | 'usageGroup' | 'usageUnassessedReason' | 'fullyRefunded'>;
 const rowStatusLabel = (row: StatusRow) => row.fullyRefunded ? refundLabel : row.usageGroup ? LABELS.usageGroup[row.usageGroup] : LABELS.paidEver[row.paidEver.value];
-const rowStatus = (row: StatusRow) => <MangmeeBadge className="max-w-full truncate" tone={row.fullyRefunded ? 'amber' : row.usageGroup === 'ACTIVE' ? 'brand' : 'slate'}>{rowStatusLabel(row)}{(row.usageUnassessedReason || row.paidEver.reason) && <IncompleteDot reason={[row.usageUnassessedReason, row.paidEver.reason].filter(Boolean).map(code => reasonText(code!)).join(' · ')} />}</MangmeeBadge>;
+const rowStatus = (row: StatusRow) => <MangmeeBadge className="max-w-full" tone={row.fullyRefunded ? 'amber' : row.usageGroup === 'ACTIVE' ? 'brand' : 'slate'}><span className="min-w-0 truncate" title={rowStatusLabel(row)}>{rowStatusLabel(row)}</span>{(row.usageUnassessedReason || row.paidEver.reason) && <IncompleteDot reason={[row.usageUnassessedReason, row.paidEver.reason].filter(Boolean).map(code => reasonText(code!)).join(' · ')} />}</MangmeeBadge>;
 
 function referrer(row: ExecutiveCompanyRow['referrer']): string {
   return `${thaiLabel(row.label, row.salesCode)}${row.source === 'ADMIN' ? ` ${EXECUTIVE_REFERRER_ADMIN_SUFFIX}` : ''}`;
 }
 function CompareToggle({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: () => void }) {
   const id = useId();
-  return <label onClick={event => event.stopPropagation()} htmlFor={id} className="relative z-20 flex shrink-0 min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg hover:bg-gray-100 focus-within:ring-2 focus-within:ring-brand-700"><input id={id} type="checkbox" checked={checked} disabled={disabled} onChange={onChange} className="size-4 accent-brand-800" /><span className="sr-only">{W.selectCompare}</span></label>;
+  return <label onClick={event => event.stopPropagation()} htmlFor={id} className="relative z-10 flex shrink-0 min-h-11 min-w-11 cursor-pointer items-center justify-center rounded-lg hover:bg-gray-100 focus-within:ring-2 focus-within:ring-brand-700"><input id={id} type="checkbox" checked={checked} disabled={disabled} onChange={onChange} className="size-4 accent-brand-800" /><span className="sr-only">{W.selectCompare}</span></label>;
 }
 export function CompaniesContent({ data, nav, selected, select, sortColumn }: { data: ExecutiveCompanies; nav: Navigation; selected: string[]; select: (id: string) => void; sortColumn?: (key: string) => void }) {
   const ranked = ['netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests'].includes(data.sort.sortBy);
   const netSort = data.sort.sortBy === 'netReceipts';
   const sort = (key: string) => data.sort.sortBy === key ? data.sort.sortDir === 'asc' ? 'ascending' as const : 'descending' as const : undefined;
   const columns: ReportColumn[] = [
-    ...(ranked ? [{ label: W.rank, width: 34, source: netSort ? data.coverage.money : data.coverage.usage, sourceName: netSort ? 'money' : 'usage' }] : []), { label: W.selectCompare, width: 44, srOnly: true }, { label: W.company, width: 170, sort: sort(data.sort.sortBy === 'joinedAt' ? 'joinedAt' : 'companyName'), onSort: sortColumn && (() => sortColumn('companyName')) },
-    { label: W.group, width: 85, align: 'left' }, { label: W.shortPlan, width: 85, align: 'left' }, { label: W.status, width: 115, align: 'left' },
-    { label: W.lifetimeReceipts, width: 75 }, { label: W.receiptCount, width: 85, sort: sort('expenseReceiptCount'), onSort: sortColumn && (() => sortColumn('expenseReceiptCount')) },
-    { label: W.days, width: 60, sort: sort('activeDays'), onSort: sortColumn && (() => sortColumn('activeDays')) }, { label: W.lastActivity, width: 85, sort: sort('lastActivityAt'), onSort: sortColumn && (() => sortColumn('lastActivityAt')) }, { label: W.unitInHeader(W.shortNet, W.unitBaht), width: 110, sort: sort('netReceipts'), onSort: sortColumn && (() => sortColumn('netReceipts')) },
-    ...(netSort ? [{ label: W.shortCumulative, width: 60, source: data.coverage.money, sourceName: 'money' }] : []),
+    ...(ranked ? [{ label: W.rank, width: 64, mobile: false, source: netSort ? data.coverage.money : data.coverage.usage, sourceName: netSort ? 'money' : 'usage' }] : []),
+    { label: W.shortCompare, width: 44, control: true }, { label: W.company, width: netSort ? 200 : 220, sort: sort('companyName'), onSort: sortColumn && (() => sortColumn('companyName')) },
+    { label: W.group, width: 160, hide: 'always', mobile: false, align: 'left' },
+    { label: W.plan, width: 136, hide: ranked && data.sort.sortBy !== 'expenseReceiptCount' || data.sort.sortBy === 'lastActivityAt' ? 'always' : 'narrow', mobile: false, align: 'left' },
+    { label: W.status, width: 140, hide: 'narrow', mobile: false, align: 'left' },
+    { label: W.lifetimeReceipts, width: 116, hide: 'always', mobile: false },
+    { label: W.tableReceipts, width: 120, hide: ranked && !netSort && data.sort.sortBy !== 'expenseReceiptCount' ? 'narrow' : undefined, mobile: true, sort: sort('expenseReceiptCount'), onSort: sortColumn && (() => sortColumn('expenseReceiptCount')) },
+    { label: W.days, width: 104, hide: data.sort.sortBy === 'activeDays' ? undefined : 'always', mobile: true, sort: sort('activeDays'), onSort: sortColumn && (() => sortColumn('activeDays')) },
+    { label: W.ai, width: 128, hide: data.sort.sortBy === 'aiRequests' ? undefined : 'always', mobile: data.sort.sortBy === 'aiRequests', sort: sort('aiRequests'), onSort: sortColumn && (() => sortColumn('aiRequests')) },
+    { label: W.lastActivity, width: 120, hide: data.sort.sortBy === 'lastActivityAt' ? undefined : 'always', mobile: false, sort: sort('lastActivityAt'), onSort: sortColumn && (() => sortColumn('lastActivityAt')) },
+    { label: W.shortJoined, width: 96, hide: data.sort.sortBy === 'joinedAt' ? undefined : 'always', mobile: false, sort: sort('joinedAt'), onSort: sortColumn && (() => sortColumn('joinedAt')) },
+    { label: W.unitInHeader(W.tableNet, W.unitBaht), width: 132, mobile: true, sort: sort('netReceipts'), onSort: sortColumn && (() => sortColumn('netReceipts')) },
+    ...(netSort ? [{ label: W.shortCumulative, width: 84, mobile: false, source: data.coverage.money, sourceName: 'money' }] : []),
   ];
   return <ReportNotes data={data}>
     <p role="status" className="text-sm tabular-nums">{W.found(data.pagination.total)} · {W.shortNet} <Figure value={data.summary.netReceiptsSatang} moneyValue netValue /> {W.unitBaht}</p>
-    {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <Card title={W.companies} actions={<span className="text-xs text-gray-600">{W.shortPlan} · {W.current}</span>}>
-      <ReportTable title={W.companies} columns={columns} nameIndex={ranked ? 2 : 1} remember={nav.remember} rows={data.items.map(row => ({
+    {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <section aria-label={W.companies} className="rounded-xl border border-gray-200 bg-white">
+      <ReportTable title={W.companies} compactMobile columns={columns} nameIndex={ranked ? 2 : 1} remember={nav.remember} rows={data.items.map(row => ({
         key: row.id, href: companyLink(row.id, nav.params), className: 'executive-company-row', cells: [
           ...(ranked ? [row.rank ?? '–'] : []), <CompareToggle key="compare" checked={selected.includes(row.id)} disabled={selected.length === 2 && !selected.includes(row.id)} onChange={() => select(row.id)} />,
-          <div key="name" className="min-w-0 pr-12 md:pr-0"><span className="block truncate" title={row.displayName}>{row.displayName}</span><span className="block truncate text-xs font-normal text-gray-600">{row.provinceLabel} · {W.joinedShort(reportShortDate(row.joinedAt))}</span></div>,
-          <span key="group" className="block truncate" title={row.industryGroup.label}>{row.industryGroup.label}</span>,
-          <MangmeeBadge key="plan" className="max-w-full truncate">{row.planLabel}{row.planState !== 'ACTIVE' ? ` · ${LABELS.planState[row.planState] ?? W.unknown}` : ''}</MangmeeBadge>, rowStatus(row),
+          <div key="name" className="min-w-0 pr-28 md:pr-0"><span className="block truncate" title={row.displayName}>{row.displayName}</span><span className="block truncate text-xs font-normal text-gray-600">{row.provinceLabel} · {W.joinedShort(reportShortDate(row.joinedAt))}</span></div>,
+          <span key="group" className="block whitespace-normal" title={row.industryGroup.label}>{row.industryGroup.label}</span>,
+          <MangmeeBadge key="plan" className="max-w-full"><span className="min-w-0 truncate" title={`${row.planLabel}${row.planState !== 'ACTIVE' ? ` · ${LABELS.planState[row.planState] ?? W.unknown}` : ''}`}>{row.planLabel}{row.planState !== 'ACTIVE' ? ` · ${LABELS.planState[row.planState] ?? W.unknown}` : ''}</span></MangmeeBadge>, rowStatus(row),
           <Figure key="lifetime" value={sourceCount(row.metrics.expenseReceiptCountLifetime, data.coverage.usage)} />,
           <Figure key="receipts" value={sourceCount(row.metrics.expenseReceiptCountInPeriod, data.coverage.usage)} />,
-          <Figure key="days" value={sourceCount(row.metrics.activeDays, data.coverage.usage)} />, reportShortDate(row.lastActivityAt),
+          <Figure key="days" value={sourceCount(row.metrics.activeDays, data.coverage.usage)} />, <Figure key="ai" value={sourceCount(row.metrics.aiRequests, data.coverage.usage)} />, reportShortDate(row.lastActivityAt), reportShortDate(row.joinedAt),
           <Figure key="net" value={sourceMoney(row.metrics.netReceiptsSatang, data.coverage.money)} moneyValue netValue />,
           ...(netSort ? [row.cumulativeShare ? ratioText(row.cumulativeShare) : '–'] : []),
-        ], details: <div className="executive-usage-summary flex flex-wrap items-center gap-x-4 gap-y-1"><span>{W.registered}: {row.registeredName || W.unknown}</span><span>{W.origin}: {[thaiLabel(row.discovery.label), row.discovery.otherText, thaiLabel(LABELS.signupRail[row.signupRail] ?? W.unknown), referrer(row.referrer)].filter(Boolean).join(' · ')}</span><span>{LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown}</span><span>{LABELS.companyStatus[row.companyStatus] ?? W.unknown}</span>{rowStatusLabel(row) !== LABELS.paidEver[row.paidEver.value] && <span>{LABELS.paidEver[row.paidEver.value]}</span>}{netSort && !row.cumulativeShare && data.coverage.money.coverage === "complete" && row.metrics.netReceiptsSatang <= 0 && <span>{W.notInShare}</span>}{[...new Set([row.paidEver.reason, row.usageUnassessedReason].filter((code): code is string => !!code && ![...data.coverage.money.reasonCodes, ...data.coverage.usage.reasonCodes].some(common => common === code)))].map(code => <span key={code}>{reasonText(code)}</span>)}{([[W.users, 'activeUsers'], [W.documents, 'documents'], [W.ai, 'aiRequests']] as const).map(([label, key]) => <span key={key}>{label}: <Figure value={sourceCount(row.metrics[key], data.coverage.usage)} /></span>)}</div>,
+        ], details: <div className="executive-usage-summary flex flex-wrap items-center gap-x-4 gap-y-1"><span>{W.registered}: {row.registeredName || W.unknown}</span><span>{W.origin}: {[thaiLabel(row.discovery.label), row.discovery.otherText, thaiLabel(LABELS.signupRail[row.signupRail] ?? W.unknown), referrer(row.referrer)].filter(Boolean).join(' · ')}</span><span>{LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown}</span><span>{LABELS.companyStatus[row.companyStatus] ?? W.unknown}</span>{rowStatusLabel(row) !== LABELS.paidEver[row.paidEver.value] && <span>{LABELS.paidEver[row.paidEver.value]}</span>}{netSort && !row.cumulativeShare && data.coverage.money.coverage === "complete" && row.metrics.netReceiptsSatang <= 0 && <span>{W.notInShare}</span>}{[...new Set([row.paidEver.reason, row.usageUnassessedReason].filter((code): code is string => !!code && ![...data.coverage.money.reasonCodes, ...data.coverage.usage.reasonCodes].some(common => common === code)))].map(code => <span key={code}>{reasonText(code)}</span>)}{([[W.users, 'activeUsers'], [W.documents, 'documents']] as const).map(([label, key]) => <span key={key}>{label}: <Figure value={sourceCount(row.metrics[key], data.coverage.usage)} /></span>)}</div>,
       }))} />
-      <p className="text-xs text-gray-600">{data.coverage.money.coverage === 'complete' && data.items.some(row => row.metrics.netReceiptsSatang < 0) && `${W.negative} · `}{W.receiptDefinition} · {W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
-      {netSort && <p className="text-xs text-gray-600">{W.tieOrder}</p>}
-    </Card>}
+      <p className="px-2 py-1 text-xs text-gray-600">{data.coverage.money.coverage === 'complete' && data.items.some(row => row.metrics.netReceiptsSatang < 0) && `${W.negative} · `}{W.receiptDefinition} · {W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
+      {netSort && <p className="px-2 py-1 text-xs text-gray-600">{W.tieOrder}</p>}
+    </section>}
   </ReportNotes>;
 }
 
@@ -159,7 +167,7 @@ function RevenueContent({ data, nav, tabs }: { data: ExecutiveAnalysis & { reven
   const columns = { gridTemplateColumns: `repeat(${Math.max(1, revenue.trend.length)}, minmax(0, 1fr))` };
   const figures: Array<[string, ExecutiveMoney]> = [[W.shortNet, revenue.netReceiptsSatang], [W.shortReceipts, revenue.receiptsSatang], [W.shortRefunds, revenue.refundsSatang], [W.tax, revenue.taxSatang], [W.shortFees, revenue.feesSatang]];
   const max = Math.max(1, ...revenue.trend.map(point => Math.abs(point.netReceiptsSatang.value ?? point.netReceiptsSatang.knownValue ?? 0)));
-  const moneyColumn = (label: string) => ({ label: W.unitInHeader(label, W.unitBaht), width: 160 });
+  const moneyColumn = (label: string) => ({ label: W.unitInHeader(label, W.unitBaht), width: 160, ...(label === W.shortRefunds ? { hide: 'narrow' as const } : {}) });
   const unmatchedRows: Array<[string, ExecutiveCount, boolean]> = [[W.unmatched, sourceCount(data.unmatchedMoney.count, data.coverage.money), false], [W.shortReceipts, sourceMoney(data.unmatchedMoney.receiptsSatang, data.coverage.money), true], [W.shortRefunds, sourceMoney(data.unmatchedMoney.refundsSatang, data.coverage.money), true], [W.excludedNet, sourceMoney(data.population.excludedTestInternalNetReceiptsSatang, data.coverage.money), true], [W.unclassifiedNet, sourceMoney(data.population.unclassifiedNetReceiptsSatang, data.coverage.money), true], [W.disputes, sourceCount(revenue.disputedInvoiceCount, data.coverage.money), false]];
   return <>
     <div className="flex min-w-0 snap-x snap-mandatory gap-3 overflow-x-auto pb-1 xl:grid xl:grid-cols-5 xl:overflow-visible">{figures.map(([label, figure], i) => <div key={label} className="w-52 shrink-0 snap-start xl:w-auto"><ExecutiveKpi iconName="money" label={label} figure={figure} moneyValue netValue={i === 0} unit={W.unitBaht} emphasis={i === 0} /></div>)}</div>

@@ -63,7 +63,7 @@ test('v2 directory exposes available fields as sticky columns and the same two-c
   const data = { ...envelope, summary: { netReceiptsSatang: count(10000) }, items: [row], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
   const html = render(CompaniesContent, { data, nav, selected: [], select: () => {} });
   const head = html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
-  for (const word of [W.company, W.group, W.lifetimeReceipts, W.receiptCount, W.days, W.lastActivity, W.shortPlan, W.shortNet]) assert.ok(head.includes(word), word);
+  for (const word of [W.company, W.group, W.lifetimeReceipts, W.tableReceipts, W.days, W.lastActivity, W.shortPlan, W.tableNet]) assert.ok(head.includes(word), word);
   assert.match(head, /sticky/); assert.match(html, /grid-cols-2/); assert.match(html, /md:table-row/);
   assert.match(html, /after:absolute after:inset-0/); assert.match(html, />27</);
   assert.equal((html.match(/type="checkbox"/g) ?? []).length, 1);
