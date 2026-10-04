@@ -354,6 +354,38 @@ describe('PrismaExpenseRepository atomic tax confirmation', () => {
     assert.ok(writes.locks >= 2, 'funding and substitute locks are held');
   });
 
+  it('returns a claim projection already confirmed by another attempt without finalizing or emitting its stable event again', async () => {
+    const { repo, row, client, writes, updatedAt } = harness();
+    row.sourceReimbursementRequestId = 'claim-1';
+    row.sourceReimbursementLineId = 'claim-line-1';
+    client.reimbursementLine.findMany = async () => [{ id: 'claim-line-1', reimbursementRequestId: 'claim-1',
+      sourceExpenseSnapshotJson: null, request: { branchId: row.branchId, requesterDisplayNameSnapshot: 'ผู้เบิก' } }];
+    client.reimbursementRequest = { findFirst: async () => ({
+      id: 'claim-1', status: 'APPROVED', branchId: row.branchId, currency: row.currency,
+      lines: [{ id: 'claim-line-1', amount: row.netPayableAmount }],
+    }) };
+    const input = { ...await inputFor(repo, updatedAt),
+      reimbursementReview: { requestId: 'claim-1', lineId: 'claim-line-1' },
+      outboxEvent: { eventKey: 'expense.confirmed:expense_record:expense-1:reimbursement:claim-1:claim-line-1', payloadJson: {} },
+    };
+    const first = await repo.finalizeAndConfirmExpenseCas(input, finalize);
+    // A caller that read READY before the first commit still carries the old version/checksum.
+    const retry = await repo.finalizeAndConfirmExpenseCas({ ...input, expectedUpdatedAt: new Date(0), expectedSourceChecksum: 'obsolete' }, async () => {
+      assert.fail('an existing confirmation must not finalize tax again');
+    });
+    assert.equal(retry.expense.status, 'CONFIRMED');
+    assert.equal(retry.expense.expenseNumber, first.expense.expenseNumber);
+    assert.deepEqual(retry.finalized, []);
+    assert.deepEqual([writes.line, writes.header, writes.outbox], [1, 1, 1]);
+
+    const confirm = new ConfirmExpenseUseCase(repo, { log: async () => undefined } as any, {} as any, {} as any);
+    const ctx = { companyId: 'company-1', userId: 'approver-1', scopes: {} } as any;
+    assert.equal((await confirm.executeForReimbursement(ctx, 'expense-1', {
+      reimbursementRequestId: 'claim-1', reimbursementLineId: 'claim-line-1', branchId: 'branch-1', allowMissingReceiptWithReason: true,
+    })).status, 'CONFIRMED');
+    assert.deepEqual([writes.line, writes.header, writes.outbox], [1, 1, 1]);
+  });
+
   it('confirms an attachment-bearing expense — the CAS re-read must include attachments in the checksum', async () => {
     // Regression: finalizeAndConfirmExpenseCas once rebuilt the record with
     // attachments: [] while the source checksum covers attachments, so every

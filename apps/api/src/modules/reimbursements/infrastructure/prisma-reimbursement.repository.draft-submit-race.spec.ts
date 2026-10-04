@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { reimbursementHubBucket, reimbursementPaidNotice } from '@watchdog-bms/contracts';
+import { reimbursementHubBucket, reimbursementPaidNotice, type ReimbursementPolicySnapshotV1 } from '@watchdog-bms/contracts';
 import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { MaterializeClaimExpensesService } from '../application/services/materialize-claim-expenses.service';
@@ -3398,24 +3398,57 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
 
   it('blocks an expense-only duplicate on detail, queue and locked payment, then dismisses, confirms and pays through the real modules', async (t) => {
     if (!reachable) return t.skip('no database reachable');
-    const target = await approvedPossibleDuplicate();
-    const claim = await approvedPossibleDuplicate();
     const db = clients[0]!;
+    const checksumSha256 = randomUUID().replaceAll('-', '').repeat(2);
+    const receipt = (uploadedByUserId: string) => db.attachmentObject.create({ data: {
+      companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${S}/receipt-${randomUUID()}`, originalFileName: 'receipt.jpg',
+      mimeType: 'image/jpeg', byteSize: 1024, checksumSha256, uploadedByUserId, status: 'ACTIVE',
+    } });
+    const target = await decidedClaim(1, { attachmentId: (await receipt(FIN)).id, requesterUserId: FIN });
+    assert.equal((await system(0).resume.execute(manager(), target.requestId)).status, 'READY_FOR_PAYMENT');
+    // A legacy submit that missed the cross-requester checksum: no claim candidate, but the real
+    // approval orchestrator scans the new projection BEFORE its first confirmation.
+    const decided = await decidedClaim(1, { attachmentId: (await receipt(STAFF)).id, requesterUserId: STAFF });
+    const resumed = await system(0).resume.execute(manager(), decided.requestId);
+    assert.equal(resumed.status, 'READY_FOR_PAYMENT');
+    const claim = { requestId: resumed.id, amount: resumed.amount };
     const [own] = await repos[0]!.listClaimProjections(companyId, claim.requestId);
     const [other] = await repos[0]!.listClaimProjections(companyId, target.requestId);
-    // Reproduce the recorded gap: only the expense scan noticed, no claim candidate exists.
-    await db.reimbursementDuplicateCandidate.deleteMany({ where: { companyId, reimbursementRequestId: claim.requestId } });
-    await db.expenseRecord.update({ where: { id: own!.id }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'POSSIBLE_DUPLICATE', postingStatus: 'pending' } });
-    await db.reimbursementRequest.update({ where: { id: claim.requestId }, data: { duplicateStatus: 'POSSIBLE_DUPLICATE' } });
-    await db.expenseDuplicateCandidate.create({ data: { companyId, expenseId: own!.id, candidateExpenseId: other!.id, reasonCodesJson: ['MANUAL'], score: 80 } });
+    const parked = await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } });
+    const confirmationEvents = () => db.outboxEvent.findMany({ where: { companyId, aggregateId: own!.id, eventType: 'expense.confirmed' } });
+    assert.deepEqual([parked.status, parked.duplicateStatus, parked.confirmedAt, (await confirmationEvents()).length], ['READY_FOR_CONFIRMATION', 'POSSIBLE_DUPLICATE', null, 0]);
+    assert.equal(await db.reimbursementDuplicateCandidate.count({ where: { companyId, reimbursementRequestId: claim.requestId } }), 0);
+    const candidate = await db.expenseDuplicateCandidate.findFirstOrThrow({ where: { companyId, expenseId: own!.id } });
+    assert.equal(candidate.candidateExpenseId, other!.id);
+    assert.ok((candidate.reasonCodesJson as string[]).includes('same_checksum'));
     assert.deepEqual(await duplicateFacts(claim, 'expense-only'), { queue: [true, 'POSSIBLE_DUPLICATE'], detail: [true, 'POSSIBLE_DUPLICATE'], list: 'POSSIBLE_DUPLICATE', payment: '422 duplicate_unresolved' });
     const prisma = { client: db } as any;
     const expenses = new PrismaExpenseRepository(prisma);
     const audit = { log: (entry: any, tx?: any) => new PrismaAuditRepository(prisma).log(entry, tx) } as any;
     const resolve = new FinanceReviewReimbursementUseCase(repos[0]!, audit, system(0).orchestrator,
       new ReimbursementEvidenceService(new PrismaAttachmentRepository(prisma), expenses), new ResolveDuplicateUseCase(expenses, audit));
-    await resolve.execute(finance(), claim.requestId, { resolveDuplicate: true, duplicateResolutionReason: 'ตรวจแล้วเป็นคนละการซื้อ' });
-    assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } })).status, 'CONFIRMED');
+    const clear = () => resolve.execute(finance(), claim.requestId, { resolveDuplicate: true, duplicateResolutionReason: 'ตรวจแล้วเป็นคนละการซื้อ' });
+    await clear();
+    const confirmed = await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } });
+    assert.equal(confirmed.status, 'CONFIRMED');
+    assert.ok(confirmed.confirmedAt);
+    const dismissed = await db.expenseDuplicateCandidate.findUniqueOrThrow({ where: { id: candidate.id } });
+    assert.deepEqual([dismissed.status, dismissed.resolvedByUserId, dismissed.resolutionReason], ['DISMISSED', FIN, 'ตรวจแล้วเป็นคนละการซื้อ']);
+    const dismissalAudit = await db.auditLog.findFirstOrThrow({ where: { companyId, targetId: own!.id, action: 'expense.duplicate.dismiss' } });
+    assert.equal((dismissalAudit.metadataJson as { reason: string }).reason, 'ตรวจแล้วเป็นคนละการซื้อ');
+    const eventKey = `expense.confirmed:expense_record:${own!.id}:reimbursement:${claim.requestId}:${own!.sourceReimbursementLineId}`;
+    assert.deepEqual((await confirmationEvents()).map(event => event.eventKey), [eventKey]);
+    // A second clear and an interrupted caller replay the existing confirmation, never its event.
+    await clear();
+    await system(0).orchestrator.reconcileExisting(finance(), (await repos[0]!.findRequestById(companyId, claim.requestId))!, true);
+    const replay = await expenses.finalizeAndConfirmExpenseCas({ companyId, id: own!.id, expectedUpdatedAt: parked.updatedAt,
+      expectedSourceChecksum: 'obsolete', actorUserId: FIN, postingStatus: 'pending', vendorSnapshotJson: null,
+      reimbursementReview: { requestId: claim.requestId, lineId: own!.sourceReimbursementLineId }, outboxEvent: { eventKey, payloadJson: {} },
+    }, async () => { assert.fail('an already confirmed projection must not finalize again'); });
+    assert.equal(replay.expense.status, 'CONFIRMED');
+    assert.deepEqual(replay.finalized, []);
+    assert.deepEqual((await confirmationEvents()).map(event => event.eventKey), [eventKey]);
+    assert.deepEqual((await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } })).confirmedAt, confirmed.confirmedAt);
     assert.equal(await db.auditLog.count({ where: { companyId, targetId: own!.id, action: 'expense.duplicate.dismiss' } }), 1);
     assert.deepEqual(await duplicateFacts(claim, 'expense-cleared'), { queue: [false, 'OVERRIDDEN'], detail: [false, 'OVERRIDDEN'], list: 'OVERRIDDEN', payment: 'PAID' });
   });
@@ -3531,28 +3564,36 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
    * A claim sent for approval and waiting for its approver. Every line has an amount of its own: the
    * same person, day and amount twice is parked as a possible duplicate instead of being confirmed.
    */
-  async function waitingClaim(lines = 1, payBy: 'unset' | 'transfer' = 'unset', duplicateOfRequestId?: string) {
+  async function waitingClaim(lines = 1, payBy: 'unset' | 'transfer' = 'unset', duplicateOfRequestId?: string, receipt?: { attachmentId: string; requesterUserId: string }) {
     const index = ++sequence;
     const amounts = Array.from({ length: lines }, () => 1000 + ++sequence);
+    const requesterUserId = receipt?.requesterUserId ?? STAFF;
     // A claim paid by transfer is sent with the requester's default account, which the submit freezes onto it.
     if (payBy === 'transfer') {
       await repos[0]!.setMemberPayoutAccount({ companyId, userId: STAFF, actorUserId: STAFF, payoutMethod: 'BANK_TRANSFER',
         destination: sealPayoutDestination({ payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0012345678' }, Buffer.alloc(32, 9))! }, async () => undefined);
     }
     const draft = await repos[0]!.createRequest({
-      companyId, branchId, requesterUserId: STAFF, requesterDisplayNameSnapshot: 'สมชาย พนักงาน', reason: `decided-${index}`, categoryKey: 'travel',
-      amount: `${amounts.reduce((sum, amount) => sum + amount, 0)}.0000`, currency: 'THB', incurredDate: day, receiptRequirementStatus: 'MISSING_WITH_REASON', missingReceiptReason: 'ใบเสร็จหาย',
-      createdByUserId: STAFF,
-      lines: amounts.map((amount, line) => ({ lineNo: line + 1, incurredDate: day, description: `รายการ ${line + 1}`, categoryKey: 'travel', amount: `${amount}.0000` })),
+      companyId, branchId, requesterUserId, requesterDisplayNameSnapshot: requesterUserId === STAFF ? 'สมชาย พนักงาน' : 'วราภรณ์ การเงิน', reason: `decided-${index}`, categoryKey: 'travel',
+      amount: `${amounts.reduce((sum, amount) => sum + amount, 0)}.0000`, currency: 'THB', incurredDate: day,
+      receiptRequirementStatus: receipt ? 'ATTACHED' : 'MISSING_WITH_REASON', missingReceiptReason: receipt ? undefined : 'ใบเสร็จหาย',
+      createdByUserId: requesterUserId,
+      lines: amounts.map((amount, line) => ({ lineNo: line + 1, incurredDate: day, description: `รายการ ${line + 1}`, categoryKey: 'travel', amount: `${amount}.0000`, attachmentId: receipt?.attachmentId })),
     });
-    const requestSnapshotHash = computeSnapshotHash(claimSnapshotFields(draft));
+    const approvalPolicySnapshotJson: ReimbursementPolicySnapshotV1 | undefined = receipt ? {
+      schemaVersion: 1, policyId: 'pol', policyVersion: 'v1', approvalRequiredFromAmount: '1.00', requiresApproval: true,
+      route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+      allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: false,
+    } : undefined;
+    const requestSnapshotHash = computeSnapshotHash(claimSnapshotFields(draft, approvalPolicySnapshotJson));
     // What a submit writes for a claim that may repeat another one: the candidate, and the status that says so.
     const duplicateCandidates = duplicateOfRequestId ? [{ candidateType: 'AMOUNT_DATE_VENDOR', candidateRequestId: duplicateOfRequestId, score: 80 }] : [];
-    const sent = { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: STAFF, outstandingAmount: draft.amount, updatedByUserId: STAFF,
+    const sent = { status: 'PENDING_APPROVAL', submittedAt: new Date(), submittedByUserId: requesterUserId, outstandingAmount: draft.amount, updatedByUserId: requesterUserId,
+      ...(approvalPolicySnapshotJson && { approvalPolicySnapshotJson }),
       ...(duplicateOfRequestId && { duplicateStatus: 'POSSIBLE_DUPLICATE' }) };
     await repos[0]!.submitDraftAtomic({
-      companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt, duplicateCandidates, evidence: { attachmentIds: [], expenseIds: [] },
-      documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${draft.id}`, reservedByUserId: STAFF },
+      companyId, requestId: draft.id, expectedUpdatedAt: draft.updatedAt, duplicateCandidates, evidence: { attachmentIds: receipt ? [receipt.attachmentId] : [], expenseIds: [] },
+      documentNumber: { documentType: 'reimbursement.request', periodKey, idempotencyKey: `reimb-submit:${draft.id}`, reservedByUserId: requesterUserId },
       ...(payBy === 'transfer' ? {
         approvalStep: { sequenceNo: 1, approverUserId: MGR, approverRoleSnapshot: 'MANAGER' }, request: sent,
         payout: {
@@ -3569,8 +3610,8 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
   }
 
   /** Approved by its approver, and nothing after: what a failure between the decision and the expense records leaves. */
-  async function decidedClaim(lines = 1) {
-    const waiting = await waitingClaim(lines);
+  async function decidedClaim(lines = 1, receipt?: Parameters<typeof waitingClaim>[3]) {
+    const waiting = await waitingClaim(lines, 'unset', undefined, receipt);
     const decision = await repos[0]!.beginApprovalDecisionAtomic({
       companyId, requestId: waiting.id, expectedUpdatedAt: waiting.updatedAt, expectedApprovalSnapshotHash: waiting.approvalSnapshotHash,
       actorUserId: MGR, actorRoles: ['MANAGER'], scopes: {}, allowSelfApproval: false, financeReviewRequired: false,
