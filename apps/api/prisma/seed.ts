@@ -3289,25 +3289,26 @@ async function main() {
     }
   }
 
-  // ── Item 11: WHT income categories (DRAFT — accountant verification required) ──
+  // ── Item 11: Global WHT catalog — owner decision 2026-10-04 ──
   // Source baseline: RD withholding tax page (https://www.rd.go.th/14929.html) checked 2026-06-23.
-  // All seeded as DRAFT. Activate only after accountant confirms applicable categories/rates.
+  // Open the approved 12; interest/dividend/prize stay DRAFT pending accountant review.
+  // Upsert updates never reset a status saved by the Mangmee team.
   const WHT_CATEGORIES = [
-    { code: 'WHT_SERVICE_3',        nameTh: 'ค่าบริการ (บุคคลธรรมดา)',       nameEn: 'Service fee (individual)',          formType: 'PND3',  defaultRate: '3.0000' },
-    { code: 'WHT_SERVICE_5',        nameTh: 'ค่าบริการ (นิติบุคคล)',           nameEn: 'Service fee (juristic)',             formType: 'PND53', defaultRate: '3.0000' },
-    { code: 'WHT_RENT_IND',         nameTh: 'ค่าเช่า (บุคคลธรรมดา)',          nameEn: 'Rent (individual)',                  formType: 'PND3',  defaultRate: '5.0000' },
-    { code: 'WHT_RENT_JUR',         nameTh: 'ค่าเช่า (นิติบุคคล)',             nameEn: 'Rent (juristic)',                    formType: 'PND53', defaultRate: '5.0000' },
-    { code: 'WHT_PROFESSIONAL_IND', nameTh: 'ค่าวิชาชีพ (บุคคลธรรมดา)',      nameEn: 'Professional fee (individual)',      formType: 'PND3',  defaultRate: '3.0000' },
-    { code: 'WHT_PROFESSIONAL_JUR', nameTh: 'ค่าวิชาชีพ (นิติบุคคล)',         nameEn: 'Professional fee (juristic)',        formType: 'PND53', defaultRate: '3.0000' },
-    { code: 'WHT_ADVERTISING_IND',  nameTh: 'ค่าโฆษณา (บุคคลธรรมดา)',        nameEn: 'Advertising fee (individual)',       formType: 'PND3',  defaultRate: '2.0000' },
-    { code: 'WHT_ADVERTISING_JUR',  nameTh: 'ค่าโฆษณา (นิติบุคคล)',           nameEn: 'Advertising fee (juristic)',         formType: 'PND53', defaultRate: '2.0000' },
-    { code: 'WHT_TRANSPORT_IND',    nameTh: 'ค่าขนส่ง (บุคคลธรรมดา)',         nameEn: 'Transport fee (individual)',         formType: 'PND3',  defaultRate: '1.0000' },
-    { code: 'WHT_TRANSPORT_JUR',    nameTh: 'ค่าขนส่ง (นิติบุคคล)',            nameEn: 'Transport fee (juristic)',           formType: 'PND53', defaultRate: '1.0000' },
-    { code: 'WHT_DIVIDEND',         nameTh: 'เงินปันผล',                       nameEn: 'Dividend',                          formType: 'PND53', defaultRate: '10.0000' },
-    { code: 'WHT_INTEREST',         nameTh: 'ดอกเบี้ย',                        nameEn: 'Interest',                          formType: 'PND3',  defaultRate: '1.0000' },
-    { code: 'WHT_PRIZE',            nameTh: 'รางวัล',                          nameEn: 'Prize / award',                     formType: 'PND3',  defaultRate: '5.0000' },
-    { code: 'WHT_OTHER_IND',        nameTh: 'อื่นๆ (บุคคลธรรมดา)',            nameEn: 'Other (individual)',                 formType: 'PND3',  defaultRate: '3.0000' },
-    { code: 'WHT_OTHER_JUR',        nameTh: 'อื่นๆ (นิติบุคคล)',               nameEn: 'Other (juristic)',                   formType: 'PND53', defaultRate: '3.0000' },
+    { code: 'WHT_SERVICE_3',        nameTh: 'ค่าบริการ (บุคคลธรรมดา)',       nameEn: 'Service fee (individual)',          formType: 'PND3',  defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_SERVICE_5',        nameTh: 'ค่าบริการ (นิติบุคคล)',           nameEn: 'Service fee (juristic)',             formType: 'PND53', defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_RENT_IND',         nameTh: 'ค่าเช่า (บุคคลธรรมดา)',          nameEn: 'Rent (individual)',                  formType: 'PND3',  defaultRate: '5.0000', status: 'ACTIVE' },
+    { code: 'WHT_RENT_JUR',         nameTh: 'ค่าเช่า (นิติบุคคล)',             nameEn: 'Rent (juristic)',                    formType: 'PND53', defaultRate: '5.0000', status: 'ACTIVE' },
+    { code: 'WHT_PROFESSIONAL_IND', nameTh: 'ค่าวิชาชีพ (บุคคลธรรมดา)',      nameEn: 'Professional fee (individual)',      formType: 'PND3',  defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_PROFESSIONAL_JUR', nameTh: 'ค่าวิชาชีพ (นิติบุคคล)',         nameEn: 'Professional fee (juristic)',        formType: 'PND53', defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_ADVERTISING_IND',  nameTh: 'ค่าโฆษณา (บุคคลธรรมดา)',        nameEn: 'Advertising fee (individual)',       formType: 'PND3',  defaultRate: '2.0000', status: 'ACTIVE' },
+    { code: 'WHT_ADVERTISING_JUR',  nameTh: 'ค่าโฆษณา (นิติบุคคล)',           nameEn: 'Advertising fee (juristic)',         formType: 'PND53', defaultRate: '2.0000', status: 'ACTIVE' },
+    { code: 'WHT_TRANSPORT_IND',    nameTh: 'ค่าขนส่ง (บุคคลธรรมดา)',         nameEn: 'Transport fee (individual)',         formType: 'PND3',  defaultRate: '1.0000', status: 'ACTIVE' },
+    { code: 'WHT_TRANSPORT_JUR',    nameTh: 'ค่าขนส่ง (นิติบุคคล)',            nameEn: 'Transport fee (juristic)',           formType: 'PND53', defaultRate: '1.0000', status: 'ACTIVE' },
+    { code: 'WHT_DIVIDEND',         nameTh: 'เงินปันผล',                       nameEn: 'Dividend',                          formType: 'PND53', defaultRate: '10.0000', status: 'DRAFT' },
+    { code: 'WHT_INTEREST',         nameTh: 'ดอกเบี้ย',                        nameEn: 'Interest',                          formType: 'PND3',  defaultRate: '1.0000', status: 'DRAFT' },
+    { code: 'WHT_PRIZE',            nameTh: 'รางวัล',                          nameEn: 'Prize / award',                     formType: 'PND3',  defaultRate: '5.0000', status: 'DRAFT' },
+    { code: 'WHT_OTHER_IND',        nameTh: 'อื่นๆ (บุคคลธรรมดา)',            nameEn: 'Other (individual)',                 formType: 'PND3',  defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_OTHER_JUR',        nameTh: 'อื่นๆ (นิติบุคคล)',               nameEn: 'Other (juristic)',                   formType: 'PND53', defaultRate: '3.0000', status: 'ACTIVE' },
   ] as const;
 
   for (const cat of WHT_CATEGORIES) {
@@ -3320,8 +3321,8 @@ async function main() {
         nameEn: cat.nameEn,
         formType: cat.formType,
         defaultRate: cat.defaultRate,
-        status: 'DRAFT',
-        conditionNote: 'Accountant verification required before activation.',
+        status: cat.status,
+        conditionNote: cat.status === 'DRAFT' ? 'รอนักบัญชีตรวจสอบก่อนเปิดใช้' : null,
       },
     });
   }
