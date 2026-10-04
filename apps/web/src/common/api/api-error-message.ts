@@ -431,6 +431,7 @@ const CODE_LABELS: Record<string, string> = {
   expense_correction_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
   expense_payment_exceeds_outstanding: 'ยอดจ่ายต้องมากกว่า 0 และไม่เกินยอดคงเหลือที่ต้องจ่าย',
   expense_payment_changed: 'ยอดหรือสถานะการจ่ายถูกเปลี่ยนระหว่างบันทึก กรุณาโหลดรายการใหม่แล้วลองอีกครั้ง',
+  expense_payment_already_cancelled: EXPENSE_CORRECTION_WORDS.paymentAlreadyCancelled,
   expense_payment_idempotency_conflict: 'ข้อมูลไม่ตรงกับรายการจ่ายที่บันทึกไว้ กรุณาตรวจประวัติการจ่ายก่อนแก้ไขเป็นรายการใหม่',
   expense_payment_future_date: EXPENSE_CORRECTION_WORDS.futurePaymentDate,
   expense_payment_not_confirmed: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed,

@@ -229,6 +229,12 @@ describe('buildCounterpartyAddressV2', () => {
 });
 
 describe('decideVendorAutoSave', () => {
+  it('does not report filling an address when both document and registry addresses are empty', () => {
+    for (const documentAddressText of [null, '', '   ']) assert.deepEqual(
+      decideVendorAutoSave({ matched: true, registryAddressText: null, documentAddressText, locked: false }),
+      { case: 'NOOP', promoteToPrimary: false, appendToHistory: false },
+    );
+  });
   it('case a: no match -> CREATE, always promotes, never appends to history', () => {
     assert.deepEqual(
       decideVendorAutoSave({ matched: false, registryAddressText: null, documentAddressText: 'X', locked: false }),

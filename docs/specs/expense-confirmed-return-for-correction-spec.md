@@ -138,3 +138,7 @@ Overpayment follows confirmation's half-satang tolerance, is shown from the corr
 Confirmation keeps `readExpensePeriodLocks(..., withholdingForms=false)`: filed ภ.ง.ด.3/ภ.ง.ด.53 block reopening, never initial or repeat confirmation. The draft-journal blocker remains the controller decision of 2026-10-04.
 
 If that one detail refresh fails, display its failure once and prevent another payment/correction write using the old data until a successful reload. Guidance for a payment attempted after reopening names a person with confirmation rights, since payment-record permission alone does not allow confirmation.
+
+Browser recheck, 2026-10-04: if another tab has reopened the expense, scroll/focus the payment refusal so it is visible after the payment card disappears. Use the app's responsive header offset and a first-step anchor that keeps the correction marker visible. Show the excess next to editable line/charge amounts and reuse the full warning beside “ส่งตรวจสอบ”. Sending for review remains allowed with that warning because it does not confirm the expense; confirmation remains blocked for overpayment. Normalize the displayed payment amount on blur.
+
+A stale reopen dialog says “เอกสารเปิดแก้ไขอยู่แล้ว กรุณาตรวจข้อมูลล่าสุด” and focuses its close control when its reason form disappears, preserving normal Escape handling. A second cancellation of an already-cancelled payment returns `expense_payment_already_cancelled`, performs no balance/audit/reason write, and refreshes the page with the existing already-cancelled sentence instead of a success toast.

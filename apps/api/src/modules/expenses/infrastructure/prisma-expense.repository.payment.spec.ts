@@ -503,6 +503,17 @@ describe('expense correction before posting (owner 2026-10-04)', () => {
     await pay(h.repo, '40'); assert.equal(h.state.expense.paymentStatus, 'PAID');
   });
 
+  it('reports an already cancelled payment without accepting a second reason or changing its balance', async () => {
+    const h = harness({ postingStatus: 'pending' });
+    await pay(h.repo, '40');
+    await h.repo.cancelPaymentAtomic({ ...command, paymentId: 'payment-1' }, audit);
+    const before = JSON.stringify(h.state);
+    await assert.rejects(h.repo.cancelPaymentAtomic({ ...command, paymentId: 'payment-1', reason: 'เหตุผลอีกคน' }, audit),
+      (e: any) => e.getResponse?.().code === 'expense_payment_already_cancelled');
+    assert.equal(JSON.stringify(h.state), before);
+    assert.equal(h.state.audits.length, 1);
+  });
+
   for (const mode of ['posted flag', 'posted journal', 'draft journal']) it(`refuses cancellation with ${mode}, even with stale payment pointers`, async () => {
     const h = harness({ postingStatus: 'pending' }); await pay(h.repo, '40');
     if (mode === 'posted flag') h.state.payments[0].postingStatus = 'posted';
