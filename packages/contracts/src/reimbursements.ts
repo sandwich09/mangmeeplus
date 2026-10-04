@@ -190,6 +190,42 @@ export function reimbursementPaymentSlipRequired(paymentMethod: string): boolean
   return paymentMethod === 'BANK_TRANSFER';
 }
 
+/** Owner 2026-10-04: evidence replaces a reference; transfers always need their slip separately. */
+export function reimbursementPaymentReferenceRequired(paymentMethod: string, hasSlip = false): boolean {
+  return paymentMethod === 'CHEQUE' && !hasSlip;
+}
+
+const transferReferenceName = 'เลขที่อ้างอิงการโอน';
+const chequeReferenceName = 'เลขที่เช็ค';
+const referenceRequiredMessage = `กรอก${chequeReferenceName}หรือแนบหลักฐานการจ่าย`;
+export const REIMBURSEMENT_PAYMENT_REFERENCE_TEXT = {
+  neutralLabel: 'เลขอ้างอิง',
+  transferName: transferReferenceName,
+  chequeName: chequeReferenceName,
+  optionalName: 'เลขที่เอกสารการจ่าย',
+  transferHint: `ดู${transferReferenceName}บนสลิปหรือในแอปธนาคาร ใช้กระทบยอดกับรายการเดินบัญชีภายหลัง ไม่บังคับกรอกเมื่อแนบสลิป`,
+  chequeHint: `ดู${chequeReferenceName}บนเช็ค ใช้กระทบยอดกับรายการเดินบัญชีภายหลัง หากไม่กรอก ให้แนบหลักฐานการจ่าย`,
+  optionalHint: 'ถ้ามี กรอกเลขที่ใบสำคัญจ่ายหรือใบเสร็จรับเงินไว้ค้นรายการภายหลัง',
+  requiredMessage: referenceRequiredMessage,
+  confirmationHint: 'ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า',
+  guidance: `เมื่อโอนเงิน ต้องแนบสลิป จะกรอก${transferReferenceName}ด้วยก็ได้ หากจ่ายเช็ค ${referenceRequiredMessage} เงินสดและวิธีอื่นกรอกเลขที่เอกสารการจ่ายได้ถ้ามี`,
+} as const;
+
+export function reimbursementPaymentReferenceField(paymentMethod: string, hasSlip: boolean) {
+  const words = REIMBURSEMENT_PAYMENT_REFERENCE_TEXT;
+  const transfer = paymentMethod === 'BANK_TRANSFER';
+  const cheque = paymentMethod === 'CHEQUE';
+  const required = reimbursementPaymentReferenceRequired(paymentMethod, hasSlip);
+  const name = transfer ? words.transferName : cheque ? words.chequeName : words.optionalName;
+  return {
+    name, required,
+    label: `${name}${transfer ? ' (ไม่บังคับเมื่อแนบสลิป)' : required ? ' *' : cheque ? ' (ไม่บังคับเมื่อแนบหลักฐาน)' : ' (ไม่บังคับ)'}`,
+    hint: transfer ? words.transferHint : cheque ? words.chequeHint : words.optionalHint,
+  };
+}
+
+export const REIMBURSEMENT_PAYMENT_STEP_NOTE = `บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่ายและวันที่ ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.guidance} ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.confirmationHint}`;
+
 /** What recording a payment asks for beyond amount, date and reference (payout spec §12.4). */
 export type ReimbursementPaymentRule = {
   /** A transfer is recorded with its slip (D3), whatever the claim asked for. */

@@ -1242,7 +1242,7 @@ describe('the buttons of a correction round are what the server says, for every 
     const card = stepCard(forPayer);
     assert.deepEqual(card.buttons, ['บันทึกจ่าย', 'พิมพ์ใบเบิก']);
     // The step says what the step is for, and points to no button it no longer has.
-    assert.equal(card.note, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง หากโอนเงิน ต้องแนบสลิป ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า');
+    assert.equal(card.note, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่ายและวันที่ เมื่อโอนเงิน ต้องแนบสลิป จะกรอกเลขที่อ้างอิงการโอนด้วยก็ได้ หากจ่ายเช็ค กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย เงินสดและวิธีอื่นกรอกเลขที่เอกสารการจ่ายได้ถ้ามี ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า');
     assert.equal(stepCard(claimPage(ready({ payoutCorrectionActions: SEND }), requester).html).note, 'รอ วราภรณ์ การเงิน บันทึกจ่าย');
     assert.equal(stepCard(claimPage(ready(), auditor).html).note, 'รอ วราภรณ์ การเงิน บันทึกจ่าย');
     // Where the account is read: the reason to send it back, then the action as underlined text of 44 px, above the step card.

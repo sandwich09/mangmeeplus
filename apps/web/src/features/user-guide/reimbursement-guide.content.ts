@@ -1,4 +1,4 @@
-import { REIMBURSEMENT_DUPLICATE_POLICY_NOTE, REIMBURSEMENT_DUPLICATE_CLEAR_HELP, reimbursementPayoutOnBehalfNotice, reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DUPLICATE_POLICY_NOTE, REIMBURSEMENT_DUPLICATE_CLEAR_HELP, reimbursementPayoutOnBehalfNotice, reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
 import { CLAIM_SIGN_LABEL, CLAIM_RESIGN_LABEL, SELF_APPROVAL_POLICY_NOTE, SELF_APPROVAL_SWITCH_LABEL } from '@/features/reimbursements/reimbursements.model';
 import { draftRowSubmitLabel } from '@/features/reimbursements/reimbursement-payout.logic';
 import { visibleHubTabs } from '@/features/reimbursements/reimbursements.logic';
@@ -482,7 +482,7 @@ export function buildReimbursementGuide(
               },
               {
                 title: 'ฟอร์มบันทึกจ่าย',
-                detail: 'จำนวนเงินเติมมาให้เต็มยอดคงค้าง และต้องจ่ายเต็มจำนวน วิธีจ่ายเริ่มตามวิธีรับเงินคืนที่ระบุในคำขอ ใส่วันที่จ่าย และเลขอ้างอิงเมื่อจ่ายด้วยการโอนหรือเช็ค',
+                detail: `จำนวนเงินเติมมาให้เต็มยอดคงค้าง และต้องจ่ายเต็มจำนวน วิธีจ่ายเริ่มตามวิธีรับเงินคืนที่ระบุในคำขอ ใส่วันที่จ่าย ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.guidance}`,
               },
               {
                 title: 'จ่ายด้วยการโอนต้องแนบสลิป',
@@ -693,7 +693,7 @@ export function buildReimbursementGuide(
               },
               {
                 title: 'บรรทัด “รับเงินคืนทาง” ในใบเบิก',
-                detail: 'อยู่ใต้ชื่อผู้เบิก บอกว่าโอนเข้าบัญชีใด หรือรับเป็นเงินสด และบอกว่าใครตรวจบัญชี บรรทัดการจ่ายเงินคืนบอกวันที่ วิธี และเลขอ้างอิง ถ้ามีสลิป ช่อง “หลักฐานการชำระเงิน” จะถูกติ๊ก',
+                detail: `อยู่ใต้ชื่อผู้เบิก บอกว่าโอนเข้าบัญชีใด หรือรับเป็นเงินสด และบอกว่าใครตรวจบัญชี บรรทัดการจ่ายเงินคืนบอกวันที่ วิธี และ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.neutralLabel} ถ้ามีสลิป ช่อง “หลักฐานการชำระเงิน” จะถูกติ๊ก`,
               },
               {
                 title: 'ใครได้เลขบัญชีเต็มบนกระดาษ',
@@ -1062,7 +1062,7 @@ export function buildReimbursementGuide(
               },
               {
                 question: 'เลือกวิธีจ่ายเป็นโอนเงินแล้วบันทึกไม่ได้',
-                answer: 'การจ่ายด้วยการโอนต้องมีสองอย่าง คือเลขอ้างอิงและสลิป หากระบบแจ้งว่า “ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค” ให้กรอกเลขรายการโอนหรือเลขเช็ค เพื่อให้กระทบยอดกับธนาคารได้ในภายหลัง หากระบบแจ้งว่า “จ่ายด้วยการโอนต้องแนบสลิป” ให้แนบสลิปโอนเงินในช่อง “สลิปหรือหลักฐานการจ่าย” ของฟอร์มบันทึกจ่าย โดยถ่ายรูปหรือเลือกไฟล์จากมือถือได้ คำขอที่มีบัญชีรับเงินต้องติ๊กยืนยันว่าโอนเข้าบัญชีที่แสดงแล้วด้วย ส่วนการจ่ายด้วยเงินสด เช็ค หรือวิธีอื่น จะแนบสลิปหรือไม่แนบก็ได้',
+                answer: `${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.guidance} ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.transferHint} ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.chequeHint} หากระบบแจ้งว่า “${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.requiredMessage}” ให้กรอกเลขหรือแนบหลักฐานในช่อง “สลิปหรือหลักฐานการจ่าย” โดยถ่ายรูปหรือเลือกไฟล์จากมือถือได้ หากระบบแจ้งว่า “จ่ายด้วยการโอนต้องแนบสลิป” ให้แนบสลิปโอนเงินในช่องเดียวกัน ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.confirmationHint} ส่วนการจ่ายด้วยเงินสดหรือวิธีอื่น จะแนบสลิปหรือไม่แนบก็ได้`,
               },
               {
                 question: 'คำขอระบุรับโอน แต่จ่ายเป็นเงินสดไปแล้ว',

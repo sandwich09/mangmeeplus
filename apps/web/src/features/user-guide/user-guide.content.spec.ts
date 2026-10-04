@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
-import { reimbursementPayoutRoundStatus, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { reimbursementPayoutRoundStatus, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
 import { buildReimbursementGuide } from './reimbursement-guide.content';
 import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content';
 import { buildExpensesGuide } from './expenses-guide.content';
@@ -137,7 +137,7 @@ describe('the reimbursement guide reads as the product does', () => {
     const source = (file: string) => readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const claimScreens = readdirSync(feature).filter((name) => /\.tsx?$/.test(name) && !name.includes('.spec.'))
       .map((name) => source(join(feature, name))).join('\n');
-    const shown = [claimScreens, ...[
+    const shown = [claimScreens, ...Object.values(REIMBURSEMENT_PAYMENT_REFERENCE_TEXT), ...[
       join(__dirname, '../../common/api/api-error-message.ts'),
       join(__dirname, '../../common/i18n/workspace-dictionary.ts'),
       join(__dirname, '../web-core-workspace/web-core-workspace.logic.ts'),

@@ -420,9 +420,11 @@ describe('payment recording (MVP full-payment)', () => {
     assert.equal(validatePaymentRecording({ ...legacy, paidAmount: '579.99' }), 'partial_payment_not_allowed');
     assert.equal(validatePaymentRecording({ ...legacy, paidAmount: '580.01' }), 'payment_over_approved_amount');
   });
-  it('requires reference for bank transfer', () => {
-    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER' }), 'payment_reference_required');
-    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1', hasSlip: true }), null);
+  it('accepts evidence instead of a reference, and keeps a transfer slip mandatory', () => {
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER' }), 'payment_slip_required');
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', hasSlip: true }), null);
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'CHEQUE', hasSlip: true }), null);
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'CHEQUE' }), 'payment_reference_required');
   });
 
   // Owner decision 2026-10-01 (D3): a transfer is recorded with its slip; every other method may carry one.
@@ -667,11 +669,13 @@ describe('payment: the words every surface shares', () => {
 });
 
 describe('payment reference', () => {
-  it('requires reference for cheque and bank transfer only', () => {
+  it('requires a cheque number only when no evidence is attached', () => {
     assert.equal(validatePaymentReference('CASH'), true);
     assert.equal(validatePaymentReference('OTHER'), true);
     assert.equal(validatePaymentReference('CHEQUE'), false);
     assert.equal(validatePaymentReference('CHEQUE', 'CHQ-1'), true);
+    assert.equal(validatePaymentReference('CHEQUE', undefined, true), true);
+    assert.equal(validatePaymentReference('BANK_TRANSFER', undefined, true), true);
   });
 });
 

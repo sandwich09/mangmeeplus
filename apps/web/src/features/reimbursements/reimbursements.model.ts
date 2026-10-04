@@ -2,7 +2,7 @@ import type { MangmeeTone } from '@/common/components/mangmee';
 import { REIMBURSEMENT_SELF_APPROVAL_DENIED, REIMBURSEMENT_DUPLICATE_UNRESOLVED, REIMBURSEMENT_POLICY_TAB_LABEL, REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
 import { translateApiError } from '@/common/api/api-error-message';
 // The words for a payment method are shared with the server's notice (their own import, apart from the line above).
-import { REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYMENT_METHOD_LABELS, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
 // A claim sent back from the pay step (payout spec §14): what it is said to wait for, in the words every other reader of it uses.
 import { reimbursementPayoutRoundStatus } from '@watchdog-bms/contracts';
 
@@ -333,7 +333,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   amount_must_be_positive: 'ยอดรวมต้องมากกว่า 0',
   line_amount_must_be_positive: 'จำนวนเงินของทุกรายการต้องมากกว่า 0',
   finance_review_required: 'ต้องผ่านการตรวจสอบการเงินก่อนจ่าย',
-  payment_reference_required: 'ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค',
+  payment_reference_required: REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.requiredMessage,
   reimbursement_payment_already_recorded: 'คำขอนี้บันทึกการจ่ายเงินไปแล้ว',
   stale_claim_snapshot: 'คำขอถูกแก้ไขหลังเปิดดูใบเบิก กรุณาเปิดใบเบิกใหม่ก่อนลงนาม',
   claim_signature_role_not_eligible: 'คุณไม่ใช่ผู้มีสิทธิ์ลงนามในช่องนี้',

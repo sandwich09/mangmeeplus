@@ -3,6 +3,7 @@
 import {
   REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
   reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
+  reimbursementPaymentReferenceRequired as paymentReferenceRequired, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, REIMBURSEMENT_PAYMENT_STEP_NOTE,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
@@ -210,9 +211,7 @@ export function approvalComparable(claim: any, lineCount: number): ApprovalCompa
   };
 }
 
-export function paymentReferenceRequired(method: string): boolean {
-  return method === 'BANK_TRANSFER' || method === 'CHEQUE';
-}
+export { paymentReferenceRequired };
 
 /**
  * Client-side validation of the full-payment form. Returns an error key or null.
@@ -236,8 +235,8 @@ export function validatePaymentForm(input: {
   if (!(paid > 0)) return 'จำนวนเงินต้องมากกว่า 0';
   if (paid > outstanding) return 'จำนวนเงินเกินยอดที่อนุมัติ';
   if (paid !== outstanding) return 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น';
-  if (paymentReferenceRequired(input.paymentMethod) && (!input.paymentReference || input.paymentReference.trim() === '')) {
-    return 'ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค';
+  if (paymentReferenceRequired(input.paymentMethod, input.hasSlip) && (!input.paymentReference || input.paymentReference.trim() === '')) {
+    return REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.requiredMessage;
   }
   // The API's own words for the same refusal, so the form and the server say one thing.
   if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return translateApiError('payment_slip_required');
@@ -1297,7 +1296,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
           : !canPay && approval?.decisionByUserId === userId
             ? `คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ${payers ? `ผู้ที่บันทึกจ่ายได้: ${payers} ` : ''}ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ`
             : waitingForPayer(detail);
-        note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง หากโอนเงิน ต้องแนบสลิป ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า' : waiting, duplicate].filter(Boolean).join(' · ');
+        note = [actions.length > 0 ? REIMBURSEMENT_PAYMENT_STEP_NOTE : waiting, duplicate].filter(Boolean).join(' · ');
       }
     } else if (key === 'document' && detail?.documentSignedVia) {
       // Done in the system or on paper (A4); the latest declared scan names who attached it and when.

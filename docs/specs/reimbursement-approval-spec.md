@@ -216,7 +216,7 @@ No company entitlement or deployment/customer gate is changed by this role-polic
 - Each payment attempt has a durable unique key. When the caller omits a client key, the API derives the key from company, reimbursement request, and the server-owned request version; caller-controlled `paidAt` must never determine idempotency.
 - A retry of the same committed payload returns the recorded payment/request state without a second payment, audit event, or outbox event. A reused key with different payment facts returns an idempotency conflict.
 - Payment method first pass values are `CASH`, `BANK_TRANSFER`, `CHEQUE`, `OTHER`.
-- Payment reference is required for bank transfer and cheque.
+- Owner decision 2026-10-04: attached payment evidence replaces the reference requirement. Transfers still require their slip; cheques without evidence require their cheque number. Cash/other references remain optional. See payout spec §27.
 - External bank transfer execution is out of scope.
 - Paid reimbursement cannot be edited silently.
 - Payment void after bank reconciliation or ledger posting must call current bank/ledger policy ports when those modules exist.
@@ -850,7 +850,7 @@ Outbox payloads are bounded ids, status, totals, actor ids, source refs, and ide
 - Approval link opened after request changed: show stale state and block old decision.
 - Rejection without reason: return validation error.
 - Finance tries to pay rejected/cancelled request: return invalid status transition.
-- Finance records bank transfer without reference: return validation error.
+- Finance records a transfer with its slip and no reference: accept. A cheque needs its number or attached payment evidence; reject only when both are absent (owner 2026-10-04).
 - Payment amount exceeds approved amount: block overpayment.
 - Paid request needs correction: require void/adjustment reason; no silent edit.
 - Payment already matched in bank reconciliation: block void unless item 13 reopen/unmatch policy allows.
@@ -922,7 +922,7 @@ Outbox payloads are bounded ids, status, totals, actor ids, source refs, and ide
 - API security: AI Gateway read tool cannot call mutation use cases.
 - API security: LINE approval/reject/payment request is refused with web-link guidance.
 - Web logic: approval queue disables approve/reject while mutation is pending.
-- Web logic: finance payment form requires reference for bank transfer/cheque.
+- Web logic: payment form uses the shared reference/evidence rule and method-specific labels/hints; only a cheque without evidence requires its number (owner 2026-10-04).
 - Web logic: policy settings validates threshold, approver mode, receipt rule, duplicate policy, finance review rule, and SLA hours.
 - Web responsive smoke: request form, approval detail, finance queue, and payment form fit desktop and mobile without overlapping controls.
 

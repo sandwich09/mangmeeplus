@@ -22,6 +22,12 @@ const METHODS = Object.keys(PAYMENT_METHOD_LABELS);
 const ok = { paidAmount: '500', outstandingAmount: '500', paymentMethod: 'CASH' };
 
 describe('payment form rules', () => {
+  it('accepts evidence instead of a reference and requires a cheque number only without evidence', () => {
+    for (const [paymentMethod, hasSlip, paymentReference, expected] of [
+      ['BANK_TRANSFER', true, undefined, null], ['CHEQUE', false, undefined, 'กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย'],
+      ['CHEQUE', true, undefined, null], ['CHEQUE', false, 'CHQ-1', null], ['CASH', false, undefined, null], ['OTHER', false, undefined, null],
+    ] as const) assert.equal(validatePaymentForm({ ...ok, paymentMethod, hasSlip, paymentReference }), expected, `${paymentMethod} evidence=${hasSlip}`);
+  });
   it('has no method to fall back on: the payer must choose one', () => {
     assert.equal(validatePaymentForm({ ...ok, paymentMethod: '' }), 'กรุณาเลือกวิธีจ่าย');
     // Asked first, so a form opened and submitted untouched says what is missing, not something about amounts.
@@ -35,8 +41,8 @@ describe('payment form rules', () => {
     assert.equal(validatePaymentForm(transfer), translateApiError('payment_slip_required'));
     assert.equal(validatePaymentForm({ ...transfer, hasSlip: false }), 'จ่ายด้วยการโอนต้องแนบสลิป');
     assert.equal(validatePaymentForm({ ...transfer, hasSlip: true }), null);
-    // The reference is asked before the slip, as the API does.
-    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER' }), 'ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค');
+    // A transfer without evidence asks for its slip; a reference cannot replace it.
+    assert.equal(validatePaymentForm({ ...ok, paymentMethod: 'BANK_TRANSFER' }), 'จ่ายด้วยการโอนต้องแนบสลิป');
   });
 
   it('leaves the slip optional for every other method', () => {
@@ -65,8 +71,8 @@ describe('payment form rules', () => {
       paymentSaveErrorMessage('slip-upload', refused('payment_slip_invalid', 422), false),
       'อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ไฟล์สลิปใช้ไม่ได้ เลือกไฟล์ PDF หรือรูปภาพที่รองรับ ขนาดไม่เกิน 10 เมกะไบต์ แล้วลองใหม่',
     );
-    const afterSlip = paymentSaveErrorMessage('record', refused('payment_reference_required', 422), true);
-    assert.equal(afterSlip, 'แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
+    const afterSlip = paymentSaveErrorMessage('record', refused('partial_payment_not_allowed', 422), true);
+    assert.equal(afterSlip, 'แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่');
     assert.equal(paymentSaveErrorMessage('record', refused('partial_payment_not_allowed', 422), false), 'ยังบันทึกจ่ายไม่สำเร็จ · ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น');
     // A connection that dropped: the slip is in, and the next press is the same payment.
     assert.match(paymentSaveErrorMessage('record', new Error('Failed to fetch'), true), /^แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · .+ · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่$/);
