@@ -1,5 +1,7 @@
 # แผนหลังบ้านและการเชื่อมระบบผู้บริหารมั่งมี
 
+ส่วนเพิ่ม 4 ต.ค. 2569: แผน R1–R4 ท้ายเอกสารเป็นงานช่วงเดือนตาม [สเปกหลังบ้าน §23](../specs/mangmee-executive-business-backend-spec-th.md#23-รายงานตามช่วงเดือน--มติ-2026-10-04) แทนข้อจำกัดเดือนเดียวของแผนเดิม ยังไม่ implement/รันทดสอบช่วงเดือน; [running note](../agent-memory/executive-period-range-spec-2026-10-04.md) บันทึกขอบเขตเอกสารและข้อเปิด
+
 คำที่แสดงบนหน้าจอล่าสุด: [ใช้คำที่คนทั่วไปเข้าใจ](../specs/mangmee-executive-plain-language-spec-th.md) — เมนู “รายรับ”, แท็บ “ลูกค้าที่สร้างรายรับสูง”; identifiers/สูตรเดิมคงไว้
 
 มติล่าสุด 2026-10-01: พักและซ่อนฟีเจอร์ลบข้อมูล; G ทั้ง 35 ข้อยังไม่ปิดใน application — 22 OPEN และ 13 DEFERRED ตาม audit. ผล 188 scenarios/58 tests ด้านล่างเป็น baseline ก่อนพัก ไม่ใช่ acceptance ของ scope ปัจจุบันทั้งหมด
@@ -195,7 +197,7 @@ Q35 (ทางตันของผู้ดูแลคนเดียวใน
 - [x] Localbrowserตรวจroutes/Back/A-B/groupdenominator/theme และsaved-state migration
 - [x] สัญญาของสี่หน้านี้อยู่ใน BE §16.1 (API04 รับ `section` สี่ค่า และตัวเลือกของการเปรียบเทียบ)
 - [ ] เมื่อ implement เพิ่ม route/section ตาม BE §16.1 พร้อม coverage/permission; ไม่ส่งทุก analysis dataset ทุกครั้งโดยไม่จำเป็น
-- [ ] แหล่งข้อมูลเดือนก่อนและ equal-period comparison ยังรอ integration; การเทียบเดือนกับเดือนไม่อยู่ในรุ่นแรก ห้ามเปิด growth% จากข้อมูลตัวอย่างไม่ครบ
+- [ ] Q37 เปิด equal-period comparison แล้วตาม §23.4; implement/ตรวจจริงใน R1–R4 ไม่ใช้ข้อมูลตัวอย่างเดือนเดียวสร้าง delta
 
 ## Export Excel — scope extension 2026-10-01
 
@@ -212,3 +214,81 @@ Ownerระบุ `outputs/company-infographic-20261001/company-receipts-dashboa
 API13 ไม่รับ templateKey หรือ includeCompanies ตาม BE §16.4; server เลือกรุ่นแม่แบบเอง E5 ต่อ shared writer เป็นหลายชีตพร้อม chart/formula/cache แล้ว รอ controller ตรวจการเปิดไฟล์จริงตาม XG03
 EXL13–14เพิ่มintegrationacceptance; baseline188/47deferredไม่เปลี่ยนและไม่มีgapimplementationปิดจากการอ่านแม่แบบ. ไม่แก้ไฟล์อ้างอิงและไม่สร้างXLSXใหม่รอบนี้
 แม่แบบที่เก็บใน repository ต้องสร้างใหม่จากข้อมูลสมมติ ไฟล์ของเจ้าของมีข้อมูลจริงและห้ามนำมาตัดแถวแล้วเก็บ เพราะชื่อบริษัทจริงยังค้างในแคชของกราฟและตารางข้อความร่วมของไฟล์ (RB-27, BE §16.4)
+
+
+## 7. แผนช่วงเดือนและหน้ารายงานสำหรับผู้บริหาร — 2026-10-04
+
+ขอบเขต: Q37, BE §23, UI §14 และคำชุด P; สรุปรายเดือนเดิมเท่านั้น ไม่มีรายวัน migration/schema/dependency/feature switch หรือการแก้ paid-invoice.ts/billing-schedule.ts งานนี้ส่งมอบสเปก/แผน ไม่อนุญาตให้นับ checkbox implementation หรือการตรวจรับผ่านจากการอ่านเอกสาร
+
+| ขั้น / สถานะ | งานที่ต้องทำ | การตรวจและเงื่อนไขจบ |
+|---|---|---|
+| R1 API + build / ยังไม่เริ่ม | ปรับ contracts `executive-business.ts`/คำจาก `executive-report-words.ts`, context/DTO/query/API02–06, read logic/service และ export query; คู่เดือน/coverage/revision/previous/monthlySeries; reuse monthly rows และ build atomic/version checks เดิม ไม่สร้าง aggregate ช่วงใน DB | RP01–RP10, RP16–RP18 ด้านล่าง; เดือนเดียวเท่ารุ่นเดิมยกเว้นคำ/contract ที่ตั้งใจเปลี่ยน; union/ยอดกลุ่ม/list summary/drilldown ตรง; PG จริงพิสูจน์ build/current labels/refund/row gaps; contracts build แล้วจึงเชื่อมเว็บ |
+| R2 เว็บแถบ + layout/charts / ยังไม่เริ่ม | component ร่วมเดียวใน reports folder, draft month picker เดิมสองช่อง, chips/clear/summary, from/to/origin URL/Back/rollover, KPI compare และกราฟตาม UI §14.3; loading/permission/partial states; ใช้ shell/tokens/fonts/fields เดิม | RP11–RP14; focused web specs + browser 390 px/desktop/zoom/keyboard ของ controller; ไม่มี hidden filter/คำอังกฤษ/id/code token; ภาพ/ข้อแก้จาก lane gap analysis merge ใน UI §14.5 ก่อนรับ layout |
+| R3 Export / ยังไม่เริ่ม | ใช้คู่เดือน/effective state ล่าสุดเดียวกับแถบ เพิ่มรายเดือน/ช่วงก่อนในส่วนคำนวณของสองชีตเดิม; range words/metadata/chart cache; buildId/permissions/contact และ row cap เดิมและมติ Q41 ก่อนปรับฐานนับส่วนรายเดือน | RP15–RP18; อ่านไฟล์จริงตรง API ไม่ต้องคำนวณสูตรใหม่เพื่อให้ตัวเลขถูก; counts ไม่ซ้ำ null ไม่กลายเป็นศูนย์; ต้นทางทุกเดือน/all pages/สองฝั่งตรงหน้าจอ |
+| R4 Acceptance / ยังไม่เริ่ม | กระทบยอดเดือนและรวมช่วง ตรวจ UI→HTTP→PG→XLSX/Back/permission/ข้อมูลบางส่วน คงผลตรวจ gap analysis; capacity กับ ALL และช่วงก่อนยาวเท่ากัน | RP19–RP20 และ regression ที่ขั้นนั้นแตะ; controller บันทึก command/exit/counts/ภาพ/ไฟล์จริง ไม่มีคำอ้างว่า deployed แล้ว; live operation หากมีภายหลังใช้ runbook เดิม |
+
+R1/R2/R3 ทำส่วนที่กำหนดแล้วได้โดยไม่รอ churn หรือ distinct users ข้ามเดือน Q38 กันเฉพาะการย่อขอบ preset ที่ยังไม่ตัดสิน; Q39 กัน churn ทั้งชุด; Q40 กันการสร้างจำนวนผู้ใช้รวม; Q41 กันการเปลี่ยนฐานเพดานส่งออกส่วนรายเดือน ไม่ใส่ตัวเลขเดา ส่วนอื่นไม่ขยาย scope เพื่อแก้ข้อมูลที่ไม่มีประวัติ
+
+### 7.1 กรณีตรวจรับและ test ที่ต้องแดงบนรุ่นเดือนเดียว
+
+ทุกรายการต่อไปนี้เป็น **ข้อกำหนดของ test ใน implementation ถัดไป ไม่ใช่ผล test ที่รันแล้ว** เขียนลง spec ที่ CI รันอยู่ก่อนแก้ production และบันทึกชื่อ test/คำสั่ง/exit/failure เก่า + green ใหม่ทีละกรณี ถ้าจำเป็นให้คืนบรรทัด production เก่าด้วยมือเพื่อพิสูจน์ red แล้วคืน fix ห้ามใช้ความคาดหวังในตารางแทนหลักฐานรัน
+
+| รหัส | ข้อมูล/การกระทำ | ผลที่ test ต้องยืนยัน |
+|---|---|---|
+| RP01 | from/to ขาด ผิดเดือน ขอบกลับ อนาคต ช่วงวัน หรือ month/preset แทน pair | 400; valid คู่ข้ามปี/เดือนเดียวรับได้ ไม่ normalize ขอบผิดให้ผ่าน |
+| RP02 | เวลาไทยที่เที่ยงคืน 1 ม.ค./1 เม.ย.; preset ไตรมาส/ปี/12 เดือน | คู่เดือนจาก API01 ถูก; ปี/ไตรมาสไม่รวมเดือนอนาคต; builtMonths จริงไม่เติม gap; ไม่มี local timezone เปลี่ยนช่วง |
+| RP03 | default เดือนปัจจุบันยังไม่ built; ALL ไม่มีเดือน/มีเดือนก่อนหน้า; ขอบ unbuilt | context ตอบได้ default คงปัจจุบัน; รายงาน 503/P09 หรือ P38 ถูก; ALL เริ่ม months.first และจบ built ล่าสุด ไม่ขึ้นกับ segment; ขอบแรกยังไม่สร้างต้อง unavailable ไม่ข้ามเดือนนั้น; preset ขอบ unbuilt disabled ไม่ย่อเอง (Q38) |
+| RP04 | fixture หลายเดือนใน §7.2 | sum เงิน/ตัวนับ และ distinct companies ตรงตัวเลขเฉลย; source ต่างเดือน/หลายใบไม่ทำ join คูณ |
+| RP05 | A รับแล้วคืนมากในเดือนกลาง แต่รวมช่วงสุทธิเป็นบวก | positiveNet/cohort คิดหลัง sum ช่วง ไม่ OR positiveNet รายเดือน และไม่ sum max(netMonth,0); การเปลี่ยนเดือนทำอันดับและสมาชิก cohort เปลี่ยนตามผลรวม |
+| RP06 | active ในเดือนแรก ไม่ active เดือนท้าย; paidEver/fullyRefunded เปลี่ยนระหว่างช่วง | ACTIVE ในช่วงตาม union, paid/refund cutoff เป็นเดือนท้าย ไม่ใช่ current profile หรือ OR ธงอดีต; unknown/คืนเต็มตาม decision table เดิม |
+| RP07 | ขอบ built แต่เดือนกลางหาย/แถวบริษัทหาย/ก่อนสมัคร/source ก่อนเก็บ | partial/unavailable/NOT_YET_REGISTERED แยก; active/paid/ใบเสร็จเป็นอย่างน้อยตามหลักฐาน; net/cost/signed correction ไม่ใช้ lower bound; affectedMonths ครบเฉพาะ metric ที่ขาด; detail ก่อนบริษัทสมัครคง profile + null/NOT_YET_REGISTERED ไม่เป็น 404/0 |
+| RP08 | เดือนเดียวผู้ใช้ 2 คน; สองเดือนเป็นคนเดิม 2 คน; invoice เดียวรับข้ามเดือน | เดือนเดียวค่าเดิม หลายเดือนผู้ใช้รวม null/P22 และ disputed count เฉพาะแยกเดือน; ไม่บวกเป็นผู้ใช้ 4 คนหรือสองใบไม่ซ้ำ |
+| RP09 | ก.ค.–ก.ย. เทียบ เม.ย.–มิ.ย.; ม.ค. ข้ามปี; ALL; ฐานก่อน 0/ติดลบ/หาย/ขาดหนึ่งเดือน | คู่ก่อน L เดือนถูก; delta/percent สูตรตรง; แสดงเหตุผลต่างกันสำหรับไม่มีฐาน/ฐานบางส่วน/ฐาน 0/ฐานเงินติดลบ; ไม่ทำให้ช่วงหลักล้ม |
+| RP10 | เดือนปัจจุบัน source ครบ/ช้า เทียบเดือนเต็มก่อน; metric CURRENT | ครบถึง cutoff แสดง actual delta พร้อม P29 ไม่มี extrapolation/elapsed day query; source ขาดงด delta; CURRENT ไม่มี temporal delta |
+| RP11 | ช่องเดือน draft/ใช้คู่/ลิงก์เก่า month และ from=compare/ลิงก์ผิด/เดือนขึ้นใหม่ | draft ไม่ส่ง request; applied URL from/to + origin ถูก; reload คงคู่เดิม ไม่ resolve preset ใหม่; API/read/export ไม่มี origin ชน from |
+| RP12 | เปลี่ยนหน้า/แท็บ/เมนู/เลขหน้า; card→list→detail→Back; จุดเดือน→list→Back | คู่เดิมและ context กลับครบ; summary/จำนวนทั้งผลกรองตรง KPI; จุดกราฟเจาะเฉพาะเดือนนั้นแล้วคืนช่วงยาว |
+| RP13 | segment/status/search/pick ซ้อนกัน; clear chip/clear filters/ดูบริษัททั้งหมด/ALL | clear เฉพาะที่มีผล คงช่วง; ดูบริษัททั้งหมดล้างเงื่อนไขบริษัทแต่ไม่เลือกทุกเดือน; ALL เปลี่ยนเวลาแต่ไม่ล้าง segment; compare/detail ไม่ใช้ hidden segment |
+| RP14 | โหลดคู่ใหม่แต่ response เก่ามาช้า/buildChanged; empty/source partial/error/403; layout 390 px | ไม่ปนชุดหรือช่วง; ไม่มีศูนย์ปลอม; ทุก chip/เดือน/เหตุผลอ่านได้ไม่มี page overflow; chart gap/negative/one-point/table/focus ถูก; theme เดิม |
+| RP15 | ส่งออกทุกหน้า/ทุก subview/สองฝั่ง/บริษัท; directory หลายหน้าและ draft ยังไม่ใช้ | body คู่/effective filters/sort ตรงแถบและคำตอบ; ทุกแถวรวมถูก ชื่อช่วง/คำในไฟล์ตรงเว็บ; draft/โหลดใหม่ยังสร้างไม่ได้ |
+| RP16 | สร้างซ้ำ hourly/full ล้มกลางทาง เดือนเก่าถูกปรับ/ป้าย CUSTOMER→TEST | build atomic ตัวนับไม่ลด revision ต่อเดือนถูก; read range ใช้ profile ปัจจุบันกับ monthly rows version เดียว ไม่บังคับ old row.buildId เท่าหัวใหม่; classification เปลี่ยนไม่ทิ้งเงินกระทบยอด |
+| RP17 | workbook monthly sources/gap/partial/current/previous/ชื่อบริษัทอันตราย/ข้อมูลติดต่อไม่มีสิทธิ์ | cache/formula/กราฟตรง API, null ไม่เป็น 0, CURRENT แยกเวลา, ไม่มี code/id/full bank account, formula injection/privacy/permission regressions เดิมไม่เสีย |
+| RP18 | build เก่าระหว่างอ่าน/export/ถูกถอนสิทธิ์; จำนวนแถวหลายเดือนแตะเพดาน | read reload ครั้งเดียว export 409; ไม่ส่งไฟล์เมื่อหมดสิทธิ์; row cap ตามมติ Q41 และ 422 ก่อน binary ไม่ตัดเดือน/บริษัท |
+| RP19 | scope ที่ built/source ครบ | sum ทุกเดือน=ยอดช่วง; sum ทุกกลุ่ม=parent; active/paid distinct/list summary/all-page equality; การเฉลี่ยและ percent ใช้ total ไม่ average averages; churn ไม่มี field/filter/KPI จน Q39 |
+| RP20 | ALL × จำนวนบริษัท/จำนวนเดือนจริงและ fixture capacity เดิม §20.2 | ตรวจเวลาหน้ารายงาน/ไฟล์และ peak memory พร้อมขอบเขตที่วัด; ไม่อ้างว่า capacity ผ่านจาก fixture 3 เดือน; ช่วงยาวไม่มี overflow สตางค์/ตัวนับและไม่ตัด trend เหลือ 6 เดือน |
+
+### 7.2 fixture เฉลยขั้นต่ำ (ข้อมูลสมมติ ไม่ใช่ข้อมูลระบบจริง)
+
+A สมัคร มิ.ย., B สมัคร ส.ค., C สมัคร ก.ย.; ทุกบริษัทเป็น CUSTOMER ไม่มีตัวกรอง ช่วง ก.ค.–ก.ย. 2569 เงินหน่วยสตางค์ และ source ครบ:
+
+| บริษัท/เดือน | รับ | คืน | ใบเสร็จ | ใช้งาน |
+|---|---:|---:|---:|---|
+| A / ก.ค. | 10,000 | 0 | 2 | ใช่ |
+| A / ส.ค. | 10,000 | 15,000 | 1 | ใช่ |
+| A / ก.ย. | 0 | 0 | 0 | ใช่ |
+| B / ส.ค. | 5,000 | 0 | 3 | ใช่ |
+| B / ก.ย. | 20,000 | 3,000 | 2 | ไม่ |
+| C / ก.ย. | 0 | 0 | 0 | ไม่ |
+
+เฉลย: รับ 45,000 คืน 18,000 สุทธิ 27,000; สุทธิ A=5,000/B=22,000/C=0; ลูกค้าสิ้นช่วง=3 ลูกค้าใหม่=2 ใช้งานไม่ซ้ำ=2 ชำระไม่ซ้ำ=2 ใบเสร็จ=8; ผลบวกจำนวนบริษัทใช้งานรายเดือน=4 ไม่ใช่จำนวนช่วง ส่วนจำนวนชำระรายเดือน=1+2+1=4 ก็ไม่ใช่จำนวนช่วง; max(net ของ A หลังรวม)=5,000 ไม่ใช่ 10,000 จากการบวกเฉพาะเดือนบวก ฐานสุทธิบวกรวม=27,000 หากช่วงก่อนมีสุทธิ 20,000 → delta +7,000 (+35.0%) สัดส่วน/เฉลี่ยคำนวณจากจำนวนเต็มก่อนปัด
+
+เพิ่ม case เดือน ส.ค. หาย →มีข้อมูลบางส่วน ไม่ใช้ศูนย์แทน; case ต้นทุนมี correction ติดลบ →ไม่เรียกยอดที่รู้ว่าอย่างน้อย; ผู้ใช้ A ก.ค./ส.ค. เป็นสองคนเดิม →ห้ามอ้างจำนวนรวม 4; cohort fixture ต้องมีจำนวนบริษัทมากพอผ่าน TOO_FEW_COMPANIES และมี tie ตามเกณฑ์เดิมก่อนทดสอบ 20%/80%
+
+### 7.3 คำสั่งและข้อจำกัดในการรัน
+
+- API เพิ่มกรณีใน `apps/api/src/modules/executive-business/executive-report-read.pg.spec.ts` และ `executive-report-build.pg.spec.ts` ที่ CI เรียกอยู่แล้ว ไม่สร้าง API spec ใหม่ ไม่แก้ package.json แม้แผนเก่า §4 เคยเสนอให้ขอข้อยกเว้น; web เพิ่มใน spec เดิม/ไฟล์ glob ได้; contract invariants ตรวจผ่าน read/build และ web specs เหล่านี้
+- Focused API: `pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/executive-business/executive-report-read.pg.spec.ts` และคำสั่งเดียวกันกับ `executive-report-build.pg.spec.ts` ต้อง PostgreSQL จริงของ controller; skipped เมื่อไม่มี DB ไม่ถือเป็น green ของพฤติกรรม
+- Focused web: `pnpm --filter @watchdog-bms/web exec node --import tsx --test src/features/executive-reports/executive-reports.logic.spec.ts`; คำสั่งเดียวกันกับ `ExecutiveReportContent.spec.ts`, `ExecutiveReports.wiring.spec.ts` และ `executive-export.logic.spec.ts` ตามขั้นที่เปลี่ยน ไม่ใช้ tsx CLI ที่เปิด socket
+- เมื่อเปลี่ยน contracts src รัน `pnpm --filter @watchdog-bms/contracts build` ก่อน API/web checks; typecheck และ whole suite ใช้ lock wrapper ที่ lane brief ระบุเท่านั้น; ไม่แก้ package.json หรือทำ migration ในงานช่วงนี้
+- เมื่อเปลี่ยนคำ runtime ให้ค้นทุก API/ai-gateway/web/e2e spec ด้วยคำเก่าจากชุด P แล้วรัน focused files ที่พบ stale expectation; controller รัน script ที่ใช้ CLI/browser/real DB ภายนอก sandbox บันทึก red และ green ของแต่ละ test ที่เปลี่ยน
+- รอบเอกสารนี้ตรวจลิงก์/รหัส P/สูตร fixture/ความขัดแย้งและ `git diff --check` เท่านั้น Runtime/typecheck/PG/browser/capacity เป็น not checked เพราะไม่มี code เปลี่ยนและ sandbox lane ไม่รองรับ ไม่ dispatch cloud/release หรือกดสร้างรายงานจริง
+
+### 7.4 ความเสี่ยงและข้อเปิด
+
+- เดือนกลางไม่มี header หรือ historical source ขาด: คืน coverage แยก metric/เดือน อย่าทำ range error ทั้งหน้า; ALL ยิ่งยาวยิ่งต้องเปิดเผยข้อขาด
+- มิติปัจจุบันและแถวเดือนเก่าสร้างคนละรอบ: ใช้ classification/segment จาก profile ปัจจุบัน version เดียว และ monthly financial/counters เดิมตาม §23; ไม่แสดงว่าเป็นประเภทธุรกิจ ณ วันเกิดเงิน
+- distinct users/ใบมีข้อโต้แย้งและ CURRENT snapshots: ไม่บวกซ้ำ ไม่เปลี่ยนหน่วยเอง; ใช้รายเดือนหรือแยกส่วนปัจจุบันตามสเปก
+- ปัจจุบันไม่ครบเดือนเทียบช่วงก่อนเต็ม: บอก P29/cutoff เสมอ ไม่ extrapolate; กรณี source ไม่ครบห้าม delta
+- ALL × ช่วงก่อน × workbook source ขยายแถว/หน่วยความจำ: reuse query เฉพาะ section, วัด capacity และคงขีดจำกัดไฟล์ ห้ามสร้าง cache/table/paging policy ใหม่โดยไม่มีหลักฐาน
+- เปลี่ยน API จาก month เป็นคู่เดือน: controller ต้องประสานการปล่อย API/web/contracts และตรวจ fresh bundle/old deep links ตาม RP11 ไม่อ้างว่า migration URL ทำให้ API caller รุ่นเก่ายังรองรับ
+- `from` เดิมเป็นหน้าต้นทาง: migration URL ไป origin ต้องมี RP11/12 ทั้ง deep link/history/export ไม่แก้เพียง page แรก
+- Q38–Q41 เปิดตามทะเบียน BE §23.5 พร้อมข้อแนะนำ; ผล gap analysis ยังรอ lane แยกและไม่ถือว่าปิดจากการออกแบบนี้
