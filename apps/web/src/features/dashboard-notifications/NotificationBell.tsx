@@ -8,7 +8,7 @@ import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { getUnreadCount, listNotifications, markAllRead, markRead, NOTIFICATIONS_CHANGED_EVENT } from './dashboard-notifications.api';
 import type { NotificationItem } from './dashboard-notifications.model';
-import { formatRelativeTime, notificationBadgeText, severityColor, severityLabel, internalNotificationHref } from './dashboard-notifications.logic';
+import { formatRelativeTime, notificationBadgeText, notificationTag, internalNotificationHref, isUnreadNotification, notificationBodyText } from './dashboard-notifications.logic';
 
 const POLL_MS = 60_000;
 
@@ -57,7 +57,7 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
 
   const handleItemClick = (item: NotificationItem) => {
     setOpen(false);
-    if (item.read) return;
+    if (!isUnreadNotification(item)) return;
     void markRead(companyId, item.id)
       .then(() => setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, read: true } : entry))))
       .catch((err: unknown) => toast.error(err));
@@ -114,18 +114,19 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
               <p className="px-4 py-6 text-center text-sm text-gray-500">ยังไม่มีการแจ้งเตือน</p>
             ) : (
               items.map((item) => {
+                const unread = isUnreadNotification(item), sentence = notificationBodyText(item), tag = notificationTag(item);
                 const body = (
                   <>
                     <div className="flex items-center gap-2">
-                      <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${severityColor(item.severity)}`}>{item.status === 'resolved' ? 'ดำเนินการแล้ว' : severityLabel(item.severity)}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${tag.tone}`}>{tag.label}</span>
                       <span className="text-[11px] text-gray-400">{formatRelativeTime(item.createdAt)}</span>
-                      {!item.read && <span aria-hidden className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand-500" />}
+                      {unread && <span aria-hidden className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand-500" />}
                     </div>
-                    <div className={`mt-1 truncate text-sm ${item.read ? 'font-medium text-gray-600' : 'font-bold text-gray-900'}`}>{item.title}</div>
-                    {item.body && <div className="mt-0.5 line-clamp-2 text-xs text-gray-500">{item.body}</div>}
+                    <div className={`mt-1 truncate text-sm ${unread ? 'font-bold text-gray-900' : 'font-medium text-gray-600'}`}>{item.title}</div>
+                    {sentence && <div className="mt-0.5 line-clamp-2 text-xs text-gray-500">{sentence}</div>}
                   </>
                 );
-                const rowClass = `block w-full border-b border-gray-50 px-4 py-3 text-left hover:bg-brand-25 ${item.read ? '' : 'bg-brand-25/50'}`;
+                const rowClass = `block w-full border-b border-gray-50 px-4 py-3 text-left hover:bg-brand-25 ${unread ? 'bg-brand-25/50' : ''}`;
                 const href = internalNotificationHref(item.deepLinkHref);
                 return href ? (
                   <Link key={item.id} href={href} className={rowClass} onClick={() => handleItemClick(item)}>
