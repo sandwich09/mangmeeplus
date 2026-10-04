@@ -77,9 +77,10 @@ const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; 
   // Report pages only (product words in Thai there); /system/executive-users is an admin page.
   const onReport = pathname === '/system/executive' || pathname.startsWith('/system/executive/');
   const openSupportCount = useOpenSupportCount(pathname, !billingOnly && !executiveOnly);
-  const sections = [...(executiveOnly ? [] : SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' && billingAllowed :
-    (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed) && (section.href !== '/system/executive-users' || executiveUsersAllowed) && (section.href !== '/system/wht-income-categories' || whtCategoriesAllowed))),
-    ...(canReadReports ? EXECUTIVE_MENU.map(section => ({ ...section, href: menuHref(section.key, new URLSearchParams(searchParams.toString())) })) : [])];
+  const adminSections = executiveOnly ? [] : SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' && billingAllowed :
+    (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed) && (section.href !== '/system/executive-users' || executiveUsersAllowed) && (section.href !== '/system/wht-income-categories' || whtCategoriesAllowed));
+  const reportSections = canReadReports ? EXECUTIVE_MENU.map(section => ({ ...section, href: menuHref(section.key, new URLSearchParams(searchParams.toString())) })) : [];
+  const sections = onReport ? [...reportSections, ...adminSections] : [...adminSections, ...reportSections];
   const groups = [...new Set(sections.map(section => section.group))];
 
   const handleSignOut = async () => {
@@ -116,7 +117,7 @@ const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; 
                 const path = section.href.split('?')[0];
                 const active = pathname === path || (path !== '/system/executive' && pathname.startsWith(`${path}/`)) || (path === '/system/partners' && pathname.startsWith('/system/company-onboardings/'));
                 return <li key={section.href}><Link href={section.href} onClick={() => setMenuOpen(false)} aria-current={active ? 'page' : undefined} className={`flex min-h-12 items-center justify-between gap-2 rounded-lg border-l-4 px-3 py-2 text-base ${active ? 'border-brand-700 bg-brand-50 font-semibold text-brand-800' : 'border-transparent text-gray-700 hover:bg-gray-50'}`}>
-                  {onReport ? thaiLabel(section.label) : section.label}
+                  {section.label}
                   {section.href === SUPPORT_REQUESTS_HREF && openSupportCount !== null && openSupportCount > 0 && <span className="inline-flex min-w-6 items-center justify-center rounded-full bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-700">{openSupportCount > 99 ? '99+' : openSupportCount}</span>}
                 </Link></li>;
               })}

@@ -23,7 +23,7 @@ test('clean values keep full accessible qualifications, dots and no reference nu
   assert.doesNotMatch(marked, /<sup|\[\d+\]/);
   assert.equal(visible(html(Figure, { value: cash, moneyValue: true })), '99.00');
   assert.equal(visible(html(Figure, { value: { ...partial, knownValue: undefined, coverage: 'unavailable' } })), '–');
-  assert.match(html(Figure, { value: { value: 0, coverage: 'complete', reasonCodes: [] } }), /text-gray-400/);
+  assert.match(html(Figure, { value: { value: 0, coverage: 'complete', reasonCodes: [] } }), /text-gray-600/);
 });
 
 test('one status detail deduplicates reasons; cells and KPI digits never contain sentences', async () => {
@@ -33,7 +33,8 @@ test('one status detail deduplicates reasons; cells and KPI digits never contain
     const data = { ...envelope, coverage: { money: figure, usage: { value: 6, coverage: 'complete', reasonCodes: [] } }, revenue: { receiptsSatang: figure, refundsSatang: figure, netReceiptsSatang: figure, taxSatang: figure, feesSatang: figure, disputedInvoiceCount: 0, trend: [], byPurchaseGroup: [{ key: 'PLAN', label: 'แพ็กเกจ', receiptsSatang: figure, refundsSatang: figure, netReceiptsSatang: figure }] } } as unknown as ExecutiveAnalysis;
     const markup = html(AnalysisContent, { data, nav, seller: null });
     const cells = markup.match(/<td\b[\s\S]*?<\/td>/g) ?? [];
-    const values = markup.match(/class="mangmee-stat-value[^>]*>[\s\S]*?<\/div>/g) ?? [];
+    const values = markup.match(/data-executive-value[^>]*>[\s\S]*?<\/div>/g) ?? [];
+    assert.equal(values.length, 5);
     for (const cell of [...cells, ...values]) assert.doesNotMatch(visible(cell), /ข้อมูลก่อน|เฉพาะ|อย่างน้อย/);
     assert.doesNotMatch(markup, /<sup|\[\d+\]/);
     if (coverage !== 'complete') {
@@ -68,7 +69,7 @@ test('shared tables keep column structure fixed with dots, explicit widths, stic
   assert.match(marked, /whitespace-nowrap/); assert.match(marked, /border-gray-100/);
   assert.match(marked, /grid-cols-2/); assert.match(marked, /md:hidden/);
   const zero = html(Table, { title: W.companies, columns: [{ label: W.company }, { label: W.days }], rows: [{ key: "zero", cells: ["ร้าน ก", 0] }] });
-  assert.match(zero, /<td[^>]*text-gray-400[^>]*>[\s\S]*?>0<\/td>/);
+  assert.match(zero, /<td[^>]*text-gray-600[^>]*>[\s\S]*?>0<\/td>/);
   assert.match(marked.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '', /role="img"/);
   assert.doesNotMatch(marked.match(/executive-figure[^>]*>[\s\S]*?<\/span>/)?.[0] ?? '', /role="img"/);
 });
@@ -79,10 +80,10 @@ test('horizontal KPI digits and unit stay clean and reserve identical height/sub
   const marked = render(cash), complete = render({ ...cash, value: 9900, coverage: 'complete', reasonCodes: [] });
   assert.deepEqual(marked.match(/<(?:div|span)\b[^>]*class="[^"]*"[^>]*>/g)?.filter(s => !s.includes('executive-dot')).map(s => s.replace(/ aria-label="[^"]*"/g, '').replace(/ style="[^"]*"/g, '')), complete.match(/<(?:div|span)\b[^>]*class="[^"]*"[^>]*>/g)?.filter(s => !s.includes('executive-dot')).map(s => s.replace(/ aria-label="[^"]*"/g, '').replace(/ style="[^"]*"/g, '')));
   assert.match(marked, /h-24/); assert.match(marked, /size-10/);
-  assert.match(marked, /!rounded-full/); assert.match(marked, /!py-2/); assert.match(marked, /!font-semibold/); assert.match(marked, /!leading-4/); assert.match(marked, /whitespace-nowrap/);
+  assert.match(marked, /rounded-full/); assert.match(marked, /py-2/); assert.match(marked, /font-semibold/); assert.match(marked, /leading-4/); assert.match(marked, /whitespace-nowrap/);
   assert.match(marked, /เฉพาะที่ยืนยันแล้ว/);
-  assert.match(html(ExecutiveKpi, { label: W.paid, value: "0", unit: W.unitCompany }), /mangmee-stat-value[^>]*!text-gray-400/);
-  assert.doesNotMatch(visible(marked.match(/mangmee-stat-value[\s\S]*?<\/div>/)?.[0] ?? ''), /เฉพาะ|บาท/);
+  assert.match(html(ExecutiveKpi, { label: W.paid, value: "0", unit: W.unitCompany }), /data-executive-value[^>]*text-gray-600/);
+  assert.doesNotMatch(visible(marked.match(/data-executive-value[\s\S]*?<\/div>/)?.[0] ?? ''), /เฉพาะ|บาท/);
 });
 
 test('tabs expose keyboard navigation, URL choices and compatible legacy report views', async () => {
@@ -135,7 +136,7 @@ test('top revenue loads the existing summary at the same build and refuses to co
   for (const changed of [false, true]) {
     const urls: string[] = [];
     const signal = new AbortController().signal;
-    const load = new Function('authedApiFetch', code)(async (url: string, options: { signal: AbortSignal }) => {
+    const load = new Function('executiveHref', 'authedApiFetch', code)((await import('./executive-reports.logic')).executiveHref, async (url: string, options: { signal: AbortSignal }) => {
       assert.equal(options.signal, signal); urls.push(url);
       return urls.length === 1 ? { build: { id: 'one' }, buildChanged: !changed, spendConcentration: {} } : { build: { id: changed ? 'two' : 'one' }, buildChanged: changed, revenue: { netReceiptsSatang: cash } };
     });
@@ -171,7 +172,9 @@ test('every report panel keeps complete, partial and unavailable reasons out of 
       const markup = html(component, props);
       assert.doesNotMatch(markup, /<sup|\[\d+\]/, `${name}/${coverage}`);
       for (const cell of markup.match(/<td\b[\s\S]*?<\/td>/g) ?? []) assert.doesNotMatch(visible(cell), /ข้อมูลก่อนเริ่ม|ยังไม่มีตัวเลขของช่วง|ใบเสร็จค่าใช้จ่ายที่ลูกค้าเพิ่ม|นับผู้ที่ยืนยัน|อย่างน้อย|เฉพาะรายการ/, `${name}/${coverage}`);
-      for (const value of markup.match(/mangmee-stat-value[^>]*>[\s\S]*?<\/div>/g) ?? []) assert.doesNotMatch(visible(value), /ข้อมูลก่อน|เฉพาะ|อย่างน้อย|บาท/, `${name}/${coverage}`);
+      const tileValues = markup.match(/data-executive-value[^>]*>[\s\S]*?<\/div>/g) ?? [];
+      if (['overview', 'paid', 'company', 'usage', 'history'].includes(name)) assert.ok(tileValues.length > 0, name);
+      for (const value of tileValues) assert.doesNotMatch(visible(value), /ข้อมูลก่อน|เฉพาะ|อย่างน้อย|บาท/, `${name}/${coverage}`);
       if (coverage !== 'complete') {
         const reason = coverage === 'partial' ? W.historyBeforeFirstBuild : W.historyBeforeFirstBuildUnavailable;
         assert.equal(visible(markup).split(reason).length - 1, 1, `${name}/${coverage}`);
@@ -226,7 +229,9 @@ test('paid usage names the two unknown sources truthfully and keeps each sub-rea
   assert.match(markup, /ยังประเมินการใช้งานไม่ได้/); assert.match(markup, /ยังประเมินการชำระไม่ได้/);
   assert.equal(visible(markup).split(W.manualTerm).length - 1, 1);
   assert.match(visible(markup), /ผู้ดูแลตั้งแพ็กเกจให้ ไม่มีหลักฐานรับเงินในระบบ · 2 บริษัท/);
-  for (const value of markup.match(/mangmee-stat-value[^>]*>[\s\S]*?<\/div>/g) ?? []) assert.doesNotMatch(visible(value), /ข้อมูล|ประเมิน|เฉพาะ|อย่างน้อย/);
+  const tileValues = markup.match(/data-executive-value[^>]*>[\s\S]*?<\/div>/g) ?? [];
+  assert.equal(tileValues.length, 3);
+  for (const value of tileValues) assert.doesNotMatch(visible(value), /ข้อมูล|ประเมิน|เฉพาะ|อย่างน้อย/);
 });
 
 test('keyboard tab focus survives a report reload without stealing focus from an input', async () => {

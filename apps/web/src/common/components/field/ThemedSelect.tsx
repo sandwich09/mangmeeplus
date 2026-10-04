@@ -85,16 +85,26 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
     summaryRef.current?.focus();
   }
 
-  function moveOptionFocus(event: KeyboardEvent<HTMLDivElement>) {
+  useEffect(() => {
+    if (!open) return;
+    // The portal is initially hidden for measurement; autofocus before placement is ignored.
+    const frame = window.requestAnimationFrame(() => {
+      panelRef.current?.querySelector<HTMLElement>(searchable ? 'input[type="search"]' : '[role="option"][aria-selected="true"]:not(:disabled), [role="option"]:not(:disabled)')?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, searchable]);
+
+  function moveOptionFocus(event: KeyboardEvent<HTMLElement>) {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return;
     if (event.target instanceof HTMLInputElement && ['Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     if (event.key === 'Escape') {
+      event.stopPropagation(); // Keep an enclosing popover/dialog and its draft open.
       detailsRef.current?.removeAttribute('open');
       summaryRef.current?.focus();
       return;
     }
-    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    const buttons = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)') ?? []);
     if (!buttons.length) return;
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
     const next = event.key === 'Home' ? 0
@@ -136,6 +146,14 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
         aria-disabled={disabled}
         tabIndex={disabled ? -1 : 0}
         onClick={(event) => { if (disabled) event.preventDefault(); }}
+        onKeyDown={event => {
+          if (disabled || !['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return;
+          if (!detailsRef.current?.open) {
+            if (event.key === 'Escape') return;
+            event.preventDefault();
+            if (detailsRef.current) detailsRef.current.open = true;
+          } else moveOptionFocus(event);
+        }}
         className={cx(
           'mangmee-input flex list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden',
           disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer group-open:border-brand-700',
@@ -157,7 +175,7 @@ export function ThemedSelect({ value, defaultValue, onChange, disabled = false, 
         onKeyDown={moveOptionFocus}
         className="z-[100000] max-h-60 min-w-[10rem] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1.5 shadow-[var(--shadow-theme-md)]"
       >
-        {searchable && <input type="search" value={query} autoFocus aria-label={searchPlaceholder}
+        {searchable && <input type="search" value={query} aria-label={searchPlaceholder}
           placeholder={searchPlaceholder} onChange={(event) => setQuery(event.target.value)}
           className="mangmee-input sticky top-0 mb-1 w-full bg-white" />}
         {visibleOptions.length === 0 && <p role="status" className="px-3 py-2 text-sm text-gray-500">ไม่พบตัวเลือกที่ตรงกับคำค้น</p>}

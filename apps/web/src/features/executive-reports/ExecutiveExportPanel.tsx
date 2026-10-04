@@ -34,15 +34,15 @@ export function ExecutiveExportPanel({ section, params, context, data, search, t
     <p>{W.through(reportDateTime(data.dataThrough.oldest))} · {W.found(n)}</p>
     <p>{W.filters} · {labels.join(' · ') || W.export.none}</p>
     <p>{W.excluded}</p>
+    {canExportContacts(section, context) && <label className="flex min-h-11 items-start gap-2"><input type="checkbox" checked={contacts} disabled={state?.kind === 'preparing'} onChange={event => setContacts(event.target.checked)} className="mt-1 size-5 accent-brand-700 focus-visible:outline-brand-700" /><span>{W.export.contacts}<span className="block text-sm">{W.export.contactHint}</span></span></label>}
     <Button loading={state?.kind === 'preparing'} disabled={!!blocked || state?.kind === 'preparing' || wait > 0} onClick={() => {
       if (abort.current && action.current) void action.current.run(body, exportFileName(section, body.month), abort.current.signal);
     }}>{state?.kind === 'preparing' ? W.export.preparing : W.export.create}</Button>
     {blocked && <p role="status">{blocked}</p>}
     {state && <p role={state.kind === 'error' || state.kind === 'denied' ? 'alert' : 'status'}>{state.text}</p>}
     {wait > 0 && <p role="status">{W.wait(wait)}</p>}
-    {canExportContacts(section, context) && <label className="flex min-h-11 items-start gap-2"><input type="checkbox" checked={contacts} disabled={state?.kind === 'preparing'} onChange={event => setContacts(event.target.checked)} className="mt-1 size-5 accent-brand-700 focus-visible:outline-brand-700" /><span>{W.export.contacts}<span className="block text-sm">{W.export.contactHint}</span></span></label>}
-    <div className="executive-export-sheets"><p className="text-sm text-gray-600">{W.export.sheets}</p><div className="mt-2 flex flex-wrap gap-3">{EXECUTIVE_EXPORT_SHEETS.map(sheet => <span key={sheet} className="rounded-lg border border-brand-100 bg-brand-25 px-4 py-3 font-semibold text-brand-800">{sheet}</span>)}</div></div>
-    <details><summary className="flex min-h-11 cursor-pointer items-center rounded-lg p-2 font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-brand-700">{W.export.columns}</summary><p className="py-3 text-sm text-gray-600">{executiveExportColumns(section, body.subview, body.includeContacts).join(' · ')}</p></details>
+    <div className="executive-export-sheets"><p className="text-sm font-semibold text-gray-600">{W.export.sheets}</p><ul className="mt-2 list-inside list-disc text-sm text-gray-700">{EXECUTIVE_EXPORT_SHEETS.map(sheet => <li key={sheet}>{sheet}</li>)}</ul></div>
+    <details><summary className="flex min-h-11 cursor-pointer items-center rounded-lg p-2 font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-brand-700">{W.export.columns}</summary><ul className="list-inside list-disc py-3 text-sm text-gray-600">{executiveExportColumns(section, body.subview, body.includeContacts).map(column => <li key={column}>{column}</li>)}</ul></details>
     <p>{W.export.format}</p>
   </section></ExecutiveSectionCard></ReportNotes>;
 }

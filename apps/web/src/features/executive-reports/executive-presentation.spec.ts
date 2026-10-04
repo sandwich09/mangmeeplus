@@ -42,8 +42,9 @@ test('overview aligns KPIs and puts adoption and follow-ups beside each other wi
   assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-24/);
   assert.match(html, /lg:grid-cols-2/);
   assert.match(html, /<button[^>]*>ดูอันดับการใช้<\/button>/);
-  assert.match(html, /<strong[^>]*>4[^<]*<\/strong>/);
-  assert.match(html, /บริษัท →/);
+  assert.match(html, /<strong[^>]*>4 บริษัท/);
+  assert.match(html, /บริษัท [\s\S]*?→/);
+  for (const group of groups) assert.equal(html.replace(/<[^>]*>/g, '').split(EXECUTIVE_REPORT_LABELS.usageGroup[group.key as 'NOT_STARTED' | 'INACTIVE']).length - 1, 1);
 });
 
 test('drill links are focusable tiles and paid usage has large counts and company actions', async () => {
@@ -85,7 +86,7 @@ test('revenue trend has a fixed height, bar labels, signed baseline, gaps and on
   const chart = html.match(/<svg[^>]*aria-label="แนวโน้ม[\s\S]*?<\/svg>/)?.[0] ?? '';
   assert.equal((chart.match(/<rect /g) ?? []).length, 4); // pattern tile, two amounts, one unavailable placeholder
   assert.match(html, /data-unavailable="true"/);
-  assert.match(html, /mangmee-icon-frame/);
+  assert.match(html, /data-executive-icon/);
   assert.match(html, /y="100"/); assert.match(html, /--color-red-600/);
   assert.equal(html.replace(/<[^>]*>/g, '').split(W.historyBeforeCollectionPartial).length - 1, 1);
   assert.equal(html.replace(/<[^>]*>/g, '').split(W.historyBeforeCollection).length - 1, 1);
@@ -94,7 +95,8 @@ test('revenue trend has a fixed height, bar labels, signed baseline, gaps and on
 test('money lag appears once in the status detail and not in any KPI', async () => {
   const { OverviewContent } = await content();
   const lag = htmlOf(OverviewContent, { data: overview, nav });
-  assert.match(lag, /executive-status[\s\S]*ข้อมูลเงินถึง/); assert.doesNotMatch(lag.match(/mangmee-stat-value[\s\S]*?<\/div>/)?.[0] ?? "", /ข้อมูลเงินถึง/);
+  assert.equal((lag.match(/data-executive-value/g) ?? []).length, 4);
+  assert.match(lag, /executive-status[\s\S]*ข้อมูลเงินถึง/); assert.doesNotMatch(lag.match(/data-executive-value[\s\S]*?<\/div>/)?.[0] ?? "", /ข้อมูลเงินถึง/);
   assert.equal(lag.split('ข้อมูลเงินถึง').length - 1, 1);
   const current = htmlOf(OverviewContent, { data: { ...overview, dataThrough: { ...overview.dataThrough, lagging: [] } }, nav });
   assert.doesNotMatch(current, /ข้อมูลเงินถึง/);
@@ -160,7 +162,7 @@ test('top payers show the exact cohorts and shares in compact shared tables with
 
 test('comparison groups controls in one card and results in another with side buttons and no repeated difference words', async () => {
   const page = source('./ExecutiveReportPage.tsx');
-  assert.match(page, /executive-compare-controls/); assert.match(page, /md:grid-cols-\[minmax\(0,1fr\)_minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(page, /executive-compare-controls/); assert.match(page, /md:grid-cols-\[minmax\(8rem,12rem\)_minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   const { AnalysisContent } = await content();
   const side = { key: 'FOOD', label: 'ร้านอาหาร', companies: count(12), netReceiptsSatang: cash(100), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(1), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(1), drilldownFilters: {} };
   const html = htmlOf(AnalysisContent, { data: { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'OTHER', label: 'อื่น ๆ' }, difference: { companies: 0, netReceiptsSatang: -100, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis, nav, seller: null });

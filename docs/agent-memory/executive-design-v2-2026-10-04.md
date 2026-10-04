@@ -223,3 +223,160 @@ Named red tests and green file counts (each named test failed with production fr
 
 Next:
 Controller: review and commit the uncommitted diff only after acceptance. Run `pnpm exec playwright test e2e/executive-report.spec.ts` on the configured local stack/worker/database; check every screen/tab at 1280×800 and 390×844, including actual above fold and the 1/1.5-screen height targets, long figures, column/badge overflow, dot/header stability, row checkboxes/expansion, filter popover/sheet, keyboard focus/Back, unavailable/stale/empty/denied/export/admin states. Run real-PostgreSQL executive specs with their documented DB URL. Continue missing figures/period ranges in the next API lane.
+
+## Browser review follow-up — round 3 (2026-10-04)
+
+Status:
+Implementation and final local checks complete on 8131c6fff; uncommitted for controller review. Focused regression proof, locked typecheck and whole web suite pass on final code/tests. Browser acceptance not checked: this lane prohibits browsers/servers/network. No second browser findings message received in this turn.
+Owner:
+Executive presentation web lane; controller reviews, commits and runs browsers.
+Scope:
+A, B1–B5 and C6–C16 from the controller's round-1 browser findings. Web feature, shared field/select/date behavior where the defect originates, system navigation, specs and E2E selectors. No contracts source change, backend change, package manifest, dependency, schema, migration or environment switch.
+Decisions:
+- Use own utility-only executive page/KPI markup and neutral data hooks. No Mangmee internal override remains. Shared cards, badges, fields and link buttons are used with their existing markup; field height uses an important minimum-height utility against the normal unlayered input rule. No change to globals.css.
+- Incomplete words use existing warning-700 (#b54708); dots remain gold-500. Muted executive words and zeroes use gray-600. WCAG sRGB token calculations: warning-700 / white 5.43:1, warning-700 / gold-100 at 40% over white 5.20:1; gray-600 / white 7.69:1, / that amber background 7.36:1. These are calculated token ratios, not measured browser-computed styles.
+- One executiveHref helper owns path/query joining for page, drill-down, menu, report/history client URLs. No feature href appends a literal ampersand. Paths passed to the helper have no existing query.
+- Keep the table's own bounded overflow container as its sticky context; isolate its stacking. Retain run-2 clean figures, dots, shared table and URL tabs.
+- One atomic filter panel: shared group then directory group, all applied choices (including KPI-only drill flags) have individually removable chips. Nested select toggles cannot change the enclosing panel's open state/body lock.
+- Select keyboard defect exists in the shared select: trigger lacked arrow handling; portal-mounted search autofocus ran before placement. Focus after placement, use enabled options, and prevent/bubble-stop Escape for the open option list. No portal implementation change in this round.
+- Report identity depends only on normalized report query; detail tabs/history paging do not re-read company figures. Independent history reads retain their own error and cached last page. Re-reads keep permitted old content, its old navigation context, and a stable dimmed/inert read overlay. Hard denied/not-found/no-data states suppress retained content immediately. Export preview requires the current query's completed response; export busy means file creation only.
+- Reuse existing words. Comparison company names use the existing contract helper that preserves free names; system group labels keep the existing Thai conversion. C16 explicitly restores the admin sidebar's original LINE/AI labels.
+
+Item audit (fixed refers to code/tests; actual browser outcome is not checked):
+
+| Item | Status and evidence |
+|---|---|
+| A | Fixed: own header/KPI markup, no mangmee-stat or external Mangmee selectors; data hooks; 26 px utility owns default size, container-based utility for long figures, reserved sub-line. Contrast tests calculate existing tokens and verify dark amber/muted hooks. |
+| B1 | Fixed: helper joins all executive query URLs, including empty first-visit query and encoded company IDs; regression checks exactly one question mark for all four reported links. |
+| B2 | Run 2 already had bounded table scrolling. Strengthened relative/isolate/overscroll context and tested sticky headers within it. Actual header position not checked. |
+| B3 | Fixed: phone panel left/right zero, bottom zero, margin zero, full width/max-width; desktop anchored 384 px with viewport cap. Classes checked; computed rectangle not checked. |
+| B4 | Fixed shared select trigger arrows, enabled-option navigation, search focus after mounting, and Escape stopping at the option list. Ordinary fields still use the unchanged body portal; panel fields still portal inside the popover. Actual Chromium/WebKit focus timing not checked. |
+| B5 | Fixed: one status message, stable retained-content overlay, no report reload for same-data tabs/detail history pages, history-only errors, hard permission/not-found guards, export not busy during report reads, no stale-scope export preview. |
+| C6 | Fixed: one segment palette supplies ring and swatches, including grey hatch. |
+| C7 | Main row/detail usage badge was already singular in run 2. Fixed duplicate payment words in the list expander when they equal the main row status; preserved a distinct payment state. |
+| C8 | Fixed: combined draft filter panel/chips, including embedded directory and KPI-only choices; removed inline directory filter/duplicate badges; real Pagination buttons retained and one-page pagination hidden. First row above fold not checked. |
+| C9 | Five-wide desktop grid and nowrap trend numbers already existed in run 2; added mobile snap strip. Actual long chart-label overlap not checked. |
+| C10 | Fixed: side-name placeholders instead of repeated long instruction, constrained dimension control, result/side headings name the comparison, small side actions retained. Free company names preserved. |
+| C11 | Fixed: own header removes double eyebrow wrapper; fields minimum 44 px, phone actions stacked; suspend last with separator. Actual rendered geometry not checked. |
+| C12 | Fixed: time controls share items-center alignment; month buttons/navigation/footer minimum 44 px, readable selected/disabled month colours. Selection rules unchanged. |
+| C13 | Fixed: sheet names and columns are genuine bullet lists, contact option before create, parent detail back action hidden while export open. |
+| C14 | Fixed: not-found hides time row, comparison/detail controls and header actions, retained data suppressed; one state with one back action. |
+| C15 | Fixed: follow-up groups appear only in the band; phone band stacks full-width links. Band's existing positive-known visibility rule retained. |
+| C16 | Fixed: remove admin-label Thai transform, report navigation precedes admin groups on report pages, permission gates unchanged. |
+
+Per-screen layout from code (1280×800 and 390×844 above-fold positions/heights: **not checked**; no browser is available):
+
+| Screen | 1280 layout target | 390 layout target | Tabs / remaining visual verification |
+|---|---|---|---|
+| Overview | Own header/time/status, four horizontal KPIs, 160 px donut beside next-topic card, one follow-up band | Two-column KPI strip, stacked cards and full-width band links | No tabs; one-screen target not checked |
+| Usage | Header/time/status then chosen panel, compact adoption/paid/ranking | Scrollable tabs, paid tiles two-column, ranking mobile cards | การเริ่มใช้งาน / ลูกค้าที่จ่ายแล้ว / จัดอันดับ; report re-read only when normalized view changes |
+| Revenue | Net first in five-wide KPI row, then one panel | Snap KPI row, one selected panel, unbroken chart numbers | ประเภทการซื้อ / แนวโน้ม 6 เดือน / เงินที่ยังไม่ผูกบริษัท / ลูกค้าที่สร้างรายรับสูง; physical label fit not checked |
+| Customers/source | Time/status, shared tabs and one compact table | Same tabs scroll; compact two-column row cards | ธุรกิจ / ช่องทาง / เซลล์; actual table width/height not checked |
+| Compare | Constrained dimension + two sides/swap in one row; named result table | Stacked controls and compact result cards | No tabs; free company names retained; control/result height not checked |
+| Company list | One filter button/chips, search/sort row, compact all-result summary, bounded table; row extras closed | Same filter sheet, two-column compact rows with more | No tabs; first row above fold and 20-row height not checked; rolling 7/30-day figures still unavailable in current API and not invented |
+| Company detail | KPI strip and chosen panel; history reads independently | Two-column KPIs, shared scrolling tabs and compact tables | บริษัท / การใช้งาน / ประวัติ; unknown company is state alone; actual one-and-a-half-screen target not checked |
+| Export | One back action, scope/notes, contact choice, create, bullet sheet list and folded bullet columns | Same order, action precedes the long columns | No tabs; actual action above fold and downloaded workbook/browser behavior not checked |
+| Executive accounts list | Own title/action, aligned minimum-44px filters, shared table | Filters stack and rows use mobile cards | No tabs; actual above fold not checked |
+| Executive account create | Own header/breadcrumb, two-column form and rights | Stacked minimum-44px form | No tabs; viewport height not checked |
+| Executive account detail | Own header, account details, actions with suspend separated last | Full-width action stack; suspend last | No tabs; four-action positioning not checked |
+
+Words (all controlled report words still come from the unchanged contracts word source; admin labels retain their existing source):
+
+| Where | Old | New / placement | Cases |
+|---|---|---|---|
+| Compare side placeholders | เลือกสองกลุ่มที่ต้องการเปรียบเทียบ | ฝั่งแรก / ฝั่งที่สอง | Side not selected; full instruction remains once in the empty state |
+| Compare result | ตัวเลข | เปรียบเทียบ · <first group/company> · <second group/company> | Comparison returned; names from contract helper/API |
+| Report sidebar admin links | ตั้งค่า ไลน์; เพดานความปลอดภัยค่าปัญญาประดิษฐ์ | ตั้งค่า LINE; เพดานความปลอดภัยค่า AI | Original admin labels, authorized explicitly by C16 |
+| Filter group headings | ตัวกรองรายงาน panel / ตัวกรองรายชื่อบริษัท inline | Same words for the two groups in one panel | Directory view only adds the second group |
+| KPI-only drill choice | เงื่อนไขที่กดมา + badges + ล้างเงื่อนไขที่กดมา | Same choice words in a removable chip; accessible ล้างตัวกรอง <choice> | Each applied non-select drill condition; individual removal |
+| Directory payment | ยังไม่เคยชำระเงิน in status and expander | Same words once when main status matches paidEver | Matching main/payment state only; distinct states retained |
+| Read feedback | กำลังอ่านข้อมูล… / failure or empty words twice | Same words once in skeleton/overlay/state | Loading, error, empty, denied, not found |
+| Month status | เดือนนี้ยังไม่จบ in time badge and detail | Same words only in the shared status detail | API isPartialMonth |
+| Follow-up labels | Same two group words above band and inside band | Same group words only inside band | Known positive NOT_STARTED / INACTIVE only |
+| Export lists/contact | Existing sheet/column/contact words | Unchanged words in bullet lists; contact before create | Existing sheet allowlist; columns for scope; contact permission only |
+
+Artifacts:
+- Updated executive design/page/content/filter/export/client logic, account pages, shared fields, system header; executive specs and E2E neutral KPI hook.
+- Updated UI spec §§4, 6, 11.1, 11.2 and browser-review layout section.
+- Read-only round-1 browser evidence under the supplied execdesign-check directory; opened JSON evidence and filter-04-chosen-390.png. Did not execute evidence scripts or open a browser.
+
+Verification:
+W = `pnpm --filter @watchdog-bms/web exec node --import tsx --test` (paths relative to apps/web).
+H = `/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh`.
+- Final red proof: replaced changed production files with `git show HEAD:<path>` bytes in this worktree, ran seven specs together with W, then restored final bytes in finally and verified every file equals its saved bytes. Node exit 1: 109 tests, 70 passed, **39 failed**, 0 skipped. No git write/mutation command used. Each named regression below failed with 8131c6fff production.
+- Final green focused command: W plus all seven files below; exit 0, **109 passed, 0 failed, 0 skipped**. Every named red regression is green. Compatibility tests also remain green.
+- Final `H pnpm --filter @watchdog-bms/web typecheck`: exit 0 (Next route type generation and TypeScript; no test count). Final `H pnpm --filter @watchdog-bms/web exec node --import tsx --test "src/**/*.spec.ts"`: all S3_* removed via Python subprocess environment, exit 0, **3,017 passed, 0 failed, 0 skipped, 573 suites**, after the last code/test edit. Earlier successful locked runs had the same counts. Development typecheck earlier exited 2 for two test type errors, corrected.
+- Contracts build not needed: no packages/contracts/src change this round.
+- Exact old text grep across API/gateway/web/E2E specs: exit 0, 13 web files, one API file and two E2E files matched the broad old heading/label search. Web files covered by whole suite. Matched API file rerun: `pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/executive-business/executive-report-read.pg.spec.ts`, exit 0, **32 pure tests passed, 0 failed**. Real-PostgreSQL suite explicitly SKIP because EXECUTIVE_REPORT_READ_TEST_DATABASE_URL is absent (Node skipped-test count is 0); real PostgreSQL not checked. E2E not checked because browsers/server are prohibited. No ai-gateway matches.
+- Token contrast calculation exit 0; ratios above, structural tests cover the selected text classes.
+- `git diff --check`: exit 0 after final production/test changes and again after this note. Final status lists only scoped files; no generated next-env.d.ts change.
+- No sandbox-refused command. No browser/network/docker/server attempt.
+
+Named regression evidence, per file (W + that path is the reproducible focused command; the proof ran them together; red exit 1 for combined command, green exit 0):
+
+`src/features/executive-reports/executive-browser-review.spec.ts` — green 15/15; red 15 failing regressions:
+
+- #1: A: executive markup owns its styles without unlayered Mangmee overrides — red failed, green passed.
+- #2: A: incomplete words, muted figures and field hints meet 4.5:1 from existing tokens — red failed, green passed.
+- #3: B1: first-visit ranking, top payers, all ranks and company comparison have one question mark — red failed, green passed.
+- #4: B2: sticky headers stay in their isolated, bounded scroll context below the app bar — red failed, green passed.
+- #5: B3: filter sheet explicitly fills the phone and has an anchored desktop width — red failed, green passed.
+- #6: B4: select arrows work from the trigger, search focuses after mount, Escape closes only options — red failed, green passed.
+- #7: B5: one read status, retained content, and export busy only while creating a file — red failed, green passed.
+- #8: C8/C12/C14: one atomic directory filter, centred time controls, one-page paging hidden and not-found alone — red failed, green passed.
+- #9: C10/C11/C13/C16: concise comparison, account controls, genuine export list and unchanged admin menu words — red failed, green passed.
+- #10: C6/C15: ring and swatches share tokens; follow-up rows appear once, in the band — red failed, green passed.
+- #11: C7: the directory does not repeat the main payment status in the expander — red failed, green passed.
+- #12: C9/C12: revenue has a mobile snap strip and date/month touch targets are at least 44px — red failed, green passed.
+- #13: B5: retained data is never rendered after denied access, a missing company or an unavailable month — red failed, green passed.
+- #14: B5: a history read failure belongs to the history tab and export never previews a different query — red failed, green passed.
+- #15: C10: comparison titles and side headers preserve free company names from the API — red failed, green passed.
+
+`src/features/executive-reports/executive-compact-report.spec.ts` — green 13/13; red 6 failing regressions:
+
+- #1: clean values keep full accessible qualifications, dots and no reference numbers — red failed, green passed.
+- #2: one status detail deduplicates reasons; cells and KPI digits never contain sentences — red failed, green passed.
+- #4: shared tables keep column structure fixed with dots, explicit widths, sticky names and compact mobile fields — red failed, green passed.
+- #5: horizontal KPI digits and unit stay clean and reserve identical height/sub-line with or without a dot — red failed, green passed.
+- #9: every report panel keeps complete, partial and unavailable reasons out of cells and KPI values — red failed, green passed.
+- #12: paid usage names the two unknown sources truthfully and keeps each sub-reason count once in the status detail — red failed, green passed.
+
+`src/features/executive-reports/executive-design-v2.spec.ts` — green 11/11; red 5 failing regressions:
+
+- #3: v2 KPI icons and arrows stay compact while long payment context lives outside the tiles — red failed, green passed.
+- #5: v2 filter drafts apply atomically, dismiss without mutation, clear and remove a single chip — red failed, green passed.
+- #8: v2 directory filter controls and chips use effective drill filters rather than unrelated saved globals — red failed, green passed.
+- #10: directory filters share the atomic draft and removable chips, including embedded drill choices — red failed, green passed.
+- #11: KPI-only conditions share the time-row filter chips and can be removed individually — red failed, green passed.
+
+`src/features/executive-reports/executive-presentation.spec.ts` — green 14/14; red 4 failing regressions:
+
+- #2: overview aligns KPIs and puts adoption and follow-ups beside each other with a header button — red failed, green passed.
+- #5: revenue trend has a fixed height, bar labels, signed baseline, gaps and one explanation per reason — red failed, green passed.
+- #6: money lag appears once in the status detail and not in any KPI — red failed, green passed.
+- #11: comparison groups controls in one card and results in another with side buttons and no repeated difference words — red failed, green passed.
+
+`src/features/executive-reports/ExecutiveReportContent.spec.ts` — green 20/20; red 2 failing regressions:
+
+- #4: overview renders four server metrics, a partial count, and four receipt groups with independent drill queries — red failed, green passed.
+- #15: unavailable money never becomes zero in reconciliation; trend has a signed zero baseline and gaps — red failed, green passed.
+
+`src/features/executive-reports/ExecutiveReports.wiring.spec.ts` — green 15/15; red 7 failing regressions:
+
+- #2: the system shell and report gate use the exact permission, and the header has report links only for readers — red failed, green passed.
+- #3: reads use authenticated fetch, no tenant target header, and reload/abort protect the entire answer — red failed, green passed.
+- #7: directory chips hide empty drill rows and each filter toggle names its own scope — red failed, green passed.
+- #8: Thai shared fields, detail tabs, history paging and responsive tables retain the permission-gated export panel — red failed, green passed.
+- #9: search stays in the history entry with a 300ms debounce, back has a direct-link fallback — red failed, green passed.
+- #11: opening/closing export and refreshing built months preserve report identity and read dependencies on every screen — red failed, green passed.
+- #15: B5: company detail tabs and history pages preserve the company read identity — red failed, green passed.
+
+`src/features/executive-reports/executive-reports.logic.spec.ts` — green 21/21; red 0 failing regressions:
+
+- Removed the test for the now-unused reportFilterChips helper with that dead helper. All remaining 21 tests pass on old and new production; no new behavior claimed.
+
+- Compact #8 only changes its API harness to supply executiveHref; same-build/mismatch behavior was already correct and remains green on old and new code. No regression red claimed for this harness adaptation.
+- E2E only migrates the KPI selector to data-executive-value; not checked in a browser here.
+
+Next:
+Controller: review/commit uncommitted changes, then run `pnpm exec playwright test e2e/executive-report.spec.ts --project=chromium` on the configured local stack with its worker token. The repository has no project named webkit; its iphone13-webkit project only matches responsive/evidence specs, so use the controller’s existing Chromium/WebKit browser matrix for this report. Check all pages/tabs/states at 1280×800 (also original 1280×900) and 390×844: actual computed styles/contrast, popover box, nested select search/arrows/Escape, table sticky position/overflow, retained-data overlay, tabs/Back/read counts, long chart/KPI numbers, first directory row, action placement and page-height targets. Run the real-PostgreSQL suite with its documented database URL. Broad stale-text grep also matched e2e/settings.spec.ts and e2e/plan-term-billing-readiness.spec.ts; browser checks not available here. Second browser report can be handled when delivered; no claim it passed. Missing rolling figures/period ranges remain the next API lane.

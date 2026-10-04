@@ -1,6 +1,6 @@
 import {
   EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, EXECUTIVE_SORT_OPTIONS, executiveMoneyQualifier, type ExecutiveContext, type ExecutiveCount, type ExecutiveMoney,
-  type ExecutiveRatio, type ExecutiveSourceCoverage, type ExecutiveOwnerContact, type ExecutiveDrilldownFilters, type ExecutiveRankingMetric, type ExecutiveEnvelope,
+  type ExecutiveRatio, type ExecutiveSourceCoverage, type ExecutiveOwnerContact, type ExecutiveDrilldownFilters, type ExecutiveRankingMetric,
 } from '@watchdog-bms/contracts';
 import { deserializeListQuery } from '../../common/functions/list-query';
 import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '../../common/i18n/thai-date';
@@ -19,7 +19,15 @@ export function reportContextParams(params: URLSearchParams): URLSearchParams {
   for (const key of ['month', ...GLOBAL_FILTERS.map(key => FILTER_URL[key])]) if (params.has(key)) next.set(key, params.get(key)!);
   return next;
 }
-export const menuHref = (section: string, params: URLSearchParams) => `${reportPath(section)}${reportContextParams(params).size ? `?${reportContextParams(params)}` : ''}`;
+export function executiveHref(path: string, params: URLSearchParams | Record<string, string> = {}): string {
+  const query = new URLSearchParams(params).toString();
+  return query ? `${path}?${query}` : path;
+}
+export function menuHref(section: string, params: URLSearchParams, extra: Record<string, string> = {}): string {
+  const query = reportContextParams(params);
+  for (const [key, value] of Object.entries(extra)) query.set(key, value);
+  return executiveHref(reportPath(section), query);
+}
 export function normalizedMonth(params: URLSearchParams, context: ExecutiveContext): string {
   const month = params.get('month') ?? '';
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month <= context.currentMonth && (!context.months || month >= context.months.first) ? month : context.defaultMonth;
@@ -72,7 +80,7 @@ export function drilldownHref(params: URLSearchParams, from: string, filters: Ex
   const next = reportContextParams(params);
   next.set('pick', new URLSearchParams(filters as Record<string, string>).toString());
   next.set('from', from);
-  return `${reportPath('companies')}?${next}`;
+  return executiveHref(reportPath('companies'), next);
 }
 export function drillLabels(filters: ExecutiveDrilldownFilters, context: ExecutiveContext): string[] {
   return Object.entries(filters).flatMap(([key, value]) => {
@@ -83,20 +91,12 @@ export function drillLabels(filters: ExecutiveDrilldownFilters, context: Executi
     return [thaiLabel(label, value)];
   });
 }
-export function reportFilterChips(applied: ExecutiveEnvelope['appliedFilters'] | undefined, picked: ExecutiveDrilldownFilters | null, context: ExecutiveContext): { picked: string[]; active: string[] } {
-  return {
-    picked: picked ? drillLabels(picked, context) : [],
-    active: [...Object.entries(applied?.global ?? {}), ...Object.entries(applied?.directory ?? {})]
-      .filter(([key, option]) => option.value !== 'ALL' && picked?.[key as keyof ExecutiveDrilldownFilters] !== option.value)
-      .map(([, option]) => thaiLabel(option.label, option.value)),
-  };
-}
 export function changedParams(params: URLSearchParams, changes: Record<string, string>): URLSearchParams {
   const next = new URLSearchParams(params);
   for (const [key, value] of Object.entries(changes)) value ? next.set(key, value) : next.delete(key);
   const picked = drillFilters(params);
   if (picked && !Object.hasOwn(changes, 'pick')) {
-    for (const key of GLOBAL_FILTERS) if (Object.hasOwn(changes, FILTER_URL[key])) {
+    for (const key of [...GLOBAL_FILTERS, ...DIRECTORY_FILTERS]) if (Object.hasOwn(changes, FILTER_URL[key])) {
       if (changes[FILTER_URL[key]] === 'ALL') delete picked[key];
       else picked[key] = changes[FILTER_URL[key]];
     }

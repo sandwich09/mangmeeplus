@@ -77,7 +77,7 @@ test('overview renders four server metrics, a partial count, and four receipt gr
   }, expenseReceiptAdoption: { population: 72, segments: ['EVER', 'NEVER', 'UNKNOWN', 'NOT_ENTITLED'].map(key => ({ key, count: 18, share: { value: 25 }, drilldownFilters: { receiptAdoption: key } })), reasonCodes: [], roundingNote: false },
   paidUsage: { groups: [{ key: 'NOT_STARTED', count: 20, drilldownFilters: { usageGroup: 'NOT_STARTED' } }, { key: 'INACTIVE', count: 3, drilldownFilters: { usageGroup: 'INACTIVE' } }] }, spendConcentration: { topShare: { value: 83.4 }, reasonCodes: [] } } as unknown as ExecutiveOverview;
   const html = renderToStaticMarkup(React.createElement(OverviewContent, { data, nav }));
-  assert.equal((html.match(/mangmee-stat-value/g) ?? []).length, 4);
+  assert.equal((html.match(/data-executive-value/g) ?? []).length, 4);
   assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-24/);
   assert.ok(accessible(html).includes('อย่างน้อย 38')); assert.ok(accessible(html).includes('245,806.00 บาท'));
   for (const words of [ 'ยังไม่ได้จัดประเภท 2 บริษัท', 'ไม่มีในแพ็กเกจ', 'ก.ย. 2569']) assert.ok(text(html).includes(words), words);
@@ -197,7 +197,7 @@ test('unavailable money never becomes zero in reconciliation; trend has a signed
   const data = { ...envelope, coverage: { ...envelope.coverage, money: { coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] } }, revenue: { ...moneyRow, byPurchaseGroup: [{ key: 'FIRST_PURCHASE', label: 'ซื้อครั้งแรก', ...moneyRow }], disputedInvoiceCount: 0, trend: [{ month: '2026-09', isPartialMonth: false, ...moneyRow }] } } as unknown as ExecutiveAnalysis;
   const html = renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav: { ...nav, params: new URLSearchParams('view=trend') }, seller: null }));
   assert.doesNotMatch(text(html), /0\.00 บาท/); assert.match(html, /y1="100" y2="100"/); assert.match(html, /data-unavailable="true"/);
-  assert.match(html, /mangmee-icon-frame/);
+  assert.match(html, /data-executive-icon/);
 });
 
 test('company payment flags show Thai values, preserving confirmed negatives and incomplete unknowns', async () => {

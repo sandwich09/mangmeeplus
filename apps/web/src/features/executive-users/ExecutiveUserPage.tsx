@@ -3,10 +3,10 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import type { ExecutiveUserCredential, ExecutiveUserView } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
-import { EXECUTIVE_PAGE_CLASS, ExecutiveSectionCard } from '../executive-reports/ExecutiveReportDesign';
+import { EXECUTIVE_PAGE_CLASS, ExecutivePage, ExecutiveSectionCard } from '../executive-reports/ExecutiveReportDesign';
 import { Button } from '@/common/components/button';
 import { TextField, SwitchField } from '@/common/components/field';
-import { MangmeePage, MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
+import { MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
 import { ErrorState, ForbiddenState, LoadingState } from '@/common/components/state';
 import { useInputPrompt } from '@/common/components/modal';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
@@ -122,16 +122,16 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
     finally { busyRef.current = false; setBusy(false); }
   }
   const expiryNotice = user && executiveExpiryNotice(user);
-  return <MangmeePage title={userId || user ? words.detail : words.add}
+  return <ExecutivePage title={userId || user ? words.detail : words.add}
     eyebrow={<Link href="/system/executive-users" className="mangmee-btn mangmee-btn-secondary hover:bg-brand-25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{EXECUTIVE_USERS_TITLE}</Link>}
-    className={`${EXECUTIVE_PAGE_CLASS} [&_label>span]:text-sm`}>
+    className={EXECUTIVE_PAGE_CLASS}>
     {inputPromptDialog}
     {denied ? <ForbiddenState description={error ?? undefined} /> : <>
       {credential && <ExecutiveCredentialPanel key={credential.expiresAt} credential={credential} onClose={() => setCredential(null)} />}
       {notice && <p role="status" className="text-sm text-brand-800">{notice}</p>}
       {error && <ErrorState description={error} onRetry={currentUserId ? () => setRetry(value => value + 1) : undefined} />}
       {loading ? <LoadingState label={words.loadingAccount} /> : user ? <ExecutiveSectionCard title={words.account} actions={protectedAccount || user.status === 'REVOKED' ? <p className="text-sm text-gray-600">{apiErrorMessage({ code: protectedAccount ? 'ACCOUNT_PROTECTED' : 'ACCOUNT_REVOKED' })}</p>
-          : <div className="flex flex-wrap gap-3">{executiveActions(user, protectedAccount).map(action => <Button key={action} variant={action === 'suspend' ? 'danger' : 'secondary'} loading={busy} disabled={busy || refreshRequired} onClick={() => void act(action)}>{executiveActionLabel(user, action)}</Button>)}</div>}>
+          : <div className="grid w-full gap-2 sm:flex sm:flex-wrap">{executiveActions(user, protectedAccount).filter(action => action !== 'suspend').map(action => <Button key={action} variant="secondary" loading={busy} disabled={busy || refreshRequired} onClick={() => void act(action)}>{executiveActionLabel(user, action)}</Button>)}{executiveActions(user, protectedAccount).includes('suspend') && <div className="mt-2 border-t border-gray-200 pt-2 sm:ml-2 sm:mt-0 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0"><Button variant="danger" className="w-full sm:w-auto" loading={busy} disabled={busy || refreshRequired} onClick={() => void act('suspend')}>{executiveActionLabel(user, 'suspend')}</Button></div>}</div>}>
         <dl className="grid gap-4 sm:grid-cols-2">{[
           [words.displayName, user.displayName], [words.username, user.username], [words.phoneNumber, user.phoneNumber || words.unspecified],
           [words.email, user.email || words.unspecified], [words.rights, executiveRights(user)], [words.lastEntry, user.lastWebEntryAt ? formatThaiDateTime(user.lastWebEntryAt) : words.missing],
@@ -141,11 +141,11 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
         {!userId && <Link href={`/system/executive-users/${encodeURIComponent(user.userId)}`} className="mangmee-btn mangmee-btn-secondary hover:bg-brand-25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{words.openAccount}</Link>}
       </ExecutiveSectionCard> : !userId && <ExecutiveSectionCard title={words.add}>
         <form noValidate className="grid gap-4 md:grid-cols-2 [&>label]:min-w-0 [&>div]:md:col-span-2 [&>p]:md:col-span-2" onSubmit={event => { event.preventDefault(); void create(); }}>
-          <TextField label={words.username} name="username" value={values.username} autoComplete="off" maxLength={40} required disabled={busy} error={errors.username} onChange={event => set('username', event.target.value)} />
-          <TextField label={words.displayName} name="displayName" value={values.displayName} maxLength={120} required disabled={busy} error={errors.displayName} onChange={event => set('displayName', event.target.value)} />
+          <TextField className="!min-h-11" label={words.username} name="username" value={values.username} autoComplete="off" maxLength={40} required disabled={busy} error={errors.username} onChange={event => set('username', event.target.value)} />
+          <TextField className="!min-h-11" label={words.displayName} name="displayName" value={values.displayName} maxLength={120} required disabled={busy} error={errors.displayName} onChange={event => set('displayName', event.target.value)} />
           <div className="grid gap-4 sm:grid-cols-2">
-            <TextField label={`${words.phoneNumber} ${words.optional}`} name="phoneNumber" type="tel" value={values.phoneNumber} maxLength={20} disabled={busy} error={errors.phoneNumber} onChange={event => set('phoneNumber', event.target.value)} />
-            <TextField label={`${words.email} ${words.optional}`} name="email" type="email" value={values.email} maxLength={254} disabled={busy} error={errors.email} onChange={event => set('email', event.target.value)} />
+            <TextField className="!min-h-11" label={`${words.phoneNumber} ${words.optional}`} name="phoneNumber" type="tel" value={values.phoneNumber} maxLength={20} disabled={busy} error={errors.phoneNumber} onChange={event => set('phoneNumber', event.target.value)} />
+            <TextField className="!min-h-11" label={`${words.email} ${words.optional}`} name="email" type="email" value={values.email} maxLength={254} disabled={busy} error={errors.email} onChange={event => set('email', event.target.value)} />
           </div>
           <p className="font-medium">{EXECUTIVE_RIGHTS.canRead}</p>
           <SwitchField label={EXECUTIVE_RIGHTS.canExport} name="canExport" checked={values.canExport} disabled={busy} onChange={event => set('canExport', event.target.checked)} />
@@ -156,5 +156,5 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
         </form>
       </ExecutiveSectionCard>}
     </>}
-  </MangmeePage>;
+  </ExecutivePage>;
 }
