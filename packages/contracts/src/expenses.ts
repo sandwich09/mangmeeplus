@@ -1,4 +1,5 @@
 import { hasCurrentExpenseEvidenceReview } from './expense-evidence.js';
+import { PAYMENT_DATE_IN_FUTURE } from './civil-date.js';
 export * from './expense-evidence.js';
 // Item 09 – Expense and Receipt Upload contracts
 
@@ -652,7 +653,7 @@ export const EXPENSE_CORRECTION_WORDS = {
   correcting: 'กำลังแก้ไขเอกสารที่ยืนยันแล้ว',
   downloadAgain: 'ดาวน์โหลดเอกสารอีกครั้ง',
   certificateIssued: 'ออกเอกสารแล้ว',
-  futurePaymentDate: 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้',
+  futurePaymentDate: PAYMENT_DATE_IN_FUTURE.message,
   sourceRefreshed: 'โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจยอดและประวัติการจ่ายก่อนทำรายการอีกครั้ง',
   sourceRefreshFailed: 'โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาโหลดหน้าใหม่ก่อนทำรายการอีกครั้ง',
   paymentOnReopened: 'เอกสารถูกเปิดแก้ไขแล้ว จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ตรวจและยืนยันเอกสารก่อน',
