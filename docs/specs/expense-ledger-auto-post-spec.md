@@ -1,5 +1,7 @@
 # Feature: Expense Ledger Auto-post with Accountant Exception Queue
 
+Owner decision 2026-10-04: unposted recorded expense payments may be cancelled with an audited actor/reason; history keeps VOIDED and totals/status recalculate by deducting the cancelled amount and preserving any legacy paid balance without a history row. Posted payments require existing cancellation/reversal. Expense reopen and payment cancellation serialize with generated journal creation; generated draft journals and unresolved posting pointers currently block correction until resolved; automatic draft cancellation awaits the owner decision. Reopen leaves the posting queue, keeps number/payments and requires confirmation again before journal generation. Journal creation rechecks expense revision/status and payment state under the shared lifecycle lock, so a worker holding pre-correction facts cannot post them. The UI prefills outstanding and names the remainder; retrying an uncertain existing payment keeps its immutable intent and remains available after the balance changes.
+
 ## 1. Status
 
 - Status: Approved for implementation

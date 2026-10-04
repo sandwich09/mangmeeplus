@@ -207,3 +207,20 @@ describe('CreateWhtCertificateUseCase — cap.wht50bis/SYSTEM_INITIAL_ISSUE fenc
     assert.equal(handoffs.created.length, 0);
   });
 });
+
+describe('tax-workspace issuance from an expense being corrected', () => {
+  it('refuses expense events after reopening or superseding the source, before creating a certificate', async () => {
+    for (const mode of ['reopened', 'superseded']) for (const state of ['OPEN', 'CLOSED'] as const) {
+      const spy = makeSpy();
+      const event = { id: 'event-1', companyId: 'company-1', sourceType: 'expense.record', sourceId: 'exp-1', status: 'ACTIVE', sourceHash: 'old', eventType: 'WHT_PND3', grossAmount: '1000.0000', withheldAmount: '30.0000', taxAmount: '30.0000' };
+      spy.taxRepo.findEventsByPeriod = async () => [event];
+      const client = spy.taxRepo.prisma.client;
+      client.$executeRaw = async () => 0;
+      client.$transaction = async (work: any) => work(client);
+      client.expenseRecord = { findFirst: async () => ({ status: mode === 'reopened' ? 'NEEDS_REVIEW' : 'CONFIRMED' }) };
+      client.taxEvent = { findMany: async () => [{ ...event, status: mode === 'superseded' ? 'SUPERSEDED' : 'ACTIVE' }] };
+      await assert.rejects(() => useCase(guard({ state }), spy).value.execute(ctx, input), (e: any) => e.getResponse?.().code === 'expense_wht_source_changed');
+      assert.equal(spy.calls.includes('write:certificate'), false);
+    }
+  });
+});

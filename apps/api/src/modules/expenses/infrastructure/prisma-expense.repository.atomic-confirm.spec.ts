@@ -396,7 +396,7 @@ describe('WHT certificate handoff at expense confirmation', () => {
     client.company = { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) };
     client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
     client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
-    client.whtCertificateHandoff = { create: async ({ data }: any) => { handoffs.push(data); } };
+    client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { handoffs.push(data); } };
     const input = await inputFor(repo, updatedAt);
     const result = await repo.finalizeAndConfirmExpenseCas(input, finalize);
     assert.equal(result.expense.status, 'CONFIRMED');
@@ -450,4 +450,31 @@ it('confirms a reviewed original receipt after certificate cancellation while re
   assert.equal(result.expense.status, 'CONFIRMED');
   assert.equal(h.writes.outbox, 1);
   assert.equal(h.row.missingReceiptReason, 'ไม่ได้รับใบเสร็จในวันที่สร้างใบทดแทน');
+});
+
+
+describe('confirmation after expense correction', () => {
+  it('refuses corrected payable below recorded payments before finalization or posting', async () => {
+    const h = harness(); h.row.paidAmount = '108'; h.row.netPayableAmount = '107';
+    const input = await inputFor(h.repo, h.updatedAt);
+    await assert.rejects(() => h.repo.finalizeAndConfirmExpenseCas(input, finalize), (e: any) => e.getResponse?.().code === 'expense_paid_exceeds_payable');
+    assert.equal(h.row.status, 'READY_FOR_CONFIRMATION'); assert.equal(h.writes.header, 0); assert.equal(h.writes.outbox, 0);
+  });
+
+  it('rebuilds a retired handoff from corrected facts with the same expense number and no duplicate handoff', async () => {
+    const h = harness();
+    Object.assign(h.row, { whtAmount: 30, whtCategoryCode: 'CAT1', whtRate: 3, vendorEntityKindSnapshot: 'INDIVIDUAL', expenseNumber: 'EXP-KEEP' });
+    const retired: any = { id: 'handoff-old', status: 'CANCELLED', payeeAddress: 'ที่อยู่ของผู้รับเงินเดิม', prefillSnapshotJson: { withheldAmount: 'wrong' } };
+    h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+    h.client.whtCertificateHandoff = {
+      findFirst: async () => retired,
+      update: async ({ where, data }: any) => { assert.equal(where.id, retired.id); Object.assign(retired, data); return retired; },
+      create: async () => { throw new Error('duplicate handoff'); },
+    };
+    const result = await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize);
+    assert.equal(result.expense.expenseNumber, 'EXP-KEEP'); assert.equal(retired.status, 'REQUIRED');
+    assert.equal(retired.prefillSnapshotJson.withheldAmount, '30'); assert.equal(retired.prefillSnapshotJson.formType, 'PND3'); assert.equal(retired.payeeAddress, null);
+  });
 });

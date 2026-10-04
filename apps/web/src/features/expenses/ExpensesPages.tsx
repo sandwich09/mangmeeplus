@@ -41,7 +41,7 @@ import {
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS,
   insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange, changeExpenseVatSourceType,
   formatTaxId, taxIdDigits, reviewValues, incompleteSourceReviewLine,
-  expenseReviewWithholdsTax, changeExpenseReviewWhtInput, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
+  expenseReviewWithholdsTax, changeExpenseReviewWhtInput, expenseWhtCategoriesForPayee, changeExpensePayeeType, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseCaptureCapabilityDto, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput } from '@watchdog-bms/contracts';
@@ -1223,6 +1223,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const whtCategoryIssue = fieldIssue(issues, 'whtCategoryCode');
 
   const documentWhtRate = expenseDocumentWhtRate(values.lines);
+  const applicableWhtCategories = expenseWhtCategoriesForPayee(whtCategories, values.vendorEntityKindSnapshot);
   const whtInput: ExpenseWhtInput = values.whtInput ?? { inputType: 'RATE', value: expenseRateToPercent(documentWhtRate ?? '') };
   const withholdsTax = expenseReviewWithholdsTax(values, detail.whtAmount);
   const vatSource = values.vatSource ?? { inputType: 'NONE' as const };
@@ -2113,7 +2114,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               <span className="mb-1 block text-xs font-medium text-gray-600">
                 <label htmlFor={`expense-payee-entity-kind-${detail.id}`}>{t('expenses.payee_entity_kind', locale)}</label>
               </span>
-              <ThemedSelect id={`expense-payee-entity-kind-${detail.id}`} aria-label={t('expenses.payee_entity_kind', locale)} className={validationInputClass(payeeEntityKindIssue)} aria-invalid={payeeEntityKindIssue?.severity === 'error' || undefined} value={values.vendorEntityKindSnapshot ?? ''} onChange={(e) => setValues((v) => ({ ...v, vendorEntityKindSnapshot: e.target.value as BuyerEntityKind | '' }))} disabled={!isMutable || busy}>
+              <ThemedSelect id={`expense-payee-entity-kind-${detail.id}`} aria-label={t('expenses.payee_entity_kind', locale)} className={validationInputClass(payeeEntityKindIssue)} aria-invalid={payeeEntityKindIssue?.severity === 'error' || undefined} value={values.vendorEntityKindSnapshot ?? ''} onChange={(e) => { setTaxFactsDirty(true); setValues((v) => changeExpensePayeeType(v, e.target.value as BuyerEntityKind | '', whtCategories)); }} disabled={!isMutable || busy}>
                 {!detail.vendorEntityKindSnapshot && <option value="">{t('expenses.category_unspecified', locale)}</option>}
                 {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
               </ThemedSelect>
@@ -2123,24 +2124,24 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               <span className="mb-1 block text-xs font-medium text-gray-600">
                 <label htmlFor={`expense-wht-category-${detail.id}`}>{t('expenses.wht_income_category', locale)}</label>
               </span>
-              <ThemedSelect id={`expense-wht-category-${detail.id}`} aria-label={t('expenses.wht_income_category', locale)} className={validationInputClass(whtCategoryIssue)} aria-invalid={whtCategoryIssue?.severity === 'error' || undefined} value={values.whtCategoryCode ?? ''} onChange={(e) => {
+              <ThemedSelect id={`expense-wht-category-${detail.id}`} aria-label={t('expenses.wht_income_category', locale)} className={validationInputClass(whtCategoryIssue)} aria-invalid={whtCategoryIssue?.severity === 'error' || undefined} value={!isMutable || applicableWhtCategories.some((item) => item.code === values.whtCategoryCode) ? values.whtCategoryCode ?? '' : ''} onChange={(e) => {
                 const code = e.target.value;
-                const picked = whtCategories.find((item) => item.code === code);
+                const picked = applicableWhtCategories.find((item) => item.code === code);
                 if (!picked) return;
                 const rate = String(Number(picked.defaultRate));
                 setTaxFactsDirty(true);
                 setValues((v) => ({ ...v, whtCategoryCode: code, whtRate: rate,
                   whtInput: { inputType: 'RATE', value: rate, ...(v.whtInput?.baseAmount !== undefined && { baseAmount: v.whtInput.baseAmount }) } }));
               }} disabled={!isMutable || busy}>
-                {!values.whtCategoryCode && <option value="">{t('expenses.category_unspecified', locale)}</option>}
-                {values.whtCategoryCode && !whtCategories.some((item) => item.code === values.whtCategoryCode) && <option value={values.whtCategoryCode}>{t('expenses.wht_category_recorded', locale)}</option>}
-                {whtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
+                <option value="">{t('expenses.category_unspecified', locale)}</option>
+                {!isMutable && values.whtCategoryCode && !applicableWhtCategories.some((item) => item.code === values.whtCategoryCode) && <option value={values.whtCategoryCode}>{t('expenses.wht_category_recorded', locale)}</option>}
+                {applicableWhtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
               </ThemedSelect>
               <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
             </div>
             {whtCategoriesState === 'loading' && <p className="text-sm text-gray-600">{t('expenses.wht_categories_loading', locale)}</p>}
             {whtCategoriesState === 'error' && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_failed', locale)}</p>}
-            {whtCategoriesState === 'ready' && whtCategories.length === 0 && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_empty', locale)}</p>}
+            {whtCategoriesState === 'ready' && Boolean(values.vendorEntityKindSnapshot) && applicableWhtCategories.length === 0 && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_empty', locale)}</p>}
             <div className="grid grid-cols-1 gap-3">
               <label>
                 <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_input_unit', locale)}</span>

@@ -8,7 +8,7 @@ import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaExpenseRepository } from './prisma-expense.repository';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
-import { CreateExpenseDraftUseCase, UpdateExpenseDraftUseCase } from '../application/use-cases/expense-draft.use-case';
+import { CancelExpensePaymentUseCase, ReopenExpenseUseCase, RecordExpensePaymentUseCase, CreateExpenseDraftUseCase, UpdateExpenseDraftUseCase } from '../application/use-cases/expense-draft.use-case';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { canNumberReviewedDraft } from './expense-number';
 import { hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
@@ -56,7 +56,7 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
   async function ready(id: string, expenseDate?: string) {
     await client.expenseRecord.update({ where: { id }, data: { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY' } });
     const file = await client.attachmentObject.create({ data: {
-      companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${companyId}/${id}`,
+      companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${companyId}/${id}/${randomUUID()}`,
       originalFileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 1,
       checksumSha256: 'b'.repeat(64), uploadedByUserId: userId, status: 'ACTIVE',
     } });
@@ -276,6 +276,47 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     assert.equal(await client.outboxEvent.count({ where: { companyId, eventKey } }), 1);
     assert.equal(await client.auditLog.count({ where: { companyId, targetId: payment.id, action: 'reimbursement.payment.void' } }), 1);
     assert.equal((await client.reimbursementRequest.findUniqueOrThrow({ where: { id: request.id } })).paymentTotalAmount.toString(), '0');
+  });
+
+
+  it('corrects confirmed payments and document without changing the number, and checks the retained paid total at re-confirmation', async () => {
+    const source = await create.execute(ctx(), draft());
+    const confirmed = (await repo.finalizeAndConfirmExpenseCas(await ready(source.id), async () => [])).expense;
+    const finance = { ...ctx(), permissions: ['expense.confirm', 'expense.payment.record'] };
+    const payments = new RecordExpensePaymentUseCase(repo, audit as any);
+    await payments.execute(finance, source.id, { paidAmount: '40', paidAt: '2026-10-04', idempotencyKey: randomUUID() });
+    await payments.execute(finance, source.id, { paidAmount: '60', paidAt: '2026-10-04', idempotencyKey: randomUUID() });
+    const history = await client.expensePayment.findMany({ where: { companyId, expenseId: source.id }, orderBy: { createdAt: 'asc' } });
+    const cancel = new CancelExpensePaymentUseCase(repo, audit as any);
+    const corrected = await cancel.execute(finance, source.id, history[0]!.id, 'กรอกยอดจ่ายผิด');
+    assert.equal(corrected.paidAmount, '60.0000'); assert.equal(corrected.outstandingAmount, '40.0000');
+    const reopened = await new ReopenExpenseUseCase(repo, audit as any).execute(finance, source.id, 'แก้ยอดเอกสาร');
+    assert.equal(reopened.expenseNumber, confirmed.expenseNumber); assert.equal(reopened.paidAmount, '60.0000'); assert.equal(reopened.confirmedAt, null);
+    assert.equal((await client.expensePayment.findUniqueOrThrow({ where: { id: history[0]!.id } })).status, 'VOIDED');
+    await client.expenseRecord.update({ where: { id: source.id }, data: { netPayableAmount: '50', status: 'READY_FOR_CONFIRMATION' } });
+    await assert.rejects(repo.finalizeAndConfirmExpenseCas({ companyId, id: source.id } as any, async () => []), (error: any) => error.getResponse?.().code === 'expense_paid_exceeds_payable');
+    await client.expenseRecord.update({ where: { id: source.id }, data: { netPayableAmount: '100', status: 'NEEDS_REVIEW' } });
+    const reconfirm = await ready(source.id);
+    reconfirm.outboxEvent.eventKey = `correction-reconfirm:${source.id}`;
+    const result = await repo.finalizeAndConfirmExpenseCas(reconfirm, async () => []);
+    assert.equal(result.expense.expenseNumber, confirmed.expenseNumber); assert.equal(result.expense.paidAmount, '60.0000');
+    assert.equal(await client.documentNumber.count({ where: { companyId, ownerId: source.id } }), 1);
+    for (const action of ['expense.reopen', 'expense.payment.cancel']) {
+      const entry = await client.auditLog.findFirstOrThrow({ where: { companyId, action } });
+      assert.equal(entry.actorUserId, userId); assert.ok((entry.metadataJson as any).reason);
+    }
+  });
+
+  it('refuses cancellation from the posted journal even when the payment pointer still says pending', async () => {
+    const source = await create.execute(ctx(), draft());
+    await repo.finalizeAndConfirmExpenseCas(await ready(source.id), async () => []);
+    await new RecordExpensePaymentUseCase(repo, audit as any).execute({ ...ctx(), permissions: ['expense.payment.record'] }, source.id, { paidAmount: '40', idempotencyKey: randomUUID() });
+    const payment = await client.expensePayment.findFirstOrThrow({ where: { companyId, expenseId: source.id } });
+    const period = await client.accountingPeriod.upsert({ where: { companyId_periodKey: { companyId, periodKey: '2026-10' } }, create: { companyId, periodKey: '2026-10', status: 'OPEN', startDate: new Date('2026-10-01'), endDate: new Date('2026-10-31') }, update: {} });
+    await client.journalEntry.create({ data: { companyId, periodId: period.id, entryNumber: `posted-${randomUUID()}`, entryType: 'GENERATED', sourceType: 'expense.payment', sourceId: payment.id, status: 'POSTED', entryDate: new Date(), createdByUserId: userId } });
+    await assert.rejects(repo.cancelPaymentAtomic({ companyId, expenseId: source.id, paymentId: payment.id, actorUserId: userId, scopes: {}, reason: 'แก้ยอดจ่าย' }), (error: any) => error.getResponse?.().blocker === 'ledger_posted');
+    assert.equal((await client.expensePayment.findUniqueOrThrow({ where: { id: payment.id } })).status, 'RECORDED');
+    assert.equal((await repo.expenseCorrectionCapabilities(companyId, source.id, ['expense.confirm', 'expense.payment.record'])).canReopen, false);
   });
 
 });

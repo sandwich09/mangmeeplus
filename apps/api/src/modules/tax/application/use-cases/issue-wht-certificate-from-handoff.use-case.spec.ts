@@ -37,11 +37,14 @@ function harness(options: { handoff?: Record<string, unknown>; onReserve?: () =>
     prefillSnapshotJson: prefill(),
     ...options.handoff,
   };
+  const expense = { status: 'CONFIRMED' };
   const certificates: any[] = [];
   const commits: any[] = [];
   const audits: any[] = [];
   const renders: any[] = [];
   const client: any = {
+    $executeRaw: async () => 0,
+    expenseRecord: { findFirst: async () => expense },
     whtCertificateHandoff: {
       findUnique: async ({ where }: any) => (where.id === handoff.id ? { ...handoff } : null),
       updateMany: async ({ where, data }: any) => {
@@ -92,7 +95,7 @@ function harness(options: { handoff?: Record<string, unknown>; onReserve?: () =>
     },
   };
   return {
-    handoff, certificates, commits, audits, renders, client,
+    handoff, expense, certificates, commits, audits, renders, client,
     execute: (gate: LaunchGateGuardService) =>
       new IssueWhtCertificateFromHandoffUseCase(taxRepo, reserveNumber, documentSequences, audit, gate, renderer, {} as any, {} as any),
   };
@@ -190,5 +193,32 @@ describe('IssueWhtCertificateFromHandoffUseCase', () => {
     const h = harness({ handoff: { companyId: 'company-2' } });
     const useCase = h.execute(guard({ state: 'OPEN' }));
     await assert.rejects(() => useCase.execute(ctx, 'handoff-1'), /not found/i);
+  });
+});
+
+
+describe('persistent expense certificate action', () => {
+  it('refuses issuance after the source reopened or its unissued handoff changed while rendering', async () => {
+    for (const mode of ['reopened', 'changed handoff']) {
+      const h = harness({ handoff: { sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1', prefillSnapshotHash: 'original' } });
+      const render = h.client.$transaction;
+      h.client.$transaction = async (work: any) => {
+        if (mode === 'reopened') h.expense.status = 'NEEDS_REVIEW';
+        else h.handoff.prefillSnapshotHash = 'corrected';
+        return render(work);
+      };
+      await assert.rejects(() => h.execute(guard({ state: 'OPEN' })).execute(ctx, 'handoff-1'), (e: any) => ['expense_wht_source_changed', 'wht_handoff_not_issuable'].includes(e.getResponse?.().code));
+      assert.equal(h.certificates.length, 0); assert.equal(h.commits.length, 0);
+    }
+  });
+
+  it('re-downloads the latest issued certificate without reserving another number or issuing a replacement', async () => {
+    const h = harness(); const useCase = h.execute(guard({ state: 'OPEN' }));
+    await assert.rejects(() => useCase.download(ctx, 'handoff-1'), (error: any) => /ยังไม่มีหนังสือรับรอง/.test(error.getResponse?.().message));
+    await useCase.execute(ctx, 'handoff-1');
+    const result = await (useCase as any).download(ctx, 'handoff-1');
+    assert.equal(result.pdfArtifact.mimeType, 'application/pdf'); assert.equal(result.id, h.handoff.certificateId);
+    assert.equal(h.certificates.length, 1); assert.equal(h.commits.length, 1);
+    await assert.rejects(() => (useCase as any).download({ ...ctx, companyId: 'other' }, 'handoff-1'), /not found/i);
   });
 });

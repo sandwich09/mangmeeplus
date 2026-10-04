@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Controller, ForbiddenException, Get, Post, Patch, Param, Body, Query, HttpCode, NotFoundException } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { CorrectWhtCertificateDto, ExportPnd53Dto, LinkExternalWhtCertificateDto, MarkPnd53FiledDto, ResolvePnd53IssueDto, SetWhtHandoffPayeeAddressDto, UpdateCompanyTaxSignatureDto } from './tax.dtos';
@@ -314,7 +314,7 @@ export class TaxController {
   // source payment, outside the Tax workspace (tax-thailand-2026-spec.md:1391).
 
   @Get('wht/payment-handoffs')
-  @RequirePermissions('wht.certificate.read')
+  @RequireAnyPermission('wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct')
   @ApiOperation({ summary: 'List 50 Tawi certificates awaiting external issuance' })
   async listWhtHandoffs(
     @ReqCtx() ctx: RequestContext,
@@ -373,6 +373,13 @@ export class TaxController {
   // `wht.certificate.issue` is gated by `wht_50bis` (legacy `thai_tax` also retains it) —
   // unlike its `wht/payment-handoffs/*` siblings above, which are deliberately NOT gated — but the
   // URL family stays the same because both AP and Expenses already read/write handoffs here.
+  @Get('wht/payment-handoffs/:handoffId/system-certificate')
+  @RequireAnyPermission('wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct')
+  async downloadSystemWhtCertificate(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('handoffId') handoffId: string) {
+    assertRouteCompany(ctx, companyId);
+    return this.issueFromHandoff.download(ctx, handoffId);
+  }
+
   @Post('wht/payment-handoffs/:handoffId/system-certificate')
   @HttpCode(200)
   @RequirePermissions('wht.certificate.issue')

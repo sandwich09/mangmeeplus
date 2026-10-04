@@ -620,6 +620,61 @@ export type ExpensePaymentSummary = {
   createdAt: string;
 };
 
+export type ExpenseCorrectionBlocker = 'not_confirmed' | 'ledger_posted' | 'journal_pending' | 'posting_unresolved'
+  | 'certificate_issued' | 'tax_period_filed' | 'live_claim' | 'permission_denied'
+  | 'payment_voided' | 'no_balance' | 'missing_branch' | 'personal_advance';
+
+/** Read by the server from persisted financial/legal state, never inferred by the client. */
+export type ExpenseCorrectionCapabilities = {
+  canReopen: boolean;
+  reopenBlockers: ExpenseCorrectionBlocker[];
+  canRecordPayment: boolean;
+  recordPaymentBlocker: ExpenseCorrectionBlocker | null;
+  payments: Array<{ id: string; canCancel: boolean; cancelBlocker: ExpenseCorrectionBlocker | null }>;
+};
+
+export const EXPENSE_CORRECTION_WORDS = {
+  saving: 'กำลังบันทึก…',
+  reopen: 'แก้ไขเอกสาร',
+  cancelPayment: 'ยกเลิกรายการจ่ายนี้',
+  reason: 'เหตุผลที่แก้ไข',
+  reasonRequired: 'กรุณาระบุเหตุผลอย่างน้อย 3 ตัวอักษร และไม่เกิน 500 ตัวอักษร',
+  reopened: 'เปิดเอกสารให้แก้ไขแล้ว รายการจ่ายเดิมยังอยู่ กรุณาตรวจยอดก่อนยืนยันอีกครั้ง',
+  paymentCancelled: 'ยกเลิกรายการจ่ายแล้ว กรุณาตรวจยอดค้างจ่ายก่อนบันทึกรายการใหม่',
+  unavailable: 'ยังตรวจสิทธิ์แก้ไขไม่ได้ กรุณาโหลดหน้าใหม่',
+  sourceChanged: 'ข้อมูลเอกสารเปลี่ยนแล้ว กรุณาโหลดหน้าใหม่และตรวจข้อมูลก่อนดำเนินการ',
+  certificateUnavailable: 'ยังไม่มีหนังสือรับรองที่ระบบออกให้ดาวน์โหลด กรุณาตรวจสถานะเอกสาร',
+  paidExceedsPayable: 'ยอดที่จ่ายแล้วเกินยอดสุทธิที่ต้องจ่าย กรุณายกเลิกรายการจ่ายที่ยังไม่ลงบัญชีและบันทึกยอดที่ถูกต้องก่อนยืนยัน',
+} as const;
+
+const EXPENSE_CORRECTION_BLOCKER_WORDS: Record<ExpenseCorrectionBlocker, string> = {
+  not_confirmed: 'เอกสารยังไม่อยู่ในขั้นตอนที่แก้ไขการยืนยันหรือบันทึกจ่ายได้ กรุณาตรวจสถานะเอกสาร',
+  ledger_posted: 'ลงบัญชีแล้ว ให้ตรวจขั้นตอนยกเลิกเอกสารและกลับรายการบัญชีก่อนบันทึกใหม่',
+  posting_unresolved: 'ยังตรวจสถานะการลงบัญชีไม่ครบ ให้ผู้ทำบัญชีตรวจรายการที่เกี่ยวข้องก่อนแก้ไข',
+  journal_pending: 'มีรายการบัญชีที่ยังไม่ผ่านรายการ ให้ผู้ทำบัญชีจัดการรายการนั้นก่อนแก้ไข',
+  certificate_issued: 'ออกเอกสาร 50 ทวิแล้ว ให้แก้ไขหนังสือรับรองและตรวจขั้นตอนยกเลิกเอกสารก่อนบันทึกใหม่',
+  tax_period_filed: 'อยู่ในรอบ ภ.ง.ด.53 ที่ยื่นหรือปิดแล้ว ให้ผู้ทำบัญชีตรวจการแก้ไขแบบภาษีก่อนแก้เอกสาร',
+  live_claim: 'อยู่ในคำขอเบิกที่ยังดำเนินการ ให้จัดการผ่านคำขอเบิกเดิมในเมนูการเบิกจ่าย',
+  permission_denied: 'ต้องให้ผู้มีสิทธิ์ดำเนินการรายการนี้',
+  payment_voided: 'รายการจ่ายนี้ยกเลิกแล้ว',
+  no_balance: 'ไม่มียอดค้างจ่ายแล้ว',
+  missing_branch: 'กรุณาเลือกสาขาของเอกสารก่อนบันทึกจ่าย',
+  personal_advance: 'พนักงานจ่ายร้านแล้ว ให้ดำเนินการคืนเงินผ่านการเบิกจ่าย',
+};
+
+export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocker): string {
+  return Object.hasOwn(EXPENSE_CORRECTION_BLOCKER_WORDS, blocker) ? EXPENSE_CORRECTION_BLOCKER_WORDS[blocker] : EXPENSE_CORRECTION_WORDS.unavailable;
+}
+
+export function expenseConfirmedLockMessage(capabilities?: ExpenseCorrectionCapabilities): string {
+  const remedy = capabilities?.canReopen
+    ? `กด “${EXPENSE_CORRECTION_WORDS.reopen}” เพื่อกลับไปตรวจ รายการจ่ายเดิมยังอยู่`
+    : capabilities?.reopenBlockers.length
+      ? capabilities.reopenBlockers.map(expenseCorrectionBlockerMessage).join(' · ')
+      : EXPENSE_CORRECTION_WORDS.unavailable;
+  return `เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ · ${remedy}`;
+}
+
 export type ExpenseReimbursementProgress = { requestId?: string; requestNo?: string | null; status: string };
 export function isExpensePendingReview(row: { status: ExpenseStatus; reimbursementProgress?: ExpenseReimbursementProgress }): boolean {
   return isExpensePending(row.status) && !row.reimbursementProgress;
@@ -811,6 +866,7 @@ export type ExpenseBuyerAsPrinted = {
 };
 
 export type ExpenseDetail = ExpenseSummary & {
+  correctionCapabilities?: ExpenseCorrectionCapabilities;
   /** Slice 2; absent until a document with a buyer block has been read or re-checked. */
   buyerAsPrinted?: ExpenseBuyerAsPrinted | null;
   primaryAttachmentId?: string | null;

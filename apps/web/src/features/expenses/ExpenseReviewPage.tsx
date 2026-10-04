@@ -1,6 +1,6 @@
 'use client';
 
-import { expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
 import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -27,9 +27,9 @@ import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import {
   acknowledgeOcrTotal, confirmDuplicate, confirmExpense, deleteExpense, dismissDuplicate,
   fetchAttachmentPreviewBlob, getExpense, getExpenseReadStatus,
-  markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, rejectExpense,
+  markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, rejectExpense, reopenExpense, cancelExpensePayment,
   requestExpenseExtraction, removeExpenseReceipt, runDuplicateCheck, updateExpenseReviewFields, uploadExpenseEvidenceFile, voidExpense,
-  listWhtHandoffs, issueSystemWhtCertificate, correctSystemWhtCertificate, issueSystemWhtReplacementCopy,
+  listWhtHandoffs, issueSystemWhtCertificate, downloadSystemWhtCertificate, correctSystemWhtCertificate, issueSystemWhtReplacementCopy,
 } from './expenses.api';
 import {
   captureReadNoticeText, captureReadAgainAllowed, captureReadIsRunning, captureReadNotice,
@@ -45,11 +45,11 @@ import {
   MIME_TYPE_LABELS, canDeleteExpense, claimExpenseRecordNote, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, isClaimExpenseRecord, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
   expenseConfirmBlocker, expenseDocumentDateStatus, EXPENSE_DATE_STATUS_LABELS,
-  canCorrectWhtCertificate, canIssueWhtReplacementCopy,
+  canCorrectWhtCertificate, canIssueWhtReplacementCopy, canIssueExpenseWhtCertificate, expensePaymentFormState, expenseConfirmedLockMessage,
 } from './expenses.model';
 import type { ExpenseReviewTotalsState } from './useExpenseReviewTotals';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
-import { canVoidExpenseFinancialState, isCalculatedExpenseRounding, todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod, type RemoveExpenseReceiptInput, type WhtCertificateHandoffDto } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, isCalculatedExpenseRounding, todayCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod, type RemoveExpenseReceiptInput, type WhtCertificateHandoffDto } from '@watchdog-bms/contracts';
 import {
   AiFieldLabel, AiFieldMissingHint, BuyerMatchBanner, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
   InlineSpinner, MoneyRow, STEP_HELPER_KEYS, STEP_LABEL_KEYS, expenseNoticeKey,
@@ -122,6 +122,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const [showReject, setShowReject] = useState(false);
   const [showVoid, setShowVoid] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [correctionAction, setCorrectionAction] = useState<{ paymentId?: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [duplicateResolution, setDuplicateResolution] = useState<{ candidateId: string; action: 'dismiss' | 'confirm' } | null>(null);
   const [paidAmount, setPaidAmount] = useState('');
@@ -131,6 +132,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const paymentPendingRef = useRef(false);
   const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
   const [paymentFailure, setPaymentFailure] = useState<ExpensePaymentFailure | 'refresh_failed' | null>(null);
+  const prefilledBalanceRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!detail || paymentAttemptRef.current || paymentPendingRef.current) return;
+    const key = `${detail.id}:${detail.outstandingAmount}`;
+    if (prefilledBalanceRef.current === key) return;
+    prefilledBalanceRef.current = key;
+    setPaidAmount(expensePaymentFormState(detail.outstandingAmount, '', paidAt).prefill);
+  }, [detail?.id, detail?.outstandingAmount, paidAt]);
   const [receiptUploading, setReceiptUploading] = useState(false);
   // §16.4 / §17.6: the file intents, the durable read job, and the two answers a conflict can give.
   const fileOperationRef = useRef<{ key: string; operationId: string } | null>(null);
@@ -373,37 +382,28 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     finally { setActionLoading(false); }
   };
 
-  // WHT certificate system issuance plan §4.2: not mandatory (spec §4.2 item 3) — offered right
-  // after a successful confirm, on the same page, only when both gates pass. `hasWht` below is read
-  // from this render's `detail` closure deliberately: whtAmount does not change as a result of
-  // confirming, so the value from just before the call is still the right one to check.
-  const [whtIssuePrompt, setWhtIssuePrompt] = useState<{ handoffId: string } | null>(null);
   const [whtIssuing, setWhtIssuing] = useState(false);
   const [whtIssueError, setWhtIssueError] = useState<string | null>(null);
-  const [whtIssuedPdf, setWhtIssuedPdf] = useState<{ certificateNumber: string; fileName: string; mimeType: string; contentBase64: string } | null>(null);
-
-  // Correction & replacement plan §5.2 survey finding: unlike the session-only prompt above, this
-  // page is ALSO the persistent, cross-session detail view for a confirmed expense (reachable later
-  // from the expenses list's "ยืนยันแล้ว" filter, `ExpenseListPage` → `openListExpense` →
-  // `/companies/:companyId/expenses/:expenseId`) — so the handoff is re-read from the server on every
-  // load, not carried over from the confirm-time session state.
+  const [whtLoading, setWhtLoading] = useState(false);
+  // Read the durable handoff on every confirmed revision, including later visits.
   const [whtHandoff, setWhtHandoff] = useState<WhtCertificateHandoffDto | null>(null);
   useEffect(() => {
-    if (!detail || detail.status !== 'CONFIRMED' || !(Number(detail.whtAmount) > 0) || !permissions.includes('wht.certificate.correct')) {
+    if (!detail || detail.status !== 'CONFIRMED' || !(Number(detail.whtAmount) > 0) || !permissions.some((permission) => ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct'].includes(permission))) {
       setWhtHandoff(null);
       return;
     }
     let cancelled = false;
-    listWhtHandoffs(companyId, { status: 'SYSTEM_ISSUED', sourcePaymentId: expenseId })
-      .then((handoffs) => { if (!cancelled) setWhtHandoff(handoffs[0] ?? null); })
-      .catch(() => { if (!cancelled) setWhtHandoff(null); });
+    setWhtLoading(true); setWhtIssueError(null); setWhtHandoff(null);
+    listWhtHandoffs(companyId, { sourcePaymentId: expenseId })
+      .then((handoffs) => { if (!cancelled) setWhtHandoff(handoffs.find((handoff) => handoff.status !== 'CANCELLED') ?? null); })
+      .catch((e) => { if (!cancelled) setWhtIssueError(err(e)); })
+      .finally(() => { if (!cancelled) setWhtLoading(false); });
     return () => { cancelled = true; };
-  }, [companyId, expenseId, detail?.status, detail?.whtAmount, permissions]);
+  }, [companyId, expenseId, detail?.status, detail?.whtAmount, detail?.updatedAt, permissions]);
 
   const [correctOpen, setCorrectOpen] = useState(false);
   const [correctBusy, setCorrectBusy] = useState(false);
   const [correctError, setCorrectError] = useState<string | null>(null);
-  const [correctedPdf, setCorrectedPdf] = useState<{ certificateNumber: string; fileName: string; mimeType: string; contentBase64: string } | null>(null);
   const [replaceBusy, setReplaceBusy] = useState(false);
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [correctForm, setCorrectForm] = useState({
@@ -447,7 +447,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         reason: correctForm.reason.trim(),
       });
       downloadArtifact(result.pdfArtifact);
-      setCorrectedPdf({ certificateNumber: result.certificateNumber, ...result.pdfArtifact });
+      setWhtHandoff((current) => current ? { ...current, certificateId: result.id } : null);
       setCorrectOpen(false);
       toast.success('แก้ไขหนังสือรับรองเรียบร้อยแล้ว');
     } catch (e) {
@@ -468,31 +468,28 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   };
 
   const doConfirm = async () => {
-    setWhtIssuePrompt(null); setWhtIssuedPdf(null); setWhtIssueError(null);
-    const confirmed = await doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว');
-    if (!confirmed || !hasWht || !permissions.includes('wht.certificate.issue')) return;
-    try {
-      const handoffs = await listWhtHandoffs(companyId, { status: 'REQUIRED', sourcePaymentId: expenseId });
-      const handoff = handoffs[0];
-      if (handoff?.systemIssuanceOpen) setWhtIssuePrompt({ handoffId: handoff.id });
-    } catch {
-      // Best-effort prompt only — the confirm itself already succeeded, and the AP/Expenses handoff
-      // list is always reachable later from the WHT handoff panel.
-    }
+    await doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว');
   };
 
   const doIssueWhtCertificate = async () => {
-    if (!whtIssuePrompt) return;
+    if (!detail || !whtHandoff || !canIssueExpenseWhtCertificate(detail, whtHandoff, permissions)) return;
     setWhtIssuing(true); setWhtIssueError(null);
     try {
-      const result = await issueSystemWhtCertificate(companyId, whtIssuePrompt.handoffId);
+      const result = await issueSystemWhtCertificate(companyId, whtHandoff.id);
       downloadArtifact(result.pdfArtifact);
-      setWhtIssuedPdf({ certificateNumber: result.certificateNumber, ...result.pdfArtifact });
-      setWhtIssuePrompt(null);
+      setWhtHandoff({ ...whtHandoff, status: 'SYSTEM_ISSUED', certificateId: result.id });
+      await load();
       toast.success('ออกหนังสือรับรองหัก ณ ที่จ่ายในระบบเรียบร้อยแล้ว');
-    } catch (e) {
-      setWhtIssueError(err(e));
-    } finally { setWhtIssuing(false); }
+    } catch (e) { setWhtIssueError(err(e)); }
+    finally { setWhtIssuing(false); }
+  };
+
+  const downloadWht = async () => {
+    if (!whtHandoff) return;
+    setWhtIssuing(true); setWhtIssueError(null);
+    try { downloadArtifact((await downloadSystemWhtCertificate(companyId, whtHandoff.id)).pdfArtifact); }
+    catch (e) { setWhtIssueError(err(e)); }
+    finally { setWhtIssuing(false); }
   };
 
   const editPayment = (change: () => void) => {
@@ -507,7 +504,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
 
   const submitPayment = async () => {
     // Synchronous guard also covers two clicks before React renders the disabled state.
-    if (paymentPendingRef.current || actionLoading || paymentFailure === 'conflict' || !paidAmount || !isCivilDate(paidAt)) return;
+    if (paymentPendingRef.current || actionLoading || paymentFailure === 'conflict' || (!paymentAttemptRef.current && (expensePaymentFormState(detail?.outstandingAmount ?? '0', paidAmount, paidAt).disabledReason || !detail?.correctionCapabilities?.canRecordPayment))) return;
     paymentPendingRef.current = true;
     setActionLoading(true); setError(null);
     try {
@@ -525,7 +522,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       }
       setDetail(refreshed);
       paymentAttemptRef.current = null;
-      setPaidAmount(''); setPaymentFailure(null); setPaymentNotice(null);
+      setPaidAmount(expensePaymentFormState(refreshed.outstandingAmount, '', paidAt).prefill); setPaymentFailure(null); setPaymentNotice(null);
       // A successful replay may report a source voided since the original payment.
       toast.success(refreshed.status === 'VOIDED' ? 'รายการนี้ถูกยกเลิกแล้ว ไม่มีการบันทึกจ่ายเพิ่ม' : 'บันทึกการจ่ายเรียบร้อยแล้ว');
     } catch (e) {
@@ -817,6 +814,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // Extraction: expense.ocr.request OR expense.review OR (expense.receipt.upload on own record).
   const canExtract = !claimedSource && (caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord));
   const isConfirmed = detail.status === 'CONFIRMED';
+  const paymentForm = expensePaymentFormState(detail.outstandingAmount, paidAmount, paidAt, Boolean(paymentAttemptRef.current));
   const canCancelFinancialExpense = !claimedSource && !claimRecord && canVoidExpenseFinancialState(detail);
   const canGenerateJournal = isConfirmed && caps.canPostLedger && detail.pendingPostingSourceType !== null;
   const canViewJournal = isConfirmed && caps.canReadLedger && detail.journalEntryId !== null;
@@ -1102,35 +1100,18 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </>
         )}
         {canRestartReview && <button className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.restart_review', locale)}</button>}
-        {/* WHT certificate system issuance plan §4.2: offered right after confirm, not mandatory —
-            the operator can close this and issue later from the AP-style WHT handoff list instead. */}
-        {whtIssuePrompt && (
-          <div role="status" className="w-full rounded-xl border border-brand-100 bg-brand-50 p-3 text-sm text-brand-900">
-            <p className="mb-2">เอกสารนี้หักภาษี ณ ที่จ่ายไว้ — ต้องการออกหนังสือรับรองหัก ณ ที่จ่ายในระบบตอนนี้เลยหรือไม่?</p>
-            {whtIssueError && <div className="mb-2"><ErrorBanner message={whtIssueError} /></div>}
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className={btnClass} disabled={whtIssuing} aria-busy={Boolean(whtIssuing)} onClick={() => void doIssueWhtCertificate()}>
-                {whtIssuing ? 'กำลังพิมพ์เอกสาร...' : t('wht.print_certificate', locale)}
-              </button>
-              <button type="button" className={ghostClass} disabled={whtIssuing} onClick={() => setWhtIssuePrompt(null)}>ปิด</button>
-            </div>
-          </div>
+        {detail.correctionCapabilities?.canReopen && <button type="button" className={ghostClass} disabled={actionLoading} aria-busy={actionLoading} onClick={() => { setReason(''); setError(null); setCorrectionAction({}); }}>{EXPENSE_CORRECTION_WORDS.reopen}</button>}
+        {isConfirmed && hasWht && whtLoading && <p role="status" className="w-full text-sm text-gray-600">กำลังตรวจเอกสาร 50 ทวิ…</p>}
+        {isConfirmed && hasWht && whtIssueError && <div className="w-full"><ErrorBanner message={whtIssueError} /></div>}
+        {canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) && (
+          <button type="button" className={btnClass} disabled={whtIssuing} aria-busy={whtIssuing} onClick={() => void doIssueWhtCertificate()}>
+            {whtIssuing ? 'กำลังพิมพ์เอกสาร…' : t('wht.print_certificate', locale)}
+          </button>
         )}
-        {whtIssuedPdf && (
-          <div role="status" className="w-full rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-900">
-            ระบบออกหนังสือรับรองให้แล้ว · เลขที่ {whtIssuedPdf.certificateNumber}{' '}
-            <button type="button" className="font-semibold underline underline-offset-2" onClick={() => downloadArtifact(whtIssuedPdf)}>ดาวน์โหลด PDF อีกครั้ง</button>
-          </div>
-        )}
-        {/* Correction & replacement plan §5.2: server-truth banner, works whenever the operator
-            reaches this page — same day or long after confirming (unlike whtIssuePrompt/whtIssuedPdf
-            above, which only exist for the confirming session). */}
-        {whtHandoff && (
+        {isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED' && (
           <div className="w-full rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-900">
-            <p>ระบบออกหนังสือรับรองให้แล้ว{(correctedPdf) ? ` · เลขที่ ${correctedPdf.certificateNumber}` : ''}</p>
-            {correctedPdf && (
-              <button type="button" className="mt-1 font-semibold underline underline-offset-2" onClick={() => downloadArtifact(correctedPdf)}>ดาวน์โหลด PDF อีกครั้ง</button>
-            )}
+            <p>ระบบออกหนังสือรับรองให้แล้ว</p>
+            <button type="button" className="mt-1 font-semibold underline underline-offset-2" disabled={whtIssuing} aria-busy={whtIssuing} onClick={() => void downloadWht()}>ดาวน์โหลด PDF อีกครั้ง</button>
             {canCorrectWhtCertificate(whtHandoff, permissions) && (
               <div className="mt-3 border-t border-green-200 pt-3">
                 <button type="button" className={ghostClass} aria-expanded={correctOpen} onClick={() => (correctOpen ? setCorrectOpen(false) : openCorrectForm())}>
@@ -1285,7 +1266,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </p>
           {/* The whole form below is disabled at CONFIRMED, but nothing on the page said so —
               the fields just stopped responding. State the rule and the way out, once, here. */}
-          <p className="mt-1 text-xs font-semibold text-gray-600">เอกสารยืนยันแล้ว แก้ไขข้อมูลไม่ได้ · หากข้อมูลไม่ถูกต้อง ให้ยกเลิกเอกสารแล้วบันทึกใหม่</p>
+          <p className="mt-1 text-xs font-semibold text-gray-600">{expenseConfirmedLockMessage(detail.correctionCapabilities)}</p>
         </div>
         <MangmeeBadge tone={detail.postingStatus === 'posted' ? 'brand' : detail.postingStatus === 'posting_error' ? 'danger' : detail.postingStatus === 'pending' ? 'amber' : 'slate'}>
           {POSTING_STATUS_LABELS[detail.postingStatus]}
@@ -1601,7 +1582,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             รายการนี้มาจากการเบิกคืนพนักงาน{detail.vendorDocumentNumber ? ` (ใบเบิก ${detail.vendorDocumentNumber})` : ''} — ระบบบันทึกการชำระให้อัตโนมัติเมื่อมีการบันทึกจ่ายใบเบิก
           </p>
         )}
-        {isConfirmed && !personalSubstitute && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && !detail.sourceReimbursementRequestId && (
+        {(detail.correctionCapabilities?.canRecordPayment || Boolean(paymentAttemptRef.current)) && (
           <form onSubmit={(event) => { event.preventDefault(); void submitPayment(); }} className="space-y-3">
             <fieldset disabled={actionLoading} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <label className="space-y-1 text-sm text-gray-700">
@@ -1620,20 +1601,28 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               </div>
             </fieldset>
             <p className="text-sm text-gray-500">เลือกวันที่จ่ายเงินจริง แม้จะนำมาบันทึกภายหลัง · ยอดค้างจ่าย {baht(detail.outstandingAmount)}</p>
-            {paymentNotice && <p role="status" className="rounded-xl bg-warning-50 p-3 text-sm text-warning-800">{paymentNotice}</p>}
-            <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={actionLoading || paymentFailure === 'conflict' || !paidAmount || !isCivilDate(paidAt)} aria-busy={Boolean(actionLoading)}>{actionLoading ? 'กำลังบันทึก…' : paymentFailure === 'conflict' ? 'กรุณาตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : t('expenses.record_payment', locale)}</button>
+            {paymentForm.disabledReason && <p role="status" className="text-sm text-warning-700">{paymentForm.disabledReason}</p>}
+            <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={actionLoading || paymentFailure === 'conflict' || Boolean(paymentForm.disabledReason)} aria-busy={Boolean(actionLoading)}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : paymentFailure === 'conflict' ? 'กรุณาตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : paymentForm.label}</button>
           </form>
         )}
+        {isConfirmed && detail.correctionCapabilities?.recordPaymentBlocker && detail.correctionCapabilities.recordPaymentBlocker !== 'no_balance' && (
+          <p className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.recordPaymentBlocker)}</p>
+        )}
+        {paymentNotice && <p role="status" className="rounded-xl bg-warning-50 p-3 text-sm text-warning-800">{paymentNotice}</p>}
         {(detail.payments?.length ?? 0) > 0 && (
           <div className="space-y-2 border-t border-gray-100 pt-3">
             <p className="text-xs font-semibold text-gray-600">ประวัติการจ่าย</p>
-            {detail.payments?.map((payment) => (
+            {detail.payments?.map((payment) => {
+              const paymentCapability = detail.correctionCapabilities?.payments.find((item) => item.id === payment.id);
+              return (
               <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
                 <span>{dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span>
                 <span className="tabular-nums font-semibold text-gray-800">{baht(payment.amount)}</span>
                 <span>{payment.status === 'VOIDED' ? 'ยกเลิกแล้ว' : payment.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : payment.postingStatus === 'posting_error' ? 'ลงบัญชีไม่สำเร็จ' : 'รอลงบัญชี'}</span>
+                {paymentCapability?.canCancel && <button type="button" className={ghostClass} disabled={actionLoading || Boolean(paymentFailure)} aria-busy={actionLoading} onClick={() => { setReason(''); setError(null); setCorrectionAction({ paymentId: payment.id }); }}>{EXPENSE_CORRECTION_WORDS.cancelPayment}</button>}
+                {payment.status === 'RECORDED' && paymentCapability?.cancelBlocker && <p className="w-full">{expenseCorrectionBlockerMessage(paymentCapability.cancelBlocker)}</p>}
               </div>
-            ))}
+            ); })}
           </div>
         )}
         {detail.status === 'VOIDED' && <p className="text-sm text-gray-400">{t('expenses.document_voided', locale)}{detail.voidReason ? ` — ${detail.voidReason}` : ''}</p>}
@@ -2021,6 +2010,27 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         )}
       </MangmeePage>
 
+      <Modal open={Boolean(correctionAction)} title={correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopen}
+        size="sm" closeLabel={t('expenses.close', 'th')} onClose={() => { if (!actionLoading) setCorrectionAction(null); }}>
+        <form className="space-y-3" onSubmit={(event) => {
+          event.preventDefault();
+          if (!correctionAction || reason.trim().length < 3 || findForbiddenChars(reason).length) return;
+          const paymentId = correctionAction.paymentId;
+          void doAction(async () => {
+            if (paymentId) await cancelExpensePayment(companyId, expenseId, paymentId, reason.trim());
+            else await reopenExpense(companyId, expenseId, reason.trim());
+            setCorrectionAction(null); setReason('');
+            paymentAttemptRef.current = null; setPaymentFailure(null); setPaymentNotice(null);
+            if (!paymentId) setStep('data');
+          }, paymentId ? EXPENSE_CORRECTION_WORDS.paymentCancelled : EXPENSE_CORRECTION_WORDS.reopened);
+        }}>
+          {error && <ErrorBanner message={error} />}
+          <label className="block text-sm" htmlFor="expense-correction-reason">{EXPENSE_CORRECTION_WORDS.reason}</label>
+          <textarea id="expense-correction-reason" className={inputClass} rows={3} value={reason} required minLength={3} maxLength={REASON_MAX_LENGTH} disabled={actionLoading} onChange={(event) => setReason(sanitizeReasonInput(event.target.value))} />
+          {reason.trim().length < 3 && <p className="text-sm text-gray-600">{EXPENSE_CORRECTION_WORDS.reasonRequired}</p>}
+          <button type="submit" className={btnClass} disabled={actionLoading || reason.trim().length < 3} aria-busy={actionLoading}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : t('expenses.confirm', 'th')}</button>
+        </form>
+      </Modal>
       <Modal
         open={showReject}
         title={t('expenses.reject_confirm_title', locale)}

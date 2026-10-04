@@ -1,3 +1,4 @@
+import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
 import { JPEG_LABEL, PNG_LABEL } from '@watchdog-bms/contracts';
 import { expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import type {
@@ -365,6 +366,7 @@ export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | '
 }
 
 export type ExpenseDetail = ExpenseSummary & {
+  correctionCapabilities?: import('@watchdog-bms/contracts').ExpenseCorrectionCapabilities;
   /** Vendor-address Slice 2: the printed buyer block and its registry comparison (warn-only). */
   buyerAsPrinted?: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted | null;
   primaryAttachmentId?: string | null;
@@ -1822,4 +1824,35 @@ export function canIssueWhtReplacementCopy(
 ): boolean {
   return handoff.status === 'SYSTEM_ISSUED' && Boolean(handoff.certificateId) && Boolean(handoff.systemReplacementOpen)
     && permissions.includes('wht.certificate.correct');
+}
+
+
+export { expenseConfirmedLockMessage } from '@watchdog-bms/contracts';
+
+export function expensePaymentFormState(outstanding: string, amount: string, paidAt: string, retrying = false) {
+  const balance = Number(outstanding);
+  const prefill = Number.isFinite(balance) && balance > 0 ? balance.toFixed(2) : '';
+  const value = Number(amount);
+  const disabledReason = retrying ? null : !INCOME_POSITIVE_MONEY_PATTERN.test(amount.trim())
+    ? 'กรุณากรอกยอดจ่ายมากกว่า 0 และทศนิยมไม่เกิน 2 ตำแหน่ง'
+    : value > Number(prefill) ? 'ยอดจ่ายเกินยอดค้างจ่าย กรุณาตรวจยอดอีกครั้ง'
+    : !isCivilDate(paidAt) ? 'กรุณาเลือกวันที่จ่ายเงินจริงให้ถูกต้อง' : null;
+  const formatted = `฿${(Number.isFinite(value) ? value : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return { prefill, disabledReason, label: value > 0 && value === Number(prefill) ? `บันทึกจ่ายส่วนที่เหลือ ${formatted}` : `บันทึกจ่าย ${formatted}` };
+}
+
+export function canIssueExpenseWhtCertificate(expense: Pick<ExpenseDetail, 'status' | 'whtAmount'>,
+  handoff: import('@watchdog-bms/contracts').WhtCertificateHandoffDto | null, permissions: string[]): boolean {
+  return expense.status === 'CONFIRMED' && Number(expense.whtAmount) > 0 && handoff?.status === 'REQUIRED'
+    && handoff.systemIssuanceOpen && permissions.includes('wht.certificate.issue');
+}
+
+export function expenseWhtCategoriesForPayee<T extends { formType: string }>(categories: T[], payeeType: BuyerEntityKind | '' | undefined): T[] {
+  const formType = payeeType === 'INDIVIDUAL' ? 'PND3' : payeeType === 'JURISTIC' ? 'PND53' : null;
+  return categories.filter((category) => category.formType === formType);
+}
+
+export function changeExpensePayeeType(values: ExpenseDraftReviewValues, payeeType: BuyerEntityKind | '', categories: Array<{ code: string; formType: string }>): ExpenseDraftReviewValues {
+  return { ...values, vendorEntityKindSnapshot: payeeType,
+    whtCategoryCode: expenseWhtCategoriesForPayee(categories, payeeType).some((category) => category.code === values.whtCategoryCode) ? values.whtCategoryCode : '' };
 }

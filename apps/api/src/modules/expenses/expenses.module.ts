@@ -13,6 +13,8 @@ import {
   VoidExpenseUseCase,
   MarkExpenseReadyUseCase,
   RecordExpensePaymentUseCase,
+  ReopenExpenseUseCase,
+  CancelExpensePaymentUseCase,
 } from './application/use-cases/expense-draft.use-case';
 import {
   InitReceiptUploadUseCase,
@@ -161,6 +163,8 @@ import { ProcurementModule } from '../procurement/procurement.module';
     VoidExpenseUseCase,
     MarkExpenseReadyUseCase,
     RecordExpensePaymentUseCase,
+  ReopenExpenseUseCase,
+  CancelExpensePaymentUseCase,
     DeleteExpenseUseCase,
     RemoveExpenseReceiptUseCase,
     InitReceiptUploadUseCase,

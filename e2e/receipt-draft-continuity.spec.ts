@@ -530,9 +530,12 @@ for (const width of [390, 1280]) {
         await page.getByRole('option', { name: words['expenses.wht_yes'], exact: true }).click();
         await expect(payeeKind).toBeVisible();
         await expect(incomeCategory).toBeVisible();
+        await expect(block.getByText(words['expenses.wht_categories_empty'], { exact: true })).toHaveCount(0);
+        await payeeKind.click();
+        await page.getByRole('option', { name: 'บุคคลธรรมดา', exact: true }).click();
         await expect(block.getByText(words['expenses.wht_categories_empty'], { exact: true })).toBeVisible();
         await withholding.fill('3');
-        await expect(payeeKind).toHaveAttribute('aria-invalid', 'true');
+        await expect(incomeCategory).toHaveAttribute('aria-invalid', 'true');
         await expect(next).toBeDisabled();
         await block.screenshot({ path: info.outputPath('withholding-empty-catalog-' + width + '.png') });
         // Clearing the rate needs no category, even with an empty catalog.

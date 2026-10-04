@@ -1,3 +1,4 @@
+import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage } from '@watchdog-bms/contracts';
 import { loadExpenseReimbursementProgress } from './expense-reimbursement-progress';
 import { loadExpenseEvidenceSources } from './expense-evidence-sources';
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
@@ -6,7 +7,7 @@ import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAf
 import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
-import { findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, type ExpenseClaimOwner } from './expense-void-blocker';
+import { expenseWhtHandoffWhere, lockExpenseCorrection, readExpenseCorrectionCapabilities, findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, type ExpenseClaimOwner } from './expense-void-blocker';
 import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-as-printed.logic';
@@ -613,6 +614,71 @@ export class PrismaExpenseRepository {
       };
       if (withinTx) await withinTx(tx, result);
       return result;
+    }, { isolationLevel: 'ReadCommitted' });
+  }
+
+  async expenseCorrectionCapabilities(companyId: string, expenseId: string, permissions: string[]) {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const expense = await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId }, include: { payments: true } });
+      if (!expense) throw new NotFoundException();
+      return readExpenseCorrectionCapabilities(tx, expense, permissions);
+    }, { isolationLevel: 'RepeatableRead' });
+  }
+
+  async reopenExpenseAtomic(input: {
+    companyId: string; expenseId: string; actorUserId: string; scopes: BranchScopes; reason: string;
+  }, withinTx?: (tx: any) => Promise<void>): Promise<ExpenseRecord> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
+      await lockExpenseCorrection(tx, input.companyId, input.expenseId);
+      // Take turns with filing and handoff mutations, including writers which read before us.
+      await tx.$executeRaw`SELECT id FROM "WhtCertificateHandoff" WHERE "companyId" = ${input.companyId} AND (("sourcePaymentType" = 'expense.record' AND "sourcePaymentId" = ${input.expenseId}) OR EXISTS (SELECT 1 FROM "TaxEvent" e WHERE e."companyId" = ${input.companyId} AND e."sourceType" = 'expense.record' AND e."sourceId" = ${input.expenseId} AND "taxEventIdsJson" @> jsonb_build_array(e.id))) FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "TaxPeriod" WHERE "companyId" = ${input.companyId} AND "formType" = 'PND53' AND (id IN (SELECT "taxPeriodId" FROM "TaxEvent" WHERE "companyId" = ${input.companyId} AND "sourceType" = 'expense.record' AND "sourceId" = ${input.expenseId}) OR "periodKey" = (SELECT to_char("expenseDate" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM') FROM "ExpenseRecord" WHERE "companyId" = ${input.companyId} AND id = ${input.expenseId})) FOR UPDATE`;
+      const current = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId }, include: { payments: true } });
+      if (!current) throw new NotFoundException();
+      if (!isBranchInScope(input.scopes, current.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+      const capability = await readExpenseCorrectionCapabilities(tx, current, ['expense.confirm']);
+      if (!capability.canReopen) throw new ConflictException({ code: 'expense_correction_blocked', blockers: capability.reopenBlockers,
+        message: capability.reopenBlockers.map(expenseCorrectionBlockerMessage).join(' · ') });
+      const changed = await tx.expenseRecord.updateMany({ where: { companyId: input.companyId, id: input.expenseId, status: 'CONFIRMED', updatedAt: current.updatedAt },
+        data: { status: 'NEEDS_REVIEW', postingStatus: 'not_required', postingError: null,
+          confirmedAt: null, confirmedByUserId: null, reviewedAt: null, reviewedByUserId: null, updatedByUserId: input.actorUserId } });
+      if (changed.count !== 1) throw new ConflictException('expense_correction_source_changed');
+      const events = await tx.taxEvent.findMany({ where: { companyId: input.companyId, sourceType: 'expense.record', sourceId: input.expenseId }, select: { id: true } });
+      await tx.whtCertificateHandoff.updateMany({ where: { ...expenseWhtHandoffWhere(input.companyId, input.expenseId, events.map((event: any) => event.id)), status: 'REQUIRED' }, data: { status: 'CANCELLED' } });
+      await tx.taxEvent.updateMany({ where: { companyId: input.companyId, sourceType: 'expense.record', sourceId: input.expenseId, status: 'ACTIVE', eventType: { in: ['WHT_PND3', 'WHT_PND53'] } }, data: { status: 'SUPERSEDED', sourceHash: null } });
+      if (withinTx) await withinTx(tx);
+      return mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { companyId: input.companyId, id: input.expenseId } }));
+    }, { isolationLevel: 'ReadCommitted' });
+  }
+
+  async cancelPaymentAtomic(input: {
+    companyId: string; expenseId: string; paymentId: string; actorUserId: string; scopes: BranchScopes; reason: string;
+  }, withinTx?: (tx: any) => Promise<void>): Promise<ExpenseRecord> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
+      await lockExpenseCorrection(tx, input.companyId, input.expenseId);
+      const current = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId }, include: { payments: true } });
+      if (!current) throw new NotFoundException();
+      if (!isBranchInScope(input.scopes, current.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+      const payment = await tx.expensePayment.findFirst({ where: { companyId: input.companyId, expenseId: input.expenseId, id: input.paymentId } });
+      if (!payment) throw new NotFoundException();
+      if (payment.status === 'VOIDED') return mapExpense(current);
+      const capability = (await readExpenseCorrectionCapabilities(tx, current, ['expense.payment.record'])).payments.find((p) => p.id === input.paymentId);
+      if (!capability?.canCancel) throw new ConflictException({ code: 'expense_payment_correction_blocked', blocker: capability?.cancelBlocker,
+        message: capability?.cancelBlocker ? expenseCorrectionBlockerMessage(capability.cancelBlocker) : EXPENSE_CORRECTION_WORDS.unavailable });
+      const changedPayment = await tx.expensePayment.updateMany({ where: { companyId: input.companyId, expenseId: input.expenseId, id: input.paymentId, status: 'RECORDED' },
+        data: { status: 'VOIDED', postingStatus: 'not_required', postingError: null, voidedAt: new Date(), voidedByUserId: input.actorUserId } });
+      if (changedPayment.count !== 1) throw new ConflictException('expense_payment_changed');
+      // Subtract only this history row: old expenses can include a legacy paid balance with no row.
+      const paidAmount = Decimal.max(new Decimal(current.paidAmount.toString()).minus(payment.amount.toString()), 0).toFixed(4);
+      const latest = (await tx.expensePayment.findMany({ where: { companyId: input.companyId, expenseId: input.expenseId, status: 'RECORDED' }, orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }] }))[0];
+      const changed = await tx.expenseRecord.updateMany({ where: { companyId: input.companyId, id: input.expenseId, status: current.status, updatedAt: current.updatedAt },
+        data: { paidAmount, ...calcPaymentAmounts(current.netPayableAmount.toString(), paidAmount), paymentStatus: derivePaymentStatus(current.netPayableAmount.toString(), paidAmount),
+          paidAt: latest?.paidAt ?? null, paymentMethod: latest?.paymentMethod ?? null, bankAccountRef: latest?.bankAccountRef ?? null, updatedByUserId: input.actorUserId } });
+      if (changed.count !== 1) throw new ConflictException('expense_payment_changed');
+      if (withinTx) await withinTx(tx);
+      return mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { companyId: input.companyId, id: input.expenseId } }));
     }, { isolationLevel: 'ReadCommitted' });
   }
 
@@ -2893,6 +2959,7 @@ export class PrismaExpenseRepository {
       const current = await tx.expenseRecord.findFirst({ where: { id: input.id, companyId: input.companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
       if (current?.status === 'CONFIRMED') return mapExpense(current);
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
+      assertExpensePaidWithinPayable(current);
       await assertProjectionSource(tx, input.companyId, current);
       assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
         { ...mapExpense(current), lines: (current.lines ?? []).map(mapLine) });
@@ -2955,6 +3022,7 @@ export class PrismaExpenseRepository {
       });
       if (current?.status === 'CONFIRMED') return { expense: mapExpense(current), finalized: [] };
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
+      assertExpensePaidWithinPayable(current);
       await assertProjectionSource(tx, input.companyId, current);
       requireExpenseBranchId(current.branchId);
       assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
@@ -3015,6 +3083,7 @@ export class PrismaExpenseRepository {
           ...line, ...acceptedVat!.lines.find((item) => item.lineNumber === line.lineNumber)!.totals,
         })),
       } : currentRecord;
+      assertExpensePaidWithinPayable(acceptedRecord);
       const finalized = await finalizeTax({ db: tx, expense: acceptedRecord });
       const expectedLineIds = currentRecord.lines.filter((line) => line.taxSnapshot?.taxCodeDefinitionId || line.taxSnapshot?.externalTaxCode).map((line) => line.id);
       if (finalized.length !== expectedLineIds.length || new Set(finalized.map((line) => line.sourceLineId)).size !== finalized.length
@@ -4322,7 +4391,11 @@ async function createWhtHandoffForExpense(tx: any, input: {
     withheldAmount,
     paymentDate: expense.expenseDate.toISOString(),
   };
-  await tx.whtCertificateHandoff.create({
+  const retired = await tx.whtCertificateHandoff.findFirst({ where: { companyId, creationCommandId: `wht-cert:${companyId}:expense.record:${expense.id}`, status: 'CANCELLED' }, select: { id: true } });
+  const writeHandoff = retired
+    ? (input: any) => tx.whtCertificateHandoff.update({ where: { id: retired.id }, data: { ...input.data, payeeAddress: null, payeeAddressByUserId: null, payeeAddressAt: null } })
+    : (input: any) => tx.whtCertificateHandoff.create(input);
+  await writeHandoff({
     data: {
       companyId,
       status: 'REQUIRED',
@@ -4341,4 +4414,11 @@ async function createWhtHandoffForExpense(tx: any, input: {
       payloadFingerprint: createHash('sha256').update(JSON.stringify(prefill)).digest('hex'),
     },
   });
+}
+
+
+function assertExpensePaidWithinPayable(expense: any): void {
+  if (new Decimal(String(expense.paidAmount ?? 0)).minus(String(expense.netPayableAmount)).gt(SETTLE_EPSILON)) {
+    throw new BadRequestException({ code: 'expense_paid_exceeds_payable', message: EXPENSE_CORRECTION_WORDS.paidExceedsPayable });
+  }
 }

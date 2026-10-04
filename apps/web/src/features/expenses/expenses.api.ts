@@ -743,3 +743,16 @@ export function correctSystemWhtCertificate(companyId: string, handoffId: string
 export function issueSystemWhtReplacementCopy(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
   return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate/replacement-copy`, { method: 'POST' });
 }
+
+
+export function reopenExpense(companyId: string, expenseId: string, reason: string) {
+  return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export function cancelExpensePayment(companyId: string, expenseId: string, paymentId: string, reason: string) {
+  return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/payments/${paymentId}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export function downloadSystemWhtCertificate(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {
+  return apiFetch(`/companies/${companyId}/wht/payment-handoffs/${handoffId}/system-certificate`);
+}

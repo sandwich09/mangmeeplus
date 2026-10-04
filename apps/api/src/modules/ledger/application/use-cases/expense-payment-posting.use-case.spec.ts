@@ -220,3 +220,23 @@ describe('PrismaExpenseRepository.countPostingBlockers — GAP-07 settlement blo
     assert.deepEqual(await repo.countPostingBlockers(CO, FROM, TO), { pending: 0, errors: 0 });
   });
 });
+
+describe('expense correction and generated journal creation share the mutation boundary', () => {
+  for (const [sourceType, expenseStatus, paymentStatus, expectedVersion] of [
+    ['expense.record', 'NEEDS_REVIEW', 'RECORDED', undefined],
+    ['expense.payment', 'CONFIRMED', 'VOIDED', undefined],
+    ['expense.record', 'CONFIRMED', 'RECORDED', new Date('2026-10-03')],
+  ] as const) it(`refuses stale ${sourceType}: ${expenseStatus}/${paymentStatus}/${expectedVersion}`, async () => {
+    const { PrismaLedgerRepository } = await import('../../infrastructure/prisma-ledger.repository');
+    let writes = 0;
+    const client: any = {
+      $transaction: async (work: any) => work({ ...client }), $executeRaw: async () => 0,
+      expenseRecord: { findFirst: async () => ({ status: expenseStatus, updatedAt: new Date('2026-10-04') }) },
+      expensePayment: { findFirst: async () => ({ expenseId: 'exp-1', status: paymentStatus }) },
+      journalEntry: { create: async ({ data }: any) => { writes++; return { id: 'j1', ...data, lines: [] }; } },
+    };
+    const repo = new PrismaLedgerRepository({ client } as any);
+    await assert.rejects(() => repo.createJournalEntry({ companyId: 'co-1', periodId: 'p1', entryNumber: 'JV1', entryType: 'GENERATED', sourceType, sourceId: sourceType === 'expense.record' ? 'exp-1' : 'pay-1', expectedExpenseUpdatedAt: expectedVersion, lines: [], entryDate: new Date() } as any), (e: any) => e.getResponse?.().code === 'expense_posting_source_changed');
+    assert.equal(writes, 0);
+  });
+});
