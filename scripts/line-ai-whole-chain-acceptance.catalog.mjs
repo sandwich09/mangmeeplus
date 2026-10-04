@@ -370,6 +370,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/modules/line-ai/agents/semantic-turn-v2-approval-backlog.spec.ts',
   ] },
   { id: 'reliability-api-v2', cwd: 'apps/api', command: '../../node_modules/.bin/tsx', args: ['--test',
+    // Public Official OA webhook (#999): merged to main without an owning runner, so the API suite's coverage guard failed.
+    'src/modules/auth/line-official-webhook.controller.spec.ts',
     'src/modules/billing/application/billing-feature-entitlements.spec.ts',
     'src/modules/billing/application/billing-plan-manage.spec.ts',
     'src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.spec.ts',

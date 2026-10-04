@@ -21,7 +21,7 @@ test('all four server statuses have Thai words and allow only supported actions'
   assert.deepEqual(EXECUTIVE_ACCOUNT_STATUSES.map(executiveStatus), ['รอเปิดใช้งาน', 'เปิดใช้งาน', 'ระงับ', 'ถอนสิทธิ์แล้ว']);
   for (const status of EXECUTIVE_ACCOUNT_STATUSES) {
     const actions = executiveActions({ ...user, status });
-    assert.deepEqual(actions, status === 'REVOKED' ? [] : ['export', 'contacts', status === 'SUSPENDED' ? 'activate' : 'suspend', 'credential']);
+    assert.deepEqual(actions, status === 'REVOKED' ? [] : ['export', 'contacts', 'note', status === 'SUSPENDED' ? 'activate' : 'suspend', 'credential']);
   }
   assert.deepEqual(executiveActions(user, true), []);
 });
@@ -30,6 +30,10 @@ test('account command toggles only its chosen right and requires a bounded reaso
   const { executiveCommand } = await logic();
   assert.deepEqual(executiveCommand(user, 'export', ' ตรวจแล้ว '), { path: 'access', body: { canExport: true, canSeeContacts: true, reason: 'ตรวจแล้ว' } });
   assert.deepEqual(executiveCommand(user, 'contacts', 'เหตุผล'), { path: 'access', body: { canExport: false, canSeeContacts: false, reason: 'เหตุผล' } });
+  // The note right is sent only when it is the one being changed: the server keeps it otherwise, whatever this page last read.
+  assert.deepEqual(executiveCommand(user, 'note', 'เหตุผล'), { path: 'access', body: { canExport: false, canSeeContacts: true, canEditCompanyNote: true, reason: 'เหตุผล' } });
+  assert.deepEqual(executiveCommand({ ...user, canEditCompanyNote: true }, 'note', 'เหตุผล'), { path: 'access', body: { canExport: false, canSeeContacts: true, canEditCompanyNote: false, reason: 'เหตุผล' } });
+  for (const action of ['export', 'contacts'] as const) assert.ok(!('canEditCompanyNote' in executiveCommand({ ...user, canEditCompanyNote: true }, action, 'เหตุผล')!.body));
   assert.deepEqual(executiveCommand(user, 'suspend', 'เหตุผล'), { path: 'status', body: { status: 'SUSPENDED', reason: 'เหตุผล' } });
   assert.deepEqual(executiveCommand({ ...user, status: 'SUSPENDED' }, 'activate', 'เหตุผล'), { path: 'status', body: { status: 'ACTIVE', reason: 'เหตุผล' } });
   assert.deepEqual(executiveCommand(user, 'credential', 'เหตุผล'), { path: 'credential', body: { reason: 'เหตุผล' } });
@@ -45,16 +49,26 @@ test('confirmation names both identifiers, sessions and irretrievable files trut
   assert.match(reset, /การเข้าระบบที่ค้างอยู่.*ยกเลิก/);
   for (const action of ['export', 'contacts'] as const) assert.match(executiveConfirmation({ ...user, canExport: true }, action), /ดาวน์โหลดไปแล้วเรียกคืนไม่ได้/);
   assert.equal(executiveRights({ ...user, canRead: false, canSeeContacts: false }), 'ไม่มีสิทธิ์รายงาน');
+  // The note right: named by the note's own shared words in the list of rights, the switch and the action; its effect is said truthfully.
+  const { COMPANY_TEAM_NOTE_WORDS: NOTE } = await import('@watchdog-bms/contracts');
+  const { executiveRightList, executiveActionLabel, EXECUTIVE_RIGHTS } = await logic();
+  assert.equal(EXECUTIVE_RIGHTS.canEditCompanyNote, NOTE.permissionDescription);
+  assert.deepEqual(executiveRightList(user), ['ดูรายงานผู้บริหาร', 'ดูข้อมูลติดต่อเจ้าของร้าน']);
+  assert.deepEqual(executiveRightList({ ...user, canExport: true, canEditCompanyNote: true }), ['ดูรายงานผู้บริหาร', 'ส่งออก Excel', 'ดูข้อมูลติดต่อเจ้าของร้าน', NOTE.permissionDescription]);
+  assert.equal(executiveActionLabel(user, 'note'), `เปิดสิทธิ์${NOTE.permissionDescription}`); assert.equal(executiveActionLabel({ ...user, canEditCompanyNote: true }, 'note'), `ปิดสิทธิ์${NOTE.permissionDescription}`);
+  const note = executiveConfirmation(user, 'note');
+  assert.ok(note.includes(user.displayName) && note.includes(user.username)); assert.ok(note.includes(NOTE.description)); assert.doesNotMatch(note, /ดาวน์โหลด|ข้อมูลส่วนบุคคล/);
 });
 
 test('create defaults are unticked; validation and payload preserve optional contact semantics', async () => {
   const { emptyExecutiveForm, validateExecutiveForm, executiveCreateBody } = await logic();
   const empty = emptyExecutiveForm();
-  assert.equal(empty.canExport, false); assert.equal(empty.canSeeContacts, false);
+  assert.equal(empty.canExport, false); assert.equal(empty.canSeeContacts, false); assert.equal(empty.canEditCompanyNote, false);
   assert.deepEqual(Object.keys(validateExecutiveForm(empty)).sort(), ['displayName', 'username']);
   const valid = { ...empty, username: ' Admin_1 ', displayName: ' ชื่อ ', email: ' ', phoneNumber: ' ' };
   assert.deepEqual(validateExecutiveForm(valid), {});
-  assert.deepEqual(executiveCreateBody(valid), { username: 'admin_1', displayName: 'ชื่อ', canExport: false, canSeeContacts: false });
+  assert.deepEqual(executiveCreateBody(valid), { username: 'admin_1', displayName: 'ชื่อ', canExport: false, canSeeContacts: false, canEditCompanyNote: false });
+  assert.equal(executiveCreateBody({ ...valid, canEditCompanyNote: true }).canEditCompanyNote, true);
   assert.deepEqual(Object.keys(validateExecutiveForm({ ...valid, username: 'ก', displayName: 'ก'.repeat(121), email: 'invalid', phoneNumber: '0'.repeat(21) })).sort(), ['displayName', 'email', 'phoneNumber', 'username']);
 });
 

@@ -15,6 +15,7 @@ export type TransactionTaxSourceLineRow = {
   taxInvoiceNumber: string | null;
   taxComponents: TransactionTaxComponentPreview[];
   updatedAt: Date;
+  confirmedAt?: Date | null;
 };
 
 export type AccountingDocumentSourceRow = {
@@ -58,6 +59,7 @@ export type ExpenseSourceRow = {
   vendorAddress: string | null;
   currency: string;
   updatedAt: Date;
+  confirmedAt?: Date | null;
 };
 
 // WHT events are derived from confirmed expenses with whtAmount > 0
@@ -78,6 +80,7 @@ export type ExpenseWhtSourceRow = {
   whtRate: string | null;
   currency: string;
   updatedAt: Date;
+  confirmedAt?: Date | null;
 };
 
 // WHT events derived from recorded supplier payments that withheld tax. The other seam for the same

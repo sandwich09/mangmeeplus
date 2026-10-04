@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import {
   eligibleKnowledgeCards, knowledgeCardHash, knowledgePackHash, offeredKnowledgeMetadata,
   parseSelectedKnowledgeCardIds, renderApprovedKnowledge, validateKnowledgePack,
@@ -28,13 +29,29 @@ describe('approved product knowledge eligibility, source integrity and rendering
   it('validates bounded curated bodies against the exact checked-in manual source hashes', () => {
     validateKnowledgePack(PRODUCT_HELP_PACK);
     assert.equal(PRODUCT_HELP_PACK.status, 'APPROVED');
-    assert.deepEqual(PRODUCT_HELP_PACK.reviewers, ['repository-ai-source-code-review:codex-gpt-5.6-sol:2026-09-27']);
+    assert.deepEqual(PRODUCT_HELP_PACK.reviewers, ['repository-ai-source-code-review:codex-gpt-6:2026-10-04']);
+    assert.equal(PRODUCT_HELP_PACK.version, 2);
+    assert.equal(PRODUCT_HELP_PACK.cards.length, 12, 'refresh the existing pack without adding cards');
+    assert.equal(PRODUCT_HELP_PACK.effectiveTo, '2026-12-27T00:00:00+07:00');
+    assert.equal(PRODUCT_HELP_PACK.reviewDueAt, PRODUCT_HELP_PACK.effectiveTo);
     const root = resolve(__dirname, '../../../../../..');
     for (const card of PRODUCT_HELP_PACK.cards) {
+      assert.equal(card.version, /\/(expenses|reimbursement)-guide\.content\.ts$/.test(card.sourceFile) ? 2 : 1, card.id);
       assert.equal(createHash('sha256').update(readFileSync(resolve(root, card.sourceFile))).digest('hex'), card.sourceHash, card.sourceFile);
       const guide = card.sourceURL.split('/user-guide/')[1]!.split('#')[0]!;
       assert.ok(readFileSync(resolve(root, `apps/web/app/(workspace)/companies/[companyId]/user-guide/${guide}/page.tsx`)), 'citation page exists');
     }
+  });
+
+  it('explains conditional correction after confirmation to readers without promising edit rights', () => {
+    const card = PRODUCT_HELP_PACK.cards.find((entry) => entry.id === 'expense.draft')!;
+    const answer = renderApprovedKnowledge(PRODUCT_HELP_PACK, [card.id], { ...access(), permissions: ['expense.read_own'] }, 'company-A')!;
+    assert.ok(answer, 'read-only members can ask about correction');
+    assert.match(answer.replyText, new RegExp(`ผู้มีสิทธิ์กด “${EXPENSE_CORRECTION_WORDS.reopen}” ได้เมื่อเอกสารเปิดแก้ไขได้`));
+    assert.match(answer.replyText, /กลับไปตรวจสอบโดยใช้เลขเอกสารเดิม/);
+    assert.match(answer.replyText, /หากเปิดแก้ไขไม่ได้.*เหตุผล.*ผู้ที่ต้องติดต่อ/);
+    assert.doesNotMatch(answer.replyText, /เมื่อยืนยันแล้วไม่ใช่ร่างที่แก้ได้ตามปกติ/);
+    assert.equal(answer.webLinks[0]!.path, '/companies/company-A/user-guide/expenses#overview');
   });
 
   it('offers nothing from draft, retired, unreviewed, expired or wrong-release packs', () => {

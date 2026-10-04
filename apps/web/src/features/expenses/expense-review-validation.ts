@@ -1,6 +1,6 @@
 import { workspaceDictionary, type SupportedLocale, type DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { EXPENSE_DECIMAL_18_4_PATTERN, isCalculatedExpenseRounding, validateExpenseWhtInput } from '@watchdog-bms/contracts';
-import { EXPENSE_LINE_CHARGE_KINDS, calculateManualExpenseTotals, expenseChargeKindAllowsNegative, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
+import { EXPENSE_LINE_CHARGE_KINDS, calculateManualExpenseTotals, expenseChargeKindAllowsNegative, expenseReviewWithholdsTax, normalizeExpenseWhtValue, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
 
 /** The same facts have prompts only when this reader can edit the form. */
 export function expenseReviewMessage(key: DictionaryKey, locale: SupportedLocale, canEdit: boolean, params?: Record<string, string>): string {
@@ -146,6 +146,9 @@ export function validateExpenseReview(
   values: ExpenseDraftReviewValues,
   opts: {
     today: string; aiGrandTotal?: string | null; whtAmount?: string | null;
+    /** The reviewer's หัก/ไม่หัก answer. While หัก is chosen the payee type, income category and a
+     *  value are all required, whatever the value is; omitted, the saved amounts decide as before. */
+    withholdingChosen?: boolean;
     /** Vendor address spec §8: only a full tax invoice is nudged about a missing seller address. */
     sourceDocumentType?: string;
   },
@@ -155,7 +158,7 @@ export function validateExpenseReview(
   // RA-18 mirror of `validateConfirm` (`expense-status.logic.ts:199`): a withholding expense may not
   // be confirmed without the payee's taxpayer class, because it decides ภ.ง.ด.3 vs ภ.ง.ด.53. Same
   // predicate the review form uses to show the select at all.
-  const withholdsTax = expenseReviewWithholdsTax(values, opts.whtAmount);
+  const withholdsTax = opts.withholdingChosen ?? expenseReviewWithholdsTax(values, opts.whtAmount);
   if (withholdsTax && !values.vendorEntityKindSnapshot) {
     addIssue(issues, 'vendorEntityKindSnapshot', 'error', 'expenses.v_payee_kind_required');
   }
@@ -266,12 +269,14 @@ export function validateExpenseReview(
 
   const totals = computedTotals(values);
   if (values.whtInput) {
-    const { inputType, value, baseAmount } = values.whtInput;
+    const { inputType, baseAmount } = values.whtInput;
+    // A leading zero is tidied on leaving the field, not refused while it is being typed.
+    const value = normalizeExpenseWhtValue(values.whtInput.value);
     if (inputType !== 'RATE' && inputType !== 'AMOUNT') {
       addIssue(issues, 'whtInput.inputType', 'error', 'expenses.v_wht_unit');
     } else if (baseAmount !== undefined && validateExpenseWhtInput({ inputType: 'AMOUNT', value: '0', baseAmount })) {
       addIssue(issues, 'whtInput.baseAmount', 'error', 'expenses.v_wht_base');
-    } else if (validateExpenseWhtInput(values.whtInput)) {
+    } else if (validateExpenseWhtInput({ ...values.whtInput, value })) {
       addIssue(issues, 'whtInput.value', 'error', inputType === 'RATE' ? 'expenses.v_wht_percent' : 'expenses.v_wht_amount');
     } else if (totals) {
       // ponytail: the server owns VAT reconciliation. Inclusive source VAT can alter the accepted

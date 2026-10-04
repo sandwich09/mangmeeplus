@@ -76,12 +76,28 @@ test.describe('EXEC — executive report', () => {
       }
       await expect(page).toHaveURL(/\/system\/executive(\?|$)/);
       await expect(page.getByRole('heading', { name: 'ภาพรวมธุรกิจมั่งมี', level: 1 })).toBeVisible();
+      // The fixture joins this month; days 1–7 intentionally default to last month.
+      await page.getByRole('button', { name: 'เดือนนี้', exact: true }).click();
+      await expect(page).toHaveURL(/from=\d{4}-\d{2}.*to=\d{4}-\d{2}/);
+      await expect(page.getByRole('button', { name: 'เดือนนี้', exact: true })).toHaveAttribute('aria-pressed', 'true');
       // Only the report menu.
       await expect(page.locator('#system-navigation')).toHaveAttribute('aria-label', 'ส่วนงานผู้บริหาร');
       await expect(page.locator('#system-navigation').getByRole('link', { name: 'บริษัทและผู้ใช้งาน' })).toHaveCount(0);
 
+      const filter = page.getByRole('button', { name: /^ตัวกรอง \d+$/ });
+      await expect(filter).toBeVisible();
+      await filter.click();
+      const filterPanel = page.getByRole('dialog', { name: 'ตัวกรองรายงาน' });
+      await expect(filterPanel).toBeVisible();
+      await expect(filterPanel.getByRole('combobox')).toHaveCount(3);
+      await filterPanel.getByRole('button', { name: 'ใช้ตัวกรอง', exact: true }).click();
+      await expect(filterPanel).not.toBeVisible();
+
       // ── the companies card opens a list of exactly its count ──
-      const card = page.locator('main div.grid.grid-cols-2 > a').first();
+      const card = page.locator('main .executive-kpi-link').first();
+      await expect(page.getByRole('button', { name: 'ดูบริษัททั้งหมด', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'ดูอันดับการใช้', exact: true })).toBeVisible();
+      await expect(card.locator('[data-executive-value]')).toHaveCSS('font-size', '26px');
       await expect(card).toContainText('บริษัทลูกค้า');
       const count = Number((await card.innerText()).match(/บริษัทลูกค้า\s+(?:อย่างน้อย\s+)?([\d,]+)/)?.[1]?.replace(/,/g, ''));
       expect(count).toBeGreaterThan(0);
@@ -89,15 +105,24 @@ test.describe('EXEC — executive report', () => {
       await page.waitForURL(/\/system\/executive\/companies\?/);
       await expect(page.getByRole('status').filter({ hasText: new RegExp(`^พบ ${count.toLocaleString('th-TH')} บริษัท`) })).toBeVisible();
 
+      const rowDetails = page.getByRole('button', { name: 'รายละเอียด', exact: true }).first();
+      await expect(rowDetails).toHaveAttribute('aria-expanded', 'false');
+      await rowDetails.click();
+      await expect(rowDetails).toHaveAttribute('aria-expanded', 'true');
+      await expect(page).toHaveURL(/\/system\/executive\/companies\?/);
+      await rowDetails.click();
+
       // ── a company's detail and its three tabs ──
       const link = page.locator('main a[href^="/system/executive/companies/"]').first();
-      const name = (await link.innerText()).trim();
+      const name = (await link.locator('span').first().innerText()).trim();
       await link.click();
       await expect(page.getByRole('heading', { name, level: 1 })).toBeVisible();
       await expect(page.getByText('ข้อมูลบริษัท', { exact: true }).first()).toBeVisible();
-      await page.getByRole('button', { name: 'การใช้งานและรายรับ', exact: true }).click();
-      await expect(page.getByRole('button', { name: 'การใช้งานและรายรับ', exact: true })).toHaveAttribute('aria-pressed', 'true');
-      await page.getByRole('button', { name: 'ประวัติบริษัท', exact: true }).click();
+      await page.getByRole('tab', { name: 'การใช้งานและรายรับ', exact: true }).click();
+      await expect(page.getByRole('tab', { name: 'การใช้งานและรายรับ', exact: true })).toHaveAttribute('aria-selected', 'true');
+      await expect(page).toHaveURL(/view=usage/);
+      await page.getByRole('tab', { name: 'การใช้งานและรายรับ', exact: true }).press('ArrowRight');
+      await expect(page).toHaveURL(/view=history/);
       await expect(page.getByText('สมัคร', { exact: true }).first()).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await context.close();

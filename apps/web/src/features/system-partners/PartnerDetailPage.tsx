@@ -44,6 +44,7 @@ import {
   type CompanyReferralView,
 } from '@/features/sales-console/sales-console.logic';
 import PartnerReportLabels from './PartnerReportLabels';
+import PartnerTeamNote from './PartnerTeamNote';
 import PartnerAiAdjustmentHistory from './PartnerAiAdjustmentHistory';
 import PartnerPlanAdjustmentHistory from './PartnerPlanAdjustmentHistory';
 import {
@@ -3552,6 +3553,7 @@ export default function PartnerDetailPage({ companyId, canManageMembers = false,
             <Link className="inline-flex min-h-11 items-center px-2 text-brand-800 underline underline-offset-4" href={`/system/billing/companies/${encodeURIComponent(companyId)}`}>ดูการชำระเงินของบริษัท</Link>
           </div>
         </SectionCard>
+        <PartnerTeamNote key={companyId} companyId={companyId} />
         <PartnerReportLabels detail={detail} canManage={canManageReportLabels} isPlatformCompany={isPlatformCompany} onSaved={setDetail} />
         {/* Purchase without setup PR E (R-E3): registered name / tax id / address */}
         {identityEditMode && !profileLocked && identityControl && (

@@ -1,6 +1,6 @@
 // Permission registry: canonical source of truth for permission keys and role grants.
 // Imported by seed.ts and tested by permission-registry.spec.ts.
-import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS, COMPANY_TEAM_NOTE_MANAGE_PERMISSION, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { BILLING_PERMISSIONS, EXECUTIVE_PERMISSION_KEYS, EXECUTIVE_ROLE_KEYS, SALES_PERMISSION_KEYS, SALES_ROLE_KEYS } from '@watchdog-bms/contracts';
 
 /**
@@ -93,7 +93,9 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'system.executive.read', description: 'ดูรายงานผู้บริหาร', riskLevel: 'MEDIUM' },
   { key: 'system.executive.export', description: 'ส่งออกรายงานผู้บริหาร', riskLevel: 'HIGH' },
   { key: 'system.executive.contact.read', description: 'ดูข้อมูลติดต่อเจ้าของร้านในรายงานผู้บริหาร', riskLevel: 'HIGH' },
+  { key: COMPANY_TEAM_NOTE_MANAGE_PERMISSION, description: NOTE_WORDS.permissionDescription, riskLevel: 'MEDIUM' },
   { key: 'system.executive_user.manage', description: 'จัดการบัญชีผู้บริหาร', riskLevel: 'CRITICAL' },
+  { key: 'system.wht_income_category.manage', description: 'เปิด–ปิดประเภทเงินได้หัก ณ ที่จ่ายสำหรับทุกร้าน', riskLevel: 'HIGH' },
   { key: 'system.partner_company.create',           description: 'Create new partner company',                          riskLevel: 'HIGH' },
   { key: 'system.partner_company.update',           description: 'Update partner company profile metadata',             riskLevel: 'MEDIUM' },
   { key: 'system.partner_company.lifecycle.manage', description: 'Activate/inactivate/archive partner company',         riskLevel: 'CRITICAL' },
@@ -544,6 +546,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'account.identity.unlink',
     'system.company_onboarding.create',
     'system.company_onboarding.read',
+    'system.wht_income_category.manage',
     'system.email_delivery.read',
     'system.email_delivery.manage',
     'system.company_onboarding.regenerate_temporary_password',
@@ -580,6 +583,9 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
   MANGMEE_EXECUTIVE_CONTACT: [
     'account.session.read', 'account.password.change', 'account.identity.link', 'system.executive.contact.read',
+  ],
+  MANGMEE_EXECUTIVE_COMPANY_NOTE: [
+    'account.session.read', 'account.password.change', 'account.identity.link', COMPANY_TEAM_NOTE_MANAGE_PERMISSION,
   ],
   // ── มั่งมี sales team (spec §5). Platform-tenant memberships, never a shop's. ──
   // S29 is the whole point of these two lists: no business permission of ANY kind, so the
@@ -1093,9 +1099,10 @@ export const SYSTEM_ROLES: Array<{ key: string; name: string; description: strin
   { key: 'MARKETING',       name: 'Marketing',       description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.MARKETING}: ดูข้อมูลลูกค้าและรายงาน` },
   { key: 'STAFF',           name: 'Staff',           description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.STAFF}ทั่วไป: บันทึกค่าใช้จ่ายและขอเบิกของตัวเอง` },
   { key: 'AUDITOR_READONLY',name: 'Auditor (Read-only)', description: `สำหรับ${THAI_SYSTEM_ROLE_NAMES.AUDITOR_READONLY}: ดูข้อมูลของบริษัทเพื่อตรวจสอบโดยไม่แก้ไข` },
-  { key: 'MANGMEE_EXECUTIVE', name: 'ผู้บริหารมั่งมี', description: 'สำหรับผู้บริหารมั่งมีที่ดูรายงานผู้บริหาร' },
-  { key: 'MANGMEE_EXECUTIVE_EXPORT', name: 'สิทธิ์ส่งออกรายงานสำหรับผู้บริหาร', description: 'สิทธิ์เพิ่มเติมสำหรับส่งออกรายงานผู้บริหาร' },
-  { key: 'MANGMEE_EXECUTIVE_CONTACT', name: 'สิทธิ์ดูข้อมูลติดต่อสำหรับผู้บริหาร', description: 'สิทธิ์เพิ่มเติมสำหรับดูข้อมูลติดต่อเจ้าของร้านในรายงานผู้บริหาร' },
+  { key: 'MANGMEE_EXECUTIVE', name: THAI_SYSTEM_ROLE_NAMES.MANGMEE_EXECUTIVE, description: 'สำหรับผู้บริหารมั่งมีที่ดูรายงานผู้บริหาร' },
+  { key: 'MANGMEE_EXECUTIVE_EXPORT', name: THAI_SYSTEM_ROLE_NAMES.MANGMEE_EXECUTIVE_EXPORT, description: 'สิทธิ์เพิ่มเติมสำหรับส่งออกรายงานผู้บริหาร' },
+  { key: 'MANGMEE_EXECUTIVE_COMPANY_NOTE', name: THAI_SYSTEM_ROLE_NAMES.MANGMEE_EXECUTIVE_COMPANY_NOTE, description: NOTE_WORDS.roleDescription },
+  { key: 'MANGMEE_EXECUTIVE_CONTACT', name: THAI_SYSTEM_ROLE_NAMES.MANGMEE_EXECUTIVE_CONTACT, description: 'สิทธิ์เพิ่มเติมสำหรับดูข้อมูลติดต่อเจ้าของร้านในรายงานผู้บริหาร' },
   // S06: prefixed so they can never be confused with the tenant role `SALES` above, which is a
   // shop's own sales employee. UI wording is "ทีมขายมั่งมี" / "เซลล์".
   { key: 'MANGMEE_SALES_LEAD', name: 'Mangmee Sales Lead', description: 'Mangmee sales team lead: all teams deals, approvals, team accounts' },

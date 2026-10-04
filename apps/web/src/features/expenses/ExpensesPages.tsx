@@ -1,5 +1,7 @@
 'use client';
 
+import { expenseOverpaidAmount } from '@watchdog-bms/contracts';
+
 import { THAI_SYSTEM_ROLE_NAMES, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 
 import { isExpenseEvidenceFile, expenseEvidenceAssessment, expenseEvidenceInputError, EXPENSE_RECEIPT_SOURCE_TYPES, type ExpenseEvidenceAssessment } from '@watchdog-bms/contracts';
@@ -41,12 +43,12 @@ import {
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS,
   insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange, changeExpenseVatSourceType,
   formatTaxId, taxIdDigits, reviewValues, incompleteSourceReviewLine,
-  expenseReviewWithholdsTax, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
+  expenseReviewWithholdsTax, changeExpenseReviewWhtInput, sanitizeExpenseWhtTyping, normalizeExpenseWhtValue, expenseWhtCategoriesForPayee, changeExpensePayeeType, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseCaptureCapabilityDto, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { useExpenseReviewTotals, type ExpenseReviewTotalsState } from './useExpenseReviewTotals';
-import { AI_BUDGET_REFUSAL_CODES, isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, EXPENSE_WITHHOLDING_WORDS, isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification } from '@watchdog-bms/contracts';
 import { counterpartyAutoSaveNotice, counterpartyHref } from '../counterparties/counterparties.logic';
 import { COUNTERPARTY_READ_PERMISSION, type CounterpartyAutoSaveNotice } from '../counterparties/counterparties.model';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
@@ -88,6 +90,7 @@ import {
 import {
   err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
   ICON, KPI, StatCard, StatusBadge, TAX_TONE, ErrorBanner, InfoBanner, StateBanner, HowItWorks,
+  tapTargetClass, WholeWords,
 } from './ExpensesUi';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { expenseReviewMessage, validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
@@ -147,6 +150,9 @@ function messageWithParams(message: string, params?: Record<string, string>): st
 function fieldIssue(issues: ExpenseFieldIssue[], field: string): ExpenseFieldIssue | undefined {
   return issues.find((issue) => issue.field === field);
 }
+
+/** Problems that are said beside a field of the withholding block, in the block's own order. */
+const WHT_ISSUE_FIELDS = ['vendorEntityKindSnapshot', 'whtCategoryCode', 'whtInput.inputType', 'whtInput.value', 'whtRate', 'whtInput.baseAmount'];
 
 /** §8: the way forward of a registry notice, dropped entirely when the reader may not open it. */
 function RegistryNoticeLink({ companyId, notice }: { companyId: string; notice: CounterpartyAutoSaveNotice }) {
@@ -567,7 +573,7 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
         >
           <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-3xl shadow-sm">📤</span>
           <div className="text-lg font-bold text-gray-800">{t('expenses.upload_dropzone_title', locale)}</div>
-          <div className="text-sm text-gray-500">{t('expenses.upload_dropzone_hint', locale)}</div>
+          <div className="text-sm text-gray-500"><WholeWords text={t('expenses.upload_dropzone_hint', locale)} /></div>
           {preparing ? <div className="text-sm font-semibold text-brand-700">{t('expenses.upload_preparing', locale)}</div> : fileName && <div className="mt-1 inline-flex items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-sm font-semibold text-brand-700">✓ {fileName}</div>}
           <input ref={fileRef} type="file" accept={RECEIPT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileChange} />
         </label>
@@ -1137,7 +1143,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [] }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, overpaymentCue, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [] }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
@@ -1149,6 +1155,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   /** Owner decision 2026-08-28: accepting the document VAT total rides on confirm, not on review, so
    *  a confirmer is never shown a refusal with no control that can clear it. */
   canConfirm: boolean;
+  overpaymentCue?: string | null;
   /** Explicit save is available only on the first review step; later steps use navigation saves. */
   showSaveDraft?: boolean;
   /** Back/Next in an existing certificate must preserve signed no-op revisions. */
@@ -1170,9 +1177,19 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   // seeded categories are DRAFT until an accountant activates them), so a fetch failure must not
   // block reviewing or confirming an ordinary expense.
   const [whtCategories, setWhtCategories] = useState<WhtIncomeCategoryOption[]>([]);
+  const [whtCategoriesState, setWhtCategoriesState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [withholdingEnabled, setWithholdingEnabled] = useState(() => expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount));
+  // R4: a freshly chosen หัก shows no red. Leaving a value field or pressing ถัดไป reveals what is missing.
+  const [whtReveal, setWhtReveal] = useState(true);
+  // R2: an empty value is only a value being typed until the reviewer leaves the field.
+  const [whtValueFocused, setWhtValueFocused] = useState(false);
+  const whtBlockRef = useRef<HTMLFieldSetElement>(null);
   useEffect(() => {
     let active = true;
-    void listExpenseWhtIncomeCategories(companyId).then((categories) => { if (active) setWhtCategories(categories); }).catch(() => { if (active) setWhtCategories([]); });
+    setWhtCategoriesState('loading');
+    void listExpenseWhtIncomeCategories(companyId).then((categories) => {
+      if (active) { setWhtCategories(categories); setWhtCategoriesState('ready'); }
+    }).catch(() => { if (active) { setWhtCategories([]); setWhtCategoriesState('error'); } });
     return () => { active = false; };
   }, [companyId]);
   useEffect(() => {
@@ -1205,20 +1222,37 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const showsTax = showsTaxCapture(capture.mode, hasRecordedTax(detail.lines));
   const aiGrandTotal = aiGrandTotalValue(detail.aiVerifiedFieldsJson);
   const aiSuggestion = useMemo(() => expenseAiSuggestion(detail.aiVerificationSummaryJson), [detail.aiVerificationSummaryJson]);
-  const issues = useMemo(() => validateExpenseReview(values, { today: todayCivilDate(), aiGrandTotal, whtAmount: detail.whtAmount, sourceDocumentType: detail.sourceDocumentType }), [values, aiGrandTotal, detail.whtAmount, detail.sourceDocumentType]);
+  const issues = useMemo(() => validateExpenseReview(values, { today: todayCivilDate(), aiGrandTotal, whtAmount: detail.whtAmount, sourceDocumentType: detail.sourceDocumentType, withholdingChosen: withholdingEnabled }), [values, aiGrandTotal, detail.whtAmount, detail.sourceDocumentType, withholdingEnabled]);
+  const whtQuiet = withholdingEnabled && !whtReveal;
+  const whtBlank = (values.whtInput?.value ?? '').trim() === '';
+  const whtValueTyping = whtValueFocused && whtBlank;
+  // R3: of what is still missing while หัก is chosen, only the first in block order is said — picking a
+  // category fills the rate, so flagging both would ask for the same thing twice.
+  const whtMissing = withholdingEnabled
+    ? ['vendorEntityKindSnapshot', 'whtCategoryCode', ...(whtBlank ? ['whtInput.value'] : [])]
+      .filter((field) => issues.some((issue) => issue.field === field && issue.severity === 'error'))
+    : [];
+  const shownIssues = issues.filter((issue) => !(WHT_ISSUE_FIELDS.includes(issue.field)
+    && (whtQuiet || (whtValueTyping && issue.field === 'whtInput.value') || whtMissing.indexOf(issue.field) > 0)));
+  const whtHiddenError = issues.some((issue) => issue.severity === 'error' && !shownIssues.includes(issue));
   const vendorNameIssue = fieldIssue(issues, 'vendorNameSnapshot');
   const vendorTaxIdIssue = fieldIssue(issues, 'vendorTaxIdSnapshot');
   const vendorAddressIssue = fieldIssue(issues, 'vendorAddressSnapshot');
   const documentNumberIssue = fieldIssue(issues, 'vendorDocumentNumber');
   const expenseDateIssue = fieldIssue(issues, 'expenseDate');
   const linesIssue = fieldIssue(issues, 'lines');
-  const whtValueIssue = fieldIssue(issues, 'whtInput.value') ?? fieldIssue(issues, 'whtRate');
-  const whtUnitIssue = fieldIssue(issues, 'whtInput.inputType');
-  const payeeEntityKindIssue = fieldIssue(issues, 'vendorEntityKindSnapshot');
-  const whtCategoryIssue = fieldIssue(issues, 'whtCategoryCode');
+  const whtValueIssue = fieldIssue(shownIssues, 'whtInput.value') ?? fieldIssue(shownIssues, 'whtRate');
+  const whtUnitIssue = fieldIssue(shownIssues, 'whtInput.inputType');
+  const whtBaseIssue = fieldIssue(shownIssues, 'whtInput.baseAmount');
+  const payeeEntityKindIssue = fieldIssue(shownIssues, 'vendorEntityKindSnapshot');
+  const whtCategoryIssue = fieldIssue(shownIssues, 'whtCategoryCode');
 
   const documentWhtRate = expenseDocumentWhtRate(values.lines);
+  const applicableWhtCategories = expenseWhtCategoriesForPayee(whtCategories, values.vendorEntityKindSnapshot);
   const whtInput: ExpenseWhtInput = values.whtInput ?? { inputType: 'RATE', value: expenseRateToPercent(documentWhtRate ?? '') };
+  // R3: the way out is named once, beside that first missing field.
+  const whtWayOut = (issue?: ExpenseFieldIssue) => isMutable && issue && issue.field === whtMissing[0]
+    ? <span className="mt-1 block text-xs text-gray-600">{EXPENSE_WITHHOLDING_WORDS.wayOut(t('expenses.wht_no', locale))}</span> : null;
   const withholdsTax = expenseReviewWithholdsTax(values, detail.whtAmount);
   const vatSource = values.vatSource ?? { inputType: 'NONE' as const };
   const vatSourceMode = vatSource.lines?.length ? 'LINES' : vatSource.inputType;
@@ -1229,14 +1263,18 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const sourceCategoryMessage = sourceCategoryIncompleteIndexes.length
     ? `${t('expenses.source_draft_item_n', locale).replace('{n}', String(sourceCategoryIncompleteIndexes[0]! + 1))} ${t('expenses.category', locale)}: ${t('expenses.source_draft_missing_one', locale)}`
     : null;
-  const blockingIssueCount = issues.filter((issue) => issue.severity === 'error').length
+  const blockingIssueCount = shownIssues.filter((issue) => issue.severity === 'error').length
     + (vatSourceError ? 1 : 0) + sourceCategoryIncompleteIndexes.length;
-  const firstBlockingIssue = issues.find((issue) => issue.severity === 'error');
+  const firstBlockingIssue = shownIssues.find((issue) => issue.severity === 'error');
   const firstBlockingMessage = firstBlockingIssue
     ? expenseReviewMessage(firstBlockingIssue.messageKey, locale, isMutable, firstBlockingIssue.params)
     : vatSourceError ?? sourceCategoryMessage;
+  // R5: a withholding problem is said once, beside its field. The footer and the totals card only point to it.
+  const firstBlockingIsWht = Boolean(firstBlockingIssue && WHT_ISSUE_FIELDS.includes(firstBlockingIssue.field));
+  const blockingPointer = firstBlockingIsWht
+    ? t('expenses.v_blocking_count', locale).replace('{count}', String(blockingIssueCount)) : firstBlockingMessage;
   const liveTotals = useExpenseReviewTotals(companyId, detail, values,
-    isMutable && (canReview || !detail.sourceDraft), firstBlockingMessage, totalsRetry, onTotalsChange);
+    isMutable && (canReview || !detail.sourceDraft), blockingPointer, totalsRetry, onTotalsChange);
   const totalIssues = liveTotals?.status === 'ready' && liveTotals.totals && aiGrandTotal
     && Math.abs(Number(liveTotals.totals.grandTotalAmount) - Number(aiGrandTotal)) > 0.05
     ? [{ field: 'total', severity: 'warn' as const, messageKey: 'expenses.v_total_mismatch' as const,
@@ -1288,7 +1326,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     : null;
 
   useEffect(() => {
-    setValues(reviewValues(detail)); setVatEditors({}); setVatSourceDirty(false); setTaxFactsDirty(false);
+    setValues(reviewValues(detail)); setWithholdingEnabled(expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount)); setWhtReveal(true); setVatEditors({}); setVatSourceDirty(false); setTaxFactsDirty(false);
     setVatOverrideReason(''); setVatOverrideLineNumber(null);
   }, [detail.id, detail.updatedAt]);
   useEffect(() => {
@@ -1300,7 +1338,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       ? { reason, vatLineNumber: vatOverrideLineNumber, expectedUpdatedAt: detail.updatedAt }
       : null;
   }, [canConfirm, detail.updatedAt, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
-  useEffect(() => { onValidationChange?.(blockingIssueCount, firstBlockingMessage); }, [blockingIssueCount, firstBlockingMessage, onValidationChange]);
+  useEffect(() => { onValidationChange?.(blockingIssueCount, firstBlockingIsWht ? null : firstBlockingMessage); }, [blockingIssueCount, firstBlockingIsWht, firstBlockingMessage, onValidationChange]);
 
   const updateLine = (index: number, field: EditableReviewLineField, value: string, vatTreatment?: ExpenseLineVatTreatment | null) => {
     if (field !== 'description') setVatSourceDirty(true);
@@ -1399,6 +1437,16 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
 
   const save = async (explicitDraftSave = false): Promise<boolean> => {
     if (busy || !isMutable) return false;
+    // R3: หัก with something missing never moves on (and never saves ไม่หัก in its place). The first
+    // press reveals what is missing beside its field and takes the reviewer there.
+    if (whtHiddenError) {
+      setWhtReveal(true); setWhtValueFocused(false);
+      window.setTimeout(() => {
+        const target = whtBlockRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? whtBlockRef.current;
+        target?.scrollIntoView({ block: 'center' }); target?.focus({ preventScroll: true });
+      }, 50);
+      return false;
+    }
     if (skipUnchangedSave && JSON.stringify(values) === JSON.stringify(reviewValues(detail))) return true;
     // The registry notice belongs to the save that produced it; a refused save must not leave the
     // previous one on screen as if it described this attempt.
@@ -1836,43 +1884,6 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             )}
           </div>
         )}
-        {/* RA-18: the payee's taxpayer class decides ภ.ง.ด.3 vs ภ.ง.ด.53, so it is only asked for when
-            this document actually withholds tax, and confirmation blocks until it is picked — never
-            guessed. The blank choice disappears once a class is stored because the update contract has
-            no clear-to-null idiom for the vendor snapshot fields, so re-picking it would be a no-op. */}
-        {withholdsTax && (
-          <div className="sm:col-span-2">
-            <span className="mb-1 block text-xs font-medium text-gray-600">
-              <label htmlFor={`expense-payee-entity-kind-${detail.id}`}>{t('expenses.payee_entity_kind', locale)}</label>
-            </span>
-            <ThemedSelect id={`expense-payee-entity-kind-${detail.id}`} aria-label={t('expenses.payee_entity_kind', locale)} className={validationInputClass(payeeEntityKindIssue)} aria-invalid={payeeEntityKindIssue?.severity === 'error' || undefined} value={values.vendorEntityKindSnapshot ?? ''} onChange={(e) => setValues((v) => ({ ...v, vendorEntityKindSnapshot: e.target.value as BuyerEntityKind | '' }))} disabled={!isMutable || busy}>
-              {!detail.vendorEntityKindSnapshot && <option value="">{t('expenses.category_unspecified', locale)}</option>}
-              {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-            </ThemedSelect>
-            <FieldIssueNote canEdit={isMutable} issue={payeeEntityKindIssue} />
-          </div>
-        )}
-        {/* WHT certificate system issuance plan §1.2 (S2/S3): the income category a 50 ทวิ
-            certificate needs to print, same "only asked for when withholding tax" gate as the payee
-            taxpayer class above. Picking a category fills whtRate from its defaultRate — mirroring
-            the AP settlement form's suggestion behaviour — but the rate is not independently
-            editable here, unlike AP: this is a classification field, not a new payment entry. */}
-        {withholdsTax && (
-          <div className="sm:col-span-2">
-            <span className="mb-1 block text-xs font-medium text-gray-600">
-              <label htmlFor={`expense-wht-category-${detail.id}`}>{t('expenses.wht_income_category', locale)}</label>
-            </span>
-            <ThemedSelect id={`expense-wht-category-${detail.id}`} aria-label={t('expenses.wht_income_category', locale)} className={validationInputClass(whtCategoryIssue)} aria-invalid={whtCategoryIssue?.severity === 'error' || undefined} value={values.whtCategoryCode ?? ''} onChange={(e) => {
-              const code = e.target.value;
-              const picked = whtCategories.find((item) => item.code === code);
-              setValues((v) => ({ ...v, whtCategoryCode: code, whtRate: picked ? String(Number(picked.defaultRate)) : '' }));
-            }} disabled={!isMutable || busy}>
-              {!detail.whtCategoryCode && <option value="">{t('expenses.category_unspecified', locale)}</option>}
-              {whtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
-            </ThemedSelect>
-            <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
-          </div>
-        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
@@ -1903,7 +1914,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <div key={index} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <span id={`expense-review-line-${detail.id}-${index}`} tabIndex={-1} className="text-xs font-semibold text-gray-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">{t('expenses.line_number', locale)} {index + 1}</span>
-            {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
+            {isMutable && <button type="button" className={cx(tapTargetClass, 'flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50')} disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* A textarea, not an input: on a phone the single line clipped the description at the
@@ -1945,6 +1956,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_unit_price', locale)}</span>
               <input type="number" min="0" step="0.0001" className={validationInputClass(unitPriceIssue)} aria-invalid={unitPriceIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
+              {overpaymentCue && <p data-testid="expense-overpayment-cue" className="mt-1 text-xs font-semibold text-error-700">{overpaymentCue}</p>}
               <FieldIssueNote canEdit={isMutable} issue={unitPriceIssue} />
               {!unitPriceIssue && sourceMissingNote('unitPrice', line.sourceItemRef)}
             </label>
@@ -2049,7 +2061,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <div key={`charge-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <span id={`expense-review-line-${detail.id}-${index}`} tabIndex={-1} className="text-xs font-semibold text-gray-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">{t('expenses.line_number', locale)} {productEntries.length + chargeIndex + 1}</span>
-            {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_charge_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
+            {isMutable && <button type="button" className={cx(tapTargetClass, 'flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50')} disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_charge_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
           </div>
           <div className="grid grid-cols-1 gap-3">
             <div>
@@ -2084,6 +2096,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               {/* No `min`: ปัดเศษ is the one kind a bill prints as a deduction, and the validator is
                   what refuses a minus sign on any other kind. */}
               <input type="number" step="0.0001" className={validationInputClass(amountIssue ?? quantityIssue)} aria-invalid={amountIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
+              {overpaymentCue && <p data-testid="expense-overpayment-cue" className="mt-1 text-xs font-semibold text-error-700">{overpaymentCue}</p>}
               <FieldIssueNote canEdit={isMutable} issue={amountIssue ?? quantityIssue} />
               {chargeKind === 'ROUNDING' && <p className="mt-1 text-xs text-gray-500">{t('expenses.rounding_explanation', locale)}</p>}
             </label>
@@ -2128,62 +2141,124 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         );
       })}
 
-      {values.lines.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-          <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
-            <span>{t('expenses.document_wht_rate', locale)}</span>
-            <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_wht_rate', locale)} />
-          </span>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_input_unit', locale)}</span>
-              <ThemedSelect
-                className={validationInputClass(whtUnitIssue)}
-                aria-invalid={whtUnitIssue?.severity === 'error' || undefined}
-                value={whtInput.inputType}
-              onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: event.target.value as ExpenseWhtInput['inputType'], value: '' } })); }}
-                disabled={!isMutable || busy}
-              >
-                <option value="RATE">{t('expenses.wht_unit_percent', locale)}</option>
-                <option value="AMOUNT">{t('expenses.wht_unit_baht', locale)}</option>
+      <fieldset data-testid="expense-withholding" ref={whtBlockRef} tabIndex={-1} className="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-3">
+        <legend className="px-1 text-sm font-semibold text-gray-800">{t('expenses.wht_choice', locale)}</legend>
+        <ThemedSelect aria-label={t('expenses.wht_choice', locale)} value={withholdingEnabled ? 'YES' : 'NO'}
+          onChange={(event) => {
+            const enabled = event.target.value === 'YES';
+            // R1: the only place the decision changes. R4: หัก starts clean — empty value, no category, no red.
+            setWithholdingEnabled(enabled); setWhtReveal(!enabled); setTaxFactsDirty(true); setError(null);
+            if (!enabled) setValues((current) => changeExpenseReviewWhtInput(current, { inputType: 'RATE', value: '' }));
+            else setValues((current) => ({ ...current, whtInput: { inputType: 'RATE', value: '' } }));
+          }} disabled={!isMutable || busy}>
+          <option value="NO">{t('expenses.wht_no', locale)}</option>
+          <option value="YES">{t('expenses.wht_yes', locale)}</option>
+        </ThemedSelect>
+        {withholdingEnabled && (
+          <div className="mt-3 grid grid-cols-1 gap-3">
+            <div>
+              <span className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor={`expense-payee-entity-kind-${detail.id}`}>{t('expenses.payee_entity_kind', locale)}</label>
+              </span>
+              <ThemedSelect id={`expense-payee-entity-kind-${detail.id}`} aria-label={t('expenses.payee_entity_kind', locale)} className={validationInputClass(payeeEntityKindIssue)} aria-invalid={payeeEntityKindIssue?.severity === 'error' || undefined} value={values.vendorEntityKindSnapshot ?? ''} onChange={(e) => { setTaxFactsDirty(true); setValues((v) => changeExpensePayeeType(v, e.target.value as BuyerEntityKind | '', whtCategories)); }} disabled={!isMutable || busy}>
+                {!detail.vendorEntityKindSnapshot && <option value="">{t('expenses.category_unspecified', locale)}</option>}
+                {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
               </ThemedSelect>
-              <FieldIssueNote canEdit={isMutable} issue={whtUnitIssue} />
-            </label>
-            <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
-              <input
-                id={`expense-wht-rate-${detail.id}`}
-                type="number"
-                inputMode="decimal"
-                min="0"
-                max={whtInput.inputType === 'RATE' ? '100' : undefined}
-                step="0.01"
-                className={validationInputClass(whtValueIssue)}
-                aria-invalid={whtValueIssue?.severity === 'error' || undefined}
-                value={whtInput.value}
-                onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: whtInput.inputType, value: event.target.value } })); }}
-                disabled={!isMutable || busy}
-              />
-              <FieldIssueNote canEdit={isMutable} issue={whtValueIssue} />
-            </label>
+              <FieldIssueNote canEdit={isMutable} issue={payeeEntityKindIssue} />
+              {whtWayOut(payeeEntityKindIssue)}
+            </div>
+            <div>
+              <span className="mb-1 block text-xs font-medium text-gray-600">
+                <label htmlFor={`expense-wht-category-${detail.id}`}>{t('expenses.wht_income_category', locale)}</label>
+              </span>
+              <ThemedSelect id={`expense-wht-category-${detail.id}`} aria-label={t('expenses.wht_income_category', locale)} className={validationInputClass(whtCategoryIssue)} aria-invalid={whtCategoryIssue?.severity === 'error' || undefined} value={!isMutable || applicableWhtCategories.some((item) => item.code === values.whtCategoryCode) ? values.whtCategoryCode ?? '' : ''} onChange={(e) => {
+                const code = e.target.value;
+                const picked = applicableWhtCategories.find((item) => item.code === code);
+                if (!picked) return;
+                const rate = String(Number(picked.defaultRate));
+                setTaxFactsDirty(true);
+                setValues((v) => ({ ...v, whtCategoryCode: code, whtRate: rate,
+                  whtInput: { inputType: 'RATE', value: rate, ...(v.whtInput?.baseAmount !== undefined && { baseAmount: v.whtInput.baseAmount }) } }));
+              }} disabled={!isMutable || busy}>
+                <option value="">{t('expenses.category_unspecified', locale)}</option>
+                {!isMutable && values.whtCategoryCode && !applicableWhtCategories.some((item) => item.code === values.whtCategoryCode) && <option value={values.whtCategoryCode}>{t('expenses.wht_category_recorded', locale)}</option>}
+                {applicableWhtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
+              </ThemedSelect>
+              <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
+              {whtWayOut(whtCategoryIssue)}
+            </div>
+            {whtCategoriesState === 'loading' && <p className="text-sm text-gray-600">{t('expenses.wht_categories_loading', locale)}</p>}
+            {whtCategoriesState === 'error' && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_failed', locale)}</p>}
+            {whtCategoriesState === 'ready' && Boolean(values.vendorEntityKindSnapshot) && applicableWhtCategories.length === 0 && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_empty', locale)}</p>}
+            <div className="grid grid-cols-1 gap-3">
+              <label>
+                <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_input_unit', locale)}</span>
+                <ThemedSelect
+                  aria-label={t('expenses.wht_input_unit', locale)}
+                  className={validationInputClass(whtUnitIssue)}
+                  aria-invalid={whtUnitIssue?.severity === 'error' || undefined}
+                  value={whtInput.inputType}
+                  onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: event.target.value as ExpenseWhtInput['inputType'], value: '0' } })); }}
+                  disabled={!isMutable || busy}
+                >
+                  <option value="RATE">{t('expenses.wht_unit_percent', locale)}</option>
+                  <option value="AMOUNT">{t('expenses.wht_unit_baht', locale)}</option>
+                </ThemedSelect>
+                <FieldIssueNote canEdit={isMutable} issue={whtUnitIssue} />
+              </label>
+              <label>
+                <span className="mb-1 block text-xs font-medium text-gray-600">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
+                <input
+                  id={`expense-wht-rate-${detail.id}`}
+                  type="text"
+                  inputMode="decimal"
+                  className={validationInputClass(whtValueIssue)}
+                  aria-invalid={whtValueIssue?.severity === 'error' || undefined}
+                  value={whtInput.value}
+                  onChange={(event) => {
+                    // R1/R2: editing the value never touches the decision or the category; an empty field
+                    // is only a field being typed in, and "-" or letters never enter it.
+                    const value = sanitizeExpenseWhtTyping(event.target.value);
+                    setTaxFactsDirty(true); setError(null);
+                    setValues((current) => ({ ...current, whtInput: { inputType: whtInput.inputType, value,
+                      ...(current.whtInput?.baseAmount !== undefined && { baseAmount: current.whtInput.baseAmount }) } }));
+                  }}
+                  onFocus={() => setWhtValueFocused(true)}
+                  onBlur={() => {
+                    setWhtValueFocused(false); setWhtReveal(true);
+                    setValues((current) => current.whtInput
+                      ? { ...current, whtInput: { ...current.whtInput, value: normalizeExpenseWhtValue(current.whtInput.value) } } : current);
+                  }}
+                  disabled={!isMutable || busy}
+                />
+                <FieldIssueNote canEdit={isMutable} issue={whtValueIssue} />
+                {whtWayOut(whtValueIssue)}
+                {isMutable && <span className="mt-1 block text-xs text-gray-500">{whtInput.inputType === 'AMOUNT' ? EXPENSE_WITHHOLDING_WORDS.amountHint : EXPENSE_WITHHOLDING_WORDS.percentHint}</span>}
+              </label>
+            </div>
+            {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
+            {(Number(whtInput.value) > 0 || whtInput.baseAmount !== undefined) && <label className="mt-3 block">
+              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_base', locale)}</span>
+              <input type="number" inputMode="decimal" min="0" step="0.01"
+                aria-invalid={Boolean(whtBaseIssue)}
+                className={validationInputClass(whtBaseIssue)}
+                value={whtInput.baseAmount ?? ''} disabled={!isMutable || busy} onBlur={() => setWhtReveal(true)}
+                onChange={(event) => { setTaxFactsDirty(true); const base = event.target.value;
+                  setValues((current) => { const next = { ...whtInput, ...current.whtInput };
+                    if (base === '') delete next.baseAmount; else next.baseAmount = base;
+                    return { ...current, whtInput: next }; }); }} />
+              <FieldIssueNote canEdit={isMutable} issue={whtBaseIssue} />
+              <span className="mt-1 block text-xs text-gray-500">{t('expenses.wht_base_hint', locale)}</span>
+            </label>}
+
+            {liveTotals?.status === 'ready' && liveTotals.totals
+              ? <MoneyRow label={t('expenses.wht', locale)} value={liveTotals.totals.whtAmount} />
+              : !isMutable
+                ? <MoneyRow label={t('expenses.wht', locale)} value={detail.whtAmount} />
+                : <p className="text-sm text-gray-600">{t(liveTotals?.status === 'error' ? 'expenses.wht_calculation_pending' : 'expenses.wht_calculating', locale)}</p>}
           </div>
-          {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
-          {(Number(whtInput.value) > 0 || whtInput.baseAmount !== undefined) && <label className="mt-3 block">
-            <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.wht_base', locale)}</span>
-            <input type="number" inputMode="decimal" min="0" step="0.01"
-              aria-invalid={Boolean(fieldIssue(issues, 'whtInput.baseAmount'))}
-              className={validationInputClass(fieldIssue(issues, 'whtInput.baseAmount'))}
-              value={whtInput.baseAmount ?? ''} disabled={!isMutable || busy}
-              onChange={(event) => { setTaxFactsDirty(true); const base = event.target.value;
-                setValues((current) => { const next = { ...whtInput, ...current.whtInput };
-                  if (base === '') delete next.baseAmount; else next.baseAmount = base;
-                  return { ...current, whtInput: next }; }); }} />
-            <FieldIssueNote canEdit={isMutable} issue={fieldIssue(issues, 'whtInput.baseAmount')} />
-            <span className="mt-1 block text-xs text-gray-500">{t('expenses.wht_base_hint', locale)}</span>
-          </label>}
-          <p className="mt-1 text-xs text-gray-500">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_amount_hint' : 'expenses.wht_percent_hint', locale)}</p>
-        </div>
-      )}
+        )}
+      </fieldset>
 
       {totalIssues.map((issue, index) => <FieldIssueNote canEdit={isMutable} key={`${issue.messageKey}-${index}`} issue={issue} />)}
 
@@ -2580,7 +2655,7 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
                           </div>
                         </div>
                         <div className="tabular-nums text-right text-[15px] font-bold text-gray-900">{baht(e.grandTotalAmount)}</div>
-                        <div className="flex flex-col items-end gap-1">{e.reimbursementProgress ? <span className="text-xs text-success-700">{expenseReimbursementProgressLabel(e.reimbursementProgress)}</span> : <><StatusBadge status={e.status} /><StatusBadge status={e.paymentStatus} /></>}</div>
+                        <div className="flex flex-col items-end gap-1">{e.reimbursementProgress ? <span className="text-xs text-success-700">{expenseReimbursementProgressLabel(e.reimbursementProgress)}</span> : <><StatusBadge status={e.status} /><StatusBadge status={expenseOverpaidAmount(e) ? 'OVERPAID' : e.paymentStatus} /></>}</div>
                         <div className="flex items-center justify-end gap-1.5">
                           <IconBtn title="ดูรายละเอียด" onClick={(event) => { event.stopPropagation(); onSelect(e.id); }}>{ICON.eye}</IconBtn>
                           {canDeleteExpense(e, userId, caps) && (

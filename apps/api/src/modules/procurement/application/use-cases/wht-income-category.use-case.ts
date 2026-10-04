@@ -18,8 +18,8 @@ export type WhtIncomeCategoryOption = { code: string; nameTh: string; formType: 
  * permission — permission-registry.ts's employee/reviewer grants) must not be shut out of the same
  * catalog an AP operator sees.
  *
- * ACTIVE only, and deliberately so: the catalog ships DRAFT pending accountant review, and a rate
- * nobody has verified must not end up on a legal document.
+ * ACTIVE only: the owner's 2026-10-04 baseline opens 12 categories; exceptional categories and
+ * any category later disabled by Mangmee remain unavailable for new selections.
  */
 @Injectable()
 export class ListWhtIncomeCategoriesUseCase {

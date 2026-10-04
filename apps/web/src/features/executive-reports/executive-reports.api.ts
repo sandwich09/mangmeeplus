@@ -1,18 +1,33 @@
-import type { ExecutiveContext, ExecutiveOverview, ExecutiveCompanies, ExecutiveAnalysis, ExecutiveCompanyDetail, ExecutiveCompanyHistory } from '@watchdog-bms/contracts';
+import type { ExecutiveContext, ExecutiveOverview, ExecutiveCompanies, ExecutiveAnalysis, ExecutiveCompanyDetail, ExecutiveCompanyHistory, ExecutiveCompanyNoteBody, ExecutiveCompanyNoteResult } from '@watchdog-bms/contracts';
 import { authedApiFetch, authedFetch } from '../../common/api/authed-fetch';
-import type { ReportSection } from './executive-reports.logic';
+import { executiveHref, type ReportSection } from './executive-reports.logic';
 
 export type ReportData = ExecutiveOverview | ExecutiveCompanies | ExecutiveAnalysis | ExecutiveCompanyDetail;
 export function getExecutiveContext(signal: AbortSignal): Promise<ExecutiveContext> {
   return authedApiFetch('/v1/system/executive/context', { signal, cache: 'no-store', suppressErrorToast: true });
 }
-export function getExecutiveReport(section: ReportSection, query: Record<string, string | number>, signal: AbortSignal, targetCompanyId?: string): Promise<ReportData> {
+export async function getExecutiveReport(section: ReportSection, query: Record<string, string | number>, signal: AbortSignal, targetCompanyId?: string): Promise<ReportData> {
   const endpoint = section === 'detail' ? `companies/${encodeURIComponent(targetCompanyId!)}` : section === 'overview' || section === 'companies' ? section : 'analysis';
   const params = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]));
-  return authedApiFetch(`/v1/system/executive/${endpoint}?${params}`, { signal, cache: 'no-store', suppressErrorToast: true });
+  const report = await authedApiFetch<ReportData>(executiveHref(`/v1/system/executive/${endpoint}`, params), { signal, cache: 'no-store', suppressErrorToast: true });
+  if (section !== 'revenue' || query.view !== 'top') return report;
+  // The top endpoint has no receipt/tax/fee totals. Read the existing summary from the same build for the shared strip.
+  params.set('view', 'summary'); params.set('buildId', report.build.id);
+  const summary = await authedApiFetch<ExecutiveAnalysis>(executiveHref('/v1/system/executive/analysis', params), { signal, cache: 'no-store', suppressErrorToast: true });
+  if (summary.buildChanged || summary.build.id !== report.build.id) throw Error('executive revenue builds differ');
+  return { ...report, revenue: summary.revenue, periodComparisons: summary.periodComparisons, monthlySeries: summary.monthlySeries } as ExecutiveAnalysis;
 }
-export function getExecutiveHistory(targetCompanyId: string, page: number, signal: AbortSignal): Promise<ExecutiveCompanyHistory> {
-  return authedApiFetch(`/v1/system/executive/companies/${encodeURIComponent(targetCompanyId)}/history?page=${page}&pageSize=20`, { signal, cache: 'no-store', suppressErrorToast: true });
+export function getExecutiveHistory(targetCompanyId: string, page: number, signal: AbortSignal, period: Record<string, string | number> = {}): Promise<ExecutiveCompanyHistory> {
+  return authedApiFetch(executiveHref(`/v1/system/executive/companies/${encodeURIComponent(targetCompanyId)}/history`, { ...Object.fromEntries(Object.entries(period).map(([key, value]) => [key, String(value)])), page: String(page), pageSize: '20' }), { signal, cache: 'no-store', suppressErrorToast: true });
+}
+
+/** The report has no read of the note alone: its latest state comes with the company's own page, for the period on screen. */
+export async function getExecutiveCompanyNote(targetCompanyId: string, period: { from: string; to: string }): Promise<ExecutiveCompanyNoteResult> {
+  const { company } = await authedApiFetch<ExecutiveCompanyDetail>(executiveHref(`/v1/system/executive/companies/${encodeURIComponent(targetCompanyId)}`, period), { cache: 'no-store', suppressErrorToast: true });
+  return { note: company.note, canEditNote: company.canEditNote };
+}
+export function patchExecutiveCompanyNote(targetCompanyId: string, body: ExecutiveCompanyNoteBody): Promise<ExecutiveCompanyNoteResult> {
+  return authedApiFetch(`/v1/system/executive/companies/${encodeURIComponent(targetCompanyId)}`, { method: 'PATCH', body: JSON.stringify(body), cache: 'no-store', suppressErrorToast: true });
 }
 
 /** API13 returns a complete XLSX directly, with no saved copy or download URL. */

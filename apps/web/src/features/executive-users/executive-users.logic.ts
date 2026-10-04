@@ -1,5 +1,5 @@
 import {
-  EXECUTIVE_ACCOUNT_STATUSES, type ExecutiveAccountStatus, type ExecutiveUserCreateBody,
+  COMPANY_TEAM_NOTE_WORDS as NOTE, EXECUTIVE_ACCOUNT_STATUSES, type ExecutiveAccountStatus, type ExecutiveUserCreateBody,
   type ExecutiveUserView, type ExecutiveUserAccessBody, type ExecutiveUserStatusBody, type ExecutiveUserReasonBody,
 } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '../../common/api/api-error-message';
@@ -26,7 +26,11 @@ export const executiveWords = {
 };
 export const EXECUTIVE_RIGHTS = {
   canRead: 'ดูรายงานผู้บริหาร', canExport: 'ส่งออก Excel', canSeeContacts: 'ดูข้อมูลติดต่อเจ้าของร้าน',
+  // The note right is named by the note's own shared words, the same as in the role list.
+  canEditCompanyNote: NOTE.permissionDescription,
 };
+/** What the note is, said under its right: the team's own, the same one the admin console shows. */
+export const EXECUTIVE_NOTE_RIGHT_NOTE = NOTE.description;
 export const EXECUTIVE_EXPORT_NOTE = 'ไฟล์มีข้อมูลบริษัทตามสิทธิ์และตัวกรองที่เลือก และดาวน์โหลดไปแล้วเรียกคืนไม่ได้';
 export const EXECUTIVE_CONTACT_NOTE = 'เห็นอีเมลและเบอร์โทรของเจ้าของร้าน ซึ่งเป็นข้อมูลส่วนบุคคล';
 export const EXECUTIVE_CONTACT_EXPORT_NOTE = 'ข้อมูลติดต่อจะอยู่ในไฟล์ได้ต้องมีทั้งสิทธิ์ส่งออกและสิทธิ์ดูข้อมูลติดต่อ';
@@ -37,9 +41,13 @@ const STATUS_WORDS: Record<ExecutiveAccountStatus, { label: string; tone: Mangme
 export const executiveStatus = (status: ExecutiveAccountStatus) => STATUS_WORDS[status].label;
 export const executiveStatusTone = (status: ExecutiveAccountStatus) => STATUS_WORDS[status].tone;
 export const executiveStatusOptions = EXECUTIVE_ACCOUNT_STATUSES.map(value => ({ value, label: executiveStatus(value) }));
-export function executiveRights(user: Pick<ExecutiveUserView, 'canRead' | 'canExport' | 'canSeeContacts'>): string {
-  return (Object.keys(EXECUTIVE_RIGHTS) as Array<keyof typeof EXECUTIVE_RIGHTS>).filter(key => user[key]).map(key => EXECUTIVE_RIGHTS[key]).join(' · ') || 'ไม่มีสิทธิ์รายงาน';
+type Rights = Pick<ExecutiveUserView, 'canRead' | 'canExport' | 'canSeeContacts' | 'canEditCompanyNote'>;
+/** The rights an account holds, one entry each; a list or a card shows them all, never cut. */
+export function executiveRightList(user: Rights): string[] {
+  const held = (Object.keys(EXECUTIVE_RIGHTS) as Array<keyof typeof EXECUTIVE_RIGHTS>).filter(key => user[key]).map(key => EXECUTIVE_RIGHTS[key]);
+  return held.length ? held : ['ไม่มีสิทธิ์รายงาน'];
 }
+export const executiveRights = (user: Rights): string => executiveRightList(user).join(' · ');
 
 type Filters = { q: string; status?: ExecutiveAccountStatus; page: number };
 export function executiveFilters(params: Pick<URLSearchParams, 'get'>): Filters & { pageSize: number } {
@@ -57,20 +65,21 @@ export function executiveListUrl(current: Filters, changes: Partial<Filters>): s
   return `/system/executive-users${params.size ? `?${params}` : ''}`;
 }
 
-export type ExecutiveAction = 'export' | 'contacts' | 'suspend' | 'activate' | 'credential';
+export type ExecutiveAction = 'export' | 'contacts' | 'note' | 'suspend' | 'activate' | 'credential';
 export function executiveActions(user: ExecutiveUserView, protectedAccount = false): ExecutiveAction[] {
-  return protectedAccount || user.status === 'REVOKED' ? [] : ['export', 'contacts', user.status === 'SUSPENDED' ? 'activate' : 'suspend', 'credential'];
+  return protectedAccount || user.status === 'REVOKED' ? [] : ['export', 'contacts', 'note', user.status === 'SUSPENDED' ? 'activate' : 'suspend', 'credential'];
 }
 export function executiveActionLabel(user: ExecutiveUserView, action: ExecutiveAction): string {
   if (action === 'export') return `${user.canExport ? 'ปิด' : 'เปิด'}สิทธิ์${EXECUTIVE_RIGHTS.canExport}`;
   if (action === 'contacts') return `${user.canSeeContacts ? 'ปิด' : 'เปิด'}สิทธิ์${EXECUTIVE_RIGHTS.canSeeContacts}`;
+  if (action === 'note') return `${user.canEditCompanyNote ? 'ปิด' : 'เปิด'}สิทธิ์${EXECUTIVE_RIGHTS.canEditCompanyNote}`;
   return { suspend: 'ระงับบัญชี', activate: 'เปิดใช้อีกครั้ง', credential: 'ออกรหัสผ่านใหม่' }[action];
 }
 export function executiveConfirmation(user: ExecutiveUserView, action: ExecutiveAction): string {
   const effect = action === 'credential' ? 'การเข้าระบบที่ค้างอยู่ของบัญชีนี้จะถูกยกเลิก รหัสผ่านเดิมจะใช้ไม่ได้ และต้องตั้งรหัสผ่านใหม่เมื่อเข้าใช้งาน'
     : action === 'suspend' ? 'บัญชีนี้จะเข้าใช้งานไม่ได้ตั้งแต่คำขอถัดไป และเข้าระบบใหม่ไม่ได้จนกว่าจะเปิดใช้อีกครั้ง'
       : action === 'activate' ? 'ยกเลิกการระงับบัญชี หากรหัสผ่านหมดอายุ ต้องออกรหัสผ่านใหม่ด้วย'
-        : `สิทธิ์ใหม่มีผลตั้งแต่คำขอถัดไป ${action === 'export' ? EXECUTIVE_EXPORT_NOTE : `${EXECUTIVE_CONTACT_NOTE} ${EXECUTIVE_EXPORT_NOTE}`}`;
+        : `สิทธิ์ใหม่มีผลตั้งแต่คำขอถัดไป ${action === 'note' ? EXECUTIVE_NOTE_RIGHT_NOTE : action === 'export' ? EXECUTIVE_EXPORT_NOTE : `${EXECUTIVE_CONTACT_NOTE} ${EXECUTIVE_EXPORT_NOTE}`}`;
   return `${user.displayName} · ${executiveWords.username} ${user.username}\n${effect}`;
 }
 export type ExecutiveCommand = { path: 'access'; body: ExecutiveUserAccessBody }
@@ -80,8 +89,9 @@ export function executiveCommand(user: ExecutiveUserView, action: ExecutiveActio
   if (!reason || reason.length > 500 || !executiveActions(user).includes(action)) return null;
   if (action === 'credential') return { path: 'credential', body: { reason } };
   if (action === 'suspend' || action === 'activate') return { path: 'status', body: { status: action === 'suspend' ? 'SUSPENDED' : 'ACTIVE', reason } };
+  // The note right travels only when it is the one being changed: left out, the server keeps it as it is (also when this page read it a while ago).
   return { path: 'access', body: { canExport: action === 'export' ? !user.canExport : user.canExport,
-    canSeeContacts: action === 'contacts' ? !user.canSeeContacts : user.canSeeContacts, reason } };
+    canSeeContacts: action === 'contacts' ? !user.canSeeContacts : user.canSeeContacts, ...(action === 'note' ? { canEditCompanyNote: !user.canEditCompanyNote } : {}), reason } };
 }
 export function executiveExpiryNotice(user: ExecutiveUserView, now = Date.now()): string | null {
   if (user.status !== 'PENDING_ACTIVATION') return null;
@@ -91,10 +101,10 @@ export function executiveExpiryNotice(user: ExecutiveUserView, now = Date.now())
     : `รหัสผ่านชั่วคราวใช้ได้ถึง ${formatThaiDateTime(user.temporaryPasswordExpiresAt)}`;
 }
 
-export type ExecutiveForm = ExecutiveUserCreateBody & { phoneNumber: string; email: string };
+export type ExecutiveForm = ExecutiveUserCreateBody & { phoneNumber: string; email: string; canEditCompanyNote: boolean };
 export type ExecutiveFormErrors = Partial<Record<keyof ExecutiveForm, string>>;
 export function emptyExecutiveForm(): ExecutiveForm {
-  return { username: '', displayName: '', phoneNumber: '', email: '', canExport: false, canSeeContacts: false };
+  return { username: '', displayName: '', phoneNumber: '', email: '', canExport: false, canSeeContacts: false, canEditCompanyNote: false };
 }
 export function validateExecutiveForm(values: ExecutiveForm): ExecutiveFormErrors {
   const errors: ExecutiveFormErrors = {};
@@ -107,7 +117,7 @@ export function validateExecutiveForm(values: ExecutiveForm): ExecutiveFormError
 export function executiveCreateBody(values: ExecutiveForm): ExecutiveUserCreateBody {
   return { username: values.username.trim().toLowerCase(), displayName: values.displayName.trim(),
     ...(values.phoneNumber.trim() ? { phoneNumber: values.phoneNumber.trim() } : {}),
-    ...(values.email.trim() ? { email: values.email.trim() } : {}), canExport: values.canExport, canSeeContacts: values.canSeeContacts };
+    ...(values.email.trim() ? { email: values.email.trim() } : {}), canExport: values.canExport, canSeeContacts: values.canSeeContacts, canEditCompanyNote: values.canEditCompanyNote };
 }
 export function executiveFieldErrors(error: unknown): ExecutiveFormErrors {
   const value = error as { fieldErrors?: Record<string, unknown>; details?: { fieldErrors?: Record<string, unknown> } } | null;

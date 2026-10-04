@@ -28,6 +28,12 @@ import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, FUTURE_TRIGGER
 import { completedDocumentNotificationIds } from './infrastructure/document-notification-state';
 import { WORKFLOW_TEMPLATE_CATALOG } from '../workflow/domain/workflow-template-catalog';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
+import { ALL_FEATURE_ENTITLEMENT_KEYS, TIER_FEATURE_PRESETS } from '@watchdog-bms/contracts';
+import * as notificationModel from './domain/models/notification.model';
+import { CreateOrUpdateNotificationEventUseCase, ProcessQueuedDeliveryUseCase } from './application/use-cases/notification.use-cases';
+import { StockLowScanUseCase } from './application/use-cases/stock-low-scan.use-case';
+import { PrismaAlertStateRepository, PrismaNotificationRuleRepository } from './infrastructure/prisma-notification.repository';
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 
 const COMPANY = 'co-1';
 
@@ -123,6 +129,7 @@ function capturingPrisma(captured: Record<string, any>) {
   });
   return {
     client: {
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationEvent: model('event'),
       notificationRecipient: model('recipient'),
       notificationDelivery: model('delivery'),
@@ -170,6 +177,7 @@ describe('decision code words in notices stored before the fix', () => {
     });
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationEvent: {
           // The first read (a `select`) is the still-to-do projection; the second is the page.
           findMany: async (args: any) => (args.select ? [] : [
@@ -345,3 +353,240 @@ describe('notices of a claim whose payout account is being corrected', () => {
     assert.equal(WORKFLOW_TEMPLATE_CATALOG.filter((entry) => entry.key.startsWith('reimbursement_payout_correction_')).length, 2);
   });
 });
+
+
+// Owner 2026-10-04: module availability, not a rule/preference, determines which notices exist.
+function notificationStore(featureKeys: readonly string[] | null) {
+  const events: any[] = [];
+  const recipients: any[] = [];
+  const deliveries: any[] = [];
+  let entitlementRows = featureKeys?.map(featureKey => ({ featureKey, enabled: true })) ?? [];
+  const matches = (row: any, where: any): boolean => {
+    if (where.AND && !where.AND.every((clause: any) => matches(row, clause))) return false;
+    for (const key of ['companyId', 'triggerKey', 'id', 'status']) {
+      const value = where[key];
+      if (value === undefined) continue;
+      if (typeof value === 'string' && row[key] !== value) return false;
+      if (value.in && !value.in.includes(row[key])) return false;
+      if (value.notIn?.includes(row[key]) || value.not === row[key]) return false;
+    }
+    return true;
+  };
+  const prisma = { client: {
+    companyFeatureEntitlement: { findMany: async (q: any) => { assert.equal(q.where.companyId, COMPANY); return entitlementRows; } },
+    notificationEvent: {
+      findFirst: async ({ where }: any) => events.find(row => row.companyId === where.companyId && row.dedupKey === where.dedupKey) ?? null,
+      create: async ({ data }: any) => { const row = { id: `event-${events.length}`, ...data }; events.push(row); return row; },
+      update: async () => assert.fail('unentitled dedup must not update an old event'),
+      findMany: async ({ where, select, take }: any) => select ? [] : events.filter(row => matches(row, where)).slice(0, take),
+      groupBy: async ({ where }: any) => {
+        const counts = new Map<string, number>();
+        for (const row of events.filter(row => matches(row, where))) counts.set(row.severity, (counts.get(row.severity) ?? 0) + 1);
+        return [...counts].map(([severity, total]) => ({ severity, _count: { _all: total } }));
+      },
+    },
+    notificationRule: { findFirst: async () => null },
+    alertState: { findUnique: async () => null, upsert: async ({ create }: any) => create },
+    companyMembership: { findMany: async () => [{ userId: 'u1' }] },
+    notificationRecipient: {
+      findUnique: async () => null,
+      create: async ({ data }: any) => { const row = { id: `recipient-${recipients.length}`, ...data }; recipients.push(row); return row; },
+    },
+    notificationDelivery: {
+      findFirst: async () => null,
+      create: async ({ data }: any) => { deliveries.push(data); return data; },
+    },
+  } } as any;
+  const create = new CreateOrUpdateNotificationEventUseCase(
+    new PrismaNotificationEventRepository(prisma), new PrismaNotificationRecipientRepository(prisma),
+    new PrismaNotificationDeliveryRepository(prisma), new PrismaAlertStateRepository(prisma),
+    new PrismaNotificationRuleRepository(prisma), prisma,
+  );
+  const input = (triggerKey: string) => ({ companyId: COMPANY, triggerKey, sourceModule: 'test', sourceType: 'record', sourceId: 'record-1',
+    severity: 'action', title: 'รายการรอตรวจ', body: '', recipientUserIds: ['u1'] });
+  return { prisma, create, input, events, recipients, deliveries,
+    setRows: (rows: typeof entitlementRows) => { entitlementRows = rows; } };
+}
+
+describe('notifications only for owned modules', () => {
+  it('classifies every listed, template and literal-emitted trigger using real feature keys', () => {
+    const mapping = (notificationModel as any).NOTIFICATION_TRIGGER_FEATURE_KEYS;
+    assert.ok(mapping, 'ownership mapping must live beside the trigger lists');
+    const keys = new Set([...IMPLEMENTED_TRIGGER_KEYS, ...FUTURE_TRIGGER_KEYS, ...EMITTED_BUT_NOT_DELIVERABLE,
+      'signup_pending_review', 'signup_ops_alert', 'crm_pdpa_erasure_completed', 'crm_pdpa_erasure_failed']);
+    for (const file of apiSourceFiles(join(__dirname, '..'))) {
+      if (file.endsWith('notification.model.ts')) continue;
+      for (const match of readFileSync(file, 'utf8').matchAll(/triggerKey:\s*'([a-z][a-z0-9_.]+)'/g)) keys.add(match[1]!);
+    }
+    for (const template of WORKFLOW_TEMPLATE_CATALOG) {
+      for (const action of template.defaultActionJson) {
+        if (action.actionType === 'SEND_NOTIFICATION') keys.add(String(action.configJson['triggerKey']));
+      }
+    }
+    for (const key of keys) {
+      assert.ok(Object.hasOwn(mapping, key), `unclassified notification trigger: ${key}`);
+      // No marketing feature exists yet: this future key is explicitly blocked pending the owner.
+      if (key === 'campaign_opportunity') { assert.equal(mapping[key], null); continue; }
+      assert.ok(Array.isArray(mapping[key]), key);
+      for (const feature of mapping[key]) assert.ok(ALL_FEATURE_ENTITLEMENT_KEYS.includes(feature), `${key}: ${feature}`);
+    }
+  });
+
+  for (const [triggerKey, feature] of [['crm_sla_breach', 'crm.inbox'], ['stock_low', 'inventory']] as const) {
+    it(`${triggerKey}: STARTER creates no event or delivery; the purchased module and legacy company do`, async () => {
+      const starter = notificationStore(TIER_FEATURE_PRESETS.STARTER_249);
+      const result = await starter.create.execute(starter.input(triggerKey));
+      assert.equal(starter.events.length, 0);
+      assert.equal(result.skipped, true);
+      assert.deepEqual([starter.recipients.length, starter.deliveries.length], [0, 0]);
+      for (const keys of [[feature], null]) {
+        const owned = notificationStore(keys);
+        assert.equal((await owned.create.execute(owned.input(triggerKey))).skipped, false);
+        assert.deepEqual([owned.events.length, owned.recipients.length, owned.deliveries.length], [1, 1, 2]);
+      }
+    });
+  }
+
+  it('blocks unregistered and unresolved future triggers instead of treating them as platform-wide', async () => {
+    for (const triggerKey of ['workflow.custom_notice', 'campaign_opportunity']) {
+      const store = notificationStore(null);
+      assert.equal((await store.create.execute(store.input(triggerKey))).skipped, true);
+      assert.equal(store.events.length, 0);
+    }
+  });
+
+  it('does not repair dedup recipients or deliveries after a downgrade', async () => {
+    const store = notificationStore(['crm']);
+    await store.create.execute(store.input('crm_sla_breach'));
+    store.setRows(TIER_FEATURE_PRESETS.STARTER_249.map(featureKey => ({ featureKey, enabled: true })));
+    assert.equal((await store.create.execute(store.input('crm_sla_breach'))).skipped, true);
+    assert.deepEqual([store.events.length, store.recipients.length, store.deliveries.length], [1, 1, 2]);
+  });
+
+  it('explicit submenu OFF beats parent CRM while platform notices remain available', async () => {
+    const store = notificationStore(['crm']);
+    store.setRows([{ featureKey: 'crm', enabled: true }, { featureKey: 'crm.inbox', enabled: false }]);
+    assert.equal((await store.create.execute(store.input('crm_sla_breach'))).skipped, true);
+    assert.equal(store.events.length, 0);
+    assert.equal((await store.create.execute(store.input('plan_term_expiring'))).skipped, false);
+    assert.equal(store.events.length, 1);
+  });
+
+  it('retained CRM/stock events disappear from lists, filtered pages, unread totals and severity badges, and return after purchase', async () => {
+    const store = notificationStore(['crm', 'inventory']);
+    for (const key of ['crm_sla_breach', 'stock_low', 'plan_term_expiring']) await store.create.execute(store.input(key));
+    store.setRows(TIER_FEATURE_PRESETS.STARTER_249.map(featureKey => ({ featureKey, enabled: true })));
+    const repo = new PrismaNotificationEventRepository(store.prisma);
+    const counts = new PrismaNotificationRecipientRepository(store.prisma);
+    for (const filter of [{}, { read: false }, { status: 'open' }]) {
+      const page = await repo.list(COMPANY, 'u1', { ...filter, pageSize: 1 });
+      assert.deepEqual(page.items.map(row => row.triggerKey), ['plan_term_expiring']);
+      assert.equal(page.nextCursor, undefined, 'filter must run before page size/cursor');
+    }
+    assert.deepEqual((await repo.list(COMPANY, 'u1', { triggerKey: 'crm_sla_breach' })).items, []);
+    assert.deepEqual(await counts.countUnread(COMPANY, 'u1'), { total: 1, bySeverity: { critical: 0, action: 1, insight: 0, info: 0 } });
+    assert.equal(store.events.length, 3, 'history is retained');
+    store.setRows([{ featureKey: 'crm', enabled: true }, { featureKey: 'inventory', enabled: true }]);
+    assert.equal((await repo.list(COMPANY, 'u1', {})).items.length, 3);
+    assert.equal((await counts.countUnread(COMPANY, 'u1')).total, 3);
+  });
+
+  it('counts only entitled retained events in total and each severity', async () => {
+    const store = notificationStore(TIER_FEATURE_PRESETS.STARTER_249);
+    store.events.push(
+      { id: 'crm-old', companyId: COMPANY, triggerKey: 'crm_sla_breach', status: 'OPEN', severity: 'CRITICAL' },
+      { id: 'stock-old', companyId: COMPANY, triggerKey: 'stock_low', status: 'OPEN', severity: 'ACTION' },
+      { id: 'package', companyId: COMPANY, triggerKey: 'plan_term_expiring', status: 'OPEN', severity: 'INFO' },
+    );
+    assert.deepEqual(await new PrismaNotificationRecipientRepository(store.prisma).countUnread(COMPANY, 'u1'),
+      { total: 1, bySeverity: { critical: 0, action: 0, insight: 0, info: 1 } });
+  });
+
+  for (const triggerKey of ['crm_sla_breach', 'stock_low', 'workflow.reimbursement_payment_voided']) {
+    for (const channel of ['WEB', 'LINE']) it(`${triggerKey}: queued ${channel} delivery is suppressed after module loss, even mandatory notices`, async () => {
+      const result = await deliverOwnedNotice(triggerKey, channel, ['company_settings']);
+      assert.equal(result.last.status.toLowerCase(), 'suppressed');
+      assert.equal(result.pushes, 0);
+    });
+  }
+
+  for (const [triggerKey, feature] of [['crm_sla_breach', 'crm'], ['stock_low', 'inventory']] as const) {
+    it(`${triggerKey}: a downgrade between the initial LINE read and transaction egress prevents the push`, async () => {
+      const result = await deliverOwnedNotice(triggerKey, 'LINE', [feature], ['company_settings']);
+      assert.equal(result.pushes, 0);
+      assert.equal(result.last.status.toLowerCase(), 'suppressed');
+      const entitled = await deliverOwnedNotice(triggerKey, 'LINE', [feature]);
+      assert.equal(entitled.pushes, 1);
+      assert.equal(entitled.last.status.toLowerCase(), 'sent');
+    });
+  }
+
+  for (const [triggerKey, feature] of [['crm_sla_breach', 'crm'], ['stock_low', 'inventory']] as const) {
+    it(`${triggerKey}: holds the shared company entitlement lock for the final LINE read and push`, async () => {
+      const result = await deliverOwnedNotice(triggerKey, 'LINE', [feature], [feature], true);
+      assert.equal(result.pushes, 1);
+    });
+  }
+
+  it('filters the recipient read path by the same current module ownership', async () => {
+    const store = notificationStore(TIER_FEATURE_PRESETS.STARTER_249);
+    let query: any;
+    store.prisma.client.notificationRecipient.findMany = async (q: any) => { query = q; return []; };
+    await new PrismaNotificationRecipientRepository(store.prisma).listByUser(COMPANY, 'u1', { pageSize: 1 });
+    assert.ok(query.where.event.triggerKey.in.includes('plan_term_expiring'));
+    assert.ok(!query.where.event.triggerKey.in.includes('crm_sla_breach'));
+    assert.ok(!query.where.event.triggerKey.in.includes('stock_low'));
+  });
+
+  it('stock-low scan skips all inventory reads for STARTER and reads them after purchase', async () => {
+    const store = notificationStore(TIER_FEATURE_PRESETS.STARTER_249);
+    let productReads = 0;
+    store.prisma.client.product = { findMany: async () => { productReads++; return []; } };
+    store.prisma.client.stockMovement = { groupBy: async () => [] };
+    const scan = new StockLowScanUseCase(store.prisma, store.create,
+      { findByTriggerKey: async () => ({ status: 'enabled' }) } as any);
+    assert.deepEqual(await scan.execute(COMPANY), { scanned: 0, triggered: 0 });
+    assert.equal(productReads, 0);
+    store.setRows([{ featureKey: 'inventory', enabled: true }]);
+    await scan.execute(COMPANY);
+    assert.equal(productReads, 1);
+  });
+});
+
+
+async function deliverOwnedNotice(triggerKey: string, channel: string, featureKeys: readonly string[], egressFeatureKeys = featureKeys, requireFence = false) {
+  const store = notificationStore(featureKeys);
+  let pushes = 0;
+  const originalFetch = globalThis.fetch;
+  const updates: any[] = [];
+  let fenced = false;
+  const row: any = { id: 'd1', companyId: COMPANY, channel, status: 'QUEUED', attemptCount: 0,
+    recipient: { userId: 'u1', event: { triggerKey,
+      sourceModule: triggerKey.startsWith('crm_') ? 'crm_inbox' : 'inventory', sourceType: 'crm_conversation', sourceId: 'conv-1',
+      severity: 'ACTION', status: 'OPEN', title: 'รายการรอตรวจ', body: '' } } };
+  const update = async ({ data }: any) => { updates.push(data); return data; };
+  const updateMany = async ({ data }: any) => { updates.push(data); return { count: 1 }; };
+  store.prisma.client.notificationDelivery = { findFirst: async () => row, updateMany };
+  store.prisma.client.notificationPreference = { findUnique: async () => null };
+  store.prisma.client.externalIdentity = { findFirst: async () => ({ providerUserId: 'line-1' }) };
+  store.prisma.client.$transaction = async (run: any) => run({ ...store.prisma.client,
+    $queryRaw: async () => [{ id: 'm1' }],
+    $executeRaw: async (sql: any) => { assert.deepEqual(sql.values, [`entitlement:${COMPANY}`]); fenced = true; return 0; },
+    companyFeatureEntitlement: { findMany: async () => {
+      if (requireFence) assert.equal(fenced, true, 'entitlement read must hold the company lock through egress');
+      return egressFeatureKeys.map(featureKey => ({ featureKey, enabled: true }));
+    } },
+    notificationDelivery: { findFirst: async () => row, updateMany, update },
+    crmConversation: { findFirst: async () => ({ customerId: 'customer-1' }) },
+    crmCustomer: { findFirst: async () => ({ id: 'customer-1' }) },
+  });
+  const config = { lineMessagingChannelAccessToken: 'token', lineMessagingChannelId: 'channel' } as any;
+  const process = new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture(config), store.prisma,
+    { update: async (_co: string, _id: string, data: any) => update({ data }) } as any,
+    { log: async () => undefined } as any, config);
+  try {
+    globalThis.fetch = (async () => { pushes++; return new Response('{}', { status: 200 }); }) as any;
+    await process.execute(COMPANY, 'd1');
+    return { pushes, last: updates.at(-1) };
+  } finally { globalThis.fetch = originalFetch; }
+}

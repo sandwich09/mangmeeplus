@@ -57,3 +57,23 @@ describe('PrismaTaxRepository createIssue dedupe', () => {
     assert.equal(record.id, 'issue-new');
   });
 });
+
+
+describe('expense tax events cannot cross correction', () => {
+  for (const [status, version] of [['NEEDS_REVIEW', 1], ['REJECTED', 1], ['VOIDED', 1], ['CONFIRMED', 2]] as const) {
+    it(`refuses stale synchronization at ${status}/${version}`, async () => {
+      let writes = 0;
+      const client: any = {
+        $transaction: async (work: any) => work({ ...client }), $executeRaw: async () => 0,
+        expenseRecord: { findFirst: async () => ({ status, confirmedAt: new Date(version), updatedAt: new Date(100) }) },
+        taxEvent: { upsert: async ({ create }: any) => { writes++; return { id: 'event', ...create }; } },
+      };
+      await assert.rejects(new PrismaTaxRepository({ client } as any).upsertEvent({ companyId: 'c1', sourceType: 'expense.record', sourceId: 'e1', expectedExpenseConfirmedAt: new Date(1), idempotencyKey: 'old' } as any), (e: any) => e.getResponse?.().code === 'expense_tax_source_changed');
+      assert.equal(writes, 0);
+      // A fresh confirmation still syncs when posting has stamped an unrelated write time.
+      client.expenseRecord.findFirst = async () => ({ status: 'CONFIRMED', confirmedAt: new Date(3), updatedAt: new Date(100) });
+      await new PrismaTaxRepository({ client } as any).upsertEvent({ companyId: 'c1', sourceType: 'expense.record', sourceId: 'e1', expectedExpenseConfirmedAt: new Date(3), idempotencyKey: 'current' } as any);
+      assert.equal(writes, 1);
+    });
+  }
+});

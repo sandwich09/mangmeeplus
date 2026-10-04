@@ -1,4 +1,4 @@
-import { EXECUTIVE_WORDS as W, type ExecutiveContext, type ExecutiveExportBody } from '@watchdog-bms/contracts';
+import { EXECUTIVE_WORDS as W, executivePeriodLabel, type ExecutiveContext, type ExecutiveExportBody } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '../../common/api/api-error-message';
 import { formatThaiDate, formatThaiMonth } from '../../common/i18n/thai-date';
 import { reportQuery, reasonText, retryDelaySeconds, type ReportSection } from './executive-reports.logic';
@@ -6,17 +6,16 @@ import { reportQuery, reasonText, retryDelaySeconds, type ReportSection } from '
 export const canExport = (context: ExecutiveContext | null) => !!context?.capabilities.readReport.allowed && !!context.capabilities.export.allowed;
 export const canExportContacts = (section: ReportSection, context: ExecutiveContext | null) => canExport(context) && ['companies', 'detail'].includes(section) && !!context?.capabilities.seeContacts.allowed;
 export function exportBody(section: ReportSection, params: URLSearchParams, context: ExecutiveContext, buildId: string, search = '', targetCompanyId?: string, includeContacts = false): ExecutiveExportBody {
-  const { month, page: _page, pageSize: _pageSize, section: _section, view, metric, dimension, sideA, sideB, sortBy, sortDir, ...filters } = reportQuery(section, params, context, search);
-  return { buildId, reportKey: section, month: String(month), filters, format: 'xlsx', includeContacts: includeContacts && canExportContacts(section, context),
+  const { from, to, page: _page, pageSize: _pageSize, section: _section, view, metric, sortBy, sortDir, ...filters } = reportQuery(section, params, context, search);
+  return { buildId, reportKey: section, from: String(from), to: String(to), filters, format: 'xlsx', includeContacts: includeContacts && canExportContacts(section, context),
     ...(view ? { subview: section === 'customers' && view === 'sales' && params.get('seller') === 'credited' ? 'creditedSales' : String(view) } : {}),
     ...(metric || sortBy ? { sortBy: String(metric ?? sortBy) as ExecutiveExportBody['sortBy'], sortDir: (metric ? 'desc' : sortDir) as 'asc' | 'desc' } : {}),
     ...(section === 'revenue' && view === 'top' ? { sortBy: 'netReceipts', sortDir: 'desc' } : {}),
-    ...(section === 'compare' ? { comparison: { dimension: String(dimension), sideA: String(sideA), sideB: String(sideB) } } : {}),
     ...(section === 'detail' ? { targetCompanyId } : {}) };
 }
-export function exportFileName(section: ReportSection, month: string, now = new Date()): string {
+export function exportFileName(section: ReportSection, from: string, now = new Date(), to = from): string {
   const time = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false }).format(now).replace(':', '');
-  return `รายงานผู้บริหารมั่งมี-${W[section]}-${formatThaiMonth(month).replaceAll(' ', '')}-ส่งออก-${formatThaiDate(now).replaceAll(' ', '')}-${time}.xlsx`;
+  return `รายงานผู้บริหารมั่งมี-${W[section]}-${executivePeriodLabel(from, to).replaceAll(' ', '')}-ส่งออก-${formatThaiDate(now).replaceAll(' ', '')}-${time}.xlsx`;
 }
 export type ExportState = { kind: 'preparing' | 'done' | 'error' | 'expired' | 'denied'; text: string; retryAfterSeconds?: number };
 /** A request may hand a file to the browser only while its original context still exists. */

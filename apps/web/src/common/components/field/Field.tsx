@@ -11,18 +11,20 @@ type FieldFrameProps = {
   showRequiredMark?: boolean;
   error?: string;
   hint?: string;
+  hintClassName?: string;
+  frameClassName?: string;
   children: ReactNode;
 };
 
-function FieldFrame({ id, label, showRequiredMark, error, hint, children }: FieldFrameProps) {
+function FieldFrame({ id, label, showRequiredMark, error, hint, hintClassName, frameClassName, children }: FieldFrameProps) {
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
 
   return (
-    <label htmlFor={id} className="flex flex-col gap-1.5 text-sm font-medium text-gray-700">
+    <label htmlFor={id} className={`flex flex-col gap-1.5 text-sm font-medium text-gray-700 ${frameClassName ?? ''}`}>
       <span>{label}{showRequiredMark && <span className="text-red-600" aria-hidden="true"> *</span>}</span>
       {children}
-      {hint && <span id={hintId} className="text-xs font-normal text-gray-400">{hint}</span>}
+      {hint && <span id={hintId} title={hintClassName ? hint : undefined} className={`text-xs font-normal ${hintClassName ?? 'text-gray-400'}`}>{hint}</span>}
       {error && <FieldError id={errorId}>{error}</FieldError>}
     </label>
   );
@@ -40,9 +42,11 @@ export interface TextFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   showRequiredMark?: boolean;
   error?: string;
   hint?: string;
+  hintClassName?: string;
+  frameClassName?: string;
 }
 
-export function TextField({ id, label, showRequiredMark, error, hint, className, ...rest }: TextFieldProps) {
+export function TextField({ id, label, showRequiredMark, error, hint, hintClassName, frameClassName, className, ...rest }: TextFieldProps) {
   const [locale] = useLocale();
   const [revealed, setRevealed] = useState(false);
   const fieldId = getFieldId(id, rest.name, label);
@@ -63,7 +67,7 @@ export function TextField({ id, label, showRequiredMark, error, hint, className,
   );
 
   return (
-    <FieldFrame id={fieldId} label={label} showRequiredMark={showRequiredMark} error={error} hint={hint}>
+    <FieldFrame id={fieldId} label={label} showRequiredMark={showRequiredMark} error={error} hint={hint} hintClassName={hintClassName} frameClassName={frameClassName}>
       {isPassword ? (
         <span className="relative block">
           {input}
@@ -93,16 +97,17 @@ export interface SelectFieldProps extends ThemedSelectProps {
   showRequiredMark?: boolean;
   error?: string;
   hint?: string;
+  frameClassName?: string;
 }
 
-export function SelectField({ id, label, showRequiredMark, error, hint, className, children, ...rest }: SelectFieldProps) {
+export function SelectField({ id, label, showRequiredMark, error, hint, frameClassName, className, children, ...rest }: SelectFieldProps) {
   const fieldId = getFieldId(id, rest.name, label);
   const describedBy = [hint ? `${fieldId}-hint` : undefined, error ? `${fieldId}-error` : undefined]
     .filter(Boolean)
     .join(' ');
 
   return (
-    <FieldFrame id={fieldId} label={label} showRequiredMark={showRequiredMark} error={error} hint={hint}>
+    <FieldFrame id={fieldId} label={label} showRequiredMark={showRequiredMark} error={error} hint={hint} frameClassName={frameClassName}>
       <ThemedSelect
         id={fieldId}
         aria-label={label}

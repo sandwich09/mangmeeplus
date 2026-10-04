@@ -1,3 +1,5 @@
+import { EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, todayCivilDate } from '@watchdog-bms/contracts';
+import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
 import { JPEG_LABEL, PNG_LABEL } from '@watchdog-bms/contracts';
 import { expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import type {
@@ -365,6 +367,8 @@ export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | '
 }
 
 export type ExpenseDetail = ExpenseSummary & {
+  correctionOpenedAt?: string | null;
+  correctionCapabilities?: import('@watchdog-bms/contracts').ExpenseCorrectionCapabilities;
   /** Vendor-address Slice 2: the printed buyer block and its registry comparison (warn-only). */
   buyerAsPrinted?: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted | null;
   primaryAttachmentId?: string | null;
@@ -807,12 +811,16 @@ export function buildExpenseDraftReviewPayload(
     vendorAddressSnapshot: values.vendorAddressSnapshot.trim() || null,
     vendorBranchCodeSnapshot: values.vendorBranchCodeSnapshot.trim() || null,
     ...(values.vendorEntityKindSnapshot && { vendorEntityKindSnapshot: values.vendorEntityKindSnapshot }),
-    ...(values.whtCategoryCode && { whtCategoryCode: values.whtCategoryCode, ...(values.whtRate && { whtRate: values.whtRate }) }),
+    ...(values.whtInput?.value === '0' && values.whtCategoryCode === ''
+      ? { whtCategoryCode: '', whtRate: '0' }
+      : values.whtCategoryCode && { whtCategoryCode: values.whtCategoryCode, ...(values.whtRate && { whtRate: values.whtRate }) }),
     vendorDocumentNumber: values.vendorDocumentNumber.trim(),
     ...((!options.sourceDraft || values.expenseDate) && { expenseDate: values.expenseDate }),
     vatMode: values.vatMode,
     ...(includeTaxFacts && payloadValues.vatSource && { vatSource: payloadValues.vatSource }),
-    ...(includeTaxFacts && values.whtInput && { whtInput: values.whtInput }),
+    // A half-typed value ("03", "") never reaches the API malformed; a blank one is refused before any save
+    // while หัก is chosen (ExpenseReviewEditSection.save), so "0" here only feeds the totals preview.
+    ...(includeTaxFacts && values.whtInput && { whtInput: { ...values.whtInput, value: normalizeExpenseWhtValue(values.whtInput.value) || '0' } }),
     ...(options.partial && options.sourceDraft && { sourceDraft: sourceReviewInput(values, options.sourceDraft) }),
     ...(includeLines && { lines: payloadValues.lines.map((line, index) => ({
       ...(line.id && { id: line.id }),
@@ -1170,6 +1178,30 @@ export function expenseReviewWithholdsTax(values: ExpenseDraftReviewValues, save
   return values.whtInput
     ? Number(values.whtInput.value) > 0
     : Number(savedWhtAmount) > 0 || values.lines.some((line) => Number(line.whtRate) > 0);
+}
+
+/** Blank is a reviewer decision to clear WHT, using the API's existing explicit-zero idiom. */
+export function changeExpenseReviewWhtInput(values: ExpenseDraftReviewValues, input: ExpenseWhtInput): ExpenseDraftReviewValues {
+  if (input.value.trim() !== '') return { ...values, whtInput: input };
+  return {
+    ...values,
+    whtInput: { inputType: input.inputType, value: '0' },
+    whtCategoryCode: '', whtRate: '',
+    lines: values.lines.map((line) => ({ ...line, whtRate: null })),
+  };
+}
+
+/** R2: only digits and one decimal point enter the withholding field; "-" and letters never do. */
+export function sanitizeExpenseWhtTyping(value: string): string {
+  const [whole = '', ...rest] = value.replace(/[^\d.]/g, '').split('.');
+  return rest.length ? `${whole}.${rest.join('')}` : whole;
+}
+
+/** R2: what was typed, tidied the way leaving the field does — "03" → "3", ".5" → "0.5", "3." → "3". Blank stays blank. */
+export function normalizeExpenseWhtValue(value: string): string {
+  const [whole = '', fraction = ''] = value.trim().split('.');
+  if (!whole && !fraction) return '';
+  return `${whole.replace(/^0+(?=\d)/, '') || '0'}${fraction ? `.${fraction}` : ''}`;
 }
 
 export type ExpenseVatRatePreset = 'unset' | 'standard' | 'exempt' | 'zero' | 'nonVat' | 'unknownZero' | 'custom';
@@ -1809,4 +1841,35 @@ export function canIssueWhtReplacementCopy(
 ): boolean {
   return handoff.status === 'SYSTEM_ISSUED' && Boolean(handoff.certificateId) && Boolean(handoff.systemReplacementOpen)
     && permissions.includes('wht.certificate.correct');
+}
+
+
+export { expenseConfirmedLockMessage } from '@watchdog-bms/contracts';
+
+export function expensePaymentFormState(outstanding: string, amount: string, paidAt: string, retrying = false, today = todayCivilDate('Asia/Bangkok')) {
+  const balance = Number(outstanding);
+  const prefill = Number.isFinite(balance) && balance > 0 ? balance.toFixed(2) : '';
+  const value = Number(amount);
+  const disabledReason = paidAt > today && isCivilDate(paidAt) ? EXPENSE_CORRECTION_WORDS.futurePaymentDate : retrying ? null : !INCOME_POSITIVE_MONEY_PATTERN.test(normalizeExpensePaymentAmount(amount.trim()))
+    ? 'กรุณากรอกยอดจ่ายมากกว่า 0 และทศนิยมไม่เกิน 2 ตำแหน่ง'
+    : value > Number(prefill) ? 'ยอดจ่ายเกินยอดค้างจ่าย กรุณาตรวจยอดอีกครั้ง'
+    : !isCivilDate(paidAt) ? 'กรุณาเลือกวันที่จ่ายเงินจริงให้ถูกต้อง' : null;
+  const formatted = `฿${(Number.isFinite(value) ? value : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return { prefill, disabledReason, maxPaidAt: today, label: value > 0 && value === Number(prefill) ? `บันทึกจ่ายส่วนที่เหลือ ${formatted}` : `บันทึกจ่าย ${formatted}` };
+}
+
+export function canIssueExpenseWhtCertificate(expense: Pick<ExpenseDetail, 'status' | 'whtAmount'>,
+  handoff: import('@watchdog-bms/contracts').WhtCertificateHandoffDto | null, permissions: string[]): boolean {
+  return expense.status === 'CONFIRMED' && Number(expense.whtAmount) > 0 && handoff?.status === 'REQUIRED'
+    && handoff.systemIssuanceOpen && permissions.includes('wht.certificate.issue');
+}
+
+export function expenseWhtCategoriesForPayee<T extends { formType: string }>(categories: T[], payeeType: BuyerEntityKind | '' | undefined): T[] {
+  const formType = payeeType === 'INDIVIDUAL' ? 'PND3' : payeeType === 'JURISTIC' ? 'PND53' : null;
+  return categories.filter((category) => category.formType === formType);
+}
+
+export function changeExpensePayeeType(values: ExpenseDraftReviewValues, payeeType: BuyerEntityKind | '', categories: Array<{ code: string; formType: string }>): ExpenseDraftReviewValues {
+  return { ...values, vendorEntityKindSnapshot: payeeType,
+    whtCategoryCode: expenseWhtCategoriesForPayee(categories, payeeType).some((category) => category.code === values.whtCategoryCode) ? values.whtCategoryCode : '' };
 }

@@ -137,7 +137,7 @@ describe('ReimbursementProjectionReconcilerService replay of a claim that needed
     return { service, ready: () => outbox.find((row) => row.eventType === 'reimbursement.ready_for_payment')?.payloadJson.data };
   }
 
-  it('names the holders of the policy role who cover the claim branch', async () => {
+  it('names the holders of the policy role who cover the claim branch, excluding the requester when self-approval is off', async () => {
     const { service, ready } = replay('POLICY', [
       approverRole('MANAGER', ['mgr-1', 'staff-1']),
       approverRole('OWNER', ['owner-1']),
@@ -145,10 +145,8 @@ describe('ReimbursementProjectionReconcilerService replay of a claim that needed
 
     assert.deepEqual((await service.execute()).completed, ['req-1']);
 
-    // staff-1 is the requester and a manager, and a manager may approve their own claim, so the
-    // route keeps them. The notice is what never asks a requester alone (neverPreferRecipientPayloadKeys),
-    // which is why the event carries the requester next to this list.
-    assert.deepEqual(ready().approverRecipientUserIds, ['mgr-1', 'staff-1']);
+    // The owner's 2026-10-04 rule also applies to managers: a peer can approve, so this is not solo.
+    assert.deepEqual(ready().approverRecipientUserIds, ['mgr-1']);
     assert.equal(ready().requesterUserId, 'staff-1');
   });
 

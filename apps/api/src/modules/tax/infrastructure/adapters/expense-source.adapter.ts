@@ -80,7 +80,7 @@ export class ExpenseSourceAdapter {
       // §10 fallback: the document's own printed address wins; the registry only fills a gap.
       vendorAddress: r.vendorAddressSnapshot ?? (r.vendorCounterpartyId ? registryAddresses.get(r.vendorCounterpartyId) ?? null : null),
       currency: r.currency ?? 'THB',
-      updatedAt: r.updatedAt,
+      updatedAt: r.updatedAt, confirmedAt: r.confirmedAt,
     }));
   }
 
@@ -112,7 +112,7 @@ export class ExpenseSourceAdapter {
       incomeCategoryCode: r.taxCategory ?? null,
       ...whtLineFacts(r.lines, String(r.taxableAmount ?? '0'), r.whtInputJson as ExpenseWhtCapture | null),
       currency: r.currency ?? 'THB',
-      updatedAt: r.updatedAt,
+      updatedAt: r.updatedAt, confirmedAt: r.confirmedAt,
     }));
   }
 
@@ -125,7 +125,7 @@ export class ExpenseSourceAdapter {
     const expand = (rows: any[], sourceType: TransactionTaxSourceLineRow['sourceType'], dateKey: string, numberKey: string): TransactionTaxSourceLineRow[] => rows.flatMap((row: any) => row.lines.map((line: any) => ({
       sourceType, sourceId: row.id, sourceLineId: line.id, companyId: row.companyId, branchId: row.branchId ?? null,
       sourceEventType: row.status, eventDate: row[dateKey], currency: row.currency, vatMode: row.vatMode ?? null,
-      taxInvoiceNumber: row[numberKey] ?? null, taxComponents: Array.isArray(line.taxComponentsJson) ? line.taxComponentsJson : [], updatedAt: row.updatedAt,
+      taxInvoiceNumber: row[numberKey] ?? null, taxComponents: Array.isArray(line.taxComponentsJson) ? line.taxComponentsJson : [], updatedAt: row.updatedAt, confirmedAt: row.confirmedAt,
     })));
     return [...expand(expenses, 'expense.record', 'expenseDate', 'vendorDocumentNumber'), ...expand(bills, 'procurement.vendor_bill', 'billDate', 'taxInvoiceNumber')];
   }
@@ -139,7 +139,7 @@ export class ExpenseSourceAdapter {
     const expand = (rows: any[], sourceType: TransactionTaxSourceLineRow['sourceType'], dateKey: string): TransactionTaxSourceLineRow[] => rows.flatMap((row: any) => row.lines.map((line: any) => ({
       sourceType, sourceId: row.id, sourceLineId: line.id, companyId: row.companyId, branchId: row.branchId ?? null, sourceEventType: 'VOIDED',
       eventDate: row[dateKey], currency: row.currency, vatMode: row.vatMode ?? null, taxInvoiceNumber: row.taxInvoiceNumber ?? null,
-      taxComponents: Array.isArray(line.taxComponentsJson) ? line.taxComponentsJson : [], updatedAt: row.updatedAt,
+      taxComponents: Array.isArray(line.taxComponentsJson) ? line.taxComponentsJson : [], updatedAt: row.updatedAt, confirmedAt: row.confirmedAt,
     })));
     return [...expand(expenses, 'expense.record', 'expenseDate'), ...expand(bills, 'procurement.vendor_bill', 'billDate')];
   }

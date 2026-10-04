@@ -429,6 +429,7 @@ model Company {
   archivedAt                        DateTime?
   featureEntitlements               CompanyFeatureEntitlement[]
   aiConfiguration                   CompanyAiConfiguration?
+  teamNote                          CompanyTeamNote?
   webEntrySetting                   CompanyWebEntrySetting?
   aiUsageEvents                     AiUsageEvent[]
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
@@ -4016,6 +4017,10 @@ model ExecutiveCompanyMonth {
   expenseReceiptsWeb     Int       @default(0)
   /// A stored counter was higher than the recount, so source rows are gone (SOURCE_ROWS_PURGED).
   countersHeld           Boolean   @default(false)
+  /// Cumulative last counted action before this month’s cutoff; never today’s profile date for a past period.
+  lastActivityAt         DateTime?
+  activityHistorySince   DateTime?
+  activitySnapshotReady  Boolean   @default(false)
   // Groups of the month (spec §13.2).
   /// 'YES' | 'NO' | 'UNKNOWN', as of the month's end.
   paidEver               String
@@ -4084,6 +4089,10 @@ model ExecutiveCompanyProfile {
   receiptAdoption             String
   /// Sum of the stored monthly receipt counts, not a recount.
   expenseReceiptCountLifetime Int       @default(0)
+  /// Receipt dates, rolling windows and status counts as of build.asOf; null until a FULL build backfills.
+  sheetFacts                  Json?
+  businessTypeCode            String?
+  businessTypeOther           String?
   activeMemberCount           Int       @default(0)
   branchCount                 Int       @default(0)
 
@@ -10635,4 +10644,14 @@ model LineDeliveryPlan {
   @@index([status, nextAttemptAt, expiresAt])
   @@index([purgeAt])
   @@index([companyId, userId, createdAt])
+}
+
+// Platform-only team note; cascade cannot block company deletion, actor id has no FK.
+model CompanyTeamNote {
+  companyId       String   @id
+  text            String   @db.VarChar(1000)
+  version         Int      @default(0)
+  updatedByUserId String
+  updatedAt       DateTime @updatedAt
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }

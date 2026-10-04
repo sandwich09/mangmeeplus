@@ -126,6 +126,26 @@ describe('case a — no counterparty matches the vendor key', () => {
 });
 
 describe('case b — the counterparty exists but has no address', () => {
+  it('stays silent on repeated empty-address saves, even if another vendor field is saved', async () => {
+    const row = { id: 'cp-1', type: 'CUSTOMER', displayName: 'ร้านเดิม', billingAddressJson: null };
+    const { useCase, saved, audits } = harness([row]);
+    for (let i = 0; i < 3; i++) {
+      const result = await useCase.execute(ctx, { ...vendor, vendorAddressText: '' });
+      assert.equal(result.result.case, 'NOOP');
+      row.type = 'BOTH';
+    }
+    assert.equal(saved.length, 1); assert.equal(saved[0].billingAddressJson, undefined);
+    assert.equal(audits[0].metadataJson.addressChanged, false);
+  });
+
+  it('reports an address fill only in the save that fills it, not subsequent saves', async () => {
+    const row = { id: 'cp-1', type: 'VENDOR', displayName: 'ร้านเดิม', billingAddressJson: null as any };
+    const { useCase, saved } = harness([row]);
+    assert.equal((await useCase.execute(ctx, vendor)).result.case, 'FILL');
+    row.billingAddressJson = saved[0].billingAddressJson;
+    for (let i = 0; i < 3; i++) assert.equal((await useCase.execute(ctx, vendor)).result.case, 'NOOP');
+    assert.equal(saved.length, 1);
+  });
   it('fills the registry from the document and keeps the existing row', async () => {
     const { useCase, saved, created } = harness([{ id: 'cp-1', type: 'VENDOR', displayName: 'ร้านเดิม', billingAddressJson: null }]);
 

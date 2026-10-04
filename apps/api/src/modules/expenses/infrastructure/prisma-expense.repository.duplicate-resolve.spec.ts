@@ -172,14 +172,17 @@ describe('PrismaExpenseRepository duplicate-candidate resolution', () => {
     assert.equal(store.candidates.find((c) => c.id === 'cand-cross-branch')?.status, 'OPEN');
   });
 
-  it('rejects resolution on a confirmed expense without changing posting state', async () => {
-    const { repo, store } = harness();
-    await assert.rejects(
-      () => repo.resolveDuplicateCandidate({ ...base, expenseId: 'expense-posted', candidateId: 'cand-posted' }, noopAudit),
-      /status CONFIRMED/,
-    );
-    assert.equal(store.candidates.find((c) => c.id === 'cand-posted')?.status, 'OPEN');
-    assert.equal(store.expenses.find((e) => e.id === 'expense-posted')?.postingStatus, 'posted');
+  it('cannot repark a confirmed projection through a duplicate rescan or resolution, even before posting', async () => {
+    for (const postingStatus of ['pending', 'posted']) {
+      const { repo, store } = harness();
+      Object.assign(store.expenses.find((e) => e.id === 'expense-1')!, { status: 'CONFIRMED', postingStatus, sourceReimbursementRequestId: 'claim-1' });
+      const before = structuredClone(store);
+      await assert.rejects(() => repo.runDuplicateCheck(base, async () => {
+        assert.fail('a confirmed projection must not be scanned again');
+      }), /status CONFIRMED/);
+      await assert.rejects(() => repo.resolveDuplicateCandidate({ ...base, candidateId: 'cand-own', action: 'dismiss' }, noopAudit), /status CONFIRMED/);
+      assert.deepEqual(store, before);
+    }
   });
 
   it('rejects duplicate writes on an editable expense whose posting is already locked', async () => {
@@ -348,4 +351,14 @@ describe('PrismaExpenseRepository duplicate-candidate resolution', () => {
     }]).findByIdWithRelations('co-1', 'expense-1', undefined, { branchIds: ['branch-a'] });
     assert.equal(visible?.duplicateOfExpenseId, 'expense-other-branch');
   });
+});
+
+
+it('a claim-bound dismissal can clear a hidden cross-branch candidate, but cannot claim another source expense', async () => {
+  const h = harness();
+  Object.assign(h.store.expenses.find(e => e.id === 'expense-1')!, { sourceReimbursementRequestId: 'rb-1' });
+  const input: any = { companyId: 'co-1', expenseId: 'expense-1', candidateId: 'cand-cross-branch', actorUserId: 'payer', action: 'dismiss', reason: 'คนละการซื้อ', scopes: { branchIds: ['branch-a'] }, reimbursementRequestId: 'rb-1', reimbursementBranchId: 'branch-a' };
+  await assert.rejects(() => h.repo.resolveDuplicateCandidate({ ...input, reimbursementRequestId: 'rb-other' }, async () => undefined), /reimbursement_projection_source_mismatch/);
+  await h.repo.resolveDuplicateCandidate(input, async () => undefined);
+  assert.equal(h.store.candidates.find(c => c.id === 'cand-cross-branch')!.status, 'DISMISSED');
 });

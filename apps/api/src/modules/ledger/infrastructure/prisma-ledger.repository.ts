@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { lockExpenseCorrection } from '../../expenses/infrastructure/expense-void-blocker';
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
 import { resolveTransactionBranchId } from '../../data-model-core/application/services/transaction-branch';
@@ -219,7 +221,21 @@ export class PrismaLedgerRepository {
     return r ? mapEntry(r) : null;
   }
 
-  async createJournalEntry(input: CreateJournalEntryInput & { entryNumber: string }, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
+  async createJournalEntry(input: CreateJournalEntryInput & { entryNumber: string; expectedExpenseConfirmedAt?: Date | null; expectedExpenseStatus?: string }, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
+    if (input.entryType === 'GENERATED' && ['expense.record', 'expense.payment'].includes(input.sourceType ?? '')) {
+      if (db === this.prisma.client) return this.prisma.client.$transaction((tx) => this.createJournalEntry(input, tx), { isolationLevel: 'ReadCommitted' });
+      const payment = input.sourceType === 'expense.payment'
+        ? await db.expensePayment.findFirst({ where: { companyId: input.companyId, id: input.sourceId } }) : null;
+      const expenseId = payment?.expenseId ?? input.sourceId;
+      if (!expenseId) throw new ConflictException({ code: 'expense_posting_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      await lockExpenseCorrection(db, input.companyId, expenseId);
+      const expense = await db.expenseRecord.findFirst({ where: { companyId: input.companyId, id: expenseId } });
+      const currentPayment = payment ? await db.expensePayment.findFirst({ where: { companyId: input.companyId, id: input.sourceId } }) : null;
+      if (!expense || !['CONFIRMED', 'VOIDED'].includes(expense.status) || expense.status !== (input.expectedExpenseStatus ?? 'CONFIRMED') || (input.sourceType === 'expense.payment' && currentPayment?.status !== 'RECORDED')
+        || (input.expectedExpenseConfirmedAt !== undefined && (expense.confirmedAt?.getTime() ?? null) !== (input.expectedExpenseConfirmedAt?.getTime() ?? null))) {
+        throw new ConflictException({ code: 'expense_posting_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      }
+    }
     const r = await db.journalEntry.create({
       data: {
         companyId: input.companyId, periodId: input.periodId, entryNumber: input.entryNumber,

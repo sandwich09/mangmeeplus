@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { CompanyTeamNoteModule } from './company-team-note.module';
 import { PartnerController } from './presentation/http/partner.controller';
 import { SystemLineController } from './presentation/http/system-line.controller';
 import { SystemAiBudgetController } from './presentation/http/system-ai-budget.controller';
@@ -52,7 +53,7 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
   // LoggerModule: LOGGER_TOKEN for the best-effort LINE notice the package-change decision sends.
   // EmployeeAccessModule (PR E): supplies ListThaiAddressesUseCase for the partner identity form's
   // address-master route. It declares no `imports` of its own, so this cannot cycle.
-  imports: [LedgerModule, DataModelCoreModule, DashboardNotificationsModule, LoggerModule, EmployeeAccessModule],
+  imports: [CompanyTeamNoteModule, LedgerModule, DataModelCoreModule, DashboardNotificationsModule, LoggerModule, EmployeeAccessModule],
   controllers: [
     PartnerController,
     SystemLineController,

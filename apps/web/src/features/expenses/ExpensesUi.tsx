@@ -3,7 +3,8 @@
 // Shared presentational primitives for the Expenses workspace, matching the
 // มั่งมี mock's exact card/colour/spacing system. Real Thai copy from the feature;
 // exact hex accents from the mock (mangmee brand tokens for the green shell).
-import { useEffect, useRef, type ReactNode } from 'react';
+import { EXPENSE_CORRECTION_WORDS, IMAGE_SOURCE_TYPES_LABEL, STORED_IMAGE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { Fragment, useEffect, useRef, type ReactNode } from 'react';
 import { MangmeeBadge, cx, type MangmeeTone } from '@/common/components/mangmee';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { formatThaiDate } from '@/common/i18n/thai-date';
@@ -22,6 +23,8 @@ export const inputClass = 'mangmee-input';
 export const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
 export const ghostClass = 'mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50';
 export const dangerClass = 'mangmee-btn mangmee-btn-danger disabled:cursor-not-allowed disabled:opacity-50';
+/** A phone needs 44 px to tap. The hit area grows around a small control; how the control looks does not change. */
+export const tapTargetClass = "relative before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-full before:min-w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']";
 export const successBtn = 'mangmee-btn text-white disabled:cursor-not-allowed disabled:opacity-50';
 export const successBtnStyle = { background: 'linear-gradient(150deg,var(--color-brand-700),var(--color-brand-800))', borderColor: 'var(--color-brand-700)' } as const;
 
@@ -85,7 +88,7 @@ export function TAX_TONE(status: string): MangmeeTone {
 }
 export function StatusBadge({ status }: { status: string }) {
   const otherLabels: Record<string, string> = {
-    NOT_CHECKED: 'ยังไม่ตรวจรายการซ้ำ', NO_MATCH: 'ไม่พบรายการซ้ำ', POSSIBLE_DUPLICATE: 'อาจเป็นรายการซ้ำ',
+    OVERPAID: EXPENSE_CORRECTION_WORDS.overpaid, NOT_CHECKED: 'ยังไม่ตรวจรายการซ้ำ', NO_MATCH: 'ไม่พบรายการซ้ำ', POSSIBLE_DUPLICATE: 'อาจเป็นรายการซ้ำ',
     CONFIRMED_DUPLICATE: 'ยืนยันว่าเป็นรายการซ้ำ', OVERRIDDEN: 'ตรวจและยืนยันแล้ว',
     NOT_VERIFIED: 'ยังไม่ตรวจด้วย AI', VERIFYING: 'AI กำลังตรวจ', AI_VERIFIED: 'AI ตรวจแล้ว', PARTIAL: 'ข้อมูลบางส่วน',
     HUMAN_VERIFIED: 'ผู้ตรวจยืนยันแล้ว', FAILED: 'ดำเนินการไม่สำเร็จ',
@@ -94,7 +97,24 @@ export function StatusBadge({ status }: { status: string }) {
     ?? (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[status]
     ?? otherLabels[status]
     ?? 'สถานะอื่น';
-  return <MangmeeBadge tone={STATUS_TONE[status] ?? 'slate'}>{label}</MangmeeBadge>;
+  return <MangmeeBadge tone={status === 'OVERPAID' ? 'danger' : STATUS_TONE[status] ?? 'slate'}>{label}</MangmeeBadge>;
+}
+
+/**
+ * A shared sentence of names the browser does not know (file types written in Thai), with every name kept whole. A browser breaks
+ * Thai where its dictionary sees a word, so at a phone's width it cut "ฮีอิก" or "พีเอ็นจี" in two. The words stay the shared ones:
+ * only where a line may break changes (at the spaces).
+ */
+export function WholeWords({ text }: { text: string }) {
+  return <>{text.split(' ').map((word, index) => <Fragment key={index}>{index > 0 && ' '}<span className="whitespace-nowrap">{word}</span></Fragment>)}</>;
+}
+
+/** A banner sentence that lists file types keeps every type's name whole (a phone cut "ฮีอิก" in two); any other sentence is shown as written. */
+function TypeNamesWhole({ message }: { message: string }) {
+  const list = [IMAGE_SOURCE_TYPES_LABEL, STORED_IMAGE_TYPES_LABEL].find(label => message.includes(label));
+  if (!list) return <>{message}</>;
+  const at = message.indexOf(list);
+  return <>{message.slice(0, at)}<WholeWords text={list} />{message.slice(at + list.length)}</>;
 }
 
 // ── banners ──────────────────────────────────────────────────────────────────
@@ -107,10 +127,10 @@ export function ErrorBanner({ message, focus = false }: { message: string; focus
     ref.current?.scrollIntoView({ block: 'center' });
     ref.current?.focus({ preventScroll: true });
   }, [message, focus]);
-  return <div ref={ref} tabIndex={-1} role="alert" className="rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm font-medium text-error-700">⚠ {message}</div>;
+  return <div ref={ref} tabIndex={-1} role="alert" className="whitespace-pre-line rounded-xl border border-[#FECDCA] bg-error-50 px-4 py-3 text-sm font-medium text-error-700">⚠ <TypeNamesWhole message={message} /></div>;
 }
 export function InfoBanner({ message }: { message: string }) {
-  return <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3 text-sm font-medium text-brand-700">{message}</div>;
+  return <div className="rounded-xl border border-brand-100 bg-brand-25 px-4 py-3 text-sm font-medium text-brand-700"><TypeNamesWhole message={message} /></div>;
 }
 export function isForbidden(message: string): boolean {
   return /Insufficient permissions|Missing permission|Forbidden/i.test(message);

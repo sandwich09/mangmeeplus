@@ -1,3 +1,5 @@
+import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
+import { expenseCorrectionBlockerMessage } from '@watchdog-bms/contracts';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type {
@@ -390,8 +392,8 @@ export class WhtCertificateHandoffUseCase {
     // what actually happened, instead of silently overwriting the first one's legal evidence.
     let outcome: { count: number };
     try {
-      outcome = await this.table.updateMany({
-        where: { id: handoffId, companyId: ctx.companyId, status: 'REQUIRED' },
+      const write = (table: any) => table.updateMany({
+        where: { id: handoffId, companyId: ctx.companyId, status: 'REQUIRED', payloadFingerprint: row.payloadFingerprint },
         data: {
           status: 'EXTERNAL_LINKED',
           externalCertificateNumber,
@@ -404,6 +406,14 @@ export class WhtCertificateHandoffUseCase {
           linkedByUserId: ctx.userId,
         },
       });
+      outcome = row.sourcePaymentType === 'expense.record' && row.sourcePaymentId
+        ? await this.taxRepo.prisma.client.$transaction(async (tx: any) => {
+          await lockExpenseCorrection(tx, ctx.companyId, row.sourcePaymentId);
+          const expense = await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: row.sourcePaymentId }, select: { status: true } });
+          if (expense?.status !== 'CONFIRMED') throw new ConflictException({ code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed') });
+          return write(tx.whtCertificateHandoff);
+        }, { isolationLevel: 'ReadCommitted' })
+        : await write(this.table);
     } catch (error) {
       // A concurrent request took this link command id between our lookup and this write. The
       // lookup above cannot close that window, so the unique index does — and the loser gets the

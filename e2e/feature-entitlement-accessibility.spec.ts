@@ -49,9 +49,9 @@ async function createWhtHandoff(api: any, companyId: string) {
   }));
   await json<VendorBill>(await api.post(`companies/${companyId}/accounts-payable/vendor-bills/${bill.id}/submit`, { data: {} }));
   await json<VendorBill>(await api.post(`companies/${companyId}/accounts-payable/vendor-bills/${bill.id}/approve`, { data: {} }));
-  // Withholding requires an ACTIVE income category (an accountant must verify it) — same
-  // activation step wht-settlement.spec.ts performs against the seeded catalog.
-  await json(await api.patch(`companies/${companyId}/tax/wht-categories/WHT_SERVICE_5`, { data: { status: 'ACTIVE' } }));
+  // The globally opened baseline is selectable without a shop changing it.
+  const categories = await json<Array<{ code: string; status: string }>>(await api.get(`companies/${companyId}/tax/wht-categories`));
+  expect(categories.find(row => row.code === 'WHT_SERVICE_5')?.status).toBe('ACTIVE');
   const payment = await json<SupplierPayment>(await api.post(`companies/${companyId}/accounts-payable/payments`, {
     data: {
       idempotencyKey: unique('e2e-wht-payment'),
