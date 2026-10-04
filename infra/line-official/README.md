@@ -36,7 +36,8 @@ The stack declares only these names:
 Stack/function/role name is watchdog-bms-line-official-oa-prod. The runtime role
 can read only those two secret ARNs and write only its own 14-day log group.
 It has no VPC/ERP/DB/AI/IAM-write access. Runtime is Node.js24/arm64, 256MB, 10s,
-reserved concurrency10. Parameters use NoEcho; values come from the private
+the current account concurrency limit is10. No reserved concurrency is requested
+because AWS requires an unreserved allowance and this account quota is only10. Parameters use NoEcho; values come from the private
 owner-approved credential file, never argv, Git, logs, Outputs or chat.
 
 Publication boundaries:

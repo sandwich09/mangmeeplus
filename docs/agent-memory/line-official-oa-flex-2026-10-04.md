@@ -68,3 +68,6 @@ Owner scope reply: isolate only the OA cards. Independent Function URL publicati
 - Owner replied “ใช้ thawatchai” to the non-root platform-session question. Actual STS confirms account311414082667/root. This explicit choice supersedes the non-root default only for provisioning the new isolated OA stack; no ERP roles/resources/gates are changed. Existing non-root Production authority signs acceptance.
 - Provider ValidateTemplate PASS for the prepared inline template, with CAPABILITY_NAMED_IAM and only ChannelSecret/ChannelAccessToken/PromoteLive parameters. No stack/change-set write yet.
 - Draft PR https://github.com/MangmeeDev/mangmeeplus/pull/1000 attached to the task. Final clean candidate is rebuilt after this documentation update; retain exact hashes in the isolated release ledger.
+
+- Before first cloud write, root preflight confirmed stack/function/role and both dedicated secrets absent. Lambda AccountLimit is10 concurrent executions, so reserved10 would violate AWS unreserved allowance. Removed reservation rather than changing account quotas; account limit remains10. No stack write/retry occurred.
+- Current primary cloud inventory now records an independently owner-started UAT at10:04UTC; this OA operation has not changed UAT. Earlier stopped state is historical.

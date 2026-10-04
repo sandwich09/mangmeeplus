@@ -62,7 +62,7 @@ def main():
     resources['Function'] = resource('Lambda::Function', {
         'FunctionName':NAME, 'Description':'Official OA only; source '+commit, 'Runtime':'nodejs24.x',
         'Handler':'index.handler', 'Role':att('Role','Arn'), 'Architectures':['arm64'],
-        'Timeout':10, 'MemorySize':256, 'ReservedConcurrentExecutions':10,
+        'Timeout':10, 'MemorySize':256,
         'RuntimeManagementConfig':{'UpdateRuntimeOn':'FunctionUpdate'},
         'Environment':{'Variables':{'OFFICIAL_SECRET_ARN':ref('OfficialSecret'),'OFFICIAL_TOKEN_ARN':ref('OfficialToken'),
                                     'OFFICIAL_RELEASE_SHA':commit}},
