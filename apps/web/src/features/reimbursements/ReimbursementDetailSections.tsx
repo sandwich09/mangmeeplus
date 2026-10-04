@@ -7,7 +7,7 @@ import { ATTACHMENT_SOURCE_TYPES_LABEL, REIMBURSEMENT_SELF_APPROVED_NOTE } from 
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { looksLikeAccountNumber, todayCivilDate } from '@watchdog-bms/contracts';
+import { looksLikeAccountNumber, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -390,6 +390,8 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
   // One session for this opened form: its key makes บันทึกจ่าย after a lost answer the same payment, never a
   // second one, and its in-flight flag makes a second press before the first has finished do nothing.
   const session = useRef<PaymentFormSession>({ idempotencyKey: null, saving: false });
+  const today = todayCivilDate();
+  const futurePaidAt = Boolean(form.paidAt && isFuturePaymentDate(form.paidAt, today));
   const attached = paymentSlipChoices(request);
   // One rule for the fields shown and the payment the API takes (`reimbursementPaymentRule`): the
   // slip, the confirmation of the account and the reason for another method than the one asked for.
@@ -434,7 +436,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
           </p>
         </div>
       )}
-      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
+      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required max={today} today={today} value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">เลขอ้างอิง {(form.paymentMethod === 'BANK_TRANSFER' || form.paymentMethod === 'CHEQUE') && '*'}</label><input className={inputClass} aria-label="เลขอ้างอิง" value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} /></div>
       <div data-testid="reimbursement-payment-slip">
         <div className="mb-1.5 text-xs font-semibold text-gray-600">สลิปหรือหลักฐานการจ่าย {slipRequired && '*'}</div>
@@ -482,8 +484,8 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
         <PayerConfirmationCheck confirmation={payout.confirmation} checked={payer.confirmedFor === payout.confirmation.key} disabled={busy}
           onChange={(checked) => setPayer(p => ({ ...p, confirmedFor: checked ? payout.confirmation!.key : '' }))} />
       )}
-      {error && <ErrorBanner message={error} />}
-      <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
+      {(futurePaidAt || error) && <ErrorBanner message={futurePaidAt ? PAYMENT_DATE_IN_FUTURE.message : error!} />}
+      <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy || futurePaidAt} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
     </form>
   );
 }

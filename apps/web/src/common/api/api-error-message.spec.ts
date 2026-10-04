@@ -3,6 +3,11 @@ import { test } from 'node:test';
 
 import { apiErrorMessage, translateApiError } from './api-error-message';
 
+test('the future-payment-date code displays the shared Thai refusal', () => {
+  assert.equal(translateApiError('payment_date_in_future'), 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้');
+  assert.equal(apiErrorMessage({ code: 'payment_date_in_future' }), 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้');
+});
+
 test('billing rate limit displays only the bounded wait and preserves a route to retry', () => {
   const error = (seconds: unknown) => Object.assign(new Error('internal diagnostic'), { status: 429, code: 'BILLING_RATE_LIMIT', details: { retryAfterSeconds: seconds } });
   assert.equal(apiErrorMessage(error(31)), 'ทำรายการถี่เกินไป กรุณารอ 31 วินาที แล้วลองรายการเดิมอีกครั้ง');

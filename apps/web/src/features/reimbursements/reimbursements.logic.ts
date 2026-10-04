@@ -2,7 +2,7 @@
 
 import {
   REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
-  reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
@@ -221,6 +221,7 @@ export function paymentReferenceRequired(method: string): boolean {
  */
 export function validatePaymentForm(input: {
   paidAmount: string;
+  paidAt?: string;
   outstandingAmount: string;
   paymentMethod: string;
   paymentReference?: string;
@@ -229,6 +230,7 @@ export function validatePaymentForm(input: {
   payout?: { rule: ReimbursementPaymentRule; confirmed: boolean; mismatchReason: string };
 }): string | null {
   if (!input.paymentMethod) return 'กรุณาเลือกวิธีจ่าย';
+  if (input.paidAt && isFuturePaymentDate(input.paidAt)) return translateApiError(PAYMENT_DATE_IN_FUTURE.code);
   const paid = Number(input.paidAmount);
   const outstanding = Number(input.outstandingAmount);
   if (!(paid > 0)) return 'จำนวนเงินต้องมากกว่า 0';

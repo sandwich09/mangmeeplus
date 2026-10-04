@@ -333,6 +333,19 @@ describe('saving the payment form', () => {
     };
   }
 
+  it('refuses a future paid date before upload or recording, and permits yesterday/today after Bangkok midnight', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-04T17:30:00.000Z') });
+    for (const paidAt of ['2026-10-04', '2026-10-05', '2026-10-06']) {
+      const h = form({ form: { ...transferForm, paidAt } });
+      const result = await h.press();
+      if (paidAt === '2026-10-06') {
+        assert.deepEqual(result, { status: 'refused', text: 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้' });
+        assert.deepEqual(h.calls, []);
+        assert.equal(h.session.idempotencyKey, null);
+      } else assert.equal(result.status, 'saved');
+    }
+  });
+
   it('uploads the picked slip, then records the payment with it and one key', async () => {
     const h = form();
     assert.deepEqual(await h.press(), { status: 'saved' });

@@ -9,7 +9,7 @@ import type {
   ReimbursementFinanceQueueItem,
   ReimbursementRequestDetail,
 } from '@watchdog-bms/contracts';
-import { reimbursementDuplicateBlockNotice, civilDate, civilPeriodKey, looksLikeAccountNumber, reimbursementPaidNotice, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateBlockNotice, civilDate, civilPeriodKey, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE, looksLikeAccountNumber, reimbursementPaidNotice, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
@@ -435,6 +435,7 @@ export class RecordReimbursementPaymentUseCase {
     // Friendly preflight before reserving a payment number; the repository
     // repeats the same proof under the payment lock to close the race.
     requireTransactionBranchId(req.branchId);
+    if (isFuturePaymentDate(paidAt)) throw new BadRequestException(PAYMENT_DATE_IN_FUTURE);
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     const openDuplicates = await this.repo.listOpenDuplicateCandidates(ctx.companyId, id);
