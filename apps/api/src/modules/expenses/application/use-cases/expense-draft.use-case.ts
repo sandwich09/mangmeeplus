@@ -1518,7 +1518,7 @@ export class RejectExpenseUseCase {
     if (claim) throw claimOwnsExpenseError(claim);
     const err = validateStatusTransition(r.status, 'REJECTED');
     if (err) throw new BadRequestException(err);
-    const updated = await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, status: 'REJECTED', rejectedByUserId: ctx.userId, rejectedAt: new Date(), rejectReason: reason, postingStatus: 'not_required' });
+    const updated = await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, updatedByUserId: ctx.userId, status: 'REJECTED', rejectedByUserId: ctx.userId, rejectedAt: new Date(), rejectReason: reason, postingStatus: 'not_required' });
     await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.reject', targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH' });
     return updated;
   }

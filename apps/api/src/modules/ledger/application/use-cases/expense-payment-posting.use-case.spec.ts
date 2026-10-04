@@ -70,7 +70,7 @@ function generateFakes(expense: Record<string, unknown>) {
   const commit = { execute: async () => undefined } as any;
   const prisma = { client: { company: { findUnique: async () => ({ baseCurrency: 'THB' }) } } } as any;
   const uc = new GenerateJournalFromSourceUseCase(ledgerRepo, noopAudit, reserve, commit, noopOutbox, {} as any, expenseRepo, {} as any, {} as any, prisma);
-  return { uc, created, flips, periodKeys, expenseRepo };
+  return { uc, created, flips, periodKeys, expenseRepo, ledgerRepo };
 }
 
 describe('GenerateJournalFromSourceUseCase — expense.payment canonical source', () => {
@@ -231,12 +231,59 @@ describe('expense correction and generated journal creation share the mutation b
     let writes = 0;
     const client: any = {
       $transaction: async (work: any) => work({ ...client }), $executeRaw: async () => 0,
-      expenseRecord: { findFirst: async () => ({ status: expenseStatus, updatedAt: new Date('2026-10-04') }) },
+      expenseRecord: { findFirst: async () => ({ status: expenseStatus, confirmedAt: new Date('2026-10-04'), updatedAt: new Date('2026-10-04') }) },
       expensePayment: { findFirst: async () => ({ expenseId: 'exp-1', status: paymentStatus }) },
       journalEntry: { create: async ({ data }: any) => { writes++; return { id: 'j1', ...data, lines: [] }; } },
     };
     const repo = new PrismaLedgerRepository({ client } as any);
-    await assert.rejects(() => repo.createJournalEntry({ companyId: 'co-1', periodId: 'p1', entryNumber: 'JV1', entryType: 'GENERATED', sourceType, sourceId: sourceType === 'expense.record' ? 'exp-1' : 'pay-1', expectedExpenseUpdatedAt: expectedVersion, lines: [], entryDate: new Date() } as any), (e: any) => e.getResponse?.().code === 'expense_posting_source_changed');
+    await assert.rejects(() => repo.createJournalEntry({ companyId: 'co-1', periodId: 'p1', entryNumber: 'JV1', entryType: 'GENERATED', sourceType, sourceId: sourceType === 'expense.record' ? 'exp-1' : 'pay-1', expectedExpenseConfirmedAt: expectedVersion, lines: [], entryDate: new Date() } as any), (e: any) => e.getResponse?.().code === 'expense_posting_source_changed');
     assert.equal(writes, 0);
   });
+});
+
+// Posting/projection writes updatedAt after canonicalSource; they do not change the confirmation.
+describe('expense posting uses confirmation identity rather than row write time', () => {
+  for (const [sourceType, status] of [['expense.record', 'CONFIRMED'], ['expense.payment', 'CONFIRMED'], ['expense.record', 'VOIDED']] as const) {
+    it(`allows ${sourceType}/${status} after a posting or claim-projection stamp`, async () => {
+      const { PrismaLedgerRepository } = await import('../../infrastructure/prisma-ledger.repository');
+      const confirmedAt = new Date('2026-10-03T01:00:00Z');
+      const readAt = new Date('2026-10-03T02:00:00Z');
+      let updatedAt = readAt;
+      let writes = 0;
+      const client: any = {
+        $transaction: async (work: any) => work({ ...client }),
+        $executeRaw: async () => { updatedAt = new Date(readAt.getTime() + 1000); return 0; },
+        expenseRecord: { findFirst: async () => ({ status, confirmedAt, updatedAt }) },
+        expensePayment: { findFirst: async () => ({ expenseId: 'exp-1', status: 'RECORDED' }) },
+        journalEntry: { create: async ({ data }: any) => { writes++; return { id: 'j1', ...data, lines: [] }; } },
+      };
+      await new PrismaLedgerRepository({ client } as any).createJournalEntry({ companyId: 'co-1', periodId: 'p1', entryNumber: 'JV1', entryType: 'GENERATED', sourceType, sourceId: sourceType === 'expense.record' ? 'exp-1' : 'pay-1', expectedExpenseStatus: status, expectedExpenseConfirmedAt: confirmedAt, expectedExpenseUpdatedAt: readAt, lines: [], entryDate: new Date() } as any);
+      assert.equal(writes, 1);
+      assert.notEqual(updatedAt.getTime(), readAt.getTime());
+    });
+  }
+});
+
+
+it('canonical payment posting carries the confirmation across its own updatedAt stamp into the real journal writer', async () => {
+  const { PrismaLedgerRepository } = await import('../../infrastructure/prisma-ledger.repository');
+  const confirmedAt = new Date('2026-10-03T01:00:00Z');
+  const readAt = new Date('2026-10-03T02:00:00Z');
+  const expense = { ...paidExpense(), confirmedAt, updatedAt: readAt };
+  const h = generateFakes(expense);
+  h.expenseRepo.updatePaymentPostingStatus = async () => { expense.updatedAt = new Date(readAt.getTime() + 1000); };
+  let written = 0;
+  const client: any = {
+    $transaction: async (work: any) => work({ ...client }), $executeRaw: async () => 0,
+    expenseRecord: { findFirst: async () => expense },
+    expensePayment: { findFirst: async () => ({ expenseId: expense.id, status: 'RECORDED' }) },
+    journalEntry: { create: async ({ data }: any) => { written++; return { id: 'real-journal', ...data, lines: [] }; } },
+  };
+  const fakeCreate = h.ledgerRepo.createJournalEntry;
+  h.ledgerRepo.createJournalEntry = async (input: any) => {
+    await new PrismaLedgerRepository({ client } as any).createJournalEntry(input);
+    return fakeCreate(input);
+  };
+  await h.uc.execute(ctx(['journal.entry.post']), { sourceType: 'expense.payment', sourceId: 'payment-1' });
+  assert.equal(written, 1); assert.notEqual(expense.updatedAt, readAt);
 });

@@ -478,3 +478,25 @@ describe('confirmation after expense correction', () => {
     assert.equal(retired.prefillSnapshotJson.withheldAmount, '30'); assert.equal(retired.prefillSnapshotJson.formType, 'PND3'); assert.equal(retired.payeeAddress, null);
   });
 });
+
+
+describe('confirmation keeps its own period gate', () => {
+  // A document confirmed after ภ.ง.ด.3 / ภ.ง.ด.53 was filed is not refused here: the tax sync skips or flags it for an
+  // amended filing. Only a correction (reopen) stops at a filed withholding period.
+  for (const formType of ['PND3', 'PND53']) it(`still confirms when ${formType} of the month is filed`, async () => {
+    const h = harness();
+    h.row.whtAmount = 3; h.row.whtCategoryCode = 'CAT1'; h.row.whtRate = 3;
+    h.row.vendorEntityKindSnapshot = formType === 'PND3' ? 'INDIVIDUAL' : 'JURISTIC';
+    h.row.vendorNameSnapshot = 'ผู้รับเงิน'; h.row.vendorTaxIdSnapshot = '1111111111111';
+    h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+    h.client.whtCertificateHandoff = { findFirst: async () => null, create: async () => undefined };
+    h.client.taxPeriod.findMany = async ({ where }: any) => where.OR?.some((p: any) => p.formType === formType)
+      ? [{ formType, periodKey: '2026-07', status: 'FILED' }] : [];
+    const input = await inputFor(h.repo, h.updatedAt);
+    const result = await h.repo.finalizeAndConfirmExpenseCas(input, finalize);
+    assert.equal(result.expense.status, 'CONFIRMED');
+    assert.equal(h.writes.header, 1);
+  });
+});

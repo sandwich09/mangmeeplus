@@ -1,4 +1,4 @@
-import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
 import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
@@ -413,6 +413,9 @@ const CODE_LABELS: Record<string, string> = {
   output_tax_code_line_mismatch: 'รหัสภาษีที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจรหัสภาษีก่อนบันทึก',
   posting_rule_missing: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี',
   expense_correction_blocked: EXPENSE_CORRECTION_WORDS.unavailable,
+  expense_rejection_payments_recorded: expenseCorrectionBlockerMessage('recorded_payments'),
+  expense_rejection_paid_balance: expenseCorrectionBlockerMessage('legacy_paid_balance'),
+  expense_tax_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
   expense_payment_correction_blocked: EXPENSE_CORRECTION_WORDS.unavailable,
   expense_paid_exceeds_payable: EXPENSE_CORRECTION_WORDS.paidExceedsPayable,
   wht_certificate_download_unavailable: EXPENSE_CORRECTION_WORDS.certificateUnavailable,
@@ -1542,11 +1545,12 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     }
   }
   if (code === 'expense_correction_blocked' || code === 'expense_payment_correction_blocked') {
-    const payload = (details ?? error) as { blockers?: unknown; blocker?: unknown } | undefined;
+    const payload = (details ?? error) as Partial<ExpenseCorrectionCapabilities> & { blockers?: unknown; blocker?: unknown } | undefined;
     const blockers = Array.isArray(payload?.blockers) ? payload.blockers : [payload?.blocker];
-    const messages = blockers.filter((blocker): blocker is string => typeof blocker === 'string')
-      .map((blocker) => expenseCorrectionBlockerMessage(blocker as ExpenseCorrectionBlocker)).filter(Boolean);
-    return messages.length ? messages.join(' · ') : EXPENSE_CORRECTION_WORDS.unavailable;
+    const messages = code === 'expense_correction_blocked'
+      ? expenseReopenBlockerMessages({ ...payload, canReopen: false, reopenBlockers: blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string') } as ExpenseCorrectionCapabilities)
+      : blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string').map(b => expenseCorrectionBlockerMessage(b, 'cancelPayment'));
+    return messages.length ? messages.map(message => `• ${message}`).join('\n') : EXPENSE_CORRECTION_WORDS.unavailable;
   }
   if (typeof code === 'string') {
     if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;

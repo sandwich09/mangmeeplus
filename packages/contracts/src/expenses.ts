@@ -10,6 +10,7 @@ import {
   type BusinessDocumentKind,
   type ReceiptOcrFieldResult,
 } from './line-ai.js';
+import type { TaxFormType } from './tax.js';
 import type { BuyerEntityKind } from './company-tax-identity.js';
 import type { ExpenseCaptureReadStatus } from './expense-capture.js';
 import type { ExpenseDocumentDateStatus } from './line-ai-value-normalizer.js';
@@ -622,12 +623,16 @@ export type ExpensePaymentSummary = {
 
 export type ExpenseCorrectionBlocker = 'not_confirmed' | 'ledger_posted' | 'journal_pending' | 'posting_unresolved'
   | 'certificate_issued' | 'tax_period_filed' | 'live_claim' | 'permission_denied'
-  | 'payment_voided' | 'no_balance' | 'missing_branch' | 'personal_advance';
+  | 'payment_voided' | 'no_balance' | 'missing_branch' | 'personal_advance' | 'accounting_period_locked' | 'recorded_payments' | 'legacy_paid_balance';
 
 /** Read by the server from persisted financial/legal state, never inferred by the client. */
 export type ExpenseCorrectionCapabilities = {
   canReopen: boolean;
   reopenBlockers: ExpenseCorrectionBlocker[];
+  lockedAccountingPeriodKey?: string | null;
+  lockedTaxPeriods?: Array<{ formType: TaxFormType; periodKey: string }>;
+  canReject?: boolean;
+  rejectBlocker?: ExpenseCorrectionBlocker | null;
   canRecordPayment: boolean;
   recordPaymentBlocker: ExpenseCorrectionBlocker | null;
   payments: Array<{ id: string; canCancel: boolean; cancelBlocker: ExpenseCorrectionBlocker | null }>;
@@ -647,32 +652,46 @@ export const EXPENSE_CORRECTION_WORDS = {
   paidExceedsPayable: 'ยอดที่จ่ายแล้วเกินยอดสุทธิที่ต้องจ่าย กรุณายกเลิกรายการจ่ายที่ยังไม่ลงบัญชีและบันทึกยอดที่ถูกต้องก่อนยืนยัน',
 } as const;
 
-const EXPENSE_CORRECTION_BLOCKER_WORDS: Record<ExpenseCorrectionBlocker, string> = {
-  not_confirmed: 'เอกสารยังไม่อยู่ในขั้นตอนที่แก้ไขการยืนยันหรือบันทึกจ่ายได้ กรุณาตรวจสถานะเอกสาร',
-  ledger_posted: 'ลงบัญชีแล้ว ให้ตรวจขั้นตอนยกเลิกเอกสารและกลับรายการบัญชีก่อนบันทึกใหม่',
-  posting_unresolved: 'ยังตรวจสถานะการลงบัญชีไม่ครบ ให้ผู้ทำบัญชีตรวจรายการที่เกี่ยวข้องก่อนแก้ไข',
-  journal_pending: 'มีรายการบัญชีที่ยังไม่ผ่านรายการ ให้ผู้ทำบัญชีจัดการรายการนั้นก่อนแก้ไข',
-  certificate_issued: 'ออกเอกสาร 50 ทวิแล้ว ให้แก้ไขหนังสือรับรองและตรวจขั้นตอนยกเลิกเอกสารก่อนบันทึกใหม่',
-  tax_period_filed: 'อยู่ในรอบ ภ.ง.ด.53 ที่ยื่นหรือปิดแล้ว ให้ผู้ทำบัญชีตรวจการแก้ไขแบบภาษีก่อนแก้เอกสาร',
-  live_claim: 'อยู่ในคำขอเบิกที่ยังดำเนินการ ให้จัดการผ่านคำขอเบิกเดิมในเมนูการเบิกจ่าย',
-  permission_denied: 'ต้องให้ผู้มีสิทธิ์ดำเนินการรายการนี้',
-  payment_voided: 'รายการจ่ายนี้ยกเลิกแล้ว',
-  no_balance: 'ไม่มียอดค้างจ่ายแล้ว',
-  missing_branch: 'กรุณาเลือกสาขาของเอกสารก่อนบันทึกจ่าย',
-  personal_advance: 'พนักงานจ่ายร้านแล้ว ให้ดำเนินการคืนเงินผ่านการเบิกจ่าย',
+const EXPENSE_CORRECTION_ACTIONS = { reopen: 'เปิดแก้ไขเอกสาร', recordPayment: 'บันทึกจ่าย', cancelPayment: 'ยกเลิกรายการจ่าย', reject: 'ปฏิเสธเอกสาร' } as const;
+const EXPENSE_CORRECTION_FORM_NAMES: Partial<Record<TaxFormType, string>> = {
+  PP30: 'ภ.พ.30', PP36: 'ภ.พ.36', PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53', CUSTOMS_SUPPORT: 'เอกสารประกอบภาษีนำเข้า',
 };
-
-export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocker): string {
-  return Object.hasOwn(EXPENSE_CORRECTION_BLOCKER_WORDS, blocker) ? EXPENSE_CORRECTION_BLOCKER_WORDS[blocker] : EXPENSE_CORRECTION_WORDS.unavailable;
+function expenseCorrectionMonth(periodKey?: string): string {
+  if (!periodKey || !/^\d{4}-\d{2}$/.test(periodKey)) return '';
+  return `${periodKey.slice(5)}/${Number(periodKey.slice(0, 4)) + 543}`;
 }
-
+export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocker, operation: keyof typeof EXPENSE_CORRECTION_ACTIONS = 'reopen', facts?: ExpenseCorrectionCapabilities): string {
+  const action = EXPENSE_CORRECTION_ACTIONS[operation];
+  switch (blocker) {
+    case 'not_confirmed': return `สถานะเอกสารนี้${action}ไม่ได้ กรุณากลับไปหน้ารายจ่าย`;
+    case 'ledger_posted': return `มีรายการลงบัญชีแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'posting_unresolved': return `สถานะการลงบัญชียังไม่ชัดเจน จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'journal_pending': return `มีรายการบัญชีรอผ่านรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'certificate_issued': return `ออกเอกสาร 50 ทวิแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'accounting_period_locked': return `เดือนบัญชี ${expenseCorrectionMonth(facts?.lockedAccountingPeriodKey ?? undefined)} ไม่เปิดรับรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'tax_period_filed': return `รอบภาษีของเอกสารถูกล็อกแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'live_claim': return `เอกสารอยู่ในคำขอเบิกที่ยังดำเนินการ จึง${action}จากหน้านี้ไม่ได้ ติดต่อผู้ดูแลคำขอเบิก`;
+    case 'permission_denied': return `คุณไม่มีสิทธิ์${action} ติดต่อผู้มีสิทธิ์ดำเนินการ`;
+    case 'payment_voided': return 'รายการจ่ายนี้ยกเลิกแล้ว กรุณาโหลดหน้าใหม่';
+    case 'no_balance': return 'ไม่มียอดค้างจ่าย จึงบันทึกจ่ายเพิ่มไม่ได้';
+    case 'missing_branch': return 'เอกสารยังไม่มีสาขา จึงบันทึกจ่ายไม่ได้ ติดต่อผู้ดูแลรายจ่าย';
+    case 'personal_advance': return 'ใบรับรองระบุว่าพนักงานจ่ายร้านแล้ว จึงบันทึกจ่ายซ้ำไม่ได้ ติดต่อผู้ดูแลการเบิกคืน';
+    case 'legacy_paid_balance': return 'มียอดจ่ายเดิมที่ไม่มีรายการให้ยกเลิก จึงปฏิเสธเอกสารไม่ได้ ติดต่อผู้มีสิทธิ์ยกเลิกเอกสาร';
+    case 'recorded_payments': return 'ยังมีรายการจ่ายอยู่ จึงปฏิเสธเอกสารไม่ได้ ให้ผู้มีสิทธิ์ยกเลิกรายการจ่ายก่อน';
+    default: return EXPENSE_CORRECTION_WORDS.unavailable;
+  }
+}
+export function expenseReopenBlockerMessages(capabilities?: ExpenseCorrectionCapabilities): string[] {
+  if (!capabilities || capabilities.canReopen) return [];
+  return capabilities.reopenBlockers.flatMap(blocker => blocker === 'tax_period_filed' && capabilities.lockedTaxPeriods?.length
+    ? capabilities.lockedTaxPeriods.map(period => `รอบ ${EXPENSE_CORRECTION_FORM_NAMES[period.formType] ?? 'ภาษี'} เดือน ${expenseCorrectionMonth(period.periodKey)} ถูกล็อกแล้ว จึงเปิดแก้ไขเอกสารไม่ได้ ติดต่อผู้ทำบัญชี`)
+    : [expenseCorrectionBlockerMessage(blocker, 'reopen', capabilities)]);
+}
 export function expenseConfirmedLockMessage(capabilities?: ExpenseCorrectionCapabilities): string {
-  const remedy = capabilities?.canReopen
-    ? `กด “${EXPENSE_CORRECTION_WORDS.reopen}” เพื่อกลับไปตรวจ รายการจ่ายเดิมยังอยู่`
-    : capabilities?.reopenBlockers.length
-      ? capabilities.reopenBlockers.map(expenseCorrectionBlockerMessage).join(' · ')
-      : EXPENSE_CORRECTION_WORDS.unavailable;
-  return `เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ · ${remedy}`;
+  return capabilities?.canReopen
+    ? `เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ กด “${EXPENSE_CORRECTION_WORDS.reopen}” เพื่อกลับไปตรวจ รายการจ่ายเดิมยังอยู่`
+    : capabilities?.reopenBlockers.length ? 'เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ เปิดแก้ไขไม่ได้ด้วยเหตุผลต่อไปนี้'
+    : `เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ ${EXPENSE_CORRECTION_WORDS.unavailable}`;
 }
 
 export type ExpenseReimbursementProgress = { requestId?: string; requestNo?: string | null; status: string };

@@ -1,4 +1,4 @@
-import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages } from '@watchdog-bms/contracts';
 import { loadExpenseReimbursementProgress } from './expense-reimbursement-progress';
 import { loadExpenseEvidenceSources } from './expense-evidence-sources';
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
@@ -7,7 +7,7 @@ import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAf
 import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
-import { expenseWhtHandoffWhere, lockExpenseCorrection, readExpenseCorrectionCapabilities, findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, type ExpenseClaimOwner } from './expense-void-blocker';
+import { readExpensePeriodLocks, retireExpenseTaxEvents, lockExpenseCorrection, readExpenseCorrectionCapabilities, findJournalToReverse, findLiveClaimOf, journalPeriodRefusal, lockedTaxFormTypesOf, type ExpenseClaimOwner } from './expense-void-blocker';
 import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { confirmBuyerMismatch, readBuyerAsPrinted } from '../domain/logic/buyer-as-printed.logic';
@@ -40,7 +40,7 @@ import type {
   ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
 import { canVoidExpenseFinancialState, civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilInstantDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
-import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
+import { expenseTaxSourceChecksum, validateStatusTransition } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
 import { acceptExpenseVatSource } from '../domain/logic/expense-vat-reconciliation.logic';
@@ -619,7 +619,7 @@ export class PrismaExpenseRepository {
 
   async expenseCorrectionCapabilities(companyId: string, expenseId: string, permissions: string[]) {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
-      const expense = await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId }, include: { payments: true } });
+      const expense = await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId }, include: { payments: true, lines: true } });
       if (!expense) throw new NotFoundException();
       return readExpenseCorrectionCapabilities(tx, expense, permissions);
     }, { isolationLevel: 'RepeatableRead' });
@@ -633,20 +633,18 @@ export class PrismaExpenseRepository {
       await lockExpenseCorrection(tx, input.companyId, input.expenseId);
       // Take turns with filing and handoff mutations, including writers which read before us.
       await tx.$executeRaw`SELECT id FROM "WhtCertificateHandoff" WHERE "companyId" = ${input.companyId} AND (("sourcePaymentType" = 'expense.record' AND "sourcePaymentId" = ${input.expenseId}) OR EXISTS (SELECT 1 FROM "TaxEvent" e WHERE e."companyId" = ${input.companyId} AND e."sourceType" = 'expense.record' AND e."sourceId" = ${input.expenseId} AND "taxEventIdsJson" @> jsonb_build_array(e.id))) FOR UPDATE`;
-      await tx.$executeRaw`SELECT id FROM "TaxPeriod" WHERE "companyId" = ${input.companyId} AND "formType" = 'PND53' AND (id IN (SELECT "taxPeriodId" FROM "TaxEvent" WHERE "companyId" = ${input.companyId} AND "sourceType" = 'expense.record' AND "sourceId" = ${input.expenseId}) OR "periodKey" = (SELECT to_char("expenseDate" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM') FROM "ExpenseRecord" WHERE "companyId" = ${input.companyId} AND id = ${input.expenseId})) FOR UPDATE`;
-      const current = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId }, include: { payments: true } });
+      const current = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId }, include: { payments: true, lines: true } });
       if (!current) throw new NotFoundException();
       if (!isBranchInScope(input.scopes, current.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-      const capability = await readExpenseCorrectionCapabilities(tx, current, ['expense.confirm']);
+      const capability = await readExpenseCorrectionCapabilities(tx, current, ['expense.confirm'], true);
       if (!capability.canReopen) throw new ConflictException({ code: 'expense_correction_blocked', blockers: capability.reopenBlockers,
-        message: capability.reopenBlockers.map(expenseCorrectionBlockerMessage).join(' · ') });
+        lockedAccountingPeriodKey: capability.lockedAccountingPeriodKey, lockedTaxPeriods: capability.lockedTaxPeriods,
+        message: expenseReopenBlockerMessages(capability).join('\n') });
       const changed = await tx.expenseRecord.updateMany({ where: { companyId: input.companyId, id: input.expenseId, status: 'CONFIRMED', updatedAt: current.updatedAt },
         data: { status: 'NEEDS_REVIEW', postingStatus: 'not_required', postingError: null,
           confirmedAt: null, confirmedByUserId: null, reviewedAt: null, reviewedByUserId: null, updatedByUserId: input.actorUserId } });
       if (changed.count !== 1) throw new ConflictException('expense_correction_source_changed');
-      const events = await tx.taxEvent.findMany({ where: { companyId: input.companyId, sourceType: 'expense.record', sourceId: input.expenseId }, select: { id: true } });
-      await tx.whtCertificateHandoff.updateMany({ where: { ...expenseWhtHandoffWhere(input.companyId, input.expenseId, events.map((event: any) => event.id)), status: 'REQUIRED' }, data: { status: 'CANCELLED' } });
-      await tx.taxEvent.updateMany({ where: { companyId: input.companyId, sourceType: 'expense.record', sourceId: input.expenseId, status: 'ACTIVE', eventType: { in: ['WHT_PND3', 'WHT_PND53'] } }, data: { status: 'SUPERSEDED', sourceHash: null } });
+      await retireExpenseTaxEvents(tx, input.companyId, input.expenseId);
       if (withinTx) await withinTx(tx);
       return mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { companyId: input.companyId, id: input.expenseId } }));
     }, { isolationLevel: 'ReadCommitted' });
@@ -666,7 +664,7 @@ export class PrismaExpenseRepository {
       if (payment.status === 'VOIDED') return mapExpense(current);
       const capability = (await readExpenseCorrectionCapabilities(tx, current, ['expense.payment.record'])).payments.find((p) => p.id === input.paymentId);
       if (!capability?.canCancel) throw new ConflictException({ code: 'expense_payment_correction_blocked', blocker: capability?.cancelBlocker,
-        message: capability?.cancelBlocker ? expenseCorrectionBlockerMessage(capability.cancelBlocker) : EXPENSE_CORRECTION_WORDS.unavailable });
+        message: capability?.cancelBlocker ? expenseCorrectionBlockerMessage(capability.cancelBlocker, 'cancelPayment') : EXPENSE_CORRECTION_WORDS.unavailable });
       const changedPayment = await tx.expensePayment.updateMany({ where: { companyId: input.companyId, expenseId: input.expenseId, id: input.paymentId, status: 'RECORDED' },
         data: { status: 'VOIDED', postingStatus: 'not_required', postingError: null, voidedAt: new Date(), voidedByUserId: input.actorUserId } });
       if (changedPayment.count !== 1) throw new ConflictException('expense_payment_changed');
@@ -1545,6 +1543,15 @@ export class PrismaExpenseRepository {
     return this.runInTx(db, async (tx: any) => {
       await lockExpenseFunding(tx, companyId, id);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${id}:substitute-receipt`}))`;
+      if (rest.status === 'REJECTED') {
+        await lockExpenseCorrection(tx, companyId, id);
+        const current = await tx.expenseRecord.findFirst({ where: { id, companyId }, include: { payments: true } });
+        if (current && (Number(current.paidAmount) > 0 || current.payments.some((p: any) => p.status === 'RECORDED'))) {
+          const recorded = current.payments.some((p: any) => p.status === 'RECORDED');
+          throw new ConflictException({ code: recorded ? 'expense_rejection_payments_recorded' : 'expense_rejection_paid_balance', message: expenseCorrectionBlockerMessage(recorded ? 'recorded_payments' : 'legacy_paid_balance') });
+        }
+        if (!current || validateStatusTransition(current.status, 'REJECTED')) throw new ConflictException('expense_correction_source_changed');
+      }
       const beforeReview = refreshSubstituteEvidence ? await tx.expenseRecord.findFirst({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } }) : null;
       // `vendorEntityKindSnapshot` is deliberately NOT material. The payee taxpayer class is never
       // printed on the ใบรับรองแทนใบเสร็จ artifact (`substitute-receipt.logic.ts`), so locking it buys
@@ -1611,6 +1618,7 @@ export class PrismaExpenseRepository {
         }
         throw new Error(`Expense ${id} not found in company ${companyId}`);
       }
+      if (rest.status === 'REJECTED') await retireExpenseTaxEvents(tx, companyId, id);
       const record = mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id, companyId } }));
       if (refreshSubstituteEvidence) this.reviewRefreshTransactions.add(tx);
       try { await withinTx?.(tx); }
@@ -2931,6 +2939,7 @@ export class PrismaExpenseRepository {
         where: { id: expenseId },
         data: { postingStatus: reversal.reversed ? 'reversed' : 'not_required', postingError: null },
       });
+      if (current.status !== 'CONFIRMED') await retireExpenseTaxEvents(tx, companyId, expenseId);
       const row = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId } });
       return {
         expense: mapExpense(row),
@@ -3114,23 +3123,10 @@ export class PrismaExpenseRepository {
         }
       }
 
-      const periodKey = civilPeriodKey(coerceCivilDate(current.expenseDate));
-      const accountingPeriod = await tx.accountingPeriod.findUnique({
-        where: { companyId_periodKey: { companyId: input.companyId, periodKey } }, select: { status: true },
-      });
-      if (accountingPeriod && !['OPEN', 'REOPENED'].includes(String(accountingPeriod.status))) {
-        throw new ConflictException(`expense_confirmation_accounting_period_locked:${periodKey}`);
-      }
-      const formTypes = [...new Set(finalized.flatMap((line) => line.taxComponents ?? [])
-        .flatMap((component) => component.reportContributions.map((contribution) => contribution.formType))
-        .filter((formType) => ['PP30', 'PP36', 'CUSTOMS_SUPPORT'].includes(formType)))];
-      if (formTypes.length) {
-        const periods = await tx.taxPeriod.findMany({
-          where: { companyId: input.companyId, periodKey, formType: { in: formTypes } }, select: { formType: true, status: true },
-        });
-        const locked = periods.find((period: any) => ['FILED', 'PAID', 'CLOSED'].includes(String(period.status)));
-        if (locked) throw new ConflictException(`expense_confirmation_tax_period_locked:${locked.formType}:${periodKey}`);
-      }
+      const periodLocks = await readExpensePeriodLocks(tx, { ...acceptedRecord, lines: finalized.map(line => ({ taxComponentsJson: line.taxComponents })) }, [], true, false);
+      if (periodLocks.lockedAccountingPeriodKey) throw new ConflictException(`expense_confirmation_accounting_period_locked:${periodLocks.lockedAccountingPeriodKey}`);
+      const lockedTaxPeriod = periodLocks.lockedTaxPeriods[0];
+      if (lockedTaxPeriod) throw new ConflictException(`expense_confirmation_tax_period_locked:${lockedTaxPeriod.formType}:${lockedTaxPeriod.periodKey}`);
 
       for (const line of finalized) {
         const changed = await tx.expenseLine.updateMany({
