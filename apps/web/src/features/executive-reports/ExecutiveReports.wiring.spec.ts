@@ -21,7 +21,7 @@ test('the system shell and report gate use the exact permission, and the header 
   assert.match(header, /useOpenSupportCount\(pathname, !billingOnly && !executiveOnly\)/);
   assert.match(header, /EXECUTIVE_ACCESS_DENIED_EVENT/);
   assert.match(header, /thaiLabel\(environment\)/);
-  assert.match(header, /thaiLabel\(section.label\)/);
+  assert.doesNotMatch(header, /thaiLabel\(section.label\)/);
   // Report routes only: '/system/executive-users' (an admin page) keeps the admin console's own menu words.
   assert.doesNotMatch(header, /pathname\.startsWith\('\/system\/executive'\)/);
 });
@@ -32,7 +32,7 @@ test('reads use authenticated fetch, no tenant target header, and reload/abort p
   assert.match(page, /SOURCE_STALE/); assert.match(page, /setData\(null\)/); assert.match(page, /CoverLoader/);
   assert.match(page, /keepLoadedReport/);
   assert.match(page, /retry: retryWait > 0 \? undefined/);
-  assert.ok(page.indexOf('setData(result.data)') < page.indexOf('await getExecutiveHistory'));
+  assert.ok(page.indexOf('setData(result.data)') < page.indexOf('void getExecutiveHistory'));
 });
 test('a build change refreshes provider context without turning its new object into another report reload', () => {
   const page = source('./ExecutiveReportPage.tsx');
@@ -55,24 +55,24 @@ test('system and sales denial gates select report wording for executive-only ses
 });
 test('directory chips hide empty drill rows and each filter toggle names its own scope', async () => {
   const page = source('./ExecutiveReportPage.tsx');
-  assert.match(page, /reportFilterChips/);
-  assert.match(page, /pickLabels.length > 0 &&/);
-  assert.match(page, /<ExecutiveFilters context=/);
-  assert.match(source('./ExecutiveFilters.tsx'), /\{W.reportFilters\}/);
-  assert.match(page, /\{W.companyFilters\} · \{DIRECTORY_FILTERS/);
+  assert.match(page, /DIRECTORY_FILTERS/);
+  assert.match(page, /extra=\{pickLabels.map/);
+  assert.match(page, /<ExecutiveFilters[^\n]*context=/);
+  assert.match(source('./ExecutiveFilters.tsx'), /W.reportFilters/);
+  assert.match(source('./ExecutiveFilters.tsx'), /W.companyFilters/);
   const { W } = await import('./executive-reports.words');
   assert.equal(W.reportFilters, 'ตัวกรองรายงาน'); assert.equal(W.companyFilters, 'ตัวกรองรายชื่อบริษัท');
 });
 test('Thai shared fields, detail tabs, history paging and responsive tables retain the permission-gated export panel', () => {
   const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts') + source('./ExecutiveReportDesign.tsx');
-  for (const component of ['MangmeePage', 'MangmeeCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
+  for (const component of ['ExecutivePage', 'MangmeeCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
   assert.match(source('./ExecutiveReportContent.tsx'), /<ExecutiveKpi/);
   assert.match(all, /allowClear=\{false\}/); assert.match(all, /selectable=\{context\.builtMonths\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table-header-group/);
   assert.match(all, /ExecutiveTable as ReportTable/);
   assert.match(all, /ExecutiveCompanyHistory/); assert.match(all, /EXECUTIVE_HISTORY_EVENT_LABELS/);
   assert.doesNotMatch(all, /mangmee-table-scroll|<select\b|<textarea\b|data-rights|localStorage/);
   assert.match(all, /canExport\(context\) && !exportOpen/);
-  assert.match(all, /exportOpen && context && visibleData && <ExecutiveExportPanel/);
+  assert.match(all, /exportOpen && context && visibleData && dataKey === requestKey && !reading && <ExecutiveExportPanel/);
 });
 test('search stays in the history entry with a 300ms debounce, back has a direct-link fallback', () => {
   const page = source('./ExecutiveReportPage.tsx');
@@ -81,7 +81,7 @@ test('search stays in the history entry with a 300ms debounce, back has a direct
   assert.match(page, /navigateParams\(clearedParams\(params\), false, ''\)/);
   // A change the reader makes keeps only our own history keys, so Next's router (useSearchParams) follows it.
   assert.match(page, /const state = reportHistoryState\(window\.history\.state, searchValue, replace\)/);
-  assert.match(page, /replaceState\(\{ \.\.\.ownHistoryState\(window\.history\.state\), executiveSearch: term \}, '', `/);
+  assert.match(page, /replaceState\(\{ \.\.\.ownHistoryState\(window\.history\.state\), executiveSearch: term \}, '', executiveHref/);
 });
 
 // Execute the page's actual setup, normalization and close handler with a history stub;
@@ -146,7 +146,9 @@ test('opening/closing export and refreshing built months preserve report identit
     assert.deepEqual((await pageTransitions(section, params, context, {})).dependencies, closed.dependencies, section);
     if (section === 'companies' || section === 'detail') {
       params.set('page', '4');
-      assert.notDeepEqual((await pageTransitions(section, params, context, {})).dependencies, closed.dependencies, section);
+      const paged = (await pageTransitions(section, params, context, {})).dependencies;
+      if (section === 'detail') assert.deepEqual(paged, closed.dependencies, section);
+      else assert.notDeepEqual(paged, closed.dependencies, section);
       params.set('page', '3');
     }
     params.set('month', '2026-10');
@@ -201,4 +203,14 @@ test('an export refused for the export or contacts right re-reads the rights; on
   denyExport();
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(calls, ['exportDenied=true', 'refresh']);
+});
+
+test('B5: company detail tabs and history pages preserve the company read identity', async () => {
+  const context = await exportContext();
+  const company = await pageTransitions('detail', new URLSearchParams('month=2026-09&view=company'), context, {});
+  for (const view of ['usage', 'history']) {
+    const panel = await pageTransitions('detail', new URLSearchParams({ month: '2026-09', view, page: '3' }), context, {});
+    assert.equal(panel.requestKey, company.requestKey, view);
+    assert.deepEqual(panel.dependencies, company.dependencies, view);
+  }
 });

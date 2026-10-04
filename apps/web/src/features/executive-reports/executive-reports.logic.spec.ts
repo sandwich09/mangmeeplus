@@ -124,15 +124,6 @@ test('every contracted reason/state pair has Thai words and historical reasons d
   }
   assert.deepEqual(differences, []);
 });
-test('drill chips omit empty/all/sort-only conditions and applied filters already named by the drill', async () => {
-  const { reportFilterChips } = await logic();
-  const applied = { global: { discovery: { value: 'FACEBOOK', label: 'Facebook' }, industry: { value: 'UNKNOWN', label: 'ไม่ระบุ' } }, directory: { usageGroup: { value: 'ACTIVE', label: EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE! } } };
-  assert.deepEqual(reportFilterChips(applied, { discovery: 'FACEBOOK' }, context), { picked: ['เฟซบุ๊ก'], active: ['ไม่ระบุ', EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE] });
-  for (const picked of [null, {}, { discovery: 'ALL' }, { sortBy: 'netReceipts', sortDir: 'desc' }] as const) {
-    assert.deepEqual(reportFilterChips(applied, picked, context).picked, []);
-  }
-  assert.deepEqual(reportFilterChips(applied, { industry: 'UNKNOWN', usageGroup: 'ACTIVE' }, context), { picked: ['ไม่ระบุ', EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE], active: ['เฟซบุ๊ก'] });
-});
 test('403 clears data, no-build 503 is no data yet, and other failures stay errors', async () => {
   const { reportFailure } = await logic();
   assert.equal(reportFailure({ status: 403 }).kind, 'denied');

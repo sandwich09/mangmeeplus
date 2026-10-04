@@ -48,10 +48,10 @@ test('v2 follow-up band includes only known positive groups and exact drill link
 test('v2 KPI icons and arrows stay compact while long payment context lives outside the tiles', async () => {
   const { OverviewContent } = await import('./ExecutiveReportContent');
   const html = render(OverviewContent, { data: overview([]), nav });
-  assert.equal((html.match(/mangmee-icon-frame/g) ?? []).length, 4);
+  assert.equal((html.match(/data-executive-icon/g) ?? []).length, 4);
   assert.match(html, /executive-kpi-link/); assert.match(html, /aria-hidden="true"[^>]*>→/);
-  assert.match(html, /mangmee-stat-sub[\s\S]*ยังไม่ได้จัดประเภท 2 บริษัท[\s\S]*?<\/section>/);
-  const tiles = html.match(/<section[^>]*mangmee-stat-card[\s\S]*?<\/section>/g) ?? [];
+  assert.match(html, /data-executive-sub[\s\S]*ยังไม่ได้จัดประเภท 2 บริษัท[\s\S]*?<\/section>/);
+  const tiles = html.match(/<section[^>]*data-executive-kpi[\s\S]*?<\/section>/g) ?? [];
   assert.equal(tiles.length, 4);
   for (const tile of tiles) assert.doesNotMatch(tile, /ยังไม่เคยชำระแต่ใช้งานอยู่/);
   assert.match(html, /ยังไม่เคยชำระแต่ใช้งานอยู่ 1 บริษัท/);
@@ -82,7 +82,7 @@ function elements(tree: React.ReactNode): Array<React.ReactElement<any>> {
 }
 
 test('v2 filter drafts apply atomically, dismiss without mutation, clear and remove a single chip', async () => {
-  const { GLOBAL_FILTERS, FILTER_URL, changedParams } = await import('./executive-reports.logic');
+  const { GLOBAL_FILTERS, DIRECTORY_FILTERS, FILTER_URL, changedParams } = await import('./executive-reports.logic');
   const { Button } = await import('../../common/components/button');
   const { SelectField } = await import('../../common/components/field/Field');
   const { thaiLabel } = await import('./executive-reports.words');
@@ -90,12 +90,14 @@ test('v2 filter drafts apply atomically, dismiss without mutation, clear and rem
   const calls: any[] = [];
   const context = { filters: Object.fromEntries(Object.entries(EXECUTIVE_REPORT_LABELS).map(([key, labels]) => [key, Object.entries(labels).map(([value, label]) => ({ value, label }))])) };
   const values = { industry: 'ALL', discovery: 'FACEBOOK', referringSales: 'ALL' };
-  const Filters = componentFunction('./ExecutiveFilters.tsx', 'ExecutiveFilters', { React, W, Button, SelectField, thaiLabel, window: { innerHeight: 844 }, GLOBAL_FILTERS, FILTER_URL, DesignIcons: { filter: () => null }, useBodyScrollLock: () => {}, useId: () => 'filters', useEffect: () => {}, useRef: () => refs[refCursor++] ?? (refs[refCursor - 1] = { current: { hidePopover: () => hidden++, getBoundingClientRect: () => ({ left: 20, bottom: 60 }) } }), useState: (initial: any) => { const index = cursor++; if (!(index in state)) state[index] = initial; return [state[index], (next: any) => state[index] = typeof next === 'function' ? next(state[index]) : next]; } });
+  const Filters = componentFunction('./ExecutiveFilters.tsx', 'ExecutiveFilters', { React, W, Button, SelectField, thaiLabel, window: { innerHeight: 844 }, GLOBAL_FILTERS, DIRECTORY_FILTERS, FILTER_URL, DesignIcons: { filter: () => null }, useBodyScrollLock: () => {}, useId: () => 'filters', useEffect: () => {}, useRef: () => refs[refCursor++] ?? (refs[refCursor - 1] = { current: { hidePopover: () => hidden++, getBoundingClientRect: () => ({ left: 20, bottom: 60 }) } }), useState: (initial: any) => { const index = cursor++; if (!(index in state)) state[index] = initial; return [state[index], (next: any) => state[index] = typeof next === 'function' ? next(state[index]) : next]; } });
   const tree = () => { cursor = 0; refCursor = 0; return elements(Filters({ context, values, errors: {}, apply: (changes: unknown) => calls.push(changes), clear: () => calls.push('clear') })); };
   const trigger = () => tree().find(x => x.type === Button && x.props.popoverTarget)!;
   assert.ok(trigger()); assert.equal(trigger().props['aria-expanded'], false);
   trigger().props.onClick();
   tree().find(x => x.props.popover === 'auto')!.props.onToggle({ newState: 'open' });
+  assert.equal(trigger().props['aria-expanded'], true);
+  tree().find(x => x.props.popover === 'auto')!.props.onToggle({ newState: 'closed', target: {}, currentTarget: {} });
   assert.equal(trigger().props['aria-expanded'], true);
   const select = tree().find(x => x.type === SelectField && x.props.id.includes('industry'))!;
   select.props.onChange({ target: { value: 'FOOD_ACCOMMODATION' } });
@@ -133,7 +135,7 @@ test('v2 nested select/date portals stay inside a native popover and ordinary fi
 
 
 test('v2 directory filter controls and chips use effective drill filters rather than unrelated saved globals', async () => {
-  const { reportQuery, GLOBAL_FILTERS, drillLabels, drillFilters } = await import('./executive-reports.logic');
+  const { reportQuery, GLOBAL_FILTERS, DIRECTORY_FILTERS, FILTER_URL, drillLabels, drillFilters } = await import('./executive-reports.logic');
   const file = ts.createSourceFile('page.tsx', source('./ExecutiveReportPage.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const page = file.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'ExecutiveReportPage') as ts.FunctionDeclaration;
   const declarations = page.body!.statements.filter(ts.isVariableStatement).flatMap(node => [...node.declarationList.declarations]);
@@ -144,11 +146,12 @@ test('v2 directory filter controls and chips use effective drill filters rather 
     return `const ${declaration.getText(file)};`;
   }).join('\n');
   const js = ts.transpileModule(code + '\nreturn { filterValues, pickLabels };', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  const evaluate = () => new Function('reportQuery', 'GLOBAL_FILTERS', 'drillLabels', 'picked', 'section', 'params', 'context', 'search', js)(reportQuery, GLOBAL_FILTERS, drillLabels, drillFilters(params), 'companies', params, context, '');
-  assert.deepEqual(evaluate().filterValues, { industry: 'FOOD_ACCOMMODATION', discovery: 'ALL', referringSales: 'ALL' });
+  const evaluate = () => new Function('DIRECTORY_FILTERS', 'FILTER_URL', 'reportQuery', 'GLOBAL_FILTERS', 'drillLabels', 'picked', 'section', 'params', 'context', 'search', js)(DIRECTORY_FILTERS, FILTER_URL, reportQuery, GLOBAL_FILTERS, drillLabels, drillFilters(params), 'companies', params, context, '');
+  assert.deepEqual(evaluate().filterValues, { industry: 'FOOD_ACCOMMODATION', discovery: 'ALL', referringSales: 'ALL', ...Object.fromEntries(DIRECTORY_FILTERS.map(key => [key, 'ALL'])) });
   assert.deepEqual(evaluate().pickLabels, []); // Global picks already have removable chips beside the filter button.
   params.set('pick', 'industry=FOOD_ACCOMMODATION&usageGroup=NOT_STARTED');
-  assert.deepEqual(evaluate().pickLabels, [EXECUTIVE_REPORT_LABELS.usageGroup.NOT_STARTED]);
+  assert.deepEqual(evaluate().pickLabels, []);
+  assert.equal(evaluate().filterValues.usageGroup, 'NOT_STARTED');
 });
 
 test('v2 shared design reaches every report/account view and export, without a new palette', () => {
@@ -159,4 +162,47 @@ test('v2 shared design reaches every report/account view and export, without a n
   for (const path of ['./ExecutiveReportPage.tsx', '../executive-users/ExecutiveUsersPage.tsx', '../executive-users/ExecutiveUserPage.tsx']) assert.match(source(path), /EXECUTIVE_PAGE_CLASS/);
   assert.match(source('./ExecutiveExportPanel.tsx'), /<ExecutiveSectionCard title=\{W.export.action\} actions=/);
   assert.match(source('./ExecutiveReportContent.tsx'), /ExecutiveSectionCard as Card/);
+});
+
+
+test('directory filters share the atomic draft and removable chips, including embedded drill choices', async () => {
+  const logic = await import('./executive-reports.logic');
+  const { Button } = await import('../../common/components/button');
+  const { SelectField } = await import('../../common/components/field/Field');
+  const { thaiLabel } = await import('./executive-reports.words');
+  let stateIndex = 0; const state: any[] = [], applied: any[] = [];
+  const context = { currentMonth: '2026-10', defaultMonth: '2026-09', filters: Object.fromEntries(Object.entries(EXECUTIVE_REPORT_LABELS).map(([key, labels]) => [key, Object.entries(labels).map(([value, label]) => ({ value, label }))])) };
+  const values = { ...Object.fromEntries([...logic.GLOBAL_FILTERS, ...logic.DIRECTORY_FILTERS].map(key => [key, 'ALL'])), usageGroup: 'NOT_STARTED' };
+  const Filters = componentFunction('./ExecutiveFilters.tsx', 'ExecutiveFilters', { React, W, Button, SelectField, thaiLabel, ...logic, DesignIcons: { filter: () => null }, useBodyScrollLock() {}, useEffect() {}, useId: () => 'filters', useRef: () => ({ current: { hidePopover() {} } }), useState: (initial: any) => { const i = stateIndex++; if (!(i in state)) state[i] = initial; return [state[i], (next: any) => state[i] = typeof next === 'function' ? next(state[i]) : next]; } });
+  const render = () => { stateIndex = 0; return elements(Filters({ context, directory: true, values, errors: {}, apply: (next: object) => applied.push(next), clear() {} })); };
+  assert.equal(render().filter(n => n.type === SelectField).length, 10);
+  render().find(n => n.type === SelectField && n.props.id.endsWith('usageGroup'))!.props.onChange({ target: { value: 'ACTIVE' } });
+  assert.equal(applied.length, 0);
+  render().find(n => n.type === 'form')!.props.onSubmit({ preventDefault() {} });
+  assert.equal(applied[0].filter_usage, 'ACTIVE'); assert.equal(Object.keys(applied[0]).length, 10);
+  render().find(n => n.type === Button && n.props['aria-label'] === W.removeFilter(`${W.filterLabels.usageGroup} · ${EXECUTIVE_REPORT_LABELS.usageGroup.NOT_STARTED}`))!.props.onClick();
+  const params = logic.changedParams(new URLSearchParams('month=2026-09&pick=usageGroup%3DNOT_STARTED'), applied[1]);
+  assert.equal(logic.reportQuery('companies', params, context as any).usageGroup, undefined);
+});
+
+test('KPI-only conditions share the time-row filter chips and can be removed individually', async () => {
+  const { ExecutiveFilters } = await import('./ExecutiveFilters');
+  const context = { filters: Object.fromEntries(Object.entries(EXECUTIVE_REPORT_LABELS).map(([key, labels]) => [key, Object.entries(labels).map(([value, label]) => ({ value, label }))])) };
+  const markup = render(ExecutiveFilters, { context, values: { industry: 'ALL', discovery: 'ALL', referringSales: 'ALL' }, errors: {}, apply() {}, clear() {}, extra: [{ key: 'paidInPeriod', label: 'มีเงินรับในเดือนที่เลือก', remove() {} }] });
+  assert.ok(markup.includes(`aria-label="${W.removeFilter('มีเงินรับในเดือนที่เลือก')}"`));
+  assert.match(markup, /tabular-nums[^>]*>1<\/span>/);
+  const page = source('./ExecutiveReportPage.tsx');
+  assert.match(page, /extra=\{pickLabels\.map/);
+  assert.doesNotMatch(page, /pickLabels\.map\([^\n]*MangmeeBadge/);
+  const file = ts.createSourceFile('page.tsx', page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let expression: ts.Expression | undefined;
+  const visit = (node: ts.Node) => { if (ts.isJsxAttribute(node) && node.name.getText(file) === 'extra' && node.initializer && ts.isJsxExpression(node.initializer)) expression = node.initializer.expression; ts.forEachChild(node, visit); };
+  visit(file); assert.ok(expression);
+  const code = ts.transpileModule(`return ${expression.getText(file)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  let changes: Record<string, string> = {};
+  const picked = { paidInPeriod: 'true', positiveNetInPeriod: 'true' };
+  const chips = new Function('picked', 'pickLabels', 'update', code)(picked, [{ key: 'paidInPeriod', label: 'มีเงินรับในเดือนที่เลือก' }], (next: Record<string, string>) => changes = next);
+  chips[0].remove();
+  const remaining = new URLSearchParams(changes.pick);
+  assert.equal(remaining.has('paidInPeriod'), false); assert.equal(remaining.get('positiveNetInPeriod'), 'true');
 });
