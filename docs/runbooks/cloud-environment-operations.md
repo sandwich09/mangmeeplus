@@ -10,6 +10,19 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Isolated Official OA live service — 2026-10-04
+
+MangmeePlus Official @107ewccg now uses stack/function/role watchdog-bms-line-official-oa-prod
+in ap-southeast-1/account311414082667. It serves only three public PNG icons and a dedicated
+HMAC webhook, using immutable staging/live version1. Dedicated secret names are
+watchdog-bms/production/line-official/channel-secret and channel-access-token; IAM reads only
+those two ARNs and writes its own14-day log group. No ERP/DB/UAT/system OA resources changed.
+Owner explicitly chose local validation, OA-only scope and thawatchai provisioning after
+non-root denial; both acceptance signatures use existing non-root Production KMS authority.
+Provider webhook active:true, Contact/Social native replies stopped, how-to/package retained.
+Owner confirmed both cards received and actions working; supplemental acceptance signature verified. [Exact IDs, hashes, proof and recovery](../evidence/line-official-oa-isolated-publication-2026-10-04.md).
+
+
 ## Hotfix 2026-09-30 evening — claim lines on a phone (current)
 
 After this section, Production serves hotfix source `908e7aab`. `main` `b7d86eb8` (#937) merges it and has the same tree. UAT still serves `7b1b1c11`, which does not have this web fix. This is the first live use of the isolated `deploy-prod-hotfix` path since the Kamal cutover, run from a clean `main` controller at `7b1b1c11`. The GitHub workflow ID is `NOT_DISPATCHED`. Times are Bangkok.

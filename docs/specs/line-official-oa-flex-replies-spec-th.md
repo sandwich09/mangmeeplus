@@ -1,6 +1,6 @@
 # การ์ดตอบกลับ LINE Official OA
 
-สถานะ: owner อนุญาตเชื่อม API และพัฒนาระบบตอบกลับ 2026-10-04; ยังไม่เปิดใช้งานจริง
+สถานะ: เปิดบริการ OA แยกแล้ว 2026-10-04; LINE/provider และ signed acceptance ผ่าน; owner ยืนยันได้รับครบสองการ์ดและปุ่มใช้งานได้. ดู `docs/evidence/line-official-oa-isolated-publication-2026-10-04.md`
 
 ## ผลลัพธ์และขอบเขต
 
