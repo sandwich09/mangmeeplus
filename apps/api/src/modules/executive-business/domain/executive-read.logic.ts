@@ -282,13 +282,19 @@ export function rangeCoverage(parts: Array<{ month: string; source: ExecutiveSou
   return { coverage: !affectedMonths.length ? 'complete' : parts.some(p => p.source.coverage !== 'unavailable') ? 'partial' : 'unavailable',
     reasonCodes: [...new Set(affectedMonths.flatMap(p => p.reasonCodes))], affectedMonths };
 }
+/** The figure alone. A comparison is attached to the very figure it compares, so it must not carry that object
+ *  (or anything the object holds, such as its share): a cycle cannot be sent as JSON and the whole answer fails. */
+function figureOnly(figure: ExecutiveCount): ExecutiveCount {
+  return { value: figure.value, ...(figure.knownValue !== undefined ? { knownValue: figure.knownValue } : {}), coverage: figure.coverage, reasonCodes: figure.reasonCodes,
+    ...(figure.affectedMonths ? { affectedMonths: figure.affectedMonths } : {}), ...('currency' in figure ? { currency: (figure as ExecutiveMoney).currency } : {}) };
+}
 export function periodComparison(current: ExecutiveCount, previous: ExecutiveCount, period: ExecutiveRangePeriod, includesOpenMonth: boolean, decimals = 0): ExecutivePeriodComparison {
   const affectedMonths = [...current.affectedMonths ?? [], ...previous.affectedMonths ?? []];
   const exact = current.value !== null && previous.value !== null && current.coverage === 'complete' && previous.coverage === 'complete';
   const absoluteChange = exact ? current.value! - previous.value! : null;
   const status = previous.coverage === 'unavailable' ? 'NO_PREVIOUS' : !exact ? 'PARTIAL' : previous.value === 0 ? 'ZERO_BASE'
     : previous.value! < 0 ? 'NEGATIVE_BASE' : absoluteChange === 0 ? 'UNCHANGED' : 'COMPLETE';
-  return { period, current, previous, absoluteChange, percentChange: exact && previous.value! > 0 ? roundRatio(BigInt(Math.round(absoluteChange! * 10 ** decimals)) * 100n, Math.round(previous.value! * 10 ** decimals), 1) : null,
+  return { period, current: figureOnly(current), previous: figureOnly(previous), absoluteChange, percentChange: exact && previous.value! > 0 ? roundRatio(BigInt(Math.round(absoluteChange! * 10 ** decimals)) * 100n, Math.round(previous.value! * 10 ** decimals), 1) : null,
     status, affectedMonths, includesOpenMonth };
 }
 /** One row per company, sums before cohort/rank; cutoff flags come only from the final month. */

@@ -31,7 +31,7 @@ import { CompanyTeamNoteService } from '../system-partner-management/application
 import { PLATFORM_TENANT_ID } from '../sales-console/application/sales-context';
 import { ExecutiveReportBuildUseCase } from './application/executive-report-build.use-case';
 import { ExecutiveReportReadService } from './application/executive-report-read.service';
-import { aiCostCoverageOf, combined, countOf, moneyCoverageOf, ranksOf, roundRatio, roundingNote, shareOf, sortedBy, spendGroupsOf, usageCoverageOf, type ReportRow } from './domain/executive-read.logic';
+import { aiCostCoverageOf, combined, countOf, moneyCoverageOf, periodComparison, ranksOf, roundRatio, roundingNote, shareOf, sortedBy, spendGroupsOf, usageCoverageOf, type ReportRow } from './domain/executive-read.logic';
 import { executiveMonthOf, executiveMonthRange } from './domain/executive-report.logic';
 
 const databaseUrl = process.env.EXECUTIVE_REPORT_READ_TEST_DATABASE_URL;
@@ -738,6 +738,8 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
       assert.equal(current.company.sheet.receipts7.value, 0); assert.equal(valueOf(current.company.sheet.receipts30), 1);
       const selected = await report.overview(reader(), { from: '2026-09', to: '2026-10' });
       assert.deepEqual(selected.churn.comparison!.period.from, '2026-07'); assert.deepEqual(selected.churn.comparison!.period.to, '2026-08');
+      // The screen gets this answer as JSON: a comparison that held the figure it is attached to made every overview with a previous period fail.
+      assert.doesNotThrow(() => JSON.stringify(selected));
       const filtered = await report.companies(reader(), { from: '2026-09', to: '2026-09', churned: 'true', pageSize: 100 });
       assert.ok(filtered.items.some(row => row.id === 'range-churn')); assert.ok(filtered.items.every(row => row.id !== 'range-boundary'));
       const editor = reader(['system.executive.read', 'system.executive.company_note.manage']);
@@ -766,6 +768,20 @@ describe('executive report read rules', () => {
   /** The smallest row the rules read: a company's net in the month and when it joined. */
   const row = (companyId: string, net: number, joined = '2026-08-01T00:00:00Z') =>
     ({ companyId, receiptsSatang: Math.max(net, 0), refundsSatang: Math.max(-net, 0), profile: { companyCreatedAt: at(joined) } }) as unknown as ReportRow;
+
+  it('a comparison carries the two figures alone, so the figure it is attached to can still be sent as JSON', () => {
+    const period = { from: '2026-08', to: '2026-08' } as never;
+    const share = { value: 50, numerator: 1, denominator: 2 } as { value: number; numerator: number; denominator: number; comparison?: unknown };
+    const churn = { ...countOf(1, { coverage: 'complete', reasonCodes: [] }), share, drilldownFilters: { churned: 'true' } } as ExecutiveCount & { share: typeof share };
+    const prior = { ...countOf(2, { coverage: 'complete', reasonCodes: [] }), share: { value: 25, numerator: 1, denominator: 4 } };
+    churn.comparison = periodComparison(churn, prior, period, false);
+    share.comparison = periodComparison({ ...churn, value: share.value }, { ...prior, value: prior.share.value }, period, false, 1);
+    assert.deepEqual(churn.comparison.current, { value: 1, coverage: 'complete', reasonCodes: [] });
+    assert.deepEqual([churn.comparison.absoluteChange, churn.comparison.percentChange], [-1, -50]);
+    assert.doesNotThrow(() => JSON.stringify(churn));
+    const money = periodComparison({ ...countOf(300, { coverage: 'partial', reasonCodes: ['BILLING_SCAN_NOT_COMPLETE'] }), currency: 'THB' } as ExecutiveCount, countOf(100, { coverage: 'complete', reasonCodes: [] }), period, false);
+    assert.deepEqual(money.current, { value: null, knownValue: 300, coverage: 'partial', reasonCodes: ['BILLING_SCAN_NOT_COMPLETE'], currency: 'THB' });
+  });
 
   it('rounds half up from whole numbers, once, and says when shares do not add up to 100.0', () => {
     assert.equal(roundRatio(4000, 72, 1), 55.6); // 40 of 72 = 55.555…%
