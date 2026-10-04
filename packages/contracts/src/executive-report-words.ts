@@ -220,6 +220,8 @@ export const EXECUTIVE_SHEET_WORDS = {
   receipts7: 'เพิ่มใบเสร็จใน 7 วัน', receipts30: 'เพิ่มใบเสร็จใน 30 วัน', receiptDays30AtLeast2: 'เพิ่มใบเสร็จอย่างน้อย 2 วันใน 30 วัน',
   followUp: 'ควรติดตาม', invite: 'ชวนให้เริ่มใช้', followExisting: 'ติดตามผู้ที่เคยใช้',
   count: 'จำนวน', share: 'สัดส่วน (%)', everUsedShare: 'สัดส่วนจากบริษัทที่เคยใช้ (%)',
+  receiptDistribution: 'จำนวนใบเสร็จต่อบริษัท', recentUsage: 'การใช้งานล่าสุด', packagesFound: 'แพ็กเกจที่พบ',
+  churnShare: (share: string) => `${share} ของบริษัทที่เคยใช้`,
   expired: 'หมดอายุแล้ว',
   receiptBucket: { ALL: 'ทุกระดับใบเสร็จ', ZERO: W.export.buckets[0]!, ONE_TO_FIVE: W.export.buckets[1]!, SIX_PLUS: W.export.buckets[2]! },
   package: 'แพ็กเกจ', allPackages: 'ทุกแพ็กเกจ', lifetime: W.lifetimeReceipts, sourceMissing: 'ข้อมูลสรุปส่วนนี้ยังไม่ครบ จึงยังประเมินบางตัวเลขไม่ได้', sourceStale: 'ข้อมูลรายงานอาจยังไม่เป็นปัจจุบัน', classificationMissing: 'ยังมีบริษัทที่ไม่ได้จัดประเภท', noteAdminRoute: 'กรุณาแก้ไขหมายเหตุผ่านหน้าผู้ดูแลระบบ',

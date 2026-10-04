@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
-import { executivePeriodReportWords, EXECUTIVE_REPORT_LABELS, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveOverview } from '@watchdog-bms/contracts';
+import { executivePeriodReportWords, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SHEET_WORDS as S, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveOverview } from '@watchdog-bms/contracts';
 
 const W = executivePeriodReportWords();
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
@@ -24,7 +24,7 @@ const envelope = {
 const nav = { params: new URLSearchParams('month=2026-09'), from: 'overview', remember: () => {}, navigate: () => {} };
 const adoption = { population: 12, coverage: 'complete', reasonCodes: [], segments: [{ key: 'EVER', count: 12, share: { value: 100 }, drilldownFilters: { receiptAdoption: 'EVER' } }] };
 const groups = [{ key: 'NOT_STARTED', count: 4, drilldownFilters: { usageGroup: 'NOT_STARTED' } }, { key: 'INACTIVE', count: 2, drilldownFilters: { usageGroup: 'INACTIVE' } }];
-const overview = { ...envelope, metrics: { companies: { ...count(12), drilldownFilters: {} }, activeCompanies: { ...count(3), drilldownFilters: {}, breakdown: {} }, companiesWithReceipts: { ...count(6), drilldownFilters: {} }, netReceiptsSatang: { ...cash(100), drilldownFilters: {} } }, expenseReceiptAdoption: adoption, paidUsage: { groups }, spendConcentration: { topShare: { value: 80 }, reasonCodes: [] } } as unknown as ExecutiveOverview;
+const overview = { ...envelope, metrics: { companies: { ...count(12), drilldownFilters: {} }, activeCompanies: { ...count(3), drilldownFilters: {}, breakdown: {} }, companiesWithReceipts: { ...count(6), drilldownFilters: {} }, netReceiptsSatang: { ...cash(100), drilldownFilters: {} } }, expenseReceiptAdoption: adoption, asOfFigures: { asOf: '2026-10-04', receiptBuckets: [], packages: [], receipts7: { ...count(0), drilldownFilters: {} }, receipts30: { ...count(0), drilldownFilters: {} }, receiptDays30AtLeast2: { ...count(0), drilldownFilters: {} }, followUp: { neverUsed: { ...count(4), drilldownFilters: { neverUsed: 'true' } }, churn: { ...count(2), drilldownFilters: { churned: 'true' } } } }, paidUsage: { groups }, spendConcentration: { topShare: { value: 80 }, reasonCodes: [] } } as unknown as ExecutiveOverview;
 const htmlOf = (component: React.ComponentType<any>, props: object) => renderToStaticMarkup(React.createElement(component, props));
 
 test('report shell keeps shared KPI sizes, descriptions, time row and loading skeletons', () => {
@@ -39,13 +39,13 @@ test('report shell keeps shared KPI sizes, descriptions, time row and loading sk
 test('overview uses equal KPI widths and places the top-payers row inside adoption with a header button', async () => {
   const { OverviewContent } = await content();
   const html = htmlOf(OverviewContent, { data: overview, nav });
-  assert.match(html, /data-executive-kpi-strip[^>]*lg:grid-cols-2/);
+  assert.match(html, /data-executive-kpi-strip[^>]*min-\[1200px\]:grid-cols-4/);
   assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-26/);
   assert.doesNotMatch(html, /<h2[^>]*>[^<]*เรื่องที่ควรดูต่อ/);
   assert.match(html, /<button[^>]*>ดูอันดับการใช้<\/button>/);
-  assert.match(html, /<strong[^>]*>4 บริษัท/);
+  assert.ok(html.replace(/<[^>]*>/g, '').includes('4 บริษัท'));
   assert.match(html, /บริษัท [\s\S]*?→/);
-  for (const group of groups) assert.equal(html.replace(/<[^>]*>/g, '').split(group.key === 'INACTIVE' ? 'เคยใช้ แต่ไม่ใช้ในช่วงนี้' : EXECUTIVE_REPORT_LABELS.usageGroup.NOT_STARTED).length - 1, 1);
+  for (const label of [S.invite, S.followExisting]) assert.equal(html.replace(/<[^>]*>/g, '').split(label).length - 1, 1);
 });
 
 test('drill links are focusable tiles and paid usage has large counts and company actions', async () => {
@@ -54,7 +54,7 @@ test('drill links are focusable tiles and paid usage has large counts and compan
   assert.match(link, /rounded-lg/); assert.match(link, /min-h-11/); assert.match(link, /focus-visible/); assert.doesNotMatch(link, / underline/);
   const paidUsage = { groups, paidEver: { count: 6, drilldownFilters: {} }, usageUnassessed: { count: 0 }, paymentUnknown: { count: 0 }, fullyRefunded: { count: 0 } };
   const html = htmlOf(AnalysisContent, { data: { ...envelope, expenseReceiptAdoption: adoption, paidUsage } as unknown as ExecutiveAnalysis, nav: { ...nav, params: new URLSearchParams('view=paid') }, seller: null });
-  assert.match(html, /grid-cols-2/); assert.match(html, /min\(26px/); assert.match(html, /executive-kpi-link/);
+  assert.match(html, /grid-cols-2/); assert.match(html, /font-size:26px/); assert.match(html, /executive-kpi-link/);
   assert.match(html, /usageGroup%3DNOT_STARTED/);
 });
 

@@ -6,7 +6,7 @@ import { Button } from '@/common/components/button';
 import { SelectField } from '@/common/components/field/Field';
 import { useBodyScrollLock } from '@/common/hooks/use-body-scroll-lock';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
-import { FILTER_URL, GLOBAL_FILTERS, DIRECTORY_FILTERS } from './executive-reports.logic';
+import { FILTER_URL, GLOBAL_FILTERS, DIRECTORY_FILTERS, filterOptions, filterLabel } from './executive-reports.logic';
 import { W, thaiLabel } from './executive-reports.words';
 
 type FilterValues = Partial<Record<keyof typeof FILTER_URL, string>>;
@@ -17,7 +17,7 @@ export function ExecutiveFilters({ context, values, errors, apply, clear, direct
   const id = useId();
   useBodyScrollLock(open);
   const keys = directory ? [...GLOBAL_FILTERS, ...DIRECTORY_FILTERS] : GLOBAL_FILTERS;
-  const applied = keys.filter(key => values[key] && values[key] !== 'ALL').map(key => ({ key, label: thaiLabel(context.filters[key].find(option => option.value === values[key])?.label ?? W.unknown, values[key]!), remove: () => apply({ [FILTER_URL[key]]: 'ALL' }) }));
+  const applied = keys.filter(key => values[key] && values[key] !== 'ALL').map(key => ({ key, label: thaiLabel(filterOptions(key, context).find(option => option.value === values[key])?.label ?? W.unknown, key === 'packageLabel' ? undefined : values[key]!), remove: () => apply({ [FILTER_URL[key]]: 'ALL' }) }));
   const chips = [...applied, ...extra];
   const valueKey = JSON.stringify(values);
   useEffect(() => { panel.current?.hidePopover(); }, [valueKey]);
@@ -27,7 +27,7 @@ export function ExecutiveFilters({ context, values, errors, apply, clear, direct
       const rect = trigger.current?.getBoundingClientRect();
       if (rect) setPosition({ left: `${rect.left}px`, top: `${Math.min(rect.bottom + 8, Math.max(8, window.innerHeight - 440))}px` });
     }}>{W.filters}{' '}<span className="rounded-full bg-brand-50 px-2 py-0.5 text-brand-800 tabular-nums">{chips.length}</span></Button></span>
-    {chips.length > 0 && <div data-filter-chips className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">{chips.map(({ key, label, remove }) => <Button key={key} title={label} variant="secondary" className="shrink-0 whitespace-nowrap !rounded-full !border-brand-200 !bg-brand-25 !text-brand-800" aria-label={W.removeFilter(`${Object.hasOwn(FILTER_URL, key) ? `${W.filterLabels[key as keyof typeof FILTER_URL]} · ` : ''}${label}`)} onClick={remove}>
+    {chips.length > 0 && <div data-filter-chips className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">{chips.map(({ key, label, remove }) => <Button key={key} title={label} variant="secondary" className="shrink-0 whitespace-nowrap !rounded-full !border-brand-200 !bg-brand-25 !text-brand-800" aria-label={W.removeFilter(`${Object.hasOwn(FILTER_URL, key) ? `${filterLabel(key as keyof typeof FILTER_URL)} · ` : ''}${label}`)} onClick={remove}>
       <span>{label}</span><span aria-hidden="true">×</span>
     </Button>)}</div>}
     <div ref={panel} id={id} popover="auto" role="dialog" aria-labelledby={`${id}-title`} onToggle={event => { if (event.target === event.currentTarget) setOpen(event.newState === 'open'); }}
@@ -35,8 +35,8 @@ export function ExecutiveFilters({ context, values, errors, apply, clear, direct
       className="fixed left-0 right-0 bottom-0 top-auto m-0 w-full max-w-none max-h-[85dvh] overflow-y-auto rounded-t-2xl border border-gray-200 bg-white p-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))] text-gray-900 shadow-xl [&:not(:popover-open)]:hidden backdrop:bg-gray-900/40 md:bottom-auto md:left-[min(var(--filter-left),calc(100vw_-_24rem_-_1rem))] md:right-auto md:top-[var(--filter-top)] md:max-h-[calc(100dvh_-_var(--filter-top)_-_1rem)] md:w-96 md:max-w-[calc(100vw_-_2rem)] md:rounded-xl md:backdrop:bg-transparent">
       <header className="mb-4 flex items-center justify-between gap-3"><h2 id={`${id}-title`} className="font-semibold text-brand-800">{W.reportFilters}</h2><Button autoFocus variant="secondary" onClick={() => panel.current?.hidePopover()}>{W.close}</Button></header>
       <form className="grid min-w-0 gap-4" onSubmit={event => { event.preventDefault(); apply(Object.fromEntries(keys.map(key => [FILTER_URL[key], draft[key] ?? 'ALL']))); panel.current?.hidePopover(); }}>
-        {[GLOBAL_FILTERS, ...(directory ? [DIRECTORY_FILTERS] : [])].map((group, index) => <fieldset key={index} className="grid min-w-0 gap-3"><legend className="mb-2 text-sm font-semibold text-gray-600">{index ? W.companyFilters : W.reportFilters}</legend>{group.map(key => <SelectField key={key} id={`executive-filter-${key}`} label={W.filterLabels[key]} value={draft[key] ?? 'ALL'} error={errors[key]} searchable={key === 'referringSales'} wrapLabel className="!min-h-11 !text-base" onChange={event => setDraft(current => ({ ...current, [key]: event.target.value }))}>
-          {context.filters[key].map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, option.value)}</option>)}
+        {[GLOBAL_FILTERS, ...(directory ? [DIRECTORY_FILTERS] : [])].map((group, index) => <fieldset key={index} className="grid min-w-0 gap-3"><legend className="mb-2 text-sm font-semibold text-gray-600">{index ? W.companyFilters : W.reportFilters}</legend>{group.map(key => <SelectField key={key} id={`executive-filter-${key}`} label={filterLabel(key)} value={draft[key] ?? 'ALL'} error={errors[key]} searchable={key === 'referringSales'} wrapLabel className="!min-h-11 !text-base" onChange={event => setDraft(current => ({ ...current, [key]: event.target.value }))}>
+          {filterOptions(key, context).map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, key === 'packageLabel' ? undefined : option.value)}</option>)}
         </SelectField>)}</fieldset>)}
         <div className="flex flex-wrap justify-end gap-2 border-t border-gray-200 pt-4"><Button type="button" variant="secondary" onClick={() => { clear(); panel.current?.hidePopover(); }}>{W.clear}</Button><Button type="submit">{W.applyFilters}</Button></div>
       </form>

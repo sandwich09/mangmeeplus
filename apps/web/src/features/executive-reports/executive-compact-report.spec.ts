@@ -80,7 +80,7 @@ test('horizontal KPI digits and unit stay clean and reserve identical height/sub
   const render = (value: object) => html(ExecutiveKpi, { label: W.net, figure: value as any, moneyValue: true, unit: 'บาท' } as any);
   const marked = render(cash), complete = render({ ...cash, value: 9900, coverage: 'complete', reasonCodes: [] });
   assert.deepEqual(marked.match(/<(?:div|span)\b[^>]*class="[^"]*"[^>]*>/g)?.filter(s => !s.includes('executive-dot')).map(s => s.replace(/ aria-label="[^"]*"/g, '').replace(/ style="[^"]*"/g, '')), complete.match(/<(?:div|span)\b[^>]*class="[^"]*"[^>]*>/g)?.filter(s => !s.includes('executive-dot')).map(s => s.replace(/ aria-label="[^"]*"/g, '').replace(/ style="[^"]*"/g, '')));
-  assert.match(marked, /h-26/); assert.match(marked, /size-10/);
+  assert.match(marked, /h-26/); assert.match(marked, /size-6/);
   assert.match(marked, /rounded-full/); assert.match(marked, /py-2/); assert.match(marked, /font-semibold/); assert.match(marked, /leading-4/); assert.match(marked, /whitespace-nowrap/);
   assert.match(marked, /เฉพาะที่ยืนยันแล้ว/);
   assert.match(html(ExecutiveKpi, { label: W.paid, value: "0", unit: W.unitCompany }), /data-executive-value[^>]*text-gray-600/);
@@ -285,11 +285,11 @@ test('round B d: longest KPI value sets one scale through link wrappers; units n
   const { ExecutiveKpi, ExecutiveKpiStrip } = await import('./ExecutiveReportDesign');
   const children = [100000000, 9900, 0].map((n, i) => React.createElement('a', { href: '/', key: i }, React.createElement(ExecutiveKpi, { label: W.net, figure: { ...cash, knownValue: n } as any, moneyValue: true, unit: W.unitBaht, arrow: true })));
   const markup = html(ExecutiveKpiStrip, { children });
-  const scales = [...markup.matchAll(/style="(--executive-kpi-digits:[^"]+)"/g)].map(m => m[1]);
+  const scales = [...markup.matchAll(/data-executive-value="true" style="font-size:([^"]+)"/g)].map(m => m[1]);
   assert.equal(scales.length, 3); assert.equal(new Set(scales).size, 1);
-  assert.equal(Number(scales[0].match(/digits:([^;]+)/)![1]), 12 * 0.62); // 1,000,000.00 has 12 characters
-  assert.match(markup, /grid-cols-1[^>]*lg:grid-cols-2[^>]*xl:grid-cols-3/);
-  assert.match(markup, /flex flex-nowrap items-baseline/);
+  assert.equal(scales[0], '16px');
+  assert.match(markup, /grid-cols-2/);
+  assert.match(markup, /flex[^"]*flex-nowrap items-baseline/);
   assert.match(markup, /grid-cols-\[minmax\(0,1fr\)_1rem\]/);
   assert.doesNotMatch(markup.match(/data-executive-label[^>]*>/)![0], /truncate/);
   assert.match(markup, /color:var\(--color-warning-700\)/);

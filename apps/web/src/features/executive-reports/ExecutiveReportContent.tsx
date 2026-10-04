@@ -3,10 +3,10 @@
 import Link from 'next/link';
 import { useId, type ReactNode } from 'react';
 import {
-  executiveComparisonLabel, EXECUTIVE_PERIOD_WORDS as P, EXECUTIVE_HISTORY_EVENT_LABELS, executivePeriodReportLabels, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
+  executiveComparisonLabel, EXECUTIVE_SHEET_WORDS as S, EXECUTIVE_COMPANY_SHEET_COLUMNS, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_PERIOD_WORDS as P, EXECUTIVE_HISTORY_EVENT_LABELS, executivePeriodReportLabels, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
   type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveCompanyHistory,
   type ExecutiveCount, type ExecutiveMoney, type ExecutiveDrilldownFilters, type ExecutiveReceiptAdoption,
-  type ExecutivePaidUsage, type ExecutiveSpendConcentration, type ExecutiveCompanyRow,
+  type ExecutiveAsOfFigures, type ExecutiveAsOfCount, type ExecutivePaidUsage, type ExecutiveSpendConcentration, type ExecutiveCompanyRow,
 } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
 import { ExecutiveSectionCard as Card, ExecutiveKpi, ExecutiveKpiStrip, ExecutiveTable as ReportTable, Figure, IncompleteDot, ReportNotes, ExecutiveTabs, type ReportColumn } from './ExecutiveReportDesign';
@@ -14,7 +14,7 @@ import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { Button } from '@/common/components/button';
 import { EmptyState } from '@/common/components/state';
 import { W, RANK_LABELS, REPORT_VIEWS, DETAIL_TABS, thaiLabel } from './executive-reports.words';
-import { money, ratioText, reportDate, reportDateTime, periodText, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber, hoistedSource } from './executive-reports.logic';
+import { money, ratioText, reportDate, reportDateTime, periodText, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber, hoistedSource, drillFilters, INFOGRAPHIC_FILTERS } from './executive-reports.logic';
 
 const LABELS = executivePeriodReportLabels();
 type Navigation = { params: URLSearchParams; from: string; remember: () => void; navigate: (href: string) => void };
@@ -78,8 +78,8 @@ function PaidUsage({ data, nav }: { data: ExecutivePaidUsage; nav: Navigation })
 const refundLabel = EXECUTIVE_FLAG_LABELS.fullyRefunded.true;
 
 export function OverviewContent({ data, nav }: { data: ExecutiveOverview; nav: Navigation }) {
-  const followUps = data.paidUsage.groups.filter(group => group.key === 'NOT_STARTED' || group.key === 'INACTIVE');
-  const followUpNeeded = followUps.filter(group => group.count > 0);
+  const followUps = data.asOfFigures ? [{ label: S.invite, ...data.asOfFigures.followUp.neverUsed }, { label: S.followExisting, ...data.asOfFigures.followUp.churn }] : [];
+  const followUpNeeded = followUps.filter(group => (group.value ?? group.knownValue ?? 0) > 0);
   const cards = [
     { label: W.companyCount, metric: data.metrics.companies, icon: 'store', sub: data.metrics.companies.unclassifiedCount > 0 ? W.unclassified(data.metrics.companies.unclassifiedCount) : undefined },
     { label: W.active, metric: data.metrics.activeCompanies, icon: 'bolt', sub: undefined },
@@ -87,21 +87,41 @@ export function OverviewContent({ data, nav }: { data: ExecutiveOverview; nav: N
     { label: W.net, metric: data.metrics.netReceiptsSatang, icon: 'money', sub: undefined, money: true },
   ];
   return <ReportNotes data={data}>
-    <ExecutiveKpiStrip columns={2}>{cards.map(card => <Link key={card.label} href={drilldownHref(nav.params, nav.from, card.metric.drilldownFilters)} onClick={nav.remember} className={`executive-kpi-link relative rounded-xl group ${linkFocus}`}>
+    <ExecutiveKpiStrip>{cards.map(card => <Link key={card.label} href={drilldownHref(nav.params, nav.from, card.metric.drilldownFilters)} onClick={nav.remember} className={`executive-kpi-link relative rounded-xl group ${linkFocus}`}>
       <ExecutiveKpi iconName={card.icon} label={card.label} figure={card.metric} moneyValue={card.money} netValue={card.money} unit={card.money ? W.unitBaht : W.unitCompany} sub={card.sub} comparison={card.metric.comparison} arrow />
-    </Link>)}</ExecutiveKpiStrip>
+    </Link>)}{data.churn && <div className="relative min-w-0"><DrillLink nav={nav} filters={data.churn.drilldownFilters} className="executive-kpi-link block rounded-xl"><ExecutiveKpi label={S.churn} figure={data.churn} unit={W.unitCompany} iconName="users" supporting={S.churnShare(ratioText(data.churn.share))} comparison={data.periodComparisons?.churnedCompanies ?? data.churn.comparison} arrow /></DrillLink><details className="absolute bottom-0 right-0 z-10"><summary aria-label={S.churnHelp(reportDate(data.churn.referenceDate))} title={S.churnHelp(reportDate(data.churn.referenceDate))} className="flex min-h-11 min-w-11 cursor-pointer list-none items-center justify-center rounded-lg text-brand-800 focus-visible:outline-2 focus-visible:outline-brand-700"><DesignIcons.info className="size-4" /></summary><p className="absolute right-0 top-full z-30 w-72 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-600 shadow-lg">{S.churnHelp(reportDate(data.churn.referenceDate))}</p></details></div>}</ExecutiveKpiStrip>
     <p className="text-xs text-gray-600">{W.excluded} · {W.activityDefinition} · {W.paidDefinition}{data.metrics.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(data.metrics.netReceiptsSatang.value) && ` · ${W.negative}`}{data.metrics.activeCompanies.breakdown.notPaid > 0 && ` · ${W.unpaidActive(data.metrics.activeCompanies.breakdown.notPaid)}`}{data.metrics.activeCompanies.breakdown.paymentUnknown > 0 && ` · ${W.paymentUnknownActive(data.metrics.activeCompanies.breakdown.paymentUnknown)}`}</p>
     <ReceiptAdoption data={data.expenseReceiptAdoption} nav={nav} actions={<Button variant="secondary" onClick={() => openReport(nav, menuHref('usage', nav.params, { view: 'ranking' }))}>{W.seeRanking}</Button>}>
       <ReportLink href={menuHref('revenue', nav.params, { view: 'top' })} remember={nav.remember} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-gray-100 px-2 py-1"><span className="flex-1"><span className="text-sm font-semibold">{W.top}</span><span className="block text-xs text-gray-600">{W.followUpDescriptions.top}</span></span><strong className="shrink-0 text-xl tabular-nums">{ratioText(data.spendConcentration.topShare)} →</strong></ReportLink>
 
     </ReceiptAdoption>
+    {data.asOfFigures && <AsOfInfographic data={data.asOfFigures} nav={nav} />}
     {followUpNeeded.length > 0 && <aside className="executive-follow-up-band flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:items-center rounded-xl bg-brand-800 p-4 text-white sm:p-3">
-      <h2 className="flex items-center gap-3 font-semibold"><DesignIcons.megaphone className="size-6 shrink-0 text-gold-300" />{W.followUpBand}</h2>
-      <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2">{followUpNeeded.map(group => <DrillLink key={group.key} nav={nav} filters={group.drilldownFilters} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-white/30 px-3 py-2 text-white hover:!bg-brand-700">
-        <span>{LABELS.usageGroup[group.key]}</span><strong className="shrink-0 tabular-nums">{group.count.toLocaleString('th-TH')} {W.unitCompany} <span aria-hidden="true">→</span></strong>
+      <h2 className="flex items-center gap-3 font-semibold"><DesignIcons.megaphone className="size-6 shrink-0 text-gold-300" />{S.followUp}{followUpNeeded.some(group => group.coverage !== 'complete') && <IncompleteDot reason={[...new Set(followUpNeeded.flatMap(group => group.reasonCodes))].map(code => reasonText(code)).join(' · ')} />}</h2>
+      <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2">{followUpNeeded.map(group => <DrillLink key={group.label} nav={nav} filters={group.drilldownFilters} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-white/30 px-3 py-2 text-white hover:!bg-brand-700">
+        <span>{group.label}</span><strong className="shrink-0 tabular-nums"><Figure value={group} mark={false} /> {W.unitCompany} <span aria-hidden="true">→</span></strong>
       </DrillLink>)}</div>
     </aside>}
   </ReportNotes>;
+}
+
+function AsOfInfographic({ data, nav }: { data: ExecutiveAsOfFigures; nav: Navigation }) {
+  const rows = (items: Array<ExecutiveAsOfCount & { label: string }>, vertical = false) => {
+    const max = Math.max(1, ...items.map(item => item.value ?? item.knownValue ?? 0));
+    return <ul className={vertical ? 'grid grid-cols-3 items-end gap-3 pt-2' : 'grid gap-1'}>{items.map((item, index) => <li key={`${item.label}-${index}`}><DrillLink nav={nav} filters={item.drilldownFilters} className={vertical ? 'flex min-h-11 flex-col items-center gap-1 rounded-lg p-1 text-center text-xs' : 'block min-h-11 rounded-lg px-1 py-1 text-xs'}>
+      {vertical ? <><strong className="whitespace-nowrap tabular-nums"><Figure value={item} mark={false} /></strong><div aria-hidden="true" className="flex h-16 w-9 items-end rounded bg-gray-100"><div className="w-full rounded bg-brand-700" style={{ height: `${(item.value ?? item.knownValue ?? 0) / max * 100}%` }} /></div><span>{item.label}</span><span className="tabular-nums text-gray-600">{ratioText(item.share)}</span></> : <><div className="flex items-baseline justify-between gap-2"><span className="min-w-0">{item.label}</span><strong className="shrink-0 whitespace-nowrap tabular-nums"><Figure value={item} mark={false} /> · {ratioText(item.share)}</strong></div><div aria-hidden="true" className="mt-1 h-1 rounded bg-gray-100"><div className="h-full rounded bg-brand-700" style={{ width: `${Math.max(0, Math.min(100, item.share?.value ?? 0))}%` }} /></div></>}
+    </DrillLink></li>)}</ul>;
+  };
+  const mark = (items: ExecutiveAsOfCount[]) => items.some(item => item.coverage !== 'complete') ? <IncompleteDot reason={[...new Set(items.flatMap(item => item.reasonCodes))].map(code => reasonText(code)).join(' · ')} /> : null;
+  return <section data-executive-as-of className="space-y-2">
+    <header className="flex items-center justify-between gap-3 border-b border-brand-200 pb-1"><h2 className="text-sm font-semibold text-brand-800">{S.asOf}</h2><span className="whitespace-nowrap text-sm text-gray-600">{reportDate(data.asOf)}</span></header>
+    <p className="text-xs text-gray-600">{S.asOfHelp}</p>
+    <div className="grid min-w-0 gap-3 min-[1200px]:grid-cols-3">
+      <Card title={<>{S.receiptDistribution}{mark(data.receiptBuckets)}</>}>{rows(data.receiptBuckets, true)}</Card>
+      <Card title={<>{S.recentUsage}{mark([data.receipts30, data.receipts7, data.receiptDays30AtLeast2])}</>}>{rows([{ ...data.receipts30, label: S.receipts30 }, { ...data.receipts7, label: S.receipts7 }, { ...data.receiptDays30AtLeast2, label: S.receiptDays30AtLeast2 }])}</Card>
+      <Card title={<>{S.packagesFound}{mark(data.packages)}</>}>{rows([...data.packages].sort((a, b) => Number(a.label === EXECUTIVE_NO_PLAN_DATA_LABEL) - Number(b.label === EXECUTIVE_NO_PLAN_DATA_LABEL)))}</Card>
+    </div>
+  </section>;
 }
 
 function companyLink(id: string, params: URLSearchParams): string {
@@ -122,23 +142,27 @@ function CompareToggle({ checked, disabled, onChange }: { checked: boolean; disa
 export function CompaniesContent({ data, nav, selected, select, sortColumn }: { data: ExecutiveCompanies; nav: Navigation; selected: string[]; select: (id: string) => void; sortColumn?: (key: string) => void }) {
   const ranked = ['netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests'].includes(data.sort.sortBy);
   const netSort = data.sort.sortBy === 'netReceipts';
+  const churnFilter = nav.params.get('filter_churned') === 'true' || drillFilters(nav.params)?.churned === 'true';
+  const inactivityLabel = (key: string) => EXECUTIVE_COMPANY_SHEET_COLUMNS.find(column => column.key === key)!.label;
   const sort = (key: string) => data.sort.sortBy === key ? data.sort.sortDir === 'asc' ? 'ascending' as const : 'descending' as const : undefined;
   const columns: ReportColumn[] = [
     ...(ranked ? [{ label: W.rank, width: 64, mobile: false, source: netSort ? data.coverage.money : data.coverage.usage, sourceName: netSort ? 'money' : 'usage' }] : []),
     { label: W.shortCompare, width: 44, control: true }, { label: W.company, width: netSort ? 200 : 220, sort: sort('companyName'), onSort: sortColumn && (() => sortColumn('companyName')) },
     { label: W.group, width: 160, hide: 'always', mobile: false, align: 'left' },
-    { label: W.plan, width: 136, hide: ranked && data.sort.sortBy !== 'expenseReceiptCount' || data.sort.sortBy === 'lastActivityAt' ? 'always' : 'narrow', mobile: false, align: 'left' },
-    { label: W.status, width: 140, hide: 'narrow', mobile: false, align: 'left' },
+    { label: W.plan, width: 136, hide: churnFilter || ranked && data.sort.sortBy !== 'expenseReceiptCount' || data.sort.sortBy === 'lastActivityAt' ? 'always' : 'narrow', mobile: false, align: 'left' },
+    { label: W.status, width: 140, hide: churnFilter ? 'always' : 'narrow', mobile: false, align: 'left' },
     { label: W.lifetimeReceipts, width: 116, hide: 'always', mobile: false },
-    { label: W.tableReceipts, width: 120, hide: ranked && !netSort && data.sort.sortBy !== 'expenseReceiptCount' ? 'narrow' : undefined, mobile: true, sort: sort('expenseReceiptCount'), onSort: sortColumn && (() => sortColumn('expenseReceiptCount')) },
-    { label: W.days, width: 104, hide: data.sort.sortBy === 'activeDays' ? undefined : 'always', mobile: true, sort: sort('activeDays'), onSort: sortColumn && (() => sortColumn('activeDays')) },
+    { label: W.tableReceipts, width: 120, hide: churnFilter ? 'always' : ranked && !netSort && data.sort.sortBy !== 'expenseReceiptCount' ? 'narrow' : undefined, mobile: !churnFilter, sort: sort('expenseReceiptCount'), onSort: sortColumn && (() => sortColumn('expenseReceiptCount')) },
+    { label: W.days, width: 104, hide: !churnFilter && data.sort.sortBy === 'activeDays' ? undefined : 'always', mobile: !churnFilter, sort: sort('activeDays'), onSort: sortColumn && (() => sortColumn('activeDays')) },
     { label: W.ai, width: 128, hide: data.sort.sortBy === 'aiRequests' ? undefined : 'always', mobile: data.sort.sortBy === 'aiRequests', sort: sort('aiRequests'), onSort: sortColumn && (() => sortColumn('aiRequests')) },
     { label: W.lastActivity, width: 120, hide: data.sort.sortBy === 'lastActivityAt' ? undefined : 'always', mobile: false, sort: sort('lastActivityAt'), onSort: sortColumn && (() => sortColumn('lastActivityAt')) },
-    { label: W.shortJoined, width: 96, hide: data.sort.sortBy === 'joinedAt' ? undefined : 'always', mobile: false, sort: sort('joinedAt'), onSort: sortColumn && (() => sortColumn('joinedAt')) },
-    { label: W.unitInHeader(W.tableNet, W.unitBaht), width: 132, mobile: true, sort: sort('netReceipts'), onSort: sortColumn && (() => sortColumn('netReceipts')) },
+    { label: W.shortJoined, width: 96, hide: !churnFilter && data.sort.sortBy === 'joinedAt' ? undefined : 'always', mobile: false, sort: sort('joinedAt'), onSort: sortColumn && (() => sortColumn('joinedAt')) },
+    { label: W.unitInHeader(W.tableNet, W.unitBaht), width: 132, mobile: !churnFilter, hide: churnFilter ? 'always' : undefined, sort: sort('netReceipts'), onSort: sortColumn && (() => sortColumn('netReceipts')) },
+    ...(churnFilter ? [{ label: inactivityLabel('lastUseAt'), width: 204, hide: 'narrow' as const, mobile: true }, { label: inactivityLabel('daysSinceLastUse'), width: 228, mobile: true }] : []),
     ...(netSort ? [{ label: W.shortCumulative, width: 84, mobile: false, source: data.coverage.money, sourceName: 'money' }] : []),
   ];
   return <ReportNotes data={data}>
+    <div data-executive-quick-filters className="flex min-w-0 items-center gap-2 overflow-x-auto">{INFOGRAPHIC_FILTERS.map(({ key, value, label }) => <DrillLink key={`${key}-${value}`} nav={nav} filters={{ ...(drillFilters(nav.params) ?? {}), [key]: value, ...(['churned'].includes(key) ? {} : { atDataDate: 'true' }) }} className="flex min-h-11 shrink-0 items-center rounded-full border border-gray-200 px-3 text-xs text-brand-800">{label}</DrillLink>)}<Button variant="secondary" onClick={() => { const panel = document.getElementById('executive-filter-packageLabel')?.closest<HTMLElement>('[popover]'); if (panel) document.querySelector<HTMLButtonElement>(`button[popovertarget="${panel.id}"]`)?.click(); }}>{S.package}</Button></div>
     <p role="status" className="text-sm tabular-nums">{W.found(data.pagination.total)} · {W.shortNet} <Figure value={data.summary.netReceiptsSatang} moneyValue netValue unit={W.unitBaht} /></p>
     {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <section aria-label={W.companies} className="rounded-xl border border-gray-200 bg-white">
       <ReportTable title={W.companies} compactMobile columns={columns} nameIndex={ranked ? 2 : 1} remember={nav.remember} rows={data.items.map(row => ({
@@ -151,6 +175,7 @@ export function CompaniesContent({ data, nav, selected, select, sortColumn }: { 
           <Figure key="receipts" value={sourceCount(row.metrics.expenseReceiptCountInPeriod, row.coverage?.usage ?? data.coverage.usage)} />,
           <Figure key="days" value={sourceCount(row.metrics.activeDays, row.coverage?.usage ?? data.coverage.usage)} />, <Figure key="ai" value={sourceCount(row.metrics.aiRequests, row.coverage?.usage ?? data.coverage.usage)} />, reportShortDate(row.lastActivityAt), reportShortDate(row.joinedAt),
           <Figure key="net" value={sourceMoney(row.metrics.netReceiptsSatang, row.coverage?.money ?? data.coverage.money)} moneyValue netValue />,
+          ...(churnFilter ? [reportShortDate(row.inactivity?.lastUseAt), row.inactivity ? <Figure key="inactivity" value={sourceCount(row.inactivity.daysSinceLastUse, row.inactivity.coverage)} /> : '–'] : []),
           ...(netSort ? [row.cumulativeShare ? ratioText(row.cumulativeShare) : '–'] : []),
         ], details: <div className="executive-usage-summary flex flex-wrap items-center gap-x-4 gap-y-1"><span>{W.registered}: {row.registeredName || W.unknown}</span><span>{W.origin}: {[thaiLabel(row.discovery.label), row.discovery.otherText, thaiLabel(LABELS.signupRail[row.signupRail] ?? W.unknown), referrer(row.referrer)].filter(Boolean).join(' · ')}</span><span>{LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown}</span><span>{LABELS.companyStatus[row.companyStatus] ?? W.unknown}</span>{rowStatusLabel(row) !== LABELS.paidEver[row.paidEver.value] && <span>{LABELS.paidEver[row.paidEver.value]}</span>}{netSort && !row.cumulativeShare && data.coverage.money.coverage === "complete" && row.metrics.netReceiptsSatang !== null && row.metrics.netReceiptsSatang <= 0 && <span>{W.notInShare}</span>}{[...new Set([row.paidEver.reason, row.usageUnassessedReason].filter((code): code is string => !!code && ![...data.coverage.money.reasonCodes, ...data.coverage.usage.reasonCodes].some(common => common === code)))].map(code => <span key={code}>{reasonText(code)}</span>)}{([[W.users, 'activeUsers'], [W.documents, 'documents']] as const).map(([label, key]) => <span key={key}>{label}: <Figure value={sourceCount(row.metrics[key], data.coverage.usage)} /></span>)}</div>,
       }))} />

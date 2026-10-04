@@ -20,9 +20,9 @@ test('A: executive markup owns its styles without unlayered Mangmee overrides', 
   const { ExecutiveKpi, ExecutivePage } = await import('./ExecutiveReportDesign') as any;
   const tile = html(ExecutiveKpi, { label: W.net, figure: partial, moneyValue: true, unit: W.unitBaht });
   assert.match(tile, /data-executive-kpi/); assert.match(tile, /data-executive-value/);
-  assert.match(tile, /min\(26px/); assert.match(tile, /rounded-full/);
+  assert.match(tile, /font-size:18px/); assert.match(tile, /rounded-full/);
   for (const figure of [partial, { ...partial, value: 9900, coverage: 'complete' }, { ...partial, knownValue: 1500200 }]) {
-    assert.doesNotMatch(html(ExecutiveKpi, { label: W.net, figure, moneyValue: true }), /style="[^"]*font-size:/);
+    assert.match(html(ExecutiveKpi, { label: W.net, figure, moneyValue: true }), /font-size:18px/);
   }
   assert.match(html(ExecutivePage, { title: W.overview, description: W.descriptions.overview, children: 'body' }), /text-brand-800/);
 });
@@ -133,7 +133,7 @@ test('C6/C15: ring and swatches share tokens; follow-up rows appear once, in the
   const { OverviewContent } = await import('./ExecutiveReportContent');
   const count = { value: 2, coverage: 'complete', reasonCodes: [], drilldownFilters: {} };
   const base = { period: { month: '2026-09', isPartialMonth: false }, build: { asOf: '2026-10-04' }, coverage: { money: count, usage: count }, dataThrough: { lagging: [] }, reasonCodes: [], population: { eligibleCount: count }, unmatchedMoney: { count: 0 } };
-  const data = { ...base, metrics: { companies: count, activeCompanies: { ...count, breakdown: {} }, companiesWithReceipts: count, netReceiptsSatang: { ...count, currency: 'THB' } }, expenseReceiptAdoption: { population: 2, segments: [{ key: 'EVER', count: 1, share: { value: 50 }, drilldownFilters: {} }, { key: 'NEVER', count: 1, share: { value: 50 }, drilldownFilters: {} }] }, paidUsage: { groups: [{ key: 'NOT_STARTED', count: 1, drilldownFilters: {} }, { key: 'INACTIVE', count: 1, drilldownFilters: {} }] }, spendConcentration: { topShare: { value: 50 }, reasonCodes: [] } };
+  const data = { ...base, metrics: { companies: count, activeCompanies: { ...count, breakdown: {} }, companiesWithReceipts: count, netReceiptsSatang: { ...count, currency: 'THB' } }, expenseReceiptAdoption: { population: 2, segments: [{ key: 'EVER', count: 1, share: { value: 50 }, drilldownFilters: {} }, { key: 'NEVER', count: 1, share: { value: 50 }, drilldownFilters: {} }] }, asOfFigures: { asOf: '2026-10-04', receiptBuckets: [], packages: [], receipts7: count, receipts30: count, receiptDays30AtLeast2: count, followUp: { neverUsed: { ...count, value: 1 }, churn: { ...count, value: 1 } } }, paidUsage: { groups: [{ key: 'NOT_STARTED', count: 1, drilldownFilters: {} }, { key: 'INACTIVE', count: 1, drilldownFilters: {} }] }, spendConcentration: { topShare: { value: 50 }, reasonCodes: [] } };
   const markup = html(OverviewContent, { data, nav: { params: new URLSearchParams(), from: 'overview', remember() {}, navigate() {} } });
   const swatches = [...markup.matchAll(/<span[^>]*class="h-4 w-4 shrink-0 rounded-sm border[^>]*>/g)].map(([tag]) => tag);
   for (const [i, key] of ['EVER', 'NEVER'].entries()) {
@@ -143,9 +143,8 @@ test('C6/C15: ring and swatches share tokens; follow-up rows appear once, in the
   }
   assert.match(markup, /executive-follow-up-band[^"\n]*flex-col[^"\n]*sm:flex-row/);
   const text = markup.replace(/<[^>]*>/g, '');
-  const { executivePeriodReportLabels } = await import('@watchdog-bms/contracts');
-  const labels = executivePeriodReportLabels();
-  for (const key of ['NOT_STARTED', 'INACTIVE']) assert.equal(text.split(labels.usageGroup[key]).length - 1, 1, key);
+  const { EXECUTIVE_SHEET_WORDS } = await import('@watchdog-bms/contracts');
+  for (const label of [EXECUTIVE_SHEET_WORDS.invite, EXECUTIVE_SHEET_WORDS.followExisting]) assert.equal(text.split(label).length - 1, 1, label);
 });
 
 test('C7: the directory does not repeat the main payment status in the expander', async () => {
@@ -161,7 +160,7 @@ test('C7: the directory does not repeat the main payment status in the expander'
 
 test('round B d: every revenue tile belongs to the shared equal-width strip', () => {
   assert.match(source('./ExecutiveReportContent.tsx'), /<ExecutiveKpiStrip>\{figures.map/);
-  assert.match(source('./ExecutiveReportDesign.tsx'), /grid-cols-1[^"\n]*lg:grid-cols-2/);
+  assert.match(source('./ExecutiveReportDesign.tsx'), /grid-cols-2/);
 });
 
 test('B5: retained data is never rendered after denied access, a missing company or an unavailable month', () => {
