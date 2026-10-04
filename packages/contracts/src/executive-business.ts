@@ -1,13 +1,14 @@
+import { COMPANY_TEAM_NOTE_MANAGE_PERMISSION } from './company-team-note.js';
 import { SIGNUP_DISCOVERY_SOURCE_OPTIONS } from './external-signup.js';
 import { PLAN_TERM_STATE_LABEL_TH, type PlanTermState } from './plan-term.js';
 import { REPORT_INDUSTRY_GROUPS } from './report-labels.js';
 
 /** Executive accounts: BE spec §16.1 API07–10/API14/API15 and §17. */
-export const EXECUTIVE_ROLE_KEYS = ['MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT'] as const;
-export const EXECUTIVE_PERMISSION_KEYS = ['system.executive.read', 'system.executive.export', 'system.executive.contact.read', 'system.executive_user.manage'] as const;
+export const EXECUTIVE_ROLE_KEYS = ['MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT', 'MANGMEE_EXECUTIVE_COMPANY_NOTE'] as const;
+export const EXECUTIVE_PERMISSION_KEYS = ['system.executive.read', 'system.executive.export', 'system.executive.contact.read', 'system.executive_user.manage', COMPANY_TEAM_NOTE_MANAGE_PERMISSION] as const;
 export const EXECUTIVE_ACCOUNT_STATUSES = ['PENDING_ACTIVATION', 'ACTIVE', 'SUSPENDED', 'REVOKED'] as const;
 export type ExecutiveAccountStatus = typeof EXECUTIVE_ACCOUNT_STATUSES[number];
-export type ExecutiveUserAccess = { canExport: boolean; canSeeContacts: boolean };
+export type ExecutiveUserAccess = { canExport: boolean; canSeeContacts: boolean; canManageCompanyNote?: boolean };
 export type ExecutiveUserCreateBody = ExecutiveUserAccess & {
   username: string; displayName: string; phoneNumber?: string; email?: string;
 };
