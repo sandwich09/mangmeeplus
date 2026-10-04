@@ -190,7 +190,8 @@ test('unavailable money never becomes zero in reconciliation; trend has a signed
   const moneyRow = { receiptsSatang: missing, refundsSatang: missing, netReceiptsSatang: missing, feesSatang: missing, taxSatang: missing };
   const data = { ...envelope, coverage: { ...envelope.coverage, money: { coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] } }, revenue: { ...moneyRow, byPurchaseGroup: [{ key: 'FIRST_PURCHASE', label: 'ซื้อครั้งแรก', ...moneyRow }], disputedInvoiceCount: 0, trend: [{ month: '2026-09', isPartialMonth: false, ...moneyRow }] } } as unknown as ExecutiveAnalysis;
   const html = renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav, seller: null }));
-  assert.doesNotMatch(text(html), /0\.00 บาท/); assert.match(html, /y1="100" y2="100"/); assert.doesNotMatch(html, /<rect /);
+  assert.doesNotMatch(text(html), /0\.00 บาท/); assert.match(html, /y1="100" y2="100"/); assert.doesNotMatch(html.match(/<svg[^>]*aria-label="แนวโน้ม[\s\S]*?<\/svg>/)?.[0] ?? '', /<rect /);
+  assert.match(html, /mangmee-icon-frame/);
 });
 
 test('company payment flags show Thai values, preserving confirmed negatives and incomplete unknowns', async () => {

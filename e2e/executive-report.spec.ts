@@ -80,11 +80,20 @@ test.describe('EXEC — executive report', () => {
       await expect(page.locator('#system-navigation')).toHaveAttribute('aria-label', 'ส่วนงานผู้บริหาร');
       await expect(page.locator('#system-navigation').getByRole('link', { name: 'บริษัทและผู้ใช้งาน' })).toHaveCount(0);
 
+      const filter = page.getByRole('button', { name: /^ตัวกรอง \d+$/ });
+      await expect(filter).toBeVisible();
+      await filter.click();
+      const filterPanel = page.getByRole('dialog', { name: 'ตัวกรองรายงาน' });
+      await expect(filterPanel).toBeVisible();
+      await expect(filterPanel.getByRole('combobox')).toHaveCount(3);
+      await filterPanel.getByRole('button', { name: 'ใช้ตัวกรอง', exact: true }).click();
+      await expect(filterPanel).not.toBeVisible();
+
       // ── the companies card opens a list of exactly its count ──
-      const card = page.locator('main div.grid.grid-cols-2 > a').first();
+      const card = page.locator('main .executive-kpi-link').first();
       await expect(page.getByRole('button', { name: 'ดูบริษัททั้งหมด', exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'ดูอันดับการใช้', exact: true })).toBeVisible();
-      await expect(card.locator('.mangmee-stat-value')).toHaveCSS('font-size', '24px');
+      await expect(card.locator('.mangmee-stat-value')).toHaveCSS('font-size', '30px');
       await expect(card).toContainText('บริษัทลูกค้า');
       const count = Number((await card.innerText()).match(/บริษัทลูกค้า\s+(?:อย่างน้อย\s+)?([\d,]+)/)?.[1]?.replace(/,/g, ''));
       expect(count).toBeGreaterThan(0);

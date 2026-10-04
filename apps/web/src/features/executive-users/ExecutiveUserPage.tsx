@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import type { ExecutiveUserCredential, ExecutiveUserView } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
+import { EXECUTIVE_PAGE_CLASS, ExecutiveSectionCard } from '../executive-reports/ExecutiveReportDesign';
 import { Button } from '@/common/components/button';
 import { TextField, SwitchField } from '@/common/components/field';
 import { MangmeePage, MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
@@ -122,25 +123,24 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
   }
   const expiryNotice = user && executiveExpiryNotice(user);
   return <MangmeePage title={userId || user ? words.detail : words.add}
-    eyebrow={<Link href="/system/executive-users" className="inline-flex min-h-11 items-center text-brand-800">{EXECUTIVE_USERS_TITLE}</Link>}
-    className="min-w-0 [overflow-wrap:anywhere] [&_button]:min-h-11 [&_button]:min-w-11 [&_label>span]:text-sm">
+    eyebrow={<Link href="/system/executive-users" className="mangmee-btn mangmee-btn-secondary hover:bg-brand-25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{EXECUTIVE_USERS_TITLE}</Link>}
+    className={`${EXECUTIVE_PAGE_CLASS} [&_label>span]:text-sm`}>
     {inputPromptDialog}
     {denied ? <ForbiddenState description={error ?? undefined} /> : <>
       {credential && <ExecutiveCredentialPanel key={credential.expiresAt} credential={credential} onClose={() => setCredential(null)} />}
       {notice && <p role="status" className="text-sm text-brand-800">{notice}</p>}
       {error && <ErrorState description={error} onRetry={currentUserId ? () => setRetry(value => value + 1) : undefined} />}
-      {loading ? <LoadingState label={words.loadingAccount} /> : user ? <MangmeeCard className="min-w-0 space-y-4 p-4">
+      {loading ? <LoadingState label={words.loadingAccount} /> : user ? <ExecutiveSectionCard title={words.account} actions={protectedAccount || user.status === 'REVOKED' ? <p className="text-sm text-gray-600">{apiErrorMessage({ code: protectedAccount ? 'ACCOUNT_PROTECTED' : 'ACCOUNT_REVOKED' })}</p>
+          : <div className="flex flex-wrap gap-3">{executiveActions(user, protectedAccount).map(action => <Button key={action} variant={action === 'suspend' ? 'danger' : 'secondary'} loading={busy} disabled={busy || refreshRequired} onClick={() => void act(action)}>{executiveActionLabel(user, action)}</Button>)}</div>}>
         <dl className="grid gap-4 sm:grid-cols-2">{[
           [words.displayName, user.displayName], [words.username, user.username], [words.phoneNumber, user.phoneNumber || words.unspecified],
           [words.email, user.email || words.unspecified], [words.rights, executiveRights(user)], [words.lastEntry, user.lastWebEntryAt ? formatThaiDateTime(user.lastWebEntryAt) : words.missing],
         ].map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-sm text-gray-600">{label}</dt><dd className="mt-1">{value}</dd></div>)}</dl>
         <p>{words.status}: <MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></p>
         {expiryNotice && <p className="text-sm text-gray-600">{expiryNotice}</p>}
-        {protectedAccount || user.status === 'REVOKED' ? <p className="text-sm text-gray-600">{apiErrorMessage({ code: protectedAccount ? 'ACCOUNT_PROTECTED' : 'ACCOUNT_REVOKED' })}</p>
-          : <div className="flex flex-wrap gap-3">{executiveActions(user, protectedAccount).map(action => <Button key={action} variant={action === 'suspend' ? 'danger' : 'secondary'} loading={busy} disabled={busy || refreshRequired} onClick={() => void act(action)}>{executiveActionLabel(user, action)}</Button>)}</div>}
-        {!userId && <Link href={`/system/executive-users/${encodeURIComponent(user.userId)}`} className="inline-flex min-h-11 items-center text-brand-800">{words.openAccount}</Link>}
-      </MangmeeCard> : !userId && <MangmeeCard className="p-4">
-        <form noValidate className="grid gap-4" onSubmit={event => { event.preventDefault(); void create(); }}>
+        {!userId && <Link href={`/system/executive-users/${encodeURIComponent(user.userId)}`} className="mangmee-btn mangmee-btn-secondary hover:bg-brand-25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{words.openAccount}</Link>}
+      </ExecutiveSectionCard> : !userId && <ExecutiveSectionCard title={words.add}>
+        <form noValidate className="grid gap-4 md:grid-cols-2 [&>label]:min-w-0 [&>div]:md:col-span-2 [&>p]:md:col-span-2" onSubmit={event => { event.preventDefault(); void create(); }}>
           <TextField label={words.username} name="username" value={values.username} autoComplete="off" maxLength={40} required disabled={busy} error={errors.username} onChange={event => set('username', event.target.value)} />
           <TextField label={words.displayName} name="displayName" value={values.displayName} maxLength={120} required disabled={busy} error={errors.displayName} onChange={event => set('displayName', event.target.value)} />
           <div className="grid gap-4 sm:grid-cols-2">
@@ -152,9 +152,9 @@ export default function ExecutiveUserPage({ userId }: { userId?: string }) {
           <p className="text-sm text-gray-600">{EXECUTIVE_EXPORT_NOTE}</p>
           <SwitchField label={EXECUTIVE_RIGHTS.canSeeContacts} name="canSeeContacts" checked={values.canSeeContacts} disabled={busy} onChange={event => set('canSeeContacts', event.target.checked)} />
           <p className="text-sm text-gray-600">{EXECUTIVE_CONTACT_NOTE} {EXECUTIVE_CONTACT_EXPORT_NOTE}</p>
-          <div className="flex flex-wrap gap-3"><Button type="submit" loading={busy}>{words.save}</Button><Link href="/system/executive-users" className="mangmee-btn mangmee-btn-secondary">{words.cancel}</Link></div>
+          <div className="flex flex-wrap gap-3"><Button type="submit" loading={busy}>{words.save}</Button><Link href="/system/executive-users" className="mangmee-btn mangmee-btn-secondary hover:bg-brand-25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{words.cancel}</Link></div>
         </form>
-      </MangmeeCard>}
+      </ExecutiveSectionCard>}
     </>}
   </MangmeePage>;
 }

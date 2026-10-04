@@ -57,14 +57,16 @@ test('directory chips hide empty drill rows and each filter toggle names its own
   const page = source('./ExecutiveReportPage.tsx');
   assert.match(page, /reportFilterChips/);
   assert.match(page, /pickLabels.length > 0 &&/);
-  assert.match(page, /\{W.reportFilters\} · \{filterCount\}/);
+  assert.match(page, /<ExecutiveFilters context=/);
+  assert.match(source('./ExecutiveFilters.tsx'), /\{W.reportFilters\}/);
   assert.match(page, /\{W.companyFilters\} · \{DIRECTORY_FILTERS/);
   const { W } = await import('./executive-reports.words');
   assert.equal(W.reportFilters, 'ตัวกรองรายงาน'); assert.equal(W.companyFilters, 'ตัวกรองรายชื่อบริษัท');
 });
 test('Thai shared fields, detail tabs, history paging and responsive tables retain the permission-gated export panel', () => {
-  const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts');
+  const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts') + source('./ExecutiveReportDesign.tsx');
   for (const component of ['MangmeePage', 'MangmeeCard', 'MangmeeStatCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
+  assert.match(source('./ExecutiveReportContent.tsx'), /<ExecutiveKpi/);
   assert.match(all, /allowClear=\{false\}/); assert.match(all, /selectable=\{context\.builtMonths\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table/);
   assert.match(all, /ExecutiveCompanyHistory/); assert.match(all, /EXECUTIVE_HISTORY_EVENT_LABELS/);
   assert.doesNotMatch(all, /mangmee-table-scroll|<select\b|<textarea\b|data-rights|localStorage/);
