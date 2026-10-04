@@ -61,16 +61,28 @@ export function reportNotes(data: unknown): string[] {
   return [...notes];
 }
 type StatusSource = keyof ExecutiveEnvelope['sourceStatus'];
-export function sourceStatusNotes(data: ExecutiveEnvelope, sources: StatusSource[], periodOnly = false): Array<{ source: string; text: string }> {
+/**
+ * What the status banner says. It speaks only about the months of the chosen period (owner 2026-10-05): a reason that touches
+ * other months only is left out, and no month outside the period is named. Two reasons that read the same are said once, with
+ * every month either of them names.
+ */
+export function sourceStatusNotes(data: ExecutiveEnvelope, sources: StatusSource[]): Array<{ source: string; text: string }> {
   const seen = new Set<string>();
+  const inPeriod = (month: string) => month >= (data.period.from ?? data.period.month) && month <= (data.period.to ?? data.period.month);
   const notes: Array<{ source: string; text: string }> = sources.flatMap(source => {
     const status = data.sourceStatus[source];
-    return status.reasonCodes.flatMap(code => {
+    const lines = new Map<string, string[]>();
+    for (const code of status.reasonCodes) {
       const months = status.affectedMonths?.filter(m => m.reasonCodes.includes(code)).map(m => m.month) ?? [];
-      const shownMonths = periodOnly ? months.filter(month => month >= (data.period.from ?? data.period.month) && month <= (data.period.to ?? data.period.month)) : months;
-      if (periodOnly && months.length && !shownMonths.length) return [];
+      const shownMonths = months.filter(inPeriod);
+      if (months.length && !shownMonths.length) continue;
       const sentence = reasonText(code, status.coverage, shownMonths);
-      const text = shownMonths.length && !['RANGE_MONTH_NOT_BUILT', 'MONTH_SUMMARY_INCOMPLETE'].includes(code) ? `${sentence} · ${P.affectedMonths(shownMonths.map(executiveMonthLabel).join(', '))}` : sentence;
+      // These two sentences name their months themselves.
+      const listed = ['RANGE_MONTH_NOT_BUILT', 'MONTH_SUMMARY_INCOMPLETE'].includes(code) ? [] : shownMonths;
+      lines.set(sentence, [...new Set([...(lines.get(sentence) ?? []), ...listed])].sort());
+    }
+    return [...lines].flatMap(([sentence, months]) => {
+      const text = months.length ? `${sentence} · ${P.affectedMonths(months.map(executiveMonthLabel).join(', '))}` : sentence;
       if (seen.has(text)) return [];
       seen.add(text); return [{ source, text }];
     });
@@ -84,14 +96,14 @@ export function sourceStatusNotes(data: ExecutiveEnvelope, sources: StatusSource
   }
   return notes;
 }
-function SourceStatus({ data, sources, periodOnly }: { data: ExecutiveEnvelope; sources: StatusSource[]; periodOnly: boolean }) {
+function SourceStatus({ data, sources }: { data: ExecutiveEnvelope; sources: StatusSource[] }) {
   const [open, setOpen] = useState(false);
-  const notes = sourceStatusNotes(data, sources, periodOnly);
+  const notes = sourceStatusNotes(data, sources);
   const labels: Record<string, string> = { money: W.moneySource, usage: W.usage, aiCost: W.aiCostSource, company: W.companyTab };
-  const incomplete = sources.filter(source => (periodOnly ? data.coverage[source] : data.sourceStatus[source]).coverage !== 'complete');
+  const incomplete = sources.filter(source => data.coverage[source].coverage !== 'complete');
   const openMonth = data.period.includesOpenMonth ?? data.period.isPartialMonth;
   if (!incomplete.length && !notes.length && !openMonth) return null;
-  const summary = incomplete.map(source => `${labels[source]}: ${(periodOnly ? data.coverage[source] : data.sourceStatus[source]).coverage === 'unavailable' ? W.unavailableFigure : source === 'money' ? W.confirmedSummary : source === 'usage' ? W.countAtLeast : W.measuredOnly}`).join(' · ');
+  const summary = incomplete.map(source => `${labels[source]}: ${data.coverage[source].coverage === 'unavailable' ? W.unavailableFigure : source === 'money' ? W.confirmedSummary : source === 'usage' ? W.countAtLeast : W.measuredOnly}`).join(' · ');
   return <aside className={`executive-status rounded-lg border px-3 text-xs text-gray-700 ${openMonth ? 'border-gold-300 bg-gold-100/40' : 'border-gray-200 bg-gray-50'}`} aria-label={openMonth ? P.openMonth : W.export.notes}>
     <details className="group" onToggle={event => setOpen(event.currentTarget.open)}>
       <summary aria-expanded={open} className="flex min-h-[38px] cursor-pointer list-none items-center gap-2 rounded py-1 focus-visible:outline-2 focus-visible:outline-brand-700">
@@ -106,8 +118,8 @@ function SourceStatus({ data, sources, periodOnly }: { data: ExecutiveEnvelope; 
     </details>
   </aside>;
 }
-export function ReportStatus({ data, sources = ['money', 'usage', ...((data as { periodSummary?: unknown }).periodSummary ? ['aiCost' as const] : [])], periodOnly = false }: { data: ExecutiveEnvelope; sources?: StatusSource[]; periodOnly?: boolean }) {
-  return data.sourceStatus ? <SourceStatus data={data} sources={sources} periodOnly={periodOnly} /> : <LegacyStatus data={data} />;
+export function ReportStatus({ data, sources = ['money', 'usage', ...((data as { periodSummary?: unknown }).periodSummary ? ['aiCost' as const] : [])] }: { data: ExecutiveEnvelope; sources?: StatusSource[] }) {
+  return data.sourceStatus ? <SourceStatus data={data} sources={sources} /> : <LegacyStatus data={data} />;
 }
 function LegacyStatus({ data }: { data: ExecutiveEnvelope }) {
   const [open, setOpen] = useState(false);
@@ -146,9 +158,9 @@ function LegacyStatus({ data }: { data: ExecutiveEnvelope }) {
     </details>
   </aside>;
 }
-export function ReportNotes({ data, children, sources, periodOnly }: { data: ExecutiveEnvelope; children: ReactNode; sources?: StatusSource[]; periodOnly?: boolean }) {
+export function ReportNotes({ data, children, sources }: { data: ExecutiveEnvelope; children: ReactNode; sources?: StatusSource[] }) {
   const alreadyShown = useContext(ReasonNotes);
-  return <ReasonNotes.Provider value={true}>{!alreadyShown && <ReportStatus data={data} sources={sources} periodOnly={periodOnly} />}{children}</ReasonNotes.Provider>;
+  return <ReasonNotes.Provider value={true}>{!alreadyShown && <ReportStatus data={data} sources={sources} />}{children}</ReasonNotes.Provider>;
 }
 export function ExecutiveSectionCard({ title, children, actions, className = '' }: { title: ReactNode; children: ReactNode; actions?: ReactNode; className?: string }) {
   return <MangmeeCard className={`min-w-0 space-y-2 p-3 ${className}`}>

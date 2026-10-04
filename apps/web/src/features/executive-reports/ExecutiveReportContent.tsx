@@ -339,7 +339,7 @@ export function AnalysisContent({ data, nav, seller, rankingControl, tabs, readi
       <p className="text-xs text-gray-600">{data.groups.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && `${W.negative} · `}{W.baseLabel} <Figure value={data.population.eligibleCount} unit={W.unitCompany} /> · {periodText(data.period)}</p>{data.industryCoverage && <p className="text-xs text-gray-600">{W.industryCoverage(data.industryCoverage.numerator, data.industryCoverage.denominator)}</p>}{data.roundingNote && <p className="text-xs text-gray-600">{W.rounding}</p>}
     </Card>}</div></>;
   } else panel = <EmptyState title={W.noRows} description="" />;
-  return <ReportNotes data={data} periodOnly={section === 'revenue'} sources={section === 'revenue' ? ['money'] : ['money', 'usage']}>{panel}</ReportNotes>;
+  return <ReportNotes data={data} sources={section === 'revenue' ? ['money'] : ['money', 'usage']}>{panel}</ReportNotes>;
 }
 
 export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, tabs, onNote, reading }: { data: ExecutiveCompanyDetail; tab: string; history: ExecutiveCompanyHistory | null; admin: boolean; nav: Navigation; contactReadAt: string; tabs?: ReactNode; onNote?: NoteChange; reading?: PanelRead }) {
