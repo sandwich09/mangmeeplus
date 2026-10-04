@@ -104,7 +104,7 @@ export class ExecutiveUsersService {
         const user = await tx.user.create({ data: { username, displayName, email, phoneNumber, status: 'ACTIVE' }, select: { id: true } });
         await tx.userCredential.create({ data: { userId: user.id, passwordHash: hashTemporaryPassword(temporaryPassword), status: 'TEMPORARY', mustChangePassword: true, expiresAt } });
         const membership = await tx.companyMembership.create({ data: { userId: user.id, companyId: PLATFORM_TENANT_ID, status: 'ACTIVE' }, select: { id: true } });
-        await tx.membershipRole.createMany({ data: roles.filter((role) => role.key === BASE_ROLE || (role.key === EXPORT_ROLE && body.canExport) || (role.key === CONTACT_ROLE && body.canSeeContacts) || (role.key === NOTE_ROLE && body.canManageCompanyNote))
+        await tx.membershipRole.createMany({ data: roles.filter((role) => role.key === BASE_ROLE || (role.key === EXPORT_ROLE && body.canExport) || (role.key === CONTACT_ROLE && body.canSeeContacts) || (role.key === NOTE_ROLE && (body.canEditCompanyNote ?? body.canManageCompanyNote)))
           .map((role) => ({ membershipId: membership.id, roleId: role.id })) });
         const view = this.view(await this.account(tx, ctx, user.id));
         await this.log(tx, ctx, user.id, 'created', null, this.accessState(view), null);
@@ -155,7 +155,7 @@ export class ExecutiveUsersService {
       const current = await this.account(tx, ctx, userId, true);
       const before = this.view(current);
       const roles = await this.roles(tx, ctx);
-      const canManageCompanyNote = body.canManageCompanyNote ?? before.canManageCompanyNote ?? false;
+      const canManageCompanyNote = body.canEditCompanyNote ?? body.canManageCompanyNote ?? before.canManageCompanyNote ?? false;
       const desired = roles.filter((role) => (role.key === EXPORT_ROLE && body.canExport) || (role.key === CONTACT_ROLE && body.canSeeContacts) || (role.key === NOTE_ROLE && canManageCompanyNote));
       const existing = current.roles.map(({ role }) => role.key);
       if ([EXPORT_ROLE, CONTACT_ROLE, NOTE_ROLE].every((key) => existing.includes(key) === desired.some((role) => role.key === key))) return before;
@@ -194,7 +194,7 @@ export class ExecutiveUsersService {
     return { userId: row.userId, username: row.user.username ?? '', displayName: row.user.displayName,
       email: row.user.email, phoneNumber: row.user.phoneNumber, status,
       temporaryPasswordExpiresAt: status === 'PENDING_ACTIVATION' ? credential?.expiresAt?.toISOString() ?? null : null,
-      canRead: permissions.has('system.executive.read'), canExport: permissions.has('system.executive.export'), canSeeContacts: permissions.has('system.executive.contact.read'), canManageCompanyNote: permissions.has(COMPANY_TEAM_NOTE_MANAGE_PERMISSION),
+      canRead: permissions.has('system.executive.read'), canExport: permissions.has('system.executive.export'), canSeeContacts: permissions.has('system.executive.contact.read'), canManageCompanyNote: permissions.has(COMPANY_TEAM_NOTE_MANAGE_PERMISSION), canEditCompanyNote: permissions.has(COMPANY_TEAM_NOTE_MANAGE_PERMISSION),
       lastWebEntryAt: row.user.sessions[0]?.issuedAt.toISOString() ?? null };
   }
 
@@ -203,13 +203,15 @@ export class ExecutiveUsersService {
     return reason.trim();
   }
 
-  private validateAccess(ctx: RequestContext, body: { canExport: boolean; canSeeContacts: boolean; canManageCompanyNote?: boolean }): void {
+  private validateAccess(ctx: RequestContext, body: { canExport: boolean; canSeeContacts: boolean; canManageCompanyNote?: boolean; canEditCompanyNote?: boolean }): void {
+    if (body.canEditCompanyNote !== undefined && typeof body.canEditCompanyNote !== 'boolean') throw executiveError(ctx.requestId, 'INVALID_INPUT', 'canEditCompanyNote');
+    if (body.canEditCompanyNote !== undefined && body.canManageCompanyNote !== undefined && body.canEditCompanyNote !== body.canManageCompanyNote) throw executiveError(ctx.requestId, 'INVALID_INPUT', 'canEditCompanyNote');
     if (body.canManageCompanyNote !== undefined && typeof body.canManageCompanyNote !== 'boolean') throw executiveError(ctx.requestId, 'INVALID_INPUT', 'canManageCompanyNote');
     for (const field of ['canExport', 'canSeeContacts'] as const) if (typeof body[field] !== 'boolean') throw executiveError(ctx.requestId, 'INVALID_INPUT', field);
   }
 
   private accessState(view: ExecutiveUserView) {
-    return { status: view.status, canRead: view.canRead, canExport: view.canExport, canSeeContacts: view.canSeeContacts, canManageCompanyNote: view.canManageCompanyNote };
+    return { status: view.status, canRead: view.canRead, canExport: view.canExport, canSeeContacts: view.canSeeContacts, canManageCompanyNote: view.canManageCompanyNote, canEditCompanyNote: view.canEditCompanyNote };
   }
 
   private log(tx: Prisma.TransactionClient, ctx: RequestContext, userId: string, action: string,

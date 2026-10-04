@@ -1,3 +1,4 @@
+import { EXECUTIVE_SHEET_WORDS as S, executiveCompanySortLabel } from './executive-report-words.js';
 import { COMPANY_TEAM_NOTE_MANAGE_PERMISSION } from './company-team-note.js';
 import { SIGNUP_DISCOVERY_SOURCE_OPTIONS } from './external-signup.js';
 import { PLAN_TERM_STATE_LABEL_TH, type PlanTermState } from './plan-term.js';
@@ -8,7 +9,7 @@ export const EXECUTIVE_ROLE_KEYS = ['MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPO
 export const EXECUTIVE_PERMISSION_KEYS = ['system.executive.read', 'system.executive.export', 'system.executive.contact.read', 'system.executive_user.manage', COMPANY_TEAM_NOTE_MANAGE_PERMISSION] as const;
 export const EXECUTIVE_ACCOUNT_STATUSES = ['PENDING_ACTIVATION', 'ACTIVE', 'SUSPENDED', 'REVOKED'] as const;
 export type ExecutiveAccountStatus = typeof EXECUTIVE_ACCOUNT_STATUSES[number];
-export type ExecutiveUserAccess = { canExport: boolean; canSeeContacts: boolean; canManageCompanyNote?: boolean };
+export type ExecutiveUserAccess = { canExport: boolean; canSeeContacts: boolean; canManageCompanyNote?: boolean; canEditCompanyNote?: boolean };
 export type ExecutiveUserCreateBody = ExecutiveUserAccess & {
   username: string; displayName: string; phoneNumber?: string; email?: string;
 };
@@ -32,7 +33,7 @@ export type ExecutiveUserAccessBody = ExecutiveUserReasonBody & ExecutiveUserAcc
 /** Every reason a figure is partial or missing (§16.5), plus the sub-reasons of PAYMENT_HISTORY_INCOMPLETE (§13.2). */
 export const EXECUTIVE_REASON_CODES = ['ACTIVITY_HISTORY_INCOMPLETE', 'PAYMENT_HISTORY_INCOMPLETE', 'BILLING_SCAN_NOT_COMPLETE', 'UNMATCHED_MONEY',
   'PURCHASE_KIND_UNKNOWN', 'ADDON_NOT_ON_SALE', 'CLASSIFICATION_INCOMPLETE', 'INDUSTRY_NOT_PROVIDED', 'HISTORY_BEFORE_COLLECTION',
-  'HISTORY_BEFORE_FIRST_BUILD', 'SOURCE_ROWS_PURGED', 'SOURCE_STALE', 'NOT_YET_REGISTERED', 'RANGE_MONTH_NOT_BUILT', 'DISTINCT_USERS_NOT_AVAILABLE', 'MONTH_SUMMARY_INCOMPLETE', 'NOT_ENTITLED', 'TOO_FEW_COMPANIES', 'NO_POSITIVE_NET'] as const;
+  'HISTORY_BEFORE_FIRST_BUILD', 'SOURCE_ROWS_PURGED', 'SOURCE_STALE', 'NOT_YET_REGISTERED', 'RANGE_MONTH_NOT_BUILT', 'DISTINCT_USERS_NOT_AVAILABLE', 'MONTH_SUMMARY_INCOMPLETE', 'SHEET_FACTS_NOT_BUILT', 'NOT_ENTITLED', 'TOO_FEW_COMPANIES', 'NO_POSITIVE_NET'] as const;
 export type ExecutiveReasonCode = typeof EXECUTIVE_REASON_CODES[number];
 export const EXECUTIVE_PAID_EVER_REASONS = ['BILLING_SOURCE_REVIEW', 'MANUAL_TERM_NO_RECEIPT', 'LEGACY_NO_TERM', 'BILLING_SCAN_NOT_COMPLETE', 'UNMATCHED_MONEY'] as const;
 export type ExecutivePaidEverReason = typeof EXECUTIVE_PAID_EVER_REASONS[number];
@@ -46,7 +47,8 @@ const planStateLabels = Object.fromEntries((['ACTIVE', 'TRIAL', 'NO_PACKAGE', 'E
  * come from the data (API01): "ชื่อ · รหัสเซลล์".
  */
 export const EXECUTIVE_REPORT_LABELS: Record<'industry' | 'discovery' | 'referringSales' | 'companyStatus' | 'planState' | 'usageGroup' | 'paidEver'
-  | 'receiptAdoption' | 'spendCohort' | 'signupRail', Readonly<Record<string, string>>> = {
+  | 'receiptAdoption' | 'spendCohort' | 'signupRail' | 'receiptBucket' | 'packageLabel', Readonly<Record<string, string>>> = {
+  get receiptBucket() { return S.receiptBucket; }, packageLabel: { get ALL() { return S.allPackages; } },
   industry: { ALL: 'ทุกธุรกิจ', ...Object.fromEntries(REPORT_INDUSTRY_GROUPS.map((group) => [group.key, group.label])), UNKNOWN: 'ไม่ระบุ' },
   discovery: { ALL: 'ทุกช่องทาง', ...Object.fromEntries(SIGNUP_DISCOVERY_SOURCE_OPTIONS.map((option) => [option.value, option.label])),
     UNKNOWN: 'ไม่ระบุ', BEFORE_COLLECTION: 'ก่อนเริ่มเก็บข้อมูล', ADMIN_CREATED: 'ผู้ดูแลสร้าง' },
@@ -64,7 +66,9 @@ export const EXECUTIVE_REPORT_LABELS: Record<'industry' | 'discovery' | 'referri
 };
 export type ExecutiveFilterKey = keyof typeof EXECUTIVE_REPORT_LABELS;
 /** The words of the list's yes/no filters as chips: the card or line each one opens (plain-language spec, N02, N03, N05, N12). */
-export const EXECUTIVE_FLAG_LABELS: Record<'usageAssessed' | 'activeInPeriod' | 'paidInPeriod' | 'positiveNetInPeriod' | 'fullyRefunded' | 'joinedInPeriod', Readonly<Record<string, string>>> = {
+export const EXECUTIVE_FLAG_LABELS: Record<'usageAssessed' | 'activeInPeriod' | 'paidInPeriod' | 'positiveNetInPeriod' | 'fullyRefunded' | 'joinedInPeriod' | 'churned' | 'neverUsed' | 'receiptAdded7' | 'receiptAdded30' | 'receiptDays30AtLeast2' | 'atDataDate', Readonly<Record<string, string>>> = {
+  churned: { get true() { return S.churn; } }, neverUsed: { get true() { return S.neverUsed; } }, receiptAdded7: { get true() { return S.receipts7; } }, receiptAdded30: { get true() { return S.receipts30; } },
+  receiptDays30AtLeast2: { get true() { return S.receiptDays30AtLeast2; } }, atDataDate: { get true() { return S.asOf; } },
   usageAssessed: { false: 'ยังประเมินไม่ได้', true: 'ไม่รวมบริษัทที่ยังประเมินไม่ได้' },
   activeInPeriod: { true: 'ใช้งานในเดือน' },
   paidInPeriod: { true: 'ชำระในเดือน' },
@@ -88,6 +92,7 @@ export const EXECUTIVE_SORT_OPTIONS = [
   { sortBy: 'expenseReceiptCount', sortDir: 'desc', label: 'ใบเสร็จในเดือน มาก → น้อย' },
   { sortBy: 'activeDays', sortDir: 'desc', label: 'วันใช้งาน มาก → น้อย' },
   { sortBy: 'aiRequests', sortDir: 'desc', label: 'ใช้ผู้ช่วย มาก → น้อย' },
+  ...(['receiptsLifetime', 'lastReceiptAt', 'firstReceiptAt', 'planEndsAt', 'receipts7', 'receipts30', 'receiptDays30', 'daysSinceLastReceipt', 'daysLeft', 'lifetimeReceiptsSatang', 'lifetimeRefundsSatang', 'lifetimeNetSatang', 'activeMemberCount', 'branchCount', 'daysSinceLastUse', 'lastUseAt', 'confirmed', 'pending', 'draft', 'aiRequests30'] as const).map(sortBy => ({ sortBy, sortDir: 'desc' as const, get label() { return executiveCompanySortLabel(sortBy); } })),
 ] as const;
 export type ExecutiveSortBy = typeof EXECUTIVE_SORT_OPTIONS[number]['sortBy'];
 export const EXECUTIVE_RANKING_METRICS = ['expenseReceiptCount', 'activeDays', 'aiRequests'] as const;
@@ -124,6 +129,7 @@ export type ExecutiveReportQuery = ExecutivePeriodRequest & { buildId?: string; 
 export type ExecutiveCompaniesQuery = ExecutiveReportQuery & {
   companyStatus?: string; planState?: string; usageGroup?: string; usageAssessed?: 'true' | 'false'; activeInPeriod?: 'true'; paidInPeriod?: 'true';
   positiveNetInPeriod?: 'true'; paidEver?: string; fullyRefunded?: 'true'; receiptAdoption?: string; spendCohort?: string; signupRail?: string;
+  churned?: 'true'; neverUsed?: 'true'; receiptAdded7?: 'true'; receiptAdded30?: 'true'; receiptDays30AtLeast2?: 'true'; atDataDate?: 'true'; receiptBucket?: string; packageLabel?: string;
   joinedInPeriod?: 'true'; q?: string; sortBy?: ExecutiveSortBy; sortDir?: 'asc' | 'desc'; page?: number; pageSize?: number;
 };
 export type ExecutiveAnalysisQuery = ExecutiveReportQuery & {
@@ -163,7 +169,7 @@ export type ExecutiveDataSource = 'billing' | 'activity' | 'aiCost' | 'profile';
 export type ExecutiveDataThrough = Record<ExecutiveDataSource, string | null> & { oldest: string | null; lagging: ExecutiveDataSource[] };
 export type ExecutiveSourceCoverage = { coverage: ExecutiveCoverage; reasonCodes: ExecutiveReasonCode[]; affectedMonths?: ExecutiveAffectedMonth[] };
 export type ExecutiveMonthMetadata = { month: string; built: boolean; isPartialMonth: boolean; revision: number | null; revisedAt: string | null; dataThrough: ExecutiveDataThrough; coverage: Record<'money' | 'usage' | 'aiCost' | 'population', ExecutiveSourceCoverage> };
-export type ExecutivePeriodMetric = 'companies' | 'newCompanies' | 'activeCompanies' | 'companiesWithReceipts' | 'positiveNetCompanies' | 'paidEverCompanies' | 'fullyRefundedCompanies' | 'receiptsSatang' | 'refundsSatang' | 'netReceiptsSatang' | 'feesSatang' | 'taxSatang' | 'aiCostSatang' | 'expenseReceiptCount' | 'documents' | 'aiRequests' | 'netReceiptsPerCompanySatang' | 'expenseReceiptsPerCompany' | 'activeCompanyShare' | 'paidCompanyShare' | 'activeDays';
+export type ExecutivePeriodMetric = 'companies' | 'newCompanies' | 'activeCompanies' | 'companiesWithReceipts' | 'positiveNetCompanies' | 'paidEverCompanies' | 'fullyRefundedCompanies' | 'receiptsSatang' | 'refundsSatang' | 'netReceiptsSatang' | 'feesSatang' | 'taxSatang' | 'aiCostSatang' | 'expenseReceiptCount' | 'documents' | 'aiRequests' | 'netReceiptsPerCompanySatang' | 'expenseReceiptsPerCompany' | 'activeCompanyShare' | 'paidCompanyShare' | 'activeDays' | 'churnedCompanies';
 export type ExecutiveMonthlySeries = { side?: 'A' | 'B'; metric: ExecutivePeriodMetric; timeBasis: 'PERIOD' | 'END_OF_PERIOD'; points: Array<{ month: string; metricValue: ExecutiveCount; coverage: ExecutiveCoverage; reasonCodes: ExecutiveReasonCode[] }> };
 
 export type ExecutiveEnvelope = {
@@ -187,7 +193,8 @@ export type ExecutiveEnvelope = {
   };
   unmatchedMoney: { count: number; receiptsSatang: number; refundsSatang: number; otherSatang: number; coverage?: ExecutiveSourceCoverage };
   /** The month's money and usage sources: what every figure of this answer stands on. */
-  coverage: { money: ExecutiveSourceCoverage; usage: ExecutiveSourceCoverage };
+  coverage: { money: ExecutiveSourceCoverage; usage: ExecutiveSourceCoverage; aiCost: ExecutiveSourceCoverage };
+  sourceStatus: Record<'money' | 'usage' | 'aiCost', ExecutiveSourceCoverage & { dataThrough: string | null }>;
 };
 
 export type ExecutiveDrillCount = { count: number; drilldownFilters: ExecutiveDrilldownFilters };
@@ -250,6 +257,7 @@ export type ExecutiveOverview = ExecutiveEnvelope & {
     companiesWithReceipts: ExecutiveCount & { drilldownFilters: ExecutiveDrilldownFilters };
     netReceiptsSatang: ExecutiveMoney & { drilldownFilters: ExecutiveDrilldownFilters };
   };
+  churn: ExecutiveChurn; asOfFigures: ExecutiveAsOfFigures;
   paidUsage: ExecutivePaidUsage;
   expenseReceiptAdoption: ExecutiveReceiptAdoption;
   spendConcentration: Pick<ExecutiveSpendConcentration, 'topCount' | 'population' | 'topShare' | 'periodBasis' | 'coverage' | 'reasonCodes'>;
@@ -270,6 +278,7 @@ export type ExecutiveCompanyRow = {
   metrics: { receiptsSatang: number | null; refundsSatang: number | null; netReceiptsSatang: number | null; activeDays: number | null; activeUsers: number | null; documents: number | null;
     aiRequests: number | null; expenseReceiptCountInPeriod: number | null; expenseReceiptCountLifetime: number };
   lastActivityAt: string | null;
+  sheet: ExecutiveCompanySheet; inactivity: ExecutiveInactivity; ownerContact: ExecutiveOwnerContact; note: ExecutiveReportNote; canEditNote: boolean;
   /** With a metric order: the rank among the companies in scope (ties share it: 1, 1, 3), and for net receipts the cumulative share. */
   rank?: number; cumulativeShare?: ExecutiveRatio | null;
 };
@@ -332,7 +341,7 @@ export type ExecutiveCompanyDetail = ExecutiveEnvelope & {
     paidEver: { value: 'YES' | 'NO' | 'UNKNOWN'; reason?: string }; fullyRefunded: boolean;
     lifetimeReceiptsSatang: number; lifetimeRefundsSatang: number; expenseReceiptCountLifetime: number;
     firstActivityAt: string | null; lastWebEntryAt: string | null; lastLineActivityAt: string | null;
-    ownerContact: ExecutiveOwnerContact;
+    ownerContact: ExecutiveOwnerContact; sheet: ExecutiveCompanySheet; inactivity: ExecutiveInactivity; note: ExecutiveReportNote; canEditNote: boolean;
   };
   periodSummary?: ExecutivePeriodSummary | null; periodReasonCodes?: ExecutiveReasonCode[];
   monthlyHistory?: Array<ExecutiveMonthMetadata & { applicable: boolean; summary: ExecutivePeriodSummary | null; reasonCodes: ExecutiveReasonCode[] }>;
@@ -350,7 +359,7 @@ export type ExecutiveCompanyDetail = ExecutiveEnvelope & {
   monthReasonCodes: ExecutiveReasonCode[];
 };
 export type ExecutiveHistoryEvent = { kind: ExecutiveHistoryEventKind; at: string; planLabel?: string };
-export type ExecutiveCompanyHistory = { requestId: string; build?: ExecutiveEnvelope['build']; buildChanged?: boolean; period?: ExecutivePeriod; items: ExecutiveHistoryEvent[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } };
+export type ExecutiveCompanyHistory = { requestId: string; build?: ExecutiveEnvelope['build']; buildChanged?: boolean; period?: ExecutivePeriod; coverage?: ExecutiveEnvelope['coverage']; sourceStatus?: ExecutiveEnvelope['sourceStatus']; dataThrough?: ExecutiveDataThrough; items: ExecutiveHistoryEvent[]; pagination: { page: number; pageSize: number; total: number; totalPages: number } };
 
 /** API13: server chooses the template. All filters apply to the entire result, never a page. */
 export const EXECUTIVE_EXPORT_REPORT_KEYS = ['overview', 'companies', 'usage', 'revenue', 'customers', 'compare', 'detail'] as const;
@@ -360,4 +369,26 @@ export type ExecutiveExportBody = ExecutivePeriodRequest & {
   buildId: string; reportKey: ExecutiveExportReportKey; subview?: string; filters: ExecutiveExportFilters;
   sortBy?: ExecutiveSortBy; sortDir?: 'asc' | 'desc'; comparison?: { dimension: string; sideA: string; sideB: string };
   targetCompanyId?: string; includeContacts: boolean; format: 'xlsx';
+};
+
+export type ExecutiveReceiptBucket = 'ZERO' | 'ONE_TO_FIVE' | 'SIX_PLUS';
+export type ExecutiveReportNote = { text: string; version: number; updatedAt: string | null; updatedBy: { displayName: string } | null };
+export type ExecutiveCompanyNoteBody = { text: string; expectedVersion: number };
+export type ExecutiveCompanyNoteResult = { note: ExecutiveReportNote; canEditNote: boolean };
+export type ExecutiveInactivity = { referenceDate: string; lastUseAt: string | null; daysSinceLastUse: number | null; churned: boolean | null; neverUsed: boolean | null; coverage: ExecutiveSourceCoverage };
+export type ExecutiveCompanySheet = {
+  asOf: string; planLabel: string; businessTypeLabel: string | null; planEndsAt: string | null; daysLeft: number | null; packageExpired: boolean | null;
+  receiptsLifetime: ExecutiveCount; firstReceiptAt: string | null; lastReceiptAt: string | null; daysSinceLastReceipt: number | null;
+  receipts7: ExecutiveCount; receipts30: ExecutiveCount; receiptDays30: ExecutiveCount; confirmed: ExecutiveCount; pending: ExecutiveCount; draft: ExecutiveCount; receiptBucket: ExecutiveReceiptBucket | null;
+  aiRequests30: ExecutiveCount;
+  paymentState: { paidEver: 'YES' | 'NO' | 'UNKNOWN'; fullyRefunded: boolean };
+  lifetimeReceiptsSatang: ExecutiveMoney; lifetimeRefundsSatang: ExecutiveMoney; lifetimeNetSatang: ExecutiveMoney; activeMemberCount: number; branchCount: number;
+};
+export type ExecutiveChurn = ExecutiveCount & { referenceDate: string; share: ExecutiveRatio | null; everUsed: ExecutiveCount; drilldownFilters: ExecutiveDrilldownFilters };
+export type ExecutiveAsOfCount = ExecutiveCount & { share: ExecutiveRatio | null; drilldownFilters: ExecutiveDrilldownFilters };
+export type ExecutiveAsOfFigures = {
+  asOf: string; timeBasis: 'DATA_DATE'; companies: ExecutiveAsOfCount; receiptsLifetime: ExecutiveAsOfCount;
+  adoption: ExecutiveReceiptAdoption; receiptBuckets: Array<ExecutiveAsOfCount & { key: ExecutiveReceiptBucket; label: string }>;
+  receipts7: ExecutiveAsOfCount; receipts30: ExecutiveAsOfCount; receiptDays30AtLeast2: ExecutiveAsOfCount;
+  packages: Array<ExecutiveAsOfCount & { label: string }>; followUp: { neverUsed: ExecutiveAsOfCount; churn: ExecutiveChurn };
 };

@@ -40,3 +40,27 @@ test('executive period contracts provide every preset, reason and Thai range wor
   const labels = Object.values(words.EXECUTIVE_PERIOD_WORDS.presets) as string[];
   assert.ok(labels.every(label => !/[A-Za-z_]/.test(label)));
 });
+
+test('executive owner sheet uses one Thai churn definition and shared column/filter words', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const standalone = spawnSync(process.execPath, ['--import', 'tsx', '-e', 'require("./src/executive-report-words.ts")'], { encoding: 'utf8' });
+  assert.equal(standalone.status, 0, standalone.stderr);
+  const words: any = await import('./executive-report-words.js');
+  const contracts: any = await import('./executive-business.js');
+  assert.equal(contracts.EXECUTIVE_SORT_OPTIONS[0].sortBy, 'joinedAt');
+  assert.equal(words.EXECUTIVE_SHEET_WORDS.churn, 'เลิกใช้ (ไม่ได้ใช้ติดต่อกันเกิน 1 เดือน)');
+  assert.equal(contracts.EXECUTIVE_FLAG_LABELS.churned.true, words.EXECUTIVE_SHEET_WORDS.churn);
+  assert.equal(contracts.EXECUTIVE_REPORT_LABELS.packageLabel.ALL, words.EXECUTIVE_SHEET_WORDS.allPackages);
+  assert.equal(words.EXECUTIVE_COMPANY_SHEET_COLUMNS.find((c: any) => c.key === 'churned').label, words.EXECUTIVE_SHEET_WORDS.churn);
+  assert.deepEqual(words.EXECUTIVE_COMPANY_SHEET_COLUMNS.slice(0, 9).map((c: any) => c.key), ['company', 'businessType', 'plan', 'receiptsLifetime', 'lastReceiptAt', 'planEndsAt', 'email', 'phone', 'note']);
+  assert.ok(words.EXECUTIVE_COMPANY_SHEET_COLUMNS.every((c: any) => !/[A-Za-z_]/.test(c.label)));
+  assert.ok(words.executiveSourceReasonText('RANGE_MONTH_NOT_BUILT', ['2026-08']).includes('ส.ค.'));
+  assert.ok(words.executiveSourceReasonText('MONTH_SUMMARY_INCOMPLETE', ['2026-08']));
+  for (const reason of contracts.EXECUTIVE_REASON_CODES) assert.notEqual(words.executiveSourceReasonText(reason, ['2026-08']), words.EXECUTIVE_WORDS.unavailableFigure, reason);
+  assert.equal(words.executiveSourceReasonText('HISTORY_BEFORE_COLLECTION', [], 'partial'), words.EXECUTIVE_WORDS.historyBeforeCollectionPartial);
+  assert.equal(words.executiveSourceReasonText('HISTORY_BEFORE_COLLECTION', [], 'unavailable'), words.EXECUTIVE_WORDS.historyBeforeCollection);
+  assert.equal(words.executiveSourceReasonText('SOURCE_STALE'), 'ข้อมูลรายงานอาจยังไม่เป็นปัจจุบัน');
+  assert.ok(!words.EXECUTIVE_WORDS.export.bucketsDefinition.includes('ไม่มีบนหน้าจอ'));
+  const { PLAN_TIER_PRESETS } = await import('./plan-term.js');
+  for (const key of Object.keys(PLAN_TIER_PRESETS)) assert.doesNotMatch(words.executivePlanLabel(key), /[A-Za-z_]/);
+});

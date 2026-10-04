@@ -15,10 +15,10 @@ export type ExecutiveRebuildResult =
   | { status: 'SKIPPED' }
   | { status: 'BUILT'; buildId: string; kind: 'HOURLY' | 'FULL'; months: string[]; companyCount: number };
 
-type CompanyRow = { id: string; createdAt: Date; status: string; businessTypeCode: string | null; reportClassification: string | null;
+type CompanyRow = { id: string; createdAt: Date; status: string; businessTypeCode: string | null; businessTypeOther: string | null; reportClassification: string | null;
   reportIndustryGroup: string | null; referralSalesUserId: string | null; referralSource: string | null; province: string | null };
 type SignupRow = { companyId: string; source: string; discoverySource: string | null; createdAt: Date };
-type ActivityRow = { companyId: string; firstAt: Date; lastAt: Date; lastLineAt: Date | null } &
+type ActivityRow = { companyId: string; firstAt: Date; lastAt: Date; lastLineAt: Date | null; aiRequests30: number } &
   Omit<UsageCounters, 'expenseReceiptsLine' | 'expenseReceiptsWeb'>;
 type Money = { receiptsSatang: number; refundsSatang: number; feesSatang: number; taxSatang: number };
 const noMoney = (): Money => ({ receiptsSatang: 0, refundsSatang: 0, feesSatang: 0, taxSatang: 0 });
@@ -66,10 +66,12 @@ export class ExecutiveReportBuildUseCase {
     const fullToday = await db.executiveReportBuild.findFirst({ where: { definitionVersion, kind: 'FULL', asOf: { gte: bangkokDayStart(asOf) } }, select: { id: true } });
     const kind = fullToday ? 'HOURLY' as const : 'FULL' as const;
 
+    const since7 = new Date(bangkokDayStart(asOf).getTime() - 6 * 86_400_000), since30 = new Date(bangkokDayStart(asOf).getTime() - 29 * 86_400_000);
+
     // ── Current facts, one set each ──
     const [companies, terms, signups, provinces, discoverySince, aiSince, ocrSince, firstBuild, members, branches, entitlementRows,
-      attributions, deductions, webEntries, receiptEvidence, storedProfiles, movements, coverage, payments] = await Promise.all([
-      db.$queryRaw<CompanyRow[]>`SELECT c.id, c."createdAt", c.status::text AS status, c."businessTypeCode", c."reportClassification", c."reportIndustryGroup",
+      attributions, deductions, webEntries, receiptEvidence, storedProfiles, movements, coverage, payments, receiptFacts, storedSnapshots] = await Promise.all([
+      db.$queryRaw<CompanyRow[]>`SELECT c.id, c."createdAt", c.status::text AS status, c."businessTypeCode", c."businessTypeOther", c."reportClassification", c."reportIndustryGroup",
           c."referralSalesUserId", c."referralSource", c."addressJson"->>'province' AS province FROM "Company" c WHERE c."createdAt" < ${asOf}`,
       db.companyPlanTerm.findMany({ select: { companyId: true, tierKey: true, termStartAt: true, termEndsAt: true, renewCount: true, termDisabledAt: true } }),
       // The original signup of a company: its earliest linked request. A later request never replaces it (spec §15).
@@ -80,7 +82,7 @@ export class ExecutiveReportBuildUseCase {
       db.aiUsageEvent.aggregate({ _min: { createdAt: true } }),
       db.companyOcrUsageEvent.aggregate({ _min: { createdAt: true } }),
       db.executiveReportBuild.aggregate({ _min: { asOf: true } }),
-      db.companyMembership.groupBy({ by: ['companyId'], where: { status: 'ACTIVE' }, _count: { _all: true } }),
+      db.companyMembership.groupBy({ by: ['companyId'], where: { status: 'ACTIVE', user: { status: 'ACTIVE' } }, _count: { _all: true } }),
       db.branch.groupBy({ by: ['companyId'], where: { status: 'ACTIVE' }, _count: { _all: true } }),
       db.companyFeatureEntitlement.findMany({ select: { companyId: true, featureKey: true, enabled: true } }),
       db.salesAttribution.findMany({ select: { id: true, companyId: true, salesUserId: true, source: true, amountSatang: true, refundedSatang: true,
@@ -104,10 +106,20 @@ export class ExecutiveReportBuildUseCase {
         UNION SELECT "companyId" FROM "AttachmentLink" WHERE purpose = 'expense.receipt.primary'
         UNION SELECT "companyId" FROM "CompanyOcrUsageEvent" WHERE "sourceRoute" IN ('receipt-ocr-web', 'receipt-ocr-line')`,
       db.executiveCompanyProfile.findMany({ select: { companyId: true, firstActivityAt: true, lastActivityAt: true, lastLineActivityAt: true,
-        lastWebEntryAt: true, receiptAdoption: true } }),
+        lastWebEntryAt: true, receiptAdoption: true, expenseReceiptCountLifetime: true, sheetFacts: true } }),
       this.billing.movements({ start: new Date(0), end: asOf }),
       this.billing.coverage(),
       this.billing.companyPayments(),
+      db.$queryRaw<Array<{ companyId: string; firstReceiptAt: Date; lastReceiptAt: Date; receipts7: number; receipts30: number; receiptDays30: number; confirmed: number; pending: number; draft: number; sourceCount: number }>>`
+        SELECT "companyId", MIN("createdAt") AS "firstReceiptAt", MAX("createdAt") AS "lastReceiptAt", COUNT(*)::int AS "sourceCount",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${since7})::int AS "receipts7",
+          COUNT(*) FILTER (WHERE "createdAt" >= ${since30})::int AS "receipts30",
+          COUNT(DISTINCT ("createdAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok')::date) FILTER (WHERE "createdAt" >= ${since30})::int AS "receiptDays30",
+          COUNT(*) FILTER (WHERE status = 'CONFIRMED')::int AS confirmed,
+          COUNT(*) FILTER (WHERE status IN ('EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'))::int AS pending,
+          COUNT(*) FILTER (WHERE status = 'DRAFT')::int AS draft
+        FROM "ExpenseRecord" WHERE "createdAt" < ${asOf} AND "captureSource" IN ('WEB_UPLOAD', 'LINE_UPLOAD') GROUP BY "companyId"`,
+      db.executiveCompanyMonth.findMany({ where: { definitionVersion }, select: { companyId: true, month: true, lastActivityAt: true, activeDays: true, activitySnapshotReady: true } }),
     ]);
     const referrerIds = [...new Set(companies.flatMap((company) => company.referralSalesUserId ? [company.referralSalesUserId] : []))];
     const salesProfiles = new Set((referrerIds.length ? await db.salesAgentProfile.findMany({ where: { userId: { in: referrerIds } }, select: { userId: true } }) : [])
@@ -123,6 +135,7 @@ export class ExecutiveReportBuildUseCase {
     const webEntryOf = new Map(webEntries.map((row) => [row.companyId, row.at]));
     const hasReceiptEvidence = new Set(receiptEvidence.map((row) => row.companyId));
     const storedProfileOf = new Map(storedProfiles.map((profile) => [profile.companyId, profile]));
+    const heldReceiptMonthsOf = new Map(storedProfiles.map(profile => [profile.companyId, new Set((profile.sheetFacts as { purgedReceiptMonths?: string[] } | null)?.purgedReceiptMonths ?? [])]));
     const attributionOf = new Map(attributions.map((row) => [row.companyId, row]));
     const deductionsOf = groupBy(deductions, (row) => row.attributionId);
 
@@ -137,6 +150,7 @@ export class ExecutiveReportBuildUseCase {
       else untied.push(movement);
     }
     const firstUntiedReceiptAt = untied.filter((movement) => movement.kind === 'RECEIPT').reduce<Date | null>((first, movement) => earlier(first, movement.occurredAt), null);
+    const unmatchedMoneyMonths = [...new Set(untied.map(movement => executiveMonthOf(movement.occurredAt)))].sort();
     const billingReadThrough = coverage.since ? billingCoveredThrough(coverage.ranges, coverage.since) : null;
 
     // ── Sales credit by month, by the sales module's own rules (spec §14.3) ──
@@ -162,7 +176,7 @@ export class ExecutiveReportBuildUseCase {
 
     const classificationOf = (company: CompanyRow) => reportClassificationOf(company);
     const monthRows: Prisma.ExecutiveCompanyMonthCreateManyInput[] = [], monthHeaders: Prisma.ExecutiveReportMonthCreateManyInput[] = [];
-    const activityOf = new Map<string, { firstAt: Date | null; lastAt: Date | null; lastLineAt: Date | null }>();
+    const activityOf = new Map<string, { firstAt: Date | null; lastAt: Date | null; lastLineAt: Date | null; aiRequests30: number }>();
     const paidNow = new Map<string, { paidEver: string; paidEverReason: string | null; fullyRefunded: boolean }>();
 
     // Oldest month first, so a later month can ask "was there a counted action before my cutoff" of the months before it.
@@ -172,8 +186,14 @@ export class ExecutiveReportBuildUseCase {
       usageOf.set(month, sources);
       for (const row of sources.activity) {
         const seen = activityOf.get(row.companyId);
-        activityOf.set(row.companyId, { firstAt: earlier(seen?.firstAt, row.firstAt), lastAt: later(seen?.lastAt, row.lastAt), lastLineAt: later(seen?.lastLineAt, row.lastLineAt) });
+        activityOf.set(row.companyId, { firstAt: earlier(seen?.firstAt, row.firstAt), lastAt: later(seen?.lastAt, row.lastAt), lastLineAt: later(seen?.lastLineAt, row.lastLineAt), aiRequests30: int32((seen?.aiRequests30 ?? 0) + row.aiRequests30, 'aiRequests30') });
       }
+    }
+    const lastUseOf = new Map<string, Date | null>();
+    const uncertainLastUse = new Map<string, Date>();
+    for (const row of storedSnapshots) if (row.month < months[0]!) {
+      lastUseOf.set(row.companyId, later(lastUseOf.get(row.companyId), row.lastActivityAt));
+      if (!row.activitySnapshotReady && row.activeDays > 0) uncertainLastUse.set(row.companyId, later(uncertainLastUse.get(row.companyId), executiveMonthRange(row.month).end)!);
     }
     const firstActivityOf = (companyId: string) => earlier(storedProfileOf.get(companyId)?.firstActivityAt, activityOf.get(companyId)?.firstAt);
 
@@ -223,6 +243,10 @@ export class ExecutiveReportBuildUseCase {
           || (running && !!payment?.paidInvoice && payment.invoiceRefundedSatang >= payment.invoicePaidSatang));
 
         const stored = sources.stored.get(company.id) ?? null, seen = activity.get(company.id), receipt = receipts.get(company.id);
+        const heldReceiptMonths = heldReceiptMonthsOf.get(company.id) ?? new Set<string>();
+        if ((stored?.expenseReceiptsLine ?? 0) + (stored?.expenseReceiptsWeb ?? 0) > (receipt?.expenseReceiptsLine ?? 0) + (receipt?.expenseReceiptsWeb ?? 0)) heldReceiptMonths.add(month);
+        else heldReceiptMonths.delete(month);
+        heldReceiptMonthsOf.set(company.id, heldReceiptMonths);
         const { counters, held } = keepLargerCounters({ ...NO_USAGE, ...(seen ? pickCounters(seen) : {}),
           expenseReceiptsLine: receipt?.expenseReceiptsLine ?? 0, expenseReceiptsWeb: receipt?.expenseReceiptsWeb ?? 0 }, stored);
         const firstActivityAt = firstActivityOf(company.id);
@@ -231,7 +255,15 @@ export class ExecutiveReportBuildUseCase {
           historyCompleteSinceSignup: !aiSince._min.createdAt || aiSince._min.createdAt <= company.createdAt });
         const credit = creditOf.get(company.id)?.get(month);
 
-        const figures: CompanyMonthFigures = { ...counters, reportClassification: classificationOf(company),
+        const lastActivityAt = later(lastUseOf.get(company.id), later(seen?.lastAt, stored?.activitySnapshotReady ? stored.lastActivityAt : null));
+        lastUseOf.set(company.id, lastActivityAt);
+        // A held count cannot reconstruct the dates of actions deleted before the first snapshot.
+        if (counters.activeDays > (seen?.activeDays ?? 0) && !stored?.activitySnapshotReady) uncertainLastUse.set(company.id, cutoff);
+        const uncertainThrough = uncertainLastUse.get(company.id);
+        if (uncertainThrough && lastActivityAt && lastActivityAt >= uncertainThrough) uncertainLastUse.delete(company.id);
+        const activityHistorySince = later(firstBuildAt, aiSince._min.createdAt);
+        const activitySnapshotReady = !uncertainLastUse.has(company.id);
+        const figures: CompanyMonthFigures = { ...counters, lastActivityAt, activityHistorySince, activitySnapshotReady, reportClassification: classificationOf(company),
           receiptsSatang: money.receiptsSatang, refundsSatang: money.refundsSatang, feesSatang: money.feesSatang, taxSatang: money.taxSatang,
           moneyByPurchaseKind: byKind, disputedInvoiceCount: disputed.size, aiCostSatang: aiCost.get(company.id) ?? 0, countersHeld: held,
           paidEver: paidEver.value, paidEverReason: paidEver.reason, fullyRefunded, usageGroup: usage.usageGroup, usageUnassessedReason: usage.reason,
@@ -261,6 +293,7 @@ export class ExecutiveReportBuildUseCase {
     }
 
     // ── One profile per company: the dimensions as they are now and the values of its whole life ──
+    const receiptFactsOf = new Map(receiptFacts.map(row => [row.companyId, row]));
     const profiles: Prisma.ExecutiveCompanyProfileCreateManyInput[] = companies.map((company) => {
       const signup = signupOf.get(company.id) ?? null, term = termOf.get(company.id) ?? null, stored = storedProfileOf.get(company.id);
       const discovery = decideDiscovery(signup, discoverySince._min.createdAt), industry = reportIndustryGroupOf(company);
@@ -270,6 +303,22 @@ export class ExecutiveReportBuildUseCase {
       const entitled = evaluateEntitledFeatureKeys(entitlementsOf.get(company.id) ?? []);
       const province = company.province?.trim().replace(/^(จังหวัด|จ\.)\s*/, '') ?? '';
       const paid = paidNow.get(company.id)!;
+      const receipt = receiptFactsOf.get(company.id), oldFacts = stored?.sheetFacts as { firstReceiptAt?: string | null; lastReceiptAt?: string | null } | null;
+      const storedReceiptCount = [...usageOf.values()].reduce((n, source) => n + (source.stored.get(company.id)?.expenseReceiptsLine ?? 0) + (source.stored.get(company.id)?.expenseReceiptsWeb ?? 0), 0);
+      const receiptCountersHeld = (receipt?.sourceCount ?? 0) < Math.max(storedReceiptCount, stored?.expenseReceiptCountLifetime ?? 0);
+      const purgedReceiptMonths = receiptCountersHeld ? [...(heldReceiptMonthsOf.get(company.id) ?? [])].sort() : [];
+      const firstReceiptAt = earlier(receipt?.firstReceiptAt, oldFacts?.firstReceiptAt ? new Date(oldFacts.firstReceiptAt) : null);
+      const lastReceiptAt = later(receipt?.lastReceiptAt, oldFacts?.lastReceiptAt ? new Date(oldFacts.lastReceiptAt) : null);
+      const knownRecent = (since: Date) => lastReceiptAt && lastReceiptAt >= since ? 1 : 0;
+      const knownDays30 = knownRecent(since30) && firstReceiptAt && firstReceiptAt >= since30 && lastReceiptAt && bangkokDayStart(firstReceiptAt) < bangkokDayStart(lastReceiptAt) ? 2 : knownRecent(since30);
+      const sheetFacts = { asOf: asOf.toISOString(),
+        unmatchedMoneyMonths,
+        aiRequests30: seen?.aiRequests30 ?? 0, aiUsageSince: aiSince._min.createdAt?.toISOString() ?? null,
+        firstReceiptAt: firstReceiptAt?.toISOString() ?? null,
+        lastReceiptAt: lastReceiptAt?.toISOString() ?? null,
+        ...Object.fromEntries(['receipts7', 'receipts30', 'receiptDays30', 'confirmed', 'pending', 'draft', 'sourceCount'].map(key => [key, int32(receipt?.[key as 'receipts7'] ?? 0, key)])),
+        receipts7: Math.max(receipt?.receipts7 ?? 0, knownRecent(since7)), receipts30: Math.max(receipt?.receipts30 ?? 0, knownRecent(since30)), receiptDays30: Math.max(receipt?.receiptDays30 ?? 0, knownDays30),
+        activitySnapshotReady: !uncertainLastUse.has(company.id), activityHistorySince: later(firstBuildAt, aiSince._min.createdAt)?.toISOString() ?? null, receiptHistorySince: later(firstBuildAt, ocrSince._min.createdAt)?.toISOString() ?? null, receiptCountersHeld, purgedReceiptMonths };
       return {
         companyId: company.id, buildId: '', companyCreatedAt: company.createdAt, companyStatus: company.status, reportClassification: classificationOf(company),
         industryGroup: industry?.group ?? null, industryGroupSource: industry?.source ?? null, provinceCode: provinceCodeOf.get(province) ?? null,
@@ -285,6 +334,7 @@ export class ExecutiveReportBuildUseCase {
         lastLineActivityAt: later(stored?.lastLineActivityAt, seen?.lastLineAt), lastWebEntryAt: later(stored?.lastWebEntryAt, webEntryOf.get(company.id)),
         receiptAdoption: decideReceiptAdoption({ evidence: hasReceiptEvidence.has(company.id) || stored?.receiptAdoption === 'EVER',
           entitled: entitled === null || entitled.has('expenses'), createdAt: company.createdAt, ocrUsageSince: ocrSince._min.createdAt }),
+        sheetFacts, businessTypeCode: company.businessTypeCode, businessTypeOther: company.businessTypeOther,
         activeMemberCount: memberCount.get(company.id) ?? 0, branchCount: branchCount.get(company.id) ?? 0,
       };
     });
@@ -342,6 +392,7 @@ async function readMonthSources(db: PrismaClient, month: string, asOf: Date, def
              COUNT(*) FILTER (WHERE kind = 'EXPENSE' AND channel = 'WEB')::int AS "confirmedExpensesWeb",
              COUNT(*) FILTER (WHERE kind = 'DOCUMENT')::int AS "issuedDocuments",
              COUNT(DISTINCT ref) FILTER (WHERE kind = 'AI')::int AS "aiRequests",
+             COUNT(DISTINCT ref) FILTER (WHERE kind = 'AI' AND at >= ${new Date(bangkokDayStart(asOf).getTime() - 29 * 86_400_000)})::int AS "aiRequests30",
              MIN(at) AS "firstAt", MAX(at) AS "lastAt", MAX(at) FILTER (WHERE channel = 'LINE') AS "lastLineAt"
         FROM (SELECT *, (at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Bangkok')::date AS day FROM atoms) dated
        GROUP BY "companyId"`,

@@ -1,9 +1,9 @@
-import { ArgumentsHost, Body, Catch, Controller, HttpException, Injectable, Get, Header, HttpCode, Param, Post, Query, Req, Res, UseFilters } from '@nestjs/common';
+import { ArgumentsHost, Body, Catch, Controller, HttpException, Injectable, Get, Patch, Header, HttpCode, Param, Post, Query, Req, Res, UseFilters } from '@nestjs/common';
 import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsObject, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import type { Request, Response } from 'express';
 import {
-  EXECUTIVE_WORDS as W, executivePeriodLabel, EXECUTIVE_EXPORT_REPORT_KEYS, type ExecutiveExportBody, type ExecutiveExportFilters, EXECUTIVE_RANKING_METRICS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
+  COMPANY_TEAM_NOTE_WORDS, EXECUTIVE_SHEET_WORDS, COMPANY_TEAM_NOTE_MANAGE_PERMISSION, COMPANY_TEAM_NOTE_MAX_LENGTH, type ExecutiveCompanyNoteBody, EXECUTIVE_WORDS as W, executivePeriodLabel, EXECUTIVE_EXPORT_REPORT_KEYS, type ExecutiveExportBody, type ExecutiveExportFilters, EXECUTIVE_RANKING_METRICS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
   type ExecutiveAnalysisQuery, type ExecutiveCompaniesQuery, type ExecutiveHistoryQuery, type ExecutiveRankingMetric, type ExecutiveReportQuery, type ExecutiveSortBy,
 } from '@watchdog-bms/contracts';
 import { randomUUID } from 'node:crypto';
@@ -11,7 +11,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { XLSX_MIME_TYPE, xlsxThaiDate } from '../../../../common/export/xlsx.logic';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
-import { assertPlatformTenant } from '../../../sales-console/application/sales-context';
+import { assertPlatformTenant, isSystemAdmin } from '../../../sales-console/application/sales-context';
 import { executiveError } from '../../application/executive-users.service';
 import { ExecutiveReportReadService } from '../../application/executive-report-read.service';
 import { ExecutiveAccountExceptionFilter } from './executive-users.controller';
@@ -32,6 +32,14 @@ export class ExecutiveReportQueryDto implements ExecutiveReportQuery {
 }
 
 export class ExecutiveCompaniesQueryDto extends ExecutiveReportQueryDto implements ExecutiveCompaniesQuery {
+  @IsOptional() @IsIn(keysOf('receiptBucket')) receiptBucket?: string;
+  @IsOptional() @IsString() @MaxLength(120) packageLabel?: string;
+  @IsOptional() @IsIn(['true']) churned?: 'true';
+  @IsOptional() @IsIn(['true']) neverUsed?: 'true';
+  @IsOptional() @IsIn(['true']) receiptAdded7?: 'true';
+  @IsOptional() @IsIn(['true']) receiptAdded30?: 'true';
+  @IsOptional() @IsIn(['true']) receiptDays30AtLeast2?: 'true';
+  @IsOptional() @IsIn(['true']) atDataDate?: 'true';
   @IsOptional() @IsIn(keysOf('companyStatus')) companyStatus?: string;
   @IsOptional() @IsIn(keysOf('planState')) planState?: string;
   @IsOptional() @IsIn(keysOf('usageGroup')) usageGroup?: string;
@@ -92,6 +100,11 @@ export class ExecutiveExportDto implements ExecutiveExportBody {
   @IsIn(['xlsx']) format!: 'xlsx';
 }
 
+export class ExecutiveCompanyNoteDto implements ExecutiveCompanyNoteBody {
+  @IsString() @MaxLength(COMPANY_TEAM_NOTE_MAX_LENGTH) text!: string;
+  @IsInt() @Min(0) expectedVersion!: number;
+}
+
 type ExecutiveRequest = Request & { context: RequestContext; executiveExportAttempted?: boolean };
 
 /** Guard/DTO failures happen before the action; record those without copying an untrusted body into audit. */
@@ -114,6 +127,7 @@ export class ExecutiveReportExceptionFilter extends ExecutiveAccountExceptionFil
       }
     }
     if (exporting) new ExecutiveAccountExceptionFilter(W.export.denied).catch(error, host);
+    else if (req.method === 'PATCH') new ExecutiveAccountExceptionFilter(req.context && isSystemAdmin(req.context) ? EXECUTIVE_SHEET_WORDS.noteAdminRoute : COMPANY_TEAM_NOTE_WORDS.editDenied).catch(error, host);
     else super.catch(error, host);
   }
 }
@@ -127,6 +141,14 @@ export class ExecutiveReportExceptionFilter extends ExecutiveAccountExceptionFil
 @UseFilters(ExecutiveReportExceptionFilter)
 export class ExecutiveReportController {
   constructor(private readonly report: ExecutiveReportReadService) {}
+
+  @Patch('companies/:targetCompanyId')
+  @Header('Cache-Control', 'no-store')
+  @RequirePermissions('system.executive.read', COMPANY_TEAM_NOTE_MANAGE_PERMISSION)
+  updateNote(@Param('targetCompanyId') companyId: string, @Body() body: ExecutiveCompanyNoteDto, @Req() req: ExecutiveRequest) {
+    assertPlatformTenant(req.context);
+    return this.report.updateNote(req.context, companyId, body);
+  }
 
   @Get('context')
   @Header('Cache-Control', 'no-store')
@@ -169,7 +191,7 @@ export class ExecutiveReportController {
     const result = await this.report.export(req.context, body);
     res.setHeader('Content-Type', XLSX_MIME_TYPE);
     res.setHeader('Content-Disposition', body.month !== undefined ? 'attachment; filename="executive-report.xlsx"'
-      : `attachment; filename*=UTF-8''${encodeURIComponent(`${W[body.reportKey]} ${executivePeriodLabel(body.from!, body.to!)} ${xlsxThaiDate(this.report.clock())}.xlsx`)}`);
+      : `attachment; filename*=UTF-8''${encodeURIComponent(`${W[body.reportKey]} ${executivePeriodLabel(result.period.from, result.period.to)} ${xlsxThaiDate(this.report.clock())}.xlsx`)}`);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Export-Reference', result.exportReference);
     res.setHeader('X-Export-Row-Count', String(result.rowCount));

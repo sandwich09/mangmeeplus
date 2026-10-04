@@ -714,6 +714,52 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
     const october = await client.executiveCompanyMonth.findUniqueOrThrow({ where: { companyId_month_definitionVersion: { companyId: shop, month: '2026-10', definitionVersion: 1 } } });
     assert.deepEqual([october.confirmedExpensesWeb, october.activeDays, october.countersHeld], [1, 1, false]);
   });
+  it('backfills cutoff last-use dates, rolling receipt boundaries and bucket-edge sheet facts in a FULL build', async () => {
+    const asOf = nextDay(), since7 = new Date(bangkokDayStart(asOf).getTime() - 6 * 86_400_000), since30 = new Date(bangkokDayStart(asOf).getTime() - 29 * 86_400_000);
+    for (const n of [0, 1, 5, 6]) {
+      const id = `sheet-${n}`; await company(id, { reportClassification: 'CUSTOMER', createdAt: at('2026-08-10T00:00:00Z'), businessTypeCode: 'OTHER', businessTypeOther: 'ค้าปลีก' });
+      const user = await person(id);
+      if (n === 6) await client.user.update({ where: { id: user }, data: { status: 'DISABLED' } });
+      await document(id, user, '2026-08-30T17:00:00Z'); // Aug31, counted use, not a receipt
+      for (let i = 0; i < n; i++) {
+        const createdAt = n === 1 ? new Date(asOf.getTime() - 1) : n === 6 && i === 0 ? new Date(since30.getTime() - 1) : n === 6 && i === 5 ? since7 : new Date(since30.getTime() + i * 86_400_000);
+        const row = await expense(id, user, null, 'WEB_UPLOAD', createdAt.toISOString());
+        if (i === 1) await client.expenseRecord.update({ where: { id: row.id }, data: { status: 'NEEDS_REVIEW' } });
+      }
+    }
+    await aiEvent('sheet-6', new Date(asOf.getTime() - 1).toISOString());
+    const result = built(await build.rebuild(asOf)); assert.equal(result.kind, 'FULL');
+    const firstBuildAt = (await client.executiveReportBuild.aggregate({ _min: { asOf: true } }))._min.asOf!;
+    for (const n of [0,1,5,6]) {
+      const p = await profile(`sheet-${n}`), september = (await monthRow(p.companyId, '2026-09'))!, facts = p.sheetFacts as any;
+      assert.equal(p.expenseReceiptCountLifetime, n); assert.equal(p.businessTypeOther, 'ค้าปลีก'); assert.equal(p.activeMemberCount, n === 6 ? 0 : 1);
+      assert.equal(september.lastActivityAt!.toISOString(), '2026-08-30T17:00:00.000Z'); assert.equal(september.activitySnapshotReady, true);
+      assert.equal(facts.asOf, asOf.toISOString()); assert.equal(facts.sourceCount, n);
+      assert.equal(facts.aiRequests30, n === 6 ? 1 : 0);
+      assert.ok(september.activityHistorySince! >= firstBuildAt);
+      assert.ok(new Date(facts.activityHistorySince) >= firstBuildAt);
+      assert.equal(facts.receipts30, n === 6 ? 5 : n); assert.equal(facts.receipts7, n === 1 || n === 6 ? 1 : 0);
+      assert.equal(facts.receiptDays30, n === 6 ? 5 : n); assert.equal(facts.pending, n >= 5 ? 1 : 0); assert.equal(facts.draft, n - facts.pending);
+    }
+    const id = 'sheet-6', stored = (await profile(id)).sheetFacts as any;
+    await client.expenseRecord.deleteMany({ where: { companyId: id } });
+    await build.rebuild(minuteLater());
+    const after = await profile(id), facts = after.sheetFacts as any;
+    assert.equal(after.expenseReceiptCountLifetime, 6); assert.equal(facts.lastReceiptAt, stored.lastReceiptAt); assert.equal(facts.receipts7, 1); assert.equal(facts.sourceCount, 0);
+    assert.deepEqual(facts.purgedReceiptMonths, ['2026-09', '2026-10']);
+    assert.equal((await monthRow(id, '2026-09'))!.lastActivityAt!.toISOString(), '2026-08-30T17:00:00.000Z');
+    // Legacy held usage has no date until a later observed action supersedes its whole month.
+    await client.executiveCompanyMonth.update({ where: { companyId_month_definitionVersion: { companyId: id, month: '2026-08', definitionVersion: 1 } }, data: { activitySnapshotReady: false, lastActivityAt: null } });
+    await client.accountingDocument.deleteMany({ where: { companyId: id } });
+    await build.rebuild(minuteLater());
+    assert.equal((await monthRow(id, '2026-09'))!.activitySnapshotReady, false);
+    const staff = (await client.companyMembership.findFirstOrThrow({ where: { companyId: id } })).userId;
+    await document(id, staff, new Date(clock.getTime() - 1).toISOString());
+    await build.rebuild(minuteLater());
+    assert.equal((await monthRow(id, '2026-10'))!.activitySnapshotReady, true);
+    assert.equal((await profile(id)).sheetFacts && ((await profile(id)).sheetFacts as any).activitySnapshotReady, true);
+  });
+
 });
 
 // ── The rules, with no database (executive backend spec §12.1, §12.3, §13.2, §13.4, §15) ──────────────
@@ -820,6 +866,8 @@ describe('executive report rules', () => {
       disputedInvoiceCount: 0, aiCostSatang: 0, countersHeld: false, paidEver: 'YES', paidEverReason: null, fullyRefunded: false, usageGroup: 'ACTIVE', usageUnassessedReason: null,
       salesCreditSatang: 0, salesCreditActivations: 0, salesCreditWaiting: 0 };
     const reordered = { ...row, moneyByPurchaseKind: { UPGRADE: row.moneyByPurchaseKind.UPGRADE!, RENEWAL: row.moneyByPurchaseKind.RENEWAL! } };
+    assert.notEqual(figuresKey({ ...row, lastActivityAt: at('2026-08-01T00:00:00Z') } as CompanyMonthFigures), figuresKey({ ...row, lastActivityAt: at('2026-08-02T00:00:00Z') } as CompanyMonthFigures));
+    assert.notEqual(figuresKey({ ...row, activitySnapshotReady: true } as CompanyMonthFigures), figuresKey(row));
     assert.equal(figuresKey(reordered), figuresKey(row));
     assert.equal(figuresKey({ ...row, countersHeld: true }), figuresKey(row));
     assert.notEqual(figuresKey({ ...row, receiptsSatang: 101 }), figuresKey(row));

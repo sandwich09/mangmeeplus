@@ -1,3 +1,4 @@
+import { CompanyTeamNoteModule } from '../system-partner-management/company-team-note.module';
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { BillingModule } from '../billing/billing.module';
@@ -8,7 +9,7 @@ import { ExecutiveUsersController } from './presentation/http/executive-users.co
 
 /** Executive accounts (E1) and the report's read API (E3). BillingModule: the company history reads purchases through billing's own reader. */
 @Module({
-  imports: [AuditModule, BillingModule],
+  imports: [AuditModule, BillingModule, CompanyTeamNoteModule],
   controllers: [ExecutiveUsersController, ExecutiveReportController],
   providers: [ExecutiveUsersService, ExecutiveReportReadService, ExecutiveReportExceptionFilter],
 })

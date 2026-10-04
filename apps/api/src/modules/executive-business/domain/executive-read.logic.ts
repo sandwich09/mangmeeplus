@@ -8,7 +8,7 @@ import { decideUsageGroup, executiveMonthOf, executiveMonthRange, NO_USAGE, USAG
 import type { ExecutiveCompanyMonth, ExecutiveCompanyProfile } from '../../../generated/prisma/client';
 
 /** One company in one month: its month figures and its profile as of the build. */
-export type ReportRow = ExecutiveCompanyMonth & { profile: ExecutiveCompanyProfile };
+export type ReportRow = ExecutiveCompanyMonth & { profile: ExecutiveCompanyProfile; sheet?: import('@watchdog-bms/contracts').ExecutiveCompanySheet; inactivity?: import('@watchdog-bms/contracts').ExecutiveInactivity };
 
 export const netOf = (row: Pick<ExecutiveCompanyMonth, 'receiptsSatang' | 'refundsSatang'>) => row.receiptsSatang - row.refundsSatang;
 export const documentsOf = (row: ExecutiveCompanyMonth) => row.confirmedExpensesLine + row.confirmedExpensesWeb + row.issuedDocuments;
@@ -102,6 +102,7 @@ export const moneyOf = (value: number, source: ExecutiveSourceCoverage): Executi
 export type GlobalFilters = { industry: string; discovery: string; referringSales: string };
 export type DirectoryFilters = {
   companyStatus: string; planState: string; usageGroup: string; paidEver: string; receiptAdoption: string; spendCohort: string; signupRail: string;
+  receiptBucket?: string; packageLabel?: string; churned?: true; neverUsed?: true; receiptAdded7?: true; receiptAdded30?: true; receiptDays30AtLeast2?: true; atDataDate?: true;
   joinedInPeriod?: true; usageAssessed?: boolean; activeInPeriod?: true; paidInPeriod?: true; positiveNetInPeriod?: true; fullyRefunded?: true;
 };
 export const industryKeyOf = (row: ReportRow) => row.profile.industryGroup ?? 'UNKNOWN';
@@ -127,6 +128,12 @@ export function matchesDirectory(row: ReportRow, filters: DirectoryFilters, coho
     && (!filters.paidInPeriod || row.receiptsSatang > 0)
     && (!filters.positiveNetInPeriod || netOf(row) > 0)
     && (!filters.fullyRefunded || row.fullyRefunded)
+    && (!filters.receiptBucket || filters.receiptBucket === 'ALL' || row.sheet?.receiptBucket === filters.receiptBucket)
+    && (!filters.packageLabel || filters.packageLabel === 'ALL' || row.sheet?.planLabel === filters.packageLabel)
+    && (!filters.churned || row.inactivity?.churned === true) && (!filters.neverUsed || row.inactivity?.neverUsed === true)
+    && (!filters.receiptAdded7 || (row.sheet?.receipts7.value ?? row.sheet?.receipts7.knownValue ?? 0) > 0)
+    && (!filters.receiptAdded30 || (row.sheet?.receipts30.value ?? row.sheet?.receipts30.knownValue ?? 0) > 0)
+    && (!filters.receiptDays30AtLeast2 || (row.sheet?.receiptDays30.value ?? row.sheet?.receiptDays30.knownValue ?? 0) >= 2)
     && (cohort === null || cohort.has(row.companyId));
 }
 

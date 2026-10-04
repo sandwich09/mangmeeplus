@@ -377,7 +377,7 @@ describe('ExecutiveUsersService (E1)', () => {
     const { state, service } = await fixture();
     const result = await service.create(context, { ...body, username: ' Report.Reader ', phoneNumber: ' 0812345678 ', email: ' REPORT@EXAMPLE.COM ' });
     assert.deepEqual(Object.keys(result).sort(), ['credential', 'user']);
-    assert.deepEqual(Object.keys(result.user).sort(), ['canExport', 'canManageCompanyNote', 'canRead', 'canSeeContacts', 'displayName', 'email', 'lastWebEntryAt', 'phoneNumber', 'status', 'temporaryPasswordExpiresAt', 'userId', 'username']);
+    assert.deepEqual(Object.keys(result.user).sort(), ['canEditCompanyNote', 'canExport', 'canManageCompanyNote', 'canRead', 'canSeeContacts', 'displayName', 'email', 'lastWebEntryAt', 'phoneNumber', 'status', 'temporaryPasswordExpiresAt', 'userId', 'username']);
     assert.deepEqual(Object.keys(result.credential).sort(), ['expiresAt', 'temporaryPassword', 'userId', 'username']);
     assert.equal(result.user.username, 'report.reader'); assert.equal(result.user.email, 'report@example.com');
     assert.equal(result.user.status, 'PENDING_ACTIVATION'); assert.equal(result.user.lastWebEntryAt, null);
@@ -394,6 +394,17 @@ describe('ExecutiveUsersService (E1)', () => {
       ['executive.user.created', context.userId, 'User', result.user.userId, context.requestId, null]);
     assert.deepEqual(Object.keys(audit.metadataJson).sort(), ['from', 'reason', 'to']);
     for (const secret of [result.credential.temporaryPassword, credential.passwordHash, '0812345678', 'report@example.com', body.displayName]) assert.ok(!JSON.stringify(audit).includes(secret));
+  });
+  it('accepts the canonical note edit flag through create, change access and list, preserving the old alias', async () => {
+    const { service, state } = await fixture();
+    const created = await service.create(context, { ...body, canEditCompanyNote: true });
+    assert.equal(created.user.canEditCompanyNote, true); assert.equal(created.user.canManageCompanyNote, true);
+    assert.equal((await service.list(context, {})).items[0]!.canEditCompanyNote, true);
+    const access = { canExport: false, canSeeContacts: false, reason: 'ติดตามบริษัท' };
+    assert.equal((await service.setAccess(context, created.user.userId, { ...access, canEditCompanyNote: false })).canEditCompanyNote, false);
+    assert.equal(state.audits.at(-1).metadataJson.to.canEditCompanyNote, false);
+    await assert.rejects(service.setAccess(context, created.user.userId, { ...access, canEditCompanyNote: true, canManageCompanyNote: false }), errorCode('INVALID_INPUT', 400));
+    for (const canEditCompanyNote of [null, 'true', 1]) await assert.rejects(service.create(context, { ...body, canEditCompanyNote } as any), errorCode('INVALID_INPUT', 400));
   });
   it('creates only the requested export/contact/company-note add-on roles', async () => {
     for (const canExport of [false, true]) for (const canSeeContacts of [false, true]) for (const canManageCompanyNote of [false, true]) {

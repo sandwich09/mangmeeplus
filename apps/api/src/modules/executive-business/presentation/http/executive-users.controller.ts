@@ -15,6 +15,7 @@ export class ExecutiveUserCreateDto implements ExecutiveUserCreateBody {
   @IsOptional() @IsEmail() @MaxLength(320) email?: string;
   @IsBoolean() canExport!: boolean;
   @IsBoolean() canSeeContacts!: boolean;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() canEditCompanyNote?: boolean;
   @ValidateIf((_object, value) => value !== undefined) @IsBoolean() canManageCompanyNote?: boolean;
 }
 export class ExecutiveUserCredentialDto implements ExecutiveUserReasonBody {
@@ -26,6 +27,7 @@ export class ExecutiveUserStatusDto extends ExecutiveUserCredentialDto implement
 export class ExecutiveUserAccessDto extends ExecutiveUserCredentialDto implements ExecutiveUserAccessBody {
   @IsBoolean() canExport!: boolean;
   @IsBoolean() canSeeContacts!: boolean;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() canEditCompanyNote?: boolean;
   @ValidateIf((_object, value) => value !== undefined) @IsBoolean() canManageCompanyNote?: boolean;
 }
 export class ExecutiveUserListQueryDto implements ExecutiveUserListQuery {

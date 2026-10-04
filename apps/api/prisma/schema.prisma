@@ -4017,6 +4017,10 @@ model ExecutiveCompanyMonth {
   expenseReceiptsWeb     Int       @default(0)
   /// A stored counter was higher than the recount, so source rows are gone (SOURCE_ROWS_PURGED).
   countersHeld           Boolean   @default(false)
+  /// Cumulative last counted action before this month’s cutoff; never today’s profile date for a past period.
+  lastActivityAt         DateTime?
+  activityHistorySince   DateTime?
+  activitySnapshotReady  Boolean   @default(false)
   // Groups of the month (spec §13.2).
   /// 'YES' | 'NO' | 'UNKNOWN', as of the month's end.
   paidEver               String
@@ -4085,6 +4089,10 @@ model ExecutiveCompanyProfile {
   receiptAdoption             String
   /// Sum of the stored monthly receipt counts, not a recount.
   expenseReceiptCountLifetime Int       @default(0)
+  /// Receipt dates, rolling windows and status counts as of build.asOf; null until a FULL build backfills.
+  sheetFacts                  Json?
+  businessTypeCode            String?
+  businessTypeOther           String?
   activeMemberCount           Int       @default(0)
   branchCount                 Int       @default(0)
 
