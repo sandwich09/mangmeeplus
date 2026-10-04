@@ -5,6 +5,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './harness/fixtures';
 import { ensureBrowserLegalAcceptance, expectNoClientError } from './harness/auth';
 import { chooseThemedOption } from './harness/e2e-utils';
+import { workspaceDictionary } from '../apps/web/src/common/i18n/workspace-dictionary';
 
 const apiRequire = createRequire(resolve('apps/api/package.json'));
 const databaseUrl = process.env.RECEIPT_CONTINUITY_TEST_DATABASE_URL;
@@ -424,6 +425,10 @@ for (const width of [390, 1280]) {
       { description: 'SELF SERVICE SAUCE', quantity: '1', unitPrice: '20' },
       { description: 'COKE', quantity: '1', unitPrice: '25' },
     ] as any);
+    const words = workspaceDictionary.th;
+    const whtCategoryCode = 'e2e-wht-' + randomUUID();
+    const whtPath = '**/api/v1/companies/' + companyId + '/expenses/wht-income-categories';
+    await page.route(whtPath, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     try {
       const category = await f.client.expenseCategory.findFirstOrThrow({ where: { companyId, status: 'ACTIVE', accountHintKey: 'expense.meals' } });
       const setup = await api.patch(`companies/${companyId}/expenses/${f.expense.id}/review-fields`, { data: {
@@ -510,23 +515,59 @@ for (const width of [390, 1280]) {
       expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(width);
       await page.screenshot({ path: info.outputPath(`receipt-review-dropdown-${width}.png`) });
       await categoryList.getByRole('option', { name: category.name, exact: true }).click();
-      if (width === 390) {
+      {
         const next = page.getByRole('button', { name: 'ถัดไป', exact: true });
-        const payeeKind = page.getByRole('combobox', { name: 'ประเภทผู้รับเงิน (หัก ณ ที่จ่าย)', exact: true });
-        const withholding = page.getByRole('spinbutton', { name: /^อัตราหัก ณ ที่จ่าย/ });
+        const block = page.getByTestId('expense-withholding');
+        const choice = block.getByRole('combobox', { name: words['expenses.wht_choice'], exact: true });
+        const payeeKind = page.getByRole('combobox', { name: words['expenses.payee_entity_kind'], exact: true });
+        const incomeCategory = block.getByRole('combobox', { name: words['expenses.wht_income_category'], exact: true });
+        const withholding = block.getByRole('spinbutton', { name: /^อัตราหัก ณ ที่จ่าย/ });
+        await expect(choice).toContainText(words['expenses.wht_no']);
         await expect(payeeKind).toHaveCount(0);
-        await withholding.fill('3');
+        await expect(incomeCategory).toHaveCount(0);
+        await expect(withholding).toHaveCount(0);
+        await choice.click();
+        await page.getByRole('option', { name: words['expenses.wht_yes'], exact: true }).click();
         await expect(payeeKind).toBeVisible();
+        await expect(incomeCategory).toBeVisible();
+        await expect(block.getByText(words['expenses.wht_categories_empty'], { exact: true })).toBeVisible();
+        await withholding.fill('3');
         await expect(payeeKind).toHaveAttribute('aria-invalid', 'true');
+        await expect(next).toBeDisabled();
+        await block.screenshot({ path: info.outputPath('withholding-empty-catalog-' + width + '.png') });
+        // Clearing the rate needs no category, even with an empty catalog.
+        await withholding.fill('');
+        await expect(choice).toContainText(words['expenses.wht_no']);
+        await expect(payeeKind).toHaveCount(0);
+        await expect(incomeCategory).toHaveCount(0);
+        await expect(next).toBeEnabled();
+        // A synthetic ACTIVE row in the explicitly selected isolated DB; seeded catalog decisions stay untouched.
+        await f.client.whtIncomeCategory.create({ data: {
+          code: whtCategoryCode, nameTh: 'ค่าบริการทดสอบ', formType: 'PND53', defaultRate: '3', status: 'ACTIVE',
+        } });
+        await page.unroute(whtPath);
+        await page.reload();
+        await choice.click();
+        await page.getByRole('option', { name: words['expenses.wht_yes'], exact: true }).click();
+        await incomeCategory.click();
+        await page.getByRole('option', { name: 'ค่าบริการทดสอบ', exact: true }).click();
+        await expect(withholding).toHaveValue('3');
         await expect(next).toBeDisabled();
         await payeeKind.click();
         await page.getByRole('option', { name: 'นิติบุคคล (ภ.ง.ด.53)', exact: true }).click();
-        const whtBase = page.getByRole('spinbutton', { name: /^ฐานคำนวณหัก ณ ที่จ่าย/ });
+        const order = await block.evaluate((element) => {
+          const fields = ['expense-payee-entity-kind-', 'expense-wht-category-', 'expense-wht-rate-'];
+          return fields.map((id) => element.querySelector('[id^="' + id + '"]')!.getBoundingClientRect().top);
+        });
+        expect(order[0]).toBeLessThan(order[1]);
+        expect(order[1]).toBeLessThan(order[2]);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const whtBase = block.getByRole('spinbutton', { name: /^ฐานคำนวณหัก ณ ที่จ่าย/ });
         await whtBase.fill('1000');
         await expect(next).toBeEnabled();
         await saveDraft.click();
         await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
-        const taxes = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
+        const taxes = await (await api.get('companies/' + companyId + '/expenses/' + f.expense.id)).json();
         expect(taxes.whtInputJson).toMatchObject({ inputType: 'RATE', value: '3', baseAmount: '1000' });
         expect(Number(taxes.whtAmount)).toBe(30);
         expect(Number(taxes.netPayableAmount)).toBe(270);
@@ -534,14 +575,42 @@ for (const width of [390, 1280]) {
         await page.reload();
         await expect(whtBase).toHaveValue('1000');
         await expect(withholding).toHaveValue('3');
+        await expect(choice).toContainText(words['expenses.wht_yes']);
+        await block.screenshot({ path: info.outputPath('withholding-selected-' + width + '.png') });
         await whtBase.fill('100000');
         await expect(next).toBeDisabled();
-        // The review blocker line itself. The live totals panel echoes the same sentence since commit
-        // 4361ed0b ('ยังแสดงยอดล่าสุดไม่ได้: …'), so match the blocker exactly rather than by substring.
         await expect(page.getByRole('status').filter({ hasText: /^ยอดหัก ณ ที่จ่ายต้องไม่เกินฐานหักหรือยอดรวมเอกสาร$/ })).toBeVisible();
-        await whtBase.fill('');
-        await withholding.fill('0');
+        await choice.click();
+        await page.getByRole('option', { name: words['expenses.wht_no'], exact: true }).click();
         await expect(payeeKind).toHaveCount(0);
+        await expect(incomeCategory).toHaveCount(0);
+        await expect(withholding).toHaveCount(0);
+        await expect(next).toBeEnabled();
+        await saveDraft.click();
+        await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
+        const cleared = await (await api.get('companies/' + companyId + '/expenses/' + f.expense.id)).json();
+        expect(cleared.whtInputJson).toMatchObject({ inputType: 'RATE', value: '0' });
+        expect(cleared.whtInputJson.baseAmount).toBeUndefined();
+        expect(Number(cleared.whtAmount)).toBe(0);
+        expect(cleared.whtCategoryCode).toBe('');
+        expect(Number(cleared.whtRate)).toBe(0);
+        await choice.click();
+        await page.getByRole('option', { name: words['expenses.wht_yes'], exact: true }).click();
+        await incomeCategory.click();
+        await page.getByRole('option', { name: 'ค่าบริการทดสอบ', exact: true }).click();
+        await withholding.fill('0');
+        await expect(incomeCategory).toContainText('ค่าบริการทดสอบ');
+        await withholding.press('End');
+        await withholding.pressSequentially('.5');
+        await expect(withholding).toHaveValue('0.5');
+        await expect(next).toBeEnabled();
+        await block.getByRole('combobox', { name: words['expenses.wht_input_unit'], exact: true }).click();
+        await page.getByRole('option', { name: words['expenses.wht_unit_baht'], exact: true }).click();
+        const amount = block.getByRole('spinbutton', { name: words['expenses.wht_value_baht'], exact: true });
+        await amount.fill('30');
+        await amount.fill('');
+        await expect(choice).toContainText(words['expenses.wht_no']);
+        await expect(incomeCategory).toHaveCount(0);
         await expect(next).toBeEnabled();
       }
       await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
@@ -566,6 +635,10 @@ for (const width of [390, 1280]) {
         await page.reload();
         await expect(purpose).toHaveValue('เลี้ยงอาหารลูกค้าที่มาคุยงาน');
       }
-    } finally { await f.cleanup(); }
+    } finally {
+      await page.unroute(whtPath);
+      await f.client.whtIncomeCategory.deleteMany({ where: { code: whtCategoryCode } });
+      await f.cleanup();
+    }
   });
 }

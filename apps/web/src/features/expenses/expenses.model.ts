@@ -807,7 +807,9 @@ export function buildExpenseDraftReviewPayload(
     vendorAddressSnapshot: values.vendorAddressSnapshot.trim() || null,
     vendorBranchCodeSnapshot: values.vendorBranchCodeSnapshot.trim() || null,
     ...(values.vendorEntityKindSnapshot && { vendorEntityKindSnapshot: values.vendorEntityKindSnapshot }),
-    ...(values.whtCategoryCode && { whtCategoryCode: values.whtCategoryCode, ...(values.whtRate && { whtRate: values.whtRate }) }),
+    ...(values.whtInput?.value === '0' && values.whtCategoryCode === ''
+      ? { whtCategoryCode: '', whtRate: '0' }
+      : values.whtCategoryCode && { whtCategoryCode: values.whtCategoryCode, ...(values.whtRate && { whtRate: values.whtRate }) }),
     vendorDocumentNumber: values.vendorDocumentNumber.trim(),
     ...((!options.sourceDraft || values.expenseDate) && { expenseDate: values.expenseDate }),
     vatMode: values.vatMode,
@@ -1170,6 +1172,17 @@ export function expenseReviewWithholdsTax(values: ExpenseDraftReviewValues, save
   return values.whtInput
     ? Number(values.whtInput.value) > 0
     : Number(savedWhtAmount) > 0 || values.lines.some((line) => Number(line.whtRate) > 0);
+}
+
+/** Blank is a reviewer decision to clear WHT, using the API's existing explicit-zero idiom. */
+export function changeExpenseReviewWhtInput(values: ExpenseDraftReviewValues, input: ExpenseWhtInput): ExpenseDraftReviewValues {
+  if (input.value.trim() !== '') return { ...values, whtInput: input };
+  return {
+    ...values,
+    whtInput: { inputType: input.inputType, value: '0' },
+    whtCategoryCode: '', whtRate: '',
+    lines: values.lines.map((line) => ({ ...line, whtRate: null })),
+  };
 }
 
 export type ExpenseVatRatePreset = 'unset' | 'standard' | 'exempt' | 'zero' | 'nonVat' | 'unknownZero' | 'custom';

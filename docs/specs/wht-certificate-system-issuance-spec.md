@@ -66,7 +66,17 @@ UI ปัจจุบัน (ยืนยันจาก source):
 
 ### 4.2 Expenses — หน้าตรวจสอบ → "ยืนยันเอกสาร"
 
-UI ปัจจุบัน (ยืนยันจาก source):
+**UI follow-up 2026-10-04:** the first review step uses one withholding block after the line
+list, beginning with ไม่หัก / หัก. Selecting หัก reveals payee type, income category and
+rate/amount together before any positive rate is entered. Positive withholding still requires
+both classifications under the existing `validateConfirm` rules. Blank rate/amount or ไม่หัก
+sends explicit zero and clears withholding metadata/errors. Empty, loading and failed category
+lists are explained separately, including for read-only viewers. See
+[expense withholding input spec](expense-wht-input-units-mixed-vat-spec.md#review-interaction-2026-10-04).
+The print button, AP print heading/button and stale-state notice reuse the workspace dictionary's
+“พิมพ์เอกสาร 50 ทวิ” wording. Catalog activation and issuance gates are unchanged.
+
+UI ก่อนเปลี่ยนแปลง v1 (ยืนยันจาก source):
 
 - Dropdown บังคับ "ประเภทผู้รับเงิน (หัก ณ ที่จ่าย)" (`t('expenses.payee_entity_kind')`) ต่อเมื่อ `whtAmount > 0` ก่อนกดยืนยันได้ ([expense-status.logic.ts:318-323](../../apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts))
 - ปุ่ม "ยืนยันเอกสาร" (`t('expenses.confirm_and_post')`, [ExpenseReviewPage.tsx:923](../../apps/web/src/features/expenses/ExpenseReviewPage.tsx)) เรียก `confirmExpense` → toast "ยืนยันเอกสารเรียบร้อยแล้ว" — ไม่มี handoff/certificate ใด ๆ เกิดขึ้นหลังจากนี้วันนี้

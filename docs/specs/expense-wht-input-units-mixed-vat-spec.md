@@ -10,6 +10,41 @@ an explicit baht amount into a rounded inferred rate. Gross stays before WHT; pa
 gross minus accepted WHT. Existing permissions, optimistic concurrency, and confirmation
 boundaries remain in force.
 
+### Review interaction (2026-10-04)
+
+- One withholding block follows the line list. Its first control is “หัก ณ ที่จ่ายไหม”
+  (ไม่หัก / หัก), defaulting to ไม่หัก unless saved input, lines or totals carry withholding.
+  Selecting หัก shows payee type, income category, unit, rate/amount, optional base and
+  accepted withholding amount in that order. These fields appear nowhere else in the form.
+  The block remains a single column at 390 and 1280 pixels.
+- Selecting an income category fills both the editable percent input and certificate-rate
+  metadata from its existing default rate. Percent and baht still use the existing money
+  calculator and validation; no default rate is invented when enabling withholding.
+- Clearing the rate/amount or choosing ไม่หัก clears category/rate/base and legacy line rates,
+  removes withholding issues and stale save errors, and sends explicit zero to override saved
+  withholding. The existing update contract also receives blank category and zero certificate
+  rate, so these do not reappear on reload. Vendor taxpayer class remains a vendor snapshot.
+  No server/client validator relaxation is required: an empty editor is normalized to zero
+  before validation and saving. Non-empty invalid input still blocks.
+- A typed zero remains editable so staff can enter a fractional value such as 0.5 without
+  losing category/base or having the form disappear. Changing units starts the new amount at
+  zero, preserves classification/base and does not create an invalid blank input.
+- Loading, failed requests and successful empty income-category lists have separate Thai
+  messages from the workspace dictionary. An empty list explains that no category is open
+  for this shop, that an unclassified withholding document cannot be confirmed, and that a
+  bookkeeper with tax-configuration permission must check and activate categories. The same
+  notice appears read-only; it does not demand an edit that viewer cannot perform. Previously
+  saved categories absent from the current list display a Thai recorded-category label, never
+  a raw code. Existing classified documents retain the existing confirmation rules.
+- Show the authoritative preview amount when ready, saved amount for a read-only document,
+  and calculation/loading guidance otherwise. Do not label stale saved money as the current
+  edited amount. Preview requests omit certificate category/rate metadata rejected by the
+  existing money DTO; save requests retain it.
+
+Catalog activation, certificate entitlement/permission gates, PND53, API and database schema
+are outside this interaction change. Product wording stays Thai and comes from the workspace
+dictionary; certificate print labels and stale-state notice use one “พิมพ์เอกสาร 50 ทวิ” source.
+
 A receipt may contain taxable, zero-rated, exempt and non-VAT lines. Persist the explicit
 zero-treatment choice independently of Tax Code (ordinary receipts cannot retain a Tax
 Code). Never infer a product's eligibility from its name. Unknown historical zero treatment

@@ -1110,7 +1110,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             {whtIssueError && <div className="mb-2"><ErrorBanner message={whtIssueError} /></div>}
             <div className="flex flex-wrap gap-2">
               <button type="button" className={btnClass} disabled={whtIssuing} aria-busy={Boolean(whtIssuing)} onClick={() => void doIssueWhtCertificate()}>
-                {whtIssuing ? 'กำลังพิมพ์เอกสาร...' : 'พิมพ์เอกสารทวิ 50'}
+                {whtIssuing ? 'กำลังพิมพ์เอกสาร...' : t('wht.print_certificate', locale)}
               </button>
               <button type="button" className={ghostClass} disabled={whtIssuing} onClick={() => setWhtIssuePrompt(null)}>ปิด</button>
             </div>
