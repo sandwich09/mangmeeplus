@@ -113,7 +113,7 @@ test('A3 overpayment is immediate, names excess/remedy and blocks confirmation; 
   const d = expense({ status: 'READY_FOR_CONFIRMATION', paidAmount: '700', outstandingAmount: '0', payments: [payment] });
   const html = harness({ detail: d }).render();
   assert.match(visible(html), /จ่ายเกินยอดสุทธิ ฿200.00/);
-  assert.match(html, /ยกเลิกรายการจ่ายด้านล่างก่อนยืนยัน/);
+  assert.match(html, /ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน/);
   assert.match(html, /<button[^>]*disabled=""[^>]*>ยืนยันเอกสาร<\/button>/);
   assert.doesNotMatch(html, /ต้องตรวจ 0 รายการ|>ชำระแล้ว<|>ชำระบางส่วน</);
   const legacy = harness({ detail: { ...d, payments: [] } }).render();
@@ -347,7 +347,7 @@ test('round 7: unconfirmed and refreshed stale-pay notices use one boxed alert e
 });
 
 test('round 7: exactly one full excess remedy follows the visible review/confirm action or stays in payment history', () => {
-  const full = 'จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายด้านล่างก่อนยืนยัน';
+  const full = 'จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน';
   for (const status of ['NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']) {
     for (const step of ['data', 'evidence', 'review']) {
       const html = harness({ step, detail: expense({ status, paidAmount: '700', outstandingAmount: '0', payments: [payment] }) }).render();
@@ -381,7 +381,7 @@ test('recheck 3: editing prices shows an adjacent excess cue and sending for rev
   const mark = stub(api, 'markExpenseReadyAsReviewer', async () => { sent++; return detail; });
   try {
     const html = page.render();
-    assert.match(html, /id="expense-review-overpayment"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายด้านล่างก่อนยืนยัน/);
+    assert.match(html, /id="expense-review-overpayment"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน/);
     assert.equal(page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ส่งตรวจสอบ')?.props.disabled, false);
     await page.act('button', 'ส่งตรวจสอบ'); assert.equal(sent, 1);
   } finally { mark.mock.restore(); }

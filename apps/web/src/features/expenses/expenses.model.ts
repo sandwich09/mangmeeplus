@@ -818,7 +818,9 @@ export function buildExpenseDraftReviewPayload(
     ...((!options.sourceDraft || values.expenseDate) && { expenseDate: values.expenseDate }),
     vatMode: values.vatMode,
     ...(includeTaxFacts && payloadValues.vatSource && { vatSource: payloadValues.vatSource }),
-    ...(includeTaxFacts && values.whtInput && { whtInput: values.whtInput }),
+    // A half-typed value ("03", "") never reaches the API malformed; a blank one is refused before any save
+    // while หัก is chosen (ExpenseReviewEditSection.save), so "0" here only feeds the totals preview.
+    ...(includeTaxFacts && values.whtInput && { whtInput: { ...values.whtInput, value: normalizeExpenseWhtValue(values.whtInput.value) || '0' } }),
     ...(options.partial && options.sourceDraft && { sourceDraft: sourceReviewInput(values, options.sourceDraft) }),
     ...(includeLines && { lines: payloadValues.lines.map((line, index) => ({
       ...(line.id && { id: line.id }),
@@ -1187,6 +1189,19 @@ export function changeExpenseReviewWhtInput(values: ExpenseDraftReviewValues, in
     whtCategoryCode: '', whtRate: '',
     lines: values.lines.map((line) => ({ ...line, whtRate: null })),
   };
+}
+
+/** R2: only digits and one decimal point enter the withholding field; "-" and letters never do. */
+export function sanitizeExpenseWhtTyping(value: string): string {
+  const [whole = '', ...rest] = value.replace(/[^\d.]/g, '').split('.');
+  return rest.length ? `${whole}.${rest.join('')}` : whole;
+}
+
+/** R2: what was typed, tidied the way leaving the field does — "03" → "3", ".5" → "0.5", "3." → "3". Blank stays blank. */
+export function normalizeExpenseWhtValue(value: string): string {
+  const [whole = '', fraction = ''] = value.trim().split('.');
+  if (!whole && !fraction) return '';
+  return `${whole.replace(/^0+(?=\d)/, '') || '0'}${fraction ? `.${fraction}` : ''}`;
 }
 
 export type ExpenseVatRatePreset = 'unset' | 'standard' | 'exempt' | 'zero' | 'nonVat' | 'unknownZero' | 'custom';

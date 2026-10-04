@@ -1,6 +1,6 @@
 'use client';
 
-import { normalizeExpensePaymentAmount, expenseOverpaidAmount, expenseOverpaymentRemedy, expenseReopenedMessage, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
+import { normalizeExpensePaymentAmount, expenseOverpaidAmount, expenseOverpaymentRemedy, expenseReopenedMessage, EXPENSE_CORRECTION_WORDS, EXPENSE_REVIEW_STEP_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
 import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1846,7 +1846,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         {guided && (
           <div className="border-b border-gray-100 bg-brand-25 px-4 py-2.5 text-sm text-gray-700">
             <span className="font-bold text-brand-700">ขั้นที่ {stepIndex + 1}:</span>{' '}
-            {t(STEP_HELPER_KEYS[step], locale)}
+            {/* The sentence names the button actually shown on the last step. */}
+            {step === 'review' && detail.status === 'READY_FOR_CONFIRMATION'
+              ? canConfirm ? EXPENSE_REVIEW_STEP_WORDS.thenConfirm : EXPENSE_REVIEW_STEP_WORDS.sentAwaitingConfirm
+              : t(STEP_HELPER_KEYS[step], locale)}
           </div>
         )}
 
@@ -2001,13 +2004,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                         </div>
 
                       {vendorCard}
-                      {moneyCard}
+                      {step === 'data' && moneyCard}
                     </div>
                     <div className={cx('space-y-4', step === 'evidence' ? undefined : 'hidden')}>
                       {documentReviewCard}
                       {priceMismatchWarning}
                     </div>
                     <div className={cx('space-y-4', step === 'review' ? undefined : 'hidden')}>
+                      {/* The last step asks the reviewer to look at the whole summary: the amounts are part of it. */}
+                      {step === 'review' && moneyCard}
                       {auditCard}
                       {duplicatesCard}
                     </div>

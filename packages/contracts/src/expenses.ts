@@ -661,7 +661,10 @@ export const EXPENSE_CORRECTION_WORDS = {
   paymentOnUnconfirmed: 'เอกสารยังไม่ได้ยืนยัน จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ยืนยันเอกสารก่อน',
   paymentAlreadyCancelled: 'รายการจ่ายนี้ถูกยกเลิกแล้ว โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจประวัติการจ่าย',
   overpaid: 'จ่ายเกินยอดสุทธิ',
-  cancelBeforeConfirm: 'ยกเลิกรายการจ่ายด้านล่างก่อนยืนยัน',
+  // Direction-free: the payment card sits above this sentence on the last step and below it on the first.
+  cancelBeforeConfirm: 'ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน',
+  /** Beside ส่งตรวจสอบ, which over-payment does not block: say what is true there. */
+  sendableWhileOverpaid: 'ส่งตรวจสอบได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน',
   askCancelBeforeConfirm: 'ให้ผู้มีสิทธิ์ยกเลิกรายการจ่ายก่อนยืนยัน',
   legacyOverpaid: 'ไม่พบรายการจ่ายให้ยกเลิก ติดต่อผู้มีสิทธิ์ยกเลิกเอกสาร',
   reasonRequired: 'กรุณาระบุเหตุผลอย่างน้อย 3 ตัวอักษร และไม่เกิน 500 ตัวอักษร',
@@ -690,6 +693,18 @@ export function expenseOverpaymentRemedy(hasRecordedPayments: boolean, canCancel
   return !hasRecordedPayments ? EXPENSE_CORRECTION_WORDS.legacyOverpaid : canCancel
     ? EXPENSE_CORRECTION_WORDS.cancelBeforeConfirm : EXPENSE_CORRECTION_WORDS.askCancelBeforeConfirm;
 }
+/** Review-form withholding guidance. Blank no longer means "no withholding": the decision is its own control. */
+export const EXPENSE_WITHHOLDING_WORDS = {
+  /** `noLabel` is the decision option as printed on screen, so the way out always names a real control. */
+  wayOut: (noLabel: string) => `เลือก “${noLabel}” ถ้ารายการนี้ไม่ต้องหัก ณ ที่จ่าย`,
+  percentHint: 'กรอกเปอร์เซ็นต์ตามเอกสาร เช่น 3 หมายถึง 3% ของฐานหัก ณ ที่จ่าย',
+  amountHint: 'เก็บยอดบาทที่กรอกไว้แม้แก้รายการ ระบบตรวจว่าไม่เกินฐานหักและยอดรวมเมื่อบันทึก',
+} as const;
+/** Last review step: the sentence follows the button actually shown (ส่งตรวจสอบ keeps the dictionary's approver sentence). */
+export const EXPENSE_REVIEW_STEP_WORDS = {
+  thenConfirm: 'ดูสรุปทั้งหมดอีกครั้ง แล้วยืนยันเอกสาร',
+  sentAwaitingConfirm: 'ดูสรุปทั้งหมดอีกครั้ง เอกสารนี้ส่งตรวจสอบแล้ว รอผู้มีสิทธิ์ยืนยัน',
+} as const;
 /** Keep the existing positive-money boundary; only remove insignificant leading zeroes. */
 export function normalizeExpensePaymentAmount(value: string): string { return value.replace(/^0+(?=\d)/, ''); }
 

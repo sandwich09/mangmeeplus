@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import * as model from './expenses.model';
 import type { ExpenseDraftReviewValues } from './expenses.model';
-import type { ExpenseWhtInput } from '@watchdog-bms/contracts';
+import { EXPENSE_REVIEW_STEP_WORDS, EXPENSE_WITHHOLDING_WORDS, type ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { validateExpenseReview } from './expense-review-validation';
 import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
 import { apiErrorMessage } from '../../common/api/api-error-message';
@@ -57,8 +57,47 @@ test('clearing either unit overrides old totals/rates, removes every withholding
       assert.ok(payload.lines!.every((line) => !('whtRate' in line)));
     }
   }
-  assert.match(block, /changeExpenseReviewWhtInput\(current, \{ inputType: whtInput.inputType, value,/);
-  assert.match(block, /if \(value\.trim\(\) === ''\) setWithholdingEnabled\(false\)/);
+  // R1: only the หัก/ไม่หัก control changes the decision. Clearing the value used to flip it to ไม่หัก
+  // mid-typing, hiding the block and dropping focus (owner report 2026-10-05).
+  assert.equal((block.match(/setWithholdingEnabled\(/g) ?? []).length, 1);
+  assert.doesNotMatch(block, /setWithholdingEnabled\(false\)/);
+});
+
+test('R2: only digits and one point are typed; leaving the field tidies a leading zero instead of refusing it', () => {
+  assert.equal(model.sanitizeExpenseWhtTyping('-1'), '1');
+  assert.equal(model.sanitizeExpenseWhtTyping('3a.5.2'), '3.52');
+  for (const [typed, tidy] of [['03', '3'], ['00.5', '0.5'], ['.5', '0.5'], ['3.', '3'], ['0', '0'], ['', ''], ['10', '10']] as const) {
+    assert.equal(model.normalizeExpenseWhtValue(typed), tidy, typed);
+  }
+  const typing = { ...values(), vendorEntityKindSnapshot: 'JURISTIC' as const, whtCategoryCode: 'SERVICE', whtInput: { inputType: 'RATE' as const, value: '03' } };
+  assert.deepEqual(validateExpenseReview(typing, { today: '2026-10-04', withholdingChosen: true }), [], '"03" is 3 being typed, not an error');
+  assert.deepEqual(model.buildExpenseDraftReviewPayload(typing).whtInput, { inputType: 'RATE', value: '3' });
+  assert.match(block, /type="text"\s+inputMode="decimal"/);
+  assert.match(block, /sanitizeExpenseWhtTyping\(event\.target\.value\)/);
+  assert.match(block, /onBlur=\{\(\) => \{\s*setWhtValueFocused\(false\); setWhtReveal\(true\);[\s\S]*?normalizeExpenseWhtValue/);
+  assert.match(edit, /whtValueTyping && issue\.field === 'whtInput\.value'/, 'an empty value is not red while it is being typed');
+});
+
+test('R3: หัก with a missing payee type, category or value is refused in block order and names the way out; 0 stays valid', () => {
+  const chosen = (v: ExpenseDraftReviewValues) => validateExpenseReview(v, { today: '2026-10-04', withholdingChosen: true }).map((issue) => issue.field);
+  const empty = { ...values(), whtInput: { inputType: 'RATE' as const, value: '' } };
+  assert.deepEqual(chosen(empty), ['vendorEntityKindSnapshot', 'whtCategoryCode', 'whtInput.value']);
+  assert.deepEqual(chosen({ ...empty, vendorEntityKindSnapshot: 'JURISTIC' }), ['whtCategoryCode', 'whtInput.value']);
+  assert.deepEqual(chosen({ ...empty, vendorEntityKindSnapshot: 'JURISTIC', whtCategoryCode: 'SERVICE' }), ['whtInput.value']);
+  assert.deepEqual(chosen({ ...empty, vendorEntityKindSnapshot: 'JURISTIC', whtCategoryCode: 'SERVICE', whtInput: { inputType: 'RATE', value: '0' } }), []);
+  assert.deepEqual(validateExpenseReview(changeInput(empty, { inputType: 'RATE', value: '' }), { today: '2026-10-04', withholdingChosen: false }), [], 'ไม่หัก asks for none of it');
+  assert.match(edit, /if \(whtHiddenError\) \{\s*setWhtReveal\(true\);[\s\S]*?return false;/, 'ถัดไป stays on the step instead of saving ไม่หัก');
+  assert.equal(EXPENSE_WITHHOLDING_WORDS.wayOut(words['expenses.wht_no']!), 'เลือก “ไม่หัก” ถ้ารายการนี้ไม่ต้องหัก ณ ที่จ่าย');
+  assert.equal((block.match(/\{whtWayOut\(/g) ?? []).length, 3, 'beside each field that can be the first missing one');
+  assert.match(edit, /issue\.field === whtMissing\[0\]/, 'but printed once');
+  assert.match(edit, /whtMissing\.indexOf\(issue\.field\) > 0/, 'only the first missing field is said: picking a category fills the rate');
+});
+
+test('R4 and R5: choosing หัก starts clean, and the footer and totals card only point to a withholding problem', () => {
+  assert.match(block, /else setValues\(\(current\) => \(\{ \.\.\.current, whtInput: \{ inputType: 'RATE', value: '' \} \}\)\)/, 'empty, never the "0" that ไม่หัก stored');
+  assert.match(block, /setWhtReveal\(!enabled\)/, 'no red until the reviewer leaves a field or presses ถัดไป');
+  assert.match(edit, /firstBlockingIsWht \? null : firstBlockingMessage/);
+  assert.match(edit, /useExpenseReviewTotals\([\s\S]*?blockingPointer, totalsRetry/);
 });
 
 test('choosing no withholding clears category/rate/base/legacy rates and issues while keeping the vendor snapshot', () => {
@@ -130,14 +169,16 @@ test('a saved category outside the current catalog displays a Thai label instead
 });
 
 test('withholding hints explain optional blanks and the actual base without English tokens', () => {
-  for (const key of ['expenses.wht_percent_hint', 'expenses.wht_amount_hint', 'expenses.wht_base_hint']) {
-    assert.doesNotMatch(words[key]!, /[A-Za-z]/);
-    assert.equal((workspaceDictionary.en as Record<string, string>)[key], words[key], 'employee guidance has one Thai wording source in either workspace locale');
+  assert.doesNotMatch(words['expenses.wht_base_hint']!, /[A-Za-z]/);
+  assert.equal((workspaceDictionary.en as Record<string, string>)['expenses.wht_base_hint'], words['expenses.wht_base_hint'], 'employee guidance has one Thai wording source in either workspace locale');
+  // A blank value is refused while หัก is chosen, so the value hints no longer promise "เว้นว่าง … เพื่อไม่หัก".
+  for (const hint of [EXPENSE_WITHHOLDING_WORDS.percentHint, EXPENSE_WITHHOLDING_WORDS.amountHint]) {
+    assert.doesNotMatch(hint, /[A-Za-z]|เว้นว่าง/);
+    assert.match(hint, /ฐานหัก/);
   }
-  for (const key of ['expenses.wht_percent_hint', 'expenses.wht_amount_hint']) {
-    assert.match(words[key]!, /เว้นว่างหรือกรอก 0 เพื่อไม่หัก/);
-    assert.match(words[key]!, /ฐานหัก/);
-  }
+  assert.match(block, /EXPENSE_WITHHOLDING_WORDS\.amountHint : EXPENSE_WITHHOLDING_WORDS\.percentHint/);
+  assert.doesNotMatch(block, /wht_percent_hint|wht_amount_hint/);
+  assert.ok(block.indexOf('EXPENSE_WITHHOLDING_WORDS.percentHint') < block.indexOf("t('expenses.wht_base', locale)"), 'the value hint sits under the value, before the base field');
 });
 
 test('all printed certificate labels and stale-state notice share the 50 ทวิ wording source', () => {
@@ -176,4 +217,13 @@ test('income categories match the payee form and changing type clears an incompa
   assert.match(block, /changeExpensePayeeType/);
   assert.match(block, /applicableWhtCategories.map/);
   assert.match(block, /applicableWhtCategories.length === 0/);
+});
+
+test('the last step names the button actually shown and carries the amounts it asks the reviewer to check', () => {
+  const review = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
+  assert.match(review, /detail\.status === 'READY_FOR_CONFIRMATION'\s*\? canConfirm \? EXPENSE_REVIEW_STEP_WORDS\.thenConfirm : EXPENSE_REVIEW_STEP_WORDS\.sentAwaitingConfirm\s*: t\(STEP_HELPER_KEYS\[step\], locale\)/);
+  assert.equal(EXPENSE_REVIEW_STEP_WORDS.thenConfirm, 'ดูสรุปทั้งหมดอีกครั้ง แล้วยืนยันเอกสาร');
+  assert.doesNotMatch(EXPENSE_REVIEW_STEP_WORDS.sentAwaitingConfirm, /ส่งให้ผู้อนุมัติ/, 'already sent: it must not ask to send again');
+  assert.match(review, /\{step === 'data' && moneyCard\}/);
+  assert.match(review, /\{step === 'review' && moneyCard\}/, 'total, VAT, withholding and the amount to pay are on the last screen');
 });

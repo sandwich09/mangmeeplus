@@ -43,12 +43,12 @@ import {
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS,
   insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange, changeExpenseVatSourceType,
   formatTaxId, taxIdDigits, reviewValues, incompleteSourceReviewLine,
-  expenseReviewWithholdsTax, changeExpenseReviewWhtInput, expenseWhtCategoriesForPayee, changeExpensePayeeType, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
+  expenseReviewWithholdsTax, changeExpenseReviewWhtInput, sanitizeExpenseWhtTyping, normalizeExpenseWhtValue, expenseWhtCategoriesForPayee, changeExpensePayeeType, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseCaptureCapabilityDto, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { useExpenseReviewTotals, type ExpenseReviewTotalsState } from './useExpenseReviewTotals';
-import { AI_BUDGET_REFUSAL_CODES, isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, EXPENSE_WITHHOLDING_WORDS, isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification } from '@watchdog-bms/contracts';
 import { counterpartyAutoSaveNotice, counterpartyHref } from '../counterparties/counterparties.logic';
 import { COUNTERPARTY_READ_PERMISSION, type CounterpartyAutoSaveNotice } from '../counterparties/counterparties.model';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
@@ -149,6 +149,9 @@ function messageWithParams(message: string, params?: Record<string, string>): st
 function fieldIssue(issues: ExpenseFieldIssue[], field: string): ExpenseFieldIssue | undefined {
   return issues.find((issue) => issue.field === field);
 }
+
+/** Problems that are said beside a field of the withholding block, in the block's own order. */
+const WHT_ISSUE_FIELDS = ['vendorEntityKindSnapshot', 'whtCategoryCode', 'whtInput.inputType', 'whtInput.value', 'whtRate', 'whtInput.baseAmount'];
 
 /** §8: the way forward of a registry notice, dropped entirely when the reader may not open it. */
 function RegistryNoticeLink({ companyId, notice }: { companyId: string; notice: CounterpartyAutoSaveNotice }) {
@@ -1175,6 +1178,11 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const [whtCategories, setWhtCategories] = useState<WhtIncomeCategoryOption[]>([]);
   const [whtCategoriesState, setWhtCategoriesState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [withholdingEnabled, setWithholdingEnabled] = useState(() => expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount));
+  // R4: a freshly chosen หัก shows no red. Leaving a value field or pressing ถัดไป reveals what is missing.
+  const [whtReveal, setWhtReveal] = useState(true);
+  // R2: an empty value is only a value being typed until the reviewer leaves the field.
+  const [whtValueFocused, setWhtValueFocused] = useState(false);
+  const whtBlockRef = useRef<HTMLFieldSetElement>(null);
   useEffect(() => {
     let active = true;
     setWhtCategoriesState('loading');
@@ -1213,21 +1221,37 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const showsTax = showsTaxCapture(capture.mode, hasRecordedTax(detail.lines));
   const aiGrandTotal = aiGrandTotalValue(detail.aiVerifiedFieldsJson);
   const aiSuggestion = useMemo(() => expenseAiSuggestion(detail.aiVerificationSummaryJson), [detail.aiVerificationSummaryJson]);
-  const issues = useMemo(() => validateExpenseReview(values, { today: todayCivilDate(), aiGrandTotal, whtAmount: detail.whtAmount, sourceDocumentType: detail.sourceDocumentType }), [values, aiGrandTotal, detail.whtAmount, detail.sourceDocumentType]);
+  const issues = useMemo(() => validateExpenseReview(values, { today: todayCivilDate(), aiGrandTotal, whtAmount: detail.whtAmount, sourceDocumentType: detail.sourceDocumentType, withholdingChosen: withholdingEnabled }), [values, aiGrandTotal, detail.whtAmount, detail.sourceDocumentType, withholdingEnabled]);
+  const whtQuiet = withholdingEnabled && !whtReveal;
+  const whtBlank = (values.whtInput?.value ?? '').trim() === '';
+  const whtValueTyping = whtValueFocused && whtBlank;
+  // R3: of what is still missing while หัก is chosen, only the first in block order is said — picking a
+  // category fills the rate, so flagging both would ask for the same thing twice.
+  const whtMissing = withholdingEnabled
+    ? ['vendorEntityKindSnapshot', 'whtCategoryCode', ...(whtBlank ? ['whtInput.value'] : [])]
+      .filter((field) => issues.some((issue) => issue.field === field && issue.severity === 'error'))
+    : [];
+  const shownIssues = issues.filter((issue) => !(WHT_ISSUE_FIELDS.includes(issue.field)
+    && (whtQuiet || (whtValueTyping && issue.field === 'whtInput.value') || whtMissing.indexOf(issue.field) > 0)));
+  const whtHiddenError = issues.some((issue) => issue.severity === 'error' && !shownIssues.includes(issue));
   const vendorNameIssue = fieldIssue(issues, 'vendorNameSnapshot');
   const vendorTaxIdIssue = fieldIssue(issues, 'vendorTaxIdSnapshot');
   const vendorAddressIssue = fieldIssue(issues, 'vendorAddressSnapshot');
   const documentNumberIssue = fieldIssue(issues, 'vendorDocumentNumber');
   const expenseDateIssue = fieldIssue(issues, 'expenseDate');
   const linesIssue = fieldIssue(issues, 'lines');
-  const whtValueIssue = fieldIssue(issues, 'whtInput.value') ?? fieldIssue(issues, 'whtRate');
-  const whtUnitIssue = fieldIssue(issues, 'whtInput.inputType');
-  const payeeEntityKindIssue = fieldIssue(issues, 'vendorEntityKindSnapshot');
-  const whtCategoryIssue = fieldIssue(issues, 'whtCategoryCode');
+  const whtValueIssue = fieldIssue(shownIssues, 'whtInput.value') ?? fieldIssue(shownIssues, 'whtRate');
+  const whtUnitIssue = fieldIssue(shownIssues, 'whtInput.inputType');
+  const whtBaseIssue = fieldIssue(shownIssues, 'whtInput.baseAmount');
+  const payeeEntityKindIssue = fieldIssue(shownIssues, 'vendorEntityKindSnapshot');
+  const whtCategoryIssue = fieldIssue(shownIssues, 'whtCategoryCode');
 
   const documentWhtRate = expenseDocumentWhtRate(values.lines);
   const applicableWhtCategories = expenseWhtCategoriesForPayee(whtCategories, values.vendorEntityKindSnapshot);
   const whtInput: ExpenseWhtInput = values.whtInput ?? { inputType: 'RATE', value: expenseRateToPercent(documentWhtRate ?? '') };
+  // R3: the way out is named once, beside that first missing field.
+  const whtWayOut = (issue?: ExpenseFieldIssue) => isMutable && issue && issue.field === whtMissing[0]
+    ? <span className="mt-1 block text-xs text-gray-600">{EXPENSE_WITHHOLDING_WORDS.wayOut(t('expenses.wht_no', locale))}</span> : null;
   const withholdsTax = expenseReviewWithholdsTax(values, detail.whtAmount);
   const vatSource = values.vatSource ?? { inputType: 'NONE' as const };
   const vatSourceMode = vatSource.lines?.length ? 'LINES' : vatSource.inputType;
@@ -1238,14 +1262,18 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const sourceCategoryMessage = sourceCategoryIncompleteIndexes.length
     ? `${t('expenses.source_draft_item_n', locale).replace('{n}', String(sourceCategoryIncompleteIndexes[0]! + 1))} ${t('expenses.category', locale)}: ${t('expenses.source_draft_missing_one', locale)}`
     : null;
-  const blockingIssueCount = issues.filter((issue) => issue.severity === 'error').length
+  const blockingIssueCount = shownIssues.filter((issue) => issue.severity === 'error').length
     + (vatSourceError ? 1 : 0) + sourceCategoryIncompleteIndexes.length;
-  const firstBlockingIssue = issues.find((issue) => issue.severity === 'error');
+  const firstBlockingIssue = shownIssues.find((issue) => issue.severity === 'error');
   const firstBlockingMessage = firstBlockingIssue
     ? expenseReviewMessage(firstBlockingIssue.messageKey, locale, isMutable, firstBlockingIssue.params)
     : vatSourceError ?? sourceCategoryMessage;
+  // R5: a withholding problem is said once, beside its field. The footer and the totals card only point to it.
+  const firstBlockingIsWht = Boolean(firstBlockingIssue && WHT_ISSUE_FIELDS.includes(firstBlockingIssue.field));
+  const blockingPointer = firstBlockingIsWht
+    ? t('expenses.v_blocking_count', locale).replace('{count}', String(blockingIssueCount)) : firstBlockingMessage;
   const liveTotals = useExpenseReviewTotals(companyId, detail, values,
-    isMutable && (canReview || !detail.sourceDraft), firstBlockingMessage, totalsRetry, onTotalsChange);
+    isMutable && (canReview || !detail.sourceDraft), blockingPointer, totalsRetry, onTotalsChange);
   const totalIssues = liveTotals?.status === 'ready' && liveTotals.totals && aiGrandTotal
     && Math.abs(Number(liveTotals.totals.grandTotalAmount) - Number(aiGrandTotal)) > 0.05
     ? [{ field: 'total', severity: 'warn' as const, messageKey: 'expenses.v_total_mismatch' as const,
@@ -1297,7 +1325,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     : null;
 
   useEffect(() => {
-    setValues(reviewValues(detail)); setWithholdingEnabled(expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount)); setVatEditors({}); setVatSourceDirty(false); setTaxFactsDirty(false);
+    setValues(reviewValues(detail)); setWithholdingEnabled(expenseReviewWithholdsTax(reviewValues(detail), detail.whtAmount)); setWhtReveal(true); setVatEditors({}); setVatSourceDirty(false); setTaxFactsDirty(false);
     setVatOverrideReason(''); setVatOverrideLineNumber(null);
   }, [detail.id, detail.updatedAt]);
   useEffect(() => {
@@ -1309,7 +1337,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       ? { reason, vatLineNumber: vatOverrideLineNumber, expectedUpdatedAt: detail.updatedAt }
       : null;
   }, [canConfirm, detail.updatedAt, vatBlocked, vatOverrideLineNumber, vatOverrideReason, vatOverrideRef]);
-  useEffect(() => { onValidationChange?.(blockingIssueCount, firstBlockingMessage); }, [blockingIssueCount, firstBlockingMessage, onValidationChange]);
+  useEffect(() => { onValidationChange?.(blockingIssueCount, firstBlockingIsWht ? null : firstBlockingMessage); }, [blockingIssueCount, firstBlockingIsWht, firstBlockingMessage, onValidationChange]);
 
   const updateLine = (index: number, field: EditableReviewLineField, value: string, vatTreatment?: ExpenseLineVatTreatment | null) => {
     if (field !== 'description') setVatSourceDirty(true);
@@ -1408,6 +1436,16 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
 
   const save = async (explicitDraftSave = false): Promise<boolean> => {
     if (busy || !isMutable) return false;
+    // R3: หัก with something missing never moves on (and never saves ไม่หัก in its place). The first
+    // press reveals what is missing beside its field and takes the reviewer there.
+    if (whtHiddenError) {
+      setWhtReveal(true); setWhtValueFocused(false);
+      window.setTimeout(() => {
+        const target = whtBlockRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? whtBlockRef.current;
+        target?.scrollIntoView({ block: 'center' }); target?.focus({ preventScroll: true });
+      }, 50);
+      return false;
+    }
     if (skipUnchangedSave && JSON.stringify(values) === JSON.stringify(reviewValues(detail))) return true;
     // The registry notice belongs to the save that produced it; a refused save must not leave the
     // previous one on screen as if it described this attempt.
@@ -2102,13 +2140,15 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         );
       })}
 
-      <fieldset data-testid="expense-withholding" className="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-3">
+      <fieldset data-testid="expense-withholding" ref={whtBlockRef} tabIndex={-1} className="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-3">
         <legend className="px-1 text-sm font-semibold text-gray-800">{t('expenses.wht_choice', locale)}</legend>
         <ThemedSelect aria-label={t('expenses.wht_choice', locale)} value={withholdingEnabled ? 'YES' : 'NO'}
           onChange={(event) => {
             const enabled = event.target.value === 'YES';
-            setWithholdingEnabled(enabled); setTaxFactsDirty(true); setError(null);
+            // R1: the only place the decision changes. R4: หัก starts clean — empty value, no category, no red.
+            setWithholdingEnabled(enabled); setWhtReveal(!enabled); setTaxFactsDirty(true); setError(null);
             if (!enabled) setValues((current) => changeExpenseReviewWhtInput(current, { inputType: 'RATE', value: '' }));
+            else setValues((current) => ({ ...current, whtInput: { inputType: 'RATE', value: '' } }));
           }} disabled={!isMutable || busy}>
           <option value="NO">{t('expenses.wht_no', locale)}</option>
           <option value="YES">{t('expenses.wht_yes', locale)}</option>
@@ -2124,6 +2164,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 {Object.entries(PAYEE_ENTITY_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
               </ThemedSelect>
               <FieldIssueNote canEdit={isMutable} issue={payeeEntityKindIssue} />
+              {whtWayOut(payeeEntityKindIssue)}
             </div>
             <div>
               <span className="mb-1 block text-xs font-medium text-gray-600">
@@ -2143,6 +2184,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 {applicableWhtCategories.map((item) => <option key={item.code} value={item.code}>{item.nameTh}</option>)}
               </ThemedSelect>
               <FieldIssueNote canEdit={isMutable} issue={whtCategoryIssue} />
+              {whtWayOut(whtCategoryIssue)}
             </div>
             {whtCategoriesState === 'loading' && <p className="text-sm text-gray-600">{t('expenses.wht_categories_loading', locale)}</p>}
             {whtCategoriesState === 'error' && <p role="status" className="text-sm text-warning-700">{t('expenses.wht_categories_failed', locale)}</p>}
@@ -2167,41 +2209,46 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 <span className="mb-1 block text-xs font-medium text-gray-600">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_value_baht' : 'expenses.wht_value_percent', locale)}</span>
                 <input
                   id={`expense-wht-rate-${detail.id}`}
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min="0"
-                  max={whtInput.inputType === 'RATE' ? '100' : undefined}
-                  step="0.01"
                   className={validationInputClass(whtValueIssue)}
                   aria-invalid={whtValueIssue?.severity === 'error' || undefined}
                   value={whtInput.value}
                   onChange={(event) => {
-                    const value = event.target.value;
+                    // R1/R2: editing the value never touches the decision or the category; an empty field
+                    // is only a field being typed in, and "-" or letters never enter it.
+                    const value = sanitizeExpenseWhtTyping(event.target.value);
                     setTaxFactsDirty(true); setError(null);
-                    setValues((current) => changeExpenseReviewWhtInput(current, { inputType: whtInput.inputType, value,
-                      ...(current.whtInput?.baseAmount !== undefined && { baseAmount: current.whtInput.baseAmount }) }));
-                    if (value.trim() === '') setWithholdingEnabled(false);
+                    setValues((current) => ({ ...current, whtInput: { inputType: whtInput.inputType, value,
+                      ...(current.whtInput?.baseAmount !== undefined && { baseAmount: current.whtInput.baseAmount }) } }));
+                  }}
+                  onFocus={() => setWhtValueFocused(true)}
+                  onBlur={() => {
+                    setWhtValueFocused(false); setWhtReveal(true);
+                    setValues((current) => current.whtInput
+                      ? { ...current, whtInput: { ...current.whtInput, value: normalizeExpenseWhtValue(current.whtInput.value) } } : current);
                   }}
                   disabled={!isMutable || busy}
                 />
                 <FieldIssueNote canEdit={isMutable} issue={whtValueIssue} />
+                {whtWayOut(whtValueIssue)}
+                {isMutable && <span className="mt-1 block text-xs text-gray-500">{whtInput.inputType === 'AMOUNT' ? EXPENSE_WITHHOLDING_WORDS.amountHint : EXPENSE_WITHHOLDING_WORDS.percentHint}</span>}
               </label>
             </div>
             {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
             {(Number(whtInput.value) > 0 || whtInput.baseAmount !== undefined) && <label className="mt-3 block">
-              <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.wht_base', locale)}</span>
+              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.wht_base', locale)}</span>
               <input type="number" inputMode="decimal" min="0" step="0.01"
-                aria-invalid={Boolean(fieldIssue(issues, 'whtInput.baseAmount'))}
-                className={validationInputClass(fieldIssue(issues, 'whtInput.baseAmount'))}
-                value={whtInput.baseAmount ?? ''} disabled={!isMutable || busy}
+                aria-invalid={Boolean(whtBaseIssue)}
+                className={validationInputClass(whtBaseIssue)}
+                value={whtInput.baseAmount ?? ''} disabled={!isMutable || busy} onBlur={() => setWhtReveal(true)}
                 onChange={(event) => { setTaxFactsDirty(true); const base = event.target.value;
                   setValues((current) => { const next = { ...whtInput, ...current.whtInput };
                     if (base === '') delete next.baseAmount; else next.baseAmount = base;
                     return { ...current, whtInput: next }; }); }} />
-              <FieldIssueNote canEdit={isMutable} issue={fieldIssue(issues, 'whtInput.baseAmount')} />
+              <FieldIssueNote canEdit={isMutable} issue={whtBaseIssue} />
               <span className="mt-1 block text-xs text-gray-500">{t('expenses.wht_base_hint', locale)}</span>
             </label>}
-            <p className="mt-1 text-xs text-gray-500">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_amount_hint' : 'expenses.wht_percent_hint', locale)}</p>
 
             {liveTotals?.status === 'ready' && liveTotals.totals
               ? <MoneyRow label={t('expenses.wht', locale)} value={liveTotals.totals.whtAmount} />
