@@ -27,6 +27,11 @@ import { BillingCashMovementsService } from '../billing/application/billing-cash
 import { ExecutiveReportBuildUseCase } from '../executive-business/application/executive-report-build.use-case';
 import { backfillReportLabels, REPORT_LABEL_BACKFILL_REQUEST_ID } from '../../../prisma/report-label-backfill';
 import { PLATFORM_TENANT_ID } from '../sales-console/application/sales-context';
+import { CompanyTeamNoteService } from './application/company-team-note.service';
+import { AuditService } from '../audit/application/audit.service';
+import { PrismaAuditRepository } from '../audit/infrastructure/prisma-audit.repository';
+import { CompanyIdentityUseCase } from '../data-model-core/application/use-cases/company-identity.use-case';
+import type { RequestContext } from '../auth/domain/models/request-context.model';
 import { GetPartnerDetailUseCase } from './application/use-cases/get-partner-detail.use-case';
 import { ListPartnersUseCase } from './application/use-cases/list-partners.use-case';
 import { UpdatePartnerProfileUseCase } from './application/use-cases/update-partner-profile.use-case';
@@ -219,4 +224,60 @@ describe('company report labels on real PostgreSQL', { skip: !databaseUrl }, () 
     assert.equal((await detail().execute(PLATFORM_TENANT_ID)).reportLabels.classification, 'INTERNAL');
     await assert.rejects(() => update().execute(cmd(PLATFORM_TENANT_ID, 'rt-first-admin', { reportClassification: 'TEST' })), UnprocessableEntityException);
   });
+
+  // COMPANY-TEAM-NOTE: registered PG suite; same isolated, migrated database as the labels.
+  const noteContext = (userId: string): RequestContext => ({ requestId: randomUUID(), userId, companyId: PLATFORM_TENANT_ID,
+    roles: ['SYSTEM_ADMIN'], permissions: ['system.partner_dashboard.read'], authProvider: 'watchdog', authSubject: userId, membershipId: 'test', scopes: {} });
+  const noteService = (db: PrismaClient = client) => new CompanyTeamNoteService({ client: db } as never,
+    new AuditService(new PrismaAuditRepository({ client: db } as never), { error: () => { throw new Error('unexpected audit log error'); } } as never));
+
+  it('team note first-write concurrency admits one editor and one platform audit; stale clear cannot overwrite', async () => {
+    await company(PLATFORM_TENANT_ID); await company('note-race');
+    for (const id of ['note-admin-a', 'note-admin-b']) await client.user.create({ data: { id, displayName: 'ผู้ดูแล' } });
+    const other = new PrismaClient({ adapter: new PrismaPg({ connectionString: scratchUrl }) }); others.push(other);
+    const results = await Promise.allSettled([
+      noteService().put(noteContext('note-admin-a'), 'note-race', { text: '  ติดตามหนึ่ง  ', expectedVersion: 0 }),
+      noteService(other).put(noteContext('note-admin-b'), 'note-race', { text: 'ติดตามสอง', expectedVersion: 0 }),
+    ]);
+    assert.equal(results.filter(row => row.status === 'fulfilled').length, 1);
+    const failure = results.find(row => row.status === 'rejected') as PromiseRejectedResult;
+    assert.equal(failure.reason.getStatus(), 409);
+    const saved = await noteService().get(noteContext('note-admin-a'), 'note-race');
+    assert.equal(saved.version, 1); assert.ok(saved.updatedBy); assert.ok(saved.updatedAt);
+    const audits = await client.auditLog.findMany({ where: { action: 'system.company_team_note.update', targetId: 'note-race' } });
+    assert.equal(audits.length, 1); assert.equal(audits[0]!.companyId, PLATFORM_TENANT_ID);
+    assert.deepEqual(audits[0]!.metadataJson, { beforeLength: 0, afterLength: saved.text.length, beforeVersion: 0, afterVersion: 1 });
+    await assert.rejects(() => noteService().put(noteContext('note-admin-a'), 'note-race', { text: '', expectedVersion: 0 }), (error: any) => error.getStatus() === 409);
+    const cleared = await noteService().put(noteContext('note-admin-b'), 'note-race', { text: ' \n ', expectedVersion: 1 });
+    assert.equal(cleared.text, ''); assert.equal(cleared.version, 2); assert.equal(cleared.updatedBy?.userId, 'note-admin-b');
+    assert.deepEqual(await noteService().put(noteContext('note-admin-a'), 'note-race', { text: '', expectedVersion: 2 }), cleared);
+    assert.equal(await client.auditLog.count({ where: { action: 'system.company_team_note.update', targetId: 'note-race' } }), 2);
+  });
+
+  it('team note real audit insert failure rolls back the note, and cascade permits deleting its company', async () => {
+    await company(PLATFORM_TENANT_ID); await company('note-delete');
+    await assert.rejects(() => noteService().put(noteContext('missing-note-actor'), 'note-delete', { text: '1234567890', expectedVersion: 0 }),
+      (error: any) => error.getStatus() === 503 && !JSON.stringify(error).includes('1234567890'));
+    assert.equal(await client.companyTeamNote.findUnique({ where: { companyId: 'note-delete' } }), null);
+    await client.user.create({ data: { id: 'note-delete-admin', displayName: 'ผู้ดูแล' } });
+    await noteService().put(noteContext('note-delete-admin'), 'note-delete', { text: 'ติดตาม', expectedVersion: 0 });
+    await client.company.delete({ where: { id: 'note-delete' } });
+    assert.equal(await client.companyTeamNote.findUnique({ where: { companyId: 'note-delete' } }), null);
+  });
+
+  it('team note is absent from real shop company read and audit path, including a defensive shop-scoped audit row', async () => {
+    await company(PLATFORM_TENANT_ID); await company('note-shop');
+    await client.user.create({ data: { id: 'note-shop-owner', displayName: 'เจ้าของร้าน' } });
+    await client.companyMembership.create({ data: { companyId: 'note-shop', userId: 'note-shop-owner', status: 'ACTIVE' } });
+    await noteService().put(noteContext('note-shop-owner'), 'note-shop', { text: 'ข้อมูลลับของทีม 1234567890', expectedVersion: 0 });
+    const shop: RequestContext = { ...noteContext('note-shop-owner'), companyId: 'note-shop', roles: ['OWNER'], permissions: ['company.legal_identity.read'] };
+    const response = await new CompanyIdentityUseCase({ client } as never, {} as never, {} as never).get(shop, 'note-shop');
+    assert.ok(!JSON.stringify(response).includes('teamNote')); assert.ok(!JSON.stringify(response).includes('1234567890'));
+    await client.auditLog.create({ data: { companyId: 'note-shop', actorUserId: 'note-shop-owner', action: 'system.company_team_note.update',
+      targetType: 'Company', targetId: 'note-shop', requestId: randomUUID(), result: 'SUCCESS', metadataJson: { beforeLength: 0, afterLength: 25 } } });
+    const trail = await new PrismaAuditRepository({ client } as never).getCompanyLogs({ companyId: 'note-shop', page: 1, pageSize: 100 });
+    assert.ok(trail.data.every(row => row.action !== 'system.company_team_note.update'));
+    assert.ok(!JSON.stringify(trail).includes('1234567890'));
+  });
+
 });

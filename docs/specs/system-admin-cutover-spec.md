@@ -41,3 +41,10 @@ The repository owner dispatches one constrained GitHub Actions workflow from pro
 - `ADD` evidence names the environment, operation, username, user id, role, result, request id, and source commit without secrets.
 - Live Production login returns `passwordChangeRequired=true`, redirects to `/system/platform-access`, `/v1/auth/me` includes `SYSTEM_ADMIN`, and the verification session is logged out. Signed ADD evidence records this without tokens.
 - After owner password change, `REVOKE` evidence shows the old credential disabled and zero active old sessions.
+
+
+## Decision register: COMPANY-TEAM-NOTE — 2026-10-04
+
+เจ้าของตัดสินใจให้เก็บหมายเหตุทีมมั่งมีหนึ่งรายการต่อบริษัท อ่าน/แก้จากคอนโซลและรายงานผู้บริหารให้ตรงกัน. การ์ดในภาพรวมบริษัทของผู้ดูแลใช้ `GET/PUT /v1/system/partners/:partnerCompanyId/team-note`, ส่งเวอร์ชันที่อ่านมา; ผู้ดูแลแก้ได้ทุกสถานะบริษัท ร้านไม่เห็นข้อมูลนี้. ช่องสิทธิ์เสริม `canManageCompanyNote` ในคำสั่งสร้าง/แก้บัญชีผู้บริหารให้สิทธิ์ `system.executive.company_note.manage` ผ่าน role เสริม ค่าเริ่มต้นปิด
+
+[สเปกหลังบ้าน COMPANY-TEAM-NOTE](mangmee-executive-business-backend-spec-th.md#decision-register-company-team-note--2026-10-04) เป็นกติกากลางด้านข้อความ เวอร์ชัน audit และ cascade; [สเปกหน้าจอ](mangmee-executive-business-ui-spec-th.md#decision-register-company-team-note--2026-10-04) ระบุสถานะการ์ด. หลักฐานและงานตรวจรับค้างอยู่ที่ `docs/agent-memory/company-team-note-2026-10-04.md`
