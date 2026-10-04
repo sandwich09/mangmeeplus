@@ -420,9 +420,11 @@ describe('payment recording (MVP full-payment)', () => {
     assert.equal(validatePaymentRecording({ ...legacy, paidAmount: '579.99' }), 'partial_payment_not_allowed');
     assert.equal(validatePaymentRecording({ ...legacy, paidAmount: '580.01' }), 'payment_over_approved_amount');
   });
-  it('requires reference for bank transfer', () => {
-    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER' }), 'payment_reference_required');
-    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', paymentReference: 'TXN-1', hasSlip: true }), null);
+  it('accepts evidence instead of a reference, and keeps a transfer slip mandatory', () => {
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER' }), 'payment_slip_required');
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'BANK_TRANSFER', hasSlip: true }), null);
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'CHEQUE', hasSlip: true }), null);
+    assert.equal(validatePaymentRecording({ ...base, paymentMethod: 'CHEQUE' }), 'payment_reference_required');
   });
 
   // Owner decision 2026-10-01 (D3): a transfer is recorded with its slip; every other method may carry one.
@@ -667,11 +669,13 @@ describe('payment: the words every surface shares', () => {
 });
 
 describe('payment reference', () => {
-  it('requires reference for cheque and bank transfer only', () => {
+  it('requires a cheque number only when no evidence is attached', () => {
     assert.equal(validatePaymentReference('CASH'), true);
     assert.equal(validatePaymentReference('OTHER'), true);
     assert.equal(validatePaymentReference('CHEQUE'), false);
     assert.equal(validatePaymentReference('CHEQUE', 'CHQ-1'), true);
+    assert.equal(validatePaymentReference('CHEQUE', undefined, true), true);
+    assert.equal(validatePaymentReference('BANK_TRANSFER', undefined, true), true);
   });
 });
 
@@ -1905,5 +1909,26 @@ describe('payout account correction round', () => {
         { title: 'อรทัย เลือกวิธีรับเงินคืนในใบเบิกของคุณ', body: 'เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แก้ได้ทันที' });
     }
     assert.equal(reimbursementPayoutAnsweredForRequesterNotice('NEW_ACCOUNT', 'อรทัย', { payoutMethod: 'BANK_TRANSFER' }).body, 'เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แก้ได้ทันที');
+  });
+});
+
+
+describe('company-wide strong duplicate signals', () => {
+  it('matches receipt checksums across different attachment ids and requesters', () => {
+    const common = { amount: '100', currency: 'THB', incurredDate: '2026-01-01', categoryKey: 'other' };
+    const match = scoreDuplicate({ ...common, requesterUserId: 'one', lines: [{ lineNo: 1, attachmentId: 'a', attachmentChecksum: 'same' }] } as any,
+      { ...common, amount: '200', incurredDate: '2026-02-01', requesterUserId: 'two', lines: [{ lineNo: 1, attachmentId: 'b', attachmentChecksum: 'same' }] } as any);
+    assert.ok(match.score >= 80);
+    assert.equal(match.sharedType, 'ATTACHMENT');
+  });
+  it('does not score soft similarities across requesters', () => {
+    const common = { amount: '100', currency: 'THB', incurredDate: '2026-01-01', categoryKey: 'other', normalizedReason: 'same' };
+    assert.equal(scoreDuplicate({ ...common, requesterUserId: 'one' }, { ...common, requesterUserId: 'two' }).score, 0);
+    assert.ok(scoreDuplicate({ ...common, requesterUserId: 'one' }, { ...common, requesterUserId: 'one' }).score > 0);
+  });
+  it('blocks unresolved source expenses only under BLOCK_PAYMENT', () => {
+    assert.equal((duplicateBlocksPayment as any)('BLOCK_PAYMENT', 0, 1), true);
+    assert.equal((duplicateBlocksPayment as any)('WARN', 0, 1), false);
+    assert.equal((duplicateBlocksPayment as any)('BLOCK_PAYMENT', 0, 0), false);
   });
 });

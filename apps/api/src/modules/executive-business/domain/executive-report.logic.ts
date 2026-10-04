@@ -169,6 +169,7 @@ export function keepLargerCounters(recount: UsageCounters, stored: Partial<Usage
 export type MoneyByKind = Record<string, { receiptsSatang: number; refundsSatang: number; feesSatang: number; taxSatang: number }>;
 /** What a company-month row reports. Two rows with the same figures are the same answer, whatever build wrote them. */
 export type CompanyMonthFigures = UsageCounters & {
+  lastActivityAt?: Date | null; activityHistorySince?: Date | null; activitySnapshotReady?: boolean;
   reportClassification: string | null;
   receiptsSatang: number; refundsSatang: number; feesSatang: number; taxSatang: number;
   moneyByPurchaseKind: MoneyByKind;
@@ -177,7 +178,7 @@ export type CompanyMonthFigures = UsageCounters & {
   usageGroup: string | null; usageUnassessedReason: string | null;
   salesCreditSatang: number; salesCreditActivations: number; salesCreditWaiting: number;
 };
-const FIGURE_KEYS = ['reportClassification', 'receiptsSatang', 'refundsSatang', 'feesSatang', 'taxSatang', 'disputedInvoiceCount', 'aiCostSatang',
+const FIGURE_KEYS = ['lastActivityAt', 'activityHistorySince', 'activitySnapshotReady', 'reportClassification', 'receiptsSatang', 'refundsSatang', 'feesSatang', 'taxSatang', 'disputedInvoiceCount', 'aiCostSatang',
   ...USAGE_COUNTERS, 'paidEver', 'paidEverReason', 'fullyRefunded', 'usageGroup', 'usageUnassessedReason',
   'salesCreditSatang', 'salesCreditActivations', 'salesCreditWaiting'] as const;
 /**

@@ -14,3 +14,6 @@ export function ReimbursementSourceFacts({ source }: { source: ReimbursementSour
     <div><dt className="font-semibold">VAT ตามต้นทาง / หัก ณ ที่จ่าย</dt><dd>{money(source.totals.vatAmount, source.currency)} / {money(source.totals.whtAmount, source.currency)}</dd></div>
   </dl>;
 }
+
+/** The claim forms name file types with every name kept whole: the same rendering as the expense screens. */
+export { WholeWords } from '../expenses/ExpensesUi';

@@ -164,7 +164,7 @@ describe('employee-access.logic', () => {
   it('asks one question about one list wherever a platform-only role could reach a shop (RB-34)', () => {
     // The list is the registry's, and it is the list the platform-role invariants are built from:
     // a key added there is refused by every surface below without touching any of them.
-    assert.deepEqual([...PLATFORM_ONLY_ROLE_KEYS], ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES', 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT']);
+    assert.deepEqual([...PLATFORM_ONLY_ROLE_KEYS], ['MANGMEE_SALES_LEAD', 'MANGMEE_SALES', 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT', 'MANGMEE_EXECUTIVE_COMPANY_NOTE']);
     assert.deepEqual([...PLATFORM_ROLE_KEYS], ['SYSTEM_ADMIN', ...PLATFORM_ONLY_ROLE_KEYS]);
     for (const key of PLATFORM_ONLY_ROLE_KEYS) {
       assert.equal(platformOnlyRoleRefused(key, false), true, key);

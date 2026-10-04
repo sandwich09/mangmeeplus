@@ -1,4 +1,5 @@
 import { hasCurrentExpenseEvidenceReview } from './expense-evidence.js';
+import { PAYMENT_DATE_IN_FUTURE } from './civil-date.js';
 export * from './expense-evidence.js';
 // Item 09 – Expense and Receipt Upload contracts
 
@@ -10,6 +11,7 @@ import {
   type BusinessDocumentKind,
   type ReceiptOcrFieldResult,
 } from './line-ai.js';
+import type { TaxFormType } from './tax.js';
 import type { BuyerEntityKind } from './company-tax-identity.js';
 import type { ExpenseCaptureReadStatus } from './expense-capture.js';
 import type { ExpenseDocumentDateStatus } from './line-ai-value-normalizer.js';
@@ -616,9 +618,138 @@ export type ExpensePaymentSummary = {
   journalEntryId: string | null;
   journalEntryNumber: string | null;
   postingError: string | null;
+  cancellationReason?: string | null;
   createdByUserId: string;
   createdAt: string;
 };
+
+export type ExpenseCorrectionBlocker = 'not_confirmed' | 'ledger_posted' | 'journal_pending' | 'posting_unresolved'
+  | 'certificate_issued' | 'tax_period_filed' | 'live_claim' | 'permission_denied'
+  | 'payment_voided' | 'no_balance' | 'missing_branch' | 'personal_advance' | 'accounting_period_locked' | 'recorded_payments' | 'legacy_paid_balance';
+
+/** Read by the server from persisted financial/legal state, never inferred by the client. */
+export type ExpenseCorrectionCapabilities = {
+  canReopen: boolean;
+  reopenBlockers: ExpenseCorrectionBlocker[];
+  lockedAccountingPeriodKey?: string | null;
+  lockedTaxPeriods?: Array<{ formType: TaxFormType; periodKey: string }>;
+  canReject?: boolean;
+  rejectBlocker?: ExpenseCorrectionBlocker | null;
+  canRecordPayment: boolean;
+  recordPaymentBlocker: ExpenseCorrectionBlocker | null;
+  payments: Array<{ id: string; canCancel: boolean; cancelBlocker: ExpenseCorrectionBlocker | null }>;
+};
+
+export const EXPENSE_CORRECTION_WORDS = {
+  saving: 'กำลังบันทึก…',
+  reopen: 'แก้ไขเอกสาร',
+  cancelPayment: 'ยกเลิกรายการจ่ายนี้',
+  reason: 'เหตุผลที่แก้ไข',
+  cancelReason: 'เหตุผลที่ยกเลิก',
+  reject: 'ยกเลิกรายการ',
+  reopenSubmit: 'เปิดเอกสารกลับไปตรวจสอบ',
+  reopenDescription: 'เอกสารจะกลับไปตรวจสอบ ใช้เลขเอกสารเดิม กรุณาตรวจข้อมูลก่อนยืนยันอีกครั้ง',
+  retainedPayments: 'รายการจ่ายเดิมยังอยู่',
+  correcting: 'กำลังแก้ไขเอกสารที่ยืนยันแล้ว',
+  downloadAgain: 'ดาวน์โหลดเอกสารอีกครั้ง',
+  certificateIssued: 'ออกเอกสารแล้ว',
+  futurePaymentDate: PAYMENT_DATE_IN_FUTURE.message,
+  sourceRefreshed: 'โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจยอดและประวัติการจ่ายก่อนทำรายการอีกครั้ง',
+  alreadyReopened: 'เอกสารเปิดแก้ไขอยู่แล้ว กรุณาตรวจข้อมูลล่าสุด',
+  sourceRefreshFailed: 'โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาโหลดหน้าใหม่ก่อนทำรายการอีกครั้ง',
+  paymentOnReopened: 'เอกสารถูกเปิดแก้ไขแล้ว จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ตรวจและยืนยันเอกสารก่อน',
+  paymentOnUnconfirmed: 'เอกสารยังไม่ได้ยืนยัน จึงบันทึกจ่ายไม่ได้ ให้ผู้มีสิทธิ์ยืนยันเอกสารก่อน',
+  paymentAlreadyCancelled: 'รายการจ่ายนี้ถูกยกเลิกแล้ว โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจประวัติการจ่าย',
+  overpaid: 'จ่ายเกินยอดสุทธิ',
+  // Direction-free: the payment card sits above this sentence on the last step and below it on the first.
+  cancelBeforeConfirm: 'ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน',
+  /** Beside ส่งตรวจสอบ, which over-payment does not block: say what is true there. */
+  sendableWhileOverpaid: 'ส่งตรวจสอบได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน',
+  askCancelBeforeConfirm: 'ให้ผู้มีสิทธิ์ยกเลิกรายการจ่ายก่อนยืนยัน',
+  legacyOverpaid: 'ไม่พบรายการจ่ายให้ยกเลิก ติดต่อผู้มีสิทธิ์ยกเลิกเอกสาร',
+  reasonRequired: 'กรุณาระบุเหตุผลอย่างน้อย 3 ตัวอักษร และไม่เกิน 500 ตัวอักษร',
+  reopened: 'เปิดเอกสารให้แก้ไขแล้ว กรุณาตรวจยอดก่อนยืนยันอีกครั้ง',
+  paymentCancelled: 'ยกเลิกรายการจ่ายแล้ว กรุณาตรวจยอดค้างจ่ายก่อนบันทึกรายการใหม่',
+  unavailable: 'ยังตรวจสิทธิ์แก้ไขไม่ได้ กรุณาโหลดหน้าใหม่',
+  sourceChanged: 'ข้อมูลเอกสารเปลี่ยนแล้ว กรุณาโหลดหน้าใหม่และตรวจข้อมูลก่อนดำเนินการ',
+  certificateUnavailable: 'ยังไม่มีหนังสือรับรองที่ระบบออกให้ดาวน์โหลด กรุณาตรวจสถานะเอกสาร',
+  paidExceedsPayable: 'ยอดที่จ่ายแล้วเกินยอดสุทธิที่ต้องจ่าย กรุณาตรวจยอดและประวัติการจ่ายก่อนยืนยัน',
+} as const;
+
+export function expenseReopenedMessage(hasPayments: boolean): string {
+  return `${EXPENSE_CORRECTION_WORDS.reopened}${hasPayments ? ` ${EXPENSE_CORRECTION_WORDS.retainedPayments}` : ''}`;
+}
+/** Stored money is Decimal(18,4). Match confirmation's half-satang tolerance without float loss. */
+export function expenseOverpaidAmount(expense: { paidAmount?: string; netPayableAmount?: string }): string | null {
+  const scaled = (value?: string) => {
+    if (!value || !/^\d+(?:\.\d{1,4})?$/.test(value)) return 0n;
+    const [whole, fraction = ''] = value.split('.');
+    return BigInt(whole!) * 10000n + BigInt(fraction.padEnd(4, '0'));
+  };
+  const excess = scaled(expense.paidAmount) - scaled(expense.netPayableAmount);
+  return excess > 50n ? `${excess / 10000n}.${String(excess % 10000n).padStart(4, '0')}` : null;
+}
+export function expenseOverpaymentRemedy(hasRecordedPayments: boolean, canCancel: boolean): string {
+  return !hasRecordedPayments ? EXPENSE_CORRECTION_WORDS.legacyOverpaid : canCancel
+    ? EXPENSE_CORRECTION_WORDS.cancelBeforeConfirm : EXPENSE_CORRECTION_WORDS.askCancelBeforeConfirm;
+}
+/** Review-form withholding guidance. Blank no longer means "no withholding": the decision is its own control. */
+export const EXPENSE_WITHHOLDING_WORDS = {
+  /** `noLabel` is the decision option as printed on screen, so the way out always names a real control. */
+  wayOut: (noLabel: string) => `เลือก “${noLabel}” ถ้ารายการนี้ไม่ต้องหัก ณ ที่จ่าย`,
+  percentHint: 'กรอกเปอร์เซ็นต์ตามเอกสาร เช่น 3 หมายถึง 3% ของฐานหัก ณ ที่จ่าย',
+  amountHint: 'เก็บยอดบาทที่กรอกไว้แม้แก้รายการ ระบบตรวจว่าไม่เกินฐานหักและยอดรวมเมื่อบันทึก',
+} as const;
+/** Last review step: the sentence follows the button actually shown (ส่งตรวจสอบ keeps the dictionary's approver sentence). */
+export const EXPENSE_REVIEW_STEP_WORDS = {
+  thenConfirm: 'ดูสรุปทั้งหมดอีกครั้ง แล้วยืนยันเอกสาร',
+  sentAwaitingConfirm: 'ดูสรุปทั้งหมดอีกครั้ง เอกสารนี้ส่งตรวจสอบแล้ว รอผู้มีสิทธิ์ยืนยัน',
+} as const;
+/** Keep the existing positive-money boundary; only remove insignificant leading zeroes. */
+export function normalizeExpensePaymentAmount(value: string): string { return value.replace(/^0+(?=\d)/, ''); }
+
+const EXPENSE_CORRECTION_ACTIONS = { reopen: 'เปิดแก้ไขเอกสาร', recordPayment: 'บันทึกจ่าย', cancelPayment: 'ยกเลิกรายการจ่าย', reject: EXPENSE_CORRECTION_WORDS.reject } as const;
+const EXPENSE_CORRECTION_FORM_NAMES: Partial<Record<TaxFormType, string>> = {
+  PP30: 'ภ.พ.30', PP36: 'ภ.พ.36', PND3: 'ภ.ง.ด.3', PND53: 'ภ.ง.ด.53', CUSTOMS_SUPPORT: 'เอกสารประกอบภาษีนำเข้า',
+};
+function expenseCorrectionMonth(periodKey?: string): string {
+  if (!periodKey || !/^\d{4}-\d{2}$/.test(periodKey)) return '';
+  return `${periodKey.slice(5)}/${Number(periodKey.slice(0, 4)) + 543}`;
+}
+export function expenseCorrectionBlockerMessage(blocker: ExpenseCorrectionBlocker, operation: keyof typeof EXPENSE_CORRECTION_ACTIONS = 'reopen', facts?: ExpenseCorrectionCapabilities, showsLedger = true): string {
+  const action = EXPENSE_CORRECTION_ACTIONS[operation];
+  if (!showsLedger && ['ledger_posted', 'journal_pending', 'posting_unresolved', 'accounting_period_locked'].includes(blocker)) return `รายการนี้ถูกล็อกไว้ จึง${action}ไม่ได้ ติดต่อผู้ดูแลรายจ่าย`;
+  switch (blocker) {
+    case 'not_confirmed': return `สถานะเอกสารนี้${action}ไม่ได้ กรุณากลับไปหน้ารายจ่าย`;
+    case 'ledger_posted': return `มีรายการลงบัญชีแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'posting_unresolved': return `สถานะการลงบัญชียังไม่ชัดเจน จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'journal_pending': return `มีรายการบัญชีรอผ่านรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'certificate_issued': return `ออกเอกสาร 50 ทวิแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'accounting_period_locked': return `เดือนบัญชี ${expenseCorrectionMonth(facts?.lockedAccountingPeriodKey ?? undefined)} ไม่เปิดรับรายการ จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'tax_period_filed': return `รอบภาษีของเอกสารถูกล็อกแล้ว จึง${action}ไม่ได้ ติดต่อผู้ทำบัญชี`;
+    case 'live_claim': return `เอกสารอยู่ในคำขอเบิกที่ยังดำเนินการ จึง${action}จากหน้านี้ไม่ได้ ติดต่อผู้ดูแลคำขอเบิก`;
+    case 'permission_denied': return `คุณไม่มีสิทธิ์${action} ติดต่อผู้มีสิทธิ์ดำเนินการ`;
+    case 'payment_voided': return 'รายการจ่ายนี้ยกเลิกแล้ว กรุณาโหลดหน้าใหม่';
+    case 'no_balance': return 'ไม่มียอดค้างจ่าย จึงบันทึกจ่ายเพิ่มไม่ได้';
+    case 'missing_branch': return 'เอกสารยังไม่มีสาขา จึงบันทึกจ่ายไม่ได้ ติดต่อผู้ดูแลรายจ่าย';
+    case 'personal_advance': return 'ใบรับรองระบุว่าพนักงานจ่ายร้านแล้ว จึงบันทึกจ่ายซ้ำไม่ได้ ติดต่อผู้ดูแลการเบิกคืน';
+    case 'legacy_paid_balance': return `มียอดจ่ายเดิมที่ไม่มีรายการให้ยกเลิก จึง${EXPENSE_CORRECTION_WORDS.reject}ไม่ได้ ติดต่อผู้มีสิทธิ์ยกเลิกเอกสาร`;
+    case 'recorded_payments': return `ยังมีรายการจ่ายอยู่ จึง${EXPENSE_CORRECTION_WORDS.reject}ไม่ได้ ${facts?.payments.some(p => p.canCancel) ? 'ยกเลิกรายการจ่ายด้านล่างก่อน' : 'ให้ผู้มีสิทธิ์ยกเลิกรายการจ่ายก่อน'}`;
+    default: return EXPENSE_CORRECTION_WORDS.unavailable;
+  }
+}
+export function expenseReopenBlockerMessages(capabilities?: ExpenseCorrectionCapabilities, showsLedger = true): string[] {
+  if (!capabilities || capabilities.canReopen) return [];
+  return capabilities.reopenBlockers.flatMap(blocker => blocker === 'tax_period_filed' && capabilities.lockedTaxPeriods?.length
+    ? capabilities.lockedTaxPeriods.map(period => `รอบ ${EXPENSE_CORRECTION_FORM_NAMES[period.formType] ?? 'ภาษี'} เดือน ${expenseCorrectionMonth(period.periodKey)} ถูกล็อกแล้ว จึงเปิดแก้ไขเอกสารไม่ได้ ติดต่อผู้ทำบัญชี`)
+    : [expenseCorrectionBlockerMessage(blocker, 'reopen', capabilities, showsLedger)]);
+}
+export function expenseConfirmedLockMessage(capabilities?: ExpenseCorrectionCapabilities, hasPayments = false): string {
+  return capabilities?.canReopen
+    ? `เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ กด “${EXPENSE_CORRECTION_WORDS.reopen}” เพื่อกลับไปตรวจ${hasPayments ? ` ${EXPENSE_CORRECTION_WORDS.retainedPayments}` : ''}`
+    : capabilities?.reopenBlockers.length ? 'เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ เปิดแก้ไขไม่ได้ด้วยเหตุผลต่อไปนี้'
+    : `เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้ ${EXPENSE_CORRECTION_WORDS.unavailable}`;
+}
 
 export type ExpenseReimbursementProgress = { requestId?: string; requestNo?: string | null; status: string };
 export function isExpensePendingReview(row: { status: ExpenseStatus; reimbursementProgress?: ExpenseReimbursementProgress }): boolean {
@@ -811,6 +942,9 @@ export type ExpenseBuyerAsPrinted = {
 };
 
 export type ExpenseDetail = ExpenseSummary & {
+  /** Reopen audit, present only while correcting; not inferred from a document number. */
+  correctionOpenedAt?: string | null;
+  correctionCapabilities?: ExpenseCorrectionCapabilities;
   /** Slice 2; absent until a document with a buyer block has been read or re-checked. */
   buyerAsPrinted?: ExpenseBuyerAsPrinted | null;
   primaryAttachmentId?: string | null;

@@ -24,6 +24,12 @@ export class AppConfigService {
       throw new Error(`Config validation failed:\n${result.error.message}`);
     }
     this.config = result.data;
+    if (this.config.LINE_OFFICIAL_REPLY_ENABLED &&
+      (!this.config.LINE_OFFICIAL_CHANNEL_SECRET?.trim() ||
+       !this.config.LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN?.trim() ||
+       !this.config.WEB_BASE_URL?.startsWith('https://'))) {
+      throw new Error('Official OA replies require dedicated channel credentials and an HTTPS WEB_BASE_URL.');
+    }
     validateProductionConfig(this.config as unknown as Record<string, unknown>);
   }
 
@@ -91,6 +97,9 @@ export class AppConfigService {
   get lineMessagingChannelId(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_ID; }
   get lineMessagingChannelSecret(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_SECRET; }
   get lineMessagingChannelAccessToken(): string | undefined { return this.config.LINE_MESSAGING_CHANNEL_ACCESS_TOKEN; }
+  get lineOfficialReplyEnabled(): boolean { return this.config.LINE_OFFICIAL_REPLY_ENABLED; }
+  get lineOfficialChannelSecret(): string | undefined { return this.config.LINE_OFFICIAL_CHANNEL_SECRET; }
+  get lineOfficialChannelAccessToken(): string | undefined { return this.config.LINE_OFFICIAL_CHANNEL_ACCESS_TOKEN; }
   get lineAiBufferDebounceMs(): number { return this.config.LINE_AI_BUFFER_DEBOUNCE_MS; }
   get lineAiBufferMaxWaitMs(): number { return this.config.LINE_AI_BUFFER_MAX_WAIT_MS; }
   get lineAiLoadingAnimationEnabled(): boolean { return this.config.LINE_AI_LOADING_ANIMATION_ENABLED; }

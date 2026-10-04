@@ -1,7 +1,10 @@
-import { EXECUTIVE_WORDS as W, executiveThaiLabel as thaiLabel } from '@watchdog-bms/contracts';
-export { W, thaiLabel };
+import { executivePeriodReportWords, executiveThaiLabel as thaiLabel } from '@watchdog-bms/contracts';
+export const W = executivePeriodReportWords();
+export { thaiLabel };
 
-export const EXECUTIVE_MENU = (['overview', 'usage', 'revenue', 'customers', 'compare', 'companies'] as const).map(key => ({ key, label: W[key], group: W.report, href: key === 'overview' ? '/system/executive' : `/system/executive/${key}` }));
-export const REPORT_VIEWS = { usage: [{ value: 'adoption', label: W.adoption }, { value: 'ranking', label: W.ranking }], revenue: [{ value: 'summary', label: W.summary }, { value: 'top', label: W.top }], customers: [{ value: 'industry', label: W.industry }, { value: 'discovery', label: W.discovery }, { value: 'sales', label: W.sales }] };
+export const EXECUTIVE_MENU = (['overview', 'companies', 'usage', 'revenue', 'customers'] as const).map(key => ({ key, label: W[key], group: W.report, href: key === 'overview' ? '/system/executive' : `/system/executive/${key}` }));
+export const REPORT_VIEWS = { usage: [{ value: 'adoption', label: W.adoption }, { value: 'paid', label: W.shortPaidUsage }, { value: 'ranking', label: W.ranking }], revenue: [{ value: 'summary', label: W.purchase }, { value: 'trend', label: W.shortTrend }, { value: 'unmatched', label: W.unmatched }, { value: 'top', label: W.top }], customers: [{ value: 'industry', label: W.industry }, { value: 'discovery', label: W.discovery }, { value: 'sales', label: W.sales }] };
 export const DETAIL_TABS = [{ value: 'company', label: W.companyTab }, { value: 'usage', label: W.usageTab }, { value: 'history', label: W.history }];
 export const RANK_LABELS = { expenseReceiptCount: { label: W.receiptCount, unit: W.unitReceipt }, activeDays: { label: W.days, unit: W.unitDay }, aiRequests: { label: W.ai, unit: W.unitRequest } };
+/** The groups of an opened row of the company list (the owner's sheet, 2026-10-04). The facts inside use the shared column words. */
+export const COMPANY_GROUPS = { receipts: 'ใบเสร็จ', plan: 'แพ็กเกจและการชำระ', people: 'คนและการตั้งค่า', usage: W.usage };

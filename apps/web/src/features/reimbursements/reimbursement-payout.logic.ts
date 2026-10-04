@@ -412,6 +412,12 @@ export function draftRowSubmitsFromItsPage(row: { payoutMethod?: string | null }
   return row.payoutMethod !== 'CASH';
 }
 
+/** Words follow the receiving method the row knows; an unstated method may still use a default on the page. */
+export function draftRowSubmitLabel(row: { payoutMethod?: string | null }): string {
+  return row.payoutMethod === 'CASH' ? 'ส่งอนุมัติ'
+    : row.payoutMethod === 'BANK_TRANSFER' ? 'ตรวจบัญชีและส่งอนุมัติ' : 'เลือกวิธีรับเงินคืนและส่งอนุมัติ';
+}
+
 /** Why "ส่งอนุมัติ" is not offered yet, as far as the payout goes; null when the payout is ready. */
 export function claimPayoutSubmitBlock(detail: { status?: string; payout?: ReimbursementPayoutSummary | null }): string | null {
   if (detail.status !== 'DRAFT') return null;

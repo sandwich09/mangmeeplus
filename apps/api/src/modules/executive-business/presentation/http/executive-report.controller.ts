@@ -1,17 +1,17 @@
-import { ArgumentsHost, Body, Catch, Controller, HttpException, Injectable, Get, Header, HttpCode, Param, Post, Query, Req, Res, UseFilters } from '@nestjs/common';
+import { ArgumentsHost, Body, Catch, Controller, HttpException, Injectable, Get, Patch, Header, HttpCode, Param, Post, Query, Req, Res, UseFilters } from '@nestjs/common';
 import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsObject, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import type { Request, Response } from 'express';
 import {
-  EXECUTIVE_WORDS as W, EXECUTIVE_EXPORT_REPORT_KEYS, type ExecutiveExportBody, type ExecutiveExportFilters, EXECUTIVE_RANKING_METRICS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
+  COMPANY_TEAM_NOTE_WORDS, EXECUTIVE_SHEET_WORDS, COMPANY_TEAM_NOTE_MANAGE_PERMISSION, COMPANY_TEAM_NOTE_MAX_LENGTH, type ExecutiveCompanyNoteBody, EXECUTIVE_WORDS as W, executivePeriodLabel, EXECUTIVE_EXPORT_REPORT_KEYS, type ExecutiveExportBody, type ExecutiveExportFilters, EXECUTIVE_RANKING_METRICS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
   type ExecutiveAnalysisQuery, type ExecutiveCompaniesQuery, type ExecutiveHistoryQuery, type ExecutiveRankingMetric, type ExecutiveReportQuery, type ExecutiveSortBy,
 } from '@watchdog-bms/contracts';
 import { randomUUID } from 'node:crypto';
 import { AuditService } from '../../../audit/application/audit.service';
-import { XLSX_MIME_TYPE } from '../../../../common/export/xlsx.logic';
+import { XLSX_MIME_TYPE, xlsxThaiDate } from '../../../../common/export/xlsx.logic';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
-import { assertPlatformTenant } from '../../../sales-console/application/sales-context';
+import { assertPlatformTenant, isSystemAdmin } from '../../../sales-console/application/sales-context';
 import { executiveError } from '../../application/executive-users.service';
 import { ExecutiveReportReadService } from '../../application/executive-report-read.service';
 import { ExecutiveAccountExceptionFilter } from './executive-users.controller';
@@ -21,7 +21,9 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /** §12.4: the month and the report's own filters. A value outside the contract is 400, never widened to ALL. */
 export class ExecutiveReportQueryDto implements ExecutiveReportQuery {
-  @IsString() @Matches(MONTH) month!: string;
+  @IsOptional() @IsString() @Matches(MONTH) month?: string;
+  @IsOptional() @IsString() @Matches(MONTH) from?: string;
+  @IsOptional() @IsString() @Matches(MONTH) to?: string;
   @IsOptional() @IsString() @MaxLength(64) buildId?: string;
   @IsOptional() @IsIn(keysOf('industry')) industry?: string;
   @IsOptional() @IsIn(keysOf('discovery')) discovery?: string;
@@ -30,6 +32,14 @@ export class ExecutiveReportQueryDto implements ExecutiveReportQuery {
 }
 
 export class ExecutiveCompaniesQueryDto extends ExecutiveReportQueryDto implements ExecutiveCompaniesQuery {
+  @IsOptional() @IsIn(keysOf('receiptBucket')) receiptBucket?: string;
+  @IsOptional() @IsString() @MaxLength(120) packageLabel?: string;
+  @IsOptional() @IsIn(['true']) churned?: 'true';
+  @IsOptional() @IsIn(['true']) neverUsed?: 'true';
+  @IsOptional() @IsIn(['true']) receiptAdded7?: 'true';
+  @IsOptional() @IsIn(['true']) receiptAdded30?: 'true';
+  @IsOptional() @IsIn(['true']) receiptDays30AtLeast2?: 'true';
+  @IsOptional() @IsIn(['true']) atDataDate?: 'true';
   @IsOptional() @IsIn(keysOf('companyStatus')) companyStatus?: string;
   @IsOptional() @IsIn(keysOf('planState')) planState?: string;
   @IsOptional() @IsIn(keysOf('usageGroup')) usageGroup?: string;
@@ -38,6 +48,7 @@ export class ExecutiveCompaniesQueryDto extends ExecutiveReportQueryDto implemen
   @IsOptional() @IsIn(['true']) paidInPeriod?: 'true';
   @IsOptional() @IsIn(['true']) positiveNetInPeriod?: 'true';
   @IsOptional() @IsIn(keysOf('paidEver')) paidEver?: string;
+  @IsOptional() @IsIn(['true']) joinedInPeriod?: 'true';
   @IsOptional() @IsIn(['true']) fullyRefunded?: 'true';
   @IsOptional() @IsIn(keysOf('receiptAdoption')) receiptAdoption?: string;
   @IsOptional() @IsIn(keysOf('spendCohort')) spendCohort?: string;
@@ -61,11 +72,13 @@ export class ExecutiveAnalysisQueryDto extends ExecutiveReportQueryDto implement
 }
 
 export class ExecutiveCompanyQueryDto implements ExecutiveReportQuery {
-  @IsString() @Matches(MONTH) month!: string;
+  @IsOptional() @IsString() @Matches(MONTH) month?: string;
+  @IsOptional() @IsString() @Matches(MONTH) from?: string;
+  @IsOptional() @IsString() @Matches(MONTH) to?: string;
   @IsOptional() @IsString() @MaxLength(64) buildId?: string;
 }
 
-export class ExecutiveHistoryQueryDto implements ExecutiveHistoryQuery {
+export class ExecutiveHistoryQueryDto extends ExecutiveCompanyQueryDto implements ExecutiveHistoryQuery {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize?: number;
 }
@@ -74,7 +87,9 @@ export class ExecutiveHistoryQueryDto implements ExecutiveHistoryQuery {
 export class ExecutiveExportDto implements ExecutiveExportBody {
   @IsString() @IsNotEmpty() @MaxLength(64) buildId!: string;
   @IsIn(EXECUTIVE_EXPORT_REPORT_KEYS) reportKey!: ExecutiveExportBody['reportKey'];
-  @IsString() @Matches(MONTH) month!: string;
+  @IsOptional() @IsString() @Matches(MONTH) month?: string;
+  @IsOptional() @IsString() @Matches(MONTH) from?: string;
+  @IsOptional() @IsString() @Matches(MONTH) to?: string;
   @IsObject() filters!: ExecutiveExportFilters;
   @IsOptional() @IsString() @MaxLength(40) subview?: string;
   @IsOptional() @IsIn(EXECUTIVE_SORT_OPTIONS.map(option => option.sortBy)) sortBy?: ExecutiveSortBy;
@@ -83,6 +98,11 @@ export class ExecutiveExportDto implements ExecutiveExportBody {
   @IsOptional() @IsString() @MaxLength(64) targetCompanyId?: string;
   @IsBoolean() includeContacts!: boolean;
   @IsIn(['xlsx']) format!: 'xlsx';
+}
+
+export class ExecutiveCompanyNoteDto implements ExecutiveCompanyNoteBody {
+  @IsString() @MaxLength(COMPANY_TEAM_NOTE_MAX_LENGTH) text!: string;
+  @IsInt() @Min(0) expectedVersion!: number;
 }
 
 type ExecutiveRequest = Request & { context: RequestContext; executiveExportAttempted?: boolean };
@@ -107,6 +127,7 @@ export class ExecutiveReportExceptionFilter extends ExecutiveAccountExceptionFil
       }
     }
     if (exporting) new ExecutiveAccountExceptionFilter(W.export.denied).catch(error, host);
+    else if (req.method === 'PATCH') new ExecutiveAccountExceptionFilter(req.context && isSystemAdmin(req.context) ? EXECUTIVE_SHEET_WORDS.noteAdminRoute : COMPANY_TEAM_NOTE_WORDS.editDenied).catch(error, host);
     else super.catch(error, host);
   }
 }
@@ -120,6 +141,14 @@ export class ExecutiveReportExceptionFilter extends ExecutiveAccountExceptionFil
 @UseFilters(ExecutiveReportExceptionFilter)
 export class ExecutiveReportController {
   constructor(private readonly report: ExecutiveReportReadService) {}
+
+  @Patch('companies/:targetCompanyId')
+  @Header('Cache-Control', 'no-store')
+  @RequirePermissions('system.executive.read', COMPANY_TEAM_NOTE_MANAGE_PERMISSION)
+  updateNote(@Param('targetCompanyId') companyId: string, @Body() body: ExecutiveCompanyNoteDto, @Req() req: ExecutiveRequest) {
+    assertPlatformTenant(req.context);
+    return this.report.updateNote(req.context, companyId, body);
+  }
 
   @Get('context')
   @Header('Cache-Control', 'no-store')
@@ -161,7 +190,8 @@ export class ExecutiveReportController {
     req.executiveExportAttempted = true;
     const result = await this.report.export(req.context, body);
     res.setHeader('Content-Type', XLSX_MIME_TYPE);
-    res.setHeader('Content-Disposition', 'attachment; filename="executive-report.xlsx"');
+    res.setHeader('Content-Disposition', body.month !== undefined ? 'attachment; filename="executive-report.xlsx"'
+      : `attachment; filename*=UTF-8''${encodeURIComponent(`${W[body.reportKey]} ${executivePeriodLabel(result.period.from, result.period.to)} ${xlsxThaiDate(this.report.clock())}.xlsx`)}`);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Export-Reference', result.exportReference);
     res.setHeader('X-Export-Row-Count', String(result.rowCount));

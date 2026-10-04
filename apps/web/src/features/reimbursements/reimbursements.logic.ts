@@ -1,14 +1,15 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
-  reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
+  REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
+  reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE,
+  reimbursementPaymentReferenceRequired as paymentReferenceRequired, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, REIMBURSEMENT_PAYMENT_STEP_NOTE,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import {
-  CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
+  CLAIM_SIGN_LABEL, CLAIM_SIGNATURE_ROLE_LABELS, claimSignAction, CURRENT_DESK_LABELS, DUPLICATE_STATUS_LABELS, currentDeskText, ERROR_CODE_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimIsBeingCancelled, claimSignatureSlots, eligibleSignatureRoles, paymentDeskText, reimbursementOwnActions,
   POLICY_TAB_LABEL, SELF_APPROVAL_SWITCH_LABEL,
   type ClaimSignatureRole,
@@ -133,6 +134,7 @@ export function awaitingSystemNote(detail: any, approvedBy?: string): string {
 export function errorText(e: unknown): string {
   const code = (e as { code?: unknown } | null)?.code;
   const viaCode = typeof code === 'string' ? ERROR_CODE_LABELS[code] ?? translateApiError(code) : null;
+  if (code === 'duplicate_unresolved') return apiErrorMessage(e);
   if (viaCode) return viaCode;
   return errorMessage(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด', e);
 }
@@ -209,9 +211,7 @@ export function approvalComparable(claim: any, lineCount: number): ApprovalCompa
   };
 }
 
-export function paymentReferenceRequired(method: string): boolean {
-  return method === 'BANK_TRANSFER' || method === 'CHEQUE';
-}
+export { paymentReferenceRequired };
 
 /**
  * Client-side validation of the full-payment form. Returns an error key or null.
@@ -220,6 +220,7 @@ export function paymentReferenceRequired(method: string): boolean {
  */
 export function validatePaymentForm(input: {
   paidAmount: string;
+  paidAt?: string;
   outstandingAmount: string;
   paymentMethod: string;
   paymentReference?: string;
@@ -228,13 +229,14 @@ export function validatePaymentForm(input: {
   payout?: { rule: ReimbursementPaymentRule; confirmed: boolean; mismatchReason: string };
 }): string | null {
   if (!input.paymentMethod) return 'กรุณาเลือกวิธีจ่าย';
+  if (input.paidAt && isFuturePaymentDate(input.paidAt)) return translateApiError(PAYMENT_DATE_IN_FUTURE.code);
   const paid = Number(input.paidAmount);
   const outstanding = Number(input.outstandingAmount);
   if (!(paid > 0)) return 'จำนวนเงินต้องมากกว่า 0';
   if (paid > outstanding) return 'จำนวนเงินเกินยอดที่อนุมัติ';
   if (paid !== outstanding) return 'ต้องจ่ายเต็มจำนวนคงค้างเท่านั้น';
-  if (paymentReferenceRequired(input.paymentMethod) && (!input.paymentReference || input.paymentReference.trim() === '')) {
-    return 'ต้องระบุเลขอ้างอิงสำหรับการโอนเงิน/เช็ค';
+  if (paymentReferenceRequired(input.paymentMethod, input.hasSlip) && (!input.paymentReference || input.paymentReference.trim() === '')) {
+    return REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.requiredMessage;
   }
   // The API's own words for the same refusal, so the form and the server say one thing.
   if (reimbursementPaymentSlipRequired(input.paymentMethod) && !input.hasSlip) return translateApiError('payment_slip_required');
@@ -518,11 +520,11 @@ export function quickPayTarget(layout: 'cards' | 'table', companyId: string, req
  * refuses a claim with no branch for everyone, and the claim page offers no button for one either.
  */
 export function queueRowOffersPayment(
-  row: { status?: string; branchId?: string | null; cancellationPending?: boolean } | null | undefined,
+  row: { status?: string; branchId?: string | null; cancellationPending?: boolean; hasDuplicateBlocker?: boolean; duplicateReasons?: readonly string[] } | null | undefined,
   permissions: readonly string[],
 ): boolean {
   // A claim being cancelled is not paid (the API refuses it); its row says so and offers no payment.
-  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && !claimIsBeingCancelled(row) && permissions.includes('reimbursement.payment.record');
+  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && !claimIsBeingCancelled(row) && !row.hasDuplicateBlocker && !row.duplicateReasons?.includes('EXPENSE_CONFIRMATION') && permissions.includes('reimbursement.payment.record');
 }
 
 /**
@@ -1073,21 +1075,8 @@ export const JOURNEY_STEP_LABELS: Record<JourneyStepKey, string> = {
   items: 'รายการที่จ่ายไป', approval: 'อนุมัติ', finance: 'ตรวจการเงิน', payment: 'จ่ายเงินคืน', document: 'เอกสาร',
 };
 
-/** Why an open duplicate candidate was raised, in words (submit only records these two matches). */
-const DUPLICATE_MATCH_TEXT: Record<string, string> = {
-  ATTACHMENT_CHECKSUM: 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น',
-  EXPENSE_LINK: 'ใช้รายการค่าใช้จ่ายเดียวกับคำขอเบิกอื่น',
-};
-
-function openDuplicateText(detail: any): string {
-  const texts = new Set<string>((detail?.duplicateCandidates ?? [])
-    .filter((candidate: any) => candidate.status === 'OPEN')
-    .map((candidate: any) => DUPLICATE_MATCH_TEXT[candidate.candidateType] ?? 'อาจซ้ำกับคำขอเบิกอื่น'));
-  return [...texts].join(' และ ') || 'อาจซ้ำกับคำขอเบิกอื่น';
-}
-
 /** The policy switch, quoted as the settings page labels it so it can be found there. */
-const SELF_APPROVAL_SWITCH = `"${SELF_APPROVAL_SWITCH_LABEL}"`;
+const SELF_APPROVAL_BLOCK_NOTE = `ใบนี้เป็นของคุณเอง และนโยบายที่ใบนี้ใช้ปิด "${SELF_APPROVAL_SWITCH_LABEL}"`;
 
 /**
  * Whether THIS claim passes through finance review (spec §5: per claim, from its frozen policy).
@@ -1178,7 +1167,7 @@ function payoutCorrectionStepNote(
     // fed by an older server) only what is true of every answer.
     viewer.canApprove ? (answer ? reimbursementPayoutRoundApproverNote(answer, detail?.payoutCorrectionAnsweredBy) : `รอคุณอนุมัติ${thing} รายการและยอดเงินไม่เปลี่ยน`) : waiting,
     // The requester holds the approval this answer waits on and the company's switch refuses them (spec §15).
-    detail?.approvalActions?.selfApprovalBlocked === true && `ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติ${thing}เองไม่ได้`,
+    detail?.approvalActions?.selfApprovalBlocked === true && `${SELF_APPROVAL_BLOCK_NOTE} คุณจึงอนุมัติ${thing}เองไม่ได้`,
     // While it waits, what was answered may be answered again: an account corrected, or cash changed for another choice.
     !viewer.canApprove && viewer.canSubmit && (viewer.isRequester ? words.given.againForYou : words.given.againOnBehalf),
   ].filter(Boolean).join(' · ');
@@ -1263,8 +1252,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       // froze the switch at submit, so turning it on helps only once the claim is sent again.
       if (detail?.approvalActions?.selfApprovalBlocked === true) {
         const canManagePolicy = permissions.includes('reimbursement.policy.manage');
-        note = `${waiting} · ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด ${SELF_APPROVAL_SWITCH} คุณจึงอนุมัติเองไม่ได้ ถ้าต้องการอนุมัติเอง ${
-          canManagePolicy ? `เปิดได้ที่${POLICY_TAB_LABEL}` : `ขอให้เจ้าของกิจการเปิดใน${POLICY_TAB_LABEL}`} แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่`;
+        note = `${waiting} · ${REIMBURSEMENT_SELF_APPROVAL_DENIED}`;
         if (canManagePolicy) actions.push('policy-settings');
       }
       // spec §6: the requester takes back a claim nobody has decided yet — the same reopen as a refusal.
@@ -1284,15 +1272,15 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
       const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
-      if (payable && detail?.duplicateBlocksPayment === true) {
+      if (payable && (detail?.duplicateBlocksPayment === true || detail?.duplicateReasons?.includes('EXPENSE_CONFIRMATION'))) {
         // The API refuses payment until the block is cleared with a reason.
         // Owner 2026-09-21: a claim has only a requester and an approver, so whoever records the
         // payment clears the duplicate block with a reason; duplicate.resolve holders still can too.
         const canResolve = permissions.includes('reimbursement.payment.record') || permissions.includes('reimbursement.duplicate.resolve');
         if (canResolve) actions.push('resolve-duplicate');
-        note = `ติดรายการซ้ำ: ${openDuplicateText(detail)} ${canResolve
-          ? 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้'
-          : `รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`}`;
+        const reasons = detail.duplicateReasons ?? (detail.duplicateCandidates ?? []).filter((candidate: any) => candidate.status === 'OPEN').map((candidate: any) => candidate.candidateType);
+        note = canResolve ? reimbursementDuplicateBlockNotice(reasons)
+          : `ติดรายการซ้ำ: ${reimbursementDuplicateReasonText(reasons)} รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`;
       } else {
         const canPay = permissions.includes('reimbursement.payment.record');
         // The payment endpoint refuses a claim with no branch for everyone, so nobody is offered the
@@ -1308,13 +1296,14 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
           : !canPay && approval?.decisionByUserId === userId
             ? `คุณอนุมัติใบนี้แล้ว แต่บัญชีของคุณยังไม่มีสิทธิ์บันทึกจ่าย ${payers ? `ผู้ที่บันทึกจ่ายได้: ${payers} ` : ''}ถ้าต้องการจ่ายเอง ขอให้เจ้าของกิจการเพิ่มสิทธิ์บันทึกจ่ายให้บทบาทของคุณ`
             : waitingForPayer(detail);
-        note = [actions.length > 0 ? 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง' : waiting, duplicate].filter(Boolean).join(' · ');
+        note = [actions.length > 0 ? REIMBURSEMENT_PAYMENT_STEP_NOTE : waiting, duplicate].filter(Boolean).join(' · ');
       }
     } else if (key === 'document' && detail?.documentSignedVia) {
       // Done in the system or on paper (A4); the latest declared scan names who attached it and when.
       note = detail.documentSignedVia === 'DIGITAL' ? 'ลงนามในระบบครบแล้ว'
         : paperSignedLine((detail.signedCopies ?? []).find((copy: any) => copy.acknowledgedAt));
     } else if (key === 'document') {
+      const signAction = claimSignAction(detail, userId);
       if (eligibleSignatureRoles(detail, userId).some((role) => !signed.has(role))) actions.push('sign');
       // §18.2: name who the document still waits for. The blocks the form needs are the server's own
       // (`documentSignedVia`): ผู้อนุมัติ only when a person approved, ฝ่ายบัญชี only when finance reviewed.
@@ -1330,7 +1319,8 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
         .map((role) => `${blockLabel(role)}${signers[role] ? ` (${signers[role]})` : ''}`);
       note = [
         unsigned.length > 0 ? `จ่ายเงินคืนแล้ว ยังไม่ลงนาม: ${unsigned.join(' และ')}` : 'จ่ายเงินคืนแล้ว พิมพ์ใบเบิกเก็บไว้ได้',
-        actions.includes('sign') && 'คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก',
+        actions.includes('sign') && (signAction?.label === CLAIM_SIGN_LABEL
+          ? `คุณยังไม่ได้ลงนาม กด${CLAIM_SIGN_LABEL}` : `คุณยังลงนามไม่ครบ กด${signAction?.label}เพื่อเติมลายเซ็น`),
       ].filter(Boolean).join(' · ');
     }
     // Spec §14.3: a claim that waits for its payment is sent back for its account by whoever the server says may:

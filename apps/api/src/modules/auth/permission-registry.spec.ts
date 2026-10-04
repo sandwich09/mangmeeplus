@@ -23,6 +23,12 @@ function companyRoleKeys(): string[] {
 }
 
 describe('permission-registry', () => {
+  it('registers HIGH global WHT catalog management for SYSTEM_ADMIN alone', () => {
+    const key = 'system.wht_income_category.manage';
+    assert.equal(PERMISSIONS.find(p => p.key === key)?.riskLevel, 'HIGH');
+    assert.equal(COMPANY_PERMISSION_KEYS.includes(key), false);
+    assert.deepEqual(Object.keys(ROLE_GRANTS).filter(role => ROLE_GRANTS[role]!.includes(key)), ['SYSTEM_ADMIN']);
+  });
   it('grants package management to OWNER by default, not ADMIN', () => {
     assert.ok(COMPANY_PERMISSION_KEYS.includes('company.plan.manage'));
     assert.ok(ROLE_GRANTS.OWNER!.includes('company.plan.manage'));
@@ -541,6 +547,7 @@ describe('executive platform permission matrix (E1)', () => {
     MANGMEE_EXECUTIVE: 'system.executive.read',
     MANGMEE_EXECUTIVE_EXPORT: 'system.executive.export',
     MANGMEE_EXECUTIVE_CONTACT: 'system.executive.contact.read',
+    MANGMEE_EXECUTIVE_COMPANY_NOTE: 'system.executive.company_note.manage',
   };
   for (const [role, permission] of Object.entries(grants)) {
     it(`${role} has exactly its account baseline and executive permission`, () => {
@@ -550,7 +557,7 @@ describe('executive platform permission matrix (E1)', () => {
       assert.ok(PLATFORM_ROLE_KEYS.includes(role));
     });
   }
-  it('only the platform administrator receives all four executive permissions', () => {
+  it('only the platform administrator receives all five executive permissions', () => {
     for (const permission of [...Object.values(grants), 'system.executive_user.manage']) {
       assert.ok(PERMISSION_KEYS.includes(permission));
       assert.ok(ROLE_GRANTS.SYSTEM_ADMIN!.includes(permission));
@@ -562,9 +569,9 @@ describe('executive platform permission matrix (E1)', () => {
 
 it('executive catalog names and descriptions are plain Thai', () => {
   const roles = SYSTEM_ROLES.filter(({ key }) => key.startsWith('MANGMEE_EXECUTIVE'));
-  assert.equal(roles.length, 3);
+  assert.equal(roles.length, 4);
   const permissions = PERMISSIONS.filter(({ key }) => key.startsWith('system.executive'));
-  assert.equal(permissions.length, 4);
+  assert.equal(permissions.length, 5);
   for (const text of [...roles.flatMap(({ name, description }) => [name, description]), ...permissions.map(({ description }) => description)]) {
     assert.match(text, /[ก-๙]/); assert.doesNotMatch(text, /[A-Za-z]/);
   }

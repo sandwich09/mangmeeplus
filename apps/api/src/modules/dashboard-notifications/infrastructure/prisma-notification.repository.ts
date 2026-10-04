@@ -14,7 +14,14 @@ import type {
   NotificationRule, NotificationEvent, NotificationRecipient,
   NotificationDelivery, NotificationPreference, AlertState,
 } from '../domain/models/notification.model';
-import { DEFAULT_ENABLED_CHANNELS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS } from '../domain/models/notification.model';
+import { DEFAULT_ENABLED_CHANNELS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, NOTIFICATION_TRIGGER_FEATURE_KEYS, isNotificationTriggerEntitled } from '../domain/models/notification.model';
+import { loadEntitledFeatureKeys } from '../../employee-access/application/entitlement.helper';
+
+/** Apply before pagination/grouping, so hidden history cannot fill pages or inflate badges. */
+async function entitledNotificationFilter(prisma: PrismaService, companyId: string) {
+  const entitled = await loadEntitledFeatureKeys(prisma, companyId);
+  return { triggerKey: { in: Object.keys(NOTIFICATION_TRIGGER_FEATURE_KEYS).filter(key => isNotificationTriggerEntitled(key, entitled)) } };
+}
 
 /**
  * Keyset page for the three cursor-paginated lists here.
@@ -131,6 +138,7 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
     if (filter.read === false || filter.status === 'open') where.AND = [{ status: { not: 'RESOLVED' } }, { id: { notIn: completed } }];
     if (filter.severity) where.severity = filter.severity.toUpperCase();
     if (filter.triggerKey) where.triggerKey = filter.triggerKey;
+    where.AND = [...(where.AND ?? []), await entitledNotificationFilter(this.prisma, companyId)];
     const rows = await this.prisma.client.notificationEvent.findMany({
       where,
       ...keysetPage(filter.cursor, pageSize),
@@ -204,7 +212,7 @@ export class PrismaNotificationRecipientRepository implements NotificationRecipi
   async findByEventAndUser(eventId: string, userId: string) { const r = await this.prisma.client.notificationRecipient.findUnique({ where: { eventId_userId: { eventId, userId } } }); return r ? toRecipient(r) : null; }
   async listByUser(companyId: string, userId: string, filter: { read?: boolean; cursor?: string; pageSize?: number }) {
     const pageSize = filter.pageSize ?? 25;
-    const where: any = { companyId, userId };
+    const where: any = { companyId, userId, event: await entitledNotificationFilter(this.prisma, companyId) };
     if (filter.read === false) where.readAt = null;
     if (filter.read === true) where.readAt = { not: null };
     const rows = await this.prisma.client.notificationRecipient.findMany({ where, ...keysetPage(filter.cursor, pageSize), include: { event: true } });
@@ -225,7 +233,7 @@ export class PrismaNotificationRecipientRepository implements NotificationRecipi
     const completed = await completedDocumentNotificationIds(this.prisma.client, companyId, userId);
     const groups = await this.prisma.client.notificationEvent.groupBy({
       by: ['severity'],
-      where: { companyId, status: { not: 'RESOLVED' }, id: { notIn: completed }, recipients: { some: { userId, readAt: null, dismissedAt: null } } },
+      where: { companyId, ...await entitledNotificationFilter(this.prisma, companyId), status: { not: 'RESOLVED' }, id: { notIn: completed }, recipients: { some: { userId, readAt: null, dismissedAt: null } } },
       _count: { _all: true },
     });
     const count = (severity: string) => groups.find((group) => group.severity === severity)?._count._all ?? 0;

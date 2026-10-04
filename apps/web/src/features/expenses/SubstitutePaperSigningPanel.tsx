@@ -10,7 +10,7 @@ import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { DocumentPreviewModal } from '@/common/components/document-preview';
 import { acceptSubstitutePaper, downloadSubstituteReceiptFormPdf, listSubstituteReceiptHistory, previewSubstitutePaper, submitSubstitutePaperFile } from './expenses.api';
-import { btnClass, ghostClass, inputClass, ErrorBanner, err } from './ExpensesUi';
+import { btnClass, ghostClass, inputClass, ErrorBanner, err, WholeWords } from './ExpensesUi';
 
 const blankSigner = (): SubstituteReceiptPaperSigner => ({ name: '', position: '', signedOn: '' });
 export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, canAccept, allowSamePerson, onChange }: {
@@ -61,7 +61,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
         <p className="text-sm text-gray-600">หากแก้ข้อมูลที่หน้ารายการค่าใช้จ่าย ให้ดาวน์โหลดแบบฟอร์มล่าสุดไปลงนามใหม่ เอกสารใช้เลขเดิม และฉบับที่เคยเซ็นจะอยู่ในประวัติ</p>
         <h3 className="font-bold">2. อัปโหลดฉบับที่กรอกและลงนามครบทั้งสองส่วน</h3>
         <ThemedFile file={file} accept={ATTACHMENT_UPLOAD_ACCEPT} aria-label="ฉบับลงนามบนกระดาษ" onChange={(picked) => { setFile(picked); setMatches(false); }} />
-        <p className="text-xs text-gray-500">PDF ไม่เกิน 5 หน้า หรือ{SIGNATURE_FILE_TYPES_LABEL} ขนาดไม่เกิน 10 เมกะไบต์ ให้เห็นครบทุกหน้าและอ่านได้ชัดเจน</p>
+        <p className="text-xs text-gray-500">PDF ไม่เกิน 5 หน้า หรือ<WholeWords text={SIGNATURE_FILE_TYPES_LABEL} /> ขนาดไม่เกิน <span className="whitespace-nowrap">10 เมกะไบต์</span> ให้เห็นครบทุกหน้าและอ่านได้ชัดเจน</p>
         <div className="grid gap-4 md:grid-cols-2">{signerFields('ผู้รับรองการจ่าย', payer, setPayer)}{signerFields('ผู้อนุมัติ', approver, setApprover)}</div>
         <label className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={samePerson} onChange={(event) => setSamePerson(event.target.checked)} /><span>ผู้ลงนามทั้งสองส่วนเป็นคนเดียวกัน (ต้องผ่านนโยบายบริษัท)</span></label>
         <label className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={matches} onChange={(event) => setMatches(event.target.checked)} /><span>ยืนยันว่าไฟล์เป็นเอกสารเลขที่ {evidence.documentNumber} ข้อมูลตรงกับแบบฟอร์ม และมีชื่อ วันที่ ลายเซ็นครบทั้งสองส่วน โดยตำแหน่ง (ถ้ามี) ตรงกับกระดาษ</span></label>

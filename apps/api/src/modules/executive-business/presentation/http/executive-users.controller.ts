@@ -1,6 +1,6 @@
 import { ArgumentsHost, Body, Catch, Controller, ExceptionFilter, Get, Header, HttpCode, HttpException, Param, Post, Query, Req, UseFilters } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsEmail, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import type { Request, Response } from 'express';
 import { EXECUTIVE_ACCOUNT_STATUSES, type ExecutiveAccountStatus, type ExecutiveUserCreateBody, type ExecutiveUserAccessBody, type ExecutiveUserStatusBody, type ExecutiveUserReasonBody, type ExecutiveUserListQuery } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
@@ -15,6 +15,8 @@ export class ExecutiveUserCreateDto implements ExecutiveUserCreateBody {
   @IsOptional() @IsEmail() @MaxLength(320) email?: string;
   @IsBoolean() canExport!: boolean;
   @IsBoolean() canSeeContacts!: boolean;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() canEditCompanyNote?: boolean;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() canManageCompanyNote?: boolean;
 }
 export class ExecutiveUserCredentialDto implements ExecutiveUserReasonBody {
   @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
@@ -25,6 +27,8 @@ export class ExecutiveUserStatusDto extends ExecutiveUserCredentialDto implement
 export class ExecutiveUserAccessDto extends ExecutiveUserCredentialDto implements ExecutiveUserAccessBody {
   @IsBoolean() canExport!: boolean;
   @IsBoolean() canSeeContacts!: boolean;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() canEditCompanyNote?: boolean;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() canManageCompanyNote?: boolean;
 }
 export class ExecutiveUserListQueryDto implements ExecutiveUserListQuery {
   @IsOptional() @IsString() @MaxLength(320) q?: string;

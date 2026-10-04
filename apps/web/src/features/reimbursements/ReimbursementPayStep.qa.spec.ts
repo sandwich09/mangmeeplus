@@ -475,7 +475,7 @@ describe('pay step: the confirmation names one account, and says when the payer 
     assert.match(box(paymentForm(legacyWithDefault, { method: 'BANK_TRANSFER', payer: { confirmedFor: `default:${TOKEN}` } })), /checked=""/);
     assert.doesNotMatch(box(paymentForm({ ...legacyWithDefault, legacyPayoutDefault: { ...KBANK, confirmToken: 'f'.repeat(32) } },
       { method: 'BANK_TRANSFER', payer: { confirmedFor: `default:${TOKEN}` } })), /checked/);
-    assert.match(read('./ReimbursementDetailSections.tsx'), /onChange=\{\(checked\) => setPayer\(p => \(\{ \.\.\.p, confirmedFor: checked \? payout\.confirmation!\.key : '' \}\)\)\}/);
+    assert.match(read('./ReimbursementDetailSections.tsx'), /onChange=\{\(checked\) => editPayer\(p => \(\{ \.\.\.p, confirmedFor: checked \? payout\.confirmation!\.key : '' \}\)\)\}/);
   });
 
   // Before: "เหตุผลที่จ่ายต่างจากที่ผู้เบิกขอ" and "ผู้เบิกขอรับเป็นเงินสด …". The method on the claim may have been chosen by whoever

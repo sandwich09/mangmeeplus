@@ -15,7 +15,7 @@ import {
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
 } from './reimbursements.api';
 import {
-  FINANCE_REVIEW_LABELS, POLICY_TAB_LABEL, REIMBURSEMENT_CREATE_UNAVAILABLE, SELF_APPROVAL_SWITCH_LABEL,
+  FINANCE_REVIEW_LABELS, POLICY_TAB_LABEL, REIMBURSEMENT_CREATE_UNAVAILABLE, SELF_APPROVAL_SWITCH_LABEL, SELF_APPROVAL_POLICY_NOTE,
   claimDeskText, claimStatusBadge, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
 import {
@@ -34,10 +34,10 @@ import {
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
-import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage } from './reimbursement-payout.logic';
+import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
 import { roleDisplayName } from '../employee-access/role-picker.logic';
-import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateBlockNotice, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
 /** Every banner in this feature goes through here, so API error codes never reach the user raw. */
@@ -432,7 +432,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                               title={reimbursementSubmitReadiness(r).message}
                               onClick={e => { e.stopPropagation(); submitRow(r); }}
                               disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
-                            >{draftRowSubmitsFromItsPage(r) ? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'}</button>}
+                            >{draftRowSubmitLabel(r)}</button>}
                             {/* Cancelling now opens the journey page (Phase 6): its own "ยกเลิกคำขอ" action carries the confirm dialog. */}
                             {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                           </div>
@@ -472,7 +472,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         title={reimbursementSubmitReadiness(r).message}
                         onClick={() => submitRow(r)}
                         disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
-                      >{draftRowSubmitsFromItsPage(r) ? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'}</button>}
+                      >{draftRowSubmitLabel(r)}</button>}
                       {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => onOpenDetail(r.id)} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                     </div>
                   )}
@@ -822,7 +822,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td className={cx(FREE_TEXT_CELL, 'min-w-24')}>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
-                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}</div></td>
+                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge><span className="text-xs text-amber-800">{reimbursementDuplicateBlockNotice(r.duplicateReasons, r.status === 'FINANCE_REVIEW')}</span></>}</div></td>
                         {withReview && <td className="text-xs text-gray-500">{financeLine(r) ?? '—'}</td>}
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -853,7 +853,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge claim={r} />
-                      {r.hasDuplicateBlocker && <MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge>}
+                      {(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge><span className="text-xs text-amber-800">{reimbursementDuplicateBlockNotice(r.duplicateReasons, r.status === 'FINANCE_REVIEW')}</span></>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
                   </div>
@@ -1071,7 +1071,7 @@ export function PolicySettings({ companyId, onPolicy }: {
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-gray-800">{SELF_APPROVAL_SWITCH_LABEL}</span>
-                <span className="mt-0.5 block text-xs text-gray-500">เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายสามารถอนุมัติใบเบิกที่ตัวเองสร้างได้</span>
+                <span className="mt-0.5 block text-xs text-gray-500">{SELF_APPROVAL_POLICY_NOTE}</span>
               </span>
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.allowSelfApproval} onChange={e => setForm((f: any) => ({ ...f, allowSelfApproval: e.target.checked }))} />
             </label>

@@ -13,11 +13,26 @@ import {
   exclusiveEndOfDay,
   isCivilDate,
   isCivilPeriodKey,
+  isFuturePaymentDate,
+  PAYMENT_DATE_IN_FUTURE,
   todayCivilDate,
   utcDateToCivilDate,
 } from './civil-date.js';
 
 describe('civil-date', () => {
+  it('refuses only payment dates after Bangkok today, including the UTC day boundary', (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-04T16:59:59.999Z') });
+    assert.equal(isFuturePaymentDate('2026-10-03'), false);
+    assert.equal(isFuturePaymentDate('2026-10-04'), false);
+    assert.equal(isFuturePaymentDate('2026-10-05'), true);
+    assert.equal(isFuturePaymentDate(new Date('2026-10-04T17:30:00.000Z')), true);
+    t.mock.timers.tick(1);
+    assert.equal(isFuturePaymentDate('2026-10-05'), false);
+    assert.equal(isFuturePaymentDate('2026-10-06'), true);
+    assert.equal(isFuturePaymentDate(new Date('2026-10-04T17:30:00.000Z')), false);
+    assert.deepEqual(PAYMENT_DATE_IN_FUTURE, { code: 'payment_date_in_future', message: 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้' });
+  });
+
   it('accepts only real calendar days in YYYY-MM-DD', () => {
     for (const good of ['2026-08-04', '2024-02-29', '1999-12-31', '2100-12-31']) {
       assert.equal(isCivilDate(good), true, good);

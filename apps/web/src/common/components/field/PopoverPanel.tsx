@@ -91,6 +91,6 @@ export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth
 
   return createPortal(
     <div ref={panelRef} {...rest} style={style ?? UNPLACED} className={className}>{children}</div>,
-    document.body,
+    anchorRef.current?.closest<HTMLElement>('[popover], dialog') ?? document.body,
   );
 }

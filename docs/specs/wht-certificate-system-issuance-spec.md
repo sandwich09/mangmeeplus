@@ -1,5 +1,17 @@
 # WHT Certificate System Issuance Spec — ออกหนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ในระบบ ครั้งแรก
 
+## Global income catalog — owner decision 2026-10-04
+
+The owner approved opening 12 global categories for every shop: service and professional fees at 3%, rent at 5%, advertising at 2%, transport at 1%, and other income at 3%, each with individual (PND3) and juristic (PND53) rows. Preserve the actual seed service codes `WHT_SERVICE_3` and `WHT_SERVICE_5`; other paired codes retain their `_IND`/`_JUR` suffixes. Interest, dividend and prize remain DRAFT on insertion pending accountant review. The existing interest baseline (1%, PND3) is questionable and must not be corrected or activated in this change.
+
+A data-only, idempotent migration inserts missing rows and activates the approved 12 on seeded databases; it leaves existing exceptional rows unchanged. Seed creates the same initial statuses and never resets a saved status. Only Mangmee's SYSTEM_ADMIN manages this global catalog through `/system/wht-income-categories`, under “ตั้งค่าระบบ”, with `system.wht_income_category.manage` and the existing platform-tenant boundary. The shared HIGH-audited status command refuses customer-company callers, including the legacy `tax.config.manage` route; customer reads and package/readiness gates remain as specified elsewhere.
+
+The admin sees name, filing form, percentage and status, and can enable/disable only (no name/rate editing). Confirmation identifies the category, form and default rate; existing settled records and certificates retain their snapshots. Discovery: AP permits a saved rate override, and `IssueWhtCertificateFromHandoffUseCase` copies `prefill.whtRate`, so it cannot truthfully promise every later certificate uses the catalog default. Pending owner clarification, the proposed confirmation explains that selecting offers this default and every later certificate uses the saved payment rate. No rate-enforcement change is authorized here. Loading, empty, denied, failed-read and failed-save states use plain Thai, with retry after a read failure. Acceptance includes fresh/seeded/repeated SQL, exactly 12 initial expense options, platform-only routes and rendered list/toggles. Implementation sequence and verification are recorded in `docs/agent-memory/wht-income-category-catalog-2026-10-04.md`.
+
+## Persistent certificate actions on the expense page — 2026-10-04
+
+2026-10-04: confirmed withholding expenses retain “พิมพ์เอกสาร 50 ทวิ” across visits when entitlement, permission and server route capability allow. Issued certificates retain re-download/correction (`GET /companies/:companyId/wht/payment-handoffs/:handoffId/system-certificate`, read/issue/correct permission, latest certificate, same number, no new issue/replacement); no withholding means no action. Reopen cancels required direct and tax-event handoffs and supersedes all active expense tax events (legacy VAT, finalized line contributions and WHT); confirmation rebuilds the direct handoff from corrected facts with the same id and clears an operator address belonging to the old payee. Direct issuance/external linking rechecks the confirmed source under the correction lock. Tax-workspace issuance and external fallback creation also recheck the confirmed expense and current active event hashes. Handoff status checks and certificate creation are in the same transaction, so a losing issuance leaves no certificate. Issued/external certificates block reopening. Catalog matches payee type (individual ภ.ง.ด.3, juristic ภ.ง.ด.53); changes clear incompatible categories. Mangmee manages the catalog; empty applicable lists direct users to the Mangmee team.
+
 ## Print-format correction (2026-09-23)
 
 The system PDF must print on the Revenue Department's published 50 ทวิ form, with Thai text confined to its payer, payee, tax ID, filing type, income, amount, and signature fields. The PDF must not expose serialized address JSON, overlap form labels or adjacent columns, or substitute a visually different blank page. The Revenue Department source is https://rd.go.th/fileadmin/tax_pdf/withhold/approve_wh3_081156.pdf. A replacement copy retains its number and shows ใบแทน. The payer signature stays blank unless the company chose automatic signature. The same renderer applies to initial issuance, correction, and replacement.
@@ -66,7 +78,17 @@ UI ปัจจุบัน (ยืนยันจาก source):
 
 ### 4.2 Expenses — หน้าตรวจสอบ → "ยืนยันเอกสาร"
 
-UI ปัจจุบัน (ยืนยันจาก source):
+**UI follow-up 2026-10-04:** the first review step uses one withholding block after the line
+list, beginning with ไม่หัก / หัก. Selecting หัก reveals payee type, income category and
+rate/amount together before any positive rate is entered. Positive withholding still requires
+both classifications under the existing `validateConfirm` rules. Blank rate/amount or ไม่หัก
+sends explicit zero and clears withholding metadata/errors. Empty, loading and failed category
+lists are explained separately, including for read-only viewers. See
+[expense withholding input spec](expense-wht-input-units-mixed-vat-spec.md#review-interaction-2026-10-04).
+The print button, AP print heading/button and stale-state notice reuse the workspace dictionary's
+“พิมพ์เอกสาร 50 ทวิ” wording. Catalog activation and issuance gates are unchanged.
+
+UI ก่อนเปลี่ยนแปลง v1 (ยืนยันจาก source):
 
 - Dropdown บังคับ "ประเภทผู้รับเงิน (หัก ณ ที่จ่าย)" (`t('expenses.payee_entity_kind')`) ต่อเมื่อ `whtAmount > 0` ก่อนกดยืนยันได้ ([expense-status.logic.ts:318-323](../../apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts))
 - ปุ่ม "ยืนยันเอกสาร" (`t('expenses.confirm_and_post')`, [ExpenseReviewPage.tsx:923](../../apps/web/src/features/expenses/ExpenseReviewPage.tsx)) เรียก `confirmExpense` → toast "ยืนยันเอกสารเรียบร้อยแล้ว" — ไม่มี handoff/certificate ใด ๆ เกิดขึ้นหลังจากนี้วันนี้
@@ -210,3 +232,7 @@ Route-readiness gate นี้เป็น**คนละแกนกับ** bil
 The 50 ทวิ company signature page reads `GET /companies/:companyId/tax/profile/signature`, protected by the existing `company.tax_signature.manage` permission (entitled through `wht_50bis`, or legacy `thai_tax`). It returns only `signatureMode` and `signatureImageAttachmentId`, with `BLANK`/null defaults. Route company must match the request company. ENTERPRISE signature managers can read and save this setting; STARTER and non-managers cannot. The full `tax/profile` endpoint and other Tax workspace data retain their existing tax-only permission gates. This page does not serve PND53.
 
 Controls appear only after successful loading; failed loading offers retry, not a default-value save. The card keeps inner padding at 390 px. No schema change is required.
+
+### Confirmed-expense browser follow-up (2026-10-04)
+
+An issued expense certificate keeps a compact sticky download action (“ดาวน์โหลดเอกสารอีกครั้ง”); correction and replacement controls remain in the document body. Issuance eligibility and the no-withholding exclusion are unchanged. After issuance, the main document actions display the certificate's reopen blocker for all readers, independent of ledger permission. The in-app expense guide uses the shared actual correction and payment-cancellation button names. The owner decision prohibiting future expense-payment dates applies only to expense payment recording, not certificate correction dates or claim payouts in this lane.

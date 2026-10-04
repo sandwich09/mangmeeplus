@@ -18,7 +18,7 @@ import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
 import { collectReceiptUploadResults, draftSentBackNote, mergeDraftLineEvidence, validateRequestForm, errorMessage, sumLineAmounts, formatMoney, errorText, money, categoryText } from './reimbursements.logic';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
-import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
+import { ReimbursementSourceFacts, WholeWords } from './ReimbursementSourceFacts';
 import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
 import { BackToClaimsLink, ClaimPayoutFormSection } from './ReimbursementPayout';
 import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
@@ -513,7 +513,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                         </div>
                       )}
                       {l.linkedExpenseId && !l.file && <p className="mt-2 text-xs text-gray-500">เชื่อมกับค่าใช้จ่ายที่บันทึกไว้</p>}
-                      <p className="mt-1 text-xs leading-5 text-gray-400">รองรับ {ATTACHMENT_SOURCE_TYPES_LABEL} ระบบจะแปลงรูปให้อัตโนมัติก่อนแนบ</p>
+                      <p className="mt-1 text-xs leading-5 text-gray-400">รองรับ <WholeWords text={ATTACHMENT_SOURCE_TYPES_LABEL} /> ระบบจะแปลงรูปให้อัตโนมัติก่อนแนบ</p>
                     </div>
                   </div>
                 </div>

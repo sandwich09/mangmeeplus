@@ -139,12 +139,20 @@ describe('claimSignAction (one ลงนาม button)', () => {
   });
 
   it('signs both blocks from one tap when the requester approved their own claim (AC06)', () => {
-    assert.deepEqual(claimSignAction(solo, 'owner-1'), { roles: ['REQUESTER', 'APPROVER'], label: 'ลงนาม' });
+    assert.deepEqual(claimSignAction(solo, 'owner-1'), { roles: ['REQUESTER', 'APPROVER'], label: 'ลงนามในใบเบิก' });
     assert.equal(claimSelfApproved(solo), true);
     assert.equal(claimSelfApproved(detail()), false);
     // A legacy claim keeps every block that person really signed for.
     assert.deepEqual(claimSignAction({ ...solo, claimFormLayout: 'LEGACY_FOUR_SIGNERS' }, 'owner-1')?.roles, ['REQUESTER', 'APPROVER', 'FINANCE_REVIEW', 'PAYER']);
   });
+
+  for (const [userId, role] of [['staff-1', 'REQUESTER'], ['mgr-1', 'APPROVER']]) {
+    it(`${role}: first signing differs from replacing the viewer's own signature`, () => {
+      assert.equal(claimSignAction(detail({ signatures: [] }), userId!)?.label, 'ลงนามในใบเบิก');
+      assert.equal(claimSignAction(detail({ signatures: [{ role, signedByUserId: userId }] }), userId!)?.label, 'ลงนามใหม่');
+      assert.equal(claimSignAction(detail({ signatures: [{ role, signedByUserId: 'previous-actor' }] }), userId!)?.label, 'ลงนามในใบเบิก');
+    });
+  }
 
   it('offers ลงนามใหม่ to a requester who signed before approving, now filling the approver block too (§15)', () => {
     const signedEarly = { ...solo, signatures: [{ role: 'REQUESTER', signedByUserId: 'owner-1' }] };

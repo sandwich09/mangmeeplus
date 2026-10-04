@@ -19,15 +19,16 @@ import {
   NOTIFICATIONS_CHANGED_EVENT,
 } from './dashboard-notifications.api';
 import {
-  severityColor,
-  severityLabel,
   formatRelativeTime,
   internalNotificationHref,
   visibleNotifications,
+  isUnreadNotification,
+  notificationBodyText,
+  notificationTag,
   notificationRuleChannelsText,
   notificationRuleDetailText,
 } from './dashboard-notifications.logic';
-import type { NotificationItem, NotificationRule, NotificationPreference, NotificationSeverity } from './dashboard-notifications.model';
+import type { NotificationItem, NotificationRule, NotificationPreference } from './dashboard-notifications.model';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
 
 function ErrorBanner({ message }: { message: string }) {
@@ -165,7 +166,7 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
   async function handleOpen(item: NotificationItem) {
     const href = internalHref(item);
     if (!href) return;
-    if (!item.read) await handleMarkRead(item.id);
+    if (isUnreadNotification(item)) await handleMarkRead(item.id);
     router.push(href);
   }
 
@@ -178,8 +179,8 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
         <div className="flex gap-2">
           <button
             onClick={handleMarkAllRead}
-            disabled={loading || markAllBusy || busyRow !== null || !items.some((item) => !item.read)} aria-busy={Boolean(markAllBusy)}
-            className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:min-h-0"
+            disabled={loading || markAllBusy || busyRow !== null || !items.some(isUnreadNotification)} aria-busy={Boolean(markAllBusy)}
+            className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
           >
             {markAllBusy ? 'กำลังทำเครื่องหมาย...' : 'อ่านทั้งหมด'}
           </button>
@@ -209,7 +210,7 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
 
       <div className="rounded-lg border border-gray-200 bg-white overflow-hidden divide-y divide-gray-100">
         {visibleItems.map((item) => (
-          <div key={item.id} className={`relative flex items-start gap-3 p-3 ${item.read ? 'opacity-60' : ''}`}>
+          <div key={item.id} className={`relative flex items-start gap-3 p-3 ${isUnreadNotification(item) ? '' : 'opacity-60'}`}>
             {/* The whole row is the target, badge included. It used to be a <div role="link">
                 covering only the middle column — about 180px of a 390px screen, and not a real
                 link: no long-press, no open-in-new-tab, Enter only. The overlay link is a
@@ -218,23 +219,23 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
             {internalHref(item) && (
               <Link
                 href={internalHref(item)!}
-                onClick={() => { if (!item.read) void handleMarkRead(item.id); }}
+                onClick={() => { if (isUnreadNotification(item)) void handleMarkRead(item.id); }}
                 className="absolute inset-0 z-0"
                 aria-label={item.title}
               />
             )}
-            <span className={`pointer-events-none relative mt-0.5 rounded px-1.5 py-0.5 text-xs font-semibold ${severityColor(item.severity as NotificationSeverity)}`}>
-              {item.status === 'resolved' ? 'ดำเนินการแล้ว' : severityLabel(item.severity as NotificationSeverity)}
+            <span className={`pointer-events-none relative mt-0.5 rounded px-1.5 py-0.5 text-xs font-semibold ${notificationTag(item).tone}`}>
+              {notificationTag(item).label}
             </span>
             <div className="pointer-events-none relative min-w-0 flex-1">
               {/* Two lines instead of `truncate`: the title had ~180px of room and was cut
                   mid-sentence, which is most of what made this screen unreadable on a phone. */}
               <p className="line-clamp-2 text-sm font-medium text-gray-900 sm:truncate">{item.title}</p>
-              <p className="text-xs text-gray-500">{item.body}</p>
+              {notificationBodyText(item) && <p className="text-xs text-gray-500">{notificationBodyText(item)}</p>}
               <p className="text-xs text-gray-400 mt-0.5">{formatRelativeTime(item.createdAt)}</p>
             </div>
             <NotificationRowMenu
-              read={item.read}
+              read={!isUnreadNotification(item)}
               busy={markAllBusy || busyRow !== null}
               busyLabel={busyRow?.id === item.id ? (busyRow.action === 'read' ? 'กำลังทำเครื่องหมาย...' : 'กำลังปิด...') : null}
               onMarkRead={() => handleMarkRead(item.id)}

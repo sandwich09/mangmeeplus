@@ -67,13 +67,13 @@ const paid = { ...base, status: 'PAID', paymentStatus: 'PAID', outstandingAmount
  * order (fields, the payer's statement, slip, error, busy), so the first two `null` initial values are the
  * slip and the error. A method not given is the one the form itself starts from.
  */
-function paymentForm(request: object, state: { method?: string; slip?: object; error?: string } = {}, onOpenFile: (choice: unknown) => void = noop): string {
+function paymentForm(request: object, state: { method?: string; slip?: object; error?: string; reference?: string } = {}, onOpenFile: (choice: unknown) => void = noop): string {
   const realUseState = reactRuntime.useState;
   let nulls = 0;
   Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
     const [value, set] = (realUseState as (initial: unknown) => [unknown, unknown])(initial);
     const start = typeof initial === 'function' ? (initial as () => unknown)() : initial;
-    if (start && typeof start === 'object' && 'paymentMethod' in start) return [{ ...start, ...(state.method !== undefined && { paymentMethod: state.method }) }, set];
+    if (start && typeof start === 'object' && 'paymentMethod' in start) return [{ ...start, ...(state.method !== undefined && { paymentMethod: state.method }), ...(state.reference !== undefined && { paymentReference: state.reference }) }, set];
     if (start === null) {
       nulls += 1;
       if (nulls === 1 && state.slip) return [state.slip, set];
@@ -100,6 +100,46 @@ function paymentRow(html: string, paymentNo: string): string {
 }
 
 describe('payment form: the payer chooses the method', () => {
+  for (const method of ['BANK_TRANSFER', 'CHEQUE', 'CASH', 'OTHER']) {
+    it(`names the reference and explains its evidence rule for ${method}`, () => {
+      for (const hasSlip of [false, true]) {
+        const html = paymentForm(base, { method, ...(hasSlip && { slip: { attachmentId: ids.slip, name: 'หลักฐาน.jpg' } }) });
+        const required = method === 'CHEQUE' && !hasSlip;
+        const label = method === 'BANK_TRANSFER' ? 'เลขที่อ้างอิงการโอน (ไม่บังคับเมื่อแนบสลิป)'
+          : method === 'CHEQUE' ? `เลขที่เช็ค${required ? ' *' : ' (ไม่บังคับเมื่อแนบหลักฐาน)'}` : 'เลขที่เอกสารการจ่าย (ไม่บังคับ)';
+        assert.ok(visible(html).includes(label), label);
+        assert.equal(/<input[^>]*aria-label="เลขที่เช็ค"[^>]*aria-required="true"/.test(html), required);
+        // Like a missing slip, the refusal is said on บันทึกจ่าย: the form neither locks the button nor warns while it is being filled.
+        const submit = /<button\b([^>]*\btype="submit"[^>]*)>/.exec(html)?.[1] ?? '';
+        assert.ok(!submit.includes('disabled=""'));
+        assert.ok(!html.includes('กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย'));
+        assert.ok(visible(html).some(text => method === 'BANK_TRANSFER' ? text.includes('บนสลิปหรือในแอปธนาคาร') && text.includes('กระทบยอด')
+          : method === 'CHEQUE' ? text.includes('บนเช็ค') && text.includes('แนบหลักฐานการจ่าย') : text.includes('ใบสำคัญจ่ายหรือใบเสร็จรับเงิน')));
+      }
+      if (method === 'CHEQUE') {
+        const numbered = paymentForm(base, { method, reference: 'CHQ-1' });
+        assert.doesNotMatch(numbered, /type="submit"[^>]*disabled=""/);
+        assert.ok(!numbered.includes('กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย'));
+      }
+    });
+  }
+
+  it('a refusal goes as soon as the payer changes the form, and the hint never ends on a lone syllable (screen check 2026-10-05)', () => {
+    const source = read('./ReimbursementDetailSections.tsx');
+    const form = source.slice(source.indexOf('export function PaymentForm('), source.indexOf('const attachmentPreviewMimeType'));
+    // Every change the payer makes goes through a setter that first takes the refusal away: the method, the reference, evidence attached,
+    // removed or chosen from the claim's own files, and the other fields alike. So the red box never contradicts the form in front of them.
+    assert.match(form, /const edited = <T,>\(set: React\.Dispatch<React\.SetStateAction<T>>\): React\.Dispatch<React\.SetStateAction<T>> => \(next\) => \{ setError\(null\); set\(next\); \};/);
+    assert.match(form, /const editForm = edited\(setForm\), editPayer = edited\(setPayer\), editSlip = edited\(setSlip\);/);
+    assert.equal((form.match(/=> edit(?:Form|Payer|Slip)\(/g) ?? []).length, 8);
+    assert.doesNotMatch(form, /onChange=\{[^}]*=> set(?:Form|Payer|Slip)\(/);
+    // The slip the form swaps in after its own upload is not the payer's change: a refusal said after that upload stays on screen.
+    assert.match(form, /onSlipUploaded: setSlip,/);
+    assert.match(form, /\{validationError && <ErrorBanner message=\{validationError\} \/>\}/);
+    // Seen at 390 px: the cash hint ended with "หลัง" alone on its last line.
+    for (const method of ['BANK_TRANSFER', 'CHEQUE', 'CASH', 'OTHER']) assert.match(paymentForm(base, { method }), /<p id="[^"]*-hint" class="mt-1 text-pretty text-xs leading-5 text-gray-500">/);
+  });
+
   it('opens with no method selected, never เงินสด', () => {
     const html = paymentForm(base);
     const method = /<summary[^>]*role="combobox"[^>]*aria-label="วิธีจ่าย"[^>]*>(.*?)<\/summary>/su.exec(html);
@@ -112,13 +152,13 @@ describe('payment form: the payer chooses the method', () => {
     assert.ok(visible(html).includes('สลิปหรือหลักฐานการจ่าย'));
   });
 
-  it('shows the chosen method, and marks the reference and the slip as required for a transfer only', () => {
+  it('shows the chosen method, requires a transfer slip and explains its optional reference', () => {
     const transferForm = visible(paymentForm(base, { method: 'BANK_TRANSFER' }));
-    for (const text of ['โอนเงิน', 'เลขอ้างอิง *', 'สลิปหรือหลักฐานการจ่าย *']) assert.ok(transferForm.includes(text), text);
+    for (const text of ['โอนเงิน', 'เลขที่อ้างอิงการโอน (ไม่บังคับเมื่อแนบสลิป)', 'สลิปหรือหลักฐานการจ่าย *']) assert.ok(transferForm.includes(text), text);
     assert.ok(transferForm.some((text) => text.startsWith('จ่ายด้วยการโอนต้องแนบสลิป')));
 
     const cashForm = visible(paymentForm(base, { method: 'CASH' }));
-    for (const text of ['เงินสด', 'เลขอ้างอิง', 'สลิปหรือหลักฐานการจ่าย']) assert.ok(cashForm.includes(text), text);
+    for (const text of ['เงินสด', 'เลขที่เอกสารการจ่าย (ไม่บังคับ)', 'สลิปหรือหลักฐานการจ่าย']) assert.ok(cashForm.includes(text), text);
     assert.ok(cashForm.some((text) => text.startsWith('แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้')));
     assert.equal(cashForm.includes('สลิปหรือหลักฐานการจ่าย *'), false);
   });
@@ -152,7 +192,10 @@ describe('payment form: the slip', () => {
     assert.doesNotMatch(input[0], /capture/);
     assert.match(input[0], /aria-label="สลิปหรือหลักฐานการจ่าย"/);
     assert.match(input[0], /aria-required="true"/);
-    assert.ok(visible(html).some((text) => text.includes(`${ATTACHMENT_SOURCE_TYPES_LABEL} ขนาดไม่เกิน 10 เมกะไบต์`)));
+    // The shared sentence, read whole; on screen every file-type name and the size are unbreakable, so a phone never cuts "ฮีอิก" in two.
+    const whole = (markup: string) => markup.replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/gu, '$1');
+    assert.ok(visible(whole(html)).some((text) => text.includes(`${ATTACHMENT_SOURCE_TYPES_LABEL} ขนาดไม่เกิน 10 เมกะไบต์`)));
+    for (const name of [...ATTACHMENT_SOURCE_TYPES_LABEL.split(' '), '10 เมกะไบต์']) assert.ok(html.includes(`<span class="whitespace-nowrap">${name}</span>`), name);
   });
 
   it('shows the file the payer picked, and the one already uploaded when saving failed', () => {

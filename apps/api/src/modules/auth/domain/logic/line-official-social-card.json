@@ -1,0 +1,209 @@
+{
+  "type": "flex",
+  "altText": "ติดตามมั่งมี Plus: Instagram, Facebook และ TikTok",
+  "contents": {
+    "type": "bubble",
+    "size": "kilo",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "xs",
+      "paddingAll": "16px",
+      "paddingBottom": "8px",
+      "backgroundColor": "#F7F4E8",
+      "contents": [
+        {
+          "type": "text",
+          "text": "MANGMEE PLUS",
+          "size": "10px",
+          "color": "#437054",
+          "weight": "bold",
+          "wrap": true
+        },
+        {
+          "type": "text",
+          "text": "ติดตามมั่งมี Plus",
+          "size": "20px",
+          "color": "#164D35",
+          "weight": "bold",
+          "wrap": true
+        }
+      ]
+    },
+    "footer": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "sm",
+      "paddingAll": "12px",
+      "paddingTop": "8px",
+      "backgroundColor": "#F7F4E8",
+      "contents": [
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "spacing": "sm",
+          "alignItems": "center",
+          "paddingAll": "10px",
+          "height": "56px",
+          "cornerRadius": "10px",
+          "backgroundColor": "#F0D6DF",
+          "action": {
+            "type": "uri",
+            "label": "Instagram",
+            "uri": "https://www.instagram.com/mangmee_plus?stkn=MXR2M2kwdjl0MnV2"
+          },
+          "contents": [
+            {
+              "type": "image",
+              "url": "https://mangmeeplus.com/assets/line/official-oa-instagram.png",
+              "size": "28px",
+              "aspectRatio": "1:1",
+              "aspectMode": "fit",
+              "flex": 0
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "spacing": "none",
+              "flex": 1,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "Instagram",
+                  "size": "15px",
+                  "color": "#20382E",
+                  "weight": "bold",
+                  "wrap": true
+                },
+                {
+                  "type": "text",
+                  "text": "@mangmee_plus",
+                  "size": "11px",
+                  "color": "#4C6255",
+                  "wrap": true
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "›",
+              "size": "20px",
+              "color": "#A42B76",
+              "flex": 0
+            }
+          ]
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "spacing": "sm",
+          "alignItems": "center",
+          "paddingAll": "10px",
+          "height": "56px",
+          "cornerRadius": "10px",
+          "backgroundColor": "#D6E4F2",
+          "action": {
+            "type": "uri",
+            "label": "Facebook",
+            "uri": "https://www.facebook.com/share/17k2DsH7TJ/"
+          },
+          "contents": [
+            {
+              "type": "image",
+              "url": "https://mangmeeplus.com/assets/line/official-oa-facebook.png",
+              "size": "28px",
+              "aspectRatio": "1:1",
+              "aspectMode": "fit",
+              "flex": 0
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "spacing": "none",
+              "flex": 1,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "Facebook",
+                  "size": "15px",
+                  "color": "#20382E",
+                  "weight": "bold",
+                  "wrap": true
+                },
+                {
+                  "type": "text",
+                  "text": "Mangmee Plus",
+                  "size": "11px",
+                  "color": "#4C6255",
+                  "wrap": true
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "›",
+              "size": "20px",
+              "color": "#0866FF",
+              "flex": 0
+            }
+          ]
+        },
+        {
+          "type": "box",
+          "layout": "horizontal",
+          "spacing": "sm",
+          "alignItems": "center",
+          "paddingAll": "10px",
+          "height": "56px",
+          "cornerRadius": "10px",
+          "backgroundColor": "#CFE5E1",
+          "action": {
+            "type": "uri",
+            "label": "TikTok",
+            "uri": "https://www.tiktok.com/@mangmee_plus?_r=1&_t=ZS-9AGf8zsKkJY"
+          },
+          "contents": [
+            {
+              "type": "image",
+              "url": "https://mangmeeplus.com/assets/line/official-oa-tiktok.png",
+              "size": "28px",
+              "aspectRatio": "1:1",
+              "aspectMode": "fit",
+              "flex": 0
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "spacing": "none",
+              "flex": 1,
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "TikTok",
+                  "size": "15px",
+                  "color": "#20382E",
+                  "weight": "bold",
+                  "wrap": true
+                },
+                {
+                  "type": "text",
+                  "text": "@mangmee_plus",
+                  "size": "11px",
+                  "color": "#4C6255",
+                  "wrap": true
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "›",
+              "size": "20px",
+              "color": "#0891B2",
+              "flex": 0
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

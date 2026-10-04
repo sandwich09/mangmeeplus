@@ -341,7 +341,7 @@ describe('PreviewReimbursementClaimFormUseCase', () => {
       claimSignatures: [signatureRow('REQUESTER', 'mgr-1'), signatureRow('APPROVER', 'mgr-1')],
     }));
     const svg = svgOf(await previewUseCase(repo).execute(ctx({ userId: 'mgr-1', permissions: ['reimbursement.read'] }), 'rb-1'));
-    assert.match(svg, /ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท/);
+    assert.match(svg, /ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน ใบนี้ได้รับการอนุมัติโดยผู้เบิกเอง/);
     assert.equal((svg.match(/<image href=/g) ?? []).length, 2);
     assert.match(svg, /วิธี เงินสด เลขอ้างอิง - บันทึกโดย มานี ผู้จัดการ/);
   });

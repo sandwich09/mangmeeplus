@@ -354,6 +354,38 @@ describe('PrismaExpenseRepository atomic tax confirmation', () => {
     assert.ok(writes.locks >= 2, 'funding and substitute locks are held');
   });
 
+  it('returns a claim projection already confirmed by another attempt without finalizing or emitting its stable event again', async () => {
+    const { repo, row, client, writes, updatedAt } = harness();
+    row.sourceReimbursementRequestId = 'claim-1';
+    row.sourceReimbursementLineId = 'claim-line-1';
+    client.reimbursementLine.findMany = async () => [{ id: 'claim-line-1', reimbursementRequestId: 'claim-1',
+      sourceExpenseSnapshotJson: null, request: { branchId: row.branchId, requesterDisplayNameSnapshot: 'ผู้เบิก' } }];
+    client.reimbursementRequest = { findFirst: async () => ({
+      id: 'claim-1', status: 'APPROVED', branchId: row.branchId, currency: row.currency,
+      lines: [{ id: 'claim-line-1', amount: row.netPayableAmount }],
+    }) };
+    const input = { ...await inputFor(repo, updatedAt),
+      reimbursementReview: { requestId: 'claim-1', lineId: 'claim-line-1' },
+      outboxEvent: { eventKey: 'expense.confirmed:expense_record:expense-1:reimbursement:claim-1:claim-line-1', payloadJson: {} },
+    };
+    const first = await repo.finalizeAndConfirmExpenseCas(input, finalize);
+    // A caller that read READY before the first commit still carries the old version/checksum.
+    const retry = await repo.finalizeAndConfirmExpenseCas({ ...input, expectedUpdatedAt: new Date(0), expectedSourceChecksum: 'obsolete' }, async () => {
+      assert.fail('an existing confirmation must not finalize tax again');
+    });
+    assert.equal(retry.expense.status, 'CONFIRMED');
+    assert.equal(retry.expense.expenseNumber, first.expense.expenseNumber);
+    assert.deepEqual(retry.finalized, []);
+    assert.deepEqual([writes.line, writes.header, writes.outbox], [1, 1, 1]);
+
+    const confirm = new ConfirmExpenseUseCase(repo, { log: async () => undefined } as any, {} as any, {} as any);
+    const ctx = { companyId: 'company-1', userId: 'approver-1', scopes: {} } as any;
+    assert.equal((await confirm.executeForReimbursement(ctx, 'expense-1', {
+      reimbursementRequestId: 'claim-1', reimbursementLineId: 'claim-line-1', branchId: 'branch-1', allowMissingReceiptWithReason: true,
+    })).status, 'CONFIRMED');
+    assert.deepEqual([writes.line, writes.header, writes.outbox], [1, 1, 1]);
+  });
+
   it('confirms an attachment-bearing expense — the CAS re-read must include attachments in the checksum', async () => {
     // Regression: finalizeAndConfirmExpenseCas once rebuilt the record with
     // attachments: [] while the source checksum covers attachments, so every
@@ -396,7 +428,7 @@ describe('WHT certificate handoff at expense confirmation', () => {
     client.company = { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) };
     client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
     client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
-    client.whtCertificateHandoff = { create: async ({ data }: any) => { handoffs.push(data); } };
+    client.whtCertificateHandoff = { findFirst: async () => null, create: async ({ data }: any) => { handoffs.push(data); } };
     const input = await inputFor(repo, updatedAt);
     const result = await repo.finalizeAndConfirmExpenseCas(input, finalize);
     assert.equal(result.expense.status, 'CONFIRMED');
@@ -450,4 +482,53 @@ it('confirms a reviewed original receipt after certificate cancellation while re
   assert.equal(result.expense.status, 'CONFIRMED');
   assert.equal(h.writes.outbox, 1);
   assert.equal(h.row.missingReceiptReason, 'ไม่ได้รับใบเสร็จในวันที่สร้างใบทดแทน');
+});
+
+
+describe('confirmation after expense correction', () => {
+  it('refuses corrected payable below recorded payments before finalization or posting', async () => {
+    const h = harness(); h.row.paidAmount = '108'; h.row.netPayableAmount = '107';
+    const input = await inputFor(h.repo, h.updatedAt);
+    await assert.rejects(() => h.repo.finalizeAndConfirmExpenseCas(input, finalize), (e: any) => e.getResponse?.().code === 'expense_paid_exceeds_payable');
+    assert.equal(h.row.status, 'READY_FOR_CONFIRMATION'); assert.equal(h.writes.header, 0); assert.equal(h.writes.outbox, 0);
+  });
+
+  it('rebuilds a retired handoff from corrected facts with the same expense number and no duplicate handoff', async () => {
+    const h = harness();
+    Object.assign(h.row, { whtAmount: 30, whtCategoryCode: 'CAT1', whtRate: 3, vendorEntityKindSnapshot: 'INDIVIDUAL', expenseNumber: 'EXP-KEEP' });
+    const retired: any = { id: 'handoff-old', status: 'CANCELLED', payeeAddress: 'ที่อยู่ของผู้รับเงินเดิม', prefillSnapshotJson: { withheldAmount: 'wrong' } };
+    h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย' }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าเช่า' }) };
+    h.client.whtCertificateHandoff = {
+      findFirst: async () => retired,
+      update: async ({ where, data }: any) => { assert.equal(where.id, retired.id); Object.assign(retired, data); return retired; },
+      create: async () => { throw new Error('duplicate handoff'); },
+    };
+    const result = await h.repo.finalizeAndConfirmExpenseCas(await inputFor(h.repo, h.updatedAt), finalize);
+    assert.equal(result.expense.expenseNumber, 'EXP-KEEP'); assert.equal(retired.status, 'REQUIRED');
+    assert.equal(retired.prefillSnapshotJson.withheldAmount, '30'); assert.equal(retired.prefillSnapshotJson.formType, 'PND3'); assert.equal(retired.payeeAddress, null);
+  });
+});
+
+
+describe('confirmation keeps its own period gate', () => {
+  // A document confirmed after ภ.ง.ด.3 / ภ.ง.ด.53 was filed is not refused here: the tax sync skips or flags it for an
+  // amended filing. Only a correction (reopen) stops at a filed withholding period.
+  for (const formType of ['PND3', 'PND53']) it(`still confirms when ${formType} of the month is filed`, async () => {
+    const h = harness();
+    h.row.whtAmount = 3; h.row.whtCategoryCode = 'CAT1'; h.row.whtRate = 3;
+    h.row.vendorEntityKindSnapshot = formType === 'PND3' ? 'INDIVIDUAL' : 'JURISTIC';
+    h.row.vendorNameSnapshot = 'ผู้รับเงิน'; h.row.vendorTaxIdSnapshot = '1111111111111';
+    h.client.company = { findUnique: async () => ({ name: 'ผู้จ่าย', registeredName: 'บริษัท ผู้จ่าย จำกัด', taxId: '9999999999999', addressJson: null }) };
+    h.client.branch = { findUnique: async () => ({ taxBranchCode: '00002' }) };
+    h.client.whtIncomeCategory = { findUnique: async () => ({ nameTh: 'ค่าบริการ' }) };
+    h.client.whtCertificateHandoff = { findFirst: async () => null, create: async () => undefined };
+    h.client.taxPeriod.findMany = async ({ where }: any) => where.OR?.some((p: any) => p.formType === formType)
+      ? [{ formType, periodKey: '2026-07', status: 'FILED' }] : [];
+    const input = await inputFor(h.repo, h.updatedAt);
+    const result = await h.repo.finalizeAndConfirmExpenseCas(input, finalize);
+    assert.equal(result.expense.status, 'CONFIRMED');
+    assert.equal(h.writes.header, 1);
+  });
 });

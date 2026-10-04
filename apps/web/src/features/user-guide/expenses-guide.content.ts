@@ -1,3 +1,4 @@
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { GUIDE_MISSING_MENU_HELP, GUIDE_PERMISSION_REQUEST, type GuideLink, type UserGuide } from './user-guide.model';
@@ -14,7 +15,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
   const has = (...keys: string[]) => keys.some((key) => permissions.includes(key));
   const link = (allowed: boolean, label: string, href: string): GuideLink | undefined =>
     (allowed ? { label, href } : undefined);
-  const correctionHelp = 'หากข้อมูลผิดหลังยืนยัน ให้ผู้มีสิทธิ์ตรวจว่ารายการส่งกลับแก้ไขได้หรือไม่ ถ้าทำได้ ให้กด “ส่งกลับแก้ไข” ก่อนแก้ข้อมูล หากทำไม่ได้ ให้ตรวจเงื่อนไขการยกเลิกเอกสารก่อนดำเนินการ';
+  const correctionHelp = `หากข้อมูลผิดหลังยืนยัน ผู้มีสิทธิ์กด “${EXPENSE_CORRECTION_WORDS.reopen}” ได้เมื่อเอกสารเปิดแก้ไขได้ เอกสารกลับไปตรวจสอบโดยใช้เลขเอกสารเดิม หากเปิดแก้ไขไม่ได้ หน้ารายจ่ายบอกเหตุผลและผู้ที่ต้องติดต่อ`;
   const canRead = has('expense.read', 'expense.read_own');
   // Default holders in ROLE_GRANTS: expense.review → reviewers; expense.confirm and expense.category.manage → confirmers.
   const reviewers = [THAI_SYSTEM_ROLE_NAMES.OWNER, THAI_SYSTEM_ROLE_NAMES.ADMIN, THAI_SYSTEM_ROLE_NAMES.MANAGER, THAI_SYSTEM_ROLE_NAMES.FINANCE].join(', ');
@@ -70,7 +71,7 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
               ['ฉบับร่าง', 'บันทึกไว้แล้วแต่ยังไม่ได้ตรวจ ยังแก้ไขและลบได้', 'ผู้บันทึก'],
               ['รอตรวจสอบ', 'ข้อมูลเข้าระบบแล้ว รอผู้มีสิทธิ์ตรวจความครบถ้วน', `ผู้มีสิทธิ์ตรวจสอบค่าใช้จ่าย เช่น ${reviewers}`],
               ['พร้อมยืนยัน', 'ตรวจครบทุกข้อแล้ว รอกดยืนยัน', `ผู้มีสิทธิ์ยืนยันค่าใช้จ่าย เช่น ${confirmers}`],
-              ['ยืนยันแล้ว', 'ยืนยันแล้ว ต้องตรวจเงื่อนไขก่อนส่งกลับแก้ไขหรือยกเลิก', 'ส่งออกชุดหลักฐานให้สำนักงานบัญชี'],
+              ['ยืนยันแล้ว', `ยืนยันแล้ว ดู “${EXPENSE_CORRECTION_WORDS.reopen}” และเหตุผลที่เปิดแก้ไขไม่ได้จากหน้ารายจ่าย`, 'ส่งออกชุดหลักฐานให้สำนักงานบัญชี'],
               ['ปฏิเสธ', 'ตรวจแล้วไม่ผ่าน พร้อมเหตุผลที่ผู้บันทึกอ่านได้', 'ผู้บันทึก (แก้ไขแล้วส่งใหม่)'],
             ],
           },
@@ -187,6 +188,14 @@ export function buildExpensesGuide(companyId: string, permissions: readonly stri
             title: 'ตัวอย่างข้อที่ระบบมักแจ้งเตือน',
             detail: 'ยังไม่มีเลขผู้เสียภาษีผู้ขาย — ใบกำกับภาษีเต็มรูปต้องมีเลข 13 หลัก จึงจะใช้เครดิตภาษีซื้อได้ หากผู้ขายไม่ได้จดทะเบียนภาษีมูลค่าเพิ่ม เอกสารฉบับนั้นใช้เป็นหลักฐานประกอบรายจ่ายได้ แต่ขอคืนภาษีซื้อไม่ได้',
           },
+          { kind: 'items', items: [
+            { title: EXPENSE_CORRECTION_WORDS.reopen, detail: correctionHelp },
+            { title: 'รายการจ่ายเดิมระหว่างแก้ไข', detail: `รายการจ่ายที่ยังไม่ยกเลิกยังอยู่ในประวัติทุกขั้นตอน ถ้ายอดจ่ายเกินยอดใหม่ ให้ผู้มีสิทธิ์กด “${EXPENSE_CORRECTION_WORDS.cancelPayment}” ที่รายการจ่าย แล้วบันทึกยอดที่ถูกต้องหลังยืนยันเอกสารอีกครั้ง` },
+            { title: EXPENSE_CORRECTION_WORDS.cancelPayment, detail: `ผู้มีสิทธิ์ยกเลิกรายการจ่ายได้เมื่อปุ่มแสดงอยู่ ตรวจยอด วันที่และวิธีจ่าย กรอก “${EXPENSE_CORRECTION_WORDS.cancelReason}” แล้วกด “${EXPENSE_CORRECTION_WORDS.cancelPayment}” ประวัติจะแสดงว่ารายการถูกยกเลิกพร้อมเหตุผล หากยกเลิกไม่ได้ หน้ารายจ่ายบอกเหตุผลและผู้ที่ต้องติดต่อ` },
+            { title: EXPENSE_CORRECTION_WORDS.reject, detail: `ปุ่มอยู่ใน “เพิ่มเติม” หากยังมีรายการจ่าย ต้องยกเลิกรายการจ่ายก่อน หากไม่มีสิทธิ์ ให้ติดต่อผู้มีสิทธิ์ยกเลิกรายการจ่าย` },
+            { title: 'วันที่จ่ายเงินจริง', detail: EXPENSE_CORRECTION_WORDS.futurePaymentDate },
+            { title: 'เอกสารที่เปิดแก้ไขไม่ได้', detail: 'เอกสารที่ออกหนังสือรับรองแล้ว อยู่ในรอบที่ถูกล็อก มีรายการอื่นที่ล็อกข้อมูล หรืออยู่ในคำขอเบิกที่ยังดำเนินการ เปิดแก้ไขจากหน้านี้ไม่ได้ ให้ติดต่อบุคคลตามเหตุผลที่หน้าเอกสารแสดง' },
+          ] },
         ],
       },
       {

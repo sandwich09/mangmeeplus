@@ -56,6 +56,8 @@ import { CreateCompanyOnboardingUseCase } from '../system-onboarding/application
 import { SetPartnerManualExpenseWebEntryUseCase } from './application/use-cases/set-partner-manual-expense-web-entry.use-case';
 import { GetPartnerDetailUseCase } from './application/use-cases/get-partner-detail.use-case';
 import { MANUAL_EXPENSE_WEB_ENTRY_WITHOUT_ROW } from './domain/logic/manual-expense-web-entry.logic';
+import { ListWhtIncomeCategoriesUseCase } from '../procurement/application/use-cases/wht-income-category.use-case';
+import { ExpenseController } from '../expenses/presentation/http/expense.controller';
 
 const databaseUrl = process.env.MANUAL_EXPENSE_WEB_ENTRY_TEST_DATABASE_URL;
 const API_SRC = join(__dirname, '..', '..');
@@ -65,6 +67,16 @@ const PLATFORM = 'platform-company';
 const ADMIN = 'admin-a';
 const OTHER_ADMIN = 'admin-b';
 const AUDIT_ACTION = 'system.partner_manual_expense_web_entry.update';
+const WHT_MIGRATION = '20261004120000_open_wht_income_categories';
+const WHT_APPROVED = [
+  ['WHT_SERVICE_3', '3.0000', 'PND3'], ['WHT_SERVICE_5', '3.0000', 'PND53'],
+  ['WHT_PROFESSIONAL_IND', '3.0000', 'PND3'], ['WHT_PROFESSIONAL_JUR', '3.0000', 'PND53'],
+  ['WHT_RENT_IND', '5.0000', 'PND3'], ['WHT_RENT_JUR', '5.0000', 'PND53'],
+  ['WHT_ADVERTISING_IND', '2.0000', 'PND3'], ['WHT_ADVERTISING_JUR', '2.0000', 'PND53'],
+  ['WHT_TRANSPORT_IND', '1.0000', 'PND3'], ['WHT_TRANSPORT_JUR', '1.0000', 'PND53'],
+  ['WHT_OTHER_IND', '3.0000', 'PND3'], ['WHT_OTHER_JUR', '3.0000', 'PND53'],
+];
+const WHT_DRAFT = ['WHT_DIVIDEND', 'WHT_INTEREST', 'WHT_PRIZE'];
 
 /** Non-spec source files under a directory. */
 function sources(dir: string): string[] {
@@ -120,6 +132,57 @@ describe('manual-expense web entry on real PostgreSQL', { skip: !databaseUrl }, 
   let me: AuthController;
   let companyId: string;
   let ownerId: string;
+
+  it('all migrations on a fresh database expose exactly the 12 approved categories through the expense endpoint', async () => {
+    const rows = await client.whtIncomeCategory.findMany({ orderBy: { code: 'asc' } });
+    assert.equal(rows.length, 15);
+    assert.deepEqual(rows.filter(row => row.status === 'DRAFT').map(row => row.code), [...WHT_DRAFT].sort());
+    const controller = Object.assign(Object.create(ExpenseController.prototype), {
+      listWhtCategories: new ListWhtIncomeCategoriesUseCase(prisma as never),
+    }) as ExpenseController;
+    for (const shop of ['shop-a', 'shop-b']) {
+      const options = await controller.whtIncomeCategories({ companyId: shop, permissions: ['expense.create'] } as RequestContext);
+      assert.deepEqual(options.map(row => [row.code, row.defaultRate, row.formType]), WHT_APPROVED.map(([code, rate, form]) => [code, String(Number(rate)), form]).sort());
+    }
+  });
+
+  it('the catalog migration inserts missing rows, opens seeded rows, preserves exceptions and repeats without changing rows', async () => {
+    const sql = readFileSync(join(MIGRATIONS, WHT_MIGRATION, 'migration.sql'), 'utf8');
+    // A temporary copy isolates this data-only migration from the suite's public global catalog.
+    await raw.query('BEGIN');
+    try {
+      await raw.query('CREATE TEMP TABLE "WhtIncomeCategory" (LIKE public."WhtIncomeCategory" INCLUDING ALL) ON COMMIT DROP');
+      assert.equal((await raw.query(sql)).rowCount, 15);
+      const read = async () => (await raw.query('SELECT * FROM pg_temp."WhtIncomeCategory" ORDER BY "code"')).rows;
+      const assertStatuses = (rows: any[]) => {
+        assert.equal(rows.length, 15);
+        assert.deepEqual(rows.filter(row => row.status === 'ACTIVE').map(row => [row.code, row.defaultRate, row.formType]), [...WHT_APPROVED].sort());
+        assert.deepEqual(rows.filter(row => row.status === 'DRAFT').map(row => row.code), [...WHT_DRAFT].sort());
+      };
+      const fresh = await read();
+      assertStatuses(fresh);
+      assert.equal((await raw.query(sql)).rowCount, 0);
+      assert.deepEqual(await read(), fresh, 'a repeat is a no-op');
+
+      // Same 15-row seed baseline, with existing ids and review notes to preserve.
+      await raw.query('UPDATE pg_temp."WhtIncomeCategory" SET "status" = \'DRAFT\', "conditionNote" = \'existing review note\'');
+      const seeded = await read();
+      assert.equal((await raw.query(sql)).rowCount, 12);
+      const opened = await read();
+      assertStatuses(opened);
+      assert.deepEqual(opened.map(row => row.id), seeded.map(row => row.id));
+      assert.deepEqual(opened.filter(row => WHT_DRAFT.includes(row.code)), seeded.filter(row => WHT_DRAFT.includes(row.code)));
+      assert.equal((await raw.query(sql)).rowCount, 0);
+      assert.deepEqual(await read(), opened);
+
+      await raw.query('UPDATE pg_temp."WhtIncomeCategory" SET "status" = \'RETIRED\' WHERE "code" = ANY($1)', [WHT_DRAFT]);
+      const retired = await read();
+      assert.equal((await raw.query(sql)).rowCount, 0);
+      assert.deepEqual(await read(), retired, 'existing exceptional statuses are left as they are');
+    } finally {
+      await raw.query('ROLLBACK');
+    }
+  });
   /** One user per role of ROLE_GRANTS and per template of ROLE_TEMPLATES, all members of the shop. */
   const actors: Array<{ label: string; userId: string }> = [];
   const actor = (label: string) => actors.find((candidate) => candidate.label === label)!.userId;

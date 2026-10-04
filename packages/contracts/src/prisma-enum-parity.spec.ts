@@ -313,3 +313,15 @@ describe('enum parity registry covers every same-named contracts array', () => {
     );
   });
 });
+
+describe('expense correction display facts', () => {
+  it('keeps exact overpayments even at the Decimal limit and matches half-satang settlement tolerance', () => {
+    assert.equal(typeof (expenses as any).expenseOverpaidAmount, 'function');
+    const excess = (expenses as any).expenseOverpaidAmount;
+    assert.equal(excess({ paidAmount: '700', netPayableAmount: '500' }), '200.0000');
+    assert.equal(excess({ paidAmount: '99999999999999.99', netPayableAmount: '99999999999999.98' }), '0.0100');
+    assert.equal(excess({ paidAmount: '100.0050', netPayableAmount: '100' }), null);
+    assert.equal(excess({ paidAmount: '100.0051', netPayableAmount: '100' }), '0.0051');
+    assert.equal(excess({ paidAmount: '99', netPayableAmount: '100' }), null);
+  });
+});

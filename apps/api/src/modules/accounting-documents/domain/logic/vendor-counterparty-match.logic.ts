@@ -243,7 +243,7 @@ export function decideVendorAutoSave(input: {
   const documentText = input.documentAddressText?.trim() || null;
 
   if (!registryText) {
-    return { case: 'FILL', promoteToPrimary: Boolean(documentText), appendToHistory: false };
+    return { case: documentText ? 'FILL' : 'NOOP', promoteToPrimary: Boolean(documentText), appendToHistory: false };
   }
 
   if (!documentText || normalizeThaiAddress(registryText) === normalizeThaiAddress(documentText)) {

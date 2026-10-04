@@ -899,14 +899,14 @@ describe('executive account boundary (E1)', () => {
     const routes = new Map<unknown, { permissions: (method: string) => string[]; args: (method: string, req: unknown) => unknown[] }>([
       [ExecutiveUsersController, { permissions: () => ['system.executive_user.manage'],
         args: (method, req) => method === 'list' || method === 'create' ? [{}, req] : method === 'detail' ? ['target', req] : ['target', {}, req] }],
-      [ExecutiveReportController, { permissions: method => method === 'export' ? ['system.executive.read', 'system.executive.export'] : ['system.executive.read'],
-        args: (method, req) => method === 'export' ? [{}, req, { setHeader: () => {}, send: () => {} }] : method === 'context' ? [req] : method === 'company' || method === 'history' ? ['target', {}, req] : [{}, req] }],
+      [ExecutiveReportController, { permissions: method => method === 'export' ? ['system.executive.read', 'system.executive.export'] : method === 'updateNote' ? ['system.executive.read', 'system.executive.company_note.manage'] : ['system.executive.read'],
+        args: (method, req) => method === 'export' ? [{}, req, { setHeader: () => {}, send: () => {} }] : method === 'context' ? [req] : ['company', 'history', 'updateNote'].includes(method) ? ['target', {}, req] : [{}, req] }],
     ]);
     assert.deepEqual(controllers.map((controller) => controller.name), ['ExecutiveUsersController', 'ExecutiveReportController']);
     for (const Controller of controllers) {
       const { permissions, args } = routes.get(Controller)!;
       const calls: string[] = [];
-      const service = new Proxy({}, { get: (_target, method: string) => () => { calls.push(method); return Promise.resolve(method === 'export' ? { file: Buffer.alloc(0), exportReference: 'export-test', rowCount: 0 } : {}); } });
+      const service = new Proxy({}, { get: (_target, method: string) => method === 'clock' ? () => new Date('2026-10-04T00:00:00Z') : () => { calls.push(method); return Promise.resolve(method === 'export' ? { file: Buffer.alloc(0), exportReference: 'export-test', rowCount: 0, period: { from: '2026-09', to: '2026-09' } } : {}); } });
       const controller = new Controller(service);
       for (const method of Object.getOwnPropertyNames(Controller.prototype).filter((name) => Reflect.hasMetadata(METHOD_METADATA, Controller.prototype[name]))) {
         checked++;
@@ -935,7 +935,7 @@ describe('executive account boundary (E1)', () => {
         }
       }
     }
-    assert.equal(checked, 13);
+    assert.equal(checked, 14);
     const app = readFileSync(join(__dirname, '../../app.module.ts'), 'utf8');
     assert.match(app, /imports:\s*\[[\s\S]*?ExecutiveBusinessModule/);
   });
@@ -946,10 +946,10 @@ describe('executive account boundary (E1)', () => {
     const dto = await import('../executive-business/presentation/http/executive-users.controller');
     const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
     for (const [metatype, body] of [
-      [dto.ExecutiveUserCreateDto, { username: 'reader', displayName: 'ผู้บริหาร', canExport: false, canSeeContacts: false }],
+      [dto.ExecutiveUserCreateDto, { username: 'reader', displayName: 'ผู้บริหาร', canExport: false, canSeeContacts: false, canEditCompanyNote: true }],
       [dto.ExecutiveUserStatusDto, { status: 'SUSPENDED', reason: 'เหตุผล' }],
       [dto.ExecutiveUserCredentialDto, { reason: 'เหตุผล' }],
-      [dto.ExecutiveUserAccessDto, { canExport: false, canSeeContacts: true, reason: 'เหตุผล' }],
+      [dto.ExecutiveUserAccessDto, { canExport: false, canSeeContacts: true, canEditCompanyNote: false, reason: 'เหตุผล' }],
       [dto.ExecutiveUserListQueryDto, { q: 'reader', status: 'ACTIVE', page: 1, pageSize: 20 }],
     ] as const) {
       const metadata = { type: 'body' as const, metatype };
@@ -973,10 +973,12 @@ describe('executive account boundary (E1)', () => {
     const list = { month: '2026-09', buildId: 'b1', industry: 'FOOD_ACCOMMODATION', discovery: 'BEFORE_COLLECTION', referringSales: 'S001', companyStatus: 'ARCHIVED',
       planState: 'ADMIN_HOLD', usageGroup: 'NOT_STARTED', usageAssessed: 'false', activeInPeriod: 'true', paidInPeriod: 'true', positiveNetInPeriod: 'true', paidEver: 'UNKNOWN',
       fullyRefunded: 'true', receiptAdoption: 'NOT_ENTITLED', spendCohort: 'TO80_BOUNDARY_TIE', signupRail: 'email-otp', q: '  ร้านซ้ำ  ', sortBy: 'netReceipts', sortDir: 'asc',
-      page: '3', pageSize: '100' };
+      page: '3', pageSize: '100', receiptBucket: 'ONE_TO_FIVE', churned: 'true', receiptAdded7: 'true', atDataDate: 'true', packageLabel: 'แพ็กเกจทดสอบ' };
     const parsed = await query(dto.ExecutiveCompaniesQueryDto, list);
-    assert.deepEqual([parsed.q, parsed.page, parsed.pageSize, Object.keys(parsed).length], ['ร้านซ้ำ', 3, 100, Object.keys(list).length]);
-    for (const bad of [{ month: '2026-13' }, { month: '2569-9' }, { month: undefined }, { industry: 'MINING' }, { discovery: 'LINE' }, { referringSales: 'S 001' },
+    assert.deepEqual([parsed.q, parsed.page, parsed.pageSize], ['ร้านซ้ำ', 3, 100]);
+    assert.deepEqual(Object.keys(parsed).filter(key => parsed[key] !== undefined).sort(), Object.keys(list).sort());
+    await query(dto.ExecutiveCompaniesQueryDto, { from: '2026-08', to: '2026-09' });
+    for (const bad of [{ month: '2026-13' }, { month: '2569-9' }, { industry: 'MINING' }, { discovery: 'LINE' }, { referringSales: 'S 001' },
       { companyStatus: 'DELETED' }, { usageGroup: 'UNKNOWN' }, { usageAssessed: 'maybe' }, { activeInPeriod: 'false' }, { paidEver: 'MAYBE' }, { spendCohort: 'TOP10' },
       { signupRail: 'partner-api' }, { q: 'ก'.repeat(121) }, { sortBy: 'id' }, { sortDir: 'up' }, { page: '0' }, { pageSize: '101' }, { page: '1.5' }, { companyId: 'shop-1' }])
       await assert.rejects(query(dto.ExecutiveCompaniesQueryDto, { ...list, ...bad }), JSON.stringify(bad));

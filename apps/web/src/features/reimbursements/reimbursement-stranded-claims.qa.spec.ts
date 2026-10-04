@@ -599,3 +599,12 @@ describe('moving a file of ใบเบิกที่เซ็นแล้ว t
     assert.deepEqual([refused.asked.length, refused.calls.filter((call) => call.method !== 'GET')], [1, []]);
   });
 });
+
+it('the duplicate-clear dialog covers source-document duplicates and confirmation retries', () => {
+  const blocked = claim({ duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_DOCUMENT'] });
+  const dialog = withDialog(blocked, { userId: 'owner', permissions: OWNER }, 'resolve-duplicate', 'ปลดรายการซ้ำ RB-202610-00007', 'คนละการซื้อ');
+  const text = visible(dialog).join(' ');
+  assert.match(text, /เพื่อปลดและยืนยันเอกสารก่อนบันทึกจ่าย/);
+  assert.match(text, /ถ้าการยืนยันยังไม่เสร็จ/);
+  assert.doesNotMatch(text, /ใบนี้ไม่ได้เบิกซ้ำกับคำขออื่น/);
+});

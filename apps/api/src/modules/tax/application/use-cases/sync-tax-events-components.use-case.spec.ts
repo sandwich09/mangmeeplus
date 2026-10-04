@@ -225,3 +225,14 @@ describe('header NON_CLAIMABLE against the two input-VAT paths', () => {
     assert.equal(issues[0]?.issueCode, 'INPUT_VAT_NOT_CLAIMABLE');
   });
 });
+
+
+it('passes the expense snapshot revision into tax persistence so a concurrent correction cannot recreate events', async () => {
+  const version = new Date('2026-08-02T01:00:00Z');
+  const events: any[] = [];
+  const taxRepo: any = { upsertPeriod: async () => ({ id: 'period', status: 'OPEN' }), findEventByIdempotencyKey: async () => null, upsertEvent: async (event: any) => events.push(event) };
+  const expenseSource: any = { findConfirmedWithVatByCompany: async () => [], findConfirmedWithWhtByCompany: async () => [],
+    findFinalizedTransactionTaxLines: async () => [{ sourceType: 'expense.record', sourceId: 'e1', sourceLineId: 'l1', eventDate: version, confirmedAt: version, updatedAt: new Date(version.getTime() + 1000), currency: 'THB', taxComponents: [{ componentKey: 'VAT', snapshot: { ...snapshot('SELF_ASSESSED', '7'), recognitionDate: '2026-08-02' }, accountAssignments: [], reportContributions: [] }] }] };
+  await new SyncTaxEventsUseCase(taxRepo, { findIssuedWithVatByCompany: async () => [] } as any, expenseSource, noWhtPayments).execute('c1');
+  assert.equal(events.length, 1); assert.equal(events[0].expectedExpenseConfirmedAt, version);
+});

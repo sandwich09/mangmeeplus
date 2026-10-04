@@ -345,6 +345,8 @@ Rules:
 - `system.shared_line_credential.manage` manages WatchDog shared LINE OA platform credentials, not per-partner LINE OA credentials.
 - Shared LINE webhooks must resolve company from linked identity plus selected company context, not from `messagingChannelId`.
 
+Owner decision 2026-10-04: `system.wht_income_category.manage` (HIGH) is granted to SYSTEM_ADMIN only and additionally requires the platform tenant. It reads and enables/disables the global WHT catalog through `/v1/system/wht-income-categories`. Shop `tax.config.manage` no longer authorizes global status changes; shop reads remain unchanged. The System Admin page is under “ตั้งค่าระบบ”; the shop tax panel is read-only and empty-catalog guidance directs shops to the Mangmee team.
+
 ## 5.4 Thai Tax Permission Keys
 
 Use these keys for Thai Tax MVP:

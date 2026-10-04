@@ -7,6 +7,8 @@ import { PartnerMemberPasswordResetUseCase } from './partner-member-password-res
 import { PartnerMemberPasswordRevealUseCase } from './partner-member-password-reveal.use-case';
 import { SetPartnerMemberContactUseCase } from './set-partner-member-contact.use-case';
 import { SetPartnerOwnerNameUseCase } from './set-partner-owner-name.use-case';
+import { EXECUTIVE_ROLE_KEYS } from '@watchdog-bms/contracts';
+import { PLATFORM_ROLE_KEYS, ROLE_GRANTS } from '../../../auth/permission-registry';
 import { encryptCredential } from '../../domain/logic/credential-cipher.logic';
 import { verifyPassword } from '../../../auth/domain/logic/password-credential.logic';
 
@@ -73,7 +75,7 @@ describe('SetPartnerOwnerNameUseCase', () => {
       id: 'user-1', isSystemProtected: false,
       memberships: {
         some: { companyId: 'co-1', roles: { some: { role: { key: 'OWNER' } } } },
-        none: { roles: { some: { role: { key: { in: ['SYSTEM_ADMIN', 'MANGMEE_SALES_LEAD', 'MANGMEE_SALES', 'MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT'] } } } } },
+        none: { roles: { some: { role: { key: { in: [...PLATFORM_ROLE_KEYS] } } } } },
       },
     };
     const tx = {
@@ -304,7 +306,7 @@ describe('SetPartnerMemberContactUseCase', () => {
 
 // E1 account commands live here because this platform-account spec is registered in API CI.
 describe('ExecutiveUsersService (E1)', () => {
-  const keys = ['MANGMEE_EXECUTIVE', 'MANGMEE_EXECUTIVE_EXPORT', 'MANGMEE_EXECUTIVE_CONTACT'];
+  const keys = EXECUTIVE_ROLE_KEYS;
   const context = { userId: 'admin', requestId: 'request-e1', companyId: 'seed-watchdog-system-company',
     roles: [], permissions: ['system.executive_user.manage'] } as any;
   const body = { username: 'report.reader', displayName: 'ผู้บริหาร', canExport: false, canSeeContacts: false };
@@ -314,7 +316,7 @@ describe('ExecutiveUsersService (E1)', () => {
     const writes: string[] = [];
     const state = { users: [] as any[], members: [] as any[], audits: [] as any[], sessions: [] as any[], auditFails: false, uniqueField: '' };
     const role = (key: string) => ({ id: key, key, scopeKey: 'system', companyId: null, isSystem: true, status: 'ACTIVE',
-      permissions: [{ permission: { key: ['system.executive.read', 'system.executive.export', 'system.executive.contact.read'][keys.indexOf(key)] } }] });
+      permissions: (ROLE_GRANTS[key] ?? []).filter(key => key.startsWith('system.executive.')).map(key => ({ permission: { key } })) });
     const matches = (row: any, where: any): boolean => !where || Object.entries(where).every(([key, cond]: [string, any]) => {
       if (key === 'AND') return (Array.isArray(cond) ? cond : [cond]).every((c: any) => matches(row, c));
       if (key === 'OR') return cond.some((c: any) => matches(row, c));
@@ -375,7 +377,7 @@ describe('ExecutiveUsersService (E1)', () => {
     const { state, service } = await fixture();
     const result = await service.create(context, { ...body, username: ' Report.Reader ', phoneNumber: ' 0812345678 ', email: ' REPORT@EXAMPLE.COM ' });
     assert.deepEqual(Object.keys(result).sort(), ['credential', 'user']);
-    assert.deepEqual(Object.keys(result.user).sort(), ['canExport', 'canRead', 'canSeeContacts', 'displayName', 'email', 'lastWebEntryAt', 'phoneNumber', 'status', 'temporaryPasswordExpiresAt', 'userId', 'username']);
+    assert.deepEqual(Object.keys(result.user).sort(), ['canEditCompanyNote', 'canExport', 'canManageCompanyNote', 'canRead', 'canSeeContacts', 'displayName', 'email', 'lastWebEntryAt', 'phoneNumber', 'status', 'temporaryPasswordExpiresAt', 'userId', 'username']);
     assert.deepEqual(Object.keys(result.credential).sort(), ['expiresAt', 'temporaryPassword', 'userId', 'username']);
     assert.equal(result.user.username, 'report.reader'); assert.equal(result.user.email, 'report@example.com');
     assert.equal(result.user.status, 'PENDING_ACTIVATION'); assert.equal(result.user.lastWebEntryAt, null);
@@ -393,13 +395,36 @@ describe('ExecutiveUsersService (E1)', () => {
     assert.deepEqual(Object.keys(audit.metadataJson).sort(), ['from', 'reason', 'to']);
     for (const secret of [result.credential.temporaryPassword, credential.passwordHash, '0812345678', 'report@example.com', body.displayName]) assert.ok(!JSON.stringify(audit).includes(secret));
   });
-  it('creates only the requested export/contact add-on roles', async () => {
-    for (const canExport of [false, true]) for (const canSeeContacts of [false, true]) {
+  it('accepts the canonical note edit flag through create, change access and list, preserving the old alias', async () => {
+    const { service, state } = await fixture();
+    const created = await service.create(context, { ...body, canEditCompanyNote: true });
+    assert.equal(created.user.canEditCompanyNote, true); assert.equal(created.user.canManageCompanyNote, true);
+    assert.equal((await service.list(context, {})).items[0]!.canEditCompanyNote, true);
+    const access = { canExport: false, canSeeContacts: false, reason: 'ติดตามบริษัท' };
+    assert.equal((await service.setAccess(context, created.user.userId, { ...access, canEditCompanyNote: false })).canEditCompanyNote, false);
+    assert.equal(state.audits.at(-1).metadataJson.to.canEditCompanyNote, false);
+    await assert.rejects(service.setAccess(context, created.user.userId, { ...access, canEditCompanyNote: true, canManageCompanyNote: false }), errorCode('INVALID_INPUT', 400));
+    for (const canEditCompanyNote of [null, 'true', 1]) await assert.rejects(service.create(context, { ...body, canEditCompanyNote } as any), errorCode('INVALID_INPUT', 400));
+  });
+  it('creates only the requested export/contact/company-note add-on roles', async () => {
+    for (const canExport of [false, true]) for (const canSeeContacts of [false, true]) for (const canManageCompanyNote of [false, true]) {
       const { state, service } = await fixture();
-      const result = await service.create(context, { ...body, canExport, canSeeContacts });
-      assert.deepEqual(state.members[0].roles.map((r: any) => r.role.key), [keys[0], ...(canExport ? [keys[1]] : []), ...(canSeeContacts ? [keys[2]] : [])]);
-      assert.equal(result.user.canExport, canExport); assert.equal(result.user.canSeeContacts, canSeeContacts);
+      const result = await service.create(context, { ...body, canExport, canSeeContacts, canManageCompanyNote });
+      assert.deepEqual(state.members[0].roles.map((r: any) => r.role.key), [keys[0], ...(canExport ? [keys[1]] : []), ...(canSeeContacts ? [keys[2]] : []), ...(canManageCompanyNote ? [keys[3]] : [])]);
+      assert.equal(result.user.canExport, canExport); assert.equal(result.user.canSeeContacts, canSeeContacts); assert.equal(result.user.canManageCompanyNote, canManageCompanyNote);
     }
+  });
+  it('defaults company-note right off, grants explicitly, preserves omitted access, revokes explicitly and rejects non-booleans', async () => {
+    const { service, state } = await fixture();
+    const created = await service.create(context, body);
+    assert.equal(created.user.canManageCompanyNote, false);
+    const access = { canExport: false, canSeeContacts: false, reason: 'ช่วยติดตามบริษัท' };
+    assert.equal((await service.setAccess(context, created.user.userId, { ...access, canManageCompanyNote: true })).canManageCompanyNote, true);
+    assert.equal(state.audits.at(-1).metadataJson.to.canManageCompanyNote, true);
+    assert.equal((await service.setAccess(context, created.user.userId, { ...access, canExport: true })).canManageCompanyNote, true);
+    assert.equal((await service.setAccess(context, created.user.userId, { ...access, canManageCompanyNote: false })).canManageCompanyNote, false);
+    for (const value of ['yes', null, 1]) await assert.rejects(service.setAccess(context, created.user.userId,
+      { ...access, canManageCompanyNote: value } as any), errorCode('INVALID_INPUT', 400));
   });
   it('maps username/email conflicts, including database races, and never attaches an existing user', async () => {
     for (const field of ['username', 'email']) {

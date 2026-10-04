@@ -118,7 +118,7 @@ Adapter ใหม่ `supplier-payment-source.adapter.ts` (mirror [expense-sourc
 - **แหล่งหมวดสำหรับหน้า AP**: endpoint เดิม `GET tax/wht-categories` ติด `tax.config.read` (ยืนยันแล้ว [tax.controller.ts:249](../../apps/api/src/modules/tax/presentation/http/tax.controller.ts)) ซึ่งคนการเงินฝั่ง AP ไม่จำเป็นต้องมี — เพิ่ม endpoint read เล็ก `GET .../procurement/wht-categories` guard ด้วย `procurement.supplier_payment.read` คืนเฉพาะ ACTIVE `{code, nameTh, formType, defaultRate}` ตามหลักเดียวกับที่แท็บ WHT ไม่ผูก `thai_tax` (H4)
 - แสดง "โอนจริง" = ตัดหนี้ − หัก (readonly), ส่ง `grossAmount`=ตัดหนี้, `whtAmount`, `netPaidAmount`, `allocations[0].whtAmount`
 - บิลที่ `whtAmount > 0` อยู่แล้ว: ช่องหักถูก disable พร้อมข้อความว่าบิลนี้หักไว้ตอนตั้งหนี้แล้ว
-- หมวด ACTIVE ว่างเปล่า (ยัง DRAFT ทั้ง 15 แถวตาม seed): แสดงคำแนะนำให้เปิดใช้หมวดก่อน — ช่องหักใช้ไม่ได้จนกว่าจะมีหมวด (fail closed ฝั่ง UX, สอดคล้อง seed note "Accountant verification required")
+- Owner decision 2026-10-04: migration/seed เปิดใช้ 12 หมวดตาม WHT certificate system issuance spec; ดอกเบี้ย เงินปันผล รางวัลยังรอตรวจสอบเมื่อเพิ่มใหม่ ผู้ดูแลระบบของมั่งมีเท่านั้นที่เปิด–ปิดหมวดกลางได้ ร้านอ่านได้แต่เปลี่ยนสถานะไม่ได้ หากผู้ดูแลปิดทุกหมวด ช่องเลือกว่างและต้องติดต่อมั่งมีเพื่อเปิดใช้หมวดก่อน
 - `canSubmitSupplierPayment` ([accounts-payable.model.ts](../../apps/web/src/features/accounts-payable/accounts-payable.model.ts)) รับ wht inputs + bill.whtAmount แล้ว validate กติกา §6.2 ฝั่ง client
 
 ## 7. ฝั่งรับ — accounting documents
@@ -208,7 +208,7 @@ default branch `accounting.payment.received`:
 
 - Payment ที่เคยสร้างผ่าน API ด้วย wht > 0 (ถ้ามีใน UAT/prod) เคยโพสต์ journal แบบ net-only ผิดมาก่อน — migration ไม่แก้ย้อนหลัง ต้อง audit ด้วย query `SupplierPayment.whtAmount > 0` ก่อน deploy แล้วแก้ด้วย manual journal ถ้าพบ
 - การสลับ validation `Σ alloc == netPaid` → `== gross` ต้องมี test ยืนยัน caller เดิม (wht=0) ไม่สะดุด
-- หมวดเงินได้ยัง DRAFT ทั้งหมด: ฟีเจอร์ฝั่งจ่ายจะกดใช้ไม่ได้จนกว่านักบัญชีเปิดใช้หมวด (by design) — ต้องสื่อสารตอนเปิดฟีเจอร์
+- Owner decision 2026-10-04: เปิดใช้ 12 หมวดกลางตาม migration; ดอกเบี้ย เงินปันผล รางวัลรอตรวจสอบ ไม่แก้อัตราดอกเบี้ยเดิมในรอบนี้ การปิดหมวดโดยมั่งมีมีผลต่อการเลือกใหม่ ไม่เปลี่ยนข้อมูลที่หักไปแล้ว
 
 ## Enterprise PND53 wording — 2026-10-03
 

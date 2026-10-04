@@ -43,11 +43,9 @@ async function expectPostingBlockedOnlyByMissingRule(api: any, companyId: string
 
 test.describe('WHT at settlement time', () => {
   test('A1 @p1 paying a vendor with 3% withheld clears the bill, pays the net, and reaches ภ.ง.ด.53', async ({ authedPage, api, companyId }) => {
-    // The catalog ships DRAFT — nothing may withhold until an accountant vouches for the rate.
-    // This is the activation an accountant performs from the tax workspace WHT tab.
+    // Owner decision 2026-10-04: migration/seed opens the baseline; shops only read it.
     const before = await json<WhtCategory[]>(await api.get(`companies/${companyId}/tax/wht-categories`));
-    expect(before.some((row) => row.code === WHT_CODE), 'seeded catalog must contain the service category').toBe(true);
-    await json<WhtCategory>(await api.patch(`companies/${companyId}/tax/wht-categories/${WHT_CODE}`, { data: { status: 'ACTIVE' } }));
+    expect(before.find((row) => row.code === WHT_CODE)?.status).toBe('ACTIVE');
 
     const supplier = await json<Supplier>(await api.post(`companies/${companyId}/procurement/suppliers`, {
       data: { displayName: unique('E2E WHT supplier'), legalName: unique('บริษัท ผู้รับเงิน'), taxId: '0105500000001', supplierType: 'JURISTIC_PERSON', defaultCurrency: 'THB' },

@@ -20,9 +20,10 @@ export function useExpenseReviewTotals(companyId: string, detail: ExpenseDetail,
   const disallowsTaxCode = !allowsDomesticInputTaxCode(detail.sourceDocumentType, detail.taxEvidenceStatus);
   // The two PATCH routes take the contract type, which the global ValidationPipe skips; this POST
   // takes `ExpenseTotalsPreviewDto`, which it validates with `forbidNonWhitelisted`. Neither the
-  // seller address nor the branch code moves a single satang, so they are dropped here rather than
-  // widening a money DTO to carry fields it would never read.
-  const { vendorAddressSnapshot: _address, vendorBranchCodeSnapshot: _branch, ...reviewPayload } =
+  // seller address, branch code nor certificate classification moves a single satang, so they are
+  // dropped here rather than widening a money DTO to carry fields it would never read.
+  const { vendorAddressSnapshot: _address, vendorBranchCodeSnapshot: _branch,
+    whtCategoryCode: _whtCategory, whtRate: _whtRate, ...reviewPayload } =
     buildExpenseDraftReviewPayload(disallowsTaxCode ? { ...values, lines: clearExpenseTaxSelections(values.lines) } : values,
       { sourceDraft: detail.sourceDraft, originalLines: detail.lines });
   const payload = JSON.stringify({ expectedUpdatedAt: detail.updatedAt,
