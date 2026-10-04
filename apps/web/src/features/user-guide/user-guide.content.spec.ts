@@ -277,7 +277,7 @@ it('the claim guide never says the owner alone changes the claim policy', () => 
   for (const said of [
     'งานตรวจการเงินมีต่อเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” ในหน้าตั้งค่านโยบาย',
     `${roles.OWNER}หรือ${roles.ADMIN}เปิด “ตรวจการเงินก่อนจ่าย” ได้ที่หน้าตั้งค่านโยบาย`,
-    'เมื่อปิด ทุกบทบาทอนุมัติใบของตัวเองไม่ได้',
+    'เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด',
     'ขอให้ผู้มีสิทธิ์ตั้งค่านโยบายเปิดสวิตช์',
   ]) assert.ok(read.some((text) => text.includes(said)), said);
 });
@@ -505,9 +505,9 @@ it('the claim guide names the receiving-method choice when a draft states none',
 
 it('the claim guide applies self-approval to every role and keeps solo and frozen routes in the explanations and policy table', () => {
   const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']));
-  assert.equal((text.match(/เมื่อปิด ทุกบทบาทอนุมัติใบของตัวเองไม่ได้/g) ?? []).length, 3);
-  assert.ok(text.includes('ผู้เบิกเป็นผู้อนุมัติได้เพียงคนเดียว'));
-  assert.ok(text.includes('ใบที่ส่งแล้วใช้ผู้อนุมัติที่กำหนดไว้ตอนส่ง'));
+  assert.equal((text.match(/เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด/g) ?? []).length, 3);
+  assert.ok(text.includes('ผู้เบิกเป็นคนเดียวที่อนุมัติใบนี้ได้'));
+  assert.ok(text.includes('ใบที่ส่งไปแล้วใช้ผู้อนุมัติตามที่กำหนดไว้ตอนส่ง'));
   assert.equal(text.includes('บทบาทอื่นทำได้เมื่อบริษัทเปิด'), false);
 });
 
@@ -515,4 +515,12 @@ it('the claim guide names first signing and replacement as the buttons do', () =
   const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']));
   assert.ok(text.includes('กด “ลงนามในใบเบิก”'));
   assert.ok(text.includes('ถ้าเคยลงนามแล้ว ปุ่มอ่าน “ลงนามใหม่”'));
+});
+
+
+it('duplicate guide covers company-wide evidence and the expense-document payment block', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co-1', ['reimbursement.read', 'reimbursement.payment.record', 'reimbursement.policy.manage']));
+  assert.match(text, /ข้ามผู้เบิก/);
+  assert.match(text, /เอกสารค่าใช้จ่าย/);
+  assert.match(text, /ยืนยันเอกสารก่อน/);
 });

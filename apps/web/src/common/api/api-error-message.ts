@@ -1,6 +1,6 @@
 import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
-import { COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
 import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
@@ -608,7 +608,7 @@ const CODE_LABELS: Record<string, string> = {
     'ยังส่งไม่ได้ตามนโยบายใบเสร็จของบริษัท กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ',
   missing_receipt_reason_required:
     'มีรายการที่ยังไม่แนบหลักฐาน กรุณาระบุเหตุผลที่ไม่มีใบเสร็จก่อนส่งใบเบิก',
-  duplicate_unresolved: 'ระบบพบใบเบิกที่อาจซ้ำกับรายการเดิม นโยบายบริษัทกำหนดให้ตรวจสอบก่อนจึงจะส่งได้',
+  duplicate_unresolved: REIMBURSEMENT_DUPLICATE_UNRESOLVED,
   invalid_primary_attachment: 'ไฟล์แนบต้องเป็นไฟล์ที่ผู้เบิกอัปโหลดเองและยังใช้งานอยู่',
   invalid_linked_expense: 'รายการค่าใช้จ่ายที่ผูกไว้ไม่ใช่ของผู้เบิก หรือถูกลบไปแล้ว',
   invalid_status_transition: 'สถานะปัจจุบันของใบเบิกทำรายการนี้ไม่ได้ กรุณาโหลดรายการใหม่',
@@ -618,7 +618,7 @@ const CODE_LABELS: Record<string, string> = {
   not_eligible_approver: 'คุณไม่ได้อยู่ในขั้นอนุมัติปัจจุบันของใบเบิกนี้',
   not_assigned_approver: 'ใบเบิกนี้ถูกมอบหมายให้ผู้อนุมัติคนอื่นแล้ว',
   not_eligible_approver_role: 'บทบาทของคุณไม่ตรงกับผู้อนุมัติที่กำหนดไว้ในขั้นนี้',
-  self_approval_denied: 'อนุมัติใบเบิกของตนเองไม่ได้ ต้องให้ผู้มีสิทธิ์อนุมัติคนอื่นเป็นผู้อนุมัติ',
+  self_approval_denied: REIMBURSEMENT_SELF_APPROVAL_DENIED,
   rejection_reason_required: 'กรุณาระบุเหตุผลการไม่อนุมัติ',
   // อนุมัติหรือปฏิเสธใบที่ไม่ได้รออนุมัติแล้ว: บอกสิ่งที่อาจเกิดขึ้นและสิ่งที่ต้องทำ ไม่พิมพ์ชื่อสถานะของใบ
   reimbursement_not_awaiting_approval:
@@ -1529,11 +1529,19 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     kind?: unknown;
     details?: unknown;
     retryAfterSeconds?: unknown;
+    duplicateReasons?: unknown;
+    duplicatePhase?: unknown;
   } | null | undefined;
   const details = error?.details && typeof error.details === 'object'
     ? error.details as typeof error
     : undefined;
   const code = apiErrorCode(e);
+  if (code === 'duplicate_unresolved') {
+    const reasons = details?.duplicateReasons ?? error?.duplicateReasons;
+    const phase = details?.duplicatePhase ?? error?.duplicatePhase;
+    const knownReasons = Array.isArray(reasons) ? reasons.filter((reason): reason is string => typeof reason === 'string') : [];
+    return phase === 'SUBMIT' ? reimbursementDuplicateSubmitNotice(knownReasons) : phase === 'PAYMENT' ? reimbursementDuplicateBlockNotice(knownReasons) : REIMBURSEMENT_DUPLICATE_UNRESOLVED;
+  }
   if (code === 'plan_branch_limit_exceeded') {
     const capacity = details?.details && typeof details.details === 'object'
       ? details.details as { limit?: unknown }

@@ -113,7 +113,7 @@ describe('Thai coverage for default-open feature error codes', () => {
     const codes = openFeatureErrorCodes();
     for (const code of ['payout_confirmation_required', 'payment_method_mismatch_reason_required', 'payout_destination_changed',
       'payout_method_required', 'payout_destination_required', 'note_contains_account_number']) {
-      assert.equal(codes.get(code), 'reimbursements', `${code} is no longer found in the API source`);
+      assert.ok(codes.has(code) && sourceFiles(join(API_MODULES, 'reimbursements')).some(file => readFileSync(file, 'utf8').includes(`'${code}'`)), `${code} is no longer found in the reimbursement source`);
       assert.ok(translateApiError(code), `${code} has no Thai text`);
     }
     // Found by the planner shape alone: neither is thrown as a literal anywhere in the API.
@@ -136,7 +136,7 @@ describe('Thai coverage for default-open feature error codes', () => {
   // check while helping nobody.
   it('answers with what to do, for the codes that end a journey', () => {
     for (const [code, expected] of [
-      ['self_approval_denied', /อนุมัติใบเบิกของตนเองไม่ได้/],
+      ['self_approval_denied', /ไม่สามารถอนุมัติคำขอของตนเองได้/],
       ['missing_receipt_reason_required', /เหตุผลที่ไม่มีใบเสร็จ/],
       ['reimbursement_accrual_not_posted', /ก่อน/],
       ['employee_phone_conflict', /เบอร์โทรศัพท์/],

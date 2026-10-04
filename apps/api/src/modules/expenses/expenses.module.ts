@@ -237,6 +237,7 @@ import { ProcurementModule } from '../procurement/procurement.module';
     ListMySubstituteReceiptSignaturesUseCase,
     LineExpenseDraftConversationUseCase,
     ConfirmExpenseUseCase,
+    ResolveDuplicateUseCase,
     VoidExpenseUseCase,
     InitSignatureUploadUseCase,
     CreateSignatureAssetUseCase,

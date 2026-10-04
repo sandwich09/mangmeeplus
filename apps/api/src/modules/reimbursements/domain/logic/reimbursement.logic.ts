@@ -759,17 +759,26 @@ export const PAYMENT_RECORDING_STATUSES: readonly ReimbursementRequestStatus[] =
 // The claim's `duplicateStatus` column says the same until its expense records are built; from then on
 // the column holds the result of THOSE records, which know nothing of the candidates. So a claim
 // found possibly duplicate at submit read NO_MATCH after approval while its payment was still refused.
-// Every answer now reads the candidates through the two rules below.
+// Answers combine the claim candidates with its own expense records below.
 
 /**
  * Whether an unresolved duplicate refuses the claim's payment: the policy the claim was sent under
- * blocks payment, and a candidate is still open. The one test. Recording a payment asks it before
+ * blocks payment, and a claim candidate or its own expense duplicate is unresolved. The one test.
+ * Recording a payment asks it before
  * the payment lock and under it (`duplicate_unresolved`), the claim detail reports it as
  * `duplicateBlocksPayment` and a pay-queue row as `hasDuplicateBlocker`, so a row and a claim page
  * carry the mark exactly when the payment would be refused for it.
  */
-export function duplicateBlocksPayment(duplicatePolicy: string, openCandidates: number): boolean {
-  return duplicatePolicy === 'BLOCK_PAYMENT' && openCandidates > 0;
+export function duplicateBlocksPayment(duplicatePolicy: string, openCandidates: number, unresolvedExpenses = 0): boolean {
+  return duplicatePolicy === 'BLOCK_PAYMENT' && (openCandidates > 0 || unresolvedExpenses > 0);
+}
+
+export function claimDuplicateReasons(request: { duplicateCandidates?: { status: string; candidateType: string }[]; possibleDuplicateExpenseCount?: number; duplicateConfirmationPendingCount?: number }): import('@watchdog-bms/contracts').ReimbursementDuplicateReason[] {
+  return [...new Set([
+    ...(request.duplicateCandidates ?? []).filter(candidate => candidate.status === 'OPEN').map(candidate => candidate.candidateType),
+    ...((request.possibleDuplicateExpenseCount ?? 0) > 0 ? ['EXPENSE_DOCUMENT'] : []),
+    ...((request.duplicateConfirmationPendingCount ?? 0) > 0 ? ['EXPENSE_CONFIRMATION'] : []),
+  ])] as import('@watchdog-bms/contracts').ReimbursementDuplicateReason[];
 }
 
 /**
@@ -880,7 +889,7 @@ export type DuplicateCandidateInput = {
   incurredDate: string; // ISO date (day granularity)
   categoryKey: string;
   normalizedReason?: string;
-  lines?: readonly { lineNo: number; attachmentId?: string | null; linkedExpenseId?: string | null }[];
+  lines?: readonly { lineNo: number; attachmentId?: string | null; linkedExpenseId?: string | null; attachmentChecksum?: string }[];
 };
 
 export type DuplicateMatch = {
@@ -903,12 +912,13 @@ export function scoreDuplicate(a: DuplicateCandidateInput, b: DuplicateCandidate
   for (const line of byLineNo(a.lines ?? [])) {
     const other = (b.lines ?? []).find((candidate) =>
       (!!line.attachmentId && candidate.attachmentId === line.attachmentId)
+      || (!!line.attachmentChecksum && candidate.attachmentChecksum === line.attachmentChecksum)
       || (!!line.linkedExpenseId && candidate.linkedExpenseId === line.linkedExpenseId));
     if (!other) continue;
-    score += 60; // same receipt/expense on both claims is the strongest signal
+    score += 80; // Strong evidence blocks submit regardless of requester, amount or date.
     if (match.sharedLineNo === undefined) {
       match.sharedLineNo = line.lineNo;
-      if (line.attachmentId && other.attachmentId === line.attachmentId) {
+      if (line.attachmentId && (other.attachmentId === line.attachmentId || (!!line.attachmentChecksum && other.attachmentChecksum === line.attachmentChecksum))) {
         match.sharedType = 'ATTACHMENT';
         match.sharedAttachmentId = line.attachmentId;
       } else {
@@ -917,7 +927,8 @@ export function scoreDuplicate(a: DuplicateCandidateInput, b: DuplicateCandidate
       }
     }
   }
-  if (a.requesterUserId === b.requesterUserId) score += 10;
+  if (a.requesterUserId !== b.requesterUserId) return { ...match, score: Math.min(score, 100) };
+  score += 10;
   if (d(a.amount).eq(d(b.amount)) && a.currency === b.currency) score += 20;
   if (dayOf(a.incurredDate) === dayOf(b.incurredDate)) score += 10;
   if (a.normalizedReason && b.normalizedReason && a.normalizedReason === b.normalizedReason) score += 10;

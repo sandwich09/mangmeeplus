@@ -1,4 +1,4 @@
-import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_POLICY_TAB_LABEL, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1111,7 +1111,7 @@ describe('one thing has one name on the claim screens (owner 2026-10-02)', () =>
   const screens = claimScreenSources();
 
   it('uses no second name for the requester, the admin role, the policy tab or its self-approval switch', () => {
-    assert.ok(screens.includes('ผู้เบิก') && screens.includes('THAI_SYSTEM_ROLE_NAMES') && screens.includes('ตั้งค่านโยบาย'), 'the screens were read');
+    assert.ok(screens.includes('ผู้เบิก') && screens.includes('THAI_SYSTEM_ROLE_NAMES') && screens.includes('POLICY_TAB_LABEL') && REIMBURSEMENT_POLICY_TAB_LABEL === 'ตั้งค่านโยบาย', 'the screens were read');
     for (const retired of ['ผู้ขอ', 'ผู้ยื่น', 'ผู้รับเงินคืน', 'ผู้สำรองจ่ายและรับเงินคืน', 'แอดมิน', 'ตั้งค่าเบิกจ่าย', 'อนุญาตให้อนุมัติคำขอตนเอง']) {
       assert.equal(screens.includes(retired), false, retired);
     }
@@ -1213,6 +1213,17 @@ describe('claim policy shares the employee and role-page names', () => {
 describe('claims self-approval policy words', () => {
   it('explains the switch for all roles, the solo exception, and the frozen submitted route', () => {
     const texts = policySettings(policyForm, [roleOption('MANAGER', 'ผู้จัดการ', true)]);
-    assert.ok(texts.includes('เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบเบิกของตัวเองได้ เมื่อปิด ทุกบทบาทอนุมัติใบของตัวเองไม่ได้ ยกเว้นตอนส่งมีผู้เบิกเป็นผู้อนุมัติได้เพียงคนเดียว ใบที่ส่งแล้วใช้ผู้อนุมัติที่กำหนดไว้ตอนส่ง'));
+    assert.ok(texts.includes('เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบเบิกของตัวเองได้ เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด ยกเว้นเมื่อตอนส่ง ผู้เบิกเป็นคนเดียวที่อนุมัติใบนี้ได้ ใบที่ส่งไปแล้วใช้ผู้อนุมัติตามที่กำหนดไว้ตอนส่ง'));
   });
+});
+
+
+it('both pay-queue layouts reuse the same duplicate reason and clearing notice as the payment refusal', () => {
+  const source = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
+  assert.equal((source.match(/reimbursementDuplicateBlockNotice\(r\.duplicateReasons, r\.status === 'FINANCE_REVIEW'\)/g) ?? []).length, 2);
+});
+
+it('duplicate-clear success says the review was recorded without promising every blocker is gone', () => {
+  const source = readFileSync(join(__dirname, 'ReimbursementJourneyPage.tsx'), 'utf8');
+  assert.match(source, /success: REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED/);
 });

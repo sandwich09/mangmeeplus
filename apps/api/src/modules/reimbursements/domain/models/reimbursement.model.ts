@@ -130,6 +130,7 @@ export type ReimbursementLineRecord = {
   amount: string;
   attachmentId?: string;
   linkedExpenseId?: string;
+  attachmentChecksum?: string;
   sourceExpenseSnapshot?: ReimbursementSourceSnapshot;
   attachmentSnapshot?: ReimbursementAttachmentSnapshot;
   createdAt: Date;
@@ -236,6 +237,8 @@ export type ReimbursementRequestRecord = {
   status: ReimbursementRequestStatus;
   paymentStatus: ReimbursementPaymentStatus;
   duplicateStatus: ReimbursementDuplicateStatus;
+  possibleDuplicateExpenseCount?: number;
+  duplicateConfirmationPendingCount?: number;
   receiptRequirementStatus: ReimbursementReceiptRequirementStatus;
   postingStatus: ReimbursementPostingStatus;
   linkedExpenseId?: string;

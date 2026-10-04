@@ -1,7 +1,7 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
 import {
-  EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
+  REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateReasonText, reimbursementDuplicateBlockNotice, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYMENT_SLIP_MAX_FILES, REIMBURSEMENT_SYSTEM_WAIT_LABEL, isReimbursementClaimApprover,
   reimbursementIncurredDateError, reimbursementPaymentSlipRequired, todayCivilDate,
   type ReimbursementHubBucket, type ReimbursementHubSummary,
 } from '@watchdog-bms/contracts';
@@ -133,6 +133,7 @@ export function awaitingSystemNote(detail: any, approvedBy?: string): string {
 export function errorText(e: unknown): string {
   const code = (e as { code?: unknown } | null)?.code;
   const viaCode = typeof code === 'string' ? ERROR_CODE_LABELS[code] ?? translateApiError(code) : null;
+  if (code === 'duplicate_unresolved') return apiErrorMessage(e);
   if (viaCode) return viaCode;
   return errorMessage(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด', e);
 }
@@ -518,11 +519,11 @@ export function quickPayTarget(layout: 'cards' | 'table', companyId: string, req
  * refuses a claim with no branch for everyone, and the claim page offers no button for one either.
  */
 export function queueRowOffersPayment(
-  row: { status?: string; branchId?: string | null; cancellationPending?: boolean } | null | undefined,
+  row: { status?: string; branchId?: string | null; cancellationPending?: boolean; hasDuplicateBlocker?: boolean; duplicateReasons?: readonly string[] } | null | undefined,
   permissions: readonly string[],
 ): boolean {
   // A claim being cancelled is not paid (the API refuses it); its row says so and offers no payment.
-  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && !claimIsBeingCancelled(row) && permissions.includes('reimbursement.payment.record');
+  return row?.status === 'READY_FOR_PAYMENT' && !!row.branchId && !claimIsBeingCancelled(row) && !row.hasDuplicateBlocker && !row.duplicateReasons?.includes('EXPENSE_CONFIRMATION') && permissions.includes('reimbursement.payment.record');
 }
 
 /**
@@ -1073,19 +1074,6 @@ export const JOURNEY_STEP_LABELS: Record<JourneyStepKey, string> = {
   items: 'รายการที่จ่ายไป', approval: 'อนุมัติ', finance: 'ตรวจการเงิน', payment: 'จ่ายเงินคืน', document: 'เอกสาร',
 };
 
-/** Why an open duplicate candidate was raised, in words (submit only records these two matches). */
-const DUPLICATE_MATCH_TEXT: Record<string, string> = {
-  ATTACHMENT_CHECKSUM: 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น',
-  EXPENSE_LINK: 'ใช้รายการค่าใช้จ่ายเดียวกับคำขอเบิกอื่น',
-};
-
-function openDuplicateText(detail: any): string {
-  const texts = new Set<string>((detail?.duplicateCandidates ?? [])
-    .filter((candidate: any) => candidate.status === 'OPEN')
-    .map((candidate: any) => DUPLICATE_MATCH_TEXT[candidate.candidateType] ?? 'อาจซ้ำกับคำขอเบิกอื่น'));
-  return [...texts].join(' และ ') || 'อาจซ้ำกับคำขอเบิกอื่น';
-}
-
 /** The policy switch, quoted as the settings page labels it so it can be found there. */
 const SELF_APPROVAL_BLOCK_NOTE = `ใบนี้เป็นของคุณเอง และนโยบายที่ใบนี้ใช้ปิด "${SELF_APPROVAL_SWITCH_LABEL}"`;
 
@@ -1263,8 +1251,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       // froze the switch at submit, so turning it on helps only once the claim is sent again.
       if (detail?.approvalActions?.selfApprovalBlocked === true) {
         const canManagePolicy = permissions.includes('reimbursement.policy.manage');
-        note = `${waiting} · ${SELF_APPROVAL_BLOCK_NOTE} คุณจึงอนุมัติเองไม่ได้ ถ้าต้องการอนุมัติเอง ${
-          canManagePolicy ? `เปิดได้ที่${POLICY_TAB_LABEL}` : `ขอให้เจ้าของกิจการเปิดใน${POLICY_TAB_LABEL}`} แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่`;
+        note = `${waiting} · ${REIMBURSEMENT_SELF_APPROVAL_DENIED}`;
         if (canManagePolicy) actions.push('policy-settings');
       }
       // spec §6: the requester takes back a claim nobody has decided yet — the same reopen as a refusal.
@@ -1284,15 +1271,15 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
       const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
-      if (payable && detail?.duplicateBlocksPayment === true) {
+      if (payable && (detail?.duplicateBlocksPayment === true || detail?.duplicateReasons?.includes('EXPENSE_CONFIRMATION'))) {
         // The API refuses payment until the block is cleared with a reason.
         // Owner 2026-09-21: a claim has only a requester and an approver, so whoever records the
         // payment clears the duplicate block with a reason; duplicate.resolve holders still can too.
         const canResolve = permissions.includes('reimbursement.payment.record') || permissions.includes('reimbursement.duplicate.resolve');
         if (canResolve) actions.push('resolve-duplicate');
-        note = `ติดรายการซ้ำ: ${openDuplicateText(detail)} ${canResolve
-          ? 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล จึงจะบันทึกจ่ายได้'
-          : `รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`}`;
+        const reasons = detail.duplicateReasons ?? (detail.duplicateCandidates ?? []).filter((candidate: any) => candidate.status === 'OPEN').map((candidate: any) => candidate.candidateType);
+        note = canResolve ? reimbursementDuplicateBlockNotice(reasons)
+          : `ติดรายการซ้ำ: ${reimbursementDuplicateReasonText(reasons)} รอ${PAYER}ตรวจรายการซ้ำและปลดก่อน จึงจะบันทึกจ่ายได้`;
       } else {
         const canPay = permissions.includes('reimbursement.payment.record');
         // The payment endpoint refuses a claim with no branch for everyone, so nobody is offered the

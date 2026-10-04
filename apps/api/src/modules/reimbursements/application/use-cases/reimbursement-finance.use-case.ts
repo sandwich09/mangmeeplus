@@ -1,3 +1,4 @@
+import { ResolveDuplicateUseCase } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { createHash } from 'node:crypto';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import type {
@@ -8,7 +9,7 @@ import type {
   ReimbursementFinanceQueueItem,
   ReimbursementRequestDetail,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilPeriodKey, looksLikeAccountNumber, reimbursementPaidNotice, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateBlockNotice, civilDate, civilPeriodKey, looksLikeAccountNumber, reimbursementPaidNotice, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { requireTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
@@ -23,7 +24,7 @@ import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import { assertCanReadRequestOrAssignment } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
-  duplicateBlocksPayment,
+  duplicateBlocksPayment, claimDuplicateReasons,
   payoutCorrectionPhase,
   claimApproverUserId,
   isSamePaymentRequest,
@@ -80,7 +81,9 @@ export class ListFinanceQueueUseCase {
       // with. It read the status column, which after approval holds the result of the claim's expense
       // records: a claim found possibly duplicate at submit had no mark here while its payment was refused.
       hasDuplicateBlocker: duplicateBlocksPayment(effectivePolicyForRequest(r, currentPolicy).duplicatePolicy,
-        (r.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length),
+        (r.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length,
+        (r.possibleDuplicateExpenseCount ?? 0) + (r.duplicateConfirmationPendingCount ?? 0)),
+      duplicateReasons: claimDuplicateReasons(r),
     }));
   }
 }
@@ -92,6 +95,7 @@ export class FinanceReviewReimbursementUseCase {
     private readonly audit: AuditService,
     private readonly projections: ReimbursementProjectionOrchestratorService,
     private readonly evidence: ReimbursementEvidenceService,
+    private readonly expenseDuplicates: ResolveDuplicateUseCase,
   ) {}
 
   async execute(ctx: RequestContext, id: string, input: FinanceReviewReimbursementInput): Promise<ReimbursementRequestDetail> {
@@ -114,7 +118,8 @@ export class FinanceReviewReimbursementUseCase {
     if (looksLikeAccountNumber(note)) throw new BadRequestException('note_contains_account_number');
     if (input.resolveDuplicate) {
       if (!ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
-      if (!input.duplicateResolutionReason?.trim()) throw new BadRequestException('duplicate_resolution_reason_required');
+      if (!input.duplicateResolutionReason?.trim() || input.duplicateResolutionReason.trim().length > 500) throw new BadRequestException('duplicate_resolution_reason_required');
+      if (looksLikeAccountNumber(input.duplicateResolutionReason)) throw new BadRequestException('note_contains_account_number');
     }
     if (input.decision === 'NEEDS_INFO' && !note) {
       throw new BadRequestException('finance_correction_reason_required');
@@ -263,13 +268,15 @@ export class FinanceReviewReimbursementUseCase {
       throw new ForbiddenException('Missing permission: reimbursement.payment.record or reimbursement.duplicate.resolve');
     }
     const duplicateResolutionReason = reason?.trim();
-    if (!duplicateResolutionReason) throw new BadRequestException('duplicate_resolution_reason_required');
+    if (!duplicateResolutionReason || duplicateResolutionReason.length > 500) throw new BadRequestException('duplicate_resolution_reason_required');
+    if (looksLikeAccountNumber(duplicateResolutionReason)) throw new BadRequestException('note_contains_account_number');
 
     const req = await this.repo.findRequestById(ctx.companyId, id);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     assertReimbursementBranchInScope(ctx, req.branchId);
 
-    await this.repo.resolvePaymentDuplicatesAtomic({
+    let reconcileExpenses = false;
+    const resolved = await this.repo.resolvePaymentDuplicatesAtomic({
       companyId: ctx.companyId,
       requestId: id,
       expectedUpdatedAt: req.updatedAt,
@@ -278,6 +285,7 @@ export class FinanceReviewReimbursementUseCase {
       resolvedAt: new Date(),
       reason: duplicateResolutionReason,
       onResolvedPersisted: async (tx) => {
+        reconcileExpenses = (await this.expenseDuplicates.executeForReimbursement(ctx, id, req.branchId, duplicateResolutionReason, tx)) > 0;
         await this.audit.log({
           companyId: ctx.companyId,
           actorUserId: ctx.userId,
@@ -292,6 +300,11 @@ export class FinanceReviewReimbursementUseCase {
       },
     });
 
+    if (reconcileExpenses) {
+      const policy = effectivePolicyForRequest(resolved, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
+      await this.projections.reconcileExisting(ctx, resolved, policy.allowMissingReceiptWithReason);
+      await this.repo.refreshClaimProjectionState(ctx.companyId, id, ctx.scopes ?? {});
+    }
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
     return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!, ctx);
   }
@@ -422,11 +435,11 @@ export class RecordReimbursementPaymentUseCase {
     // Friendly preflight before reserving a payment number; the repository
     // repeats the same proof under the payment lock to close the race.
     requireTransactionBranchId(req.branchId);
-    await this.repo.assertClaimPaymentReady(ctx.companyId, id, paidAt);
 
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     const openDuplicates = await this.repo.listOpenDuplicateCandidates(ctx.companyId, id);
-    const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, openDuplicates.length);
+    const duplicateReasons = claimDuplicateReasons({ ...req, duplicateCandidates: openDuplicates });
+    const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, openDuplicates.length, (req.possibleDuplicateExpenseCount ?? 0) + (req.duplicateConfirmationPendingCount ?? 0));
 
     const error = validatePaymentRecording({
       status: req.status,
@@ -440,7 +453,8 @@ export class RecordReimbursementPaymentUseCase {
       paymentReference: input.paymentReference,
       hasSlip: Boolean(input.slipAttachmentId),
     });
-    if (error) throw new UnprocessableEntityException(error);
+    if (error) throw new UnprocessableEntityException(error === 'duplicate_unresolved' ? { code: error, duplicatePhase: 'PAYMENT', message: reimbursementDuplicateBlockNotice(duplicateReasons), duplicateReasons } : error);
+    await this.repo.assertClaimPaymentReady(ctx.companyId, id, paidAt);
     // Everything that can refuse the payment is checked before a payment number is reserved: a
     // refusal after that point would burn a number that only a retry with the same key reuses.
     // The payer's statement about the account is one of them.

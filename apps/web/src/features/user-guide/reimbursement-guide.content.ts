@@ -1,4 +1,4 @@
-import { reimbursementPayoutOnBehalfNotice, reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DUPLICATE_POLICY_NOTE, REIMBURSEMENT_DUPLICATE_CLEAR_HELP, reimbursementPayoutOnBehalfNotice, reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { CLAIM_SIGN_LABEL, CLAIM_RESIGN_LABEL, SELF_APPROVAL_POLICY_NOTE, SELF_APPROVAL_SWITCH_LABEL } from '@/features/reimbursements/reimbursements.model';
 import { draftRowSubmitLabel } from '@/features/reimbursements/reimbursement-payout.logic';
 import { visibleHubTabs } from '@/features/reimbursements/reimbursements.logic';
@@ -887,7 +887,7 @@ export function buildReimbursementGuide(
       {
         id: 'duplicate',
         title: 'เมื่อระบบเตือนว่าอาจเบิกซ้ำ',
-        summary: 'คำขอที่อนุมัติแล้วกลายเป็นค่าใช้จ่ายของบริษัท ระบบจึงตรวจการเบิกซ้ำให้',
+        summary: REIMBURSEMENT_DUPLICATE_POLICY_NOTE,
         iconKey: 'FileIcon',
         tone: 'cyan',
         blocks: [
@@ -905,7 +905,7 @@ export function buildReimbursementGuide(
               },
               {
                 title: 'เมื่อขั้นจ่ายเงินคืนขึ้นว่า “ติดรายการซ้ำ”',
-                detail: 'เปิดดูใบเสร็จทุกรายการ แล้วค้นในเมนูค่าใช้จ่ายด้วยยอดเงินหรือชื่อผู้ขาย ถ้าไม่ซ้ำจริง กด “ปลดรายการซ้ำ” ใส่เหตุผล แล้วกด “ยืนยันว่าไม่ซ้ำ” ระบบบันทึกชื่อคุณและเหตุผลไว้ จึงจะบันทึกจ่ายได้ ถ้าซ้ำจริง ให้ผู้เบิกยกเลิกคำขอ อย่าจ่ายซ้ำ',
+                detail: `เปิดดูใบเสร็จทุกรายการ แล้วค้นในเมนูค่าใช้จ่ายด้วยยอดเงินหรือชื่อผู้ขาย ${REIMBURSEMENT_DUPLICATE_CLEAR_HELP} ระบบบันทึกชื่อคุณและเหตุผลไว้ ถ้าซ้ำจริง ให้ผู้เบิกยกเลิกคำขอ อย่าจ่ายซ้ำ`,
               },
               {
                 title: 'ใครปลดรายการซ้ำได้',
@@ -919,7 +919,7 @@ export function buildReimbursementGuide(
             rows: [
               ['เตือน', 'เตือนอย่างเดียว ทุกขั้นยังเดินต่อได้ตามปกติ'],
               ['ระงับการส่ง', 'ผู้เบิกกดส่งอนุมัติไม่ได้จนกว่าจะแก้ไข'],
-              ['ระงับการจ่าย (ค่าเริ่มต้น)', 'ส่งและอนุมัติได้ตามปกติ แต่บันทึกจ่ายไม่ได้จนกว่าจะปลดรายการซ้ำ'],
+              ['ระงับการจ่าย (ค่าเริ่มต้น)', REIMBURSEMENT_DUPLICATE_POLICY_NOTE],
             ],
           },
         ],
@@ -941,7 +941,7 @@ export function buildReimbursementGuide(
               [SELF_APPROVAL_SWITCH_LABEL, SELF_APPROVAL_POLICY_NOTE, 'เปิดเมื่อต้องการให้ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบของตัวเองได้แม้มีผู้อนุมัติคนอื่น'],
               ['ต้องมีใบเสร็จ', 'ทุกรายการต้องแนบใบเสร็จก่อนส่งอนุมัติ', 'ควรเปิดไว้เสมอ'],
               ['อนุญาตไม่มีใบเสร็จได้หากระบุเหตุผล', 'ให้ผู้เบิกใส่เหตุผลแทนใบเสร็จได้ เช่น ค่าทางด่วนแบบบัตรอัตโนมัติ', 'ควรเปิดคู่กับข้อบน เพื่อให้งานจริงไม่ติดขัด'],
-              ['นโยบายรายการซ้ำ', 'ความเข้มงวดเมื่อพบคำขอที่อาจเบิกซ้ำ', 'ดูตารางในหัวข้อการเบิกซ้ำ'],
+              ['นโยบายรายการซ้ำ', REIMBURSEMENT_DUPLICATE_POLICY_NOTE, 'ดูตารางในหัวข้อการเบิกซ้ำ'],
               ['ตรวจการเงินก่อนจ่าย', 'เพิ่มขั้นให้ฝ่ายการเงินตรวจก่อนจ่าย ค่าเริ่มต้นคือปิด', 'เปิดเมื่อมีฝ่ายการเงินแยกจากผู้อนุมัติเท่านั้น'],
               ['กำหนดเวลาอนุมัติและจ่าย (ชั่วโมง)', 'จำนวนชั่วโมงที่อยากให้ตัดสินหรือจ่ายให้เสร็จ ถ้าเกินจะมีป้ายเตือนและแจ้งเตือน ถ้าไม่ตั้ง จะไม่มีการเตือน', 'เช่น 24 หรือ 48 ชั่วโมง'],
             ],
@@ -1054,7 +1054,7 @@ export function buildReimbursementGuide(
               },
               {
                 question: 'บันทึกจ่ายไม่ได้ เพราะระบบพบรายการที่อาจซ้ำ',
-                answer: 'ขั้นจ่ายเงินคืนขึ้นว่า “ติดรายการซ้ำ” เพราะบริษัทตั้งนโยบายรายการซ้ำไว้เป็นระงับการจ่าย ให้ตรวจตามหัวข้อการเบิกซ้ำ ถ้าไม่ซ้ำ กด “ปลดรายการซ้ำ” พร้อมเหตุผล แล้วจึงบันทึกจ่าย',
+                answer: `${REIMBURSEMENT_DUPLICATE_POLICY_NOTE} ${REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`,
               },
               {
                 question: 'ต้องการทยอยจ่ายบางส่วน แต่ระบบไม่ให้',

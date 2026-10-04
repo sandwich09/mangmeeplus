@@ -511,3 +511,29 @@ test('employee and claim refusals name the standard OWNER and ADMIN roles consis
   assert.equal(translateApiError('payout_account_edit_denied'), 'คุณตั้งบัญชีรับเงินคืนของคนนี้ไม่ได้ ให้เจ้าของบัญชีตั้งเอง หรือให้เจ้าของกิจการหรือผู้ดูแลบริษัทตั้งให้');
   assert.equal(translateApiError('reimbursement_policy_inactive'), 'บริษัทปิดรับใบเบิกใหม่ชั่วคราว กรุณาติดต่อเจ้าของกิจการหรือผู้ดูแลบริษัท');
 });
+
+
+test('claim self-approval refusal explains the frozen-policy way forward in the shared toast', () => {
+  const text = apiErrorMessage({ code: 'self_approval_denied' });
+  assert.match(text, /ให้ผู้อนุมัติคนอื่นตัดสิน/);
+  assert.match(text, /เก็บนโยบายไว้ตอนส่ง/);
+  assert.match(text, /เปิดกลับเป็นร่างและส่ง/);
+});
+
+
+test('duplicate refusal distinguishes submission from payment and rejects unknown reason tokens', () => {
+  const payment = { code: 'duplicate_unresolved', details: { duplicatePhase: 'PAYMENT', duplicateReasons: ['EXPENSE_DOCUMENT', '__proto__', 'private-id'] } };
+  assert.match(apiErrorMessage(payment), /เอกสารค่าใช้จ่ายของใบนี้อาจซ้ำกับเอกสารเดิม/);
+  assert.doesNotMatch(apiErrorMessage(payment), /private-id|object Object|__proto__/);
+  const submit = apiErrorMessage({ code: 'duplicate_unresolved', details: { duplicatePhase: 'SUBMIT', duplicateReasons: ['ATTACHMENT_CHECKSUM'] } });
+  assert.match(submit, /ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น/);
+  assert.match(submit, /ยังส่งใบนี้ไม่ได้/);
+  assert.doesNotMatch(submit, /ก่อนบันทึกจ่าย/);
+});
+
+test('duplicate finance-review guidance names its available decision instead of a payment-step button', async () => {
+  const { reimbursementDuplicateBlockNotice } = await import('@watchdog-bms/contracts');
+  const message = (reimbursementDuplicateBlockNotice as any)(['ATTACHMENT_CHECKSUM'], true);
+  assert.match(message, /ผู้ตรวจการเงินที่มีสิทธิ์ปลดรายการซ้ำอนุมัติจ่าย/);
+  assert.doesNotMatch(message, /กดปลดรายการซ้ำ/);
+});

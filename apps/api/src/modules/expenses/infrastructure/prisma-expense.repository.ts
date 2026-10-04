@@ -3504,16 +3504,17 @@ export class PrismaExpenseRepository {
 
   private async assertDuplicateWriteAllowed(
     tx: Prisma.TransactionClient,
-    input: { companyId: string; expenseId: string; scopes: { branchIds?: string[] } },
+    input: { companyId: string; expenseId: string; scopes: { branchIds?: string[] }; reimbursementRequestId?: string; reimbursementBranchId?: string },
   ): Promise<void> {
     // ponytail: duplicate writes are low-frequency; one company lock avoids cross-writer lock cycles.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:duplicate-reconciliation`}))`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
     const expense = await tx.expenseRecord.findFirst({
       where: { id: input.expenseId, companyId: input.companyId },
-      select: { branchId: true, status: true, postingStatus: true },
+      select: { branchId: true, status: true, postingStatus: true, sourceReimbursementRequestId: true },
     });
     if (!expense) throw new NotFoundException(`Expense ${input.expenseId} not found`);
+    if (input.reimbursementRequestId && (expense.sourceReimbursementRequestId !== input.reimbursementRequestId || (expense.branchId ?? undefined) !== input.reimbursementBranchId)) throw new ConflictException('reimbursement_projection_source_mismatch');
     if (!isBranchInScope(input.scopes, expense.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     if (!['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
       throw new BadRequestException(`Cannot change duplicate state for expense in status ${expense.status}`);
@@ -3855,6 +3856,17 @@ export class PrismaExpenseRepository {
     });
   }
 
+  async listClaimDuplicates(companyId: string, requestId: string, branchId: string | undefined, scopes: { branchIds?: string[] }, db: any) {
+    return db.expenseRecord.findMany({
+      where: { companyId, sourceReimbursementRequestId: requestId, branchId: branchId ?? null, ...branchScopeWhere(scopes), OR: [
+        { duplicateStatus: 'POSSIBLE_DUPLICATE', status: { not: 'VOIDED' } },
+        { duplicateStatus: 'OVERRIDDEN', status: 'READY_FOR_CONFIRMATION' },
+      ] },
+      select: { id: true, duplicateCandidates: { where: { status: 'OPEN' }, select: { id: true } } },
+    });
+  }
+
+
   /**
    * A candidate row is reachable only through the expense that owns it: the write is
    * scoped by `companyId` AND `expenseId`, and a zero-row result is a NotFound rather
@@ -3862,12 +3874,14 @@ export class PrismaExpenseRepository {
    * another company's candidate. Resolution, the expense status flip, and the caller's
    * audit row share one transaction, so a failed audit rolls the mutation back.
    */
+
   async resolveDuplicateCandidate(
-    input: { companyId: string; expenseId: string; candidateId: string; actorUserId: string; action: 'dismiss' | 'confirm'; reason?: string; scopes: { branchIds?: string[] } },
+    input: { companyId: string; expenseId: string; candidateId: string; actorUserId: string; action: 'dismiss' | 'confirm'; reason?: string; scopes: { branchIds?: string[] }; reimbursementRequestId?: string; reimbursementBranchId?: string },
     auditWithinTx: (tx: Prisma.TransactionClient) => Promise<void>,
+    db?: Prisma.TransactionClient,
   ): Promise<void> {
     const client = this.prisma.client as any;
-    await client.$transaction(async (tx: Prisma.TransactionClient) => {
+    const work = async (tx: Prisma.TransactionClient) => {
       await this.assertDuplicateWriteAllowed(tx, input);
       const existingConfirmed = await tx.expenseDuplicateCandidate.findFirst({
         where: { companyId: input.companyId, expenseId: input.expenseId, status: 'CONFIRMED_DUPLICATE' },
@@ -3883,11 +3897,12 @@ export class PrismaExpenseRepository {
         where: {
           id: ownedCandidate.candidateExpenseId,
           companyId: input.companyId,
-          ...branchScopeWhere(input.scopes),
+          // Claim-bound dismissal changes only its own source; it reveals no target facts.
+          ...(input.reimbursementRequestId && input.action === 'dismiss' ? {} : branchScopeWhere(input.scopes)),
         },
         select: { id: true },
       });
-      if (!candidateExpense) throw new NotFoundException(`Duplicate target ${ownedCandidate.candidateExpenseId} not found in company ${input.companyId}`);
+      if (!candidateExpense) throw new NotFoundException(input.reimbursementRequestId ? 'reimbursement_duplicate_source_unavailable' : `Duplicate target ${ownedCandidate.candidateExpenseId} not found in company ${input.companyId}`);
       const candidate = await tx.expenseDuplicateCandidate.updateMany({
         where: { id: input.candidateId, companyId: input.companyId, expenseId: input.expenseId, status: 'OPEN' },
         data: {
@@ -3926,7 +3941,9 @@ export class PrismaExpenseRepository {
       });
       if (expense.count !== 1) throw new NotFoundException(`Expense ${input.expenseId} not found`);
       await auditWithinTx(tx);
-    });
+    };
+    if (db) await work(db);
+    else await client.$transaction(work);
   }
 
   /**
