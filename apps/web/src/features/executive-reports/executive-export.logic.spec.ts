@@ -75,9 +75,12 @@ test('preparation panel puts the action before column details, contacts default 
   const { renderToStaticMarkup } = await import('react-dom/server');
   const { ExecutiveExportPanel } = await import('./ExecutiveExportPanel');
   const { EXECUTIVE_WORDS: W } = await import('@watchdog-bms/contracts');
-  const data: any = { build: { id: 'shown' }, period: { month: '2026-09' }, dataThrough: { oldest: '2026-10-03T02:30:00Z' }, appliedFilters: { global: {}, directory: {} }, population: { eligibleCount: { value: 2, coverage: 'complete' } }, pagination: { total: 2 } };
+  const data: any = { build: { id: 'shown' }, period: { month: '2026-09' }, dataThrough: { oldest: '2026-10-03T02:30:00Z', lagging: [] }, coverage: { usage: { coverage: 'complete', reasonCodes: [] }, money: { coverage: 'complete', reasonCodes: [] } }, appliedFilters: { global: {}, directory: {} }, population: { eligibleCount: { value: 2, coverage: 'complete', reasonCodes: [] } }, pagination: { total: 2 } };
   const props: any = { section: 'companies', params: new URLSearchParams('month=2026-09'), context, data, search: '', close: () => {}, reload: () => {}, deny: () => {} };
   const html = renderToStaticMarkup(React.createElement(ExecutiveExportPanel, props));
+  assert.doesNotMatch(html, /ตัวเลขบางส่วนยังไม่ครบ/);
+  const partial = renderToStaticMarkup(React.createElement(ExecutiveExportPanel, { ...props, data: { ...data, coverage: { ...data.coverage, usage: { coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_FIRST_BUILD'] } } } }));
+  assert.match(partial, /executive-status/); assert.match(partial, new RegExp(W.historyBeforeFirstBuild));
   assert.ok(html.indexOf(W.export.create) < html.indexOf(W.export.columns)); assert.doesNotMatch(html, /type="checkbox"/);
   const withRight = { ...context, capabilities: { ...context.capabilities, seeContacts: { allowed: true } } };
   const contact = renderToStaticMarkup(React.createElement(ExecutiveExportPanel, { ...props, context: withRight }));

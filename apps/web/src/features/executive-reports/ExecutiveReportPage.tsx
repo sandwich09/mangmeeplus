@@ -19,12 +19,12 @@ import {
   swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, drillLabels, reportFilterChips, menuHref, reportDateTime, pageNumber, reasonText,
   EXECUTIVE_ACCESS_DENIED_EVENT, sortLabel, retryDelaySeconds, reportHistoryState, ownHistoryState, backSection, type ReportSection,
 } from './executive-reports.logic';
-import { EXECUTIVE_PAGE_CLASS, ExecutiveSectionCard } from './ExecutiveReportDesign';
+import { EXECUTIVE_PAGE_CLASS, ExecutiveSectionCard, ExecutiveTabs, ReasonNotes, ReportStatus } from './ExecutiveReportDesign';
 import { ExecutiveFilters } from './ExecutiveFilters';
 import { ExecutiveExportPanel } from './ExecutiveExportPanel';
 import { canExport } from './executive-export.logic';
 import { W, REPORT_VIEWS, DETAIL_TABS, RANK_LABELS, thaiLabel } from './executive-reports.words';
-import { OverviewContent, CompaniesContent, AnalysisContent, CompanyContent, ReportLink, Reasons, ReportSkeleton } from './ExecutiveReportContent';
+import { OverviewContent, CompaniesContent, AnalysisContent, CompanyContent, ReportLink, ReportSkeleton } from './ExecutiveReportContent';
 
 type Failure = ReturnType<typeof reportFailure>;
 type ReportContext = { context: ExecutiveContext | null; failure: Failure | null; retry?: () => void; retryWait: number; build: MutableRefObject<string | undefined>; admin: boolean; deny: () => void; refresh: (signal: AbortSignal) => Promise<void> };
@@ -92,7 +92,8 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const [contactReadAt, setContactReadAt] = useState('');
   const [retryWait, setRetryWait] = useRetryWait();
   const [backTitle, setBackTitle] = useState<string | null>(null);
-  const tab = DETAIL_TABS.find(tab => tab.value === params.get('tab'))?.value ?? 'company';
+  const tabFocus = useRef<string | null>(null);
+  const tab = DETAIL_TABS.find(tab => tab.value === (params.get('view') ?? params.get('tab')))?.value ?? 'company';
   const problem = context && section === 'compare' ? comparisonProblem(params, context) : null;
   const queryKey = context ? JSON.stringify(reportQuery(section, params, context, search)) : null;
   const historyPage = section === 'detail' && tab === 'history' ? pageNumber(params.get('page')) : 1;
@@ -104,6 +105,12 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     if (replace) window.history.replaceState(state, '', href);
     else window.history.pushState(state, '', href);
   }
+  useEffect(() => {
+    if (!loading && tabFocus.current) {
+      if (document.activeElement === document.body || document.activeElement?.getAttribute('role') === 'tab') document.getElementById(`executive-tab-${tabFocus.current}`)?.focus();
+      tabFocus.current = null;
+    }
+  }, [loading, paramsString]);
   function update(changes: Record<string, string>) { navigateParams(changedParams(params, changes)); }
   function clear() { setTerm(''); setSearch(''); navigateParams(clearedParams(params), false, ''); }
   function back(fallback: string) {
@@ -219,7 +226,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const pickLabels = context && picked ? drillLabels(Object.fromEntries(Object.entries(picked).filter(([key]) => !GLOBAL_FILTERS.some(global => global === key))), context) : [];
   const pagination = section === 'companies' && visibleData && 'pagination' in visibleData ? visibleData.pagination : tab === 'history' && section === 'detail' ? history?.pagination : null;
   const comparison = visibleData && 'comparison' in visibleData ? visibleData.comparison : null;
-  return <main className={`executive-report mx-auto max-w-7xl p-4 text-base sm:p-6 ${EXECUTIVE_PAGE_CLASS}`}>
+  return <ReasonNotes.Provider value={!exportOpen}><main className={`executive-report mx-auto max-w-7xl p-4 text-base sm:p-6 ${EXECUTIVE_PAGE_CLASS}`}>
     <MangmeePage eyebrow={W.report} title={title} description={W.descriptions[section]} actions={<div className="flex flex-wrap gap-2">{canExport(context) && !exportOpen && <Button variant={section === 'overview' ? 'secondary' : 'primary'} loading={loading} disabled={loading || !!failed || !!problem || !visibleData} onClick={() => { const next = new URLSearchParams(params); next.set('export', '1'); setExportNotice(''); navigateParams(next); }}>{W.export.action}</Button>}{section === 'overview' && !exportOpen ? <Button onClick={() => { rememberNavigation(); router.push(menuHref('companies', params)); }}>{W.allCompanies}</Button> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}</div>}>
       <div className="space-y-4">
         {exportNotice && <p role="status">{exportNotice}</p>}
@@ -227,11 +234,12 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
         {canExport(context) && !exportOpen && (loading || failed || problem || !visibleData) && <p role="status">{loading ? W.loading : problem ? W[problem] : failed?.text ?? W.noData}</p>}
         {exportOpen && context && visibleData && <ExecutiveExportPanel key={requestKey} section={section} params={params} context={context} data={visibleData} search={search} targetCompanyId={targetCompanyId} close={closeExport} reload={reloadExport} deny={denyExport} />}
         {context && !exportOpen && <>
-          <div className="executive-time-row flex min-w-0 flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-4">
+          <div className="executive-time-row flex min-w-0 flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-3">
             <div className="w-44"><label htmlFor="executive-month" className="text-sm">{W.month}</label><ThemedDate id="executive-month" aria-label={W.month} aria-invalid={!!fieldErrors.month} aria-describedby={fieldErrors.month ? 'executive-month-error' : undefined} mode="month" allowClear={false} value={normalizedMonth(params, context)} min={context.months?.first} max={context.months?.last ?? context.currentMonth} selectable={context.builtMonths} onChange={event => event.target.value && update({ month: event.target.value })} className="!min-h-11 !text-base" />{fieldErrors.month && <FieldError id="executive-month-error">{fieldErrors.month}</FieldError>}</div>
             {section !== 'compare' && section !== 'detail' && <ExecutiveFilters context={context} values={filterValues} errors={fieldErrors} apply={update} clear={clear} />}
-            {visibleData && <><span className="text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.period.isPartialMonth && <><MangmeeBadge tone="amber">{W.partialMonth}</MangmeeBadge>{context.months && visibleData.period.month > context.months.first && <Button variant="secondary" onClick={() => { const date = new Date(`${visibleData.period.month}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); update({ month: date.toISOString().slice(0, 7) }); }}>{W.previousMonth}</Button>}</>}{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
+            {visibleData && <><span className="text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.period.isPartialMonth && <>{context.months && visibleData.period.month > context.months.first && <Button variant="secondary" onClick={() => { const date = new Date(`${visibleData.period.month}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); update({ month: date.toISOString().slice(0, 7) }); }}>{W.previousMonth}</Button>}</>}{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
           </div>
+          {visibleData && <ReportStatus data={visibleData} />}
           {section === 'compare' || section === 'detail' ? <p className="text-sm">{section === 'compare' ? W.compareBase : W.detailBase}</p> : null}
           {section === 'companies' && <>
             <div className="grid min-w-0 gap-3 sm:grid-cols-2"><TextField id="executive-search" label={W.search} type="search" maxLength={120} value={term} hint={W.searchHint} error={fieldErrors.q} className="!min-h-11 !text-base" onChange={event => { setTerm(event.target.value); window.history.replaceState({ ...window.history.state, executiveSearch: event.target.value }, '', window.location.href); }} />
@@ -244,22 +252,14 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
           </>}
           {section !== 'compare' && section !== 'detail' && (filterCount > 0 || DIRECTORY_FILTERS.some(key => params.get(FILTER_URL[key]) && params.get(FILTER_URL[key]) !== 'ALL') || term || params.has('pick')) && <Button variant="secondary" onClick={clear}>{W.clear}</Button>}
           <div className="flex flex-wrap gap-2">{activeLabels.map((label, i) => <MangmeeBadge key={i}>{label}</MangmeeBadge>)}</div>
-          {(section === 'usage' || section === 'revenue' || section === 'customers') && <>
-            <nav className="executive-view-tabs flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-2" aria-label={W[section]}>{REPORT_VIEWS[section].map(view => <Button key={view.value} variant="secondary" className={reportView(section, params) === view.value ? '!border-brand-700 !bg-brand-50 !text-brand-800' : ''} aria-pressed={reportView(section, params) === view.value} onClick={() => update({ view: view.value })}>{view.label}</Button>)}</nav>
-            {section === 'customers' && reportView(section, params) === 'sales' && <SelectField label={W.sales} value={params.get('seller') === 'credited' ? 'credited' : 'referring'} className="!min-h-11 !text-base" onChange={event => update({ seller: event.target.value })}><option value="referring">{W.referring}</option><option value="credited">{W.credited}</option></SelectField>}
-          </>}
-          {section === 'detail' && <nav className="executive-view-tabs flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-2" aria-label={W.detail}>{DETAIL_TABS.map(item => <Button key={item.value} variant="secondary" className={tab === item.value ? '!border-brand-700 !bg-brand-50 !text-brand-800' : ''} aria-pressed={tab === item.value} onClick={() => update({ tab: item.value })}>{item.label}</Button>)}</nav>}
           {section === 'compare' && <ExecutiveSectionCard title={W.compare} className="executive-compare-controls min-w-0 space-y-4 p-4 sm:p-5">
-            <SelectField label={W.dimension} value={['industry', 'discovery', 'referringSales', 'company'].includes(params.get('by') ?? '') ? params.get('by')! : 'industry'} error={fieldErrors.dimension} className="!min-h-11 !text-base" onChange={event => update({ by: event.target.value, a: '', b: '' })}>{[['industry', W.industry], ['discovery', W.discovery], ['referringSales', W.referring], ['company', W.company]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectField>
+            <div className="grid min-w-0 items-end gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_minmax(0,1fr)]"><SelectField label={W.dimension} value={['industry', 'discovery', 'referringSales', 'company'].includes(params.get('by') ?? '') ? params.get('by')! : 'industry'} error={fieldErrors.dimension} className="!min-h-11 !text-base" onChange={event => update({ by: event.target.value, a: '', b: '' })}>{[['industry', W.industry], ['discovery', W.discovery], ['referringSales', W.referring], ['company', W.company]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectField>
             {params.get('by') === 'company' && <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.chooseCompanies}</ReportLink>}
-            <div className="grid min-w-0 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">{(['a', 'b'] as const).map(side => <Fragment key={side}>{side === 'b' && <div>{!problem && <Button variant="secondary" onClick={() => navigateParams(swappedParams(params))}>{W.swap}</Button>}</div>}{params.get('by') === 'company' ? <div className="min-w-0"><p className="text-sm text-gray-600">{side === 'a' ? W.sideA : W.sideB}</p>{comparison && <p className="font-semibold">{thaiLabel(comparison[side === 'a' ? 'sideA' : 'sideB'].label, comparison[side === 'a' ? 'sideA' : 'sideB'].key)}</p>}</div> : <SelectField label={side === 'a' ? W.sideA : W.sideB} value={params.get(side) ?? ''} error={fieldErrors[side === 'a' ? 'sideA' : 'sideB']} searchable className="!min-h-11 !text-base" onChange={event => update({ [side]: event.target.value })}><option value="">{W.choose}</option>{context.filters[(params.get('by') === 'discovery' || params.get('by') === 'referringSales' ? params.get('by') : 'industry') as 'industry' | 'discovery' | 'referringSales'].filter(option => option.value !== 'ALL').map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, option.value)}</option>)}</SelectField>}</Fragment>)}</div>
+            <div className="contents">{(['a', 'b'] as const).map(side => <Fragment key={side}>{side === 'b' && <div>{!problem && <Button variant="secondary" onClick={() => navigateParams(swappedParams(params))}>{W.swap}</Button>}</div>}{params.get('by') === 'company' ? <div className="min-w-0"><p className="text-sm text-gray-600">{side === 'a' ? W.sideA : W.sideB}</p>{comparison && <p className="font-semibold">{thaiLabel(comparison[side === 'a' ? 'sideA' : 'sideB'].label, comparison[side === 'a' ? 'sideA' : 'sideB'].key)}</p>}</div> : <SelectField label={side === 'a' ? W.sideA : W.sideB} value={params.get(side) ?? ''} error={fieldErrors[side === 'a' ? 'sideA' : 'sideB']} searchable className="!min-h-11 !text-base" onChange={event => update({ [side]: event.target.value })}><option value="">{W.choose}</option>{context.filters[(params.get('by') === 'discovery' || params.get('by') === 'referringSales' ? params.get('by') : 'industry') as 'industry' | 'discovery' | 'referringSales'].filter(option => option.value !== 'ALL').map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, option.value)}</option>)}</SelectField>}</Fragment>)}</div></div>
           </ExecutiveSectionCard>}
         </>}
         {updated && <p role="status">{W.updated}</p>}
         {Math.max(retryWait, shared.retryWait) > 0 && <p role="status">{W.wait(Math.max(retryWait, shared.retryWait))}</p>}
-        {visibleData?.reasonCodes.includes('SOURCE_STALE') && <p role="status" className="rounded-lg border border-warning-600 bg-warning-50 p-3">{reasonText('SOURCE_STALE')} {W.staleAt(reportDateTime(visibleData.build.asOf))}</p>}
-        {!exportOpen && visibleData?.dataThrough.lagging.filter(source => source !== 'billing').map(source => <MangmeeBadge key={source} tone="slate">{`${source === 'activity' ? W.usage : source === 'aiCost' ? W.aiCost : W.companyTab} · ${W.through(reportDateTime(visibleData.dataThrough[source]))}`}</MangmeeBadge>)}
-        {visibleData && <Reasons codes={visibleData.reasonCodes.filter(code => code !== 'SOURCE_STALE')} />}
         {failed?.kind === 'denied' ? <ForbiddenState title={failed.text} description="" helpText="" /> : failed?.kind === 'notFound' ? <EmptyState title={failed.text} description="" action={<Button variant="secondary" onClick={() => back(menuHref('companies', params))}>{W.back(W.companies)}</Button>} /> : failed?.kind === 'noData' ? <EmptyState title={failed.text} description="" action={<Button variant="secondary" onClick={shared.failure ? shared.retry : retry}>{W.retry}</Button>} /> : failed && !visibleData ? <ErrorState title={failed.text} onRetry={shared.failure ? shared.retry : retry} /> : null}
         {failed && visibleData && <ErrorState title={failed.text} description={W.staleAt(reportDateTime(visibleData.build.asOf))} onRetry={retry} />}
         {!context && !shared.failure && <ReportSkeleton />}
@@ -268,13 +268,13 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
         {!exportOpen && <><CoverLoader active={loading && !!visibleData} label={W.loading}>
           <div className="min-w-0 space-y-4" aria-busy={loading}>
             {visibleData && section === 'overview' && <OverviewContent data={visibleData as ExecutiveOverview} nav={nav} />}
-            {visibleData && section === 'companies' && <CompaniesContent data={visibleData as ExecutiveCompanies} nav={nav} selected={selected} select={selectCompany} />}
-            {visibleData && section === 'detail' && <CompanyContent data={visibleData as ExecutiveCompanyDetail} tab={tab} history={history} admin={shared.admin} nav={nav} contactReadAt={contactReadAt} />}
-            {visibleData && ['usage', 'revenue', 'customers', 'compare'].includes(section) && <AnalysisContent data={visibleData as ExecutiveAnalysis} nav={nav} seller={params.get('seller')} rankingControl={section === 'usage' && reportView(section, params) === 'ranking' ? <SelectField label={W.ranking} value={Object.hasOwn(RANK_LABELS, params.get('rank') ?? '') ? params.get('rank')! : 'expenseReceiptCount'} error={fieldErrors.metric} className="!min-h-11 !text-base" onChange={event => update({ rank: event.target.value })}>{Object.entries(RANK_LABELS).map(([value, words]) => <option key={value} value={value}>{words.label}</option>)}</SelectField> : undefined} />}
+            {visibleData && section === 'companies' && <CompaniesContent data={visibleData as ExecutiveCompanies} nav={nav} selected={selected} select={selectCompany} sortColumn={sortBy => update({ sortBy, sortDir: effectiveQuery.sortBy === sortBy ? effectiveQuery.sortDir === 'asc' ? 'desc' : 'asc' : sortBy === 'companyName' ? 'asc' : 'desc' })} />}
+            {visibleData && section === 'detail' && <CompanyContent data={visibleData as ExecutiveCompanyDetail} tab={tab} history={history} admin={shared.admin} nav={nav} contactReadAt={contactReadAt} tabs={<ExecutiveTabs label={W.detail} tabs={DETAIL_TABS} value={tab} onChange={(view, keyboard) => { tabFocus.current = keyboard ? view : null; update({ view, tab: "" }); }} />} />}
+            {visibleData && ['usage', 'revenue', 'customers', 'compare'].includes(section) && <AnalysisContent data={visibleData as ExecutiveAnalysis} nav={nav} seller={params.get('seller')} tabs={section !== 'compare' ? <><ExecutiveTabs label={W[section]} tabs={REPORT_VIEWS[section as 'usage' | 'revenue' | 'customers']} value={reportView(section as 'usage' | 'revenue' | 'customers', params)} onChange={(view, keyboard) => { tabFocus.current = keyboard ? view : null; update({ view }); }} />{section === 'customers' && reportView(section, params) === 'sales' && <SelectField label={W.sales} value={params.get('seller') === 'credited' ? 'credited' : 'referring'} className="!min-h-11 !text-base" onChange={event => update({ seller: event.target.value })}><option value="referring">{W.referring}</option><option value="credited">{W.credited}</option></SelectField>}</> : undefined} rankingControl={section === 'usage' && reportView(section, params) === 'ranking' ? <SelectField label={W.ranking} value={Object.hasOwn(RANK_LABELS, params.get('rank') ?? '') ? params.get('rank')! : 'expenseReceiptCount'} error={fieldErrors.metric} className="!min-h-11 !text-base" onChange={event => update({ rank: event.target.value })}>{Object.entries(RANK_LABELS).map(([value, words]) => <option key={value} value={value}>{words.label}</option>)}</SelectField> : undefined} />}
           </div>
         </CoverLoader>
         {pagination && pagination.totalPages > 0 && <Pagination page={pagination.page} totalPages={pagination.totalPages} disabled={loading} onPageChange={page => update({ page: String(page) })} />}</>}
       </div>
     </MangmeePage>
-  </main>;
+  </main></ReasonNotes.Provider>;
 }

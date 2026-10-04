@@ -57,7 +57,8 @@ export function reportQuery(section: ReportSection, params: URLSearchParams, con
   const global = Object.fromEntries(GLOBAL_FILTERS.map(key => [key, filterValue(key, params, context)]));
   if (section === 'overview') return { month, ...global };
   if (section !== 'companies') {
-    const view = reportView(section, params);
+    const selectedView = reportView(section, params);
+    const view = section === 'revenue' && selectedView !== 'top' ? 'summary' : section === 'usage' && selectedView !== 'ranking' ? 'adoption' : selectedView;
     const rank = params.get('rank') as ExecutiveRankingMetric;
     return { month, ...global, section, view, ...(section === 'usage' && view === 'ranking' ? { metric: Object.hasOwn(RANK_LABELS, rank) ? rank : 'expenseReceiptCount' } : {}) };
   }
@@ -117,10 +118,10 @@ export function comparisonProblem(params: URLSearchParams, context: ExecutiveCon
 export function swappedParams(params: URLSearchParams): URLSearchParams {
   return changedParams(params, { a: params.get('b') ?? '', b: params.get('a') ?? '' });
 }
-export const money = (satang: number) => `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`;
+export const money = (satang: number) => `${(satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${W.unitBaht}`;
 export const countText = (figure: ExecutiveCount) => figure.value !== null ? figure.value.toLocaleString('th-TH') : figure.knownValue !== undefined ? `${W.atLeast} ${figure.knownValue.toLocaleString('th-TH')}` : '—';
 export const moneyText = (figure: ExecutiveMoney, measured = false) => figure.value !== null ? money(figure.value) : figure.knownValue !== undefined ? `${money(figure.knownValue)} (${executiveMoneyQualifier(figure, measured)})` : '—';
-export const ratioText = (figure: ExecutiveRatio | null | undefined, unit = '%') => figure?.value === null || figure?.value === undefined ? '—' : `${figure.value.toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${unit}`;
+export const ratioText = (figure: ExecutiveRatio | null | undefined, unit = '%') => figure?.value === null || figure?.value === undefined ? '–' : `${figure.value.toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${unit}`;
 export const reportMonth = formatThaiMonth, reportDate = formatThaiDate, reportDateTime = formatThaiDateTime;
 export function sourceCount(value: number, source: ExecutiveSourceCoverage): ExecutiveCount {
   return { value: source.coverage === 'complete' ? value : null, ...(source.coverage === 'partial' ? { knownValue: value } : {}), ...source };
@@ -184,3 +185,15 @@ export function backSection(path: string): ReportSection {
   if (route.startsWith('/system/executive/companies/')) return 'detail';
   return (['usage', 'revenue', 'customers', 'compare', 'companies'] as const).find(section => route === reportPath(section)) ?? 'overview';
 }
+
+/** All rendered values must share an incomplete source before a column can carry its mark. */
+export function hoistedSource(values: Array<{ coverage: string; source: string; empty?: boolean }>): string | null {
+  const nonEmpty = values.filter(value => !value.empty);
+  return nonEmpty.length && nonEmpty.every(value => value.coverage !== 'complete' && value.source === nonEmpty[0].source) ? nonEmpty[0].source : null;
+}
+export const reportShortDate = (date: string | null | undefined) => reportDate(date, '–').replace(/25(\d{2})$/, '$1');
+export const reportShortMonth = (month: string) => reportMonth(month).replace(/25(\d{2})$/, '$1');
+export const figureNumber = (value: ExecutiveCount, moneyValue = false) => {
+  const number = value.value ?? value.knownValue;
+  return number === undefined ? '–' : (moneyValue ? number / 100 : number).toLocaleString('th-TH', moneyValue ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : undefined);
+};

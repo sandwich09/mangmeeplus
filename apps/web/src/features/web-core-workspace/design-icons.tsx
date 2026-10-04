@@ -6,6 +6,7 @@ import React from 'react';
 type IconEl = [string, Record<string, string | number>];
 
 const ICONS: Record<string, IconEl[]> = {
+  info: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M12 11v6M12 7h.01' }]],
   filter: [['path', { d: 'M4 5h16l-6 7v6l-4 2v-8Z' }]],
   megaphone: [['path', { d: 'M4 10h4l12-5v14L8 14H4Z' }], ['path', { d: 'M8 14l2 7h4l-2-6' }]],
   grid: [['rect', { x: 3, y: 3, width: 7, height: 7, rx: 1 }], ['rect', { x: 14, y: 3, width: 7, height: 7, rx: 1 }], ['rect', { x: 3, y: 14, width: 7, height: 7, rx: 1 }], ['rect', { x: 14, y: 14, width: 7, height: 7, rx: 1 }]],

@@ -21,13 +21,15 @@ test('account routes and header require manage permission, including direct deta
 test('list handles stale responses, URL filters, text-only empty results, mobile cards and shared paging', () => {
   const s = source('ExecutiveUsersPage.tsx');
   for (const token of ['executiveFilters', 'executiveListUrl', 'AbortController', 'signal.aborted', 'CoverLoader', 'ForbiddenState', 'Pagination', 'SelectField', 'TextField']) assert.ok(s.includes(token), token);
-  assert.match(s, /items.length === 0/); assert.match(s, /md:hidden/); assert.match(s, /hidden.*md:table/); assert.match(s, /table-fixed/);
+  assert.match(s, /items.length === 0/); assert.match(s, /<ExecutiveTable/);
+  const table = source('../executive-reports/ExecutiveReportDesign.tsx');
+  assert.match(table, /md:hidden/); assert.match(table, /hidden.*md:table/); assert.match(table, /table-fixed/);
   assert.doesNotMatch(s, /<EmptyState|mangmee-table-scroll/);
 });
 test('every account status uses a distinct theme tone in mobile, desktop and detail badges', async () => {
   const { executiveStatusTone } = await import('./executive-users.logic');
   assert.deepEqual(['ACTIVE', 'PENDING_ACTIVATION', 'SUSPENDED', 'REVOKED'].map(status => executiveStatusTone(status as Parameters<typeof executiveStatusTone>[0])), ['brand', 'amber', 'danger', 'slate']);
-  assert.equal((source('ExecutiveUsersPage.tsx').match(/<MangmeeBadge tone=\{executiveStatusTone\(user.status\)\}/g) ?? []).length, 2);
+  assert.equal((source('ExecutiveUsersPage.tsx').match(/<MangmeeBadge[^>]*tone=\{executiveStatusTone\(user.status\)\}/g) ?? []).length, 1);
   assert.match(source('ExecutiveUserPage.tsx'), /<MangmeeBadge tone=\{executiveStatusTone\(user.status\)\}/);
 });
 
@@ -66,7 +68,7 @@ test('new account components use themed controls and mobile touch targets', () =
   for (const file of ['ExecutiveUsersPage.tsx', 'ExecutiveUserPage.tsx', '../system-partners/PartnerReportLabels.tsx']) {
     const s = source(file); assert.ok(s.length > 0);
     assert.doesNotMatch(s, /<select\b|<input\b|<textarea\b|size="sm"|#[0-9a-fA-F]{3,8}\b/);
-    assert.match(s, /MangmeeCard/);
+    assert.match(s, file === 'ExecutiveUsersPage.tsx' ? /<ExecutiveTable/ : /MangmeeCard/);
   }
 });
 

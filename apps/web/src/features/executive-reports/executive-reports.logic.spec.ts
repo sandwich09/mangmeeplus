@@ -75,7 +75,7 @@ test('counts preserve partial/unknown/true zero and money never calls partial an
 test('satang, negative amounts, rounded ratios and Buddhist dates have one Thai format', async () => {
   const { money, ratioText, reportMonth, reportDate, reportDateTime } = await logic();
   assert.equal(money(-123450), '-1,234.50 บาท'); assert.equal(money(1), '0.01 บาท'); assert.equal(money(99999999900), '999,999,999.00 บาท');
-  assert.equal(ratioText({ value: 83.4, numerator: 834, denominator: 1000 }), '83.4%'); assert.equal(ratioText(null), '—');
+  assert.equal(ratioText({ value: 83.4, numerator: 834, denominator: 1000 }), '83.4%'); assert.equal(ratioText(null), '–');
   assert.equal(reportMonth('2026-09'), 'ก.ย. 2569'); assert.equal(reportDate('2026-09-30T05:00:00Z'), '30 ก.ย. 2569');
   assert.equal(reportDateTime('2026-09-30T05:00:00Z'), '30 ก.ย. 2569 12:00 น.');
 });

@@ -26,7 +26,7 @@ test('the system shell and report gate use the exact permission, and the header 
   assert.doesNotMatch(header, /pathname\.startsWith\('\/system\/executive'\)/);
 });
 test('reads use authenticated fetch, no tenant target header, and reload/abort protect the entire answer', () => {
-  const api = source('./executive-reports.api.ts'), page = source('./ExecutiveReportPage.tsx');
+  const api = source('./executive-reports.api.ts'), page = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportDesign.tsx');
   assert.match(api, /authedApiFetch/); assert.match(api, /cache: 'no-store'/); assert.doesNotMatch(api, /X-Company-Id|fixture/i);
   assert.match(page, /AbortController/); assert.match(page, /signal\.aborted/); assert.match(page, /readCurrentBuild/);
   assert.match(page, /SOURCE_STALE/); assert.match(page, /setData\(null\)/); assert.match(page, /CoverLoader/);
@@ -65,9 +65,10 @@ test('directory chips hide empty drill rows and each filter toggle names its own
 });
 test('Thai shared fields, detail tabs, history paging and responsive tables retain the permission-gated export panel', () => {
   const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts') + source('./ExecutiveReportDesign.tsx');
-  for (const component of ['MangmeePage', 'MangmeeCard', 'MangmeeStatCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
+  for (const component of ['MangmeePage', 'MangmeeCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
   assert.match(source('./ExecutiveReportContent.tsx'), /<ExecutiveKpi/);
-  assert.match(all, /allowClear=\{false\}/); assert.match(all, /selectable=\{context\.builtMonths\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table/);
+  assert.match(all, /allowClear=\{false\}/); assert.match(all, /selectable=\{context\.builtMonths\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table-header-group/);
+  assert.match(all, /ExecutiveTable as ReportTable/);
   assert.match(all, /ExecutiveCompanyHistory/); assert.match(all, /EXECUTIVE_HISTORY_EVENT_LABELS/);
   assert.doesNotMatch(all, /mangmee-table-scroll|<select\b|<textarea\b|data-rights|localStorage/);
   assert.match(all, /canExport\(context\) && !exportOpen/);
@@ -99,7 +100,7 @@ async function pageTransitions(section: string, params: URLSearchParams, context
   const { canExport } = await import('./executive-export.logic');
   const deps = { ...logic, DETAIL_TABS, canExport, section, targetCompanyId: undefined, window, Context: {},
     useContext: () => ({ context }), usePathname: () => '/system/executive', useRouter: () => ({}), useSearchParams: () => params,
-    useState: (value: unknown) => [value, () => {}], useRetryWait: () => [0, () => {}], useCallback: (fn: unknown) => fn };
+    useState: (value: unknown) => [value, () => {}], useRef: (value: unknown) => ({ current: value }), useRetryWait: () => [0, () => {}], useCallback: (fn: unknown) => fn };
   const js = ts.transpileModule(`${setup}\nreturn { requestKey, exportOpen, normalize: ${normalize.arguments[0]!.getText(file)}, dependencies: ${read.arguments[1]!.getText(file)}, close: ${close.initializer!.getText(file)} };`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   return new Function('deps', `const {${Object.keys(deps).join(',')}} = deps; ${js}`)(deps);
 }
@@ -172,7 +173,7 @@ test('web re-exports one shared words source including later report polish and s
   assert.equal(W, sharedWords); assert.equal(thaiLabel, executiveThaiLabel);
   assert.deepEqual([W.reportFilters, W.companyFilters, W.unavailableFigure, W.rank, W.item, W.yes, W.partialMeasuredMoney, W.contactNotPermitted],
     ['ตัวกรองรายงาน', 'ตัวกรองรายชื่อบริษัท', 'ยังไม่มีตัวเลข', 'อันดับ', 'รายการ', 'ใช่', 'ยอดเฉพาะช่วงที่วัดได้', 'ไม่มีสิทธิ์ดูข้อมูลติดต่อ']);
-  assert.equal(W.reasonReference(2), 'ดูเหตุผลข้อ 2');
+  assert.equal(W.incompleteLegend, 'ยังไม่ครบ');
   assert.equal(W.yes, W.export.yes); assert.equal(W.rank, W.export.rank);
   assert.equal(thaiLabel('IG', 'IG'), 'อินสตาแกรม');
   const { executiveReasonMessage } = await import('../../common/api/api-error-message');
