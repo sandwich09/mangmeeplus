@@ -38,6 +38,7 @@ Open questions (none blocks UAT):
 - The body of a resolved notification is the sentence written when it was created; the web no longer shows it as a pending request, the server still stores it.
 - Screen items seen and left: an email shortened in its cell at 1280 px (full address in the link), a tenth column when the list is sorted by a fact outside the nine, a Thai word broken inside the two-line business-type cell, the mixed-unit header "จำนวน (จำนวน / บาท)" on unmatched money, seven paid-usage tiles leaving one alone on its row.
 - Not proven on a screen: a note saved from the report by a real executive account that holds the note right (no such seed account; proven at the API and with a mocked answer in the browser).
+- Follow-ups set aside when the owner froze the scope on 2026-10-05 ("cut ของไปแค่นี้ … ไม่ได้ขึ้น uat สักที"): `e2e/receipt-draft-continuity.spec.ts` (about lines 524–585) still pins the old withholding behaviour and will fail when Playwright e2e runs again (it is not part of the release path); the usage Excel still carries the cumulative column "ใบเสร็จสะสม" next to the in-system groups.
 
 Artifacts:
 
@@ -49,3 +50,21 @@ Artifacts:
 Verification: see the section at the end of this note.
 
 Next: merge to `develop` and `main`; UAT deploy by the local Kamal path with smoke acceptance (`docs/runbooks/uat-production-v2-deployment.md`, `infra/kamal/README.md`), then the POST SQL on UAT. Production waits for the owner's own go and sign-in.
+
+## Verification (controller, 2026-10-05 06:52–06:57, final code head `e51e532f5`)
+
+GitHub Actions has ended every pull-request run in `startup_failure` with zero jobs since 2026-09-25, so the gates were run locally with `scratchpad/integration-verify.sh` (the 17 steps CI runs): **all 17 exit 0** — contracts build, Prisma generate and validate, maintenance pins, migration review, config validation, DI, typechecks, unit suites, acceptance, harness, LINE-AI whole-chain acceptance, M01, P1, boot, `git diff --check`, and every registered real-PostgreSQL spec.
+
+| Suite | Result |
+|---|---|
+| API fixed-list suite | 11,860 tests, 0 failed |
+| Web (`src/**/*.spec.ts`) | 3,154 pass, 0 fail |
+| AI gateway | 1,535 pass, 0 fail |
+| Contracts | 350 pass, 0 fail |
+| Config | 153 pass, 0 fail |
+| Workers | 47 pass, 0 fail |
+| Real-PostgreSQL specs | 457 pass, 0 fail |
+
+Also run: the release's database phase on a production-era schema (see "Candidate update 3" in the release note); the read-only UAT preflight; the PRE SQL on UAT (exit 0: 266 migrations applied, 13 of this release pending, none unfinished).
+
+Screen checks at 390 px and 1280 px on the local stack by agents that looked at the real screen: the executive pages and tabs, the claim payment form, the withholding block (found and fixed a dead end and a silent save), expense correction, the withholding-category admin page, the team note card, notifications. Playwright e2e was not run.
