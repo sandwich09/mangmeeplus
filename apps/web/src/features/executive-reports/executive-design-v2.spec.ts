@@ -124,7 +124,7 @@ test('v2 filter drafts apply atomically, dismiss without mutation, clear and rem
 
 test('v2 filter panel is a labelled responsive native popover in the time row, and views use tabs', () => {
   const page = source('./ExecutiveReportPage.tsx'), filters = source('./ExecutiveFilters.tsx');
-  const timeRow = page.slice(page.indexOf('executive-time-row'), page.indexOf('<ReportStatus periodOnly'));
+  const timeRow = page.slice(page.indexOf('executive-time-row'), page.indexOf('<ReportStatus data='));
   assert.ok(timeRow.length > 100 && timeRow.length < 3000);
   assert.match(timeRow, /<ExecutiveFilters/); assert.doesNotMatch(timeRow, /<summary/);
   assert.match(filters, /popover="auto"/); assert.match(filters, /role="dialog"/); assert.match(filters, /aria-labelledby/);

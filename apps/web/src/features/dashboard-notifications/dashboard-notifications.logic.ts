@@ -22,8 +22,26 @@ export function notificationRuleDetailText(rule: { channels: readonly Notificati
   ].join(' · ');
 }
 
+/**
+ * A notice still waiting for its reader. One the server calls resolved is done with: it is never unread, whatever its read
+ * time says (the badge and the unread list already leave it out). The dot, the tint, the bold title, "mark as read" and
+ * "mark all" all follow this one rule.
+ */
+export function isUnreadNotification(item: Pick<NotificationItem, 'read' | 'status'>): boolean {
+  return !item.read && item.status !== 'resolved';
+}
+
+/**
+ * The sentence under a notice's title. It was written when the notice was raised and can ask for something ("waiting for you
+ * to record the payment"); once the notice is resolved that request is no longer true, so a resolved notice shows its title
+ * and its "done" tag only.
+ */
+export function notificationBodyText(item: Pick<NotificationItem, 'body' | 'status'>): string {
+  return item.status === 'resolved' ? '' : item.body;
+}
+
 export function visibleNotifications(items: NotificationItem[], filter: 'all' | 'unread'): NotificationItem[] {
-  return filter === 'unread' ? items.filter((item) => !item.read && item.status !== 'resolved') : items;
+  return filter === 'unread' ? items.filter(isUnreadNotification) : items;
 }
 
 export function getWidgetMetricValue(widget: DashboardWidget, metricKey: string): number | string | null {
@@ -55,6 +73,11 @@ export function severityColor(severity: NotificationSeverity): string {
 
 export function severityLabel(severity: NotificationSeverity): string {
   return NOTIFICATION_SEVERITY_LABELS[severity] ?? severity;
+}
+
+/** The tag in front of a notice: how urgent it is, or that it is done. A done notice is no longer urgent, so it loses the urgent colour. */
+export function notificationTag(item: Pick<NotificationItem, 'severity' | 'status'>): { label: string; tone: string } {
+  return item.status === 'resolved' ? { label: 'ดำเนินการแล้ว', tone: severityColor('info') } : { label: severityLabel(item.severity), tone: severityColor(item.severity) };
 }
 
 /** Header bell badge: hidden at 0, capped at 99+. */

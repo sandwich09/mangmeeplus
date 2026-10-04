@@ -55,7 +55,7 @@ test('preset order, truthful disabled reasons, scrolling phone row and custom sh
   assert.match(markup, /executive-period-from/); assert.match(markup, /executive-period-to/); assert.match(markup, new RegExp(P.apply));
 });
 const complete = { coverage: 'complete', reasonCodes: [], dataThrough: '2026-10-04' };
-const envelope = { period: { from: '2026-08', to: '2026-10', includesOpenMonth: true }, sourceStatus: {
+const envelope = { period: { from: '2026-08', to: '2026-10', includesOpenMonth: true }, coverage: { money: { coverage: 'partial', reasonCodes: ['RANGE_MONTH_NOT_BUILT'] }, usage: { coverage: 'complete', reasonCodes: [] }, aiCost: { coverage: 'unavailable', reasonCodes: ['SHEET_FACTS_NOT_BUILT'] } }, sourceStatus: {
   money: { coverage: 'partial', reasonCodes: ['RANGE_MONTH_NOT_BUILT', 'MONTH_SUMMARY_INCOMPLETE', 'BILLING_SCAN_NOT_COMPLETE', 'PAYMENT_HISTORY_INCOMPLETE'], affectedMonths: [{ month: '2026-08', reasonCodes: ['RANGE_MONTH_NOT_BUILT'] }, { month: '2026-09', reasonCodes: ['MONTH_SUMMARY_INCOMPLETE', 'BILLING_SCAN_NOT_COMPLETE', 'PAYMENT_HISTORY_INCOMPLETE'] }], dataThrough: null },
   usage: complete, aiCost: { ...complete, coverage: 'unavailable', reasonCodes: ['SHEET_FACTS_NOT_BUILT'] },
 }, revenue: { trend: [{ reasonCodes: ['UNMATCHED_MONEY'] }] } };
@@ -68,7 +68,26 @@ test('source banner names affected months once, ignores unrelated nested reasons
   for (const { text } of notes) assert.equal(markup.split(text).length - 1, 1);
   const closed = render(ReportStatus, { data: { ...envelope, period: { ...envelope.period, includesOpenMonth: false } }, sources: ['money'] });
   assert.doesNotMatch(closed, new RegExp(P.openMonth)); assert.match(closed, /bg-gray-50/);
-  assert.equal(render(ReportStatus, { data: { period: { includesOpenMonth: false }, sourceStatus: { money: complete, usage: complete, aiCost: complete } }, sources: ['money'] }), '');
+  assert.equal(render(ReportStatus, { data: { period: { includesOpenMonth: false }, coverage: { money: complete, usage: complete, aiCost: complete }, sourceStatus: { money: complete, usage: complete, aiCost: complete } }, sources: ['money'] }), '');
+});
+test('owner 2026-10-05: the banner speaks only about the chosen period, and two reasons that read the same are said once', async () => {
+  const { ReportStatus, sourceStatusNotes } = await import('./ExecutiveReportDesign');
+  const { readFileSync } = await import('node:fs'); const W = (await import('@watchdog-bms/contracts')).executivePeriodReportWords();
+  // The source as a whole has gaps in four months; the reader chose September alone.
+  const usage = { coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION', 'ACTIVITY_HISTORY_INCOMPLETE', 'HISTORY_BEFORE_FIRST_BUILD'], dataThrough: '2026-10-04',
+    affectedMonths: [{ month: '2026-07', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] }, { month: '2026-08', reasonCodes: ['HISTORY_BEFORE_COLLECTION', 'HISTORY_BEFORE_FIRST_BUILD'] }, { month: '2026-09', reasonCodes: ['HISTORY_BEFORE_COLLECTION', 'ACTIVITY_HISTORY_INCOMPLETE'] }, { month: '2026-10', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] }] };
+  const data = (from: string, to: string, period = 'partial') => ({ period: { from, to, includesOpenMonth: false }, coverage: { money: complete, usage: { coverage: period, reasonCodes: [] }, aiCost: complete }, sourceStatus: { money: complete, usage, aiCost: complete } });
+  const september = sourceStatusNotes(data('2026-09', '2026-09') as never, ['money', 'usage']);
+  // One sentence for the two reasons that read the same; no other month named; the reason that touches August only is not there.
+  assert.equal(september.length, 1); assert.match(september[0].text, /· ในเดือน ก\.ย\. 2569$/); assert.doesNotMatch(september.map(note => note.text).join(' '), /ก\.ค\.|ส\.ค\.|ต\.ค\./);
+  // A range of months: still one sentence, with every month of the range that either reason names, in order.
+  const range = sourceStatusNotes(data('2026-08', '2026-10') as never, ['money', 'usage']);
+  assert.equal(range.filter(note => note.text.startsWith(september[0].text.split(' · ')[0])).length, 1);
+  assert.match(range.find(note => note.text.startsWith(september[0].text.split(' · ')[0]))!.text, /· ในเดือน ส\.ค\. 2569, ก\.ย\. 2569, ต\.ค\. 2569$/); assert.equal(range.length, 2);
+  // Whether the banner says "incomplete" follows the chosen period's own coverage, on every page (no switch per page any more).
+  assert.match(render(ReportStatus, { data: data('2026-09', '2026-09'), sources: ['money', 'usage'] }), new RegExp(W.incompleteLegend));
+  assert.doesNotMatch(render(ReportStatus, { data: data('2026-09', '2026-09', 'complete'), sources: ['money', 'usage'] }), new RegExp(`>${W.incompleteLegend}<`));
+  for (const file of ['./ExecutiveReportDesign.tsx', './ExecutiveReportContent.tsx', './ExecutiveReportPage.tsx', './ExecutiveExportPanel.tsx']) assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /periodOnly|data\.sourceStatus\[source\]\.coverage/, file);
 });
 const comparison = (status: ExecutivePeriodComparison['status'], percentChange: number | null = null) => ({ status, percentChange, absoluteChange: 6, period: { from: '2026-07', to: '2026-09' }, current: { value: 6, coverage: 'complete' }, previous: { value: 0, coverage: 'complete' }, affectedMonths: [], includesOpenMonth: false } as unknown as ExecutivePeriodComparison);
 test('KPI comparisons obey all server states, keep percent rules and give incomplete data priority', async () => {
@@ -103,7 +122,7 @@ test('nullable period payment flags stay unknown even when other report money is
 test('range-only banner excludes lifetime issues outside the shown months; detail not-applicable reasons remain', async () => {
   const { ReportStatus } = await import('./ExecutiveReportDesign');
   const data = { ...detail, period: { from: '2026-10', to: '2026-10', includesOpenMonth: false }, sourceStatus: { ...detail.sourceStatus, money: { ...complete, coverage: 'partial', reasonCodes: ['UNMATCHED_MONEY'], affectedMonths: [{ month: '2026-09', reasonCodes: ['UNMATCHED_MONEY'] }] } } };
-  assert.equal(render(ReportStatus, { data, sources: ['money'], periodOnly: true }), '');
+  assert.equal(render(ReportStatus, { data, sources: ['money'] }), '');
   const beforeJoin = render(ReportStatus, { data: { ...data, periodSummary: null, periodReasonCodes: ['NOT_YET_REGISTERED'], sourceStatus: detail.sourceStatus }, sources: ['money', 'usage'] });
   assert.match(beforeJoin, new RegExp(P.periodNotRegistered));
 });

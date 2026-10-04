@@ -90,7 +90,7 @@ import {
 import {
   err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
   ICON, KPI, StatCard, StatusBadge, TAX_TONE, ErrorBanner, InfoBanner, StateBanner, HowItWorks,
-  tapTargetClass,
+  tapTargetClass, WholeWords,
 } from './ExpensesUi';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { expenseReviewMessage, validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
@@ -573,7 +573,7 @@ function UploadPanel({ companyId, branchId, canManagePlan, onSuccess, onBatchSuc
         >
           <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-3xl shadow-sm">📤</span>
           <div className="text-lg font-bold text-gray-800">{t('expenses.upload_dropzone_title', locale)}</div>
-          <div className="text-sm text-gray-500">{t('expenses.upload_dropzone_hint', locale)}</div>
+          <div className="text-sm text-gray-500"><WholeWords text={t('expenses.upload_dropzone_hint', locale)} /></div>
           {preparing ? <div className="text-sm font-semibold text-brand-700">{t('expenses.upload_preparing', locale)}</div> : fileName && <div className="mt-1 inline-flex items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-sm font-semibold text-brand-700">✓ {fileName}</div>}
           <input ref={fileRef} type="file" accept={RECEIPT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileChange} />
         </label>
