@@ -294,7 +294,7 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     t.mock.timers.setTime(new Date('2026-10-04T17:30:00Z').getTime());
     await payments.execute(finance, source.id, { paidAmount: '10', paidAt: '2026-10-05', idempotencyKey: randomUUID() });
     const stored = await client.expensePayment.create({ data: { companyId, expenseId: source.id, amount: '40', currency: 'THB',
-      paidAt: new Date('2026-10-08T00:00:00Z'), paymentMethod: 'CASH', createdByUserId: userId, idempotencyKey: randomUUID() } });
+      paidAt: new Date('2026-10-08T00:00:00Z'), paymentMethod: 'CASH', createdByUserId: userId } });
     await client.expenseRecord.update({ where: { id: source.id }, data: { paidAmount: '70', outstandingAmount: '30' } });
     const cancelled = await new CancelExpensePaymentUseCase(repo, audit as any).execute(finance, source.id, stored.id, 'แก้รายการเดิม');
     assert.equal(Number(cancelled.paidAmount), 30);
