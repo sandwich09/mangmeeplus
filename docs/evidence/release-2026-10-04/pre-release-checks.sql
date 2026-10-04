@@ -1,11 +1,14 @@
--- P1-P9: counts only. Also valid after all ten release migrations.
+-- P1-P12: counts only; baseline 908e7aab9 or later schema. PostgreSQL 16/18.
+-- P1 includes the conditional range migration: 12 integrated, 13 only after its merge.
 -- Run against the intended production database with a read-only database role.
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout = '30s';
 SET LOCAL lock_timeout = '5s';
 SET LOCAL TIME ZONE 'UTC';
 
--- P1. Migration ledger. Names are predicates, never result columns.
+-- P1. Migration ledger. Expected baseline: applied 0, pending 13, unfinished 0.
+-- After integrated batch only: 12/1/0; after range joins: 13/0/0. Overall total varies.
+-- Names are predicates, never result columns.
 WITH required(name) AS (VALUES
   ('20261001100000_reimbursement_payout_account'),
   ('20261001110000_reimbursement_payout_snapshot_delete_guard'),
@@ -16,7 +19,10 @@ WITH required(name) AS (VALUES
   ('20261002120000_data_rights_single_admin_mode'),
   ('20261002230000_company_web_entry_setting'),
   ('20261003090000_company_report_labels'),
-  ('20261003091000_executive_report_summary')
+  ('20261003091000_executive_report_summary'),
+  ('20261004120000_open_wht_income_categories'),
+  ('20261004130000_company_team_note'),
+  ('20261004150000_executive_company_sheet_facts')
 )
 SELECT (SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL) AS completed_migrations,
        (SELECT count(*) FROM "_prisma_migrations" WHERE finished_at IS NULL AND rolled_back_at IS NULL) AS unfinished_migrations,
@@ -129,5 +135,62 @@ SELECT (SELECT count(*) FROM "DataRightsCase" WHERE "approvedByUserId" = "create
          OR "completedByUserId" = "executionStartedByUserId") AS cases_with_same_person_steps,
        (SELECT count(*) FROM "DataRightsEvidenceRecord" e JOIN "DataRightsCase" c ON c.id = e."caseId"
          WHERE e."evidenceType" = 'INDEPENDENT_VERIFICATION' AND e."recordedByUserId" = c."executionStartedByUserId") AS verification_evidence_by_executor;
+
+-- P10. Controller-reported production baseline 2026-10-04: catalog 0 (all status counts 0),
+-- withholding awaiting confirmation 11 in 3 companies, certificates 0. Re-observe; not a constant.
+SELECT (SELECT count(*) FROM "WhtIncomeCategory") AS income_categories,
+       (SELECT count(*) FROM "WhtIncomeCategory" WHERE status = 'ACTIVE') AS active_income_categories,
+       (SELECT count(*) FROM "WhtIncomeCategory" WHERE status = 'DRAFT') AS draft_income_categories,
+       (SELECT count(*) FROM "WhtIncomeCategory" WHERE status NOT IN ('ACTIVE', 'DRAFT')) AS other_status_income_categories,
+       (SELECT count(*) FROM "ExpenseRecord" WHERE "whtAmount" > 0 AND status NOT IN ('CONFIRMED', 'REJECTED', 'VOIDED')) AS withholding_expenses_awaiting_confirmation,
+       (SELECT count(DISTINCT "companyId") FROM "ExpenseRecord" WHERE "whtAmount" > 0 AND status NOT IN ('CONFIRMED', 'REJECTED', 'VOIDED')) AS companies_with_withholding_awaiting_confirmation,
+       (SELECT count(*) FROM "WhtCertificate") AS withholding_certificates;
+-- New table guard only: no reference to a relation absent from the baseline schema.
+-- Expected before migrate 0; after company-note migration 1. Row count is Q11 after migrate.
+SELECT CASE WHEN to_regclass('"CompanyTeamNote"') IS NULL THEN 0 ELSE 1 END AS company_team_note_table_present;
+
+-- P11. Support inventory: no fixed/zero target. A branch policy OFF is counted once per company.
+-- Frozen claim policy, not today's switch, decides self-approval; role fallback/solo exceptions are not evaluated.
+WITH pending AS (
+  SELECT r.id, r."companyId", r."requesterUserId", r."approvalPolicySnapshotJson", s."approverUserId",
+         CASE WHEN jsonb_typeof(s."assignedApproverUserIdsJson") = 'array'
+              THEN s."assignedApproverUserIdsJson" ELSE '[]'::jsonb END AS assigned
+  FROM "ReimbursementRequest" r JOIN "ReimbursementApprovalStep" s
+    ON s.id = r."currentApprovalStepId" AND s."reimbursementRequestId" = r.id AND s."companyId" = r."companyId"
+  WHERE r.status = 'PENDING_APPROVAL' AND s.status = 'PENDING' AND s."invalidatedAt" IS NULL
+), sole_requester AS (
+  SELECT * FROM pending p
+  WHERE (jsonb_array_length(p.assigned) > 0
+         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p.assigned) a(value)
+                         WHERE a.value IS DISTINCT FROM to_jsonb(p."requesterUserId")))
+     OR (jsonb_array_length(p.assigned) = 0 AND p."approverUserId" = p."requesterUserId")
+)
+SELECT (SELECT count(DISTINCT "companyId") FROM "ReimbursementPolicy" WHERE status = 'ACTIVE' AND NOT "allowSelfApproval") AS companies_with_active_self_approval_off_policy,
+       count(*) AS pending_claims_assigned_only_to_requester,
+       count(*) FILTER (WHERE "approvalPolicySnapshotJson" ->> 'allowSelfApproval' = 'false') AS sole_requester_claims_with_frozen_self_approval_off,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM "ReimbursementPolicy" policy
+         WHERE policy."companyId" = sole_requester."companyId" AND policy.status = 'ACTIVE' AND NOT policy."allowSelfApproval")) AS sole_requester_claims_in_companies_with_off_policy
+FROM sole_requester;
+
+-- P12. History only: no fixed target, no repair or reversal. Includes subsequently VOIDED payments.
+-- Use recording time (createdAt), not the back-dated paidAt. Surviving candidate timestamps approximate
+-- its original OPEN interval; deleted candidates and overwritten resolution/reopen history are unknowable.
+WITH payments_with_observable_open_candidate AS (
+  SELECT p.id, p."reimbursementRequestId", p.status, r."approvalPolicySnapshotJson"
+  FROM "ReimbursementPayment" p JOIN "ReimbursementRequest" r
+    ON r.id = p."reimbursementRequestId" AND r."companyId" = p."companyId"
+  WHERE EXISTS (
+    SELECT 1 FROM "ExpenseRecord" e JOIN "ExpenseDuplicateCandidate" d
+      ON d."expenseId" = e.id AND d."companyId" = e."companyId"
+    WHERE e."sourceReimbursementRequestId" = r.id AND e."companyId" = r."companyId"
+      AND d."createdAt" <= p."createdAt"
+      AND (d."resolvedAt" > p."createdAt" OR (d."resolvedAt" IS NULL AND d.status = 'OPEN'))
+  )
+)
+SELECT count(DISTINCT "reimbursementRequestId") AS claims_paid_during_observable_open_expense_duplicate,
+       count(*) AS payment_records_during_observable_open_expense_duplicate,
+       count(*) FILTER (WHERE status = 'VOIDED') AS subsequently_voided_payment_records,
+       count(DISTINCT "reimbursementRequestId") FILTER (WHERE "approvalPolicySnapshotJson" ->> 'duplicatePolicy' = 'BLOCK_PAYMENT') AS affected_claims_with_frozen_block_payment
+FROM payments_with_observable_open_candidate;
 
 ROLLBACK;
