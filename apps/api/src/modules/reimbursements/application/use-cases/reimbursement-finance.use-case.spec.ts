@@ -294,6 +294,29 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
     await assert.rejects(() => uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' }), /duplicate_unresolved/);
   });
 
+  it('uses the submitted duplicate policy rather than today’s switch, and refuses before number reservation', async () => {
+    const snapshot = (duplicatePolicy: string) => ({ schemaVersion: 1, policyId: 'policy-1', policyVersion: 'v1',
+      approvalRequiredFromAmount: '1.00', requiresApproval: false, route: null, allowSelfApproval: false,
+      requireReceipt: false, allowMissingReceiptWithReason: true, duplicatePolicy, financeReviewRequired: false });
+    for (const [submitted, current, blocked] of [['BLOCK_PAYMENT', 'WARN', true], ['WARN', 'BLOCK_PAYMENT', false]] as const) {
+      const req = financeReviewedRequest({ approvalPolicySnapshotJson: snapshot(submitted), duplicateStatus: 'POSSIBLE_DUPLICATE' });
+      const repo = fakeRepo(req, { policy: { duplicatePolicy: current }, openDuplicates: 1 });
+      let reservations = 0;
+      const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit,
+        { execute: async (...args: any[]) => { reservations++; return (reserve.execute as any)(...args); } } as any, commit, fakeDetailEvidence as any);
+      const payment = uc.execute(ctx(perms), 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-02-01T00:00:00.000Z' });
+      if (blocked) {
+        await assert.rejects(payment, /duplicate_unresolved/);
+        assert.equal(reservations, 0);
+        assert.equal(repo.payments.length, 0);
+        assert.equal(req.paymentStatus, 'UNPAID');
+      } else {
+        assert.equal((await payment).status, 'PAID');
+        assert.equal(reservations, 1);
+      }
+    }
+  });
+
   it('requires reference for bank transfer', async () => {
     const req = financeReviewedRequest();
     const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, reserve, commit, fakeDetailEvidence as any);

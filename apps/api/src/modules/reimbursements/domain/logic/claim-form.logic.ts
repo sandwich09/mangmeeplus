@@ -6,7 +6,7 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
-import { civilDate, maskedPayoutAccountNumber, REIMBURSEMENT_PAYMENT_METHOD_LABELS } from '@watchdog-bms/contracts';
+import { civilDate, maskedPayoutAccountNumber, REIMBURSEMENT_PAYMENT_METHOD_LABELS, REIMBURSEMENT_SELF_APPROVED_NOTE } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimFormLayout,
   ReimbursementClaimSignatureRole,
@@ -24,7 +24,6 @@ const THAI_POSITIONS = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื
 const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 /** The words the claim page and the requester's notice use (invariant I4); a method with no word prints as a dash, never as its code. */
 const PAYMENT_METHOD_LABELS: Record<string, string | undefined> = REIMBURSEMENT_PAYMENT_METHOD_LABELS;
-const SAME_PERSON_NOTE = 'ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท';
 const WORD_SEGMENTER = new Intl.Segmenter('th', { granularity: 'word' });
 const GRAPHEME_SEGMENTER = new Intl.Segmenter('th', { granularity: 'grapheme' });
 
@@ -435,7 +434,7 @@ function signatureSection(snapshot: ReimbursementClaimFormSnapshot, top: number)
   // D3: two half-sheet blocks. No payer/accounting block: the repayment facts print as text instead.
   return `<text x="45" y="${top - 30}" font-weight="700">การอนุมัติ</text>
     ${signatureBlock(45, top, 'ผู้เบิก', signers.requester, 380)}${signatureBlock(425, top, 'ผู้อนุมัติ', signers.approver, 380, note)}${snapshot.selfApproved ? `
-    <text x="425" y="${top + 140}" text-anchor="middle" font-size="13">${SAME_PERSON_NOTE}</text>` : ''}`;
+    <text x="425" y="${top + 140}" text-anchor="middle" font-size="13">${REIMBURSEMENT_SELF_APPROVED_NOTE}</text>` : ''}`;
 }
 
 /** The legacy four-block form reprints byte for byte, so only the two-signer form reports the slip. */

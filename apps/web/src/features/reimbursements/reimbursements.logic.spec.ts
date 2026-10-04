@@ -505,9 +505,10 @@ describe('errorMessage', () => {
   it('translates the API error codes the banners actually surface', () => {
     assert.match(errorMessage('missing_receipt'), /ใบเสร็จ/);
     assert.match(errorMessage('self_approval_denied'), /ตนเอง/);
-    // Audit H-18: the refusal has to say the rule is a setting, and name the toggle the way the
-    // settings page labels it, or the reader cannot find what to change.
-    assert.match(errorMessage('self_approval_denied'), /การตั้งค่า/);
+    // The refusal names the policy this claim uses, which can predate the current company switch,
+    // and the toggle exactly as the settings page labels it.
+    assert.match(errorMessage('self_approval_denied'), /นโยบายที่ใบนี้ใช้/);
+    assert.doesNotMatch(errorMessage('self_approval_denied'), /การตั้งค่าปัจจุบัน/);
     // The tab and the toggle as the hub prints them: the names had drifted ("ตั้งค่าเบิกจ่าย", "อนุญาตให้อนุมัติคำขอตนเอง").
     assert.ok(errorMessage('self_approval_denied').endsWith('เปิดได้ที่ ตั้งค่านโยบาย › "ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"'));
     assert.match(errorMessage('claim_form_requires_submitted'), /เลขที่เอกสาร/);
@@ -1072,7 +1073,7 @@ describe('buildJourneySteps', () => {
     }
     // Whoever can pay keeps the form and its own instruction, named payers or not.
     const payer = active(two, [...APPROVER, 'reimbursement.payment.record'], 'boss');
-    assert.deepEqual([payer.actions, payer.note], [['pay', 'print'], 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง']);
+    assert.deepEqual([payer.actions, payer.note], [['pay', 'print'], 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง หากโอนเงิน ต้องแนบสลิป ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า']);
   });
 
   // Phase 0.6 (spec §13.3 F1): the deploy-time back-fill gives a company role that approves the two pay keys, and
@@ -1189,7 +1190,8 @@ describe('buildJourneySteps', () => {
     const custom = [...STAFF, 'reimbursement.approve', 'reimbursement.reject'];
     const manager = active(own, [...custom, 'reimbursement.policy.manage'], 'solo');
     assert.deepEqual(manager.actions, ['policy-settings', 'reopen', 'cancel', 'print']);
-    assert.match(manager.note ?? '', /^รอ เจ้าของ อนุมัติ · ใบนี้เป็นของคุณเอง/);
+    assert.match(manager.note ?? '', /^รอ เจ้าของ อนุมัติ · ใบนี้เป็นของคุณเอง และนโยบายที่ใบนี้ใช้ปิด/);
+    assert.doesNotMatch(manager.note ?? '', /บริษัทยังไม่เปิด/);
     assert.match(manager.note ?? '', /"ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้"/);
     assert.match(manager.note ?? '', /เปิดได้ที่ตั้งค่านโยบาย แล้วเปิดคำขอกลับเป็นร่างและส่งอนุมัติใหม่$/);
     const member = active(own, custom, 'solo');
@@ -1258,7 +1260,7 @@ describe('who a claim waits for is the same on every surface', () => {
     assert.ok(toldApprover.includes(`ผู้ที่บันทึกจ่ายได้: ${currentDeskText(detail.currentDesk, detail.paymentDesk)} `), toldApprover);
     // Whoever is offered the payment reads what to do, not who to wait for; the header and the timeline still say who.
     const forPayer = activeJourneyStep(buildJourneySteps(detail, ['reimbursement.payment.record'], 'payer'))!;
-    assert.deepEqual([forPayer.actions.includes('pay'), forPayer.note], [true, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง']);
+    assert.deepEqual([forPayer.actions.includes('pay'), forPayer.note], [true, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง หากโอนเงิน ต้องแนบสลิป ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า']);
   });
 
   it('names the finance desk while finance reviews, then the same payment desk', () => {

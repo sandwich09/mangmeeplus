@@ -1786,7 +1786,7 @@ export class PrismaReimbursementRepository {
       });
       if (!step || step.requestSnapshotHash !== storedHash) throw new ConflictException('stale_approval_snapshot');
       const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
-      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
         throw new ForbiddenException('self_approval_denied');
       }
 
@@ -2622,7 +2622,7 @@ export class PrismaReimbursementRepository {
       });
       if (!step) throw new ConflictException('stale_approval_snapshot');
       const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
-      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
         throw new ForbiddenException('self_approval_denied');
       }
       const changedStep = await tx.reimbursementApprovalStep.updateMany({
@@ -2734,7 +2734,7 @@ export class PrismaReimbursementRepository {
           ? await tx.reimbursementApprovalStep.findFirst({ where: { ...where, id: row.currentApprovalStepId } }) : null;
         if (!step || step.status !== 'PENDING') throw this.requestChanged();
         const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, row.branchId);
-        if (!assignedBySnapshot && isSelfApproval(row.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
+        if (!assignedBySnapshot && isSelfApproval(row.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
           throw new ForbiddenException('self_approval_denied');
         }
         const cancelled = await tx.reimbursementApprovalStep.updateMany({ where: { ...where, id: step.id, status: 'PENDING' }, data: { status: 'CANCELLED', ...setAside } });
@@ -2953,7 +2953,7 @@ export class PrismaReimbursementRepository {
         ? await tx.reimbursementApprovalStep.findFirst({ where: { ...where, id: request.currentApprovalStepId } }) : null;
       if (!step || step.status !== 'PENDING' || step.requestSnapshotHash !== storedHash) throw new ConflictException('stale_approval_snapshot');
       const assignedBySnapshot = await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles, request.branchId);
-      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
+      if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
         throw new ForbiddenException('self_approval_denied');
       }
       await attestClaimPayout(tx, request, {

@@ -2195,35 +2195,17 @@ async function seedOperationalDemoData(input: {
     },
   });
 
+  // A draft its requester has not sent yet: sending it from the claim page writes its step, route, policy snapshot and
+  // hash for real. It used to be seeded as waiting for approval without them, so nobody could approve or withdraw it
+  // while the page read "รอ Local Owner อนุมัติ". A claim already in the database is left as it is (whoever tries the
+  // demo may have sent, approved or paid it since), apart from that stuck state below.
   await db.reimbursementRequest.upsert({
     where: { id: 'seed-reimbursement-request-travel' },
-    update: {
-      branchId,
-      requestNo: 'RB-LOCAL-0001',
-      requesterUserId: ownerUserId,
-      requesterDisplayNameSnapshot: 'Local Owner',
-      title: 'ค่าเดินทางพบลูกค้า VIP',
-      reason: 'เดินทางไปตรวจงานและรับ brief ลูกค้า VIP',
-      categoryKey: 'travel',
-      categoryLabelSnapshot: 'ค่าเดินทาง',
-      amount: '650',
-      incurredDate: at(-2, 8),
-      submittedAt: at(-1, 9),
-      submittedByUserId: ownerUserId,
-      currentApproverUserId: ownerUserId,
-      status: 'PENDING_APPROVAL',
-      paymentStatus: 'UNPAID',
-      financeReviewStatus: 'PENDING',
-      duplicateStatus: 'NO_MATCH',
-      receiptRequirementStatus: 'REQUIRED',
-      outstandingAmount: '650',
-      updatedByUserId: ownerUserId,
-    },
+    update: {},
     create: {
       id: 'seed-reimbursement-request-travel',
       companyId,
       branchId,
-      requestNo: 'RB-LOCAL-0001',
       requesterUserId: ownerUserId,
       requesterDisplayNameSnapshot: 'Local Owner',
       title: 'ค่าเดินทางพบลูกค้า VIP',
@@ -2232,16 +2214,12 @@ async function seedOperationalDemoData(input: {
       categoryLabelSnapshot: 'ค่าเดินทาง',
       amount: '650',
       incurredDate: at(-2, 8),
-      submittedAt: at(-1, 9),
-      submittedByUserId: ownerUserId,
-      currentApproverUserId: ownerUserId,
-      status: 'PENDING_APPROVAL',
-      paymentStatus: 'UNPAID',
-      financeReviewStatus: 'PENDING',
-      duplicateStatus: 'NO_MATCH',
+      status: 'DRAFT',
+      paymentStatus: 'NOT_PAYABLE',
+      financeReviewStatus: 'NOT_REQUIRED',
+      duplicateStatus: 'NOT_CHECKED',
       receiptRequirementStatus: 'REQUIRED',
       outstandingAmount: '650',
-      approvalSnapshotHash: 'seed-rb-approval',
       idempotencyKey: 'seed-reimbursement-request-travel',
       createdByUserId: ownerUserId,
     },
@@ -2249,7 +2227,7 @@ async function seedOperationalDemoData(input: {
   // Every claim owns at least one line (the header total is their rollup).
   await db.reimbursementLine.upsert({
     where: { reimbursementRequestId_lineNo: { reimbursementRequestId: 'seed-reimbursement-request-travel', lineNo: 1 } },
-    update: { amount: '650', description: 'ค่าเดินทางพบลูกค้า VIP', categoryKey: 'travel', categoryLabelSnapshot: 'ค่าเดินทาง', incurredDate: at(-2, 8) },
+    update: {},
     create: {
       companyId,
       reimbursementRequestId: 'seed-reimbursement-request-travel',
@@ -2261,27 +2239,20 @@ async function seedOperationalDemoData(input: {
       amount: '650',
     },
   });
-  await db.reimbursementApprovalStep.upsert({
-    where: { id: 'seed-reimbursement-approval-step' },
-    update: {
-      reimbursementRequestId: 'seed-reimbursement-request-travel',
-      sequenceNo: 1,
-      approverUserId: ownerUserId,
-      approverRoleSnapshot: 'OWNER',
-      status: 'PENDING',
-      requestSnapshotHash: 'seed-rb-approval',
-    },
-    create: {
-      id: 'seed-reimbursement-approval-step',
-      companyId,
-      reimbursementRequestId: 'seed-reimbursement-request-travel',
-      sequenceNo: 1,
-      approverUserId: ownerUserId,
-      approverRoleSnapshot: 'OWNER',
-      status: 'PENDING',
-      requestSnapshotHash: 'seed-rb-approval',
+  // A database seeded before holds the sample stuck: waiting for approval with no current step. Only while it is still
+  // so, it becomes the draft a fresh database gets, without the step written then or a signature given on it since.
+  const stuckSample = await db.reimbursementRequest.updateMany({
+    where: { id: 'seed-reimbursement-request-travel', status: 'PENDING_APPROVAL', currentApprovalStepId: null },
+    data: {
+      requestNo: null, submittedAt: null, submittedByUserId: null, currentApproverUserId: null, approvalSnapshotHash: null,
+      status: 'DRAFT', paymentStatus: 'NOT_PAYABLE', financeReviewStatus: 'NOT_REQUIRED', duplicateStatus: 'NOT_CHECKED',
+      updatedByUserId: ownerUserId,
     },
   });
+  if (stuckSample.count > 0) {
+    await db.reimbursementClaimSignature.deleteMany({ where: { reimbursementRequestId: 'seed-reimbursement-request-travel' } });
+    await db.reimbursementApprovalStep.deleteMany({ where: { reimbursementRequestId: 'seed-reimbursement-request-travel' } });
+  }
 
   const workflowTemplate = await db.workflowTemplate.findUnique({ where: { key: 'low_stock_alert' } });
   await db.workflowRule.upsert({

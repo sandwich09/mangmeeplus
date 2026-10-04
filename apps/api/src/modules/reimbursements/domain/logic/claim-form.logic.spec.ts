@@ -202,7 +202,7 @@ describe('reimbursement claim form', () => {
     const owner = { name: 'เจ้าของร้าน', at: '2026-07-20T03:00:00.000Z', signatureDataUrl: 'data:image/png;base64,AAAB' };
     const input = snapshot({ selfApproved: true, signers: { requester: owner, approver: owner, accounting: null, finance: null } });
     for (const artifact of bothRenderings(input)) {
-      assert.equal((artifact.match(/ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท/g) ?? []).length, 1);
+      assert.equal((artifact.match(/ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน ใบนี้ได้รับการอนุมัติโดยผู้เบิกเอง/g) ?? []).length, 1);
       assert.equal((artifact.match(/<image href=/g) ?? []).length, 2, 'one signature fills both blocks');
       const noteY = Number(/y="(\d+)"[^>]*>ผู้เบิกและผู้อนุมัติ/.exec(artifact)![1]);
       const dateYs = [...artifact.matchAll(/y="(\d+)"[^>]*>วันที่ 20/g)].map((m) => Number(m[1]));
@@ -464,15 +464,17 @@ describe('reimbursement claim form', () => {
 });
 
 // Payout spec §17.1: the four-block form, and the form of a claim sent before claims carried a
-// receiving account, print as they always did, letter for letter. These digests are of the bytes the
+// receiving account, keep their layout. The two-block self-approval wording is updated below.
+// The other digests are of the bytes the
 // renderer produced BEFORE the payout line was added (they were committed on their own, against the
 // untouched renderer), so they pin the old print and not the new code's opinion of it. Every text
 // here fits its line, so no digest depends on where a Thai dictionary breaks a word.
-describe('prints that predate the payout line are unchanged, byte for byte', () => {
+describe('prints that predate the payout line keep their layout and truthful self-approval wording', () => {
   const sha256 = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
   const base = snapshot();
   const unapproved = { ...base.signers, approver: null, accounting: null, finance: null };
   const signed = { ...base.signers, requester: { ...base.signers.requester!, signatureDataUrl: 'data:image/png;base64,AAAB' } };
+  // 2026-10-04: only the two-block self-approved wording changed; its two digests were refreshed.
   const prints: Array<[string, Partial<ReimbursementClaimFormSnapshot>, string, string]> = [
     ['four blocks, fully signed', { layout: 'LEGACY_FOUR_SIGNERS' }, '99698fee62531f3fa0376094307c8f801991ec98f75bfd1a22bbeeed3556ffcc', '6c55175fdbf1ae5e59258b64887a60162450a72fb7e681ce2510cd0b220a2dfe'],
     ['four blocks, waiting for approval, receipt waived', { layout: 'LEGACY_FOUR_SIGNERS', signers: unapproved, hasReceiptEvidence: false, missingReceiptReason: 'ร้านค้าไม่ออกใบเสร็จ' }, '83d79a0f65a13ccd7b2341b215ddd7d2229cc06b8cf5278737f7c0ebe0b8c1bb', '03ee4956983f743857f3a2843c9425cdd772fab868b8cbe1c3e1b90a939a6bd4'],
@@ -480,7 +482,7 @@ describe('prints that predate the payout line are unchanged, byte for byte', () 
     ['four blocks, signed on screen, cancelled', { layout: 'LEGACY_FOUR_SIGNERS', signers: signed, cancellation: { reason: 'บันทึกซ้ำ' } }, '0cbd38c68e9b46be506b249c3879efa4b4c3a654f4dfd474c138661eb0a7acd9', '7bab863947db7f39e866841ca200257c5d6af3c88ab6a712d687666eef62c75e'],
     ['two blocks, paid by transfer', {}, '7f05fa5de4f86022c64de84b041464fb98d82148d9e6f8d6e3feba5f1ac9902a', '64e7374821c409165f36676a72b5bc7c19172e2418bd378bb09e4ae9078e3d70'],
     ['two blocks, waiting for approval, not paid', { signers: unapproved, repayment: null }, 'e5fb330697f129289f54e7c318ce1b0145aa517ccf685be5849dbcca721892d8', '697ebf449fed9e25f2890dc4ef77fce5dd7b8cdbd78ae5031d3dd5347d1be792'],
-    ['two blocks, own approval, paid in cash with a slip', { selfApproved: true, hasPaymentEvidence: true, repayment: { ...base.repayment!, method: 'CASH', reference: null } }, 'efed6dd67933e9477fc022f45a3238363613f6c404a4e25fdd6262330ff9c55c', '405df586737ba0cd2e017654084c824c1543c2dc2042b8a98d75145f5a3fefdf'],
+    ['two blocks, own approval, paid in cash with a slip', { selfApproved: true, hasPaymentEvidence: true, repayment: { ...base.repayment!, method: 'CASH', reference: null } }, 'd9a3c209fa92baa48389e98c9210a375249d1b099e2e88df698d28eb713efbcd', '3037558504dcfd70f22d3949c048f8d129d7d1d3c6651c2c8cb90928181080cd'],
     ['two blocks, approval skipped by policy, cancelled', { signers: unapproved, approvalDecisionNote: 'ไม่ต้องอนุมัติตามนโยบาย', cancellation: { reason: 'บันทึกซ้ำ' } }, '52aaa250838ecf81aae9876ce02b916f78a6b326b29b2429c9c65855692ce95e', '0affadcd29c054c613dc459d1d991124af637f12c6ca154066bcab9100cf9986'],
     ['two blocks, 65 lines over several pages', {
       lines: Array.from({ length: 65 }, (_, i) => ({ lineNo: i + 1, incurredDate: '2026-09-10', description: `ROW-${i + 1}-END รายการค่าใช้จ่าย`, purpose: 'กิจการ', amount: '10.00' })),

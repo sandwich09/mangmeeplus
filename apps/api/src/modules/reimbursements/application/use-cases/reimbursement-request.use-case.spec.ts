@@ -2374,6 +2374,31 @@ describe('submission route when the requester is the only approver', () => {
   const input = { companyId: 'co-1', roleKey: 'CUSTOM_SOLO', branchId: 'branch-1', requesterUserId: 'solo-1', allowSelfApproval: false };
   const otherBranch = { branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['branch-2'] };
 
+  for (const roleKey of ['OWNER', 'ADMIN', 'MANAGER']) {
+    it(`${roleKey}: routes switch-off claims to peers, switch-on claims also to self, and keeps the solo exception`, async () => {
+      const peerRoles = { [roleKey]: [{ userId: 'solo-1' }, { userId: 'peer-1' }] };
+      const off = await resolver(peerRoles).resolveSubmissionRoute({ ...input, roleKey });
+      assert.deepEqual([off.recipientUserIds, off.soloSelfApproval], [['peer-1'], undefined]);
+      const on = await resolver(peerRoles).resolveSubmissionRoute({ ...input, roleKey, allowSelfApproval: true });
+      assert.deepEqual([on.recipientUserIds, on.soloSelfApproval], [['peer-1', 'solo-1'], undefined]);
+      const solo = await resolver({ [roleKey]: [{ userId: 'solo-1' }] }).resolveSubmissionRoute({ ...input, roleKey });
+      assert.deepEqual([solo.recipientUserIds, solo.soloSelfApproval], [['solo-1'], true]);
+      const ownerFallback = await resolver({ [roleKey]: [{ userId: 'solo-1' }], OWNER: [{ userId: 'owner-1' }] })
+        .resolveSubmissionRoute({ ...input, roleKey });
+      assert.deepEqual(ownerFallback.recipientUserIds, ['owner-1']);
+    });
+    it(`${roleKey}: a named requester falls back to another approver unless the switch is on`, async () => {
+      const named = { userId: 'solo-1', branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null, branchScopes: [],
+        roles: [{ role: { key: roleKey, permissions: APPROVE.map((key) => ({ permission: { key } })) } }] };
+      const namedInput = { companyId: 'co-1', userId: 'solo-1', branchId: 'branch-1', requesterUserId: 'solo-1', allowSelfApproval: false, fallbackRole: roleKey };
+      const routes = resolver({ [roleKey]: [{ userId: 'solo-1' }, { userId: 'peer-1' }] }, named);
+      assert.equal(await routes.resolveNamedSubmissionRoute(namedInput), null);
+      assert.deepEqual((await routes.resolveNamedSubmissionRoute({ ...namedInput, allowSelfApproval: true }))?.recipientUserIds, ['solo-1']);
+      const solo = await resolver({ [roleKey]: [{ userId: 'solo-1' }] }, named).resolveNamedSubmissionRoute(namedInput);
+      assert.deepEqual([solo?.recipientUserIds, solo?.soloSelfApproval], [['solo-1'], true]);
+    });
+  }
+
   it('gives the step back to a solo holder of the routed role instead of refusing the claim', async () => {
     assert.deepEqual(await resolver({ CUSTOM_SOLO: [{ userId: 'solo-1' }], OWNER: [] }).resolveSubmissionRoute(input), {
       responsibilityRole: 'CUSTOM_SOLO', effectiveTaskRole: 'CUSTOM_SOLO', recipientUserIds: ['solo-1'],
