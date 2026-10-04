@@ -306,7 +306,7 @@ test('owner\'s sheet: the nine columns fit a 1280 px screen, a fact the list is 
   const base = { period: { month: '2026-09', isPartialMonth: false }, build: {}, coverage: { money: complete, usage: complete }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 }, population: {}, items: [row], summary: { netReceiptsSatang: { value: 9900, ...complete } }, pagination: { total: 1 } };
   const table = (sortBy: string, item: object = row) => elements((CompaniesContent as any)({ data: { ...base, items: [item], sort: { sortBy, sortDir: 'desc' } }, nav: { params: new URLSearchParams(), from: 'companies' } })).find(e => e.type === ExecutiveTable)!;
   const labels = (sortBy: string, item: object = row) => table(sortBy, item).props.columns.map((c: any) => c.label);
-  const NINE = ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จ (รายการสะสม)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'อีเมล', 'เบอร์โทร', 'หมายเหตุ'];
+  const NINE = ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จในระบบ (รายการ)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'อีเมล', 'เบอร์โทร', 'หมายเหตุ'];
   for (const sortBy of ['joinedAt', 'companyName', 'receiptsLifetime', 'lastReceiptAt', 'planEndsAt']) {
     const { props } = table(sortBy);
     assert.equal(props.sheet, true); assert.deepEqual(labels(sortBy), NINE, sortBy);
@@ -323,7 +323,7 @@ test('owner\'s sheet: the nine columns fit a 1280 px screen, a fact the list is 
   }
   // The headers that take two lines break before a whole word, never inside one the browser does not know.
   const rendered = html(ExecutiveTable, table('joinedAt').props);
-  for (const [first, second] of [['ใบเสร็จ ', '(รายการสะสม)'], ['เพิ่มใบเสร็จ', 'ล่าสุด'], ['สิ้นสุด', 'แพ็กเกจ']]) assert.ok(rendered.includes(`<span class="whitespace-nowrap">${first}</span><wbr/><span class="whitespace-nowrap">${second}</span>`), second);
+  for (const [first, second] of [['ใบเสร็จในระบบ ', '(รายการ)'], ['เพิ่มใบเสร็จ', 'ล่าสุด'], ['สิ้นสุด', 'แพ็กเกจ']]) assert.ok(rendered.includes(`<span class="whitespace-nowrap">${first}</span><wbr/><span class="whitespace-nowrap">${second}</span>`), second);
   // With the contact right: two links the reader presses to write or call. The phone link carries digits only.
   assert.match(rendered, /<a href="mailto:owner@example\.test" title="owner@example\.test"[^>]*>owner@example\.test<\/a>/); assert.match(rendered, /<a href="tel:0810000001"[^>]*>081-000 0001<\/a>/);
   // Without it the API returns no contact: the two columns do not exist, and no cell is empty or masked.
