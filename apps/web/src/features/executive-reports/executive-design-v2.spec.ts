@@ -45,13 +45,16 @@ test('v2 follow-up band includes only known positive groups and exact drill link
   assert.doesNotMatch(band, /usageGroup%3DINACTIVE|usageGroup%3DACTIVE/); assert.match(band, /4/);
 });
 
-test('v2 KPI icons, arrows and classification/payment notes stay inside their tiles', async () => {
+test('v2 KPI icons and arrows stay compact while long payment context lives outside the tiles', async () => {
   const { OverviewContent } = await import('./ExecutiveReportContent');
   const html = render(OverviewContent, { data: overview([]), nav });
   assert.equal((html.match(/mangmee-icon-frame/g) ?? []).length, 4);
   assert.match(html, /executive-kpi-link/); assert.match(html, /aria-hidden="true"[^>]*>→/);
   assert.match(html, /mangmee-stat-sub[\s\S]*ยังไม่ได้จัดประเภท 2 บริษัท[\s\S]*?<\/section>/);
-  assert.match(html, /mangmee-stat-sub[\s\S]*ยังไม่เคยชำระแต่ใช้งานอยู่ 1 บริษัท[\s\S]*?<\/section>/);
+  const tiles = html.match(/<section[^>]*mangmee-stat-card[\s\S]*?<\/section>/g) ?? [];
+  assert.equal(tiles.length, 4);
+  for (const tile of tiles) assert.doesNotMatch(tile, /ยังไม่เคยชำระแต่ใช้งานอยู่/);
+  assert.match(html, /ยังไม่เคยชำระแต่ใช้งานอยู่ 1 บริษัท/);
 });
 
 test('v2 directory exposes available fields as sticky columns and the same two-column mobile row', async () => {
@@ -60,7 +63,7 @@ test('v2 directory exposes available fields as sticky columns and the same two-c
   const data = { ...envelope, summary: { netReceiptsSatang: count(10000) }, items: [row], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
   const html = render(CompaniesContent, { data, nav, selected: [], select: () => {} });
   const head = html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
-  for (const word of [W.company, W.group, W.lifetimeReceipts, W.receiptCount, W.days, W.lastActivity, W.plan, W.net]) assert.ok(head.includes(word), word);
+  for (const word of [W.company, W.group, W.lifetimeReceipts, W.receiptCount, W.days, W.lastActivity, W.shortPlan, W.shortNet]) assert.ok(head.includes(word), word);
   assert.match(head, /sticky/); assert.match(html, /grid-cols-2/); assert.match(html, /md:table-row/);
   assert.match(html, /after:absolute after:inset-0/); assert.match(html, />27</);
   assert.equal((html.match(/type="checkbox"/g) ?? []).length, 1);
@@ -118,7 +121,7 @@ test('v2 filter panel is a labelled responsive native popover in the time row, a
   assert.match(timeRow, /<ExecutiveFilters/); assert.doesNotMatch(timeRow, /<summary/);
   assert.match(filters, /popover="auto"/); assert.match(filters, /role="dialog"/); assert.match(filters, /aria-labelledby/);
   assert.match(filters, /bottom-0/); assert.match(filters, /md:top-/); assert.match(filters, /min-h-11/); assert.match(filters, /safe-area-inset-bottom/);
-  assert.match(page, /executive-view-tabs/); assert.doesNotMatch(page, /reportView\(section, params\) === view.value \? 'primary'/);
+  assert.match(page, /<ExecutiveTabs/); assert.doesNotMatch(page, /reportView\(section, params\) === view.value \? 'primary'/);
 });
 
 test('v2 nested select/date portals stay inside a native popover and ordinary fields still portal to body', () => {
@@ -150,7 +153,7 @@ test('v2 directory filter controls and chips use effective drill filters rather 
 
 test('v2 shared design reaches every report/account view and export, without a new palette', () => {
   const design = source('./ExecutiveReportDesign.tsx');
-  assert.match(design, /rounded-full/); assert.match(design, /text-3xl/); assert.match(design, /from-gold-500/);
+  assert.match(design, /rounded-full/); assert.match(design, /text-\[26px\]/); assert.match(design, /from-gold-500/);
   for (const label of [W.applyFilters, W.close, W.followUpBand, W.removeFilter('ประเภทธุรกิจ · ไม่ระบุ')]) assert.doesNotMatch(label, /[A-Za-z_]/);
   assert.match(design, /bg-brand-600/); assert.doesNotMatch(design, /#[0-9a-f]{3,8}\b|blue-/i);
   for (const path of ['./ExecutiveReportPage.tsx', '../executive-users/ExecutiveUsersPage.tsx', '../executive-users/ExecutiveUserPage.tsx']) assert.match(source(path), /EXECUTIVE_PAGE_CLASS/);

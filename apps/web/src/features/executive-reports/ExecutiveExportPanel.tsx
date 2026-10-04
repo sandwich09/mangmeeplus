@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { EXECUTIVE_EXPORT_SHEETS, EXECUTIVE_WORDS as W, executiveExportColumns, executiveComparisonLabel, type ExecutiveContext } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
-import { ExecutiveSectionCard } from './ExecutiveReportDesign';
+import { ExecutiveSectionCard, ReportNotes } from './ExecutiveReportDesign';
 import { reportDateTime, reportMonth, type ReportSection } from './executive-reports.logic';
 import { canExportContacts, createExportAction, exportBody, exportFileName, type ExportState } from './executive-export.logic';
 import { getExecutiveExport, downloadExecutiveExport, type ReportData } from './executive-reports.api';
@@ -29,7 +29,7 @@ export function ExecutiveExportPanel({ section, params, context, data, search, t
   if (search) labels.push(`${W.search} · ${search}`);
   const unavailable = 'company' in data && !data.month;
   const blocked = unavailable ? W.noData : !n ? W.export.empty : null;
-  return <ExecutiveSectionCard title={W.export.action} actions={<Button variant="secondary" onClick={close}>{W.back(W[section])}</Button>}><section className="space-y-4" aria-label={W.export.action}>
+  return <ReportNotes data={data}><ExecutiveSectionCard title={W.export.action} actions={<Button variant="secondary" onClick={close}>{W.back(W[section])}</Button>}><section className="space-y-4" aria-label={W.export.action}>
     <p>{W[section]} · {reportMonth(data.period.month)}</p>
     <p>{W.through(reportDateTime(data.dataThrough.oldest))} · {W.found(n)}</p>
     <p>{W.filters} · {labels.join(' · ') || W.export.none}</p>
@@ -44,5 +44,5 @@ export function ExecutiveExportPanel({ section, params, context, data, search, t
     <div className="executive-export-sheets"><p className="text-sm text-gray-600">{W.export.sheets}</p><div className="mt-2 flex flex-wrap gap-3">{EXECUTIVE_EXPORT_SHEETS.map(sheet => <span key={sheet} className="rounded-lg border border-brand-100 bg-brand-25 px-4 py-3 font-semibold text-brand-800">{sheet}</span>)}</div></div>
     <details><summary className="flex min-h-11 cursor-pointer items-center rounded-lg p-2 font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-brand-700">{W.export.columns}</summary><p className="py-3 text-sm text-gray-600">{executiveExportColumns(section, body.subview, body.includeContacts).join(' · ')}</p></details>
     <p>{W.export.format}</p>
-  </section></ExecutiveSectionCard>;
+  </section></ExecutiveSectionCard></ReportNotes>;
 }

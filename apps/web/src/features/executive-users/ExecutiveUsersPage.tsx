@@ -4,10 +4,10 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { ExecutiveAccountStatus, ExecutiveUserListDto, ExecutiveUserView } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
-import { EXECUTIVE_PAGE_CLASS, ExecutiveSectionCard } from '../executive-reports/ExecutiveReportDesign';
+import { EXECUTIVE_PAGE_CLASS, ExecutiveSectionCard, ExecutiveTable } from '../executive-reports/ExecutiveReportDesign';
 import { Button } from '@/common/components/button';
 import { TextField, SelectField } from '@/common/components/field';
-import { MangmeePage, MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
+import { MangmeePage, MangmeeBadge } from '@/common/components/mangmee';
 import { CoverLoader, LoadingState, ErrorState, ForbiddenState } from '@/common/components/state';
 import { Pagination } from '@/common/components/data-table/Pagination';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
@@ -65,21 +65,7 @@ export default function ExecutiveUsersPage() {
             : <>
               <p role="status" className="mb-3 text-sm text-gray-600">{words.found(data.pagination.total)}</p>
               {data.items.length === 0 ? <p className="py-8 text-center text-gray-600">{page > 1 ? words.emptyPage : words.empty}</p> : <>
-                <div className="grid gap-3 md:hidden">{data.items.map(user => <MangmeeCard key={user.userId} className="min-w-0 p-4">
-                  <Link href={userHref(user)} className="flex min-h-11 items-center rounded-lg font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{user.displayName}</Link>
-                  <p className="text-sm text-gray-600">{words.username}: {user.username}</p>
-                  <p className="mt-2 text-sm text-gray-600">{words.rights}: {executiveRights(user)}</p>
-                  <p className="my-2"><MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></p>
-                  <p className="text-sm text-gray-600">{words.lastEntry}: {lastEntry(user)}</p>
-                </MangmeeCard>)}</div>
-                <table className="hidden w-full table-fixed text-left text-sm md:table">
-                  <caption className="sr-only">{words.caption}</caption>
-                  <thead><tr>{[words.account, words.rights, words.status, words.lastEntry].map(label => <th key={label} scope="col" className="sticky top-0 border-b border-brand-100 bg-brand-25 p-3 text-brand-800">{label}</th>)}</tr></thead>
-                  <tbody>{data.items.map(user => <tr key={user.userId} className="border-t border-gray-200">
-                    <td className="break-words p-3"><Link href={userHref(user)} className="flex min-h-11 items-center rounded-lg font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{user.displayName}</Link><p>{user.username}</p></td>
-                    <td className="break-words p-3">{executiveRights(user)}</td><td className="p-3"><MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></td><td className="p-3">{lastEntry(user)}</td>
-                  </tr>)}</tbody>
-                </table>
+                <ExecutiveTable title={words.caption} columns={[{ label: words.account, width: 260 }, { label: words.rights, width: 260, align: 'left' }, { label: words.status, width: 120, align: 'left' }, { label: words.lastEntry, width: 180, align: 'left' }]} rows={data.items.map(user => ({ key: user.userId, href: userHref(user), cells: [<div key="account"><span className="block truncate" title={user.displayName}>{user.displayName}</span><span className="block truncate text-xs font-normal text-gray-500" title={user.username}>{user.username}</span></div>, <span key="rights" className="block truncate" title={executiveRights(user)}>{executiveRights(user)}</span>, <MangmeeBadge key="status" tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge>, lastEntry(user)] }))} />
               </>}
               {page > 1 && data.items.length === 0 && <Button variant="secondary" loading={loading} onClick={() => update({ page: 1 })}>{words.firstPage}</Button>}
               {data.pagination.totalPages > 1 && <Pagination page={page} totalPages={data.pagination.totalPages} disabled={loading} onPageChange={page => update({ page })} />}
