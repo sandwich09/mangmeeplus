@@ -639,6 +639,10 @@ Default rule creation:
 
 ## 16. Notification Generation Rules
 
+- Owner decision 2026-10-04: a shop receives notices only about modules its package contains. The trigger ownership mapping lives beside the trigger lists in `notification.model.ts`; every implemented, future and workflow-emitted trigger must have an explicit classification. Feature ownership uses the existing entitlement evaluator (including submenu inheritance and explicit OFF); a company with no entitlement rows retains everything-on semantics. Package/billing, account, security and linking notices are platform-wide.
+- Check ownership before event creation or dedup/recipient repair. An unentitled signal creates no event, recipient or delivery. The stock-low scan skips inventory reads when its trigger is unentitled. Keep rules/templates for a later purchase.
+- Retained events from a downgrade or old packages are excluded from the bell/list, recipient read path, pagination, unread totals and severity badges using current ownership. Keep the stored history. Queued WEB/LINE deliveries of those events are suppressed; LINE takes the existing shared company entitlement lock (downgrade writers take its exclusive side), rechecks ownership on its transaction's current event and holds that lock through provider egress. Launch shadow probes remain observational. Unknown/unregistered trigger keys are blocked until classified.
+- Open ownership decision: `campaign_opportunity` is future/disabled and documented as marketing, but no marketing entitlement exists. Keep it blocked until the owner identifies its sold feature; do not classify it as platform-wide.
 - Every event needs `companyId`, `triggerKey`, severity, title, body, source refs, dedup key, and recipient policy.
 - Dedup key must be deterministic and include company, trigger, source module, source type, and source id or snapshot period.
 - Existing active event with same dedup key inside cooldown updates `lastSeenAt` and `occurrenceCount`, not a new event.
@@ -910,6 +914,7 @@ Rule management page:
 
 Unit/domain:
 
+- Every listed, template and literal-emitted notification trigger has an ownership entry with catalog feature keys or an explicit platform classification; the future marketing key remains blocked pending its ownership decision.
 - Dedup key generation is stable for same company/trigger/source.
 - Cooldown updates existing active event instead of creating duplicate event.
 - Quiet hours suppresses non-critical LINE delivery and does not suppress critical delivery.
@@ -921,6 +926,8 @@ Unit/domain:
 
 Use case:
 
+- STARTER produces no `crm_sla_breach` or `stock_low` event, recipient or delivery; a company with the owning feature and a legacy company with no entitlement rows do. Explicit CRM inbox OFF beats CRM parent ON; platform package notices still work.
+- Downgrade prevents dedup recipient/delivery repair. Retained events disappear from list/filter pages and unread totals/severity badges without deletion, and become visible after purchase. Stock-low scans skip unentitled inventory reads.
 - Generate dashboard snapshot with inventory provider succeeds.
 - Generate dashboard snapshot without source provider returns unavailable widget.
 - Stock low scan creates notification event and recipient/delivery rows.
@@ -948,6 +955,7 @@ Integration/API:
 
 Worker/delivery:
 
+- Module loss suppresses queued WEB and LINE notices, including mandatory reimbursement notices. CRM and other LINE paths recheck ownership under the shared entitlement lock before egress, including a downgrade after the initial queue read.
 - LINE delivery is skipped for unlinked user.
 - LINE delivery is suppressed when user disables LINE channel.
 - LINE provider failure records `failed`, error code, retry time, and safe message.

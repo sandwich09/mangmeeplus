@@ -12,12 +12,14 @@ import { PrismaAlertStateRepository } from '../../infrastructure/prisma-notifica
 import { buildDedupKey, isInCooldown, computeCooldownUntil, isImplementedTrigger, isRetryable, isInQuietHours, resolveDeliveryOutcome, notificationSourceHref } from '../../domain/logic/notification.logic';
 import type { NotificationSummaryDto, NotificationPreferenceDto, NotificationRuleDto, UnreadCountDto, UpdatePreferenceDto, UpdateRuleDto } from '@watchdog-bms/contracts';
 import { withLineExternalBrowserLinks } from '@watchdog-bms/contracts';
-import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT, notificationRuleDisplayName } from '../../domain/models/notification.model';
+import { ALWAYS_DELIVERED_TRIGGER_KEYS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT, notificationRuleDisplayName, isNotificationTriggerEntitled } from '../../domain/models/notification.model';
+import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
+import { sharedEntitlementLock } from '../../../feature-launch/application/execution-attempt.service';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { GenerateSnapshotUseCase } from './generate-snapshot.use-case';
 import { webLink } from '../../../../common/http/web-link';
@@ -230,6 +232,9 @@ export class CreateOrUpdateNotificationEventUseCase {
     /** Recipients who get this notice in the web bell only, with no LINE push. Everyone else gets both. */
     webOnlyRecipientUserIds?: string[];
   }) {
+    if (!isNotificationTriggerEntitled(input.triggerKey, await loadEntitledFeatureKeys(this.prisma, input.companyId))) {
+      return { event: undefined, skipped: true, reason: 'feature_not_enabled' };
+    }
     const dedupKey = buildDedupKey({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, periodKey: input.periodKey });
     const now = new Date();
 
@@ -334,6 +339,9 @@ export class ProcessQueuedDeliveryUseCase {
     // Billing owns its mode-bound, current-OWNER delivery and crash recovery.
     if (delivery.recipient.event.sourceModule === 'billing') return delivery;
     if (!['QUEUED', 'FAILED'].includes(delivery.status)) return delivery;
+    if (!await this.checkTriggerEntitlement(this.prisma.client, delivery)) {
+      return this.prisma.client.notificationDelivery.findFirst({ where: { id: deliveryId, companyId } });
+    }
 
     if (delivery.channel === 'WEB') {
       return this.deliveries.update(companyId, deliveryId, {
@@ -454,6 +462,17 @@ export class ProcessQueuedDeliveryUseCase {
     return attempt.delivery;
   }
 
+  /** CAS suppression retains history and cannot overwrite another worker's committed outcome. */
+  private async checkTriggerEntitlement(db: any, delivery: any): Promise<boolean> {
+    const entitled = await loadEntitledFeatureKeys({ client: db } as PrismaService, delivery.companyId);
+    if (isNotificationTriggerEntitled(delivery.recipient.event.triggerKey, entitled)) return true;
+    await db.notificationDelivery.updateMany({
+      where: { id: delivery.id, companyId: delivery.companyId, status: { in: ['QUEUED', 'FAILED'] }, attemptCount: delivery.attemptCount },
+      data: { status: 'SUPPRESSED', nextAttemptAt: null, errorCode: 'FEATURE_NOT_ENABLED' },
+    });
+    return false;
+  }
+
   /** Claim + provider call + outcome settle are one transaction, so stale sweep
    * snapshots cannot double-push and a process crash rolls the claim back. */
   private async pushClaimedNonCustomerLineNotification(
@@ -469,11 +488,13 @@ export class ProcessQueuedDeliveryUseCase {
     errorCode?: string;
   } | null> {
     return this.prisma.client.$transaction(async (tx: any) => {
+      await tx.$executeRaw(sharedEntitlementLock(companyId));
       const current = await tx.notificationDelivery.findFirst({
         where: { id: deliveryId, companyId, status: { in: ['QUEUED', 'FAILED'] }, attemptCount: expectedAttemptCount },
         include: { recipient: { include: { event: true } } },
       });
       if (!current || isCustomerLinkedCrmNotification(current.recipient.event)) return null;
+      if (!await this.checkTriggerEntitlement(tx, current)) return null;
 
       const activeMemberships = await tx.$queryRaw`
         SELECT "id"
@@ -569,6 +590,7 @@ export class ProcessQueuedDeliveryUseCase {
     errorCode?: string;
   } | null> {
     return this.prisma.client.$transaction(async (tx: any) => {
+      await tx.$executeRaw(sharedEntitlementLock(companyId));
       const beforeLock = await tx.notificationDelivery.findFirst({
         where: { id: deliveryId, companyId, status: { in: ['QUEUED', 'FAILED'] }, attemptCount: expectedAttemptCount },
         include: { recipient: { include: { event: true } } },
@@ -584,6 +606,7 @@ export class ProcessQueuedDeliveryUseCase {
         include: { recipient: { include: { event: true } } },
       });
       if (!current || !isDeliverableCustomerLinkedCrmNotification(current.recipient.event)) return null;
+      if (!await this.checkTriggerEntitlement(tx, current)) return null;
       const currentCustomerId = await crmNotificationCustomerId(tx, companyId, current.recipient.event);
       if (currentCustomerId !== discoveredCustomerId) return null;
       const customer = await tx.crmCustomer.findFirst({
@@ -671,8 +694,8 @@ export class ProcessDueNotificationDeliveriesUseCase {
   async execute(limit = DELIVERY_SWEEP_BATCH_LIMIT): Promise<{ processed: number; failures: number }> {
     const due = await this.deliveries.findDue(new Date(), limit);
     let failures = 0;
-    // SHADOW ONLY (plan §3 F1): the highest-fan-out notification surface — it pushes to employee
-    // LINE and web with no entitlement check. Recorded, never enforced.
+    // SHADOW ONLY (plan §3 F1): launch availability remains observational. Module ownership is
+    // enforced separately by ProcessQueuedDeliveryUseCase.
     const sweep = this.shadow.startSweep(SHADOW_SURFACES.notificationsDeliverySweep);
     try {
       for (const d of due) {
