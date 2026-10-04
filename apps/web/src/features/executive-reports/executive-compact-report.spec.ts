@@ -110,23 +110,26 @@ test('tabs expose keyboard navigation, URL choices and compatible legacy report 
   assert.match(source('./ExecutiveReportPage.tsx'), /<ExecutiveTabs/);
 });
 
-test('directory columns, closed row expanders and conditional rank/share replace the tall rows', async () => {
+test('the sheet has its headers in the owner\'s order, rows start closed, and rank and share are read in the opened row', async () => {
   const { CompaniesContent } = await import('./ExecutiveReportContent');
-  const row = { id: 'one', displayName: 'ร้าน ก', registeredName: 'บริษัท ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'EVER', usageGroup: 'ACTIVE', paidEver: { value: 'YES' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 2, activeDays: 1, activeUsers: 1, documents: 1, aiRequests: 1, netReceiptsSatang: 9900 }, lastActivityAt: '2026-10-04' };
+  const { companyFacts } = await import('./executive-company.fixture');
+  const row = { id: 'one', displayName: 'ร้าน ก', registeredName: 'บริษัท ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'EVER', usageGroup: 'ACTIVE', paidEver: { value: 'YES' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 2, activeDays: 1, activeUsers: 1, documents: 1, aiRequests: 1, netReceiptsSatang: 9900 }, lastActivityAt: '2026-10-04', ...companyFacts() };
   const render = (sortBy: string) => html(CompaniesContent, { data: { ...envelope, items: [{ ...row, rank: 1, cumulativeShare: { value: 100 } }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy, sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
   const plain = render('joinedAt'), ranked = render('netReceipts');
-  const head = plain.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
-  const labels = ['บริษัท', 'กลุ่มธุรกิจ', 'แพ็กเกจ', 'สถานะ', 'ใบเสร็จสะสม', W.tableReceipts, 'วันใช้งาน', 'ใช้ระบบล่าสุด', 'สุทธิ'];
-  let last = -1; for (const label of labels) { const at = head.indexOf(label); assert.ok(at > last, label); last = at; }
+  const titles = (markup: string) => [...(markup.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').matchAll(/<th[^>]*title="([^"]*)"/g)].map(match => match[1]);
+  assert.deepEqual(titles(plain), ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จ (รายการสะสม)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'หมายเหตุ']);
   assert.match(plain, /aria-expanded="false"/); assert.doesNotMatch(plain, /<details[^>]* open/);
-  assert.doesNotMatch(head, /สะสม %|อันดับ/); assert.match(ranked.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '', /สะสม %/);
+  // Ordered by net receipts: that figure joins the columns right after the name; rank and share are facts of the opened row.
+  assert.deepEqual(titles(ranked).slice(0, 2), ['บริษัท / ร้าน', 'ยอดรับสุทธิ (บาท)']);
+  assert.doesNotMatch(titles(ranked).join(' '), /สะสม %|อันดับ/); assert.doesNotMatch(plain, /<dt[^>]*>(?:อันดับ|สัดส่วนสะสม)<\/dt>/);
+  const opened = ranked.match(/<tr hidden=""[\s\S]*?<\/tr>/)?.[0] ?? '';
+  assert.match(opened, /<dt[^>]*>อันดับ<\/dt><dd[^>]*>1<\/dd>/); assert.match(opened, /<dt[^>]*>สัดส่วนสะสม<\/dt><dd[^>]*>100\.0%<\/dd>/);
   assert.match(source('./ExecutiveReportDesign.tsx'), /stopPropagation/);
   assert.match(plain, /52px|h-12/);
   const withoutShare = (coverage: string, net: number) => html(CompaniesContent, { data: { ...envelope, coverage: { ...envelope.coverage, money: { ...cash, coverage, reasonCodes: coverage === 'complete' ? [] : cash.reasonCodes } }, items: [{ ...row, metrics: { ...row.metrics, netReceiptsSatang: net }, rank: 1, cumulativeShare: null }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy: 'netReceipts', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
   const nonPositive = withoutShare('complete', 0);
-  assert.match(nonPositive.match(/<tr hidden=""[\s\S]*?<\/tr>/)?.[0] ?? '', /ไม่นับในสัดส่วน/);
+  assert.match(nonPositive.match(/<tr hidden=""[\s\S]*?<\/tr>/)?.[0] ?? '', /<dt[^>]*>สัดส่วนสะสม<\/dt><dd[^>]*>ไม่นับในสัดส่วน<\/dd>/);
   assert.doesNotMatch(withoutShare('partial', 9900), /ไม่นับในสัดส่วน/);
-
 });
 
 test('top revenue loads the existing summary at the same build and refuses to combine different builds', async () => {
@@ -150,6 +153,7 @@ test('top revenue loads the existing summary at the same build and refuses to co
 });
 
 test('every report panel keeps complete, partial and unavailable reasons out of cells and KPI values', async () => {
+  const { companyFacts } = await import('./executive-company.fixture');
   const { OverviewContent, AnalysisContent, CompaniesContent, CompanyContent } = await import('./ExecutiveReportContent');
   for (const coverage of ['complete', 'partial', 'unavailable'] as const) {
     const figure = { value: coverage === 'complete' ? 6 : null, ...(coverage === 'partial' ? { knownValue: 6 } : {}), coverage, reasonCodes: coverage === 'complete' ? [] : ['HISTORY_BEFORE_FIRST_BUILD'] };
@@ -157,7 +161,7 @@ test('every report panel keeps complete, partial and unavailable reasons out of 
     const base = { ...envelope, coverage: { usage: figure, money }, population: { ...envelope.population, eligibleCount: figure } };
     const adoption = { population: 6, coverage, reasonCodes: figure.reasonCodes, segments: [{ key: 'EVER', count: 6, share: { value: 100 }, drilldownFilters: {} }] };
     const paid = { groups: [{ key: 'NOT_STARTED', count: 1, drilldownFilters: {} }], paidEver: { count: 1, drilldownFilters: {} }, usageUnassessed: { count: 0 }, paymentUnknown: { count: 0 }, fullyRefunded: { count: 0 } };
-    const company = { id: 'one', displayName: 'ร้าน ก', registeredName: 'บริษัท ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { key: 'OTHER', label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, creditedSeller: {}, ownerContact: { status: 'NOT_PERMITTED' }, receiptAdoption: 'EVER', usageGroup: 'ACTIVE', paidEver: { value: 'YES' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 2, activeDays: 1, activeUsers: 1, documents: 1, aiRequests: 1, netReceiptsSatang: 9900 }, lastActivityAt: '2026-10-04', expenseReceiptCountLifetime: 6 };
+    const company = { id: 'one', displayName: 'ร้าน ก', registeredName: 'บริษัท ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { key: 'OTHER', label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, creditedSeller: {}, receiptAdoption: 'EVER', usageGroup: 'ACTIVE', paidEver: { value: 'YES' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 2, activeDays: 1, activeUsers: 1, documents: 1, aiRequests: 1, netReceiptsSatang: 9900 }, lastActivityAt: '2026-10-04', expenseReceiptCountLifetime: 6, ...companyFacts() };
     const detail = { ...base, company, monthReasonCodes: [], month: { paidEver: company.paidEver, usageGroup: 'ACTIVE', paidInMonth: true, positiveNetInMonth: true, usage: { ...company.metrics, activeDaysLine: 1, activeDaysWeb: 1, activeUsersLine: 1, activeUsersWeb: 1, expenseReceiptsLine: 1, expenseReceiptsWeb: 1 }, money: { receiptsSatang: money, refundsSatang: money, netReceiptsSatang: money, taxSatang: money, feesSatang: money, aiCostSatang: money } } };
     const cases: Array<[string, React.ComponentType<any>, object]> = [
       ['overview', OverviewContent, { data: { ...base, metrics: { companies: { ...figure, drilldownFilters: {} }, activeCompanies: { ...figure, drilldownFilters: {}, breakdown: {} }, companiesWithReceipts: { ...figure, drilldownFilters: {} }, netReceiptsSatang: { ...money, drilldownFilters: {} } }, expenseReceiptAdoption: adoption, paidUsage: paid, spendConcentration: { topShare: null, reasonCodes: [] } }, nav }],

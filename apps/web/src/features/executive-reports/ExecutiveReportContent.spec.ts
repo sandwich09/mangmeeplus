@@ -6,6 +6,7 @@ import type { ExecutiveCount, ExecutiveMoney, ExecutiveEnvelope, ExecutiveOvervi
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 require.extensions['.svg'] = module => { module.exports = () => null; };
+import { companyFacts } from './executive-company.fixture';
 const content = () => import('./ExecutiveReportContent');
 const count = (value: number): ExecutiveCount => ({ value, coverage: 'complete', reasonCodes: [] });
 const cash = (value: number): ExecutiveMoney => ({ ...count(value), currency: 'THB' });
@@ -25,6 +26,7 @@ const company = {
   discovery: { key: 'FACEBOOK', label: 'Facebook', otherText: 'ก'.repeat(200) }, signupRail: 'line-oa', referrer: { kind: 'NONE', label: 'ไม่มีเซลล์ผู้แนะนำ' },
   creditedSeller: {}, paidEver: { value: 'UNKNOWN', reason: 'MANUAL_TERM_NO_RECEIPT' }, fullyRefunded: false, usageGroup: null, usageUnassessedReason: 'ACTIVITY_HISTORY_INCOMPLETE', receiptAdoption: 'UNKNOWN',
   metrics: { receiptsSatang: 0, refundsSatang: 100, netReceiptsSatang: -100, activeDays: 0, activeUsers: 0, documents: 0, aiRequests: 0, expenseReceiptCountInPeriod: 0, expenseReceiptCountLifetime: 0 }, lastActivityAt: null,
+  ...companyFacts(),
 };
 
 test('rendered partial and unavailable figures retain their reasons and negative amounts have words', async () => {
@@ -92,7 +94,7 @@ test('directory uses the all-result summary rather than row sums and wraps unkno
   const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav }));
   const visible = text(html);
   // The rank is the place in the chosen order (here by net receipts), not a usage rank.
-  assert.match(visible, /อันดับ/); assert.match(html, />4<\/td>/); assert.doesNotMatch(visible, /อันดับการใช้/);
+  assert.match(html, /<dt[^>]*>อันดับ<\/dt><dd[^>]*>4<\/dd>/); assert.doesNotMatch(visible, /อันดับการใช้/);
   assert.match(visible, /พบ 72 บริษัท/); assert.match(visible, /1,234\.50/); assert.match(accessible(html), /อย่างน้อย 0/); assert.match(visible, /ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้/);
   assert.match(visible, /ผู้ดูแลตั้งแพ็กเกจให้/); assert.match(accessible(html), /คืนเงินมากกว่าเงินรับ/); assert.match(visible, /เฟซบุ๊ก/); assert.match(visible, /สมัครทางไลน์/);
   assert.doesNotMatch(visible, /internal-company|ADMIN_HOLD|MANUAL_TERM|Facebook|LINE/);

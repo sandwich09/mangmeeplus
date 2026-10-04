@@ -58,17 +58,21 @@ test('v2 KPI icons and arrows stay compact while long payment context lives outs
   assert.match(html, /ยังไม่เคยชำระแต่ใช้งานอยู่ 1 บริษัท/);
 });
 
-test('v2 directory exposes available fields as sticky columns and the same two-column mobile row', async () => {
+test('the company list is the owner\'s sheet: its own columns in the table, the first one held in place, and a phone card of label-value lines', async () => {
   const { CompaniesContent } = await import('./ExecutiveReportContent');
-  const row = { id: 'row', displayName: 'ร้าน ก', registeredName: null, provinceLabel: 'เชียงใหม่', joinedAt: '2026-09-01T00:00:00Z', industryGroup: { label: 'ร้านอาหาร' }, companyStatus: 'ACTIVE', planState: 'ACTIVE', planLabel: 'ร้านเติบโต', discovery: { label: 'Facebook' }, signupRail: 'line-oa', referrer: { label: 'ไม่ระบุ' }, paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', receiptAdoption: 'EVER', metrics: { expenseReceiptCountLifetime: 27, expenseReceiptCountInPeriod: 7, activeDays: 3, activeUsers: 2, documents: 4, aiRequests: 5, netReceiptsSatang: 10000 }, lastActivityAt: null };
+  const { companyFacts } = await import('./executive-company.fixture');
+  const row = { id: 'row', displayName: 'ร้าน ก', registeredName: null, provinceLabel: 'เชียงใหม่', joinedAt: '2026-09-01T00:00:00Z', industryGroup: { label: 'ร้านอาหาร' }, companyStatus: 'ACTIVE', planState: 'ACTIVE', planLabel: 'ร้านเติบโต', discovery: { label: 'Facebook' }, signupRail: 'line-oa', referrer: { label: 'ไม่ระบุ' }, paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', receiptAdoption: 'EVER', metrics: { expenseReceiptCountLifetime: 27, expenseReceiptCountInPeriod: 7, activeDays: 3, activeUsers: 2, documents: 4, aiRequests: 5, netReceiptsSatang: 10000 }, lastActivityAt: null, ...companyFacts() };
   const data = { ...envelope, summary: { netReceiptsSatang: count(10000) }, items: [row], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
   const html = render(CompaniesContent, { data, nav });
   const head = html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
-  for (const word of [W.company, W.group, W.lifetimeReceipts, W.tableReceipts, W.days, W.lastActivity, W.shortPlan, W.tableNet]) assert.ok(head.includes(word), word);
-  assert.match(head, /sticky/); assert.match(html, /grid-cols-2/); assert.match(html, /md:table-row/);
+  for (const word of ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จ (รายการสะสม)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'หมายเหตุ']) assert.ok(head.includes(`title="${word}"`), word);
+  assert.match(head, /md:sticky md:left-0/); assert.match(html, /grid-cols-1/); assert.match(html, /md:table-row/);
   assert.match(html, /after:absolute after:inset-0/); assert.match(html, />27</);
   assert.doesNotMatch(html, /type="checkbox"/); // the comparison checkbox is taken out for now (owner 2026-10-05)
-  assert.doesNotMatch(head, /7 วัน|30 วัน|ประเภทกิจการ|เพิ่มใบเสร็จล่าสุด/);
+  // The figures of the chosen period and the rest of the sheet are facts of the opened row, not columns.
+  assert.doesNotMatch(head, /7 วัน|30 วัน|ใบเสร็จช่วงนี้|วันใช้งาน|สุทธิ/);
+  const opened = html.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '';
+  for (const word of ['ใบเสร็จใหม่ 7 วัน', 'ใบเสร็จใหม่ 30 วัน', W.receiptCount, W.days, 'ยอดรับสุทธิ (บาท)']) assert.ok(opened.includes(`>${word}</dt>`), word);
 });
 
 function componentFunction(path: string, name: string, deps: Record<string, unknown>) {

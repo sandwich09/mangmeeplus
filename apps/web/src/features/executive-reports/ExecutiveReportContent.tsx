@@ -3,17 +3,17 @@
 import Link from 'next/link';
 import { useId, type ReactNode } from 'react';
 import {
-  EXECUTIVE_SHEET_WORDS as S, EXECUTIVE_COMPANY_SHEET_COLUMNS, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_PERIOD_WORDS as P, EXECUTIVE_HISTORY_EVENT_LABELS, executivePeriodReportLabels, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
+  EXECUTIVE_SHEET_WORDS as S, EXECUTIVE_COMPANY_SHEET_COLUMNS, EXECUTIVE_SORT_OPTIONS, COMPANY_TEAM_NOTE_WORDS as N, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_PERIOD_WORDS as P, EXECUTIVE_HISTORY_EVENT_LABELS, executivePeriodReportLabels, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
   type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveCompanyHistory,
   type ExecutiveCount, type ExecutiveMoney, type ExecutiveDrilldownFilters, type ExecutiveReceiptAdoption,
   type ExecutiveAsOfFigures, type ExecutiveAsOfCount, type ExecutivePaidUsage, type ExecutiveSpendConcentration, type ExecutiveCompanyRow,
 } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
-import { ExecutiveSectionCard as Card, ExecutiveKpi, ExecutiveKpiStrip, ExecutiveTable as ReportTable, Figure, IncompleteDot, ReportNotes, ExecutiveTabs, type ReportColumn } from './ExecutiveReportDesign';
+import { ExecutiveSectionCard as Card, ExecutiveKpi, ExecutiveKpiStrip, ExecutiveTable as ReportTable, Figure, IncompleteDot, ReportNotes, ExecutiveTabs, type ReportColumn, type ReportDetailGroup, type ReportDetailItem } from './ExecutiveReportDesign';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { Button } from '@/common/components/button';
 import { EmptyState } from '@/common/components/state';
-import { W, RANK_LABELS, REPORT_VIEWS, DETAIL_TABS, thaiLabel } from './executive-reports.words';
+import { W, RANK_LABELS, REPORT_VIEWS, DETAIL_TABS, COMPANY_GROUPS as G, thaiLabel } from './executive-reports.words';
 import { money, ratioText, reportDate, reportDateTime, periodText, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber, hoistedSource, drillFilters, INFOGRAPHIC_FILTERS } from './executive-reports.logic';
 
 const LABELS = executivePeriodReportLabels();
@@ -139,62 +139,96 @@ const rowStatus = (row: StatusRow) => <MangmeeBadge className="max-w-full" tone=
 function referrer(row: ExecutiveCompanyRow['referrer']): string {
   return `${thaiLabel(row.label, row.salesCode)}${row.source === 'ADMIN' ? ` ${EXECUTIVE_REFERRER_ADMIN_SUFFIX}` : ''}`;
 }
+const sheetLabel = (key: string) => EXECUTIVE_COMPANY_SHEET_COLUMNS.find(column => column.key === key)!.label;
+/** Facts of the selected period, which the owner's sheet does not carry, under the key the API orders the list by. */
+const PERIOD_LABELS: Record<string, string> = { netReceipts: W.unitInHeader(W.shortNet, W.unitBaht), expenseReceiptCount: W.receiptCount, activeDays: W.days, aiRequests: W.ai, lastActivityAt: W.lastActivity };
+const factLabel = (key: string) => PERIOD_LABELS[key] ?? sheetLabel(key);
+/** The sheet's own columns after the name, in the owner's order (2026-10-04). The contact pair and the note follow them. */
+const SHEET_COLUMNS = ['businessType', 'plan', 'receiptsLifetime', 'lastReceiptAt', 'planEndsAt'];
+const contactLink = 'relative z-10 block truncate text-brand-800 underline decoration-1 underline-offset-2 focus-visible:outline-2 focus-visible:outline-brand-700 max-md:inline-flex max-md:min-h-11 max-md:items-center max-md:whitespace-normal max-md:[overflow-wrap:anywhere]';
+/** A header on two lines breaks before `part` and nowhere else: left alone, the browser cuts a word it does not know (แพ็กเกจ) in two. */
+const brokenBefore = (label: string, part: string): ReactNode => label.endsWith(part) && label.length > part.length ? <><span className="whitespace-nowrap">{label.slice(0, -part.length)}</span><wbr /><span className="whitespace-nowrap">{part}</span></> : label;
+
+const paymentStateLabel = (row: ExecutiveCompanyRow) => row.sheet.paymentState.fullyRefunded ? refundLabel : LABELS.paidEver[row.sheet.paymentState.paidEver];
+/** Every fact of one company the list can show, under the key the API orders it by. A fact that is not known reads "–", never 0. */
+function companyFacts(row: ExecutiveCompanyRow, data: ExecutiveCompanies): Record<string, ReactNode> {
+  const sheet = row.sheet, usage = row.coverage?.usage ?? data.coverage.usage;
+  const number = (value: number | null) => value === null ? '–' : value.toLocaleString('th-TH');
+  return {
+    businessType: sheet.businessTypeLabel ? <span className="whitespace-normal md:line-clamp-2" title={sheet.businessTypeLabel}>{sheet.businessTypeLabel}</span> : '–',
+    plan: <span className="flex min-w-0 flex-col items-start gap-1 max-md:items-end"><MangmeeBadge className="max-w-full"><span className="min-w-0 truncate" title={row.planLabel}>{row.planLabel}</span></MangmeeBadge>{row.planState !== 'ACTIVE' && <span className="text-xs leading-4 text-gray-600">{LABELS.planState[row.planState] ?? W.unknown}</span>}</span>,
+    receiptsLifetime: <Figure value={sheet.receiptsLifetime} />, lastReceiptAt: reportShortDate(sheet.lastReceiptAt), planEndsAt: reportShortDate(sheet.planEndsAt),
+    firstReceiptAt: reportShortDate(sheet.firstReceiptAt), receipts7: <Figure value={sheet.receipts7} />, receipts30: <Figure value={sheet.receipts30} />, receiptDays30: <Figure value={sheet.receiptDays30} />,
+    daysSinceLastReceipt: number(sheet.daysSinceLastReceipt), confirmed: <Figure value={sheet.confirmed} />, pending: <Figure value={sheet.pending} />, draft: <Figure value={sheet.draft} />,
+    receiptBucket: sheet.receiptBucket ? S.receiptBucket[sheet.receiptBucket] : '–',
+    paymentState: paymentStateLabel(row),
+    // The sheet says "หมดอายุแล้ว" for a package that has run out, never a negative number of days.
+    daysLeft: sheet.packageExpired ? S.expired : number(sheet.daysLeft),
+    lifetimeReceiptsSatang: <Figure value={sheet.lifetimeReceiptsSatang} moneyValue />, lifetimeRefundsSatang: <Figure value={sheet.lifetimeRefundsSatang} moneyValue />, lifetimeNetSatang: <Figure value={sheet.lifetimeNetSatang} moneyValue netValue />,
+    activeMemberCount: number(sheet.activeMemberCount), branchCount: number(sheet.branchCount), joinedAt: reportShortDate(row.joinedAt),
+    signupRail: thaiLabel(LABELS.signupRail[row.signupRail] ?? W.unknown), discovery: [thaiLabel(row.discovery.label), row.discovery.otherText].filter(Boolean).join(' · '), referrer: referrer(row.referrer),
+    aiRequests30: <Figure value={sheet.aiRequests30} />, lastUseAt: reportShortDate(row.inactivity.lastUseAt),
+    // A number the API gives is shown as it is; where it gives none, the dash says why (the dot).
+    daysSinceLastUse: row.inactivity.daysSinceLastUse === null ? <Figure value={sourceCount(null, row.inactivity.coverage)} /> : number(row.inactivity.daysSinceLastUse),
+    churned: row.inactivity.churned === null ? <Figure value={sourceCount(null, row.inactivity.coverage)} /> : row.inactivity.churned ? W.yes : W.export.no,
+    netReceipts: <Figure value={sourceMoney(row.metrics.netReceiptsSatang, row.coverage?.money ?? data.coverage.money)} moneyValue netValue />,
+    expenseReceiptCount: <Figure value={sourceCount(row.metrics.expenseReceiptCountInPeriod, usage)} />, activeDays: <Figure value={sourceCount(row.metrics.activeDays, usage)} />,
+    aiRequests: <Figure value={sourceCount(row.metrics.aiRequests, usage)} />, lastActivityAt: reportShortDate(row.lastActivityAt),
+  };
+}
+
 export function CompaniesContent({ data, nav, sortColumn }: { data: ExecutiveCompanies; nav: Navigation; sortColumn?: (key: string) => void }) {
-  const ranked = ['netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests'].includes(data.sort.sortBy);
-  const netSort = data.sort.sortBy === 'netReceipts';
+  const netSort = data.sort.sortBy === 'netReceipts', ranked = ['netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests'].includes(data.sort.sortBy);
   const churnFilter = nav.params.get('filter_churned') === 'true' || drillFilters(nav.params)?.churned === 'true';
-  const sheetLabel = (key: string) => EXECUTIVE_COMPANY_SHEET_COLUMNS.find(column => column.key === key)!.label;
-  const sort = (key: string) => data.sort.sortBy === key ? data.sort.sortDir === 'asc' ? 'ascending' as const : 'descending' as const : undefined;
+  // The contact pair exists only where the API returns contacts (the reader holds that right). Without it there is no column: no empty or masked cell.
+  const contacts = data.items.some(row => row.ownerContact.status !== 'NOT_PERMITTED');
+  // What the list is filtered or ordered by is read right after the name, unless the sheet's own columns (or the name's own line) already show it.
+  const lead = [...new Set([...(churnFilter ? ['lastUseAt', 'daysSinceLastUse'] : []), data.sort.sortBy as string])].filter(key => !['companyName', 'joinedAt', ...SHEET_COLUMNS].includes(key));
+  const order = (key: string) => EXECUTIVE_SORT_OPTIONS.some(option => option.sortBy === key) ? { sort: data.sort.sortBy === key ? data.sort.sortDir === 'asc' ? 'ascending' as const : 'descending' as const : undefined, onSort: sortColumn && (() => sortColumn(key)) } : {};
+  const text = { align: 'left' as const };
+  // Sized so the nine columns fit a 1280 px screen (974 px of table); under that the card scrolls sideways and the name stays in place.
   const columns: ReportColumn[] = [
-    ...(ranked ? [{ label: W.rank, width: 64, mobile: false, source: netSort ? data.coverage.money : data.coverage.usage, sourceName: netSort ? 'money' : 'usage' }] : []),
-    { label: W.company, width: netSort ? 200 : 220, sort: sort('companyName'), onSort: sortColumn && (() => sortColumn('companyName')) },
-    { label: W.group, width: 160, hide: 'always', mobile: false, align: 'left' },
-    { label: W.plan, width: 136, hide: churnFilter || ranked && data.sort.sortBy !== 'expenseReceiptCount' || data.sort.sortBy === 'lastActivityAt' ? 'always' : 'narrow', mobile: false, align: 'left' },
-    { label: W.status, width: 140, hide: churnFilter ? 'always' : 'narrow', mobile: false, align: 'left' },
-    { label: W.lifetimeReceipts, width: 116, hide: 'always', mobile: false },
-    { label: W.tableReceipts, width: 120, hide: churnFilter ? 'always' : ranked && !netSort && data.sort.sortBy !== 'expenseReceiptCount' ? 'narrow' : undefined, mobile: !churnFilter, sort: sort('expenseReceiptCount'), onSort: sortColumn && (() => sortColumn('expenseReceiptCount')) },
-    { label: W.days, width: 104, hide: !churnFilter && data.sort.sortBy === 'activeDays' ? undefined : 'always', mobile: !churnFilter, sort: sort('activeDays'), onSort: sortColumn && (() => sortColumn('activeDays')) },
-    { label: W.ai, width: 128, hide: data.sort.sortBy === 'aiRequests' ? undefined : 'always', mobile: data.sort.sortBy === 'aiRequests', sort: sort('aiRequests'), onSort: sortColumn && (() => sortColumn('aiRequests')) },
-    { label: W.lastActivity, width: 120, hide: data.sort.sortBy === 'lastActivityAt' ? undefined : 'always', mobile: false, sort: sort('lastActivityAt'), onSort: sortColumn && (() => sortColumn('lastActivityAt')) },
-    { label: W.shortJoined, width: 96, hide: !churnFilter && data.sort.sortBy === 'joinedAt' ? undefined : 'always', mobile: false, sort: sort('joinedAt'), onSort: sortColumn && (() => sortColumn('joinedAt')) },
-    { label: W.unitInHeader(W.tableNet, W.unitBaht), width: 132, mobile: !churnFilter, hide: churnFilter ? 'always' : undefined, sort: sort('netReceipts'), onSort: sortColumn && (() => sortColumn('netReceipts')) },
-    ...(churnFilter ? [{ label: sheetLabel('lastUseAt'), width: 204, hide: 'narrow' as const, mobile: true }, { label: sheetLabel('daysSinceLastUse'), width: 228, mobile: true }] : []),
-    ...(netSort ? [{ label: W.shortCumulative, width: 84, mobile: false, source: data.coverage.money, sourceName: 'money' }] : []),
+    { label: sheetLabel('company'), width: 150, ...order('companyName') }, ...lead.map(key => ({ label: factLabel(key), width: 104, ...order(key) })),
+    { label: sheetLabel('businessType'), width: 112, ...text }, { label: sheetLabel('plan'), width: 100, ...text },
+    { label: sheetLabel('receiptsLifetime'), head: brokenBefore(sheetLabel('receiptsLifetime'), '(รายการสะสม)'), width: 100, ...order('receiptsLifetime') },
+    { label: sheetLabel('lastReceiptAt'), head: brokenBefore(sheetLabel('lastReceiptAt'), 'ล่าสุด'), width: 84, ...order('lastReceiptAt') },
+    { label: sheetLabel('planEndsAt'), head: brokenBefore(sheetLabel('planEndsAt'), 'แพ็กเกจ'), width: 80, ...order('planEndsAt') },
+    ...(contacts ? [{ label: sheetLabel('email'), width: 116, ...text }, { label: sheetLabel('phone'), width: 100, ...text }] : []),
+    { label: sheetLabel('note'), width: contacts ? 88 : 304, ...text },
   ];
   return <ReportNotes data={data}>
     <div data-executive-quick-filters className="flex min-w-0 items-center gap-2 overflow-x-auto">{INFOGRAPHIC_FILTERS.map(({ key, value, label }) => <DrillLink key={`${key}-${value}`} nav={nav} filters={{ ...(drillFilters(nav.params) ?? {}), [key]: value, ...(['churned'].includes(key) ? {} : { atDataDate: 'true' }) }} className="flex min-h-11 shrink-0 items-center rounded-full border border-gray-200 px-3 text-xs text-brand-800">{label}</DrillLink>)}<Button variant="secondary" onClick={() => { const panel = document.getElementById('executive-filter-packageLabel')?.closest<HTMLElement>('[popover]'); if (panel) document.querySelector<HTMLButtonElement>(`button[popovertarget="${panel.id}"]`)?.click(); }}>{S.package}</Button></div>
     <p role="status" className="text-sm tabular-nums">{W.found(data.pagination.total)} · {W.shortNet} <Figure value={data.summary.netReceiptsSatang} moneyValue netValue unit={W.unitBaht} /></p>
     {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <section aria-label={W.companies} className="rounded-xl border border-gray-200 bg-white">
-      <ReportTable title={W.companies} compactMobile columns={columns} nameIndex={ranked ? 1 : 0} remember={nav.remember} rows={data.items.map(row => {
-        const cells = [
-          ...(ranked ? [row.rank ?? '–'] : []),
-          <div key="name" className="min-w-0"><span className="block truncate" title={row.displayName}>{row.displayName}</span><span className="block truncate text-xs font-normal text-gray-600">{row.provinceLabel} · {W.joinedShort(reportShortDate(row.joinedAt))}</span></div>,
-          <span key="group" className="block whitespace-normal" title={row.industryGroup.label}>{row.industryGroup.label}</span>,
-          <span key="plan" className="flex min-w-0 flex-col items-start gap-1"><MangmeeBadge className="max-w-full"><span className="min-w-0 truncate" title={row.planLabel}>{row.planLabel}</span></MangmeeBadge>{row.planState !== 'ACTIVE' && <span className="text-xs leading-4 text-gray-600">{LABELS.planState[row.planState] ?? W.unknown}</span>}</span>, rowStatus(row),
-          <Figure key="lifetime" value={sourceCount(row.metrics.expenseReceiptCountLifetime, row.coverage?.usage ?? data.coverage.usage)} />,
-          <Figure key="receipts" value={sourceCount(row.metrics.expenseReceiptCountInPeriod, row.coverage?.usage ?? data.coverage.usage)} />,
-          <Figure key="days" value={sourceCount(row.metrics.activeDays, row.coverage?.usage ?? data.coverage.usage)} />, <Figure key="ai" value={sourceCount(row.metrics.aiRequests, row.coverage?.usage ?? data.coverage.usage)} />, reportShortDate(row.lastActivityAt), reportShortDate(row.joinedAt),
-          <Figure key="net" value={sourceMoney(row.metrics.netReceiptsSatang, row.coverage?.money ?? data.coverage.money)} moneyValue netValue />,
-          ...(churnFilter ? [reportShortDate(row.inactivity?.lastUseAt), row.inactivity ? <Figure key="inactivity" value={sourceCount(row.inactivity.daysSinceLastUse, row.inactivity.coverage)} /> : '–'] : []),
-          ...(netSort ? [row.cumulativeShare ? ratioText(row.cumulativeShare) : '–'] : []),
-        ];
-        // A column that is not on screen at this width is read here instead, under the same label (or a fuller one).
-        const column = (label: string, as = label) => { const index = columns.findIndex(item => item.label === label); return index < 0 ? [] : [{ label: as, value: cells[index], column: index }]; };
+      <ReportTable title={W.companies} sheet columns={columns} remember={nav.remember} rows={data.items.map(row => {
+        const facts = companyFacts(row, data), fact = (key: string): ReportDetailItem => ({ label: factLabel(key), value: facts[key] });
+        // A contact is a link the reader presses to write or call. It goes nowhere else: not into an address of this site, a log or a count.
+        const email = row.ownerContact.status === 'OK' && row.ownerContact.email, phone = row.ownerContact.status === 'OK' && row.ownerContact.phoneNumber;
+        // Why there is no contact (no owner account, several owners) is said once, in the first of the two cells.
+        const noContact = row.ownerContact.status === 'OK' ? null : contactFields(row.ownerContact)[0]?.[1];
         const reasons = [...new Set([row.paidEver.reason, row.usageUnassessedReason].filter((code): code is string => !!code && ![...data.coverage.money.reasonCodes, ...data.coverage.usage.reasonCodes].some(common => common === code)))].map(code => reasonText(code));
-        return { key: row.id, href: companyLink(row.id, nav.params), className: 'executive-company-row', cells, groups: [
-          { title: W.companyTab, items: [{ label: W.registered, value: row.registeredName || W.unknown }, ...column(W.group),
-            { label: W.filterLabels.discovery, value: [thaiLabel(row.discovery.label), row.discovery.otherText].filter(Boolean).join(' · ') }, { label: W.filterLabels.signupRail, value: thaiLabel(LABELS.signupRail[row.signupRail] ?? W.unknown) }, { label: W.referring, value: referrer(row.referrer) }] },
-          { title: W.usage, items: [{ label: W.filterLabels.receiptAdoption, value: LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown }, ...column(W.lifetimeReceipts), ...column(W.tableReceipts), ...column(W.days),
-            ...([[W.users, 'activeUsers'], [W.documents, 'documents']] as const).map(([label, key]) => ({ label, value: <Figure value={sourceCount(row.metrics[key], data.coverage.usage)} /> })),
-            ...column(W.ai), ...column(W.lastActivity), ...(churnFilter ? [...column(sheetLabel('lastUseAt')), ...column(sheetLabel('daysSinceLastUse'))] : [])] },
-          { title: W.status, items: [{ label: W.filterLabels.companyStatus, value: LABELS.companyStatus[row.companyStatus] ?? W.unknown }, ...column(W.plan), ...column(W.status, W.filterLabels.usageGroup),
-            ...(rowStatusLabel(row) !== LABELS.paidEver[row.paidEver.value] ? [{ label: sheetLabel('paymentState'), value: LABELS.paidEver[row.paidEver.value] }] : []),
-            ...column(W.rank), ...column(W.unitInHeader(W.tableNet, W.unitBaht)), ...column(W.shortCumulative),
-            ...(netSort && !row.cumulativeShare && data.coverage.money.coverage === 'complete' && row.metrics.netReceiptsSatang !== null && row.metrics.netReceiptsSatang <= 0 ? [{ label: W.cumulativeShare, value: W.notInShare }] : []),
-            ...(reasons.length ? [{ label: W.export.notes, value: reasons.join(' · ') }] : [])] },
+        const groups: ReportDetailGroup[] = [
+          ...(row.note.text ? [{ title: N.title, items: [{ label: sheetLabel('note'), value: <span className="whitespace-pre-wrap">{row.note.text}</span>, wide: true }, { label: sheetLabel('noteUpdatedBy'), value: row.note.updatedBy?.displayName ?? '–' }, { label: sheetLabel('noteUpdatedAt'), value: reportDateTime(row.note.updatedAt, '–') }] }] : []),
+          { title: G.receipts, items: ['firstReceiptAt', 'receipts7', 'receipts30', 'receiptDays30', 'daysSinceLastReceipt', 'confirmed', 'pending', 'draft', 'receiptBucket'].map(fact) },
+          { title: G.plan, items: ['paymentState', 'daysLeft', 'lifetimeReceiptsSatang', 'lifetimeRefundsSatang', 'lifetimeNetSatang'].map(fact) },
+          { title: G.people, items: [...['activeMemberCount', 'branchCount', 'joinedAt', 'signupRail', 'discovery', 'referrer'].map(fact), { label: W.registered, value: row.registeredName || W.unknown }, { label: W.group, value: row.industryGroup.label }, { label: W.filterLabels.companyStatus, value: LABELS.companyStatus[row.companyStatus] ?? W.unknown }] },
+          { title: G.usage, items: [...['lastUseAt', 'daysSinceLastUse', 'churned', 'aiRequests30'].map(fact), { label: W.filterLabels.receiptAdoption, value: LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown }] },
+          // The figures of the period chosen above the list, apart from the sheet's own (which are as of the data date).
+          { title: periodText(data.period), items: [...(rowStatusLabel(row) === paymentStateLabel(row) ? [] : [{ label: W.filterLabels.usageGroup, value: rowStatus(row) }]), ...['expenseReceiptCount', 'activeDays'].map(fact),
+            ...([[W.users, 'activeUsers'], [W.documents, 'documents']] as const).map(([label, key]) => ({ label, value: <Figure value={sourceCount(row.metrics[key], data.coverage.usage)} /> })), ...['aiRequests', 'netReceipts', 'lastActivityAt'].map(fact),
+            ...(ranked ? [{ label: W.rank, value: row.rank ?? '–' }] : []),
+            ...(netSort ? [{ label: W.cumulativeShare, value: row.cumulativeShare ? ratioText(row.cumulativeShare) : data.coverage.money.coverage === 'complete' && row.metrics.netReceiptsSatang !== null && row.metrics.netReceiptsSatang <= 0 ? W.notInShare : '–' }] : []),
+            ...(reasons.length ? [{ label: W.export.notes, value: reasons.join(' · '), wide: true }] : [])] },
+        ];
+        return { key: row.id, href: companyLink(row.id, nav.params), className: 'executive-company-row', groups, cells: [
+          <div key="name" className="min-w-0"><span className="block truncate" title={row.displayName}>{row.displayName}</span><span className="block truncate text-xs font-normal text-gray-600" title={row.provinceLabel}>{W.joinedShort(reportShortDate(row.joinedAt))} · {row.provinceLabel}</span></div>,
+          ...lead.map(key => facts[key]), ...SHEET_COLUMNS.map(key => facts[key]),
+          ...(contacts ? [email ? <a key="email" href={`mailto:${encodeURI(email)}`} title={email} className={contactLink}>{email}</a> : noContact ? <span key="email" className="whitespace-normal text-gray-600 md:line-clamp-2" title={noContact}>{noContact}</span> : '–',
+            phone ? <a key="phone" href={`tel:${phone.replace(/[^\d+]/g, '')}`} className={contactLink}>{phone}</a> : '–'] : []),
+          row.note.text ? <span key="note" className="line-clamp-2 whitespace-normal" title={row.note.text}>{row.note.text}</span> : '–',
         ], action: <ReportLink href={companyLink(row.id, nav.params)} remember={nav.remember} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 text-sm font-semibold text-brand-800 md:w-auto">{W.detail}<span aria-hidden="true">→</span></ReportLink> };
       })} />
-      <p className="px-2 py-1 text-xs text-gray-600">{data.coverage.money.coverage === 'complete' && data.items.some(row => row.metrics.netReceiptsSatang !== null && row.metrics.netReceiptsSatang < 0) && `${W.negative} · `}{W.receiptDefinition} · {W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
+      <p className="px-2 py-1 text-xs text-gray-600">{S.asOf} {reportDate(data.items[0]?.sheet.asOf)} · {data.coverage.money.coverage === 'complete' && data.items.some(row => row.metrics.netReceiptsSatang !== null && row.metrics.netReceiptsSatang < 0) && `${W.negative} · `}{W.receiptDefinition} · {W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
       {netSort && <p className="px-2 py-1 text-xs text-gray-600">{W.tieOrder}</p>}
     </section>}
   </ReportNotes>;

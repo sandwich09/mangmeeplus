@@ -65,24 +65,37 @@ const company = {
   paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', receiptAdoption: 'EVER', fullyRefunded: false,
   metrics: { expenseReceiptCountLifetime: 27, expenseReceiptCountInPeriod: 7, activeDays: 3, activeUsers: 2, documents: 4, aiRequests: 5, netReceiptsSatang: 10000 }, lastActivityAt: '2026-09-30T00:00:00Z',
 };
-test('directory uses explicit receipt columns, an opened row of grouped facts under their own labels and no comparison checkbox', async () => {
+test('an opened row of the company sheet is grouped facts under their own labels, with the note in full and a link to the company', async () => {
   const { CompaniesContent } = await content();
-  const html = htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(10000) }, items: [company], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
+  const { companyFacts } = await import('./executive-company.fixture');
+  const facts = companyFacts({ note: { text: 'โทรคุยแล้ว\nรอใบเสนอราคา', version: 2, updatedAt: '2026-10-04T08:30:00.000Z', updatedBy: { displayName: 'สมหญิง' } } });
+  const html = htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(10000) }, items: [{ ...company, ...facts }], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
   assert.match(html, /executive-company-row/);
-  assert.ok((html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').includes(W.lifetimeReceipts));
   // Owner 2026-10-05: an opened row is a tidy grid, grouped, every value under its own label, with a link to the company; no run-on line.
   const opened = html.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '';
-  assert.deepEqual([...opened.matchAll(/<h3[^>]*>([^<]*)<\/h3>/g)].map(match => match[1]), [W.companyTab, W.usage, W.status]);
-  assert.equal((opened.match(/<dl class="grid grid-cols-2 [^"]*@min-\[640px\]:grid-cols-3 @min-\[936px\]:grid-cols-4"/g) ?? []).length, 3);
+  assert.deepEqual([...opened.matchAll(/<h3[^>]*>([^<]*)<\/h3>/g)].map(match => match[1]), ['หมายเหตุของทีมมั่งมี', 'ใบเสร็จ', 'แพ็กเกจและการชำระ', 'คนและการตั้งค่า', 'การใช้งาน', 'ช่วงเดือน ก.ย. 2569']);
+  assert.equal((opened.match(/<dl class="grid grid-cols-2 [^"]*@min-\[640px\]:grid-cols-3 @min-\[936px\]:grid-cols-4"/g) ?? []).length, 6);
   assert.equal((opened.match(/<dt/g) ?? []).length, (opened.match(/<dd/g) ?? []).length);
-  assert.match(opened, /<dt[^>]*>ชื่อจดทะเบียน<\/dt><dd[^>]*>บริษัท ก<\/dd>/); assert.doesNotMatch(opened, /ชื่อจดทะเบียน:|ที่มา:/);
+  const read = (label: string) => new RegExp(`<dt[^>]*>${label.replace(/[()]/g, '\\$&')}</dt><dd[^>]*>([\\s\\S]*?)</dd>`).exec(opened)?.[1].replace(/<[^>]*>/g, '');
+  // The owner's sheet, in his groups, with the shared column words.
+  for (const [label, value] of [['บิลแรก', '3 ก.ค. 69'], ['ใบเสร็จใหม่ 7 วัน', '2'], ['ใบเสร็จใหม่ 30 วัน', '7'], ['จำนวนวันที่เพิ่มใบเสร็จใน 30 วัน', '3'], ['ห่างจากใบเสร็จล่าสุด (วัน)', '5'], ['ยืนยันแล้ว', '20'], ['รอตรวจ/ยืนยัน', '4'], ['แบบร่าง', '3'], ['ระดับใบเสร็จ', '6 รายการขึ้นไป'],
+    ['สถานะการชำระ', 'เคยชำระเงิน'], ['วันเหลือ', '10'], ['รับชำระสะสม (บาท)', '999.00'], ['คืนเงินสะสม (บาท)', '0.00'], ['ชำระสุทธิสะสม (บาท)', '999.00'],
+    ['สมาชิกใช้งานได้', '2'], ['สาขาเปิด', '1'], ['วันที่สมัคร', '1 ก.ย. 69'], ['ช่องทางสมัคร', 'สมัครทางไลน์'], ['รู้จักจาก', 'อื่น ๆ · งานร้านค้า'], ['ผู้แนะนำ', 'ไม่มีเซลล์ผู้แนะนำ'], ['ชื่อจดทะเบียน', 'บริษัท ก'],
+    ['ใช้ระบบล่าสุดถึงวันอ้างอิง', '30 ก.ย. 69'], ['ห่างจากการใช้ระบบล่าสุด (วัน)', '0'], ['เลิกใช้ (ไม่ได้ใช้ติดต่อกันเกิน 1 เดือน)', 'ไม่ใช่'], ['คำขอผู้ช่วย 30 วัน', '5'],
+    [W.receiptCount, '7'], [W.days, '3'], [W.users, '2'], [W.documents, '4'], [W.ai, '5'], ['ยอดรับสุทธิ (บาท)', '100.00'], [W.lastActivity, '30 ก.ย. 69'],
+    ['หมายเหตุ', 'โทรคุยแล้ว\nรอใบเสนอราคา'], ['ผู้แก้ไขหมายเหตุ', 'สมหญิง'], ['แก้ไขหมายเหตุเมื่อ', '4 ต.ค. 2569 15:30 น.']] as const) assert.equal(read(label), value, label);
+  assert.doesNotMatch(opened, /ชื่อจดทะเบียน:|ที่มา:/);
+  // The note is clamped to two lines in its cell and whole in the opened row.
+  assert.match(html, /<span class="line-clamp-2 whitespace-normal" title="โทรคุยแล้ว\nรอใบเสนอราคา">/); assert.match(opened, /<div class="min-w-0 col-span-full "><dt[^>]*>หมายเหตุ<\/dt><dd[^>]*><span class="whitespace-pre-wrap">/);
   assert.match(opened, /<a[^>]*href="\/system\/executive\/companies\/[^"]*"[^>]*>รายละเอียดบริษัท<span aria-hidden="true">→<\/span><\/a>/);
-  // An opened row spans every column, hidden ones too: the empty trailing columns take that span, so the table keeps the card's full width.
-  assert.equal((html.match(/<col style="width:0"\/>/g) ?? []).length, (html.match(/<col class="md:hidden[^"]*"/g) ?? []).length);
+  // A package that has run out reads "หมดอายุแล้ว", never a negative number of days; a fact the API does not know reads "–", never 0.
+  const expired = htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(0) }, items: [{ ...company, ...companyFacts(), sheet: { ...facts.sheet, daysLeft: -3, packageExpired: true, firstReceiptAt: null, lastReceiptAt: null, daysSinceLastReceipt: null, receiptBucket: null, businessTypeLabel: null, planEndsAt: null } }], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
+  const cells = [...(expired.replace(/<tr hidden=""[\s\S]*?<\/tr>/g, '').match(/<tbody[\s\S]*?<\/tbody>/)?.[0] ?? '').matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(match => match[1].replace(/<span class="[^"]*md:hidden">[^<]*<\/span>/, '').replace(/<[^>]*>/g, ''));
+  assert.deepEqual([cells[1], cells[4], cells[5], cells[6]], ['–', '–', '–', '–']); // business type, last receipt, package end, note
+  assert.match(expired, /<dt[^>]*>วันเหลือ<\/dt><dd[^>]*>หมดอายุแล้ว<\/dd>/); assert.doesNotMatch(expired.replace(/<[^>]*>/g, ' '), /[-−]\s?3\b/);
   assert.doesNotMatch(html, /type="checkbox"|เปรียบเทียบ/);
-  assert.equal((html.match(/>เคยชำระเงิน</g) ?? []).length, 1);
-  for (const label of [W.tableReceipts, W.days, W.users, W.documents, W.ai, W.lastActivity, W.shortPlan, W.tableNet]) assert.ok(html.includes(label), label);
-  assert.match(html, /งานร้านค้า/); assert.match(html, /สมัครทางไลน์/);
+  // An empty note has no group of its own in the opened row.
+  assert.doesNotMatch(expired.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '', /หมายเหตุของทีมมั่งมี/);
 });
 
 test('revenue trend has a fixed height, bar labels, signed baseline, gaps and one explanation per reason', async () => {

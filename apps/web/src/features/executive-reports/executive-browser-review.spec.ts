@@ -201,21 +201,23 @@ test('C6/C15: ring and swatches share tokens; follow-up rows appear once, in the
   for (const label of [EXECUTIVE_SHEET_WORDS.invite, EXECUTIVE_SHEET_WORDS.followExisting]) assert.equal(text.split(label).length - 1, 1, label);
 });
 
-test('C7: the directory does not repeat the main payment status in the expander', async () => {
+test('C7: the payment status of a company is said once, in the sheet\'s own line of the opened row', async () => {
   const { CompaniesContent } = await import('./ExecutiveReportContent');
+  const { companyFacts } = await import('./executive-company.fixture');
   const complete = { coverage: 'complete', reasonCodes: [] };
-  const row = { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'NEVER', paidEver: { value: 'NO' }, metrics: { expenseReceiptCountLifetime: 0, expenseReceiptCountInPeriod: 0, activeDays: 0, activeUsers: 0, documents: 0, aiRequests: 0, netReceiptsSatang: 0 } };
+  const row = { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'NEVER', paidEver: { value: 'NO' }, metrics: { expenseReceiptCountLifetime: 0, expenseReceiptCountInPeriod: 0, activeDays: 0, activeUsers: 0, documents: 0, aiRequests: 0, netReceiptsSatang: 0 }, ...companyFacts(), sheet: { ...companyFacts().sheet, paymentState: { paidEver: 'NO', fullyRefunded: false } } };
   const data = { period: { month: '2026-09', isPartialMonth: false }, build: {}, coverage: { money: complete, usage: complete }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 }, population: {}, items: [row], sort: { sortBy: 'joinedAt' }, summary: { netReceiptsSatang: { value: 0, ...complete } }, pagination: { total: 1 } };
-  const markup = html(CompaniesContent, { data, nav: { params: new URLSearchParams(), from: 'companies' } });
-  const main = markup.replace(/<tr hidden=""[\s\S]*?<\/tr>/g, '');
-  assert.equal(main.replace(/<[^>]*>/g, '').split('ยังไม่เคยชำระเงิน').length - 1, 1);
-  // In the opened row the status stands in for its column only: it is hidden wherever the column itself is on screen (a wide table),
-  // and the separate payment line is left out when the status already says the same.
+  const nav = { params: new URLSearchParams(), from: 'companies' };
+  const markup = html(CompaniesContent, { data, nav });
+  // The status is not a column of the sheet: the closed row does not say it.
+  assert.doesNotMatch(markup.replace(/<tr hidden=""[\s\S]*?<\/tr>/g, ''), /ยังไม่เคยชำระเงิน/);
   const opened = markup.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '';
-  const repeats = opened.match(/<div class="[^"]*"><dt[^>]*>[^<]*<\/dt><dd[^>]*>(?:(?!<\/dd>)[\s\S])*ยังไม่เคยชำระเงิน/g) ?? [];
-  assert.equal(repeats.length, 1);
-  assert.match(repeats[0], /^<div class="min-w-0 block md:block @min-\[936px\]:hidden">/);
-  assert.doesNotMatch(opened, /สถานะการชำระ/);
+  assert.equal(opened.split('ยังไม่เคยชำระเงิน').length - 1, 1);
+  assert.match(opened, /<dt[^>]*>สถานะการชำระ<\/dt><dd[^>]*>ยังไม่เคยชำระเงิน<\/dd>/);
+  assert.doesNotMatch(opened, /การชำระและใช้งาน/);
+  // A status of the chosen period that says more than the payment state is read in the period's own group.
+  const active = html(CompaniesContent, { data: { ...data, items: [{ ...row, usageGroup: 'ACTIVE', paidEver: { value: 'YES' }, sheet: { ...row.sheet, paymentState: { paidEver: 'YES', fullyRefunded: false } } }] }, nav });
+  assert.match(active, /<dt[^>]*>การชำระและใช้งาน<\/dt>/); assert.match(active, /<dt[^>]*>สถานะการชำระ<\/dt><dd[^>]*>เคยชำระเงิน<\/dd>/);
 });
 
 test('round B d: every revenue tile belongs to the shared equal-width strip', () => {
@@ -294,35 +296,49 @@ test('round A: the compact frame places directory controls in the header and has
   assert.doesNotMatch(filters, /data-filter-chips/);
 });
 
-test('round A: directory column budgets fit both widths, keep the real sort and expose three or four mobile figures', async () => {
+test('owner\'s sheet: the nine columns fit a 1280 px screen, a fact the list is ordered by joins them, and contacts exist only with the right', async () => {
   const { CompaniesContent } = await import('./ExecutiveReportContent');
   const { ExecutiveTable } = await import('./ExecutiveReportDesign');
+  const { companyFacts } = await import('./executive-company.fixture');
   const complete = { coverage: 'complete', reasonCodes: [] };
-  const row = { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'ทดลองใช้ฟรีสำหรับร้านอาหาร', planState: 'TRIAL', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'NEVER', paidEver: { value: 'NO' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 3, activeDays: 2, activeUsers: 1, documents: 1, aiRequests: 5, netReceiptsSatang: 9900 }, cumulativeShare: { value: 100 } };
+  const row = { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'ทดลองใช้ฟรีสำหรับร้านอาหาร', planState: 'TRIAL', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'NEVER', paidEver: { value: 'NO' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 3, activeDays: 2, activeUsers: 1, documents: 1, aiRequests: 5, netReceiptsSatang: 9900 }, cumulativeShare: { value: 100 }, ...companyFacts({ ownerContact: { status: 'OK', email: 'owner@example.test', phoneNumber: '081-000 0001' } }) };
   const base = { period: { month: '2026-09', isPartialMonth: false }, build: {}, coverage: { money: complete, usage: complete }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 }, population: {}, items: [row], summary: { netReceiptsSatang: { value: 9900, ...complete } }, pagination: { total: 1 } };
-  for (const sortBy of ['joinedAt', 'companyName', 'netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests', 'lastActivityAt']) {
-    const tree = (CompaniesContent as any)({ data: { ...base, sort: { sortBy, sortDir: 'desc' } }, nav: { params: new URLSearchParams(), from: 'companies' } });
-    const table = elements(tree).find(e => e.type === ExecutiveTable)!;
-    const columns = table.props.columns;
-    assert.equal(table.props.compactMobile, true);
-    assert.equal(columns.some((c: any) => c.control), false); // no comparison checkbox column (owner 2026-10-05)
-    for (const [wide, budget] of [[false, 694], [true, 936]] as const) assert.ok(columns.filter((c: any) => c.hide !== 'always' && (wide || c.hide !== 'narrow')).reduce((n: number, c: any) => n + c.width, 44) <= budget, `${sortBy}/${wide}`);
-    const mobile = columns.filter((c: any) => c.mobile);
-    assert.equal(mobile.length, sortBy === 'aiRequests' ? 4 : 3);
-    const sorted = columns.filter((c: any) => c.sort);
-    assert.equal(sorted.length, 1, sortBy);
-    assert.equal(sorted[0].hide, undefined, sortBy);
-    if (sortBy === 'joinedAt') { assert.equal(sorted[0].label, W.shortJoined); assert.equal(columns.find((c: any) => c.label === W.company).sort, undefined); }
-    if (sortBy === 'aiRequests') assert.ok(mobile.some((c: any) => c.label === W.ai));
-    const rendered = html(ExecutiveTable, table.props);
-    assert.match(rendered, /grid-cols-\[repeat\(var\(--mobile-columns\),minmax\(0,1fr\)\)\]/);
-    assert.match(rendered, /title="ทดลองใช้ฟรีสำหรับร้านอาหาร/);
-    assert.match(rendered, /min-w-0 truncate/);
-    const packageBadge = rendered.match(/<span class="mangmee-badge[^>]*><span[^>]*title="ทดลองใช้ฟรีสำหรับร้านอาหาร"[^>]*>[\s\S]*?<\/span><\/span>/)![0];
-    assert.equal(packageBadge.replace(/<[^>]*>/g, ''), row.planLabel);
-    assert.match(rendered, /text-xs leading-4 text-gray-600/);
-    assert.match(rendered, /@min-\[936px\]:table-cell/);
-    assert.doesNotMatch(rendered, /⌃|⌄|max-h-|overflow-auto/);
+  const table = (sortBy: string, item: object = row) => elements((CompaniesContent as any)({ data: { ...base, items: [item], sort: { sortBy, sortDir: 'desc' } }, nav: { params: new URLSearchParams(), from: 'companies' } })).find(e => e.type === ExecutiveTable)!;
+  const labels = (sortBy: string, item: object = row) => table(sortBy, item).props.columns.map((c: any) => c.label);
+  const NINE = ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จ (รายการสะสม)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'อีเมล', 'เบอร์โทร', 'หมายเหตุ'];
+  for (const sortBy of ['joinedAt', 'companyName', 'receiptsLifetime', 'lastReceiptAt', 'planEndsAt']) {
+    const { props } = table(sortBy);
+    assert.equal(props.sheet, true); assert.deepEqual(labels(sortBy), NINE, sortBy);
+    // A 1280 px screen leaves the table 974 px: the nine columns and the opener fit, so nothing scrolls sideways there.
+    assert.ok(props.columns.reduce((n: number, c: any) => n + c.width, 44) <= 974, sortBy);
+    // No column is dropped at any width or kept off the phone card: a narrower card scrolls instead.
+    assert.ok(props.columns.every((c: any) => c.hide === undefined && c.mobile === undefined));
+    assert.deepEqual(props.columns.filter((c: any) => c.sort).map((c: any) => c.label), sortBy === 'joinedAt' ? [] : [NINE[['companyName', 'receiptsLifetime', 'lastReceiptAt', 'planEndsAt'].indexOf(sortBy) && ['companyName', 'receiptsLifetime', 'lastReceiptAt', 'planEndsAt'].indexOf(sortBy) + 2]], sortBy);
   }
-  assert.match(source('./ExecutiveReportContent.tsx'), /label === W.shortRefunds \? \{ hide: 'narrow'/);
+  // Ordered by a fact outside the nine: that fact is read right after the name and carries the order's arrow.
+  for (const [sortBy, label] of [['netReceipts', 'ยอดรับสุทธิ (บาท)'], ['daysSinceLastReceipt', 'ห่างจากใบเสร็จล่าสุด (วัน)'], ['aiRequests30', 'คำขอผู้ช่วย 30 วัน'], ['activeDays', W.days], ['lastActivityAt', W.lastActivity]] as const) {
+    assert.deepEqual(labels(sortBy), [NINE[0], label, ...NINE.slice(1)], sortBy);
+    assert.equal(table(sortBy).props.columns[1].sort, 'descending', sortBy);
+  }
+  // The headers that take two lines break before a whole word, never inside one the browser does not know.
+  const rendered = html(ExecutiveTable, table('joinedAt').props);
+  for (const [first, second] of [['ใบเสร็จ ', '(รายการสะสม)'], ['เพิ่มใบเสร็จ', 'ล่าสุด'], ['สิ้นสุด', 'แพ็กเกจ']]) assert.ok(rendered.includes(`<span class="whitespace-nowrap">${first}</span><wbr/><span class="whitespace-nowrap">${second}</span>`), second);
+  // With the contact right: two links the reader presses to write or call. The phone link carries digits only.
+  assert.match(rendered, /<a href="mailto:owner@example\.test" title="owner@example\.test"[^>]*>owner@example\.test<\/a>/); assert.match(rendered, /<a href="tel:0810000001"[^>]*>081-000 0001<\/a>/);
+  // Without it the API returns no contact: the two columns do not exist, and no cell is empty or masked.
+  const hidden = { ...row, ownerContact: { status: 'NOT_PERMITTED' } };
+  assert.deepEqual(labels('joinedAt', hidden), NINE.filter(label => label !== 'อีเมล' && label !== 'เบอร์โทร'));
+  assert.doesNotMatch(html(ExecutiveTable, table('joinedAt', hidden).props), /mailto:|tel:|owner@example|0810000001|081-000/);
+  assert.ok(table('joinedAt', hidden).props.columns.reduce((n: number, c: any) => n + c.width, 44) <= 974);
+  // No owner account (or several): said once, in the first of the two cells; the other reads "–".
+  const noOwner = html(ExecutiveTable, table('joinedAt', { ...row, ownerContact: { status: 'NO_CURRENT_OWNER' } }).props).replace(/<tr hidden=""[\s\S]*?<\/tr>/g, '');
+  assert.equal(noOwner.split('ไม่พบบัญชีเจ้าของปัจจุบัน').length - 1, 2); // the visible words and their title
+  assert.doesNotMatch(noOwner, /mailto:|tel:/);
+  // The phone card: label left, value right, on its own line for every column; the card grid of other tables is not used.
+  assert.match(rendered, /<tr[^>]*class="relative grid grid-cols-1 /); assert.doesNotMatch(rendered, /--mobile-columns/);
+  assert.match(rendered, /<td class="[^"]*flex items-baseline justify-between gap-3[^"]*"><span class="shrink-0 text-xs leading-5 text-gray-600 md:hidden">ประเภทกิจการ<\/span>/);
+  // The card scrolls sideways under the width of its columns, with the first column held in place above the rest.
+  assert.match(rendered, /<div class="relative min-w-0 @container md:overflow-x-auto"><table style="--sheet-width:974px" class="[^"]*md:min-w-\[var\(--sheet-width\)\]/);
+  assert.match(rendered, /<th[^>]*title="บริษัท \/ ร้าน"[^>]*class="whitespace-normal leading-4 md:sticky md:left-0 md:z-20 /);
+  assert.doesNotMatch(rendered.match(/<thead[\s\S]*?<\/thead>/)![0], /sticky top-20/);
 });
