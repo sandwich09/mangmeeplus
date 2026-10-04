@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Client } from 'pg';
 import type { ExecutiveCount, ExecutiveDrilldownFilters } from '@watchdog-bms/contracts';
-import { PrismaClient } from '../../generated/prisma/client';
+import { Prisma, PrismaClient } from '../../generated/prisma/client';
 import { AuditService } from '../audit/application/audit.service';
 import { PrismaAuditRepository } from '../audit/infrastructure/prisma-audit.repository';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
@@ -417,7 +417,7 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
     assert.deepEqual(await ids('BOUNDARY_TIE'), ['c-b', 'c-c', 'c-d', 'c-dup1']);
     assert.equal((await ids('REST')).length, top.restCount);
     // The companies paying 0 or less are counted on the same companies as the groups.
-    assert.equal((await list('2026-09', { pageSize: 100 })).items.filter((row) => row.metrics.netReceiptsSatang <= 0).length, top.nonPositiveCount);
+    assert.equal((await list('2026-09', { pageSize: 100 })).items.filter((row) => row.metrics.netReceiptsSatang! <= 0).length, top.nonPositiveCount);
     const tied = await list('2026-09', top.drilldownFilters.BOUNDARY_TIE!);
     assert.equal(valueOf(tied.summary.netReceiptsSatang), 4 * 299_000);
     // Ranks share a place (1, 2, 2, 2, 2, 6); the cumulative share checks the 80% edge; nothing positive, no share.
@@ -660,6 +660,55 @@ describe('executive report read API on real PostgreSQL', { skip: !databaseUrl },
       assert.deepEqual([kept.month!.usage.activeDays, kept.month!.usageGroup, kept.monthReasonCodes], [1, 'ACTIVE', ['SOURCE_ROWS_PURGED']]);
     } finally { clock = NOW; }
   });
+  it('RP04/RP08/RP19 reads a range from real built rows with union membership and reconciling totals', async () => {
+    const ctx = reader(), pair = { from: '2026-09', to: '2026-10' };
+    const [september, october, range, list] = await Promise.all([report.overview(ctx, { month: pair.from }), report.overview(ctx, { month: pair.to }), report.overview(ctx, pair), report.companies(ctx, { ...pair, pageSize: 100 })]);
+    assert.equal(valueOf(range.metrics.netReceiptsSatang), valueOf(september.metrics.netReceiptsSatang)! + valueOf(october.metrics.netReceiptsSatang)!);
+    const source = await client.executiveCompanyMonth.findMany({ where: { month: { in: [pair.from, pair.to] } } });
+    const customerIds = new Set((await client.executiveCompanyProfile.findMany({ where: { reportClassification: 'CUSTOMER' } })).map(row => row.companyId));
+    assert.equal(valueOf(range.metrics.activeCompanies), new Set(source.filter(row => customerIds.has(row.companyId) && row.activeDays > 0).map(row => row.companyId)).size);
+    assert.equal(list.pagination.total, valueOf(range.metrics.companies));
+    assert.equal(valueOf(list.summary.netReceiptsSatang), valueOf(range.metrics.netReceiptsSatang));
+    assert.equal((await report.company(ctx, 'c-a', pair)).periodSummary!.usage.activeUsers, null);
+    assert.equal((await report.analysis(ctx, { ...pair, section: 'revenue' })).revenue!.disputedInvoiceCount, null);
+  });
+  it('RP07 on real PostgreSQL preserves a missing middle header and a missing company row without fabricated zeroes', async () => {
+    const header = await client.executiveReportMonth.findFirstOrThrow({ where: { month: '2026-09' } });
+    try {
+      await client.executiveReportMonth.delete({ where: { month_definitionVersion: { month: header.month, definitionVersion: header.definitionVersion } } });
+      const range = await report.overview(reader(), { from: '2026-08', to: '2026-10' });
+      assert.equal(range.months!.find(month => month.month === '2026-09')!.built, false);
+      assert.ok(range.metrics.netReceiptsSatang.affectedMonths!.some(month => month.month === '2026-09' && month.reasonCodes.includes('RANGE_MONTH_NOT_BUILT')));
+    } finally { await client.executiveReportMonth.create({ data: header }); }
+    const row = await client.executiveCompanyMonth.findFirstOrThrow({ where: { month: '2026-09', companyId: 'c-a' } });
+    try {
+      await client.executiveCompanyMonth.delete({ where: { companyId_month_definitionVersion: { companyId: row.companyId, month: row.month, definitionVersion: row.definitionVersion } } });
+      const detail = await report.company(reader(), 'c-a', { from: '2026-09', to: '2026-09' });
+      assert.equal(detail.periodSummary!.money.netReceiptsSatang.coverage, 'unavailable');
+      assert.equal(detail.periodSummary!.usage.activeDays, null);
+      assert.equal(detail.monthlyHistory![0]!.summary, null);
+    } finally { await client.executiveCompanyMonth.create({ data: { ...row, moneyByPurchaseKind: row.moneyByPurchaseKind ?? Prisma.JsonNull } }); }
+  });
+  it('RP16 reads old monthly build IDs with current labels after a real hourly build', async () => {
+    const billing = new BillingCashMovementsService({ client } as never, { billingMode: 'live', stripeAccountId: STRIPE } as never);
+    const build = new ExecutiveReportBuildUseCase({ client } as never, billing);
+    const latest = await client.executiveReportBuild.findFirstOrThrow({ orderBy: { asOf: 'desc' } }), now = new Date(latest.asOf.getTime() + 3 * 3600000);
+    const original = await client.company.findUniqueOrThrow({ where: { id: 'c-a' }, select: { reportClassification: true } });
+    try {
+      await client.company.update({ where: { id: 'c-a' }, data: { reportClassification: 'TEST' } });
+      const built = await build.rebuild(now); assert.equal((built as { kind: string }).kind, 'HOURLY'); clock = now;
+      const range = await report.overview(reader(), { from: '2026-08', to: '2026-09' });
+      const august = await client.executiveCompanyMonth.findFirstOrThrow({ where: { month: '2026-08', companyId: 'c-a' } });
+      assert.notEqual(august.buildId, range.build.id);
+      const listed = await report.companies(reader(), { from: '2026-08', to: '2026-09', pageSize: 100 });
+      assert.ok(listed.items.every(row => row.id !== 'c-a'));
+      assert.ok(range.population.excludedTestInternalNetReceiptsSatang >= 500000);
+    } finally {
+      await client.company.update({ where: { id: 'c-a' }, data: original });
+      await build.rebuild(new Date(now.getTime() + 3600000)); clock = NOW;
+    }
+  });
+
 });
 
 // ── The rules, with no database (executive backend spec §13.1, §13.6) ─────────────────────────────
@@ -892,13 +941,14 @@ function exportSourceFixture(n = 15) {
 }
 describe('API13 snapshot to workbook agreement', () => {
   it('writes every source date as Thai text, including Bangkok day rollover and blank missing dates', async () => {
-    const f = exportSourceFixture(1), at = new Date('2026-09-30T18:30:00Z');
+    const f = exportSourceFixture(1), at = new Date('2026-09-30T18:30:00Z'), body = { ...f.body, month: '2026-10' };
+    f.rows[0]!.month = '2026-10';
     Object.assign(f.profiles[0]!, { companyCreatedAt: at, salesCreditPaidAt: at, firstActivityAt: at, lastActivityAt: at, lastWebEntryAt: at, lastLineActivityAt: at });
-    const source = workbookParts((await f.report.export(f.ctx, f.body)).file).get('xl/worksheets/sheet2.xml')!;
+    const source = workbookParts((await f.report.export(f.ctx, body)).file).get('xl/worksheets/sheet2.xml')!;
     for (const ref of ['F7', 'P7', 'AE7']) assert.match(cellXml(source, ref), /t="inlineStr"[\s\S]*1 ต.ค. 2569/);
     for (const ref of ['AF7', 'AG7', 'AH7']) assert.match(cellXml(source, ref), /t="inlineStr"[\s\S]*1 ต.ค. 2569 01:30 น./);
     f.profiles[0]!.lastLineActivityAt = null;
-    assert.equal(cellXml(workbookParts((await f.report.export(f.ctx, f.body)).file).get('xl/worksheets/sheet2.xml')!, 'AH7'), '');
+    assert.equal(cellXml(workbookParts((await f.report.export(f.ctx, body)).file).get('xl/worksheets/sheet2.xml')!, 'AH7'), '');
   });
   it('gives money KPI values the same card font and fill as count cards while retaining numeric money formatting', async () => {
     const f = exportSourceFixture();
@@ -1196,4 +1246,322 @@ it('keeps all four native charts when a ranking has no positive items, without i
   const empty = parts.get('xl/charts/chart2.xml')!;
   assert.match(empty, /'ภาพรวม'!\$G\$\d+:\$G\$\d+/);
   assert.doesNotMatch(empty.match(/<c:numCache>[\s\S]*?<\/c:numCache>/)![0], /<c:pt idx=/);
+});
+
+
+/** RP fixtures: the spec's three companies, all sources complete, plus the equal-length previous period. */
+function rangeSourceFixture() {
+  const f = exportSourceFixture(3), headers = new Map<string, any>();
+  Object.assign(f.build, { firstMonth: '2026-04', billingSince: at('2026-03-31T17:00:00Z'), aiUsageSince: at('2026-03-31T17:00:00Z') });
+  for (const month of ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10']) headers.set(month,
+    { month, revision: month === '2026-07' ? 2 : 1, revisedAt: month === '2026-07' ? f.build.asOf : null, asOf: f.build.asOf,
+      billingCoveredThrough: f.build.asOf, beforeFirstBuild: false, untiedCount: 0, untiedReceiptsSatang: 0, untiedRefundsSatang: 0, untiedOtherSatang: 0 });
+  f.profiles.forEach((profile, i) => Object.assign(profile, { companyCreatedAt: at(['2026-06-01T00:00:00Z', '2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z'][i]!),
+    paidEver: 'YES', fullyRefunded: false, firstActivityAt: at('2026-07-02T00:00:00Z') }));
+  const source: any[] = [];
+  const put = (i: number, month: string, receipts: number, refunds: number, count: number, active: boolean) => source.push({ ...f.rows[i], month,
+    definitionVersion: 1, buildId: month === '2026-07' ? 'older-hourly-build' : f.build.id,
+    receiptsSatang: receipts, refundsSatang: refunds, expenseReceiptsWeb: count, activeDays: active ? 1 : 0, activeUsers: active ? 2 : 0,
+    activeDaysLine: 0, activeDaysWeb: active ? 1 : 0, activeUsersLine: 0, activeUsersWeb: active ? 2 : 0, confirmedExpensesWeb: count,
+    paidEver: receipts || i < 2 ? 'YES' : 'NO', paidEverReason: null, fullyRefunded: false,
+    usageGroup: i === 2 ? 'NOT_PAID' : active ? 'ACTIVE' : 'INACTIVE', usageUnassessedReason: null,
+    moneyByPurchaseKind: { FIRST_PURCHASE: { receiptsSatang: receipts, refundsSatang: refunds, feesSatang: 12, taxSatang: 0 } }, disputedInvoiceCount: receipts ? 1 : 0 });
+  put(0, '2026-06', 20000, 0, 0, false);
+  put(0, '2026-07', 10000, 0, 2, true); put(0, '2026-08', 10000, 15000, 1, true); put(0, '2026-09', 0, 0, 0, true);
+  put(1, '2026-08', 5000, 0, 3, true); put(1, '2026-09', 20000, 3000, 2, false); put(2, '2026-09', 0, 0, 0, false);
+  const requested = (where: any, month: string) => typeof where.month === 'string' ? where.month === month
+    : where.month?.in ? where.month.in.includes(month) : (!where.month?.gte || month >= where.month.gte) && (!where.month?.lte || month <= where.month.lte);
+  f.tx.executiveReportMonth.findFirst = async () => ({ month: '2026-04' });
+  f.tx.executiveReportMonth.findUnique = async (args: any) => headers.get(args.where.month_definitionVersion.month) ?? null;
+  f.tx.executiveReportMonth.findMany = async (args: any = {}) => [...headers.values()].filter(row => requested(args.where ?? {}, row.month));
+  f.tx.executiveCompanyMonth.findMany = async (args: any) => source.filter(row => requested(args.where, row.month));
+  f.tx.company.findUnique = async (args: any) => ({ ...f.companies.find(row => row.id === args.where.id), createdAt: f.profiles.find(row => row.companyId === args.where.id)?.companyCreatedAt });
+  f.tx.executiveCompanyMonth.aggregate = async () => ({ _sum: { salesCreditSatang: 0 } });
+  f.tx.executiveReportBuild.aggregate = async () => ({ _min: { asOf: at('2026-03-01T00:00:00Z') } });
+  f.tx.executiveCompanyProfile.findUnique = async (args: any) => f.profiles.find(row => row.companyId === args.where.companyId);
+  f.tx.auditLog = { findMany: async () => [] };
+  (f.report as any).billing.companyPackagePurchases = async () => [];
+  return { ...f, headers, source, query: { from: '2026-07', to: '2026-09' } };
+}
+
+describe('executive period range RP01–RP19 without PostgreSQL', () => {
+  it('RP01 accepts month pairs and legacy month, rejects incomplete, mixed, reversed, future and daily inputs', async () => {
+    const f = rangeSourceFixture();
+    const paired = await f.report.overview(f.ctx, f.query as any);
+    assert.equal((paired.period as any).monthCount, 3);
+    assert.equal(paired.period.appliedPreset, null);
+    assert.equal((await f.report.overview(f.ctx, { month: '2026-09' })).period.month, '2026-09');
+    for (const query of [{ from: '2026-07' }, { to: '2026-09' }, {}, { ...f.query, month: '2026-09' },
+      { from: '2026-13', to: '2026-09' }, { from: '2026-09', to: '2026-07' }, { from: '2026-09', to: '2026-11' },
+      { from: '2026-09-01', to: '2026-09-30' }, { ...f.query, preset: 'ALL' }]) {
+      await assert.rejects(() => f.report.overview(f.ctx, query as any), e => statusOf(e) === 400 && codeOf(e) === 'EXECUTIVE_QUERY_INVALID');
+    }
+  });
+  it('RP02–RP03 resolves Bangkok defaults, shortened preset starts, ALL and unbuilt boundaries without hiding interior gaps', async () => {
+    const f = rangeSourceFixture();
+    f.report.clock = () => at('2026-09-30T17:00:00Z');
+    let context: any = await f.report.context(f.ctx);
+    assert.deepEqual(context.defaultPeriod, { from: '2026-09', to: '2026-09', appliedPreset: 'LAST_MONTH' });
+    assert.deepEqual(context.presets.find((p: any) => p.key === 'THIS_YEAR'), { key: 'THIS_YEAR', from: '2026-04', to: '2026-10', available: true, unbuiltBoundaryMonths: [] });
+    f.headers.delete('2026-08'); f.headers.delete('2026-10');
+    context = await f.report.context(f.ctx);
+    assert.equal(context.presets.find((p: any) => p.key === 'THIS_MONTH').available, false);
+    assert.deepEqual([context.presets.find((p: any) => p.key === 'ALL').from, context.presets.find((p: any) => p.key === 'ALL').to], ['2026-04', '2026-09']);
+    assert.ok(!context.builtMonths.includes('2026-08'));
+    await assert.rejects(() => f.report.overview(f.ctx, { from: '2026-08', to: '2026-09' } as any), e => statusOf(e) === 503 &&
+      codeOf(e) === 'EXECUTIVE_REPORT_UNAVAILABLE' && JSON.stringify((e as any).getResponse().unbuiltMonths) === '["2026-08"]');
+    f.report.clock = () => at('2026-10-07T17:00:00Z');
+    assert.equal((await f.report.context(f.ctx) as any).defaultPeriod.appliedPreset, 'THIS_MONTH');
+    f.headers.clear(); assert.ok((await f.report.context(f.ctx) as any).presets.every((p: any) => !p.available));
+  });
+  it('RP04–RP06/RP19 aggregates before ranking, unions companies, applies end flags and partitions current dimensions', async () => {
+    const f = rangeSourceFixture(), overview: any = await f.report.overview(f.ctx, f.query as any);
+    assert.deepEqual([overview.metrics.companies.value, overview.metrics.activeCompanies.value, overview.metrics.companiesWithReceipts.value,
+      overview.metrics.netReceiptsSatang.value, overview.metrics.newCompanies.value], [3, 2, 2, 27000, 2]);
+    const directory: any = await f.report.companies(f.ctx, { ...f.query, sortBy: 'netReceipts' } as any);
+    assert.deepEqual(directory.items.map((r: any) => [r.id, r.metrics.netReceiptsSatang]), [['fiction-1', 22000], ['fiction-0', 5000], ['fiction-2', 0]]);
+    assert.equal(directory.summary.netReceiptsSatang.value, 27000);
+    const newCompanies = await f.report.companies(f.ctx, overview.metrics.newCompanies.drilldownFilters);
+    assert.equal(newCompanies.pagination.total, 2);
+    assert.equal(directory.items[0].metrics.activeUsers, null);
+    assert.equal(overview.paidUsage.groups.find((g: any) => g.key === 'ACTIVE').count, 2);
+    assert.equal(overview.paidUsage.groups.find((g: any) => g.key === 'NOT_PAID').count, 1);
+    const groups = await f.report.analysis(f.ctx, { ...f.query, section: 'customers' } as any);
+    assert.equal(groups.groups!.reduce((n, g) => n + g.netReceiptsSatang.value!, 0), 27000);
+    assert.equal(groups.groups!.reduce((n, g) => n + g.activeCompanies.value!, 0), 2);
+    const detail: any = await f.report.company(f.ctx, 'fiction-0', f.query as any);
+    assert.equal(detail.periodSummary.money.netReceiptsSatang.value, 5000);
+    assert.equal(detail.periodSummary.usage.expenseReceiptCountInPeriod, 3);
+    assert.equal(detail.periodComparisons.activeDays.absoluteChange, 3);
+    assert.equal(detail.monthlyHistory.length, 3);
+    assert.deepEqual(detail.months.map((m: any) => m.revision), [2, 1, 1]);
+    // The current profile label wins over the old month's label, without requiring the old row's buildId to match.
+    f.profiles[1]!.reportClassification = 'TEST';
+    const relabelled: any = await f.report.overview(f.ctx, f.query as any);
+    assert.equal(relabelled.metrics.netReceiptsSatang.value, 5000);
+    assert.equal(relabelled.population.excludedTestInternalNetReceiptsSatang, 22000);
+    f.build.unclassifiedCount = 1; f.profiles[2]!.reportClassification = null as any; f.profiles[2]!.companyCreatedAt = at('2026-10-01T00:00:00Z');
+    const beforeSignup = await f.report.overview(f.ctx, f.query);
+    assert.equal(beforeSignup.metrics.companies.unclassifiedCount, 0); assert.equal(beforeSignup.population.unclassifiedCount, 0);
+  });
+  it('RP07 preserves interior gaps and metric-specific known values; before signup is not a source gap', async () => {
+    const f = rangeSourceFixture(); f.headers.delete('2026-08');
+    const data: any = await f.report.overview(f.ctx, f.query as any);
+    assert.deepEqual(data.months.map((m: any) => [m.month, m.built]), [['2026-07', true], ['2026-08', false], ['2026-09', true]]);
+    assert.deepEqual([data.metrics.activeCompanies.value, data.metrics.activeCompanies.knownValue, data.metrics.activeCompanies.coverage], [null, 1, 'partial']);
+    assert.deepEqual(data.metrics.netReceiptsSatang.affectedMonths, [{ month: '2026-08', reasonCodes: ['RANGE_MONTH_NOT_BUILT'] }]);
+    const concentration = (await f.report.analysis(f.ctx, { ...f.query, section: 'revenue', view: 'top' })).spendConcentration!;
+    assert.equal(concentration.positiveCompanyCount, null);
+    assert.equal(data.metrics.netReceiptsSatang.knownValue, 27000); // Only July + September, not the stored orphan August rows.
+    const detail: any = await f.report.company(f.ctx, 'fiction-2', f.query as any);
+    assert.deepEqual(detail.monthlyHistory[0].reasonCodes, ['NOT_YET_REGISTERED']);
+    f.profiles[2]!.companyCreatedAt = at('2026-10-01T00:00:00Z');
+    const later: any = await f.report.company(f.ctx, 'fiction-2', f.query as any);
+    assert.equal(later.periodSummary, null); assert.deepEqual(later.periodReasonCodes, ['NOT_YET_REGISTERED']);
+  });
+  it('RP07/RP08 never invents distinct users, invoices or missing-row zeroes and keeps cost coverage separate', async () => {
+    const f = rangeSourceFixture(), detail: any = await f.report.company(f.ctx, 'fiction-0', f.query as any);
+    assert.equal(detail.periodSummary.usage.activeUsers, null);
+    assert.equal(detail.monthlyHistory[0].summary.usage.activeUsers, 2);
+    assert.equal(detail.monthlyHistory[0].summary.disputedInvoiceCount.value, 1);
+    const revenue: any = await f.report.analysis(f.ctx, { ...f.query, section: 'revenue' } as any);
+    assert.equal(revenue.revenue.disputedInvoiceCount, null);
+    assert.equal(revenue.revenue.trend[0].disputedInvoiceCount.value, 1);
+    f.source.splice(f.source.findIndex(r => r.companyId === 'fiction-0' && r.month === '2026-08'), 1);
+    const missing: any = await f.report.overview(f.ctx, f.query as any);
+    assert.equal(missing.metrics.netReceiptsSatang.coverage, 'partial');
+    assert.equal(missing.metrics.netReceiptsSatang.affectedMonths[0].month, '2026-08');
+    const one: any = await f.report.company(f.ctx, 'fiction-0', { from: '2026-07', to: '2026-07' } as any);
+    assert.equal(one.periodSummary.usage.activeUsers, 2);
+    f.build.aiUsageSince = at('2026-08-15T00:00:00Z');
+    const costs: any = await f.report.company(f.ctx, 'fiction-1', f.query as any);
+    assert.equal(costs.periodSummary.money.netReceiptsSatang.coverage, 'complete');
+    assert.equal(costs.periodSummary.money.aiCostSatang.coverage, 'partial');
+    assert.equal(costs.periodSummary.money.aiCostSatang.affectedMonths[0].month, '2026-08');
+  });
+  it('RP07 reconciles purchase-kind totals with confirmed money when a stored month predates collection', async () => {
+    const f = rangeSourceFixture();
+    f.build.billingSince = at('2026-07-31T17:00:00Z');
+    const revenue = (await f.report.analysis(f.ctx, { ...f.query, section: 'revenue' })).revenue!;
+    assert.equal(revenue.netReceiptsSatang.knownValue, 17000);
+    for (const key of ['receiptsSatang', 'refundsSatang', 'netReceiptsSatang', 'feesSatang', 'taxSatang'] as const)
+      assert.equal(revenue.byPurchaseGroup.reduce((total, group) => total + (group[key].knownValue ?? group[key].value ?? 0), 0), revenue[key].knownValue);
+  });
+  it('RP07/RP15 scopes directory and detail coverage to their companies and labels wholly unavailable cost truthfully', async () => {
+    const f = rangeSourceFixture();
+    f.source.splice(f.source.findIndex(row => row.companyId === 'fiction-1' && row.month === '2026-08'), 1);
+    const directory = await f.report.companies(f.ctx, { ...f.query, q: f.companies[0]!.name });
+    assert.equal(directory.summary.netReceiptsSatang.value, 5000);
+    const body: any = { ...f.body, ...f.query, reportKey: 'detail', targetCompanyId: 'fiction-0' }; delete body.month;
+    const words = await import('@watchdog-bms/contracts');
+    const detail = workbookParts((await f.report.export(f.ctx, body)).file);
+    assert.doesNotMatch(detail.get('xl/worksheets/sheet1.xml')!, new RegExp(words.EXECUTIVE_WORDS.partialMoney));
+    const cost = rangeSourceFixture(); cost.build.aiUsageSince = at('2026-09-30T17:00:00Z');
+    const costBody: any = { ...cost.body, ...cost.query }; delete costBody.month;
+    const workbook = workbookParts((await cost.report.export(cost.ctx, costBody)).file);
+    assert.match(workbook.get('xl/worksheets/sheet2.xml')!, new RegExp(words.EXECUTIVE_WORDS.unavailableFigure));
+    assert.doesNotMatch(workbook.get('xl/worksheets/sheet2.xml')!, new RegExp(words.EXECUTIVE_WORDS.partialMeasuredMoney));
+  });
+  it('RP15 qualifies grouped partial money from money facts instead of an at-least count word', async () => {
+    const f = rangeSourceFixture();
+    f.source.splice(f.source.findIndex(row => row.companyId === 'fiction-1' && row.month === '2026-08'), 1);
+    const body: any = { ...f.body, ...f.query, reportKey: 'customers', subview: 'industry' }; delete body.month;
+    const { EXECUTIVE_WORDS, EXECUTIVE_REPORT_LABELS } = await import('@watchdog-bms/contracts');
+    const dashboard = workbookParts((await f.report.export(f.ctx, body)).file).get('xl/worksheets/sheet1.xml')!;
+    const groupRow = dashboard.match(/<row\b[^>]*>[\s\S]*?<\/row>/g)!.find(row => row.includes(EXECUTIVE_REPORT_LABELS.industry.FOOD_ACCOMMODATION!) && /<c r="F\d+"/.test(row));
+    assert.ok(groupRow);
+    assert.match(groupRow, new RegExp(EXECUTIVE_WORDS.partialMoney));
+  });
+  it('RP09 compares the previous equal-length population and distinguishes zero, negative, absent and partial bases', async () => {
+    const f = rangeSourceFixture(), data: any = await f.report.overview(f.ctx, f.query as any);
+    const comparison = data.metrics.netReceiptsSatang.comparison;
+    assert.deepEqual([comparison.period.from, comparison.period.to, comparison.previous.value, comparison.absoluteChange, comparison.percentChange, comparison.status],
+      ['2026-04', '2026-06', 20000, 7000, 35, 'COMPLETE']);
+    assert.equal(data.metrics.companies.comparison.previous.value, 1);
+    f.source.find(r => r.month === '2026-06').receiptsSatang = 0;
+    assert.equal((await f.report.overview(f.ctx, f.query as any) as any).metrics.netReceiptsSatang.comparison.status, 'ZERO_BASE');
+    f.source.find(r => r.month === '2026-06').refundsSatang = 100;
+    assert.equal((await f.report.overview(f.ctx, f.query as any) as any).metrics.netReceiptsSatang.comparison.status, 'NEGATIVE_BASE');
+    f.headers.delete('2026-05');
+    assert.equal((await f.report.overview(f.ctx, f.query as any) as any).metrics.netReceiptsSatang.comparison.status, 'PARTIAL');
+    f.headers.delete('2026-04'); f.headers.delete('2026-06');
+    assert.equal((await f.report.overview(f.ctx, f.query as any) as any).metrics.netReceiptsSatang.comparison.status, 'NO_PREVIOUS');
+  });
+  it('RP10/RP19 keeps open-month actuals, monthly series and CURRENT values separate from temporal deltas', async () => {
+    const f = rangeSourceFixture();
+    const data: any = await f.report.overview(f.ctx, { from: '2026-09', to: '2026-10' } as any);
+    assert.equal(data.period.includesOpenMonth, true);
+    assert.equal(data.period.effectiveEndExclusive, f.build.asOf.toISOString());
+    assert.equal(data.metrics.netReceiptsSatang.comparison.includesOpenMonth, true);
+    assert.equal(data.expenseReceiptAdoption.timeBasis, 'CURRENT');
+    assert.equal(data.expenseReceiptAdoption.comparison, undefined);
+    assert.deepEqual(data.monthlySeries.find((s: any) => s.metric === 'netReceiptsSatang').points.map((p: any) => p.month), ['2026-09', '2026-10']);
+  });
+  it('API06 filters live allowlisted events to the applied range and records the period in audit', async () => {
+    const f = rangeSourceFixture();
+    f.tx.auditLog.findMany = async () => [{ createdAt: at('2026-08-02T00:00:00Z'), actorUserId: 'actor', metadataJson: { toStatus: 'SUSPENDED' } },
+      { createdAt: at('2026-10-01T00:00:00Z'), actorUserId: 'actor', metadataJson: { toStatus: 'ACTIVE' } }];
+    const history: any = await f.report.history(f.ctx, 'fiction-0', f.query as any);
+    assert.deepEqual(history.items.map((e: any) => e.kind), ['SUSPENDED']);
+    assert.equal(history.period.from, f.query.from); assert.equal(history.build.id, f.build.id);
+    assert.deepEqual(f.audits.at(-1).metadataJson.period, f.query);
+  });
+  it('RP15/RP17 exports the applied range, monthly sources and previous figures with cached totals and blank distinct users', async () => {
+    const f = rangeSourceFixture(), body: any = { ...f.body, ...f.query }; delete body.month;
+    const output = await f.report.export(f.ctx, body), parts = workbookParts(output.file), source = parts.get('xl/worksheets/sheet2.xml')!, dashboard = parts.get('xl/worksheets/sheet1.xml')!;
+    assert.equal(output.rowCount, 3); assert.match(cellXml(dashboard, 'R7'), /<v>270<\/v>/);
+    assert.match(dashboard, /ช่วงเดือน ก.ค. 2569 ถึง ก.ย. 2569/); assert.match(dashboard, /ประวัติรายเดือน/); assert.match(dashboard, /เม.ย. 2569/);
+    assert.match(source, /ใบเสร็จในช่วงนี้/); assert.equal(cellXml(source, 'W7'), '');
+    assert.deepEqual(f.audits.at(-1).metadataJson.period, f.query);
+    assert.doesNotMatch([...parts.values()].join(''), /fiction-0|older-hourly-build|DISTINCT_USERS/);
+  });
+  it('RP15 HTTP range download names the report and actual month pair in Thai', async () => {
+    const { ExecutiveReportController } = await import('./presentation/http/executive-report.controller');
+    const { EXECUTIVE_WORDS, executivePeriodLabel } = await import('@watchdog-bms/contracts');
+    const { xlsxThaiDate } = await import('../../common/export/xlsx.logic');
+    const f = rangeSourceFixture(), body: any = { ...f.body, ...f.query }; delete body.month;
+    const headers: Record<string, string> = {};
+    await new ExecutiveReportController(f.report).export(body, { context: f.ctx } as never,
+      { setHeader: (key: string, value: string) => { headers[key] = value; }, send: () => {} } as never);
+    assert.equal(headers['Content-Disposition'], `attachment; filename*=UTF-8''${encodeURIComponent(`${EXECUTIVE_WORDS.overview} ${executivePeriodLabel(f.query.from, f.query.to)} ${xlsxThaiDate(f.report.clock())}.xlsx`)}`);
+  });
+});
+
+
+describe('executive period range boundary, cohort and HTTP regressions', () => {
+  it('RP01 HTTP DTOs admit pairs and legacy requests but reject daily and unknown inputs before reading', async () => {
+    const { ExecutiveReportQueryDto, ExecutiveCompanyQueryDto, ExecutiveHistoryQueryDto, ExecutiveExportDto } = await import('./presentation/http/executive-report.controller');
+    const { ValidationPipe } = await import('@nestjs/common');
+    const { GLOBAL_VALIDATION_PIPE_OPTIONS } = await import('../../common/pipes/validation-pipe.options');
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS), f = rangeSourceFixture();
+    for (const metatype of [ExecutiveReportQueryDto, ExecutiveCompanyQueryDto, ExecutiveHistoryQueryDto]) {
+      const pair: any = await pipe.transform(f.query, { type: 'query', metatype });
+      assert.deepEqual([pair.from, pair.to], [f.query.from, f.query.to]);
+      await pipe.transform({ month: '2026-09' }, { type: 'query', metatype });
+      await assert.rejects(() => pipe.transform({ ...f.query, timezone: 'UTC' }, { type: 'query', metatype }));
+      await assert.rejects(() => pipe.transform({ from: '2026-09-01', to: '2026-09-30' }, { type: 'query', metatype }));
+    }
+    const body: any = { ...f.body, ...f.query }; delete body.month;
+    assert.equal((await pipe.transform(body, { type: 'body', metatype: ExecutiveExportDto }) as any).from, f.query.from);
+    await assert.rejects(() => f.report.export(f.ctx, { ...body, filters: { from: '2026-07' } }), e => codeOf(e) === 'EXECUTIVE_QUERY_INVALID');
+  });
+  it('RP02/RP09 resolves quarter/year/year-crossing previous periods from Bangkok, not the machine date', async () => {
+    const f = rangeSourceFixture(); f.report.clock = () => at('2026-12-31T17:00:00Z');
+    const context: any = await f.report.context(f.ctx);
+    assert.equal(context.currentMonth, '2027-01');
+    assert.deepEqual(context.defaultPeriod, { from: '2026-12', to: '2026-12', appliedPreset: 'LAST_MONTH' });
+    for (const key of ['THIS_QUARTER', 'THIS_YEAR']) assert.deepEqual([context.presets.find((p: any) => p.key === key).from, context.presets.find((p: any) => p.key === key).to], ['2027-01', '2027-01']);
+    f.tx.executiveReportMonth.findFirst = async () => ({ month: '2025-12' });
+    for (const month of ['2025-12', '2026-01']) f.headers.set(month, { ...f.headers.get('2026-09'), month });
+    const data: any = await f.report.overview(f.ctx, { from: '2026-01', to: '2026-01' } as any);
+    assert.deepEqual([data.metrics.companies.comparison.period.from, data.metrics.companies.comparison.period.to], ['2025-12', '2025-12']);
+  });
+  it('RP05/RP06 recomputes cohorts from signed range nets, never unions monthly payers or cutoff flags', async () => {
+    const f = rangeSourceFixture();
+    for (let i = 3; i < 10; i++) {
+      f.profiles.push({ ...f.profiles[2]!, companyId: `extra-${i}` });
+      f.companies.push({ ...f.companies[2]!, id: `extra-${i}` });
+      f.source.push({ ...f.source.at(-1), companyId: `extra-${i}`, month: '2026-09' });
+    }
+    const first = { ...f.source[1], companyId: 'extra-3', month: '2026-07', receiptsSatang: 9000, refundsSatang: 0 };
+    f.profiles[3]!.companyCreatedAt = at('2026-06-01T00:00:00Z');
+    f.source.push(first, { ...first, month: '2026-08', receiptsSatang: 0, refundsSatang: 10000 });
+    const result = await f.report.analysis(f.ctx, { ...f.query, section: 'revenue', view: 'top' } as any), concentration = result.spendConcentration!;
+    assert.deepEqual([concentration.positiveCompanyCount, concentration.positiveNetTotalSatang, concentration.signedNetTotalSatang, concentration.topCount], [2, 27000, 26000, 2]);
+    const list = await f.report.companies(f.ctx, { ...f.query, spendCohort: 'TOP20', sortBy: 'netReceipts' } as any);
+    assert.deepEqual(list.items.map(row => row.id), ['fiction-1', 'fiction-0']);
+    f.source.find(row => row.companyId === 'fiction-0' && row.month === '2026-07').fullyRefunded = true;
+    assert.equal((await f.report.company(f.ctx, 'fiction-0', f.query as any) as any).periodSummary.fullyRefunded, false);
+    f.source.find(row => row.companyId === 'fiction-0' && row.month === '2026-09').fullyRefunded = true;
+    const overview = await f.report.overview(f.ctx, f.query as any);
+    assert.equal(overview.paidUsage.fullyRefunded.count, 1); assert.equal(overview.paidUsage.groups.find(group => group.key === 'ACTIVE')!.count, 1);
+  });
+  it('RP07 returns no invented zero when all applicable company rows are missing', async () => {
+    const f = rangeSourceFixture(); f.source.splice(0, f.source.length);
+    const detail: any = await f.report.company(f.ctx, 'fiction-0', f.query as any);
+    assert.equal(detail.periodSummary.money.netReceiptsSatang.coverage, 'unavailable');
+    assert.equal(detail.periodSummary.money.netReceiptsSatang.knownValue, undefined);
+    assert.equal(detail.periodSummary.usage.activeDays, null);
+    assert.ok(detail.monthlyHistory.every((month: any) => month.summary === null));
+  });
+  it('RP09/RP10/RP19 compares side populations and rate points, suppresses incomplete deltas and does not truncate long series', async () => {
+    const f = rangeSourceFixture();
+    const comparison: any = (await f.report.analysis(f.ctx, { ...f.query, section: 'compare', dimension: 'company', sideA: 'fiction-0', sideB: 'fiction-1' } as any)).comparison;
+    assert.equal(comparison.sideA.periodComparisons.netReceiptsSatang.absoluteChange, -15000);
+    assert.equal(comparison.sideB.periodComparisons.netReceiptsSatang.previous.value, 0);
+    const compared: any = await f.report.analysis(f.ctx, { ...f.query, section: 'compare', dimension: 'company', sideA: 'fiction-0', sideB: 'fiction-1' });
+    assert.deepEqual(compared.monthlySeries.map((s: any) => s.side), ['A', 'B']);
+    assert.deepEqual(compared.monthlySeries[0].points.map((p: any) => p.metricValue.value), [10000, -5000, 0]);
+    const overview: any = await f.report.overview(f.ctx, f.query as any);
+    assert.equal(overview.periodComparisons.activeCompanyShare.absoluteChange, 66.7);
+    assert.equal(overview.periodComparisons.activeCompanyShare.percentChange, null);
+    f.headers.get('2026-08').billingCoveredThrough = at('2026-08-15T00:00:00Z');
+    const partial: any = await f.report.overview(f.ctx, f.query as any);
+    assert.equal(partial.metrics.netReceiptsSatang.comparison.status, 'PARTIAL');
+    assert.equal(partial.metrics.netReceiptsSatang.comparison.absoluteChange, null);
+    const long: any = await f.report.analysis(f.ctx, { from: '2026-04', to: '2026-10', section: 'revenue' } as any);
+    assert.equal(long.revenue.trend.length, 7); assert.equal(long.monthlySeries[0].points.length, 7);
+    f.headers.get('2026-08').asOf = at('2026-08-15T00:00:00Z');
+    const stale: any = await f.report.overview(f.ctx, f.query);
+    assert.equal(stale.metrics.activeCompanies.coverage, 'partial');
+    assert.ok(stale.metrics.activeCompanies.affectedMonths.some((m: any) => m.month === '2026-08' && m.reasonCodes.includes('SOURCE_STALE')));
+  });
+  it('RP18 preserves build reload/export expiry and counts range-export companies once', async () => {
+    const f = rangeSourceFixture();
+    const overview = await f.report.overview(f.ctx, { ...f.query, buildId: 'old' } as any);
+    assert.equal(overview.buildChanged, true);
+    const body: any = { ...f.body, ...f.query, buildId: 'old' }; delete body.month;
+    await assert.rejects(() => f.report.export(f.ctx, body), e => statusOf(e) === 409 && codeOf(e) === 'EXECUTIVE_SNAPSHOT_EXPIRED');
+    const output = await f.report.export(f.ctx, { ...body, buildId: f.build.id });
+    assert.equal(output.rowCount, 3);
+    assert.equal(f.audits.at(-1).metadataJson.companyCount, 3);
+  });
+  it('RP20 refuses unsafe range sums and rounds large integer ratios without floating intermediate products', async () => {
+    assert.equal(roundRatio(1n, 0n, 0), null);
+    assert.equal(roundRatio(9007199254740000n, 3n, 0), 3002399751580000);
+    const f = rangeSourceFixture();
+    for (const row of f.source) row.receiptsSatang = Math.floor(Number.MAX_SAFE_INTEGER / 2) + 1;
+    await assert.rejects(() => f.report.overview(f.ctx, f.query), e => statusOf(e) === 503 && codeOf(e) === 'SOURCE_UNAVAILABLE');
+  });
+
 });

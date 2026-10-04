@@ -222,12 +222,12 @@ EXL13–14เพิ่มintegrationacceptance; baseline188/47deferredไม่�
 
 | ขั้น / สถานะ | งานที่ต้องทำ | การตรวจและเงื่อนไขจบ |
 |---|---|---|
-| R1 API + build / ยังไม่เริ่ม | ปรับ contracts `executive-business.ts`/คำจาก `executive-report-words.ts`, context/DTO/query/API02–06, read logic/service และ export query; คู่เดือน/coverage/revision/previous/monthlySeries; reuse monthly rows และ build atomic/version checks เดิม ไม่สร้าง aggregate ช่วงใน DB | RP01–RP10, RP16–RP18 ด้านล่าง; เดือนเดียวเท่ารุ่นเดิมยกเว้นคำ/contract ที่ตั้งใจเปลี่ยน; union/ยอดกลุ่ม/list summary/drilldown ตรง; PG จริงพิสูจน์ build/current labels/refund/row gaps; contracts build แล้วจึงเชื่อมเว็บ |
+| R1 API + build / มี diff รอตรวจ PostgreSQL | ปรับ contracts `executive-business.ts`/คำจาก `executive-report-words.ts`, context/DTO/query/API02–06, read logic/service และ export query; คู่เดือน/coverage/revision/previous/monthlySeries; reuse monthly rows และ build atomic/version checks เดิม ไม่สร้าง aggregate ช่วงใน DB | RP01–RP10, RP16–RP18 ด้านล่าง; เดือนเดียวเท่ารุ่นเดิมยกเว้นคำ/contract ที่ตั้งใจเปลี่ยน; union/ยอดกลุ่ม/list summary/drilldown ตรง; PG จริงพิสูจน์ build/current labels/refund/row gaps; contracts build แล้วจึงเชื่อมเว็บ |
 | R2 เว็บแถบ + layout/charts / ยังไม่เริ่ม | component ร่วมเดียวใน reports folder, draft month picker เดิมสองช่อง, chips/clear/summary, from/to/origin URL/Back/rollover, KPI compare และกราฟตาม UI §14.3; loading/permission/partial states; ใช้ shell/tokens/fonts/fields เดิม | RP11–RP14; focused web specs + browser 390 px/desktop/zoom/keyboard ของ controller; ไม่มี hidden filter/คำอังกฤษ/id/code token; ภาพ/ข้อแก้จาก lane gap analysis merge ใน UI §14.5 ก่อนรับ layout |
-| R3 Export / ยังไม่เริ่ม | ใช้คู่เดือน/effective state ล่าสุดเดียวกับแถบ เพิ่มรายเดือน/ช่วงก่อนในส่วนคำนวณของสองชีตเดิม; range words/metadata/chart cache; buildId/permissions/contact และ row cap เดิมและมติ Q41 ก่อนปรับฐานนับส่วนรายเดือน | RP15–RP18; อ่านไฟล์จริงตรง API ไม่ต้องคำนวณสูตรใหม่เพื่อให้ตัวเลขถูก; counts ไม่ซ้ำ null ไม่กลายเป็นศูนย์; ต้นทางทุกเดือน/all pages/สองฝั่งตรงหน้าจอ |
+| R3 Export / มี diff รอตรวจ PostgreSQL/ความจุ | ใช้คู่เดือน/effective state ล่าสุดเดียวกับแถบ เพิ่มรายเดือน/ช่วงก่อนในส่วนคำนวณของสองชีตเดิม; range words/metadata/chart cache; buildId/permissions/contact และ row cap เดิมและมติ Q41 ก่อนปรับฐานนับส่วนรายเดือน | RP15–RP18; อ่านไฟล์จริงตรง API ไม่ต้องคำนวณสูตรใหม่เพื่อให้ตัวเลขถูก; counts ไม่ซ้ำ null ไม่กลายเป็นศูนย์; ต้นทางทุกเดือน/all pages/สองฝั่งตรงหน้าจอ |
 | R4 Acceptance / ยังไม่เริ่ม | กระทบยอดเดือนและรวมช่วง ตรวจ UI→HTTP→PG→XLSX/Back/permission/ข้อมูลบางส่วน คงผลตรวจ gap analysis; capacity กับ ALL และช่วงก่อนยาวเท่ากัน | RP19–RP20 และ regression ที่ขั้นนั้นแตะ; controller บันทึก command/exit/counts/ภาพ/ไฟล์จริง ไม่มีคำอ้างว่า deployed แล้ว; live operation หากมีภายหลังใช้ runbook เดิม |
 
-R1/R2/R3 ทำส่วนที่กำหนดแล้วได้โดยไม่รอ churn หรือ distinct users ข้ามเดือน Q38 กันเฉพาะการย่อขอบ preset ที่ยังไม่ตัดสิน; Q39 กัน churn ทั้งชุด; Q40 กันการสร้างจำนวนผู้ใช้รวม; Q41 กันการเปลี่ยนฐานเพดานส่งออกส่วนรายเดือน ไม่ใส่ตัวเลขเดา ส่วนอื่นไม่ขยาย scope เพื่อแก้ข้อมูลที่ไม่มีประวัติ
+R1/R2/R3 ทำส่วนที่กำหนดแล้วได้โดยไม่รอ churn หรือ distinct users ข้ามเดือน Q38 ตัดสินย่อเฉพาะขอบต้นและ ALL ตาม builtMonths; Q39 พัก churn ทั้งชุด; Q40 ใช้จำนวนผู้ใช้แยกเดือน; Q41 คง 10,000 บริษัทและ byte/time เดิม ไม่ใส่ตัวเลขเดา ส่วนอื่นไม่ขยาย scope เพื่อแก้ข้อมูลที่ไม่มีประวัติ
 
 ### 7.1 กรณีตรวจรับและ test ที่ต้องแดงบนรุ่นเดือนเดียว
 
@@ -237,7 +237,7 @@ R1/R2/R3 ทำส่วนที่กำหนดแล้วได้โด�
 |---|---|---|
 | RP01 | from/to ขาด ผิดเดือน ขอบกลับ อนาคต ช่วงวัน หรือ month/preset แทน pair | 400; valid คู่ข้ามปี/เดือนเดียวรับได้ ไม่ normalize ขอบผิดให้ผ่าน |
 | RP02 | เวลาไทยที่เที่ยงคืน 1 ม.ค./1 เม.ย.; preset ไตรมาส/ปี/12 เดือน | คู่เดือนจาก API01 ถูก; ปี/ไตรมาสไม่รวมเดือนอนาคต; builtMonths จริงไม่เติม gap; ไม่มี local timezone เปลี่ยนช่วง |
-| RP03 | default เดือนปัจจุบันยังไม่ built; ALL ไม่มีเดือน/มีเดือนก่อนหน้า; ขอบ unbuilt | context ตอบได้ default คงปัจจุบัน; รายงาน 503/P09 หรือ P38 ถูก; ALL เริ่ม months.first และจบ built ล่าสุด ไม่ขึ้นกับ segment; ขอบแรกยังไม่สร้างต้อง unavailable ไม่ข้ามเดือนนั้น; preset ขอบ unbuilt disabled ไม่ย่อเอง (Q38) |
+| RP03 | default เดือนปัจจุบันยังไม่ built; ALL ไม่มีเดือน/มีเดือนก่อนหน้า; ขอบ unbuilt | context ตอบได้ default เดือนที่แล้วในวัน 1–7 เวลาไทย นอกนั้นเดือนนี้; รายงาน 503/P09 หรือ P38 ถูก; ALL เริ่ม built แรกและจบ built ล่าสุด ไม่ขึ้นกับ segment; preset ย่อได้เฉพาะขอบต้นก่อน built แรก คืนคู่จริง; ขอบปลาย unbuilt disabled และช่องกลางยัง visible ตาม Q38 |
 | RP04 | fixture หลายเดือนใน §7.2 | sum เงิน/ตัวนับ และ distinct companies ตรงตัวเลขเฉลย; source ต่างเดือน/หลายใบไม่ทำ join คูณ |
 | RP05 | A รับแล้วคืนมากในเดือนกลาง แต่รวมช่วงสุทธิเป็นบวก | positiveNet/cohort คิดหลัง sum ช่วง ไม่ OR positiveNet รายเดือน และไม่ sum max(netMonth,0); การเปลี่ยนเดือนทำอันดับและสมาชิก cohort เปลี่ยนตามผลรวม |
 | RP06 | active ในเดือนแรก ไม่ active เดือนท้าย; paidEver/fullyRefunded เปลี่ยนระหว่างช่วง | ACTIVE ในช่วงตาม union, paid/refund cutoff เป็นเดือนท้าย ไม่ใช่ current profile หรือ OR ธงอดีต; unknown/คืนเต็มตาม decision table เดิม |
@@ -291,4 +291,6 @@ A สมัคร มิ.ย., B สมัคร ส.ค., C สมัคร ก
 - ALL × ช่วงก่อน × workbook source ขยายแถว/หน่วยความจำ: reuse query เฉพาะ section, วัด capacity และคงขีดจำกัดไฟล์ ห้ามสร้าง cache/table/paging policy ใหม่โดยไม่มีหลักฐาน
 - เปลี่ยน API จาก month เป็นคู่เดือน: controller ต้องประสานการปล่อย API/web/contracts และตรวจ fresh bundle/old deep links ตาม RP11 ไม่อ้างว่า migration URL ทำให้ API caller รุ่นเก่ายังรองรับ
 - `from` เดิมเป็นหน้าต้นทาง: migration URL ไป origin ต้องมี RP11/12 ทั้ง deep link/history/export ไม่แก้เพียง page แรก
-- Q38–Q41 เปิดตามทะเบียน BE §23.5 พร้อมข้อแนะนำ; ผล gap analysis ยังรอ lane แยกและไม่ถือว่าปิดจากการออกแบบนี้
+- Q32/Q38–Q41 ตัดสิน 2026-10-04 ตามทะเบียน BE §23.5; ผล gap analysis ยังรอ lane แยกและไม่ถือว่าปิดจากการออกแบบนี้
+
+หลักฐาน backend R1/R3 และคำสั่ง red/green อยู่ใน [running note backend](../agent-memory/executive-period-range-backend-2026-10-04.md). R2/RP11–RP14 เป็น lane เว็บถัดไป; RP20 ความจุ ALL จริงเป็น R4/controller. ไม่มี build/schema/migration/package.json เปลี่ยน; registered build specs เดิมยังต้องรันกับฐานข้อมูลจริง.

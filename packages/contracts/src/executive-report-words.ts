@@ -1,4 +1,4 @@
-import { EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, type ExecutiveSourceCoverage } from './executive-business.js';
+import { EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, type ExecutivePeriodComparison, type ExecutiveSortBy, type ExecutiveSourceCoverage } from './executive-business.js';
 
 const COMPANY_CUSTOMERS = 'บริษัทลูกค้า';
 const WEIGHT = 'ยอดที่ใช้คำนวณสัดส่วน';
@@ -112,4 +112,69 @@ export function executiveExportColumns(reportKey: string, subview?: string, cont
 /** Company names are free text; only report dimension labels carry a system/seller code. */
 export function executiveComparisonLabel(side: { key: string; label: string }, dimension: string): string {
   return dimension === 'company' ? side.label : executiveThaiLabel(side.label, side.key);
+}
+
+
+/** P01–P53: range controls and qualifiers shared by the web and XLSX; legacy month words above stay for old callers. */
+export const EXECUTIVE_PERIOD_WORDS = {
+  presets: { THIS_MONTH: 'เดือนนี้', LAST_MONTH: 'เดือนที่แล้ว', THIS_QUARTER: 'ไตรมาสนี้', THIS_YEAR: 'ปีนี้', LAST_12_MONTHS: '12 เดือนล่าสุด', ALL: 'ทั้งหมด' },
+  notRegistered: 'ข้อมูลเดือนนี้อยู่ก่อนเวลาที่บริษัทสมัคร', invalid: 'กรุณาเลือกเดือนเริ่มต้นและเดือนสิ้นสุดให้ถูกต้อง', custom: 'กำหนดช่วงเดือน', from: 'ตั้งแต่เดือน', to: 'ถึงเดือน', apply: 'ใช้ช่วงเดือน', previous: 'ช่วงก่อนหน้า',
+  range: (from: string, to: string) => `ช่วงเดือน ${from}${from === to ? '' : ` ถึง ${to}`}`,
+  unbuilt: (months: string) => `ยังไม่มีรายงานของเดือน ${months}`,
+  missingMonths: (months: string) => `ช่วงที่เลือกมีเดือนที่ยังไม่มีรายงาน: ${months}`,
+  distinctUsersUnavailable: 'ยังสรุปจำนวนผู้ใช้ไม่ซ้ำตลอดหลายเดือนไม่ได้',
+  openMonth: 'ช่วงนี้รวมเดือนที่ยังไม่จบ', noPrevious: (period: string) => `ยังไม่มีตัวเลขของช่วงก่อนหน้า ${period}`,
+  unchanged: 'เท่าเดิม', zeroBase: 'ช่วงก่อนเป็นศูนย์ จึงไม่แสดงร้อยละ', negativeBase: 'ช่วงก่อนมียอดติดลบ จึงไม่แสดงร้อยละ',
+  cannotCompare: (months: string) => `ยังเทียบกับช่วงก่อนไม่ได้ เพราะข้อมูลของเดือน ${months} ยังไม่ครบ`,
+  openComparison: 'ช่วงนี้ยังไม่ครบเดือน ตัวเลขเทียบกับช่วงก่อนที่ครบเดือนแล้ว',
+  noFilters: 'ไม่ได้เพิ่มตัวกรองบริษัท', selectedBase: 'หน้านี้ใช้ช่วงเดือนและกลุ่มหรือบริษัทที่เลือก ไม่ใช้ตัวกรองรายงาน',
+  all: 'ดูทั้งหมด', allPeriod: 'ตั้งแต่เดือนแรกถึงเดือนล่าสุดที่มีรายงาน',
+  allCompanies: 'ดูบริษัทลูกค้าทั้งหมดในช่วงที่เลือก โดยไม่ใช้ตัวกรองบริษัท',
+  currentAt: (at: string) => `ข้อมูลปัจจุบัน ณ ${at}`,
+  incomplete: (months: string) => `ข้อมูลที่ใช้คำนวณตัวเลขนี้ยังไม่ครบในเดือน ${months}`,
+  noneBuilt: 'ยังไม่มีเดือนที่สร้างรายงานแล้ว', change: (value: string) => `เปลี่ยนจากช่วงก่อน ${value}`,
+  compareWith: (period: string) => `เทียบกับ ${period}`,
+  active: 'ใช้งานในช่วงนี้', paid: 'ชำระในช่วงนี้', net: 'ยอดรับสุทธิในช่วงนี้', receipts: 'เงินรับในช่วงนี้', refunds: 'คืนเงินในช่วงนี้',
+  positive: 'จ่ายมากกว่ายอดคืนในช่วงนี้', receiptCount: 'ใบเสร็จในช่วงนี้', fees: 'ค่าธรรมเนียมการรับชำระในช่วงนี้',
+  tax: 'ภาษีมูลค่าเพิ่มในช่วงนี้', inactive: 'เคยใช้ แต่ไม่ใช้ในช่วงนี้', paidActive: 'จ่ายแล้ว ใช้งานในช่วงนี้',
+  documents: 'เอกสารในช่วงนี้', ai: 'ถามผู้ช่วยในช่วงนี้', usersByMonth: 'จำนวนผู้ใช้แยกเดือน', monthlyHistory: 'ประวัติรายเดือน',
+  newCompanies: EXECUTIVE_FLAG_LABELS.joinedInPeriod.true!, trend: 'แนวโน้มรายเดือน', noReceipts: 'ไม่มีเงินรับในช่วงนี้', noPositiveNet: 'ยอดรับไม่มากกว่ายอดคืนในช่วงนี้',
+  refundedDifference: (n: number) => `ต่างจาก “ชำระในช่วงนี้” ${n.toLocaleString('th-TH')} บริษัทเพราะยอดรับไม่มากกว่ายอดคืนในช่วงนี้`,
+  paidDefinition: 'มีเงินรับในช่วงเดือนที่เลือก แม้คืนเงินภายหลัง',
+};
+export function executiveMonthLabel(value: string): string {
+  return new Intl.DateTimeFormat('th-TH-u-ca-buddhist', { month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(new Date(`${value}-01T00:00:00Z`));
+}
+export function executivePeriodLabel(from: string, to: string): string {
+  return EXECUTIVE_PERIOD_WORDS.range(executiveMonthLabel(from), executiveMonthLabel(to));
+}
+/** Preserve the legacy export layout; replace time-specific labels from the shared period words. */
+export function executivePeriodExportColumns(reportKey: string, subview?: string, contacts = false): string[] {
+  const P = EXECUTIVE_PERIOD_WORDS;
+  return executiveExportColumns(reportKey, subview, contacts).map((label, i) => ({
+    20: P.receiptCount, 21: W.days, 22: P.usersByMonth, 23: P.documents, 24: P.ai,
+    25: `${P.receipts} (บาท)`, 26: `${P.refunds} (บาท)`, 27: `${P.net} (บาท)`, 28: `${P.fees} (บาท)`, 29: `${W.aiCost} (บาท)`,
+  } as Record<number, string>)[i] ?? label);
+}
+
+export function executivePeriodFilterLabel(key: string, value: string): string {
+  const P = EXECUTIVE_PERIOD_WORDS;
+  if (value === 'true') {
+    const flags: Record<string, string> = { activeInPeriod: P.active, paidInPeriod: P.paid, positiveNetInPeriod: P.positive, joinedInPeriod: P.newCompanies };
+    if (flags[key]) return flags[key]!;
+  }
+  if (key === 'usageGroup' && value === 'INACTIVE') return P.inactive;
+  if (key === 'usageGroup' && value === 'ACTIVE') return P.paidActive;
+  return (EXECUTIVE_REPORT_LABELS as Record<string, Record<string, string>>)[key]?.[value] ?? (EXECUTIVE_FLAG_LABELS as Record<string, Record<string, string>>)[key]?.[value] ?? W.unknown;
+}
+export function executivePeriodSortLabel(option: { sortBy: ExecutiveSortBy; label: string }): string {
+  const P = EXECUTIVE_PERIOD_WORDS;
+  return option.sortBy === 'netReceipts' ? `${P.net} มาก → น้อย` : option.sortBy === 'expenseReceiptCount' ? `${P.receiptCount} มาก → น้อย` : option.label;
+}
+export function executivePeriodComparisonQualifier(comparison: ExecutivePeriodComparison): string {
+  const P = EXECUTIVE_PERIOD_WORDS;
+  const status = comparison.status === 'NO_PREVIOUS' ? P.noPrevious(executivePeriodLabel(comparison.period.from, comparison.period.to))
+    : comparison.status === 'PARTIAL' ? P.cannotCompare(comparison.affectedMonths.map(m => executiveMonthLabel(m.month)).join(', '))
+    : comparison.status === 'ZERO_BASE' ? P.zeroBase : comparison.status === 'NEGATIVE_BASE' ? P.negativeBase : comparison.status === 'UNCHANGED' ? P.unchanged : '';
+  return [status, comparison.includesOpenMonth && comparison.current.coverage === 'complete' && comparison.previous.coverage === 'complete' ? P.openComparison : ''].filter(Boolean).join(' · ');
 }

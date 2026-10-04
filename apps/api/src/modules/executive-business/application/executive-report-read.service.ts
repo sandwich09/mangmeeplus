@@ -3,8 +3,9 @@ import { performance } from 'node:perf_hooks';
 import { HttpException, Injectable } from '@nestjs/common';
 import {
   DBD_TSIC_ACTIVITIES, EXECUTIVE_FLAG_LABELS, EXECUTIVE_NO_PLAN_DATA_LABEL, EXECUTIVE_UNKNOWN_LABEL, EXECUTIVE_PAID_EVER_REASONS, EXECUTIVE_PURCHASE_GROUPS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS,
-  billingPlanLabel, EXECUTIVE_EXPORT_REPORT_KEYS, EXECUTIVE_WORDS as W, EXECUTIVE_REFERRER_ADMIN_SUFFIX, executiveThaiLabel, executiveComparisonLabel, executiveExportColumns, executiveMoneyQualifier,
-  type ExecutiveExportBody,
+  billingPlanLabel, EXECUTIVE_EXPORT_REPORT_KEYS, EXECUTIVE_WORDS as LEGACY_WORDS, EXECUTIVE_REFERRER_ADMIN_SUFFIX, executiveThaiLabel, executiveComparisonLabel, executiveExportColumns, executiveMoneyQualifier,
+  EXECUTIVE_PERIOD_WORDS as P, executivePeriodLabel, executivePeriodExportColumns, executivePeriodFilterLabel, executivePeriodSortLabel, executivePeriodComparisonQualifier,
+  type ExecutiveExportBody, type ExecutiveRangePeriod, type ExecutivePeriodMetric, type ExecutiveCount, type ExecutivePeriodSummary, type ExecutiveMonthMetadata,
   type ExecutiveAnalysis, type ExecutiveAnalysisQuery, type ExecutiveCompanies, type ExecutiveCompaniesQuery, type ExecutiveCompanyDetail,
   type ExecutiveCompanyHistory, type ExecutiveCompanyRow, type ExecutiveCompareSide, type ExecutiveContext, type ExecutiveDrilldownFilters,
   type ExecutiveEnvelope, type ExecutiveFilterKey, type ExecutiveGroupRow, type ExecutiveHistoryEvent, type ExecutiveHistoryEventKind,
@@ -22,7 +23,7 @@ import { AuditService } from '../../audit/application/audit.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { BillingCashMovementsService } from '../../billing/application/billing-cash-movements.service';
 import {
-  aiCostCoverageOf, combined, countOf, documentsOf, expenseReceiptsOf, industryKeyOf, isMonth, matchesDirectory, matchesGlobal, moneyCoverageOf, moneyOf, netOf,
+  safeTotal, aggregatePeriodRows, monthsBetween, periodInput, periodPresets, rangePeriod, rangeCoverage, periodComparison, shiftMonth, aiCostCoverageOf, combined, countOf, documentsOf, expenseReceiptsOf, industryKeyOf, isMonth, matchesDirectory, matchesGlobal, moneyCoverageOf, moneyOf, netOf,
   ranksOf, referrerKeyOf, roundRatio, roundingNote, shareOf, sortedBy, spendGroupsOf, usageCoverageOf,
   type DirectoryFilters, type GlobalFilters, type ReportRow, type SpendGroups,
 } from '../domain/executive-read.logic';
@@ -33,6 +34,8 @@ type Tx = Prisma.TransactionClient;
 type Seller = { userId: string; salesCode: string; label: string };
 /** One month of the current data set, read in one snapshot, and the companies in scope for the request. */
 type DataSet = {
+  legacy: boolean; period: ExecutiveRangePeriod; monthly: DataSet[]; previous?: DataSet; built: boolean; rawIds: Set<string>; rowsById: Map<string, ReportRow>;
+  sourceMoney: ExecutiveSourceCoverage; sourceUsage: ExecutiveSourceCoverage; sourceCost: ExecutiveSourceCoverage; cost: ExecutiveSourceCoverage;
   build: ExecutiveReportBuild; header: ExecutiveReportMonth; month: string; range: { start: Date; end: Date }; effectiveEnd: Date;
   rows: ReportRow[]; population: ReportRow[]; scope: ReportRow[]; profiles: Map<string, ExecutiveCompanyProfile>;
   global: GlobalFilters; money: ExecutiveSourceCoverage; usage: ExecutiveSourceCoverage; populationCoverage: ExecutiveSourceCoverage;
@@ -45,8 +48,9 @@ const STALE_AFTER_MS = 2 * 3_600_000;
 const LAG_MS = 24 * 3_600_000;
 const SNAPSHOT = { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 10_000, timeout: 30_000 };
 const L = EXECUTIVE_REPORT_LABELS;
+const W = LEGACY_WORDS;
 const iso = (at: Date | null | undefined) => (at ? at.toISOString() : null);
-const sum = (rows: readonly ReportRow[], valueOf: (row: ReportRow) => number) => rows.reduce((total, row) => total + valueOf(row), 0);
+const sum = (rows: readonly ReportRow[], valueOf: (row: ReportRow) => number) => safeTotal(rows.map(valueOf));
 const DEFAULT_DIR = Object.fromEntries(EXECUTIVE_SORT_OPTIONS.map((option) => [option.sortBy, option.sortDir])) as Record<ExecutiveSortBy, 'asc' | 'desc'>;
 const METRIC_OF: Record<ExecutiveRankingMetric, (row: ReportRow) => number> = {
   expenseReceiptCount: expenseReceiptsOf, activeDays: (row) => row.activeDays, aiRequests: (row) => row.aiRequests,
@@ -78,7 +82,7 @@ export class ExecutiveReportReadService {
   // ── API01 ────────────────────────────────────────────────────────────────────────────────────
 
   async context(ctx: RequestContext): Promise<ExecutiveContext> {
-    const currentMonth = executiveMonthOf(this.clock());
+    const now = this.clock(), currentMonth = executiveMonthOf(now);
     const { build, built, sellers } = await this.prisma.client.$transaction(async (tx) => {
       const build = await latestBuild(tx);
       if (!build) return { build: null, built: [] as string[], sellers: [] as Seller[] };
@@ -92,7 +96,7 @@ export class ExecutiveReportReadService {
     }, SNAPSHOT);
     const has = (permission: string) => ({ allowed: ctx.permissions.includes(permission) });
     const options = (key: ExecutiveFilterKey, leaveOut: string[] = []) =>
-      Object.entries(L[key]).filter(([value]) => !leaveOut.includes(value)).map(([value, label]) => ({ value, label }));
+      Object.entries(L[key]).filter(([value]) => !leaveOut.includes(value)).map(([value, label]) => ({ value, label: key === 'usageGroup' ? executivePeriodFilterLabel(key, value) : label }));
     const [all, ...special] = options('referringSales');
     const monthOf = (at: Date | null) => (at ? executiveMonthOf(at) : null);
     return {
@@ -105,8 +109,8 @@ export class ExecutiveReportReadService {
         spendCohort: options('spendCohort', ['BOUNDARY_TIE', 'TO80_BOUNDARY_TIE']),
         referringSales: [all!, ...sellers.sort((a, b) => a.label.localeCompare(b.label, 'th')).map((seller) => ({ value: seller.salesCode, label: seller.label })), ...special],
       },
-      sortOptions: EXECUTIVE_SORT_OPTIONS,
-      currentMonth, defaultMonth: currentMonth, // Q32: the current month
+      sortOptions: EXECUTIVE_SORT_OPTIONS.map(option => ({ ...option, label: executivePeriodSortLabel(option) })),
+      currentMonth, defaultMonth: periodPresets(now, built).defaultPeriod.from, ...periodPresets(now, built),
       months: build && built.length ? { first: built[0]!, last: currentMonth } : null,
       builtMonths: built, // the month headers a round wrote: the months API02–API05 can answer
       earliestAvailableMonth: { aiUsage: monthOf(build?.aiUsageSince ?? null), receiptReading: monthOf(build?.ocrUsageSince ?? null),
@@ -124,7 +128,7 @@ export class ExecutiveReportReadService {
     const result: ExecutiveOverview = {
       ...this.envelope(ctx, data, query),
       metrics: {
-        companies: { ...countOf(scope.length, data.populationCoverage), unclassifiedCount: data.build.unclassifiedCount, drilldownFilters: drill({}) },
+        companies: { ...countOf(scope.length, data.populationCoverage), unclassifiedCount: data.legacy ? data.build.unclassifiedCount : data.rows.filter(row => row.profile.reportClassification === null).length, drilldownFilters: drill({}) },
         activeCompanies: { ...countOf(active.length, data.usage), drilldownFilters: drill({ activeInPeriod: 'true' }), breakdown: {
           paidActive: active.filter((row) => row.usageGroup === 'ACTIVE').length, notPaid: active.filter((row) => row.paidEver === 'NO').length,
           paymentUnknown: active.filter((row) => row.paidEver === 'UNKNOWN').length, fullyRefunded: active.filter((row) => row.fullyRefunded).length } },
@@ -136,6 +140,12 @@ export class ExecutiveReportReadService {
       spendConcentration: (({ topCount, population, topShare, periodBasis, coverage, reasonCodes }) =>
         ({ topCount, population, topShare, periodBasis, coverage, reasonCodes }))(spend),
     };
+    if (!data.legacy) {
+      result.metrics.newCompanies = { ...figuresOf(data).newCompanies, drilldownFilters: drill({ joinedInPeriod: 'true' }) };
+      const comparisons = result.periodComparisons!;
+      for (const key of Object.keys(result.metrics) as Array<keyof typeof result.metrics>) if (result.metrics[key]) Object.assign(result.metrics[key]!, { comparison: comparisons[key] });
+    }
+    result.monthlySeries = seriesOf(data, ['companies', 'activeCompanies', 'companiesWithReceipts', 'netReceiptsSatang']);
     await this.readAudit(ctx, 'overview', data, query, {}, scope.length);
     return result;
   }
@@ -150,7 +160,7 @@ export class ExecutiveReportReadService {
     const groups = spendGroupsOf(data.scope, moneyIncomplete(data.money));
     const cohort = directory.spendCohort === 'ALL' ? null : groups.members[directory.spendCohort as keyof SpendGroups['members']];
     const nameOf = (row: ReportRow) => names.get(row.companyId)?.name ?? null;
-    let list = data.scope.filter((row) => matchesDirectory(row, directory, cohort));
+    let list = data.scope.filter((row) => matchesDirectory(row, directory, cohort, data.range.start));
     if (q) list = list.filter((row) => [nameOf(row), names.get(row.companyId)?.registeredName, provinceOf(data, row.profile)]
       .some((text) => text?.toLocaleLowerCase('th').includes(q)));
     const sorted = sortedBy<string | number>(list, sortValueOf(sortBy, nameOf), sortDir);
@@ -166,9 +176,13 @@ export class ExecutiveReportReadService {
       ...(sortBy === 'netReceipts' && ranks ? { cumulativeShare: groups.cumulative.get(row.companyId) ?? null } : {}) }));
     const result: ExecutiveCompanies = {
       ...this.envelope(ctx, data, query, directoryLabels(query), groupsReason(directory.spendCohort, groups)),
-      summary: { netReceiptsSatang: moneyOf(sum(sorted, netOf), data.money) },
+      summary: { netReceiptsSatang: moneyOf(sum(sorted, netOf), data.legacy ? data.money : coverageFor(data, sorted, 'money')) },
       items, pagination: { page, pageSize, total, totalPages }, sort: { sortBy, sortDir },
     };
+    if (!data.legacy && data.previous) {
+      result.periodComparisons = comparisonsOf(data, sorted, directoryScopeOf(data.previous, query, names));
+      result.summary.netReceiptsSatang.comparison = result.periodComparisons.netReceiptsSatang;
+    }
     await this.readAudit(ctx, 'companies', data, query, { ...auditableDirectory(query), sortBy, sortDir, page, pageSize }, total, !!q);
     return result;
   }
@@ -218,6 +232,9 @@ export class ExecutiveReportReadService {
       result.comparison = this.compareOf(ctx, data, query.dimension!, query.sideA!, query.sideB!, extra.names);
       rowCount = 2;
     }
+    result.monthlySeries = seriesOf(data, query.section === 'usage' ? ['activeCompanies', 'expenseReceiptCount'] : query.section === 'revenue' ? ['receiptsSatang', 'refundsSatang', 'netReceiptsSatang'] : query.section === 'customers' ? ['companies', 'newCompanies'] : ['netReceiptsSatang']);
+    if (comparing && result.comparison) result.monthlySeries = (['A', 'B'] as const).flatMap(side => seriesOf(data, ['netReceiptsSatang'], month => month.population.filter(row => inComparisonSide(row, query.dimension!, side === 'A' ? query.sideA! : query.sideB!, data.salesCodeOf))).map(series => ({ ...series, side })));
+    if (!data.legacy && result.revenue) for (const key of ['receiptsSatang', 'refundsSatang', 'netReceiptsSatang', 'feesSatang', 'taxSatang'] as const) result.revenue[key].comparison = result.periodComparisons?.[key];
     await this.readAudit(ctx, `analysis.${query.section}${comparing ? '' : `.${view}`}`, data, query,
       { ...(query.metric ? { metric: query.metric } : {}), ...(comparing ? { dimension: query.dimension } : {}) }, rowCount);
     return result;
@@ -264,7 +281,17 @@ export class ExecutiveReportReadService {
         expenseReceiptCountLifetime: profile.expenseReceiptCountLifetime, firstActivityAt: iso(profile.firstActivityAt),
         lastWebEntryAt: iso(profile.lastWebEntryAt), lastLineActivityAt: iso(profile.lastLineActivityAt), ownerContact,
       },
-      month: row && {
+      periodSummary: row ? periodSummaryOf(data, row) : null,
+      periodComparisons: row ? comparisonsOf(data, [row], data.previous?.population.filter(item => item.companyId === targetCompanyId)) : {},
+      periodReasonCodes: monthReasons,
+      monthlyHistory: data.monthly.map(month => {
+        const applicable = profile.companyCreatedAt < month.effectiveEnd, r = month.rowsById.get(targetCompanyId), available = !!r && month.rawIds.has(targetCompanyId);
+        const coverage = !applicable ? { money: complete(), usage: complete(), aiCost: complete(), population: complete() }
+          : { ...monthMetadata(month).coverage, money: coverageFor(month, [r!], 'money'), usage: coverageFor(month, [r!], 'usage'), aiCost: coverageFor(month, [r!], 'cost') };
+        return { ...monthMetadata(month), applicable, coverage, summary: applicable && available ? periodSummaryOf(month, r!) : null,
+          reasonCodes: !applicable ? ['NOT_YET_REGISTERED' as const] : !available ? coverage.money.reasonCodes : r!.countersHeld ? ['SOURCE_ROWS_PURGED' as const] : [] };
+      }),
+      month: data.period.monthCount === 1 && row ? {
         paidEver: base.paidEver, fullyRefunded: row.fullyRefunded, paidInMonth: row.receiptsSatang > 0, positiveNetInMonth: netOf(row) > 0,
         usageGroup: base.usageGroup, ...(row.usageUnassessedReason ? { usageUnassessedReason: row.usageUnassessedReason } : {}),
         money: { ...moneyRowOf([row], data.money),
@@ -273,16 +300,19 @@ export class ExecutiveReportReadService {
           activeUsersLine: row.activeUsersLine, activeUsersWeb: row.activeUsersWeb, documents: documentsOf(row), confirmedExpensesLine: row.confirmedExpensesLine,
           confirmedExpensesWeb: row.confirmedExpensesWeb, issuedDocuments: row.issuedDocuments, aiRequests: row.aiRequests,
           expenseReceiptCountInPeriod: expenseReceiptsOf(row), expenseReceiptsLine: row.expenseReceiptsLine, expenseReceiptsWeb: row.expenseReceiptsWeb },
-      },
+      } : null,
       monthReasonCodes: monthReasons,
     };
-    await this.companyAudit(ctx, targetCompanyId, query.month, ownerContact.status === 'OK' && (!!ownerContact.email || !!ownerContact.phoneNumber));
+    await this.companyAudit(ctx, targetCompanyId, query.month ?? null, ownerContact.status === 'OK' && (!!ownerContact.email || !!ownerContact.phoneNumber), { from: data.period.from, to: data.period.to });
     return result;
   }
 
   // ── API13 ────────────────────────────────────────────────────────────────────────────────────
 
   async export(ctx: RequestContext, body: ExecutiveExportBody): Promise<{ file: Buffer; exportReference: string; rowCount: number }> {
+    const W = body?.month !== undefined ? LEGACY_WORDS : { ...LEGACY_WORDS, ...P, partialMonth: P.openMonth, compareBase: P.selectedBase, detailBase: P.selectedBase,
+      noPositiveCompanies: LEGACY_WORDS.noPositiveCompanies.replace('ในเดือน', 'ในช่วงนี้'), documentDefinition: LEGACY_WORDS.documentDefinition.replace('ในเดือน', 'ในช่วงนี้') };
+    const usageLabels = body?.month !== undefined ? L.usageGroup : { ...L.usageGroup, INACTIVE: P.inactive, ACTIVE: P.paidActive };
     const started = performance.now(), exportReference = randomUUID();
     let ownsSlot = false, rowCount = 0, bytes = 0, data: DataSet | undefined, query: ExecutiveCompaniesQuery | undefined;
     let includesContacts = false, outcome = 'FAILED';
@@ -291,6 +321,7 @@ export class ExecutiveReportReadService {
       assertPlatformTenant(ctx);
       if (!['system.executive.read', 'system.executive.export'].every(key => ctx.permissions.includes(key))) throw executiveError(ctx.requestId, 'EXECUTIVE_ACCESS_DENIED', undefined, W.export.denied);
       const validatedQuery = exportQueryOf(ctx, body);
+      validatedPeriod(ctx, validatedQuery, executiveMonthOf(this.clock()));
       query = validatedQuery;
       includesContacts = body.includeContacts;
       if (includesContacts && !ctx.permissions.includes('system.executive.contact.read')) throw executiveError(ctx.requestId, 'EXECUTIVE_ACCESS_DENIED', undefined, W.export.denied);
@@ -333,24 +364,27 @@ export class ExecutiveReportReadService {
           for (const row of list) sideOf.set(row.companyId, `${belongs(row, pair.sideA) ? W.sideA : W.sideB} · ${executiveComparisonLabel(belongs(row, pair.sideA) ? comparison.sideA : comparison.sideB, comparison.dimension)}`);
         } else if (body.reportKey === 'companies') {
           const search = query.q?.trim().toLocaleLowerCase('th');
-          list = list.filter(row => matchesDirectory(row, directory, cohort) && (!search || [extra.names.get(row.companyId)?.name, extra.names.get(row.companyId)?.registeredName, provinceOf(set, row.profile)].some(text => text?.toLocaleLowerCase('th').includes(search))));
+          list = list.filter(row => matchesDirectory(row, directory, cohort, set.range.start) && (!search || [extra.names.get(row.companyId)?.name, extra.names.get(row.companyId)?.registeredName, provinceOf(set, row.profile)].some(text => text?.toLocaleLowerCase('th').includes(search))));
         }
         if (!list.length) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_EMPTY');
         if (list.length > 10_000) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
         const sortBy = query.sortBy ?? 'joinedAt', sortDir = query.sortDir ?? DEFAULT_DIR[sortBy];
         list = sortedBy(list, sortValueOf(sortBy, row => extra.names.get(row.companyId)?.name ?? null), sortDir);
         rowCount = list.length;
+        const selectedMoney = set.legacy ? set.money : coverageFor(set, list, 'money'), selectedUsage = set.legacy ? set.usage : coverageFor(set, list, 'usage');
+        const selectedCost = set.legacy ? set.cost : coverageFor(set, list, 'cost');
         const metric = sortBy === 'netReceipts' ? netOf : (METRIC_OF as Partial<Record<string, (row: ReportRow) => number>>)[sortBy];
         const ranks = metric && !(sortBy === 'netReceipts' && moneyIncomplete(set.money)) ? ranksOf(sortedBy(set.scope, metric, 'desc'), metric) : null;
-        const contactAt = this.clock(), columns = executiveExportColumns(body.reportKey, body.subview, includesContacts);
-        const costs = aiCostCoverageOf({ start: set.range.start, end: set.range.end, aiUsageSince: set.build.aiUsageSince });
+        const contactAt = this.clock(), columns = (body.month !== undefined ? executiveExportColumns : executivePeriodExportColumns)(body.reportKey, body.subview, includesContacts);
+        const costs = selectedCost;
         const rows: WorkbookCell[][] = [];
         for (const row of list) {
           if (performance.now() - started > 30_000) throw executiveError(ctx.requestId, 'EXECUTIVE_EXPORT_LIMIT_EXCEEDED');
           const company = this.rowOf(set, row, extra.names, extra.others.get(row.companyId)), profile = row.profile, live = extra.companies.get(row.companyId);
-          const money = (satang: number) => set.money.coverage === 'unavailable' ? null : { value: satang / 100, style: 3 };
-          const usage = (n: number) => set.usage.coverage === 'unavailable' ? null : n;
-          const notes = [set.usage.coverage !== 'complete' ? W.export.usageMissing : '', set.money.coverage !== 'complete' ? W.export.moneyMissing : '', costs.coverage !== 'complete' ? W.export.aiMissing : '',
+          const sources = set.legacy ? { money: set.money, usage: set.usage, aiCost: costs } : periodSummaryOf(set, row).coverage;
+          const money = (satang: number) => sources.money.coverage === 'unavailable' ? null : { value: satang / 100, style: 3 };
+          const usage = (n: number) => sources.usage.coverage === 'unavailable' ? null : n;
+          const notes = [sources.usage.coverage !== 'complete' ? W.export.usageMissing : '', sources.money.coverage !== 'complete' ? W.export.moneyMissing : '', sources.aiCost.coverage !== 'complete' ? W.export.aiMissing : '',
             profile.receiptAdoption === 'UNKNOWN' ? L.receiptAdoption.UNKNOWN : '', row.paidEverReason === 'MANUAL_TERM_NO_RECEIPT' ? W.manualTerm : '', body.reportKey === 'revenue' && body.subview === 'top' ? spendStatus : ''].filter(Boolean).join(' · ');
           const cells: WorkbookCell[] = [company.displayName, company.registeredName, company.provinceLabel, executiveThaiLabel(company.industryGroup.label),
             live?.businessTypeCode === 'OTHER' ? live.businessTypeOther : DBD_LABEL.get(live?.businessTypeCode ?? '') ?? null, xlsxThaiDate(company.joinedAt),
@@ -359,10 +393,10 @@ export class ExecutiveReportReadService {
             executiveThaiLabel(company.referrer.label, company.referrer.salesCode) + (company.referrer.source === 'ADMIN' ? ` ${EXECUTIVE_REFERRER_ADMIN_SUFFIX}` : ''),
             company.creditedSeller.label ? executiveThaiLabel(company.creditedSeller.label, company.creditedSeller.salesCode) : null,
             profile.creditedSalesUserId ? { value: (extra.credit.get(row.companyId) ?? 0) / 100, style: 3 } : null, xlsxThaiDate(iso(profile.salesCreditPaidAt)),
-            L.paidEver[row.paidEver]!, row.fullyRefunded ? EXECUTIVE_FLAG_LABELS.fullyRefunded.true! : row.usageGroup ? L.usageGroup[row.usageGroup]! : L.paidEver.UNKNOWN!,
+            L.paidEver[row.paidEver]!, row.fullyRefunded ? EXECUTIVE_FLAG_LABELS.fullyRefunded.true! : row.usageGroup ? usageLabels[row.usageGroup]! : L.paidEver.UNKNOWN!,
             L.receiptAdoption[profile.receiptAdoption]!, profile.receiptAdoption === 'UNKNOWN' || profile.receiptAdoption === 'NOT_ENTITLED' ? null : profile.expenseReceiptCountLifetime,
-            usage(expenseReceiptsOf(row)), usage(row.activeDays), usage(row.activeUsers), usage(documentsOf(row)), usage(row.aiRequests),
-            money(row.receiptsSatang), money(row.refundsSatang), money(netOf(row)), money(row.feesSatang), costs.coverage === 'unavailable' ? null : { value: row.aiCostSatang / 100, style: 3 },
+            usage(expenseReceiptsOf(row)), usage(row.activeDays), set.period.monthCount > 1 ? null : usage(row.activeUsers), usage(documentsOf(row)), usage(row.aiRequests),
+            money(row.receiptsSatang), money(row.refundsSatang), money(netOf(row)), money(row.feesSatang), sources.aiCost.coverage === 'unavailable' ? null : { value: row.aiCostSatang / 100, style: 3 },
             xlsxThaiDate(iso(profile.firstActivityAt)), xlsxThaiDate(iso(profile.lastActivityAt), true), xlsxThaiDate(iso(profile.lastWebEntryAt), true), xlsxThaiDate(iso(profile.lastLineActivityAt), true)];
           if (body.reportKey === 'usage' && body.subview === 'ranking') cells.push(ranks?.get(row.companyId) ?? null);
           if (body.reportKey === 'revenue' && body.subview === 'top') cells.push(ranks?.get(row.companyId) ?? null, set.money.coverage === 'complete' ? { value: Math.max(netOf(row), 0) / 100, style: 3 } : null,
@@ -383,20 +417,20 @@ export class ExecutiveReportReadService {
           status: source.coverage === 'partial' ? W.atLeast : undefined, ...(source.coverage !== 'unavailable' && formula ? { formula } : {}) });
         const sumFormula = (c: number, source: ExecutiveSourceCoverage) => source.coverage === 'unavailable' ? undefined : `SUM(${range(c)})`;
         const kpis: ExportFigure[] = [count(W.companyCount, list.length, set.populationCoverage, `COUNTA(${range(1)})`),
-          count(W.active, list.filter(row => row.activeDays > 0).length, set.usage, `COUNTIF(${range(22)},">0")`),
-          { label: W.net, value: set.money.coverage === 'unavailable' ? null : sum(list, netOf) / 100, formula: sumFormula(28, set.money), style: 3, status: set.money.coverage === 'partial' ? W.partialMoney : undefined }];
+          count(W.active, list.filter(row => row.activeDays > 0).length, selectedUsage, `COUNTIF(${range(22)},">0")`),
+          { label: W.net, value: selectedMoney.coverage === 'unavailable' ? null : sum(list, netOf) / 100, formula: sumFormula(28, selectedMoney), style: 3, status: selectedMoney.coverage === 'partial' ? W.partialMoney : undefined }];
         if (body.reportKey === 'companies') kpis[0] = { label: W.companyCount, value: list.length, formula: `COUNTA(${range(1)})`, status: W.found(list.length) };
-        if (detail) kpis.splice(0, 3, kpis[2]!, count(W.receiptCount, sum(list, expenseReceiptsOf), set.usage, sumFormula(21, set.usage)),
-          count(W.days, sum(list, row => row.activeDays), set.usage, sumFormula(22, set.usage)));
+        if (detail) kpis.splice(0, 3, kpis[2]!, count(W.receiptCount, sum(list, expenseReceiptsOf), selectedUsage, sumFormula(21, selectedUsage)),
+          count(W.days, sum(list, row => row.activeDays), selectedUsage, sumFormula(22, selectedUsage)));
         const adoption = this.adoptionOf(set, list);
         let panels: ExportPanel[] = [{ title: W.adoptionTitle, kind: 'doughnut', labels: adoption.segments.map(segment => L.receiptAdoption[segment.key]!), values: adoption.segments.map(segment => segment.count),
           formulas: adoption.segments.map(segment => `COUNTIF(${range(19)},"${L.receiptAdoption[segment.key]}")`) },
           { title: W.lifetimeReceipts, kind: 'bar', labels: W.export.buckets, values: [rows.filter(row => row[19] === 0).length, rows.filter(row => typeof row[19] === 'number' && row[19] >= 1 && row[19] <= 5).length, rows.filter(row => typeof row[19] === 'number' && row[19] >= 6).length],
             formulas: [`COUNTIFS(${range(20)},"=0",${range(20)},"<>")`, `COUNTIFS(${range(20)},">=1",${range(20)},"<=5")`, `COUNTIF(${range(20)},">=6")`], status: W.export.bucketsDefinition },
-          { title: W.paidUsage, kind: 'bar', labels: Object.values(L.usageGroup).slice(1), values: this.paidUsageOf(set, list).groups.map(group => group.count),
-            formulas: Object.values(L.usageGroup).slice(1).map(label => `COUNTIF(${range(18)},"${label}")`) },
-          { title: W.net, kind: 'bar', labels: [W.receipts, W.refunds, W.net], values: [sum(list, row => row.receiptsSatang), sum(list, row => row.refundsSatang), sum(list, netOf)].map(n => set.money.coverage === 'unavailable' ? null : n / 100),
-            formulas: [26, 27, 28].map(c => sumFormula(c, set.money) ?? 'IF(1=1,"",0)'), status: set.money.coverage === 'partial' ? W.partialMoney : undefined, style: 3 }];
+          { title: W.paidUsage, kind: 'bar', labels: Object.values(usageLabels).slice(1), values: this.paidUsageOf(set, list).groups.map(group => group.count),
+            formulas: Object.values(usageLabels).slice(1).map(label => `COUNTIF(${range(18)},"${label}")`) },
+          { title: W.net, kind: 'bar', labels: [W.receipts, W.refunds, W.net], values: [sum(list, row => row.receiptsSatang), sum(list, row => row.refundsSatang), sum(list, netOf)].map(n => selectedMoney.coverage === 'unavailable' ? null : n / 100),
+            formulas: [26, 27, 28].map(c => sumFormula(c, selectedMoney) ?? 'IF(1=1,"",0)'), status: selectedMoney.coverage === 'partial' ? W.partialMoney : undefined, style: 3 }];
         const tables: ExportTable[] = [];
         if (body.reportKey === 'usage' && body.subview === 'ranking') {
           const ranking = this.rankingOf(set, sortBy as ExecutiveRankingMetric, extra.names);
@@ -419,8 +453,8 @@ export class ExecutiveReportReadService {
             status: spendStatus || undefined };
           const payers = sortedBy(list.filter(row => netOf(row) > 0), netOf, 'desc').slice(0, 10);
           panels[1] = { title: W.cumulativeShare, kind: 'bar', labels: payers.map(row => extra.names.get(row.companyId)?.name ?? ''), values: payers.map(row => groups.cumulative.get(row.companyId)?.value == null ? null : groups.cumulative.get(row.companyId)!.value! / 100), style: 6 };
-          panels[2] = { title: W.positiveNet, kind: 'bar', labels: [W.positiveNet, W.negativeTotal], values: set.money.coverage === 'unavailable' ? [null, null] : [groups.positiveNetTotalSatang / 100, groups.negativeNetSatang / 100], style: 3, status: negativeNote };
-          tables.push({ title: W.positiveNet, headers: [W.companyCount, W.positiveNet, W.negativeTotal, W.export.notes], rows: [[set.money.coverage === 'unavailable' ? null : groups.positiveCompanyCount, { value: set.money.coverage === 'unavailable' ? null : groups.positiveNetTotalSatang / 100, style: 3 }, { value: set.money.coverage === 'unavailable' ? null : groups.negativeNetSatang / 100, style: 3 }, negativeNote]] });
+          panels[2] = { title: W.positiveNet, kind: 'bar', labels: [W.positiveNet, W.negativeTotal], values: (set.legacy ? set.money.coverage === 'unavailable' : moneyIncomplete(set.money)) ? [null, null] : [groups.positiveNetTotalSatang / 100, groups.negativeNetSatang / 100], style: 3, status: negativeNote };
+          tables.push({ title: W.positiveNet, headers: [W.companyCount, W.positiveNet, W.negativeTotal, W.export.notes], rows: [[(set.legacy ? set.money.coverage === 'unavailable' : moneyIncomplete(set.money)) ? null : groups.positiveCompanyCount, { value: (set.legacy ? set.money.coverage === 'unavailable' : moneyIncomplete(set.money)) ? null : groups.positiveNetTotalSatang / 100, style: 3 }, { value: (set.legacy ? set.money.coverage === 'unavailable' : moneyIncomplete(set.money)) ? null : groups.negativeNetSatang / 100, style: 3 }, negativeNote]] });
         }
         if (body.reportKey === 'customers') {
           const grouped = this.groupsOf(set, body.subview === 'creditedSales' ? 'sales' : body.subview as 'industry' | 'discovery' | 'sales', extra.credit);
@@ -430,7 +464,9 @@ export class ExecutiveReportReadService {
           panels[1] = { title: W.net, kind: 'bar', labels, values: grouped.groups!.map(group => figureValue(group.netReceiptsSatang, 100)), style: 3 };
           panels[2] = { title: W.active, kind: 'bar', labels, values: grouped.groups!.map(group => figureValue(group.activeCompanies)), status: set.usage.coverage === 'partial' ? W.atLeast : undefined };
           panels[3] = { title: W.paid, kind: 'bar', labels, values: grouped.groups!.map(group => figureValue(group.companiesWithReceipts)), status: set.money.coverage === 'partial' ? W.atLeast : undefined };
-          tables.push({ title: W.customers, headers: [W.group, W.companyCount, W.net, W.active, W.export.notes], rows: grouped.groups!.map(group => [groupLabel(group), group.companies.count, { value: figureValue(group.netReceiptsSatang, 100), style: 3 }, figureValue(group.activeCompanies), set.populationCoverage.coverage === 'partial' || group.netReceiptsSatang.coverage === 'partial' ? W.atLeast : '']) });
+          tables.push({ title: W.customers, headers: [W.group, W.companyCount, W.net, W.active, W.export.notes], rows: grouped.groups!.map(group => [groupLabel(group), group.companies.count, { value: figureValue(group.netReceiptsSatang, 100), style: 3 }, figureValue(group.activeCompanies),
+            set.legacy ? set.populationCoverage.coverage === 'partial' || group.netReceiptsSatang.coverage === 'partial' ? W.atLeast : ''
+              : [executiveMoneyQualifier(group.netReceiptsSatang), group.activeCompanies.coverage !== 'complete' ? W.export.usageMissing : '', set.populationCoverage.coverage === 'partial' ? W.atLeast : ''].filter(Boolean).join(' · ')]) });
           if (body.subview === 'creditedSales') {
             panels[0] = { title: W.creditAmount, kind: 'bar', labels: grouped.creditedSellers!.rows.map(row => executiveThaiLabel(row.seller.label ?? '', row.seller.salesCode)), values: grouped.creditedSellers!.rows.map(row => row.creditSatang / 100), style: 3 };
             tables.push({ title: W.credited, headers: [W.sales, W.companyCount, W.waiting, W.creditAmount], rows: grouped.creditedSellers!.rows.map(row => [executiveThaiLabel(row.seller.label ?? '', row.seller.salesCode), row.companies, row.waiting, { value: row.creditSatang / 100, style: 3 }]) });
@@ -450,16 +486,40 @@ export class ExecutiveReportReadService {
           }) });
         }
         if (detail) panels = panels.filter(panel => panel.kind !== 'doughnut');
-        const sort = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === sortBy)!;
+        const sort = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === sortBy)!, sortLabel = body.month !== undefined ? sort.label : executivePeriodSortLabel(sort);
         const filters = [...Object.values(envelope.appliedFilters.global), ...Object.values(envelope.appliedFilters.directory)].filter(option => option.value !== 'ALL').map(option => executiveThaiLabel(option.label, option.value));
         const metadata = [W.through(exportDateTime(envelope.dataThrough.oldest ?? set.build.asOf)), `${W.filters} · ${[...filters, ...(query.q ? [`${W.search} · ${query.q}`] : []), ...(comparison ? [executiveComparisonLabel(comparison.sideA, comparison.dimension), executiveComparisonLabel(comparison.sideB, comparison.dimension)] : [])].join(' · ') || W.export.none}`,
-          `${W.sort} · ${sortDir === sort.sortDir ? sort.label : sort.label.replace('มาก → น้อย', 'น้อย → มาก').replace('ก → ฮ', 'ฮ → ก').replace('ล่าสุดก่อน', 'เก่าสุดก่อน')}`, W.found(list.length), W.excluded,
+          `${W.sort} · ${sortDir === sort.sortDir ? sortLabel : sortLabel.replace('มาก → น้อย', 'น้อย → มาก').replace('ก → ฮ', 'ฮ → ก').replace('ล่าสุดก่อน', 'เก่าสุดก่อน')}`, W.found(list.length), W.excluded,
           W.moneyDefinition, W.vatIncluded, W.receiptDefinition, W.documentDefinition, W.usersDefinition, W.aiDefinition,
           W.export.sentBy(extra.actor, exportDateTime(this.clock())), `${W.export.reference} · ${exportReference}`,
-          ...(set.money.coverage !== 'complete' ? [W.export.moneyMissing] : []), ...(set.usage.coverage !== 'complete' ? [W.export.usageMissing] : []),
+          ...(selectedMoney.coverage !== 'complete' ? [W.export.moneyMissing] : []), ...(selectedUsage.coverage !== 'complete' ? [W.export.usageMissing] : []),
           ...envelope.dataThrough.lagging.map(source => source === 'billing' && envelope.dataThrough.billing ? W.moneyThrough(exportDateTime(envelope.dataThrough.billing)) : ''),
           ...(includesContacts ? [W.export.personal, W.contactAt(exportDateTime(contactAt))] : [])];
-        const file = buildExecutiveWorkbook({ title: W[body.reportKey], month: body.month, metadata, columns, rows, kpis, panels, tables });
+        if (body.month === undefined) {
+          metadata.push(...(set.period.includesOpenMonth ? [P.openMonth] : []), ...(set.period.monthCount > 1 ? [P.distinctUsersUnavailable] : []), P.currentAt(exportDateTime(set.build.asOf)));
+          for (const [source, measured] of [[selectedMoney, false], [selectedUsage, false], [selectedCost, true]] as const) if (source.coverage !== 'complete') {
+            const months = (source.affectedMonths ?? []).map(part => exportMonth(part.month)).join(', ');
+            metadata.push(P.incomplete(months), ...(measured ? [executiveMoneyQualifier(source, true)] : []));
+          }
+          // Monthly sources and previous-period inputs stay in the calculation area of the original two sheets.
+
+          tables.push(monthlyExportTable(set, list, extra.names, P.monthlyHistory, started));
+          const selectedPrevious = body.reportKey === 'companies' ? directoryScopeOf(set.previous!, query, extra.names)
+            : detail ? set.previous!.population.filter(row => row.companyId === body.targetCompanyId)
+            : comparing ? set.previous!.population.filter(row => body.comparison!.dimension === 'company' ? [body.comparison!.sideA, body.comparison!.sideB].includes(row.companyId)
+              : [body.comparison!.sideA, body.comparison!.sideB].includes(body.comparison!.dimension === 'industry' ? industryKeyOf(row) : body.comparison!.dimension === 'discovery' ? row.profile.discovery : referrerKeyOf(row, set.salesCodeOf)))
+            : set.previous!.scope;
+          tables.push(monthlyExportTable(set.previous!, selectedPrevious, extra.names, `${P.previous} · ${P.monthlyHistory}`, started));
+          const comparisons = comparisonsOf(set, list, selectedPrevious);
+          tables.push({ title: P.compareWith(executivePeriodLabel(set.previous!.period.from, set.previous!.period.to)), headers: [W.figure, W.current, P.previous, W.difference, W.export.notes],
+            rows: (['companies', 'activeCompanies', 'companiesWithReceipts', 'netReceiptsSatang', 'expenseReceiptCount'] as const).map((key, i) => {
+              const comparison = comparisons[key]!, scale = key === 'netReceiptsSatang' ? 100 : 1;
+              const status = executivePeriodComparisonQualifier(comparison);
+              return [[W.companyCount, W.active, W.paid, W.net, W.receiptCount][i]!, { value: figureValue(comparison.current, scale), style: scale === 100 ? 3 : 0 },
+                { value: figureValue(comparison.previous, scale), style: scale === 100 ? 3 : 0 }, { value: comparison.absoluteChange === null ? null : comparison.absoluteChange / scale, style: scale === 100 ? 3 : 0 }, status];
+            }) });
+        }
+        const file = buildExecutiveWorkbook({ title: W[body.reportKey], month: body.month ?? set.month, ...(body.month === undefined ? { period: set.period } : {}), metadata, columns, rows, kpis, panels, tables });
         bytes = file.length;
         const [current, currentActor, session] = await Promise.all([
           this.access.resolveAccess(ctx.userId, ctx.companyId),
@@ -482,7 +542,7 @@ export class ExecutiveReportReadService {
       try {
         await this.audit.logOrThrow({ actorUserId: ctx.userId, action: 'executive.export.created', targetType: 'ExecutiveExport', requestId: ctx.requestId,
           result: outcome === 'SUCCESS' ? 'SUCCESS' : outcome === 'EXECUTIVE_ACCESS_DENIED' ? 'DENIED' : 'FAILED', riskLevel: includesContacts ? 'MEDIUM' : 'LOW',
-          metadataJson: { exportReference, reportKey: query ? body.reportKey : null, subview: query ? body.subview ?? null : null, month: query?.month ?? null,
+          metadataJson: { exportReference, reportKey: query ? body.reportKey : null, subview: query ? body.subview ?? null : null, month: query?.month ?? null, period: data?.period ? { from: data.period.from, to: data.period.to } : query ? { from: query.from ?? query.month, to: query.to ?? query.month } : null,
             filters: data && query ? { ...data.global, ...auditableDirectory(query) } : {}, comparison: auditComparison ?? null,
             sortBy: query?.sortBy ?? null, sortDir: query?.sortDir ?? null, hasSearch: !!query?.q, rowCount, companyCount: rowCount, bytes, includesContacts, outcome,
             buildId: data?.build.id ?? null, definitionVersion: data?.build.definitionVersion ?? null, templateVersion: 'executive-v4-1' } });
@@ -494,16 +554,19 @@ export class ExecutiveReportReadService {
 
   /** The company's own events from the rows that already record them; nothing of who did it or why (spec §16.1 API06). */
   async history(ctx: RequestContext, targetCompanyId: string, query: ExecutiveHistoryQuery): Promise<ExecutiveCompanyHistory> {
-    const found = await this.prisma.client.$transaction(async (tx) => {
-      const build = await latestBuild(tx);
-      if (!build) throw executiveError(ctx.requestId, 'SOURCE_UNAVAILABLE');
+    const readEvents = async (tx: Tx) => {
       const profile = await tx.executiveCompanyProfile.findUnique({ where: { companyId: targetCompanyId }, select: { reportClassification: true } });
       if (profile?.reportClassification !== 'CUSTOMER') return null;
       return Promise.all([
         tx.company.findUnique({ where: { id: targetCompanyId }, select: { createdAt: true } }),
-        tx.auditLog.findMany({ where: { action: LIFECYCLE_ACTION, targetType: 'company', targetId: targetCompanyId },
-          select: { createdAt: true, actorUserId: true, metadataJson: true } }),
+        tx.auditLog.findMany({ where: { action: LIFECYCLE_ACTION, targetType: 'company', targetId: targetCompanyId }, select: { createdAt: true, actorUserId: true, metadataJson: true } }),
       ]);
+    };
+    const loaded = query.from !== undefined || query.to !== undefined || query.month !== undefined ? await this.load(ctx, query, false, readEvents) : null;
+    const periodData = loaded?.data ?? null;
+    const found = loaded ? loaded.extra : await this.prisma.client.$transaction(async tx => {
+      if (!await latestBuild(tx)) throw executiveError(ctx.requestId, 'SOURCE_UNAVAILABLE');
+      return readEvents(tx);
     }, SNAPSHOT);
     if (!found?.[0]) throw executiveError(ctx.requestId, 'COMPANY_NOT_FOUND');
     const [company, transitions] = found;
@@ -518,10 +581,11 @@ export class ExecutiveReportReadService {
       const renewal = EXECUTIVE_PURCHASE_GROUPS.find((group) => (group.kinds as readonly string[]).includes(purchase.purchaseKind))?.key === 'RENEWAL';
       events.push({ kind: renewal ? 'PACKAGE_RENEWED' : 'PACKAGE_PURCHASED', at: purchase.appliedAt.toISOString(), planLabel: billingPlanLabel(purchase.tierKey) });
     }
-    events.sort((a, b) => b.at.localeCompare(a.at));
-    const pageSize = query.pageSize ?? 20, totalPages = Math.ceil(events.length / pageSize), page = Math.max(1, Math.min(query.page ?? 1, totalPages));
-    await this.companyAudit(ctx, targetCompanyId, null, false);
-    return { requestId: ctx.requestId, items: events.slice((page - 1) * pageSize, page * pageSize), pagination: { page, pageSize, total: events.length, totalPages } };
+    const appliedEvents = periodData ? events.filter(event => event.at >= periodData.period.startInclusive && event.at < periodData.period.effectiveEndExclusive) : events;
+    appliedEvents.sort((a, b) => b.at.localeCompare(a.at));
+    const pageSize = query.pageSize ?? 20, totalPages = Math.ceil(appliedEvents.length / pageSize), page = Math.max(1, Math.min(query.page ?? 1, totalPages));
+    await this.companyAudit(ctx, targetCompanyId, query.month ?? null, false, periodData ? { from: periodData.period.from, to: periodData.period.to } : undefined);
+    return { requestId: ctx.requestId, ...(periodData ? (({ build, buildChanged, period }) => ({ build, buildChanged, period }))(this.envelope(ctx, periodData, query)) : {}), items: appliedEvents.slice((page - 1) * pageSize, page * pageSize), pagination: { page, pageSize, total: appliedEvents.length, totalPages } };
   }
 
   // ── The data set ─────────────────────────────────────────────────────────────────────────────
@@ -533,40 +597,48 @@ export class ExecutiveReportReadService {
    */
   private async load<T = undefined>(ctx: RequestContext, query: ExecutiveReportQuery, useGlobalFilters: boolean,
     extra?: (tx: Tx, data: DataSet) => Promise<T>): Promise<{ data: DataSet; extra: T }> {
-    const invalid = (field: string) => executiveError(ctx.requestId, 'EXECUTIVE_QUERY_INVALID', field);
-    if (!isMonth(query.month) || query.month > executiveMonthOf(this.clock())) throw invalid('month');
+    const requested = validatedPeriod(ctx, query, executiveMonthOf(this.clock()));
     return this.prisma.client.$transaction(async (tx) => {
       const build = await latestBuild(tx);
       if (!build) throw executiveError(ctx.requestId, 'SOURCE_UNAVAILABLE');
-      const [first, header, monthRows, profileRows, provinces] = await Promise.all([
+      const months = monthsBetween(requested.from, requested.to), previousTo = shiftMonth(requested.from, -1), previousFrom = shiftMonth(requested.from, -months.length);
+      const [first, headers, monthRows, profileRows, provinces, legacyHeader] = await Promise.all([
         tx.executiveReportMonth.findFirst({ where: { definitionVersion: VERSION }, orderBy: { month: 'asc' }, select: { month: true } }),
-        tx.executiveReportMonth.findUnique({ where: { month_definitionVersion: { month: query.month, definitionVersion: VERSION } } }),
-        tx.executiveCompanyMonth.findMany({ where: { month: query.month, definitionVersion: VERSION } }),
+        tx.executiveReportMonth.findMany({ where: { month: { gte: previousFrom, lte: requested.to }, definitionVersion: VERSION } }),
+        tx.executiveCompanyMonth.findMany({ where: { month: { gte: previousFrom, lte: requested.to }, definitionVersion: VERSION } }),
         tx.executiveCompanyProfile.findMany(),
         tx.$queryRaw<Array<{ provinceCode: string; provinceTh: string }>>`SELECT DISTINCT "provinceCode", "provinceTh" FROM "ThaiAddressMaster"`,
+        query.month ? tx.executiveReportMonth.findUnique({ where: { month_definitionVersion: { month: query.month, definitionVersion: VERSION } } }) : Promise.resolve(null),
       ]);
-      if (!first || query.month < first.month) throw invalid('month');
-      if (!header) throw executiveError(ctx.requestId, 'SOURCE_UNAVAILABLE');
-      const profiles = new Map(profileRows.map((profile) => [profile.companyId, profile]));
-      const sellers = await sellersOf(tx, profileRows.flatMap((profile) =>
-        [profile.referrerKind === 'KNOWN' ? profile.referrerSalesUserId : null, profile.creditedSalesUserId]));
-      const salesCodeOf = new Map([...sellers.values()].map((seller) => [seller.userId, seller.salesCode]));
+      if (!first || requested.from < first.month) throw executiveError(ctx.requestId, 'EXECUTIVE_QUERY_INVALID', query.month ? 'month' : 'from', query.month ? undefined : P.invalid);
+      const headerOf = new Map(headers.map(header => [header.month, header]));
+      if (legacyHeader) headerOf.set(query.month!, { ...legacyHeader, month: query.month! });
+      const unbuiltMonths = [...new Set([requested.from, requested.to].filter(month => !headerOf.has(month)))];
+      if (unbuiltMonths.length && query.month !== undefined) throw executiveError(ctx.requestId, 'SOURCE_UNAVAILABLE');
+      if (unbuiltMonths.length) throw new HttpException({ code: 'EXECUTIVE_REPORT_UNAVAILABLE', message: P.unbuilt(unbuiltMonths.map(exportMonth).join(', ')), requestId: ctx.requestId, unbuiltMonths }, 503);
+      const profiles = new Map(profileRows.map(profile => [profile.companyId, profile]));
+      const sellers = await sellersOf(tx, profileRows.flatMap(profile => [profile.referrerKind === 'KNOWN' ? profile.referrerSalesUserId : null, profile.creditedSalesUserId]));
+      const salesCodeOf = new Map([...sellers.values()].map(seller => [seller.userId, seller.salesCode]));
       const global = await this.globalOf(tx, ctx, query, salesCodeOf, sellers, useGlobalFilters);
-      // ponytail: a month row whose company has no profile any more is left out. That needs a deleted company, and deleting
-      // companies belongs to the deferred data-deletion work (spec §19, PAY-20), which must decide what such money shows as.
-      const rows = monthRows.flatMap((row) => { const profile = profiles.get(row.companyId); return profile ? [{ ...row, profile }] : []; });
-      const population = rows.filter((row) => row.reportClassification === 'CUSTOMER');
-      const range = executiveMonthRange(query.month), effectiveEnd = header.asOf < range.end ? header.asOf : range.end;
-      const data: DataSet = {
-        build, header, month: query.month, range, effectiveEnd, rows, population, profiles, global, sellers, salesCodeOf,
-        scope: population.filter((row) => matchesGlobal(row, global, salesCodeOf)),
-        provinces: new Map(provinces.map((row) => [row.provinceCode, row.provinceTh])),
-        money: moneyCoverageOf({ end: range.end, effectiveEnd, billingSince: build.billingSince, billingCoveredThrough: header.billingCoveredThrough, untiedCount: header.untiedCount }),
-        usage: usageCoverageOf({ start: range.start, beforeFirstBuild: header.beforeFirstBuild, aiUsageSince: build.aiUsageSince }),
-        populationCoverage: build.unclassifiedCount > 0 ? { coverage: 'partial', reasonCodes: ['CLASSIFICATION_INCOMPLETE'] } : { coverage: 'complete', reasonCodes: [] },
+      const shared = { legacy: query.month !== undefined, build, profiles, global, sellers, salesCodeOf, provinces: new Map(provinces.map(row => [row.provinceCode, row.provinceTh])) };
+      const byMonth = new Map<string, ReportRow[]>();
+      for (const row of monthRows) {
+        const profile = profiles.get(row.companyId);
+        if (!profile || !headerOf.has(row.month)) continue;
+        const rows = byMonth.get(row.month) ?? []; rows.push({ ...row, reportClassification: profile.reportClassification, profile }); byMonth.set(row.month, rows);
+      }
+      const make = (from: string, to: string): DataSet => {
+        const period = rangePeriod(from, to, build.asOf, executiveMonthOf(this.clock()));
+        const monthly = monthsBetween(from, to).map(month => monthDataSet(shared, month, headerOf.get(month), byMonth.get(month) ?? [], executiveMonthOf(this.clock())));
+        return aggregateDataSet(shared, period, monthly);
       };
+      const data = make(requested.from, requested.to); data.previous = make(previousFrom, previousTo);
+      // API01 identifies the server's default preset. An explicit pair cannot prove which shortcut a caller chose.
       return { data, extra: (extra ? await extra(tx, data) : undefined) as T };
-    }, SNAPSHOT);
+    }, SNAPSHOT).catch(error => {
+      if (error instanceof RangeError && error.message === 'EXECUTIVE_TOTAL_OVERFLOW') throw executiveError(ctx.requestId, 'SOURCE_UNAVAILABLE');
+      throw error;
+    });
   }
 
   /** The report's own filters, checked against the data: a sales code must be a seller that exists (400 otherwise, never ALL). */
@@ -597,7 +669,9 @@ export class ExecutiveReportReadService {
         monthRevision: header.revision, monthRevisedAt: iso(header.revisedAt) },
       buildChanged: !!query.buildId && query.buildId !== build.id,
       reasonCodes: [...(this.clock().getTime() - build.asOf.getTime() > STALE_AFTER_MS ? ['SOURCE_STALE' as const] : []), ...reasons],
-      period: { month: data.month, timeZone: 'Asia/Bangkok', startInclusive: data.range.start.toISOString(), endExclusive: data.range.end.toISOString(),
+      months: data.monthly.map(monthMetadata), previousMonths: data.previous?.monthly.map(monthMetadata),
+      periodComparisons: comparisonsOf(data),
+      period: { ...data.period, month: data.month, timeZone: 'Asia/Bangkok', startInclusive: data.range.start.toISOString(), endExclusive: data.range.end.toISOString(),
         effectiveEndExclusive: data.effectiveEnd.toISOString(), isPartialMonth: data.effectiveEnd < data.range.end },
       dataThrough: { billing: iso(sources.billing), activity: iso(sources.activity), aiCost: iso(sources.aiCost), profile: iso(sources.profile),
         oldest: known.length ? new Date(Math.min(...known)).toISOString() : null,
@@ -609,10 +683,11 @@ export class ExecutiveReportReadService {
       },
       population: {
         eligibleCount: countOf(data.scope.length, data.populationCoverage), excludedTestInternalCount: excluded.length,
-        unclassifiedCount: build.unclassifiedCount, excludedTestInternalNetReceiptsSatang: sum(excluded, netOf),
+        unclassifiedCount: data.legacy ? build.unclassifiedCount : rows.filter(row => row.profile.reportClassification === null).length, excludedTestInternalNetReceiptsSatang: sum(excluded, netOf),
         unclassifiedNetReceiptsSatang: sum(rows.filter((row) => row.reportClassification === null), netOf),
+        ...(data.legacy ? {} : { excludedTestInternalMoneyCoverage: coverageFor(data, excluded, 'money'), unclassifiedMoneyCoverage: coverageFor(data, rows.filter(row => row.reportClassification === null), 'money') }),
       },
-      unmatchedMoney: { count: header.untiedCount, receiptsSatang: header.untiedReceiptsSatang, refundsSatang: header.untiedRefundsSatang, otherSatang: header.untiedOtherSatang },
+      unmatchedMoney: { count: header.untiedCount, receiptsSatang: header.untiedReceiptsSatang, refundsSatang: header.untiedRefundsSatang, otherSatang: header.untiedOtherSatang, ...(data.legacy ? {} : { coverage: rangeCoverage(data.monthly.map(month => ({ month: month.month, source: month.sourceMoney }))) }) },
       coverage: { money: data.money, usage: data.usage },
     };
   }
@@ -620,7 +695,7 @@ export class ExecutiveReportReadService {
   /** The complete list query behind an item: the request's report filters plus the item's own. */
   private drill(data: DataSet) {
     const global = Object.fromEntries(Object.entries(data.global).filter(([, value]) => value !== 'ALL'));
-    return (own: ExecutiveDrilldownFilters): ExecutiveDrilldownFilters => ({ ...global, ...own });
+    return (own: ExecutiveDrilldownFilters): ExecutiveDrilldownFilters => ({ ...(data.legacy ? {} : { from: data.period.from, to: data.period.to }), ...global, ...own });
   }
 
   // ── Figures ─────────────────────────────────────────────────────────────────────────────────
@@ -658,8 +733,8 @@ export class ExecutiveReportReadService {
       : groups.blocked.length ? { coverage: 'unavailable', reasonCodes: groups.blocked } : data.money;
     const { blocked: _blocked, members: _members, cumulative: _cumulative, ...figures } = groups;
     return {
-      ...figures, receiptsWithoutPositiveNet: scope.filter((row) => row.receiptsSatang > 0 && netOf(row) <= 0).length,
-      periodBasis: 'SELECTED_MONTH', coverage: coverage.coverage, reasonCodes: coverage.reasonCodes,
+      ...figures, ...(!data.legacy && moneyIncomplete(data.money) ? { positiveCompanyCount: null, nonPositiveCount: null, positiveNetTotalSatang: null, negativeNetSatang: null } : {}), receiptsWithoutPositiveNet: !data.legacy && moneyIncomplete(data.money) ? null : scope.filter((row) => row.receiptsSatang > 0 && netOf(row) <= 0).length,
+      periodBasis: data.period.monthCount === 1 ? 'SELECTED_MONTH' : 'SELECTED_PERIOD', coverage: coverage.coverage, reasonCodes: coverage.reasonCodes,
       drilldownFilters: groups.blocked.length ? {} : Object.fromEntries((['TOP20', 'REST', 'TO80', 'BOUNDARY_TIE', 'TO80_BOUNDARY_TIE'] as const)
         .map((cohort) => [cohort, drill({ spendCohort: cohort, sortBy: 'netReceipts', sortDir: 'desc' })])),
     };
@@ -680,7 +755,9 @@ export class ExecutiveReportReadService {
 
   private revenueOf(data: DataSet, trend: TrendPoint[], addOnEverSold: boolean): NonNullable<ExecutiveAnalysis['revenue']> {
     const unknownMoney = data.scope.some((row) => kindMoney(row, ['UNKNOWN']).receiptsSatang || kindMoney(row, ['UNKNOWN']).refundsSatang);
-    const groupCoverage = combined(data.money, unknownMoney ? { coverage: 'partial', reasonCodes: ['PURCHASE_KIND_UNKNOWN'] } : { coverage: 'complete', reasonCodes: [] });
+    const kindCoverage: ExecutiveSourceCoverage = data.legacy ? unknownMoney ? { coverage: 'partial', reasonCodes: ['PURCHASE_KIND_UNKNOWN'] } : complete()
+      : rangeCoverage(data.monthly.map(month => ({ month: month.month, source: month.scope.some(row => kindMoney(row, ['UNKNOWN']).receiptsSatang || kindMoney(row, ['UNKNOWN']).refundsSatang) ? { coverage: 'partial', reasonCodes: ['PURCHASE_KIND_UNKNOWN'] } : complete() })));
+    const groupCoverage = combined(data.money, kindCoverage);
     return {
       ...moneyRowOf(data.scope, data.money),
       byPurchaseGroup: EXECUTIVE_PURCHASE_GROUPS.map((group) => {
@@ -692,11 +769,11 @@ export class ExecutiveReportReadService {
         return { key: group.key, label: group.label, receiptsSatang: moneyOf(total('receiptsSatang'), coverage), refundsSatang: moneyOf(total('refundsSatang'), coverage),
           netReceiptsSatang: moneyOf(total('receiptsSatang') - total('refundsSatang'), coverage), feesSatang: moneyOf(total('feesSatang'), coverage), taxSatang: moneyOf(total('taxSatang'), coverage) };
       }),
-      disputedInvoiceCount: sum(data.scope, (row) => row.disputedInvoiceCount),
+      disputedInvoiceCount: data.period.monthCount === 1 ? sum(data.scope, (row) => row.disputedInvoiceCount) : null,
       trend: trend.map((point) => {
         const scope = point.rows.filter((row) => row.reportClassification === 'CUSTOMER' && matchesGlobal(row, data.global, data.salesCodeOf));
         const receipts = sum(scope, (row) => row.receiptsSatang), refunds = sum(scope, (row) => row.refundsSatang);
-        return { month: point.month, isPartialMonth: point.isPartialMonth, receiptsSatang: moneyOf(receipts, point.money), refundsSatang: moneyOf(refunds, point.money),
+        return { month: point.month, isPartialMonth: point.isPartialMonth, ...(data.legacy ? {} : { disputedInvoiceCount: countOf(sum(scope, row => row.disputedInvoiceCount), point.money) }), receiptsSatang: moneyOf(receipts, point.money), refundsSatang: moneyOf(refunds, point.money),
           netReceiptsSatang: moneyOf(receipts - refunds, point.money) };
       }),
     };
@@ -715,11 +792,12 @@ export class ExecutiveReportReadService {
     for (const row of data.scope) { const key = keyOf(row); if (byKey.has(key)) byKey.get(key)!.push(row); else byKey.set(key, [row]); }
     const groups = order.filter((key) => byKey.has(key)).map((key): ExecutiveGroupRow => {
       const rows = byKey.get(key)!;
-      return { key, label: labelOf(key), companies: { count: rows.length, share: shareOf(rows.length, data.scope.length) },
-        companiesWithReceipts: countOf(rows.filter((row) => row.receiptsSatang > 0).length, data.money),
+      const comparisons = data.legacy ? {} : comparisonsOf(data, rows, data.previous?.scope.filter(row => keyOf(row) === key));
+      return { key, label: labelOf(key), companies: { count: rows.length, share: shareOf(rows.length, data.scope.length), ...(data.legacy ? {} : { comparison: comparisons.companies }) },
+        companiesWithReceipts: { ...countOf(rows.filter((row) => row.receiptsSatang > 0).length, coverageFor(data, rows, 'money')), ...(data.legacy ? {} : { comparison: comparisons.companiesWithReceipts }) },
         paidEverCompanies: rows.filter((row) => row.paidEver === 'YES').length,
-        activeCompanies: countOf(rows.filter((row) => row.activeDays > 0).length, data.usage),
-        netReceiptsSatang: moneyOf(sum(rows, netOf), data.money), drilldownFilters: drill({ [filter]: key }) };
+        activeCompanies: { ...countOf(rows.filter((row) => row.activeDays > 0).length, coverageFor(data, rows, 'usage')), ...(data.legacy ? {} : { comparison: comparisons.activeCompanies }) },
+        netReceiptsSatang: { ...moneyOf(sum(rows, netOf), coverageFor(data, rows, 'money')), ...(data.legacy ? {} : { comparison: comparisons.netReceiptsSatang }) }, drilldownFilters: drill({ [filter]: key }) };
     });
     const result: ReturnType<ExecutiveReportReadService['groupsOf']> = { groups, roundingNote: roundingNote(groups.map((group) => group.companies.share)) };
     if (view === 'industry') result.industryCoverage = shareOf(data.scope.filter((row) => row.profile.industryGroup !== null).length, data.scope.length);
@@ -727,7 +805,7 @@ export class ExecutiveReportReadService {
       // First-payment credit as it stands now (spec §14.3): the companies credited to each seller among today's customers in the report's filters.
       const credited = new Map<string, ExecutiveCompanyProfile[]>();
       for (const profile of data.profiles.values()) {
-        if (profile.reportClassification !== 'CUSTOMER' || !profile.creditedSalesUserId || !matchesGlobal({ profile } as ReportRow, data.global, data.salesCodeOf)) continue;
+        if (profile.reportClassification !== 'CUSTOMER' || profile.companyCreatedAt >= data.effectiveEnd || !profile.creditedSalesUserId || !matchesGlobal({ profile } as ReportRow, data.global, data.salesCodeOf)) continue;
         if (credited.has(profile.creditedSalesUserId)) credited.get(profile.creditedSalesUserId)!.push(profile); else credited.set(profile.creditedSalesUserId, [profile]);
       }
       result.creditedSellers = { timeBasis: 'CURRENT', asOf: data.build.asOf.toISOString(), rows: [...credited.entries()]
@@ -758,9 +836,11 @@ export class ExecutiveReportReadService {
         label = L[filter as ExecutiveFilterKey][key] ?? [...data.sellers.values()].find((seller) => seller.salesCode === key)?.label ?? key;
       }
       const counts = dimension === 'company' ? { coverage: 'complete' as const, reasonCodes: [] } : data.populationCoverage;
+      const previousRows = data.previous?.population.filter(row => dimension === 'company' ? row.companyId === key : filter === 'industry' ? industryKeyOf(row) === key : filter === 'discovery' ? row.profile.discovery === key : referrerKeyOf(row, data.salesCodeOf) === key);
+      const periodComparisons = data.legacy ? undefined : comparisonsOf(data, rows, previousRows);
       const net = sum(rows, netOf), receipts = sum(rows, expenseReceiptsOf), ever = rows.filter((row) => row.profile.receiptAdoption === 'EVER').length;
       const exact = (source: ExecutiveSourceCoverage) => source.coverage === 'complete' && counts.coverage === 'complete';
-      return { rows, counts, key, label, drilldownFilters: dimension === 'company' ? null : { [filter]: key },
+      return { rows, counts, key, label, ...(periodComparisons ? { periodComparisons } : {}), drilldownFilters: dimension === 'company' ? null : { [filter]: key },
         companies: countOf(rows.length, counts), netReceiptsSatang: moneyOf(net, data.money),
         netReceiptsPerCompanySatang: exact(data.money) ? { value: roundRatio(net, rows.length, 0), numerator: net, denominator: rows.length } : null,
         expenseReceiptCount: countOf(receipts, data.usage),
@@ -792,6 +872,9 @@ export class ExecutiveReportReadService {
   private rowOf(data: DataSet, row: ReportRow, names: Map<string, CompanyName>, otherText?: string | null): ExecutiveCompanyRow {
     const profile = row.profile, industry = industryKeyOf(row);
     const seller = profile.referrerKind === 'KNOWN' ? data.sellers.get(profile.referrerSalesUserId ?? '') : undefined;
+    const money = coverageFor(data, [row], 'money'), usage = coverageFor(data, [row], 'usage');
+    const moneyValue = (n: number) => !data.legacy && money.coverage === 'unavailable' ? null : n;
+    const usageValue = (n: number) => !data.legacy && usage.coverage === 'unavailable' ? null : n;
     const kind = profile.referrerKind === 'KNOWN' && !seller ? 'UNRESOLVED' : profile.referrerKind as ExecutiveCompanyRow['referrer']['kind'];
     return {
       id: row.companyId, displayName: names.get(row.companyId)?.name ?? '', registeredName: registeredOf(names, row.companyId),
@@ -807,8 +890,9 @@ export class ExecutiveReportReadService {
       paidEver: { value: row.paidEver as PaidEverValue, ...(row.paidEverReason ? { reason: row.paidEverReason } : {}) }, fullyRefunded: row.fullyRefunded,
       usageGroup: row.usageGroup as ExecutiveCompanyRow['usageGroup'], ...(row.usageUnassessedReason ? { usageUnassessedReason: row.usageUnassessedReason } : {}),
       receiptAdoption: profile.receiptAdoption,
-      metrics: { receiptsSatang: row.receiptsSatang, refundsSatang: row.refundsSatang, netReceiptsSatang: netOf(row), activeDays: row.activeDays,
-        activeUsers: row.activeUsers, documents: documentsOf(row), aiRequests: row.aiRequests, expenseReceiptCountInPeriod: expenseReceiptsOf(row),
+      coverage: { money, usage },
+      metrics: { receiptsSatang: moneyValue(row.receiptsSatang), refundsSatang: moneyValue(row.refundsSatang), netReceiptsSatang: moneyValue(netOf(row)), activeDays: usageValue(row.activeDays),
+        activeUsers: data.period.monthCount > 1 ? null : usageValue(row.activeUsers), documents: usageValue(documentsOf(row)), aiRequests: usageValue(row.aiRequests), expenseReceiptCountInPeriod: usageValue(expenseReceiptsOf(row)),
         expenseReceiptCountLifetime: profile.expenseReceiptCountLifetime },
       lastActivityAt: iso(profile.lastActivityAt),
     };
@@ -833,12 +917,12 @@ export class ExecutiveReportReadService {
   private readAudit(ctx: RequestContext, reportKey: string, data: DataSet, query: ExecutiveReportQuery, filters: Record<string, unknown>, rowCount: number, hasSearch = false) {
     const global = Object.fromEntries(Object.entries(data.global).filter(([, value]) => value !== 'ALL'));
     return this.audit.log({ actorUserId: ctx.userId, action: 'executive.report.read', targetType: 'ExecutiveReport', requestId: ctx.requestId, result: 'SUCCESS',
-      riskLevel: 'LOW', metadataJson: { reportKey, month: query.month, buildId: data.build.id, filters: { ...global, ...filters }, rowCount, hasSearch } });
+      riskLevel: 'LOW', metadataJson: { reportKey, month: query.month ?? null, period: { from: data.period.from, to: data.period.to }, buildId: data.build.id, filters: { ...global, ...filters }, rowCount, hasSearch } });
   }
 
-  private companyAudit(ctx: RequestContext, companyId: string, month: string | null, contactsReturned: boolean) {
+  private companyAudit(ctx: RequestContext, companyId: string, month: string | null, contactsReturned: boolean, period?: { from: string; to: string }) {
     return this.audit.log({ actorUserId: ctx.userId, action: 'executive.company.read', targetType: 'Company', targetId: companyId, requestId: ctx.requestId,
-      result: 'SUCCESS', riskLevel: contactsReturned ? 'MEDIUM' : 'LOW', metadataJson: { month, contactsReturned } });
+      result: 'SUCCESS', riskLevel: contactsReturned ? 'MEDIUM' : 'LOW', metadataJson: { month, ...(period ? { period } : {}), contactsReturned } });
   }
 }
 
@@ -849,6 +933,147 @@ type AnalysisExtra = { trend?: TrendPoint[]; addOnEverSold?: boolean; credit?: M
 type Money = { receiptsSatang: number; refundsSatang: number; feesSatang: number; taxSatang: number };
 type PaidEverValue = ExecutiveCompanyRow['paidEver']['value'];
 type TrendPoint = { month: string; isPartialMonth: boolean; money: ExecutiveSourceCoverage; rows: ReportRow[] };
+
+type SharedData = Pick<DataSet, 'legacy' | 'build' | 'profiles' | 'global' | 'sellers' | 'salesCodeOf' | 'provinces'>;
+const complete = (): ExecutiveSourceCoverage => ({ coverage: 'complete', reasonCodes: [] });
+const missingMonth = (): ExecutiveSourceCoverage => ({ coverage: 'unavailable', reasonCodes: ['RANGE_MONTH_NOT_BUILT'] });
+
+function monthDataSet(shared: SharedData, month: string, stored: ExecutiveReportMonth | undefined, raw: ReportRow[], currentMonth: string): DataSet {
+  const period = rangePeriod(month, month, shared.build.asOf, currentMonth), range = executiveMonthRange(month), effectiveEnd = new Date(period.effectiveEndExclusive);
+  const header = stored ?? { month, asOf: shared.build.asOf, revision: 0, revisedAt: null, beforeFirstBuild: false,
+    untiedCount: 0, untiedReceiptsSatang: 0, untiedRefundsSatang: 0, untiedOtherSatang: 0 } as ExecutiveReportMonth;
+  const eligibleProfiles = [...shared.profiles.values()].filter(p => p.companyCreatedAt < effectiveEnd);
+  const rowOf = new Map(raw.map(row => [row.companyId, row])), rawIds = new Set(rowOf.keys());
+  const sourceMoney = stored ? moneyCoverageOf({ end: range.end, effectiveEnd, billingSince: shared.build.billingSince, billingCoveredThrough: header.billingCoveredThrough, untiedCount: header.untiedCount }) : missingMonth();
+  const outdated = !shared.legacy && stored && header.asOf < effectiveEnd ? { coverage: 'partial' as const, reasonCodes: ['SOURCE_STALE' as const] } : complete();
+  const sourceUsage = stored ? combined(usageCoverageOf({ start: range.start, beforeFirstBuild: header.beforeFirstBuild, aiUsageSince: shared.build.aiUsageSince }), outdated) : missingMonth();
+  const sourceCost = stored ? combined(aiCostCoverageOf({ start: range.start, end: range.end, aiUsageSince: shared.build.aiUsageSince }), outdated) : missingMonth();
+  const rows = eligibleProfiles.map(profile => rowOf.get(profile.companyId) ?? aggregatePeriodRows(profile, [month], [], false));
+  const population = rows.filter(row => row.profile.reportClassification === 'CUSTOMER'), scope = population.filter(row => matchesGlobal(row, shared.global, shared.salesCodeOf));
+  const populationCoverage: ExecutiveSourceCoverage = !stored ? missingMonth() : eligibleProfiles.some(p => p.reportClassification === null) ? { coverage: 'partial', reasonCodes: ['CLASSIFICATION_INCOMPLETE'] } : complete();
+  const data: DataSet = { ...shared, period, monthly: [], built: !!stored, header, month, range, effectiveEnd, rows, population, scope, rawIds, rowsById: new Map(rows.map(row => [row.companyId, row])),
+    sourceMoney, sourceUsage, sourceCost, money: sourceMoney, usage: sourceUsage, cost: sourceCost, populationCoverage };
+  data.money = coverageFor(data, scope, 'money'); data.usage = coverageFor(data, scope, 'usage'); data.cost = coverageFor(data, scope, 'cost');
+  return data;
+}
+/** Scope-aware coverage: a company before signup contributes nothing and is not a gap. A built month's missing row is unknown. */
+function coverageFor(data: DataSet, scope: ReportRow[], kind: 'money' | 'usage' | 'cost'): ExecutiveSourceCoverage {
+  const months = data.monthly.length ? data.monthly : [data], ids = new Set(scope.map(row => row.companyId));
+  const parts = months.flatMap(month => {
+    const applicable = [...ids].flatMap(id => { const row = month.rowsById.get(id); return row ? [row] : []; });
+    // Empty populations still need a header/source to prove a zero; a specific company before signup does not.
+    if (!applicable.length && ids.size && scope !== data.scope) return [];
+    let source = kind === 'money' ? month.sourceMoney : kind === 'usage' ? month.sourceUsage : month.sourceCost;
+    if (month.built && applicable.some(row => !month.rawIds.has(row.companyId))) source = combined(source, { coverage: applicable.every(row => !month.rawIds.has(row.companyId)) ? 'unavailable' : 'partial', reasonCodes: ['MONTH_SUMMARY_INCOMPLETE'] });
+    if (!data.legacy && kind !== 'cost' && month.populationCoverage.reasonCodes.includes('CLASSIFICATION_INCOMPLETE')) source = combined(source, month.populationCoverage);
+    return [{ month: month.month, source }];
+  });
+  const coverage = rangeCoverage(parts);
+  return data.legacy ? { coverage: coverage.coverage, reasonCodes: coverage.reasonCodes } : coverage;
+}
+function aggregateDataSet(shared: SharedData, period: ExecutiveRangePeriod, monthly: DataSet[]): DataSet {
+  const last = monthly.at(-1)!, eligible = [...shared.profiles.values()].filter(profile => profile.companyCreatedAt < new Date(period.effectiveEndExclusive));
+  const rows = eligible.map(profile => {
+    const selected = monthly.flatMap(month => {
+      if (!month.built || !month.rawIds.has(profile.companyId)) return [];
+      const row = month.rowsById.get(profile.companyId)!;
+      return [month.sourceMoney.coverage === 'unavailable' ? { ...row, moneyByPurchaseKind: null } : row];
+    });
+    const usage = coverageFor({ ...last, monthly } as DataSet, [{ companyId: profile.companyId } as ReportRow], 'usage');
+    const row = aggregatePeriodRows(profile, monthly.map(month => month.month), selected, usage.coverage === 'complete');
+    for (const [kind, keys] of [['sourceMoney', ['receiptsSatang', 'refundsSatang', 'feesSatang', 'taxSatang']], ['sourceCost', ['aiCostSatang']]] as const)
+      for (const key of keys) row[key] = safeTotal(monthly.map(month => month[kind].coverage === 'unavailable' ? 0 : month.rowsById.get(profile.companyId)?.[key] ?? 0));
+    return row;
+  });
+  for (const key of ['receiptsSatang', 'refundsSatang', 'feesSatang', 'taxSatang', 'aiCostSatang', 'activeDays', 'expenseReceiptsLine', 'expenseReceiptsWeb', 'confirmedExpensesLine', 'confirmedExpensesWeb', 'issuedDocuments', 'aiRequests'] as const) sum(rows, row => row[key]);
+  const population = rows.filter(row => row.profile.reportClassification === 'CUSTOMER'), scope = population.filter(row => matchesGlobal(row, shared.global, shared.salesCodeOf));
+  const data: DataSet = { ...last, ...shared, period, monthly, rows, rowsById: new Map(rows.map(row => [row.companyId, row])), population, scope, range: { start: new Date(period.startInclusive), end: new Date(period.endExclusive) },
+    effectiveEnd: new Date(period.effectiveEndExclusive), header: { ...last.header,
+      untiedCount: monthly.reduce((n, m) => n + (m.header.untiedCount ?? 0), 0), untiedReceiptsSatang: monthly.reduce((n, m) => n + (m.header.untiedReceiptsSatang ?? 0), 0),
+      untiedRefundsSatang: monthly.reduce((n, m) => n + (m.header.untiedRefundsSatang ?? 0), 0), untiedOtherSatang: monthly.reduce((n, m) => n + (m.header.untiedOtherSatang ?? 0), 0) } };
+  data.money = coverageFor(data, scope, 'money'); data.usage = coverageFor(data, scope, 'usage'); data.cost = coverageFor(data, scope, 'cost');
+  data.populationCoverage = data.legacy ? last.populationCoverage : rangeCoverage([{ month: last.month, source: last.populationCoverage }]);
+  return data;
+}
+function monthMetadata(data: DataSet): ExecutiveMonthMetadata {
+  const sources = { billing: data.built ? data.header.billingCoveredThrough : null, activity: data.built ? data.header.asOf : null,
+    aiCost: data.built ? data.header.asOf : null, profile: data.build.asOf };
+  const known = Object.values(sources).filter((at): at is Date => !!at).map(at => at.getTime()), newest = Math.max(...known);
+  return { month: data.month, built: data.built, isPartialMonth: data.period.includesOpenMonth, revision: data.built ? data.header.revision : null, revisedAt: iso(data.header.revisedAt),
+    dataThrough: { billing: iso(sources.billing), activity: iso(sources.activity), aiCost: iso(sources.aiCost), profile: iso(sources.profile), oldest: known.length ? new Date(Math.min(...known)).toISOString() : null,
+      lagging: (Object.keys(sources) as Array<keyof typeof sources>).filter(key => !sources[key] || newest - sources[key]!.getTime() > LAG_MS) },
+    coverage: { money: data.money, usage: data.usage, aiCost: data.cost, population: data.populationCoverage } };
+}
+function figuresOf(data: DataSet, scope = data.scope): Record<Exclude<ExecutivePeriodMetric, 'activeDays'>, ExecutiveCount> {
+  const money = coverageFor(data, scope, 'money'), usage = coverageFor(data, scope, 'usage'), cost = coverageFor(data, scope, 'cost');
+  const endFlags = rangeCoverage([{ month: data.period.to, source: !data.built ? missingMonth() : scope.some(row => row.paidEver === 'UNKNOWN') ? { coverage: 'partial', reasonCodes: ['PAYMENT_HISTORY_INCOMPLETE'] } : data.populationCoverage }]);
+  const ratios = (numerator: number, source: ExecutiveSourceCoverage, decimals: number, scale = 1): ExecutiveCount => ({ value: source.coverage === 'complete' && data.populationCoverage.coverage === 'complete' ? roundRatio(numerator * scale, scope.length, decimals) : null, coverage: source.coverage, reasonCodes: source.reasonCodes, affectedMonths: source.affectedMonths });
+  return {
+    netReceiptsPerCompanySatang: ratios(sum(scope, netOf), money, 0), expenseReceiptsPerCompany: ratios(sum(scope, expenseReceiptsOf), usage, 1),
+    activeCompanyShare: ratios(scope.filter(row => row.activeDays > 0).length, usage, 1, 100), paidCompanyShare: ratios(scope.filter(row => row.receiptsSatang > 0).length, money, 1, 100),
+    companies: countOf(scope.length, data.populationCoverage), newCompanies: countOf(scope.filter(row => row.profile.companyCreatedAt >= data.range.start).length, data.populationCoverage),
+    activeCompanies: countOf(scope.filter(row => row.activeDays > 0).length, usage), companiesWithReceipts: countOf(scope.filter(row => row.receiptsSatang > 0).length, money),
+    // Missing refunds can reverse positive-net membership: it is not a lower bound.
+    positiveNetCompanies: money.coverage === 'complete' ? countOf(scope.filter(row => netOf(row) > 0).length, money) : { value: null, coverage: money.coverage, reasonCodes: money.reasonCodes, affectedMonths: money.affectedMonths },
+    paidEverCompanies: countOf(scope.filter(row => row.paidEver === 'YES').length, endFlags), fullyRefundedCompanies: countOf(scope.filter(row => row.fullyRefunded).length, endFlags),
+    ...moneyRowOf(scope, money), aiCostSatang: moneyOf(sum(scope, row => row.aiCostSatang), cost),
+    expenseReceiptCount: countOf(sum(scope, expenseReceiptsOf), usage), documents: countOf(sum(scope, documentsOf), usage), aiRequests: countOf(sum(scope, row => row.aiRequests), usage),
+  };
+}
+function comparisonsOf(data: DataSet, scope = data.scope, previousScope = data.previous?.scope): Partial<Record<ExecutivePeriodMetric, ReturnType<typeof periodComparison>>> {
+  if (!data.previous) return {};
+  const current = figuresOf(data, scope), previous = figuresOf(data.previous, previousScope);
+  const comparisons = Object.fromEntries((Object.keys(current) as Array<keyof typeof current>).map(key => [key, periodComparison(current[key], previous[key], data.previous!.period, data.period.includesOpenMonth, ['expenseReceiptsPerCompany', 'activeCompanyShare', 'paidCompanyShare'].includes(key) ? 1 : 0)])) as Record<ExecutivePeriodMetric, ReturnType<typeof periodComparison>>;
+  const priorRows = previousScope ?? data.previous.scope;
+  if (scope.length === 1 && priorRows.length <= 1) comparisons.activeDays = periodComparison(countOf(scope[0]!.activeDays, coverageFor(data, scope, 'usage')),
+    priorRows.length ? countOf(priorRows[0]!.activeDays, coverageFor(data.previous, priorRows, 'usage')) : countOf(0, { coverage: 'unavailable', reasonCodes: ['NOT_YET_REGISTERED'] }), data.previous.period, data.period.includesOpenMonth);
+  const numerators: Array<[ExecutivePeriodMetric, (rows: ReportRow[]) => number, number, number]> = [
+    ['netReceiptsPerCompanySatang', rows => sum(rows, netOf), 0, 1], ['expenseReceiptsPerCompany', rows => sum(rows, expenseReceiptsOf), 1, 1],
+    ['activeCompanyShare', rows => rows.filter(row => row.activeDays > 0).length, 1, 100], ['paidCompanyShare', rows => rows.filter(row => row.receiptsSatang > 0).length, 1, 100],
+  ];
+  for (const [key, numerator, decimals, scale] of numerators) {
+    const comparison = comparisons[key], prior = previousScope ?? data.previous.scope;
+    if (comparison.absoluteChange === null) continue;
+    const left = numerator(scope), right = numerator(prior), difference = BigInt(left) * BigInt(prior.length) - BigInt(right) * BigInt(scope.length);
+    comparison.absoluteChange = roundRatio(difference * BigInt(scale), BigInt(scope.length) * BigInt(prior.length), decimals);
+    comparison.percentChange = scale === 100 || right <= 0 ? null : roundRatio(difference * 100n, BigInt(right) * BigInt(scope.length), 1);
+    comparison.status = right === 0 ? 'ZERO_BASE' : right < 0 ? 'NEGATIVE_BASE' : comparison.absoluteChange === 0 ? 'UNCHANGED' : 'COMPLETE';
+  }
+  return comparisons;
+
+}
+function seriesOf(data: DataSet, metrics: Array<Exclude<ExecutivePeriodMetric, 'activeDays'>>, select: (month: DataSet) => ReportRow[] = month => month.scope) {
+  return metrics.map(metric => ({ metric, timeBasis: metric === 'companies' ? 'END_OF_PERIOD' as const : 'PERIOD' as const,
+    points: data.monthly.map(month => { const metricValue = figuresOf(month, select(month))[metric]; return { month: month.month, metricValue, coverage: metricValue.coverage, reasonCodes: metricValue.reasonCodes }; }) }));
+}
+function periodSummaryOf(data: DataSet, row: ReportRow): ExecutivePeriodSummary {
+  const money = coverageFor(data, [row], 'money'), usage = coverageFor(data, [row], 'usage'), cost = coverageFor(data, [row], 'cost');
+  const activeUsersCoverage: ExecutiveSourceCoverage = data.period.monthCount > 1 ? { coverage: 'unavailable', reasonCodes: ['DISTINCT_USERS_NOT_AVAILABLE'] } : usage;
+  const count = (n: number) => usage.coverage === 'unavailable' ? null : n;
+  return { ...(data.period.monthCount === 1 ? { disputedInvoiceCount: countOf(row.disputedInvoiceCount, money) } : {}), paidEver: { value: row.paidEver as PaidEverValue, ...(row.paidEverReason ? { reason: row.paidEverReason } : {}) }, fullyRefunded: row.paidEver === 'UNKNOWN' ? null : row.fullyRefunded,
+    paidInPeriod: row.receiptsSatang > 0 ? true : money.coverage === 'complete' ? false : null, positiveNetInPeriod: money.coverage === 'complete' ? netOf(row) > 0 : null,
+    usageGroup: row.usageGroup as ExecutivePeriodSummary['usageGroup'], ...(row.usageUnassessedReason ? { usageUnassessedReason: row.usageUnassessedReason } : {}),
+    money: { ...moneyRowOf([row], money), aiCostSatang: moneyOf(row.aiCostSatang, cost) }, coverage: { money, usage, aiCost: cost },
+    usage: { activeDays: count(row.activeDays), activeDaysLine: count(row.activeDaysLine), activeDaysWeb: count(row.activeDaysWeb),
+      activeUsers: activeUsersCoverage.coverage === 'unavailable' ? null : row.activeUsers, activeUsersLine: activeUsersCoverage.coverage === 'unavailable' ? null : row.activeUsersLine, activeUsersWeb: activeUsersCoverage.coverage === 'unavailable' ? null : row.activeUsersWeb, activeUsersCoverage,
+      documents: count(documentsOf(row)), confirmedExpensesLine: count(row.confirmedExpensesLine), confirmedExpensesWeb: count(row.confirmedExpensesWeb), issuedDocuments: count(row.issuedDocuments),
+      aiRequests: count(row.aiRequests), expenseReceiptCountInPeriod: count(expenseReceiptsOf(row)), expenseReceiptsLine: count(row.expenseReceiptsLine), expenseReceiptsWeb: count(row.expenseReceiptsWeb) } };
+}
+
+function monthlyExportTable(data: DataSet, list: ReportRow[], names: Map<string, CompanyName>, title: string, started: number): ExportTable {
+  const value = (figure: ExecutiveCount, scale = 1): WorkbookCell => ({ value: figureValue(figure, scale), style: scale === 100 ? 3 : 0 });
+  return { title, headers: [W.company, W.month, P.receipts, P.refunds, P.net, P.fees, P.tax, W.aiCost, P.receiptCount, W.days, P.usersByMonth, P.documents, P.ai, W.disputes, W.export.notes],
+    rows: data.monthly.flatMap(month => list.map(row => {
+      if (performance.now() - started > 30_000) throw new Error('XLSX_LIMIT');
+      const name = names.get(row.companyId)?.name ?? '';
+      if (row.profile.companyCreatedAt >= month.effectiveEnd) return [name, exportMonth(month.month), ...Array.from({ length: 12 }, () => null), P.notRegistered];
+      const monthlyRow = month.rowsById.get(row.companyId)!, summary = periodSummaryOf(month, monthlyRow);
+      const known = month.built && month.rawIds.has(row.companyId), moneyStatus = executiveMoneyQualifier(summary.money.netReceiptsSatang), costStatus = executiveMoneyQualifier(summary.money.aiCostSatang, true);
+      return [name, exportMonth(month.month), ...[summary.money.receiptsSatang, summary.money.refundsSatang, summary.money.netReceiptsSatang, summary.money.feesSatang, summary.money.taxSatang, summary.money.aiCostSatang].map(figure => value(figure, 100)),
+        known ? summary.usage.expenseReceiptCountInPeriod : null, known ? summary.usage.activeDays : null, known ? summary.usage.activeUsers : null, known ? summary.usage.documents : null, known ? summary.usage.aiRequests : null, summary.disputedInvoiceCount ? figureValue(summary.disputedInvoiceCount) : null,
+        !month.built ? P.unbuilt(exportMonth(month.month)) : [moneyStatus, costStatus, summary.coverage.usage.coverage !== 'complete' ? W.export.usageMissing : ''].filter(Boolean).join(' · ')];
+    })) };
+}
 
 function latestBuild(tx: Tx) {
   return tx.executiveReportBuild.findFirst({ where: { definitionVersion: VERSION }, orderBy: [{ asOf: 'desc' }, { id: 'desc' }] });
@@ -891,7 +1116,7 @@ async function otherTextsOf(db: Tx | PrismaService['client'], companyIds: string
   return result;
 }
 
-const moneyIncomplete = (money: ExecutiveSourceCoverage) => money.coverage === 'unavailable' || money.reasonCodes.includes('BILLING_SCAN_NOT_COMPLETE');
+const moneyIncomplete = (money: ExecutiveSourceCoverage) => money.affectedMonths !== undefined ? money.coverage !== 'complete' : money.coverage === 'unavailable' || money.reasonCodes.includes('BILLING_SCAN_NOT_COMPLETE');
 function kindMoney(row: ReportRow, kinds: readonly string[]): Money {
   const byKind = (row.moneyByPurchaseKind ?? {}) as Record<string, Money>;
   const total: Money = { receiptsSatang: 0, refundsSatang: 0, feesSatang: 0, taxSatang: 0 };
@@ -906,6 +1131,7 @@ function moneyRowOf(rows: ReportRow[], coverage: ExecutiveSourceCoverage): Execu
 
 /** Six months up to the selected one, from the same set. A month the set does not hold is "no data", never 0 (spec §12.4). */
 async function trendOf(tx: Tx, data: DataSet): Promise<TrendPoint[]> {
+  if (!data.legacy) return data.monthly.map(month => ({ month: month.month, isPartialMonth: month.period.includesOpenMonth, money: month.money, rows: month.built ? month.rows : [] }));
   const months: string[] = [];
   for (let month = data.month; months.length < 6; month = executiveMonthOf(new Date(executiveMonthRange(month).start.getTime() - 1))) months.unshift(month);
   const [headers, rows] = await Promise.all([
@@ -918,7 +1144,7 @@ async function trendOf(tx: Tx, data: DataSet): Promise<TrendPoint[]> {
     const effectiveEnd = header.asOf < range.end ? header.asOf : range.end;
     return { month, isPartialMonth: effectiveEnd < range.end,
       money: moneyCoverageOf({ end: range.end, effectiveEnd, billingSince: data.build.billingSince, billingCoveredThrough: header.billingCoveredThrough, untiedCount: header.untiedCount }),
-      rows: rows.filter((row) => row.month === month).flatMap((row) => { const profile = data.profiles.get(row.companyId); return profile ? [{ ...row, profile }] : []; }) };
+      rows: rows.filter((row) => row.month === month).flatMap((row) => { const profile = data.profiles.get(row.companyId); return profile ? [{ ...row, reportClassification: profile.reportClassification, profile }] : []; }) };
   });
 }
 /** Whether any paid add-on money was ever recorded: until then the add-on row reads "not on sale" (spec §14.1). */
@@ -935,22 +1161,35 @@ async function cumulativeCreditOf(tx: Tx): Promise<Map<string, number>> {
 
 // ── Query reading ─────────────────────────────────────────────────────────────────────────────
 
+function inComparisonSide(row: ReportRow, dimension: string, key: string, salesCodeOf: Map<string, string>): boolean {
+  return dimension === 'company' ? row.companyId === key : dimension === 'industry' ? industryKeyOf(row) === key : dimension === 'discovery' ? row.profile.discovery === key : referrerKeyOf(row, salesCodeOf) === key;
+}
+function validatedPeriod(ctx: RequestContext, query: ExecutiveReportQuery, currentMonth: string) {
+  try { return periodInput(query, currentMonth); }
+  catch (error) { throw executiveError(ctx.requestId, 'EXECUTIVE_QUERY_INVALID', error instanceof RangeError ? error.message : 'from', query.month !== undefined ? undefined : P.invalid); }
+}
+function directoryScopeOf(data: DataSet, query: ExecutiveCompaniesQuery, names: Map<string, CompanyName>): ReportRow[] {
+  const directory = directoryOf(query), groups = spendGroupsOf(data.scope, moneyIncomplete(data.money)), cohort = directory.spendCohort === 'ALL' ? null : groups.members[directory.spendCohort as keyof SpendGroups['members']];
+  const q = query.q?.trim().toLocaleLowerCase('th');
+  return data.scope.filter(row => matchesDirectory(row, directory, cohort, data.range.start) && (!q || [names.get(row.companyId)?.name, names.get(row.companyId)?.registeredName, provinceOf(data, row.profile)].some(text => text?.toLocaleLowerCase('th').includes(q))));
+}
 function directoryOf(query: ExecutiveCompaniesQuery): DirectoryFilters {
   return {
     companyStatus: query.companyStatus ?? 'ALL', planState: query.planState ?? 'ALL', usageGroup: query.usageGroup ?? 'ALL', paidEver: query.paidEver ?? 'ALL',
     receiptAdoption: query.receiptAdoption ?? 'ALL', spendCohort: query.spendCohort ?? 'ALL', signupRail: query.signupRail ?? 'ALL',
+    ...(query.joinedInPeriod ? { joinedInPeriod: true } : {}),
     ...(query.usageAssessed ? { usageAssessed: query.usageAssessed === 'true' } : {}),
     ...(query.activeInPeriod ? { activeInPeriod: true } : {}), ...(query.paidInPeriod ? { paidInPeriod: true } : {}),
     ...(query.positiveNetInPeriod ? { positiveNetInPeriod: true } : {}), ...(query.fullyRefunded ? { fullyRefunded: true } : {}),
   };
 }
 const DIRECTORY_KEYS = ['companyStatus', 'planState', 'usageGroup', 'paidEver', 'receiptAdoption', 'spendCohort', 'signupRail'] as const;
-const FLAG_KEYS = ['usageAssessed', 'activeInPeriod', 'paidInPeriod', 'positiveNetInPeriod', 'fullyRefunded'] as const;
+const FLAG_KEYS = ['joinedInPeriod', 'usageAssessed', 'activeInPeriod', 'paidInPeriod', 'positiveNetInPeriod', 'fullyRefunded'] as const;
 /** The list filters in force, with their words (spec §16.2 appliedFilters). */
 function directoryLabels(query: ExecutiveCompaniesQuery): Record<string, ExecutiveOption> {
   const result: Record<string, ExecutiveOption> = {};
-  for (const key of DIRECTORY_KEYS) if (query[key] && query[key] !== 'ALL') result[key] = { value: query[key]!, label: L[key][query[key]!]! };
-  for (const key of FLAG_KEYS) if (query[key]) result[key] = { value: query[key]!, label: EXECUTIVE_FLAG_LABELS[key][query[key]!]! };
+  for (const key of DIRECTORY_KEYS) if (query[key] && query[key] !== 'ALL') result[key] = { value: query[key]!, label: query.month !== undefined ? L[key][query[key]!]! : executivePeriodFilterLabel(key, query[key]!) };
+  for (const key of FLAG_KEYS) if (query[key]) result[key] = { value: query[key]!, label: query.month !== undefined ? EXECUTIVE_FLAG_LABELS[key][query[key]!]! : executivePeriodFilterLabel(key, query[key]!) };
   return result;
 }
 function auditableDirectory(query: ExecutiveCompaniesQuery): Record<string, string> {
@@ -975,7 +1214,7 @@ const figureValue = (figure: { value: number | null; knownValue?: number } | nul
 function exportQueryOf(ctx: RequestContext, body: ExecutiveExportBody): ExecutiveCompaniesQuery {
   const invalid = (field: string): never => { throw executiveError(ctx.requestId, 'EXECUTIVE_QUERY_INVALID', field); };
   if (!body || typeof body !== 'object') return invalid('body');
-  const allowed = ['buildId', 'reportKey', 'subview', 'month', 'filters', 'sortBy', 'sortDir', 'comparison', 'targetCompanyId', 'includeContacts', 'format'];
+  const allowed = ['buildId', 'reportKey', 'subview', 'month', 'from', 'to', 'filters', 'sortBy', 'sortDir', 'comparison', 'targetCompanyId', 'includeContacts', 'format'];
   for (const key of Object.keys(body)) if (!allowed.includes(key)) invalid(key);
   if (!EXECUTIVE_EXPORT_REPORT_KEYS.includes(body.reportKey)) invalid('reportKey');
   if (typeof body.buildId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(body.buildId)) invalid('buildId');
@@ -1008,5 +1247,5 @@ function exportQueryOf(ctx: RequestContext, body: ExecutiveExportBody): Executiv
     if (!pair || Object.keys(pair).some(key => !['dimension', 'sideA', 'sideB'].includes(key)) || !['industry', 'discovery', 'referringSales', 'company'].includes(pair.dimension)) invalid('comparison');
     if (!pair!.sideA || !pair!.sideB || pair!.sideA === pair!.sideB || ![pair!.sideA, pair!.sideB].every(side => typeof side === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(side))) invalid('comparison');
   } else if (body.comparison !== undefined) invalid('comparison');
-  return { month: body.month, buildId: body.buildId, ...body.filters, ...(body.sortBy ? { sortBy: body.sortBy } : ranked ? { sortBy: 'expenseReceiptCount' } : top ? { sortBy: 'netReceipts' } : {}), ...(body.sortDir ? { sortDir: body.sortDir } : ranked || top ? { sortDir: 'desc' } : {}) };
+  return { ...(body.month !== undefined ? { month: body.month } : { from: body.from, to: body.to }), buildId: body.buildId, ...body.filters, ...(body.sortBy ? { sortBy: body.sortBy } : ranked ? { sortBy: 'expenseReceiptCount' } : top ? { sortBy: 'netReceipts' } : {}), ...(body.sortDir ? { sortDir: body.sortDir } : ranked || top ? { sortDir: 'desc' } : {}) };
 }
