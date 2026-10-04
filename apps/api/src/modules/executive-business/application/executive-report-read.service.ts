@@ -32,7 +32,7 @@ import { EXECUTIVE_DEFINITION_VERSION, executiveMonthOf, executiveMonthRange } f
 import { executiveError } from './executive-users.service';
 
 import { CompanyTeamNoteService } from '../../system-partner-management/application/company-team-note.service';
-import { bangkokDate, companyInactivity, companyPlanLabelOf as planLabelOf, companySheetOf, receiptFactsOf, receiptCoverageOf } from '../domain/executive-company-sheet.logic';
+import { bangkokDate, companyInactivity, companyPlanLabelOf as planLabelOf, companySheetOf, receiptFactsOf, receiptCoverageOf, receiptsInSystem } from '../domain/executive-company-sheet.logic';
 
 type Tx = Prisma.TransactionClient;
 type Seller = { userId: string; salesCode: string; label: string };
@@ -472,7 +472,7 @@ export class ExecutiveReportReadService {
         const bucketRange = `'รายบริษัท'!${columnName(1 + sheetColumns.findIndex(column => column.key === 'receiptBucket'))}7:${columnName(1 + sheetColumns.findIndex(column => column.key === 'receiptBucket'))}${6 + rows.length}`;
         let panels: ExportPanel[] = [{ title: W.adoptionTitle, kind: 'doughnut', labels: adoption.segments.map(segment => L.receiptAdoption[segment.key]!), values: adoption.segments.map(segment => segment.count),
           formulas: adoption.segments.map(segment => `COUNTIF(${range(19)},"${L.receiptAdoption[segment.key]}")`) },
-          { title: W.lifetimeReceipts, kind: 'bar', labels: W.export.buckets, values: (['ZERO', 'ONE_TO_FIVE', 'SIX_PLUS'] as const).map(key => list.filter(row => row.sheet!.receiptBucket === key).length),
+          { title: S.receiptDistribution, kind: 'bar', labels: W.export.buckets, values: (['ZERO', 'ONE_TO_FIVE', 'SIX_PLUS'] as const).map(key => list.filter(row => row.sheet!.receiptBucket === key).length),
             formulas: W.export.buckets.map(label => `COUNTIF(${bucketRange},"${label}")`), status: W.export.bucketsDefinition },
           { title: W.paidUsage, kind: 'bar', labels: Object.values(usageLabels).slice(1), values: this.paidUsageOf(set, list).groups.map(group => group.count),
             formulas: Object.values(usageLabels).slice(1).map(label => `COUNTIF(${range(18)},"${label}")`) },
@@ -1003,7 +1003,7 @@ export class ExecutiveReportReadService {
     const packages = [...new Set(rows.map(row => planLabelOf(row.profile)))].map(label => ({ label, ...count(rows.filter(row => planLabelOf(row.profile) === label).length, populationCoverage, { packageLabel: label }) }));
     const inactivityCoverage = poolCoverage(rows.map(row => row.inactivity!.coverage));
     return { asOf: data.build.asOf.toISOString(), timeBasis: 'DATA_DATE', companies: count(rows.length, populationCoverage, {}),
-      receiptsLifetime: { ...count(sum(rows, row => row.profile.expenseReceiptCountLifetime), receipt, {}), share: null },
+      receiptsLifetime: { ...count(sum(rows, row => receiptsInSystem(row.profile)), receipt, {}), share: null },
       adoption: { ...this.adoptionOf(data, rows), segments: this.adoptionOf(data, rows).segments.map(segment => ({ ...segment, drilldownFilters: drill({ receiptAdoption: segment.key }) })) },
       receiptBuckets: (['ZERO', 'ONE_TO_FIVE', 'SIX_PLUS'] as const).map(key => ({ key, label: S.receiptBucket[key], ...count(rows.filter(row => row.sheet!.receiptBucket === key).length, receipt, { receiptBucket: key }) })),
       ...Object.fromEntries((['receipts7', 'receipts30', 'receiptDays30AtLeast2'] as const).map(key => [key, count(rows.filter(row => (row.sheet![key === 'receiptDays30AtLeast2' ? 'receiptDays30' : key].value ?? row.sheet![key === 'receiptDays30AtLeast2' ? 'receiptDays30' : key].knownValue ?? 0) >= (key === 'receiptDays30AtLeast2' ? 2 : 1)).length, poolCoverage(rows.map(row => row.sheet![key === 'receiptDays30AtLeast2' ? 'receiptDays30' : key])), { [key === 'receipts7' ? 'receiptAdded7' : key === 'receipts30' ? 'receiptAdded30' : key]: 'true' })])) as Pick<ExecutiveAsOfFigures, 'receipts7' | 'receipts30' | 'receiptDays30AtLeast2'>,

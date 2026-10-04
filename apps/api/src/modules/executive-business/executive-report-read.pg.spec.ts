@@ -1721,17 +1721,22 @@ describe('executive owner sheet and churn without PostgreSQL', () => {
     Object.assign(f.profiles[2]!, { planEndsAt: new Date(f.build.asOf.getTime() - 1) });
     const expiredToday = await f.report.companies(f.ctx, { ...f.query, receiptBucket: 'SIX_PLUS' });
     assert.equal(expiredToday.items[0]!.sheet.packageExpired, true); assert.equal(expiredToday.items[0]!.sheet.daysLeft, null);
+    // Owner 2026-10-05 ("นับที่มีอยู่ในระบบ"): receipts are counted from the rows in the system on the data date.
+    // A history that starts after the company, or receipts deleted earlier, no longer turn these counts into "at least".
     for (const profile of f.profiles) (profile as any).sheetFacts.receiptHistorySince = new Date(f.build.asOf.getTime() - 10 * 86_400_000).toISOString();
     const recentCoverage = await f.report.overview(f.ctx, f.query);
     assert.equal(recentCoverage.asOfFigures.receipts7.coverage, 'complete');
-    assert.equal(recentCoverage.asOfFigures.receipts30.coverage, 'partial');
+    assert.equal(recentCoverage.asOfFigures.receipts30.coverage, 'complete');
+    assert.deepEqual(recentCoverage.asOfFigures.receiptBuckets.map(b => [b.key, b.value]), [['ZERO',1], ['ONE_TO_FIVE',1], ['SIX_PLUS',1]]);
     const covered = await f.report.companies(f.ctx, f.query);
     assert.equal(covered.items[0]!.sheet.receipts7.coverage, 'complete');
-    assert.equal(covered.items[0]!.sheet.confirmed.coverage, 'partial');
+    assert.equal(covered.items[0]!.sheet.confirmed.coverage, 'complete');
     for (const profile of f.profiles) Object.assign((profile as any).sheetFacts, { receiptHistorySince: '2026-01-01T00:00:00Z', receiptCountersHeld: true, purgedReceiptMonths: ['2026-06'] });
     const earlierPurge = await f.report.overview(f.ctx, f.query);
     assert.equal(earlierPurge.asOfFigures.receipts7.coverage, 'complete');
-    assert.deepEqual(earlierPurge.sourceStatus.usage.affectedMonths?.map(month => month.month), ['2026-06']);
+    assert.equal(earlierPurge.asOfFigures.receiptsLifetime.coverage, 'complete');
+    assert.ok(!earlierPurge.sourceStatus.usage.reasonCodes.includes('SOURCE_ROWS_PURGED'));
+    assert.ok(!(earlierPurge.sourceStatus.usage.affectedMonths ?? []).some(month => month.month === '2026-06'));
     for (const profile of f.profiles) (profile as any).sheetFacts.unmatchedMoneyMonths = ['2026-06'];
     const moneyStatus = await f.report.overview(f.ctx, f.query);
     assert.ok(moneyStatus.sourceStatus.money.reasonCodes.includes('UNMATCHED_MONEY'));
@@ -1775,10 +1780,10 @@ describe('executive owner sheet and churn without PostgreSQL', () => {
     for (const label of words.EXECUTIVE_COMPANY_SHEET_COLUMNS.map(c => c.label)) if (!['อีเมล', 'เบอร์โทร'].includes(label)) assert.ok(source.includes(label), label);
     assert.ok(source.includes(words.EXECUTIVE_SHEET_WORDS.churn)); assert.ok(source.includes('ติดตาม') || source.includes('โอนเข้า'));
     assert.doesNotMatch([...parts.values()].join(''), /1234567890|๑๒๓-๔๕๖-๗๘๙๐/);
-    (f.profiles[1] as any).sheetFacts.receiptCountersHeld = true; // five known receipts cannot prove the 1–5 group
+    (f.profiles[1] as any).sheetFacts.receiptCountersHeld = true; // a held counter no longer matters: the receipts in the system place the company in its group
     const overview = workbookParts((await f.report.export(f.ctx, { ...f.body, month: undefined, ...f.query, reportKey: 'overview' })).file);
     const cache = overview.get('xl/charts/chart2.xml')!.match(/<c:numCache>([\s\S]*?)<\/c:numCache>/)![1]!;
-    assert.match(cache, /<c:pt idx="1"><c:v>0<\/c:v>/);
+    assert.match(cache, /<c:pt idx="1"><c:v>1<\/c:v>/);
     assert.ok(overview.get('xl/worksheets/sheet1.xml')!.includes(words.EXECUTIVE_SHEET_WORDS.asOfHelp));
     const { xlsxThaiDate } = await import('../../common/export/xlsx.logic');
     assert.ok(overview.get('xl/worksheets/sheet1.xml')!.includes(`${words.EXECUTIVE_SHEET_WORDS.asOf} · ${xlsxThaiDate(f.build.asOf)}`));
@@ -1800,16 +1805,18 @@ describe('executive owner sheet source and permission boundaries', () => {
     assert.equal(labelled.appliedFilters.directory.packageLabel!.label, label);
     await assert.rejects(f.report.companies(f.ctx, { ...f.query, packageLabel: 'made-up-package' }), error => codeOf(error) === 'EXECUTIVE_QUERY_INVALID');
   });
-  it('qualifies unknown snapshots and held receipt counters once at source level without false bucket zeroes', async () => {
+  it('qualifies facts that were never built once at source level, and counts a held counter by the receipts in the system', async () => {
     const f = sheetSourceFixture(); Object.assign(f.profiles[0]!, { sheetFacts: null });
     const facts: any = (f.profiles[1] as any).sheetFacts; facts.receiptCountersHeld = true; facts.sourceCount = 1;
     const overview = await f.report.overview(f.ctx, f.query);
+    // One company has no stored facts yet: the pooled figures stay "at least" and no group shows a false zero.
     assert.equal(overview.asOfFigures.receiptsLifetime.coverage, 'partial');
     assert.equal(overview.asOfFigures.receiptBuckets[0]!.value, null);
     assert.ok(overview.sourceStatus.usage.reasonCodes.includes('SHEET_FACTS_NOT_BUILT'));
-    assert.ok(overview.sourceStatus.usage.reasonCodes.includes('SOURCE_ROWS_PURGED'));
+    // Owner 2026-10-05: deleted receipts are simply not counted; they are not a reason any more.
+    assert.ok(!overview.sourceStatus.usage.reasonCodes.includes('SOURCE_ROWS_PURGED'));
     const list = await f.report.companies(f.ctx, { ...f.query, receiptBucket: 'ONE_TO_FIVE' });
-    assert.equal(list.pagination.total, 0);
+    assert.deepEqual(list.items.map(row => [row.id, row.sheet.receiptsLifetime.value, row.sheet.receiptsLifetime.coverage]), [['fiction-1', 1, 'complete']]);
   });
   it('fails closed if contact audit fails and uses the existing note write/concurrency boundary', async () => {
     const f = sheetSourceFixture(), writes: any[] = [];
