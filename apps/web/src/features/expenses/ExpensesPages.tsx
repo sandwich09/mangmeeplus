@@ -1,5 +1,7 @@
 'use client';
 
+import { expenseOverpaidAmount } from '@watchdog-bms/contracts';
+
 import { THAI_SYSTEM_ROLE_NAMES, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 
 import { isExpenseEvidenceFile, expenseEvidenceAssessment, expenseEvidenceInputError, EXPENSE_RECEIPT_SOURCE_TYPES, type ExpenseEvidenceAssessment } from '@watchdog-bms/contracts';
@@ -2602,7 +2604,7 @@ function ExpenseListPage({ companyId, caps, canOpenManual, userId, onSelect }: {
                           </div>
                         </div>
                         <div className="tabular-nums text-right text-[15px] font-bold text-gray-900">{baht(e.grandTotalAmount)}</div>
-                        <div className="flex flex-col items-end gap-1">{e.reimbursementProgress ? <span className="text-xs text-success-700">{expenseReimbursementProgressLabel(e.reimbursementProgress)}</span> : <><StatusBadge status={e.status} /><StatusBadge status={e.paymentStatus} /></>}</div>
+                        <div className="flex flex-col items-end gap-1">{e.reimbursementProgress ? <span className="text-xs text-success-700">{expenseReimbursementProgressLabel(e.reimbursementProgress)}</span> : <><StatusBadge status={e.status} /><StatusBadge status={expenseOverpaidAmount(e) ? 'OVERPAID' : e.paymentStatus} /></>}</div>
                         <div className="flex items-center justify-end gap-1.5">
                           <IconBtn title="ดูรายละเอียด" onClick={(event) => { event.stopPropagation(); onSelect(e.id); }}>{ICON.eye}</IconBtn>
                           {canDeleteExpense(e, userId, caps) && (

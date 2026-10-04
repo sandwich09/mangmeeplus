@@ -282,6 +282,26 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
   });
 
 
+  it('rejects future paid dates at the Bangkok boundary without writing and still cancels a stored future payment', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-04T16:30:00Z').getTime() });
+    const source = await create.execute(ctx(), draft());
+    await repo.finalizeAndConfirmExpenseCas(await ready(source.id), async () => []);
+    const finance = { ...ctx(), permissions: ['expense.payment.record'] };
+    const payments = new RecordExpensePaymentUseCase(repo, audit as any);
+    for (const paidAt of ['2026-10-03', '2026-10-04']) await payments.execute(finance, source.id, { paidAmount: '0010', paidAt, idempotencyKey: randomUUID() });
+    await assert.rejects(payments.execute(finance, source.id, { paidAmount: '10', paidAt: '2026-10-05' }), (e: any) => e.getResponse?.().code === 'expense_payment_future_date');
+    assert.equal(await client.expensePayment.count({ where: { expenseId: source.id } }), 2);
+    t.mock.timers.setTime(new Date('2026-10-04T17:30:00Z').getTime());
+    await payments.execute(finance, source.id, { paidAmount: '10', paidAt: '2026-10-05', idempotencyKey: randomUUID() });
+    const stored = await client.expensePayment.create({ data: { companyId, expenseId: source.id, amount: '40', currency: 'THB',
+      paidAt: new Date('2026-10-08T00:00:00Z'), paymentMethod: 'CASH', createdByUserId: userId, idempotencyKey: randomUUID() } });
+    await client.expenseRecord.update({ where: { id: source.id }, data: { paidAmount: '70', outstandingAmount: '30' } });
+    const cancelled = await new CancelExpensePaymentUseCase(repo, audit as any).execute(finance, source.id, stored.id, 'แก้รายการเดิม');
+    assert.equal(Number(cancelled.paidAmount), 30);
+    const after = await client.expensePayment.findUniqueOrThrow({ where: { id: stored.id } });
+    assert.equal(after.status, 'VOIDED'); assert.equal(after.paidAt.toISOString(), stored.paidAt.toISOString());
+  });
+
   it('corrects confirmed payments and document without changing the number, and checks the retained paid total at re-confirmation', async () => {
     const source = await create.execute(ctx(), draft());
     const confirmed = (await repo.finalizeAndConfirmExpenseCas(await ready(source.id), async () => [])).expense;
@@ -296,6 +316,8 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     const reopened = await new ReopenExpenseUseCase(repo, audit as any).execute(finance, source.id, 'แก้ยอดเอกสาร');
     assert.equal(reopened.expenseNumber, confirmed.expenseNumber); assert.equal(Number(reopened.paidAmount), 60); assert.equal(reopened.confirmedAt, null);
     assert.equal((await client.expensePayment.findUniqueOrThrow({ where: { id: history[0]!.id } })).status, 'VOIDED');
+    const correctionHistory = await repo.findCorrectionHistory(companyId, source.id, [history[0]!.id]);
+    assert.ok(correctionHistory.reopenedAt); assert.equal(correctionHistory.cancellationReasons.get(history[0]!.id), 'กรอกยอดจ่ายผิด');
     await client.expenseRecord.update({ where: { id: source.id }, data: { netPayableAmount: '50', status: 'READY_FOR_CONFIRMATION' } });
     await assert.rejects(repo.finalizeAndConfirmExpenseCas({ companyId, id: source.id } as any, async () => []), (error: any) => error.getResponse?.().code === 'expense_paid_exceeds_payable');
     await client.expenseRecord.update({ where: { id: source.id }, data: { netPayableAmount: '100', status: 'NEEDS_REVIEW' } });

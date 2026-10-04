@@ -92,7 +92,7 @@ test('append adds supporting evidence and never names a primary to swap', () => 
 
 test('a conflict offers the latest data instead of a silent retry', () => {
   assert.match(source, /code === 'expense_revision_conflict' \|\| code === 'expense_receipt_replace_conflict'/);
-  assert.match(source, /\{error && conflictReload && \(/);
+  assert.match(source, /\{\(error \|\| paymentNotice \|\| correctionError\) && conflictReload && \(/);
   assert.match(source, /expenses\.capture\.reload_latest/);
 });
 

@@ -294,15 +294,16 @@ describe('PrismaExpenseRepository partial payment history', () => {
     assert.equal(state.payments.length, 1);
   });
 
-  it('rejects impossible dates and non-public money grammar without writing anything', async () => {
+  it('refuses invalid dates and money without writes, while accepting leading zeros', async () => {
     const { repo, state } = harness();
-    for (const amount of ['40.0001', '4e1', 'NaN', 'Infinity', '0', '-1', '01']) {
+    for (const amount of ['40.0001', '4e1', 'NaN', 'Infinity', '0', '-1']) {
       await assert.rejects(() => pay(repo, amount), BadRequestException);
     }
     for (const paidAt of ['2026-02-30', '2026-08-10T00:00:00Z', '2569-08-10', '']) {
       await assert.rejects(() => pay(repo, '40', { paidAt }), BadRequestException);
     }
     assert.equal(state.payments.length, 0);
+    await pay(repo, '01'); assert.equal(Number(state.payments[0].amount), 1);
   });
 
   for (const failedWrite of ['audit', 'outbox'] as const) {
@@ -657,4 +658,36 @@ it('a legacy paid balance without a cancellable row explains the existing financ
   const cap = await h.repo.expenseCorrectionCapabilities('company-1', 'expense-1', ['expense.reject']);
   assert.equal(cap.rejectBlocker, 'legacy_paid_balance');
   await assert.rejects(h.repo.updateExpense({ companyId: 'company-1', id: 'expense-1', status: 'REJECTED', updatedByUserId: 'finance-1' }), (e: any) => e.getResponse?.().code === 'expense_rejection_paid_balance');
+});
+
+// Browser follow-up regressions stay in this registered API file.
+describe('expense correction detail facts and payment input', () => {
+  it('accepts leading-zero amounts and still refuses zero/too much precision', async () => {
+    const { repo, state } = harness();
+    await pay(repo, '0040.00');
+    assert.equal(Number(state.payments[0].amount), 40);
+    for (const amount of ['000', '0040.001']) await assert.rejects(() => pay(repo, amount), BadRequestException);
+  });
+  it('names an expense opened elsewhere instead of returning an uncoded status refusal', async () => {
+    const { repo } = harness({ status: 'NEEDS_REVIEW' });
+    await assert.rejects(() => pay(repo, '1'), (e: any) => e.getResponse?.().code === 'expense_payment_not_confirmed');
+  });
+  it('reads reopen and cancellation audit facts scoped to the authorized expense and payment IDs', async () => {
+    let query: any;
+    const repo = new PrismaExpenseRepository({ client: { auditLog: { findMany: async (input: any) => {
+      query = input; return [
+        { action: 'expense.payment.cancel', targetId: 'p1', metadataJson: { reason: 'ยอดผิด' }, createdAt: VERSION },
+        { action: 'expense.reopen', targetId: 'expense-1', createdAt: VERSION },
+      ];
+    } } } } as any);
+    const read = (repo as any).findCorrectionHistory; assert.equal(typeof read, 'function');
+    const result = await read.call(repo, 'company-1', 'expense-1', ['p1']);
+    assert.equal(query.where.companyId, 'company-1'); assert.equal(query.where.result, 'SUCCESS');
+    assert.deepEqual(query.where.OR, [
+      { action: 'expense.reopen', targetType: 'expense_record', targetId: 'expense-1' },
+      { action: 'expense.payment.cancel', targetType: 'expense_payment', targetId: { in: ['p1'] } },
+    ]);
+    assert.equal(result.reopenedAt.toISOString(), VERSION.toISOString());
+    assert.equal(result.cancellationReasons.get('p1'), 'ยอดผิด');
+  });
 });

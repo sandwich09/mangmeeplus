@@ -1,6 +1,6 @@
 'use client';
 
-import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
+import { expenseOverpaidAmount, expenseOverpaymentRemedy, expenseReopenedMessage, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
 import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -118,11 +118,21 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     setDataErrorCount(count); setDataErrorMessage(message);
   }, []);
   const [reason, setReason] = useState('');
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
+  const correctionReasonRef = useRef<HTMLTextAreaElement>(null);
+  const rejectReasonRef = useRef<HTMLTextAreaElement>(null);
   const [ocrTotalReason, setOcrTotalReason] = useState('');
   const [showReject, setShowReject] = useState(false);
   const [showVoid, setShowVoid] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [correctionAction, setCorrectionAction] = useState<{ paymentId?: string } | null>(null);
+  useEffect(() => {
+    if (!correctionAction && !showReject) return;
+    const frame = window.requestAnimationFrame(() => (correctionAction ? correctionReasonRef : rejectReasonRef).current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [correctionAction, showReject]);
+
   const [deleting, setDeleting] = useState(false);
   const [duplicateResolution, setDuplicateResolution] = useState<{ candidateId: string; action: 'dismiss' | 'confirm' } | null>(null);
   const [paidAmount, setPaidAmount] = useState('');
@@ -359,6 +369,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       : initialExpenseReviewStep(deriveExpenseReviewSteps(detail, canReview), detail.status));
   }, [detail, expenseId, canReview]);
 
+  useEffect(() => {
+    if (!detail?.correctionOpenedAt || !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status)) return;
+    setStep('data');
+    const frame = window.requestAnimationFrame(() => vendorRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [detail?.correctionOpenedAt]);
+
   // Signed URL is fetched on click, not on panel open: it expires in 15 min.
   const openPreview = async (attachment: ExpenseDetail['attachments'][number]) => {
     const requestId = ++previewRequestRef.current;
@@ -375,10 +392,30 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     }
   };
 
+  const refreshChangedDocument = async (cause: unknown, operation: 'payment' | 'correction' | 'other'): Promise<string | null> => {
+    const failure = cause as { message?: unknown; details?: { message?: unknown } };
+    const message = failure?.message ?? failure?.details?.message;
+    const code = apiErrorCode(cause) ?? (typeof message === 'string' ? message : null);
+    if (!['expense_payment_exceeds_outstanding', 'expense_payment_changed', 'expense_payment_not_confirmed',
+      'expense_correction_source_changed', 'expense_correction_blocked', 'expense_payment_correction_blocked',
+      'expense_paid_exceeds_payable', 'expense_rejection_payments_recorded', 'expense_rejection_paid_balance', 'EXPENSE_UPDATE_CONFLICT'].includes(code ?? '')
+      && !(code?.startsWith('expense_confirmation_') && code.endsWith('_changed'))) return null;
+    try {
+      const refreshed = await getExpense(companyId, expenseId);
+      setDetail(refreshed); setConflictReload(false);
+      paymentAttemptRef.current = null; setPaymentFailure(null);
+      setPaidAmount(expensePaymentFormState(refreshed.outstandingAmount, '', paidAt).prefill);
+      if (operation === 'payment' && refreshed.status !== 'CONFIRMED') return refreshed.correctionOpenedAt
+        ? EXPENSE_CORRECTION_WORDS.paymentOnReopened : EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed;
+      if (operation === 'correction' && correctionAction?.paymentId && refreshed.payments?.find(p => p.id === correctionAction.paymentId)?.status === 'VOIDED') return EXPENSE_CORRECTION_WORDS.paymentAlreadyCancelled;
+      return EXPENSE_CORRECTION_WORDS.sourceRefreshed;
+    } catch { setConflictReload(true); return EXPENSE_CORRECTION_WORDS.sourceRefreshFailed; }
+  };
+
   const doAction = async (fn: () => Promise<unknown>, successMessage?: string) => {
     setActionLoading(true); setError(null);
     try { await fn(); await load(); onRefresh(); if (successMessage) toast.success(successMessage); return true; }
-    catch (e) { setError(err(e)); return false; }
+    catch (e) { setError(await refreshChangedDocument(e, 'other') ?? err(e)); return false; }
     finally { setActionLoading(false); }
   };
 
@@ -504,7 +541,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
 
   const submitPayment = async () => {
     // Synchronous guard also covers two clicks before React renders the disabled state.
-    if (paymentPendingRef.current || actionLoading || paymentFailure === 'conflict' || (!paymentAttemptRef.current && (expensePaymentFormState(detail?.outstandingAmount ?? '0', paidAmount, paidAt).disabledReason || !detail?.correctionCapabilities?.canRecordPayment))) return;
+    if (paymentPendingRef.current || actionLoading || conflictReload || paymentFailure === 'conflict' || (!paymentAttemptRef.current && (expensePaymentFormState(detail?.outstandingAmount ?? '0', paidAmount, paidAt).disabledReason || !detail?.correctionCapabilities?.canRecordPayment))) return;
     paymentPendingRef.current = true;
     setActionLoading(true); setError(null);
     try {
@@ -543,7 +580,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             : 'ยังยืนยันผลการบันทึกไม่ได้ กด “ลองบันทึกรายการเดิมอีกครั้ง” ได้โดยไม่เพิ่มยอดจ่ายซ้ำ หากจะเปลี่ยนข้อมูล กรุณาตรวจประวัติการจ่ายก่อน');
         }
       }
-      setError(err(e));
+      setPaymentNotice(await refreshChangedDocument(e, 'payment') ?? err(e));
       return;
     } finally {
       paymentPendingRef.current = false;
@@ -565,7 +602,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       toast.success(successMessage);
       // Left set on purpose: the navigation unmounts this page, and re-enabling the button would
       // let a second submit fire against an expense that already moved on.
-    } catch (e) { setError(err(e)); setActionLoading(false); }
+    } catch (e) { setError(await refreshChangedDocument(e, 'other') ?? err(e)); setActionLoading(false); }
   };
 
   // Not doAction: the record is gone on success, so reloading it would 404. Leave `deleting` set —
@@ -813,7 +850,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const canMutateDraft = isMutable && (canReview || (caps.canUpdate && isOwnRecord));
   // Extraction: expense.ocr.request OR expense.review OR (expense.receipt.upload on own record).
   const canExtract = !claimedSource && (caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord));
+  // Fixed correction marker: h-5 plus the stepper's gap-1.5 = 1.625rem.
+  const viewerTopRem = VIEWER_TOP_REM + (isMutable && detail.correctionOpenedAt ? 1.625 : 0);
   const isConfirmed = detail.status === 'CONFIRMED';
+  const correctionAllowed = correctionAction?.paymentId
+    ? detail.correctionCapabilities?.payments.find(p => p.id === correctionAction.paymentId)?.canCancel === true
+    : detail.correctionCapabilities?.canReopen === true;
   const paymentForm = expensePaymentFormState(detail.outstandingAmount, paidAmount, paidAt, Boolean(paymentAttemptRef.current));
   const canCancelFinancialExpense = !claimedSource && !claimRecord && canVoidExpenseFinancialState(detail);
   const canGenerateJournal = isConfirmed && caps.canPostLedger && detail.pendingPostingSourceType !== null;
@@ -903,7 +945,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // the button stayed live on a ฿0 expense. The API refuses it now; including it here means the
   // reviewer is told before the round trip, and the button no longer disagrees with the rule.
   const personalSubstitute = detail.substituteReceiptEvidence?.fundingSource === 'PERSONAL_ADVANCE';
-  const canConfirmExpense = !personalSubstitute && canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && !evidenceError && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
+  const currentPreview = reviewTotals?.revision === `${detail.id}:${detail.updatedAt}` ? reviewTotals : null;
+  const previewTotals = currentPreview?.status === 'ready' ? currentPreview.totals : undefined;
+  const money = previewTotals ?? detail;
+  const overpaidAmount = expenseOverpaidAmount({ paidAmount: detail.paidAmount, netPayableAmount: money.netPayableAmount });
+  const hasPaymentHistory = (detail.payments?.length ?? 0) > 0;
+  const hasRecordedPayments = detail.payments?.some(p => p.status === 'RECORDED') ?? false;
+  const canCancelRecordedPayment = detail.correctionCapabilities?.payments.some(p => p.canCancel) ?? false;
+  const overpaymentMessage = overpaidAmount ? `${EXPENSE_CORRECTION_WORDS.overpaid} ${baht(overpaidAmount)} ${expenseOverpaymentRemedy(hasRecordedPayments, canCancelRecordedPayment)}` : null;
+  const canConfirmExpense = !overpaidAmount && !personalSubstitute && canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && !evidenceError && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
   // Owner requirement 2026-08-28: the reason used to live only in the button's `title`, i.e. a hover
   // tooltip — and expenses get reviewed on a phone, where nothing hovers. One helper decides it now,
   // both footers use it, and it is rendered as text under the button instead of hidden behind a cursor.
@@ -913,12 +963,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       evidenceError, ocrTotalUnacknowledged, isZeroAmount, classificationBlockMessage,
     })
     : null;
-  const confirmBlockedText = personalSubstitute ? 'ใบรับรองนี้ระบุว่าพนักงานจ่ายร้านแล้ว การคืนเงินต้องดำเนินการแยกตามขั้นตอนการเงิน' : sourceDraftIncomplete
+  const confirmBlockedText = overpaymentMessage ?? (personalSubstitute ? 'ใบรับรองนี้ระบุว่าพนักงานจ่ายร้านแล้ว การคืนเงินต้องดำเนินการแยกตามขั้นตอนการเงิน' : sourceDraftIncomplete
     ? t('expenses.source_draft_blocks_progress', locale)
-    : confirmBlocker ? (confirmBlocker.literal ?? t(confirmBlocker.key!, locale)) : null;
+    : confirmBlocker ? (confirmBlocker.literal ?? t(confirmBlocker.key!, locale)) : null);
   const confirmBlockedNotice = confirmBlockedText ? (
     <p className="w-full text-center text-xs font-medium text-warning-700">
-      {t('expenses.confirm_blocked_prefix', locale)} {confirmBlockedText}
+      {overpaymentMessage ? null : <>{t('expenses.confirm_blocked_prefix', locale)} {confirmBlockedText}</>}
     </p>
   ) : null;
   const storedClassification = aiMap?.['classification'] && typeof aiMap['classification'] === 'object'
@@ -946,8 +996,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const aiMissingDataFields = expenseAiMissingFields(aiMap, 'data');
 
   const auditChecks = deriveExpenseAuditChecks(detail);
+
   const auditPassCount = auditChecks.filter((check) => check.status === 'pass').length;
-  const auditWarnCount = auditChecks.filter((check) => check.status === 'warn').length;
+  const auditWarnCount = auditChecks.filter((check) => check.status === 'warn').length + (overpaymentMessage ? 1 : 0);
   const confirmBlockers = canMutateDraft && (classificationBlocked || (detail.status === 'READY_FOR_CONFIRMATION' && (isZeroAmount || hasDuplicates)));
   const warnNoteClass = 'rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-xs font-semibold text-warning-700';
   const navChips: Array<{ key: DictionaryKey; ref: { current: HTMLDivElement | null } }> = [
@@ -1005,113 +1056,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
 
   // Guided review exposes cancellation on every step, then deletion for a cancelled record.
   // Existing permission checks and financial-void actions still apply.
-  const modalFooter = hasFooterActions ? (
-    <fieldset disabled={aiReading} inert={aiReading} className="flex min-w-0 w-full flex-wrap items-center gap-2">
-      {/* Invalid drafts remain cancellable on every step, directly from the action bar. */}
-      {(guided || approverOnlyActions) && canReject && (
-        <button type="button" className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t(showReject && actionLoading ? 'expenses.rejecting' : 'expenses.reject', locale)}</button>
-      )}
-      {/* Cancellation preserves the record; deletion is offered only once that state is confirmed. */}
-      {detail.status === 'REJECTED' && canDelete && <button type="button" className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting} aria-busy={deleting}>{t('expenses.delete', locale)}</button>}
-      {canCancelFinancialExpense && caps.canVoid && <details className="relative shrink-0" onClick={event => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
-        <summary className={cx(ghostClass, 'min-h-11 cursor-pointer list-none')}>เพิ่มเติม</summary>
-        <div className="absolute bottom-full left-0 z-20 mb-2 flex min-w-48 flex-col gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
-        {canCancelFinancialExpense && (
-          <>
-            {caps.canVoid && <button className={dangerClass} onClick={() => { setReason(''); setError(null); setShowVoid(true); setShowReject(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.void_document', locale)}</button>}
-          </>
-        )}
-      </div></details>}
-      <div className={cx('ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2') }>
-        {canEditLinkedSubstitute && (
-          <button type="button" className={cx(ghostClass, '!min-h-[44px] !text-base')} disabled={aiReading || stepSaving || evidenceDirty} aria-busy={Boolean(stepSaving)} onClick={() => void openSubstituteReceipt(true)}>
-            {stepSaving ? 'กำลังบันทึก…' : 'แก้ไขใบแทนใบเสร็จ'}
-          </button>
-        )}
-        {guided && (
-          <>
-            {step === 'data' && validationBlockMessage && (
-              <div className="max-w-lg rounded-lg border border-warning-100 bg-warning-50 px-3 py-2 text-sm text-warning-700">
-                <p id={`expense-review-block-${detail.id}`} role="status">{validationBlockMessage}</p>
-                <button type="button" className="mt-1 rounded font-semibold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" onClick={() => {
-                  const section = vendorRef.current;
-                  const target = section?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? section;
-                  target?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-                  target?.focus({ preventScroll: true });
-                }}>{t('expenses.v_fix_fields', locale)}</button>
-              </div>
-            )}
-            {stepIndex > 0 && <button className={ghostClass} disabled={stepSaving} aria-busy={Boolean(stepSaving)} onClick={() => void goToStep(steps[stepIndex - 1].key)}>{t('expenses.step_back', locale)}</button>}
-            {step === 'review' && (
-              <>
-                {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.check_duplicate', locale)}</button>}
-                {detail.status !== 'READY_FOR_CONFIRMATION' && (
-                  <>
-                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} aria-busy={Boolean(actionLoading)} title={classificationBlocked ? classificationBlockMessage : sourceDraftIncomplete ? t('expenses.source_draft_blocks_progress', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
-                    {sourceDraftIncomplete && <p role="status" className="max-w-lg text-sm font-medium text-warning-700">{t('expenses.source_draft_blocks_progress', locale)}</p>}
-                  </>
-                )}
-                {detail.status === 'READY_FOR_CONFIRMATION' && (
-                  <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => void doConfirm()} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
-                    {confirmBlockedNotice}
-                  </>
-                )}
-              </>
-            )}
-            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && validationBlockMessage !== undefined) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-busy={Boolean(stepSaving)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
-            {/* Save-review guidance lives beside that form (`expense-document-review-hint-*`, which the
-                button's aria-describedby already names). On a phone that box can be scrolled away while
-                the disabled ถัดไป stays in this sticky bar, so below `lg` the short sentence is repeated
-                here as plain text — not a second live region — so a disabled button always says why. */}
-            {aiReading ? (
-              <p role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
-                {t('expenses.ai_reading', locale)}
-              </p>
-            ) : step === 'evidence' && evidenceStepBlocker && (documentReviewSaveRequired ? (
-              <p className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right lg:hidden">
-                {t(evidenceStepBlocker, locale)}
-              </p>
-            ) : (
-              <p id={`expense-review-evidence-block-${detail.id}`} role="status" className="max-w-lg rounded-xl border border-warning-100 bg-warning-50 p-3 text-sm font-medium text-warning-700 sm:w-full sm:text-right">
-                {t(evidenceStepBlocker, locale)}
-              </p>
-            ))}
-          </>
-        )}
-        {approverOnlyActions && (
-          <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => void doConfirm()} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
-            {confirmBlockedNotice}
-          </>
-        )}
-        {canCancelFinancialExpense && (
-          <>
-            {canGenerateJournal && detail.pendingPostingSourceType && (
-              <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, detail.pendingPostingSourceId!), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading || !detail.pendingPostingSourceId} aria-busy={Boolean(actionLoading)}>
-                {detail.postingStatus === 'posting_error'
-                  ? 'แก้ไขแล้ว ลองลงบัญชีอีกครั้ง'
-                  : detail.pendingPostingSourceType === 'expense.payment'
-                    ? 'ลงบัญชีการชำระ'
-                    : 'สร้างและผ่านรายการ JV'}
-              </button>
-            )}
-            {canViewJournal && <button className={btnClass} onClick={onGoJournal}>{detail.journalEntryNumber ? `ดู ${detail.journalEntryNumber} →` : t('expenses.view_journal', locale)}</button>}
-          </>
-        )}
-        {canRestartReview && <button className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.restart_review', locale)}</button>}
-        {detail.correctionCapabilities?.canReopen && <button type="button" className={ghostClass} disabled={actionLoading} aria-busy={actionLoading} onClick={() => { setReason(''); setError(null); setCorrectionAction({}); }}>{EXPENSE_CORRECTION_WORDS.reopen}</button>}
-        {isConfirmed && hasWht && whtLoading && <p role="status" className="w-full text-sm text-gray-600">กำลังตรวจเอกสาร 50 ทวิ…</p>}
-        {isConfirmed && hasWht && whtIssueError && <div className="w-full"><ErrorBanner message={whtIssueError} /></div>}
-        {canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) && (
-          <button type="button" className={btnClass} disabled={whtIssuing} aria-busy={whtIssuing} onClick={() => void doIssueWhtCertificate()}>
-            {whtIssuing ? 'กำลังพิมพ์เอกสาร…' : t('wht.print_certificate', locale)}
-          </button>
-        )}
-        {isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED' && (
-          <div className="w-full rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-900">
-            <p>ระบบออกหนังสือรับรองให้แล้ว</p>
-            <button type="button" className="mt-1 font-semibold underline underline-offset-2" disabled={whtIssuing} aria-busy={whtIssuing} onClick={() => void downloadWht()}>ดาวน์โหลด PDF อีกครั้ง</button>
+  const issuedCertificateActions = isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED' && (canCorrectWhtCertificate(whtHandoff, permissions) || canIssueWhtReplacementCopy(whtHandoff, permissions)) && (
+    <MangmeeCard className="p-4 text-sm text-gray-700">
             {canCorrectWhtCertificate(whtHandoff, permissions) && (
               <div className="mt-3 border-t border-green-200 pt-3">
                 <button type="button" className={ghostClass} aria-expanded={correctOpen} onClick={() => (correctOpen ? setCorrectOpen(false) : openCorrectForm())}>
@@ -1188,6 +1134,123 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 </button>
               </div>
             )}
+    </MangmeeCard>
+  );
+  const modalFooter = hasFooterActions ? (
+    <fieldset disabled={aiReading} inert={aiReading} className="flex min-w-0 w-full flex-wrap items-center gap-2 [&_button]:whitespace-nowrap [&_summary]:whitespace-nowrap">
+      {/* Invalid drafts remain cancellable on every step through the secondary actions. */}
+      {/* Cancellation preserves the record; deletion is offered only once that state is confirmed. */}
+      {detail.status === 'REJECTED' && canDelete && <button type="button" className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting} aria-busy={deleting}>{t('expenses.delete', locale)}</button>}
+      {(guided || approverOnlyActions || canRestartReview || (canCancelFinancialExpense && caps.canVoid)) && <details className="relative shrink-0" onClick={event => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+        <summary className={cx(ghostClass, 'min-h-11 cursor-pointer list-none')}>เพิ่มเติม</summary>
+        <div className="absolute bottom-full left-0 z-20 mb-2 flex min-w-48 flex-col gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
+        {canCancelFinancialExpense && (
+          <>
+            {caps.canVoid && <button className={dangerClass} onClick={() => { setReason(''); setError(null); setShowVoid(true); setShowReject(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.void_document', locale)}</button>}
+          </>
+        )}
+
+      {(guided || approverOnlyActions) && canReject && (
+        <button type="button" className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t(showReject && actionLoading ? 'expenses.rejecting' : 'expenses.reject', locale)}</button>
+      )}
+
+        {canEditLinkedSubstitute && (
+          <button type="button" className={cx(ghostClass, '!min-h-[44px] !text-base')} disabled={aiReading || stepSaving || evidenceDirty} aria-busy={Boolean(stepSaving)} onClick={() => void openSubstituteReceipt(true)}>
+            {stepSaving ? 'กำลังบันทึก…' : 'แก้ไขใบแทนใบเสร็จ'}
+          </button>
+        )}
+
+            {stepIndex > 0 && <button className={ghostClass} disabled={stepSaving} aria-busy={Boolean(stepSaving)} onClick={() => void goToStep(steps[stepIndex - 1].key)}>{t('expenses.step_back', locale)}</button>}
+
+                {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.check_duplicate', locale)}</button>}
+        {canRestartReview && <button className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.restart_review', locale)}</button>}
+        {canCancelFinancialExpense && (
+          <>
+            {canGenerateJournal && detail.pendingPostingSourceType && (
+              <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, detail.pendingPostingSourceId!), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading || !detail.pendingPostingSourceId} aria-busy={Boolean(actionLoading)}>
+                {detail.postingStatus === 'posting_error'
+                  ? 'แก้ไขแล้ว ลองลงบัญชีอีกครั้ง'
+                  : detail.pendingPostingSourceType === 'expense.payment'
+                    ? 'ลงบัญชีการชำระ'
+                    : 'สร้างและผ่านรายการ JV'}
+              </button>
+            )}
+            {canViewJournal && <button className={btnClass} onClick={onGoJournal}>{detail.journalEntryNumber ? `ดู ${detail.journalEntryNumber} →` : t('expenses.view_journal', locale)}</button>}
+          </>
+        )}
+
+
+
+      </div></details>}
+      <div className={cx('ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2') }>
+        {guided && (
+          <>
+            {step === 'data' && validationBlockMessage && (
+              <div className="max-w-lg rounded-lg border border-warning-100 bg-warning-50 px-3 py-2 text-sm text-warning-700">
+                <p id={`expense-review-block-${detail.id}`} role="status">{validationBlockMessage}</p>
+                <button type="button" className="mt-1 rounded font-semibold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" onClick={() => {
+                  const section = vendorRef.current;
+                  const target = section?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? section;
+                  target?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+                  target?.focus({ preventScroll: true });
+                }}>{t('expenses.v_fix_fields', locale)}</button>
+              </div>
+            )}
+            {step === 'review' && (
+              <>
+
+                {detail.status !== 'READY_FOR_CONFIRMATION' && (
+                  <>
+                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} aria-busy={Boolean(actionLoading)} title={classificationBlocked ? classificationBlockMessage : sourceDraftIncomplete ? t('expenses.source_draft_blocks_progress', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
+                    {sourceDraftIncomplete && <p role="status" className="max-w-lg text-sm font-medium text-warning-700">{t('expenses.source_draft_blocks_progress', locale)}</p>}
+                  </>
+                )}
+                {detail.status === 'READY_FOR_CONFIRMATION' && (
+                  <>
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => void doConfirm()} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {confirmBlockedNotice}
+                  </>
+                )}
+              </>
+            )}
+            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && validationBlockMessage !== undefined) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-busy={Boolean(stepSaving)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {/* Save-review guidance lives beside that form (`expense-document-review-hint-*`, which the
+                button's aria-describedby already names). On a phone that box can be scrolled away while
+                the disabled ถัดไป stays in this sticky bar, so below `lg` the short sentence is repeated
+                here as plain text — not a second live region — so a disabled button always says why. */}
+            {aiReading ? (
+              <p role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
+                {t('expenses.ai_reading', locale)}
+              </p>
+            ) : step === 'evidence' && evidenceStepBlocker && (documentReviewSaveRequired ? (
+              <p className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right lg:hidden">
+                {t(evidenceStepBlocker, locale)}
+              </p>
+            ) : (
+              <p id={`expense-review-evidence-block-${detail.id}`} role="status" className="max-w-lg rounded-xl border border-warning-100 bg-warning-50 p-3 text-sm font-medium text-warning-700 sm:w-full sm:text-right">
+                {t(evidenceStepBlocker, locale)}
+              </p>
+            ))}
+          </>
+        )}
+        {approverOnlyActions && (
+          <>
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => void doConfirm()} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {confirmBlockedNotice}
+          </>
+        )}
+        {isConfirmed && hasWht && whtLoading && <p role="status" className="w-full text-sm text-gray-600">กำลังตรวจเอกสาร 50 ทวิ…</p>}
+        {isConfirmed && hasWht && whtIssueError && <div className="w-full"><ErrorBanner message={whtIssueError} /></div>}
+        {canIssueExpenseWhtCertificate(detail, whtHandoff, permissions) && (
+          <button type="button" className={btnClass} disabled={whtIssuing} aria-busy={whtIssuing} onClick={() => void doIssueWhtCertificate()}>
+            {whtIssuing ? 'กำลังพิมพ์เอกสาร…' : t('wht.print_certificate', locale)}
+          </button>
+        )}
+        {isConfirmed && hasWht && whtHandoff?.status === 'SYSTEM_ISSUED' && (
+          <div className="flex min-w-0 items-center gap-2 text-xs text-green-900">
+            <p className="hidden whitespace-nowrap sm:block">{EXPENSE_CORRECTION_WORDS.certificateIssued}</p>
+            <button type="button" className="whitespace-nowrap font-semibold underline underline-offset-2" disabled={whtIssuing} aria-busy={whtIssuing} onClick={() => void downloadWht()}>{EXPENSE_CORRECTION_WORDS.downloadAgain}</button>
+
           </div>
         )}
       </div>
@@ -1266,10 +1329,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </p>
           {/* The whole form below is disabled at CONFIRMED, but nothing on the page said so —
               the fields just stopped responding. State the rule and the way out, once, here. */}
-          <p className="mt-1 text-xs font-semibold text-gray-600">{expenseConfirmedLockMessage(detail.correctionCapabilities)}</p>
-          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-gray-600">
-            {expenseReopenBlockerMessages(detail.correctionCapabilities).map(message => <li key={message}>{message}</li>)}
-          </ul>
+
         </div>
         <MangmeeBadge tone={detail.postingStatus === 'posted' ? 'brand' : detail.postingStatus === 'posting_error' ? 'danger' : detail.postingStatus === 'pending' ? 'amber' : 'slate'}>
           {POSTING_STATUS_LABELS[detail.postingStatus]}
@@ -1301,9 +1361,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       </MangmeeCard>
     </div>
   );
-  const currentPreview = reviewTotals?.revision === `${detail.id}:${detail.updatedAt}` ? reviewTotals : null;
-  const previewTotals = currentPreview?.status === 'ready' ? currentPreview.totals : undefined;
-  const money = previewTotals ?? detail;
   const calculationPending = currentPreview?.status === 'loading';
   const calculationError = currentPreview?.status === 'error';
   const moneyVatMode = currentPreview?.vatMode ?? detail.vatMode;
@@ -1373,7 +1430,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           <div className="mt-2 flex flex-wrap items-center justify-between rounded-xl bg-brand-50 px-4 py-3">
             <div>
               <div className="text-xs font-semibold text-brand-700">{t(moneyHasWht ? 'expenses.amount_due_after_wht' : 'expenses.amount_due', locale)}</div>
-              <div className="mt-1">{detail.reimbursementProgress ? <span>{expenseReimbursementProgressLabel(detail.reimbursementProgress)}</span> : <StatusBadge status={detail.paymentStatus} />}</div>
+              <div className="mt-1">{overpaidAmount ? <MangmeeBadge tone="danger">{EXPENSE_CORRECTION_WORDS.overpaid}</MangmeeBadge> : detail.reimbursementProgress ? <span>{expenseReimbursementProgressLabel(detail.reimbursementProgress)}</span> : <StatusBadge status={detail.paymentStatus} />}</div>
             </div>
             <div className="text-right">
               <div className="tabular-nums text-2xl font-black text-brand-700">{baht(money.outstandingAmount)}</div>
@@ -1576,17 +1633,19 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     </MangmeeCard>
   );
   const paymentHistory = (detail.payments?.length ?? 0) > 0 && (
-    <div className="space-y-2 border-t border-gray-100 pt-3">
+    <div className="space-y-2 border-t border-gray-100 pt-3" data-testid="expense-payment-history">
       <p className="text-xs font-semibold text-gray-600">ประวัติการจ่าย</p>
       {detail.payments?.map((payment) => {
         const paymentCapability = detail.correctionCapabilities?.payments.find((item) => item.id === payment.id);
+        const cancelled = payment.status === 'VOIDED';
         return (
-          <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
-            <span>{dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span>
-            <span className="tabular-nums font-semibold text-gray-800">{baht(payment.amount)}</span>
-            <span>{payment.status === 'VOIDED' ? 'ยกเลิกแล้ว' : payment.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : payment.postingStatus === 'posting_error' ? 'ลงบัญชีไม่สำเร็จ' : 'รอลงบัญชี'}</span>
-            {paymentCapability?.canCancel && <button type="button" className={ghostClass} disabled={actionLoading || Boolean(paymentFailure)} aria-busy={actionLoading} onClick={() => { setShowReject(false); setReason(''); setError(null); setCorrectionAction({ paymentId: payment.id }); }}>{EXPENSE_CORRECTION_WORDS.cancelPayment}</button>}
-            {payment.status === 'RECORDED' && paymentCapability?.cancelBlocker && <p className="w-full">{expenseCorrectionBlockerMessage(paymentCapability.cancelBlocker, 'cancelPayment')}</p>}
+          <div key={payment.id} className={cx('grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 rounded-lg border p-3 text-xs', cancelled ? 'border-gray-100 bg-gray-50 text-gray-400' : 'border-gray-200 text-gray-600')}>
+            <span className={cancelled ? 'line-through' : undefined}>{dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span>
+            <span className={cx('text-right tabular-nums font-semibold', cancelled ? 'line-through' : 'text-gray-800')}>{baht(payment.amount)}</span>
+            {cancelled && <div className="col-span-2 space-y-1"><MangmeeBadge tone="slate">ยกเลิกแล้ว</MangmeeBadge>{payment.cancellationReason && <p>{payment.cancellationReason}</p>}</div>}
+            {!cancelled && caps.canReadLedger && <span className="col-span-2">{expenseValueLabel(POSTING_STATUS_LABELS, payment.postingStatus, 'รอตรวจสถานะบัญชี')}</span>}
+            {!cancelled && paymentCapability?.canCancel && <button type="button" className={cx(ghostClass, 'col-span-2 justify-self-start whitespace-nowrap')} disabled={actionLoading || Boolean(paymentFailure)} aria-busy={actionLoading} onClick={() => { setCorrectionReason(''); setCorrectionError(null); setCorrectionAction({ paymentId: payment.id }); }}>{EXPENSE_CORRECTION_WORDS.cancelPayment}</button>}
+            {!cancelled && paymentCapability?.cancelBlocker && <p className="col-span-2">{expenseCorrectionBlockerMessage(paymentCapability.cancelBlocker, 'cancelPayment', detail.correctionCapabilities, caps.canReadLedger)}</p>}
           </div>
         );
       })}
@@ -1617,16 +1676,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               </label>
               <div className="space-y-1 text-sm text-gray-700">
                 <label htmlFor="expense-payment-paid-at">วันที่จ่ายเงินจริง</label>
-                <ThemedDate id="expense-payment-paid-at" name="paidAt" className={inputClass} value={paidAt} required disabled={actionLoading} onChange={(e) => editPayment(() => setPaidAt(e.target.value))} />
+                <ThemedDate id="expense-payment-paid-at" name="paidAt" className={inputClass} value={paidAt} max={paymentForm.maxPaidAt} required disabled={actionLoading} onChange={(e) => editPayment(() => setPaidAt(e.target.value))} />
               </div>
             </fieldset>
             <p className="text-sm text-gray-500">เลือกวันที่จ่ายเงินจริง แม้จะนำมาบันทึกภายหลัง · ยอดค้างจ่าย {baht(detail.outstandingAmount)}</p>
             {paymentForm.disabledReason && <p role="status" className="text-sm text-warning-700">{paymentForm.disabledReason}</p>}
-            <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={actionLoading || paymentFailure === 'conflict' || Boolean(paymentForm.disabledReason)} aria-busy={Boolean(actionLoading)}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : paymentFailure === 'conflict' ? 'กรุณาตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : paymentForm.label}</button>
+            <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={actionLoading || conflictReload || paymentFailure === 'conflict' || Boolean(paymentForm.disabledReason)} aria-busy={Boolean(actionLoading)}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : paymentFailure === 'conflict' ? 'กรุณาตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : paymentForm.label}</button>
           </form>
         )}
         {isConfirmed && detail.correctionCapabilities?.recordPaymentBlocker && detail.correctionCapabilities.recordPaymentBlocker !== 'no_balance' && (
-          <p className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.recordPaymentBlocker, 'recordPayment')}</p>
+          <p className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.recordPaymentBlocker, 'recordPayment', detail.correctionCapabilities, caps.canReadLedger)}</p>
         )}
         {paymentNotice && <p role="status" className="rounded-xl bg-warning-50 p-3 text-sm text-warning-800">{paymentNotice}</p>}
         {paymentHistory}
@@ -1709,11 +1768,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     <>
       {confirmDialog}
       <MangmeePage eyebrow={backLink} title={pageTitle} meta={pageMeta}>
-        {error && <ErrorBanner message={error} />}
+        {error && !showReject && !correctionAction && <ErrorBanner message={error} />}
         {/* UXE-21: the record moved under this attempt. Nothing was changed, and the way on is the
             latest data — never a silent retry of a write whose target no longer exists. */}
-        {error && conflictReload && (
-          <button type="button" className={cx(ghostClass, 'min-h-11')} onClick={() => { setConflictReload(false); setError(null); void load(); }}>
+        {(error || paymentNotice || correctionError) && conflictReload && (
+          <button type="button" className={cx(ghostClass, 'min-h-11')} onClick={() => { void refreshChangedDocument({ code: 'EXPENSE_UPDATE_CONFLICT' }, 'other').then(message => { if (message !== EXPENSE_CORRECTION_WORDS.sourceRefreshFailed) { setError(null); setPaymentNotice(null); setCorrectionError(null); } }); }}>
             {t('expenses.capture.reload_latest', locale)}
           </button>
         )}
@@ -1729,7 +1788,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           {actionLoading ? t('expenses.action_in_progress', locale) : ''}
         </p>
 
+        {isConfirmed && <div className="space-y-2 rounded-xl border border-gray-200 p-4" data-testid="expense-correction-actions">
+          <p className="text-sm text-gray-600">{expenseConfirmedLockMessage(detail.correctionCapabilities, hasPaymentHistory)}</p>
+          {!detail.correctionCapabilities?.canReopen && <ul className="list-disc space-y-1 pl-5 text-sm text-gray-600">{expenseReopenBlockerMessages(detail.correctionCapabilities, caps.canReadLedger).map(message => <li key={message}>{message}</li>)}</ul>}
+          {detail.correctionCapabilities?.canReopen && <button type="button" className={cx(ghostClass, 'whitespace-nowrap')} disabled={actionLoading} onClick={() => { setCorrectionReason(''); setCorrectionError(null); setCorrectionAction({}); }}>{EXPENSE_CORRECTION_WORDS.reopen}</button>}
+        </div>}
+        {paymentNotice && !isConfirmed && <p role="status" className="text-sm text-warning-800">{paymentNotice}</p>}
         {!sourceOnlyDraft && <div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: `${APP_HEADER_REM}rem` }}>
+          {isMutable && detail.correctionOpenedAt && <p role="status" className="h-5 w-full whitespace-nowrap text-xs font-semibold leading-5 text-warning-800">{EXPENSE_CORRECTION_WORDS.correcting}</p>}
           {guided ? (
             <ThemedSteps steps={steps.map((entry, index) => ({
               key: entry.key,
@@ -1774,7 +1840,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             {/* left pane (lg+): inline document viewer */}
             <div
               className="hidden min-h-0 border-r border-gray-100 bg-gray-50 lg:sticky lg:flex lg:self-start lg:flex-col"
-              style={{ top: `${VIEWER_TOP_REM}rem`, height: `calc(100dvh - ${VIEWER_TOP_REM + VIEWER_BOTTOM_GAP_REM}rem)` }}
+              style={{ top: `${viewerTopRem}rem`, height: `calc(100dvh - ${viewerTopRem + VIEWER_BOTTOM_GAP_REM}rem)` }}
             >
               {attachments.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -1919,6 +1985,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                       {auditCard}
                       {duplicatesCard}
                     </div>
+                    {(paymentHistory || overpaymentMessage) && <MangmeeCard className="p-4">{overpaymentMessage && <p role="status" className="mb-3 text-sm text-error-700">{overpaymentMessage}</p>}{paymentHistory}</MangmeeCard>}
                   </>
                 ) : (
                   <>
@@ -1935,13 +2002,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                       {duplicatesCard}
                     </div>
                     {paymentCard}
+                    {issuedCertificateActions}
                   </>
                 )}
                 </fieldset>
                 {aiReading && (
                   <div className="absolute inset-0 z-10 bg-white/80">
                     {/* A long receipt form must not put its only spinner below the viewport. */}
-                    <div className="sticky h-40 [&>div]:bg-transparent" style={{ top: `${VIEWER_TOP_REM}rem` }}>
+                    <div className="sticky h-40 [&>div]:bg-transparent" style={{ top: `${viewerTopRem}rem` }}>
                       <CoverLoader active scope="section" label={t('expenses.ai_reading', locale)} />
                     </div>
                   </div>
@@ -2016,38 +2084,51 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       </MangmeePage>
 
       <Modal open={Boolean(correctionAction)} title={correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopen}
-        size="sm" closeLabel={t('expenses.close', 'th')} onClose={() => { if (!actionLoading) setCorrectionAction(null); }}>
-        <form className="space-y-3" onSubmit={(event) => {
+        size="sm" closeLabel={t('expenses.close', 'th')} onClose={() => { if (!actionLoading) setCorrectionAction(null); }}
+        footer={<>
+          <button type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading} onClick={() => setCorrectionAction(null)}>{t('expenses.cancel', 'th')}</button>
+          {correctionAllowed && <button type="submit" form="expense-correction-form" className={cx(correctionAction?.paymentId ? dangerClass : btnClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading || conflictReload || correctionReason.trim().length < 3} aria-busy={actionLoading}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopenSubmit}</button>}
+        </>}>
+        {correctionAllowed ? <form id="expense-correction-form" className="space-y-3" onSubmit={(event) => {
           event.preventDefault();
-          if (!correctionAction || reason.trim().length < 3 || findForbiddenChars(reason).length) return;
+          if (!correctionAction || !correctionAllowed || conflictReload || correctionReason.trim().length < 3 || findForbiddenChars(correctionReason).length) return;
           const paymentId = correctionAction.paymentId;
-          void doAction(async () => {
-            if (paymentId) await cancelExpensePayment(companyId, expenseId, paymentId, reason.trim());
-            else await reopenExpense(companyId, expenseId, reason.trim());
-            setCorrectionAction(null); setReason('');
-            paymentAttemptRef.current = null; setPaymentFailure(null); setPaymentNotice(null);
-            if (!paymentId) setStep('data');
-          }, paymentId ? EXPENSE_CORRECTION_WORDS.paymentCancelled : EXPENSE_CORRECTION_WORDS.reopened);
+          setActionLoading(true); setCorrectionError(null);
+          void (async () => {
+            try {
+              if (paymentId) await cancelExpensePayment(companyId, expenseId, paymentId, correctionReason.trim());
+              else await reopenExpense(companyId, expenseId, correctionReason.trim());
+              setDetail(await getExpense(companyId, expenseId));
+              setCorrectionAction(null); setCorrectionReason('');
+              paymentAttemptRef.current = null; setPaymentFailure(null); setPaymentNotice(null);
+              if (!paymentId) setStep('data');
+              toast.success(paymentId ? EXPENSE_CORRECTION_WORDS.paymentCancelled : expenseReopenedMessage(hasPaymentHistory));
+            } catch (cause) { setCorrectionError(await refreshChangedDocument(cause, 'correction') ?? err(cause)); }
+            finally { setActionLoading(false); }
+          })();
         }}>
-          {error && <ErrorBanner message={error} />}
-          <label className="block text-sm" htmlFor="expense-correction-reason">{EXPENSE_CORRECTION_WORDS.reason}</label>
-          <textarea id="expense-correction-reason" className={inputClass} rows={3} value={reason} required minLength={3} maxLength={REASON_MAX_LENGTH} disabled={actionLoading} onChange={(event) => setReason(sanitizeReasonInput(event.target.value))} />
-          {reason.trim().length < 3 && <p className="text-sm text-gray-600">{EXPENSE_CORRECTION_WORDS.reasonRequired}</p>}
-          <button type="submit" className={btnClass} disabled={actionLoading || reason.trim().length < 3} aria-busy={actionLoading}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : t('expenses.confirm', 'th')}</button>
-        </form>
+          {correctionAction?.paymentId ? (() => {
+            const payment = detail.payments?.find(p => p.id === correctionAction.paymentId);
+            return payment && <p className="text-sm text-gray-700">{baht(payment.amount)} · {dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</p>;
+          })() : <p className="text-sm text-gray-700">{EXPENSE_CORRECTION_WORDS.reopenDescription}{hasPaymentHistory ? ` ${EXPENSE_CORRECTION_WORDS.retainedPayments}` : ''}</p>}
+          {correctionError && <ErrorBanner message={correctionError} />}
+          <label className="block text-sm" htmlFor="expense-correction-reason">{correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelReason : EXPENSE_CORRECTION_WORDS.reason}</label>
+          <textarea ref={correctionReasonRef} autoFocus id="expense-correction-reason" className={inputClass} rows={3} value={correctionReason} required minLength={3} maxLength={REASON_MAX_LENGTH} disabled={actionLoading} onChange={(event) => setCorrectionReason(sanitizeReasonInput(event.target.value))} />
+          {correctionReason.trim().length < 3 && <p className="text-sm text-gray-600">{EXPENSE_CORRECTION_WORDS.reasonRequired}</p>}
+        </form> : <ErrorBanner message={correctionError ?? EXPENSE_CORRECTION_WORDS.unavailable} />}
       </Modal>
       <Modal
-        open={showReject}
-        title={t('expenses.reject_confirm_title', locale)}
+        open={showReject && !correctionAction}
+        title={detail.correctionCapabilities?.canReject === true ? t('expenses.reject_confirm_title', locale) : EXPENSE_CORRECTION_WORDS.reject}
         size="sm"
         closeLabel={t('expenses.close', locale)}
         onClose={closeReject}
-        footer={(
+        footer={detail.correctionCapabilities?.canReject === true ? (
           <>
-            <button type="button" className={cx(ghostClass, 'flex-1 sm:flex-none')} onClick={closeReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>
+            <button type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} onClick={closeReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>
               {t('expenses.reject_stay', locale)}
             </button>
-            <button type="button" className={cx(dangerClass, 'flex-1 sm:flex-none')} onClick={() => {
+            <button type="button" className={cx(dangerClass, 'w-full sm:w-auto whitespace-nowrap')} onClick={() => {
               const cleanReason = reason.trim();
               const forbidden = findForbiddenChars(cleanReason);
               if (forbidden.length > 0) { setError(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' '))); return; }
@@ -2056,23 +2137,23 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 setShowReject(false); setReason('');
               }, t('expenses.reject_success', locale));
             }} disabled={actionLoading || !reason.trim() || detail.correctionCapabilities?.canReject !== true} aria-busy={Boolean(actionLoading)}>
-              {t(actionLoading ? 'expenses.rejecting' : 'expenses.confirm', locale)}
+              {actionLoading ? t('expenses.rejecting', locale) : EXPENSE_CORRECTION_WORDS.reject}
             </button>
           </>
-        )}
+        ) : <button type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} onClick={closeReject}>{t('expenses.close', locale)}</button>}
       >
         <div className="space-y-3">
-          <p className="text-sm leading-6 text-gray-600">{t('expenses.reject_confirm_description', locale)}</p>
+          {detail.correctionCapabilities?.canReject === true && <p className="text-sm leading-6 text-gray-600">{t('expenses.reject_confirm_description', locale)}</p>}
           {detail.correctionCapabilities?.canReject === undefined && <p role="status" className="text-sm text-gray-600">{EXPENSE_CORRECTION_WORDS.unavailable}</p>}
           {detail.correctionCapabilities?.rejectBlocker && <>
-            <p role="status" className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.rejectBlocker, 'reject')}</p>
-            {paymentHistory}
+            <p role="status" className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.rejectBlocker, 'reject', detail.correctionCapabilities)}</p>
           </>}
+          {paymentHistory}
           {error && <ErrorBanner message={error} />}
-          <label className="block text-sm font-medium text-gray-700">
+          {detail.correctionCapabilities?.canReject === true && <><label className="block text-sm font-medium text-gray-700">
             {t('expenses.reject_reason', locale)} <span className="text-error-600" aria-hidden>*</span>
             <textarea
-              className={cx(inputClass, 'mt-1 min-h-28 resize-y')}
+              ref={rejectReasonRef} autoFocus className={cx(inputClass, 'mt-1 min-h-28 resize-y')}
               rows={4}
               required
               disabled={actionLoading}
@@ -2082,7 +2163,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               placeholder={t('expenses.reject_reason_placeholder', locale)}
             />
           </label>
-          <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/{REASON_MAX_LENGTH}</div>
+          <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/{REASON_MAX_LENGTH}</div></>}
         </div>
       </Modal>
 

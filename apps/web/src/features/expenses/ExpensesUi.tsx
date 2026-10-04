@@ -3,6 +3,7 @@
 // Shared presentational primitives for the Expenses workspace, matching the
 // มั่งมี mock's exact card/colour/spacing system. Real Thai copy from the feature;
 // exact hex accents from the mock (mangmee brand tokens for the green shell).
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { MangmeeBadge, cx, type MangmeeTone } from '@/common/components/mangmee';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -85,7 +86,7 @@ export function TAX_TONE(status: string): MangmeeTone {
 }
 export function StatusBadge({ status }: { status: string }) {
   const otherLabels: Record<string, string> = {
-    NOT_CHECKED: 'ยังไม่ตรวจรายการซ้ำ', NO_MATCH: 'ไม่พบรายการซ้ำ', POSSIBLE_DUPLICATE: 'อาจเป็นรายการซ้ำ',
+    OVERPAID: EXPENSE_CORRECTION_WORDS.overpaid, NOT_CHECKED: 'ยังไม่ตรวจรายการซ้ำ', NO_MATCH: 'ไม่พบรายการซ้ำ', POSSIBLE_DUPLICATE: 'อาจเป็นรายการซ้ำ',
     CONFIRMED_DUPLICATE: 'ยืนยันว่าเป็นรายการซ้ำ', OVERRIDDEN: 'ตรวจและยืนยันแล้ว',
     NOT_VERIFIED: 'ยังไม่ตรวจด้วย AI', VERIFYING: 'AI กำลังตรวจ', AI_VERIFIED: 'AI ตรวจแล้ว', PARTIAL: 'ข้อมูลบางส่วน',
     HUMAN_VERIFIED: 'ผู้ตรวจยืนยันแล้ว', FAILED: 'ดำเนินการไม่สำเร็จ',
@@ -94,7 +95,7 @@ export function StatusBadge({ status }: { status: string }) {
     ?? (EXPENSE_PAYMENT_STATUS_LABELS as Record<string, string>)[status]
     ?? otherLabels[status]
     ?? 'สถานะอื่น';
-  return <MangmeeBadge tone={STATUS_TONE[status] ?? 'slate'}>{label}</MangmeeBadge>;
+  return <MangmeeBadge tone={status === 'OVERPAID' ? 'danger' : STATUS_TONE[status] ?? 'slate'}>{label}</MangmeeBadge>;
 }
 
 // ── banners ──────────────────────────────────────────────────────────────────

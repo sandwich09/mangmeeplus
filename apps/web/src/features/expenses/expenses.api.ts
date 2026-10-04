@@ -174,7 +174,7 @@ export async function updateExpenseReviewFields(
   expenseId: string,
   body: UpdateExpenseDraftInput & { expectedUpdatedAt: string },
 ): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/review-fields`, { method: 'PATCH', body: JSON.stringify(body) });
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/review-fields`, { method: 'PATCH', suppressErrorToast: true, body: JSON.stringify(body) });
 }
 
 export async function overrideNonExpenseClassification(
@@ -348,11 +348,11 @@ export async function fetchAttachmentPreviewBlob(
 }
 
 export async function markExpenseReady(companyId: string, expenseId: string): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/mark-ready`, { method: 'POST', body: '{}' });
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/mark-ready`, { method: 'POST', suppressErrorToast: true, body: '{}' });
 }
 
 export async function markExpenseReadyAsReviewer(companyId: string, expenseId: string): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reviewer-mark-ready`, { method: 'POST', body: '{}' });
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reviewer-mark-ready`, { method: 'POST', suppressErrorToast: true, body: '{}' });
 }
 
 /** Plan 13.11.B: `vatSourceOverride` is the reviewer's "ใช้ยอดตามเอกสาร"; omitted, this is the
@@ -363,17 +363,17 @@ export async function confirmExpense(
   vatSourceOverride?: ExpenseVatSourceOverrideInput,
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/confirm`, {
-    method: 'POST',
+    method: 'POST', suppressErrorToast: true,
     body: JSON.stringify(vatSourceOverride ? { vatSourceOverride } : {}),
   });
 }
 
 export async function rejectExpense(companyId: string, expenseId: string, reason: string): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/reject`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason }) });
 }
 
 export async function voidExpense(companyId: string, expenseId: string, reason: string): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/void`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason }) });
 }
 
 export async function recordExpensePayment(
@@ -381,7 +381,7 @@ export async function recordExpensePayment(
   expenseId: string,
   body: RecordExpensePaymentInput,
 ): Promise<ExpenseSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/payment`, { method: 'POST', body: JSON.stringify(body) });
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/payment`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify(body) });
 }
 
 export async function runDuplicateCheck(companyId: string, expenseId: string): Promise<{ candidatesCreated: number; openCandidates: number }> {
@@ -746,11 +746,11 @@ export function issueSystemWhtReplacementCopy(companyId: string, handoffId: stri
 
 
 export function reopenExpense(companyId: string, expenseId: string, reason: string) {
-  return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/reopen`, { method: 'POST', body: JSON.stringify({ reason }) });
+  return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/reopen`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason }) });
 }
 
 export function cancelExpensePayment(companyId: string, expenseId: string, paymentId: string, reason: string) {
-  return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/payments/${paymentId}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) });
+  return apiFetch<ExpenseDetail>(`/v1/companies/${companyId}/expenses/${expenseId}/payments/${paymentId}/cancel`, { method: 'POST', suppressErrorToast: true, body: JSON.stringify({ reason }) });
 }
 
 export function downloadSystemWhtCertificate(companyId: string, handoffId: string): Promise<WhtCertificateDto & { pdfArtifact: TaxExportArtifact }> {

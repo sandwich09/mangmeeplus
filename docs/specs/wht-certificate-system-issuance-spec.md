@@ -232,3 +232,7 @@ Route-readiness gate นี้เป็น**คนละแกนกับ** bil
 The 50 ทวิ company signature page reads `GET /companies/:companyId/tax/profile/signature`, protected by the existing `company.tax_signature.manage` permission (entitled through `wht_50bis`, or legacy `thai_tax`). It returns only `signatureMode` and `signatureImageAttachmentId`, with `BLANK`/null defaults. Route company must match the request company. ENTERPRISE signature managers can read and save this setting; STARTER and non-managers cannot. The full `tax/profile` endpoint and other Tax workspace data retain their existing tax-only permission gates. This page does not serve PND53.
 
 Controls appear only after successful loading; failed loading offers retry, not a default-value save. The card keeps inner padding at 390 px. No schema change is required.
+
+### Confirmed-expense browser follow-up (2026-10-04)
+
+An issued expense certificate keeps a compact sticky download action (“ดาวน์โหลดเอกสารอีกครั้ง”); correction and replacement controls remain in the document body. Issuance eligibility and the no-withholding exclusion are unchanged. After issuance, the main document actions display the certificate's reopen blocker for all readers, independent of ledger permission. The in-app expense guide uses the shared actual correction and payment-cancellation button names. The owner decision prohibiting future expense-payment dates applies only to expense payment recording, not certificate correction dates or claim payouts in this lane.

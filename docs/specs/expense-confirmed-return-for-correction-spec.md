@@ -123,6 +123,18 @@ The loop the owner described is the new edge plus the two that already exist: re
 - **Q3 — notification.** v1 relies on the creator seeing the record in their list. Should a return also raise a dashboard notification or a LINE message, given the creator may not open the app for days?
 - **Q4 — repeat returns.** Nothing here limits how many times a document may round-trip. Is a count or a "returned twice → escalate" rule wanted, or is the audit trail enough?
 
-## Guide wording — 2026-10-03
+## Guide wording — updated 2026-10-04
 
-The expense guide (overview, evidence and FAQ) must describe the existing guarded “ส่งกลับแก้ไข” path. It must not claim that every confirmed expense must be cancelled and recreated, or can never be edited again. Ask a permitted user to check whether return-for-correction is available; otherwise check the cancellation conditions. Linked reimbursement source records still follow their claim workflow. No state transition or permission changes.
+The expense guide (overview, evidence and FAQ) uses the page's shared “แก้ไขเอกสาร” and “ยกเลิกรายการจ่ายนี้” labels. Explain the guarded return to review with the same number, retained payments, permissions/blockers and the next step displayed by the document. Document-cancellation copy uses “ยกเลิกรายการ”; a blocked action does not invite a reason or confirmation. Linked reimbursement source records still follow their claim workflow. No state transition or permission changes.
+
+## Browser follow-up (2026-10-04)
+
+Use the existing reopen audit to expose a persistent correction marker only while the document is open. The lock sentence, capability-controlled reopen action and separate blocker list are main document information for all readers, including owners without ledger access. A reopen returns to the first editable step; its dialog explains review/same number and mentions retained payment history only when it exists.
+
+Recorded and cancelled payment rows remain available near totals throughout review. Cancelled rows are grey/struck, include the cancellation audit reason, and cannot offer a cancel action. Cancelling within the document-cancellation dialog preserves that dialog and its independently typed reason, refreshing the history. A blocked document cancellation offers its actual next step and history, without a reason/confirmation form; shared names match the page's “ยกเลิกรายการ”. Payment cancellation identifies amount, paid date and method and uses “เหตุผลที่ยกเลิก” and “ยกเลิกรายการจ่ายนี้”.
+
+Overpayment follows confirmation's half-satang tolerance, is shown from the corrected preview immediately (including the list badge and review warning count), and disables confirmation. The remedy distinguishes cancellable payments, missing cancellation rights and legacy paid balances without recorded rows. No ledger status/wording is shown in payment history or its cancellation blocker when the page hides accounting UI. Definitive stale payment/reopen/cancel/confirmation writes refresh detail once; their refusal stays next to the action without an automatic toast or repeated banner. Reason dialogs share full-width mobile buttons and focus the reason field. Review exposes one primary action and “เพิ่มเติม” for secondary actions, with no labels broken inside words.
+
+Confirmation keeps `readExpensePeriodLocks(..., withholdingForms=false)`: filed ภ.ง.ด.3/ภ.ง.ด.53 block reopening, never initial or repeat confirmation. The draft-journal blocker remains the controller decision of 2026-10-04.
+
+If that one detail refresh fails, display its failure once and prevent another payment/correction write using the old data until a successful reload. Guidance for a payment attempted after reopening names a person with confirmation rights, since payment-record permission alone does not allow confirmation.

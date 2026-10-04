@@ -1,5 +1,5 @@
 import { maskAccountNumber } from '../../../banking/domain/logic/banking.logic';
-import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
+import { isCivilDate, EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
 import { expenseDraftNumberingEnabled } from '../../infrastructure/expense-number';
 import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
@@ -219,6 +219,14 @@ export class GetExpenseUseCase {
 
   correctionCapabilities(ctx: RequestContext, expenseId: string) {
     return this.repo.expenseCorrectionCapabilities(ctx.companyId, expenseId, ctx.permissions);
+  }
+
+  async correctionHistory(ctx: RequestContext, expense: ExpenseRecordWithRelations) {
+    const history = await this.repo.findCorrectionHistory(ctx.companyId, expense.id, expense.payments.filter(p => p.status === 'VOIDED').map(p => p.id));
+    return {
+      correctionOpenedAt: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status) ? history.reopenedAt?.toISOString() ?? null : null,
+      payments: expense.payments.map(payment => ({ ...payment, cancellationReason: history.cancellationReasons.get(payment.id) ?? null })),
+    };
   }
 
   async sourceDraft(ctx: RequestContext, expense: ExpenseRecordWithRelations) {
@@ -1761,6 +1769,9 @@ export class RecordExpensePaymentUseCase {
     requireExpenseBranchId(r.branchId);
     if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== 'string' || !PAYMENT_IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey))) {
       throw new BadRequestException({ code: 'expense_payment_invalid_key', message: 'Payment key must contain 8–64 letters, numbers, underscores or hyphens.' });
+    }
+    if (input.paidAt && isCivilDate(input.paidAt) && input.paidAt > todayCivilDate('Asia/Bangkok')) {
+      throw new BadRequestException({ code: 'expense_payment_future_date', message: EXPENSE_CORRECTION_WORDS.futurePaymentDate });
     }
     // Separate caller keys from legacy transport IDs; hash the whole ID, never a prefix.
     const idempotencyKey = input.idempotencyKey === undefined

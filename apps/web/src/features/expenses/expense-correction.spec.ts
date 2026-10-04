@@ -31,12 +31,12 @@ test('confirmed lock gives one next step and lists the actual period blockers se
   assert.match(messages[1], /08\/2569/);
   assert.match(messages[2], /ภ.พ.30/); assert.match(messages[3], /ภ.ง.ด.3/);
   assert.doesNotMatch(messages.join(' '), /ภ.ง.ด.53|ภ.พ.36|ตรวจขั้นตอน|[A-Za-z]|·/);
-  assert.match(page, /expenseReopenBlockerMessages\(detail.correctionCapabilities\)\.map/);
+  assert.match(page, /expenseReopenBlockerMessages\(detail.correctionCapabilities, caps.canReadLedger\)\.map/);
   assert.match(page, /<li key=\{message\}/);
 });
 
 test('reopen, record and cancel refusals describe the requested action; unknown context never guesses a form', () => {
-  for (const [operation, expected] of [['reopen', 'เปิดแก้ไขเอกสาร'], ['recordPayment', 'บันทึกจ่าย'], ['cancelPayment', 'ยกเลิกรายการจ่าย'], ['reject', 'ปฏิเสธเอกสาร']]) {
+  for (const [operation, expected] of [['reopen', 'เปิดแก้ไขเอกสาร'], ['recordPayment', 'บันทึกจ่าย'], ['cancelPayment', 'ยกเลิกรายการจ่าย'], ['reject', 'ยกเลิกรายการ']]) {
     const text = (correction as any).expenseCorrectionBlockerMessage('not_confirmed', operation);
     assert.ok(text.includes(expected)); assert.doesNotMatch(text, /ตรวจสถานะเอกสาร|[A-Za-z]/);
   }
@@ -59,7 +59,7 @@ test('reopen, record and cancel refusals describe the requested action; unknown 
 });
 
 test('a reopened expense with payments explains rejection and puts permitted cancellation in the rejection dialog', () => {
-  const modal = page.slice(page.indexOf('<Modal\n        open={showReject}'));
+  const modal = page.slice(page.indexOf('<Modal\n        open={showReject && !correctionAction}'));
   assert.match(modal, /rejectBlocker/);
   assert.match(modal, /paymentHistory/);
   assert.match(modal, /canReject === undefined[\s\S]*EXPENSE_CORRECTION_WORDS.unavailable/);
@@ -80,7 +80,7 @@ test('50 ทวิ issuance remains available across visits from server capabili
   ]) assert.equal(allowed(detail, h, permissions), false);
   assert.match(page, /canIssueExpenseWhtCertificate\(detail, whtHandoff, permissions\)/);
   assert.match(page, /downloadSystemWhtCertificate/);
-  assert.match(page, /ดาวน์โหลด PDF อีกครั้ง/);
+  assert.match(page, /EXPENSE_CORRECTION_WORDS.downloadAgain/);
   assert.doesNotMatch(page, /status: 'SYSTEM_ISSUED', sourcePaymentId: expenseId/);
 });
 

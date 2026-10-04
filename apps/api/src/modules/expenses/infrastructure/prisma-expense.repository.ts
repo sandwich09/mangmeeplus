@@ -1,4 +1,4 @@
-import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages } from '@watchdog-bms/contracts';
+import { normalizeExpensePaymentAmount, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages } from '@watchdog-bms/contracts';
 import { loadExpenseReimbursementProgress } from './expense-reimbursement-progress';
 import { loadExpenseEvidenceSources } from './expense-evidence-sources';
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
@@ -522,7 +522,7 @@ export class PrismaExpenseRepository {
           message: 'A claim-born expense settles through reimbursement payment.',
         });
       }
-      if (typeof input.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(input.amount)) {
+      if (typeof input.amount !== 'string' || !POSITIVE_ACCOUNTING_MONEY_PATTERN.test(normalizeExpensePaymentAmount(input.amount))) {
         throw new BadRequestException({
           code: 'expense_payment_exceeds_outstanding',
           message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
@@ -555,7 +555,7 @@ export class PrismaExpenseRepository {
         return { expense: mapExpense(current), payment: mapPayment(previous), replayed: true };
       }
       if (current.status !== 'CONFIRMED') {
-        throw new BadRequestException(`Can only record payment for CONFIRMED expenses (current: ${current.status})`);
+        throw new BadRequestException({ code: 'expense_payment_not_confirmed', message: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed });
       }
       const paidAt = input.paidAt ? civilDateToUtcDate(coerceCivilDate(input.paidAt)) : new Date();
       const paidBefore = new Decimal(current.paidAmount.toString());
@@ -873,6 +873,22 @@ export class PrismaExpenseRepository {
       // would be read under the old job's identity.
       ...(attachment.checksumSha256 ? { checksumSha256: attachment.checksumSha256 } : {}),
     };
+  }
+
+  async findCorrectionHistory(companyId: string, expenseId: string, cancelledPaymentIds: string[]) {
+    const audits = await this.prisma.client.auditLog.findMany({
+      where: { companyId, result: 'SUCCESS', OR: [
+        { action: 'expense.reopen', targetType: 'expense_record', targetId: expenseId },
+        { action: 'expense.payment.cancel', targetType: 'expense_payment', targetId: { in: cancelledPaymentIds } },
+      ] },
+      orderBy: { createdAt: 'desc' }, select: { action: true, targetId: true, createdAt: true, metadataJson: true },
+    });
+    const cancellationReasons = new Map<string, string>();
+    for (const audit of audits) {
+      const reason = (audit.metadataJson as { reason?: unknown } | null)?.reason;
+      if (audit.action === 'expense.payment.cancel' && typeof audit.targetId === 'string' && typeof reason === 'string' && !cancellationReasons.has(audit.targetId)) cancellationReasons.set(audit.targetId, reason);
+    }
+    return { reopenedAt: audits.find(a => a.action === 'expense.reopen')?.createdAt ?? null, cancellationReasons };
   }
 
   async findByIdWithRelations(

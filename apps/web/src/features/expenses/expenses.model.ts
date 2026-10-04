@@ -1,3 +1,4 @@
+import { EXPENSE_CORRECTION_WORDS, normalizeExpensePaymentAmount, todayCivilDate } from '@watchdog-bms/contracts';
 import { INCOME_POSITIVE_MONEY_PATTERN } from '../accounting-documents/income-record.logic';
 import { JPEG_LABEL, PNG_LABEL } from '@watchdog-bms/contracts';
 import { expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
@@ -366,6 +367,7 @@ export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | '
 }
 
 export type ExpenseDetail = ExpenseSummary & {
+  correctionOpenedAt?: string | null;
   correctionCapabilities?: import('@watchdog-bms/contracts').ExpenseCorrectionCapabilities;
   /** Vendor-address Slice 2: the printed buyer block and its registry comparison (warn-only). */
   buyerAsPrinted?: import('@watchdog-bms/contracts').ExpenseBuyerAsPrinted | null;
@@ -1829,16 +1831,16 @@ export function canIssueWhtReplacementCopy(
 
 export { expenseConfirmedLockMessage } from '@watchdog-bms/contracts';
 
-export function expensePaymentFormState(outstanding: string, amount: string, paidAt: string, retrying = false) {
+export function expensePaymentFormState(outstanding: string, amount: string, paidAt: string, retrying = false, today = todayCivilDate('Asia/Bangkok')) {
   const balance = Number(outstanding);
   const prefill = Number.isFinite(balance) && balance > 0 ? balance.toFixed(2) : '';
   const value = Number(amount);
-  const disabledReason = retrying ? null : !INCOME_POSITIVE_MONEY_PATTERN.test(amount.trim())
+  const disabledReason = paidAt > today && isCivilDate(paidAt) ? EXPENSE_CORRECTION_WORDS.futurePaymentDate : retrying ? null : !INCOME_POSITIVE_MONEY_PATTERN.test(normalizeExpensePaymentAmount(amount.trim()))
     ? 'กรุณากรอกยอดจ่ายมากกว่า 0 และทศนิยมไม่เกิน 2 ตำแหน่ง'
     : value > Number(prefill) ? 'ยอดจ่ายเกินยอดค้างจ่าย กรุณาตรวจยอดอีกครั้ง'
     : !isCivilDate(paidAt) ? 'กรุณาเลือกวันที่จ่ายเงินจริงให้ถูกต้อง' : null;
   const formatted = `฿${(Number.isFinite(value) ? value : 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  return { prefill, disabledReason, label: value > 0 && value === Number(prefill) ? `บันทึกจ่ายส่วนที่เหลือ ${formatted}` : `บันทึกจ่าย ${formatted}` };
+  return { prefill, disabledReason, maxPaidAt: today, label: value > 0 && value === Number(prefill) ? `บันทึกจ่ายส่วนที่เหลือ ${formatted}` : `บันทึกจ่าย ${formatted}` };
 }
 
 export function canIssueExpenseWhtCertificate(expense: Pick<ExpenseDetail, 'status' | 'whtAmount'>,
