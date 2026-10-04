@@ -1,5 +1,16 @@
 # Agent Memory: executive-design-v2-2026-10-04
 
+## Round B — 2026-10-04; after cc9281321
+
+Status: Complete in the working tree; uncommitted for controller review. Controller confirmed Round A geometry; Round B browser geometry/computed fonts remain not checked (lane prohibits browser/server).
+Owner: Codex implementation lane; controller reviews, commits and measures the local stack.
+Scope: B c/d/e(iii–v)/f plus the four listed Round A screenshot findings. No shared-component restyling, backend, dependency or money-rule changes; C and e(i–ii) remain deferred.
+Decisions: Source-specific column contexts include wrapped figures and mixed-source columns; inferred hoists union source reasons, explicit sources retain exceptional-row dots. Header/value dots sit outside the number box; phone labels carry none. Trend hoists its common source once to the title. KPI strips share longest-value/unit sizing; equal 104px tiles use one phone column, two at 1024px, three at 1280px for revenue/paid usage (overview/detail stay two). Units never wrap, labels reserve two lines and arrows have a slot. Warning words use explicit warning-700 (#b54708), calculated 5.43:1 on white. Open month heading uses existing “เดือนนี้ยังไม่จบ”; closed issues use neutral “หมายเหตุข้อมูล” with the remaining issue. Summaries are unclamped, details show native open state/chevron and a two-column definition list; unknown source ownership stays under general notes. Package badge contains only its name, abnormal state is separate small text; header rule clears the search hint. Overview top-payers row lives inside the full-width adoption card. Base counts and company-summary money keep qualifications accessible and put the dot after the unit; “จาก” is extracted once from the existing word source.
+Open questions: e(i) reason relevance/subjects and e(ii) duplicate classification notes intentionally wait for backend per-source status. Actual font equality, long-number fit, two-line labels, opened mobile banner, package fit, overview page height and final dot alignment are not checked without a browser.
+Artifacts: ExecutiveReportDesign.tsx, ExecutiveReportContent.tsx, contracts word source, five adjusted executive spec files, UI spec layout rules. Existing e2e data-executive-value hooks/selectors remain valid and unchanged.
+Verification: Six focused node/tsx executive files (executive-browser-review, executive-compact-report, executive-design-v2, executive-presentation, ExecutiveReportContent, ExecutiveReports.wiring): final exit 0, 96 passed/0 failed/0 skipped; compact alone exit 0, 18 passed. Earlier adaptation run exit 1, 80 passed/11 failed; corrected expectations/harness and retained stale notice. Web typecheck through heavy.sh: initial exit 2 (new strip helper type), corrected final exit 0. Contracts build exit 0; warning contrast calculation exit 0 (5.43:1); git diff --check exit 0. No whole suite or restored-baseline red proof, per the lighter protocol.
+Next: Controller browser-check B at 1280×800/390×844 (including September, long money and paid usage), review/commit; merged-branch suites run by controller. Await C and backend integration findings separately.
+
 ## Round A — 2026-10-04; after d3fdf06d0
 
 Status: Complete in the working tree for controller review; final browser geometry not checked (no browser/server in this lane).

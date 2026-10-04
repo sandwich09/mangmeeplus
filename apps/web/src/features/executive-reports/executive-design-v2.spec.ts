@@ -156,7 +156,7 @@ test('v2 directory filter controls and chips use effective drill filters rather 
 
 test('v2 shared design reaches every report/account view and export, without a new palette', () => {
   const design = source('./ExecutiveReportDesign.tsx');
-  assert.match(design, /rounded-full/); assert.match(design, /text-\[26px\]/); assert.match(design, /from-gold-500/);
+  assert.match(design, /rounded-full/); assert.match(design, /min\(26px/); assert.match(design, /from-gold-500/);
   for (const label of [W.applyFilters, W.close, W.followUpBand, W.removeFilter('ประเภทธุรกิจ · ไม่ระบุ')]) assert.doesNotMatch(label, /[A-Za-z_]/);
   assert.match(design, /bg-brand-600/); assert.doesNotMatch(design, /#[0-9a-f]{3,8}\b|blue-/i);
   for (const path of ['./ExecutiveReportPage.tsx', '../executive-users/ExecutiveUsersPage.tsx', '../executive-users/ExecutiveUserPage.tsx']) assert.match(source(path), /EXECUTIVE_PAGE_CLASS/);

@@ -78,7 +78,7 @@ test('overview renders four server metrics, a partial count, and four receipt gr
   paidUsage: { groups: [{ key: 'NOT_STARTED', count: 20, drilldownFilters: { usageGroup: 'NOT_STARTED' } }, { key: 'INACTIVE', count: 3, drilldownFilters: { usageGroup: 'INACTIVE' } }] }, spendConcentration: { topShare: { value: 83.4 }, reasonCodes: [] } } as unknown as ExecutiveOverview;
   const html = renderToStaticMarkup(React.createElement(OverviewContent, { data, nav }));
   assert.equal((html.match(/data-executive-value/g) ?? []).length, 4);
-  assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-24/);
+  assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-26/);
   assert.ok(accessible(html).includes('อย่างน้อย 38')); assert.ok(accessible(html).includes('245,806.00 บาท'));
   for (const words of [ 'ยังไม่ได้จัดประเภท 2 บริษัท', 'ไม่มีในแพ็กเกจ', 'ก.ย. 2569']) assert.ok(text(html).includes(words), words);
   assert.doesNotMatch(text(html), /internal-|NOT_ENTITLED|FACEBOOK/);
