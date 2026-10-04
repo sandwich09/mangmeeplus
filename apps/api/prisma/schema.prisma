@@ -429,6 +429,7 @@ model Company {
   archivedAt                        DateTime?
   featureEntitlements               CompanyFeatureEntitlement[]
   aiConfiguration                   CompanyAiConfiguration?
+  teamNote                          CompanyTeamNote?
   webEntrySetting                   CompanyWebEntrySetting?
   aiUsageEvents                     AiUsageEvent[]
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
@@ -10635,4 +10636,14 @@ model LineDeliveryPlan {
   @@index([status, nextAttemptAt, expiresAt])
   @@index([purgeAt])
   @@index([companyId, userId, createdAt])
+}
+
+// Platform-only team note; cascade cannot block company deletion, actor id has no FK.
+model CompanyTeamNote {
+  companyId       String   @id
+  text            String   @db.VarChar(1000)
+  version         Int      @default(0)
+  updatedByUserId String
+  updatedAt       DateTime @updatedAt
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }

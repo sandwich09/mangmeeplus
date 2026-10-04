@@ -1,5 +1,7 @@
 import type { SharedLineMessagingSettings } from '@watchdog-bms/contracts';
 import type {
+  CompanyTeamNoteDto,
+  PutCompanyTeamNoteBody,
   PartnerAiAdjustmentHistory,
   PartnerPlanAdjustmentHistory,
   PartnerReportClassificationFilter,
@@ -432,4 +434,14 @@ export function getPartnerIdentityControl(companyId: string): Promise<PartnerIde
 }
 export function patchPartnerIdentity(companyId: string, dto: PatchPartnerIdentityDto): Promise<PartnerCompanyDetailDto> {
   return apiFetch(`/v1/system/partners/${companyId}/identity`, { method: 'PATCH', body: JSON.stringify(dto), suppressErrorToast: true });
+}
+
+
+export function getPartnerTeamNote(companyId: string): Promise<CompanyTeamNoteDto> {
+  return apiFetch(`/v1/system/partners/${encodeURIComponent(companyId)}/team-note`, { suppressErrorToast: true });
+}
+export function putPartnerTeamNote(companyId: string, body: PutCompanyTeamNoteBody): Promise<CompanyTeamNoteDto> {
+  return apiFetch(`/v1/system/partners/${encodeURIComponent(companyId)}/team-note`, {
+    method: 'PUT', body: JSON.stringify(body), suppressErrorToast: true,
+  });
 }
