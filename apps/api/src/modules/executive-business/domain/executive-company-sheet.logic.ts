@@ -18,39 +18,27 @@ export function inactivityAt(last: Date | null, reference: Date) {
 }
 export function receiptBucket(n: number) { return n === 0 ? 'ZERO' as const : n <= 5 ? 'ONE_TO_FIVE' as const : 'SIX_PLUS' as const; }
 export const receiptFactsOf = (profile: ExecutiveCompanyProfile) => profile.sheetFacts as ReceiptSheetFacts | null;
+/** Owner 2026-10-05 ("นับที่มีอยู่ในระบบ"): a company's receipts are the uploaded receipts that are in the system on the
+ *  data date. A receipt deleted earlier is not counted and no longer turns the count into "at least", and a company
+ *  older than the first build is counted like any other: the build reads the rows themselves. The stored history and
+ *  purge markers stay in the facts; they no longer qualify these figures. */
+export const receiptsInSystem = (profile: ExecutiveCompanyProfile) => receiptFactsOf(profile)?.sourceCount ?? profile.expenseReceiptCountLifetime;
 export function receiptCoverageOf(profile: ExecutiveCompanyProfile): ExecutiveSourceCoverage {
-  const facts = receiptFactsOf(profile);
-  if (!facts) return { coverage: profile.expenseReceiptCountLifetime > 0 ? 'partial' : 'unavailable', reasonCodes: ['SHEET_FACTS_NOT_BUILT'] };
-  const reasons: ExecutiveSourceCoverage['reasonCodes'] = [];
-  const affected = new Map<string, ExecutiveSourceCoverage['reasonCodes']>();
-  const add = (month: string, reason: ExecutiveSourceCoverage['reasonCodes'][number]) => affected.set(month, [...new Set([...(affected.get(month) ?? []), reason])]);
-  if (facts.receiptCountersHeld || facts.sourceCount < profile.expenseReceiptCountLifetime) reasons.push('SOURCE_ROWS_PURGED');
-  if (reasons.length) for (const month of facts.purgedReceiptMonths ?? []) add(month, 'SOURCE_ROWS_PURGED');
-  if (facts.receiptHistorySince && new Date(facts.receiptHistorySince) > profile.companyCreatedAt) {
-    reasons.push('HISTORY_BEFORE_COLLECTION');
-    for (const month of executiveMonths(executiveMonthOf(profile.companyCreatedAt), executiveMonthOf(new Date(Date.parse(facts.receiptHistorySince) - 1)))) add(month, 'HISTORY_BEFORE_COLLECTION');
-  }
-  return { coverage: reasons.length ? 'partial' : 'complete', reasonCodes: reasons, ...(affected.size ? { affectedMonths: [...affected].sort(([a], [b]) => a.localeCompare(b)).map(([month, reasonCodes]) => ({ month, reasonCodes })) } : {}) };
+  return receiptFactsOf(profile) ? { coverage: 'complete', reasonCodes: [] }
+    : { coverage: profile.expenseReceiptCountLifetime > 0 ? 'partial' : 'unavailable', reasonCodes: ['SHEET_FACTS_NOT_BUILT'] };
 }
 export function companyPlanLabelOf(profile: ExecutiveCompanyProfile) { return !profile.planTierKey ? EXECUTIVE_NO_PLAN_DATA_LABEL : profile.planState === 'NO_PACKAGE' ? EXECUTIVE_REPORT_LABELS.planState.NO_PACKAGE! : executivePlanLabel(profile.planTierKey); }
 export function companySheetOf(profile: ExecutiveCompanyProfile, asOf: Date, businessTypeLabel: string | null, money: ExecutiveSourceCoverage): ExecutiveCompanySheet {
   const facts = receiptFactsOf(profile), coverage = receiptCoverageOf(profile);
-  const windowCoverage = (days: number): ExecutiveSourceCoverage => {
-    if (!facts) return coverage;
-    const reasons: ExecutiveSourceCoverage['reasonCodes'] = [];
-    if ((facts.receiptCountersHeld || facts.sourceCount < profile.expenseReceiptCountLifetime) && (!facts.purgedReceiptMonths?.length || facts.purgedReceiptMonths.some(month => month >= executiveMonthOf(new Date(bangkokDayStart(asOf).getTime() - (days - 1) * DAY)) && month <= executiveMonthOf(asOf)))) reasons.push('SOURCE_ROWS_PURGED');
-    if (facts.receiptHistorySince && new Date(facts.receiptHistorySince) > new Date(bangkokDayStart(asOf).getTime() - (days - 1) * DAY)) reasons.push('HISTORY_BEFORE_COLLECTION');
-    return { coverage: reasons.length ? 'partial' : 'complete', reasonCodes: reasons };
-  };
   const daysLeft = profile.planEndsAt ? daysBetween(asOf, profile.planEndsAt) : null;
   const packageExpired = profile.planEndsAt ? profile.planEndsAt <= asOf : null;
   return { asOf: asOf.toISOString(), planLabel: companyPlanLabelOf(profile), businessTypeLabel, planEndsAt: profile.planEndsAt?.toISOString() ?? null,
     daysLeft: daysLeft !== null && !packageExpired ? daysLeft : null, packageExpired,
-    receiptsLifetime: countOf(profile.expenseReceiptCountLifetime, coverage), firstReceiptAt: facts?.firstReceiptAt ?? null, lastReceiptAt: facts?.lastReceiptAt ?? null,
+    receiptsLifetime: countOf(receiptsInSystem(profile), coverage), firstReceiptAt: facts?.firstReceiptAt ?? null, lastReceiptAt: facts?.lastReceiptAt ?? null,
     daysSinceLastReceipt: facts?.lastReceiptAt ? daysBetween(new Date(facts.lastReceiptAt), asOf) : null,
-    ...Object.fromEntries(['receipts7', 'receipts30', 'receiptDays30', 'confirmed', 'pending', 'draft'].map(key => [key, countOf(facts?.[key as 'receipts7'] ?? 0, key === 'receipts7' ? windowCoverage(7) : ['receipts30', 'receiptDays30'].includes(key) ? windowCoverage(30) : coverage)])) as Pick<ExecutiveCompanySheet, 'receipts7' | 'receipts30' | 'receiptDays30' | 'confirmed' | 'pending' | 'draft'>,
+    ...Object.fromEntries(['receipts7', 'receipts30', 'receiptDays30', 'confirmed', 'pending', 'draft'].map(key => [key, countOf(facts?.[key as 'receipts7'] ?? 0, coverage)])) as Pick<ExecutiveCompanySheet, 'receipts7' | 'receipts30' | 'receiptDays30' | 'confirmed' | 'pending' | 'draft'>,
     aiRequests30: countOf(facts?.aiRequests30 ?? 0, facts?.aiRequests30 === undefined ? { coverage: 'unavailable', reasonCodes: ['SHEET_FACTS_NOT_BUILT'] } : aiCostCoverageOf({ start: new Date(bangkokDayStart(asOf).getTime() - 29 * DAY), end: asOf, aiUsageSince: facts.aiUsageSince ? new Date(facts.aiUsageSince) : null })),
-    receiptBucket: coverage.coverage === 'complete' ? receiptBucket(profile.expenseReceiptCountLifetime) : profile.expenseReceiptCountLifetime >= 6 ? 'SIX_PLUS' : null,
+    receiptBucket: coverage.coverage === 'complete' ? receiptBucket(receiptsInSystem(profile)) : receiptsInSystem(profile) >= 6 ? 'SIX_PLUS' : null,
     paymentState: { paidEver: profile.paidEver as 'YES' | 'NO' | 'UNKNOWN', fullyRefunded: profile.fullyRefunded },
     lifetimeReceiptsSatang: moneyOf(profile.lifetimeReceiptsSatang ?? 0, money), lifetimeRefundsSatang: moneyOf(profile.lifetimeRefundsSatang ?? 0, money),
     lifetimeNetSatang: moneyOf((profile.lifetimeReceiptsSatang ?? 0) - (profile.lifetimeRefundsSatang ?? 0), money),
