@@ -37,6 +37,9 @@ test('executive period contracts provide every preset, reason and Thai range wor
   assert.equal(words.executivePeriodLabel('2026-07', '2026-09'), 'ช่วงเดือน ก.ค. 2569 ถึง ก.ย. 2569');
   assert.equal(words.executivePeriodLabel('2026-09', '2026-09'), 'ช่วงเดือน ก.ย. 2569');
   assert.equal(words.EXECUTIVE_PERIOD_WORDS.invalid, 'กรุณาเลือกเดือนเริ่มต้นและเดือนสิ้นสุดให้ถูกต้อง');
+  assert.equal(words.executivePeriodReportWords().net, words.EXECUTIVE_PERIOD_WORDS.net);
+  assert.equal(words.executivePeriodReportWords().tableReceipts, words.EXECUTIVE_PERIOD_WORDS.tableReceipts);
+  assert.equal(words.executivePeriodReportLabels().usageGroup.INACTIVE, words.EXECUTIVE_PERIOD_WORDS.inactive);
   const labels = Object.values(words.EXECUTIVE_PERIOD_WORDS.presets) as string[];
   assert.ok(labels.every(label => !/[A-Za-z_]/.test(label)));
 });

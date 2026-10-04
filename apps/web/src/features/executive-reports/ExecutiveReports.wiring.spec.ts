@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import ts from 'typescript';
-import { EXECUTIVE_WORDS as sharedWords, executiveThaiLabel } from '@watchdog-bms/contracts';
+import { executivePeriodReportWords, executiveThaiLabel } from '@watchdog-bms/contracts';
 import { W, thaiLabel } from './executive-reports.words';
 const source = (path: string) => { const p = fileURLToPath(new URL(path, import.meta.url)); return existsSync(p) ? readFileSync(p, 'utf8') : ''; };
 
@@ -26,7 +26,7 @@ test('the system shell and report gate use the exact permission, and the header 
   assert.doesNotMatch(header, /pathname\.startsWith\('\/system\/executive'\)/);
 });
 test('reads use authenticated fetch, no tenant target header, and reload/abort protect the entire answer', () => {
-  const api = source('./executive-reports.api.ts'), page = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportDesign.tsx');
+  const api = source('./executive-reports.api.ts'), page = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportDesign.tsx') + source('./ExecutivePeriodControl.tsx');
   assert.match(api, /authedApiFetch/); assert.match(api, /cache: 'no-store'/); assert.doesNotMatch(api, /X-Company-Id|fixture/i);
   assert.match(page, /AbortController/); assert.match(page, /signal\.aborted/); assert.match(page, /readCurrentBuild/);
   assert.match(page, /SOURCE_STALE/); assert.match(page, /setData\(null\)/); assert.match(page, /CoverLoader/);
@@ -64,7 +64,7 @@ test('directory chips hide empty drill rows and each filter toggle names its own
   assert.equal(W.reportFilters, 'ตัวกรองรายงาน'); assert.equal(W.companyFilters, 'ตัวกรองรายชื่อบริษัท');
 });
 test('Thai shared fields, detail tabs, history paging and responsive tables retain the permission-gated export panel', () => {
-  const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts') + source('./ExecutiveReportDesign.tsx');
+  const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts') + source('./ExecutiveReportDesign.tsx') + source('./ExecutivePeriodControl.tsx');
   for (const component of ['ExecutivePage', 'MangmeeCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
   assert.match(source('./ExecutiveReportContent.tsx'), /<ExecutiveKpi/);
   assert.match(all, /allowClear=\{false\}/); assert.match(all, /selectable=\{context\.builtMonths\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table-header-group/);
@@ -121,7 +121,7 @@ test('normalization keeps only an allowed export flag and stays URL-only for a s
     page.normalize();
     const next = new URL(replaced, 'https://test.invalid').searchParams;
     assert.equal(next.get('export'), kept); assert.equal(next.has('q'), false); assert.equal(next.has('buildId'), false);
-    assert.equal(next.get('month'), '2026-09'); assert.equal(next.get('filter_industry'), 'ALL');
+    assert.equal(next.get('from'), '2026-09'); assert.equal(next.get('to'), '2026-09'); assert.equal(next.has('month'), false); assert.equal(next.get('filter_industry'), 'ALL');
   }
 });
 
@@ -172,7 +172,7 @@ test('closing export updates Next router state while preserving the report URL, 
 });
 
 test('web re-exports one shared words source including later report polish and state-aware reasons', async () => {
-  assert.equal(W, sharedWords); assert.equal(thaiLabel, executiveThaiLabel);
+  assert.deepEqual(W, executivePeriodReportWords()); assert.equal(thaiLabel, executiveThaiLabel);
   assert.deepEqual([W.reportFilters, W.companyFilters, W.unavailableFigure, W.rank, W.item, W.yes, W.partialMeasuredMoney, W.contactNotPermitted],
     ['ตัวกรองรายงาน', 'ตัวกรองรายชื่อบริษัท', 'ยังไม่มีตัวเลข', 'อันดับ', 'รายการ', 'ใช่', 'ยอดเฉพาะช่วงที่วัดได้', 'ไม่มีสิทธิ์ดูข้อมูลติดต่อ']);
   assert.equal(W.incompleteLegend, 'ยังไม่ครบ');

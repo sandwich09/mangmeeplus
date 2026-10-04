@@ -1,6 +1,6 @@
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
-import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
+import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, EXECUTIVE_REASON_CODES, executiveSourceReasonText, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
 
@@ -18,6 +18,7 @@ const CODE_LABELS: Record<string, string> = {
   company_team_note_edit_denied: NOTE_WORDS.editDenied,
   company_team_note_company_not_found: NOTE_WORDS.notFound,
   company_team_note_save_unconfirmed: NOTE_WORDS.saveUnknown,
+  ...Object.fromEntries(EXECUTIVE_REASON_CODES.map(code => [code, executiveSourceReasonText(code)])),
   INVALID_INPUT: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
   EXECUTIVE_SNAPSHOT_EXPIRED: W.export.expired,
   EXECUTIVE_EXPORT_LIMIT_EXCEEDED: W.export.limit,
@@ -1429,15 +1430,9 @@ const API_KINDS = new Set([...Object.keys(KIND_LABELS), 'unknown']);
 const OTHER_CLIENT_ERROR = 'ทำรายการไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง';
 const GENERIC_API_ERROR = 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง';
 
-// Coverage selects historical reasons from the shared screen/workbook words.
-const EXECUTIVE_REASON_STATE_LABELS: Record<string, Partial<Record<ExecutiveCoverage, string>>> = {
-  HISTORY_BEFORE_COLLECTION: { partial: W.historyBeforeCollectionPartial },
-  HISTORY_BEFORE_FIRST_BUILD: { unavailable: W.historyBeforeFirstBuildUnavailable },
-  SOURCE_ROWS_PURGED: { unavailable: W.sourceRowsPurgedUnavailable },
-};
-
-export function executiveReasonMessage(code: string, coverage?: ExecutiveCoverage): string {
-  return (coverage && EXECUTIVE_REASON_STATE_LABELS[code]?.[coverage]) || apiErrorMessage({ code });
+/** Report reasons use the same source words as the workbook; API errors keep their error wording. */
+export function executiveReasonMessage(code: string, coverage?: ExecutiveCoverage, months: readonly string[] = []): string {
+  return EXECUTIVE_REASON_CODES.includes(code as typeof EXECUTIVE_REASON_CODES[number]) ? executiveSourceReasonText(code, months, coverage) : apiErrorMessage({ code });
 }
 
 /** Translates one API message/code. Returns null when nothing is known about it. */

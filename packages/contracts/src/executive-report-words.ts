@@ -137,6 +137,11 @@ export function executiveComparisonLabel(side: { key: string; label: string }, d
 /** P01–P53: range controls and qualifiers shared by the web and XLSX; legacy month words above stay for old callers. */
 export const EXECUTIVE_PERIOD_WORDS = {
   presets: { THIS_MONTH: 'เดือนนี้', LAST_MONTH: 'เดือนที่แล้ว', THIS_QUARTER: 'ไตรมาสนี้', THIS_YEAR: 'ปีนี้', LAST_12_MONTHS: '12 เดือนล่าสุด', ALL: 'ทั้งหมด' },
+  tableReceipts: 'ใบเสร็จช่วงนี้', periodNotRegistered: 'ข้อมูลช่วงนี้อยู่ก่อนเวลาที่บริษัทสมัคร',
+  affectedMonths: (months: string) => `ในเดือน ${months}`,
+  documentDefinition: 'เอกสารคือรายจ่ายที่ยืนยันแล้วกับเอกสารขายที่ออกในช่วงที่เลือก',
+  spendTitle: (period: string) => `รายรับ${period}มาจากลูกค้ากลุ่มใด`,
+  nonPositive: (n: number) => `ยอดรับสุทธิในช่วงนี้เป็น 0 หรือติดลบ ${n.toLocaleString('th-TH')} บริษัท`,
   notRegistered: 'ข้อมูลเดือนนี้อยู่ก่อนเวลาที่บริษัทสมัคร', invalid: 'กรุณาเลือกเดือนเริ่มต้นและเดือนสิ้นสุดให้ถูกต้อง', custom: 'กำหนดช่วงเดือน', from: 'ตั้งแต่เดือน', to: 'ถึงเดือน', apply: 'ใช้ช่วงเดือน', previous: 'ช่วงก่อนหน้า',
   range: (from: string, to: string) => `ช่วงเดือน ${from}${from === to ? '' : ` ถึง ${to}`}`,
   unbuilt: (months: string) => `ยังไม่มีรายงานของเดือน ${months}`,
@@ -161,6 +166,15 @@ export const EXECUTIVE_PERIOD_WORDS = {
   refundedDifference: (n: number) => `ต่างจาก “ชำระในช่วงนี้” ${n.toLocaleString('th-TH')} บริษัทเพราะยอดรับไม่มากกว่ายอดคืนในช่วงนี้`,
   paidDefinition: 'มีเงินรับในช่วงเดือนที่เลือก แม้คืนเงินภายหลัง',
 };
+/** Period screens reuse legacy structure and replace only time-specific words. */
+export function executivePeriodReportWords() { return { ...W,
+  active: EXECUTIVE_PERIOD_WORDS.active, paid: EXECUTIVE_PERIOD_WORDS.paid, positive: EXECUTIVE_PERIOD_WORDS.positive, net: EXECUTIVE_PERIOD_WORDS.net,
+  receipts: EXECUTIVE_PERIOD_WORDS.receipts, refunds: EXECUTIVE_PERIOD_WORDS.refunds, receiptCount: EXECUTIVE_PERIOD_WORDS.receiptCount, tableReceipts: EXECUTIVE_PERIOD_WORDS.tableReceipts,
+  trend: EXECUTIVE_PERIOD_WORDS.trend, shortTrend: EXECUTIVE_PERIOD_WORDS.trend, paidDefinition: EXECUTIVE_PERIOD_WORDS.paidDefinition,
+  documentDefinition: EXECUTIVE_PERIOD_WORDS.documentDefinition, noReceipts: EXECUTIVE_PERIOD_WORDS.noReceipts,
+  noPositiveNet: EXECUTIVE_PERIOD_WORDS.noPositiveNet, refundedDifference: EXECUTIVE_PERIOD_WORDS.refundedDifference, nonPositive: EXECUTIVE_PERIOD_WORDS.nonPositive,
+}; }
+export function executivePeriodReportLabels() { return { ...EXECUTIVE_REPORT_LABELS, usageGroup: { ...EXECUTIVE_REPORT_LABELS.usageGroup, ACTIVE: EXECUTIVE_PERIOD_WORDS.paidActive, INACTIVE: EXECUTIVE_PERIOD_WORDS.inactive } as Record<string, string> }; }
 export function executiveMonthLabel(value: string): string {
   return new Intl.DateTimeFormat('th-TH-u-ca-buddhist', { month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(new Date(`${value}-01T00:00:00Z`));
 }

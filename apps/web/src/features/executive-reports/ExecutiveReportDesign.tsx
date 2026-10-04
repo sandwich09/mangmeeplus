@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { createContext, useContext, useId, useState, isValidElement, Children, type ReactNode, type CSSProperties } from 'react';
-import { executiveMoneyQualifier, type ExecutiveCount, type ExecutiveMoney, type ExecutiveEnvelope, type ExecutiveCoverage } from '@watchdog-bms/contracts';
+import { EXECUTIVE_PERIOD_WORDS as P, executiveMonthLabel, executivePeriodComparisonQualifier, executiveMoneyQualifier, type ExecutiveCount, type ExecutiveMoney, type ExecutiveEnvelope, type ExecutiveCoverage, type ExecutivePeriodComparison } from '@watchdog-bms/contracts';
 import { MangmeeCard } from '@/common/components/mangmee';
 import { ChevronDownIcon } from '@/common/icons';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
@@ -23,7 +23,7 @@ export const ReasonNotes = createContext(false);
 const ColumnMark = createContext<Record<string, readonly string[]> | null>(null);
 const KpiScale = createContext({ digits: 11, unitWidth: 42 });
 type FigureProps = { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; source?: string; mark?: boolean; unit?: string };
-const reasons = (value: { reasonCodes: readonly string[]; coverage: ExecutiveCoverage }) => [...new Set(value.reasonCodes.map(code => reasonText(code, value.coverage)))].join(' · ');
+const reasons = (value: { reasonCodes: readonly string[]; coverage: ExecutiveCoverage; affectedMonths?: Array<{ month: string; reasonCodes: readonly string[] }> }) => [...new Set(value.reasonCodes.map(code => reasonText(code, value.coverage, value.affectedMonths?.filter(m => m.reasonCodes.includes(code)).map(m => m.month))))].join(' · ');
 export function IncompleteDot({ reason }: { reason: string }) {
   return <span role="img" aria-label={`${W.incompleteLegend}${reason && reason !== W.incompleteLegend ? ` — ${reason}` : ''}`} title={reason || W.incompleteLegend} className="executive-dot ml-1 inline-block size-1.5 shrink-0 rounded-full bg-gold-500 align-middle" />;
 }
@@ -39,6 +39,8 @@ export function Figure({ value, moneyValue = false, netValue = false, measured =
 }
 // The old ReasonNotes mechanism now has one expandable, unnumbered detail per page.
 export function reportNotes(data: unknown): string[] {
+  const envelope = data as ExecutiveEnvelope;
+  if (envelope?.sourceStatus) return sourceStatusNotes(envelope, ['money', 'usage', 'aiCost']).map(note => note.text);
   const notes = new Set<string>();
   const noteCounts = new Map<string, number>();
   function visit(node: unknown) {
@@ -58,7 +60,56 @@ export function reportNotes(data: unknown): string[] {
   for (const [note, n] of noteCounts) { notes.delete(note); notes.add(`${note} · ${n.toLocaleString('th-TH')} ${W.unitCompany}`); }
   return [...notes];
 }
-export function ReportStatus({ data }: { data: ExecutiveEnvelope }) {
+type StatusSource = keyof ExecutiveEnvelope['sourceStatus'];
+export function sourceStatusNotes(data: ExecutiveEnvelope, sources: StatusSource[], periodOnly = false): Array<{ source: string; text: string }> {
+  const seen = new Set<string>();
+  const notes: Array<{ source: string; text: string }> = sources.flatMap(source => {
+    const status = data.sourceStatus[source];
+    return status.reasonCodes.flatMap(code => {
+      const months = status.affectedMonths?.filter(m => m.reasonCodes.includes(code)).map(m => m.month) ?? [];
+      const shownMonths = periodOnly ? months.filter(month => month >= (data.period.from ?? data.period.month) && month <= (data.period.to ?? data.period.month)) : months;
+      if (periodOnly && months.length && !shownMonths.length) return [];
+      const sentence = reasonText(code, status.coverage, shownMonths);
+      const text = shownMonths.length && !['RANGE_MONTH_NOT_BUILT', 'MONTH_SUMMARY_INCOMPLETE'].includes(code) ? `${sentence} · ${P.affectedMonths(shownMonths.map(executiveMonthLabel).join(', '))}` : sentence;
+      if (seen.has(text)) return [];
+      seen.add(text); return [{ source, text }];
+    });
+  });
+  const detail = data as ExecutiveEnvelope & { periodReasonCodes?: string[]; periodSummary?: { usage: { activeUsersCoverage: { reasonCodes: string[]; coverage: ExecutiveCoverage } } } | null };
+  const extra = [...(data.population?.eligibleCount.reasonCodes ?? []).map(code => ({ code, source: 'company', coverage: data.population.eligibleCount.coverage })), ...(detail.periodReasonCodes ?? []).map(code => ({ code, source: 'company', coverage: undefined })), ...(sources.includes('aiCost') ? (detail.periodSummary?.usage.activeUsersCoverage?.reasonCodes ?? []).map(code => ({ code, source: 'usage', coverage: detail.periodSummary!.usage.activeUsersCoverage.coverage })) : [])];
+  for (const { code, source, coverage } of extra) {
+    if (sources.some(source => data.sourceStatus[source].reasonCodes.some(reason => reason === code))) continue;
+    const text = code === 'NOT_YET_REGISTERED' ? P.periodNotRegistered : reasonText(code, coverage);
+    if (!seen.has(text)) { notes.push({ source, text }); seen.add(text); }
+  }
+  return notes;
+}
+function SourceStatus({ data, sources, periodOnly }: { data: ExecutiveEnvelope; sources: StatusSource[]; periodOnly: boolean }) {
+  const [open, setOpen] = useState(false);
+  const notes = sourceStatusNotes(data, sources, periodOnly);
+  const labels: Record<string, string> = { money: W.moneySource, usage: W.usage, aiCost: W.aiCostSource, company: W.companyTab };
+  const incomplete = sources.filter(source => (periodOnly ? data.coverage[source] : data.sourceStatus[source]).coverage !== 'complete');
+  const openMonth = data.period.includesOpenMonth ?? data.period.isPartialMonth;
+  if (!incomplete.length && !notes.length && !openMonth) return null;
+  const summary = incomplete.map(source => `${labels[source]}: ${(periodOnly ? data.coverage[source] : data.sourceStatus[source]).coverage === 'unavailable' ? W.unavailableFigure : source === 'money' ? W.confirmedSummary : source === 'usage' ? W.countAtLeast : W.measuredOnly}`).join(' · ');
+  return <aside className={`executive-status rounded-lg border px-3 text-xs text-gray-700 ${openMonth ? 'border-gold-300 bg-gold-100/40' : 'border-gray-200 bg-gray-50'}`} aria-label={openMonth ? P.openMonth : W.export.notes}>
+    <details className="group" onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary aria-expanded={open} className="flex min-h-[38px] cursor-pointer list-none items-center gap-2 rounded py-1 focus-visible:outline-2 focus-visible:outline-brand-700">
+        <DesignIcons.info className="size-4 shrink-0 text-warning-700" />
+        <div className="min-w-0 flex-1"><strong className="font-semibold">{openMonth ? P.openMonth : W.export.notes}</strong><span className="block sm:ml-2 sm:inline">{openMonth ? summary : notes[0] ? `${labels[notes[0].source]}: ${notes[0].text}` : summary}</span></div>
+        <span className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">{incomplete.length > 0 && <span className="inline-flex items-center gap-1 whitespace-nowrap"><IncompleteDot reason={W.incompleteLegend} />{W.incompleteLegend}</span>}<span className="inline-flex items-center gap-1 font-semibold text-brand-800">{W.details}<ChevronDownIcon aria-hidden="true" className="size-4 group-open:rotate-180" /></span></span>
+      </summary>
+      <dl className="grid gap-x-6 gap-y-2 border-t border-gray-200 py-3 md:grid-cols-2">
+        {notes.slice(openMonth ? 0 : 1).map(({ source, text }) => <div key={text} className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-2"><dt className="font-semibold text-gray-600">{labels[source]}</dt><dd>{text}</dd></div>)}
+        {sources.filter(source => data.sourceStatus[source].dataThrough).map(source => <div key={source} className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-2"><dt className="font-semibold text-gray-600">{labels[source]}</dt><dd>{source === 'money' ? W.moneyThrough(reportDate(data.sourceStatus[source].dataThrough)) : W.through(reportDateTime(data.sourceStatus[source].dataThrough))}</dd></div>)}
+      </dl>
+    </details>
+  </aside>;
+}
+export function ReportStatus({ data, sources = ['money', 'usage', ...((data as { periodSummary?: unknown }).periodSummary ? ['aiCost' as const] : [])], periodOnly = false }: { data: ExecutiveEnvelope; sources?: StatusSource[]; periodOnly?: boolean }) {
+  return data.sourceStatus ? <SourceStatus data={data} sources={sources} periodOnly={periodOnly} /> : <LegacyStatus data={data} />;
+}
+function LegacyStatus({ data }: { data: ExecutiveEnvelope }) {
   const [open, setOpen] = useState(false);
   const notes = reportNotes(data);
   const companies = (data as ExecutiveEnvelope & { metrics?: { companies: ExecutiveCount & { unclassifiedCount: number } } }).metrics?.companies;
@@ -95,9 +146,9 @@ export function ReportStatus({ data }: { data: ExecutiveEnvelope }) {
     </details>
   </aside>;
 }
-export function ReportNotes({ data, children }: { data: ExecutiveEnvelope; children: ReactNode }) {
+export function ReportNotes({ data, children, sources, periodOnly }: { data: ExecutiveEnvelope; children: ReactNode; sources?: StatusSource[]; periodOnly?: boolean }) {
   const alreadyShown = useContext(ReasonNotes);
-  return <ReasonNotes.Provider value={true}>{!alreadyShown && <ReportStatus data={data} />}{children}</ReasonNotes.Provider>;
+  return <ReasonNotes.Provider value={true}>{!alreadyShown && <ReportStatus data={data} sources={sources} periodOnly={periodOnly} />}{children}</ReasonNotes.Provider>;
 }
 export function ExecutiveSectionCard({ title, children, actions, className = '' }: { title: ReactNode; children: ReactNode; actions?: ReactNode; className?: string }) {
   return <MangmeeCard className={`min-w-0 space-y-2 p-3 ${className}`}>
@@ -112,7 +163,12 @@ export function ExecutiveKpiStrip({ children, columns = 3 }: { children: ReactNo
   const scale = { digits: Math.max(1, ...values.map(p => p.figure ? figureNumber(p.figure, p.moneyValue).length : String(p.value ?? '').length)), unitWidth: Math.max(0, ...values.map(p => (p.unit?.length ?? 0) * 9)) };
   return <KpiScale.Provider value={scale}><div data-executive-kpi-strip className={`grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2 ${columns === 3 ? 'xl:grid-cols-3' : ''}`}>{children}</div></KpiScale.Provider>;
 }
-export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = false, measured = false, unit, value, sub, iconName = 'chart', emphasis = false, arrow = false }: { label: string; figure?: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; unit?: string; value?: ReactNode; sub?: ReactNode; iconName?: string; emphasis?: boolean; arrow?: boolean }) {
+export function comparisonLine(comparison: ExecutivePeriodComparison): string {
+  const qualifier = executivePeriodComparisonQualifier(comparison);
+  const change = comparison.status === 'COMPLETE' && comparison.percentChange !== null ? P.change(`${comparison.percentChange > 0 ? '+' : ''}${comparison.percentChange.toLocaleString('th-TH', { maximumFractionDigits: 1 })}%`) : '';
+  return [change, qualifier].filter(Boolean).join(' · ');
+}
+export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = false, measured = false, unit, value, sub, comparison, iconName = 'chart', emphasis = false, arrow = false }: { label: string; figure?: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; unit?: string; value?: ReactNode; sub?: ReactNode; comparison?: ExecutivePeriodComparison; iconName?: string; emphasis?: boolean; arrow?: boolean }) {
   const Icon = DesignIcons[iconName];
   const incomplete = figure && figure.coverage !== 'complete';
   const scale = useContext(KpiScale);
@@ -121,7 +177,7 @@ export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = fal
     <div className="min-w-0 flex-1 [container-type:inline-size]" style={{ '--executive-kpi-digits': scale.digits * 0.62, '--executive-kpi-unit-width': `${scale.unitWidth + 4}px` } as CSSProperties}>
       <div className="grid grid-cols-[minmax(0,1fr)_1rem] gap-1"><div data-executive-label className="min-h-8 text-[13px] font-normal leading-4 text-gray-600" title={label}>{label}</div><span aria-hidden="true" className="text-brand-700">{arrow ? '→' : ''}</span></div>
       <div className="flex flex-nowrap items-baseline gap-x-1"><div data-executive-value className={`whitespace-nowrap text-[length:min(26px,calc((100cqw_-_var(--executive-kpi-unit-width))/var(--executive-kpi-digits)))] font-semibold leading-8 tabular-nums ${value === 0 || value === "0" ? "text-gray-600" : ""}`}>{figure ? <Figure value={figure} moneyValue={moneyValue} measured={measured} netValue={netValue} mark={false} /> : value}</div>{unit && <span className="shrink-0 whitespace-nowrap text-[13px] leading-4 text-gray-600">{unit}</span>}</div>
-      <div data-executive-sub className="flex h-4 items-center text-xs text-gray-600" style={incomplete ? { color: 'var(--color-warning-700)' } : undefined}>{incomplete ? <><IncompleteDot reason={reasons(figure)} /><span className="ml-1">{figure.coverage === 'unavailable' ? W.unavailableFigure : moneyValue ? (executiveMoneyQualifier(figure, measured) === W.addOnNotSold ? W.addOnNotSold : measured ? W.measuredOnly : W.confirmedOnly) : W.countAtLeast}</span></> : <span className="ml-1">{sub}</span>}</div>
+      <div data-executive-sub className="flex h-4 items-center text-xs text-gray-600" style={incomplete ? { color: 'var(--color-warning-700)' } : undefined}>{incomplete ? <><IncompleteDot reason={reasons(figure)} /><span className="ml-1 truncate">{figure.coverage === 'unavailable' ? W.unavailableFigure : moneyValue ? (executiveMoneyQualifier(figure, measured) === W.addOnNotSold ? W.addOnNotSold : measured ? W.measuredOnly : W.confirmedOnly) : W.countAtLeast}</span></> : <span className="ml-1 truncate" title={comparison ? comparisonLine(comparison) : undefined}>{comparison ? <><span aria-hidden="true" className={comparison.absoluteChange !== null && comparison.absoluteChange > 0 ? "text-brand-700" : comparison.absoluteChange !== null && comparison.absoluteChange < 0 ? "text-red-700" : "text-gray-600"}>{comparison.status === "COMPLETE" && comparison.absoluteChange !== null ? comparison.absoluteChange > 0 ? "↑ " : "↓ " : ""}</span>{comparisonLine(comparison)}</> : sub}</span>}</div>
     </div>
   </section>;
 }

@@ -1,5 +1,5 @@
 import {
-  EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, EXECUTIVE_SORT_OPTIONS, executiveMoneyQualifier, type ExecutiveContext, type ExecutiveCount, type ExecutiveMoney,
+  EXECUTIVE_REPORT_LABELS, EXECUTIVE_FLAG_LABELS, EXECUTIVE_SORT_OPTIONS, EXECUTIVE_PERIOD_WORDS as P, executivePeriodLabel, executivePeriodFilterLabel, executivePeriodSortLabel, executiveMoneyQualifier, type ExecutiveContext, type ExecutiveCount, type ExecutiveMoney,
   type ExecutiveRatio, type ExecutiveSourceCoverage, type ExecutiveOwnerContact, type ExecutiveDrilldownFilters, type ExecutiveRankingMetric,
 } from '@watchdog-bms/contracts';
 import { deserializeListQuery } from '../../common/functions/list-query';
@@ -16,7 +16,7 @@ export const reportPath = (section: string) => section === 'overview' ? '/system
 export const pageNumber = (raw: string | null) => raw && /^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) && Number(raw) > 0 ? Number(raw) : 1;
 export function reportContextParams(params: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams();
-  for (const key of ['month', ...GLOBAL_FILTERS.map(key => FILTER_URL[key])]) if (params.has(key)) next.set(key, params.get(key)!);
+  for (const key of ['from', 'to', 'periodPreset', 'month', ...GLOBAL_FILTERS.map(key => FILTER_URL[key])]) if (params.has(key)) next.set(key, params.get(key)!);
   return next;
 }
 export function executiveHref(path: string, params: URLSearchParams | Record<string, string> = {}): string {
@@ -28,9 +28,36 @@ export function menuHref(section: string, params: URLSearchParams, extra: Record
   for (const [key, value] of Object.entries(extra)) query.set(key, value);
   return executiveHref(reportPath(section), query);
 }
-export function normalizedMonth(params: URLSearchParams, context: ExecutiveContext): string {
-  const month = params.get('month') ?? '';
-  return /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && month <= context.currentMonth && (!context.months || month >= context.months.first) ? month : context.defaultMonth;
+const origins = ['overview', 'usage', 'revenue', 'customers', 'compare', 'companies'];
+const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
+export function validPeriod(from: string, to: string, context: ExecutiveContext, builtOnly = false): boolean {
+  return monthPattern.test(from) && monthPattern.test(to) && from <= to && to <= context.currentMonth
+    && (!context.months || from >= context.months.first)
+    && (!builtOnly || context.builtMonths.includes(from) && context.builtMonths.includes(to));
+}
+/** Migrate the old navigation `from` before interpreting the period; invalid URLs stay visible. */
+export function periodParams(params: URLSearchParams, context: ExecutiveContext): URLSearchParams {
+  const next = new URLSearchParams(params);
+  if (origins.includes(next.get('from') ?? '') && next.has('month') && !next.has('to')) {
+    next.set('origin', next.get('from')!); next.delete('from');
+  }
+  if (!next.has('from') && !next.has('to')) {
+    const legacy = next.get('month');
+    const range = context.defaultPeriod ?? { from: context.defaultMonth, to: context.defaultMonth, appliedPreset: null };
+    next.set('from', legacy ?? range.from); next.set('to', legacy ?? range.to);
+    if (!legacy && range.appliedPreset) next.set('periodPreset', range.appliedPreset);
+  }
+  next.delete('month');
+  const preset = context.presets?.find(p => p.available && p.key === next.get('periodPreset') && p.from === next.get('from') && p.to === next.get('to'));
+  if (context.presets && !preset) next.delete('periodPreset');
+  return next;
+}
+export function selectedPeriod(params: URLSearchParams, context: ExecutiveContext) {
+  const next = periodParams(params, context), from = next.get('from') ?? '', to = next.get('to') ?? '';
+  return validPeriod(from, to, context) ? { from, to, appliedPreset: next.get('periodPreset') } : null;
+}
+export function periodText(period: { from?: string; to?: string; month?: string }): string {
+  return executivePeriodLabel(period.from ?? period.month!, period.to ?? period.month!);
 }
 export function filterValue(key: keyof typeof FILTER_URL, params: URLSearchParams, context: ExecutiveContext): string {
   const value = params.get(FILTER_URL[key]);
@@ -56,37 +83,40 @@ export function drillFilters(params: URLSearchParams): ExecutiveDrilldownFilters
   return result;
 }
 export function reportQuery(section: ReportSection, params: URLSearchParams, context: ExecutiveContext, search = ''): Record<string, string | number> {
-  const month = normalizedMonth(params, context);
-  if (section === 'detail') return { month };
+  const period = selectedPeriod(params, context);
+  if (!period) return {};
+  const { from, to } = period;
+  if (section === 'detail') return { from, to };
   if (section === 'compare') {
     const dimension = ['industry', 'discovery', 'referringSales', 'company'].includes(params.get('by') ?? '') ? params.get('by')! : 'industry';
-    return { month, section, dimension, sideA: params.get('a') ?? '', sideB: params.get('b') ?? '' };
+    return { from, to, section, dimension, sideA: params.get('a') ?? '', sideB: params.get('b') ?? '' };
   }
   const global = Object.fromEntries(GLOBAL_FILTERS.map(key => [key, filterValue(key, params, context)]));
-  if (section === 'overview') return { month, ...global };
+  if (section === 'overview') return { from, to, ...global };
   if (section !== 'companies') {
     const selectedView = reportView(section, params);
     const view = section === 'revenue' && selectedView !== 'top' ? 'summary' : section === 'usage' && selectedView !== 'ranking' ? 'adoption' : selectedView;
     const rank = params.get('rank') as ExecutiveRankingMetric;
-    return { month, ...global, section, view, ...(section === 'usage' && view === 'ranking' ? { metric: Object.hasOwn(RANK_LABELS, rank) ? rank : 'expenseReceiptCount' } : {}) };
+    return { from, to, ...global, section, view, ...(section === 'usage' && view === 'ranking' ? { metric: Object.hasOwn(RANK_LABELS, rank) ? rank : 'expenseReceiptCount' } : {}) };
   }
   const picked = drillFilters(params);
   const directory = Object.fromEntries(DIRECTORY_FILTERS.flatMap(key => { const value = filterValue(key, params, context); return value === 'ALL' ? [] : [[key, value]]; }));
   const list = deserializeListQuery(params);
   const order = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === list.sortBy) ?? EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === picked?.sortBy) ?? EXECUTIVE_SORT_OPTIONS[0];
-  return { month, ...(picked ?? global), ...directory, sortBy: order.sortBy, sortDir: list.sortDir ?? picked?.sortDir ?? order.sortDir, page: pageNumber(params.get('page')), pageSize: 20, ...(search.trim() ? { q: search.trim().slice(0, 120) } : {}) };
+  return { from, to, ...(picked ?? global), ...directory, sortBy: order.sortBy, sortDir: list.sortDir ?? picked?.sortDir ?? order.sortDir, page: pageNumber(params.get('page')), pageSize: 20, ...(search.trim() ? { q: search.trim().slice(0, 120) } : {}) };
 }
 export function drilldownHref(params: URLSearchParams, from: string, filters: ExecutiveDrilldownFilters): string {
   const next = reportContextParams(params);
-  next.set('pick', new URLSearchParams(filters as Record<string, string>).toString());
-  next.set('from', from);
+  if (filters.from && filters.to) { next.delete('month'); next.delete('periodPreset'); next.set('from', filters.from); next.set('to', filters.to); }
+  const { from: _from, to: _to, ...picked } = filters;
+  next.set('pick', new URLSearchParams(picked as Record<string, string>).toString());
+  next.set('origin', from);
   return executiveHref(reportPath('companies'), next);
 }
 export function drillLabels(filters: ExecutiveDrilldownFilters, context: ExecutiveContext): string[] {
   return Object.entries(filters).flatMap(([key, value]) => {
-    if (value === 'ALL' || ['sortBy', 'sortDir'].includes(key)) return [];
-    const label = EXECUTIVE_REPORT_LABELS[key as keyof typeof EXECUTIVE_REPORT_LABELS]?.[value]
-      ?? EXECUTIVE_FLAG_LABELS[key as keyof typeof EXECUTIVE_FLAG_LABELS]?.[value]
+    if (value === 'ALL' || ['sortBy', 'sortDir', 'from', 'to'].includes(key)) return [];
+    const label = (key === 'referringSales' ? undefined : executivePeriodFilterLabel(key, value))
       ?? context.filters.referringSales.find(option => option.value === value)?.label ?? W.unknown;
     return [thaiLabel(label, value)];
   });
@@ -107,7 +137,9 @@ export function changedParams(params: URLSearchParams, changes: Record<string, s
   return next;
 }
 export function clearedParams(params: URLSearchParams): URLSearchParams {
-  return new URLSearchParams({ month: params.get('month') ?? '', filter_industry: 'ALL', filter_discovery: 'ALL', filter_sales: 'ALL' });
+  const next = reportContextParams(params);
+  for (const key of GLOBAL_FILTERS) next.set(FILTER_URL[key], 'ALL');
+  return next;
 }
 export function comparisonProblem(params: URLSearchParams, context: ExecutiveContext): 'choose' | 'same' | null {
   const by = params.get('by') ?? 'industry', a = params.get('a'), b = params.get('b');
@@ -123,10 +155,10 @@ export const countText = (figure: ExecutiveCount) => figure.value !== null ? fig
 export const moneyText = (figure: ExecutiveMoney, measured = false) => figure.value !== null ? money(figure.value) : figure.knownValue !== undefined ? `${money(figure.knownValue)} (${executiveMoneyQualifier(figure, measured)})` : '—';
 export const ratioText = (figure: ExecutiveRatio | null | undefined, unit = '%') => figure?.value === null || figure?.value === undefined ? '–' : `${figure.value.toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${unit}`;
 export const reportMonth = formatThaiMonth, reportDate = formatThaiDate, reportDateTime = formatThaiDateTime;
-export function sourceCount(value: number, source: ExecutiveSourceCoverage): ExecutiveCount {
-  return { value: source.coverage === 'complete' ? value : null, ...(source.coverage === 'partial' ? { knownValue: value } : {}), ...source };
+export function sourceCount(value: number | null, source: ExecutiveSourceCoverage): ExecutiveCount {
+  return { value: source.coverage === 'complete' ? value : null, ...(source.coverage === 'partial' && value !== null ? { knownValue: value } : {}), ...source };
 }
-export const sourceMoney = (value: number, source: ExecutiveSourceCoverage): ExecutiveMoney => ({ ...sourceCount(value, source), currency: 'THB' });
+export const sourceMoney = (value: number | null, source: ExecutiveSourceCoverage): ExecutiveMoney => ({ ...sourceCount(value, source), currency: 'THB' });
 export const negativeMoneyNote = (value: number | null | undefined) => value !== null && value !== undefined && value < 0 ? W.negative : null;
 export const reasonText = executiveReasonMessage;
 export function queryFieldErrors(error: unknown): Record<string, string> {
@@ -138,6 +170,10 @@ export function reportFailure(error: unknown, monthRequested = true): { kind: 'd
   const code = apiErrorCode(error), status = (error as { status?: number })?.status;
   if (status === 403 || code === 'EXECUTIVE_ACCESS_DENIED') return { kind: 'denied', text: reasonText('EXECUTIVE_ACCESS_DENIED') };
   if (code === 'COMPANY_NOT_FOUND') return { kind: 'notFound', text: reasonText(code) };
+  if (code === 'EXECUTIVE_REPORT_UNAVAILABLE') {
+    const months = (error as { details?: { unbuiltMonths?: string[] } }).details?.unbuiltMonths ?? [];
+    return { kind: 'noData', text: months.length ? P.unbuilt(months.map(reportShortMonth).join(', ')) : P.noneBuilt };
+  }
   if (monthRequested && status === 503 && code === 'SOURCE_UNAVAILABLE') return { kind: 'noData', text: W.noData };
   // Unknown diagnostics never reach a report screen, including a plain Error without metadata.
   return { kind: 'error', text: code ? reasonText(code) : W.readFailed };
@@ -160,7 +196,8 @@ export const rankingTieText = (tie: { count: number; value: number } | undefined
 export const spendTieText = (tie: { count: number; netSatang: number } | undefined) => tie && tie.count > 0 ? W.spendTie(tie.count, money(tie.netSatang)) : null;
 export function sortLabel(sortBy: string, sortDir: string): string {
   const option = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === sortBy) ?? EXECUTIVE_SORT_OPTIONS[0];
-  return sortDir === option.sortDir ? option.label : option.label.replace('มาก → น้อย', 'น้อย → มาก').replace('ก → ฮ', 'ฮ → ก').replace('ล่าสุดก่อน', 'เก่าสุดก่อน');
+  const label = executivePeriodSortLabel(option);
+  return sortDir === option.sortDir ? label : label.replace('มาก → น้อย', 'น้อย → มาก').replace('ก → ฮ', 'ฮ → ก').replace('ล่าสุดก่อน', 'เก่าสุดก่อน');
 }
 export function retryDelaySeconds(error: unknown): number {
   const e = error as { status?: number; retryAfterSeconds?: unknown; details?: { retryAfterSeconds?: unknown } };

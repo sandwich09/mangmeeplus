@@ -15,10 +15,10 @@ export async function getExecutiveReport(section: ReportSection, query: Record<s
   params.set('view', 'summary'); params.set('buildId', report.build.id);
   const summary = await authedApiFetch<ExecutiveAnalysis>(executiveHref('/v1/system/executive/analysis', params), { signal, cache: 'no-store', suppressErrorToast: true });
   if (summary.buildChanged || summary.build.id !== report.build.id) throw Error('executive revenue builds differ');
-  return { ...report, revenue: summary.revenue } as ExecutiveAnalysis;
+  return { ...report, revenue: summary.revenue, periodComparisons: summary.periodComparisons, monthlySeries: summary.monthlySeries } as ExecutiveAnalysis;
 }
-export function getExecutiveHistory(targetCompanyId: string, page: number, signal: AbortSignal): Promise<ExecutiveCompanyHistory> {
-  return authedApiFetch(executiveHref(`/v1/system/executive/companies/${encodeURIComponent(targetCompanyId)}/history`, { page: String(page), pageSize: '20' }), { signal, cache: 'no-store', suppressErrorToast: true });
+export function getExecutiveHistory(targetCompanyId: string, page: number, signal: AbortSignal, period: Record<string, string | number> = {}): Promise<ExecutiveCompanyHistory> {
+  return authedApiFetch(executiveHref(`/v1/system/executive/companies/${encodeURIComponent(targetCompanyId)}/history`, { ...Object.fromEntries(Object.entries(period).map(([key, value]) => [key, String(value)])), page: String(page), pageSize: '20' }), { signal, cache: 'no-store', suppressErrorToast: true });
 }
 
 /** API13 returns a complete XLSX directly, with no saved copy or download URL. */

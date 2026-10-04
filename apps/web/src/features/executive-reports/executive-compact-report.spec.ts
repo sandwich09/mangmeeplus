@@ -3,7 +3,8 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { EXECUTIVE_WORDS as W, type ExecutiveAnalysis, type ExecutiveCompanies } from '@watchdog-bms/contracts';
+import { executivePeriodReportWords, type ExecutiveAnalysis, type ExecutiveCompanies } from '@watchdog-bms/contracts';
+const W = executivePeriodReportWords();
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 require.extensions['.svg'] = module => { module.exports = () => null; };
 const html = (component: React.ComponentType<any>, props: object) => renderToStaticMarkup(React.createElement(component, props));
@@ -115,7 +116,7 @@ test('directory columns, closed row expanders and conditional rank/share replace
   const render = (sortBy: string) => html(CompaniesContent, { data: { ...envelope, items: [{ ...row, rank: 1, cumulativeShare: { value: 100 } }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy, sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav, selected: [], select() {} });
   const plain = render('joinedAt'), ranked = render('netReceipts');
   const head = plain.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
-  const labels = ['บริษัท', 'กลุ่มธุรกิจ', 'แพ็กเกจ', 'สถานะ', 'ใบเสร็จสะสม', 'ใบเสร็จเดือน', 'วันใช้งาน', 'ใช้ระบบล่าสุด', 'สุทธิ'];
+  const labels = ['บริษัท', 'กลุ่มธุรกิจ', 'แพ็กเกจ', 'สถานะ', 'ใบเสร็จสะสม', W.tableReceipts, 'วันใช้งาน', 'ใช้ระบบล่าสุด', 'สุทธิ'];
   let last = -1; for (const label of labels) { const at = head.indexOf(label); assert.ok(at > last, label); last = at; }
   assert.match(plain, /aria-expanded="false"/); assert.doesNotMatch(plain, /<details[^>]* open/);
   assert.doesNotMatch(head, /สะสม %|อันดับ/); assert.match(ranked.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '', /สะสม %/);
@@ -221,8 +222,8 @@ test('complete selected-period data never receives an incomplete heading just be
   assert.match(markup, /หมายเหตุข้อมูล/); assert.match(markup, /ข้อมูลเงินถึงวันที่/);
   assert.equal(html(ReportStatus, { data: { ...data, dataThrough: { lagging: [] } } }), '');
   const stale = html(ReportStatus, { data: { ...data, reasonCodes: ['SOURCE_STALE'] } });
-  assert.match(stale.match(/<summary[\s\S]*?<\/summary>/)?.[0] ?? '', /ข้อมูลยังไม่ได้อัปเดต/);
-  assert.equal(visible(stale).split('ข้อมูลยังไม่ได้อัปเดต').length - 1, 1);
+  assert.match(stale.match(/<summary[\s\S]*?<\/summary>/)?.[0] ?? '', /ข้อมูลรายงานอาจยังไม่เป็นปัจจุบัน/);
+  assert.equal(visible(stale).split('ข้อมูลรายงานอาจยังไม่เป็นปัจจุบัน').length - 1, 1);
   assert.doesNotMatch(stale, /ตัวเลขบางส่วนยังไม่ครบ/);
 });
 

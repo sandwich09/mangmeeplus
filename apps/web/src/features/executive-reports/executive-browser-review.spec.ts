@@ -4,8 +4,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
-import { EXECUTIVE_WORDS as W } from '@watchdog-bms/contracts';
+import { executivePeriodReportWords } from '@watchdog-bms/contracts';
 
+const W = executivePeriodReportWords();
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 require.extensions['.svg'] = module => { module.exports = () => null; };
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -99,7 +100,7 @@ test('B4: select arrows work from the trigger, search focuses after mount, Escap
 test('B5: one read status, retained content, and export busy only while creating a file', () => {
   const page = source('./ExecutiveReportPage.tsx');
   assert.doesNotMatch(page, /loading=\{loading\}[^\n]*W\.export\.action|loading \? W\.loading/);
-  assert.match(page, /const visibleData = context[^\n]*\? data : null/);
+  assert.match(page, /const visibleData = !periodInvalid && samePeriod && context[^\n]*\? data : null/);
   assert.match(page, /reading && !!visibleData/); assert.match(page, /inert=\{reading/);
   assert.doesNotMatch(page, /\[queryKey, section, targetCompanyId, attempt, problem, tab/);
   assert.match(page, /\[.*historyPage.*\]/);
@@ -122,7 +123,7 @@ test('C10/C11/C13/C16: concise comparison, account controls, genuine export list
   assert.match(account, /min-h-11/); assert.match(account, /border-t/);
   const panel = source('./ExecutiveExportPanel.tsx');
   assert.ok(panel.indexOf('{canExportContacts(') < panel.indexOf('<Button loading='));
-  assert.match(panel, /<ul[^>]*list-disc/); assert.match(panel, /executiveExportColumns[^]*\.map\(/);
+  assert.match(panel, /<ul[^>]*list-disc/); assert.match(panel, /executivePeriodExportColumns[^]*\.map\(/);
   const header = source('../../common/components/app-shell/SystemHeader.tsx');
   assert.doesNotMatch(header, /thaiLabel\(section.label\)/);
   assert.match(header, /onReport \? \[\.\.\.reportSections, \.\.\.adminSections\]/);
@@ -142,7 +143,8 @@ test('C6/C15: ring and swatches share tokens; follow-up rows appear once, in the
   }
   assert.match(markup, /executive-follow-up-band[^"\n]*flex-col[^"\n]*sm:flex-row/);
   const text = markup.replace(/<[^>]*>/g, '');
-  const { EXECUTIVE_REPORT_LABELS: labels } = await import('@watchdog-bms/contracts');
+  const { executivePeriodReportLabels } = await import('@watchdog-bms/contracts');
+  const labels = executivePeriodReportLabels();
   for (const key of ['NOT_STARTED', 'INACTIVE']) assert.equal(text.split(labels.usageGroup[key]).length - 1, 1, key);
 });
 
@@ -168,11 +170,12 @@ test('B5: retained data is never rendered after denied access, a missing company
   const declaration = page.body!.statements.filter(ts.isVariableStatement).flatMap(n => [...n.declarationList.declarations]).find(n => n.name.getText(file) === 'visibleData')!;
   const js = ts.transpileModule(`return ${declaration.initializer!.getText(file)};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const data = { private: true };
-  const visible = new Function('context', 'failed', 'data', 'dataKey', 'requestKey', js);
-  for (const kind of ['denied', 'notFound', 'noData']) assert.equal(visible({}, { kind }, data), null, kind);
-  assert.equal(visible(null, null, data), null);
-  assert.equal(visible({}, { kind: 'error' }, data), data);
-  assert.equal(visible({}, null, data), data);
+  const visible = new Function('context', 'failed', 'data', 'dataKey', 'requestKey', 'periodInvalid', 'samePeriod', js);
+  const shown = (...args: unknown[]) => visible(...args, undefined, undefined, false, true);
+  for (const kind of ['denied', 'notFound', 'noData']) assert.equal(shown({}, { kind }, data), null, kind);
+  assert.equal(shown(null, null, data), null);
+  assert.equal(shown({}, { kind: 'error' }, data), data);
+  assert.equal(shown({}, null, data), data);
 });
 
 test('B5: a history read failure belongs to the history tab and export never previews a different query', () => {
@@ -219,7 +222,7 @@ test('round A: optional executive field and picker styles preserve ordinary hint
   assert.doesNotMatch(ordinary.find(e => e.type === 'panel')!.props.className, /\[&_button\]/);
   assert.match(renderPicker({ mode: 'month', value: '2026-10', panelClassName: '[&_button]:min-h-11 [&_button]:min-w-11' }).find(e => e.type === 'panel')!.props.className, /\[&_button\]:min-h-11/);
   assert.match(source('./ExecutiveReportPage.tsx'), /hintClassName="truncate text-gray-600"/);
-  assert.match(source('./ExecutiveReportPage.tsx'), /mode="month" panelClassName="\[&_button\]:min-h-11/);
+  assert.match(source('./ExecutivePeriodControl.tsx'), /panelClassName="\[&_button\]:min-h-11/);
 });
 
 function elements(node: React.ReactNode): React.ReactElement<any>[] {

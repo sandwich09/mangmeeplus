@@ -4,8 +4,9 @@ import { readFileSync } from 'node:fs';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
-import { EXECUTIVE_WORDS as W, EXECUTIVE_REPORT_LABELS, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveOverview } from '@watchdog-bms/contracts';
+import { executivePeriodReportWords, EXECUTIVE_REPORT_LABELS, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveOverview } from '@watchdog-bms/contracts';
 
+const W = executivePeriodReportWords();
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 require.extensions['.svg'] = module => { module.exports = () => null; };
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -44,7 +45,7 @@ test('overview uses equal KPI widths and places the top-payers row inside adopti
   assert.match(html, /<button[^>]*>ดูอันดับการใช้<\/button>/);
   assert.match(html, /<strong[^>]*>4 บริษัท/);
   assert.match(html, /บริษัท [\s\S]*?→/);
-  for (const group of groups) assert.equal(html.replace(/<[^>]*>/g, '').split(EXECUTIVE_REPORT_LABELS.usageGroup[group.key as 'NOT_STARTED' | 'INACTIVE']).length - 1, 1);
+  for (const group of groups) assert.equal(html.replace(/<[^>]*>/g, '').split(group.key === 'INACTIVE' ? 'เคยใช้ แต่ไม่ใช้ในช่วงนี้' : EXECUTIVE_REPORT_LABELS.usageGroup.NOT_STARTED).length - 1, 1);
 });
 
 test('drill links are focusable tiles and paid usage has large counts and company actions', async () => {
@@ -139,7 +140,7 @@ test('report buttons remember the origin and navigate to the same month and exac
   assert.equal(url.pathname, '/system/executive/companies'); assert.equal(url.searchParams.get('month'), '2026-09');
   const picked = new URLSearchParams(url.searchParams.get('pick')!);
   assert.equal(picked.get('sortBy'), 'activeDays'); assert.equal(picked.get('sortDir'), 'desc');
-  assert.equal(picked.get('industry'), 'FOOD'); assert.equal(url.searchParams.get('from'), 'usage');
+  assert.equal(picked.get('industry'), 'FOOD'); assert.equal(url.searchParams.get('origin'), 'usage');
 });
 
 test('customer rows have a full-row drill link, bar track and screen-reader-only caption', async () => {

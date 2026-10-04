@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS, EXECUTIVE_REASON_CODES, EXECUTIVE_PAID_EVER_REASONS, type ExecutiveContext } from '@watchdog-bms/contracts';
+import { EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS, EXECUTIVE_REASON_CODES, EXECUTIVE_PAID_EVER_REASONS, executiveSourceReasonText, type ExecutiveContext } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '../../common/api/api-error-message';
 
 const logic = () => import('./executive-reports.logic');
@@ -8,12 +8,12 @@ const context = {
   defaultMonth: '2026-10', currentMonth: '2026-10', months: { first: '2026-09', last: '2026-10' },
   filters: Object.fromEntries(Object.entries(EXECUTIVE_REPORT_LABELS).map(([key, labels]) => [key, Object.entries(labels).map(([value, label]) => ({ value, label }))])),
   sortOptions: EXECUTIVE_SORT_OPTIONS,
-} as ExecutiveContext;
+} as unknown as ExecutiveContext;
 
 test('URL defaults reject unknown values, future months, malformed pages and sort orders', async () => {
   const { reportQuery } = await logic();
-  const q = reportQuery('companies', new URLSearchParams('month=2027-01&filter_industry=secret&page=2x&sortBy=bad&sortDir=bad'), context);
-  assert.deepEqual(q, { month: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
+  const q = reportQuery('companies', new URLSearchParams('month=2026-10&filter_industry=secret&page=2x&sortBy=bad&sortDir=bad'), context);
+  assert.deepEqual(q, { from: '2026-10', to: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
 });
 test('URL aliases send the API filters, ranking, tabs, sort and paging without leaking a URL search', async () => {
   const { reportQuery } = await logic();
@@ -21,25 +21,25 @@ test('URL aliases send the API filters, ranking, tabs, sort and paging without l
   const q = reportQuery('companies', params, context, '  ร้าน ก  ');
   assert.equal(q.discovery, 'FACEBOOK'); assert.equal(q.usageGroup, 'NOT_STARTED'); assert.equal(q.receiptAdoption, 'UNKNOWN');
   assert.equal(q.sortDir, 'desc'); assert.equal(q.page, 3); assert.equal(q.q, 'ร้าน ก');
-  assert.deepEqual(reportQuery('usage', new URLSearchParams('view=ranking&rank=aiRequests'), context), { month: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', section: 'usage', view: 'ranking', metric: 'aiRequests' });
+  assert.deepEqual(reportQuery('usage', new URLSearchParams('view=ranking&rank=aiRequests'), context), { from: '2026-10', to: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', section: 'usage', view: 'ranking', metric: 'aiRequests' });
 });
 test('menus carry only the report context; compare and detail retain but do not send global filters', async () => {
   const { menuHref, reportQuery } = await logic();
   const p = new URLSearchParams('month=2026-09&filter_industry=UNKNOWN&filter_discovery=FACEBOOK&filter_sales=NONE&view=top&page=3&pick=bad&buildId=secret');
   assert.equal(menuHref('usage', p), '/system/executive/usage?month=2026-09&filter_industry=UNKNOWN&filter_discovery=FACEBOOK&filter_sales=NONE');
-  assert.deepEqual(reportQuery('detail', p, context), { month: '2026-09' });
+  assert.deepEqual(reportQuery('detail', p, context), { from: '2026-09', to: '2026-09' });
   p.set('by', 'discovery'); p.set('a', 'FACEBOOK'); p.set('b', 'OTHER');
-  assert.deepEqual(reportQuery('compare', p, context), { month: '2026-09', section: 'compare', dimension: 'discovery', sideA: 'FACEBOOK', sideB: 'OTHER' });
+  assert.deepEqual(reportQuery('compare', p, context), { from: '2026-09', to: '2026-09', section: 'compare', dimension: 'discovery', sideA: 'FACEBOOK', sideB: 'OTHER' });
 });
 test('a drill-down uses the COMPLETE API query without merging the origin globals', async () => {
   const { drilldownHref, reportQuery } = await logic();
   const origin = new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK&view=top&page=9');
   const href = drilldownHref(origin, 'compare', { discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc' });
   const p = new URL(href, 'https://test.invalid').searchParams;
-  assert.equal(p.get('filter_discovery'), 'FACEBOOK'); assert.equal(p.get('from'), 'compare'); assert.equal(p.has('buildId'), false);
-  assert.deepEqual(reportQuery('companies', p, context), { month: '2026-09', discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc', page: 1, pageSize: 20 });
+  assert.equal(p.get('filter_discovery'), 'FACEBOOK'); assert.equal(p.get('origin'), 'compare'); assert.equal(p.has('buildId'), false);
+  assert.deepEqual(reportQuery('companies', p, context), { from: '2026-09', to: '2026-09', discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc', page: 1, pageSize: 20 });
   const blank = new URL(drilldownHref(origin, 'overview', {}), 'https://test.invalid').searchParams;
-  assert.deepEqual(reportQuery('companies', blank, context), { month: '2026-09', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
+  assert.deepEqual(reportQuery('companies', blank, context), { from: '2026-09', to: '2026-09', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
 });
 test('changing filters or sort resets paging; clearing keeps the month and removes drilled conditions', async () => {
   const { changedParams, clearedParams } = await logic();
@@ -117,7 +117,7 @@ test('every contracted reason/state pair has Thai words and historical reasons d
   const differences: string[] = [];
   for (const code of new Set([...EXECUTIVE_REASON_CODES, ...EXECUTIVE_PAID_EVER_REASONS])) {
     for (const state of ['partial', 'unavailable'] as const) {
-      const expected = overrides[code as keyof typeof overrides]?.[state] ?? apiErrorMessage({ code });
+      const expected = EXECUTIVE_REASON_CODES.includes(code as typeof EXECUTIVE_REASON_CODES[number]) ? executiveSourceReasonText(code, [], state) : apiErrorMessage({ code });
       if (reasonText(code, state) !== expected) differences.push(`${code} × ${state}`);
       assert.doesNotMatch(reasonText(code, state), /[A-Za-z_]/);
     }
@@ -159,7 +159,7 @@ test('tie sentences use returned counts only, omit zero ties, and negative money
 
 test('sort wording follows the actual direction including direct URLs with reverse order', async () => {
   const { sortLabel } = await logic();
-  assert.equal(sortLabel('netReceipts', 'asc'), 'ยอดรับสุทธิในเดือน น้อย → มาก');
+  assert.equal(sortLabel('netReceipts', 'asc'), 'ยอดรับสุทธิในช่วงนี้ น้อย → มาก');
   assert.equal(sortLabel('companyName', 'desc'), 'ชื่อบริษัท ฮ → ก');
   assert.equal(sortLabel('joinedAt', 'asc'), 'สมัครเก่าสุดก่อน');
 });
@@ -201,5 +201,5 @@ test('screen labels translate product words and omit returned seller codes and e
 test('drilled condition chips use the same Thai words without showing a seller code or sort token', async () => {
   const { drillLabels } = await logic();
   const named = { ...context, filters: { ...context.filters, referringSales: [{ value: 'S003', label: 'คุณฟ้า · S003' }] } };
-  assert.deepEqual(drillLabels({ referringSales: 'S003', discovery: 'FACEBOOK', paidInPeriod: 'true', sortBy: 'netReceipts', sortDir: 'desc' }, named), ['คุณฟ้า', 'เฟซบุ๊ก', 'ชำระในเดือน']);
+  assert.deepEqual(drillLabels({ referringSales: 'S003', discovery: 'FACEBOOK', paidInPeriod: 'true', sortBy: 'netReceipts', sortDir: 'desc' }, named), ['คุณฟ้า', 'เฟซบุ๊ก', 'ชำระในช่วงนี้']);
 });

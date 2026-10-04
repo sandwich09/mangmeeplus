@@ -76,6 +76,10 @@ test.describe('EXEC — executive report', () => {
       }
       await expect(page).toHaveURL(/\/system\/executive(\?|$)/);
       await expect(page.getByRole('heading', { name: 'ภาพรวมธุรกิจมั่งมี', level: 1 })).toBeVisible();
+      // The fixture joins this month; days 1–7 intentionally default to last month.
+      await page.getByRole('button', { name: 'เดือนนี้', exact: true }).click();
+      await expect(page).toHaveURL(/from=\d{4}-\d{2}.*to=\d{4}-\d{2}/);
+      await expect(page.getByRole('button', { name: 'เดือนนี้', exact: true })).toHaveAttribute('aria-pressed', 'true');
       // Only the report menu.
       await expect(page.locator('#system-navigation')).toHaveAttribute('aria-label', 'ส่วนงานผู้บริหาร');
       await expect(page.locator('#system-navigation').getByRole('link', { name: 'บริษัทและผู้ใช้งาน' })).toHaveCount(0);

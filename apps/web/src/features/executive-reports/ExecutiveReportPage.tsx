@@ -3,20 +3,19 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, Fragment, type ReactNode, type MutableRefObject } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
-  EXECUTIVE_SORT_OPTIONS, executiveComparisonLabel,
+  EXECUTIVE_SORT_OPTIONS, executiveComparisonLabel, EXECUTIVE_PERIOD_WORDS as P,
   type ExecutiveContext, type ExecutiveCompanyHistory, type ExecutiveCompanyDetail, type ExecutiveCompanies, type ExecutiveOverview, type ExecutiveAnalysis,
 } from '@watchdog-bms/contracts';
 import { MangmeeBadge } from '@/common/components/mangmee';
 import { Button } from '@/common/components/button';
-import { ChevronLeftIcon } from '@/common/icons';
-import { SelectField, TextField, FieldError } from '@/common/components/field/Field';
-import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { SelectField, TextField } from '@/common/components/field/Field';
+import { ExecutivePeriodControl } from './ExecutivePeriodControl';
 import { Pagination } from '@/common/components/data-table/Pagination';
 import { EmptyState, ErrorState, ForbiddenState, CoverLoader } from '@/common/components/state';
 import { WorkspaceLocaleContext } from '@/common/i18n/locale-context';
 import { getExecutiveContext, getExecutiveReport, getExecutiveHistory, type ReportData } from './executive-reports.api';
 import {
-  FILTER_URL, GLOBAL_FILTERS, DIRECTORY_FILTERS, reportQuery, reportView, filterValue, normalizedMonth, changedParams, clearedParams, comparisonProblem,
+  FILTER_URL, GLOBAL_FILTERS, DIRECTORY_FILTERS, reportQuery, reportView, filterValue, selectedPeriod, periodParams, periodText, changedParams, clearedParams, comparisonProblem,
   swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, drillLabels, menuHref, executiveHref, reportDateTime, pageNumber, reasonText,
   EXECUTIVE_ACCESS_DENIED_EVENT, sortLabel, retryDelaySeconds, reportHistoryState, ownHistoryState, backSection, type ReportSection,
 } from './executive-reports.logic';
@@ -77,7 +76,8 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const { context } = shared;
   const pathname = usePathname(), router = useRouter(), searchParams = useSearchParams();
   const paramsString = searchParams.toString();
-  const params = new URLSearchParams(paramsString);
+  const params = context ? periodParams(new URLSearchParams(paramsString), context) : new URLSearchParams(paramsString);
+  const periodInvalid = !!context && !selectedPeriod(params, context);
   const exportOpen = params.get('export') === '1' && canExport(context);
   const [exportNotice, setExportNotice] = useState('');
   const [exportDenied, setExportDenied] = useState(false);
@@ -98,7 +98,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const tabFocus = useRef<string | null>(null);
   const tab = DETAIL_TABS.find(tab => tab.value === (params.get('view') ?? params.get('tab')))?.value ?? 'company';
   const problem = context && section === 'compare' ? comparisonProblem(params, context) : null;
-  const queryKey = context ? JSON.stringify(reportQuery(section, params, context, search)) : null;
+  const queryKey = context && !periodInvalid ? JSON.stringify(reportQuery(section, params, context, search)) : null;
   const historyPage = section === 'detail' && tab === 'history' ? pageNumber(params.get('page')) : 1;
   const requestKey = `${section}:${targetCompanyId ?? ''}:${queryKey}`;
 
@@ -155,7 +155,8 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   useEffect(() => {
     if (!context) return;
     const next = new URLSearchParams(paramsString);
-    next.set('month', normalizedMonth(next, context));
+    const normalized = periodParams(next, context);
+    for (const key of ['month', 'from', 'to', 'origin', 'periodPreset']) { next.delete(key); if (normalized.has(key)) next.set(key, normalized.get(key)!); }
     for (const key of GLOBAL_FILTERS) next.set(FILTER_URL[key], filterValue(key, next, context));
     next.delete('q'); next.delete('search'); next.delete('buildId'); if (next.get('export') !== '1' || !canExport(context)) next.delete('export');
     // URL only (Next's own state keeps the router where it is): every read normalises the same way, so a router update would read twice.
@@ -163,7 +164,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   }, [context, paramsString, pathname]);
 
   useEffect(() => {
-    if (!context || problem) { setData(null); setHistory(null); setLoading(false); return; }
+    if (!context || problem || periodInvalid) { setData(null); setHistory(null); setLoading(false); return; }
     const controller = new AbortController();
     const query = reportQuery(section, new URLSearchParams(paramsString), context, search);
     setLoading(true); setFailure(null); setFieldErrors({}); setUpdated(false); setRetryWait(0);
@@ -194,11 +195,11 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const [historyKey, setHistoryKey] = useState('');
   useEffect(() => {
     if (!context || section !== 'detail' || tab !== 'history' || dataKey !== requestKey) return;
-    const key = `${targetCompanyId}:${historyPage}:${attempt}`;
+    const key = `${requestKey}:${historyPage}:${attempt}`;
     if (historyKey === key && history) return;
     const controller = new AbortController();
     setHistoryLoading(true); setHistoryFailure(null);
-    void getExecutiveHistory(targetCompanyId!, historyPage, controller.signal).then(result => {
+    void getExecutiveHistory(targetCompanyId!, historyPage, controller.signal, { ...reportQuery('detail', params, context), buildId: data!.build.id }).then(result => {
       if (controller.signal.aborted) return;
       setHistory(result); setHistoryKey(key);
       if (historyPage !== result.pagination.page) {
@@ -226,11 +227,12 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const denyExport = useCallback(() => { setExportDenied(true); void shared.refresh(new AbortController().signal).catch(() => {}); }, [shared]);
   const retry = retryWait > 0 ? undefined : () => setAttempt(n => n + 1);
   const failed = shared.failure ?? failure ?? (tab === 'history' ? historyFailure : null);
-  const visibleData = context && !['denied', 'notFound', 'noData'].includes(failed?.kind ?? '') ? data : null;
+  const samePeriod = data && context && selectedPeriod(params, context) && (data.period.from ?? data.period.month) === params.get('from') && (data.period.to ?? data.period.month) === params.get('to');
+  const visibleData = !periodInvalid && samePeriod && context && !['denied', 'notFound', 'noData'].includes(failed?.kind ?? '') ? data : null;
   const reading = loading || historyLoading || (!!data && dataKey !== requestKey && !failed);
   const title = section === 'detail' && visibleData && 'company' in visibleData ? visibleData.company.displayName : W[section];
-  const nav = { params: dataKey === requestKey ? params : new URLSearchParams(dataParams), from: section, remember: rememberNavigation, navigate: (href: string) => router.push(href) };
-  const from = params.get('from');
+  const nav = { params: dataKey === requestKey ? params : context ? periodParams(new URLSearchParams(dataParams), context) : new URLSearchParams(dataParams), from: section, remember: rememberNavigation, navigate: (href: string) => router.push(href) };
+  const from = params.get('origin');
   const origin = ['overview', 'usage', 'revenue', 'customers', 'compare'].includes(from ?? '') ? from as Exclude<ReportSection, 'detail' | 'companies'> : 'overview';
   const fallback = section === 'detail' ? menuHref('companies', params) : menuHref(origin, params);
   const selected = [params.get('a'), params.get('b')].filter((value): value is string => !!value);
@@ -259,13 +261,14 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
         {exportOpen && reading && visibleData && <ReportSkeleton />}
         {exportOpen && context && visibleData && dataKey === requestKey && !reading && <ExecutiveExportPanel key={requestKey} section={section} params={params} context={context} data={visibleData} search={search} targetCompanyId={targetCompanyId} close={closeExport} reload={reloadExport} deny={denyExport} />}
         {context && !exportOpen && failed?.kind !== 'notFound' && <>
+          <ExecutivePeriodControl context={context} params={params} apply={update} />
           <div className="executive-time-row flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-gray-200 bg-white px-2 py-0">
-            <div className="flex items-center gap-2"><label htmlFor="executive-month" className="sr-only shrink-0 text-sm sm:not-sr-only">{W.month}</label><div className="w-32 sm:w-36"><ThemedDate id="executive-month" aria-label={W.month} aria-invalid={!!fieldErrors.month} aria-describedby={fieldErrors.month ? 'executive-month-error' : undefined} mode="month" panelClassName="[&_button]:min-h-11 [&_button]:min-w-11" allowClear={false} value={normalizedMonth(params, context)} min={context.months?.first} max={context.months?.last ?? context.currentMonth} selectable={context.builtMonths} onChange={event => event.target.value && update({ month: event.target.value })} className="!min-h-11 !text-base" /></div>{fieldErrors.month && <FieldError id="executive-month-error">{fieldErrors.month}</FieldError>}{visibleData?.period.isPartialMonth && context.months && visibleData.period.month > context.months.first && <Button variant="secondary" aria-label={W.previousMonth} onClick={() => { const date = new Date(`${visibleData.period.month}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); update({ month: date.toISOString().slice(0, 7) }); }}><ChevronLeftIcon aria-hidden="true" className="size-4 sm:hidden" /><span className="hidden sm:inline">{W.previousMonth}</span></Button>}</div>
+            {selectedPeriod(params, context) && <span className="shrink-0 text-xs text-gray-700">{periodText(selectedPeriod(params, context)!)}</span>}
             {section !== 'compare' && section !== 'detail' && <ExecutiveFilters directory={section === 'companies'} context={context} values={filterValues} errors={fieldErrors} apply={update} clear={clear} extra={pickLabels.map(({ key, label }) => ({ key, label, remove: () => { const next = new URLSearchParams(picked as Record<string, string>); next.delete(key); update({ pick: next.toString() }); } }))} />}
             {visibleData && <><span className="whitespace-nowrap text-xs sm:text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
           </div>
-          {visibleData && <ReportStatus data={visibleData} />}
-          {section === 'compare' || section === 'detail' ? <p className="text-sm">{section === 'compare' ? W.compareBase : W.detailBase}</p> : null}
+          {visibleData && <ReportStatus periodOnly={section === 'revenue' || section === 'compare'} data={section === 'detail' && tab === 'history' && history?.sourceStatus && history.period ? { ...visibleData, sourceStatus: history.sourceStatus, period: history.period } : visibleData} sources={section === 'revenue' ? ['money'] : section === 'detail' && tab === 'usage' ? ['money', 'usage', 'aiCost'] : ['money', 'usage']} />}
+          {section === 'compare' || section === 'detail' ? <p className="text-sm">{P.selectedBase}</p> : null}
           {section === 'companies' && <>
             {from === 'compare' && <p>{W.compareList}</p>}
             {selected.length === 2 && <ReportLink href={menuHref('compare', params, { by: 'company', a: selected[0], b: selected[1] })} remember={rememberNavigation}>{W.compareTwo}</ReportLink>}
@@ -281,8 +284,9 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
         {failed?.kind === 'denied' ? <ForbiddenState title={failed.text} description="" helpText="" /> : failed?.kind === 'notFound' ? <EmptyState title={failed.text} description="" action={<Button variant="secondary" onClick={() => back(menuHref('companies', params))}>{W.back(W.companies)}</Button>} /> : failed?.kind === 'noData' ? <EmptyState title={failed.text} description="" action={<Button variant="secondary" onClick={shared.failure ? shared.retry : retry}>{W.retry}</Button>} /> : failed && !visibleData ? <ErrorState description="" title={failed.text} onRetry={shared.failure ? shared.retry : retry} /> : null}
         {failed?.kind === 'error' && visibleData && <ErrorState title={failed.text} description={historyFailure && tab === 'history' ? '' : W.staleAt(reportDateTime(visibleData.build.asOf))} onRetry={retry} />}
         {!context && !shared.failure && <ReportSkeleton />}
+        {periodInvalid && <p role="alert" className="text-sm text-red-700">{P.invalid}</p>}
         {context && problem && <EmptyState title={W[problem]} description="" />}
-        {context && !problem && !failed && !visibleData && <ReportSkeleton />}
+        {context && !periodInvalid && !problem && !failed && !visibleData && <ReportSkeleton />}
         {!exportOpen && <><div className="relative min-h-32">
           <CoverLoader active={reading && !!visibleData} label={W.loading} />
           <div className={`min-w-0 space-y-4 ${reading ? "opacity-50" : ""}`} aria-busy={reading} aria-hidden={reading && !!visibleData ? true : undefined} inert={reading && !!visibleData}>

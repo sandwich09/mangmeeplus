@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useId, type ReactNode } from 'react';
 import {
-  executiveComparisonLabel, EXECUTIVE_HISTORY_EVENT_LABELS, EXECUTIVE_REPORT_LABELS as LABELS, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
+  executiveComparisonLabel, EXECUTIVE_PERIOD_WORDS as P, EXECUTIVE_HISTORY_EVENT_LABELS, executivePeriodReportLabels, EXECUTIVE_REFERRER_ADMIN_SUFFIX, EXECUTIVE_FLAG_LABELS,
   type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanies, type ExecutiveCompanyDetail, type ExecutiveCompanyHistory,
   type ExecutiveCount, type ExecutiveMoney, type ExecutiveDrilldownFilters, type ExecutiveReceiptAdoption,
   type ExecutivePaidUsage, type ExecutiveSpendConcentration, type ExecutiveCompanyRow,
@@ -14,8 +14,9 @@ import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { Button } from '@/common/components/button';
 import { EmptyState } from '@/common/components/state';
 import { W, RANK_LABELS, REPORT_VIEWS, DETAIL_TABS, thaiLabel } from './executive-reports.words';
-import { money, ratioText, reportDate, reportDateTime, reportMonth, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber, hoistedSource } from './executive-reports.logic';
+import { money, ratioText, reportDate, reportDateTime, periodText, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber, hoistedSource } from './executive-reports.logic';
 
+const LABELS = executivePeriodReportLabels();
 type Navigation = { params: URLSearchParams; from: string; remember: () => void; navigate: (href: string) => void };
 const linkClass = 'flex min-h-11 min-w-11 w-full items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white p-3 text-gray-900';
 const linkFocus = 'group min-w-0 break-words [overflow-wrap:anywhere] transition-colors hover:bg-brand-25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700';
@@ -87,7 +88,7 @@ export function OverviewContent({ data, nav }: { data: ExecutiveOverview; nav: N
   ];
   return <ReportNotes data={data}>
     <ExecutiveKpiStrip columns={2}>{cards.map(card => <Link key={card.label} href={drilldownHref(nav.params, nav.from, card.metric.drilldownFilters)} onClick={nav.remember} className={`executive-kpi-link relative rounded-xl group ${linkFocus}`}>
-      <ExecutiveKpi iconName={card.icon} label={`${card.label}${card.label === W.companyCount ? '' : ` ${reportMonth(data.period.month)}`}`} figure={card.metric} moneyValue={card.money} netValue={card.money} unit={card.money ? W.unitBaht : W.unitCompany} sub={card.sub} arrow />
+      <ExecutiveKpi iconName={card.icon} label={card.label} figure={card.metric} moneyValue={card.money} netValue={card.money} unit={card.money ? W.unitBaht : W.unitCompany} sub={card.sub} comparison={card.metric.comparison} arrow />
     </Link>)}</ExecutiveKpiStrip>
     <p className="text-xs text-gray-600">{W.excluded} · {W.activityDefinition} · {W.paidDefinition}{data.metrics.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(data.metrics.netReceiptsSatang.value) && ` · ${W.negative}`}{data.metrics.activeCompanies.breakdown.notPaid > 0 && ` · ${W.unpaidActive(data.metrics.activeCompanies.breakdown.notPaid)}`}{data.metrics.activeCompanies.breakdown.paymentUnknown > 0 && ` · ${W.paymentUnknownActive(data.metrics.activeCompanies.breakdown.paymentUnknown)}`}</p>
     <ReceiptAdoption data={data.expenseReceiptAdoption} nav={nav} actions={<Button variant="secondary" onClick={() => openReport(nav, menuHref('usage', nav.params, { view: 'ranking' }))}>{W.seeRanking}</Button>}>
@@ -107,7 +108,7 @@ function companyLink(id: string, params: URLSearchParams): string {
   const next = new URLSearchParams(params); next.delete('tab');
   return executiveHref(`/system/executive/companies/${encodeURIComponent(id)}`, next);
 }
-type StatusRow = Pick<ExecutiveCompanyRow, 'paidEver' | 'usageGroup' | 'usageUnassessedReason' | 'fullyRefunded'>;
+type StatusRow = Pick<ExecutiveCompanyRow, 'paidEver' | 'usageGroup' | 'usageUnassessedReason'> & { fullyRefunded: boolean | null };
 const rowStatusLabel = (row: StatusRow) => row.fullyRefunded ? refundLabel : row.usageGroup ? LABELS.usageGroup[row.usageGroup] : LABELS.paidEver[row.paidEver.value];
 const rowStatus = (row: StatusRow) => <MangmeeBadge className="max-w-full" tone={row.fullyRefunded ? 'amber' : row.usageGroup === 'ACTIVE' ? 'brand' : 'slate'}><span className="min-w-0 truncate" title={rowStatusLabel(row)}>{rowStatusLabel(row)}</span>{(row.usageUnassessedReason || row.paidEver.reason) && <IncompleteDot reason={[row.usageUnassessedReason, row.paidEver.reason].filter(Boolean).map(code => reasonText(code!)).join(' · ')} />}</MangmeeBadge>;
 
@@ -146,14 +147,14 @@ export function CompaniesContent({ data, nav, selected, select, sortColumn }: { 
           <div key="name" className="min-w-0 pr-28 md:pr-0"><span className="block truncate" title={row.displayName}>{row.displayName}</span><span className="block truncate text-xs font-normal text-gray-600">{row.provinceLabel} · {W.joinedShort(reportShortDate(row.joinedAt))}</span></div>,
           <span key="group" className="block whitespace-normal" title={row.industryGroup.label}>{row.industryGroup.label}</span>,
           <span key="plan" className="flex min-w-0 flex-col items-start gap-1"><MangmeeBadge className="max-w-full"><span className="min-w-0 truncate" title={row.planLabel}>{row.planLabel}</span></MangmeeBadge>{row.planState !== 'ACTIVE' && <span className="text-xs leading-4 text-gray-600">{LABELS.planState[row.planState] ?? W.unknown}</span>}</span>, rowStatus(row),
-          <Figure key="lifetime" value={sourceCount(row.metrics.expenseReceiptCountLifetime, data.coverage.usage)} />,
-          <Figure key="receipts" value={sourceCount(row.metrics.expenseReceiptCountInPeriod, data.coverage.usage)} />,
-          <Figure key="days" value={sourceCount(row.metrics.activeDays, data.coverage.usage)} />, <Figure key="ai" value={sourceCount(row.metrics.aiRequests, data.coverage.usage)} />, reportShortDate(row.lastActivityAt), reportShortDate(row.joinedAt),
-          <Figure key="net" value={sourceMoney(row.metrics.netReceiptsSatang, data.coverage.money)} moneyValue netValue />,
+          <Figure key="lifetime" value={sourceCount(row.metrics.expenseReceiptCountLifetime, row.coverage?.usage ?? data.coverage.usage)} />,
+          <Figure key="receipts" value={sourceCount(row.metrics.expenseReceiptCountInPeriod, row.coverage?.usage ?? data.coverage.usage)} />,
+          <Figure key="days" value={sourceCount(row.metrics.activeDays, row.coverage?.usage ?? data.coverage.usage)} />, <Figure key="ai" value={sourceCount(row.metrics.aiRequests, row.coverage?.usage ?? data.coverage.usage)} />, reportShortDate(row.lastActivityAt), reportShortDate(row.joinedAt),
+          <Figure key="net" value={sourceMoney(row.metrics.netReceiptsSatang, row.coverage?.money ?? data.coverage.money)} moneyValue netValue />,
           ...(netSort ? [row.cumulativeShare ? ratioText(row.cumulativeShare) : '–'] : []),
-        ], details: <div className="executive-usage-summary flex flex-wrap items-center gap-x-4 gap-y-1"><span>{W.registered}: {row.registeredName || W.unknown}</span><span>{W.origin}: {[thaiLabel(row.discovery.label), row.discovery.otherText, thaiLabel(LABELS.signupRail[row.signupRail] ?? W.unknown), referrer(row.referrer)].filter(Boolean).join(' · ')}</span><span>{LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown}</span><span>{LABELS.companyStatus[row.companyStatus] ?? W.unknown}</span>{rowStatusLabel(row) !== LABELS.paidEver[row.paidEver.value] && <span>{LABELS.paidEver[row.paidEver.value]}</span>}{netSort && !row.cumulativeShare && data.coverage.money.coverage === "complete" && row.metrics.netReceiptsSatang <= 0 && <span>{W.notInShare}</span>}{[...new Set([row.paidEver.reason, row.usageUnassessedReason].filter((code): code is string => !!code && ![...data.coverage.money.reasonCodes, ...data.coverage.usage.reasonCodes].some(common => common === code)))].map(code => <span key={code}>{reasonText(code)}</span>)}{([[W.users, 'activeUsers'], [W.documents, 'documents']] as const).map(([label, key]) => <span key={key}>{label}: <Figure value={sourceCount(row.metrics[key], data.coverage.usage)} /></span>)}</div>,
+        ], details: <div className="executive-usage-summary flex flex-wrap items-center gap-x-4 gap-y-1"><span>{W.registered}: {row.registeredName || W.unknown}</span><span>{W.origin}: {[thaiLabel(row.discovery.label), row.discovery.otherText, thaiLabel(LABELS.signupRail[row.signupRail] ?? W.unknown), referrer(row.referrer)].filter(Boolean).join(' · ')}</span><span>{LABELS.receiptAdoption[row.receiptAdoption] ?? W.unknown}</span><span>{LABELS.companyStatus[row.companyStatus] ?? W.unknown}</span>{rowStatusLabel(row) !== LABELS.paidEver[row.paidEver.value] && <span>{LABELS.paidEver[row.paidEver.value]}</span>}{netSort && !row.cumulativeShare && data.coverage.money.coverage === "complete" && row.metrics.netReceiptsSatang !== null && row.metrics.netReceiptsSatang <= 0 && <span>{W.notInShare}</span>}{[...new Set([row.paidEver.reason, row.usageUnassessedReason].filter((code): code is string => !!code && ![...data.coverage.money.reasonCodes, ...data.coverage.usage.reasonCodes].some(common => common === code)))].map(code => <span key={code}>{reasonText(code)}</span>)}{([[W.users, 'activeUsers'], [W.documents, 'documents']] as const).map(([label, key]) => <span key={key}>{label}: <Figure value={sourceCount(row.metrics[key], data.coverage.usage)} /></span>)}</div>,
       }))} />
-      <p className="px-2 py-1 text-xs text-gray-600">{data.coverage.money.coverage === 'complete' && data.items.some(row => row.metrics.netReceiptsSatang < 0) && `${W.negative} · `}{W.receiptDefinition} · {W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
+      <p className="px-2 py-1 text-xs text-gray-600">{data.coverage.money.coverage === 'complete' && data.items.some(row => row.metrics.netReceiptsSatang !== null && row.metrics.netReceiptsSatang < 0) && `${W.negative} · `}{W.receiptDefinition} · {W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
       {netSort && <p className="px-2 py-1 text-xs text-gray-600">{W.tieOrder}</p>}
     </section>}
   </ReportNotes>;
@@ -161,33 +162,36 @@ export function CompaniesContent({ data, nav, selected, select, sortColumn }: { 
 
 function RevenueContent({ data, nav, tabs }: { data: ExecutiveAnalysis & { revenue: NonNullable<ExecutiveAnalysis['revenue']> }; nav: Navigation; tabs: ReactNode }) {
   const revenue = data.revenue, view = reportView('revenue', nav.params), pattern = useId();
-  const columns = { gridTemplateColumns: `repeat(${Math.max(1, revenue.trend.length)}, minmax(0, 1fr))` };
+  const monthly = data.monthlySeries?.find(series => series.metric === 'netReceiptsSatang');
+  const trend = monthly ? monthly.points.map(point => ({ month: point.month, netReceiptsSatang: { ...point.metricValue, currency: 'THB' as const, affectedMonths: point.metricValue.affectedMonths ?? [{ month: point.month, reasonCodes: point.metricValue.reasonCodes }] } })) : revenue.trend;
+  const columns = { gridTemplateColumns: `repeat(${Math.max(1, trend.length)}, minmax(0, 1fr))` };
   const figures: Array<[string, ExecutiveMoney]> = [[W.shortNet, revenue.netReceiptsSatang], [W.shortReceipts, revenue.receiptsSatang], [W.shortRefunds, revenue.refundsSatang], [W.tax, revenue.taxSatang], [W.shortFees, revenue.feesSatang]];
-  const trendSource = hoistedSource(revenue.trend.map(point => ({ coverage: point.netReceiptsSatang.coverage, source: 'money' })));
-  const max = Math.max(1, ...revenue.trend.map(point => Math.abs(point.netReceiptsSatang.value ?? point.netReceiptsSatang.knownValue ?? 0)));
+  const trendSource = hoistedSource(trend.map(point => ({ coverage: point.netReceiptsSatang.coverage, source: 'money' })));
+  const max = Math.max(1, ...trend.map(point => Math.abs(point.netReceiptsSatang.value ?? point.netReceiptsSatang.knownValue ?? 0)));
   const moneyColumn = (label: string) => ({ label: W.unitInHeader(label, W.unitBaht), width: 160, ...(label === W.shortRefunds ? { hide: 'narrow' as const } : {}) });
   const unmatchedRows: Array<[string, ExecutiveCount, boolean]> = [[W.unmatched, sourceCount(data.unmatchedMoney.count, data.coverage.money), false], [W.shortReceipts, sourceMoney(data.unmatchedMoney.receiptsSatang, data.coverage.money), true], [W.shortRefunds, sourceMoney(data.unmatchedMoney.refundsSatang, data.coverage.money), true], [W.excludedNet, sourceMoney(data.population.excludedTestInternalNetReceiptsSatang, data.coverage.money), true], [W.unclassifiedNet, sourceMoney(data.population.unclassifiedNetReceiptsSatang, data.coverage.money), true], [W.disputes, sourceCount(revenue.disputedInvoiceCount, data.coverage.money), false]];
   return <>
-    <ExecutiveKpiStrip>{figures.map(([label, figure], i) => <ExecutiveKpi key={label} iconName="money" label={label} figure={figure} moneyValue netValue={i === 0} unit={W.unitBaht} emphasis={i === 0} />)}</ExecutiveKpiStrip>
+    <ExecutiveKpiStrip>{figures.map(([label, figure], i) => <ExecutiveKpi key={label} iconName="money" label={label} figure={figure} moneyValue netValue={i === 0} unit={W.unitBaht} comparison={figure.comparison ?? data.periodComparisons?.[(["netReceiptsSatang", "receiptsSatang", "refundsSatang", "taxSatang", "feesSatang"] as const)[i]]} emphasis={i === 0} />)}</ExecutiveKpiStrip>
     {tabs}<div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${view}`} aria-label={REPORT_VIEWS.revenue.find(tab => tab.value === view)?.label}>
     {view === 'top' && data.spendConcentration && <SpendContent data={data.spendConcentration} nav={nav} />}
     {view === 'summary' && <Card title={W.purchase}><ReportTable title={W.purchase} columns={[{ label: W.purchase, width: 240 }, moneyColumn(W.shortReceipts), moneyColumn(W.shortRefunds), moneyColumn(W.shortNet)]} rows={revenue.byPurchaseGroup.map(row => ({ key: row.key, cells: [row.label, <Figure key="receipts" value={row.receiptsSatang} moneyValue />, <Figure key="refunds" value={row.refundsSatang} moneyValue />, <Figure key="net" value={row.netReceiptsSatang} moneyValue netValue />] }))} /><p className="text-xs text-gray-600">{W.moneyDefinition} · {W.vatIncluded}{revenue.byPurchaseGroup.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && ` · ${W.negative}`}</p></Card>}
     {view === 'unmatched' && <Card title={W.unmatched}><ReportTable title={W.unmatched} columns={[{ label: W.item, width: 440 }, { label: W.unitInHeader(W.quantity, `${W.quantity} / ${W.unitBaht}`), width: 180 }]} rows={unmatchedRows.map(([label, value, cash]) => ({ key: label, cells: [label, <Figure key={label} value={value} moneyValue={cash} source="money" />] }))} />{data.population.unclassifiedCount > 0 && <p className="text-xs text-gray-600">{W.unclassified(data.population.unclassifiedCount)}</p>}</Card>}
-    {view === 'trend' && <Card title={<span className="relative">{W.unitInHeader(W.trend, W.unitBaht)}{trendSource && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={[...new Set(revenue.trend.flatMap(point => point.netReceiptsSatang.reasonCodes.map(code => reasonText(code, point.netReceiptsSatang.coverage))))].join(' · ')} /></span>}</span>}>
-      <div className="executive-trend-labels grid items-end gap-2 text-center text-sm tabular-nums" style={columns}>{revenue.trend.map(point => <Figure key={point.month} value={point.netReceiptsSatang} moneyValue mark={!trendSource} />)}</div>
+    {view === 'trend' && <Card title={<span className="relative">{W.unitInHeader(W.trend, W.unitBaht)}{trendSource && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={[...new Set(trend.flatMap(point => point.netReceiptsSatang.reasonCodes.map(code => reasonText(code, point.netReceiptsSatang.coverage, [point.month]))))].join(' · ')} /></span>}</span>}>
+      <div className="overflow-x-auto"><div style={trend.length >= 12 ? { minWidth: trend.length * 64 } : undefined}><div className="executive-trend-labels grid items-end gap-2 text-center text-sm tabular-nums" style={columns}>{trend.map(point => <Figure key={point.month} value={point.netReceiptsSatang} moneyValue mark={!trendSource} />)}</div>
       <svg viewBox="0 0 360 200" height="200" preserveAspectRatio="none" role="img" aria-label={W.trend} className="block h-[200px] w-full">
         <defs><pattern id={pattern} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--color-gray-100)" /><line x1="0" x2="0" y1="0" y2="6" stroke="var(--color-gray-400)" strokeWidth="2" /></pattern></defs>
         {[25, 50, 75, 125, 150, 175].map(y => <line key={y} x1="0" x2="360" y1={y} y2={y} stroke="var(--color-gray-100)" />)}
-        <line x1="0" x2="360" y1="100" y2="100" stroke="var(--color-gray-400)" />{revenue.trend.map((point, index) => {
+        <line x1="0" x2="360" y1="100" y2="100" stroke="var(--color-gray-400)" />{trend.map((point, index) => {
           const value = point.netReceiptsSatang.value ?? point.netReceiptsSatang.knownValue;
-          const step = 360 / Math.max(1, revenue.trend.length), x = index * step + step / 4, width = step / 2;
+          const step = 360 / Math.max(1, trend.length), x = index * step + step / 4, width = step / 2;
           if (value === undefined) return <rect key={point.month} data-unavailable="true" x={x} y="10" width={width} height="90" fill={`url(#${pattern})`} />;
           const height = Math.abs(value) / max * 90;
           return <g key={point.month}><title>{reportShortMonth(point.month)}: {figureNumber(point.netReceiptsSatang, true)}</title><rect x={x} y={value < 0 ? 100 : 100 - height} width={width} height={Math.max(1, height)} fill={value < 0 ? 'var(--color-red-600)' : 'var(--color-brand-800)'} /></g>;
         })}
       </svg>
-      <div className="grid gap-2 text-center text-xs text-gray-600" style={columns}>{revenue.trend.map(point => <p key={point.month}>{reportShortMonth(point.month)}</p>)}</div>
-      {revenue.trend.some(point => point.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(point.netReceiptsSatang.value)) && <p className="text-xs text-red-700">{W.negative}</p>}
+      <div className="grid gap-2 text-center text-xs text-gray-600" style={columns}>{trend.map(point => <p key={point.month}>{reportShortMonth(point.month)}</p>)}</div>
+      </div></div>
+      {trend.some(point => point.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(point.netReceiptsSatang.value)) && <p className="text-xs text-red-700">{W.negative}</p>}
       <p className="text-xs text-gray-600">{W.moneyDefinition}</p>
     </Card>}
     </div>
@@ -199,17 +203,18 @@ function SpendContent({ data, nav }: { data: ExecutiveSpendConcentration; nav: N
     const [count, companies, weight] = key === 'TOP20' ? [data.topCount, data.topCompanyShare, data.topShare] : key === 'REST' ? [data.restCount, data.restCompanyShare, data.restShare] : [data.prefix80Count, data.prefix80CompanyShare, data.prefix80Share];
     return { key, href: data.drilldownFilters[key] ? drilldownHref(nav.params, nav.from, data.drilldownFilters[key]!) : undefined, cells: [LABELS.spendCohort[key], count ?? '–', ratioText(companies), <Share key={key} count={null} share={weight} />] };
   });
-  return <Card title={W.spendTitle(reportMonth(nav.params.get('month')))}>
+  return <Card title={P.spendTitle(periodText({ from: nav.params.get('from') ?? undefined, to: nav.params.get('to') ?? undefined, month: nav.params.get('month') ?? undefined }))}>
     <p className="text-xs text-gray-600">{W.base(data.population)} · {W.weight}: {W.weightDefinition}</p>
+    {blocked && data.reasonCodes.filter(code => code === 'TOO_FEW_COMPANIES' || code === 'NO_POSITIVE_NET').map(code => <p key={code} role="status" className="text-xs text-gray-600">{reasonText(code)}</p>)}
     {data.reasonCodes.includes('BILLING_SCAN_NOT_COMPLETE') && <p className="text-xs">{W.partialRanking}</p>}
     {blocked ? data.reasonCodes.includes('TOO_FEW_COMPANIES') && <Button variant="secondary" onClick={() => openReport(nav, menuHref('companies', nav.params, { sortBy: 'netReceipts', sortDir: 'desc' }))}>{W.allRanks}</Button> : <>
       <ReportTable title={W.top} remember={nav.remember} columns={[{ label: W.group, width: 360 }, { label: W.unitCompany, width: 100 }, { label: W.unitInHeader(W.unitCompany, '%'), width: 120 }, { label: W.unitInHeader(W.weight, '%'), width: 160 }]} rows={cohorts} />
       {(['TOP20', 'TO80'] as const).map(key => spendTieText(key === 'TOP20' ? data.boundaryTie : data.prefix80BoundaryTie) && <DrillLink key={key} nav={nav} filters={data.drilldownFilters[key === 'TOP20' ? 'BOUNDARY_TIE' : 'TO80_BOUNDARY_TIE']!} className="flex min-h-11 items-center rounded border border-gray-200 px-3 text-xs text-gray-600">{spendTieText(key === 'TOP20' ? data.boundaryTie : data.prefix80BoundaryTie)}</DrillLink>)}
-      <p className="text-xs">{W.positive} {data.positiveCompanyCount.toLocaleString('th-TH')} {W.unitCompany}{data.nonPositiveCount > 0 && ` · ${W.nonPositive(data.nonPositiveCount)}`}</p>
-      {data.positiveCompanyCount < data.topTargetCount && <p className="text-xs">{W.fewPositive}</p>}{data.roundingNote && <p className="text-xs">{W.rounding}</p>}
+      <p className="text-xs">{W.positive} {data.positiveCompanyCount?.toLocaleString('th-TH') ?? '–'} {W.unitCompany}{data.nonPositiveCount !== null && data.nonPositiveCount > 0 && ` · ${W.nonPositive(data.nonPositiveCount)}`}</p>
+      {data.positiveCompanyCount !== null && data.positiveCompanyCount < data.topTargetCount && <p className="text-xs">{W.fewPositive}</p>}{data.roundingNote && <p className="text-xs">{W.rounding}</p>}
     </>}
-    <ReportTable title={W.figure} columns={[{ label: W.item, width: 360 }, { label: W.unitInHeader(W.shortNet, W.unitBaht), width: 200 }]} rows={[[W.positiveNet, data.positiveNetTotalSatang], [W.net, data.signedNetTotalSatang], [W.negativeTotal, data.negativeNetSatang]].map(([label, value]) => ({ key: String(label), cells: [label, <Figure key={String(label)} value={sourceMoney(Number(value), data)} moneyValue netValue />] }))} />
-    {data.receiptsWithoutPositiveNet > 0 && <p className="text-xs">{W.refundedDifference(data.receiptsWithoutPositiveNet)}</p>}
+    <ReportTable title={W.figure} columns={[{ label: W.item, width: 360 }, { label: W.unitInHeader(W.shortNet, W.unitBaht), width: 200 }]} rows={([[W.positiveNet, data.positiveNetTotalSatang], [W.net, data.signedNetTotalSatang], [W.negativeTotal, data.negativeNetSatang]] as Array<[string, number | null]>).map(([label, value]) => ({ key: String(label), cells: [label, <Figure key={String(label)} value={sourceMoney(value, data)} moneyValue netValue />] }))} />
+    {data.receiptsWithoutPositiveNet !== null && data.receiptsWithoutPositiveNet > 0 && <p className="text-xs">{W.refundedDifference(data.receiptsWithoutPositiveNet)}</p>}
   </Card>;
 }
 function Share({ count, share }: { count: number | null; share: Parameters<typeof ratioText>[0] }) {
@@ -235,7 +240,7 @@ export function AnalysisContent({ data, nav, seller, rankingControl, tabs }: { d
       <ReportTable title={W.credited} columns={[{ label: W.creditedSeller, width: 300 }, { label: W.companyCount, width: 120 }, { label: W.waiting, width: 90 }, { label: W.unitInHeader(W.creditAmount, W.unitBaht), width: 200 }]} rows={data.creditedSellers.rows.map((row, i) => ({ key: String(i), cells: [thaiLabel(row.seller.label ?? W.unknown, row.seller.salesCode), row.companies, row.waiting, figureNumber({ value: row.creditSatang, coverage: 'complete', reasonCodes: [] }, true)] }))} /><p className="text-xs text-gray-600">{W.through(reportDateTime(data.creditedSellers.asOf))}</p>{W.creditNotes.map(note => <p key={note} className="text-xs text-gray-600">{note}</p>)}
     </Card> : <Card title={rowsAre}>
       <ReportTable title={W.customers} remember={nav.remember} columns={[{ label: rowsAre, width: 190 }, { label: W.unitCompany, width: 140, source: data.population.eligibleCount, sourceName: 'company' }, { label: W.paid, width: 100 }, { label: W.filterLabels.paidEver, width: 110 }, { label: W.active, width: 110 }, { label: W.unitInHeader(W.shortNet, W.unitBaht), width: 140 }]} rows={data.groups.map(row => ({ key: row.key, href: drilldownHref(nav.params, nav.from, row.drilldownFilters), cells: [<span key="label" className="block truncate" title={thaiLabel(row.label, row.key)}>{thaiLabel(row.label, row.key)}</span>, <Share key="share" count={row.companies.count} share={row.companies.share} />, <Figure key="paid" value={row.companiesWithReceipts} />, row.paidEverCompanies.toLocaleString('th-TH'), <Figure key="active" value={row.activeCompanies} />, <Figure key="money" value={row.netReceiptsSatang} moneyValue netValue />] }))} />
-      <p className="text-xs text-gray-600">{data.groups.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && `${W.negative} · `}{W.baseLabel} <Figure value={data.population.eligibleCount} unit={W.unitCompany} /> · {reportMonth(data.period.month)}</p>{data.industryCoverage && <p className="text-xs text-gray-600">{W.industryCoverage(data.industryCoverage.numerator, data.industryCoverage.denominator)}</p>}{data.roundingNote && <p className="text-xs text-gray-600">{W.rounding}</p>}
+      <p className="text-xs text-gray-600">{data.groups.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && `${W.negative} · `}{W.baseLabel} <Figure value={data.population.eligibleCount} unit={W.unitCompany} /> · {periodText(data.period)}</p>{data.industryCoverage && <p className="text-xs text-gray-600">{W.industryCoverage(data.industryCoverage.numerator, data.industryCoverage.denominator)}</p>}{data.roundingNote && <p className="text-xs text-gray-600">{W.rounding}</p>}
     </Card>}</div></>;
   } else if (data.comparison) {
     const c = data.comparison;
@@ -251,28 +256,30 @@ export function AnalysisContent({ data, nav, seller, rankingControl, tabs }: { d
       <p className="text-xs text-gray-600">{W.receiptDefinition} · {W.difference} · {W.point}{[c.sideA, c.sideB].some(side => side.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(side.netReceiptsSatang.value)) && ` · ${W.negative}`}</p>
     </Card>;
   } else panel = <EmptyState title={W.noRows} description="" />;
-  return <ReportNotes data={data}>{panel}</ReportNotes>;
+  return <ReportNotes data={data} periodOnly={section === 'revenue' || !!data.comparison} sources={section === 'revenue' ? ['money'] : ['money', 'usage']}>{panel}</ReportNotes>;
 }
 
 export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, tabs }: { data: ExecutiveCompanyDetail; tab: string; history: ExecutiveCompanyHistory | null; admin: boolean; nav: Navigation; contactReadAt: string; tabs?: ReactNode }) {
-  const company = data.company, month = data.month;
+  const company = data.company;
+  const month = data.periodSummary !== undefined ? data.periodSummary : data.month && { ...data.month, coverage: data.coverage, paidInPeriod: data.month.paidInMonth || (data.coverage.money.coverage === 'complete' ? false : null), positiveNetInPeriod: data.month.positiveNetInMonth || (data.coverage.money.coverage === 'complete' ? false : null) };
+  const usageCoverage = month?.coverage.usage ?? data.coverage.usage;
   const tabBar = tabs ?? <ExecutiveTabs label={W.detail} tabs={DETAIL_TABS} value={tab} onChange={value => { const next = new URLSearchParams(nav.params); next.delete('tab'); next.set('view', value); nav.navigate(executiveHref(`/system/executive/companies/${encodeURIComponent(company.id)}`, next)); }} />;
-  const figures: Array<[string, ExecutiveCount, boolean, string, string]> = month ? [[W.shortNet, month.money.netReceiptsSatang, true, 'money', W.unitBaht], [W.receiptCount, sourceCount(month.usage.expenseReceiptCountInPeriod, data.coverage.usage), false, 'receipt', W.unitReceipt], [W.days, sourceCount(month.usage.activeDays, data.coverage.usage), false, 'calendar', W.unitDay], [W.ai, sourceCount(month.usage.aiRequests, data.coverage.usage), false, 'chat', W.unitRequest]] : [];
-  return <ReportNotes data={data}>
-    {month && <ExecutiveKpiStrip columns={2}>{figures.map(([label, figure, moneyValue, icon, unit]) => <ExecutiveKpi key={label} iconName={icon} label={label} figure={figure} moneyValue={moneyValue} netValue={moneyValue} unit={unit} />)}</ExecutiveKpiStrip>}
+  const figures: Array<[string, ExecutiveCount, boolean, string, string]> = month ? [[W.shortNet, month.money.netReceiptsSatang, true, 'money', W.unitBaht], [W.receiptCount, sourceCount(month.usage.expenseReceiptCountInPeriod, usageCoverage), false, 'receipt', W.unitReceipt], [W.days, sourceCount(month.usage.activeDays, usageCoverage), false, 'calendar', W.unitDay], [W.ai, sourceCount(month.usage.aiRequests, usageCoverage), false, 'chat', W.unitRequest]] : [];
+  return <ReportNotes data={data} sources={tab === 'usage' ? ['money', 'usage', 'aiCost'] : ['money', 'usage']}>
+    {month && <ExecutiveKpiStrip columns={2}>{figures.map(([label, figure, moneyValue, icon, unit]) => <ExecutiveKpi key={label} iconName={icon} label={label} figure={figure} moneyValue={moneyValue} netValue={moneyValue} unit={unit} comparison={figure.comparison ?? data.periodComparisons?.[moneyValue ? "netReceiptsSatang" : icon === "receipt" ? "expenseReceiptCount" : icon === "calendar" ? "activeDays" : "aiRequests"]} />)}</ExecutiveKpiStrip>}
     <p className="text-xs text-gray-600">{W.receiptDefinition}</p>
     {tabBar}<div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${tab}`} aria-label={DETAIL_TABS.find(item => item.value === tab)?.label}>
     {tab === 'history' ? history && <Card title={W.history}>{history.items.length === 0 ? <EmptyState title={W.noHistory} description="" /> : <ReportTable title={W.history} columns={[{ label: W.item, width: 340 }, { label: W.historyAt, width: 160, align: 'left' }, { label: W.shortPlan, width: 160, align: 'left' }]} rows={history.items.map((event, index) => ({ key: String(index), cells: [EXECUTIVE_HISTORY_EVENT_LABELS[event.kind], reportDateTime(event.at), event.planLabel] }))} />}</Card> : tab === 'usage' ? month && <div className="grid min-w-0 gap-3 xl:grid-cols-2">
       <Card title={W.usageTab}>{rowStatus(month)}<p>{W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
         <DetailValues rows={[
           [W.filterLabels.receiptAdoption, LABELS.receiptAdoption[company.receiptAdoption] ?? W.unknown], [W.lifetimeReceipts, <Figure key="lifetime" value={sourceCount(company.expenseReceiptCountLifetime, data.coverage.usage)} />],
-          ...([[W.receiptCount, 'expenseReceiptCountInPeriod'], [W.days, 'activeDays'], [W.users, 'activeUsers'], [W.documents, 'documents'], [W.ai, 'aiRequests']] as const).map(([label, key]): [string, ReactNode] => [label, <Figure key={key} value={sourceCount(month.usage[key], data.coverage.usage)} />]),
+          ...([[W.receiptCount, 'expenseReceiptCountInPeriod'], [W.days, 'activeDays'], [W.users, 'activeUsers'], [W.documents, 'documents'], [W.ai, 'aiRequests']] as const).map(([label, key]): [string, ReactNode] => [label, <Figure key={key} value={sourceCount(month.usage[key], key === 'activeUsers' && 'activeUsersCoverage' in month.usage ? month.usage.activeUsersCoverage : usageCoverage)} />]),
           [W.firstActivity, reportDateTime(company.firstActivityAt)], [W.lastActivity, reportDateTime(company.lastActivityAt)], [W.lastWeb, reportDateTime(company.lastWebEntryAt)], [W.lastLine, reportDateTime(company.lastLineActivityAt)],
         ]} />
-        <ReportTable title={W.usage} columns={[{ label: W.discovery, width: 100 }, { label: W.days, width: 80 }, { label: W.users, width: 95 }, { label: W.receiptCount, width: 105 }]} rows={(['Line', 'Web'] as const).map(channel => ({ key: channel, cells: [channel === 'Line' ? W.line : W.web, <Figure key="days" value={sourceCount(month.usage[`activeDays${channel}`], data.coverage.usage)} />, <Figure key="users" value={sourceCount(month.usage[`activeUsers${channel}`], data.coverage.usage)} />, <Figure key="receipts" value={sourceCount(month.usage[`expenseReceipts${channel}`], data.coverage.usage)} />] }))} />
+        <ReportTable title={W.usage} columns={[{ label: W.discovery, width: 100 }, { label: W.days, width: 80 }, { label: W.users, width: 95 }, { label: W.receiptCount, width: 105 }]} rows={(['Line', 'Web'] as const).map(channel => ({ key: channel, cells: [channel === 'Line' ? W.line : W.web, <Figure key="days" value={sourceCount(month.usage[`activeDays${channel}`], usageCoverage)} />, <Figure key="users" value={sourceCount(month.usage[`activeUsers${channel}`], 'activeUsersCoverage' in month.usage ? month.usage.activeUsersCoverage : usageCoverage)} />, <Figure key="receipts" value={sourceCount(month.usage[`expenseReceipts${channel}`], usageCoverage)} />] }))} />
       </Card>
       <Card title={W.revenue}><p className="text-xs text-gray-600">{W.moneyDefinition} · {W.vatIncluded}{month.money.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(month.money.netReceiptsSatang.value) && ` · ${W.negative}`}</p><ReportTable title={W.revenue} columns={[{ label: W.item }, { label: W.unitInHeader(W.quantity, W.unitBaht), width: 130 }]} rows={([[W.shortReceipts, month.money.receiptsSatang], [W.shortRefunds, month.money.refundsSatang], [W.shortNet, month.money.netReceiptsSatang], [W.tax, month.money.taxSatang], [W.shortFees, month.money.feesSatang], [W.aiCost, month.money.aiCostSatang]] as Array<[string, ExecutiveMoney]>).map(([label, value]) => ({ key: label, cells: [<span key="label" className="block truncate" title={label}>{label}</span>, <Figure key={label} value={value} moneyValue netValue={label === W.shortNet} measured={label === W.aiCost} source={label === W.aiCost ? "aiCost" : "money"} />] }))} />
-        <p>{W.paid}: {month.paidInMonth ? W.yes : data.coverage.money.coverage === 'complete' ? W.noReceipts : LABELS.paidEver.UNKNOWN} · {W.positive}: {month.positiveNetInMonth ? W.yes : data.coverage.money.coverage === 'complete' ? W.noPositiveNet : LABELS.paidEver.UNKNOWN}</p>
+        <p>{W.paid}: {month.paidInPeriod === true ? W.yes : month.paidInPeriod === false ? W.noReceipts : LABELS.paidEver.UNKNOWN} · {W.positive}: {month.positiveNetInPeriod === true ? W.yes : month.positiveNetInPeriod === false ? W.noPositiveNet : LABELS.paidEver.UNKNOWN}</p>
       </Card>
     </div> : tab === 'company' && <>
       <div className="grid min-w-0 gap-3 lg:grid-cols-2 xl:grid-cols-3">

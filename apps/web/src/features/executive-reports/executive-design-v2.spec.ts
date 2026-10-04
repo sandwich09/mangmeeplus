@@ -4,8 +4,9 @@ import { readFileSync } from 'node:fs';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
-import { EXECUTIVE_WORDS as W, EXECUTIVE_REPORT_LABELS, type ExecutiveOverview, type ExecutiveCompanies } from '@watchdog-bms/contracts';
+import { executivePeriodReportWords, EXECUTIVE_REPORT_LABELS, type ExecutiveOverview, type ExecutiveCompanies } from '@watchdog-bms/contracts';
 
+const W = executivePeriodReportWords();
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 require.extensions['.svg'] = module => { module.exports = () => null; };
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');

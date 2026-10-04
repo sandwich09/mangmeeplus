@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExecutiveContext } from '@watchdog-bms/contracts';
+require.extensions['.svg'] = module => { module.exports = () => null; };
 const moduleOf = () => import('./executive-export.logic');
 const context = { capabilities: { readReport: { allowed: true }, export: { allowed: true }, seeContacts: { allowed: false } }, currentMonth: '2026-10', defaultMonth: '2026-10', months: { first: '2026-08', last: '2026-10' },
   filters: Object.fromEntries(['industry', 'discovery', 'referringSales', 'companyStatus', 'planState', 'usageGroup', 'paidEver', 'receiptAdoption', 'spendCohort', 'signupRail'].map(k => [k, [{ value: 'ALL', label: 'ทั้งหมด' }, { value: 'OTHER', label: 'อื่น ๆ' }]])) } as unknown as ExecutiveContext;
@@ -8,7 +9,7 @@ test('export body uses the shown build and full canonical query, removes paging 
   const { exportBody } = await moduleOf();
   const params = new URLSearchParams('month=2026-09&page=3&filter_discovery=OTHER&pick=paidEver%3DYES%26sortBy%3DnetReceipts%26sortDir%3Ddesc');
   const body = exportBody('companies', params, context, 'shown-build', 'ร้าน', undefined, false);
-  assert.deepEqual(body, { buildId: 'shown-build', reportKey: 'companies', month: '2026-09', filters: { paidEver: 'YES', q: 'ร้าน' }, sortBy: 'netReceipts', sortDir: 'desc', format: 'xlsx', includeContacts: false });
+  assert.deepEqual(body, { buildId: 'shown-build', reportKey: 'companies', from: '2026-09', to: '2026-09', filters: { paidEver: 'YES', q: 'ร้าน' }, sortBy: 'netReceipts', sortDir: 'desc', format: 'xlsx', includeContacts: false });
   const detail = exportBody('detail', params, context, 'shown', '', 'target', true);
   assert.deepEqual(detail.filters, {}); assert.equal(detail.targetCompanyId, 'target'); assert.equal(detail.includeContacts, false);
   const compare = exportBody('compare', new URLSearchParams('month=2026-09&by=company&a=a&b=b&filter_discovery=OTHER'), context, 'shown', 'search');
@@ -45,7 +46,7 @@ test('snapshot expiry reloads once and returns to the report without automatical
 });
 test('filename is Thai and contains no company name, internal key or search, and permission gates use capabilities', async () => {
   const { exportFileName, canExport, canExportContacts } = await moduleOf();
-  assert.equal(exportFileName('detail', '2026-09', new Date('2026-10-03T02:30:00Z')), 'รายงานผู้บริหารมั่งมี-รายละเอียดบริษัท-ก.ย.2569-ส่งออก-3ต.ค.2569-0930.xlsx');
+  assert.equal(exportFileName('detail', '2026-09', new Date('2026-10-03T02:30:00Z')), 'รายงานผู้บริหารมั่งมี-รายละเอียดบริษัท-ช่วงเดือนก.ย.2569-ส่งออก-3ต.ค.2569-0930.xlsx');
   assert.equal(canExport(context), true); assert.equal(canExportContacts('companies', context), false);
   const contact = { ...context, capabilities: { ...context.capabilities, seeContacts: { allowed: true } } };
   assert.equal(canExportContacts('companies', contact), true); assert.equal(canExportContacts('overview', contact), false);
