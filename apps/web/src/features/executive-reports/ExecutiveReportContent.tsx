@@ -11,6 +11,7 @@ import {
 import { MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
 import { ExecutiveSectionCard as Card, ExecutiveKpi, ExecutiveKpiStrip, ExecutiveTable as ReportTable, Figure, IncompleteDot, ReportNotes, ExecutiveTabs, type ReportColumn, type ReportDetailGroup, type ReportDetailItem } from './ExecutiveReportDesign';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
+import { ExecutiveCompanyNote, ExecutiveNoteAction, type NoteChange } from './ExecutiveCompanyNote';
 import { Button } from '@/common/components/button';
 import { EmptyState } from '@/common/components/state';
 import { W, RANK_LABELS, REPORT_VIEWS, DETAIL_TABS, COMPANY_GROUPS as G, thaiLabel } from './executive-reports.words';
@@ -177,7 +178,7 @@ function companyFacts(row: ExecutiveCompanyRow, data: ExecutiveCompanies): Recor
   };
 }
 
-export function CompaniesContent({ data, nav, sortColumn }: { data: ExecutiveCompanies; nav: Navigation; sortColumn?: (key: string) => void }) {
+export function CompaniesContent({ data, nav, sortColumn, onNote }: { data: ExecutiveCompanies; nav: Navigation; sortColumn?: (key: string) => void; onNote?: NoteChange }) {
   const netSort = data.sort.sortBy === 'netReceipts', ranked = ['netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests'].includes(data.sort.sortBy);
   const churnFilter = nav.params.get('filter_churned') === 'true' || drillFilters(nav.params)?.churned === 'true';
   // The contact pair exists only where the API returns contacts (the reader holds that right). Without it there is no column: no empty or masked cell.
@@ -208,7 +209,10 @@ export function CompaniesContent({ data, nav, sortColumn }: { data: ExecutiveCom
         const noContact = row.ownerContact.status === 'OK' ? null : contactFields(row.ownerContact)[0]?.[1];
         const reasons = [...new Set([row.paidEver.reason, row.usageUnassessedReason].filter((code): code is string => !!code && ![...data.coverage.money.reasonCodes, ...data.coverage.usage.reasonCodes].some(common => common === code)))].map(code => reasonText(code));
         const groups: ReportDetailGroup[] = [
-          ...(row.note.text ? [{ title: N.title, items: [{ label: sheetLabel('note'), value: <span className="whitespace-pre-wrap">{row.note.text}</span>, wide: true }, { label: sheetLabel('noteUpdatedBy'), value: row.note.updatedBy?.displayName ?? '–' }, { label: sheetLabel('noteUpdatedAt'), value: reportDateTime(row.note.updatedAt, '–') }] }] : []),
+          // Every reader reads the note; an account with the note right also gets the action that opens its editor (so also where there is no note yet).
+          ...(row.note.text || row.note.updatedAt || row.canEditNote ? [{ title: N.title, items: [{ label: sheetLabel('note'), value: row.note.text ? <span className="whitespace-pre-wrap">{row.note.text}</span> : N.empty, wide: true },
+            ...(row.note.updatedAt ? [{ label: sheetLabel('noteUpdatedBy'), value: row.note.updatedBy?.displayName ?? '–' }, { label: sheetLabel('noteUpdatedAt'), value: reportDateTime(row.note.updatedAt, '–') }] : [])],
+            action: row.canEditNote ? <ExecutiveNoteAction companyId={row.id} companyName={row.displayName} note={row.note} canEdit period={data.period} onChange={onNote} /> : undefined }] : []),
           { title: G.receipts, items: ['firstReceiptAt', 'receipts7', 'receipts30', 'receiptDays30', 'daysSinceLastReceipt', 'confirmed', 'pending', 'draft', 'receiptBucket'].map(fact) },
           { title: G.plan, items: ['paymentState', 'daysLeft', 'lifetimeReceiptsSatang', 'lifetimeRefundsSatang', 'lifetimeNetSatang'].map(fact) },
           { title: G.people, items: [...['activeMemberCount', 'branchCount', 'joinedAt', 'signupRail', 'discovery', 'referrer'].map(fact), { label: W.registered, value: row.registeredName || W.unknown }, { label: W.group, value: row.industryGroup.label }, { label: W.filterLabels.companyStatus, value: LABELS.companyStatus[row.companyStatus] ?? W.unknown }] },
@@ -320,7 +324,7 @@ export function AnalysisContent({ data, nav, seller, rankingControl, tabs }: { d
   return <ReportNotes data={data} periodOnly={section === 'revenue'} sources={section === 'revenue' ? ['money'] : ['money', 'usage']}>{panel}</ReportNotes>;
 }
 
-export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, tabs }: { data: ExecutiveCompanyDetail; tab: string; history: ExecutiveCompanyHistory | null; admin: boolean; nav: Navigation; contactReadAt: string; tabs?: ReactNode }) {
+export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, tabs, onNote }: { data: ExecutiveCompanyDetail; tab: string; history: ExecutiveCompanyHistory | null; admin: boolean; nav: Navigation; contactReadAt: string; tabs?: ReactNode; onNote?: NoteChange }) {
   const company = data.company;
   const month = data.periodSummary !== undefined ? data.periodSummary : data.month && { ...data.month, coverage: data.coverage, paidInPeriod: data.month.paidInMonth || (data.coverage.money.coverage === 'complete' ? false : null), positiveNetInPeriod: data.month.positiveNetInMonth || (data.coverage.money.coverage === 'complete' ? false : null) };
   const usageCoverage = month?.coverage.usage ?? data.coverage.usage;
@@ -347,6 +351,9 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, 
       <Card title={W.companyTab}><DetailValues rows={[[W.company, company.displayName], [W.registered, company.registeredName || W.unknown], [W.group, company.industryGroup.label], [W.businessType, company.businessTypeLabel || company.businessTypeOtherText || W.unknown], [W.province, company.provinceLabel], [W.joined, reportDate(company.joinedAt)], [W.filterLabels.companyStatus, LABELS.companyStatus[company.companyStatus] ?? W.unknown], ...contactFields(company.ownerContact).map(([field, value]): [string, ReactNode] => [W[field], value])]} />{company.ownerContact.status === 'NOT_PERMITTED' ? <p className="text-sm">{W.contactNotPermitted}</p> : <p className="text-sm">{W.contactAt(reportDateTime(contactReadAt))}</p>}</Card>
       <Card title={W.originTitle}><DetailValues rows={[[W.filterLabels.discovery, thaiLabel(company.discovery.label)], ...(company.discovery.key === 'OTHER' ? [[LABELS.discovery.OTHER!, company.discovery.otherText || W.unknown] as [string, ReactNode]] : []), [W.filterLabels.signupRail, thaiLabel(LABELS.signupRail[company.signupRail] ?? W.unknown)], [W.referring, referrer(company.referrer)], [W.creditedSeller, thaiLabel(company.creditedSeller.label || W.unknown, company.creditedSeller.salesCode)], [W.creditAmount, company.creditedSeller.creditSatang === undefined ? '—' : money(company.creditedSeller.creditSatang)], [W.creditAt, reportDateTime(company.creditedSeller.creditedAt)]]} /><p className="text-sm">{W.current} · {W.through(reportDateTime(data.build.asOf))}</p>{W.creditNotes.map(note => <p key={note} className="text-sm">{note}</p>)}</Card>
       <Card title={W.service}><p>{W.current} · {W.through(reportDateTime(data.build.asOf))}</p><DetailValues rows={[[W.plan, company.planLabel], [W.filterLabels.planState, <div key="state">{LABELS.planState[company.planState] ?? W.unknown}{company.planState === 'ADMIN_HOLD' && <p>{LABELS.companyStatus[company.companyStatus] ?? W.unknown}</p>}</div>], [W.planEnds, reportDate(company.planEndsAt)], [W.members, company.currentActiveMemberCount], [W.branches, company.currentBranchCount], [W.lastActivity, reportDateTime(company.lastActivityAt)]]} /></Card>
+      {/* The team's note, the same one as in the list and in the admin console. A System Admin changes it in the console. */}
+      <Card title={N.title} className="col-span-full [overflow-wrap:anywhere]"><ExecutiveCompanyNote key={company.id} companyId={company.id} note={company.note} canEdit={company.canEditNote} period={data.period} onChange={onNote}
+        readOnly={admin ? <Link href={`/system/partners/${encodeURIComponent(company.id)}`} onClick={nav.remember} className="inline-flex min-h-11 items-center text-brand-800 underline decoration-1 underline-offset-2 md:min-h-0">{S.noteAdminRoute}</Link> : undefined} /></Card>
       </div>
       {admin && <ReportLink href={`/system/partners/${encodeURIComponent(company.id)}`} remember={nav.remember}>{W.management}</ReportLink>}
     </>}

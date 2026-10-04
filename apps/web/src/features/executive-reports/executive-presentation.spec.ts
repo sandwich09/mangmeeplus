@@ -98,6 +98,58 @@ test('an opened row of the company sheet is grouped facts under their own labels
   assert.doesNotMatch(expired.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '', /หมายเหตุของทีมมั่งมี/);
 });
 
+test('the team note: every reader reads it, the note right adds the edit action in the row and the editor on the company page, an admin is sent to the console', async () => {
+  const { CompaniesContent, CompanyContent } = await content();
+  const { companyFacts } = await import('./executive-company.fixture');
+  const { COMPANY_TEAM_NOTE_WORDS: N } = await import('@watchdog-bms/contracts');
+  const opened = (facts: object) => htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(0) }, items: [{ ...company, ...companyFacts(), ...facts }], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav }).match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '';
+  const noted = { text: 'รอใบเสนอราคา', version: 2, updatedAt: '2026-10-04T08:30:00.000Z', updatedBy: { displayName: 'สมหญิง' } };
+  // No note and no right: the opened row says nothing about the note. A note without the right: read only.
+  assert.ok(!opened({}).includes(N.title));
+  assert.ok(opened({ note: noted }).includes('รอใบเสนอราคา')); assert.ok(!opened({ note: noted }).includes(`>${N.edit}<`));
+  // The note right: the action is there also where there is no note yet (said in the note's own words); the editor opens only on the action.
+  const editable = opened({ canEditNote: true });
+  assert.match(editable, new RegExp(`<h3[^>]*>${N.title}</h3>`)); assert.match(editable, new RegExp(`<dd[^>]*>${N.empty}</dd>`)); assert.match(editable, new RegExp(`<button[^>]*>${N.edit}</button>`));
+  assert.doesNotMatch(editable, /ผู้แก้ไขหมายเหตุ|role="dialog"|<textarea/);
+  // A note that was cleared still says who cleared it and when.
+  const cleared = opened({ note: { ...noted, text: '' } });
+  assert.match(cleared, new RegExp(`<dd[^>]*>${N.empty}</dd>`)); assert.match(cleared, /<dt[^>]*>ผู้แก้ไขหมายเหตุ<\/dt><dd[^>]*>สมหญิง<\/dd>/);
+
+  // The company page: the same note in its own card, once.
+  const page = (facts: object, admin = false) => htmlOf(CompanyContent, { data: { ...envelope, company: { ...company, ...companyFacts(), creditedSeller: {}, currentActiveMemberCount: 1, currentBranchCount: 1, ...facts }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail, tab: 'company', history: null, admin, nav, contactReadAt: '' });
+  const reader = page({ note: noted });
+  assert.equal(reader.split(`>${N.title}<`).length - 1, 1); assert.ok(reader.includes('รอใบเสนอราคา')); assert.ok(reader.includes('แก้ล่าสุดโดย สมหญิง เมื่อ 4 ต.ค. 2569'));
+  assert.ok(reader.includes(N.readOnly)); assert.ok(!reader.includes(`>${N.edit}<`));
+  const holder = page({ canEditNote: true });
+  assert.match(holder, new RegExp(`<button[^>]*>${N.edit}</button>`)); assert.ok(holder.includes(N.empty)); assert.ok(!holder.includes(N.readOnly));
+  // A System Admin changes the note in the console: the sentence itself is the way there.
+  const console_ = page({}, true);
+  assert.match(console_, new RegExp(`<a[^>]*href="/system/partners/company"[^>]*>${S.noteAdminRoute}</a>`)); assert.ok(!console_.includes(N.readOnly));
+  // The history and usage tabs do not repeat it.
+  assert.ok(!htmlOf(CompanyContent, { data: { ...envelope, company: { ...company, ...companyFacts(), note: noted }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail, tab: 'history', history: null, admin: false, nav, contactReadAt: '' }).includes(N.title));
+
+  // One editor: the report's block and dialog are the console's own note over the report's routes, with no sentence of their own.
+  const note = source('./ExecutiveCompanyNote.tsx');
+  assert.match(note, /import \{ TeamNoteBody, useTeamNote, type TeamNote \} from '\.\.\/system-partners\/PartnerTeamNote';/);
+  assert.match(note, /closeOnBackdrop=\{draft === base\}/); assert.match(note, /if \(!saving\) close\(\)/); assert.doesNotMatch(note, /[ก-๙]/);
+  // A changed note replaces the one on screen without reading the report again.
+  assert.match(source('./ExecutiveReportPage.tsx'), /const noteChanged = useCallback\(\(companyId: string, change: ExecutiveCompanyNoteResult\) => setData\(/);
+});
+test('the note routes of the report: the company is in the address, the save sends the text and the version only, the latest note comes with the company page', async () => {
+  const api = await import('./executive-reports.api');
+  const calls: Array<{ url: string; init?: RequestInit }> = []; const original = globalThis.fetch;
+  const latest = { text: 'ล่าสุด', version: 5, updatedAt: '2026-10-04T08:30:00.000Z', updatedBy: { displayName: 'สมหญิง' } };
+  globalThis.fetch = (async (url: string, init?: RequestInit) => { calls.push({ url, init }); return new Response(JSON.stringify(init?.method === 'PATCH' ? { note: latest, canEditNote: true } : { company: { note: latest, canEditNote: false, ownerContact: { status: 'OK', email: 'owner@example.test' } } }), { status: 200 }); }) as typeof fetch;
+  try {
+    assert.deepEqual(await api.patchExecutiveCompanyNote('co /1', { text: 'ทีม', expectedVersion: 4 }), { note: latest, canEditNote: true });
+    assert.equal(calls[0].url, '/api/v1/system/executive/companies/co%20%2F1'); assert.equal(calls[0].init?.method, 'PATCH');
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { text: 'ทีม', expectedVersion: 4 });
+    // Reading again keeps only the note and the right of the answer: nothing else of the company (its contact least of all) travels on.
+    assert.deepEqual(await api.getExecutiveCompanyNote('co /1', { from: '2026-07', to: '2026-09' }), { note: latest, canEditNote: false });
+    assert.equal(calls[1].url, '/api/v1/system/executive/companies/co%20%2F1?from=2026-07&to=2026-09'); assert.equal(calls[1].init?.method ?? 'GET', 'GET');
+  } finally { globalThis.fetch = original; }
+});
+
 test('revenue trend has a fixed height, bar labels, signed baseline, gaps and one explanation per reason', async () => {
   const { AnalysisContent } = await content();
   const partial = { ...cash(10000), value: null, knownValue: 10000, coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] };

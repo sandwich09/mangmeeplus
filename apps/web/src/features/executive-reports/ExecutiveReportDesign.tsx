@@ -198,7 +198,7 @@ export function ExecutiveTabs({ label, tabs, value, onChange }: { label: string;
 export type ReportColumn = { label: string; /** What the header shows when it is not the plain label (a label with its own line break). */ head?: ReactNode; width?: number; align?: 'left' | 'right'; control?: boolean; mobile?: boolean; hide?: 'narrow' | 'always'; sort?: 'ascending' | 'descending'; onSort?: () => void; source?: { coverage: ExecutiveCoverage; reasonCodes: readonly string[] }; sourceName?: string };
 /** A fact of an opened row, under its own label. With `column`, it stands in for that column and shows only where the column itself is not on screen. */
 export type ReportDetailItem = { label: string; value: ReactNode; column?: number; /** A long text takes the whole line. */ wide?: boolean };
-export type ReportDetailGroup = { title?: string; items: ReportDetailItem[] };
+export type ReportDetailGroup = { title?: string; items: ReportDetailItem[]; /** What the reader can do about these facts, under them. */ action?: ReactNode };
 type ReportRow = { key: string; cells: ReactNode[]; href?: string; groups?: ReportDetailGroup[]; action?: ReactNode; className?: string };
 // A table has three layouts: cards on a phone, a desktop table in a narrow card, and one in a wide card (936 px and up).
 // `shownOn` shows an element only on the layouts where it has something to show. Tailwind reads the names from here, so they are spelled out.
@@ -263,6 +263,7 @@ export function ExecutiveTable({ title, columns, rows, remember, nameIndex = 0, 
           {groupsOf(row).map((group, index) => <section key={index} className={shownOn('block', group.on)}>
             {group.title && <h3 className="mb-1.5 text-xs font-semibold text-brand-800">{group.title}</h3>}
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 @min-[640px]:grid-cols-3 @min-[936px]:grid-cols-4">{group.items.map((item, i) => <div key={i} className={`min-w-0 ${item.wide ? 'col-span-full' : ''} ${item.column === undefined ? '' : shownOn('block', offRow(item.column))}`}><dt className="text-pretty text-xs leading-4 text-gray-600">{item.label}</dt><dd className="break-words text-sm leading-5 tabular-nums [overflow-wrap:anywhere]">{item.value}</dd></div>)}</dl>
+            {group.action && <div className="mt-2 flex">{group.action}</div>}
           </section>)}
           {row.action && <div className="flex md:justify-end">{row.action}</div>}
         </div></td></tr>}

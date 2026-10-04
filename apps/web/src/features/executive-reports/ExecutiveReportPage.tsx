@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   EXECUTIVE_SORT_OPTIONS, EXECUTIVE_PERIOD_WORDS as P,
-  type ExecutiveContext, type ExecutiveCompanyHistory, type ExecutiveCompanyDetail, type ExecutiveCompanies, type ExecutiveOverview, type ExecutiveAnalysis,
+  type ExecutiveContext, type ExecutiveCompanyHistory, type ExecutiveCompanyDetail, type ExecutiveCompanies, type ExecutiveOverview, type ExecutiveAnalysis, type ExecutiveCompanyNoteResult,
 } from '@watchdog-bms/contracts';
 import { MangmeeBadge } from '@/common/components/mangmee';
 import { Button } from '@/common/components/button';
@@ -217,6 +217,10 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, targetCompanyId, tab, historyPage, dataKey, requestKey, attempt]);
 
+  // A note saved or read again on this screen: only that company's note changes in the report already shown; nothing is read again.
+  const noteChanged = useCallback((companyId: string, change: ExecutiveCompanyNoteResult) => setData(current => !current ? current
+    : 'company' in current ? current.company.id === companyId ? { ...current, company: { ...current.company, ...change } } : current
+    : 'pagination' in current ? { ...current, items: current.items.map(row => row.id === companyId ? { ...row, ...change } : row) } : current), []);
   const closeExport = useCallback(() => {
     const next = new URLSearchParams(window.location.search); next.delete('export');
     window.history.replaceState(ownHistoryState(window.history.state), '', executiveHref(window.location.pathname, next));
@@ -275,8 +279,8 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
           <CoverLoader active={reading && !!visibleData} label={W.loading} />
           <div className={`min-w-0 space-y-4 ${reading ? "opacity-50" : ""}`} aria-busy={reading} aria-hidden={reading && !!visibleData ? true : undefined} inert={reading && !!visibleData}>
             {visibleData && section === 'overview' && <OverviewContent data={visibleData as ExecutiveOverview} nav={nav} />}
-            {visibleData && section === 'companies' && <CompaniesContent data={visibleData as ExecutiveCompanies} nav={nav} sortColumn={sortBy => update({ sortBy, sortDir: effectiveQuery.sortBy === sortBy ? effectiveQuery.sortDir === 'asc' ? 'desc' : 'asc' : sortBy === 'companyName' ? 'asc' : 'desc' })} />}
-            {visibleData && section === 'detail' && <CompanyContent data={visibleData as ExecutiveCompanyDetail} tab={tab} history={history} admin={shared.admin} nav={nav} contactReadAt={contactReadAt} tabs={<ExecutiveTabs label={W.detail} tabs={DETAIL_TABS} value={tab} onChange={(view, keyboard) => { tabFocus.current = keyboard ? view : null; update({ view, tab: "" }); }} />} />}
+            {visibleData && section === 'companies' && <CompaniesContent data={visibleData as ExecutiveCompanies} nav={nav} onNote={noteChanged} sortColumn={sortBy => update({ sortBy, sortDir: effectiveQuery.sortBy === sortBy ? effectiveQuery.sortDir === 'asc' ? 'desc' : 'asc' : sortBy === 'companyName' ? 'asc' : 'desc' })} />}
+            {visibleData && section === 'detail' && <CompanyContent data={visibleData as ExecutiveCompanyDetail} tab={tab} history={history} admin={shared.admin} nav={nav} contactReadAt={contactReadAt} onNote={noteChanged} tabs={<ExecutiveTabs label={W.detail} tabs={DETAIL_TABS} value={tab} onChange={(view, keyboard) => { tabFocus.current = keyboard ? view : null; update({ view, tab: "" }); }} />} />}
             {visibleData && ['usage', 'revenue', 'customers'].includes(section) && <AnalysisContent data={visibleData as ExecutiveAnalysis} nav={nav} seller={params.get('seller')} tabs={<><ExecutiveTabs label={W[section]} tabs={REPORT_VIEWS[section as 'usage' | 'revenue' | 'customers']} value={reportView(section as 'usage' | 'revenue' | 'customers', params)} onChange={(view, keyboard) => { tabFocus.current = keyboard ? view : null; update({ view }); }} />{section === 'customers' && reportView(section, params) === 'sales' && <SelectField label={W.sales} frameClassName="md:!flex-row md:!items-center md:!gap-2 [&>span:first-child]:shrink-0 md:[&>details]:flex-none" value={params.get('seller') === 'credited' ? 'credited' : 'referring'} className="!min-h-11 !text-base" onChange={event => update({ seller: event.target.value })}><option value="referring">{W.referring}</option><option value="credited">{W.credited}</option></SelectField>}</>} rankingControl={section === 'usage' && reportView(section, params) === 'ranking' ? <SelectField label={W.ranking} frameClassName="md:!flex-row md:!items-center md:!gap-2 [&>span:first-child]:shrink-0 md:[&>details]:flex-none" value={Object.hasOwn(RANK_LABELS, params.get('rank') ?? '') ? params.get('rank')! : 'expenseReceiptCount'} error={fieldErrors.metric} className="!min-h-11 !text-base" onChange={event => update({ rank: event.target.value })}>{Object.entries(RANK_LABELS).map(([value, words]) => <option key={value} value={value}>{words.label}</option>)}</SelectField> : undefined} />}
           </div>
         </div>
