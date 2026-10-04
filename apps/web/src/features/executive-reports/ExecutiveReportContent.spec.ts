@@ -200,7 +200,7 @@ test('company payment flags show Thai values, preserving confirmed negatives and
       const variant = { ...data, coverage: { ...data.coverage, money: { coverage, reasonCodes: [] } }, month: { ...data.month!, paidInMonth, positiveNetInMonth,
         money: { ...data.month!.money, receiptsSatang: metric(receipts), refundsSatang: metric(refunds), netReceiptsSatang: metric(receipts - refunds) } } };
       const html = renderToStaticMarkup(React.createElement(CompanyContent, { data: variant, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' }));
-      actual.push(html.match(/<p>(ชำระในช่วงนี้:.*?)<\/p>/)?.[1] ?? '');
+      actual.push(html.match(/<p class="text-sm">(ชำระในช่วงนี้:.*?)<\/p>/)?.[1] ?? '');
       expected.push(`ชำระในช่วงนี้: ${paidInMonth ? 'ใช่' : coverage === 'complete' ? 'ไม่มีเงินรับในช่วงนี้' : 'ยังประเมินไม่ได้'} · จ่ายมากกว่ายอดคืนในช่วงนี้: ${positiveNetInMonth ? 'ใช่' : coverage === 'complete' ? 'ยอดรับไม่มากกว่ายอดคืนในช่วงนี้' : 'ยังประเมินไม่ได้'}`);
     }
   }

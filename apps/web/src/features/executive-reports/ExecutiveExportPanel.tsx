@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { EXECUTIVE_EXPORT_SHEETS, EXECUTIVE_WORDS as W, executivePeriodExportColumns, type ExecutiveContext } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
+import { ChevronDownIcon } from '@/common/icons';
 import { ExecutiveSectionCard, ReportNotes } from './ExecutiveReportDesign';
 import { reportDateTime, periodText, type ReportSection } from './executive-reports.logic';
 import { canExportContacts, createExportAction, exportBody, exportFileName, type ExportState } from './executive-export.logic';
@@ -41,7 +42,7 @@ export function ExecutiveExportPanel({ section, params, context, data, search, t
     {state && <p role={state.kind === 'error' || state.kind === 'denied' ? 'alert' : 'status'}>{state.text}</p>}
     {wait > 0 && <p role="status">{W.wait(wait)}</p>}
     <div className="executive-export-sheets"><p className="text-sm font-semibold text-gray-600">{W.export.sheets}</p><ul className="mt-2 list-inside list-disc text-sm text-gray-700">{EXECUTIVE_EXPORT_SHEETS.map(sheet => <li key={sheet}>{sheet}</li>)}</ul></div>
-    <details><summary className="flex min-h-11 cursor-pointer items-center rounded-lg p-2 font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-brand-700">{W.export.columns}</summary><ul className="list-inside list-disc py-3 text-sm text-gray-600">{executivePeriodExportColumns(section, body.subview, body.includeContacts).map(column => <li key={column}>{column}</li>)}</ul></details>
+    <details className="group"><summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-lg p-2 font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-brand-700">{W.export.columns}<ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 group-open:rotate-180" /></summary><ul className="list-inside list-disc py-3 text-sm text-gray-600">{executivePeriodExportColumns(section, body.subview, body.includeContacts).map(column => <li key={column}>{column}</li>)}</ul></details>
     <p>{W.export.format}</p>
   </section></ExecutiveSectionCard></ReportNotes>;
 }

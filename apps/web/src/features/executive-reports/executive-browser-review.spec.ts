@@ -343,3 +343,41 @@ test('owner\'s sheet: the nine columns fit a 1280 px screen, a fact the list is 
   assert.match(rendered, /<th[^>]*title="บริษัท \/ ร้าน"[^>]*class="whitespace-normal leading-4 md:sticky md:left-0 md:z-20 /);
   assert.doesNotMatch(rendered.match(/<thead[\s\S]*?<\/thead>/)![0], /sticky top-20/);
 });
+
+test('sweep 2026-10-05: the chosen tab and period stay in view, tables stay inside their cards, and the small things a reader trips on', async () => {
+  const design = source('./ExecutiveReportDesign.tsx'), content = source('./ExecutiveReportContent.tsx'), page = source('./ExecutiveReportPage.tsx');
+  const { EXECUTIVE_PERIOD_WORDS: P } = await import('@watchdog-bms/contracts');
+  // A row that scrolls sideways (the tabs, the period presets on a phone) keeps its chosen item in view, moving sideways only.
+  assert.match(design, /if \(a\.left < b\.left\) row\.scrollLeft -= b\.left - a\.left; else if \(a\.right > b\.right\) row\.scrollLeft \+= a\.right - b\.right;/);
+  assert.match(design, /<ChosenInView id=\{`executive-tab-\$\{value\}`\} \/>/); assert.doesNotMatch(design, /scrollIntoView/);
+  assert.match(source('./ExecutivePeriodControl.tsx'), /useEffect\(\(\) => keepInView\(row\.current\?\.querySelector\('\[aria-pressed="true"\]'\)\), \[period\?\.appliedPreset\]\);/);
+  // The header's amber dot ends inside its own column (the next header covered a third of it), and the sort arrow stands off its label.
+  assert.match(design, /<span className="absolute left-full top-1\/2 -ml-0\.5 -translate-y-1\/2">/); assert.match(design, /<span aria-hidden="true" className="ml-1">\{column\.sort === 'ascending' \? '↑' : '↓'\}<\/span>/);
+  // A card narrower than 936 px keeps the customer tables inside it: two counts move to the opened row; the seller table is narrower.
+  assert.match(content, /\{ label: W\.filterLabels\.paidEver, width: 110, hide: 'narrow' \}, \{ label: W\.active, width: 110, hide: 'narrow' \}/);
+  assert.match(content, /\{ label: W\.creditedSeller, width: 260 \}/);
+  // One wrap rule for the whole report; a company page without the filter button still has air in its period row.
+  assert.match(page, /executive-report mx-auto max-w-7xl px-3 py-2 text-base text-pretty sm:px-6/); assert.match(page, /\$\{section === 'detail' \? 'py-2' : 'py-0'/);
+  // "Current, data through" is said once above the company's cards; definitions are the small grey line they are elsewhere.
+  assert.equal(content.split('{W.current} · {W.through(reportDateTime(data.build.asOf))}').length - 1, 1);
+  assert.match(content, /<p className="text-xs text-gray-600">\{W\.documentDefinition\} · \{W\.usersDefinition\} · \{W\.aiDefinition\}<\/p>/);
+  // No value reads "–": an event without a package, a date the report does not have.
+  assert.match(content, /event\.planLabel \|\| '–'/); assert.doesNotMatch(content, /'—'/);
+  const { reportDate, reportDateTime } = await import('./executive-reports.logic');
+  assert.equal(reportDate(null), '–'); assert.equal(reportDateTime(undefined), '–'); assert.equal(reportDate('2026-10-02T17:00:00.000Z'), '3 ต.ค. 2569');
+  // Sentences true in every case: a range of months is not "the month"; fewer than ten ranked companies are not "the first ten"; a year does not run into the next word.
+  assert.equal(P.spendTitle('ช่วงเดือน ก.ย. 2569'), 'รายรับช่วงเดือน ก.ย. 2569 มาจากลูกค้ากลุ่มใด');
+  assert.equal(W.rankBase(22, 'ใบเสร็จในช่วงนี้'), 'ไม่เกิน 10 อันดับแรกจาก 22 บริษัท ตามใบเสร็จในช่วงนี้ · บริษัทที่เป็น 0 ไม่อยู่ในอันดับ');
+  assert.equal(W.followUpDescriptions.top, 'ดูสัดส่วนรายรับของกลุ่มที่จ่ายสูงสุดในช่วงเดือนที่เลือก'); assert.match(W.followUpDescriptions.INACTIVE, /ในช่วงเดือนที่เลือก$/);
+  // The company page: its contact is a link to write or call, as in the list; a company without one says so in words.
+  const { CompanyContent } = await import('./ExecutiveReportContent'); const { companyFacts } = await import('./executive-company.fixture');
+  const complete = { coverage: 'complete', reasonCodes: [] };
+  const detail = (ownerContact: object) => html(CompanyContent, { data: { build: { id: 'b', asOf: '2026-10-04T00:00:00Z' }, period: { month: '2026-09' }, dataThrough: { lagging: [] }, appliedFilters: { global: {}, directory: {} }, coverage: { usage: complete, money: complete }, monthReasonCodes: [], month: null,
+    company: { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, companyStatus: 'ACTIVE', planState: 'PAID_ACTIVE', planLabel: 'เติบโต', discovery: { key: 'LINE', label: 'ไลน์' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีเซลล์ผู้แนะนำ' }, creditedSeller: {}, ...companyFacts(), ownerContact } },
+    tab: 'company', history: null, admin: false, nav: { params: new URLSearchParams(), from: 'detail', remember() {}, navigate() {} }, contactReadAt: '2026-10-04T00:00:00Z' });
+  const linked = detail({ status: 'OK', email: 'owner@example.test', phoneNumber: '081-000 0001' });
+  assert.match(linked, /<a href="mailto:owner@example\.test"[^>]*>owner@example\.test<\/a>/); assert.match(linked, /<a href="tel:0810000001"[^>]*>081-000 0001<\/a>/);
+  assert.doesNotMatch(detail({ status: 'OK', email: null, phoneNumber: null }), /mailto:|tel:/); assert.doesNotMatch(detail({ status: 'NOT_PERMITTED' }), /mailto:|tel:|owner@example/);
+  // The quick filter that opens the package filter keeps its word whole when the row is full.
+  assert.match(content, /<Button variant="secondary" className="shrink-0 whitespace-nowrap" onClick=\{\(\) => \{ const panel = document\.getElementById\('executive-filter-packageLabel'\)/);
+});

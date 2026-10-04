@@ -152,7 +152,9 @@ export const money = (satang: number) => `${(satang / 100).toLocaleString('th-TH
 export const countText = (figure: ExecutiveCount) => figure.value !== null ? figure.value.toLocaleString('th-TH') : figure.knownValue !== undefined ? `${W.atLeast} ${figure.knownValue.toLocaleString('th-TH')}` : '—';
 export const moneyText = (figure: ExecutiveMoney, measured = false) => figure.value !== null ? money(figure.value) : figure.knownValue !== undefined ? `${money(figure.knownValue)} (${executiveMoneyQualifier(figure, measured)})` : '—';
 export const ratioText = (figure: ExecutiveRatio | null | undefined, unit = '%') => figure?.value === null || figure?.value === undefined ? '–' : `${figure.value.toLocaleString('th-TH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}${unit}`;
-export const reportMonth = formatThaiMonth, reportDate = formatThaiDate, reportDateTime = formatThaiDateTime;
+// A date the report does not have reads "–", the same dash as a figure it does not have.
+type DateValue = Parameters<typeof formatThaiDate>[0];
+export const reportMonth = (value: DateValue, fallback = '–') => formatThaiMonth(value, fallback), reportDate = (value: DateValue, fallback = '–') => formatThaiDate(value, fallback), reportDateTime = (value: DateValue, fallback = '–') => formatThaiDateTime(value, fallback);
 export function sourceCount(value: number | null, source: ExecutiveSourceCoverage): ExecutiveCount {
   return { value: source.coverage === 'complete' ? value : null, ...(source.coverage === 'partial' && value !== null ? { knownValue: value } : {}), ...source };
 }

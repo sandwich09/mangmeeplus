@@ -89,7 +89,7 @@ export const EXECUTIVE_WORDS = {
   unpaidActive: (n: number) => `รวมบริษัทที่ยังไม่เคยชำระแต่ใช้งานอยู่ ${n.toLocaleString('th-TH')} บริษัท`,
   paymentUnknownActive: (n: number) => `รวมบริษัทที่ข้อมูลการชำระไม่ครบแต่ใช้งานอยู่ ${n.toLocaleString('th-TH')} บริษัท`,
   refundedDifference: (n: number) => `ต่างจาก “ชำระในเดือน” ${n.toLocaleString('th-TH')} บริษัทเพราะยอดรับไม่มากกว่ายอดคืนในเดือน`,
-  rankBase: (n: number, label: string) => `10 อันดับแรกจาก ${n.toLocaleString('th-TH')} บริษัท ตาม${label}`,
+  rankBase: (n: number, label: string) => `ไม่เกิน 10 อันดับแรกจาก ${n.toLocaleString('th-TH')} บริษัท ตาม${label} · บริษัทที่เป็น 0 ไม่อยู่ในอันดับ`,
   rankingTie: (n: number, value: string, unit: string) => `มีอีก ${n.toLocaleString('th-TH')} บริษัทที่ค่าเท่ากับอันดับสุดท้ายที่แสดง (${value} ${unit})`,
   groupCompanies: (n: number, of: number, share: string) => `${n.toLocaleString('th-TH')} จาก ${of.toLocaleString('th-TH')} บริษัท (${share})`,
   ofWeight: (share: string) => `${share} ของ${WEIGHT}`,
@@ -140,7 +140,7 @@ export const EXECUTIVE_PERIOD_WORDS = {
   tableReceipts: 'ใบเสร็จช่วงนี้', periodNotRegistered: 'ข้อมูลช่วงนี้อยู่ก่อนเวลาที่บริษัทสมัคร',
   affectedMonths: (months: string) => `ในเดือน ${months}`,
   documentDefinition: 'เอกสารคือรายจ่ายที่ยืนยันแล้วกับเอกสารขายที่ออกในช่วงที่เลือก',
-  spendTitle: (period: string) => `รายรับ${period}มาจากลูกค้ากลุ่มใด`,
+  spendTitle: (period: string) => `รายรับ${period} มาจากลูกค้ากลุ่มใด`,
   nonPositive: (n: number) => `ยอดรับสุทธิในช่วงนี้เป็น 0 หรือติดลบ ${n.toLocaleString('th-TH')} บริษัท`,
   notRegistered: 'ข้อมูลเดือนนี้อยู่ก่อนเวลาที่บริษัทสมัคร', invalid: 'กรุณาเลือกเดือนเริ่มต้นและเดือนสิ้นสุดให้ถูกต้อง', custom: 'กำหนดช่วงเดือน', from: 'ตั้งแต่เดือน', to: 'ถึงเดือน', apply: 'ใช้ช่วงเดือน', previous: 'ช่วงก่อนหน้า',
   range: (from: string, to: string) => `ช่วงเดือน ${from}${from === to ? '' : ` ถึง ${to}`}`,
@@ -165,6 +165,7 @@ export const EXECUTIVE_PERIOD_WORDS = {
   get newCompanies() { return EXECUTIVE_FLAG_LABELS.joinedInPeriod.true!; }, trend: 'แนวโน้มรายเดือน', noReceipts: 'ไม่มีเงินรับในช่วงนี้', noPositiveNet: 'ยอดรับไม่มากกว่ายอดคืนในช่วงนี้',
   refundedDifference: (n: number) => `ต่างจาก “ชำระในช่วงนี้” ${n.toLocaleString('th-TH')} บริษัทเพราะยอดรับไม่มากกว่ายอดคืนในช่วงนี้`,
   paidDefinition: 'มีเงินรับในช่วงเดือนที่เลือก แม้คืนเงินภายหลัง',
+  inactiveDescription: 'เคยชำระเงินและเคยใช้ระบบ แต่ไม่พบการใช้ในช่วงเดือนที่เลือก', topDescription: 'ดูสัดส่วนรายรับของกลุ่มที่จ่ายสูงสุดในช่วงเดือนที่เลือก',
 };
 /** Period screens reuse legacy structure and replace only time-specific words. */
 export function executivePeriodReportWords() { return { ...W,
@@ -173,6 +174,7 @@ export function executivePeriodReportWords() { return { ...W,
   trend: EXECUTIVE_PERIOD_WORDS.trend, shortTrend: EXECUTIVE_PERIOD_WORDS.trend, paidDefinition: EXECUTIVE_PERIOD_WORDS.paidDefinition,
   documentDefinition: EXECUTIVE_PERIOD_WORDS.documentDefinition, noReceipts: EXECUTIVE_PERIOD_WORDS.noReceipts,
   noPositiveNet: EXECUTIVE_PERIOD_WORDS.noPositiveNet, refundedDifference: EXECUTIVE_PERIOD_WORDS.refundedDifference, nonPositive: EXECUTIVE_PERIOD_WORDS.nonPositive,
+  followUpDescriptions: { ...W.followUpDescriptions, INACTIVE: EXECUTIVE_PERIOD_WORDS.inactiveDescription, top: EXECUTIVE_PERIOD_WORDS.topDescription },
 }; }
 export function executivePeriodReportLabels() { return { ...EXECUTIVE_REPORT_LABELS, usageGroup: { ...EXECUTIVE_REPORT_LABELS.usageGroup, ACTIVE: EXECUTIVE_PERIOD_WORDS.paidActive, INACTIVE: EXECUTIVE_PERIOD_WORDS.inactive } as Record<string, string> }; }
 export function executiveMonthLabel(value: string): string {

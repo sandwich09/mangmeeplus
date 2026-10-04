@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { createContext, useContext, useId, useState, isValidElement, Children, type ReactNode, type CSSProperties } from 'react';
+import { createContext, useContext, useEffect, useId, useState, isValidElement, Children, type ReactNode, type CSSProperties } from 'react';
 import { EXECUTIVE_PERIOD_WORDS as P, executiveMonthLabel, executivePeriodComparisonQualifier, executiveMoneyQualifier, type ExecutiveCount, type ExecutiveMoney, type ExecutiveEnvelope, type ExecutiveCoverage, type ExecutivePeriodComparison } from '@watchdog-bms/contracts';
 import { MangmeeCard } from '@/common/components/mangmee';
 import { ChevronDownIcon } from '@/common/icons';
@@ -178,7 +178,7 @@ export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = fal
   const scale = useContext(KpiScale);
   return <section data-executive-kpi className={`relative flex h-26 min-w-0 flex-col justify-center gap-1 rounded-xl border px-2 py-2 shadow-theme-sm transition-colors group-hover:border-brand-300 group-hover:bg-brand-25 ${emphasis ? 'border-brand-300 bg-brand-25' : 'border-gray-200 bg-white'}`}>
     <div className="min-w-0 w-full">
-      <div className="grid grid-cols-[minmax(0,1fr)_1rem] gap-1"><div data-executive-label className="min-h-8 text-[13px] font-normal leading-4 text-gray-600" title={label}>{label}</div><span aria-hidden="true" className="text-brand-700">{arrow ? '→' : ''}</span></div>
+      <div className="grid grid-cols-[minmax(0,1fr)_1rem] gap-1"><div data-executive-label className="min-h-8 text-pretty text-[13px] font-normal leading-4 text-gray-600" title={label}>{label}</div><span aria-hidden="true" className="text-brand-700">{arrow ? '→' : ''}</span></div>
       <div className="flex flex-nowrap items-center gap-2"><span data-executive-icon aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700"><Icon className="size-4" /></span><div className="flex min-w-0 flex-nowrap items-baseline gap-x-1"><div data-executive-value style={{ fontSize: scale.size }} className={`whitespace-nowrap font-semibold leading-7 tabular-nums ${value === 0 || value === "0" ? "text-gray-600" : ""}`}>{figure ? <Figure value={figure} moneyValue={moneyValue} measured={measured} netValue={netValue} mark={false} /> : value}</div>{unit && <span className="shrink-0 whitespace-nowrap text-[13px] leading-4 text-gray-600">{unit}</span>}</div></div>
       {supporting && <div data-executive-supporting className="h-3 truncate pr-7 text-[11px] leading-3 text-gray-600" title={supporting}>{supporting}</div>}
       <div data-executive-sub className="flex h-4 items-center text-xs text-gray-600" style={incomplete ? { color: 'var(--color-warning-700)' } : undefined}>{incomplete ? <><IncompleteDot reason={reasons(figure)} /><span className="ml-1 truncate">{figure.coverage === 'unavailable' ? W.unavailableFigure : moneyValue ? (executiveMoneyQualifier(figure, measured) === W.addOnNotSold ? W.addOnNotSold : measured ? W.measuredOnly : W.confirmedOnly) : W.countAtLeast}</span></> : <span className="ml-1 truncate" title={comparison ? comparisonLine(comparison) : undefined}>{comparison ? <><span aria-hidden="true" className={comparison.absoluteChange !== null && comparison.absoluteChange > 0 ? "text-brand-700" : comparison.absoluteChange !== null && comparison.absoluteChange < 0 ? "text-red-700" : "text-gray-600"}>{comparison.status === "COMPLETE" && comparison.absoluteChange !== null ? comparison.absoluteChange > 0 ? "↑ " : "↓ " : ""}</span>{comparisonLine(comparison)}</> : sub}</span>}</div>
@@ -186,6 +186,18 @@ export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = fal
   </section>;
 }
 
+/** Keeps the chosen item of a row that scrolls sideways in view (a phone shows only part of the row). Sideways only: the page itself never moves. */
+export function keepInView(item: Element | null | undefined) {
+  const row = item?.parentElement;
+  if (!item || !row) return;
+  const a = item.getBoundingClientRect(), b = row.getBoundingClientRect();
+  if (a.left < b.left) row.scrollLeft -= b.left - a.left; else if (a.right > b.right) row.scrollLeft += a.right - b.right;
+}
+/** Mounted inside such a row: keeps its chosen item in view whenever the choice changes. Draws nothing. */
+function ChosenInView({ id }: { id: string }) {
+  useEffect(() => keepInView(document.getElementById(id)), [id]);
+  return null;
+}
 export function ExecutiveTabs({ label, tabs, value, onChange }: { label: string; tabs: Array<{ value: string; label: string }>; value: string; onChange: (value: string, keyboard?: boolean) => void }) {
   return <div role="tablist" aria-label={label} className="executive-view-tabs flex min-w-0 overflow-x-auto border-b border-gray-200">
     {tabs.map((tab, index) => <button key={tab.value} type="button" role="tab" id={`executive-tab-${tab.value}`} aria-controls="executive-panel" aria-selected={value === tab.value} tabIndex={value === tab.value ? 0 : -1} className={`min-h-11 shrink-0 whitespace-nowrap border-b-2 px-4 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-brand-700 ${value === tab.value ? 'border-brand-700 text-brand-800' : 'border-transparent text-gray-600 hover:text-brand-700'}`} onClick={() => onChange(tab.value)} onKeyDown={event => {
@@ -193,6 +205,7 @@ export function ExecutiveTabs({ label, tabs, value, onChange }: { label: string;
       if (next < 0) return;
       event.preventDefault(); onChange(tabs[next].value, true); (event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next])?.focus();
     }}>{tab.label}</button>)}
+    <ChosenInView id={`executive-tab-${value}`} />
   </div>;
 }
 export type ReportColumn = { label: string; /** A long text: on the phone card it takes a whole line and wraps. */ wide?: boolean; /** What the header shows when it is not the plain label (a label with its own line break). */ head?: ReactNode; width?: number; align?: 'left' | 'right'; control?: boolean; mobile?: boolean; hide?: 'narrow' | 'always'; sort?: 'ascending' | 'descending'; onSort?: () => void; source?: { coverage: ExecutiveCoverage; reasonCodes: readonly string[] }; sourceName?: string };
@@ -248,7 +261,7 @@ export function ExecutiveTable({ title, columns, rows, remember, nameIndex = 0, 
     <table style={sheet ? { '--sheet-width': `${sheetWidth}px` } as CSSProperties : undefined} className={`block w-full border-collapse space-y-2 md:table md:table-fixed md:space-y-0 ${sheet ? 'md:min-w-[var(--sheet-width)]' : ''}`}>
       <caption className="sr-only">{title}</caption><colgroup className="hidden md:table-column-group">{columns.map((column, i) => <col key={i} className={desktopColumn(column, 'table-column')} style={{ width: column.width ?? 120 }} />)}{hasMore && <col className={shownOn('column', moreOn)} style={{ width: 44 }} />}{/* An opened row spans every column, also the ones a layout hides: these empty columns take that span, or the table would stop short of its card. */}{hasMore && columns.filter(column => column.hide).map((_, i) => <col key={`span-${i}`} style={{ width: 0 }} />)}</colgroup>
       <thead className="hidden md:table-header-group"><tr>{columns.map((column, index) => {
-        const label = <span className="relative inline-flex items-center">{column.head ? <span>{column.head}</span> : column.label}{column.sort && <span aria-hidden="true">{column.sort === 'ascending' ? ' ↑' : ' ↓'}</span>}{marks[index] && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={marks[index]!.reason} /></span>}</span>;
+        const label = <span className="relative inline-flex items-center">{column.head ? <span>{column.head}</span> : column.label}{column.sort && <span aria-hidden="true" className="ml-1">{column.sort === 'ascending' ? '↑' : '↓'}</span>}{marks[index] && <span className="absolute left-full top-1/2 -ml-0.5 -translate-y-1/2">{/* 2 px closer than a figure's own dot: it ends inside its column, where the next header cannot cover it */}<IncompleteDot reason={marks[index]!.reason} /></span>}</span>;
         return <th key={index} scope="col" aria-sort={column.sort} title={column.label} className={`${head} ${sheet && index === nameIndex ? `md:sticky md:left-0 ${held}` : ''} h-11 border-b border-gray-100 bg-gray-50 px-2 text-xs font-semibold text-gray-600 ${columnAlign(column, index, nameIndex)} ${desktopColumn(column, 'table-cell')}`}>{column.onSort ? <button type="button" onClick={column.onSort} className={`min-h-11 rounded focus-visible:outline-2 focus-visible:outline-brand-700 ${sheet ? '' : 'whitespace-nowrap'}`}>{label}</button> : label}</th>;
       })}{hasMore && <th className={`${sheet ? '' : 'sticky top-20 z-30'} bg-gray-50 ${shownOn('cell', moreOn)}`}><span className="sr-only">{W.details}</span></th>}</tr></thead>
       {rows.map(row => <tbody key={row.key} className="relative block rounded-lg border border-gray-100 bg-white p-2 md:table-row-group md:rounded-none md:border-0 md:p-0">

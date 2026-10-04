@@ -1,21 +1,24 @@
 'use client';
 
-import { useId, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { EXECUTIVE_PERIOD_PRESETS, EXECUTIVE_PERIOD_WORDS as P, executiveSourceReasonText, type ExecutiveContext } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { useBodyScrollLock } from '@/common/hooks/use-body-scroll-lock';
 import { periodParams, selectedPeriod, validPeriod } from './executive-reports.logic';
 import { W } from './executive-reports.words';
+import { keepInView } from './ExecutiveReportDesign';
 
 export function ExecutivePeriodControl({ context, params, apply }: { context: ExecutiveContext; params: URLSearchParams; apply: (changes: Record<string, string>) => void }) {
   const period = selectedPeriod(params, context), canonical = periodParams(params, context);
   const [draft, setDraft] = useState({ from: period?.from ?? '', to: period?.to ?? '' });
   const [open, setOpen] = useState(false), [position, setPosition] = useState({ left: '0px', top: '0px' });
-  const panel = useRef<HTMLDivElement>(null), trigger = useRef<HTMLSpanElement>(null), id = useId();
+  const panel = useRef<HTMLDivElement>(null), trigger = useRef<HTMLSpanElement>(null), row = useRef<HTMLDivElement>(null), id = useId();
+  // The chosen period is always in view, also where a phone shows only the first presets of the row.
+  useEffect(() => keepInView(row.current?.querySelector('[aria-pressed="true"]')), [period?.appliedPreset]);
   useBodyScrollLock(open);
   const valid = validPeriod(draft.from, draft.to, context, true);
-  return <div data-executive-period className="flex min-w-0 items-center gap-1 overflow-x-auto">
+  return <div ref={row} data-executive-period className="flex min-w-0 items-center gap-1 overflow-x-auto">
     {EXECUTIVE_PERIOD_PRESETS.flatMap(key => {
       const preset = context.presets?.find(p => p.key === key);
       if (!preset) return [];

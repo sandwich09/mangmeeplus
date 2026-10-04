@@ -90,6 +90,6 @@ test('owner 2026-10-05: five KPI tiles are one row from 1200 px, 3 + 2 from 768 
   assert.match(page, /<MangmeeBadge><span className="md:hidden">\{W\.revised\(reportShortDateTime\(/);
   assert.match(source('./ExecutiveFilters.tsx'), /return <div className="grid min-w-min flex-1 grid-cols-\[auto_minmax\(0,1fr\)\] items-center gap-2">/);
   const { reportShortDateTime } = await import('./executive-reports.logic');
-  assert.equal(reportShortDateTime('2026-10-02T17:00:00.000Z'), '3 ต.ค. 69 00:00 น.'); assert.equal(reportShortDateTime(null), '—');
+  assert.equal(reportShortDateTime('2026-10-02T17:00:00.000Z'), '3 ต.ค. 69 00:00 น.'); assert.equal(reportShortDateTime(null), '–'); // one dash for "no value" in the whole report
 });
 

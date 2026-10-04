@@ -279,7 +279,7 @@ test('export wraps in a card, folds columns and displays sheet tiles', async () 
   const { ExecutiveExportPanel } = await import('./ExecutiveExportPanel');
   const filters = Object.fromEntries(Object.keys(EXECUTIVE_REPORT_LABELS).map(key => [key, [{ value: 'ALL', label: 'ทั้งหมด' }]]));
   const html = htmlOf(ExecutiveExportPanel, { section: 'overview', params: nav.params, context: { filters, currentMonth: '2026-10', defaultMonth: '2026-10', capabilities: { readReport: { allowed: true }, export: { allowed: true } } }, data: overview, search: '', close: () => {}, reload: () => {}, deny: () => {} });
-  assert.match(html, /mangmee-card/); assert.match(html, /<details><summary[^>]*>หัวคอลัมน์รายบริษัท/); assert.match(html, /executive-export-sheets/);
+  assert.match(html, /mangmee-card/); assert.match(html, /<details class="group"><summary[^>]*>หัวคอลัมน์รายบริษัท/); assert.match(source('./ExecutiveExportPanel.tsx'), /\{W\.export\.columns\}<ChevronDownIcon aria-hidden="true" className="size-4 shrink-0 group-open:rotate-180" \/>/); // the list of columns opens: its chevron says so assert.match(html, /executive-export-sheets/);
   assert.match(html, /executive-status[\s\S]*ข้อมูลเงินถึงวันที่/);
 });
 
