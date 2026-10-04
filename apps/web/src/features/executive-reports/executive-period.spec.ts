@@ -51,7 +51,7 @@ test('preset order, truthful disabled reasons, scrolling phone row and custom sh
   for (const key of EXECUTIVE_PERIOD_PRESETS) { const next = markup.indexOf(`>${P.presets[key]}</button>`); assert.ok(next > index); index = next; }
   assert.match(markup, /aria-pressed="true"[^>]*>เดือนที่แล้ว/);
   assert.match(markup, /disabled="" title="ยังไม่มีรายงานของเดือน/); assert.match(markup, /overflow-x-auto/); assert.doesNotMatch(markup, /flex-wrap/);
-  assert.match(markup, /fixed left-0 right-0 bottom-0 top-auto m-0 w-full/); assert.match(markup, /md:w-96/);
+  assert.match(markup, /fixed left-0 right-0 bottom-0 top-auto m-0 w-full[^"]*mangmee-safe-bottom/); assert.match(markup, /md:w-96/);
   assert.match(markup, /executive-period-from/); assert.match(markup, /executive-period-to/); assert.match(markup, new RegExp(P.apply));
 });
 const complete = { coverage: 'complete', reasonCodes: [], dataThrough: '2026-10-04' };
