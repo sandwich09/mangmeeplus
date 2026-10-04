@@ -425,6 +425,8 @@ const CODE_LABELS: Record<string, string> = {
   expense_payment_exceeds_outstanding: 'ยอดจ่ายต้องมากกว่า 0 และไม่เกินยอดคงเหลือที่ต้องจ่าย',
   expense_payment_changed: 'ยอดหรือสถานะการจ่ายถูกเปลี่ยนระหว่างบันทึก กรุณาโหลดรายการใหม่แล้วลองอีกครั้ง',
   expense_payment_idempotency_conflict: 'ข้อมูลไม่ตรงกับรายการจ่ายที่บันทึกไว้ กรุณาตรวจประวัติการจ่ายก่อนแก้ไขเป็นรายการใหม่',
+  expense_payment_future_date: EXPENSE_CORRECTION_WORDS.futurePaymentDate,
+  expense_payment_not_confirmed: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed,
   expense_payment_invalid_date: 'วันที่จ่ายไม่ถูกต้อง กรุณาเลือกวันที่จ่ายเงินจริงจากปฏิทิน',
   expense_payment_invalid_key: 'ข้อมูลสำหรับยืนยันรายการจ่ายไม่ถูกต้อง กรุณาเปิดรายการใหม่และตรวจประวัติการจ่ายก่อนบันทึก',
   expense_payment_invalid_method: 'วิธีจ่ายเงินไม่ถูกต้อง กรุณาเลือกวิธีจ่ายเงินจากรายการ',
@@ -1550,7 +1552,7 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     const messages = code === 'expense_correction_blocked'
       ? expenseReopenBlockerMessages({ ...payload, canReopen: false, reopenBlockers: blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string') } as ExpenseCorrectionCapabilities)
       : blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string').map(b => expenseCorrectionBlockerMessage(b, 'cancelPayment'));
-    return messages.length ? messages.map(message => `• ${message}`).join('\n') : EXPENSE_CORRECTION_WORDS.unavailable;
+    return messages.length ? messages.join('\n') : EXPENSE_CORRECTION_WORDS.unavailable;
   }
   if (typeof code === 'string') {
     if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;

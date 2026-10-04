@@ -1,3 +1,4 @@
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { STOCK_MOVEMENT_TYPE_LABELS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 import { EXPENSE_MANUAL_EDIT_HELP_TH, EXPENSE_SAVED_MANUAL_HELP_TH, EXPENSE_READ_FAILED_HELP_TH, EXPENSE_READ_PARTIAL_HELP_TH, ATTACHMENT_SOURCE_TYPES_LABEL, SIGNATURE_FILE_TYPES_LABEL, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watchdog-bms/contracts';
@@ -1137,7 +1138,7 @@ export const workspaceDictionary = {
     'expenses.send_for_review': 'ส่งตรวจสอบ',
     'expenses.non_expense_workflow_blocked': 'ยังส่งตรวจหรือยืนยันไม่ได้ เพราะ AI อ่านไฟล์นี้ว่าไม่ใช่หลักฐานค่าใช้จ่าย ถ้าเป็นหลักฐานค่าใช้จ่ายจริง ให้ผู้มีสิทธิ์ตรวจค่าใช้จ่ายเลือกประเภทเอกสารที่ถูกต้องเอง แล้วกดยืนยันเพื่อใช้ประเภทที่เลือกแทนผลของ AI',
     'expenses.zero_amount_warning': 'ยอดรวมเป็นศูนย์ — กรุณาตรวจสอบรายละเอียดก่อนยืนยันเอกสาร',
-    'expenses.reject': 'ยกเลิกรายการ',
+    'expenses.reject': EXPENSE_CORRECTION_WORDS.reject,
     'expenses.rejecting': 'กำลังยกเลิก…',
     'expenses.reject_confirm_title': 'ยืนยันการยกเลิกรายการ',
     'expenses.reject_confirm_description': 'รายการจะเปลี่ยนเป็นสถานะยกเลิก กรุณาระบุเหตุผลก่อนยืนยัน',

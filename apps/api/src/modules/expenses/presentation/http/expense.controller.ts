@@ -269,7 +269,7 @@ export class ExpenseController {
     const sourceDraft = await this.get.sourceDraft(ctx, expense);
     // `buyerAsPrinted` is the parsed form of `buyerAsPrintedJson`; the detail carries only that one.
     const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, buyerAsPrintedJson: _buyer, ...detail } = expense;
-    return { ...detail, sourceDraft, correctionCapabilities: await this.get.correctionCapabilities(ctx, expenseId) };
+    return { ...detail, ...await this.get.correctionHistory(ctx, expense), sourceDraft, correctionCapabilities: await this.get.correctionCapabilities(ctx, expenseId) };
   }
 
   @Get(':expenseId/payment-voucher.pdf')
