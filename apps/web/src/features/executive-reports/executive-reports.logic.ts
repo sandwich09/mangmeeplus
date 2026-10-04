@@ -110,7 +110,7 @@ export function reportQuery(section: ReportSection, params: URLSearchParams, con
   const directory = Object.fromEntries(DIRECTORY_FILTERS.flatMap(key => { const value = filterValue(key, params, context); return value === 'ALL' ? [] : [[key, value]]; }));
   const list = deserializeListQuery(params);
   const order = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === list.sortBy) ?? EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === picked?.sortBy) ?? EXECUTIVE_SORT_OPTIONS[0];
-  return { from, to, ...(picked ?? global), ...directory, ...(Object.entries({ ...picked, ...directory }).some(([key, value]) => ['neverUsed', 'receiptAdded7', 'receiptAdded30', 'receiptDays30AtLeast2', 'receiptBucket', 'packageLabel'].includes(key) && value !== 'ALL') ? { atDataDate: 'true' } : {}), sortBy: order.sortBy, sortDir: list.sortDir ?? picked?.sortDir ?? order.sortDir, page: pageNumber(params.get('page')), pageSize: 20, ...(search.trim() ? { q: search.trim().slice(0, 120) } : {}) };
+  return { from, to, ...(picked ?? global), ...directory, ...(Object.entries({ ...picked, ...directory }).some(([key, value]) => ['neverUsed', 'receiptAdded7', 'receiptAdded30', 'receiptDays30AtLeast2', 'receiptBucket', 'packageLabel'].includes(key) && value !== 'ALL') ? { atDataDate: 'true' } : {}), sortBy: order.sortBy, sortDir: list.sortDir ?? picked?.sortDir ?? order.sortDir, page: pageNumber(params.get('page')), pageSize: 10, ...(search.trim() ? { q: search.trim().slice(0, 120) } : {}) };
 }
 export function drilldownHref(params: URLSearchParams, from: string, filters: ExecutiveDrilldownFilters): string {
   const next = reportContextParams(params);

@@ -116,6 +116,32 @@ test('C8/C12/C14: one atomic directory filter, centred time controls, one-page p
   assert.match(page, /context && !exportOpen && failed\?\.kind !== 'notFound'/);
 });
 
+test('owner 2026-10-05: ten companies a page, a pager nobody overlooks, and one line of header controls', async () => {
+  const { reportQuery } = await import('./executive-reports.logic');
+  const context = { currentMonth: '2026-10', defaultMonth: '2026-10', builtMonths: ['2026-10'], filters: { industry: [], discovery: [], referringSales: [] } } as any;
+  assert.equal(reportQuery('companies', new URLSearchParams(), context).pageSize, 10);
+  const page = source('./ExecutiveReportPage.tsx');
+  assert.match(page, /<Pagination prominent /);
+  // The pager sits under the list: a new page is read from its first row, clear of the sticky bar.
+  assert.match(page, /id="executive-results" className="[^"]*scroll-mt-32/); assert.match(page, /getElementById\('executive-results'\)\?\.scrollIntoView\(\)/);
+  const { Pagination } = await import('../../common/components/data-table/Pagination');
+  const pager = html(Pagination, { page: 2, totalPages: 3, onPageChange() {}, prominent: true });
+  assert.match(pager, />หน้า 2 จาก 3</);
+  // Both ends are bordered buttons a thumb can hit (44 px), with the arrow hidden from the spoken name.
+  assert.equal((pager.match(/<button[^>]*border border-gray-300[^>]*min-h-11/g) ?? []).length, 2);
+  assert.match(pager, /<span aria-hidden="true">←<\/span>ก่อนหน้า/); assert.match(pager, /ถัดไป<span aria-hidden="true">→<\/span>/);
+  assert.match(html(Pagination, { page: 1, totalPages: 3, onPageChange() {}, prominent: true }), /<button[^>]*disabled=""[^>]*>[\s\S]*?ก่อนหน้า/);
+  // The plain pager other screens use keeps its look.
+  assert.doesNotMatch(html(Pagination, { page: 2, totalPages: 3, onPageChange() {} }), /border-gray-300|aria-hidden/);
+  // Search, sort and export share one 44 px line: nothing hangs under the search box, the sort is named and never squeezed into a fixed column.
+  const controls = page.match(/const directoryControls = [^\n]*\n[^\n]*\n[^\n]*/)?.[0] ?? '';
+  assert.match(controls, /placeholder=\{W\.searchHint\}/); assert.doesNotMatch(controls, /hint=\{|md:w-80"|grid-cols-/);
+  assert.match(controls, /<DesignIcons\.search /);
+  assert.match(controls, /<SelectField id="executive-sort" label=\{W\.sort\} frameClassName="[^"]*!flex-row[^"]*md:\[&>details\]:flex-none/);
+  assert.doesNotMatch(controls, /executive-sort"[^>]*sr-only/);
+  assert.match(source('./ExecutiveReportDesign.tsx'), /max-xl:order-last max-xl:basis-full/);
+});
+
 test('C11/C13/C16: account controls, genuine export list and unchanged admin menu words', () => {
   const content = source('./ExecutiveReportContent.tsx');
   assert.doesNotMatch(content, /panel = <Card title=\{W.figure\}/);
@@ -210,7 +236,6 @@ test('round A: optional executive field and picker styles preserve ordinary hint
   assert.equal(future.props.disabled, true); assert.match(future.props.className, /disabled:opacity-30/);
   assert.doesNotMatch(ordinary.find(e => e.type === 'panel')!.props.className, /\[&_button\]/);
   assert.match(renderPicker({ mode: 'month', value: '2026-10', panelClassName: '[&_button]:min-h-11 [&_button]:min-w-11' }).find(e => e.type === 'panel')!.props.className, /\[&_button\]:min-h-11/);
-  assert.match(source('./ExecutiveReportPage.tsx'), /hintClassName="truncate text-gray-600"/);
   assert.match(source('./ExecutivePeriodControl.tsx'), /panelClassName="\[&_button\]:min-h-11/);
 });
 

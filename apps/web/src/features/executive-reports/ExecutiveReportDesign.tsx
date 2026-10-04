@@ -14,7 +14,7 @@ export function ExecutivePage({ eyebrow, title, description, actions, controls, 
   return <div className={`flex min-w-0 flex-col ${compact ? 'gap-2' : 'gap-4'} ${className}`}>
     <header className={`relative flex min-w-0 flex-wrap items-center justify-between after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-linear-to-r after:from-gold-500 after:to-transparent ${compact ? 'gap-2 pb-1' : 'gap-3 pb-3'}`}>
       <div className={compact ? 'min-w-0 flex-1' : 'min-w-0'}>{eyebrow && <div data-breadcrumb className={compact ? 'sr-only' : 'mb-1 text-xs font-semibold text-brand-800'}>{eyebrow}</div>}<h1 className={`font-semibold text-brand-800 ${compact ? 'truncate text-xl leading-7 md:text-2xl md:leading-8' : 'text-2xl sm:text-3xl'}`} title={typeof title === 'string' ? title : undefined}>{title}</h1>{description && <p className={compact ? 'truncate text-sm leading-5 text-gray-600' : 'mt-1 text-sm text-gray-600'} title={typeof description === 'string' ? description : undefined}>{description}</p>}</div>
-      {controls && <div className="min-w-0 max-md:order-last max-md:basis-full">{controls}</div>}
+      {controls && <div className="min-w-0 max-xl:order-last max-xl:basis-full">{controls}</div>}
       {actions && <div className={`flex min-w-0 flex-wrap items-center gap-2 ${compact && !controls ? 'max-md:basis-full' : ''}`}>{actions}</div>}
     </header>{children}
   </div>;

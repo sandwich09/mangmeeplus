@@ -8,6 +8,7 @@ type IconEl = [string, Record<string, string | number>];
 const ICONS: Record<string, IconEl[]> = {
   info: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M12 11v6M12 7h.01' }]],
   filter: [['path', { d: 'M4 5h16l-6 7v6l-4 2v-8Z' }]],
+  search: [['circle', { cx: 11, cy: 11, r: 7 }], ['path', { d: 'M20 20l-3.8-3.8' }]],
   megaphone: [['path', { d: 'M4 10h4l12-5v14L8 14H4Z' }], ['path', { d: 'M8 14l2 7h4l-2-6' }]],
   grid: [['rect', { x: 3, y: 3, width: 7, height: 7, rx: 1 }], ['rect', { x: 14, y: 3, width: 7, height: 7, rx: 1 }], ['rect', { x: 3, y: 14, width: 7, height: 7, rx: 1 }], ['rect', { x: 14, y: 14, width: 7, height: 7, rx: 1 }]],
   chat: [['path', { d: 'M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z' }], ['path', { d: 'M8 10h8M8 13h5' }]],

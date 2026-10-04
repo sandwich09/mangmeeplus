@@ -13,7 +13,7 @@ const context = {
 test('URL defaults reject unknown values, future months, malformed pages and sort orders', async () => {
   const { reportQuery } = await logic();
   const q = reportQuery('companies', new URLSearchParams('month=2026-10&filter_industry=secret&page=2x&sortBy=bad&sortDir=bad'), context);
-  assert.deepEqual(q, { from: '2026-10', to: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
+  assert.deepEqual(q, { from: '2026-10', to: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 10 });
 });
 test('URL aliases send the API filters, ranking, tabs, sort and paging without leaking a URL search', async () => {
   const { reportQuery } = await logic();
@@ -35,9 +35,9 @@ test('a drill-down uses the COMPLETE API query without merging the origin global
   const href = drilldownHref(origin, 'customers', { discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc' });
   const p = new URL(href, 'https://test.invalid').searchParams;
   assert.equal(p.get('filter_discovery'), 'FACEBOOK'); assert.equal(p.get('origin'), 'customers'); assert.equal(p.has('buildId'), false);
-  assert.deepEqual(reportQuery('companies', p, context), { from: '2026-09', to: '2026-09', discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc', page: 1, pageSize: 20 });
+  assert.deepEqual(reportQuery('companies', p, context), { from: '2026-09', to: '2026-09', discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc', page: 1, pageSize: 10 });
   const blank = new URL(drilldownHref(origin, 'overview', {}), 'https://test.invalid').searchParams;
-  assert.deepEqual(reportQuery('companies', blank, context), { from: '2026-09', to: '2026-09', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
+  assert.deepEqual(reportQuery('companies', blank, context), { from: '2026-09', to: '2026-09', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 10 });
 });
 test('changing filters or sort resets paging; clearing keeps the month and removes drilled conditions', async () => {
   const { changedParams, clearedParams } = await logic();

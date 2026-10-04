@@ -7,6 +7,8 @@ interface PaginationProps {
   onPageChange: (page: number) => void;
   disabled?: boolean;
   locale?: 'th' | 'en';
+  /** Bordered 44 px buttons with arrows and a bold "page x of y": a pager nobody overlooks and a thumb can hit. */
+  prominent?: boolean;
 }
 
 const labels = {
@@ -14,26 +16,27 @@ const labels = {
   en: { prev: 'Previous', next: 'Next', page_of: (p: number, t: number) => `Page ${p} of ${t}` },
 };
 
-export function Pagination({ page, totalPages, onPageChange, disabled, locale = 'th' }: PaginationProps) {
+export function Pagination({ page, totalPages, onPageChange, disabled, locale = 'th', prominent = false }: PaginationProps) {
   const l = labels[locale];
+  const look = prominent ? { variant: 'secondary', size: 'md', className: 'min-h-11 min-w-28 !text-base' } as const : { variant: 'ghost', size: 'sm' } as const;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 py-3 sm:flex-nowrap">
+    <div className={prominent ? 'flex items-center justify-between gap-3 py-1' : 'flex flex-wrap items-center justify-between gap-4 py-3 sm:flex-nowrap'}>
       <Button
-        variant="ghost"
-        size="sm"
+        {...look}
         disabled={disabled || page <= 1}
         onClick={() => onPageChange(page - 1)}
       >
+        {prominent && <span aria-hidden="true">←</span>}
         {l.prev}
       </Button>
-      <span className="text-sm text-gray-600">{l.page_of(page, totalPages)}</span>
+      <span className={prominent ? 'text-center text-base font-semibold tabular-nums text-gray-900' : 'text-sm text-gray-600'}>{l.page_of(page, totalPages)}</span>
       <Button
-        variant="ghost"
-        size="sm"
+        {...look}
         disabled={disabled || page >= totalPages}
         onClick={() => onPageChange(page + 1)}
       >
         {l.next}
+        {prominent && <span aria-hidden="true">→</span>}
       </Button>
     </div>
   );
