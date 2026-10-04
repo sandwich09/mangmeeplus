@@ -109,7 +109,7 @@ const summary = {
   money: Object.fromEntries(['netReceiptsSatang', 'receiptsSatang', 'refundsSatang', 'taxSatang', 'feesSatang', 'aiCostSatang'].map(key => [key, cash])),
   usage: { ...Object.fromEntries(['activeDays', 'activeDaysLine', 'activeDaysWeb', 'expenseReceiptCountInPeriod', 'expenseReceiptsLine', 'expenseReceiptsWeb', 'documents', 'aiRequests'].map(key => [key, 6])), activeUsers: null, activeUsersLine: null, activeUsersWeb: null, activeUsersCoverage: { coverage: 'unavailable', reasonCodes: ['DISTINCT_USERS_NOT_AVAILABLE'] } },
 };
-const company = { id: 'customer', receiptAdoption: 'EVER', expenseReceiptCountLifetime: 6 };
+const company = { id: 'customer', receiptAdoption: 'EVER', expenseReceiptCountLifetime: 6, sheet: { receiptsLifetime: { value: 6, ...complete } } };
 const detail = { ...envelope, periodSummary: summary, company, coverage: { money: complete, usage: complete, aiCost: complete }, sourceStatus: { money: complete, usage: complete, aiCost: complete } };
 test('nullable period payment flags stay unknown even when other report money is complete', async () => {
   const { CompanyContent } = await import('./ExecutiveReportContent');

@@ -205,7 +205,7 @@ export function CompaniesContent({ data, nav, sortColumn, onNote }: { data: Exec
   const columns: ReportColumn[] = [
     { label: sheetLabel('company'), width: 150, ...order('companyName') }, ...lead.map(key => ({ label: factLabel(key), width: 104, ...order(key) })),
     { label: sheetLabel('businessType'), width: 112, ...text }, { label: sheetLabel('plan'), width: 100, ...text },
-    { label: sheetLabel('receiptsLifetime'), head: brokenBefore(sheetLabel('receiptsLifetime'), '(รายการสะสม)'), width: 100, ...order('receiptsLifetime') },
+    { label: sheetLabel('receiptsLifetime'), head: brokenBefore(sheetLabel('receiptsLifetime'), '(รายการ)'), width: 100, ...order('receiptsLifetime') },
     { label: sheetLabel('lastReceiptAt'), head: brokenBefore(sheetLabel('lastReceiptAt'), 'ล่าสุด'), width: 84, ...order('lastReceiptAt') },
     { label: sheetLabel('planEndsAt'), head: brokenBefore(sheetLabel('planEndsAt'), 'แพ็กเกจ'), width: 80, ...order('planEndsAt') },
     ...(contacts ? [{ label: sheetLabel('email'), width: 116, ...text }, { label: sheetLabel('phone'), width: 100, ...text }] : []),
@@ -355,7 +355,7 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, 
     {tab === 'history' ? history && <Card title={W.history}>{history.items.length === 0 ? <EmptyState title={W.noHistory} description="" /> : <ReportTable title={W.history} columns={[{ label: W.item, width: 340 }, { label: W.historyAt, width: 160, align: 'left' }, { label: W.shortPlan, width: 160, align: 'left' }]} rows={history.items.map((event, index) => ({ key: String(index), cells: [EXECUTIVE_HISTORY_EVENT_LABELS[event.kind], reportDateTime(event.at), event.planLabel || '–'] }))} />}</Card> : tab === 'usage' ? month && <div className="grid min-w-0 gap-3 xl:grid-cols-2">
       <Card title={W.usageTab}>{rowStatus(month)}<p className="text-xs text-gray-600">{W.documentDefinition} · {W.usersDefinition} · {W.aiDefinition}</p>
         <DetailValues rows={[
-          [W.filterLabels.receiptAdoption, LABELS.receiptAdoption[company.receiptAdoption] ?? W.unknown], [W.lifetimeReceipts, <Figure key="lifetime" value={sourceCount(company.expenseReceiptCountLifetime, data.coverage.usage)} />],
+          [W.filterLabels.receiptAdoption, LABELS.receiptAdoption[company.receiptAdoption] ?? W.unknown], [S.lifetime, <Figure key="lifetime" value={company.sheet.receiptsLifetime} />] /* one receipt total, the list's own: what is in the system on the data date */,
           ...([[W.receiptCount, 'expenseReceiptCountInPeriod'], [W.days, 'activeDays'], [W.users, 'activeUsers'], [W.documents, 'documents'], [W.ai, 'aiRequests']] as const).map(([label, key]): [string, ReactNode] => [label, <Figure key={key} value={sourceCount(month.usage[key], key === 'activeUsers' && 'activeUsersCoverage' in month.usage ? month.usage.activeUsersCoverage : usageCoverage)} />]),
           [W.firstActivity, reportDateTime(company.firstActivityAt)], [W.lastActivity, reportDateTime(company.lastActivityAt)], [W.lastWeb, reportDateTime(company.lastWebEntryAt)], [W.lastLine, reportDateTime(company.lastLineActivityAt)],
         ]} />

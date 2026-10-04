@@ -261,6 +261,10 @@ test('company detail explains each distinct reason once with accessible dots and
   assert.equal((html.match(/executive-status/g) ?? []).length, 1);
   assert.match(accessible(html), /อย่างน้อย 1/); assert.match(accessible(html), /ยังไม่มีตัวเลข/); assert.match(accessible(html), /12\.34 บาท \(ยอดเฉพาะช่วงที่วัดได้\)/);
   for (const cell of html.match(/<td[^>]*>[\s\S]*?<\/td>/g) ?? []) assert.doesNotMatch(text(cell), /ข้อมูลก่อนเริ่ม|ข้อมูลที่เก็บได้|อย่างน้อย|เฉพาะช่วงที่วัดได้/);
+  // One receipt total on the page, the list's own: what is in the system on the data date. It is exact while the period's usage is still "at least".
+  const total = html.match(/<dt[^>]*>ใบเสร็จในระบบ<\/dt><dd[^>]*>([\s\S]*?)<\/dd>/)?.[1] ?? '';
+  assert.equal(text(total).trim(), '27'); assert.doesNotMatch(total, /executive-dot|อย่างน้อย/); assert.doesNotMatch(visible, /ใบเสร็จสะสม/);
+  assert.match(html, /<dt[^>]*>ใบเสร็จในช่วงนี้<\/dt>/); // the count of the chosen period is a different figure, under its own name
 });
 
 test('executive denial uses the report error words instead of the admin-console state', async () => {

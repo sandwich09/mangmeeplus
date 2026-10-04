@@ -65,7 +65,7 @@ test('the company list is the owner\'s sheet: its own columns in the table, the 
   const data = { ...envelope, summary: { netReceiptsSatang: count(10000) }, items: [row], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
   const html = render(CompaniesContent, { data, nav });
   const head = html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
-  for (const word of ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จ (รายการสะสม)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'หมายเหตุ']) assert.ok(head.includes(`title="${word}"`), word);
+  for (const word of ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จในระบบ (รายการ)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'หมายเหตุ']) assert.ok(head.includes(`title="${word}"`), word);
   assert.match(head, /md:sticky md:left-0/); assert.match(html, /grid-cols-1/); assert.match(html, /md:table-row/);
   assert.match(html, /after:absolute after:inset-0/); assert.match(html, />27</);
   assert.doesNotMatch(html, /type="checkbox"/); // the comparison checkbox is taken out for now (owner 2026-10-05)

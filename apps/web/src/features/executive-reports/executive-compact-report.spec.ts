@@ -117,7 +117,7 @@ test('the sheet has its headers in the owner\'s order, rows start closed, and ra
   const render = (sortBy: string) => html(CompaniesContent, { data: { ...envelope, items: [{ ...row, rank: 1, cumulativeShare: { value: 100 } }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy, sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
   const plain = render('joinedAt'), ranked = render('netReceipts');
   const titles = (markup: string) => [...(markup.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').matchAll(/<th[^>]*title="([^"]*)"/g)].map(match => match[1]);
-  assert.deepEqual(titles(plain), ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จ (รายการสะสม)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'หมายเหตุ']);
+  assert.deepEqual(titles(plain), ['บริษัท / ร้าน', 'ประเภทกิจการ', 'แพ็กเกจ', 'ใบเสร็จในระบบ (รายการ)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'หมายเหตุ']);
   assert.match(plain, /aria-expanded="false"/); assert.doesNotMatch(plain, /<details[^>]* open/);
   // Ordered by net receipts: that figure joins the columns right after the name; rank and share are facts of the opened row.
   assert.deepEqual(titles(ranked).slice(0, 2), ['บริษัท / ร้าน', 'ยอดรับสุทธิ (บาท)']);
