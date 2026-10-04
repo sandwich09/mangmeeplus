@@ -1,3 +1,6 @@
+import { SyncTaxEventsUseCase } from '../../tax/application/use-cases/sync-tax-events.use-case';
+import { PrismaTaxRepository } from '../../tax/infrastructure/repositories/prisma-tax.repository';
+import { ExpenseSourceAdapter } from '../../tax/infrastructure/adapters/expense-source.adapter';
 import { PrismaReimbursementRepository } from '../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { MaterializeClaimExpensesService } from '../../reimbursements/application/services/materialize-claim-expenses.service';
 import assert from 'node:assert/strict';
@@ -53,8 +56,8 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     if (userId) await client.user.delete({ where: { id: userId } });
     await client.$disconnect();
   });
-  async function ready(id: string, expenseDate?: string) {
-    await client.expenseRecord.update({ where: { id }, data: { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY' } });
+  async function ready(id: string, expenseDate?: string, taxInvoice = false) {
+    await client.expenseRecord.update({ where: { id }, data: { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: taxInvoice ? 'TAX_INVOICE' : 'RECEIPT', taxEvidenceStatus: taxInvoice ? 'USABLE_FOR_TAX' : 'SUPPORTING_ONLY' } });
     const file = await client.attachmentObject.create({ data: {
       companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${companyId}/${id}/${randomUUID()}`,
       originalFileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 1,
@@ -289,9 +292,9 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     const history = await client.expensePayment.findMany({ where: { companyId, expenseId: source.id }, orderBy: { createdAt: 'asc' } });
     const cancel = new CancelExpensePaymentUseCase(repo, audit as any);
     const corrected = await cancel.execute(finance, source.id, history[0]!.id, 'กรอกยอดจ่ายผิด');
-    assert.equal(corrected.paidAmount, '60.0000'); assert.equal(corrected.outstandingAmount, '40.0000');
+    assert.equal(Number(corrected.paidAmount), 60); assert.equal(Number(corrected.outstandingAmount), 40);
     const reopened = await new ReopenExpenseUseCase(repo, audit as any).execute(finance, source.id, 'แก้ยอดเอกสาร');
-    assert.equal(reopened.expenseNumber, confirmed.expenseNumber); assert.equal(reopened.paidAmount, '60.0000'); assert.equal(reopened.confirmedAt, null);
+    assert.equal(reopened.expenseNumber, confirmed.expenseNumber); assert.equal(Number(reopened.paidAmount), 60); assert.equal(reopened.confirmedAt, null);
     assert.equal((await client.expensePayment.findUniqueOrThrow({ where: { id: history[0]!.id } })).status, 'VOIDED');
     await client.expenseRecord.update({ where: { id: source.id }, data: { netPayableAmount: '50', status: 'READY_FOR_CONFIRMATION' } });
     await assert.rejects(repo.finalizeAndConfirmExpenseCas({ companyId, id: source.id } as any, async () => []), (error: any) => error.getResponse?.().code === 'expense_paid_exceeds_payable');
@@ -299,7 +302,7 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     const reconfirm = await ready(source.id);
     reconfirm.outboxEvent.eventKey = `correction-reconfirm:${source.id}`;
     const result = await repo.finalizeAndConfirmExpenseCas(reconfirm, async () => []);
-    assert.equal(result.expense.expenseNumber, confirmed.expenseNumber); assert.equal(result.expense.paidAmount, '60.0000');
+    assert.equal(result.expense.expenseNumber, confirmed.expenseNumber); assert.equal(Number(result.expense.paidAmount), 60);
     assert.equal(await client.documentNumber.count({ where: { companyId, ownerId: source.id } }), 1);
     for (const action of ['expense.reopen', 'expense.payment.cancel']) {
       const entry = await client.auditLog.findFirstOrThrow({ where: { companyId, action } });
@@ -317,6 +320,146 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     await assert.rejects(repo.cancelPaymentAtomic({ companyId, expenseId: source.id, paymentId: payment.id, actorUserId: userId, scopes: {}, reason: 'แก้ยอดจ่าย' }), (error: any) => error.getResponse?.().blocker === 'ledger_posted');
     assert.equal((await client.expensePayment.findUniqueOrThrow({ where: { id: payment.id } })).status, 'RECORDED');
     assert.equal((await repo.expenseCorrectionCapabilities(companyId, source.id, ['expense.confirm', 'expense.payment.record'])).canReopen, false);
+  });
+
+
+  const taxRepo = new PrismaTaxRepository(prisma);
+  const expenseSource = new ExpenseSourceAdapter(prisma);
+  const sync = new SyncTaxEventsUseCase(taxRepo, { findIssuedWithVatByCompany: async () => [] } as any,
+    expenseSource, { findRecordedWithWhtByCompany: async () => [] } as any);
+  const correction = (id: string) => ({ companyId, expenseId: id, actorUserId: userId, scopes: {}, reason: 'แก้ข้อมูลภาษี' });
+  const activeEvents = (id: string) => client.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', sourceId: id, status: 'ACTIVE' } });
+  async function assertRetired(id: string) {
+    assert.equal((await activeEvents(id)).length, 0);
+    assert.equal(await client.whtCertificateHandoff.count({ where: { companyId, sourcePaymentType: 'expense.record', sourcePaymentId: id, status: 'REQUIRED' } }), 0);
+  }
+  // Real expense/tax repositories and source adapter; only catalog resolution is isolated.
+  async function editTaxDocument(id: string, date: string, base: number, withholding: number, individual: boolean, component: boolean) {
+    const vat = Number((base * 0.07).toFixed(2));
+    const source = (await repo.findByIdWithRelations(companyId, id))!;
+    const snapshot: any = { taxCodeDefinitionId: null, externalTaxCode: 'I7', taxProfileKey: 'SAP_TH', taxProfileVersion: 1,
+      roundingMode: 'HALF_UP', roundingScale: 2, taxAmountTolerance: '0.01', taxRegime: 'VAT', taxDirection: 'INPUT',
+      taxTreatment: 'STANDARD', taxContext: 'DOMESTIC_PURCHASE', taxRate: '7', sourceCurrency: 'THB', taxCurrency: 'THB',
+      exchangeRate: '1', exchangeRateSource: 'FUNCTIONAL_CURRENCY', exchangeRateDate: date,
+      taxBaseAmount: String(base), taxAmount: String(vat), claimability: 'CLAIMABLE', evidenceStatus: 'VERIFIED',
+      accountRuleVersion: 1, reportRuleVersion: 1, recognitionDate: date, evidenceRefs: [] };
+    const taxComponents: any = [{ componentKey: 'VAT', snapshot, accountAssignments: [],
+      reportContributions: [{ formType: 'PP30', boxKey: 'box_6_eligible_purchases', amount: String(base), amountSource: 'TAX_BASE' },
+        { formType: 'PP30', boxKey: 'box_7_input_tax', amount: String(vat), amountSource: 'TAX_AMOUNT' }] }];
+    await repo.updateExpense({ companyId, id, updatedByUserId: userId, expectedUpdatedAt: source.updatedAt, expenseDate: new Date(date),
+      vendorNameSnapshot: 'ผู้รับเงินทดสอบ', vendorTaxIdSnapshot: '0105557000001', vendorEntityKindSnapshot: individual ? 'INDIVIDUAL' : 'JURISTIC',
+      vendorDocumentNumber: `INV-${id}`, vatMode: 'VAT_EXCLUDED', inputVatClaimStatus: 'CLAIMABLE',
+      taxableAmount: String(base), subtotalAmount: String(base), vatAmount: String(vat), whtAmount: String(withholding),
+      grandTotalAmount: String(base + vat), netPayableAmount: String(base + vat - withholding),
+      outstandingAmount: String(base + vat - withholding - Number(source.paidAmount)),
+      whtRate: withholding ? '3' : '0', taxCategory: withholding ? 'SERVICE' : '',
+    }, async tx => {
+      await repo.upsertLines(companyId, id, [{ companyId, expenseId: id, expenseCategoryId: null, accountHintKey: null, taxCategory: withholding ? 'SERVICE' : null, lineNumber: 1, description: 'รายการแก้ไข', quantity: '1', unitPrice: String(base),
+        discountAmount: '0', taxableAmount: String(base), vatRate: '0.07', vatAmount: String(vat), whtRate: withholding ? '0.03' : null,
+        whtAmount: String(withholding), lineSubtotalAmount: String(base), lineTotalAmount: String(base + vat),
+        ...(component && { taxSnapshot: snapshot, taxComponents }),
+      }], tx, true); // Replaces the line with a new id, like deleting/replacing a reviewed line.
+    });
+    const input = await ready(id, undefined, true);
+    input.outboxEvent.eventKey = `tax-correction:${randomUUID()}`;
+    await repo.finalizeAndConfirmExpenseCas(input, async ({ expense }) => component ? expense.lines.map(line => ({ ...line,
+      companyId, expenseId: id, sourceLineId: line.id, taxSnapshot: snapshot, taxComponents,
+    })) : []);
+  }
+
+  it('retires header VAT and WHT while open; new ids, VAT, date and payee produce exactly one current active set', async () => {
+    const source = await create.execute(ctx(), draft({ expenseDate: '2026-05-01' }));
+    await editTaxDocument(source.id, '2026-05-01', 100, 3, false, false);
+    await sync.execute(companyId);
+    const old = await activeEvents(source.id);
+    assert.deepEqual(old.map(e => e.eventType).sort(), ['VAT_INPUT', 'WHT_PND53']);
+    const oldLine = await client.expenseLine.findFirstOrThrow({ where: { companyId, expenseId: source.id } });
+    await repo.reopenExpenseAtomic(correction(source.id));
+    await assertRetired(source.id);
+    await sync.execute(companyId); await assertRetired(source.id);
+    await editTaxDocument(source.id, '2026-06-01', 200, 6, true, true);
+    await sync.execute(companyId); await sync.execute(companyId);
+    const current = await activeEvents(source.id);
+    assert.equal(current.length, 2);
+    assert.deepEqual(current.map(e => e.eventType).sort(), ['VAT_INPUT', 'WHT_PND3']);
+    assert.ok(current.every(e => e.periodKey === '2026-06'));
+    assert.equal(Number(current.find(e => e.eventType === 'VAT_INPUT')!.taxAmount), 14);
+    const currentLine = current.find(e => e.eventType === 'VAT_INPUT')!.sourceLineId;
+    assert.ok(currentLine); assert.notEqual(currentLine, oldLine.id);
+    assert.ok(old.every(e => !current.some(now => now.id === e.id)));
+    // Removing withholding retires both the old form and its REQUIRED handoff.
+    await repo.reopenExpenseAtomic(correction(source.id)); await assertRetired(source.id);
+    await editTaxDocument(source.id, '2026-07-01', 300, 0, true, true);
+    await sync.execute(companyId); await sync.execute(companyId);
+    const noWht = await activeEvents(source.id);
+    assert.equal(noWht.length, 1); assert.equal(noWht[0]!.periodKey, '2026-07');
+    assert.equal(Number(noWht[0]!.taxAmount), 21); assert.notEqual(noWht[0]!.sourceLineId, currentLine);
+    assert.equal(await client.whtCertificateHandoff.count({ where: { companyId, sourcePaymentId: source.id, status: 'REQUIRED' } }), 0);
+    // Adding withholding after another correction creates only the newly applicable form.
+    await repo.reopenExpenseAtomic(correction(source.id)); await assertRetired(source.id);
+    await editTaxDocument(source.id, '2026-07-02', 400, 12, false, true);
+    await sync.execute(companyId); await sync.execute(companyId);
+    const added = await activeEvents(source.id);
+    assert.equal(added.length, 2); assert.deepEqual(added.map(e => e.eventType).sort(), ['VAT_INPUT', 'WHT_PND53']);
+    assert.equal(Number(added.find(e => e.eventType === 'VAT_INPUT')!.taxAmount), 28);
+  });
+
+  for (const finish of ['reject', 'void'] as const) it(`reopen then ${finish} leaves no active tax fact or required handoff, and no stranded payment`, async () => {
+    const source = await create.execute(ctx(), draft({ expenseDate: '2026-05-02' }));
+    await editTaxDocument(source.id, '2026-05-02', 100, 3, true, true);
+    await sync.execute(companyId);
+    await new RecordExpensePaymentUseCase(repo, audit as any).execute({ ...ctx(), permissions: ['expense.payment.record'] }, source.id, { paidAmount: '40', idempotencyKey: randomUUID() });
+    await repo.reopenExpenseAtomic(correction(source.id)); await assertRetired(source.id);
+    if (finish === 'reject') {
+      await assert.rejects(repo.updateExpense({ companyId, id: source.id, status: 'REJECTED', updatedByUserId: userId }), (e: any) => e.getResponse?.().code === 'expense_rejection_payments_recorded');
+      const payment = await client.expensePayment.findFirstOrThrow({ where: { companyId, expenseId: source.id } });
+      await repo.cancelPaymentAtomic({ ...correction(source.id), paymentId: payment.id });
+      await repo.updateExpense({ companyId, id: source.id, status: 'REJECTED', updatedByUserId: userId });
+    } else await repo.voidExpenseTrueReversal(companyId, source.id, userId, 'ยกเลิกหลังเปิดแก้ไข');
+    await sync.execute(companyId); await assertRetired(source.id);
+    assert.equal(await client.expensePayment.count({ where: { companyId, expenseId: source.id, status: 'RECORDED' } }), 0);
+  });
+
+  it('stale tax sync cannot resurrect reporting facts after reopen or after a new confirmation', async () => {
+    const source = await create.execute(ctx(), draft({ expenseDate: '2026-05-03' }));
+    await editTaxDocument(source.id, '2026-05-03', 100, 3, false, false);
+    const before = (await repo.findById(companyId, source.id))!;
+    await sync.execute(companyId);
+    const old = (await activeEvents(source.id))[0]!;
+    const stale: any = { ...old, expectedExpenseConfirmedAt: before.confirmedAt, idempotencyKey: `stale:${randomUUID()}` };
+    await repo.reopenExpenseAtomic(correction(source.id));
+    await assert.rejects(taxRepo.upsertEvent(stale), (e: any) => e.getResponse?.().code === 'expense_tax_source_changed');
+    await assertRetired(source.id);
+    await editTaxDocument(source.id, '2026-06-03', 200, 0, true, true);
+    await assert.rejects(taxRepo.upsertEvent(stale), (e: any) => e.getResponse?.().code === 'expense_tax_source_changed');
+    await sync.execute(companyId);
+    const active = await activeEvents(source.id); assert.equal(active.length, 1); assert.equal(active[0]!.periodKey, '2026-06');
+  });
+
+
+  it('capability and locked reopen refuse accounting and each applicable tax form, then an open document edits and confirms again', async () => {
+    const source = await create.execute(ctx(), draft({ expenseDate: '2026-04-01' }));
+    await repo.finalizeAndConfirmExpenseCas(await ready(source.id), async () => []);
+    const month = await client.accountingPeriod.upsert({ where: { companyId_periodKey: { companyId, periodKey: '2026-04' } },
+      create: { companyId, periodKey: '2026-04', startDate: new Date('2026-04-01'), endDate: new Date('2026-04-30'), status: 'CLOSED' }, update: { status: 'CLOSED' } });
+    const cap = await repo.expenseCorrectionCapabilities(companyId, source.id, ['expense.confirm']);
+    assert.equal(cap.canReopen, false); assert.equal(cap.lockedAccountingPeriodKey, '2026-04');
+    await assert.rejects(repo.reopenExpenseAtomic(correction(source.id)), (e: any) => e.getResponse?.().blockers?.includes('accounting_period_locked'));
+    await client.accountingPeriod.update({ where: { id: month.id }, data: { status: 'REOPENED' } });
+    for (const formType of ['PP30', 'PP36', 'CUSTOMS_SUPPORT', 'PND3', 'PND53'] as const) {
+      const withholding = formType.startsWith('PND');
+      await client.expenseRecord.update({ where: { id: source.id }, data: { whtAmount: withholding ? '3' : '0', vendorEntityKindSnapshot: formType === 'PND3' ? 'INDIVIDUAL' : 'JURISTIC' } });
+      await client.expenseLine.updateMany({ where: { companyId, expenseId: source.id }, data: { taxComponentsJson: withholding ? [] : [{ reportContributions: [{ formType }] }] } });
+      const period = await client.taxPeriod.upsert({ where: { companyId_formType_periodKey: { companyId, formType, periodKey: '2026-04' } },
+        create: { companyId, formType, taxType: withholding ? 'WHT' : formType === 'CUSTOMS_SUPPORT' ? 'CUSTOMS' : 'VAT', periodKey: '2026-04', status: 'FILED' }, update: { status: 'FILED' } });
+      const current = await repo.expenseCorrectionCapabilities(companyId, source.id, ['expense.confirm']);
+      assert.deepEqual(current.lockedTaxPeriods, [{ formType, periodKey: '2026-04' }]); assert.equal(current.canReopen, false);
+      await assert.rejects(repo.reopenExpenseAtomic(correction(source.id)), (e: any) => e.getResponse?.().lockedTaxPeriods?.[0]?.formType === formType);
+      await client.taxPeriod.update({ where: { id: period.id }, data: { status: 'OPEN' } });
+    }
+    await repo.reopenExpenseAtomic(correction(source.id));
+    await editTaxDocument(source.id, '2026-04-02', 200, 6, true, true);
+    assert.equal((await repo.findById(companyId, source.id))!.status, 'CONFIRMED');
   });
 
 });

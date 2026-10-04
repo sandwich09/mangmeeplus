@@ -401,7 +401,7 @@ export class GenerateJournalFromSourceUseCase {
     }
   }
 
-  private async canonicalSource(ctx: RequestContext, raw: PostingSourceRef): Promise<LedgerSourcePostingInput & { expenseUpdatedAt?: Date; expenseStatus?: string }> {
+  private async canonicalSource(ctx: RequestContext, raw: PostingSourceRef): Promise<LedgerSourcePostingInput & { expenseConfirmedAt?: Date | null; expenseStatus?: string }> {
     if (raw.sourceType === 'accounting.document' || raw.sourceType === 'accounting_document') {
       const document = await this.accountingRepo.findDocumentById(ctx.companyId, raw.sourceId);
       if (!document) throw new NotFoundException('Accounting source document not found');
@@ -420,7 +420,7 @@ export class GenerateJournalFromSourceUseCase {
       }
       return { ...asLedgerSource({ ...expense, sourceType: 'expense.record', sourceId: expense.id,
         sourceEventType: expense.status === 'VOIDED' ? 'voided' : 'confirmed',
-        idempotencyKey: `expense:${expense.status}:${expense.id}` } as any), expenseUpdatedAt: expense.updatedAt, expenseStatus: expense.status };
+        idempotencyKey: `expense:${expense.status}:${expense.id}` } as any), expenseConfirmedAt: expense.confirmedAt, expenseStatus: expense.status };
     }
     if (raw.sourceType === 'expense.payment') {
       const payment = await this.expenseRepo.findPaymentById(ctx.companyId, raw.sourceId);
@@ -434,7 +434,7 @@ export class GenerateJournalFromSourceUseCase {
         companyId: expense.companyId,
         branchId: expense.branchId ?? undefined,
         sourceType: 'expense.payment',
-        expenseUpdatedAt: expense.updatedAt,
+        expenseConfirmedAt: expense.confirmedAt,
         sourceId: payment.id,
         sourceEventType: 'expense.payment',
         idempotencyKey: `expense.payment:${payment.id}`,
@@ -674,7 +674,7 @@ export class GenerateJournalFromSourceUseCase {
 
     const number = { companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey, idempotencyKey: `gen:${source.sourceType}:${source.sourceId}`, reservedByUserId: ctx.userId };
     const writePosted = async (entryNumber: string, db?: Prisma.TransactionClient) => {
-      const created = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: civilDateToUtcDate(coerceCivilDate(source.sourceDate)), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines, expectedExpenseUpdatedAt: source.expenseUpdatedAt, expectedExpenseStatus: source.expenseStatus }, db);
+      const created = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: civilDateToUtcDate(coerceCivilDate(source.sourceDate)), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines, expectedExpenseConfirmedAt: source.expenseConfirmedAt, expectedExpenseStatus: source.expenseStatus }, db);
       await this.repo.postJournalEntry(created.id, ctx.userId, db);
       return created;
     };

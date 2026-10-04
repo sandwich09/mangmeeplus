@@ -221,7 +221,7 @@ export class PrismaLedgerRepository {
     return r ? mapEntry(r) : null;
   }
 
-  async createJournalEntry(input: CreateJournalEntryInput & { entryNumber: string; expectedExpenseUpdatedAt?: Date; expectedExpenseStatus?: string }, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
+  async createJournalEntry(input: CreateJournalEntryInput & { entryNumber: string; expectedExpenseConfirmedAt?: Date | null; expectedExpenseStatus?: string }, db: LedgerDb = this.prisma.client): Promise<JournalEntryRecord> {
     if (input.entryType === 'GENERATED' && ['expense.record', 'expense.payment'].includes(input.sourceType ?? '')) {
       if (db === this.prisma.client) return this.prisma.client.$transaction((tx) => this.createJournalEntry(input, tx), { isolationLevel: 'ReadCommitted' });
       const payment = input.sourceType === 'expense.payment'
@@ -232,7 +232,7 @@ export class PrismaLedgerRepository {
       const expense = await db.expenseRecord.findFirst({ where: { companyId: input.companyId, id: expenseId } });
       const currentPayment = payment ? await db.expensePayment.findFirst({ where: { companyId: input.companyId, id: input.sourceId } }) : null;
       if (!expense || !['CONFIRMED', 'VOIDED'].includes(expense.status) || expense.status !== (input.expectedExpenseStatus ?? 'CONFIRMED') || (input.sourceType === 'expense.payment' && currentPayment?.status !== 'RECORDED')
-        || (input.expectedExpenseUpdatedAt && expense.updatedAt.getTime() !== input.expectedExpenseUpdatedAt.getTime())) {
+        || (input.expectedExpenseConfirmedAt !== undefined && (expense.confirmedAt?.getTime() ?? null) !== (input.expectedExpenseConfirmedAt?.getTime() ?? null))) {
         throw new ConflictException({ code: 'expense_posting_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
       }
     }

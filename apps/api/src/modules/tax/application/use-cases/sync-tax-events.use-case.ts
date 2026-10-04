@@ -131,6 +131,7 @@ export class SyncTaxEventsUseCase {
         const legacyCode = ['O7', 'O0', 'OX'].includes(snapshot.externalTaxCode ?? '') ? snapshot.externalTaxCode as 'O7' | 'O0' | 'OX' : null;
         await this.taxRepo.upsertEvent({
           companyId, branchId: source.branchId, taxPeriodId: period.id, idempotencyKey: idKey, eventType, status: 'ACTIVE',
+          expectedExpenseConfirmedAt: source.sourceType === 'expense.record' ? source.confirmedAt : undefined,
           sourceType: source.sourceType, sourceId: source.sourceId, sourceLineId: source.sourceLineId, sourceLineKey: source.sourceLineId,
           componentKey: component.componentKey, taxSnapshot: snapshot, reportContributions: component.reportContributions,
           accountAssignments: component.accountAssignments, sourceEventType: source.sourceEventType, sourceHash: hash,
@@ -230,7 +231,7 @@ export class SyncTaxEventsUseCase {
 
       await this.taxRepo.upsertEvent({
         companyId, taxPeriodId: period.id, idempotencyKey: idKey, eventType: 'VAT_INPUT', status: 'ACTIVE',
-        sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.confirmed', sourceHash: hash,
+        expectedExpenseConfirmedAt: exp.confirmedAt, sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.confirmed', sourceHash: hash,
         periodKey, eventDate: exp.expenseDate,
         taxableBase: exp.taxableAmount, taxAmount: exp.vatAmount, currency: exp.currency,
         vatMode: exp.vatMode, outputTaxCode: null, whtFormType: null,
@@ -285,7 +286,7 @@ export class SyncTaxEventsUseCase {
 
       await this.taxRepo.upsertEvent({
         companyId, taxPeriodId: period.id, idempotencyKey: idKey, eventType, status: 'ACTIVE',
-        sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.wht', sourceHash: hash,
+        expectedExpenseConfirmedAt: exp.confirmedAt, sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.wht', sourceHash: hash,
         periodKey, eventDate: exp.expenseDate,
         taxableBase: exp.grossAmount, taxAmount: exp.whtAmount, currency: exp.currency,
         vatMode: null, outputTaxCode: null, whtFormType: formType,

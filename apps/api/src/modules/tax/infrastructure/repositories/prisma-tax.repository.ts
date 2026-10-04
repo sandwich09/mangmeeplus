@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
+import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
+import { ConflictException, BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { TaxEventRecord, UpsertTaxEventInput } from '../../domain/ports/tax-event.repository.port';
 import type { TaxPeriodRecord, CreateTaxPeriodInput } from '../../domain/ports/tax-period.repository.port';
@@ -97,7 +99,15 @@ export class PrismaTaxRepository {
     return rows.map(r => this.toEventRecord(r));
   }
 
-  async upsertEvent(input: UpsertTaxEventInput): Promise<TaxEventRecord> {
+  async upsertEvent(input: UpsertTaxEventInput, db: any = this.prisma.client): Promise<TaxEventRecord> {
+    if (input.sourceType === 'expense.record') {
+      if (db === this.prisma.client) return this.prisma.client.$transaction(tx => this.upsertEvent(input, tx), { isolationLevel: 'ReadCommitted' });
+      await lockExpenseCorrection(db, input.companyId, input.sourceId);
+      const current = await db.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.sourceId } });
+      if (!current || current.status !== 'CONFIRMED' || (input.expectedExpenseConfirmedAt !== undefined && (current.confirmedAt?.getTime() ?? null) !== (input.expectedExpenseConfirmedAt?.getTime() ?? null))) {
+        throw new ConflictException({ code: 'expense_tax_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      }
+    }
     const data = {
       companyId: input.companyId, taxPeriodId: input.taxPeriodId, idempotencyKey: input.idempotencyKey,
       eventType: input.eventType as any, status: (input.status ?? 'ACTIVE') as any,
@@ -136,7 +146,7 @@ export class PrismaTaxRepository {
       reportContributionsJson: input.reportContributions as any ?? null,
       accountAssignmentsJson: input.accountAssignments as any ?? null,
     };
-    const row = await this.prisma.client.taxEvent.upsert({
+    const row = await db.taxEvent.upsert({
       where: { idempotencyKey: input.idempotencyKey },
       update: data,
       create: data,

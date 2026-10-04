@@ -1,6 +1,6 @@
 'use client';
 
-import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
 import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1267,6 +1267,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           {/* The whole form below is disabled at CONFIRMED, but nothing on the page said so —
               the fields just stopped responding. State the rule and the way out, once, here. */}
           <p className="mt-1 text-xs font-semibold text-gray-600">{expenseConfirmedLockMessage(detail.correctionCapabilities)}</p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-gray-600">
+            {expenseReopenBlockerMessages(detail.correctionCapabilities).map(message => <li key={message}>{message}</li>)}
+          </ul>
         </div>
         <MangmeeBadge tone={detail.postingStatus === 'posted' ? 'brand' : detail.postingStatus === 'posting_error' ? 'danger' : detail.postingStatus === 'pending' ? 'amber' : 'slate'}>
           {POSTING_STATUS_LABELS[detail.postingStatus]}
@@ -1572,6 +1575,23 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       ))}
     </MangmeeCard>
   );
+  const paymentHistory = (detail.payments?.length ?? 0) > 0 && (
+    <div className="space-y-2 border-t border-gray-100 pt-3">
+      <p className="text-xs font-semibold text-gray-600">ประวัติการจ่าย</p>
+      {detail.payments?.map((payment) => {
+        const paymentCapability = detail.correctionCapabilities?.payments.find((item) => item.id === payment.id);
+        return (
+          <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+            <span>{dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span>
+            <span className="tabular-nums font-semibold text-gray-800">{baht(payment.amount)}</span>
+            <span>{payment.status === 'VOIDED' ? 'ยกเลิกแล้ว' : payment.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : payment.postingStatus === 'posting_error' ? 'ลงบัญชีไม่สำเร็จ' : 'รอลงบัญชี'}</span>
+            {paymentCapability?.canCancel && <button type="button" className={ghostClass} disabled={actionLoading || Boolean(paymentFailure)} aria-busy={actionLoading} onClick={() => { setShowReject(false); setReason(''); setError(null); setCorrectionAction({ paymentId: payment.id }); }}>{EXPENSE_CORRECTION_WORDS.cancelPayment}</button>}
+            {payment.status === 'RECORDED' && paymentCapability?.cancelBlocker && <p className="w-full">{expenseCorrectionBlockerMessage(paymentCapability.cancelBlocker, 'cancelPayment')}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
   const paymentCard = (
     <div ref={paymentRef} className="scroll-mt-24">
       <MangmeeCard className="space-y-3 p-4">
@@ -1606,25 +1626,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </form>
         )}
         {isConfirmed && detail.correctionCapabilities?.recordPaymentBlocker && detail.correctionCapabilities.recordPaymentBlocker !== 'no_balance' && (
-          <p className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.recordPaymentBlocker)}</p>
+          <p className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.recordPaymentBlocker, 'recordPayment')}</p>
         )}
         {paymentNotice && <p role="status" className="rounded-xl bg-warning-50 p-3 text-sm text-warning-800">{paymentNotice}</p>}
-        {(detail.payments?.length ?? 0) > 0 && (
-          <div className="space-y-2 border-t border-gray-100 pt-3">
-            <p className="text-xs font-semibold text-gray-600">ประวัติการจ่าย</p>
-            {detail.payments?.map((payment) => {
-              const paymentCapability = detail.correctionCapabilities?.payments.find((item) => item.id === payment.id);
-              return (
-              <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
-                <span>{dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span>
-                <span className="tabular-nums font-semibold text-gray-800">{baht(payment.amount)}</span>
-                <span>{payment.status === 'VOIDED' ? 'ยกเลิกแล้ว' : payment.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : payment.postingStatus === 'posting_error' ? 'ลงบัญชีไม่สำเร็จ' : 'รอลงบัญชี'}</span>
-                {paymentCapability?.canCancel && <button type="button" className={ghostClass} disabled={actionLoading || Boolean(paymentFailure)} aria-busy={actionLoading} onClick={() => { setReason(''); setError(null); setCorrectionAction({ paymentId: payment.id }); }}>{EXPENSE_CORRECTION_WORDS.cancelPayment}</button>}
-                {payment.status === 'RECORDED' && paymentCapability?.cancelBlocker && <p className="w-full">{expenseCorrectionBlockerMessage(paymentCapability.cancelBlocker)}</p>}
-              </div>
-            ); })}
-          </div>
-        )}
+        {paymentHistory}
         {detail.status === 'VOIDED' && <p className="text-sm text-gray-400">{t('expenses.document_voided', locale)}{detail.voidReason ? ` — ${detail.voidReason}` : ''}</p>}
         {detail.paidAt && <p className="text-xs text-gray-400">{t('expenses.paid_at', locale)} {dateShort(detail.paidAt)}</p>}
         {detail.confirmedAt && <p className="text-xs text-gray-400">{t('expenses.confirmed_at', locale)} {dateShort(detail.confirmedAt)}</p>}
@@ -2050,7 +2055,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 await rejectExpense(companyId, expenseId, cleanReason);
                 setShowReject(false); setReason('');
               }, t('expenses.reject_success', locale));
-            }} disabled={actionLoading || !reason.trim()} aria-busy={Boolean(actionLoading)}>
+            }} disabled={actionLoading || !reason.trim() || detail.correctionCapabilities?.canReject !== true} aria-busy={Boolean(actionLoading)}>
               {t(actionLoading ? 'expenses.rejecting' : 'expenses.confirm', locale)}
             </button>
           </>
@@ -2058,6 +2063,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       >
         <div className="space-y-3">
           <p className="text-sm leading-6 text-gray-600">{t('expenses.reject_confirm_description', locale)}</p>
+          {detail.correctionCapabilities?.canReject === undefined && <p role="status" className="text-sm text-gray-600">{EXPENSE_CORRECTION_WORDS.unavailable}</p>}
+          {detail.correctionCapabilities?.rejectBlocker && <>
+            <p role="status" className="text-sm text-gray-600">{expenseCorrectionBlockerMessage(detail.correctionCapabilities.rejectBlocker, 'reject')}</p>
+            {paymentHistory}
+          </>}
           {error && <ErrorBanner message={error} />}
           <label className="block text-sm font-medium text-gray-700">
             {t('expenses.reject_reason', locale)} <span className="text-error-600" aria-hidden>*</span>
