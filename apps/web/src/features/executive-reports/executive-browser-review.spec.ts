@@ -19,9 +19,9 @@ test('A: executive markup owns its styles without unlayered Mangmee overrides', 
   const { ExecutiveKpi, ExecutivePage } = await import('./ExecutiveReportDesign') as any;
   const tile = html(ExecutiveKpi, { label: W.net, figure: partial, moneyValue: true, unit: W.unitBaht });
   assert.match(tile, /data-executive-kpi/); assert.match(tile, /data-executive-value/);
-  assert.match(tile, /text-\[26px\]/); assert.match(tile, /rounded-full/);
+  assert.match(tile, /min\(26px/); assert.match(tile, /rounded-full/);
   for (const figure of [partial, { ...partial, value: 9900, coverage: 'complete' }, { ...partial, knownValue: 1500200 }]) {
-    assert.doesNotMatch(html(ExecutiveKpi, { label: W.net, figure, moneyValue: true }), /style="[^"]*(?:font-size|color):/);
+    assert.doesNotMatch(html(ExecutiveKpi, { label: W.net, figure, moneyValue: true }), /style="[^"]*font-size:/);
   }
   assert.match(html(ExecutivePage, { title: W.overview, description: W.descriptions.overview, children: 'body' }), /text-brand-800/);
 });
@@ -29,7 +29,7 @@ test('A: executive markup owns its styles without unlayered Mangmee overrides', 
 test('A: incomplete words and muted figures meet 4.5:1 from existing tokens', async () => {
   const { ExecutiveKpi, Figure } = await import('./ExecutiveReportDesign');
   const tile = html(ExecutiveKpi, { label: W.net, figure: partial, moneyValue: true });
-  assert.match(tile, /text-warning-700/); assert.doesNotMatch(tile, /color:var\(--color-gold-500\)|text-gray-400/);
+  assert.match(tile, /color:var\(--color-warning-700\)/); assert.doesNotMatch(tile, /color:var\(--color-gold-500\)|text-gray-400/);
   assert.match(html(Figure, { value: { value: 0, coverage: 'complete', reasonCodes: [] } }), /text-gray-600/);
   const tokens = source('../../../../../packages/design-tokens/generated/web/theme.css');
   const rgb = (token: string) => tokens.match(new RegExp(`--color-${token}: #([0-9a-f]{6})`))![1].match(/../g)!.map(v => parseInt(v, 16) / 255);
@@ -157,8 +157,9 @@ test('C7: the directory does not repeat the main payment status in the expander'
   assert.doesNotMatch(markup.match(/executive-usage-summary[\s\S]*?<\/td>/)?.[0] ?? '', /ยังไม่เคยชำระเงิน/);
 });
 
-test('C9: revenue has a mobile snap strip', () => {
-  assert.match(source('./ExecutiveReportContent.tsx'), /snap-x[^"\n]*xl:grid[^"\n]*xl:grid-cols-5/);
+test('round B d: every revenue tile belongs to the shared equal-width strip', () => {
+  assert.match(source('./ExecutiveReportContent.tsx'), /<ExecutiveKpiStrip>\{figures.map/);
+  assert.match(source('./ExecutiveReportDesign.tsx'), /grid-cols-1[^"\n]*lg:grid-cols-2/);
 });
 
 test('B5: retained data is never rendered after denied access, a missing company or an unavailable month', () => {
@@ -233,6 +234,7 @@ test('round A: the compact frame places directory controls in the header and has
   assert.doesNotMatch(markup, /sm:text-3xl|pb-3/);
   const page = source('./ExecutiveReportPage.tsx');
   assert.match(page, /<ExecutivePage compact controls=\{directoryControls\}/);
+  assert.match(source('./ExecutiveReportDesign.tsx'), /gap-2 pb-1/); // search hint stays clear of the rule
   assert.match(page, /executive-time-row[^"\n]*items-center[^"\n]*py-0/);
   assert.doesNotMatch(page, /activeLabels\.map|<div className="flex flex-wrap gap-2">\{activeLabels/);
   assert.doesNotMatch(source('./ExecutiveReportDesign.tsx').match(/executive-status[^]*?<\/aside>/)?.[0] ?? '', /py-2/);
@@ -265,6 +267,9 @@ test('round A: directory column budgets fit both widths, keep the real sort and 
     assert.match(rendered, /grid-cols-\[repeat\(var\(--mobile-columns\),minmax\(0,1fr\)\)\]/);
     assert.match(rendered, /title="ทดลองใช้ฟรีสำหรับร้านอาหาร/);
     assert.match(rendered, /min-w-0 truncate/);
+    const packageBadge = rendered.match(/<span class="mangmee-badge[^>]*><span[^>]*title="ทดลองใช้ฟรีสำหรับร้านอาหาร"[^>]*>[\s\S]*?<\/span><\/span>/)![0];
+    assert.equal(packageBadge.replace(/<[^>]*>/g, ''), row.planLabel);
+    assert.match(rendered, /text-xs leading-4 text-gray-600/);
     assert.match(rendered, /@min-\[936px\]:table-cell/);
     assert.doesNotMatch(rendered, /⌃|⌄|max-h-|overflow-auto/);
   }

@@ -79,7 +79,7 @@ test('horizontal KPI digits and unit stay clean and reserve identical height/sub
   const render = (value: object) => html(ExecutiveKpi, { label: W.net, figure: value as any, moneyValue: true, unit: 'บาท' } as any);
   const marked = render(cash), complete = render({ ...cash, value: 9900, coverage: 'complete', reasonCodes: [] });
   assert.deepEqual(marked.match(/<(?:div|span)\b[^>]*class="[^"]*"[^>]*>/g)?.filter(s => !s.includes('executive-dot')).map(s => s.replace(/ aria-label="[^"]*"/g, '').replace(/ style="[^"]*"/g, '')), complete.match(/<(?:div|span)\b[^>]*class="[^"]*"[^>]*>/g)?.filter(s => !s.includes('executive-dot')).map(s => s.replace(/ aria-label="[^"]*"/g, '').replace(/ style="[^"]*"/g, '')));
-  assert.match(marked, /h-24/); assert.match(marked, /size-10/);
+  assert.match(marked, /h-26/); assert.match(marked, /size-10/);
   assert.match(marked, /rounded-full/); assert.match(marked, /py-2/); assert.match(marked, /font-semibold/); assert.match(marked, /leading-4/); assert.match(marked, /whitespace-nowrap/);
   assert.match(marked, /เฉพาะที่ยืนยันแล้ว/);
   assert.match(html(ExecutiveKpi, { label: W.paid, value: "0", unit: W.unitCompany }), /data-executive-value[^>]*text-gray-600/);
@@ -192,7 +192,7 @@ test('row clicks open the link; comparison and expander events never navigate an
   const node = file.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'ExecutiveTable')!;
   const code = ts.transpileModule(node.getText(file).replace(/^export /, '') + '\nreturn ExecutiveTable;', { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
   let expanded: string[] = [], navigations = 0, stopped = 0;
-  const deps = { React, W, useState: () => [expanded, (next: (old: string[]) => string[]) => expanded = next(expanded)], useId: () => 'table', isValidElement: React.isValidElement, Fragment: React.Fragment, Figure: design.Figure, IncompleteDot: design.IncompleteDot, ColumnMark: React.createContext(null), Link: 'a', hoistedSource: logic.hoistedSource, reasons: () => '', columnAlign: () => '', desktopColumn: () => 'md:table-cell', ChevronDownIcon: () => null };
+  const deps = { React, Children: React.Children, W, useState: () => [expanded, (next: (old: string[]) => string[]) => expanded = next(expanded)], useId: () => 'table', isValidElement: React.isValidElement, Fragment: React.Fragment, Figure: design.Figure, IncompleteDot: design.IncompleteDot, ColumnMark: React.createContext(null), Link: 'a', hoistedSource: logic.hoistedSource, reasons: () => '', columnAlign: () => '', desktopColumn: () => 'md:table-cell', ChevronDownIcon: () => null };
   const Table = new Function('deps', `const {${Object.keys(deps).join(',')}}=deps; ${code}`)(deps);
   const rows = [{ key: 'one', href: '/system/executive/companies/one', cells: ['ร้าน ก', 6], details: 'ข้อมูลรอง' }];
   const elements = (node: React.ReactNode): React.ReactElement<any>[] => React.Children.toArray(node).flatMap(child => React.isValidElement<any>(child) ? [child, ...elements((child.props as { children?: React.ReactNode }).children)] : []);
@@ -253,4 +253,92 @@ test('keyboard tab focus survives a report reload without stealing focus from an
     run(true); assert.equal(tabFocus.current, 'ranking'); assert.equal(focused, false);
     run(false); assert.equal(tabFocus.current, null); assert.equal(focused, active !== 'input');
   }
+});
+
+test('round B c: hoisted source reasons cover wrapped values and mixed-source columns without repeated mobile label dots', async () => {
+  const { ExecutiveTable, Figure } = await import('./ExecutiveReportDesign');
+  const figure = (value: object, source = 'money') => React.createElement(Figure, { value: value as any, moneyValue: source !== 'usage', source });
+  const rows = [
+    { key: 'money', cells: ['เงิน', figure(cash)] },
+    { key: 'other-reason', cells: ['คืนเงิน', React.createElement('div', {}, figure({ ...cash, reasonCodes: ['BILLING_SCAN_NOT_COMPLETE'] }))] },
+    { key: 'ai', cells: ['ต้นทุน', figure({ ...cash, knownValue: undefined, coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] }, 'aiCost')] },
+    { key: 'count', cells: ['บริษัท', figure(partial, 'usage')] },
+    { key: 'empty', cells: ['ค่าเฉลี่ย', '–'] },
+  ];
+  const markup = html(ExecutiveTable, { title: W.revenue, columns: [{ label: W.item }, { label: W.unitInHeader(W.quantity, W.unitBaht) }], rows });
+  const head = markup.match(/<thead[\s\S]*?<\/thead>/)![0];
+  assert.equal((head.match(/executive-dot/g) ?? []).length, 1);
+  assert.doesNotMatch(markup.replace(head, ''), /executive-dot/);
+  assert.match(head, /absolute left-full/);
+  const mixed = html(ExecutiveTable, { title: W.revenue, columns: [{ label: W.item }, { label: W.unitInHeader(W.quantity, W.unitBaht) }], rows: [rows[0], { key: 'complete', cells: ['ครบ', figure({ ...cash, value: 9900, coverage: 'complete', reasonCodes: [] })] }] });
+  assert.doesNotMatch(mixed.match(/<thead[\s\S]*?<\/thead>/)![0], /executive-dot/);
+  assert.equal((mixed.match(/executive-dot/g) ?? []).length, 1);
+  assert.match(mixed, /absolute left-full top-1\/2 -translate-y-1\/2/);
+  const exceptional = html(ExecutiveTable, { title: W.revenue, columns: [{ label: W.item }, { label: W.quantity, source: cash, sourceName: 'money' }], rows: [rows[0], { key: 'exception', cells: ['เฉพาะแถว', figure({ ...cash, reasonCodes: [...cash.reasonCodes, 'UNMATCHED_MONEY'] })] }] });
+  assert.equal((exceptional.match(/executive-dot/g) ?? []).length, 2); // one header, one exceptional value
+  const headerReason = exceptional.match(/<thead[\s\S]*?<\/thead>/)![0].match(/role="img"[^>]*title="([^"]*)"/)![1];
+  assert.equal(headerReason.split(W.historyBeforeFirstBuild).length - 1, 1);
+});
+
+test('round B d: longest KPI value sets one scale through link wrappers; units never wrap and arrows own a slot', async () => {
+  const { ExecutiveKpi, ExecutiveKpiStrip } = await import('./ExecutiveReportDesign');
+  const children = [100000000, 9900, 0].map((n, i) => React.createElement('a', { href: '/', key: i }, React.createElement(ExecutiveKpi, { label: W.net, figure: { ...cash, knownValue: n } as any, moneyValue: true, unit: W.unitBaht, arrow: true })));
+  const markup = html(ExecutiveKpiStrip, { children });
+  const scales = [...markup.matchAll(/style="(--executive-kpi-digits:[^"]+)"/g)].map(m => m[1]);
+  assert.equal(scales.length, 3); assert.equal(new Set(scales).size, 1);
+  assert.equal(Number(scales[0].match(/digits:([^;]+)/)![1]), 12 * 0.62); // 1,000,000.00 has 12 characters
+  assert.match(markup, /grid-cols-1[^>]*lg:grid-cols-2[^>]*xl:grid-cols-3/);
+  assert.match(markup, /flex flex-nowrap items-baseline/);
+  assert.match(markup, /grid-cols-\[minmax\(0,1fr\)_1rem\]/);
+  assert.doesNotMatch(markup.match(/data-executive-label[^>]*>/)![0], /truncate/);
+  assert.match(markup, /color:var\(--color-warning-700\)/);
+  assert.doesNotMatch(markup, /absolute right-2|has-\[.executive-dot\]/);
+});
+
+test('round B e: open and closed months have distinct banners, unclamped summaries and a two-column definition list', async () => {
+  const { ReportStatus } = await import('./ExecutiveReportDesign');
+  const open = html(ReportStatus, { data: envelope });
+  const closed = html(ReportStatus, { data: { ...envelope, period: { month: '2026-09', isPartialMonth: false } } });
+  assert.match(open, /border-gold-300 bg-gold-100\/40/); assert.match(open, /เดือนนี้ยังไม่จบ/);
+  assert.match(closed, /border-gray-200 bg-gray-50/); assert.match(closed.match(/<summary[\s\S]*?<\/summary>/)![0], /ข้อมูลก่อนเริ่มทำรายงาน/);
+  for (const markup of [open, closed]) {
+    assert.doesNotMatch(markup, /line-clamp|truncate/);
+    assert.match(markup, /aria-expanded="false"/);
+    assert.match(markup, /<dl[^>]*md:grid-cols-2/);
+    assert.equal(visible(markup).split(W.incompleteLegend).length - 1, 1);
+    assert.equal(visible(markup).split(W.historyBeforeFirstBuild).length - 1, 1);
+  }
+  assert.match(source('./ExecutiveReportDesign.tsx'), /onToggle=\{event => setOpen\(event.currentTarget.open\)\}/);
+  assert.match(source('./ExecutiveReportDesign.tsx'), /group-open:rotate-180/);
+});
+
+test('round B f: all customer group bases use clean figures with the qualification after the unit', async () => {
+  const { AnalysisContent, Figure } = await import('./ExecutiveReportContent');
+  for (const view of ['industry', 'discovery', 'referringSales']) {
+    const markup = html(AnalysisContent, { data: { ...envelope, view, groups: [] }, nav: { ...nav, from: 'customers' }, seller: null });
+    assert.match(visible(markup), /จาก 6บริษัท/);
+    assert.doesNotMatch(visible(markup), /จาก อย่างน้อย/);
+    assert.match(markup, /aria-label="อย่างน้อย 6 บริษัท —/);
+  }
+  const moneyWithUnit = html(Figure, { value: cash, moneyValue: true, unit: W.unitBaht });
+  assert.ok(moneyWithUnit.indexOf('>บาท<') < moneyWithUnit.indexOf('executive-dot'));
+});
+
+test('round B screenshots: purchase money has only header dots and incomplete trend uses one title dot', async () => {
+  const { AnalysisContent } = await import('./ExecutiveReportContent');
+  const revenue = { receiptsSatang: cash, refundsSatang: cash, netReceiptsSatang: cash, taxSatang: cash, feesSatang: cash, disputedInvoiceCount: 0,
+    byPurchaseGroup: ['FIRST', 'RENEWAL', 'UPGRADE', 'ADDON', 'UNKNOWN'].map((key, i) => {
+      const value = { ...cash, knownValue: i === 3 ? undefined : 9900, coverage: i === 3 ? 'unavailable' : 'partial', reasonCodes: i === 3 ? ['ADDON_NOT_ON_SALE'] : ['BILLING_SCAN_NOT_COMPLETE'] };
+      return { key, label: W.purchase, receiptsSatang: value, refundsSatang: value, netReceiptsSatang: value };
+    }),
+    trend: ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10'].map(month => ({ month, netReceiptsSatang: cash })),
+  };
+  const purchase = html(AnalysisContent, { data: { ...envelope, revenue }, nav, seller: null });
+  const head = purchase.match(/<thead[\s\S]*?<\/thead>/)![0];
+  assert.equal((head.match(/executive-dot/g) ?? []).length, 3);
+  for (const td of purchase.match(/<td\b[\s\S]*?<\/td>/g) ?? []) assert.doesNotMatch(td, /executive-dot/);
+  const trend = html(AnalysisContent, { data: { ...envelope, revenue }, nav: { ...nav, params: new URLSearchParams('view=trend') }, seller: null });
+  const panel = trend.slice(trend.indexOf('id="executive-panel"'));
+  assert.equal((panel.match(/executive-dot/g) ?? []).length, 1);
+  assert.doesNotMatch(panel.match(/executive-trend-labels[\s\S]*?<\/div>/)![0], /executive-dot/);
 });

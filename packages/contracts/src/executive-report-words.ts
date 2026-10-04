@@ -7,6 +7,8 @@ const YES = 'ใช่';
 const RANK = 'อันดับ';
 
 // Shared screen/workbook words. Filter values and enums remain in executive-business.
+const BASE = 'จาก';
+
 export const EXECUTIVE_WORDS = {
   export: { action: 'ส่งออก Excel', create: 'สร้างไฟล์ Excel', format: 'พร้อมกราฟและข้อมูลรายบริษัท', preparing: 'กำลังสร้างไฟล์…', done: 'ส่งไฟล์ให้เบราว์เซอร์แล้ว', failed: 'สร้างไฟล์ไม่สำเร็จ ลองใหม่ได้โดยใช้เงื่อนไขเดิม', downloadFailed: 'ดาวน์โหลดไฟล์ไม่สำเร็จ กรุณาลองใหม่', expired: 'ข้อมูลรายงานเก่าแล้ว กรุณาโหลดใหม่ก่อนสร้างไฟล์', contacts: 'รวมข้อมูลติดต่อเจ้าของบัญชี', contactHint: 'เมื่อเลือก ไฟล์จะมีคอลัมน์อีเมลและเบอร์โทรของเจ้าของร้าน ซึ่งเป็นข้อมูลส่วนบุคคล', personal: 'มีข้อมูลส่วนบุคคล ใช้ภายในเท่านั้น', sheets: 'ชีตในไฟล์', columns: 'หัวคอลัมน์รายบริษัท', none: 'ไม่มี', reference: 'เลขอ้างอิงการส่งออก', notes: 'หมายเหตุข้อมูล', contactNotes: 'หมายเหตุข้อมูลติดต่อ', calculations: 'ตัวเลขที่ใช้ในกราฟ', busy: 'มีไฟล์ที่กำลังสร้างอยู่ กรุณารอให้เสร็จก่อน', limit: 'ไฟล์นี้เกินขีดจำกัดที่ระบบสร้างได้ กรุณาลองใหม่หรือเลือกบริษัทให้น้อยลง', empty: 'ไม่มีบริษัทตามเงื่อนไข จึงไม่มีไฟล์ให้สร้าง', denied: 'คุณไม่มีสิทธิ์ส่งออกไฟล์นี้', buckets: ['ไม่มีใบเสร็จ', '1–5 รายการ', '6 รายการขึ้นไป'], bucketsDefinition: 'ตัวเลขนี้ไม่มีบนหน้าจอ: แบ่งตามจำนวนใบเสร็จค่าใช้จ่ายสะสมตั้งแต่สมัครถึงเวลาของข้อมูล เฉพาะบริษัทที่ประเมินได้', usageMissing: 'ข้อมูลการใช้งานไม่ครบ', moneyMissing: 'ข้อมูลการชำระไม่ครบ', aiMissing: 'ข้อมูลต้นทุนผู้ช่วยไม่ครบ', rank: RANK, to80: 'อยู่ในกลุ่มที่รวมยอดรับถึง 80%', yes: YES, no: 'ไม่ใช่', unavailable: 'ระบบยังอ่านข้อมูลส่วนนี้ไม่ได้', sentBy: (name: string, at: string) => `ส่งออกโดย ${name} เมื่อ ${at}` },
   report: 'รายงานผู้บริหาร', executive: 'ผู้บริหาร', navigation: 'ส่วนงานผู้บริหาร',
@@ -80,7 +82,7 @@ export const EXECUTIVE_WORDS = {
   back: (title: string) => `← กลับ${title}`,
   through: (at: string) => `ข้อมูลถึง ${at}`, moneyThrough: (at: string) => `ข้อมูลเงินถึงวันที่ ${at}`, revised: (at: string) => `ปรับปรุงเมื่อ ${at}`,
   staleAt: (at: string) => `ตัวเลขเป็นของ ${at}`, contactAt: (at: string) => `ข้อมูลบัญชี ณ ${at}`,
-  base: (n: string | number) => `จาก ${n} บริษัท`, found: (n: number) => `พบ ${n.toLocaleString('th-TH')} บริษัท`,
+  baseLabel: BASE, base: (n: string | number) => `${BASE} ${n} บริษัท`, found: (n: number) => `พบ ${n.toLocaleString('th-TH')} บริษัท`,
   unclassified: (n: number) => `ยังไม่ได้จัดประเภท ${n.toLocaleString('th-TH')} บริษัท`,
   industryCoverage: (x: number, n: number) => `มีข้อมูลประเภทธุรกิจ ${x.toLocaleString('th-TH')} จาก ${n.toLocaleString('th-TH')} บริษัท`,
   unpaidActive: (n: number) => `รวมบริษัทที่ยังไม่เคยชำระแต่ใช้งานอยู่ ${n.toLocaleString('th-TH')} บริษัท`,

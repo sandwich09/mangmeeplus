@@ -35,12 +35,12 @@ test('report shell keeps shared KPI sizes, descriptions, time row and loading sk
   assert.match(page, /ReportSkeleton/);
 });
 
-test('overview aligns KPIs and puts adoption and follow-ups beside each other with a header button', async () => {
+test('overview uses equal KPI widths and places the top-payers row inside adoption with a header button', async () => {
   const { OverviewContent } = await content();
   const html = htmlOf(OverviewContent, { data: overview, nav });
-  assert.match(html, /grid-cols-2[^"<>]*lg:grid-cols-4/);
-  assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-24/);
-  assert.match(html, /lg:grid-cols-2/);
+  assert.match(html, /data-executive-kpi-strip[^>]*lg:grid-cols-2/);
+  assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-26/);
+  assert.doesNotMatch(html, /<h2[^>]*>[^<]*เรื่องที่ควรดูต่อ/);
   assert.match(html, /<button[^>]*>ดูอันดับการใช้<\/button>/);
   assert.match(html, /<strong[^>]*>4 บริษัท/);
   assert.match(html, /บริษัท [\s\S]*?→/);
@@ -53,7 +53,7 @@ test('drill links are focusable tiles and paid usage has large counts and compan
   assert.match(link, /rounded-lg/); assert.match(link, /min-h-11/); assert.match(link, /focus-visible/); assert.doesNotMatch(link, / underline/);
   const paidUsage = { groups, paidEver: { count: 6, drilldownFilters: {} }, usageUnassessed: { count: 0 }, paymentUnknown: { count: 0 }, fullyRefunded: { count: 0 } };
   const html = htmlOf(AnalysisContent, { data: { ...envelope, expenseReceiptAdoption: adoption, paidUsage } as unknown as ExecutiveAnalysis, nav: { ...nav, params: new URLSearchParams('view=paid') }, seller: null });
-  assert.match(html, /grid-cols-2/); assert.match(html, /text-\[26px\]/); assert.match(html, /executive-kpi-link/);
+  assert.match(html, /grid-cols-2/); assert.match(html, /min\(26px/); assert.match(html, /executive-kpi-link/);
   assert.match(html, /usageGroup%3DNOT_STARTED/);
 });
 
@@ -68,7 +68,7 @@ test('directory uses explicit receipt columns, labelled secondary summaries and 
   const { CompaniesContent } = await content();
   const html = htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(10000) }, items: [company], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav, selected: [], select: () => {} });
   assert.match(html, /executive-company-row/); assert.match(html, /executive-usage-summary/);
-  assert.ok((html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').includes(W.lifetimeReceipts)); assert.doesNotMatch(html, /<dl/);
+  assert.ok((html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').includes(W.lifetimeReceipts)); assert.doesNotMatch(html.match(/<section aria-label="บริษัทลูกค้า"[\s\S]*?<\/section>/)?.[0] ?? '', /<dl/);
   assert.equal((html.match(/type="checkbox"/g) ?? []).length, 1);
   assert.match(html, /sr-only[^>]*>เลือกเพื่อเปรียบเทียบ/);
   assert.equal((html.match(/>เคยชำระเงิน</g) ?? []).length, 1);

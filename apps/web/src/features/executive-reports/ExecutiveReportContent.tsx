@@ -9,12 +9,12 @@ import {
   type ExecutivePaidUsage, type ExecutiveSpendConcentration, type ExecutiveCompanyRow,
 } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
-import { ExecutiveSectionCard as Card, ExecutiveKpi, ExecutiveTable as ReportTable, Figure, IncompleteDot, ReportNotes, ExecutiveTabs, type ReportColumn } from './ExecutiveReportDesign';
+import { ExecutiveSectionCard as Card, ExecutiveKpi, ExecutiveKpiStrip, ExecutiveTable as ReportTable, Figure, IncompleteDot, ReportNotes, ExecutiveTabs, type ReportColumn } from './ExecutiveReportDesign';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { Button } from '@/common/components/button';
 import { EmptyState } from '@/common/components/state';
 import { W, RANK_LABELS, REPORT_VIEWS, DETAIL_TABS, thaiLabel } from './executive-reports.words';
-import { countText, money, ratioText, reportDate, reportDateTime, reportMonth, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber } from './executive-reports.logic';
+import { money, ratioText, reportDate, reportDateTime, reportMonth, reasonText, sourceCount, sourceMoney, contactFields, rankingTieText, spendTieText, negativeMoneyNote, drilldownHref, menuHref, executiveHref, reportShortDate, reportShortMonth, reportView, figureNumber, hoistedSource } from './executive-reports.logic';
 
 type Navigation = { params: URLSearchParams; from: string; remember: () => void; navigate: (href: string) => void };
 const linkClass = 'flex min-h-11 min-w-11 w-full items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white p-3 text-gray-900';
@@ -34,7 +34,7 @@ function DetailValues({ rows }: { rows: Array<[string, ReactNode]> }) {
   return <dl className="grid min-w-0 gap-3 sm:grid-cols-2">{rows.map(([label, value]) => <div key={label} className="min-w-0 break-words [overflow-wrap:anywhere]"><dt className="text-xs text-gray-600">{label}</dt><dd className="text-base">{value}</dd></div>)}</dl>;
 }
 const segmentColours = { EVER: 'brand-700', NEVER: 'gold-500', UNKNOWN: 'gray-200', NOT_ENTITLED: 'gray-200' };
-function ReceiptAdoption({ data, nav, actions }: { data: ExecutiveReceiptAdoption; nav: Navigation; actions?: ReactNode }) {
+function ReceiptAdoption({ data, nav, actions, children }: { data: ExecutiveReceiptAdoption; nav: Navigation; actions?: ReactNode; children?: ReactNode }) {
   const patternId = useId();
   let offset = 0;
   return <Card title={W.adoptionTitle} actions={actions}>
@@ -59,18 +59,19 @@ function ReceiptAdoption({ data, nav, actions }: { data: ExecutiveReceiptAdoptio
         </DrillLink></li>)}</ul>
       </div>
     </>}
+{children}
 <p className="text-xs text-gray-600">{W.receiptDefinition} · {W.current} · {W.base(data.population)} · {W.chartHint}{data.roundingNote && ` · ${W.rounding}`}</p>
   </Card>;
 }
 function PaidUsage({ data, nav }: { data: ExecutivePaidUsage; nav: Navigation }) {
-  const tile = (label: string, n: number, filters: ExecutiveDrilldownFilters) => <DrillLink nav={nav} filters={filters} className="executive-kpi-link relative block rounded-xl pr-0 hover:bg-brand-25"><ExecutiveKpi label={label} iconName="users" value={n.toLocaleString('th-TH')} unit={W.unitCompany} /><span aria-hidden="true" className="absolute right-2 top-3 text-brand-700">→</span></DrillLink>;
-  return <Card title={W.paidUsage}><p className="text-xs text-gray-600">{W.cumulative}</p><div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+  const tile = (label: string, n: number, filters: ExecutiveDrilldownFilters) => <DrillLink nav={nav} filters={filters} className="executive-kpi-link relative block rounded-xl pr-0 hover:bg-brand-25"><ExecutiveKpi label={label} iconName="users" value={n.toLocaleString('th-TH')} unit={W.unitCompany} arrow /></DrillLink>;
+  return <Card title={W.paidUsage}><p className="text-xs text-gray-600">{W.cumulative}</p><ExecutiveKpiStrip>
     {data.groups.map(group => <div key={group.key}>{tile(LABELS.usageGroup[group.key], group.count, group.drilldownFilters)}</div>)}
     {tile(LABELS.paidEver.YES, data.paidEver.count, data.paidEver.drilldownFilters)}
     {data.usageUnassessed.count > 0 && tile(W.usageUnassessed, data.usageUnassessed.count, data.usageUnassessed.drilldownFilters)}
     {data.paymentUnknown.count > 0 && tile(W.paymentUnassessed, data.paymentUnknown.count, data.paymentUnknown.drilldownFilters)}
     {data.fullyRefunded.count > 0 && tile(refundLabel, data.fullyRefunded.count, data.fullyRefunded.drilldownFilters)}
-  </div></Card>;
+  </ExecutiveKpiStrip></Card>;
 }
 // Flag copy comes from the same contract used on drilled chips.
 const refundLabel = EXECUTIVE_FLAG_LABELS.fullyRefunded.true;
@@ -85,18 +86,14 @@ export function OverviewContent({ data, nav }: { data: ExecutiveOverview; nav: N
     { label: W.net, metric: data.metrics.netReceiptsSatang, icon: 'money', sub: undefined, money: true },
   ];
   return <ReportNotes data={data}>
-    <div className="grid min-w-0 grid-cols-2 gap-3 lg:grid-cols-4">{cards.map(card => <Link key={card.label} href={drilldownHref(nav.params, nav.from, card.metric.drilldownFilters)} onClick={nav.remember} className={`executive-kpi-link relative rounded-xl group ${linkFocus}`}>
-      <ExecutiveKpi iconName={card.icon} label={`${card.label}${card.label === W.companyCount ? '' : ` ${reportMonth(data.period.month)}`}`} figure={card.metric} moneyValue={card.money} netValue={card.money} unit={card.money ? W.unitBaht : W.unitCompany} sub={card.sub} />
-      <span aria-hidden="true" className="absolute right-2 top-3 text-brand-700">→</span>
-    </Link>)}</div>
+    <ExecutiveKpiStrip columns={2}>{cards.map(card => <Link key={card.label} href={drilldownHref(nav.params, nav.from, card.metric.drilldownFilters)} onClick={nav.remember} className={`executive-kpi-link relative rounded-xl group ${linkFocus}`}>
+      <ExecutiveKpi iconName={card.icon} label={`${card.label}${card.label === W.companyCount ? '' : ` ${reportMonth(data.period.month)}`}`} figure={card.metric} moneyValue={card.money} netValue={card.money} unit={card.money ? W.unitBaht : W.unitCompany} sub={card.sub} arrow />
+    </Link>)}</ExecutiveKpiStrip>
     <p className="text-xs text-gray-600">{W.excluded} · {W.activityDefinition} · {W.paidDefinition}{data.metrics.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(data.metrics.netReceiptsSatang.value) && ` · ${W.negative}`}{data.metrics.activeCompanies.breakdown.notPaid > 0 && ` · ${W.unpaidActive(data.metrics.activeCompanies.breakdown.notPaid)}`}{data.metrics.activeCompanies.breakdown.paymentUnknown > 0 && ` · ${W.paymentUnknownActive(data.metrics.activeCompanies.breakdown.paymentUnknown)}`}</p>
-    <div className="grid min-w-0 gap-3 lg:grid-cols-2">
-    <ReceiptAdoption data={data.expenseReceiptAdoption} nav={nav} actions={<Button variant="secondary" onClick={() => openReport(nav, menuHref('usage', nav.params, { view: 'ranking' }))}>{W.seeRanking}</Button>} />
-    <Card title={W.followUp}>
+    <ReceiptAdoption data={data.expenseReceiptAdoption} nav={nav} actions={<Button variant="secondary" onClick={() => openReport(nav, menuHref('usage', nav.params, { view: 'ranking' }))}>{W.seeRanking}</Button>}>
       <ReportLink href={menuHref('revenue', nav.params, { view: 'top' })} remember={nav.remember} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-gray-100 px-2 py-1"><span className="flex-1"><span className="text-sm font-semibold">{W.top}</span><span className="block text-xs text-gray-600">{W.followUpDescriptions.top}</span></span><strong className="shrink-0 text-xl tabular-nums">{ratioText(data.spendConcentration.topShare)} →</strong></ReportLink>
 
-    </Card>
-    </div>
+    </ReceiptAdoption>
     {followUpNeeded.length > 0 && <aside className="executive-follow-up-band flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:items-center rounded-xl bg-brand-800 p-4 text-white sm:p-3">
       <h2 className="flex items-center gap-3 font-semibold"><DesignIcons.megaphone className="size-6 shrink-0 text-gold-300" />{W.followUpBand}</h2>
       <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2">{followUpNeeded.map(group => <DrillLink key={group.key} nav={nav} filters={group.drilldownFilters} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-white/30 px-3 py-2 text-white hover:!bg-brand-700">
@@ -141,14 +138,14 @@ export function CompaniesContent({ data, nav, selected, select, sortColumn }: { 
     ...(netSort ? [{ label: W.shortCumulative, width: 84, mobile: false, source: data.coverage.money, sourceName: 'money' }] : []),
   ];
   return <ReportNotes data={data}>
-    <p role="status" className="text-sm tabular-nums">{W.found(data.pagination.total)} · {W.shortNet} <Figure value={data.summary.netReceiptsSatang} moneyValue netValue /> {W.unitBaht}</p>
+    <p role="status" className="text-sm tabular-nums">{W.found(data.pagination.total)} · {W.shortNet} <Figure value={data.summary.netReceiptsSatang} moneyValue netValue unit={W.unitBaht} /></p>
     {data.pagination.total === 0 ? <EmptyState title={W.empty} description="" /> : <section aria-label={W.companies} className="rounded-xl border border-gray-200 bg-white">
       <ReportTable title={W.companies} compactMobile columns={columns} nameIndex={ranked ? 2 : 1} remember={nav.remember} rows={data.items.map(row => ({
         key: row.id, href: companyLink(row.id, nav.params), className: 'executive-company-row', cells: [
           ...(ranked ? [row.rank ?? '–'] : []), <CompareToggle key="compare" checked={selected.includes(row.id)} disabled={selected.length === 2 && !selected.includes(row.id)} onChange={() => select(row.id)} />,
           <div key="name" className="min-w-0 pr-28 md:pr-0"><span className="block truncate" title={row.displayName}>{row.displayName}</span><span className="block truncate text-xs font-normal text-gray-600">{row.provinceLabel} · {W.joinedShort(reportShortDate(row.joinedAt))}</span></div>,
           <span key="group" className="block whitespace-normal" title={row.industryGroup.label}>{row.industryGroup.label}</span>,
-          <MangmeeBadge key="plan" className="max-w-full"><span className="min-w-0 truncate" title={`${row.planLabel}${row.planState !== 'ACTIVE' ? ` · ${LABELS.planState[row.planState] ?? W.unknown}` : ''}`}>{row.planLabel}{row.planState !== 'ACTIVE' ? ` · ${LABELS.planState[row.planState] ?? W.unknown}` : ''}</span></MangmeeBadge>, rowStatus(row),
+          <span key="plan" className="flex min-w-0 flex-col items-start gap-1"><MangmeeBadge className="max-w-full"><span className="min-w-0 truncate" title={row.planLabel}>{row.planLabel}</span></MangmeeBadge>{row.planState !== 'ACTIVE' && <span className="text-xs leading-4 text-gray-600">{LABELS.planState[row.planState] ?? W.unknown}</span>}</span>, rowStatus(row),
           <Figure key="lifetime" value={sourceCount(row.metrics.expenseReceiptCountLifetime, data.coverage.usage)} />,
           <Figure key="receipts" value={sourceCount(row.metrics.expenseReceiptCountInPeriod, data.coverage.usage)} />,
           <Figure key="days" value={sourceCount(row.metrics.activeDays, data.coverage.usage)} />, <Figure key="ai" value={sourceCount(row.metrics.aiRequests, data.coverage.usage)} />, reportShortDate(row.lastActivityAt), reportShortDate(row.joinedAt),
@@ -166,17 +163,18 @@ function RevenueContent({ data, nav, tabs }: { data: ExecutiveAnalysis & { reven
   const revenue = data.revenue, view = reportView('revenue', nav.params), pattern = useId();
   const columns = { gridTemplateColumns: `repeat(${Math.max(1, revenue.trend.length)}, minmax(0, 1fr))` };
   const figures: Array<[string, ExecutiveMoney]> = [[W.shortNet, revenue.netReceiptsSatang], [W.shortReceipts, revenue.receiptsSatang], [W.shortRefunds, revenue.refundsSatang], [W.tax, revenue.taxSatang], [W.shortFees, revenue.feesSatang]];
+  const trendSource = hoistedSource(revenue.trend.map(point => ({ coverage: point.netReceiptsSatang.coverage, source: 'money' })));
   const max = Math.max(1, ...revenue.trend.map(point => Math.abs(point.netReceiptsSatang.value ?? point.netReceiptsSatang.knownValue ?? 0)));
   const moneyColumn = (label: string) => ({ label: W.unitInHeader(label, W.unitBaht), width: 160, ...(label === W.shortRefunds ? { hide: 'narrow' as const } : {}) });
   const unmatchedRows: Array<[string, ExecutiveCount, boolean]> = [[W.unmatched, sourceCount(data.unmatchedMoney.count, data.coverage.money), false], [W.shortReceipts, sourceMoney(data.unmatchedMoney.receiptsSatang, data.coverage.money), true], [W.shortRefunds, sourceMoney(data.unmatchedMoney.refundsSatang, data.coverage.money), true], [W.excludedNet, sourceMoney(data.population.excludedTestInternalNetReceiptsSatang, data.coverage.money), true], [W.unclassifiedNet, sourceMoney(data.population.unclassifiedNetReceiptsSatang, data.coverage.money), true], [W.disputes, sourceCount(revenue.disputedInvoiceCount, data.coverage.money), false]];
   return <>
-    <div className="flex min-w-0 snap-x snap-mandatory gap-3 overflow-x-auto pb-1 xl:grid xl:grid-cols-5 xl:overflow-visible">{figures.map(([label, figure], i) => <div key={label} className="w-52 shrink-0 snap-start xl:w-auto"><ExecutiveKpi iconName="money" label={label} figure={figure} moneyValue netValue={i === 0} unit={W.unitBaht} emphasis={i === 0} /></div>)}</div>
+    <ExecutiveKpiStrip>{figures.map(([label, figure], i) => <ExecutiveKpi key={label} iconName="money" label={label} figure={figure} moneyValue netValue={i === 0} unit={W.unitBaht} emphasis={i === 0} />)}</ExecutiveKpiStrip>
     {tabs}<div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${view}`} aria-label={REPORT_VIEWS.revenue.find(tab => tab.value === view)?.label}>
     {view === 'top' && data.spendConcentration && <SpendContent data={data.spendConcentration} nav={nav} />}
     {view === 'summary' && <Card title={W.purchase}><ReportTable title={W.purchase} columns={[{ label: W.purchase, width: 240 }, moneyColumn(W.shortReceipts), moneyColumn(W.shortRefunds), moneyColumn(W.shortNet)]} rows={revenue.byPurchaseGroup.map(row => ({ key: row.key, cells: [row.label, <Figure key="receipts" value={row.receiptsSatang} moneyValue />, <Figure key="refunds" value={row.refundsSatang} moneyValue />, <Figure key="net" value={row.netReceiptsSatang} moneyValue netValue />] }))} /><p className="text-xs text-gray-600">{W.moneyDefinition} · {W.vatIncluded}{revenue.byPurchaseGroup.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && ` · ${W.negative}`}</p></Card>}
     {view === 'unmatched' && <Card title={W.unmatched}><ReportTable title={W.unmatched} columns={[{ label: W.item, width: 440 }, { label: W.unitInHeader(W.quantity, `${W.quantity} / ${W.unitBaht}`), width: 180 }]} rows={unmatchedRows.map(([label, value, cash]) => ({ key: label, cells: [label, <Figure key={label} value={value} moneyValue={cash} source="money" />] }))} />{data.population.unclassifiedCount > 0 && <p className="text-xs text-gray-600">{W.unclassified(data.population.unclassifiedCount)}</p>}</Card>}
-    {view === 'trend' && <Card title={W.unitInHeader(W.trend, W.unitBaht)}>
-      <div className="executive-trend-labels grid items-end gap-2 text-center text-sm tabular-nums" style={columns}>{revenue.trend.map(point => <Figure key={point.month} value={point.netReceiptsSatang} moneyValue />)}</div>
+    {view === 'trend' && <Card title={<span className="relative">{W.unitInHeader(W.trend, W.unitBaht)}{trendSource && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={[...new Set(revenue.trend.flatMap(point => point.netReceiptsSatang.reasonCodes.map(code => reasonText(code, point.netReceiptsSatang.coverage))))].join(' · ')} /></span>}</span>}>
+      <div className="executive-trend-labels grid items-end gap-2 text-center text-sm tabular-nums" style={columns}>{revenue.trend.map(point => <Figure key={point.month} value={point.netReceiptsSatang} moneyValue mark={!trendSource} />)}</div>
       <svg viewBox="0 0 360 200" height="200" preserveAspectRatio="none" role="img" aria-label={W.trend} className="block h-[200px] w-full">
         <defs><pattern id={pattern} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--color-gray-100)" /><line x1="0" x2="0" y1="0" y2="6" stroke="var(--color-gray-400)" strokeWidth="2" /></pattern></defs>
         {[25, 50, 75, 125, 150, 175].map(y => <line key={y} x1="0" x2="360" y1={y} y2={y} stroke="var(--color-gray-100)" />)}
@@ -237,7 +235,7 @@ export function AnalysisContent({ data, nav, seller, rankingControl, tabs }: { d
       <ReportTable title={W.credited} columns={[{ label: W.creditedSeller, width: 300 }, { label: W.companyCount, width: 120 }, { label: W.waiting, width: 90 }, { label: W.unitInHeader(W.creditAmount, W.unitBaht), width: 200 }]} rows={data.creditedSellers.rows.map((row, i) => ({ key: String(i), cells: [thaiLabel(row.seller.label ?? W.unknown, row.seller.salesCode), row.companies, row.waiting, figureNumber({ value: row.creditSatang, coverage: 'complete', reasonCodes: [] }, true)] }))} /><p className="text-xs text-gray-600">{W.through(reportDateTime(data.creditedSellers.asOf))}</p>{W.creditNotes.map(note => <p key={note} className="text-xs text-gray-600">{note}</p>)}
     </Card> : <Card title={rowsAre}>
       <ReportTable title={W.customers} remember={nav.remember} columns={[{ label: rowsAre, width: 190 }, { label: W.unitCompany, width: 140, source: data.population.eligibleCount, sourceName: 'company' }, { label: W.paid, width: 100 }, { label: W.filterLabels.paidEver, width: 110 }, { label: W.active, width: 110 }, { label: W.unitInHeader(W.shortNet, W.unitBaht), width: 140 }]} rows={data.groups.map(row => ({ key: row.key, href: drilldownHref(nav.params, nav.from, row.drilldownFilters), cells: [<span key="label" className="block truncate" title={thaiLabel(row.label, row.key)}>{thaiLabel(row.label, row.key)}</span>, <Share key="share" count={row.companies.count} share={row.companies.share} />, <Figure key="paid" value={row.companiesWithReceipts} />, row.paidEverCompanies.toLocaleString('th-TH'), <Figure key="active" value={row.activeCompanies} />, <Figure key="money" value={row.netReceiptsSatang} moneyValue netValue />] }))} />
-      <p className="text-xs text-gray-600">{data.groups.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && `${W.negative} · `}{W.base(countText(data.population.eligibleCount))} · {reportMonth(data.period.month)}</p>{data.industryCoverage && <p className="text-xs text-gray-600">{W.industryCoverage(data.industryCoverage.numerator, data.industryCoverage.denominator)}</p>}{data.roundingNote && <p className="text-xs text-gray-600">{W.rounding}</p>}
+      <p className="text-xs text-gray-600">{data.groups.some(row => row.netReceiptsSatang.coverage === 'complete' && negativeMoneyNote(row.netReceiptsSatang.value)) && `${W.negative} · `}{W.baseLabel} <Figure value={data.population.eligibleCount} unit={W.unitCompany} /> · {reportMonth(data.period.month)}</p>{data.industryCoverage && <p className="text-xs text-gray-600">{W.industryCoverage(data.industryCoverage.numerator, data.industryCoverage.denominator)}</p>}{data.roundingNote && <p className="text-xs text-gray-600">{W.rounding}</p>}
     </Card>}</div></>;
   } else if (data.comparison) {
     const c = data.comparison;
@@ -261,7 +259,7 @@ export function CompanyContent({ data, tab, history, admin, nav, contactReadAt, 
   const tabBar = tabs ?? <ExecutiveTabs label={W.detail} tabs={DETAIL_TABS} value={tab} onChange={value => { const next = new URLSearchParams(nav.params); next.delete('tab'); next.set('view', value); nav.navigate(executiveHref(`/system/executive/companies/${encodeURIComponent(company.id)}`, next)); }} />;
   const figures: Array<[string, ExecutiveCount, boolean, string, string]> = month ? [[W.shortNet, month.money.netReceiptsSatang, true, 'money', W.unitBaht], [W.receiptCount, sourceCount(month.usage.expenseReceiptCountInPeriod, data.coverage.usage), false, 'receipt', W.unitReceipt], [W.days, sourceCount(month.usage.activeDays, data.coverage.usage), false, 'calendar', W.unitDay], [W.ai, sourceCount(month.usage.aiRequests, data.coverage.usage), false, 'chat', W.unitRequest]] : [];
   return <ReportNotes data={data}>
-    {month && <div className="grid min-w-0 grid-cols-2 gap-3 xl:grid-cols-4">{figures.map(([label, figure, moneyValue, icon, unit]) => <ExecutiveKpi key={label} iconName={icon} label={label} figure={figure} moneyValue={moneyValue} netValue={moneyValue} unit={unit} />)}</div>}
+    {month && <ExecutiveKpiStrip columns={2}>{figures.map(([label, figure, moneyValue, icon, unit]) => <ExecutiveKpi key={label} iconName={icon} label={label} figure={figure} moneyValue={moneyValue} netValue={moneyValue} unit={unit} />)}</ExecutiveKpiStrip>}
     <p className="text-xs text-gray-600">{W.receiptDefinition}</p>
     {tabBar}<div id="executive-panel" role="tabpanel" aria-labelledby={`executive-tab-${tab}`} aria-label={DETAIL_TABS.find(item => item.value === tab)?.label}>
     {tab === 'history' ? history && <Card title={W.history}>{history.items.length === 0 ? <EmptyState title={W.noHistory} description="" /> : <ReportTable title={W.history} columns={[{ label: W.item, width: 340 }, { label: W.historyAt, width: 160, align: 'left' }, { label: W.shortPlan, width: 160, align: 'left' }]} rows={history.items.map((event, index) => ({ key: String(index), cells: [EXECUTIVE_HISTORY_EVENT_LABELS[event.kind], reportDateTime(event.at), event.planLabel] }))} />}</Card> : tab === 'usage' ? month && <div className="grid min-w-0 gap-3 xl:grid-cols-2">

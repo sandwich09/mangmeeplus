@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { createContext, useContext, useId, useState, isValidElement, type ReactNode, type CSSProperties } from 'react';
+import { createContext, useContext, useId, useState, isValidElement, Children, type ReactNode, type CSSProperties } from 'react';
 import { executiveMoneyQualifier, type ExecutiveCount, type ExecutiveMoney, type ExecutiveEnvelope, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 import { MangmeeCard } from '@/common/components/mangmee';
 import { ChevronDownIcon } from '@/common/icons';
@@ -12,7 +12,7 @@ import { countText, moneyText, reasonText, figureNumber, hoistedSource, reportDa
 export const EXECUTIVE_PAGE_CLASS = 'min-w-0 text-gray-900 [&_button]:min-h-11 [&_button]:min-w-11 [&_button]:focus-visible:outline-2 [&_button]:focus-visible:outline-offset-2 [&_button]:focus-visible:outline-brand-700';
 export function ExecutivePage({ eyebrow, title, description, actions, controls, children, compact = false, className = '' }: { eyebrow?: ReactNode; title: ReactNode; description?: ReactNode; actions?: ReactNode; controls?: ReactNode; children: ReactNode; compact?: boolean; className?: string }) {
   return <div className={`flex min-w-0 flex-col ${compact ? 'gap-2' : 'gap-4'} ${className}`}>
-    <header className={`relative flex min-w-0 flex-wrap items-center justify-between after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-linear-to-r after:from-gold-500 after:to-transparent ${compact ? 'gap-2 pb-0' : 'gap-3 pb-3'}`}>
+    <header className={`relative flex min-w-0 flex-wrap items-center justify-between after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-linear-to-r after:from-gold-500 after:to-transparent ${compact ? 'gap-2 pb-1' : 'gap-3 pb-3'}`}>
       <div className={compact ? 'min-w-0 flex-1' : 'min-w-0'}>{eyebrow && <div data-breadcrumb className={compact ? 'sr-only' : 'mb-1 text-xs font-semibold text-brand-800'}>{eyebrow}</div>}<h1 className={`font-semibold text-brand-800 ${compact ? 'truncate text-xl leading-7 md:text-2xl md:leading-8' : 'text-2xl sm:text-3xl'}`} title={typeof title === 'string' ? title : undefined}>{title}</h1>{description && <p className={compact ? 'truncate text-sm leading-5 text-gray-600' : 'mt-1 text-sm text-gray-600'} title={typeof description === 'string' ? description : undefined}>{description}</p>}</div>
       {controls && <div className="min-w-0 max-md:order-last max-md:basis-full">{controls}</div>}
       {actions && <div className={`flex min-w-0 flex-wrap items-center gap-2 ${compact && !controls ? 'max-md:basis-full' : ''}`}>{actions}</div>}
@@ -20,20 +20,21 @@ export function ExecutivePage({ eyebrow, title, description, actions, controls, 
   </div>;
 }
 export const ReasonNotes = createContext(false);
-const ColumnMark = createContext<readonly string[] | null>(null);
-type FigureProps = { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; source?: string; mark?: boolean };
+const ColumnMark = createContext<Record<string, readonly string[]> | null>(null);
+const KpiScale = createContext({ digits: 11, unitWidth: 42 });
+type FigureProps = { value: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; source?: string; mark?: boolean; unit?: string };
 const reasons = (value: { reasonCodes: readonly string[]; coverage: ExecutiveCoverage }) => [...new Set(value.reasonCodes.map(code => reasonText(code, value.coverage)))].join(' · ');
 export function IncompleteDot({ reason }: { reason: string }) {
-  return <span role="img" aria-label={`${W.incompleteLegend}${reason ? ` — ${reason}` : ''}`} title={reason || W.incompleteLegend} className="executive-dot ml-1 inline-block size-1.5 shrink-0 rounded-full bg-gold-500 align-middle" />;
+  return <span role="img" aria-label={`${W.incompleteLegend}${reason && reason !== W.incompleteLegend ? ` — ${reason}` : ''}`} title={reason || W.incompleteLegend} className="executive-dot ml-1 inline-block size-1.5 shrink-0 rounded-full bg-gold-500 align-middle" />;
 }
-export function Figure({ value, moneyValue = false, netValue = false, measured = false, mark = true }: FigureProps) {
-  const columnCodes = useContext(ColumnMark);
+export function Figure({ value, moneyValue = false, netValue = false, measured = false, source = measured ? 'aiCost' : moneyValue ? 'money' : 'usage', mark = true, unit }: FigureProps) {
+  const columnCodes = useContext(ColumnMark)?.[source];
   const reason = reasons(value);
   const qualified = value.value === null && value.knownValue === undefined ? W.unavailableFigure : moneyValue ? moneyText(value as ExecutiveMoney, measured) : countText(value);
   const negative = netValue && value.coverage === 'complete' && (value.value ?? 0) < 0 ? W.negative : '';
-  const showDot = mark && value.coverage !== 'complete' && (columnCodes === null || value.reasonCodes.some(code => !columnCodes.includes(code)));
-  return <span className={`executive-figure inline-flex items-center whitespace-nowrap tabular-nums ${(value.value ?? value.knownValue) === 0 ? 'text-gray-600' : moneyValue && (value.value ?? value.knownValue ?? 0) < 0 ? 'text-red-700' : ''}`} aria-label={[qualified, reason, negative].filter(Boolean).join(' — ')}>
-    {figureNumber(value, moneyValue)}{showDot && <IncompleteDot reason={reason} />}
+  const showDot = mark && value.coverage !== 'complete' && (columnCodes === undefined || value.reasonCodes.some(code => !columnCodes.includes(code)));
+  return <span className={`executive-figure relative inline-flex items-center whitespace-nowrap tabular-nums ${unit ? 'mr-3' : ''} ${(value.value ?? value.knownValue) === 0 ? 'text-gray-600' : moneyValue && (value.value ?? value.knownValue ?? 0) < 0 ? 'text-red-700' : ''}`} aria-label={[`${qualified}${unit && !moneyValue ? ` ${unit}` : ''}`, reason, negative].filter(Boolean).join(' — ')}>
+    {figureNumber(value, moneyValue)}{unit && <span className="ml-1">{unit}</span>}{showDot && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={reason} /></span>}
   </span>;
 }
 // The old ReasonNotes mechanism now has one expandable, unnumbered detail per page.
@@ -58,8 +59,8 @@ export function reportNotes(data: unknown): string[] {
   return [...notes];
 }
 export function ReportStatus({ data }: { data: ExecutiveEnvelope }) {
-  const sourceStale = data.reasonCodes?.includes('SOURCE_STALE');
-  const notes = reportNotes(data).filter(note => !sourceStale || note !== reasonText('SOURCE_STALE'));
+  const [open, setOpen] = useState(false);
+  const notes = reportNotes(data);
   const companies = (data as ExecutiveEnvelope & { metrics?: { companies: ExecutiveCount & { unclassifiedCount: number } } }).metrics?.companies;
   if (companies && companies.coverage !== 'complete' && companies.unclassifiedCount > 0) notes.push(W.unclassified(companies.unclassifiedCount));
   if (data.unmatchedMoney?.count > 0 && !notes.includes(reasonText('UNMATCHED_MONEY'))) notes.push(reasonText('UNMATCHED_MONEY'));
@@ -76,18 +77,21 @@ export function ReportStatus({ data }: { data: ExecutiveEnvelope }) {
   const isIncomplete = data.period.isPartialMonth || incomplete(data);
   const billingLag = data.dataThrough?.lagging.includes('billing') && data.dataThrough.billing;
   if (!notes.length && !summaries.length && !data.period.isPartialMonth && !billingLag) return null;
-  return <aside className={`executive-status rounded-lg border px-3 text-xs text-gray-700 ${isIncomplete ? "border-gold-300 bg-gold-100/40" : "border-gray-200 bg-gray-50"}`} aria-label={isIncomplete ? W.incompleteHeading : W.export.notes}>
-    <details className="group">
-      <summary className="flex min-h-[38px] cursor-pointer list-none items-center gap-2 rounded focus-visible:outline-2 focus-visible:outline-brand-700">
-        <DesignIcons.info className="size-4 shrink-0 text-gold-500" />
-        <div className="min-w-0 flex-1 line-clamp-2 sm:line-clamp-none"><strong className="font-semibold">{isIncomplete ? W.incompleteHeading : W.export.notes}</strong><span className="ml-2">{[sourceStale ? reasonText('SOURCE_STALE') : '', summaries.join(' · ') || (isIncomplete ? W.incompleteLegend : '')].filter(Boolean).join(' · ')}</span></div>
-        {isIncomplete && <span className="inline-flex items-center whitespace-nowrap"><IncompleteDot reason={W.incompleteLegend} />{W.incompleteLegend}</span>}<span className="shrink-0 font-semibold text-brand-800">{W.details}</span>
+  const heading = data.period.isPartialMonth ? W.partialMonth : W.export.notes;
+  const summary = data.period.isPartialMonth ? summaries.join(' · ') : notes[0] || summaries.join(' · ');
+  const detailNotes = notes.filter(note => note !== heading && note !== summary);
+  const sourceLabel = (note: string) => sources.filter(([, source]) => source.reasonCodes.some(code => note.startsWith(reasonText(code, source.coverage)))).map(([label]) => label).join(' · ') || W.export.notes;
+  return <aside className={`executive-status rounded-lg border px-3 text-xs text-gray-700 ${data.period.isPartialMonth ? "border-gold-300 bg-gold-100/40" : "border-gray-200 bg-gray-50"}`} aria-label={heading}>
+    <details className="group" onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary aria-expanded={open} className="flex min-h-[38px] cursor-pointer list-none items-center gap-2 rounded py-1 focus-visible:outline-2 focus-visible:outline-brand-700">
+        <DesignIcons.info className="size-4 shrink-0 text-warning-700" />
+        <div className="min-w-0 flex-1"><strong className="font-semibold">{heading}</strong><span className="block sm:ml-2 sm:inline">{summary}</span></div>
+        <span className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">{isIncomplete && <span className="inline-flex items-center gap-1 whitespace-nowrap"><IncompleteDot reason={W.incompleteLegend} />{W.incompleteLegend}</span>}<span className="inline-flex items-center gap-1 font-semibold text-brand-800">{W.details}<ChevronDownIcon aria-hidden="true" className="size-4 group-open:rotate-180" /></span></span>
       </summary>
-      <div className="space-y-1 border-t border-gold-300 pt-2">
-        {notes.map(note => <p key={note}>{note}</p>)}
-        {data.period.isPartialMonth && !notes.includes(W.partialMonth) && <p>{W.partialMonth}</p>}
-        {billingLag && <p>{W.moneyThrough(reportDate(billingLag))}</p>}
-      </div>
+      <dl className="grid gap-x-6 gap-y-2 border-t border-gray-200 py-3 md:grid-cols-2">
+        {detailNotes.map(note => <div key={note} className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-2"><dt className="font-semibold text-gray-600">{sourceLabel(note)}</dt><dd>{note}</dd></div>)}
+        {billingLag && <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-2"><dt className="font-semibold text-gray-600">{W.moneySource}</dt><dd>{W.moneyThrough(reportDate(billingLag))}</dd></div>}
+      </dl>
     </details>
   </aside>;
 }
@@ -95,23 +99,29 @@ export function ReportNotes({ data, children }: { data: ExecutiveEnvelope; child
   const alreadyShown = useContext(ReasonNotes);
   return <ReasonNotes.Provider value={true}>{!alreadyShown && <ReportStatus data={data} />}{children}</ReasonNotes.Provider>;
 }
-export function ExecutiveSectionCard({ title, children, actions, className = '' }: { title: string; children: ReactNode; actions?: ReactNode; className?: string }) {
+export function ExecutiveSectionCard({ title, children, actions, className = '' }: { title: ReactNode; children: ReactNode; actions?: ReactNode; className?: string }) {
   return <MangmeeCard className={`min-w-0 space-y-2 p-3 ${className}`}>
     <header className="flex min-w-0 flex-wrap items-center justify-between gap-2">
       <h2 className="flex min-w-0 items-center gap-2 text-base font-semibold text-brand-800"><span aria-hidden="true" className="h-5 w-1 shrink-0 rounded-full bg-brand-600" />{title}</h2>{actions}
     </header>{children}
   </MangmeeCard>;
 }
-export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = false, measured = false, unit, value, sub, iconName = 'chart', emphasis = false }: { label: string; figure?: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; unit?: string; value?: ReactNode; sub?: ReactNode; iconName?: string; emphasis?: boolean }) {
+export function ExecutiveKpiStrip({ children, columns = 3 }: { children: ReactNode; columns?: 2 | 3 }) {
+  const tiles = (node: ReactNode): Array<{ figure?: ExecutiveCount; moneyValue?: boolean; value?: ReactNode; unit?: string }> => Children.toArray(node).flatMap(child => isValidElement<{ children?: ReactNode; figure?: ExecutiveCount; moneyValue?: boolean; value?: ReactNode; unit?: string }>(child) ? child.type === ExecutiveKpi ? [child.props] : tiles(child.props.children) : []);
+  const values = tiles(children);
+  const scale = { digits: Math.max(1, ...values.map(p => p.figure ? figureNumber(p.figure, p.moneyValue).length : String(p.value ?? '').length)), unitWidth: Math.max(0, ...values.map(p => (p.unit?.length ?? 0) * 9)) };
+  return <KpiScale.Provider value={scale}><div data-executive-kpi-strip className={`grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2 ${columns === 3 ? 'xl:grid-cols-3' : ''}`}>{children}</div></KpiScale.Provider>;
+}
+export function ExecutiveKpi({ label, figure, moneyValue = false, netValue = false, measured = false, unit, value, sub, iconName = 'chart', emphasis = false, arrow = false }: { label: string; figure?: ExecutiveCount | ExecutiveMoney; moneyValue?: boolean; netValue?: boolean; measured?: boolean; unit?: string; value?: ReactNode; sub?: ReactNode; iconName?: string; emphasis?: boolean; arrow?: boolean }) {
   const Icon = DesignIcons[iconName];
   const incomplete = figure && figure.coverage !== 'complete';
-  const digits = figure ? figureNumber(figure, moneyValue).length : 0;
-  return <section data-executive-kpi className={`flex h-24 min-w-0 items-center gap-2 rounded-xl border px-2 py-2 shadow-theme-sm transition-colors group-hover:border-brand-300 group-hover:bg-brand-25 sm:gap-3 sm:px-3 ${emphasis ? 'border-brand-300 bg-brand-25' : 'border-gray-200 bg-white'}`}>
+  const scale = useContext(KpiScale);
+  return <section data-executive-kpi className={`flex h-26 min-w-0 items-center gap-3 rounded-xl border px-3 py-2 shadow-theme-sm transition-colors group-hover:border-brand-300 group-hover:bg-brand-25 ${emphasis ? 'border-brand-300 bg-brand-25' : 'border-gray-200 bg-white'}`}>
     <span data-executive-icon aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700"><Icon className="size-5" /></span>
-    <div className="min-w-0 flex-1 [container-type:inline-size]">
-      <div data-executive-label className="truncate text-[13px] font-normal leading-4 text-gray-600" title={label}>{label}</div>
-      <div className="flex flex-wrap items-baseline gap-x-1"><div data-executive-value className={`whitespace-nowrap ${digits > 6 ? 'text-[length:min(26px,calc(100cqw/var(--executive-digits)))]' : 'text-[26px]'} font-semibold leading-8 tabular-nums ${value === 0 || value === "0" ? "text-gray-600" : ""}`} style={digits > 6 ? { "--executive-digits": digits * 0.62 } as CSSProperties : undefined}>{figure ? <Figure value={figure} moneyValue={moneyValue} measured={measured} netValue={netValue} mark={false} /> : value}</div>{unit && <span className="whitespace-nowrap text-[13px] leading-4 text-gray-600">{unit}</span>}</div>
-      <div data-executive-sub className="flex h-4 items-center truncate text-xs text-gray-600 has-[.executive-dot]:text-warning-700">{incomplete ? <><IncompleteDot reason={reasons(figure)} /><span className="ml-1">{figure.coverage === 'unavailable' ? W.unavailableFigure : moneyValue ? (executiveMoneyQualifier(figure, measured) === W.addOnNotSold ? W.addOnNotSold : measured ? W.measuredOnly : W.confirmedOnly) : W.countAtLeast}</span></> : <span className="ml-1">{sub}</span>}</div>
+    <div className="min-w-0 flex-1 [container-type:inline-size]" style={{ '--executive-kpi-digits': scale.digits * 0.62, '--executive-kpi-unit-width': `${scale.unitWidth + 4}px` } as CSSProperties}>
+      <div className="grid grid-cols-[minmax(0,1fr)_1rem] gap-1"><div data-executive-label className="min-h-8 text-[13px] font-normal leading-4 text-gray-600" title={label}>{label}</div><span aria-hidden="true" className="text-brand-700">{arrow ? '→' : ''}</span></div>
+      <div className="flex flex-nowrap items-baseline gap-x-1"><div data-executive-value className={`whitespace-nowrap text-[length:min(26px,calc((100cqw_-_var(--executive-kpi-unit-width))/var(--executive-kpi-digits)))] font-semibold leading-8 tabular-nums ${value === 0 || value === "0" ? "text-gray-600" : ""}`}>{figure ? <Figure value={figure} moneyValue={moneyValue} measured={measured} netValue={netValue} mark={false} /> : value}</div>{unit && <span className="shrink-0 whitespace-nowrap text-[13px] leading-4 text-gray-600">{unit}</span>}</div>
+      <div data-executive-sub className="flex h-4 items-center text-xs text-gray-600" style={incomplete ? { color: 'var(--color-warning-700)' } : undefined}>{incomplete ? <><IncompleteDot reason={reasons(figure)} /><span className="ml-1">{figure.coverage === 'unavailable' ? W.unavailableFigure : moneyValue ? (executiveMoneyQualifier(figure, measured) === W.addOnNotSold ? W.addOnNotSold : measured ? W.measuredOnly : W.confirmedOnly) : W.countAtLeast}</span></> : <span className="ml-1">{sub}</span>}</div>
     </div>
   </section>;
 }
@@ -135,30 +145,35 @@ export function ExecutiveTable({ title, columns, rows, remember, nameIndex = 0, 
   if (!rows.length) return <p role="status" className="py-8 text-center text-sm text-gray-600">{W.noRows}</p>;
   const onMobile = (column: ReportColumn, index: number) => column.mobile ?? (index > nameIndex && index <= nameIndex + 6 && !column.control);
   const hasMore = rows.some(row => row.details) || columns.some((column, i) => column.hide || (i !== nameIndex && !column.control && !onMobile(column, i)));
+  const figures = (node: ReactNode): FigureProps[] => Children.toArray(node).flatMap(child => isValidElement<FigureProps & { children?: ReactNode }>(child) ? child.type === Figure ? [child.props] : figures(child.props.children) : []);
   const marks = columns.map((column, index) => {
-    const values = rows.map(row => isValidElement<FigureProps>(row.cells[index]) && row.cells[index].type === Figure ? row.cells[index].props : null);
-    const source = column.source && column.source.coverage !== 'complete' ? column.sourceName ?? 'usage' : values.every(Boolean) ? hoistedSource(values.map(p => ({ coverage: p!.value.coverage, source: p!.source ?? (p!.moneyValue ? 'money' : 'usage') }))) : null;
-    const codes = column.source?.reasonCodes ?? (source ? values[0]!.value.reasonCodes.filter(code => values.every(p => p!.value.reasonCodes.includes(code))) : null);
-    return source ? { codes: codes ?? [], reason: column.source ? reasons(column.source) : [...new Set(values.flatMap(p => p ? [reasons(p.value)] : []))].join(' · ') } : null;
+    const values = rows.flatMap(row => figures(row.cells[index]));
+    const sources: Record<string, readonly string[]> = {};
+    if (column.source && column.source.coverage !== 'complete') sources[column.sourceName ?? 'usage'] = column.source.reasonCodes;
+    for (const source of new Set(values.map(p => p.source ?? (p.measured ? 'aiCost' : p.moneyValue ? 'money' : 'usage')))) {
+      const group = values.filter(p => (p.source ?? (p.measured ? 'aiCost' : p.moneyValue ? 'money' : 'usage')) === source);
+      if (!sources[source] && hoistedSource(group.map(p => ({ coverage: p.value.coverage, source })))) sources[source] = [...new Set(group.flatMap(p => p.value.reasonCodes))];
+    }
+    return Object.keys(sources).length ? { sources, reason: [...new Set([...(column.source?.reasonCodes.map(code => reasonText(code, column.source?.coverage)) ?? []), ...values.filter(p => sources[p.source ?? (p.measured ? 'aiCost' : p.moneyValue ? 'money' : 'usage')]).flatMap(p => p.value.reasonCodes.map(code => reasonText(code, p.value.coverage)))])].filter(Boolean).join(' · ') } : null;
   });
-  const cell = (row: ReportRow, index: number) => <ColumnMark.Provider value={marks[index]?.codes ?? null}>{row.cells[index]}</ColumnMark.Provider>;
+  const cell = (row: ReportRow, index: number) => <ColumnMark.Provider value={marks[index]?.sources ?? null}>{row.cells[index]}</ColumnMark.Provider>;
   const more = (row: ReportRow) => <button type="button" aria-label={W.details} aria-expanded={expanded.includes(row.key)} aria-controls={`${id}-${row.key}`} className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded px-1 text-brand-700 hover:bg-brand-50 focus-visible:outline-2 focus-visible:outline-brand-700" onClick={event => { event.stopPropagation(); toggle(row.key); }}><span className="text-xs md:hidden">{expanded.includes(row.key) ? W.less : W.more}</span><ChevronDownIcon aria-hidden="true" className={`size-4 shrink-0 ${expanded.includes(row.key) ? 'rotate-180' : ''}`} /></button>;
   return <div className="relative min-w-0 @container">
     <table className="block w-full border-collapse space-y-2 md:table md:table-fixed md:space-y-0">
       <caption className="sr-only">{title}</caption><colgroup className="hidden md:table-column-group">{columns.map((column, i) => <col key={i} className={desktopColumn(column, 'table-column')} style={{ width: column.width ?? 120 }} />)}{hasMore && <col style={{ width: 44 }} />}</colgroup>
       <thead className="hidden md:table-header-group"><tr>{columns.map((column, index) => {
-        const label = <>{column.label}{column.sort && <span aria-hidden="true">{column.sort === 'ascending' ? ' ↑' : ' ↓'}</span>}{marks[index] && <IncompleteDot reason={marks[index]!.reason} />}</>;
+        const label = <span className="relative inline-flex items-center">{column.label}{column.sort && <span aria-hidden="true">{column.sort === 'ascending' ? ' ↑' : ' ↓'}</span>}{marks[index] && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={marks[index]!.reason} /></span>}</span>;
         return <th key={index} scope="col" aria-sort={column.sort} title={column.label} className={`sticky top-20 z-30 h-11 whitespace-nowrap border-b border-gray-100 bg-gray-50 px-2 text-xs font-semibold text-gray-600 ${columnAlign(column, index, nameIndex)} ${desktopColumn(column, 'table-cell')}`}>{column.onSort ? <button type="button" onClick={column.onSort} className="min-h-11 whitespace-nowrap rounded focus-visible:outline-2 focus-visible:outline-brand-700">{label}</button> : label}</th>;
       })}{hasMore && <th className="sticky top-20 z-30 bg-gray-50"><span className="sr-only">{W.details}</span></th>}</tr></thead>
       {rows.map(row => <tbody key={row.key} className="relative block rounded-lg border border-gray-100 bg-white p-2 md:table-row-group md:rounded-none md:border-0 md:p-0">
         <tr onClick={event => { if (row.href && !(event.target as HTMLElement).closest('a,button,input,label,summary')) event.currentTarget.querySelector<HTMLAnchorElement>('a[href]')?.click(); }} style={compactMobile ? { '--mobile-columns': columns.filter(onMobile).length } as CSSProperties : undefined} className={`relative grid ${compactMobile ? 'grid-cols-[repeat(var(--mobile-columns),minmax(0,1fr))]' : 'grid-cols-2'} gap-x-2 bg-white hover:bg-brand-25 md:table-row ${row.className ?? ''}`}>
           {row.cells.map((value, index) => <td key={index} className={`min-w-0 border-gray-100 text-sm tabular-nums md:h-12 md:border-b md:px-2 md:py-1 ${index === nameIndex ? 'col-span-full block bg-inherit md:sticky md:left-0 md:z-0' : columns[index].control ? 'absolute right-16 top-0 z-10 md:static' : onMobile(columns[index], index) ? 'block whitespace-nowrap' : 'hidden whitespace-nowrap'} ${desktopColumn(columns[index], 'table-cell')} ${columnAlign(columns[index], index, nameIndex)} ${index !== nameIndex && (value === 0 || value === '0' || value === '0.00' || value === '0.0%') ? 'text-gray-600' : ''}`}>
-            {index !== nameIndex && <span className={`${columns[index].control ? 'sr-only' : 'block truncate text-xs leading-4 text-gray-600 md:hidden'}`}>{columns[index].label}{marks[index] && <IncompleteDot reason={marks[index]!.reason} />}</span>}
+            {index !== nameIndex && <span className={`${columns[index].control ? 'sr-only' : 'block truncate text-xs leading-4 text-gray-600 md:hidden'}`}>{columns[index].label}</span>}
             {index === nameIndex && row.href ? <Link href={row.href} onClick={remember} className="block min-h-11 content-center font-semibold text-brand-800 after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-brand-700">{value}</Link> : cell(row, index)}
           </td>)}
           {hasMore && <td className="absolute right-0 top-0 z-10 block text-right md:relative md:table-cell md:h-12 md:border-b md:border-gray-100">{more(row)}</td>}
         </tr>
-        {hasMore && <tr hidden={!expanded.includes(row.key)} id={`${id}-${row.key}`} className="block bg-gray-50 md:table-row"><td colSpan={columns.length + 1} className="block p-2 text-xs md:table-cell"><div data-extra-columns className="grid grid-cols-2 gap-2 md:flex md:flex-wrap md:gap-x-4">{columns.map((column, index) => index !== nameIndex && !column.control && <div key={index} className={`min-w-0 ${onMobile(column, index) ? 'hidden' : 'block'} ${column.hide === 'always' ? 'md:block' : column.hide === 'narrow' ? 'md:block @min-[936px]:hidden' : 'md:hidden'}`}><span className="block text-gray-600">{column.label}{marks[index] && <IncompleteDot reason={marks[index]!.reason} />}</span>{cell(row, index)}</div>)}</div>{row.details}</td></tr>}
+        {hasMore && <tr hidden={!expanded.includes(row.key)} id={`${id}-${row.key}`} className="block bg-gray-50 md:table-row"><td colSpan={columns.length + 1} className="block p-2 text-xs md:table-cell"><div data-extra-columns className="grid grid-cols-2 gap-2 md:flex md:flex-wrap md:gap-x-4">{columns.map((column, index) => index !== nameIndex && !column.control && <div key={index} className={`min-w-0 ${onMobile(column, index) ? 'hidden' : 'block'} ${column.hide === 'always' ? 'md:block' : column.hide === 'narrow' ? 'md:block @min-[936px]:hidden' : 'md:hidden'}`}><span className="block text-gray-600">{column.label}</span>{cell(row, index)}</div>)}</div>{row.details}</td></tr>}
       </tbody>)}
     </table>
   </div>;
