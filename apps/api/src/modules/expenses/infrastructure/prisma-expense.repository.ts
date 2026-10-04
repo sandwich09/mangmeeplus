@@ -2877,6 +2877,9 @@ export class PrismaExpenseRepository {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
       const current = await tx.expenseRecord.findFirst({ where: { id: expenseId, companyId } });
       if (!current || !canVoidExpenseFinancialState(current)) throw new ConflictException({ code: 'expense_changed', message: 'Expense is no longer eligible for cancellation. Reload before continuing.' });
+      // Read before the status claim below: a document voided while open for correction has its tax records retired
+      // here; a confirmed one keeps the existing path (the tax sync retires or flags them, period locks included).
+      const voidedFromConfirmed = current.status === 'CONFIRMED';
       const voidedAt = new Date();
       const claimed = await tx.expenseRecord.updateMany({
         where: { id: expenseId, companyId, status: current.status, updatedAt: current.updatedAt },
@@ -2955,7 +2958,7 @@ export class PrismaExpenseRepository {
         where: { id: expenseId },
         data: { postingStatus: reversal.reversed ? 'reversed' : 'not_required', postingError: null },
       });
-      if (current.status !== 'CONFIRMED') await retireExpenseTaxEvents(tx, companyId, expenseId);
+      if (!voidedFromConfirmed) await retireExpenseTaxEvents(tx, companyId, expenseId);
       const row = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId } });
       return {
         expense: mapExpense(row),
