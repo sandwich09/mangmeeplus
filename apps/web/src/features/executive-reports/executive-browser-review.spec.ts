@@ -51,11 +51,11 @@ test('B1: first-visit ranking, top payers, all ranks and company comparison have
   for (const file of ['ExecutiveReportContent.tsx', 'ExecutiveReportPage.tsx', 'executive-reports.api.ts']) assert.doesNotMatch(source('./' + file), /\}&(?:view|by|sortBy)|\?\$\{(?:next|current|params)\}/, file);
 });
 
-test('B2: sticky headers stay in their isolated, bounded scroll context below the app bar', async () => {
+test('B2: tables grow with the page and every sticky header clears the app bar and row controls', async () => {
   const { ExecutiveTable } = await import('./ExecutiveReportDesign');
   const table = html(ExecutiveTable, { title: W.company, columns: [{ label: W.company }], rows: [{ key: 'a', cells: ['ร้าน ก'] }] });
-  assert.match(table, /^<div class="[^"]*relative[^"]*isolate[^"]*overflow-auto[^"]*md:max-h-\[560px\]/);
-  assert.match(table, /sticky top-0/);
+  assert.doesNotMatch(table, /overflow-auto|max-h-|min-width:/);
+  assert.match(table, /sticky top-20 z-30/);
 });
 
 test('B3: filter sheet explicitly fills the phone and has an anchored desktop width', () => {
@@ -152,7 +152,9 @@ test('C7: the directory does not repeat the main payment status in the expander'
   const row = { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'NEVER', paidEver: { value: 'NO' }, metrics: { expenseReceiptCountLifetime: 0, expenseReceiptCountInPeriod: 0, activeDays: 0, activeUsers: 0, documents: 0, aiRequests: 0, netReceiptsSatang: 0 } };
   const data = { period: { month: '2026-09', isPartialMonth: false }, build: {}, coverage: { money: complete, usage: complete }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 }, population: {}, items: [row], sort: { sortBy: 'joinedAt' }, summary: { netReceiptsSatang: { value: 0, ...complete } }, pagination: { total: 1 } };
   const markup = html(CompaniesContent, { data, nav: { params: new URLSearchParams(), from: 'companies' }, selected: [], select() {} });
-  assert.equal(markup.replace(/<[^>]*>/g, '').split('ยังไม่เคยชำระเงิน').length - 1, 1);
+  const main = markup.replace(/<tr hidden=""[\s\S]*?<\/tr>/g, '');
+  assert.equal(main.replace(/<[^>]*>/g, '').split('ยังไม่เคยชำระเงิน').length - 1, 1);
+  assert.doesNotMatch(markup.match(/executive-usage-summary[\s\S]*?<\/td>/)?.[0] ?? '', /ยังไม่เคยชำระเงิน/);
 });
 
 test('C9: revenue has a mobile snap strip', () => {
@@ -193,4 +195,78 @@ test('C10: comparison titles and side headers preserve free company names from t
   const markup = html(AnalysisContent, { data, nav: { params: new URLSearchParams(), from: 'compare', remember() {} }, seller: null });
   assert.match(markup, /เปรียบเทียบ · AI · IG/); assert.match(markup, /ฝั่งแรก · AI/); assert.match(markup, /ฝั่งที่สอง · IG/);
   assert.doesNotMatch(markup, /ปัญญาประดิษฐ์|อินสตาแกรม/);
+});
+
+test('round A: optional executive field and picker styles preserve ordinary hints, sizes and disabled days', async () => {
+  const { TextField } = await import('../../common/components/field/Field');
+  const props = { id: 'search', label: W.search, hint: W.searchHint };
+  assert.match(html(TextField, props), /id="search-hint"[^>]*text-gray-400/);
+  assert.match(html(TextField, { ...props, hintClassName: 'truncate text-gray-600' }), /id="search-hint"[^>]*text-gray-600/);
+  const code = source('../../common/components/field/ThemedDate.tsx').replace(/^import .*;\n/gm, '').replace(/^export /gm, '');
+  const js = ts.transpileModule(code + '\nreturn ThemedDate;', { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+  const renderPicker = (options: object) => {
+    let state = 0;
+    const deps = { React, useWorkspaceLocale: () => 'th', useState: (value: any) => [state++ === 0 ? true : typeof value === 'function' ? value() : value, () => {}], useRef: () => ({ current: null }), useEffect() {}, useMemo: (fn: () => unknown) => fn(), useCallback: (fn: unknown) => fn, useCloseOnOutsideClick() {}, cx: (...values: string[]) => values.filter(Boolean).join(' '), PopoverPanel: 'panel' };
+    const Picker = new Function('deps', `const {${Object.keys(deps).join(',')}} = deps; ${js}`)(deps);
+    return elements(Picker({ value: '2026-10-04', max: '2026-10-04', ...options }));
+  };
+  const ordinary = renderPicker({});
+  const selected = ordinary.find(e => e.type === 'button' && e.props.children === 4)!;
+  const future = ordinary.find(e => e.type === 'button' && e.props.children === 5)!;
+  assert.match(selected.props.className, /bg-brand-500/);
+  assert.equal(future.props.disabled, true); assert.match(future.props.className, /disabled:opacity-30/);
+  assert.doesNotMatch(ordinary.find(e => e.type === 'panel')!.props.className, /\[&_button\]/);
+  assert.match(renderPicker({ mode: 'month', value: '2026-10', panelClassName: '[&_button]:min-h-11 [&_button]:min-w-11' }).find(e => e.type === 'panel')!.props.className, /\[&_button\]:min-h-11/);
+  assert.match(source('./ExecutiveReportPage.tsx'), /hintClassName="truncate text-gray-600"/);
+  assert.match(source('./ExecutiveReportPage.tsx'), /mode="month" panelClassName="\[&_button\]:min-h-11/);
+});
+
+function elements(node: React.ReactNode): React.ReactElement<any>[] {
+  return React.Children.toArray(node).flatMap(child => React.isValidElement(child) ? [child, ...elements((child.props as { children?: React.ReactNode }).children)] : []);
+}
+
+test('round A: the compact frame places directory controls in the header and has no empty chip row', async () => {
+  const { ExecutivePage } = await import('./ExecutiveReportDesign');
+  const markup = html(ExecutivePage, { compact: true, eyebrow: W.report, title: W.companies, description: W.descriptions.companies, actions: 'action', controls: 'search/sort', children: 'body' });
+  assert.match(markup, /flex-col gap-2/); assert.match(markup, /data-breadcrumb[^>]*sr-only/);
+  assert.match(markup.match(/<header[\s\S]*?<\/header>/)?.[0] ?? '', /search\/sort/);
+  assert.doesNotMatch(markup, /sm:text-3xl|pb-3/);
+  const page = source('./ExecutiveReportPage.tsx');
+  assert.match(page, /<ExecutivePage compact controls=\{directoryControls\}/);
+  assert.match(page, /executive-time-row[^"\n]*items-center[^"\n]*py-0/);
+  assert.doesNotMatch(page, /activeLabels\.map|<div className="flex flex-wrap gap-2">\{activeLabels/);
+  assert.doesNotMatch(source('./ExecutiveReportDesign.tsx').match(/executive-status[^]*?<\/aside>/)?.[0] ?? '', /py-2/);
+  const { ExecutiveFilters } = await import('./ExecutiveFilters');
+  const filters = html(ExecutiveFilters, { context: { filters: { industry: [], discovery: [], referringSales: [] } }, values: {}, errors: {}, apply() {}, clear() {} });
+  assert.doesNotMatch(filters, /data-filter-chips/);
+});
+
+test('round A: directory column budgets fit both widths, keep the real sort and expose three or four mobile figures', async () => {
+  const { CompaniesContent } = await import('./ExecutiveReportContent');
+  const { ExecutiveTable } = await import('./ExecutiveReportDesign');
+  const complete = { coverage: 'complete', reasonCodes: [] };
+  const row = { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'ทดลองใช้ฟรีสำหรับร้านอาหาร', planState: 'TRIAL', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'NEVER', paidEver: { value: 'NO' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 3, activeDays: 2, activeUsers: 1, documents: 1, aiRequests: 5, netReceiptsSatang: 9900 }, cumulativeShare: { value: 100 } };
+  const base = { period: { month: '2026-09', isPartialMonth: false }, build: {}, coverage: { money: complete, usage: complete }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 }, population: {}, items: [row], summary: { netReceiptsSatang: { value: 9900, ...complete } }, pagination: { total: 1 } };
+  for (const sortBy of ['joinedAt', 'companyName', 'netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests', 'lastActivityAt']) {
+    const tree = (CompaniesContent as any)({ data: { ...base, sort: { sortBy, sortDir: 'desc' } }, nav: { params: new URLSearchParams(), from: 'companies' }, selected: [], select() {} });
+    const table = elements(tree).find(e => e.type === ExecutiveTable)!;
+    const columns = table.props.columns;
+    assert.equal(table.props.compactMobile, true);
+    assert.equal(columns.find((c: any) => c.control).label, W.shortCompare);
+    for (const [wide, budget] of [[false, 694], [true, 936]] as const) assert.ok(columns.filter((c: any) => c.hide !== 'always' && (wide || c.hide !== 'narrow')).reduce((n: number, c: any) => n + c.width, 44) <= budget, `${sortBy}/${wide}`);
+    const mobile = columns.filter((c: any) => c.mobile);
+    assert.equal(mobile.length, sortBy === 'aiRequests' ? 4 : 3);
+    const sorted = columns.filter((c: any) => c.sort);
+    assert.equal(sorted.length, 1, sortBy);
+    assert.equal(sorted[0].hide, undefined, sortBy);
+    if (sortBy === 'joinedAt') { assert.equal(sorted[0].label, W.shortJoined); assert.equal(columns.find((c: any) => c.label === W.company).sort, undefined); }
+    if (sortBy === 'aiRequests') assert.ok(mobile.some((c: any) => c.label === W.ai));
+    const rendered = html(ExecutiveTable, table.props);
+    assert.match(rendered, /grid-cols-\[repeat\(var\(--mobile-columns\),minmax\(0,1fr\)\)\]/);
+    assert.match(rendered, /title="ทดลองใช้ฟรีสำหรับร้านอาหาร/);
+    assert.match(rendered, /min-w-0 truncate/);
+    assert.match(rendered, /@min-\[936px\]:table-cell/);
+    assert.doesNotMatch(rendered, /⌃|⌄|max-h-|overflow-auto/);
+  }
+  assert.match(source('./ExecutiveReportContent.tsx'), /label === W.shortRefunds \? \{ hide: 'narrow'/);
 });

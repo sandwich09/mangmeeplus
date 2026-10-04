@@ -40,6 +40,8 @@ export type ThemedDateProps = {
   /** Required report months have no clear action; other pickers retain it. */
   allowClear?: boolean;
   className?: string;
+  /** Optional popup touch-target styling; ordinary date pickers keep their current sizes. */
+  panelClassName?: string;
   placeholder?: string;
   min?: string;
   max?: string;
@@ -85,7 +87,7 @@ function todayParts(value?: string) {
   return { year: now.getFullYear(), month: now.getMonth(), day: now.getDate() };
 }
 
-export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, allowClear = true, className, placeholder, min, max, selectable, today: businessToday, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
+export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, allowClear = true, className, panelClassName, placeholder, min, max, selectable, today: businessToday, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
   const locale = useWorkspaceLocale();
   const monthsAbbr = MONTHS_ABBR[locale] ?? MONTHS_ABBR.th;
   const monthsFull = MONTHS_FULL[locale] ?? MONTHS_FULL.th;
@@ -204,7 +206,7 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
         anchorRef={rootRef}
         panelRef={panelRef}
         height={mode === 'month' ? 300 : 400}
-        className="z-[100000] flex w-[286px] max-w-[90vw] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-[var(--shadow-theme-md)]"
+        className={`z-[100000] flex w-[286px] max-w-[90vw] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-[var(--shadow-theme-md)] ${panelClassName ?? ''}`}
       >
         <div className="mb-2 flex shrink-0 items-center justify-between">
           <button type="button" onClick={() => shiftView(0, -1)} className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 sm:h-8 sm:w-8" aria-label="ปีก่อนหน้า">‹‹</button>

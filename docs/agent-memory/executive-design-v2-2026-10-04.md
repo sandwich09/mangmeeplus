@@ -1,5 +1,16 @@
 # Agent Memory: executive-design-v2-2026-10-04
 
+## Round A — 2026-10-04; after d3fdf06d0
+
+Status: Complete in the working tree for controller review; final browser geometry not checked (no browser/server in this lane).
+Owner: Codex implementation lane; controller reviews, commits and checks the local stack.
+Scope: Round A only: compact report frame, page-scrolling tables, company columns/cards and scoped shared-field options. Rounds B/C deferred.
+Decisions: Title/description/actions share a compact header; directory search/sort move there. Time controls centre vertically, empty chip rows disappear, folded banner is 40px. Tables grow with rows; headers use top 80px/z-30 above row controls z-10. Directory widths total at most 936px wide/694px narrow across seven sorts; lower-priority columns move into the closed expander, sorted column stays visible. Phone cards use three figures (four for assistant sort), with details inside the same card and icon-set chevrons. Single-page pagination was already hidden. New short words: เทียบ, สมัคร, ใบเสร็จเดือน, สุทธิ (บาท), ย่อ. Optional Field frame/hint and ThemedDate panel classes leave ordinary defaults, selected-day colour and disabled-day dimming unchanged. Executive hint uses gray-600 (#475467), calculated contrast 7.69:1 on white; actual computed colour not checked.
+Open questions: No product decision needed. Actual y≈260/380 first figures, y≈330 first company row, 120px phone-card height, Thai font/header fit and sticky behaviour are not checked without a browser; controller must measure at 1280/1024/768/390px.
+Artifacts: ExecutiveReportDesign/Content/Page/Filters; Field.tsx and ThemedDate.tsx opt-in props; contracts word source; four executive specs; UI spec §11.1/§11.2 and Round A frame rule. Neutral e2e hooks and detail button accessible name remain unchanged.
+Verification: Focused node/tsx run of executive-browser-review, executive-compact-report, executive-design-v2, executive-presentation, ExecutiveReportContent and ExecutiveReports.wiring: exit 0, 91 passed/0 failed/0 skipped. Earlier expectation/harness run: exit 1, 81 passed/7 failed, corrected. Web typecheck through heavy.sh: initial exit 2 (new test child.props cast), corrected run exit 0. Contracts build exit 0. Token contrast calculation exit 0. git diff --check exit 0. No restored baseline/red proof and no whole suite, per the lighter Round A protocol.
+Next: Controller browser-check Round A measurements, review/commit this uncommitted diff, run merged-branch suites under the agreed protocol; send B/C findings separately.
+
 ## Run 1 — archived; controller committed f12068bbc
 
 Status: Implementation and local verification complete; uncommitted diff for controller review. Browser acceptance not checked (lane prohibits browser/server/network).
