@@ -1,4 +1,3 @@
-import { Fragment } from 'react';
 import type { ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import { dateShort } from '../expenses/ExpensesUi';
 import { money } from './reimbursements.logic';
@@ -16,11 +15,5 @@ export function ReimbursementSourceFacts({ source }: { source: ReimbursementSour
   </dl>;
 }
 
-/**
- * A shared sentence of names the browser does not know (file types written in Thai), with every name kept whole. A browser breaks
- * Thai where its dictionary sees a word, so at a phone's width it cut "ฮีอิก" or "พีเอ็นจี" in two. The words stay the shared ones:
- * only where a line may break changes (at the spaces).
- */
-export function WholeWords({ text }: { text: string }) {
-  return <>{text.split(' ').map((word, index) => <Fragment key={index}>{index > 0 && ' '}<span className="whitespace-nowrap">{word}</span></Fragment>)}</>;
-}
+/** The claim forms name file types with every name kept whole: the same rendering as the expense screens. */
+export { WholeWords } from '../expenses/ExpensesUi';
