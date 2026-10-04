@@ -106,3 +106,8 @@ test('late period refusals preserve the actual forms and render as separate line
   assert.match(text, /ภ.พ.36/); assert.match(text, /ภ.ง.ด.3/);
   assert.doesNotMatch(text, /ภ.พ.30|ภ.ง.ด.53|·/); assert.equal(text.split('\n').length, 2);
 });
+
+test('the cancel-payment dialog has one button that begins ยกเลิก: the one that only closes reads ปิด', () => {
+  assert.match(page, /t\(correctionAllowed && !correctionAction\?\.paymentId \? 'expenses\.cancel' : 'expenses\.close', 'th'\)/);
+  assert.equal(correction.EXPENSE_CORRECTION_WORDS.cancelPayment, 'ยกเลิกรายการจ่ายนี้');
+});

@@ -116,6 +116,9 @@ test('A3 overpayment is immediate, names excess/remedy and blocks confirmation; 
   assert.match(html, /ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน/);
   assert.match(html, /<button[^>]*disabled=""[^>]*>ยืนยันเอกสาร<\/button>/);
   assert.doesNotMatch(html, /ต้องตรวจ 0 รายการ|>ชำระแล้ว<|>ชำระบางส่วน</);
+  // The amount to pay after the edit (500), what was paid (700) and the excess (200) explain each other.
+  assert.match(html, /text-2xl font-black text-brand-700">฿500.00</, 'not the ฿0.00 outstanding');
+  assert.match(visible(html), /ชำระแล้ว\s*฿700.00/);
   const legacy = harness({ detail: { ...d, payments: [] } }).render();
   assert.match(legacy, /ไม่พบรายการจ่ายให้ยกเลิก ติดต่อผู้มีสิทธิ์ยกเลิกเอกสาร/);
   assert.doesNotMatch(legacy, /ยกเลิกรายการจ่ายด้านล่าง/);
@@ -348,10 +351,15 @@ test('round 7: unconfirmed and refreshed stale-pay notices use one boxed alert e
 
 test('round 7: exactly one full excess remedy follows the visible review/confirm action or stays in payment history', () => {
   const full = 'จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน';
+  // Beside ส่งตรวจสอบ nothing is blocked yet, so that one screen says what is true there instead.
+  const sendable = 'จ่ายเกินยอดสุทธิ ฿200.00 ส่งตรวจสอบได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน';
   for (const status of ['NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']) {
     for (const step of ['data', 'evidence', 'review']) {
       const html = harness({ step, detail: expense({ status, paidAmount: '700', outstandingAmount: '0', payments: [payment] }) }).render();
-      assert.equal(visible(html).split(full).length - 1, 1, `${status}/${step}`);
+      const besideSend = status === 'NEEDS_REVIEW' && step === 'review';
+      assert.equal(visible(html).split(full).length - 1, besideSend ? 0 : 1, `${status}/${step}`);
+      assert.equal(visible(html).split(sendable).length - 1, besideSend ? 1 : 0, `${status}/${step}`);
+      assert.doesNotMatch(html, /ด้านล่างก่อนยืนยัน/, 'the payment card sits above the sentence on the last step');
       const card = html.match(/data-testid="expense-payment-overpayment"[^>]*>([\s\S]*?)<\/p>/)?.[1];
       assert.ok(card);
       assert.match(card, /จ่ายเกินยอดสุทธิ ฿200.00/);
@@ -381,7 +389,7 @@ test('recheck 3: editing prices shows an adjacent excess cue and sending for rev
   const mark = stub(api, 'markExpenseReadyAsReviewer', async () => { sent++; return detail; });
   try {
     const html = page.render();
-    assert.match(html, /id="expense-review-overpayment"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายที่เกินก่อนยืนยัน/);
+    assert.match(html, /id="expense-review-overpayment"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00 ส่งตรวจสอบได้ แต่ยืนยันเอกสารไม่ได้จนกว่าจะยกเลิกรายการจ่ายที่เกิน/);
     assert.equal(page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ส่งตรวจสอบ')?.props.disabled, false);
     await page.act('button', 'ส่งตรวจสอบ'); assert.equal(sent, 1);
   } finally { mark.mock.restore(); }

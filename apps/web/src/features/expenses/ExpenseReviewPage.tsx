@@ -1031,8 +1031,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     (guided && step === 'review' && (detail.status !== 'READY_FOR_CONFIRMATION' || canConfirm))
     || (approverOnlyActions && canConfirm)
   );
+  // Beside ส่งตรวจสอบ the over-payment blocks nothing yet: say what is true there, not the block sentence.
+  const overpaymentSendable = guided && detail.status !== 'READY_FOR_CONFIRMATION';
   const overpaymentActionNotice = showOverpaymentActionNotice && overpaymentMessage && (
-    <p id="expense-review-overpayment" role="status" className="w-full text-sm text-error-700">{overpaymentMessage}</p>
+    <p id="expense-review-overpayment" role="status" className={cx('w-full text-sm', overpaymentSendable ? 'text-warning-700' : 'text-error-700')}>
+      {overpaymentSendable ? `${overpaymentCue} ${EXPENSE_CORRECTION_WORDS.sendableWhileOverpaid}` : overpaymentMessage}
+    </p>
   );
   // The status row above already carries the badge; a second one under the same words would only repeat them.
   const overpaymentPaymentNotice = overpaymentMessage && (
@@ -1455,10 +1459,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           <div className="mt-2 flex flex-wrap items-center justify-between rounded-xl bg-brand-50 px-4 py-3">
             <div>
               <div className="text-xs font-semibold text-brand-700">{t(moneyHasWht ? 'expenses.amount_due_after_wht' : 'expenses.amount_due', locale)}</div>
-              <div className="mt-1">{overpaidAmount ? <MangmeeBadge tone="danger">{EXPENSE_CORRECTION_WORDS.overpaid}</MangmeeBadge> : detail.reimbursementProgress ? <span>{expenseReimbursementProgressLabel(detail.reimbursementProgress)}</span> : <StatusBadge status={detail.paymentStatus} />}</div>
+              <div className="mt-1">{overpaidAmount ? <MangmeeBadge tone="danger">{overpaymentCue}</MangmeeBadge> : detail.reimbursementProgress ? <span>{expenseReimbursementProgressLabel(detail.reimbursementProgress)}</span> : <StatusBadge status={detail.paymentStatus} />}</div>
             </div>
             <div className="text-right">
-              <div className="tabular-nums text-2xl font-black text-brand-700">{baht(money.outstandingAmount)}</div>
+              {/* Over-paid: the amount to pay after the edit, what was paid and the excess explain each other
+                  (display only — nothing here is recomputed). Otherwise the amount still outstanding. */}
+              <div className="tabular-nums text-2xl font-black text-brand-700">{baht(overpaidAmount ? money.netPayableAmount : money.outstandingAmount)}</div>
               {Number(detail.paidAmount) > 0 && <div className="tabular-nums text-xs text-gray-500">{t('expenses.paid_prefix', locale)} {baht(detail.paidAmount)}</div>}
             </div>
           </div>
@@ -2117,7 +2123,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       <Modal open={Boolean(correctionAction)} title={correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopen}
         size="sm" closeLabel={t('expenses.close', 'th')} onClose={() => { if (!actionLoading) setCorrectionAction(null); }}
         footer={<>
-          <button ref={correctionCloseRef} type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading} onClick={() => setCorrectionAction(null)}>{t(correctionAllowed ? 'expenses.cancel' : 'expenses.close', 'th')}</button>
+          <button ref={correctionCloseRef} type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading} onClick={() => setCorrectionAction(null)}>{/* Beside "ยกเลิกรายการจ่ายนี้" a second "ยกเลิก" reads as the same action. */}{t(correctionAllowed && !correctionAction?.paymentId ? 'expenses.cancel' : 'expenses.close', 'th')}</button>
           {correctionAllowed && <button type="submit" form="expense-correction-form" className={cx(correctionAction?.paymentId ? dangerClass : btnClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading || conflictReload || correctionReason.trim().length < 3} aria-busy={actionLoading}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopenSubmit}</button>}
         </>}>
         {correctionAllowed ? <form id="expense-correction-form" className="space-y-3" onSubmit={(event) => {
