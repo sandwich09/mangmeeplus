@@ -387,3 +387,27 @@ P12 reads the same side of the candidate table as the payment gate: an expense i
 **Candidate after this inventory.** The preview moved from `16b1b86c7` to `b60c684c6` with three commits: the void decides from the status it read (`51fb422dc`, expenses), the approved help pack follows today's guides (`f1f54a194`, assistant) and executive design round B (`e0500f0d3`, web only). None adds a migration, a permission or a release task. The help pack change is one more reason the assistant ships from the same candidate.
 
 **Still moving when this was written.** The claim payment reference rule (a reference is not required when a slip or other evidence is attached) and the executive range web integration, which brings migration 13 into the candidate. Neither changes these SQL files. Re-read both at freeze, and re-run the two files on the frozen candidate.
+
+## Candidate update 3 (2026-10-05, morning — the batch that goes to UAT)
+
+Written by the controller. The inventory above ("Candidate update 2") was taken at preview `16b1b86c7`; this section lists only what changed after it. The batch's own note is `owner-preview-batch-2026-10-04.md`.
+
+**The conditional parts are now in.** The executive range backend and its web are integrated, so the candidate carries **13** migrations since Production (the thirteenth is `20261004150000_executive_company_sheet_facts`). Read every "12 integrated / 13 with range" above as 13. P1 after the release task: **13 applied / 0 pending / 0 unfinished**. Q15 after the first FULL build under this code: **6 / 0 / 0**.
+
+**What else changed for people.**
+
+- Executive report: the period control and its shortcuts; the churn figure; the figures as of the data date; the company list as the owner's sheet with the team note edited from the report; ten companies a page. The comparison page and the compare checkboxes are taken out for now at the owner's word (web only; the API still answers, the old address opens the overview).
+- Receipt counts in the executive report follow the owner's rule of 2026-10-05, "นับที่มีอยู่ในระบบ": the company sheet's count, its 0 / 1–5 / 6+ group and the as-of figures count the uploaded receipts that are in the system on the data date. Deleted receipts are not counted and a company older than the first build no longer carries "at least". The period figures (receipts added in a month) are unchanged.
+- Expense review: the withholding decision changes only when the user changes it. This closes the dead end the owner first reported (a rate typed and removed turned red and blocked the step) and a silent save of "ไม่หัก" found by a screen check.
+- Claims: with payment evidence attached the reference number is not required.
+- Notifications: a notice the server calls resolved is no longer drawn as unread, and no longer shows the request it once carried.
+
+**From `main` only.** #999–#1001 (public Official OA flex replies, published the same day as an isolated stack by another session; not an ERP release) are part of this candidate unchanged. They had left `main` red on two gates: the API suite's spec-coverage guard (an unregistered spec) and the whole-chain acceptance (W00 manifest not regenerated after `line-ai.module.ts` and the config package changed). Both are fixed in this batch: the spec runs in the whole-chain API suite and the manifest is regenerated. The assistant artifact therefore ships from the same candidate, as already required.
+
+**No new environment variable or secret.** No new migration beyond the thirteen. The permission sync now also creates the note right and its role (Q12: 2 keys, 1 role, 3 required pairs, 0 unexpected).
+
+**Rehearsal of the release's database phase** (controller, 2026-10-05 01:24, disposable PostgreSQL 18.3 at the production-era schema of 266 migrations; the same commands as `infra/kamal/release.py` `migrations()` in normal mode, with `GIT_SHA` set): catalog with pending allowed → `APPEND_ONLY_PENDING` (266 applied, 13 pending; the destructive-SQL guard passes for all thirteen) → `prisma migrate deploy` → catalog `EXACT_MATCH` (279) → permission sync → launch gates verified closed → workflow templates (26) → Thai address master (7,436 rows) → entitlement normalisation dry run → build authority verified. Every step exit 0; PRE and POST SQL exit 0 afterwards.
+
+**The executive figures right after a release.** The first build is FULL and fills the sheet facts. Until the label review is done, one unclassified company makes every as-of count "at least" (`CLASSIFICATION_INCOMPLETE`); that is the review step working as written in "Permission sync and one-time steps", not a fault.
+
+**UAT.** The owner authorised UAT for this batch on 2026-10-05 ("หลังจาก แก้และทำทุกอย่าเสร็จแล้ว ก็ขึน uat ได้") and chose the automatic (smoke) acceptance. Production is not authorised. Read-only UAT preflight `20261004T182131Z-e92a39e3`: `PREFLIGHT_PASSED_NO_DEPLOYMENT` (12.2 s). Both UAT hosts were already running. The UAT operation ids and the POST SQL result on UAT are recorded in `owner-preview-batch-2026-10-04.md` once the deploy has run.
