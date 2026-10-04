@@ -2,7 +2,9 @@
 
 ## 1. Status
 
-v0.1, 2026-08-06. **Proposed — not implemented.** Awaiting owner sign-off on §13.
+v0.1, 2026-08-06. **Historical proposal; superseded for this lane by the following owner decision.**
+
+2026-10-04: “แก้ได้จนกว่าจะลงบัญชีหรือออก 50 ทวิ”. The remaining 2026-08-06 sections below are retained as historical context, including their proposed columns, payment exclusion and endpoint; the following decision is the current rule for this lane. Use `POST /expenses/:expenseId/reopen`, `expense.confirm`, mandatory audited 3–500 character reason, existing `NEEDS_REVIEW`, no schema change. Block posted journals (including payments), unresolved posting pointers, issued/external 50 ทวิ, filed/paid/closed ภ.ง.ด.53 containing the expense, and live claim ownership. Keep number/payments; clear confirmed/review stamps and set posting to `not_required`. Re-confirmation validates paid against corrected payable. Cancel required direct and tax-event handoffs and supersede active WHT tax events on reopen. Rebuild the direct handoff at confirmation with the same id and fresh snapshots, clearing an address typed for the former payee. Saved totals deduct retained payments. Server capabilities explain every blocker/remedy; existing substitute evidence locks remain. Generated draft journals currently refuse correction pending resolution; automatic cancellation needs the owner decision recorded in task memory. A filed ภ.พ.30 reopening rule is also pending; its existing confirmation gate is unchanged.
 
 Owner: thawtchai. Owner decision recorded 2026-08-06, in the owner's words: a confirmed expense must not be editable; if it needs fixing it goes back to the person who opened it, they correct it, and it circulates back to accounting for another round.
 

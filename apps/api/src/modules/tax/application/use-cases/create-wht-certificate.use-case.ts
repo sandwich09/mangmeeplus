@@ -1,3 +1,5 @@
+import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../../../audit/application/audit.service';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
@@ -97,11 +99,25 @@ export class CreateWhtCertificateUseCase {
       // row whose JSON is not the §4.1 shape — an address nobody can print must not block issuing.
       address: formatCompanyLegalAddress(company?.addressJson as CompanyLegalAddress | null),
     };
+    const expenseIds = [...new Set(events.filter((event) => event.sourceType === 'expense.record').map((event) => event.sourceId))].sort();
+    const withCurrentExpenseSources = async (write: (db: any) => Promise<any>) => expenseIds.length ? await this.taxRepo.prisma.client.$transaction(async (tx: any) => {
+      for (const expenseId of expenseIds) {
+        await lockExpenseCorrection(tx, ctx.companyId, expenseId);
+        const expense = await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: expenseId }, select: { status: true } });
+        if (expense?.status !== 'CONFIRMED') throw new ConflictException({ code: 'expense_wht_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      }
+      const current = await tx.taxEvent.findMany({ where: { companyId: ctx.companyId, id: { in: input.taxEventIds } } });
+      if (current.length !== events.length || current.some((event: any) => event.status !== 'ACTIVE' || event.sourceHash !== events.find((old) => old.id === event.id)?.sourceHash)) {
+        throw new ConflictException({ code: 'expense_wht_source_changed', message: EXPENSE_CORRECTION_WORDS.sourceChanged });
+      }
+      return write(tx);
+    }, { isolationLevel: 'ReadCommitted' }) : await write(this.taxRepo.prisma.client);
     if (!systemIssuanceOpen) {
       // The facts are valid and the tax really was withheld — only the SYSTEM artifact is
       // unavailable. Persist what we know so the operator can have the certificate issued
       // externally and link it back (spec:205).
-      const handoff = await this.handoffs.createOrReplay({
+      const handoff = await withCurrentExpenseSources((db) => this.handoffs.createOrReplay({
+        ...(db !== this.taxRepo.prisma.client ? { tx: db } : {}),
         companyId: ctx.companyId,
         creationCommandId: `tax.wht_certificate:${period.id}:${[...input.taxEventIds].sort().join(',')}`,
         sourceFeatureKey: 'thai_tax',
@@ -120,7 +136,7 @@ export class CreateWhtCertificateUseCase {
           withheldAmount: input.withheldAmount,
           paymentDate: input.paymentDate,
         },
-      });
+      }));
       throw new ConflictException({
         code: WHT_SYSTEM_ISSUANCE_UNAVAILABLE,
         fallback: WHT_EXTERNAL_FALLBACK,
@@ -152,7 +168,7 @@ export class CreateWhtCertificateUseCase {
       paymentDate: input.paymentDate,
       issuedAt: new Date().toISOString(),
     }, payerSnapshot, input.payeeSnapshot, signature);
-    const row = await this.taxRepo.prisma.client.whtCertificate.create({
+    const writeCertificate = (db: any) => db.whtCertificate.create({
       data: {
         companyId: ctx.companyId,
         certificateNumber: reserved.documentNumber,
@@ -172,6 +188,7 @@ export class CreateWhtCertificateUseCase {
         issuedByUserId: ctx.userId,
       },
     });
+    const row = await withCurrentExpenseSources(writeCertificate);
     await this.commitNumber.execute({ id: reserved.id, companyId: ctx.companyId, ownerType: 'tax.wht_certificate', ownerId: row.id });
     await this.audit.log({
       companyId: ctx.companyId,

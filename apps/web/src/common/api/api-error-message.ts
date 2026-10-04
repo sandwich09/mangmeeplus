@@ -1,3 +1,4 @@
+import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
 import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
@@ -411,6 +412,13 @@ const CODE_LABELS: Record<string, string> = {
   bank_match_state_changed: 'รายการนี้ถูกเปลี่ยนระหว่างจับคู่ กรุณากดรีเฟรชแล้วลองอีกครั้ง',
   output_tax_code_line_mismatch: 'รหัสภาษีที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจรหัสภาษีก่อนบันทึก',
   posting_rule_missing: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี',
+  expense_correction_blocked: EXPENSE_CORRECTION_WORDS.unavailable,
+  expense_payment_correction_blocked: EXPENSE_CORRECTION_WORDS.unavailable,
+  expense_paid_exceeds_payable: EXPENSE_CORRECTION_WORDS.paidExceedsPayable,
+  wht_certificate_download_unavailable: EXPENSE_CORRECTION_WORDS.certificateUnavailable,
+  expense_posting_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
+  expense_wht_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
+  expense_correction_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
   expense_payment_exceeds_outstanding: 'ยอดจ่ายต้องมากกว่า 0 และไม่เกินยอดคงเหลือที่ต้องจ่าย',
   expense_payment_changed: 'ยอดหรือสถานะการจ่ายถูกเปลี่ยนระหว่างบันทึก กรุณาโหลดรายการใหม่แล้วลองอีกครั้ง',
   expense_payment_idempotency_conflict: 'ข้อมูลไม่ตรงกับรายการจ่ายที่บันทึกไว้ กรุณาตรวจประวัติการจ่ายก่อนแก้ไขเป็นรายการใหม่',
@@ -1532,6 +1540,13 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
       return code === 'BILLING_RATE_LIMIT' ? `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`
         : `${CODE_LABELS[code]} (ลองใหม่ได้ใน ${seconds} วินาที)`;
     }
+  }
+  if (code === 'expense_correction_blocked' || code === 'expense_payment_correction_blocked') {
+    const payload = (details ?? error) as { blockers?: unknown; blocker?: unknown } | undefined;
+    const blockers = Array.isArray(payload?.blockers) ? payload.blockers : [payload?.blocker];
+    const messages = blockers.filter((blocker): blocker is string => typeof blocker === 'string')
+      .map((blocker) => expenseCorrectionBlockerMessage(blocker as ExpenseCorrectionBlocker)).filter(Boolean);
+    return messages.length ? messages.join(' · ') : EXPENSE_CORRECTION_WORDS.unavailable;
   }
   if (typeof code === 'string') {
     if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;

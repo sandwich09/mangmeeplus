@@ -110,24 +110,23 @@ test('typing zero before a decimal keeps the chosen category and base for a frac
 test('empty, loading and failed catalogs have distinct shared Thai guidance for editable and read-only views', () => {
   const empty = words['expenses.wht_categories_empty'];
   assert.ok(empty, 'empty catalog has an explanation');
-  assert.match(empty, /ยังไม่มีประเภทเงินได้ที่เปิดให้ร้านนี้เลือก/);
-  assert.match(empty, /ยังไม่ระบุประเภทเงินได้.*ยืนยันไม่ได้/);
-  assert.match(empty, /ผู้ทำบัญชีที่มีสิทธิ์ตั้งค่าภาษี.*เปิดใช้งาน/);
+  assert.match(empty, /ยังไม่มีประเภทเงินได้ที่เปิดใช้/);
+  assert.match(empty, /ติดต่อทีมมั่งมี/);
   for (const key of ['expenses.wht_categories_empty', 'expenses.wht_categories_loading', 'expenses.wht_categories_failed']) {
     assert.ok(words[key]);
     assert.doesNotMatch(words[key]!, /[A-Za-z]/);
     assert.ok(block.includes(key), `${key} appears in the same block, including read-only`);
   }
-  assert.match(block, /whtCategoriesState === 'ready' && whtCategories.length === 0/);
+  assert.match(block, /whtCategoriesState === 'ready'.*applicableWhtCategories.length === 0/);
   assert.match(edit, /setWhtCategoriesState\('error'\)/);
   assert.doesNotMatch(block, /isMutable &&[^\n]*wht_categories/, 'guidance is also visible without edit permission');
 });
 
 test('a saved category outside the current catalog displays a Thai label instead of its code', () => {
   assert.equal(words['expenses.wht_category_recorded'], 'ประเภทเงินได้ที่บันทึกไว้');
-  assert.match(block, /values.whtCategoryCode && !whtCategories.some/);
+  assert.match(block, /!isMutable && values.whtCategoryCode && !applicableWhtCategories.some/);
   assert.match(block, /<option value=\{values.whtCategoryCode\}>\{t\('expenses.wht_category_recorded', locale\)\}/);
-  assert.match(block, /const picked = whtCategories.find\([\s\S]*?if \(!picked\) return;/, 're-selecting the recorded fallback must not replace its amount with an invented rate');
+  assert.match(block, /const picked = applicableWhtCategories.find\([\s\S]*?if \(!picked\) return;/, 're-selecting the recorded fallback must not replace its amount with an invented rate');
 });
 
 test('withholding hints explain optional blanks and the actual base without English tokens', () => {
@@ -157,4 +156,24 @@ test('all printed certificate labels and stale-state notice share the 50 ทว�
     }
   };
   scan(new URL('../../', import.meta.url));
+});
+
+
+test('income categories match the payee form and changing type clears an incompatible category', () => {
+  const catalog = [
+    { code: 'PERSON', nameTh: 'บุคคล', formType: 'PND3', defaultRate: '3' },
+    { code: 'COMPANY', nameTh: 'บริษัท', formType: 'PND53', defaultRate: '3' },
+  ];
+  const filter = (model as any).expenseWhtCategoriesForPayee;
+  const change = (model as any).changeExpensePayeeType;
+  assert.equal(typeof filter, 'function'); assert.equal(typeof change, 'function');
+  assert.deepEqual(filter(catalog, 'INDIVIDUAL').map((c: any) => c.code), ['PERSON']);
+  assert.deepEqual(filter(catalog, 'JURISTIC').map((c: any) => c.code), ['COMPANY']);
+  assert.deepEqual(filter(catalog, ''), []);
+  const before = { ...values(), vendorEntityKindSnapshot: 'INDIVIDUAL', whtCategoryCode: 'PERSON' };
+  assert.equal(change(before, 'JURISTIC', catalog).whtCategoryCode, '');
+  assert.equal(change(before, 'INDIVIDUAL', catalog).whtCategoryCode, 'PERSON');
+  assert.match(block, /changeExpensePayeeType/);
+  assert.match(block, /applicableWhtCategories.map/);
+  assert.match(block, /applicableWhtCategories.length === 0/);
 });

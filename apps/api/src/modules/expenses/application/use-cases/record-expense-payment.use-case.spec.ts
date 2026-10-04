@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { RecordExpensePaymentUseCase } from './expense-draft.use-case';
@@ -123,4 +123,41 @@ describe('RecordExpensePaymentUseCase', () => {
     assert.equal(events[0].eventKey, 'expense.payment_recorded:expense_payment:pay-original');
     assert.equal(events[0].payloadJson.data.paidAmount, '40.0000');
   });
+});
+
+// This file is in the API test script; direct callers have the same permission/reason boundary as HTTP.
+describe('expense correction authorization and audit', () => {
+  it('requires permission, web authority, branch scope and a meaningful bounded reason', async () => {
+    const production = await import('./expense-draft.use-case');
+    for (const [name, permission, method] of [
+      ['ReopenExpenseUseCase', 'expense.confirm', 'reopenExpenseAtomic'],
+      ['CancelExpensePaymentUseCase', 'expense.payment.record', 'cancelPaymentAtomic'],
+    ]) {
+      const UseCase = (production as any)[name]; assert.equal(typeof UseCase, 'function');
+      const calls: any[] = [];
+      const repo = { findById: async () => ({ branchId: 'branch-1' }), [method]: async (input: any, hook: any) => { calls.push(input); await hook({}); return { status: 'NEEDS_REVIEW' }; } };
+      const audits: any[] = [];
+      const useCase = new UseCase(repo, { log: async (entry: any, tx: any) => { assert.ok(tx); audits.push(entry); } });
+      const run = (context: any, reason: any) => name === 'ReopenExpenseUseCase' ? useCase.execute(context, 'exp-1', reason) : useCase.execute(context, 'exp-1', 'pay-1', reason);
+      const authorized = { ...ctx(), permissions: [permission] };
+      await assert.rejects(() => run({ ...authorized, permissions: [] }, 'กรอกผิด'), ForbiddenException);
+      await assert.rejects(() => run({ ...authorized, authProvider: 'line' }, 'กรอกผิด'), ForbiddenException);
+      await assert.rejects(() => run({ ...authorized, scopes: { branchIds: ['other'] } }, 'กรอกผิด'), ForbiddenException);
+      for (const reason of ['', '  ', 'ab', 'a'.repeat(501), null]) await assert.rejects(() => run(authorized, reason), BadRequestException);
+      await run(authorized, '  กรอกผิด  ');
+      assert.equal(calls.length, 1); assert.equal(calls[0].reason, 'กรอกผิด');
+      assert.equal(audits[0].actorUserId, authorized.userId); assert.equal(audits[0].metadataJson.reason, 'กรอกผิด');
+      assert.equal(JSON.stringify(audits).includes('bankAccountRef'), false);
+    }
+  });
+});
+
+
+test('correction audit reasons mask long account-number text as well as excluding bank fields', async () => {
+  const { ReopenExpenseUseCase } = await import('./expense-draft.use-case');
+  let logged: any;
+  const repo: any = { findById: async () => ({ branchId: 'branch-1' }), reopenExpenseAtomic: async (_input: any, hook: any) => { await hook({}); return {}; } };
+  await new ReopenExpenseUseCase(repo, { log: async (entry: any) => { logged = entry; } } as any).execute({ ...ctx(), permissions: ['expense.confirm'] }, 'exp-1', 'แก้ยอดบัญชี 012-3-45678-9');
+  assert.equal(JSON.stringify(logged).includes('012-3-45678-9'), false);
+  assert.match(logged.metadataJson.reason, /6789/);
 });

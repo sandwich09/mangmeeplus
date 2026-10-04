@@ -1,3 +1,5 @@
+import { maskAccountNumber } from '../../../banking/domain/logic/banking.logic';
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
 import { expenseDraftNumberingEnabled } from '../../infrastructure/expense-number';
 import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
@@ -23,7 +25,7 @@ import { expenseVendorIdentityFields } from '../../domain/logic/expense-vendor-i
 import { readBuyerAsPrinted, recheckBuyerAsPrinted, stampClaimStatusBeforeMark } from '../../domain/logic/buyer-as-printed.logic';
 import { EnsureVendorCounterpartyFromExpenseUseCase } from '../../../accounting-documents/application/use-cases/ensure-vendor-counterparty-from-expense.use-case';
 import { normalizeExpensePrecisionAdjustment } from '../../domain/logic/expense-precision-adjustment.logic';
-import { expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
+import { calcPaymentAmounts, derivePaymentStatus, expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
 import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import {
@@ -213,6 +215,10 @@ export class GetExpenseUseCase {
       throw new ForbiddenException('Access denied');
     }
     return r;
+  }
+
+  correctionCapabilities(ctx: RequestContext, expenseId: string) {
+    return this.repo.expenseCorrectionCapabilities(ctx.companyId, expenseId, ctx.permissions);
   }
 
   async sourceDraft(ctx: RequestContext, expense: ExpenseRecordWithRelations) {
@@ -986,7 +992,7 @@ export class UpdateExpenseDraftUseCase {
       }),
       ...(reviewedByUserId && { reviewedByUserId, reviewedAt }),
       ...(totals ?? {}),
-      ...(totals ? { outstandingAmount: totals.netPayableAmount } : {}),
+      ...(totals ? { ...calcPaymentAmounts(totals.netPayableAmount, r.paidAmount ?? '0'), paymentStatus: derivePaymentStatus(totals.netPayableAmount, r.paidAmount ?? '0') } : {}),
     }, resolvedLines || options.transactionalAudit || hasSourceDraft || input.evidenceAssessment || input.documentReviewAcknowledged
       ? async (tx) => {
         if (resolvedLines) {
@@ -1781,5 +1787,47 @@ export class RecordExpensePaymentUseCase {
       } });
     });
     return result.expense;
+  }
+}
+
+
+function correctionReason(reason: string): string {
+  if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 500) {
+    throw new BadRequestException(EXPENSE_CORRECTION_WORDS.reasonRequired);
+  }
+  return reason.trim().replace(/\d(?:[ -]?\d){7,}/g, maskAccountNumber);
+}
+
+@Injectable()
+export class ReopenExpenseUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+
+  async execute(ctx: RequestContext, expenseId: string, reason: string): Promise<ExpenseRecord> {
+    requirePerm(ctx, 'expense.confirm', 'reopen expense');
+    if (ctx.authProvider === 'line') throw new ForbiddenException('Expense correction requires authenticated web authority.');
+    const cleanReason = correctionReason(reason);
+    const expense = await this.repo.findById(ctx.companyId, expenseId);
+    if (!expense) throw new NotFoundException();
+    assertBranchInScope(ctx, expense.branchId);
+    return this.repo.reopenExpenseAtomic({ companyId: ctx.companyId, expenseId, actorUserId: ctx.userId, scopes: ctx.scopes ?? {}, reason: cleanReason },
+      (tx) => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.reopen', targetType: 'expense_record', targetId: expenseId,
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { reason: cleanReason } }, tx));
+  }
+}
+
+@Injectable()
+export class CancelExpensePaymentUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+
+  async execute(ctx: RequestContext, expenseId: string, paymentId: string, reason: string): Promise<ExpenseRecord> {
+    requirePerm(ctx, 'expense.payment.record', 'cancel expense payment');
+    if (ctx.authProvider === 'line') throw new ForbiddenException('Expense payment correction requires authenticated web authority.');
+    const cleanReason = correctionReason(reason);
+    const expense = await this.repo.findById(ctx.companyId, expenseId);
+    if (!expense) throw new NotFoundException();
+    assertBranchInScope(ctx, expense.branchId);
+    return this.repo.cancelPaymentAtomic({ companyId: ctx.companyId, expenseId, paymentId, actorUserId: ctx.userId, scopes: ctx.scopes ?? {}, reason: cleanReason },
+      (tx) => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.cancel', targetType: 'expense_payment', targetId: paymentId,
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, reason: cleanReason } }, tx));
   }
 }

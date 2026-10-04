@@ -24,7 +24,7 @@ function expense(overrides: Record<string, unknown> = {}) {
 }
 
 function harness(overrides: Record<string, unknown> = {}) {
-  const state = { expense: expense(overrides), payments: [] as any[], audits: [] as any[], events: [] as any[] };
+  const state = { expense: expense(overrides), payments: [] as any[], journals: [] as any[], handoffs: [] as any[], taxEvents: [] as any[], certificates: [] as any[], taxPeriods: [] as any[], claim: null as any, audits: [] as any[], events: [] as any[] };
   let forceCasFailure = false;
   let failingWrite: 'audit' | 'outbox' | undefined;
   const client: any = {
@@ -32,12 +32,24 @@ function harness(overrides: Record<string, unknown> = {}) {
     $transaction: async (work: (tx: any) => Promise<unknown>) => {
       const draft = structuredClone(state);
       const tx = {
+        journalEntry: { findMany: async () => draft.journals },
+        whtCertificateHandoff: {
+          findMany: async ({ where }: any) => draft.handoffs.filter((row) => {
+            const direct = (row.sourcePaymentType ?? 'expense.record') === 'expense.record' && (row.sourcePaymentId ?? 'expense-1') === 'expense-1';
+            return where.OR ? direct || where.OR.some((filter: any) => filter.taxEventIdsJson?.array_contains?.some((id: string) => row.taxEventIdsJson?.includes(id))) : direct;
+          }),
+          updateMany: async ({ data }: any) => { draft.handoffs.forEach((row) => Object.assign(row, data)); return { count: draft.handoffs.length }; },
+        },
+        taxEvent: { findMany: async () => draft.taxEvents, updateMany: async ({ data }: any) => { draft.taxEvents.forEach((row) => Object.assign(row, data)); return { count: draft.taxEvents.length }; } },
+        whtCertificate: { findFirst: async () => draft.certificates[0] ?? null },
+        taxPeriod: { findMany: async () => draft.taxPeriods },
+        reimbursementRequest: { findFirst: async () => draft.claim },
         attachmentLink: { findMany: async () => [] },
         expenseSubstituteReceiptEvidence: { findFirst: async () => null },
         reimbursementLine: { findFirst: async () => null },
         $executeRaw: async () => 0,
         expenseRecord: {
-          findFirst: async ({ where }: any) => where.companyId === draft.expense.companyId && where.id === draft.expense.id ? draft.expense : null,
+          findFirst: async ({ where }: any) => where.companyId === draft.expense.companyId && where.id === draft.expense.id ? { ...draft.expense, payments: draft.payments } : null,
           findFirstOrThrow: async () => draft.expense,
           updateMany: async ({ where, data }: any) => {
             if (forceCasFailure || where.status !== draft.expense.status
@@ -47,7 +59,13 @@ function harness(overrides: Record<string, unknown> = {}) {
           },
         },
         expensePayment: {
-          findFirst: async ({ where }: any) => draft.payments.find((row) => row.companyId === where.companyId && row.idempotencyKey === where.idempotencyKey) ?? null,
+          findMany: async () => draft.payments.filter((row) => row.status === 'RECORDED'),
+          updateMany: async ({ where, data }: any) => {
+            const row = draft.payments.find((p) => p.id === where.id && p.companyId === where.companyId && p.expenseId === where.expenseId && p.status === where.status);
+            if (!row || forceCasFailure) return { count: 0 };
+            Object.assign(row, data); return { count: 1 };
+          },
+          findFirst: async ({ where }: any) => draft.payments.find((row) => row.companyId === where.companyId && (where.id ? row.id === where.id && row.expenseId === where.expenseId : row.idempotencyKey === where.idempotencyKey)) ?? null,
           create: async ({ data }: any) => {
             const row = {
               ...data, id: `payment-${draft.payments.length + 1}`, journalEntryId: null, postingError: null,
@@ -70,7 +88,7 @@ function harness(overrides: Record<string, unknown> = {}) {
       state.expense = draft.expense;
       state.payments = draft.payments;
       state.audits = draft.audits;
-      state.events = draft.events;
+      state.events = draft.events; state.handoffs = draft.handoffs; state.taxEvents = draft.taxEvents;
       return result;
     },
   };
@@ -458,5 +476,90 @@ describe('Expense payment intent integrity (real PostgreSQL)', () => {
     assert.equal(result.status, 'VOIDED');
     await assertPaymentEffects(expense.id, 1, '0.0000');
     assert.equal((await clients[0]!.expensePayment.findFirstOrThrow({ where: { companyId, expenseId: expense.id } })).status, 'VOIDED');
+  });
+});
+
+
+describe('expense correction before posting (owner 2026-10-04)', () => {
+  const command = { companyId: 'company-1', expenseId: 'expense-1', actorUserId: 'finance-1', scopes: {}, reason: 'กรอกยอดผิด' };
+  const audit = (tx: any) => tx.auditLog.create({ data: { actorUserId: command.actorUserId, metadataJson: { reason: command.reason } } });
+
+  it('cancels only the chosen unposted payment, retains history and allows recording its replacement', async () => {
+    const h = harness({ postingStatus: 'pending' });
+    await pay(h.repo, '40'); await pay(h.repo, '60');
+    const result = await (h.repo as any).cancelPaymentAtomic({ ...command, paymentId: 'payment-1' }, audit);
+    assert.equal(result.paidAmount, '60.0000'); assert.equal(result.outstandingAmount, '40.0000');
+    assert.equal(result.paymentStatus, 'PARTIALLY_PAID');
+    assert.equal(h.state.payments[0].status, 'VOIDED');
+    assert.equal(h.state.payments[0].voidedByUserId, 'finance-1');
+    assert.ok(h.state.payments[0].voidedAt); assert.equal(h.state.audits.length, 1);
+    await pay(h.repo, '40'); assert.equal(h.state.expense.paymentStatus, 'PAID');
+  });
+
+  for (const mode of ['posted flag', 'posted journal', 'draft journal']) it(`refuses cancellation with ${mode}, even with stale payment pointers`, async () => {
+    const h = harness({ postingStatus: 'pending' }); await pay(h.repo, '40');
+    if (mode === 'posted flag') h.state.payments[0].postingStatus = 'posted';
+    else h.state.journals.push({ sourceType: 'expense.payment', sourceId: 'payment-1', status: mode === 'posted journal' ? 'POSTED' : 'DRAFT' });
+    await assert.rejects(() => (h.repo as any).cancelPaymentAtomic({ ...command, paymentId: 'payment-1' }, audit), (e: any) => e.getResponse?.().code === 'expense_payment_correction_blocked');
+    assert.equal(h.state.payments[0].status, 'RECORDED'); assert.equal(h.state.expense.paidAmount, '40.0000');
+  });
+
+  it('reopens a paid confirmed expense, keeps its number/payments and retires only unissued WHT', async () => {
+    const h = harness({ postingStatus: 'pending', expenseNumber: 'EXP-1', confirmedAt: VERSION, confirmedByUserId: 'confirmer', reviewedAt: VERSION });
+    await pay(h.repo, '40'); h.state.handoffs.push({ status: 'REQUIRED' }); h.state.taxEvents.push({ id: 'event-1', taxPeriodId: 'p1', status: 'ACTIVE' });
+    const result = await (h.repo as any).reopenExpenseAtomic(command, audit);
+    assert.equal(result.status, 'NEEDS_REVIEW'); assert.equal(result.expenseNumber, 'EXP-1');
+    assert.equal(result.paidAmount, '40.0000'); assert.equal(h.state.payments[0].status, 'RECORDED');
+    assert.equal(result.postingStatus, 'not_required'); assert.equal(result.confirmedAt, null); assert.equal(result.reviewedAt, null);
+    assert.equal(h.state.handoffs[0].status, 'CANCELLED'); assert.equal(h.state.taxEvents[0].status, 'SUPERSEDED'); assert.equal(h.state.audits.length, 1);
+  });
+
+  const refusals = [
+    ['ledger_posted', (h: any) => h.state.journals.push({ sourceType: 'expense.record', sourceId: 'expense-1', status: 'POSTED' })],
+    ['ledger_posted', (h: any) => { h.state.payments.push({ id: 'payment-1', status: 'RECORDED', postingStatus: 'pending' }); h.state.journals.push({ sourceType: 'expense.payment', sourceId: 'payment-1', status: 'POSTED' }); }],
+    ['journal_pending', (h: any) => h.state.journals.push({ sourceType: 'expense.record', sourceId: 'expense-1', status: 'DRAFT' })],
+    ['certificate_issued', (h: any) => h.state.handoffs.push({ status: 'SYSTEM_ISSUED' })],
+    ['certificate_issued', (h: any) => h.state.handoffs.push({ status: 'EXTERNAL_LINKED' })],
+    ['certificate_issued', (h: any) => { h.state.taxEvents.push({ id: 'event-1', taxPeriodId: 'period-1' }); h.state.certificates.push({ id: 'cert-1' }); }],
+    ['tax_period_filed', (h: any) => { h.state.taxEvents.push({ id: 'event-1', taxPeriodId: 'period-1' }); h.state.taxPeriods.push({ id: 'period-1', formType: 'PND53', status: 'FILED' }); }],
+    ['live_claim', (h: any) => { h.state.expense.sourceReimbursementRequestId = 'claim-1'; h.state.claim = { id: 'claim-1' }; }],
+    ['not_confirmed', (h: any) => { h.state.expense.status = 'VOIDED'; }],
+  ] as const;
+  for (const [index, [code, arrange]] of refusals.entries()) it(`refuses reopen: ${code} (${index}) and reports the same server capability`, async () => {
+    const h = harness({ postingStatus: 'pending' }); arrange(h);
+    await assert.rejects(() => (h.repo as any).reopenExpenseAtomic(command, audit), (e: any) => e.getResponse?.().blockers?.includes(code));
+    const caps = await (h.repo as any).expenseCorrectionCapabilities(command.companyId, command.expenseId, ['expense.confirm', 'expense.payment.record']);
+    assert.equal(caps.canReopen, false); assert.ok(caps.reopenBlockers.includes(code));
+    assert.equal(h.state.audits.length, 0);
+  });
+
+  it('refuses an external certificate linked through tax events rather than a payment source', async () => {
+    const h = harness({ postingStatus: 'pending' });
+    h.state.taxEvents.push({ id: 'event-1', taxPeriodId: 'period-1' });
+    h.state.handoffs.push({ status: 'EXTERNAL_LINKED', sourcePaymentType: 'tax.workspace', taxEventIdsJson: ['event-1'] });
+    await assert.rejects(() => h.repo.reopenExpenseAtomic(command), (error: any) => error.getResponse?.().blockers?.includes('certificate_issued'));
+    assert.equal(h.state.expense.status, 'CONFIRMED');
+  });
+
+  it('capabilities allow only permitted correction and payment recording; posted payment stays blocked', async () => {
+    const h = harness({ postingStatus: 'pending' }); await pay(h.repo, '40');
+    let caps = await (h.repo as any).expenseCorrectionCapabilities('company-1', 'expense-1', ['expense.confirm', 'expense.payment.record']);
+    assert.equal(caps.canReopen, true); assert.equal(caps.canRecordPayment, true); assert.equal(caps.payments[0].canCancel, true);
+    caps = await (h.repo as any).expenseCorrectionCapabilities('company-1', 'expense-1', []);
+    assert.equal(caps.canReopen, false); assert.equal(caps.canRecordPayment, false); assert.equal(caps.payments[0].canCancel, false);
+    h.state.payments[0].postingStatus = 'posted';
+    caps = await (h.repo as any).expenseCorrectionCapabilities('company-1', 'expense-1', ['expense.confirm', 'expense.payment.record']);
+    assert.equal(caps.payments[0].canCancel, false); assert.equal(caps.payments[0].cancelBlocker, 'posting_unresolved');
+  });
+
+  it('rolls correction back on audit failure and refuses cross-tenant, cross-expense, branch and CAS changes', async () => {
+    const h = harness({ postingStatus: 'pending' }); await pay(h.repo, '40'); h.failWrite('audit');
+    await assert.rejects(() => (h.repo as any).cancelPaymentAtomic({ ...command, paymentId: 'payment-1' }, audit), /audit unavailable/);
+    assert.equal(h.state.payments[0].status, 'RECORDED'); assert.equal(h.state.expense.paidAmount, '40.0000');
+    await assert.rejects(() => (h.repo as any).cancelPaymentAtomic({ ...command, expenseId: 'other', paymentId: 'payment-1' }), NotFoundException);
+    await assert.rejects(() => (h.repo as any).reopenExpenseAtomic({ ...command, companyId: 'other' }), NotFoundException);
+    await assert.rejects(() => (h.repo as any).reopenExpenseAtomic({ ...command, scopes: { branchIds: ['other'] } }), ForbiddenException);
+    h.failNextCas(); await assert.rejects(() => (h.repo as any).reopenExpenseAtomic(command), ConflictException);
+    assert.equal(h.state.expense.status, 'CONFIRMED');
   });
 });

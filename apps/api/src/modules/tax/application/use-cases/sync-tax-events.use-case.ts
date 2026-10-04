@@ -278,10 +278,7 @@ export class SyncTaxEventsUseCase {
 
       const hash = computeSourceHash({ whtAmount: exp.whtAmount, updatedAt: exp.updatedAt.toISOString() });
       const idKey = taxEventIdempotencyKey(companyId, 'expense.record', exp.id, `${eventType}:${hash}`);
-      // No cross-form cleanup is needed: the class is captured before confirmation and CONFIRMED only
-      // transitions to VOIDED, so an expense cannot move between ภ.ง.ด.3 and ภ.ง.ด.53 after its first
-      // sync. Adding a reclassification seam means superseding the other form's event *and* asserting
-      // that form's period lock, like the two supersede sites above.
+      // The gated expense correction command supersedes both WHT forms before making the source editable.
       const existing = await this.activeEvent(companyId, 'expense.record', exp.id, '__HEADER__', null, eventType, idKey);
       if (existing && existing.sourceHash === hash) continue;
       if (existing) await this.taxRepo.supersedeEvent(existing.id);
