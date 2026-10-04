@@ -1,6 +1,6 @@
 import { HttpException, Injectable } from '@nestjs/common';
 import {
-  EXECUTIVE_ACCOUNT_STATUSES, EXECUTIVE_ROLE_KEYS, EXECUTIVE_WORDS as W,
+  COMPANY_TEAM_NOTE_MANAGE_PERMISSION, EXECUTIVE_ACCOUNT_STATUSES, EXECUTIVE_ROLE_KEYS, EXECUTIVE_WORDS as W,
   type ExecutiveAccountStatus, type ExecutiveUserAccessBody, type ExecutiveUserCreateBody,
   type ExecutiveUserCreateResult, type ExecutiveUserCredential, type ExecutiveUserListDto,
   type ExecutiveUserListQuery, type ExecutiveUserReasonBody, type ExecutiveUserStatusBody, type ExecutiveUserView,
@@ -16,7 +16,7 @@ import { generateTemporaryPassword, hashTemporaryPassword, temporaryPasswordExpi
 import { PLATFORM_TENANT_ID } from '../../sales-console/application/sales-context';
 import { optionalLineContactEmail } from '../../external-signup/domain/line-signup.logic';
 
-const [BASE_ROLE, EXPORT_ROLE, CONTACT_ROLE] = EXECUTIVE_ROLE_KEYS;
+const [BASE_ROLE, EXPORT_ROLE, CONTACT_ROLE, NOTE_ROLE] = EXECUTIVE_ROLE_KEYS;
 const SYSTEM_ROLE = { scopeKey: 'system', isSystem: true, companyId: null } as const;
 const EXECUTIVE_MEMBER = { companyId: PLATFORM_TENANT_ID, status: { in: ['ACTIVE', 'SUSPENDED', 'DISABLED'] }, roles: { some: { role: { ...SYSTEM_ROLE, key: BASE_ROLE } } } } satisfies Prisma.CompanyMembershipWhereInput;
 const ADMIN_USER = { memberships: { some: { roles: { some: { role: { key: 'SYSTEM_ADMIN' } } } } } };
@@ -104,7 +104,7 @@ export class ExecutiveUsersService {
         const user = await tx.user.create({ data: { username, displayName, email, phoneNumber, status: 'ACTIVE' }, select: { id: true } });
         await tx.userCredential.create({ data: { userId: user.id, passwordHash: hashTemporaryPassword(temporaryPassword), status: 'TEMPORARY', mustChangePassword: true, expiresAt } });
         const membership = await tx.companyMembership.create({ data: { userId: user.id, companyId: PLATFORM_TENANT_ID, status: 'ACTIVE' }, select: { id: true } });
-        await tx.membershipRole.createMany({ data: roles.filter((role) => role.key === BASE_ROLE || (role.key === EXPORT_ROLE && body.canExport) || (role.key === CONTACT_ROLE && body.canSeeContacts))
+        await tx.membershipRole.createMany({ data: roles.filter((role) => role.key === BASE_ROLE || (role.key === EXPORT_ROLE && body.canExport) || (role.key === CONTACT_ROLE && body.canSeeContacts) || (role.key === NOTE_ROLE && body.canManageCompanyNote))
           .map((role) => ({ membershipId: membership.id, roleId: role.id })) });
         const view = this.view(await this.account(tx, ctx, user.id));
         await this.log(tx, ctx, user.id, 'created', null, this.accessState(view), null);
@@ -155,9 +155,10 @@ export class ExecutiveUsersService {
       const current = await this.account(tx, ctx, userId, true);
       const before = this.view(current);
       const roles = await this.roles(tx, ctx);
-      const desired = roles.filter((role) => (role.key === EXPORT_ROLE && body.canExport) || (role.key === CONTACT_ROLE && body.canSeeContacts));
+      const canManageCompanyNote = body.canManageCompanyNote ?? before.canManageCompanyNote ?? false;
+      const desired = roles.filter((role) => (role.key === EXPORT_ROLE && body.canExport) || (role.key === CONTACT_ROLE && body.canSeeContacts) || (role.key === NOTE_ROLE && canManageCompanyNote));
       const existing = current.roles.map(({ role }) => role.key);
-      if ([EXPORT_ROLE, CONTACT_ROLE].every((key) => existing.includes(key) === desired.some((role) => role.key === key))) return before;
+      if ([EXPORT_ROLE, CONTACT_ROLE, NOTE_ROLE].every((key) => existing.includes(key) === desired.some((role) => role.key === key))) return before;
       await tx.membershipRole.deleteMany({ where: { membershipId: current.id, roleId: { in: roles.filter((role) => role.key !== BASE_ROLE && !desired.includes(role)).map((role) => role.id) } } });
       await tx.membershipRole.createMany({ data: desired.map((role) => ({ membershipId: current.id, roleId: role.id })), skipDuplicates: true });
       const after = this.view(await this.account(tx, ctx, userId));
@@ -193,7 +194,7 @@ export class ExecutiveUsersService {
     return { userId: row.userId, username: row.user.username ?? '', displayName: row.user.displayName,
       email: row.user.email, phoneNumber: row.user.phoneNumber, status,
       temporaryPasswordExpiresAt: status === 'PENDING_ACTIVATION' ? credential?.expiresAt?.toISOString() ?? null : null,
-      canRead: permissions.has('system.executive.read'), canExport: permissions.has('system.executive.export'), canSeeContacts: permissions.has('system.executive.contact.read'),
+      canRead: permissions.has('system.executive.read'), canExport: permissions.has('system.executive.export'), canSeeContacts: permissions.has('system.executive.contact.read'), canManageCompanyNote: permissions.has(COMPANY_TEAM_NOTE_MANAGE_PERMISSION),
       lastWebEntryAt: row.user.sessions[0]?.issuedAt.toISOString() ?? null };
   }
 
@@ -202,12 +203,13 @@ export class ExecutiveUsersService {
     return reason.trim();
   }
 
-  private validateAccess(ctx: RequestContext, body: { canExport: boolean; canSeeContacts: boolean }): void {
+  private validateAccess(ctx: RequestContext, body: { canExport: boolean; canSeeContacts: boolean; canManageCompanyNote?: boolean }): void {
+    if (body.canManageCompanyNote !== undefined && typeof body.canManageCompanyNote !== 'boolean') throw executiveError(ctx.requestId, 'INVALID_INPUT', 'canManageCompanyNote');
     for (const field of ['canExport', 'canSeeContacts'] as const) if (typeof body[field] !== 'boolean') throw executiveError(ctx.requestId, 'INVALID_INPUT', field);
   }
 
   private accessState(view: ExecutiveUserView) {
-    return { status: view.status, canRead: view.canRead, canExport: view.canExport, canSeeContacts: view.canSeeContacts };
+    return { status: view.status, canRead: view.canRead, canExport: view.canExport, canSeeContacts: view.canSeeContacts, canManageCompanyNote: view.canManageCompanyNote };
   }
 
   private log(tx: Prisma.TransactionClient, ctx: RequestContext, userId: string, action: string,

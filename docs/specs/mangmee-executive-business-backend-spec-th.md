@@ -1390,7 +1390,7 @@ response error `{code,message,requestId,fieldErrors?,retryable?,retryAfterSecond
 | billing mutate/refund/credits | ตาม billing permissions/scopes เดิมเท่านั้น | ไม่มี | ไม่มี | ไม่มี |
 
 ชื่อ permission ใน registry ตั้งแต่ E1: `system.executive.read`, `system.executive.export`,
-`system.executive.contact.read`, `system.executive_user.manage`
+`system.executive.contact.read`, `system.executive_user.manage`, `system.executive.company_note.manage` (เพิ่ม 2026-10-04)
 ชื่อ role ระบบใน E1 (`isSystem = true`, `scopeKey = 'system'`, `companyId = null`):
 
 | Role | Permission | ใครได้ |
@@ -1398,11 +1398,12 @@ response error `{code,message,requestId,fieldErrors?,retryable?,retryAfterSecond
 | `MANGMEE_EXECUTIVE` | `account.session.read`, `account.password.change`, `account.identity.link`, `system.executive.read` | บัญชีผู้บริหารทุกบัญชี |
 | `MANGMEE_EXECUTIVE_EXPORT` | สิทธิ์ `account.*` สามตัวเดียวกัน + `system.executive.export` | เฉพาะคนที่ผู้ดูแลเปิดสิทธิ์ส่งออก (ค่าเริ่มต้นปิด) |
 | `MANGMEE_EXECUTIVE_CONTACT` | สิทธิ์ `account.*` สามตัวเดียวกัน + `system.executive.contact.read` | เฉพาะคนที่ผู้ดูแลเปิดสิทธิ์ดูข้อมูลติดต่อ (ค่าเริ่มต้นปิด) |
-| `SYSTEM_ADMIN` (เดิม) | เพิ่ม permission ใหม่ทั้งสี่ตัว | ผู้ดูแลระบบคนเดียว |
+| `MANGMEE_EXECUTIVE_COMPANY_NOTE` | สิทธิ์ `account.*` สามตัวเดียวกัน + `system.executive.company_note.manage` | เฉพาะคนที่ผู้ดูแลเปิดสิทธิ์แก้หมายเหตุ (ค่าเริ่มต้นปิด; เพิ่ม 2026-10-04) |
+| `SYSTEM_ADMIN` (เดิม) | เพิ่ม permission ทั้งห้าตัว | ผู้ดูแลระบบคนเดียว |
 
-- role เสริมสองตัวต้องถือสิทธิ์ `account.*` สามตัวด้วย เพราะ `permission-registry.spec.ts` บังคับว่าทุก role เปลี่ยนรหัสผ่านของตัวเองได้ และ role ที่เปลี่ยนรหัสผ่านได้ต้องผูก LINE ของตัวเองได้
+- role เสริมสามตัวต้องถือสิทธิ์ `account.*` สามตัวด้วย เพราะ `permission-registry.spec.ts` บังคับว่าทุก role เปลี่ยนรหัสผ่านของตัวเองได้ และ role ที่เปลี่ยนรหัสผ่านได้ต้องผูก LINE ของตัวเองได้
 - สิทธิ์รายคนทำด้วยการเพิ่มหรือถอด role เสริมที่ membership ของบริษัทแพลตฟอร์ม (API15) ไม่เก็บสถานะแยกที่ต้องให้แต่ละ endpoint ไปตรวจเอง
-- ต้องมี test แบบเดียวกับของ role ทีมขาย: role ผู้บริหารทั้งสามตัวถือเฉพาะ `system.executive.*` ที่ระบุกับสิทธิ์ `account.*` สามตัว และไม่มี permission ธุรกิจอื่นใด
+- ต้องมี test แบบเดียวกับของ role ทีมขาย: role ผู้บริหารทั้งสี่ตัวถือเฉพาะ `system.executive.*` ที่ระบุกับสิทธิ์ `account.*` สามตัว และไม่มี permission ธุรกิจอื่นใด
 - ทางเลือกของ Q13/Q14 ที่ไม่ได้เลือก (ทุกคนที่ดูรายงานได้ ส่งออกและเห็นข้อมูลติดต่อได้): ตัด role เสริมสองตัวและ API15 แล้วใส่ permission สองตัวนั้นใน `MANGMEE_EXECUTIVE` — แก้ที่ registry จุดเดียว
 
 **role ผู้บริหารเป็นของแพลตฟอร์มเท่านั้น (RB-34)** ก่อนการแก้ เจ้าของร้านเห็นและมอบ role ระบบของแพลตฟอร์ม (ทีมขาย) ให้พนักงานตัวเองได้
@@ -1851,3 +1852,19 @@ API13 รวมเข้า program ใน `f576b821e` แล้ว และร
 - คืน binary โดยตรงพร้อม no-store, ชื่อสำรอง ASCII คงที่, X-Export-Reference, X-Export-Row-Count, X-Export-Company-Count และ X-Request-Id; หน้าเว็บตั้งชื่อไทย ไม่มีสำเนาไฟล์บน server
 - `executive.export.created` เขียนก่อนปล่อยไฟล์และไม่ส่งไฟล์เมื่อเขียน audit ไม่ได้; บันทึกกรณี guard/DTO ปฏิเสธก่อนถึง action ด้วย และกรณีเขียน audit ก่อน action ไม่ได้คืน 503 โดยไม่ปล่อยไฟล์หรือทิ้ง Promise rejection ไม่เก็บ body, คำค้น ชื่อ อีเมล หรือเบอร์โทร; ไม่ตั้ง companyId ของลูกค้า
 - PostgreSQL test เพิ่มใน `executive-report-read.pg.spec.ts`: ตัวเลขจริงตรง overview/list, contact opt-in, audit privacy และปฏิเสธ build ก่อนรอบสร้างใหม่; lane รันเฉพาะเคสที่ไม่ต้องมีฐานข้อมูล controller ต้องรันส่วน PostgreSQL
+
+
+## Decision register: COMPANY-TEAM-NOTE — 2026-10-04
+
+เจ้าของตัดสินใจ: “มีช่องหมายเหตุในระบบเลย มีทั้งฝั่ง console และ ceo ให้ consistency กัน”. ข้อยกเว้นใหม่จากขอบเขตอ่านอย่างเดียวของรายงาน: มีหมายเหตุของทีมมั่งมีหนึ่งรายการต่อบริษัท เป็นข้อมูลของแพลตฟอร์ม อ่านและแก้จากคอนโซลผู้ดูแลและรายงานผู้บริหารโดยใช้ข้อมูลเดียวกัน อ่านสด ไม่เก็บไว้ในชุดข้อมูลรายงาน ไม่ส่งให้ร้านผ่าน API การส่งออก ประวัติตรวจสอบ หรือเครื่องมือ LINE
+
+- ข้อความธรรมดา ตัดช่องว่างหัวท้าย ยาวไม่เกิน 1,000 ตัวอักษร; ข้อความว่างล้างหมายเหตุ แสดงผู้แก้ล่าสุดและเวลาที่แก้ แม้ล้างข้อความแล้ว
+- ผู้ที่อ่านหน้าบริษัทของผู้ดูแลหรือรายงานผู้บริหารได้ อ่านหมายเหตุได้ ผู้ดูแลระบบแก้ได้เสมอ ไม่ผูกกับสถานะบริษัท ผู้บริหารแก้ได้เมื่อมีสิทธิ์เสริม `system.executive.company_note.manage` เท่านั้น ค่าเริ่มต้นปิด ผู้ดูแลเปิดรายบัญชีผ่าน role `MANGMEE_EXECUTIVE_COMPANY_NOTE` (account baseline สามสิทธิ์เหมือน role เสริมส่งออก/ติดต่อ)
+- ชื่อ role ผู้บริหารบนคอนโซลอ่านจาก `THAI_SYSTEM_ROLE_NAMES` เดียวกับ registry ทุก role เสริมมีชื่อไทย ไม่แสดงคีย์ให้ผู้ใช้
+- `canManageCompanyNote` เป็นช่องเสริมของคำสั่งสร้าง/แก้สิทธิ์: ไม่ส่งตอนสร้าง = ปิด; ไม่ส่งตอนแก้สิทธิ์ = รักษาค่าเดิม เพื่อให้ผู้ใช้หน้ารุ่นก่อนเปลี่ยนสิทธิ์ส่งออก/ติดต่อโดยไม่ถอนสิทธิ์หมายเหตุเงียบ ๆ; ส่ง false = ถอน
+- ตาราง `CompanyTeamNote` แยกจากข้อมูลร้าน ใช้ companyId เป็นคีย์ FK บริษัทลบต่อเนื่อง (CASCADE) ไม่ขวางกติกาลบบริษัท; ไม่ผูก FK ผู้แก้ หมายเหตุว่างที่เคยแก้ยังรักษาเวอร์ชันและเวลาล่าสุด
+- `GET/PUT /v1/system/partners/:partnerCompanyId/team-note` อ่าน/แก้ผ่านบริการเดียวกับผู้บริหาร ภายใต้บริบทบริษัทแพลตฟอร์ม; PUT รับ `{ text, expectedVersion }`. ไม่มีแถว = text ว่าง version 0; เวอร์ชันเก่า = 409 `company_team_note_version_conflict` แม้ข้อความที่ขอจะตรงกับล่าสุด; ค่าปัจจุบันและเวอร์ชันตรง = ไม่เขียนซ้ำ
+- บันทึก audit `system.company_team_note.update` พร้อมการแก้ในธุรกรรมเดียว เก็บ actor, ความยาวก่อน/หลัง และเวอร์ชันก่อน/หลัง ไม่เก็บข้อความ; ข้อผิดพลาดจากฐานข้อมูลที่อาจมีข้อความส่งเข้าไม่ถูกส่งต่อไปยังตัวบันทึก log (ตอบ 503 แบบคำคงที่) เพื่อไม่เผยรายละเอียดส่วนตัวหรือเลขบัญชีที่อาจถูกพิมพ์ในหมายเหตุ; ตัวกรองประวัติของร้านตัด action ฝั่งแพลตฟอร์มนี้
+- การ์ด “หมายเหตุของทีมมั่งมี” อยู่ในภาพรวมบริษัทของผู้ดูแล มีอ่าน/ว่าง/โหลด/ผิดพลาด/ไม่มีสิทธิ์ แก้ บันทึก ยกเลิก จำนวนตัวอักษร และผู้แก้ล่าสุด/เวลา; เมื่อชนกัน รักษาร่างไว้และให้โหลดค่าล่าสุดก่อนแก้ใหม่ ไม่ส่งซ้ำอัตโนมัติ ข้อความระบบอยู่ใน `COMPANY_TEAM_NOTE_WORDS` ที่เดียว
+
+หลักฐานและขอบเขตงานอยู่ใน `docs/agent-memory/company-team-note-2026-10-04.md`; หน้าบัญชีผู้บริหารและหน้ารายงานเป็นงานของอีก lane

@@ -42,3 +42,16 @@ describe('employeeFullName', () => {
     assert.deepEqual([...EMPLOYEE_TITLE_PREFIXES], ['นาย', 'นาง', 'นางสาว']);
   });
 });
+
+
+it('company-note words are plain Thai, the limit is shared, and only its optional role grants management', async () => {
+  const { COMPANY_TEAM_NOTE_WORDS: W, COMPANY_TEAM_NOTE_MAX_LENGTH, COMPANY_TEAM_NOTE_MANAGE_PERMISSION } = await import('./company-team-note.js');
+  const { EXECUTIVE_PERMISSION_KEYS, EXECUTIVE_ROLE_KEYS } = await import('./executive-business.js');
+  assert.equal(COMPANY_TEAM_NOTE_MAX_LENGTH, 1000);
+  assert.ok(EXECUTIVE_PERMISSION_KEYS.includes(COMPANY_TEAM_NOTE_MANAGE_PERMISSION));
+  assert.ok(EXECUTIVE_ROLE_KEYS.includes('MANGMEE_EXECUTIVE_COMPANY_NOTE'));
+  for (const words of [...Object.values(W).filter(value => typeof value === 'string'), W.count(1000), W.lastChanged('ผู้ดูแล', 'วันนี้')]) {
+    assert.match(words as string, /[ก-๙]/); assert.doesNotMatch(words as string, /[A-Za-z]/);
+  }
+  assert.match(W.tooLong, /1,000/); assert.equal(W.count(1000), '1,000 / 1,000 ตัวอักษร');
+});

@@ -1,5 +1,5 @@
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
-import { SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
+import { COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
 import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
@@ -11,6 +11,13 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECU
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  company_team_note_version_conflict: NOTE_WORDS.conflict,
+  company_team_note_invalid: NOTE_WORDS.invalid,
+  company_team_note_too_long: NOTE_WORDS.tooLong,
+  company_team_note_read_denied: NOTE_WORDS.denied,
+  company_team_note_edit_denied: NOTE_WORDS.editDenied,
+  company_team_note_company_not_found: NOTE_WORDS.notFound,
+  company_team_note_save_unconfirmed: NOTE_WORDS.saveUnknown,
   INVALID_INPUT: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
   EXECUTIVE_SNAPSHOT_EXPIRED: W.export.expired,
   EXECUTIVE_EXPORT_LIMIT_EXCEEDED: W.export.limit,

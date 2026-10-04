@@ -1762,6 +1762,10 @@ export const workspaceDictionary = {
     'role.COMPANY_VIEW': 'Company viewer',
     'role.MANGMEE_SALES_LEAD': 'Mangmee Sales Lead',
     'role.MANGMEE_SALES': 'Mangmee Sales',
+    'role.MANGMEE_EXECUTIVE': THAI_SYSTEM_ROLE_NAMES.MANGMEE_EXECUTIVE,
+    'role.MANGMEE_EXECUTIVE_EXPORT': THAI_SYSTEM_ROLE_NAMES.MANGMEE_EXECUTIVE_EXPORT,
+    'role.MANGMEE_EXECUTIVE_CONTACT': THAI_SYSTEM_ROLE_NAMES.MANGMEE_EXECUTIVE_CONTACT,
+    'role.MANGMEE_EXECUTIVE_COMPANY_NOTE': THAI_SYSTEM_ROLE_NAMES.MANGMEE_EXECUTIVE_COMPANY_NOTE,
     // Modules
     'module.dashboard': 'Dashboard',
     'module.inbox': 'Inbox',
