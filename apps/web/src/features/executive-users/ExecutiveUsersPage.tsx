@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { ExecutiveAccountStatus, ExecutiveUserListDto, ExecutiveUserView } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
+import { EXECUTIVE_PAGE_CLASS, ExecutiveSectionCard } from '../executive-reports/ExecutiveReportDesign';
 import { Button } from '@/common/components/button';
 import { TextField, SelectField } from '@/common/components/field';
 import { MangmeePage, MangmeeCard, MangmeeBadge } from '@/common/components/mangmee';
@@ -44,17 +45,17 @@ export default function ExecutiveUsersPage() {
   }
   const clear = () => { setTerm(''); update({ q: '', status: undefined }); };
   return <MangmeePage title={EXECUTIVE_USERS_TITLE} eyebrow={words.admin}
-    className="min-w-0 [overflow-wrap:anywhere] [&_button]:min-h-11 [&_button]:min-w-11"
+    className={EXECUTIVE_PAGE_CLASS}
     actions={!denied && <Link href="/system/executive-users/new" className="mangmee-btn mangmee-btn-primary hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{words.add}</Link>}>
     {denied ? <ForbiddenState description={error ?? undefined} /> : <>
-      <MangmeeCard className="p-4">
+      <ExecutiveSectionCard title={words.caption}>
         <form className="grid gap-3 md:grid-cols-[1fr_14rem_auto_auto] md:items-end" onSubmit={event => { event.preventDefault(); update({ q: term }); setRetry(value => value + 1); }}>
           <TextField label={words.searchLabel} name="executive-search" type="search" maxLength={320} value={term} onChange={event => setTerm(event.target.value)} disabled={loading} />
           <SelectField label={words.statusLabel} name="executive-status" value={status ?? ''} disabled={loading}
             onChange={event => update({ status: event.target.value ? event.target.value as ExecutiveAccountStatus : undefined })}>
             <option value="">{words.allStatuses}</option>{executiveStatusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </SelectField>
-          <Button type="submit" loading={loading}>{words.search}</Button>
+          <Button type="submit" variant="secondary" loading={loading}>{words.search}</Button>
           <Button type="button" variant="secondary" loading={loading} onClick={clear}>{words.clear}</Button>
         </form>
       <div className="relative mt-4 min-h-32" aria-busy={loading}>
@@ -73,7 +74,7 @@ export default function ExecutiveUsersPage() {
                 </MangmeeCard>)}</div>
                 <table className="hidden w-full table-fixed text-left text-sm md:table">
                   <caption className="sr-only">{words.caption}</caption>
-                  <thead><tr>{[words.account, words.rights, words.status, words.lastEntry].map(label => <th key={label} scope="col" className="p-3">{label}</th>)}</tr></thead>
+                  <thead><tr>{[words.account, words.rights, words.status, words.lastEntry].map(label => <th key={label} scope="col" className="sticky top-0 border-b border-brand-100 bg-brand-25 p-3 text-brand-800">{label}</th>)}</tr></thead>
                   <tbody>{data.items.map(user => <tr key={user.userId} className="border-t border-gray-200">
                     <td className="break-words p-3"><Link href={userHref(user)} className="flex min-h-11 items-center rounded-lg font-semibold text-brand-800 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-700">{user.displayName}</Link><p>{user.username}</p></td>
                     <td className="break-words p-3">{executiveRights(user)}</td><td className="p-3"><MangmeeBadge tone={executiveStatusTone(user.status)}>{executiveStatus(user.status)}</MangmeeBadge></td><td className="p-3">{lastEntry(user)}</td>
@@ -84,7 +85,7 @@ export default function ExecutiveUsersPage() {
               {data.pagination.totalPages > 1 && <Pagination page={page} totalPages={data.pagination.totalPages} disabled={loading} onPageChange={page => update({ page })} />}
             </>}
       </div>
-      </MangmeeCard>
+      </ExecutiveSectionCard>
     </>}
   </MangmeePage>;
 }

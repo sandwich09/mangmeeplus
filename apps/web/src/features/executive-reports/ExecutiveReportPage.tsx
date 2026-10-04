@@ -6,7 +6,7 @@ import {
   EXECUTIVE_SORT_OPTIONS,
   type ExecutiveContext, type ExecutiveCompanyHistory, type ExecutiveCompanyDetail, type ExecutiveCompanies, type ExecutiveOverview, type ExecutiveAnalysis,
 } from '@watchdog-bms/contracts';
-import { MangmeePage, MangmeeBadge, MangmeeCard } from '@/common/components/mangmee';
+import { MangmeePage, MangmeeBadge } from '@/common/components/mangmee';
 import { Button } from '@/common/components/button';
 import { SelectField, TextField, FieldError } from '@/common/components/field/Field';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
@@ -16,9 +16,11 @@ import { WorkspaceLocaleContext } from '@/common/i18n/locale-context';
 import { getExecutiveContext, getExecutiveReport, getExecutiveHistory, type ReportData } from './executive-reports.api';
 import {
   FILTER_URL, GLOBAL_FILTERS, DIRECTORY_FILTERS, reportQuery, reportView, filterValue, normalizedMonth, changedParams, clearedParams, comparisonProblem,
-  swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, reportFilterChips, menuHref, reportDateTime, pageNumber, reasonText,
+  swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, drillLabels, reportFilterChips, menuHref, reportDateTime, pageNumber, reasonText,
   EXECUTIVE_ACCESS_DENIED_EVENT, sortLabel, retryDelaySeconds, reportHistoryState, ownHistoryState, backSection, type ReportSection,
 } from './executive-reports.logic';
+import { EXECUTIVE_PAGE_CLASS, ExecutiveSectionCard } from './ExecutiveReportDesign';
+import { ExecutiveFilters } from './ExecutiveFilters';
 import { ExecutiveExportPanel } from './ExecutiveExportPanel';
 import { canExport } from './executive-export.logic';
 import { W, REPORT_VIEWS, DETAIL_TABS, RANK_LABELS, thaiLabel } from './executive-reports.words';
@@ -204,50 +206,54 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
     const next = selected.includes(id) ? selected.filter(value => value !== id) : [...selected, id].slice(0, 2);
     update({ a: next[0] ?? '', b: next[1] ?? '' });
   }
-  const filterCount = context ? GLOBAL_FILTERS.filter(key => filterValue(key, params, context) !== 'ALL').length : 0;
+  const effectiveQuery = context ? reportQuery(section, params, context, search) : {};
+  const filterValues = Object.fromEntries(GLOBAL_FILTERS.map(key => [key, String(effectiveQuery[key] ?? 'ALL')])) as Record<typeof GLOBAL_FILTERS[number], string>;
+  const filterCount = GLOBAL_FILTERS.filter(key => filterValues[key] !== 'ALL').length;
   function filterControl(key: keyof typeof FILTER_URL) {
     return context && <SelectField key={key} id={`executive-${key}`} label={W.filterLabels[key]} value={filterValue(key, params, context)} error={fieldErrors[key]} searchable={key === 'referringSales'} className="!min-h-11 !text-base" onChange={event => update({ [FILTER_URL[key]]: event.target.value })}>
       {context.filters[key].map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, option.value)}</option>)}
     </SelectField>;
   }
   const picked = drillFilters(params);
-  const { active: activeLabels, picked: pickLabels } = context ? reportFilterChips(visibleData?.appliedFilters, picked, context) : { active: [], picked: [] };
+  const { active: activeLabels } = context ? reportFilterChips(visibleData ? { ...visibleData.appliedFilters, global: {} } : undefined, picked, context) : { active: [] };
+  const pickLabels = context && picked ? drillLabels(Object.fromEntries(Object.entries(picked).filter(([key]) => !GLOBAL_FILTERS.some(global => global === key))), context) : [];
   const pagination = section === 'companies' && visibleData && 'pagination' in visibleData ? visibleData.pagination : tab === 'history' && section === 'detail' ? history?.pagination : null;
   const comparison = visibleData && 'comparison' in visibleData ? visibleData.comparison : null;
-  return <main className="executive-report mx-auto min-w-0 max-w-7xl p-4 text-base [overflow-wrap:anywhere] sm:p-6 [&_button]:min-h-11 [&_button]:min-w-11 [&_button]:focus-visible:outline-2 [&_button]:focus-visible:outline-offset-2 [&_button]:focus-visible:outline-brand-700 [&_.mangmee-stat-sub]:!text-sm">
-    <MangmeePage eyebrow={W.report} title={title} description={W.descriptions[section]} actions={<div className="flex flex-wrap gap-2">{canExport(context) && !exportOpen && <Button variant="secondary" loading={loading} disabled={loading || !!failed || !!problem || !visibleData} onClick={() => { const next = new URLSearchParams(params); next.set('export', '1'); setExportNotice(''); navigateParams(next); }}>{W.export.action}</Button>}{section === 'overview' ? <Button onClick={() => { rememberNavigation(); router.push(menuHref('companies', params)); }}>{W.allCompanies}</Button> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}</div>}>
+  return <main className={`executive-report mx-auto max-w-7xl p-4 text-base sm:p-6 ${EXECUTIVE_PAGE_CLASS}`}>
+    <MangmeePage eyebrow={W.report} title={title} description={W.descriptions[section]} actions={<div className="flex flex-wrap gap-2">{canExport(context) && !exportOpen && <Button variant={section === 'overview' ? 'secondary' : 'primary'} loading={loading} disabled={loading || !!failed || !!problem || !visibleData} onClick={() => { const next = new URLSearchParams(params); next.set('export', '1'); setExportNotice(''); navigateParams(next); }}>{W.export.action}</Button>}{section === 'overview' && !exportOpen ? <Button onClick={() => { rememberNavigation(); router.push(menuHref('companies', params)); }}>{W.allCompanies}</Button> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}</div>}>
       <div className="space-y-4">
         {exportNotice && <p role="status">{exportNotice}</p>}
         {exportDenied && context && !canExport(context) && <p role="status">{W.export.denied}</p>}
         {canExport(context) && !exportOpen && (loading || failed || problem || !visibleData) && <p role="status">{loading ? W.loading : problem ? W[problem] : failed?.text ?? W.noData}</p>}
         {exportOpen && context && visibleData && <ExecutiveExportPanel key={requestKey} section={section} params={params} context={context} data={visibleData} search={search} targetCompanyId={targetCompanyId} close={closeExport} reload={reloadExport} deny={denyExport} />}
         {context && !exportOpen && <>
-          <div className="executive-time-row flex min-w-0 flex-wrap items-end gap-3">
+          <div className="executive-time-row flex min-w-0 flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-4">
             <div className="w-44"><label htmlFor="executive-month" className="text-sm">{W.month}</label><ThemedDate id="executive-month" aria-label={W.month} aria-invalid={!!fieldErrors.month} aria-describedby={fieldErrors.month ? 'executive-month-error' : undefined} mode="month" allowClear={false} value={normalizedMonth(params, context)} min={context.months?.first} max={context.months?.last ?? context.currentMonth} selectable={context.builtMonths} onChange={event => event.target.value && update({ month: event.target.value })} className="!min-h-11 !text-base" />{fieldErrors.month && <FieldError id="executive-month-error">{fieldErrors.month}</FieldError>}</div>
-            {visibleData && <><span className="text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.period.isPartialMonth && <><MangmeeBadge tone="amber">{W.partialMonth}</MangmeeBadge>{context.months && visibleData.period.month > context.months.first && <Button variant="ghost" onClick={() => { const date = new Date(`${visibleData.period.month}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); update({ month: date.toISOString().slice(0, 7) }); }}>{W.previousMonth}</Button>}</>}{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
+            {section !== 'compare' && section !== 'detail' && <ExecutiveFilters context={context} values={filterValues} errors={fieldErrors} apply={update} clear={clear} />}
+            {visibleData && <><span className="text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.period.isPartialMonth && <><MangmeeBadge tone="amber">{W.partialMonth}</MangmeeBadge>{context.months && visibleData.period.month > context.months.first && <Button variant="secondary" onClick={() => { const date = new Date(`${visibleData.period.month}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); update({ month: date.toISOString().slice(0, 7) }); }}>{W.previousMonth}</Button>}</>}{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
           </div>
-          {section === 'compare' || section === 'detail' ? <p className="text-sm">{section === 'compare' ? W.compareBase : W.detailBase}</p> : <details><summary className="flex min-h-11 cursor-pointer items-center font-semibold">{W.reportFilters} · {filterCount}</summary><div className="grid min-w-0 gap-3 py-3 sm:grid-cols-3">{GLOBAL_FILTERS.map(filterControl)}</div></details>}
+          {section === 'compare' || section === 'detail' ? <p className="text-sm">{section === 'compare' ? W.compareBase : W.detailBase}</p> : null}
           {section === 'companies' && <>
             <div className="grid min-w-0 gap-3 sm:grid-cols-2"><TextField id="executive-search" label={W.search} type="search" maxLength={120} value={term} hint={W.searchHint} error={fieldErrors.q} className="!min-h-11 !text-base" onChange={event => { setTerm(event.target.value); window.history.replaceState({ ...window.history.state, executiveSearch: event.target.value }, '', window.location.href); }} />
               <SelectField id="executive-sort" label={W.sort} value={String(reportQuery('companies', params, context).sortBy)} error={fieldErrors.sortBy ?? fieldErrors.sortDir} className="!min-h-11 !text-base" onChange={event => { const sort = EXECUTIVE_SORT_OPTIONS.find(option => option.sortBy === event.target.value)!; update({ sortBy: sort.sortBy, sortDir: sort.sortDir }); }}>{context.sortOptions.map(option => <option key={option.sortBy} value={option.sortBy}>{sortLabel(option.sortBy, option.sortBy === reportQuery('companies', params, context).sortBy ? String(reportQuery('companies', params, context).sortDir) : option.sortDir)}</option>)}</SelectField>
             </div>
-            <details><summary className="flex min-h-11 cursor-pointer items-center font-semibold">{W.companyFilters} · {DIRECTORY_FILTERS.filter(key => filterValue(key, params, context) !== 'ALL').length}</summary><div className="grid min-w-0 gap-3 py-3 sm:grid-cols-3">{DIRECTORY_FILTERS.map(filterControl)}</div></details>
+            <details className="rounded-xl border border-gray-200 bg-white p-3"><summary className="flex min-h-11 cursor-pointer items-center justify-between rounded-lg border border-gray-300 px-3 font-semibold text-brand-800 focus-visible:outline-brand-700">{W.companyFilters} · {DIRECTORY_FILTERS.filter(key => filterValue(key, params, context) !== 'ALL').length}</summary><div className="grid min-w-0 gap-3 py-3 sm:grid-cols-3">{DIRECTORY_FILTERS.map(filterControl)}</div></details>
             {from === 'compare' && <p>{W.compareList}</p>}
-            {pickLabels.length > 0 && <div className="flex flex-wrap items-center gap-2"><span>{W.pick}</span>{pickLabels.map((label, i) => <MangmeeBadge key={i}>{label}</MangmeeBadge>)}<Button variant="ghost" onClick={() => update({ pick: '' })}>{W.removePick}</Button></div>}
+            {pickLabels.length > 0 && <div className="flex flex-wrap items-center gap-2"><span>{W.pick}</span>{pickLabels.map((label, i) => <MangmeeBadge key={i}>{label}</MangmeeBadge>)}<Button variant="secondary" onClick={() => update({ pick: '' })}>{W.removePick}</Button></div>}
             {selected.length === 2 && <ReportLink href={`${menuHref('compare', params)}&by=company&a=${encodeURIComponent(selected[0])}&b=${encodeURIComponent(selected[1])}`} remember={rememberNavigation}>{W.compareTwo}</ReportLink>}
           </>}
           {section !== 'compare' && section !== 'detail' && (filterCount > 0 || DIRECTORY_FILTERS.some(key => params.get(FILTER_URL[key]) && params.get(FILTER_URL[key]) !== 'ALL') || term || params.has('pick')) && <Button variant="secondary" onClick={clear}>{W.clear}</Button>}
           <div className="flex flex-wrap gap-2">{activeLabels.map((label, i) => <MangmeeBadge key={i}>{label}</MangmeeBadge>)}</div>
           {(section === 'usage' || section === 'revenue' || section === 'customers') && <>
-            <nav className="flex flex-wrap gap-2" aria-label={W[section]}>{REPORT_VIEWS[section].map(view => <Button key={view.value} variant={reportView(section, params) === view.value ? 'primary' : 'secondary'} aria-pressed={reportView(section, params) === view.value} onClick={() => update({ view: view.value })}>{view.label}</Button>)}</nav>
+            <nav className="executive-view-tabs flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-2" aria-label={W[section]}>{REPORT_VIEWS[section].map(view => <Button key={view.value} variant="secondary" className={reportView(section, params) === view.value ? '!border-brand-700 !bg-brand-50 !text-brand-800' : ''} aria-pressed={reportView(section, params) === view.value} onClick={() => update({ view: view.value })}>{view.label}</Button>)}</nav>
             {section === 'customers' && reportView(section, params) === 'sales' && <SelectField label={W.sales} value={params.get('seller') === 'credited' ? 'credited' : 'referring'} className="!min-h-11 !text-base" onChange={event => update({ seller: event.target.value })}><option value="referring">{W.referring}</option><option value="credited">{W.credited}</option></SelectField>}
           </>}
-          {section === 'detail' && <nav className="flex flex-wrap gap-2" aria-label={W.detail}>{DETAIL_TABS.map(item => <Button key={item.value} variant={tab === item.value ? 'primary' : 'secondary'} aria-pressed={tab === item.value} onClick={() => update({ tab: item.value })}>{item.label}</Button>)}</nav>}
-          {section === 'compare' && <MangmeeCard className="executive-compare-controls min-w-0 space-y-4 p-4 sm:p-5">
+          {section === 'detail' && <nav className="executive-view-tabs flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-2" aria-label={W.detail}>{DETAIL_TABS.map(item => <Button key={item.value} variant="secondary" className={tab === item.value ? '!border-brand-700 !bg-brand-50 !text-brand-800' : ''} aria-pressed={tab === item.value} onClick={() => update({ tab: item.value })}>{item.label}</Button>)}</nav>}
+          {section === 'compare' && <ExecutiveSectionCard title={W.compare} className="executive-compare-controls min-w-0 space-y-4 p-4 sm:p-5">
             <SelectField label={W.dimension} value={['industry', 'discovery', 'referringSales', 'company'].includes(params.get('by') ?? '') ? params.get('by')! : 'industry'} error={fieldErrors.dimension} className="!min-h-11 !text-base" onChange={event => update({ by: event.target.value, a: '', b: '' })}>{[['industry', W.industry], ['discovery', W.discovery], ['referringSales', W.referring], ['company', W.company]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectField>
             {params.get('by') === 'company' && <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.chooseCompanies}</ReportLink>}
             <div className="grid min-w-0 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">{(['a', 'b'] as const).map(side => <Fragment key={side}>{side === 'b' && <div>{!problem && <Button variant="secondary" onClick={() => navigateParams(swappedParams(params))}>{W.swap}</Button>}</div>}{params.get('by') === 'company' ? <div className="min-w-0"><p className="text-sm text-gray-600">{side === 'a' ? W.sideA : W.sideB}</p>{comparison && <p className="font-semibold">{thaiLabel(comparison[side === 'a' ? 'sideA' : 'sideB'].label, comparison[side === 'a' ? 'sideA' : 'sideB'].key)}</p>}</div> : <SelectField label={side === 'a' ? W.sideA : W.sideB} value={params.get(side) ?? ''} error={fieldErrors[side === 'a' ? 'sideA' : 'sideB']} searchable className="!min-h-11 !text-base" onChange={event => update({ [side]: event.target.value })}><option value="">{W.choose}</option>{context.filters[(params.get('by') === 'discovery' || params.get('by') === 'referringSales' ? params.get('by') : 'industry') as 'industry' | 'discovery' | 'referringSales'].filter(option => option.value !== 'ALL').map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, option.value)}</option>)}</SelectField>}</Fragment>)}</div>
-          </MangmeeCard>}
+          </ExecutiveSectionCard>}
         </>}
         {updated && <p role="status">{W.updated}</p>}
         {Math.max(retryWait, shared.retryWait) > 0 && <p role="status">{W.wait(Math.max(retryWait, shared.retryWait))}</p>}

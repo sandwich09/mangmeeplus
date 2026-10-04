@@ -16,6 +16,8 @@ export const EXECUTIVE_WORDS = {
   industry: 'ธุรกิจ', discovery: 'ช่องทาง', sales: 'เซลล์', referring: 'เซลล์ผู้แนะนำ', credited: 'ยอดขายครั้งแรกของเซลล์',
   companyTab: 'ข้อมูลบริษัท', usageTab: 'การใช้งานและรายรับ', history: 'ประวัติบริษัท',
   month: 'เดือนรายงาน', filters: 'ตัวกรอง', clear: 'ล้างตัวกรอง', retry: 'ลองอีกครั้ง', loading: 'กำลังอ่านข้อมูล…', readFailed: 'อ่านข้อมูลไม่สำเร็จ กรุณาลองใหม่',
+  applyFilters: 'ใช้ตัวกรอง', close: 'ปิด', followUpBand: 'ควรติดตาม:',
+  removeFilter: (label: string) => `ล้างตัวกรอง ${label}`,
   reportFilters: 'ตัวกรองรายงาน', companyFilters: 'ตัวกรองรายชื่อบริษัท', unavailableFigure: 'ยังไม่มีตัวเลข',
   historyBeforeCollection: 'ยังไม่มีข้อมูลของช่วงนี้ เพราะเป็นช่วงก่อนที่ระบบเริ่มเก็บ',
   historyBeforeCollectionPartial: 'ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้ ช่วงก่อนเริ่มเก็บยังประเมินไม่ได้',

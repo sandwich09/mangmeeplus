@@ -61,12 +61,13 @@ const company = {
   joinedAt: '2026-09-01T00:00:00Z', companyStatus: 'ACTIVE', planState: 'PAID_ACTIVE', planLabel: 'ร้านเติบโต',
   discovery: { key: 'OTHER', label: 'อื่น ๆ', otherText: 'งานร้านค้า' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีเซลล์ผู้แนะนำ' },
   paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', receiptAdoption: 'EVER', fullyRefunded: false,
-  metrics: { expenseReceiptCountInPeriod: 7, activeDays: 3, activeUsers: 2, documents: 4, aiRequests: 5, netReceiptsSatang: 10000 }, lastActivityAt: '2026-09-30T00:00:00Z',
+  metrics: { expenseReceiptCountLifetime: 27, expenseReceiptCountInPeriod: 7, activeDays: 3, activeUsers: 2, documents: 4, aiRequests: 5, netReceiptsSatang: 10000 }, lastActivityAt: '2026-09-30T00:00:00Z',
 };
-test('directory uses compact labelled summaries, one paid badge and a small checkbox per company', async () => {
+test('directory uses explicit receipt columns, labelled secondary summaries and one comparison checkbox per company', async () => {
   const { CompaniesContent } = await content();
   const html = htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(10000) }, items: [company], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav, selected: [], select: () => {} });
-  assert.match(html, /executive-company-row/); assert.match(html, /executive-usage-summary/); assert.doesNotMatch(html, /<dl/);
+  assert.match(html, /executive-company-row/); assert.match(html, /executive-usage-summary/);
+  assert.ok((html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').includes(W.lifetimeReceipts)); assert.doesNotMatch(html, /<dl/);
   assert.equal((html.match(/type="checkbox"/g) ?? []).length, 1);
   assert.match(html, /sr-only[^>]*>เลือกเพื่อเปรียบเทียบ/);
   assert.equal((html.match(/>เคยชำระเงิน</g) ?? []).length, 1);
@@ -81,7 +82,9 @@ test('revenue trend has a fixed height, bar labels, signed baseline, gaps and on
   const html = htmlOf(AnalysisContent, { data: { ...envelope, revenue: { receiptsSatang: cash(0), refundsSatang: cash(0), netReceiptsSatang: cash(0), taxSatang: cash(0), feesSatang: cash(0), byPurchaseGroup: [], disputedInvoiceCount: 0, trend } } as unknown as ExecutiveAnalysis, nav, seller: null });
   assert.match(html, /height="200"/); assert.match(html, /preserveAspectRatio="none"/);
   assert.match(html, /executive-trend-labels/); assert.match(html, /ก.ค. 2569/); assert.match(html, /-100.00 บาท/);
-  assert.equal((html.match(/<rect /g) ?? []).length, 2);
+  const chart = html.match(/<svg[^>]*aria-label="แนวโน้ม[\s\S]*?<\/svg>/)?.[0] ?? '';
+  assert.equal((chart.match(/<rect /g) ?? []).length, 2);
+  assert.match(html, /mangmee-icon-frame/);
   assert.match(html, /y="100"/); assert.match(html, /--color-red-600/);
   assert.equal(html.split(W.historyBeforeCollectionPartial).length - 1, 1);
   assert.equal(html.split(W.historyBeforeCollection).length - 1, 1);
@@ -183,11 +186,11 @@ test('export wraps in a card, folds columns and displays sheet tiles', async () 
   assert.doesNotMatch(html, /ข้อมูลเงินถึง/);
 });
 
-test('admin table lives in the filter card', () => {
+test('admin table lives in the shared section card with its filter form', () => {
   const file = ts.createSourceFile('users.tsx', source('../executive-users/ExecutiveUsersPage.tsx'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let inside = false;
   function visit(node: ts.Node) {
-    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(file) === 'MangmeeCard' && node.getText(file).includes('<form') && node.getText(file).includes('<table')) inside = true;
+    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(file) === 'ExecutiveSectionCard' && node.getText(file).includes('<form') && node.getText(file).includes('<table')) inside = true;
     ts.forEachChild(node, visit);
   }
   visit(file); assert.ok(inside, 'filter form and table share the same card');
