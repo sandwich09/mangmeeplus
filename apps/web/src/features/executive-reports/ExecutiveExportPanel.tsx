@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { EXECUTIVE_EXPORT_SHEETS, EXECUTIVE_WORDS as W, executivePeriodExportColumns, executiveComparisonLabel, type ExecutiveContext } from '@watchdog-bms/contracts';
+import { EXECUTIVE_EXPORT_SHEETS, EXECUTIVE_WORDS as W, executivePeriodExportColumns, type ExecutiveContext } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
 import { ExecutiveSectionCard, ReportNotes } from './ExecutiveReportDesign';
 import { reportDateTime, periodText, type ReportSection } from './executive-reports.logic';
@@ -23,9 +23,8 @@ export function ExecutiveExportPanel({ section, params, context, data, search, t
   }, [context, data.build.id, reload, deny]);
   useEffect(() => { if (!wait) return; const timer = setTimeout(() => setWait(n => n - 1), 1000); return () => clearTimeout(timer); }, [wait]);
   const body = exportBody(section, params, context, data.build.id, search, targetCompanyId, contacts);
-  const n = 'pagination' in data ? data.pagination.total : 'company' in data ? 1 : 'comparison' in data && data.comparison ? (data.comparison.sideA.companies.value ?? data.comparison.sideA.companies.knownValue ?? 0) + (data.comparison.sideB.companies.value ?? data.comparison.sideB.companies.knownValue ?? 0) : data.population.eligibleCount.value ?? data.population.eligibleCount.knownValue ?? 0;
+  const n = 'pagination' in data ? data.pagination.total : 'company' in data ? 1 : data.population.eligibleCount.value ?? data.population.eligibleCount.knownValue ?? 0;
   const labels = [...Object.values(data.appliedFilters.global), ...Object.values(data.appliedFilters.directory)].filter(option => option.value !== 'ALL').map(option => thaiLabel(option.label, option.value));
-  if ('comparison' in data && data.comparison) labels.push(`${W.sideA} · ${executiveComparisonLabel(data.comparison.sideA, data.comparison.dimension)}`, `${W.sideB} · ${executiveComparisonLabel(data.comparison.sideB, data.comparison.dimension)}`);
   if (search) labels.push(`${W.search} · ${search}`);
   const unavailable = 'company' in data && !(data.periodSummary === undefined ? data.month : data.periodSummary);
   const blocked = unavailable ? W.noData : !n ? W.export.empty : null;

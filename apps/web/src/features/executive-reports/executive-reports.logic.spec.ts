@@ -23,20 +23,18 @@ test('URL aliases send the API filters, ranking, tabs, sort and paging without l
   assert.equal(q.sortDir, 'desc'); assert.equal(q.page, 3); assert.equal(q.q, 'ร้าน ก');
   assert.deepEqual(reportQuery('usage', new URLSearchParams('view=ranking&rank=aiRequests'), context), { from: '2026-10', to: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', section: 'usage', view: 'ranking', metric: 'aiRequests' });
 });
-test('menus carry only the report context; compare and detail retain but do not send global filters', async () => {
+test('menus carry only the report context; detail retains but does not send global filters', async () => {
   const { menuHref, reportQuery } = await logic();
   const p = new URLSearchParams('month=2026-09&filter_industry=UNKNOWN&filter_discovery=FACEBOOK&filter_sales=NONE&view=top&page=3&pick=bad&buildId=secret');
   assert.equal(menuHref('usage', p), '/system/executive/usage?month=2026-09&filter_industry=UNKNOWN&filter_discovery=FACEBOOK&filter_sales=NONE');
   assert.deepEqual(reportQuery('detail', p, context), { from: '2026-09', to: '2026-09' });
-  p.set('by', 'discovery'); p.set('a', 'FACEBOOK'); p.set('b', 'OTHER');
-  assert.deepEqual(reportQuery('compare', p, context), { from: '2026-09', to: '2026-09', section: 'compare', dimension: 'discovery', sideA: 'FACEBOOK', sideB: 'OTHER' });
 });
 test('a drill-down uses the COMPLETE API query without merging the origin globals', async () => {
   const { drilldownHref, reportQuery } = await logic();
   const origin = new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK&view=top&page=9');
-  const href = drilldownHref(origin, 'compare', { discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc' });
+  const href = drilldownHref(origin, 'customers', { discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc' });
   const p = new URL(href, 'https://test.invalid').searchParams;
-  assert.equal(p.get('filter_discovery'), 'FACEBOOK'); assert.equal(p.get('origin'), 'compare'); assert.equal(p.has('buildId'), false);
+  assert.equal(p.get('filter_discovery'), 'FACEBOOK'); assert.equal(p.get('origin'), 'customers'); assert.equal(p.has('buildId'), false);
   assert.deepEqual(reportQuery('companies', p, context), { from: '2026-09', to: '2026-09', discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc', page: 1, pageSize: 20 });
   const blank = new URL(drilldownHref(origin, 'overview', {}), 'https://test.invalid').searchParams;
   assert.deepEqual(reportQuery('companies', blank, context), { from: '2026-09', to: '2026-09', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
@@ -54,15 +52,6 @@ test('changing filters or sort resets paging; clearing keeps the month and remov
   assert.equal(clearedParams(p).toString(), 'month=2026-09&filter_industry=ALL&filter_discovery=ALL&filter_sales=ALL');
 });
 const reportQueryForChanged = (module: Awaited<ReturnType<typeof logic>>, params: URLSearchParams) => module.reportQuery('companies', params, context);
-test('invalid compare sides never request an invented pair; side swapping changes only the sides', async () => {
-  const { comparisonProblem, swappedParams } = await logic();
-  assert.equal(comparisonProblem(new URLSearchParams(), context), 'choose');
-  assert.equal(comparisonProblem(new URLSearchParams('by=industry&a=UNKNOWN&b=UNKNOWN'), context), 'same');
-  assert.equal(comparisonProblem(new URLSearchParams('by=discovery&a=secret&b=OTHER'), context), 'choose');
-  assert.equal(comparisonProblem(new URLSearchParams('by=company&a=one&b=two'), context), null);
-  const p = swappedParams(new URLSearchParams('by=company&a=one&b=two&month=2026-09&filter_discovery=OTHER'));
-  assert.equal(p.get('a'), 'two'); assert.equal(p.get('b'), 'one'); assert.equal(p.get('filter_discovery'), 'OTHER');
-});
 test('counts preserve partial/unknown/true zero and money never calls partial an at-least amount', async () => {
   const { countText, moneyText } = await logic();
   assert.equal(countText({ value: null, knownValue: 38, coverage: 'partial', reasonCodes: [] }), 'อย่างน้อย 38');
@@ -171,7 +160,7 @@ test('rate-limit retry time uses only a valid returned number and never a diagno
 });
 test('back keeps the source history entry across filter/page pushes and names the actual source screen', async () => {
   const { reportHistoryState, ownHistoryState, backSection } = await logic();
-  const source = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: ['tree'], executiveBack: '/system/executive/compare?by=company&a=one&b=two', executiveBackDistance: 1 };
+  const source = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: ['tree'], executiveBack: '/system/executive/customers?view=discovery', executiveBackDistance: 1 };
   const next = reportHistoryState(source, 'ร้าน ก', false);
   // A state that still carries Next's own keys is taken by Next's patched pushState for its own call: the router would keep the old URL.
   assert.equal(next.__NA, undefined); assert.equal(next.__PRIVATE_NEXTJS_INTERNALS_TREE, undefined);
@@ -180,7 +169,9 @@ test('back keeps the source history entry across filter/page pushes and names th
   assert.equal(next.executiveBack, source.executiveBack); assert.equal(next.executiveBackDistance, 2); assert.equal(next.executiveSearch, 'ร้าน ก');
   assert.equal(reportHistoryState(next, '', true).executiveBackDistance, 2);
   assert.equal(reportHistoryState(next, '', true).executiveSearch, '');
-  assert.equal(backSection(source.executiveBack), 'compare');
+  assert.equal(backSection(source.executiveBack), 'customers');
+  // The comparison page is taken out (owner 2026-10-05): a history entry that still points at it names the overview.
+  assert.equal(backSection('/system/executive/compare?by=company&a=one&b=two'), 'overview');
   assert.equal(backSection('/system/executive/usage?view=ranking'), 'usage');
   assert.equal(backSection('/system/executive/companies/internal'), 'detail');
 });

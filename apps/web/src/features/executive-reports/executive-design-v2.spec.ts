@@ -62,12 +62,12 @@ test('v2 directory exposes available fields as sticky columns and the same two-c
   const { CompaniesContent } = await import('./ExecutiveReportContent');
   const row = { id: 'row', displayName: 'ร้าน ก', registeredName: null, provinceLabel: 'เชียงใหม่', joinedAt: '2026-09-01T00:00:00Z', industryGroup: { label: 'ร้านอาหาร' }, companyStatus: 'ACTIVE', planState: 'ACTIVE', planLabel: 'ร้านเติบโต', discovery: { label: 'Facebook' }, signupRail: 'line-oa', referrer: { label: 'ไม่ระบุ' }, paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', receiptAdoption: 'EVER', metrics: { expenseReceiptCountLifetime: 27, expenseReceiptCountInPeriod: 7, activeDays: 3, activeUsers: 2, documents: 4, aiRequests: 5, netReceiptsSatang: 10000 }, lastActivityAt: null };
   const data = { ...envelope, summary: { netReceiptsSatang: count(10000) }, items: [row], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
-  const html = render(CompaniesContent, { data, nav, selected: [], select: () => {} });
+  const html = render(CompaniesContent, { data, nav });
   const head = html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
   for (const word of [W.company, W.group, W.lifetimeReceipts, W.tableReceipts, W.days, W.lastActivity, W.shortPlan, W.tableNet]) assert.ok(head.includes(word), word);
   assert.match(head, /sticky/); assert.match(html, /grid-cols-2/); assert.match(html, /md:table-row/);
   assert.match(html, /after:absolute after:inset-0/); assert.match(html, />27</);
-  assert.equal((html.match(/type="checkbox"/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /type="checkbox"/); // the comparison checkbox is taken out for now (owner 2026-10-05)
   assert.doesNotMatch(head, /7 วัน|30 วัน|ประเภทกิจการ|เพิ่มใบเสร็จล่าสุด/);
 });
 

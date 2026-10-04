@@ -40,9 +40,9 @@ test('A: incomplete words and muted figures meet 4.5:1 from existing tokens', as
   }
 });
 
-test('B1: first-visit ranking, top payers, all ranks and company comparison have one question mark', async () => {
+test('B1: first-visit ranking, top payers and all ranks have one question mark', async () => {
   const { menuHref, executiveHref } = await import('./executive-reports.logic') as any;
-  for (const [section, extra] of [['usage', { view: 'ranking' }], ['revenue', { view: 'top' }], ['companies', { sortBy: 'netReceipts', sortDir: 'desc' }], ['compare', { by: 'company', a: 'a&b', b: 'c d' }]] as const) {
+  for (const [section, extra] of [['usage', { view: 'ranking' }], ['revenue', { view: 'top' }], ['companies', { sortBy: 'netReceipts', sortDir: 'desc' }], ['companies', { pick: 'packageLabel=a&b c' }]] as const) {
     const href = menuHref(section, new URLSearchParams(), extra);
     assert.equal(href.split('?').length, 2, href);
     assert.equal(new URL(href, 'https://test.invalid').pathname, `/system/executive/${section}`);
@@ -116,9 +116,9 @@ test('C8/C12/C14: one atomic directory filter, centred time controls, one-page p
   assert.match(page, /context && !exportOpen && failed\?\.kind !== 'notFound'/);
 });
 
-test('C10/C11/C13/C16: concise comparison, account controls, genuine export list and unchanged admin menu words', () => {
-  const page = source('./ExecutiveReportPage.tsx'), content = source('./ExecutiveReportContent.tsx');
-  assert.doesNotMatch(page, /<option value="">\{W.choose\}/); assert.doesNotMatch(content, /panel = <Card title=\{W.figure\}/);
+test('C11/C13/C16: account controls, genuine export list and unchanged admin menu words', () => {
+  const content = source('./ExecutiveReportContent.tsx');
+  assert.doesNotMatch(content, /panel = <Card title=\{W.figure\}/);
   const account = source('../executive-users/ExecutiveUserPage.tsx');
   assert.match(account, /min-h-11/); assert.match(account, /border-t/);
   const panel = source('./ExecutiveExportPanel.tsx');
@@ -152,7 +152,7 @@ test('C7: the directory does not repeat the main payment status in the expander'
   const complete = { coverage: 'complete', reasonCodes: [] };
   const row = { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'NEVER', paidEver: { value: 'NO' }, metrics: { expenseReceiptCountLifetime: 0, expenseReceiptCountInPeriod: 0, activeDays: 0, activeUsers: 0, documents: 0, aiRequests: 0, netReceiptsSatang: 0 } };
   const data = { period: { month: '2026-09', isPartialMonth: false }, build: {}, coverage: { money: complete, usage: complete }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 }, population: {}, items: [row], sort: { sortBy: 'joinedAt' }, summary: { netReceiptsSatang: { value: 0, ...complete } }, pagination: { total: 1 } };
-  const markup = html(CompaniesContent, { data, nav: { params: new URLSearchParams(), from: 'companies' }, selected: [], select() {} });
+  const markup = html(CompaniesContent, { data, nav: { params: new URLSearchParams(), from: 'companies' } });
   const main = markup.replace(/<tr hidden=""[\s\S]*?<\/tr>/g, '');
   assert.equal(main.replace(/<[^>]*>/g, '').split('ยังไม่เคยชำระเงิน').length - 1, 1);
   assert.doesNotMatch(markup.match(/executive-usage-summary[\s\S]*?<\/td>/)?.[0] ?? '', /ยังไม่เคยชำระเงิน/);
@@ -188,16 +188,6 @@ test('B5: a history read failure belongs to the history tab and export never pre
   for (const tab of ['company', 'usage']) assert.equal(failed({}, null, failure, tab), null);
   assert.equal(failed({ failure }, null, null, 'company'), failure);
   assert.match(source('./ExecutiveReportPage.tsx'), /exportOpen && context && visibleData && dataKey === requestKey && !reading/);
-});
-
-test('C10: comparison titles and side headers preserve free company names from the API', async () => {
-  const { AnalysisContent } = await import('./ExecutiveReportContent');
-  const count = { value: 1, coverage: 'complete', reasonCodes: [] };
-  const side = { key: 'one', label: 'AI', companies: count, activeCompanies: count, netReceiptsSatang: { ...count, currency: 'THB' }, expenseReceiptCount: count, netReceiptsPerCompanySatang: null, expenseReceiptsPerCompany: null, everAddedReceiptShare: null };
-  const data = { period: { month: '2026-09' }, build: {}, coverage: { money: count, usage: count }, population: { eligibleCount: count }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 }, comparison: { dimension: 'company', sideA: side, sideB: { ...side, key: 'two', label: 'IG' }, difference: { companies: 0, activeCompanies: 0, netReceiptsSatang: 0, expenseReceiptCount: 0, netReceiptsPerCompanySatang: null, expenseReceiptsPerCompany: null, everAddedReceiptShare: null } } };
-  const markup = html(AnalysisContent, { data, nav: { params: new URLSearchParams(), from: 'compare', remember() {} }, seller: null });
-  assert.match(markup, /เปรียบเทียบ · AI · IG/); assert.match(markup, /ฝั่งแรก · AI/); assert.match(markup, /ฝั่งที่สอง · IG/);
-  assert.doesNotMatch(markup, /ปัญญาประดิษฐ์|อินสตาแกรม/);
 });
 
 test('round A: optional executive field and picker styles preserve ordinary hints, sizes and disabled days', async () => {
@@ -252,11 +242,11 @@ test('round A: directory column budgets fit both widths, keep the real sort and 
   const row = { id: 'a', displayName: 'ร้าน ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'ทดลองใช้ฟรีสำหรับร้านอาหาร', planState: 'TRIAL', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'NEVER', paidEver: { value: 'NO' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 3, activeDays: 2, activeUsers: 1, documents: 1, aiRequests: 5, netReceiptsSatang: 9900 }, cumulativeShare: { value: 100 } };
   const base = { period: { month: '2026-09', isPartialMonth: false }, build: {}, coverage: { money: complete, usage: complete }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 }, population: {}, items: [row], summary: { netReceiptsSatang: { value: 9900, ...complete } }, pagination: { total: 1 } };
   for (const sortBy of ['joinedAt', 'companyName', 'netReceipts', 'expenseReceiptCount', 'activeDays', 'aiRequests', 'lastActivityAt']) {
-    const tree = (CompaniesContent as any)({ data: { ...base, sort: { sortBy, sortDir: 'desc' } }, nav: { params: new URLSearchParams(), from: 'companies' }, selected: [], select() {} });
+    const tree = (CompaniesContent as any)({ data: { ...base, sort: { sortBy, sortDir: 'desc' } }, nav: { params: new URLSearchParams(), from: 'companies' } });
     const table = elements(tree).find(e => e.type === ExecutiveTable)!;
     const columns = table.props.columns;
     assert.equal(table.props.compactMobile, true);
-    assert.equal(columns.find((c: any) => c.control).label, W.shortCompare);
+    assert.equal(columns.some((c: any) => c.control), false); // no comparison checkbox column (owner 2026-10-05)
     for (const [wide, budget] of [[false, 694], [true, 936]] as const) assert.ok(columns.filter((c: any) => c.hide !== 'always' && (wide || c.hide !== 'narrow')).reduce((n: number, c: any) => n + c.width, 44) <= budget, `${sortBy}/${wide}`);
     const mobile = columns.filter((c: any) => c.mobile);
     assert.equal(mobile.length, sortBy === 'aiRequests' ? 4 : 3);

@@ -4,13 +4,16 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import ts from 'typescript';
 import { executivePeriodReportWords, executiveThaiLabel } from '@watchdog-bms/contracts';
-import { W, thaiLabel } from './executive-reports.words';
+import { W, thaiLabel, EXECUTIVE_MENU } from './executive-reports.words';
 const source = (path: string) => { const p = fileURLToPath(new URL(path, import.meta.url)); return existsSync(p) ? readFileSync(p, 'utf8') : ''; };
 
-test('all seven report routes render the real report page and detail uses targetCompanyId', () => {
-  for (const route of ['', '/companies', '/usage', '/revenue', '/customers', '/compare', '/companies/[targetCompanyId]']) {
+test('all six report routes render the real report page, detail uses targetCompanyId and the old compare address opens the overview', () => {
+  for (const route of ['', '/companies', '/usage', '/revenue', '/customers', '/companies/[targetCompanyId]']) {
     assert.match(source(`../../../app/system/executive${route}/page.tsx`), /ExecutiveReportPage/, route);
   }
+  // The comparison is taken out for now (owner 2026-10-05): no menu entry, and its old address is not a missing page.
+  assert.match(source('../../../app/system/executive/compare/page.tsx'), /redirect\('\/system\/executive'\)/);
+  assert.deepEqual(EXECUTIVE_MENU.map(item => item.key), ['overview', 'companies', 'usage', 'revenue', 'customers']);
   assert.match(source('../../../app/system/executive/companies/[targetCompanyId]/page.tsx'), /await params/);
 });
 test('the system shell and report gate use the exact permission, and the header has report links only for readers', () => {
@@ -127,7 +130,7 @@ test('normalization keeps only an allowed export flag and stays URL-only for a s
 
 test('opening/closing export and refreshing built months preserve report identity and read dependencies on every screen', async () => {
   const context = await exportContext();
-  for (const section of ['overview', 'companies', 'usage', 'revenue', 'customers', 'compare', 'detail']) {
+  for (const section of ['overview', 'companies', 'usage', 'revenue', 'customers', 'detail']) {
     const params = new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK&page=3&by=industry&a=ALL&b=UNKNOWN&tab=history');
     const closed = await pageTransitions(section, params, context, {});
     params.set('export', '1');

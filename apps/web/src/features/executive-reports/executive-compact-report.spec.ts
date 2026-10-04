@@ -113,7 +113,7 @@ test('tabs expose keyboard navigation, URL choices and compatible legacy report 
 test('directory columns, closed row expanders and conditional rank/share replace the tall rows', async () => {
   const { CompaniesContent } = await import('./ExecutiveReportContent');
   const row = { id: 'one', displayName: 'ร้าน ก', registeredName: 'บริษัท ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, receiptAdoption: 'EVER', usageGroup: 'ACTIVE', paidEver: { value: 'YES' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 2, activeDays: 1, activeUsers: 1, documents: 1, aiRequests: 1, netReceiptsSatang: 9900 }, lastActivityAt: '2026-10-04' };
-  const render = (sortBy: string) => html(CompaniesContent, { data: { ...envelope, items: [{ ...row, rank: 1, cumulativeShare: { value: 100 } }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy, sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav, selected: [], select() {} });
+  const render = (sortBy: string) => html(CompaniesContent, { data: { ...envelope, items: [{ ...row, rank: 1, cumulativeShare: { value: 100 } }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy, sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
   const plain = render('joinedAt'), ranked = render('netReceipts');
   const head = plain.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '';
   const labels = ['บริษัท', 'กลุ่มธุรกิจ', 'แพ็กเกจ', 'สถานะ', 'ใบเสร็จสะสม', W.tableReceipts, 'วันใช้งาน', 'ใช้ระบบล่าสุด', 'สุทธิ'];
@@ -122,7 +122,7 @@ test('directory columns, closed row expanders and conditional rank/share replace
   assert.doesNotMatch(head, /สะสม %|อันดับ/); assert.match(ranked.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '', /สะสม %/);
   assert.match(source('./ExecutiveReportDesign.tsx'), /stopPropagation/);
   assert.match(plain, /52px|h-12/);
-  const withoutShare = (coverage: string, net: number) => html(CompaniesContent, { data: { ...envelope, coverage: { ...envelope.coverage, money: { ...cash, coverage, reasonCodes: coverage === 'complete' ? [] : cash.reasonCodes } }, items: [{ ...row, metrics: { ...row.metrics, netReceiptsSatang: net }, rank: 1, cumulativeShare: null }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy: 'netReceipts', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav, selected: [], select() {} });
+  const withoutShare = (coverage: string, net: number) => html(CompaniesContent, { data: { ...envelope, coverage: { ...envelope.coverage, money: { ...cash, coverage, reasonCodes: coverage === 'complete' ? [] : cash.reasonCodes } }, items: [{ ...row, metrics: { ...row.metrics, netReceiptsSatang: net }, rank: 1, cumulativeShare: null }], summary: { netReceiptsSatang: cash }, pagination: { total: 1 }, sort: { sortBy: 'netReceipts', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
   const nonPositive = withoutShare('complete', 0);
   assert.match(nonPositive.match(/<tr hidden=""[\s\S]*?<\/tr>/)?.[0] ?? '', /ไม่นับในสัดส่วน/);
   assert.doesNotMatch(withoutShare('partial', 9900), /ไม่นับในสัดส่วน/);
@@ -158,15 +158,13 @@ test('every report panel keeps complete, partial and unavailable reasons out of 
     const adoption = { population: 6, coverage, reasonCodes: figure.reasonCodes, segments: [{ key: 'EVER', count: 6, share: { value: 100 }, drilldownFilters: {} }] };
     const paid = { groups: [{ key: 'NOT_STARTED', count: 1, drilldownFilters: {} }], paidEver: { count: 1, drilldownFilters: {} }, usageUnassessed: { count: 0 }, paymentUnknown: { count: 0 }, fullyRefunded: { count: 0 } };
     const company = { id: 'one', displayName: 'ร้าน ก', registeredName: 'บริษัท ก', provinceLabel: 'กรุงเทพ', joinedAt: '2026-07-02', industryGroup: { label: 'ร้านค้า' }, planLabel: 'เติบโต', planState: 'ACTIVE', companyStatus: 'ACTIVE', discovery: { key: 'OTHER', label: 'อื่น ๆ' }, signupRail: 'line-oa', referrer: { label: 'ไม่มีผู้แนะนำ' }, creditedSeller: {}, ownerContact: { status: 'NOT_PERMITTED' }, receiptAdoption: 'EVER', usageGroup: 'ACTIVE', paidEver: { value: 'YES' }, metrics: { expenseReceiptCountLifetime: 6, expenseReceiptCountInPeriod: 2, activeDays: 1, activeUsers: 1, documents: 1, aiRequests: 1, netReceiptsSatang: 9900 }, lastActivityAt: '2026-10-04', expenseReceiptCountLifetime: 6 };
-    const side = { key: 'one', label: 'ร้าน ก', companies: figure, activeCompanies: figure, netReceiptsSatang: money, expenseReceiptCount: figure, netReceiptsPerCompanySatang: null, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, drilldownFilters: {} };
     const detail = { ...base, company, monthReasonCodes: [], month: { paidEver: company.paidEver, usageGroup: 'ACTIVE', paidInMonth: true, positiveNetInMonth: true, usage: { ...company.metrics, activeDaysLine: 1, activeDaysWeb: 1, activeUsersLine: 1, activeUsersWeb: 1, expenseReceiptsLine: 1, expenseReceiptsWeb: 1 }, money: { receiptsSatang: money, refundsSatang: money, netReceiptsSatang: money, taxSatang: money, feesSatang: money, aiCostSatang: money } } };
     const cases: Array<[string, React.ComponentType<any>, object]> = [
       ['overview', OverviewContent, { data: { ...base, metrics: { companies: { ...figure, drilldownFilters: {} }, activeCompanies: { ...figure, drilldownFilters: {}, breakdown: {} }, companiesWithReceipts: { ...figure, drilldownFilters: {} }, netReceiptsSatang: { ...money, drilldownFilters: {} } }, expenseReceiptAdoption: adoption, paidUsage: paid, spendConcentration: { topShare: null, reasonCodes: [] } }, nav }],
       ...['adoption', 'paid'].map(view => [view, AnalysisContent, { data: { ...base, expenseReceiptAdoption: adoption, paidUsage: paid }, nav: { ...nav, params: new URLSearchParams({ view }) }, seller: null }] as [string, React.ComponentType<any>, object]),
       ['ranking', AnalysisContent, { data: { ...base, usageRanking: { ...figure, metric: 'activeDays', total: 6, drilldownFilters: {}, items: [{ ...company, rank: 1, value: 6 }] } }, nav: { ...nav, params: new URLSearchParams('view=ranking') }, seller: null }],
       ['customers', AnalysisContent, { data: { ...base, view: 'industry', groups: [{ key: 'one', label: 'ร้านค้า', companies: { count: 6, share: { value: 100 } }, paidEverCompanies: 6, companiesWithReceipts: figure, activeCompanies: figure, netReceiptsSatang: money, drilldownFilters: {} }] }, nav, seller: null }],
-      ['compare', AnalysisContent, { data: { ...base, comparison: { sideA: side, sideB: { ...side, key: 'two' }, difference: { companies: 0, netReceiptsSatang: 0, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } }, nav, seller: null }],
-      ['companies', CompaniesContent, { data: { ...base, items: [company], summary: { netReceiptsSatang: money }, pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } }, nav, selected: [], select() {} }],
+      ['companies', CompaniesContent, { data: { ...base, items: [company], summary: { netReceiptsSatang: money }, pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } }, nav }],
       ...['company', 'usage', 'history'].map(tab => [tab, CompanyContent, { data: detail, tab, history: { items: [] }, nav, admin: false, contactReadAt: '' }] as [string, React.ComponentType<any>, object]),
     ];
     for (const [name, component, props] of cases) {
@@ -185,7 +183,7 @@ test('every report panel keeps complete, partial and unavailable reasons out of 
   }
 });
 
-test('row clicks open the link; comparison and expander events never navigate and expansion starts closed', async () => {
+test('row clicks open the link; inner control and expander events never navigate and expansion starts closed', async () => {
   const ts = await import('typescript');
   const design = await import('./ExecutiveReportDesign');
   const logic = await import('./executive-reports.logic');
