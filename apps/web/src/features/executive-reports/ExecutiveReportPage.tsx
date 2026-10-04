@@ -1,28 +1,28 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type MutableRefObject } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, Fragment, type ReactNode, type MutableRefObject } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   EXECUTIVE_SORT_OPTIONS,
   type ExecutiveContext, type ExecutiveCompanyHistory, type ExecutiveCompanyDetail, type ExecutiveCompanies, type ExecutiveOverview, type ExecutiveAnalysis,
 } from '@watchdog-bms/contracts';
-import { MangmeePage, MangmeeBadge } from '@/common/components/mangmee';
+import { MangmeePage, MangmeeBadge, MangmeeCard } from '@/common/components/mangmee';
 import { Button } from '@/common/components/button';
 import { SelectField, TextField, FieldError } from '@/common/components/field/Field';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { Pagination } from '@/common/components/data-table/Pagination';
-import { LoadingState, EmptyState, ErrorState, ForbiddenState, CoverLoader } from '@/common/components/state';
+import { EmptyState, ErrorState, ForbiddenState, CoverLoader } from '@/common/components/state';
 import { WorkspaceLocaleContext } from '@/common/i18n/locale-context';
 import { getExecutiveContext, getExecutiveReport, getExecutiveHistory, type ReportData } from './executive-reports.api';
 import {
   FILTER_URL, GLOBAL_FILTERS, DIRECTORY_FILTERS, reportQuery, reportView, filterValue, normalizedMonth, changedParams, clearedParams, comparisonProblem,
-  swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, reportFilterChips, menuHref, reportDateTime, reportDate, pageNumber, reasonText,
+  swappedParams, reportFailure, keepLoadedReport, queryFieldErrors, readCurrentBuild, drillFilters, reportFilterChips, menuHref, reportDateTime, pageNumber, reasonText,
   EXECUTIVE_ACCESS_DENIED_EVENT, sortLabel, retryDelaySeconds, reportHistoryState, ownHistoryState, backSection, type ReportSection,
 } from './executive-reports.logic';
 import { ExecutiveExportPanel } from './ExecutiveExportPanel';
 import { canExport } from './executive-export.logic';
 import { W, REPORT_VIEWS, DETAIL_TABS, RANK_LABELS, thaiLabel } from './executive-reports.words';
-import { OverviewContent, CompaniesContent, AnalysisContent, CompanyContent, ReportLink, Reasons } from './ExecutiveReportContent';
+import { OverviewContent, CompaniesContent, AnalysisContent, CompanyContent, ReportLink, Reasons, ReportSkeleton } from './ExecutiveReportContent';
 
 type Failure = ReturnType<typeof reportFailure>;
 type ReportContext = { context: ExecutiveContext | null; failure: Failure | null; retry?: () => void; retryWait: number; build: MutableRefObject<string | undefined>; admin: boolean; deny: () => void; refresh: (signal: AbortSignal) => Promise<void> };
@@ -195,7 +195,7 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const retry = retryWait > 0 ? undefined : () => setAttempt(n => n + 1);
   const failed = shared.failure ?? failure;
   const title = section === 'detail' && visibleData && 'company' in visibleData ? visibleData.company.displayName : W[section];
-  const nav = { params, from: section, remember: rememberNavigation };
+  const nav = { params, from: section, remember: rememberNavigation, navigate: (href: string) => router.push(href) };
   const from = params.get('from');
   const origin = ['overview', 'usage', 'revenue', 'customers', 'compare'].includes(from ?? '') ? from as Exclude<ReportSection, 'detail' | 'companies'> : 'overview';
   const fallback = section === 'detail' ? menuHref('companies', params) : menuHref(origin, params);
@@ -213,15 +213,16 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
   const picked = drillFilters(params);
   const { active: activeLabels, picked: pickLabels } = context ? reportFilterChips(visibleData?.appliedFilters, picked, context) : { active: [], picked: [] };
   const pagination = section === 'companies' && visibleData && 'pagination' in visibleData ? visibleData.pagination : tab === 'history' && section === 'detail' ? history?.pagination : null;
-  return <main className="executive-report mx-auto min-w-0 max-w-7xl p-4 text-base [overflow-wrap:anywhere] sm:p-6 [&_button]:min-h-11 [&_button]:min-w-11 [&_.mangmee-stat-value]:!text-lg [&_.mangmee-stat-card]:!p-3 [&_.mangmee-stat-sub]:!text-sm">
-    <MangmeePage eyebrow={W.report} title={title} actions={<div className="flex flex-wrap gap-2">{canExport(context) && !exportOpen && <Button variant="secondary" loading={loading} disabled={loading || !!failed || !!problem || !visibleData} onClick={() => { const next = new URLSearchParams(params); next.set('export', '1'); setExportNotice(''); navigateParams(next); }}>{W.export.action}</Button>}{section === 'overview' ? <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.allCompanies}</ReportLink> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}</div>}>
+  const comparison = visibleData && 'comparison' in visibleData ? visibleData.comparison : null;
+  return <main className="executive-report mx-auto min-w-0 max-w-7xl p-4 text-base [overflow-wrap:anywhere] sm:p-6 [&_button]:min-h-11 [&_button]:min-w-11 [&_button]:focus-visible:outline-2 [&_button]:focus-visible:outline-offset-2 [&_button]:focus-visible:outline-brand-700 [&_.mangmee-stat-sub]:!text-sm">
+    <MangmeePage eyebrow={W.report} title={title} description={W.descriptions[section]} actions={<div className="flex flex-wrap gap-2">{canExport(context) && !exportOpen && <Button variant="secondary" loading={loading} disabled={loading || !!failed || !!problem || !visibleData} onClick={() => { const next = new URLSearchParams(params); next.set('export', '1'); setExportNotice(''); navigateParams(next); }}>{W.export.action}</Button>}{section === 'overview' ? <Button onClick={() => { rememberNavigation(); router.push(menuHref('companies', params)); }}>{W.allCompanies}</Button> : ((section === 'companies' && from) || section === 'detail') ? <Button variant="secondary" onClick={() => back(fallback)}>{W.back(backTitle ?? (section === 'detail' ? W.companies : W[origin]))}</Button> : undefined}</div>}>
       <div className="space-y-4">
         {exportNotice && <p role="status">{exportNotice}</p>}
         {exportDenied && context && !canExport(context) && <p role="status">{W.export.denied}</p>}
         {canExport(context) && !exportOpen && (loading || failed || problem || !visibleData) && <p role="status">{loading ? W.loading : problem ? W[problem] : failed?.text ?? W.noData}</p>}
         {exportOpen && context && visibleData && <ExecutiveExportPanel key={requestKey} section={section} params={params} context={context} data={visibleData} search={search} targetCompanyId={targetCompanyId} close={closeExport} reload={reloadExport} deny={denyExport} />}
         {context && !exportOpen && <>
-          <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <div className="executive-time-row flex min-w-0 flex-wrap items-end gap-3">
             <div className="w-44"><label htmlFor="executive-month" className="text-sm">{W.month}</label><ThemedDate id="executive-month" aria-label={W.month} aria-invalid={!!fieldErrors.month} aria-describedby={fieldErrors.month ? 'executive-month-error' : undefined} mode="month" allowClear={false} value={normalizedMonth(params, context)} min={context.months?.first} max={context.months?.last ?? context.currentMonth} selectable={context.builtMonths} onChange={event => event.target.value && update({ month: event.target.value })} className="!min-h-11 !text-base" />{fieldErrors.month && <FieldError id="executive-month-error">{fieldErrors.month}</FieldError>}</div>
             {visibleData && <><span className="text-sm">{W.through(reportDateTime(visibleData.dataThrough.oldest))}</span>{visibleData.period.isPartialMonth && <><MangmeeBadge tone="amber">{W.partialMonth}</MangmeeBadge>{context.months && visibleData.period.month > context.months.first && <Button variant="ghost" onClick={() => { const date = new Date(`${visibleData.period.month}-01T00:00:00Z`); date.setUTCMonth(date.getUTCMonth() - 1); update({ month: date.toISOString().slice(0, 7) }); }}>{W.previousMonth}</Button>}</>}{visibleData.build.monthRevisedAt && <MangmeeBadge>{W.revised(reportDateTime(visibleData.build.monthRevisedAt))}</MangmeeBadge>}</>}
           </div>
@@ -239,32 +240,31 @@ export default function ExecutiveReportPage({ section, targetCompanyId }: { sect
           <div className="flex flex-wrap gap-2">{activeLabels.map((label, i) => <MangmeeBadge key={i}>{label}</MangmeeBadge>)}</div>
           {(section === 'usage' || section === 'revenue' || section === 'customers') && <>
             <nav className="flex flex-wrap gap-2" aria-label={W[section]}>{REPORT_VIEWS[section].map(view => <Button key={view.value} variant={reportView(section, params) === view.value ? 'primary' : 'secondary'} aria-pressed={reportView(section, params) === view.value} onClick={() => update({ view: view.value })}>{view.label}</Button>)}</nav>
-            {section === 'usage' && reportView(section, params) === 'ranking' && <SelectField label={W.ranking} value={Object.hasOwn(RANK_LABELS, params.get('rank') ?? '') ? params.get('rank')! : 'expenseReceiptCount'} error={fieldErrors.metric} className="!min-h-11 !text-base" onChange={event => update({ rank: event.target.value })}>{Object.entries(RANK_LABELS).map(([value, words]) => <option key={value} value={value}>{words.label}</option>)}</SelectField>}
             {section === 'customers' && reportView(section, params) === 'sales' && <SelectField label={W.sales} value={params.get('seller') === 'credited' ? 'credited' : 'referring'} className="!min-h-11 !text-base" onChange={event => update({ seller: event.target.value })}><option value="referring">{W.referring}</option><option value="credited">{W.credited}</option></SelectField>}
           </>}
           {section === 'detail' && <nav className="flex flex-wrap gap-2" aria-label={W.detail}>{DETAIL_TABS.map(item => <Button key={item.value} variant={tab === item.value ? 'primary' : 'secondary'} aria-pressed={tab === item.value} onClick={() => update({ tab: item.value })}>{item.label}</Button>)}</nav>}
-          {section === 'compare' && <>
+          {section === 'compare' && <MangmeeCard className="executive-compare-controls min-w-0 space-y-4 p-4 sm:p-5">
             <SelectField label={W.dimension} value={['industry', 'discovery', 'referringSales', 'company'].includes(params.get('by') ?? '') ? params.get('by')! : 'industry'} error={fieldErrors.dimension} className="!min-h-11 !text-base" onChange={event => update({ by: event.target.value, a: '', b: '' })}>{[['industry', W.industry], ['discovery', W.discovery], ['referringSales', W.referring], ['company', W.company]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectField>
-            {params.get('by') === 'company' ? <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.chooseCompanies}</ReportLink> : <div className="grid min-w-0 gap-3 sm:grid-cols-2">{(['a', 'b'] as const).map(side => <SelectField key={side} label={side === 'a' ? W.sideA : W.sideB} value={params.get(side) ?? ''} error={fieldErrors[side === 'a' ? 'sideA' : 'sideB']} searchable className="!min-h-11 !text-base" onChange={event => update({ [side]: event.target.value })}><option value="">{W.choose}</option>{context.filters[(params.get('by') === 'discovery' || params.get('by') === 'referringSales' ? params.get('by') : 'industry') as 'industry' | 'discovery' | 'referringSales'].filter(option => option.value !== 'ALL').map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, option.value)}</option>)}</SelectField>)}</div>}
-            {!problem && <Button variant="secondary" onClick={() => navigateParams(swappedParams(params))}>{W.swap}</Button>}
-          </>}
+            {params.get('by') === 'company' && <ReportLink href={menuHref('companies', params)} remember={rememberNavigation}>{W.chooseCompanies}</ReportLink>}
+            <div className="grid min-w-0 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">{(['a', 'b'] as const).map(side => <Fragment key={side}>{side === 'b' && <div>{!problem && <Button variant="secondary" onClick={() => navigateParams(swappedParams(params))}>{W.swap}</Button>}</div>}{params.get('by') === 'company' ? <div className="min-w-0"><p className="text-sm text-gray-600">{side === 'a' ? W.sideA : W.sideB}</p>{comparison && <p className="font-semibold">{thaiLabel(comparison[side === 'a' ? 'sideA' : 'sideB'].label, comparison[side === 'a' ? 'sideA' : 'sideB'].key)}</p>}</div> : <SelectField label={side === 'a' ? W.sideA : W.sideB} value={params.get(side) ?? ''} error={fieldErrors[side === 'a' ? 'sideA' : 'sideB']} searchable className="!min-h-11 !text-base" onChange={event => update({ [side]: event.target.value })}><option value="">{W.choose}</option>{context.filters[(params.get('by') === 'discovery' || params.get('by') === 'referringSales' ? params.get('by') : 'industry') as 'industry' | 'discovery' | 'referringSales'].filter(option => option.value !== 'ALL').map(option => <option key={option.value} value={option.value}>{thaiLabel(option.label, option.value)}</option>)}</SelectField>}</Fragment>)}</div>
+          </MangmeeCard>}
         </>}
         {updated && <p role="status">{W.updated}</p>}
         {Math.max(retryWait, shared.retryWait) > 0 && <p role="status">{W.wait(Math.max(retryWait, shared.retryWait))}</p>}
         {visibleData?.reasonCodes.includes('SOURCE_STALE') && <p role="status" className="rounded-lg border border-warning-600 bg-warning-50 p-3">{reasonText('SOURCE_STALE')} {W.staleAt(reportDateTime(visibleData.build.asOf))}</p>}
-        {visibleData?.dataThrough.lagging.map(source => <p key={source} className="text-sm">{source === 'billing' ? W.moneyThrough(reportDate(visibleData.dataThrough.billing)) : `${source === 'activity' ? W.usage : source === 'aiCost' ? W.aiCost : W.companyTab} · ${W.through(reportDateTime(visibleData.dataThrough[source]))}`}</p>)}
+        {!exportOpen && visibleData?.dataThrough.lagging.filter(source => source !== 'billing').map(source => <MangmeeBadge key={source} tone="slate">{`${source === 'activity' ? W.usage : source === 'aiCost' ? W.aiCost : W.companyTab} · ${W.through(reportDateTime(visibleData.dataThrough[source]))}`}</MangmeeBadge>)}
         {visibleData && <Reasons codes={visibleData.reasonCodes.filter(code => code !== 'SOURCE_STALE')} />}
         {failed?.kind === 'denied' ? <ForbiddenState title={failed.text} description="" helpText="" /> : failed?.kind === 'notFound' ? <EmptyState title={failed.text} description="" action={<Button variant="secondary" onClick={() => back(menuHref('companies', params))}>{W.back(W.companies)}</Button>} /> : failed?.kind === 'noData' ? <EmptyState title={failed.text} description="" action={<Button variant="secondary" onClick={shared.failure ? shared.retry : retry}>{W.retry}</Button>} /> : failed && !visibleData ? <ErrorState title={failed.text} onRetry={shared.failure ? shared.retry : retry} /> : null}
         {failed && visibleData && <ErrorState title={failed.text} description={W.staleAt(reportDateTime(visibleData.build.asOf))} onRetry={retry} />}
-        {!context && !shared.failure && <LoadingState label={W.loading} />}
+        {!context && !shared.failure && <ReportSkeleton />}
         {context && problem && <EmptyState title={W[problem]} description="" />}
-        {context && !problem && !failed && !visibleData && <LoadingState label={W.loading} />}
+        {context && !problem && !failed && !visibleData && <ReportSkeleton />}
         {!exportOpen && <><CoverLoader active={loading && !!visibleData} label={W.loading}>
           <div className="min-w-0 space-y-4" aria-busy={loading}>
             {visibleData && section === 'overview' && <OverviewContent data={visibleData as ExecutiveOverview} nav={nav} />}
             {visibleData && section === 'companies' && <CompaniesContent data={visibleData as ExecutiveCompanies} nav={nav} selected={selected} select={selectCompany} />}
             {visibleData && section === 'detail' && <CompanyContent data={visibleData as ExecutiveCompanyDetail} tab={tab} history={history} admin={shared.admin} nav={nav} contactReadAt={contactReadAt} />}
-            {visibleData && ['usage', 'revenue', 'customers', 'compare'].includes(section) && <AnalysisContent data={visibleData as ExecutiveAnalysis} nav={nav} seller={params.get('seller')} />}
+            {visibleData && ['usage', 'revenue', 'customers', 'compare'].includes(section) && <AnalysisContent data={visibleData as ExecutiveAnalysis} nav={nav} seller={params.get('seller')} rankingControl={section === 'usage' && reportView(section, params) === 'ranking' ? <SelectField label={W.ranking} value={Object.hasOwn(RANK_LABELS, params.get('rank') ?? '') ? params.get('rank')! : 'expenseReceiptCount'} error={fieldErrors.metric} className="!min-h-11 !text-base" onChange={event => update({ rank: event.target.value })}>{Object.entries(RANK_LABELS).map(([value, words]) => <option key={value} value={value}>{words.label}</option>)}</SelectField> : undefined} />}
           </div>
         </CoverLoader>
         {pagination && pagination.totalPages > 0 && <Pagination page={pagination.page} totalPages={pagination.totalPages} disabled={loading} onPageChange={page => update({ page: String(page) })} />}</>}

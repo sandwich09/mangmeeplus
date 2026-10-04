@@ -10,7 +10,7 @@ const content = () => import('./ExecutiveReportContent');
 const count = (value: number): ExecutiveCount => ({ value, coverage: 'complete', reasonCodes: [] });
 const cash = (value: number): ExecutiveMoney => ({ ...count(value), currency: 'THB' });
 const missing: ExecutiveMoney = { value: null, coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], currency: 'THB' };
-const nav = { params: new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK'), from: 'overview', remember: () => {} };
+const nav = { params: new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK'), from: 'overview', remember: () => {}, navigate: () => {} };
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 const envelope = {
   build: { id: 'internal-build', asOf: '2026-10-01T05:00:00Z' }, period: { month: '2026-09' },
@@ -76,7 +76,8 @@ test('overview renders four server metrics, a partial count, and four receipt gr
   }, expenseReceiptAdoption: { population: 72, segments: ['EVER', 'NEVER', 'UNKNOWN', 'NOT_ENTITLED'].map(key => ({ key, count: 18, share: { value: 25 }, drilldownFilters: { receiptAdoption: key } })), reasonCodes: [], roundingNote: false },
   paidUsage: { groups: [{ key: 'NOT_STARTED', count: 20, drilldownFilters: { usageGroup: 'NOT_STARTED' } }, { key: 'INACTIVE', count: 3, drilldownFilters: { usageGroup: 'INACTIVE' } }] }, spendConcentration: { topShare: { value: 83.4 }, reasonCodes: [] } } as unknown as ExecutiveOverview;
   const html = renderToStaticMarkup(React.createElement(OverviewContent, { data, nav }));
-  assert.equal((html.match(/mangmee-stat-card/g) ?? []).length, 4);
+  assert.equal((html.match(/class="mangmee-card mangmee-stat-card"/g) ?? []).length, 4);
+  assert.match(html, /\[&amp;_.mangmee-stat-card\]:h-full/);
   for (const words of ['อย่างน้อย 38', '245,806.00 บาท', 'ยังไม่ได้จัดประเภท 2 บริษัท', 'ไม่มีในแพ็กเกจ', 'ก.ย. 2569']) assert.ok(text(html).includes(words), words);
   assert.doesNotMatch(text(html), /internal-|NOT_ENTITLED|FACEBOOK/);
   assert.match(html, /pick=activeInPeriod%3Dtrue/);
@@ -100,8 +101,8 @@ test('each compare toggle has its own id, so its label selects its own company',
   const data = { ...envelope, summary: { netReceiptsSatang: cash(0) }, items: [company, { ...company, id: 'second-company' }], pagination: { total: 2 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
   const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav, selected: [], select: () => {} }));
   const ids = [...html.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)].map(([input]) => input.match(/id="([^"]+)"/)?.[1]);
-  assert.equal(ids.length, 4); // two rows, each as a phone card and as a table row
-  assert.equal(new Set(ids).size, 4, `duplicate ids: ${ids.join(', ')}`);
+  assert.equal(ids.length, 2); // one responsive row and checkbox per company
+  assert.equal(new Set(ids).size, 2, `duplicate ids: ${ids.join(', ')}`);
   for (const id of ids) assert.ok(html.includes(`for="${id}"`), `label for ${id}`);
 });
 test('group tables and comparisons preserve null averages and the backend difference', async () => {
@@ -124,15 +125,16 @@ test('each table names its first column for what its rows are, and differences u
   assert.equal(firstHeader(compare), 'รายการ');
   assert.match(text(compare), /1,234 /); assert.match(text(compare), /0\.0 /); assert.match(text(compare), /-12\.5 จุด/);
 });
-test('a company without a registered name starts its line with the province, not with a separator', async () => {
+test('a company without a registered name keeps its province and group in the information card without a stray header', async () => {
   const { AnalysisContent, CompanyContent } = await content();
   const ranking = { metric: 'expenseReceiptCount', total: 1, coverage: 'complete', reasonCodes: [], drilldownFilters: {},
     items: [{ id: 'internal-company', displayName: 'ร้าน ก', registeredName: null, provinceLabel: 'เชียงใหม่', value: 3, rank: 1 }] };
   const ranked = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, usageRanking: ranking } as unknown as ExecutiveAnalysis, nav, seller: null })));
   assert.match(ranked, /เชียงใหม่/); assert.doesNotMatch(ranked, /·\s+เชียงใหม่/);
   const detail = { ...envelope, company: { ...company, registeredName: null, ownerContact: { status: 'NOT_PERMITTED' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;
-  const head = text(renderToStaticMarkup(React.createElement(CompanyContent, { data: detail, tab: 'history', history: null, admin: false, nav, contactReadAt: '' })));
-  assert.match(head, /เชียงใหม่ · ไม่ระบุ/); assert.doesNotMatch(head, /^\s*·/);
+  const html = renderToStaticMarkup(React.createElement(CompanyContent, { data: detail, tab: 'company', history: null, admin: false, nav, contactReadAt: '' }));
+  assert.match(text(html), /เชียงใหม่/); assert.match(text(html), /ไม่ระบุ/);
+  assert.doesNotMatch(html, /^<p>เชียงใหม่ ·/);
 });
 test('company contact values and labels disappear without permission and never fall back to supplied forbidden values', async () => {
   const { CompanyContent } = await content();
@@ -223,7 +225,8 @@ test('spend groups show each group as the backend counts it: companies of all, s
     boundaryTie: { count: 1, netSatang: 299000 }, prefix80BoundaryTie: { count: 0, netSatang: 299000 }, periodBasis: 'SELECTED_MONTH', coverage: 'complete', reasonCodes: [],
     drilldownFilters: { TOP20: { spendCohort: 'TOP20' }, REST: { spendCohort: 'REST' }, TO80: { spendCohort: 'TO80' }, BOUNDARY_TIE: { spendCohort: 'BOUNDARY_TIE' }, TO80_BOUNDARY_TIE: { spendCohort: 'TO80_BOUNDARY_TIE' } },
   };
-  const render = (figures: Partial<typeof spend>) => text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, spendConcentration: { ...spend, ...figures } } as unknown as ExecutiveAnalysis, nav, seller: null })));
+  const render = (figures: Partial<typeof spend>) => text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, spendConcentration: { ...spend, ...figures } } as unknown as ExecutiveAnalysis, nav, seller: null }))).replace(/\s+/g, ' ');
+  assert.match(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, spendConcentration: spend } as unknown as ExecutiveAnalysis, nav, seller: null })), /<button[^>]*>บริษัทที่รวมยอดรับถึง 80%/);
   const visible = render({});
   for (const words of ['ลูกค้าที่จ่ายสูงสุด 20% แรก · 4 จาก 16 บริษัท (25.0%) · 74.6% ของยอดที่ใช้คำนวณสัดส่วน', 'ลูกค้านอกกลุ่มที่จ่ายสูงสุด 20% แรก · 12 จาก 16 บริษัท (75.0%) · 25.4% ของยอดที่ใช้คำนวณสัดส่วน',
     'บริษัทที่รวมยอดรับถึง 80% · 5 จาก 16 บริษัท (31.3%) · 90.6% ของยอดที่ใช้คำนวณสัดส่วน', 'ยอดรับสุทธิในเดือนเป็น 0 หรือติดลบ 8 บริษัท']) assert.ok(visible.includes(words), words);
