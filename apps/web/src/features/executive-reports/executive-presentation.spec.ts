@@ -65,11 +65,20 @@ const company = {
   paidEver: { value: 'YES' }, usageGroup: 'ACTIVE', receiptAdoption: 'EVER', fullyRefunded: false,
   metrics: { expenseReceiptCountLifetime: 27, expenseReceiptCountInPeriod: 7, activeDays: 3, activeUsers: 2, documents: 4, aiRequests: 5, netReceiptsSatang: 10000 }, lastActivityAt: '2026-09-30T00:00:00Z',
 };
-test('directory uses explicit receipt columns, labelled secondary summaries and no comparison checkbox', async () => {
+test('directory uses explicit receipt columns, an opened row of grouped facts under their own labels and no comparison checkbox', async () => {
   const { CompaniesContent } = await content();
   const html = htmlOf(CompaniesContent, { data: { ...envelope, summary: { netReceiptsSatang: cash(10000) }, items: [company], pagination: { total: 1 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies, nav });
-  assert.match(html, /executive-company-row/); assert.match(html, /executive-usage-summary/);
-  assert.ok((html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').includes(W.lifetimeReceipts)); assert.doesNotMatch(html.match(/<section aria-label="บริษัทลูกค้า"[\s\S]*?<\/section>/)?.[0] ?? '', /<dl/);
+  assert.match(html, /executive-company-row/);
+  assert.ok((html.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').includes(W.lifetimeReceipts));
+  // Owner 2026-10-05: an opened row is a tidy grid, grouped, every value under its own label, with a link to the company; no run-on line.
+  const opened = html.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '';
+  assert.deepEqual([...opened.matchAll(/<h3[^>]*>([^<]*)<\/h3>/g)].map(match => match[1]), [W.companyTab, W.usage, W.status]);
+  assert.equal((opened.match(/<dl class="grid grid-cols-2 [^"]*@min-\[640px\]:grid-cols-3 @min-\[936px\]:grid-cols-4"/g) ?? []).length, 3);
+  assert.equal((opened.match(/<dt/g) ?? []).length, (opened.match(/<dd/g) ?? []).length);
+  assert.match(opened, /<dt[^>]*>ชื่อจดทะเบียน<\/dt><dd[^>]*>บริษัท ก<\/dd>/); assert.doesNotMatch(opened, /ชื่อจดทะเบียน:|ที่มา:/);
+  assert.match(opened, /<a[^>]*href="\/system\/executive\/companies\/[^"]*"[^>]*>รายละเอียดบริษัท<span aria-hidden="true">→<\/span><\/a>/);
+  // An opened row spans every column, hidden ones too: the empty trailing columns take that span, so the table keeps the card's full width.
+  assert.equal((html.match(/<col style="width:0"\/>/g) ?? []).length, (html.match(/<col class="md:hidden[^"]*"/g) ?? []).length);
   assert.doesNotMatch(html, /type="checkbox"|เปรียบเทียบ/);
   assert.equal((html.match(/>เคยชำระเงิน</g) ?? []).length, 1);
   for (const label of [W.tableReceipts, W.days, W.users, W.documents, W.ai, W.lastActivity, W.shortPlan, W.tableNet]) assert.ok(html.includes(label), label);

@@ -116,6 +116,34 @@ test('C8/C12/C14: one atomic directory filter, centred time controls, one-page p
   assert.match(page, /context && !exportOpen && failed\?\.kind !== 'notFound'/);
 });
 
+test('owner 2026-10-05: a row opener exists only where opening shows something, and a purchase type row shows its own tax and fee', async () => {
+  const { ExecutiveTable } = await import('./ExecutiveReportDesign');
+  const table = (columns: object[]) => html(ExecutiveTable, { title: W.purchase, columns, rows: [{ key: 'a', cells: ['ก', 1, 2] }] });
+  // Every column is on screen on every layout: no opener and no opened row.
+  assert.doesNotMatch(table([{ label: 'ก' }, { label: 'ข' }, { label: 'ค' }]), /aria-expanded|data-row-details/);
+  // A column only the wide table has: the opener, its column and the opened row exist on the narrow table alone.
+  const narrow = table([{ label: 'ก' }, { label: 'ข' }, { label: 'ค', hide: 'narrow' }]);
+  assert.match(narrow, /<td class="[^"]*hidden md:table-cell @min-\[936px\]:hidden"><button[^>]*aria-expanded="false"/);
+  assert.match(narrow, /<tr hidden="" id="[^"]*" class="bg-gray-50 hidden md:table-row @min-\[936px\]:hidden">/);
+  assert.match(narrow, /<col class="hidden md:table-column @min-\[936px\]:hidden" style="width:44px"\/>/);
+  // A column kept off the phone card: the opener is on the phone alone, and the opened row shows that one column.
+  const phone = table([{ label: 'ก' }, { label: 'ข' }, { label: 'ค', mobile: false }]);
+  assert.match(phone, /<td class="[^"]*block md:hidden @min-\[936px\]:hidden"><button/);
+  assert.deepEqual([...(phone.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '').matchAll(/<dt[^>]*>([^<]*)<\/dt>/g)].map(match => match[1]), ['ค']);
+  const { AnalysisContent } = await import('./ExecutiveReportContent');
+  const money = { value: 9900, coverage: 'complete', reasonCodes: [], currency: 'THB' };
+  const row = { receiptsSatang: money, refundsSatang: money, netReceiptsSatang: money, taxSatang: { ...money, value: 648 }, feesSatang: { ...money, value: 361 } };
+  const data = { period: { month: '2026-09', isPartialMonth: false }, build: {}, coverage: { money, usage: money }, population: { eligibleCount: money, unclassifiedCount: 0 }, dataThrough: { lagging: [] }, reasonCodes: [], unmatchedMoney: { count: 0 },
+    revenue: { ...row, disputedInvoiceCount: 0, trend: [], byPurchaseGroup: [{ key: 'RENEWAL', label: 'ต่ออายุ', ...row }] } };
+  const purchase = html(AnalysisContent, { data, nav: { params: new URLSearchParams(), from: 'revenue', remember() {} }, seller: null });
+  const head = [...(purchase.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '').matchAll(/<th[^>]*title="([^"]*)"/g)].map(match => match[1]);
+  assert.deepEqual(head, ['ประเภทการซื้อ', 'เงินรับ (บาท)', 'คืนเงิน (บาท)', 'ยอดรับสุทธิ (บาท)', 'ภาษีมูลค่าเพิ่ม (บาท)', 'ค่าธรรมเนียม (บาท)']);
+  const openedRow = purchase.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '';
+  assert.match(openedRow, /<dt[^>]*>ภาษีมูลค่าเพิ่ม \(บาท\)<\/dt><dd[^>]*>[\s\S]*?6\.48/); assert.match(openedRow, /<dt[^>]*>ค่าธรรมเนียม \(บาท\)<\/dt><dd[^>]*>[\s\S]*?3\.61/);
+  // On the wide table all five figures are columns, so nothing is left to open there.
+  assert.match(purchase, /<td class="[^"]*block md:table-cell @min-\[936px\]:hidden"><button/);
+});
+
 test('owner 2026-10-05: ten companies a page, a pager nobody overlooks, and one line of header controls', async () => {
   const { reportQuery } = await import('./executive-reports.logic');
   const context = { currentMonth: '2026-10', defaultMonth: '2026-10', builtMonths: ['2026-10'], filters: { industry: [], discovery: [], referringSales: [] } } as any;
@@ -181,7 +209,13 @@ test('C7: the directory does not repeat the main payment status in the expander'
   const markup = html(CompaniesContent, { data, nav: { params: new URLSearchParams(), from: 'companies' } });
   const main = markup.replace(/<tr hidden=""[\s\S]*?<\/tr>/g, '');
   assert.equal(main.replace(/<[^>]*>/g, '').split('ยังไม่เคยชำระเงิน').length - 1, 1);
-  assert.doesNotMatch(markup.match(/executive-usage-summary[\s\S]*?<\/td>/)?.[0] ?? '', /ยังไม่เคยชำระเงิน/);
+  // In the opened row the status stands in for its column only: it is hidden wherever the column itself is on screen (a wide table),
+  // and the separate payment line is left out when the status already says the same.
+  const opened = markup.match(/data-row-details[\s\S]*?<\/td>/)?.[0] ?? '';
+  const repeats = opened.match(/<div class="[^"]*"><dt[^>]*>[^<]*<\/dt><dd[^>]*>(?:(?!<\/dd>)[\s\S])*ยังไม่เคยชำระเงิน/g) ?? [];
+  assert.equal(repeats.length, 1);
+  assert.match(repeats[0], /^<div class="min-w-0 block md:block @min-\[936px\]:hidden">/);
+  assert.doesNotMatch(opened, /สถานะการชำระ/);
 });
 
 test('round B d: every revenue tile belongs to the shared equal-width strip', () => {

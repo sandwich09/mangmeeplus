@@ -31,7 +31,7 @@ test('one status detail deduplicates reasons; cells and KPI digits never contain
   const { AnalysisContent } = await import('./ExecutiveReportContent');
   for (const coverage of ['complete', 'partial', 'unavailable'] as const) {
     const figure = coverage === 'complete' ? { ...cash, value: 9900, coverage, reasonCodes: [] } : { ...cash, coverage, knownValue: coverage === 'partial' ? 9900 : undefined };
-    const data = { ...envelope, coverage: { money: figure, usage: { value: 6, coverage: 'complete', reasonCodes: [] } }, revenue: { receiptsSatang: figure, refundsSatang: figure, netReceiptsSatang: figure, taxSatang: figure, feesSatang: figure, disputedInvoiceCount: 0, trend: [], byPurchaseGroup: [{ key: 'PLAN', label: 'แพ็กเกจ', receiptsSatang: figure, refundsSatang: figure, netReceiptsSatang: figure }] } } as unknown as ExecutiveAnalysis;
+    const data = { ...envelope, coverage: { money: figure, usage: { value: 6, coverage: 'complete', reasonCodes: [] } }, revenue: { receiptsSatang: figure, refundsSatang: figure, netReceiptsSatang: figure, taxSatang: figure, feesSatang: figure, disputedInvoiceCount: 0, trend: [], byPurchaseGroup: [{ key: 'PLAN', label: 'แพ็กเกจ', receiptsSatang: figure, refundsSatang: figure, netReceiptsSatang: figure, taxSatang: figure, feesSatang: figure }] } } as unknown as ExecutiveAnalysis;
     const markup = html(AnalysisContent, { data, nav, seller: null });
     const cells = markup.match(/<td\b[\s\S]*?<\/td>/g) ?? [];
     const values = markup.match(/data-executive-value[^>]*>[\s\S]*?<\/div>/g) ?? [];
@@ -191,9 +191,9 @@ test('row clicks open the link; inner control and expander events never navigate
   const node = file.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'ExecutiveTable')!;
   const code = ts.transpileModule(node.getText(file).replace(/^export /, '') + '\nreturn ExecutiveTable;', { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
   let expanded: string[] = [], navigations = 0, stopped = 0;
-  const deps = { React, Children: React.Children, W, useState: () => [expanded, (next: (old: string[]) => string[]) => expanded = next(expanded)], useId: () => 'table', isValidElement: React.isValidElement, Fragment: React.Fragment, Figure: design.Figure, IncompleteDot: design.IncompleteDot, ColumnMark: React.createContext(null), Link: 'a', hoistedSource: logic.hoistedSource, reasons: () => '', columnAlign: () => '', desktopColumn: () => 'md:table-cell', ChevronDownIcon: () => null };
+  const deps = { React, Children: React.Children, W, useState: () => [expanded, (next: (old: string[]) => string[]) => expanded = next(expanded)], useId: () => 'table', isValidElement: React.isValidElement, Fragment: React.Fragment, Figure: design.Figure, IncompleteDot: design.IncompleteDot, ColumnMark: React.createContext(null), Link: 'a', hoistedSource: logic.hoistedSource, reasons: () => '', columnAlign: () => '', desktopColumn: () => 'md:table-cell', shownOn: (_kind: string, on: readonly boolean[]) => on.map(yes => yes ? 'shown' : 'hidden').join(' '), ChevronDownIcon: () => null };
   const Table = new Function('deps', `const {${Object.keys(deps).join(',')}}=deps; ${code}`)(deps);
-  const rows = [{ key: 'one', href: '/system/executive/companies/one', cells: ['ร้าน ก', 6], details: 'ข้อมูลรอง' }];
+  const rows = [{ key: 'one', href: '/system/executive/companies/one', cells: ['ร้าน ก', 6], groups: [{ title: 'ข้อมูลรอง', items: [{ label: 'ชื่อจดทะเบียน', value: 'บริษัท ก' }] }] }];
   const elements = (node: React.ReactNode): React.ReactElement<any>[] => React.Children.toArray(node).flatMap(child => React.isValidElement<any>(child) ? [child, ...elements((child.props as { children?: React.ReactNode }).children)] : []);
   const render = () => elements(Table({ title: W.companies, columns: [{ label: W.company }, { label: W.days }], rows }));
   const row = render().find(element => element.type === 'tr' && element.props.onClick)!;
@@ -328,14 +328,18 @@ test('round B screenshots: purchase money has only header dots and incomplete tr
   const revenue = { receiptsSatang: cash, refundsSatang: cash, netReceiptsSatang: cash, taxSatang: cash, feesSatang: cash, disputedInvoiceCount: 0,
     byPurchaseGroup: ['FIRST', 'RENEWAL', 'UPGRADE', 'ADDON', 'UNKNOWN'].map((key, i) => {
       const value = { ...cash, knownValue: i === 3 ? undefined : 9900, coverage: i === 3 ? 'unavailable' : 'partial', reasonCodes: i === 3 ? ['ADDON_NOT_ON_SALE'] : ['BILLING_SCAN_NOT_COMPLETE'] };
-      return { key, label: W.purchase, receiptsSatang: value, refundsSatang: value, netReceiptsSatang: value };
+      return { key, label: W.purchase, receiptsSatang: value, refundsSatang: value, netReceiptsSatang: value, taxSatang: value, feesSatang: value };
     }),
     trend: ['2026-05', '2026-06', '2026-07', '2026-08', '2026-09', '2026-10'].map(month => ({ month, netReceiptsSatang: cash })),
   };
   const purchase = html(AnalysisContent, { data: { ...envelope, revenue }, nav, seller: null });
   const head = purchase.match(/<thead[\s\S]*?<\/thead>/)![0];
-  assert.equal((head.match(/executive-dot/g) ?? []).length, 3);
-  for (const td of purchase.match(/<td\b[\s\S]*?<\/td>/g) ?? []) assert.doesNotMatch(td, /executive-dot/);
+  // Five money columns (the row's own tax and fee included): the dot is on each header, never repeated in the cells under it.
+  assert.equal((head.match(/executive-dot/g) ?? []).length, 5);
+  const opened = purchase.match(/<tr hidden=""[\s\S]*?<\/tr>/g) ?? [];
+  for (const td of purchase.replace(/<tr hidden=""[\s\S]*?<\/tr>/g, '').match(/<td\b[\s\S]*?<\/td>/g) ?? []) assert.doesNotMatch(td, /executive-dot/);
+  // An opened row has no header above its figures, so each incomplete figure there carries its own dot.
+  assert.equal(opened.length, 5); for (const row of opened) assert.equal((row.match(/executive-dot/g) ?? []).length, 3);
   const trend = html(AnalysisContent, { data: { ...envelope, revenue }, nav: { ...nav, params: new URLSearchParams('view=trend') }, seller: null });
   const panel = trend.slice(trend.indexOf('id="executive-panel"'));
   assert.equal((panel.match(/executive-dot/g) ?? []).length, 1);

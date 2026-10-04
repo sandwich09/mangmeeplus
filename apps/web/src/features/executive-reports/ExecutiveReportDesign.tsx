@@ -195,7 +195,16 @@ export function ExecutiveTabs({ label, tabs, value, onChange }: { label: string;
   </div>;
 }
 export type ReportColumn = { label: string; width?: number; align?: 'left' | 'right'; control?: boolean; mobile?: boolean; hide?: 'narrow' | 'always'; sort?: 'ascending' | 'descending'; onSort?: () => void; source?: { coverage: ExecutiveCoverage; reasonCodes: readonly string[] }; sourceName?: string };
-type ReportRow = { key: string; cells: ReactNode[]; href?: string; details?: ReactNode; className?: string };
+/** A fact of an opened row, under its own label. With `column`, it stands in for that column and shows only where the column itself is not on screen. */
+export type ReportDetailItem = { label: string; value: ReactNode; column?: number };
+export type ReportDetailGroup = { title?: string; items: ReportDetailItem[] };
+type ReportRow = { key: string; cells: ReactNode[]; href?: string; groups?: ReportDetailGroup[]; action?: ReactNode; className?: string };
+// A table has three layouts: cards on a phone, a desktop table in a narrow card, and one in a wide card (936 px and up).
+// `shownOn` shows an element only on the layouts where it has something to show. Tailwind reads the names from here, so they are spelled out.
+type Layouts = readonly [phone: boolean, narrow: boolean, wide: boolean];
+const SHOWN = { block: ['block', 'md:block', '@min-[936px]:block'], cell: ['block', 'md:table-cell', '@min-[936px]:table-cell'], row: ['block', 'md:table-row', '@min-[936px]:table-row'], column: ['', 'md:table-column', '@min-[936px]:table-column'] } as const;
+const HIDDEN = ['hidden', 'md:hidden', '@min-[936px]:hidden'] as const;
+const shownOn = (kind: keyof typeof SHOWN, on: Layouts) => on.map((yes, layout) => yes ? SHOWN[kind][layout] : HIDDEN[layout]).join(' ');
 const desktopColumn = (column: ReportColumn, display: 'table-cell' | 'table-column') => column.hide === 'always' ? 'md:hidden' : column.hide === 'narrow' ? display === 'table-cell' ? 'md:hidden @min-[936px]:table-cell' : 'md:hidden @min-[936px]:table-column' : display === 'table-cell' ? 'md:table-cell' : 'md:table-column';
 export function ExecutiveTable({ title, columns, rows, remember, nameIndex = 0, compactMobile = false }: { title: string; columns: ReportColumn[]; rows: ReportRow[]; remember?: () => void; nameIndex?: number; compactMobile?: boolean }) {
   const [expanded, setExpanded] = useState<string[]>([]);
@@ -203,7 +212,15 @@ export function ExecutiveTable({ title, columns, rows, remember, nameIndex = 0, 
   const toggle = (key: string) => setExpanded(current => current.includes(key) ? current.filter(k => k !== key) : [...current, key]);
   if (!rows.length) return <p role="status" className="py-8 text-center text-sm text-gray-600">{W.noRows}</p>;
   const onMobile = (column: ReportColumn, index: number) => column.mobile ?? (index > nameIndex && index <= nameIndex + 6 && !column.control);
-  const hasMore = rows.some(row => row.details) || columns.some((column, i) => column.hide || (i !== nameIndex && !column.control && !onMobile(column, i)));
+  // Where a column's value is NOT in the row itself; an opened row shows it there, under its label.
+  const offRow = (index: number): Layouts => [!onMobile(columns[index], index), !!columns[index].hide, columns[index].hide === 'always'];
+  const anyOn = (parts: Layouts[]): Layouts => [parts.some(part => part[0]), parts.some(part => part[1]), parts.some(part => part[2])];
+  const groupsOf = (row: ReportRow) => (row.groups ?? [{ items: columns.flatMap((column, index) => index !== nameIndex && !column.control ? [{ label: column.label, value: row.cells[index], column: index }] : []) }] as ReportDetailGroup[])
+    .map(group => ({ ...group, items: group.items.filter(item => item.column === undefined || offRow(item.column).some(Boolean)) }))
+    .map(group => ({ ...group, on: anyOn(group.items.map(item => item.column === undefined ? [true, true, true] as const : offRow(item.column))) }));
+  // The control that opens a row exists only on the layouts where opening shows something (owner 2026-10-05: no control that does nothing).
+  const moreOn = anyOn(rows.flatMap(row => [...groupsOf(row).map(group => group.on), ...(row.action ? [[true, true, true] as const] : [])]));
+  const hasMore = moreOn.some(Boolean);
   const figures = (node: ReactNode): FigureProps[] => Children.toArray(node).flatMap(child => isValidElement<FigureProps & { children?: ReactNode }>(child) ? child.type === Figure ? [child.props] : figures(child.props.children) : []);
   const marks = columns.map((column, index) => {
     const values = rows.flatMap(row => figures(row.cells[index]));
@@ -219,20 +236,26 @@ export function ExecutiveTable({ title, columns, rows, remember, nameIndex = 0, 
   const more = (row: ReportRow) => <button type="button" aria-label={W.details} aria-expanded={expanded.includes(row.key)} aria-controls={`${id}-${row.key}`} className="inline-flex min-h-11 min-w-11 items-center justify-center gap-1 rounded px-1 text-brand-700 hover:bg-brand-50 focus-visible:outline-2 focus-visible:outline-brand-700" onClick={event => { event.stopPropagation(); toggle(row.key); }}><span className="text-xs md:hidden">{expanded.includes(row.key) ? W.less : W.more}</span><ChevronDownIcon aria-hidden="true" className={`size-4 shrink-0 ${expanded.includes(row.key) ? 'rotate-180' : ''}`} /></button>;
   return <div className="relative min-w-0 @container">
     <table className="block w-full border-collapse space-y-2 md:table md:table-fixed md:space-y-0">
-      <caption className="sr-only">{title}</caption><colgroup className="hidden md:table-column-group">{columns.map((column, i) => <col key={i} className={desktopColumn(column, 'table-column')} style={{ width: column.width ?? 120 }} />)}{hasMore && <col style={{ width: 44 }} />}</colgroup>
+      <caption className="sr-only">{title}</caption><colgroup className="hidden md:table-column-group">{columns.map((column, i) => <col key={i} className={desktopColumn(column, 'table-column')} style={{ width: column.width ?? 120 }} />)}{hasMore && <col className={shownOn('column', moreOn)} style={{ width: 44 }} />}{/* An opened row spans every column, also the ones a layout hides: these empty columns take that span, or the table would stop short of its card. */}{hasMore && columns.filter(column => column.hide).map((_, i) => <col key={`span-${i}`} style={{ width: 0 }} />)}</colgroup>
       <thead className="hidden md:table-header-group"><tr>{columns.map((column, index) => {
         const label = <span className="relative inline-flex items-center">{column.label}{column.sort && <span aria-hidden="true">{column.sort === 'ascending' ? ' ↑' : ' ↓'}</span>}{marks[index] && <span className="absolute left-full top-1/2 -translate-y-1/2"><IncompleteDot reason={marks[index]!.reason} /></span>}</span>;
         return <th key={index} scope="col" aria-sort={column.sort} title={column.label} className={`sticky top-20 z-30 h-11 whitespace-nowrap border-b border-gray-100 bg-gray-50 px-2 text-xs font-semibold text-gray-600 ${columnAlign(column, index, nameIndex)} ${desktopColumn(column, 'table-cell')}`}>{column.onSort ? <button type="button" onClick={column.onSort} className="min-h-11 whitespace-nowrap rounded focus-visible:outline-2 focus-visible:outline-brand-700">{label}</button> : label}</th>;
-      })}{hasMore && <th className="sticky top-20 z-30 bg-gray-50"><span className="sr-only">{W.details}</span></th>}</tr></thead>
+      })}{hasMore && <th className={`sticky top-20 z-30 bg-gray-50 ${shownOn('cell', moreOn)}`}><span className="sr-only">{W.details}</span></th>}</tr></thead>
       {rows.map(row => <tbody key={row.key} className="relative block rounded-lg border border-gray-100 bg-white p-2 md:table-row-group md:rounded-none md:border-0 md:p-0">
         <tr onClick={event => { if (row.href && !(event.target as HTMLElement).closest('a,button,input,label,summary')) event.currentTarget.querySelector<HTMLAnchorElement>('a[href]')?.click(); }} style={compactMobile ? { '--mobile-columns': columns.filter(onMobile).length } as CSSProperties : undefined} className={`relative grid ${compactMobile ? 'grid-cols-[repeat(var(--mobile-columns),minmax(0,1fr))]' : 'grid-cols-2'} gap-x-2 bg-white hover:bg-brand-25 md:table-row ${row.className ?? ''}`}>
-          {row.cells.map((value, index) => <td key={index} className={`min-w-0 border-gray-100 text-sm tabular-nums md:h-12 md:border-b md:px-2 md:py-1 ${index === nameIndex ? 'col-span-full block bg-inherit md:sticky md:left-0 md:z-0' : columns[index].control ? 'absolute right-16 top-0 z-10 md:static' : onMobile(columns[index], index) ? 'block whitespace-nowrap' : 'hidden whitespace-nowrap'} ${desktopColumn(columns[index], 'table-cell')} ${columnAlign(columns[index], index, nameIndex)} ${index !== nameIndex && (value === 0 || value === '0' || value === '0.00' || value === '0.0%') ? 'text-gray-600' : ''}`}>
+          {row.cells.map((value, index) => <td key={index} className={`min-w-0 border-gray-100 text-sm tabular-nums md:h-12 md:border-b md:px-2 md:py-1 ${index === nameIndex ? `col-span-full block bg-inherit md:sticky md:left-0 md:z-0 ${moreOn[0] ? 'min-h-11 content-center pr-16 md:min-h-0 md:pr-2' : ''}` : columns[index].control ? 'absolute right-16 top-0 z-10 md:static' : onMobile(columns[index], index) ? 'block whitespace-nowrap' : 'hidden whitespace-nowrap'} ${desktopColumn(columns[index], 'table-cell')} ${columnAlign(columns[index], index, nameIndex)} ${index !== nameIndex && (value === 0 || value === '0' || value === '0.00' || value === '0.0%') ? 'text-gray-600' : ''}`}>
             {index !== nameIndex && <span className={`${columns[index].control ? 'sr-only' : 'block truncate text-xs leading-4 text-gray-600 md:hidden'}`}>{columns[index].label}</span>}
             {index === nameIndex && row.href ? <Link href={row.href} onClick={remember} className="block min-h-11 content-center font-semibold text-brand-800 after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-brand-700">{value}</Link> : cell(row, index)}
           </td>)}
-          {hasMore && <td className="absolute right-0 top-0 z-10 block text-right md:relative md:table-cell md:h-12 md:border-b md:border-gray-100">{more(row)}</td>}
+          {hasMore && <td className={`absolute right-0 top-0 z-10 text-right md:relative md:h-12 md:border-b md:border-gray-100 ${shownOn('cell', moreOn)}`}>{more(row)}</td>}
         </tr>
-        {hasMore && <tr hidden={!expanded.includes(row.key)} id={`${id}-${row.key}`} className="block bg-gray-50 md:table-row"><td colSpan={columns.length + 1} className="block p-2 text-xs md:table-cell"><div data-extra-columns className="grid grid-cols-2 gap-2 md:flex md:flex-wrap md:gap-x-4">{columns.map((column, index) => index !== nameIndex && !column.control && <div key={index} className={`min-w-0 ${onMobile(column, index) ? 'hidden' : 'block'} ${column.hide === 'always' ? 'md:block' : column.hide === 'narrow' ? 'md:block @min-[936px]:hidden' : 'md:hidden'}`}><span className="block text-gray-600">{column.label}</span>{cell(row, index)}</div>)}</div>{row.details}</td></tr>}
+        {hasMore && <tr hidden={!expanded.includes(row.key)} id={`${id}-${row.key}`} className={`bg-gray-50 ${shownOn('row', moreOn)}`}><td colSpan={columns.length + 1} className="block p-3 md:table-cell md:px-4"><div data-row-details className="space-y-3">
+          {groupsOf(row).map((group, index) => <section key={index} className={shownOn('block', group.on)}>
+            {group.title && <h3 className="mb-1.5 text-xs font-semibold text-brand-800">{group.title}</h3>}
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 @min-[640px]:grid-cols-3 @min-[936px]:grid-cols-4">{group.items.map((item, i) => <div key={i} className={`min-w-0 ${item.column === undefined ? '' : shownOn('block', offRow(item.column))}`}><dt className="text-xs leading-4 text-gray-600">{item.label}</dt><dd className="break-words text-sm leading-5 tabular-nums [overflow-wrap:anywhere]">{item.value}</dd></div>)}</dl>
+          </section>)}
+          {row.action && <div className="flex md:justify-end">{row.action}</div>}
+        </div></td></tr>}
       </tbody>)}
     </table>
   </div>;
