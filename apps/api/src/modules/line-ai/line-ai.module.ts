@@ -149,6 +149,7 @@ import { LineCaptureResultsInternalController } from './presentation/http/line-c
 import { LineCaptureResultNotifierUseCase } from './application/use-cases/line-capture-result-notifier.use-case';
 import { LineExplainFileAttemptTool } from './application/use-cases/line-file-attempt.tool';
 import { LineWebhookController } from '../auth/presentation/line-webhook.controller';
+import { LineOfficialWebhookController } from '../auth/presentation/line-official-webhook.controller';
 
 const erpTools = [
   LineExplainFileAttemptTool,
@@ -248,7 +249,7 @@ const erpTools = [
     // LINE "ฉันมีส่วนลดไหม": the owner-only ส่วนลดจากงาน read the package page uses (sales-event spec §8.1).
     BillingModule,
   ],
-  controllers: [LineDocumentQaInternalController, InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineCaptureResultsInternalController, LineWebhookController],
+  controllers: [LineDocumentQaInternalController, InternalToolsController, InternalAiBudgetController, LineAiLedgerInternalController, LineCaptureResultsInternalController, LineWebhookController, LineOfficialWebhookController],
   providers: [
     LineReplyAdapter,
     ActorDelegationService,
