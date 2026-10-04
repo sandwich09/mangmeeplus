@@ -311,7 +311,7 @@ export class ExecutiveReportBuildUseCase {
       const lastReceiptAt = later(receipt?.lastReceiptAt, oldFacts?.lastReceiptAt ? new Date(oldFacts.lastReceiptAt) : null);
       const knownRecent = (since: Date) => lastReceiptAt && lastReceiptAt >= since ? 1 : 0;
       const knownDays30 = knownRecent(since30) && firstReceiptAt && firstReceiptAt >= since30 && lastReceiptAt && bangkokDayStart(firstReceiptAt) < bangkokDayStart(lastReceiptAt) ? 2 : knownRecent(since30);
-      const sheetFacts = { asOf: asOf.toISOString(),
+      const sheetFacts = {
         unmatchedMoneyMonths,
         aiRequests30: seen?.aiRequests30 ?? 0, aiUsageSince: aiSince._min.createdAt?.toISOString() ?? null,
         firstReceiptAt: firstReceiptAt?.toISOString() ?? null,

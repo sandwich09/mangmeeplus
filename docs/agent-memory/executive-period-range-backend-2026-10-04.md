@@ -1,18 +1,22 @@
 # Agent Memory: executive-period-range-backend-2026-10-04
 
 Status:
-- Round 2 implemented after controller commits a8b23ea4a / 5f8951dde; changes uncommitted for review. Final focused checks and locked API typecheck pass. Final whitespace check refreshed below.
+- Round 2 committed by controller as b47eb4a9c. Round 3 fixes only the two reported build-spec failures; changes remain uncommitted. Final focused non-DB checks, locked API typecheck and whitespace check pass.
 - No web implementation, package.json, dependencies, paid-invoice.ts, billing-schedule.ts, network, docker, server, W00/manifest or pins changes. Additive migration/schema are explicitly authorized by this round.
 
 Owner:
 - Codex backend/contracts/Excel lane. Controller reviews/commits and runs real PostgreSQL and browser/capacity acceptance; web integration is another lane.
 
 Scope:
+- Round 3: remove clock-only sheetFacts changes; correct the FULL-backfill case's date-dependent expectations and historical refresh. No contracts, schema, migration, web or user-facing words changed in this round.
 - Fix controller's RB22 allow-list and exact audit metadata cases; filenames use the applied export period.
 - Churn at selected-period reference date, separate data-date infographic, company sheet columns/filter/sort, contact-page audits, shared team-note read/write/access flag, Excel and shared Thai words.
 - Reuse monthly summaries and existing counted-action SQL. No second note store or permission/concurrency/audit implementation.
 
 Decisions:
+- Round 3: sheetFacts contains no asOf timestamp. Rolling lower boundaries remain Bangkok midnight minus 6/29 dates; the upper cutoff remains build.asOf. Stable source rows on one data date give stable stored facts; date rollover may legitimately age counts. Reads/Excel counted-to, days-left and days-since derive their reference from build.asOf, never the removed JSON field.
+- Checked monthly lastActivityAt/activityHistorySince/activitySnapshotReady: last use comes from counted source dates/saved snapshots, history from the fixed first build/source collection boundary, readiness from source-date uncertainty. No per-round time is stored in these fields; the existing snapshot-equality test includes all three.
+- The failing purge-month expectation was wrong: earlier PG cases move clock to November, so this fixture's six receipts are in October. Expected purge months now come from the inserted fixture dates. FULL still explicitly proves September is included and its last-use facts are present. Simulated lost August dates need another FULL to refresh September; a later observed action's readiness is checked at the actual current month, not hard-coded October.
 - Read AGENTS.md and repository ponytail full skill first. Small existing helper/pattern diff, no new dependency.
 - Owner 2026-10-04 replaces Q39: “เลิกใช้ 1 เดือน และต้องบอกด้วยว่าไม่ได้ใช้ติดต่อกันเกิน 1 เดือน”. Churn requires prior counted use and Bangkok reference DATE strictly greater than last-use DATE plus one calendar month, clamped to the next month's last day. Exactly one month is excluded. Closed period reference is its final month end; current month uses build.asOf DATE. Never used is separate.
 - Counted use remains member-confirmed expense excluding internal API captures, member-issued document, successful MODEL_CALL on line-turn. New AI30 figure filters the same atoms/ref counting; no second definition.
@@ -33,6 +37,7 @@ Open questions:
 - Current isolated web reason-map still fails RANGE_MONTH_NOT_BUILT. Controller says web lane fixed it elsewhere; not checked after merge here. Shared executiveSourceReasonText covers all reason codes, including SHEET_FACTS_NOT_BUILT, with coverage-aware Thai words.
 
 Artifacts:
+- Round 3 files: executive-report-build.use-case.ts, executive-company-sheet.logic.ts, registered build/read pg specs, backend §23.7, this note. Added PG regression for same-date fact equality and next-date 7/30-day ageing with no source changes. Read fixtures omit obsolete JSON asOf; assertions retain data-date block/sheet/Excel counted-to, days-left, receipt days-since and historical use days-since.
 - Migration 20261004150000_executive_company_sheet_facts: ExecutiveCompanyMonth lastActivityAt/activityHistorySince/activitySnapshotReady; ExecutiveCompanyProfile sheetFacts/businessTypeCode/businessTypeOther. Nullable fields + false default; no destructive operation or transaction-table change.
 - Next FULL build fills all historical monthly last-use snapshots and current profile receipt dates/windows/statuses, business type, AI30, history boundaries, purge/unmatched months. It cannot recover dates deleted before any snapshot; those remain unknown. Hourly builds update current/previous snapshots and current profile facts; FULL is necessary for older months.
 - Contracts web handoff: ExecutiveCompanySheet, ExecutiveInactivity, ExecutiveChurn, ExecutiveAsOfFigures/ExecutiveAsOfCount, ExecutiveReportNote, ExecutiveCompanyNoteBody/Result, canonical access alias; overview.churn/asOfFigures; row/detail sheet/inactivity/ownerContact/note/canEditNote; row.coverage intentional; envelope coverage.aiCost/sourceStatus with per-source reasons/affectedMonths/dataThrough; bounded history carries envelope status; churnedCompanies comparisons; 8 query/filter keys and 20 new numeric/date sorts (see backend §23.8); shared sheet words/35 columns/sort/reason/plan-label helpers.
@@ -40,6 +45,8 @@ Artifacts:
 - Backend spec §23.7–23.8 and decision register; UI and Excel spec appendices. Round 1 implementation/evidence preserved in a8b23ea4a; this note replaces superseded Q39/status text.
 
 Verification:
+- Round 3 controller baseline on b47eb4a9c: 442 pass/2 fail, both registered build PG cases. Local PG execution not checked (no DB); no old files restored, no whole-suite run. Final command `pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/executive-business/executive-report-build.pg.spec.ts src/modules/executive-business/executive-report-read.pg.spec.ts`: exit 0, 69 pass/0 fail; both real-PG suites explicitly SKIP. The initial focused run also passed 69/0.
+- Round 3 `/private/tmp/claude-501/-Users-thawatchai-Project-MangmeeYungYuen-mangmeeplus/6fadd91a-5682-4234-a498-2e23f77e8587/scratchpad/codex/heavy.sh pnpm --filter @watchdog-bms/api typecheck`: exit 0 after waiting for the shared lock. `git diff --check`: exit 0. Contracts build not run because contracts did not change. Only six scoped files changed; no user-facing words changed.
 - Prerequisite pnpm --filter @watchdog-bms/api exec prisma generate and pnpm --filter @watchdog-bms/contracts build: exit 0. Prisma generate repeated after additive schema: exit 0. Migration not applied here (no DB).
 - Controller baseline PG: 429 pass, 2 fail (RB22 coverage allow-list; period in company-read audit). Both expectations corrected intentionally, plus a range audit case and Thai-only plan/detail-history label expectations. PG red/green not checked locally.
 - RED proof: saved production bytes, wrote HEAD production versions by git show, removed the new helper for baseline, ran registered read/build/auth/partner-member-console spec files with node --import tsx --test --test-reporter=spec, restored every saved byte in finally (no git mutations). Exit 1: 184 tests, 158 pass/26 fail. Failures = all 11 new read cases + 9 adapted workbook cases + 1 build revision case + 3 HTTP/permission cases + 2 executive-access cases. The exact same updated tests run GREEN below.
@@ -68,5 +75,6 @@ Verification:
 - Read-only inspection of built contracts via node --input-type=module: exit 0; all 20 source reason codes and 20 added sort labels printed in Thai for the final words handoff. This is an inspection, not another test count.
 
 Next:
+- Round 3: controller reruns registered build/read real-PG specs, including same-date/midnight regression. Contracts build not required in this round (no contracts edits).
 - Controller applies additive migration and runs next FULL summary build, registered read/build PG specs with their disposable DB variables, full verification, real Excel opening/capacity/browser checks. No sandbox-refused commands occurred.
 - Web lane consumes backend §23.8 types/filters/sorts/words and note/access aliases; updates reason map and page-level source banner, asOf drilling, churn definition/date/help, notes and contact gating. Re-run the three web specs after merge.

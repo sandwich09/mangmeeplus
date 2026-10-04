@@ -716,6 +716,7 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
   });
   it('backfills cutoff last-use dates, rolling receipt boundaries and bucket-edge sheet facts in a FULL build', async () => {
     const asOf = nextDay(), since7 = new Date(bangkokDayStart(asOf).getTime() - 6 * 86_400_000), since30 = new Date(bangkokDayStart(asOf).getTime() - 29 * 86_400_000);
+    const receiptMonths = new Set<string>();
     for (const n of [0, 1, 5, 6]) {
       const id = `sheet-${n}`; await company(id, { reportClassification: 'CUSTOMER', createdAt: at('2026-08-10T00:00:00Z'), businessTypeCode: 'OTHER', businessTypeOther: 'ค้าปลีก' });
       const user = await person(id);
@@ -723,18 +724,20 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
       await document(id, user, '2026-08-30T17:00:00Z'); // Aug31, counted use, not a receipt
       for (let i = 0; i < n; i++) {
         const createdAt = n === 1 ? new Date(asOf.getTime() - 1) : n === 6 && i === 0 ? new Date(since30.getTime() - 1) : n === 6 && i === 5 ? since7 : new Date(since30.getTime() + i * 86_400_000);
+        if (n === 6) receiptMonths.add(executiveMonthOf(createdAt));
         const row = await expense(id, user, null, 'WEB_UPLOAD', createdAt.toISOString());
         if (i === 1) await client.expenseRecord.update({ where: { id: row.id }, data: { status: 'NEEDS_REVIEW' } });
       }
     }
     await aiEvent('sheet-6', new Date(asOf.getTime() - 1).toISOString());
     const result = built(await build.rebuild(asOf)); assert.equal(result.kind, 'FULL');
+    assert.ok(result.months.includes('2026-09'));
     const firstBuildAt = (await client.executiveReportBuild.aggregate({ _min: { asOf: true } }))._min.asOf!;
     for (const n of [0,1,5,6]) {
       const p = await profile(`sheet-${n}`), september = (await monthRow(p.companyId, '2026-09'))!, facts = p.sheetFacts as any;
       assert.equal(p.expenseReceiptCountLifetime, n); assert.equal(p.businessTypeOther, 'ค้าปลีก'); assert.equal(p.activeMemberCount, n === 6 ? 0 : 1);
       assert.equal(september.lastActivityAt!.toISOString(), '2026-08-30T17:00:00.000Z'); assert.equal(september.activitySnapshotReady, true);
-      assert.equal(facts.asOf, asOf.toISOString()); assert.equal(facts.sourceCount, n);
+      assert.equal(Object.hasOwn(facts, 'asOf'), false); assert.equal(facts.sourceCount, n);
       assert.equal(facts.aiRequests30, n === 6 ? 1 : 0);
       assert.ok(september.activityHistorySince! >= firstBuildAt);
       assert.ok(new Date(facts.activityHistorySince) >= firstBuildAt);
@@ -746,18 +749,32 @@ describe('executive report build on real PostgreSQL', { skip: !databaseUrl }, ()
     await build.rebuild(minuteLater());
     const after = await profile(id), facts = after.sheetFacts as any;
     assert.equal(after.expenseReceiptCountLifetime, 6); assert.equal(facts.lastReceiptAt, stored.lastReceiptAt); assert.equal(facts.receipts7, 1); assert.equal(facts.sourceCount, 0);
-    assert.deepEqual(facts.purgedReceiptMonths, ['2026-09', '2026-10']);
+    assert.deepEqual(facts.purgedReceiptMonths, [...receiptMonths].sort());
     assert.equal((await monthRow(id, '2026-09'))!.lastActivityAt!.toISOString(), '2026-08-30T17:00:00.000Z');
     // Legacy held usage has no date until a later observed action supersedes its whole month.
     await client.executiveCompanyMonth.update({ where: { companyId_month_definitionVersion: { companyId: id, month: '2026-08', definitionVersion: 1 } }, data: { activitySnapshotReady: false, lastActivityAt: null } });
     await client.accountingDocument.deleteMany({ where: { companyId: id } });
-    await build.rebuild(minuteLater());
+    assert.equal(built(await build.rebuild(nextDay())).kind, 'FULL'); // September is outside the current hourly window.
     assert.equal((await monthRow(id, '2026-09'))!.activitySnapshotReady, false);
     const staff = (await client.companyMembership.findFirstOrThrow({ where: { companyId: id } })).userId;
     await document(id, staff, new Date(clock.getTime() - 1).toISOString());
     await build.rebuild(minuteLater());
-    assert.equal((await monthRow(id, '2026-10'))!.activitySnapshotReady, true);
+    assert.equal((await monthRow(id, executiveMonthOf(clock)))!.activitySnapshotReady, true);
     assert.equal((await profile(id)).sheetFacts && ((await profile(id)).sheetFacts as any).activitySnapshotReady, true);
+  });
+  it('keeps rolling facts unchanged within a Bangkok date and ages them at midnight without new source rows', async () => {
+    const id = 'sheet-clock'; await company(id, { reportClassification: 'CUSTOMER' });
+    const user = await person(id), day = bangkokDayStart(clock);
+    for (const days of [6, 29]) await expense(id, user, null, 'WEB_UPLOAD', new Date(day.getTime() - days * 86_400_000).toISOString());
+    await build.rebuild(minuteLater());
+    const before = (await profile(id)).sheetFacts as any;
+    assert.deepEqual([before.receipts7, before.receipts30], [1, 2]);
+    await build.rebuild(minuteLater());
+    assert.deepEqual((await profile(id)).sheetFacts, before);
+    await build.rebuild(nextDay());
+    const after = (await profile(id)).sheetFacts as any;
+    assert.deepEqual([after.receipts7, after.receipts30], [0, 1]);
+    assert.equal((await profile(id)).expenseReceiptCountLifetime, 2);
   });
 
 });

@@ -4,7 +4,7 @@ import { bangkokDayStart, executiveMonthOf, executiveMonths } from './executive-
 import type { ExecutiveCompanyProfile, ExecutiveCompanyMonth } from '../../../generated/prisma/client';
 
 const DAY = 86_400_000;
-export type ReceiptSheetFacts = { asOf: string; firstReceiptAt: string | null; lastReceiptAt: string | null;
+export type ReceiptSheetFacts = { firstReceiptAt: string | null; lastReceiptAt: string | null;
   receipts7: number; receipts30: number; receiptDays30: number; confirmed: number; pending: number; draft: number; sourceCount: number;
   activityHistorySince: string | null; activitySnapshotReady: boolean; receiptHistorySince: string | null; receiptCountersHeld: boolean; purgedReceiptMonths?: string[]; aiRequests30?: number; aiUsageSince?: string | null; unmatchedMoneyMonths?: string[] };
 export const bangkokDate = (at: Date) => new Date(bangkokDayStart(at).getTime() + 7 * 3_600_000).toISOString().slice(0, 10);

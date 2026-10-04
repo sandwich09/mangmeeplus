@@ -1630,7 +1630,7 @@ function sheetSourceFixture() {
   const f = rangeSourceFixture();
   f.profiles.forEach((p: any, i) => Object.assign(p, { businessTypeCode: 'OTHER', businessTypeOther: 'ร้านอาหาร', planEndsAt: at(i === 0 ? '2026-10-01T17:00:00Z' : i === 1 ? '2026-10-10T02:30:00Z' : '2026-10-03T05:00:00Z'), activeMemberCount: 2, branchCount: 1,
     firstActivityAt: i === 2 ? null : at('2026-07-01T00:00:00Z'), lastActivityAt: i === 2 ? null : at('2026-08-30T17:00:00Z'),
-    expenseReceiptCountLifetime: [0, 5, 6][i], sheetFacts: { asOf: f.build.asOf.toISOString(), firstReceiptAt: i ? '2026-08-01T00:00:00Z' : null,
+    expenseReceiptCountLifetime: [0, 5, 6][i], sheetFacts: { firstReceiptAt: i ? '2026-08-01T00:00:00Z' : null,
       lastReceiptAt: i ? '2026-10-02T00:00:00Z' : null, receipts7: i, receipts30: i + 1, receiptDays30: i, confirmed: i, pending: i, draft: 0, sourceCount: [0,5,6][i],
       unmatchedMoneyMonths: [], aiRequests30: i, aiUsageSince: '2026-01-01T00:00:00Z', activityHistorySince: '2026-01-01T00:00:00Z', activitySnapshotReady: true, receiptHistorySince: '2026-01-01T00:00:00Z', receiptCountersHeld: false } }));
   f.source.forEach(row => Object.assign(row, { activitySnapshotReady: true, activityHistorySince: at('2026-01-01T00:00:00Z'), lastActivityAt: row.month < '2026-09' ? at('2026-07-01T00:00:00Z') : row.companyId === 'fiction-2' ? null : at('2026-08-30T17:00:00Z') }));
@@ -1683,6 +1683,8 @@ describe('executive owner sheet and churn without PostgreSQL', () => {
     assert.equal(result.churn.comparison?.status, 'ZERO_BASE');
     const list = await f.report.companies(f.ctx, { from: '2026-09', to: '2026-09', churned: 'true', sortBy: 'daysSinceLastUse' });
     assert.deepEqual(list.items.map(row => row.id), ['fiction-1']);
+    assert.equal(list.items[0]!.inactivity.referenceDate, '2026-09-30');
+    assert.equal(list.items[0]!.inactivity.daysSinceLastUse, 60);
     const never = await f.report.companies(f.ctx, { ...f.query, neverUsed: 'true' }); assert.deepEqual(never.items.map(row => row.id), ['fiction-2']);
   });
   it('returns rolling figures at the data date, bucket edges, filters and date/number sorts', async () => {
@@ -1695,6 +1697,8 @@ describe('executive owner sheet and churn without PostgreSQL', () => {
     assert.deepEqual(list.items.map(row => row.id), ['fiction-1']);
     const recent = await f.report.companies(f.ctx, { ...f.query, receiptAdded30: 'true', sortBy: 'receipts30', sortDir: 'desc' });
     assert.deepEqual(recent.items.map(row => row.id), ['fiction-2', 'fiction-1', 'fiction-0']);
+    assert.equal(recent.items[0]!.sheet.asOf, f.build.asOf.toISOString());
+    assert.equal(recent.items[0]!.sheet.daysSinceLastReceipt, 1);
     assert.equal(recent.items[0]!.sheet.daysLeft, 0); assert.equal(recent.items[2]!.sheet.daysLeft, null); assert.equal(recent.items[2]!.sheet.packageExpired, true);
     assert.equal(recent.items[1]!.sheet.daysLeft, 7);
     assert.equal(recent.items[0]!.sheet.aiRequests30.value, 2);
@@ -1760,6 +1764,8 @@ describe('executive owner sheet and churn without PostgreSQL', () => {
     const cache = overview.get('xl/charts/chart2.xml')!.match(/<c:numCache>([\s\S]*?)<\/c:numCache>/)![1]!;
     assert.match(cache, /<c:pt idx="1"><c:v>0<\/c:v>/);
     assert.ok(overview.get('xl/worksheets/sheet1.xml')!.includes(words.EXECUTIVE_SHEET_WORDS.asOfHelp));
+    const { xlsxThaiDate } = await import('../../common/export/xlsx.logic');
+    assert.ok(overview.get('xl/worksheets/sheet1.xml')!.includes(`${words.EXECUTIVE_SHEET_WORDS.asOf} · ${xlsxThaiDate(f.build.asOf)}`));
     assert.ok(overview.get('xl/worksheets/sheet1.xml')!.includes('สัดส่วนจากบริษัทที่เคยใช้'));
   });
 });
