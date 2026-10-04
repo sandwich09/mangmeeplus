@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Header, HttpCode, Param, Patch, Post, Put, Query, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
@@ -23,6 +23,8 @@ import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import {
   ALL_FEATURE_ENTITLEMENT_KEYS,
+  COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS,
+  type PutCompanyTeamNoteBody,
   LEGAL_IDENTITY_CORRECTION_REASONS,
   PARTNER_ADJUSTMENT_REASON_MAX_LENGTH,
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
@@ -44,6 +46,7 @@ import { trustedPublicApiBase } from '../../../../common/http/public-api-base';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { assertPlatformTenant } from '../../../sales-console/application/sales-context';
 import { ListThaiAddressesUseCase } from '../../../employee-access/application/use-cases/list-thai-addresses.use-case';
+import { CompanyTeamNoteService } from '../../application/company-team-note.service';
 import { ListPartnersUseCase } from '../../application/use-cases/list-partners.use-case';
 import { GetPartnerDetailUseCase } from '../../application/use-cases/get-partner-detail.use-case';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
@@ -75,6 +78,11 @@ import { PartnerAiCreditHoldsUseCase } from '../../application/use-cases/partner
 
 /** Derived from the frozen catalog so the DTO can never drift from the presets it validates. */
 const PLAN_TIER_KEYS = Object.keys(PLAN_TIER_PRESETS) as PlanTierKey[];
+
+export class PutCompanyTeamNoteDto implements PutCompanyTeamNoteBody {
+  @IsString() text!: string;
+  @IsInt() @Min(0) expectedVersion!: number;
+}
 
 export class UpdateProfileBodyDto {
   @IsString() @IsOptional() name?: string;
@@ -276,6 +284,7 @@ export class PartnerController {
     private readonly updateIdentity: UpdatePartnerIdentityUseCase,
     private readonly listThaiAddresses: ListThaiAddressesUseCase,
     private readonly setManualExpenseWebEntryUseCase: SetPartnerManualExpenseWebEntryUseCase,
+    private readonly companyTeamNote: CompanyTeamNoteService,
   ) {}
 
   @Get()
@@ -353,6 +362,23 @@ export class PartnerController {
   @ApiResponse({ status: 404 })
   detail(@Param('partnerCompanyId') companyId: string) {
     return this.getDetail.execute(companyId);
+  }
+
+  @Get(':partnerCompanyId/team-note')
+  @Header('Cache-Control', 'no-store')
+  @RequirePermissions('system.partner_dashboard.read')
+  getTeamNote(@Param('partnerCompanyId') companyId: string, @Req() req: AuthedRequest) {
+    return this.companyTeamNote.get(req.context, companyId);
+  }
+
+  @Put(':partnerCompanyId/team-note')
+  @Header('Cache-Control', 'no-store')
+  @RequirePermissions('system.partner_company.update')
+  putTeamNote(@Param('partnerCompanyId') companyId: string, @Body() body: PutCompanyTeamNoteDto, @Req() req: AuthedRequest) {
+    if (!req.context.roles.includes('SYSTEM_ADMIN')) {
+      throw new ForbiddenException({ code: 'company_team_note_edit_denied', message: NOTE_WORDS.editDenied });
+    }
+    return this.companyTeamNote.put(req.context, companyId, body);
   }
 
   @Patch(':partnerCompanyId')

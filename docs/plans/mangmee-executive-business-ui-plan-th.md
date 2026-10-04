@@ -1,5 +1,7 @@
 # แผนหน้าจอผู้บริหารมั่งมี
 
+ส่วนเพิ่ม 4 ต.ค. 2569: งานช่วงเดือนและ layout ตาม [UI §14](../specs/mangmee-executive-business-ui-spec-th.md#14-ช่วงเดือนและรูปแบบหน้ารายงาน--2026-10-04) / [BE §23](../specs/mangmee-executive-business-backend-spec-th.md#23-รายงานตามช่วงเดือน--มติ-2026-10-04) ใช้ลำดับ R1–R4 ในแผนหลังบ้าน §7 แทนกติกาเดือนเดียว/ไม่เทียบช่วงเดิม ยังไม่ implement และยังไม่ผ่าน browser acceptance; [running note](../agent-memory/executive-period-range-spec-2026-10-04.md) บันทึกงานรอบนี้
+
 คำที่แสดงบนหน้าจอล่าสุด: [ใช้คำที่คนทั่วไปเข้าใจ](../specs/mangmee-executive-plain-language-spec-th.md) — เมนู “รายรับ”, แท็บ “ลูกค้าที่สร้างรายรับสูง”; identifiers/สูตรเดิมคงไว้
 
 มติล่าสุด 2026-10-01: **พักและซ่อน EX-05/06 และคำร้องใน EX-04**; scope ปัจจุบันเป็นรายงานและบัญชีผู้บริหาร. Checkmarks เกี่ยวกับโครงคำร้อง/hold ด้านล่างเป็นประวัติเดโมเดิม ไม่ใช่ feature ที่เปิดในเดโมปัจจุบันหรือเกณฑ์ตรวจรับรอบนี้
@@ -210,7 +212,7 @@ static check อย่างเดียวไม่ยืนยัน open drop
 - [x] Localdemo แยกusage/revenue/customers/compare; overviewสั้น; mobilemenuใช้themedselector; deletionยังซ่อน
 - [x] Localbrowserตรวจroutes/Back/A-B/groupdenominator/theme และsaved-state migration
 - [ ] เมื่อimplement เพิ่มroute/sectionและcomparisoncontractพร้อมsnapshot/coverage/permissionตามspec; ไม่ส่งทุกanalysisdatasetทุกครั้งโดยไม่จำเป็น
-- [ ] แหล่งข้อมูลเดือนก่อนและequal-period comparisonยังรอintegration; ห้ามเปิดgrowth%จากข้อมูลตัวอย่างไม่ครบ
+- [ ] Q37 เปิดช่วงก่อนยาวเท่ากันแล้ว; เชื่อมตาม R1–R4 และ BE §23.4 ห้ามใช้ข้อมูลตัวอย่างไม่ครบสร้าง delta
 - [ ] ในแอปจริง เมนูมือถือใช้ปุ่ม “เมนู” เดิมของ `SystemHeader` ไม่ใช้ dropdown ของต้นแบบ และชุดหน้าเป็นไปตามสเปกหน้าจอ §3 ซึ่งเอกสารโครงหน้าแก้ให้ตรงกันแล้ว (RU-06, RU-07)
 
 
@@ -241,3 +243,21 @@ EXL13–14เพิ่มintegrationacceptance; baseline188/47deferredไม่�
 - [ ] นำเฉพาะเอกสารและต้นแบบส่วนผู้บริหารเข้า main/develop ผ่าน PR และ CI; ไม่รวมไฟล์ลูกค้าจริงหรืองานค้างของส่วนอื่น
 
 ขอบเขตนี้ไม่เริ่ม application/API implementation และไม่ deploy UAT/Production
+
+
+## 6. แผนเว็บช่วงเดือนและรูปแบบผู้บริหาร — 2026-10-04
+
+ทะเบียน stage/test/fixture/คำสั่งชุดเดียวอยู่ใน [แผนหลังบ้าน §7](mangmee-executive-business-backend-plan-th.md#7-แผนช่วงเดือนและหน้ารายงานสำหรับผู้บริหาร--2026-10-04) ไม่สร้าง checklist สูตรอีกชุด ตารางนี้กำหนดสิ่งที่เว็บต้องส่งให้แต่ละ stage ตรวจรับ:
+
+| ขั้น / สถานะ | งานเว็บและการเชื่อม | tests/หลักฐานก่อนส่งต่อ |
+|---|---|---|
+| R1 / ยังไม่เริ่ม | รอ contracts/context/range read พร้อมตาม BE §23; เทียบ shape ของ appliedFilters/monthlySeries/comparisons/monthlyHistory/coverage/revision กับหน้า/API client เดิม ระบุ CURRENT แยกจากค่าในช่วง | RP01–RP10 ผ่านฝั่ง API; contracts build แล้ว ไม่มีการใช้ type cast/คำนวณเองกลบข้อมูลที่ยังไม่มี |
+| R2 / ยังไม่เริ่ม | ปรับ reports logic/API client/page/content เดิม แถบเดียว draft+chips+summary+clear; คู่เดือนใน URL และ origin migration; กราฟ/KPI/สองคอลัมน์/drilldown ตาม UI §14.3; shell/fields/tokens/fonts เดิม | เพิ่ม regression RP11–RP14 ใน executive-reports.logic.spec.ts, ExecutiveReportContent.spec.ts, ExecutiveReports.wiring.spec.ts ที่ glob รัน; เดือนเดียว/หลายเดือน/ALL/empty/partial/403/response race/Back และ focus/table ของกราฟต้องมี red เก่า–green ใหม่ |
+| R3 / ยังไม่เริ่ม | export panel/logic ใช้ latest applied state และ buildId; ไม่สร้างจาก draft ไม่ส่ง segment ที่ไม่มีผล; P06/P09–P14/P24–P29 ตรงไฟล์และหน้า; ชื่อไฟล์คู่เดือนภาษาไทย | RP15/RP17/RP18 ใน executive-export.logic.spec.ts และ PG read spec ฝั่ง API; manifest/preview/ทุกหน้าผลกรอง/สองฝั่ง/ข้อมูลติดต่อ/409/422 ตรงคำขอ ไม่มี fallback เป็นเดือนเดียว |
+| R4 / ยังไม่เริ่ม | controller เปิดจอจริงจาก API/PG fixtures และผลตรวจ gap analysis ที่ merge ใน UI §14.5; desktop + 390 px/zoom 200%/keyboard/เปิด picker และ select จริง | RP19–RP20, screenshots ทุกหน้า/สถานะ การเจาะและ Back ไฟล์เปิดจริงและ cached chart values; บันทึกเวลาหรือความจำที่วัดจริง ไม่ใช้ภาพ preview ยืนยันว่าจอจริงผ่าน |
+
+กติกา test: รอบนี้ไม่มี test/code เปลี่ยน เป็น spec/plan only; implementation ต้องเขียน test ก่อน fix แล้วรัน node + tsx loader ตาม lane commands ห้ามใช้ tsx CLI หรือเพิ่มรายการ test ใน package.json API ใช้ PG spec เดิมที่ CI เรียก; typecheck/whole suite ผ่าน heavy.sh เท่านั้น ตรวจคำเก่าทุก API/ai-gateway/web/e2e spec เมื่อเปลี่ยน runtime words และรายงาน red/green ทีละ test ไม่ถือ skip PG เป็น pass
+
+ข้อเปิด/ความเสี่ยงที่ต้องเห็นใน handoff: Q38 preset ที่ขอบยังไม่ built, Q39 นิยาม churn, Q40 ผู้ใช้ไม่ซ้ำหลายเดือนและ Q41 ฐานเพดานแถวส่งออกตาม BE §23.5; ALL ยาวทำแกน/คำกำกับล้นหรือไฟล์เกินเพดาน, current period เทียบเต็มเดือนก่อน, from เดิมชนชื่อเดือน, response ข้ามช่วง/ชุด, CURRENT values ถูกอ่านเป็น historical; กติกาลดความเสี่ยงและ capacity อยู่แผนหลังบ้าน §7.4 ไม่มีการขยาย dependency/schema หรือเดาความหมายบริษัทเลิกใช้
+
+รอบนี้เพิ่มช่องรอ gap analysis เท่านั้น ผลภาพ/ข้อค้นพบต้นแบบเทียบจอจริงเป็น **not checked — lane นี้ไม่มี browser และงานดังกล่าวอยู่ lane แยก** ไม่เขียนว่าหน้าจอเสร็จจน controller เก็บหลักฐานรับ layout/R4 ครบ

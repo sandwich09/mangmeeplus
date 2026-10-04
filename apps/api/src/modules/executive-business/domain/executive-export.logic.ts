@@ -1,15 +1,13 @@
-import { EXECUTIVE_EXPORT_SHEETS, EXECUTIVE_WORDS as W } from '@watchdog-bms/contracts';
+import { EXECUTIVE_EXPORT_SHEETS, EXECUTIVE_WORDS as W, executivePeriodLabel, executiveMonthLabel, type ExecutiveRangePeriod } from '@watchdog-bms/contracts';
 import { buildWorkbook, columnName, xlsxThaiDate, type WorkbookCell, type WorkbookChart } from '../../../common/export/xlsx.logic';
 
 export type ExportFigure = { label: string; value: number | null; formula?: string; status?: string; style?: number };
 export type ExportPanel = { title: string; kind: WorkbookChart['kind']; labels: string[]; values: (number | null)[]; formulas?: string[]; status?: string; statuses?: string[]; colors?: string[]; style?: number };
 export type ExportTable = { title: string; headers: string[]; rows: WorkbookCell[][] };
-export type ExecutiveWorkbook = { title: string; month: string; metadata: string[]; columns: string[]; rows: WorkbookCell[][];
+export type ExecutiveWorkbook = { title: string; month: string; period?: ExecutiveRangePeriod; metadata: string[]; columns: string[]; rows: WorkbookCell[][];
   kpis: ExportFigure[]; panels: ExportPanel[]; tables?: ExportTable[] };
 
-export function exportMonth(month: string): string {
-  return new Intl.DateTimeFormat('th-TH-u-ca-buddhist', { month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' }).format(new Date(`${month}-01T00:00:00Z`));
-}
+export const exportMonth = executiveMonthLabel;
 export function exportDateTime(at: Date | string): string {
   return xlsxThaiDate(at, true)!;
 }
@@ -22,7 +20,7 @@ export function buildExecutiveWorkbook(input: ExecutiveWorkbook): Buffer {
     while (rows.length < r) rows.push(Array.from({ length: 24 }, () => null));
     rows[r - 1]![c - 1] = value;
   };
-  put(2, 2, { value: input.title, style: 1 }); put(4, 2, `${W.month} · ${exportMonth(input.month)}`);
+  put(2, 2, { value: input.title, style: 1 }); put(4, 2, input.period ? executivePeriodLabel(input.period.from, input.period.to) : `${W.month} · ${exportMonth(input.month)}`);
   input.kpis.forEach((figure, i) => {
     const c = [2, 10, 18][i]!;
     put(7, c, { value: figure.value, ...(figure.formula ? { formula: figure.formula } : {}), style: figure.style === 3 ? 11 : figure.style ?? 7 });
@@ -56,7 +54,7 @@ export function buildExecutiveWorkbook(input: ExecutiveWorkbook): Buffer {
     next += 2;
   }
   // Source metadata has five rows; the header always starts at row 6, without merged source cells.
-  const source: WorkbookCell[][] = [[{ value: input.title, style: 1 }], [`${W.month} · ${exportMonth(input.month)}`], [input.metadata[0] ?? ''], [input.metadata[1] ?? ''], [input.metadata.slice(2).join(' · ')], input.columns.map(value => ({ value, style: 2 })), ...input.rows];
+  const source: WorkbookCell[][] = [[{ value: input.title, style: 1 }], [input.period ? executivePeriodLabel(input.period.from, input.period.to) : `${W.month} · ${exportMonth(input.month)}`], [input.metadata[0] ?? ''], [input.metadata[1] ?? ''], [input.metadata.slice(2).join(' · ')], input.columns.map(value => ({ value, style: 2 })), ...input.rows];
   return buildWorkbook([
     { name: EXECUTIVE_EXPORT_SHEETS[0], rows, widths: Array.from({ length: 24 }, () => 7.11), freezeRows: 4, merges, printArea: 'A1:X46', charts },
     { name: EXECUTIVE_EXPORT_SHEETS[1], rows: source, widths: input.columns.map((_, i) => i === 0 ? 38 : i === 1 || i === 34 ? 32 : 24), freezeRows: 6, autoHeightRows: [3, 4, 5],
