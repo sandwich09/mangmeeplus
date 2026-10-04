@@ -1139,7 +1139,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [] }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, overpaymentCue, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false, permissions = [] }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
@@ -1151,6 +1151,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   /** Owner decision 2026-08-28: accepting the document VAT total rides on confirm, not on review, so
    *  a confirmer is never shown a refusal with no control that can clear it. */
   canConfirm: boolean;
+  overpaymentCue?: string | null;
   /** Explicit save is available only on the first review step; later steps use navigation saves. */
   showSaveDraft?: boolean;
   /** Back/Next in an existing certificate must preserve signed no-op revisions. */
@@ -1916,6 +1917,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_unit_price', locale)}</span>
               <input type="number" min="0" step="0.0001" className={validationInputClass(unitPriceIssue)} aria-invalid={unitPriceIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
+              {overpaymentCue && <p data-testid="expense-overpayment-cue" className="mt-1 text-xs font-semibold text-error-700">{overpaymentCue}</p>}
               <FieldIssueNote canEdit={isMutable} issue={unitPriceIssue} />
               {!unitPriceIssue && sourceMissingNote('unitPrice', line.sourceItemRef)}
             </label>
@@ -2055,6 +2057,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               {/* No `min`: ปัดเศษ is the one kind a bill prints as a deduction, and the validator is
                   what refuses a minus sign on any other kind. */}
               <input type="number" step="0.0001" className={validationInputClass(amountIssue ?? quantityIssue)} aria-invalid={amountIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
+              {overpaymentCue && <p data-testid="expense-overpayment-cue" className="mt-1 text-xs font-semibold text-error-700">{overpaymentCue}</p>}
               <FieldIssueNote canEdit={isMutable} issue={amountIssue ?? quantityIssue} />
               {chargeKind === 'ROUNDING' && <p className="mt-1 text-xs text-gray-500">{t('expenses.rounding_explanation', locale)}</p>}
             </label>

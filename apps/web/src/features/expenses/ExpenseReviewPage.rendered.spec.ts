@@ -104,7 +104,8 @@ test('A2 recorded payments remain visible at totals in every correction review s
     const html = harness({ step, detail: expense({ status: 'NEEDS_REVIEW', payments: [payment], paidAmount: '700', correctionOpenedAt: '2026-10-04T02:00:00Z' }) }).render();
     assert.match(html, /ประวัติการจ่าย/); assert.match(html, /ยกเลิกรายการจ่ายนี้/);
     assert.match(html, /กำลังแก้ไขเอกสารที่ยืนยันแล้ว/);
-    assert.match(html, /top:10\.375rem;height:calc\(100dvh - 16\.375rem\)/);
+    assert.match(html, /top:calc\(var\(--app-header-h\) \+ 6\.125rem\);height:calc\(100dvh - var\(--app-header-h\) - 12\.125rem\)/);
+    assert.match(html, /style="top:var\(--app-header-h\)"/);
     assert.doesNotMatch(html, /รอลงบัญชี/);
   }
 });
@@ -254,7 +255,7 @@ test('A4 stale reopen and cancelled-payment writes refresh once and keep only th
     try {
       page.render(); const html = await page.act('form', cancelling ? 'เหตุผลที่ยกเลิก' : 'เหตุผลที่แก้ไข', 'onSubmit');
       assert.equal(reads, 1);
-      const message = cancelling ? 'รายการจ่ายนี้ถูกยกเลิกแล้ว โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจประวัติการจ่าย' : 'โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจยอดและประวัติการจ่ายก่อนทำรายการอีกครั้ง';
+      const message = cancelling ? 'รายการจ่ายนี้ถูกยกเลิกแล้ว โหลดข้อมูลล่าสุดแล้ว กรุณาตรวจประวัติการจ่าย' : 'เอกสารเปิดแก้ไขอยู่แล้ว กรุณาตรวจข้อมูลล่าสุด';
       assert.equal(html.split(message).length - 1, 1); assert.doesNotMatch(html, /•/);
       assert.doesNotMatch(dialog(html), /<textarea|type="submit"/);
     } finally { write.mock.restore(); get.mock.restore(); }
@@ -275,14 +276,14 @@ test('A3 overpayment in the expense list renders its fact instead of a paid badg
   } finally { runtime.useState = real; }
 });
 
-test('C reopening scrolls the first editable step, not a stepper already stuck at the top', () => {
+test('C reopening scrolls the first-step anchor with the marker below the responsive app header', () => {
   const openedAt = '2026-10-04T02:00:00Z';
   const page = harness({ detail: expense({ status: 'NEEDS_REVIEW', correctionOpenedAt: openedAt }) });
   const names = [...readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8').matchAll(/const (\w+) = useRef/g)].map(m => m[1]);
   const realRef = runtime.useRef; let index = 0, scrolled = 0; const frames: Array<() => void> = [];
   const originalWindow = globalThis.window;
   (globalThis as any).window = { requestAnimationFrame: (fn: () => void) => { frames.push(fn); return 1; }, cancelAnimationFrame: noop };
-  const ref = mock.method(runtime, 'useRef', (init: any) => { const value = realRef(init); return names[index++] === 'vendorRef' ? { current: { scrollIntoView: () => { scrolled++; } } } : value; });
+  const ref = mock.method(runtime, 'useRef', (init: any) => { const value = realRef(init); return names[index++] === 'reviewStartRef' ? { current: { scrollIntoView: () => { scrolled++; } } } : value; });
   const effect = mock.method(runtime, 'useEffect', (fn: () => unknown, deps?: unknown[]) => { if (deps?.length === 1 && deps[0] === openedAt) fn(); });
   try { page.render(); frames.forEach(fn => fn()); assert.equal(page.state.step, 'data'); assert.equal(scrolled, 1); }
   finally { ref.mock.restore(); effect.mock.restore(); if (originalWindow === undefined) delete (globalThis as any).window; else globalThis.window = originalWindow; }
@@ -303,4 +304,82 @@ test('A4 a failed stale read explains it once and prevents another write against
     assert.equal(html.split('โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาโหลดหน้าใหม่ก่อนทำรายการอีกครั้ง').length - 1, 1);
     assert.match(html, /type="submit"[^>]*disabled=""/);
   } finally { record.mock.restore(); get.mock.restore(); }
+});
+
+function focusNotice(page: ReturnType<typeof harness>, refName: string, message: string) {
+  const names = [...readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8').matchAll(/const (\w+) = useRef/g)].map(m => m[1]);
+  const realRef = runtime.useRef, previousWindow = globalThis.window;
+  let index = 0, focused = 0, scrolled = 0; const frames: Array<() => void> = [];
+  (globalThis as any).window = { requestAnimationFrame: (fn: () => void) => { frames.push(fn); return 1; }, cancelAnimationFrame: noop };
+  const ref = mock.method(runtime, 'useRef', (init: any) => {
+    const value = realRef(init);
+    return names[index++] === refName ? { current: { focus: () => { focused++; }, scrollIntoView: () => { scrolled++; } } } : value;
+  });
+  const effect = mock.method(runtime, 'useEffect', (fn: () => unknown, deps?: unknown[]) => { if (deps?.includes(message)) fn(); });
+  try { page.render(); frames.forEach(fn => fn()); return { focused, scrolled }; }
+  finally { ref.mock.restore(); effect.mock.restore(); if (previousWindow === undefined) delete (globalThis as any).window; else globalThis.window = previousWindow; }
+}
+
+test('recheck 1: a payment refusal after external reopen is scrolled into view and focused once', async () => {
+  const page = harness();
+  const record = stub(api, 'recordExpensePayment', async () => { throw { code: 'expense_payment_not_confirmed' }; });
+  const get = stub(api, 'getExpense', async () => expense({ status: 'NEEDS_REVIEW', correctionOpenedAt: '2026-10-04T02:00:00Z' }));
+  try {
+    page.render(); const html = await page.act('form', 'วิธีจ่ายเงิน', 'onSubmit');
+    const message = page.state.paymentNotice;
+    assert.match(message, /เอกสารถูกเปิดแก้ไขแล้ว/);
+    assert.equal(html.split(message).length - 1, 1);
+    assert.deepEqual(focusNotice(page, 'paymentNoticeRef', message), { focused: 1, scrolled: 1 });
+    assert.match(html, /tabindex="-1"[^>]*scroll-mt-\[calc\(var\(--app-header-h\)\+1rem\)\]/);
+  } finally { record.mock.restore(); get.mock.restore(); }
+});
+
+test('recheck 3: editing prices shows an adjacent excess cue and sending for review warns without blocking', async () => {
+  const detail = expense({ status: 'NEEDS_REVIEW', paidAmount: '700', payments: [payment], outstandingAmount: '0',
+    lines: [{ id: 'l1', description: 'สินค้า', quantity: '1', unitPrice: '500', discountAmount: '0', vatRate: '0', whtRate: '0', lineSubtotalAmount: '500', lineTaxAmount: '0', lineTotalAmount: '500' }] });
+  const edit = harness({ step: 'data', detail }).render();
+  assert.match(edit, /value="500"[^>]*\/><p[^>]*data-testid="expense-overpayment-cue"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00<\/p>/);
+  const page = harness({ step: 'review', detail }); let sent = 0;
+  const mark = stub(api, 'markExpenseReadyAsReviewer', async () => { sent++; return detail; });
+  try {
+    const html = page.render();
+    assert.match(html, /id="expense-review-overpayment"[^>]*>จ่ายเกินยอดสุทธิ ฿200.00 ยกเลิกรายการจ่ายด้านล่างก่อนยืนยัน/);
+    assert.equal(page.nodes.find(n => n.tag === 'button' && text(n.props.children) === 'ส่งตรวจสอบ')?.props.disabled, false);
+    await page.act('button', 'ส่งตรวจสอบ'); assert.equal(sent, 1);
+  } finally { mark.mock.restore(); }
+});
+
+test('recheck 4: stale reopen names the already open document and focuses a usable close control', async () => {
+  const page = harness({ correctionAction: {}, correctionReason: 'แก้ยอด' });
+  const reopen = stub(api, 'reopenExpense', async () => { throw { code: 'expense_correction_blocked' }; });
+  const get = stub(api, 'getExpense', async () => expense({ status: 'NEEDS_REVIEW', correctionOpenedAt: '2026-10-04T02:00:00Z', correctionCapabilities: { ...allowed, canReopen: false } }));
+  try {
+    page.render(); const html = await page.act('form', 'expense-correction-form', 'onSubmit');
+    const message = 'เอกสารเปิดแก้ไขอยู่แล้ว กรุณาตรวจข้อมูลล่าสุด';
+    assert.equal(page.state.correctionError, message); assert.match(dialog(html), /เอกสารเปิดแก้ไขอยู่แล้ว/);
+    assert.deepEqual(focusNotice(page, 'correctionCloseRef', message), { focused: 1, scrolled: 0 });
+    const modal = page.nodes.find(n => n.props.open === true && n.props.title === 'แก้ไขเอกสาร');
+    assert.ok(modal); modal.props.onClose(); assert.equal(page.state.correctionAction, null);
+  } finally { reopen.mock.restore(); get.mock.restore(); }
+});
+
+test('recheck 5: an already cancelled payment refreshes and reports the fact without a success toast', async () => {
+  const page = harness({ correctionAction: { paymentId: 'p1' }, correctionReason: 'เหตุผลคนที่สอง', detail: expense({ payments: [payment] }) });
+  const cancel = stub(api, 'cancelExpensePayment', async () => { throw { code: 'expense_payment_already_cancelled' }; });
+  let reads = 0;
+  const get = stub(api, 'getExpense', async () => { reads++; return expense({ payments: [{ ...payment, status: 'VOIDED', cancellationReason: 'เหตุผลเดิม' }], correctionCapabilities: { ...allowed, payments: [{ id: 'p1', canCancel: false }] } }); });
+  try {
+    page.render(); const html = await page.act('form', 'expense-correction-form', 'onSubmit');
+    assert.equal(reads, 1); assert.match(dialog(html), /รายการจ่ายนี้ถูกยกเลิกแล้ว/);
+    assert.deepEqual(page.successes, []); assert.equal(page.state.correctionReason, 'เหตุผลคนที่สอง');
+    assert.equal(page.state.detail.payments[0].cancellationReason, 'เหตุผลเดิม');
+  } finally { cancel.mock.restore(); get.mock.restore(); }
+});
+
+test('recheck 7: blurring the amount normalizes its displayed leading zeros and remainder label', async () => {
+  const page = harness({ paidAmount: '0500' });
+  page.render(); const html = await page.act('input', 'expense-payment-amount', 'onBlur');
+  assert.equal(page.state.paidAmount, '500');
+  assert.match(html, /id="expense-payment-amount"[^>]*value="500"/);
+  assert.match(html, /บันทึกจ่ายส่วนที่เหลือ ฿500.00/);
 });

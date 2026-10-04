@@ -1,6 +1,6 @@
 'use client';
 
-import { expenseOverpaidAmount, expenseOverpaymentRemedy, expenseReopenedMessage, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
+import { normalizeExpensePaymentAmount, expenseOverpaidAmount, expenseOverpaymentRemedy, expenseReopenedMessage, EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
 import { expenseEvidenceAssessment, expenseEvidenceConfirmationError, expenseDateIsReadable } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -74,13 +74,10 @@ import {
   type ExpenseExtractionAttempt,
 } from './expense-upload.logic';
 
-// Sticky offsets, measured against the running app — do not guess these.
-// AppHeader is `sticky top-0 z-[99999] h-[68px]`, so page-level sticky chrome must clear it or it
-// pins underneath and silently disappears on scroll. The stepper row measures 72px.
+// The app shell owns the responsive header height through --app-header-h.
+// The stepper row measures 72px; page chrome and viewers must clear both.
 // e2e `VIS-03` asserts the stepper stays visible below the header, so drift here fails a test.
-const APP_HEADER_REM = 4.25; // 68px
 const STEPPER_REM = 4.5; // 72px
-const VIEWER_TOP_REM = APP_HEADER_REM + STEPPER_REM;
 const VIEWER_BOTTOM_GAP_REM = 6; // clearance for the sticky action bar
 const PAYMENT_SAVED_REFRESH_NOTICE = 'บันทึกการจ่ายแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาตรวจประวัติการจ่าย หรือกด “ลองบันทึกรายการเดิมอีกครั้ง” เพื่อโหลดข้อมูล โดยไม่เพิ่มยอดจ่ายซ้ำ';
 type ExpensePreviewSource = DocumentPreviewSource & { hideOpenNewTab?: boolean; onViewed?: () => void };
@@ -121,6 +118,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const [correctionReason, setCorrectionReason] = useState('');
   const [correctionError, setCorrectionError] = useState<string | null>(null);
   const correctionReasonRef = useRef<HTMLTextAreaElement>(null);
+  const correctionCloseRef = useRef<HTMLButtonElement>(null);
   const rejectReasonRef = useRef<HTMLTextAreaElement>(null);
   const [ocrTotalReason, setOcrTotalReason] = useState('');
   const [showReject, setShowReject] = useState(false);
@@ -129,9 +127,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const [correctionAction, setCorrectionAction] = useState<{ paymentId?: string } | null>(null);
   useEffect(() => {
     if (!correctionAction && !showReject) return;
-    const frame = window.requestAnimationFrame(() => (correctionAction ? correctionReasonRef : rejectReasonRef).current?.focus());
+    const frame = window.requestAnimationFrame(() => (correctionAction ? correctionReasonRef.current ?? correctionCloseRef.current : rejectReasonRef.current)?.focus());
     return () => window.cancelAnimationFrame(frame);
-  }, [correctionAction, showReject]);
+  }, [correctionAction, showReject, correctionError]);
 
   const [deleting, setDeleting] = useState(false);
   const [duplicateResolution, setDuplicateResolution] = useState<{ candidateId: string; action: 'dismiss' | 'confirm' } | null>(null);
@@ -141,6 +139,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const paymentAttemptRef = useRef<ExpensePaymentAttempt | null>(null);
   const paymentPendingRef = useRef(false);
   const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
+  const paymentNoticeRef = useRef<HTMLParagraphElement>(null);
+  const reviewStartRef = useRef<HTMLDivElement>(null);
   const [paymentFailure, setPaymentFailure] = useState<ExpensePaymentFailure | 'refresh_failed' | null>(null);
   const prefilledBalanceRef = useRef<string | null>(null);
   useEffect(() => {
@@ -372,9 +372,18 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   useEffect(() => {
     if (!detail?.correctionOpenedAt || !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status)) return;
     setStep('data');
-    const frame = window.requestAnimationFrame(() => vendorRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' }));
+    const frame = window.requestAnimationFrame(() => reviewStartRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' }));
     return () => window.cancelAnimationFrame(frame);
   }, [detail?.correctionOpenedAt]);
+
+  useEffect(() => {
+    if (!paymentNotice || detail?.status === 'CONFIRMED') return;
+    const frame = window.requestAnimationFrame(() => {
+      paymentNoticeRef.current?.scrollIntoView({ block: 'center', behavior: 'auto' });
+      paymentNoticeRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [paymentNotice, detail?.status]);
 
   // Signed URL is fetched on click, not on panel open: it expires in 15 min.
   const openPreview = async (attachment: ExpenseDetail['attachments'][number]) => {
@@ -396,7 +405,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     const failure = cause as { message?: unknown; details?: { message?: unknown } };
     const message = failure?.message ?? failure?.details?.message;
     const code = apiErrorCode(cause) ?? (typeof message === 'string' ? message : null);
-    if (!['expense_payment_exceeds_outstanding', 'expense_payment_changed', 'expense_payment_not_confirmed',
+    if (!['expense_payment_exceeds_outstanding', 'expense_payment_changed', 'expense_payment_not_confirmed', 'expense_payment_already_cancelled',
       'expense_correction_source_changed', 'expense_correction_blocked', 'expense_payment_correction_blocked',
       'expense_paid_exceeds_payable', 'expense_rejection_payments_recorded', 'expense_rejection_paid_balance', 'EXPENSE_UPDATE_CONFLICT'].includes(code ?? '')
       && !(code?.startsWith('expense_confirmation_') && code.endsWith('_changed'))) return null;
@@ -408,6 +417,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       if (operation === 'payment' && refreshed.status !== 'CONFIRMED') return refreshed.correctionOpenedAt
         ? EXPENSE_CORRECTION_WORDS.paymentOnReopened : EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed;
       if (operation === 'correction' && correctionAction?.paymentId && refreshed.payments?.find(p => p.id === correctionAction.paymentId)?.status === 'VOIDED') return EXPENSE_CORRECTION_WORDS.paymentAlreadyCancelled;
+      if (operation === 'correction' && !correctionAction?.paymentId && refreshed.correctionOpenedAt && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(refreshed.status)) return EXPENSE_CORRECTION_WORDS.alreadyReopened;
       return EXPENSE_CORRECTION_WORDS.sourceRefreshed;
     } catch { setConflictReload(true); return EXPENSE_CORRECTION_WORDS.sourceRefreshFailed; }
   };
@@ -851,7 +861,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // Extraction: expense.ocr.request OR expense.review OR (expense.receipt.upload on own record).
   const canExtract = !claimedSource && (caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord));
   // Fixed correction marker: h-5 plus the stepper's gap-1.5 = 1.625rem.
-  const viewerTopRem = VIEWER_TOP_REM + (isMutable && detail.correctionOpenedAt ? 1.625 : 0);
+  const viewerOffsetRem = STEPPER_REM + (isMutable && detail.correctionOpenedAt ? 1.625 : 0);
+  const viewerTop = `calc(var(--app-header-h) + ${viewerOffsetRem}rem)`;
   const isConfirmed = detail.status === 'CONFIRMED';
   const correctionAllowed = correctionAction?.paymentId
     ? detail.correctionCapabilities?.payments.find(p => p.id === correctionAction.paymentId)?.canCancel === true
@@ -952,7 +963,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const hasPaymentHistory = (detail.payments?.length ?? 0) > 0;
   const hasRecordedPayments = detail.payments?.some(p => p.status === 'RECORDED') ?? false;
   const canCancelRecordedPayment = detail.correctionCapabilities?.payments.some(p => p.canCancel) ?? false;
-  const overpaymentMessage = overpaidAmount ? `${EXPENSE_CORRECTION_WORDS.overpaid} ${baht(overpaidAmount)} ${expenseOverpaymentRemedy(hasRecordedPayments, canCancelRecordedPayment)}` : null;
+  const overpaymentCue = overpaidAmount ? `${EXPENSE_CORRECTION_WORDS.overpaid} ${baht(overpaidAmount)}` : null;
+  const overpaymentMessage = overpaymentCue ? `${overpaymentCue} ${expenseOverpaymentRemedy(hasRecordedPayments, canCancelRecordedPayment)}` : null;
   const canConfirmExpense = !overpaidAmount && !personalSubstitute && canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && !evidenceError && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
   // Owner requirement 2026-08-28: the reason used to live only in the button's `title`, i.e. a hover
   // tooltip — and expenses get reviewed on a phone, where nothing hovers. One helper decides it now,
@@ -1211,6 +1223,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                     {confirmBlockedNotice}
                   </>
                 )}
+                {overpaymentMessage && <p id="expense-review-overpayment" role="status" className="w-full text-sm text-error-700">{overpaymentMessage}</p>}
               </>
             )}
             {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && validationBlockMessage !== undefined) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-busy={Boolean(stepSaving)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
@@ -1444,7 +1457,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} permissions={permissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} permissions={permissions} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} overpaymentCue={overpaymentCue} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   // Vendor-address Slice 2, review fix 1: on a tax-code invoice the way forward is the line's Tax
@@ -1666,7 +1679,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             <fieldset disabled={actionLoading} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <label className="space-y-1 text-sm text-gray-700">
                 <span>{t('expenses.payment_amount', locale)}</span>
-                <input className={inputClass} type="number" inputMode="decimal" min="0.01" step="0.01" required placeholder="0.00" value={paidAmount} onChange={(e) => editPayment(() => setPaidAmount(e.target.value))} />
+                <input id="expense-payment-amount" className={inputClass} type="number" inputMode="decimal" min="0.01" step="0.01" required placeholder="0.00" value={paidAmount} onChange={(e) => editPayment(() => setPaidAmount(e.target.value))} onBlur={() => setPaidAmount(normalizeExpensePaymentAmount(paidAmount.trim()))} />
               </label>
               <label className="space-y-1 text-sm text-gray-700">
                 <span>วิธีจ่ายเงิน</span>
@@ -1793,8 +1806,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           {!detail.correctionCapabilities?.canReopen && <ul className="list-disc space-y-1 pl-5 text-sm text-gray-600">{expenseReopenBlockerMessages(detail.correctionCapabilities, caps.canReadLedger).map(message => <li key={message}>{message}</li>)}</ul>}
           {detail.correctionCapabilities?.canReopen && <button type="button" className={cx(ghostClass, 'whitespace-nowrap')} disabled={actionLoading} onClick={() => { setCorrectionReason(''); setCorrectionError(null); setCorrectionAction({}); }}>{EXPENSE_CORRECTION_WORDS.reopen}</button>}
         </div>}
-        {paymentNotice && !isConfirmed && <p role="status" className="text-sm text-warning-800">{paymentNotice}</p>}
-        {!sourceOnlyDraft && <div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: `${APP_HEADER_REM}rem` }}>
+        {paymentNotice && !isConfirmed && <p ref={paymentNoticeRef} tabIndex={-1} role="status" className="scroll-mt-[calc(var(--app-header-h)+1rem)] text-sm text-warning-800">{paymentNotice}</p>}
+        {!sourceOnlyDraft && <><div ref={reviewStartRef} className="scroll-mt-[var(--app-header-h)]" /><div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: 'var(--app-header-h)' }}>
           {isMutable && detail.correctionOpenedAt && <p role="status" className="h-5 w-full whitespace-nowrap text-xs font-semibold leading-5 text-warning-800">{EXPENSE_CORRECTION_WORDS.correcting}</p>}
           {guided ? (
             <ThemedSteps steps={steps.map((entry, index) => ({
@@ -1816,7 +1829,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               {t(chip.key, locale)}
             </button>
           ))}
-        </div>}
+        </div></>}
         {guided && (
           <div className="border-b border-gray-100 bg-brand-25 px-4 py-2.5 text-sm text-gray-700">
             <span className="font-bold text-brand-700">ขั้นที่ {stepIndex + 1}:</span>{' '}
@@ -1840,7 +1853,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             {/* left pane (lg+): inline document viewer */}
             <div
               className="hidden min-h-0 border-r border-gray-100 bg-gray-50 lg:sticky lg:flex lg:self-start lg:flex-col"
-              style={{ top: `${viewerTopRem}rem`, height: `calc(100dvh - ${viewerTopRem + VIEWER_BOTTOM_GAP_REM}rem)` }}
+              style={{ top: viewerTop, height: `calc(100dvh - var(--app-header-h) - ${viewerOffsetRem + VIEWER_BOTTOM_GAP_REM}rem)` }}
             >
               {attachments.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -2009,7 +2022,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 {aiReading && (
                   <div className="absolute inset-0 z-10 bg-white/80">
                     {/* A long receipt form must not put its only spinner below the viewport. */}
-                    <div className="sticky h-40 [&>div]:bg-transparent" style={{ top: `${viewerTopRem}rem` }}>
+                    <div className="sticky h-40 [&>div]:bg-transparent" style={{ top: viewerTop }}>
                       <CoverLoader active scope="section" label={t('expenses.ai_reading', locale)} />
                     </div>
                   </div>
@@ -2086,7 +2099,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       <Modal open={Boolean(correctionAction)} title={correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopen}
         size="sm" closeLabel={t('expenses.close', 'th')} onClose={() => { if (!actionLoading) setCorrectionAction(null); }}
         footer={<>
-          <button type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading} onClick={() => setCorrectionAction(null)}>{t('expenses.cancel', 'th')}</button>
+          <button ref={correctionCloseRef} type="button" className={cx(ghostClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading} onClick={() => setCorrectionAction(null)}>{t('expenses.cancel', 'th')}</button>
           {correctionAllowed && <button type="submit" form="expense-correction-form" className={cx(correctionAction?.paymentId ? dangerClass : btnClass, 'w-full sm:w-auto whitespace-nowrap')} disabled={actionLoading || conflictReload || correctionReason.trim().length < 3} aria-busy={actionLoading}>{actionLoading ? EXPENSE_CORRECTION_WORDS.saving : correctionAction?.paymentId ? EXPENSE_CORRECTION_WORDS.cancelPayment : EXPENSE_CORRECTION_WORDS.reopenSubmit}</button>}
         </>}>
         {correctionAllowed ? <form id="expense-correction-form" className="space-y-3" onSubmit={(event) => {

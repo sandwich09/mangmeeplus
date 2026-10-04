@@ -661,7 +661,7 @@ export class PrismaExpenseRepository {
       if (!isBranchInScope(input.scopes, current.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
       const payment = await tx.expensePayment.findFirst({ where: { companyId: input.companyId, expenseId: input.expenseId, id: input.paymentId } });
       if (!payment) throw new NotFoundException();
-      if (payment.status === 'VOIDED') return mapExpense(current);
+      if (payment.status === 'VOIDED') throw new ConflictException({ code: 'expense_payment_already_cancelled', message: EXPENSE_CORRECTION_WORDS.paymentAlreadyCancelled });
       const capability = (await readExpenseCorrectionCapabilities(tx, current, ['expense.payment.record'])).payments.find((p) => p.id === input.paymentId);
       if (!capability?.canCancel) throw new ConflictException({ code: 'expense_payment_correction_blocked', blocker: capability?.cancelBlocker,
         message: capability?.cancelBlocker ? expenseCorrectionBlockerMessage(capability.cancelBlocker, 'cancelPayment') : EXPENSE_CORRECTION_WORDS.unavailable });
