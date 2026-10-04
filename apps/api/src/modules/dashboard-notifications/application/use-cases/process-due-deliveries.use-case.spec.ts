@@ -117,6 +117,7 @@ describe('CreateOrUpdateNotificationEventUseCase recipients', () => {
       { findByTriggerKey: async () => null } as any,
       {
         client: {
+          companyFeatureEntitlement: { findMany: async () => [] },
           notificationDelivery: { findFirst: async () => null },
           companyMembership: {
             findMany: async (query: any) => {
@@ -152,6 +153,7 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
     const deliveries: any[] = [];
     const alertStates = new Map<string, any>();
     const client = {
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationEvent: {
         findFirst: async ({ where }: any) => events.find((row) => row.companyId === where.companyId && row.dedupKey === where.dedupKey) ?? null,
         create: async ({ data }: any) => { const row = { id: `event-${events.length + 1}`, createdAt: new Date(), ...data }; events.push(row); return row; },
@@ -204,13 +206,13 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
     const round1 = await useCase.execute(claimNotice({ periodKey: 'run-1' }));
     // The same run retried: nothing new, nobody pushed twice.
     const retry = await useCase.execute(claimNotice({ periodKey: 'run-1' }));
-    assert.equal(retry.event.id, round1.event.id);
+    assert.equal(retry.event!.id, round1.event!.id);
     assert.equal(deliveries.length, 2);
 
     const round2 = await useCase.execute(claimNotice({ periodKey: 'run-2' }));
 
-    assert.notEqual(round2.event.id, round1.event.id);
-    assert.deepEqual(pushedTo(round2.event.id), ['mgr-1']);
+    assert.notEqual(round2.event!.id, round1.event!.id);
+    assert.deepEqual(pushedTo(round2.event!.id), ['mgr-1']);
     assert.deepEqual(events.map((row) => [row.id, row.status]), [['event-1', 'RESOLVED'], ['event-2', 'OPEN']]);
     assert.ok(events[0].resolvedAt instanceof Date);
   });
@@ -224,7 +226,7 @@ describe('CreateOrUpdateNotificationEventUseCase periods', () => {
     await decision('run-reject', 'ผลการพิจารณา: ไม่อนุมัติ');
     const approved = await decision('run-approve', 'ผลการพิจารณา: อนุมัติ');
 
-    assert.deepEqual(pushedTo(approved.event.id), ['staff-1']);
+    assert.deepEqual(pushedTo(approved.event!.id), ['staff-1']);
     assert.deepEqual(events.map((row) => [row.body, row.status]), [
       ['ผลการพิจารณา: ไม่อนุมัติ', 'RESOLVED'], ['ผลการพิจารณา: อนุมัติ', 'OPEN'],
     ]);
@@ -317,6 +319,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     const updates: any[] = [];
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationDelivery: {
           findFirst: async () => ({
             id: 'delivery-1', companyId: 'co-1', channel: 'LINE', status: 'QUEUED', attemptCount: 0,
@@ -341,6 +344,8 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       },
     } as any;
     prisma.client.$transaction = async (run: any) => run({
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: {
         findFirst: async () => ({
           id: 'delivery-1', companyId: 'co-1', channel: 'LINE', status: 'QUEUED', attemptCount: 0,
@@ -412,12 +417,15 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     };
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationDelivery: { findFirst: async () => delivery },
         notificationPreference: { findUnique: async () => null },
         externalIdentity: { findFirst: async () => ({ providerUserId: 'line-user-1' }) },
       },
     } as any;
     prisma.client.$transaction = async (run: any) => run({
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: {
         findFirst: async () => ({ ...delivery, recipient: { ...delivery.recipient, event: { ...delivery.recipient.event, status: 'OPEN' } } }),
         updateMany: async (query: any) => { updates.push(query.data); return { count: 1 }; },
@@ -452,12 +460,15 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     };
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationDelivery: { findFirst: async () => delivery },
         notificationPreference: { findUnique: async () => null },
         externalIdentity: { findFirst: async () => ({ providerUserId: 'line-user-1' }) },
       },
     } as any;
     prisma.client.$transaction = async (run: any) => run({
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: {
         findFirst: async () => ({ ...delivery, recipient: { ...delivery.recipient, event: { ...delivery.recipient.event, status: 'OPEN' } } }),
         updateMany: async (query: any) => { updates.push(query.data); return { count: 1 }; },
@@ -493,6 +504,8 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     let mutexTail = Promise.resolve();
     const matches = (where: any) => ['QUEUED', 'FAILED'].includes(persisted.status) && persisted.attemptCount === where.attemptCount;
     const tx = {
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: {
         findFirst: async (query: any) => matches(query.where) ? { ...persisted, recipient: stale.recipient } : null,
         updateMany: async (query: any) => {
@@ -506,6 +519,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     };
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationDelivery: { findFirst: async () => { outerReads += 1; return outerReads <= 2 ? stale : persisted; } },
         notificationPreference: { findUnique: async () => null },
         externalIdentity: { findFirst: async () => ({ providerUserId: 'line-user-1' }) },
@@ -559,6 +573,8 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       },
     };
     const tx = {
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: { findFirst: async () => (locked ? null : staleDelivery) },
       crmConversation: { findFirst: async () => ({ customerId: 'customer-1' }) },
       crmCustomer: { findFirst: async () => { throw new Error('must not read after suppressed delivery'); } },
@@ -566,6 +582,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     };
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationDelivery: {
           findFirst: async () => {
             outerDeliveryReads += 1;
@@ -623,6 +640,8 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       },
     };
     const tx = {
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: { findFirst: async () => delivery },
       crmConversation: { findFirst: async () => ({ customerId: 'customer-1' }) },
       crmCustomer: { findFirst: async () => ({ id: 'customer-1' }) },
@@ -630,6 +649,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     };
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationDelivery: {
           findFirst: async () => delivery,
           updateMany: async (query: any) => { cleanupAttempts.push(query); return { count: 1 }; },
@@ -673,6 +693,8 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       recipient: { userId: 'staff-1', event: event(staleSecret) },
     };
     const tx = {
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: {
         findFirst: async () => {
           deliveryReads += 1;
@@ -696,6 +718,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     };
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationDelivery: { findFirst: async () => outerDelivery },
         notificationPreference: { findUnique: async () => null },
         externalIdentity: { findFirst: async () => ({ providerUserId: 'line-staff-1' }) },
@@ -751,6 +774,8 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       && persisted.attemptCount === where.attemptCount
     );
     const tx = {
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: {
         findFirst: async (query: any) => matchesClaim(query.where)
           ? { ...persisted, recipient: staleOuter.recipient }
@@ -771,6 +796,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     };
     const prisma = {
       client: {
+        companyFeatureEntitlement: { findMany: async () => [] },
         notificationDelivery: {
           findFirst: async () => {
             outerInitialReads += 1;
@@ -842,11 +868,14 @@ describe('ProcessQueuedDeliveryUseCase and a preference list saved before a trig
     const delivery = { id: 'delivery-1', companyId: 'co-1', channel: 'LINE', status: 'QUEUED', attemptCount: 0, recipient: { userId: 'user-1', event } };
     const updates: any[] = [];
     const prisma = { client: {
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: { findFirst: async () => delivery },
       notificationPreference: { findUnique: async () => preference },
       externalIdentity: { findFirst: async () => ({ providerUserId: 'line-user-1' }) },
     } } as any;
     prisma.client.$transaction = async (run: any) => run({
+      $executeRaw: async () => 0,
+      companyFeatureEntitlement: { findMany: async () => [] },
       notificationDelivery: {
         findFirst: async () => delivery,
         updateMany: async (query: any) => { updates.push(query.data); return { count: 1 }; },

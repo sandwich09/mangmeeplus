@@ -3,6 +3,8 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { CreateOrUpdateNotificationEventUseCase } from './notification.use-cases';
 import { buildDedupKey } from '../../domain/logic/notification.logic';
 import { PrismaNotificationRuleRepository } from '../../infrastructure/prisma-notification.repository';
+import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
+import { isNotificationTriggerEntitled } from '../../domain/models/notification.model';
 
 /**
  * Stock Low Scan Use Case (Item 06)
@@ -19,6 +21,9 @@ export class StockLowScanUseCase {
   ) {}
 
   async execute(companyId: string): Promise<{ scanned: number; triggered: number }> {
+    if (!isNotificationTriggerEntitled('stock_low', await loadEntitledFeatureKeys(this.prisma, companyId))) {
+      return { scanned: 0, triggered: 0 };
+    }
     // Get active rule for stock_low
     const rule = await this.rules.findByTriggerKey(companyId, 'stock_low');
     if (!rule || rule.status === 'disabled' || rule.status === 'system') {

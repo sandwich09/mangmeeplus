@@ -218,6 +218,73 @@ export const FUTURE_TRIGGER_KEYS: string[] = [
   'system_security_alert',
 ];
 
+/**
+ * Ownership, independent of rules and channel preferences. All listed/emitted keys belong here.
+ * [] = platform-wide; null = blocked pending a product ownership decision. Required features use
+ * the canonical entitlement evaluator's expanded keys, so an explicit submenu OFF wins.
+ */
+export const NOTIFICATION_TRIGGER_FEATURE_KEYS: Readonly<Record<string, readonly string[] | null>> = {
+  'billing.package_updated': [],
+  daily_owner_summary: ['dashboard_notifications'],
+  stock_low: ['inventory'],
+  stockout_risk: ['inventory'],
+  crm_sla_breach: ['crm.inbox'],
+  crm_new_conversation: ['crm.inbox'],
+  crm_payment_proof: ['crm.inbox'],
+  crm_booking_reminder: ['crm.bookings'],
+  'workflow.reimbursement_pending_approval': ['reimbursement'],
+  'workflow.approval_sla_breach': ['reimbursement'],
+  'workflow.reimbursement_payment_sla_breach': ['reimbursement'],
+  'workflow.reimbursement_payment_voided': ['reimbursement'],
+  'workflow.reimbursement_finance_blocked_requester': ['reimbursement'],
+  'workflow.reimbursement_decision_requester': ['reimbursement'],
+  'workflow.reimbursement_correction_requester': ['reimbursement'],
+  'workflow.reimbursement_finance_review': ['reimbursement'],
+  'workflow.reimbursement_ready_for_payment': ['reimbursement'],
+  'workflow.reimbursement_payment_recorded': ['reimbursement'],
+  'workflow.reimbursement_payout_correction_requested': ['reimbursement'],
+  'workflow.reimbursement_payout_correction_submitted': ['reimbursement'],
+  'reimbursement.payout_account_set_by_other': ['reimbursement'],
+  'expense.substitute_receipt_signature_pending': ['expenses'],
+  'expense.substitute_receipt_approval_pending': ['expenses'],
+  report_ready: ['reports'],
+  plan_term_expiring: [],
+  plan_term_expired: [],
+  sales_deal_renewal_pending: [],
+  sales_deal_renewal_overdue: [],
+  sales_daily_digest: [],
+  sales_deal_ending: [],
+  sales_today_low: ['sales_documents'],
+  invoice_overdue: ['sales_documents'],
+  tax_due_soon: ['thai_tax'],
+  approval_pending: ['workflow_automation'],
+  follow_up_due: ['crm.followups'],
+  // The future marketing module has no sold feature key. Do not invent one or make this global.
+  campaign_opportunity: null,
+  system_security_alert: [],
+  // Template notices stay outside IMPLEMENTED_TRIGGER_KEYS: ownership does not enable LINE.
+  'workflow.daily_owner_summary': ['dashboard_notifications'],
+  'workflow.low_stock_alert': ['inventory'],
+  'workflow.stockout_risk': ['inventory'],
+  'workflow.vendor_bill_pending': ['procurement.vendor_bills'],
+  'workflow.vendor_bill_second_approval': ['procurement.vendor_bills'],
+  'workflow.tax_due_soon': ['thai_tax'],
+  'workflow.bank_reconciliation_aging': ['bank_reconciliation.matching'],
+  'workflow.overdue_invoice': ['sales_documents'],
+  'workflow.crm_follow_up_due': ['crm.followups'],
+  'workflow.crm_opportunity_stuck': ['crm.pipeline'],
+  'workflow.sales_below_target': ['crm.overview'],
+  signup_pending_review: [],
+  signup_ops_alert: [],
+  crm_pdpa_erasure_completed: ['crm.customers'],
+  crm_pdpa_erasure_failed: ['crm.customers'],
+};
+
+export function isNotificationTriggerEntitled(triggerKey: string, entitled: ReadonlySet<string> | null): boolean {
+  const required = NOTIFICATION_TRIGGER_FEATURE_KEYS[triggerKey];
+  return Array.isArray(required) && (entitled === null || required.every(key => entitled.has(key)));
+}
+
 export const MAX_DELIVERY_ATTEMPTS = 5;
 
 // Default delivery channels when a user has no NotificationPreference row (A4).
