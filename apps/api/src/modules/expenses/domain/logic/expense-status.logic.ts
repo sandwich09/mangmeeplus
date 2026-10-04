@@ -76,7 +76,8 @@ const ALLOWED_TRANSITIONS: Record<ExpenseStatus, ExpenseStatus[]> = {
   EXTRACTING: ['NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'],
   NEEDS_REVIEW: ['READY_FOR_CONFIRMATION', 'REJECTED'],
   READY_FOR_CONFIRMATION: ['CONFIRMED', 'NEEDS_REVIEW', 'REJECTED'],
-  CONFIRMED: ['VOIDED'],
+  // Only the permission-checked reopen command may take the correction edge.
+  CONFIRMED: ['VOIDED', 'NEEDS_REVIEW'],
   // "เริ่มตรวจใหม่" reopens a rejected record. Only back to NEEDS_REVIEW: the record must be edited
   // and re-submitted, so a rejection can never be undone into a confirmable state in one step.
   REJECTED: ['NEEDS_REVIEW'],

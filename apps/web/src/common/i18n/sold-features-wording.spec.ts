@@ -123,7 +123,9 @@ test('permission guidance does not promise disabled features or shop-admin role 
 
 test('expense guide explains the existing return-for-correction route and guides use Thai upload words', () => {
   const expenses = JSON.stringify(buildExpensesGuide('company', []));
-  assert.match(expenses, /ส่งกลับแก้ไข/);
+  assert.match(expenses, /แก้ไขเอกสาร/);
+  assert.match(expenses, /ยกเลิกรายการจ่ายนี้/);
+  assert.doesNotMatch(expenses, /ส่งกลับแก้ไข/);
   assert.doesNotMatch(expenses, /หากผิดต้องยกเลิกแล้วบันทึกใหม่|ต้องยกเลิกเอกสารฉบับนั้นแล้วบันทึกใหม่/);
   for (const path of ['features/user-guide/expenses-guide.content.ts', 'features/user-guide/reimbursement-guide.content.ts', 'features/user-guide/substitute-receipt-guide.content.ts']) {
     assert.deepEqual(thaiLiterals(path).filter((text) => /\b(?:PNG|JPEG|JPG|HEIC|HEIF|MB|Service charge|SRC)\b/.test(text)), [], path);

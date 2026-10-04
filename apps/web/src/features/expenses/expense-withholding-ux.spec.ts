@@ -1,0 +1,179 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import * as model from './expenses.model';
+import type { ExpenseDraftReviewValues } from './expenses.model';
+import type { ExpenseWhtInput } from '@watchdog-bms/contracts';
+import { validateExpenseReview } from './expense-review-validation';
+import { workspaceDictionary } from '../../common/i18n/workspace-dictionary';
+import { apiErrorMessage } from '../../common/api/api-error-message';
+
+const source = readFileSync(new URL('./ExpensesPages.tsx', import.meta.url), 'utf8');
+const edit = source.slice(source.indexOf('export function ExpenseReviewEditSection'), source.indexOf('// ── Detail (popup dialog)'));
+const block = edit.slice(edit.indexOf('<fieldset data-testid="expense-withholding"'), edit.indexOf('</fieldset>', edit.indexOf('<fieldset data-testid="expense-withholding"')));
+const words = workspaceDictionary.th as Record<string, string>;
+const changeInput = (values: ExpenseDraftReviewValues, input: ExpenseWhtInput) => {
+  const change = (model as unknown as { changeExpenseReviewWhtInput?: (v: ExpenseDraftReviewValues, i: ExpenseWhtInput) => ExpenseDraftReviewValues }).changeExpenseReviewWhtInput;
+  assert.equal(typeof change, 'function', 'the UI needs a tested blank/clear transition');
+  return change!(values, input);
+};
+const values = (): ExpenseDraftReviewValues => ({
+  vendorNameSnapshot: 'ร้านทดสอบ', vendorTaxIdSnapshot: '', vendorAddressSnapshot: '', vendorBranchCodeSnapshot: '',
+  vendorDocumentNumber: '1', expenseDate: '2026-10-04', vatMode: 'NO_VAT',
+  lines: [{ description: 'ค่าบริการ', quantity: '1', unitPrice: '100', discountAmount: '0', vatRate: '',
+    whtRate: '0.03', expenseCategoryId: null, accountHintKey: null, taxCategory: null }],
+});
+
+test('one phone-order block gates payee/category/unit/value/base/amount behind the withholding choice', () => {
+  assert.ok(block, 'the whole withholding form is one fieldset');
+  const fields = ['expenses.wht_choice', '{withholdingEnabled && (', 'expenses.payee_entity_kind',
+    'expenses.wht_income_category', 'expenses.wht_input_unit', 'expense-wht-rate-', 'expenses.wht_base', 'expenses.wht'];
+  let previous = -1;
+  for (const field of fields) {
+    const at = field === 'expenses.wht' ? block.lastIndexOf("t('expenses.wht',") : block.indexOf(field);
+    assert.ok(at > previous, `${field} follows the previous field`);
+    previous = at;
+  }
+  const outside = edit.replace(block, '');
+  for (const key of ['expenses.payee_entity_kind', 'expenses.wht_income_category', 'expenses.wht_input_unit', 'expense-wht-rate-']) {
+    assert.equal(outside.includes(key), false, `${key} appears only in the block`);
+  }
+  assert.doesNotMatch(block, /grid-cols-2/, 'withholding reads top to bottom at every width');
+  assert.match(edit, /useState\(\(\) => expenseReviewWithholdsTax\(reviewValues\(detail\), detail.whtAmount\)\)/);
+  assert.match(edit, /setWithholdingEnabled\(expenseReviewWithholdsTax\(reviewValues\(detail\), detail.whtAmount\)\)/, 'reload resets the choice from saved facts');
+  assert.match(block, /disabled=\{!isMutable \|\| busy\}/, 'the read-only variant disables editing');
+});
+
+test('clearing either unit overrides old totals/rates, removes every withholding issue and sends explicit zero', () => {
+  for (const inputType of ['RATE', 'AMOUNT'] as const) {
+    for (const value of ['', '  ']) {
+      const before = { ...values(), whtInput: { inputType, value: '3', baseAmount: '-1' } };
+      assert.ok(validateExpenseReview(before, { today: '2026-10-04', whtAmount: '3' }).length > 0);
+      const after = changeInput(before, { inputType, value });
+      assert.equal(model.expenseReviewWithholdsTax(after, '3'), false);
+      assert.deepEqual(validateExpenseReview(after, { today: '2026-10-04', whtAmount: '3' }), []);
+      const payload = model.buildExpenseDraftReviewPayload(after);
+      assert.deepEqual(payload.whtInput, { inputType, value: '0' });
+      assert.ok(payload.lines!.every((line) => !('whtRate' in line)));
+    }
+  }
+  assert.match(block, /changeExpenseReviewWhtInput\(current, \{ inputType: whtInput.inputType, value,/);
+  assert.match(block, /if \(value\.trim\(\) === ''\) setWithholdingEnabled\(false\)/);
+});
+
+test('choosing no withholding clears category/rate/base/legacy rates and issues while keeping the vendor snapshot', () => {
+  const before = { ...values(), vendorEntityKindSnapshot: 'JURISTIC' as const, whtCategoryCode: 'SERVICE', whtRate: '3',
+    whtInput: { inputType: 'AMOUNT' as const, value: '300', baseAmount: '-1' } };
+  const after = changeInput(before, { inputType: 'RATE', value: '' });
+  assert.deepEqual(after.whtInput, { inputType: 'RATE', value: '0' });
+  assert.equal(after.whtCategoryCode, '');
+  assert.equal(after.whtRate, '');
+  assert.ok(after.lines.every((line) => line.whtRate === null));
+  assert.equal(after.vendorEntityKindSnapshot, 'JURISTIC');
+  assert.deepEqual(validateExpenseReview(after, { today: '2026-10-04', whtAmount: '3' }), []);
+  assert.equal(model.buildExpenseDraftReviewPayload(after).whtCategoryCode, '');
+  assert.equal(model.buildExpenseDraftReviewPayload(after).whtRate, '0', 'clear persisted certificate metadata as well as the computed amount');
+  assert.match(block, /if \(!enabled\)[\s\S]*changeExpenseReviewWhtInput\(current, \{ inputType: 'RATE', value: '' \}\)/);
+  assert.match(block, /setError\(null\)/, 'a failed save must not leave an old withholding error');
+});
+
+test('choosing a category fills the actual percent input as well as certificate metadata', () => {
+  assert.match(block, /whtInput: \{ inputType: 'RATE', value: rate/);
+  assert.match(block, /whtCategoryCode: code, whtRate: rate/);
+});
+
+test('totals preview omits certificate classification fields rejected by the existing DTO', () => {
+  const hook = readFileSync(new URL('./useExpenseReviewTotals.ts', import.meta.url), 'utf8');
+  const removed = hook.slice(hook.indexOf('const {'), hook.indexOf('...reviewPayload }'));
+  assert.match(removed, /whtCategoryCode: _whtCategory/);
+  assert.match(removed, /whtRate: _whtRate/);
+  assert.doesNotMatch(removed, /whtInput:/, 'the actual withholding money input still reaches the calculator');
+  const dto = readFileSync(new URL('../../../../api/src/modules/expenses/presentation/http/expense.dtos.ts', import.meta.url), 'utf8');
+  const preview = dto.slice(dto.indexOf('export class ExpenseTotalsPreviewDto'), dto.indexOf('/** Shared upload-intent'));
+  assert.doesNotMatch(preview, /whtCategoryCode|whtRate/);
+  assert.match(preview, /whtInput\?: ExpenseWhtInput/);
+});
+
+test('typing zero before a decimal keeps the chosen category and base for a fractional rate or amount', () => {
+  for (const inputType of ['RATE', 'AMOUNT'] as const) {
+    const before = { ...values(), vendorEntityKindSnapshot: 'JURISTIC' as const, whtCategoryCode: 'SERVICE', whtRate: '3' };
+    const zero = changeInput(before, { inputType, value: '0', baseAmount: '100' });
+    assert.equal(zero.whtCategoryCode, 'SERVICE');
+    assert.equal(zero.whtInput?.baseAmount, '100');
+    const fraction = changeInput(zero, { inputType, value: '0.5', baseAmount: '100' });
+    assert.equal(model.expenseReviewWithholdsTax(fraction), true);
+    assert.deepEqual(validateExpenseReview(fraction, { today: '2026-10-04' }), []);
+  }
+  assert.doesNotMatch(block, /Number\(value\) === 0\) setWithholdingEnabled\(false\)/);
+});
+
+test('empty, loading and failed catalogs have distinct shared Thai guidance for editable and read-only views', () => {
+  const empty = words['expenses.wht_categories_empty'];
+  assert.ok(empty, 'empty catalog has an explanation');
+  assert.match(empty, /ยังไม่มีประเภทเงินได้ที่เปิดใช้/);
+  assert.match(empty, /ติดต่อทีมมั่งมี/);
+  for (const key of ['expenses.wht_categories_empty', 'expenses.wht_categories_loading', 'expenses.wht_categories_failed']) {
+    assert.ok(words[key]);
+    assert.doesNotMatch(words[key]!, /[A-Za-z]/);
+    assert.ok(block.includes(key), `${key} appears in the same block, including read-only`);
+  }
+  assert.match(block, /whtCategoriesState === 'ready'.*applicableWhtCategories.length === 0/);
+  assert.match(edit, /setWhtCategoriesState\('error'\)/);
+  assert.doesNotMatch(block, /isMutable &&[^\n]*wht_categories/, 'guidance is also visible without edit permission');
+});
+
+test('a saved category outside the current catalog displays a Thai label instead of its code', () => {
+  assert.equal(words['expenses.wht_category_recorded'], 'ประเภทเงินได้ที่บันทึกไว้');
+  assert.match(block, /!isMutable && values.whtCategoryCode && !applicableWhtCategories.some/);
+  assert.match(block, /<option value=\{values.whtCategoryCode\}>\{t\('expenses.wht_category_recorded', locale\)\}/);
+  assert.match(block, /const picked = applicableWhtCategories.find\([\s\S]*?if \(!picked\) return;/, 're-selecting the recorded fallback must not replace its amount with an invented rate');
+});
+
+test('withholding hints explain optional blanks and the actual base without English tokens', () => {
+  for (const key of ['expenses.wht_percent_hint', 'expenses.wht_amount_hint', 'expenses.wht_base_hint']) {
+    assert.doesNotMatch(words[key]!, /[A-Za-z]/);
+    assert.equal((workspaceDictionary.en as Record<string, string>)[key], words[key], 'employee guidance has one Thai wording source in either workspace locale');
+  }
+  for (const key of ['expenses.wht_percent_hint', 'expenses.wht_amount_hint']) {
+    assert.match(words[key]!, /เว้นว่างหรือกรอก 0 เพื่อไม่หัก/);
+    assert.match(words[key]!, /ฐานหัก/);
+  }
+});
+
+test('all printed certificate labels and stale-state notice share the 50 ทวิ wording source', () => {
+  assert.equal(words['wht.print_certificate'], 'พิมพ์เอกสาร 50 ทวิ');
+  const review = readFileSync(new URL('./ExpenseReviewPage.tsx', import.meta.url), 'utf8');
+  const ap = readFileSync(new URL('../accounts-payable/AccountsPayablePages.tsx', import.meta.url), 'utf8');
+  assert.match(review, /t\('wht.print_certificate', locale\)/);
+  assert.equal((ap.match(/workspaceDictionary.th\['wht.print_certificate'\]/g) ?? []).length, 2);
+  assert.equal(apiErrorMessage({ code: 'wht_handoff_not_issuable' }), words['wht.print_certificate_not_issuable']);
+  assert.ok(words['wht.print_certificate_not_issuable']?.includes(words['wht.print_certificate']!));
+  const scan = (url: URL): void => {
+    for (const entry of readdirSync(url, { withFileTypes: true })) {
+      const path = new URL(entry.name + (entry.isDirectory() ? '/' : ''), url);
+      if (entry.isDirectory()) scan(path);
+      else if (/\.tsx?$/.test(entry.name)) assert.equal(readFileSync(path, 'utf8').includes('ทวิ' + ' 50'), false, path.pathname);
+    }
+  };
+  scan(new URL('../../', import.meta.url));
+});
+
+
+test('income categories match the payee form and changing type clears an incompatible category', () => {
+  const catalog = [
+    { code: 'PERSON', nameTh: 'บุคคล', formType: 'PND3', defaultRate: '3' },
+    { code: 'COMPANY', nameTh: 'บริษัท', formType: 'PND53', defaultRate: '3' },
+  ];
+  const filter = (model as any).expenseWhtCategoriesForPayee;
+  const change = (model as any).changeExpensePayeeType;
+  assert.equal(typeof filter, 'function'); assert.equal(typeof change, 'function');
+  assert.deepEqual(filter(catalog, 'INDIVIDUAL').map((c: any) => c.code), ['PERSON']);
+  assert.deepEqual(filter(catalog, 'JURISTIC').map((c: any) => c.code), ['COMPANY']);
+  assert.deepEqual(filter(catalog, ''), []);
+  const before = { ...values(), vendorEntityKindSnapshot: 'INDIVIDUAL', whtCategoryCode: 'PERSON' };
+  assert.equal(change(before, 'JURISTIC', catalog).whtCategoryCode, '');
+  assert.equal(change(before, 'INDIVIDUAL', catalog).whtCategoryCode, 'PERSON');
+  assert.match(block, /changeExpensePayeeType/);
+  assert.match(block, /applicableWhtCategories.map/);
+  assert.match(block, /applicableWhtCategories.length === 0/);
+});

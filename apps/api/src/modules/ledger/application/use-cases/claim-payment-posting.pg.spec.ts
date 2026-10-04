@@ -105,8 +105,8 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
   /** Takes a shop out of every later drain, so each test's drain counts are its own. */
   const retire = (s: Shop) => client.company.update({ where: { id: s.companyId }, data: { status: 'ARCHIVED' } });
 
-  /** An approved claim whose lines each have a CONFIRMED expense record, ready to be paid. */
-  async function claim(s: Shop, amounts: string[]) {
+  /** An approved claim with confirmed expense records, or a suspected duplicate parked before confirmation. */
+  async function claim(s: Shop, amounts: string[], opts: { duplicatePolicy?: 'WARN'; possibleDuplicate?: boolean } = {}) {
     const total = amounts.reduce((sum, amount) => sum.add(amount), new Decimal(0)).toFixed(2);
     let request = await claims.createRequest({
       companyId: s.companyId, branchId: s.branchId, requesterUserId: s.userId, createdByUserId: s.userId,
@@ -116,6 +116,10 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
     });
     await client.reimbursementRequest.update({ where: { id: request.id }, data: {
       status: 'FINANCE_REVIEW', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: s.userId,
+      ...(opts.duplicatePolicy && { approvalPolicySnapshotJson: {
+        schemaVersion: 1, policyId: 'pg-policy', policyVersion: 'v1', approvalRequiredFromAmount: '1000.00', requiresApproval: false,
+        route: null, allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy: opts.duplicatePolicy, financeReviewRequired: true,
+      } }),
     } });
     request = (await claims.findRequestById(s.companyId, request.id))!;
     const projections = await claims.prepareClaimProjections({
@@ -125,7 +129,9 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
     // Fixture shortcut for the confirm saga, which is not under test here.
     await client.expenseRecord.updateMany({
       where: { companyId: s.companyId, sourceReimbursementRequestId: request.id },
-      data: { status: 'CONFIRMED', confirmedAt: new Date(), postingStatus: 'pending', duplicateStatus: 'NO_MATCH' },
+      data: opts.possibleDuplicate
+        ? { duplicateStatus: 'POSSIBLE_DUPLICATE', postingStatus: 'pending' }
+        : { status: 'CONFIRMED', confirmedAt: new Date(), postingStatus: 'pending', duplicateStatus: 'NO_MATCH' },
     });
     await client.reimbursementRequest.update({ where: { id: request.id }, data: { status: 'READY_FOR_PAYMENT' } });
     return { requestId: request.id, total, expenseIds: projections.map((projection) => projection.expenseId) };
@@ -242,7 +248,8 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
     try {
       const ready = await claim(s, ['100.00']);
       const waitingAccrual = await claim(s, ['60.00', '40.00']);
-      const suspectedDuplicate = await claim(s, ['70.00']);
+      // A frozen warning policy permits payment; duplicate review still keeps its settlement pending.
+      const suspectedDuplicate = await claim(s, ['70.00'], { duplicatePolicy: 'WARN', possibleDuplicate: true });
       const confirmedDuplicate = await claim(s, ['50.00', '30.00']);
       const voided = await claim(s, ['90.00']);
       const beforeActivation = await claim(s, ['110.00']);
@@ -253,9 +260,7 @@ describe('claim payout posting (PostgreSQL)', { skip: !databaseUrl }, () => {
       for (const c of [ready, voided, beforeActivation, alreadyFailed, alreadyJournaled]) await post(s, 'expense.record', c.expenseIds[0]!);
       await post(s, 'expense.record', waitingAccrual.expenseIds[0]!);
       await post(s, 'expense.record', confirmedDuplicate.expenseIds[0]!);
-      // Finance parked these lines as duplicates: suspected keeps the settlement waiting,
-      // confirmed needs no accrual at all.
-      await client.expenseRecord.update({ where: { id: suspectedDuplicate.expenseIds[0]! }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'POSSIBLE_DUPLICATE' } });
+      // The suspected duplicate is still unconfirmed; a confirmed duplicate needs no accrual at all.
       await client.expenseRecord.update({ where: { id: confirmedDuplicate.expenseIds[1]! }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE', postingStatus: 'not_required' } });
       // An evidence warning keeps this accrual for the accountant, so the worker never posts it
       // and the payout behind it has to keep waiting.

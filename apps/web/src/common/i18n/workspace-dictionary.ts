@@ -1,3 +1,4 @@
+import { EXPENSE_CORRECTION_WORDS } from '@watchdog-bms/contracts';
 import { STOCK_MOVEMENT_TYPE_LABELS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 
 import { EXPENSE_MANUAL_EDIT_HELP_TH, EXPENSE_SAVED_MANUAL_HELP_TH, EXPENSE_READ_FAILED_HELP_TH, EXPENSE_READ_PARTIAL_HELP_TH, ATTACHMENT_SOURCE_TYPES_LABEL, SIGNATURE_FILE_TYPES_LABEL, UPLOAD_HEIC_CONVERSION_MESSAGE } from '@watchdog-bms/contracts';
@@ -8,10 +9,29 @@ const thaiRoleLabels = Object.fromEntries(
   Object.entries(THAI_SYSTEM_ROLE_NAMES).map(([key, name]) => [`role.${key}`, name]),
 ) as { [K in keyof typeof THAI_SYSTEM_ROLE_NAMES as `role.${K}`]: (typeof THAI_SYSTEM_ROLE_NAMES)[K] };
 
+const whtPrintCertificate = 'พิมพ์เอกสาร 50 ทวิ';
+const withholdingWords = {
+  'expenses.wht_percent_hint': 'กรอกเปอร์เซ็นต์ตามเอกสาร เช่น 3 หมายถึง 3% ของฐานหัก ณ ที่จ่าย เว้นว่างหรือกรอก 0 เพื่อไม่หัก',
+  'expenses.wht_amount_hint': 'เก็บยอดบาทที่กรอกไว้แม้แก้รายการ ระบบตรวจว่าไม่เกินฐานหักและยอดรวมเมื่อบันทึก เว้นว่างหรือกรอก 0 เพื่อไม่หัก',
+  'expenses.wht_base_hint': 'ระบุเมื่อฐานหักต่างจากยอดก่อนภาษีมูลค่าเพิ่ม เช่น บิลมีคูปอง เว้นว่างเพื่อใช้ฐานจากรายการ ไม่ต้องคำนวณย้อนจากยอดภาษี',
+  'expenses.wht_choice': 'หัก ณ ที่จ่ายไหม',
+  'expenses.wht_no': 'ไม่หัก',
+  'expenses.wht_yes': 'หัก',
+  'expenses.wht_categories_loading': 'กำลังโหลดประเภทเงินได้…',
+  'expenses.wht_categories_failed': 'ยังโหลดประเภทเงินได้ไม่ได้ กรุณาโหลดหน้าใหม่ หากยังไม่ได้ ให้ผู้ดูแลร้านช่วยตรวจสอบสิทธิ์และการเชื่อมต่อ',
+  'expenses.wht_categories_empty': 'ยังไม่มีประเภทเงินได้ที่เปิดใช้สำหรับผู้รับเงินประเภทนี้ ติดต่อทีมมั่งมี',
+  'expenses.wht_category_recorded': 'ประเภทเงินได้ที่บันทึกไว้',
+  'expenses.wht_calculating': 'กำลังคำนวณยอดหัก ณ ที่จ่าย…',
+  'expenses.wht_calculation_pending': 'ยังคำนวณยอดหัก ณ ที่จ่ายล่าสุดไม่ได้ กรุณาตรวจข้อมูลที่แจ้งไว้',
+  'wht.print_certificate': whtPrintCertificate,
+  'wht.print_certificate_not_issuable': `สถานะของรายการนี้เปลี่ยนไปแล้ว ไม่สามารถ${whtPrintCertificate}ได้ในตอนนี้ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง`,
+};
+
 export type SupportedLocale = 'th' | 'en';
 
 export const workspaceDictionary = {
   th: {
+    ...withholdingWords,
     // Shell
     'shell.toggle_sidebar': 'สลับเมนู',
     'shell.user_menu': 'เมนูผู้ใช้',
@@ -993,7 +1013,6 @@ export const workspaceDictionary = {
     'expenses.vat': 'ภาษีมูลค่าเพิ่ม',
     'expenses.grand_total': 'ยอดรวมทั้งสิ้น',
     'expenses.wht': 'หัก ณ ที่จ่าย',
-    'expenses.document_wht_rate': 'หัก ณ ที่จ่าย (ทั้งบิล)',
     'expenses.wht_multiple_rates_hint': 'บิลเดิมมีหลายอัตรา ระบบจะเก็บค่าเดิมไว้จนกว่าจะกรอกค่าใหม่สำหรับทั้งบิล',
     'expenses.wht_input_unit': 'หน่วยหัก ณ ที่จ่าย',
     'expenses.wht_unit_percent': 'เปอร์เซ็นต์ (%)',
@@ -1001,11 +1020,8 @@ export const workspaceDictionary = {
     'expenses.wht_value_percent': 'อัตราหัก ณ ที่จ่าย (%)',
     'expenses.wht_value_baht': 'ยอดหัก ณ ที่จ่าย (บาท)',
     'expenses.wht_base': 'ฐานคำนวณหัก ณ ที่จ่าย (บาท)',
-    'expenses.wht_base_hint': 'ระบุเมื่อฐานหักต่างจากยอดก่อน VAT เช่น บิลมีคูปอง เว้นว่างเพื่อใช้ฐานจากรายการ ไม่ต้องคำนวณย้อนจากยอดภาษี',
     'expenses.v_wht_base': 'กรอกฐานหักเป็นจำนวนบาทตั้งแต่ 0 และทศนิยมไม่เกิน 2 ตำแหน่ง',
     'expenses.v_wht_base_readonly': 'ฐานหัก ณ ที่จ่ายไม่ถูกต้อง',
-    'expenses.wht_percent_hint': 'กรอก 3 หมายถึง 3% ของยอดก่อน VAT · กรอก 0 เพื่อไม่หัก ณ ที่จ่าย',
-    'expenses.wht_amount_hint': 'เก็บยอดบาทที่กรอกไว้แม้แก้รายการ ระบบตรวจว่าไม่เกินยอดก่อน VAT เมื่อบันทึก · กรอก 0 เพื่อไม่หัก ณ ที่จ่าย',
     'expenses.amount_due': 'ยอดที่ต้องชำระจริง',
     'expenses.taxable_base_ex_vat': 'ฐานภาษี (ยอดก่อน VAT)',
     'expenses.amount_due_after_wht': 'ยอดที่ต้องชำระจริง (หลังหัก ณ ที่จ่าย)',
@@ -1091,7 +1107,6 @@ export const workspaceDictionary = {
     'expenses.tip_tax_id': 'เลข 13 หลักของผู้ขาย ดูได้จากหัวใบกำกับภาษี ถ้าไม่มีให้เว้นว่าง',
     'expenses.tip_vat_mode': 'เลือก "VAT รวมในราคา" ถ้าราคาบนใบเสร็จรวมภาษีไว้แล้ว เลือก "VAT แยกจากราคา" ถ้าต้องบวกเพิ่ม · อัตรากรอกที่แต่ละรายการ',
     'expenses.tip_vat_rate': 'ปกติร้านค้าในไทยใช้ 7% · เลือก 0% เมื่อเป็นการส่งออกหรือบริการที่ใช้ในต่างประเทศ · ถ้าใบเสร็จพิมพ์ยอด VAT เป็นบาทมาให้ ให้กรอกยอดนั้นแล้วระบบคำนวณอัตราให้',
-    'expenses.tip_wht_rate': 'เลือกบาทหรือเปอร์เซ็นต์ตามเอกสาร แล้วกรอกครั้งเดียวสำหรับทั้งบิล เช่น 3 = 3% หรือ 30.50 บาท · กรอก 0 เพื่อไม่หัก ณ ที่จ่าย',
     'expenses.tip_tax_code': 'รหัสที่ใช้แยกประเภทภาษีซื้อในรายงานภาษี เลือกได้เมื่อเอกสารเป็นใบกำกับภาษีเท่านั้น',
     'expenses.tip_doc_type': 'ใบกำกับภาษีใช้ขอคืนภาษีซื้อได้ ใบเสร็จทั่วไปใช้เป็นค่าใช้จ่ายได้แต่ขอคืนภาษีไม่ได้',
     'expenses.tip_tax_status': 'บอกว่าเอกสารนี้ใช้เป็นหลักฐานทางภาษีได้แค่ไหน มีผลกับการคิดภาษีซื้อ',
@@ -1123,7 +1138,7 @@ export const workspaceDictionary = {
     'expenses.send_for_review': 'ส่งตรวจสอบ',
     'expenses.non_expense_workflow_blocked': 'ยังส่งตรวจหรือยืนยันไม่ได้ เพราะ AI อ่านไฟล์นี้ว่าไม่ใช่หลักฐานค่าใช้จ่าย ถ้าเป็นหลักฐานค่าใช้จ่ายจริง ให้ผู้มีสิทธิ์ตรวจค่าใช้จ่ายเลือกประเภทเอกสารที่ถูกต้องเอง แล้วกดยืนยันเพื่อใช้ประเภทที่เลือกแทนผลของ AI',
     'expenses.zero_amount_warning': 'ยอดรวมเป็นศูนย์ — กรุณาตรวจสอบรายละเอียดก่อนยืนยันเอกสาร',
-    'expenses.reject': 'ยกเลิกรายการ',
+    'expenses.reject': EXPENSE_CORRECTION_WORDS.reject,
     'expenses.rejecting': 'กำลังยกเลิก…',
     'expenses.reject_confirm_title': 'ยืนยันการยกเลิกรายการ',
     'expenses.reject_confirm_description': 'รายการจะเปลี่ยนเป็นสถานะยกเลิก กรุณาระบุเหตุผลก่อนยืนยัน',
@@ -1702,6 +1717,7 @@ export const workspaceDictionary = {
     'counterparties.auto_save_link_failed': 'บันทึกร้านในทะเบียนคู่ค้าแล้ว แต่เชื่อมกับรายการนี้ไม่สำเร็จ กรุณาเปิดรายการใหม่เพื่อตรวจสอบ',
   },
   en: {
+    ...withholdingWords,
     'shell.toggle_sidebar': 'Toggle Sidebar',
     'shell.user_menu': 'User Menu',
     'shell.notifications': 'Notifications',
@@ -2661,7 +2677,6 @@ export const workspaceDictionary = {
     'expenses.vat': 'VAT',
     'expenses.grand_total': 'Grand total',
     'expenses.wht': 'Withholding tax',
-    'expenses.document_wht_rate': 'Withholding tax (whole bill)',
     'expenses.wht_multiple_rates_hint': 'This existing bill has multiple rates. They remain unchanged until you enter a replacement value for the whole bill.',
     'expenses.wht_input_unit': 'Withholding unit',
     'expenses.wht_unit_percent': 'Percent (%)',
@@ -2669,11 +2684,8 @@ export const workspaceDictionary = {
     'expenses.wht_value_percent': 'Withholding rate (%)',
     'expenses.wht_value_baht': 'Withholding amount (baht)',
     'expenses.wht_base': 'Withholding base (baht)',
-    'expenses.wht_base_hint': 'Enter when the withholding base differs from the pre-VAT total, for example a coupon. Leave blank to use the line base; do not back-solve from rounded tax.',
     'expenses.v_wht_base': 'Enter a non-negative withholding base in baht with at most two decimal places',
     'expenses.v_wht_base_readonly': 'The withholding tax base is invalid',
-    'expenses.wht_percent_hint': 'Enter 3 for 3% of the pre-VAT amount. Enter 0 for no withholding.',
-    'expenses.wht_amount_hint': 'The entered baht amount stays fixed when items change. The pre-VAT limit is checked on save. Enter 0 for no withholding.',
     'expenses.amount_due': 'Amount due',
     'expenses.taxable_base_ex_vat': 'Taxable base (pre-VAT)',
     'expenses.amount_due_after_wht': 'Amount due (after withholding tax)',
@@ -2757,7 +2769,6 @@ export const workspaceDictionary = {
     'expenses.tip_tax_id': "The vendor's 13-digit tax ID, shown at the top of the tax invoice. Leave blank if unavailable.",
     'expenses.tip_vat_mode': 'Choose "VAT included in price" if receipt prices already include tax, or "VAT added to price" if tax must be added. The rate is set per line.',
     'expenses.tip_vat_rate': 'Thai vendors normally use 7%. Choose 0% for exports or services used abroad. If the receipt prints a VAT amount in baht, enter that and the rate is derived.',
-    'expenses.tip_wht_rate': 'Choose baht or percent as printed, then enter one value for the whole bill, e.g. 3 for 3% or 30.50 baht. Enter 0 for no withholding.',
     'expenses.tip_tax_code': 'The code used to categorize input VAT in tax reports. Available only when the document is a tax invoice.',
     'expenses.tip_doc_type': 'A tax invoice can support an input VAT claim. A regular receipt can support an expense but not an input VAT claim.',
     'expenses.tip_tax_status': 'Indicates how this document can be used as tax evidence and affects input VAT treatment.',

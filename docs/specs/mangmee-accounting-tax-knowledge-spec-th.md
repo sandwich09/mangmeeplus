@@ -209,6 +209,10 @@ Runtime โหลดเฉพาะ APPROVED pack ที่ยังไม่ห
 
 Pack: mangmee-product-help
 
+ทบทวนแหล่งคู่มือ 2026-10-04: pack รุ่น 2 คง 12 การ์ดเดิม การ์ดทั้ง 6 ใบที่อ้างคู่มือรายจ่ายและ 2 ใบที่อ้างคู่มือเบิกจ่ายเป็นรุ่น 2 เพราะ source hash เปลี่ยน ส่วน 4 ใบที่อ้างคู่มืออื่นคงรุ่น 1 ตามหลัก immutable version ในแผน P23-0 การ์ด `expense.draft` ต้องบอกว่าหลังยืนยันผู้มีสิทธิ์เปิด “แก้ไขเอกสาร” ได้เมื่อเอกสารเปิดแก้ไขได้ กลับไปตรวจสอบด้วยเลขเดิม และดูเหตุผล/ผู้ที่ต้องติดต่อหากเปิดไม่ได้ (คู่มือรายจ่าย `#overview`) การ์ด `expense.vat-display` คงข้อความเดิมทุกคำ (ผู้ควบคุมงานไม่รับการเปลี่ยนคำ “VAT” เพราะไม่จำเป็นต่อความถูกต้องและจะเปลี่ยนข้อมูลที่ใช้เลือกการ์ดโดยไม่มีการทดสอบกับโมเดล) เปลี่ยนเฉพาะรุ่นตาม source hash (`#list`) การ์ดเบิกจ่ายเดิมไม่ให้สิทธิ์อนุมัติใบของตัวเองหรือข้ามการตรวจรายการซ้ำ จึงคงข้อความเดิม (`#quick-start`, `#tabs`)
+
+การอนุมัติแหล่งของ 12 การ์ดนี้ใช้ผลตรวจ AI ได้ตามมติ Owner 2026-09-27 ใน [บันทึก advisor](../agent-memory/mangmee-ai-expense-advisor-2026-09-27.md) ไม่ใช่หลักฐานว่าผ่านการประเมินกับโมเดลจริง รอบนี้ reviewer คือ `repository-ai-source-code-review:codex-gpt-6:2026-10-04`; คง effectiveFrom/effectiveTo/reviewDueAt เดิม ไม่ต่ออายุ pack การตรวจแหล่ง ขนาด citation สิทธิ์ checksum และ regression อยู่ใน spec ของ pack และ W00 ต้องตรวจ/ย้าย pin เมื่อพบ drift ตามแผน advisor ส่วน blind eval/regression (§14) และ final tuning/held-out บน commit ที่จะ merge (สเปก advisor รายจ่าย §10) ยังเป็น release gate: รอบนี้ห้ามเรียกโมเดลเพราะงบเต็ม จึงยังไม่อ้างว่าผ่าน gate นี้ ดู [หลักฐานทบทวนรายประโยคและผลตรวจ](../agent-memory/approved-product-help-refresh-2026-10-04.md)
+
 - สมัคร/claim account/auto-register
 - Login เว็บด้วย username/password
 - LINE OA กลาง, Add Friend, LIFF account linking และ QR Login

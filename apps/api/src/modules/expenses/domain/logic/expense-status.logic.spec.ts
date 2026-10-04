@@ -494,3 +494,11 @@ describe('readAiCategorySuggestion', () => {
     }
   });
 });
+
+describe('confirmed expense correction transition', () => {
+  it('returns only to review; confirmation and draft remain inaccessible without the correction endpoint gates', () => {
+    assert.equal(canTransition('CONFIRMED', 'NEEDS_REVIEW'), true);
+    assert.equal(canTransition('CONFIRMED', 'DRAFT'), false);
+    assert.equal(canTransition('CONFIRMED', 'READY_FOR_CONFIRMATION'), false);
+  });
+});

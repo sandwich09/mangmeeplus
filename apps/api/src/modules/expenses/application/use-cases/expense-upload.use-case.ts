@@ -1,3 +1,4 @@
+import { looksLikeAccountNumber } from '@watchdog-bms/contracts';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException, Optional } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
@@ -600,6 +601,21 @@ export class DuplicateCheckUseCase {
 @Injectable()
 export class ResolveDuplicateUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+
+  /** Claim authority is limited to its own projections. Dismissal never exposes the other document. */
+  async executeForReimbursement(ctx: RequestContext, requestId: string, branchId: string | undefined, reason: string, db: any): Promise<number> {
+    if (!ctx.permissions.includes('reimbursement.payment.record') && !ctx.permissions.includes('reimbursement.duplicate.resolve')) throw new ForbiddenException('Missing permission: reimbursement.duplicate.resolve');
+    if (!reason.trim() || reason.length > 500) throw new BadRequestException('duplicate_resolution_reason_required');
+    if (looksLikeAccountNumber(reason)) throw new BadRequestException('note_contains_account_number');
+    const rows = await this.repo.listClaimDuplicates(ctx.companyId, requestId, branchId, ctx.scopes ?? {}, db);
+    for (const expense of rows) for (const candidate of expense.duplicateCandidates) {
+      await this.repo.resolveDuplicateCandidate({ companyId: ctx.companyId, expenseId: expense.id, candidateId: candidate.id, actorUserId: ctx.userId, action: 'dismiss', reason,
+        scopes: ctx.scopes ?? {}, reimbursementRequestId: requestId, reimbursementBranchId: branchId },
+        tx => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.duplicate.dismiss', targetType: 'expense_record', targetId: expense.id, requestId: ctx.requestId,
+          result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { candidateId: candidate.id, reason, reimbursementRequestId: requestId } }, tx), db);
+    }
+    return rows.length;
+  }
 
   async execute(ctx: RequestContext, expenseId: string, candidateId: string, action: 'dismiss' | 'confirm', reason?: string): Promise<void> {
     if (!ctx.permissions.includes('expense.duplicate.resolve')) throw new ForbiddenException('Missing permission: expense.duplicate.resolve');

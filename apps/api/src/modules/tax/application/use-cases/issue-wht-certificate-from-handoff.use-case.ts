@@ -1,3 +1,5 @@
+import { lockExpenseCorrection } from '../../../expenses/infrastructure/expense-void-blocker';
+import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage } from '@watchdog-bms/contracts';
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { RequestContext, WhtHandoffPrefillDto } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -11,6 +13,8 @@ import { PrismaTaxRepository } from '../../infrastructure/repositories/prisma-ta
 import { TaxArtifactRendererService } from '../services/tax-artifact-renderer.service';
 import type { WhtCertificateSignature } from '../../domain/logic/wht-certificate-pdf.logic';
 import { isLaunchRouteOpen } from './wht-certificate-handoff.use-case';
+
+const HANDOFF_CHANGED_MESSAGE = 'สถานะของงานนี้เปลี่ยนไปแล้วระหว่างออกเอกสาร';
 
 /**
  * Mints a 50 ทวิ directly from an existing `WhtCertificateHandoff` — the AP/Expenses "ออกเอกสารใน
@@ -136,7 +140,17 @@ export class IssueWhtCertificateFromHandoffUseCase {
     const pdf = await this.renderer.renderWhtCertificate(fields, prefill.payerSnapshot, payee, signature);
 
     const client = this.taxRepo.prisma.client as any;
-    const { certificateRow, handoffUpdated } = await client.$transaction(async (tx: any) => {
+    const { certificateRow } = await client.$transaction(async (tx: any) => {
+      if (row.sourcePaymentType === 'expense.record' && row.sourcePaymentId) {
+        await lockExpenseCorrection(tx, ctx.companyId, row.sourcePaymentId);
+        const expense = await tx.expenseRecord.findFirst({ where: { companyId: ctx.companyId, id: row.sourcePaymentId }, select: { status: true } });
+        if (expense?.status !== 'CONFIRMED') throw new ConflictException({ code: 'expense_wht_source_changed', message: expenseCorrectionBlockerMessage('not_confirmed') });
+      }
+      await tx.$executeRaw`SELECT id FROM "WhtCertificateHandoff" WHERE id = ${row.id} AND "companyId" = ${ctx.companyId} FOR UPDATE`;
+      const current = await tx.whtCertificateHandoff.findUnique({ where: { id: row.id } });
+      if (current?.status !== 'REQUIRED' || current.prefillSnapshotHash !== row.prefillSnapshotHash) {
+        throw new ConflictException({ code: 'wht_handoff_not_issuable', message: HANDOFF_CHANGED_MESSAGE });
+      }
       const certificateRow = await tx.whtCertificate.create({
         data: {
           companyId: ctx.companyId,
@@ -168,18 +182,9 @@ export class IssueWhtCertificateFromHandoffUseCase {
         where: { id: row.id, companyId: ctx.companyId, status: 'REQUIRED' },
         data: { status: 'SYSTEM_ISSUED', certificateId: certificateRow.id },
       });
+      if (handoffUpdated.count !== 1) throw new ConflictException({ code: 'wht_handoff_not_issuable', message: HANDOFF_CHANGED_MESSAGE });
       return { certificateRow, handoffUpdated };
     });
-
-    if (handoffUpdated.count === 0) {
-      // Lost to a concurrent `linkExternal` (or a second identical mint) between the REQUIRED check
-      // above and this transaction. The certificate row is real and numbered, but the handoff it was
-      // meant to close already moved — this is the rare case the reserve-level P2002 catch above
-      // does not cover (the SVG/PDF for a certificate that will not be returned was still rendered,
-      // an acceptable cost for a same-object double-submit race this narrow).
-      const current = await this.table.findUnique({ where: { id: row.id } });
-      throw new ConflictException({ code: 'wht_handoff_not_issuable', message: 'สถานะของงานนี้เปลี่ยนไปแล้วระหว่างออกเอกสาร', status: current?.status ?? null });
-    }
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId, action: 'document.number.commit',
@@ -211,11 +216,18 @@ export class IssueWhtCertificateFromHandoffUseCase {
    * path, but a response without a `pdfArtifact` would leave the loser with no way to download the
    * certificate at all (nothing ever populates `pdfAttachmentId` — see `CreateWhtCertificateUseCase`).
    */
+  async download(ctx: RequestContext, handoffId: string) {
+    const handoff = await this.table.findUnique({ where: { id: handoffId } });
+    if (!handoff || handoff.companyId !== ctx.companyId) throw new NotFoundException('WHT handoff not found.');
+    if (handoff.status !== 'SYSTEM_ISSUED') throw new ConflictException({ code: 'wht_certificate_download_unavailable', message: EXPENSE_CORRECTION_WORDS.certificateUnavailable });
+    return this.reloadWinner(handoffId);
+  }
+
   private async reloadWinner(handoffId: string) {
     const winner = await this.table.findUnique({ where: { id: handoffId } });
     if (winner?.certificateId) {
       const cert = await this.taxRepo.prisma.client.whtCertificate.findUnique({ where: { id: winner.certificateId } });
-      if (cert) {
+      if (cert && cert.companyId === winner.companyId) {
         const formType = await this.inferFormType(cert);
         const pdf = await this.renderer.renderWhtCertificate({
           certificateNumber: cert.certificateNumber,

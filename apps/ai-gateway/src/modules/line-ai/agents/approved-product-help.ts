@@ -1,10 +1,10 @@
 /** Curated product guidance reviewed against these exact source/body hashes. */
-import { THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { EXPENSE_CORRECTION_WORDS, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
 import { knowledgeCardHash, knowledgePackHash, type ProductKnowledgeCard, type ProductKnowledgePack } from './approved-knowledge';
 
 const sources = {
-  expenses: { file: 'expenses-guide.content.ts', hash: '08dbb27a0465a294b243976f814717518938888e9af979e6ae0424002a1212d5' },
-  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '013078416e268b89892e90c3dba2a1ae505e9f487b3f7a98f49efd634d6c4432' },
+  expenses: { file: 'expenses-guide.content.ts', hash: '6fad431f54f3eb4e4469f496ff43e4438c45f707ca6fd437eec60d90fd9397d3' },
+  reimbursements: { file: 'reimbursement-guide.content.ts', hash: '5062ebdf55877b00a868eeef18f763f507651363db7f672f0e1ebc399879637e' },
   'substitute-receipts': { file: 'substitute-receipt-guide.content.ts', hash: '8abcde427c8df626472db6d8709e144d843b83e8655b1934c343b410765bfc99' },
   reports: { file: 'reports-guide.content.ts', hash: 'a26bbd51335bb620c4ef3511760ee89c14754b12189881416ca0cfca9fd5abe4' },
 } as const;
@@ -14,7 +14,7 @@ function card(
   permissionAnyOf: string[], requiredCapabilities: string[] = [],
 ): ProductKnowledgeCard {
   const value: ProductKnowledgeCard = {
-    id, version: 1, title, questions, summary: title, body,
+    id, version: guide === 'expenses' || guide === 'reimbursements' ? 2 : 1, title, questions, summary: title, body,
     sourceURL: `/companies/{companyId}/user-guide/${guide}#${anchor}`,
     sourceFile: `apps/web/src/features/user-guide/${sources[guide].file}`, sourceHash: sources[guide].hash,
     contentHash: '', permissionAnyOf, requiredPermissions: [],
@@ -30,9 +30,9 @@ const reimbursementReaders = ['reimbursement.read', 'reimbursement.read_related'
 const substituteReaders = ['expense.review', 'expense.confirm', 'expense.read_own'];
 
 export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
-  id: 'mangmee-product-help', version: 1, status: 'APPROVED',
+  id: 'mangmee-product-help', version: 2, status: 'APPROVED',
   language: 'th', jurisdiction: 'TH',
-  owner: 'repository:product-help', reviewers: ['repository-ai-source-code-review:codex-gpt-5.6-sol:2026-09-27'],
+  owner: 'repository:product-help', reviewers: ['repository-ai-source-code-review:codex-gpt-6:2026-10-04'],
   effectiveFrom: '2026-09-27T00:00:00+07:00', effectiveTo: '2026-12-27T00:00:00+07:00', reviewDueAt: '2026-12-27T00:00:00+07:00',
   releaseRange: { min: '2.4.0', maxExclusive: '2.5.0' }, contentHash: '',
   cards: [
@@ -43,7 +43,7 @@ export const PRODUCT_HELP_PACK: ProductKnowledgePack = {
     card('expense.find', 'expenses', 'list', 'ค้นหารายการค่าใช้จ่าย', ['หาบิลร้านเดิมยังไง', 'ดูรายการตามสถานะที่ไหน'],
       'ในรายการค่าใช้จ่าย เลือกช่วงเวลาแล้วกรองสถานะได้ ช่องค้นหาใช้ชื่อผู้ขายหรือเลขที่เอกสาร จากนั้นเปิดรายการที่ต้องการเพื่อตรวจรายละเอียดค่ะ', expenseReaders, ['expense.list_recent']),
     card('expense.draft', 'expenses', 'overview', 'ฉบับร่างต่างจากยืนยันแล้วอย่างไร', ['ร่างใช้เป็นยอดบัญชีแล้วหรือยัง', 'บันทึกไว้ก่อนแล้วค่อยตรวจได้ไหม'],
-      'ฉบับร่างเป็นรายการที่บันทึกไว้และยังแก้ไขได้ ต้องตรวจรายละเอียดให้ครบก่อนยืนยัน เมื่อยืนยันแล้วไม่ใช่ร่างที่แก้ได้ตามปกติค่ะ หากข้อมูลผิดให้ตรวจขั้นตอนแก้ไขหรือยกเลิกตามสิทธิ์ก่อนดำเนินการ', expenseReaders),
+      `ฉบับร่างเป็นรายการที่บันทึกไว้และยังแก้ไขได้ ต้องตรวจรายละเอียดให้ครบก่อนยืนยันค่ะ หากข้อมูลผิดหลังยืนยัน ผู้มีสิทธิ์กด “${EXPENSE_CORRECTION_WORDS.reopen}” ได้เมื่อเอกสารเปิดแก้ไขได้ เอกสารกลับไปตรวจสอบโดยใช้เลขเอกสารเดิม หากเปิดแก้ไขไม่ได้ หน้ารายจ่ายบอกเหตุผลและผู้ที่ต้องติดต่อ`, expenseReaders),
     card('expense.vat-display', 'expenses', 'list', 'VAT ที่พบในเอกสารหมายถึงอะไร', ['ตัวเลข VAT ด้านบนขอคืนได้เลยไหม', 'ยอดภาษีในหน้ารายจ่ายคือยอดยื่นไหม'],
       'การ์ด VAT ในหน้ารายการเป็นยอด VAT ที่พบในเอกสาร ยังไม่ใช่ยอดภาษีซื้อที่ขอคืนได้ค่ะ ต้องตรวจคุณสมบัติเอกสารและเงื่อนไขภาษีของแต่ละรายการก่อนนำไปใช้ยื่น', expenseReaders),
     card('expense.export', 'expenses', 'overview', 'ส่งเอกสารให้นักบัญชี', ['เตรียมข้อมูลให้นักบัญชียังไง', 'ส่งรายจ่ายพร้อมหลักฐานได้ไหม'],

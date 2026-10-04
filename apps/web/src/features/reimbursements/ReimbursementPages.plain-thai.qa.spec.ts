@@ -1,4 +1,4 @@
-import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_POLICY_TAB_LABEL, ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import * as React from 'react';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,6 +28,42 @@ const { ReimbursementJourneyPage } = require('./ReimbursementJourneyPage') as ty
 const { approvalComparable, diffApprovalFields, draftSentBackNote, errorMessage, hubListKey, reimbursementListScope } = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
 const model = require('./reimbursements.model') as typeof import('./reimbursements.model');
 const reactRuntime = require('react') as typeof React;
+
+for (const [now, yesterday, today, tomorrow] of [
+  ['2026-10-04T12:00:00.000Z', '2026-10-03', '2026-10-04', '2026-10-05'],
+  ['2026-10-04T17:30:00.000Z', '2026-10-04', '2026-10-05', '2026-10-06'],
+]) {
+  it(`the payment form caps its calendar at Bangkok today, explains and disables a future paid date at ${now}`, (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date(now!) });
+    const previousDocument = globalThis.document;
+    // Open the real calendar in the existing static renderer; no browser or storage is used.
+    Object.assign(globalThis, { document: { body: {} } });
+    try {
+      for (const paidAt of [yesterday, today, tomorrow]) {
+        let falseStates = 0;
+        const html = renderWithState(React.createElement(ToastContext.Provider, { value: toast }, React.createElement(sections.PaymentForm, {
+          companyId: 'company-1', request: { outstandingAmount: '500', currency: 'THB' }, onCancel: noop, onDone: noop, onOpenFile: noop,
+        })), (initial) => {
+          if (initial && typeof initial === 'object' && 'paidAmount' in initial) return { ...initial, paidAt, paymentMethod: 'CASH' };
+          if (initial === false && ++falseStates > 1) return true; // Leave the form idle; open its field popovers.
+          return undefined;
+        });
+        const submit = /<button\b([^>]*\btype="submit"[^>]*)>/.exec(html)?.[1];
+        assert.ok(submit, 'payment submit button rendered');
+        assert.equal(/\bdisabled=""/.test(submit), paidAt === tomorrow, paidAt);
+        assert.equal(html.includes('วันที่จ่ายเงินจริงต้องไม่เกินวันนี้'), paidAt === tomorrow, paidAt);
+        for (const [day, blocked] of [[today, false], [tomorrow, true]] as const) {
+          const attrs = new RegExp(`<button\\b([^>]*)>${Number(day!.slice(-2))}</button>`).exec(html)?.[1];
+          assert.ok(attrs, `calendar day ${day} rendered`);
+          assert.equal(/\bdisabled=""/.test(attrs), blocked, `calendar day ${day}`);
+        }
+      }
+    } finally {
+      if (previousDocument === undefined) Reflect.deleteProperty(globalThis, 'document');
+      else globalThis.document = previousDocument;
+    }
+  });
+}
 
 const h = React.createElement;
 const noop = () => undefined;
@@ -315,7 +351,7 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     // "อยู่ที่" on the phone cards: the requester in the badge's own word, then the approvers by name.
     assert.deepEqual(texts.filter((text) => text.startsWith('อยู่ที่')), ['อยู่ที่ ผู้มีสิทธิ์อนุมัติ', 'อยู่ที่ ผู้เบิก', 'อยู่ที่ สมชาย']);
     // With its requester, and still no draft: nothing on the row sends it, and it is not among the drafts.
-    assert.equal(texts.some((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ'), false);
+    assert.equal(texts.some((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ' || text === 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'), false);
     assert.equal(rowsShown(hubTab('mine', claims, 'draft')), 1);
     assert.equal(visible(hubTab('mine', claims, 'draft')).includes('รอผู้เบิกแก้บัญชีรับเงิน'), false);
   });
@@ -591,14 +627,14 @@ describe('the approval queue offers only what the server says this viewer can do
 // Payout Phase 1 on the paged list: a row shows no account, so a draft is sent from its row only when the draft
 // itself chose cash. Any other draft may be paid into an account, and its button opens the claim page instead.
 describe('a draft row of the hub list is sent from the row only when nothing unseen would be frozen', () => {
-  const sending = (html: string) => visible(html).filter((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ');
+  const sending = (html: string) => visible(html).filter((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ' || text === 'เลือกวิธีรับเงินคืนและส่งอนุมัติ');
   const ready = { ...draft, receiptRequirementStatus: 'ATTACHED' };
 
-  it('says ส่งอนุมัติ on a cash draft and ตรวจบัญชีและส่งอนุมัติ on every other draft, in the list the hub holds', () => {
+  it('names the missing receiving method, transfer account check or cash submission in both list layouts', () => {
     // Table row and phone card, both from the rows of the held list.
     assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod: 'CASH' }])), ['ส่งอนุมัติ', 'ส่งอนุมัติ']);
-    for (const payoutMethod of [undefined, 'BANK_TRANSFER']) {
-      assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod }])), ['ตรวจบัญชีและส่งอนุมัติ', 'ตรวจบัญชีและส่งอนุมัติ'], String(payoutMethod));
+    for (const [payoutMethod, label] of [[undefined, 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'], [null, 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'], ['BANK_TRANSFER', 'ตรวจบัญชีและส่งอนุมัติ']] as const) {
+      assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod }])), [label, label], String(payoutMethod));
     }
     // A claim already sent has no send button, whatever it is paid by.
     assert.deepEqual(sending(hubTab('mine', [{ ...ready, status: 'PENDING_APPROVAL', payoutMethod: 'CASH', currentDesk: { kind: 'APPROVER' } }])), []);
@@ -1111,7 +1147,7 @@ describe('one thing has one name on the claim screens (owner 2026-10-02)', () =>
   const screens = claimScreenSources();
 
   it('uses no second name for the requester, the admin role, the policy tab or its self-approval switch', () => {
-    assert.ok(screens.includes('ผู้เบิก') && screens.includes('THAI_SYSTEM_ROLE_NAMES') && screens.includes('ตั้งค่านโยบาย'), 'the screens were read');
+    assert.ok(screens.includes('ผู้เบิก') && screens.includes('THAI_SYSTEM_ROLE_NAMES') && screens.includes('POLICY_TAB_LABEL') && REIMBURSEMENT_POLICY_TAB_LABEL === 'ตั้งค่านโยบาย', 'the screens were read');
     for (const retired of ['ผู้ขอ', 'ผู้ยื่น', 'ผู้รับเงินคืน', 'ผู้สำรองจ่ายและรับเงินคืน', 'แอดมิน', 'ตั้งค่าเบิกจ่าย', 'อนุญาตให้อนุมัติคำขอตนเอง']) {
       assert.equal(screens.includes(retired), false, retired);
     }
@@ -1208,4 +1244,22 @@ describe('claim policy shares the employee and role-page names', () => {
       assert.ok(texts.some((text) => text.includes('บทบาท ผู้ตรวจประจำบริษัท อนุมัติได้ แต่บันทึกจ่ายไม่ได้')), key);
     }
   });
+});
+
+describe('claims self-approval policy words', () => {
+  it('explains the switch for all roles, the solo exception, and the frozen submitted route', () => {
+    const texts = policySettings(policyForm, [roleOption('MANAGER', 'ผู้จัดการ', true)]);
+    assert.ok(texts.includes('เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบเบิกของตัวเองได้ เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด ยกเว้นเมื่อตอนส่ง ผู้เบิกเป็นคนเดียวที่อนุมัติใบนี้ได้ ใบที่ส่งไปแล้วใช้ผู้อนุมัติตามที่กำหนดไว้ตอนส่ง'));
+  });
+});
+
+
+it('both pay-queue layouts reuse the same duplicate reason and clearing notice as the payment refusal', () => {
+  const source = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
+  assert.equal((source.match(/reimbursementDuplicateBlockNotice\(r\.duplicateReasons, r\.status === 'FINANCE_REVIEW'\)/g) ?? []).length, 2);
+});
+
+it('duplicate-clear success says the review was recorded without promising every blocker is gone', () => {
+  const source = readFileSync(join(__dirname, 'ReimbursementJourneyPage.tsx'), 'utf8');
+  assert.match(source, /success: REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED/);
 });

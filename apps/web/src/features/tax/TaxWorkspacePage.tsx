@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
-import { ForbiddenState } from '@/common/components/state';
+import { ErrorState, ForbiddenState } from '@/common/components/state';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { formatThaiDate, formatThaiMonth } from '@/common/i18n/thai-date';
@@ -18,7 +18,6 @@ import {
   markFiled,
   markPaid,
   listWhtCategories,
-  setWhtCategoryStatus,
   type WhtCategory,
   type TaxPeriod,
   type TaxEvent,
@@ -32,6 +31,7 @@ import { useToast } from '@/common/components/toast';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
 import { listExpenses } from '@/features/expenses/expenses.api';
+import { W as WHT_CATALOG_WORDS, formLabel, rateLabel, statusLabel } from '@/features/system-wht-income-categories/wht-income-categories.words';
 
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
@@ -298,7 +298,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
           ))}
         </div>
 
-        {tab === 'WHT' && <WhtIncomeCategoryPanel companyId={companyId} canManage={can('tax.config.manage')} canRead={can('tax.config.read')} />}
+        {tab === 'WHT' && <WhtIncomeCategoryPanel companyId={companyId} canRead={can('tax.config.read')} />}
 
         <div className="grid gap-6 lg:grid-cols-3">
           {/* Period list */}
@@ -457,74 +457,47 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
   );
 }
 
-/**
- * The catalog every withholding decision picks from.
- *
- * It ships DRAFT on purpose — the seed stamps "Accountant verification required" on all 15 rows —
- * and until an accountant activates a row nothing may withhold under it. This panel is where that
- * verification is recorded; without it the pay-side withholding form has an empty dropdown and the
- * whole feature is unreachable.
- */
-function WhtIncomeCategoryPanel({ companyId, canManage, canRead }: { companyId: string; canManage: boolean; canRead: boolean }) {
-  const toast = useToast();
-  const [rows, setRows] = useState<WhtCategory[]>([]);
-  const [busyCode, setBusyCode] = useState<string | null>(null);
+/** Shops read the global catalog; only Mangmee manages it from the System Admin page. */
+function WhtIncomeCategoryPanel({ companyId, canRead }: { companyId: string; canRead: boolean }) {
+  const [rows, setRows] = useState<WhtCategory[] | null>(null);
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
     if (!canRead) return;
-    listWhtCategories(companyId).then(setRows).catch((cause) => setError(apiErrorMessage(cause)));
+    setRows(null); setError('');
+    listWhtCategories(companyId).then(setRows).catch(() => setError(WHT_CATALOG_WORDS.loadFailed));
   }, [companyId, canRead]);
   useEffect(() => { load(); }, [load]);
 
   if (!canRead) return null;
+  if (error) return <ErrorState description={error} onRetry={load} />;
+  if (rows === null) return <LoadingState label={WHT_CATALOG_WORDS.loading} />;
   const active = rows.filter((row) => row.status === 'ACTIVE').length;
-
-  async function toggle(row: WhtCategory) {
-    setBusyCode(row.code); setError('');
-    try {
-      const next = await setWhtCategoryStatus(companyId, row.code, row.status === 'ACTIVE' ? 'DRAFT' : 'ACTIVE');
-      setRows((current) => current.map((item) => item.code === row.code ? { ...item, status: next.status } : item));
-      toast.success(row.status === 'ACTIVE' ? 'คืนหมวดเงินได้เป็นร่างเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดเงินได้เรียบร้อยแล้ว');
-    } catch (cause) { setError(apiErrorMessage(cause)); } finally { setBusyCode(null); }
-  }
 
   return (
     <MangmeeCard className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3">
         <div>
-          <div className="text-sm font-medium text-gray-700">หมวดเงินได้ หัก ณ ที่จ่าย</div>
+          <div className="text-sm font-medium text-gray-700">{WHT_CATALOG_WORDS.title}</div>
           <div className="text-xs text-gray-500">เปิดใช้งานแล้ว {active} จาก {rows.length} หมวด — หมวดที่ยังไม่เปิดจะเลือกตอนบันทึกจ่ายไม่ได้</div>
         </div>
       </div>
-      {error && <div className="px-4 py-2 text-xs text-error-600">{error}</div>}
       {active === 0 && rows.length > 0 && (
         <div className="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-900">
-          ยังไม่มีหมวดที่เปิดใช้งาน — ผู้ทำบัญชีต้องตรวจอัตราตามประกาศกรมสรรพากรแล้วกดเปิดใช้งานก่อน จึงจะหักภาษี ณ ที่จ่ายตอนจ่ายเจ้าหนี้ได้
+          {WHT_CATALOG_WORDS.noActive}
         </div>
       )}
       <div className="mangmee-table-scroll">
         <table className="mangmee-table min-w-full">
-          <thead><tr><th>หมวดเงินได้</th><th>แบบ</th><th>อัตรา</th><th>สถานะ</th><th /></tr></thead>
+          <thead><tr>{[WHT_CATALOG_WORDS.name, WHT_CATALOG_WORDS.form, WHT_CATALOG_WORDS.rate, WHT_CATALOG_WORDS.status].map(label => <th key={label}>{label}</th>)}</tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-gray-400">ไม่พบหมวดเงินได้</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-gray-400">{WHT_CATALOG_WORDS.empty}</td></tr>}
             {rows.map((row) => (
               <tr key={row.code}>
-                <td>{row.nameTh}<small className="block font-mono text-xs text-gray-400">{row.code}</small></td>
-                <td>{row.formType === 'PND3' ? 'ภ.ง.ด.3' : 'ภ.ง.ด.53'}</td>
-                <td className="tabular-nums">{Number(row.defaultRate)}%</td>
-                <td><Badge status={row.status} /></td>
-                <td>
-                  {canManage && (
-                    <button
-                      className={row.status === 'ACTIVE' ? ghostClass : btnClass}
-                      disabled={busyCode === row.code} aria-busy={Boolean(busyCode === row.code)}
-                      onClick={() => void toggle(row)}
-                    >
-                      {row.status === 'ACTIVE' ? 'คืนเป็นร่าง' : 'เปิดใช้งาน'}
-                    </button>
-                  )}
-                </td>
+                <td>{row.nameTh}</td>
+                <td>{formLabel(row.formType)}</td>
+                <td className="tabular-nums">{rateLabel(row.defaultRate)}</td>
+                <td>{statusLabel(row.status)}</td>
               </tr>
             ))}
           </tbody>

@@ -63,7 +63,8 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
       return row;
     },
   };
-  const taxRepo = { prisma: { client: { whtCertificateHandoff: table } } } as any;
+  const client: any = { whtCertificateHandoff: table, $executeRaw: async () => 0, $transaction: async (work: any) => work(client), expenseRecord: { findFirst: async () => ({ status: 'CONFIRMED' }) } };
+  const taxRepo = { prisma: { client } } as any;
   const audit = { log: async (entry: any) => { audits.push(entry); } } as any;
   // §2.4: `.list`/`.get` now read the route gate for `systemIssuanceOpen`. Resolving (never
   // throwing) simulates OPEN, which is fine here — these fixtures do not assert on that field.
@@ -77,7 +78,7 @@ function makeStore(seed: any[] = [], registry: { matched?: any; failSave?: boole
       saves.push(input);
     },
   } as any;
-  return { rows, audits, saves, table, value: new WhtCertificateHandoffUseCase(taxRepo, audit, gate, counterparties) };
+  return { rows, audits, saves, table, client, value: new WhtCertificateHandoffUseCase(taxRepo, audit, gate, counterparties) };
 }
 
 /** A registry row with an address already on it, so cases c and d have something to compare to. */
@@ -567,5 +568,16 @@ describe('WhtCertificateHandoffUseCase — durable prefilled handoff (H4)', () =
     const linked = await store.value.linkExternal(ctx, created.id, { commandId: 'c2', externalCertificateNumber: 'EXT-1', externalEvidenceRef: 'f', issuedDate: '2026-02-28' });
     assert.equal(store.rows[0].externalIssuedDate.toISOString(), '2026-02-28T00:00:00.000Z');
     assert.equal(linked.externalIssuedDate, '2026-02-28T00:00:00.000Z');
+  });
+});
+
+
+describe('expense correction versus external certificate linking', () => {
+  it('refuses an external certificate link after reopening the expense', async () => {
+    const h = makeStore();
+    const created = await h.value.createOrReplay({ ...baseInput, creationCommandId: 'expense-handoff', sourcePaymentType: 'expense.record', sourcePaymentId: 'exp-1' });
+    h.client.expenseRecord.findFirst = async () => ({ status: 'NEEDS_REVIEW' });
+    await assert.rejects(() => h.value.linkExternal(ctx, created.id, { commandId: 'external-link-1', externalCertificateNumber: '50-1', externalEvidenceRef: 'attachment-1', issuedDate: '2026-10-04' }), (e: any) => e.getResponse?.().code === 'expense_wht_source_changed');
+    assert.equal(h.rows[0].status, 'REQUIRED'); assert.equal(h.audits.filter((a: any) => a.action === 'tax.wht_certificate.external_link').length, 0);
   });
 });

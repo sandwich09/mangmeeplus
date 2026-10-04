@@ -734,6 +734,7 @@ test('EXP-27 @smoke retries a real backdated partial expense payment on mobile w
     const paidAt = card.getByRole('combobox', { name: 'วันที่จ่ายเงินจริง', exact: true });
     await expect(card).toContainText('เลือกวันที่จ่ายเงินจริง แม้จะนำมาบันทึกภายหลัง');
     await expect(card).toContainText('ยอดค้างจ่าย ฿100.00');
+    await expect(amount).toHaveValue('100.00');
     await amount.fill('40');
     await method.click();
     await page.getByRole('option', { name: 'เงินสด', exact: true }).click();
@@ -760,7 +761,7 @@ test('EXP-27 @smoke retries a real backdated partial expense payment on mobile w
         await route.fulfill({ response });
       }
     });
-    await card.getByRole('button', { name: 'บันทึกชำระ', exact: true }).click();
+    await card.getByRole('button', { name: /^บันทึกจ่าย(?:ส่วนที่เหลือ)? ฿/ }).click();
     await expect.poll(() => attempts.length, { message: 'the real first payment transaction must finish before dropping its response' }).toBe(1);
     expect(attempts[0]!.status).toBe(201);
     expect(attempts[0]!.expenseId).toBe(created.id);
@@ -794,7 +795,8 @@ test('EXP-27 @smoke retries a real backdated partial expense payment on mobile w
     // Only Date advances, not timers; the visible form and its attempt stay mounted.
     await page.clock.setFixedTime(attempts[0]!.clientTime + 61_000);
     await retry.click();
-    await expect(card.getByRole('button', { name: 'บันทึกชำระ', exact: true })).toBeDisabled();
+    await expect(card.getByRole('button', { name: 'บันทึกจ่ายส่วนที่เหลือ ฿60.00', exact: true })).toBeEnabled();
+    await expect(amount).toHaveValue('60.00');
     await expect(card.getByRole('status')).toHaveCount(0);
     expect(attempts).toHaveLength(2);
     expect(droppedResponses).toBe(1);
@@ -896,7 +898,7 @@ test('EXP-28 @p1 distinguishes rejected, uncertain, and conflicting expense paym
     const card = page.getByRole('heading', { name: 'การชำระเงิน', exact: true }).locator('..');
     const amount = card.getByRole('spinbutton', { name: 'ยอดชำระ', exact: true });
     const method = card.getByRole('combobox', { name: 'วิธีจ่ายเงิน', exact: true });
-    const submit = card.getByRole('button', { name: 'บันทึกชำระ', exact: true });
+    const submit = card.getByRole('button', { name: /^บันทึกจ่าย(?:ส่วนที่เหลือ)? ฿/ });
     const retry = card.getByRole('button', { name: 'ลองบันทึกรายการเดิมอีกครั้ง', exact: true });
     const notice = card.getByRole('status');
     await expect(method).toBeVisible();
@@ -997,7 +999,7 @@ test('EXP-29 @p1 retains a committed payment intent until its detail refresh suc
     await gotoCompany(page, companyId, `/expenses/${created.id}`);
     const card = page.getByRole('heading', { name: 'การชำระเงิน', exact: true }).locator('..');
     const amount = card.getByRole('spinbutton', { name: 'ยอดชำระ', exact: true });
-    const submit = card.getByRole('button', { name: 'บันทึกชำระ', exact: true });
+    const submit = card.getByRole('button', { name: /^บันทึกจ่าย(?:ส่วนที่เหลือ)? ฿/ });
     const retry = card.getByRole('button', { name: 'ลองบันทึกรายการเดิมอีกครั้ง', exact: true });
     const notice = card.getByRole('status');
     await amount.fill('40');
@@ -1037,8 +1039,8 @@ test('EXP-29 @p1 retains a committed payment intent until its detail refresh suc
     await testInfo.attach('expense-payment-saved-refresh-failed', { path: pendingPath, contentType: 'image/png' });
 
     await retry.click(); // real POST replay with the original immutable intent
-    await expect(submit).toBeDisabled();
-    await expect(amount).toHaveValue('');
+    await expect(submit).toBeEnabled();
+    await expect(amount).toHaveValue('60.00');
     await expect(notice).toHaveCount(0);
     await expect(retry).toHaveCount(0);
     await expect(page.getByRole('main').getByRole('alert')).toHaveCount(0);

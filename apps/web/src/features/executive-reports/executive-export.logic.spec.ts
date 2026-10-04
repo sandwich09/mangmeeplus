@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExecutiveContext } from '@watchdog-bms/contracts';
+// The panel's design components import the SVG icon barrel; the node test runner has no SVG loader.
 require.extensions['.svg'] = module => { module.exports = () => null; };
 const moduleOf = () => import('./executive-export.logic');
 const context = { capabilities: { readReport: { allowed: true }, export: { allowed: true }, seeContacts: { allowed: false } }, currentMonth: '2026-10', defaultMonth: '2026-10', months: { first: '2026-08', last: '2026-10' },

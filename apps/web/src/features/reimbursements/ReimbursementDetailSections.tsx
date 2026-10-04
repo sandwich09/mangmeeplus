@@ -1,13 +1,13 @@
 'use client';
 
-import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { ATTACHMENT_SOURCE_TYPES_LABEL, REIMBURSEMENT_SELF_APPROVED_NOTE } from '@watchdog-bms/contracts';
 
 // The claim detail as sections, shared by the hub drawer and the journey page while both exist
 // (the drawer goes in Phase 6). Markup moved from the drawer; test ids are kept on it.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
-import { looksLikeAccountNumber, todayCivilDate } from '@watchdog-bms/contracts';
+import { looksLikeAccountNumber, todayCivilDate, isFuturePaymentDate, PAYMENT_DATE_IN_FUTURE, reimbursementPaymentReferenceField, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -31,10 +31,10 @@ import {
 import {
   PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
-  APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
+  APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimHasNoApprover, claimInPayoutCorrection, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
-  claimStatusBadge,
+  claimStatusBadge, currentDeskText,
 } from './reimbursements.model';
 import {
   NOTE_HAS_ACCOUNT_NUMBER,
@@ -390,12 +390,18 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
   // One session for this opened form: its key makes บันทึกจ่าย after a lost answer the same payment, never a
   // second one, and its in-flight flag makes a second press before the first has finished do nothing.
   const session = useRef<PaymentFormSession>({ idempotencyKey: null, saving: false });
+  const today = todayCivilDate();
+  const futurePaidAt = Boolean(form.paidAt && isFuturePaymentDate(form.paidAt, today));
   const attached = paymentSlipChoices(request);
   // One rule for the fields shown and the payment the API takes (`reimbursementPaymentRule`): the
   // slip, the confirmation of the account and the reason for another method than the one asked for.
   const payout = paymentFormPayout(request, form.paymentMethod);
   const slipRequired = payout.rule.slipRequired;
   const chosen = chosenPaymentSlipChoice(slip, attached);
+  const reference = reimbursementPaymentReferenceField(form.paymentMethod, slip !== null);
+  const referenceId = useId();
+  // Like a missing slip, a missing cheque number is said when the payer presses บันทึกจ่าย, not while the form is still being filled.
+  const validationError = futurePaidAt ? PAYMENT_DATE_IN_FUTURE.message : error;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -434,8 +440,12 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
           </p>
         </div>
       )}
-      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
-      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">เลขอ้างอิง {(form.paymentMethod === 'BANK_TRANSFER' || form.paymentMethod === 'CHEQUE') && '*'}</label><input className={inputClass} aria-label="เลขอ้างอิง" value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} /></div>
+      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required max={today} today={today} value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor={referenceId}>{reference.label}</label>
+        <input id={referenceId} className={inputClass} aria-label={reference.name} aria-required={reference.required} aria-describedby={`${referenceId}-hint`} value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} />
+        <p id={`${referenceId}-hint`} className="mt-1 text-xs leading-5 text-gray-500">{reference.hint}</p>
+      </div>
       <div data-testid="reimbursement-payment-slip">
         <div className="mb-1.5 text-xs font-semibold text-gray-600">สลิปหรือหลักฐานการจ่าย {slipRequired && '*'}</div>
         {/* No capture attribute, like the receipt upload: a phone offers its camera and its photo library. */}
@@ -482,8 +492,8 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
         <PayerConfirmationCheck confirmation={payout.confirmation} checked={payer.confirmedFor === payout.confirmation.key} disabled={busy}
           onChange={(checked) => setPayer(p => ({ ...p, confirmedFor: checked ? payout.confirmation!.key : '' }))} />
       )}
-      {error && <ErrorBanner message={error} />}
-      <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
+      {validationError && <ErrorBanner message={validationError} />}
+      <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy || futurePaidAt} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
     </form>
   );
 }
@@ -890,7 +900,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             </div>
             {noApprover && <p className="mt-3 text-xs text-gray-600">ใบนี้ไม่ต้องอนุมัติตามนโยบาย จึงมีเฉพาะลายเซ็นของผู้เบิก</p>}
             {slots.length === 2 && claimSelfApproved(detail) && (
-              <p className="mt-3 text-xs text-gray-600">ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท</p>
+              <p className="mt-3 text-xs text-gray-600">{REIMBURSEMENT_SELF_APPROVED_NOTE}</p>
             )}
             {correcting && <p className="mt-3 text-xs text-gray-600">{signingWaitsForRound(detail)}</p>}
             {/* One tap signs every block this viewer really acted on; the server re-checks each role. */}
@@ -968,7 +978,9 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                     {APPROVAL_STEP_STATUS_LABELS[s.status] ?? '—'}
                   </MangmeeBadge>
                 </div>
-                <div className="mt-1">{s.decidedByName ? `โดย ${s.decidedByName}` : s.approverName ? `ผู้อนุมัติ: ${s.approverName}` : '—'}</div>
+                <div className="mt-1">{s.decidedByName ? `โดย ${s.decidedByName}` : s.id === detail.currentApprovalStepId && s.status === 'PENDING'
+                  ? `ผู้อนุมัติ: ${currentDeskText(detail.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER}`
+                  : s.approverName ? `ผู้อนุมัติ: ${s.approverName}` : '—'}</div>
                 {approvalStepCorrectionNote(s) && <div className="mt-1 text-gray-500">{approvalStepCorrectionNote(s)}</div>}
                 {s.comment && <div className="mt-1 text-gray-500">{s.comment}</div>}
                 {s.rejectionReason && <div className="mt-1 text-error-700">{s.rejectionReason}</div>}
@@ -998,7 +1010,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                 </div>
                 {/* A voided payment is said in the words of the button that voids it, the same words the timeline uses. */}
                 <div className="mt-1">{PAYMENT_METHOD_LABELS[p.paymentMethod] ?? '—'} · {p.status === 'RECORDED' ? 'บันทึกแล้ว' : p.status === 'VOIDED' ? PAYMENT_VOIDED_LABEL : 'สถานะการจ่าย'}</div>
-                <div className="mt-1 break-words text-gray-500">{`วันที่จ่าย ${dateShort(p.paidAt)}${p.paymentReference ? ` · เลขอ้างอิง ${p.paymentReference}` : ''}`}</div>
+                <div className="mt-1 break-words text-gray-500">{`วันที่จ่าย ${dateShort(p.paidAt)}${p.paymentReference ? ` · ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.neutralLabel} ${p.paymentReference}` : ''}`}</div>
                 {/* Where the money went, as the payer confirmed it: masked for everyone, and when they confirmed.
                     A transfer with no account confirmed says so (a legacy claim, or a claim that asked for cash). */}
                 {paymentDestinationText(p) ? (

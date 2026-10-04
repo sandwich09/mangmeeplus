@@ -125,7 +125,7 @@ const WRITES = [
     name: 'finance-review a claim',
     permissions: ['reimbursement.finance_review'],
     claim: otherBranchClaim({ status: 'FINANCE_REVIEW' }),
-    run: (repo: any, ctx: any) => new FinanceReviewReimbursementUseCase(repo, audit, projections, fakeDetailEvidence as any)
+    run: (repo: any, ctx: any) => new FinanceReviewReimbursementUseCase(repo, audit, projections, fakeDetailEvidence as any, { executeForReimbursement: async () => 0 } as any)
       .execute(ctx, 'rb-1', { decision: 'APPROVED_FOR_PAYMENT' } as any),
   },
   {
@@ -245,8 +245,8 @@ describe('a caller the claim detail refuses gets that same answer from every end
     { family: 'cancellation', name: 'cancel', run: (repo, ctx) => new CancelReimbursementUseCase(repo, audit, never('voidExpense')).execute(ctx, 'rb-1', 'ยกเลิกคำขอเบิกค่าใช้จ่าย') },
     { family: 'cancellation', name: 'withdraw a cancellation', run: (repo, ctx) => new WithdrawReimbursementCancellationUseCase(repo, audit).execute(ctx, 'rb-1') },
     { family: 'cancellation', name: 'withdraw or reopen as a draft', run: (repo, ctx) => new ReopenRejectedReimbursementUseCase(repo, audit).execute(ctx, 'rb-1') },
-    { family: 'finance review', name: 'decide a finance review', run: (repo, ctx) => new FinanceReviewReimbursementUseCase(repo, audit, never('projections'), fakeDetailEvidence as any).execute(ctx, 'rb-1', { decision: 'APPROVED_FOR_PAYMENT' } as any) },
-    { family: 'payment', name: 'clear a duplicate block at the payment step', payer: true, run: (repo, ctx) => new FinanceReviewReimbursementUseCase(repo, audit, never('projections'), fakeDetailEvidence as any).execute(ctx, 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'คนละรายการ' } as any) },
+    { family: 'finance review', name: 'decide a finance review', run: (repo, ctx) => new FinanceReviewReimbursementUseCase(repo, audit, never('projections'), fakeDetailEvidence as any, { executeForReimbursement: async () => 0 } as any).execute(ctx, 'rb-1', { decision: 'APPROVED_FOR_PAYMENT' } as any) },
+    { family: 'payment', name: 'clear a duplicate block at the payment step', payer: true, run: (repo, ctx) => new FinanceReviewReimbursementUseCase(repo, audit, never('projections'), fakeDetailEvidence as any, { executeForReimbursement: async () => 0 } as any).execute(ctx, 'rb-1', { resolveDuplicate: true, duplicateResolutionReason: 'คนละรายการ' } as any) },
     { family: 'payment', name: 'record a payment', payer: true, run: (repo, ctx) => new RecordReimbursementPaymentUseCase(repo, audit, never('reserve'), never('commit'), fakeDetailEvidence as any).execute(ctx, 'rb-1', { paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-01-07T00:00:00.000Z' } as any) },
     ...['pay-1', 'pay-unknown'].map((paymentId) => ({
       family: 'payment', name: `void payment ${paymentId}`, payer: true as const,

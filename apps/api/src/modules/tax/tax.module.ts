@@ -22,6 +22,7 @@ import { TaxArtifactRendererService } from './application/services/tax-artifact-
 import { GetCitCalendarUseCase } from './application/use-cases/get-cit-calendar.use-case';
 import { GetTaxSummaryUseCase } from './application/use-cases/get-tax-summary.use-case';
 import { TaxController } from './presentation/http/tax.controller';
+import { SystemWhtIncomeCategoryController } from './presentation/http/system-wht-income-category.controller';
 import { TransactionTaxController } from './presentation/http/transaction-tax.controller';
 import { PrismaTransactionTaxRepository } from './infrastructure/repositories/prisma-transaction-tax.repository';
 import { GetCompanyTaxCodeProfileUseCase, GetTransactionTaxAgentSummaryUseCase, TransactionTaxConfigUseCase } from './application/use-cases/transaction-tax-config.use-case';
@@ -32,7 +33,7 @@ import { TaxCodeImportUseCase } from './application/use-cases/tax-code-import.us
   // FeatureLaunchModule supplies the guard that fences SYSTEM 50 ทวิ issuance on
   // cap.wht50bis/SYSTEM_INITIAL_ISSUE. It imports only LoggerModule, so there is no cycle back here.
   imports: [AuditModule, DataModelCoreModule, FeatureLaunchModule],
-  controllers: [TaxController, TransactionTaxController],
+  controllers: [TaxController, TransactionTaxController, SystemWhtIncomeCategoryController],
   providers: [
     PrismaTaxRepository,
     // §10 registry write-back for the 50 ทวิ handoff. Provided here rather than imported:

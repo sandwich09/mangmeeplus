@@ -1,3 +1,4 @@
+import { reimbursementDuplicateSubmitNotice, REIMBURSEMENT_DUPLICATE_REASON_TEXT } from '@watchdog-bms/contracts';
 import { Injectable, ConflictException, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import type {
   RequestContext,
@@ -606,7 +607,12 @@ export class SubmitReimbursementUseCase {
     // Duplicate detection (warn on submit; blocking only if policy = BLOCK_SUBMIT).
     const dupResult = await this.detectDuplicates(ctx.companyId, req);
     if (dupResult.blocking && policy.duplicatePolicy === 'BLOCK_SUBMIT') {
-      throw new UnprocessableEntityException('duplicate_unresolved');
+      await this.repo.recordBlockedSubmitDuplicates({ companyId: ctx.companyId, requestId: id, expectedUpdatedAt: req.updatedAt, candidates: dupResult.candidates,
+        onPersisted: tx => this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.duplicate.detect', targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId,
+          result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { blockedSubmit: true, candidateCount: dupResult.candidates.length } }, tx),
+      });
+      const duplicateReasons = [...new Set(dupResult.candidates.map(candidate => candidate.candidateType))];
+      throw new UnprocessableEntityException({ code: 'duplicate_unresolved', duplicatePhase: 'SUBMIT', duplicateReasons, message: reimbursementDuplicateSubmitNotice(duplicateReasons) });
     }
 
     const now = new Date();
@@ -876,11 +882,15 @@ export class SubmitReimbursementUseCase {
   }
 
   private async detectDuplicates(companyId: string, req: { id: string; requesterUserId: string; amount: string; currency: string; incurredDate: Date; categoryKey: string; reason: string; lines?: ReimbursementLineRecord[] }) {
-    const candidates = await this.repo.findDuplicateCandidates(companyId, req.requesterUserId, req.id);
+    const attachmentIds = (req.lines ?? []).flatMap(line => line.attachmentId ?? []);
+    const attachmentChecksums = await this.repo.findReceiptChecksums(companyId, attachmentIds);
+    const candidates = await this.repo.findDuplicateCandidates(companyId, req.requesterUserId, req.id, {
+      attachmentIds, attachmentChecksums, expenseIds: (req.lines ?? []).flatMap(line => line.linkedExpenseId ?? []),
+    });
     const a = {
       requesterUserId: req.requesterUserId, amount: req.amount, currency: req.currency,
       incurredDate: req.incurredDate.toISOString(), categoryKey: req.categoryKey,
-      normalizedReason: normalizeReason(req.reason), lines: req.lines ?? [],
+      normalizedReason: normalizeReason(req.reason), lines: (req.lines ?? []).map(line => ({ ...line, attachmentChecksum: line.attachmentId ? attachmentChecksums[line.attachmentId] : undefined })),
     };
     let best = 0;
     const duplicateCandidates: ReimbursementDuplicateCandidateWriteData[] = [];
@@ -897,9 +907,7 @@ export class SubmitReimbursementUseCase {
           candidateAttachmentId: match.sharedAttachmentId,
           candidateExpenseId: match.sharedExpenseId,
           score: match.score,
-          reason: match.sharedLineNo !== undefined
-            ? `line ${match.sharedLineNo} shares ${match.sharedType === 'EXPENSE' ? 'a linked expense' : 'a receipt'} with ${c.requestNo ?? c.id}`
-            : undefined,
+          reason: match.sharedType === 'EXPENSE' ? REIMBURSEMENT_DUPLICATE_REASON_TEXT.EXPENSE_LINK : match.sharedType === 'ATTACHMENT' ? REIMBURSEMENT_DUPLICATE_REASON_TEXT.ATTACHMENT_CHECKSUM : REIMBURSEMENT_DUPLICATE_REASON_TEXT.AMOUNT_DATE_VENDOR,
         });
         best = Math.max(best, match.score);
       }

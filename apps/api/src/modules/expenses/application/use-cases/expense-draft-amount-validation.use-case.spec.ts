@@ -506,4 +506,12 @@ it('preview rejects stale, unauthorized, other-tenant, foreign row and invalid a
   }
 });
 
+it('saving a reopened expense keeps recorded payments and derives the remaining balance and payment state', async () => {
+  for (const [paid, outstanding, status] of [['40', '2369.7000', 'PARTIALLY_PAID'], ['2409.70', '0.0000', 'PAID']]) {
+    const { useCase, input } = setup(undefined, { status: 'NEEDS_REVIEW', paidAmount: paid });
+    const saved = await useCase.execute(ctx, 'expense-1', input);
+    assert.equal(saved.paidAmount, paid); assert.equal(saved.outstandingAmount, outstanding); assert.equal(saved.paymentStatus, status);
+  }
+});
+
 });

@@ -66,7 +66,7 @@ For every submitted claim, the system must then produce one consistent answer ac
 | E17 | Pending and SLA workflow rules are hardcoded MANAGER/OWNER; tasks are hardcoded MANAGER. | `workflow-template-catalog.ts:118-170` | Custom/ADMIN role selection would disagree with delivery. |
 | E18 | Workflow runner accepts scalar recipient payload ids and static task role only. | `workflow-action-runner.use-case.ts:172-198,244-266` | Dynamic role recipients/tasks require backward-compatible expansion. |
 | E19 | Existing runner/template resync preserves admin-owned edits. | workflow template use case and sync script | Default rules can change without overwriting customer customization. |
-| E20 | Current self-approval policy exempts OWNER/ADMIN/MANAGER even when the toggle is off. | `reimbursement.logic.ts:247-275` | Copy and request-specific recipient filtering must reflect the real rule. |
+| E20 | Historical self-approval policy exempted OWNER/ADMIN/MANAGER; superseded for claims by owner decision 2026-10-04 (§11). | `reimbursement.logic.ts:247-275` | Copy and request-specific recipient filtering must reflect the real rule. |
 | E21 | E2E spreads GET output into PUT and restores it the same way. | `e2e/reimbursements.spec.ts:43-50` | Strict DTOs and legacy preservation require writable-only fixtures. |
 | E22 | Existing columns support role/mode/user and one named approver, but not the set of people resolved from a role at submit. | `schema.prisma:5195-5220,5337-5361` | A nullable step assignment snapshot is required to distinguish new frozen assignments from legacy dynamic-role steps. |
 | E23 | Employee create/update contracts and API already accept `roleIds[]` and union effective permissions, but both active employee screens submitted only the first role. | employee-access contracts/use cases; active employee pages | Adding a role was not safely representable and saving could silently drop other assignments. |
@@ -531,7 +531,7 @@ fallback for legacy events that have no assignment snapshot.
 ## 11. Concurrency and Transaction Boundaries
 
 - Options reads never reserve readiness; save/submit revalidate.
-- Submit readiness is request-specific: it applies branch scope and the real self-approval predicate. A sole non-exempt holder submitting their own claim is not counted; OWNER recovery must be actionable for that request or submit fails before mutation.
+- Submit readiness is request-specific: it applies branch scope and the real self-approval predicate. The requester of any role is excluded when self-approval is off; OWNER recovery must be actionable for that request or submit fails before mutation.
   - Exception (owner decision 2026-09-21, "ผู้ใช้คนเดียวที่กำหนดบทบาทเอง ต้องทำได้นะ"): when the route is empty only because the requester was removed as a self-approver — they hold the routed role (or are the named approver) and cover the branch, and no other holder or OWNER covers it — the step is assigned to the requester, `route.soloSelfApprovalAtSubmission: true` is frozen in the snapshot, and the approval audit records `selfApproval.via = 'no_other_approver'`. Decided at submit only; background re-reads never apply it.
 - Policy update uses `UPDATE ... WHERE id=? AND updatedAt=?`.
 - Company-default create is fenced by a partial unique index and conflict mapping.
@@ -698,7 +698,7 @@ Record exact UAT, READY, and Production run ids.
 | Status | active; inactive zero-mutation submit; draft edit allowed; pending/finance/payment continue; reactivation validation. |
 | Snapshot | V1 write/read/hash; later policy edit; permission/member drift; missing legacy snapshot; malformed server row fails closed. |
 | Legacy | named user; missing user; mismatch; unknown role; DIRECT_MANAGER; zero-write GET; unrelated save; explicit normalization. |
-| Queue/mutation | holder; OWNER; unrelated role; self exemption/non-exemption; branch; permission; double decision/CAS. |
+| Queue/mutation | holder; OWNER; unrelated role; self switch off/on; solo exception; frozen older self-route; branch; permission; double decision/CAS. |
 | Workflow | selected role; fallback OWNER; SLA; finance request; below-threshold none; array payload; admin-owned untouched. |
 | Web/E2E | loading, retry, empty, complete, partial, none, inactive, legacy, conflict, summary, busy/error/success, desktop/390. |
 
@@ -795,3 +795,9 @@ second return endpoint is added.
       own reason and never runs automatically in the browser.
 - [ ] Loading, permission, stale state, double click, lost response, validation, and server failure leave
       the visible request refreshable and consistent with the server.
+
+### Owner decision 2026-10-04: claims switch applies to everyone
+
+"สวิตช์มีผลกับทุกคน": no claim role exemption remains. With self-approval off, submission routing excludes the requester for role routes, named routes and OWNER recovery. The existing submit-time solo exception remains when the requester is the only eligible approver covering the branch. With the switch on, assigned requesters can decide as before. Queue/detail eligibility, approve/reject endpoints and locked mutations use the same claim guard. Procurement and substitute receipts retain their existing rules.
+
+Submitted assignments remain frozen, including earlier role-exempt self-assignments; active assignees covering the branch keep their decision rights. A reopened/resubmitted claim resolves the route under the new rule. Self-approval audit distinguishes `company_policy`, `no_other_approver`, and `frozen_assignment`; it records the actor's roles without claiming a current role exemption.

@@ -552,7 +552,7 @@ describe('a claim is sent with the account its page showed', () => {
     assert.equal(logic.draftRowSubmitsFromItsPage({ payoutMethod: 'CASH' }), false);
     const hub = read('./ReimbursementsPages.tsx');
     assert.match(hub, /const submitRow = \(r: any\) => \(draftRowSubmitsFromItsPage\(r\)\s+\? onOpenDetail\(r\.id\)\s+: void action\(r\.id, \(\) => submitReimbursement\(companyId, r\.id\), 'ส่งขออนุมัติเรียบร้อยแล้ว'\)\);/);
-    assert.equal(hub.match(/\{draftRowSubmitsFromItsPage\(r\) \? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'\}/g)?.length, 2, 'table row and phone card');
+    assert.equal(hub.match(/\{draftRowSubmitLabel\(r\)\}/g)?.length, 2, 'table row and phone card');
     assert.equal(hub.match(/submitReimbursement\(/g)?.length, 1, 'no other list path submits');
   });
 });
@@ -755,5 +755,14 @@ describe('payout screens speak plain Thai and fit a 390 px phone', () => {
     assert.match(cardHtml, /<dl class="grid grid-cols-2 gap-3"><div class="min-w-0">[\s\S]*?break-words[\s\S]*?<div class="min-w-0">[\s\S]*?break-words/);
     assert.match(read('./ReimbursementPayout.tsx'), /break-all font-mono text-lg[^"]*" data-testid="payout-account-number"/);
     for (const [radio] of screens[10]![1].matchAll(/<label class="[^"]*"><input type="radio"/g)) assert.match(radio, /min-h-11/);
+  });
+});
+
+describe('draft row submission words', () => {
+  it('asks for the receiving method when none is stated, an account check for transfer, and submits cash', () => {
+    assert.equal(logic.draftRowSubmitLabel({}), 'เลือกวิธีรับเงินคืนและส่งอนุมัติ');
+    assert.equal(logic.draftRowSubmitLabel({ payoutMethod: null }), 'เลือกวิธีรับเงินคืนและส่งอนุมัติ');
+    assert.equal(logic.draftRowSubmitLabel({ payoutMethod: 'BANK_TRANSFER' }), 'ตรวจบัญชีและส่งอนุมัติ');
+    assert.equal(logic.draftRowSubmitLabel({ payoutMethod: 'CASH' }), 'ส่งอนุมัติ');
   });
 });

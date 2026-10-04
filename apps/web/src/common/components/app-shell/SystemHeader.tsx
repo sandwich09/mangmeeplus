@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { EXECUTIVE_MENU, W, thaiLabel } from '@/features/executive-reports/executive-reports.words';
 import { menuHref, EXECUTIVE_ACCESS_DENIED_EVENT } from '@/features/executive-reports/executive-reports.logic';
 import { EXECUTIVE_USERS_TITLE } from '@/features/executive-users/executive-users.logic';
+import { W as WHT_CATALOG_WORDS } from '@/features/system-wht-income-categories/wht-income-categories.words';
 import { logoutCurrentSession } from '@/common/auth/session';
 import { AlertModal } from '@/common/components/modal';
 import {
@@ -51,13 +52,14 @@ const SECTIONS = [
   { href: '/system/data-rights', label: 'คำขอเกี่ยวกับข้อมูล', group: 'คำขอและการติดต่อ' },
   { href: '/system/email-delivery', label: 'สถานะอีเมล', group: 'คำขอและการติดต่อ' },
   { href: '/system/executive-users', label: EXECUTIVE_USERS_TITLE, group: 'ตั้งค่าระบบ' },
+  { href: '/system/wht-income-categories', label: WHT_CATALOG_WORDS.title, group: 'ตั้งค่าระบบ' },
   { href: '/system/sales-team', label: 'ทีมขาย', group: 'ตั้งค่าระบบ' },
   { href: '/system/line-settings', label: 'ตั้งค่า LINE', group: 'ตั้งค่าระบบ' },
   { href: '/system/ai-budget', label: 'เพดานความปลอดภัยค่า AI', group: 'ตั้งค่าระบบ' },
   { href: '/system/platform-access', label: 'เปิด–ปิดบริการ', group: 'ตั้งค่าระบบ' },
 ];
 
-const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; emailAllowed?: boolean; executiveOnly?: boolean; executiveAllowed?: boolean; executiveUsersAllowed?: boolean; environment?: string }> = ({ billingOnly = false, billingAllowed = false, emailAllowed = false, executiveOnly = false, executiveAllowed = false, executiveUsersAllowed = false, environment }) => {
+const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; emailAllowed?: boolean; executiveOnly?: boolean; executiveAllowed?: boolean; executiveUsersAllowed?: boolean; whtCategoriesAllowed?: boolean; environment?: string }> = ({ billingOnly = false, billingAllowed = false, emailAllowed = false, executiveOnly = false, executiveAllowed = false, executiveUsersAllowed = false, whtCategoriesAllowed = false, environment }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
@@ -76,7 +78,7 @@ const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; 
   const onReport = pathname === '/system/executive' || pathname.startsWith('/system/executive/');
   const openSupportCount = useOpenSupportCount(pathname, !billingOnly && !executiveOnly);
   const adminSections = executiveOnly ? [] : SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' && billingAllowed :
-    (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed) && (section.href !== '/system/executive-users' || executiveUsersAllowed));
+    (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed) && (section.href !== '/system/executive-users' || executiveUsersAllowed) && (section.href !== '/system/wht-income-categories' || whtCategoriesAllowed));
   const reportSections = canReadReports ? EXECUTIVE_MENU.map(section => ({ ...section, href: menuHref(section.key, new URLSearchParams(searchParams.toString())) })) : [];
   const sections = onReport ? [...reportSections, ...adminSections] : [...adminSections, ...reportSections];
   const groups = [...new Set(sections.map(section => section.group))];

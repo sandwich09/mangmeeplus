@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
-import { reimbursementPayoutRoundStatus, THAI_SYSTEM_ROLE_NAMES } from '@watchdog-bms/contracts';
+import { reimbursementPayoutRoundStatus, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
 import { buildReimbursementGuide } from './reimbursement-guide.content';
 import { buildSubstituteReceiptGuide } from './substitute-receipt-guide.content';
 import { buildExpensesGuide } from './expenses-guide.content';
@@ -137,7 +137,7 @@ describe('the reimbursement guide reads as the product does', () => {
     const source = (file: string) => readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const claimScreens = readdirSync(feature).filter((name) => /\.tsx?$/.test(name) && !name.includes('.spec.'))
       .map((name) => source(join(feature, name))).join('\n');
-    const shown = [claimScreens, ...[
+    const shown = [claimScreens, ...Object.values(REIMBURSEMENT_PAYMENT_REFERENCE_TEXT), ...[
       join(__dirname, '../../common/api/api-error-message.ts'),
       join(__dirname, '../../common/i18n/workspace-dictionary.ts'),
       join(__dirname, '../web-core-workspace/web-core-workspace.logic.ts'),
@@ -256,9 +256,9 @@ it('the claim guide names every standard role as the role picker does', () => {
   assert.equal(holders('ตั้งนโยบายการเบิก'), `${roles.OWNER} ${roles.ADMIN}`);
   assert.equal(holders('สิทธิ์แก้ไขข้อมูลพนักงาน'), `${roles.OWNER} ${roles.ADMIN} และ${roles.MANAGER}กับ${roles.HR}ในสาขาที่ตนดูแล`);
   assert.equal(rows('tabs').find((row) => row[0] === 'ตั้งค่านโยบาย')?.[1], `${roles.OWNER} และ${roles.ADMIN}`);
-  // Approving one's own claim without the policy switch, and approving then paying: the three roles that hold it.
+  // Default roles can record payment; self-approval is governed by the company switch for all roles.
   const approvers = `${roles.OWNER} ${roles.ADMIN} และ${roles.MANAGER}`;
-  for (const part of ['อนุมัติคำขอของตัวเองได้ ระบบบันทึกไว้', 'ทำได้อยู่แล้วโดยไม่ต้องเปิด', 'ทำได้อยู่แล้ว บทบาทที่บริษัทสร้างเอง', 'อนุมัติคำขอของตัวเองได้ บทบาทอื่นจะเห็น']) {
+  for (const part of ['ทำได้อยู่แล้ว บทบาทที่บริษัทสร้างเอง']) {
     assert.ok(read.find((sentence) => sentence.includes(part))?.includes(approvers), part);
   }
   // A role is never called by a word outside the one list ("เจ้าของบัญชี" is the account's owner, not a role).
@@ -277,8 +277,8 @@ it('the claim guide never says the owner alone changes the claim policy', () => 
   for (const said of [
     'งานตรวจการเงินมีต่อเมื่อบริษัทเปิด “ตรวจการเงินก่อนจ่าย” ในหน้าตั้งค่านโยบาย',
     `${roles.OWNER}หรือ${roles.ADMIN}เปิด “ตรวจการเงินก่อนจ่าย” ได้ที่หน้าตั้งค่านโยบาย`,
-    'บทบาทอื่นทำได้เมื่อบริษัทเปิด “ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้”',
-    `ขอให้${roles.OWNER}หรือ${roles.ADMIN}เปิดในหน้าตั้งค่านโยบาย`,
+    'เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด',
+    'ขอให้ผู้มีสิทธิ์ตั้งค่านโยบายเปิดสวิตช์',
   ]) assert.ok(read.some((text) => text.includes(said)), said);
 });
 
@@ -494,4 +494,33 @@ describe('claim notification gaps in the guide', () => {
     assert.match(text, /บัญชีรับเงินคืนประจำ/);
     assert.doesNotMatch(text, /เจ้าของบัญชีได้รับแจ้งทุกครั้ง/);
   });
+});
+
+it('the claim guide names the receiving-method choice when a draft states none', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']));
+  assert.ok(text.includes('เลือกวิธีรับเงินคืนและส่งอนุมัติ'));
+  assert.ok(text.includes('คำขอโอนเงินกด'));
+  assert.equal(text.includes('คำขออื่นปุ่มจะเป็น'), false);
+});
+
+it('the claim guide applies self-approval to every role and keeps solo and frozen routes in the explanations and policy table', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']));
+  assert.equal((text.match(/เมื่อปิด ไม่มีใครอนุมัติใบเบิกของตัวเองได้ไม่ว่าบทบาทใด/g) ?? []).length, 3);
+  assert.ok(text.includes('ผู้เบิกเป็นคนเดียวที่อนุมัติใบนี้ได้'));
+  assert.ok(text.includes('ใบที่ส่งไปแล้วใช้ผู้อนุมัติตามที่กำหนดไว้ตอนส่ง'));
+  assert.equal(text.includes('บทบาทอื่นทำได้เมื่อบริษัทเปิด'), false);
+});
+
+it('the claim guide names first signing and replacement as the buttons do', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create'], ['STAFF']));
+  assert.ok(text.includes('กด “ลงนามในใบเบิก”'));
+  assert.ok(text.includes('ถ้าเคยลงนามแล้ว ปุ่มอ่าน “ลงนามใหม่”'));
+});
+
+
+it('duplicate guide covers company-wide evidence and the expense-document payment block', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co-1', ['reimbursement.read', 'reimbursement.payment.record', 'reimbursement.policy.manage']));
+  assert.match(text, /ข้ามผู้เบิก/);
+  assert.match(text, /เอกสารค่าใช้จ่าย/);
+  assert.match(text, /ยืนยันเอกสารก่อน/);
 });

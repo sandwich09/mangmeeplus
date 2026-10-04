@@ -23,6 +23,12 @@ function companyRoleKeys(): string[] {
 }
 
 describe('permission-registry', () => {
+  it('registers HIGH global WHT catalog management for SYSTEM_ADMIN alone', () => {
+    const key = 'system.wht_income_category.manage';
+    assert.equal(PERMISSIONS.find(p => p.key === key)?.riskLevel, 'HIGH');
+    assert.equal(COMPANY_PERMISSION_KEYS.includes(key), false);
+    assert.deepEqual(Object.keys(ROLE_GRANTS).filter(role => ROLE_GRANTS[role]!.includes(key)), ['SYSTEM_ADMIN']);
+  });
   it('grants package management to OWNER by default, not ADMIN', () => {
     assert.ok(COMPANY_PERMISSION_KEYS.includes('company.plan.manage'));
     assert.ok(ROLE_GRANTS.OWNER!.includes('company.plan.manage'));
