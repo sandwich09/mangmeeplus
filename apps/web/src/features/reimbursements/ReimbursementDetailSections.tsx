@@ -23,7 +23,7 @@ import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
 import {
   dateShort, ErrorBanner, InfoBanner, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
 } from '../expenses/ExpensesUi';
-import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
+import { ReimbursementSourceFacts, WholeWords } from './ReimbursementSourceFacts';
 import {
   fetchAttachmentPreviewBlob, fetchReimbursementPaymentSlipBlob, previewReimbursementClaimForm, recordReimbursementPayment,
   uploadReimbursementPaymentSlip,
@@ -402,6 +402,10 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
   const referenceId = useId();
   // Like a missing slip, a missing cheque number is said when the payer presses บันทึกจ่าย, not while the form is still being filled.
   const validationError = futurePaidAt ? PAYMENT_DATE_IN_FUTURE.message : error;
+  // A refusal is about the form as it was pressed. Whatever the payer then changes takes it away, so the red box never contradicts the
+  // form in front of them (the slip the form itself swaps in after an upload is not the payer's change: `onSlipUploaded` keeps `setSlip`).
+  const edited = <T,>(set: React.Dispatch<React.SetStateAction<T>>): React.Dispatch<React.SetStateAction<T>> => (next) => { setError(null); set(next); };
+  const editForm = edited(setForm), editPayer = edited(setPayer), editSlip = edited(setSlip);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -420,9 +424,9 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
   return (
     <form className="space-y-3" onSubmit={submit}>
       <p className="text-xs text-gray-500">จ่ายเต็มจำนวนคงค้าง {formatMoney(request.outstandingAmount, request.currency)}</p>
-      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label><input className={inputClass} type="number" step="0.01" required value={form.paidAmount} onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))} /></div>
+      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label><input className={inputClass} type="number" step="0.01" required value={form.paidAmount} onChange={e => editForm(f => ({ ...f, paidAmount: e.target.value }))} /></div>
       <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วิธีจ่าย *</label>
-        <ThemedSelect className={inputClass} aria-label="วิธีจ่าย" required value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}>
+        <ThemedSelect className={inputClass} aria-label="วิธีจ่าย" required value={form.paymentMethod} onChange={e => editForm(f => ({ ...f, paymentMethod: e.target.value }))}>
           <option value="" disabled>เลือกวิธีจ่าย</option>
           {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </ThemedSelect>
@@ -433,27 +437,27 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
         <div data-testid="reimbursement-payment-mismatch">
           <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-payment-mismatch-reason">เหตุผลที่จ่ายต่างจากที่ระบุในใบ *</label>
           <textarea id="reimbursement-payment-mismatch-reason" className={cx(inputClass, 'min-h-20 resize-y')} aria-required maxLength={REASON_MAX_LENGTH} disabled={busy}
-            value={payer.mismatchReason} onChange={e => setPayer(p => ({ ...p, mismatchReason: sanitizeReasonInput(e.target.value) }))}
+            value={payer.mismatchReason} onChange={e => editPayer(p => ({ ...p, mismatchReason: sanitizeReasonInput(e.target.value) }))}
             placeholder="เช่น ผู้เบิกขอรับเป็นเงินสดแทน" />
           <p className="mt-1 text-xs leading-5 text-gray-500">
             ใบนี้ระบุ{payout.requestedMethodText} ประวัติการจ่ายจะแสดงว่า{PAID_DIFFERENTLY_LABEL} พร้อมเหตุผลนี้ อย่าพิมพ์เลขบัญชีในช่องนี้
           </p>
         </div>
       )}
-      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required max={today} today={today} value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
+      <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required max={today} today={today} value={form.paidAt} onChange={e => editForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
       <div>
         <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor={referenceId}>{reference.label}</label>
-        <input id={referenceId} className={inputClass} aria-label={reference.name} aria-required={reference.required} aria-describedby={`${referenceId}-hint`} value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} />
-        <p id={`${referenceId}-hint`} className="mt-1 text-xs leading-5 text-gray-500">{reference.hint}</p>
+        <input id={referenceId} className={inputClass} aria-label={reference.name} aria-required={reference.required} aria-describedby={`${referenceId}-hint`} value={form.paymentReference} onChange={e => editForm(f => ({ ...f, paymentReference: e.target.value }))} />
+        <p id={`${referenceId}-hint`} className="mt-1 text-pretty text-xs leading-5 text-gray-500">{reference.hint}</p>
       </div>
       <div data-testid="reimbursement-payment-slip">
         <div className="mb-1.5 text-xs font-semibold text-gray-600">สลิปหรือหลักฐานการจ่าย {slipRequired && '*'}</div>
         {/* No capture attribute, like the receipt upload: a phone offers its camera and its photo library. */}
         <ThemedFile file={slip ? ('file' in slip ? slip.file : slip.name) : null} accept={RECEIPT_UPLOAD_ACCEPT} aria-label="สลิปหรือหลักฐานการจ่าย"
           aria-required={slipRequired} disabled={busy} loading={busy && !!slip && 'file' in slip}
-          onChange={file => setSlip(file ? { file } : null)} />
+          onChange={file => editSlip(file ? { file } : null)} />
         <p className="mt-1 text-xs leading-5 text-gray-400">
-          {slipRequired ? 'จ่ายด้วยการโอนต้องแนบสลิป' : 'แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้'} · {ATTACHMENT_SOURCE_TYPES_LABEL} ขนาดไม่เกิน 10 เมกะไบต์
+          {slipRequired ? 'จ่ายด้วยการโอนต้องแนบสลิป' : 'แนบได้ถ้ามี ไม่บังคับสำหรับวิธีจ่ายนี้'} · <WholeWords text={ATTACHMENT_SOURCE_TYPES_LABEL} /> ขนาดไม่เกิน <span className="whitespace-nowrap">10 เมกะไบต์</span>
         </p>
         {attached.length > 0 && (
           <div className="mt-3 [overflow-wrap:anywhere]" data-testid="reimbursement-payment-slip-choices">
@@ -466,7 +470,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
                   <label className="flex min-h-11 cursor-pointer items-start gap-3">
                     <input type="radio" name="reimbursement-payment-slip-choice" className="mt-0.5 h-5 w-5 shrink-0" disabled={busy}
                       checked={chosen?.attachmentId === choice.attachmentId}
-                      onChange={() => setSlip({ attachmentId: choice.attachmentId, name: choice.label })} />
+                      onChange={() => editSlip({ attachmentId: choice.attachmentId, name: choice.label })} />
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold text-gray-900">{choice.label}</span>
                       <span className="mt-0.5 block text-xs leading-5 text-gray-500">{choice.what}</span>
@@ -490,7 +494,7 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
       {/* Spec §12.3: the transfer went into the account shown. Given per account, never carried over to another. */}
       {payout.confirmation && (
         <PayerConfirmationCheck confirmation={payout.confirmation} checked={payer.confirmedFor === payout.confirmation.key} disabled={busy}
-          onChange={(checked) => setPayer(p => ({ ...p, confirmedFor: checked ? payout.confirmation!.key : '' }))} />
+          onChange={(checked) => editPayer(p => ({ ...p, confirmedFor: checked ? payout.confirmation!.key : '' }))} />
       )}
       {validationError && <ErrorBanner message={validationError} />}
       <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy || futurePaidAt} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
@@ -761,7 +765,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
       {canEditDraft && !l.sourceExpenseSnapshot && (
         <div className="mt-1 space-y-1">
           <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
-          <p className="leading-5 text-gray-400">{ATTACHMENT_SOURCE_TYPES_LABEL}</p>
+          <p className="leading-5 text-gray-400"><WholeWords text={ATTACHMENT_SOURCE_TYPES_LABEL} /></p>
           {l.attachmentId && <button className="min-h-11 text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
         </div>
       )}

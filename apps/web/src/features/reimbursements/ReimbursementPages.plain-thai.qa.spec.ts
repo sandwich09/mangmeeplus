@@ -291,7 +291,8 @@ describe('the claim lines fit a 390 px phone (Owner, 2026-09-30)', () => {
     // Not inside mangmee-table-scroll: its max-content cut the amount and receipt columns off a desktop card (2026-10-01).
     assert.doesNotMatch(html.slice(html.lastIndexOf('<section', tableAt), tableAt), /mangmee-table-scroll/u);
     const cards = html.slice(cardsAt, tableAt), table = html.slice(tableAt);
-    const cardTexts = visible(cards);
+    // The file-type names are each kept whole on screen (one unbreakable span a name); the words read are the shared sentence.
+    const cardTexts = visible(cards.replace(/<span class="whitespace-nowrap">([^<]*)<\/span>/gu, '$1'));
     for (const text of ['ค่าแท็กซี่', '1,234.50 บาท', '27 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'วัตถุประสงค์: ไปพบลูกค้า',
       'ปากกาและแฟ้ม', '380.00 บาท', '26 ก.ย. 2569 · ยังไม่ได้เลือกหมวด', 'ร้านเครื่องเขียนสมใจ', 'รวมเป็นเงิน', '1,614.50 บาท',
       ATTACHMENT_SOURCE_TYPES_LABEL, 'นำไฟล์ออก']) assert.ok(cardTexts.includes(text), text);
