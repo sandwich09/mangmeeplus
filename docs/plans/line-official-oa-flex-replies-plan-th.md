@@ -15,3 +15,14 @@ Spec: `docs/specs/line-official-oa-flex-replies-spec-th.md`
 - [ ] Verify webhook/assets, เปิด OA webhook, ปิดเฉพาะสอง native auto replies หลังผ่าน; owner ทดสอบทั้งสองการ์ดบนโทรศัพท์
 
 ไม่มี schema/identity/ERP/AI changes และไม่มี package.json หรือ dependency changes. คง rich menu, native welcome/how-to/package, manual chat และ OA ระบบตามเดิม.
+
+## Owner-selected isolated publication — 2026-10-04
+
+- [x] Owner authorized local checks/release instead of GitHub billing-blocked CI and selected OA-only scope
+- [x] Existing non-root Production preflight passed; no ERP deployment. UAT is stopped and stays unchanged
+- [x] Dedicated secret creation denied to existing non-root writer; no credential was provisioned and no IAM escalation
+- [x] Build standalone Lambda artifact by reusing existing mapper/verifier/JSON/icons; local tests 5/5 and scoped template assertions PASS
+- [x] Provider ValidateTemplate passed; owner explicitly selected thawatchai for this new OA stack after the non-root session request. KMS signing remains non-root
+- [ ] Prepare and review the narrow CloudFormation change set
+- [ ] Publish staging immutable version, check actual provider/three icon paths, promote live to the same version
+- [ ] Verify and enable Official webhook; stop only native Social/Contact; retain signed ledger and owner phone result
