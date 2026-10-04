@@ -16,7 +16,6 @@ const REQUIRED_APPROVER_PERMISSIONS = ['reimbursement.read', 'reimbursement.appr
 
 export type ApproverHolder = {
   userId?: string;
-  roleKeys?: string[];
   branchScopeMode: 'ALL_BRANCHES' | 'SELECTED_BRANCHES' | 'DEFAULT_BRANCH_ONLY';
   defaultBranchId?: string | null;
   branchIds: string[];
@@ -213,7 +212,7 @@ export class ListReimbursementApproverOptionsUseCase {
     return inputs.map((input) => [...new Set(owner.holders.filter((holder) => (
       !!holder.userId
       && holderCoversRequest(holder, input.branchId)
-      && !isSelfApproval(input.requesterUserId, holder.userId, input.allowSelfApproval, holder.roleKeys ?? ['OWNER'])
+      && !isSelfApproval(input.requesterUserId, holder.userId, input.allowSelfApproval)
     )).map((holder) => holder.userId!))].sort());
   }
 
@@ -237,7 +236,6 @@ export class ListReimbursementApproverOptionsUseCase {
         input.requesterUserId,
         holder.userId,
         input.allowSelfApproval,
-        holder.roleKeys ?? [role.key],
       )
     ));
     const owner = roles.find((role) => role.key === 'OWNER');
@@ -258,7 +256,7 @@ export class ListReimbursementApproverOptionsUseCase {
     // Owner order 2026-09-21 ("ผู้ใช้คนเดียวที่กำหนดบทบาทเอง ต้องทำได้นะ"): nobody is left only because
     // the requester was dropped above as a self-approver, so the step goes back to them instead of
     // dead-ending. Anyone else eligible — another holder or the OWNER fallback — still decides first.
-    // An OWNER holder is exempt and never dropped, so the routed role is the only place to look.
+    // This applies to every routed role, including OWNER (owner decision 2026-10-04).
     const soloSelfApproval = soloExemption && recipientUserIds.length === 0
       && selectedRoles.some((role) => role.holders.some((holder) => holder.userId === input.requesterUserId && holderCoversRequest(holder, input.branchId)));
     if (soloSelfApproval) recipientUserIds = [input.requesterUserId];
@@ -288,7 +286,7 @@ export class ListReimbursementApproverOptionsUseCase {
           userId: true, branchScopeMode: true, defaultBranchId: true,
           branchScopes: { select: { branchId: true } },
           roles: { where: { role: { status: 'ACTIVE' } }, select: {
-            role: { select: { key: true, permissions: { select: { permission: { select: { key: true } } } } } },
+            role: { select: { permissions: { select: { permission: { select: { key: true } } } } } },
           } },
         },
       }),
@@ -301,7 +299,6 @@ export class ListReimbursementApproverOptionsUseCase {
     );
     const holder: ApproverHolder = {
       userId: membership.userId,
-      roleKeys: membership.roles.map(({ role }) => role.key),
       branchScopeMode: membership.branchScopeMode,
       defaultBranchId: membership.defaultBranchId,
       branchIds: membership.branchScopes.map((scope) => scope.branchId),
@@ -310,7 +307,7 @@ export class ListReimbursementApproverOptionsUseCase {
       || !holderCoversRequest(holder, input.branchId)) {
       return null;
     }
-    const soloSelfApproval = isSelfApproval(input.requesterUserId, input.userId, input.allowSelfApproval, holder.roleKeys);
+    const soloSelfApproval = isSelfApproval(input.requesterUserId, input.userId, input.allowSelfApproval);
     if (soloSelfApproval) {
       // Owner order 2026-09-21: the named approver filed this claim. Whoever the role route still
       // finds decides it (the caller falls through to that route); only when it finds nobody does
@@ -346,7 +343,6 @@ export class ListReimbursementApproverOptionsUseCase {
               branchScopeMode: true,
               defaultBranchId: true,
               branchScopes: { select: { branchId: true } },
-              roles: { select: { role: { select: { key: true, status: true } } } },
             } } },
           },
         },
@@ -371,7 +367,6 @@ export class ListReimbursementApproverOptionsUseCase {
           permissionKeys: filterPermissionsByEntitlement(role.permissions.map((item) => item.permission.key), entitled),
           holders: role.memberships.map(({ membership }) => ({
             userId: membership.userId,
-            roleKeys: membership.roles.filter(({ role }) => role.status === 'ACTIVE').map(({ role }) => role.key),
             branchScopeMode: membership.branchScopeMode,
             defaultBranchId: membership.defaultBranchId,
             branchIds: membership.branchScopes.map((scope) => scope.branchId),

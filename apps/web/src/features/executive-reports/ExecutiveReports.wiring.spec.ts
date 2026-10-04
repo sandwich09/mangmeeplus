@@ -3,14 +3,17 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import ts from 'typescript';
-import { EXECUTIVE_WORDS as sharedWords, executiveThaiLabel } from '@watchdog-bms/contracts';
-import { W, thaiLabel } from './executive-reports.words';
+import { executivePeriodReportWords, executiveThaiLabel } from '@watchdog-bms/contracts';
+import { W, thaiLabel, EXECUTIVE_MENU } from './executive-reports.words';
 const source = (path: string) => { const p = fileURLToPath(new URL(path, import.meta.url)); return existsSync(p) ? readFileSync(p, 'utf8') : ''; };
 
-test('all seven report routes render the real report page and detail uses targetCompanyId', () => {
-  for (const route of ['', '/companies', '/usage', '/revenue', '/customers', '/compare', '/companies/[targetCompanyId]']) {
+test('all six report routes render the real report page, detail uses targetCompanyId and the old compare address opens the overview', () => {
+  for (const route of ['', '/companies', '/usage', '/revenue', '/customers', '/companies/[targetCompanyId]']) {
     assert.match(source(`../../../app/system/executive${route}/page.tsx`), /ExecutiveReportPage/, route);
   }
+  // The comparison is taken out for now (owner 2026-10-05): no menu entry, and its old address is not a missing page.
+  assert.match(source('../../../app/system/executive/compare/page.tsx'), /redirect\('\/system\/executive'\)/);
+  assert.deepEqual(EXECUTIVE_MENU.map(item => item.key), ['overview', 'companies', 'usage', 'revenue', 'customers']);
   assert.match(source('../../../app/system/executive/companies/[targetCompanyId]/page.tsx'), /await params/);
 });
 test('the system shell and report gate use the exact permission, and the header has report links only for readers', () => {
@@ -21,18 +24,18 @@ test('the system shell and report gate use the exact permission, and the header 
   assert.match(header, /useOpenSupportCount\(pathname, !billingOnly && !executiveOnly\)/);
   assert.match(header, /EXECUTIVE_ACCESS_DENIED_EVENT/);
   assert.match(header, /thaiLabel\(environment\)/);
-  assert.match(header, /thaiLabel\(section.label\)/);
+  assert.doesNotMatch(header, /thaiLabel\(section.label\)/);
   // Report routes only: '/system/executive-users' (an admin page) keeps the admin console's own menu words.
   assert.doesNotMatch(header, /pathname\.startsWith\('\/system\/executive'\)/);
 });
 test('reads use authenticated fetch, no tenant target header, and reload/abort protect the entire answer', () => {
-  const api = source('./executive-reports.api.ts'), page = source('./ExecutiveReportPage.tsx');
+  const api = source('./executive-reports.api.ts'), page = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportDesign.tsx') + source('./ExecutivePeriodControl.tsx');
   assert.match(api, /authedApiFetch/); assert.match(api, /cache: 'no-store'/); assert.doesNotMatch(api, /X-Company-Id|fixture/i);
   assert.match(page, /AbortController/); assert.match(page, /signal\.aborted/); assert.match(page, /readCurrentBuild/);
   assert.match(page, /SOURCE_STALE/); assert.match(page, /setData\(null\)/); assert.match(page, /CoverLoader/);
   assert.match(page, /keepLoadedReport/);
   assert.match(page, /retry: retryWait > 0 \? undefined/);
-  assert.ok(page.indexOf('setData(result.data)') < page.indexOf('await getExecutiveHistory'));
+  assert.ok(page.indexOf('setData(result.data)') < page.indexOf('void getExecutiveHistory'));
 });
 test('a build change refreshes provider context without turning its new object into another report reload', () => {
   const page = source('./ExecutiveReportPage.tsx');
@@ -55,21 +58,24 @@ test('system and sales denial gates select report wording for executive-only ses
 });
 test('directory chips hide empty drill rows and each filter toggle names its own scope', async () => {
   const page = source('./ExecutiveReportPage.tsx');
-  assert.match(page, /reportFilterChips/);
-  assert.match(page, /pickLabels.length > 0 &&/);
-  assert.match(page, /\{W.reportFilters\} · \{filterCount\}/);
-  assert.match(page, /\{W.companyFilters\} · \{DIRECTORY_FILTERS/);
+  assert.match(page, /DIRECTORY_FILTERS/);
+  assert.match(page, /extra=\{pickLabels.map/);
+  assert.match(page, /<ExecutiveFilters[^\n]*context=/);
+  assert.match(source('./ExecutiveFilters.tsx'), /W.reportFilters/);
+  assert.match(source('./ExecutiveFilters.tsx'), /W.companyFilters/);
   const { W } = await import('./executive-reports.words');
   assert.equal(W.reportFilters, 'ตัวกรองรายงาน'); assert.equal(W.companyFilters, 'ตัวกรองรายชื่อบริษัท');
 });
 test('Thai shared fields, detail tabs, history paging and responsive tables retain the permission-gated export panel', () => {
-  const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts');
-  for (const component of ['MangmeePage', 'MangmeeCard', 'MangmeeStatCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
-  assert.match(all, /allowClear=\{false\}/); assert.match(all, /selectable=\{context\.builtMonths\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table/);
+  const all = source('./ExecutiveReportPage.tsx') + source('./ExecutiveReportContent.tsx') + source('./executive-reports.words.ts') + source('./ExecutiveReportDesign.tsx') + source('./ExecutivePeriodControl.tsx');
+  for (const component of ['ExecutivePage', 'MangmeeCard', 'MangmeeBadge', 'TextField', 'SelectField', 'ThemedDate', 'Pagination', 'ForbiddenState']) assert.match(all, new RegExp(component));
+  assert.match(source('./ExecutiveReportContent.tsx'), /<ExecutiveKpi/);
+  assert.match(all, /allowClear=\{false\}/); assert.match(all, /selectable=\{context\.builtMonths\}/); assert.match(all, /table-fixed/); assert.match(all, /md:hidden/); assert.match(all, /hidden[^"\n]*md:table-header-group/);
+  assert.match(all, /ExecutiveTable as ReportTable/);
   assert.match(all, /ExecutiveCompanyHistory/); assert.match(all, /EXECUTIVE_HISTORY_EVENT_LABELS/);
   assert.doesNotMatch(all, /mangmee-table-scroll|<select\b|<textarea\b|data-rights|localStorage/);
   assert.match(all, /canExport\(context\) && !exportOpen/);
-  assert.match(all, /exportOpen && context && visibleData && <ExecutiveExportPanel/);
+  assert.match(all, /exportOpen && context && visibleData && dataKey === requestKey && !reading && <ExecutiveExportPanel/);
 });
 test('search stays in the history entry with a 300ms debounce, back has a direct-link fallback', () => {
   const page = source('./ExecutiveReportPage.tsx');
@@ -78,7 +84,7 @@ test('search stays in the history entry with a 300ms debounce, back has a direct
   assert.match(page, /navigateParams\(clearedParams\(params\), false, ''\)/);
   // A change the reader makes keeps only our own history keys, so Next's router (useSearchParams) follows it.
   assert.match(page, /const state = reportHistoryState\(window\.history\.state, searchValue, replace\)/);
-  assert.match(page, /replaceState\(\{ \.\.\.ownHistoryState\(window\.history\.state\), executiveSearch: term \}, '', `/);
+  assert.match(page, /replaceState\(\{ \.\.\.ownHistoryState\(window\.history\.state\), executiveSearch: term \}, '', executiveHref/);
 });
 
 // Execute the page's actual setup, normalization and close handler with a history stub;
@@ -97,7 +103,7 @@ async function pageTransitions(section: string, params: URLSearchParams, context
   const { canExport } = await import('./executive-export.logic');
   const deps = { ...logic, DETAIL_TABS, canExport, section, targetCompanyId: undefined, window, Context: {},
     useContext: () => ({ context }), usePathname: () => '/system/executive', useRouter: () => ({}), useSearchParams: () => params,
-    useState: (value: unknown) => [value, () => {}], useRetryWait: () => [0, () => {}], useCallback: (fn: unknown) => fn };
+    useState: (value: unknown) => [value, () => {}], useRef: (value: unknown) => ({ current: value }), useRetryWait: () => [0, () => {}], useCallback: (fn: unknown) => fn };
   const js = ts.transpileModule(`${setup}\nreturn { requestKey, exportOpen, normalize: ${normalize.arguments[0]!.getText(file)}, dependencies: ${read.arguments[1]!.getText(file)}, close: ${close.initializer!.getText(file)} };`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   return new Function('deps', `const {${Object.keys(deps).join(',')}} = deps; ${js}`)(deps);
 }
@@ -118,13 +124,13 @@ test('normalization keeps only an allowed export flag and stays URL-only for a s
     page.normalize();
     const next = new URL(replaced, 'https://test.invalid').searchParams;
     assert.equal(next.get('export'), kept); assert.equal(next.has('q'), false); assert.equal(next.has('buildId'), false);
-    assert.equal(next.get('month'), '2026-09'); assert.equal(next.get('filter_industry'), 'ALL');
+    assert.equal(next.get('from'), '2026-09'); assert.equal(next.get('to'), '2026-09'); assert.equal(next.has('month'), false); assert.equal(next.get('filter_industry'), 'ALL');
   }
 });
 
 test('opening/closing export and refreshing built months preserve report identity and read dependencies on every screen', async () => {
   const context = await exportContext();
-  for (const section of ['overview', 'companies', 'usage', 'revenue', 'customers', 'compare', 'detail']) {
+  for (const section of ['overview', 'companies', 'usage', 'revenue', 'customers', 'detail']) {
     const params = new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK&page=3&by=industry&a=ALL&b=UNKNOWN&tab=history');
     const closed = await pageTransitions(section, params, context, {});
     params.set('export', '1');
@@ -143,7 +149,9 @@ test('opening/closing export and refreshing built months preserve report identit
     assert.deepEqual((await pageTransitions(section, params, context, {})).dependencies, closed.dependencies, section);
     if (section === 'companies' || section === 'detail') {
       params.set('page', '4');
-      assert.notDeepEqual((await pageTransitions(section, params, context, {})).dependencies, closed.dependencies, section);
+      const paged = (await pageTransitions(section, params, context, {})).dependencies;
+      if (section === 'detail') assert.deepEqual(paged, closed.dependencies, section);
+      else assert.notDeepEqual(paged, closed.dependencies, section);
       params.set('page', '3');
     }
     params.set('month', '2026-10');
@@ -167,10 +175,10 @@ test('closing export updates Next router state while preserving the report URL, 
 });
 
 test('web re-exports one shared words source including later report polish and state-aware reasons', async () => {
-  assert.equal(W, sharedWords); assert.equal(thaiLabel, executiveThaiLabel);
+  assert.deepEqual(W, executivePeriodReportWords()); assert.equal(thaiLabel, executiveThaiLabel);
   assert.deepEqual([W.reportFilters, W.companyFilters, W.unavailableFigure, W.rank, W.item, W.yes, W.partialMeasuredMoney, W.contactNotPermitted],
     ['ตัวกรองรายงาน', 'ตัวกรองรายชื่อบริษัท', 'ยังไม่มีตัวเลข', 'อันดับ', 'รายการ', 'ใช่', 'ยอดเฉพาะช่วงที่วัดได้', 'ไม่มีสิทธิ์ดูข้อมูลติดต่อ']);
-  assert.equal(W.reasonReference(2), 'ดูเหตุผลข้อ 2');
+  assert.equal(W.incompleteLegend, 'ยังไม่ครบ');
   assert.equal(W.yes, W.export.yes); assert.equal(W.rank, W.export.rank);
   assert.equal(thaiLabel('IG', 'IG'), 'อินสตาแกรม');
   const { executiveReasonMessage } = await import('../../common/api/api-error-message');
@@ -198,4 +206,14 @@ test('an export refused for the export or contacts right re-reads the rights; on
   denyExport();
   await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(calls, ['exportDenied=true', 'refresh']);
+});
+
+test('B5: company detail tabs and history pages preserve the company read identity', async () => {
+  const context = await exportContext();
+  const company = await pageTransitions('detail', new URLSearchParams('month=2026-09&view=company'), context, {});
+  for (const view of ['usage', 'history']) {
+    const panel = await pageTransitions('detail', new URLSearchParams({ month: '2026-09', view, page: '3' }), context, {});
+    assert.equal(panel.requestKey, company.requestKey, view);
+    assert.deepEqual(panel.dependencies, company.dependencies, view);
+  }
 });

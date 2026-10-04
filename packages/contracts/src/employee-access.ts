@@ -1,3 +1,5 @@
+import { COMPANY_TEAM_NOTE_WORDS } from './company-team-note.js';
+
 // ---- Item 10C: Employee Access and Role Management ----
 
 export type EmployeeAccessStatus = 'DRAFT' | 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
@@ -191,6 +193,10 @@ export const THAI_SYSTEM_ROLE_NAMES = {
   ACCOUNTANT: 'ฝ่ายบัญชี', MARKETING: 'ฝ่ายการตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ (ดูอย่างเดียว)',
   COMPANY_VIEW: 'ผู้ดูภาพรวมบริษัท',
   MANGMEE_SALES_LEAD: 'หัวหน้าทีมขายมั่งมี', MANGMEE_SALES: 'เซลล์มั่งมี',
+  MANGMEE_EXECUTIVE: 'ผู้บริหารมั่งมี',
+  MANGMEE_EXECUTIVE_EXPORT: 'สิทธิ์ส่งออกรายงานสำหรับผู้บริหาร',
+  MANGMEE_EXECUTIVE_CONTACT: 'สิทธิ์ดูข้อมูลติดต่อสำหรับผู้บริหาร',
+  MANGMEE_EXECUTIVE_COMPANY_NOTE: COMPANY_TEAM_NOTE_WORDS.roleName,
 } as const;
 
 /**

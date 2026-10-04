@@ -132,3 +132,16 @@ describe('GAP-04 taxReviewerRole enforcement', () => {
     assert.equal(resolved, false); // rejected before touching the issue
   });
 });
+
+
+describe('persistent certificate route authority', () => {
+  it('lets readers, issuers and correctors read the handoff and re-download, while issuance remains separately guarded', async () => {
+    const { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } = await import('../../../../common/security/permissions.decorator');
+    const proto = TaxController.prototype;
+    assert.equal(typeof proto.downloadSystemWhtCertificate, 'function');
+    for (const handler of [proto.listWhtHandoffs, proto.downloadSystemWhtCertificate]) {
+      assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, handler), ['wht.certificate.read', 'wht.certificate.issue', 'wht.certificate.correct']);
+    }
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, proto.issueSystemWhtCertificate), ['wht.certificate.issue']);
+  });
+});

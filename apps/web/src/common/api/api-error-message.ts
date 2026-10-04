@@ -1,6 +1,7 @@
+import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
-import { SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE } from '@watchdog-bms/contracts';
-import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, type ExecutiveCoverage } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, PAYMENT_DATE_IN_FUTURE, REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
+import { EXECUTIVE_WORDS as W, THAI_SYSTEM_ROLE_NAMES, EXECUTIVE_REASON_CODES, executiveSourceReasonText, type ExecutiveCoverage } from '@watchdog-bms/contracts';
 
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECUTIVE_UNKNOWN_LABEL } from '@watchdog-bms/contracts';
 
@@ -11,6 +12,14 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS, EXECUTIVE_REPORT_LABELS, EXECU
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  company_team_note_version_conflict: NOTE_WORDS.conflict,
+  company_team_note_invalid: NOTE_WORDS.invalid,
+  company_team_note_too_long: NOTE_WORDS.tooLong,
+  company_team_note_read_denied: NOTE_WORDS.denied,
+  company_team_note_edit_denied: NOTE_WORDS.editDenied,
+  company_team_note_company_not_found: NOTE_WORDS.notFound,
+  company_team_note_save_unconfirmed: NOTE_WORDS.saveUnknown,
+  ...Object.fromEntries(EXECUTIVE_REASON_CODES.map(code => [code, executiveSourceReasonText(code)])),
   INVALID_INPUT: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่',
   EXECUTIVE_SNAPSHOT_EXPIRED: W.export.expired,
   EXECUTIVE_EXPORT_LIMIT_EXCEEDED: W.export.limit,
@@ -411,9 +420,22 @@ const CODE_LABELS: Record<string, string> = {
   bank_match_state_changed: 'รายการนี้ถูกเปลี่ยนระหว่างจับคู่ กรุณากดรีเฟรชแล้วลองอีกครั้ง',
   output_tax_code_line_mismatch: 'รหัสภาษีที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจรหัสภาษีก่อนบันทึก',
   posting_rule_missing: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี',
+  expense_correction_blocked: EXPENSE_CORRECTION_WORDS.unavailable,
+  expense_rejection_payments_recorded: expenseCorrectionBlockerMessage('recorded_payments'),
+  expense_rejection_paid_balance: expenseCorrectionBlockerMessage('legacy_paid_balance'),
+  expense_tax_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
+  expense_payment_correction_blocked: EXPENSE_CORRECTION_WORDS.unavailable,
+  expense_paid_exceeds_payable: EXPENSE_CORRECTION_WORDS.paidExceedsPayable,
+  wht_certificate_download_unavailable: EXPENSE_CORRECTION_WORDS.certificateUnavailable,
+  expense_posting_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
+  expense_wht_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
+  expense_correction_source_changed: EXPENSE_CORRECTION_WORDS.sourceChanged,
   expense_payment_exceeds_outstanding: 'ยอดจ่ายต้องมากกว่า 0 และไม่เกินยอดคงเหลือที่ต้องจ่าย',
   expense_payment_changed: 'ยอดหรือสถานะการจ่ายถูกเปลี่ยนระหว่างบันทึก กรุณาโหลดรายการใหม่แล้วลองอีกครั้ง',
+  expense_payment_already_cancelled: EXPENSE_CORRECTION_WORDS.paymentAlreadyCancelled,
   expense_payment_idempotency_conflict: 'ข้อมูลไม่ตรงกับรายการจ่ายที่บันทึกไว้ กรุณาตรวจประวัติการจ่ายก่อนแก้ไขเป็นรายการใหม่',
+  expense_payment_future_date: EXPENSE_CORRECTION_WORDS.futurePaymentDate,
+  expense_payment_not_confirmed: EXPENSE_CORRECTION_WORDS.paymentOnUnconfirmed,
   expense_payment_invalid_date: 'วันที่จ่ายไม่ถูกต้อง กรุณาเลือกวันที่จ่ายเงินจริงจากปฏิทิน',
   expense_payment_invalid_key: 'ข้อมูลสำหรับยืนยันรายการจ่ายไม่ถูกต้อง กรุณาเปิดรายการใหม่และตรวจประวัติการจ่ายก่อนบันทึก',
   expense_payment_invalid_method: 'วิธีจ่ายเงินไม่ถูกต้อง กรุณาเลือกวิธีจ่ายเงินจากรายการ',
@@ -590,7 +612,7 @@ const CODE_LABELS: Record<string, string> = {
     'ยังส่งไม่ได้ตามนโยบายใบเสร็จของบริษัท กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ',
   missing_receipt_reason_required:
     'มีรายการที่ยังไม่แนบหลักฐาน กรุณาระบุเหตุผลที่ไม่มีใบเสร็จก่อนส่งใบเบิก',
-  duplicate_unresolved: 'ระบบพบใบเบิกที่อาจซ้ำกับรายการเดิม นโยบายบริษัทกำหนดให้ตรวจสอบก่อนจึงจะส่งได้',
+  duplicate_unresolved: REIMBURSEMENT_DUPLICATE_UNRESOLVED,
   invalid_primary_attachment: 'ไฟล์แนบต้องเป็นไฟล์ที่ผู้เบิกอัปโหลดเองและยังใช้งานอยู่',
   invalid_linked_expense: 'รายการค่าใช้จ่ายที่ผูกไว้ไม่ใช่ของผู้เบิก หรือถูกลบไปแล้ว',
   invalid_status_transition: 'สถานะปัจจุบันของใบเบิกทำรายการนี้ไม่ได้ กรุณาโหลดรายการใหม่',
@@ -600,7 +622,7 @@ const CODE_LABELS: Record<string, string> = {
   not_eligible_approver: 'คุณไม่ได้อยู่ในขั้นอนุมัติปัจจุบันของใบเบิกนี้',
   not_assigned_approver: 'ใบเบิกนี้ถูกมอบหมายให้ผู้อนุมัติคนอื่นแล้ว',
   not_eligible_approver_role: 'บทบาทของคุณไม่ตรงกับผู้อนุมัติที่กำหนดไว้ในขั้นนี้',
-  self_approval_denied: 'อนุมัติใบเบิกของตนเองไม่ได้ ต้องให้ผู้มีสิทธิ์อนุมัติคนอื่นเป็นผู้อนุมัติ',
+  self_approval_denied: REIMBURSEMENT_SELF_APPROVAL_DENIED,
   rejection_reason_required: 'กรุณาระบุเหตุผลการไม่อนุมัติ',
   // อนุมัติหรือปฏิเสธใบที่ไม่ได้รออนุมัติแล้ว: บอกสิ่งที่อาจเกิดขึ้นและสิ่งที่ต้องทำ ไม่พิมพ์ชื่อสถานะของใบ
   reimbursement_not_awaiting_approval:
@@ -672,6 +694,8 @@ const CODE_LABELS: Record<string, string> = {
 
   // ---- รายการเบิกจ่าย: จ่ายเงินและยกเลิก ----
   payment_date_invalid: 'วันที่จ่ายเงินไม่ถูกต้อง',
+  payment_reference_required: REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.requiredMessage,
+  [PAYMENT_DATE_IN_FUTURE.code]: PAYMENT_DATE_IN_FUTURE.message,
   // ระบบรับเฉพาะการจ่ายเต็มยอดคงค้าง ทั้งสองข้อความจึงบอกยอดที่ต้องกรอก
   payment_amount_invalid: 'จำนวนเงินที่จ่ายต้องมากกว่า 0 กรุณากรอกยอดคงค้างของใบเบิกแล้วกดบันทึกจ่ายอีกครั้ง',
   payment_over_approved_amount: 'จำนวนเงินที่จ่ายเกินยอดคงค้างของใบเบิก กรุณาแก้เป็นยอดคงค้างแล้วกดบันทึกจ่ายอีกครั้ง',
@@ -1078,7 +1102,7 @@ const CODE_LABELS: Record<string, string> = {
   wht_handoff_link_command_reused: 'คำขอแนบหนังสือรับรองนี้ถูกใช้กับรายการอื่นแล้ว กรุณาโหลดงานใหม่',
   wht_handoff_not_linkable: 'สถานะของงานนี้ยังแนบหนังสือรับรองไม่ได้ กรุณาตรวจสถานะล่าสุด',
   wht_handoff_already_linked: 'หนังสือรับรองนี้ถูกแนบไว้แล้ว กรุณาตรวจเอกสารที่เชื่อมอยู่',
-  wht_handoff_not_issuable: 'สถานะของรายการนี้เปลี่ยนไปแล้ว ไม่สามารถพิมพ์เอกสารทวิ 50 ได้ในตอนนี้ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
+  wht_handoff_not_issuable: workspaceDictionary.th['wht.print_certificate_not_issuable'],
   wht_system_issuance_unavailable: 'ระบบยังไม่เปิดการออกหนังสือรับรองอัตโนมัติ',
   wht_handoff_form_type_unresolved: 'ไม่สามารถระบุแบบ ภ.ง.ด. ได้ กรุณาตรวจสอบประเภทผู้รับเงินก่อนออกเอกสาร',
   wht_handoff_income_category_missing: 'ไม่มีข้อมูลประเภทเงินได้/อัตราหัก ณ ที่จ่ายในรายการนี้ กรุณากรอกให้ครบก่อนออกเอกสาร',
@@ -1422,15 +1446,9 @@ const API_KINDS = new Set([...Object.keys(KIND_LABELS), 'unknown']);
 const OTHER_CLIENT_ERROR = 'ทำรายการไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง';
 const GENERIC_API_ERROR = 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง';
 
-// Coverage selects historical reasons from the shared screen/workbook words.
-const EXECUTIVE_REASON_STATE_LABELS: Record<string, Partial<Record<ExecutiveCoverage, string>>> = {
-  HISTORY_BEFORE_COLLECTION: { partial: W.historyBeforeCollectionPartial },
-  HISTORY_BEFORE_FIRST_BUILD: { unavailable: W.historyBeforeFirstBuildUnavailable },
-  SOURCE_ROWS_PURGED: { unavailable: W.sourceRowsPurgedUnavailable },
-};
-
-export function executiveReasonMessage(code: string, coverage?: ExecutiveCoverage): string {
-  return (coverage && EXECUTIVE_REASON_STATE_LABELS[code]?.[coverage]) || apiErrorMessage({ code });
+/** Report reasons use the same source words as the workbook; API errors keep their error wording. */
+export function executiveReasonMessage(code: string, coverage?: ExecutiveCoverage, months: readonly string[] = []): string {
+  return EXECUTIVE_REASON_CODES.includes(code as typeof EXECUTIVE_REASON_CODES[number]) ? executiveSourceReasonText(code, months, coverage) : apiErrorMessage({ code });
 }
 
 /** Translates one API message/code. Returns null when nothing is known about it. */
@@ -1511,11 +1529,19 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     kind?: unknown;
     details?: unknown;
     retryAfterSeconds?: unknown;
+    duplicateReasons?: unknown;
+    duplicatePhase?: unknown;
   } | null | undefined;
   const details = error?.details && typeof error.details === 'object'
     ? error.details as typeof error
     : undefined;
   const code = apiErrorCode(e);
+  if (code === 'duplicate_unresolved') {
+    const reasons = details?.duplicateReasons ?? error?.duplicateReasons;
+    const phase = details?.duplicatePhase ?? error?.duplicatePhase;
+    const knownReasons = Array.isArray(reasons) ? reasons.filter((reason): reason is string => typeof reason === 'string') : [];
+    return phase === 'SUBMIT' ? reimbursementDuplicateSubmitNotice(knownReasons) : phase === 'PAYMENT' ? reimbursementDuplicateBlockNotice(knownReasons) : REIMBURSEMENT_DUPLICATE_UNRESOLVED;
+  }
   if (code === 'plan_branch_limit_exceeded') {
     const capacity = details?.details && typeof details.details === 'object'
       ? details.details as { limit?: unknown }
@@ -1532,6 +1558,14 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
       return code === 'BILLING_RATE_LIMIT' ? `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`
         : `${CODE_LABELS[code]} (ลองใหม่ได้ใน ${seconds} วินาที)`;
     }
+  }
+  if (code === 'expense_correction_blocked' || code === 'expense_payment_correction_blocked') {
+    const payload = (details ?? error) as Partial<ExpenseCorrectionCapabilities> & { blockers?: unknown; blocker?: unknown } | undefined;
+    const blockers = Array.isArray(payload?.blockers) ? payload.blockers : [payload?.blocker];
+    const messages = code === 'expense_correction_blocked'
+      ? expenseReopenBlockerMessages({ ...payload, canReopen: false, reopenBlockers: blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string') } as ExpenseCorrectionCapabilities)
+      : blockers.filter((b): b is ExpenseCorrectionBlocker => typeof b === 'string').map(b => expenseCorrectionBlockerMessage(b, 'cancelPayment'));
+    return messages.length ? messages.join('\n') : EXPENSE_CORRECTION_WORDS.unavailable;
   }
   if (typeof code === 'string') {
     if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;

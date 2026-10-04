@@ -92,7 +92,7 @@ test('append adds supporting evidence and never names a primary to swap', () => 
 
 test('a conflict offers the latest data instead of a silent retry', () => {
   assert.match(source, /code === 'expense_revision_conflict' \|\| code === 'expense_receipt_replace_conflict'/);
-  assert.match(source, /\{error && conflictReload && \(/);
+  assert.match(source, /\{\(error \|\| paymentNotice \|\| correctionError\) && conflictReload && \(/);
   assert.match(source, /expenses\.capture\.reload_latest/);
 });
 
@@ -161,26 +161,21 @@ test('both confirm buttons call the shared doConfirm handler, not a duplicated i
   assert.doesNotMatch(source, /onClick=\{\(\) => doAction\(\(\) => confirmExpense/);
 });
 
-test('the post-confirm WHT prompt is offered only when the confirmed expense withheld tax and the permission is present, and is never mandatory', () => {
-  assert.match(source, /if \(!confirmed \|\| !hasWht \|\| !permissions\.includes\('wht\.certificate\.issue'\)\) return;/);
-  // §4.2 item 3: explicitly not mandatory — a dismiss control must exist beside the issue action.
-  assert.match(source, /onClick=\{\(\) => setWhtIssuePrompt\(null\)\}/);
+test('the persistent WHT action uses the same server capability after confirmation and on later visits', () => {
+  assert.match(source, /canIssueExpenseWhtCertificate\(detail, whtHandoff, permissions\)/);
+  assert.doesNotMatch(source, /whtIssuePrompt/);
 });
 
-test('issuing from the post-confirm prompt calls the system-certificate endpoint and downloads the PDF immediately', () => {
-  // Same reasoning as the AP WhtHandoffDetail wiring test: pdfAttachmentId is never populated, so
-  // the mint response is the only place the PDF bytes ever exist.
-  assert.match(source, /await issueSystemWhtCertificate\(companyId, whtIssuePrompt\.handoffId\)/);
+test('issuing from the persistent action downloads the PDF immediately and reloads the expense blockers', () => {
+  assert.match(source, /await issueSystemWhtCertificate\(companyId, whtHandoff\.id\)/);
   assert.match(source, /downloadArtifact\(result\.pdfArtifact\)/);
+  assert.match(source, /setWhtHandoff\(\{ \.\.\.whtHandoff, status: 'SYSTEM_ISSUED'/);
 });
 
-// Correction & replacement plan §5.2 survey finding: this page IS the persistent, cross-session
-// detail view for a confirmed expense (the [expenseId] route renders it directly) — unlike
-// whtIssuePrompt/whtIssuedPdf above, which are confirm-session-only, the handoff here is re-read
-// from the server on every load so the two buttons work long after the confirming session ends.
-test('the correction/replacement handoff is re-read from the server whenever the expense is CONFIRMED and withheld tax, not carried from session state', () => {
-  assert.match(source, /detail\.status !== 'CONFIRMED' \|\| !\(Number\(detail\.whtAmount\) > 0\) \|\| !permissions\.includes\('wht\.certificate\.correct'\)/);
-  assert.match(source, /listWhtHandoffs\(companyId, \{ status: 'SYSTEM_ISSUED', sourcePaymentId: expenseId \}\)/);
+test('the handoff is re-read for every confirmed withholding revision and includes required and issued documents', () => {
+  assert.match(source, /detail\.status !== 'CONFIRMED' \|\| !\(Number\(detail\.whtAmount\) > 0\)/);
+  assert.match(source, /listWhtHandoffs\(companyId, \{ sourcePaymentId: expenseId \}\)/);
+  assert.match(source, /detail\?\.updatedAt, permissions/);
 });
 
 test('the correction form and replacement button render through the shared accounts-payable-mirrored predicates', () => {

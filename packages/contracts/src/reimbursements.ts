@@ -190,6 +190,42 @@ export function reimbursementPaymentSlipRequired(paymentMethod: string): boolean
   return paymentMethod === 'BANK_TRANSFER';
 }
 
+/** Owner 2026-10-04: evidence replaces a reference; transfers always need their slip separately. */
+export function reimbursementPaymentReferenceRequired(paymentMethod: string, hasSlip = false): boolean {
+  return paymentMethod === 'CHEQUE' && !hasSlip;
+}
+
+const transferReferenceName = 'เลขที่อ้างอิงการโอน';
+const chequeReferenceName = 'เลขที่เช็ค';
+const referenceRequiredMessage = `กรอก${chequeReferenceName}หรือแนบหลักฐานการจ่าย`;
+export const REIMBURSEMENT_PAYMENT_REFERENCE_TEXT = {
+  neutralLabel: 'เลขอ้างอิง',
+  transferName: transferReferenceName,
+  chequeName: chequeReferenceName,
+  optionalName: 'เลขที่เอกสารการจ่าย',
+  transferHint: `ดู${transferReferenceName}บนสลิปหรือในแอปธนาคาร ใช้กระทบยอดกับรายการเดินบัญชีภายหลัง ไม่บังคับกรอกเมื่อแนบสลิป`,
+  chequeHint: `ดู${chequeReferenceName}บนเช็ค ใช้กระทบยอดกับรายการเดินบัญชีภายหลัง หากไม่กรอก ให้แนบหลักฐานการจ่าย`,
+  optionalHint: 'ถ้ามี กรอกเลขที่ใบสำคัญจ่ายหรือใบเสร็จรับเงินไว้ค้นรายการภายหลัง',
+  requiredMessage: referenceRequiredMessage,
+  confirmationHint: 'ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า',
+  guidance: `เมื่อโอนเงิน ต้องแนบสลิป จะกรอก${transferReferenceName}ด้วยก็ได้ หากจ่ายเช็ค ${referenceRequiredMessage} เงินสดและวิธีอื่นกรอกเลขที่เอกสารการจ่ายได้ถ้ามี`,
+} as const;
+
+export function reimbursementPaymentReferenceField(paymentMethod: string, hasSlip: boolean) {
+  const words = REIMBURSEMENT_PAYMENT_REFERENCE_TEXT;
+  const transfer = paymentMethod === 'BANK_TRANSFER';
+  const cheque = paymentMethod === 'CHEQUE';
+  const required = reimbursementPaymentReferenceRequired(paymentMethod, hasSlip);
+  const name = transfer ? words.transferName : cheque ? words.chequeName : words.optionalName;
+  return {
+    name, required,
+    label: `${name}${transfer ? ' (ไม่บังคับเมื่อแนบสลิป)' : required ? ' *' : cheque ? ' (ไม่บังคับเมื่อแนบหลักฐาน)' : ' (ไม่บังคับ)'}`,
+    hint: transfer ? words.transferHint : cheque ? words.chequeHint : words.optionalHint,
+  };
+}
+
+export const REIMBURSEMENT_PAYMENT_STEP_NOTE = `บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่ายและวันที่ ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.guidance} ${REIMBURSEMENT_PAYMENT_REFERENCE_TEXT.confirmationHint}`;
+
 /** What recording a payment asks for beyond amount, date and reference (payout spec §12.4). */
 export type ReimbursementPaymentRule = {
   /** A transfer is recorded with its slip (D3), whatever the claim asked for. */
@@ -406,6 +442,36 @@ export function canOpenReimbursementPaymentSlip(viewer: ReimbursementPayoutViewe
   return isReimbursementPayoutParty(viewer, claim) || viewer.permissions.includes('reimbursement.finance_review');
 }
 
+export const REIMBURSEMENT_POLICY_TAB_LABEL = 'ตั้งค่านโยบาย';
+export const REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL = 'ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้';
+export const REIMBURSEMENT_SELF_APPROVAL_HELP = `ให้ผู้อนุมัติคนอื่นตัดสินแทน หรือให้ผู้มีสิทธิ์ตั้งค่านโยบายเปิด "${REIMBURSEMENT_SELF_APPROVAL_SWITCH_LABEL}" ใน${REIMBURSEMENT_POLICY_TAB_LABEL} ใบที่เก็บนโยบายไว้ตอนส่งต้องเปิดกลับเป็นร่างและส่งอนุมัติใหม่เมื่อยังไม่มีใครตัดสิน เพื่อใช้นโยบายที่เปิด`;
+export const REIMBURSEMENT_SELF_APPROVAL_DENIED = `ไม่สามารถอนุมัติคำขอของตนเองได้ตามนโยบายที่ใบนี้ใช้ ${REIMBURSEMENT_SELF_APPROVAL_HELP}`;
+
+export type ReimbursementDuplicateReason = 'ATTACHMENT_CHECKSUM' | 'EXPENSE_LINK' | 'AMOUNT_DATE_VENDOR' | 'MANUAL' | 'EXPENSE_DOCUMENT' | 'EXPENSE_CONFIRMATION';
+const POSSIBLE_OTHER_CLAIM_TEXT = 'อาจซ้ำกับคำขอเบิกอื่น';
+export const REIMBURSEMENT_DUPLICATE_REASON_TEXT: Record<ReimbursementDuplicateReason, string> = {
+  ATTACHMENT_CHECKSUM: 'ใช้ใบเสร็จเดียวกับคำขอเบิกอื่น',
+  EXPENSE_LINK: 'ใช้รายการค่าใช้จ่ายเดียวกับคำขอเบิกอื่น',
+  AMOUNT_DATE_VENDOR: POSSIBLE_OTHER_CLAIM_TEXT,
+  MANUAL: POSSIBLE_OTHER_CLAIM_TEXT,
+  EXPENSE_DOCUMENT: 'เอกสารค่าใช้จ่ายของใบนี้อาจซ้ำกับเอกสารเดิม',
+  EXPENSE_CONFIRMATION: 'เอกสารค่าใช้จ่ายของใบนี้ยังรอยืนยันหลังปลดรายการซ้ำ',
+};
+export const REIMBURSEMENT_DUPLICATE_CLEAR_HELP = 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล เพื่อปลดและยืนยันเอกสารก่อนบันทึกจ่าย ถ้าการยืนยันยังไม่เสร็จ กดปลดรายการซ้ำอีกครั้ง';
+export function reimbursementDuplicateReasonText(reasons: readonly string[] = []): string {
+  return [...new Set(reasons.filter(reason => Object.hasOwn(REIMBURSEMENT_DUPLICATE_REASON_TEXT, reason)).map(reason => REIMBURSEMENT_DUPLICATE_REASON_TEXT[reason as ReimbursementDuplicateReason]))].join(' และ ') || POSSIBLE_OTHER_CLAIM_TEXT;
+}
+export const REIMBURSEMENT_DUPLICATE_FINANCE_HELP = 'ตรวจว่าไม่ซ้ำแล้ว ให้ผู้ตรวจการเงินที่มีสิทธิ์ปลดรายการซ้ำอนุมัติจ่ายพร้อมเหตุผลก่อนบันทึกจ่าย';
+export const REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED = 'บันทึกการตรวจรายการซ้ำแล้ว';
+export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [], financeReview = false): string {
+  return `ติดรายการซ้ำ: ${reimbursementDuplicateReasonText(reasons)} ${financeReview ? REIMBURSEMENT_DUPLICATE_FINANCE_HELP : REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`;
+}
+export const REIMBURSEMENT_DUPLICATE_UNRESOLVED = 'พบรายการที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ';
+export function reimbursementDuplicateSubmitNotice(reasons: readonly string[] = []): string {
+  return `พบรายการที่อาจซ้ำ: ${reimbursementDuplicateReasonText(reasons)} ยังส่งใบนี้ไม่ได้ ตรวจและแก้หลักฐาน หรือให้ผู้มีสิทธิ์ตั้งค่านโยบายตรวจนโยบายรายการซ้ำก่อนส่งอีกครั้ง`;
+}
+export const REIMBURSEMENT_DUPLICATE_POLICY_NOTE = 'ใบเสร็จหรือรายการค่าใช้จ่ายเดียวกันตรวจข้ามผู้เบิกทั้งบริษัท ความคล้ายของยอดและวันตรวจเฉพาะผู้เบิกเดียวกัน ใบที่เก็บนโยบายระงับการจ่ายไว้ตอนส่งจ่ายไม่ได้เมื่อรายการซ้ำของใบยังไม่ตัดสิน หรือเอกสารค่าใช้จ่ายของใบยังอาจซ้ำ ต้องตรวจแล้วปลดรายการซ้ำพร้อมเหตุผล และยืนยันเอกสารก่อนจ่าย';
+
 // ---- Duplicate candidate ----
 
 export type ReimbursementDuplicateCandidateSummary = {
@@ -525,6 +591,9 @@ export const REIMBURSEMENT_DESK_LABELS: Record<ReimbursementCurrentDeskKind, str
  * the claim page's step note and timeline row for the same claim.
  */
 export const REIMBURSEMENT_SYSTEM_WAIT_LABEL = 'รอระบบปรับสถานะ';
+
+/** The known fact on the claim page and printed form, for policy-on, solo and older frozen self-approvals alike. */
+export const REIMBURSEMENT_SELF_APPROVED_NOTE = 'ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน ใบนี้ได้รับการอนุมัติโดยผู้เบิกเอง';
 
 // ---- หน้ารวม (hub) buckets ----
 
@@ -808,8 +877,9 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
   approvalSteps: ReimbursementApprovalStepSummary[];
   payments: ReimbursementPaymentSummary[];
   duplicateCandidates: ReimbursementDuplicateCandidateSummary[];
-  /** An open duplicate candidate under this claim's BLOCK_PAYMENT policy: payment is refused until it is cleared. */
+  /** An unresolved claim candidate or own expense duplicate under the claim's frozen BLOCK_PAYMENT policy. */
   duplicateBlocksPayment?: boolean;
+  duplicateReasons?: ReimbursementDuplicateReason[];
   signatures: ReimbursementClaimSignatureSummary[];
   /** Uploaded scans/photos of the wet-ink signed form, newest first. */
   signedCopies: ReimbursementSignedCopySummary[];
@@ -1632,6 +1702,7 @@ export type ReimbursementApprovalQueueItem = ReimbursementRequestSummary & {
 export type ReimbursementFinanceQueueItem = ReimbursementRequestSummary & {
   ageHours: number;
   hasDuplicateBlocker: boolean;
+  duplicateReasons?: ReimbursementDuplicateReason[];
 };
 
 // ---- Source ref for item 13 bank reconciliation ----

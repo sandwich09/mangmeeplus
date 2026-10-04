@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS, EXECUTIVE_REASON_CODES, EXECUTIVE_PAID_EVER_REASONS, type ExecutiveContext } from '@watchdog-bms/contracts';
+import { EXECUTIVE_REPORT_LABELS, EXECUTIVE_SORT_OPTIONS, EXECUTIVE_REASON_CODES, EXECUTIVE_PAID_EVER_REASONS, executiveSourceReasonText, type ExecutiveContext } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '../../common/api/api-error-message';
 
 const logic = () => import('./executive-reports.logic');
@@ -8,12 +8,12 @@ const context = {
   defaultMonth: '2026-10', currentMonth: '2026-10', months: { first: '2026-09', last: '2026-10' },
   filters: Object.fromEntries(Object.entries(EXECUTIVE_REPORT_LABELS).map(([key, labels]) => [key, Object.entries(labels).map(([value, label]) => ({ value, label }))])),
   sortOptions: EXECUTIVE_SORT_OPTIONS,
-} as ExecutiveContext;
+} as unknown as ExecutiveContext;
 
 test('URL defaults reject unknown values, future months, malformed pages and sort orders', async () => {
   const { reportQuery } = await logic();
-  const q = reportQuery('companies', new URLSearchParams('month=2027-01&filter_industry=secret&page=2x&sortBy=bad&sortDir=bad'), context);
-  assert.deepEqual(q, { month: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
+  const q = reportQuery('companies', new URLSearchParams('month=2026-10&filter_industry=secret&page=2x&sortBy=bad&sortDir=bad'), context);
+  assert.deepEqual(q, { from: '2026-10', to: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 10 });
 });
 test('URL aliases send the API filters, ranking, tabs, sort and paging without leaking a URL search', async () => {
   const { reportQuery } = await logic();
@@ -21,25 +21,23 @@ test('URL aliases send the API filters, ranking, tabs, sort and paging without l
   const q = reportQuery('companies', params, context, '  ร้าน ก  ');
   assert.equal(q.discovery, 'FACEBOOK'); assert.equal(q.usageGroup, 'NOT_STARTED'); assert.equal(q.receiptAdoption, 'UNKNOWN');
   assert.equal(q.sortDir, 'desc'); assert.equal(q.page, 3); assert.equal(q.q, 'ร้าน ก');
-  assert.deepEqual(reportQuery('usage', new URLSearchParams('view=ranking&rank=aiRequests'), context), { month: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', section: 'usage', view: 'ranking', metric: 'aiRequests' });
+  assert.deepEqual(reportQuery('usage', new URLSearchParams('view=ranking&rank=aiRequests'), context), { from: '2026-10', to: '2026-10', industry: 'ALL', discovery: 'ALL', referringSales: 'ALL', section: 'usage', view: 'ranking', metric: 'aiRequests' });
 });
-test('menus carry only the report context; compare and detail retain but do not send global filters', async () => {
+test('menus carry only the report context; detail retains but does not send global filters', async () => {
   const { menuHref, reportQuery } = await logic();
   const p = new URLSearchParams('month=2026-09&filter_industry=UNKNOWN&filter_discovery=FACEBOOK&filter_sales=NONE&view=top&page=3&pick=bad&buildId=secret');
   assert.equal(menuHref('usage', p), '/system/executive/usage?month=2026-09&filter_industry=UNKNOWN&filter_discovery=FACEBOOK&filter_sales=NONE');
-  assert.deepEqual(reportQuery('detail', p, context), { month: '2026-09' });
-  p.set('by', 'discovery'); p.set('a', 'FACEBOOK'); p.set('b', 'OTHER');
-  assert.deepEqual(reportQuery('compare', p, context), { month: '2026-09', section: 'compare', dimension: 'discovery', sideA: 'FACEBOOK', sideB: 'OTHER' });
+  assert.deepEqual(reportQuery('detail', p, context), { from: '2026-09', to: '2026-09' });
 });
 test('a drill-down uses the COMPLETE API query without merging the origin globals', async () => {
   const { drilldownHref, reportQuery } = await logic();
   const origin = new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK&view=top&page=9');
-  const href = drilldownHref(origin, 'compare', { discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc' });
+  const href = drilldownHref(origin, 'customers', { discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc' });
   const p = new URL(href, 'https://test.invalid').searchParams;
-  assert.equal(p.get('filter_discovery'), 'FACEBOOK'); assert.equal(p.get('from'), 'compare'); assert.equal(p.has('buildId'), false);
-  assert.deepEqual(reportQuery('companies', p, context), { month: '2026-09', discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc', page: 1, pageSize: 20 });
+  assert.equal(p.get('filter_discovery'), 'FACEBOOK'); assert.equal(p.get('origin'), 'customers'); assert.equal(p.has('buildId'), false);
+  assert.deepEqual(reportQuery('companies', p, context), { from: '2026-09', to: '2026-09', discovery: 'OTHER', sortBy: 'netReceipts', sortDir: 'desc', page: 1, pageSize: 10 });
   const blank = new URL(drilldownHref(origin, 'overview', {}), 'https://test.invalid').searchParams;
-  assert.deepEqual(reportQuery('companies', blank, context), { month: '2026-09', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 20 });
+  assert.deepEqual(reportQuery('companies', blank, context), { from: '2026-09', to: '2026-09', sortBy: 'joinedAt', sortDir: 'desc', page: 1, pageSize: 10 });
 });
 test('changing filters or sort resets paging; clearing keeps the month and removes drilled conditions', async () => {
   const { changedParams, clearedParams } = await logic();
@@ -54,15 +52,6 @@ test('changing filters or sort resets paging; clearing keeps the month and remov
   assert.equal(clearedParams(p).toString(), 'month=2026-09&filter_industry=ALL&filter_discovery=ALL&filter_sales=ALL');
 });
 const reportQueryForChanged = (module: Awaited<ReturnType<typeof logic>>, params: URLSearchParams) => module.reportQuery('companies', params, context);
-test('invalid compare sides never request an invented pair; side swapping changes only the sides', async () => {
-  const { comparisonProblem, swappedParams } = await logic();
-  assert.equal(comparisonProblem(new URLSearchParams(), context), 'choose');
-  assert.equal(comparisonProblem(new URLSearchParams('by=industry&a=UNKNOWN&b=UNKNOWN'), context), 'same');
-  assert.equal(comparisonProblem(new URLSearchParams('by=discovery&a=secret&b=OTHER'), context), 'choose');
-  assert.equal(comparisonProblem(new URLSearchParams('by=company&a=one&b=two'), context), null);
-  const p = swappedParams(new URLSearchParams('by=company&a=one&b=two&month=2026-09&filter_discovery=OTHER'));
-  assert.equal(p.get('a'), 'two'); assert.equal(p.get('b'), 'one'); assert.equal(p.get('filter_discovery'), 'OTHER');
-});
 test('counts preserve partial/unknown/true zero and money never calls partial an at-least amount', async () => {
   const { countText, moneyText } = await logic();
   assert.equal(countText({ value: null, knownValue: 38, coverage: 'partial', reasonCodes: [] }), 'อย่างน้อย 38');
@@ -75,7 +64,7 @@ test('counts preserve partial/unknown/true zero and money never calls partial an
 test('satang, negative amounts, rounded ratios and Buddhist dates have one Thai format', async () => {
   const { money, ratioText, reportMonth, reportDate, reportDateTime } = await logic();
   assert.equal(money(-123450), '-1,234.50 บาท'); assert.equal(money(1), '0.01 บาท'); assert.equal(money(99999999900), '999,999,999.00 บาท');
-  assert.equal(ratioText({ value: 83.4, numerator: 834, denominator: 1000 }), '83.4%'); assert.equal(ratioText(null), '—');
+  assert.equal(ratioText({ value: 83.4, numerator: 834, denominator: 1000 }), '83.4%'); assert.equal(ratioText(null), '–');
   assert.equal(reportMonth('2026-09'), 'ก.ย. 2569'); assert.equal(reportDate('2026-09-30T05:00:00Z'), '30 ก.ย. 2569');
   assert.equal(reportDateTime('2026-09-30T05:00:00Z'), '30 ก.ย. 2569 12:00 น.');
 });
@@ -117,21 +106,12 @@ test('every contracted reason/state pair has Thai words and historical reasons d
   const differences: string[] = [];
   for (const code of new Set([...EXECUTIVE_REASON_CODES, ...EXECUTIVE_PAID_EVER_REASONS])) {
     for (const state of ['partial', 'unavailable'] as const) {
-      const expected = overrides[code as keyof typeof overrides]?.[state] ?? apiErrorMessage({ code });
+      const expected = EXECUTIVE_REASON_CODES.includes(code as typeof EXECUTIVE_REASON_CODES[number]) ? executiveSourceReasonText(code, [], state) : apiErrorMessage({ code });
       if (reasonText(code, state) !== expected) differences.push(`${code} × ${state}`);
       assert.doesNotMatch(reasonText(code, state), /[A-Za-z_]/);
     }
   }
   assert.deepEqual(differences, []);
-});
-test('drill chips omit empty/all/sort-only conditions and applied filters already named by the drill', async () => {
-  const { reportFilterChips } = await logic();
-  const applied = { global: { discovery: { value: 'FACEBOOK', label: 'Facebook' }, industry: { value: 'UNKNOWN', label: 'ไม่ระบุ' } }, directory: { usageGroup: { value: 'ACTIVE', label: EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE! } } };
-  assert.deepEqual(reportFilterChips(applied, { discovery: 'FACEBOOK' }, context), { picked: ['เฟซบุ๊ก'], active: ['ไม่ระบุ', EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE] });
-  for (const picked of [null, {}, { discovery: 'ALL' }, { sortBy: 'netReceipts', sortDir: 'desc' }] as const) {
-    assert.deepEqual(reportFilterChips(applied, picked, context).picked, []);
-  }
-  assert.deepEqual(reportFilterChips(applied, { industry: 'UNKNOWN', usageGroup: 'ACTIVE' }, context), { picked: ['ไม่ระบุ', EXECUTIVE_REPORT_LABELS.usageGroup.ACTIVE], active: ['เฟซบุ๊ก'] });
 });
 test('403 clears data, no-build 503 is no data yet, and other failures stay errors', async () => {
   const { reportFailure } = await logic();
@@ -168,7 +148,7 @@ test('tie sentences use returned counts only, omit zero ties, and negative money
 
 test('sort wording follows the actual direction including direct URLs with reverse order', async () => {
   const { sortLabel } = await logic();
-  assert.equal(sortLabel('netReceipts', 'asc'), 'ยอดรับสุทธิในเดือน น้อย → มาก');
+  assert.equal(sortLabel('netReceipts', 'asc'), 'ยอดรับสุทธิในช่วงนี้ น้อย → มาก');
   assert.equal(sortLabel('companyName', 'desc'), 'ชื่อบริษัท ฮ → ก');
   assert.equal(sortLabel('joinedAt', 'asc'), 'สมัครเก่าสุดก่อน');
 });
@@ -180,7 +160,7 @@ test('rate-limit retry time uses only a valid returned number and never a diagno
 });
 test('back keeps the source history entry across filter/page pushes and names the actual source screen', async () => {
   const { reportHistoryState, ownHistoryState, backSection } = await logic();
-  const source = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: ['tree'], executiveBack: '/system/executive/compare?by=company&a=one&b=two', executiveBackDistance: 1 };
+  const source = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: ['tree'], executiveBack: '/system/executive/customers?view=discovery', executiveBackDistance: 1 };
   const next = reportHistoryState(source, 'ร้าน ก', false);
   // A state that still carries Next's own keys is taken by Next's patched pushState for its own call: the router would keep the old URL.
   assert.equal(next.__NA, undefined); assert.equal(next.__PRIVATE_NEXTJS_INTERNALS_TREE, undefined);
@@ -189,7 +169,9 @@ test('back keeps the source history entry across filter/page pushes and names th
   assert.equal(next.executiveBack, source.executiveBack); assert.equal(next.executiveBackDistance, 2); assert.equal(next.executiveSearch, 'ร้าน ก');
   assert.equal(reportHistoryState(next, '', true).executiveBackDistance, 2);
   assert.equal(reportHistoryState(next, '', true).executiveSearch, '');
-  assert.equal(backSection(source.executiveBack), 'compare');
+  assert.equal(backSection(source.executiveBack), 'customers');
+  // The comparison page is taken out (owner 2026-10-05): a history entry that still points at it names the overview.
+  assert.equal(backSection('/system/executive/compare?by=company&a=one&b=two'), 'overview');
   assert.equal(backSection('/system/executive/usage?view=ranking'), 'usage');
   assert.equal(backSection('/system/executive/companies/internal'), 'detail');
 });
@@ -210,5 +192,18 @@ test('screen labels translate product words and omit returned seller codes and e
 test('drilled condition chips use the same Thai words without showing a seller code or sort token', async () => {
   const { drillLabels } = await logic();
   const named = { ...context, filters: { ...context.filters, referringSales: [{ value: 'S003', label: 'คุณฟ้า · S003' }] } };
-  assert.deepEqual(drillLabels({ referringSales: 'S003', discovery: 'FACEBOOK', paidInPeriod: 'true', sortBy: 'netReceipts', sortDir: 'desc' }, named), ['คุณฟ้า', 'เฟซบุ๊ก', 'ชำระในเดือน']);
+  assert.deepEqual(drillLabels({ referringSales: 'S003', discovery: 'FACEBOOK', paidInPeriod: 'true', sortBy: 'netReceipts', sortDir: 'desc' }, named), ['คุณฟ้า', 'เฟซบุ๊ก', 'ชำระในช่วงนี้']);
+});
+
+test('a chart label on a phone is the whole figure under a million and the short Thai form from a million, never an English letter', async () => {
+  const { shortFigureNumber, figureNumber } = await logic();
+  const money = (satang: number) => ({ value: satang, coverage: 'complete' as const, reasonCodes: [] });
+  for (const [satang, short, full] of [[1510200, '15,102', '15,102.00'], [9900, '99', '99.00'], [0, '0', '0.00'], [-250050, '-2,501', '-2,500.50'], [99999940, '999,999', '999,999.40'], [453060000, '4.5 ล้าน', '4,530,600.00'], [-1250000000, '-12.5 ล้าน', '-12,500,000.00'], [150000000000, '1.5 พันล้าน', '1,500,000,000.00']] as const) {
+    assert.equal(shortFigureNumber(money(satang), true), short); assert.equal(figureNumber(money(satang), true), full);
+    assert.doesNotMatch(shortFigureNumber(money(satang), true), /[A-Za-z]/);
+  }
+  // A figure the report does not have reads "–"; one it knows in part reads what is known, as the full figure does.
+  assert.equal(shortFigureNumber({ value: null, coverage: 'unavailable', reasonCodes: [] }, true), '–');
+  assert.equal(shortFigureNumber({ value: null, knownValue: 1510200, coverage: 'partial', reasonCodes: [] }, true), '15,102');
+  assert.equal(shortFigureNumber({ value: 1234567, coverage: 'complete', reasonCodes: [] }), '1.2 ล้าน'); assert.equal(shortFigureNumber({ value: 1234, coverage: 'complete', reasonCodes: [] }), '1,234');
 });

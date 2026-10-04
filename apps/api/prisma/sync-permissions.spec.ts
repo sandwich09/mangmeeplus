@@ -9,6 +9,14 @@ import { RecordReimbursementPaymentUseCase } from '../src/modules/reimbursements
 
 type CompanyRole = { id: string; key: string; scopeKey: string; companyId?: string };
 
+it('syncs the global WHT catalog key to SYSTEM_ADMIN only and preserves that result on retry', async () => {
+  const { prisma, grants } = fakeDb([{ id: 'custom-owner', key: 'CUSTOM_OWNER', scopeKey: 'co-1', holds: ['tax.config.manage'] }]);
+  for (let run = 0; run < 2; run++) {
+    await syncPermissions(prisma, () => undefined);
+    assert.deepEqual([...grants].filter(([, held]) => held.has('system.wht_income_category.manage')).map(([id]) => id), ['SYSTEM_ADMIN']);
+  }
+});
+
 /** In-memory materialized RolePermission rows, not a database connection. A permission's id is its key. */
 function fakeDb(companyRoles: Array<CompanyRole & { holds: string[] }>, companies = ['co-1']) {
   const permissions = new Map<string, { id: string; key: string }>();

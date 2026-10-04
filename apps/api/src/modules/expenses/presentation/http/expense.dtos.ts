@@ -16,7 +16,8 @@
  * endpoint is a contract change, not a hardening — a caller that has always omitted it would start
  * getting 400s the moment this deploys.
  */
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { normalizeExpensePaymentAmount } from '@watchdog-bms/contracts';
 import {
   IsInt,
   IsBoolean,
@@ -194,6 +195,7 @@ export class RecordExpensePaymentDto implements RecordExpensePaymentInput {
   @Matches(PAYMENT_IDEMPOTENCY_KEY_PATTERN) idempotencyKey?: string;
   // Same money pattern the accounting documents use — one definition of what a payable amount
   // looks like, so the two boundaries cannot disagree about "1e5" or "-0.001".
+  @Transform(({ value }) => typeof value === 'string' ? normalizeExpensePaymentAmount(value) : value)
   @Matches(POSITIVE_ACCOUNTING_MONEY_PATTERN) paidAmount!: string;
   @IsIn(EXPENSE_PAYMENT_METHODS) @IsOptional() paymentMethod?: ExpensePaymentMethod;
   @Matches(CIVIL_DATE_PATTERN) @IsOptional() paidAt?: string;

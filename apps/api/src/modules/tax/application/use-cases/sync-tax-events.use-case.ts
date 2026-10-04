@@ -131,6 +131,7 @@ export class SyncTaxEventsUseCase {
         const legacyCode = ['O7', 'O0', 'OX'].includes(snapshot.externalTaxCode ?? '') ? snapshot.externalTaxCode as 'O7' | 'O0' | 'OX' : null;
         await this.taxRepo.upsertEvent({
           companyId, branchId: source.branchId, taxPeriodId: period.id, idempotencyKey: idKey, eventType, status: 'ACTIVE',
+          expectedExpenseConfirmedAt: source.sourceType === 'expense.record' ? source.confirmedAt : undefined,
           sourceType: source.sourceType, sourceId: source.sourceId, sourceLineId: source.sourceLineId, sourceLineKey: source.sourceLineId,
           componentKey: component.componentKey, taxSnapshot: snapshot, reportContributions: component.reportContributions,
           accountAssignments: component.accountAssignments, sourceEventType: source.sourceEventType, sourceHash: hash,
@@ -230,7 +231,7 @@ export class SyncTaxEventsUseCase {
 
       await this.taxRepo.upsertEvent({
         companyId, taxPeriodId: period.id, idempotencyKey: idKey, eventType: 'VAT_INPUT', status: 'ACTIVE',
-        sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.confirmed', sourceHash: hash,
+        expectedExpenseConfirmedAt: exp.confirmedAt, sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.confirmed', sourceHash: hash,
         periodKey, eventDate: exp.expenseDate,
         taxableBase: exp.taxableAmount, taxAmount: exp.vatAmount, currency: exp.currency,
         vatMode: exp.vatMode, outputTaxCode: null, whtFormType: null,
@@ -278,17 +279,14 @@ export class SyncTaxEventsUseCase {
 
       const hash = computeSourceHash({ whtAmount: exp.whtAmount, updatedAt: exp.updatedAt.toISOString() });
       const idKey = taxEventIdempotencyKey(companyId, 'expense.record', exp.id, `${eventType}:${hash}`);
-      // No cross-form cleanup is needed: the class is captured before confirmation and CONFIRMED only
-      // transitions to VOIDED, so an expense cannot move between ภ.ง.ด.3 and ภ.ง.ด.53 after its first
-      // sync. Adding a reclassification seam means superseding the other form's event *and* asserting
-      // that form's period lock, like the two supersede sites above.
+      // The gated expense correction command supersedes both WHT forms before making the source editable.
       const existing = await this.activeEvent(companyId, 'expense.record', exp.id, '__HEADER__', null, eventType, idKey);
       if (existing && existing.sourceHash === hash) continue;
       if (existing) await this.taxRepo.supersedeEvent(existing.id);
 
       await this.taxRepo.upsertEvent({
         companyId, taxPeriodId: period.id, idempotencyKey: idKey, eventType, status: 'ACTIVE',
-        sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.wht', sourceHash: hash,
+        expectedExpenseConfirmedAt: exp.confirmedAt, sourceType: 'expense.record', sourceId: exp.id, sourceEventType: 'expense.wht', sourceHash: hash,
         periodKey, eventDate: exp.expenseDate,
         taxableBase: exp.grossAmount, taxAmount: exp.whtAmount, currency: exp.currency,
         vatMode: null, outputTaxCode: null, whtFormType: formType,

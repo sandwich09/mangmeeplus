@@ -195,11 +195,3 @@ export function markPaid(companyId: string, periodId: string, note?: string): Pr
 export function listWhtCategories(companyId: string, status?: string): Promise<WhtCategory[]> {
   return apiFetch(`/v1/companies/${companyId}/tax/wht-categories${qs({ status })}`);
 }
-
-/**
- * Records that an accountant has checked a statutory rate against the RD. Nothing may withhold
- * under a category until this has been done — the catalog ships DRAFT for exactly that reason.
- */
-export function setWhtCategoryStatus(companyId: string, code: string, status: 'ACTIVE' | 'DRAFT'): Promise<WhtCategory> {
-  return apiFetch(`/v1/companies/${companyId}/tax/wht-categories/${encodeURIComponent(code)}`, { method: 'PATCH', body: JSON.stringify({ status }) });
-}

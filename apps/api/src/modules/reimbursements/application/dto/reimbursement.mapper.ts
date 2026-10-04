@@ -1,8 +1,8 @@
-import { canOpenReimbursementPaymentSlip } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateReasonText, canOpenReimbursementPaymentSlip } from '@watchdog-bms/contracts';
 import type {
   ReimbursementPayoutCorrection,
   ReimbursementPayoutCorrectionReason,
-  ReimbursementPayoutViewer,
+  ReimbursementPayoutViewer, RequestContext,
   ReimbursementPolicySummary,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
@@ -26,11 +26,13 @@ import type {
   ReimbursementClaimSignatureRecord,
 } from '../../domain/models/reimbursement.model';
 import {
-  claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment,
+  claimDuplicateReasons, claimDuplicateStatus, claimSignatureAckHash, computeReceiptRequirement, currentDesk, duplicateBlocksPayment,
   payoutCorrectionAnswer, payoutCorrectionAnsweredBy, payoutCorrectionPhase, payoutCorrectionRoundStart,
 } from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import { assertCanReadRequestOrAssignment } from '../use-cases/reimbursement-request.use-case';
+import { ForbiddenException } from '@nestjs/common';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ClaimPayoutRecord, ClaimPayoutVersionRecord, PaymentPayoutDestinationRecord } from '../../infrastructure/reimbursement-payout';
 import { hasPayoutSnapshot } from '../../domain/logic/payout-destination.logic';
@@ -342,6 +344,7 @@ export function toRequestDetail(
     financeReviewRequired?: boolean;
     allowMissingReceiptWithReason?: boolean;
     duplicateBlocksPayment?: boolean;
+    duplicateReasons?: import('@watchdog-bms/contracts').ReimbursementDuplicateReason[];
     paymentSlips?: PaymentSlipRows;
     viewerCanOpenSlips?: boolean;
     payout?: ReimbursementPayoutSummary;
@@ -387,6 +390,7 @@ export function toRequestDetail(
     )),
     duplicateCandidates: (r.duplicateCandidates ?? []).map(toDuplicateSummary),
     duplicateBlocksPayment: extras.duplicateBlocksPayment,
+    duplicateReasons: extras.duplicateReasons,
     signatures: (r.claimSignatures ?? []).map((s) => toClaimSignatureSummary(s, displayNames)),
     signedCopies: extras.signedCopies ?? [],
   };
@@ -410,7 +414,7 @@ export async function detailWithFileNames(
   evidence: ReimbursementEvidenceService,
   companyId: string,
   req: ReimbursementRequestRecord,
-  viewer: ReimbursementPayoutViewer,
+  viewer: ReimbursementPayoutViewer & { scopes?: RequestContext['scopes'] },
   approvalActions?: { canApprove: boolean; canReject: boolean } | null,
 ): Promise<ReimbursementRequestDetail> {
   const signedCopiesRead = repo.listSignedClaimFormCopies(companyId, req.id);
@@ -450,7 +454,15 @@ export async function detailWithFileNames(
     : req.receiptRequirementStatus;
   // The ack hash is the LIVE claim, not the submit-frozen approval hash: a signer
   // acknowledges what the form prints right now.
-  return toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
+  const duplicateCandidates = await Promise.all((req.duplicateCandidates ?? []).map(async candidate => {
+    const summary = toDuplicateSummary(candidate);
+    const target = candidate.candidateRequestId ? await repo.findRequestById(companyId, candidate.candidateRequestId, true) : null;
+    const readable = target && await assertCanReadRequestOrAssignment({ ...viewer, companyId } as RequestContext, target, repo)
+      .then(() => true, error => { if (error instanceof ForbiddenException) return false; throw error; });
+    if (readable) return summary;
+    return { id: summary.id, candidateType: summary.candidateType, score: summary.score, status: summary.status, reason: reimbursementDuplicateReasonText([summary.candidateType]) };
+  }));
+  return { ...toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
     signedCopies: toSignedCopySummaries(signedCopies, displayNames),
     claimSignatureAckHash: claimSignatureAckHash(req),
     documentSignedVia: req.claimSignatures && documentSignedVia(req, signedCopies.some((copy) => copy.acknowledged)),
@@ -460,7 +472,8 @@ export async function detailWithFileNames(
     // The payment gate's own test, by the gate's own function: the page marks the claim exactly when
     // recording its payment would answer `duplicate_unresolved`.
     duplicateBlocksPayment: duplicateBlocksPayment(requestPolicy.duplicatePolicy,
-      (req.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length),
+      (req.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length, (req.possibleDuplicateExpenseCount ?? 0) + (req.duplicateConfirmationPendingCount ?? 0)),
+    duplicateReasons: claimDuplicateReasons(req),
     paymentSlips,
     viewerCanOpenSlips: canOpenReimbursementPaymentSlip(
       { userId: viewer.userId, permissions: viewer.permissions },
@@ -469,5 +482,5 @@ export async function detailWithFileNames(
     payout: toPayoutSummary(payout, displayNames),
     paymentDestinations,
     payoutCorrection: toPayoutCorrection(req, displayNames, approvedVersion === undefined ? undefined : approvedAccounts?.[approvedVersion]),
-  });
+  }), duplicateCandidates };
 }

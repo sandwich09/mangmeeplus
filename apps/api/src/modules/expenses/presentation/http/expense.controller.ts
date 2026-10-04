@@ -31,6 +31,8 @@ import {
   VoidExpenseUseCase,
   MarkExpenseReadyUseCase,
   RecordExpensePaymentUseCase,
+  ReopenExpenseUseCase,
+  CancelExpensePaymentUseCase,
 } from '../../application/use-cases/expense-draft.use-case';
 import {
   InitReceiptUploadUseCase,
@@ -110,6 +112,8 @@ export class ExpenseController {
     private readonly void_: VoidExpenseUseCase,
     private readonly ready: MarkExpenseReadyUseCase,
     private readonly payment: RecordExpensePaymentUseCase,
+    private readonly reopen: ReopenExpenseUseCase,
+    private readonly cancelPayment: CancelExpensePaymentUseCase,
     private readonly initUpload: InitReceiptUploadUseCase,
     private readonly completeUpload: CompleteReceiptUploadUseCase,
     private readonly sourcePosting: GetExpenseSourcePostingInputUseCase,
@@ -265,7 +269,7 @@ export class ExpenseController {
     const sourceDraft = await this.get.sourceDraft(ctx, expense);
     // `buyerAsPrinted` is the parsed form of `buyerAsPrintedJson`; the detail carries only that one.
     const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, buyerAsPrintedJson: _buyer, ...detail } = expense;
-    return { ...detail, sourceDraft };
+    return { ...detail, ...await this.get.correctionHistory(ctx, expense), sourceDraft, correctionCapabilities: await this.get.correctionCapabilities(ctx, expenseId) };
   }
 
   @Get(':expenseId/payment-voucher.pdf')
@@ -573,6 +577,18 @@ export class ExpenseController {
   @RequirePermissions('expense.void')
   voidExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonRequiredDto) {
     return this.void_.execute(ctx, expenseId, body.reason);
+  }
+
+  @Post(':expenseId/reopen')
+  @RequirePermissions('expense.confirm')
+  reopenExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonRequiredDto) {
+    return this.reopen.execute(ctx, expenseId, body.reason);
+  }
+
+  @Post(':expenseId/payments/:paymentId/cancel')
+  @RequirePermissions('expense.payment.record')
+  cancelExpensePayment(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('paymentId') paymentId: string, @Body() body: ReasonRequiredDto) {
+    return this.cancelPayment.execute(ctx, expenseId, paymentId, body.reason);
   }
 
   @Post(':expenseId/payment')

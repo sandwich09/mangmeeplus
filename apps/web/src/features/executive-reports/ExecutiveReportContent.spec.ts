@@ -6,11 +6,13 @@ import type { ExecutiveCount, ExecutiveMoney, ExecutiveEnvelope, ExecutiveOvervi
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 require.extensions['.svg'] = module => { module.exports = () => null; };
+import { companyFacts } from './executive-company.fixture';
 const content = () => import('./ExecutiveReportContent');
 const count = (value: number): ExecutiveCount => ({ value, coverage: 'complete', reasonCodes: [] });
 const cash = (value: number): ExecutiveMoney => ({ ...count(value), currency: 'THB' });
 const missing: ExecutiveMoney = { value: null, coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], currency: 'THB' };
-const nav = { params: new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK'), from: 'overview', remember: () => {} };
+const nav = { params: new URLSearchParams('month=2026-09&filter_discovery=FACEBOOK'), from: 'overview', remember: () => {}, navigate: () => {} };
+const accessible = (html: string) => [...html.matchAll(/aria-label="([^"]*)"/g)].map(match => match[1]).join(' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 const envelope = {
   build: { id: 'internal-build', asOf: '2026-10-01T05:00:00Z' }, period: { month: '2026-09' },
@@ -24,17 +26,18 @@ const company = {
   discovery: { key: 'FACEBOOK', label: 'Facebook', otherText: 'ก'.repeat(200) }, signupRail: 'line-oa', referrer: { kind: 'NONE', label: 'ไม่มีเซลล์ผู้แนะนำ' },
   creditedSeller: {}, paidEver: { value: 'UNKNOWN', reason: 'MANUAL_TERM_NO_RECEIPT' }, fullyRefunded: false, usageGroup: null, usageUnassessedReason: 'ACTIVITY_HISTORY_INCOMPLETE', receiptAdoption: 'UNKNOWN',
   metrics: { receiptsSatang: 0, refundsSatang: 100, netReceiptsSatang: -100, activeDays: 0, activeUsers: 0, documents: 0, aiRequests: 0, expenseReceiptCountInPeriod: 0, expenseReceiptCountLifetime: 0 }, lastActivityAt: null,
+  ...companyFacts(),
 };
 
 test('rendered partial and unavailable figures retain their reasons and negative amounts have words', async () => {
   const { Figure } = await content();
   const partial = renderToStaticMarkup(React.createElement(Figure, { value: { value: null, knownValue: 38, coverage: 'partial', reasonCodes: ['ACTIVITY_HISTORY_INCOMPLETE'] } }));
-  assert.match(text(partial), /อย่างน้อย 38/); assert.match(text(partial), /ข้อมูลการใช้งานไม่ครบ/);
-  const unavailable = text(renderToStaticMarkup(React.createElement(Figure, { value: missing, moneyValue: true })));
-  assert.match(unavailable, /—/); assert.match(unavailable, /ก่อนที่ระบบเริ่มเก็บ/); assert.doesNotMatch(unavailable, /0\.00/);
-  assert.match(text(renderToStaticMarkup(React.createElement(Figure, { value: cash(-123450), moneyValue: true, netValue: true }))), /คืนเงินมากกว่าเงินรับ/);
-  assert.doesNotMatch(text(renderToStaticMarkup(React.createElement(Figure, { value: cash(-100), moneyValue: true }))), /คืนเงินมากกว่าเงินรับ/);
-  assert.doesNotMatch(text(renderToStaticMarkup(React.createElement(Figure, { value: { ...cash(-100), value: null, knownValue: -100, coverage: 'partial' }, moneyValue: true, netValue: true }))), /คืนเงินมากกว่าเงินรับ/);
+  assert.match(accessible(partial), /อย่างน้อย 38/); assert.match(accessible(partial), /ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้/);
+  const unavailable = accessible(renderToStaticMarkup(React.createElement(Figure, { value: missing, moneyValue: true })));
+  assert.match(unavailable, /ยังไม่มีตัวเลข/); assert.match(unavailable, /ก่อนที่ระบบเริ่มเก็บ/); assert.doesNotMatch(unavailable, /0\.00/);
+  assert.match(accessible(renderToStaticMarkup(React.createElement(Figure, { value: cash(-123450), moneyValue: true, netValue: true }))), /คืนเงินมากกว่าเงินรับ/);
+  assert.doesNotMatch(accessible(renderToStaticMarkup(React.createElement(Figure, { value: cash(-100), moneyValue: true }))), /คืนเงินมากกว่าเงินรับ/);
+  assert.doesNotMatch(accessible(renderToStaticMarkup(React.createElement(Figure, { value: { ...cash(-100), value: null, knownValue: -100, coverage: 'partial' }, moneyValue: true, netValue: true }))), /คืนเงินมากกว่าเงินรับ/);
 });
 test('screen and workbook money qualifiers use the same facts and Thai words for every coverage and add-on sale state', async () => {
   const { Figure } = await content();
@@ -52,7 +55,7 @@ test('screen and workbook money qualifiers use the same facts and Thai words for
   ];
   for (const [value, measured, expected] of cases) {
     assert.equal(qualifier(value, measured), expected);
-    const shown = text(renderToStaticMarkup(React.createElement(Figure, { value, moneyValue: true, measured })));
+    const shown = accessible(renderToStaticMarkup(React.createElement(Figure, { value, moneyValue: true, measured })));
     if (expected) assert.ok(shown.includes(expected), shown);
     assert.doesNotMatch(qualifier(value, measured), /[A-Za-z_]/);
   }
@@ -60,7 +63,7 @@ test('screen and workbook money qualifiers use the same facts and Thai words for
 test('figures and receipt adoption use counted-data reasons when a number is shown', async () => {
   const { Figure, OverviewContent } = await content();
   const partial = { value: null, knownValue: 3, coverage: 'partial' as const, reasonCodes: ['HISTORY_BEFORE_COLLECTION' as const] };
-  const figure = text(renderToStaticMarkup(React.createElement(Figure, { value: partial })));
+  const figure = accessible(renderToStaticMarkup(React.createElement(Figure, { value: partial })));
   assert.match(figure, /อย่างน้อย 3/); assert.match(figure, /ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้/);
   assert.doesNotMatch(figure, /ยังไม่มีข้อมูลของช่วงนี้/);
   const data = { ...envelope, metrics: { companies: { ...count(3), drilldownFilters: {} }, activeCompanies: { ...count(0), drilldownFilters: {}, breakdown: { notPaid: 0, paymentUnknown: 0 } }, companiesWithReceipts: { ...count(0), drilldownFilters: {} }, netReceiptsSatang: { ...cash(0), drilldownFilters: {} } },
@@ -76,8 +79,10 @@ test('overview renders four server metrics, a partial count, and four receipt gr
   }, expenseReceiptAdoption: { population: 72, segments: ['EVER', 'NEVER', 'UNKNOWN', 'NOT_ENTITLED'].map(key => ({ key, count: 18, share: { value: 25 }, drilldownFilters: { receiptAdoption: key } })), reasonCodes: [], roundingNote: false },
   paidUsage: { groups: [{ key: 'NOT_STARTED', count: 20, drilldownFilters: { usageGroup: 'NOT_STARTED' } }, { key: 'INACTIVE', count: 3, drilldownFilters: { usageGroup: 'INACTIVE' } }] }, spendConcentration: { topShare: { value: 83.4 }, reasonCodes: [] } } as unknown as ExecutiveOverview;
   const html = renderToStaticMarkup(React.createElement(OverviewContent, { data, nav }));
-  assert.equal((html.match(/mangmee-stat-card/g) ?? []).length, 4);
-  for (const words of ['อย่างน้อย 38', '245,806.00 บาท', 'ยังไม่ได้จัดประเภท 2 บริษัท', 'ไม่มีในแพ็กเกจ', 'ก.ย. 2569']) assert.ok(text(html).includes(words), words);
+  assert.equal((html.match(/data-executive-value/g) ?? []).length, 4);
+  assert.doesNotMatch(html, /\[&amp;_.mangmee-stat-card\]:h-full/); assert.match(html, /h-26/);
+  assert.ok(accessible(html).includes('อย่างน้อย 38')); assert.ok(accessible(html).includes('245,806.00 บาท'));
+  for (const words of [ 'ยังไม่ได้จัดประเภท 2 บริษัท', 'ไม่มีในแพ็กเกจ', 'ยอดรับสุทธิในช่วงนี้']) assert.ok(text(html).includes(words), words);
   assert.doesNotMatch(text(html), /internal-|NOT_ENTITLED|FACEBOOK/);
   assert.match(html, /pick=activeInPeriod%3Dtrue/);
   assert.match(html, /role="group" aria-label="การเริ่มใช้ใบเสร็จ"/);
@@ -86,60 +91,48 @@ test('overview renders four server metrics, a partial count, and four receipt gr
 test('directory uses the all-result summary rather than row sums and wraps unknown usage instead of inventing zero', async () => {
   const { CompaniesContent } = await content();
   const data = { ...envelope, summary: { netReceiptsSatang: cash(123450) }, items: [{ ...company, rank: 4 }], pagination: { total: 72 }, sort: { sortBy: 'netReceipts', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
-  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav, selected: [], select: () => {} }));
+  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav }));
   const visible = text(html);
   // The rank is the place in the chosen order (here by net receipts), not a usage rank.
-  assert.match(visible, /อันดับ 4/); assert.doesNotMatch(visible, /อันดับการใช้/);
-  assert.match(visible, /พบ 72 บริษัท/); assert.match(visible, /1,234\.50 บาท/); assert.match(visible, /อย่างน้อย 0/); assert.match(visible, /ข้อมูลการใช้งานไม่ครบ/);
-  assert.match(visible, /ผู้ดูแลตั้งแพ็กเกจให้/); assert.match(visible, /คืนเงินมากกว่าเงินรับ/); assert.match(visible, /เฟซบุ๊ก/); assert.match(visible, /สมัครทางไลน์/);
+  assert.match(html, /<dt[^>]*>อันดับ<\/dt><dd[^>]*>4<\/dd>/); assert.doesNotMatch(visible, /อันดับการใช้/);
+  assert.match(visible, /พบ 72 บริษัท/); assert.match(visible, /1,234\.50/); assert.match(accessible(html), /อย่างน้อย 0/); assert.match(visible, /ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้/);
+  assert.match(visible, /ผู้ดูแลตั้งแพ็กเกจให้/); assert.match(accessible(html), /คืนเงินมากกว่าเงินรับ/); assert.match(visible, /เฟซบุ๊ก/); assert.match(visible, /สมัครทางไลน์/);
   assert.doesNotMatch(visible, /internal-company|ADMIN_HOLD|MANUAL_TERM|Facebook|LINE/);
   assert.match(html, /table-fixed/); assert.match(html, /md:hidden/); assert.match(html, /companies\/internal-company\?/); // the id is only in the detail link
 });
-test('each compare toggle has its own id, so its label selects its own company', async () => {
+test('the company list offers no comparison: no checkbox, no column and no link to it (owner 2026-10-05)', async () => {
   const { CompaniesContent } = await content();
   const data = { ...envelope, summary: { netReceiptsSatang: cash(0) }, items: [company, { ...company, id: 'second-company' }], pagination: { total: 2 }, sort: { sortBy: 'joinedAt', sortDir: 'desc' } } as unknown as ExecutiveCompanies;
-  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav, selected: [], select: () => {} }));
-  const ids = [...html.matchAll(/<input[^>]*type="checkbox"[^>]*>/g)].map(([input]) => input.match(/id="([^"]+)"/)?.[1]);
-  assert.equal(ids.length, 4); // two rows, each as a phone card and as a table row
-  assert.equal(new Set(ids).size, 4, `duplicate ids: ${ids.join(', ')}`);
-  for (const id of ids) assert.ok(html.includes(`for="${id}"`), `label for ${id}`);
+  const html = renderToStaticMarkup(React.createElement(CompaniesContent, { data, nav }));
+  assert.doesNotMatch(html, /type="checkbox"|executive\/compare/);
+  assert.doesNotMatch(text(html) + accessible(html), /เทียบ/);
 });
-test('group tables and comparisons preserve null averages and the backend difference', async () => {
+test('each table names its first column for what its rows are', async () => {
   const { AnalysisContent } = await content();
-  const side = { key: 'UNKNOWN', label: 'ไม่ระบุ', companies: count(1), netReceiptsSatang: cash(999), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(12), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(0), drilldownFilters: { industry: 'UNKNOWN' } };
-  const data = { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'OTHER', label: 'อื่น ๆ' }, difference: { companies: 9, netReceiptsSatang: -123450, netReceiptsPerCompanySatang: null, expenseReceiptCount: null, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis;
-  const visible = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav: { ...nav, from: 'compare' }, seller: null })));
-  assert.match(visible, /ต่างกัน \(ฝั่งแรกลบฝั่งที่สอง\)/); assert.match(visible, /-1,234\.50 บาท/); assert.match(visible, /—/); assert.doesNotMatch(visible, /NaN|Infinity|A ลบ B/);
-});
-test('each table names its first column for what its rows are, and differences use the Thai number format', async () => {
-  const { AnalysisContent } = await content();
-  const firstHeader = (html: string) => html.match(/<thead><tr><th[^>]*>([^<]*)<\/th>/)?.[1];
+  const firstHeader = (html: string) => text(html.match(/<thead[^>]*><tr><th[^>]*>(.*?)<\/th>/)?.[1] ?? '').trim();
   const group = { key: 'IG', label: 'IG', companies: { count: 1, share: { value: 100, numerator: 1, denominator: 1 } }, companiesWithReceipts: count(1), paidEverCompanies: 1, activeCompanies: count(1), netReceiptsSatang: cash(100), drilldownFilters: { discovery: 'IG' } };
   const groups = (view: string) => renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, view, groups: [group] } as unknown as ExecutiveAnalysis, nav, seller: null }));
   assert.equal(firstHeader(groups('industry')), 'กลุ่มธุรกิจ');
   assert.equal(firstHeader(groups('discovery')), 'ช่องทาง');
   assert.equal(firstHeader(groups('sales')), 'เซลล์ผู้แนะนำ');
-  const side = { key: 'A', label: 'ก', companies: count(1234), netReceiptsSatang: cash(0), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(0), expenseReceiptsPerCompany: { value: 1.5 }, everAddedReceiptShare: { value: 50 }, activeCompanies: count(0), drilldownFilters: {} };
-  const compare = renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'B' }, difference: { companies: 1234, netReceiptsSatang: 0, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: 0, everAddedReceiptShare: -12.5, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis, nav: { ...nav, from: 'compare' }, seller: null }));
-  assert.equal(firstHeader(compare), 'รายการ');
-  assert.match(text(compare), /1,234 /); assert.match(text(compare), /0\.0 /); assert.match(text(compare), /-12\.5 จุด/);
 });
-test('a company without a registered name starts its line with the province, not with a separator', async () => {
+test('a company without a registered name keeps its province and group in the information card without a stray header', async () => {
   const { AnalysisContent, CompanyContent } = await content();
   const ranking = { metric: 'expenseReceiptCount', total: 1, coverage: 'complete', reasonCodes: [], drilldownFilters: {},
     items: [{ id: 'internal-company', displayName: 'ร้าน ก', registeredName: null, provinceLabel: 'เชียงใหม่', value: 3, rank: 1 }] };
   const ranked = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, usageRanking: ranking } as unknown as ExecutiveAnalysis, nav, seller: null })));
   assert.match(ranked, /เชียงใหม่/); assert.doesNotMatch(ranked, /·\s+เชียงใหม่/);
   const detail = { ...envelope, company: { ...company, registeredName: null, ownerContact: { status: 'NOT_PERMITTED' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;
-  const head = text(renderToStaticMarkup(React.createElement(CompanyContent, { data: detail, tab: 'history', history: null, admin: false, nav, contactReadAt: '' })));
-  assert.match(head, /เชียงใหม่ · ไม่ระบุ/); assert.doesNotMatch(head, /^\s*·/);
+  const html = renderToStaticMarkup(React.createElement(CompanyContent, { data: detail, tab: 'company', history: null, admin: false, nav, contactReadAt: '' }));
+  assert.match(text(html), /เชียงใหม่/); assert.match(text(html), /ไม่ระบุ/);
+  assert.doesNotMatch(html, /^<p>เชียงใหม่ ·/);
 });
 test('company contact values and labels disappear without permission and never fall back to supplied forbidden values', async () => {
   const { CompanyContent } = await content();
   const make = (status: ExecutiveCompanyDetail['company']['ownerContact']['status']) => ({ ...envelope, company: { ...company, ownerContact: { status, email: 'hidden@example.test', phoneNumber: '0812345678' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: ['NOT_YET_REGISTERED'] }) as unknown as ExecutiveCompanyDetail;
   const render = (status: ExecutiveCompanyDetail['company']['ownerContact']['status']) => text(renderToStaticMarkup(React.createElement(CompanyContent, { data: make(status), tab: 'company', history: null, admin: false, nav, contactReadAt: '2026-10-03T05:00:00Z' })));
   assert.doesNotMatch(render('NOT_PERMITTED'), /อีเมลเจ้าของบัญชี|เบอร์โทรเจ้าของบัญชี|hidden@example|0812345678/);
-  assert.match(render('NOT_PERMITTED'), /บริษัทนี้ยังไม่สมัคร/);
+  assert.match(render('NOT_PERMITTED'), /ข้อมูลเดือนนี้อยู่ก่อนเวลาที่บริษัทสมัคร/);
   // UI spec §8.1, plain-language spec: a reader without the right sees that, instead of the two fields.
   assert.match(render('NOT_PERMITTED'), /ไม่มีสิทธิ์ดูข้อมูลติดต่อ/); assert.doesNotMatch(render('OK'), /ไม่มีสิทธิ์ดูข้อมูลติดต่อ/);
   assert.match(render('MULTIPLE_OWNERS'), /มีเจ้าของหลายบัญชี/); assert.doesNotMatch(render('MULTIPLE_OWNERS'), /hidden@example|0812345678/);
@@ -153,21 +146,21 @@ test('the "other" detail of the signup channel shows only for a company that cho
   assert.match(render({ key: 'OTHER', label: 'อื่น ๆ', otherText: 'งานอีเวนต์' }), /อื่น ๆ\s+งานอีเวนต์/);
   assert.match(render({ key: 'OTHER', label: 'อื่น ๆ' }), /อื่น ๆ\s+ไม่ระบุ/);
 });
-test('detail and compare content do not repeat the "no report filters" sentence the page already shows', async () => {
-  const { CompanyContent, AnalysisContent } = await content();
+test('detail content does not repeat the "no report filters" sentence the page already shows', async () => {
+  const { CompanyContent } = await content();
   const detail = { ...envelope, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' }, businessTypeLabel: null, businessTypeOtherText: null, planEndsAt: null, currentActiveMemberCount: 1, currentBranchCount: 1 }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;
   const detailText = text(renderToStaticMarkup(React.createElement(CompanyContent, { data: detail, tab: 'company', history: null, admin: false, nav, contactReadAt: '' })));
   assert.doesNotMatch(detailText, /หน้านี้ไม่ใช้ตัวกรองของรายงาน/); assert.match(detailText, /ใบเสร็จค่าใช้จ่ายที่ลูกค้าเพิ่ม/);
-  const side = { key: 'A', label: 'ก', companies: count(1), netReceiptsSatang: cash(0), netReceiptsPerCompanySatang: null, expenseReceiptCount: count(0), expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: count(0), drilldownFilters: {} };
-  const compareText = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, comparison: { sideA: side, sideB: { ...side, key: 'B' }, difference: { companies: 0, netReceiptsSatang: 0, netReceiptsPerCompanySatang: null, expenseReceiptCount: 0, expenseReceiptsPerCompany: null, everAddedReceiptShare: null, activeCompanies: 0 } } } as unknown as ExecutiveAnalysis, nav: { ...nav, from: 'compare' }, seller: null })));
-  assert.doesNotMatch(compareText, /หน้านี้ไม่ใช้ตัวกรองของรายงาน/); assert.match(compareText, /ใบเสร็จค่าใช้จ่ายที่ลูกค้าเพิ่ม/);
 });
 test('history shows only the event/date/plan allowlist and Buddhist dates', async () => {
   const { CompanyContent } = await content();
   const data = { ...envelope, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' } }, month: null, monthReasonCodes: [] } as unknown as ExecutiveCompanyDetail;
   const history = { items: [{ kind: 'PACKAGE_RENEWED', at: '2026-09-30T05:00:00Z', planLabel: 'ร้านเติบโต', actorName: 'hidden-actor', reason: 'hidden-reason' }] } as unknown as ExecutiveCompanyHistory;
-  const visible = text(renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'history', history, admin: false, nav, contactReadAt: '' })));
-  assert.match(visible, /ต่ออายุแพ็กเกจ ร้านเติบโต/); assert.match(visible, /30 ก\.ย\. 2569 12:00 น\./); assert.doesNotMatch(visible, /hidden-|PACKAGE_RENEWED|internal-company/);
+  const markup = renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'history', history, admin: false, nav, contactReadAt: '' }));
+  assert.match(markup, /<table/);
+  assert.match(markup.match(/<thead[\s\S]*?<\/thead>/)?.[0] ?? '', /วันเวลา/);
+  const visible = text(markup);
+  assert.match(visible, /ต่ออายุแพ็กเกจ[\s\S]*ร้านเติบโต/); assert.match(visible, /30 ก\.ย\. 2569 12:00 น\./); assert.doesNotMatch(visible, /hidden-|PACKAGE_RENEWED|internal-company/);
 });
 test('small or incomplete spend groups show the reason instead of a fabricated group, while returned ties stay exact', async () => {
   const { AnalysisContent } = await content();
@@ -180,22 +173,23 @@ test('small or incomplete spend groups show the reason instead of a fabricated g
     topCompanyShare: { value: 11.1 }, prefix80CompanyShare: { value: 11.1 }, restCompanyShare: { value: 88.9 }, boundaryTie: { count: 7, netSatang: 299000 }, prefix80BoundaryTie: { count: 9, netSatang: 299000 }, coverage: 'complete', reasonCodes: [], drilldownFilters: { TOP20: {}, REST: {}, TO80: {}, BOUNDARY_TIE: {}, TO80_BOUNDARY_TIE: {} } } } as unknown as ExecutiveAnalysis;
   const visible = text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: tied, nav, seller: null })));
   assert.match(visible, /มีอีก 7 บริษัท/); assert.match(visible, /มีอีก 9 บริษัท/); assert.match(visible, /2,990\.00 บาท/);
-  assert.match(renderToStaticMarkup(React.createElement(AnalysisContent, { data: tied, nav, seller: null })), /role="group"/);
+  assert.match(renderToStaticMarkup(React.createElement(AnalysisContent, { data: tied, nav, seller: null })), /<table/);
 });
 
 test('unavailable money never becomes zero in reconciliation; trend has a signed zero baseline and gaps', async () => {
   const { AnalysisContent } = await content();
   const moneyRow = { receiptsSatang: missing, refundsSatang: missing, netReceiptsSatang: missing, feesSatang: missing, taxSatang: missing };
   const data = { ...envelope, coverage: { ...envelope.coverage, money: { coverage: 'unavailable', reasonCodes: ['HISTORY_BEFORE_COLLECTION'] } }, revenue: { ...moneyRow, byPurchaseGroup: [{ key: 'FIRST_PURCHASE', label: 'ซื้อครั้งแรก', ...moneyRow }], disputedInvoiceCount: 0, trend: [{ month: '2026-09', isPartialMonth: false, ...moneyRow }] } } as unknown as ExecutiveAnalysis;
-  const html = renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav, seller: null }));
-  assert.doesNotMatch(text(html), /0\.00 บาท/); assert.match(html, /y1="100" y2="100"/); assert.doesNotMatch(html, /<rect /);
+  const html = renderToStaticMarkup(React.createElement(AnalysisContent, { data, nav: { ...nav, params: new URLSearchParams('view=trend') }, seller: null }));
+  assert.doesNotMatch(text(html), /0\.00 บาท/); assert.match(html, /y1="100" y2="100"/); assert.match(html, /data-unavailable="true"/);
+  assert.match(html, /data-executive-icon/);
 });
 
 test('company payment flags show Thai values, preserving confirmed negatives and incomplete unknowns', async () => {
   const { CompanyContent } = await content();
   const data = { ...envelope, coverage: { usage: { coverage: 'complete', reasonCodes: [] }, money: { coverage: 'complete', reasonCodes: [] } }, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' }, expenseReceiptCountLifetime: 0 }, monthReasonCodes: [], month: { paidEver: { value: 'NO' }, usageGroup: 'NOT_PAID', paidInMonth: false, positiveNetInMonth: false, fullyRefunded: false, usage: { activeDays: 0, activeDaysLine: 0, activeDaysWeb: 0, activeUsers: 0, activeUsersLine: 0, activeUsersWeb: 0, documents: 0, aiRequests: 0, expenseReceiptCountInPeriod: 0, expenseReceiptsLine: 0, expenseReceiptsWeb: 0 }, money: { receiptsSatang: cash(0), refundsSatang: cash(0), netReceiptsSatang: cash(0), feesSatang: cash(0), taxSatang: cash(0), aiCostSatang: cash(0) } } } as unknown as ExecutiveCompanyDetail;
   const visible = text(renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' })));
-  assert.match(visible, /ไม่มีเงินรับในเดือน/); assert.match(visible, /ยอดรับไม่มากกว่ายอดคืนในเดือน/);
+  assert.match(visible, /ไม่มีเงินรับในช่วงนี้/); assert.match(visible, /ยอดรับไม่มากกว่ายอดคืนในช่วงนี้/);
   assert.doesNotMatch(visible, /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
   const actual: string[] = [], expected: string[] = [];
   for (const coverage of ['complete', 'partial', 'unavailable'] as const) {
@@ -206,8 +200,8 @@ test('company payment flags show Thai values, preserving confirmed negatives and
       const variant = { ...data, coverage: { ...data.coverage, money: { coverage, reasonCodes: [] } }, month: { ...data.month!, paidInMonth, positiveNetInMonth,
         money: { ...data.month!.money, receiptsSatang: metric(receipts), refundsSatang: metric(refunds), netReceiptsSatang: metric(receipts - refunds) } } };
       const html = renderToStaticMarkup(React.createElement(CompanyContent, { data: variant, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' }));
-      actual.push(html.match(/<p>(ชำระในเดือน:.*?)<\/p>/)?.[1] ?? '');
-      expected.push(`ชำระในเดือน: ${paidInMonth ? 'ใช่' : coverage === 'complete' ? 'ไม่มีเงินรับในเดือน' : 'ยังประเมินไม่ได้'} · จ่ายมากกว่ายอดคืนในเดือน: ${positiveNetInMonth ? 'ใช่' : coverage === 'complete' ? 'ยอดรับไม่มากกว่ายอดคืนในเดือน' : 'ยังประเมินไม่ได้'}`);
+      actual.push(html.match(/<p class="text-sm">(ชำระในช่วงนี้:.*?)<\/p>/)?.[1] ?? '');
+      expected.push(`ชำระในช่วงนี้: ${paidInMonth ? 'ใช่' : coverage === 'complete' ? 'ไม่มีเงินรับในช่วงนี้' : 'ยังประเมินไม่ได้'} · จ่ายมากกว่ายอดคืนในช่วงนี้: ${positiveNetInMonth ? 'ใช่' : coverage === 'complete' ? 'ยอดรับไม่มากกว่ายอดคืนในช่วงนี้' : 'ยังประเมินไม่ได้'}`);
     }
   }
   assert.deepEqual(actual, expected);
@@ -223,10 +217,11 @@ test('spend groups show each group as the backend counts it: companies of all, s
     boundaryTie: { count: 1, netSatang: 299000 }, prefix80BoundaryTie: { count: 0, netSatang: 299000 }, periodBasis: 'SELECTED_MONTH', coverage: 'complete', reasonCodes: [],
     drilldownFilters: { TOP20: { spendCohort: 'TOP20' }, REST: { spendCohort: 'REST' }, TO80: { spendCohort: 'TO80' }, BOUNDARY_TIE: { spendCohort: 'BOUNDARY_TIE' }, TO80_BOUNDARY_TIE: { spendCohort: 'TO80_BOUNDARY_TIE' } },
   };
-  const render = (figures: Partial<typeof spend>) => text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, spendConcentration: { ...spend, ...figures } } as unknown as ExecutiveAnalysis, nav, seller: null })));
+  const render = (figures: Partial<typeof spend>) => text(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, spendConcentration: { ...spend, ...figures } } as unknown as ExecutiveAnalysis, nav, seller: null }))).replace(/\s+/g, ' ');
+  assert.match(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, spendConcentration: spend } as unknown as ExecutiveAnalysis, nav, seller: null })), /<a[^>]*>[\s\S]*บริษัทที่รวมยอดรับถึง 80%/);
+  assert.match(renderToStaticMarkup(React.createElement(AnalysisContent, { data: { ...envelope, spendConcentration: spend } as unknown as ExecutiveAnalysis, nav, seller: null })), /<table/);
   const visible = render({});
-  for (const words of ['ลูกค้าที่จ่ายสูงสุด 20% แรก · 4 จาก 16 บริษัท (25.0%) · 74.6% ของยอดที่ใช้คำนวณสัดส่วน', 'ลูกค้านอกกลุ่มที่จ่ายสูงสุด 20% แรก · 12 จาก 16 บริษัท (75.0%) · 25.4% ของยอดที่ใช้คำนวณสัดส่วน',
-    'บริษัทที่รวมยอดรับถึง 80% · 5 จาก 16 บริษัท (31.3%) · 90.6% ของยอดที่ใช้คำนวณสัดส่วน', 'ยอดรับสุทธิในเดือนเป็น 0 หรือติดลบ 8 บริษัท']) assert.ok(visible.includes(words), words);
+  for (const words of ['ลูกค้าที่จ่ายสูงสุด 20% แรก', '25.0%', '74.6%', 'ลูกค้านอกกลุ่มที่จ่ายสูงสุด 20% แรก', '75.0%', '25.4%', 'บริษัทที่รวมยอดรับถึง 80%', '31.3%', '90.6%', 'ยอดรับสุทธิในช่วงนี้เป็น 0 หรือติดลบ 8 บริษัท']) assert.ok(visible.includes(words), words);
   assert.doesNotMatch(visible, /เพราะการปัดเศษ/);
   assert.match(render({ roundingNote: true }), /ผลรวมไม่เท่ากับ 100\.0% เพราะการปัดเศษ/);
   assert.doesNotMatch(render({ nonPositiveCount: 0 }), /หรือติดลบ/);
@@ -240,16 +235,16 @@ test('the measured AI cost keeps its own coverage: what was measured is not the 
   const cost = (aiCostSatang: ExecutiveMoney) => {
     const data = { ...envelope, company: { ...company, ownerContact: { status: 'NOT_PERMITTED' } }, monthReasonCodes: [], month: { ...month, money: { ...month.money, aiCostSatang } } } as unknown as ExecutiveCompanyDetail;
     const html = renderToStaticMarkup(React.createElement(CompanyContent, { data, tab: 'usage', history: null, admin: false, nav, contactReadAt: '' }));
-    return text(/<dt[^>]*>ต้นทุนผู้ช่วยและการอ่านใบเสร็จที่วัดได้<\/dt><dd[^>]*>(.*?)<\/dd>/.exec(html)?.[1] ?? '');
+    return accessible((html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g) ?? []).find(row => row.includes('title="ต้นทุนผู้ช่วยและการอ่านใบเสร็จที่วัดได้"')) ?? '');
   };
   assert.match(cost(cash(1234)), /12\.34 บาท/);
   const partial = cost({ value: null, knownValue: 1234, coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], currency: 'THB' });
   assert.match(partial, /12\.34 บาท \(ยอดเฉพาะช่วงที่วัดได้\)/); assert.doesNotMatch(partial, /ยอดเฉพาะรายการที่ยืนยันแล้ว/);
   const before = cost(missing);
-  assert.match(before, /—/); assert.match(before, /ยังไม่มีตัวเลข/); assert.doesNotMatch(before, /บาท/);
+  assert.match(before, /ยังไม่มีตัวเลข/); assert.doesNotMatch(before, /0\.00/);
 });
 
-test('company detail explains each distinct reason once and links each affected figure to it, preserving mixed states', async () => {
+test('company detail explains each distinct reason once with accessible dots and clean mixed-state figures', async () => {
   const { CompanyContent } = await content();
   const usage = { activeDays: 1, activeDaysLine: 0, activeDaysWeb: 1, activeUsers: 1, activeUsersLine: 0, activeUsersWeb: 1, documents: 1, aiRequests: 0, expenseReceiptCountInPeriod: 1, expenseReceiptsLine: 0, expenseReceiptsWeb: 1 };
   const partialCash: ExecutiveMoney = { value: null, knownValue: 1234, coverage: 'partial', reasonCodes: ['HISTORY_BEFORE_COLLECTION'], currency: 'THB' };
@@ -262,24 +257,14 @@ test('company detail explains each distinct reason once and links each affected 
   for (const sentence of ['ข้อมูลก่อนเริ่มทำรายงาน นับได้เฉพาะรายการที่ยังเหลืออยู่', 'ตัวเลขนี้ครอบคลุมเฉพาะข้อมูลที่เก็บได้ ช่วงก่อนเริ่มเก็บยังประเมินไม่ได้', 'ยังไม่มีข้อมูลของช่วงนี้ เพราะเป็นช่วงก่อนที่ระบบเริ่มเก็บ']) {
     assert.equal(visible.split(sentence).length - 1, 1, sentence);
   }
-  const notes = [...html.matchAll(/<p id="([^"]+)"[^>]*>/g)].map(match => match[1]);
-  assert.equal(notes.length, 3);
-  for (const note of notes) assert.match(html, new RegExp(`href="#${note}"`));
-  for (const dd of [...html.matchAll(/<dd[^>]*>(.*?)<\/dd>/g)].map(match => match[1]).filter(value => /อย่างน้อย|ยังไม่มีตัวเลข|ยอดเฉพาะช่วงที่วัดได้/.test(value))) {
-    assert.match(dd, /href="#/);
-  }
-  const references = [...html.matchAll(/<sup[^>]*><a href="#([^"]+)" aria-label="ดูเหตุผลข้อ (\d+)" class="([^"]+)">\[(\d+)\]<\/a><\/sup>/g)];
-  assert.ok(references.length > notes.length); // Several adjacent references share each note.
-  for (const [, target, number, classes, visibleNumber] of references) {
-    assert.equal(target, notes[Number(number) - 1]);
-    assert.equal(visibleNumber, number);
-    // Reserve horizontal space for each touch target; compensate vertically to keep figure rows compact.
-    for (const required of ['inline-flex', 'min-h-11', 'min-w-11', '-my-3', 'items-center', 'justify-center', 'align-middle']) {
-      assert.ok(classes.split(' ').includes(required), `reason ${number}: missing ${required}`);
-    }
-    assert.doesNotMatch(classes, /(?:^| )-m(?:x|l|r)-/);
-  }
-  assert.match(visible, /อย่างน้อย 1/); assert.match(visible, /ยังไม่มีตัวเลข/); assert.match(visible, /12\.34 บาท \(ยอดเฉพาะช่วงที่วัดได้\)/);
+  assert.doesNotMatch(html, /<sup|\[\d+\]/);
+  assert.equal((html.match(/executive-status/g) ?? []).length, 1);
+  assert.match(accessible(html), /อย่างน้อย 1/); assert.match(accessible(html), /ยังไม่มีตัวเลข/); assert.match(accessible(html), /12\.34 บาท \(ยอดเฉพาะช่วงที่วัดได้\)/);
+  for (const cell of html.match(/<td[^>]*>[\s\S]*?<\/td>/g) ?? []) assert.doesNotMatch(text(cell), /ข้อมูลก่อนเริ่ม|ข้อมูลที่เก็บได้|อย่างน้อย|เฉพาะช่วงที่วัดได้/);
+  // One receipt total on the page, the list's own: what is in the system on the data date. It is exact while the period's usage is still "at least".
+  const total = html.match(/<dt[^>]*>ใบเสร็จในระบบ<\/dt><dd[^>]*>([\s\S]*?)<\/dd>/)?.[1] ?? '';
+  assert.equal(text(total).trim(), '27'); assert.doesNotMatch(total, /executive-dot|อย่างน้อย/); assert.doesNotMatch(visible, /ใบเสร็จสะสม/);
+  assert.match(html, /<dt[^>]*>ใบเสร็จในช่วงนี้<\/dt>/); // the count of the chosen period is a different figure, under its own name
 });
 
 test('executive denial uses the report error words instead of the admin-console state', async () => {

@@ -1,5 +1,75 @@
+import { validateStatusTransition } from '../domain/logic/expense-status.logic';
+import { formPeriodKey, isPeriodLocked } from '../../tax/domain/logic/tax-period.logic';
 import { ConflictException, UnprocessableEntityException, type HttpException } from '@nestjs/common';
 import { canVoidExpenseFinancialState, type ExpenseVoidBlocker } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate, type TaxFormType, type ExpenseCorrectionBlocker, type ExpenseCorrectionCapabilities } from '@watchdog-bms/contracts';
+
+/** Shared with journal creation and certificate issuance, so stale reads cannot cross correction. */
+export async function lockExpenseCorrection(tx: any, companyId: string, expenseId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
+}
+
+/** Includes the Tax workspace's external certificate handoffs backed by the expense's events. */
+export function expenseWhtHandoffWhere(companyId: string, expenseId: string, eventIds: string[]) {
+  return { companyId, OR: [
+    { sourcePaymentType: 'expense.record', sourcePaymentId: expenseId },
+    ...eventIds.map((id) => ({ taxEventIdsJson: { array_contains: [id] } })),
+  ] };
+}
+
+/** The same facts decide both the detail capabilities and the locked mutation's refusal. */
+export async function readExpenseCorrectionCapabilities(db: any, expense: any, permissions: string[], lockPeriods = false): Promise<ExpenseCorrectionCapabilities> {
+  const companyId = expense.companyId;
+  const payments = expense.payments ?? await db.expensePayment.findMany({ where: { companyId, expenseId: expense.id } });
+  const journals = await db.journalEntry.findMany({ where: { companyId, OR: [
+    { sourceType: 'expense.record', sourceId: expense.id },
+    { sourceType: 'expense.payment', sourceId: { in: [expense.id, ...payments.map((p: any) => p.id)] } },
+  ] }, select: { sourceType: true, sourceId: true, status: true } });
+  const events = await db.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', sourceId: expense.id }, select: { id: true, taxPeriodId: true, status: true } });
+  const handoffs = await db.whtCertificateHandoff.findMany({ where: expenseWhtHandoffWhere(companyId, expense.id, events.map((event: any) => event.id)) });
+  const issued = events.length ? await db.whtCertificate.findFirst({ where: { companyId, OR: events.map((e: any) => ({ taxEventIdsJson: { array_contains: [e.id] } })) }, select: { id: true } }) : null;
+  const periodLocks = await readExpensePeriodLocks(db, expense, events.filter((event: any) => event.status === 'ACTIVE').map((event: any) => event.taxPeriodId), lockPeriods);
+  const claim = await findLiveClaimOf(db, companyId, expense);
+  const links = await db.attachmentLink.findMany({ where: { companyId, targetType: 'expense.record', targetId: expense.id }, select: { attachmentId: true } });
+  const linkedClaim = await db.reimbursementLine.findFirst({ where: { companyId, request: { status: { notIn: ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'] } }, OR: [
+    { linkedExpenseId: expense.id }, { attachmentId: { in: links.map((link: any) => link.attachmentId) } },
+  ] }, select: { id: true } });
+  const substitute = await db.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, expenseId: expense.id }, orderBy: { version: 'desc' } });
+  const liveClaim = Boolean(claim || linkedClaim);
+  const reopenBlockers: ExpenseCorrectionBlocker[] = [];
+  if (expense.status !== 'CONFIRMED') reopenBlockers.push('not_confirmed');
+  if (journals.some((j: any) => j.status === 'POSTED')) reopenBlockers.push('ledger_posted');
+  else if (expense.postingStatus === 'posted' || expense.postingStatus === 'reversed' || expense.journalEntryId
+    || payments.some((p: any) => p.postingStatus === 'posted' || p.postingStatus === 'reversed' || p.journalEntryId)) reopenBlockers.push('posting_unresolved');
+  if (journals.some((j: any) => j.status !== 'POSTED')) reopenBlockers.push('journal_pending');
+  if (issued || handoffs.some((h: any) => h.status === 'SYSTEM_ISSUED' || h.status === 'EXTERNAL_LINKED' || h.certificateId || h.externalIssuedDate)) reopenBlockers.push('certificate_issued');
+  if (periodLocks.lockedAccountingPeriodKey) reopenBlockers.push('accounting_period_locked');
+  if (periodLocks.lockedTaxPeriods.length) reopenBlockers.push('tax_period_filed');
+  if (liveClaim) reopenBlockers.push('live_claim');
+  if (!permissions.includes('expense.confirm')) reopenBlockers.push('permission_denied');
+  const paymentPermission = permissions.includes('expense.payment.record');
+  const recordPaymentBlocker: ExpenseCorrectionBlocker | null = !paymentPermission ? 'permission_denied'
+    : liveClaim || expense.sourceReimbursementRequestId ? 'live_claim'
+    : substitute?.fundingSource === 'PERSONAL_ADVANCE' ? 'personal_advance'
+    : expense.status !== 'CONFIRMED' ? 'not_confirmed'
+    : !expense.branchId ? 'missing_branch'
+    : Number(expense.outstandingAmount) <= 0 ? 'no_balance' : null;
+  const rejectBlocker: ExpenseCorrectionBlocker | null = !permissions.includes('expense.reject') ? 'permission_denied'
+    : liveClaim ? 'live_claim' : validateStatusTransition(expense.status, 'REJECTED') ? 'not_confirmed'
+    : payments.some((p: any) => p.status === 'RECORDED') ? 'recorded_payments' : Number(expense.paidAmount) > 0 ? 'legacy_paid_balance' : null;
+  return { ...periodLocks, canReject: !rejectBlocker, rejectBlocker, canReopen: reopenBlockers.length === 0, reopenBlockers, canRecordPayment: !recordPaymentBlocker, recordPaymentBlocker,
+    payments: payments.map((p: any) => {
+      const ownJournals = journals.filter((j: any) => j.sourceType === 'expense.payment' && (j.sourceId === p.id || j.sourceId === expense.id));
+      const cancelBlocker: ExpenseCorrectionBlocker | null = p.status === 'VOIDED' ? 'payment_voided'
+        : ownJournals.some((j: any) => j.status === 'POSTED') ? 'ledger_posted'
+        : ownJournals.length ? 'journal_pending'
+        : p.postingStatus === 'posted' || p.postingStatus === 'reversed' || p.journalEntryId ? 'posting_unresolved'
+        : liveClaim || expense.sourceReimbursementRequestId ? 'live_claim'
+        : !['CONFIRMED', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'DRAFT'].includes(expense.status) ? 'not_confirmed'
+        : !paymentPermission ? 'permission_denied' : null;
+      return { id: p.id, canCancel: !cancelBlocker, cancelBlocker };
+    }) };
+}
 
 // What stops an expense void, read in one place. The void itself throws on these; a reimbursement
 // claim reads them before it commits to cancelling, and again when it shows a cancellation that has
@@ -23,6 +93,39 @@ export function lockedTaxFormTypesOf(expense: { lines?: any[]; inputVatClaimStat
   // The claim-status fallback fails closed for rows without components.
   if (expense.inputVatClaimStatus === 'CLAIMABLE' && Number(expense.vatAmount) !== 0) formTypes.add('PP30');
   return [...formTypes];
+}
+
+/** Same date/form lookup for confirmation, capability and locked reopen. Active event periods
+ * also fence retirement when a component was recognized in another month. */
+/**
+ * `withholdingForms`: a correction also stops at a filed ภ.ง.ด.3 / ภ.ง.ด.53 period, because reopening retires the
+ * withholding events of a filed return. Confirmation does not: a document confirmed after the period was filed is
+ * left to the tax sync, which skips or flags it for an amended filing, as before.
+ */
+export async function readExpensePeriodLocks(db: any, expense: any, eventPeriodIds: string[] = [], lock = false, withholdingForms = true) {
+  const periodKey = civilPeriodKey(coerceCivilDate(expense.expenseDate));
+  const formTypes = lockedTaxFormTypesOf(expense) as TaxFormType[];
+  if (withholdingForms && Number(expense.whtAmount) > 0) formTypes.push(expense.vendorEntityKindSnapshot === 'INDIVIDUAL' ? 'PND3' : 'PND53');
+  if (lock) {
+    await db.$executeRaw`SELECT id FROM "AccountingPeriod" WHERE "companyId" = ${expense.companyId} AND "periodKey" = ${periodKey} FOR UPDATE`;
+    await db.$executeRaw`SELECT id FROM "TaxPeriod" WHERE "companyId" = ${expense.companyId} AND ("periodKey" = ${periodKey} OR id IN (SELECT "taxPeriodId" FROM "TaxEvent" WHERE "companyId" = ${expense.companyId} AND "sourceType" = 'expense.record' AND "sourceId" = ${expense.id} AND status = 'ACTIVE')) ORDER BY id FOR UPDATE`;
+  }
+  const accounting = await db.accountingPeriod.findUnique({ where: { companyId_periodKey: { companyId: expense.companyId, periodKey } }, select: { status: true } });
+  const periods = formTypes.length || eventPeriodIds.length ? await db.taxPeriod.findMany({ where: {
+    companyId: expense.companyId, OR: [
+      ...[...new Set(formTypes)].map(formType => ({ formType, periodKey: formPeriodKey(formType, expense.expenseDate) })),
+      ...(eventPeriodIds.length ? [{ id: { in: eventPeriodIds } }] : []),
+    ],
+  }, select: { formType: true, periodKey: true, status: true } }) : [];
+  return { lockedAccountingPeriodKey: accounting && !['OPEN', 'REOPENED'].includes(accounting.status) ? periodKey : null,
+    lockedTaxPeriods: periods.filter((p: any) => isPeriodLocked(p.status)).map((p: any) => ({ formType: p.formType as TaxFormType, periodKey: p.periodKey })) };
+}
+
+/** Retire reporting facts before any correction can replace line ids, dates or payee facts. */
+export async function retireExpenseTaxEvents(tx: any, companyId: string, expenseId: string): Promise<void> {
+  const events = await tx.taxEvent.findMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId }, select: { id: true } });
+  await tx.whtCertificateHandoff.updateMany({ where: { ...expenseWhtHandoffWhere(companyId, expenseId, events.map((e: any) => e.id)), status: 'REQUIRED' }, data: { status: 'CANCELLED' } });
+  await tx.taxEvent.updateMany({ where: { companyId, sourceType: 'expense.record', sourceId: expenseId, status: 'ACTIVE' }, data: { status: 'SUPERSEDED', sourceHash: null } });
 }
 
 /**

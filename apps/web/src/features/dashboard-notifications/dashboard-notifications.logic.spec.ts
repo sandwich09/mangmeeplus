@@ -10,6 +10,9 @@ import {
   severityColor,
   severityLabel,
   visibleNotifications,
+  isUnreadNotification,
+  notificationBodyText,
+  notificationTag,
 } from './dashboard-notifications.logic';
 
 describe('notificationBadgeText', () => {
@@ -36,6 +39,42 @@ describe('visibleNotifications', () => {
     const items = [notification('unread', false), notification('read', true)];
     assert.deepEqual(visibleNotifications(items, 'unread').map((item) => item.id), ['unread']);
     assert.deepEqual(visibleNotifications(items, 'all').map((item) => item.id), ['unread', 'read']);
+  });
+
+  // Found 2026-10-05: a claim notice the server had resolved (the claim was paid) came back with no read time. The badge and
+  // the unread list left it out, yet the bell drew it with the unread dot and tint, under a sentence asking for the payment.
+  it('never treats a resolved notice as unread, whatever its read time says', () => {
+    const resolved = { ...notification('resolved', false), status: 'resolved' as const, body: 'ยอด 680.00 บาท · รอคุณบันทึกการจ่ายเงิน' };
+    const open = { ...notification('open', false), body: 'ยอด 650.00 บาท' };
+    assert.equal(isUnreadNotification(resolved), false); assert.equal(isUnreadNotification({ ...resolved, read: true }), false);
+    assert.equal(isUnreadNotification(open), true); assert.equal(isUnreadNotification({ ...open, read: true }), false);
+    assert.deepEqual(visibleNotifications([resolved, open], 'unread').map((item) => item.id), ['open']);
+    assert.deepEqual(visibleNotifications([resolved, open], 'all').map((item) => item.id), ['resolved', 'open']);
+  });
+
+  it('leaves the sentence written when the notice was raised out of a resolved notice: it can ask for what is already done', () => {
+    const body = 'ยอด 680.00 บาท · รอคุณบันทึกการจ่ายเงิน';
+    assert.equal(notificationBodyText({ status: 'resolved', body }), '');
+    assert.equal(notificationBodyText({ status: 'open', body }), body);
+    assert.equal(notificationBodyText({ status: 'open', body: '' }), '');
+  });
+
+  it('tags a resolved notice as done in the neutral colour, not in the colour that asks for action', () => {
+    assert.deepEqual(notificationTag({ status: 'resolved', severity: 'action' }), { label: 'ดำเนินการแล้ว', tone: severityColor('info') });
+    assert.deepEqual(notificationTag({ status: 'open', severity: 'action' }), { label: 'ต้องดำเนินการ', tone: severityColor('action') });
+    for (const file of ['NotificationBell.tsx', 'NotificationPages.tsx']) assert.doesNotMatch(readFileSync(join(__dirname, file), 'utf8'), /ดำเนินการแล้ว|severityColor\(item/, file);
+  });
+
+  it('is the one rule both screens draw from: dot, tint, bold title, dimming, mark-as-read and mark-all', () => {
+    for (const file of ['NotificationBell.tsx', 'NotificationPages.tsx']) {
+      const page = readFileSync(join(__dirname, file), 'utf8');
+      assert.doesNotMatch(page, /item\.read|!n\.read|item\.body/, file);
+      assert.match(page, /isUnreadNotification/, file); assert.match(page, /notificationBodyText\(item\)/, file);
+    }
+    const bell = readFileSync(join(__dirname, 'NotificationBell.tsx'), 'utf8'), centre = readFileSync(join(__dirname, 'NotificationPages.tsx'), 'utf8');
+    assert.match(bell, /\{unread && <span aria-hidden className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand-500" \/>\}/); assert.match(bell, /\$\{unread \? 'bg-brand-25\/50' : ''\}/);
+    assert.match(bell, /if \(!isUnreadNotification\(item\)\) return;/);
+    assert.match(centre, /\$\{isUnreadNotification\(item\) \? '' : 'opacity-60'\}/); assert.match(centre, /!items\.some\(isUnreadNotification\)/); assert.match(centre, /read=\{!isUnreadNotification\(item\)\}/);
   });
 });
 

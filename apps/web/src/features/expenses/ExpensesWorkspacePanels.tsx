@@ -27,7 +27,7 @@ import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
 import { assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
 import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { SignaturePad } from './SignaturePad';
-import { err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, HowItWorks } from './ExpensesUi';
+import { err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, HowItWorks, WholeWords } from './ExpensesUi';
 import {
   deriveEvidenceRowFlags,
   evidenceRowState,
@@ -604,7 +604,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
                   {fileName ? <span className="font-semibold text-brand-700">✓ {fileName}</span> : (
                     <>
                       <span>เลือกรูปลายเซ็นหรือถ่ายรูป</span>
-                      <span className="text-xs text-gray-400">{IMAGE_SOURCE_TYPES_LABEL}</span>
+                      <span className="text-xs text-gray-400"><WholeWords text={IMAGE_SOURCE_TYPES_LABEL} /></span>
                     </>
                   )}
                   <input ref={fileRef} type="file" accept={SIGNATURE_UPLOAD_ACCEPT} className="hidden" disabled={saving || preparingFile || previewing} onChange={(e) => void selectSignatureFile(e.target.files?.[0] ?? null)} />

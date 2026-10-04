@@ -2,6 +2,12 @@
 
 Status: Approved for implementation by repository owner on 2026-08-25.
 
+## Global WHT catalog administration — owner decision 2026-10-04
+
+SYSTEM_ADMIN alone receives `system.wht_income_category.manage` through the permission registry and the existing permission sync. `/system/wht-income-categories` is linked under “ตั้งค่าระบบ” only with that permission; direct visits require it too. `GET /v1/system/wht-income-categories` lists name, form, rate and status; `PATCH /v1/system/wht-income-categories/:code` accepts only ACTIVE or DRAFT. Both require the platform tenant in addition to permission. No shop role receives this key; `tax.config.manage` cannot change the global catalog.
+
+The page offers enable/disable with a Thai confirmation naming the category/form/default rate and its effect on new selections and later 50 ทวิ. Certificates copy the saved source rate (which AP can override), rather than enforcing the catalog default; the exact requested default-rate promise needs the owner clarification recorded in `wht-certificate-system-issuance-spec.md`. Name and rate are read-only. The existing status use case writes a HIGH audit with the platform actor, old/new statuses, rate and form. The initial 12 ACTIVE / 3 DRAFT catalog and preservation rules are defined in that spec (2026-10-04 decision). No live environment operation is part of this implementation lane.
+
 ## Goal
 
 Allow the sole repository owner to replace an application `SYSTEM_ADMIN` in Production without opening a broad interactive database writer or weakening the existing protected-principal triggers.
@@ -35,3 +41,10 @@ The repository owner dispatches one constrained GitHub Actions workflow from pro
 - `ADD` evidence names the environment, operation, username, user id, role, result, request id, and source commit without secrets.
 - Live Production login returns `passwordChangeRequired=true`, redirects to `/system/platform-access`, `/v1/auth/me` includes `SYSTEM_ADMIN`, and the verification session is logged out. Signed ADD evidence records this without tokens.
 - After owner password change, `REVOKE` evidence shows the old credential disabled and zero active old sessions.
+
+
+## Decision register: COMPANY-TEAM-NOTE — 2026-10-04
+
+เจ้าของตัดสินใจให้เก็บหมายเหตุทีมมั่งมีหนึ่งรายการต่อบริษัท อ่าน/แก้จากคอนโซลและรายงานผู้บริหารให้ตรงกัน. การ์ดในภาพรวมบริษัทของผู้ดูแลใช้ `GET/PUT /v1/system/partners/:partnerCompanyId/team-note`, ส่งเวอร์ชันที่อ่านมา; ผู้ดูแลแก้ได้ทุกสถานะบริษัท ร้านไม่เห็นข้อมูลนี้. ช่องสิทธิ์เสริม `canManageCompanyNote` ในคำสั่งสร้าง/แก้บัญชีผู้บริหารให้สิทธิ์ `system.executive.company_note.manage` ผ่าน role เสริม ค่าเริ่มต้นปิด
+
+[สเปกหลังบ้าน COMPANY-TEAM-NOTE](mangmee-executive-business-backend-spec-th.md#decision-register-company-team-note--2026-10-04) เป็นกติกากลางด้านข้อความ เวอร์ชัน audit และ cascade; [สเปกหน้าจอ](mangmee-executive-business-ui-spec-th.md#decision-register-company-team-note--2026-10-04) ระบุสถานะการ์ด. หลักฐานและงานตรวจรับค้างอยู่ที่ `docs/agent-memory/company-team-note-2026-10-04.md`

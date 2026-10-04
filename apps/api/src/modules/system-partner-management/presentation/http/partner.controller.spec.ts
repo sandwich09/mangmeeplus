@@ -70,7 +70,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
     uc.getPlanTerm, {execute:async()=>({items:[],nextCursor:null})} as any, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
     uc.timeline, uc.lineMessage, uc.aiCreditHolds, uc.setOwnerName,
-    uc.updateIdentity, uc.listThaiAddresses, uc.setManualExpenseWebEntry,
+    uc.updateIdentity, uc.listThaiAddresses, uc.setManualExpenseWebEntry, {} as any,
   );
 }
 
@@ -776,6 +776,46 @@ describe('SetPartnerManualExpenseWebEntryUseCase', () => {
       const h = webEntryHarness();
       await assert.rejects(() => h.run(enabled, expectedVersion), UnprocessableEntityException, JSON.stringify([enabled, expectedVersion]));
       assert.deepEqual([h.locks, h.writes, h.audits], [[], [], []]);
+    }
+  });
+});
+
+
+describe('System Admin company-team-note routes', () => {
+  it('reads/saves only through the shared service with platform context and expectedVersion', async () => {
+    const calls: any[] = [];
+    const ctrl: any = makeCtrl();
+    ctrl.companyTeamNote = { get: async (...args: any[]) => { calls.push(args); return { text: 'ทีม' }; },
+      put: async (...args: any[]) => { calls.push(args); return { text: 'ใหม่' }; } };
+    const req = makeReq(); req.context.companyId = PLATFORM_TENANT_ID;
+    assert.equal((await ctrl.getTeamNote('co-1', req)).text, 'ทีม');
+    assert.equal((await ctrl.putTeamNote('co-1', { text: 'ใหม่', expectedVersion: 3 }, req)).text, 'ใหม่');
+    assert.deepEqual(calls, [[req.context, 'co-1'], [req.context, 'co-1', { text: 'ใหม่', expectedVersion: 3 }]]);
+  });
+  it('shop owner is refused by both route permission gates; executive may not edit via the console route', async () => {
+    const ctrl: any = makeCtrl(); const reflector = new Reflector();
+    const guard = new DenyByDefaultGuard(reflector);
+    for (const [method, permission] of [['getTeamNote', 'system.partner_dashboard.read'], ['putTeamNote', 'system.partner_company.update']]) {
+      assert.deepEqual(reflector.get(REQUIRED_PERMISSIONS_KEY, ctrl[method]), [permission]);
+      const req = makeReq(['company.profile.read', 'company.profile.manage']); req.context.roles = ['OWNER']; req.context.companyId = 'co-1';
+      const execution = { getHandler: () => ctrl[method], getClass: () => PartnerController,
+        switchToHttp: () => ({ getRequest: () => req }) } as ExecutionContext;
+      assert.throws(() => guard.canActivate(execution), ForbiddenException);
+    }
+    const req = makeReq(['system.executive.read', 'system.executive.company_note.manage']);
+    req.context.companyId = PLATFORM_TENANT_ID; req.context.roles = ['MANGMEE_EXECUTIVE'];
+    await assert.rejects(async () => ctrl.putTeamNote('co-1', { text: 'x', expectedVersion: 0 }, req), ForbiddenException);
+  });
+  it('grant DTOs accept an optional boolean company-note right; invalid values fail', async () => {
+    const { ExecutiveUserCreateDto, ExecutiveUserAccessDto } = await import('../../../executive-business/presentation/http/executive-users.controller');
+    const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+    for (const metatype of [ExecutiveUserCreateDto, ExecutiveUserAccessDto]) {
+      const body = { username: 'executive', displayName: 'ผู้บริหาร', reason: 'ติดตาม', canExport: false, canSeeContacts: false };
+      const fields = metatype === ExecutiveUserCreateDto ? { username: body.username, displayName: body.displayName } : { reason: body.reason };
+      const run = (value: any) => pipe.transform({ ...fields, canExport: false, canSeeContacts: false, ...value }, { type: 'body', metatype });
+      assert.equal((await run({ canManageCompanyNote: true })).canManageCompanyNote, true);
+      assert.equal((await run({})).canManageCompanyNote, undefined);
+      for (const value of ['yes', null, 1]) await assert.rejects(() => run({ canManageCompanyNote: value }), BadRequestException);
     }
   });
 });

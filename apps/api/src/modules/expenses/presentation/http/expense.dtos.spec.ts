@@ -223,6 +223,12 @@ describe('expense body DTOs (audit H-23)', () => {
   });
 
   describe('RecordExpensePaymentDto', () => {
+    it('normalizes leading zeros before the existing money validation', async () => {
+      const result = await run(RecordExpensePaymentDto, { paidAmount: '0500.00' });
+      assert.equal(result.paidAmount, '500.00');
+      for (const paidAmount of ['000', '00.0001']) await assert.rejects(() => run(RecordExpensePaymentDto, { paidAmount }), BadRequestException);
+    });
+
     it('accepts an ordinary payment', async () => {
       const result = await run(RecordExpensePaymentDto, { paidAmount: '1070.25', paymentMethod: 'BANK_TRANSFER', idempotencyKey: 'payment-intent-1', paidAt: '2026-07-31' });
       assert.equal(result.paidAmount, '1070.25');

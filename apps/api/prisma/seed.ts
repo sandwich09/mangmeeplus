@@ -2195,35 +2195,17 @@ async function seedOperationalDemoData(input: {
     },
   });
 
+  // A draft its requester has not sent yet: sending it from the claim page writes its step, route, policy snapshot and
+  // hash for real. It used to be seeded as waiting for approval without them, so nobody could approve or withdraw it
+  // while the page read "รอ Local Owner อนุมัติ". A claim already in the database is left as it is (whoever tries the
+  // demo may have sent, approved or paid it since), apart from that stuck state below.
   await db.reimbursementRequest.upsert({
     where: { id: 'seed-reimbursement-request-travel' },
-    update: {
-      branchId,
-      requestNo: 'RB-LOCAL-0001',
-      requesterUserId: ownerUserId,
-      requesterDisplayNameSnapshot: 'Local Owner',
-      title: 'ค่าเดินทางพบลูกค้า VIP',
-      reason: 'เดินทางไปตรวจงานและรับ brief ลูกค้า VIP',
-      categoryKey: 'travel',
-      categoryLabelSnapshot: 'ค่าเดินทาง',
-      amount: '650',
-      incurredDate: at(-2, 8),
-      submittedAt: at(-1, 9),
-      submittedByUserId: ownerUserId,
-      currentApproverUserId: ownerUserId,
-      status: 'PENDING_APPROVAL',
-      paymentStatus: 'UNPAID',
-      financeReviewStatus: 'PENDING',
-      duplicateStatus: 'NO_MATCH',
-      receiptRequirementStatus: 'REQUIRED',
-      outstandingAmount: '650',
-      updatedByUserId: ownerUserId,
-    },
+    update: {},
     create: {
       id: 'seed-reimbursement-request-travel',
       companyId,
       branchId,
-      requestNo: 'RB-LOCAL-0001',
       requesterUserId: ownerUserId,
       requesterDisplayNameSnapshot: 'Local Owner',
       title: 'ค่าเดินทางพบลูกค้า VIP',
@@ -2232,16 +2214,12 @@ async function seedOperationalDemoData(input: {
       categoryLabelSnapshot: 'ค่าเดินทาง',
       amount: '650',
       incurredDate: at(-2, 8),
-      submittedAt: at(-1, 9),
-      submittedByUserId: ownerUserId,
-      currentApproverUserId: ownerUserId,
-      status: 'PENDING_APPROVAL',
-      paymentStatus: 'UNPAID',
-      financeReviewStatus: 'PENDING',
-      duplicateStatus: 'NO_MATCH',
+      status: 'DRAFT',
+      paymentStatus: 'NOT_PAYABLE',
+      financeReviewStatus: 'NOT_REQUIRED',
+      duplicateStatus: 'NOT_CHECKED',
       receiptRequirementStatus: 'REQUIRED',
       outstandingAmount: '650',
-      approvalSnapshotHash: 'seed-rb-approval',
       idempotencyKey: 'seed-reimbursement-request-travel',
       createdByUserId: ownerUserId,
     },
@@ -2249,7 +2227,7 @@ async function seedOperationalDemoData(input: {
   // Every claim owns at least one line (the header total is their rollup).
   await db.reimbursementLine.upsert({
     where: { reimbursementRequestId_lineNo: { reimbursementRequestId: 'seed-reimbursement-request-travel', lineNo: 1 } },
-    update: { amount: '650', description: 'ค่าเดินทางพบลูกค้า VIP', categoryKey: 'travel', categoryLabelSnapshot: 'ค่าเดินทาง', incurredDate: at(-2, 8) },
+    update: {},
     create: {
       companyId,
       reimbursementRequestId: 'seed-reimbursement-request-travel',
@@ -2261,27 +2239,20 @@ async function seedOperationalDemoData(input: {
       amount: '650',
     },
   });
-  await db.reimbursementApprovalStep.upsert({
-    where: { id: 'seed-reimbursement-approval-step' },
-    update: {
-      reimbursementRequestId: 'seed-reimbursement-request-travel',
-      sequenceNo: 1,
-      approverUserId: ownerUserId,
-      approverRoleSnapshot: 'OWNER',
-      status: 'PENDING',
-      requestSnapshotHash: 'seed-rb-approval',
-    },
-    create: {
-      id: 'seed-reimbursement-approval-step',
-      companyId,
-      reimbursementRequestId: 'seed-reimbursement-request-travel',
-      sequenceNo: 1,
-      approverUserId: ownerUserId,
-      approverRoleSnapshot: 'OWNER',
-      status: 'PENDING',
-      requestSnapshotHash: 'seed-rb-approval',
+  // A database seeded before holds the sample stuck: waiting for approval with no current step. Only while it is still
+  // so, it becomes the draft a fresh database gets, without the step written then or a signature given on it since.
+  const stuckSample = await db.reimbursementRequest.updateMany({
+    where: { id: 'seed-reimbursement-request-travel', status: 'PENDING_APPROVAL', currentApprovalStepId: null },
+    data: {
+      requestNo: null, submittedAt: null, submittedByUserId: null, currentApproverUserId: null, approvalSnapshotHash: null,
+      status: 'DRAFT', paymentStatus: 'NOT_PAYABLE', financeReviewStatus: 'NOT_REQUIRED', duplicateStatus: 'NOT_CHECKED',
+      updatedByUserId: ownerUserId,
     },
   });
+  if (stuckSample.count > 0) {
+    await db.reimbursementClaimSignature.deleteMany({ where: { reimbursementRequestId: 'seed-reimbursement-request-travel' } });
+    await db.reimbursementApprovalStep.deleteMany({ where: { reimbursementRequestId: 'seed-reimbursement-request-travel' } });
+  }
 
   const workflowTemplate = await db.workflowTemplate.findUnique({ where: { key: 'low_stock_alert' } });
   await db.workflowRule.upsert({
@@ -3289,25 +3260,26 @@ async function main() {
     }
   }
 
-  // ── Item 11: WHT income categories (DRAFT — accountant verification required) ──
+  // ── Item 11: Global WHT catalog — owner decision 2026-10-04 ──
   // Source baseline: RD withholding tax page (https://www.rd.go.th/14929.html) checked 2026-06-23.
-  // All seeded as DRAFT. Activate only after accountant confirms applicable categories/rates.
+  // Open the approved 12; interest/dividend/prize stay DRAFT pending accountant review.
+  // Upsert updates never reset a status saved by the Mangmee team.
   const WHT_CATEGORIES = [
-    { code: 'WHT_SERVICE_3',        nameTh: 'ค่าบริการ (บุคคลธรรมดา)',       nameEn: 'Service fee (individual)',          formType: 'PND3',  defaultRate: '3.0000' },
-    { code: 'WHT_SERVICE_5',        nameTh: 'ค่าบริการ (นิติบุคคล)',           nameEn: 'Service fee (juristic)',             formType: 'PND53', defaultRate: '3.0000' },
-    { code: 'WHT_RENT_IND',         nameTh: 'ค่าเช่า (บุคคลธรรมดา)',          nameEn: 'Rent (individual)',                  formType: 'PND3',  defaultRate: '5.0000' },
-    { code: 'WHT_RENT_JUR',         nameTh: 'ค่าเช่า (นิติบุคคล)',             nameEn: 'Rent (juristic)',                    formType: 'PND53', defaultRate: '5.0000' },
-    { code: 'WHT_PROFESSIONAL_IND', nameTh: 'ค่าวิชาชีพ (บุคคลธรรมดา)',      nameEn: 'Professional fee (individual)',      formType: 'PND3',  defaultRate: '3.0000' },
-    { code: 'WHT_PROFESSIONAL_JUR', nameTh: 'ค่าวิชาชีพ (นิติบุคคล)',         nameEn: 'Professional fee (juristic)',        formType: 'PND53', defaultRate: '3.0000' },
-    { code: 'WHT_ADVERTISING_IND',  nameTh: 'ค่าโฆษณา (บุคคลธรรมดา)',        nameEn: 'Advertising fee (individual)',       formType: 'PND3',  defaultRate: '2.0000' },
-    { code: 'WHT_ADVERTISING_JUR',  nameTh: 'ค่าโฆษณา (นิติบุคคล)',           nameEn: 'Advertising fee (juristic)',         formType: 'PND53', defaultRate: '2.0000' },
-    { code: 'WHT_TRANSPORT_IND',    nameTh: 'ค่าขนส่ง (บุคคลธรรมดา)',         nameEn: 'Transport fee (individual)',         formType: 'PND3',  defaultRate: '1.0000' },
-    { code: 'WHT_TRANSPORT_JUR',    nameTh: 'ค่าขนส่ง (นิติบุคคล)',            nameEn: 'Transport fee (juristic)',           formType: 'PND53', defaultRate: '1.0000' },
-    { code: 'WHT_DIVIDEND',         nameTh: 'เงินปันผล',                       nameEn: 'Dividend',                          formType: 'PND53', defaultRate: '10.0000' },
-    { code: 'WHT_INTEREST',         nameTh: 'ดอกเบี้ย',                        nameEn: 'Interest',                          formType: 'PND3',  defaultRate: '1.0000' },
-    { code: 'WHT_PRIZE',            nameTh: 'รางวัล',                          nameEn: 'Prize / award',                     formType: 'PND3',  defaultRate: '5.0000' },
-    { code: 'WHT_OTHER_IND',        nameTh: 'อื่นๆ (บุคคลธรรมดา)',            nameEn: 'Other (individual)',                 formType: 'PND3',  defaultRate: '3.0000' },
-    { code: 'WHT_OTHER_JUR',        nameTh: 'อื่นๆ (นิติบุคคล)',               nameEn: 'Other (juristic)',                   formType: 'PND53', defaultRate: '3.0000' },
+    { code: 'WHT_SERVICE_3',        nameTh: 'ค่าบริการ (บุคคลธรรมดา)',       nameEn: 'Service fee (individual)',          formType: 'PND3',  defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_SERVICE_5',        nameTh: 'ค่าบริการ (นิติบุคคล)',           nameEn: 'Service fee (juristic)',             formType: 'PND53', defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_RENT_IND',         nameTh: 'ค่าเช่า (บุคคลธรรมดา)',          nameEn: 'Rent (individual)',                  formType: 'PND3',  defaultRate: '5.0000', status: 'ACTIVE' },
+    { code: 'WHT_RENT_JUR',         nameTh: 'ค่าเช่า (นิติบุคคล)',             nameEn: 'Rent (juristic)',                    formType: 'PND53', defaultRate: '5.0000', status: 'ACTIVE' },
+    { code: 'WHT_PROFESSIONAL_IND', nameTh: 'ค่าวิชาชีพ (บุคคลธรรมดา)',      nameEn: 'Professional fee (individual)',      formType: 'PND3',  defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_PROFESSIONAL_JUR', nameTh: 'ค่าวิชาชีพ (นิติบุคคล)',         nameEn: 'Professional fee (juristic)',        formType: 'PND53', defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_ADVERTISING_IND',  nameTh: 'ค่าโฆษณา (บุคคลธรรมดา)',        nameEn: 'Advertising fee (individual)',       formType: 'PND3',  defaultRate: '2.0000', status: 'ACTIVE' },
+    { code: 'WHT_ADVERTISING_JUR',  nameTh: 'ค่าโฆษณา (นิติบุคคล)',           nameEn: 'Advertising fee (juristic)',         formType: 'PND53', defaultRate: '2.0000', status: 'ACTIVE' },
+    { code: 'WHT_TRANSPORT_IND',    nameTh: 'ค่าขนส่ง (บุคคลธรรมดา)',         nameEn: 'Transport fee (individual)',         formType: 'PND3',  defaultRate: '1.0000', status: 'ACTIVE' },
+    { code: 'WHT_TRANSPORT_JUR',    nameTh: 'ค่าขนส่ง (นิติบุคคล)',            nameEn: 'Transport fee (juristic)',           formType: 'PND53', defaultRate: '1.0000', status: 'ACTIVE' },
+    { code: 'WHT_DIVIDEND',         nameTh: 'เงินปันผล',                       nameEn: 'Dividend',                          formType: 'PND53', defaultRate: '10.0000', status: 'DRAFT' },
+    { code: 'WHT_INTEREST',         nameTh: 'ดอกเบี้ย',                        nameEn: 'Interest',                          formType: 'PND3',  defaultRate: '1.0000', status: 'DRAFT' },
+    { code: 'WHT_PRIZE',            nameTh: 'รางวัล',                          nameEn: 'Prize / award',                     formType: 'PND3',  defaultRate: '5.0000', status: 'DRAFT' },
+    { code: 'WHT_OTHER_IND',        nameTh: 'อื่นๆ (บุคคลธรรมดา)',            nameEn: 'Other (individual)',                 formType: 'PND3',  defaultRate: '3.0000', status: 'ACTIVE' },
+    { code: 'WHT_OTHER_JUR',        nameTh: 'อื่นๆ (นิติบุคคล)',               nameEn: 'Other (juristic)',                   formType: 'PND53', defaultRate: '3.0000', status: 'ACTIVE' },
   ] as const;
 
   for (const cat of WHT_CATEGORIES) {
@@ -3320,8 +3292,8 @@ async function main() {
         nameEn: cat.nameEn,
         formType: cat.formType,
         defaultRate: cat.defaultRate,
-        status: 'DRAFT',
-        conditionNote: 'Accountant verification required before activation.',
+        status: cat.status,
+        conditionNote: cat.status === 'DRAFT' ? 'รอนักบัญชีตรวจสอบก่อนเปิดใช้' : null,
       },
     });
   }

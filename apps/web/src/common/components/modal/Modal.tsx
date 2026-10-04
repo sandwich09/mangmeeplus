@@ -15,6 +15,8 @@ export interface ModalProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   bodyClassName?: string;
   bodyScroll?: boolean;
+  /** False while the body holds something typed and not yet saved: a stray tap outside must not lose it. The close button and Escape still close. */
+  closeOnBackdrop?: boolean;
   /** Document-preview modals: Ctrl+P prints ONLY this modal's body, once. Without it the fixed
    *  overlay is repeated by the browser on every printed page (the "same form twice in one
    *  printout" bug) with the app page showing through behind it. */
@@ -47,6 +49,7 @@ export function Modal({
   size = 'md',
   bodyClassName,
   bodyScroll = true,
+  closeOnBackdrop = true,
   printSurface = false,
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -97,7 +100,7 @@ export function Modal({
   };
 
   return createPortal(
-    <div className={`fixed inset-0 z-[99999] flex items-end justify-center bg-gray-900/40 p-0 sm:items-center sm:p-4${printSurface ? ' modal-print-surface' : ''}`} onMouseDown={onClose}>
+    <div className={`fixed inset-0 z-[99999] flex items-end justify-center bg-gray-900/40 p-0 sm:items-center sm:p-4${printSurface ? ' modal-print-surface' : ''}`} onMouseDown={closeOnBackdrop ? onClose : (event) => event.preventDefault() /* the focus stays in the dialog, so Escape still closes it */}>
       <div
         ref={dialogRef}
         role="dialog"

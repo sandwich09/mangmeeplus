@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { RecordExpensePaymentUseCase } from './expense-draft.use-case';
@@ -60,6 +60,19 @@ describe('RecordExpensePaymentUseCase', () => {
     };
     return { calls, useCase: new RecordExpensePaymentUseCase(repo, noopAudit) };
   }
+
+  it('rejects future expense paid dates using Bangkok today, allowing yesterday/today across the UTC boundary', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-04T16:30:00Z').getTime() });
+    const { calls, useCase } = ordinary();
+    for (const paidAt of ['2026-10-03', '2026-10-04']) await useCase.execute(ctx(), 'exp-1', { paidAmount: '1', paidAt });
+    await assert.rejects(() => useCase.execute(ctx(), 'exp-1', { paidAmount: '1', paidAt: '2026-10-05' }),
+      (e: any) => e.getResponse?.().code === 'expense_payment_future_date' && e.getResponse().message === 'วันที่จ่ายเงินจริงต้องไม่เกินวันนี้');
+    assert.equal(calls.length, 2);
+    t.mock.timers.setTime(new Date('2026-10-04T17:30:00Z').getTime());
+    await useCase.execute(ctx(), 'exp-1', { paidAmount: '1', paidAt: '2026-10-05' });
+    await assert.rejects(() => useCase.execute(ctx(), 'exp-1', { paidAmount: '1', paidAt: '2026-10-06' }), (e: any) => e.getResponse?.().code === 'expense_payment_future_date');
+    assert.equal(calls.length, 3);
+  });
 
   it('keeps explicit keys and civil dates stable across request IDs, and forwards branch scope', async () => {
     const { calls, useCase } = ordinary('branch-1');
@@ -123,4 +136,53 @@ describe('RecordExpensePaymentUseCase', () => {
     assert.equal(events[0].eventKey, 'expense.payment_recorded:expense_payment:pay-original');
     assert.equal(events[0].payloadJson.data.paidAmount, '40.0000');
   });
+});
+
+// This file is in the API test script; direct callers have the same permission/reason boundary as HTTP.
+describe('expense correction authorization and audit', () => {
+  it('requires permission, web authority, branch scope and a meaningful bounded reason', async () => {
+    const production = await import('./expense-draft.use-case');
+    for (const [name, permission, method] of [
+      ['ReopenExpenseUseCase', 'expense.confirm', 'reopenExpenseAtomic'],
+      ['CancelExpensePaymentUseCase', 'expense.payment.record', 'cancelPaymentAtomic'],
+    ]) {
+      const UseCase = (production as any)[name]; assert.equal(typeof UseCase, 'function');
+      const calls: any[] = [];
+      const repo = { findById: async () => ({ branchId: 'branch-1' }), [method]: async (input: any, hook: any) => { calls.push(input); await hook({}); return { status: 'NEEDS_REVIEW' }; } };
+      const audits: any[] = [];
+      const useCase = new UseCase(repo, { log: async (entry: any, tx: any) => { assert.ok(tx); audits.push(entry); } });
+      const run = (context: any, reason: any) => name === 'ReopenExpenseUseCase' ? useCase.execute(context, 'exp-1', reason) : useCase.execute(context, 'exp-1', 'pay-1', reason);
+      const authorized = { ...ctx(), permissions: [permission] };
+      await assert.rejects(() => run({ ...authorized, permissions: [] }, 'กรอกผิด'), ForbiddenException);
+      await assert.rejects(() => run({ ...authorized, authProvider: 'line' }, 'กรอกผิด'), ForbiddenException);
+      await assert.rejects(() => run({ ...authorized, scopes: { branchIds: ['other'] } }, 'กรอกผิด'), ForbiddenException);
+      for (const reason of ['', '  ', 'ab', 'a'.repeat(501), null]) await assert.rejects(() => run(authorized, reason), BadRequestException);
+      await run(authorized, '  กรอกผิด  ');
+      assert.equal(calls.length, 1); assert.equal(calls[0].reason, 'กรอกผิด');
+      assert.equal(audits[0].actorUserId, authorized.userId); assert.equal(audits[0].metadataJson.reason, 'กรอกผิด');
+      assert.equal(JSON.stringify(audits).includes('bankAccountRef'), false);
+    }
+  });
+});
+
+
+test('correction audit reasons mask long account-number text as well as excluding bank fields', async () => {
+  const { ReopenExpenseUseCase } = await import('./expense-draft.use-case');
+  let logged: any;
+  const repo: any = { findById: async () => ({ branchId: 'branch-1' }), reopenExpenseAtomic: async (_input: any, hook: any) => { await hook({}); return {}; } };
+  await new ReopenExpenseUseCase(repo, { log: async (entry: any) => { logged = entry; } } as any).execute({ ...ctx(), permissions: ['expense.confirm'] }, 'exp-1', 'แก้ยอดบัญชี 012-3-45678-9');
+  assert.equal(JSON.stringify(logged).includes('012-3-45678-9'), false);
+  assert.match(logged.metadataJson.reason, /6789/);
+});
+
+test('detail correction history keeps persisted cancellation reasons and marks only open documents', async () => {
+  const { GetExpenseUseCase } = await import('./expense-draft.use-case');
+  const repo = { findCorrectionHistory: async () => ({ reopenedAt: new Date('2026-10-04T02:00:00Z'), cancellationReasons: new Map([['p1', 'ยอดผิด']]) }) } as any;
+  const useCase = new GetExpenseUseCase(repo);
+  for (const status of ['NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED', 'REJECTED', 'VOIDED']) {
+    const history = (useCase as any).correctionHistory; assert.equal(typeof history, 'function');
+    const result = await history.call(useCase, ctx(), { id: 'e1', status, payments: [{ id: 'p1', status: 'VOIDED' }] });
+    assert.equal(Boolean(result.correctionOpenedAt), ['NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(status));
+    assert.equal(result.payments[0].cancellationReason, 'ยอดผิด');
+  }
 });
