@@ -1,6 +1,6 @@
 'use client';
 
-import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
+import { ATTACHMENT_SOURCE_TYPES_LABEL, REIMBURSEMENT_SELF_APPROVED_NOTE } from '@watchdog-bms/contracts';
 
 // The claim detail as sections, shared by the hub drawer and the journey page while both exist
 // (the drawer goes in Phase 6). Markup moved from the drawer; test ids are kept on it.
@@ -31,10 +31,10 @@ import {
 import {
   PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
-  APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS,
+  APPROVAL_STEP_STATUS_LABELS, CLAIM_SIGNATURE_ROLE_LABELS, CURRENT_DESK_LABELS,
   canUploadSignedCopy, canVoidRecordedPayment, claimHasNoApprover, claimInPayoutCorrection, claimSelfApproved, claimSignAction, claimSignatureSlots, reimbursementOwnActions,
   type ClaimSignatureRole,
-  claimStatusBadge,
+  claimStatusBadge, currentDeskText,
 } from './reimbursements.model';
 import {
   NOTE_HAS_ACCOUNT_NUMBER,
@@ -890,7 +890,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
             </div>
             {noApprover && <p className="mt-3 text-xs text-gray-600">ใบนี้ไม่ต้องอนุมัติตามนโยบาย จึงมีเฉพาะลายเซ็นของผู้เบิก</p>}
             {slots.length === 2 && claimSelfApproved(detail) && (
-              <p className="mt-3 text-xs text-gray-600">ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน อนุมัติรายการของตนเองตามนโยบายบริษัท</p>
+              <p className="mt-3 text-xs text-gray-600">{REIMBURSEMENT_SELF_APPROVED_NOTE}</p>
             )}
             {correcting && <p className="mt-3 text-xs text-gray-600">{signingWaitsForRound(detail)}</p>}
             {/* One tap signs every block this viewer really acted on; the server re-checks each role. */}
@@ -968,7 +968,9 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                     {APPROVAL_STEP_STATUS_LABELS[s.status] ?? '—'}
                   </MangmeeBadge>
                 </div>
-                <div className="mt-1">{s.decidedByName ? `โดย ${s.decidedByName}` : s.approverName ? `ผู้อนุมัติ: ${s.approverName}` : '—'}</div>
+                <div className="mt-1">{s.decidedByName ? `โดย ${s.decidedByName}` : s.id === detail.currentApprovalStepId && s.status === 'PENDING'
+                  ? `ผู้อนุมัติ: ${currentDeskText(detail.currentDesk) ?? CURRENT_DESK_LABELS.APPROVER}`
+                  : s.approverName ? `ผู้อนุมัติ: ${s.approverName}` : '—'}</div>
                 {approvalStepCorrectionNote(s) && <div className="mt-1 text-gray-500">{approvalStepCorrectionNote(s)}</div>}
                 {s.comment && <div className="mt-1 text-gray-500">{s.comment}</div>}
                 {s.rejectionReason && <div className="mt-1 text-error-700">{s.rejectionReason}</div>}

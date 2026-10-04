@@ -354,32 +354,13 @@ export function isExactLegacyV1FallbackSnapshot(
 
 // ---- Self-approval guard ----
 
-/**
- * Roles that may approve their own claim without the company turning the policy on
- * (owner decision 2026-08-10). Imported rather than restated: procurement already carries this
- * exact list for the same reason — a small company is one person doing everything — and two copies
- * of one policy is how they come to disagree.
- *
- * Every such decision is audited inside the approving transaction, so support can always answer
- * "who approved their own claim, and under what": see the selfApproval block in the approval audit
- * metadata. The exemption buys convenience, not anonymity.
- */
-import { SELF_APPROVAL_EXEMPT_ROLES } from '../../../procurement/domain/logic/procurement.logic';
-export { SELF_APPROVAL_EXEMPT_ROLES };
-
-/**
- * `approverRoles` defaults to none, so a caller that has not opted in keeps the strict
- * maker-checker behaviour. Widening who may approve is not something a default should decide.
- */
+/** Owner 2026-10-04: the claims switch applies to every role. Frozen assignments are checked by callers. */
 export function isSelfApproval(
   requesterUserId: string,
   approverUserId: string,
   allowSelfApproval: boolean,
-  approverRoles: string[] = [],
 ): boolean {
-  if (allowSelfApproval) return false;
-  if (requesterUserId !== approverUserId) return false;
-  return !approverRoles.some((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role));
+  return !allowSelfApproval && requesterUserId === approverUserId;
 }
 
 /**

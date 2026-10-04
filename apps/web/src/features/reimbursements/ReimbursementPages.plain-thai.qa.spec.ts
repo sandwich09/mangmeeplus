@@ -315,7 +315,7 @@ describe('the hub cards and chips count what their filter shows (spec §18.1, AC
     // "อยู่ที่" on the phone cards: the requester in the badge's own word, then the approvers by name.
     assert.deepEqual(texts.filter((text) => text.startsWith('อยู่ที่')), ['อยู่ที่ ผู้มีสิทธิ์อนุมัติ', 'อยู่ที่ ผู้เบิก', 'อยู่ที่ สมชาย']);
     // With its requester, and still no draft: nothing on the row sends it, and it is not among the drafts.
-    assert.equal(texts.some((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ'), false);
+    assert.equal(texts.some((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ' || text === 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'), false);
     assert.equal(rowsShown(hubTab('mine', claims, 'draft')), 1);
     assert.equal(visible(hubTab('mine', claims, 'draft')).includes('รอผู้เบิกแก้บัญชีรับเงิน'), false);
   });
@@ -591,14 +591,14 @@ describe('the approval queue offers only what the server says this viewer can do
 // Payout Phase 1 on the paged list: a row shows no account, so a draft is sent from its row only when the draft
 // itself chose cash. Any other draft may be paid into an account, and its button opens the claim page instead.
 describe('a draft row of the hub list is sent from the row only when nothing unseen would be frozen', () => {
-  const sending = (html: string) => visible(html).filter((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ');
+  const sending = (html: string) => visible(html).filter((text) => text === 'ส่งอนุมัติ' || text === 'ตรวจบัญชีและส่งอนุมัติ' || text === 'เลือกวิธีรับเงินคืนและส่งอนุมัติ');
   const ready = { ...draft, receiptRequirementStatus: 'ATTACHED' };
 
-  it('says ส่งอนุมัติ on a cash draft and ตรวจบัญชีและส่งอนุมัติ on every other draft, in the list the hub holds', () => {
+  it('names the missing receiving method, transfer account check or cash submission in both list layouts', () => {
     // Table row and phone card, both from the rows of the held list.
     assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod: 'CASH' }])), ['ส่งอนุมัติ', 'ส่งอนุมัติ']);
-    for (const payoutMethod of [undefined, 'BANK_TRANSFER']) {
-      assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod }])), ['ตรวจบัญชีและส่งอนุมัติ', 'ตรวจบัญชีและส่งอนุมัติ'], String(payoutMethod));
+    for (const [payoutMethod, label] of [[undefined, 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'], [null, 'เลือกวิธีรับเงินคืนและส่งอนุมัติ'], ['BANK_TRANSFER', 'ตรวจบัญชีและส่งอนุมัติ']] as const) {
+      assert.deepEqual(sending(hubTab('mine', [{ ...ready, payoutMethod }])), [label, label], String(payoutMethod));
     }
     // A claim already sent has no send button, whatever it is paid by.
     assert.deepEqual(sending(hubTab('mine', [{ ...ready, status: 'PENDING_APPROVAL', payoutMethod: 'CASH', currentDesk: { kind: 'APPROVER' } }])), []);
@@ -1207,5 +1207,12 @@ describe('claim policy shares the employee and role-page names', () => {
       assert.ok(texts.includes('ผู้ตรวจประจำบริษัท'), key);
       assert.ok(texts.some((text) => text.includes('บทบาท ผู้ตรวจประจำบริษัท อนุมัติได้ แต่บันทึกจ่ายไม่ได้')), key);
     }
+  });
+});
+
+describe('claims self-approval policy words', () => {
+  it('explains the switch for all roles, the solo exception, and the frozen submitted route', () => {
+    const texts = policySettings(policyForm, [roleOption('MANAGER', 'ผู้จัดการ', true)]);
+    assert.ok(texts.includes('เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบเบิกของตัวเองได้ เมื่อปิด ทุกบทบาทอนุมัติใบของตัวเองไม่ได้ ยกเว้นตอนส่งมีผู้เบิกเป็นผู้อนุมัติได้เพียงคนเดียว ใบที่ส่งแล้วใช้ผู้อนุมัติที่กำหนดไว้ตอนส่ง'));
   });
 });

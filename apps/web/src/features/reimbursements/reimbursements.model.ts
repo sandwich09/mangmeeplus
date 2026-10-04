@@ -15,6 +15,10 @@ export const REIMBURSEMENT_CREATE_UNAVAILABLE = `ขณะนี้ไม่ส�
 export const POLICY_TAB_LABEL = 'ตั้งค่านโยบาย';
 export const SELF_APPROVAL_SWITCH_LABEL = 'ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้';
 
+export const SELF_APPROVAL_POLICY_NOTE = 'เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายอนุมัติใบเบิกของตัวเองได้ เมื่อปิด ทุกบทบาทอนุมัติใบของตัวเองไม่ได้ ยกเว้นตอนส่งมีผู้เบิกเป็นผู้อนุมัติได้เพียงคนเดียว ใบที่ส่งแล้วใช้ผู้อนุมัติที่กำหนดไว้ตอนส่ง';
+export const CLAIM_SIGN_LABEL = 'ลงนามในใบเบิก';
+export const CLAIM_RESIGN_LABEL = 'ลงนามใหม่';
+
 export const REQUEST_STATUS_LABELS: Record<string, string> = {
   DRAFT: 'ร่าง',
   PENDING_APPROVAL: 'รออนุมัติ',
@@ -235,8 +239,8 @@ export function eligibleSignatureRoles(detail: any, userId: string): ClaimSignat
 export function claimSignAction(detail: any, userId: string): { roles: ClaimSignatureRole[]; label: string } | null {
   const roles = eligibleSignatureRoles(detail, userId);
   if (roles.length === 0) return null;
-  const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
-  return { roles, label: roles.some((role) => signed.has(role)) ? 'ลงนามใหม่' : 'ลงนาม' };
+  const signed = new Set((detail?.signatures ?? []).filter((row: any) => row.signedByUserId === userId).map((row: any) => row.role));
+  return { roles, label: roles.some((role) => signed.has(role)) ? CLAIM_RESIGN_LABEL : CLAIM_SIGN_LABEL };
 }
 
 /** Whether the server reports the claim as being in a payout account correction round, on a list row or on its detail. */
@@ -317,7 +321,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted
   // self-approval had no reason to look for the switch. Quotes the tab's and the toggle's own labels —
   // a message that paraphrases a control is a message you cannot search the settings page with.
-  self_approval_denied: `ไม่สามารถอนุมัติคำขอของตนเองได้ตามการตั้งค่าปัจจุบัน — เปิดได้ที่ ${POLICY_TAB_LABEL} › "${SELF_APPROVAL_SWITCH_LABEL}"`,
+  self_approval_denied: `ไม่สามารถอนุมัติคำขอของตนเองได้ตามนโยบายที่ใบนี้ใช้ — เปิดได้ที่ ${POLICY_TAB_LABEL} › "${SELF_APPROVAL_SWITCH_LABEL}"`,
   reimbursement_changed: 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง',
   stale_approval_snapshot: 'คำขอถูกแก้ไขหลังส่งอนุมัติ กรุณาเปิดดูรายละเอียดใหม่ก่อนตัดสินใจ',
   expense_already_claimed: 'ค่าใช้จ่ายนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว',

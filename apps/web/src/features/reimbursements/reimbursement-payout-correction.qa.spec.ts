@@ -1242,7 +1242,7 @@ describe('the buttons of a correction round are what the server says, for every 
     const card = stepCard(forPayer);
     assert.deepEqual(card.buttons, ['บันทึกจ่าย', 'พิมพ์ใบเบิก']);
     // The step says what the step is for, and points to no button it no longer has.
-    assert.equal(card.note, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง');
+    assert.equal(card.note, 'บันทึกจ่ายเต็มจำนวน ระบุวิธีจ่าย วันที่ และเลขอ้างอิง หากโอนเงิน ต้องแนบสลิป ถ้าโอนเข้าบัญชีที่ใบนี้ระบุ ต้องติ๊กยืนยันบัญชีที่โอนเข้า');
     assert.equal(stepCard(claimPage(ready({ payoutCorrectionActions: SEND }), requester).html).note, 'รอ วราภรณ์ การเงิน บันทึกจ่าย');
     assert.equal(stepCard(claimPage(ready(), auditor).html).note, 'รอ วราภรณ์ การเงิน บันทึกจ่าย');
     // Where the account is read: the reason to send it back, then the action as underlined text of 44 px, above the step card.
@@ -1461,7 +1461,7 @@ describe('the header line, the step note, the timeline and the badge name the sa
     assert.equal(active(phaseB({ payoutCorrectionActions: GIVE }), financeReviewer).note, 'รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่ · ถ้าบัญชีที่ส่งไปยังไม่ถูกต้อง คุณแก้แทนผู้เบิกได้');
     // The requester who would approve their own new account but for the company's switch is told so, with no way back to a draft.
     const blocked = active(phaseB({ payoutCorrectionActions: GIVE, approvalActions: { canApprove: false, canReject: false, selfApprovalBlocked: true } }), { userId: 'staff', permissions: EVERYTHING });
-    assert.match(blocked.note!, /^รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่ · ใบนี้เป็นของคุณเอง และบริษัทยังไม่เปิด "ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้" คุณจึงอนุมัติบัญชีรับเงินใหม่เองไม่ได้ · /u);
+    assert.match(blocked.note!, /^รอ สมศรี ผู้จัดการ อนุมัติบัญชีรับเงินใหม่ · ใบนี้เป็นของคุณเอง และนโยบายที่ใบนี้ใช้ปิด "ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้" คุณจึงอนุมัติบัญชีรับเงินใหม่เองไม่ได้ · /u);
     // Before: "อนุมัติบัญชีใหม่เองไม่ได้" of every answer. What they cannot approve is what was answered.
     const blockedCash = active(answeredWith('SAME_CASH', { payoutCorrectionActions: GIVE, approvalActions: { canApprove: false, canReject: false, selfApprovalBlocked: true } }), { userId: 'staff', permissions: EVERYTHING });
     assert.ok(blockedCash.note!.includes('คุณจึงอนุมัติการรับเป็นเงินสดเองไม่ได้ · ถ้าต้องการเปลี่ยนวิธีรับเงินคืน กดเลือกวิธีรับเงินคืนอีกครั้งได้'), blockedCash.note);
@@ -2422,7 +2422,7 @@ describe('signing and signed copies around a round (spec §14.4, AC32)', () => {
       onSign: noop, onUploadSignedCopy: noop, onRequestVoidPayment: noop, onOpenPaymentSlip: noop, onAttachPaymentSlip: noop, onUseSignedCopyAsSlip: noop }),
     (start) => (start === null && ++nulls === 1 ? pendingCopy : undefined));
   };
-  const signButton = (texts: string[]) => texts.filter((text) => text === 'ลงนาม' || text === 'ลงนามใหม่');
+  const signButton = (texts: string[]) => texts.filter((text) => text === 'ลงนามในใบเบิก' || text === 'ลงนามใหม่');
   /** Why nothing is signed meanwhile: what the claim waits for, in the words of its badge, and when signing comes back. */
   const waits = (status: string) => `ใบนี้${status} ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งเมื่อใบกลับมารอจ่าย`;
   const WAITS = waits('รอผู้เบิกแก้บัญชีรับเงิน');
@@ -2438,8 +2438,8 @@ describe('signing and signed copies around a round (spec §14.4, AC32)', () => {
     }
     // Before the round and after it: the requester, and the approver the claim now stands on.
     for (const detail of [ready(), reapproved()]) {
-      assert.deepEqual(signButton(detailSections(detail, requester).texts), ['ลงนาม']);
-      assert.deepEqual(signButton(detailSections(detail, approver).texts), ['ลงนาม']);
+      assert.deepEqual(signButton(detailSections(detail, requester).texts), ['ลงนามในใบเบิก']);
+      assert.deepEqual(signButton(detailSections(detail, approver).texts), ['ลงนามในใบเบิก']);
       assert.equal(detailSections(detail, requester).texts.some((text) => text.includes('ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้')), false);
     }
     assert.deepEqual(signButton(detailSections(reapproved(), payer).texts), []);
@@ -2625,5 +2625,45 @@ describe('an approval or a rejection of a claim that no longer waits is answered
       () => still.handlers.reject.onConfirm('โอนเข้าบัญชี 123-4-56789-0 ไม่ได้'));
     assert.ok(still.changes.some((change) => change.value === translateApiError('note_contains_account_number')));
     assert.equal(dialogClosed(still), false);
+  });
+});
+
+// Owner 2026-10-04: every instruction matches the action offered to this viewer.
+describe('claim detail words from actual actors and routes', () => {
+  for (const [viewer, role] of [[requester, 'REQUESTER'], [approver, 'APPROVER']] as const) {
+    it(`${role}: the paid claim offers first signing, then replacement only for their own signature`, () => {
+      const paid = ready({ status: 'PAID', paymentStatus: 'PAID', currentDesk: undefined,
+        signatures: [{ role: role === 'REQUESTER' ? 'APPROVER' : 'REQUESTER', signedByUserId: role === 'REQUESTER' ? 'boss' : 'staff' }] });
+      const first = claimPage(paid, viewer).texts;
+      assert.ok(first.includes('ลงนามในใบเบิก'));
+      assert.equal(first.includes('ลงนามใหม่'), false);
+      assert.equal(first.includes('ลงนาม'), false);
+      assert.ok(first.some((text) => text.includes('คุณยังไม่ได้ลงนาม กดลงนามในใบเบิก')));
+      const replace = claimPage({ ...paid, signatures: [...paid.signatures, { role, signedByUserId: viewer.userId }], documentSignedVia: 'DIGITAL' }, viewer).texts;
+      assert.ok(replace.includes('ลงนามใหม่'));
+    });
+  }
+  it('asks a self-approver who signed only one block to replace that signature and fill the other', () => {
+    const partial = ready({ status: 'PAID', requesterUserId: 'boss',
+      approvalSteps: [{ ...step1, decisionByUserId: 'boss' }], signatures: [{ role: 'REQUESTER', signedByUserId: 'boss' }] });
+    const texts = claimPage(partial, approver).texts;
+    assert.ok(texts.some((text) => text.includes('คุณยังลงนามไม่ครบ กดลงนามใหม่เพื่อเติมลายเซ็น')));
+    assert.equal(texts.includes('ลงนามในใบเบิก'), false);
+  });
+  it('names the pending approvers in the step history exactly as the header does', () => {
+    const pending = ready({ status: 'PENDING_APPROVAL', approvedAt: undefined, currentApprovalStepId: 'pending-step',
+      currentDesk: { kind: 'APPROVER', names: ['สมศรี ผู้จัดการ', 'วิชัย เจ้าของ'] },
+      approvalSteps: [{ id: 'pending-step', sequenceNo: 1, status: 'PENDING' }] });
+    const texts = claimPage(pending, auditor).texts;
+    assert.ok(texts.includes('ผู้อนุมัติ: สมศรี ผู้จัดการ หรือ วิชัย เจ้าของ'));
+    assert.ok(texts.includes('อยู่ที่ สมศรี ผู้จัดการ หรือ วิชัย เจ้าของ'));
+  });
+  it('states the self-approved fact without inventing a policy reason for policy-on, solo or older frozen routes', () => {
+    for (const reason of ['company_policy', 'no_other_approver', 'frozen_assignment']) {
+      const self = ready({ requesterUserId: 'boss', approvalSteps: [{ ...step1, decisionByUserId: 'boss' }] });
+      const texts = claimPage(self, approver).texts;
+      assert.ok(texts.includes('ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน ใบนี้ได้รับการอนุมัติโดยผู้เบิกเอง'), reason);
+      assert.equal(texts.some((text) => text.includes('อนุมัติรายการของตนเองตามนโยบายบริษัท')), false);
+    }
   });
 });

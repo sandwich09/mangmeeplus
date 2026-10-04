@@ -19,7 +19,7 @@ import {
   reopenReimbursement, resumeReimbursement, setLineReceipt, signReimbursementClaimForm, submitReimbursement, uploadReimbursementPaymentSlip, uploadSignedClaimFormCopy,
   voidReimbursementPayment, withdrawReimbursementCancellation,
 } from './reimbursements.api';
-import { POLICY_TAB_LABEL, claimDeskText, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
+import { POLICY_TAB_LABEL, CLAIM_SIGN_LABEL, claimDeskText, claimSignAction, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
   activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
   isStaleApprovalError, opensPaymentFormOnArrival, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
@@ -47,7 +47,7 @@ const ACTION_LABELS: Record<Exclude<JourneyAction, 'send-back' | 'correct-payout
   'resume-cancel': 'ดำเนินการยกเลิกต่อ', 'withdraw-cancel': 'ถอนการยกเลิก',
   approve: 'อนุมัติ', reject: 'ปฏิเสธ', resume: 'ดำเนินการต่อ', 'policy-settings': `ไปที่${POLICY_TAB_LABEL}`,
   'finance-approve': 'อนุมัติจ่าย', 'finance-return': 'ส่งกลับให้แก้ไข', 'finance-block': 'ระงับการจ่าย',
-  'resolve-duplicate': 'ปลดรายการซ้ำ', pay: 'บันทึกจ่าย', sign: 'ลงนามในใบเบิก', print: 'พิมพ์ใบเบิก',
+  'resolve-duplicate': 'ปลดรายการซ้ำ', pay: 'บันทึกจ่าย', sign: CLAIM_SIGN_LABEL, print: 'พิมพ์ใบเบิก',
   'attach-signed-copy': 'แนบสำเนาที่เซ็นแล้ว', 'void-payment': 'ยกเลิกการจ่าย',
 };
 
@@ -397,7 +397,8 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
           // that, of an account to correct again or of cash to choose again.
           : action === 'send-back' ? payoutCorrectionSendBackTitle(detail)
             : action === 'correct-payout' ? correctPayoutLabel
-              : ACTION_LABELS[action];
+              : action === 'sign' ? claimSignAction(detail, userId)?.label ?? CLAIM_SIGN_LABEL
+                : ACTION_LABELS[action];
     if (action === 'edit') return <Link key={action} className={className} href={`${hubHref}/${detail.id}/edit`}>{label}</Link>;
     if (action === 'policy-settings') return <Link key={action} className={className} href={`${hubHref}?tab=policy`}>{label}</Link>;
     // Signing and the signed copy live in their sections below; the card points there.

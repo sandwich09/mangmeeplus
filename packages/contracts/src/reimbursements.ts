@@ -526,6 +526,9 @@ export const REIMBURSEMENT_DESK_LABELS: Record<ReimbursementCurrentDeskKind, str
  */
 export const REIMBURSEMENT_SYSTEM_WAIT_LABEL = 'รอระบบปรับสถานะ';
 
+/** The known fact on the claim page and printed form, for policy-on, solo and older frozen self-approvals alike. */
+export const REIMBURSEMENT_SELF_APPROVED_NOTE = 'ผู้เบิกและผู้อนุมัติเป็นบุคคลเดียวกัน ใบนี้ได้รับการอนุมัติโดยผู้เบิกเอง';
+
 // ---- หน้ารวม (hub) buckets ----
 
 /** Every claim sits in exactly one bucket, so the hub's chips add up to "ทั้งหมด". */

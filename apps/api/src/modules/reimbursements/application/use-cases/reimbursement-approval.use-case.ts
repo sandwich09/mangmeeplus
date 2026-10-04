@@ -14,7 +14,6 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
   isSelfApproval,
-  SELF_APPROVAL_EXEMPT_ROLES,
   matchesApproverRole,
   frozenApprovalAuthority,
   validateRejectionReason,
@@ -139,9 +138,9 @@ export function pendingApprovalActions(
   const step = currentApprovalStep(request);
   const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
   const eligible = isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers);
-  // Assignment resolution already applied the submitted self-approval rule and role exemptions.
+  // Assignment resolution already applied the self-approval rule at submission.
   // Re-evaluating it from a later role would hide a still-actionable task.
-  if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, ctx.userId, allowSelfApproval, ctx.roles)) {
+  if (!assignedBySnapshot && isSelfApproval(request.requesterUserId, ctx.userId, allowSelfApproval)) {
     // They hold the approval this step waits on, so only the switch stands in the way.
     const blockedOnlyBySwitch = step?.status === 'PENDING'
       && ctx.permissions.includes('reimbursement.approve')
@@ -388,7 +387,7 @@ export class ApproveReimbursementUseCase {
     if (!ctx.permissions.includes('reimbursement.approve') && !assignedBySnapshot) {
       throw new ForbiddenException('Missing permission: reimbursement.approve');
     }
-    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
+    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval)) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.approval.self_approval_denied',
         targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
@@ -419,8 +418,8 @@ export class ApproveReimbursementUseCase {
       // (payout spec §14.6) and nothing waits for the reconciler.
       const selfApproval = req.requesterUserId === ctx.userId ? {
         approvedOwnRequest: true,
-        via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
-        actorRoles: soloAtSubmission ? ctx.roles : ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
+        via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'frozen_assignment',
+        actorRoles: ctx.roles,
       } : undefined;
       await this.repo.approvePayoutCorrectionAtomic({
         companyId: ctx.companyId,
@@ -515,19 +514,14 @@ export class ApproveReimbursementUseCase {
             currency: req.currency,
             comment,
             projectionPending: !policy.financeReviewRequired,
-            // The exemption buys convenience, not anonymity. Recorded in the SAME transaction as
-            // the decision, so the trail cannot exist without the approval or the approval without
-            // the trail — a post-commit audit write can be lost exactly when it matters most.
-            // `via` distinguishes the company having opened the policy from a role standing in for
-            // it, which is the question support has to answer when a customer disputes a claim.
-            // `no_other_approver`: nobody else could approve at submit (owner order 2026-09-21); no
-            // exempt role stood in, so the roles the requester acted under are recorded instead.
+            // Record the reason in the decision transaction. Older frozen self-assignments stay
+            // executable after the 2026-10-04 rule change, without claiming a current role exemption.
             ...(req.requesterUserId === ctx.userId
               ? {
                 selfApproval: {
                   approvedOwnRequest: true,
-                  via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
-                  actorRoles: soloAtSubmission ? ctx.roles : ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
+                  via: soloAtSubmission ? 'no_other_approver' : policy.allowSelfApproval ? 'company_policy' : 'frozen_assignment',
+                  actorRoles: ctx.roles,
                 },
               }
               : {}),
@@ -659,7 +653,7 @@ export class RejectReimbursementUseCase {
     if (!ctx.permissions.includes('reimbursement.reject') && !assignedBySnapshot) {
       throw new ForbiddenException('Missing permission: reimbursement.reject');
     }
-    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
+    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval)) {
       throw new ForbiddenException('self_approval_denied');
     }
     if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)) {

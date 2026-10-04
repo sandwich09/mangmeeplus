@@ -15,7 +15,7 @@ import {
   getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
 } from './reimbursements.api';
 import {
-  FINANCE_REVIEW_LABELS, POLICY_TAB_LABEL, REIMBURSEMENT_CREATE_UNAVAILABLE, SELF_APPROVAL_SWITCH_LABEL,
+  FINANCE_REVIEW_LABELS, POLICY_TAB_LABEL, REIMBURSEMENT_CREATE_UNAVAILABLE, SELF_APPROVAL_SWITCH_LABEL, SELF_APPROVAL_POLICY_NOTE,
   claimDeskText, claimStatusBadge, currentDeskText, reimbursementOwnActions, reimbursementSubmitReadiness,
 } from './reimbursements.model';
 import {
@@ -34,7 +34,7 @@ import {
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
-import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage } from './reimbursement-payout.logic';
+import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
 import { roleDisplayName } from '../employee-access/role-picker.logic';
 import { type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
@@ -432,7 +432,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                               title={reimbursementSubmitReadiness(r).message}
                               onClick={e => { e.stopPropagation(); submitRow(r); }}
                               disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
-                            >{draftRowSubmitsFromItsPage(r) ? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'}</button>}
+                            >{draftRowSubmitLabel(r)}</button>}
                             {/* Cancelling now opens the journey page (Phase 6): its own "ยกเลิกคำขอ" action carries the confirm dialog. */}
                             {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                           </div>
@@ -472,7 +472,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         title={reimbursementSubmitReadiness(r).message}
                         onClick={() => submitRow(r)}
                         disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
-                      >{draftRowSubmitsFromItsPage(r) ? 'ตรวจบัญชีและส่งอนุมัติ' : 'ส่งอนุมัติ'}</button>}
+                      >{draftRowSubmitLabel(r)}</button>}
                       {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => onOpenDetail(r.id)} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                     </div>
                   )}
@@ -1071,7 +1071,7 @@ export function PolicySettings({ companyId, onPolicy }: {
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-gray-800">{SELF_APPROVAL_SWITCH_LABEL}</span>
-                <span className="mt-0.5 block text-xs text-gray-500">เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายสามารถอนุมัติใบเบิกที่ตัวเองสร้างได้</span>
+                <span className="mt-0.5 block text-xs text-gray-500">{SELF_APPROVAL_POLICY_NOTE}</span>
               </span>
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.allowSelfApproval} onChange={e => setForm((f: any) => ({ ...f, allowSelfApproval: e.target.checked }))} />
             </label>
