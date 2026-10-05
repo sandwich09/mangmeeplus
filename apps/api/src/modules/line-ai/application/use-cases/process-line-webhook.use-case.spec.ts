@@ -13,7 +13,7 @@ import { ReceiptOcrApplyService } from '../../../expenses/application/services/r
 import { TH_SME_EXPENSE_CATEGORIES_V1 } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
-import { buildLineAssistantTextCardMessage, isCompleteLineBusinessAnswerPresentation } from '../../domain/logic/line-business-card.logic';
+import { buildLineAssistantTextCardMessage, isCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from '../../domain/logic/line-business-card.logic';
 import { isLineSystemCard, readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
 import { lineMessagePreview } from '../../domain/logic/line-message-preview.logic';
 import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
@@ -5656,6 +5656,124 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
         }
       });
     }
+  });
+
+  // Owner 2026-10-05, real LINE: after the assistant asked him a question, his short replies "สิงหา ถึง ตค"
+  // and "ปี 2569" came back as a bare text bubble between cards — "การ์ดหลุดด้วย". Every short reply of a
+  // bound chat (an apology, a question, a notice) stands on the locked design under the reader's own
+  // words; its sentence is unchanged and is still what the delivery plan stores and falls back to.
+  describe('a bound chat\'s short replies stand on the locked design', () => {
+    const UNCLEAR = 'ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร ช่วยพิมพ์อีกแบบได้ไหมคะ เช่น "เดือนนี้จ่ายไปเท่าไหร่" หรือ "แยกค่าใช้จ่ายตามหมวด"';
+    const TRANSIENT = 'ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ';
+    async function boundReply(errorCode: string, permissions: string[], messageText: string, over: Record<string, unknown> = { lineMessageId: 'line-message-1' }, webBaseUrl?: string) {
+      const { prisma, updates } = makePrisma();
+      prisma.client.lineIntakePendingMedia.findMany = async () => [];
+      prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+      const h = makeUseCase(prisma, {
+        permissions,
+        config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+          lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'], ...(webBaseUrl ? { webBaseUrl } : {}) },
+        intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode }),
+        aiGatewayFn: () => assert.fail('a route that did not route must not start the LINE turn'),
+      });
+      const event: any = { ...BASE_EVENT, webhookEventId: `evt-bound-reply-${errorCode}-${permissions.join('+')}-${Object.keys(over).length}-${webBaseUrl ?? ''}`, messageText, ...over };
+      const evidence = await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0',
+        eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] });
+      assert.ok(evidence);
+      event.inputEvidence = evidence.inputEvidence;
+      const flow = h.useCase as any;
+      const delivered: any[] = [];
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { delivered.push(...messages); return 'ok'; };
+      flow.contextV2 = {
+        admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+        projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+      };
+      // The grant is stored on the event as the real admission does: without one the second route says
+      // "the system is slow" whatever the route answered (a missing grant is not a text nobody understood).
+      flow.prepareTextGrantV2 = async () => { const grant = { turnKey: evidence.inputEvidence.turnKey }; flow.budgetGrantsV2.set(event, grant); return grant; };
+      flow.budgetGrantsV2.set(event, { turnKey: evidence.inputEvidence.turnKey });
+      flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+      await h.useCase.execute(event);
+      assert.equal(h.getAiGatewayCalled(), false);
+      return { delivered, final: (updates.at(-1) as any).data };
+    }
+    for (const [route, permissions, messageText] of [
+      ['first', ['line.ai.query'], 'สิงหา ถึง ตค'],
+      // A sender who may only capture expenses is not routed first; the second route is theirs.
+      ['second', ['expense.receipt.line_upload'], 'ปี 2569'],
+    ] as const) {
+      it(`the two apologies at the ${route} route are a card under the reader's own words, the sentence unchanged`, async () => {
+        for (const [errorCode, sentence] of [['ROUTER_SEMANTIC_SCHEMA_INVALID', UNCLEAR], ['PROVIDER_TIMEOUT', TRANSIENT]] as const) {
+          const turn = await boundReply(errorCode, [...permissions], messageText);
+          assert.equal(turn.delivered.length, 1, errorCode);
+          const [message] = turn.delivered;
+          assert.equal(isLineSystemCard(message), true, `${errorCode}: a card of the locked design, never a bare text bubble`);
+          const card = readLineSystemCard(message);
+          assert.deepEqual(card.header, [...lineAnswerCardHeader(messageText)!.lines], errorCode);
+          assert.deepEqual([card.prose, card.rows, card.actions], [[sentence], [], []], errorCode);
+          // The sentence is the canonical text: what the plan stores, and what LINE gets if it refuses the card.
+          assert.equal(message.canonicalText, sentence);
+          assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so the delivery plan sends the card itself');
+          assert.equal(turn.final.status, 'provider_unavailable');
+          assert.equal(turn.final.errorCode, errorCode);
+        }
+      });
+    }
+
+    it('the reader\'s own words head it: two short lines, or the beginning of a long message', async () => {
+      assert.deepEqual(readLineSystemCard((await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'สิงหา ถึง ตค')).delivered[0]).header, ['สิงหา', 'ถึง ตค']);
+      assert.deepEqual(readLineSystemCard((await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'ปี 2569')).delivered[0]).header, ['ปี', '2569']);
+      const long = readLineSystemCard((await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'ช่วยดูค่าใช้จ่ายของเดือนที่แล้วเทียบกับเดือนนี้ให้หน่อยได้ไหมคะ')).delivered[0]);
+      assert.ok(long.header[1]!.endsWith('…') && 'ช่วยดูค่าใช้จ่ายของเดือนที่แล้วเทียบกับเดือนนี้ให้หน่อยได้ไหมคะ'.startsWith(long.header[0]!));
+    });
+
+    it('stays the text it was where a card cannot be true or cannot be drawn: a tap, a base that is not https', async () => {
+      // A button tap is carried as words the reader never typed (no LINE message id): no heading of "their words".
+      const tap = await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'อ่านคำตอบต่อ', {});
+      assert.deepEqual(tap.delivered, [{ type: 'text', text: UNCLEAR }]);
+      // LINE fetches the card's pictures over https only.
+      const local = await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'สิงหา ถึง ตค', { lineMessageId: 'line-message-1' }, 'http://localhost:3000');
+      assert.deepEqual(local.delivered, [{ type: 'text', text: UNCLEAR }]);
+    });
+  });
+
+  // The same class, a reply that has no typed words to stand under: a tap on a proposal's button. Its
+  // answer is the edit's own card (design lock context 4), never a bare text bubble.
+  describe('a bound chat\'s replies to a tap, and a reply with a link of its own', () => {
+    const ACCESS = { permissions: ['line.ai.query', 'expense.update'], roles: [] };
+    function seam(options: Record<string, unknown> = {}) {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { permissions: ACCESS.permissions, ...options });
+      const flow = h.useCase as any;
+      const sent: any[] = [];
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); return 'ok'; };
+      const bind = (event: object) => { flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1' }, id: 'conversation', epoch: 1 }); return event as any; };
+      return { flow, sent, bind };
+    }
+
+    it('a tap on a proposal that is gone answers on the edit\'s own card: nothing was changed', async () => {
+      for (const draftUpdate of [{ enabled: true }, { enabled: false }]) {
+        const { flow, sent, bind } = seam({ draftUpdate });
+        await flow.handleDraftUpdatePostback(bind({ ...BASE_EVENT, webhookEventId: `evt-gone-${draftUpdate.enabled}`, messageText: 'ยืนยันการแก้ไข' }), { companyId: 'company-1', userId: 'user-1' }, ACCESS, true);
+        assert.equal(sent.length, 1);
+        const card = readLineSystemCard(sent[0]);
+        assert.deepEqual(card.header, ['แก้ไขค่าใช้จ่าย', 'ยังไม่ได้แก้ไข']);
+        assert.deepEqual(card.prose, [sent[0].canonicalText]);
+        assert.match(sent[0].canonicalText, /^ไม่พบรายการที่รอยืนยันในแชทนี้ค่ะ/u);
+        assert.equal(isCompleteLineBusinessAnswerPresentation(sent[0]), true);
+      }
+    });
+
+    it('a reply whose link is not a page of this company stays text: only a text message keeps it tappable', async () => {
+      const { flow, sent, bind } = seam();
+      await flow.deliverReply(bind({ ...BASE_EVENT, messageText: 'ขอลิงก์คู่มือ', lineMessageId: 'line-message-1' }), 'ดูได้ที่ https://example.org/guide ค่ะ');
+      assert.deepEqual(sent, [{ type: 'text', text: 'ดูได้ที่ https://example.org/guide ค่ะ' }]);
+      // …and a page of this company becomes the card's button, under the name its own line gives it.
+      sent.length = 0;
+      await flow.deliverReply(bind({ ...BASE_EVENT, messageText: 'ขอลิงก์รายการ', lineMessageId: 'line-message-2' }), 'เปิดได้เลยค่ะ\nเปิดดูรายการ: https://app.example.com/companies/company-1/expenses/e1');
+      const card = readLineSystemCard(sent[0]);
+      assert.deepEqual([card.prose, card.actions], [['เปิดได้เลยค่ะ'], [{ type: 'uri', label: 'เปิดดูรายการ', uri: 'https://app.example.com/companies/company-1/expenses/e1' }]]);
+    });
   });
 
   it('says the budget could not be CHECKED for AI_BUDGET_UNAVAILABLE, and never that it is full', async () => {
