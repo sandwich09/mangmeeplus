@@ -298,6 +298,25 @@ describe('reimbursement payout mirrors the claim expense projections', () => {
 
 
 describe('payment source duplicate gate', () => {
+  it('refuses a confirmed own expense under the payment lock for every policy without changing recorded money', async () => {
+    for (const duplicatePolicy of ['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT']) {
+      const h = recordHarness();
+      h.tx.reimbursementPolicy.findFirst = async () => ({ duplicatePolicy });
+      h.request.sourceExpenses = [{ status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE' }];
+      let created = 0;
+      const create = h.tx.reimbursementPayment.create;
+      h.tx.reimbursementPayment.create = async (input: any) => { created++; return create(input); };
+      await assert.rejects(() => h.repo.recordPaymentAtomic({ companyId: 'co-1', reimbursementRequestId: 'rb-1', paidByUserId: 'payer', currency: 'THB', paidAmount: '289', paymentMethod: 'CASH', paidAt: PAID_AT, idempotencyKey: 'confirmed-dup' }), (error: any) => {
+        assert.equal(error.getResponse().code, 'duplicate_confirmed');
+        assert.deepEqual(error.getResponse().duplicateReasons, ['EXPENSE_CONFIRMED_DUPLICATE']);
+        return true;
+      });
+      assert.equal(created, 0);
+      assert.equal(h.request.paymentTotalAmount, '0.0000');
+      assert.equal(h.request.paymentStatus, 'UNPAID');
+      assert.deepEqual(h.expenseUpdates, []);
+    }
+  });
   it('refuses an unresolved own expense under the lock, but leaves WARN payable', async () => {
     for (const duplicatePolicy of ['BLOCK_PAYMENT', 'WARN']) {
       const h = recordHarness();

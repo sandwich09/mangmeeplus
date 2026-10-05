@@ -28,7 +28,7 @@ import {
   policyDecisionPreview, approverNotReadyHelp, approvalComparable, categoryText, type HubTab,
   type HubFilter, approverPaymentWarning,
   NO_HUB_LIST, QUEUE_PAGE_SIZE, HUB_SEARCH_DELAY_MS, hubCardFilter, hubList, hubListKey, hubListStatusText, hubNextPage, withHubFailure, withHubPage, withHubRetry, type HubList,
-  queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote, quickPayTarget,
+  queueRowOffersFinanceReview, queueRowOffersPayment, quickPayBlockedNote, quickPayTarget, duplicateNoticeForViewer, duplicateCanBeCleared,
   approvalRowOffers, financeQueueWords, rowHasFinanceReview, rowMayBeDuplicate,
 } from './reimbursements.logic';
 import {
@@ -37,7 +37,7 @@ import {
 import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
 import { roleDisplayName } from '../employee-access/role-picker.logic';
-import { reimbursementDuplicateBlockNotice, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateBlockText, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
 /** Every banner in this feature goes through here, so API error codes never reach the user raw. */
@@ -56,7 +56,7 @@ const HUB_TAB_DESCRIPTIONS: Record<NamedHubTab, string> = {
 /** A claim that has waited longer than the company's deadline, in the words of the notice the server sends for it. */
 const OVERDUE_LABEL = 'เกินกำหนด';
 /** The mark of a claim that may repeat another one, on a row of either queue. */
-const MAY_BE_DUPLICATE_LABEL = 'อาจซ้ำ';
+const MAY_BE_DUPLICATE_LABEL = reimbursementDuplicateBlockText();
 /** The deadline itself: how long a claim may wait for its approval, and then for its payment. */
 const DEADLINE_LABEL = 'กำหนดเวลาอนุมัติและจ่าย';
 const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' | 'name'>) =>
@@ -236,7 +236,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         canCreate={permissions.includes('reimbursement.create')}
       />}
       {tab === 'approvals' && <ApprovalQueue {...queueProps} />}
-      {tab === 'finance' && <FinanceQueue {...queueProps} financeStep={financeStep} onRecordPayment={recordPayment} />}
+      {tab === 'finance' && <FinanceQueue {...queueProps} userId={userId} financeStep={financeStep} onRecordPayment={recordPayment} />}
       {tab === 'policy' && <PolicySettings companyId={companyId} onPolicy={notePolicy} />}
 
       {payFor && <PaymentModal
@@ -714,7 +714,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
 }
 
 // ── Finance Queue ─────────────────────────────────────────────────────────────
-function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onRecordPayment, financeStep }: QueueProps & {
+function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, userId, onRecordPayment, financeStep }: QueueProps & {
+  userId: string;
   /** `layout`: where the press was made, the table (a dialog opens) or the phone cards (the claim page opens). */
   onRecordPayment: (request: any, layout: 'cards' | 'table') => void;
   /** Whether the company has the finance-review step. Undefined while the page is still reading its policy. */
@@ -769,7 +770,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
     r.currency,
     claimStatusBadge(r).label,
     financeLine(r),
-    r.hasDuplicateBlocker ? MAY_BE_DUPLICATE_LABEL : '',
+    r.hasDuplicateBlocker ? reimbursementDuplicateBlockText(r.duplicateReasons) : '',
     currentDeskText(r.currentDesk),
   ], query)), [data, query, financeLine]);
   const bounds = useMemo(() => pageBounds(filteredData.length, page), [filteredData.length, page]);
@@ -822,7 +823,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                         <td className={cx(FREE_TEXT_CELL, 'min-w-24')}>{r.requesterDisplayNameSnapshot}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
                         <td className="text-right tabular-nums">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</td>
-                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge><span className="text-xs text-amber-800">{reimbursementDuplicateBlockNotice(r.duplicateReasons, r.status === 'FINANCE_REVIEW')}</span></>}</div></td>
+                        <td><div className="flex flex-wrap items-center gap-2"><StatusBadge claim={r} />{(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{reimbursementDuplicateBlockText(r.duplicateReasons)}</MangmeeBadge><span className="text-xs text-amber-800">{duplicateNoticeForViewer(r, permissions, userId)}</span></>}</div></td>
                         {withReview && <td className="text-xs text-gray-500">{financeLine(r) ?? '—'}</td>}
                         <td className="text-right">
                           <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -831,7 +832,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {queueRowOffersFinanceReview(r) && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
+                            {queueRowOffersFinanceReview(r) && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (duplicateCanBeCleared(r) && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={duplicateCanBeCleared(r) && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: duplicateCanBeCleared(r), duplicateResolutionReason: duplicateCanBeCleared(r) ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
                             {queueRowOffersPayment(r, permissions) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); onRecordPayment(r, 'table'); }}>บันทึกจ่าย</button>}
                           </div>
                         </td>
@@ -853,14 +854,14 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <StatusBadge claim={r} />
-                      {(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{MAY_BE_DUPLICATE_LABEL}</MangmeeBadge><span className="text-xs text-amber-800">{reimbursementDuplicateBlockNotice(r.duplicateReasons, r.status === 'FINANCE_REVIEW')}</span></>}
+                      {(r.hasDuplicateBlocker || r.duplicateReasons?.includes('EXPENSE_CONFIRMATION')) && <><MangmeeBadge tone="amber">{reimbursementDuplicateBlockText(r.duplicateReasons)}</MangmeeBadge><span className="text-xs text-amber-800">{duplicateNoticeForViewer(r, permissions, userId)}</span></>}
                     </div>
                     <span className="shrink-0 text-xs tabular-nums text-gray-500">{r.ageHours} ชม.</span>
                   </div>
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`/companies/${companyId}/reimbursements/${r.id}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
-                    {queueRowOffersFinanceReview(r) && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
+                    {queueRowOffersFinanceReview(r) && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (duplicateCanBeCleared(r) && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={duplicateCanBeCleared(r) && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: duplicateCanBeCleared(r), duplicateResolutionReason: duplicateCanBeCleared(r) ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
                     {queueRowOffersPayment(r, permissions) && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => onRecordPayment(r, 'cards')}>บันทึกจ่าย</button>}
                   </div>
                 </MangmeeCard>

@@ -1726,6 +1726,12 @@ const reimbursementDetailData = (over: Record<string, unknown> = {}): Record<str
 });
 
 describe('R-L4 F13 reimbursement.get_detail::single_metric — รายละเอียดใบเบิก', () => {
+  it('keeps the verified payment-block explanation in the LINE claim answer', () => {
+    const paymentBlockNotice = 'ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ จึงบันทึกจ่ายไม่ได้';
+    const result = formatPreparedSimpleRead(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData({ duplicateBlocksPayment: true, paymentBlockNotice })), TH);
+    assert.equal(result.kind, 'answer');
+    if (result.kind === 'answer') assert.ok(result.replyText.includes(paymentBlockNotice));
+  });
   it('states the requester, Thai date, amount, status, source, as-of and link (Thai)', () => {
     const r = formatPreparedSimpleRead(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(reimbursementDetailData()), TH);
     assert.equal(r.kind, 'answer');

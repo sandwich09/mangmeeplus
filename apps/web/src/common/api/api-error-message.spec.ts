@@ -3,6 +3,21 @@ import { test } from 'node:test';
 
 import { apiErrorMessage, translateApiError } from './api-error-message';
 
+test('confirmed duplicate payment refusals say why and give the state-appropriate way out', () => {
+  for (const nested of [false, true]) {
+    const facts = { code: 'duplicate_confirmed', claimStatus: 'READY_FOR_PAYMENT', canCancel: true };
+    const message = apiErrorMessage(nested ? { status: 422, details: facts } : facts);
+    assert.match(message, /ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+    assert.match(message, /กดยกเลิกคำขอในหน้าใบเบิก/);
+    assert.match(message, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
+    assert.doesNotMatch(message, /ปลดรายการซ้ำ|อนุมัติจ่าย|[a-zA-Z_]/);
+  }
+  const partial = apiErrorMessage({ code: 'duplicate_confirmed', details: { claimStatus: 'PARTIALLY_PAID', canVoidPayment: false } });
+  assert.match(partial, /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
+  assert.doesNotMatch(partial, /กดยกเลิกคำขอ/);
+  assert.match(translateApiError('duplicate_confirmed')!, /ไม่ใส่รายการซ้ำ/);
+});
+
 test('the payment-reference code asks for a cheque number or evidence', () => {
   assert.equal(translateApiError('payment_reference_required'), 'กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย');
   assert.equal(apiErrorMessage({ code: 'payment_reference_required' }), 'กรอกเลขที่เช็คหรือแนบหลักฐานการจ่าย');

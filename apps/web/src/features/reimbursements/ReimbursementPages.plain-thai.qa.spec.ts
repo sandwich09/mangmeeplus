@@ -1257,10 +1257,22 @@ describe('claims self-approval policy words', () => {
 
 it('both pay-queue layouts reuse the same duplicate reason and clearing notice as the payment refusal', () => {
   const source = readFileSync(join(__dirname, 'ReimbursementsPages.tsx'), 'utf8');
-  assert.equal((source.match(/reimbursementDuplicateBlockNotice\(r\.duplicateReasons, r\.status === 'FINANCE_REVIEW'\)/g) ?? []).length, 2);
+  assert.equal((source.match(/duplicateNoticeForViewer\(r, permissions, userId\)/g) ?? []).length, 2);
 });
 
 it('duplicate-clear success says the review was recorded without promising every blocker is gone', () => {
   const source = readFileSync(join(__dirname, 'ReimbursementJourneyPage.tsx'), 'utf8');
   assert.match(source, /success: REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED/);
+});
+
+it('both pay-queue layouts distinguish confirmed duplicates and give cancellation or payment-void guidance', () => {
+  for (const status of ['READY_FOR_PAYMENT', 'FINANCE_REVIEW', 'PARTIALLY_PAID']) {
+    const html = hubTab('finance', [{ ...queueRow, status, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }]);
+    const text = visible(html).join(' ');
+    assert.equal((text.match(/ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/g) ?? []).length, 2);
+    assert.match(text, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
+    assert.doesNotMatch(text, /กดปลดรายการซ้ำ|ตรวจว่าไม่ซ้ำแล้ว/);
+    if (status === 'PARTIALLY_PAID') assert.match(text, /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
+    else assert.match(text, /กดยกเลิกคำขอในหน้าใบเบิก/);
+  }
 });

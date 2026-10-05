@@ -1,5 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { reimbursementDuplicateBlockNotice } from './reimbursements.js';
+
+test('confirmed receipt guidance gives the actual cancellation or payment-void path, never duplicate clearance', () => {
+  const reasons = ['EXPENSE_CONFIRMED_DUPLICATE', 'ATTACHMENT_CHECKSUM'];
+  const notice = (context: object) => (reimbursementDuplicateBlockNotice as any)(reasons, true, context) as string;
+  const own = notice({ status: 'READY_FOR_PAYMENT', canCancel: true });
+  assert.match(own, /ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+  assert.match(own, /กดยกเลิกคำขอในหน้าใบเบิก/);
+  const other = notice({ status: 'FINANCE_REVIEW', canCancel: false });
+  assert.match(other, /ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขา/);
+  for (const status of ['PARTIALLY_PAID', 'PAID']) {
+    const paid = notice({ status, canCancel: false, canVoidPayment: true });
+    assert.match(paid, /มีรายการจ่ายอยู่ จึงยกเลิกคำขอไม่ได้/);
+    assert.match(paid, /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
+    assert.match(notice({ status, canVoidPayment: false }), /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
+  }
+  assert.match(notice({ status: 'READY_FOR_PAYMENT', cancellationPending: true, canResumeCancellation: true }), /ดำเนินการยกเลิกต่อ/);
+  assert.match(notice({ status: 'REJECTED' }), /ถูกปฏิเสธแล้ว/);
+  for (const context of [{ status: 'CANCELLED' }, { status: 'VOIDED' }, {}, { status: 'DRAFT', canCancel: true }, { status: 'PENDING_APPROVAL', canCancel: false }]) {
+    const text = notice(context);
+    assert.match(text, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
+    assert.doesNotMatch(text, /ปลดรายการซ้ำ|อนุมัติจ่าย|[a-zA-Z_]/);
+  }
+});
 import {
   MANDATORY_MARKETING_UNSUBSCRIBE_KEYWORDS,
   withMandatoryMarketingUnsubscribeKeywords,

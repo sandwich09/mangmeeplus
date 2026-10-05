@@ -2944,6 +2944,36 @@ describe('PrismaReimbursementRepository: sending a claim back for its payout acc
 
 
 describe('own expense duplicates agree at every payment surface', () => {
+  it('refuses a confirmed own duplicate under every policy before reserving a number or recording a payment', async () => {
+    for (const duplicatePolicy of ['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT']) {
+      const req = financeReviewedRequest({ confirmedDuplicateExpenseCount: 1, duplicateStatus: 'NO_MATCH' });
+      const repo = fakeRepo(req, { policy: { duplicatePolicy } });
+      let reserved = 0;
+      const uc = new RecordReimbursementPaymentUseCase(repo, noopAudit, { execute: async () => { reserved++; return reserve.execute(); } } as any, commit, fakeDetailEvidence as any);
+      await assert.rejects(() => uc.execute(ctx(['reimbursement.payment.record']), req.id, { paidAmount: '500', paymentMethod: 'CASH', paidAt: '2026-02-01' }), (error: any) => {
+        const response = error.getResponse();
+        assert.equal(response.code, 'duplicate_confirmed');
+        assert.deepEqual(response.duplicateReasons, ['EXPENSE_CONFIRMED_DUPLICATE']);
+        return true;
+      });
+      assert.equal(reserved, 0);
+      assert.equal(repo.payments.length, 0);
+    }
+  });
+  it('marks confirmed own duplicates on detail and queue under every policy even with a stale claim status', async () => {
+    const { ListFinanceQueueUseCase } = await import('./reimbursement-finance.use-case');
+    for (const duplicatePolicy of ['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT']) {
+      const req = financeReviewedRequest({ confirmedDuplicateExpenseCount: 1, duplicateStatus: 'NO_MATCH' });
+      const repo = fakeRepo(req, { policy: { duplicatePolicy } });
+      repo.listRequests = async () => [req];
+      const detail = await detailWithFileNames(repo, fakeDetailEvidence as any, 'co-1', req, ctx([]));
+      const [row] = await new ListFinanceQueueUseCase(repo).execute(ctx(['reimbursement.finance_review']));
+      assert.equal(detail.duplicateBlocksPayment, true, duplicatePolicy);
+      assert.equal(row.hasDuplicateBlocker, true, duplicatePolicy);
+      assert.deepEqual(detail.duplicateReasons, ['EXPENSE_CONFIRMED_DUPLICATE']);
+      assert.deepEqual(row.duplicateReasons, detail.duplicateReasons);
+    }
+  });
   it('refuses before number reservation and marks detail/queue; WARN stays payable', async () => {
     for (const duplicatePolicy of ['BLOCK_PAYMENT', 'WARN']) {
       const req = financeReviewedRequest({ possibleDuplicateExpenseCount: 1, duplicateStatus: 'POSSIBLE_DUPLICATE', approvalPolicySnapshotJson: { schemaVersion: 1, policyId: 'p', policyVersion: 'v', approvalRequiredFromAmount: '1', requiresApproval: false, route: null, allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: true, duplicatePolicy, financeReviewRequired: false } });

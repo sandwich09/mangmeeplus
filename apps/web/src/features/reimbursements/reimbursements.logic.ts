@@ -134,7 +134,7 @@ export function awaitingSystemNote(detail: any, approvedBy?: string): string {
 export function errorText(e: unknown): string {
   const code = (e as { code?: unknown } | null)?.code;
   const viaCode = typeof code === 'string' ? ERROR_CODE_LABELS[code] ?? translateApiError(code) : null;
-  if (code === 'duplicate_unresolved') return apiErrorMessage(e);
+  if (code === 'duplicate_unresolved' || code === 'duplicate_confirmed') return apiErrorMessage(e);
   if (viaCode) return viaCode;
   return errorMessage(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด', e);
 }
@@ -388,6 +388,7 @@ export function paymentSaveErrorMessage(stage: 'slip-upload' | 'record', error: 
   if (stage === 'slip-upload') return `อัปโหลดสลิปไม่สำเร็จ ระบบยังไม่ได้บันทึกจ่าย · ${errorText(error)}`;
   if (isLostPaymentRace(error)) return 'ยังบันทึกจ่ายไม่สำเร็จ เพราะมีการทำรายการกับใบนี้ในเวลาเดียวกัน กดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่';
   const reason = errorText(error);
+  if ((error as { code?: unknown } | null)?.code === 'duplicate_confirmed') return reason;
   if ((error as { status?: unknown } | null)?.status === 409) return `ยังบันทึกจ่ายไม่สำเร็จ · ${reason}`;
   return slipKept
     ? `แนบสลิปแล้ว แต่ยังบันทึกจ่ายไม่สำเร็จ · ${reason} · ตรวจข้อมูลแล้วกดบันทึกจ่ายอีกครั้ง ไม่ต้องแนบสลิปหรือโอนเงินใหม่`
@@ -1173,6 +1174,19 @@ function payoutCorrectionStepNote(
   ].filter(Boolean).join(' · ');
 }
 
+export function duplicateNoticeForViewer(detail: any, permissions: readonly string[], userId: string): string {
+  return reimbursementDuplicateBlockNotice(detail?.duplicateReasons, detail?.status === 'FINANCE_REVIEW', {
+    status: detail?.status,
+    canCancel: reimbursementOwnActions(detail, userId, permissions).canCancel,
+    cancellationPending: claimIsBeingCancelled(detail),
+    canResumeCancellation: detail?.pendingCancellation?.canResume === true,
+  });
+}
+
+export function duplicateCanBeCleared(claim: { duplicateBlocksPayment?: boolean; hasDuplicateBlocker?: boolean; duplicateReasons?: readonly string[] }): boolean {
+  return (claim.duplicateBlocksPayment === true || claim.hasDuplicateBlocker === true) && !claim.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE');
+}
+
 /**
  * The claim as 4 or 5 steps with the actions open to this viewer. A projection of the existing
  * statuses: nothing is stored, every action still goes through its own endpoint, and the buttons
@@ -1195,6 +1209,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
   const humanApproved = !!approval;
   const signed = new Set((detail?.signatures ?? []).map((row: any) => row.role));
   const payment = (detail?.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
+  const confirmedDuplicate = detail?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') === true;
   const duplicate = ['POSSIBLE_DUPLICATE', 'CONFIRMED_DUPLICATE'].includes(detail?.duplicateStatus)
     ? DUPLICATE_STATUS_LABELS[detail.duplicateStatus] : undefined;
   // Payout spec §14: the claim's place in a correction round, and what the server says THIS viewer may do about
@@ -1272,7 +1287,10 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
     } else if (key === 'payment') {
       // APPROVED here is the no-finance claim waiting for its projection; the API accepts payment then.
       const payable = ['READY_FOR_PAYMENT', 'APPROVED'].includes(status);
-      if (payable && (detail?.duplicateBlocksPayment === true || detail?.duplicateReasons?.includes('EXPENSE_CONFIRMATION'))) {
+      if (confirmedDuplicate) {
+        note = duplicateNoticeForViewer(detail, permissions, userId);
+        if (canVoidRecordedPayment(payment, permissions)) actions.push('void-payment');
+      } else if (payable && (detail?.duplicateBlocksPayment === true || detail?.duplicateReasons?.includes('EXPENSE_CONFIRMATION'))) {
         // The API refuses payment until the block is cleared with a reason.
         // Owner 2026-09-21: a claim has only a requester and an approver, so whoever records the
         // payment clears the duplicate block with a reason; duplicate.resolve holders still can too.
@@ -1335,6 +1353,7 @@ export function buildJourneySteps(detail: any, permissions: readonly string[], u
       if (canUploadSignedCopy(detail, userId, permissions)) actions.push('attach-signed-copy');
       if (canVoidRecordedPayment(payment, permissions)) actions.push('void-payment');
     }
+    if (confirmedDuplicate && key !== 'payment') note = [note, duplicateNoticeForViewer(detail, permissions, userId)].filter(Boolean).join(' · ');
     return { note, actions };
   };
 

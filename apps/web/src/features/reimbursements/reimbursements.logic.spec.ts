@@ -14,6 +14,21 @@ import {
 import { currentDeskText } from './reimbursements.model';
 import { REIMBURSEMENT_DESK_LABELS, isReimbursementClaimApprover, reimbursementHubBucket } from '@watchdog-bms/contracts';
 
+it('a confirmed duplicate offers cancellation guidance without payment or clearance, including partially paid claims', () => {
+  const confirmed = { id: 'rb', requesterUserId: 'staff', branchId: 'b', status: 'READY_FOR_PAYMENT', financeReviewStatus: 'NOT_REQUIRED', duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'], lines: [] };
+  const permissions = ['reimbursement.payment.record', 'reimbursement.duplicate.resolve', 'reimbursement.cancel_own', 'reimbursement.payment.void'];
+  const step = activeJourneyStep(buildJourneySteps(confirmed, permissions, 'staff'))!;
+  assert.equal(step.actions.includes('pay'), false);
+  assert.equal(step.actions.includes('resolve-duplicate'), false);
+  assert.equal(step.actions.includes('cancel'), true);
+  assert.match(step.note!, /กดยกเลิกคำขอในหน้าใบเบิก/);
+  const paid = activeJourneyStep(buildJourneySteps({ ...confirmed, status: 'PARTIALLY_PAID', payments: [{ status: 'RECORDED' }] }, permissions, 'staff'))!;
+  assert.equal(paid.actions.includes('cancel'), false);
+  assert.equal(paid.actions.includes('void-payment'), true);
+  assert.match(paid.note!, /มีรายการจ่ายอยู่ จึงยกเลิกคำขอไม่ได้/);
+  assert.match(paid.note!, /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
+});
+
 const line = (overrides: Record<string, unknown> = {}) => ({
   incurredDate: '2026-01-01', description: 'แท็กซี่', categoryKey: 'travel', amount: '100', hasReceipt: true, ...overrides,
 });

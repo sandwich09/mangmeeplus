@@ -89,6 +89,22 @@ function text(value: any): string {
 function visible(html: string) { return html.replace(/<[^>]+>/g, ' '); }
 function dialog(html: string) { return html.slice(html.indexOf('<section data-dialog')); }
 
+test('confirming a claim receipt duplicate warns before confirmation about payment, cancellation and irreversibility only for claim sources', () => {
+  for (const sourceReimbursementRequestId of ['claim-1', null]) {
+    for (const action of ['confirm', 'dismiss']) {
+      const page = harness({ detail: expense({ status: 'READY_FOR_CONFIRMATION', sourceReimbursementRequestId, duplicateStatus: 'POSSIBLE_DUPLICATE' }),
+        duplicateResolution: { candidateId: 'd1', action }, reason: 'ตรวจแล้วซ้ำจริง' }, [...OWNER, 'expense.duplicate.resolve']);
+      const text = visible(page.render());
+      if (sourceReimbursementRequestId && action === 'confirm') {
+        assert.match(text, /หากยืนยันว่าซ้ำ ใบเบิกนี้จะบันทึกจ่ายไม่ได้/);
+        assert.match(text, /ต้องยกเลิกใบเบิกนี้/);
+        assert.match(text, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
+        assert.match(text, /การยืนยันว่าซ้ำแล้วไม่สามารถย้อนกลับได้/);
+      } else assert.doesNotMatch(text, /หากยืนยันว่าซ้ำ ใบเบิกนี้/);
+    }
+  }
+});
+
 test('A1 owner without ledger sees confirmed lock, reopen, actual certificate blockers and missing capability', () => {
   const html = harness().render();
   assert.match(html, /เอกสารยืนยันแล้ว จึงล็อกข้อมูลไว้/);

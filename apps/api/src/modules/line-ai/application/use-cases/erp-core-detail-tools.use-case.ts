@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException, Optional } from '@ne
 import Decimal from 'decimal.js';
 import type { RequestContext, SourceRef, ToolResult } from '@watchdog-bms/contracts';
 import {
-  civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementPayoutHeld, reimbursementPayoutRoundStatus,
+  civilDate, EXPENSE_STATUS_LABELS, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, REIMBURSEMENT_SYSTEM_WAIT_LABEL, reimbursementPayoutHeld, reimbursementPayoutRoundStatus, reimbursementDuplicateBlockNotice,
 } from '@watchdog-bms/contracts';
 import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
@@ -11,7 +11,7 @@ import { GetProductUseCase } from '../../../inventory/application/use-cases/list
 import { GetDocumentUseCase, ListDocumentsUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
 import { GetExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
 import { parseLineExpenseDraftContinuation } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
-import { GetReimbursementDetailUseCase } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
+import { GetReimbursementDetailUseCase, mayCancelReimbursement } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { GetReimbursementAiSummaryUseCase } from '../../../reimbursements/application/use-cases/reimbursement-summary.use-case';
 import { PAYOUT_CORRECTION_STEP_REASON } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
@@ -432,6 +432,11 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
       // (both are refused meanwhile): its status reads as the system's wait, the words of the claim page and
       // of the backlog tool for the same claim, never as the status it has not left yet.
       const round = item.cancellationPending ? undefined : item.payoutCorrection;
+      const paymentBlockNotice = item.duplicateBlocksPayment ? reimbursementDuplicateBlockNotice(item.duplicateReasons, item.status === 'FINANCE_REVIEW', {
+        status: item.status, canCancel: mayCancelReimbursement(toCtx(ctx), item),
+        cancellationPending: item.cancellationPending,
+        canResumeCancellation: item.pendingCancellation?.canResume,
+      }) : undefined;
       return {
         toolName: this.toolName, status: 'ok', asOf,
         data: {
@@ -455,6 +460,12 @@ export class ReimbursementGetDetailTool implements ErpReadToolPort<{ reimburseme
             .map((step) => ({ status: step.status, sequence: step.sequenceNo, actedAt: step.decidedAt ?? null })),
           payments: item.payments.slice(0, 10).map((payment) => ({ paymentNo: payment.paymentNo, status: payment.status, paidAmount: payment.paidAmount, paidAt: payment.paidAt })),
           duplicateCount: item.duplicateCandidates.length,
+          ...(item.duplicateBlocksPayment && {
+            duplicateBlocksPayment: true,
+            paymentBlockNotice,
+            // The general accounting reader consumes message; the compiled claim reply consumes paymentBlockNotice.
+            message: paymentBlockNotice,
+          }),
         },
         sourceRefs: [source(ctx, asOf, item.requestNo ?? 'รายการเบิกจ่าย', 'reimbursements', 'reimbursement', item.id, `/companies/${ctx.companyId}/reimbursements/${item.id}`)],
       };

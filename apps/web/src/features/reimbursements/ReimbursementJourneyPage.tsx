@@ -21,7 +21,7 @@ import {
 } from './reimbursements.api';
 import { POLICY_TAB_LABEL, CLAIM_SIGN_LABEL, claimDeskText, claimSignAction, reimbursementSubmitReadiness, type ClaimSignatureRole } from './reimbursements.model';
 import {
-  activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, errorText, isMissingSavedSignatureError,
+  activeJourneyStep, approvalComparable, approverNotReadyHelp, buildJourneySteps, diffApprovalFields, duplicateCanBeCleared, errorText, isMissingSavedSignatureError,
   isStaleApprovalError, opensPaymentFormOnArrival, signedCopyMoveConfirmText, type JourneyAction, type JourneyStepState,
 } from './reimbursements.logic';
 import {
@@ -329,7 +329,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     && attestedVersion !== staleReview.detail.payout?.version;
   // The server's own answer to "would this claim's payment be refused for a duplicate": the fact the pay-queue row
   // marks (`hasDuplicateBlocker`). The finance approval clears the block exactly when there is one, as the queue's does.
-  const duplicateBlocks = detail.duplicateBlocksPayment === true;
+  const duplicateBlocks = duplicateCanBeCleared(detail);
   const duplicateResolutionBlocked = duplicateBlocks && !permissions.includes('reimbursement.duplicate.resolve');
   const recordedPayment = (detail.payments ?? []).filter((row: any) => row.status === 'RECORDED').at(-1);
   const desk = claimDeskText(detail);

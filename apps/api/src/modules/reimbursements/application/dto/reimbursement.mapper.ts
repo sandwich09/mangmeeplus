@@ -31,7 +31,7 @@ import {
 } from '../../domain/logic/reimbursement.logic';
 import { claimFormLayout, documentSignedVia } from '../../domain/logic/claim-form.logic';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
-import { assertCanReadRequestOrAssignment } from '../use-cases/reimbursement-request.use-case';
+import { assertCanReadRequestOrAssignment, mayCancelReimbursement } from '../use-cases/reimbursement-request.use-case';
 import { ForbiddenException } from '@nestjs/common';
 import type { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ClaimPayoutRecord, ClaimPayoutVersionRecord, PaymentPayoutDestinationRecord } from '../../infrastructure/reimbursement-payout';
@@ -472,7 +472,7 @@ export async function detailWithFileNames(
     // The payment gate's own test, by the gate's own function: the page marks the claim exactly when
     // recording its payment would answer `duplicate_unresolved`.
     duplicateBlocksPayment: duplicateBlocksPayment(requestPolicy.duplicatePolicy,
-      (req.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length, (req.possibleDuplicateExpenseCount ?? 0) + (req.duplicateConfirmationPendingCount ?? 0)),
+      (req.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length, (req.possibleDuplicateExpenseCount ?? 0) + (req.duplicateConfirmationPendingCount ?? 0), req.confirmedDuplicateExpenseCount),
     duplicateReasons: claimDuplicateReasons(req),
     paymentSlips,
     viewerCanOpenSlips: canOpenReimbursementPaymentSlip(
@@ -482,5 +482,5 @@ export async function detailWithFileNames(
     payout: toPayoutSummary(payout, displayNames),
     paymentDestinations,
     payoutCorrection: toPayoutCorrection(req, displayNames, approvedVersion === undefined ? undefined : approvedAccounts?.[approvedVersion]),
-  }), duplicateCandidates };
+  }), duplicateCandidates, viewerCanCancel: !req.cancellationPendingAt && mayCancelReimbursement({ ...viewer, companyId } as RequestContext, req) };
 }

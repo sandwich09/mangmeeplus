@@ -38,7 +38,7 @@ import {
 } from './reimbursements.model';
 import {
   NOTE_HAS_ACCOUNT_NUMBER,
-  approvalStepCorrectionNote, attachedFileKindText, buildClaimTimeline, canAttachPaymentSlip, categoryText, chosenPaymentSlipChoice, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
+  approvalStepCorrectionNote, attachedFileKindText, buildClaimTimeline, canAttachPaymentSlip, categoryText, chosenPaymentSlipChoice, duplicateNoticeForViewer, errorText, formatMoney, paperSignedLine, paymentSlipChoices, paymentSlipCount,
   rowHasFinanceReview, savePaymentForm, signedCopyMisfiledHint, slipTargetPayment, sumLineAmounts, timelineDateText,
   type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip, type PaymentSlipChoice,
 } from './reimbursements.logic';
@@ -803,7 +803,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
           <Row k="การจ่าย" v={<PaymentBadge status={detail.paymentStatus} />} />
           <Row k="ใบเสร็จ" v={RECEIPT_REQUIREMENT_LABELS[detail.receiptRequirementStatus]} />
           <Row k="เหตุผลที่ไม่มีใบเสร็จ" v={detail.missingReceiptReason} />
-          <Row k="ตรวจรายการซ้ำ" v={DUPLICATE_STATUS_LABELS[detail.duplicateStatus]} />
+          <Row k="ตรวจรายการซ้ำ" v={detail.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') ? duplicateNoticeForViewer(detail, permissions, userId) : DUPLICATE_STATUS_LABELS[detail.duplicateStatus]} />
         </dl>
       </MangmeeCard>
 
