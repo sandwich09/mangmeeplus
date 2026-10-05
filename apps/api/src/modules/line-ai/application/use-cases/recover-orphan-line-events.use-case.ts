@@ -338,7 +338,7 @@ export class RecoverOrphanLineEventsUseCase {
     } catch (err) {
       this.logger.warn({ msg: 'line_outcome_replay_failed', webhookEventId: row.webhookEventId, ...safeLineErrorDetails(err) });
     }
-    if (delivery === 'failed_permanent') {
+    if (delivery === 'failed_permanent' || delivery === 'failed_flex') {
       await this.park({ ...row, status: 'delivery_pending', errorCode: OUTCOME_REPLAY_CLAIM }, 'delivery_failed', 'LINE_DELIVERY_FAILED_PERMANENT');
       return 'skipped';
     }

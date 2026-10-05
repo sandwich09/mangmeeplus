@@ -12,7 +12,7 @@ import { currentBudgetState } from '../../../common/usage/usage-context';
 import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { buildCapabilityHelp } from './response-composer.agent';
-import { OPEN_WORK_TOOLS, assumedYearNote, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
+import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
 import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
@@ -28,6 +28,12 @@ import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic'
 import { completeReimbursementDraftInput } from './reimbursement-draft-input';
 
 const logger = new Logger('SemanticTurnV2');
+
+// Match only a capability question, not a specific how-to or an independent business clause.
+// The API's menu matcher is API-local; semantic turns use this clause's quoted input evidence.
+function isCurrentCapabilityQuestion(text: string): boolean {
+  return /^(?:(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ|ระบบ)?(?:ทำ(?:อะไร|ไร)ได้(?:บ้าง)?|ช่วย(?:อะไร|ไร)(?:ฉัน|ผม|เรา)?ได้(?:บ้าง)?|มี(?:ความสามารถ|ฟีเจอร์)อะไร(?:บ้าง)?)(?:ครับ|ค่ะ|คะ|นะคะ|หน่อย)?|what\s+can\s+you\s+(?:do|help(?:\s+me)?\s+with)|what\s+are\s+your\s+(?:capabilities|abilities))(?:[?？!。.]*)$/iu.test(text.trim().replace(/(?<=[ก-๙])\s+(?=[ก-๙])/gu, ''));
+}
 
 // Spec §8 row 1 ("อ่านข้อมูลไม่ได้ ฝั่งระบบ"): system-side, terminal, no retry invitation, no dead
 // end. Reused for every forced/compose give-up below so none of them lingers as a phantom
@@ -620,9 +626,11 @@ export async function runSemanticTurnV2(input: {
   const entitledFeatureKeys = req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys;
   const itemText = new Map<number, string>();
   const scopePolicyForcedIndices = new Set<number>();
+  const capabilityIndices = new Set<number>();
   for (const item of inventory) {
     const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
     itemText.set(item.index, text);
+    if ((item.kind === 'help' || item.kind === 'general') && isCurrentCapabilityQuestion(text)) capabilityIndices.add(item.index);
     const override = scopePolicyOverride(text, item.kind, req.userContext.permissions, entitledFeatureKeys, language, item.toolHint);
     if (override) {
       forced.set(item.index, { status: 'unsupported', reasonCode: override.reasonCode, text: override.text });
@@ -1017,7 +1025,7 @@ export async function runSemanticTurnV2(input: {
   // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
   const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
     && entry.result.status === 'ok' && object(entry.result.data) && object(entry.result.data.reimbursementDraft))).map(item => item.index));
-  const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index)
+  const needsComposition = inventory.some(item => item.kind !== 'help' && !capabilityIndices.has(item.index) && !forced.has(item.index) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
     && !emptyBacklogText.has(item.index));
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
@@ -1138,6 +1146,10 @@ export async function runSemanticTurnV2(input: {
     else if (item.kind === 'read' && answer.reasonCode === 'SEMANTIC_ANSWER_UNAVAILABLE' && comparisonByIndex.has(item.index)) {
       answer = { index: item.index, status: 'handled', text: expensePeriodComparisonReplyText(comparisonByIndex.get(item.index)!),
         reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', sourceRefIds: good.flatMap(result => result.sourceRefs.map(sourceId)) };
+      modelComposed = false;
+    }
+    else if (capabilityIndices.has(item.index)) {
+      answer = { index: item.index, status: 'handled', text: capabilityHelp };
       modelComposed = false;
     }
     // E4 (tuning-6a, run 5 dead ends: T-005-a t3 "ทำไมเดือนนี้ค้างจ่ายเยอะจังคะ", T-015-a t1 "ทำไมมี
@@ -1310,8 +1322,19 @@ export async function runSemanticTurnV2(input: {
     toolData: result.status === 'ok' ? [{ tool: result.toolName, data: result.data }] : [], asOf: result.asOf }));
   const sourceRefs = [...new Map(sources.map(ref => [sourceId(ref), ref])).values()];
   const webLinks = sources.filter(ref => ref.webPath).map(ref => ({ label: ref.label, path: ref.webPath! }));
-  // A layout stands for the whole reply or for nothing: one item, one block, and that item's layout.
-  const layout = inventory.length === 1 && blocks.length === 1 ? layouts.get(inventory[0]!.index) : undefined;
+  // A layout stands for the whole reply or for nothing: one item, one block, and that item's layout…
+  const single = inventory.length === 1 && blocks.length === 1 ? layouts.get(inventory[0]!.index) : undefined;
+  // …or, for an answer that is ONLY reads of what is waiting — every item a read whose answer stands,
+  // every call of the turn one of those reads and successful — one card of all of them (owner
+  // 2026-10-05, "มีงานค้างอะไรบ้าง": three numbered parts read "อ่านยากมาก"). Its rows are the tools'
+  // results; the sentences stay the canonical answer. A lone day's checklist is that card only when the
+  // reader asked about waiting work: the same read also answers "ค่าใช้จ่ายวันนี้".
+  const turnResults = [...new Set(results.map(entry => entry.result))];
+  const backlog = !single && inventory.every(item => item.kind === 'read') && coverage.every(entry => entry.status === 'handled')
+    && turnResults.length > 0 && turnResults.every(result => result.status === 'ok' && BACKLOG_TOOLS.has(result.toolName))
+    && (turnResults.length > 1 || myPendingWorkQuestion(req.messageText))
+    ? backlogCardLayout(turnResults) : undefined;
+  const layout = single ?? backlog;
   const sourceLabels = [...new Set(sourceRefs.map(ref => ref.label))];
   return { plan, outputs, replyText, semanticCoverage: coverage, sourceRefs, webLinks,
     ...(layout ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, layout,

@@ -18,7 +18,8 @@ import {
 } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { absoluteWebLink } from '../../../../common/http/web-link';
-import { buildLineSystemCardBubble, lineSystemCardAvailable, type LineSystemCard, type LineSystemCardRow } from './line-system-card.logic';
+import type { LineSystemCard, LineSystemCardRow } from './line-system-card.logic';
+import { drawLineSystemCard } from './line-system-card-limits.logic';
 import { buildLineSystemTextCardMessage } from './line-business-card.logic';
 
 export const DRAFT_UPDATE_CONFIRM_COMMAND = 'ยืนยันการแก้ไข';
@@ -108,8 +109,9 @@ export const draftUpdateCardHeader = (state: DraftUpdateCardState): LineSystemCa
 export const draftUpdateBlockedState = lineDraftUpdateBlockedState;
 
 /** The proposal on the locked design: the record, every change, the new total in the cream row, and
- *  the two buttons side by side. Same facts, same order of meaning and same postbacks as before. */
-function previewBubble(preview: LineDraftUpdatePreview, webBaseUrl: string): Record<string, unknown> {
+ *  the two buttons side by side. Same facts, same order of meaning and same postbacks as before.
+ *  `undefined` where the design cannot be drawn so that LINE accepts it; the card it had before is sent. */
+function previewBubble(preview: LineDraftUpdatePreview, webBaseUrl: string | undefined): Record<string, unknown> | undefined {
   const totalChanged = preview.totalsBefore.grandTotalAmount !== preview.totalsAfter.grandTotalAmount;
   const rows: LineSystemCardRow[] = [
     { label: 'ผู้ขาย', value: scrubRecordText(preview.record.vendorName, 40) || 'ไม่ระบุผู้ขาย' },
@@ -121,8 +123,9 @@ function previewBubble(preview: LineDraftUpdatePreview, webBaseUrl: string): Rec
       ? [{ label: 'ยอดรวมใหม่', value: money(preview.totalsAfter.grandTotalAmount), total: true }, { label: 'ยอดรวมเดิม', value: money(preview.totalsBefore.grandTotalAmount) }]
       : [{ label: 'ยอดรวม', value: `${money(preview.totalsAfter.grandTotalAmount)} (ไม่เปลี่ยน)`, total: true }]),
   ];
-  return buildLineSystemCardBubble({
-    mascot: 'general', header: draftUpdateCardHeader('preview'), rows,
+  return drawLineSystemCard({
+    // A record with no state or date on it has no such row; an empty cell is never drawn.
+    mascot: 'general', header: draftUpdateCardHeader('preview'), rows: rows.filter((row) => row.value.trim()),
     notes: preview.warnings.map((warning) => `⚠️ ${scrubRecordText(warning, 160)}`),
     footnotes: [LINE_DRAFT_UPDATE_CONFIRM_HINT],
     // SEC-04: the opaque id binds this button to this card; the server still rechecks the
@@ -140,8 +143,9 @@ const DESIGN_ROW_CHARS = 200;
 
 export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview, webBaseUrl?: string): LineReplyMessage {
   const totalChanged = preview.totalsBefore.grandTotalAmount !== preview.totalsAfter.grandTotalAmount;
-  const designed = lineSystemCardAvailable(webBaseUrl) && preview.diff.length <= DESIGN_DIFF_ROWS && preview.warnings.length <= 3
-    && preview.diff.every((entry) => entry.label.trim() && Array.from(entry.label).length <= 40 && Array.from(diffValue(entry)).length <= DESIGN_ROW_CHARS);
+  const designed = preview.diff.length <= DESIGN_DIFF_ROWS && preview.warnings.length <= 3
+    && preview.diff.every((entry) => entry.label.trim() && Array.from(entry.label).length <= 40 && Array.from(diffValue(entry)).length <= DESIGN_ROW_CHARS)
+    ? previewBubble(preview, webBaseUrl) : undefined;
   const rows = preview.diff.slice(0, MAX_DIFF_ROWS).map((entry) => ({
     type: 'box' as const,
     layout: 'vertical' as const,
@@ -157,7 +161,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview, web
     // fallback delivery never silently loses the amount the user is being asked about.
     altText: lineMessagePreview(`${draftUpdateHeadline(preview)} · ยอดรวมใหม่ ${money(preview.totalsAfter.grandTotalAmount)} — หากไม่เห็นปุ่ม ให้ส่งคำขอแก้ไขใหม่เพื่อรับบัตรอีกครั้ง`),
     canonicalText: draftUpdateCanonicalDiff(preview),
-    contents: designed ? previewBubble(preview, webBaseUrl) : {
+    contents: designed ?? {
       type: 'bubble',
       size: 'mega',
       body: {
