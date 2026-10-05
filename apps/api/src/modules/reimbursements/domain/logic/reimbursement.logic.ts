@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import {
-  isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPaymentReferenceRequired, reimbursementPayoutCorrectionPhase,
+  reimbursementDuplicateBlockNotice, isReimbursementClaimApprover, reimbursementIncurredDateError, reimbursementPaymentSlipRequired, reimbursementPaymentReferenceRequired, reimbursementPayoutCorrectionPhase,
   reimbursementPayoutHeld, reimbursementPayoutRoundAnswer, reimbursementPayoutRoundStatus, REIMBURSEMENT_PAYOUT_ROUND_TEXTS, todayCivilDate,
 } from '@watchdog-bms/contracts';
 import type {
@@ -781,6 +781,13 @@ export function claimDuplicateReasons(request: { duplicateCandidates?: { status:
     ...((request.duplicateConfirmationPendingCount ?? 0) > 0 ? ['EXPENSE_CONFIRMATION'] : []),
     ...((request.confirmedDuplicateExpenseCount ?? 0) > 0 ? ['EXPENSE_CONFIRMED_DUPLICATE'] : []),
   ])] as import('@watchdog-bms/contracts').ReimbursementDuplicateReason[];
+}
+
+export function confirmedDuplicateRefusal(request: Parameters<typeof claimDuplicateReasons>[0] & { status: string }, canCancel?: boolean) {
+  const duplicateReasons = claimDuplicateReasons(request);
+  if (!duplicateReasons.includes('EXPENSE_CONFIRMED_DUPLICATE')) return null;
+  return { code: 'duplicate_confirmed', duplicatePhase: 'PAYMENT', duplicateReasons, claimStatus: request.status, canCancel,
+    message: reimbursementDuplicateBlockNotice(duplicateReasons, false, { status: request.status, canCancel }) };
 }
 
 /**

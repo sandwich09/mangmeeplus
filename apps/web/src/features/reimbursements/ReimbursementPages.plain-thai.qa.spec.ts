@@ -525,7 +525,7 @@ describe('a hub list is a table only where its card is wide enough for it, and c
       assert.match(page, new RegExp(`<div class="mt-3 grid grid-cols-1 gap-3 @\\[44rem\\]:grid-cols-2 @\\[${width}\\]:hidden" data-testid="reimbursements-${tab}-card-list">`, 'u'), tab);
       const table = page.slice(page.indexOf(`data-testid="reimbursements-${tab}-table"`), page.indexOf(`data-testid="reimbursements-${tab}-card-list"`));
       // Only free text wraps; no forced width and no max-content scroller around it.
-      assert.match(table, /<div class="mt-3 overflow-x-auto"><table class="mangmee-table \[&amp;_td\]:whitespace-nowrap \[&amp;_th\]:whitespace-nowrap">/u, tab);
+      assert.match(table, /<div class="mt-3 overflow-x-auto"><table class="mangmee-table \[&amp;_td\]:whitespace-nowrap \[&amp;_th\]:whitespace-nowrap[^"]*">/u, tab);
       assert.doesNotMatch(table, /min-w-\[980px\]|mangmee-table-scroll|md:block/u, tab);
     }
   });
@@ -1275,4 +1275,30 @@ it('both pay-queue layouts distinguish confirmed duplicates and give cancellatio
     if (status === 'PARTIALLY_PAID') assert.match(text, /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/);
     else assert.match(text, /กดยกเลิกคำขอในหน้าใบเบิก/);
   }
+});
+
+it('the finance table wraps guidance and reserves visible actions within either desktop content width', () => {
+  for (const withReview of [false, true]) {
+    const rows = [{ ...queueRow, status: 'READY_FOR_PAYMENT', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] },
+      { ...queueRow, id: 'payable', status: 'READY_FOR_PAYMENT', hasDuplicateBlocker: false, duplicateReasons: [] }];
+    const html = hubTab('finance', rows, undefined, {}, '', withReview);
+    const table = html.slice(html.indexOf('data-testid="reimbursements-finance-table"'), html.indexOf('</table>', html.indexOf('data-testid="reimbursements-finance-table"')));
+    assert.match(table, /table-fixed/);
+    assert.match(table, /w-full/);
+    assert.match(table, /\[&amp;_td\]:!whitespace-normal/);
+    assert.match(table, /overflow-wrap:anywhere/);
+    const fixedWidths = [...table.matchAll(/<col style="width:(\d+)px"/g)].map(match => Number(match[1]));
+    assert.equal(fixedWidths.at(-1), 176, 'action column is reserved');
+    for (const contentWidth of [974, 1177]) assert.ok(contentWidth - 32 - fixedWidths.reduce((sum, width) => sum + width, 0) >= 190, 'remaining status cell can wrap');
+    assert.match(table, /รอยกเลิก/);
+    assert.match(table, /บันทึกจ่าย<\/button>/, 'other rows retain their payment action');
+  }
+});
+
+it('the duplicate summary names both possible and confirmed blockers honestly', () => {
+  const text = visible(hubTab('finance', [queueRow, { ...queueRow, id: 'confirmed', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] }]));
+  const label = text.indexOf('ติดรายการซ้ำ');
+  assert.ok(label >= 0);
+  assert.equal(text[label - 1], '2');
+  assert.ok(!text.includes('พบรายการที่อาจซ้ำ'));
 });

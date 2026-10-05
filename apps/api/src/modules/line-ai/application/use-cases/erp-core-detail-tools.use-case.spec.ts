@@ -32,6 +32,7 @@ describe('LINE ERP core detail tools', () => {
       const result = await tool.execute({ ...ctx, permissions: [...ctx.permissions, ...permissions] }, { reimbursementId: 'rr1' });
       const data = result.data as any;
       assert.equal(data.duplicateBlocksPayment, true);
+      if (status === 'READY_FOR_PAYMENT') assert.equal(data.status, 'รอยกเลิก');
       assert.equal(data.message, data.paymentBlockNotice, 'the general LINE answer receives the same guidance as the compiled answer');
       assert.match(data.paymentBlockNotice, pattern);
       assert.match(data.paymentBlockNotice, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);

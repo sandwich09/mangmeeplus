@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
+  paymentVoidedMessage, paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorMessage, errorText,
   isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence, withAssignedApprovalTab,
   buildClaimTimeline, buildJourneySteps, activeJourneyStep, policyDecisionPreview, isMissingSavedSignatureError,
@@ -1388,3 +1388,22 @@ for (const [reason, words] of [['ATTACHMENT_CHECKSUM', 'ใช้ใบเสร
     assert.ok(step.note!.includes('ปลดรายการซ้ำ'));
   });
 }
+
+it('payment-void success describes only the refreshed claim and this viewer’s next actions', () => {
+  const ready = { status: 'READY_FOR_PAYMENT', branchId: 'b', requesterUserId: 'staff', financeReviewStatus: 'NOT_REQUIRED', viewerCanCancel: false };
+  assert.equal(paymentVoidedMessage(ready, [], 'payer'), 'ยกเลิกการจ่ายแล้ว');
+  assert.equal(paymentVoidedMessage(ready, ['reimbursement.payment.record'], 'payer'), 'ยกเลิกการจ่ายแล้ว คุณสามารถบันทึกจ่ายใหม่ได้');
+  assert.equal(paymentVoidedMessage({ ...ready, viewerCanCancel: true }, [], 'staff'), 'ยกเลิกการจ่ายแล้ว คุณสามารถยกเลิกคำขอต่อได้');
+  const confirmed = { ...ready, duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] };
+  const message = paymentVoidedMessage(confirmed, ['reimbursement.payment.record'], 'payer');
+  assert.match(message, /^ยกเลิกการจ่ายแล้ว ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+  assert.match(message, /ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขา/);
+  assert.doesNotMatch(message, /คุณสามารถ|บันทึกจ่ายใหม่|กลับไปรอจ่าย|กดยกเลิกคำขอ/);
+});
+
+it('the confirmed-duplicate timeline waits for cancellation instead of named payers', () => {
+  const row = { status: 'READY_FOR_PAYMENT', duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'], currentDesk: { kind: 'PAYMENT' }, paymentDesk: { names: ['สมศรี'] } };
+  const waiting = buildClaimTimeline(row).find(entry => entry.key === 'payment')!;
+  assert.match(waiting.label, /รอยกเลิกคำขอ เพราะใบเสร็จยืนยันว่าซ้ำ/);
+  assert.doesNotMatch(waiting.label, /สมศรี|บันทึกจ่าย/);
+});

@@ -458,6 +458,7 @@ export const REIMBURSEMENT_DUPLICATE_REASON_TEXT: Record<ReimbursementDuplicateR
   EXPENSE_CONFIRMATION: 'เอกสารค่าใช้จ่ายของใบนี้ยังรอยืนยันหลังปลดรายการซ้ำ',
   EXPENSE_CONFIRMED_DUPLICATE: 'ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ',
 };
+export const REIMBURSEMENT_DUPLICATE_BLOCK_LABEL = 'ติดรายการซ้ำ';
 export const REIMBURSEMENT_DUPLICATE_CLEAR_HELP = 'ตรวจแล้วถ้าไม่ซ้ำ กดปลดรายการซ้ำพร้อมเหตุผล เพื่อปลดและยืนยันเอกสารก่อนบันทึกจ่าย ถ้าการยืนยันยังไม่เสร็จ กดปลดรายการซ้ำอีกครั้ง';
 export function reimbursementDuplicateReasonText(reasons: readonly string[] = []): string {
   return [...new Set(reasons.filter(reason => Object.hasOwn(REIMBURSEMENT_DUPLICATE_REASON_TEXT, reason)).map(reason => REIMBURSEMENT_DUPLICATE_REASON_TEXT[reason as ReimbursementDuplicateReason]))].join(' และ ') || POSSIBLE_OTHER_CLAIM_TEXT;
@@ -474,7 +475,16 @@ const DUPLICATE_CANCEL_ACTOR = 'ผู้เบิกที่มีสิทธ
 const DUPLICATE_NEW_CLAIM_HELP = 'ให้ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ';
 const DUPLICATE_CANCEL_ACTION = 'กดยกเลิกคำขอในหน้าใบเบิกนี้';
 const DUPLICATE_CANCEL_HELP = `ให้${DUPLICATE_CANCEL_ACTOR}ยกเลิกคำขอ`;
-const DUPLICATE_VOID_HELP = 'ให้ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้ตรวจและยกเลิกรายการจ่ายให้ครบก่อน';
+const DUPLICATE_VOID_ACTOR = 'ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้';
+const DUPLICATE_VOID_HELP = `ให้${DUPLICATE_VOID_ACTOR}ตรวจและยกเลิกรายการจ่ายให้ครบก่อน`;
+/** Display-only: the stored status, routing and reminders keep their existing rules. */
+export function reimbursementDuplicateWait(claim?: { status?: string; duplicateReasons?: readonly string[]; cancellationPending?: boolean; currentDesk?: { kind?: string } | null } | null) {
+  if (!claim?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') || claim.cancellationPending || claim.currentDesk?.kind === 'SYSTEM') return undefined;
+  if (claim.status === 'PARTIALLY_PAID') return { status: undefined, actor: DUPLICATE_VOID_ACTOR,
+    waiting: reimbursementDuplicateBlockNotice(claim.duplicateReasons, false, { status: claim.status }) };
+  if (claim.status !== 'READY_FOR_PAYMENT' && !(claim.status === 'APPROVED' && claim.currentDesk?.kind === 'PAYMENT')) return undefined;
+  return { status: 'รอยกเลิก', actor: DUPLICATE_CANCEL_ACTOR, waiting: `รอยกเลิกคำขอ เพราะใบเสร็จยืนยันว่าซ้ำ ${DUPLICATE_CANCEL_HELP}` };
+}
 export const REIMBURSEMENT_DUPLICATE_CONFIRM_WARNING = `หากยืนยันว่าซ้ำ ใบเบิกนี้จะบันทึกจ่ายไม่ได้ ต้องยกเลิกใบเบิกนี้ แล้ว${DUPLICATE_NEW_CLAIM_HELP} หากมีรายการจ่ายอยู่ ${DUPLICATE_VOID_HELP}จึงจะยกเลิกใบเบิกได้ การยืนยันว่าซ้ำแล้วไม่สามารถย้อนกลับได้`;
 export function reimbursementDuplicateBlockText(reasons: readonly string[] = []): string {
   return reasons.includes('EXPENSE_CONFIRMED_DUPLICATE') ? 'ยืนยันว่าใบเสร็จซ้ำ' : 'อาจซ้ำ';
@@ -501,7 +511,7 @@ export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [
     }
     return `${why} ${help}`;
   }
-  return `ติดรายการซ้ำ: ${reimbursementDuplicateReasonText(reasons)} ${financeReview ? REIMBURSEMENT_DUPLICATE_FINANCE_HELP : REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`;
+  return `${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}: ${reimbursementDuplicateReasonText(reasons)} ${financeReview ? REIMBURSEMENT_DUPLICATE_FINANCE_HELP : REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`;
 }
 export const REIMBURSEMENT_DUPLICATE_UNRESOLVED = 'พบรายการที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ';
 export function reimbursementDuplicateSubmitNotice(reasons: readonly string[] = []): string {
@@ -715,6 +725,7 @@ export type ReimbursementRequestSummary = {
   financeReviewStatus: ReimbursementFinanceReviewStatus;
   paymentStatus: ReimbursementPaymentStatus;
   duplicateStatus: ReimbursementDuplicateStatus;
+  duplicateReasons?: ReimbursementDuplicateReason[];
   receiptRequirementStatus: ReimbursementReceiptRequirementStatus;
   /** Effective policy hint for pre-submit guidance; server validation remains authoritative. */
   allowMissingReceiptWithReason?: boolean;

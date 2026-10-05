@@ -3,7 +3,7 @@
   "manifestVersion": "W00-2026-09-27.1",
   "baseBranch": "origin/main",
   "baseRevision": "9c6a18268672b6bef6dcb9298def62b05680b625",
-  "sourceRevision": "37347701011a26111f0978fd4aa414af89c34b02",
+  "sourceRevision": "d7ba71c9fcf2a5322f083b0b78d9ce0df4780c79",
   "checkoutBranch": "codex/small-dup-20261005",
   "checkoutDirty": true,
   "sourceHashes": [
@@ -49,7 +49,7 @@
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.ts",
-      "sha256": "a03f47da73866eee8ee51bb7fe4c107d165e39fa4bb5ea2e2f05496c0f60ec30"
+      "sha256": "09e272bc4c78380ce3a8553a18d8f1885322ee5a2bc41e32d8550f199dcf0f4d"
     },
     {
       "path": "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.ts",
@@ -9016,6 +9016,6 @@
     "registryOrphanHandlers": [],
     "duplicateRegistryNames": []
   },
-  "generatedAt": "2026-10-05T04:12:45.866Z",
-  "manifestDigest": "737a8e38702e048571bff06366543a5cd37340c4cdde3456353db34d1aa5d5aa"
+  "generatedAt": "2026-10-05T05:25:53.981Z",
+  "manifestDigest": "8c8080443cd0686b0049b1c9a2f5f6ff3858fe9f61990954f5ba81ab4218eebb"
 }

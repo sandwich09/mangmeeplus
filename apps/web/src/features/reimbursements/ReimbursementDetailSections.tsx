@@ -1,6 +1,6 @@
 'use client';
 
-import { ATTACHMENT_SOURCE_TYPES_LABEL, REIMBURSEMENT_SELF_APPROVED_NOTE } from '@watchdog-bms/contracts';
+import { ATTACHMENT_SOURCE_TYPES_LABEL, REIMBURSEMENT_SELF_APPROVED_NOTE, reimbursementDuplicateBlockNotice } from '@watchdog-bms/contracts';
 
 // The claim detail as sections, shared by the hub drawer and the journey page while both exist
 // (the drawer goes in Phase 6). Markup moved from the drawer; test ids are kept on it.
@@ -26,7 +26,7 @@ import {
 import { ReimbursementSourceFacts, WholeWords } from './ReimbursementSourceFacts';
 import {
   fetchAttachmentPreviewBlob, fetchReimbursementPaymentSlipBlob, previewReimbursementClaimForm, recordReimbursementPayment,
-  uploadReimbursementPaymentSlip,
+  uploadReimbursementPaymentSlip, getReimbursement,
 } from './reimbursements.api';
 import {
   PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
@@ -142,8 +142,9 @@ export function ReasonDialog({ title, description, confirmLabel, busy, error, da
   );
 }
 
-export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: {
+export function VoidPaymentDialog({ payment, claim, busy, error, onClose, onConfirm }: {
   payment: any;
+  claim?: any;
   busy?: boolean;
   error?: string | null;
   onClose: () => void;
@@ -161,7 +162,7 @@ export function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: 
     <Modal open title={`ยกเลิกการจ่าย ${payment.paymentNo ?? ''}`.trim()} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <div className="space-y-4">
         {/* Spec §12.8: a void also undoes the payment's match to a bank statement line, in the same transaction. */}
-        <ErrorBanner message="ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ใบเบิกจะกลับไปสถานะรอจ่าย ถ้าการจ่ายนี้จับคู่กับรายการเดินบัญชีธนาคารไว้แล้ว ระบบจะยกเลิกการจับคู่นั้นให้ด้วย" />
+        <ErrorBanner message={`ระบบจะกลับรายการจ่ายและรายการบัญชีที่เกี่ยวข้อง ${claim?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') ? reimbursementDuplicateBlockNotice(claim.duplicateReasons, false, { status: claim.status }) : 'ใบเบิกจะกลับไปสถานะรอจ่าย'} ถ้าการจ่ายนี้จับคู่กับรายการเดินบัญชีธนาคารไว้แล้ว ระบบจะยกเลิกการจับคู่นั้นให้ด้วย`} />
         {error && error !== NOTE_HAS_ACCOUNT_NUMBER && <ErrorBanner message={error} />}
         <div>
           <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="reimbursement-void-reason">เหตุผล *</label>
@@ -318,7 +319,7 @@ const SIGNED_COPY_NOT_FOR_SLIPS = 'ช่องนี้สำหรับใบ
  * have no "account being corrected" and no "new account" to wait for. Signing comes back with the pay step.
  */
 const signingWaitsForRound = (detail: Parameters<typeof claimStatusBadge>[0]) =>
-  `ใบนี้${claimStatusBadge(detail).label} ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ทำได้อีกครั้งเมื่อใบกลับมารอจ่าย`;
+  `ใบนี้${claimStatusBadge(detail).label} ยังลงนามหรือยืนยันสำเนาที่ลงนามครบไม่ได้ ${detail?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') ? reimbursementDuplicateBlockNotice(detail.duplicateReasons, false, { status: detail.status }) : 'ทำได้อีกครั้งเมื่อใบกลับมารอจ่าย'}`;
 
 /**
  * A4: a scan counts as the signed record only after the attacher declares both signatures are on it for
@@ -363,11 +364,12 @@ function SignedCopyDialog({ requestNo, fileName, waitsForRound, onClose, onSend 
  * Full payment only (MVP). A modal in the hub queue; inline in the journey card, never a modal on mobile.
  * `request` is the claim detail where the host has it: files already attached to the claim can serve as the slip.
  */
-export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }: {
+export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile, onClaimChanged }: {
   companyId: string;
   request: any;
   onCancel: () => void;
   onDone: () => void;
+  onClaimChanged?: (latest: any) => void;
   /**
    * Opens a file already on the claim, so the payer sees what it is before choosing it as the slip. Every host gives
    * it (`useClaimDocumentPreview().openSlipChoice`): the form never lists files that cannot be looked at.
@@ -418,6 +420,16 @@ export function PaymentForm({ companyId, request, onCancel, onDone, onOpenFile }
       onBusy: (sending) => { setBusy(sending); if (sending) setError(null); },
     });
     if (result.status === 'refused') setError(result.text);
+    if (result.status === 'refused' && result.refreshClaim) {
+      setBusy(true);
+      let notice = result.text;
+      try {
+        const latest = await getReimbursement(companyId, request.id);
+        if (onClaimChanged) onClaimChanged(latest); else onCancel();
+      } catch (error) { onCancel(); notice = `${notice} · ${errorText(error)}`; }
+      finally { setBusy(false); }
+      toast.error(notice);
+    }
     if (result.status === 'saved') { onDone(); toast.success('บันทึกจ่ายเรียบร้อยแล้ว'); }
   };
 

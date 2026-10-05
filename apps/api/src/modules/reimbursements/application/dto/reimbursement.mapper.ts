@@ -105,6 +105,7 @@ export function toRequestSummary(
     // With the claim's own candidates where they were loaded: a candidate still open is a possible
     // duplicate whatever the column says once the claim's expense records exist (`claimDuplicateStatus`).
     duplicateStatus: claimDuplicateStatus(r.duplicateStatus, r.duplicateCandidates),
+    duplicateReasons: claimDuplicateReasons(r),
     receiptRequirementStatus: r.receiptRequirementStatus,
     ...(options.allowMissingReceiptWithReason !== undefined
       ? { allowMissingReceiptWithReason: options.allowMissingReceiptWithReason }

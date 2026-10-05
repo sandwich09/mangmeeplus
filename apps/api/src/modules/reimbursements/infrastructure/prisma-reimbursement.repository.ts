@@ -80,7 +80,7 @@ import {
   deriveHeaderFromLines,
   computeReceiptRequirement,
   currentDesk,
-  duplicateBlocksPayment, claimDuplicateReasons,
+  duplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
 } from '../domain/logic/reimbursement.logic';
 import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay, isExpenseVoidReason } from '@watchdog-bms/contracts';
 import { findClaimExpenseVoidBlocker, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
@@ -1871,7 +1871,7 @@ export class PrismaReimbursementRepository {
       await this.lockRequest(tx, data.companyId, data.requestId);
       const row = await tx.reimbursementRequest.findFirst({
         where: { id: data.requestId, companyId: data.companyId },
-        include: { lines: { orderBy: { lineNo: 'asc' } } },
+        include: { lines: { orderBy: { lineNo: 'asc' } }, sourceExpenses: OWN_DUPLICATE_EXPENSES },
       });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (row.status !== 'FINANCE_REVIEW') {
@@ -1883,6 +1883,8 @@ export class PrismaReimbursementRepository {
       }
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
+      const refusal = data.resolveRequestDuplicates && confirmedDuplicateRefusal(request);
+      if (refusal) throw new UnprocessableEntityException(refusal);
       await assertReimbursementSources(tx, request);
       if (request.financeReviewStatus === 'APPROVED_FOR_PAYMENT') {
         if (request.financeReviewedByUserId !== data.actorUserId || !request.financeReviewedAt) {
@@ -1943,7 +1945,7 @@ export class PrismaReimbursementRepository {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
       await this.lockRequest(tx, data.companyId, data.requestId);
-      const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId } });
+      const row = await tx.reimbursementRequest.findFirst({ where: { id: data.requestId, companyId: data.companyId }, include: { sourceExpenses: OWN_DUPLICATE_EXPENSES } });
       if (!row) throw new NotFoundException('Reimbursement request not found');
       if (!['APPROVED', 'READY_FOR_PAYMENT'].includes(row.status)) {
         throw new UnprocessableEntityException(`Cannot resolve duplicates from status ${row.status}`);
@@ -1951,6 +1953,8 @@ export class PrismaReimbursementRepository {
       this.assertNotBeingCancelled(row);
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) throw this.requestChanged();
       this.assertDecisionBranch(row.branchId, data.scopes);
+      const refusal = confirmedDuplicateRefusal(this.toRequest(row));
+      if (refusal) throw new UnprocessableEntityException(refusal);
       await this.overrideOpenDuplicates(tx, data.companyId, data.requestId, data.actorUserId, data.resolvedAt, data.reason);
       const changed = await tx.reimbursementRequest.updateMany({
         where: { id: data.requestId, companyId: data.companyId, status: row.status, updatedAt: data.expectedUpdatedAt },

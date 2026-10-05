@@ -10,7 +10,7 @@ import {
 } from './reimbursement-payment-slip.use-case';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementController } from '../../presentation/http/reimbursement.controller';
-import { detailWithFileNames } from '../dto/reimbursement.mapper';
+import { detailWithFileNames, toRequestSummary } from '../dto/reimbursement.mapper';
 import { RecordReimbursementPaymentDto } from '../../presentation/http/reimbursement.dtos';
 import { ConflictException } from '@nestjs/common';
 import { reimbursementPaidNotice } from '@watchdog-bms/contracts';
@@ -2972,6 +2972,7 @@ describe('own expense duplicates agree at every payment surface', () => {
       assert.equal(row.hasDuplicateBlocker, true, duplicatePolicy);
       assert.deepEqual(detail.duplicateReasons, ['EXPENSE_CONFIRMED_DUPLICATE']);
       assert.deepEqual(row.duplicateReasons, detail.duplicateReasons);
+      assert.deepEqual(toRequestSummary(req).duplicateReasons, detail.duplicateReasons);
     }
   });
   it('refuses before number reservation and marks detail/queue; WARN stays payable', async () => {
@@ -3095,3 +3096,44 @@ for (const [reason, code] of [['ก'.repeat(501), 'duplicate_resolution_reason_r
     assert.equal(audits, 0);
   });
 }
+
+it('refuses every confirmed-duplicate override before any decision, expense resolution or success audit', async () => {
+  for (const decision of [undefined, 'APPROVED_FOR_PAYMENT', 'BLOCKED'] as const) {
+    const req = financeReviewedRequest({ status: decision ? 'FINANCE_REVIEW' : 'READY_FOR_PAYMENT', financeReviewStatus: decision ? 'PENDING' : 'APPROVED_FOR_PAYMENT', confirmedDuplicateExpenseCount: 1 });
+    const repo = fakeRepo(req);
+    const before = JSON.stringify(req);
+    const writes: string[] = [];
+    const uc = new FinanceReviewReimbursementUseCase(repo, { log: async () => { writes.push('audit'); } } as any,
+      { execute: async () => { writes.push('projection'); } } as any, fakeDetailEvidence as any,
+      { executeForReimbursement: async () => { writes.push('expense'); return 0; } } as any);
+    await assert.rejects(() => uc.execute(ctx(['reimbursement.finance_review', 'reimbursement.duplicate.resolve', 'reimbursement.payment.record']), req.id,
+      { decision, resolveDuplicate: true, duplicateResolutionReason: 'ตรวจสอบแล้วไม่ซ้ำ', note: 'ตรวจสอบแล้ว' }), (error: any) => {
+      assert.equal(error.getStatus(), 422);
+      const response = error.getResponse();
+      assert.equal(response.code, 'duplicate_confirmed');
+      assert.equal(response.duplicatePhase, 'PAYMENT');
+      assert.equal(response.claimStatus, req.status);
+      assert.deepEqual(response.duplicateReasons, ['EXPENSE_CONFIRMED_DUPLICATE']);
+      assert.match(response.message, /ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+      return true;
+    });
+    assert.equal(JSON.stringify(req), before);
+    assert.deepEqual(writes, []);
+  }
+});
+
+it('the locked duplicate override also refuses confirmed own expenses before its success callback', async () => {
+  for (const status of ['READY_FOR_PAYMENT', 'FINANCE_REVIEW']) {
+    const h = correctionRepositoryHarness({ status, candidates: [{ id: 'duplicate', companyId: 'co-1', reimbursementRequestId: 'rb-1', status: 'OPEN' }] });
+    h.request.sourceExpenses = [{ status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE' }];
+    const before = JSON.stringify([h.request, h.candidates]);
+    let audits = 0;
+    const data = { companyId: 'co-1', requestId: 'rb-1', expectedUpdatedAt: h.expectedUpdatedAt, actorUserId: 'fin-1', scopes: {} };
+    const call = status === 'FINANCE_REVIEW'
+      ? () => h.repo.beginFinanceApprovalAtomic({ ...data, reviewedAt: new Date(), resolveRequestDuplicates: true, duplicateResolutionReason: 'ตรวจสอบแล้ว', onDecisionPersisted: async () => { audits++; } })
+      : () => h.repo.resolvePaymentDuplicatesAtomic({ ...data, resolvedAt: new Date(), reason: 'ตรวจสอบแล้ว', onResolvedPersisted: async () => { audits++; } });
+    await assert.rejects(call, (error: any) => error.getStatus() === 422 && error.getResponse().code === 'duplicate_confirmed');
+    assert.equal(JSON.stringify([h.request, h.candidates]), before);
+    assert.equal(audits, 0);
+  }
+});
