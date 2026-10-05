@@ -2,7 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { stripLineExternalBrowserParam, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import {
+  buildDesignedLineAnswerMessage,
   buildExpenseDraftCardMessage,
+  buildExpenseDraftReviewCard,
+  buildLineSystemTextCardMessage,
+  lineAnswerCardHeader,
+  type LineExpenseDraftCardFacts,
   buildAiBudgetExceededMessage,
   buildPackageRequiredMessage,
   buildSignupDoorCard,
@@ -20,6 +25,9 @@ import { ASK_PLAN_MANAGER_TH } from '../../../access-control/domain/logic/plan-m
 import { receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import * as cardBuilders from './line-business-card.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { readLineSystemCard } from './line-system-card.fixture';
+
+const readSystemCard = readLineSystemCard;
 
 const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards']): LineAiTurnResponse => ({
   requestId: 'r1', replyText: cards?.map(card => card.text).join('\n\n') ?? 'fallback', sourceRefs: [], sourceLabels: [], webLinks: [],
@@ -341,81 +349,159 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
   });
 });
 
-// ── §10.1 expense draft card: a dedicated ร่างค่าใช้จ่าย card with one row per grounded fact, instead
-//    of the generic card wrapping a canonical reply its 1,200-character body would silently cut. ──
-describe('expense draft card (§10.1)', () => {
+// ── Design lock §7: the header of a prose answer is the reader's own words on two lines. Thai has no
+//    spaces and a word list cuts finer than a reader does, so the break must never fall inside a name. ──
+describe('lineAnswerCardHeader — the reader\'s own question as two header lines', () => {
+  const header = (question: string) => {
+    const result = lineAnswerCardHeader(question);
+    return result ? `${result.lines[0]} / ${result.lines[1]}${result.quiet ? ' [quiet]' : result.question ? '' : ' [under]'}` : undefined;
+  };
+
+  it('breaks a short question where its two lines come out most even — the locked examples included', () => {
+    for (const [question, expected] of [
+      ['ทำอะไรได้บ้าง', 'ทำอะไร / ได้บ้าง'],
+      ['วันนี้เหนื่อยจัง', 'วันนี้ / เหนื่อยจัง'],
+      ['มีงานค้างอะไรบ้าง', 'มีงานค้าง / อะไรบ้าง'],
+      ['กำไรขั้นต้นคืออะไร', 'กำไรขั้นต้น / คืออะไร'],
+      ['รายการนี้จ่ายหรือยัง', 'รายการนี้ / จ่ายหรือยัง'],
+      ['เพิ่มค่าบริการ 152 บาท', 'เพิ่มค่าบริการ / 152 บาท'],
+      ['what can you do', 'what can / you do'],
+    ]) assert.equal(header(question), expected, question);
+  });
+
+  it('never ends a line inside a name: ค่าใช้จ่าย, ใบเสร็จ, แจ้งเตือน, เท่าไหร่, วันนี้ stay whole', () => {
+    for (const [question, expected] of [
+      ['ดูค่าใช้จ่ายเดือนนี้', 'ดูค่าใช้จ่าย / เดือนนี้'],
+      ['ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'ค่าใช้จ่าย / เดือนนี้เท่าไหร่'],
+      ['สรุปค่าใช้จ่าย', 'สรุป / ค่าใช้จ่าย'],
+      ['มีแจ้งเตือนอะไรไหม', 'มีแจ้งเตือน / อะไรไหม'],
+      ['ขอดูใบเสร็จล่าสุด', 'ขอดูใบเสร็จ / ล่าสุด'],
+      ['ใบเบิกรออนุมัติมีไหม', 'ใบเบิก / รออนุมัติมีไหม'],
+      ['ใบกำกับภาษีคืออะไร', 'ใบกำกับภาษี / คืออะไร'],
+      ['รายจ่ายเดือนที่แล้ว', 'รายจ่าย / เดือนที่แล้ว'],
+      ['ยอดขายวันนี้', 'ยอดขาย / วันนี้'],
+      ['เบิกจ่ายรออนุมัติ', 'เบิกจ่าย / รออนุมัติ'],
+      ['หัก ณ ที่จ่ายคืออะไร', 'หัก ณ ที่จ่าย / คืออะไร'],
+      ['ติดต่อเจ้าหน้าที่', 'ติดต่อ / เจ้าหน้าที่'],
+      ['เดือนนี้จ่ายไปเท่าไหร่คะ', 'เดือนนี้จ่ายไป / เท่าไหร่คะ'],
+    ]) assert.equal(header(question), expected, question);
+    // The property itself, over every example: no line ends on a word that only begins a name,
+    // and none starts with one that only ends a phrase.
+    for (const question of ['ดูค่าใช้จ่ายเดือนนี้', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'ขอดูใบเสร็จล่าสุด', 'มีแจ้งเตือนอะไรไหม', 'ยอดขายวันนี้', 'ช่วยสรุปรายจ่ายหน่อย', 'ค่าบริการคิดยังไง', 'บิลนี้ทำไมยอดไม่ตรง']) {
+      const [first, second] = lineAnswerCardHeader(question)!.lines;
+      assert.doesNotMatch(first, /(?:ค่า|ใบ|แจ้ง|เท่า|ราย|ยอด|ค่าใช้)$/u, question);
+      assert.doesNotMatch(second, /^(?:นี้|ไหร่|ไง|หน่อย|จ่ายเดือน)/u, question);
+      assert.equal(`${first}${second}`, question.replace(/\s+/gu, ''), 'nothing is rephrased, added or dropped');
+    }
+  });
+
+  it('puts a message that has no place to break under ข้อความของคุณ, whole', () => {
+    for (const [message, expected] of [['สวัสดีค่ะ', 'ข้อความของคุณ / สวัสดีค่ะ [under]'], ['ขอบคุณค่ะ', 'ข้อความของคุณ / ขอบคุณค่ะ [under]'],
+      ['ค่าใช้จ่าย', 'ข้อความของคุณ / ค่าใช้จ่าย [under]'], ['hello', 'ข้อความของคุณ / hello [under]'], ['ok', 'ข้อความของคุณ / ok [under]']]) {
+      assert.equal(header(message), expected, message);
+    }
+  });
+
+  it('keeps the beginning of a long question and marks the cut, in the quieter style; a Latin name is not split', () => {
+    assert.equal(header('ทำไม service charge คิดแยกเป็นอีกรายการนึง ทำไมไม่รวมกัน ?'), 'ทำไม / service charge… [quiet]');
+    const long = lineAnswerCardHeader('ค่าใช้จ่ายเดือนที่แล้วเทียบกับเดือนนี้เป็นยังไงบ้างคะช่วยดูให้หน่อย')!;
+    assert.deepEqual([long.lines[0], long.quiet, long.lines[1].endsWith('…')], ['ค่าใช้จ่ายเดือนที่แล้ว', true, true]);
+    assert.ok('ค่าใช้จ่ายเดือนที่แล้วเทียบกับเดือนนี้เป็นยังไงบ้างคะช่วยดูให้หน่อย'.startsWith(`${long.lines[0]}${long.lines[1].slice(0, -1)}`), 'the heading is the question\'s own beginning');
+    // One unbroken run longer than a line is cut by letters: there is no other way, and the cut is marked.
+    const run = lineAnswerCardHeader('ก'.repeat(60))!;
+    assert.deepEqual([[...run.lines[0]].length, run.lines[1].endsWith('…'), run.quiet], [16, true, true]);
+  });
+
+  it('holds every line to what the header can show, and has no header for nothing', () => {
+    for (const question of ['ดูค่าใช้จ่ายเดือนนี้', 'ทำไม service charge คิดแยกเป็นอีกรายการนึง ทำไมไม่รวมกัน ?', 'ก'.repeat(200), 'a b c d e f g h i j k l m n o p q r s t u v w x y z']) {
+      const result = lineAnswerCardHeader(question)!;
+      const limit = result.quiet ? 16 : 14;
+      for (const line of result.lines) assert.ok([...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(line)].length <= limit && line.trim().length > 0, `${question} → ${line}`);
+    }
+    for (const empty of [undefined, '', '   ', '\n\t']) assert.equal(lineAnswerCardHeader(empty), undefined);
+  });
+});
+
+// ── §10.1 expense draft card, on the locked System OA design (context 6 "รอตรวจสอบ"): the review mascot,
+//    one `label : value` row per grounded fact, the draft's notes, and the one button that opens the record. ──
+describe('expense draft card (§10.1) — the locked review card', () => {
   const WEB = 'https://app.example.com';
   const CANONICAL = '🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)\n• ยอดรวม – 1,250.00';
-  const FULL = { expenseId: 'exp-1', amount: '1,250.00 บาท', item: 'ร้านกาแฟบ้านไร่', category: 'ค่าเดินทาง', status: 'ร่าง – รอตรวจสอบ' };
-  const rowsOf = (message: { type: string }) => ((message as any).contents.body.contents as any[])
-    .filter((entry) => entry.type === 'box')
-    .map((box) => [box.contents[0].text, box.contents[1].text]);
+  const FULL: LineExpenseDraftCardFacts = {
+    expenseId: 'exp-1', subject: 'ข้อมูลใบเสร็จ',
+    rows: [
+      { label: 'ผู้ขาย / ร้านค้า', value: 'ร้านกาแฟบ้านไร่' }, { label: 'วันที่เอกสาร', value: '2 ก.ย. 2569' },
+      { label: 'หมวดค่าใช้จ่าย', value: 'ค่าเดินทาง' }, { label: 'ยอดรวม', value: '1,250.00 บาท', total: true },
+      { label: 'สถานะเอกสาร', value: 'รอตรวจสอบ', pill: 'pending' },
+    ],
+    notes: ['รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ'],
+  };
 
-  it('draws one row per fact, in a fixed order, with plain-Thai labels and no prose row', () => {
+  it('draws the review mascot, the two header lines, one row per fact in order, the note and the review button', () => {
     const message = buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1');
     assert.equal(message.type, 'flex');
-    const contents = (message as any).contents;
-    assert.equal(contents.header.contents[0].text, 'ร่างค่าใช้จ่าย');
-    assert.deepEqual(rowsOf(message), [
-      ['ยอดรวม', '1,250.00 บาท'],
-      ['รายการ', 'ร้านกาแฟบ้านไร่'],
-      ['หมวดหมู่', 'ค่าเดินทาง'],
-      ['สถานะ', 'ร่าง – รอตรวจสอบ'],
-    ]);
-    // No wrapped-paragraph row survives beside the structured ones (§10.2).
-    assert.deepEqual(contents.body.contents.filter((entry: any) => entry.type === 'text'), []);
+    const card = readSystemCard(message);
+    assert.deepEqual(card.header, ['ข้อมูลใบเสร็จ', 'รอตรวจสอบ']);
+    assert.equal(card.mascot, `${WEB}/assets/line/system-card-mascot-review-20261005.png`);
+    assert.deepEqual(card.rows, FULL.rows.map((row) => [row.label, ':', row.value]));
+    assert.deepEqual(card.notes, FULL.notes);
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: 'https://app.example.com/companies/c1/expenses/exp-1' }]);
+    // The owner cut the yellow "รอตรวจสอบ" strip: the header and the status row already say it.
+    assert.equal(card.banner, undefined);
+    assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so a bound chat is sent the card itself');
   });
 
   it('omits every row the capture did not ground, and never substitutes a placeholder', () => {
-    const message = buildExpenseDraftCardMessage(CANONICAL, { expenseId: 'exp-1', category: 'ค่าเดินทาง' }, WEB, 'c1');
-    assert.deepEqual(rowsOf(message), [['หมวดหมู่', 'ค่าเดินทาง']]);
+    const message = buildExpenseDraftCardMessage(CANONICAL, { ...FULL, rows: [{ label: 'ผู้ขาย / ร้านค้า', value: '  ' }, { label: 'หมวดค่าใช้จ่าย', value: 'ค่าเดินทาง' }] }, WEB, 'c1');
+    assert.deepEqual(readSystemCard(message).rows, [['หมวดค่าใช้จ่าย', ':', 'ค่าเดินทาง']]);
     assert.doesNotMatch(JSON.stringify((message as any).contents), /ยังไม่ระบุ|undefined|null/u);
-    // Blank-but-present values are the same as absent: an empty Flex text element is not sent.
-    assert.deepEqual(
-      rowsOf(buildExpenseDraftCardMessage(CANONICAL, { expenseId: 'exp-1', amount: '  ', item: '', category: 'ค่าเดินทาง' }, WEB, 'c1')),
-      [['หมวดหมู่', 'ค่าเดินทาง']],
-    );
   });
 
-  it('degrades to the generic text card when nothing at all is grounded', () => {
-    const message = buildExpenseDraftCardMessage(CANONICAL, { expenseId: 'exp-1' }, WEB, 'c1');
-    assert.equal(message.type, 'flex');
-    assert.equal((message as any).contents.header.contents[0].text, 'ข้อมูลจากน้องมั่งมี');
-    assert.match(JSON.stringify(message.contents), /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/u);
+  it('degrades to the generic text card when nothing is grounded, a fact is longer than a row, or LINE could not fetch the pictures', () => {
+    for (const [facts, base] of [
+      [{ ...FULL, rows: [] }, WEB],
+      [{ ...FULL, rows: [{ label: 'ผู้ขาย / ร้านค้า', value: 'ก'.repeat(201) }] }, WEB],
+      [{ ...FULL, notes: Array.from({ length: 5 }, (_, index) => `หมายเหตุ ${index}`) }, WEB],
+      [FULL, 'http://app.example.com'], [FULL, undefined],
+    ] as Array<[LineExpenseDraftCardFacts, string | undefined]>) {
+      const message = buildExpenseDraftCardMessage(CANONICAL, facts, base, 'c1');
+      assert.equal(message.type, 'flex');
+      assert.equal((message as any).contents.header.contents[0].text, 'ข้อมูลจากน้องมั่งมี');
+      assert.match(JSON.stringify(message.contents), /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/u);
+      assert.equal(buildExpenseDraftReviewCard(CANONICAL, facts, base, 'c1'), undefined);
+    }
   });
 
-  it('carries the CANONICAL reply as altText — the words the text reply and the Flex→text fallback use', () => {
+  it('carries the CANONICAL reply as altText and as the text a fallback sends, with the way in as a line', () => {
     const message = buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1');
     assert.equal(message.type === 'flex' && message.altText, CANONICAL);
+    assert.equal(message.type === 'flex' && message.canonicalText, `${CANONICAL}\nเปิดดูรายการ: https://app.example.com/companies/c1/expenses/exp-1`);
+    const linked = `${CANONICAL}\n✅ ตรวจสอบและยืนยันในเว็บแอป:\nhttps://app.example.com/companies/c1/expenses/exp-1`;
+    assert.equal((buildExpenseDraftCardMessage(linked, FULL, WEB, 'c1') as any).canonicalText, linked, 'a reply that already carries the link is not given a second one');
     // Longer than the shared 400-character preview ceiling: VISIBLY marked, never silently cut.
-    const long = `${'ก'.repeat(500)}`;
-    const marked = buildExpenseDraftCardMessage(long, FULL, WEB, 'c1');
+    const marked = buildExpenseDraftCardMessage('ก'.repeat(500), FULL, WEB, 'c1');
     assert.equal(marked.type === 'flex' && Array.from(marked.altText).length, 400);
     assert.ok(marked.type === 'flex' && marked.altText.endsWith('…'));
   });
 
   it('opens exactly the tenant expense record — no query, no hash, no financial parameter', () => {
-    const action = (buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1') as any).contents.footer.contents[0].action;
-    assert.equal(action.type, 'uri');
-    assert.equal(action.uri, 'https://app.example.com/companies/c1/expenses/exp-1');
-    assert.equal(new URL(action.uri).search, '');
-    assert.equal(new URL(action.uri).hash, '');
-    // An untrusted base, or an id that cannot form a tenant path, loses the BUTTON — never the card.
-    for (const [base, companyId, expenseId] of [
-      [undefined, 'c1', 'exp-1'], ['javascript:alert(1)', 'c1', 'exp-1'], [WEB, '..', 'exp-1'], [WEB, 'c1', '../../c2/expenses/e9'],
-    ] as Array<[string | undefined, string, string]>) {
-      const card = (buildExpenseDraftCardMessage(CANONICAL, { ...FULL, expenseId }, base, companyId) as any).contents;
-      const uri = card.footer?.contents[0]?.action?.uri;
-      assert.ok(uri === undefined || uri === `${WEB}/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(expenseId)}`, String(uri));
-      assert.ok(card.body.contents.length > 0, 'the rows survive whatever happens to the link');
+    const [action] = readSystemCard(buildExpenseDraftCardMessage(CANONICAL, FULL, WEB, 'c1')).actions;
+    assert.equal(action!.uri, 'https://app.example.com/companies/c1/expenses/exp-1');
+    assert.equal(new URL(action!.uri!).search, '');
+    assert.equal(new URL(action!.uri!).hash, '');
+    // An id that cannot form a tenant path gets no card of this design, and no link anywhere.
+    for (const [companyId, expenseId] of [['..', 'exp-1'], ['c1', '../../c2/expenses/e9']] as Array<[string, string]>) {
+      const message = buildExpenseDraftCardMessage(CANONICAL, { ...FULL, expenseId }, WEB, companyId);
+      assert.equal(buildExpenseDraftReviewCard(CANONICAL, { ...FULL, expenseId }, WEB, companyId), undefined);
+      assert.doesNotMatch(JSON.stringify(message), /"type":"uri"/u);
     }
   });
 
   it('passes Thai NFC text through byte-identically, in the rows and in the altText', () => {
     // NFC: base + tone/vowel marks as their own code points — normalising to NFKC would rewrite them.
     const item = 'ค่าน้ำมันรถ'.normalize('NFC');
-    const message = buildExpenseDraftCardMessage(item, { ...FULL, item }, WEB, 'c1');
-    assert.equal(rowsOf(message)[1]![1], item);
+    const message = buildExpenseDraftCardMessage(item, { ...FULL, rows: [{ label: 'รายการ', value: item }] }, WEB, 'c1');
+    assert.equal(readSystemCard(message).rows[0]![2], item);
     assert.equal(message.type === 'flex' && message.altText, item);
     assert.equal(JSON.parse(JSON.stringify(message)).altText, item);
   });
@@ -650,10 +736,17 @@ describe('public policy card', () => {
 // reason it never meets a delivery plan — a new builder fails this test until someone decides which.
 describe('delivery plan guard: every card carries its text, or says why it never needs one', () => {
   const WEB = 'https://app.example.com';
+  const DRAFT_FACTS: LineExpenseDraftCardFacts = { expenseId: 'e1', subject: 'ร่างค่าใช้จ่าย', rows: [{ label: 'ยอดรวม', value: '100.00 บาท', total: true }], notes: [] };
   const carriesText: Record<string, () => LineReplyMessage[]> = {
     buildPublicPolicyCardMessage: () => [buildPublicPolicyCardMessage({ topic: 'trial', title: 'หัวข้อ', text: 'คำตอบ' })],
     buildLineAssistantTextCardMessage: () => [buildLineAssistantTextCardMessage('คำตอบ', WEB, 'c1')],
-    buildExpenseDraftCardMessage: () => [buildExpenseDraftCardMessage('ร่างค่าใช้จ่าย', { expenseId: 'e1', amount: '100.00' }, WEB, 'c1')],
+    buildExpenseDraftCardMessage: () => [buildExpenseDraftCardMessage('ร่างค่าใช้จ่าย', DRAFT_FACTS, WEB, 'c1'), buildExpenseDraftCardMessage('ร่างค่าใช้จ่าย', DRAFT_FACTS, undefined, 'c1')],
+    buildExpenseDraftReviewCard: () => [buildExpenseDraftReviewCard('ร่างค่าใช้จ่าย', DRAFT_FACTS, WEB, 'c1')!],
+    buildLineSystemTextCardMessage: () => [buildLineSystemTextCardMessage({ text: 'คำตอบ', header: { lines: ['แก้ไขค่าใช้จ่าย', 'ยกเลิกแล้ว'] }, webBaseUrl: WEB, companyId: 'c1' })!],
+    buildDesignedLineAnswerMessage: () => [
+      buildDesignedLineAnswerMessage(response(), 'fallback', WEB, 'c1', 'ทำอะไรได้บ้าง')!,
+      buildDesignedLineAnswerMessage(response([{ text: 'คำตอบ' }]), 'fallback', WEB, 'c1', 'ทำอะไรได้บ้าง')!,
+    ],
     buildReimbursementPayerClarificationMessage: () => [buildReimbursementPayerClarificationMessage()],
     buildReimbursementHandoffMessage: () => [buildReimbursementHandoffMessage(WEB, 'c1'), buildReimbursementHandoffMessage(undefined, 'c1')],
     buildAiBudgetExceededMessage: () => [true, false].flatMap((canManagePlan) => [true, false].flatMap((trialTier) =>

@@ -65,7 +65,9 @@ import {
   draftProposalAckReason,
   DRAFT_UPDATE_CANCELLED_REPLY,
   DRAFT_UPDATE_EXPIRED_REPLY,
+  buildDraftUpdateOutcomeCard,
   buildDraftUpdatePreviewCard,
+  draftUpdateBlockedState,
   draftUpdateAppliedReply,
   draftUpdateBlockedReply,
   draftUpdateChangedReply,
@@ -148,7 +150,7 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { AiBudgetScope, BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, PlanTermLockReason, LineAiReadMemory, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFallbackReason, ReceiptOcrFieldResult, ReceiptOcrResponse, RequestContext } from '@watchdog-bms/contracts';
-import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, extractValueCandidatesV2, mapThaiDigits, todayCivilDate, hasToolFeature, hasToolPermissions, lineToolRegistryFor, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, EXPENSE_STATUS_LABELS, scrubRecordIdentifier, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, extractValueCandidatesV2, mapThaiDigits, todayCivilDate, hasToolFeature, hasToolPermissions, lineToolRegistryFor, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
 import { LineAiBudgetDeadlineExceededError } from '../line-ai-budget-authority.service';
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
@@ -157,7 +159,7 @@ import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer,
 import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQuestion } from '../../domain/logic/line-event-discount.logic';
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -1507,40 +1509,16 @@ function formatReplyDate(value: string | undefined): string | undefined {
   return Number.isNaN(date.getTime()) ? value : THAI_DATE_REPLY_FORMATTER.format(date);
 }
 
-export function formatPaypersReply(
-  webBaseUrl: string | undefined,
-  companyId: string,
-  expenseId: string,
-  options: { acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus; askVendorAddress?: boolean } = {},
-): string {
-  const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
+type PaypersReplyOptions = { acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus; askVendorAddress?: boolean };
+
+/** ONE reading of what the capture grounded, for the reply text and for the review card alike: a
+ *  figure that is `undefined` here was not grounded, and neither of them may state it. */
+function paypersReplyFacts(options: PaypersReplyOptions) {
+  const money = (value: string) => Number(toMoney4(value)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const amountValue = options.acceptedAmounts?.grandTotalAmount ?? options.fields?.grandTotalAmount ?? options.amount;
-  const amount = amountValue && Number(toMoney4(amountValue)) > 0 ? Number(toMoney4(amountValue)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'ยังไม่ระบุ';
-  const docType = options.sourceDocumentType ? SOURCE_DOC_TYPE_REPLY_LABELS[options.sourceDocumentType] : undefined;
-  const moneyLabel = (value: string) => Number(toMoney4(value)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const vatValue = options.acceptedAmounts?.vatAmount ?? options.fields?.vatAmount;
   const vatMode = options.acceptedAmounts?.vatMode ?? options.fields?.vatMode;
   const whtValue = options.acceptedAmounts?.whtAmount ?? options.fields?.whtAmount;
-  const parts = options.compact ? [
-    '🧾 เก็บรูปและร่างแล้วค่ะ',
-    ...(docType && options.sourceDocumentType !== 'RECEIPT' ? [`เอกสาร: ${docType}`] : []),
-    ...(options.fields?.vendorName ? [`ร้าน: ${options.fields.vendorName}`] : []),
-    `ยอดในใบเสร็จ: ${amount === 'ยังไม่ระบุ' ? 'ยังอ่านยอดไม่ได้' : `${amount}${options.fields?.currency && options.fields.currency !== 'THB' ? ` ${options.fields.currency}` : ' บาท'}`}`,
-    `วันที่: ${!options.fields?.expenseDate ? 'ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน' : options.dateStatus === 'unverified' ? 'ยังรอตรวจสอบ' : receiptCardDateLine(options.fields.expenseDate, options.dateStatus ?? 'verified')}`,
-    'ยังไม่ยืนยันรายการ',
-  ] : [
-    '🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)',
-    '',
-    '📋 ข้อมูลที่อ่านได้ตอนนี้:',
-    `• ผู้ขาย/ผู้รับเงิน – ${options.fields?.vendorName ?? 'ยังไม่ระบุ'}`,
-    `• ยอดรวม – ${amount}`,
-    `• ประเภทเอกสาร – ${docType ?? 'รอตรวจสอบ'}`,
-    `• วันที่เอกสาร – ${receiptCardDateLine(options.fields?.expenseDate, options.dateStatus ?? (options.fields?.expenseDate ? 'verified' : 'unverified'))}`,
-    `• หมวดหมู่ค่าใช้จ่าย – ${options.categoryName ?? 'ยังไม่ระบุ'}`,
-    ...(vatMode !== 'NO_VAT' && vatMode !== 'EXEMPT' && vatValue && Number(toMoney4(vatValue)) > 0
-      ? [`• VAT – ${moneyLabel(vatValue)} บาท`] : []),
-    ...(whtValue && Number(toMoney4(whtValue)) > 0 ? [`• WHT – ${moneyLabel(whtValue)} บาท`] : []),
-  ];
   // Journey J1 step 1: additional charges belong on the DEFAULT card, not only when the sender
   // happens to ask what was on the bill. A service charge is money the shop added — the row a
   // reviewer questions first — and folding it into "ยอดรวม" is how the BHC 152.00 went unseen.
@@ -1559,63 +1537,103 @@ export function formatPaypersReply(
   // explicit item answers; it must not look like another purchase or reduce the service total.
   const additionalTotal = charges.filter((charge) => charge.kind !== 'ROUNDING')
     .reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
-  if (additionalTotal !== 0) parts.push(`• ค่าบริการอื่นๆ – ${moneyLabel(String(additionalTotal))} บาท`);
-  else if (charges.length === 0) {
-    const foldedAdditional = folded.filter((charge) => charge.kind !== 'ROUNDING');
-    const foldedTotal = foldedAdditional.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
-    if (foldedTotal !== 0) parts.push(`• ค่าบริการอื่นๆ – ${moneyLabel(String(foldedTotal))} บาท (รวมอยู่ในยอดเดียว รอตรวจสอบในเว็บ)`);
-  }
-  if (options.questionText && isReceiptItemQuestion(options.questionText)) {
-    const itemLines = receiptItemLines(options.fields, charges);
-    parts.push('', '🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
+  const foldedTotal = additionalTotal === 0 && charges.length === 0
+    ? folded.filter((charge) => charge.kind !== 'ROUNDING').reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0)
+    : 0;
+  const itemLines = options.questionText && isReceiptItemQuestion(options.questionText) ? receiptItemLines(options.fields, charges) : undefined;
+  // The total printed is the DOCUMENT's own figure and nothing converted it, so a non-baht
+  // document must say so (UAT 2026-08-29: $200.00 USD was recorded as 200 บาท).
+  const foreignCurrency = options.fields?.currency && options.fields.currency !== 'THB' ? options.fields.currency : undefined;
+  return {
+    amount: amountValue && Number(toMoney4(amountValue)) > 0 ? money(amountValue) : undefined,
+    docType: options.sourceDocumentType ? SOURCE_DOC_TYPE_REPLY_LABELS[options.sourceDocumentType] : undefined,
+    vat: vatMode !== 'NO_VAT' && vatMode !== 'EXEMPT' && vatValue && Number(toMoney4(vatValue)) > 0 ? money(vatValue) : undefined,
+    wht: whtValue && Number(toMoney4(whtValue)) > 0 ? money(whtValue) : undefined,
+    otherCharges: additionalTotal !== 0 ? `${money(String(additionalTotal))} บาท`
+      : foldedTotal !== 0 ? `${money(String(foldedTotal))} บาท (รวมอยู่ในยอดเดียว รอตรวจสอบในเว็บ)` : undefined,
+    dateLine: receiptCardDateLine(options.fields?.expenseDate, options.dateStatus ?? (options.fields?.expenseDate ? 'verified' : 'unverified')),
+    itemBlock: itemLines && ['🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
       ? itemLines
-      : ['• ยังอ่านรายการสินค้าจากหลักฐานนี้ไม่ได้ชัดเจนค่ะ']));
-  }
-  if (options.textOnly) {
-    parts.push('', '📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน');
-  }
-  if (options.hasDuplicate) {
-    parts.push('', '⚠️ พบไฟล์ที่อาจซ้ำกับรายการที่มีอยู่ – กรุณาตรวจสอบก่อนยืนยัน');
-  }
-  // Vendor-address §11.3: the one question this card may ask, and only when the draft conversation
-  // has an unretired ask on it — so a full tax invoice whose address could not be read is asked
-  // exactly once, and every other document (and every later card) says nothing about addresses.
-  if (options.askVendorAddress) {
-    parts.push('', LINE_VENDOR_ADDRESS_PROMPT);
-  }
-  // The total printed above is the DOCUMENT's own figure and nothing converted it, so a non-baht
-  // document must say so here too (UAT 2026-08-29: $200.00 USD was recorded as 200 บาท). THB and an
-  // unread currency push nothing and keep this reply byte-identical.
-  if (options.fields?.currency && options.fields.currency !== 'THB') {
-    parts.push('', `⚠️ เอกสารนี้เป็นสกุลเงิน ${options.fields.currency} – ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก`);
-  }
+      : ['• ยังอ่านรายการสินค้าจากหลักฐานนี้ไม่ได้ชัดเจนค่ะ'])],
+    textOnlyNote: options.textOnly ? '📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน' : undefined,
+    duplicateNote: options.hasDuplicate ? '⚠️ พบไฟล์ที่อาจซ้ำกับรายการที่มีอยู่ – กรุณาตรวจสอบก่อนยืนยัน' : undefined,
+    // Vendor-address §11.3: the one question this card may ask, and only when the draft conversation
+    // has an unretired ask on it — so a full tax invoice whose address could not be read is asked
+    // exactly once, and every other document (and every later card) says nothing about addresses.
+    addressAsk: options.askVendorAddress ? LINE_VENDOR_ADDRESS_PROMPT : undefined,
+    foreignCurrency,
+    currencyNote: foreignCurrency
+      ? `⚠️ เอกสารนี้เป็นสกุลเงิน ${foreignCurrency} – ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก` : undefined,
+  };
+}
+
+export function formatPaypersReply(
+  webBaseUrl: string | undefined,
+  companyId: string,
+  expenseId: string,
+  options: PaypersReplyOptions = {},
+): string {
+  const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
+  const facts = paypersReplyFacts(options);
+  const amount = facts.amount ?? 'ยังไม่ระบุ';
+  const docType = facts.docType;
+  const parts = options.compact ? [
+    '🧾 เก็บรูปและร่างแล้วค่ะ',
+    ...(docType && options.sourceDocumentType !== 'RECEIPT' ? [`เอกสาร: ${docType}`] : []),
+    ...(options.fields?.vendorName ? [`ร้าน: ${options.fields.vendorName}`] : []),
+    `ยอดในใบเสร็จ: ${amount === 'ยังไม่ระบุ' ? 'ยังอ่านยอดไม่ได้' : `${amount}${options.fields?.currency && options.fields.currency !== 'THB' ? ` ${options.fields.currency}` : ' บาท'}`}`,
+    `วันที่: ${!options.fields?.expenseDate ? 'ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน' : options.dateStatus === 'unverified' ? 'ยังรอตรวจสอบ' : receiptCardDateLine(options.fields.expenseDate, options.dateStatus ?? 'verified')}`,
+    'ยังไม่ยืนยันรายการ',
+  ] : [
+    '🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)',
+    '',
+    '📋 ข้อมูลที่อ่านได้ตอนนี้:',
+    `• ผู้ขาย/ผู้รับเงิน – ${options.fields?.vendorName ?? 'ยังไม่ระบุ'}`,
+    `• ยอดรวม – ${amount}`,
+    `• ประเภทเอกสาร – ${docType ?? 'รอตรวจสอบ'}`,
+    `• วันที่เอกสาร – ${facts.dateLine}`,
+    `• หมวดหมู่ค่าใช้จ่าย – ${options.categoryName ?? 'ยังไม่ระบุ'}`,
+    ...(facts.vat ? [`• VAT – ${facts.vat} บาท`] : []),
+    ...(facts.wht ? [`• WHT – ${facts.wht} บาท`] : []),
+  ];
+  if (facts.otherCharges) parts.push(`• ค่าบริการอื่นๆ – ${facts.otherCharges}`);
+  if (facts.itemBlock) parts.push('', ...facts.itemBlock);
+  if (facts.textOnlyNote) parts.push('', facts.textOnlyNote);
+  if (facts.duplicateNote) parts.push('', facts.duplicateNote);
+  if (facts.addressAsk) parts.push('', facts.addressAsk);
+  // THB and an unread currency push nothing and keep this reply byte-identical.
+  if (facts.currencyNote) parts.push('', facts.currencyNote);
   parts.push('', `${options.compact ? 'เปิดดูรายการ' : '✅ ตรวจสอบและยืนยันในเว็บแอป'}:\n${link}`);
   return parts.join('\n');
 }
 
-/** §10.1 status row. The record EXISTS but is unconfirmed — the same state the canonical reply's header
- *  prints ("บันทึก…เบื้องต้นแล้ว (รอตรวจสอบ)"), said once, here, and never by a model. */
-const EXPENSE_DRAFT_CARD_STATUS = 'ร่าง – รอตรวจสอบและยืนยันในเว็บ';
-
-/** The §10.1 card rows reuse the SAME grounded values `formatPaypersReply` prints, with the same money
- *  rule. A value the capture did not ground is OMITTED — the card leaves the row out rather than
- *  repeating the text reply's 'ยังไม่ระบุ' placeholder as if it were a fact. */
+/** The §10.1 review card states the SAME grounded values `formatPaypersReply` prints, read once by
+ *  `paypersReplyFacts`, in the locked design's order. A value the capture did not ground is OMITTED —
+ *  the card leaves the row out rather than repeating the text reply's 'ยังไม่ระบุ' placeholder as if it
+ *  were a fact — and everything else the reply says below its facts is a note, word for word.
+ *  `lead` and `tail` are what a caller put in front of the reply and after it; they are its first and last notes. */
 function expenseDraftCardFacts(
   expenseId: string,
-  options: { amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; item?: string | null } = {},
+  options: PaypersReplyOptions & { status?: string | null; item?: string | null; lead?: string; tail?: string } = {},
 ): LineExpenseDraftCardFacts {
-  const amountValue = options.fields?.grandTotalAmount ?? options.amount;
-  const amount = amountValue && Number(toMoney4(amountValue)) > 0
-    ? `${Number(toMoney4(amountValue)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`
-    : undefined;
-  const item = options.item ?? options.fields?.vendorName;
-  return {
+  const facts = paypersReplyFacts(options);
+  return expenseDraftCardFactsFrom({
     expenseId,
-    ...(amount ? { amount } : {}),
-    ...(item ? { item } : {}),
-    ...(options.categoryName ? { category: options.categoryName } : {}),
-    status: EXPENSE_DRAFT_CARD_STATUS,
-  };
+    subject: expenseDraftCardSubject(options.sourceDocumentType, options.textOnly),
+    vendor: options.fields?.vendorName,
+    item: options.item,
+    date: facts.dateLine,
+    documentNumber: scrubRecordIdentifier(options.fields?.documentNumber ?? null, 40),
+    documentType: facts.docType,
+    category: options.categoryName,
+    total: facts.amount && `${facts.amount} ${facts.foreignCurrency ?? 'บาท'}`,
+    vat: facts.vat && `${facts.vat} บาท`,
+    withholdingTax: facts.wht && `${facts.wht} บาท`,
+    otherCharges: facts.otherCharges,
+    status: (EXPENSE_STATUS_LABELS as Record<string, string>)[options.status ?? ''] ?? EXPENSE_STATUS_LABELS.NEEDS_REVIEW,
+    notesBefore: [options.lead],
+    notesAfter: [facts.itemBlock?.join('\n'), facts.textOnlyNote, facts.duplicateNote, facts.addressAsk, facts.currencyNote, options.tail],
+  });
 }
 
 export function isGroundedReceiptFollowUp(text: string): boolean {
@@ -2460,8 +2478,11 @@ export class ProcessLineWebhookUseCase {
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     text: string,
     quickReply?: LineReplyMessage['quickReply'],
+    /** This same reply as a card of the locked System OA design, when its builder could draw it whole.
+     *  The card carries `text` as its canonical text, so `text` is still what is stored and what falls back. */
+    designed?: LineReplyMessage,
   ): Promise<void> {
-    const result = await this.deliverMessages(event, [{
+    const result = await this.deliverMessages(event, [designed ?? {
       ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
       ...(quickReply ? { quickReply } : {}),
     }]);
@@ -3397,13 +3418,10 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     if (!confirm) {
-      const cancelled = await this.draftUpdate.cancel(ctx, chatKeyHash, event.draftUpdatePreviewId);
-      await this.deliverCompletedReply(
-        event,
-        cancelled === 'cancelled' ? DRAFT_UPDATE_CANCELLED_REPLY : DRAFT_UPDATE_EXPIRED_REPLY,
-        ctx.companyId,
-        access,
-      );
+      const cancelled = await this.draftUpdate.cancel(ctx, chatKeyHash, event.draftUpdatePreviewId) === 'cancelled';
+      const cancelReply = cancelled ? DRAFT_UPDATE_CANCELLED_REPLY : DRAFT_UPDATE_EXPIRED_REPLY;
+      await this.deliverCompletedReply(event, cancelReply, ctx.companyId, access, undefined,
+        buildDraftUpdateOutcomeCard(cancelled ? 'cancelled' : 'unchanged', cancelReply, this.config.webBaseUrl, ctx.companyId));
       await this.updateEventLog(event.webhookEventId, 'draft_update_cancelled', undefined, ctx.companyId);
       return;
     }
@@ -3418,6 +3436,8 @@ export class ProcessLineWebhookUseCase {
     const outcome = await this.draftUpdate.apply(ctx, chatKeyHash, event.webhookEventId, event.draftUpdatePreviewId);
     let reply: string;
     let status = 'completed';
+    // The header of the reply's card says what really became of the edit.
+    const cardState = outcome.status === 'applied' ? 'applied' as const : outcome.status === 'blocked' ? draftUpdateBlockedState(outcome.reason) : 'unchanged' as const;
     if (outcome.status === 'applied') {
       this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash, requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'APPLIED' });
       const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview, outcome.vendorCounterpartyAutoSave);
@@ -3434,7 +3454,8 @@ export class ProcessLineWebhookUseCase {
       reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
       status = outcome.reason === 'forbidden' ? 'forbidden' : 'draft_update_blocked';
     }
-    await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+    await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
+      buildDraftUpdateOutcomeCard(cardState, reply, this.config.webBaseUrl, ctx.companyId));
     await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
@@ -3472,7 +3493,7 @@ export class ProcessLineWebhookUseCase {
     if (outcome.status === 'preview') {
       this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash: chatKeyHashOf(event), requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'PENDING' });
       try {
-        await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview)]);
+        await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview, this.config.webBaseUrl)]);
       } catch (error) {
         const savedPlan = this.boundConversations.has(event) && await this.prisma.client.lineTurnOutcome.findUnique({ where: { webhookEventId: event.webhookEventId }, select: { presentationKind: true } });
         if (!savedPlan || savedPlan.presentationKind !== 'delivery_plan_v2') await this.draftUpdate.discardUndeliveredPreview(ctx, chatKeyHashOf(event), outcome.preview.previewId);
@@ -3489,7 +3510,8 @@ export class ProcessLineWebhookUseCase {
     }
     if (outcome.status === 'move_suggestion') {
       const reply = draftUpdateMoveSuggestionReply(outcome.lineNumber, outcome.chargeLabel);
-      await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+      await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
+        buildDraftUpdateOutcomeCard('unchanged', reply, this.config.webBaseUrl, ctx.companyId));
       await this.persistIntakeTurn({ event,
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
@@ -3502,7 +3524,8 @@ export class ProcessLineWebhookUseCase {
     // record and must be said rather than swallowed.
     if (outcome.reason === 'feature_disabled') return 'not_handled';
     const reply = draftUpdateBlockedReply(outcome.reason, this.config.webBaseUrl, ctx.companyId, outcome.expenseId);
-    await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+    await this.deliverCompletedReply(event, reply, ctx.companyId, access, undefined,
+      buildDraftUpdateOutcomeCard(draftUpdateBlockedState(outcome.reason), reply, this.config.webBaseUrl, ctx.companyId));
     await this.persistIntakeTurn({ event,
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: normalizeLineText(event.messageText), replyText: reply, intent: 'CORRECTION',
@@ -3546,15 +3569,18 @@ export class ProcessLineWebhookUseCase {
     access: { permissions: string[]; roles: string[] },
     /** Spec §13: the state badge the reply's own use case chose. Absent renders exactly as before. */
     badge?: string,
+    /** This same reply as a card of the locked System OA design, when its builder could draw it whole.
+     *  It carries `text` as its canonical text, so the text is still what is stored and what falls back. */
+    designed?: LineReplyMessage,
   ): Promise<void> {
     // Bound chats render the same card production sends (UAT 2026-09-29: the receipt draft reply had
     // become plain text ending in a raw link with ids). A lossless card is a complete presentation, so
     // the delivery plan sends the card itself with this text as its fallback.
-    if (Array.from(text).length > LINE_FLEX_CARD_BODY_MAX_CHARS) {
-      return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access, undefined, true);
+    if (!designed && Array.from(text).length > LINE_FLEX_CARD_BODY_MAX_CHARS) {
+      return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access);
     }
     const message = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
-      buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
+      designed ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
       companyId,
       access,
     ));
@@ -3586,7 +3612,6 @@ export class ProcessLineWebhookUseCase {
     companyId: string,
     access: { permissions: string[]; roles: string[] },
     expenseDraft?: LineExpenseDraftCardFacts,
-    requestedDraftEdit = false,
   ): Promise<void> {
     if (texts.length === 0 || texts.length > (this.boundConversations.has(event) ? 15 : LINE_MAX_MESSAGES_PER_REPLY)) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
     // Production's render handles up to one LINE reply's worth of parts; a longer bound answer is
@@ -3596,16 +3621,10 @@ export class ProcessLineWebhookUseCase {
     }
     const messages = await this.timeStage(event.webhookEventId, 'render', async () => {
       const terminal = texts[texts.length - 1]!;
-      // Default-off is the legacy shape exactly: every part a text message, completion quick reply on the
-      // terminal one only.
-      if (!this.config.lineAiMultipartTerminalFlexEnabled && !requestedDraftEdit) {
-        const parts = texts.map((text) => this.buildLosslessTextMessage(text));
-        parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
-        return parts;
-      }
-      // §10.1: an expense capture terminal that grounded a draft gets the DEDICATED ร่างค่าใช้จ่าย card;
-      // the generic card stays the render for every terminal with no such draft behind it. Same gate
-      // either way, so flag-off is still the byte-identical legacy all-text shape above.
+      // §10.1: an expense capture terminal that grounded a draft gets the DEDICATED review card; the
+      // generic card stays the render for every terminal with no such draft behind it. No switch
+      // decides this (owner 2026-09-29): what keeps a reply whole is the rule below — a card is the
+      // terminal message only where it holds the whole terminal text, and a longer text is sent as text.
       const terminalCard = (text: string): LineReplyMessage => expenseDraft && !/ข้อมูลที่ต้องใช้|ข้อมูลที่ยังต้องตอบ/u.test(text)
         ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId)
         : buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
@@ -3689,6 +3708,8 @@ export class ProcessLineWebhookUseCase {
     // Nothing pending is an ordinary turn; two pending things are the router's to ask about.
     if ([edit, action, ...openDrafts].filter(Boolean).length !== 1) return false;
     let text: string;
+    // The pending edit's own states are cards of the locked design; the other pending work keeps its text.
+    let editState: Parameters<typeof buildDraftUpdateOutcomeCard>[0] | undefined;
     if (openDrafts.length) {
       const result = await this.expenseDraftConversation!.execute(ctx, { messageText: 'ยกเลิก', chatKeyHash,
         webhookEventId: event.webhookEventId, captureHints: { targetExpenseId: openDrafts[0]!.expenseId } });
@@ -3698,9 +3719,13 @@ export class ProcessLineWebhookUseCase {
         absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${openDrafts[0]!.expenseId}`)].join('\n');
     } else if (edit) {
       const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${edit.expenseId}`);
-      if (reply === 'review') text = `${draftUpdateCanonicalDiff(edit)}\n\nยังไม่ได้แก้รายการค่ะ กดยืนยันในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย`;
-      else if (await this.draftUpdate!.cancel(ctx, chatKeyHash, edit.previewId) === 'cancelled') {
+      editState = 'unchanged';
+      if (reply === 'review') {
+        editState = 'preview';
+        text = `${draftUpdateCanonicalDiff(edit)}\n\nยังไม่ได้แก้รายการค่ะ กดยืนยันในบัตรเมื่อพร้อม หรือพิมพ์ยกเลิกได้เลย`;
+      } else if (await this.draftUpdate!.cancel(ctx, chatKeyHash, edit.previewId) === 'cancelled') {
         await this.closeWaitingWriteTask(bound);
+        editState = 'cancelled';
         text = [`ยกเลิกการแก้ไขแล้วค่ะ รายการเดิมไม่เปลี่ยน: ${formatRecordLabel(edit.record)} · ยอดรวม ${moneyLabel(edit.totalsBefore.grandTotalAmount)} บาท`,
           'รายการนี้ยังบันทึกเป็นร่างไว้ (ยังไม่ยืนยัน ยังไม่จ่าย) ถ้าไม่ใช้แล้วลบได้ในเว็บค่ะ', link].join('\n');
       } else text = 'คำขอแก้ไขนี้หมดอายุหรือรายการเปลี่ยนไปแล้วค่ะ ยังไม่ได้แก้ไขรายการ';
@@ -3722,7 +3747,7 @@ export class ProcessLineWebhookUseCase {
           : 'ร่างใบเบิกนี้หมดอายุหรือเปลี่ยนไปแล้วค่ะ ยังไม่ได้สร้างใบเบิก';
       }
     }
-    await this.deliverReply(event, text);
+    await this.deliverReply(event, text, undefined, editState && buildDraftUpdateOutcomeCard(editState, text, this.config.webBaseUrl, ctx.companyId));
     await this.persistIntakeTurn({ event, userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: normalizeLineText(event.messageText), replyText: text, intent: reply === 'cancel' ? 'CORRECTION' : 'CLARIFY' });
     await this.updateEventLog(event.webhookEventId, reply === 'cancel' ? 'pending_work_cancelled' : 'pending_work_reviewed', undefined, ctx.companyId);
@@ -4006,7 +4031,10 @@ export class ProcessLineWebhookUseCase {
     const turnId = await this.persistTurn(bound.owner.userId, bound.owner.companyId, event.webhookEventId, request.messagePreviewHash,
       event.messageText.slice(0, PREVIEW_MAX_CHARS), response, event);
     await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, bound.owner.companyId);
-    const delivered = await this.deliverMessages(event, [{ type: 'text', text: formatLineReply(response, this.config.webBaseUrl) }]);
+    // The answer on the locked design, under the reader's own question; its text where the design cannot be drawn.
+    const answerText = formatLineReply(response, this.config.webBaseUrl);
+    const delivered = await this.deliverMessages(event, [buildDesignedLineAnswerMessage(response, answerText, this.config.webBaseUrl, bound.owner.companyId, event.messageText)
+      ?? { type: 'text', text: answerText }]);
     // Same terminal row states as the business-answer path; only COMPLETED/REFUSED rows feed the next turn's context.
     await this.prisma.client.aiTurn.update({ where: { id: turnId }, data: delivered === 'ok'
       ? { status: response.refused ? 'REFUSED' : 'COMPLETED', errorCode: response.errorCode }
@@ -6275,7 +6303,7 @@ export class ProcessLineWebhookUseCase {
         const mixedContinuation = this.mixedBusinessQuestions?.get(event);
         if (mixedContinuation) mixedContinuation.businessStatus = ['ENDED', 'CANCELLED'].includes(result.status) ? 'handled' : 'needs_user';
         this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
-        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
@@ -6453,7 +6481,7 @@ export class ProcessLineWebhookUseCase {
         return;
       }
       this.rememberSubstituteDeliverySource(event, continuationCtx, result);
-      if (captured) captureReply = (await this.savedReceiptReplies(event, companyId, captured.expense.id)).join('\n');
+      if (captured) captureReply = (await this.savedReceiptReply(event, companyId, captured.expense.id)).texts.join('\n');
       // A FORBIDDEN outcome answers nothing and carries no resume capsule, so it must be delivered
       // through the normal branch instead of being reduced to a side-question interruption.
       //
@@ -6964,7 +6992,7 @@ export class ProcessLineWebhookUseCase {
         const mixedContinuation = this.mixedBusinessQuestions?.get(event);
         if (mixedContinuation) mixedContinuation.businessStatus = ['ENDED', 'CANCELLED'].includes(result.status) ? 'handled' : 'needs_user';
         this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
-        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess);
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
@@ -7129,26 +7157,28 @@ export class ProcessLineWebhookUseCase {
       const mixedCapture = this.mixedBusinessQuestions?.get(event); if (mixedCapture) mixedCapture.businessStatus = 'handled';
       this.rememberReceiptDeliverySource(event, ctx, captured.expense,
         captured.categoryNameSourceId && captured.categoryName ? { id: captured.categoryNameSourceId, name: captured.categoryName } : undefined);
-      const replyTexts = captured.replyTexts.length
-        ? captured.replyTexts
-        : [formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
-          textOnly: true,
-          amount: captured.insertedAmount,
-          categoryName: captured.categoryName,
-          sourceDocumentType: captured.expense.sourceDocumentType,
-          fields: {
-            ...(captured.expense.expenseDate ? { expenseDate: new Date(captured.expense.expenseDate).toISOString() } : {}),
-            ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
-          } as ReceiptOcrFieldResult,
-        })];
+      const captureSummary = {
+        textOnly: true,
+        amount: captured.insertedAmount,
+        categoryName: captured.categoryName,
+        sourceDocumentType: captured.expense.sourceDocumentType,
+        fields: {
+          ...(captured.expense.expenseDate ? { expenseDate: new Date(captured.expense.expenseDate).toISOString() } : {}),
+          ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
+        } as ReceiptOcrFieldResult,
+      };
+      // The review card states what this lane's own summary states, so it is built for that summary
+      // only; a reply the draft conversation wrote keeps the card that shows its text.
+      const ownSummary = captured.replyTexts.length === 0;
+      const replyTexts = ownSummary
+        ? [formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, captureSummary)]
+        : captured.replyTexts;
       const expenseDraftInterruption = await interruptExpenseDraft([captured.expense.id]);
       if (expenseDraftInterruption) replyTexts[replyTexts.length - 1] = `${replyTexts.at(-1)}\n\n${expenseDraftInterruption}`;
-      await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess,
-        expenseDraftCardFacts(captured.expense.id, {
-          amount: captured.insertedAmount,
-          categoryName: captured.categoryName,
-          item: captured.expense.vendorNameSnapshot ?? captured.expense.note,
-        }));
+      await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess, ownSummary
+        ? expenseDraftCardFacts(captured.expense.id, { ...captureSummary, status: captured.expense.status, item: captured.expense.note,
+          ...(expenseDraftInterruption ? { tail: expenseDraftInterruption } : {}) })
+        : undefined);
       await this.settleWriteLane(event, 'handled');
       await this.ackConsumed(capturePlan, 'evidence_capture');
       await this.persistIntakeTurn({ event,
@@ -7209,7 +7239,7 @@ export class ProcessLineWebhookUseCase {
         : null;
       if (draftAnswer) {
         this.rememberContinuationDeliverySource(event, expenseDraftCtx, draftAnswer);
-        await this.deliverCompletedReplies(event, this.withDraftWebLink(draftAnswer.replyTexts, companyId, draftAnswer.expenseId), companyId, resolvedAccess, undefined, true);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(draftAnswer.replyTexts, companyId, draftAnswer.expenseId), companyId, resolvedAccess);
         await this.settleWriteLane(event, 'needs_user', draftAnswer.replyTexts.join('\n'));
         await this.ackConsumed(correctionPlan, 'correction_apply');
         await this.persistIntakeTurn({ event, userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -7592,7 +7622,7 @@ export class ProcessLineWebhookUseCase {
     if (turnResponse.semanticCoverage) this.semanticDelivery.set(event, turnResponse.semanticCoverage);
     // 10. Customer-visible completion requires a confirmed LINE reply/push.
     const completionMessage = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
-      buildLineBusinessAnswerMessage(turnResponse, formatLineReply(turnResponse, this.config.webBaseUrl), this.config.webBaseUrl, companyId),
+      buildLineBusinessAnswerMessage(turnResponse, formatLineReply(turnResponse, this.config.webBaseUrl), this.config.webBaseUrl, companyId, normalizedText),
       companyId,
       resolvedAccess,
     ));
@@ -7627,7 +7657,7 @@ export class ProcessLineWebhookUseCase {
     }
     const delivery = await this.deliverMessages(
       event,
-      [...(draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview)] : [completionMessage]), ...reimbursementMessages],
+      [...(draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview, this.config.webBaseUrl)] : [completionMessage]), ...reimbursementMessages],
     );
     this.emitTurnSummary({ webhookEventId: event.webhookEventId, requestId, request: turnRequest, response: turnResponse, delivery });
     if (delivery !== 'ok') {
@@ -8247,8 +8277,9 @@ export class ProcessLineWebhookUseCase {
         ...(saved ? { expenseId: saved.expenseId, companyId: saved.companyId } : {}), ...safeLineErrorDetails(err) });
       if (err instanceof LineDeliveryError) return { outcome: 'done' };
       if (saved?.uploaded) {
-        const texts = await this.savedReceiptReplies(event, saved.companyId, saved.expenseId);
-        const delivered = await this.deliverRequiredMessages(event, texts.map((text) => buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId)))
+        const summary = await this.savedReceiptReply(event, saved.companyId, saved.expenseId);
+        const delivered = await this.deliverRequiredMessages(event, summary.texts.map((text) => this.receiptReviewCard(text, summary.draft, saved!.companyId)
+          ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId)))
           .then(() => true, (error: unknown) => {
             this.logger.warn({ msg: 'line_receipt_saved_reply_failed', webhookEventId: event.webhookEventId, expenseId: saved!.expenseId, ...safeLineErrorDetails(error) });
             return false;
@@ -9280,22 +9311,25 @@ export class ProcessLineWebhookUseCase {
         ...(draftSuggestedCategoryId ? { suggestedCategoryId: draftSuggestedCategoryId } : {}),
       });
     // Source facts remain durable and editable, but sending a photo never starts a questionnaire.
-    const replyTexts = await this.savedReceiptReplies(event, companyId, intent.expenseId, caption);
+    const saved = await this.savedReceiptReply(event, companyId, intent.expenseId, caption);
+    const replyTexts = saved.texts;
     // §18.4 NR04/NR05: the document DID pass eligibility and a record exists, so the expense summary
     // is unchanged — only the one sentence naming what kind of document this is leads it. "ยังไม่ได้
     // สร้างรายการ" is impossible here by construction, which is exactly §18.4's rule.
     const nrOnExpense = expensePathNonReceiptLead(decision.classification, ocrFields?.grandTotalAmount);
-    if (nrOnExpense) replyTexts[0] = `${nrOnExpense}\n\n${replyTexts[0]!}`;
-    if (utilityReceipt) replyTexts[0] = [
+    const utilityLead = utilityReceipt ? [
       `📄 รูปนี้มีเอกสาร${/(?:ค่าน้ำ|ประปา)/u.test(utilityReceipt.bill.titleEvidence) ? 'ค่าน้ำ' : 'ค่าไฟ'} 2 งวดค่ะ`,
       `• งวดก่อน ${utilityReceipt.receipt.period}: ใบเสร็จ ${utilityReceipt.receipt.amount} บาท — บันทึกร่างค่าใช้จ่ายจากใบเสร็จแล้ว รอตรวจข้อมูล`,
       `• งวดปัจจุบัน ${utilityReceipt.bill.period}: ${utilityReceipt.bill.titleEvidence} ${utilityReceipt.bill.amount} บาท — เป็นยอดที่เรียกเก็บ ยังไม่ใช่หลักฐานว่าชำระ และยังไม่ได้บันทึกจากภาพนี้`,
       'ไม่ได้รวมสองยอดหรือบันทึกการชำระเงินจากใบแจ้งค่ะ',
       'หากต้องการบันทึกใบแจ้งงวดปัจจุบันเป็นร่างบิลค้างชำระด้วย พิมพ์ “บันทึกใบแจ้งหนี้ด้วย” ค่ะ',
       'เมื่อชำระงวดปัจจุบันแล้ว ส่งใบเสร็จของงวดนั้นเข้ามาเพื่อบันทึกค่าใช้จ่ายค่ะ',
-      '', replyTexts[0]!,
-    ].join('\n');
-    await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
+    ].join('\n') : undefined;
+    // What leads the summary in the text leads the review card's notes, in the same order.
+    const leads = [utilityLead, nrOnExpense].filter((lead): lead is string => !!lead);
+    if (leads.length) replyTexts[0] = [...leads, replyTexts[0]!].join('\n\n');
+    await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access, undefined,
+      this.receiptReviewCard(replyTexts[0]!, saved.draft, companyId, leads));
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({ event,
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -9304,24 +9338,32 @@ export class ProcessLineWebhookUseCase {
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
   }
 
-  /** Recovery reads the saved record; it never opens a questionnaire or reapplies money. */
-  private async savedReceiptReplies(event: LineReceiptUploadEvent | LineTextEvent, companyId: string, expenseId: string, questionText?: string): Promise<string[]> {
+  /** The saved receipt's summary as the locked review card. `leads` are what the caller put in front of
+   *  the summary; `undefined` when the record is past review or the card cannot be drawn whole. */
+  private receiptReviewCard(text: string, draft: LineExpenseDraftCardFacts | undefined, companyId: string, leads: readonly string[] = []): LineReplyMessage | undefined {
+    return draft && buildExpenseDraftReviewCard(text, { ...draft, notes: [...leads, ...draft.notes] }, this.config.webBaseUrl, companyId);
+  }
+
+  /** Recovery reads the saved record; it never opens a questionnaire or reapplies money. `draft` is the
+   *  same reading as the review card's facts, present only while the record still awaits review. */
+  private async savedReceiptReply(event: LineReceiptUploadEvent | LineTextEvent, companyId: string, expenseId: string, questionText?: string): Promise<{ texts: string[]; draft?: LineExpenseDraftCardFacts }> {
+    const texts = (text: string) => ({ texts: [text] });
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
     const fallback = 'ยังตรวจสอบใบเสร็จเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการก่อนส่งซ้ำค่ะ';
     try {
-      if (!event.handoff || !this.expenseRepo?.findByIdWithRelations) return [fallback];
+      if (!event.handoff || !this.expenseRepo?.findByIdWithRelations) return texts(fallback);
       const access = await this.permissionResolver.resolveAccess(event.handoff.userId, companyId);
       const expense = await this.expenseRepo.findByIdWithRelations(companyId, expenseId, undefined, access.scopes ?? {});
       if (!expense || expense.createdByUserId !== event.handoff.userId || expense.captureSource !== 'LINE_UPLOAD'
-        || expense.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) return [fallback];
+        || expense.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) return texts(fallback);
       const category = expense.expenseCategoryId ? (await this.expenseRepo.listCategories(companyId)).find(item => item.id === expense.expenseCategoryId) : undefined;
       this.rememberReceiptDeliverySource(event, { requestId: event.webhookEventId, authSubject: event.handoff.userId,
         userId: event.handoff.userId, companyId, membershipId: access.membershipId, roles: access.roles,
         permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, expense, category);
-      if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return [`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`];
+      if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return texts(`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`);
       const summary = expense.aiVerificationSummaryJson;
       const reconciliation = summary?.chargeReconciliation as { status?: unknown; chargesApplied?: unknown } | undefined;
-      return [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, {
+      const options: PaypersReplyOptions = {
         questionText,
         acceptedAmounts: { grandTotalAmount: expense.grandTotalAmount, vatAmount: expense.vatAmount, whtAmount: expense.whtAmount, netPayableAmount: expense.netPayableAmount, vatMode: expense.vatMode, discountAmount: expense.discountAmount },
         sourceDocumentType: expense.sourceDocumentType,
@@ -9343,10 +9385,12 @@ export class ProcessLineWebhookUseCase {
           ? { chargeReconciliation: { status: reconciliation.status, chargesApplied: reconciliation.chargesApplied } } : {}),
         hasDuplicate: Boolean(expense.duplicateOfExpenseId) || expense.duplicateStatus === 'POSSIBLE_DUPLICATE',
         dateStatus: (summary?.dateStatus as ExpenseDocumentDateStatus | undefined) ?? (expense.reviewedAt ? 'verified' : 'unverified'),
-      })];
+      };
+      return { texts: [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, options)],
+        draft: expenseDraftCardFacts(expenseId, { ...options, status: expense.status }) };
     } catch (error) {
       this.logger.warn({ msg: 'line_receipt_summary_unavailable', companyId, expenseId, ...safeLineErrorDetails(error) });
-      return [fallback];
+      return texts(fallback);
     }
   }
 
@@ -9747,7 +9791,11 @@ export class ProcessLineWebhookUseCase {
 ${link}`, ctx.companyId, access);
     else if (!expense.primaryAttachmentId) await this.deliverCompletedReply(event, `เก็บร่างไว้แล้ว แต่ยังไม่มีรูปแนบที่ยืนยันการอัปโหลดค่ะ เปิดตรวจสอบร่างเดิมได้ที่
 ${link}`, ctx.companyId, access);
-    else await this.deliverCompletedReply(event, (await this.savedReceiptReplies(event, ctx.companyId, expense.id)).join('\n'), ctx.companyId, access);
+    else {
+      const summary = await this.savedReceiptReply(event, ctx.companyId, expense.id);
+      const text = summary.texts.join('\n');
+      await this.deliverCompletedReply(event, text, ctx.companyId, access, undefined, this.receiptReviewCard(text, summary.draft, ctx.companyId));
+    }
     await this.recordDeliveredReceiptContinuation(event, ctx.companyId, ctx.userId, expense.id, ctx.scopes);
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
   }
@@ -10914,9 +10962,12 @@ ${link}`, ctx.companyId, access);
         additionalReply = SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED;
       }
     }
-    const receiptReply = (await this.savedReceiptReplies(event, companyId, expenseId)).join('\n');
+    const summary = await this.savedReceiptReply(event, companyId, expenseId);
+    const receiptReply = summary.texts.join('\n');
     const reply = additionalReply ? `${receiptReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${additionalReply}` : receiptReply;
-    await this.deliverCompletedReply(event, reply, companyId, access);
+    // The review card is the receipt's own summary; a reply that also reports the substitute work keeps the card that shows its text.
+    await this.deliverCompletedReply(event, reply, companyId, access, undefined,
+      additionalReply ? undefined : this.receiptReviewCard(reply, summary.draft, companyId));
     await this.prisma.client.lineIntakePendingMedia.updateMany({
       where: { id: pending.id, status: 'PENDING' },
       data: { status: 'RESOLVED_RECEIPT' },

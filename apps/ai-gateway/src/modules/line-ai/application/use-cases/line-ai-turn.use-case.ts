@@ -4,7 +4,7 @@
  * Feature flag: LINE_AI_AGENT_ORCHESTRATION_ENABLED=true  → item 10B orchestrator path.
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
+import type { LineAiAnswerCardLayout, LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
 import { AI_BUDGET_REFUSAL_CODES, LINE_AI_EXPENSE_CRITERION_REPLIES, LINE_TOOL_REGISTRY, asIntakeRouteIntent, extractValueCandidates, isBusinessIntakeIntent, lineAiRetainedTaskSourceMatchesProjection, parseAiBudgetGrantV2, parseLineAiPreparedPlan, parseLineAiTurnValueCandidates, parseLineAiResponsePreferences, parseLineAiTaskProjection, parseLineAiSemanticSubrequests, parseLineAiSemanticCoverage, verifyLineAiInputEvidence, verifyLineAiRetainedTaskSource, verifyLineAiValueCandidatesV2 } from '@watchdog-bms/contracts';
 import { currentBudgetState } from '../../../../common/usage/usage-context';
 import { AI_BUDGET_V2_SUPPORTED } from '../../../../common/usage/ai-budget-provider';
@@ -12,7 +12,7 @@ import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTur
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
 import { OrchestratorAgent } from '../../agents/orchestrator.agent';
 import { allExpenseBranchesRequested, expenseBranchScopeRequested, expenseCriterionOnlyMessage, thaiExpenseMonthMentions, uncertainExpenseFilter, unsupportedExpenseFilter } from '../../agents/orchestrator.agent';
-import { formatExpenseSummary } from '../../agents/prepared-simple-read-formatter';
+import { OPEN_WORK_TOOLS, formatExpenseSummary, openWorkCardLayout } from '../../agents/prepared-simple-read-formatter';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
 import { AgentCoreRuntimeClient } from '../../infrastructure/runtime/agentcore-runtime.client';
 import { toolAccessOutcome } from '../../agents/tool-availability';
@@ -628,6 +628,9 @@ export class LineAiTurnUseCase {
 
     let replyText = buildCaptureReplyFromToolResults(results) ?? buildReplyFromToolResults(results);
     let deterministicExpenseSummary = false;
+    // The locked card of a turn that is ONE successful read: the summary's rows from the formatter that
+    // wrote the sentence, the open-work rows from that tool's own result. Several reads stay sentences.
+    let layout: LineAiAnswerCardLayout | undefined;
     const expenseResult = results.find(result => result.toolName === 'expense.list_recent');
     if (expenseResult) {
       const formatted = expenseResult.status === 'ok'
@@ -638,6 +641,7 @@ export class LineAiTurnUseCase {
         : { kind: 'unverified' as const };
       if (formatted.kind === 'answer') {
         replyText = formatted.replyText;
+        if (results.length === 1) layout = formatted.layout;
         const data = expenseResult.data as Record<string, unknown>;
         const period = data['period'] as Record<string, unknown> | undefined;
         deterministicExpenseSummary = topTools.length === 1 && results.length === 1 && data['truncated'] !== true
@@ -654,6 +658,9 @@ export class LineAiTurnUseCase {
       && result.data !== undefined
       && result.data !== null
       && ['read_summary', 'read_detail', 'report'].includes(topTools[index]?.category ?? ''));
+    if (results.length === 1 && readResults.length === 1 && OPEN_WORK_TOOLS.has(readResults[0]!.toolName)) {
+      layout = openWorkCardLayout(readResults[0]!.toolName, readResults[0]!.data, readResults[0]!.asOf);
+    }
     const presentation = readResults.length > 0 ? {
       kind: 'answer_cards' as const,
       cards: readResults.slice(0, 12).map((result) => {
@@ -662,6 +669,7 @@ export class LineAiTurnUseCase {
         const link = refs.find((source) => source.webPath);
         return {
           text: readResults.length === 1 ? replyText : buildReplyFromToolResults([result]),
+          ...(layout && readResults.length === 1 ? { layout } : {}),
           ...(labels.length > 0 ? { sourceLabels: labels } : {}),
           ...(link?.webPath ? { webLink: { label: link.label, path: link.webPath } } : {}),
         };
