@@ -1334,14 +1334,14 @@ const breakdownData = (over: Record<string, unknown> = {}): Record<string, unkno
 });
 
 describe('R-L4 F9 expense.get_breakdown::list — แยกค่าใช้จ่าย', () => {
-  it('groups by category by default: descending amount, percentage share, overall total, source, as-of, link (Thai)', () => {
+  it('groups by category by default: descending amount, no percentage share, overall total, source, as-of, link (Thai)', () => {
     const r = formatPreparedSimpleRead(BREAKDOWN, breakdownOutput(breakdownData()), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
     assert.match(r.replyText, /^ค่าใช้จ่ายแยกตามหมวด/);
-    assert.match(r.replyText, /\n• อาหาร: 3,000\.00 บาท \(60\.0%, 6 รายการ\)/);
-    assert.match(r.replyText, /\n• เดินทาง: 1,500\.00 บาท \(30\.0%, 3 รายการ\)/);
-    assert.match(r.replyText, /\n• ค่าน้ำ: 500\.00 บาท \(10\.0%, 1 รายการ\)/);
+    assert.match(r.replyText, /\n• อาหาร: 3,000\.00 บาท \(6 รายการ\)/);
+    assert.match(r.replyText, /\n• เดินทาง: 1,500\.00 บาท \(3 รายการ\)/);
+    assert.match(r.replyText, /\n• ค่าน้ำ: 500\.00 บาท \(1 รายการ\)/);
     assert.match(r.replyText, /\nรวมทั้งหมด: 5,000\.00 บาท \(10 รายการ\)/);
     assert.doesNotMatch(r.replyText, /ที่มา:|Source:/);
     assert.deepEqual(r.webLinks, [{ label: 'สรุปค่าใช้จ่ายแยกกลุ่ม', path: '/companies/c1/expenses' }]);
@@ -1394,7 +1394,7 @@ describe('R-L4 F9 expense.get_breakdown::list — แยกค่าใช้จ
     assert.equal(byVendor.kind, 'answer');
     if (byVendor.kind === 'answer') {
       assert.match(byVendor.replyText, /^ค่าใช้จ่ายแยกตามร้าน/);
-      assert.match(byVendor.replyText, /\n• ร้านสมใจ: 2,000\.00 บาท \(40\.0%, 4 รายการ\)/);
+      assert.match(byVendor.replyText, /\n• ร้านสมใจ: 2,000\.00 บาท \(4 รายการ\)/);
     }
     const byBranch = formatPreparedSimpleRead(BREAKDOWN, breakdownOutput(breakdownData()), { ...TH, proposedInput: { groupBy: 'branch' } });
     assert.equal(byBranch.kind, 'answer');
@@ -1412,7 +1412,7 @@ describe('R-L4 F9 expense.get_breakdown::list — แยกค่าใช้จ
     assert.equal(byVendor.kind, 'answer');
     if (byVendor.kind === 'answer') {
       assert.match(byVendor.replyText, /^ค่าใช้จ่ายแยกตามร้าน/);
-      assert.match(byVendor.replyText, /\n• ร้านสมใจ: 2,000\.00 บาท \(40\.0%, 4 รายการ\)/);
+      assert.match(byVendor.replyText, /\n• ร้านสมใจ: 2,000\.00 บาท \(4 รายการ\)/);
     }
     const byBranchApplied = formatPreparedSimpleRead(BREAKDOWN,
       breakdownOutput(breakdownData({ queryApplied: { filters: { groupBy: 'branch' } } })), TH);
@@ -1431,7 +1431,7 @@ describe('R-L4 F9 expense.get_breakdown::list — แยกค่าใช้จ
     const r = formatPreparedSimpleRead(BREAKDOWN, breakdownOutput(breakdownData({ totalCount: 10, totalAmount: '1000.00', byCategory: many })), TH);
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
-    assert.match(r.replyText, /\n• อื่นๆ \(2\): 200\.00 บาท \(20\.0%, 2 รายการ\)/);
+    assert.match(r.replyText, /\n• อื่นๆ \(2\): 200\.00 บาท \(2 รายการ\)/);
     assert.doesNotMatch(r.replyText, /หมวด8|หมวด9/);
   });
 
@@ -1440,7 +1440,7 @@ describe('R-L4 F9 expense.get_breakdown::list — แยกค่าใช้จ
     assert.equal(r.kind, 'answer');
     if (r.kind !== 'answer') return;
     assert.match(r.replyText, /^Expenses by category/);
-    assert.match(r.replyText, /\n• อาหาร: 3,000\.00 THB \(60\.0%, 6 records\)/);
+    assert.match(r.replyText, /\n• อาหาร: 3,000\.00 THB \(6 records\)/);
     assert.match(r.replyText, /\nTotal: 5,000\.00 THB \(10 records\)/);
   });
 
@@ -2185,10 +2185,10 @@ describe('design lock context 1 — the expense list and the grouped summary as 
     assert.ok(result.replyText.includes('แสดง 10 จาก 30 รายการ') && result.replyText.includes('ตัวกรอง: เฉพาะที่ยืนยันแล้ว, เฉพาะร้านร้าน 1'));
   });
 
-  it('the grouped summary the owner got: the total, the count, what it is grouped by, each group with its amount, share and count', () => {
+  it('the grouped summary the owner got: the total, the count, what it is grouped by, each group with its amount and no share', () => {
     const result = formatPreparedSimpleRead(BREAKDOWN, grouped(), { ...TH, ...asked });
     assert.ok(result.kind === 'answer');
-    assert.equal(result.replyText, 'ค่าใช้จ่ายแยกตามหมวด\n• ไม่ระบุหมวด: 0.00 บาท (0.0%, 1 รายการ)\nรวมทั้งหมด: 0.00 บาท (1 รายการ)\nช่วง: เดือนนี้ (1–5 ต.ค. 2569)\nข้อมูล ณ 5 ต.ค. 2569');
+    assert.equal(result.replyText, 'ค่าใช้จ่ายแยกตามหมวด\n• ไม่ระบุหมวด: 0.00 บาท (1 รายการ)\nรวมทั้งหมด: 0.00 บาท (1 รายการ)\nช่วง: เดือนนี้ (1–5 ต.ค. 2569)\nข้อมูล ณ 5 ต.ค. 2569');
     assert.deepEqual(layoutOf(BREAKDOWN, grouped(), asked), {
       context: 'expense_summary',
       header: ['สรุปค่าใช้จ่าย', 'ตุลาคม 2569'],
@@ -2196,7 +2196,7 @@ describe('design lock context 1 — the expense list and the grouped summary as 
         { label: 'ยอดรวม', value: '0.00 บาท', emphasis: 'total' },
         { label: 'จำนวนรายการ', value: '1 รายการ' },
         { label: 'แยกตาม', value: 'หมวด' },
-        { label: 'ไม่ระบุหมวด', value: '0.00 บาท (0.0%, 1 รายการ)' },
+        { label: 'ไม่ระบุหมวด', value: '0.00 บาท' },
         { label: 'ช่วงวันที่', value: '1–5 ต.ค. 2569' },
         { label: 'ที่มา', value: 'สรุปค่าใช้จ่ายแยกกลุ่ม' },
         { label: 'ข้อมูล ณ', value: '5 ต.ค. 2569' },
@@ -2212,8 +2212,8 @@ describe('design lock context 1 — the expense list and the grouped summary as 
     const layout = layoutOf(BREAKDOWN, grouped(data), asked)!;
     assert.equal(layout.rows.length, 16, 'the most a card holds: three on top, eight groups, the rest, the filter, the period, the source and the day');
     assert.deepEqual(layout.rows.slice(2, 5), [{ label: 'แยกตาม', value: 'ร้าน' },
-      { label: 'ร้าน 1', value: '1,100.00 บาท (16.7%, 1 รายการ)' }, { label: 'ร้าน 2', value: '1,000.00 บาท (15.2%, 2 รายการ)' }]);
-    assert.deepEqual(layout.rows[11], { label: 'อื่นๆ (3)', value: '600.00 บาท (9.1%, 30 รายการ)' });
+      { label: 'ร้าน 1', value: '1,100.00 บาท' }, { label: 'ร้าน 2', value: '1,000.00 บาท' }]);
+    assert.deepEqual(layout.rows[11], { label: 'อื่นๆ (3)', value: '600.00 บาท' });
     assert.deepEqual(row(layout, 'ตัวกรอง'), { label: 'ตัวกรอง', value: 'เฉพาะที่ยังไม่ชำระ' });
     assert.ok(result.kind === 'answer');
     for (const entry of layout.rows.slice(3, 12)) assert.ok(result.replyText.includes(`• ${entry.label}: ${entry.value}`), entry.label);
