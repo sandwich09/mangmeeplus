@@ -1,4 +1,4 @@
-import { REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY, REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS } from '@watchdog-bms/contracts';
 import { EXPENSE_CORRECTION_WORDS, expenseCorrectionBlockerMessage, expenseReopenBlockerMessages, type ExpenseCorrectionCapabilities, type ExpenseCorrectionBlocker } from '@watchdog-bms/contracts';
 import { workspaceDictionary } from '@/common/i18n/workspace-dictionary';
 import { REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, PAYMENT_DATE_IN_FUTURE, REIMBURSEMENT_DUPLICATE_UNRESOLVED, reimbursementDuplicateSubmitNotice, REIMBURSEMENT_SELF_APPROVAL_DENIED, reimbursementDuplicateBlockNotice, SIGNATURE_FILE_TYPES_LABEL, SIGNATURE_FILE_REQUIRED_MESSAGE, SIGNATURE_FILE_TOO_LARGE_MESSAGE, UPLOAD_FILE_TYPE_MISMATCH_MESSAGE, COMPANY_TEAM_NOTE_WORDS as NOTE_WORDS } from '@watchdog-bms/contracts';
@@ -673,6 +673,7 @@ const CODE_LABELS: Record<string, string> = {
   payout_correction_not_allowed: 'ใบนี้ส่งกลับไม่ได้ในตอนนี้ ส่งกลับได้เฉพาะใบที่รอจ่ายและยังไม่ได้บันทึกจ่าย ถ้าบันทึกจ่ายแล้วต้องยกเลิกการจ่ายก่อน',
   payout_correction_denied: 'คุณไม่มีสิทธิ์ส่งกลับหรือเลือกวิธีรับเงินคืนของใบนี้',
   payout_correction_not_requested: 'ใบนี้ไม่ได้ถูกส่งกลับเรื่องวิธีรับเงินคืน กรุณาเปิดใบใหม่เพื่อดูสถานะล่าสุด',
+  payout_correction_name_mismatch_third_party: REIMBURSEMENT_PAYOUT_NAME_MISMATCH_THIRD_PARTY,
   payout_correction_reason_required: 'กรุณาเลือกเหตุผลที่ส่งกลับ',
   payout_correction_note_too_long: 'หมายเหตุต้องไม่เกิน 500 ตัวอักษร',
 

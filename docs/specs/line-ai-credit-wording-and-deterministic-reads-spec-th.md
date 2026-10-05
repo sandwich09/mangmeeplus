@@ -138,6 +138,12 @@ Owner decisions 2026-09-18 (ถอดจากข้อความจริง)
 - ไม่ได้ตัดสินสิทธิ์: tool ต้องอยู่ในชุดที่ API เสนอให้ผู้ใช้คนนี้ และ API ตรวจสิทธิ์อีกครั้งตอน tool ทำงาน ไม่มีการเรียกโมเดลจึงไม่มีค่า AI ของขั้นนี้
 - เพิ่มบรรทัดจับเวลา (มีแต่ตัวเลข ไม่มีข้อความผู้ใช้): API `line.ai.intake_timing` (`grantMs`, `contextMs`, `categoriesMs`, `gatewayMs`) และ gateway `LINE intake routed` มี `routeMs`, `handlerMs` เพื่อหาเวลาราว 2 วินาทีก่อนเรียกโมเดลที่ยังไม่รู้ที่มา
 
+**จำคำตอบ "runtime พร้อม" ไว้ชั่วคราว (2026-10-05 22:00)** — บรรทัดจับเวลาใหม่ของรอบแรกบน UAT (21:57) บอกว่าขั้น route ใช้ `grantMs` 1,505 ms ก่อนเรียกโมเดล: ทุกข้อความ API ขอ `/internal/ai/line-reliability-capabilities` และ gateway ตอบโดย **invoke AgentCore runtime หนึ่งรอบ** (capability probe) เพื่อยืนยันเวอร์ชันสัญญาและ identity ของ artifact
+
+- คำตอบ "พร้อม" เป็นข้อเท็จจริงของ artifact หลัง qualifier ที่ process นี้ถูก pin ไว้ ซึ่ง release ไม่เปลี่ยนใต้ process ที่ยังให้บริการ (release ถัดไป pin process ใหม่ไปอีก qualifier) และทุก invoke จริงยังตรวจ identity ของ runtime เองแบบ fail closed อยู่แล้ว gateway process จึงจำคำตอบ **ใช่** ไว้ 5 นาที (`BUDGET_V2_CAPABILITY_TTL_MS`)
+- คำตอบ **ไม่** หรือ probe ที่ล้มเหลว ไม่ถูกจำ: ข้อความถัดไปถามใหม่ทันที จึงกลับมาใช้งานได้ทันทีที่ runtime พร้อม
+- ผลที่ยอมรับ: ถ้า runtime เสียภายใน 5 นาทีหลังตอบว่าพร้อม turn จะล้มเหลวที่ invoke จริงแทนที่จะถูกปฏิเสธตั้งแต่ขั้นออก grant ซึ่งเป็นผลเดียวกับ runtime เสียหลัง probe ผ่านในแบบเดิม
+
 หลักฐานทดสอบ: สรุป 2/3/4/8 ช่วง, 100%/99.9%/ลดลง/เท่ากัน/ฐานศูนย์, ข้ามปี, ช่วงไม่เต็มเดือน, กลุ่ม, ตัวกรองและสิทธิ์ต่างกัน, เดือนหนึ่งล้มเหลว/ไม่มีสิทธิ์/ผลรวมไม่ครบในสามเดือน อยู่ใน `business-read-result-semantics.spec.ts` และ `semantic-turn-v2-compose-skip.spec.ts`; ยังไม่ยืนยัน LINE จริงหรือ Production จากการทดสอบใน workspace
 
 ### 6.2 family ที่ต้องเพิ่ม (จากงานที่พลาดเลนใน corpus)

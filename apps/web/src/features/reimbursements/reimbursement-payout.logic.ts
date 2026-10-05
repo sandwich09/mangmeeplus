@@ -648,10 +648,10 @@ export const PAYOUT_CORRECTION_SUPERSEDED: Record<'send-back' | 'correct-payout'
  * no account of its own has the one reason that says so, which its form states and does not ask.
  */
 export function payoutCorrectionReasons(
-  detail: { payoutMethod?: string | null; payout?: Pick<ReimbursementPayoutSummary, 'payoutMethod' | 'payoutKind'> | null } | null | undefined,
+  detail: { payoutMethod?: string | null; payout?: Pick<ReimbursementPayoutSummary, 'payoutMethod' | 'payoutKind' | 'holderType'> | null } | null | undefined,
 ): ReadonlyArray<[ReimbursementPayoutCorrectionReason, string]> {
   // Each in the words of the account the claim holds: a PromptPay number is never called "เลขบัญชี". The code sent is the same.
-  return reimbursementPayoutCorrectionReasons(reimbursementPayoutHeld(detail), detail?.payout?.payoutKind)
+  return reimbursementPayoutCorrectionReasons(reimbursementPayoutHeld(detail), detail?.payout?.payoutKind, detail?.payout?.holderType)
     .map((code) => [code, reimbursementPayoutCorrectionReasonLabel(code, detail?.payout?.payoutKind)]);
 }
 
