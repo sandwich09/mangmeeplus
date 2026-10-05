@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { maskedPayoutAccount, reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
+import { invalidPayoutHolderField, invalidSavedPayoutAccountLabel, PAYOUT_SAVED_ACCOUNT_LIMIT, maskedPayoutAccount, reimbursementPayoutAnsweredForRequesterNotice } from '@watchdog-bms/contracts';
 import type {
   MemberPayoutAccountResponse,
   MemberPayoutAccountSummary,
@@ -9,6 +9,9 @@ import type {
   ReimbursementPayoutInput,
   RequestContext,
   SetMemberPayoutAccountInput,
+  AddSavedPayoutAccountInput,
+  SavedPayoutAccountSummary,
+  SavedPayoutAccountListResponse,
 } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -22,7 +25,7 @@ import {
   type SealedPayoutDestination,
 } from '../../domain/logic/payout-destination.logic';
 import { PrismaReimbursementRepository, type DraftPayoutChange } from '../../infrastructure/prisma-reimbursement.repository';
-import type { MemberPayoutAccountRecord } from '../../infrastructure/reimbursement-payout';
+import type { MemberPayoutAccountRecord, SavedPayoutAccountRecord } from '../../infrastructure/reimbursement-payout';
 
 /** The notification an account owner gets when someone else sets their account. */
 export const PAYOUT_ACCOUNT_SET_TRIGGER_KEY = 'reimbursement.payout_account_set_by_other';
@@ -52,6 +55,59 @@ export class MemberPayoutAccountUseCase {
     private readonly config: AppConfigService,
     private readonly notifications: CreateOrUpdateNotificationEventUseCase,
   ) {}
+
+  async listSavedOwn(ctx: RequestContext): Promise<SavedPayoutAccountListResponse> {
+    this.assertOwn(ctx);
+    return { accounts: (await this.repo.listSavedPayoutAccounts(ctx.companyId, ctx.userId)).map(toSavedPayoutAccountSummary), limit: PAYOUT_SAVED_ACCOUNT_LIMIT };
+  }
+
+  async addSavedOwn(ctx: RequestContext, input: AddSavedPayoutAccountInput): Promise<SavedPayoutAccountSummary> {
+    this.assertOwn(ctx);
+    const holderField = invalidPayoutHolderField(input);
+    if (holderField) throw new BadRequestException(holderField === 'holderType' ? 'payout_holder_type_invalid' : 'payout_holder_note_invalid');
+    if (invalidSavedPayoutAccountLabel(input?.label)) throw new BadRequestException('payout_saved_account_label_invalid');
+    const destination = sealPayoutDestination(input, this.config.credentialEncryptionKey);
+    if (!destination) throw new BadRequestException('payout_destination_invalid');
+    const account = await this.repo.addSavedPayoutAccount({
+      companyId: ctx.companyId, userId: ctx.userId, destination,
+      holderType: input.holderType, holderNote: input.holderType === 'THIRD_PARTY' ? input.holderNote!.trim() : undefined,
+      label: input.label?.trim() || undefined,
+    }, (tx, row) => this.audit.log(this.savedAuditEntry(ctx, 'add', row), tx));
+    return toSavedPayoutAccountSummary(account);
+  }
+
+  async deleteSavedOwn(ctx: RequestContext, id: string): Promise<void> {
+    this.assertOwn(ctx);
+    await this.repo.removeSavedPayoutAccount(ctx.companyId, ctx.userId, id, (tx, row) => this.audit.log(this.savedAuditEntry(ctx, 'delete', row), tx));
+  }
+
+  async revealSavedOwn(ctx: RequestContext, id: string): Promise<PayoutAccountReveal> {
+    this.assertOwn(ctx);
+    const [account, secret] = await Promise.all([
+      this.repo.findSavedPayoutAccount(ctx.companyId, ctx.userId, id),
+      this.repo.findSavedPayoutSecret(ctx.companyId, ctx.userId, id),
+    ]);
+    if (!account || !secret) throw new NotFoundException('payout_saved_account_not_found');
+    await this.audit.logOrThrow(this.savedAuditEntry(ctx, 'reveal', account));
+    return { accountNumber: openPayoutAccountNumber(secret, this.config.credentialEncryptionKey) };
+  }
+
+  async makeSavedDefaultOwn(ctx: RequestContext, id: string): Promise<MemberPayoutAccountResponse> {
+    this.assertOwn(ctx);
+    const account = await this.repo.makeSavedPayoutAccountDefault(ctx.companyId, ctx.userId, id,
+      (tx, destination) => this.write(ctx, ctx.userId, 'BANK_TRANSFER', destination, tx),
+      (tx, row) => this.audit.log(this.savedAuditEntry(ctx, 'make_default', row), tx));
+    return this.respond(ctx.companyId, account);
+  }
+
+  private savedAuditEntry(ctx: RequestContext, action: 'add' | 'delete' | 'reveal' | 'make_default', account: SavedPayoutAccountRecord) {
+    return {
+      companyId: ctx.companyId, actorUserId: ctx.userId, action: `reimbursement.payout_saved_account.${action}`,
+      targetType: 'member_saved_payout_account', targetId: account.id, requestId: ctx.requestId,
+      result: 'SUCCESS' as const, riskLevel: 'MEDIUM' as const,
+      metadataJson: { payoutKind: account.payoutKind, bankName: account.bankName ?? null, accountLast4: account.accountLast4, holderType: account.holderType },
+    };
+  }
 
   async getOwn(ctx: RequestContext): Promise<MemberPayoutAccountResponse> {
     this.assertOwn(ctx);
@@ -298,4 +354,8 @@ export function toMemberPayoutAccountSummary(account: MemberPayoutAccountRecord,
     updatedAt: account.updatedAt.toISOString(),
     ...(setByOtherName && { setByOtherName }),
   };
+}
+
+export function toSavedPayoutAccountSummary(account: SavedPayoutAccountRecord): SavedPayoutAccountSummary {
+  return { ...account, createdAt: account.createdAt.toISOString() };
 }

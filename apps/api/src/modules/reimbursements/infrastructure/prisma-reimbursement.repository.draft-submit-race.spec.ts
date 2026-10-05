@@ -2892,6 +2892,138 @@ describe('reimbursement payout account and claim snapshot (real PostgreSQL)', ()
     await db.reimbursementRequest.delete({ where: { id: claim.id } });
     assert.equal((await destinationsOf(claim.id)).length, 0);
   });
+
+  const savedData = (destination = seal(KBANK), userId = requester) => ({ companyId, userId, holderType: 'SELF' as const, destination });
+  async function resetSaved() {
+    await clients[0]!.memberSavedPayoutAccount.deleteMany({ where: { companyId } });
+    await clients[0]!.memberPayoutAccount.deleteMany({ where: { companyId, userId: requester } });
+  }
+  function savedUseCase(failSwapAudit = false) {
+    const db = clients[0]!;
+    const auditRepo = new PrismaAuditRepository({ client: db } as any);
+    return new MemberPayoutAccountUseCase(repos[0]!, {
+      log: async (entry: any, tx: any) => {
+        if (failSwapAudit && entry.action === 'reimbursement.payout_saved_account.make_default') throw new Error('saved swap audit failed');
+        await auditRepo.log(entry, tx);
+      },
+    } as any, { credentialEncryptionKey: key } as any, {
+      executeInTransaction: async () => { throw new Error('own account swap must not send a notice'); },
+    } as any);
+  }
+  const savedCtx = () => ({ companyId, userId: requester, requestId: `${PAYOUT_TAG}-saved`, permissions: ['reimbursement.create'] }) as any;
+
+  it('saved payout: unique fingerprints are per member and concurrent duplicates return one conflict', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    await resetSaved();
+    const db = clients[0]!;
+    const data = { companyId, userId: requester, holderType: 'SELF', ...seal(KBANK) };
+    await db.memberSavedPayoutAccount.create({ data });
+    await refusedBy(() => db.memberSavedPayoutAccount.create({ data: { ...data, holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' } }), /P2002|Unique constraint/i);
+    await db.memberSavedPayoutAccount.create({ data: { ...data, userId: approver } });
+    assert.equal(await db.memberSavedPayoutAccount.count({ where: { companyId, fingerprint: data.fingerprint } }), 2);
+    await resetSaved();
+    const outcomes = await Promise.allSettled(repos.map((repo) => repo.addSavedPayoutAccount(savedData(), async () => undefined)));
+    assert.equal(outcomes.filter((result) => result.status === 'fulfilled').length, 1);
+    const failure = outcomes.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+    assert.equal(errorMessage(failure.reason), 'payout_saved_account_duplicate');
+    assert.equal(await db.memberSavedPayoutAccount.count({ where: { companyId, userId: requester } }), 1);
+  });
+
+  it('saved payout: holder checks reject missing third-party notes and self notes on both tables', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    await resetSaved();
+    const db = clients[0]!;
+    const claim = await draft('saved holder checks');
+    for (const patch of [
+      { holderType: 'THIRD_PARTY', holderNote: null }, { holderType: 'SELF', holderNote: 'คู่สมรส' },
+      { holderType: 'THIRD_PARTY', holderNote: ' ' }, { holderType: 'THIRD_PARTY', holderNote: 'ก'.repeat(201) },
+      { holderType: 'OTHER', holderNote: null },
+    ]) {
+      await refusedBy(() => db.memberSavedPayoutAccount.create({ data: { companyId, userId: requester, ...seal(KBANK), ...patch } }), /MemberSavedPayoutAccount_holder_(?:type|note)_check/);
+      await refusedBy(() => db.reimbursementPayoutDestination.create({ data: { companyId, reimbursementRequestId: claim.id, version: 1, source: 'REQUESTER', createdByUserId: requester, ...seal(KBANK), ...patch } }), /ReimbursementPayoutDestination_holder_(?:type|note)_check/);
+    }
+    assert.equal(await db.memberSavedPayoutAccount.count({ where: { companyId } }), 0);
+    assert.equal((await destinationsOf(claim.id)).length, 0);
+  });
+
+  it('saved payout: frozen holder facts cannot change while unfrozen facts can', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const claim = await draft('saved frozen holder facts');
+    const row = await db.reimbursementPayoutDestination.create({ data: {
+      companyId, reimbursementRequestId: claim.id, version: 1, source: 'REQUESTER', createdByUserId: requester,
+      ...seal(KBANK), holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก',
+    } });
+    await db.reimbursementPayoutDestination.update({ where: { id: row.id }, data: { holderType: 'SELF', holderNote: null } });
+    await db.reimbursementPayoutDestination.update({ where: { id: row.id }, data: { holderType: 'THIRD_PARTY', holderNote: 'ช่างรับเหมาที่สำรองจ่าย', frozenAt: new Date() } });
+    await refusedBy(() => db.reimbursementPayoutDestination.update({ where: { id: row.id }, data: { holderType: 'SELF' } }), /reimbursement_payout_destination_frozen/);
+    await refusedBy(() => db.reimbursementPayoutDestination.update({ where: { id: row.id }, data: { holderNote: 'คู่สมรสของผู้เบิก' } }), /reimbursement_payout_destination_frozen/);
+    const kept = await db.reimbursementPayoutDestination.findUniqueOrThrow({ where: { id: row.id } });
+    assert.deepEqual([kept.holderType, kept.holderNote], ['THIRD_PARTY', 'ช่างรับเหมาที่สำรองจ่าย']);
+  });
+
+  it('saved payout: make default atomically swaps sealed accounts and following drafts freeze the new default', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    await resetSaved();
+    const db = clients[0]!;
+    const accounts = savedUseCase();
+    await setDefault(KBANK);
+    const old = await db.memberPayoutAccount.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: requester } } });
+    const claim = await draft('saved promoted default');
+    const added = await accounts.addSavedOwn(savedCtx(), { ...SCB, holderType: 'SELF', label: 'บัญชีสำรอง' });
+    const picked = await repos[0]!.findSavedPayoutAccountForCopy(companyId, requester, added.id);
+    // An old default already in the list is retained once, rather than duplicated by the swap.
+    await db.memberSavedPayoutAccount.create({ data: { companyId, userId: requester, holderType: 'SELF', ...seal(KBANK) } });
+    await accounts.makeSavedDefaultOwn(savedCtx(), added.id);
+    const current = await db.memberPayoutAccount.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: requester } } });
+    assert.deepEqual([current.fingerprint, current.accountNumberEncrypted, current.version, current.updatedByUserId], [picked!.fingerprint, picked!.accountNumberEncrypted, old.version + 1, requester]);
+    const remaining = await db.memberSavedPayoutAccount.findMany({ where: { companyId, userId: requester } });
+    assert.equal(remaining.length, 1);
+    assert.deepEqual([remaining[0]!.fingerprint, remaining[0]!.holderType, remaining[0]!.label, remaining[0]!.holderNote], [old.fingerprint, 'SELF', null, null]);
+    const sent = await submit(claim);
+    assert.equal(sent.pending.payoutFingerprint, picked!.fingerprint);
+    assert.equal((await destinationsOf(claim.id))[0]!.accountNumberEncrypted, picked!.accountNumberEncrypted);
+    const audits = await db.auditLog.findMany({ where: { companyId, requestId: `${PAYOUT_TAG}-saved`, action: { in: ['reimbursement.payout_account.set', 'reimbursement.payout_saved_account.make_default'] } } });
+    assert.deepEqual(audits.map((row) => row.action).sort(), ['reimbursement.payout_account.set', 'reimbursement.payout_saved_account.make_default']);
+    assert.doesNotMatch(JSON.stringify(audits.map((row) => row.metadataJson)), /4090001112|0012345678|บัญชีสำรอง|accountNumberEncrypted/);
+  });
+
+  it('saved payout: failed swap rolls back and cash or absent defaults create no saved account', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    await resetSaved();
+    const db = clients[0]!;
+    const accounts = savedUseCase();
+    await setDefault(KBANK);
+    const before = await db.memberPayoutAccount.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: requester } } });
+    const added = await accounts.addSavedOwn(savedCtx(), { ...SCB, holderType: 'SELF' });
+    const auditCount = await db.auditLog.count({ where: { companyId, requestId: savedCtx().requestId } });
+    await assert.rejects(() => savedUseCase(true).makeSavedDefaultOwn(savedCtx(), added.id), /saved swap audit failed/);
+    assert.deepEqual(await db.memberPayoutAccount.findUniqueOrThrow({ where: { companyId_userId: { companyId, userId: requester } } }), before);
+    assert.deepEqual((await accounts.listSavedOwn(savedCtx())).accounts.map((row) => row.id), [added.id]);
+    assert.equal(await db.auditLog.count({ where: { companyId, requestId: savedCtx().requestId } }), auditCount);
+    await accounts.makeSavedDefaultOwn(savedCtx(), added.id);
+    const restored = await db.memberSavedPayoutAccount.findFirstOrThrow({ where: { companyId, userId: requester } });
+    assert.equal(restored.accountNumberEncrypted, before.accountNumberEncrypted);
+    for (const cash of [true, false]) {
+      await resetSaved();
+      if (cash) await repos[0]!.setMemberPayoutAccount({ companyId, userId: requester, actorUserId: requester, payoutMethod: 'CASH' }, async () => undefined);
+      const saved = await accounts.addSavedOwn(savedCtx(), { ...SCB, holderType: 'SELF' });
+      await accounts.makeSavedDefaultOwn(savedCtx(), saved.id);
+      assert.equal((await accounts.listSavedOwn(savedCtx())).accounts.length, 0);
+    }
+  });
+
+  it('saved payout: concurrent additions cannot exceed the twenty-account limit', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    await resetSaved();
+    for (let index = 0; index < 19; index++) await repos[0]!.addSavedPayoutAccount(savedData(seal({ ...KBANK, accountNumber: `000000${String(index).padStart(4, '0')}` })), async () => undefined);
+    const outcomes = await Promise.allSettled(repos.map((repo, index) => repo.addSavedPayoutAccount(savedData(seal({ ...KBANK, accountNumber: `999999999${index}` })), async () => undefined)));
+    assert.equal(outcomes.filter((result) => result.status === 'fulfilled').length, 1);
+    const failure = outcomes.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+    assert.equal(errorMessage(failure.reason), 'payout_saved_account_limit');
+    assert.equal(await clients[0]!.memberSavedPayoutAccount.count({ where: { companyId, userId: requester } }), 20);
+  });
+
 });
 
 /**

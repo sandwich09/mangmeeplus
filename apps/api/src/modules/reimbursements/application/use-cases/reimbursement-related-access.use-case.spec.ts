@@ -384,9 +384,18 @@ describe('claim account number reveal: the requester, that claim approver, the p
   it('exposes the payout routes with the narrowest permission each, and no way to reveal another member default account', () => {
     const prototype = ReimbursementPayoutController.prototype;
     assert.deepEqual(Object.getOwnPropertyNames(prototype).filter((name) => name !== 'constructor').sort(),
-      ['deleteOwn', 'getForMember', 'getOwn', 'requestPayoutCorrection', 'revealForClaim', 'revealOwn', 'setForMember', 'setOwn', 'submitPayoutCorrection']);
-    for (const handler of ['getOwn', 'setOwn', 'deleteOwn', 'revealOwn'] as const) {
+      ['addSavedOwn', 'deleteOwn', 'deleteSavedOwn', 'getForMember', 'getOwn', 'listSavedOwn', 'makeSavedDefaultOwn', 'requestPayoutCorrection', 'revealForClaim', 'revealOwn', 'revealSavedOwn', 'setForMember', 'setOwn', 'submitPayoutCorrection']);
+    for (const handler of ['getOwn', 'setOwn', 'deleteOwn', 'revealOwn', 'listSavedOwn', 'addSavedOwn', 'deleteSavedOwn', 'revealSavedOwn', 'makeSavedDefaultOwn'] as const) {
       assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype[handler]), ['reimbursement.create'], handler);
+    }
+    for (const [handler, path, method] of [
+      ['listSavedOwn', 'payout-accounts/me/saved', 0], ['addSavedOwn', 'payout-accounts/me/saved', 1],
+      ['deleteSavedOwn', 'payout-accounts/me/saved/:accountId', 3],
+      ['revealSavedOwn', 'payout-accounts/me/saved/:accountId/reveal', 1],
+      ['makeSavedDefaultOwn', 'payout-accounts/me/saved/:accountId/make-default', 1],
+    ] as const) {
+      assert.equal(Reflect.getMetadata('path', prototype[handler]), path);
+      assert.equal(Reflect.getMetadata('method', prototype[handler]), method);
     }
     assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.getForMember), ['access.employee.read', 'access.employee.update']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.setForMember), ['access.employee.update']);

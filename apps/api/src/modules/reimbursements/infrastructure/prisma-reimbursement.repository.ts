@@ -92,6 +92,9 @@ import {
   applyDraftPayoutChange, attestClaimPayout, deleteMemberPayoutAccount, draftPayoutAfterReopen, freezePayoutAtSubmit,
   readClaimPayout, readClaimPayoutSecret, readDraftDefaultPayout, readMemberPayoutAccount, readMemberPayoutSecret, readSubmitPayoutPlan,
   writeMemberPayoutAccount, type DraftPayoutChange, type MemberPayoutAccountRecord,
+  addSavedPayoutAccount, deleteSavedPayoutAccount, listSavedPayoutAccounts, makeSavedPayoutAccountDefault,
+  readSavedPayoutAccount, readSavedPayoutAccountForCopy, readSavedPayoutSecret,
+  type SavedPayoutAccountRecord, type SavedPayoutAccountWrite,
 } from './reimbursement-payout';
 // The payment step's side of the payout (kept as its own imports, apart from the block above).
 import { planPaymentPayout, type PaymentPayoutPlan, type PaymentPayoutStatement } from '../domain/logic/payout-destination.logic';
@@ -1399,6 +1402,50 @@ export class PrismaReimbursementRepository {
   }
 
   // ---- Payout account (rules: ../domain/logic/payout-destination.logic.ts, SQL: ./reimbursement-payout.ts) ----
+
+  listSavedPayoutAccounts(companyId: string, userId: string) {
+    return listSavedPayoutAccounts(this.prisma.client, companyId, userId);
+  }
+
+  findSavedPayoutAccount(companyId: string, userId: string, id: string) {
+    return readSavedPayoutAccount(this.prisma.client, companyId, userId, id);
+  }
+
+  findSavedPayoutSecret(companyId: string, userId: string, id: string) {
+    return readSavedPayoutSecret(this.prisma.client, companyId, userId, id);
+  }
+
+  /** Server-side copies only, never an outbound payload. */
+  findSavedPayoutAccountForCopy(companyId: string, userId: string, id: string) {
+    return readSavedPayoutAccountForCopy(this.prisma.client, companyId, userId, id);
+  }
+
+  addSavedPayoutAccount(data: SavedPayoutAccountWrite, onPersisted: (tx: any, account: SavedPayoutAccountRecord) => Promise<void>) {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const account = await addSavedPayoutAccount(tx, data);
+      await onPersisted(tx, account);
+      return account;
+    });
+  }
+
+  removeSavedPayoutAccount(companyId: string, userId: string, id: string, onPersisted: (tx: any, account: SavedPayoutAccountRecord) => Promise<void>) {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const account = await deleteSavedPayoutAccount(tx, companyId, userId, id);
+      await onPersisted(tx, account);
+    });
+  }
+
+  makeSavedPayoutAccountDefault(
+    companyId: string, userId: string, id: string,
+    writeDefault: (tx: any, destination: SealedPayoutDestination) => Promise<MemberPayoutAccountRecord>,
+    onPersisted: (tx: any, account: SavedPayoutAccountRecord) => Promise<void>,
+  ): Promise<MemberPayoutAccountRecord> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      const result = await makeSavedPayoutAccountDefault(tx, companyId, userId, id, (destination) => writeDefault(tx, destination));
+      await onPersisted(tx, result.saved);
+      return result.account;
+    });
+  }
 
   findMemberPayoutAccount(companyId: string, userId: string): Promise<MemberPayoutAccountRecord | null> {
     return readMemberPayoutAccount(this.prisma.client, companyId, userId);

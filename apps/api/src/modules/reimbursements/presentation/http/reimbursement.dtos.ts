@@ -21,6 +21,7 @@ import type {
   ReimbursementPayoutInput,
   ReimbursementPayoutKind,
   ReimbursementPayoutMethod,
+  ReimbursementPayoutHolderType,
   SignReimbursementClaimFormInput,
   SubmitReimbursementPayoutCorrectionInput,
   SubmitReimbursementRequestInput,
@@ -73,6 +74,13 @@ export class ReimbursementPayoutDto extends PayoutDestinationFieldsDto {
 
 export class SetMemberPayoutAccountDto extends PayoutDestinationFieldsDto {
   @IsIn(PAYOUT_METHODS) payoutMethod!: ReimbursementPayoutMethod;
+}
+
+/** Transport bounds only; shared holder and label validators decide the stable use-case refusals. */
+export class AddSavedPayoutAccountDto extends PayoutDestinationFieldsDto {
+  @IsString() @MaxLength(40) holderType!: ReimbursementPayoutHolderType;
+  @IsString() @ValidateIf((_object, value) => value !== undefined) @MaxLength(2000) holderNote?: string;
+  @IsString() @ValidateIf((_object, value) => value !== undefined) @MaxLength(200) label?: string;
 }
 
 // ---- Payout account correction round (payout spec §14) ----

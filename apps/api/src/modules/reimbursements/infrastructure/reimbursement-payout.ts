@@ -4,15 +4,17 @@
  * `reimbursement-source.ts`. The rules themselves live in `../domain/logic/payout-destination.logic.ts`.
  *
  * Two things hold for every function here:
- *  - the ciphertext is selected only by the two `…Secret` readers, which serve the audited reveal,
- *    and by the copies that move a sealed account as one unit: at submit, in a correction round
+ *  - the ciphertext is selected only by the `…Secret` readers, which serve the audited reveal,
+ *    and by the copies that move a sealed account as one unit: when promoting a saved account,
+ *    at submit, in a correction round
  *    (the requester's default account, or the account the claim had), and at the payment of a
  *    legacy claim;
  *  - once a claim is submitted, nothing reads the member's default account for it again. The one
  *    exception is a legacy claim, which froze no account: its payer is shown the requester's current
  *    default (`readLegacyPayoutDefault`) and a payment into it keeps a copy (`confirmPaymentPayout`).
  */
-import { BadRequestException, ConflictException, type HttpException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, type HttpException } from '@nestjs/common';
+import { PAYOUT_SAVED_ACCOUNT_LIMIT } from '@watchdog-bms/contracts';
 import type {
   ReimbursementLegacyPayoutDefault,
   ReimbursementPayoutKind,
@@ -20,6 +22,8 @@ import type {
   ReimbursementPayoutNotReadyReason,
   ReimbursementPayoutSource,
   ReimbursementRequestStatus,
+  SavedPayoutAccountSummary,
+  PayoutHolderFacts,
 } from '@watchdog-bms/contracts';
 import {
   CASH_PAYOUT_FINGERPRINT,
@@ -157,6 +161,114 @@ export async function deleteMemberPayoutAccount(tx: any, companyId: string, user
   const before = await readMemberPayoutAccount(tx, companyId, userId);
   if (before) await tx.memberPayoutAccount.deleteMany({ where: { companyId, userId } });
   return before;
+}
+
+// ---- Other saved accounts: always scoped to their owning membership, never read by default paths ----
+
+export type SavedPayoutAccountRecord = Omit<SavedPayoutAccountSummary, 'createdAt'> & { createdAt: Date };
+export type SavedPayoutAccountWrite = PayoutHolderFacts & {
+  companyId: string; userId: string; label?: string; destination: SealedPayoutDestination;
+};
+export type SavedPayoutAccountCopy = Omit<SavedPayoutAccountRecord, 'bankName'> & SealedPayoutDestination;
+
+const SAVED_ACCOUNT_COLUMNS = {
+  id: true, label: true, holderType: true, holderNote: true, payoutKind: true, bankName: true,
+  accountName: true, accountLast4: true, createdAt: true,
+} as const;
+
+function toSavedAccount(row: any): SavedPayoutAccountRecord {
+  return {
+    id: row.id, label: opt(row.label), holderType: row.holderType, holderNote: opt(row.holderNote),
+    payoutKind: row.payoutKind, bankName: opt(row.bankName), accountName: row.accountName,
+    accountLast4: row.accountLast4, createdAt: row.createdAt,
+  };
+}
+
+export async function listSavedPayoutAccounts(client: any, companyId: string, userId: string): Promise<SavedPayoutAccountRecord[]> {
+  const rows = await client.memberSavedPayoutAccount.findMany({
+    where: { companyId, userId }, select: SAVED_ACCOUNT_COLUMNS, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+  return rows.map(toSavedAccount);
+}
+
+export async function readSavedPayoutAccount(client: any, companyId: string, userId: string, id: string): Promise<SavedPayoutAccountRecord | null> {
+  const row = await client.memberSavedPayoutAccount.findFirst({ where: { companyId, userId, id }, select: SAVED_ACCOUNT_COLUMNS });
+  return row ? toSavedAccount(row) : null;
+}
+
+/** Reveal only. */
+export async function readSavedPayoutSecret(client: any, companyId: string, userId: string, id: string): Promise<string | null> {
+  const row = await client.memberSavedPayoutAccount.findFirst({ where: { companyId, userId, id }, select: { accountNumberEncrypted: true } });
+  return row?.accountNumberEncrypted ?? null;
+}
+
+/** Copies only: a sealed account moves as one unit, without opening its number. */
+export async function readSavedPayoutAccountForCopy(client: any, companyId: string, userId: string, id: string): Promise<SavedPayoutAccountCopy | null> {
+  const row = await client.memberSavedPayoutAccount.findFirst({
+    where: { companyId, userId, id }, select: { ...SAVED_ACCOUNT_COLUMNS, accountNumberEncrypted: true, fingerprint: true },
+  });
+  return row ? { ...toSavedAccount(row), bankName: row.bankName, accountNumberEncrypted: row.accountNumberEncrypted, fingerprint: row.fingerprint } : null;
+}
+
+async function lockSavedPayoutMember(tx: any, companyId: string, userId: string): Promise<void> {
+  // One membership lock serializes saved-list mutations, including the count when the list is empty.
+  await tx.$queryRaw`SELECT 1 FROM "CompanyMembership" WHERE "companyId" = ${companyId} AND "userId" = ${userId} FOR UPDATE`;
+}
+
+export async function addSavedPayoutAccount(tx: any, data: SavedPayoutAccountWrite): Promise<SavedPayoutAccountRecord> {
+  await lockSavedPayoutMember(tx, data.companyId, data.userId);
+  await tx.$queryRaw`SELECT 1 FROM "MemberPayoutAccount" WHERE "companyId" = ${data.companyId} AND "userId" = ${data.userId} FOR UPDATE`;
+  const current = await readMemberPayoutAccount(tx, data.companyId, data.userId);
+  if (current?.fingerprint === data.destination.fingerprint) throw new ConflictException('payout_saved_account_is_default');
+  if (await tx.memberSavedPayoutAccount.count({ where: { companyId: data.companyId, userId: data.userId } }) >= PAYOUT_SAVED_ACCOUNT_LIMIT) {
+    throw new ConflictException('payout_saved_account_limit');
+  }
+  try {
+    const row = await tx.memberSavedPayoutAccount.create({
+      data: { companyId: data.companyId, userId: data.userId, label: data.label ?? null, holderType: data.holderType, holderNote: data.holderNote ?? null, ...data.destination },
+      select: SAVED_ACCOUNT_COLUMNS,
+    });
+    return toSavedAccount(row);
+  } catch (error) {
+    if ((error as { code?: string }).code === 'P2002') throw new ConflictException('payout_saved_account_duplicate');
+    throw error;
+  }
+}
+
+export async function deleteSavedPayoutAccount(tx: any, companyId: string, userId: string, id: string): Promise<SavedPayoutAccountRecord> {
+  await lockSavedPayoutMember(tx, companyId, userId);
+  const before = await readSavedPayoutAccount(tx, companyId, userId, id);
+  if (!before) throw new NotFoundException('payout_saved_account_not_found');
+  await tx.memberSavedPayoutAccount.deleteMany({ where: { companyId, userId, id } });
+  return before;
+}
+
+export async function makeSavedPayoutAccountDefault(
+  tx: any, companyId: string, userId: string, id: string,
+  writeDefault: (destination: SealedPayoutDestination) => Promise<MemberPayoutAccountRecord>,
+): Promise<{ saved: SavedPayoutAccountRecord; account: MemberPayoutAccountRecord }> {
+  await lockSavedPayoutMember(tx, companyId, userId);
+  await tx.$queryRaw`SELECT 1 FROM "MemberPayoutAccount" WHERE "companyId" = ${companyId} AND "userId" = ${userId} FOR UPDATE`;
+  await tx.$queryRaw`SELECT 1 FROM "MemberSavedPayoutAccount" WHERE "companyId" = ${companyId} AND "userId" = ${userId} AND "id" = ${id} FOR UPDATE`;
+  const saved = await readSavedPayoutAccountForCopy(tx, companyId, userId, id);
+  if (!saved) throw new NotFoundException('payout_saved_account_not_found');
+  if (saved.holderType !== 'SELF') throw new ConflictException('payout_default_must_be_own');
+  // The old default is selected with its ciphertext only because it is copied into the saved list.
+  const old = await tx.memberPayoutAccount.findFirst({ where: { companyId, userId }, select: {
+    payoutMethod: true, payoutKind: true, bankName: true, accountName: true, accountNumberEncrypted: true, accountLast4: true, fingerprint: true,
+  } });
+  const account = await writeDefault({
+    payoutKind: saved.payoutKind, bankName: saved.bankName, accountName: saved.accountName,
+    accountNumberEncrypted: saved.accountNumberEncrypted, accountLast4: saved.accountLast4, fingerprint: saved.fingerprint,
+  });
+  await tx.memberSavedPayoutAccount.deleteMany({ where: { companyId, userId, id } });
+  if (old?.payoutMethod === 'BANK_TRANSFER') {
+    const { payoutMethod: _method, ...destination } = old;
+    await tx.memberSavedPayoutAccount.createMany({
+      data: [{ companyId, userId, label: null, holderType: 'SELF', holderNote: null, ...destination }], skipDuplicates: true,
+    });
+  }
+  return { saved: toSavedAccount(saved), account };
 }
 
 /**

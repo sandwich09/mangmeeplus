@@ -949,6 +949,10 @@ endpoint ใหม่ทั้งหมดอยู่ใต้ `/companies/:com
 |---|---|---|
 | `GET payout-accounts/me`, `PUT payout-accounts/me`, `DELETE payout-accounts/me` | บัญชีประจำของตัวเอง | `reimbursement.create` |
 | `POST payout-accounts/me/reveal` | เปิดเลขเต็มของตัวเอง | `reimbursement.create` |
+| `GET payout-accounts/me/saved`, `POST payout-accounts/me/saved` | รายการบัญชีอื่นที่บันทึกไว้ของตัวเอง (4 ตัวท้าย) และเพิ่ม ตามสเปกหลายบัญชี §4 | `reimbursement.create` |
+| `DELETE payout-accounts/me/saved/:accountId` | ลบบัญชีที่บันทึกไว้ของตัวเอง | `reimbursement.create` |
+| `POST payout-accounts/me/saved/:accountId/reveal` | เปิดเลขเต็มของบัญชีที่บันทึกไว้ของตัวเอง หลังเขียนบันทึกการเปิดสำเร็จ | `reimbursement.create` |
+| `POST payout-accounts/me/saved/:accountId/make-default` | สลับบัญชีของตัวเองที่บันทึกไว้เป็นบัญชีประจำ ตามสเปกหลายบัญชี §4.3 | `reimbursement.create` |
 | `GET payout-accounts/members/:userId`, `PUT payout-accounts/members/:userId` | ดู (4 ตัวท้าย) และตั้งให้พนักงาน | อ่าน: `access.employee.read` หรือ `access.employee.update` เขียน: `access.employee.update` |
 | `POST :requestId/payout-destination/reveal` | เปิดเลขเต็มของใบ | กลุ่ม §11.1 |
 | `PUT :requestId/payout-destination` | ผู้เบิกส่งบัญชีใหม่ในรอบแก้บัญชี: เงินสด บัญชีประจำ ระบุบัญชี หรือบัญชีเดิมของใบ (`PREVIOUS`) | ผู้เบิก หรือ `reimbursement.finance_review` |

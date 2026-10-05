@@ -1,13 +1,13 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import type { RequestContext, SetMemberPayoutAccountInput, SubmitReimbursementPayoutCorrectionInput } from '@watchdog-bms/contracts';
+import type { AddSavedPayoutAccountInput, RequestContext, SetMemberPayoutAccountInput, SubmitReimbursementPayoutCorrectionInput } from '@watchdog-bms/contracts';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import { MemberPayoutAccountUseCase } from '../../application/use-cases/reimbursement-payout.use-case';
 import { RevealClaimPayoutUseCase } from '../../application/use-cases/reimbursement-payout-reveal.use-case';
 import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from '../../application/use-cases/reimbursement-payout-correction.use-case';
 import { ReimbursementWriteQuiesceGuard } from './reimbursement-write-quiesce.guard';
-import { RequestPayoutCorrectionDto, SetMemberPayoutAccountDto, SubmitPayoutCorrectionDto } from './reimbursement.dtos';
+import { AddSavedPayoutAccountDto, RequestPayoutCorrectionDto, SetMemberPayoutAccountDto, SubmitPayoutCorrectionDto } from './reimbursement.dtos';
 
 /**
  * Payout account endpoints. A controller of its own under the reimbursements path, registered ahead
@@ -26,6 +26,39 @@ export class ReimbursementPayoutController {
     private readonly requestCorrection: RequestPayoutCorrectionUseCase,
     private readonly submitCorrection: SubmitPayoutCorrectionUseCase,
   ) {}
+
+  @Get('payout-accounts/me/saved')
+  @RequirePermissions('reimbursement.create')
+  listSavedOwn(@ReqCtx() ctx: RequestContext) {
+    return this.accounts.listSavedOwn(ctx);
+  }
+
+  @Post('payout-accounts/me/saved')
+  @RequirePermissions('reimbursement.create')
+  addSavedOwn(@ReqCtx() ctx: RequestContext, @Body() body: AddSavedPayoutAccountDto) {
+    return this.accounts.addSavedOwn(ctx, body as AddSavedPayoutAccountInput);
+  }
+
+  @Delete('payout-accounts/me/saved/:accountId')
+  @RequirePermissions('reimbursement.create')
+  @HttpCode(204)
+  deleteSavedOwn(@ReqCtx() ctx: RequestContext, @Param('accountId') id: string) {
+    return this.accounts.deleteSavedOwn(ctx, id);
+  }
+
+  @Post('payout-accounts/me/saved/:accountId/reveal')
+  @RequirePermissions('reimbursement.create')
+  @HttpCode(200)
+  revealSavedOwn(@ReqCtx() ctx: RequestContext, @Param('accountId') id: string) {
+    return this.accounts.revealSavedOwn(ctx, id);
+  }
+
+  @Post('payout-accounts/me/saved/:accountId/make-default')
+  @RequirePermissions('reimbursement.create')
+  @HttpCode(200)
+  makeSavedDefaultOwn(@ReqCtx() ctx: RequestContext, @Param('accountId') id: string) {
+    return this.accounts.makeSavedDefaultOwn(ctx, id);
+  }
 
   @Get('payout-accounts/me')
   @RequirePermissions('reimbursement.create')

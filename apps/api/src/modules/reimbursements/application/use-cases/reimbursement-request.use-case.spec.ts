@@ -61,6 +61,141 @@ import { RequestPayoutCorrectionUseCase, SubmitPayoutCorrectionUseCase } from '.
 // server-side rollup of the lines — a client never sends them.
 
 const noopAudit = { log: async () => undefined } as any;
+
+describe('saved payout accounts API', () => {
+  const bank = { payoutKind: 'BANK_ACCOUNT' as const, bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789', holderType: 'SELF' as const };
+  function savedWorld() {
+    const tables = fakePayoutTables();
+    const audits: any[] = [];
+    const notices: any[] = [];
+    let failAudit: boolean | string = false;
+    const recordAudit = async (entry: any) => {
+      if (failAudit === true || failAudit === entry.action) throw new Error('audit unavailable');
+      audits.push(entry);
+    };
+    const audit = {
+      log: recordAudit,
+      logOrThrow: recordAudit,
+    };
+    const repo = new PrismaReimbursementRepository({ client: tables.client } as any, {} as any);
+    const useCase = payoutUseCase(repo, audit, notices);
+    return { tables, audits, notices, repo, useCase, failAudit: (action?: string) => { failAudit = action ?? true; } };
+  }
+  const refusal = (status: number, code: string) => (error: any) => error.getStatus?.() === status && error.message === code;
+
+  it('lists only own masked accounts oldest first, with the limit, and deletes an owned row', async () => {
+    const w = savedWorld();
+    assert.deepEqual(await w.useCase.listSavedOwn(ctx()), { accounts: [], limit: 20 });
+    const first = await w.useCase.addSavedOwn(ctx(), { ...bank, label: ' บัญชีส่วนตัว ' });
+    const second = await w.useCase.addSavedOwn(ctx(), { ...bank, accountNumber: '0000001234', holderType: 'THIRD_PARTY', holderNote: ' คู่สมรสของผู้เบิก ' });
+    await w.useCase.addSavedOwn(ctx({ userId: 'other' }), bank);
+    const list = await w.useCase.listSavedOwn(ctx());
+    assert.deepEqual(list.accounts.map((row) => row.id), [first.id, second.id]);
+    assert.deepEqual([first.label, second.holderNote, first.accountLast4], ['บัญชีส่วนตัว', 'คู่สมรสของผู้เบิก', '6789']);
+    assert.doesNotMatch(JSON.stringify(list), /accountNumber|fingerprint|0123456789|0000001234/);
+    await w.useCase.deleteSavedOwn(ctx(), first.id);
+    assert.deepEqual((await w.useCase.listSavedOwn(ctx())).accounts.map((row) => row.id), [second.id]);
+  });
+
+  it('refuses invalid account, holder type, holder note and label with stable codes', async () => {
+    const w = savedWorld();
+    for (const [patch, code] of [
+      [{ accountNumber: '12345' }, 'payout_destination_invalid'],
+      [{ holderType: 'OTHER' }, 'payout_holder_type_invalid'],
+      [{ holderType: 'THIRD_PARTY' }, 'payout_holder_note_invalid'],
+      [{ holderNote: 'คู่สมรส' }, 'payout_holder_note_invalid'],
+      [{ holderType: 'THIRD_PARTY', holderNote: 'เลขบัญชี 0123456789' }, 'payout_holder_note_invalid'],
+      [{ label: 'ก'.repeat(41) }, 'payout_saved_account_label_invalid'],
+      [{ label: '081 234 5678' }, 'payout_saved_account_label_invalid'],
+    ] as const) await assert.rejects(() => w.useCase.addSavedOwn(ctx(), { ...bank, ...patch } as any), refusal(400, code));
+    assert.equal(w.audits.length, 0);
+  });
+
+  it('refuses the default, duplicate accounts regardless of holder, and a 21st account', async () => {
+    const w = savedWorld();
+    await w.useCase.setOwn(ctx(), { payoutMethod: 'BANK_TRANSFER', ...bank });
+    await assert.rejects(() => w.useCase.addSavedOwn(ctx(), bank), refusal(409, 'payout_saved_account_is_default'));
+    await w.useCase.deleteOwn(ctx());
+    await w.useCase.addSavedOwn(ctx(), bank);
+    await assert.rejects(() => w.useCase.addSavedOwn(ctx(), { ...bank, holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' }), refusal(409, 'payout_saved_account_duplicate'));
+    for (let index = 1; index < 20; index++) await w.useCase.addSavedOwn(ctx(), { ...bank, accountNumber: `000000${String(index).padStart(4, '0')}` });
+    await assert.rejects(() => w.useCase.addSavedOwn(ctx(), { ...bank, accountNumber: '9999999999' }), refusal(409, 'payout_saved_account_limit'));
+    assert.equal((await w.useCase.listSavedOwn(ctx())).accounts.length, 20);
+  });
+
+  it('refuses every command without own-create permission and hides another member or tenant id', async () => {
+    const w = savedWorld();
+    const account = await w.useCase.addSavedOwn(ctx(), bank);
+    const commands = (viewer: any, id = account.id) => [
+      () => w.useCase.listSavedOwn(viewer), () => w.useCase.addSavedOwn(viewer, bank),
+      () => w.useCase.deleteSavedOwn(viewer, id), () => w.useCase.revealSavedOwn(viewer, id), () => w.useCase.makeSavedDefaultOwn(viewer, id),
+    ];
+    for (const run of commands(ctx({ permissions: ['access.employee.update'], roles: ['MANAGER'] }))) await assert.rejects(run, (error: any) => error.getStatus?.() === 403);
+    for (const viewer of [ctx({ userId: 'manager', roles: ['MANAGER'], permissions: ['reimbursement.create', 'access.employee.update'] }), ctx({ companyId: 'other-company' })]) {
+      assert.deepEqual((await w.useCase.listSavedOwn(viewer)).accounts, []);
+      for (const id of [account.id, 'does-not-exist']) for (const run of commands(viewer, id).slice(2)) await assert.rejects(run, refusal(404, 'payout_saved_account_not_found'));
+    }
+  });
+
+  it('audits reveal before opening the number, and audits mutations without number, note or label', async () => {
+    const w = savedWorld();
+    const saved = await w.useCase.addSavedOwn(ctx(), { ...bank, holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก', label: 'บัญชีครอบครัว' });
+    assert.deepEqual(await w.useCase.revealSavedOwn(ctx(), saved.id), { accountNumber: '0123456789' });
+    await w.useCase.deleteSavedOwn(ctx(), saved.id);
+    assert.deepEqual(w.audits.map((row) => row.action), ['reimbursement.payout_saved_account.add', 'reimbursement.payout_saved_account.reveal', 'reimbursement.payout_saved_account.delete']);
+    for (const row of w.audits) {
+      assert.equal(row.actorUserId, 'staff-1');
+      assert.deepEqual(row.metadataJson, { payoutKind: bank.payoutKind, bankName: bank.bankName, accountLast4: '6789', holderType: 'THIRD_PARTY' });
+      assert.doesNotMatch(JSON.stringify(row), /0123456789|คู่สมรส|บัญชีครอบครัว|accountNumber|holderNote|label/);
+    }
+    const next = await w.useCase.addSavedOwn(ctx(), bank);
+    w.tables.savedAccounts.find((row) => row.id === next.id)!.accountNumberEncrypted = 'unreadable';
+    w.failAudit();
+    await assert.rejects(() => w.useCase.revealSavedOwn(ctx(), next.id), /audit unavailable/);
+  });
+
+  it('swaps sealed accounts through the default write with version and both audits, without a notice', async () => {
+    const w = savedWorld();
+    await w.useCase.setOwn(ctx(), { payoutMethod: 'BANK_TRANSFER', ...bank });
+    const old = { ...w.tables.accounts[0] };
+    const saved = await w.useCase.addSavedOwn(ctx(), { ...bank, accountNumber: '0000001234', label: 'บัญชีสำรอง' });
+    const secret = await w.repo.findSavedPayoutAccountForCopy('co-1', 'staff-1', saved.id);
+    w.audits.length = 0;
+    const response = await w.useCase.makeSavedDefaultOwn(ctx(), saved.id);
+    assert.equal(response.account?.accountLast4, '1234');
+    assert.equal(w.tables.accounts[0].version, 2);
+    assert.equal(w.tables.accounts[0].accountNumberEncrypted, secret!.accountNumberEncrypted);
+    const remaining = (await w.useCase.listSavedOwn(ctx())).accounts;
+    assert.deepEqual(remaining.map((row) => [row.accountLast4, row.holderType, row.label]), [['6789', 'SELF', undefined]]);
+    assert.equal((await w.repo.findSavedPayoutAccountForCopy('co-1', 'staff-1', remaining[0]!.id))!.accountNumberEncrypted, old.accountNumberEncrypted);
+    assert.deepEqual(w.audits.map((row) => row.action), ['reimbursement.payout_account.set', 'reimbursement.payout_saved_account.make_default']);
+    assert.equal(w.notices.length, 0);
+    assert.doesNotMatch(JSON.stringify(w.audits), /0123456789|0000001234|บัญชีสำรอง|accountNumberEncrypted/);
+  });
+
+  it('rejects third-party promotion and rolls the whole swap back if its audit fails', async () => {
+    const w = savedWorld();
+    const third = await w.useCase.addSavedOwn(ctx(), { ...bank, holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' });
+    await assert.rejects(() => w.useCase.makeSavedDefaultOwn(ctx(), third.id), refusal(409, 'payout_default_must_be_own'));
+    await w.useCase.setOwn(ctx(), { payoutMethod: 'CASH' });
+    const self = await w.useCase.addSavedOwn(ctx(), { ...bank, accountNumber: '0000001234' });
+    w.failAudit('reimbursement.payout_saved_account.make_default');
+    await assert.rejects(() => w.useCase.makeSavedDefaultOwn(ctx(), self.id), /audit unavailable/);
+    assert.equal(w.tables.accounts[0].payoutMethod, 'CASH');
+    assert.equal((await w.useCase.listSavedOwn(ctx())).accounts.length, 2);
+  });
+
+  it('does not save cash or absent defaults and does not duplicate an already-saved old default', async () => {
+    for (const previous of ['CASH', 'ABSENT', 'DUPLICATE'] as const) {
+      const w = savedWorld();
+      if (previous === 'CASH') await w.useCase.setOwn(ctx(), { payoutMethod: 'CASH' });
+      if (previous === 'DUPLICATE') { await w.useCase.addSavedOwn(ctx(), bank); await w.useCase.setOwn(ctx(), { payoutMethod: 'BANK_TRANSFER', ...bank }); }
+      const account = await w.useCase.addSavedOwn(ctx(), { ...bank, accountNumber: '0000001234' });
+      await w.useCase.makeSavedDefaultOwn(ctx(), account.id);
+      assert.equal((await w.useCase.listSavedOwn(ctx())).accounts.length, previous === 'DUPLICATE' ? 1 : 0);
+    }
+  });
+});
 const noopOutbox = { append: async () => undefined } as any;
 const readyApproverRoutes = {
   resolveNamedSubmissionRoute: async () => null,

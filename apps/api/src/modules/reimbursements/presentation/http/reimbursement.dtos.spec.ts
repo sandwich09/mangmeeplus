@@ -7,12 +7,26 @@ import {
   LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
   ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, SubmitReimbursementDto, UpdateReimbursementDraftDto,
   RequestPayoutCorrectionDto, SubmitPayoutCorrectionDto, RejectReimbursementDto, VoidReimbursementPaymentDto,
+  AddSavedPayoutAccountDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
 // that stops a client from posting its own claim total (lane C rollup rule) and
 // the first runtime validation these endpoints have ever had.
 const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+
+describe('saved payout account bodies', () => {
+  const body = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789', holderType: 'SELF' };
+  it('accepts typed holder facts and optional private label while preserving leading zeros', async () => {
+    assert.equal(typeof AddSavedPayoutAccountDto, 'function');
+    const output = await pipe.transform({ ...body, label: 'บัญชีสำรอง' }, { type: 'body', metatype: AddSavedPayoutAccountDto });
+    assert.deepEqual({ ...output }, { ...body, label: 'บัญชีสำรอง', holderNote: undefined });
+    await pipe.transform({ ...body, holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' }, { type: 'body', metatype: AddSavedPayoutAccountDto });
+  });
+  it('rejects unknown/server-owned fields and invalid transport types', async () => {
+    for (const patch of [{ userId: 'other' }, { companyId: 'other' }, { id: 'forged' }, { fingerprint: 'forged' }, { accountNumberEncrypted: 'forged' }, { accountLast4: '0000' }, { createdAt: 'now' }, { payoutMethod: 'CASH' }, { accountNumber: 123456 }, { holderType: 1 }, { holderNote: 1 }, { label: 1 }, { label: null }, { holderNote: null }]) await rejects(AddSavedPayoutAccountDto, { ...body, ...patch });
+  });
+});
 
 const validLine = {
   lineNo: 1,
