@@ -159,7 +159,8 @@ import { isPublicPolicyFollowUp, isPublicPolicyTopic, resolvePublicPolicyAnswer,
 import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQuestion } from '../../domain/logic/line-event-discount.logic';
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { lineSystemCardTexts } from '../../domain/logic/line-system-card.logic';
+import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -2482,11 +2483,34 @@ export class ProcessLineWebhookUseCase {
      *  The card carries `text` as its canonical text, so `text` is still what is stored and what falls back. */
     designed?: LineReplyMessage,
   ): Promise<void> {
-    const result = await this.deliverMessages(event, [designed ?? {
-      ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
-      ...(quickReply ? { quickReply } : {}),
-    }]);
+    const card = designed ? undefined : this.boundReplyCard(event, text);
+    const result = await this.deliverMessages(event, [designed
+      ?? (card ? inheritCompleteLineBusinessAnswerPresentation(card, { ...card, ...(quickReply ? { quickReply } : {}) }) : {
+        ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
+        ...(quickReply ? { quickReply } : {}),
+      })]);
     if (result !== 'ok') throw new LineDeliveryError(result);
+  }
+
+  /**
+   * A bound chat's short reply — an apology, a question, a notice — on the locked design, under the
+   * reader's own words (owner 2026-10-05, when "ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร…" came back as
+   * a bare text bubble between cards: "การ์ดหลุดด้วย"). The card carries `text` as its canonical text, so
+   * the delivery plan stores the same words and sends them if LINE refuses the card.
+   *
+   * `undefined` — the reply stays the text it was — for a chat that is not bound; for a reply to
+   * something that carried no typed words (a photo, a file, a button tap): a heading needs the
+   * reader's words; for a web base that is not https; and for a reply with a link that cannot be made
+   * a button of this company, which only a text message keeps tappable.
+   */
+  private boundReplyCard(event: object, text: string): LineReplyMessage | undefined {
+    const bound = this.boundConversations.get(event);
+    // A typed message has LINE's own message id; a tap or a follow is carried here as words the reader never typed.
+    const typed = 'messageText' in event && typeof event.messageText === 'string' && 'lineMessageId' in event && event.lineMessageId ? event.messageText : undefined;
+    const header = bound && lineAnswerCardHeader(typed);
+    if (!bound || !header) return undefined;
+    const card = buildLineSystemTextCardMessage({ text, header, webBaseUrl: this.config.webBaseUrl, companyId: bound.owner.companyId, textStyle: 'answer', icon: 'file' });
+    return card?.type === 'flex' && !lineSystemCardTexts(card.contents).some((line) => /https?:\/\//iu.test(line)) ? card : undefined;
   }
 
   /** P29 + J1: answer a locked company with the package invitation instead of the generic "we
