@@ -227,3 +227,9 @@ Decisions the controller made and told the owner: a card row shows one short val
 Left on purpose (the owner's scope rule): per-group differences in a comparison; a card of rows for six or more grouped periods (it stays sentences); the two seconds of the routing stage before the model call (measured first, by the new timing lines); the AgentCore round trip of a turn that does no model work (about 1.6 s).
 
 Process notes: the full 17-step verification (about seven minutes) ran before every round; every new card body was accepted by LINE's validator from the UAT host before it went out; `main` stayed frozen from each prepare to its acceptance.
+
+### Later the same evening (21:45–22:30)
+
+- Owner 21:45, two screenshots: the contact card's button "โทร 098-256-5628" becomes "ติดต่อทีมงาน" and opens the staff LINE OA (the number stays as text above); its "ติดต่อเจ้าหน้าที่" button is removed; the package card's "คุยกับทีมงาน" opens the staff LINE OA ("แก้เร็วๆ ง่ายๆ"). Done in round 2i (22:09) with the photo and file reply cards. The staff OA is the one `STAFF_OA_URL` already named (owner 2026-09-29); the staff OA's own contact card, another channel, was not changed.
+- Round 2j (22:30): the readiness probe remembered for five minutes (the 1.5 s the timing line found), and four claims screen defects from the second walk.
+- Still open for speed, by measurement: the AgentCore round trip of a turn that does no model work (about 1.6 s), the one-second message buffer, the router's model call for everything that is not the plain comparison.
