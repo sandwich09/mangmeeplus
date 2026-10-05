@@ -74,3 +74,12 @@ it('retains cancelled scans pinned by older claims as history even when another 
   assert.equal(evidence.attachments.find(file => file.id === 'signed')?.isHistorical, true);
   assert.equal(evidence.attachments.find(file => file.id === 'signed')?.sourceExpenseId, 'source');
 });
+
+it('D3: expense progress loads the confirmed own expense fact in the existing claim query', async () => {
+  const { db } = fixture(); let query: any;
+  db.expenseSubstituteReceiptEvidence.findMany = async () => [{ expenseId: 'source' }];
+  db.reimbursementLine.findMany = async (q: any) => { query = q; return [{ sourceExpenseSnapshotJson: { expenseId: 'source' }, request: { id: 'claim', requestNo: 'RB1', status: 'READY_FOR_PAYMENT', branchId: 'b1', sourceExpenses: [{ duplicateStatus: 'CONFIRMED_DUPLICATE' }] } }]; };
+  const progress = await loadExpenseReimbursementProgress(db, 'co1', [{ id: 'source', branchId: 'b1', status: 'READY_FOR_CONFIRMATION' }]);
+  assert.equal(progress.get('source')?.hasConfirmedDuplicate, true);
+  assert.ok(query.select.request.select.sourceExpenses);
+});

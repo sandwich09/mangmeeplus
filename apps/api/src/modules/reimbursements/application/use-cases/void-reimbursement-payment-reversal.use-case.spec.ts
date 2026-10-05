@@ -236,6 +236,10 @@ describe('reimbursement.payment_voided event feeds the requester notice', () => 
         findFirstOrThrow: async () => request,
         update: async ({ data }: any) => { Object.assign(request, data); return request; },
       },
+      reimbursementPolicy: { findFirst: async ({ where }: any) => {
+        assert.deepEqual(where, { companyId: 'co-1', branchId: null });
+        return null;
+      } },
       expenseRecord: { findMany: async () => [], update: async () => ({}) },
       auditLog: { create: async () => ({}) },
       outboxEvent: { create: async ({ data }: any) => { outbox.push(data); return data; } },

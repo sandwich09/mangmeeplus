@@ -1,3 +1,6 @@
+import { ALWAYS_DELIVERED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, IMPLEMENTED_TRIGGER_KEYS, NOTIFICATION_TRIGGER_FEATURE_KEYS } from '../models/notification.model';
+import { WORKFLOW_TEMPLATE_CATALOG, WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG, WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS } from '../../../workflow/domain/workflow-template-catalog';
+import { DOCUMENT_NOTIFICATION_STATES } from '../../infrastructure/document-notification-state';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -13,8 +16,6 @@ import {
   resolveDeliveryOutcome,
   notificationSourceHref,
 } from './notification.logic';
-import { ALWAYS_DELIVERED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, IMPLEMENTED_TRIGGER_KEYS } from '../models/notification.model';
-import { WORKFLOW_TEMPLATE_CATALOG } from '../../../workflow/domain/workflow-template-catalog';
 
 describe('notification source links', () => {
   it('opens the exact persisted report export without substituting another report', () => {
@@ -34,7 +35,7 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
       .filter((action) => action.actionType === 'SEND_NOTIFICATION')
       .map((action) => String(action.configJson['triggerKey']));
 
-    assert.equal(workflowTriggerKeys.length, 13);
+    assert.equal(workflowTriggerKeys.length, 16);
     for (const key of workflowTriggerKeys) {
       assert.equal(isImplementedTrigger(key), true, key);
     }
@@ -51,12 +52,15 @@ describe('implemented-trigger gate (LINE preference suppression)', () => {
 
   // The list is short on purpose: every key on it overrides a person's saved trigger list. Adding one
   // is a decision, so the whole list is pinned here.
-  it('always delivers exactly the six claim notices a saved preference list must not drop', () => {
+  it('always delivers exactly the nine claim notices a saved preference list must not drop', () => {
     assert.deepEqual(ALWAYS_DELIVERED_TRIGGER_KEYS, [
       'reimbursement.payout_account_set_by_other',
       // Audit B9: a voided payment (to the requester) and a claim waiting past the deadline (to whoever can pay).
       'workflow.reimbursement_payment_voided',
       'workflow.reimbursement_finance_blocked_requester',
+      'workflow.reimbursement_duplicate_confirmed',
+      'workflow.reimbursement_duplicate_cancel',
+      'workflow.reimbursement_duplicate_sla_breach',
       'workflow.reimbursement_payment_sla_breach',
       // Payout spec §14: a claim held back until its payout account is corrected (to the requester), and
       // the corrected account waiting for approval (to the approvers of the new step).
@@ -173,4 +177,20 @@ describe('delivery retry/backoff (A4)', () => {
     const now = new Date();
     assert.deepEqual(resolveDeliveryOutcome({ resultStatus: 'failed', errorCode: 'HTTP_401', attemptCountAfter: 1, maxAttempts: 5, now }), { status: 'failed' });
   });
+});
+
+it('D3: every duplicate notice is registered for delivery, source state and workflow/module gates', () => {
+  for (const key of ['reimbursement_duplicate_confirmed', 'reimbursement_duplicate_cancel', 'reimbursement_duplicate_sla_breach']) {
+    const trigger = `workflow.${key}`;
+    assert.ok(IMPLEMENTED_TRIGGER_KEYS.includes(trigger)); assert.ok(ALWAYS_DELIVERED_TRIGGER_KEYS.includes(trigger));
+    assert.deepEqual(NOTIFICATION_TRIGGER_FEATURE_KEYS[trigger], ['reimbursement']);
+    assert.equal(DOCUMENT_NOTIFICATION_STATES[trigger].confirmedDuplicate, true);
+  }
+  for (const key of ['reimbursement_duplicate_confirmed', 'reimbursement_duplicate_sla_breach']) {
+    const template = WORKFLOW_TEMPLATE_CATALOG.find(t => t.key === key)!;
+    assert.equal(template.autoEnable, true); assert.deepEqual(template.requiredSourceModules, ['reimbursements']);
+    assert.deepEqual(template.requiredPermissions, []); assert.equal(WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS[key], 0);
+    assert.ok(template.defaultActionJson.every(action => action.configJson['duplicateRecipient']));
+  }
+  assert.equal(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG.reimbursement_duplicate_confirmed.eventType, 'reimbursement.duplicate_confirmed');
 });

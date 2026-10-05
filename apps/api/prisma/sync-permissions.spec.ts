@@ -154,7 +154,7 @@ it('adds the pay and void rights to company roles that approve reimbursements, a
       financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID', duplicateStatus: 'NO_MATCH', receiptRequirementStatus: 'ATTACHED', postingStatus: 'pending',
       paymentTotalAmount: '0.0000', outstandingAmount: '500.0000', createdAt: day, updatedAt: day, lines: [], approvalSteps: [], payments: [], duplicateCandidates: [] };
     const repo = {
-      findRequestById: async () => claim, findPolicy: async () => null, assertClaimPaymentReady: async () => undefined, listOpenDuplicateCandidates: async () => [],
+      findRequestById: async () => claim, findPolicy: async () => null, assertClaimPaymentReady: async () => undefined, assertPaymentRecordInput: async () => undefined, listOpenDuplicateCandidates: async () => [],
       getUserDisplayNames: async () => ({}), listSignedClaimFormCopies: async () => [],
       recordPaymentAtomic: async (data: any) => ({ created: true, payment: { id: 'pay-1', ...data, status: 'RECORDED', postingStatus: 'pending' },
         request: { ...claim, status: 'PAID', paymentStatus: 'PAID' } }),

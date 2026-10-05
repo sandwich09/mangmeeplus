@@ -124,6 +124,14 @@ describe('the reimbursement guide reads as the product does', () => {
   const guide = buildReimbursementGuide('co', OWNER, ['OWNER']);
   const read = sentences(guide);
 
+  it('Round 4: explains the duplicate card and chip and payable-only waiting figures', () => {
+    const list = sentences({ ...guide, sections: guide.sections.filter((section) => section.id === 'list') }).join(' ');
+    assert.match(list, /ติดรายการซ้ำ/u);
+    assert.match(list, /จ่ายได้/u);
+    assert.match(list, /ตัวกรอง 7 ปุ่ม/u);
+    assert.match(list, /ยอดคงค้างรวม/u);
+  });
+
   // approved-product-help.ts (ai-gateway) links the LINE assistant's two claim cards to these sections.
   it('keeps the sections the assistant links to', () => {
     for (const id of ['quick-start', 'tabs']) assert.ok(guide.sections.some((section) => section.id === id), id);
@@ -523,4 +531,11 @@ it('duplicate guide covers company-wide evidence and the expense-document paymen
   assert.match(text, /ข้ามผู้เบิก/);
   assert.match(text, /เอกสารค่าใช้จ่าย/);
   assert.match(text, /ยืนยันเอกสารก่อน/);
+});
+
+it('D3: guide tells who gets confirmed-duplicate notices and one reminder per blocked period', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create']));
+  assert.match(text, /ใบเสร็จของใบเบิกยืนยันว่าซ้ำ/);
+  assert.match(text, /ผู้เบิกยกเลิกเองไม่ได้/);
+  assert.match(text, /เตือนครั้งเดียวในช่วงที่ติดรายการซ้ำ/);
 });

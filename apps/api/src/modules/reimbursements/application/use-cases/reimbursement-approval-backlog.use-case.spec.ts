@@ -34,6 +34,7 @@ function repo(rows: any[], steps: any[], active: Record<string, string[]>, anyOw
   const calls: any = { list: undefined, own: undefined, active: [] as any[], names: [] as string[][] };
   return {
     calls,
+    findPolicy: async () => null,
     // The backlog read filters by status; the only other read is "does the caller have any claim at all".
     listRequests: async (where: any) => {
       if (where.statuses) { calls.list = where; return rows; }
@@ -241,8 +242,11 @@ it('confirmed duplicates wait for cancellation, separate from payable claims in 
   const payable = claim({ status: 'READY_FOR_PAYMENT' });
   const partial = claim({ status: 'PARTIALLY_PAID', confirmedDuplicateExpenseCount: 1 });
   const result = await run(repo([blocked, partial, payable], [], {}));
-  assert.match(result.items.find(row => row.id === blocked.id)!.waitingOn, /ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขา/);
+  assert.equal(result.items.find(row => row.id === blocked.id)!.waitingOn, 'ติดรายการซ้ำ');
   assert.equal(result.desks.length, 3);
-  assert.equal(result.items.find(row => row.id === partial.id)!.waitingOn, 'ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้');
-  assert.match(result.desks.find(row => row.label.includes('ผู้เบิก'))!.note!, /รอยกเลิกคำขอ เพราะใบเสร็จยืนยันว่าซ้ำ/);
+  assert.equal(result.items.find(row => row.id === partial.id)!.waitingOn, 'ติดรายการซ้ำ');
+  assert.equal(result.desks.filter(row => row.kind === 'payment').reduce((sum, row) => sum + row.count, 0), 1);
+  const blocks = result.desks.filter(row => row.kind === 'duplicate_blocked');
+  assert.equal(blocks.reduce((sum, row) => sum + row.count, 0), 2);
+  assert.match(blocks.find(row => row.note?.includes('รอยกเลิกคำขอ'))!.note!, /รอยกเลิกคำขอ เพราะใบเสร็จยืนยันว่าซ้ำ/);
 });

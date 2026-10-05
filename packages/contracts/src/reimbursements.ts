@@ -105,6 +105,7 @@ export type ReimbursementPolicySnapshotV1 = {
   policyVersion: string;
   approvalRequiredFromAmount: string;
   requiresApproval: boolean;
+  approvalFloor?: 'THIRD_PARTY_PAYOUT';
   route: null | {
     mode: 'MANAGER_ROLE' | 'OWNER_ROLE' | 'CUSTOM_ROLE';
     roleKey: string;
@@ -282,6 +283,8 @@ export type ReimbursementPaymentDestinationSummary = {
   bankName?: string;
   accountName: string;
   accountLast4: string;
+  holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
 };
 
 export type ReimbursementPaymentSummary = {
@@ -344,7 +347,7 @@ export type ReimbursementPaymentFacts = {
   currency: string;
   slipCount: number;
   /** The account the payer confirmed the transfer into; absent when none was confirmed. */
-  payoutDestination?: { payoutKind?: string | null; accountLast4?: string | null } | null;
+  payoutDestination?: { payoutKind?: string | null; accountLast4?: string | null; holderType?: ReimbursementPayoutHolderType } | null;
 };
 
 /**
@@ -354,7 +357,7 @@ export type ReimbursementPaymentFacts = {
  */
 export function reimbursementPaymentHowText(payment: Pick<ReimbursementPaymentFacts, 'paymentMethod' | 'payoutDestination'>): string {
   const destination = payment.payoutDestination;
-  if (destination) return `โอนเข้า${destination.payoutKind === 'PROMPTPAY_PHONE' ? 'พร้อมเพย์เบอร์' : 'บัญชี'}${maskedPayoutAccountNumber(destination.accountLast4 ?? '')}`;
+  if (destination) return `โอนเข้า${maskedPayoutAccountWithHolder({ payoutKind: destination.payoutKind === 'PROMPTPAY_PHONE' ? 'PROMPTPAY_PHONE' : 'BANK_ACCOUNT', accountLast4: destination.accountLast4, holderType: destination.holderType }).replace(/^เลขบัญชี/, 'บัญชี')}`;
   return Object.hasOwn(REIMBURSEMENT_PAYMENT_METHOD_LABELS, payment.paymentMethod)
     ? REIMBURSEMENT_PAYMENT_METHOD_LABELS[payment.paymentMethod as ReimbursementPaymentMethod] : '';
 }
@@ -471,6 +474,7 @@ export type ReimbursementDuplicateGuidanceContext = {
   cancellationPending?: boolean;
   canResumeCancellation?: boolean;
 };
+const CONFIRMED_DUPLICATE_PAYMENT_REASON = `${REIMBURSEMENT_DUPLICATE_REASON_TEXT.EXPENSE_CONFIRMED_DUPLICATE} จึงบันทึกจ่ายไม่ได้`;
 const DUPLICATE_CANCEL_ACTOR = 'ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขาของใบนี้';
 const DUPLICATE_NEW_CLAIM_HELP = 'ให้ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ';
 const DUPLICATE_CANCEL_ACTION = 'กดยกเลิกคำขอในหน้าใบเบิกนี้';
@@ -491,7 +495,7 @@ export function reimbursementDuplicateBlockText(reasons: readonly string[] = [])
 }
 export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [], financeReview = false, context: ReimbursementDuplicateGuidanceContext = {}): string {
   if (reasons.includes('EXPENSE_CONFIRMED_DUPLICATE')) {
-    const why = `${REIMBURSEMENT_DUPLICATE_REASON_TEXT.EXPENSE_CONFIRMED_DUPLICATE} จึงบันทึกจ่ายไม่ได้`;
+    const why = CONFIRMED_DUPLICATE_PAYMENT_REASON;
     // After a cancellation the requester sends a new claim: "…ยกเลิกคำขอ แล้วให้ผู้เบิก…" reads as one step after the other.
     const then = `แล้ว${DUPLICATE_NEW_CLAIM_HELP}`;
     let help: string;
@@ -514,6 +518,40 @@ export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [
   return `${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}: ${reimbursementDuplicateReasonText(reasons)} ${financeReview ? REIMBURSEMENT_DUPLICATE_FINANCE_HELP : REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`;
 }
 export const REIMBURSEMENT_DUPLICATE_UNRESOLVED = 'พบรายการที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ';
+
+/** Confirmed receipts cannot be cleared; these notices use the same general cancellation guidance as the claim. */
+export function reimbursementConfirmedDuplicateNotice(recipient: 'requester' | 'cancel', overdue = false) {
+  return {
+    description: 'แจ้งเมื่อใบเสร็จของใบเบิกยืนยันว่าซ้ำ เพื่อให้ยกเลิกใบเบิกและส่งใบใหม่',
+    title: `ใบเบิก${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}${overdue ? 'เกินกำหนด' : ''}: {{requestNo}}`,
+    body: recipient === 'requester' ? reimbursementDuplicateBlockNotice(['EXPENSE_CONFIRMED_DUPLICATE'])
+      : `${CONFIRMED_DUPLICATE_PAYMENT_REASON} รอคุณยกเลิกคำขอ ${DUPLICATE_NEW_CLAIM_HELP}`,
+  };
+}
+
+export type ReimbursementPaymentDuplicateBlock = 'NONE' | 'UNRESOLVED' | 'CONFIRMED';
+export const REIMBURSEMENT_PAYMENT_VOIDED_TITLE = 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}';
+
+/** The payer's next step; callers suppress confirmed duplicates instead of telling anyone to pay. */
+export function reimbursementPaymentTurnNotice(kind: 'ready' | 'overdue', unresolved = false): { title: string; body: string } {
+  return {
+    title: `${unresolved ? `ใบเบิกรอตรวจรายการที่อาจซ้ำ${kind === 'overdue' ? 'เกินกำหนด' : ''}`
+      : kind === 'overdue' ? 'ใบเบิกรอจ่ายเงินเกินกำหนด' : 'พร้อมจ่ายเบิกจ่าย'}: {{requestNo}}`,
+    body: `ยอด {{amount}} {{currency}} · ${unresolved ? 'รอคุณตรวจรายการที่อาจซ้ำก่อนบันทึกการจ่ายเงิน' : 'รอคุณบันทึกการจ่ายเงิน'}`,
+  };
+}
+
+/** Only facts after the void, never its free-text reason or an account number. */
+export function reimbursementPaymentVoidedNotice(claim: {
+  status?: string; cancellationPending?: boolean; paymentDuplicateBlock?: ReimbursementPaymentDuplicateBlock; duplicateReasons?: readonly string[];
+} = {}): string {
+  const next = claim.cancellationPending ? REIMBURSEMENT_SYSTEM_WAIT_LABEL
+    : claim.paymentDuplicateBlock && claim.paymentDuplicateBlock !== 'NONE'
+      ? reimbursementDuplicateWait({ ...claim, currentDesk: { kind: 'PAYMENT' } })?.waiting
+        ?? reimbursementDuplicateBlockNotice(claim.duplicateReasons, false, claim)
+      : claim.status === 'PAID' ? 'ใบเบิกยังจ่ายครบแล้ว' : 'ใบเบิกกลับไปรอจ่าย';
+  return `การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ${next}`;
+}
 export function reimbursementDuplicateSubmitNotice(reasons: readonly string[] = []): string {
   return `พบรายการที่อาจซ้ำ: ${reimbursementDuplicateReasonText(reasons)} ยังส่งใบนี้ไม่ได้ ตรวจและแก้หลักฐาน หรือให้ผู้มีสิทธิ์ตั้งค่านโยบายตรวจนโยบายรายการซ้ำก่อนส่งอีกครั้ง`;
 }
@@ -645,7 +683,7 @@ export const REIMBURSEMENT_SELF_APPROVED_NOTE = 'ผู้เบิกและ�
 // ---- หน้ารวม (hub) buckets ----
 
 /** Every claim sits in exactly one bucket, so the hub's chips add up to "ทั้งหมด". */
-export type ReimbursementHubBucket = 'draft' | 'review' | 'payment' | 'paid' | 'closed';
+export type ReimbursementHubBucket = 'draft' | 'review' | 'payment' | 'duplicate_blocked' | 'paid' | 'closed';
 
 /**
  * Where a claim's status alone places it. Typed over every status, so a status added later has to be
@@ -673,18 +711,21 @@ export function reimbursementHubBucket(claim: {
   status?: string;
   financeReviewStatus?: string;
   currentDesk?: { kind?: string } | null;
+  hasDuplicateBlocker?: boolean;
 }): ReimbursementHubBucket {
+  const paymentBucket = claim.hasDuplicateBlocker ? 'duplicate_blocked' : 'payment';
   switch (claim.currentDesk?.kind) {
     // A claim waiting for approval that is with its requester was sent back to have its payout account
     // corrected (payout spec §14). It stands at the approval step, so its status places it, in รออนุมัติ/ตรวจสอบ:
     // the counts and the list filter are made from the status, and a row must fall where they put it.
     case 'REQUESTER': if (claim.status === 'PENDING_APPROVAL') break; return 'draft';
     case 'APPROVER': case 'FINANCE': return 'review';
-    case 'PAYMENT': return 'payment';
+    case 'PAYMENT': return paymentBucket;
   }
   // Approved and still being routed on: to finance review while that is pending, otherwise to payment.
   if (claim.status === 'APPROVED' && claim.financeReviewStatus === 'PENDING') return 'review';
-  return HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
+  const bucket = HUB_BUCKET_BY_STATUS[claim.status as ReimbursementRequestStatus] ?? 'closed';
+  return bucket === 'payment' ? paymentBucket : bucket;
 }
 
 /** The whole list scope as the server counted it, or what a search found in it: what the hub's cards and chips print. */
@@ -700,6 +741,8 @@ export type ReimbursementHubSummary = {
 // ---- Request ----
 
 export type ReimbursementRequestSummary = {
+  /** The payment predicate evaluated on this claim's submitted policy and own duplicate facts. */
+  hasDuplicateBlocker?: boolean;
   id: string;
   companyId: string;
   branchId?: string;
@@ -984,6 +1027,8 @@ export type ApproveReimbursementInput = {
    * transfer, and it must be the claim's current version. Cash and legacy claims take none.
    */
   payoutVerifiedVersion?: number;
+  /** Explicit acceptance of a third-party account, in addition to the version attestation. */
+  payoutThirdPartyAccepted?: boolean;
 };
 
 export type RejectReimbursementInput = {
@@ -1287,18 +1332,19 @@ export function reimbursementPayoutRoundApproves(answer: ReimbursementPayoutRoun
  */
 export function reimbursementPayoutSentBackNotice(
   held: ReimbursementPayoutHeld, reasonCode: ReimbursementPayoutCorrectionReason, payoutKind?: ReimbursementPayoutKind | null,
+  holder?: { holderType?: ReimbursementPayoutHolderType | null },
 ): { title: string; body: string } {
   const words = PAYOUT_ROUND_HELD_WORDS[held];
-  return { title: words.noticeTitle, body: `เหตุผล: ${reimbursementPayoutCorrectionReasonLabel(reasonCode, payoutKind)} · เปิดใบเบิกเพื่อ${words.ask}` };
+  return { title: withPayoutHolderFlag(words.noticeTitle, holder), body: withPayoutHolderFlag(`เหตุผล: ${reimbursementPayoutCorrectionReasonLabel(reasonCode, payoutKind)} · เปิดใบเบิกเพื่อ${words.ask}`, holder) };
 }
 
 /**
  * The approvers' notice of an answer (spec §17.3): the title is the claim's status label, which the
  * template follows with the claim number; the body goes after the amount.
  */
-export function reimbursementPayoutAnswerNotice(answer: ReimbursementPayoutRoundAnswer | null | undefined): { title: string; body: string } {
+export function reimbursementPayoutAnswerNotice(answer: ReimbursementPayoutRoundAnswer | null | undefined, holder?: { holderType?: ReimbursementPayoutHolderType | null }): { title: string; body: string } {
   const words = payoutRoundApprovalWords(answer);
-  return { title: words.status, body: `รอคุณตรวจและอนุมัติ${words.approves}` };
+  return { title: withPayoutHolderFlag(words.status, holder), body: withPayoutHolderFlag(`รอคุณตรวจและอนุมัติ${words.approves}`, holder) };
 }
 
 type PayoutRoundHeldTexts = Record<
@@ -1464,22 +1510,22 @@ export const REIMBURSEMENT_PAYOUT_ROUND_PAY_LEAD_FOR_REQUESTER: Partial<Record<R
 export function reimbursementPayoutAnsweredForRequesterNotice(
   answer: ReimbursementPayoutRoundAnswer | null | undefined,
   byName: string | null | undefined,
-  given: { payoutMethod?: string | null; payoutKind?: ReimbursementPayoutKind | null; bankName?: string | null; accountLast4?: string | null } | null | undefined,
+  given: { payoutMethod?: string | null; payoutKind?: ReimbursementPayoutKind | null; bankName?: string | null; accountLast4?: string | null; holderType?: ReimbursementPayoutHolderType } | null | undefined,
   facts: { draft?: boolean; alsoSavedAsDefault?: boolean } = {},
 ): { title: string; body: string } {
   const did = typeof answer === 'string' && Object.hasOwn(PAYOUT_ROUND_ANSWER_WORDS, answer) ? PAYOUT_ROUND_ANSWER_WORDS[answer].did : 'เลือกวิธีรับเงินคืน';
-  const account = given?.payoutMethod === 'BANK_TRANSFER' && given.accountLast4 ? maskedPayoutAccount(given) : undefined;
+  const account = given?.payoutMethod === 'BANK_TRANSFER' && given.accountLast4 ? maskedPayoutAccountWithHolder(given) : undefined;
   const holds = account ?? (given?.payoutMethod === 'CASH' ? 'รับเป็นเงินสด' : facts.draft ? 'ยังไม่ได้ระบุวิธีรับเงินคืน' : undefined);
   const next = facts.draft
     ? 'เปิดใบเบิกเพื่อตรวจ ถ้าไม่ถูกต้อง แจ้งผู้จัดทำใบเบิก'
-    : `เปิดใบเบิกเพื่อตรวจ ${account ? 'ถ้าไม่ใช่บัญชีของคุณ' : 'ถ้าไม่ถูกต้อง'} แก้ได้ทันที`;
+    : `เปิดใบเบิกเพื่อตรวจ ${account && given?.holderType !== 'THIRD_PARTY' ? 'ถ้าไม่ใช่บัญชีของคุณ' : 'ถ้าไม่ถูกต้อง'} แก้ได้ทันที`;
   return {
-    title: `${payoutRoundDoer({ onBehalf: true, byName }).who}${did}ในใบเบิกของคุณ`,
+    title: withPayoutHolderFlag(`${payoutRoundDoer({ onBehalf: true, byName }).who}${did}ในใบเบิกของคุณ`, given ?? undefined),
     body: `${holds ? `${holds} · ` : ''}${next}${facts.alsoSavedAsDefault ? ' · บันทึกบัญชีนี้เป็นบัญชีรับเงินคืนประจำของคุณด้วย' : ''}`,
   };
 }
 
-export const REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE = 'กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย';
+export const REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE = 'กรอกบัญชีรับเงินคืนของใบนี้ หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย';
 
 /** What the preparer is told about the requester's notice, by the kind of save. */
 export function reimbursementPayoutOnBehalfNotice(inDraft = false): string {
@@ -1509,6 +1555,7 @@ export type RequestReimbursementPayoutCorrectionInput = {
  */
 export type SubmitReimbursementPayoutCorrectionInput = (
   | { mode: 'CASH' }
+  | { mode: 'SAVED'; savedAccountId: string }
   | {
     mode: 'DEFAULT';
     /** `payoutCorrectionActions.requesterDefault.token` of the default account the page showed. */
@@ -1525,6 +1572,9 @@ export type SubmitReimbursementPayoutCorrectionInput = (
     mode: 'SPECIFIED';
     /** Also make it the requester's default account. */
     saveAsDefault?: boolean;
+    saveForLater?: boolean;
+    holderType?: ReimbursementPayoutHolderType;
+    holderNote?: string;
   } & PayoutDestinationInput)
 ) & {
   /**
@@ -1544,6 +1594,8 @@ export type ReimbursementPayoutCorrectionAccount = {
   bankName?: string;
   accountName?: string;
   accountLast4?: string;
+  holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
   version?: number;
 };
 
@@ -1599,6 +1651,8 @@ export type ReimbursementPayoutCorrectionActions = {
    * typed on their behalf would be on the claim without anyone being told (`payout_account_member_not_active`).
    */
   specifiedRefusal?: 'REQUESTER_NOT_ACTIVE';
+  /** This frozen policy has no approval step: typed/saved choices must be own accounts. */
+  thirdPartyRefusal?: 'APPROVAL_NOT_REQUIRED';
 };
 
 /**
@@ -1778,8 +1832,95 @@ export type ReimbursementPaymentSourceRef = {
 /** A subset of the payment methods on purpose: no new enum value. */
 export type ReimbursementPayoutMethod = 'BANK_TRANSFER' | 'CASH';
 export type ReimbursementPayoutKind = 'BANK_ACCOUNT' | 'PROMPTPAY_PHONE';
-/** Where a claim's account came from: the requester's default, typed by the requester, or typed by whoever prepared the claim for them. */
-export type ReimbursementPayoutSource = 'DEFAULT_ACCOUNT' | 'REQUESTER' | 'PREPARER';
+export type ReimbursementPayoutHolderType = 'SELF' | 'THIRD_PARTY';
+/** Where a claim's account came from: the default, a saved account, or whoever typed it. */
+export type ReimbursementPayoutSource = 'DEFAULT_ACCOUNT' | 'SAVED_ACCOUNT' | 'REQUESTER' | 'PREPARER';
+
+export const PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH = 40;
+export const PAYOUT_HOLDER_NOTE_MIN_LENGTH = 2;
+export const PAYOUT_HOLDER_NOTE_MAX_LENGTH = 200;
+export const PAYOUT_SAVED_ACCOUNT_LIMIT = 20;
+
+export type PayoutHolderFacts = {
+  holderType: ReimbursementPayoutHolderType;
+  holderNote?: string;
+};
+
+/** Holder facts are stated by a person, never inferred from the account name. */
+export function invalidPayoutHolderField(input: Partial<PayoutHolderFacts> | null | undefined): 'holderType' | 'holderNote' | null {
+  if (input?.holderType !== 'SELF' && input?.holderType !== 'THIRD_PARTY') return 'holderType';
+  if (input.holderNote !== undefined && typeof input.holderNote !== 'string') return 'holderNote';
+  const note = input.holderNote?.trim() ?? '';
+  if (input.holderType === 'SELF') return note ? 'holderNote' : null;
+  return note.length < PAYOUT_HOLDER_NOTE_MIN_LENGTH || note.length > PAYOUT_HOLDER_NOTE_MAX_LENGTH || looksLikeAccountNumber(note)
+    ? 'holderNote' : null;
+}
+
+/** A private optional label still must not carry an account number. */
+export function invalidSavedPayoutAccountLabel(label: unknown): 'label' | null {
+  if (label === undefined) return null;
+  if (typeof label !== 'string') return 'label';
+  return label.trim().length > PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH || looksLikeAccountNumber(label) ? 'label' : null;
+}
+
+/** Shared by forms, claim print, notices and LINE; notes are excluded from short notices. */
+export const REIMBURSEMENT_PAYOUT_HOLDER_WORDS = {
+  self: 'บัญชีของฉันเอง',
+  requesterSelf: 'บัญชีของผู้เบิกเอง',
+  thirdParty: 'บัญชีของบุคคลอื่น',
+  noteLabel: 'เป็นบัญชีของใคร และเกี่ยวข้องอย่างไร',
+  noteExample: 'เช่น ช่างรับเหมาที่สำรองจ่ายค่าวัสดุ หรือคู่สมรสของผู้เบิก',
+  noteInvalid: 'ระบุว่าเป็นบัญชีของใคร และเกี่ยวข้องอย่างไร (2 ถึง 200 ตัวอักษร)',
+  noteContainsAccountNumber: 'อย่าพิมพ์เลขบัญชีในช่องนี้ เพราะเมื่อใช้บัญชีนี้ในใบเบิก ทุกคนที่เปิดใบเบิกจะเห็นข้อความนี้',
+  thirdPartyAcceptance: 'ฉันตรวจบัญชีนี้แล้ว และยอมรับให้คืนเงินของใบนี้เข้าบัญชีของบุคคลอื่นตามที่ระบุ',
+  thirdPartyAcceptanceRequired: 'ติ๊กยอมรับการคืนเงินเข้าบัญชีของบุคคลอื่นก่อนอนุมัติ',
+  thirdPartyApprovalNotice: 'ใบนี้คืนเงินเข้าบัญชีของบุคคลอื่น จึงต้องผ่านผู้อนุมัติก่อนจ่ายทุกครั้ง',
+  thirdPartySelfAttestation: 'ผู้เบิกยืนยันบัญชีของบุคคลอื่นด้วยตนเอง',
+  thirdPartyPaymentConfirmation: 'โอนเข้าบัญชีของบุคคลอื่นตามที่อนุมัติในใบนี้แล้ว และชื่อผู้รับที่ธนาคารแสดงตรงกับใบเบิก',
+} as const;
+
+export function payoutHolderChoiceLabel(holderType: ReimbursementPayoutHolderType, forSelf: boolean): string {
+  return holderType === 'THIRD_PARTY' ? REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty
+    : forSelf ? REIMBURSEMENT_PAYOUT_HOLDER_WORDS.self : REIMBURSEMENT_PAYOUT_HOLDER_WORDS.requesterSelf;
+}
+
+/** Existing claims and self accounts gain no new line. */
+export function payoutHolderLine(account: { holderType?: ReimbursementPayoutHolderType | null; holderNote?: string | null }): string | null {
+  return account.holderType === 'THIRD_PARTY' ? `${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty}: ${account.holderNote?.trim() ?? ''}` : null;
+}
+
+// Words added by the saved-account screens, shared by their rows, forms and refusals.
+export const REIMBURSEMENT_SAVED_PAYOUT_WORDS = {
+  title: 'บัญชีอื่นที่บันทึกไว้', row: 'บัญชีที่บันทึกไว้', add: 'เพิ่มบัญชี',
+  empty: 'ยังไม่มีบัญชีอื่นที่บันทึกไว้', loading: 'กำลังโหลดบัญชีที่บันทึกไว้...',
+  label: 'ชื่อเรียก (ไม่บังคับ)', holder: 'เจ้าของบัญชี',
+  labelInvalid: `ชื่อเรียกต้องไม่เกิน ${PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH} ตัวอักษร และไม่ใส่เลขบัญชี กรุณาแก้ชื่อเรียก`,
+  limit: `บันทึกบัญชีอื่นได้ไม่เกิน ${PAYOUT_SAVED_ACCOUNT_LIMIT} บัญชี หากครบแล้วให้ลบบัญชีที่ไม่ใช้ก่อนเพิ่มบัญชีใหม่`,
+  makeDefault: 'ตั้งเป็นบัญชีประจำ', saved: 'เพิ่มบัญชีแล้ว', removed: 'ลบบัญชีที่บันทึกไว้แล้ว', madeDefault: 'ตั้งเป็นบัญชีประจำแล้ว',
+  madeDefaultWithPrevious: 'ตั้งเป็นบัญชีประจำแล้ว บัญชีประจำเดิมอยู่ในรายการบัญชีที่บันทึกไว้',
+  deleteTitle: 'ลบบัญชีที่บันทึกไว้', deleteNotice: 'บัญชีนี้จะหายจากรายการ ใบเบิกที่บันทึกหรือส่งไปแล้วจะยังใช้บัญชีของใบนั้นตามเดิม',
+  saveForLater: 'บันทึกบัญชีนี้ไว้ใช้ครั้งหน้า', choose: 'กรุณาเลือกวิธีรับเงินคืนของใบนี้',
+  notFound: 'ไม่พบบัญชีที่เลือกในรายการแล้ว กรุณาโหลดรายการล่าสุดและเลือกวิธีรับเงินคืนใหม่',
+  accountNameHint: 'กรอกชื่อตามที่ธนาคารแสดง เพื่อให้ผู้อนุมัติตรวจบัญชีที่เลือก',
+};
+export const REIMBURSEMENT_SAVED_PAYOUT_ERROR_WORDS = {
+  payout_saved_account_not_found: REIMBURSEMENT_SAVED_PAYOUT_WORDS.notFound,
+  payout_saved_account_limit: REIMBURSEMENT_SAVED_PAYOUT_WORDS.limit,
+  payout_saved_account_duplicate: 'บันทึกบัญชีนี้ไว้แล้ว กรุณาเลือกบัญชีจากรายการเดิม',
+  payout_saved_account_is_default: 'บัญชีนี้เป็นบัญชีประจำอยู่แล้ว กรุณาใช้บัญชีประจำหรือเพิ่มบัญชีอื่น',
+  payout_default_must_be_own: 'บัญชีประจำต้องเป็นบัญชีของตัวเอง กรุณาใช้บัญชีนี้เฉพาะใบเบิกหรือเลือกบัญชีของตัวเอง',
+  payout_holder_type_invalid: 'กรุณาเลือกเจ้าของบัญชีจากตัวเลือกที่แสดง',
+  payout_holder_note_invalid: `${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.noteInvalid} ${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.noteContainsAccountNumber}`,
+  payout_saved_account_label_invalid: REIMBURSEMENT_SAVED_PAYOUT_WORDS.labelInvalid,
+  payout_third_party_acceptance_required: REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdPartyAcceptanceRequired,
+  payout_third_party_needs_approval: 'ใบนี้ใช้บัญชีของบุคคลอื่นไม่ได้เพราะไม่มีขั้นอนุมัติ เลือกบัญชีของตัวเองหรือเงินสด หรือยกเลิกใบนี้แล้วส่งใบใหม่',
+  payment_currency_mismatch: 'สกุลเงินที่จ่ายไม่ตรงกับใบเบิก กรุณาใช้สกุลเงินเดียวกับใบเบิก',
+  payment_source_bank_account_invalid: 'บัญชีที่ใช้จ่ายไม่พร้อมใช้งานในบริษัทนี้ กรุณาโหลดข้อมูลล่าสุดและเลือกบัญชีที่ใช้จ่ายใหม่',
+  // A choice the form should never send, and the two the command refuses for who is filling the form.
+  payout_mode_invalid: 'เลือกวิธีรับเงินคืนไม่สำเร็จ กรุณาโหลดหน้าใหม่แล้วเลือกวิธีรับเงินคืนอีกครั้ง',
+  payout_save_options_invalid: 'เลือกได้อย่างเดียว: บันทึกเป็นบัญชีประจำ หรือบันทึกบัญชีนี้ไว้ใช้ครั้งหน้า กรุณาเอาเครื่องหมายออกหนึ่งช่อง',
+  payout_saved_account_owner_required: 'บัญชีที่บันทึกไว้เป็นของผู้เบิก จึงเลือกหรือบันทึกเพิ่มได้เฉพาะเมื่อผู้เบิกกรอกใบเบิกเอง กรุณาเลือกบัญชีประจำของผู้เบิก เงินสด หรือกรอกบัญชีสำหรับใบนี้',
+};
 
 // Source: Bank of Thailand financial institution directory, checked 2026-09-23.
 export const THAI_BANK_NAMES = [
@@ -1883,6 +2024,30 @@ export function maskedPayoutAccount(account: {
   return account.payoutKind === 'PROMPTPAY_PHONE' ? `พร้อมเพย์เบอร์${masked}` : `${account.bankName ?? ''} เลขบัญชี${masked}`.trim();
 }
 
+/** Short account text for notices and LINE: holder flag only, never the holder note. */
+export function maskedPayoutAccountWithHolder(account: Parameters<typeof maskedPayoutAccount>[0] & { holderType?: ReimbursementPayoutHolderType | null }): string {
+  return withPayoutHolderFlag(maskedPayoutAccount(account), account);
+}
+
+/** The same short flag on sentences that name an account without its digits. */
+export function withPayoutHolderFlag(text: string, account?: { holderType?: ReimbursementPayoutHolderType | null }): string {
+  return account?.holderType === 'THIRD_PARTY' ? `${text} (${REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdParty})` : text;
+}
+
+/** Saved accounts are private to their member; the label is never copied into a claim. */
+export type SavedPayoutAccountSummary = PayoutHolderFacts & {
+  id: string;
+  label?: string;
+  payoutKind: ReimbursementPayoutKind;
+  bankName?: string;
+  accountName: string;
+  accountLast4: string;
+  createdAt: string;
+};
+
+export type SavedPayoutAccountListResponse = { accounts: SavedPayoutAccountSummary[]; limit: number };
+export type AddSavedPayoutAccountInput = PayoutDestinationInput & PayoutHolderFacts & { label?: string };
+
 /** A member's default payout account as every screen sees it: never the full number. */
 export type MemberPayoutAccountSummary = {
   userId: string;
@@ -1913,10 +2078,14 @@ export type PayoutAccountReveal = { accountNumber: string };
 export type ReimbursementPayoutInput =
   | { mode: 'DEFAULT' }
   | { mode: 'CASH' }
+  | { mode: 'SAVED'; savedAccountId: string }
   | ({
     mode: 'SPECIFIED';
     /** Also make it the requester's default account; the claim then follows that default. */
     saveAsDefault?: boolean;
+    saveForLater?: boolean;
+    holderType?: ReimbursementPayoutHolderType;
+    holderNote?: string;
   } & PayoutDestinationInput);
 
 export type ReimbursementPayoutNotReadyReason = 'payout_method_required' | 'payout_destination_required';
@@ -1932,6 +2101,10 @@ export type ReimbursementPayoutSummary = {
   bankName?: string;
   accountName?: string;
   accountLast4?: string;
+  holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
+  /** Draft only: this account requires approval even below the policy's amount threshold. */
+  approvalRequiredForThirdParty?: true;
   /** The claim's own snapshot version. Absent for cash, and while a draft still follows the default. */
   version?: number;
   source?: ReimbursementPayoutSource;
@@ -1973,6 +2146,8 @@ export type ReimbursementPayoutVersionSummary = {
   bankName?: string;
   accountName: string;
   accountLast4: string;
+  holderType?: ReimbursementPayoutHolderType;
+  holderNote?: string;
   source: ReimbursementPayoutSource;
   /** Who typed or set the account, when it was not the requester. The name is absent when it cannot be resolved. */
   enteredByUserId?: string;
@@ -2026,6 +2201,8 @@ export type ReimbursementAiSummary = {
   unpaidApprovedCount: number;
   overdueApprovalCount: number;
   totalUnpaidAmount: string;
+  /** Unpaid claims excluded from the payment figures by the duplicate predicate; absent in older output. */
+  duplicateBlockedCount?: number;
   /** Item 1 (spec R-A1 row 18): the caller's own effective read scope, from the same own/related/
    *  company permission check `GetReimbursementAiSummaryUseCase` already applies above. */
   accessScope: 'own' | 'related' | 'company';

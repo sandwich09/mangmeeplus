@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { REIMBURSEMENT_DUPLICATE_CLEAR_HELP, REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED, EXPENSE_VOID_REASON_MIN_LENGTH, reimbursementPayoutRoundApproves } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_DUPLICATE_CLEAR_HELP, REIMBURSEMENT_DUPLICATE_RESOLUTION_SAVED, EXPENSE_VOID_REASON_MIN_LENGTH, REIMBURSEMENT_PAYOUT_HOLDER_WORDS as HOLDER_WORDS, reimbursementPayoutRoundApproves } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { ThemedSteps, type ThemedStepState } from '@/common/components/steps/ThemedSteps';
@@ -29,7 +29,7 @@ import {
   StaleApprovalDialog, StatusBadge, VoidPaymentDialog, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
 import { BackToClaimsLink, ClaimPayoutCard, PayoutAttestationCheck } from './ReimbursementPayout';
-import { PAYOUT_ATTESTATION_REQUIRED, claimNeedsPayoutAttestation, claimPayoutSubmitBlock } from './reimbursement-payout.logic';
+import { PAYOUT_ATTESTATION_REQUIRED, isThirdPartyAcceptanceRefusal, needsThirdPartyAcceptance, payoutApprovalKey, claimNeedsPayoutAttestation, claimPayoutSubmitBlock } from './reimbursement-payout.logic';
 // The payout account correction round (payout spec §14): its forms and card, and the words of its buttons.
 import { PayoutCorrectionAccountForm, PayoutCorrectionComparison, PayoutCorrectionRequestForm } from './ReimbursementPayoutCorrection';
 import {
@@ -114,6 +114,9 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   const [noteError, setNoteError] = useState<string | null>(null);
   // "ตรวจบัญชีแล้ว" is given for one account version; a claim sent again with another version unticks it.
   const [attestedVersion, setAttestedVersion] = useState<number | null>(null);
+  const [acceptance, setAcceptance] = useState<{ acceptedFor: string | null }>({ acceptedFor: null });
+  const payoutTickRef = useRef<HTMLInputElement>(null);
+  const [focusAcceptance, setFocusAcceptance] = useState(false);
   // Which form of a correction round is open inside the step card: sending the claim back, or giving its account.
   const [correctionForm, setCorrectionForm] = useState<'send-back' | 'correct-payout' | null>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -172,6 +175,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
 
   // The card of the step the claim moved to takes focus (and scrolls into view) after an action.
   useEffect(() => { if (focusTick) cardRef.current?.focus(); }, [focusTick]);
+  useEffect(() => {
+    if (focusAcceptance && detail) { payoutTickRef.current?.focus(); setFocusAcceptance(false); }
+  }, [focusAcceptance, detail]);
+
 
   const steps = useMemo(() => (detail ? buildJourneySteps(detail, permissions, userId) : []), [detail, permissions, userId]);
   const step = activeJourneyStep(steps);
@@ -218,20 +225,25 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     const target = review?.detail ?? detail;
     // The server refuses a transfer claim without the attestation of its current account version.
     const verified = claimNeedsPayoutAttestation(target) ? attestedVersion : null;
-    if (claimNeedsPayoutAttestation(target) && verified !== target.payout?.version) {
+    if (claimNeedsPayoutAttestation(target) && (verified !== target.payout?.version || (needsThirdPartyAcceptance(target) && acceptance.acceptedFor !== payoutApprovalKey(target)))) {
       setStaleReview(null);
-      setActionError(PAYOUT_ATTESTATION_REQUIRED);
+      setActionError(needsThirdPartyAcceptance(target) ? HOLDER_WORDS.thirdPartyAcceptanceRequired : PAYOUT_ATTESTATION_REQUIRED);
       return;
     }
     let stale = false;
+    let acceptanceRefused = false;
     const { ok, latest } = await act(
       'approve',
-      () => approveReimbursement(companyId, requestId, undefined, target.approvalSnapshotHash, verified ?? undefined),
+      () => approveReimbursement(companyId, requestId, undefined, target.approvalSnapshotHash, verified ?? undefined, needsThirdPartyAcceptance(target) ? true : undefined),
       // In a payout round the same call approves what was answered alone, and the claim is back at its pay step: said of
       // that thing, a new account, the account the claim had, a first one, or cash.
       target.payoutCorrectionPhase ? (latest) => `อนุมัติ${reimbursementPayoutRoundApproves(target.payoutCorrectionAnswer)}แล้ว ${latest?.duplicateReasons?.includes('EXPENSE_CONFIRMED_DUPLICATE') ? duplicateNoticeForViewer(latest, permissions, userId) : 'ใบกลับไปรอจ่ายเงินคืน'}` : 'อนุมัติคำขอเรียบร้อยแล้ว',
-      (e) => { stale = !review && isStaleApprovalError(e); return stale; },
+      (e) => { acceptanceRefused = isThirdPartyAcceptanceRefusal(e); stale = !review && isStaleApprovalError(e); return stale; },
     );
+    if (acceptanceRefused) {
+      setAttestedVersion(null); setAcceptance({ acceptedFor: null }); setStaleReview(null); setFocusAcceptance(true);
+      return;
+    }
     if (stale) {
       // Changed since this page read it. Where this viewer may still approve the claim as it is now, they compare
       // and decide again. Where they may not (someone else decided it, sent it back for its payout account or
@@ -326,9 +338,10 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
   // One reason at a time: the receipt rule first, then the receiving method.
   const readiness = receiptReadiness.blocked || !payoutBlock ? receiptReadiness : { blocked: true, message: payoutBlock };
   const needsAttestation = Boolean(step?.actions.includes('approve')) && claimNeedsPayoutAttestation(detail);
-  const attested = needsAttestation && attestedVersion === detail.payout?.version;
+  const attested = needsAttestation && attestedVersion === detail.payout?.version && (!needsThirdPartyAcceptance(detail) || acceptance.acceptedFor === payoutApprovalKey(detail));
+  const attestationRequired = needsThirdPartyAcceptance(detail) ? HOLDER_WORDS.thirdPartyAcceptanceRequired : PAYOUT_ATTESTATION_REQUIRED;
   const staleReviewNeedsAttestation = !!staleReview && claimNeedsPayoutAttestation(staleReview.detail)
-    && attestedVersion !== staleReview.detail.payout?.version;
+    && (attestedVersion !== staleReview.detail.payout?.version || (needsThirdPartyAcceptance(staleReview.detail) && acceptance.acceptedFor !== payoutApprovalKey(staleReview.detail)));
   // The server's own answer to "would this claim's payment be refused for a duplicate": the fact the pay-queue row
   // marks (`hasDuplicateBlocker`). The finance approval clears the block exactly when there is one, as the queue's does.
   const duplicateBlocks = duplicateCanBeCleared(detail);
@@ -408,11 +421,11 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
     if (action === 'attach-signed-copy') return <a key={action} className={className} href="#reimbursement-signed-copies">{label}</a>;
     const working = busyAction === action || (action === 'print' && previewLoadingKey !== null);
     const blockedReason = action === 'submit' && readiness.blocked ? readiness.message
-      : action === 'approve' && needsAttestation && !attested ? PAYOUT_ATTESTATION_REQUIRED
+      : action === 'approve' && needsAttestation && !attested ? attestationRequired
         : action === 'finance-approve' && duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined;
     return (
       <button key={action} type="button" className={className} title={action === 'submit' ? undefined : blockedReason}
-        aria-describedby={action === 'submit' && blockedReason ? 'claim-submit-readiness' : undefined}
+        aria-describedby={blockedReason ? action === 'submit' ? 'claim-submit-readiness' : action === 'approve' ? 'claim-payout-attestation-required' : undefined : undefined}
         disabled={busyAction !== null || previewLoadingKey !== null || Boolean(blockedReason)} aria-busy={working}
         onClick={handlers[action]}>
         {working ? 'กำลังดำเนินการ...' : label}
@@ -529,14 +542,16 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
             <p className="text-xs font-bold text-brand-700">ขั้นตอน {stepIndex + 1}</p>
             <h2 id="journey-step-title" className="mt-1 text-lg font-bold text-gray-900">{step.label}</h2>
             {step.note && <p className="mt-1 text-sm text-gray-600">{step.note}</p>}
+            {needsThirdPartyAcceptance(detail) && ['DRAFT', 'PENDING_APPROVAL'].includes(detail.status) && <p className="mt-1 text-sm text-amber-800">{HOLDER_WORDS.thirdPartyApprovalNotice}</p>}
           </div>
           {step.actions.includes('submit') && readiness.blocked && readiness.message && <div id="claim-submit-readiness"><ErrorBanner message={readiness.message} /></div>}
           {/* Spec §14.6: what a round's approvers approve. What the claim was approved with beside what was answered. */}
           {step.key === 'approval' && <PayoutCorrectionComparison detail={detail} />}
           {needsAttestation && (
-            <PayoutAttestationCheck checked={attested} disabled={busyAction !== null} payoutKind={detail.payout?.payoutKind}
-              onChange={(checked) => setAttestedVersion(checked ? detail.payout?.version ?? null : null)} />
+            <PayoutAttestationCheck checked={attested} disabled={busyAction !== null} payoutKind={detail.payout?.payoutKind} holderType={detail.payout?.holderType} forSelf={detail.requesterUserId === userId} inputRef={payoutTickRef}
+              onChange={(checked) => { setAttestedVersion(checked ? detail.payout?.version ?? null : null); setAcceptance({ acceptedFor: checked ? payoutApprovalKey(detail) : null }); }} />
           )}
+          {needsAttestation && !attested && <p id="claim-payout-attestation-required" className="text-sm text-amber-800">{attestationRequired}</p>}
           {cardActions.length > 0 && (
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">{cardActions.map(actionButton)}</div>
           )}
@@ -655,6 +670,7 @@ export function ReimbursementJourneyPage({ companyId, requestId, userId, permiss
       />}
       {staleReview && <StaleApprovalDialog
         requestNo={staleReview.detail.requestNo ?? staleReview.before.requestNo}
+        beforePayout={staleReview.before.payout} payout={staleReview.detail.payout}
         diff={diffApprovalFields(
           approvalComparable(staleReview.before, (staleReview.before.lines ?? []).length),
           approvalComparable(staleReview.detail, (staleReview.detail.lines ?? []).length),

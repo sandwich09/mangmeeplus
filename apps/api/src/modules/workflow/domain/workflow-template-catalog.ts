@@ -1,4 +1,4 @@
-import { reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES as ROLE } from '@watchdog-bms/contracts';
+import { reimbursementConfirmedDuplicateNotice, reimbursementFinanceBlockedRequesterNotice, reimbursementPaymentTurnNotice, REIMBURSEMENT_PAYMENT_VOIDED_TITLE, THAI_SYSTEM_ROLE_NAMES as ROLE } from '@watchdog-bms/contracts';
 import type { WorkflowActionDefinition, WorkflowConditionNode, WorkflowTemplateStatus, WorkflowTriggerType } from '@watchdog-bms/contracts';
 
 export type WorkflowTemplateSeed = {
@@ -37,6 +37,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
   // Two ways a claim arrives at the finance desk: a person approved it, or it needed no approval
   // and was sent straight there. The second wrote an event no rule listened to, so nobody was told.
   reimbursement_finance_review_pending: { eventTypes: ['reimbursement.approved', 'reimbursement.finance_review_requested'] },
+  reimbursement_duplicate_confirmed: { eventType: 'reimbursement.duplicate_confirmed' },
   reimbursement_ready_for_payment: { eventType: 'reimbursement.ready_for_payment' },
   reimbursement_payment_recorded: { eventType: 'reimbursement.payment_recorded' },
   reimbursement_payment_voided: { eventType: 'reimbursement.payment_voided' },
@@ -61,6 +62,8 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
   reimbursement_finance_blocked_requester: 0,
   reimbursement_finance_review: 0,
   reimbursement_finance_review_pending: 0,
+  reimbursement_duplicate_confirmed: 0,
+  reimbursement_duplicate_sla_breach: 0,
   reimbursement_ready_for_payment: 0,
   reimbursement_payment_recorded: 0,
   reimbursement_payment_voided: 0,
@@ -74,6 +77,8 @@ export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> 
 // payment reminder. The admin can still enable it; nothing else about auto-enable changes.
 export const WORKFLOW_TEMPLATE_FOLLOWS_SIBLING: Record<string, string> = {
   reimbursement_finance_blocked_requester: 'reimbursement_decision_requester',
+  reimbursement_duplicate_confirmed: 'reimbursement_finance_blocked_requester',
+  reimbursement_duplicate_sla_breach: 'reimbursement_payment_sla_breach',
   reimbursement_payment_voided: 'reimbursement_payment_recorded',
   reimbursement_payment_sla_breach: 'approval_sla_breach',
   // The two notices of a payout account correction (payout spec §17.3): "your claim needs its account
@@ -247,6 +252,25 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     autoEnable: true,
     status: 'AVAILABLE',
   },
+  ...(['reimbursement_duplicate_confirmed', 'reimbursement_duplicate_sla_breach'] as const).map((key): WorkflowTemplateSeed => {
+    const overdue = key === 'reimbursement_duplicate_sla_breach';
+    return {
+      key, name: reimbursementConfirmedDuplicateNotice('cancel', overdue).title.split(':')[0],
+      description: reimbursementConfirmedDuplicateNotice('cancel', overdue).description,
+      category: 'approval', sourceModule: 'reimbursements', triggerType: overdue ? 'SLA_SCAN' : 'EVENT',
+      defaultConditionJson: overdue ? { field: 'slaRisk', op: 'EQ', value: true } : { field: 'requestId', op: 'EXISTS' },
+      // Different keys: the requester and fallback have different bodies, so they must not share one stored notice.
+      defaultActionJson: (overdue ? ['cancel'] as const : ['requester', 'cancel'] as const).map(recipient => ({
+        actionKey: `notify_duplicate_${recipient}`, actionType: 'SEND_NOTIFICATION', configJson: {
+          triggerKey: `workflow.${!overdue && recipient === 'cancel' ? 'reimbursement_duplicate_cancel' : key}`, duplicateRecipient: recipient,
+          excludeRecipientPayloadKeys: ['actorUserId'], skipWhenAllRecipientsExcluded: true, skipWhenNoRecipients: true,
+          severity: 'action', titleTemplate: reimbursementConfirmedDuplicateNotice(recipient, overdue).title,
+          bodyTemplate: reimbursementConfirmedDuplicateNotice(recipient, overdue).body, deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
+        },
+      })),
+      requiredPermissions: [], requiredSourceModules: ['reimbursements'], defaultEnabled: false, status: 'AVAILABLE', autoEnable: true,
+    };
+  }),
   {
     // Audit B9: the only reminder covered approvals, so a claim waiting for payment was never
     // chased. Same scan, same policy deadline and same cadence as the approval reminder above;
@@ -274,8 +298,9 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // 'action', not 'critical': a critical notice is pushed through a person's quiet hours,
           // and a claim that has waited two days can wait until morning.
           severity: 'action',
-          titleTemplate: 'ใบเบิกรอจ่ายเงินเกินกำหนด: {{requestNo}}',
-          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
+          // D2: the scan suppresses confirmed duplicates; the runner chooses unresolved words even for old/edited rules.
+          titleTemplate: reimbursementPaymentTurnNotice('overdue').title,
+          bodyTemplate: reimbursementPaymentTurnNotice('overdue').body,
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // The scan comes round again by itself, so having nobody who can pay right now (a
           // suspended company, no payer covering the branch) is not a failure to retry into a
@@ -499,9 +524,10 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           preferRecipientPayloadKeys: ['financeReviewerUserId', 'actorUserId', 'approverRecipientUserIds'],
           neverPreferRecipientPayloadKeys: ['requesterUserId'],
           severity: 'action',
-          titleTemplate: 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}',
+          titleTemplate: reimbursementPaymentTurnNotice('ready').title,
           // Worded as the reader's own next step: every recipient is someone who can record it.
-          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน',
+          // D2: confirmed duplicates emit no ready event; old events without the field keep today's words.
+          bodyTemplate: reimbursementPaymentTurnNotice('ready').body,
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // NO actor exclusion, unlike every other claim notice (audit B9, owner rule 2026-10-01:
           // a claim has a requester and an approver, and the approver records the payment). The
@@ -580,10 +606,11 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           triggerKey: 'workflow.reimbursement_payment_voided',
           recipientPayloadKeys: ['requesterUserId'],
           severity: 'info',
-          titleTemplate: 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}',
+          titleTemplate: REIMBURSEMENT_PAYMENT_VOIDED_TITLE,
           // No figure and no reason on purpose: the reason is free text typed by the person who
           // voided, and a notice must never be able to carry an account number.
-          bodyTemplate: 'การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ใบเบิกกลับไปรอจ่าย',
+          // D2: composed from the post-void claim in its transaction; the runner retains legacy-event fallback.
+          bodyTemplate: '{{paymentVoidedNotice}}',
           deepLinkPathTemplate: REIMBURSEMENT_REQUEST_LINK,
           // Step-journey spec §11 (AC11): the actor of this event never gets notified about their
           // own action — a solo owner submitting/approving/paying their own claim gets none of

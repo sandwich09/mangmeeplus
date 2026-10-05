@@ -834,7 +834,7 @@ describe('the account form of a claim in a round (spec §14.5): the default, a t
     assert.equal(heading(html), 'แก้บัญชีรับเงินแทนผู้เบิก');
     assert.equal(heading(form(withDefault(phaseA())).html), 'แก้บัญชีรับเงิน');
     assert.deepEqual(choices(texts), ['ใช้บัญชีรับเงินคืนประจำของผู้เบิก', 'รับเป็นเงินสด', 'ระบุบัญชีสำหรับใบนี้', KEEP]);
-    assert.ok(texts.includes('กรอกบัญชีของผู้เบิก หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย'));
+    assert.ok(texts.includes('กรอกบัญชีรับเงินคืนของใบนี้ หลังบันทึกคุณจะเห็นเฉพาะ 4 ตัวท้าย'));
     assert.ok(texts.includes('บันทึกเป็นบัญชีประจำของผู้เบิก'));
   });
 
@@ -2709,4 +2709,252 @@ it('a changed default account offers no correction route for a confirmed duplica
   assert.ok(hint);
   assert.doesNotMatch(hint, /กดส่งกลับ|ก่อนมีการโอน|แจ้งผู้อนุมัติ/);
   assert.doesNotMatch(page.html, /data-testid="reimbursement-payout-send-back"/);
+});
+
+// Web round W2: every name-bearing destination keeps its holder facts.
+const holderWords = require('@watchdog-bms/contracts').REIMBURSEMENT_PAYOUT_HOLDER_WORDS;
+const holderLine = require('@watchdog-bms/contracts').payoutHolderLine;
+const thirdAccount = { ...KBANK, holderType: 'THIRD_PARTY' as const, holderNote: 'บัญชีของคู่สมรสสำหรับรับเงินคืน' };
+const payoutLogic = require('./reimbursement-payout.logic') as typeof import('./reimbursement-payout.logic');
+describe('W2 holder facts on every account surface', () => {
+  const surfaces: Array<[string, (account: any) => React.ReactElement]> = [
+    ['claim payout', account => h(payoutUi.ClaimPayoutCard, { companyId: 'company-1', detail: ready({ payout: account, payoutHistory: [] }), userId: 'staff', payoutAccountHref: '/accounts' })],
+    ['pay step payout', account => h(payoutUi.ClaimPayoutCard, { companyId: 'company-1', detail: ready({ payout: account, payoutHistory: [] }), userId: 'finance', payoutAccountHref: '/accounts', payStep: true })],
+    ['account history', account => h(payoutUi.ClaimPayoutCard, { companyId: 'company-1', detail: ready({ payout: SCB, payoutHistory: [{ ...account, frozenAt: AT.submitted }, { ...SCB, frozenAt: AT.given }] }), userId: 'staff', payoutAccountHref: '/accounts' })],
+    ['payment confirmation', account => h(payoutUi.PayerConfirmationCheck, { confirmation: payoutLogic.paymentFormPayout(ready({ payout: account }), 'BANK_TRANSFER').confirmation!, checked: false, onChange: noop })],
+    ['previous correction option', account => h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail: phaseA({ payoutCorrection: { ...round, previous: account } }), userId: 'staff', canEditEmployees: false, onCancel: noop, onDone: noop, onConflict: async () => false })],
+    ['previous correction comparison', account => h(correctionUi.PayoutCorrectionComparison, { detail: phaseB({ payoutCorrection: { phase: 'AWAITING_APPROVAL', ...round, previous: account, sameAsPrevious: false } }) })],
+    ['current correction comparison', account => h(correctionUi.PayoutCorrectionComparison, { detail: phaseB({ payout: account }) })],
+    ['payment row', account => h(sections.ClaimDetailSections, { detail: ready({ payments: [{ id: 'payment-1', status: 'RECORDED', paymentMethod: 'BANK_TRANSFER', amount: '100', paidAt: AT.approved, payoutDestination: account }] }), userId: 'staff', permissions: [], busy: false, onOpenAttachment: noop, onLineReceipt: noop, onSign: noop, onUploadSignedCopy: noop, onRequestVoidPayment: noop, onOpenPaymentSlip: noop, onAttachPaymentSlip: noop, onUseSignedCopyAsSlip: noop })],
+    ['stale approval comparison', account => h(sections.StaleApprovalDialog, { requestNo: 'RB-202610-00007', diff: [{ key: 'payout', label: 'บัญชีรับเงิน', before: 'ก่อนหน้า', after: 'ปัจจุบัน', changed: true }], beforePayout: account, payout: account, lines: [], currency: 'THB', busy: false, error: null, onClose: noop, onConfirm: noop } as any)],
+  ];
+  for (const [name, element] of surfaces) it(`${name}: third-party line and badge; own account unchanged`, () => {
+    const third = render(element(thirdAccount));
+    assert.ok(third.texts.includes(holderLine(thirdAccount)), name);
+    assert.ok(third.texts.includes(holderWords.thirdParty), name);
+    assert.equal(render(element({ ...KBANK, holderType: 'SELF' })).html, render(element(KBANK)).html);
+  });
+  it('self-approval names the third-party attestation truthfully', () => {
+    assert.ok(payoutLogic.payoutAttestationText({ ...thirdAccount, verifiedAt: AT.approved, verifiedByUserId: 'staff' }, 'staff')!.startsWith(holderWords.thirdPartySelfAttestation));
+  });
+  it('third-party checkbox replaces the own-account attestation', () => {
+    const third = render(h(payoutUi.PayoutAttestationCheck, { checked: false, onChange: noop, holderType: 'THIRD_PARTY' } as any));
+    assert.ok(third.texts.includes(holderWords.thirdPartyAcceptance));
+    assert.ok(!third.texts.includes(payoutLogic.PAYOUT_ATTESTATION_TEXT));
+    const self = render(h(payoutUi.PayoutAttestationCheck, { checked: true, onChange: noop, holderType: 'THIRD_PARTY', forSelf: true } as any));
+    assert.ok(self.texts.includes(holderWords.thirdPartySelfAttestation));
+  });
+  it('third-party approve is visibly blocked, and approval notice appears on the claim', () => {
+    const claim = phaseB({ payout: thirdAccount, approvalActions: DECIDE });
+    const page = claimPage(claim, approver);
+    assert.ok(page.texts.includes(holderWords.thirdPartyAcceptanceRequired));
+    assert.ok(page.texts.includes(holderWords.thirdPartyApprovalNotice));
+  });
+  it('approve API sends acceptance only when given', async () => {
+    const api = require('./reimbursements.api') as any;
+    const calls = await withApi(() => ({ status: 200, body: {} }), async () => {
+      await api.approveReimbursement('company-1', 'claim-1', undefined, 'hash', 1, true);
+      await api.approveReimbursement('company-1', 'claim-1', undefined, 'hash', 1);
+      await api.approveReimbursement('company-1', 'claim-1', undefined, 'hash');
+    });
+    assert.equal((calls[0]!.body as any).payoutThirdPartyAccepted, true);
+    assert.ok(!('payoutThirdPartyAccepted' in (calls[1]!.body as any)));
+    assert.ok(!('payoutThirdPartyAccepted' in (calls[2]!.body as any)));
+  });
+  it('correction input carries saved id and typed holder facts', () => {
+    const base = emptyPayoutCorrectionForm();
+    assert.deepEqual(payoutCorrectionInput({ ...base, mode: 'SAVED', savedAccountId: 'saved-1' } as any, undefined, false), { mode: 'SAVED', savedAccountId: 'saved-1' });
+    const input = payoutCorrectionInput({ ...base, mode: 'SPECIFIED', holder: { holderType: 'THIRD_PARTY', holderNote: thirdAccount.holderNote }, saveAsDefault: true, saveForLater: true } as any, undefined, true);
+    assert.equal((input as any).holderType, 'THIRD_PARTY');
+    assert.equal((input as any).holderNote, thirdAccount.holderNote);
+    assert.ok(!('saveAsDefault' in input!));
+  });
+  it('correction SAVED requires explicit submit mode and forbidden third-party choice is explained up front', () => {
+    assert.equal(payoutCorrectionOffers({}, 'SAVED' as any), false);
+    assert.equal(payoutCorrectionOffers({ payoutCorrectionActions: { submitModes: ['SAVED'] } }, 'SAVED' as any), true);
+    const detail = phaseA({ payoutCorrectionActions: { submitModes: ['SPECIFIED', 'CASH', 'PREVIOUS'], thirdPartyRefusal: 'APPROVAL_NOT_REQUIRED' }, payoutCorrection: { ...round, previous: thirdAccount } });
+    const screen = render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail, userId: 'staff', canEditEmployees: false, onCancel: noop, onDone: noop, onConflict: async () => false }));
+    assert.ok(screen.texts.includes(translateApiError('payout_third_party_needs_approval')!));
+    assert.ok(!screen.texts.includes(payoutLogic.PAYOUT_CORRECTION_PREVIOUS_LABEL));
+  });
+});
+
+describe('W2 approval and correction interactions', () => {
+  const checkedPage = (claim: any, viewer = approver, accepted = true) => {
+    let found: ReturnType<typeof render> | undefined;
+    for (let position = 3; position < 25; position++) {
+      let nulls = 0;
+      let page: ReturnType<typeof render>;
+      try { page = render(h(ReimbursementJourneyPage, { companyId: 'company-1', requestId: 'claim-1', userId: viewer.userId, permissions: viewer.permissions }), start => {
+        if (start && typeof start === 'object' && 'acceptedFor' in start) return { acceptedFor: accepted ? JSON.stringify([claim.id, claim.payout?.version, claim.payout?.holderType, claim.payout?.holderNote, claim.submittedAt, claim.approvalSnapshotHash]) : null };
+        if (start !== null) return undefined;
+        nulls++;
+        return nulls === 2 ? claim : nulls === position ? claim.payout?.version : undefined;
+      }, (type, props, children) => type === payoutUi.PayoutAttestationCheck ? 'tick' : type === 'button' && children.includes('อนุมัติ') ? 'approve' : undefined); } catch { continue; }
+      if (page.handlers.tick?.checked && !page.handlers.approve?.disabled) { found = page; break; }
+    }
+    assert.ok(found, 'checked account enables approve');
+    return found;
+  };
+  for (const [label, account, viewer] of [['own', KBANK, approver], ['third-party', thirdAccount, approver], ['self-approval third-party', thirdAccount, { ...approver, userId: 'staff' }]] as const) {
+    it(`${label}: checked approval sends exactly the required account facts`, async () => {
+      const claim = phaseB({ payout: account, approvalActions: DECIDE });
+      const page = checkedPage(claim, viewer);
+      const calls = await withApi(() => ({ status: 200, body: claim }), () => page.handlers.approve.onClick());
+      const body = calls.find(call => call.url.endsWith('/approve'))!.body as any;
+      assert.equal(body.payoutVerifiedVersion, account.version);
+      assert.equal(body.payoutThirdPartyAccepted, 'holderType' in account && account.holderType === 'THIRD_PARTY' ? true : undefined);
+      if ('holderType' in account && account.holderType === 'THIRD_PARTY' && viewer.userId === 'staff') assert.ok(page.texts.includes(holderWords.thirdPartySelfAttestation));
+    });
+  }
+  it('cash approval has no account check and sends no account acceptance', async () => {
+    const claim = phaseB({ payout: { payoutMethod: 'CASH', version: 1 }, payoutMethod: 'CASH', approvalActions: DECIDE });
+    const page = claimPage(claim, approver, undefined, (type, props, children) => type === payoutUi.PayoutAttestationCheck ? 'tick' : type === 'button' && children.includes('อนุมัติ') ? 'approve' : undefined);
+    assert.equal(page.handlers.tick, undefined);
+    assert.equal(page.handlers.approve.disabled, false);
+    const calls = await withApi(() => ({ status: 200, body: claim }), () => page.handlers.approve.onClick());
+    const body = calls.find(call => call.url.endsWith('/approve'))!.body as any;
+    assert.equal(body.payoutVerifiedVersion, undefined);
+    assert.equal(body.payoutThirdPartyAccepted, undefined);
+  });
+  it('acceptance refusal reloads claim, unticks acceptance and requests checkbox focus', async () => {
+    const claim = phaseB({ payout: thirdAccount, approvalActions: DECIDE });
+    const page = checkedPage(claim);
+    const calls = await withApi((_url, method) => method === 'POST' ? { status: 409, body: { code: 'payout_third_party_acceptance_required' } } : { status: 200, body: claim }, () => page.handlers.approve.onClick());
+    assert.ok(calls.some(call => call.method === 'GET' && call.url.endsWith('/claim-1')));
+    assert.ok(page.changes.some(change => change.value === holderWords.thirdPartyAcceptanceRequired));
+    assert.ok(page.changes.some(change => (change.value as any)?.acceptedFor === null));
+    assert.ok(page.changes.some(change => change.initial === false && change.value === true));
+    assert.ok(page.handlers.tick.inputRef, 'focus target belongs to checkbox');
+  });
+  it('acceptance is not reusable after holder facts or approval snapshot changes', () => {
+    const claim = phaseB({ payout: thirdAccount });
+    assert.notEqual(payoutLogic.payoutApprovalKey(claim), payoutLogic.payoutApprovalKey({ ...claim, payout: { ...thirdAccount, holderNote: 'บัญชีของพี่สาวสำหรับรับเงินคืน' } }));
+    assert.notEqual(payoutLogic.payoutApprovalKey(claim), payoutLogic.payoutApprovalKey({ ...claim, approvalSnapshotHash: 'new-snapshot' }));
+  });
+  it('correction saved rows are offered only to requester and filter refused holders', () => {
+    const accounts = [{ ...KBANK, id: 'own-saved', label: 'บัญชีสำหรับค่าเดินทาง', holderType: 'SELF', createdAt: AT.submitted }, { ...thirdAccount, id: 'third-saved', label: 'บัญชีครอบครัว', createdAt: AT.submitted }];
+    const draw = (userId: string, refusal = false) => render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail: phaseA({ payoutCorrectionActions: { submitModes: ['SAVED', 'SPECIFIED', 'CASH'], ...(refusal && { thirdPartyRefusal: 'APPROVAL_NOT_REQUIRED' }) } }), userId, canEditEmployees: false, onCancel: noop, onDone: noop, onConflict: async () => false }), start => Array.isArray(start) && start.length === 0 ? accounts : start?.mode === '' ? { ...start, mode: 'SPECIFIED' } : undefined);
+    assert.ok(draw('staff').texts.some(text => text.includes('บัญชีครอบครัว')));
+    assert.ok(!draw('finance').texts.some(text => text.includes('บัญชีครอบครัว')));
+    const refused = draw('staff', true);
+    assert.ok(!refused.texts.some(text => text.includes('บัญชีครอบครัว')));
+    assert.ok(!refused.texts.includes(holderWords.thirdParty));
+    assert.ok(refused.texts.includes(translateApiError('payout_third_party_needs_approval')!));
+  });
+  it('hidden account names reveal no holder facts', () => {
+    const screen = render(h(payoutUi.ClaimPayoutCard, { companyId: 'company-1', detail: ready({ payout: { ...thirdAccount, accountName: undefined }, payoutHistory: [] }), userId: 'audit', payoutAccountHref: '/accounts' }));
+    assert.ok(!screen.texts.includes(holderLine(thirdAccount)));
+  });
+});
+
+describe('W2 payment guard refusals preserve the filled form', () => {
+  for (const [code, status] of [['payment_currency_mismatch', 409], ['payment_source_bank_account_invalid', 400]] as const) it(code, async () => {
+    const request = ready({ payout: thirdAccount });
+    let nulls = 0;
+    const page = render(h(sections.PaymentForm, { companyId: 'company-1', request, onCancel: noop, onDone: noop, onOpenFile: noop }), start => {
+      if (start?.paymentMethod !== undefined) return { ...start, paymentReference: 'หลักฐานการโอน' };
+      if (start?.confirmedFor !== undefined) return { ...start, confirmedFor: 'version:1' };
+      if (start === null && ++nulls === 1) return { attachmentId: 'slip-1', name: 'หลักฐาน.jpg' };
+      return undefined;
+    }, (type, props) => type === 'form' ? 'form' : undefined);
+    const calls = await withApi(() => ({ status, body: { code } }), () => page.handlers.form.onSubmit(submitEvent));
+    assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+    assert.ok(page.changes.some(change => typeof change.value === 'string' && change.value.includes(translateApiError(code)!)));
+    assert.ok(!page.changes.some(change => (change.initial as any)?.paymentMethod !== undefined));
+    assert.ok(!page.changes.some(change => (change.initial as any)?.confirmedFor !== undefined));
+    assert.ok(page.texts.includes(holderLine(thirdAccount)));
+  });
+});
+
+it('W2 payer confirmation names the approved third-party destination', () => {
+  const confirmation = payoutLogic.paymentFormPayout(ready({ payout: thirdAccount }), 'BANK_TRANSFER').confirmation!;
+  const screen = render(h(payoutUi.PayerConfirmationCheck, { confirmation, checked: false, onChange: noop }));
+  assert.ok(screen.texts.includes(`${holderWords.thirdPartyPaymentConfirmation} *`));
+  assert.ok(!screen.texts.includes(`${payoutLogic.PAYER_CONFIRMATION_TEXT} *`));
+});
+it('W2 stale comparison notices changed holder facts even with identical masked account', () => {
+  assert.notEqual(payoutLogic.payoutComparableText({ payout: KBANK }), payoutLogic.payoutComparableText({ payout: thirdAccount }));
+  assert.notEqual(payoutLogic.payoutComparableText({ payout: thirdAccount }), payoutLogic.payoutComparableText({ payout: { ...thirdAccount, holderNote: 'บัญชีของพี่สาวสำหรับรับเงินคืน' } }));
+});
+it('W2 correction validates holder note and excludes the two saving ticks', () => {
+  const form = { ...emptyPayoutCorrectionForm(), mode: 'SPECIFIED' as const, account: { payoutKind: 'BANK_ACCOUNT' as const, bankChoice: 'ธนาคารกสิกรไทย', bankOther: '', accountName: 'สมชาย ใจดี', accountNumber: '0012345678' }, holder: { holderType: 'THIRD_PARTY' as const, holderNote: '' } };
+  assert.equal(payoutCorrectionFormError(form)?.field, 'holderNote');
+  const draw = (holder: any = { holderType: 'SELF' }) => {
+    let bools = 0;
+    return render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail: phaseA({ payoutCorrectionActions: { submitModes: ['SPECIFIED', 'CASH'] } }), userId: 'staff', canEditEmployees: false, onCancel: noop, onDone: noop, onConflict: async () => false }), start => start?.mode === '' ? { ...form, holder, saveAsDefault: true, saveForLater: false } : start === false && ++bools === 1 ? true : undefined,
+      (type, props, children) => type === 'label' && children.some((child: any) => child?.props?.children === require('@watchdog-bms/contracts').REIMBURSEMENT_SAVED_PAYOUT_WORDS.saveForLater) ? 'laterLabel' : type === 'input' && props?.type === 'checkbox' ? (props.checked ? 'defaultTick' : 'laterTick') : undefined);
+  };
+  const own = draw();
+  own.handlers.laterTick.onChange({ target: { checked: true } });
+  const next = own.changes.find(change => (change.value as any)?.saveForLater === true)!.value as any;
+  assert.equal(next.saveAsDefault, false);
+  const third = draw({ holderType: 'THIRD_PARTY', holderNote: thirdAccount.holderNote });
+  assert.ok(!third.texts.includes('บันทึกเป็นบัญชีประจำของฉัน'));
+});
+it('W2 missing correction saved account reloads the list and clears choice', async () => {
+  const page = render(h(correctionUi.PayoutCorrectionAccountForm, { companyId: 'company-1', detail: phaseA({ payoutCorrectionActions: { submitModes: ['SAVED', 'CASH'] } }), userId: 'staff', canEditEmployees: false, onCancel: noop, onDone: noop, onConflict: async () => false }), start => start?.mode === '' ? { ...start, mode: 'SAVED', savedAccountId: 'gone-saved' } : undefined, grabForm('reimbursement-payout-correction-account'));
+  const calls = await withApi(() => ({ status: 404, body: { code: 'payout_saved_account_not_found' } }), () => page.handlers.form.onSubmit(submitEvent));
+  assert.deepEqual((calls[0]!.body as any).savedAccountId, 'gone-saved');
+  assert.ok(page.changes.some(change => (change.value as any)?.mode === '' && (change.value as any)?.savedAccountId === undefined));
+  assert.ok(page.changes.some(change => change.initial === 0 && change.value === 1));
+  assert.ok(page.changes.some(change => change.value === translateApiError('payout_saved_account_not_found')));
+});
+
+describe('W2 approval queue transfers acceptance to the claim page', () => {
+  const SearchParamsContext = require('next/dist/shared/lib/hooks-client-context.shared-runtime').SearchParamsContext;
+  const { ReimbursementsHubPage } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
+  const queue = (row: any) => render(h(SearchParamsContext.Provider, { value: new URLSearchParams('tab=approvals') }, h(ReimbursementsHubPage, { companyId: 'company-1', userId: 'boss', permissions: ['reimbursement.approve', 'reimbursement.read'], roles: ['OWNER'] })), start => Array.isArray(start) && start.length === 0 ? [row] : start === true ? false : undefined, (type, props, children) => type === 'button' && (children.includes('อนุมัติ') || children.includes('ตรวจบัญชีและอนุมัติ')) ? 'approve' : undefined);
+  it('transfer quick approval opens account check without sending an approval', async () => {
+    const pushed: string[] = [];
+    const originalPush = router.push;
+    Reflect.set(router, 'push', (path: string) => pushed.push(path));
+    try {
+      const page = queue(phaseB({ payout: thirdAccount, payoutCorrectionPhase: undefined, approvalActions: DECIDE }));
+      const calls = await withApi(() => ({ status: 200, body: [] }), () => page.handlers.approve.onClick({ stopPropagation: noop }));
+      assert.deepEqual(calls, []);
+      assert.equal(pushed[0], '/companies/company-1/reimbursements/claim-1');
+    } finally { Reflect.set(router, 'push', originalPush); }
+  });
+  it('an old cash row refused for third-party acceptance reloads queue and opens the claim', async () => {
+    const pushed: string[] = [];
+    const originalPush = router.push;
+    Reflect.set(router, 'push', (path: string) => pushed.push(path));
+    try {
+      const page = queue(phaseB({ payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' }, payoutCorrectionPhase: undefined, approvalActions: DECIDE }));
+      const calls = await withApi((_url, method) => method === 'POST' ? { status: 409, body: { code: 'payout_third_party_acceptance_required' } } : { status: 200, body: [] }, () => page.handlers.approve.onClick({ stopPropagation: noop }));
+      assert.ok(calls.some(call => call.method === 'GET'));
+      assert.equal(pushed[0], '/companies/company-1/reimbursements/claim-1');
+      assert.ok(page.changes.some(change => change.value === holderWords.thirdPartyAcceptanceRequired));
+    } finally { Reflect.set(router, 'push', originalPush); }
+  });
+});
+
+it('W2 draft with a third-party account shows approval floor even below the normal policy threshold', () => {
+  const draft = ready({ status: 'DRAFT', payout: thirdAccount, approvedAt: null, submittedAt: null, approvalSteps: [], approvalRequiredForThirdParty: true, currentDesk: { kind: 'REQUESTER' } });
+  assert.ok(claimPage(draft, requester).texts.includes(holderWords.thirdPartyApprovalNotice));
+  assert.ok(!claimPage({ ...draft, payout: KBANK }, requester).texts.includes(holderWords.thirdPartyApprovalNotice));
+});
+it('W2 stale cash confirmation refusal reloads the queue and opens the acceptance on the claim', async () => {
+  const pushed: string[] = [];
+  const originalPush = router.push;
+  Reflect.set(router, 'push', (path: string) => pushed.push(path));
+  const SearchParamsContext = require('next/dist/shared/lib/hooks-client-context.shared-runtime').SearchParamsContext;
+  const { ReimbursementsHubPage } = require('./ReimbursementsPages') as typeof import('./ReimbursementsPages');
+  const row = phaseB({ payoutCorrectionPhase: undefined, payoutMethod: 'CASH', payout: { payoutMethod: 'CASH' }, approvalActions: DECIDE });
+  let found: ReturnType<typeof render> | undefined;
+  for (let position = 1; position < 20; position++) {
+    let nulls = 0;
+    try {
+      const page = render(h(SearchParamsContext.Provider, { value: new URLSearchParams('tab=approvals') }, h(ReimbursementsHubPage, { companyId: 'company-1', userId: 'boss', permissions: ['reimbursement.approve', 'reimbursement.read'], roles: ['OWNER'] })), start => Array.isArray(start) && start.length === 0 ? [row] : start === true ? false : start === null && ++nulls === position ? { row, detail: row } : undefined, type => type === sections.StaleApprovalDialog ? 'dialog' : undefined);
+      if (page.handlers.dialog) { found = page; break; }
+    } catch { /* another nullable state cannot hold the review */ }
+  }
+  assert.ok(found);
+  try {
+    const calls = await withApi((_url, method) => method === 'POST' ? { status: 409, body: { code: 'payout_third_party_acceptance_required' } } : { status: 200, body: [] }, () => found!.handlers.dialog.onConfirm());
+    assert.ok(calls.some(call => call.method === 'GET'));
+    assert.equal(pushed[0], '/companies/company-1/reimbursements/claim-1');
+    assert.ok(found.changes.some(change => change.value === holderWords.thirdPartyAcceptanceRequired));
+  } finally { Reflect.set(router, 'push', originalPush); }
 });

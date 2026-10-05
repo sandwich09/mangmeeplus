@@ -2,6 +2,7 @@ import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { IngestWorkflowEventUseCase } from './workflow-event-ingest.use-case';
 import type { WorkflowEventEnvelope } from '@watchdog-bms/contracts';
+import { reimbursementConfirmedDuplicateNotice } from '@watchdog-bms/contracts';
 import {
   WORKFLOW_TEMPLATE_CATALOG,
   WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS,
@@ -53,6 +54,8 @@ describe('IngestWorkflowEventUseCase', () => {
       'approval_sla_breach',
       'reimbursement_correction_requester',
       'reimbursement_decision_requester',
+      'reimbursement_duplicate_confirmed',
+      'reimbursement_duplicate_sla_breach',
       'reimbursement_finance_blocked_requester',
       'reimbursement_finance_review',
       'reimbursement_finance_review_pending',
@@ -78,9 +81,15 @@ describe('IngestWorkflowEventUseCase', () => {
       ['reimbursement_ready_for_payment', 'reimbursement.ready_for_payment'],
       ['reimbursement_payment_recorded', 'reimbursement.payment_recorded'],
       ['reimbursement_payment_voided', 'reimbursement.payment_voided'],
+      ['reimbursement_duplicate_confirmed', 'reimbursement.duplicate_confirmed'],
     ] as const) {
+      assert.equal(WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === key)?.triggerType, 'EVENT', key);
       assert.equal(ruleMatchesEventType(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG[key] ?? {}, eventType), true, key);
     }
+    const duplicateSla = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_duplicate_sla_breach')!;
+    assert.equal(duplicateSla.triggerType, 'SLA_SCAN');
+    assert.deepEqual(duplicateSla.defaultConditionJson, { field: 'slaRisk', op: 'EQ', value: true });
+    assert.equal(WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG[duplicateSla.key], undefined);
   });
 
   it('targets the new payment templates at the right recipients with a renderable title', () => {
@@ -130,10 +139,12 @@ describe('IngestWorkflowEventUseCase', () => {
   // the finance desk (owner decision 2026-10-02), for an approver who reviews finance themselves.
   it('gives every reimbursement notification a body distinct from its title, the journey-page link, and actor exclusion', () => {
     const notifications = WORKFLOW_TEMPLATE_CATALOG
-      .filter((entry) => entry.sourceModule === 'reimbursements' && entry.triggerType === 'EVENT')
-      .map((entry) => ({ key: entry.key, cfg: entry.defaultActionJson.find((a) => a.actionType === 'SEND_NOTIFICATION')?.configJson ?? {} }));
+      .filter((entry) => entry.sourceModule === 'reimbursements' && (entry.triggerType === 'EVENT' || entry.key === 'reimbursement_duplicate_sla_breach'))
+      .flatMap((entry) => entry.defaultActionJson.filter((action) => action.actionType === 'SEND_NOTIFICATION')
+        .map((action) => ({ key: entry.key, cfg: action.configJson })));
 
-    assert.equal(notifications.length, 11);
+    // Twelve event templates, including both duplicate-confirmed recipients, plus its SLA reminder.
+    assert.equal(notifications.length, 14);
     for (const { key, cfg } of notifications) {
       assert.equal(typeof cfg['bodyTemplate'], 'string', key);
       assert.notEqual(cfg['bodyTemplate'], cfg['titleTemplate'], key);
@@ -145,6 +156,10 @@ describe('IngestWorkflowEventUseCase', () => {
       // too: the reason in the fixed list's own words, and nothing a person typed (payout spec §17.3).
       if (key === 'reimbursement_payment_recorded') assert.equal(cfg['bodyTemplate'], '{{paidNotice}}', key);
       else if (key === 'reimbursement_payout_correction_requested') assert.equal(cfg['bodyTemplate'], '{{payoutCorrectionNotice}}', key);
+      else if (key === 'reimbursement_duplicate_confirmed' || key === 'reimbursement_duplicate_sla_breach') {
+        assert.ok(cfg['duplicateRecipient'] === 'requester' || cfg['duplicateRecipient'] === 'cancel', key);
+        assert.equal(cfg['bodyTemplate'], reimbursementConfirmedDuplicateNotice(cfg['duplicateRecipient'], key === 'reimbursement_duplicate_sla_breach').body, key);
+      }
       else if (!['reimbursement_payment_voided', 'reimbursement_finance_blocked_requester'].includes(key)) assert.match(String(cfg['bodyTemplate']), /\{\{(amount|paidAmount)\}\}/, key);
       assert.equal(cfg['deepLinkPathTemplate'], REIMBURSEMENT_REQUEST_LINK, key);
       // Two notices are about the NEXT step, which may be the actor's own: paying a claim one has approved, and

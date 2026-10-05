@@ -7,12 +7,26 @@ import {
   LinkReimbursementSignedCopyDto, RecordReimbursementPaymentDto,
   ReimbursementInternalNoteDto, SetMemberPayoutAccountDto, SubmitReimbursementDto, UpdateReimbursementDraftDto,
   RequestPayoutCorrectionDto, SubmitPayoutCorrectionDto, RejectReimbursementDto, VoidReimbursementPaymentDto,
+  AddSavedPayoutAccountDto,
 } from './reimbursement.dtos';
 
 // The exact global-pipe configuration main.ts registers: this is the runtime gate
 // that stops a client from posting its own claim total (lane C rollup rule) and
 // the first runtime validation these endpoints have ever had.
 const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
+
+describe('saved payout account bodies', () => {
+  const body = { payoutKind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'นาย สมชาย ใจดี', accountNumber: '0123456789', holderType: 'SELF' };
+  it('accepts typed holder facts and optional private label while preserving leading zeros', async () => {
+    assert.equal(typeof AddSavedPayoutAccountDto, 'function');
+    const output = await pipe.transform({ ...body, label: 'บัญชีสำรอง' }, { type: 'body', metatype: AddSavedPayoutAccountDto });
+    assert.deepEqual({ ...output }, { ...body, label: 'บัญชีสำรอง', holderNote: undefined });
+    await pipe.transform({ ...body, holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก' }, { type: 'body', metatype: AddSavedPayoutAccountDto });
+  });
+  it('rejects unknown/server-owned fields and invalid transport types', async () => {
+    for (const patch of [{ userId: 'other' }, { companyId: 'other' }, { id: 'forged' }, { fingerprint: 'forged' }, { accountNumberEncrypted: 'forged' }, { accountLast4: '0000' }, { createdAt: 'now' }, { payoutMethod: 'CASH' }, { accountNumber: 123456 }, { holderType: 1 }, { holderNote: 1 }, { label: 1 }, { label: null }, { holderNote: null }]) await rejects(AddSavedPayoutAccountDto, { ...body, ...patch });
+  });
+});
 
 const validLine = {
   lineNo: 1,
@@ -390,4 +404,24 @@ describe('payout correction DTOs', () => {
       await rejects(SubmitPayoutCorrectionDto, { mode: 'CASH', ...forged });
     }
   });
+});
+
+describe('multi payout 2a DTOs', () => {
+  it('takes a SAVED id alone and refuses missing ids, unknown modes and mixed account fields', async () => {
+    const output = await pipe.transform({ payout: { mode: 'SAVED', savedAccountId: 'saved-1' } }, { type: 'body', metatype: UpdateReimbursementDraftDto });
+    assert.equal(output.payout.savedAccountId, 'saved-1');
+    for (const payout of [{ mode: 'SAVED' }, { mode: 'SAVED', savedAccountId: '' }, { mode: 'SAVED', savedAccountId: 1 }, { mode: 'SAVED', savedAccountId: 'saved-1', accountName: 'สมชาย' }, { mode: 'UNKNOWN' }, { mode: 'CASH', savedAccountId: 'saved-1' }]) await rejects(UpdateReimbursementDraftDto, { payout });
+  });
+  it('takes typed holder facts and saveForLater, and a strictly boolean approval acceptance', async () => {
+    await pipe.transform({ payout: { mode: 'SPECIFIED', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก', saveForLater: true } }, { type: 'body', metatype: UpdateReimbursementDraftDto });
+    await pipe.transform({ payoutThirdPartyAccepted: true }, { type: 'body', metatype: ApproveReimbursementDto });
+    for (const payoutThirdPartyAccepted of ['true', 1, null]) await rejects(ApproveReimbursementDto, { payoutThirdPartyAccepted });
+  });
+});
+
+it('multi payout 2b: correction DTO takes saved ids and holder facts but refuses mixed modes', async () => {
+  const body = (_type: any, input: any) => pipe.transform(input, { type: 'body', metatype: SubmitPayoutCorrectionDto });
+  await body(SubmitPayoutCorrectionDto, { mode: 'SAVED', savedAccountId: 'saved-1', expectedUpdatedAt: '2026-10-05T01:00:00Z' });
+  await body(SubmitPayoutCorrectionDto, { mode: 'SPECIFIED', holderType: 'THIRD_PARTY', holderNote: 'คู่สมรสของผู้เบิก', saveForLater: true });
+  for (const input of [{ mode: 'SAVED' }, { mode: 'SAVED', savedAccountId: 'saved-1', accountName: 'สมชาย' }, { mode: 'PREVIOUS', holderType: 'SELF' }, { mode: 'CASH', savedAccountId: 'saved-1' }]) await rejects(SubmitPayoutCorrectionDto, input);
 });

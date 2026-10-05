@@ -1,13 +1,13 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import {
-  reimbursementDuplicateWait, THAI_SYSTEM_ROLE_NAMES, civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
+  reimbursementDuplicateWait, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, THAI_SYSTEM_ROLE_NAMES, civilDate, civilDateToUtcDate, REIMBURSEMENT_DESK_LABELS, REIMBURSEMENT_SYSTEM_WAIT_LABEL,
   type RequestContext, type ReimbursementAiSummary,
 } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import {
-  claimDuplicateReasons, ageHours, isSlaRisk, d, decStr, currentDesk, approvalWaitStartedAt, payoutCorrectionPhase, payoutCorrectionRequesterDesk,
+  claimDuplicateBlocksPayment, claimDuplicateReasons, ageHours, isSlaRisk, d, decStr, currentDesk, approvalWaitStartedAt, payoutCorrectionPhase, payoutCorrectionRequesterDesk,
 } from '../../domain/logic/reimbursement.logic';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 
@@ -33,12 +33,14 @@ export class GetReimbursementAiSummaryUseCase {
       requesterUserId,
       relatedUserId,
       scopes: ctx.scopes ?? {},
+      withDuplicateCandidates: true,
     });
     const now = new Date();
 
     let pendingApproval = 0;
     let overdueApproval = 0;
     let unpaidApproved = 0;
+    let duplicateBlocked = 0;
     let totalUnpaid = d('0');
 
     for (const r of all) {
@@ -55,6 +57,7 @@ export class GetReimbursementAiSummaryUseCase {
         if (isSlaRisk(age, policy.slaHours)) overdueApproval++;
       }
       if ((r.status === 'FINANCE_REVIEW' || r.status === 'READY_FOR_PAYMENT' || r.status === 'PARTIALLY_PAID') && r.paymentStatus !== 'PAID') {
+        if (claimDuplicateBlocksPayment(r, currentPolicy)) { duplicateBlocked++; continue; }
         unpaidApproved++;
         totalUnpaid = totalUnpaid.add(d(r.outstandingAmount));
       }
@@ -70,6 +73,7 @@ export class GetReimbursementAiSummaryUseCase {
       unpaidApprovedCount: unpaidApproved,
       overdueApprovalCount: overdueApproval,
       totalUnpaidAmount: decStr(totalUnpaid),
+      duplicateBlockedCount: duplicateBlocked,
       // Item 1 (spec R-A1 row 18): mirrors the requesterUserId/relatedUserId precedence above exactly
       // (related wins whenever canReadRelated is true, same as `relatedUserId` there).
       accessScope: canReadAll ? 'company' : canReadRelated ? 'related' : 'own',
@@ -88,6 +92,7 @@ const BACKLOG_STATUSES = ['PENDING_APPROVAL', 'FINANCE_REVIEW', 'READY_FOR_PAYME
 export const BACKLOG_DESK_LABELS = {
   finance: `${REIMBURSEMENT_DESK_LABELS.FINANCE} (รอตรวจสอบ)`,
   payment: REIMBURSEMENT_DESK_LABELS.PAYMENT,
+  duplicate_blocked: REIMBURSEMENT_DUPLICATE_BLOCK_LABEL,
   no_active_approver: 'ไม่มีผู้อนุมัติที่ยังใช้งานอยู่',
   // The system's desk: the same words the claim page prints for the same claim.
   status_pending: REIMBURSEMENT_SYSTEM_WAIT_LABEL,
@@ -163,12 +168,14 @@ export class GetReimbursementApprovalBacklogUseCase {
       throw new ForbiddenException('Missing permission to read reimbursements');
     }
     const mine = input.requester === 'me' || (!canReadAll && !canReadRelated);
+    const currentPolicy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const rows = await this.repo.listRequests({
       companyId: ctx.companyId,
       requesterUserId: mine ? ctx.userId : undefined,
       relatedUserId: !mine && !canReadAll ? ctx.userId : undefined,
       scopes: ctx.scopes ?? {},
       statuses: BACKLOG_STATUSES,
+      withDuplicateCandidates: true,
     });
 
     // currentDesk's own step: the lowest open sequence of each waiting claim.
@@ -195,8 +202,11 @@ export class GetReimbursementApprovalBacklogUseCase {
       // Being cancelled: approval and payment are refused meanwhile, so it waits for no approver and no payer
       // (audit B3). The web's desk rule (`currentDesk`) says the same of it.
       if (row.cancellationPendingAt) return desk('status_pending');
-      const cancellation = reimbursementDuplicateWait({ status: row.status, duplicateReasons: claimDuplicateReasons(row), currentDesk: currentDesk({ status: row.status, financeReviewStatus: row.financeReviewStatus }) });
-      if (cancellation) return { key: `confirmed_duplicate:${cancellation.actor}`, kind: 'payment', label: cancellation.actor, note: cancellation.waiting };
+      const current = currentDesk({ status: row.status, financeReviewStatus: row.financeReviewStatus });
+      if (current?.kind === 'PAYMENT' && claimDuplicateBlocksPayment(row, currentPolicy)) {
+        const cancellation = reimbursementDuplicateWait({ status: row.status, duplicateReasons: claimDuplicateReasons(row), currentDesk: current });
+        return { ...desk('duplicate_blocked'), ...(cancellation ? { key: `confirmed_duplicate:${cancellation.actor}`, note: cancellation.waiting } : {}) };
+      }
       if (row.status !== 'PENDING_APPROVAL') {
         return currentDesk({ status: row.status, financeReviewStatus: row.financeReviewStatus })?.kind === 'FINANCE' ? desk('finance') : desk('payment');
       }
@@ -227,7 +237,7 @@ export class GetReimbursementApprovalBacklogUseCase {
     const overall = new Map<string, Money>();
     const items = rows.map((row) => {
       const entry = deskByRow.get(row.id)!;
-      const approved = entry.kind === 'finance' || entry.kind === 'payment';
+      const approved = entry.kind === 'finance' || entry.kind === 'payment' || entry.kind === 'duplicate_blocked';
       const submittedOn = civilDate(row.submittedAt ?? row.createdAt);
       const approvedOn = approved ? civilDate(row.approvedAt ?? row.submittedAt ?? row.createdAt) : undefined;
       // A round's wait is its own: since the send-back while with the requester, since the new account for its
