@@ -3196,8 +3196,12 @@ describe('LINE intake dispatch – a bound (v2) chat answers open work in produc
     // UAT 2026-09-29: this reply was plain text ending in a raw link with ids; production sent a card.
     const reply: any = h.sentMessages.at(-1)?.at(-1);
     assert.equal(reply?.type, 'flex', "production's card, not text");
-    assert.doesNotMatch(JSON.stringify(reply.contents.body), /https?:\/\//u, 'no raw link in the card body');
-    assert.match(JSON.stringify(reply.contents.footer), /expense-draft-1/u, 'the draft link rides on the button');
+    // Owner 2026-10-05: in a bound chat that card is the locked design (one body block: its pictures and
+    // its button live in it), so it is read as a person reads it. The link still rides on the button.
+    const card = readLineSystemCard(reply);
+    assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
+    assert.deepEqual(card.actions.map((action) => action.label), ['เปิดดูรายการ']);
+    assert.match(card.actions[0]!.uri ?? '', /expense-draft-1/u, 'the draft link rides on the button');
   });
 
   it('a correction reaches the router with the captures it may correct', async () => {
