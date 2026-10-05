@@ -15,7 +15,7 @@
 import { EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_STATUS_LABELS, PERIOD_ASSUMPTIONS, formatThaiPeriodRange, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
 import type { LineAiAnswerCardLayout, LineAiAnswerCardRow, LineAiPeriodCandidate, LineAiWebLink, SourceRef, SpecialistOutput } from '@watchdog-bms/contracts';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
-import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
+import { aggregationIncomplete, appliedPeriod, expenseNameResolutionIssue, expenseNameResolutionReplyText, expensePeriodComparisonCard, REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText } from '../domain/logic/business-read-result-semantics';
 
 export type PreparedFormatResult =
   /** `layout` is the same answer as the locked System OA card shows it (design lock spec): built from the
@@ -477,6 +477,15 @@ function cardLayout(layout: LineAiAnswerCardLayout): LineAiAnswerCardLayout | un
   return parseLineAiAnswerCardLayout(layout);
 }
 
+/** A comparison of periods on the locked "สรุปค่าใช้จ่าย" card: its rows are the computed comparison's
+ *  own (business-read-result-semantics.ts). More rows than a card holds, or a name longer than a
+ *  row's label, is no layout: the answer is then its sentences. */
+export function expenseComparisonCardLayout(comparison: Parameters<typeof expensePeriodComparisonCard>[0], percent: boolean, linked: boolean): LineAiAnswerCardLayout | undefined {
+  const card = expensePeriodComparisonCard(comparison, percent);
+  return card && cardLayout({ context: 'expense_summary', header: card.header, rows: card.rows,
+    ...(card.notes.length ? { notes: card.notes } : {}), ...(linked ? { linkLabel: 'ดูค่าใช้จ่ายในเว็บ' } : {}) });
+}
+
 /** The period as a card's row says it: the sentence's own words for the dates. A period the reader
  *  named reads "เดือนนี้ (1–5 ต.ค. 2569)" in the sentence — their word, then the dates — and the row
  *  shows those dates, which fit one line; any other phrase is shown as the sentence has it. */
@@ -796,8 +805,8 @@ function appliedGroupBy(data: Record<string, unknown> | undefined): unknown {
  * R-L4/R-A2 — `expense.get_breakdown` as a grouped list ("แยกค่าใช้จ่ายตามหมวด"). `ctx.proposedInput`
  * carries the validated `groupBy` the fast lane actually sent (defaulting to category, same as the
  * tool's own default) — this only selects which of the tool's three ALREADY-COMPUTED axes leads the
- * answer, it never re-groups anything client-side. Groups sort by amount descending with a percentage
- * share of the tool's own `totalAmount`; the top 8 are named, the rest are folded into one "อื่นๆ" row
+ * answer, it never re-groups anything client-side. Groups sort by amount descending (no percentage
+ * share: owner 2026-10-05); the top 8 are named, the rest are folded into one "อื่นๆ" row
  * (its amount/count are an exact sum of the tool's own per-group numbers, not an estimate), then the
  * overall total, filter line, period, source, as-of and link — the same order as spec R-A2.
  */
@@ -832,13 +841,11 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
   groups.sort((a, b) => moneyNumber(b.amount) - moneyNumber(a.amount));
 
   const { sourceRefs, webLinks, sourceText } = groundedSource(output.facts.find((fact) => fact.sourceRef)?.sourceRef, english);
-  const totalNumber = moneyNumber(totalAmount);
-  const percentText = (part: number): string => `${(totalNumber > 0 ? part / totalNumber * 100 : 0).toFixed(1)}%`;
   const shown = groups.slice(0, MAX_BREAKDOWN_GROUPS);
   const rest = groups.slice(MAX_BREAKDOWN_GROUPS);
   const groupLine = (name: string, amount: number, count: number) => english
-    ? `\n• ${name}: ${moneyText(amount)} THB (${percentText(amount)}, ${plural(count, 'record')})`
-    : `\n• ${name}: ${moneyText(amount)} บาท (${percentText(amount)}, ${groupThousands(String(count))} รายการ)`;
+    ? `\n• ${name}: ${moneyText(amount)} THB (${plural(count, 'record')})`
+    : `\n• ${name}: ${moneyText(amount)} บาท (${groupThousands(String(count))} รายการ)`;
   const groupLines = shown.map((g) => groupLine(g.name, moneyNumber(g.amount), g.count)).join('');
   const othersLine = rest.length > 0
     ? groupLine(
@@ -859,12 +866,13 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
     + `${periodLine(ctx.proposedInput, data, english, periodLabel, ctx.periodNote)}${sourceText}${asOfLine(output.asOf, english)}`;
   // The same summary on the locked card (owner 2026-10-05: "สรุปค่าใช้จ่ายเดือนนี้ อยากได้เหมือน pattern
   // อ่านใบเสร็จ"): the total and the count, what the rows are grouped by, then one row for each group
-  // with its amount, share and count exactly as the sentence states them.
+  // with its amount. No share (owner, same day: "เอา % ออกเถอะ งง ไม่สวยด้วย"), and the group's count
+  // stays in the sentence only: an amount with a count beside it breaks across two lines of a row.
   const heading = english ? undefined : expensePeriodHeading(data);
   const period = periodPhrase(ctx.proposedInput, data, false, periodLabel);
   const asOfDay = asOfDayLabel(output.asOf);
   const sourceLabel = output.facts.find((fact) => fact.sourceRef)?.sourceRef?.label;
-  const groupValue = (amount: number, count: number) => `${moneyText(amount)} บาท (${percentText(amount)}, ${groupThousands(String(count))} รายการ)`;
+  const groupValue = (amount: number) => `${moneyText(amount)} บาท`;
   const layout = heading && period ? cardLayout({
     context: 'expense_summary',
     header: ['สรุปค่าใช้จ่าย', heading],
@@ -872,9 +880,8 @@ function formatExpenseBreakdownList(output: SpecialistOutput, ctx: PreparedForma
       { label: 'ยอดรวม', value: `${moneyText(totalAmount)} บาท`, emphasis: 'total' },
       { label: 'จำนวนรายการ', value: `${groupThousands(String(totalCount))} รายการ` },
       { label: 'แยกตาม', value: axis.labelTh },
-      ...shown.map((g) => ({ label: g.name, value: groupValue(moneyNumber(g.amount), g.count) })),
-      ...(rest.length > 0 ? [{ label: `อื่นๆ (${rest.length})`,
-        value: groupValue(rest.reduce((sum, g) => sum + moneyNumber(g.amount), 0), rest.reduce((sum, g) => sum + g.count, 0)) }] : []),
+      ...shown.map((g) => ({ label: g.name, value: groupValue(moneyNumber(g.amount)) })),
+      ...(rest.length > 0 ? [{ label: `อื่นๆ (${rest.length})`, value: groupValue(rest.reduce((sum, g) => sum + moneyNumber(g.amount), 0)) }] : []),
       ...(filterPhrases.length ? [{ label: 'ตัวกรอง', value: filterPhrases.join(', ') }] : []),
       { label: 'ช่วงวันที่', value: periodRowValue(period, data) },
       ...(sourceLabel ? [{ label: 'ที่มา', value: sourceLabel }] : []),
