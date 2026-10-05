@@ -160,7 +160,7 @@ import { buildEventDiscountCard, EVENT_DISCOUNT_MEMBER_REPLY, isMangmeeDiscountQ
 import { BillingService } from '../../../billing/application/billing.service';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPackagePosterMessage, buildPackageReviewCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { lineSystemCardTexts } from '../../domain/logic/line-system-card.logic';
-import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
+import { asCompleteLineCard, buildPublicPolicyCardMessage, buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildExpenseDraftReviewCard, buildKeptReceiptCard, expenseDraftCardFactsFrom, expenseDraftCardSubject, buildPackageRequiredMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildDesignedLineAnswerMessage, buildLineSystemTextCardMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader, LIFF_ID_PATTERN, LINE_SENT_DOCUMENT_CARD_CONTEXT, LINE_SENT_DOCUMENT_OUTCOMES, type LineExpenseDraftCardFacts, type LineSentDocumentOutcome } from '../../domain/logic/line-business-card.logic';
 // P10-L: the LINE surface opens a package-change request and tells the operators about a support
 // request; both live in the signup module, which owns those rules and their audit.
 import { PackageChangeRequestUseCase } from '../../../external-signup/application/package-change-request.use-case';
@@ -634,6 +634,12 @@ export function formatOcrGovernanceClarifyReply(errorCode?: string, readFailed =
         : null;
   return notice ? `${notice}\n\n${MEDIA_CLARIFY_REPLY}` : MEDIA_CLARIFY_REPLY;
 }
+/** The outcome that same reply reports, for its card's heading: the picture is kept but was not read
+ *  (no credit, reading switched off, a failed read), or the reply is the question alone. */
+export function ocrGovernanceClarifyOutcome(errorCode?: string, readFailed = false): LineSentDocumentOutcome {
+  return aiBudgetReasonTh(errorCode) || errorCode === 'OCR_FEATURE_DISABLED'
+    || (readFailed && errorCode !== 'OCR_REQUEST_ALREADY_ADMITTED') ? 'unread' : 'question';
+}
 /**
  * The REASON half of a document-reading refusal on the image lane — and nothing else. Kept separate
  * from any claim about the picture so the "kept it" and the "could not keep it" replies can never
@@ -961,6 +967,25 @@ function decideLineBusinessDocument(
     return { outcome: 'clarify', persistMedia: false, classification: ocr.classification };
   }
   return { outcome: 'reference', classification: ocr.classification };
+}
+
+/**
+ * What `formatBusinessDocumentReply` reports about the same classification, for its card's heading.
+ * "Not a document of an expense" is said only where the reader found exactly that and nothing was
+ * kept: a picture that is no business document, an appointment or booking, and a parcel label, a
+ * deposit slip, a quotation, an order or a delivery note that was NOT kept as a draft. Kept as a
+ * draft, or any other read (an invoice, a slip, a check bill, a kind nobody is sure of), it is the
+ * result of the read — §18.4: those are successful reads and never borrow the failure wording.
+ */
+export function businessDocumentOutcome(classification: BusinessDocumentClassification | null, keptAsDraft = false): LineSentDocumentOutcome {
+  if (!classification) return 'question';
+  if (classification.contentKind === 'MULTI_DOCUMENT') return 'notTaken';
+  if (classification.contentKind === 'UNREADABLE') return 'unread';
+  const nr = classifyNonReceiptCase(classification);
+  if (nr === 'NR07') return 'notExpense';
+  if (nr === 'NR01' || nr === 'NR02' || nr === 'NR03') return keptAsDraft ? 'result' : 'notExpense';
+  if (nr) return 'result';
+  return ['APPOINTMENT_CARD', 'BOOKING_CONFIRMATION', 'RESERVATION_CONFIRMATION'].includes(classification.documentKind) ? 'notExpense' : 'result';
 }
 
 /**
@@ -2482,8 +2507,10 @@ export class ProcessLineWebhookUseCase {
     /** This same reply as a card of the locked System OA design, when its builder could draw it whole.
      *  The card carries `text` as its canonical text, so `text` is still what is stored and what falls back. */
     designed?: LineReplyMessage,
+    /** For a reply to a photo or a file: what became of that document (its card's second header line). */
+    outcome?: LineSentDocumentOutcome,
   ): Promise<void> {
-    const card = designed ? undefined : this.boundReplyCard(event, text);
+    const card = designed ? undefined : this.boundReplyCard(event, text, undefined, outcome);
     const result = await this.deliverMessages(event, [designed
       ?? (card ? inheritCompleteLineBusinessAnswerPresentation(card, { ...card, ...(quickReply ? { quickReply } : {}) }) : {
         ...(this.boundConversations.has(event) ? { type: 'text' as const, text } : this.lineReply.buildTextMessage(text)),
@@ -2498,16 +2525,22 @@ export class ProcessLineWebhookUseCase {
    * a bare text bubble between cards: "การ์ดหลุดด้วย"). The card carries `text` as its canonical text, so
    * the delivery plan stores the same words and sends them if LINE refuses the card.
    *
-   * `undefined` — the reply stays the text it was — for a chat that is not bound; for a reply to
-   * something that carried no typed words (a photo, a file, a button tap): a heading needs the
-   * reader's words; for a web base that is not https; and for a reply with a link that cannot be made
-   * a button of this company, which only a text message keeps tappable.
+   * A photo or a file carries no words. Its reply stands under "เอกสารที่ส่งมา" and the fixed phrase for
+   * what became of the document (owner 2026-10-05, a reply to a photo still on the green card): the
+   * sender of the reply names the outcome; one that names none is a result of the read.
+   *
+   * `undefined` — the reply stays what it was — for a chat that is not bound; for a reply to a button
+   * tap (no typed words, no document); for a web base that is not https; and for a reply with a link
+   * that cannot be made a button of this company, which only a text message keeps tappable.
    */
-  private boundReplyCard(event: object, text: string, badge?: string): LineReplyMessage | undefined {
+  private boundReplyCard(event: object, text: string, badge?: string, outcome?: LineSentDocumentOutcome): LineReplyMessage | undefined {
     const bound = this.boundConversations.get(event);
     // A typed message has LINE's own message id; a tap or a follow is carried here as words the reader never typed.
     const typed = 'messageText' in event && typeof event.messageText === 'string' && 'lineMessageId' in event && event.lineMessageId ? event.messageText : undefined;
-    const header = bound && lineAnswerCardHeader(typed);
+    const sentDocument = !('messageText' in event) && 'messageType' in event;
+    const header = !bound ? undefined : sentDocument
+      ? { lines: [LINE_SENT_DOCUMENT_CARD_CONTEXT, LINE_SENT_DOCUMENT_OUTCOMES[outcome ?? 'result']] as const }
+      : lineAnswerCardHeader(typed);
     if (!bound || !header) return undefined;
     const card = buildLineSystemTextCardMessage({ text, ...(badge?.trim() ? { paper: `${badge.trim()}\n${text}` } : {}), header,
       webBaseUrl: this.config.webBaseUrl, companyId: bound.owner.companyId, textStyle: 'answer', icon: 'file' });
@@ -3601,17 +3634,19 @@ export class ProcessLineWebhookUseCase {
     /** This same reply as a card of the locked System OA design, when its builder could draw it whole.
      *  It carries `text` as its canonical text, so the text is still what is stored and what falls back. */
     designed?: LineReplyMessage,
+    /** For a reply to a photo or a file: what became of that document (its card's second header line). */
+    outcome?: LineSentDocumentOutcome,
   ): Promise<void> {
     // Bound chats render the same card production sends (UAT 2026-09-29: the receipt draft reply had
     // become plain text ending in a raw link with ids). A lossless card is a complete presentation, so
     // the delivery plan sends the card itself with this text as its fallback.
     if (!designed && Array.from(text).length > LINE_FLEX_CARD_BODY_MAX_CHARS) {
-      return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access);
+      return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access, undefined, outcome);
     }
     // In a bound chat the reply stands on the locked design under the reader's own words; the card from
     // before the design is what a chat that is not bound, or a reply to a photo or a tap, still gets.
     const message = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
-      designed ?? this.boundReplyCard(event, text, badge) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
+      designed ?? this.boundReplyCard(event, text, badge, outcome) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
       companyId,
       access,
     ));
@@ -3643,6 +3678,7 @@ export class ProcessLineWebhookUseCase {
     companyId: string,
     access: { permissions: string[]; roles: string[] },
     expenseDraft?: LineExpenseDraftCardFacts,
+    outcome?: LineSentDocumentOutcome,
   ): Promise<void> {
     if (texts.length === 0 || texts.length > (this.boundConversations.has(event) ? 15 : LINE_MAX_MESSAGES_PER_REPLY)) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
     // Production's render handles up to one LINE reply's worth of parts; a longer bound answer is
@@ -3658,7 +3694,7 @@ export class ProcessLineWebhookUseCase {
       // terminal message only where it holds the whole terminal text, and a longer text is sent as text.
       const terminalCard = (text: string): LineReplyMessage => expenseDraft && !/ข้อมูลที่ต้องใช้|ข้อมูลที่ยังต้องตอบ/u.test(text)
         ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId)
-        : this.boundReplyCard(event, text) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
+        : this.boundReplyCard(event, text, undefined, outcome) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
       // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
       // single completed reply gets, so a multi-part journey never ends in plain text.
       if (Array.from(terminal).length <= LINE_FLEX_CARD_BODY_MAX_CHARS) {
@@ -8313,7 +8349,7 @@ export class ProcessLineWebhookUseCase {
       if (saved?.uploaded) {
         const summary = await this.savedReceiptReply(event, saved.companyId, saved.expenseId);
         const delivered = await this.deliverRequiredMessages(event, summary.texts.map((text) => this.receiptReviewCard(text, summary.draft, saved!.companyId)
-          ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId)))
+          ?? this.boundReplyCard(event, text) ?? buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId)))
           .then(() => true, (error: unknown) => {
             this.logger.warn({ msg: 'line_receipt_saved_reply_failed', webhookEventId: event.webhookEventId, expenseId: saved!.expenseId, ...safeLineErrorDetails(error) });
             return false;
@@ -8329,11 +8365,12 @@ export class ProcessLineWebhookUseCase {
       const deterministic = lineCaptureFailureReply(err, BRANCH_RETRY_RESEND);
       if (deterministic) {
         this.logger.warn({ msg: 'LINE receipt upload needs branch selection', webhookEventId: event.webhookEventId });
-        await this.deliverReply(event, deterministic.reply).catch(() => {});
+        await this.deliverReply(event, deterministic.reply, undefined, undefined, 'notTaken').catch(() => {});
         await this.updateEventLog(event.webhookEventId, deterministic.status, deterministic.errorCode);
         return { outcome: 'done' };
       }
       this.logger.error({ msg: 'LINE receipt upload error', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(err) });
+      // What was kept is not known here (see the reply's own note), so the card does not say "not taken".
       await this.deliverReply(event, mediaProcessingFailedReply(event.messageType)).catch(() => {});
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
       return { outcome: 'done' };
@@ -8431,7 +8468,7 @@ export class ProcessLineWebhookUseCase {
       fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, access, entitledFeatureKeys) });
     await this.bindConversation(event);
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
-      await this.deliverReply(event, formatRefusal('feature_disabled'));
+      await this.deliverReply(event, formatRefusal('feature_disabled'), undefined, undefined, 'notTaken');
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
       await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
       return;
@@ -8445,7 +8482,7 @@ export class ProcessLineWebhookUseCase {
       && access.permissions.includes('line.ai.query') && access.permissions.includes('attachment.create')
       && access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission));
     if (!canCaptureExpense && !canSubmitSignature && !canReadDocument && !canStageReimbursement) {
-      await this.deliverReply(event, receiptDeniedReply(access));
+      await this.deliverReply(event, receiptDeniedReply(access), undefined, undefined, 'notTaken');
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload' } });
       await this.updateEventLog(event.webhookEventId,
         receiptFeatureDisabled(access) ? 'feature_disabled' : 'forbidden',
@@ -8454,7 +8491,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     if ((!this.initReceiptUpload || !this.completeReceiptUpload) && !canReadDocument && !canStageReimbursement) {
-      await this.deliverReply(event, ERROR_REPLY);
+      await this.deliverReply(event, ERROR_REPLY, undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', 'EXPENSE_MODULE_UNAVAILABLE', companyId);
       return;
     }
@@ -8499,7 +8536,7 @@ export class ProcessLineWebhookUseCase {
         ...(downloaded.declaredFileSize !== undefined ? { declaredFileSize: downloaded.declaredFileSize } : {}),
         ...(downloaded.measuredByteSize !== undefined ? { measuredByteSize: downloaded.measuredByteSize } : {}),
       });
-      await this.deliverReply(event, mediaDownloadFailedReply(event.messageType));
+      await this.deliverReply(event, mediaDownloadFailedReply(event.messageType), undefined, undefined, 'notTaken');
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_LINE_MEDIA_DOWNLOAD_FAILED', companyId);
       return;
     }
@@ -8510,7 +8547,7 @@ export class ProcessLineWebhookUseCase {
         companyId, stage: 'SECURITY', reasonCode: mediaRejectionReason, outcome: 'REJECTED',
         measuredByteSize: media.byteSize, fileName: media.fileName,
       });
-      await this.deliverReply(event, MEDIA_SECURITY_REJECTED_REPLY);
+      await this.deliverReply(event, MEDIA_SECURITY_REJECTED_REPLY, undefined, undefined, 'notTaken');
       await this.audit.log({
         companyId,
         actorUserId: identity.userId,
@@ -8543,7 +8580,7 @@ export class ProcessLineWebhookUseCase {
       (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; });
     if (qaRoute?.handled) return;
     if (!this.initReceiptUpload || !this.completeReceiptUpload) {
-      await this.deliverReply(event, ERROR_REPLY);
+      await this.deliverReply(event, ERROR_REPLY, undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'expense_module_unavailable', 'EXPENSE_MODULE_UNAVAILABLE', companyId); return;
     }
 
@@ -8666,18 +8703,18 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'SIGNATURE_UPLOAD_TICKET') {
       if (!canSubmitSignature) {
-        await this.deliverReply(event, SIGNATURE_FORBIDDEN_REPLY);
+        await this.deliverReply(event, SIGNATURE_FORBIDDEN_REPLY, undefined, undefined, 'notTaken');
         await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_signature_owner_permission', route: 'signature' } });
         await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
         return;
       }
       if (event.messageType !== 'image' || !this.initSignatureUpload || !this.createSignatureAsset) {
-        await this.deliverReply(event, SIGNATURE_NEED_IMAGE_REPLY);
+        await this.deliverReply(event, SIGNATURE_NEED_IMAGE_REPLY, undefined, undefined, 'question');
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
       const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
-      await this.deliverCompletedReply(event, ticketReply, companyId, access);
+      await this.deliverCompletedReply(event, ticketReply, companyId, access, undefined, undefined, 'stored');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูปลายเซ็น]${captionSuffix}`, replyText: ticketReply, intent: 'SIGNATURE_REQUEST',
@@ -8698,7 +8735,7 @@ export class ProcessLineWebhookUseCase {
       && canSubmitSignature && event.messageType === 'image' && isSignatureCaptionText(caption)
       && this.initSignatureUpload && this.createSignatureAsset) {
       const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
-      await this.deliverCompletedReply(event, ticketReply, companyId, access);
+      await this.deliverCompletedReply(event, ticketReply, companyId, access, undefined, undefined, 'stored');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูปลายเซ็น]${captionSuffix}`, replyText: ticketReply, intent: 'SIGNATURE_REQUEST',
@@ -8733,7 +8770,7 @@ export class ProcessLineWebhookUseCase {
           this.logger.warn({ msg: 'line_clarify_pending_media_failed', requestId, ...safeLineErrorDetails(error) });
         }
       }
-      await this.deliverReply(event, clarifyReply);
+      await this.deliverReply(event, clarifyReply, undefined, undefined, 'question');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `${parked?.pending ? mediaPreviewLabel(parked.pending) : '[ผู้ใช้ส่งรูป/ไฟล์]'}${captionSuffix}`,
@@ -8750,7 +8787,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'MUTATION_REQUEST_REFUSAL') {
-      await this.deliverCompletedReply(event, MUTATION_REFUSAL_REPLY, companyId, access);
+      await this.deliverCompletedReply(event, MUTATION_REFUSAL_REPLY, companyId, access, undefined, undefined, 'notTaken');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: MUTATION_REFUSAL_REPLY, intent: 'MUTATION_REQUEST', refused: true,
@@ -8771,7 +8808,7 @@ export class ProcessLineWebhookUseCase {
           receiptClarifyQuestion(event),
         );
         if (created) {
-          await this.deliverReply(event, MEDIA_CLARIFY_REPLY);
+          await this.deliverReply(event, MEDIA_CLARIFY_REPLY, undefined, undefined, 'question');
           await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY, intent: 'CLARIFY',
@@ -8791,7 +8828,7 @@ export class ProcessLineWebhookUseCase {
         );
         return { outcome: 'done' };
       }
-      await this.deliverCompletedReply(event, MEDIA_UNSUPPORTED_REPLY, companyId, access);
+      await this.deliverCompletedReply(event, MEDIA_UNSUPPORTED_REPLY, companyId, access, undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }
@@ -8840,7 +8877,7 @@ export class ProcessLineWebhookUseCase {
     // never read an existing expense. Every possible capture/fallback branch is denied here.
     const isReferenceOnlyRoute = routePlan.status === 'ROUTED' && routePlan.intent === 'BUSINESS_DOCUMENT_REFERENCE';
     if (!canCaptureExpense && !isReferenceOnlyRoute) {
-      await this.deliverReply(event, receiptDeniedReply(access));
+      await this.deliverReply(event, receiptDeniedReply(access), undefined, undefined, 'notTaken');
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload', route: 'capture' } });
       await this.updateEventLog(event.webhookEventId,
         receiptFeatureDisabled(access) ? 'feature_disabled' : 'forbidden',
@@ -8931,7 +8968,7 @@ export class ProcessLineWebhookUseCase {
       // would hand them a workflow they are not allowed to finish, so neither happens.
       if (!canCaptureExpense) {
         const denied = formatBudgetMediaNotStoredReply(ocr.errorCode, 'no_permission');
-        await this.deliverReply(event, denied);
+        await this.deliverReply(event, denied, undefined, undefined, 'notTaken');
         await this.updateEventLog(event.webhookEventId, terminal, ocr.errorCode, companyId,
           { ...(budgetScope ? { budgetScope } : {}), mediaState: 'not_stored_no_permission' });
         return { outcome: 'done' };
@@ -8945,7 +8982,7 @@ export class ProcessLineWebhookUseCase {
         // The bytes are NOT stored. Confirming retention from the webhook alone is exactly what
         // §9.2 forbids, so say what is true and keep the money reason.
         this.logger.warn({ msg: 'line_budget_pending_media_failed', requestId, ...safeLineErrorDetails(error) });
-        await this.deliverReply(event, formatBudgetMediaNotStoredReply(ocr.errorCode, 'save_failed'));
+        await this.deliverReply(event, formatBudgetMediaNotStoredReply(ocr.errorCode, 'save_failed'), undefined, undefined, 'notTaken');
         await this.updateEventLog(event.webhookEventId, terminal, ocr.errorCode, companyId,
           { ...(budgetScope ? { budgetScope } : {}), mediaState: 'save_failed' });
         return { outcome: 'done' };
@@ -8962,7 +8999,7 @@ export class ProcessLineWebhookUseCase {
         : null;
       if (parked.created || notStored) {
         const text = notStored ?? reply;
-        await this.deliverReply(event, text);
+        await this.deliverReply(event, text, undefined, undefined, notStored ? 'notTaken' : 'unread');
         await this.persistIntakeTurn({ event,
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: `${notStored ? '[ผู้ใช้ส่งรูป/ไฟล์]' : mediaPreviewLabel(parked.pending)}${captionSuffix}`,
@@ -9041,7 +9078,7 @@ export class ProcessLineWebhookUseCase {
           },
         );
         if (created) {
-          await this.deliverReply(event, reply, buildCheckBillDecisionQuickReply());
+          await this.deliverReply(event, reply, buildCheckBillDecisionQuickReply(), undefined, 'question');
           await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `[ผู้ใช้ส่งเช็กบิล]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
@@ -9076,7 +9113,8 @@ export class ProcessLineWebhookUseCase {
         ? formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId,
           { ...(captureLink ? { captureLink } : {}) })
         : MEDIA_UNSUPPORTED_REPLY;
-      await this.deliverCompletedReply(event, reply, companyId, access);
+      await this.deliverCompletedReply(event, reply, companyId, access, undefined, undefined,
+        decision.outcome === 'reference' ? businessDocumentOutcome(decision.classification, Boolean(captureLink)) : 'notTaken');
       await this.persistIntakeTurn({ event,
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
@@ -9108,7 +9146,7 @@ export class ProcessLineWebhookUseCase {
         });
         if (link) {
           const failedReply = CAPTURE_READ_FAILED_REPLY(link);
-          await this.deliverCompletedReply(event, failedReply, companyId, access);
+          await this.deliverCompletedReply(event, failedReply, companyId, access, undefined, undefined, 'unread');
           await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: failedReply, intent: 'EVIDENCE_CAPTURE',
@@ -9124,6 +9162,12 @@ export class ProcessLineWebhookUseCase {
           ? ocr.utilityDocuments?.length ? formatUtilityDocumentsReply(ocr.utilityDocuments) : MULTI_DOCUMENT_CLARIFY_REPLY
           : formatOcrGovernanceClarifyReply(ocr.errorCode, ocr.status === 'OCR_FAILED')
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
+      // What the reply reports, for its card's heading: several documents in one picture is a question;
+      // a read that failed or was refused leaves the picture kept and unread; a reply about what the
+      // document is follows what the reader found.
+      const clarifyOutcome: LineSentDocumentOutcome = !decision.persistMedia ? businessDocumentOutcome(decision.classification)
+        : ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && decision.classification?.contentKind === 'MULTI_DOCUMENT' ? 'question'
+          : ocrGovernanceClarifyOutcome(ocr.errorCode, ocr.status === 'OCR_FAILED');
       let terminalStatus = 'clarification_required';
       if (decision.persistMedia && canCaptureExpense) {
         const { created, pending } = await this.ensurePendingMedia(
@@ -9132,7 +9176,7 @@ export class ProcessLineWebhookUseCase {
             ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && decision.classification?.contentKind === 'MULTI_DOCUMENT'),
         );
         if (created) {
-          await this.deliverReply(event, reply);
+          await this.deliverReply(event, reply, undefined, undefined, clarifyOutcome);
           await this.persistIntakeTurn({ event,
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
             userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
@@ -9146,7 +9190,7 @@ export class ProcessLineWebhookUseCase {
         }
         if (!created) terminalStatus = 'duplicate_media_pending';
       } else {
-        await this.deliverReply(event, decision.persistMedia ? MEDIA_UNSUPPORTED_REPLY : reply);
+        await this.deliverReply(event, decision.persistMedia ? MEDIA_UNSUPPORTED_REPLY : reply, undefined, undefined, decision.persistMedia ? 'notTaken' : clarifyOutcome);
       }
       await this.updateEventLog(event.webhookEventId, terminalStatus, undefined, companyId);
       return;
@@ -9678,7 +9722,7 @@ export class ProcessLineWebhookUseCase {
     const existing = await this.expenseRepo?.findByLineMessageId(companyId, event.lineMessageId);
     if (existing) {
       await this.deliverCompletedReply(
-        event, this.fileStoredReply(this.expenseCaptureLink(companyId, existing.id)), companyId, access,
+        event, this.fileStoredReply(this.expenseCaptureLink(companyId, existing.id)), companyId, access, undefined, undefined, 'reading',
       );
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId, { mediaState: 'redelivered' });
       return finished();
@@ -9699,7 +9743,7 @@ export class ProcessLineWebhookUseCase {
       });
       const deterministic = lineCaptureFailureReply(error, BRANCH_RETRY_RESEND);
       if (deterministic) {
-        await this.deliverReply(event, deterministic.reply).catch(() => {});
+        await this.deliverReply(event, deterministic.reply, undefined, undefined, 'notTaken').catch(() => {});
         await this.updateEventLog(event.webhookEventId, deterministic.status, deterministic.errorCode, companyId);
         return { outcome: 'done' };
       }
@@ -9712,7 +9756,7 @@ export class ProcessLineWebhookUseCase {
       targetType: 'expense', targetId: persisted.expenseId,
     });
 
-    await this.deliverCompletedReply(event, this.fileStoredReply(persisted.link), companyId, access);
+    await this.deliverCompletedReply(event, this.fileStoredReply(persisted.link), companyId, access, undefined, undefined, 'reading');
     await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ผู้ใช้ส่งไฟล์เอกสาร #${persisted.attachmentId}]${caption ? ` ${caption}` : ''}`,
@@ -9829,9 +9873,9 @@ export class ProcessLineWebhookUseCase {
     if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status) || !expense.primaryAttachmentId)
       this.rememberReceiptDeliverySource(event, ctx, expense);
     if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) await this.deliverCompletedReply(event, `เก็บรายการนี้ไว้แล้วค่ะ เปิดตรวจสอบสถานะปัจจุบันได้ที่
-${link}`, ctx.companyId, access);
+${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     else if (!expense.primaryAttachmentId) await this.deliverCompletedReply(event, `เก็บร่างไว้แล้ว แต่ยังไม่มีรูปแนบที่ยืนยันการอัปโหลดค่ะ เปิดตรวจสอบร่างเดิมได้ที่
-${link}`, ctx.companyId, access);
+${link}`, ctx.companyId, access, undefined, undefined, 'stored');
     else {
       const summary = await this.savedReceiptReply(event, ctx.companyId, expense.id);
       const text = summary.texts.join('\n');
@@ -9893,7 +9937,7 @@ ${link}`, ctx.companyId, access);
     if (route.status === 'ROUTED' && route.intent === 'REIMBURSEMENT_REQUEST_START' && this.config.lineAiReimbursementDraftWriteEnabled
       && route.semanticSubrequests?.some(item => item.kind === 'write') && this.budgetGrantsV2.has(textEvent)) {
       if (!access.permissions.includes('attachment.create') || !access.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission))) {
-        await this.deliverReply(event, 'สิทธิ์ปัจจุบันยังไม่อนุญาตเก็บไฟล์สำหรับร่างใบเบิกค่ะ ยังไม่ได้สร้างรายการ'); return { handled: true };
+        await this.deliverReply(event, 'สิทธิ์ปัจจุบันยังไม่อนุญาตเก็บไฟล์สำหรับร่างใบเบิกค่ะ ยังไม่ได้สร้างรายการ', undefined, undefined, 'notTaken'); return { handled: true };
       }
       await this.stageReimbursementMedia(event, ctx, caption, media, bound, pending);
       this.mediaTextContinuations.set(textEvent, { route, requestId: ctx.requestId });
@@ -9902,10 +9946,10 @@ ${link}`, ctx.companyId, access);
     }
     if (!route.semanticSubrequests?.some(item => item.kind === 'file')) return { route };
     if (!this.config.lineAiDocumentQaEnabled) {
-      await this.deliverReply(event, 'การอ่านไฟล์เพื่อตอบคำถามยังไม่เปิดใช้งานค่ะ ยังไม่ได้สร้างรายการ'); return { handled: true };
+      await this.deliverReply(event, 'การอ่านไฟล์เพื่อตอบคำถามยังไม่เปิดใช้งานค่ะ ยังไม่ได้สร้างรายการ', undefined, undefined, 'notTaken'); return { handled: true };
     }
     if (route.semanticSubrequests.some(item => !['file', 'general', 'help'].includes(item.kind))) {
-      await this.deliverReply(event, 'คำถามจากไฟล์และคำขอทำรายการต้องแยกงานก่อนค่ะ กรุณาระบุว่าจะอ่านเพื่อตอบคำถาม หรือเก็บเป็นหลักฐานรายการ ยังไม่ได้สร้างรายการให้');
+      await this.deliverReply(event, 'คำถามจากไฟล์และคำขอทำรายการต้องแยกงานก่อนค่ะ กรุณาระบุว่าจะอ่านเพื่อตอบคำถาม หรือเก็บเป็นหลักฐานรายการ ยังไม่ได้สร้างรายการให้', undefined, undefined, 'question');
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId); return { handled: true };
     }
     const grant = this.budgetGrantsV2.get(textEvent);
@@ -9913,17 +9957,17 @@ ${link}`, ctx.companyId, access);
     let pages = 1;
     if (media.mimeType === 'application/pdf') pages = (await PDFDocument.load(media.bytes, { ignoreEncryption: false })).getPageCount();
     if (pages < 1 || pages > 20 || media.byteSize > 10 * 1024 * 1024) {
-      await this.deliverReply(event, 'ไฟล์นี้เกินขอบเขตการอ่าน กรุณาส่งไม่เกิน 20 หน้าและ 10 MiB ต่อไฟล์ ยังไม่ได้สร้างรายการให้');
+      await this.deliverReply(event, 'ไฟล์นี้เกินขอบเขตการอ่าน กรุณาส่งไม่เกิน 20 หน้าและ 10 MiB ต่อไฟล์ ยังไม่ได้สร้างรายการให้', undefined, undefined, 'notTaken');
       await this.updateEventLog(event.webhookEventId, 'input_rejected', 'QA_INPUT_LIMIT', ctx.companyId); return { handled: true };
     }
     if (pending && (pending.userId !== bound.owner.userId || pending.channelKind !== 'USER'
       || pending.messagingChannelId !== bound.owner.messagingChannelId || pending.chatKeyHash !== bound.owner.chatKeyHash
       || pending.membershipId !== bound.owner.membershipId || pending.lifecycleEpoch !== bound.epoch)) {
-      await this.deliverReply(event, 'ไฟล์เดิมไม่อยู่ในบริบทแชตปัจจุบันค่ะ กรุณาส่งไฟล์ใหม่ ยังไม่ได้สร้างรายการ');
+      await this.deliverReply(event, 'ไฟล์เดิมไม่อยู่ในบริบทแชตปัจจุบันค่ะ กรุณาส่งไฟล์ใหม่ ยังไม่ได้สร้างรายการ', undefined, undefined, 'notTaken');
       return { handled: true };
     }
     if (!await this.preserveSemanticTask(textEvent, route.semanticSubrequests)) {
-      await this.deliverReply(event, 'มีงานที่รออยู่เต็มแล้วค่ะ กรุณาเลือกทำต่อหรือยกเลิกงานเดิมก่อนเริ่มอ่านไฟล์นี้'); return { handled: true };
+      await this.deliverReply(event, 'มีงานที่รออยู่เต็มแล้วค่ะ กรุณาเลือกทำต่อหรือยกเลิกงานเดิมก่อนเริ่มอ่านไฟล์นี้', undefined, undefined, 'notTaken'); return { handled: true };
     }
     this.semanticTaskMappings.set(event, this.semanticTaskMappings.get(textEvent)!);
     let attachmentId = pending?.attachmentId;
@@ -10406,7 +10450,7 @@ ${link}`, ctx.companyId, access);
     }
     // §11: two classes stay plausible, so exactly one question is asked and the file waits.
     const text = question.kind === 'SUBSTITUTE_SCAN_CONFIRM' ? substituteScanConfirmQuestion(scan!) : substituteMediaQuestion(choices);
-    await this.deliverReply(event, text);
+    await this.deliverReply(event, text, undefined, undefined, 'question');
     await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `${mediaPreviewLabel(pending)}${input.captionSuffix}`, replyText: text, intent: 'CLARIFY',
@@ -10440,7 +10484,7 @@ ${link}`, ctx.companyId, access);
       purpose: input.purpose,
       webBaseUrl: this.config.webBaseUrl,
     });
-    await this.deliverCompletedReply(event, replyText, companyId, input.access);
+    await this.deliverCompletedReply(event, replyText, companyId, input.access, undefined, undefined, 'stored');
     await this.resolvePendingRow(input.pending.id, 'RESOLVED_RECEIPT');
     await this.persistIntakeTurn({ event,
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
@@ -11372,7 +11416,7 @@ ${link}`, ctx.companyId, access);
     let delivered = true;
     try {
       if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text, canManagePlan)]);
-      else await this.deliverReply(event, text);
+      else await this.deliverReply(event, text, undefined, undefined, 'notTaken');
     } catch (error) {
       // The month is claimed BEFORE the send, which is what makes the card exactly-once. If the send
       // then fails — an expired reply token, a push 429 — the claim has spent the shop's only card of

@@ -558,6 +558,27 @@ export function buildExpenseDraftReviewCard(
  *  of reply, never a model, and it is never cut out of the reply's text (owner 2026-10-05). */
 export const LINE_SENT_DOCUMENT_CARD_CONTEXT = 'เอกสารที่ส่งมา';
 
+/**
+ * What became of a photo or a file the reader sent: the second header line of the card that answers
+ * it. Fixed words, one for each kind of outcome; the code that sends the reply says which kind it is.
+ * Each must be true of every reply sent under it:
+ *  - `kept`       the bytes are a bill already kept (the row card below);
+ *  - `unread`     the document is kept or seen but its data could not be read — unclear, a failed read,
+ *                 no reading credit, reading switched off;
+ *  - `notExpense` the reader found something that is not a document of an expense, and nothing was kept;
+ *  - `notTaken`   the document was not taken in at all: a right, a package, a quota, a failed download,
+ *                 a refused file, a fault before anything was saved;
+ *  - `question`   the system asks what the document is or what to do with it;
+ *  - `reading`    the file is kept and being read; the result follows;
+ *  - `stored`     the document is kept as what the reader sent it for, with nothing read out of it;
+ *  - `result`     anything else that reports what the read found.
+ */
+export const LINE_SENT_DOCUMENT_OUTCOMES = {
+  kept: 'ตรงกับบิลที่เก็บไว้แล้ว', unread: 'อ่านข้อมูลไม่ได้', notExpense: 'ไม่ใช่เอกสารค่าใช้จ่าย', notTaken: 'ยังรับเอกสารนี้ไม่ได้',
+  question: 'ขอข้อมูลเพิ่ม', reading: 'กำลังอ่านเอกสาร', stored: 'เก็บไว้แล้ว', result: 'ผลการอ่านเอกสาร',
+} as const;
+export type LineSentDocumentOutcome = keyof typeof LINE_SENT_DOCUMENT_OUTCOMES;
+
 /** What the reply "this picture is a bill already kept" is written from. A fact the record does not
  *  hold is left out: `total` is the amount with its unit, absent when the record has no amount yet. */
 export type LineKeptReceiptFacts = { expenseId: string; vendor?: string | null; total?: string | null; progress: ReceiptProgress };
@@ -589,7 +610,7 @@ export function buildKeptReceiptCard(
   const notes = next?.trim() ? [next.trim()] : [];
   if (!actionUrl || !systemCardHolds(rows, notes)) return undefined;
   const contents = drawLineSystemCard({
-    mascot: 'general', header: { lines: [LINE_SENT_DOCUMENT_CARD_CONTEXT, 'ตรงกับบิลที่เก็บไว้แล้ว'] }, rows, notes,
+    mascot: 'general', header: { lines: [LINE_SENT_DOCUMENT_CARD_CONTEXT, LINE_SENT_DOCUMENT_OUTCOMES.kept] }, rows, notes,
     button: { action: { type: 'uri', label: 'เปิดใบเสร็จเดิม', uri: actionUrl }, icon: 'receipt' },
   }, webBaseUrl);
   // The notification reads as it did: the reply without its link line.
