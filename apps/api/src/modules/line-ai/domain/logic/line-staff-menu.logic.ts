@@ -353,7 +353,8 @@ export function buildPromotionCard(audience: 'owner' | 'employee' | 'stranger', 
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
         ...(url ? [{ type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: stranger ? 'เปิดร้านใหม่' : 'เลือกแพ็กเกจ', uri: url } }] : []),
         { type: 'button', style: 'secondary', action: { type: 'uri', label: stranger ? 'ดูแพ็กเกจบนเว็บ' : 'ดูรายละเอียดบนเว็บ', uri: 'https://official.mangmeeplus.com/' } },
-        { type: 'button', style: 'secondary', action: { type: 'message', label: 'คุยกับทีมงาน', text: 'ติดต่อเรา' } },
+        // Owner 2026-10-05: straight to the staff OA, not to the contact card first.
+        { type: 'button', style: 'secondary', action: { type: 'uri', label: 'คุยกับทีมงาน', uri: STAFF_OA_URL } },
       ] },
     },
   };
@@ -448,10 +449,11 @@ export function buildContactCard(): LineReplyMessage {
       ] },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
         { type: 'button', style: 'secondary', action: { type: 'clipboard', label: 'คัดลอกอีเมล', clipboardText: 'contact@mangmeeplus.com' } },
-        { type: 'button', style: 'secondary', action: { type: 'uri', label: 'โทร 098-256-5628', uri: 'tel:0982565628' } },
+        // Owner 2026-10-05: the number already stands above as text, so this button is the way to the
+        // team — it opens the staff OA (owner 2026-09-29: chat there; typed support commands keep their
+        // route) — and the separate "ติดต่อเจ้าหน้าที่" button that opened the same OA is gone.
+        { type: 'button', style: 'secondary', action: { type: 'uri', label: 'ติดต่อทีมงาน', uri: STAFF_OA_URL } },
         { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เว็บไซต์อย่างเป็นทางการ', uri: 'https://official.mangmeeplus.com/' } },
-        // Owner 2026-09-29: add the staff OA and chat there; typed support commands keep their route.
-        { type: 'button', style: 'secondary', action: { type: 'uri', label: STAFF_CONTACT_COMMAND, uri: STAFF_OA_URL } },
       ] },
     },
   };

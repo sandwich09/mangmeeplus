@@ -1404,7 +1404,7 @@ describe('public policy card', () => {
 
   it('opens the same staff LINE as the contact card', () => {
     const contact = (buildContactCard() as any).contents.footer.contents.map((button: any) => button.action);
-    assert.ok(contact.some((action: any) => action.type === 'uri' && action.label === 'ติดต่อเจ้าหน้าที่' && action.uri === STAFF_OA_URL));
+    assert.ok(contact.some((action: any) => action.type === 'uri' && action.label === 'ติดต่อทีมงาน' && action.uri === STAFF_OA_URL));
     assert.equal(STAFF_OA_URL, 'https://lin.ee/UU9pbOI');
   });
 });
