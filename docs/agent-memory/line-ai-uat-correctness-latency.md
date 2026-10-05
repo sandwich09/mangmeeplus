@@ -5,6 +5,8 @@ ACTIVATION-READY. No deploy, no config/flag change in any environment. Phase 0 e
 §14.1 (structural), §14.2 (now bound to the real assessor) and §14.3 (20 implemented_fixture / 1
 required_gap). Every behaviour phase stays gated, and DRAFT-only (Phase 3B) still waits for owner GO.
 
+Removed 2026-10-05: the card reply is always on; there is no switch.
+
 WP-C (2026-08-26): the §10.1 dedicated expense draft card landed — `buildExpenseDraftCardMessage()` in
 `line-business-card.logic.ts` renders `ร่างค่าใช้จ่าย` as structured rows (`ยอดรวม`, `รายการ`, `หมวดหมู่`,
 `สถานะ`) instead of wrapping the canonical reply in the generic 1,200-character body (§10.2). NO new flag:

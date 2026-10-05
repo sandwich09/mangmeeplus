@@ -1,6 +1,7 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessLineWebhookUseCase, pendingWorkReply } from './process-line-webhook.use-case';
+import { readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
 
 function fixture() {
   const event = { webhookEventId: 'followup' }, owner = { companyId: 'company' };
@@ -95,7 +96,7 @@ it('reads a typed cancel or a no-save review only as those, never a new value or
 });
 
 function pendingFixture(kind: 'edit' | 'claim') {
-  const f = fixture(), sent: string[] = [], calls: string[] = [], logs: string[] = [];
+  const f = fixture(), sent: string[] = [], cards: any[] = [], calls: string[] = [], logs: string[] = [];
   const event = Object.assign(f.event, { messageText: 'เดี๋ยว ๆ ยกเลิกก่อน', lineUserId: 'line-user' });
   const edit = { previewId: 'preview-1', expenseId: 'expense-1', record: { vendorName: 'ค่าส่งของ', expenseDate: '2026-09-29', statusLabel: 'รอตรวจสอบ' },
     tool: 'expense.draft.set_line', diff: [{ label: 'บรรทัด 1 จำนวนเงิน', before: '300.00', after: '350.00', kind: 'money' }],
@@ -114,12 +115,13 @@ function pendingFixture(kind: 'edit' | 'claim') {
     },
     expenseRepo: { findById: async (_company: string, id: string) => id === 'bill-1' ? { vendorNameSnapshot: 'ร้านเครื่องเขียนสมใจ', vendorDocumentNumber: 'NAT-STN-001' } : null },
     finishReimbursementTask: async (_owner: any, _epoch: number, id: string, applied: boolean) => { calls.push(`finish:${id}:${applied}`); },
-    deliverReply: async (_event: any, text: string) => { sent.push(text); },
+    // The reply's sentence, and — for a pending edit — the same sentence as its card of the locked design.
+    deliverReply: async (_event: any, text: string, _quickReply: unknown, designed?: unknown) => { sent.push(text); cards.push(designed); },
     persistIntakeTurn: async () => undefined,
     updateEventLog: async (_id: string, status: string) => { logs.push(status); },
   });
   const ctx = { requestId: 'request', userId: 'user', companyId: 'company', membershipId: 'member', permissions: ['expense.update'], scopes: {} };
-  return { ...f, event, ctx, sent, calls, logs };
+  return { ...f, event, ctx, sent, cards, calls, logs };
 }
 
 it('a typed cancel drops the pending edit, closes its waiting task and says what stays recorded', async () => {
@@ -130,6 +132,25 @@ it('a typed cancel drops the pending edit, closes its waiting task and says what
   assert.match(f.sent[0]!, /ยกเลิกการแก้ไขแล้ว/u); assert.match(f.sent[0]!, /ยอดรวม 300\.00 บาท/u);
   assert.match(f.sent[0]!, /ยังบันทึกเป็นร่างไว้/u, 'never claims that nothing was recorded');
   assert.deepEqual(f.logs, ['pending_work_cancelled']);
+  // Design lock context 4 "ยกเลิกแล้ว": the same sentence on the locked card, the record's link as its button.
+  const card = readLineSystemCard(f.cards[0]);
+  assert.deepEqual(card.header, ['แก้ไขค่าใช้จ่าย', 'ยกเลิกแล้ว']);
+  assert.match(card.prose.join('\n'), /ยกเลิกการแก้ไขแล้ว.*ยอดรวม 300\.00 บาท/su);
+  assert.deepEqual(card.actions.map((action) => [action.label, action.uri]), [['ดูในเว็บ', 'https://web.test/companies/company/expenses/expense-1']]);
+  assert.equal(f.cards[0].canonicalText, f.sent[0], 'the sentence is the card\'s canonical text and fallback');
+});
+
+it('a no-save review of a pending edit says it is still waiting; an edit that is gone says nothing was changed', async () => {
+  const review = pendingFixture('edit'); review.event.messageText = 'อย่าเพิ่งยืนยันนะ';
+  assert.equal(await review.flow.handlePendingWorkControl(review.event, review.ctx), true);
+  assert.deepEqual(review.calls, [], 'a review writes nothing');
+  assert.deepEqual(readLineSystemCard(review.cards[0]).header, ['แก้ไขค่าใช้จ่าย', 'รอยืนยัน']);
+  assert.match(review.sent[0]!, /ยังไม่ได้แก้รายการค่ะ/u);
+  const gone = pendingFixture('edit'); gone.flow.draftUpdate.cancel = async () => 'expired';
+  assert.equal(await gone.flow.handlePendingWorkControl(gone.event, gone.ctx), true);
+  assert.deepEqual(readLineSystemCard(gone.cards[0]).header, ['แก้ไขค่าใช้จ่าย', 'ยังไม่ได้แก้ไข']);
+  assert.match(gone.sent[0]!, /ยังไม่ได้แก้ไขรายการ/u);
+  assert.doesNotMatch(JSON.stringify(gone.cards[0]), /ยกเลิกแล้ว|แก้ไขแล้ว/u, 'never the header of a state that did not happen');
 });
 
 it('a no-save review restates the pending claim with its shop and writes nothing; a cancel drops it by its revision', async () => {
@@ -142,6 +163,8 @@ it('a no-save review restates the pending claim with its shop and writes nothing
   assert.equal(await cancel.flow.handlePendingWorkControl(cancel.event, cancel.ctx), true);
   assert.deepEqual(cancel.calls, ['claim-cancel:action:2', 'finish:action:false']);
   assert.match(cancel.sent[0]!, /ยกเลิกร่างใบเบิกนี้แล้ว/u);
+  // A claim draft is not an expense edit: it keeps its sentence, with no edit card over it.
+  assert.deepEqual([review.cards[0], cancel.cards[0]], [undefined, undefined]);
 });
 
 it('a typed cancel closes the one open text-note draft conversation and says the draft stays recorded (NAT-12)', async () => {

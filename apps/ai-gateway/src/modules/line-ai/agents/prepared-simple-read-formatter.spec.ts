@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolvePeriodCandidates, type SourceRef, type SpecialistOutput } from '@watchdog-bms/contracts';
-import { activePreparedFamilies, assumedYearNote, COMPILED_PREPARED_FAMILY_KEYS, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
+import { parseLineAiAnswerCardLayout, resolvePeriodCandidates, type LineAiAnswerCardLayout, type SourceRef, type SpecialistOutput } from '@watchdog-bms/contracts';
+import { activePreparedFamilies, assumedYearNote, COMPILED_PREPARED_FAMILY_KEYS, formatPreparedSimpleRead, openWorkCardLayout, preparedTerminalReply } from './prepared-simple-read-formatter';
 
 const SALES = 'sales.get_sales_summary::single_metric';
 const EXPENSE = 'expense.list_recent::single_metric';
@@ -1780,5 +1780,348 @@ describe('R-L4 F13 reimbursement.get_detail::single_metric — รายละ�
     ]) {
       assert.equal(formatPreparedSimpleRead(REIMBURSEMENT_DETAIL, reimbursementDetailOutput(broken), TH).kind, 'unverified');
     }
+  });
+});
+
+// ── Locked System OA card layouts (design lock 2026-10-04) ───────────────────────────────────────
+// The rows a card prints are built here, by the family that wrote the sentence, from the same values.
+// These tests hold that every clause of the sentence has a place on the card, that a fact the source
+// lacks has no row, and that every layout is one the receiver's own validator accepts unchanged.
+const layoutOf = (key: string, output: SpecialistOutput, ctx: Record<string, unknown> = {}): LineAiAnswerCardLayout | undefined => {
+  const result = formatPreparedSimpleRead(key, output, { ...TH, ...ctx });
+  assert.equal(result.kind, 'answer');
+  const layout = result.kind === 'answer' ? result.layout : undefined;
+  if (layout) assert.deepEqual(parseLineAiAnswerCardLayout(JSON.parse(JSON.stringify(layout))), layout);
+  return layout;
+};
+const row = (layout: LineAiAnswerCardLayout | undefined, label: string) => layout?.rows.find((entry) => entry.label === label);
+const labels = (layout: LineAiAnswerCardLayout | undefined) => layout?.rows.map((entry) => entry.label);
+
+describe('design lock context 1 — expense summary card', () => {
+  it('prints the sentence\'s own total, count, period, source and as-of as rows, and its exclusions as a note', () => {
+    const data = expenseData({ total: 7, period: { fromDate: '2026-08-01', toDate: '2026-08-31', defaultedToCurrentMonth: false },
+      summary: { countedItems: 7, cancelledCount: 1, totalAmount: '85.00', pendingAmount: '15.00' } });
+    const layout = layoutOf(EXPENSE, expenseOutput(data, '2026-09-17T10:00:00Z'));
+    assert.deepEqual(layout, {
+      context: 'expense_summary',
+      header: ['สรุปค่าใช้จ่าย', 'สิงหาคม 2569'],
+      rows: [
+        { label: 'ยอดรวม', value: '85.00 บาท', emphasis: 'total' },
+        { label: 'จำนวนรายการ', value: '7 รายการ' },
+        { label: 'ช่วงวันที่', value: '1 สิงหาคม 2569 – 31 สิงหาคม 2569' },
+        { label: 'ที่มา', value: 'รายการค่าใช้จ่าย' },
+        { label: 'ข้อมูล ณ', value: '17 กันยายน 2569' },
+      ],
+      notes: ['ไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ 1 รายการ'],
+      linkLabel: 'ดูค่าใช้จ่ายในเว็บ',
+    });
+  });
+
+  it('adds only what the sentence itself says: the filter, the reader\'s scope and the amount basis', () => {
+    const data = expenseData({
+      total: 3, summary: expenseSummary({ countedItems: 3, totalAmount: 27230.5, pendingAmount: 900, draftAmount: 900, confirmedAmount: 26330.5 }),
+      queryApplied: { statusBasis: 'exclude_rejected_voided', filters: { categoryName: 'อาหาร' }, accessScope: 'own' },
+    });
+    const result = formatPreparedSimpleRead(EXPENSE, expenseOutput(data), TH);
+    const layout = layoutOf(EXPENSE, expenseOutput(data));
+    assert.equal(row(layout, 'ตัวกรอง')?.value, 'เฉพาะหมวดอาหาร');
+    assert.deepEqual(layout?.notes, [
+      'แสดงเฉพาะรายการของคุณ',
+      'ฐานยอด: รวมรายการรอดำเนินการ 900.00 บาท (ในนั้นเป็นร่าง 900.00 บาท) และรายการยืนยันแล้ว 26,330.50 บาท',
+    ]);
+    // Design lock §9: the word "ขอบเขต" never labels anything on a card.
+    assert.doesNotMatch(JSON.stringify(layout), /ขอบเขต|ระดับแจ้งเตือน/);
+    // The same clauses are in the sentence — the card says nothing the answer does not.
+    assert.ok(result.kind === 'answer' && result.replyText.includes('ตัวกรอง: เฉพาะหมวดอาหาร') && result.replyText.includes('ฐานยอด: รวมรายการรอดำเนินการ 900.00 บาท'));
+  });
+
+  it('heads a period that is not one month by its own months, and says the year was assumed without brackets', () => {
+    const quarter = layoutOf(EXPENSE, expenseOutput(expenseData({ period: { fromDate: '2025-10-01', toDate: '2025-12-31', defaultedToCurrentMonth: false } })),
+      { periodLabel: 'ไตรมาส 4 (1 ต.ค. – 31 ธ.ค. 2568)', periodNote: ' (ไม่ได้ระบุปี จึงดูไตรมาส 4 ที่ผ่านมาล่าสุด)\nไตรมาส 4 ปีนี้ยังไม่ถึงค่ะ' });
+    assert.deepEqual(quarter?.header, ['สรุปค่าใช้จ่าย', 'ต.ค. – ธ.ค. 2568']);
+    assert.equal(row(quarter, 'ช่วงวันที่')?.value, 'ไตรมาส 4 (1 ต.ค. – 31 ธ.ค. 2568)');
+    assert.deepEqual(quarter?.notes, [
+      'ฐานยอด: รวมรายการรอดำเนินการ 0.00 บาท (ในนั้นเป็นร่าง 0.00 บาท) และรายการยืนยันแล้ว 1,234,567.50 บาท',
+      'ไม่ได้ระบุปี จึงดูไตรมาส 4 ที่ผ่านมาล่าสุด ไตรมาส 4 ปีนี้ยังไม่ถึงค่ะ',
+    ]);
+    const oneDay = layoutOf(EXPENSE, expenseOutput(expenseData({ period: { fromDate: '2026-08-05', toDate: '2026-08-05', defaultedToCurrentMonth: false } })));
+    assert.deepEqual(oneDay?.header, ['สรุปค่าใช้จ่าย', '5 ส.ค. 2569']);
+    const acrossYears = layoutOf(EXPENSE, expenseOutput(expenseData({ period: { fromDate: '2025-12-01', toDate: '2026-01-31', defaultedToCurrentMonth: false } })));
+    assert.deepEqual(acrossYears?.header, ['สรุปค่าใช้จ่าย', 'ธ.ค. 2568 – ม.ค. 2569']);
+  });
+
+  it('has no card for an English answer, an unknown period, or a sentence that was not verified', () => {
+    const english = formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData()), EN);
+    assert.ok(english.kind === 'answer' && english.layout === undefined);
+    assert.equal(layoutOf(EXPENSE, expenseOutput(expenseData({ period: undefined }))), undefined);
+    assert.equal(formatPreparedSimpleRead(EXPENSE, expenseOutput(expenseData({ truncated: true })), TH).kind, 'unverified');
+  });
+
+  it('says the count could not be confirmed rather than showing a number it does not have', () => {
+    const layout = layoutOf(EXPENSE, expenseOutput(expenseData({ total: undefined })));
+    assert.equal(row(layout, 'จำนวนรายการ')?.value, 'ยังยืนยันจำนวนรายการไม่ได้');
+  });
+});
+
+describe('design lock context 5 — expense record card', () => {
+  const recordData = (over: Record<string, unknown> = {}) => expenseDetailData({
+    expenseNumber: 'EXP-2026-0009', categoryName: 'ค่าอุปกรณ์สำนักงาน', vatAmount: '58.88', paymentStatus: 'UNPAID',
+    lines: [{ description: 'ซื้ออุปกรณ์สำนักงาน', chargeKind: null }], ...over,
+  });
+
+  it('confirmed: the record, its total in the emphasised row, the document state as a pill and the payment state apart from it', () => {
+    const layout = layoutOf(EXPENSE_DETAIL, expenseDetailOutput(recordData()), { messageText: 'รายการที่ 3 คือร้านอะไรครับ' });
+    assert.deepEqual(layout, {
+      context: 'expense_record',
+      header: ['รายการค่าใช้จ่าย', 'ยืนยันแล้ว'],
+      rows: [
+        { label: 'เลขรายการ', value: 'EXP-2026-0009' },
+        { label: 'รายการ', value: 'ซื้ออุปกรณ์สำนักงาน' },
+        { label: 'ผู้ขาย / ร้านค้า', value: 'ร้านสมใจ' },
+        { label: 'วันที่เอกสาร', value: '5 สิงหาคม 2569' },
+        { label: 'หมวดค่าใช้จ่าย', value: 'ค่าอุปกรณ์สำนักงาน' },
+        { label: 'ยอดรวม', value: '900.00 บาท', emphasis: 'total' },
+        { label: 'VAT', value: '58.88 บาท' },
+        { label: 'สถานะเอกสาร', value: 'ยืนยันแล้ว', tone: 'ok' },
+        { label: 'สถานะการจ่าย', value: 'ยังไม่ชำระ' },
+        { label: 'ข้อมูล ณ', value: '25 สิงหาคม 2569' },
+      ],
+      linkLabel: 'เปิดดูรายการในเว็บ',
+    });
+  });
+
+  it('leaves out every fact the record does not carry, and never prints a zero VAT or an additional charge as the item', () => {
+    const layout = layoutOf(EXPENSE_DETAIL, expenseDetailOutput(expenseDetailData({
+      vendorName: null, vatAmount: '0.00', lines: [{ description: 'ค่าบริการ', chargeKind: 'SERVICE_CHARGE' }],
+    })));
+    assert.deepEqual(labels(layout), ['ผู้ขาย / ร้านค้า', 'วันที่เอกสาร', 'ยอดรวม', 'สถานะเอกสาร', 'สถานะการจ่าย', 'ข้อมูล ณ']);
+    assert.equal(row(layout, 'ผู้ขาย / ร้านค้า')?.value, 'ไม่ระบุร้าน');
+  });
+
+  it('says there are more lines without counting what the tool did not send', () => {
+    const layout = layoutOf(EXPENSE_DETAIL, expenseDetailOutput(recordData({ lines: [
+      { description: 'กระดาษ A4', chargeKind: null }, { description: 'ค่าส่ง', chargeKind: 'DELIVERY' }, { description: 'ปากกา', chargeKind: null },
+    ] })));
+    assert.equal(row(layout, 'รายการ')?.value, 'กระดาษ A4 และรายการอื่น');
+  });
+
+  it('rejected and voided: the reason the record gives instead of a payment state, in the sentence and on the card alike', () => {
+    for (const [status, title, pill, key, reason] of [
+      ['REJECTED', 'ถูกปฏิเสธ', 'ปฏิเสธ', 'rejectReason', 'เอกสารประกอบไม่ครบ'],
+      ['VOIDED', 'ยกเลิกแล้ว', 'ยกเลิก', 'voidReason', 'บันทึกซ้ำ'],
+    ] as const) {
+      const output = expenseDetailOutput(recordData({ status, paymentStatus: status === 'VOIDED' ? 'VOIDED' : 'UNPAID', [key]: reason }));
+      const result = formatPreparedSimpleRead(EXPENSE_DETAIL, output, TH);
+      const layout = layoutOf(EXPENSE_DETAIL, output);
+      assert.deepEqual(layout?.header, ['รายการค่าใช้จ่าย', title]);
+      assert.deepEqual(row(layout, 'สถานะเอกสาร'), { label: 'สถานะเอกสาร', value: pill, tone: 'closed' });
+      assert.equal(row(layout, 'เหตุผล')?.value, reason);
+      assert.equal(row(layout, 'สถานะการจ่าย'), undefined);
+      assert.ok(result.kind === 'answer' && result.replyText.includes(`\nสถานะเอกสาร: ${pill} · เหตุผล: ${reason}`));
+      assert.ok(result.kind === 'answer' && !result.replyText.includes('สถานะการจ่าย'));
+    }
+    // No reason on the record: no reason row, and no invented one.
+    const silent = layoutOf(EXPENSE_DETAIL, expenseDetailOutput(recordData({ status: 'REJECTED', rejectReason: '  ' })));
+    assert.equal(row(silent, 'เหตุผล'), undefined);
+    assert.equal(row(silent, 'สถานะการจ่าย'), undefined);
+  });
+
+  it('a record still being reviewed keeps its own state as the title and a pending pill', () => {
+    const layout = layoutOf(EXPENSE_DETAIL, expenseDetailOutput(recordData({ status: 'NEEDS_REVIEW' })), { messageText: 'จ่ายหรือยัง' });
+    assert.deepEqual(layout?.header, ['รายการค่าใช้จ่าย', 'รอตรวจสอบ']);
+    assert.deepEqual(row(layout, 'สถานะเอกสาร'), { label: 'สถานะเอกสาร', value: 'รอตรวจสอบ', tone: 'pending' });
+  });
+
+  it('refuses a value the card must never print: a link in a reason drops the card, the sentence stays', () => {
+    const output = expenseDetailOutput(recordData({ status: 'REJECTED', rejectReason: 'ดู https://evil.example/x' }));
+    const result = formatPreparedSimpleRead(EXPENSE_DETAIL, output, TH);
+    assert.ok(result.kind === 'answer' && result.layout === undefined && result.replyText.includes('เหตุผล'));
+  });
+});
+
+describe('design lock context 7 — payment card', () => {
+  const paymentData = (over: Record<string, unknown> = {}) => expenseDetailData({
+    expenseNumber: 'EXP-2026-0009', vendorName: 'บริษัท ตัวอย่างอาหาร จำกัด', grandTotalAmount: '1322.52',
+    netPayableAmount: '1284.00', paidAmount: '1284.00', outstandingAmount: '0.00', paymentStatus: 'PAID',
+    payments: { count: 1, lastPaidOn: '2026-09-03', methods: ['BANK_TRANSFER'] }, ...over,
+  });
+  const asked = { messageText: 'รายการที่ 2 จ่ายหรือยังคะ' };
+
+  it('paid: what was due, what was paid, what is left, and when and how — from the recorded payment', () => {
+    const output = expenseDetailOutput(paymentData());
+    const result = formatPreparedSimpleRead(EXPENSE_DETAIL, output, { ...TH, ...asked });
+    assert.ok(result.kind === 'answer');
+    assert.equal(result.replyText, [
+      'การชำระเงิน: บริษัท ตัวอย่างอาหาร จำกัด ยอดสุทธิที่ต้องจ่าย 1,284.00 บาท',
+      'จ่ายแล้ว 1,284.00 บาท · ยอดคงค้าง 0.00 บาท',
+      'สถานะชำระเงิน: ชำระแล้ว · วันที่ชำระ 3 กันยายน 2569 · วิธีชำระเงิน โอนเงิน',
+      'ข้อมูล ณ 25 ส.ค. 2569',
+    ].join('\n'));
+    assert.deepEqual(layoutOf(EXPENSE_DETAIL, output, asked), {
+      context: 'payment',
+      header: ['การชำระเงิน', 'ชำระแล้ว'],
+      banner: { tone: 'ok', text: 'ชำระแล้ว · ยอดคงค้าง 0.00 บาท' },
+      rows: [
+        { label: 'เลขรายการ', value: 'EXP-2026-0009' },
+        { label: 'ผู้รับเงิน', value: 'บริษัท ตัวอย่างอาหาร จำกัด' },
+        { label: 'ยอดสุทธิที่ต้องจ่าย', value: '1,284.00 บาท', emphasis: 'total' },
+        { label: 'จ่ายแล้ว', value: '1,284.00 บาท' },
+        { label: 'ยอดคงค้าง', value: '0.00 บาท' },
+        { label: 'วันที่ชำระ', value: '3 กันยายน 2569' },
+        { label: 'วิธีชำระเงิน', value: 'โอนเงิน' },
+        { label: 'สถานะชำระเงิน', value: 'ชำระแล้ว', tone: 'ok' },
+        { label: 'ข้อมูล ณ', value: '25 สิงหาคม 2569' },
+      ],
+      linkLabel: 'เปิดดูรายการในเว็บ',
+    });
+  });
+
+  it('unpaid: waits for payment, with no date and no method that nobody recorded', () => {
+    const output = expenseDetailOutput(paymentData({ paidAmount: '0.00', outstandingAmount: '1284.00', paymentStatus: 'UNPAID',
+      payments: { count: 0, lastPaidOn: null, methods: [] } }));
+    const layout = layoutOf(EXPENSE_DETAIL, output, asked);
+    assert.deepEqual(layout?.header, ['การชำระเงิน', 'รอชำระเงิน']);
+    assert.deepEqual(layout?.banner, { tone: 'pending', text: 'ยังไม่ชำระ · ยอดคงค้าง 1,284.00 บาท' });
+    assert.deepEqual(labels(layout), ['เลขรายการ', 'ผู้รับเงิน', 'ยอดสุทธิที่ต้องจ่าย', 'จ่ายแล้ว', 'ยอดคงค้าง', 'สถานะชำระเงิน', 'ข้อมูล ณ']);
+    assert.deepEqual(row(layout, 'สถานะชำระเงิน'), { label: 'สถานะชำระเงิน', value: 'ยังไม่ชำระ', tone: 'pending' });
+    const result = formatPreparedSimpleRead(EXPENSE_DETAIL, output, { ...TH, ...asked });
+    assert.ok(result.kind === 'answer' && !/วันที่ชำระ|วิธีชำระเงิน/.test(result.replyText));
+  });
+
+  it('partly paid: the latest of several payments is said to be the latest, and every way paid is named', () => {
+    const layout = layoutOf(EXPENSE_DETAIL, expenseDetailOutput(paymentData({ paidAmount: '400.00', outstandingAmount: '884.00', paymentStatus: 'PARTIALLY_PAID',
+      payments: { count: 2, lastPaidOn: '2026-09-03', methods: ['CASH', 'BANK_TRANSFER'] } })), asked);
+    assert.deepEqual(layout?.header, ['การชำระเงิน', 'ชำระบางส่วน']);
+    assert.deepEqual(layout?.banner, { tone: 'pending', text: 'ชำระบางส่วน · ยอดคงค้าง 884.00 บาท' });
+    assert.equal(row(layout, 'วันที่ชำระ')?.value, '3 กันยายน 2569 (ครั้งล่าสุดจาก 2 ครั้ง)');
+    assert.equal(row(layout, 'วิธีชำระเงิน')?.value, 'เงินสด, โอนเงิน');
+  });
+
+  it('never names a method the record does not name, and never an internal key', () => {
+    for (const methods of [[null], ['BANK_TRANSFER', null], ['WIRE_42'], 'BANK_TRANSFER']) {
+      const layout = layoutOf(EXPENSE_DETAIL, expenseDetailOutput(paymentData({ payments: { count: 1, lastPaidOn: '2026-09-03', methods } })), asked);
+      assert.equal(row(layout, 'วิธีชำระเงิน'), undefined);
+      assert.doesNotMatch(JSON.stringify(layout), /WIRE_42|BANK_TRANSFER|null/);
+    }
+    // No bank or PromptPay number can reach this card: the tool does not send one and no row would hold it.
+    assert.doesNotMatch(JSON.stringify(layoutOf(EXPENSE_DETAIL, expenseDetailOutput(paymentData({ bankAccountRef: '123-4-56789-0' })), asked)), /56789/);
+  });
+
+  it('is the record card when the question is not about paying, when the record is not confirmed, or when no amounts came', () => {
+    const output = expenseDetailOutput(paymentData());
+    assert.equal(layoutOf(EXPENSE_DETAIL, output, { messageText: 'รายการค่าใช้จ่ายที่ 2 คือร้านอะไร' })?.context, 'expense_record');
+    assert.equal(layoutOf(EXPENSE_DETAIL, output)?.context, 'expense_record');
+    assert.equal(layoutOf(EXPENSE_DETAIL, expenseDetailOutput(paymentData({ status: 'NEEDS_REVIEW' })), asked)?.context, 'expense_record');
+    assert.equal(layoutOf(EXPENSE_DETAIL, expenseDetailOutput(paymentData({ netPayableAmount: undefined })), asked)?.context, 'expense_record');
+    for (const question of ['ค้างจ่ายเท่าไหร่', 'ชำระแล้วหรือยัง', 'is it paid?', 'outstanding?']) {
+      assert.equal(layoutOf(EXPENSE_DETAIL, output, { messageText: question })?.context, 'payment', question);
+    }
+  });
+});
+
+describe('design lock context 2 — open work card', () => {
+  const asOf = '2026-09-17T10:00:00Z';
+  const valid = (layout: LineAiAnswerCardLayout | undefined) => {
+    assert.ok(layout);
+    assert.deepEqual(parseLineAiAnswerCardLayout(JSON.parse(JSON.stringify(layout))), layout);
+    // Design lock §9: neither of the two rows the owner cut may come back.
+    assert.doesNotMatch(JSON.stringify(layout), /ระดับแจ้งเตือน|ขอบเขต|ACTION|severity/);
+    return layout;
+  };
+
+  it('one claim waiting for approval: its number, what to do, when it was read, and the button that opens that claim', () => {
+    const layout = valid(openWorkCardLayout('notifications.list_open_alerts', {
+      count: 1, hasMore: false, opens: 'claim',
+      items: [{ id: 'n1', title: 'อนุมัติเบิกจ่าย: RB-202608-00002', severity: 'ACTION', createdAt: asOf, kind: 'claim_approval', documentNo: 'RB-202608-00002' }],
+    }, asOf));
+    assert.deepEqual(layout, {
+      context: 'open_work',
+      header: ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ'],
+      rows: [
+        { label: 'เลขที่ใบเบิก', value: 'RB-202608-00002' },
+        { label: 'ต้องทำ', value: 'ตรวจสอบและอนุมัติใบเบิก' },
+        { label: 'ข้อมูล ณ', value: '17 กันยายน 2569' },
+      ],
+      notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'],
+      linkLabel: 'เปิดใบเบิกเพื่ออนุมัติ',
+    });
+  });
+
+  it('never calls the button "open the claim" unless the tool vouched that the link is that claim', () => {
+    const items = [{ id: 'n1', title: 'อนุมัติเบิกจ่าย: RB-1', kind: 'claim_approval', documentNo: 'RB-1' }];
+    for (const opens of ['list', undefined, 'CLAIM']) {
+      assert.equal(valid(openWorkCardLayout('notifications.list_open_alerts', { count: 1, hasMore: false, opens, items }, asOf)).linkLabel, 'ดูแจ้งเตือนในเว็บ');
+    }
+    // Several claims: every number is listed, and the button goes to the list they are all on.
+    const several = valid(openWorkCardLayout('notifications.list_open_alerts', { count: 2, hasMore: false, opens: 'list', items: [
+      ...items, { id: 'n2', title: 'อนุมัติเบิกจ่าย: RB-2', kind: 'claim_approval', documentNo: 'RB-2' }] }, asOf));
+    assert.deepEqual(several.header, ['ใบเบิกรออนุมัติ', 'พบ 2 รายการ']);
+    assert.deepEqual(several.rows.filter((entry) => entry.label === 'เลขที่ใบเบิก').map((entry) => entry.value), ['RB-1', 'RB-2']);
+    assert.equal(several.linkLabel, 'ดูแจ้งเตือนในเว็บ');
+  });
+
+  it('other notices keep their own titles; a notice whose number the tool did not vouch for is not called a claim', () => {
+    const layout = valid(openWorkCardLayout('notifications.list_open_alerts', { count: 2, hasMore: false, opens: 'list', items: [
+      { id: 'n1', title: 'อนุมัติเบิกจ่าย: RB-1', kind: 'claim_approval', documentNo: 'RB-1' },
+      { id: 'n2', title: 'ภาษีซื้อเดือนนี้พร้อมตรวจ', severity: 'INFO' }] }, asOf));
+    assert.deepEqual(layout.header, ['การแจ้งเตือน', 'พบ 2 รายการ']);
+    assert.deepEqual(layout.rows.slice(0, 2), [
+      { label: 'รายการที่ 1', value: 'อนุมัติเบิกจ่าย: RB-1' }, { label: 'รายการที่ 2', value: 'ภาษีซื้อเดือนนี้พร้อมตรวจ' }]);
+    const renamed = valid(openWorkCardLayout('notifications.list_open_alerts', { count: 1, hasMore: false, opens: 'claim',
+      items: [{ id: 'n1', title: 'มีใบเบิกใหม่', kind: 'claim_approval' }] }, asOf));
+    assert.deepEqual(renamed.header, ['การแจ้งเตือน', 'พบ 1 รายการ']);
+    assert.equal(renamed.linkLabel, 'ดูแจ้งเตือนในเว็บ');
+  });
+
+  it('a page that is not the whole list says so, and its count is never the whole', () => {
+    const titles = Array.from({ length: 5 }, (_, index) => ({ id: `n${index}`, title: `แจ้งเตือน ${index + 1}` }));
+    const more = valid(openWorkCardLayout('notifications.list_open_alerts', { count: 10, hasMore: true, opens: 'list', items: titles }, asOf));
+    assert.deepEqual(more.header, ['การแจ้งเตือน', 'พบมากกว่า 10 รายการ']);
+    assert.deepEqual(more.notes, ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ', 'แสดง 5 รายการแรก ดูทั้งหมดได้ในเว็บ']);
+    const capped = valid(openWorkCardLayout('notifications.list_open_alerts', { count: 7, hasMore: false, opens: 'list', items: titles }, asOf));
+    assert.deepEqual(capped.header, ['การแจ้งเตือน', 'พบ 7 รายการ']);
+    assert.equal(capped.notes?.[1], 'แสดง 5 รายการแรก ดูทั้งหมดได้ในเว็บ');
+  });
+
+  it('nothing found says WHAT was checked — open notices by the reader\'s rights, or the reader\'s own unfinished tasks', () => {
+    assert.deepEqual(valid(openWorkCardLayout('notifications.list_open_alerts', { count: 0, hasMore: false, opens: 'list', items: [] }, asOf)), {
+      context: 'open_work', header: ['การแจ้งเตือน', 'ไม่พบรายการ'],
+      rows: [{ label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
+      notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'ดูแจ้งเตือนในเว็บ',
+    });
+    assert.deepEqual(valid(openWorkCardLayout('workflow.list_assigned_tasks', { total: 0, items: [] }, asOf)), {
+      context: 'open_work', header: ['งานที่มอบหมาย', 'ไม่พบงานค้าง'],
+      rows: [{ label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
+      notes: ['ตรวจเฉพาะงานที่มอบหมายให้คุณและยังไม่เสร็จ'], linkLabel: 'ดูงานของฉันในเว็บ',
+    });
+  });
+
+  it('assigned tasks are listed by their own titles, with the true total', () => {
+    const layout = valid(openWorkCardLayout('workflow.list_assigned_tasks', { total: 12, items: Array.from({ length: 10 }, (_, index) => ({ id: `t${index}`, title: `งาน ${index + 1}` })) }, asOf));
+    assert.deepEqual(layout.header, ['งานที่มอบหมาย', 'พบ 12 รายการ']);
+    assert.equal(layout.rows.length, 11);
+    assert.deepEqual(layout.rows[0], { label: 'งานที่ 1', value: 'งาน 1' });
+    assert.deepEqual(layout.notes, ['ตรวจเฉพาะงานที่มอบหมายให้คุณและยังไม่เสร็จ', 'แสดง 10 รายการแรก ดูทั้งหมดได้ในเว็บ']);
+  });
+
+  it('has no card for a result that is not exactly this shape — an unreadable read is never "nothing found"', () => {
+    for (const [tool, data] of [
+      ['notifications.list_open_alerts', undefined], ['notifications.list_open_alerts', null], ['notifications.list_open_alerts', []],
+      ['notifications.list_open_alerts', {}], ['notifications.list_open_alerts', { items: [] }], ['notifications.list_open_alerts', { count: '0', items: [] }],
+      ['notifications.list_open_alerts', { count: 0 }], ['notifications.list_open_alerts', { count: 2, items: [] }],
+      ['notifications.list_open_alerts', { count: 1, items: [{ id: 'n1' }] }], ['notifications.list_open_alerts', { count: 1, items: [{ title: '  ' }] }],
+      ['notifications.list_open_alerts', { count: 0, items: [{ title: 'x' }] }],
+      ['notifications.list_open_alerts', { count: 1, items: [{ title: 'ดู https://evil.example' }] }],
+      ['workflow.list_assigned_tasks', { count: 0, items: [] }], ['workflow.list_recent_failures', { count: 0, items: [] }],
+      ['notifications.get_daily_summary', { total: 0, items: [] }],
+    ] as const) {
+      assert.equal(openWorkCardLayout(tool, data, asOf), undefined, `${tool} ${JSON.stringify(data)}`);
+    }
+  });
+
+  it('a read with no usable time has its items but no as-of row; with nothing to list it is no card at all', () => {
+    const layout = valid(openWorkCardLayout('workflow.list_assigned_tasks', { total: 1, items: [{ id: 't1', title: 'ตรวจใบเสร็จ' }] }, 'not-a-time'));
+    assert.deepEqual(layout.rows, [{ label: 'งานที่ 1', value: 'ตรวจใบเสร็จ' }]);
+    assert.equal(openWorkCardLayout('workflow.list_assigned_tasks', { total: 0, items: [] }, undefined), undefined);
   });
 });

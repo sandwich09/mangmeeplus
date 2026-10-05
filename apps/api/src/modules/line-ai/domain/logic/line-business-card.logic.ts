@@ -1,6 +1,7 @@
-import { AI_BUDGET_REFUSAL_CODES, type AiBudgetScope, type LineAiAnswerCard, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, parseLineAiAnswerCardLayout, type AiBudgetScope, type LineAiAnswerCard, type LineAiAnswerCardLayout, type LineAiTurnResponse, type PlanTermLockReason } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { lineMessagePreview as preview } from './line-message-preview.logic';
+import { buildLineSystemCardBubble, lineSystemCardAvailable, type LineSystemCard, type LineSystemCardIcon, type LineSystemCardRow } from './line-system-card.logic';
 import {
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
@@ -230,14 +231,9 @@ function labelFromLine(line: string): string | undefined {
   return label && Array.from(label).length <= MAX_BUTTON_LABEL ? label : undefined;
 }
 
-/** Deterministic replies (receipt/correction/reference) share the same card and link policy. */
-export function buildLineAssistantTextCardMessage(
-  text: string,
-  webBaseUrl: string | undefined,
-  companyId: string,
-  badge?: string,
-  title = 'ข้อมูลจากน้องมั่งมี',
-): LineReplyMessage {
+/** The prose of a reply and its safe web links, each lifted out of the text with the label its line
+ *  gave it. An unsafe or foreign link stays in the text exactly as it was written. */
+function splitReplyLinks(text: string, webBaseUrl: string | undefined, companyId: string): { body: string; links: Array<{ uri: string; label?: string }> } {
   const links: Array<{ uri: string; label?: string }> = [];
   const kept: string[] = [];
   for (const line of text.split('\n')) {
@@ -273,7 +269,18 @@ export function buildLineAssistantTextCardMessage(
       target.label = previous;
     }
   }
-  const body = kept.join('\n').replace(/[ \t]+\n/gu, '\n').replace(/\n{3,}/gu, '\n\n').trim();
+  return { body: kept.join('\n').replace(/[ \t]+\n/gu, '\n').replace(/\n{3,}/gu, '\n\n').trim(), links };
+}
+
+/** Deterministic replies (receipt/correction/reference) share the same card and link policy. */
+export function buildLineAssistantTextCardMessage(
+  text: string,
+  webBaseUrl: string | undefined,
+  companyId: string,
+  badge?: string,
+  title = 'ข้อมูลจากน้องมั่งมี',
+): LineReplyMessage {
+  const { body, links } = splitReplyLinks(text, webBaseUrl, companyId);
   const buttons = links.map((link, index) => ({
     label: link.label ?? (links.length === 1 ? 'เปิดดูในเว็บแอป' : `เปิดลิงก์ ${index + 1}`),
     uri: link.uri,
@@ -298,59 +305,229 @@ export function buildLineAssistantTextCardMessage(
   return message;
 }
 
-/** §10.1 expense draft card facts. Every field is a value the capture ALREADY produced and the
- *  canonical reply already prints; the card re-uses them and never derives, formats up, or invents one.
- *  A fact the capture did not ground is left `undefined` so its row is simply absent. */
+const SYSTEM_CARD_ROW_LIMIT = 16;
+const SYSTEM_CARD_LABEL_LIMIT = 40;
+const SYSTEM_CARD_VALUE_LIMIT = 200;
+const SYSTEM_CARD_NOTE_LIMIT = 4;
+const SYSTEM_CARD_NOTE_CHARS = 600;
+const within = (value: string, max: number) => Array.from(value).length <= max;
+/** Nothing on a card of the locked design is ever cut: what does not fit is not drawn as that card. */
+function systemCardHolds(rows: readonly LineSystemCardRow[], notes: readonly string[]): boolean {
+  return rows.length <= SYSTEM_CARD_ROW_LIMIT && notes.length <= SYSTEM_CARD_NOTE_LIMIT
+    && rows.every((row) => row.label.trim() && row.value.trim() && within(row.label, SYSTEM_CARD_LABEL_LIMIT) && within(row.value, SYSTEM_CARD_VALUE_LIMIT))
+    && notes.every((note) => note.trim() && within(note, SYSTEM_CARD_NOTE_CHARS));
+}
+
+const HEADER_LINE_GRAPHEMES = 14;
+const QUIET_HEADER_LINE_GRAPHEMES = 16;
+const thaiWords = new Intl.Segmenter('th', { granularity: 'word' });
+const thaiGraphemes = new Intl.Segmenter('th', { granularity: 'grapheme' });
+const graphemeCount = (value: string) => [...thaiGraphemes.segment(value.trim())].length;
+
+// Thai is written without spaces, and the word list that finds its words cuts finer than a reader
+// does: ค่า|ใช้|จ่าย, วัน|นี้, ใบ|เสร็จ. A heading broken there reads as a mistake, so a line never ends
+// on a word that only begins a name, never starts with one that only ends a phrase, and never cuts
+// the few names below. Not a grammar: a list of the breaks that looked wrong.
+const NEVER_ENDS_A_LINE = new Set(['ค่า', 'ใบ', 'การ', 'ความ', 'ผู้', 'นัก', 'ราย', 'ยอด', 'เท่า', 'แจ้ง', 'ขั้น', 'อย่าง', 'รอ', 'ที่', 'ของ', 'ใน', 'กับ', 'และ', 'หรือ', 'จาก', 'ถึง', 'ไม่', 'จะ']);
+const NEVER_STARTS_A_LINE = new Set(['นี้', 'นั้น', 'ๆ', 'ค่ะ', 'คะ', 'ครับ', 'จ้า', 'จ้ะ', 'นะ', 'จัง', 'เลย', 'ไหร่', 'ไร', 'ไง', 'หน่อย', 'ไป', 'มา']);
+const KEPT_WHOLE = ['ค่าใช้จ่าย', 'ใช้จ่าย', 'เบิกจ่าย', 'ใบกำกับภาษี', 'แพ็กเกจ', 'เจ้าหน้าที่', 'ณ ที่จ่าย'];
+
+/** The places a heading may be broken, as the two lines each break would give. */
+function headerSplits(text: string): Array<readonly [string, string]> {
+  const pieces = [...thaiWords.segment(text)];
+  const kept = KEPT_WHOLE.flatMap((name) => [...text.matchAll(new RegExp(name, 'gu'))].map((match) => [match.index, match.index + name.length] as const));
+  const splits: Array<readonly [string, string]> = [];
+  const thai = /[\u0E00-\u0E7F]/u.test(text);
+  for (let index = 1; index < pieces.length; index += 1) {
+    const at = pieces[index]!.index, before = pieces[index - 1]!.segment, after = pieces[index]!.segment;
+    if (kept.some(([start, end]) => at > start && at < end)) continue;
+    // A space the writer typed is a place to break — except, in a Thai sentence, between two words in
+    // Latin letters ("service charge" is one name there). Elsewhere the two lists decide.
+    if (thai && !before.trim() && /[A-Za-z]$/u.test(pieces[index - 2]?.segment ?? '') && /^[A-Za-z]/u.test(after)) continue;
+    if (thai && !after.trim() && /[A-Za-z]$/u.test(before) && /^[A-Za-z]/u.test(pieces[index + 1]?.segment ?? '')) continue;
+    if (before.trim() && after.trim() && (NEVER_ENDS_A_LINE.has(before) || NEVER_STARTS_A_LINE.has(after))) continue;
+    const first = text.slice(0, at).trim(), second = text.slice(at).trim();
+    if (first && second) splits.push([first, second]);
+  }
+  return splits;
+}
+
+/**
+ * The two header lines of an answer: the reader's own words (design lock §7: the header says what
+ * was answered; a short question may be the heading, a long one is shortened). A short message is
+ * broken where its two lines come out most even; one that has no place to break stands under
+ * `ข้อความของคุณ`; a long one keeps its beginning and ends in an ellipsis, in the quieter style.
+ * Nothing is rephrased, so no heading can say something the reader did not.
+ */
+export function lineAnswerCardHeader(question: string | undefined): LineSystemCard['header'] | undefined {
+  const text = (question ?? '').replace(/\s+/gu, ' ').trim();
+  if (!text) return undefined;
+  const splits = headerSplits(text);
+  const even = splits.filter(([first, second]) => graphemeCount(first) <= HEADER_LINE_GRAPHEMES && graphemeCount(second) <= HEADER_LINE_GRAPHEMES)
+    .sort((a, b) => Math.abs(graphemeCount(a[0]) - graphemeCount(a[1])) - Math.abs(graphemeCount(b[0]) - graphemeCount(b[1])))[0];
+  if (even) return { lines: [even[0], even[1]], question: true };
+  if (graphemeCount(text) <= HEADER_LINE_GRAPHEMES) return { lines: ['ข้อความของคุณ', text] };
+  // The longest beginning that fits the first line, then as much of the rest as the second holds.
+  const first = splits.filter(([line]) => graphemeCount(line) <= QUIET_HEADER_LINE_GRAPHEMES).at(-1);
+  const cut = (value: string, max: number) => [...thaiGraphemes.segment(value)].slice(0, max).map((piece) => piece.segment).join('').trim();
+  const head = first?.[0] ?? cut(text, QUIET_HEADER_LINE_GRAPHEMES);
+  const rest = first?.[1] ?? text.slice(head.length).trim();
+  if (!rest) return undefined;
+  if (graphemeCount(rest) <= QUIET_HEADER_LINE_GRAPHEMES) return { lines: [head, rest], question: true, quiet: true };
+  const tail = headerSplits(rest).filter(([line]) => graphemeCount(line) <= QUIET_HEADER_LINE_GRAPHEMES - 1).at(-1)?.[0] ?? cut(rest, QUIET_HEADER_LINE_GRAPHEMES - 1);
+  return { lines: [head, `${tail}…`], question: true, quiet: true };
+}
+
+/**
+ * A reply that is a sentence, on the locked design: two header lines, the sentence, and its one web
+ * link as the button. `undefined` when this design cannot carry the reply whole — no https base for
+ * the pictures, a second link, or more text than the paper holds — and the caller sends what it sent
+ * before. The text stays the canonical answer and the fallback.
+ */
+export function buildLineSystemTextCardMessage(input: {
+  text: string;
+  header: LineSystemCard['header'];
+  webBaseUrl: string | undefined;
+  companyId: string;
+  textStyle?: LineSystemCard['textStyle'];
+  icon?: LineSystemCardIcon;
+  /** What the button says when the reply's own line did not name the link. */
+  linkLabel?: string;
+  footnotes?: readonly string[];
+}): LineReplyMessage | undefined {
+  if (!lineSystemCardAvailable(input.webBaseUrl)) return undefined;
+  const { body, links } = splitReplyLinks(input.text, input.webBaseUrl, input.companyId);
+  if (!body || links.length > 1 || !within(body, ANSWER_CARD_BODY_LIMIT)) return undefined;
+  const label = links[0] && bounded(links[0].label ?? input.linkLabel ?? 'เปิดดูในเว็บแอป', MAX_BUTTON_LABEL);
+  return asCompleteLineCard({
+    type: 'flex',
+    altText: preview(body, 400),
+    canonicalText: input.text,
+    contents: buildLineSystemCardBubble({
+      mascot: 'general', header: input.header, text: body, textStyle: input.textStyle ?? 'result',
+      ...(input.footnotes?.length ? { footnotes: input.footnotes } : {}),
+      ...(links[0] && label ? { button: { action: { type: 'uri', label, uri: links[0].uri }, icon: input.icon ?? 'receipt' } } : {}),
+    }, input.webBaseUrl),
+  });
+}
+
+/**
+ * The receipt draft card (§10.1, locked design context 6 "รอตรวจสอบ"). Every row and note is a value the
+ * capture ALREADY produced and the canonical reply already states; the reply's formatter builds both
+ * from one reading of the record, and a fact it did not ground has no row.
+ */
 export type LineExpenseDraftCardFacts = {
   expenseId: string;
-  amount?: string | null;
-  item?: string | null;
-  category?: string | null;
-  status?: string | null;
+  /** The header's first line: what was captured (`ข้อมูลใบเสร็จ` for a receipt). The second is รอตรวจสอบ. */
+  subject: string;
+  rows: LineSystemCardRow[];
+  notes: string[];
 };
 
-const EXPENSE_DRAFT_CARD_ROWS = [
-  ['amount', 'ยอดรวม'], ['item', 'รายการ'], ['category', 'หมวดหมู่'], ['status', 'สถานะ'],
-] as const;
+/** The record EXISTS but is unconfirmed — the same state the canonical reply's header prints
+ *  ("บันทึก…เบื้องต้นแล้ว (รอตรวจสอบ)"), said once on the card, and never by a model. */
+export const EXPENSE_DRAFT_CARD_NOTE = 'รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ';
 
-/** §10.1: the expense capture terminal gets its OWN card — amount, item, category and status each on
- *  their own row — instead of the generic card wrapping a canonical reply that its 1,200-character body
- *  would silently cut (§10.2). Only rows the capture actually grounded are drawn.
+/** The header's first line of the review card: a receipt is called a receipt, a typed note a draft,
+ *  and any other paper simply a document — the row below it names the kind. */
+export function expenseDraftCardSubject(sourceDocumentType: string | null | undefined, textOnly = false): string {
+  return textOnly ? 'ร่างค่าใช้จ่าย' : sourceDocumentType === 'RECEIPT' ? 'ข้อมูลใบเสร็จ' : 'ข้อมูลเอกสาร';
+}
+
+/** What a producer of a draft's review card knows, each value already in the words it would print
+ *  (a formatted date, an amount with its unit). A value that is missing or blank has no row. */
+export type LineExpenseDraftCardValues = {
+  expenseId: string;
+  /** `ข้อมูลใบเสร็จ` for a receipt, `ข้อมูลเอกสาร` for another paper, `ร่างค่าใช้จ่าย` for a typed note. */
+  subject: string;
+  vendor?: string | null;
+  item?: string | null;
+  date?: string | null;
+  documentNumber?: string | null;
+  documentType?: string | null;
+  category?: string | null;
+  total?: string | null;
+  vat?: string | null;
+  withholdingTax?: string | null;
+  otherCharges?: string | null;
+  /** The record's own state in words (`EXPENSE_STATUS_LABELS`). */
+  status: string;
+  /** What the reply says before its facts, and after them; each is a note, word for word. */
+  notesBefore?: ReadonlyArray<string | null | undefined>;
+  notesAfter?: ReadonlyArray<string | null | undefined>;
+};
+
+/**
+ * The review card's rows, in the locked design's order and under its names, for every producer of a
+ * draft's card (the photo terminal, the file result): ONE place decides what a row is called and
+ * where it stands, so two producers cannot draw the same record two ways. A value nobody grounded is
+ * left out — never a placeholder. The state is always the last row, as a pending pill.
+ */
+export function expenseDraftCardFactsFrom(values: LineExpenseDraftCardValues): LineExpenseDraftCardFacts {
+  const row = (label: string, value: string | null | undefined, extra: Partial<LineSystemCardRow> = {}): LineSystemCardRow[] =>
+    value?.trim() ? [{ label, value: value.trim(), ...extra }] : [];
+  const notes = (entries: ReadonlyArray<string | null | undefined> = []) => entries.map((entry) => entry?.trim()).filter((entry): entry is string => !!entry);
+  const vendor = values.vendor?.trim();
+  return {
+    expenseId: values.expenseId,
+    subject: values.subject,
+    rows: [
+      ...row('ผู้ขาย / ร้านค้า', vendor),
+      ...row('รายการ', values.item?.trim() !== vendor ? values.item : undefined),
+      ...row('วันที่เอกสาร', values.date),
+      ...row('เลขเอกสาร', values.documentNumber),
+      ...row('ประเภทเอกสาร', values.documentType),
+      ...row('หมวดค่าใช้จ่าย', values.category),
+      ...row('ยอดรวม', values.total, { total: true }),
+      ...row('VAT', values.vat),
+      ...row('ภาษีหัก ณ ที่จ่าย', values.withholdingTax),
+      ...row('ค่าบริการอื่นๆ', values.otherCharges),
+      { label: 'สถานะเอกสาร', value: values.status, pill: 'pending' },
+    ],
+    notes: [...notes(values.notesBefore), EXPENSE_DRAFT_CARD_NOTE, ...notes(values.notesAfter)],
+  };
+}
+
+/** §10.1: the capture terminal as the locked review card — the review mascot, the facts as
+ *  `label : value` rows, the draft's notes, and the one button that opens the record for review.
  *
  *  `altText` stays the CANONICAL text, not a summary of the rows: it is what the chat list and the push
  *  notification show, and it is what the Flex→text fallback re-sends, so a downgraded delivery reads as
  *  the same words the plain-text reply carries. Same 400-character `preview` ceiling as every sibling
- *  card — a longer canonical text is VISIBLY marked, never silently cut. */
+ *  card — a longer canonical text is VISIBLY marked, never silently cut.
+ *
+ *  Nothing grounded to show, no https base for the pictures, or a fact longer than a row holds is not
+ *  this card: the generic text card is still the honest render of the same reply. */
 export function buildExpenseDraftCardMessage(
   canonicalText: string,
   facts: LineExpenseDraftCardFacts,
   webBaseUrl: string | undefined,
   companyId: string,
 ): LineReplyMessage {
-  const rows = EXPENSE_DRAFT_CARD_ROWS
-    .map(([key, label]) => ({ label, value: (facts[key] ?? '').trim() }))
-    .filter(({ value }) => value.length > 0);
-  // Nothing grounded to show is not a card. The generic text card is still the honest render of the
-  // same reply, so the turn degrades to it rather than shipping an empty ร่างค่าใช้จ่าย frame.
-  if (rows.length === 0) return buildLineAssistantTextCardMessage(canonicalText, webBaseUrl, companyId);
+  return buildExpenseDraftReviewCard(canonicalText, facts, webBaseUrl, companyId) ?? buildLineAssistantTextCardMessage(canonicalText, webBaseUrl, companyId);
+}
+
+/** The review card alone: `undefined` where `buildExpenseDraftCardMessage` falls back to the text card. */
+export function buildExpenseDraftReviewCard(
+  canonicalText: string,
+  facts: LineExpenseDraftCardFacts,
+  webBaseUrl: string | undefined,
+  companyId: string,
+): LineReplyMessage | undefined {
   const actionUrl = safeTenantLink(webBaseUrl, companyId, `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`);
-  const recoveryText = actionUrl && !canonicalText.includes(actionUrl) ? `${canonicalText}\nเปิดดูรายการ: ${actionUrl}` : canonicalText;
-  return {
+  const rows = facts.rows.filter((row) => row.value.trim());
+  const notes = facts.notes.filter((note) => note.trim());
+  if (!lineSystemCardAvailable(webBaseUrl) || !actionUrl || rows.length === 0 || !systemCardHolds(rows, notes)) return undefined;
+  return asCompleteLineCard({
     type: 'flex',
     altText: preview(canonicalText, 400) || 'ร่างค่าใช้จ่าย',
-    canonicalText: recoveryText,
-    contents: bubble(
-      {
-        title: 'ร่างค่าใช้จ่าย',
-        text: '',
-        webLink: {
-          label: 'เปิดตรวจสอบในเว็บ',
-          path: `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`,
-        },
-      },
-      webBaseUrl, companyId, undefined, rows,
-    ),
-  };
+    // The button as a line too: a text delivery still carries the way in.
+    canonicalText: canonicalText.includes(actionUrl) ? canonicalText : `${canonicalText}\nเปิดดูรายการ: ${actionUrl}`,
+    contents: buildLineSystemCardBubble({
+      mascot: 'review', header: { lines: [facts.subject, 'รอตรวจสอบ'] }, rows, notes,
+      button: { action: { type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: actionUrl }, icon: 'clipboard', primary: true },
+    }, webBaseUrl),
+  });
 }
 
 /** Reimbursement intake, step one. Who paid decides the whole flow, so this card asks exactly that and
@@ -729,16 +906,98 @@ function answerCardsCoverCompleteReply(response: LineAiTurnResponse, cards: Line
   });
 }
 
-/** Renderer only: presentation is structured by the trusted gateway; raw model Flex JSON is never accepted. */
+const LAYOUT_BUTTON_ICON: Record<Exclude<LineAiAnswerCardLayout['context'], 'edit_command'>, LineSystemCardIcon> = {
+  expense_summary: 'receipt', open_work: 'list', expense_record: 'file', payment: 'receipt',
+};
+
+/** One answer card on the locked design: the gateway's rows when it sent a layout for the whole
+ *  reply, otherwise the answer as prose under the reader's own question. `undefined` when the design
+ *  cannot hold it — the caller then sends the reply the way it always has. */
+function designedAnswerBubble(
+  card: LineAiAnswerCard,
+  layout: LineAiAnswerCardLayout | undefined,
+  question: string | undefined,
+  webBaseUrl: string,
+  companyId: string,
+): Record<string, unknown> | undefined {
+  const uri = card.webLink && safeTenantLink(webBaseUrl, companyId, card.webLink.path);
+  const button = (label: string, icon: LineSystemCardIcon) => uri
+    ? { button: { action: { type: 'uri' as const, label: bounded(label || 'เปิดดูข้อมูล', MAX_BUTTON_LABEL), uri }, icon } } : {};
+  if (layout && layout.context !== 'edit_command') {
+    const rows = layout.rows.map((row) => ({ label: row.label, value: row.value, ...(row.emphasis ? { total: true } : {}), ...(row.tone ? { pill: row.tone } : {}) }));
+    if (!systemCardHolds(rows, layout.notes ?? [])) return undefined;
+    return buildLineSystemCardBubble({
+      mascot: 'general', header: { lines: layout.header }, rows,
+      ...(layout.banner ? { banner: layout.banner } : {}),
+      ...(layout.notes ? { notes: layout.notes } : {}),
+      ...button(layout.linkLabel ?? card.webLink?.label ?? '', LAYOUT_BUTTON_ICON[layout.context]),
+    }, webBaseUrl);
+  }
+  const header = layout ? { lines: layout.header } : lineAnswerCardHeader(question);
+  if (!header) return undefined;
+  const sources = (card.sourceLabels ?? []).map((label) => label.trim()).filter(Boolean);
+  return buildLineSystemCardBubble({
+    mascot: 'general', header, textStyle: layout ? 'result' : 'answer',
+    text: [card.title, card.badge, card.text].map((part) => part?.trim()).filter(Boolean).join('\n'),
+    ...(sources.length ? { footnotes: [`แหล่งข้อมูล: ${sources.join(', ')}`] } : {}),
+    ...button(layout?.linkLabel ?? card.webLink?.label ?? '', layout ? 'receipt' : 'file'),
+  }, webBaseUrl);
+}
+
+/** The answer cards the gateway structured, without a refused turn's. */
+function answerCards(response: LineAiTurnResponse): LineAiAnswerCard[] {
+  return !response.refused && response.presentation?.kind === 'answer_cards'
+    ? response.presentation.cards.filter((card) => card.text.trim())
+    : [];
+}
+
+/**
+ * A gateway answer on the locked System OA design, or `undefined` when the design cannot show the
+ * WHOLE answer — no https base for the pictures, no question to head a prose answer, a second link,
+ * more text than the paper holds, or cards that do not cover the reply. The caller then sends the
+ * answer the way it did before the design, which is also this card's fallback text.
+ * `question` is the reader's own message; it heads an answer that has no structured layout.
+ */
+export function buildDesignedLineAnswerMessage(
+  response: LineAiTurnResponse,
+  fallbackText: string,
+  webBaseUrl: string | undefined,
+  companyId: string,
+  question: string | undefined,
+): LineReplyMessage | undefined {
+  if (!lineSystemCardAvailable(webBaseUrl)) return undefined;
+  const cards = answerCards(response);
+  const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId);
+  if (cards.length === 0) {
+    const header = lineAnswerCardHeader(question);
+    return header && buildLineSystemTextCardMessage({ text: canonicalText || fallbackText, header, webBaseUrl, companyId, textStyle: 'answer', icon: 'file' });
+  }
+  if (!answerCardsCoverCompleteReply(response, cards, webBaseUrl, companyId)) return undefined;
+  // A layout stands for the whole reply or for nothing: it is honoured on the one card whose text IS the reply.
+  const layout = cards.length === 1 && cards[0]!.text.trim() === response.replyText.trim() ? parseLineAiAnswerCardLayout(cards[0]!.layout) : undefined;
+  const bubbles = cards.map((card) => designedAnswerBubble(card, layout, question, webBaseUrl, companyId));
+  if (!bubbles.every((entry): entry is Record<string, unknown> => !!entry)) return undefined;
+  return asCompleteLineCard({
+    type: 'flex',
+    altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',
+    canonicalText,
+    contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles },
+  });
+}
+
+/** Renderer only: presentation is structured by the trusted gateway; raw model Flex JSON is never accepted.
+ *  The locked design first (`buildDesignedLineAnswerMessage`); below it is the reply as it was before the
+ *  design, for everything the design cannot show whole. */
 export function buildLineBusinessAnswerMessage(
   response: LineAiTurnResponse,
   fallbackText: string,
   webBaseUrl: string | undefined,
   companyId: string,
+  question?: string,
 ): LineReplyMessage {
-  const cards = !response.refused && response.presentation?.kind === 'answer_cards'
-    ? response.presentation.cards.filter((card) => card.text.trim())
-    : [];
+  const designed = buildDesignedLineAnswerMessage(response, fallbackText, webBaseUrl, companyId, question);
+  if (designed) return designed;
+  const cards = answerCards(response);
   const title = answerCardTitle(response);
   const canonicalText = completeAnswerText(response, cards, webBaseUrl, companyId);
   if (cards.length === 0) return buildLineAssistantTextCardMessage(canonicalText || fallbackText, webBaseUrl, companyId, undefined, title);

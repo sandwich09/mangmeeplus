@@ -743,7 +743,7 @@ export const LINE_AI_PRESENTATION_PERMISSION_MANIFEST: readonly PresentationPerm
     authority: 'allowed', expectedCtaPolicy: 'tenant_path_no_financial_params',
     expectedWebPath: '/companies/{companyId}/expenses/{expenseId}',
     expectedDomainWriteCount: 1, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
-    note: 'DEFAULT OFF (LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED): §10.1 dedicated "ร่างค่าใช้จ่าย" card with '
+    note: 'Card reply is always on: §10.1 dedicated "ร่างค่าใช้จ่าย" card with '
       + 'amount/item/category/status rows, built ONLY from grounded capture values — an ungrounded row is '
       + 'omitted, never filled. altText stays the canonical reply text. Code path and fixtures exist; no '
       + 'provider-replay or UAT evidence recorded yet.',
@@ -861,7 +861,7 @@ export const LINE_AI_PRESENTATION_PERMISSION_MANIFEST: readonly PresentationPerm
     authority: 'allowed', expectedCtaPolicy: 'no_cta',
     expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, expectedLongReplyThreshold: 1_200,
     evidenceStatus: 'implemented_fixture',
-    note: 'Behind LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED a terminal longer than the 1,200 a Flex body keeps '
+    note: 'Card reply is always on: a terminal longer than the 1,200 a Flex body keeps '
       + 'ships INTACT as text and a short server-owned card closes the turn after it — never a 1,200-character '
       + 'slice of the answer. At the five-message cap the card is dropped instead, so no part is ever lost to '
       + 'make room for it. Fixtures: line-intake-dispatch.use-case.spec.ts "multi-part terminal Flex".',

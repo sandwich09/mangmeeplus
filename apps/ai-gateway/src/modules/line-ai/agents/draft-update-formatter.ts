@@ -13,7 +13,8 @@
  * print buttons whose postbacks it must later re-derive (SEC-04). The text says what pressing them
  * means, so a Flex-less delivery still explains the choice.
  */
-import { scrubRecordIdentifier, scrubRecordText } from '@watchdog-bms/contracts';
+import { LINE_DRAFT_UPDATE_CARD_CONTEXT, LINE_DRAFT_UPDATE_CARD_STATES, LINE_DRAFT_UPDATE_CONFIRM_HINT, lineDraftUpdateBlockedState, scrubRecordIdentifier, scrubRecordText } from '@watchdog-bms/contracts';
+import type { LineAiAnswerCardLayout } from '@watchdog-bms/contracts';
 
 const MAX_ROWS = 5;
 
@@ -112,8 +113,23 @@ export function formatDraftUpdateReply(data: unknown): string | undefined {
     ...rows as string[],
     `ยอดรวมใหม่ ${after} (เดิม ${before})`,
     ...warnings,
-    'กด [ยืนยัน] เพื่อบันทึก หรือ [ยกเลิก] ถ้ายังไม่แก้ค่ะ — ยังไม่ได้บันทึกอะไรจนกว่าจะกดยืนยันนะคะ',
+    LINE_DRAFT_UPDATE_CONFIRM_HINT,
   ].join('\n');
+}
+
+/**
+ * The header of the locked "แก้ไขค่าใช้จ่าย" card for a draft-edit tool result: the context and the state
+ * the result itself reports — a proposal waiting for the buttons, a question back, or a record left as
+ * it was. No rows: the card's body is the answer's own sentence, and the figures of a proposal are on
+ * the API's confirm card, which alone may print them beside its buttons.
+ */
+export function draftUpdateCardLayout(data: unknown): LineAiAnswerCardLayout | undefined {
+  const payload = record(data);
+  if (!payload || payload['found'] !== true) return undefined;
+  const state = record(payload['preview']) ? 'preview' as const
+    : typeof payload['blocked'] === 'string' ? lineDraftUpdateBlockedState(payload['blocked'])
+      : record(payload['moveSuggestion']) ? 'unchanged' as const : undefined;
+  return state && { context: 'edit_command', header: [LINE_DRAFT_UPDATE_CARD_CONTEXT, LINE_DRAFT_UPDATE_CARD_STATES[state]], rows: [] };
 }
 
 /** One honest sentence per refusal. Nothing here invents a number or a record name. */

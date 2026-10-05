@@ -7,7 +7,8 @@ import {
 } from './line-ai-advisor-answer.js';
 import {
   ADVISOR_REFUSAL_CODES, ADVISOR_TONE_PREFACES, asIntakeRouteIntent, asIntakeRouterCapabilities,
-  isBusinessIntakeIntent, LINE_INTAKE_ROUTE_INTENTS, MANGMEE_CONVERSATION_MODES, parseLineAiResponsePreferenceCommand,
+  isBusinessIntakeIntent, LINE_AI_ANSWER_CARD_CONTEXTS, LINE_DRAFT_UPDATE_CARD_CONTEXT, LINE_DRAFT_UPDATE_CARD_STATES, LINE_INTAKE_ROUTE_INTENTS,
+  lineDraftUpdateBlockedState, MANGMEE_CONVERSATION_MODES, parseLineAiAnswerCardLayout, parseLineAiResponsePreferenceCommand,
 } from './line-ai.js';
 import type { AdvisorRefusalCode, AdvisorTonePreface, MangmeeConversationMode, PreparedAdvisorAnswer } from './line-ai.js';
 import { createLineAiInputEvidence } from './line-ai-input-evidence.js';
@@ -282,5 +283,97 @@ describe('parseLineAiResponsePreferenceCommand', () => {
   it('is a trusted router capability only as a literal true', () => {
     assert.deepEqual(asIntakeRouterCapabilities({ responsePreference: true }), { responsePreference: true });
     assert.deepEqual(asIntakeRouterCapabilities({ responsePreference: 'true' }), {});
+  });
+});
+
+// ── The card layout an answer may carry (design lock 2026-10-04) ──────────────────────────────────
+// Optional presentation metadata on `LineAiAnswerCard`, written by the trusted gateway from tool
+// results. Every receiver re-parses it; what does not parse is dropped and the card is its `text`.
+describe('parseLineAiAnswerCardLayout — bounded presentation metadata, never Flex', () => {
+  const layout = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    context: 'payment',
+    header: ['การชำระเงิน', 'ชำระแล้ว'],
+    rows: [
+      { label: 'ยอดสุทธิที่ต้องจ่าย', value: '1,284.00 บาท', emphasis: 'total' },
+      { label: 'สถานะชำระเงิน', value: 'ชำระแล้ว', tone: 'ok' },
+    ],
+    banner: { tone: 'ok', text: 'ชำระแล้ว · ยอดคงค้าง 0.00 บาท' },
+    notes: ['แสดงเฉพาะรายการของคุณ'],
+    linkLabel: 'เปิดดูรายการในเว็บ',
+    ...over,
+  });
+
+  it('returns exactly the fields it knows, for every context', () => {
+    assert.deepEqual(parseLineAiAnswerCardLayout(layout()), layout());
+    for (const context of LINE_AI_ANSWER_CARD_CONTEXTS) {
+      const rows = context === 'edit_command' ? [] : [{ label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }];
+      assert.deepEqual(parseLineAiAnswerCardLayout({ context, header: ['ก', 'ข'], rows }), { context, header: ['ก', 'ข'], rows }, context);
+    }
+  });
+
+  it('returns undefined for an older gateway that sends nothing and for anything that is not a layout', () => {
+    for (const legacy of [undefined, null, '', 'bubble', 3, true, [], () => {}]) assert.equal(parseLineAiAnswerCardLayout(legacy as unknown), undefined);
+  });
+
+  it('refuses Flex JSON and any key it does not know — a model can add nothing through this field', () => {
+    for (const bad of [
+      { type: 'bubble', body: { type: 'box', layout: 'vertical', contents: [] } },
+      layout({ contents: { type: 'bubble' } }), layout({ type: 'flex' }), layout({ action: { type: 'uri', uri: 'https://evil.example' } }),
+      layout({ rows: [{ label: 'ก', value: 'ข', action: { type: 'postback', data: 'x' } }] }),
+      layout({ banner: { tone: 'ok', text: 'ก', color: '#ff0000' } }),
+    ]) assert.equal(parseLineAiAnswerCardLayout(bad), undefined, JSON.stringify(bad));
+  });
+
+  it('refuses a context, tone or emphasis outside its list', () => {
+    for (const bad of [
+      layout({ context: 'marketing' }), layout({ context: undefined }), layout({ rows: [{ label: 'ก', value: 'ข', tone: 'danger' }] }),
+      layout({ rows: [{ label: 'ก', value: 'ข', emphasis: 'bold' }] }), layout({ banner: { tone: 'closed', text: 'ก' } }), layout({ banner: { tone: 'scanning', text: 'ก' } }),
+    ]) assert.equal(parseLineAiAnswerCardLayout(bad), undefined, JSON.stringify(bad));
+  });
+
+  it('holds the header to exactly two lines', () => {
+    for (const header of [[], ['หัวเดียว'], ['ก', 'ข', 'ค'], ['ก', ''], ['ก', '   '], ['ก', 7], 'ก ข', ['ก'.repeat(41), 'ข']]) {
+      assert.equal(parseLineAiAnswerCardLayout(layout({ header })), undefined, JSON.stringify(header));
+    }
+  });
+
+  it('bounds every string, and never lets a link or a control character onto a card', () => {
+    const rowOf = (label: string, value: string) => layout({ rows: [{ label, value }] });
+    assert.ok(parseLineAiAnswerCardLayout(rowOf('ก'.repeat(40), 'ข'.repeat(200))));
+    for (const bad of [
+      rowOf('ก'.repeat(41), 'ข'), rowOf('ก', 'ข'.repeat(201)), rowOf('', 'ข'), rowOf('ก', ' '),
+      rowOf('ลิงก์', 'ดู https://evil.example/x'), rowOf('ลิงก์', 'HTTP://evil.example'), rowOf('ก', 'บรรทัดแรก\nบรรทัดสอง'), rowOf('ก\u0000', 'ข'),
+      layout({ notes: ['ก'.repeat(301)] }), layout({ notes: ['1', '2', '3', '4', '5'] }), layout({ notes: 'หมายเหตุ' }), layout({ notes: ['ดู http://evil.example'] }),
+      layout({ banner: { tone: 'ok', text: 'ก'.repeat(121) } }), layout({ linkLabel: 'ก'.repeat(41) }), layout({ linkLabel: 'https://evil.example' }),
+      layout({ rows: Array.from({ length: 17 }, () => ({ label: 'ก', value: 'ข' })) }), layout({ rows: 'ก' }), layout({ rows: [null] }),
+    ]) assert.equal(parseLineAiAnswerCardLayout(bad), undefined, JSON.stringify(bad).slice(0, 120));
+  });
+
+  it('keeps rows for the cards that have them and none for the edit-command card, whose body is the answer text', () => {
+    assert.equal(parseLineAiAnswerCardLayout(layout({ rows: [] })), undefined);
+    assert.equal(parseLineAiAnswerCardLayout({ context: 'edit_command', header: ['แก้ไขค่าใช้จ่าย', 'รอยืนยัน'], rows: [{ label: 'ก', value: 'ข' }] }), undefined);
+  });
+
+  it('copies what it accepts: the result shares nothing with the untrusted input', () => {
+    const input = layout();
+    const parsed = parseLineAiAnswerCardLayout(input)!;
+    (input['rows'] as Array<Record<string, unknown>>)[0]!['value'] = 'แก้ทีหลัง';
+    (input['notes'] as string[]).push('เพิ่มทีหลัง');
+    assert.equal(parsed.rows[0]!.value, '1,284.00 บาท');
+    assert.deepEqual(parsed.notes, ['แสดงเฉพาะรายการของคุณ']);
+  });
+});
+
+describe('edit-command card states — one set of words for the API and the gateway', () => {
+  it('names the four locked states and the one for a record left as it was', () => {
+    assert.equal(LINE_DRAFT_UPDATE_CARD_CONTEXT, 'แก้ไขค่าใช้จ่าย');
+    assert.deepEqual(LINE_DRAFT_UPDATE_CARD_STATES, {
+      preview: 'รอยืนยัน', applied: 'แก้ไขแล้ว', cancelled: 'ยกเลิกแล้ว', needs_input: 'ขอข้อมูลเพิ่ม', unchanged: 'ยังไม่ได้แก้ไข',
+    });
+  });
+
+  it('calls a refusal a question only when the user can answer it', () => {
+    for (const reason of ['ambiguous_line', 'ambiguous_record', 'ungrounded_value', 'invalid_patch']) assert.equal(lineDraftUpdateBlockedState(reason), 'needs_input', reason);
+    for (const reason of ['mutation_blocked', 'no_recent_record', 'rate_limited', 'forbidden', '', 'anything_new']) assert.equal(lineDraftUpdateBlockedState(reason), 'unchanged', reason);
   });
 });

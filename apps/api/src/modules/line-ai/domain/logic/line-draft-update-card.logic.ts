@@ -12,9 +12,14 @@ import { lineMessagePreview } from './line-message-preview.logic';
  * The two buttons carry the exact preview id shown on this card, and no expense or company id.
  * The server re-checks company, chat, user, permission, status and record revision before acting.
  */
-import { scrubRecordIdentifier, scrubRecordText, type LineDraftUpdateDiffField, type LineDraftUpdatePreview, type VendorCounterpartyAutoSaveResult } from '@watchdog-bms/contracts';
+import {
+  LINE_DRAFT_UPDATE_CARD_CONTEXT, LINE_DRAFT_UPDATE_CARD_STATES, LINE_DRAFT_UPDATE_CONFIRM_HINT, lineDraftUpdateBlockedState, scrubRecordIdentifier, scrubRecordText,
+  type LineDraftUpdateCardState, type LineDraftUpdateDiffField, type LineDraftUpdatePreview, type VendorCounterpartyAutoSaveResult,
+} from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { absoluteWebLink } from '../../../../common/http/web-link';
+import { buildLineSystemCardBubble, lineSystemCardAvailable, type LineSystemCard, type LineSystemCardRow } from './line-system-card.logic';
+import { buildLineSystemTextCardMessage } from './line-business-card.logic';
 
 export const DRAFT_UPDATE_CONFIRM_COMMAND = 'ยืนยันการแก้ไข';
 export const DRAFT_UPDATE_CANCEL_COMMAND = 'ยกเลิกการแก้ไข';
@@ -95,8 +100,48 @@ export function draftUpdateCanonicalDiff(preview: LineDraftUpdatePreview): strin
     ...preview.warnings.map(warning => `⚠️ ${scrubRecordText(warning, 1000)}`)].join('\n');
 }
 
-export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): LineReplyMessage {
+/** The locked design's "แก้ไขค่าใช้จ่าย" header: the context, then the state the edit is really in.
+ *  The words live in the contracts, where the gateway's layout of the same card reads them too. */
+export type DraftUpdateCardState = LineDraftUpdateCardState;
+export const draftUpdateCardHeader = (state: DraftUpdateCardState): LineSystemCard['header'] =>
+  ({ lines: [LINE_DRAFT_UPDATE_CARD_CONTEXT, LINE_DRAFT_UPDATE_CARD_STATES[state]] });
+export const draftUpdateBlockedState = lineDraftUpdateBlockedState;
+
+/** The proposal on the locked design: the record, every change, the new total in the cream row, and
+ *  the two buttons side by side. Same facts, same order of meaning and same postbacks as before. */
+function previewBubble(preview: LineDraftUpdatePreview, webBaseUrl: string): Record<string, unknown> {
   const totalChanged = preview.totalsBefore.grandTotalAmount !== preview.totalsAfter.grandTotalAmount;
+  const rows: LineSystemCardRow[] = [
+    { label: 'ผู้ขาย', value: scrubRecordText(preview.record.vendorName, 40) || 'ไม่ระบุผู้ขาย' },
+    { label: 'วันที่เอกสาร', value: formatThaiDate(preview.record.expenseDate) },
+    { label: 'สถานะเอกสาร', value: preview.record.statusLabel.slice(0, 40) },
+    ...preview.diff.map((entry) => ({ label: entry.label, value: diffValue(entry) })),
+    // An edit that leaves the total where it was has no "new" total to announce.
+    ...(totalChanged
+      ? [{ label: 'ยอดรวมใหม่', value: money(preview.totalsAfter.grandTotalAmount), total: true }, { label: 'ยอดรวมเดิม', value: money(preview.totalsBefore.grandTotalAmount) }]
+      : [{ label: 'ยอดรวม', value: `${money(preview.totalsAfter.grandTotalAmount)} (ไม่เปลี่ยน)`, total: true }]),
+  ];
+  return buildLineSystemCardBubble({
+    mascot: 'general', header: draftUpdateCardHeader('preview'), rows,
+    notes: preview.warnings.map((warning) => `⚠️ ${scrubRecordText(warning, 160)}`),
+    footnotes: [LINE_DRAFT_UPDATE_CONFIRM_HINT],
+    // SEC-04: the opaque id binds this button to this card; the server still rechecks the
+    // current preview, user/chat binding, record revision, permissions and status.
+    choice: [
+      { type: 'postback', label: 'ยืนยัน', data: 'action=draft-update-confirm&previewId=' + encodeURIComponent(preview.previewId), displayText: DRAFT_UPDATE_CONFIRM_COMMAND },
+      { type: 'postback', label: 'ยกเลิก', data: 'action=draft-update-cancel&previewId=' + encodeURIComponent(preview.previewId), displayText: DRAFT_UPDATE_CANCEL_COMMAND },
+    ],
+  }, webBaseUrl);
+}
+
+/** A row of the locked design holds this much; a longer label or change is shown on the card it had before. */
+const DESIGN_DIFF_ROWS = 10;
+const DESIGN_ROW_CHARS = 200;
+
+export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview, webBaseUrl?: string): LineReplyMessage {
+  const totalChanged = preview.totalsBefore.grandTotalAmount !== preview.totalsAfter.grandTotalAmount;
+  const designed = lineSystemCardAvailable(webBaseUrl) && preview.diff.length <= DESIGN_DIFF_ROWS && preview.warnings.length <= 3
+    && preview.diff.every((entry) => entry.label.trim() && Array.from(entry.label).length <= 40 && Array.from(diffValue(entry)).length <= DESIGN_ROW_CHARS);
   const rows = preview.diff.slice(0, MAX_DIFF_ROWS).map((entry) => ({
     type: 'box' as const,
     layout: 'vertical' as const,
@@ -112,7 +157,7 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
     // fallback delivery never silently loses the amount the user is being asked about.
     altText: lineMessagePreview(`${draftUpdateHeadline(preview)} · ยอดรวมใหม่ ${money(preview.totalsAfter.grandTotalAmount)} — หากไม่เห็นปุ่ม ให้ส่งคำขอแก้ไขใหม่เพื่อรับบัตรอีกครั้ง`),
     canonicalText: draftUpdateCanonicalDiff(preview),
-    contents: {
+    contents: designed ? previewBubble(preview, webBaseUrl) : {
       type: 'bubble',
       size: 'mega',
       body: {
@@ -183,6 +228,17 @@ export function buildDraftUpdatePreviewCard(preview: LineDraftUpdatePreview): Li
       },
     },
   };
+}
+
+/** What became of an edit, on the locked design: the header says the state, the body is the reply
+ *  itself and its web link is the button. `undefined` where the design cannot be drawn. */
+export function buildDraftUpdateOutcomeCard(
+  state: DraftUpdateCardState,
+  reply: string,
+  webBaseUrl: string | undefined,
+  companyId: string,
+): LineReplyMessage | undefined {
+  return buildLineSystemTextCardMessage({ text: reply, header: draftUpdateCardHeader(state), webBaseUrl, companyId, linkLabel: 'ดูในเว็บ' });
 }
 
 /** J3.2 — what actually changed, then the link. Numbers copied from the applied preview. */
