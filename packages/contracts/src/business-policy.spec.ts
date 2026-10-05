@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { reimbursementDuplicateBlockNotice } from './reimbursements.js';
+import * as reimbursementWords from './reimbursements.js';
+
+test('D2: payment-void notice follows the post-void state without promising payment through a duplicate block', () => {
+  const notice = (claim: object) => (reimbursementWords as any).reimbursementPaymentVoidedNotice(claim);
+  assert.equal(notice({ status: 'READY_FOR_PAYMENT', paymentDuplicateBlock: 'NONE', duplicateReasons: [] }),
+    'การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ใบเบิกกลับไปรอจ่าย');
+  for (const [block, reasons] of [['UNRESOLVED', ['ATTACHMENT_CHECKSUM']], ['CONFIRMED', ['EXPENSE_CONFIRMED_DUPLICATE']]] as const) {
+    for (const status of ['READY_FOR_PAYMENT', 'PARTIALLY_PAID']) {
+      const text = notice({ status, paymentDuplicateBlock: block, duplicateReasons: reasons });
+      assert.match(text, /^การจ่ายเงินที่บันทึกไว้ถูกยกเลิก /);
+      assert.doesNotMatch(text, /กลับไปรอจ่าย|[A-Za-z_]/);
+      assert.match(text, block === 'CONFIRMED' ? /ยกเลิก/ : /ปลดรายการซ้ำ/);
+    }
+  }
+  assert.doesNotMatch(notice({ status: 'PAID', paymentDuplicateBlock: 'NONE' }), /กลับไปรอจ่าย/);
+  assert.doesNotMatch(notice({ status: 'READY_FOR_PAYMENT', cancellationPending: true, paymentDuplicateBlock: 'NONE' }), /กลับไปรอจ่าย/);
+});
 
 test('confirmed receipt guidance gives the actual cancellation or payment-void path, never duplicate clearance', () => {
   const reasons = ['EXPENSE_CONFIRMED_DUPLICATE', 'ATTACHMENT_CHECKSUM'];

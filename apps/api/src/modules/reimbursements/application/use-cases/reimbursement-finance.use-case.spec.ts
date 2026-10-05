@@ -120,6 +120,7 @@ function fakeRepo(req: any, opts: {
     },
     findRequestById: async (_c: string, _id: string, withRel?: boolean) => (withRel ? { ...req, approvalSteps: [], payments, duplicateCandidates: [] } : req),
     findPolicy: async () => opts.policy ?? null,
+    paymentNoticeFacts: async () => ({ paymentDuplicateBlock: 'NONE', duplicateReasons: [] }),
     getUserDisplayNames: async () => ({}),
     // Preflight the use case runs before reserving a payment number (the repository repeats it
     // under the payment lock). Default: ready.
@@ -1287,6 +1288,19 @@ describe('FinanceReviewReimbursementUseCase', () => {
     return new FinanceReviewReimbursementUseCase(repo, noopAudit, projections, fakeDetailEvidence as any, { executeForReimbursement: async () => 0 } as any);
   }
 
+  it('D2: finance completion reads the transaction duplicate block and retains its decision event', async (t) => {
+    for (const block of ['CONFIRMED', 'UNRESOLVED', 'NONE']) await t.test(block, async () => {
+      const outboxRows: any[] = [];
+      const repo = fakeRepo(financeReviewedRequest({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' }), { outboxRows });
+      repo.paymentNoticeFacts = async (tx: any) => { assert.ok(tx.outboxEvent); return { paymentDuplicateBlock: block, duplicateReasons: [] }; };
+      await financeUC(repo).execute(ctx(['reimbursement.finance_review']), 'rb-1', { decision: 'APPROVED_FOR_PAYMENT' });
+      const ready = outboxRows.filter((event: any) => event.eventType === 'reimbursement.ready_for_payment');
+      assert.equal(ready.length, block === 'CONFIRMED' ? 0 : 1);
+      if (ready[0]) assert.equal(ready[0].payloadJson.data.paymentDuplicateBlock, block);
+      assert.ok(outboxRows.some((event: any) => event.eventType === 'reimbursement.finance_review_updated'));
+    });
+  });
+
   it('approves for payment and moves to READY_FOR_PAYMENT', async () => {
     const req = financeReviewedRequest({ status: 'FINANCE_REVIEW', financeReviewStatus: 'PENDING' });
     const calls: any[] = [];
@@ -1342,7 +1356,7 @@ describe('FinanceReviewReimbursementUseCase', () => {
     const ready = outboxRows.find((row) => row.eventType === 'reimbursement.ready_for_payment');
     assert.deepEqual(ready?.payloadJson.data, {
       requestId: 'rb-1', requestNo: 'RB-202601-000001', requesterUserId: 'staff-1',
-      status: 'READY_FOR_PAYMENT', decision: 'APPROVED_FOR_PAYMENT', amount: '500.0000', currency: 'THB',
+      status: 'READY_FOR_PAYMENT', decision: 'APPROVED_FOR_PAYMENT', amount: '500.0000', currency: 'THB', paymentDuplicateBlock: 'NONE',
     });
     assert.ok(
       outboxRows.some((row) => row.eventType === 'reimbursement.finance_projection_started'),

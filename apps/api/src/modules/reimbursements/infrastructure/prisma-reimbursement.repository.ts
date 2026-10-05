@@ -11,7 +11,7 @@ import { lockPlanTermCompany } from '../../system-partner-management/application
 import { isDeepStrictEqual } from 'node:util';
 import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { reimbursementDuplicateBlockNotice, reimbursementHubBucket } from '@watchdog-bms/contracts';
+import { reimbursementDuplicateBlockNotice, reimbursementHubBucket, reimbursementPaymentVoidedNotice } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimSignatureRole, ReimbursementHubBucket, ReimbursementPayoutCorrectionReason, ReimbursementPayoutRoundAnswer, ReimbursementRequestStatus,
 } from '@watchdog-bms/contracts';
@@ -80,7 +80,7 @@ import {
   deriveHeaderFromLines,
   computeReceiptRequirement,
   currentDesk,
-  duplicateBlocksPayment, claimDuplicateBlocksPayment, claimDuplicateReasons, confirmedDuplicateRefusal,
+  duplicateBlocksPayment, claimDuplicateBlocksPayment, claimPaymentDuplicateBlock, claimDuplicateReasons, confirmedDuplicateRefusal,
 } from '../domain/logic/reimbursement.logic';
 import { CLAIM_PAYOUT_WORKLIST_LIMIT, exclusiveEndOfDay, isExpenseVoidReason } from '@watchdog-bms/contracts';
 import { findClaimExpenseVoidBlocker, type ExpenseVoidBlocker } from '../../expenses/infrastructure/expense-void-blocker';
@@ -470,6 +470,16 @@ export class PrismaReimbursementRepository {
   }
 
   // ---- Policy ----
+
+  /** Every ready/void emitter reads the claim's own duplicate facts inside its write transaction. */
+  async paymentNoticeFacts(tx: Prisma.TransactionClient, companyId: string, requestId: string) {
+    const row = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId, id: requestId },
+      include: { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES } });
+    const request = this.toRequest(row);
+    const policyRow = await tx.reimbursementPolicy.findFirst({ where: { companyId, branchId: null } });
+    const policy = effectivePolicy(policyRow ? this.toPolicy(policyRow) : null);
+    return { paymentDuplicateBlock: claimPaymentDuplicateBlock(request, policy), duplicateReasons: claimDuplicateReasons(request) };
+  }
 
   async findPolicy(companyId: string, branchId?: string | null): Promise<ReimbursementPolicyRecord | null> {
     const rows = await this.prisma.client.reimbursementPolicy.findMany({
@@ -4154,7 +4164,9 @@ export class PrismaReimbursementRepository {
         await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
           aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,
           payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'reimbursement_payment', aggregateId: paymentId,
-            occurredAt: new Date().toISOString(), data: { requestId, requestNo: updated.requestNo, requesterUserId: updated.requesterUserId, paymentStatus, reversalEntryId: reversal.reversalEntryId } },
+            occurredAt: new Date().toISOString(), data: { requestId, requestNo: updated.requestNo, requesterUserId: updated.requesterUserId, paymentStatus, reversalEntryId: reversal.reversalEntryId,
+              paymentVoidedNotice: reimbursementPaymentVoidedNotice({ status: requestStatus, cancellationPending: !!updated.cancellationPendingAt,
+                ...await this.paymentNoticeFacts(tx, companyId, requestId) }) } },
           priority: 'NORMAL', status: 'PENDING' } });
       }
       return { request: this.toRequest(updated), payment: this.toPayment(payment), reversalEntryId: reversal.reversalEntryId };

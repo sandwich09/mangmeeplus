@@ -17,7 +17,8 @@ Scope: the follow-ups that were set aside when the scope was frozen before the 2
 
 Decisions:
 
-- Owner, 2026-10-05, Round 4 counts: "นับเฉพาะใบที่จ่ายได้จริง แต่เราก็มีเตือนเรื่องใบซ้ำด้วยใช่ไหม". The summary tile "รอจ่าย N", "ยอดคงค้างรวม", the hub payment bucket and LINE aggregate "อนุมัติแล้วรอจ่าย" count only their existing population minus `duplicateBlocksPayment` on the submitted policy. Blocked payment-step claims remain counted and listed under “ติดรายการซ้ำ”; reminders and a new duplicate notice are round D2.
+- Owner, 2026-10-05, Round 4 counts: "นับเฉพาะใบที่จ่ายได้จริง แต่เราก็มีเตือนเรื่องใบซ้ำด้วยใช่ไหม". The summary tile "รอจ่าย N", "ยอดคงค้างรวม", the hub payment bucket and LINE aggregate "อนุมัติแล้วรอจ่าย" count only their existing population minus `duplicateBlocksPayment` on the submitted policy. Blocked payment-step claims remain counted and listed under “ติดรายการซ้ำ”; D2 fixes existing payment notices; the new confirmed-duplicate notices are D3.
+- D2, controller brief 2026-10-05: confirmed-duplicate claims produce no payment reminder candidate or ready-to-pay event. Unresolved blockers retain the existing payment turn and receive a check-first sentence; void notices describe the post-void state. Company-admin conditions, recipients and cooldown are preserved; runtime wording and suppression do not depend on those conditions. Legacy events without the new facts retain previous wording. No new D3 notice.
 - Owner, 2026-10-05 ~09:45: "ทำงานเล็ก ต่อ แต่ยังไม่ต้อง deploy uat prod ใช้ codex เหมือนเดิม".
 - Owner, 2026-10-05 ~10:00, on a claim whose receipt a reviewer confirmed as a real duplicate and which could still be paid in full: "ก) ห้ามจ่ายจนกว่าจะเอารายการซ้ำออกหรือยกเลิกใบเบิก และมีคำแนะนำด้วย อย่าปิดเงียบ". The controller reads it as: under every duplicate policy; nothing already paid is reversed.
 - Controller (the owner delegated screen design on 2026-10-04): with the contact pair shown, an extra sort column replaces the note column on a desktop instead of narrowing every text column. The first pass narrowed them and cut the package badges and put an e-mail on three lines.
@@ -28,8 +29,7 @@ Open questions:
 
 - The business-type cell still splits some Thai compounds (สิน|ค้า, จัด|ทำ). The split comes from the browser's own Thai word list (the same library answers the same way outside a page), and the cell forces no break, so a layout rule cannot change it. Left.
 - With the churn filter the list can carry more than one extra fact column and then scrolls sideways, as before.
-- A claim blocked by a confirmed duplicate keeps its stored status. After the Round 4 counts decision, these follow-ups remain for D2 or later:
-  - the payment reminders and their notices (`workflow-template-catalog.ts`: "รอคุณบันทึกการจ่ายเงิน", "พร้อมจ่ายเบิกจ่าย", "ใบเบิกกลับไปรอจ่าย") can still name it. Changing that touches who is notified and the reminder selection;
+- A claim blocked by a confirmed duplicate keeps its stored status. After Round 4 D2, new confirmed-duplicate notices remain for D3; this separate follow-up remains:
   - the void dialog: its guidance is true but circular for the person voiding (it tells the voider to void).
 - The finance-review decision on a claim that is at the finance-review step with a confirmed duplicate is covered by unit tests only; it was not opened on a screen.
 
@@ -144,3 +144,53 @@ Run with the controller's real test database and `REIMBURSEMENT_PG_GATE_REQUIRED
 - `counts every hub card as the rows its filter returns over all pages: company, own, related and branch-limited, with and without a search`.
 
 Browser: verify hub card/chip/filter/search and pay-queue counts at desktop/phone widths, with mixed payable/blocked claims. Not checked here: no browser or servers allowed. Controller owns full verification and commit. D2 reminder selection/new duplicate notice remains unimplemented as requested; no unresolved D1 product decision.
+
+#### Round 4 — lane dupc D2, 2026-10-05
+
+Status: Implementation complete; focused checks and API typecheck pass. Uncommitted, ready for controller review. D1 accepted as `28ba338d2`; its two real-PostgreSQL tests passed according to the controller (not rerun by this lane).
+Owner: Lane dupc, controller reviews/commits and runs full integration acceptance.
+Scope: Existing payer reminders, every ready-to-pay emitter and requester payment-void notices. No migration, new notice, deployment or AI-gateway edit. Started 07:43 UTC; 45-minute cap is 08:28 UTC.
+Decisions: Same submitted-policy duplicate predicate and reasons. Confirmed means no payer notice: remove its scan candidate and ready event at their source, independent of a copied/admin-edited rule's condition. Unresolved means the existing payer turn with check-first wording. Old events without the field keep today's output. Existing recipient preference/order, branch/permission/active-member checks, exclusions, web-only actors, severity, period and cooldown remain. Template resync preserves actual admin edits; runtime source-aware wording still fixes unresolved/voided sentences even when the admin changed the trigger key. Existing stored notices are not backfilled in D2; new confirmed-duplicate notices are D3.
+Open questions: None for D2. Database/browser behavior not checked here (lane forbids database/network/server/browser work). No new PostgreSQL fixture; the controller's fallback-line trigger finding was read and respected.
+Artifacts: `paymentNoticeFacts(tx, companyId, requestId)` rereads the claim with the pay queue's live candidates/own expense select and the transaction's company policy. `claimPaymentDuplicateBlock` calls the existing `claimDuplicateBlocksPayment`/`duplicateBlocksPayment` and `claimDuplicateReasons`. Ready events carry only `paymentDuplicateBlock`; a void carries `paymentVoidedNotice` composed from post-void status, cancellation state and those facts. No account, free-text reason or duplicate target enters the new fields. Contracts own all three notices' sentences/title. Specs §17.3 and the duplicate Round 4 continuation reflect these rules.
+
+Emitter inventory (all call the same transaction helper):
+
+1. Normal manager approval: `ApproveReimbursementUseCase` completion callback.
+2. Payout-account reapproval: the same use case's `approvePayoutCorrectionAtomic` callback.
+3. Payout submission with no approval: `SubmitPayoutCorrectionUseCase` persisted callback.
+4. Initial submission with no approval/finance step: `SubmitReimbursementUseCase` policy completion callback.
+5. Finance approval: `FinanceReviewReimbursementUseCase` finance completion callback.
+6. Projection reconciler: MANAGER, FINANCE and POLICY replay completion callback.
+7. Payment void: `PrismaReimbursementRepository.voidPaymentTrueReversal`, after rollup/mirror changes (existing notice only).
+
+Verification:
+
+Prefixes: `A`, `W`, `G`, `H` are defined above; `C` below is `pnpm --filter @watchdog-bms/contracts exec node --import tsx --test`. All test files were already listed in their package's test script. No whole suite, browser, server, docker, network or git mutation was used.
+
+| New/changed test evidence | Old production red | Fixed production green |
+|---|---|---|
+| Payment scan: omit confirmed under every policy; open candidate/own unresolved retained; same payer preference; clear baseline unchanged | A `--test-name-pattern='D2:'` scan/action files: exit 1, 0 pass / 2 fail. Confirmed was offered and block fact absent | Full focused API command below passes |
+| Every ready emitter: CONFIRMED emits no ready event; UNRESOLVED/NONE carries the field; other decision events and recipient fields stay | Initial emitter run exit 1, 0/30 (included one bad finance-test capture); corrected finance/helper red exit 1, 0/5. Final controlled baseline below proves every valid emitter case | Full focused API command below passes |
+| Old/edited payer rules: legacy/NONE unchanged; UNRESOLVED title/body; CONFIRMED skip; changed trigger-key source bypass refusal; no larger recipient list | Controlled old runner fails every unresolved/confirmed child; clear/legacy invariants pass | Full focused API command below passes |
+| Void outbox and old/edited requester rule: NONE, UNRESOLVED, CONFIRMED plus legacy; same requester-only list | Temporarily restored old repository/runner: exit 1, 2 pass / 7 fail; old void omitted the new field, edited rules printed “กลับไปรอจ่าย” through a block | Full focused API command below passes |
+| Contracts post-void state: shared confirmed cancellation/remaining-payment-void guidance, unresolved clearance, clear waiting, still-paid and cancellation-in-progress cases | C `--test-name-pattern='D2:' src/business-policy.spec.ts`: exit 1, 0/1, old production has no state-aware function | C full file: exit 0, 7/0 |
+| Existing exact ready payloads (reapproval, finance approval, no-approval payout) and exact scan query/payload now include the new fact | Each failed in final controlled baseline below | Full focused API command below passes |
+
+Controlled final baseline: saved nine changed API production sources in memory, temporarily wrote `git show HEAD:<path>` contents by hand, ran the SAME seven-file focused command below, then restored every fix in `finally`. Contracts remained built with the new words so the old runner's ignored facts could be tested directly. Exit 1, **605 pass / 53 fail** (counts include parent subtests). Every changed behavior assertion failed; unchanged recipient/legacy invariants passed. No git restore/check-out command and no persistent backup files.
+
+```sh
+# Exact seven-file command, old and fixed production:
+pnpm --filter @watchdog-bms/api exec node --import tsx --test --test-reporter=spec src/modules/workflow/application/use-cases/workflow-scan.use-case.spec.ts src/modules/workflow/application/use-cases/workflow-action-runner.use-case.spec.ts src/modules/reimbursements/application/use-cases/reimbursement-approval.use-case.spec.ts src/modules/reimbursements/application/use-cases/reimbursement-request.use-case.spec.ts src/modules/reimbursements/application/use-cases/reimbursement-finance.use-case.spec.ts src/modules/reimbursements/application/services/reimbursement-projection-reconciler.service.spec.ts src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.payment-mirror.spec.ts
+```
+
+- Fixed seven-file command: exit **0**, **658 pass / 0 fail**.
+- A `src/modules/workflow/application/use-cases/workflow-scan.use-case.spec.ts src/modules/workflow/application/use-cases/workflow-action-runner.use-case.spec.ts src/modules/workflow/application/use-cases/workflow-event-ingest.use-case.spec.ts src/modules/workflow/application/use-cases/workflow-template-auto-enable.spec.ts src/modules/workflow/application/use-cases/workflow-template.use-case.spec.ts`: exit **0**, **189/0** (before the additional source-trigger-key subtests; final seven-file run covers those). Resync preserves edited rules and re-pins unedited ones.
+- A five reimbursement files (approval, request, finance, reconciler, repository payment mirror): exit **0**, **523/0**. Earlier full runs exposed four stale exact expectations (scan query/payload and three ready payloads), corrected before the final baseline/green proof.
+- C `src/business-policy.spec.ts`: exit **0**, **7/0**.
+- W `src/features/dashboard-notifications/dashboard-notifications.logic.spec.ts`: exit **0**, **12/0**. Old title/body sentences were searched across API, gateway, web and `e2e/` specs: only this web file and the already-run action-runner/event-ingest files matched.
+- `pnpm --filter @watchdog-bms/contracts build`: exit **0** after the final title extraction too.
+- H `pnpm --filter @watchdog-bms/api typecheck`: first exit **2**, raw Prisma policy allowed nullable branchId where the domain record expects undefined. Used the existing `toPolicy` converter; A `src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.payment-mirror.spec.ts` then exit **0**, **16/0**. Typecheck retry exit **0**.
+- `git diff --check`: exit **0** on the final handoff diff.
+
+Next: Controller reviews and commits the uncommitted diff, runs real-PostgreSQL acceptance/full checks and browser if needed, and integrates develop. D3 new confirmed-duplicate notices remain untouched. Finished within the 45-minute cap (before 08:28 UTC).

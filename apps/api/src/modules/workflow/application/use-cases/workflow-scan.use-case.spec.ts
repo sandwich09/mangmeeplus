@@ -153,6 +153,23 @@ describe('payment reminder candidates (audit B9)', () => {
   }
   const fires = (payload: Record<string, unknown>) => evaluateCondition(template().defaultConditionJson, payload, NOW).matched;
 
+  it('D2: suppresses confirmed duplicates and preserves the payment turn for unresolved and clear claims', async () => {
+    const { candidates, queries } = provider([
+      claim({ id: 'confirmed', confirmedDuplicateExpenseCount: 1 }),
+      claim({ id: 'unresolved', duplicateCandidates: [{ status: 'OPEN', candidateType: 'ATTACHMENT_CHECKSUM' }] }),
+      claim({ id: 'own-unresolved', duplicateConfirmationPendingCount: 1 }),
+      claim({ id: 'clear' }),
+    ], { slaHours: 48, duplicatePolicy: 'BLOCK_PAYMENT' }, ['confirmed', 'unresolved', 'own-unresolved', 'clear'].map((id) => step({ reimbursementRequestId: id })));
+    const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
+    assert.deepEqual(items.map((item) => [item.sourceId, item.payload.paymentDuplicateBlock, item.payload.approvedByUserId]),
+      [['unresolved', 'UNRESOLVED', 'u_manager'], ['own-unresolved', 'UNRESOLVED', 'u_manager'], ['clear', 'NONE', 'u_manager']]);
+    assert.equal(queries[0].withDuplicateCandidates, true);
+    for (const policy of ['WARN', 'BLOCK_SUBMIT']) {
+      const { candidates } = provider([claim({ confirmedDuplicateExpenseCount: 1 })], { slaHours: 48, duplicatePolicy: policy });
+      assert.deepEqual(await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW), []);
+    }
+  });
+
   // Review: offering every waiting claim wrote a skipped run row per claim per hour in every
   // company. Only a claim past its deadline is offered; the rest cost nothing downstream.
   it('offers only the claims waiting for payment past the policy deadline', async () => {
@@ -163,12 +180,12 @@ describe('payment reminder candidates (audit B9)', () => {
 
     const items = await candidates.forTemplate('reimbursement_payment_sla_breach', 'co-1', NOW);
 
-    assert.deepEqual(queries, [{ companyId: 'co-1', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] }]);
+    assert.deepEqual(queries, [{ companyId: 'co-1', statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'], withDuplicateCandidates: true }]);
     assert.deepEqual(items.map((item) => [item.sourceType, item.sourceId, fires(item.payload)]), [
       ['reimbursement_request', 'rb-late', true],
     ]);
     assert.deepEqual(items[0]!.payload, {
-      requestId: 'rb-late', requestNo: 'RB-202610-00001', ageHours: 49, slaRisk: true, amount: '250', currency: 'THB',
+      requestId: 'rb-late', requestNo: 'RB-202610-00001', ageHours: 49, slaRisk: true, amount: '250', currency: 'THB', paymentDuplicateBlock: 'NONE',
       requesterUserId: 'u_staff', approverRecipientUserIds: ['u_manager', 'u_manager_2'],
       notificationPeriodKey: `payable:${hoursAgo(49).toISOString()}`,
     });

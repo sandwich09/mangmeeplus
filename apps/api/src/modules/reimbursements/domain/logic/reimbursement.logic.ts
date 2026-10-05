@@ -793,6 +793,11 @@ export function claimDuplicateReasons(request: { duplicateCandidates?: { status:
   ])] as import('@watchdog-bms/contracts').ReimbursementDuplicateReason[];
 }
 
+export function claimPaymentDuplicateBlock(request: Parameters<typeof claimDuplicateBlocksPayment>[0], currentPolicy: EffectivePolicy): import('@watchdog-bms/contracts').ReimbursementPaymentDuplicateBlock {
+  if (!claimDuplicateBlocksPayment(request, currentPolicy)) return 'NONE';
+  return claimDuplicateReasons(request).includes('EXPENSE_CONFIRMED_DUPLICATE') ? 'CONFIRMED' : 'UNRESOLVED';
+}
+
 export function confirmedDuplicateRefusal(request: Parameters<typeof claimDuplicateReasons>[0] & { status: string }, canCancel?: boolean) {
   const duplicateReasons = claimDuplicateReasons(request);
   if (!duplicateReasons.includes('EXPENSE_CONFIRMED_DUPLICATE')) return null;

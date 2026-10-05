@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
-import { ageHours, approvalWaitStartedAt, isSlaRisk, payoutCorrectionPhase } from '../../../reimbursements/domain/logic/reimbursement.logic';
+import { ageHours, approvalWaitStartedAt, claimPaymentDuplicateBlock, isSlaRisk, payoutCorrectionPhase } from '../../../reimbursements/domain/logic/reimbursement.logic';
 import { effectivePolicy, effectivePolicyForRequest, parseReimbursementPolicySnapshot } from '../../../reimbursements/domain/reimbursement.constants';
 import { ListReimbursementApproverOptionsUseCase } from '../../../reimbursements/application/use-cases/reimbursement-policy.use-case';
 import { PrismaCrmRepository } from '../../../crm/infrastructure/prisma-crm.repository';
@@ -163,7 +163,7 @@ export class WorkflowScanCandidatesProvider {
   // account is approved, which is the later of the two dates.
   private async paymentSlaBreach(companyId: string, now: Date): Promise<ScanCandidate[]> {
     const currentPolicy = effectivePolicy(await this.reimbursementRepo.findPolicy(companyId, null));
-    const waiting = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'] });
+    const waiting = await this.reimbursementRepo.listRequests({ companyId, statuses: ['READY_FOR_PAYMENT', 'PARTIALLY_PAID'], withDuplicateCandidates: true });
     // Only claims that have a deadline are looked at, and only those past it are offered. Offering
     // every waiting claim wrote a skipped run row per claim per hour in every company, deadline or
     // not; a company that set none now costs one query and nothing else.
@@ -172,7 +172,8 @@ export class WorkflowScanCandidatesProvider {
       if (r.cancellationPendingAt) return [];
       try {
         const slaHours = effectivePolicyForRequest(r, currentPolicy).slaHours;
-        return slaHours && slaHours > 0 ? [{ ...r, slaHours }] : [];
+        const paymentDuplicateBlock = claimPaymentDuplicateBlock(r, currentPolicy);
+        return paymentDuplicateBlock !== 'CONFIRMED' && slaHours && slaHours > 0 ? [{ ...r, slaHours, paymentDuplicateBlock }] : [];
       } catch {
         // A policy snapshot that cannot be read costs this one claim its reminder. Left to throw,
         // it stopped the reminders of every other claim in the company, every scan.
@@ -207,6 +208,7 @@ export class WorkflowScanCandidatesProvider {
         payload: {
           requestId: r.id, requestNo: r.requestNo, ageHours: age,
           slaRisk: true,
+          paymentDuplicateBlock: r.paymentDuplicateBlock,
           // What is left to pay: the whole claim unless a legacy part payment was recorded.
           amount: r.outstandingAmount, currency: r.currency,
           // Whose turn it is to pay, for the notice to prefer (owner rule 2026-10-01): the finance

@@ -187,6 +187,7 @@ function fakeRepo(options: RepoOptions = {}) {
     resolveSourceLines: async (_company: string, _user: string, _branch: string, _currency: string, lines: any[]) => lines.map(line => ({ ...line, ...(line.linkedExpenseId ? { sourceExpenseSnapshot: { schemaVersion: 1, expenseId: line.linkedExpenseId } } : {}) })),
     resolveCreateBranchId: async () => 'branch-1',
     findPolicy: async () => options.policy ?? null,
+    paymentNoticeFacts: async () => ({ paymentDuplicateBlock: 'NONE', duplicateReasons: [] }),
     // The claim detail's gate, which every decision endpoint asks first: who on the waiting step can still act.
     findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
     getUserDisplayName: async () => 'Somchai',
@@ -1562,6 +1563,19 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.equal(state.calls.approvalSteps.length, 0);
     assert.equal(state.calls.projections[0]?.[2]?.kind, 'POLICY');
     assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.ready_for_payment'));
+  });
+
+  it('D2: no-approval submission states the ready transaction duplicate block', async (t) => {
+    for (const block of ['CONFIRMED', 'UNRESOLVED', 'NONE']) await t.test(block, async () => {
+      const state = fakeRepo({ policy: { ...noReceiptNeeded, approvalRequiredFromAmount: '100.00', financeReviewRequired: false } });
+      state.repo.paymentNoticeFacts = async (tx: any) => { assert.ok(tx.outboxEvent); return { paymentDuplicateBlock: block, duplicateReasons: [] }; };
+      await draftWith(state, [inputLine({ amount: '99.99' })], withReason);
+      await useCases(state).submit.execute(ctx(), 'rb-1');
+      const ready = state.calls.outbox.filter((event: any) => event.eventType === 'reimbursement.ready_for_payment');
+      assert.equal(ready.length, block === 'CONFIRMED' ? 0 : 1);
+      if (ready[0]) assert.equal(ready[0].payloadJson.data.paymentDuplicateBlock, block);
+      assert.ok(state.calls.outbox.some((event: any) => event.eventType === 'reimbursement.approved'));
+    });
   });
 
   // Owner rule 2026-10-01: a claim nobody had to approve has no approver of its own to hand the
@@ -4750,6 +4764,21 @@ describe('payout correction: the requester gives the account and it is approved 
 });
 
 describe('payout correction: claims finance passed, claims nobody approves and legacy claims (3B)', () => {
+  it('D2: payout submission without approval states the ready transaction duplicate block', async (t) => {
+    for (const block of ['CONFIRMED', 'UNRESOLVED', 'NONE']) await t.test(block, async () => {
+      const world = correctionWorld({ policy: NO_APPROVAL_POLICY });
+      const id = await world.ready();
+      await world.sendBack.execute(payerCtx(), id, { reasonCode: 'BANK_WRONG' });
+      world.events().length = 0;
+      world.state.repo.paymentNoticeFacts = async (tx: any) => { assert.ok(tx.outboxEvent); return { paymentDuplicateBlock: block, duplicateReasons: [] }; };
+      await world.giveAccount.execute(ctx(), id, { mode: 'SPECIFIED', ...SCB });
+      assert.equal(world.events().length, block === 'CONFIRMED' ? 0 : 1);
+      if (world.events()[0]) {
+        assert.equal(world.events()[0].payloadJson.data.paymentDuplicateBlock, block);
+        assert.deepEqual(world.events()[0].payloadJson.data.approverRecipientUserIds, ['manager-1']);
+      }
+    });
+  });
   it('makes a claim nobody had to approve ready for payment as soon as its account is given', async () => {
     const world = correctionWorld({ policy: NO_APPROVAL_POLICY });
     const id = await world.ready();
@@ -4766,7 +4795,7 @@ describe('payout correction: claims finance passed, claims nobody approves and l
     assert.deepEqual(world.events().map((event) => event.eventType), ['reimbursement.ready_for_payment']);
     assert.deepEqual(world.events()[0].payloadJson.data, {
       requestId: id, requestNo: 'RB-202601-000001', requesterUserId: 'staff-1', amount: world.claim().amount, currency: 'THB',
-      status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD', approverRecipientUserIds: ['manager-1'],
+      status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD', paymentDuplicateBlock: 'NONE', approverRecipientUserIds: ['manager-1'],
     });
     assert.deepEqual([world.audits[0].metadataJson.readyForPayment, world.audits[0].metadataJson.approvalStepId], [true, null]);
     assert.deepEqual(given.payoutCorrectionHistory, undefined, 'the answer of a write carries no timeline; the page reads the claim again');

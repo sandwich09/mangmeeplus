@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  reimbursementPayoutAnswerNotice, reimbursementPayoutSentBackNotice,
+  reimbursementPaymentVoidedNotice, reimbursementPayoutAnswerNotice, reimbursementPayoutSentBackNotice,
   type ReimbursementPayoutCorrectionReason, type ReimbursementPayoutHeld, type ReimbursementPayoutRoundAnswer,
 } from '@watchdog-bms/contracts';
 import { ExecuteWorkflowActionUseCase } from './workflow-action-runner.use-case';
@@ -544,15 +544,28 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
   describe('payment voided notice to the requester (audit B9)', () => {
     const voided = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_payment_voided')!;
     // What the void transaction writes: the source is the PAYMENT, the claim rides the payload.
-    const runVoided = (payload: Record<string, unknown>) => make().execute(
-      { ...actionRun(voided().defaultActionJson[0]!.configJson), actionKey: voided().defaultActionJson[0]!.actionKey },
+    const runVoided = (payload: Record<string, unknown>, cfg = voided().defaultActionJson[0]!.configJson) => make().execute(
+      { ...actionRun(cfg), actionKey: voided().defaultActionJson[0]!.actionKey },
       {
         companyId: 'co_1', ruleName: voided().name, sourceModule: 'reimbursements',
         sourceType: 'reimbursement_payment', sourceId: 'pay_1',
-        payload: { requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', paymentStatus: 'UNPAID', reversalEntryId: null, ...payload },
+        payload: { eventType: 'reimbursement.payment_voided', requestId: 'rb_1', requestNo: 'RB-202610-00007', requesterUserId: 'u_requester', paymentStatus: 'UNPAID', reversalEntryId: null, ...payload },
         siblingActions: voided().defaultActionJson,
       } as any,
     );
+
+    it('D2: voided notices retain only the requester and state the actual next step even for an edited rule', async (t) => {
+      for (const block of [undefined, 'NONE', 'UNRESOLVED', 'CONFIRMED'] as const) await t.test(block ?? 'legacy', async () => {
+        notify.execute.mock.resetCalls();
+        const text = reimbursementPaymentVoidedNotice({ status: 'READY_FOR_PAYMENT', paymentDuplicateBlock: block,
+          duplicateReasons: block === 'CONFIRMED' ? ['EXPENSE_CONFIRMED_DUPLICATE'] : ['ATTACHMENT_CHECKSUM'] });
+        await runVoided({ actorUserId: 'u_payer', ...(block && { paymentVoidedNotice: text }) },
+          { ...voided().defaultActionJson[0]!.configJson, triggerKey: 'workflow.edited_void_notice', bodyTemplate: 'การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ใบเบิกกลับไปรอจ่าย' });
+        const sent = (notify.execute.mock.calls[0] as any).arguments[0];
+        assert.deepEqual(sent.recipientUserIds, ['u_requester']);
+        assert.equal(sent.body, text);
+      });
+    });
 
     it('tells the requester in plain Thai, with the link to the claim and no figure', async () => {
       await runVoided({ actorUserId: 'u_payer' });
@@ -1199,6 +1212,41 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     sourceType: 'reimbursement_request', sourceId: 'rb_1',
     payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', actorUserId: 'u_someone_else' },
     siblingActions: [],
+  });
+
+  it('D2: old or edited payer rules keep recipients, check unresolved duplicates first and suppress confirmed duplicates', async (t) => {
+    for (const key of ['reimbursement_ready_for_payment', 'reimbursement_payment_sla_breach']) {
+      for (const block of [undefined, 'NONE', 'UNRESOLVED', 'CONFIRMED']) await t.test(`${key}/${block ?? 'legacy'}`, async () => {
+        const h = harness({ sourceBranchId: 'br_claim', memberships: { u_owner: member(), u_approver: member() } });
+        const context = claimContext();
+        context.payload = { ...context.payload, actorUserId: 'u_approver', approvedByUserId: 'u_approver', requesterUserId: 'u_staff', ...(block && { paymentDuplicateBlock: block }) };
+        // A rule pinned before this release, even if an admin kept its old sentences.
+        const cfg = { ...WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === key)!.defaultActionJson[0]!.configJson,
+          titleTemplate: key === 'reimbursement_ready_for_payment' ? 'พร้อมจ่ายเบิกจ่าย: {{requestNo}}' : 'ใบเบิกรอจ่ายเงินเกินกำหนด: {{requestNo}}',
+          bodyTemplate: 'ยอด {{amount}} {{currency}} · รอคุณบันทึกการจ่ายเงิน' };
+        await h.useCase.execute(actionRun(cfg), context);
+        if (block === 'CONFIRMED') { assert.deepEqual(h.sent, []); assert.equal(h.updates.at(-1).resultJson.reason, 'confirmed_duplicate'); return; }
+        assert.deepEqual(h.sent[0].recipientUserIds, ['u_approver']);
+        assert.equal(h.sent[0].body, block === 'UNRESOLVED'
+          ? 'ยอด 250.00 บาท · รอคุณตรวจรายการที่อาจซ้ำก่อนบันทึกการจ่ายเงิน'
+          : 'ยอด 250.00 บาท · รอคุณบันทึกการจ่ายเงิน');
+        if (block === 'UNRESOLVED') assert.match(h.sent[0].title, /รอตรวจรายการที่อาจซ้ำ/);
+      });
+    }
+  });
+
+  it('D2: changing a payer rule trigger key cannot bypass the source payment block', async (t) => {
+    for (const kind of ['ready', 'overdue']) for (const block of ['CONFIRMED', 'UNRESOLVED']) await t.test(`${kind}/${block}`, async () => {
+      const h = harness({ sourceBranchId: 'br_claim', memberships: { u_owner: member(), u_approver: member() } });
+      const context = claimContext();
+      context.triggerType = kind === 'ready' ? 'EVENT' : 'SLA_SCAN';
+      context.payload = { ...context.payload, actorUserId: 'u_approver', requesterUserId: 'u_staff', paymentDuplicateBlock: block,
+        ...(kind === 'ready' && { eventType: 'reimbursement.ready_for_payment' }) };
+      const cfg = { ...readyToPay().defaultActionJson[0]!.configJson, triggerKey: 'workflow.edited_payer_notice' };
+      await h.useCase.execute(actionRun(cfg), context);
+      if (block === 'CONFIRMED') assert.deepEqual(h.sent, []);
+      else { assert.deepEqual(h.sent[0].recipientUserIds, ['u_approver']); assert.match(h.sent[0].body, /รอคุณตรวจรายการที่อาจซ้ำก่อน/); }
+    });
   });
 
   it('notifies neither a member outside the claim branch nor a member whose paying role is inactive', async () => {

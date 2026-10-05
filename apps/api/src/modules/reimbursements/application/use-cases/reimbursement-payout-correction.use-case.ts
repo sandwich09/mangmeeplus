@@ -152,7 +152,8 @@ export class SubmitPayoutCorrectionUseCase {
         }, tx);
         const eventType = result.readyForPayment ? 'reimbursement.ready_for_payment' : 'reimbursement.payout_correction_submitted';
         const notice = reimbursementPayoutAnswerNotice(result.answer);
-        await tx.outboxEvent.createMany({
+        const paymentFacts = result.readyForPayment ? await this.repo.paymentNoticeFacts(tx, ctx.companyId, id) : undefined;
+        if (paymentFacts?.paymentDuplicateBlock !== 'CONFIRMED') await tx.outboxEvent.createMany({
           data: [{
             companyId: ctx.companyId,
             eventType,
@@ -165,6 +166,7 @@ export class SubmitPayoutCorrectionUseCase {
               data: {
                 requestId: id, requestNo: req.requestNo, requesterUserId: req.requesterUserId,
                 amount: req.amount, currency: req.currency,
+                ...(paymentFacts && { paymentDuplicateBlock: paymentFacts.paymentDuplicateBlock }),
                 ...(result.readyForPayment
                   ? { status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD' }
                   // To the approvers of the new step. The title and the end of the body are finished sentences

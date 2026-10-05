@@ -514,6 +514,30 @@ export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [
   return `${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}: ${reimbursementDuplicateReasonText(reasons)} ${financeReview ? REIMBURSEMENT_DUPLICATE_FINANCE_HELP : REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`;
 }
 export const REIMBURSEMENT_DUPLICATE_UNRESOLVED = 'พบรายการที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ';
+
+export type ReimbursementPaymentDuplicateBlock = 'NONE' | 'UNRESOLVED' | 'CONFIRMED';
+export const REIMBURSEMENT_PAYMENT_VOIDED_TITLE = 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}';
+
+/** The payer's next step; callers suppress confirmed duplicates instead of telling anyone to pay. */
+export function reimbursementPaymentTurnNotice(kind: 'ready' | 'overdue', unresolved = false): { title: string; body: string } {
+  return {
+    title: `${unresolved ? `ใบเบิกรอตรวจรายการที่อาจซ้ำ${kind === 'overdue' ? 'เกินกำหนด' : ''}`
+      : kind === 'overdue' ? 'ใบเบิกรอจ่ายเงินเกินกำหนด' : 'พร้อมจ่ายเบิกจ่าย'}: {{requestNo}}`,
+    body: `ยอด {{amount}} {{currency}} · ${unresolved ? 'รอคุณตรวจรายการที่อาจซ้ำก่อนบันทึกการจ่ายเงิน' : 'รอคุณบันทึกการจ่ายเงิน'}`,
+  };
+}
+
+/** Only facts after the void, never its free-text reason or an account number. */
+export function reimbursementPaymentVoidedNotice(claim: {
+  status?: string; cancellationPending?: boolean; paymentDuplicateBlock?: ReimbursementPaymentDuplicateBlock; duplicateReasons?: readonly string[];
+} = {}): string {
+  const next = claim.cancellationPending ? REIMBURSEMENT_SYSTEM_WAIT_LABEL
+    : claim.paymentDuplicateBlock && claim.paymentDuplicateBlock !== 'NONE'
+      ? reimbursementDuplicateWait({ ...claim, currentDesk: { kind: 'PAYMENT' } })?.waiting
+        ?? reimbursementDuplicateBlockNotice(claim.duplicateReasons, false, claim)
+      : claim.status === 'PAID' ? 'ใบเบิกยังจ่ายครบแล้ว' : 'ใบเบิกกลับไปรอจ่าย';
+  return `การจ่ายเงินที่บันทึกไว้ถูกยกเลิก ${next}`;
+}
 export function reimbursementDuplicateSubmitNotice(reasons: readonly string[] = []): string {
   return `พบรายการที่อาจซ้ำ: ${reimbursementDuplicateReasonText(reasons)} ยังส่งใบนี้ไม่ได้ ตรวจและแก้หลักฐาน หรือให้ผู้มีสิทธิ์ตั้งค่านโยบายตรวจนโยบายรายการซ้ำก่อนส่งอีกครั้ง`;
 }

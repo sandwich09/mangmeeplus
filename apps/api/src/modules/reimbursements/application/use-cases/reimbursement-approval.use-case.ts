@@ -455,6 +455,8 @@ export class ApproveReimbursementUseCase {
           // its approver, who is the actor of this event. The reviewer is named where the notice looks
           // first, and still in the list a rule from before that order reads after the actor.
           const financeReviewer = req.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? req.financeReviewedByUserId : undefined;
+          const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, ctx.companyId, id);
+          if (paymentDuplicateBlock === 'CONFIRMED') return;
           await appendOutboxWithinTx(tx, {
             companyId: ctx.companyId,
             eventType: 'reimbursement.ready_for_payment',
@@ -466,6 +468,7 @@ export class ApproveReimbursementUseCase {
               data: {
                 requestId: id, requestNo: req.requestNo, status: 'READY_FOR_PAYMENT', decision: 'APPROVED',
                 requesterUserId: req.requesterUserId, amount: req.amount, currency: req.currency,
+                paymentDuplicateBlock,
                 ...(financeReviewer && { financeReviewerUserId: financeReviewer, approverRecipientUserIds: [financeReviewer] }),
               },
             },
@@ -592,7 +595,9 @@ export class ApproveReimbursementUseCase {
             riskLevel: 'HIGH',
             metadataJson: { amount: req.amount, currency: req.currency, comment, projectionReady: true },
           }, tx);
+          const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, ctx.companyId, id);
           for (const eventType of ['reimbursement.approved', 'reimbursement.ready_for_payment']) {
+            if (eventType === 'reimbursement.ready_for_payment' && paymentDuplicateBlock === 'CONFIRMED') continue;
             await appendOutboxWithinTx(tx, {
               companyId: ctx.companyId,
               eventType,
@@ -613,6 +618,7 @@ export class ApproveReimbursementUseCase {
                   requesterUserId: req.requesterUserId,
                   amount: req.amount,
                   currency: req.currency,
+                  ...(eventType === 'reimbursement.ready_for_payment' && { paymentDuplicateBlock }),
                 },
               },
             });

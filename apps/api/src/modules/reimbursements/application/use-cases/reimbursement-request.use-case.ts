@@ -846,7 +846,9 @@ export class SubmitReimbursementUseCase {
         companyId: ctx.companyId, requestId: id, actorUserId: req.requesterUserId,
         scopes: ctx.scopes ?? {}, completedAt: readyAt,
         onReadyPersisted: async (tx) => {
+          const { paymentDuplicateBlock } = await this.repo.paymentNoticeFacts(tx, ctx.companyId, id);
           for (const eventType of ['reimbursement.approved', 'reimbursement.ready_for_payment']) {
+            if (eventType === 'reimbursement.ready_for_payment' && paymentDuplicateBlock === 'CONFIRMED') continue;
             await appendSubmitOutbox(tx, {
               companyId: ctx.companyId, eventType, requestId: id, actorUserId: ctx.userId,
               traceRequestId: ctx.requestId, occurredAt: readyAt,
@@ -855,6 +857,7 @@ export class SubmitReimbursementUseCase {
                 requestId: id, requestNo, requesterUserId: req.requesterUserId,
                 status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD',
                 amount: req.amount, currency: req.currency,
+                ...(eventType === 'reimbursement.ready_for_payment' && { paymentDuplicateBlock }),
                 ...(approverRecipientUserIds.length > 0 && { approverRecipientUserIds }),
               },
             });

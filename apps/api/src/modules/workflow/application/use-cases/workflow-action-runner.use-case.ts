@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
-import { WORKFLOW_TAB_LABELS, type WorkflowActionDefinition } from '@watchdog-bms/contracts';
+import { reimbursementPaymentTurnNotice, reimbursementPaymentVoidedNotice, WORKFLOW_TAB_LABELS, type WorkflowActionDefinition } from '@watchdog-bms/contracts';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
@@ -269,6 +269,16 @@ export class ExecuteWorkflowActionUseCase {
   }
 
   private async sendNotification(actionRun: WorkflowActionRunRecord, context: ActionRunContext, cfg: Record<string, unknown>) {
+    const triggerKey = String(cfg['triggerKey'] ?? `workflow.${actionRun.actionKey}`);
+    const paymentKind = context.payload['eventType'] === 'reimbursement.ready_for_payment' || triggerKey === 'workflow.reimbursement_ready_for_payment' ? 'ready'
+      : triggerKey === 'workflow.reimbursement_payment_sla_breach'
+        || (context.triggerType === 'SLA_SCAN' && context.sourceType === 'reimbursement_request' && Object.hasOwn(context.payload, 'paymentDuplicateBlock')) ? 'overdue' : undefined;
+    // Independent of a company's condition/body snapshot, including admin edits. Emission/scan also suppresses it.
+    if (paymentKind && context.payload['paymentDuplicateBlock'] === 'CONFIRMED') {
+      return { resultJson: { skipped: true, reason: 'confirmed_duplicate' }, targetType: 'notification_event' };
+    }
+    const paymentNotice = paymentKind && context.payload['paymentDuplicateBlock'] === 'UNRESOLVED'
+      ? reimbursementPaymentTurnNotice(paymentKind, true) : undefined;
     const recipientRoles = Array.isArray(cfg['recipientRoles']) ? (cfg['recipientRoles'] as string[]) : [];
     const recipientPermissions = Array.isArray(cfg['recipientPermissions'])
       ? (cfg['recipientPermissions'] as unknown[]).filter((key): key is string => typeof key === 'string')
@@ -329,16 +339,17 @@ export class ExecuteWorkflowActionUseCase {
       throw new RetryableActionError('No active recipients resolved for configured recipientRoles, recipientPermissions, or recipientPayloadKeys (after exclusions)');
     }
     const readable = readablePayload(context.payload);
-    const titleTemplate = findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);
+    const titleTemplate = paymentNotice?.title ?? findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);
     const title = titleTemplate ? renderTemplate(titleTemplate, readable) : `แจ้งเตือนจาก${WORKFLOW_TAB_LABELS.rules}: ${context.ruleName}`;
     // Own config only (no sibling fallback like the title): a body borrowed from a sibling action
     // is how the notification ended up printing its own title twice.
-    const bodyTemplate = typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined;
+    const bodyTemplate = paymentNotice?.body ?? (typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined);
     // A body that renders to nothing falls back to the title too: a template that prints one field of
     // the event (the "paid" sentence) has nothing to say about an event written before that field existed.
-    const body = (bodyTemplate && renderTemplate(bodyTemplate, readable).trim()) || title;
+    const voided = context.payload['eventType'] === 'reimbursement.payment_voided' || triggerKey === 'workflow.reimbursement_payment_voided';
+    const body = (voided && typeof readable['paymentVoidedNotice'] === 'string' ? readable['paymentVoidedNotice']
+      : bodyTemplate && renderTemplate(bodyTemplate, readable).trim()) || (voided ? reimbursementPaymentVoidedNotice() : title);
     const webPath = resolveDeepLink(actionRun.actionKey, cfg, context);
-    const triggerKey = String(cfg['triggerKey'] ?? `workflow.${actionRun.actionKey}`);
 
     try {
       const result = await this.notify.execute({
