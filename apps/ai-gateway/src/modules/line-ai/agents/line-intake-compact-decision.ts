@@ -1,10 +1,12 @@
 import {
   LINE_TOOL_REGISTRY,
+  extractValueCandidates,
   parseLineAiPreparedPlan,
   parseLineAiSemanticSubrequests,
 } from '@watchdog-bms/contracts';
 import type {
   LineAiInputEvidenceV2,
+  LineAiOpenClarification,
   LineAiPreparedPlan,
   LineAiReadMemory,
   LineAiSemanticSubrequestV2,
@@ -66,10 +68,46 @@ const RESERVED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 // two-dispatch envelope (regression slice 2026-09-30, NAT-05 t2 and NAT-06 t3) — so on a file clause the
 // page and attachment id are kept and anything else is dropped.
 const FILE_CLAUSE_FILTER_KEYS: ReadonlySet<string> = new Set(['attachmentId', 'page']);
-// ponytail: bounded to the two shapes worth naming in a repair prompt today — the observed real-world
-// failure (a malformed taskRef) versus everything else. Split further if a repair loop needs to target
-// another specific defect.
-export type CompactDecodeRejection = 'taskref_malformed' | 'decision_shape_invalid';
+export const INTAKE_REPAIR_HINTS = {
+  "decision_keys_invalid": "decisionV1 must be an object containing only subrequests and optional simpleRead.",
+  "decision_subrequests_invalid": "decisionV1.subrequests must contain 1 to 8 clauses.",
+  "clause_keys_invalid": "Each clause must be an object using only the documented clause keys.",
+  "clause_kind_invalid": "Use kind read, general, help, write, file or public.",
+  "clause_goal_invalid": "Use a nonempty goal of at most 800 characters.",
+  "sources_invalid": "Use 1 to 8 sources per clause.",
+  "source_keys_invalid": "Each source must contain only part and either whole or quote.",
+  "source_part_invalid": "Source part must be a numeric part index or exact part-N.",
+  "source_part_missing": "Select a part that exists in current inputEvidenceParts.",
+  "source_selector_invalid": "Use exactly one of whole:true or quote:string per source.",
+  "source_quote_invalid": "Use a nonempty exact quote of at most 800 characters.",
+  "source_quote_not_found": "A quote must occur in the selected live inputEvidenceParts text; for a reply to an open question use whole:true on the live reply part and put the original request plus reply in goal; only read/general/help may quote the selected openClarifications text.",
+  "source_quote_not_unique": "Use a unique exact quote in the selected live part, or whole:true.",
+  "filters_shape_invalid": "Use a filters object with at most 16 entries.",
+  "filters_key_invalid": "Use nonempty filter keys of at most 80 characters, never prototype keys.",
+  "filter_unknown": "Use only catalog filter names.",
+  "filter_value_invalid": "Filter values must be null, boolean, finite number or string of at most 200 characters.",
+  "required_evidence_invalid": "requiredEvidence must be an array.",
+  "dependencies_invalid": "dependsOn must be an array of earlier clause indices.",
+  "entity_shape_invalid": "entity must be a nonempty string of at most 160 characters.",
+  "entity_not_in_text": "Copy entity exactly from live text or, for read/general/help only, the same selected original clarification text as the source.",
+  "taskref_malformed": "The previous taskRef was invalid: it must be the exact object {\"taskId\":\"...\",\"taskRevision\":N,\"subrequestIndex\":N} copied from one resumableTaskRefs entry — never a bare id string, and never a partial object.",
+  "semantic_contract_invalid": "Check the shared semantic contract: requiredEvidence uses at most 8 identifier strings; dependencies are unique earlier indices; taskRef has a valid id, nonnegative integer revision and index 0 to 7, and cannot be reused.",
+  "route_json_invalid": "Return one complete JSON object.",
+  "route_object_invalid": "Return a JSON object, never null or an array.",
+  "route_intent_invalid": "Select an exact offered intake intent.",
+  "route_mixed_formats": "Emit decisionV1 without legacy semanticSubrequests or preparedPlan.",
+  "route_semantic_invalid": "Include a complete decisionV1 with valid evidence for every clause.",
+  "route_retained_source_mismatch": "Preserve the offered retainedTaskSource kind, writeIntent and exact taskRef.",
+  "route_reimbursement_not_offered": "The reimbursement route was not offered; select an offered route.",
+  "route_advisor_not_offered": "The advisor route was not offered; select an offered route.",
+  "route_capture_hint_too_long": "Shorten captureHints strings to their documented bounds.",
+  "route_capture_items_too_many": "Use at most 20 captureHints items.",
+  "route_capture_item_too_long": "Use at most 200 characters per captureHints item string.",
+  "route_document_invalid": "Return a valid documentClassification or omit it when not required.",
+  "route_document_missing": "BUSINESS_DOCUMENT_REFERENCE requires documentClassification.",
+  "route_parse_exception": "Return a complete route with the documented JSON types."
+} as const;
+export type CompactDecodeRejection = keyof typeof INTAKE_REPAIR_HINTS;
 export type CompactSimpleReadRejection =
   | 'not_single_independent_read'
   | 'invalid_simple_shape'
@@ -114,37 +152,42 @@ function sourcePartIndex(value: unknown): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
-function sourceRefs(raw: unknown, evidence: LineAiInputEvidenceV2): LineAiSemanticSubrequestV2['evidenceRefs'] | undefined {
-  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 8) return undefined;
+function sourceRefs(raw: unknown, evidence: LineAiInputEvidenceV2, reject: (reason: CompactDecodeRejection) => undefined, originals: readonly LineAiOpenClarification[]): LineAiSemanticSubrequestV2['evidenceRefs'] | undefined {
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 8) return reject('sources_invalid');
   const refs: NonNullable<LineAiSemanticSubrequestV2['evidenceRefs']> = [];
   for (const value of raw) {
-    if (!plainObject(value) || !exactKeys(value, SOURCE_KEYS)) return undefined;
+    if (!plainObject(value) || !exactKeys(value, SOURCE_KEYS)) return reject('source_keys_invalid');
     const partIndex = sourcePartIndex(value['part']);
-    if (partIndex === undefined) return undefined;
+    if (partIndex === undefined) return reject('source_part_invalid');
     const part = evidence.parts[partIndex];
-    if (!part) return undefined;
+    if (!part) return reject('source_part_missing');
     const hasWhole = Object.prototype.hasOwnProperty.call(value, 'whole');
     const hasQuote = Object.prototype.hasOwnProperty.call(value, 'quote');
-    if (hasWhole === hasQuote || hasWhole && value['whole'] !== true || hasQuote && typeof value['quote'] !== 'string') return undefined;
+    if (hasWhole === hasQuote || hasWhole && value['whole'] !== true || hasQuote && typeof value['quote'] !== 'string') return reject('source_selector_invalid');
     const whole = hasWhole;
     const quote = hasQuote ? value['quote'] as string : undefined;
     if (whole) {
       refs.push({ partId: part.partId, startUtf16: 0, endUtf16: part.rawText.length, rawSha256: part.rawSha256 });
       continue;
     }
-    if (!quote || quote.length > 800) return undefined;
+    if (!quote || quote.length > 800) return reject('source_quote_invalid');
     const start = part.rawText.indexOf(quote);
-    if (start < 0 || part.rawText.indexOf(quote, start + 1) >= 0) return undefined;
+    if (start < 0) {
+      if (!part.rawText || !originals.some(entry => entry.text.includes(quote))) return reject('source_quote_not_found');
+      refs.push({ partId: part.partId, startUtf16: 0, endUtf16: part.rawText.length, rawSha256: part.rawSha256 });
+      continue;
+    }
+    if (part.rawText.indexOf(quote, start + 1) >= 0) return reject('source_quote_not_unique');
     refs.push({ partId: part.partId, startUtf16: start, endUtf16: start + quote.length, rawSha256: part.rawSha256 });
   }
   return refs;
 }
 
-function boundedFilters(value: unknown, kind?: unknown): Record<string, string | number | boolean | null> | undefined {
-  if (!plainObject(value) || Object.keys(value).length > 16) return undefined;
+function boundedFilters(value: unknown, kind: unknown, reject: (reason: CompactDecodeRejection) => undefined): Record<string, string | number | boolean | null> | undefined {
+  if (!plainObject(value) || Object.keys(value).length > 16) return reject('filters_shape_invalid');
   const filters = Object.create(null) as Record<string, string | number | boolean | null>;
   for (const [key, item] of Object.entries(value)) {
-    if (!key || key.length > 80 || RESERVED_KEYS.has(key)) return undefined;
+    if (!key || key.length > 80 || RESERVED_KEYS.has(key)) return reject('filters_key_invalid');
     const scalar = item === null || typeof item === 'boolean'
       || typeof item === 'number' && Number.isFinite(item)
       || typeof item === 'string' && item.length <= 200;
@@ -156,7 +199,8 @@ function boundedFilters(value: unknown, kind?: unknown): Record<string, string |
     // and the draft tools' choices; its filters decide nothing. NAT-04 (2026-09-29): {"expenseIds":[…]} on a
     // claim clause rejected the decision twice and the turn ran out of time — so a stray one is dropped.
     if (kind === 'write' && (!KNOWN_FILTER_KEYS.has(key) || !scalar)) continue;
-    if (!KNOWN_FILTER_KEYS.has(key) || !scalar) return undefined;
+    if (!KNOWN_FILTER_KEYS.has(key)) return reject('filter_unknown');
+    if (!scalar) return reject('filter_value_invalid');
     filters[key] = item as string | number | boolean | null;
   }
   return filters;
@@ -385,6 +429,16 @@ function simpleReadPlan(input: {
   return preparedPlan ? { preparedPlan, canonicalFilters } : { rejection: 'prepared_contract_invalid' };
 }
 
+/** Read dates only, fixed to when the original question was asked; shared by prompt and validator. */
+export function clarificationReadCandidates(originals: readonly LineAiOpenClarification[] = []) {
+  return originals.flatMap(entry => {
+    if (!Number.isFinite(Date.parse(entry.askedAt))) return [];
+    const { dates, periods } = extractValueCandidates(entry.text,
+      new Date(entry.askedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }));
+    return [{ id: entry.id, dates, periods: periods ?? [] }];
+  });
+}
+
 /** Expand the provider-private compact decision into the existing canonical gateway contracts. */
 export function parseLineIntakeCompactDecision(input: {
   raw: unknown;
@@ -398,28 +452,34 @@ export function parseLineIntakeCompactDecision(input: {
    *  (item 3/R-M3), re-checked here so a filter the model claims to have inherited must actually match
    *  a memory entry, never merely be asserted. */
   recentReads?: readonly LineAiReadMemory[];
-  /** Called once, with the specific reason, immediately before a rejecting return — so a caller can
-   *  log it and name the defect in the next repair prompt instead of retrying blind. */
+  /** Only entries selected by resolved ids, or the sole open question when ids were omitted. */
+  originalClarifications?: readonly LineAiOpenClarification[];
+  /** Called once before rejection so logs and the repair prompt name the same defect. */
   onReject?: (reason: CompactDecodeRejection) => void;
 }): CompactDecisionResult | undefined {
   const { raw, messageText, inputEvidence, enabledTools, enabledPreparedFamilies, language, valueCandidates, recentReads, onReject } = input;
   const reject = (reason: CompactDecodeRejection): undefined => { onReject?.(reason); return undefined; };
-  if (!plainObject(raw) || !exactKeys(raw, DECISION_KEYS) || !Array.isArray(raw['subrequests'])
-    || raw['subrequests'].length < 1 || raw['subrequests'].length > 8) return reject('decision_shape_invalid');
+  if (!plainObject(raw) || !exactKeys(raw, DECISION_KEYS)) return reject('decision_keys_invalid');
+  if (!Array.isArray(raw['subrequests']) || raw['subrequests'].length < 1 || raw['subrequests'].length > 8) return reject('decision_subrequests_invalid');
   const canonical: unknown[] = [];
   for (let index = 0; index < raw['subrequests'].length; index += 1) {
     const item = raw['subrequests'][index];
-    if (!plainObject(item) || !exactKeys(item, SUBREQUEST_KEYS)
-      || !SEMANTIC_KINDS.has(item['kind'] as LineAiSemanticSubrequestV2['kind'])
-      || typeof item['goal'] !== 'string' || !item['goal'].trim() || item['goal'].length > 800) return reject('decision_shape_invalid');
-    const refs = sourceRefs(item['sources'], inputEvidence);
-    const filters = boundedFilters(item['filters'], item['kind']);
-    if (!refs || !filters) return reject('decision_shape_invalid');
+    if (!plainObject(item) || !exactKeys(item, SUBREQUEST_KEYS)) return reject('clause_keys_invalid');
+    if (!SEMANTIC_KINDS.has(item['kind'] as LineAiSemanticSubrequestV2['kind'])) return reject('clause_kind_invalid');
+    if (typeof item['goal'] !== 'string' || !item['goal'].trim() || item['goal'].length > 800) return reject('clause_goal_invalid');
+    const originals = ['read', 'general', 'help'].includes(String(item['kind'])) ? input.originalClarifications ?? [] : [];
+    const refs = sourceRefs(item['sources'], inputEvidence, reject, originals);
+    if (!refs) return undefined;
+    const filters = boundedFilters(item['filters'], item['kind'], reject);
+    if (!filters) return undefined;
     const requiredEvidence = item['requiredEvidence'] === undefined ? [] : item['requiredEvidence'];
     const dependsOn = item['dependsOn'] === undefined ? [] : item['dependsOn'];
-    if (!Array.isArray(requiredEvidence) || !Array.isArray(dependsOn)) return reject('decision_shape_invalid');
+    if (!Array.isArray(requiredEvidence)) return reject('required_evidence_invalid');
+    if (!Array.isArray(dependsOn)) return reject('dependencies_invalid');
     const entity = item['entity'];
-    if (entity !== undefined && (typeof entity !== 'string' || !entity || entity.length > 160 || !messageText.includes(entity))) return reject('decision_shape_invalid');
+    if (entity !== undefined && (typeof entity !== 'string' || !entity || entity.length > 160)) return reject('entity_shape_invalid');
+    if (typeof entity === 'string' && !messageText.includes(entity) && !originals.some(entry => entry.text.includes(entity)
+      && (item['sources'] as Array<{ quote?: string }>).every(source => !source.quote || messageText.includes(source.quote) || entry.text.includes(source.quote)))) return reject('entity_not_in_text');
     // The one defect actually observed in production (4/4 repair attempts): the model copies the bare
     // taskId string instead of the {taskId,taskRevision,subrequestIndex} object. Verify every field's
     // presence and type here (not just the key set) so that specific mistake gets its own reason code
@@ -465,10 +525,17 @@ export function parseLineIntakeCompactDecision(input: {
       ...(toolHint !== undefined ? { toolHint } : {}),
     });
   }
-  const semanticSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence);
-  if (!semanticSubrequests) return reject('decision_shape_invalid');
+  const semanticSubrequests = parseLineAiSemanticSubrequests(canonical, messageText, inputEvidence, input.originalClarifications);
+  if (!semanticSubrequests) return reject('semantic_contract_invalid');
   if (raw['simpleRead'] === undefined) return { semanticSubrequests };
-  const simple = simpleReadPlan({ raw: raw['simpleRead'], semanticSubrequests, enabledTools, enabledPreparedFamilies, language, messageText, valueCandidates, recentReads });
+  // Read context only: preserve the original relative period at the time the question was asked.
+  const originals = input.originalClarifications ?? [];
+  const originalCandidates = clarificationReadCandidates(originals);
+  const readCandidates = originals.length ? { amounts: valueCandidates?.amounts ?? [],
+    dates: [...(valueCandidates?.dates ?? []), ...originalCandidates.flatMap(candidate => candidate.dates)],
+    periods: [...(valueCandidates?.periods ?? []), ...originalCandidates.flatMap(candidate => candidate.periods ?? [])] } : valueCandidates;
+  const simple = simpleReadPlan({ raw: raw['simpleRead'], semanticSubrequests, enabledTools, enabledPreparedFamilies, language,
+    messageText: [messageText, ...originals.map(entry => entry.text)].join('\n'), valueCandidates: readCandidates, recentReads });
   const canonicalSemantic = simple.canonicalFilters
     ? semanticSubrequests.map((item, index) => index === 0 ? { ...item, requestedFilters: simple.canonicalFilters! } : item)
     : semanticSubrequests;

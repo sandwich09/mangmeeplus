@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { withLineExternalBrowserLinks, withLineExternalBrowserText } from '@watchdog-bms/contracts';
 import { buildLineDeliveryPlan, deliveryHash, initialDeliveryBatchStates, lineDeliveryRetryKey, parseDeliveryBatchStates, parseLineDeliveryPlan, splitLineDeliveryText, type DeliveryAuthorizationV2 } from './line-delivery-plan.logic';
-import { asCompleteLineCard, buildDesignedLineAnswerMessage, buildExpenseDraftReviewCard, buildLineBusinessAnswerMessage, expenseDraftCardFactsFrom, inheritCompleteLineBusinessAnswerPresentation } from './line-business-card.logic';
+import { asCompleteLineCard, buildDesignedLineAnswerMessage, buildExpenseDraftReviewCard, buildLineBusinessAnswerMessage, buildLineSystemTextCardMessage, expenseDraftCardFactsFrom, inheritCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from './line-business-card.logic';
 import { buildDraftUpdateOutcomeCard, buildDraftUpdatePreviewCard, draftUpdateCanonicalDiff } from './line-draft-update-card.logic';
 import { isLineSystemCard, readLineSystemBubble } from './line-system-card.fixture';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -260,6 +260,21 @@ test('bound path, an answer of several reads: one card is the plan primary, each
     assert.equal(card.rows.length, rows ? 3 : 0);
     assert.doesNotMatch(card.texts.join('\n'), /ขอบเขต|แหล่งข้อมูล|เปิดดู|เปิดลิงก์/u);
   }
+});
+
+// Owner 2026-10-05 ("การ์ดหลุดด้วย"): a short reply of the system itself — an apology, a question, a notice —
+// is sent in a bound chat as the card the webhook builds for it. The plan keeps it as the primary, its
+// sentence as the fallback, and a quick reply rides both.
+test('bound path, a short system reply: its card is the plan primary, its sentence the fallback, a quick reply rides both', () => {
+  const sentence = 'ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร ช่วยพิมพ์อีกแบบได้ไหมคะ เช่น "เดือนนี้จ่ายไปเท่าไหร่" หรือ "แยกค่าใช้จ่ายตามหมวด"';
+  const card = buildLineSystemTextCardMessage({ text: sentence, header: lineAnswerCardHeader('สิงหา ถึง ตค')!, webBaseUrl: WEB, companyId: 'company', textStyle: 'answer', icon: 'file' });
+  const wire = assertCardIsPrimary(card, ['สิงหา', 'ถึง ตค'], 'apology');
+  assert.deepEqual(readLineSystemBubble(wire.contents).prose, [sentence]);
+  const quickReply = { items: [{ type: 'action' as const, action: { type: 'message' as const, label: 'ใช่', text: 'ใช่' } }] };
+  const withChoices = inheritCompleteLineBusinessAnswerPresentation(card!, { ...card!, quickReply });
+  const batch = boundPlan([withChoices]).batches[0]!;
+  assert.equal(batch.primary.messages[0]!.type, 'flex');
+  assert.deepEqual([batch.primary.messages[0]!.quickReply, batch.fallback?.messages[0]?.quickReply], [quickReply, quickReply]);
 });
 
 test('bound path, context 3: capability, small talk and an explained bill are each one prose card under the reader\'s question', () => {

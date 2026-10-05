@@ -346,6 +346,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     'src/agentcore/runtime-minimal-env.spec.ts',
     'src/modules/line-ai/agents/approved-knowledge.spec.ts',
     'src/modules/line-ai/agents/line-intake-compact-decision.spec.ts',
+    // Owner 2026-10-05 ("ถามวน"): a short reply to the assistant's own question; every decoder rejection reason.
+    'src/modules/line-ai/agents/line-intake-reply.spec.ts',
     'src/modules/line-ai/agents/read-tool-input.spec.ts',
     'src/modules/line-ai/domain/logic/line-ai-scope-policy.logic.spec.ts',
     'src/modules/line-ai/application/document-qa.integration.spec.ts',

@@ -1,3 +1,4 @@
+import { parseLineAiSemanticSubrequests, parseLineAiOpenClarifications, lineAiReplyClarifications } from './line-ai.js';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_PREPARED_PLAN_BOUNDS, parseLineAiPreparedPlan } from './line-ai-prepared-plan.js';
@@ -604,4 +605,29 @@ describe('parseAiBudgetEnvelope (E1c receiver boundary)', () => {
     assert.ok(AI_BUDGET_DOCUMENT_MAX_PAGES * AI_BUDGET_DOCUMENT_PAGE_TOKEN_CEILING
       < AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxInputTokens);
   });
+});
+
+describe('clarified read entity grounding', () => {
+  it('revalidates the original entity only for read/general/help and only with supplied original context', () => {
+    const live = 'ปี 2569';
+    const originals = [{ id: 'q1', text: 'สรุปค่าใช้จ่ายร้านสมใจ', question: 'ปีไหนคะ', askedAt: '2026-10-05T01:00:00Z' }];
+    const sub = { index: 0, kind: 'read', goal: 'สรุปค่าใช้จ่ายร้านสมใจ ปี 2569', requiredEvidence: [], requestedFilters: {}, dependsOn: [], entityReference: { kind: 'user_text', value: 'ร้านสมใจ' } };
+    for (const kind of ['read', 'general', 'help']) assert.ok(parseLineAiSemanticSubrequests([{ ...sub, kind }], live, undefined, originals));
+    for (const kind of ['write', 'file', 'public']) assert.equal(parseLineAiSemanticSubrequests([{ ...sub, kind }], live, undefined, originals), undefined);
+    assert.equal(parseLineAiSemanticSubrequests([sub], live), undefined);
+    assert.equal(parseLineAiSemanticSubrequests([sub], live, undefined, [{ ...originals[0]!, text: 'ร้านอื่น' }]), undefined);
+  });
+});
+
+it('bounds clarification transport and selects only offered resolved read context', () => {
+  const question = { id: 'q1', text: 'สรุปรายจ่าย', question: 'ปีไหนคะ', askedAt: '2026-10-05T01:00:00Z', reasonCode: 'READ_FILTER_NOT_UNDERSTOOD' };
+  const parsed = parseLineAiOpenClarifications([question]);
+  assert.deepEqual(parsed, [question]);
+  assert.deepEqual(lineAiReplyClarifications(parsed, ['not-offered']), []);
+  assert.deepEqual(lineAiReplyClarifications(parsed), [question]);
+  assert.deepEqual(lineAiReplyClarifications([question, { ...question, id: 'q2' }] as any), []);
+  for (const bad of [null, [null], [{ ...question, text: 'x'.repeat(12001) }], [{ ...question, askedAt: 'bad' }],
+    [{ ...question, clarifyForIntent: 'bad' }], [{ ...question, candidateExpenseIds: [1] }], [{ ...question, pendingMedia: {} }]]) {
+    assert.equal(parseLineAiOpenClarifications(bad), undefined);
+  }
 });

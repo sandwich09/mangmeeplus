@@ -246,7 +246,7 @@ describe('item 3 (223-turn eval batch 2): a two-period comparison is answered wi
     // A8: the bare signed "-22,688.00" line is now a direction sentence from the LATER period's own
     // point of view, and "ช่วง 2026-08-01" is now the Thai whole-month label "ส.ค. 2569".
     assert.match(result.replyText, /น้อยกว่า.*22,688\.00 บาท \(ลดลง 56\.1%\)/su, result.replyText);
-    assert.ok(result.replyText.includes('ช่วง ส.ค. 2569'), result.replyText);
+    assert.ok(result.replyText.includes('• ส.ค. 2569'), result.replyText);
   });
 
   it('falls to the deterministic comparison — never the generic terminal — when compose fails entirely', async () => {

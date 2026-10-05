@@ -28,7 +28,7 @@
  */
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
-import type { LineAiBusinessSubject, LineAiCoverageItem, LineAiOpenClarification, LineAiValueCandidates, LineIntakeRouteIntent } from '@watchdog-bms/contracts';
+import type { LineAiBusinessSubject, LineAiCoverageItem, LineAiSemanticCoverageV2, LineAiSemanticSubrequestV2, LineAiOpenClarification, LineAiValueCandidates, LineIntakeRouteIntent } from '@watchdog-bms/contracts';
 import { LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, asIntakeRouteIntent } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -96,6 +96,7 @@ export type LedgerEntry = {
   clarifyQuestion?: string;
   /** Intake route the clarified request was on — inherited deterministically on the answer. */
   clarifyForIntent?: LineIntakeRouteIntent;
+  reasonCode?: LineAiOpenClarification['reasonCode'];
   /** The TRUSTED intake route this turn was on, carried so a reclaimed turn reaches the gateway with
    *  the same provenance the live turn had. Without it a drained turn loses the only thing that can
    *  tell "in the system, not on LINE yet" from "out of scope" (spec §5.3). Re-validated on read. */
@@ -124,6 +125,7 @@ export type LedgerSubRequestInput = {
   subject?: LineAiBusinessSubject;
   clarifyQuestion?: string;
   clarifyForIntent?: LineIntakeRouteIntent;
+  reasonCode?: LineAiOpenClarification['reasonCode'];
   candidateExpenseIds?: string[];
   sourceContext?: string;
   pendingMedia?: LedgerPendingMedia;
@@ -174,6 +176,7 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     ...(LINE_AI_BUSINESS_SUBJECTS.includes(map['subject'] as LineAiBusinessSubject) ? { subject: map['subject'] as LineAiBusinessSubject } : {}),
     ...(map['state'] === 'pending' || map['state'] === 'waiting_user' ? { state: map['state'] } : {}),
     ...(map['clarifyQuestion'] ? { clarifyQuestion: map['clarifyQuestion'] } : {}),
+    ...(map['reasonCode'] === 'READ_FILTER_NOT_UNDERSTOOD' ? { reasonCode: map['reasonCode'] } : {}),
     ...(asIntakeRouteIntent(map['clarifyForIntent']) ? { clarifyForIntent: asIntakeRouteIntent(map['clarifyForIntent']) } : {}),
     ...(asIntakeRouteIntent(map['intakeIntent']) ? { intakeIntent: asIntakeRouteIntent(map['intakeIntent']) } : {}),
     ...(candidateExpenseIds.length > 0 ? { candidateExpenseIds } : {}),
@@ -309,6 +312,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
         ...(item.agent ? { agent: item.agent } : {}),
         ...(item.subject ? { subject: item.subject } : {}),
         ...(item.clarifyQuestion ? { clarifyQuestion: item.clarifyQuestion } : {}),
+        ...(item.reasonCode === 'READ_FILTER_NOT_UNDERSTOOD' ? { reasonCode: item.reasonCode } : {}),
         ...(item.clarifyForIntent ? { clarifyForIntent: item.clarifyForIntent } : {}),
         ...(item.candidateExpenseIds?.length ? { candidateExpenseIds: item.candidateExpenseIds.join(',') } : {}),
         ...(item.sourceContext && Buffer.byteLength(item.sourceContext, 'utf8') <= LINE_CLARIFICATION_SOURCE_MAX_BYTES ? { sourceContext: item.sourceContext } : {}),
@@ -323,15 +327,21 @@ export class LineAiLedgerService implements OnModuleDestroy {
 
   /** Derive sub_request items from coverage verdicts: needs_user waits for the user; uncovered
    *  becomes a pending follow-up. Covered items need no entry — they are already answered. */
-  coverageToSubRequests(coverage: LineAiCoverageItem[] | undefined): LedgerSubRequestInput[] {
-    return (coverage ?? [])
-      .filter((c) => c.verdict === 'needs_user' || c.verdict === 'uncovered')
+  coverageToSubRequests(coverage: LineAiCoverageItem[] | undefined, semanticCoverage?: readonly LineAiSemanticCoverageV2[],
+    inventory?: readonly LineAiSemanticSubrequestV2[]): LedgerSubRequestInput[] {
+    const readQuestions: LedgerSubRequestInput[] = (semanticCoverage ?? []).flatMap(item => {
+      const sub = inventory?.find(sub => sub.index === item.index);
+      return item.status === 'needs_user' && item.reasonCode === 'READ_FILTER_NOT_UNDERSTOOD' && item.question && sub?.kind === 'read'
+        ? [{ text: sub.goal, state: 'waiting_user', clarifyQuestion: item.question, reasonCode: 'READ_FILTER_NOT_UNDERSTOOD' }] : [];
+    });
+    return [...readQuestions, ...(coverage ?? [])
+      .filter((c) => (c.verdict === 'needs_user' || c.verdict === 'uncovered') && !readQuestions.some(item => item.text === c.request))
       .map((c) => ({
         text: c.request,
         state: c.verdict === 'needs_user' ? 'waiting_user' as const : 'pending' as const,
         ...(c.subject ? { subject: c.subject } : {}),
         ...(c.question ? { clarifyQuestion: c.question } : {}),
-      }));
+      }))];
   }
 
   /** Confirmed outcome → XACK + audit mirror. Outcome names the audit action suffix
@@ -392,6 +402,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
             question: entry.clarifyQuestion,
             text: entry.text,
             ...(entry.subject ? { subject: entry.subject } : {}),
+            ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}),
             ...(entry.clarifyForIntent ? { clarifyForIntent: entry.clarifyForIntent } : {}),
             ...(entry.candidateExpenseIds?.length ? { candidateExpenseIds: entry.candidateExpenseIds } : {}),
             ...(entry.pendingMedia ? { pendingMedia: entry.pendingMedia } : {}),
