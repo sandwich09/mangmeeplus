@@ -8,10 +8,12 @@
 import { createHash, createHmac } from 'node:crypto';
 import {
   invalidPayoutDestinationField,
+  invalidPayoutHolderField,
   looksLikeAccountNumber,
   normalizePayoutAccountNumber,
   reimbursementPaymentRule,
   type PayoutDestinationInput,
+  type PayoutHolderFacts,
   type ReimbursementPayoutKind,
   type ReimbursementPayoutMethod,
   type ReimbursementPayoutNotReadyReason,
@@ -61,6 +63,40 @@ export function payoutFingerprint(
   return createHmac('sha256', key)
     .update(JSON.stringify(['reimbursement-payout-destination:v1', destination.payoutKind, destination.bankName ?? '', destination.accountName, destination.accountNumber]))
     .digest('hex');
+}
+
+/** A saved account keeps its v1 account fingerprint, regardless of whose account it is. A claim
+ * also binds the holder facts, using only that stored fingerprint: no number needs to be opened.
+ * SELF preserves the existing fingerprint byte for byte.
+ */
+export function claimPayoutFingerprint(accountFingerprint: string, holder: PayoutHolderFacts, key: Buffer): string {
+  if (holder.holderType === 'SELF') return accountFingerprint;
+  return createHmac('sha256', key)
+    .update(JSON.stringify(['reimbursement-payout-holder:v1', accountFingerprint, holder.holderType, holder.holderNote?.trim() ?? '']))
+    .digest('hex');
+}
+
+export type SealedClaimPayoutDestination = SealedPayoutDestination & {
+  holderType: PayoutHolderFacts['holderType'];
+  holderNote: string | null;
+};
+
+/** Explicit claim accounts only. Existing default-account callers continue using the v1 sealer. */
+export function sealClaimPayoutDestination(
+  input: (Partial<PayoutDestinationInput> & Partial<PayoutHolderFacts>) | null | undefined,
+  key: Buffer,
+): SealedClaimPayoutDestination | null {
+  if (!input) return null;
+  const holder = { holderType: input.holderType === undefined ? 'SELF' as const : input.holderType, holderNote: input.holderNote };
+  if (invalidPayoutHolderField(holder)) return null;
+  const account = sealPayoutDestination(input, key);
+  if (!account) return null;
+  return {
+    ...account,
+    holderType: holder.holderType,
+    holderNote: holder.holderType === 'THIRD_PARTY' ? holder.holderNote!.trim() : null,
+    fingerprint: claimPayoutFingerprint(account.fingerprint, holder, key),
+  };
 }
 
 /**
@@ -190,12 +226,14 @@ export function defaultChangedSinceSubmit(
  * refused. Cash claims and legacy claims have no account to attest. Null means the approval may go on.
  */
 export function payoutAttestationError(
-  claim: { payoutMethod?: string | null; payoutDestinationVersion?: number | null; payoutFingerprint?: string | null },
+  claim: { payoutMethod?: string | null; payoutDestinationVersion?: number | null; payoutFingerprint?: string | null; holderType?: string | null },
   verifiedVersion: unknown,
-): 'payout_verification_required' | 'payout_destination_changed' | null {
+  thirdPartyAccepted?: unknown,
+): 'payout_verification_required' | 'payout_destination_changed' | 'payout_third_party_acceptance_required' | null {
   if (claim.payoutMethod !== 'BANK_TRANSFER' || !hasPayoutSnapshot(claim)) return null;
   if (verifiedVersion === undefined || verifiedVersion === null) return 'payout_verification_required';
-  return verifiedVersion === claim.payoutDestinationVersion ? null : 'payout_destination_changed';
+  if (verifiedVersion !== claim.payoutDestinationVersion) return 'payout_destination_changed';
+  return claim.holderType === 'THIRD_PARTY' && thirdPartyAccepted !== true ? 'payout_third_party_acceptance_required' : null;
 }
 
 // ---- The payer's confirmation at the payment step ----
@@ -296,6 +334,7 @@ export type PayoutDestinationVersionRow = {
   fingerprint: string;
   source: ReimbursementPayoutSource;
   frozenAt?: Date | null;
+  holderType?: string | null;
 };
 
 export type SubmitPayoutPlan =
@@ -308,6 +347,7 @@ export type SubmitPayoutPlan =
     fingerprint: string;
     /** COPY_DEFAULT: a new frozen copy of the default; FREEZE: the draft's own row; REUSE: an unchanged frozen version. */
     action: 'COPY_DEFAULT' | 'FREEZE' | 'REUSE';
+    thirdParty?: true;
   };
 
 /**
@@ -335,7 +375,7 @@ export function planSubmitPayout(
   if (claim.payoutMethod === 'CASH') return { payoutMethod: 'CASH', followsDefault: false };
   const own = versions.find((row) => row.version === claim.payoutDestinationVersion);
   if (!own) return { error: 'payout_destination_required' };
-  return { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: own.version, fingerprint: own.fingerprint, action: own.frozenAt ? 'REUSE' : 'FREEZE' };
+  return { payoutMethod: 'BANK_TRANSFER', followsDefault: false, version: own.version, fingerprint: own.fingerprint, action: own.frozenAt ? 'REUSE' : 'FREEZE', ...(own.holderType === 'THIRD_PARTY' && { thirdParty: true as const }) };
 }
 
 export type FrozenPayoutPlan = Exclude<SubmitPayoutPlan, { error: unknown }>;

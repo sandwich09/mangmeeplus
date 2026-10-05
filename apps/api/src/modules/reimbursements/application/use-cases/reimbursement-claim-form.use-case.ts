@@ -6,6 +6,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import type { ClaimPayoutRecord } from '../../infrastructure/reimbursement-payout';
+import { maskedPayoutHolderFacts } from '../../infrastructure/reimbursement-payout';
 import type { ReimbursementClaimSignatureRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { isLineEvidenced, byLineNo, claimApprovalStep, payoutCorrectionPhase, payoutCorrectionStatusLabel } from '../../domain/logic/reimbursement.logic';
 import { hasPayoutSnapshot, openPayoutAccountNumber } from '../../domain/logic/payout-destination.logic';
@@ -243,6 +244,7 @@ function claimFormPayout(payout: ClaimPayoutRecord | undefined, names: Record<st
   return {
     method: 'BANK_TRANSFER', kind: payout.payoutKind, bankName: payout.bankName ?? null,
     accountName: payout.accountName, accountLast4: payout.accountLast4,
+    ...maskedPayoutHolderFacts(payout),
     // The same test the claim page makes: an attestation by the requester is their own confirmation
     // (spec §10.2), not a check by someone else, and is printed as such.
     verifier: !payout.verifiedByUserId || !at ? null

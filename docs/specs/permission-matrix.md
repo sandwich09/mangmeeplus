@@ -698,7 +698,7 @@ No new permission key. A payout account says where a member's reimbursements are
 decisions 2026-10-01): a default per member, and a copy frozen on each claim when it is sent. A list or
 queue row carries the receiving method only. A claim detail carries the bank, the account name and the
 last 4 digits, the same for every reader; a notice and an audit row carry the bank and the last 4 digits;
-the evidence export carries nothing of the account. The full number leaves through the two `reveal` calls
+the evidence export carries nothing of the account. The full number leaves through the audited `reveal` calls
 and, for a claim's own account, on the printed claim form of a reader the claim's `reveal` call would
 answer; each only after its audit row is written. Routes sit under `/companies/:companyId/reimbursements`, in a
 controller registered ahead of the claim routes so `payout-accounts/…` is matched before `:requestId`.
@@ -709,12 +709,23 @@ controller registered ahead of the claim routes so `payout-accounts/…` is matc
 | `PUT payout-accounts/me` | `reimbursement.create` | The member: sets their own default, a transfer account or cash |
 | `DELETE payout-accounts/me` | `reimbursement.create` | The member: removes their own default. A claim already sent keeps its own copy |
 | `POST payout-accounts/me/reveal` | `reimbursement.create` | The account owner alone: their own full number. Nobody reveals another member's default |
+| `GET payout-accounts/me/saved` | `reimbursement.create` | The member: their own saved accounts, oldest first, last 4 digits only |
+| `POST payout-accounts/me/saved` | `reimbursement.create` | The member: saves another account, including its declared holder; at most 20 |
+| `DELETE payout-accounts/me/saved/:accountId` | `reimbursement.create` | The member: removes their own saved account |
+| `POST payout-accounts/me/saved/:accountId/reveal` | `reimbursement.create` | The member: their own saved account's full number, after its audit succeeds |
+| `POST payout-accounts/me/saved/:accountId/make-default` | `reimbursement.create` | The member: atomically swaps a saved SELF account with their default, through the existing default writer |
 | `GET payout-accounts/members/:userId` | `access.employee.read` or `access.employee.update` | An employee-data reader: last 4 digits only, and whether this viewer may set it (`canEdit`) |
 | `PUT payout-accounts/members/:userId` | `access.employee.update` | Decided per member in the use case, see below. The member's own account goes by their own right |
 | `POST :requestId/payout-destination/reveal` | `account.session.read` | Decided per claim in the use case, see below |
 | `POST :requestId/claim-form/preview` (existing) | `reimbursement.read`, `reimbursement.read_related` or `reimbursement.read_own` | Takes no option and answers with no new field. The print carries the full number for a reader the `reveal` call above would answer, and the last 4 digits for any other reader of the claim, see below |
 | `POST :requestId/submit` (existing) | `reimbursement.submit` | Takes `payoutSubmitToken`, the account the claim page showed. Refused without a receiving method (`payout_method_required`, `payout_destination_required`), and for every claim but cash the draft itself chose when the token is missing or the account changed since (`payout_destination_changed`) |
 | `POST :requestId/approve` (existing) | `account.session.read` | Requires `approvalSnapshotHash`, the claim content the approver saw. A claim paid by transfer also requires `payoutVerifiedVersion`, the account version attested (`payout_verification_required`, `payout_destination_changed`) |
+
+Saved-account commands always use `(companyId, caller.userId)`. Another member's or company's id is
+`payout_saved_account_not_found` (404), as is an absent id. Employee-data rights grant no access to another
+member's saved accounts. Add, delete and promotion commit their audits in the same transaction; saved
+account audits contain the actor, kind, bank, last 4 digits and holder type, never the full number, holder
+note or private label. Promotion sends no notice: it is the owner's own act.
 
 Who may set someone else's default account (`payoutAccountEditRefusal`), beyond holding
 `access.employee.update` in a company with the reimbursement entitlement:

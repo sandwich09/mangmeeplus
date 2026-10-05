@@ -1,3 +1,5 @@
+import { claimPaymentDuplicateBlock } from '../../reimbursements/domain/logic/reimbursement.logic';
+import { effectivePolicy } from '../../reimbursements/domain/reimbursement.constants';
 import type { ExpenseReimbursementProgress } from '@watchdog-bms/contracts';
 import type { ExpenseDb } from './prisma-expense.repository';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
@@ -17,13 +19,13 @@ export async function loadExpenseReimbursementProgress(db: ExpenseDb, companyId:
   const lines = await db.reimbursementLine.findMany({
     where: { companyId, OR: [...result.keys()].map(id => ({ sourceExpenseSnapshotJson: { path: ['expenseId'], equals: id } })),
       request: { companyId, status: { notIn: ['CANCELLED', 'VOIDED', 'REJECTED'] }, ...branchScopeWhere(scopes) } },
-    select: { sourceExpenseSnapshotJson: true, request: { select: { id: true, requestNo: true, status: true, branchId: true, updatedAt: true } } },
+    select: { sourceExpenseSnapshotJson: true, request: { select: { id: true, requestNo: true, status: true, branchId: true, updatedAt: true, approvalPolicySnapshotJson: true, sourceExpenses: { where: { status: { notIn: ['VOIDED', 'REJECTED'] } }, select: { duplicateStatus: true } } } } },
     orderBy: { request: { updatedAt: 'desc' } },
   });
   for (const line of lines) {
     const id = (line.sourceExpenseSnapshotJson as { expenseId?: string } | null)?.expenseId;
     if (!id || result.get(id)?.requestId || !rows.some(row => row.id === id && row.branchId === line.request.branchId)) continue;
-    result.set(id, { requestId: line.request.id, requestNo: line.request.requestNo, status: line.request.status });
+    result.set(id, { requestId: line.request.id, requestNo: line.request.requestNo, status: line.request.status, hasConfirmedDuplicate: claimPaymentDuplicateBlock({ approvalPolicySnapshotJson: line.request.approvalPolicySnapshotJson as any, confirmedDuplicateExpenseCount: (line.request.sourceExpenses ?? []).filter(expense => expense.duplicateStatus === 'CONFIRMED_DUPLICATE').length }, effectivePolicy(null)) === 'CONFIRMED' });
   }
   return result;
 }

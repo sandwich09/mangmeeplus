@@ -119,6 +119,7 @@ describe('ReimbursementProjectionReconcilerService replay of a claim that needed
       listPendingProjectionIntents: async () => [{ request, kind, actorUserId: kind === 'POLICY' ? 'staff-1' : kind === 'FINANCE' ? 'fin-1' : 'mgr-1', approvalStepId: 'step-1' }],
       listPendingCancellationIntents: async () => [],
       findPolicy: async () => policy,
+      paymentNoticeFacts: async () => ({ paymentDuplicateBlock: 'NONE', duplicateReasons: [] }),
       completeApprovalProjectionAtomic: complete,
       completeFinanceProjectionAtomic: complete,
       completePolicyProjectionAtomic: complete,
@@ -134,8 +135,25 @@ describe('ReimbursementProjectionReconcilerService replay of a claim that needed
       repo, { execute: async () => undefined } as any, { log: async () => undefined } as any, {} as any, prisma,
       new ListReimbursementApproverOptionsUseCase(prisma),
     );
-    return { service, ready: () => outbox.find((row) => row.eventType === 'reimbursement.ready_for_payment')?.payloadJson.data };
+    return { service, repo, outbox, ready: () => outbox.find((row) => row.eventType === 'reimbursement.ready_for_payment')?.payloadJson.data };
   }
+
+  it('D2: every projection replay path reads the transaction block without widening recipient payloads', async (t) => {
+    for (const kind of ['POLICY', 'MANAGER', 'FINANCE'] as const) for (const block of ['CONFIRMED', 'UNRESOLVED', 'NONE']) await t.test(`${kind}/${block}`, async () => {
+      const h = replay(kind, [approverRole('MANAGER', ['mgr-1'])]);
+      let reads = 0;
+      h.repo.paymentNoticeFacts = async (tx: any) => { assert.ok(tx.outboxEvent); reads++; return { paymentDuplicateBlock: block, duplicateReasons: [] }; };
+      assert.deepEqual((await h.service.execute()).failed, []);
+      assert.equal(reads, 1);
+      assert.equal(!!h.ready(), block !== 'CONFIRMED');
+      if (h.ready()) {
+        assert.equal(h.ready().paymentDuplicateBlock, block);
+        assert.equal(h.ready().requesterUserId, 'staff-1');
+        if (kind === 'POLICY') assert.deepEqual(h.ready().approverRecipientUserIds, ['mgr-1']);
+      }
+      assert.ok(h.outbox.some((event) => event.eventType !== 'reimbursement.ready_for_payment'));
+    });
+  });
 
   it('names the holders of the policy role who cover the claim branch, excluding the requester when self-approval is off', async () => {
     const { service, ready } = replay('POLICY', [

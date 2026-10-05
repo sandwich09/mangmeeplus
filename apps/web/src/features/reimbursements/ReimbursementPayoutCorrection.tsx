@@ -7,18 +7,20 @@
 // because the claim moved on (409) also has the page read the claim again, so what is under the form is true.
 
 import { useEffect, useRef, useState } from 'react';
-import { reimbursementDuplicateBlockNotice, REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE, REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
+import { REIMBURSEMENT_SAVED_PAYOUT_WORDS as SAVED_WORDS, REIMBURSEMENT_PAYOUT_HOLDER_WORDS as HOLDER_WORDS, type SavedPayoutAccountSummary, reimbursementDuplicateBlockNotice, REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE, REIMBURSEMENT_PAYOUT_CORRECTION_NOTE_MAX_LENGTH, type ReimbursementPayoutCorrectionReason } from '@watchdog-bms/contracts';
+import { translateApiError } from '@/common/api/api-error-message';
+import { LoadingState, ErrorState } from '@/common/components/state';
 import { cx } from '@/common/components/mangmee';
 import { sanitizeReasonInput } from '@/common/forms/sanitize';
 import { ErrorBanner, btnClass, ghostClass, inputClass } from '../expenses/ExpensesUi';
 import { requestReimbursementPayoutCorrection, submitReimbursementPayoutCorrection } from './reimbursements.api';
 import { errorText, payoutCorrectionComparison } from './reimbursements.logic';
-import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
-import { PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
+import { getMySavedPayoutAccounts, getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
+import { SavedPayoutAccountOption, PayoutHolderNotice, PayoutHolderFields, PayoutAccountFields, choiceClass, labelClass } from './ReimbursementPayout';
 import {
   PAYOUT_CORRECTION_ON_BEHALF_NOTICE, PAYOUT_CORRECTION_PREVIOUS_LABEL, PAYOUT_CORRECTION_REREAD_NOTE, PAYOUT_CORRECTION_SAVE_LABEL,
   PAYOUT_CORRECTION_TYPING_REFUSED, PAYOUT_METHOD_TEXT,
-  isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
+  claimPayoutSavedRefusal, setClaimPayoutHolder, setClaimPayoutSaving, isClaimChangedRefusal, isClaimStateConflict, isRequesterNotActiveRefusal,
   emptyPayoutCorrectionForm, payoutAccountWithName, payoutCorrectionAccountText, payoutCorrectionAnswerWords, payoutCorrectionFormError, payoutCorrectionInput, payoutCorrectionPreviousAccount,
   payoutCorrectionOffers, payoutCorrectionReasons, payoutCorrectionRequestError, payoutCorrectionRequestInput, payoutCorrectionSendBackNotes, payoutCorrectionSendBackTitle,
   payoutCorrectionTypingRefusedUpFront, payoutRoundTexts, type PayoutCorrectionForm,
@@ -163,6 +165,11 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
   // says so up front (`submitModes`), and the form then never offers the choice; a page read before the requester
   // left learns it from the refusal, after which the choice is not offered again. Either way the form says why.
   const [typing, setTyping] = useState<'offered' | 'refused'>('offered');
+  const thirdPartyAllowed = detail.payoutCorrectionActions?.thirdPartyRefusal !== 'APPROVAL_NOT_REQUIRED';
+  const [savedAccounts, setSavedAccounts] = useState<SavedPayoutAccountSummary[]>([]);
+  const [savedLoading, setSavedLoading] = useState(false);
+  const [savedError, setSavedError] = useState<string | null>(null);
+  const [savedReload, setSavedReload] = useState(0);
   const offers = (mode: Exclude<PayoutCorrectionForm['mode'], ''>) => payoutCorrectionOffers(detail, mode);
   const typingOffered = typing === 'offered' && offers('SPECIFIED');
   const sending = useRef(false);
@@ -184,6 +191,16 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
     return () => { active = false; };
   }, [companyId, forSelf, canEditEmployees, requesterUserId]);
 
+  useEffect(() => {
+    if (!forSelf || !payoutCorrectionOffers(detail, 'SAVED')) return;
+    let active = true;
+    setSavedLoading(true); setSavedError(null);
+    getMySavedPayoutAccounts(companyId).then(response => { if (active) setSavedAccounts(response.accounts); })
+      .catch(e => { if (active) setSavedError(errorText(e)); }).finally(() => { if (active) setSavedLoading(false); });
+    return () => { active = false; };
+  }, [companyId, forSelf, detail.payoutCorrectionActions?.submitModes, savedReload]);
+  const selectedHolder = form.mode === 'SPECIFIED' ? form.holder : form.mode === 'SAVED' ? savedAccounts.find(account => account.id === form.savedAccountId) : form.mode === 'PREVIOUS' ? previousAccount : undefined;
+
   const change = (patch: Partial<PayoutCorrectionForm>) => { setForm((current) => ({ ...current, ...patch })); setError(null); setInvalidField(undefined); };
 
   const submit = async (event: React.FormEvent) => {
@@ -191,12 +208,15 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
     if (sending.current) return;
     const invalid = payoutCorrectionFormError(form);
     // With the claim the form was opened on (`updatedAt`): a press that arrives after an earlier one was taken is refused.
-    const input = invalid ? null : payoutCorrectionInput(form, defaultAccount?.token, canSaveAsDefault, detail.updatedAt);
+    const input = invalid ? null : payoutCorrectionInput(form, defaultAccount?.token, canSaveAsDefault, detail.updatedAt, forSelf);
+    if (!thirdPartyAllowed && selectedHolder?.holderType === 'THIRD_PARTY') { setError(translateApiError('payout_third_party_needs_approval')); return; }
+    if (!offers(form.mode as Exclude<PayoutCorrectionForm['mode'], ''>)) { setError(SAVED_WORDS.choose); return; }
     if (invalid || !input) { setError(invalid?.text ?? 'กรุณาเลือกวิธีรับเงินคืนของใบนี้'); setInvalidField(invalid?.field); return; }
     sending.current = true; setBusy(true); setError(null); setInvalidField(undefined);
     try {
       onDone(await submitReimbursementPayoutCorrection(companyId, detail.id, input));
     } catch (e) {
+      if (form.mode === 'SAVED' && claimPayoutSavedRefusal({ ...form, mode: 'SAVED' }, e)) { setForm(current => ({ ...current, mode: '', savedAccountId: undefined })); setSavedReload(value => value + 1); setError(SAVED_WORDS.notFound); return; }
       // Not a claim that moved on: the claim is as it was, and what is left to choose from is on the form.
       if (isRequesterNotActiveRefusal(e)) { setTyping('refused'); setForm((current) => ({ ...current, mode: '' })); return; }
       // The account stays as typed: a refusal for one field is fixed and sent again without typing the rest.
@@ -204,13 +224,14 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
     } finally { sending.current = false; setBusy(false); }
   };
 
-  const option = (mode: PayoutCorrectionForm['mode'], label: string, hint?: string | null) => (
+  const option = (mode: PayoutCorrectionForm['mode'], label: string, hint?: string | null, account?: Parameters<typeof PayoutHolderNotice>[0]['account']) => (
     <label className={cx(choiceClass, form.mode === mode && 'border-brand-300 bg-brand-25')}>
       <input type="radio" name="payout-correction-mode" className="mt-0.5 h-5 w-5 shrink-0" checked={form.mode === mode} disabled={busy}
         onChange={() => change({ mode })} />
       <span className="min-w-0">
         <span className="block font-semibold text-gray-900">{label}</span>
         {hint && <span className="mt-0.5 block break-words text-xs text-gray-500">{hint}</span>}
+        <PayoutHolderNotice account={account} />
       </span>
     </label>
   );
@@ -224,10 +245,15 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
       </div>
       <div role="radiogroup" aria-label="รับเงินคืนทาง" aria-required className="space-y-2">
         {defaultAccount && offers('DEFAULT') && option('DEFAULT', forSelf ? 'ใช้บัญชีรับเงินคืนประจำของฉัน' : 'ใช้บัญชีรับเงินคืนประจำของผู้เบิก', payoutAccountWithName(defaultAccount))}
+        {forSelf && offers('SAVED') && savedAccounts.filter(account => thirdPartyAllowed || account.holderType !== 'THIRD_PARTY').map((account, index) => <SavedPayoutAccountOption key={account.id} account={account} index={index} name="payout-correction-mode" checked={form.mode === 'SAVED' && form.savedAccountId === account.id} disabled={busy} onChange={() => change({ mode: 'SAVED', savedAccountId: account.id })} />)}
+        {forSelf && offers('SAVED') && savedLoading && <LoadingState label={SAVED_WORDS.loading} />}
+        {forSelf && offers('SAVED') && savedError && <ErrorState description={savedError} onRetry={() => setSavedReload(value => value + 1)} />}
         {offers('CASH') && option('CASH', PAYOUT_METHOD_TEXT.CASH!)}
         {typingOffered && option('SPECIFIED', 'ระบุบัญชีสำหรับใบนี้', forSelf ? null : REIMBURSEMENT_PAYOUT_TYPING_ON_BEHALF_NOTE)}
-        {previousAccount && offers('PREVIOUS') && option('PREVIOUS', PAYOUT_CORRECTION_PREVIOUS_LABEL, `${payoutCorrectionAccountText(previousAccount)} · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง`)}
+        {previousAccount && (thirdPartyAllowed || previousAccount.holderType !== 'THIRD_PARTY') && offers('PREVIOUS') && option('PREVIOUS', PAYOUT_CORRECTION_PREVIOUS_LABEL, `${payoutCorrectionAccountText(previousAccount)} · เลือกเมื่อตรวจแล้วว่าบัญชีนี้ถูกต้อง`, previousAccount)}
       </div>
+      {!thirdPartyAllowed && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{translateApiError('payout_third_party_needs_approval')}</p>}
+      {thirdPartyAllowed && selectedHolder?.holderType === 'THIRD_PARTY' && <p className="text-sm text-amber-800">{HOLDER_WORDS.thirdPartyApprovalNotice}</p>}
       {/* Known before anyone typed: said as what the form is, not as something that went wrong. */}
       {typing === 'refused' ? <ErrorBanner message={PAYOUT_CORRECTION_TYPING_REFUSED} />
         : payoutCorrectionTypingRefusedUpFront(detail) && (
@@ -235,14 +261,17 @@ export function PayoutCorrectionAccountForm({ companyId, detail, userId, canEdit
         )}
       {form.mode === 'SPECIFIED' && typingOffered && (
         <div className="space-y-3 border-t border-gray-100 pt-3">
-          <PayoutAccountFields value={form.account} onChange={(account) => change({ account })} disabled={busy} invalidField={invalidField} />
-          {canSaveAsDefault && (
+          <PayoutAccountFields value={form.account} onChange={(account) => change({ account })} disabled={busy} invalidField={invalidField} accountNameHint={SAVED_WORDS.accountNameHint} />
+          <PayoutHolderFields value={form.holder ?? { holderType: 'SELF' }} forSelf={forSelf} disabled={busy} invalidField={invalidField} allowThirdParty={thirdPartyAllowed}
+            onChange={holder => { const next = setClaimPayoutHolder({ ...form, mode: 'SPECIFIED' }, holder); change({ holder: next.holder, saveAsDefault: next.saveAsDefault }); }} />
+          {canSaveAsDefault && form.holder?.holderType !== 'THIRD_PARTY' && (
             <label className="flex min-h-11 items-start gap-3 text-sm text-gray-700">
               <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={form.saveAsDefault} disabled={busy}
-                onChange={(event) => change({ saveAsDefault: event.target.checked })} />
+                onChange={(event) => change(setClaimPayoutSaving({ ...form, mode: 'SPECIFIED' }, 'saveAsDefault', event.target.checked) as PayoutCorrectionForm)} />
               <span>{forSelf ? 'บันทึกเป็นบัญชีประจำของฉัน' : 'บันทึกเป็นบัญชีประจำของผู้เบิก'}</span>
             </label>
           )}
+          {forSelf && <label className="flex min-h-11 items-start gap-3 text-sm text-gray-700"><input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={form.saveForLater === true} disabled={busy} onChange={event => change(setClaimPayoutSaving({ ...form, mode: 'SPECIFIED' }, 'saveForLater', event.target.checked) as PayoutCorrectionForm)} /><span>{SAVED_WORDS.saveForLater}</span></label>}
         </div>
       )}
       {/* True of every choice: what is approved may be the same account, a first one, or cash, and the step that
@@ -284,18 +313,18 @@ export function PayoutCorrectionComparison({ detail }: { detail: any }) {
         <dl>
           <div className="min-w-0" data-testid="reimbursement-payout-correction-same-account">
             <dt className="text-xs font-semibold text-gray-600">{view.labels[0]}</dt>
-            <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
+            <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}<PayoutHolderNotice account={detail.payout} /></dd>
           </div>
         </dl>
       ) : (
         <dl className="grid gap-3 sm:grid-cols-2">
           <div className="min-w-0">
             <dt className="text-xs font-semibold text-gray-600">{view.labels[0]}</dt>
-            <dd className="mt-1 break-words text-sm text-gray-700">{view.previous}</dd>
+            <dd className="mt-1 break-words text-sm text-gray-700">{view.previous}<PayoutHolderNotice account={detail.payoutCorrection?.previous} /></dd>
           </div>
           <div className="min-w-0">
             <dt className="text-xs font-semibold text-gray-600">{view.labels[1]}</dt>
-            <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}</dd>
+            <dd className="mt-1 break-words text-sm font-semibold text-gray-900">{view.current}<PayoutHolderNotice account={detail.payout} /></dd>
           </div>
         </dl>
       )}

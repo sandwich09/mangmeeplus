@@ -621,9 +621,9 @@ export type QueueSummary = { count: number; totalAmount: number; outstandingAmou
  */
 export function summariseQueue(rows: readonly any[]): QueueSummary {
   return (rows ?? []).reduce((acc, r) => ({
-    count: acc.count + 1,
-    totalAmount: acc.totalAmount + (Number(r?.amount) || 0),
-    outstandingAmount: acc.outstandingAmount + (Number(r?.outstandingAmount) || 0),
+    count: acc.count + (r?.hasDuplicateBlocker ? 0 : 1),
+    totalAmount: acc.totalAmount + (r?.hasDuplicateBlocker ? 0 : Number(r?.amount) || 0),
+    outstandingAmount: acc.outstandingAmount + (r?.hasDuplicateBlocker ? 0 : Number(r?.outstandingAmount) || 0),
     flagged: acc.flagged + (r?.slaRisk || r?.hasDuplicateBlocker ? 1 : 0),
   }), { count: 0, totalAmount: 0, outstandingAmount: 0, flagged: 0 });
 }

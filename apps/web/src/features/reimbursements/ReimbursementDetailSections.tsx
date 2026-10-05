@@ -42,7 +42,8 @@ import {
   rowHasFinanceReview, savePaymentForm, signedCopyMisfiledHint, slipTargetPayment, sumLineAmounts, timelineDateText,
   type ApprovalFieldDiff, type PaymentFormSession, type PaymentFormSlip, type PaymentSlipChoice,
 } from './reimbursements.logic';
-import { PayerConfirmationCheck } from './ReimbursementPayout';
+import { payoutHolderLine } from '@watchdog-bms/contracts';
+import { PayoutHolderNotice, PayerConfirmationCheck } from './ReimbursementPayout';
 import {
   PAID_DIFFERENTLY_LABEL, PAYMENT_NO_CLAIM_ACCOUNT, SIGNED_COPY_BEFORE_CORRECTION_LABEL, paymentDestinationText, paymentFormPayout, requestedPayout,
 } from './reimbursement-payout.logic';
@@ -192,7 +193,7 @@ export function VoidPaymentDialog({ payment, claim, busy, error, onClose, onConf
   );
 }
 
-export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm, confirmLabel = 'อนุมัติด้วยข้อมูลล่าสุด' }: {
+export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, onClose, onConfirm, confirmLabel = 'อนุมัติด้วยข้อมูลล่าสุด', beforePayout, payout }: {
   requestNo?: string;
   diff: ApprovalFieldDiff[];
   lines: any[];
@@ -203,7 +204,13 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
   onConfirm: () => void;
   /** A claim now paid by transfer is not approved from here: the caller sends the approver to check the account first. */
   confirmLabel?: string;
+  beforePayout?: Parameters<typeof PayoutHolderNotice>[0]['account'];
+  payout?: Parameters<typeof PayoutHolderNotice>[0]['account'];
 }) {
+  const accountText = (text: string, account: typeof payout) => {
+    const line = account?.accountName && payoutHolderLine(account);
+    return line && text.endsWith(` · ${line}`) ? text.slice(0, -line.length - 3) : text;
+  };
   return (
     <Modal
       open
@@ -231,10 +238,11 @@ export function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, er
               {diff.map(row => (
                 <tr key={row.key} className={cx(row.changed ? 'bg-warning-50' : 'text-gray-500', row.key === 'amount' && 'whitespace-nowrap')}>
                   <td>{row.label}</td>
-                  <td className={row.changed ? 'text-gray-400 line-through' : 'text-gray-500'}>{row.before}</td>
+                  <td className={row.changed ? 'text-gray-400 line-through' : 'text-gray-500'}>{row.key === 'payout' ? accountText(row.before, beforePayout) : row.before}{row.key === 'payout' && <PayoutHolderNotice account={beforePayout} />}</td>
                   <td className={row.changed ? 'font-bold text-gray-900' : 'text-gray-500'}>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span>{row.after}</span>
+                      <span>{row.key === 'payout' ? accountText(row.after, payout) : row.after}</span>
+                      {row.key === 'payout' && <PayoutHolderNotice account={payout} />}
                       {row.changed && <MangmeeBadge tone="amber">แก้ไขแล้ว</MangmeeBadge>}
                     </div>
                   </td>
@@ -661,7 +669,7 @@ export function useClaimDocumentPreview(companyId: string, onError: (message: st
         footer={(
           <>
             {claimFormError && <p className="mr-auto text-xs font-semibold text-error-700">{claimFormError}</p>}
-            <button
+            <button type="button"
               className={successBtn}
               style={successBtnStyle}
               disabled={claimFormSaving} aria-busy={Boolean(claimFormSaving)}
@@ -768,9 +776,9 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
   const lineReceipt = (l: any) => (
     <>
       {l.sourceExpenseSnapshot ? l.sourceExpenseSnapshot.attachments.map((file: { id: string; fileName: string }) => (
-        <button key={file.id} className="block min-h-11 max-w-48 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(file.id, file.fileName)}>📎 {file.fileName}</button>
+        <button type="button" key={file.id} className="block min-h-11 max-w-48 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(file.id, file.fileName)}>📎 {file.fileName}</button>
       )) : l.attachmentId ? (
-        <button className="min-h-11 max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
+        <button type="button" className="min-h-11 max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
           📎 {l.attachmentFileName ?? 'เปิดไฟล์แนบ'}
         </button>
       ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
@@ -778,7 +786,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
         <div className="mt-1 space-y-1">
           <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
           <p className="leading-5 text-gray-400"><WholeWords text={ATTACHMENT_SOURCE_TYPES_LABEL} /></p>
-          {l.attachmentId && <button className="min-h-11 text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
+          {l.attachmentId && <button type="button" className="min-h-11 text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
         </div>
       )}
     </>
@@ -941,7 +949,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                   {/* Attaching again never deletes: the newest declared scan counts, older ones stay viewable. */}
                   {signedCopies.map((copy: any) => (
                     <li key={copy.attachmentId} className="min-w-0 rounded-xl border border-gray-200 px-3 py-2">
-                      <button className="block min-h-11 max-w-full truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
+                      <button type="button" className="block min-h-11 max-w-full truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
                       {/* A scan declared as signed before a correction round showed the account that was then corrected. */}
                       {/* What the file is, before anyone opens it: a picture or a PDF, then what it was attached as. */}
                       <div className="break-words text-gray-500">
@@ -1032,6 +1040,7 @@ export function ClaimDetailSections({ detail, userId, permissions, busy, onOpenA
                 {paymentDestinationText(p) ? (
                   <div className="mt-1 break-words text-gray-500">
                     {`โอนเข้า ${paymentDestinationText(p)}${p.payoutConfirmedAt ? ` · ยืนยันเมื่อ ${formatThaiDateTime(p.payoutConfirmedAt)}` : ''}`}
+                    <PayoutHolderNotice account={p.payoutDestination} />
                   </div>
                 ) : p.paymentMethod === 'BANK_TRANSFER' && <div className="mt-1 text-gray-500">{PAYMENT_NO_CLAIM_ACCOUNT}</div>}
                 {p.methodMismatchReason && (

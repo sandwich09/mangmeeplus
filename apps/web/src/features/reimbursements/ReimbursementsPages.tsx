@@ -34,7 +34,7 @@ import {
 import {
   PaymentBadge, PaymentForm, RejectDialog, StaleApprovalDialog, StatusBadge, financeActionLabel, useClaimDocumentPreview,
 } from './ReimbursementDetailSections';
-import { claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
+import { isThirdPartyAcceptanceRefusal, claimNeedsPayoutAttestation, draftRowSubmitsFromItsPage, draftRowSubmitLabel } from './reimbursement-payout.logic';
 import { ClaimPayoutCard } from './ReimbursementPayout';
 import { roleDisplayName } from '../employee-access/role-picker.logic';
 import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, reimbursementDuplicateBlockText, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
@@ -325,6 +325,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     { key: 'draft', label: 'ร่าง' },
     { key: 'review', label: 'รออนุมัติ/ตรวจสอบ' },
     { key: 'payment', label: 'รอจ่าย' },
+    { key: 'duplicate_blocked', label: REIMBURSEMENT_DUPLICATE_BLOCK_LABEL },
     { key: 'paid', label: 'จ่ายแล้ว' },
     { key: 'closed', label: 'ปฏิเสธ/ยกเลิก' },
   ];
@@ -333,6 +334,8 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
     { key: 'draft', icon: ICON.edit, label: 'ร่างรอส่ง', value: summary.counts.draft, tone: KPI.amber },
     { key: 'review', icon: ICON.clock, label: 'รออนุมัติ/ตรวจสอบ', value: summary.counts.review, tone: KPI.purple },
     { key: 'payment', icon: ICON.wallet, label: 'รอจ่ายเงินคืน', value: summary.counts.payment, tone: KPI.sky },
+    ...(summary.counts.duplicate_blocked > 0 ? [{ key: 'duplicate_blocked', icon: ICON.alert, label: REIMBURSEMENT_DUPLICATE_BLOCK_LABEL,
+      value: summary.counts.duplicate_blocked, tone: KPI.danger }] as const : []),
     { key: 'all', icon: ICON.doc, label: 'ยอดรวมที่ขอเบิก', value: formatMoney(summary.totalAmount, 'THB'), tone: KPI.brand },
   ] as const : [];
 
@@ -358,12 +361,12 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
               <button key={card.key} type="button" aria-pressed={statusFilter === card.key}
                 onClick={() => setStatusFilter(hubCardFilter(statusFilter, card.key))}
                 className={cx('h-full w-full min-w-0 rounded-2xl text-left', card.key !== 'all' && statusFilter === card.key && 'ring-2 ring-brand-500 ring-offset-2')}>
-                <StatCard icon={card.icon} label={card.label} value={card.value} {...card.tone} />
+                <StatCard icon={card.icon} label={card.label} value={card.value} danger={card.key === 'duplicate_blocked'} {...card.tone} />
               </button>
             ))}
           </div>
           <MangmeeCard className="p-4">
-            {/* Three rows of two on a phone, two rows of three from sm. A label too long for a 390 px chip wraps
+            {/* All chips stay visible, including empty buckets. A label too long for a 390 px chip wraps
                 at its slash, never inside a Thai word (measured: "รออนุมัติ/ตรวจสอบ" needs 143 px of the 132 there). */}
             <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3" data-testid="reimbursements-mine-filters">
               {statusChips.map(chip => (
@@ -544,6 +547,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
         const failure = err(e);
         await load();
         setError(failure);
+        if (isThirdPartyAcceptanceRefusal(e)) { toast.error(failure); onOpenDetail(r.id); }
       }
     } finally { setBusy(null); }
   };
@@ -687,6 +691,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
       />}
       {staleReview && <StaleApprovalDialog
         requestNo={staleReview.detail.requestNo ?? staleReview.row.requestNo}
+        beforePayout={staleReview.row.payout} payout={staleReview.detail.payout}
         diff={diffApprovalFields(
           approvalComparable(staleReview.row, staleReview.row.lineCount ?? 1),
           approvalComparable(staleReview.detail, (staleReview.detail.lines ?? []).length),
@@ -708,7 +713,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
             setStaleReview(null);
             await load();
             toast.success('อนุมัติคำขอเรียบร้อยแล้ว');
-          } catch (e) { setError(err(e)); }
+          } catch (e) { setError(err(e)); if (isThirdPartyAcceptanceRefusal(e)) { setStaleReview(null); await load(); toast.error(err(e)); onOpenDetail(review.row.id); } }
           finally { setBusy(null); }
         }}
       />}

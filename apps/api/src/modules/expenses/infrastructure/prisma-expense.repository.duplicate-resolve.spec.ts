@@ -109,7 +109,7 @@ function harness() {
     expenseDuplicateCandidate: candidateTable,
     expenseRecord: table(store.expenses),
   };
-  return { repo: new PrismaExpenseRepository({ client } as any), store, lockKeys };
+  return { repo: new PrismaExpenseRepository({ client } as any), store, lockKeys, client };
 }
 
 const base = {
@@ -361,4 +361,34 @@ it('a claim-bound dismissal can clear a hidden cross-branch candidate, but canno
   await assert.rejects(() => h.repo.resolveDuplicateCandidate({ ...input, reimbursementRequestId: 'rb-other' }, async () => undefined), /reimbursement_projection_source_mismatch/);
   await h.repo.resolveDuplicateCandidate(input, async () => undefined);
   assert.equal(h.store.candidates.find(c => c.id === 'cand-cross-branch')!.status, 'DISMISSED');
+});
+
+it('D3: confirmed own duplicate commits one claim event, retries once and skips paid or closed claims', async () => {
+  for (const status of ['READY_FOR_PAYMENT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'DRAFT', 'PAID', 'CANCELLED', 'VOIDED', 'REJECTED']) {
+    const h = harness();
+    (h.store.expenses[0] as any).sourceReimbursementRequestId = 'rb-1';
+    const claim: any = { id: 'rb-1', companyId: 'co-1', status, branchId: 'branch-a', requesterUserId: 'requester', requestNo: 'RB-1', sourceExpenses: [] };
+    h.client.reimbursementRequest = { findFirst: async () => claim, findFirstOrThrow: async () => ({ ...claim, sourceExpenses: [{ ...h.store.expenses[0], duplicateCandidates: h.store.candidates }] }) };
+    h.client.reimbursementPolicy = { findFirst: async () => null };
+    const events: any[] = [];
+    h.client.outboxEvent = { createMany: async ({ data }: any) => { for (const row of data) if (!events.some(e => e.eventKey === row.eventKey)) events.push(row); } };
+    await h.repo.resolveDuplicateCandidate({ ...base, candidateId: 'cand-own' }, noopAudit);
+    const open = !['PAID', 'CANCELLED', 'VOIDED', 'REJECTED'].includes(status);
+    assert.equal(events.length, open ? 1 : 0, status);
+    await h.repo.resolveDuplicateCandidate({ ...base, candidateId: 'cand-own' }, noopAudit);
+    assert.equal(events.length, open ? 1 : 0);
+    if (open) { assert.equal(events[0].payloadJson.data.requesterUserId, 'requester'); assert.equal(events[0].payloadJson.actorUserId, base.actorUserId); assert.equal(events[0].aggregateId, 'rb-1'); }
+  }
+  const standalone = harness();
+  await standalone.repo.resolveDuplicateCandidate({ ...base, candidateId: 'cand-own' }, noopAudit);
+  await assert.rejects(() => standalone.repo.resolveDuplicateCandidate({ ...base, candidateId: 'cand-own' }, noopAudit), /already has a confirmed duplicate/);
+});
+it('D3: a failed claim event rolls confirmation back', async () => {
+  const h = harness(); (h.store.expenses[0] as any).sourceReimbursementRequestId = 'rb-1';
+  const claim: any = { id: 'rb-1', status: 'READY_FOR_PAYMENT', requesterUserId: 'requester', branchId: 'branch-a' };
+  h.client.reimbursementRequest = { findFirst: async () => claim, findFirstOrThrow: async () => ({ ...claim, sourceExpenses: [{ ...h.store.expenses[0], duplicateCandidates: h.store.candidates }] }) };
+  h.client.reimbursementPolicy = { findFirst: async () => null };
+  h.client.outboxEvent = { createMany: async () => { throw new Error('outbox_failed'); } };
+  await assert.rejects(() => h.repo.resolveDuplicateCandidate({ ...base, candidateId: 'cand-own' }, noopAudit), /outbox_failed/);
+  assert.equal(h.store.candidates[0].status, 'OPEN'); assert.equal(h.store.expenses[0].duplicateStatus, 'POSSIBLE_DUPLICATE');
 });

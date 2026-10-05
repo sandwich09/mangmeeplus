@@ -50,6 +50,21 @@ function bothRenderings(input: ReimbursementClaimFormSnapshot): string[] {
   return [renderReimbursementClaimFormSvg(input).toString('utf8'), renderReimbursementClaimFormPages(input).map(String).join('')];
 }
 
+it('multi payout 2b: pins both existing claim renderings before holder lines', () => {
+  const input = snapshot({ payout: { method: 'BANK_TRANSFER', kind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'สมชาย', accountLast4: '6789', verifier: null } });
+  assert.equal(createHash('sha256').update(bothRenderings(input).join('\n')).digest('hex'), '5dacecaa843bd626b8fa35808ee3b7f40caf531ba6ceef9ce57b2d00d959b5b1');
+});
+it('multi payout 2b: prints escaped wrapped holder facts and the truthful self attestation', () => {
+  const input = snapshot({ payout: { method: 'BANK_TRANSFER', kind: 'BANK_ACCOUNT', bankName: 'ธนาคารกสิกรไทย', accountName: 'สมชาย', accountLast4: '6789', holderType: 'THIRD_PARTY', holderNote: '<คู่สมรส> & '.padEnd(200, 'ก'), verifier: { byRequester: true, at: '2026-07-20' } } as any });
+  for (const printed of bothRenderings(input)) {
+    assert.match(printed, /บัญชีของบุคคลอื่น: &lt;คู่สมรส&gt; &amp;/);
+    assert.match(printed, /ผู้เบิกยืนยันบัญชีของบุคคลอื่นด้วยตนเอง/);
+    assert.doesNotMatch(printed, /<คู่สมรส>|ผู้เบิกยืนยันบัญชีของตนเอง/);
+    assert.equal((printed.match(/ก/g) ?? []).length, (bothRenderings(snapshot({ payout: { ...input.payout, holderType: 'SELF', holderNote: undefined } as any }))[0]!.match(/ก/g) ?? []).length + ((input.payout as any).holderNote.match(/ก/g) ?? []).length);
+    assert.ok(Number(/<rect x="45" y="(\d+)" width="760"/.exec(printed)![1]) < 700);
+  }
+});
+
 const SIGNING_LINE = /<line x1="\d+" y1="(\d+)" x2="\d+" y2="\d+" stroke="#222"/g;
 
 describe('reimbursement claim form', () => {

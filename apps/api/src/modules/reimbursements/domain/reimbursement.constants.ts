@@ -83,7 +83,7 @@ export function effectivePolicy(record: ReimbursementPolicyRecord | null): Effec
 const POLICY_SNAPSHOT_KEYS = new Set([
   'schemaVersion', 'policyId', 'policyVersion', 'approvalRequiredFromAmount', 'requiresApproval',
   'route', 'allowSelfApproval', 'requireReceipt', 'allowMissingReceiptWithReason',
-  'duplicatePolicy', 'financeReviewRequired', 'slaHours',
+  'duplicatePolicy', 'financeReviewRequired', 'slaHours', 'approvalFloor',
 ]);
 const ROUTE_KEYS = new Set(['mode', 'roleKey', 'effectiveTaskRole', 'ownerFallbackUsedAtSubmission', 'soloSelfApprovalAtSubmission']);
 
@@ -112,6 +112,7 @@ export function parseReimbursementPolicySnapshot(value: unknown): ReimbursementP
     && typeof value['policyVersion'] === 'string' && value['policyVersion'].length > 0
     && typeof threshold === 'string' && /^\d{1,14}(?:\.\d{1,4})?$/.test(threshold)
     && typeof requiresHumanApproval === 'boolean'
+    && (value['approvalFloor'] === undefined || (value['approvalFloor'] === 'THIRD_PARTY_PAYOUT' && requiresHumanApproval === true))
     && validRoute
     && (requiresHumanApproval ? route !== null : route === null)
     && typeof value['allowSelfApproval'] === 'boolean'

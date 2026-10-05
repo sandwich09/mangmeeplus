@@ -5,7 +5,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { effectivePolicy, effectivePolicyForRequest, type EffectivePolicy } from '../../domain/reimbursement.constants';
 import { mayTypePayoutAccountFor } from '../../domain/logic/payout-destination.logic';
-import { payoutCorrectionPhase, payoutCorrectionSourceStep } from '../../domain/logic/reimbursement.logic';
+import { payoutCorrectionPhase, payoutCorrectionSourceStep, payoutCorrectionApprovalRequired, payoutCorrectionRoundStart } from '../../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { detailWithFileNames } from '../dto/reimbursement.mapper';
 import { ReimbursementEvidenceService } from '../services/reimbursement-evidence.service';
@@ -104,6 +104,14 @@ export class SubmitPayoutCorrectionUseCase {
     const change: CorrectionPayoutChange = payout.mode === 'PREVIOUS'
       ? { write: { mode: 'PREVIOUS' }, audit: { mode: 'PREVIOUS' } }
       : await this.payouts.draftPayoutChange(ctx, req.requesterUserId, payout as ReimbursementPayoutInput, true);
+    if (!payoutCorrectionApprovalRequired(req)) {
+      const previous = payoutCorrectionRoundStart(req);
+      const holderType = change.write.mode === 'SPECIFIED' ? change.write.destination.holderType
+        : change.write.mode === 'SAVED' ? (await this.repo.findSavedPayoutAccount(ctx.companyId, req.requesterUserId, change.write.savedAccountId))?.holderType
+        : change.write.mode === 'PREVIOUS' && previous?.payoutVersion != null
+          ? (await this.repo.listPaymentPayoutDestinations(ctx.companyId, id, [previous.payoutVersion]))[previous.payoutVersion]?.holderType : undefined;
+      if (holderType === 'THIRD_PARTY') throw new ConflictException('payout_third_party_needs_approval');
+    }
     // Owner rule 2026-10-01: the person whose money it is hears of every change someone else makes for
     // them. Whoever answers for the requester (a finance reviewer may) is named to them, whatever was
     // chosen: an account typed, their default, the account the claim had, or cash. Only where a notice
@@ -151,8 +159,10 @@ export class SubmitPayoutCorrectionUseCase {
           },
         }, tx);
         const eventType = result.readyForPayment ? 'reimbursement.ready_for_payment' : 'reimbursement.payout_correction_submitted';
-        const notice = reimbursementPayoutAnswerNotice(result.answer);
-        await tx.outboxEvent.createMany({
+        const given = await this.repo.findClaimPayout({ ...req, ...result.columns }, tx);
+        const notice = reimbursementPayoutAnswerNotice(result.answer, given);
+        const paymentFacts = result.readyForPayment ? await this.repo.paymentNoticeFacts(tx, ctx.companyId, id) : undefined;
+        if (paymentFacts?.paymentDuplicateBlock !== 'CONFIRMED') await tx.outboxEvent.createMany({
           data: [{
             companyId: ctx.companyId,
             eventType,
@@ -165,6 +175,7 @@ export class SubmitPayoutCorrectionUseCase {
               data: {
                 requestId: id, requestNo: req.requestNo, requesterUserId: req.requesterUserId,
                 amount: req.amount, currency: req.currency,
+                ...(paymentFacts && { paymentDuplicateBlock: paymentFacts.paymentDuplicateBlock }),
                 ...(result.readyForPayment
                   ? { status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD' }
                   // To the approvers of the new step. The title and the end of the body are finished sentences
@@ -183,7 +194,7 @@ export class SubmitPayoutCorrectionUseCase {
           // In the words of the answer, with what the claim holds now as this transaction froze it: of an
           // account, its bank and last 4 digits. To the requester alone, whether the claim now waits for
           // its approvers or, having none, is ready for payment.
-          const notice = reimbursementPayoutAnsweredForRequesterNotice(result.answer, answeredByName, await this.repo.findClaimPayout({ ...req, ...result.columns }, tx), { alsoSavedAsDefault: change.audit.savedAsDefault });
+          const notice = reimbursementPayoutAnsweredForRequesterNotice(result.answer, answeredByName, given, { alsoSavedAsDefault: change.audit.savedAsDefault });
           await this.payouts.tellClaimRequester(tx, ctx.companyId, id, req.requesterUserId,
             { title: req.requestNo ? `${notice.title}: ${req.requestNo}` : notice.title, body: notice.body });
         }

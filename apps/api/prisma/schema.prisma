@@ -989,6 +989,7 @@ model CompanyMembership {
   employeeAccessProfile EmployeeAccessProfile?
   reimbursementDraftActions ReimbursementDraftAction[]
   payoutAccount         MemberPayoutAccount?
+  savedPayoutAccounts    MemberSavedPayoutAccount[]
 
   @@unique([companyId, userId])
   @@index([userId, status])
@@ -7364,6 +7365,32 @@ model MemberPayoutAccount {
   @@unique([companyId, userId])
 }
 
+/// A member's other saved accounts, private to that membership (multi-payout spec §4, §7). Never
+/// selected automatically and never cash; only the requester can choose one for a claim.
+/// The number is AES-256-GCM ciphertext; the v1 account fingerprint deduplicates independently of
+/// holder facts, while the claim's fingerprint also binds those facts for a third-party account.
+model MemberSavedPayoutAccount {
+  id                     String            @id @default(cuid())
+  companyId              String
+  userId                 String
+  label                  String?
+  /// SELF | THIRD_PARTY; a third-party account requires a holder note (CHECKs in the migration).
+  holderType             String
+  holderNote             String?
+  /// BANK_ACCOUNT | PROMPTPAY_PHONE only; a saved row always carries a complete account.
+  payoutKind             String
+  bankName               String?
+  accountName            String
+  accountNumberEncrypted String
+  accountLast4           String
+  fingerprint            String
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+  membership             CompanyMembership @relation(fields: [companyId, userId], references: [companyId, userId], onDelete: Cascade)
+
+  @@unique([companyId, userId, fingerprint])
+}
+
 /// The claim's own copy of the account it is paid into, one row per version (payout spec §9). A row
 /// with `frozenAt` set is what the approver attests and the payer pays; the migrations' triggers let
 /// only the verification columns change after that, and refuse deleting it while its claim exists.
@@ -7372,13 +7399,16 @@ model ReimbursementPayoutDestination {
   companyId              String
   reimbursementRequestId String
   version                Int
+  /// SELF for existing rows and older writers; THIRD_PARTY binds its note into the fingerprint.
+  holderType             String               @default("SELF")
+  holderNote             String?
   payoutKind             String
   bankName               String?
   accountName            String
   accountNumberEncrypted String
   accountLast4           String
   fingerprint            String
-  /// DEFAULT_ACCOUNT | REQUESTER | PREPARER: where the claim's account came from. LEGACY_PAYMENT: a
+  /// DEFAULT_ACCOUNT | SAVED_ACCOUNT | REQUESTER | PREPARER: where the claim's account came from. LEGACY_PAYMENT: a
   /// copy of the requester's default made when a legacy claim was paid into it (the claim never points at it).
   source                 String
   /// Who entered the account: whoever typed it, or — for a copy of the default — whoever last set that default.

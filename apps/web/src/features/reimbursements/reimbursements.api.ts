@@ -193,9 +193,9 @@ export function listApprovalQueue(companyId: string) {
  * The claim page and the approval queue answer a refusal themselves: the dialog of a claim edited after it was sent, or their
  * own banner. No error toast beside it: the toast's sentence for an edited claim said its data was incomplete.
  */
-export function approveReimbursement(companyId: string, id: string, comment?: string, approvalSnapshotHash?: string, payoutVerifiedVersion?: number) {
+export function approveReimbursement(companyId: string, id: string, comment?: string, approvalSnapshotHash?: string, payoutVerifiedVersion?: number, payoutThirdPartyAccepted?: boolean) {
   return apiFetch<any>(`${base(companyId)}/${id}/approve`, {
-    method: 'POST', body: JSON.stringify({ comment, approvalSnapshotHash, payoutVerifiedVersion }), suppressErrorToast: true,
+    method: 'POST', body: JSON.stringify({ comment, approvalSnapshotHash, payoutVerifiedVersion, ...(payoutThirdPartyAccepted === true && { payoutThirdPartyAccepted: true }) }), suppressErrorToast: true,
   });
 }
 /** Like the approval: the claim page (its dialog, or its step card) and the approval queue answer a refusal themselves, so no error toast says it a second time. */

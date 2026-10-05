@@ -6,6 +6,8 @@
 
 เอกสารประกอบ: [แผนงาน](../plans/reimbursement-step-journey-plan-th.md), [สถานะงาน](../agent-memory/reimbursement-step-journey.md), [สเปคเบิกจ่ายฉบับหลัก](reimbursement-approval-spec.md), [สเปคบัญชีรับเงินคืนและสลิปการจ่าย](reimbursement-payout-account-and-payment-slip-spec-th.md), [นโยบายผู้อนุมัติ](reimbursement-approver-routing-policy-spec.md), [journey uplift](reimbursement-journey-uplift-spec.md), [ใบทดแทน บริษัทจ่าย/พนักงานจ่าย](substitute-receipt-company-payer-spec.md), [ตารางสิทธิ์](permission-matrix.md)
 
+แก้ไขเพิ่ม 5 ต.ค. 2569: [สเปกหลายบัญชีรับเงินคืน](reimbursement-multi-payout-accounts-spec-th.md) เพิ่มรายการบัญชีที่บันทึกไว้ ให้ผู้เบิกเลือกบัญชีต่อใบ และให้ใบที่คืนเงินเข้าบัญชีของบุคคลอื่นมีขั้นอนุมัติเสมอพร้อมการยอมรับของผู้อนุมัติ จำนวนขั้น กติกาอนุมัติใบของตัวเอง และช่องลายเซ็นไม่เปลี่ยน
+
 ## 1. ที่มาและคำตัดสินของเจ้าของ
 
 ผู้ใช้หลักของระบบคือเจ้าของร้านที่ทำทุกอย่างเองบนมือถือ flow เบิกจ่ายเดิมออกแบบสำหรับบริษัทที่มีผู้เบิก ผู้อนุมัติ และฝ่ายการเงินแยกกัน หน้าจอเป็น hub 4 แท็บบวก drawer เจ้าของคนเดียวจึงต้องกดปุ่ม 4 ปุ่มใน 3 แท็บ และลงนามใบเบิก 4 ช่องด้วยชื่อตัวเอง ทั้งที่กฎของระบบอนุญาตให้คนเดียวทำจบอยู่แล้ว
