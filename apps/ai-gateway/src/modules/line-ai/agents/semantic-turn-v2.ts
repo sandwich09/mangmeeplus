@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
-import { LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, extractValueCandidatesV2, hasToolPermissions, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
+import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, extractValueCandidatesV2, hasToolPermissions, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
   parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, todayCivilDate, unresolvedMonthName,
-  type LineAiPeriodCandidate,
+  type LineAiAnswerCardLayout, type LineAiPeriodCandidate,
   type LineAiTurnRequest, type LineAiSemanticCoverageV2, type LineAiSourceRefV2, type LineAiValueCandidatesV2,
   type ToolMeta, type ToolResult, type PublicLookupResult, type SourceRef, type SpecialistOutput } from '@watchdog-bms/contracts';
 import type { AgentRunResult } from './agent-types';
@@ -12,7 +12,8 @@ import { currentBudgetState } from '../../../common/usage/usage-context';
 import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { buildCapabilityHelp } from './response-composer.agent';
-import { assumedYearNote, formatPreparedSimpleRead, periodLine } from './prepared-simple-read-formatter';
+import { OPEN_WORK_TOOLS, assumedYearNote, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
+import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
 import { MANGMEE_PERSONA_PROMPT, closesWithShopLine, fixMangmeeSelfReference, sanitizeMangmeeComposedText, shapeGeneralAnswer } from './mangmee-persona';
@@ -257,7 +258,7 @@ function readPeriod(good: ToolResult[], periods: readonly LineAiPeriodCandidate[
 function deterministicReadFallback(
   good: ToolResult[], language: 'th' | 'en', locale: string, enabledFamilies: ReadonlySet<string>, messageText: string, comparison?: ExpensePeriodComparison,
   periodNote = '',
-): { status: 'handled' | 'unsupported'; replyText: string; sourceRefIds: string[] } {
+): { status: 'handled' | 'unsupported'; replyText: string; sourceRefIds: string[]; layout?: LineAiAnswerCardLayout } {
   const sourceRefIds = good.flatMap(result => result.sourceRefs.map(sourceId));
   if (comparison) return { status: 'handled', replyText: expensePeriodComparisonReplyText(comparison), sourceRefIds };
   // tuning-7 (run 7 T-015-a): a why-question's fallback should show the breakdown that explains the
@@ -279,8 +280,10 @@ function deterministicReadFallback(
     for (const shape of preferredAnswerShapes(primary.toolName, primary.data, messageText)) {
       const key = preparedFamilyKey(primary.toolName, shape);
       if (!enabledFamilies.has(key)) continue;
-      const formatted = formatPreparedSimpleRead(key, output, { language, locale, periodNote });
-      if (formatted.kind === 'answer') return { status: 'handled', replyText: formatted.replyText, sourceRefIds: formatted.sourceRefs.map(sourceId) };
+      const formatted = formatPreparedSimpleRead(key, output, { language, locale, periodNote, messageText });
+      // The card of this very sentence — only when the sentence was written from the one result there is.
+      if (formatted.kind === 'answer') return { status: 'handled', replyText: formatted.replyText, sourceRefIds: formatted.sourceRefs.map(sourceId),
+        ...(formatted.layout && good.length === 1 ? { layout: formatted.layout } : {}) };
     }
   }
   return { status: 'unsupported', replyText: READ_UNAVAILABLE_TEXT[language], sourceRefIds };
@@ -1071,6 +1074,10 @@ export async function runSemanticTurnV2(input: {
   const turnWords = JSON.stringify([req.messageText, req.userContext, req.conversationContext, req.taskProjection, req.inputEvidence, retained?.modelData,
     results.map(entry => entry.result.data)]);
   const coverage: LineAiSemanticCoverageV2[] = [], texts: string[] = [];
+  // Design lock: the locked card of an item whose final answer is a deterministic read sentence, or
+  // one read of the reader's open work. Model prose never fills a row; an item answered any other way
+  // has no entry here and is drawn as its sentence.
+  const layouts = new Map<number, LineAiAnswerCardLayout>();
   for (const item of inventory) {
     // C1(d): the composer never produced a usable answer for this subrequest after every retry —
     // a compose failure, not a customer question, so it must not linger as `needs_user`.
@@ -1145,6 +1152,7 @@ export async function runSemanticTurnV2(input: {
       if (fallback.status === 'handled') {
         answer = { index: item.index, status: 'handled', text: fallback.replyText, reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED',
           ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
+        if (fallback.layout) layouts.set(item.index, fallback.layout);
         modelComposed = false;
       }
     }
@@ -1186,6 +1194,7 @@ export async function runSemanticTurnV2(input: {
         answer = { index: item.index, status: fallback.status, text: fallback.replyText,
           reasonCode: fallback.status === 'handled' ? 'DETERMINISTIC_FALLBACK_RENDERED' : 'SOURCE_COVERAGE_MISSING',
           ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
+        if (fallback.status === 'handled' && fallback.layout && item.kind === 'read') layouts.set(item.index, fallback.layout);
         modelComposed = false;
       }
       else if (item.kind === 'read') {
@@ -1206,6 +1215,7 @@ export async function runSemanticTurnV2(input: {
           answer = { index: item.index, status: fallback.status, text: fallback.replyText,
             reasonCode: fallback.status === 'handled' ? 'DETERMINISTIC_FALLBACK_RENDERED' : 'ANSWER_NUMBER_NOT_GROUNDED',
             ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
+          if (fallback.status === 'handled' && fallback.layout) layouts.set(item.index, fallback.layout);
           modelComposed = false;
         }
         // A4 (batch5): used to append `\n${facts}` here — raw machine-readable lines like
@@ -1272,6 +1282,17 @@ export async function runSemanticTurnV2(input: {
     if (modelComposed && answer.status === 'handled' && read && periodNote && !ASSUMED_YEAR_ALREADY_STATED.test(answer.text)) {
       answer.text += periodLine({ fromDate: read.period.fromDate, toDate: read.period.toDate }, undefined, language === 'en', read.period.label, periodNote);
     }
+    // Open work: the item's ONLY call was one successful read of the reader's own notices or tasks, and
+    // the answer stands. The rows are that result's; a refused or failed read never has any.
+    if (item.kind === 'read' && answer.status === 'handled' && assigned.length === 1 && good.length === 1 && OPEN_WORK_TOOLS.has(good[0]!.toolName)) {
+      const layout = openWorkCardLayout(good[0]!.toolName, good[0]!.data, good[0]!.asOf);
+      if (layout) layouts.set(item.index, layout);
+    }
+    // An expense edit: the header names the state its ONE draft-edit result reports. The body stays the answer.
+    if (item.kind === 'write' && assigned.length === 1 && good.length === 1 && (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(good[0]!.toolName)) {
+      const layout = draftUpdateCardLayout(good[0]!.data);
+      if (layout) layouts.set(item.index, layout);
+    }
     texts.push(answer.text);
     coverage.push({ index: item.index, status: answer.status, ...(answer.reasonCode ? { reasonCode: answer.reasonCode } : {}),
       ...(answer.sourceRefIds ? { sourceRefIds: answer.sourceRefIds } : {}), ...(answer.status === 'needs_user' ? { question: answer.text.slice(0, 500) } : {}) });
@@ -1287,6 +1308,13 @@ export async function runSemanticTurnV2(input: {
   const outputs = results.map(({ result }) => ({ agent: 'accounting' as const, status: result.status === 'ok' ? 'SUCCEEDED' as const : result.status === 'forbidden' ? 'PERMISSION_DENIED' as const : 'FAILED' as const,
     summary: '', suggestions: [], requiresHumanReview: false, facts: [], sourceRefs: result.sourceRefs, toolCalls: [{ name: result.toolName, status: result.status, durationMs: result.durationMs ?? 0, ...(result.errorCode ? { errorCode: result.errorCode } : {}) }],
     toolData: result.status === 'ok' ? [{ tool: result.toolName, data: result.data }] : [], asOf: result.asOf }));
-  return { plan, outputs, replyText, semanticCoverage: coverage, sourceRefs: [...new Map(sources.map(ref => [sourceId(ref), ref])).values()],
-    webLinks: sources.filter(ref => ref.webPath).map(ref => ({ label: ref.label, path: ref.webPath! })), durationMs: Date.now() - started };
+  const sourceRefs = [...new Map(sources.map(ref => [sourceId(ref), ref])).values()];
+  const webLinks = sources.filter(ref => ref.webPath).map(ref => ({ label: ref.label, path: ref.webPath! }));
+  // A layout stands for the whole reply or for nothing: one item, one block, and that item's layout.
+  const layout = inventory.length === 1 && blocks.length === 1 ? layouts.get(inventory[0]!.index) : undefined;
+  const sourceLabels = [...new Set(sourceRefs.map(ref => ref.label))];
+  return { plan, outputs, replyText, semanticCoverage: coverage, sourceRefs, webLinks,
+    ...(layout ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, layout,
+      ...(sourceLabels.length > 0 ? { sourceLabels } : {}), ...(webLinks[0] ? { webLink: webLinks[0] } : {}) }] } } : {}),
+    durationMs: Date.now() - started };
 }
