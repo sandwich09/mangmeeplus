@@ -672,6 +672,31 @@ describe('gateway answers on the locked design', () => {
       assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
     });
 
+    it('and with the gateway\'s rows for those reads it is ONE row card: each kind of work a row, each page a named button', () => {
+      const backlog = {
+        context: 'open_work', header: ['งานค้าง', 'ณ 5 ต.ค. 2569'],
+        rows: [
+          { label: 'รอตรวจสอบ', value: '21 รายการ' }, { label: 'ค้างจ่าย (ยังไม่กำหนดวันจ่าย)', value: '19 รายการ รวม 26,478.24 บาท' },
+          { label: 'รอตรวจหลักฐาน', value: '9 รายการ' }, { label: 'อาจเป็นรายการซ้ำ', value: '6 รายการ' },
+          { label: 'ใบรับรองแทนใบเสร็จ', value: 'ไม่มีค้าง' }, { label: 'เบิกจ่ายรอคุณอนุมัติ', value: 'ไม่มีค้าง' },
+        ],
+        notes: ['ไม่มีรายการครบกำหนดจ่ายวันนี้หรือเกินกำหนด', 'ตรวจเฉพาะงานที่รอคุณและรายการที่คุณมีสิทธิ์ดู'],
+      };
+      const withRows: LineAiTurnResponse = { ...compound, presentation: { kind: 'answer_cards', cards: [{ text: REPLY, layout: backlog as any, sourceLabels: PAGES.map((page) => page.label), webLink: PAGES[0]! }] } };
+      const message = draw(withRows, 'มีงานค้างอะไรบ้าง');
+      const card = readLineSystemCard(message);
+      assert.deepEqual(card.header, ['งานค้าง', 'ณ 5 ต.ค. 2569']);
+      assert.deepEqual(card.rows, backlog.rows.map((row) => [row.label, ':', row.value]));
+      assert.deepEqual(card.notes, backlog.notes);
+      assert.deepEqual(card.prose, [], 'the numbered sentences are the fallback, not the card');
+      assert.deepEqual(card.actions, PAGES.map((page) => ({ type: 'uri', label: page.label, uri: `${WEB}${page.path}` })));
+      assert.match(JSON.stringify(card.bubble), /system-card-icon-list-\d{8}\.png/u);
+      assert.doesNotMatch(card.texts.join('\n'), /ขอบเขต|แหล่งข้อมูล|เปิดดู|เปิดลิงก์|ระดับแจ้งเตือน/u);
+      assert.ok(message.type === 'flex' && message.canonicalText!.startsWith(REPLY));
+      assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
+      assert.deepEqual(lineFlexBodyProblems((message as any).contents), []);
+    });
+
     it('keeps the one button of an answer that read one record, under the record\'s name, and prints no source line', () => {
       const explain: LineAiTurnResponse = { ...compound, replyText: 'บิล «BHC» ยอด 1,789.04 บาทค่ะ\nสถานะตอนนี้: รอตรวจสอบ', sourceLabels: ['EXP-1'],
         webLinks: [{ label: 'EXP-1', path: '/companies/c1/expenses/exp-bhc' }], toolsInvoked: ['expense.get_detail'] };

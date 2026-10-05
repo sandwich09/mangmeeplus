@@ -12,7 +12,7 @@ import { currentBudgetState } from '../../../common/usage/usage-context';
 import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { buildCapabilityHelp } from './response-composer.agent';
-import { OPEN_WORK_TOOLS, assumedYearNote, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
+import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
 import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
@@ -1322,8 +1322,19 @@ export async function runSemanticTurnV2(input: {
     toolData: result.status === 'ok' ? [{ tool: result.toolName, data: result.data }] : [], asOf: result.asOf }));
   const sourceRefs = [...new Map(sources.map(ref => [sourceId(ref), ref])).values()];
   const webLinks = sources.filter(ref => ref.webPath).map(ref => ({ label: ref.label, path: ref.webPath! }));
-  // A layout stands for the whole reply or for nothing: one item, one block, and that item's layout.
-  const layout = inventory.length === 1 && blocks.length === 1 ? layouts.get(inventory[0]!.index) : undefined;
+  // A layout stands for the whole reply or for nothing: one item, one block, and that item's layout…
+  const single = inventory.length === 1 && blocks.length === 1 ? layouts.get(inventory[0]!.index) : undefined;
+  // …or, for an answer that is ONLY reads of what is waiting — every item a read whose answer stands,
+  // every call of the turn one of those reads and successful — one card of all of them (owner
+  // 2026-10-05, "มีงานค้างอะไรบ้าง": three numbered parts read "อ่านยากมาก"). Its rows are the tools'
+  // results; the sentences stay the canonical answer. A lone day's checklist is that card only when the
+  // reader asked about waiting work: the same read also answers "ค่าใช้จ่ายวันนี้".
+  const turnResults = [...new Set(results.map(entry => entry.result))];
+  const backlog = !single && inventory.every(item => item.kind === 'read') && coverage.every(entry => entry.status === 'handled')
+    && turnResults.length > 0 && turnResults.every(result => result.status === 'ok' && BACKLOG_TOOLS.has(result.toolName))
+    && (turnResults.length > 1 || myPendingWorkQuestion(req.messageText))
+    ? backlogCardLayout(turnResults) : undefined;
+  const layout = single ?? backlog;
   const sourceLabels = [...new Set(sourceRefs.map(ref => ref.label))];
   return { plan, outputs, replyText, semanticCoverage: coverage, sourceRefs, webLinks,
     ...(layout ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, layout,

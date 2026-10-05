@@ -240,6 +240,28 @@ test('bound path, context 2: the three open-work states are the plan primary; th
   ['งานที่มอบหมาย', 'ไม่พบงานค้าง'], 'no assigned tasks');
 });
 
+// Owner 2026-10-05 ("มีงานค้างอะไรบ้าง" on real LINE): an answer of several reads and several pages. With the
+// gateway's rows it is one row card; without them one prose card. Either way the plan's primary is a card
+// of the locked design with every page a named button, and the numbered sentences are the fallback.
+test('bound path, an answer of several reads: one card is the plan primary, each page a named button', () => {
+  const pages = [{ label: 'ใบรับรองแทนใบเสร็จ', path: '/companies/company/expenses/substitute-receipts' },
+    { label: 'รายการเบิกจ่ายรออนุมัติ', path: '/companies/company/reimbursements' }, { label: 'สรุปปิดร้าน 5 ต.ค. 2569', path: '/companies/company/expenses' }];
+  const replyText = '1. ใบรับรองแทนใบเสร็จ: ไม่มีค้างค่ะ\nขอบเขต: เฉพาะรายการที่เกี่ยวข้องกับคุณ\n\n2. เบิกจ่ายรออนุมัติ: ไม่มีค้างค่ะ\n\n3. รอตรวจสอบ 21 รายการ';
+  const layout = { context: 'open_work', header: ['งานค้าง', 'ณ 5 ต.ค. 2569'], rows: [{ label: 'รอตรวจสอบ', value: '21 รายการ' }, { label: 'ใบรับรองแทนใบเสร็จ', value: 'ไม่มีค้าง' }, { label: 'เบิกจ่ายรอคุณอนุมัติ', value: 'ไม่มีค้าง' }],
+    notes: ['ตรวจเฉพาะงานที่รอคุณและรายการที่คุณมีสิทธิ์ดู'] };
+  const answer = (rows: boolean) => buildLineBusinessAnswerMessage({ requestId: 'request', replyText, sourceRefs: [], sourceLabels: pages.map(page => page.label), webLinks: pages,
+    intent: 'read_summary', agent: 'accounting', refused: false, toolsInvoked: ['tool'], durationMs: 1,
+    ...(rows ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, layout: layout as any, sourceLabels: pages.map(page => page.label), webLink: pages[0]! }] } } : {}) },
+  replyText, WEB, 'company', 'มีงานค้างอะไรบ้าง');
+  for (const [rows, header] of [[true, ['งานค้าง', 'ณ 5 ต.ค. 2569']], [false, ['มีงานค้าง', 'อะไรบ้าง']]] as const) {
+    const wire = assertCardIsPrimary(answer(rows), [...header] as [string, string], rows ? 'backlog rows' : 'backlog prose');
+    const card = readLineSystemBubble(wire.contents);
+    assert.deepEqual(card.actions.map(action => [action.label, action.uri]), pages.map(page => [page.label, `${WEB}${page.path}?openExternalBrowser=1`]));
+    assert.equal(card.rows.length, rows ? 3 : 0);
+    assert.doesNotMatch(card.texts.join('\n'), /ขอบเขต|แหล่งข้อมูล|เปิดดู|เปิดลิงก์/u);
+  }
+});
+
 test('bound path, context 3: capability, small talk and an explained bill are each one prose card under the reader\'s question', () => {
   const general = (replyText: string, question: string) => buildDesignedLineAnswerMessage({ requestId: 'request', replyText, sourceRefs: [], sourceLabels: [], webLinks: [],
     intent: 'casual_conversation', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1 }, replyText, WEB, 'company', question);

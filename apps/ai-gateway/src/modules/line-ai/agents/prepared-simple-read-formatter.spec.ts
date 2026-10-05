@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseLineAiAnswerCardLayout, resolvePeriodCandidates, type LineAiAnswerCardLayout, type SourceRef, type SpecialistOutput } from '@watchdog-bms/contracts';
-import { activePreparedFamilies, assumedYearNote, COMPILED_PREPARED_FAMILY_KEYS, formatPreparedSimpleRead, openWorkCardLayout, preparedTerminalReply } from './prepared-simple-read-formatter';
+import { activePreparedFamilies, assumedYearNote, backlogCardLayout, COMPILED_PREPARED_FAMILY_KEYS, formatPreparedSimpleRead, openWorkCardLayout, preparedTerminalReply } from './prepared-simple-read-formatter';
 
 const SALES = 'sales.get_sales_summary::single_metric';
 const EXPENSE = 'expense.list_recent::single_metric';
@@ -2135,3 +2135,125 @@ describe('design lock context 2 — open work card', () => {
     assert.equal(openWorkCardLayout('workflow.list_assigned_tasks', { total: 0, items: [] }, undefined), undefined);
   });
 });
+
+// Owner 2026-10-05, on a real answer to "มีงานค้างอะไรบ้าง" — three numbered parts, a "ขอบเขต:" line, a
+// "แหล่งข้อมูล:" line: "อ่านยากมาก … พยายามเอาเข้า pattern นะ". One row card of every read of the answer.
+describe('design lock context 2 — the reader\'s waiting work, several reads on one card', () => {
+  const asOf = '2026-10-05T07:41:00.000Z'; // 14:41 in Bangkok
+  const valid = (layout: LineAiAnswerCardLayout | undefined): LineAiAnswerCardLayout => {
+    assert.ok(layout, 'a layout was built');
+    assert.deepEqual(parseLineAiAnswerCardLayout(layout), layout, 'and the receiver accepts it as it is');
+    return layout;
+  };
+  const group = (total: number, amount?: string) => ({ totals: amount ? [{ currency: 'THB', count: total, total: amount }] : [], items: { total, shown: Math.min(total, 5), remaining: Math.max(0, total - 5), items: [] } });
+  const counted = (count: number) => ({ count, items: { total: count, shown: Math.min(count, 5), remaining: Math.max(0, count - 5), items: [] } });
+  const closing = (over: Record<string, unknown> = {}) => ({
+    date: '2026-10-05', timezone: 'Asia/Bangkok', accessScope: 'company',
+    occurredToday: { totals: [], paid: [], outstanding: [], items: { total: 0, shown: 0, remaining: 0, items: [] } },
+    submittedToday: { count: 3 }, dueEndOfDay: group(0), overdue: group(0), unscheduledOutstanding: group(19, '26478.2400'),
+    pendingReview: counted(21), evidenceBlockers: counted(9), duplicateRisks: counted(6), ...over,
+  });
+  const queue = (payer: number, approver: number, byStep?: Array<{ stepLabel: string; count: number }>) => ({
+    accessScope: 'own', total: payer + approver, asPayer: { count: payer, items: [] }, asApprover: { count: approver, ...(byStep ? { byStep } : {}), items: [] },
+  });
+  const read = (toolName: string, data: unknown) => ({ toolName, data, asOf });
+  const THE_OWNERS = [read('expense.list_substitute_receipts_to_sign', queue(0, 0)), read('reimbursement.list_pending_approvals', { total: 0, items: [] }), read('expense.get_daily_closing', closing())];
+
+  it('the owner\'s own answer: what waits first, each kind a row; the two empty queues say they were checked', () => {
+    assert.deepEqual(valid(backlogCardLayout(THE_OWNERS)), {
+      context: 'open_work',
+      header: ['งานค้าง', 'ณ 5 ต.ค. 2569'],
+      rows: [
+        { label: 'รอตรวจสอบ', value: '21 รายการ' },
+        { label: 'ค้างจ่าย (ยังไม่กำหนดวันจ่าย)', value: '19 รายการ รวม 26,478.24 บาท' },
+        { label: 'รอตรวจหลักฐาน', value: '9 รายการ' },
+        { label: 'อาจเป็นรายการซ้ำ', value: '6 รายการ' },
+        { label: 'ใบรับรองแทนใบเสร็จ', value: 'ไม่มีค้าง' },
+        { label: 'เบิกจ่ายรอคุณอนุมัติ', value: 'ไม่มีค้าง' },
+      ],
+      notes: ['ไม่มีรายการครบกำหนดจ่ายวันนี้หรือเกินกำหนด', 'ตรวจเฉพาะงานที่รอคุณและรายการที่คุณมีสิทธิ์ดู'],
+    });
+    // Nothing of it names a scope with the banned word, a source line or a link.
+    assert.doesNotMatch(JSON.stringify(backlogCardLayout(THE_OWNERS)), /ขอบเขต|แหล่งข้อมูล|เปิดดู|http/u);
+  });
+
+  it('every queue with work: who it waits for, how many, and an amount only where the read totals it', () => {
+    const layout = valid(backlogCardLayout([
+      read('expense.list_substitute_receipts_to_sign', queue(2, 3, [{ stepLabel: 'รอคุณอนุมัติ', count: 2 }, { stepLabel: 'ฉบับกระดาษรอคุณตรวจรับ', count: 1 }])),
+      read('reimbursement.list_pending_approvals', { total: 2, items: [{ amount: '1500.00', currency: 'THB' }, { amount: '250.50', currency: 'THB' }] }),
+      read('expense.get_daily_closing', closing({ dueEndOfDay: group(2, '900.0000'), overdue: group(1, '120.0000'), accessScope: 'related' })),
+    ]));
+    assert.deepEqual(layout.header, ['งานค้าง', 'ณ 5 ต.ค. 2569']);
+    assert.deepEqual(layout.rows, [
+      { label: 'ใบรับรองแทนใบเสร็จ', value: 'รอคุณลงลายมือชื่อในฐานะผู้จ่ายเงิน 2 ใบ · รอคุณอนุมัติ 2 ใบ · ฉบับกระดาษรอคุณตรวจรับ 1 ใบ' },
+      { label: 'เบิกจ่ายรอคุณอนุมัติ', value: '2 รายการ รวม 1,750.50 บาท' },
+      { label: 'รอตรวจสอบ', value: '21 รายการ' },
+      { label: 'ครบกำหนดจ่ายวันนี้', value: '2 รายการ รวม 900.00 บาท' },
+      { label: 'เกินกำหนดจ่าย', value: '1 รายการ รวม 120.00 บาท' },
+      { label: 'ค้างจ่าย (ยังไม่กำหนดวันจ่าย)', value: '19 รายการ รวม 26,478.24 บาท' },
+      { label: 'รอตรวจหลักฐาน', value: '9 รายการ' },
+      { label: 'อาจเป็นรายการซ้ำ', value: '6 รายการ' },
+    ]);
+    // Something is due, so there is no "nothing due" note; the day's figures cover only what relates to the reader.
+    assert.deepEqual(layout.notes, ['ส่วนค่าใช้จ่ายแสดงเฉพาะรายการที่เกี่ยวข้องกับคุณ', 'ตรวจเฉพาะงานที่รอคุณและรายการที่คุณมีสิทธิ์ดู']);
+    // More claims than the tool returned, or two currencies: the count alone, never a sum of a part.
+    for (const data of [{ total: 12, items: [{ amount: '10.00', currency: 'THB' }] }, { total: 2, items: [{ amount: '10.00', currency: 'THB' }, { amount: '5.00', currency: 'USD' }] }]) {
+      assert.deepEqual(valid(backlogCardLayout([read('reimbursement.list_pending_approvals', data), THE_OWNERS[2]!])).rows[0],
+        { label: 'เบิกจ่ายรอคุณอนุมัติ', value: `${data.total} รายการ` });
+    }
+  });
+
+  it('nothing waiting anywhere: says so in the header, shows every kind that was read, and when', () => {
+    const quiet = closing({ unscheduledOutstanding: group(0), pendingReview: counted(0), evidenceBlockers: counted(0), duplicateRisks: counted(0) });
+    assert.deepEqual(valid(backlogCardLayout([THE_OWNERS[0]!, THE_OWNERS[1]!, read('expense.get_daily_closing', quiet)])), {
+      context: 'open_work',
+      header: ['งานค้าง', 'ไม่พบงานค้าง'],
+      rows: [
+        { label: 'ใบรับรองแทนใบเสร็จ', value: 'ไม่มีค้าง' }, { label: 'เบิกจ่ายรอคุณอนุมัติ', value: 'ไม่มีค้าง' },
+        { label: 'รายการค่าใช้จ่าย', value: 'ไม่มีค้าง' }, { label: 'ข้อมูล ณ', value: '5 ต.ค. 2569' },
+      ],
+      notes: ['ตรวจเฉพาะงานที่รอคุณและรายการที่คุณมีสิทธิ์ดู'],
+    });
+  });
+
+  it('a reader who approves no claims: the state of their own claims instead of a queue, said to be theirs', () => {
+    const layout = valid(backlogCardLayout([
+      read('reimbursement.get_summary', { pendingApprovalCount: 2, unpaidApprovedCount: 1, overdueApprovalCount: 0, totalUnpaidAmount: '480.00', accessScope: 'own' }),
+      read('expense.get_daily_closing', closing({ accessScope: 'own' })),
+    ]));
+    assert.deepEqual(layout.rows.slice(0, 2), [{ label: 'ใบเบิกรออนุมัติ', value: '2 รายการ' }, { label: 'ใบเบิกอนุมัติแล้วรอจ่าย', value: '1 รายการ รวม 480.00 บาท' }]);
+    assert.deepEqual(layout.notes, ['ส่วนใบเบิกแสดงเฉพาะรายการของคุณ', 'ไม่มีรายการครบกำหนดจ่ายวันนี้หรือเกินกำหนด', 'ส่วนค่าใช้จ่ายแสดงเฉพาะรายการของคุณ', 'ตรวจเฉพาะงานที่รอคุณและรายการที่คุณมีสิทธิ์ดู']);
+    const none = valid(backlogCardLayout([read('reimbursement.get_summary', { pendingApprovalCount: 0, unpaidApprovedCount: 0, overdueApprovalCount: 0, totalUnpaidAmount: '0.00' }), THE_OWNERS[0]!]));
+    assert.deepEqual(none.rows.slice(0, 2), [{ label: 'ใบเบิก', value: 'ไม่มีค้าง' }, { label: 'ใบรับรองแทนใบเสร็จ', value: 'ไม่มีค้าง' }]);
+  });
+
+  it('notices and assigned tasks join as one row each; a page of notices is never the whole count', () => {
+    const layout = valid(backlogCardLayout([
+      read('notifications.list_open_alerts', { count: 10, hasMore: true, opens: 'list', items: [] }),
+      read('workflow.list_assigned_tasks', { total: 0, items: [] }),
+      read('expense.list_substitute_receipts_to_sign', { accessScope: 'own', total: 0, asPayer: { count: 0, items: [] } }),
+    ]));
+    assert.deepEqual(layout.rows, [{ label: 'การแจ้งเตือน', value: 'มากกว่า 10 รายการ' }, { label: 'งานที่มอบหมาย', value: 'ไม่มีค้าง' },
+      { label: 'ใบรับรองแทนใบเสร็จ', value: 'ไม่มีที่รอคุณลงลายมือชื่อ' }]);
+  });
+
+  it('a day that is not today is named, never called today', () => {
+    const layout = valid(backlogCardLayout([read('expense.get_daily_closing', closing({ date: '2026-10-04', dueEndOfDay: group(1, '50.0000') })), THE_OWNERS[1]!]));
+    assert.ok(layout.rows.some((row) => row.label === 'ครบกำหนดจ่าย 4 ต.ค. 2569' && row.value === '1 รายการ รวม 50.00 บาท'));
+    assert.doesNotMatch(JSON.stringify(layout), /วันนี้|วันนั้น/u);
+    const nothingDue = valid(backlogCardLayout([read('expense.get_daily_closing', closing({ date: '2026-10-04' })), THE_OWNERS[1]!]));
+    assert.equal(nothingDue.notes?.[0], 'ไม่มีรายการครบกำหนดจ่าย 4 ต.ค. 2569 หรือเกินกำหนด');
+  });
+
+  it('has no card for a read that is not exactly its shape, the same read twice, another kind of read, or none', () => {
+    for (const results of [
+      [], [THE_OWNERS[0]!, THE_OWNERS[0]!], [read('expense.list_recent', { total: 1, items: [] }), THE_OWNERS[1]!],
+      [read('expense.get_daily_closing', { ...closing(), date: 'today' }), THE_OWNERS[1]!], [read('expense.get_daily_closing', null), THE_OWNERS[1]!],
+      [read('reimbursement.list_pending_approvals', { total: '0', items: [] })], [read('reimbursement.list_pending_approvals', { total: 1 })],
+      [read('expense.list_substitute_receipts_to_sign', { accessScope: 'own', total: 0 })], [read('expense.list_substitute_receipts_to_sign', { asPayer: { count: '1' } })],
+      [read('reimbursement.get_summary', { pendingApprovalCount: 1 })], [read('notifications.list_open_alerts', { items: [] })],
+      [{ ...THE_OWNERS[1]!, asOf: 'not-a-time' }], [{ toolName: THE_OWNERS[1]!.toolName, data: THE_OWNERS[1]!.data }],
+    ]) assert.equal(backlogCardLayout(results as any), undefined, JSON.stringify(results).slice(0, 90));
+  });
+});
+
