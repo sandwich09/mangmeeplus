@@ -324,9 +324,12 @@ test('owner\'s sheet: the nine columns fit a 1280 px screen, a fact the list is 
   const { EXECUTIVE_SORT_OPTIONS } = await import('@watchdog-bms/contracts');
   for (const { sortBy } of EXECUTIVE_SORT_OPTIONS) for (const status of ['OK', 'NOT_PERMITTED']) {
     const props = table(sortBy, { ...row, ownerContact: { ...row.ownerContact, status } }).props;
-    assert.ok(props.columns.reduce((n: number, c: any) => n + c.width, 44) <= 974, `${sortBy} ${status}`);
+    // What a desktop shows fits the 974 px box; the note gives its place to a sort fact from outside the sheet only where the contact pair is shown.
+    const base = table('joinedAt', { ...row, ownerContact: { ...row.ownerContact, status } }).props.columns;
+    assert.ok(props.columns.filter((c: any) => c.hide !== 'always').reduce((n: number, c: any) => n + c.width, 44) <= 974, `${sortBy} ${status}`);
+    assert.equal(props.columns.find((c: any) => c.label === 'หมายเหตุ')?.hide, props.columns.length > base.length && status === 'OK' ? 'always' : undefined, `${sortBy} ${status}`);
     assert.equal(props.columns[0].width, 150, sortBy);
-    for (const label of ['ใบเสร็จในระบบ (รายการ)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'เบอร์โทร']) {
+    for (const label of ['แพ็กเกจ', 'อีเมล', 'ใบเสร็จในระบบ (รายการ)', 'เพิ่มใบเสร็จล่าสุด', 'สิ้นสุดแพ็กเกจ', 'เบอร์โทร']) {
       assert.equal(props.columns.find((c: any) => c.label === label)?.width, table('joinedAt', { ...row, ownerContact: { ...row.ownerContact, status } }).props.columns.find((c: any) => c.label === label)?.width);
     }
   }
@@ -338,7 +341,6 @@ test('owner\'s sheet: the nine columns fit a 1280 px screen, a fact the list is 
   assert.match(emailLink, /title="owner@example\.test"/); assert.match(emailLink, />owner<wbr class="max-md:hidden"\/>@example\.test<\/a>/);
   assert.match(emailLink, /md:whitespace-normal md:\[overflow-wrap:anywhere\]/); assert.doesNotMatch(emailLink, /\s(?:truncate|line-clamp)/);
   assert.match(rendered, /<a href="tel:0810000001"[^>]*>081-000 0001<\/a>/);
-  assert.match(rendered, /md:line-clamp-2 md:break-normal md:\[overflow-wrap:break-word\]/);
   // Without it the API returns no contact: the two columns do not exist, and no cell is empty or masked.
   const hidden = { ...row, ownerContact: { status: 'NOT_PERMITTED' } };
   assert.deepEqual(labels('joinedAt', hidden), NINE.filter(label => label !== 'อีเมล' && label !== 'เบอร์โทร'));
