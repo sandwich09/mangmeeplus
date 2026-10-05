@@ -471,6 +471,7 @@ export type ReimbursementDuplicateGuidanceContext = {
   cancellationPending?: boolean;
   canResumeCancellation?: boolean;
 };
+const CONFIRMED_DUPLICATE_PAYMENT_REASON = `${REIMBURSEMENT_DUPLICATE_REASON_TEXT.EXPENSE_CONFIRMED_DUPLICATE} จึงบันทึกจ่ายไม่ได้`;
 const DUPLICATE_CANCEL_ACTOR = 'ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขาของใบนี้';
 const DUPLICATE_NEW_CLAIM_HELP = 'ให้ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ';
 const DUPLICATE_CANCEL_ACTION = 'กดยกเลิกคำขอในหน้าใบเบิกนี้';
@@ -491,7 +492,7 @@ export function reimbursementDuplicateBlockText(reasons: readonly string[] = [])
 }
 export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [], financeReview = false, context: ReimbursementDuplicateGuidanceContext = {}): string {
   if (reasons.includes('EXPENSE_CONFIRMED_DUPLICATE')) {
-    const why = `${REIMBURSEMENT_DUPLICATE_REASON_TEXT.EXPENSE_CONFIRMED_DUPLICATE} จึงบันทึกจ่ายไม่ได้`;
+    const why = CONFIRMED_DUPLICATE_PAYMENT_REASON;
     // After a cancellation the requester sends a new claim: "…ยกเลิกคำขอ แล้วให้ผู้เบิก…" reads as one step after the other.
     const then = `แล้ว${DUPLICATE_NEW_CLAIM_HELP}`;
     let help: string;
@@ -514,6 +515,16 @@ export function reimbursementDuplicateBlockNotice(reasons: readonly string[] = [
   return `${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}: ${reimbursementDuplicateReasonText(reasons)} ${financeReview ? REIMBURSEMENT_DUPLICATE_FINANCE_HELP : REIMBURSEMENT_DUPLICATE_CLEAR_HELP}`;
 }
 export const REIMBURSEMENT_DUPLICATE_UNRESOLVED = 'พบรายการที่อาจซ้ำ ต้องตรวจสอบก่อนทำต่อ';
+
+/** Confirmed receipts cannot be cleared; these notices use the same general cancellation guidance as the claim. */
+export function reimbursementConfirmedDuplicateNotice(recipient: 'requester' | 'cancel', overdue = false) {
+  return {
+    description: 'แจ้งเมื่อใบเสร็จของใบเบิกยืนยันว่าซ้ำ เพื่อให้ยกเลิกใบเบิกและส่งใบใหม่',
+    title: `ใบเบิก${REIMBURSEMENT_DUPLICATE_BLOCK_LABEL}${overdue ? 'เกินกำหนด' : ''}: {{requestNo}}`,
+    body: recipient === 'requester' ? reimbursementDuplicateBlockNotice(['EXPENSE_CONFIRMED_DUPLICATE'])
+      : `${CONFIRMED_DUPLICATE_PAYMENT_REASON} รอคุณยกเลิกคำขอ ${DUPLICATE_NEW_CLAIM_HELP}`,
+  };
+}
 
 export type ReimbursementPaymentDuplicateBlock = 'NONE' | 'UNRESOLVED' | 'CONFIRMED';
 export const REIMBURSEMENT_PAYMENT_VOIDED_TITLE = 'ยกเลิกการจ่ายเงินเบิก: {{requestNo}}';

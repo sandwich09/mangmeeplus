@@ -1206,6 +1206,29 @@ describe('SEND_NOTIFICATION recipients picked by permission can act on the recor
     };
   }
 
+  it('D3: tells requester once, falls back only when they cannot cancel, and excludes the confirmer', async (t) => {
+    for (const canCancel of [true, false]) for (const actor of ['u_finance', 'u_requester', 'u_else']) for (const overdue of [false, true]) await t.test(`${canCancel}/${actor}/${overdue}`, async () => {
+      const h = harness({ sourceBranchId: 'br_claim', memberships: {
+        u_requester: member({ roles: canCancel ? [role('ACTIVE', 'reimbursement.cancel_own')] : [] }),
+        u_finance: member({ roles: [role('ACTIVE', 'reimbursement.finance_review')] }),
+        u_owner: member({ roles: [role('ACTIVE', 'reimbursement.payment.record')] }),
+        u_second_finance: member({ roles: [role('ACTIVE', 'reimbursement.finance_review')] }),
+        u_outside: member({ roles: [role('ACTIVE', 'reimbursement.finance_review')], branchScopeMode: 'SELECTED_BRANCHES', branchScopes: [{ branchId: 'elsewhere' }] }),
+      } });
+      const modes = overdue ? ['cancel'] : ['requester', 'cancel'];
+      for (const mode of modes) await h.useCase.execute(actionRun({ triggerKey: overdue ? 'workflow.reimbursement_duplicate_sla_breach' : 'workflow.reimbursement_duplicate_confirmed',
+        duplicateRecipient: mode, recipientPayloadKeys: ['requesterUserId'], recipientPermissions: ['reimbursement.finance_review'], excludeRecipientPayloadKeys: [], skipWhenNoRecipients: true,
+        titleTemplate: 'รายการซ้ำ: {{requestNo}}', bodyTemplate: 'รายการซ้ำ', }), {
+        ...claimContext(), payload: { requestId: 'rb_1', requestNo: 'RB-1', requesterUserId: 'u_requester', status: 'READY_FOR_PAYMENT', actorUserId: actor, financeReviewerUserId: 'u_finance' },
+      });
+      const finance = actor === 'u_finance' ? 'u_second_finance' : 'u_finance';
+      const expected = overdue ? (canCancel ? ['u_requester'] : [finance]) : (canCancel ? ['u_requester'] : ['u_requester', finance]);
+      assert.deepEqual(h.sent.flatMap(row => row.recipientUserIds).sort(), expected.filter(id => id !== actor).sort());
+      assert.ok(h.sent.every(row => !/[A-Za-z_]/.test(row.body)));
+      assert.ok(h.sent.every(row => row.body.includes('ยกเลิก')));
+    });
+  });
+
   const readyToPay = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_ready_for_payment')!;
   const claimContext = (): any => ({
     companyId: 'co_1', ruleName: 'Reimbursement ready for payment', sourceModule: 'reimbursements',

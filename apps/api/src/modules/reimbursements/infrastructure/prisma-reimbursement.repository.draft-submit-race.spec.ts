@@ -3511,6 +3511,33 @@ describe('a claim is never left half cancelled or half approved (real PostgreSQL
     assert.deepEqual(await duplicateFacts(claim, 'expense-cleared'), { queue: [false, 'OVERRIDDEN'], detail: [false, 'OVERRIDDEN'], list: 'OVERRIDDEN', payment: 'PAID' });
   });
 
+  it('D3: confirmed duplicate notice commits with confirmation, rolls back with it and retries once', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const db = clients[0]!;
+    const target = await decidedClaim(1); await system(0).resume.execute(manager(), target.requestId);
+    const claim = await decidedClaim(1); await system(0).resume.execute(manager(), claim.requestId);
+    const [own] = await repos[0]!.listClaimProjections(companyId, claim.requestId);
+    const [other] = await repos[0]!.listClaimProjections(companyId, target.requestId);
+    await db.expenseRecord.update({ where: { id: own!.id }, data: { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'POSSIBLE_DUPLICATE', postingStatus: 'not_required' } });
+    const candidate = await db.expenseDuplicateCandidate.create({ data: { companyId, expenseId: own!.id, candidateExpenseId: other!.id, status: 'OPEN', score: 100, reasonCodesJson: ['same_checksum'] } });
+    const prisma = { client: db } as any;
+    const expenses = new PrismaExpenseRepository(prisma);
+    const input = { companyId, expenseId: own!.id, candidateId: candidate.id, actorUserId: FIN, action: 'confirm' as const, reason: 'ตรวจแล้วใช้ใบเสร็จซ้ำ', scopes: {} };
+    const where = { companyId, aggregateId: claim.requestId, eventType: 'reimbursement.duplicate_confirmed' };
+    await assert.rejects(() => db.$transaction(async tx => {
+      await expenses.resolveDuplicateCandidate(input, async () => undefined, tx);
+      assert.equal(await tx.outboxEvent.count({ where }), 1);
+      throw new Error('rollback_after_notice');
+    }), /rollback_after_notice/);
+    assert.equal(await db.outboxEvent.count({ where }), 0);
+    assert.equal((await db.expenseDuplicateCandidate.findUniqueOrThrow({ where: { id: candidate.id } })).status, 'OPEN');
+    assert.equal((await db.expenseRecord.findUniqueOrThrow({ where: { id: own!.id } })).duplicateStatus, 'POSSIBLE_DUPLICATE');
+    await expenses.resolveDuplicateCandidate(input, async () => undefined);
+    await expenses.resolveDuplicateCandidate(input, async () => undefined);
+    assert.equal(await db.outboxEvent.count({ where }), 1);
+    assert.equal((await db.expenseDuplicateCandidate.findUniqueOrThrow({ where: { id: candidate.id } })).status, 'CONFIRMED_DUPLICATE');
+  });
+
   it('a confirmed own expense blocks detail, queue and new payment under the real lock for every policy', async (t) => {
     if (!reachable) return t.skip('no database reachable');
     const db = clients[0]!;

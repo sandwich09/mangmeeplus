@@ -108,3 +108,10 @@ test('executive owner sheet uses one Thai churn definition and shared column/fil
   const { PLAN_TIER_PRESETS } = await import('./plan-term.js');
   for (const key of Object.keys(PLAN_TIER_PRESETS)) assert.doesNotMatch(words.executivePlanLabel(key), /[A-Za-z_]/);
 });
+
+test('D3: expense waiting for a confirmed-blocked claim says duplicate block, clear and paid retain their labels', async () => {
+  const { expenseReimbursementProgressLabel } = await import('./expenses.js');
+  assert.equal(expenseReimbursementProgressLabel({ status: 'READY_FOR_PAYMENT', hasConfirmedDuplicate: true } as any), 'ติดรายการซ้ำ');
+  assert.equal(expenseReimbursementProgressLabel({ status: 'READY_FOR_PAYMENT' }), 'รอจ่ายคืน');
+  assert.equal(expenseReimbursementProgressLabel({ status: 'PAID', hasConfirmedDuplicate: true } as any), 'จ่ายคืนแล้ว');
+});

@@ -1,4 +1,4 @@
-import { REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, REIMBURSEMENT_DUPLICATE_POLICY_NOTE, REIMBURSEMENT_DUPLICATE_CLEAR_HELP, reimbursementPayoutOnBehalfNotice, reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
+import { reimbursementConfirmedDuplicateNotice, REIMBURSEMENT_DUPLICATE_BLOCK_LABEL, REIMBURSEMENT_DUPLICATE_POLICY_NOTE, REIMBURSEMENT_DUPLICATE_CLEAR_HELP, reimbursementPayoutOnBehalfNotice, reimbursementFinanceBlockedRequesterNotice, THAI_SYSTEM_ROLE_NAMES, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT } from '@watchdog-bms/contracts';
 import { CLAIM_SIGN_LABEL, CLAIM_RESIGN_LABEL, SELF_APPROVAL_POLICY_NOTE, SELF_APPROVAL_SWITCH_LABEL } from '@/features/reimbursements/reimbursements.model';
 import { draftRowSubmitLabel } from '@/features/reimbursements/reimbursement-payout.logic';
 import { visibleHubTabs } from '@/features/reimbursements/reimbursements.logic';
@@ -814,6 +814,9 @@ export function buildReimbursementGuide(
               ['คำขอถูกส่งกลับจากขั้นจ่ายเงินคืน', 'ผู้เบิก', 'เหตุผล และให้เปิดคำขอเพื่อแก้หรือเพิ่มบัญชีรับเงิน หรือเลือกวิธีรับเงินคืน'],
               ['คำขอที่ถูกส่งกลับได้วิธีรับเงินคืนแล้ว', 'ผู้อนุมัติของคำขอนั้น', 'ยอดเงิน และบอกว่ารอคุณตรวจและอนุมัติสิ่งใด ตามสถานะของคำขอ'],
               ['คนอื่นเลือกวิธีรับเงินคืนของคำขอที่ถูกส่งกลับแทนผู้เบิก', 'ผู้เบิกที่ยังใช้งานอยู่ ทุกคำตอบที่บันทึกสำเร็จ', 'หัวข้อบอกชื่อคนที่ทำและสิ่งที่ทำ เช่น “แก้บัญชีรับเงิน” “ยืนยันบัญชีเดิม” หรือ “เปลี่ยนวิธีรับเงินคืน” ตามด้วย “ในใบเบิกของคุณ” และเลขที่คำขอ เนื้อความบอกธนาคารและ 4 ตัวท้ายของบัญชี หรือบอกว่ารับเป็นเงินสด และให้เปิดคำขอเพื่อตรวจ'],
+              ['ใบเสร็จของใบเบิกยืนยันว่าซ้ำ', 'ผู้เบิก เว้นแต่เป็นคนยืนยันเอง', reimbursementConfirmedDuplicateNotice('requester').body],
+              ['ผู้เบิกยกเลิกเองไม่ได้', 'ผู้ตรวจการเงินที่ดูแลสาขาของใบ เว้นแต่เป็นคนยืนยันเอง', reimbursementConfirmedDuplicateNotice('cancel').body],
+              [reimbursementConfirmedDuplicateNotice('cancel', true).title.split(':')[0], 'ผู้เบิกถ้ายกเลิกเองได้ มิฉะนั้นผู้ตรวจการเงินที่ดูแลสาขาของใบ ไม่รวมคนที่ยืนยันว่าซ้ำ', 'เตือนครั้งเดียวในช่วงที่ติดรายการซ้ำ นับจากการยืนยันใบเสร็จซ้ำตามกำหนดเวลาตอนส่งใบ ไม่เตือนระหว่างยกเลิกใบ'],
               ['คำขอรอนานเกินเวลาที่บริษัทตั้งไว้', 'ผู้อนุมัติของคำขอนั้น เมื่อรออนุมัติ เจ้าของกิจการได้รับเฉพาะเมื่อไม่มีผู้อนุมัติของคำขอนั้นที่ทำได้ หรือคนที่ถึงคิวบันทึกจ่าย เมื่อรอจ่าย', 'เตือนว่ารอเกินกำหนด มีเฉพาะบริษัทที่ตั้งเวลาไว้'],
             ],
           },

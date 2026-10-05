@@ -1,6 +1,7 @@
+import { mayCancelReimbursement } from '../../../reimbursements/application/use-cases/reimbursement-request.use-case';
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
-import { reimbursementPaymentTurnNotice, reimbursementPaymentVoidedNotice, WORKFLOW_TAB_LABELS, type WorkflowActionDefinition } from '@watchdog-bms/contracts';
+import { reimbursementConfirmedDuplicateNotice, reimbursementPaymentTurnNotice, reimbursementPaymentVoidedNotice, WORKFLOW_TAB_LABELS, type WorkflowActionDefinition } from '@watchdog-bms/contracts';
 import { PrismaWorkflowRepository } from '../../infrastructure/prisma-workflow.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
@@ -279,6 +280,26 @@ export class ExecuteWorkflowActionUseCase {
     }
     const paymentNotice = paymentKind && context.payload['paymentDuplicateBlock'] === 'UNRESOLVED'
       ? reimbursementPaymentTurnNotice(paymentKind, true) : undefined;
+    let duplicateRecipients: string[] | undefined;
+    try {
+      if (cfg['duplicateRecipient'] === 'requester' || cfg['duplicateRecipient'] === 'cancel') {
+        const requester = String(context.payload['requesterUserId'] ?? '');
+        const branchId = await this.repo.findSourceBranchId(context.companyId, context.sourceType, context.sourceId);
+        let requesterCanCancel = false;
+        try {
+          const access = await this.access.resolveAccess(requester, context.companyId);
+          requesterCanCancel = mayCancelReimbursement({ ...access, userId: requester } as any,
+            { requesterUserId: requester, branchId: branchId ?? undefined, status: context.payload['status'] as any });
+        } catch (error) { if (!(error instanceof ForbiddenException)) throw error; }
+        const overdue = triggerKey === 'workflow.reimbursement_duplicate_sla_breach';
+        if (cfg['duplicateRecipient'] === 'requester') duplicateRecipients = requester ? [requester] : [];
+        else if (requesterCanCancel) duplicateRecipients = overdue ? [requester] : [];
+        else duplicateRecipients = narrowToPreferred((await this.membersAbleToAct(context, ['reimbursement.finance_review'])).filter(member => member.userId !== context.payload['actorUserId']),
+          { preferRecipientPayloadKeys: ['financeReviewerUserId'] }, context.payload, new Set([String(context.payload['actorUserId'] ?? '')]));
+        if (!duplicateRecipients.length) return { resultJson: { skipped: true, reason: 'no_duplicate_recipient' }, targetType: 'notification_event' };
+      }
+    } catch (error) { throw new RetryableActionError(`Recipient lookup failed: ${error instanceof Error ? error.message : String(error)}`); }
+    const duplicateNotice = duplicateRecipients ? reimbursementConfirmedDuplicateNotice(cfg['duplicateRecipient'] as 'requester' | 'cancel', triggerKey === 'workflow.reimbursement_duplicate_sla_breach') : undefined;
     const recipientRoles = Array.isArray(cfg['recipientRoles']) ? (cfg['recipientRoles'] as string[]) : [];
     const recipientPermissions = Array.isArray(cfg['recipientPermissions'])
       ? (cfg['recipientPermissions'] as unknown[]).filter((key): key is string => typeof key === 'string')
@@ -295,11 +316,12 @@ export class ExecuteWorkflowActionUseCase {
       if (Array.isArray(value)) return value.filter((id): id is string => typeof id === 'string');
       return [];
     }));
+    if (duplicateRecipients && typeof context.payload['actorUserId'] === 'string') excludedUserIds.add(context.payload['actorUserId']);
     let roleRecipientUserIds: string[];
     let permissionRecipientUserIds: string[];
     try {
-      roleRecipientUserIds = await this.repo.findUserIdsByRoles(context.companyId, recipientRoles);
-      permissionRecipientUserIds = narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload, excludedUserIds);
+      roleRecipientUserIds = duplicateRecipients ? [] : await this.repo.findUserIdsByRoles(context.companyId, recipientRoles);
+      permissionRecipientUserIds = duplicateRecipients ? [] : narrowToPreferred(await this.membersAbleToAct(context, recipientPermissions), cfg, context.payload, excludedUserIds);
     } catch (err) {
       // Looking people up is a read. One database blip there must not dead-letter the notice at
       // its first attempt; it is retried like a failed send.
@@ -314,7 +336,7 @@ export class ExecuteWorkflowActionUseCase {
       if (Array.isArray(value)) return value.filter((id): id is string => typeof id === 'string' && id.length > 0);
       return [];
     });
-    const resolvedUserIds = [...new Set([...roleRecipientUserIds, ...permissionRecipientUserIds, ...payloadRecipientUserIds])];
+    const resolvedUserIds = [...new Set(duplicateRecipients ?? [...roleRecipientUserIds, ...permissionRecipientUserIds, ...payloadRecipientUserIds])];
     const recipientUserIds = resolvedUserIds.filter((userId) => !excludedUserIds.has(userId));
     if (recipientUserIds.length === 0) {
       // Audit H-18: whether "everyone was excluded" is a failure depends on the template, so it is
@@ -339,11 +361,11 @@ export class ExecuteWorkflowActionUseCase {
       throw new RetryableActionError('No active recipients resolved for configured recipientRoles, recipientPermissions, or recipientPayloadKeys (after exclusions)');
     }
     const readable = readablePayload(context.payload);
-    const titleTemplate = paymentNotice?.title ?? findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);
+    const titleTemplate = duplicateNotice?.title ?? paymentNotice?.title ?? findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);
     const title = titleTemplate ? renderTemplate(titleTemplate, readable) : `แจ้งเตือนจาก${WORKFLOW_TAB_LABELS.rules}: ${context.ruleName}`;
     // Own config only (no sibling fallback like the title): a body borrowed from a sibling action
     // is how the notification ended up printing its own title twice.
-    const bodyTemplate = paymentNotice?.body ?? (typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined);
+    const bodyTemplate = duplicateNotice?.body ?? paymentNotice?.body ?? (typeof cfg['bodyTemplate'] === 'string' ? (cfg['bodyTemplate'] as string) : undefined);
     // A body that renders to nothing falls back to the title too: a template that prints one field of
     // the event (the "paid" sentence) has nothing to say about an event written before that field existed.
     const voided = context.payload['eventType'] === 'reimbursement.payment_voided' || triggerKey === 'workflow.reimbursement_payment_voided';

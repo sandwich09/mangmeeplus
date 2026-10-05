@@ -383,3 +383,16 @@ describe('payment source duplicate gate', () => {
     assert.equal(queries.find(q => q.where.requesterUserId === 'one').take, 50);
   });
 });
+
+it('D3: shared notice facts name the first own confirmation and its actor, not the last receipt', async () => {
+  const { repo, request, tx } = recordHarness();
+  const first = new Date('2026-10-05T01:00:00Z'); const last = new Date('2026-10-06T01:00:00Z');
+  request.sourceExpenses = [
+    { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE', duplicateCandidates: [{ resolvedAt: last, resolvedByUserId: 'later' }] },
+    { status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'CONFIRMED_DUPLICATE', duplicateCandidates: [{ resolvedAt: first, resolvedByUserId: 'first' }] },
+  ];
+  tx.reimbursementRequest.findFirstOrThrow = async () => request;
+  const facts = await repo.paymentNoticeFacts(tx, 'co-1', 'rb-1');
+  assert.equal(facts.paymentDuplicateBlock, 'CONFIRMED');
+  assert.deepEqual(facts.confirmedDuplicateAt, first); assert.equal(facts.confirmedDuplicateActorUserId, 'first');
+});

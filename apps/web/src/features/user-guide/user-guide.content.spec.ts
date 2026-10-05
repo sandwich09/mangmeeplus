@@ -532,3 +532,10 @@ it('duplicate guide covers company-wide evidence and the expense-document paymen
   assert.match(text, /เอกสารค่าใช้จ่าย/);
   assert.match(text, /ยืนยันเอกสารก่อน/);
 });
+
+it('D3: guide tells who gets confirmed-duplicate notices and one reminder per blocked period', () => {
+  const text = JSON.stringify(buildReimbursementGuide('co', ['reimbursement.read_own', 'reimbursement.create']));
+  assert.match(text, /ใบเสร็จของใบเบิกยืนยันว่าซ้ำ/);
+  assert.match(text, /ผู้เบิกยกเลิกเองไม่ได้/);
+  assert.match(text, /เตือนครั้งเดียวในช่วงที่ติดรายการซ้ำ/);
+});

@@ -474,11 +474,17 @@ export class PrismaReimbursementRepository {
   /** Every ready/void emitter reads the claim's own duplicate facts inside its write transaction. */
   async paymentNoticeFacts(tx: Prisma.TransactionClient, companyId: string, requestId: string) {
     const row = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId, id: requestId },
-      include: { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: OWN_DUPLICATE_EXPENSES } });
+      include: { duplicateCandidates: LIVE_DUPLICATE_CANDIDATES, sourceExpenses: { ...OWN_DUPLICATE_EXPENSES, select: { ...OWN_DUPLICATE_EXPENSES.select, duplicateCandidates: { where: { status: 'CONFIRMED_DUPLICATE' }, select: { resolvedAt: true, resolvedByUserId: true } } } } } });
     const request = this.toRequest(row);
     const policyRow = await tx.reimbursementPolicy.findFirst({ where: { companyId, branchId: null } });
     const policy = effectivePolicy(policyRow ? this.toPolicy(policyRow) : null);
-    return { paymentDuplicateBlock: claimPaymentDuplicateBlock(request, policy), duplicateReasons: claimDuplicateReasons(request) };
+    const confirmations = (row.sourceExpenses ?? []).flatMap(expense => (expense.duplicateCandidates ?? []).filter(candidate => candidate.resolvedAt)).sort((a, b) => a.resolvedAt!.getTime() - b.resolvedAt!.getTime());
+    return { paymentDuplicateBlock: claimPaymentDuplicateBlock(request, policy), duplicateReasons: claimDuplicateReasons(request),
+      ...(confirmations.length && { confirmedDuplicateAt: confirmations[0].resolvedAt!, confirmedDuplicateActorUserId: confirmations[0].resolvedByUserId }) };
+  }
+
+  paymentNoticeFactsForRequest(companyId: string, requestId: string) {
+    return this.paymentNoticeFacts(this.prisma.client, companyId, requestId);
   }
 
   async findPolicy(companyId: string, branchId?: string | null): Promise<ReimbursementPolicyRecord | null> {
