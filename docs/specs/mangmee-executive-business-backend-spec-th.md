@@ -1229,7 +1229,7 @@ cases เป็น operational current state พร้อม serverNow แยก
 - ห้ามส่ง raw signup payload, hashes ที่ใช้ยืนยันตัวตน, secrets, invoice file URL, LINE id หรือ AI previews
 
 **กติกาการอ่านข้อมูล (RB-22):** projection ทุกตัวใช้ `select` ระบุฟิลด์ ห้ามใช้ `include` กับ `CompanyMembership` หรือ `User`
-ห้ามอ่านตารางต่อไปนี้ไม่ว่ากรณีใด: `MemberPayoutAccount`, `ReimbursementPayoutDestination`, `SalesAgentProfile` (ยกเว้น `salesCode`),
+ห้ามอ่านตารางต่อไปนี้ไม่ว่ากรณีใด: `MemberPayoutAccount`, `MemberSavedPayoutAccount`, `ReimbursementPayoutDestination`, `SalesAgentProfile` (ยกเว้น `salesCode`),
 `UserCredential` (ยกเว้นสถานะของบัญชีผู้บริหารเองใน API07/API09), `ExternalIdentity`, `BankAccount`, `SupplierBankAccount`
 ต้องมี test ที่เทียบชุด key ของทุก DTO กับรายการที่อนุญาตข้างต้น เพื่อให้ตารางใหม่ที่ถูกเพิ่มข้าง membership ภายหลังไม่หลุดเข้า payload
 

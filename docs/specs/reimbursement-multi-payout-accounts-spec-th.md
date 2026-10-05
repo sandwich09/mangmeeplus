@@ -111,6 +111,7 @@
 - แถวที่ตรึงแล้วแก้สองช่องใหม่ไม่ได้ เหมือนช่องบัญชีอื่น (trigger เดิมขยายให้คลุม)
 - fingerprint ของแถวที่เป็น `THIRD_PARTY` ต่างจาก fingerprint ของบัญชีเดียวกันที่เป็น `SELF` และเปลี่ยนเมื่อคำอธิบายเปลี่ยน แถว `SELF` ใช้สูตรเดิมทุกตัวอักษร ผลคือ token ตอนส่ง hash การอนุมัติ hash การลงนาม และคำตอบ "บัญชีเดิม ไม่ได้เปลี่ยน" ของรอบแก้บัญชี มองการเปลี่ยนประเภทเจ้าของบัญชีหรือคำอธิบายว่าเป็นการเปลี่ยนปลายทาง โดยไม่ต้องแก้กลไกเหล่านั้น
 - บัญชีประจำเป็น `SELF` เสมอ ใบที่ตามบัญชีประจำจึงเป็น `SELF` เสมอ
+- สูตรแยกเป็นสองชั้น: รายการที่บันทึกไว้เก็บ fingerprint บัญชีสูตรเดิม (`reimbursement-payout-destination:v1`) ไม่รวมประเภทเจ้าของบัญชีหรือคำอธิบาย ส่วนบัญชีของใบใช้ `claimPayoutFingerprint` คืนค่าเดิมสำหรับ `SELF`; สำหรับ `THIRD_PARTY` ใช้ HMAC-SHA256 ด้วยกุญแจเดิมจาก JSON array `["reimbursement-payout-holder:v1", fingerprintบัญชีเดิม, holderType, holderNoteที่ตัดช่องว่างหัวท้าย]` จึงคัดลอกจากแถวที่บันทึกไว้ได้โดยไม่ถอดรหัสเลขบัญชี `sealClaimPayoutDestination` ใช้สูตรนี้สำหรับบัญชีที่กรอกให้ใบ และ `sealPayoutDestination` เดิมไม่เปลี่ยน
 
 ### 5.2 การเลือกในร่าง
 
@@ -154,6 +155,10 @@
 
 ถ้อยคำทุกประโยคมาจากที่เดียวใน `packages/contracts` ทุกหน้าจอและทุกช่องทางใช้ประโยคเดียวกัน
 
+รอบ 1a ส่งออก `REIMBURSEMENT_PAYOUT_HOLDER_WORDS`, `payoutHolderChoiceLabel(holderType, forSelf)`, `payoutHolderLine(account)` และ `maskedPayoutAccountWithHolder(account)` สำหรับรอบหน้าจอและ API ถัดไป ตัวเลือกบัญชีของตัวเองเลือกคำตามผู้กรอกฟอร์ม บรรทัดคำอธิบายมีเฉพาะ `THIRD_PARTY`; แจ้งเตือนและ LINE ใช้ helper แบบสั้นซึ่งเพิ่มป้ายบัญชีของบุคคลอื่นแต่ไม่ใส่คำอธิบาย `maskedPayoutAccount` เดิมไม่เปลี่ยน
+
+คำปฏิเสธเลขบัญชีในคำอธิบายใช้ "อย่าพิมพ์เลขบัญชีในช่องนี้ เพราะเมื่อใช้บัญชีนี้ในใบเบิก ทุกคนที่เปิดใบเบิกจะเห็นข้อความนี้" เนื่องจากบัญชีที่บันทึกไว้แต่ยังไม่ใช้ในใบมีคำอธิบายที่เห็นเฉพาะเจ้าของรายการ ยังไม่ได้แสดงให้ผู้อ่านใบเห็น
+
 | ที่แสดง | `SELF` | `THIRD_PARTY` |
 |---|---|---|
 | รายการบัญชีที่บันทึกไว้ | ชื่อเรียก ธนาคารหรือพร้อมเพย์ 4 ตัวท้าย ชื่อบัญชี | เพิ่มป้าย "บัญชีของบุคคลอื่น" และคำอธิบาย ไม่มีปุ่มตั้งเป็นบัญชีประจำ |
@@ -176,6 +181,8 @@ Migration ใหม่หนึ่งชุด เพิ่มอย่างเ
 - สร้าง `MemberSavedPayoutAccount`: `id, companyId, userId, label, holderType, holderNote, payoutKind, bankName, accountName, accountNumberEncrypted, accountLast4, fingerprint, createdAt, updatedAt` FK ไป `CompanyMembership(companyId, userId)` ลบตามสมาชิกภาพ unique `(companyId, userId, fingerprint)` CHECK รูปแบบบัญชีแบบเดียวกับตารางเดิม และ CHECK ว่า `holderNote` มีเมื่อและเฉพาะเมื่อเป็น `THIRD_PARTY`
 - `ReimbursementPayoutDestination`: เพิ่ม `holderType TEXT NOT NULL DEFAULT 'SELF'` และ `holderNote TEXT` พร้อม CHECK เดียวกัน และแทนฟังก์ชัน trigger ตรึงแถวให้คลุมสองช่องนี้
 - ไม่มีการเติมข้อมูลย้อนหลัง โค้ดรุ่นเก่าที่เขียนแถวบัญชีของใบได้ค่า `SELF` เอง
+- CHECK เจ้าของบัญชีทั้งสองตารางรับเฉพาะ `SELF`/`THIRD_PARTY`; `SELF` เก็บคำอธิบายเป็น NULL ส่วน `THIRD_PARTY` ต้องมีคำอธิบาย 2–200 ตัวอักษรหลังตัดช่องว่างหัวท้าย
+- ตารางใหม่ใช้ ON UPDATE CASCADE / ON DELETE CASCADE เหมือนบัญชีประจำ: การย้ายสมาชิกภาพตอนรวมบัญชีพารายการที่บันทึกไว้ตามไปด้วย และการลบสมาชิกภาพลบรายการตาม ไม่มีข้อมูลผู้แก้แยกที่ต้องย้ายเพิ่ม รายการนี้เป็นข้อมูลส่วนบุคคล ต้องรวมในการสำรวจข้อมูลเพื่อสิทธิ์ข้อมูลและห้ามอ่านในรายงานผู้บริหารเหมือนบัญชีประจำ
 
 ## 8. สัญญา API
 
@@ -192,6 +199,8 @@ Migration ใหม่หนึ่งชุด เพิ่มอย่างเ
 - สรุปบัญชีของใบ ประวัติบัญชี บัญชีของรายการจ่าย และบัญชีเดิมของรอบแก้บัญชี เพิ่ม `holderType` และ `holderNote`
 - รายละเอียดร่างบอกว่าใบจะต้องผ่านผู้อนุมัติเพราะบัญชีของบุคคลอื่นหรือไม่ จากกติกาเดียวกับที่คำสั่งส่งใช้
 - คำปฏิเสธใหม่ทุกข้อมีข้อความไทยในแผนที่ข้อผิดพลาดของเว็บ และบอกสิ่งที่ผู้ใช้ทำต่อได้
+
+สัญญารอบ 1a (ชนิดข้อมูลของงานทั้งชุด; เส้นทาง API ใหม่ยังทำในรอบ 1b และ 2): `ReimbursementPayoutHolderType`, `PayoutHolderFacts`, `SavedPayoutAccountSummary`, `SavedPayoutAccountListResponse`, `AddSavedPayoutAccountInput`; ตัวตรวจ `invalidPayoutHolderField` และ `invalidSavedPayoutAccountLabel` คืนชื่อช่องที่ผิดหรือ null ใช้ `looksLikeAccountNumber` เดียวกับบัญชีเดิม ค่าขีดจำกัดคือ `PAYOUT_SAVED_ACCOUNT_LABEL_MAX_LENGTH` (40), `PAYOUT_HOLDER_NOTE_MIN_LENGTH` (2), `PAYOUT_HOLDER_NOTE_MAX_LENGTH` (200), `PAYOUT_SAVED_ACCOUNT_LIMIT` (20) ช่องใหม่บนสัญญาของใบเดิมเป็น optional ทั้งหมด และ `approvalRequiredForThirdParty?: true` ใช้เฉพาะร่าง
 
 ## 9. ข้อป้องกันของคำสั่งบันทึกจ่าย (จากผลตรวจ)
 
