@@ -23,6 +23,23 @@ Provider webhook active:true, Contact/Social native replies stopped, how-to/pack
 Owner confirmed both cards received and actions working; supplemental acceptance signature verified. [Exact IDs, hashes, proof and recovery](../evidence/line-official-oa-isolated-publication-2026-10-04.md).
 
 
+## Release 2026-10-06 00:18 — Production (current for Production)
+
+Production serves `main` source `67c270d3c` since 2026-10-06 00:18 Bangkok. Before it Production served the hotfix `0c6e888a8` (2026-10-05 13:19), which is an ancestor of this source. UAT serves the same source (round 2k). `main` HEAD was `a97a88fe8` at the promotion: docs only ahead of the source, which the promotion accepts (the signed UAT source must be an ancestor of `origin/main`; the controller files are compared with `origin/main`). GitHub workflow ids (`UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`) are `NOT_DISPATCHED`: local Kamal path, as every release since 2026-09-18.
+
+What it shipped: everything merged after the morning release of 2026-10-05 — the small follow-ups (#1008/#1009), the LINE System OA cards and assistant rounds 2a–2k of the section below (cards of the locked design, periods as people type them, the comparison and summary cards, replies to a photo or a file, the contact and package card buttons to the staff OA, the readiness answer remembered for five minutes) and the claims batch (several payout accounts chosen per claim, another person's account, claims held by a duplicate, with the follow-up screen fixes). The two routes that answered without a model call are NOT in it (withdrawn in round 2k).
+
+| Env | Operation | Source | Result | Seconds |
+|---|---|---|---|---|
+| Production | `20261005T170015Z-db077806` (promote preflight, read-only) | from UAT `20261005T155337Z-20348016` | PREFLIGHT_PASSED_NO_DEPLOYMENT 00:00. | 18.5 |
+| Production | `20261005T171004Z-ed0e56d7` (promote-prod `--production-browser-acceptance --apply`) | `67c270d3c`, signed UAT promotion from `20261005T155337Z-20348016`, no rebuild | ACCEPTED_LINE_DEFERRED 00:18, 12/12 phases; website ready 00:14:47 (282.7 s); browser stage 180.6 s, 10/10 checks observed 00:17:13–00:17:32 with the owner signing in himself; **1 migration** `20261005100000_reimbursement_saved_payout_accounts` (database phase 68.1 s, rollout 84.5 s); AgentCore `kamal_production_a` v23; signature verified; 4 SSM sessions closed; 19 builds retired; no `active.json`. | 490.1 |
+
+- Owner's go: "ยังไงไม่ต้องทำ เอาของขึ้น prod ได้เลย" (2026-10-05 about 23:55; "ไม่ต้องทำ" is the budget-rule amendment below), "พร้อม" (00:09), "เข้าแล้ว" (about 00:15).
+- Verification of the exact tree: the source's tree equals the tree of `4c2a6ffe3`, on which the full 17-step local verification passed at 22:41–22:48. The UAT acceptance promoted was the smoke acceptance of round 2k (22:57).
+- After the release, one read-only bastion session (00:19:03–00:19:10, terminated, no listener left): 280 migrations completed, 0 unfinished; `MemberSavedPayoutAccount` exists with 0 rows; `reimbursement_duplicate_confirmed` and `reimbursement_duplicate_sla_breach` are AVAILABLE with 21 ENABLED rules each for 21 active companies; claims 9 (1 pending approval, 6 ready for payment, 1 paid, 1 cancelled). Public probes 00:18:30: platform-access 200 OPEN, `/login` 200, `/api/v1/health` 200.
+- Not proven by a real turn before Production: no photo or file was sent to LINE UAT after round 2i changed the replies to them (22:09). The owner was told and chose to proceed. The first Production photo reply is the first real one: read its `line.ai.terminal` line.
+- Decided and NOT done: amending the budget rule so that a turn routed without a model call can proceed. The owner asked what the rules are and what a change would touch, was told that a turn with no model call at all would also pass the credit gate (the gate is the intake's reserve), and said not to do it.
+
 ## LINE card rounds 2026-10-05 afternoon — UAT only (current for UAT)
 
 After the last row below, UAT serves `main` `67c270d3c` (LINE System OA cards parts 1 and 2a, the assistant rounds 2b–2f and 2h–2k, and the claims batch of round 2g with its one migration and its follow-up fixes) and no longer the `2aa87ac68` of the section that follows. Production is NOT touched by these rounds: it serves the morning release plus another session's hotfix `0c6e888a8` (`20261005T060824Z-6f2c3d60`, 13:19 Bangkok). Every run used the local Kamal path from the clean controller worktree; GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok. Owner's words: "เร่งแก้ของ ไลน์หน่อยได้ไหม จะได้ทดสอบจริงบน line uat" (UAT only; Production needs his own go).
