@@ -213,7 +213,14 @@ export function inlineDownloadContentType(mimeType: string | null | undefined): 
 // origin. Substitute-receipt artifacts are the only SVGs we hold and they still download fine.
 const INLINE_DISPOSITION_MIME_TYPES = /^(?:image\/(?:png|jpeg)|application\/pdf)$/;
 
-/** The `Content-Disposition` a signed download carries. `attachment` unless inline is asked for AND safe. */
+/**
+ * The `Content-Disposition` a signed download carries. `attachment` unless inline is asked for AND safe.
+ *
+ * The storage service refuses a header value outside ISO-8859-1 with HTTP 400, so a Thai file name
+ * (every signed claim form the system names, "ใบเบิกค่าใช้จ่าย RB-….pdf") could not be opened at all.
+ * Such a name travels as an ASCII fallback plus the RFC 5987 `filename*` form; a plain ASCII name
+ * keeps the short form it always had.
+ */
 export function downloadContentDisposition(input: {
   disposition?: 'inline' | 'attachment';
   mimeType?: string | null;
@@ -222,7 +229,10 @@ export function downloadContentDisposition(input: {
   const type = input.disposition === 'inline' && input.mimeType && INLINE_DISPOSITION_MIME_TYPES.test(input.mimeType)
     ? 'inline'
     : 'attachment';
-  return `${type}; filename="${(input.fileName ?? 'download').replace(/["\r\n]/g, '_')}"`;
+  const name = (input.fileName ?? 'download').replace(/["\r\n]/g, '_');
+  if (/^[\x20-\x7e]*$/.test(name)) return `${type}; filename="${name}"`;
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${type}; filename="${name.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encoded}`;
 }
 
 export function generateObjectKey(companyId: string, fileName: string): string {
