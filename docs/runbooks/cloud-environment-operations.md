@@ -23,7 +23,34 @@ Provider webhook active:true, Contact/Social native replies stopped, how-to/pack
 Owner confirmed both cards received and actions working; supplemental acceptance signature verified. [Exact IDs, hashes, proof and recovery](../evidence/line-official-oa-isolated-publication-2026-10-04.md).
 
 
-## Release 2026-10-05 — UAT rounds 1–2 and Production (current)
+## LINE card rounds 2026-10-05 afternoon — UAT only (current for UAT)
+
+After the last row below, UAT serves `main` `8edb735ec` (LINE System OA cards parts 1 and 2a, and the assistant round 2b) and no longer the `2aa87ac68` of the section that follows. Production is NOT touched by these rounds: it serves the morning release plus another session's hotfix `0c6e888a8` (`20261005T060824Z-6f2c3d60`, 13:19 Bangkok). Every run used the local Kamal path from the clean controller worktree; GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok. Owner's words: "เร่งแก้ของ ไลน์หน่อยได้ไหม จะได้ทดสอบจริงบน line uat" (UAT only; Production needs his own go).
+
+| Env | Operation | Source (main) | Result | Seconds |
+|---|---|---|---|---|
+| UAT | `20261005T065816Z-e41796d8` (preflight) | controller at `54c4cae73` | **FAILED** 13:58: "Host identity/state changed: i-0eb581c5ac3b3d7ba". Both UAT hosts had been stopped at 09:29 (user initiated). | 1.3 |
+| UAT | `20261005T070634Z-09f0d57b` (preflight) | — | PREFLIGHT_PASSED_NO_DEPLOYMENT 14:06, after the owner started both hosts at 14:01. | 13.1 |
+| UAT | `20261005T072445Z-424f6a64` (prepare only) | `54c4cae73` (#1013 twin = develop `1ad8d59d1` via #1012) | PREPARED_NO_DEPLOYMENT 14:31; `main-typescript-build` 338.8 s. | 383.8 |
+| UAT | `20261005T073126Z-e63ad874` (prepared by `424f6a64`) | `54c4cae73` | ACCEPTED_LINE_DEFERRED 14:37, smoke, 12/12 phases, no migration (database phase 78.0 s, rollout 99.3 s), AgentCore `kamal_uat_b` v53, signature verified. | 350.4 |
+| UAT | `20261005T083915Z-f63676fe` (preflight) | controller at `ea5a98344` | PREFLIGHT_PASSED_NO_DEPLOYMENT 15:39. | 12.4 |
+| UAT | `20261005T084047Z-d5c616e7` (prepare only) | `ea5a98344` (#1015 twin = develop `2b30ab1ba` via #1014: LINE cards part 2a, row cards and named buttons) | PREPARED_NO_DEPLOYMENT 15:48. | 430.0 |
+| UAT | `20261005T084812Z-4694f13f` (prepared by `d5c616e7`) | `ea5a98344` | ACCEPTED_LINE_DEFERRED 15:54, smoke, 12/12 phases, no migration (database phase 62.4 s, rollout 98.3 s), AgentCore `kamal_uat_a` v54, signature verified, 2 SSM sessions closed. | 363.1 |
+| UAT | `20261005T092229Z-071239f5` (preflight) | controller at `8edb735ec` | PREFLIGHT_PASSED_NO_DEPLOYMENT 16:22. | 11.8 |
+| UAT | `20261005T092247Z-b0b6152d` (prepare only) | `8edb735ec` (#1017 twin = develop `cf13b7607` via #1016: periods as people say them, a reply completes the question, every month in a comparison, no bare text) | PREPARED_NO_DEPLOYMENT 16:29. | 399.9 |
+| UAT | `20261005T092928Z-8c27754e` (prepared by `b0b6152d`) | `8edb735ec` | ACCEPTED_LINE_DEFERRED 16:37, smoke, 12/12 phases, no migration (database phase 71.0 s, rollout 255.4 s), AgentCore `kamal_uat_b` v55, signature verified, 2 SSM sessions closed. The full 17-step verification of this exact tree passed afterwards (16:38–16:44). | 480.2 |
+
+**Stopped UAT hosts stop a release at the first step, and the agent cannot start them.** The deploy role (`mangmee-kamal-uat`) and the dev profile have no `ec2:StartInstances`; only the owner's own profile does, and the controller does not use it. Ask the owner to start the two hosts, then run the read-only preflight again before preparing.
+
+**Ask LINE before the customer sees a card.** `POST https://api.line.me/v2/bot/message/validate/reply` accepts a Flex payload and answers 200 or names the invalid field, and sends nothing to anyone. It was called from inside the UAT API container with that container's own channel token (`scratchpad/uat-line/validate.js` piped through one SSM port-forward and one ssh command), 49 payloads before part 1 went out. UAT and Production run with the text fallback on, so a card LINE refuses reaches the customer as plain text: validate every NEW card structure before a round.
+
+**A UAT round verified with the short gate hid a real-database failure.** Part 2a went out on typechecks, the capability manifest, the whole-chain acceptance and LINE's validator (about three minutes) because the owner asked for speed. The full run on the next round then failed in `line-capture-delivery.pg.spec.ts`: its link count assumed every address under the web base was a link, and the receipt result is now the locked card, whose pictures are served from that base. The product was right and the test was stale, but only the real-PostgreSQL step could say so. The full 17-step run takes about seven minutes on this machine: run it for every round that changes what a pushed message contains.
+
+**A lane killed in mid-typecheck leaves the machine lock behind.** At 15:51 a Codex lane died with "Selected model is at capacity" while its typecheck held `/tmp/mangmee-heavy.lock`; every other job waited ten minutes on a lock nobody owned. The wrapper (`scratchpad/codex/heavy.sh`) now records its pid in the lock and a waiter removes a lock whose holder is gone.
+
+**What only a real phone showed** (owner, 14:45–15:07): the fixtures covered the designed states, not the real routes. A compound question arrived on the card from before the design, the list and the grouped summary were prose, and a short reply to the assistant's own question was rejected by the router's decoder (`line.intake_route.compact_decode rejection=decision_shape_invalid`, two model calls, ten seconds) and answered with a plain-text apology. The gateway and API container logs on the UAT hosts named that cause in minutes; read them before designing a fix.
+
+## Release 2026-10-05 — UAT rounds 1–2 and Production (morning; superseded for UAT by the section above)
 
 After this section, UAT and Production both serve `main` `2aa87ac68` (tree equal to develop `6ac6d8a63`). Production served the hotfix `908e7aab` before it and UAT served `7b1b1c11`. Every run used the local Kamal path from a clean `main` controller worktree, and GitHub workflow IDs are `NOT_DISPATCHED`. Times are Bangkok. What the release changes for people, and the counts read before and after it, are in `docs/agent-memory/owner-preview-batch-2026-10-04.md` ("Release record") and `docs/agent-memory/release-readiness-2026-10-04.md`.
 

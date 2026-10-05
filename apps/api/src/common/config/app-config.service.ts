@@ -129,8 +129,6 @@ export class AppConfigService {
   // but NO consumer reads it yet — the prepared direct-answer lane is a later phase. Off = the reply
   // always comes from the existing reference path.
   get lineAiAdvisorDirectAnswerEnabled(): boolean { return this.config.LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED; }
-  // Terminal Flex card on a multi-part reply (default false = exact legacy all-text multi-part shape).
-  get lineAiMultipartTerminalFlexEnabled(): boolean { return this.config.LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED; }
   // Durable terminal-outcome replay (§8.3). Default false = no outcome row is written or read and the
   // orphan sweep selects exactly today's rows; true = the rendered messages are persisted before the
   // first send (fail-closed) and a retry pushes THEM instead of re-routing the input.

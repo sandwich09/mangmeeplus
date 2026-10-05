@@ -9,8 +9,8 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES } from '@watchdog-bms/contracts';
-import { formatDraftUpdateReply } from './draft-update-formatter';
+import { LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES, parseLineAiAnswerCardLayout } from '@watchdog-bms/contracts';
+import { draftUpdateCardLayout, formatDraftUpdateReply } from './draft-update-formatter';
 import { ALLOWED_TOOLS } from './accounting-summary.agent';
 
 const preview = (over: Record<string, unknown> = {}) => ({
@@ -122,6 +122,39 @@ describe('draft update formatter', () => {
     for (const row of LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES) {
       const mayWrite = row.expectedOutcome === 'applied_named_edit';
       assert.equal(row.expectedApplyCount === 0, !mayWrite, row.id);
+    }
+  });
+});
+
+// Design lock context 4: the header of the "แก้ไขค่าใช้จ่าย" card names the state the TOOL RESULT
+// reports. It carries no figure — a proposal's numbers are on the API's confirm card alone.
+describe('draft update card layout', () => {
+  const header = (data: unknown) => draftUpdateCardLayout(data)?.header;
+
+  it('names a proposal, a question back, and a record left as it was', () => {
+    assert.deepEqual(draftUpdateCardLayout(preview()), { context: 'edit_command', header: ['แก้ไขค่าใช้จ่าย', 'รอยืนยัน'], rows: [] });
+    for (const reason of ['ambiguous_line', 'ambiguous_record', 'ungrounded_value', 'invalid_patch']) {
+      assert.deepEqual(header({ found: true, blocked: reason }), ['แก้ไขค่าใช้จ่าย', 'ขอข้อมูลเพิ่ม'], reason);
+    }
+    for (const reason of ['mutation_blocked', 'no_recent_record', 'rate_limited', 'something_new']) {
+      assert.deepEqual(header({ found: true, blocked: reason }), ['แก้ไขค่าใช้จ่าย', 'ยังไม่ได้แก้ไข'], reason);
+    }
+    assert.deepEqual(header({ found: true, moveSuggestion: { lineNumber: 2, chargeLabel: 'ค่าบริการ' } }), ['แก้ไขค่าใช้จ่าย', 'ยังไม่ได้แก้ไข']);
+  });
+
+  it('never says an edit was applied or cancelled: only the API, after its own postback, knows that', () => {
+    for (const data of [preview(), { found: true, blocked: 'ambiguous_line' }, { found: true, applied: true }, { found: true, status: 'applied' }]) {
+      assert.doesNotMatch(JSON.stringify(draftUpdateCardLayout(data) ?? {}), /แก้ไขแล้ว|ยกเลิกแล้ว/);
+    }
+  });
+
+  it('has no layout for a result it cannot read, and every layout it makes is one the receiver accepts', () => {
+    for (const data of [undefined, null, 'x', [], {}, { found: false }, { found: true }, { found: false, preview: preview().preview }]) {
+      assert.equal(draftUpdateCardLayout(data), undefined);
+    }
+    for (const data of [preview(), { found: true, blocked: 'ambiguous_line' }, { found: true, blocked: 'rate_limited' }]) {
+      const layout = draftUpdateCardLayout(data);
+      assert.deepEqual(parseLineAiAnswerCardLayout(JSON.parse(JSON.stringify(layout))), layout);
     }
   });
 });

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { branchInputMatchesMessage, buildAnswerPresentation, expenseBranchScopeRequested, expenseCriterionOnlyMessage, ORCHESTRATOR_TOOL_LOOP_PROMPT, OrchestratorAgent, uncertainExpenseFilter, unsupportedExpenseFilter, validExpensePeriodSelection, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
-import { extractValueCandidates, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { extractValueCandidates, parseLineAiAnswerCardLayout, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
 
 // A valid, already-bounded prepared plan for a permitted inventory read (matches makeReq permissions).
@@ -199,6 +199,53 @@ describe('buildAnswerPresentation', () => {
       label: 'ดูรายการค่าใช้จ่าย',
       path: '/companies/company-1/expenses',
     });
+  });
+
+  // Design lock context 2: the open-work card is built from the ONE successful read, never from the sentence.
+  it('carries the open-work layout of a single successful read of notices or assigned tasks', () => {
+    const claim = { count: 1, hasMore: false, opens: 'claim', items: [{ id: 'n1', title: 'อนุมัติเบิกจ่าย: RB-202608-00002', kind: 'claim_approval', documentNo: 'RB-202608-00002' }] };
+    const output = { ...presentationOutput('SUCCEEDED', 'อนุมัติเบิกจ่าย: RB-202608-00002', '1', claim, 'notifications.list_open_alerts'), asOf: '2026-09-17T10:00:00Z' };
+    const card = buildAnswerPresentation(PRESENTATION_PLAN, [output], 'มีใบเบิกรออนุมัติ 1 รายการค่ะ')?.cards[0];
+    assert.equal(card?.text, 'มีใบเบิกรออนุมัติ 1 รายการค่ะ');
+    assert.deepEqual(card?.layout, {
+      context: 'open_work', header: ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ'],
+      rows: [{ label: 'เลขที่ใบเบิก', value: 'RB-202608-00002' }, { label: 'ต้องทำ', value: 'ตรวจสอบและอนุมัติใบเบิก' }, { label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
+      notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'เปิดใบเบิกเพื่ออนุมัติ',
+    });
+    const tasks = { ...presentationOutput('SUCCEEDED', 'งานที่ได้รับมอบหมาย', '0', { total: 0, items: [] }, 'workflow.list_assigned_tasks'), asOf: '2026-09-17T10:00:00Z' };
+    assert.deepEqual(buildAnswerPresentation(PRESENTATION_PLAN, [tasks], 'ไม่มีงานค้างค่ะ')?.cards[0]?.layout?.header, ['งานที่มอบหมาย', 'ไม่พบงานค้าง']);
+  });
+
+  it('has no layout when the answer is more than that one read, or the read did not succeed', () => {
+    const data = { count: 0, hasMore: false, opens: 'list', items: [] };
+    const read = () => ({ ...presentationOutput('SUCCEEDED', 'รายการแจ้งเตือน', '0', data, 'notifications.list_open_alerts'), asOf: '2026-09-17T10:00:00Z' });
+    // Two reads: each is a sentence card, and neither claims to be the whole answer.
+    const two = buildAnswerPresentation(PRESENTATION_PLAN, [read(), presentationOutput('SUCCEEDED')], 'รวม');
+    assert.deepEqual(two?.cards.map((card) => card.layout), [undefined, undefined]);
+    // One output that also carries a refused call: the card would hide the refusal.
+    const mixed = read();
+    mixed.toolCalls.push({ name: 'workflow.list_assigned_tasks', status: 'forbidden' as any, durationMs: 1 });
+    assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [mixed], 'ไม่พบแจ้งเตือน')?.cards[0]?.layout, undefined);
+    // One output with two results.
+    const double = read();
+    double.toolData!.push({ tool: 'workflow.list_assigned_tasks', data: { total: 0, items: [] } });
+    assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [double], 'ไม่พบ')?.cards[0]?.layout, undefined);
+    // A refused or failed read has no card at all — it can never be drawn as "nothing found".
+    assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [presentationOutput('PERMISSION_DENIED', 'รายการแจ้งเตือน', '0', data, 'notifications.list_open_alerts')], 'ไม่มีสิทธิ์'), undefined);
+    assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [presentationOutput('FAILED', 'รายการแจ้งเตือน', '0', data, 'notifications.list_open_alerts')], 'ดึงข้อมูลไม่ได้'), undefined);
+    // A malformed result: the sentence card, no rows.
+    const broken = { ...presentationOutput('SUCCEEDED', 'รายการแจ้งเตือน', '0', { items: [] }, 'notifications.list_open_alerts') };
+    assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [broken], 'ไม่พบ')?.cards[0]?.layout, undefined);
+  });
+
+  // Design lock context 4: the edit-command header rides only the deterministic sentence of that same result.
+  it('heads a draft-edit answer with the state its result reports, and only when the reply is that result\'s own sentence', () => {
+    const blocked = { found: true, blocked: 'ambiguous_line' };
+    const output = presentationOutput('SUCCEEDED', 'ร่างค่าใช้จ่าย', '-', blocked, 'expense.draft.set_line');
+    const sentence = 'บิลนี้มีหลายบรรทัดค่ะ ขอทราบว่าต้องการแก้บรรทัดไหนนะคะ (เช่น "บรรทัด 2 เป็น 500")';
+    assert.deepEqual(buildAnswerPresentation(PRESENTATION_PLAN, [output], sentence)?.cards[0]?.layout,
+      { context: 'edit_command', header: ['แก้ไขค่าใช้จ่าย', 'ขอข้อมูลเพิ่ม'], rows: [] });
+    assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [output], 'แก้ให้แล้วค่ะ')?.cards[0]?.layout, undefined);
   });
 
   it('omits cards for forbidden, unavailable, unsupported, and clarification outcomes', () => {
@@ -492,6 +539,13 @@ describe('OrchestratorAgent', () => {
     assert.equal(result.sourceRefs[0]?.permissionChecked, true);
     assert.equal(result.presentation?.kind, 'answer_cards');
     assert.equal(result.presentation?.cards[0]?.text, result.replyText);
+    // Design lock context 1: the sentence's own figures as the summary card's rows, on this lane …
+    const summaryLayout = result.presentation?.cards[0]?.layout;
+    assert.equal(summaryLayout?.context, 'expense_summary');
+    assert.equal(summaryLayout?.header[0], 'สรุปค่าใช้จ่าย');
+    assert.deepEqual(summaryLayout?.rows.slice(0, 2), [{ label: 'ยอดรวม', value: '11,875.00 บาท', emphasis: 'total' }, { label: 'จำนวนรายการ', value: '7 รายการ' }]);
+    assert.equal(summaryLayout?.linkLabel, 'ดูค่าใช้จ่ายในเว็บ');
+    assert.deepEqual(parseLineAiAnswerCardLayout(JSON.parse(JSON.stringify(summaryLayout))), summaryLayout);
     for (const question of ['ค่าใช้จ่ายเดือนนี้มีกี่ใบ', 'ค่าใช้จ่ายเดือนนี้มีกี่รายการ', 'how many expenses this month?', 'ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ มีกี่ใบ']) {
       const countReq = makeReq(question);
       countReq.userContext.permissions.push('expense.read');
@@ -524,6 +578,8 @@ describe('OrchestratorAgent', () => {
     assert.deepEqual(calledTools.slice(before), ['expense.list_recent']);
     assert.equal(prepared.replyText, full.replyText);
     assert.deepEqual(prepared.presentation, full.presentation);
+    // … and on the prepared lane: the same layout, not merely the same sentence.
+    assert.equal(prepared.presentation?.cards[0]?.layout?.context, 'expense_summary');
     assert.deepEqual(prepared.sourceRefs, full.sourceRefs);
     assert.deepEqual(prepared.webLinks, full.webLinks);
     assert.ok(prepared.replyText.includes(`\nช่วง: 1 ${thaiMonth} ${thaiYear} – ${todayDay} ${thaiMonth} ${thaiYear}`));

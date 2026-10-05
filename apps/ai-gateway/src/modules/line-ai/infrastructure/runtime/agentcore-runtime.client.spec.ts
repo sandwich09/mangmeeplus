@@ -187,6 +187,34 @@ describe('AgentCoreRuntimeClient', () => {
     }
   });
 
+  // Design lock: a card layout is presentation metadata from a separately deployed artifact. The
+  // receiver re-parses it; a layout that does not parse is dropped and the answer is kept.
+  it('keeps a valid card layout and drops an invalid one without refusing the answer', async () => {
+    const orig = globalThis.fetch;
+    const layout = { context: 'open_work', header: ['การแจ้งเตือน', 'ไม่พบรายการ'], rows: [{ label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
+      notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'ดูแจ้งเตือนในเว็บ' };
+    const respond = (cardLayout: unknown) => async () => new Response(JSON.stringify({ ...validResult,
+      presentation: { kind: 'answer_cards', cards: [{ text: 'สต็อกปัจจุบัน 100 ชิ้น', sourceLabels: ['รายการแจ้งเตือน'], layout: cardLayout }] } }), { status: 200 }) as any;
+    try {
+      const client = new AgentCoreRuntimeClient(makeConfig());
+      globalThis.fetch = respond(layout);
+      assert.deepEqual((await client.invoke(validInput)).presentation,
+        { kind: 'answer_cards', cards: [{ text: 'สต็อกปัจจุบัน 100 ชิ้น', sourceLabels: ['รายการแจ้งเตือน'], layout }] });
+      for (const bad of [
+        'flex', 42, null, [], { type: 'bubble', body: { type: 'box' } },
+        { ...layout, context: 'marketing' }, { ...layout, header: ['หัวเดียว'] }, { ...layout, rows: [{ label: 'ลิงก์', value: 'https://evil.example' }] },
+        { ...layout, extra: true }, { ...layout, rows: [] }, { ...layout, linkLabel: 'x'.repeat(41) },
+      ]) {
+        globalThis.fetch = respond(bad);
+        const result = await client.invoke(validInput);
+        assert.equal(result.replyText, validResult.replyText);
+        assert.deepEqual(result.presentation, { kind: 'answer_cards', cards: [{ text: 'สต็อกปัจจุบัน 100 ชิ้น', sourceLabels: ['รายการแจ้งเตือน'] }] }, JSON.stringify(bad));
+      }
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it('throws MALFORMED_RESPONSE for malformed optional presentation', async () => {
     const orig = globalThis.fetch;
     globalThis.fetch = async () => new Response(JSON.stringify({ ...validResult, presentation: { kind: 'answer_cards', cards: [{ title: 'missing text' }] } }), { status: 200 }) as any;

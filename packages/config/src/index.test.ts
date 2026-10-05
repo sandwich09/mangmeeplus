@@ -812,10 +812,12 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_EXACT_GREETING_ENABLED: 'false' }).LINE_AI_EXACT_GREETING_ENABLED, false);
   });
 
-  it('multi-part terminal Flex defaults off and opts in only on an explicit boolean', () => {
-    assert.equal(apiConfigSchema.parse(base).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
-    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'true' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, true);
-    assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED: 'false' }).LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, false);
+  it('has no multi-part terminal Flex switch: card replies are always on', () => {
+    const retiredKey = 'LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED';
+    assert.equal(retiredKey in apiConfigSchema.shape, false);
+    for (const value of ['true', 'false', 'invalid']) {
+      assert.equal(retiredKey in apiConfigSchema.parse({ ...base, [retiredKey]: value }), false);
+    }
   });
 
   it('durable terminal-outcome replay defaults on and honors an explicit off', () => {

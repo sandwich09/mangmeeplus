@@ -13,7 +13,9 @@ import { ReceiptOcrApplyService } from '../../../expenses/application/services/r
 import { TH_SME_EXPENSE_CATEGORIES_V1 } from '../../../expenses/application/services/expense-category-bootstrap.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
-import { buildLineAssistantTextCardMessage } from '../../domain/logic/line-business-card.logic';
+import { buildLineAssistantTextCardMessage, isCompleteLineBusinessAnswerPresentation, lineAnswerCardHeader } from '../../domain/logic/line-business-card.logic';
+import { isLineSystemCard, readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
+import { lineMessagePreview } from '../../domain/logic/line-message-preview.logic';
 import { STAFF_CONTACT_COMMAND } from '../../domain/logic/line-staff-menu.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineReadEvidenceService } from '../line-read-evidence.service';
@@ -896,15 +898,17 @@ it('answers a bound general question once before two pending files can intercept
   assert.ok(evidence); event.inputEvidence = evidence.inputEvidence;
   const flow = h.useCase as any, grant = { turnKey: evidence.inputEvidence.turnKey };
   const context = { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: new Date().toISOString(), userMessagePreview: 'กำไรคืออะไร' }] };
-  const delivered: string[] = [];
+  const delivered: string[] = [], sent: any[] = [];
   flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
     projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
     createTurn: async (_owner: unknown, _epoch: number, data: unknown) => ({ id: 'turn-1', data }) };
   flow.prepareTextGrantV2 = async (acceptedEvent: object) => { flow.budgetGrantsV2.set(acceptedEvent, grant); return grant; };
   flow.loadConversationContext = async () => context;
   flow.aiGateway.narrowLineReliabilityGrant = async () => grant;
-  flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string }>) => {
-    delivered.push(...messages.flatMap((message) => message.text ? [message.text] : [])); return 'ok';
+  // What is delivered is the answer's canonical text: a text message's own, or the card's.
+  flow.sendMessages = async (_event: unknown, messages: Array<{ text?: string; canonicalText?: string }>) => {
+    sent.push(...messages);
+    delivered.push(...messages.flatMap((message) => message.text ?? message.canonicalText ?? [])); return 'ok';
   };
   await h.useCase.execute(event);
   assert.equal(h.intakeRequests.length, 1, 'the same intake result is reused downstream');
@@ -915,6 +919,15 @@ it('answers a bound general question once before two pending files can intercept
   assert.equal(h.aiGatewayRequests[0].semanticSubrequests?.[0]?.toolHint, 'expense.get_breakdown', 'toolHint survives the routePlan -> turnRequest mapping');
   assert.equal(pendingReads, 0, 'a general question does not enumerate or consume pending private files');
   assert.match(delivered.join('\n'), /กำไรขั้นต้น/);
+  // Design lock context 3: in a bound chat the general answer is ONE card of the locked design — the
+  // reader's own question as its two header lines, the answer as it was written, nothing added.
+  assert.equal(sent.length, 1);
+  const card = readLineSystemCard(sent[0]);
+  assert.deepEqual(card.header, ['กำไรขั้นต้น', 'คืออะไร']);
+  assert.deepEqual(card.prose, ['กำไรขั้นต้นคือรายได้หักต้นทุนขาย']);
+  assert.deepEqual([card.rows, card.notes, card.footnotes, card.actions], [[], [], [], []]);
+  assert.equal(sent[0].canonicalText, 'กำไรขั้นต้นคือรายได้หักต้นทุนขาย');
+  assert.equal(isCompleteLineBusinessAnswerPresentation(sent[0]), true, 'so the delivery plan sends the card itself, with the sentence as its fallback');
 });
 
 // UAT 2026-09-29: "ร่างค่าใช้จ่ายมีอะไรบ้าง ติดปัญหาอะไรไหม" was routed with a prepared read, narrowed to the
@@ -2067,7 +2080,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'feature_disabled');
   });
 
-  it('delivers a successful business query as one themed Flex answer card', async () => {
+  it('delivers a successful business query as one answer card of the locked design', async () => {
     const { prisma } = makePrisma();
     const { useCase, sentMessages } = makeUseCase(prisma, {
       permissions: ['line.ai.query', 'expense.read'],
@@ -2084,9 +2097,20 @@ describe('ProcessLineWebhookUseCase', () => {
 
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-answer-card', messageText: 'ดูค่าใช้จ่ายเดือนนี้' });
 
+    assert.equal(sentMessages.length, 1);
     assert.equal(sentMessages[0]?.type, 'flex');
-    assert.match(JSON.stringify(sentMessages[0]), /เดือนนี้ยังไม่มีค่าใช้จ่าย/);
-    assert.match(JSON.stringify(sentMessages[0]), /#15803D/);
+    // The gateway sent no layout, so the answer is prose under the reader's own question: the card's
+    // title and text, and its one web link as the button. The line naming the source is not drawn
+    // (owner 2026-10-05); it stays in the canonical text.
+    const card = readLineSystemCard(sentMessages[0]);
+    assert.deepEqual(card.header, ['ดูค่าใช้จ่าย', 'เดือนนี้']);
+    assert.deepEqual(card.prose, ['ค่าใช้จ่ายเดือนนี้\nเดือนนี้ยังไม่มีค่าใช้จ่าย รวม 0.00 บาท']);
+    assert.deepEqual(card.footnotes, []);
+    assert.match(sentMessages[0].canonicalText ?? '', /แหล่งข้อมูล: ค่าใช้จ่าย/u);
+    assert.deepEqual(card.actions.map((action) => [action.type, action.label, action.uri]), [['uri', 'ดูค่าใช้จ่าย', 'https://app.example.com/companies/company-1/expenses']]);
+    assert.match(card.mascot, /^https:\/\/app\.example\.com\/assets\/line\/system-card-mascot-general-\d{8}\.png$/u);
+    assert.match(JSON.stringify(sentMessages[0].contents), /"startColor":"#174e37","endColor":"#167c52"/u, 'the locked green, not the old theme');
+    assert.doesNotMatch(JSON.stringify(sentMessages[0].contents), /#15803D|MANGMEE PLUS|ข้อมูลจากน้องมั่งมี/u);
     assert.deepEqual(sentMessages[0]?.quickReply?.items.map((item: any) => item.action.label), ['ค่าใช้จ่ายเดือนนี้', '📊 ถามข้อมูล']);
   });
 
@@ -4927,9 +4951,14 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(initInputs[0].captureSource, 'LINE_UPLOAD');
     assert.equal(completeInputs[0].expenseId, 'expense-line-1');
     assert.equal(replies[0]?.type, 'flex');
-    assert.match(JSON.stringify(replies[0]), /ตรวจสอบและยืนยันในเว็บแอป/);
-    assert.doesNotMatch(replies[0]?.contents?.body?.contents?.[0]?.text ?? '', /https?:\/\//);
-    assert.equal(replies[0]?.contents?.footer?.contents?.[0]?.action?.uri, 'https://app.example.com/companies/company-1/expenses/expense-line-1');
+    // Design lock context 6: the photo's result is the locked review card. Its one button opens the
+    // draft, and no text of the card is a raw link.
+    const card = readLineSystemCard(replies[0]);
+    assert.equal(card.header[1], 'รอตรวจสอบ');
+    assert.match(card.mascot, /system-card-mascot-review-\d{8}\.png$/u);
+    assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/expense-line-1' }]);
+    assert.match(replies[0].canonicalText, /ตรวจสอบและยืนยันในเว็บแอป/, 'the reply that was sent before is the card\'s canonical text');
     assert.ok(replies[0]?.quickReply?.items.some((item: any) => item.action.label === '📷 ถ่ายใบเสร็จ'));
     assert.equal((updates.at(-1) as any).data.status, 'completed');
   });
@@ -5075,7 +5104,26 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(replies[0]?.type, 'flex');
     assert.match(JSON.stringify(replies[0]), /11,875.00/);
     assert.match(JSON.stringify(replies[0]), /ตรวจสอบและยืนยันในเว็บแอป/);
-    assert.doesNotMatch(JSON.stringify(replies[0]), /CA2025020012|เลขที่เอกสาร/);
+    // The automatic summary TEXT still leaves the document number out (owner 2026-09-08). The locked
+    // review card (owner 2026-10-04) has the printed number as its own row, exactly as it was read.
+    assert.doesNotMatch(replies[0].canonicalText, /CA2025020012|เลขที่เอกสาร/);
+    assert.doesNotMatch(replies[0].altText, /CA2025020012|เลขที่เอกสาร/);
+    const card = readLineSystemCard(replies[0]);
+    assert.deepEqual(card.header, ['ข้อมูลใบเสร็จ', 'รอตรวจสอบ']);
+    assert.deepEqual(card.rows, [
+      ['ผู้ขาย / ร้านค้า', ':', 'บริษัท โฟลว์แอคเคาท์ ทดสอบ จำกัด'],
+      ['วันที่เอกสาร', ':', '27 ก.พ. 2568'],
+      ['เลขเอกสาร', ':', 'CA2025020012'],
+      ['ประเภทเอกสาร', ':', 'ใบเสร็จรับเงิน'],
+      ['หมวดค่าใช้จ่าย', ':', 'ค่าอาหาร'],
+      ['ยอดรวม', ':', '11,875.00 บาท'],
+      ['VAT', ':', '776.87 บาท'],
+      // The pill is the record's own state as the web names it; this fixture's record is still a draft.
+      ['สถานะเอกสาร', ':', 'ร่าง'],
+    ]);
+    assert.deepEqual(card.totals, ['ยอดรวม']);
+    assert.deepEqual(card.pills, { 'สถานะเอกสาร': ['#fbf1d8', '#755418'] });
+    assert.deepEqual(card.notes, ['รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ']);
     assert.doesNotMatch(JSON.stringify(replies[0]), /expense\.meals|D-PURPOSE|I01-/);
     assert.match(JSON.stringify(replies[0]), /รอตรวจสอบ/);
   });
@@ -5610,6 +5658,172 @@ describe('ProcessLineWebhookUseCase – a money refusal keeps its reason (spec �
     }
   });
 
+  // Owner 2026-10-05, real LINE: after the assistant asked him a question, his short replies "สิงหา ถึง ตค"
+  // and "ปี 2569" came back as a bare text bubble between cards — "การ์ดหลุดด้วย". Every short reply of a
+  // bound chat (an apology, a question, a notice) stands on the locked design under the reader's own
+  // words; its sentence is unchanged and is still what the delivery plan stores and falls back to.
+  describe('a bound chat\'s short replies stand on the locked design', () => {
+    const UNCLEAR = 'ขอโทษค่ะ น้องมั่งมียังไม่แน่ใจว่าหมายถึงอะไร ช่วยพิมพ์อีกแบบได้ไหมคะ เช่น "เดือนนี้จ่ายไปเท่าไหร่" หรือ "แยกค่าใช้จ่ายตามหมวด"';
+    const TRANSIENT = 'ขอโทษค่ะ ระบบตอบช้ากว่าปกติ ลองส่งข้อความเดิมอีกครั้งได้เลยค่ะ';
+    async function boundReply(errorCode: string, permissions: string[], messageText: string, over: Record<string, unknown> = { lineMessageId: 'line-message-1' }, webBaseUrl?: string) {
+      const { prisma, updates } = makePrisma();
+      prisma.client.lineIntakePendingMedia.findMany = async () => [];
+      prisma.client.lineLedgerDelivery = { findMany: async () => [] };
+      const h = makeUseCase(prisma, {
+        permissions,
+        config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'],
+          lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'], ...(webBaseUrl ? { webBaseUrl } : {}) },
+        intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode }),
+        aiGatewayFn: () => assert.fail('a route that did not route must not start the LINE turn'),
+      });
+      const event: any = { ...BASE_EVENT, webhookEventId: `evt-bound-reply-${errorCode}-${permissions.join('+')}-${Object.keys(over).length}-${webBaseUrl ?? ''}`, messageText, ...over };
+      const evidence = await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0',
+        eventIdHash: 'd'.repeat(64), acceptedAtMs: Date.now(), rawText: messageText }] });
+      assert.ok(evidence);
+      event.inputEvidence = evidence.inputEvidence;
+      const flow = h.useCase as any;
+      const delivered: any[] = [];
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { delivered.push(...messages); return 'ok'; };
+      flow.contextV2 = {
+        admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+        projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+      };
+      // The grant is stored on the event as the real admission does: without one the second route says
+      // "the system is slow" whatever the route answered (a missing grant is not a text nobody understood).
+      flow.prepareTextGrantV2 = async () => { const grant = { turnKey: evidence.inputEvidence.turnKey }; flow.budgetGrantsV2.set(event, grant); return grant; };
+      flow.budgetGrantsV2.set(event, { turnKey: evidence.inputEvidence.turnKey });
+      flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+      await h.useCase.execute(event);
+      assert.equal(h.getAiGatewayCalled(), false);
+      return { delivered, final: (updates.at(-1) as any).data };
+    }
+    for (const [route, permissions, messageText] of [
+      ['first', ['line.ai.query'], 'สิงหา ถึง ตค'],
+      // A sender who may only capture expenses is not routed first; the second route is theirs.
+      ['second', ['expense.receipt.line_upload'], 'ปี 2569'],
+    ] as const) {
+      it(`the two apologies at the ${route} route are a card under the reader's own words, the sentence unchanged`, async () => {
+        for (const [errorCode, sentence] of [['ROUTER_SEMANTIC_SCHEMA_INVALID', UNCLEAR], ['PROVIDER_TIMEOUT', TRANSIENT]] as const) {
+          const turn = await boundReply(errorCode, [...permissions], messageText);
+          assert.equal(turn.delivered.length, 1, errorCode);
+          const [message] = turn.delivered;
+          assert.equal(isLineSystemCard(message), true, `${errorCode}: a card of the locked design, never a bare text bubble`);
+          const card = readLineSystemCard(message);
+          assert.deepEqual(card.header, [...lineAnswerCardHeader(messageText)!.lines], errorCode);
+          assert.deepEqual([card.prose, card.rows, card.actions], [[sentence], [], []], errorCode);
+          // The sentence is the canonical text: what the plan stores, and what LINE gets if it refuses the card.
+          assert.equal(message.canonicalText, sentence);
+          assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so the delivery plan sends the card itself');
+          assert.equal(turn.final.status, 'provider_unavailable');
+          assert.equal(turn.final.errorCode, errorCode);
+        }
+      });
+    }
+
+    it('the reader\'s own words head it: two short lines, or the beginning of a long message', async () => {
+      assert.deepEqual(readLineSystemCard((await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'สิงหา ถึง ตค')).delivered[0]).header, ['สิงหา', 'ถึง ตค']);
+      assert.deepEqual(readLineSystemCard((await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'ปี 2569')).delivered[0]).header, ['ปี', '2569']);
+      const long = readLineSystemCard((await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'ช่วยดูค่าใช้จ่ายของเดือนที่แล้วเทียบกับเดือนนี้ให้หน่อยได้ไหมคะ')).delivered[0]);
+      assert.ok(long.header[1]!.endsWith('…') && 'ช่วยดูค่าใช้จ่ายของเดือนที่แล้วเทียบกับเดือนนี้ให้หน่อยได้ไหมคะ'.startsWith(long.header[0]!));
+    });
+
+    it('stays the text it was where a card cannot be true or cannot be drawn: a tap, a base that is not https', async () => {
+      // A button tap is carried as words the reader never typed (no LINE message id): no heading of "their words".
+      const tap = await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'อ่านคำตอบต่อ', {});
+      assert.deepEqual(tap.delivered, [{ type: 'text', text: UNCLEAR }]);
+      // LINE fetches the card's pictures over https only.
+      const local = await boundReply('ROUTER_SEMANTIC_SCHEMA_INVALID', ['line.ai.query'], 'สิงหา ถึง ตค', { lineMessageId: 'line-message-1' }, 'http://localhost:3000');
+      assert.deepEqual(local.delivered, [{ type: 'text', text: UNCLEAR }]);
+    });
+  });
+
+  // The same class, a reply that has no typed words to stand under: a tap on a proposal's button. Its
+  // answer is the edit's own card (design lock context 4), never a bare text bubble.
+  describe('a bound chat\'s replies to a tap, and a reply with a link of its own', () => {
+    const ACCESS = { permissions: ['line.ai.query', 'expense.update'], roles: [] };
+    function seam(options: Record<string, unknown> = {}) {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { permissions: ACCESS.permissions, ...options });
+      const flow = h.useCase as any;
+      const sent: any[] = [];
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); return 'ok'; };
+      const bind = (event: object) => { flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1' }, id: 'conversation', epoch: 1 }); return event as any; };
+      return { flow, sent, bind };
+    }
+
+    it('a tap on a proposal that is gone answers on the edit\'s own card: nothing was changed', async () => {
+      for (const draftUpdate of [{ enabled: true }, { enabled: false }]) {
+        const { flow, sent, bind } = seam({ draftUpdate });
+        await flow.handleDraftUpdatePostback(bind({ ...BASE_EVENT, webhookEventId: `evt-gone-${draftUpdate.enabled}`, messageText: 'ยืนยันการแก้ไข' }), { companyId: 'company-1', userId: 'user-1' }, ACCESS, true);
+        assert.equal(sent.length, 1);
+        const card = readLineSystemCard(sent[0]);
+        assert.deepEqual(card.header, ['แก้ไขค่าใช้จ่าย', 'ยังไม่ได้แก้ไข']);
+        assert.deepEqual(card.prose, [sent[0].canonicalText]);
+        assert.match(sent[0].canonicalText, /^ไม่พบรายการที่รอยืนยันในแชทนี้ค่ะ/u);
+        assert.equal(isCompleteLineBusinessAnswerPresentation(sent[0]), true);
+      }
+    });
+
+    it('a reply whose link is not a page of this company stays text: only a text message keeps it tappable', async () => {
+      const { flow, sent, bind } = seam();
+      await flow.deliverReply(bind({ ...BASE_EVENT, messageText: 'ขอลิงก์คู่มือ', lineMessageId: 'line-message-1' }), 'ดูได้ที่ https://example.org/guide ค่ะ');
+      assert.deepEqual(sent, [{ type: 'text', text: 'ดูได้ที่ https://example.org/guide ค่ะ' }]);
+      // …and a page of this company becomes the card's button, under the name its own line gives it.
+      sent.length = 0;
+      await flow.deliverReply(bind({ ...BASE_EVENT, messageText: 'ขอลิงก์รายการ', lineMessageId: 'line-message-2' }), 'เปิดได้เลยค่ะ\nเปิดดูรายการ: https://app.example.com/companies/company-1/expenses/e1');
+      const card = readLineSystemCard(sent[0]);
+      assert.deepEqual([card.prose, card.actions], [['เปิดได้เลยค่ะ'], [{ type: 'uri', label: 'เปิดดูรายการ', uri: 'https://app.example.com/companies/company-1/expenses/e1' }]]);
+    });
+  });
+
+  // The same class, the other seam: a completed reply. It used to stand on the green card titled
+  // "ข้อมูลจากน้องมั่งมี" from before the design.
+  describe('a bound chat\'s completed replies', () => {
+    const ACCESS = { permissions: ['line.ai.query'], roles: [] };
+    function seam() {
+      const { prisma } = makePrisma();
+      const h = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+      const flow = h.useCase as any;
+      const sent: any[] = [];
+      flow.deliverRequiredMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); };
+      flow.sendMessages = async (_event: unknown, messages: any[]) => { sent.push(...messages); return 'ok'; };
+      const bind = (event: object) => { flow.boundConversations.set(event, { owner: { companyId: 'company-1', userId: 'user-1' }, id: 'conversation', epoch: 1 }); return event as any; };
+      return { flow, sent, bind };
+    }
+    const LINK = 'https://app.example.com/companies/company-1/expenses/e1';
+
+    it('a completed reply to a typed message: the locked design under the reader\'s words, its link a button with its own name', async () => {
+      const { flow, sent, bind } = seam();
+      const event = bind({ ...BASE_EVENT, messageText: 'ยกเลิกรายการล่าสุด', lineMessageId: 'line-message-1' });
+      await flow.deliverCompletedReply(event, `ยกเลิกรายการแล้วค่ะ\nเปิดดูรายการ: ${LINK}`, 'company-1', ACCESS, '🔵 ยกเลิกแล้ว');
+      assert.equal(sent.length, 1);
+      const card = readLineSystemCard(sent[0]);
+      assert.deepEqual(card.header, [...lineAnswerCardHeader('ยกเลิกรายการล่าสุด')!.lines]);
+      assert.deepEqual(card.prose, ['🔵 ยกเลิกแล้ว\nยกเลิกรายการแล้วค่ะ'], 'the state badge leads the paper');
+      assert.deepEqual(card.actions, [{ type: 'uri', label: 'เปิดดูรายการ', uri: LINK }]);
+      assert.doesNotMatch(JSON.stringify(sent[0].contents), /ข้อมูลจากน้องมั่งมี|#15803D/u, 'not the card from before the design');
+      assert.ok(card.texts.every((line) => !/https?:/u.test(line)), 'no raw link is printed');
+      assert.equal(sent[0].canonicalText, `ยกเลิกรายการแล้วค่ะ\nเปิดดูรายการ: ${LINK}`, 'the reply itself is still the canonical text');
+      assert.ok(sent[0].quickReply?.items.length > 0, 'the completion menu still rides the card');
+      assert.equal(isCompleteLineBusinessAnswerPresentation(sent[0]), true);
+    });
+
+    it('the last part of a reply sent in parts is that card too; the earlier parts stay text', async () => {
+      const { flow, sent, bind } = seam();
+      const event = bind({ ...BASE_EVENT, messageText: 'ขอรายละเอียดทั้งหมด', lineMessageId: 'line-message-1' });
+      await flow.deliverCompletedReplies(event, ['ส่วนที่หนึ่ง', 'สรุปท้าย'], 'company-1', ACCESS);
+      assert.deepEqual([sent[0], isLineSystemCard(sent[1])], [{ type: 'text', text: 'ส่วนที่หนึ่ง' }, true]);
+      assert.deepEqual(readLineSystemCard(sent[1]).prose, ['สรุปท้าย']);
+    });
+
+    it('keeps the card from before for a chat that is not bound and for a reply to a tap', async () => {
+      const { flow, sent, bind } = seam();
+      await flow.deliverCompletedReply({ ...BASE_EVENT, messageText: 'ยกเลิกรายการล่าสุด', lineMessageId: 'line-message-1' }, 'ยกเลิกรายการแล้วค่ะ', 'company-1', ACCESS);
+      await flow.deliverCompletedReply(bind({ ...BASE_EVENT, messageText: 'ยกเลิก' }), 'ยกเลิกรายการแล้วค่ะ', 'company-1', ACCESS);
+      assert.deepEqual(sent.map((message) => [isLineSystemCard(message), message.contents?.header?.contents?.[0]?.text]), [[false, 'ข้อมูลจากน้องมั่งมี'], [false, 'ข้อมูลจากน้องมั่งมี']]);
+    });
+  });
+
   it('says the budget could not be CHECKED for AI_BUDGET_UNAVAILABLE, and never that it is full', async () => {
     const { prisma, updates } = makePrisma();
     const h = makeUseCase(prisma, {
@@ -5914,7 +6128,7 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
       intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, resolvedClarificationIds: ['7-0'] }),
       openWaiting: [
         {
-          id: '7-0', question: 'ปีไหน?', text: 'บันทึกบิล 9/11/37', subject: 'expense',
+          id: '7-0', question: 'ปีไหน?', text: 'สรุปค่าใช้จ่ายเดือนสิงหาคม', subject: 'expense', reasonCode: 'READ_FILTER_NOT_UNDERSTOOD',
           askedAt: '2026-07-07T09:59:00.000Z', entry: entryOf('7-0'),
         },
         { id: '8-0', question: 'สาขาไหน?', text: 'ยอดขายสาขา', askedAt: '2026-07-07T09:59:30.000Z', entry: entryOf('8-0') },
@@ -5926,6 +6140,9 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
     assert.equal(aiGatewayRequests[0]?.openClarifications?.length, 2);
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.question, 'ปีไหน?');
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.subject, 'expense');
+    assert.equal(intakeRequests[0]?.openClarifications?.[0]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
+    assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.reasonCode, 'READ_FILTER_NOT_UNDERSTOOD');
+    assert.deepEqual(aiGatewayRequests[0]?.resolvedClarificationIds, ['7-0']);
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.sourceContext, undefined, 'internal proof never reaches the model');
     assert.deepEqual(intakeRequests[0]?.openClarifications?.[0]?.pendingMedia,
       aiGatewayRequests[0]?.openClarifications?.[0]?.pendingMedia,
@@ -7183,8 +7400,8 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
 });
 
 // ── Spec §10.1: a completed multi-part reply ends in the same Flex card as a single completed reply.
-//    Behind LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED — default-off is the legacy all-text shape, proven
-//    in line-intake-dispatch.use-case.spec.ts ("multi-part terminal Flex"). ──
+//    No switch decides this (owner 2026-09-29): the terminal part is a card wherever the card holds the
+//    whole terminal text, and lossless text otherwise. ──
 describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Flex card', () => {
   async function run(replyTexts: string[]) {
     const { prisma } = makePrisma();
@@ -7197,7 +7414,7 @@ describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Fl
     };
     const { useCase } = makeUseCase(prisma, {
       permissions: ['line.ai.query', 'expense.create'],
-      config: { lineExpenseDraftConversationEnabled: true, lineAiMultipartTerminalFlexEnabled: true },
+      config: { lineExpenseDraftConversationEnabled: true },
       expenseDraftConversation: draft,
       expenseRepo: { findByIdWithRelations: async () => expense, listCategories: async () => [], listRecentLineCaptures: async () => [] },
       sendReplyFn: async (_token: string, messages: any[]) => { delivered.push(messages); return 'ok'; },
@@ -7254,9 +7471,8 @@ function makeDeliveryRun(opts: {
   const expense = savedMediaFixture('draft-1');
   const { useCase } = makeUseCase(prisma, {
     permissions: ['line.ai.query', 'expense.create'],
-    // Terminal Flex on, so the seam under test carries a real card — the payload class the fallback
-    // exists for. It is orthogonal to both flags below.
-    config: { lineExpenseDraftConversationEnabled: true, lineAiMultipartTerminalFlexEnabled: true, ...(opts.config ?? {}) },
+    // The terminal part is a real card — the payload class the fallback exists for.
+    config: { lineExpenseDraftConversationEnabled: true, ...(opts.config ?? {}) },
     expenseDraftConversation: {
       routeContexts: async () => [{ status: 'OPEN', expenseId: 'draft-1' }],
       execute: async () => ({ handled: true, status: 'UPDATED', replyTexts: ['บันทึกวัตถุประสงค์แล้วค่ะ'], acceptedFields: [],
@@ -7742,69 +7958,84 @@ describe('ProcessLineWebhookUseCase – neutral intake state mode: on, four zero
   });
 });
 
-// ── §10.1 / AI-01 `expense-draft-structured-card`: an expense capture terminal renders the DEDICATED
-//    ร่างค่าใช้จ่าย card — amount / item / category / status as rows — instead of the generic card
-//    wrapping the canonical reply. Same gate as the rest of terminal Flex
-//    (`LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED`), so default-off is still the legacy all-text shape. ──
-describe('ProcessLineWebhookUseCase – expense draft card on the capture terminal (§10.1, default off)', () => {
+// ── §10.1 / AI-01 `expense-draft-structured-card`, on the locked System OA design (context 6): the
+//    terminal of a typed-note capture. The lane's OWN summary is the review card — one row per value the
+//    capture grounded, the draft's notes, the one button that opens the record. A reply the draft
+//    conversation wrote is a card that shows that reply whole. No switch decides either. ──
+describe('ProcessLineWebhookUseCase – expense draft card on the capture terminal (§10.1)', () => {
   const CAPTURE_EVENT = Object.freeze({ ...STATE_EVENT, webhookEventId: 'evt-draft-card', messageText: '200 บาท' });
-  const run = async (config?: Record<string, unknown>) => {
+  /** `ownSummary` = the capture returned no reply of its own, so this lane words the summary. */
+  const run = async (opts: { expense?: Record<string, unknown>; ownSummary?: boolean; config?: Record<string, unknown> } = {}) => {
     const { prisma } = makePrisma();
-    const capture = makeCapture({ vendorNameSnapshot: 'ร้านกาแฟบ้านไร่' });
-    const harness = makeIntakeStateUseCase(prisma, { capture: capture.capture, ...(config ? { config } : {}) });
+    const capture = makeCapture(opts.expense ?? { vendorNameSnapshot: 'ร้านกาแฟบ้านไร่' });
+    if (opts.ownSummary) {
+      const execute = capture.capture.execute;
+      capture.capture.execute = async function(this: any, ctx: any, input: any) { return { ...await execute.call(this, ctx, input), replyTexts: [] }; };
+    }
+    const harness = makeIntakeStateUseCase(prisma, { capture: capture.capture, ...(opts.config ? { config: opts.config } : {}) });
     await harness.useCase.execute({ ...CAPTURE_EVENT });
     return { ...harness, captureCalls: capture.calls };
   };
-  const bodyOf = (message: any) => message.contents.body.contents;
-  const rowsOf = (message: any) => bodyOf(message)
-    .filter((entry: any) => entry.type === 'box')
-    .map((box: any) => [box.contents[0].text, box.contents[1].text]);
 
-  it('delivers the legacy all-text reply, unchanged, while the flag is off', async () => {
-    const off = await run();
-    assert.equal(off.captureCalls.length, 1, 'the capture itself is untouched by a render flag');
-    assert.equal(off.sent.length, 1);
-    const [legacy] = off.sent[0]!;
-    // A snapshot, not a spot check: the ONLY keys are the legacy text message plus the completion menu
-    // the terminal part has always carried, so a card slipping in here fails on `type` alone.
-    assert.deepEqual(Object.keys(legacy).sort(), ['quickReply', 'text', 'type']);
-    assert.equal(legacy.type, 'text');
-    assert.equal(legacy.text, 'บันทึกแล้ว 200 บาท');
-    assert.ok(legacy.quickReply.items.length > 0, 'the completion menu is part of the legacy shape');
+  it('shows a reply the draft conversation wrote as one card that carries it whole, with the completion menu', async () => {
+    const conversation = await run();
+    assert.equal(conversation.captureCalls.length, 1, 'the capture itself is untouched by how its reply is drawn');
+    assert.equal(conversation.sent.length, 1);
+    const [message] = conversation.sent[0]!;
+    assert.equal(message.type, 'flex');
+    assert.equal(message.canonicalText, 'บันทึกแล้ว 200 บาท', 'the reply is the card\'s canonical text and its fallback');
+    assert.match(JSON.stringify(message.contents), /บันทึกแล้ว 200 บาท/u, 'and it is what the card shows');
+    assert.equal(isLineSystemCard(message), false, 'the conversation\'s sentence is not re-told as rows it did not state');
+    assert.ok(message.quickReply.items.length > 0, 'the completion menu rides the terminal part');
+    assert.equal(isCompleteLineBusinessAnswerPresentation(message), true, 'so a bound chat is sent the card itself');
   });
 
-  it('renders the ร่างค่าใช้จ่าย card from the capture result — no invented row — when the flag is on', async () => {
-    const on = await run({ lineAiMultipartTerminalFlexEnabled: true });
-    assert.equal(on.sent.length, 1);
-    const [message] = on.sent[0]!;
+  it('draws the lane\'s own summary as the locked review card from the capture result — no invented row', async () => {
+    const own = await run({ ownSummary: true });
+    assert.equal(own.sent.length, 1);
+    const [message] = own.sent[0]!;
     assert.deepEqual(message.quickReply, (await run()).sent[0]![0].quickReply,
-      'only the container changes: the completion menu is the same one the text reply carries');
-    assert.equal(message.type, 'flex');
-    assert.equal(message.contents.header.contents[0].text, 'ร่างค่าใช้จ่าย');
-    // Exactly the values the capture returned: amount '200' and category 'ค่าเดินทาง' from
-    // `makeCapture`, the vendor as the item row, and the server-owned draft status.
-    assert.deepEqual(rowsOf(message), [
-      ['ยอดรวม', '200.00 บาท'],
-      ['รายการ', 'ร้านกาแฟบ้านไร่'],
-      ['หมวดหมู่', 'ค่าเดินทาง'],
-      ['สถานะ', 'ร่าง – รอตรวจสอบและยืนยันในเว็บ'],
+      'only the card changes: the completion menu is the same one the conversation\'s reply carries');
+    const card = readLineSystemCard(message);
+    assert.deepEqual(card.header, ['ร่างค่าใช้จ่าย', 'รอตรวจสอบ'], 'a typed note is a draft, never called a receipt');
+    assert.match(card.mascot, /system-card-mascot-review-\d{8}\.png$/u);
+    // Exactly the values the capture returned: the vendor, the document kind, category 'ค่าเดินทาง' and
+    // amount '200' from `makeCapture`, and the record's own state. No date was captured, and the row
+    // says so in the summary's own words instead of showing a date nobody read.
+    assert.deepEqual(card.rows, [
+      ['ผู้ขาย / ร้านค้า', ':', 'ร้านกาแฟบ้านไร่'],
+      ['วันที่เอกสาร', ':', 'ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน'],
+      ['ประเภทเอกสาร', ':', 'ใบเสร็จรับเงิน'],
+      ['หมวดค่าใช้จ่าย', ':', 'ค่าเดินทาง'],
+      ['ยอดรวม', ':', '200.00 บาท'],
+      ['สถานะเอกสาร', ':', 'รอตรวจสอบ'],
     ]);
-    assert.deepEqual(bodyOf(message).filter((entry: any) => entry.type === 'text'), [],
-      'the long canonical reply is NOT wrapped into the card body (§10.2)');
-    assert.equal(message.altText, 'บันทึกแล้ว 200 บาท', 'altText stays the canonical reply text');
-    assert.equal(message.contents.footer.contents[0].action.uri,
-      'https://app.example.com/companies/company-1/expenses/exp-1');
+    assert.deepEqual(card.totals, ['ยอดรวม']);
+    assert.deepEqual(Object.keys(card.pills), ['สถานะเอกสาร']);
+    assert.deepEqual(card.notes, ['รายการนี้เป็นร่าง ยังไม่ได้ยืนยันรายการ', '📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน']);
+    assert.deepEqual(card.actions, [{ type: 'uri', label: 'ตรวจสอบและยืนยันในเว็บ', uri: 'https://app.example.com/companies/company-1/expenses/exp-1' }]);
+    assert.equal(card.banner, undefined, 'no yellow "รอตรวจสอบ" strip: the owner cut it');
+    // The canonical text is the summary this lane has always sent; the card is its presentation.
+    assert.match(message.canonicalText, /^🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)/u);
+    assert.match(message.canonicalText, /https:\/\/app\.example\.com\/companies\/company-1\/expenses\/exp-1/u);
+    assert.equal(message.altText, lineMessagePreview(message.canonicalText.replace(/\nเปิดดูรายการ: \S+$/u, '')));
+    assert.equal(isCompleteLineBusinessAnswerPresentation(message), true);
   });
 
   it('omits a row the capture did not ground rather than filling it in', async () => {
-    const { prisma } = makePrisma();
-    // No vendor and no note: the item row simply does not exist. Nothing else changes.
-    const capture = makeCapture();
-    const on = makeIntakeStateUseCase(prisma, {
-      capture: capture.capture, config: { lineAiMultipartTerminalFlexEnabled: true },
-    });
-    await on.useCase.execute({ ...CAPTURE_EVENT });
-    assert.deepEqual(rowsOf(on.sent[0]![0]).map(([label]: string[]) => label), ['ยอดรวม', 'หมวดหมู่', 'สถานะ']);
+    // No vendor and no note: neither row exists, and the text reply's 'ยังไม่ระบุ' is never repeated as a fact.
+    const own = await run({ ownSummary: true, expense: {} });
+    const card = readLineSystemCard(own.sent[0]![0]);
+    assert.deepEqual(card.rows.map(([label]) => label), ['วันที่เอกสาร', 'ประเภทเอกสาร', 'หมวดค่าใช้จ่าย', 'ยอดรวม', 'สถานะเอกสาร']);
+    assert.doesNotMatch(card.texts.join('\n'), /ยังไม่ระบุ|undefined|null/u);
+  });
+
+  it('is drawn the same whatever an old environment still says about the removed switch', async () => {
+    const plain = await run({ ownSummary: true });
+    for (const stale of [true, false]) {
+      const set = await run({ ownSummary: true, config: { lineAiMultipartTerminalFlexEnabled: stale } });
+      assert.deepEqual(set.sent[0]![0].contents, plain.sent[0]![0].contents, `stale value ${stale}`);
+    }
   });
 });
 
@@ -8094,11 +8325,17 @@ describe('receipt reliability: saved facts, notification and provider-input cont
       { description: 'ค่าบริการจากแถวจริง', quantity: '1', unitPrice: '12', lineTotalAmount: '12', chargeKind: 'SERVICE_CHARGE' },
     ];
     h.expense().charges = [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '12.0000', vatAmount: '0' }];
-    const replies = await (h.useCase as any).savedReceiptReplies({ ...event, handoff: { userId: 'user-1' } }, 'company-1', 'saved-expense', 'บิลนี้มีรายการอะไรบ้าง');
+    const { texts: replies, draft } = await (h.useCase as any).savedReceiptReply({ ...event, handoff: { userId: 'user-1' } }, 'company-1', 'saved-expense', 'บิลนี้มีรายการอะไรบ้าง');
     assert.match(replies[0], /สินค้าที่แก้แล้ว × 2/);
     assert.match(replies[0], /ค่าใช้จ่ายเพิ่ม \(1 รายการ/);
     assert.equal(replies[0].split('• ค่าบริการ –').length - 1, 1);
     assert.doesNotMatch(replies[0], /ค่าบริการจากแถวจริง/);
+    // The review card's facts are the same saved rows: the item list is its note, once, and never the old OCR line.
+    const itemNotes = draft.notes.filter((note: string) => note.includes('รายการที่อ่านได้จากบิล'));
+    assert.equal(itemNotes.length, 1);
+    assert.match(itemNotes[0], /สินค้าที่แก้แล้ว × 2/);
+    assert.doesNotMatch(JSON.stringify(draft), /ค่าบริการจากแถวจริง/);
+    assert.deepEqual(draft.rows.find((row: any) => row.label === 'ค่าบริการอื่นๆ'), { label: 'ค่าบริการอื่นๆ', value: '12.00 บาท' });
     assert.equal(h.counts().ocrReads, 1);
     assert.equal(h.counts().applied, 1);
   });
@@ -8265,4 +8502,64 @@ it('capability follow-up distinguishes shop permission management from platform 
   const reply = capabilityFollowUpReply('ยังไง', { permissions: [] });
   assert.match(reply, /ผู้มีสิทธิ์จัดการบทบาท/);
   assert.doesNotMatch(reply, /ผู้ดูแลระบบของบริษัท/);
+});
+
+it('keeps the bound turn grant after zero-model period routing and after original-question evidence routing', async () => {
+  const { parseLineIntakeCompactDecision } = await import('../../../../../../ai-gateway/src/modules/line-ai/agents/line-intake-compact-decision');
+  const { parseLineAiSemanticSubrequests, lineAiReplyClarifications } = await import('@watchdog-bms/contracts');
+  for (const [kind, shortcut] of [['read', true], ['read', false], ['general', false], ['help', false]] as const) {
+    const { prisma } = makePrisma();
+    prisma.client.lineIntakePendingMedia.findMany = async () => [];
+    prisma.client.lineLedgerDelivery = { findMany: async () => [], findFirst: async () => null, findUnique: async () => null };
+    const original = { id: 'q1', text: 'สรุปค่าใช้จ่ายร้านสมใจ', question: 'ปีไหนคะ', askedAt: new Date().toISOString(), reasonCode: 'READ_FILTER_NOT_UNDERSTOOD' };
+    let issued = 0;
+    // Gateway zero-call and provider-call cases both hand the API this ordinary decoded plan.
+    const routed = (req: any) => {
+      const decoded = parseLineIntakeCompactDecision({ raw: { subrequests: [{ kind, goal: original.text,
+        sources: shortcut ? [{ part: 0, whole: true }] : [{ part: 0, quote: original.text }],
+        ...(shortcut ? {} : { entity: 'ร้านสมใจ' }), filters: {} }] }, messageText: req.messageText,
+        inputEvidence: req.inputEvidence, language: 'th', enabledTools: new Set(), enabledPreparedFamilies: new Set(), originalClarifications: [original] as any });
+      assert.ok(decoded);
+      return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', confidence: 1, language: 'th',
+        resolvedClarificationIds: ['q1'], semanticSubrequests: decoded.semanticSubrequests };
+    };
+    const h = makeUseCase(prisma, { permissions: ['line.ai.query'],
+      config: { lineAiReliabilityV2Mode: 'on', lineAiReliabilityV2CompanyIds: ['company-1'], lineAiDeliveryPlanV2Enabled: true, lineAiDeliveryPlanV2WriteCompanyIds: ['company-1'] },
+      intakeRouteFn: routed,
+      aiGatewayFn: request => {
+        assert.ok(parseLineAiSemanticSubrequests(request.semanticSubrequests, request.messageText, request.inputEvidence,
+          lineAiReplyClarifications(request.openClarifications, request.resolvedClarificationIds)), 'same shared parser used for API retained plans and gateway turn ingress');
+        return { requestId: request.requestId, replyText: 'อ่านค่าใช้จ่ายแล้วค่ะ', intent: 'read_summary', agent: 'accounting', durationMs: 1,
+          webLinks: [], sourceLabels: [], sourceRefs: [], toolsInvoked: [], refused: false, semanticCoverage: [{ index: 0, status: 'handled' }] };
+      },
+    });
+    const event: any = { ...BASE_EVENT, webhookEventId: `reply-grant-${kind}-${shortcut}`, messageText: 'ปี 2569' };
+    event.inputEvidence = (await createLineAiInputEvidence({ turnKey: event.webhookEventId, parts: [{ partId: 'part-0', eventIdHash: 'a'.repeat(64), acceptedAtMs: Date.now(), rawText: event.messageText }] }))!.inputEvidence;
+    const flow = h.useCase as any, grant = { turnKey: event.inputEvidence.turnKey }, lanes: string[] = [];
+    const findLog = prisma.client.lineWebhookEventLog.findUnique;
+    prisma.client.lineWebhookEventLog.findUnique = async (args: any) => args.select ? findLog(args) : { id: 'log-reply', status: 'received', companyId: 'company-1', createdAt: new Date() };
+    flow.aiGateway.issueLineReliabilityGrant = async () => { issued++; return grant; };
+    flow.aiGateway.narrowLineReliabilityGrant = async (_grant: any, lane: string) => { lanes.push(lane); return grant; };
+    flow.contextV2 = { admit: async () => ({ id: 'conversation', lifecycleEpoch: 1 }),
+      projection: async () => ({ version: 2, stateVersion: 1, lifecycleEpoch: 1, expiresAtMs: Date.now() + 60_000, tasks: [] }),
+      save: async () => true, createTurn: async () => ({ id: 'turn-1' }) };
+    flow.loadOpenWorkContext = async () => ({ openWaiting: [], openClarifications: [original], recentCapturedExpenses: [], activeExpenseDrafts: [],
+      substituteContext: { workflowState: 'none', hasPendingQuestion: false, recentCandidateCount: 0 } });
+    flow.loadConversationContext = async () => ({ windowMinutes: 15, maxTurns: 15, recentTurns: [] });
+    flow.textValueCandidates = async () => ({ amounts: [], dates: [], periods: shortcut ? [{ span: 'ปี 2569', kind: 'year', fromDate: '2026-01-01', toDate: '2026-12-31', source: 'explicit', label: 'ปี 2569', assumptions: [] }] : [] });
+    flow.sendMessages = async () => 'ok';
+    await h.useCase.execute(event);
+    assert.equal(h.intakeRequests.length, 1);
+    assert.equal(issued, 1, 'real prepareTextGrantV2 issues before the router');
+    assert.deepEqual(lanes, [kind === 'read' ? 'mixed' : 'general']);
+    assert.equal(h.aiGatewayRequests.length, 1, 'the following turn is reached');
+    assert.equal(h.aiGatewayRequests[0].budgetGrantV2, grant);
+    assert.deepEqual(h.aiGatewayRequests[0].resolvedClarificationIds, ['q1']);
+    assert.equal(h.aiGatewayRequests[0].semanticSubrequests[0].kind, kind);
+  }
+});
+
+it('binds the read clarification marker to the waiting question content proof', () => {
+  const question = { text: 'สรุปค่าใช้จ่าย', question: 'ปีไหนคะ' };
+  assert.notEqual(lineClarificationContentHash(question), lineClarificationContentHash({ ...question, reasonCode: 'READ_FILTER_NOT_UNDERSTOOD' } as any));
 });

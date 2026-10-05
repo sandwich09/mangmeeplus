@@ -34,6 +34,8 @@ function makeHarness(opts: {
   receiptOutcomes?: Array<'done' | 'defer_text' | 'locked'>;
   replyResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
+  /** One result per push, in order; when it runs out, `pushResult` (or 'ok') answers. */
+  pushResults?: Array<'ok' | 'failed_flex' | 'failed_other' | 'failed_permanent'>;
   eventStoreUnavailable?: boolean;
   legalAcceptanceRequired?: boolean;
   assistantPaused?: boolean;
@@ -50,7 +52,8 @@ function makeHarness(opts: {
   const replies: string[] = [];
   const replyMessages: any[] = [];
   const replyTokens: string[] = [];
-  const pushes: Array<{ to: string; text: string }> = [];
+  // `text` is what the chat list shows (a card's altText); `message` is the whole message as sent.
+  const pushes: Array<{ to: string; text: string; message: any; operationId?: string }> = [];
   const loadingCalls: string[] = [];
   const auditLogs: any[] = [];
   const serviceLogs: any[] = [];
@@ -126,9 +129,9 @@ function makeHarness(opts: {
       replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
       return opts.replyResult ?? 'ok';
     },
-    sendPush: async (to: string, messages: Array<{ text?: string; altText?: string }>) => {
-      pushes.push({ to, text: messages[0]?.text ?? messages[0]?.altText ?? '' });
-      return opts.pushResult ?? 'ok';
+    sendPush: async (to: string, messages: Array<{ text?: string; altText?: string }>, operationId?: string) => {
+      pushes.push({ to, text: messages[0]?.text ?? messages[0]?.altText ?? '', message: messages[0], operationId });
+      return opts.pushResults?.shift() ?? opts.pushResult ?? 'ok';
     },
     startLoadingAnimation: async (chatId: string) => {
       loadingCalls.push(chatId);
@@ -563,7 +566,11 @@ describe('LineMessageBufferService – media and captions', () => {
       'company-at-acceptance',
       'orphan replay preserves the accepted tenant snapshot',
     );
-    assert.match(h.pushes[0]?.text ?? '', /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+    // Design lock context 8: the acknowledgement is the scanning card; its sentence is unchanged underneath.
+    assert.equal(h.pushes.length, 1);
+    assert.equal(h.pushes[0]?.message.type, 'flex');
+    assert.match(h.pushes[0]?.message.canonicalText ?? '', /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+    assert.match(h.pushes[0]?.text ?? '', /^กำลังอ่านข้อมูลจากรูป .*คุยกับน้องต่อได้เลย$/);
 
     await h.service.enqueue(textEnv('while-ocr', 'ติดต่อเรา'));
     await sleep(20);
@@ -623,8 +630,12 @@ describe('LineMessageBufferService – media and captions', () => {
     await h.service.enqueue(mediaEnv('burst-1'));
     await h.service.enqueue(mediaEnv('burst-2'));
     await sleep(60);
-    assert.deepEqual(h.pushes.map((push) => push.text), [lineMediaGroupAckText(['image', 'image'])], 'one acknowledgement for the burst');
-    assert.match(h.pushes[0]!.text, /^ได้รับรูปแล้ว 2 รูปค่ะ/);
+    assert.deepEqual(h.pushes.map((push) => push.message.canonicalText), [lineMediaGroupAckText(['image', 'image'])], 'one acknowledgement for the burst');
+    assert.match(h.pushes[0]!.message.canonicalText, /^ได้รับรูปแล้ว 2 รูปค่ะ/);
+    // … and it is ONE scanning card that names the burst by its count, not a card per photo.
+    assert.equal(h.pushes[0]!.message.type, 'flex');
+    assert.match(h.pushes[0]!.text, /^กำลังอ่านข้อมูลจากรูป 2 รูป /);
+    assert.match(JSON.stringify(h.pushes[0]!.message.contents), /"เอกสารที่ส่งมา".*"กำลังสแกน"/);
     assert.deepEqual(timeline, ['read:burst-1'], 'both photos are acknowledged while the first is still being read');
     assert.equal(h.service.holds('burst-2'), true, 'the queued photo is still in memory, so the orphan sweep must leave it alone');
 
@@ -634,6 +645,29 @@ describe('LineMessageBufferService – media and captions', () => {
     assert.equal(h.pushes.length, 1, 'no per-photo acknowledgement follows');
     assert.ok(loadingAtSecondRead > loadingAtFirstAnswer, 'the typing indicator comes back for the second read');
     assert.equal(h.service.holds('burst-1') || h.service.holds('burst-2'), false, 'answered photos are released');
+  });
+
+  // A pushed card has no reply token behind it: if LINE refuses its body, nothing else re-sends it.
+  it('re-sends a scanning card LINE refuses ONCE as the sentence it stands for, and the photo is still read and answered', async () => {
+    const h = makeHarness({ debounceMs: 0, pushResults: ['failed_flex', 'ok'] });
+    await h.service.enqueue(mediaEnv('refused-card'));
+    await sleep(30);
+    assert.equal(h.pushes.length, 2, 'the card, then its sentence — never a third bubble');
+    assert.equal(h.pushes[0]!.message.type, 'flex');
+    assert.deepEqual(h.pushes[1]!.message, { type: 'text', text: LINE_MEDIA_RECEIVED_TEXT }, 'the acknowledgement sentence the card declares, as plain text');
+    assert.ok(h.pushes[0]!.operationId, 'the first push names its operation');
+    assert.equal(h.pushes[1]!.operationId, `${h.pushes[0]!.operationId}:text`, 'the fallback\'s retry key is derived from the first');
+    assert.deepEqual(h.receipts.map(({ event }) => event.webhookEventId), ['refused-card'], 'waiting feedback never fails a turn');
+  });
+
+  it('does not retry a waiting bubble that failed for another reason, or whose sentence is refused too', async () => {
+    for (const pushResults of [['failed_other'], ['failed_permanent'], ['failed_flex', 'failed_other']] as const) {
+      const h = makeHarness({ debounceMs: 0, pushResults: [...pushResults] });
+      await h.service.enqueue(mediaEnv(`no-retry-${pushResults.join('-')}`));
+      await sleep(30);
+      assert.equal(h.pushes.length, pushResults.length, pushResults.join(' → '));
+      assert.equal(h.receipts.length, 1, 'the read goes on');
+    }
   });
 
   it('acknowledges a photo at once even when an earlier photo is still being read', async () => {
@@ -653,8 +687,9 @@ describe('LineMessageBufferService – media and captions', () => {
     await h.service.enqueue(mediaEnv('later-2'));
     await sleep(20);
     assert.equal(h.receipts.length, 1, 'the second read still waits for the first');
-    assert.deepEqual(h.pushes.map((push) => push.text), [LINE_MEDIA_RECEIVED_TEXT, LINE_MEDIA_RECEIVED_TEXT],
+    assert.deepEqual(h.pushes.map((push) => push.message.canonicalText), [LINE_MEDIA_RECEIVED_TEXT, LINE_MEDIA_RECEIVED_TEXT],
       'but its acknowledgement does not');
+    assert.deepEqual(h.pushes.map((push) => push.message.type), ['flex', 'flex']);
 
     releaseFirst();
     await sleep(30);
@@ -958,6 +993,10 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       await settle();
       assert.equal(h.pushes.length, 1, 'a genuinely slow turn says so once, before the 60 s spinner lapses');
       assert.match(h.pushes[0]?.text ?? '', /ยังหาคำตอบอยู่/);
+      // Design lock context 5 "กำลังตรวจสอบ": that one status is the locked waiting card, same sentence.
+      assert.equal(h.pushes[0]?.message.type, 'flex');
+      assert.match(h.pushes[0]?.message.canonicalText ?? '', /ยังหาคำตอบอยู่/);
+      assert.match(JSON.stringify(h.pushes[0]?.message.contents), /"ข้อมูลที่คุณขอ".*"กำลังตรวจสอบ"/);
 
       t.mock.timers.tick(1_300);
       await settle();

@@ -1,0 +1,234 @@
+{
+  "status": "HANDOFF_READY",
+  "createdOn": "2026-10-05",
+  "scope": "System Mangmee OA design handoff only; no runtime edits, native acceptance or deployment",
+  "baseline": "../line-system-oa-design-lock-2026-10-04/approved-preview.html",
+  "baselineSha256": "2e3670353dbba10dfe6925fc019a04f59018147977bf0816967fcb6f0e42196d",
+  "imageProvenance": "All 40 images captured from the exact approved HTML through the local preview wrapper; commands and source assertions reuse the locked checker. Includes cancellation and clarification screenshots omitted by the original screenshot helper. No baseline changes.",
+  "contexts": 8,
+  "examples": 20,
+  "widths": [
+    320,
+    736
+  ],
+  "screenshots": 40,
+  "verifiedCases": 40,
+  "verificationStatus": "PASS",
+  "files": [
+    {
+      "path": "capture-approved-cards.cjs",
+      "bytes": 13506,
+      "sha256": "6f598b1dab4acaea7af2ab8b2a55772a693aacb24b65958d7e875e4f619e00d4"
+    },
+    {
+      "path": "preview.html",
+      "bytes": 783867,
+      "sha256": "f1b6be111ac9b4b2e2ba25c9246f470384bc9ca302386f3d31261bf7fdd3e13a"
+    },
+    {
+      "path": "screenshots/business-empty-alerts-320.png",
+      "bytes": 38163,
+      "sha256": "f7c01a7eef36d283d41b43855bbf1154b46155d1f866705fd8f827d3994e3b59"
+    },
+    {
+      "path": "screenshots/business-empty-alerts-736.png",
+      "bytes": 41679,
+      "sha256": "cfcfafe70aa49f851bff79b4b70507ffa5b6e831bc92823c9761a08d8666f356"
+    },
+    {
+      "path": "screenshots/business-empty-assigned-tasks-320.png",
+      "bytes": 38274,
+      "sha256": "e3458be4aed4dd643cbccf2dc4d8bd2cb4608b34b2ea574b42a76b99303a464b"
+    },
+    {
+      "path": "screenshots/business-empty-assigned-tasks-736.png",
+      "bytes": 41815,
+      "sha256": "e55e56e392001a0216232e7be8eaba9a1bc3a7f78cffa5808b6730f77e92de63"
+    },
+    {
+      "path": "screenshots/business-expense-summary-320.png",
+      "bytes": 48610,
+      "sha256": "dbb9f6904fadeea5809b919f8844af60e525f27e11353443d308ed483611ff50"
+    },
+    {
+      "path": "screenshots/business-expense-summary-736.png",
+      "bytes": 51934,
+      "sha256": "0d01cc7169e12dd789250ed906733c74e9c930c17ee202b829bbc85d26323e81"
+    },
+    {
+      "path": "screenshots/business-open-alert-320.png",
+      "bytes": 45010,
+      "sha256": "f465384e1eb41c96a9fe58da761eed8ba7e45476a8c92b4f303257a62bdf52d6"
+    },
+    {
+      "path": "screenshots/business-open-alert-736.png",
+      "bytes": 48898,
+      "sha256": "e3d2e37d8eacd7ab704e6420538c42eebcc3838682ecda77ebd4810e372dc049"
+    },
+    {
+      "path": "screenshots/cancelled-320.png",
+      "bytes": 33110,
+      "sha256": "0ac81be60faecb2dd934a0a8ed7654845bc3399d1e1cbfad3b660128cb4bea66"
+    },
+    {
+      "path": "screenshots/cancelled-736.png",
+      "bytes": 36259,
+      "sha256": "c1d6e7fabce520ce8329e0a4366f5edf8c7eed8c1aa2f1ef9a90c17ac45274a5"
+    },
+    {
+      "path": "screenshots/clarify-320.png",
+      "bytes": 36118,
+      "sha256": "cd4d816b580a1ddd06e3d3942094f4750170da0955def15cdd4af1984fbd16dd"
+    },
+    {
+      "path": "screenshots/clarify-736.png",
+      "bytes": 39304,
+      "sha256": "4a4556f2505042f6b57a3e6f6cb435a9c34b4b8cb8be1459aa481047b4a4dbff"
+    },
+    {
+      "path": "screenshots/general-กำลังตรวจสอบข้อมูล-320.png",
+      "bytes": 34731,
+      "sha256": "5b4c506eaa10535da2dfd9716340742dcb7cec7688d7aebef05dccc4b89233ff"
+    },
+    {
+      "path": "screenshots/general-กำลังตรวจสอบข้อมูล-736.png",
+      "bytes": 37874,
+      "sha256": "d7b4d694768000fe230c1a6fdb8f853e7ec5b54a07a0ec239e747d6096db259c"
+    },
+    {
+      "path": "screenshots/general-ปฏิเสธ-320.png",
+      "bytes": 57943,
+      "sha256": "74a46e3278cdd07f8a05c4098d040ddd7a52247f8d227f5294436d6e97f61ecd"
+    },
+    {
+      "path": "screenshots/general-ปฏิเสธ-736.png",
+      "bytes": 62530,
+      "sha256": "599156e45997d6cb84a50ba5099e4ea8cb789b43b23df95ef2adb858b889a9ff"
+    },
+    {
+      "path": "screenshots/general-ยกเลิก-320.png",
+      "bytes": 56391,
+      "sha256": "58c5cebd777bd91fc5f00efa9dea3cf6cd13fbf606063c1ced0b06a00894e339"
+    },
+    {
+      "path": "screenshots/general-ยกเลิก-736.png",
+      "bytes": 61246,
+      "sha256": "99bd002739e8e4478b704bf32694262ab09aef9b854a198db54df8558b15489d"
+    },
+    {
+      "path": "screenshots/mm-general-card-layered-320.png",
+      "bytes": 56646,
+      "sha256": "25b1aa7e605f3061dd43bc4d892685cb4cc8a2ddb06c84518d1c1820202ef40d"
+    },
+    {
+      "path": "screenshots/mm-general-card-layered-736.png",
+      "bytes": 61595,
+      "sha256": "aeff3384e98b7537085cc270204a83d741131ac011b153d9f546db130e065f0b"
+    },
+    {
+      "path": "screenshots/mm-payment-card-layered-320.png",
+      "bytes": 56980,
+      "sha256": "cc11aba1167d4a303881aaf2070de9d4d2957d85cced57324c066299849a6347"
+    },
+    {
+      "path": "screenshots/mm-payment-card-layered-736.png",
+      "bytes": 61706,
+      "sha256": "e65dbe7cd6923e836ecd227d6d7a62ff678ef9ff5e790a9316785f56e05ee09e"
+    },
+    {
+      "path": "screenshots/mm-review-card-layered-320.png",
+      "bytes": 59855,
+      "sha256": "44748bb70bfbc5cacb8b90e6c3435866d9e3a3df03f13adebd9acf8327df53e1"
+    },
+    {
+      "path": "screenshots/mm-review-card-layered-736.png",
+      "bytes": 65197,
+      "sha256": "23c3eb60da42cd43087920d2b7c4c74d0b5cabb692b7ca5682e415f485c4f673"
+    },
+    {
+      "path": "screenshots/mm-scanning-card-layered-320.png",
+      "bytes": 38208,
+      "sha256": "851acab51b31133fac8d7f45dd867c33440ac61c09a241092d7f3549498d790b"
+    },
+    {
+      "path": "screenshots/mm-scanning-card-layered-736.png",
+      "bytes": 42078,
+      "sha256": "d0e1f99ad4e0d53f111054868726d17f355291f8084ca622f9d1c0121b506662"
+    },
+    {
+      "path": "screenshots/payment-ชำระบางส่วน-320.png",
+      "bytes": 58037,
+      "sha256": "06d9a808439013af0df63faee72e3ebe8479154ff8ad8b98fa3689bdb417947a"
+    },
+    {
+      "path": "screenshots/payment-ชำระบางส่วน-736.png",
+      "bytes": 63097,
+      "sha256": "1e6b0901cc2a927323e27b697d7a920f4ed1bd17a27b9dc52a6904c54ad60e72"
+    },
+    {
+      "path": "screenshots/payment-ยังไม่ชำระ-320.png",
+      "bytes": 53509,
+      "sha256": "963a3bfb773c4907bafed1926974c78baed56a810062e0b616da3831f3dd2e64"
+    },
+    {
+      "path": "screenshots/payment-ยังไม่ชำระ-736.png",
+      "bytes": 57319,
+      "sha256": "51b233d47116288e34de052f1bfc053b75d41f2b95d8bff93e1384c5dd15809e"
+    },
+    {
+      "path": "screenshots/source-capability-320.png",
+      "bytes": 58261,
+      "sha256": "59e18b6fece675b948c1473b7cf6705205825dfc9a610f870b31697263c6014b"
+    },
+    {
+      "path": "screenshots/source-capability-736.png",
+      "bytes": 62186,
+      "sha256": "27790ce36f61854b34bb35efa815a6af4691143ca0e45585092aa7be61e71fe2"
+    },
+    {
+      "path": "screenshots/source-casual-320.png",
+      "bytes": 34541,
+      "sha256": "8758901468d6faaa18663bad0353593d161b4d860500665fc84cb57d40e16f8b"
+    },
+    {
+      "path": "screenshots/source-casual-736.png",
+      "bytes": 37885,
+      "sha256": "331eb1d90ea2b9952fb6029fc0d25266e1e76756288682c2a6e3b486f2f7c7f6"
+    },
+    {
+      "path": "screenshots/source-command-applied-320.png",
+      "bytes": 36173,
+      "sha256": "ab067dcfd6da2de9066bb8022e53a740e76fcac60a9b4452c0f2a3f5d4669f08"
+    },
+    {
+      "path": "screenshots/source-command-applied-736.png",
+      "bytes": 39152,
+      "sha256": "84118fc739c105abc891da57686b7b97eb99ae20ab2760e58072039e0e9c091a"
+    },
+    {
+      "path": "screenshots/source-command-preview-320.png",
+      "bytes": 53324,
+      "sha256": "a1e64bf05a1f505d53086d3a87be3ac9479300d1b72b38be174de6b92c0e135a"
+    },
+    {
+      "path": "screenshots/source-command-preview-736.png",
+      "bytes": 57496,
+      "sha256": "b05ae6a7e271f2220a9ccb5f957a0f80bef18af3e2aca4672d269d89d3632d63"
+    },
+    {
+      "path": "screenshots/source-explain-320.png",
+      "bytes": 62227,
+      "sha256": "728d8a52ce3828f259e3cbfb0e7320eeffe78eb9bff64edaa1bca9d48643f311"
+    },
+    {
+      "path": "screenshots/source-explain-736.png",
+      "bytes": 64959,
+      "sha256": "93b47bb842d4035916066ae36ac36109e4d79a8be8af597d0f6edc8e95e3d6b3"
+    },
+    {
+      "path": "source-backed-card-checks.json",
+      "bytes": 16486,
+      "sha256": "9753662d8e96d498464c4dc40199d07cd09d361dc00d81a4f70ff5b879eca4bd"
+    }
+  ]
+}

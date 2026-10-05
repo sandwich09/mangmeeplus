@@ -38,13 +38,10 @@ function providerMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
  *  or malformed message — the only class where a push fallback can still
  *  deliver. Other failures would fail the push the same way.
  *
- *  `failed_flex` is a strict REFINEMENT of `failed_token`, never of anything
- *  else: the same 400, on the same reply call, narrowed to "LINE rejected the
- *  message BODY and that body contained a Flex message". Pushing the identical
- *  payload cannot fix a payload LINE refused to render, but re-sending it as
- *  the Flex message's own `altText` can. Because it only ever appears where
- *  `failed_token` used to, a caller that does not know the value behaves
- *  exactly as before by treating it as `failed_token`. */
+ *  `failed_flex` narrows a 400 message BODY rejection containing Flex: formerly
+ *  `failed_token` for replies and `failed_permanent` for pushes. A caller may
+ *  resend the card's canonical text once; callers without that fallback must
+ *  retain the corresponding old failure behavior. */
 export type LineDeliveryResultV2 = { kind: 'accepted' | 'rejected' | 'unknown'; code: string; requestId?: string; rejection?: 'TOKEN' | 'FLEX' | 'PERMANENT' };
 
 export type LineDeliveryResult = 'ok' | 'failed_token' | 'failed_flex' | 'failed_other' | 'failed_permanent' | 'skipped';
@@ -241,12 +238,13 @@ export class LineReplyAdapter {
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
       this.logger.warn({ msg: `LINE ${kind} failed`, status: response.status, requestId: response.headers.get('x-line-request-id')?.slice(0, 100) });
+      const flexRejected = response.status === 400 && errText.includes(LINE_MESSAGE_BODY_REJECTION)
+        && (messages ?? []).some((message) => message.type === 'flex');
+      if (flexRejected) return 'failed_flex';
       if (kind !== 'reply' || response.status !== 400) {
         return response.status >= 400 && response.status < 500 && response.status !== 429 && response.status !== 408 ? 'failed_permanent' : 'failed_other';
       }
-      const flexRejected = errText.includes(LINE_MESSAGE_BODY_REJECTION)
-        && (messages ?? []).some((message) => message.type === 'flex');
-      return flexRejected ? 'failed_flex' : 'failed_token';
+      return 'failed_token';
     }
     return 'ok';
   }

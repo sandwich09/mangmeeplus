@@ -352,6 +352,8 @@ export type LineAiTurnRequest = {
   valueCandidates?: LineAiTurnValueCandidates;
   /** Item 10F: the chat's open waiting_user ledger entries (bounded). DATA, never instructions. */
   openClarifications?: LineAiOpenClarification[];
+  /** Offered questions this intake resolved; context only, never write authority. */
+  resolvedClarificationIds?: string[];
   /** Optional additive prepared plan the API forwarded (latency/autonomy §7). Untrusted model
    *  advice with no authority; every receiver re-parses it with `parseLineAiPreparedPlan`. Absent
    *  from an older API caller — the gateway/runtime then falls back to full orchestration. */
@@ -511,7 +513,7 @@ export function parseLineAiTaskProjection(value: unknown): LineAiTaskProjectionV
 }
 
 /** Strict semantic plan parser: all proposals are bounded, indexed, and bound to original evidence. */
-export function parseLineAiSemanticSubrequests(value: unknown, messageText: string, evidence?: LineAiInputEvidenceV2): LineAiSemanticSubrequestV2[] | undefined {
+export function parseLineAiSemanticSubrequests(value: unknown, messageText: string, evidence?: LineAiInputEvidenceV2, originalClarifications?: readonly LineAiOpenClarification[]): LineAiSemanticSubrequestV2[] | undefined {
   if (!Array.isArray(value) || value.length < 1 || value.length > 8) return undefined;
   const parsed: LineAiSemanticSubrequestV2[] = [];
   for (let i = 0; i < value.length; i += 1) {
@@ -541,7 +543,8 @@ export function parseLineAiSemanticSubrequests(value: unknown, messageText: stri
     if (raw['entityReference'] !== undefined) {
       const ref = raw['entityReference'];
       if (!recordValue(ref) || !exactKeys(ref, ['kind', 'value']) || ref['kind'] !== 'user_text'
-        || typeof ref['value'] !== 'string' || ref['value'].length > 160 || !messageText.includes(ref['value'])) return undefined;
+        || typeof ref['value'] !== 'string' || ref['value'].length > 160 || (!messageText.includes(ref['value']) && !(['read', 'general', 'help'].includes(String(raw['kind']))
+          && originalClarifications?.some(entry => entry.text.includes(ref['value'] as string))))) return undefined;
       entityReference = { kind: 'user_text', value: ref['value'] };
     }
     // tuning-7b (K1): an invalid toolHint drops ONLY the hint, never the whole subrequest — it is
@@ -1453,6 +1456,29 @@ export type LineDraftUpdatePreview = {
   expiresAt: string;
 };
 
+/** What the two buttons under a preview mean, in one place: the gateway's preview text ends with it
+ *  and the API's confirm card prints it, so the sentence and the card cannot say different things. */
+export const LINE_DRAFT_UPDATE_CONFIRM_HINT = 'กด [ยืนยัน] เพื่อบันทึก หรือ [ยกเลิก] ถ้ายังไม่แก้ค่ะ — ยังไม่ได้บันทึกอะไรจนกว่าจะกดยืนยันนะคะ';
+
+/** The locked design's "แก้ไขค่าใช้จ่าย" header: the context, then the state the edit is really in.
+ *  Here, because the API's cards and the gateway's `edit_command` layout must name a state alike. */
+export const LINE_DRAFT_UPDATE_CARD_CONTEXT = 'แก้ไขค่าใช้จ่าย';
+export const LINE_DRAFT_UPDATE_CARD_STATES = {
+  preview: 'รอยืนยัน',
+  applied: 'แก้ไขแล้ว',
+  cancelled: 'ยกเลิกแล้ว',
+  /** The reply asks for the one thing it could not tell: which line, which record, which figure. */
+  needs_input: 'ขอข้อมูลเพิ่ม',
+  /** Everything else that ends with the record as it was: expired, changed, refused, not allowed. */
+  unchanged: 'ยังไม่ได้แก้ไข',
+} as const;
+export type LineDraftUpdateCardState = keyof typeof LINE_DRAFT_UPDATE_CARD_STATES;
+
+/** The refusals that are a question back to the user; the rest leave the record as it was. */
+export function lineDraftUpdateBlockedState(reason: string): LineDraftUpdateCardState {
+  return ['ambiguous_line', 'ambiguous_record', 'ungrounded_value', 'invalid_patch'].includes(reason) ? 'needs_input' : 'unchanged';
+}
+
 /** The confirm/cancel beat. It carries an INTENT and nothing else — no preview id, no expense id,
  *  no company id — because the server re-derives all of them from the chat that is answering. */
 export type LineDraftUpdatePostback = {
@@ -1856,7 +1882,77 @@ export type LineAiAnswerCard = {
   /** Spec §13: one state badge rendered as its own row above the body. Additive — a card without
    *  one renders exactly as it did before, and an older gateway never sends one. */
   badge?: string;
+  /** The locked System OA card design. Additive: absent, the card is its `text` as before. */
+  layout?: LineAiAnswerCardLayout;
 };
+
+/**
+ * What a structured answer shows on the locked System OA card (docs/specs/
+ * line-system-oa-card-design-lock-spec-th.md) instead of a paragraph: two header lines and
+ * `label : value` rows. The trusted gateway fills it from ONE successful, permission-checked tool
+ * result — never from model text, and it is never Flex JSON. `text` stays the canonical answer: it is
+ * the notification, the fallback, and what is sent wherever this cannot be drawn.
+ */
+export const LINE_AI_ANSWER_CARD_CONTEXTS = ['expense_summary', 'open_work', 'expense_record', 'payment', 'edit_command'] as const;
+export type LineAiAnswerCardContext = (typeof LINE_AI_ANSWER_CARD_CONTEXTS)[number];
+export type LineAiAnswerCardRow = {
+  label: string;
+  value: string;
+  /** The one figure the card is about. */
+  emphasis?: 'total';
+  /** The value is a state, drawn as a pill. */
+  tone?: 'ok' | 'pending' | 'closed';
+};
+export type LineAiAnswerCardLayout = {
+  context: LineAiAnswerCardContext;
+  /** Exactly two lines: the context, then the state or period. */
+  header: [string, string];
+  /** Empty for `edit_command`, whose body is the card's `text`. */
+  rows: LineAiAnswerCardRow[];
+  banner?: { tone: 'ok' | 'pending'; text: string };
+  notes?: string[];
+  /** Words of the card's one button. Where it leads is the card's `webLink`, which the API checks. */
+  linkLabel?: string;
+};
+
+const CARD_ROW_TONES = ['ok', 'pending', 'closed'] as const;
+// eslint-disable-next-line no-control-regex
+const CARD_LINE_REFUSED = /[\u0000-\u001f\u007f]|https?:\/\//iu;
+/** One line a card may print: bounded, no control character, and never a link. */
+const cardLine = (value: unknown, max: number): value is string => typeof value === 'string'
+  && value.trim().length > 0 && Array.from(value).length <= max && !CARD_LINE_REFUSED.test(value);
+
+/** Receiver-boundary validator: every receiver re-parses and drops what does not parse, so a card
+ *  with a malformed layout is simply its `text`. Exact keys, bounded strings, allowlisted enums. */
+export function parseLineAiAnswerCardLayout(value: unknown): LineAiAnswerCardLayout | undefined {
+  if (!recordValue(value) || !exactKeys(value, ['context', 'header', 'rows', 'banner', 'notes', 'linkLabel'])) return undefined;
+  const { context, header, rows, banner, notes, linkLabel } = value;
+  if (!(LINE_AI_ANSWER_CARD_CONTEXTS as readonly unknown[]).includes(context)) return undefined;
+  if (!Array.isArray(header) || header.length !== 2 || !header.every((line) => cardLine(line, 40))) return undefined;
+  if (!Array.isArray(rows) || rows.length > 16 || (context === 'edit_command') !== (rows.length === 0)) return undefined;
+  for (const row of rows) {
+    if (!recordValue(row) || !exactKeys(row, ['label', 'value', 'emphasis', 'tone'])
+      || !cardLine(row['label'], 40) || !cardLine(row['value'], 200)
+      || (row['emphasis'] !== undefined && row['emphasis'] !== 'total')
+      || (row['tone'] !== undefined && !(CARD_ROW_TONES as readonly unknown[]).includes(row['tone']))) return undefined;
+  }
+  if (banner !== undefined && (!recordValue(banner) || !exactKeys(banner, ['tone', 'text'])
+    || (banner['tone'] !== 'ok' && banner['tone'] !== 'pending') || !cardLine(banner['text'], 120))) return undefined;
+  if (notes !== undefined && (!Array.isArray(notes) || notes.length > 4 || !notes.every((note) => cardLine(note, 300)))) return undefined;
+  if (linkLabel !== undefined && !cardLine(linkLabel, 40)) return undefined;
+  return {
+    context: context as LineAiAnswerCardContext,
+    header: [header[0] as string, header[1] as string],
+    rows: (rows as Array<Record<string, unknown>>).map((row) => ({
+      label: row['label'] as string, value: row['value'] as string,
+      ...(row['emphasis'] === 'total' ? { emphasis: 'total' as const } : {}),
+      ...(row['tone'] !== undefined ? { tone: row['tone'] as LineAiAnswerCardRow['tone'] } : {}),
+    })),
+    ...(banner !== undefined ? { banner: { tone: (banner as Record<string, unknown>)['tone'] as 'ok' | 'pending', text: (banner as Record<string, unknown>)['text'] as string } } : {}),
+    ...(notes !== undefined && (notes as string[]).length ? { notes: [...notes as string[]] } : {}),
+    ...(linkLabel !== undefined ? { linkLabel: linkLabel as string } : {}),
+  };
+}
 
 export type LineAiAnswerPresentation = {
   kind: 'answer_cards';
@@ -1876,6 +1972,8 @@ export type LineAiOpenClarification = {
   /** Canonical subject of the original request, when known. */
   subject?: LineAiBusinessSubject;
   askedAt: string;
+  /** Server-observed read ask-back; never mutation authority. */
+  reasonCode?: 'READ_FILTER_NOT_UNDERSTOOD';
   /** Intake route the ORIGINAL request was on, when it was an intake clarify. The dispatcher
    *  inherits it deterministically instead of trusting the model to re-read the original text. */
   clarifyForIntent?: LineIntakeRouteIntent;
@@ -1895,6 +1993,35 @@ export type LineAiOpenClarification = {
     mimeType: string;
   };
 };
+
+/** Read-only grounding selects answered entries, or the sole open question when no ids were emitted. */
+export function lineAiReplyClarifications(open: readonly LineAiOpenClarification[] | undefined, ids?: readonly string[]): LineAiOpenClarification[] {
+  return (open ?? []).filter(entry => ids ? ids.includes(entry.id) : open?.length === 1);
+}
+
+/** AgentCore is a separate JSON boundary; keep the existing question data bounded on that hop. */
+export function parseLineAiOpenClarifications(value: unknown): LineAiOpenClarification[] | undefined {
+  if (!Array.isArray(value) || value.length > 5) return undefined;
+  const out: LineAiOpenClarification[] = [];
+  for (const item of value) {
+    if (!recordValue(item) || typeof item['id'] !== 'string' || !item['id'] || item['id'].length > 200
+      || typeof item['text'] !== 'string' || item['text'].length > 12000
+      || typeof item['question'] !== 'string' || item['question'].length > 2000
+      || typeof item['askedAt'] !== 'string' || !Number.isFinite(Date.parse(item['askedAt']))) return undefined;
+    const clarifyForIntent = asIntakeRouteIntent(item['clarifyForIntent']);
+    const candidates = item['candidateExpenseIds'];
+    const media = item['pendingMedia'];
+    if (item['clarifyForIntent'] !== undefined && !clarifyForIntent
+      || candidates !== undefined && (!Array.isArray(candidates) || candidates.length > 5 || candidates.some(id => typeof id !== 'string' || !id || id.length > 200))
+      || media !== undefined && (!recordValue(media) || ['pendingMediaId', 'attachmentId', 'mimeType'].some(key => typeof media[key] !== 'string' || !media[key] || String(media[key]).length > 200))) return undefined;
+    out.push({ id: item['id'], text: item['text'], question: item['question'], askedAt: item['askedAt'],
+      ...(LINE_AI_BUSINESS_SUBJECTS.includes(item['subject'] as LineAiBusinessSubject) ? { subject: item['subject'] as LineAiBusinessSubject } : {}),
+      ...(item['reasonCode'] === 'READ_FILTER_NOT_UNDERSTOOD' ? { reasonCode: item['reasonCode'] } : {}),
+      ...(clarifyForIntent ? { clarifyForIntent } : {}), ...(candidates ? { candidateExpenseIds: [...candidates as string[]] } : {}),
+      ...(media ? { pendingMedia: { pendingMediaId: (media as Record<string, string>)['pendingMediaId']!, attachmentId: (media as Record<string, string>)['attachmentId']!, mimeType: (media as Record<string, string>)['mimeType']! } } : {}) });
+  }
+  return out;
+}
 
 // ── Item 10F: per-sub-request coverage (critic verdicts) ─────────────────────
 
