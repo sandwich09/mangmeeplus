@@ -7,6 +7,7 @@ import { REFUSAL_MESSAGES } from '../../domain/logic/line-ai-formatter.logic';
 import { ASK_PLAN_MANAGER_TH, PLAN_MANAGE_PERMISSION_KEY } from '../../../access-control/domain/logic/plan-manager.logic';
 import { LineAiLedgerInternalController } from '../../presentation/http/line-ai-ledger-internal.controller';
 import { ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
+import { readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
 
 const NOW = new Date('2026-07-07T10:00:00.000Z');
 
@@ -35,7 +36,9 @@ function makeUseCase(opts: {
   entitlements?: Array<{ featureKey: string; enabled: boolean }>;
   turnFn?: (req: any) => any;
   duringTurn?: () => void;
-  pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
+  pushResult?: 'ok' | 'failed_token' | 'failed_flex' | 'failed_other' | 'skipped';
+  /** One result per push, in order; when it runs out, `pushResult` (or 'ok') answers. */
+  pushResults?: Array<'ok' | 'failed_flex' | 'failed_other' | 'failed_permanent'>;
 } = {}) {
   const acks: Array<{ id: string; outcome: string }> = [];
   const ackReasons: Array<unknown> = [];
@@ -101,7 +104,7 @@ function makeUseCase(opts: {
     buildTextMessage: (text: string) => ({ type: 'text', text }),
     sendPush: async (to: string, messages: any[], operationId?: string) => {
       pushes.push({ to, message: messages[0], text: messages[0]?.text ?? messages[0]?.altText ?? '', operationId });
-      return opts.pushResult ?? 'ok';
+      return opts.pushResults?.shift() ?? opts.pushResult ?? 'ok';
     },
   } as any;
   // SHADOW (piece 5): the drain records one `ai_line_assistant` observation per claimed entry,
@@ -183,6 +186,37 @@ describe('AP22 queued UNKNOWN and accepted recovery', () => {
     assert.equal([...h.deliveryRows.values()][0].status, 'ACCEPTED');
   });
 
+  // A refused BODY is the one way a card can lose an answer: the same bytes cannot succeed, the text
+  // the card itself declares can. Design lock 2026-10-04: the answer is now a card of the locked design.
+  it('re-sends an answer card LINE refuses for its body ONCE, as the text it declares, under a key derived from the first', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }], pushResults: ['failed_flex', 'ok'] });
+    const result = await h.useCase.execute(20, NOW);
+    assert.equal(result.followedUp, 1);
+    assert.equal(h.turnRequests.length, 1, 'the fallback repeats no model work');
+    assert.equal(h.pushes.length, 2);
+    const [card, text] = h.pushes;
+    assert.equal(card!.message.type, 'flex');
+    assert.deepEqual(readLineSystemCard(card!.message).prose, ['ยอดค้าง 5,000 บาท'], 'the answer went out first as the locked card');
+    assert.deepEqual(text!.message, { type: 'text', text: card!.message.canonicalText });
+    assert.match(text!.message.text, /ยอดค้าง 5,000 บาท/u, 'not one figure of the answer is lost');
+    assert.match(card!.operationId ?? '', /^ledger:/u);
+    assert.equal(text!.operationId, `${card!.operationId}:text`, 'so a repeat of the fallback is the same request to LINE');
+    assert.equal([...h.deliveryRows.values()][0].status, 'ACCEPTED');
+    assert.ok(h.warnings.some((entry: any) => entry?.msg === 'line_flex_text_fallback_used'));
+  });
+
+  it('sends nothing more when the text is refused too, and treats that result as any failed push', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }], pushResults: ['failed_flex', 'failed_other'] });
+    await h.useCase.execute(20, NOW);
+    assert.equal(h.pushes.length, 2, 'one card, one text, never a third attempt in the same pass');
+    assert.deepEqual([[...h.deliveryRows.values()][0].status, [...h.deliveryRows.values()][0].errorCode], ['UNKNOWN', 'LINE_PUSH_FAILED_OTHER']);
+    // A push that failed for any other reason is not re-sent as text: the card may still arrive.
+    const other = makeUseCase({ claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }], pushResults: ['failed_other'] });
+    await other.useCase.execute(20, NOW);
+    assert.equal(other.pushes.length, 1);
+    assert.equal(other.pushes[0]!.message.type, 'flex');
+  });
+
   it('acceptance survives an ack failure and later access revocation without a new send', async () => {
     const h = makeUseCase({ claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }] });
     const ledger = (h.useCase as any).ledger, ack = ledger.ack; let first = true;
@@ -190,6 +224,14 @@ describe('AP22 queued UNKNOWN and accepted recovery', () => {
     await h.useCase.execute(20, NOW); h.state.linked = false;
     const recovered = await h.useCase.execute(20, NOW);
     assert.equal(recovered.followedUp, 1); assert.equal(h.pushes.length, 1); assert.equal(h.turnRequests.length, 1);
+  });
+
+  it('a body LINE refuses as a card and again as its text stays terminal with the existing permanent error code', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }], pushResult: 'failed_flex' });
+    await h.useCase.execute(20, NOW);
+    assert.deepEqual(h.pushes.map((push) => push.message.type), ['flex', 'text'], 'the card, then its text once');
+    assert.equal([...h.deliveryRows.values()][0].status, 'REFUSED');
+    assert.equal([...h.deliveryRows.values()][0].errorCode, 'LINE_PUSH_FAILED_PERMANENT');
   });
 
   it('changed source after UNKNOWN gets a static recovery notice and preserves the original output', async () => {

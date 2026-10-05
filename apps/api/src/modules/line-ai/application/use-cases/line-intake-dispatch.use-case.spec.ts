@@ -2,6 +2,7 @@ import { evaluateEntitledFeatureKeys } from '../../../employee-access/applicatio
 import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { deliveryHash } from '../../domain/logic/line-delivery-plan.logic';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
+import { readLineSystemCard } from '../../domain/logic/line-system-card.fixture';
 import { admitCompanyOcr } from '../company-ocr-governance';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -228,8 +229,6 @@ function makeHarness(opts: {
   lineAiReimbursementSemanticMode?: 'off' | 'shadow' | 'clarify_only' | 'handoff';
   /** LINE_AI_EXACT_GREETING_ENABLED; absent = false = legacy (a greeting goes through the router). */
   lineAiExactGreetingEnabled?: boolean;
-  /** LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED; absent = false = legacy all-text multi-part reply. */
-  lineAiMultipartTerminalFlexEnabled?: boolean;
   /** LINE_AI_ADVISOR_MODE; absent is deliberately left UNSET here so the default proves fail-closed. */
   lineAiAdvisorMode?: 'off' | 'social' | 'knowledge' | 'company';
   /** Stored CompanyFeatureEntitlement rows; absent = no rows = legacy fail-open (`null`). */
@@ -419,7 +418,6 @@ function makeHarness(opts: {
       lineExpenseDraftConversationEnabled: opts.expenseDraftConversationEnabled ?? true,
       lineAiReimbursementSemanticMode: opts.lineAiReimbursementSemanticMode ?? 'off',
       lineAiExactGreetingEnabled: opts.lineAiExactGreetingEnabled ?? false,
-      lineAiMultipartTerminalFlexEnabled: opts.lineAiMultipartTerminalFlexEnabled ?? false,
       // No `?? 'off'` on purpose: leaving it undefined models a config double / older deployment that
       // never heard of the flag, which must still resolve to the legacy advisor-off capability.
       lineAiAdvisorMode: opts.lineAiAdvisorMode,
@@ -435,7 +433,6 @@ function makeHarness(opts: {
       lineExpenseDraftConversationEnabled: opts.expenseDraftConversationEnabled ?? true,
       lineAiReimbursementSemanticMode: opts.lineAiReimbursementSemanticMode ?? 'off',
       lineAiExactGreetingEnabled: opts.lineAiExactGreetingEnabled ?? false,
-      lineAiMultipartTerminalFlexEnabled: opts.lineAiMultipartTerminalFlexEnabled ?? false,
       // No `?? 'off'` on purpose: leaving it undefined models a config double / older deployment that
       // never heard of the flag, which must still resolve to the legacy advisor-off capability.
       lineAiAdvisorMode: opts.lineAiAdvisorMode,
@@ -3073,8 +3070,14 @@ describe('LINE intake dispatch – a photo in a bound (v2) conversation reads li
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     const reply: any = h.sentMessages[0]?.[0];
     assert.equal(reply?.type, 'flex', 'a card, as production sent it');
-    assert.doesNotMatch(JSON.stringify(reply.contents.body), /https?:\/\//u, 'no raw link in the card body');
-    assert.match(JSON.stringify(reply.contents.footer), /expense-1/u, 'the draft link rides on the button');
+    // Design lock context 6: in a bound chat the plan sends the locked review card itself.
+    const card = readLineSystemCard(reply);
+    assert.deepEqual(card.header, ['ข้อมูลใบเสร็จ', 'รอตรวจสอบ']);
+    assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
+    assert.equal(card.actions.length, 1);
+    assert.match(card.actions[0]!.uri ?? '', /expense-1/u, 'the draft link rides on the button');
+    assert.match(reply.canonicalText, /^🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)[\s\S]*\/companies\/company-1\/expenses\/expense-1$/u,
+      'the reply that was sent before is the card\'s canonical text and its fallback');
   });
 
   it('two unclear photos: files are named by order and time, buttons send their own words, and a tap picks the right one', async () => {
@@ -3193,8 +3196,12 @@ describe('LINE intake dispatch – a bound (v2) chat answers open work in produc
     // UAT 2026-09-29: this reply was plain text ending in a raw link with ids; production sent a card.
     const reply: any = h.sentMessages.at(-1)?.at(-1);
     assert.equal(reply?.type, 'flex', "production's card, not text");
-    assert.doesNotMatch(JSON.stringify(reply.contents.body), /https?:\/\//u, 'no raw link in the card body');
-    assert.match(JSON.stringify(reply.contents.footer), /expense-draft-1/u, 'the draft link rides on the button');
+    // Owner 2026-10-05: in a bound chat that card is the locked design (one body block: its pictures and
+    // its button live in it), so it is read as a person reads it. The link still rides on the button.
+    const card = readLineSystemCard(reply);
+    assert.ok(card.texts.every((text) => !/https?:\/\//u.test(text)), 'no raw link in any text of the card');
+    assert.deepEqual(card.actions.map((action) => action.label), ['เปิดดูรายการ']);
+    assert.match(card.actions[0]!.uri ?? '', /expense-draft-1/u, 'the draft link rides on the button');
   });
 
   it('a correction reaches the router with the captures it may correct', async () => {
@@ -4689,7 +4696,7 @@ describe('LINE intake dispatch – Phase-0 capture/render stage timing (uat-corr
   });
 });
 
-describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-latency §10.1, default-off)', () => {
+describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-latency §10.1, always on)', () => {
   /** Longer than the 1200 code points a Flex bubble body keeps, so a card can never carry it whole. */
   const LONG_TERMINAL = `สรุปรายการค่าใช้จ่าย ${'ก'.repeat(1300)}`;
   /** Past the 4,800 the expense splitter emits and still inside LINE's 5,000-character text cap — the
@@ -4697,10 +4704,9 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
   const OVER_4800_TERMINAL = 'สรุปค่าใช้จ่ายฉบับเต็ม '.padEnd(4_900, 'ก');
 
   /** Routes a controllable list of reply parts through deliverCompletedReplies (draft-continuation lane). */
-  function multipartHarness(replyTexts: string[], lineAiMultipartTerminalFlexEnabled = false) {
+  function multipartHarness(replyTexts: string[]) {
     return makeHarness({
       permissions: ['expense.receipt.line_upload'],
-      lineAiMultipartTerminalFlexEnabled,
       routePlan: { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.95 },
       expenseDraftConversation: {
         routeContexts: async () => [],
@@ -4712,7 +4718,7 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
   const sent = (h: ReturnType<typeof makeHarness>) => (h.sentMessages[0] ?? []) as any[];
   const ANSWER = { ...TEXT_EVENT, messageText: 'ตอบคำถามในร่าง' };
 
-  it('requested editing keeps all long text and a themed terminal even without the general presentation flag', async () => {
+  it('requested editing always keeps all long text and a themed terminal', async () => {
     const texts = ['ส่วนที่ 1', 'ส่วนที่ 2', LONG_TERMINAL];
     const h = multipartHarness(texts);
 
@@ -4725,9 +4731,9 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
     assert.deepEqual(messages.map((m) => m.quickReply !== undefined), [false, false, false, true]);
   });
 
-  it('ON with a short terminal keeps earlier parts lossless and turns the terminal into the Flex card', async () => {
+  it('with a short terminal keeps earlier parts lossless and turns the terminal into the Flex card', async () => {
     const texts = ['ส่วนที่ 1', 'ส่วนที่ 2', '🧾 สรุปร่างเรียบร้อยค่ะ'];
-    const h = multipartHarness(texts, true);
+    const h = multipartHarness(texts);
 
     await h.useCase.execute(ANSWER);
 
@@ -4739,8 +4745,8 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
     assert.equal(messages[2].quickReply !== undefined, true);
   });
 
-  it('ON with a single over-long terminal ships the FULL text and appends a concise card after it', async () => {
-    const h = multipartHarness([LONG_TERMINAL], true);
+  it('with a single over-long terminal ships the FULL text and appends a concise card after it', async () => {
+    const h = multipartHarness([LONG_TERMINAL]);
 
     await h.useCase.execute(ANSWER);
 
@@ -4754,9 +4760,9 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
     assert.equal(messages[1].quickReply !== undefined, true);
   });
 
-  it('ON with an over-long terminal in a multi-part reply preserves every part exactly', async () => {
+  it('with an over-long terminal in a multi-part reply preserves every part exactly', async () => {
     const texts = ['ส่วนที่ 1', 'ส่วนที่ 2', LONG_TERMINAL];
-    const h = multipartHarness(texts, true);
+    const h = multipartHarness(texts);
 
     await h.useCase.execute(ANSWER);
 
@@ -4767,9 +4773,9 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
     assert.match(replyAssertionText(messages[3]), /ข้อความเต็มอยู่ด้านบน/);
   });
 
-  it('ON preserves a 4,900-code-point terminal exactly and still appends the concise card', async () => {
+  it('preserves a 4,900-code-point terminal exactly and still appends the concise card', async () => {
     assert.equal(Array.from(OVER_4800_TERMINAL).length, 4_900, 'the fixture is genuinely past 4,800');
-    const h = multipartHarness(['ส่วนที่ 1', OVER_4800_TERMINAL], true);
+    const h = multipartHarness(['ส่วนที่ 1', OVER_4800_TERMINAL]);
 
     await h.useCase.execute(ANSWER);
 
@@ -4783,9 +4789,9 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
     assert.equal(messages[2].quickReply !== undefined, true);
   });
 
-  it('ON at the five-part cap prefers five lossless text messages over a card', async () => {
+  it('at the five-part cap prefers five lossless text messages over a card', async () => {
     const texts = ['1', '2', '3', '4', LONG_TERMINAL];
-    const h = multipartHarness(texts, true);
+    const h = multipartHarness(texts);
 
     await h.useCase.execute(ANSWER);
 
@@ -4796,12 +4802,10 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
     assert.equal(messages[4].quickReply !== undefined, true, 'the completion menu still rides the terminal message');
   });
 
-  it('refuses to deliver a part LINE would silently slice, on either lane', async () => {
-    for (const enabled of [false, true]) {
-      const h = multipartHarness(['ok', 'x'.repeat(5001)], enabled);
-      await assert.rejects(() => h.useCase.execute(ANSWER), /LINE_REPLY_TEXT_PART_TOO_LONG/, `flag=${enabled}`);
-      assert.equal(h.sentMessages.length, 0, 'nothing half-truncated is sent');
-    }
+  it('refuses to deliver a part LINE would silently slice', async () => {
+    const h = multipartHarness(['ok', 'x'.repeat(5001)]);
+    await assert.rejects(() => h.useCase.execute(ANSWER), /LINE_REPLY_TEXT_PART_TOO_LONG/);
+    assert.equal(h.sentMessages.length, 0, 'nothing half-truncated is sent');
   });
 });
 

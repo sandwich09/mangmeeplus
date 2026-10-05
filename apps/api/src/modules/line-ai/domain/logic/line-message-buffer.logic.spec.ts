@@ -7,7 +7,10 @@ import {
   fittingPrefixCount,
   joinGroupText,
   joinedTextLength,
+  lineMediaGroupAckStage,
   lineMediaGroupAckText,
+  lineWaitCardHeader,
+  lineWaitStageMessage,
   lineWaitStages,
   lineWaitStatusText,
   nextFlushDelayMs,
@@ -131,9 +134,14 @@ describe('capacity rules', () => {
 });
 
 describe('waiting feedback microcopy', () => {
-  it('keeps the receipt acknowledgement truthful and sets a time expectation', () => {
-    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
-    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ไม่เกิน 1 นาที/, 'the ack says how long a read normally takes');
+  it('keeps the receipt acknowledgement truthful, and promises no time nobody knows (design lock §8)', () => {
+    assert.match(LINE_MEDIA_RECEIVED_TEXT, /ได้รับรูปแล้ว.*กำลังอ่านเอกสารอยู่.*สรุปให้ทางแชตนี้.*คุยกับน้องต่อได้เลย/);
+    // The sentence is the scanning card's canonical text: what a notification shows and what is sent
+    // where the card cannot be drawn. The lock bans a duration or a percentage there as on the card.
+    for (const types of [['image'], ['file'], ['image', 'image'], ['file', 'file', 'file'], ['image', 'file']] as Array<Array<'image' | 'file'>>) {
+      assert.doesNotMatch(lineMediaGroupAckText(types), /นาที|วินาที|ชั่วโมง|%|เปอร์เซ็นต์/u, types.join('+'));
+    }
+    for (const text of [LINE_MEDIA_SLOW_STATUS_TEXT, LINE_SLOW_TURN_STATUS_TEXT]) assert.doesNotMatch(text, /นาที|วินาที|ชั่วโมง|%|เปอร์เซ็นต์/u);
   });
 
   // UAT 2026-09-29 "ส่งรูปที่ 2 ต่อกันแล้วเงียบไป": a burst is acknowledged once, by count, on arrival.
@@ -143,7 +151,7 @@ describe('waiting feedback microcopy', () => {
     const burst = lineMediaGroupAckText(['image', 'image']);
     assert.match(burst, /^ได้รับรูปแล้ว 2 รูปค่ะ/);
     assert.match(burst, /ทีละรูปตามลำดับ.*ครบทุกรูป.*คุยกับน้องต่อได้เลยค่ะ$/);
-    assert.doesNotMatch(burst, /1 นาที/, 'a queue of reads cannot keep the one-minute promise');
+    assert.doesNotMatch(burst, /นาที/, 'no acknowledgement names a time');
     assert.match(lineMediaGroupAckText(['file', 'file', 'file']), /^ได้รับไฟล์แล้ว 3 ไฟล์ค่ะ/);
     const mixed = lineMediaGroupAckText(['image', 'file']);
     assert.match(mixed, /^ได้รับรูป 1 รูปและไฟล์ 1 ไฟล์แล้วค่ะ/, 'a file is never called a รูป (§17.1)');
@@ -163,13 +171,82 @@ describe('waiting feedback microcopy', () => {
   });
 });
 
+// Design lock context 8 "กำลังสแกน": the media acknowledgement, at the same moment and once per group,
+// as the locked scanning card. Its sentence is still the canonical text and the fallback.
+describe('scanning card — the media acknowledgement on the locked design', () => {
+  const WEB = 'https://app.example.test';
+  const texts = (message: any): string[] => {
+    const found: string[] = [];
+    const walk = (node: any): void => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node.type === 'text' && typeof node.text === 'string') found.push(node.text);
+      Object.values(node).forEach(walk);
+    };
+    walk(message.contents);
+    return found;
+  };
+
+  it('one picture: two header lines, what is being read, and where the result will come', () => {
+    const stage = lineMediaGroupAckStage(['image']);
+    assert.equal(stage.text, LINE_MEDIA_RECEIVED_TEXT, 'the acknowledgement sentence is the card\'s canonical text');
+    assert.deepEqual(stage.card, {
+      mascot: 'scanning', header: { lines: ['เอกสารที่ส่งมา', 'กำลังสแกน'] },
+      banner: { tone: 'scanning', text: 'กำลังอ่านข้อมูลจากรูป' },
+      text: 'อ่านเสร็จแล้ว น้องจะส่งสรุปให้ในแชตนี้ค่ะ ระหว่างนี้คุยกับน้องต่อได้เลย',
+    });
+  });
+
+  it('never calls a file a picture, and names a burst by its real counts', () => {
+    const file = lineMediaGroupAckStage(['file']);
+    assert.equal(file.text, LINE_FILE_RECEIVED_TEXT);
+    assert.equal(file.card?.banner?.text, 'กำลังอ่านข้อมูลจากไฟล์');
+    assert.doesNotMatch(JSON.stringify(file.card), /รูป/);
+    assert.equal(lineMediaGroupAckStage(['image', 'image']).card?.banner?.text, 'กำลังอ่านข้อมูลจากรูป 2 รูป');
+    assert.match(lineMediaGroupAckStage(['image', 'image']).card?.text ?? '', /ทีละรูปตามลำดับ.*ครบทุกรูป/);
+    const files = lineMediaGroupAckStage(['file', 'file', 'file']);
+    assert.equal(files.card?.banner?.text, 'กำลังอ่านข้อมูลจากไฟล์ 3 ไฟล์');
+    assert.doesNotMatch(JSON.stringify(files.card), /รูป/);
+    const mixed = lineMediaGroupAckStage(['image', 'file', 'image']);
+    assert.equal(mixed.card?.banner?.text, 'กำลังอ่านข้อมูลจากรูป 2 รูปและไฟล์ 1 ไฟล์');
+    assert.equal(mixed.text, lineMediaGroupAckText(['image', 'file', 'image']));
+  });
+
+  it('claims no progress and no finishing time, and has neither of the two rows the owner cut', () => {
+    for (const types of [['image'], ['file'], ['image', 'image'], ['image', 'file']] as Array<Array<'image' | 'file'>>) {
+      const card = JSON.stringify(lineMediaGroupAckStage(types).card);
+      assert.doesNotMatch(card, /%|เปอร์เซ็นต์|นาที|วินาที|เอกสารที่รับ|สถานะ|อ่านสำเร็จ|อ่านเรียบร้อย/, types.join('+'));
+    }
+  });
+
+  it('is sent as one Flex card whose fallback is the sentence; with no https base it is that sentence as before', () => {
+    const stage = lineMediaGroupAckStage(['image']);
+    const message = lineWaitStageMessage(stage, WEB);
+    assert.equal(message.type, 'flex');
+    if (message.type !== 'flex') return;
+    assert.equal(message.canonicalText, LINE_MEDIA_RECEIVED_TEXT);
+    assert.equal(message.altText, 'กำลังอ่านข้อมูลจากรูป อ่านเสร็จแล้ว น้องจะส่งสรุปให้ในแชตนี้ค่ะ ระหว่างนี้คุยกับน้องต่อได้เลย');
+    assert.deepEqual(texts(message), ['เอกสารที่ส่งมา', 'กำลังสแกน', 'กำลังอ่านข้อมูลจากรูป', 'อ่านเสร็จแล้ว น้องจะส่งสรุปให้ในแชตนี้ค่ะ ระหว่างนี้คุยกับน้องต่อได้เลย']);
+    assert.match(JSON.stringify(message.contents), /system-card-mascot-scanning-\d{8}\.png/);
+    assert.doesNotMatch(JSON.stringify(message.contents), /"type":"(?:postback|uri|message)"/, 'a waiting card has nothing to press');
+    for (const base of [undefined, '', 'http://localhost:3000']) {
+      assert.deepEqual(lineWaitStageMessage(stage, base), { type: 'text', text: LINE_MEDIA_RECEIVED_TEXT });
+    }
+    // A stage with no card is its sentence wherever it is sent.
+    assert.deepEqual(lineWaitStageMessage({ delayMs: 0, text: 'ข้อความ' }, WEB), { type: 'text', text: 'ข้อความ' });
+  });
+});
+
 describe('lineWaitStages', () => {
   const base = { messageText: 'ขอสรุปยอดขาย', seed: 'turn-1', latestAcceptedAt: 10_000, now: 10_000 };
 
   it('a photo turn keeps one slow-read status before the spinner window lapses; its group already acked', () => {
     const stages = lineWaitStages({ ...base, kind: 'media', loadingEnabled: true });
     assert.deepEqual(stages, [
-      { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT },
+      // Design lock context 8: still the same read, so still the scanning card — the nudge is its sentence.
+      { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_MEDIA_SLOW_STATUS_TEXT, card: {
+        mascot: 'scanning', header: { lines: ['เอกสารที่ส่งมา', 'กำลังสแกน'] }, banner: { tone: 'scanning', text: 'กำลังอ่านข้อมูลจากรูป' }, text: LINE_MEDIA_SLOW_STATUS_TEXT,
+      } },
     ]);
     assert.ok(LINE_WAIT_STATUS_SLOW_DELAY_MS < 60_000, 'slow status must land before LINE loading (60 s) expires');
     assert.deepEqual(lineWaitStages({ ...base, kind: 'media', mediaType: 'file', loadingEnabled: true }), [],
@@ -178,8 +255,22 @@ describe('lineWaitStages', () => {
 
   it('with the spinner on, a text turn stays bubble-free until the single slow-turn status (Owner 2026-08-27)', () => {
     assert.deepEqual(lineWaitStages({ ...base, kind: 'text', loadingEnabled: true }), [
-      { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_SLOW_TURN_STATUS_TEXT },
+      // Design lock context 5 "กำลังตรวจสอบ": the status sentence unchanged, on the locked waiting card.
+      { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_SLOW_TURN_STATUS_TEXT,
+        card: { mascot: 'general', header: { lines: ['ข้อมูลที่คุณขอ', 'กำลังตรวจสอบ'] }, text: LINE_SLOW_TURN_STATUS_TEXT } },
     ]);
+  });
+
+  it('heads a waiting card by what is being worked on: asked-for data, or simply the reader\'s message', () => {
+    for (const asked of ['ขอสรุปยอดขาย', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'สถานะรายการที่ 3', 'ขอรายงานภาษี']) {
+      assert.deepEqual(lineWaitCardHeader(asked), ['ข้อมูลที่คุณขอ', 'กำลังตรวจสอบ'], asked);
+    }
+    // Small talk asked for no data: the card must not say data is being checked.
+    for (const said of ['วันนี้เหนื่อยจัง', 'สวัสดีค่ะ', 'hello']) {
+      assert.deepEqual(lineWaitCardHeader(said), ['ข้อความของคุณ', 'กำลังหาคำตอบ'], said);
+    }
+    const [stage] = lineWaitStages({ ...base, messageText: 'วันนี้เหนื่อยจัง', kind: 'text', loadingEnabled: true });
+    assert.deepEqual(stage!.card?.header, { lines: ['ข้อความของคุณ', 'กำลังหาคำตอบ'] });
   });
 
   it('with the spinner off, the 5 s topic status returns as the fallback and the slow status still follows (spec §10)', () => {
@@ -187,7 +278,9 @@ describe('lineWaitStages', () => {
     assert.equal(stages.length, 2);
     assert.equal(stages[0]!.delayMs, LINE_WAIT_STATUS_DELAY_MS);
     assert.equal(stages[0]!.text, lineWaitStatusText('ขอสรุปยอดขาย', 'turn-1'));
-    assert.deepEqual(stages[1], { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_SLOW_TURN_STATUS_TEXT });
+    assert.deepEqual(stages[0]!.card, { mascot: 'general', header: { lines: ['ข้อมูลที่คุณขอ', 'กำลังตรวจสอบ'] }, text: stages[0]!.text });
+    assert.deepEqual(stages[1], { delayMs: LINE_WAIT_STATUS_SLOW_DELAY_MS, text: LINE_SLOW_TURN_STATUS_TEXT,
+      card: { mascot: 'general', header: { lines: ['ข้อมูลที่คุณขอ', 'กำลังตรวจสอบ'] }, text: LINE_SLOW_TURN_STATUS_TEXT } });
   });
 
   it('anchors text delays to durable acceptance, clamped at zero when dispatch starts late', () => {

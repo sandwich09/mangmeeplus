@@ -164,6 +164,41 @@ describe('LineAiTurnUseCase – feature flag routing', () => {
     });
   });
 
+  // Design lock context 2 on the direct tool read (the path that builds `answer_cards` itself).
+  it('direct tool read: one successful open-work read carries its layout; a refused read is never "nothing found"', async () => {
+    const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
+    const req = { ...validReq, messageText: 'มีแจ้งเตือนอะไรบ้าง', userContext: { ...validReq.userContext, permissions: ['notification.read'] } };
+    const asOf = '2026-09-17T10:00:00.000Z';
+    const listRef = { label: 'รายการแจ้งเตือน', module: 'dashboard-notifications', entityType: 'notification_list', asOf, permissionChecked: true, webPath: '/companies/company-1/notifications' };
+    const ask = (result: Record<string, unknown>) => new LineAiTurnUseCase(
+      { invoke: async (tool: any) => ({ toolName: tool.name, asOf, ...result }) } as any, makeOrchestrator(), config, makeAgentcoreRuntime()).execute(req);
+
+    const empty = await ask({ status: 'ok', data: { count: 0, hasMore: false, opens: 'list', items: [] }, sourceRefs: [listRef] });
+    assert.deepEqual(empty.toolsInvoked, ['notifications.list_open_alerts']);
+    assert.equal(empty.presentation?.cards[0]?.text, empty.replyText);
+    assert.deepEqual(empty.presentation?.cards[0]?.layout, {
+      context: 'open_work', header: ['การแจ้งเตือน', 'ไม่พบรายการ'], rows: [{ label: 'ข้อมูล ณ', value: '17 กันยายน 2569' }],
+      notes: ['ตรวจเฉพาะแจ้งเตือนที่ยังไม่ปิด ตามสิทธิ์ของคุณ'], linkLabel: 'ดูแจ้งเตือนในเว็บ',
+    });
+    assert.deepEqual(empty.presentation?.cards[0]?.webLink, { label: 'รายการแจ้งเตือน', path: '/companies/company-1/notifications' });
+
+    const claim = await ask({ status: 'ok', sourceRefs: [{ ...listRef, label: 'อนุมัติเบิกจ่าย: RB-202608-00002', entityType: 'notification_event', entityId: 'n1', webPath: '/companies/company-1/reimbursements/rb-1' }],
+      data: { count: 1, hasMore: false, opens: 'claim', items: [{ id: 'n1', title: 'อนุมัติเบิกจ่าย: RB-202608-00002', kind: 'claim_approval', documentNo: 'RB-202608-00002' }] } });
+    assert.deepEqual(claim.presentation?.cards[0]?.layout?.header, ['ใบเบิกรออนุมัติ', 'พบ 1 รายการ']);
+    assert.equal(claim.presentation?.cards[0]?.layout?.linkLabel, 'เปิดใบเบิกเพื่ออนุมัติ');
+    assert.equal(claim.presentation?.cards[0]?.webLink?.path, '/companies/company-1/reimbursements/rb-1');
+
+    // Refused or failed: no card, no rows, and never the words of an empty result.
+    for (const failed of [{ status: 'forbidden', sourceRefs: [] }, { status: 'unavailable', sourceRefs: [] }, { status: 'error', sourceRefs: [] }]) {
+      const response = await ask(failed);
+      assert.equal(response.presentation, undefined, String(failed.status));
+      assert.doesNotMatch(response.replyText, /ไม่พบรายการ|0 รายการ/, String(failed.status));
+    }
+    // A successful read this card cannot verify stays a sentence card.
+    const malformed = await ask({ status: 'ok', data: { items: [] }, sourceRefs: [listRef] });
+    assert.equal(malformed.presentation?.cards[0]?.layout, undefined);
+  });
+
   it('deterministic fallback preserves scalar zero as a successful answer card', async () => {
     const config = { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any;
     const useCase = new LineAiTurnUseCase(makeErpTools('ok', 0), makeOrchestrator(), config, makeAgentcoreRuntime());
@@ -268,6 +303,11 @@ describe('LineAiTurnUseCase – feature flag routing', () => {
     assert.match(response.replyText, /123\.00/);
     assert.match(response.replyText, /ช่วง: 1 /);
     assert.match(response.replyText, new RegExp(`– ${Number(today.slice(-2))} `));
+    // Design lock context 1 on the direct tool read: the card of the very sentence that is sent.
+    assert.equal(response.presentation?.cards[0]?.text, response.replyText);
+    assert.deepEqual(response.presentation?.cards[0]?.layout?.header, ['สรุปค่าใช้จ่าย', 'กันยายน 2569']);
+    assert.deepEqual(response.presentation?.cards[0]?.layout?.rows.slice(0, 2),
+      [{ label: 'ยอดรวม', value: '123.00 บาท', emphasis: 'total' }, { label: 'จำนวนรายการ', value: '1 รายการ' }]);
 
     const explicitCurrent = await useCase.execute({ ...req, messageText: 'ค่าใช้จ่ายเดือนนี้เท่าไร',
       valueCandidates: { amounts: [], dates: [], periods: [{ span: 'Current month', kind: 'month', fromDate, toDate,

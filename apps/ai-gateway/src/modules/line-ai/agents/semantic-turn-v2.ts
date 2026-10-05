@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
-import { LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, extractValueCandidatesV2, hasToolPermissions, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
+import { LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, PUBLIC_LOOKUP_SYSTEM_PROMPT, aiBudgetV2OrdinalCeiling, civilPeriodRange, extractValueCandidatesV2, hasToolPermissions, isCivilPeriodKey, lineAiRetainedTaskSourceText, parseLineAiSemanticCoverage,
   parsePublicLookupRequest, publicLookupPolicy, publicQueryNeedsRephrase, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, todayCivilDate, unresolvedMonthName,
-  type LineAiPeriodCandidate,
+  type LineAiAnswerCardLayout, type LineAiPeriodCandidate,
   type LineAiTurnRequest, type LineAiSemanticCoverageV2, type LineAiSourceRefV2, type LineAiValueCandidatesV2,
   type ToolMeta, type ToolResult, type PublicLookupResult, type SourceRef, type SpecialistOutput } from '@watchdog-bms/contracts';
 import type { AgentRunResult } from './agent-types';
@@ -12,13 +12,15 @@ import { currentBudgetState } from '../../../common/usage/usage-context';
 import { productKnowledgeAccess, renderApprovedKnowledge } from './approved-knowledge';
 import { PRODUCT_HELP_PACK } from './approved-product-help';
 import { buildCapabilityHelp } from './response-composer.agent';
-import { assumedYearNote, formatPreparedSimpleRead, periodLine } from './prepared-simple-read-formatter';
+import { BACKLOG_TOOLS, OPEN_WORK_TOOLS, assumedYearNote, backlogCardLayout, formatPreparedSimpleRead, openWorkCardLayout, periodLine } from './prepared-simple-read-formatter';
+import { draftUpdateCardLayout } from './draft-update-formatter';
 import { preparedFamilyKey } from '../domain/logic/prepared-simple-read.logic';
 import { toolAccessOutcome } from './tool-availability';
 import { MANGMEE_PERSONA_PROMPT, closesWithShopLine, fixMangmeeSelfReference, sanitizeMangmeeComposedText, shapeGeneralAnswer } from './mangmee-persona';
 import { canonicalizeReadToolEnums, conversationReadCandidates, evidenceRefsText, misroutedReadTool, myPendingWorkQuestion, resolvePeriodKeyAlias } from './read-tool-input';
 import { expenseNameResolutionIssue, expenseNameResolutionReplyText, type ExpenseNameResolutionIssue,
-  expensePeriodComparison, expensePeriodComparisonReplyText, expenseBreakdownShares, type ExpensePeriodComparison,
+  expensePeriodComparisonSeries, expensePeriodComparisonReplyText, expenseComparisonUnavailableReplyText, aggregationIncomplete,
+  expenseBreakdownShares, type ExpensePeriodComparisonSeries,
   reimbursementPendingApprovalsTotal, emptyApprovalBacklogReplyText, approvalBacklogStageWording,
   REIMBURSEMENT_APPROVAL_NOT_PERMITTED, reimbursementApprovalNotPermittedReplyText,
   PACKAGE_MANAGER_REQUIRED, packageManagerRequiredReplyText, PACKAGE_TOOL_NAMES, withoutUnaskedPackagePurchaseLine,
@@ -27,6 +29,12 @@ import { scopePolicyOverride } from '../domain/logic/line-ai-scope-policy.logic'
 import { completeReimbursementDraftInput } from './reimbursement-draft-input';
 
 const logger = new Logger('SemanticTurnV2');
+
+// Match only a capability question, not a specific how-to or an independent business clause.
+// The API's menu matcher is API-local; semantic turns use this clause's quoted input evidence.
+function isCurrentCapabilityQuestion(text: string): boolean {
+  return /^(?:(?:น้อง(?:มั่งมี)?|มั่งมี|คุณ|ระบบ)?(?:ทำ(?:อะไร|ไร)ได้(?:บ้าง)?|ช่วย(?:อะไร|ไร)(?:ฉัน|ผม|เรา)?ได้(?:บ้าง)?|มี(?:ความสามารถ|ฟีเจอร์)อะไร(?:บ้าง)?)(?:ครับ|ค่ะ|คะ|นะคะ|หน่อย)?|what\s+can\s+you\s+(?:do|help(?:\s+me)?\s+with)|what\s+are\s+your\s+(?:capabilities|abilities))(?:[?？!。.]*)$/iu.test(text.trim().replace(/(?<=[ก-๙])\s+(?=[ก-๙])/gu, ''));
+}
 
 // Spec §8 row 1 ("อ่านข้อมูลไม่ได้ ฝั่งระบบ"): system-side, terminal, no retry invitation, no dead
 // end. Reused for every forced/compose give-up below so none of them lingers as a phantom
@@ -249,17 +257,12 @@ function readPeriod(good: ToolResult[], periods: readonly LineAiPeriodCandidate[
  * verified, model-free formatter the prepared lane already trusts, on this item's own tool
  * results; only when it cannot verify this exact shape (or the family is operator-disabled) does
  * the reply fall back to the honest §8 terminal, still carrying this item's real source.
- *
- * Item 3(c): a two-period comparison has no compiled prepared-lane family (it spans two indices'
- * results, which the prepared lane never sees), so it gets its OWN deterministic shape here,
- * tried FIRST — a fully computed comparison beats the single-period formatter below.
  */
 function deterministicReadFallback(
-  good: ToolResult[], language: 'th' | 'en', locale: string, enabledFamilies: ReadonlySet<string>, messageText: string, comparison?: ExpensePeriodComparison,
+  good: ToolResult[], language: 'th' | 'en', locale: string, enabledFamilies: ReadonlySet<string>, messageText: string,
   periodNote = '',
-): { status: 'handled' | 'unsupported'; replyText: string; sourceRefIds: string[] } {
+): { status: 'handled' | 'unsupported'; replyText: string; sourceRefIds: string[]; layout?: LineAiAnswerCardLayout } {
   const sourceRefIds = good.flatMap(result => result.sourceRefs.map(sourceId));
-  if (comparison) return { status: 'handled', replyText: expensePeriodComparisonReplyText(comparison), sourceRefIds };
   // tuning-7 (run 7 T-015-a): a why-question's fallback should show the breakdown that explains the
   // amount (planned alongside the list by the why augmentation), not the bare list total.
   // M3 (tuning-8, T-111-b): several breakdown results can exist for a why-question (E5's vendor-
@@ -279,8 +282,10 @@ function deterministicReadFallback(
     for (const shape of preferredAnswerShapes(primary.toolName, primary.data, messageText)) {
       const key = preparedFamilyKey(primary.toolName, shape);
       if (!enabledFamilies.has(key)) continue;
-      const formatted = formatPreparedSimpleRead(key, output, { language, locale, periodNote });
-      if (formatted.kind === 'answer') return { status: 'handled', replyText: formatted.replyText, sourceRefIds: formatted.sourceRefs.map(sourceId) };
+      const formatted = formatPreparedSimpleRead(key, output, { language, locale, periodNote, messageText });
+      // The card of this very sentence — only when the sentence was written from the one result there is.
+      if (formatted.kind === 'answer') return { status: 'handled', replyText: formatted.replyText, sourceRefIds: formatted.sourceRefs.map(sourceId),
+        ...(formatted.layout && good.length === 1 ? { layout: formatted.layout } : {}) };
     }
   }
   return { status: 'unsupported', replyText: READ_UNAVAILABLE_TEXT[language], sourceRefIds };
@@ -617,9 +622,11 @@ export async function runSemanticTurnV2(input: {
   const entitledFeatureKeys = req.entitledFeatureKeys ?? req.userContext.entitledFeatureKeys;
   const itemText = new Map<number, string>();
   const scopePolicyForcedIndices = new Set<number>();
+  const capabilityIndices = new Set<number>();
   for (const item of inventory) {
     const text = evidenceRefsText(item.evidenceRefs, req.inputEvidence, req.messageText);
     itemText.set(item.index, text);
+    if ((item.kind === 'help' || item.kind === 'general') && isCurrentCapabilityQuestion(text)) capabilityIndices.add(item.index);
     const override = scopePolicyOverride(text, item.kind, req.userContext.permissions, entitledFeatureKeys, language, item.toolHint);
     if (override) {
       forced.set(item.index, { status: 'unsupported', reasonCode: override.reasonCode, text: override.text });
@@ -944,17 +951,56 @@ export async function runSemanticTurnV2(input: {
       }
     }
   }
-  const comparisonByIndex = new Map<number, ExpensePeriodComparison>();
+  const comparisonByIndex = new Map<number, ExpensePeriodComparisonSeries>();
+  const comparisonFollowers = new Set<number>();
+  const comparisonSourceIds = new Map<ExpensePeriodComparisonSeries, string[]>();
   for (const toolName of COMPARISON_TOOLS) {
+    const toolResults = results.filter(entry => entry.result.toolName === toolName && inventory.some(item => item.index === entry.index && item.kind === 'read'));
+    const comparisonData = (result: ToolResult) => ({ ...(object(result.data) ? result.data : {}),
+      ...(result.queryApplied ? { queryApplied: result.queryApplied } : {}), ...(result.completeness ? { completeness: result.completeness } : {}) });
+    for (const entry of toolResults) {
+      const incomplete = entry.result.status === 'ok' && aggregationIncomplete(comparisonData(entry.result));
+      if (entry.result.status === 'ok' && !incomplete) continue;
+      const item = inventory.find(item => item.index === entry.index)!;
+      if (results.filter(result => result.index === item.index).length !== 1) continue;
+      // inputKey is written from the normalized input at execution, never from a model reply.
+      const inputKey = (entry as { inputKey?: string }).inputKey;
+      const boundInput: unknown = inputKey ? JSON.parse(inputKey)[1] : item.requestedFilters;
+      const filters = object(boundInput) ? boundInput : item.requestedFilters;
+      const month = isCivilPeriodKey(filters['periodKey']) ? civilPeriodRange(filters['periodKey']) : undefined;
+      const fromDate = filters['fromDate'] ?? month?.startDate;
+      const toDate = filters['toDate'] ?? month?.endDate;
+      // Failed data is never evidence. Name only the period in this permission-checked request.
+      if (typeof fromDate !== 'string' || typeof toDate !== 'string' || forced.has(item.index) || questions.has(item.index)) continue;
+      forced.set(item.index, { status: entry.result.status === 'forbidden' ? 'denied' : 'unsupported',
+        reasonCode: incomplete ? 'COMPARISON_AGGREGATE_INCOMPLETE' : 'COMPARISON_READ_UNAVAILABLE',
+        text: expenseComparisonUnavailableReplyText(fromDate, toDate, incomplete ? 'incomplete' : entry.result.status === 'forbidden' ? 'forbidden' : 'unavailable', language === 'en') });
+    }
     const sameTool = readEntries.filter(entry => entry.result.toolName === toolName);
-    // Distinct periods only, oldest first — the two indices actually chosen still answer the turn's
-    // own subrequests; a third/fourth distinct period (no evidence of one in this eval) is unscoped.
-    const distinctPeriods = [...new Map(sameTool.map(entry => [`${entry.fromDate}:${entry.toDate}`, entry])).values()]
-      .sort((left, right) => left.fromDate.localeCompare(right.fromDate));
-    const [a, b] = distinctPeriods;
-    if (!a || !b) continue;
-    const comparison = expensePeriodComparison(toolName, a.result.data as Record<string, unknown>, b.result.data as Record<string, unknown>, language === 'en');
-    if (comparison) { comparisonByIndex.set(a.index, comparison); comparisonByIndex.set(b.index, comparison); }
+    // All reads must stand: no series across a failure, another facet at the same index, or a
+    // different requested filter. The planner's eight-call bound also bounds the series.
+    if (sameTool.length !== toolResults.length || sameTool.some(entry => !entry.result.sourceRefs.length
+      || forced.has(entry.index) || questions.has(entry.index) || nameIssues.has(entry.index)
+      || results.filter(result => result.index === entry.index).length !== 1)) continue;
+    const requestedBases = sameTool.map(entry => canonical(Object.fromEntries(Object.entries(inventory.find(item => item.index === entry.index)!.requestedFilters)
+      .filter(([key]) => !['fromDate', 'toDate', 'periodKey', 'limit'].includes(key)))));
+    if (new Set(requestedBases).size > 1) continue;
+    const distinctPeriods = new Map<string, typeof sameTool[number]>();
+    let conflicting = false;
+    for (const entry of sameTool) {
+      const key = `${entry.fromDate}:${entry.toDate}`, prior = distinctPeriods.get(key);
+      if (prior && canonical(comparisonData(prior.result)) !== canonical(comparisonData(entry.result))) conflicting = true;
+      distinctPeriods.set(key, entry);
+    }
+    if (conflicting) continue;
+    const comparison = expensePeriodComparisonSeries(toolName, [...distinctPeriods.values()].map(entry => comparisonData(entry.result)), language === 'en');
+    if (!comparison) continue;
+    const firstIndex = Math.min(...sameTool.map(entry => entry.index));
+    for (const entry of sameTool) {
+      comparisonByIndex.set(entry.index, comparison);
+      if (entry.index !== firstIndex) comparisonFollowers.add(entry.index);
+    }
+    comparisonSourceIds.set(comparison, [...new Set(sameTool.flatMap(entry => entry.result.sourceRefs.map(sourceId)))]);
   }
   const derivedFactsByIndex = new Map<number, string>();
   for (const entry of readEntries) {
@@ -1014,7 +1060,7 @@ export async function runSemanticTurnV2(input: {
   // whatever compose says — asking the model for it only cost the turn its 20 s deadline (NAT-04).
   const draftWrites = new Set(inventory.filter(item => item.kind === 'write' && results.some(entry => entry.index === item.index
     && entry.result.status === 'ok' && object(entry.result.data) && object(entry.result.data.reimbursementDraft))).map(item => item.index));
-  const needsComposition = inventory.some(item => item.kind !== 'help' && !forced.has(item.index) && !questions.has(item.index)
+  const needsComposition = inventory.some(item => item.kind !== 'help' && !capabilityIndices.has(item.index) && !forced.has(item.index) && !questions.has(item.index)
     && !nameIssues.has(item.index) && !comparisonByIndex.has(item.index) && !approvalDeniedIndices.has(item.index) && !draftWrites.has(item.index)
     && !emptyBacklogText.has(item.index));
   for (let attempt = 0; needsComposition && attempt < 2; attempt++) {
@@ -1071,6 +1117,10 @@ export async function runSemanticTurnV2(input: {
   const turnWords = JSON.stringify([req.messageText, req.userContext, req.conversationContext, req.taskProjection, req.inputEvidence, retained?.modelData,
     results.map(entry => entry.result.data)]);
   const coverage: LineAiSemanticCoverageV2[] = [], texts: string[] = [];
+  // Design lock: the locked card of an item whose final answer is a deterministic read sentence, or
+  // one read of the reader's open work. Model prose never fills a row; an item answered any other way
+  // has no entry here and is drawn as its sentence.
+  const layouts = new Map<number, LineAiAnswerCardLayout>();
   for (const item of inventory) {
     // C1(d): the composer never produced a usable answer for this subrequest after every retry —
     // a compose failure, not a customer question, so it must not linger as `needs_user`.
@@ -1124,13 +1174,15 @@ export async function runSemanticTurnV2(input: {
         sourceRefIds: good.flatMap(result => result.sourceRefs.map(sourceId)) };
       modelComposed = false;
     }
-    // Item 3(c): compose produced NO usable answer at all for this index (the C1(d) default above —
-    // a repair-exhausted or structurally invalid compose response, not merely an ungrounded one,
-    // which the read/write/public/file branch below already recovers). A two-period comparison still
-    // has a fully deterministic answer available; render it rather than the generic §8 terminal.
-    else if (item.kind === 'read' && answer.reasonCode === 'SEMANTIC_ANSWER_UNAVAILABLE' && comparisonByIndex.has(item.index)) {
+    // A complete comparison always uses its computed answer, including when compose ran for an
+    // independent question. A model sentence must never replace a period's figures.
+    else if (item.kind === 'read' && comparisonByIndex.has(item.index)) {
       answer = { index: item.index, status: 'handled', text: expensePeriodComparisonReplyText(comparisonByIndex.get(item.index)!),
-        reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', sourceRefIds: good.flatMap(result => result.sourceRefs.map(sourceId)) };
+        reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED', sourceRefIds: comparisonSourceIds.get(comparisonByIndex.get(item.index)!)! };
+      modelComposed = false;
+    }
+    else if (capabilityIndices.has(item.index)) {
+      answer = { index: item.index, status: 'handled', text: capabilityHelp };
       modelComposed = false;
     }
     // E4 (tuning-6a, run 5 dead ends: T-005-a t3 "ทำไมเดือนนี้ค้างจ่ายเยอะจังคะ", T-015-a t1 "ทำไมมี
@@ -1141,10 +1193,11 @@ export async function runSemanticTurnV2(input: {
     // render. Reuse the SAME model-free formatter the grounding-failure path below already trusts;
     // when it cannot render this shape either, `answer` is left exactly as the C1(d) default above.
     else if (item.kind === 'read' && answer.reasonCode === 'SEMANTIC_ANSWER_UNAVAILABLE' && good.length > 0) {
-      const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, undefined, periodNote);
+      const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, periodNote);
       if (fallback.status === 'handled') {
         answer = { index: item.index, status: 'handled', text: fallback.replyText, reasonCode: 'DETERMINISTIC_FALLBACK_RENDERED',
           ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
+        if (fallback.layout) layouts.set(item.index, fallback.layout);
         modelComposed = false;
       }
     }
@@ -1182,10 +1235,11 @@ export async function runSemanticTurnV2(input: {
         // fallback below: try the verified, model-free formatter on this item's own good tool
         // results first; only when it cannot render this shape does it fall to the honest §8
         // terminal — either way `unsupported`, never `needs_user` (R-L2/R-L3).
-        const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, comparisonByIndex.get(item.index), periodNote);
+        const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, periodNote);
         answer = { index: item.index, status: fallback.status, text: fallback.replyText,
           reasonCode: fallback.status === 'handled' ? 'DETERMINISTIC_FALLBACK_RENDERED' : 'SOURCE_COVERAGE_MISSING',
           ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
+        if (fallback.status === 'handled' && fallback.layout && item.kind === 'read') layouts.set(item.index, fallback.layout);
         modelComposed = false;
       }
       else if (item.kind === 'read') {
@@ -1202,10 +1256,11 @@ export async function runSemanticTurnV2(input: {
           // C1(c): never show the raw rejection line — reuse the SAME verified, model-free
           // formatter the prepared lane trusts for this exact tool result; failing that, an
           // honest §8 terminal that still carries this item's real source link.
-          const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, comparisonByIndex.get(item.index), periodNote);
+          const fallback = deterministicReadFallback(good, language, req.userContext.locale, enabledFamilies, itemText.get(item.index) ?? req.messageText, periodNote);
           answer = { index: item.index, status: fallback.status, text: fallback.replyText,
             reasonCode: fallback.status === 'handled' ? 'DETERMINISTIC_FALLBACK_RENDERED' : 'ANSWER_NUMBER_NOT_GROUNDED',
             ...(fallback.sourceRefIds.length > 0 ? { sourceRefIds: fallback.sourceRefIds } : {}) };
+          if (fallback.status === 'handled' && fallback.layout) layouts.set(item.index, fallback.layout);
           modelComposed = false;
         }
         // A4 (batch5): used to append `\n${facts}` here — raw machine-readable lines like
@@ -1272,7 +1327,18 @@ export async function runSemanticTurnV2(input: {
     if (modelComposed && answer.status === 'handled' && read && periodNote && !ASSUMED_YEAR_ALREADY_STATED.test(answer.text)) {
       answer.text += periodLine({ fromDate: read.period.fromDate, toDate: read.period.toDate }, undefined, language === 'en', read.period.label, periodNote);
     }
-    texts.push(answer.text);
+    // Open work: the item's ONLY call was one successful read of the reader's own notices or tasks, and
+    // the answer stands. The rows are that result's; a refused or failed read never has any.
+    if (item.kind === 'read' && answer.status === 'handled' && assigned.length === 1 && good.length === 1 && OPEN_WORK_TOOLS.has(good[0]!.toolName)) {
+      const layout = openWorkCardLayout(good[0]!.toolName, good[0]!.data, good[0]!.asOf);
+      if (layout) layouts.set(item.index, layout);
+    }
+    // An expense edit: the header names the state its ONE draft-edit result reports. The body stays the answer.
+    if (item.kind === 'write' && assigned.length === 1 && good.length === 1 && (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(good[0]!.toolName)) {
+      const layout = draftUpdateCardLayout(good[0]!.data);
+      if (layout) layouts.set(item.index, layout);
+    }
+    if (!comparisonFollowers.has(item.index)) texts.push(answer.text);
     coverage.push({ index: item.index, status: answer.status, ...(answer.reasonCode ? { reasonCode: answer.reasonCode } : {}),
       ...(answer.sourceRefIds ? { sourceRefIds: answer.sourceRefIds } : {}), ...(answer.status === 'needs_user' ? { question: answer.text.slice(0, 500) } : {}) });
   }
@@ -1287,6 +1353,24 @@ export async function runSemanticTurnV2(input: {
   const outputs = results.map(({ result }) => ({ agent: 'accounting' as const, status: result.status === 'ok' ? 'SUCCEEDED' as const : result.status === 'forbidden' ? 'PERMISSION_DENIED' as const : 'FAILED' as const,
     summary: '', suggestions: [], requiresHumanReview: false, facts: [], sourceRefs: result.sourceRefs, toolCalls: [{ name: result.toolName, status: result.status, durationMs: result.durationMs ?? 0, ...(result.errorCode ? { errorCode: result.errorCode } : {}) }],
     toolData: result.status === 'ok' ? [{ tool: result.toolName, data: result.data }] : [], asOf: result.asOf }));
-  return { plan, outputs, replyText, semanticCoverage: coverage, sourceRefs: [...new Map(sources.map(ref => [sourceId(ref), ref])).values()],
-    webLinks: sources.filter(ref => ref.webPath).map(ref => ({ label: ref.label, path: ref.webPath! })), durationMs: Date.now() - started };
+  const sourceRefs = [...new Map(sources.map(ref => [sourceId(ref), ref])).values()];
+  const webLinks = sources.filter(ref => ref.webPath).map(ref => ({ label: ref.label, path: ref.webPath! }));
+  // A layout stands for the whole reply or for nothing: one item, one block, and that item's layout…
+  const single = inventory.length === 1 && blocks.length === 1 ? layouts.get(inventory[0]!.index) : undefined;
+  // …or, for an answer that is ONLY reads of what is waiting — every item a read whose answer stands,
+  // every call of the turn one of those reads and successful — one card of all of them (owner
+  // 2026-10-05, "มีงานค้างอะไรบ้าง": three numbered parts read "อ่านยากมาก"). Its rows are the tools'
+  // results; the sentences stay the canonical answer. A lone day's checklist is that card only when the
+  // reader asked about waiting work: the same read also answers "ค่าใช้จ่ายวันนี้".
+  const turnResults = [...new Set(results.map(entry => entry.result))];
+  const backlog = !single && inventory.every(item => item.kind === 'read') && coverage.every(entry => entry.status === 'handled')
+    && turnResults.length > 0 && turnResults.every(result => result.status === 'ok' && BACKLOG_TOOLS.has(result.toolName))
+    && (turnResults.length > 1 || myPendingWorkQuestion(req.messageText))
+    ? backlogCardLayout(turnResults) : undefined;
+  const layout = single ?? backlog;
+  const sourceLabels = [...new Set(sourceRefs.map(ref => ref.label))];
+  return { plan, outputs, replyText, semanticCoverage: coverage, sourceRefs, webLinks,
+    ...(layout ? { presentation: { kind: 'answer_cards' as const, cards: [{ text: replyText, layout,
+      ...(sourceLabels.length > 0 ? { sourceLabels } : {}), ...(webLinks[0] ? { webLink: webLinks[0] } : {}) }] } } : {}),
+    durationMs: Date.now() - started };
 }

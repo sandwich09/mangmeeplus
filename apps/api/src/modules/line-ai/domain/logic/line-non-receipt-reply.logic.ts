@@ -1,5 +1,6 @@
-import { EXPENSE_MANUAL_EDIT_HELP_TH, EXPENSE_READ_FAILED_HELP_TH, EXPENSE_READ_PARTIAL_HELP_TH } from '@watchdog-bms/contracts';
+import { EXPENSE_MANUAL_EDIT_HELP_TH, EXPENSE_READ_FAILED_HELP_TH, EXPENSE_READ_PARTIAL_HELP_TH, EXPENSE_STATUS_LABELS, SOURCE_DOCUMENT_TYPE_LABELS, scrubRecordIdentifier } from '@watchdog-bms/contracts';
 import type { BusinessDocumentClassification } from '@watchdog-bms/contracts';
+import type { LineExpenseDraftCardFacts } from './line-business-card.logic';
 
 /**
  * Spec §18.4 NR01–NR09, as copy.
@@ -219,27 +220,58 @@ const CAPTURE_DATE_FORMATTER = new Intl.DateTimeFormat('th-TH', { timeZone: 'Asi
  * pointing at the EXPENSE rather than the group. A row the source does not carry is left out
  * rather than printed as a placeholder that reads like a fact.
  */
-export function formatCaptureAutoHandoffReply(input: {
+type CaptureAutoHandoffReplyInput = {
   link: string;
   vendorName?: string | null;
   amount?: string | number | null;
   currency?: string | null;
   documentTypeLabel?: string | null;
   expenseDate?: Date | string | null;
-}): string {
+  expenseId?: string;
+  status?: string;
+  documentNumber?: string | null;
+  categoryName?: string | null;
+  vatAmount?: string | null;
+  vatMode?: string | null;
+};
+
+/** One reading for the file notice and the locked review card. Optional rows carry saved facts only;
+ *  the text remains the original notice, including its link, for exact canonical fallback. */
+export function formatCaptureAutoHandoffReply(input: CaptureAutoHandoffReplyInput): { text: string; draft?: LineExpenseDraftCardFacts } {
   const amount = input.amount === null || input.amount === undefined || !Number.isFinite(Number(input.amount))
     ? null : Number(input.amount);
   const date = input.expenseDate ? new Date(input.expenseDate) : null;
   const vendor = input.vendorName?.trim();
-  return [
+  const amountLabel = amount === null ? null : `${CAPTURE_MONEY_FORMATTER.format(amount)}${input.currency && input.currency !== 'THB' ? ` ${input.currency}` : ' บาท'}`;
+  const dateLabel = date && !Number.isNaN(date.getTime()) ? CAPTURE_DATE_FORMATTER.format(date) : null;
+  const note = 'ยังไม่ยืนยันรายการ';
+  const text = [
     '🧾 อ่านเอกสารแล้ว บันทึกเป็นร่างรายการให้แล้วค่ะ',
     ...(vendor ? [`ร้าน: ${vendor}`] : []),
-    `ยอดในใบเสร็จ: ${amount === null ? 'ยังอ่านยอดไม่ได้'
-      : `${CAPTURE_MONEY_FORMATTER.format(amount)}${input.currency && input.currency !== 'THB' ? ` ${input.currency}` : ' บาท'}`}`,
+    `ยอดในใบเสร็จ: ${amountLabel ?? 'ยังอ่านยอดไม่ได้'}`,
     ...(input.documentTypeLabel ? [`ประเภทเอกสาร: ${input.documentTypeLabel}`] : []),
-    ...(date && !Number.isNaN(date.getTime()) ? [`วันที่: ${CAPTURE_DATE_FORMATTER.format(date)}`] : []),
-    'ยังไม่ยืนยันรายการ',
+    ...(dateLabel ? [`วันที่: ${dateLabel}`] : []),
+    note,
     '',
     `✅ ตรวจสอบและยืนยันในเว็บแอป:\n${input.link}`,
   ].join('\n');
+  if (!input.expenseId || !['DRAFT', 'NEEDS_REVIEW'].includes(input.status ?? '')) return { text };
+  const row = (label: string, value: string | null | undefined, extra: Partial<LineExpenseDraftCardFacts['rows'][number]> = {}) =>
+    value ? [{ label, value, ...extra }] : [];
+  const vat = input.vatMode !== 'NO_VAT' && input.vatMode !== 'EXEMPT' && input.vatAmount && Number.isFinite(Number(input.vatAmount)) && Number(input.vatAmount) > 0
+    ? `${CAPTURE_MONEY_FORMATTER.format(Number(input.vatAmount))} บาท` : null;
+  return { text, draft: {
+    expenseId: input.expenseId,
+    subject: input.documentTypeLabel === SOURCE_DOCUMENT_TYPE_LABELS.RECEIPT ? 'ข้อมูลใบเสร็จ' : 'ข้อมูลเอกสาร',
+    rows: [
+      ...row('ผู้ขาย / ร้านค้า', vendor),
+      ...row('วันที่เอกสาร', dateLabel),
+      ...row('เลขเอกสาร', scrubRecordIdentifier(input.documentNumber ?? null, 40)),
+      ...row('ประเภทเอกสาร', input.documentTypeLabel),
+      ...row('หมวดค่าใช้จ่าย', input.categoryName?.trim()),
+      ...row('ยอดรวม', amountLabel, { total: true }),
+      ...row('ภาษีมูลค่าเพิ่ม', vat),
+      { label: 'สถานะเอกสาร', value: EXPENSE_STATUS_LABELS[input.status as 'DRAFT' | 'NEEDS_REVIEW'], pill: 'pending' },
+    ], notes: [note],
+  } };
 }

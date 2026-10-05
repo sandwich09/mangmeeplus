@@ -110,7 +110,7 @@ for more than ~60 s (LINE's loading indicator ceiling) between acceptance and it
 
 | State | Feedback |
 | --- | --- |
-| Media received | Immediate ack: photo received, being read, normally within 1 minute, summary will follow; chatting may continue (`LINE_MEDIA_RECEIVED_TEXT`). |
+| Media received | Immediate ack: photo received, being read, summary will follow in this chat; chatting may continue (`LINE_MEDIA_RECEIVED_TEXT`). Sent as the locked scanning card (design lock 2026-10-04 §8) with this sentence as its canonical text. No duration and no percentage, on the card or in the sentence: the server knows neither. (Until 2026-10-05 the sentence said "normally within 1 minute".) |
 | Media download from LINE failed | Bytes never arrived, so say provably: nothing recorded from this photo; resend it (`MEDIA_DOWNLOAD_FAILED_REPLY`). The row is released for LINE redelivery only — the sweep never replays it (single retry owner: the user). |
 | Media turn failed mid-processing | State is uncertain, so no "nothing was saved" promise: processing failed, resend; a duplicate file will be flagged (`MEDIA_PROCESSING_FAILED_REPLY`). |
 | Transient read failure (timeout/empty/truncated) | Admit the read failed — never the bare "what is this picture?": photo kept, nothing recorded, then the numbered manual path (`formatOcrGovernanceClarifyReply` with `readFailed`). Governance refusals keep their own lead-ins. |

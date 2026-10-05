@@ -512,8 +512,7 @@ describe('LINE AI latency/autonomy eval corpus', () => {
       // fixtures exist, and BOTH flags default off with no provider/UAT evidence recorded yet.
       'persisted-terminal-outcome-replay', 'flex-failure-text-fallback',
       // §10.1 dedicated expense draft card. Same meaning of "implemented": the builder, the capture
-      // wiring and their specs exist behind LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED, which is still
-      // default-off with no provider/UAT evidence recorded.
+      // wiring and their specs exist and rendering is always on; no provider/UAT evidence recorded.
       'expense-draft-structured-card',
     ]) {
       assert.ok(byId.has(id), `missing presentation row ${id}`);
@@ -541,9 +540,11 @@ describe('LINE AI latency/autonomy eval corpus', () => {
         `${id}: an implemented-but-dark lane must say so, or the manifest reads as a live guarantee`);
       assert.equal(byId.get(id)!.maxAdditionalModelCalls, 0, `${id}: a delivery retry must never re-decide the turn`);
     }
-    // And for the expense draft card, which renders behind the same dark terminal-Flex flag.
-    assert.match(byId.get('expense-draft-structured-card')!.note, /DEFAULT OFF/,
-      'expense-draft-structured-card: an implemented-but-dark lane must say so');
+    // Card rendering is unconditional; deployment evidence remains a separate fact.
+    for (const id of ['expense-draft-structured-card', 'long-reply-over-1200-lossless']) {
+      assert.match(byId.get(id)!.note, /always on/);
+      assert.doesNotMatch(byId.get(id)!.note, /DEFAULT OFF|Behind LINE_AI_/);
+    }
     assert.equal(byId.get('expense-draft-structured-card')!.expectedPresentationKind, 'flex');
     assert.equal(byId.get('expense-draft-structured-card')!.expectedWebPath, '/companies/{companyId}/expenses/{expenseId}');
 

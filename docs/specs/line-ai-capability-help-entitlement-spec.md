@@ -214,3 +214,7 @@ The API carries a second, older capability lane: `isCapabilityQuestion` + `build
 ## Shared customer wording — 2026-10-03
 
 The API receipt refusal and gateway feature-disabled answer reuse `LINE_FEATURE_DISABLED_HELP_TH` from contracts. They ask a permitted package manager to check the package or contact the team; they never promise that a shop owner/administrator can switch features on in the shop web app. Empty capability answers and API follow-ups reuse `LINE_CAPABILITY_NO_ACCESS_TH`: role permissions and enabled shop menus are separate checks, and a shop administrator is not a platform administrator. Curated jokes use Thai words rather than English episode/fandom shorthand.
+
+## Current capabilities only — 2026-10-05
+
+For a general capability question (for example `ทำอะไรได้บ้าง`, `ช่วยอะไรได้บ้าง`, `น้องทำอะไรได้`, `มีความสามารถอะไร`, or `what can you do`), semantic `help` and `general` items return the existing permission/entitlement-scoped capability text alone, with `handled` coverage and no model composition. Recognise the question deterministically from the item's quoted user text; a separate read clause still executes and answers normally. Thai and English specific how-to questions without an approved guide retain the existing setup paragraph and `SPECIFIC_PRODUCT_GUIDE_UNAVAILABLE` outcome unchanged. The capability list itself is unchanged.

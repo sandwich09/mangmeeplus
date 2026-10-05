@@ -1,0 +1,192 @@
+{
+  "provenance": "Current source functions invoked offline with fixtures extracted from repository tests. Not a captured live LINE conversation, no provider/ERP calls, no financial mutation.",
+  "capability": {
+    "fixture": "apps/ai-gateway/src/modules/line-ai/agents/response-composer.agent.spec.ts",
+    "question": "ทำอะไรได้บ้าง",
+    "access": {
+      "permissions": [
+        "expense.read",
+        "expense.receipt.line_upload",
+        "dashboard.read"
+      ],
+      "entitledFeatureKeys": [
+        "expenses",
+        "expenses.list",
+        "expenses.upload",
+        "dashboard_notifications"
+      ]
+    },
+    "replyText": "น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น\n• ค่าใช้จ่ายและใบเสร็จ\n• งานค้างและการแจ้งเตือน\nส่งรูปใบเสร็จหรือสลิปเพื่อสร้างร่างค่าใช้จ่ายได้ด้วยนะคะ\nลองถามตรงๆ เช่น “ค่าใช้จ่ายเดือนนี้เท่าไหร่” ได้เลยค่ะ\nความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ"
+  },
+  "casual": {
+    "fixture": "apps/ai-gateway/src/modules/line-ai/agents/response-composer.agent.spec.ts",
+    "question": "วันนี้เหนื่อยจัง",
+    "replyText": "เหนื่อยมานิดหน่อยสินะคะ พักหายใจแป๊บหนึ่งก็ได้นะคะ 😊"
+  },
+  "explain": {
+    "fixture": "apps/ai-gateway/src/modules/line-ai/agents/expense-explain-record.spec.ts",
+    "question": "ทำไม service charge คิดแยกเป็นอีกรายการนึง ทำไมไม่รวมกัน ?",
+    "replyText": "บิล «BHC» 03/09/2569 เลขที่ A0042 ยอด 1,789.04 บาทค่ะ\nมาจาก สินค้า 1,520.00 + ค่าบริการ 152.00 = ฐานภาษี 1,672.00 แล้วบวก VAT 117.04 เป็น 1,789.04\nค่าใช้จ่ายเพิ่มแยกเป็นช่องของตัวเอง เพื่อให้ยอดฐานภาษีและ VAT ถูกต้อง ไม่ได้นับซ้ำกับสินค้านะคะ\nสถานะตอนนี้: รอตรวจสอบ\nถ้าจะแก้ผ่าน LINE ให้พิมพ์ฟิลด์กับค่าใหม่ ระบบจะแสดงตัวอย่างก่อน และจะบันทึกเมื่อกด “ยืนยัน” เท่านั้นค่ะ"
+  },
+  "command": {
+    "fixture": "apps/api/src/modules/line-ai/domain/logic/line-draft-update-card.logic.spec.ts",
+    "preview": {
+      "previewId": "550e8400-e29b-41d4-a716-446655440000",
+      "recordType": "expense",
+      "expenseId": "exp-1",
+      "record": {
+        "vendorName": "BHC",
+        "expenseDate": "2026-09-03",
+        "statusLabel": "รอตรวจสอบ"
+      },
+      "tool": "expense.draft.add_charge",
+      "diff": [
+        {
+          "field": "charge.SERVICE_CHARGE",
+          "label": "ค่าบริการ",
+          "kind": "money",
+          "before": null,
+          "after": "152.00"
+        }
+      ],
+      "totalsBefore": {
+        "subtotalAmount": "1520",
+        "discountAmount": "0",
+        "chargesAmount": "0.00",
+        "taxableAmount": "1520",
+        "vatAmount": "106.40",
+        "grandTotalAmount": "1626.40"
+      },
+      "totalsAfter": {
+        "subtotalAmount": "1520",
+        "discountAmount": "0",
+        "chargesAmount": "152.00",
+        "taxableAmount": "1672",
+        "vatAmount": "117.04",
+        "grandTotalAmount": "1789.04"
+      },
+      "warnings": [],
+      "expiresAt": "2026-09-05T10:10:00.000Z"
+    },
+    "previewText": "จะแก้ BHC · 3 ก.ย. 2569 · รอตรวจสอบ ตามนี้นะคะ\n• ค่าบริการ: ยังไม่ระบุ → 152.00\nยอดรวมใหม่ 1,789.04 (เดิม 1,626.40)\nกด [ยืนยัน] เพื่อบันทึก หรือ [ยกเลิก] ถ้ายังไม่แก้ค่ะ — ยังไม่ได้บันทึกอะไรจนกว่าจะกดยืนยันนะคะ",
+    "card": {
+      "type": "flex",
+      "altText": "จะแก้ BHC · 3 ก.ย. 2569 · รอตรวจสอบ — ค่าบริการ: ยังไม่ระบุ → 152.00 · ยอดรวมใหม่ 1,789.04 — หากไม่เห็นปุ่ม ให้ส่งคำขอแก้ไขใหม่เพื่อรับบัตรอีกครั้ง",
+      "contents": {
+        "type": "bubble",
+        "size": "mega",
+        "body": {
+          "type": "box",
+          "layout": "vertical",
+          "spacing": "md",
+          "paddingAll": "16px",
+          "contents": [
+            {
+              "type": "text",
+              "text": "ยืนยันการแก้ไขรายการ",
+              "weight": "bold",
+              "size": "lg",
+              "color": "#101828",
+              "wrap": true
+            },
+            {
+              "type": "text",
+              "text": "BHC · 3 ก.ย. 2569 · รอตรวจสอบ",
+              "size": "sm",
+              "color": "#475467",
+              "wrap": true
+            },
+            {
+              "type": "separator",
+              "margin": "md"
+            },
+            {
+              "type": "box",
+              "layout": "vertical",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "ค่าบริการ",
+                  "size": "xs",
+                  "color": "#667085",
+                  "wrap": true
+                },
+                {
+                  "type": "text",
+                  "text": "ยังไม่ระบุ → 152.00",
+                  "size": "sm",
+                  "color": "#101828",
+                  "wrap": true
+                }
+              ]
+            },
+            {
+              "type": "separator",
+              "margin": "md"
+            },
+            {
+              "type": "box",
+              "layout": "baseline",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "ยอดรวมใหม่",
+                  "size": "sm",
+                  "color": "#475467",
+                  "flex": 3
+                },
+                {
+                  "type": "text",
+                  "text": "1,789.04",
+                  "size": "md",
+                  "weight": "bold",
+                  "color": "#B54708",
+                  "align": "end",
+                  "flex": 4
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "text": "เดิม 1,626.40",
+              "size": "xs",
+              "color": "#667085",
+              "align": "end"
+            }
+          ]
+        },
+        "footer": {
+          "type": "box",
+          "layout": "vertical",
+          "spacing": "sm",
+          "contents": [
+            {
+              "type": "button",
+              "style": "primary",
+              "color": "#22C55E",
+              "action": {
+                "type": "postback",
+                "label": "ยืนยัน",
+                "data": "action=draft-update-confirm&previewId=550e8400-e29b-41d4-a716-446655440000",
+                "displayText": "ยืนยันการแก้ไข"
+              }
+            },
+            {
+              "type": "button",
+              "style": "secondary",
+              "action": {
+                "type": "postback",
+                "label": "ยกเลิก",
+                "data": "action=draft-update-cancel&previewId=550e8400-e29b-41d4-a716-446655440000",
+                "displayText": "ยกเลิกการแก้ไข"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "appliedText": "✅ แก้ให้แล้วค่ะ: ค่าบริการ 152.00 · ยอดรวม 1,789.04\nดูในเว็บ: https://app.example/companies/co-1/expenses/exp-1",
+    "cancelledText": "ยกเลิกแล้วค่ะ ยังไม่ได้แก้อะไรในรายการนะคะ",
+    "ambiguousLineText": "บิลนี้มีหลายบรรทัดค่ะ ขอทราบว่าต้องการแก้บรรทัดไหนนะคะ (เช่น \"บรรทัด 2 เป็น 500\")"
+  }
+}

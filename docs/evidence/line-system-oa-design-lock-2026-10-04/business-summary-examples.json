@@ -1,0 +1,116 @@
+{
+  "provenance": "Offline current source with repository test fixtures. The OPEN alert fixture was projected through the current notification read adapter. Empty results reuse the existing ERP empty-result test inputs. This is design evidence, not live shop data or a recent LINE transcript.",
+  "expense": {
+    "fixture": "apps/ai-gateway/src/modules/line-ai/agents/response-composer.agent.spec.ts",
+    "question": "ดูค่าใช้จ่ายเดือนนี้",
+    "data": {
+      "total": 7,
+      "period": {
+        "fromDate": "2026-08-01",
+        "toDate": "2026-08-31"
+      },
+      "summary": {
+        "countedItems": 7,
+        "cancelledCount": 1,
+        "totalAmount": "85.00",
+        "pendingAmount": "15.00"
+      },
+      "items": [
+        {
+          "vendorNameSnapshot": "Synthetic Vendor",
+          "grandTotalAmount": "40.00"
+        },
+        {
+          "status": "REJECTED",
+          "grandTotalAmount": "10.00"
+        }
+      ]
+    },
+    "sourceRefs": [
+      {
+        "label": "รายการค่าใช้จ่าย",
+        "module": "expenses",
+        "entityType": "expense_summary",
+        "permissionChecked": true,
+        "webPath": "/companies/company-1/expenses"
+      }
+    ],
+    "asOf": "2026-09-17T10:00:00Z",
+    "replyText": "ค่าใช้จ่าย: 85.00 บาท (7 รายการ)\nไม่รวมรายการที่ยกเลิกหรือถูกปฏิเสธ 1 รายการ\nช่วง: 2026-08-01 – 2026-08-31\nที่มา: รายการค่าใช้จ่าย\nข้อมูล ณ 2026-09-17"
+  },
+  "alerts": {
+    "fixture": "apps/api/src/modules/dashboard-notifications/application/use-cases/process-due-deliveries.use-case.spec.ts",
+    "adapter": "apps/api/src/modules/line-ai/application/use-cases/erp-dashboard-tools.use-case.ts",
+    "toolName": "notifications.list_open_alerts",
+    "status": "ok",
+    "data": {
+      "count": 1,
+      "items": [
+        {
+          "title": "อนุมัติเบิกจ่าย: RB-202608-00002",
+          "severity": "ACTION"
+        }
+      ]
+    },
+    "sourceRefs": [
+      {
+        "label": "อนุมัติเบิกจ่าย: RB-202608-00002",
+        "module": "dashboard-notifications",
+        "entityType": "notification_event",
+        "asOf": "2026-09-17T10:00:00Z",
+        "permissionChecked": true,
+        "webPath": "/companies/co-1/notifications"
+      }
+    ],
+    "asOf": "2026-09-17T10:00:00Z",
+    "design": {
+      "requestNumber": "RB-202608-00002",
+      "currentReadPath": "/companies/co-1/notifications",
+      "legacyNotificationPath": "/companies/co-1/reimbursements?tab=approvals&focus=rb-1",
+      "proposedDetailPath": "/companies/co-1/reimbursements/rb-1",
+      "verifiedRoute": "apps/web/app/(workspace)/companies/[companyId]/reimbursements/[requestId]/page.tsx",
+      "limitation": "Proposed direct destination for the design only. The current LINE read tool projects the notification-list path and does not project a reimbursement request ID or detail link."
+    }
+  },
+  "emptyAlerts": {
+    "fixture": "apps/api/src/modules/line-ai/application/use-cases/erp-empty-result-semantics.spec.ts",
+    "toolName": "notifications.list_open_alerts",
+    "status": "ok",
+    "data": {
+      "count": 0,
+      "items": []
+    },
+    "sourceRefs": [
+      {
+        "label": "รายการแจ้งเตือน",
+        "module": "dashboard-notifications",
+        "entityType": "notification_list",
+        "asOf": "2026-09-17T10:00:00Z",
+        "permissionChecked": true,
+        "webPath": "/companies/co-1/notifications"
+      }
+    ],
+    "asOf": "2026-09-17T10:00:00Z"
+  },
+  "emptyTasks": {
+    "fixture": "apps/api/src/modules/line-ai/application/use-cases/erp-empty-result-semantics.spec.ts",
+    "adapter": "apps/api/src/modules/line-ai/application/use-cases/erp-workflow-tools.use-case.ts",
+    "toolName": "workflow.list_assigned_tasks",
+    "status": "ok",
+    "data": {
+      "total": 0,
+      "items": []
+    },
+    "sourceRefs": [
+      {
+        "label": "งานที่ได้รับมอบหมาย",
+        "module": "workflow",
+        "entityType": "workflow_task_list",
+        "asOf": "2026-09-17T10:00:00Z",
+        "permissionChecked": true,
+        "webPath": "/companies/co-1/workflow"
+      }
+    ],
+    "asOf": "2026-09-17T10:00:00Z"
+  }
+}
