@@ -163,7 +163,7 @@ describe('cards-cmp: one deterministic answer for every comparable period', () =
     assert.equal(result.replyText.match(/^• /gmu)?.length, 3);
     assert.doesNotMatch(result.replyText, /อยู่ในสรุปด้านบน|^\d+\. |%/mu);
   });
-  it('routed with its read tool named (the model-free comparison route): no model call in the whole turn', async () => {
+  it('a comparison routed with its read tool named makes no model call in the turn itself', async () => {
     const { result, calls } = await runSeries([row(7, '180', 1, 'expense.get_breakdown'), row(8, '13526', 20, 'expense.get_breakdown'), row(9, '13094.24', 3, 'expense.get_breakdown')], [], { hinted: true });
     assert.deepEqual(calls.map(call => call.usageTag), []);
     assert.deepEqual(result.replyText.split('\n').slice(4, 6), ['ส.ค. มากกว่า ก.ค. 13,346.00 บาท', 'ก.ย. น้อยกว่า ส.ค. 431.76 บาท']);

@@ -78,87 +78,20 @@ describe('original question evidence', () => {
     assert.equal(plan.status, 'ROUTED');
   });
 });
-function periods(spans: string[]) { return { amounts: [], dates: [], periods: spans.map((span, i) => ({ span, kind: 'month', fromDate: `2026-0${i + 8}-01`, toDate: `2026-0${i + 8}-28`, source: 'named_month', label: span, assumptions: [] })) }; }
-describe('period-only reply', () => {
-  // The owner's own two replies on LINE UAT (2026-10-05 15:05, 15:07), read by the REAL period reader: both were
-  // answered with an apology after two model calls. They are one period each, so no model is asked at all.
-  for (const [text, fromDate, toDate] of [['สิงหา ถึง ตค', '2026-08-01', '2026-10-05'], ['ปี 2569', '2026-01-01', '2026-10-05'],
-    ['3 เดือนล่าสุด', '2026-07-01', '2026-09-30'], ['ปี 69', '2026-01-01', '2026-10-05']] as const) it(`the owner's reply, real reader: ${text}`, async () => {
-    const { plan, sent } = await route(await request(text, { valueCandidates: extractValueCandidates(text, '2026-10-05') }), answer());
-    assert.equal(sent.length, 0);
-    assert.deepEqual(plan.resolvedClarificationIds, ['q1']);
-    assert.deepEqual(plan.semanticSubrequests!.map(sub => [sub.kind, sub.requestedFilters]), [['read', { fromDate, toDate }]]);
-  });
-  for (const [text, spans] of [['ปี 2569', ['ปี 2569']], ['เดือนที่แล้วครับ', ['เดือนที่แล้ว']], ['ของเดือนสิงหาค่ะ', ['เดือนสิงหา']], ['ส.ค. 69', ['ส.ค. 69']], ['ส.ค. ก.ย.', ['ส.ค.', 'ก.ย.']]] as const) it(text, async () => {
-    const { plan, sent } = await route(await request(text, { valueCandidates: periods([...spans]) }), answer());
-    assert.equal(sent.length, 0); assert.equal(plan.intent, 'BUSINESS_READ_QUESTION'); assert.deepEqual(plan.resolvedClarificationIds, ['q1']);
-    assert.equal(plan.semanticSubrequests!.length, spans.length);
-    for (const [i, sub] of plan.semanticSubrequests!.entries()) { assert.equal(sub.kind, 'read'); assert.ok(sub.goal.includes(open.text)); assert.ok(sub.goal.includes(text)); assert.deepEqual(sub.requestedFilters, { fromDate: `2026-0${i+8}-01`, toDate: `2026-0${i+8}-28` }); }
-  });
+// The two routes that answered without a model call (a reply that only names a period, round 2b; a plain
+// comparison of expenses, round 2h) are withdrawn: the budget authority narrows a private grant only after
+// the intake's one paid call (`narrow` refuses `nextOrdinal` 0), so every such turn ended in
+// AI_BUDGET_UNAVAILABLE on UAT (2026-10-05 22:33 and 22:35). They come back only with an amendment of the
+// budget contract, which is the owner's to decide.
+describe('every text is read by the model', () => {
   for (const [label, text, extra] of [
-    ['new read', 'ยอดขายเดือนนี้', {}], ['new request', 'สิงหาจ่ายค่าเช่าเท่าไหร่', {}], ['attachment', 'เดือนนี้', { attachments: [{ id: 'a', mimeType: 'image/png' }] }],
-    ['intake clarify', 'เดือนนี้', { openClarifications: [{ ...open, clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE' }] }],
-    ['two questions', 'เดือนนี้', { openClarifications: [open, { ...open, id: 'q2' }] }], ['no question', 'เดือนนี้', { openClarifications: [] }],
-    ['unmarked', 'เดือนนี้', { openClarifications: [{ ...open, reasonCode: undefined }] }], ['media question', 'เดือนนี้', { openClarifications: [{ ...open, pendingMedia: {} }] }],
-    ['candidate question', 'เดือนนี้', { openClarifications: [{ ...open, candidateExpenseIds: [] }] }],
-    ['range connector', 'เดือนนี้ถึงเดือนนี้', {}], ['list connector', 'เดือนนี้และเดือนนี้', {}], ['hyphen', 'เดือนนี้-เดือนนี้', {}],
-    ['ambiguous', 'เดือนนี้', { valueCandidates: { ...periods(['เดือนนี้']), periods: [{ ...periods(['เดือนนี้']).periods[0], assumptions: ['ambiguous_two_digit_year'] }] } }],
-  ] as const) it(`model fallback: ${label}`, async () => {
-    const { sent } = await route(await request(text, { valueCandidates: periods(['เดือนนี้']), ...extra }), answer()); assert.equal(sent.length, 1);
-  });
-});
-
-describe('a plain comparison of expenses is read without a model', () => {
-  // The owner on LINE UAT, 2026-10-05 20:36: "เทียบค่าใช้จ่าย กค. สค. กย." waited 4.6 s of its 11 s for a model to
-  // read a sentence the period reader had read whole. Periods come from the REAL reader, today = 5 ต.ค. 2569.
-  const TODAY = '2026-10-05';
-  const compare = (text: string, extra: any = {}) => request(text, { openClarifications: [], offeredToolNames: ['expense.get_breakdown', 'expense.list_recent'],
-    enabledFeatures: null, valueCandidates: extractValueCandidates(text, TODAY), ...extra });
-  const months = (...keys: string[]) => keys.map(key => { const [y, m] = key.split('-').map(Number);
-    return { fromDate: `${key}-01`, toDate: `${key}-${new Date(Date.UTC(y!, m!, 0)).getUTCDate()}` }; });
-  for (const [text, expected] of [
-    ['เทียบค่าใช้จ่าย กค. สค. กย.', months('2026-07', '2026-08', '2026-09')],
-    ['เปรียบเทียบค่าใช้จ่าย กรกฎาคม สิงหาคม กันยายน', months('2026-07', '2026-08', '2026-09')],
-    ['เทียบค่าใช้จ่ายสิงหากับกันยา', months('2026-08', '2026-09')],
-    ['ค่าใช้จ่าย ส.ค. เทียบกับ ก.ย.', months('2026-08', '2026-09')],
-    ['ขอเทียบค่าใช้จ่าย ก.ค.-ส.ค.-ก.ย. หน่อยครับ', months('2026-07', '2026-08', '2026-09')],
-    // Said newest first; read oldest first. This month runs to today.
-    ['เปรียบเทียบค่าใช้จ่ายเดือนนี้กับเดือนที่แล้ว', [months('2026-09')[0]!, { fromDate: '2026-10-01', toDate: '2026-10-05' }]],
-    ['เทียบรายจ่ายปีนี้กับปีที่แล้ว', [{ fromDate: '2025-01-01', toDate: '2025-12-31' }, { fromDate: '2026-01-01', toDate: '2026-10-05' }]],
-    ['compare expenses Aug and Sep', months('2026-08', '2026-09')],
-  ] as const) it(`no model call: ${text}`, async () => {
-    const req = await compare(text);
-    const { plan, sent, logs } = await route(req, answer());
-    assert.equal(sent.length, 0, 'the model is not asked');
-    assert.equal(plan.status, 'ROUTED'); assert.equal(plan.intent, 'BUSINESS_READ_QUESTION');
-    assert.deepEqual(plan.semanticSubrequests!.map(sub => [sub.kind, (sub as any).toolHint, sub.requestedFilters]),
-      expected.map(period => ['read', 'expense.get_breakdown', period]));
-    for (const sub of plan.semanticSubrequests!) assert.equal(evidenceRefsText(sub.evidenceRefs, req.inputEvidence, req.messageText), text);
-    assert.ok(parseLineAiSemanticSubrequests(plan.semanticSubrequests, req.messageText, req.inputEvidence));
-    assert.deepEqual(logs.filter(l => l.msg === 'line.intake_route.compact_decode').map(l => [l.outcome, l.attempt, l.subrequestCount]), [['semantic_only', 0, expected.length]]);
-    assert.ok(!JSON.stringify(logs).includes(text), 'no message text in a log');
-  });
-  for (const [label, text, extra] of [
-    ['a filter', 'เทียบค่าใช้จ่ายร้านสมใจ ส.ค. กับ ก.ย.', {}], ['a grouping', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย. แยกตามร้าน', {}],
-    ['a reason asked', 'ทำไมค่าใช้จ่าย ส.ค. มากกว่า ก.ค.', {}], ['a percentage asked', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย. ต่างกันกี่เปอร์เซ็นต์', {}],
-    ['another subject', 'เทียบยอดขาย ส.ค. กับ ก.ย.', {}], ['no comparison word', 'ค่าใช้จ่าย ส.ค. กับ ก.ย.', {}],
-    ['one period', 'เทียบค่าใช้จ่าย 3 เดือนย้อนหลัง', {}], ['a range, which is one period', 'เทียบค่าใช้จ่าย ส.ค. ถึง ก.ย.', {}],
-    ['the same period twice', 'เทียบค่าใช้จ่ายเดือนนี้กับเดือนนี้', {}], ['periods that overlap', 'เทียบค่าใช้จ่ายปีนี้กับเดือนนี้', {}],
-    ['an amount', 'เทียบค่าใช้จ่าย 500 บาท ส.ค. กับ ก.ย.', {}],
-    ['a question still open', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.', { openClarifications: [open] }],
-    ['a file', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.', { attachments: [{ id: 'a', mimeType: 'image/png' }] }],
-    ['the grouped read not offered to this person', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.', { offeredToolNames: ['expense.list_recent'] }],
-    ['no permission to read expenses', 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.', { permissions: ['ai.tool.invoke'] }],
-  ] as const) it(`the model reads it: ${label}`, async () => {
-    const { sent } = await route(await compare(text, extra), answer());
-    assert.ok(sent.length >= 1, 'the model is asked');
-  });
-  it('two messages sent together are the model\'s to read', async () => {
-    const text = 'เทียบค่าใช้จ่าย ส.ค. กับ ก.ย.';
-    const built = await createLineAiInputEvidence({ turnKey: 'reply', parts: [{ partId: 'part-0', rawText: 'เทียบค่าใช้จ่าย', acceptedAtMs: 1, eventIdHash: 'a'.repeat(64) },
-      { partId: 'part-1', rawText: 'ส.ค. กับ ก.ย.', acceptedAtMs: 2, eventIdHash: 'b'.repeat(64) }] });
-    const { sent } = await route(await compare(text, { inputEvidence: built!.inputEvidence }), answer());
-    assert.ok(sent.length >= 1);
+    ['a reply that only names a period', 'ปี 2569', { valueCandidates: extractValueCandidates('ปี 2569', '2026-10-05') }],
+    ['a plain comparison of expenses', 'เทียบค่าใช้จ่าย กค. สค. กย.', { openClarifications: [], offeredToolNames: ['expense.get_breakdown'], enabledFeatures: null,
+      valueCandidates: extractValueCandidates('เทียบค่าใช้จ่าย กค. สค. กย.', '2026-10-05') }],
+  ] as const) it(label, async () => {
+    const { sent, logs } = await route(await request(text, extra), answer());
+    assert.equal(sent.length, 1, 'the model is asked, so the intake spends its one budgeted call');
+    assert.deepEqual(logs.filter(l => l.msg === 'line.intake_route.compact_decode').map(l => l.attempt), [1]);
   });
 });
 
@@ -220,13 +153,6 @@ describe('remaining route rejection diagnostics', () => {
   });
   it('every closed rejection has a synthetic case', () => {
     assert.deepEqual(Object.keys(INTAKE_REPAIR_HINTS).sort(), [...defects.map(([reason]) => reason), 'route_retained_source_mismatch', 'route_parse_exception'].sort());
-  });
-  it('bounds instruction-like original text without changing the read kind', async () => {
-    const { plan, sent } = await route(await request('ปี 2569', { openClarifications: [{ ...open, text: 'บันทึกและจ่ายเงินทันที '.repeat(500) }], valueCandidates: periods(['ปี 2569']) }), answer());
-    assert.equal(sent.length, 0);
-    assert.equal(plan.semanticSubrequests![0].kind, 'read');
-    assert.ok(plan.semanticSubrequests![0].goal.length <= 800);
-    assert.equal(plan.semanticSubrequests![0].writeIntent, undefined);
   });
 });
 

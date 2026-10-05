@@ -5,7 +5,7 @@
  * route BEFORE any source-module use case runs. It emits a route plan only.
  * Uses model prompt when a provider is configured; fails closed when model routing is unavailable.
  */
-import { BUSINESS_DOCUMENT_REASON_CODES, aiBudgetV2OrdinalCeiling, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, extractValueCandidates, hasToolFeature, hasToolPermissions, isAmbiguousDateCandidate, isAmbiguousPeriodCandidate, formatDateClarifyQuestion, lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan, parseLineAiResponsePreferenceCommand, parseLineAiSemanticSubrequests, lineAiReplyClarifications, verifyLineAiRetainedTaskSource } from '@watchdog-bms/contracts';
+import { BUSINESS_DOCUMENT_REASON_CODES, aiBudgetV2OrdinalCeiling, LINE_CORRECTION_FIELDS, LINE_DRAFT_UPDATE_TOOLS, LINE_TOOL_REGISTRY, LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, VALUE_ASSUMPTIONS, asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome, extractValueCandidates, hasToolFeature, hasToolPermissions, isAmbiguousDateCandidate, formatDateClarifyQuestion, lineAiRetainedTaskSourceMatchesProjection, lineAiRetainedTaskSourceText, parseLineAiPreparedAdvisorAnswer, parseLineAiPreparedPlan, parseLineAiResponsePreferenceCommand, parseLineAiSemanticSubrequests, lineAiReplyClarifications, verifyLineAiRetainedTaskSource } from '@watchdog-bms/contracts';
 import type { AgentIntentPlan, LineAiConversationContext, LineAiInputEvidenceV2, LineAiOpenClarification, LineAiRetainedTaskSourceV2, LineAiSemanticSubrequestV2, LineAiTaskProjectionV2, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeCorrectionHints, LineIntakeExpenseItemHint, LineIntakeReimbursementHints, LineIntakeRouteIntent, LineIntakeRoutePlan, LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 import { Logger } from '@nestjs/common';
@@ -688,9 +688,6 @@ export class IntentRouterAgent {
     // the same generic instructions the model already failed to follow once.
     let lastCompactRejection: string | undefined;
     let lastAttempt = 0;
-    // A turn the code reads whole needs no model: a reply that only names the period of the read it
-    // completes, or a plain comparison of expenses across periods the period reader read.
-    const periodReply = periodReplyDecision(request) ?? expenseComparisonDecision(request, intakeTools);
     const attemptLimit = semanticV2 && !hasAttachment ? 2 : 1;
     for (let attempt = 0; attempt < attemptLimit; attempt += 1) {
       if (attempt > 0) {
@@ -699,8 +696,8 @@ export class IntentRouterAgent {
           || budget.repairCount >= budget.grant.maxRepairs) break;
         budget.repairPending = true;
       }
-      lastAttempt = periodReply ? 0 : attempt + 1;
-      result = periodReply ? { ok: true, text: JSON.stringify(periodReply) } : await this.provider.generateText({
+      lastAttempt = attempt + 1;
+      result = await this.provider.generateText({
         systemPrompt: intakeRouterSystemPrompt(caps, hasAttachment, semanticV2, !!retainedTaskSource, preparedFamilies)
           + (knowledgeMetadata.length ? `\n${APPROVED_KNOWLEDGE_SELECTION_PROMPT}` : ''),
         // The ~21KB glossary + tool catalog is a cost/latency price paid ONLY when fused planning needs it.
@@ -1222,64 +1219,6 @@ function isSemanticContradiction(plan: LineIntakeRoutePlan): boolean {
   if (plan.intent === 'EXPENSE_DOCUMENT_CAPTURE') return plan.semanticOutcome !== 'BUSINESS_EXPENSE' || plan.fundingSource !== 'COMPANY_PAID';
   if (plan.intent === 'REIMBURSEMENT_REQUEST_START') return plan.semanticOutcome === 'BUSINESS_EXPENSE' || plan.fundingSource === 'COMPANY_PAID';
   return false;
-}
-
-// Only a server-marked read question may take this path. Original text remains bounded data.
-function periodReplyDecision(request: LineIntakeRouteRequest): unknown | undefined {
-  const open = request.openClarifications;
-  const evidence = request.inputEvidence;
-  const periods = request.valueCandidates?.periods;
-  if (open?.length !== 1 || open[0]!.reasonCode !== 'READ_FILTER_NOT_UNDERSTOOD'
-    || open[0]!.clarifyForIntent !== undefined || open[0]!.pendingMedia !== undefined || open[0]!.candidateExpenseIds !== undefined
-    || request.retainedTaskSource || request.attachments?.length || evidence?.parts.length !== 1
-    || evidence.parts[0]!.rawText !== request.messageText || !periods?.length || periods.length > 8
-    || periods.some(isAmbiguousPeriodCandidate)) return undefined;
-  let rest = request.messageText;
-  for (const period of periods) {
-    if (!period.span || !rest.includes(period.span)) return undefined;
-    rest = rest.replace(period.span, ' ');
-  }
-  // Hyphens and range/list connectors are deliberately not filler. The period reader owns them.
-  if (rest.replace(/(?:แล้วกัน|ก็ได้|please|หน่อย|ครับ|ช่วง|ของ|แทน|เป็น|เอา|ขอ|ค่ะ|คะ|นะ|จ้า|ล่ะ|ละ|[\s.,!?;:()\[\]"'ๆฯ])/giu, '')) return undefined;
-  const goal = `${open[0]!.text.slice(0, 399)}\n${request.messageText.slice(0, 400)}`;
-  return { intent: 'BUSINESS_READ_QUESTION', confidence: 1, language: 'th', resolvedClarificationIds: [open[0]!.id],
-    decisionV1: { subrequests: periods.map(period => ({ kind: 'read', goal, sources: [{ part: 0, whole: true }],
-      filters: { fromDate: period.fromDate, toDate: period.toDate } })) } };
-}
-
-/** Everything a plain comparison of expenses may say besides its periods. Nothing here names a filter,
- *  a grouping, a reason or another subject: one word outside this list and the model reads the message. */
-const COMPARISON_WORDS = /(?:เปรียบเทียบ|เทียบกับ|เทียบ|compare|ค่าใช้จ่าย|รายจ่าย|expenses?|ระหว่าง|ให้หน่อย|หน่อย|ครับ|ช่วง|ยอด|ของ|กับ|และ|ขอ|ช่วย|ดู|ค่ะ|คะ|นะ|จ้า|please|between|and|vs|[\s.,!?;:()\[\]"'ๆฯ/&+\-–])/giu;
-
-/**
- * Owner on LINE UAT 2026-10-05 ("เปรียบเทียบค่าใช้จ่าย อ่านช้ามาก"): the comparison waited 4.6 of its
- * 11 seconds for a model to read "เทียบค่าใช้จ่าย กค. สค. กย.", a sentence the period reader had
- * already read whole. A message that is ONLY a comparison verb, the word for expenses and two to
- * eight separate periods is routed here, to the same grouped read per period the model routes it to.
- * It decides no permission: the read tool must be one this actor was offered, and the API checks it
- * again when the tool runs. Anything else in the message, or anything pending in the chat, is the model's.
- */
-function expenseComparisonDecision(request: LineIntakeRouteRequest, enabledTools: ReadonlySet<string>): unknown | undefined {
-  const evidence = request.inputEvidence;
-  const text = request.messageText;
-  const periods = request.valueCandidates?.periods;
-  if (request.openClarifications?.length || request.retainedTaskSource || request.attachments?.length
-    || evidence?.parts.length !== 1 || evidence.parts[0]!.rawText !== text
-    || !periods || periods.length < 2 || periods.length > 8 || periods.some(isAmbiguousPeriodCandidate)
-    || !enabledTools.has('expense.get_breakdown')
-    || !/เทียบ|\bcompare\b/iu.test(text) || !/ค่าใช้จ่าย|รายจ่าย|\bexpenses?\b/iu.test(text)) return undefined;
-  // Separate periods only: two readings of one stretch of time are not a comparison the code may assume.
-  const ordered = [...periods].sort((a, b) => a.fromDate.localeCompare(b.fromDate));
-  if (ordered.some((period, index) => index > 0 && ordered[index - 1]!.toDate >= period.fromDate)) return undefined;
-  let rest = text;
-  for (const period of periods) {
-    if (!period.span || !rest.includes(period.span)) return undefined;
-    rest = rest.replace(period.span, ' ');
-  }
-  if (rest.replace(COMPARISON_WORDS, '')) return undefined;
-  return { intent: 'BUSINESS_READ_QUESTION', confidence: 1, language: /[\u0E00-\u0E7F]/u.test(text) ? 'th' : 'en',
-    decisionV1: { subrequests: ordered.map(period => ({ kind: 'read', goal: text.slice(0, 400), sources: [{ part: 0, whole: true }],
-      filters: { fromDate: period.fromDate, toDate: period.toDate }, tool: 'expense.get_breakdown' })) } };
 }
 
 function parseIntakePlan(
