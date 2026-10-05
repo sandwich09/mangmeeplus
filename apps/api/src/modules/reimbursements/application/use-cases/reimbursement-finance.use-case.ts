@@ -433,6 +433,8 @@ export class RecordReimbursementPaymentUseCase {
       return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req, ctx);
     }
 
+    await this.repo.assertPaymentRecordInput(req, input);
+
     // Sent back to have its payout account corrected (payout spec §14.7, §22): its status refuses the
     // payment below anyway; this tells a payer whose form was open what happened, in their own words.
     if (payoutCorrectionPhase(req)) throw new ConflictException('payout_correction_in_progress');

@@ -5,7 +5,7 @@ import { ATTACHMENT_SOURCE_TYPES_LABEL } from '@watchdog-bms/contracts';
 import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { reimbursementIncurredDateError, todayCivilDate, type MemberPayoutAccountSummary, type ReimbursementPayoutSummary, type ReimbursementSourceOption, type ReimbursementSourceOptions, type ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
+import { reimbursementIncurredDateError, todayCivilDate, type SavedPayoutAccountSummary, type MemberPayoutAccountSummary, type ReimbursementPayoutSummary, type ReimbursementSourceOption, type ReimbursementSourceOptions, type ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -21,8 +21,8 @@ import { TransactionBranchField, useTransactionCreateBranchId } from '../web-cor
 import { ReimbursementSourceFacts, WholeWords } from './ReimbursementSourceFacts';
 import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
 import { BackToClaimsLink, ClaimPayoutFormSection } from './ReimbursementPayout';
-import { getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
-import { claimPayoutFormError, claimPayoutFormOf, claimPayoutInput, emptyClaimPayoutForm, type ClaimPayoutForm } from './reimbursement-payout.logic';
+import { getMySavedPayoutAccounts, getMemberPayoutAccount, getMyPayoutAccount } from './reimbursement-payout.api';
+import { claimPayoutFieldError, claimPayoutSavedRefusal, resetClaimPayoutForRequester, claimPayoutFormError, claimPayoutFormOf, claimPayoutInput, emptyClaimPayoutForm, type ClaimPayoutForm } from './reimbursement-payout.logic';
 
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
   { value: 'travel', label: 'เดินทาง' },
@@ -79,6 +79,11 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   const [payout, setPayout] = useState<ClaimPayoutForm>(emptyClaimPayoutForm);
   const [currentPayout, setCurrentPayout] = useState<ReimbursementPayoutSummary | null>(null);
   const [myPayoutAccount, setMyPayoutAccount] = useState<MemberPayoutAccountSummary | null | undefined>(undefined);
+  const [savedAccounts, setSavedAccounts] = useState<SavedPayoutAccountSummary[]>([]);
+  const [savedAccountsLoading, setSavedAccountsLoading] = useState(false);
+  const [savedAccountsError, setSavedAccountsError] = useState<string | null>(null);
+  const [savedAccountsReload, setSavedAccountsReload] = useState(0);
+  const [payoutInvalidField, setPayoutInvalidField] = useState<string>();
   const [maySaveAsDefault, setMaySaveAsDefault] = useState(false);
   const [sourceOptions, setSourceOptions] = useState<ReimbursementSourceOptions>({ requesters: [], items: [] });
   const [sourceSearch, setSourceSearch] = useState('');
@@ -162,9 +167,21 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
   }, [canCreate, canEditEmployees, canUpdate, companyId, editing, requesterUserId, userId]);
 
   useEffect(() => {
+    let active = true;
+    setSavedAccounts([]); setSavedAccountsError(null); setSavedAccountsLoading(false);
+    if (!userId || requesterUserId !== userId || (editing ? !canUpdate : !canCreate)) return;
+    setSavedAccountsLoading(true);
+    getMySavedPayoutAccounts(companyId).then(response => { if (active) setSavedAccounts(response.accounts); })
+      .catch(e => { if (active) setSavedAccountsError(errorText(e)); })
+      .finally(() => { if (active) setSavedAccountsLoading(false); });
+    return () => { active = false; };
+  }, [companyId, requesterUserId, userId, editing, canCreate, canUpdate, savedAccountsReload]);
+
+  useEffect(() => {
     if (!editing && previousBranchRef.current !== branchId) {
       setForm(current => ({ ...current, lines: current.lines.map(line => line.linkedExpenseId ? emptyLine() : line) }));
       setRequesterUserId(userId);
+      setPayout(resetClaimPayoutForRequester); setPayoutInvalidField(undefined);
       previousBranchRef.current = branchId;
     }
   }, [branchId, editing, userId]);
@@ -273,9 +290,14 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     // Expand collapsed rows so the field named in the error is actually visible.
     if (v) { setError(v); setCollapsedLines({}); return; }
     const payoutError = claimPayoutFormError(payout);
-    if (payoutError) { setError(payoutError); return; }
+    if (payoutError) {
+      setError(payoutError); setPayoutInvalidField(claimPayoutFieldError(payout)?.field);
+      const formElement = e.currentTarget;
+      requestAnimationFrame(() => formElement.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      return;
+    }
     // Undefined leaves an existing draft's receiving choice as it is.
-    const payoutInput = claimPayoutInput(payout, maySaveAsDefault);
+    const payoutInput = claimPayoutInput(payout, maySaveAsDefault, requesterUserId === userId);
     setBusy(true);
     let createdId: string | null = null;
     let receiptFailureMessage: string | null = null;
@@ -341,6 +363,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
       // The draft opens on its journey page at step 1, where it is checked and sent for approval.
       router.push(`${hubHref}/${created.id}`);
     } catch (e) {
+      const recovery = !createdId && claimPayoutSavedRefusal(payout, e);
+      if (recovery) { setPayout(recovery.form); setSavedAccountsReload(value => value + 1); }
       setError(createdId
         ? `บันทึกร่างคำขอเบิกแล้ว แต่แนบไฟล์ไม่ครบ: ${receiptFailureMessage ?? errorText(e)}${linkedReceiptCount > 0 ? ` ระบบเก็บไฟล์ที่แนบสำเร็จ ${linkedReceiptCount} รายการไว้แล้ว` : ''} กรุณาเปิดร่างและเลือกไฟล์รายการที่ยังขาดใหม่`
         : errorText(e));
@@ -393,7 +417,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
             <h3 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h3>
             <label className="mt-3 block text-xs font-semibold text-gray-600">ผู้เบิก
               <ThemedSelect aria-label="ผู้เบิก" className={cx(inputClass, 'mt-1.5')} value={requesterUserId} disabled={editing || !canPrepareForOthers || sourcesLoading}
-                onChange={event => { setRequesterUserId(event.target.value); setForm(current => ({ ...current, lines: [emptyLine()] })); setPayout(emptyClaimPayoutForm()); }}>
+                onChange={event => { setRequesterUserId(event.target.value); setForm(current => ({ ...current, lines: [emptyLine()] })); setPayout(resetClaimPayoutForRequester); setPayoutInvalidField(undefined); }}>
                 {!sourceOptions.requesters.some(member => member.userId === requesterUserId) && <option value={requesterUserId}>{requesterUserId === userId ? 'ฉัน' : 'ผู้เบิกของใบนี้'}</option>}
                 {sourceOptions.requesters.map(member => <option key={member.userId} value={member.userId}>{member.displayName}</option>)}
               </ThemedSelect>
@@ -420,7 +444,12 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
 
           <ClaimPayoutFormSection
             value={payout}
-            onChange={setPayout}
+            onChange={value => { setPayout(value); setPayoutInvalidField(undefined); setError(null); }}
+            invalidField={payoutInvalidField}
+            savedAccounts={savedAccounts}
+            savedAccountsLoading={savedAccountsLoading}
+            savedAccountsError={savedAccountsError}
+            onReloadSaved={() => setSavedAccountsReload(value => value + 1)}
             forSelf={requesterUserId === userId}
             defaultAccount={requesterUserId === userId ? myPayoutAccount : null}
             current={currentPayout}

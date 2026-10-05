@@ -6,7 +6,7 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
-import { civilDate, maskedPayoutAccountNumber, REIMBURSEMENT_PAYMENT_METHOD_LABELS, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, REIMBURSEMENT_SELF_APPROVED_NOTE } from '@watchdog-bms/contracts';
+import { civilDate, maskedPayoutAccountNumber, payoutHolderLine, REIMBURSEMENT_PAYOUT_HOLDER_WORDS, REIMBURSEMENT_PAYMENT_METHOD_LABELS, REIMBURSEMENT_PAYMENT_REFERENCE_TEXT, REIMBURSEMENT_SELF_APPROVED_NOTE } from '@watchdog-bms/contracts';
 import type {
   ReimbursementClaimFormLayout,
   ReimbursementClaimSignatureRole,
@@ -72,6 +72,8 @@ export type ClaimFormPayout =
     accountLast4: string;
     /** Handed in only for a print whose requester may see it. Printed as stored: no grouping, leading zeros kept. */
     accountNumber?: string;
+    holderType?: 'SELF' | 'THIRD_PARTY';
+    holderNote?: string;
     /**
      * Whoever attested this account version ("ตรวจบัญชีแล้ว"); null until someone has. A requester who
      * attested their own account is not named as its checker: the form says they confirmed it themself.
@@ -319,12 +321,13 @@ function payoutLines(snapshot: ReimbursementClaimFormSnapshot): string[] {
     ? `พร้อมเพย์เบอร์${number} ชื่อบัญชี ${payout.accountName}`
     : ['โอนเข้าบัญชี', payout.bankName, 'ชื่อบัญชี', payout.accountName, `เลขบัญชี${number}`].filter(Boolean).join(' ');
   const { verifier } = payout;
+  const holderLine = payoutHolderLine(payout);
   // A requester's own attestation is printed in the claim page's words, so the paper never reads as
   // if someone else had checked the account.
   const attestation = verifier
-    ? wrapText(`${'byRequester' in verifier ? 'ผู้เบิกยืนยันบัญชีของตนเอง' : `ผู้ตรวจบัญชี ${verifier.name}`} วันที่ ${formatDate(verifier.at)}`, SHEET_WIDTH)
+    ? wrapText(`${'byRequester' in verifier ? payout.holderType === 'THIRD_PARTY' ? REIMBURSEMENT_PAYOUT_HOLDER_WORDS.thirdPartySelfAttestation : 'ผู้เบิกยืนยันบัญชีของตนเอง' : `ผู้ตรวจบัญชี ${verifier.name}`} วันที่ ${formatDate(verifier.at)}`, SHEET_WIDTH)
     : [];
-  return [...wrapText(`รับเงินคืนทาง: ${account}`, SHEET_WIDTH), ...attestation];
+  return [...wrapText(`รับเงินคืนทาง: ${account}`, SHEET_WIDTH), ...(holderLine ? wrapText(holderLine, SHEET_WIDTH) : []), ...attestation];
 }
 
 /** Fixed A4 pages for preview, printing and PDF export. The legacy tall SVG above remains in the

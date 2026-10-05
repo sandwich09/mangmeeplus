@@ -49,6 +49,7 @@ import {
   validateLines,
   requiresApproval,
   thirdPartyPayoutApprovalRequired,
+  payoutCorrectionApprovalRequired,
   computeReceiptRequirement,
   isLineEvidenced,
   claimSnapshotFields,
@@ -1353,10 +1354,12 @@ export async function payoutCorrectionActionsOf(
       submitModes: [
         ...(account && token ? ['DEFAULT' as const] : []),
         ...(typingRefused ? [] : ['SPECIFIED' as const]),
+        ...(req.requesterUserId === ctx.userId && ctx.permissions.includes('reimbursement.create') ? ['SAVED' as const] : []),
         'CASH' as const,
         ...(payoutCorrectionRoundStart(req)?.payoutMethod ? ['PREVIOUS' as const] : []),
       ],
       ...(typingRefused && { specifiedRefusal: 'REQUESTER_NOT_ACTIVE' as const }),
+      ...(!payoutCorrectionApprovalRequired(req) && { thirdPartyRefusal: 'APPROVAL_NOT_REQUIRED' as const }),
     }),
   };
 }

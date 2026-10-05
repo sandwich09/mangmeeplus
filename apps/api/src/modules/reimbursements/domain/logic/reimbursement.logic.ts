@@ -425,6 +425,11 @@ export function payoutCorrectionSourceStep<Step extends { id: string; status: st
     .sort((a, b) => b.invalidatedAt!.getTime() - a.invalidatedAt!.getTime())[0];
 }
 
+/** The frozen policy decides for current claims; legacy rounds retain their recorded approval route. */
+export function payoutCorrectionApprovalRequired(claim: Parameters<typeof payoutCorrectionSourceStep>[0] & { approvalPolicySnapshotJson?: unknown }): boolean {
+  return parseReimbursementPolicySnapshot(claim.approvalPolicySnapshotJson)?.requiresApproval ?? !!payoutCorrectionSourceStep(claim);
+}
+
 /**
  * What the claim was approved with when its current round began: kept by the send-back that opened
  * the round (a send-back from the round's own step keeps none). The detail's "previous account" and

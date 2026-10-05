@@ -105,6 +105,7 @@ function fakeRepo(req: any, policy: any = FINANCE_REVIEW_ON, events: any[] = [],
     findActiveApproverUserIds: async (_companyId: string, ids: string[]) =>
       new Set(activeApprovers ?? ids),
     findPolicy: async () => policy,
+    assertPaymentRecordInput: async () => undefined,
     getUserDisplayNames: async () => ({}),
     listSignedClaimFormCopies: async () => [],
     listPaymentSlips: async () => ({}),

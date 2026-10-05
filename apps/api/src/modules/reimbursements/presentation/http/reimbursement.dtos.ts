@@ -67,12 +67,15 @@ class PayoutDestinationFieldsDto {
   @IsString() @IsOptional() @MaxLength(40) accountNumber?: string;
 }
 
+function payoutModeFieldsValid(body: Record<string, unknown>, inRound = false): boolean {
+  if (body.mode === 'SAVED') return Object.entries(body).every(([key, value]) => value === undefined || key === 'mode' || key === 'savedAccountId' || (inRound && key === 'expectedUpdatedAt'));
+  return body.savedAccountId === undefined && (body.mode === 'SPECIFIED' || [body.holderType, body.holderNote, body.saveForLater].every((value) => value === undefined));
+}
+
 export class ReimbursementPayoutDto extends PayoutDestinationFieldsDto {
   @IsIn(['DEFAULT', 'CASH', 'SPECIFIED', 'SAVED'])
   @ValidateBy({ name: 'payoutModeFields', validator: { validate: (_value, args) => {
-    const body = args!.object as Record<string, unknown>;
-    if (body.mode === 'SAVED') return Object.entries(body).every(([key, value]) => value === undefined || key === 'mode' || key === 'savedAccountId');
-    return body.savedAccountId === undefined && (body.mode === 'SPECIFIED' || [body.holderType, body.holderNote, body.saveForLater].every((value) => value === undefined));
+    return payoutModeFieldsValid(args!.object as Record<string, unknown>);
   } } }) mode!: ReimbursementPayoutInput['mode'];
   @IsString() @IsNotEmpty() @MaxLength(100) @ValidateIf((body, value) => body.mode === 'SAVED' || value !== undefined) declare savedAccountId?: string;
   @IsBoolean() @IsOptional() saveAsDefault?: boolean;
@@ -110,7 +113,12 @@ export class RequestPayoutCorrectionDto {
  * for "use the default account" the token of the default the form showed.
  */
 export class SubmitPayoutCorrectionDto extends PayoutDestinationFieldsDto {
-  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED', 'PREVIOUS']) mode!: SubmitReimbursementPayoutCorrectionInput['mode'];
+  @IsIn(['DEFAULT', 'CASH', 'SPECIFIED', 'PREVIOUS', 'SAVED'])
+  @ValidateBy({ name: 'payoutModeFields', validator: { validate: (_value, args) => payoutModeFieldsValid(args!.object as Record<string, unknown>, true) } }) mode!: SubmitReimbursementPayoutCorrectionInput['mode'];
+  @IsString() @IsNotEmpty() @MaxLength(100) @ValidateIf((body, value) => body.mode === 'SAVED' || value !== undefined) declare savedAccountId?: string;
+  @IsBoolean() @ValidateIf((_body, value) => value !== undefined) declare saveForLater?: boolean;
+  @IsString() @MaxLength(40) @ValidateIf((_body, value) => value !== undefined) declare holderType?: ReimbursementPayoutHolderType;
+  @IsString() @MaxLength(2000) @ValidateIf((_body, value) => value !== undefined) declare holderNote?: string;
   @IsBoolean() @IsOptional() saveAsDefault?: boolean;
   @Matches(/^[0-9a-f]{32}$/) @IsOptional() defaultToken?: string;
   // `updatedAt` of the claim the form was opened on: a full timestamp, as the detail carries it.
