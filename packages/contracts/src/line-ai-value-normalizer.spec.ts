@@ -1024,13 +1024,121 @@ it('all controller matrix phrases keep bounded, non-future, exact-span wire cand
 });
 
 
-it('P1 leaves deferred P2 phrases unchanged rather than reading their partial tokens as new windows', () => {
-  for (const text of ['ครึ่งปีแรก', 'ครึ่งปีหลัง', 'ครึ่งปีแรก 2569', '1/9/69 ถึง 30/9/69', 'กย.', '9/2569',
+it('out-of-scope half years, numeric months and weekdays still have no period', () => {
+  for (const text of ['ครึ่งปีแรก', 'ครึ่งปีหลัง', 'ครึ่งปีแรก 2569', 'กย.', '9/2569',
     '๙/๒๕๖๙', '09/69', 'จันทร์ที่แล้ว', 'วันจันทร์', 'เสาร์อาทิตย์ที่ผ่านมา']) {
     assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods ?? [], [], text);
   }
-  for (const text of ['ตั้งแต่วันที่ 1 ส.ค. ถึง 31 ต.ค.', '1 ส.ค. ถึง 31 ต.ค. 2569', 'วันที่ 1 สิงหา ถึง วันที่ 5 ตุลา', '1 ส.ค. ถึง 5 ต.ค.']) {
-    assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods?.map(p => [p.kind, p.fromDate, p.toDate]),
-      [['month', '2026-08-01', '2026-08-31'], ['month', '2026-10-01', P1_TODAY]], text);
-  }
+
+});
+
+
+const P2_CONNECTORS = ['ถึง', 'จนถึง', 'ยัน', '-', '–', '—', '~', 'to', 'until', 'through'];
+
+describe('P2: day ranges are one period (owner 2026-10-05)', () => {
+  it('P2-1: named dates across months own both endpoints and follow the stated years', () => {
+    const rows = [
+      ...['ตั้งแต่วันที่ 1 ส.ค. ถึง 31 ต.ค.', '1 ส.ค. ถึง 31 ต.ค. 2569', 'วันที่ 1 สิงหา ถึง วันที่ 5 ตุลา',
+        'ตั้งแต่1ส.ค.ถึง31ต.ค.', 'จากวันที่1สคถึงวันที่31ตค', 'ช่วง1เดือน8ถึง31เดือน10',
+        'ระหว่าง1ส.ค.กับ31ต.ค.', 'ระหว่าง 1 ส.ค. และ 31 ต.ค.', 'ระหว่าง1ส.ค.ถึง31ต.ค.'].map(text => p1Row(text, '2026-08-01', P1_TODAY)),
+      p1Row('15 ส.ค. ถึง 10 ก.ย.', '2026-08-15', '2026-09-10', 'range', ['year_assumed_latest_past'], '15 ส.ค. – 10 ก.ย. 2569'),
+      ...['20 ธ.ค. ถึง 10 ม.ค.', '20 ธ.ค. ถึง 10 ม.ค. 2569', '20 ธ.ค. 2568 ถึง 10 ม.ค.', '20 ธ.ค. 2568 ถึง 10 ม.ค. 2569'].map(text => p1Row(text, '2025-12-20', '2026-01-10')),
+      p1Row('1 ส.ค. 2569 ถึง 31 ต.ค. 2569', '2026-08-01', P1_TODAY, 'range', ['era_read_be', 'year_read_be', 'period_clamped_to_today']),
+      p1Row('15 ต.ค. ถึง 31 ต.ค.', '2025-10-15', '2025-10-31'),
+      p1Row('20 ก.ย. ถึง 10 ก.ย.', '2026-09-20', P1_TODAY),
+      p1Row('20 ก.ย. ถึง 10 ก.ย. 2569', '2025-09-20', '2026-09-10'),
+      p1None('15 ต.ค. 2569 ถึง 31 ต.ค. 2569'),
+      p1Row('28 ก.พ. 2567 ถึง 29 ก.พ.', '2024-02-28', '2024-02-29'),
+      p1Row('29 ก.พ. ถึง 28 ก.พ. 2568', '2024-02-29', '2025-02-28'),
+      p1Row('29 ก.พ. ถึง 1 มี.ค.', '2024-02-29', '2024-03-01'),
+      { text: '28 ก.พ. ถึง 29 ก.พ. 2567', today: '2024-03-01', expect: { kind: 'range', fromDate: '2024-02-28', toDate: '2024-02-29' } },
+    ];
+    for (const connector of P2_CONNECTORS) for (const [first, last] of [
+      ['15 สิงหาคม', '10 กันยายน'], ['15 ส.ค.', '10 ก.ย.'], ['15 ส. ค', '10 ก. ย.'], ['15 สค', '10 กย'],
+      ['15 สิงหา', '10 กันยา'], ['15 August', '10 September'], ['15 Aug.', '10 Sep.'], ['15 เดือน 8', '10 เดือน 9'],
+    ]) rows.push(p1Row(`${first} ${connector} ${last}`, '2026-08-15', '2026-09-10'));
+    checkPeriodRows(rows);
+    for (const text of ['15 ส.ค. 2569 ถึง 10 ก.ย. 2568', '31 ก.ย. ถึง 5 ต.ค.', '29 ก.พ. 2569 ถึง 5 มี.ค. 2569']) {
+      const values = extractValueCandidates(text, P1_TODAY);
+      assert.ok(!values.periods?.some(period => period.kind === 'range'), text);
+      assert.ok(values.periods?.every(period => period.kind === 'month'), text);
+      assert.deepEqual(parseLineAiValueCandidates(values, text), values, text);
+    }
+  });
+
+  it('P2-2: a named date ending today or now owns the whole range', () => {
+    const rows: PeriodRow[] = [
+      ...['ตั้งแต่ 15 ก.ย. ถึงวันนี้', '15 ก.ย. ถึงปัจจุบัน', '15 ก.ย. ถึงตอนนี้', '15 ก.ย. จนถึงวันนี้',
+        'จากวันที่15กันยาถึงตอนนี้', '15 Sep to today', '15 September until now', '15 ก.ย. 2569 ถึงวันนี้'].map(text => p1Row(text, '2026-09-15', P1_TODAY)),
+      p1Row('20 ธ.ค. ถึงวันนี้', '2025-12-20', P1_TODAY, 'range', ['year_assumed_latest_past']),
+      p1Row('15 ต.ค. ถึงวันนี้', '2025-10-15', P1_TODAY),
+      p1Row('5 ต.ค. ถึงวันนี้', P1_TODAY, P1_TODAY),
+      p1None('15 ต.ค. 2569 ถึงวันนี้'),
+      { text: '29 ก.พ. 2567 ถึงวันนี้', today: '2024-03-01', expect: { kind: 'range', fromDate: '2024-02-29', toDate: '2024-03-01' } },
+    ];
+    for (const connector of ['ถึง', 'จนถึง', 'ยัน']) for (const end of ['วันนี้', 'ตอนนี้', 'ปัจจุบัน']) {
+      rows.push(p1Row(`ตั้งแต่วันที่ 15 ก.ย. ${connector}${end}`, '2026-09-15', P1_TODAY));
+    }
+    checkPeriodRows(rows);
+    for (const text of ['ตั้งแต่ 31 ก.ย. ถึงวันนี้', '29 ก.พ. 2569 ถึงตอนนี้']) {
+      assert.ok(!extractValueCandidates(text, P1_TODAY).periods?.some(p => p.kind === 'range'), text);
+    }
+    for (const text of ['15 ก.ย.', 'วันที่ 15 ก.ย.']) assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods?.map(p => p.monthKey), ['2026-09']);
+  });
+
+  it('P2-4: "ตั้งแต่" a date or a month with no end named means up to today', () => {
+    checkPeriodRows([
+      // read as the whole of September before this rule: a different period, answered without a word
+      ...['ตั้งแต่ 15 ก.ย.', 'ตั้งแต่วันที่ 15 ก.ย.', 'ตั้งแต่ 15 กันยายน', 'ตั้งแต่ 15 ก.ย. เป็นต้นมา', 'นับจาก 15 ก.ย.', 'since 15 Sep',
+        'ค่าใช้จ่ายตั้งแต่ 15 ก.ย. มีอะไรบ้าง', 'ตั้งแต่ 15 ก.ย. 2569', 'ตั้งแต่ 15 ก.ย. ค่ะ'].map(text => p1Row(text, '2026-09-15', P1_TODAY)),
+      ...['ตั้งแต่เดือนสิงหาคม', 'ตั้งแต่สิงหา', 'ตั้งแต่ ส.ค.', 'ตั้งแต่เดือนสิงหา เป็นต้นมา', 'since August', 'ตั้งแต่สิงหา ถึงวันนี้',
+        'ตั้งแต่เดือนสิงหาคมถึงปัจจุบัน', 'ตั้งแต่สิงหาคม 2569'].map(text => p1Row(text, '2026-08-01', P1_TODAY)),
+      p1Row('ตั้งแต่เดือนตุลา', '2026-10-01', P1_TODAY),
+      p1Row('ตั้งแต่ธันวา', '2025-12-01', P1_TODAY, 'range', ['year_assumed_latest_past']),
+      p1Row('ตั้งแต่ 20 ธ.ค.', '2025-12-20', P1_TODAY, 'range', ['year_assumed_latest_past']),
+      // a range that names its end keeps its own reading
+      p1Row('ตั้งแต่สิงหาถึงตุลา', '2026-08-01', P1_TODAY),
+      p1Row('ตั้งแต่ 15 ส.ค. ถึง 10 ก.ย.', '2026-08-15', '2026-09-10'),
+      p1Row('ตั้งแต่เดือนกรกฎาคมถึงกันยายน', '2026-07-01', '2026-09-30'),
+    ]);
+    // one period, and nothing beside it (not "today" as a second candidate)
+    for (const text of ['ตั้งแต่ 15 ก.ย.', 'ตั้งแต่สิงหา ถึงวันนี้', 'ตั้งแต่เดือนสิงหาคม']) assert.equal(extractValueCandidates(text, P1_TODAY).periods?.length, 1, text);
+    // not a start: an impossible day, a month that has not come, a word that only begins like a month, `may` alone
+    for (const text of ['ตั้งแต่ 31 ก.ย.', 'ตั้งแต่ ธ.ค. 2569', 'ตั้งแต่มีค่าใช้จ่ายเข้ามา', 'since may']) {
+      assert.ok(!extractValueCandidates(text, P1_TODAY).periods?.some(p => p.kind === 'range'), text);
+    }
+    // without "ตั้งแต่" a date or a month is what it was
+    for (const text of ['15 ก.ย.', 'เดือนสิงหาคม', 'ของเดือนสิงหา']) assert.ok(!extractValueCandidates(text, P1_TODAY).periods?.some(p => p.kind === 'range'), text);
+  });
+
+  it('P2-3: full numeric dates reuse range order and period-era rules without changing DATE candidates', () => {
+    const rows: PeriodRow[] = [
+      ...['1/9/69 ถึง 30/9/69', '1/9/2569 - 30/9/2569', '01/09/2026 ถึง 30/09/2026',
+        '๑/๙/๖๙ ถึง ๓๐/๙/๖๙', '1-9-69 ถึง 30-9-69', '1.9.69 ถึง 30.9.69'].map(text => p1Row(text, '2026-09-01', '2026-09-30')),
+      p1Row('20/12/68 ถึง 10/1/69', '2025-12-20', '2026-01-10', 'range', ['two_digit_year_resolved_plausible_era']),
+      p1Row('1/2/69 ถึง 3/4/69', '2026-02-01', '2026-04-03', 'range', ['order_assumed_day_month', 'two_digit_year_resolved_plausible_era']),
+      p1Row('9/1/69 ถึง 9/30/69', '2026-09-01', '2026-09-30'),
+      p1Row('1/8/25 ถึง 30/9/25', '2025-08-01', '2025-09-30'),
+      p1Row('1/8/2569 ถึง 31/10/2569', '2026-08-01', P1_TODAY, 'range', ['era_read_be', 'year_read_be', 'period_clamped_to_today']),
+      p1None('15/10/2569 ถึง 31/10/2569'), p1None('3/4/2569 ถึง 1/2/2569'), p1None('31/9/69 ถึง 5/10/69'),
+      p1None('15/8/69 ถึง 9/30/69'), p1None('1/9/99 ถึง 30/9/99'),
+      { text: '28/2/2024 ถึง 29/2/2024', today: '2024-03-01', expect: { kind: 'range', fromDate: '2024-02-28', toDate: '2024-02-29' } },
+    ];
+    for (const connector of P2_CONNECTORS) rows.push(p1Row(`1/9/69 ${connector} 30/9/69`, '2026-09-01', '2026-09-30'));
+    checkPeriodRows(rows);
+    for (const [first, connector, second] of [['1/9/69', 'ถึง', '30/9/69'], ['1/2/69', 'ถึง', '3/4/69'], ['20/12/2568', '-', '10/1/2569']]) {
+      const values = extractValueCandidates(`${first} ${connector} ${second}`, P1_TODAY);
+      assert.deepEqual(values.dates, [...extractValueCandidates(first!, P1_TODAY).dates, ...extractValueCandidates(second!, P1_TODAY).dates]);
+    }
+    assert.deepEqual(extractValueCandidates('1/9/69', P1_TODAY).periods ?? [], []);
+    const dates = extractValueCandidates('1/2/69 ถึง 3/4/69', P1_TODAY).dates;
+    assert.deepEqual(dates.map(date => date.isoDate), ['2026-02-01', '2069-02-01', '2026-04-03', '2069-04-03']);
+    assert.ok(dates.every(isAmbiguousDateCandidate));
+    assert.deepEqual(extractValueCandidates('เทียบ 1-15 ส.ค. กับ 1-15 ก.ย.', P1_TODAY).periods?.map(p => [p.kind, p.fromDate, p.toDate]),
+      [['range', '2026-08-01', '2026-08-15'], ['range', '2026-09-01', '2026-09-15']]);
+    for (const text of ['เทียบ 1 ส.ค. กับ 31 ต.ค.', '1 ส.ค. และ 31 ต.ค.']) {
+      assert.deepEqual(extractValueCandidates(text, P1_TODAY).periods?.map(p => p.kind), ['month', 'month'], text);
+    }
+    checkPeriodRows([p1Row('1-15 ก.ย.', '2026-09-01', '2026-09-15'), p1Row('1 ถึง 15 กันยายน', '2026-09-01', '2026-09-15')]);
+  });
 });
