@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { LineAiSemanticSubrequestV2, LineAiTurnRequest, ToolResult } from '@watchdog-bms/contracts';
+import { extractValueCandidates, type LineAiSemanticSubrequestV2, type LineAiTurnRequest, type ToolResult } from '@watchdog-bms/contracts';
 import type { IModelProvider, ProviderInput, ProviderOutput } from '../infrastructure/provider/provider.port';
 import { runSemanticTurnV2 } from './semantic-turn-v2';
 
@@ -28,10 +28,10 @@ const SOURCE_REF = { id: 'expenses:expense_summary:summary', label: 'ราย�
 /** Records every `generateText` call (by usageTag) and answers from a queue, one JSON string per call. */
 function recordingProvider(responses: string[]) {
   const queue = [...responses];
-  const calls: Array<{ usageTag: string; systemPrompt: string }> = [];
+  const calls: Array<{ usageTag: string; systemPrompt: string; messages: ProviderInput['messages'] }> = [];
   const provider: IModelProvider = {
     async generateText(input: ProviderInput): Promise<ProviderOutput> {
-      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '' });
+      calls.push({ usageTag: input.usageTag ?? '', systemPrompt: input.systemPrompt ?? '', messages: input.messages });
       return { ok: true, text: queue.shift() ?? '{}' };
     },
   };
@@ -84,6 +84,136 @@ describe('tuning-3 item 4: a two-period comparison skips the compose call entire
     assert.ok(result.replyText.includes('ต่างกัน'), result.replyText);
     assert.equal(result.semanticCoverage?.[0]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
     assert.equal(result.semanticCoverage?.[1]?.reasonCode, 'DETERMINISTIC_FALLBACK_RENDERED');
+  });
+});
+
+describe('cards-cmp: one deterministic answer for every comparable period', () => {
+  const names = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน'];
+  const row = (month: number, amount: string, count: number, toolName = 'expense.list_recent'): ToolResult => {
+    const key = `2026-${String(month).padStart(2, '0')}`;
+    return { toolName, status: 'ok', asOf: SOURCE_REF.asOf, sourceRefs: [{ ...SOURCE_REF, id: `expenses:month:${month}` }],
+      data: { period: { fromDate: `${key}-01`, toDate: `${key}-${new Date(Date.UTC(2026, month, 0)).getUTCDate()}` },
+        total: count, summary: { totalAmount: amount }, totalAmount: amount, totalCount: count,
+        ...(toolName === 'expense.get_breakdown' ? { byCategory: [{ category: 'ค่าบริการ', totalAmount: amount }] } : {}) } };
+  };
+  async function runSeries(rows: ToolResult[], filters: Record<string, string>[] = [], options: { keyed?: boolean; extra?: boolean } = {}) {
+    const periods = rows.map(result => (result.data as { period: { fromDate: string; toDate: string } }).period);
+    const messageText = `เปรียบเทียบค่าใช้จ่าย ${periods.map(period => `${names[Number(period.fromDate.slice(5, 7)) - 1]} 2569`).join(' และ ')}`;
+    const inputs = periods.map((period, index) => ({ ...(options.keyed ? { periodKey: period.fromDate.slice(0, 7) } : period), ...filters[index] }));
+    const request: LineAiTurnRequest = { requestId: 'req-series', webhookEventId: 'event-series', messageText,
+      messagePreviewHash: 'c'.repeat(16), valueCandidates: extractValueCandidates(messageText, '2026-10-05'),
+      semanticSubrequests: periods.map((period, index) => ({ index, kind: 'read', goal: messageText,
+        requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: inputs[index]! })),
+      userContext: baseUserContext(['expense.read']) };
+    if (options.extra) request.semanticSubrequests!.push({ index: rows.length, kind: 'general', goal: 'กำไรคืออะไร', requiredEvidence: [], dependsOn: [], evidenceRefs: [], requestedFilters: {} });
+    const { provider, calls } = recordingProvider([
+      JSON.stringify({ calls: rows.map((result, index) => ({ index, toolName: result.toolName, input: inputs[index] })) }),
+      JSON.stringify({ answers: [...rows.map((result, index) => ({ index, status: 'handled',
+        text: result.status === 'ok' ? `ค่าใช้จ่าย ${periods[index]!.fromDate} ${(result.data as { totalAmount: string }).totalAmount} บาท`
+          : 'ข้อมูลเดือนนี้อยู่ในสรุปด้านบนแล้วค่ะ', sourceRefIds: result.sourceRefs.map(ref => ref.id) })),
+        ...(options.extra ? [{ index: rows.length, status: 'handled', topic: 'business', text: 'กำไรคือรายได้ที่เหลือหลังหักค่าใช้จ่ายค่ะ' }] : [])] }),
+    ]);
+    const result = await runSemanticTurnV2({ req: request, provider, draftEditEnabled: false,
+      reimbursementDraftEnabled: false, publicLookupEnabled: false, approvedKnowledgeEnabled: false,
+      async invoke(_meta, _ctx, args) { const input = args as Record<string, unknown>;
+        return rows[periods.findIndex(period => period.fromDate === input.fromDate || period.fromDate.slice(0, 7) === input.periodKey)]!; },
+    });
+    return { result, calls };
+  }
+  for (const count of [2, 3, 4, 8]) it(`${count} months, including the eight-call bound: one block, all figures, no compose`, async () => {
+    // n*1000 -> (n+1)*1000: difference=1000, percentage=100/n%, multiple=2.0 only for the first change.
+    const rows = Array.from({ length: count }, (_, i) => row(i + 1, String((i + 1) * 1000), i + 1)).reverse();
+    const { result, calls } = await runSeries(rows);
+    assert.deepEqual(calls.map(call => call.usageTag), ['line.loop']);
+    assert.equal(result.replyText.match(/^เปรียบเทียบค่าใช้จ่าย/gmu)?.length, 1);
+    assert.equal(result.replyText.match(/^• /gmu)?.length, count);
+    assert.equal(result.replyText.match(/^  มากกว่า /gmu)?.length, count - 1);
+    assert.doesNotMatch(result.replyText, /อยู่ในสรุปด้านบน|^\d+\. /mu);
+    rows.forEach((resultRow, i) => {
+      const data = resultRow.data as { totalAmount: string; total: number };
+      assert.ok(result.replyText.includes(`${Number(data.totalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })} บาท (${data.total} รายการ)`));
+      assert.equal(result.semanticCoverage?.[i]?.status, 'handled');
+      assert.ok(result.semanticCoverage?.[i]?.sourceRefIds?.includes(resultRow.sourceRefs[0]!.id!));
+    });
+  });
+  it('owner July/August/September: the third month is read and answered, never referred to an absent summary', async () => {
+    // +189751.77 /25147.80 = +754.5%, ratio 8.5; -116899.57 /214899.57 = -54.4%.
+    const { result, calls } = await runSeries([row(7, '25147.80', 7), row(8, '214899.57', 25), row(9, '98000', 12)]);
+    assert.deepEqual(calls.map(call => call.usageTag), ['line.loop']);
+    assert.ok(result.replyText.includes('• ก.ย. 2569: 98,000.00 บาท (12 รายการ)'));
+    assert.match(result.replyText, /754\.5% หรือราว 8\.5 เท่าของ ก\.ค\./u);
+    assert.match(result.replyText, /116,899\.57 บาท \(ลดลง 54\.4%\)/u);
+    assert.equal(result.replyText.match(/^• /gmu)?.length, 3);
+    assert.doesNotMatch(result.replyText, /อยู่ในสรุปด้านบน|^\d+\. /mu);
+  });
+  it('a repeated period shares the comparison without a duplicate line or model answer', async () => {
+    // August 200 - July 100=100; growth=100%, ratio=2.0. July was requested twice.
+    const { result, calls } = await runSeries([row(7, '100', 1), row(8, '200', 2), row(7, '100', 1)]);
+    assert.deepEqual(calls.map(call => call.usageTag), ['line.loop']);
+    assert.equal(result.replyText.match(/^• /gmu)?.length, 2);
+    assert.equal(result.semanticCoverage?.length, 3);
+    assert.ok(result.semanticCoverage?.every(item => item.status === 'handled'));
+  });
+  it('three grouped reads preserve every total and both adjacent grouped changes', async () => {
+    // 100 -> 200 = +100 (+100%, 2x); 200 -> 300 = +100 (+50%).
+    const { result, calls } = await runSeries([row(7, '100', 1, 'expense.get_breakdown'), row(8, '200', 2, 'expense.get_breakdown'), row(9, '300', 3, 'expense.get_breakdown')]);
+    assert.deepEqual(calls.map(call => call.usageTag), ['line.loop']);
+    assert.equal(result.replyText.match(/^• /gmu)?.length, 3);
+    assert.match(result.replyText, /ค่าบริการ\n  ก\.ค\. 2569: 100\.00 บาท\n  ส\.ค\. 2569: 200\.00 บาท\n  ต่างกัน 100\.00 บาท \(\+100\.0%\)/u);
+    assert.match(result.replyText, /ค่าบริการ\n  ส\.ค\. 2569: 200\.00 บาท\n  ก\.ย\. 2569: 300\.00 บาท\n  ต่างกัน 100\.00 บาท \(\+50\.0%\)/u);
+  });
+  it('a compound turn keeps one comparison at its first item even when the model composes the independent answer', async () => {
+    // +189751.77 /25147.80=754.5%, ratio=8.5; -116899.57 /214899.57=-54.4%.
+    const { result, calls } = await runSeries([row(9, '98000', 12), row(7, '25147.80', 7), row(8, '214899.57', 25)], [], { extra: true });
+    assert.equal(result.replyText.match(/เปรียบเทียบค่าใช้จ่าย/gu)?.length, 1);
+    assert.match(result.replyText, /^1\. เปรียบเทียบค่าใช้จ่าย/u);
+    assert.equal(result.replyText.match(/^• /gmu)?.length, 3);
+    assert.match(result.replyText, /2\. กำไรคือรายได้/u);
+    assert.doesNotMatch(result.replyText, /3\. |4\. |อยู่ในสรุปด้านบน/u);
+    const compose = calls.find(call => call.usageTag === 'line.compose')!;
+    const input = JSON.parse(compose.messages[0]!.text!) as { derivedFacts: { index: number; facts: string }[] };
+    for (const index of [0, 1, 2]) assert.match(input.derivedFacts.find(fact => fact.index === index)!.facts, /754\.5% หรือราว 8\.5 เท่าของ ก\.ค\./u);
+    assert.deepEqual(result.semanticCoverage?.[0]?.sourceRefIds?.sort(), ['expenses:month:7', 'expenses:month:8', 'expenses:month:9']);
+  });
+  it('a failed month-key read among three is named from the bound request, not the failed payload', async () => {
+    const failed = { ...row(8, '999999', 99), status: 'error' as const, sourceRefs: [] };
+    const { result } = await runSeries([row(7, '100', 1), failed, row(9, '300', 3)], [], { keyed: true });
+    assert.doesNotMatch(result.replyText, /เปรียบเทียบค่าใช้จ่าย|999,?999|อยู่ในสรุปด้านบน/u);
+    assert.match(result.replyText, /ข้อมูลค่าใช้จ่าย ส\.ค\. 2569 ยังไม่พร้อม/u);
+  });
+  for (const status of ['error', 'forbidden'] as const) it(`one ${status} read among three: no series, names the unavailable month, no invented figures`, async () => {
+    const failed = { ...row(8, '999999', 99), status, sourceRefs: [] };
+    const { result } = await runSeries([row(7, '100', 1), failed, row(9, '300', 3)]);
+    assert.doesNotMatch(result.replyText, /เปรียบเทียบค่าใช้จ่าย|อยู่ในสรุปด้านบน|999,?999/u);
+    assert.match(result.replyText, status === 'forbidden' ? /ไม่มีสิทธิ์ดูค่าใช้จ่าย ส\.ค\. 2569/u : /ข้อมูลค่าใช้จ่าย ส\.ค\. 2569 ยังไม่พร้อม/u);
+    assert.ok(result.replyText.includes('100 บาท'));
+    assert.ok(result.replyText.includes('300 บาท'));
+  });
+  it('one incomplete aggregate among three: no series and no subtotal passed off as the total', async () => {
+    const incomplete = row(8, '999999', 99);
+    incomplete.completeness = { aggregate: 'partial', rows: { returned: 0, hasMore: false, nextCursor: null },
+      groups: { returned: 0, hasMore: false, nextCursor: null }, businessRecording: 'unknown' };
+    const { result } = await runSeries([row(7, '100', 1), incomplete, row(9, '300', 3)]);
+    assert.doesNotMatch(result.replyText, /เปรียบเทียบค่าใช้จ่าย|999,?999/u);
+    assert.match(result.replyText, /ข้อมูลค่าใช้จ่าย ส\.ค\. 2569 ยังไม่ครบ/u);
+  });
+  it('different tools are answered separately', async () => {
+    const { result } = await runSeries([row(7, '100', 1), row(8, '200', 2, 'expense.get_breakdown')]);
+    assert.doesNotMatch(result.replyText, /เปรียบเทียบค่าใช้จ่าย/u);
+    assert.ok(result.replyText.includes('100 บาท'));
+    assert.ok(result.replyText.includes('200 บาท'));
+  });
+  for (const [name, query] of [
+    ['filters', { filters: { vendorName: 'ร้านตัวอย่าง' } }],
+    ['grouping', { filters: { groupBy: 'vendor' } }],
+    ['scope', { accessScope: 'related' }],
+    ['branch', { branch: { mode: 'selected', branchId: 'branch-one' } }],
+  ] as const) it(`different applied ${name}: keep independent answers and no cross-period arithmetic`, async () => {
+    const rows = [row(7, '100', 1, 'expense.get_breakdown'), row(8, '200', 2, 'expense.get_breakdown')];
+    (rows[1]!.data as Record<string, unknown>).queryApplied = query;
+    const { result } = await runSeries(rows);
+    assert.doesNotMatch(result.replyText, /เปรียบเทียบค่าใช้จ่าย|ต่างกัน|มากกว่า|น้อยกว่า/u);
+    for (const amount of ['100', '200']) assert.ok(result.replyText.includes(`${amount} บาท`));
   });
 });
 
