@@ -18,6 +18,14 @@ require.extensions['.svg'] = (module) => { module.exports = () => null; };
 Reflect.set(require('react-dom'), 'createPortal', (node: React.ReactNode) => node);
 const sections = require('./ReimbursementDetailSections') as typeof import('./ReimbursementDetailSections');
 const logic = require('./reimbursements.logic') as typeof import('./reimbursements.logic');
+it('a confirmed duplicate refusal never asks the payer to retry payment, even after a slip upload', () => {
+  for (const slipKept of [true, false]) {
+    const text = logic.paymentSaveErrorMessage('record', { code: 'duplicate_confirmed', status: 422, details: { claimStatus: 'READY_FOR_PAYMENT', canCancel: true } }, slipKept);
+    assert.match(text, /กดยกเลิกคำขอในหน้าใบเบิก/);
+    assert.match(text, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
+    assert.doesNotMatch(text, /กดบันทึกจ่ายอีกครั้ง|ปลดรายการซ้ำ/);
+  }
+});
 const reactRuntime = require('react') as typeof React;
 
 const h = React.createElement;

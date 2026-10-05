@@ -21,7 +21,7 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
-import { assertCanReadRequestOrAssignment } from './reimbursement-request.use-case';
+import { assertCanReadRequestOrAssignment, mayCancelReimbursement } from './reimbursement-request.use-case';
 import {
   validatePaymentRecording,
   duplicateBlocksPayment, claimDuplicateReasons,
@@ -82,8 +82,9 @@ export class ListFinanceQueueUseCase {
       // records: a claim found possibly duplicate at submit had no mark here while its payment was refused.
       hasDuplicateBlocker: duplicateBlocksPayment(effectivePolicyForRequest(r, currentPolicy).duplicatePolicy,
         (r.duplicateCandidates ?? []).filter((candidate) => candidate.status === 'OPEN').length,
-        (r.possibleDuplicateExpenseCount ?? 0) + (r.duplicateConfirmationPendingCount ?? 0)),
+        (r.possibleDuplicateExpenseCount ?? 0) + (r.duplicateConfirmationPendingCount ?? 0), r.confirmedDuplicateExpenseCount),
       duplicateReasons: claimDuplicateReasons(r),
+      viewerCanCancel: !r.cancellationPendingAt && mayCancelReimbursement(ctx, r),
     }));
   }
 }
@@ -440,13 +441,14 @@ export class RecordReimbursementPaymentUseCase {
     const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
     const openDuplicates = await this.repo.listOpenDuplicateCandidates(ctx.companyId, id);
     const duplicateReasons = claimDuplicateReasons({ ...req, duplicateCandidates: openDuplicates });
-    const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, openDuplicates.length, (req.possibleDuplicateExpenseCount ?? 0) + (req.duplicateConfirmationPendingCount ?? 0));
+    const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, openDuplicates.length, (req.possibleDuplicateExpenseCount ?? 0) + (req.duplicateConfirmationPendingCount ?? 0), req.confirmedDuplicateExpenseCount);
 
     const error = validatePaymentRecording({
       status: req.status,
       financeReviewRequired: policy.financeReviewRequired,
       financeReviewApproved: req.financeReviewStatus === 'APPROVED_FOR_PAYMENT' || !policy.financeReviewRequired,
       duplicateBlocking,
+      duplicateReasons,
       approvedAmount: req.amount,
       outstandingAmount: req.outstandingAmount,
       paidAmount: input.paidAmount,
@@ -454,7 +456,12 @@ export class RecordReimbursementPaymentUseCase {
       paymentReference: input.paymentReference,
       hasSlip: Boolean(input.slipAttachmentId),
     });
-    if (error) throw new UnprocessableEntityException(error === 'duplicate_unresolved' ? { code: error, duplicatePhase: 'PAYMENT', message: reimbursementDuplicateBlockNotice(duplicateReasons), duplicateReasons } : error);
+    if (error) {
+      const guidance = { status: req.status, canCancel: mayCancelReimbursement(ctx, req) };
+      throw new UnprocessableEntityException(error === 'duplicate_unresolved' || error === 'duplicate_confirmed'
+        ? { code: error, duplicatePhase: 'PAYMENT', message: reimbursementDuplicateBlockNotice(duplicateReasons, false, guidance), duplicateReasons, claimStatus: req.status, canCancel: guidance.canCancel }
+        : error);
+    }
     await this.repo.assertClaimPaymentReady(ctx.companyId, id, paidAt);
     // Everything that can refuse the payment is checked before a payment number is reserved: a
     // refusal after that point would burn a number that only a retry with the same key reuses.

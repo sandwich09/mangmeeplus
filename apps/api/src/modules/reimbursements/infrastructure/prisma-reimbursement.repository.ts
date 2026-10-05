@@ -125,6 +125,7 @@ const OWN_DUPLICATE_EXPENSES = {
   where: { OR: [
     { duplicateStatus: 'POSSIBLE_DUPLICATE' as const, status: { not: 'VOIDED' as const } },
     { duplicateStatus: 'OVERRIDDEN' as const, status: 'READY_FOR_CONFIRMATION' as const },
+    { duplicateStatus: 'CONFIRMED_DUPLICATE' as const },
   ] },
   select: { duplicateStatus: true, status: true },
 };
@@ -3480,12 +3481,14 @@ export class PrismaReimbursementRepository {
       }).then((row: any) => row ? this.toPolicy(row) : null)));
       const duplicateBlocking = duplicateBlocksPayment(policy.duplicatePolicy, await tx.reimbursementDuplicateCandidate.count({
         where: { companyId: data.companyId, reimbursementRequestId: data.reimbursementRequestId, status: 'OPEN' },
-      }), (this.toRequest(request).possibleDuplicateExpenseCount ?? 0) + (this.toRequest(request).duplicateConfirmationPendingCount ?? 0));
+      }), (this.toRequest(request).possibleDuplicateExpenseCount ?? 0) + (this.toRequest(request).duplicateConfirmationPendingCount ?? 0), this.toRequest(request).confirmedDuplicateExpenseCount);
+      const duplicateReasons = claimDuplicateReasons(this.toRequest(request));
       const error = validatePaymentRecording({
         status: request.status,
         financeReviewRequired: policy.financeReviewRequired,
         financeReviewApproved: request.financeReviewStatus === 'APPROVED_FOR_PAYMENT' || !policy.financeReviewRequired,
         duplicateBlocking,
+        duplicateReasons,
         approvedAmount: dec(request.amount),
         outstandingAmount: dec(request.outstandingAmount),
         paidAmount: data.paidAmount,
@@ -3493,7 +3496,7 @@ export class PrismaReimbursementRepository {
         paymentReference: data.paymentReference,
         hasSlip: Boolean(data.slipAttachmentId),
       });
-      if (error) throw new UnprocessableEntityException(error === 'duplicate_unresolved' ? { code: error, duplicatePhase: 'PAYMENT', message: reimbursementDuplicateBlockNotice(claimDuplicateReasons(this.toRequest(request))), duplicateReasons: claimDuplicateReasons(this.toRequest(request)) } : error);
+      if (error) throw new UnprocessableEntityException(error === 'duplicate_unresolved' || error === 'duplicate_confirmed' ? { code: error, duplicatePhase: 'PAYMENT', message: reimbursementDuplicateBlockNotice(duplicateReasons, false, { status: request.status }), duplicateReasons, claimStatus: request.status } : error);
       await this.assertClaimProjectionsReady(tx, this.toRequest(request));
       // Spec §12.3, §12.4, §12.6: the account version the payer was shown is the claim's version NOW,
       // a transfer into the claim's account is confirmed, and a method other than the one asked for
@@ -4699,6 +4702,7 @@ export class PrismaReimbursementRepository {
       payments: row.payments ? row.payments.map((p: any) => this.toPayment(p)) : undefined,
       possibleDuplicateExpenseCount: row.sourceExpenses?.filter((expense: any) => expense.duplicateStatus === 'POSSIBLE_DUPLICATE').length ?? 0,
       duplicateConfirmationPendingCount: row.sourceExpenses?.filter((expense: any) => expense.duplicateStatus === 'OVERRIDDEN' && expense.status === 'READY_FOR_CONFIRMATION').length ?? 0,
+      confirmedDuplicateExpenseCount: row.sourceExpenses?.filter((expense: any) => expense.duplicateStatus === 'CONFIRMED_DUPLICATE').length ?? 0,
       duplicateCandidates: row.duplicateCandidates ? row.duplicateCandidates.map((d: any) => this.toDuplicate(d)) : undefined,
       claimSignatures: row.claimSignatures ? row.claimSignatures.map((s: any) => this.toClaimSignature(s)) : undefined,
     };

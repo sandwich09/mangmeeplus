@@ -19,6 +19,25 @@ const ctx = {
 };
 
 describe('LINE ERP core detail tools', () => {
+  it('claim detail carries the shared confirmed-duplicate guidance with the viewer cancellation and payment-void rights', async () => {
+    const claim: any = { id: 'rr1', requesterUserId: 'u1', branchId: 'b1', status: 'READY_FOR_PAYMENT',
+      duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'], approvalSteps: [], payments: [], duplicateCandidates: [] };
+    const tool = new ReimbursementGetDetailTool({ execute: async () => claim } as any);
+    for (const [status, permissions, pattern] of [
+      ['READY_FOR_PAYMENT', ['reimbursement.cancel_own'], /กดยกเลิกคำขอในหน้าใบเบิก/],
+      ['READY_FOR_PAYMENT', [], /ผู้เบิกที่มีสิทธิ์ยกเลิกหรือผู้ตรวจการเงินที่ดูแลสาขา/],
+      ['PARTIALLY_PAID', ['reimbursement.payment.void'], /ผู้มีสิทธิ์ยกเลิกการจ่ายของสาขานี้/],
+    ] as const) {
+      claim.status = status;
+      const result = await tool.execute({ ...ctx, permissions: [...ctx.permissions, ...permissions] }, { reimbursementId: 'rr1' });
+      const data = result.data as any;
+      assert.equal(data.duplicateBlocksPayment, true);
+      assert.equal(data.message, data.paymentBlockNotice, 'the general LINE answer receives the same guidance as the compiled answer');
+      assert.match(data.paymentBlockNotice, pattern);
+      assert.match(data.paymentBlockNotice, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
+      assert.doesNotMatch(data.paymentBlockNotice, /ปลดรายการซ้ำ|[a-zA-Z_]/);
+    }
+  });
   it('returns bounded product detail without persistence metadata', async () => {
     const tool = new InventoryGetProductDetailTool({ execute: async () => ({
       id: 'p1', companyId: 'c1', sku: 'SKU', name: 'สินค้า', description: 'desc', unit: 'ชิ้น', kind: 'STOCKABLE',

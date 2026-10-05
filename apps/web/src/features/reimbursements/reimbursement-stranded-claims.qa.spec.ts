@@ -540,6 +540,17 @@ describe('the claim page clears a duplicate block at the finance approval exactl
   const resolver = { userId: 'finance', permissions: [...reviewer.permissions, 'reimbursement.duplicate.resolve'] };
   const sent = async (detail: object, viewer: typeof reviewer) => (await press(detail, viewer, 'อนุมัติจ่าย'))[0]?.body;
 
+  it('a confirmed receipt gives cancellation guidance and never sends a finance duplicate override', async () => {
+    const detail = underReview({ duplicateBlocksPayment: true, duplicateReasons: ['EXPENSE_CONFIRMED_DUPLICATE'] });
+    for (const viewer of [reviewer, resolver]) {
+      assert.deepEqual(await sent(detail, viewer), { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: false });
+      const text = visible(claimPage(detail, viewer)).join(' ');
+      assert.match(text, /ใบเสร็จของใบเบิกนี้ได้รับการยืนยันว่าซ้ำ/);
+      assert.match(text, /ผู้เบิกส่งใบเบิกใหม่โดยไม่ใส่รายการซ้ำ/);
+      assert.doesNotMatch(text, /กดปลดรายการซ้ำ|ตรวจว่าไม่ซ้ำแล้ว/);
+    }
+  });
+
   // The status word is not the test: an answer that says the payment is blocked is followed whatever the word reads.
   it('sends the override with the approval for a blocked claim, and keeps the button off for a reviewer who may not clear it', async () => {
     for (const duplicateStatus of ['POSSIBLE_DUPLICATE', 'NO_MATCH']) {

@@ -277,9 +277,9 @@ export function reimbursementOwnActions(detail: any, userId: string, permissions
   return {
     canEditDraft: canPrepare && status === 'DRAFT' && (permissions.includes('reimbursement.update_own_draft') || permissions.includes('reimbursement.finance_review')),
     canSubmit: canPrepare && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
-    canCancel: !beingCancelled && ((isRequester && permissions.includes('reimbursement.cancel_own'))
+    canCancel: !beingCancelled && (detail?.viewerCanCancel ?? (((isRequester && permissions.includes('reimbursement.cancel_own'))
       || permissions.includes('reimbursement.finance_review'))
-      && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
+      && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status))),
     // REJECTED -> DRAFT: fix and resubmit under the same request number (server: /reopen).
     canReopen: canPrepare && status === 'REJECTED' && permissions.includes('reimbursement.update_own_draft'),
   };

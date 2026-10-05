@@ -1157,7 +1157,9 @@ function formatReimbursementGetDetailSingleMetric(output: SpecialistOutput, ctx:
     : `ใบเบิกจ่าย: ${requester} วันที่ ${dateLabel} ยอด ${moneyText(amount)} บาท`;
   const statusText = english ? `\nStatus: ${statusLabel}` : `\nสถานะ: ${statusLabel}`;
 
-  const replyText = `${headline}${statusText}${sourceText}${asOfLine(output.asOf, english)}`;
+  const paymentBlock = data?.['duplicateBlocksPayment'] === true && typeof data['paymentBlockNotice'] === 'string'
+    ? `\n${data['paymentBlockNotice']}` : '';
+  const replyText = `${headline}${statusText}${paymentBlock}${sourceText}${asOfLine(output.asOf, english)}`;
   return { kind: 'answer', replyText, sourceRefs, webLinks };
 }
 
