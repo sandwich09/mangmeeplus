@@ -13,7 +13,7 @@ Scope: the follow-ups that were set aside when the scope was frozen before the 2
 - Executive account page in the console: the suspend button stands at the right end, with no divider left stranded when it wraps.
 - Withholding kinds (Mangmee admin): a kind that is off reads "ไม่ได้เปิดใช้งาน", true whether it was ever on (the server keeps only the status).
 - `e2e/receipt-draft-continuity.spec.ts`: the withholding journey follows today's block. Test only.
-- Claims: a claim with a receipt confirmed as a duplicate takes no new payment under every duplicate policy, asked before the payment lock and under it, with its own reason and refusal. The claim detail and journey, both pay-queue layouts, the payment refusal, the API error map and the LINE claim answer say why and the way out for the claim's state, from one function in contracts (`reimbursementDuplicateBlockNotice`). Neither "ปลดรายการซ้ำ" nor the finance override is offered for it. Before the confirmation, on an expense that comes from a claim, the page says the claim will not be payable, must be cancelled, and that the confirmation cannot be undone. Nothing recorded is reversed; approval is not blocked. Spec: `docs/specs/reimbursement-approval-spec.md`.
+- Claims: a claim with a receipt confirmed as a duplicate takes no new payment under every duplicate policy, asked before the payment lock and under it, with its own reason and refusal. The claim detail and journey, both pay-queue layouts, the payment refusal, the API error map and the LINE claim answer say why and the way out for the claim's state, from one function in contracts (`reimbursementDuplicateBlockNotice`). Neither "ปลดรายการซ้ำ" nor the finance override is offered for it. Before the confirmation, on an expense that comes from a claim, the page says the claim will not be payable, must be cancelled, and that the confirmation cannot be undone. Nothing recorded is reversed; approval is not blocked. Spec: `docs/specs/reimbursement-approval-spec.md`. A second round, after a browser check on a real stack, made the other sentences true for a blocked claim: the badge reads "รอยกเลิก", the desk line and the timeline name who can cancel instead of "พร้อมจ่าย" and "กำลังรอ … บันทึกจ่าย" (claim page, lists, both pay-queue layouts, the LINE claim and backlog answers); the toast after voiding a payment says only what the reader can do next; the pay-queue table wraps the guidance and fits at 1280 px; the summary card reads "ติดรายการซ้ำ"; the duplicate override on a confirmed duplicate is refused with `duplicate_confirmed` before any write (it answered 200 and wrote a SUCCESS audit row while clearing nothing); a payment form opened before the confirmation reads the claim again and closes; the payout send-back is not offered on a blocked claim. A third round (controller, after the second browser check): both claim list reads load the claim's own duplicate expenses, so a list card reads "รอยกเลิก" too (the lists returned no duplicate reason and still said "พร้อมจ่าย"); the pay-queue line "อยู่ที่ …" wraps on a phone instead of being cut.
 
 Decisions:
 
@@ -27,11 +27,17 @@ Open questions:
 
 - The business-type cell still splits some Thai compounds (สิน|ค้า, จัด|ทำ). The split comes from the browser's own Thai word list (the same library answers the same way outside a page), and the cell forces no break, so a layout rule cannot change it. Left.
 - With the churn filter the list can carry more than one extra fact column and then scrolls sideways, as before.
+- A claim blocked by a confirmed duplicate keeps its stored status, so three things still treat it as payable. Asked the owner (recommended: count and remind only what can really be paid), not started:
+  - the payment reminders and their notices (`workflow-template-catalog.ts`: "รอคุณบันทึกการจ่ายเงิน", "พร้อมจ่ายเบิกจ่าย", "ใบเบิกกลับไปรอจ่าย") can still name it. Changing that touches who is notified and the reminder selection;
+  - the counts and totals: the summary tile "รอจ่าย N" and "ยอดคงค้างรวม" on the claims page (on the local stack the tile read 9 while 2 claims could really be paid), and the LINE aggregate "อนุมัติแล้วรอจ่าย" (`prepared-simple-read-formatter.ts`);
+  - the void dialog: its guidance is true but circular for the person voiding (it tells the voider to void).
+- The finance-review decision on a claim that is at the finance-review step with a confirmed duplicate is covered by unit tests only; it was not opened on a screen.
 
 Artifacts:
 
 - Branch `claude/small-followups-20261005`; lane branches `codex/small-exec-20261005`, `codex/small-wht-20261005`, `codex/small-dup-20261005`.
 - Browser proof (local stack, 1280 and 390 px): an executive account holding the note right saves the team note from the company list and from the company page, the text survives a reload, the System Admin reads the same text in the console, and an account without the right has no edit control ("คุณอ่านหมายเหตุได้ แต่ยังไม่มีสิทธิ์แก้ไข"); a direct save by that account answers 403. This closes "not proven on a screen" of the batch note.
+- Browser proof of the duplicate rule (local stack, 1280 and 390 px, seed shop owner): round 1 — the refusal, the guidance for each state, no "ปลดรายการซ้ำ" and no override on a confirmed duplicate, the warning before the confirmation (all passed, three findings: the badge and desk line still said "พร้อมจ่าย", the void toast, the table too wide). Round 2 — six of seven passed; the two left (list cards, the cut desk line on a phone) were fixed in the third round and seen again: the "mine" tab and the queue read "รอยกเลิก", the desk line stands on two lines, the summary card reads "ติดรายการซ้ำ", and the list API returns the reason `EXPENSE_CONFIRMED_DUPLICATE`.
 
 Verification: see the section at the end of this note.
 
@@ -43,22 +49,22 @@ Next: merge to `develop` and `main`. No deploy until the owner says so; the next
 - `small-exec` (23 minutes): six items. The controller then reworked the extra-sort-column layout and removed the duplicate Excel column after looking at the real screen and a downloaded file, and reverted a class that changed nothing.
 - `small-dup`: the first turn stopped after eleven minutes when the service answered "selected model is at capacity"; resumed on another model from its own diff and finished in 37 minutes. The controller tidied the sentence joins and one fallback sentence.
 
-## Verification (controller, 2026-10-05 11:21–11:27, head `fe99cb8aa`)
+## Verification (controller, 2026-10-05 12:49–12:55, head `0dc66f10c`)
 
-GitHub Actions has ended every pull-request run in `startup_failure` with zero jobs since 2026-09-25, so the gates were run locally with `scratchpad/integration-verify.sh` (the 17 steps CI runs): **all 17 exit 0**.
+GitHub Actions has ended every pull-request run in `startup_failure` with zero jobs since 2026-09-25, so the gates were run locally with `scratchpad/integration-verify.sh` (the 17 steps CI runs): **all 17 exit 0** on the final code head. The same run was green at 11:27 on `fe99cb8aa` (before the second claims round) and at 12:32 on `2a68482c4` (before the third).
 
 | Suite | Result |
 |---|---|
-| API fixed-list suite | 11,866 tests, exit 0 |
-| Web (`src/**/*.spec.ts`) | 3,162 pass, 0 fail |
+| API fixed-list suite | 11,868 tests, exit 0 |
+| Web (`src/**/*.spec.ts`) | 3,175 pass, 0 fail |
 | AI gateway | 1,536 pass, 0 fail |
 | Contracts | 351 pass, 0 fail |
 | Config | 153 pass, 0 fail |
 | Workers | 47 pass, 0 fail |
-| Real-PostgreSQL specs | exit 0; the reimbursement compatibility job 107 pass, with the new test "a confirmed own expense blocks detail, queue and new payment under the real lock for every policy" |
-| LINE-AI whole-chain acceptance | exit 0, capability manifest regenerated |
+| Real-PostgreSQL specs | exit 0; the reimbursement compatibility job includes "a confirmed own expense blocks detail, queue and new payment under the real lock for every policy", which also asserts that both list reads return the confirmed-duplicate count |
+| LINE-AI whole-chain acceptance | exit 0, capability manifest regenerated on the merged tree |
 
-The first full run was red on two older checks that pinned yesterday's behaviour, both corrected: the four-tile class in `executive-presentation.spec.ts`, and `claim-payment-posting.pg.spec.ts`, which paid a claim after its receipt was confirmed as a duplicate (now the payment is recorded first, which is still possible, and the worker posts it as before).
+The first full run (11:13) was red on two older checks that pinned yesterday's behaviour, both corrected: the four-tile class in `executive-presentation.spec.ts`, and `claim-payment-posting.pg.spec.ts`, which paid a claim after its receipt was confirmed as a duplicate (now the payment is recorded first, which is still possible, and the worker posts it as before).
 
 `e2e/receipt-draft-continuity.spec.ts`: 11 of 11 on chromium, three runs in a row, on a throwaway stack (own containers; database named `watchdog_bms` and bucket `receipt-remediation-…` as the spec's own safety checks require).
 
