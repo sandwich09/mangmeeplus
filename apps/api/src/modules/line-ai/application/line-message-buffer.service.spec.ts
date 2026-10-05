@@ -654,7 +654,7 @@ describe('LineMessageBufferService – media and captions', () => {
     await sleep(30);
     assert.equal(h.pushes.length, 2, 'the card, then its sentence — never a third bubble');
     assert.equal(h.pushes[0]!.message.type, 'flex');
-    assert.deepEqual(h.pushes[1]!.message, { type: 'text', text: LINE_MEDIA_RECEIVED_TEXT }, 'exactly what was sent before the card existed');
+    assert.deepEqual(h.pushes[1]!.message, { type: 'text', text: LINE_MEDIA_RECEIVED_TEXT }, 'the acknowledgement sentence the card declares, as plain text');
     assert.ok(h.pushes[0]!.operationId, 'the first push names its operation');
     assert.equal(h.pushes[1]!.operationId, `${h.pushes[0]!.operationId}:text`, 'the fallback\'s retry key is derived from the first');
     assert.deepEqual(h.receipts.map(({ event }) => event.webhookEventId), ['refused-card'], 'waiting feedback never fails a turn');

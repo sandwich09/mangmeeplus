@@ -81,7 +81,10 @@ export const LINE_WAIT_STATUS_SLOW_DELAY_MS = 55_000;
 export const LINE_LOADING_RESTART_DELAY_MS = 300;
 /** A second best-effort keepalive covers slow device delivery clearing the first restart. */
 export const LINE_LOADING_KEEPALIVE_DELAY_MS = 1_300;
-export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ปกติไม่เกิน 1 นาที เสร็จแล้วน้องจะสรุปให้เลยนะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ';
+/** Design lock 2026-10-04 §8: the scanning context names no time nobody knows — not on the card, and
+ *  not in this sentence, which is the card's canonical text and what is sent where the card cannot be
+ *  drawn. (It used to promise "ปกติไม่เกิน 1 นาที".) Same shape as the file sentence below. */
+export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ เสร็จแล้วน้องจะสรุปให้ทางแชตนี้นะคะ ระหว่างนี้คุยกับน้องต่อได้เลยค่ะ';
 /**
  * §17.1 / capture appendix §3: a `file` message is a DOCUMENT, and its read is async — so the
  * acknowledgement may neither call it a รูป nor promise the one-minute turnaround the photo lane
